@@ -4,35 +4,34 @@
 #[test_only]
 module deepbook_margin::margin_manager_tests;
 
-use deepbook::{pool::Pool, registry::Registry};
-use deepbook_margin::{
-    margin_constants,
-    margin_manager::{Self, MarginManager},
-    margin_pool::{Self, MarginPool},
-    margin_registry::MarginRegistry,
-    test_constants::{Self, USDC, USDT, BTC, INVALID_ASSET, btc_multiplier},
-    test_helpers::{
-        Self,
-        setup_margin_registry,
-        create_margin_pool,
-        create_pool_for_testing,
-        enable_deepbook_margin_on_pool,
-        default_protocol_config,
-        cleanup_margin_test,
-        mint_coin,
-        build_demo_usdc_price_info_object,
-        build_demo_usdt_price_info_object,
-        build_btc_price_info_object,
-        setup_btc_usd_deepbook_margin,
-        setup_usdc_usdt_deepbook_margin,
-        destroy_2,
-        destroy_3,
-        return_shared_2,
-        return_shared_3,
-        advance_time,
-        get_margin_pool_caps,
-        return_to_sender_2
-    }
+use deepbook::pool::Pool;
+use deepbook::registry::Registry;
+use deepbook_margin::margin_constants;
+use deepbook_margin::margin_manager::{Self, MarginManager};
+use deepbook_margin::margin_pool::{Self, MarginPool};
+use deepbook_margin::margin_registry::{Self, MarginRegistry};
+use deepbook_margin::test_constants::{Self, USDC, USDT, BTC, INVALID_ASSET, btc_multiplier};
+use deepbook_margin::test_helpers::{
+    Self,
+    setup_margin_registry,
+    create_margin_pool,
+    create_pool_for_testing,
+    enable_deepbook_margin_on_pool,
+    default_protocol_config,
+    cleanup_margin_test,
+    mint_coin,
+    build_demo_usdc_price_info_object,
+    build_demo_usdt_price_info_object,
+    build_btc_price_info_object,
+    setup_btc_usd_deepbook_margin,
+    setup_usdc_usdt_deepbook_margin,
+    destroy_2,
+    destroy_3,
+    return_shared_2,
+    return_shared_3,
+    advance_time,
+    get_margin_pool_caps,
+    return_to_sender_2
 };
 use std::unit_test::destroy;
 use sui::test_scenario::return_shared;
@@ -2419,4 +2418,92 @@ fun test_liquidate_fails_with_too_low_repay_amount() {
     // Should never reach here
     destroy_3!(base_coin, quote_coin, remaining_debt);
     abort (0)
+}
+
+#[test]
+fun test_unregister_margin_manager() {
+    let (mut scenario, clock, admin_cap, maintainer_cap) = setup_margin_registry();
+
+    create_margin_pool<USDT>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    create_margin_pool<USDC>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+
+    // Create DeepBook pool and enable margin trading on it
+    let (pool_id, registry_id) = create_pool_for_testing<USDC, USDT>(&mut scenario);
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    enable_deepbook_margin_on_pool<USDC, USDT>(
+        pool_id,
+        &mut registry,
+        &admin_cap,
+        &clock,
+        &mut scenario,
+    );
+    return_shared(registry);
+
+    // Create first margin manager
+    scenario.next_tx(test_constants::user1());
+    let pool = scenario.take_shared<Pool<USDC, USDT>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    let manager1_id = margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared_3!(deepbook_registry, pool, registry);
+
+    // Create second margin manager
+    scenario.next_tx(test_constants::user1());
+    let pool = scenario.take_shared<Pool<USDC, USDT>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    let manager2_id = margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared_3!(deepbook_registry, pool, registry);
+
+    // Verify both are registered
+    scenario.next_tx(test_constants::user1());
+    let registry = scenario.take_shared<MarginRegistry>();
+    let manager_ids = margin_registry::get_margin_manager_ids(&registry, test_constants::user1());
+    assert!(manager_ids.length() == 2);
+    assert!(manager_ids.contains(&manager1_id));
+    assert!(manager_ids.contains(&manager2_id));
+    return_shared(registry);
+
+    // Unregister first manager
+    scenario.next_tx(test_constants::user1());
+    let mut mm1 = scenario.take_shared_by_id<MarginManager<USDC, USDT>>(manager1_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::unregister_margin_manager<USDC, USDT>(
+        &mut mm1,
+        &mut registry,
+        scenario.ctx(),
+    );
+    return_shared_2!(mm1, registry);
+
+    // Verify only second manager remains
+    scenario.next_tx(test_constants::user1());
+    let registry = scenario.take_shared<MarginRegistry>();
+    let manager_ids = margin_registry::get_margin_manager_ids(&registry, test_constants::user1());
+    assert!(manager_ids.length() == 1);
+    assert!(!manager_ids.contains(&manager1_id));
+    assert!(manager_ids.contains(&manager2_id));
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }

@@ -3,30 +3,30 @@
 
 module deepbook_margin::margin_manager;
 
-use deepbook::{
-    balance_manager::{
-        Self,
-        BalanceManager,
-        TradeCap,
-        DepositCap,
-        WithdrawCap,
-        TradeProof,
-        DeepBookReferral
-    },
-    constants,
-    math,
-    pool::Pool,
-    registry::Registry
+use deepbook::balance_manager::{
+    Self,
+    BalanceManager,
+    TradeCap,
+    DepositCap,
+    WithdrawCap,
+    TradeProof,
+    DeepBookReferral
 };
-use deepbook_margin::{
-    margin_constants,
-    margin_pool::MarginPool,
-    margin_registry::MarginRegistry,
-    oracle::{calculate_target_currency, get_pyth_price}
-};
+use deepbook::constants;
+use deepbook::math;
+use deepbook::pool::Pool;
+use deepbook::registry::Registry;
+use deepbook_margin::margin_constants;
+use deepbook_margin::margin_pool::MarginPool;
+use deepbook_margin::margin_registry::MarginRegistry;
+use deepbook_margin::oracle::{calculate_target_currency, get_pyth_price};
 use pyth::price_info::PriceInfoObject;
-use std::{string::String, type_name::{Self, TypeName}};
-use sui::{clock::Clock, coin::Coin, event, vec_map::{Self, VecMap}};
+use std::string::String;
+use std::type_name::{Self, TypeName};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::event;
+use sui::vec_map::{Self, VecMap};
 use token::deep::DEEP;
 
 // === Errors ===
@@ -159,9 +159,12 @@ public fun new<BaseAsset, QuoteAsset>(
     margin_registry: &mut MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
-) {
+): ID {
     let manager = new_margin_manager(pool, deepbook_registry, margin_registry, clock, ctx);
+    let margin_manager_id = manager.id();
     transfer::share_object(manager);
+
+    margin_manager_id
 }
 
 /// Creates a new margin manager and returns it along with an initializer.
