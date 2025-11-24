@@ -4,34 +4,36 @@
 #[test_only]
 module deepbook_margin::margin_manager_tests;
 
-use deepbook::pool::Pool;
-use deepbook::registry::Registry;
-use deepbook_margin::margin_constants;
-use deepbook_margin::margin_manager::{Self, MarginManager};
-use deepbook_margin::margin_pool::{Self, MarginPool};
-use deepbook_margin::margin_registry::{Self, MarginRegistry};
-use deepbook_margin::test_constants::{Self, USDC, USDT, BTC, INVALID_ASSET, btc_multiplier};
-use deepbook_margin::test_helpers::{
-    Self,
-    setup_margin_registry,
-    create_margin_pool,
-    create_pool_for_testing,
-    enable_deepbook_margin_on_pool,
-    default_protocol_config,
-    cleanup_margin_test,
-    mint_coin,
-    build_demo_usdc_price_info_object,
-    build_demo_usdt_price_info_object,
-    build_btc_price_info_object,
-    setup_btc_usd_deepbook_margin,
-    setup_usdc_usdt_deepbook_margin,
-    destroy_2,
-    destroy_3,
-    return_shared_2,
-    return_shared_3,
-    advance_time,
-    get_margin_pool_caps,
-    return_to_sender_2
+use deepbook::{pool::Pool, registry::Registry};
+use deepbook_margin::{
+    margin_constants,
+    margin_manager::{Self, MarginManager},
+    margin_pool::{Self, MarginPool},
+    margin_registry::{Self, MarginRegistry},
+    test_constants::{Self, USDC, USDT, BTC, INVALID_ASSET, btc_multiplier},
+    test_helpers::{
+        Self,
+        setup_margin_registry,
+        create_margin_pool,
+        create_pool_for_testing,
+        enable_deepbook_margin_on_pool,
+        default_protocol_config,
+        cleanup_margin_test,
+        mint_coin,
+        build_demo_usdc_price_info_object,
+        build_demo_usdt_price_info_object,
+        build_btc_price_info_object,
+        setup_btc_usd_deepbook_margin,
+        setup_usdc_usdt_deepbook_margin,
+        destroy_2,
+        destroy_3,
+        return_shared_2,
+        return_shared_3,
+        return_shared_4,
+        advance_time,
+        get_margin_pool_caps,
+        return_to_sender_2
+    }
 };
 use std::unit_test::destroy;
 use sui::test_scenario::return_shared;
@@ -553,8 +555,7 @@ fun test_withdrawal_ok_when_risk_ratio_above_limit() {
     destroy(withdrawn_coin);
 
     destroy_2!(usdc_price, usdt_price);
-    return_shared_3!(usdc_pool, pool, usdt_pool);
-    return_shared(mm);
+    return_shared_4!(usdc_pool, pool, usdt_pool, mm);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -1051,11 +1052,11 @@ fun test_repay_exact_amount_no_rounding_errors() {
         );
 
         // Verify no rounding error: repaid amount should equal calculated amount
-        assert!(repaid_amount == exact_amount, 0);
+        assert!(repaid_amount == exact_amount);
 
         // Verify shares are zero
         let borrowed_quote_shares = mm.borrowed_quote_shares();
-        assert!(borrowed_quote_shares == 0, 0);
+        assert!(borrowed_quote_shares == 0);
 
         // Clean up any remaining debt
         if (borrowed_quote_shares > 0) {
@@ -1339,9 +1340,8 @@ fun test_risk_ratio_with_multiple_assets() {
     // Total debt: $2000 USDT
     // Risk ratio should be approximately 4.0 (400%)
 
-    return_shared_2!(usdt_pool, pool);
+    return_shared_3!(usdt_pool, pool, mm);
     destroy_2!(usdc_price, usdt_price);
-    return_shared(mm);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -2171,7 +2171,7 @@ fun test_borrow_at_exact_min_risk_ratio_no_rounding_issues() {
     );
 
     // Risk ratio should be exactly the minimum borrow risk ratio (1.25)
-    assert!(risk_ratio == test_constants::min_borrow_risk_ratio(), 0);
+    assert!(risk_ratio == test_constants::min_borrow_risk_ratio());
 
     return_shared(base_pool);
     destroy_2!(usdc_price, usdt_price);
@@ -2323,7 +2323,7 @@ fun test_borrow_at_exact_min_risk_ratio_with_custom_price() {
     // With the price difference, it might be slightly different
     // USDC at 0.99984495: (1 * 0.99984495 + 4 * 0.99984495) / (4 * 0.99984495) = 5/4 = 1.25
     // The ratio should still be exactly 1.25 since both assets use the same price
-    assert!(risk_ratio == test_constants::min_borrow_risk_ratio(), 0);
+    assert!(risk_ratio == test_constants::min_borrow_risk_ratio());
 
     return_shared(base_pool);
     destroy_2!(usdc_price, usdt_price);
