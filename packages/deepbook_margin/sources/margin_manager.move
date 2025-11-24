@@ -159,9 +159,12 @@ public fun new<BaseAsset, QuoteAsset>(
     margin_registry: &mut MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
-) {
+): ID {
     let manager = new_margin_manager(pool, deepbook_registry, margin_registry, clock, ctx);
+    let margin_manager_id = manager.id();
     transfer::share_object(manager);
+
+    margin_manager_id
 }
 
 /// Creates a new margin manager and returns it along with an initializer.
@@ -192,6 +195,16 @@ public fun share<BaseAsset, QuoteAsset>(
     let ManagerInitializer {
         margin_manager_id: _,
     } = initializer;
+}
+
+/// Unregister the margin manager from the margin registry.
+public fun unregister_margin_manager<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    margin_registry: &mut MarginRegistry,
+    ctx: &mut TxContext,
+) {
+    self.validate_owner(ctx);
+    margin_registry.remove_margin_manager(self.id(), ctx);
 }
 
 /// Set the referral for the margin manager.

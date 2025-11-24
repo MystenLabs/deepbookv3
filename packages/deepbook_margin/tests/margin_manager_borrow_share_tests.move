@@ -111,7 +111,7 @@ fun test_multiple_borrows_accumulate_shares_base() {
 
     let borrowed_base_shares_after_first = mm.borrowed_base_shares();
     // At ratio 1, borrowing 10 should give us 10 shares
-    assert!(borrowed_base_shares_after_first == 10 * btc_multiplier(), 0);
+    assert!(borrowed_base_shares_after_first == 10 * btc_multiplier());
 
     // Second borrow: 15 BTC more
     mm.borrow_base<BTC, USDC>(
@@ -127,8 +127,8 @@ fun test_multiple_borrows_accumulate_shares_base() {
 
     let borrowed_base_shares_after_second = mm.borrowed_base_shares();
     // Total shares should be 10 + 15 = 25
-    assert!(borrowed_base_shares_after_second == 25 * btc_multiplier(), 1);
-    assert!(mm.borrowed_quote_shares() == 0, 2);
+    assert!(borrowed_base_shares_after_second == 25 * btc_multiplier());
+    assert!(mm.borrowed_quote_shares() == 0);
 
     return_shared_3!(btc_pool, usdc_pool, pool);
     return_shared(mm);
@@ -219,7 +219,7 @@ fun test_multiple_borrows_accumulate_shares_quote() {
 
     let borrowed_quote_shares_after_first = mm.borrowed_quote_shares();
     // At ratio 1, borrowing 10 should give us 10 shares
-    assert!(borrowed_quote_shares_after_first == 10 * test_constants::usdc_multiplier(), 0);
+    assert!(borrowed_quote_shares_after_first == 10 * test_constants::usdc_multiplier());
 
     // Second borrow: 15 USDC more
     mm.borrow_quote<BTC, USDC>(
@@ -235,8 +235,8 @@ fun test_multiple_borrows_accumulate_shares_quote() {
 
     let borrowed_quote_shares_after_second = mm.borrowed_quote_shares();
     // Total shares should be 10 + 15 = 25
-    assert!(borrowed_quote_shares_after_second == 25 * test_constants::usdc_multiplier(), 1);
-    assert!(mm.borrowed_base_shares() == 0, 2);
+    assert!(borrowed_quote_shares_after_second == 25 * test_constants::usdc_multiplier());
+    assert!(mm.borrowed_base_shares() == 0);
 
     return_shared_3!(btc_pool, usdc_pool, pool);
     return_shared(mm);
@@ -328,10 +328,10 @@ fun test_user_shares_isolated_from_other_users_base() {
     );
 
     // User1 should have 20 shares
-    assert!(mm1.borrowed_base_shares() == 20 * btc_multiplier(), 0);
+    assert!(mm1.borrowed_base_shares() == 20 * btc_multiplier());
 
     // The pool now has total borrow shares of 20
-    assert!(btc_pool.borrow_shares() == 20 * btc_multiplier(), 1);
+    assert!(btc_pool.borrow_shares() == 20 * btc_multiplier());
 
     return_shared_3!(btc_pool, usdc_pool, pool);
     return_shared_2!(mm1, registry);
@@ -394,11 +394,11 @@ fun test_user_shares_isolated_from_other_users_base() {
     );
 
     // User2 should have exactly 10 shares, NOT 30 (which would be the pool total)
-    assert!(mm2.borrowed_base_shares() == 10 * btc_multiplier(), 2);
-    assert!(mm2.borrowed_quote_shares() == 0, 3);
+    assert!(mm2.borrowed_base_shares() == 10 * btc_multiplier());
+    assert!(mm2.borrowed_quote_shares() == 0);
 
     // The pool should now have total borrow shares of 30 (20 + 10)
-    assert!(btc_pool.borrow_shares() == 30 * btc_multiplier(), 4);
+    assert!(btc_pool.borrow_shares() == 30 * btc_multiplier());
 
     return_shared_3!(btc_pool, usdc_pool, pool);
     return_shared(mm2);
@@ -492,10 +492,10 @@ fun test_user_shares_isolated_from_other_users_quote() {
     );
 
     // User1 should have 20 shares
-    assert!(mm1.borrowed_quote_shares() == 20 * test_constants::usdc_multiplier(), 0);
+    assert!(mm1.borrowed_quote_shares() == 20 * test_constants::usdc_multiplier());
 
     // The pool now has total borrow shares of 20
-    assert!(usdc_pool.borrow_shares() == 20 * test_constants::usdc_multiplier(), 1);
+    assert!(usdc_pool.borrow_shares() == 20 * test_constants::usdc_multiplier());
 
     return_shared_3!(btc_pool, usdc_pool, pool);
     return_shared_2!(mm1, registry);
@@ -555,11 +555,11 @@ fun test_user_shares_isolated_from_other_users_quote() {
     );
 
     // User2 should have exactly 10 shares, NOT 30 (which would be the pool total)
-    assert!(mm2.borrowed_quote_shares() == 10 * test_constants::usdc_multiplier(), 2);
-    assert!(mm2.borrowed_base_shares() == 0, 3);
+    assert!(mm2.borrowed_quote_shares() == 10 * test_constants::usdc_multiplier());
+    assert!(mm2.borrowed_base_shares() == 0);
 
     // The pool should now have total borrow shares of 30 (20 + 10)
-    assert!(usdc_pool.borrow_shares() == 30 * test_constants::usdc_multiplier(), 4);
+    assert!(usdc_pool.borrow_shares() == 30 * test_constants::usdc_multiplier());
 
     return_shared_3!(btc_pool, usdc_pool, pool);
     return_shared(mm2);

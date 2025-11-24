@@ -39,7 +39,7 @@ fun test_calculate_usd_currency() {
         base_currency_amount,
     );
 
-    assert!(target_currency_amount == 380 * 1_000_000_000, 0); // 380 USDC
+    assert!(target_currency_amount == 380 * 1_000_000_000); // 380 USDC
 }
 
 #[test]
@@ -61,7 +61,7 @@ fun test_calculate_usd_currency_usdc() {
         base_currency_amount,
     );
 
-    assert!(target_currency_amount == 100 * 1_000_000_000, 0); // 100 USDC
+    assert!(target_currency_amount == 100 * 1_000_000_000); // 100 USDC
 }
 
 #[test]
@@ -83,7 +83,7 @@ fun test_calculate_usd_currency_2() {
         base_currency_amount,
     );
 
-    assert!(target_currency_amount == 380 * 1_000_000_000, 0); // 380 USDC
+    assert!(target_currency_amount == 380 * 1_000_000_000); // 380 USDC
 }
 
 #[test, expected_failure(abort_code = ::deepbook_margin::oracle::EInvalidPythPrice)]
@@ -125,7 +125,7 @@ fun test_calculate_target_currency() {
         base_currency_amount,
     );
 
-    assert!(target_currency_amount == 26315789474, 1); // 26.315789474 SUI
+    assert!(target_currency_amount == 26315789474); // 26.315789474 SUI
 }
 
 #[test]
@@ -148,7 +148,7 @@ fun test_calculate_target_currency_2() {
         base_currency_amount,
     );
 
-    assert!(target_currency_amount == 27, 1); // 27 TOKEN
+    assert!(target_currency_amount == 27); // 27 TOKEN
 }
 
 #[test, expected_failure(abort_code = ::deepbook_margin::oracle::EInvalidPythPrice)]
@@ -255,7 +255,7 @@ fun test_calculate_usd_price_valid_confidence_at_limit() {
     );
 
     // 1 USDC at $100 = $100 (with 9 decimals for USD representation)
-    assert!(usd_price == 100_000_000_000, 0);
+    assert!(usd_price == 100_000_000_000);
 
     destroy(admin_cap);
     destroy(price_info);
@@ -470,7 +470,7 @@ fun test_ewma_price_difference_at_upper_limit() {
     );
 
     // 1 USDC at $115 = $115 (with 9 decimals for USD representation)
-    assert!(usd_price == 115_000_000_000, 0);
+    assert!(usd_price == 115_000_000_000);
 
     destroy(admin_cap);
     destroy(price_info);
@@ -518,7 +518,7 @@ fun test_ewma_price_difference_at_lower_limit() {
     );
 
     // 1 USDC at $85 = $85 (with 9 decimals for USD representation)
-    assert!(usd_price == 85_000_000_000, 0);
+    assert!(usd_price == 85_000_000_000);
 
     destroy(admin_cap);
     destroy(price_info);
@@ -567,7 +567,7 @@ fun test_confidence_check_with_high_price_no_overflow() {
     );
 
     // 1 USDC at $1M = $1M (with 9 decimals for USD representation)
-    assert!(usd_price == 1_000_000_000_000_000, 0);
+    assert!(usd_price == 1_000_000_000_000_000);
 
     destroy(admin_cap);
     destroy(price_info);
@@ -617,7 +617,7 @@ fun test_ewma_check_with_high_price_no_overflow() {
     );
 
     // 1 USDC at $1.1M = $1.1M (with 9 decimals for USD representation)
-    assert!(usd_price == 1_100_000_000_000_000, 0);
+    assert!(usd_price == 1_100_000_000_000_000);
 
     destroy(admin_cap);
     destroy(price_info);

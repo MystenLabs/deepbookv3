@@ -155,7 +155,7 @@ public fun get_margin_pool_caps(
 public fun get_margin_pool_cap(scenario: &mut Scenario, pool_id: ID): MarginPoolCap {
     scenario.next_tx(test_constants::admin());
     let cap = scenario.take_from_sender<MarginPoolCap>();
-    assert!(cap.margin_pool_id() == pool_id, 0);
+    assert!(cap.margin_pool_id() == pool_id);
     cap
 }
 
