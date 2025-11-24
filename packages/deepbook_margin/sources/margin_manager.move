@@ -3,32 +3,36 @@
 
 module deepbook_margin::margin_manager;
 
-use deepbook::{
-    balance_manager::{
-        Self,
-        BalanceManager,
-        TradeCap,
-        DepositCap,
-        WithdrawCap,
-        TradeProof,
-        DeepBookReferral
-    },
-    constants,
-    math,
-    order_info::OrderInfo,
-    pool::Pool,
-    registry::Registry
+use deepbook::balance_manager::{
+    Self,
+    BalanceManager,
+    TradeCap,
+    DepositCap,
+    WithdrawCap,
+    TradeProof,
+    DeepBookReferral
 };
-use deepbook_margin::{
-    margin_constants,
-    margin_pool::MarginPool,
-    margin_registry::MarginRegistry,
-    oracle::{calculate_target_currency, get_pyth_price},
-    tpsl::{Self, TakeProfitStopLoss, PendingOrder}
+use deepbook::constants;
+use deepbook::math;
+use deepbook::order_info::OrderInfo;
+use deepbook::pool::Pool;
+use deepbook::registry::Registry;
+use deepbook_margin::margin_constants;
+use deepbook_margin::margin_pool::MarginPool;
+use deepbook_margin::margin_registry::MarginRegistry;
+use deepbook_margin::oracle::{
+    calculate_target_currency,
+    get_pyth_price,
+    calculate_oracle_usd_price
 };
+use deepbook_margin::tpsl::{Self, TakeProfitStopLoss, PendingOrder};
 use pyth::price_info::PriceInfoObject;
-use std::{string::String, type_name::{Self, TypeName}};
-use sui::{clock::Clock, coin::Coin, event, vec_map::{Self, VecMap}};
+use std::string::String;
+use std::type_name::{Self, TypeName};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::event;
+use sui::vec_map::{Self, VecMap};
 use token::deep::DEEP;
 
 // === Errors ===
@@ -65,7 +69,7 @@ public struct MarginManager<phantom BaseAsset, phantom QuoteAsset> has key {
     trade_cap: TradeCap,
     borrowed_base_shares: u64,
     borrowed_quote_shares: u64,
-    take_profit_stop_loss: TakeProfitStopLoss<BaseAsset, QuoteAsset>,
+    take_profit_stop_loss: TakeProfitStopLoss,
     extra_fields: VecMap<String, u64>,
 }
 
@@ -160,7 +164,7 @@ public struct WithdrawCollateralEvent has copy, drop {
 
 /// TODO: Execute one pending order per move call
 public fun execute_pending_orders<BaseAsset, QuoteAsset>(
-    self: &mut TakeProfitStopLoss<BaseAsset, QuoteAsset>,
+    self: &mut TakeProfitStopLoss,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     base_price_info_object: &PriceInfoObject,
@@ -169,26 +173,26 @@ public fun execute_pending_orders<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): vector<OrderInfo> {
-    let current_price = tpsl::current_price<BaseAsset, QuoteAsset>(
+    let current_price = current_price<BaseAsset, QuoteAsset>(
         base_price_info_object,
         quote_price_info_object,
         registry,
         clock,
     );
-    let (keys, values) = self.pending_orders().into_keys_values();
+    let (keys, values) = self.conditional_orders().into_keys_values();
     let valid_indices = values.find_indices!(|value| {
-        (value.trigger_is_below() && current_price < value.trigger_price()) ||
-        (!value.trigger_is_below() && current_price > value.trigger_price())
+        (value.condition().trigger_below_price() && current_price < value.condition().trigger_price()) ||
+        (!value.condition().trigger_below_price() && current_price > value.condition().trigger_price())
     });
 
     let mut order_infos = vector[];
     valid_indices.do!(|index| {
         let pending_order = values[index].pending_order();
-        let order_info = place_pending_limit_order<BaseAsset, QuoteAsset>(
+        let order_info = place_pending_order<BaseAsset, QuoteAsset>(
             registry,
             margin_manager,
             pool,
-            pending_order,
+            &pending_order,
             clock,
             ctx,
         );
@@ -198,13 +202,51 @@ public fun execute_pending_orders<BaseAsset, QuoteAsset>(
     // remove the pending orders
     valid_indices.do!(|index| {
         let pending_order_identifier = keys[index];
-        self.pending_orders().remove(&pending_order_identifier);
+        self.conditional_orders_mut().remove(&pending_order_identifier);
     });
 
     order_infos
 }
 
-fun place_pending_limit_order<BaseAsset, QuoteAsset>(
+/// Price of the base asset in the quote asset.
+/// TODO: account for decimals, so price matches the deepbook pool price, not just hardcoded to 9 decimals
+public fun current_price<BaseAsset, QuoteAsset>(
+    base_price_info_object: &PriceInfoObject,
+    quote_price_info_object: &PriceInfoObject,
+    registry: &MarginRegistry,
+    clock: &Clock,
+): u64 {
+    let base_usd_price = calculate_oracle_usd_price<BaseAsset>(
+        base_price_info_object,
+        registry,
+        clock,
+    );
+    let quote_usd_price = calculate_oracle_usd_price<QuoteAsset>(
+        quote_price_info_object,
+        registry,
+        clock,
+    );
+
+    math::div(base_usd_price, quote_usd_price)
+}
+
+// public fun can_place_limit_order(
+//     self: &TakeProfitStopLoss,
+//     pending_order_identifier: u64,
+// ): bool {
+//     let conditional_order = self.conditional_orders.get(&pending_order_identifier);
+//     conditional_order.pending_order.is_limit_order
+// }
+
+// public fun can_place_market_order(
+//     self: &TakeProfitStopLoss,
+//     pending_order_identifier: u64,
+// ): bool {
+//     let conditional_order = self.conditional_orders.get(&pending_order_identifier);
+//     conditional_order.pending_order.is_market_order
+// }
+
+fun place_pending_order<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -215,7 +257,7 @@ fun place_pending_limit_order<BaseAsset, QuoteAsset>(
     assert!(pending_order.pool_id() == pool.id(), EIncorrectPool);
 
     if (pending_order.is_limit_order()) {
-        place_limit_order_conditional<BaseAsset, QuoteAsset>(
+        place_pending_limit_order<BaseAsset, QuoteAsset>(
             registry,
             margin_manager,
             pool,
@@ -247,7 +289,7 @@ fun place_pending_limit_order<BaseAsset, QuoteAsset>(
 }
 
 /// Only used for tpsl pending orders.
-fun place_limit_order_conditional<BaseAsset, QuoteAsset>(
+fun place_pending_limit_order<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -1164,7 +1206,7 @@ fun new_margin_manager<BaseAsset, QuoteAsset>(
         trade_cap,
         borrowed_base_shares: 0,
         borrowed_quote_shares: 0,
-        take_profit_stop_loss: tpsl::new<BaseAsset, QuoteAsset>(),
+        take_profit_stop_loss: tpsl::new(),
         extra_fields: vec_map::empty(),
     }
 }
