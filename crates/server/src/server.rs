@@ -1595,6 +1595,7 @@ async fn margin_manager_created(
                 package,
                 margin_manager_id,
                 balance_manager_id,
+                deepbook_pool_id,
                 owner,
                 onchain_timestamp,
             )| {
@@ -1615,6 +1616,10 @@ async fn margin_manager_created(
                     (
                         "balance_manager_id".to_string(),
                         Value::from(balance_manager_id),
+                    ),
+                    (
+                        "deepbook_pool_id".to_string(),
+                        deepbook_pool_id.map_or(Value::Null, Value::from),
                     ),
                     ("owner".to_string(), Value::from(owner)),
                     (
