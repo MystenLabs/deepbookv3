@@ -15,8 +15,42 @@ tags:
   - name: Market Data
   - name: Order Flow
   - name: Reference
+  - name: Health
 
 paths:
+  /:
+    get:
+      tags: [Health]
+      summary: Basic health check
+      description: Returns HTTP 200 if the server is running.
+      operationId: healthCheck
+      responses:
+        "200":
+          description: Server is running
+
+  /status:
+    get:
+      tags: [Health]
+      summary: Indexer synchronization status
+      description: |
+        Returns detailed information about indexer health, including:
+        - Current checkpoint lag (difference between on-chain and indexed checkpoints)
+        - Time lag (how long ago the last checkpoint was indexed)
+        - Per-pipeline status for multi-pipeline setups
+        
+        **Health thresholds:**
+        - `healthy`: checkpoint_lag < 100 AND time_lag < 60 seconds
+        - `degraded`: exceeds healthy thresholds
+      operationId: getStatus
+      responses:
+        "200":
+          description: Indexer status and health metrics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexerStatus"
+      x-docs: "https://docs.sui.io/standards/deepbookv3-indexer"
+
   /get_pools:
     get:
       tags: [Pools]
@@ -469,6 +503,64 @@ components:
         contractAddressUrl: { type: string }
         can_deposit: { type: string, enum: ["true", "false"] }
         can_withdraw: { type: string, enum: ["true", "false"] }
+
+    IndexerStatus:
+      type: object
+      required: [status, latest_onchain_checkpoint, current_time_ms, max_checkpoint_lag, max_time_lag_seconds, pipelines]
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded]
+          description: "Overall indexer health status"
+        latest_onchain_checkpoint:
+          type: integer
+          format: int64
+          description: "Latest checkpoint sequence number on the blockchain"
+        current_time_ms:
+          type: integer
+          format: int64
+          description: "Current server timestamp in milliseconds"
+        max_checkpoint_lag:
+          type: integer
+          format: int64
+          description: "Maximum checkpoint lag across all pipelines"
+        max_time_lag_seconds:
+          type: integer
+          format: int64
+          description: "Maximum time lag in seconds across all pipelines"
+        pipelines:
+          type: array
+          items:
+            $ref: "#/components/schemas/PipelineStatus"
+          description: "Status for each indexer pipeline"
+
+    PipelineStatus:
+      type: object
+      required: [pipeline, indexed_checkpoint, indexed_epoch, indexed_timestamp_ms, checkpoint_lag, time_lag_seconds]
+      properties:
+        pipeline:
+          type: string
+          description: "Pipeline name (e.g., 'deepbook_indexer')"
+        indexed_checkpoint:
+          type: integer
+          format: int64
+          description: "Latest checkpoint indexed by this pipeline"
+        indexed_epoch:
+          type: integer
+          format: int64
+          description: "Latest epoch indexed by this pipeline"
+        indexed_timestamp_ms:
+          type: integer
+          format: int64
+          description: "Timestamp of the latest indexed checkpoint in milliseconds"
+        checkpoint_lag:
+          type: integer
+          format: int64
+          description: "Difference between on-chain and indexed checkpoint"
+        time_lag_seconds:
+          type: integer
+          format: int64
+          description: "Time difference in seconds since last indexed checkpoint"
 
 x-notes:
   asset_scalars: |

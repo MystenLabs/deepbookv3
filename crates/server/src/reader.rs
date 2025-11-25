@@ -2100,4 +2100,27 @@ impl Reader {
         }
         res
     }
+
+    pub async fn get_watermarks(&self) -> Result<Vec<(String, i64, i64, i64)>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        let res = schema::watermarks::table
+            .select((
+                schema::watermarks::pipeline,
+                schema::watermarks::checkpoint_hi_inclusive,
+                schema::watermarks::timestamp_ms_hi_inclusive,
+                schema::watermarks::epoch_hi_inclusive,
+            ))
+            .load::<(String, i64, i64, i64)>(&mut connection)
+            .await
+            .map_err(|_| DeepBookError::InternalError("Error fetching watermarks".to_string()));
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
 }

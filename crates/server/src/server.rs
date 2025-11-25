@@ -90,6 +90,7 @@ pub const DEEPBOOK_POOL_UPDATED_REGISTRY_PATH: &str = "/deepbook_pool_updated_re
 pub const DEEPBOOK_POOL_CONFIG_UPDATED_PATH: &str = "/deepbook_pool_config_updated";
 pub const MARGIN_MANAGERS_INFO_PATH: &str = "/margin_managers_info";
 pub const MARGIN_MANAGER_STATES_PATH: &str = "/margin_manager_states";
+pub const STATUS_PATH: &str = "/status";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -238,6 +239,7 @@ pub(crate) fn make_router(state: Arc<AppState>, rpc_url: Url) -> Router {
         .route(LEVEL2_PATH, get(orderbook))
         .route(DEEP_SUPPLY_PATH, get(deep_supply))
         .route(SUMMARY_PATH, get(summary))
+        .route(STATUS_PATH, get(status))
         .with_state((state.clone(), rpc_url));
 
     db_routes
@@ -268,6 +270,77 @@ where
 
 async fn health_check() -> StatusCode {
     StatusCode::OK
+}
+
+/// Get indexer status including checkpoint lag
+async fn status(
+    State((state, rpc_url)): State<(Arc<AppState>, Url)>,
+) -> Result<Json<serde_json::Value>, DeepBookError> {
+    // Health thresholds - adjust these values based on your requirements
+    const MAX_HEALTHY_CHECKPOINT_LAG: i64 = 100;
+    const MAX_HEALTHY_TIME_LAG_SECONDS: i64 = 60;
+
+    // Get watermarks from the database
+    let watermarks = state.reader.get_watermarks().await?;
+
+    // Get the latest checkpoint from Sui RPC
+    let sui_client = SuiClientBuilder::default().build(rpc_url.as_str()).await?;
+    let latest_checkpoint = sui_client
+        .read_api()
+        .get_latest_checkpoint_sequence_number()
+        .await
+        .map_err(|e| {
+            DeepBookError::InternalError(format!("Failed to get latest checkpoint: {}", e))
+        })?;
+
+    // Get current timestamp
+    let current_time_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| DeepBookError::InternalError("System time error".to_string()))?
+        .as_millis() as i64;
+
+    // Build status for each pipeline
+    let mut pipelines = Vec::new();
+    for (pipeline, checkpoint_hi, timestamp_ms_hi, epoch_hi) in watermarks {
+        let checkpoint_lag = latest_checkpoint as i64 - checkpoint_hi;
+        let time_lag_ms = current_time_ms - timestamp_ms_hi;
+        let time_lag_seconds = time_lag_ms / 1000;
+
+        pipelines.push(serde_json::json!({
+            "pipeline": pipeline,
+            "indexed_checkpoint": checkpoint_hi,
+            "indexed_epoch": epoch_hi,
+            "indexed_timestamp_ms": timestamp_ms_hi,
+            "checkpoint_lag": checkpoint_lag,
+            "time_lag_seconds": time_lag_seconds,
+        }));
+    }
+
+    // Determine overall health status
+    let max_checkpoint_lag = pipelines
+        .iter()
+        .filter_map(|p| p["checkpoint_lag"].as_i64())
+        .max()
+        .unwrap_or(0);
+
+    let max_time_lag_seconds = pipelines
+        .iter()
+        .filter_map(|p| p["time_lag_seconds"].as_i64())
+        .max()
+        .unwrap_or(0);
+
+    let is_healthy = max_checkpoint_lag < MAX_HEALTHY_CHECKPOINT_LAG
+        && max_time_lag_seconds < MAX_HEALTHY_TIME_LAG_SECONDS;
+    let status_str = if is_healthy { "healthy" } else { "degraded" };
+
+    Ok(Json(serde_json::json!({
+        "status": status_str,
+        "latest_onchain_checkpoint": latest_checkpoint,
+        "current_time_ms": current_time_ms,
+        "max_checkpoint_lag": max_checkpoint_lag,
+        "max_time_lag_seconds": max_time_lag_seconds,
+        "pipelines": pipelines,
+    })))
 }
 
 /// Get all pools stored in database
