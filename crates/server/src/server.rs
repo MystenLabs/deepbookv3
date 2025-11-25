@@ -1619,10 +1619,7 @@ async fn margin_manager_created(
                     ),
                     (
                         "deepbook_pool_id".to_string(),
-                        match deepbook_pool_id {
-                            Some(pool_id) => Value::from(pool_id),
-                            None => Value::Null,
-                        },
+                        deepbook_pool_id.map_or(Value::Null, Value::from),
                     ),
                     ("owner".to_string(), Value::from(owner)),
                     (
