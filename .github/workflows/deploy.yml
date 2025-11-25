@@ -25,22 +25,19 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # pin@v4.2.2
 
       - name: Trigger Pulumi Deployment
-        uses: mheap/pin-github-action@v2
+        uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # pin@v3.0.0
         with:
-          repo: peter-evans/repository-dispatch
-          version: v3
-          uses-args: |
-            repository: MystenLabs/sui-operations
-            token: ${{ secrets.DEPLOY_PULUMI_DISPATCH_TOKEN }}
-            event-type: pulumi-up
-            client-payload: |-
-              {
-                  "project_path": "apps/deepbook",
-                  "stack_to_update": "testnet"
-              }
+          repository: MystenLabs/sui-operations
+          token: ${{ secrets.DEPLOY_PULUMI_DISPATCH_TOKEN }}
+          event-type: pulumi-up
+          client-payload: |-
+            {
+                "project_path": "apps/deepbook",
+                "stack_to_update": "testnet"
+            }
 
       - name: View deployment status
         run: |
