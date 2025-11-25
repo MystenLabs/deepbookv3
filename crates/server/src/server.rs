@@ -14,6 +14,7 @@ use deepbook_schema::*;
 use diesel::dsl::count_star;
 use diesel::dsl::{max, min};
 use diesel::{ExpressionMethods, QueryDsl};
+use serde::Deserialize;
 use serde_json::Value;
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -123,6 +124,25 @@ impl AppState {
     pub(crate) fn metrics(&self) -> &RpcMetrics {
         &self.metrics
     }
+}
+
+/// Query parameters for the /status endpoint
+#[derive(Debug, Deserialize)]
+pub struct StatusQueryParams {
+    /// Maximum acceptable checkpoint lag for "healthy" status (default: 100)
+    #[serde(default = "default_max_checkpoint_lag")]
+    pub max_checkpoint_lag: i64,
+    /// Maximum acceptable time lag in seconds for "healthy" status (default: 60)
+    #[serde(default = "default_max_time_lag_seconds")]
+    pub max_time_lag_seconds: i64,
+}
+
+fn default_max_checkpoint_lag() -> i64 {
+    100
+}
+
+fn default_max_time_lag_seconds() -> i64 {
+    60
 }
 
 pub async fn run_server(
@@ -274,12 +294,9 @@ async fn health_check() -> StatusCode {
 
 /// Get indexer status including checkpoint lag
 async fn status(
+    Query(params): Query<StatusQueryParams>,
     State((state, rpc_url)): State<(Arc<AppState>, Url)>,
 ) -> Result<Json<serde_json::Value>, DeepBookError> {
-    // Health thresholds - adjust these values based on your requirements
-    const MAX_HEALTHY_CHECKPOINT_LAG: i64 = 100;
-    const MAX_HEALTHY_TIME_LAG_SECONDS: i64 = 60;
-
     // Get watermarks from the database
     let watermarks = state.reader.get_watermarks().await?;
 
@@ -301,10 +318,23 @@ async fn status(
 
     // Build status for each pipeline
     let mut pipelines = Vec::new();
+    let mut min_checkpoint = i64::MAX;
+    let mut max_lag_pipeline_name = String::new();
+    let mut max_checkpoint_lag = 0i64;
+
     for (pipeline, checkpoint_hi, timestamp_ms_hi, epoch_hi) in watermarks {
         let checkpoint_lag = latest_checkpoint as i64 - checkpoint_hi;
         let time_lag_ms = current_time_ms - timestamp_ms_hi;
         let time_lag_seconds = time_lag_ms / 1000;
+
+        // Track the earliest checkpoint and pipeline with max lag
+        if checkpoint_hi < min_checkpoint {
+            min_checkpoint = checkpoint_hi;
+        }
+        if checkpoint_lag > max_checkpoint_lag {
+            max_checkpoint_lag = checkpoint_lag;
+            max_lag_pipeline_name = pipeline.clone();
+        }
 
         pipelines.push(serde_json::json!({
             "pipeline": pipeline,
@@ -313,15 +343,9 @@ async fn status(
             "indexed_timestamp_ms": timestamp_ms_hi,
             "checkpoint_lag": checkpoint_lag,
             "time_lag_seconds": time_lag_seconds,
+            "latest_onchain_checkpoint": latest_checkpoint,
         }));
     }
-
-    // Determine overall health status
-    let max_checkpoint_lag = pipelines
-        .iter()
-        .filter_map(|p| p["checkpoint_lag"].as_i64())
-        .max()
-        .unwrap_or(0);
 
     let max_time_lag_seconds = pipelines
         .iter()
@@ -329,17 +353,26 @@ async fn status(
         .max()
         .unwrap_or(0);
 
-    let is_healthy = max_checkpoint_lag < MAX_HEALTHY_CHECKPOINT_LAG
-        && max_time_lag_seconds < MAX_HEALTHY_TIME_LAG_SECONDS;
-    let status_str = if is_healthy { "healthy" } else { "degraded" };
+    // Handle case where no pipelines exist
+    let earliest_checkpoint = if min_checkpoint == i64::MAX {
+        0
+    } else {
+        min_checkpoint
+    };
+
+    let is_healthy = max_checkpoint_lag < params.max_checkpoint_lag
+        && max_time_lag_seconds < params.max_time_lag_seconds;
+    let status_str = if is_healthy { "OK" } else { "UNHEALTHY" };
 
     Ok(Json(serde_json::json!({
         "status": status_str,
         "latest_onchain_checkpoint": latest_checkpoint,
         "current_time_ms": current_time_ms,
+        "earliest_checkpoint": earliest_checkpoint,
+        "max_lag_pipeline": max_lag_pipeline_name,
+        "pipelines": pipelines,
         "max_checkpoint_lag": max_checkpoint_lag,
         "max_time_lag_seconds": max_time_lag_seconds,
-        "pipelines": pipelines,
     })))
 }
 

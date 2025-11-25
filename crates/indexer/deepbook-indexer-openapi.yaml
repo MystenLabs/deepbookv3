@@ -38,10 +38,32 @@ paths:
         - Time lag (how long ago the last checkpoint was indexed)
         - Per-pipeline status for multi-pipeline setups
         
-        **Health thresholds:**
-        - `healthy`: checkpoint_lag < 100 AND time_lag < 60 seconds
-        - `degraded`: exceeds healthy thresholds
+        The client can specify custom health thresholds via query parameters.
+        The server will compute the status based on these thresholds.
+        
+        **Default thresholds:**
+        - `max_checkpoint_lag`: 100
+        - `max_time_lag_seconds`: 60
+        
+        **Health computation:**
+        - `healthy`: checkpoint_lag < max_checkpoint_lag AND time_lag < max_time_lag_seconds
+        - `degraded`: exceeds the specified thresholds
       operationId: getStatus
+      parameters:
+        - in: query
+          name: max_checkpoint_lag
+          schema:
+            type: integer
+            format: int64
+            default: 100
+          description: Maximum acceptable checkpoint lag for "healthy" status
+        - in: query
+          name: max_time_lag_seconds
+          schema:
+            type: integer
+            format: int64
+            default: 60
+          description: Maximum acceptable time lag in seconds for "healthy" status
       responses:
         "200":
           description: Indexer status and health metrics
@@ -506,12 +528,12 @@ components:
 
     IndexerStatus:
       type: object
-      required: [status, latest_onchain_checkpoint, current_time_ms, max_checkpoint_lag, max_time_lag_seconds, pipelines]
+      required: [status, latest_onchain_checkpoint, current_time_ms, earliest_checkpoint, max_lag_pipeline, pipelines, max_checkpoint_lag, max_time_lag_seconds]
       properties:
         status:
           type: string
-          enum: [healthy, degraded]
-          description: "Overall indexer health status"
+          enum: [OK, UNHEALTHY]
+          description: "Overall indexer health status based on client-provided thresholds"
         latest_onchain_checkpoint:
           type: integer
           format: int64
@@ -520,6 +542,18 @@ components:
           type: integer
           format: int64
           description: "Current server timestamp in milliseconds"
+        earliest_checkpoint:
+          type: integer
+          format: int64
+          description: "The lowest checkpoint across all pipelines (useful for alerting)"
+        max_lag_pipeline:
+          type: string
+          description: "Name of the pipeline with the highest checkpoint lag (useful for alerting)"
+        pipelines:
+          type: array
+          items:
+            $ref: "#/components/schemas/PipelineStatus"
+          description: "Status for each indexer pipeline"
         max_checkpoint_lag:
           type: integer
           format: int64
@@ -528,15 +562,10 @@ components:
           type: integer
           format: int64
           description: "Maximum time lag in seconds across all pipelines"
-        pipelines:
-          type: array
-          items:
-            $ref: "#/components/schemas/PipelineStatus"
-          description: "Status for each indexer pipeline"
 
     PipelineStatus:
       type: object
-      required: [pipeline, indexed_checkpoint, indexed_epoch, indexed_timestamp_ms, checkpoint_lag, time_lag_seconds]
+      required: [pipeline, indexed_checkpoint, indexed_epoch, indexed_timestamp_ms, checkpoint_lag, time_lag_seconds, latest_onchain_checkpoint]
       properties:
         pipeline:
           type: string
@@ -561,6 +590,10 @@ components:
           type: integer
           format: int64
           description: "Time difference in seconds since last indexed checkpoint"
+        latest_onchain_checkpoint:
+          type: integer
+          format: int64
+          description: "Latest on-chain checkpoint (included for completeness)"
 
 x-notes:
   asset_scalars: |
