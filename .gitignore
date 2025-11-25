@@ -17,6 +17,8 @@ package-lock.json
 
 # misc
 .env
+.envrc
 **/benchmark_data/
 tx-data.txt
 example.ts
+

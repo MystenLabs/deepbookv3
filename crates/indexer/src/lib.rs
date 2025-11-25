@@ -36,6 +36,9 @@ const MAINNET_MARGIN_PACKAGES: &[&str] = &[NOT_MAINNET_PACKAGE];
 const TESTNET_MARGIN_PACKAGES: &[&str] = &[
     "0x3f44af8fcef3cd753a221a4f25a61d2d6c74b4ca0b6809f6e670764b9debf08a",
     "0x8fe69c287d99f8873d5080bf74aec39c4b79536cdbbe260bf43a1b46fd553be0",
+    "0x442d21fd044b90274934614c3c41416c83582f42eaa8feb4fecea301aa6bdd54",
+    "0xf74ec503c186327663e11b5b888bd8a654bb8afaba34342274d3172edf3abeef",
+    "0xb388009b59b09cd5d219dae79dd3e5d08a5734884363e59a37f3cbe6ef613424",
 ];
 
 // Module definitions
@@ -52,7 +55,12 @@ pub const CORE_MODULES: &[&str] = &[
 ];
 
 /// Margin trading modules that handle lending and borrowing
-pub const MARGIN_MODULES: &[&str] = &["margin_manager", "margin_pool", "margin_registry"];
+pub const MARGIN_MODULES: &[&str] = &[
+    "margin_manager",
+    "margin_pool",
+    "margin_registry",
+    "protocol_fees",
+];
 
 /// SUI system modules
 pub const SUI_MODULES: &[&str] = &["sui"];

@@ -15,7 +15,8 @@ use deepbook::{
     },
     constants,
     math,
-    pool::Pool
+    pool::Pool,
+    registry::Registry
 };
 use deepbook_margin::{
     margin_constants,
@@ -24,7 +25,7 @@ use deepbook_margin::{
     oracle::{calculate_target_currency, get_pyth_price}
 };
 use pyth::price_info::PriceInfoObject;
-use std::{string::String, type_name};
+use std::{string::String, type_name::{Self, TypeName}};
 use sui::{clock::Clock, coin::Coin, event, vec_map::{Self, VecMap}};
 use token::deep::DEEP;
 
@@ -42,8 +43,12 @@ const EIncorrectMarginPool: u64 = 10;
 const EInvalidManagerForSharing: u64 = 11;
 const EInvalidDebtAsset: u64 = 12;
 const ERepayAmountTooLow: u64 = 13;
+const ERepaySharesTooLow: u64 = 14;
 
 // === Structs ===
+/// Witness type for authorizing MarginManager to call protected features of the DeepBook
+public struct MarginApp has drop {}
+
 /// A shared object that wraps a `BalanceManager` and provides the necessary capabilities to deposit, withdraw, and trade.
 public struct MarginManager<phantom BaseAsset, phantom QuoteAsset> has key {
     id: UID,
@@ -74,14 +79,6 @@ public struct MarginManagerCreatedEvent has copy, drop {
     timestamp: u64,
 }
 
-#[deprecated(note = b"This event is deprecated, replaced by `MarginManagerCreatedEvent`.")]
-public struct MarginManagerEvent has copy, drop {
-    margin_manager_id: ID,
-    balance_manager_id: ID,
-    owner: address,
-    timestamp: u64,
-}
-
 /// Event emitted when loan is borrowed
 public struct LoanBorrowedEvent has copy, drop {
     margin_manager_id: ID,
@@ -108,6 +105,41 @@ public struct LiquidationEvent has copy, drop {
     pool_reward: u64,
     pool_default: u64,
     risk_ratio: u64,
+    remaining_base_asset: u64,
+    remaining_quote_asset: u64,
+    remaining_base_debt: u64,
+    remaining_quote_debt: u64,
+    base_pyth_price: u64,
+    base_pyth_decimals: u8,
+    quote_pyth_price: u64,
+    quote_pyth_decimals: u8,
+    timestamp: u64,
+}
+
+/// Event emitted when user deposits collateral asset (either base or quote) into margin manager
+public struct DepositCollateralEvent has copy, drop {
+    margin_manager_id: ID,
+    amount: u64,
+    asset: TypeName,
+    pyth_price: u64,
+    pyth_decimals: u8,
+    timestamp: u64,
+}
+
+/// Event emitted when user withdraws collateral asset (either base or quote) from margin manager
+public struct WithdrawCollateralEvent has copy, drop {
+    margin_manager_id: ID,
+    amount: u64,
+    asset: TypeName,
+    withdraw_base_asset: bool,
+    remaining_base_asset: u64,
+    remaining_quote_asset: u64,
+    remaining_base_debt: u64,
+    remaining_quote_debt: u64,
+    base_pyth_price: u64,
+    base_pyth_decimals: u8,
+    quote_pyth_price: u64,
+    quote_pyth_decimals: u8,
     timestamp: u64,
 }
 
@@ -115,23 +147,28 @@ public struct LiquidationEvent has copy, drop {
 /// Creates a new margin manager and shares it.
 public fun new<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
-    registry: &mut MarginRegistry,
+    deepbook_registry: &Registry,
+    margin_registry: &mut MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
-) {
-    let manager = new_margin_manager(pool, registry, clock, ctx);
+): ID {
+    let manager = new_margin_manager(pool, deepbook_registry, margin_registry, clock, ctx);
+    let margin_manager_id = manager.id();
     transfer::share_object(manager);
+
+    margin_manager_id
 }
 
 /// Creates a new margin manager and returns it along with an initializer.
 /// The initializer is used to ensure the margin manager is shared after creation.
 public fun new_with_initializer<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
-    registry: &mut MarginRegistry,
+    deepbook_registry: &Registry,
+    margin_registry: &mut MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (MarginManager<BaseAsset, QuoteAsset>, ManagerInitializer) {
-    let manager = new_margin_manager(pool, registry, clock, ctx);
+    let manager = new_margin_manager(pool, deepbook_registry, margin_registry, clock, ctx);
     let initializer = ManagerInitializer {
         margin_manager_id: manager.id(),
     };
@@ -150,6 +187,16 @@ public fun share<BaseAsset, QuoteAsset>(
     let ManagerInitializer {
         margin_manager_id: _,
     } = initializer;
+}
+
+/// Unregister the margin manager from the margin registry.
+public fun unregister_margin_manager<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    margin_registry: &mut MarginRegistry,
+    ctx: &mut TxContext,
+) {
+    self.validate_owner(ctx);
+    margin_registry.remove_margin_manager(self.id(), ctx);
 }
 
 /// Set the referral for the margin manager.
@@ -176,26 +223,40 @@ public fun unset_referral<BaseAsset, QuoteAsset>(
 public fun deposit<BaseAsset, QuoteAsset, DepositAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
     coin: Coin<DepositAsset>,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     registry.load_inner();
     self.validate_owner(ctx);
 
+    let deposit_amount = coin.value();
+    self.deposit_int<BaseAsset, QuoteAsset, DepositAsset>(coin, ctx);
+
     let deposit_asset_type = type_name::with_defining_ids<DepositAsset>();
-    let base_asset_type = type_name::with_defining_ids<BaseAsset>();
-    let quote_asset_type = type_name::with_defining_ids<QuoteAsset>();
-    let deep_asset_type = type_name::with_defining_ids<DEEP>();
-    assert!(
-        deposit_asset_type == base_asset_type || deposit_asset_type == quote_asset_type ||
-        deposit_asset_type == deep_asset_type,
-        EInvalidDeposit,
-    );
+    let deposit_base_asset = deposit_asset_type == type_name::with_defining_ids<BaseAsset>();
+    let deposit_quote_asset = deposit_asset_type == type_name::with_defining_ids<QuoteAsset>();
+    // We return early here, because there is no need to emit a deposit collateral event if neither the base asset
+    // nor the quote asset is deposited. This handles the case for DEEP deposits, when DEEP is not part of the base
+    // or quote assets.
+    if (!deposit_base_asset && !deposit_quote_asset) return;
 
-    let balance_manager = &mut self.balance_manager;
-    let deposit_cap = &self.deposit_cap;
+    let (pyth_price, pyth_decimals) = if (deposit_base_asset) {
+        get_pyth_price<BaseAsset>(base_oracle, registry, clock)
+    } else {
+        get_pyth_price<QuoteAsset>(quote_oracle, registry, clock)
+    };
 
-    balance_manager.deposit_with_cap<DepositAsset>(deposit_cap, coin, ctx);
+    event::emit(DepositCollateralEvent {
+        margin_manager_id: self.id(),
+        amount: deposit_amount,
+        asset: deposit_asset_type,
+        pyth_price,
+        pyth_decimals,
+        timestamp: clock.timestamp_ms(),
+    });
 }
 
 /// Withdraw a specified amount of an asset from the margin manager. The asset must be of the same type as either the base, quote, or DEEP.
@@ -246,6 +307,52 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
         assert!(registry.can_withdraw(pool.id(), risk_ratio), EWithdrawRiskRatioExceeded);
     };
 
+    let withdraw_asset_type = type_name::with_defining_ids<WithdrawAsset>();
+    let withdraw_base_asset = withdraw_asset_type == type_name::with_defining_ids<BaseAsset>();
+    let withdraw_quote_asset = withdraw_asset_type == type_name::with_defining_ids<QuoteAsset>();
+    // We return early here, because there is no need to emit a withdraw collateral event if neither the base asset
+    // nor the quote asset is withdrawn. This handles the case for DEEP withdrawals, when DEEP is not part of the base
+    // or quote assets.
+    if (!withdraw_base_asset && !withdraw_quote_asset) return coin;
+
+    let (
+        _,
+        _,
+        _,
+        remaining_base_asset,
+        remaining_quote_asset,
+        remaining_base_debt,
+        remaining_quote_debt,
+        base_pyth_price,
+        base_pyth_decimals,
+        quote_pyth_price,
+        quote_pyth_decimals,
+    ) = self.manager_state(
+        registry,
+        base_oracle,
+        quote_oracle,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        clock,
+    );
+
+    event::emit(WithdrawCollateralEvent {
+        margin_manager_id: self.id(),
+        amount: withdraw_amount,
+        asset: withdraw_asset_type,
+        withdraw_base_asset,
+        remaining_base_asset,
+        remaining_quote_asset,
+        remaining_base_debt,
+        remaining_quote_debt,
+        base_pyth_price,
+        base_pyth_decimals,
+        quote_pyth_price,
+        quote_pyth_decimals,
+        timestamp: clock.timestamp_ms(),
+    });
+
     coin
 }
 
@@ -271,7 +378,7 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
     let (coin, borrowed_shares) = base_margin_pool.borrow(loan_amount, clock, ctx);
     self.borrowed_base_shares = self.borrowed_base_shares + borrowed_shares;
     self.margin_pool_id = option::some(base_margin_pool.id());
-    self.deposit(registry, coin, ctx);
+    self.deposit_int<BaseAsset, QuoteAsset, BaseAsset>(coin, ctx);
     let risk_ratio = self.risk_ratio_int(
         registry,
         base_oracle,
@@ -313,7 +420,7 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
     let (coin, borrowed_shares) = quote_margin_pool.borrow(loan_amount, clock, ctx);
     self.borrowed_quote_shares = self.borrowed_quote_shares + borrowed_shares;
     self.margin_pool_id = option::some(quote_margin_pool.id());
-    self.deposit(registry, coin, ctx);
+    self.deposit_int<BaseAsset, QuoteAsset, QuoteAsset>(coin, ctx);
     let risk_ratio = self.risk_ratio_int(
         registry,
         base_oracle,
@@ -453,6 +560,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
             math::div(repay_amount, debt),
         )
     }; // Assume index 2, so borrowed_shares = 350/2 = 175. 97.087 / 350 = 0.2774 * 175 = 48.545 shares being repaid (97.087 USDC is repayment)
+    assert!(repay_shares > 0, ERepaySharesTooLow);
     let (debt_repaid, pool_reward, pool_default) = margin_pool.repay_liquidation(
         repay_shares,
         repay_coin.split(repay_amount_with_pool_reward, ctx),
@@ -520,6 +628,23 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     };
     // We have 40 USDC which is used first in the second loop. Then SUI to reach the total of 101.941 USDC.
 
+    let (remaining_base_asset, remaining_quote_asset) = self.calculate_assets(pool);
+    let (remaining_base_debt, remaining_quote_debt) = if (self.margin_pool_id.is_some()) {
+        self.calculate_debts(margin_pool, clock)
+    } else {
+        (0, 0)
+    };
+    let (base_pyth_price, base_pyth_decimals) = get_pyth_price<BaseAsset>(
+        base_oracle,
+        registry,
+        clock,
+    );
+    let (quote_pyth_price, quote_pyth_decimals) = get_pyth_price<QuoteAsset>(
+        quote_oracle,
+        registry,
+        clock,
+    );
+
     event::emit(LiquidationEvent {
         margin_manager_id: self.id(),
         margin_pool_id: margin_pool.id(),
@@ -527,6 +652,14 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
         pool_reward,
         pool_default,
         risk_ratio,
+        remaining_base_asset,
+        remaining_quote_asset,
+        remaining_base_debt,
+        remaining_quote_debt,
+        base_pyth_price,
+        base_pyth_decimals,
+        quote_pyth_price,
+        quote_pyth_decimals,
         timestamp: clock.timestamp_ms(),
     });
 
@@ -571,6 +704,18 @@ public fun balance_manager<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
 ): &BalanceManager {
     &self.balance_manager
+}
+
+public fun base_balance<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): u64 {
+    self.balance_manager.balance<BaseAsset>()
+}
+
+public fun quote_balance<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): u64 {
+    self.balance_manager.balance<QuoteAsset>()
+}
+
+public fun deep_balance<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): u64 {
+    self.balance_manager.balance<DEEP>()
 }
 
 /// Returns (base_asset, quote_asset) for margin manager.
@@ -686,6 +831,10 @@ public fun manager_state<BaseAsset, QuoteAsset>(
     )
 }
 
+public fun id<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): ID {
+    self.id.to_inner()
+}
+
 public fun owner<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): address {
     self.owner
 }
@@ -733,6 +882,16 @@ public(package) fun balance_manager_trading_mut<BaseAsset, QuoteAsset>(
     &mut self.balance_manager
 }
 
+/// Withdraws settled amounts from the pool permissionlessly.
+/// Anyone can call this via the pool_proxy to settle balances.
+public(package) fun withdraw_settled_amounts_permissionless_int<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+) {
+    assert!(self.deepbook_pool == pool.id(), EIncorrectDeepBookPool);
+    pool.withdraw_settled_amounts_permissionless(&mut self.balance_manager);
+}
+
 /// Unwraps balance manager for trading in deepbook.
 public(package) fun trade_proof<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -741,8 +900,26 @@ public(package) fun trade_proof<BaseAsset, QuoteAsset>(
     self.balance_manager.generate_proof_as_trader(&self.trade_cap, ctx)
 }
 
-public(package) fun id<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): ID {
-    self.id.to_inner()
+/// Deposit a coin into the margin manager. The coin must be of the same type as either the base, quote, or DEEP.
+public(package) fun deposit_int<BaseAsset, QuoteAsset, DepositAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    coin: Coin<DepositAsset>,
+    ctx: &TxContext,
+) {
+    let deposit_asset_type = type_name::with_defining_ids<DepositAsset>();
+    let base_asset_type = type_name::with_defining_ids<BaseAsset>();
+    let quote_asset_type = type_name::with_defining_ids<QuoteAsset>();
+    let deep_asset_type = type_name::with_defining_ids<DEEP>();
+    assert!(
+        deposit_asset_type == base_asset_type || deposit_asset_type == quote_asset_type ||
+        deposit_asset_type == deep_asset_type,
+        EInvalidDeposit,
+    );
+
+    let balance_manager = &mut self.balance_manager;
+    let deposit_cap = &self.deposit_cap;
+
+    balance_manager.deposit_with_cap<DepositAsset>(deposit_cap, coin, ctx);
 }
 
 // === Private Functions ===
@@ -779,12 +956,13 @@ fun risk_ratio_int<BaseAsset, QuoteAsset, DebtAsset>(
 
 fun new_margin_manager<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
-    registry: &mut MarginRegistry,
+    deepbook_registry: &Registry,
+    margin_registry: &mut MarginRegistry,
     clock: &Clock,
     ctx: &mut TxContext,
 ): MarginManager<BaseAsset, QuoteAsset> {
-    registry.load_inner();
-    assert!(registry.pool_enabled(pool), EMarginTradingNotAllowedInPool);
+    margin_registry.load_inner();
+    assert!(margin_registry.pool_enabled(pool), EMarginTradingNotAllowedInPool);
 
     let id = object::new(ctx);
     let margin_manager_id = id.to_inner();
@@ -795,8 +973,12 @@ fun new_margin_manager<BaseAsset, QuoteAsset>(
         deposit_cap,
         withdraw_cap,
         trade_cap,
-    ) = balance_manager::new_with_custom_owner_and_caps(id.to_address(), ctx);
-    registry.add_margin_manager(id.to_inner(), ctx);
+    ) = balance_manager::new_with_custom_owner_caps<MarginApp>(
+        deepbook_registry,
+        id.to_address(),
+        ctx,
+    );
+    margin_registry.add_margin_manager(id.to_inner(), ctx);
 
     event::emit(MarginManagerCreatedEvent {
         margin_manager_id,

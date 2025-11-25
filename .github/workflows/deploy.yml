@@ -1,0 +1,45 @@
+name: Deploy DeepBook Services
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - crates/**
+      - docker/**
+      - Cargo.lock
+      - Cargo.toml
+
+concurrency:
+  group: deployment
+  cancel-in-progress: true
+
+jobs:
+  deploy-pulumi:
+    name: Deploy to Testnet
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # pin@v4.2.2
+
+      - name: Trigger Pulumi Deployment
+        uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # pin@v3.0.0
+        with:
+          repository: MystenLabs/sui-operations
+          token: ${{ secrets.DEPLOY_PULUMI_DISPATCH_TOKEN }}
+          event-type: pulumi-up
+          client-payload: |-
+            {
+                "project": "apps/deepbook",
+                "stack": "testnet"
+            }
+
+      - name: View deployment status
+        run: |
+          echo "🚀 View the status of the deployment here: https://github.com/MystenLabs/sui-operations/actions/workflows/pulumi-up.yaml"
+    

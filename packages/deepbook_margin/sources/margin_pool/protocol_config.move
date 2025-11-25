@@ -37,6 +37,12 @@ public fun new_protocol_config(
     margin_pool_config: MarginPoolConfig,
     interest_config: InterestConfig,
 ): ProtocolConfig {
+    // Validate cross-config constraints
+    assert!(
+        margin_pool_config.max_utilization_rate >= interest_config.optimal_utilization,
+        EInvalidRiskParam,
+    );
+
     ProtocolConfig {
         margin_pool_config,
         interest_config,
@@ -50,6 +56,11 @@ public fun new_margin_pool_config(
     protocol_spread: u64,
     min_borrow: u64,
 ): MarginPoolConfig {
+    // Validate margin pool config parameters
+    assert!(max_utilization_rate <= constants::float_scaling(), EInvalidRiskParam);
+    assert!(min_borrow >= margin_constants::min_min_borrow(), EInvalidRiskParam);
+    assert!(protocol_spread <= margin_constants::max_protocol_spread(), EInvalidRiskParam);
+
     MarginPoolConfig {
         supply_cap,
         max_utilization_rate,
@@ -87,6 +98,9 @@ public fun new_interest_config(
     optimal_utilization: u64,
     excess_slope: u64,
 ): InterestConfig {
+    // Validate interest config parameters
+    assert!(optimal_utilization <= constants::float_scaling(), EInvalidRiskParam);
+
     InterestConfig {
         base_rate,
         base_slope,
@@ -104,14 +118,10 @@ public(package) fun set_interest_config(self: &mut ProtocolConfig, config: Inter
 }
 
 public(package) fun set_margin_pool_config(self: &mut ProtocolConfig, config: MarginPoolConfig) {
-    assert!(config.protocol_spread <= constants::float_scaling(), EInvalidRiskParam);
-    assert!(config.max_utilization_rate <= constants::float_scaling(), EInvalidRiskParam);
     assert!(
         config.max_utilization_rate >= self.interest_config.optimal_utilization,
         EInvalidRiskParam,
     );
-    assert!(config.min_borrow >= margin_constants::min_min_borrow(), EInvalidRiskParam);
-    assert!(config.protocol_spread <= margin_constants::max_protocol_spread(), EInvalidRiskParam);
     self.margin_pool_config = config;
 }
 

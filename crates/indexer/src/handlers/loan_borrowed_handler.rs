@@ -56,8 +56,7 @@ impl Processor for LoanBorrowedHandler {
                         margin_manager_id: event.margin_manager_id.to_string(),
                         margin_pool_id: event.margin_pool_id.to_string(),
                         loan_amount: event.loan_amount as i64,
-                        total_borrow: event.total_borrow as i64,
-                        total_shares: event.total_shares as i64,
+                        loan_shares: event.loan_shares as i64,
                         onchain_timestamp: event.timestamp as i64,
                     };
                     debug!("Observed DeepBook Margin Loan Borrowed {:?}", data);

@@ -25,13 +25,12 @@ use deepbook::{
     registry::{Self, Registry},
     utils
 };
-use std::unit_test::assert_eq;
+use std::unit_test::{assert_eq, destroy};
 use sui::{
     clock::{Self, Clock},
     coin::{Self, Coin, mint_for_testing},
     sui::SUI,
-    test_scenario::{Scenario, begin, end, return_shared},
-    test_utils
+    test_scenario::{Scenario, begin, end, return_shared}
 };
 use token::deep::DEEP;
 
@@ -2290,7 +2289,7 @@ public(package) fun unregister_pool<BaseAsset, QuoteAsset>(
         );
         return_shared(pool);
         return_shared(registry);
-        test_utils::destroy(admin_cap);
+        destroy(admin_cap);
     }
 }
 
@@ -3387,7 +3386,7 @@ fun mint_referral_not_multiple_of_multiplier_e() {
 }
 
 #[test, expected_failure(abort_code = ::deepbook::pool::EInvalidReferralMultiplier)]
-fun test_update_referral_multiplier_e() {
+fun test_update_deepbook_referral_multiplier_e() {
     let mut test = begin(OWNER);
     let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
     let referral_id;
@@ -3402,14 +3401,14 @@ fun test_update_referral_multiplier_e() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
-        pool.update_referral_multiplier(&referral, 2_100_000_000, test.ctx());
+        pool.update_deepbook_referral_multiplier(&referral, 2_100_000_000, test.ctx());
     };
 
     abort (0)
 }
 
 #[test, expected_failure(abort_code = ::deepbook::balance_manager::EInvalidReferralOwner)]
-fun test_update_referral_multiplier_wrong_owner() {
+fun test_update_deepbook_referral_multiplier_wrong_owner() {
     let mut test = begin(OWNER);
     let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
     let referral_id;
@@ -3425,7 +3424,7 @@ fun test_update_referral_multiplier_wrong_owner() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
-        pool.update_referral_multiplier(&referral, 200_000_000, test.ctx());
+        pool.update_deepbook_referral_multiplier(&referral, 200_000_000, test.ctx());
     };
 
     abort (0)
@@ -3449,9 +3448,9 @@ fun test_claim_referral_rewards_wrong_owner() {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
         let (base, quote, deep) = pool.claim_referral_rewards(&referral, test.ctx());
-        test_utils::destroy(base);
-        test_utils::destroy(quote);
-        test_utils::destroy(deep);
+        destroy(base);
+        destroy(quote);
+        destroy(deep);
     };
 
     abort (0)
@@ -3488,7 +3487,7 @@ fun test_process_order_referral_ok() {
         balance_manager.set_referral(&referral, &trade_cap);
         return_shared(balance_manager);
         return_shared(referral);
-        test_utils::destroy(trade_cap);
+        destroy(trade_cap);
     };
 
     test.next_tx(ALICE);
@@ -3526,7 +3525,7 @@ fun test_process_order_referral_ok() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
-        pool.update_referral_multiplier(&referral, 2_000_000_000, test.ctx());
+        pool.update_deepbook_referral_multiplier(&referral, 2_000_000_000, test.ctx());
         return_shared(pool);
         return_shared(referral);
     };
@@ -3751,8 +3750,8 @@ fun test_enable_ewma_params_ok() {
         assert_eq!(order_info.paid_fees(), 150_000_000);
     };
 
-    test_utils::destroy(clock);
-    test_utils::destroy(admin_cap);
+    destroy(clock);
+    destroy(admin_cap);
     end(test);
 }
 
@@ -5839,7 +5838,7 @@ fun setup_pool<BaseAsset, QuoteAsset>(
             );
     };
     return_shared(registry);
-    test_utils::destroy(admin_cap);
+    destroy(admin_cap);
 
     pool_id
 }
@@ -5871,7 +5870,7 @@ fun setup_permissionless_pool<BaseAsset, QuoteAsset>(
             );
     };
     return_shared(registry);
-    test_utils::destroy(admin_cap);
+    destroy(admin_cap);
 
     pool_id
 }
@@ -6250,7 +6249,7 @@ fun adjust_min_lot_size_admin<BaseAsset, QuoteAsset>(
         &admin_cap,
         &clock,
     );
-    test_utils::destroy(admin_cap);
+    destroy(admin_cap);
     return_shared(pool);
     return_shared(clock);
 }
@@ -6271,7 +6270,7 @@ fun adjust_tick_size_admin<BaseAsset, QuoteAsset>(
         &admin_cap,
         &clock,
     );
-    test_utils::destroy(admin_cap);
+    destroy(admin_cap);
     return_shared(pool);
     return_shared(clock);
 }
@@ -6287,7 +6286,7 @@ fun add_stablecoin<T>(sender: address, registry_id: ID, test: &mut Scenario) {
         );
     };
     return_shared(registry);
-    test_utils::destroy(admin_cap);
+    destroy(admin_cap);
 }
 
 fun remove_stablecoin<T>(sender: address, registry_id: ID, test: &mut Scenario) {
@@ -6301,7 +6300,7 @@ fun remove_stablecoin<T>(sender: address, registry_id: ID, test: &mut Scenario) 
         );
     };
     return_shared(registry);
-    test_utils::destroy(admin_cap);
+    destroy(admin_cap);
 }
 
 fun advance_scenario_with_gas_price(test: &mut Scenario, gas_price: u64, timestamp_advance: u64) {

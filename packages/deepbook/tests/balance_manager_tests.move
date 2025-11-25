@@ -4,25 +4,20 @@
 #[test_only]
 module deepbook::balance_manager_tests;
 
-use deepbook::balance_manager::{
-    Self,
-    BalanceManager,
-    TradeCap,
-    DepositCap,
-    WithdrawCap,
-    DeepBookReferral
+use deepbook::{
+    balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap, DeepBookReferral},
+    registry
 };
-use sui::{
-    coin::mint_for_testing,
-    sui::SUI,
-    test_scenario::{Scenario, begin, end, return_shared},
-    test_utils
-};
+use std::unit_test::destroy;
+use sui::{coin::mint_for_testing, sui::SUI, test_scenario::{Scenario, begin, end, return_shared}};
 use token::deep::DEEP;
 
 public struct SPAM has store {}
 public struct USDC has store {}
 public struct USDT has store {}
+
+// Unauthorized app for testing
+public struct UnauthorizedApp has drop {}
 
 #[test]
 fun test_deposit_ok() {
@@ -571,7 +566,7 @@ fun test_referral_ok() {
         transfer::public_share_object(balance_manager);
         return_shared(referral1);
         return_shared(referral2);
-        test_utils::destroy(trade_cap);
+        destroy(trade_cap);
     };
 
     end(test);
@@ -589,10 +584,50 @@ fun test_unset_no_referral_ok() {
         assert!(balance_manager.get_referral_id() == option::none(), 0);
 
         transfer::public_share_object(balance_manager);
-        test_utils::destroy(trade_cap);
+        destroy(trade_cap);
     };
 
     end(test);
+}
+
+#[test, expected_failure(abort_code = registry::EAppNotAuthorized)]
+fun test_unauthorized_custom_owner_creation_e() {
+    let mut test = begin(@0xF);
+    let alice = @0xA;
+    let victim = @0xB;
+    let registry_id;
+
+    test.next_tx(alice);
+    {
+        registry_id = registry::test_registry(test.ctx());
+    };
+
+    // Attempt to use unauthorized app
+    test.next_tx(alice);
+    {
+        let deepbook_registry = test.take_shared_by_id<registry::Registry>(registry_id);
+
+        // Attempt to create a BalanceManager with custom owner using unauthorized app
+        // This should fail with EAppNotAuthorized since UnauthorizedApp is not registered
+        let (
+            balance_manager,
+            deposit_cap,
+            withdraw_cap,
+            trade_cap,
+        ) = balance_manager::new_with_custom_owner_caps<UnauthorizedApp>(
+            &deepbook_registry,
+            victim,
+            test.ctx(),
+        );
+
+        transfer::public_share_object(balance_manager);
+        destroy(deposit_cap);
+        destroy(withdraw_cap);
+        destroy(trade_cap);
+        return_shared(deepbook_registry);
+    };
+
+    abort 0
 }
 
 public(package) fun deposit_into_account<T>(
