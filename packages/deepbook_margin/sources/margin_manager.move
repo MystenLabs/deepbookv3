@@ -230,12 +230,19 @@ public fun current_price<BaseAsset, QuoteAsset>(
     math::div(base_usd_price, quote_usd_price)
 }
 
-// public fun can_place_limit_order(
-//     self: &TakeProfitStopLoss,
-//     pending_order_identifier: u64,
+// public fun can_place_limit_order<BaseAsset, QuoteAsset>(
+//     self: &MarginManager<BaseAsset, QuoteAsset>,
+//     pending_order: PendingOrder,
 // ): bool {
-//     let conditional_order = self.conditional_orders.get(&pending_order_identifier);
-//     conditional_order.pending_order.is_limit_order
+//     let base_asset = self.base_balance();
+//     let quote_asset = self.quote_balance();
+//     let is_bid = pending_order.is_bid();
+
+//     if (is_bid) {
+//         base_asset >= pending_order.quantity()
+//     } else {
+//         quote_asset >= pending_order.quantity()
+//     }
 // }
 
 // public fun can_place_market_order(

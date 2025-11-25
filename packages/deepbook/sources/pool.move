@@ -4,39 +4,35 @@
 /// Public-facing interface for the package.
 module deepbook::pool;
 
-use deepbook::{
-    account::Account,
-    balance_manager::{
-        Self,
-        BalanceManager,
-        TradeProof,
-        DeepBookReferral,
-        TradeCap,
-        DepositCap,
-        WithdrawCap
-    },
-    big_vector::BigVector,
-    book::{Self, Book},
-    constants,
-    deep_price::{Self, DeepPrice, OrderDeepPrice, emit_deep_price_added},
-    ewma::{init_ewma_state, EWMAState},
-    math,
-    order::Order,
-    order_info::{Self, OrderInfo},
-    registry::{DeepbookAdminCap, Registry},
-    state::{Self, State},
-    vault::{Self, Vault, FlashLoan}
+use deepbook::account::Account;
+use deepbook::balance_manager::{
+    Self,
+    BalanceManager,
+    TradeProof,
+    DeepBookReferral,
+    TradeCap,
+    DepositCap,
+    WithdrawCap
 };
+use deepbook::big_vector::BigVector;
+use deepbook::book::{Self, Book};
+use deepbook::constants;
+use deepbook::deep_price::{Self, DeepPrice, OrderDeepPrice, emit_deep_price_added};
+use deepbook::ewma::{init_ewma_state, EWMAState};
+use deepbook::math;
+use deepbook::order::Order;
+use deepbook::order_info::{Self, OrderInfo};
+use deepbook::registry::{DeepbookAdminCap, Registry};
+use deepbook::state::{Self, State};
+use deepbook::vault::{Self, Vault, FlashLoan};
 use std::type_name;
-use sui::{
-    balance::{Self, Balance},
-    clock::Clock,
-    coin::{Self, Coin},
-    dynamic_field as df,
-    event,
-    vec_set::{Self, VecSet},
-    versioned::{Self, Versioned}
-};
+use sui::balance::{Self, Balance};
+use sui::clock::Clock;
+use sui::coin::{Self, Coin};
+use sui::dynamic_field as df;
+use sui::event;
+use sui::vec_set::{Self, VecSet};
+use sui::versioned::{Self, Versioned};
 use token::deep::{DEEP, ProtectedTreasury};
 
 use fun df::add as UID.add;
@@ -365,10 +361,10 @@ public fun swap_exact_quantity<BaseAsset, QuoteAsset>(
     let is_bid = quote_quantity > 0;
     if (is_bid) {
         (base_quantity, _, _) = if (pay_with_deep) {
-            self.get_quantity_out(0, quote_quantity, clock)
-        } else {
-            self.get_quantity_out_input_fee(0, quote_quantity, clock)
-        }
+                self.get_quantity_out(0, quote_quantity, clock)
+            } else {
+                self.get_quantity_out_input_fee(0, quote_quantity, clock)
+            }
     } else {
         if (!pay_with_deep) {
             base_quantity =
@@ -1391,6 +1387,139 @@ public fun locked_balance<BaseAsset, QuoteAsset>(
     deep_quantity = deep_quantity + settled_balances.deep();
 
     (base_quantity, quote_quantity, deep_quantity)
+}
+
+// /// Check if a limit order can be placed based on balance manager balances.
+// /// Returns true if the balance manager has sufficient balance (accounting for fees) to place the order, false otherwise.
+// public fun can_place_limit_order<BaseAsset, QuoteAsset>(
+//     self: &Pool<BaseAsset, QuoteAsset>,
+//     balance_manager: &BalanceManager,
+//     price: u64,
+//     quantity: u64,
+//     is_bid: bool,
+//     pay_with_deep: bool,
+// ): bool {
+//     let whitelist = self.whitelisted();
+//     let pool_inner = self.load_inner();
+
+//     // Get order deep price for fee calculation
+//     let order_deep_price = if (pay_with_deep) {
+//         pool_inner.deep_price.get_order_deep_price(whitelist)
+//     } else {
+//         pool_inner.deep_price.empty_deep_price()
+//     };
+
+//     let quote_quantity = math::mul(quantity, price);
+
+//     // Calculate fee quantity using maker fee (worst case for limit orders)
+//     let maker_fee = pool_inner.state.governance().trade_params().maker_fee();
+//     let fee_balances = order_deep_price.fee_quantity(quantity, quote_quantity, is_bid);
+//     let mut fee_base = fee_balances.base();
+//     let mut fee_quote = fee_balances.quote();
+//     let mut fee_deep = fee_balances.deep();
+
+//     // Apply maker fee multiplier
+//     fee_base = math::mul(fee_base, maker_fee);
+//     fee_quote = math::mul(fee_quote, maker_fee);
+//     fee_deep = math::mul(fee_deep, maker_fee);
+
+//     // Calculate required balances
+//     let mut required_base = 0;
+//     let mut required_quote = 0;
+//     let mut required_deep = 0;
+
+//     if (is_bid) {
+//         // Bid order: need quote asset to buy base
+//         required_quote = quote_quantity;
+//         if (pay_with_deep) {
+//             required_deep = fee_deep;
+//         } else {
+//             // Fees paid in quote asset
+//             required_quote = required_quote + fee_quote;
+//         };
+//     } else {
+//         required_base = quantity;
+//         if (pay_with_deep) {
+//             required_deep = fee_deep;
+//         } else {
+//             // Fees paid in base asset
+//             required_base = required_base + fee_base;
+//         };
+//     };
+
+//     // Get current balances from balance manager
+//     let available_base = balance_manager::balance<BaseAsset>(balance_manager);
+//     let available_quote = balance_manager::balance<QuoteAsset>(balance_manager);
+//     let available_deep = balance_manager::balance<DEEP>(balance_manager);
+
+//     // Check if available balances are sufficient
+//     (available_base >= required_base) && (available_quote >= required_quote) && (available_deep >= required_deep)
+// }
+
+/// Check if a market order can be placed based on balance manager balances.
+/// Returns true if the balance manager has sufficient balance (accounting for fees) to place the order, false otherwise.
+public fun can_place_market_order<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    balance_manager: &BalanceManager,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    clock: &Clock,
+): bool {
+    let mut required_base = 0;
+    let mut required_deep = 0;
+
+    // Get current balances from balance manager
+    let available_base = balance_manager::balance<BaseAsset>(balance_manager);
+    let available_quote = balance_manager::balance<QuoteAsset>(balance_manager);
+    let available_deep = balance_manager::balance<DEEP>(balance_manager);
+
+    if (is_bid) {
+        // For bid orders: check if available quote can return desired base quantity
+        // get_quantity_out_input_fee already accounts for fees being deducted from quote
+        let (base_out, _, deep_required) = if (pay_with_deep) {
+            self.get_quantity_out(0, available_quote, clock)
+        } else {
+            self.get_quantity_out_input_fee(0, available_quote, clock)
+        };
+
+        // Not enough quote balance for the base quantity
+        if (base_out < quantity) {
+            return false
+        };
+
+        if (pay_with_deep) {
+            required_deep = deep_required;
+        };
+    } else {
+        // For ask orders: if paying fees in input token (base), need quantity + fees
+        // get_quantity_out_input_fee accounts for fees, so we need to check if we have enough base
+        // including fees that will be deducted
+        let pool_inner = self.load_inner();
+        let taker_fee = pool_inner.state.governance().trade_params().taker_fee();
+        let input_fee_rate = math::mul(taker_fee, constants::fee_penalty_multiplier());
+
+        let (_, _, deep_required) = if (pay_with_deep) {
+            self.get_quantity_out(quantity, 0, clock)
+        } else {
+            self.get_quantity_out_input_fee(quantity, 0, clock)
+        };
+
+        // If paying fees in base asset, need quantity + fees
+        required_base = if (pay_with_deep) {
+                quantity
+            } else {
+                // Fees are deducted from base, so need more base to account for fees
+                math::mul(quantity, constants::float_scaling() + input_fee_rate)
+            };
+
+        if (pay_with_deep) {
+            required_deep = deep_required;
+        };
+    };
+
+    // Check if available balances are sufficient
+    (available_base >= required_base) && (available_deep >= required_deep)
 }
 
 /// Returns the trade params for the pool.
