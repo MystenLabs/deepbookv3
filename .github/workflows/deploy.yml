@@ -35,8 +35,8 @@ jobs:
           event-type: pulumi-up
           client-payload: |-
             {
-                "project_path": "apps/deepbook",
-                "stack_to_update": "testnet"
+                "project": "apps/deepbook",
+                "stack": "testnet"
             }
 
       - name: View deployment status
