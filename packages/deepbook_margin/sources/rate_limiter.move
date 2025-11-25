@@ -1,49 +1,34 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// Token Bucket rate limiter for controlling withdrawal rates.
+/// Reference: https://github.com/code-423n4/2024-11-chainlink/blob/main/contracts/src/ccip/libraries/RateLimiter.sol
 module deepbook_margin::rate_limiter;
 
 use sui::clock::Clock;
 
 public struct RateLimiter has store {
-    transactions: vector<Transaction>,
-    window_duration_ms: u64,
-    max_net_withdrawal: u64,
+    available: u64,
+    last_updated_ms: u64,
+    capacity: u64,
+    refill_rate_per_ms: u64,
     enabled: bool,
-}
-
-public struct Transaction has copy, drop, store {
-    amount: u64,
-    is_deposit: bool,
-    timestamp_ms: u64,
 }
 
 // === Public-Package Functions ===
 
 public(package) fun new(
-    window_duration_ms: u64,
-    max_net_withdrawal: u64,
+    capacity: u64,
+    refill_rate_per_ms: u64,
     enabled: bool,
 ): RateLimiter {
     RateLimiter {
-        transactions: vector::empty(),
-        window_duration_ms,
-        max_net_withdrawal,
+        available: capacity,
+        last_updated_ms: 0,
+        capacity,
+        refill_rate_per_ms,
         enabled,
     }
-}
-
-public(package) fun record_deposit(self: &mut RateLimiter, amount: u64, clock: &Clock) {
-    if (!self.enabled) return;
-
-    self.clean_old_transactions(clock);
-    self
-        .transactions
-        .push_back(Transaction {
-            amount,
-            is_deposit: true,
-            timestamp_ms: clock.timestamp_ms(),
-        });
 }
 
 public(package) fun check_and_record_withdrawal(
@@ -53,50 +38,49 @@ public(package) fun check_and_record_withdrawal(
 ): bool {
     if (!self.enabled) return true;
 
-    self.clean_old_transactions(clock);
+    self.refill(clock);
 
-    let net_withdrawal = self.calculate_net_withdrawal();
-    let new_net = if (net_withdrawal > 0) {
-        net_withdrawal + amount
-    } else {
-        amount
-    };
-
-    if (new_net > self.max_net_withdrawal) {
+    if (amount > self.available) {
         return false
     };
 
-    self
-        .transactions
-        .push_back(Transaction {
-            amount,
-            is_deposit: false,
-            timestamp_ms: clock.timestamp_ms(),
-        });
+    self.available = self.available - amount;
     true
 }
 
 public(package) fun get_available_withdrawal(self: &RateLimiter, clock: &Clock): u64 {
-    if (!self.enabled) return self.max_net_withdrawal;
+    if (!self.enabled) return self.capacity;
 
-    let net_withdrawal = self.calculate_net_withdrawal_at_time(clock.timestamp_ms());
-
-    if (net_withdrawal >= self.max_net_withdrawal) {
-        0
+    let current_time = clock.timestamp_ms();
+    let elapsed = if (current_time > self.last_updated_ms) {
+        current_time - self.last_updated_ms
     } else {
-        self.max_net_withdrawal - net_withdrawal
-    }
+        0
+    };
+
+    let refill_amount = (elapsed as u128) * (self.refill_rate_per_ms as u128);
+    let new_available = (self.available as u128) + refill_amount;
+    let capped = if (new_available > (self.capacity as u128)) {
+        self.capacity
+    } else {
+        (new_available as u64)
+    };
+
+    capped
 }
 
 public(package) fun update_config(
     self: &mut RateLimiter,
-    window_duration_ms: u64,
-    max_net_withdrawal: u64,
+    capacity: u64,
+    refill_rate_per_ms: u64,
     enabled: bool,
 ) {
-    self.window_duration_ms = window_duration_ms;
-    self.max_net_withdrawal = max_net_withdrawal;
+    self.capacity = capacity;
+    self.refill_rate_per_ms = refill_rate_per_ms;
     self.enabled = enabled;
+    if (self.available > capacity) {
+        self.available = capacity;
+    };
 }
 
 // === Public View Functions ===
@@ -105,70 +89,44 @@ public fun is_enabled(self: &RateLimiter): bool {
     self.enabled
 }
 
-public fun max_net_withdrawal(self: &RateLimiter): u64 {
-    self.max_net_withdrawal
+public fun capacity(self: &RateLimiter): u64 {
+    self.capacity
 }
 
-public fun window_duration_ms(self: &RateLimiter): u64 {
-    self.window_duration_ms
-}
-
-public fun current_net_withdrawal(self: &RateLimiter, clock: &Clock): u64 {
-    self.calculate_net_withdrawal_at_time(clock.timestamp_ms())
+public fun refill_rate_per_ms(self: &RateLimiter): u64 {
+    self.refill_rate_per_ms
 }
 
 // === Internal Functions ===
 
-fun calculate_net_withdrawal(self: &RateLimiter): u64 {
-    let mut total_deposits = 0;
-    let mut total_withdrawals = 0;
-
-    self.transactions.do_ref!(|tx| {
-        if (tx.is_deposit) {
-            total_deposits = total_deposits + tx.amount;
-        } else {
-            total_withdrawals = total_withdrawals + tx.amount;
-        };
-    });
-
-    if (total_withdrawals > total_deposits) {
-        total_withdrawals - total_deposits
-    } else {
-        0
-    }
-}
-
-fun calculate_net_withdrawal_at_time(self: &RateLimiter, current_time: u64): u64 {
-    let mut total_deposits = 0;
-    let mut total_withdrawals = 0;
-    let cutoff_time = if (current_time > self.window_duration_ms) {
-        current_time - self.window_duration_ms
-    } else {
-        0
-    };
-
-    self.transactions.filter!(|tx| tx.timestamp_ms >= cutoff_time).do_ref!(|tx| {
-        if (tx.is_deposit) {
-            total_deposits = total_deposits + tx.amount;
-        } else {
-            total_withdrawals = total_withdrawals + tx.amount;
-        };
-    });
-
-    if (total_withdrawals > total_deposits) {
-        total_withdrawals - total_deposits
-    } else {
-        0
-    }
-}
-
-fun clean_old_transactions(self: &mut RateLimiter, clock: &Clock) {
+fun refill(self: &mut RateLimiter, clock: &Clock) {
     let current_time = clock.timestamp_ms();
-    let cutoff_time = if (current_time > self.window_duration_ms) {
-        current_time - self.window_duration_ms
+    let elapsed = if (current_time > self.last_updated_ms) {
+        current_time - self.last_updated_ms
     } else {
         0
     };
 
-    self.transactions = self.transactions.filter!(|tx| tx.timestamp_ms >= cutoff_time);
+    if (elapsed > 0) {
+        let refill_amount = (elapsed as u128) * (self.refill_rate_per_ms as u128);
+        let new_available = (self.available as u128) + refill_amount;
+        self.available = if (new_available > (self.capacity as u128)) {
+            self.capacity
+        } else {
+            (new_available as u64)
+        };
+        self.last_updated_ms = current_time;
+    }
+}
+
+// === Test-only Functions ===
+
+#[test_only]
+public fun available(self: &RateLimiter): u64 {
+    self.available
+}
+
+#[test_only]
+public fun last_updated_ms(self: &RateLimiter): u64 {
+    self.last_updated_ms
 }

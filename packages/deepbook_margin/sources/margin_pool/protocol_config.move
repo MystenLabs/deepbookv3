@@ -21,8 +21,8 @@ public struct MarginPoolConfig has copy, drop, store {
     max_utilization_rate: u64,
     protocol_spread: u64,
     min_borrow: u64,
-    rate_limit_window_ms: u64,
-    max_net_withdrawal: u64,
+    rate_limit_capacity: u64,
+    rate_limit_refill_rate_per_ms: u64,
     rate_limit_enabled: bool,
 }
 
@@ -61,14 +61,18 @@ public fun new_margin_pool_config(
     assert!(min_borrow >= margin_constants::min_min_borrow(), EInvalidRiskParam);
     assert!(protocol_spread <= margin_constants::max_protocol_spread(), EInvalidRiskParam);
 
+    let default_capacity = supply_cap / 10; // 10% of supply cap
+    let default_window_ms = 86_400_000u64; // 24 hours
+    let default_refill_rate = default_capacity / default_window_ms;
+
     MarginPoolConfig {
         supply_cap,
         max_utilization_rate,
         protocol_spread,
         min_borrow,
-        rate_limit_window_ms: 86_400_000, // 24 hours default
-        max_net_withdrawal: supply_cap / 10, // 10% of supply cap default
-        rate_limit_enabled: false, // Disabled by default
+        rate_limit_capacity: default_capacity,
+        rate_limit_refill_rate_per_ms: default_refill_rate,
+        rate_limit_enabled: false,
     }
 }
 
@@ -77,8 +81,8 @@ public fun new_margin_pool_config_with_rate_limit(
     max_utilization_rate: u64,
     protocol_spread: u64,
     min_borrow: u64,
-    rate_limit_window_ms: u64,
-    max_net_withdrawal: u64,
+    rate_limit_capacity: u64,
+    rate_limit_refill_rate_per_ms: u64,
     rate_limit_enabled: bool,
 ): MarginPoolConfig {
     MarginPoolConfig {
@@ -86,8 +90,8 @@ public fun new_margin_pool_config_with_rate_limit(
         max_utilization_rate,
         protocol_spread,
         min_borrow,
-        rate_limit_window_ms,
-        max_net_withdrawal,
+        rate_limit_capacity,
+        rate_limit_refill_rate_per_ms,
         rate_limit_enabled,
     }
 }
@@ -190,24 +194,24 @@ public(package) fun excess_slope(self: &ProtocolConfig): u64 {
     self.interest_config.excess_slope
 }
 
-public(package) fun rate_limit_window_ms(self: &ProtocolConfig): u64 {
-    self.margin_pool_config.rate_limit_window_ms
+public(package) fun rate_limit_capacity(self: &ProtocolConfig): u64 {
+    self.margin_pool_config.rate_limit_capacity
 }
 
-public(package) fun max_net_withdrawal(self: &ProtocolConfig): u64 {
-    self.margin_pool_config.max_net_withdrawal
+public(package) fun rate_limit_refill_rate_per_ms(self: &ProtocolConfig): u64 {
+    self.margin_pool_config.rate_limit_refill_rate_per_ms
 }
 
 public(package) fun rate_limit_enabled(self: &ProtocolConfig): bool {
     self.margin_pool_config.rate_limit_enabled
 }
 
-public(package) fun rate_limit_window_ms_from_config(config: &MarginPoolConfig): u64 {
-    config.rate_limit_window_ms
+public(package) fun rate_limit_capacity_from_config(config: &MarginPoolConfig): u64 {
+    config.rate_limit_capacity
 }
 
-public(package) fun max_net_withdrawal_from_config(config: &MarginPoolConfig): u64 {
-    config.max_net_withdrawal
+public(package) fun rate_limit_refill_rate_per_ms_from_config(config: &MarginPoolConfig): u64 {
+    config.rate_limit_refill_rate_per_ms
 }
 
 public(package) fun rate_limit_enabled_from_config(config: &MarginPoolConfig): bool {

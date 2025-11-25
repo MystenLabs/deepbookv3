@@ -187,8 +187,8 @@ public fun create_pool_with_rate_limit<Asset>(
     registry: &mut MarginRegistry,
     maintainer_cap: &MaintainerCap,
     supply_cap: u64,
-    max_net_withdrawal: u64,
-    rate_limit_window_ms: u64,
+    rate_limit_capacity: u64,
+    rate_limit_refill_rate_per_ms: u64,
     rate_limit_enabled: bool,
     clock: &Clock,
     scenario: &mut Scenario,
@@ -200,8 +200,8 @@ public fun create_pool_with_rate_limit<Asset>(
         test_constants::max_utilization_rate(),
         test_constants::protocol_spread(),
         test_constants::min_borrow(),
-        rate_limit_window_ms,
-        max_net_withdrawal,
+        rate_limit_capacity,
+        rate_limit_refill_rate_per_ms,
         rate_limit_enabled,
     );
     let interest_config = protocol_config::new_interest_config(

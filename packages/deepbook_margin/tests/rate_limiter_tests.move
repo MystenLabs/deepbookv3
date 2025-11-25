@@ -22,12 +22,13 @@ fun test_basic_rate_limiting() {
 
     scenario.next_tx(admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
+    // capacity = 10_000, refill_rate = 10 per ms (full refill in 1000ms = 1 second)
     let _pool_id = test_helpers::create_pool_with_rate_limit<USDC>(
         &mut registry,
         &maintainer_cap,
-        1_000_000, // 1M supply cap
-        10_000, // 100K max net withdrawal
-        HOUR_MS, // 24 hour window
+        1_000_000, // supply cap
+        10_000, // capacity
+        10, // refill_rate_per_ms (10K per second)
         true, // enabled
         &clock,
         &mut scenario,
@@ -43,10 +44,7 @@ fun test_basic_rate_limiting() {
     let supply_coin = coin::mint_for_testing<USDC>(20_000, scenario.ctx());
     pool.supply(&registry, &supplier_cap, supply_coin, option::none(), &clock);
 
-    // Move clock past window
-    clock::increment_for_testing(&mut clock, 2 * HOUR_MS);
-
-    // withdraw $10K (at the limit)
+    // Withdraw $10K (at the limit)
     let withdrawn1 = pool.withdraw(
         &registry,
         &supplier_cap,
@@ -56,12 +54,9 @@ fun test_basic_rate_limiting() {
     );
     assert!(withdrawn1.value() == 10_000, 0);
 
-    // Should not be able to withdraw
+    // Should not be able to withdraw more (bucket is empty)
     let available = pool.get_available_withdrawal(&clock);
     assert!(available == 0, 1);
-
-    let current_net = pool.get_current_net_withdrawal(&clock);
-    assert!(current_net == 10_000, 2);
 
     destroy_3!(withdrawn1, supplier_cap, maintainer_cap);
     destroy(admin_cap);
@@ -71,7 +66,7 @@ fun test_basic_rate_limiting() {
 }
 
 #[test]
-fun test_deposit_increases_capacity() {
+fun test_capacity_refills_over_time() {
     let (
         mut scenario,
         mut clock,
@@ -81,12 +76,13 @@ fun test_deposit_increases_capacity() {
 
     scenario.next_tx(admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
+    // capacity = 10_000, refill_rate = 10 per ms
     let _pool_id = test_helpers::create_pool_with_rate_limit<USDC>(
         &mut registry,
         &maintainer_cap,
         1_000_000,
-        10_000, // 10K max net withdrawal
-        HOUR_MS,
+        10_000, // capacity
+        10, // refill 10 per ms
         true,
         &clock,
         &mut scenario,
@@ -98,10 +94,10 @@ fun test_deposit_increases_capacity() {
     let registry = scenario.take_shared<MarginRegistry>();
     let supplier_cap = margin_pool::mint_supplier_cap(&registry, &clock, scenario.ctx());
 
-    let supply_coin = coin::mint_for_testing<USDC>(20_000, scenario.ctx());
+    let supply_coin = coin::mint_for_testing<USDC>(30_000, scenario.ctx());
     pool.supply(&registry, &supplier_cap, supply_coin, option::none(), &clock);
-    clock::increment_for_testing(&mut clock, 2 * HOUR_MS);
 
+    // Withdraw full capacity
     let withdrawn1 = pool.withdraw(
         &registry,
         &supplier_cap,
@@ -109,11 +105,18 @@ fun test_deposit_increases_capacity() {
         &clock,
         scenario.ctx(),
     );
+    assert!(withdrawn1.value() == 10_000, 0);
 
-    let deposit_coin = coin::mint_for_testing<USDC>(5_000, scenario.ctx());
-    pool.supply(&registry, &supplier_cap, deposit_coin, option::none(), &clock);
+    // Bucket is now empty
+    assert!(pool.get_available_withdrawal(&clock) == 0, 1);
 
-    // Should now be able to withdraw $5K more
+    // Wait 500ms - should have 5000 available (500 * 10 = 5000)
+    clock::increment_for_testing(&mut clock, 500);
+
+    let available = pool.get_available_withdrawal(&clock);
+    assert!(available == 5_000, 2);
+
+    // Withdraw 5000
     let withdrawn2 = pool.withdraw(
         &registry,
         &supplier_cap,
@@ -121,10 +124,12 @@ fun test_deposit_increases_capacity() {
         &clock,
         scenario.ctx(),
     );
-    assert!(withdrawn2.value() == 5_000, 0);
+    assert!(withdrawn2.value() == 5_000, 3);
 
-    // Current net withdrawal is 10K (15K withdrawn - 5K deposited)
-    assert!(pool.get_current_net_withdrawal(&clock) == 10_000, 1);
+    // Wait another 1000ms - should be back to full capacity (10_000)
+    clock::increment_for_testing(&mut clock, 1_000);
+    let available_after = pool.get_available_withdrawal(&clock);
+    assert!(available_after == 10_000, 4);
 
     destroy_4!(withdrawn1, withdrawn2, supplier_cap, maintainer_cap);
     destroy(admin_cap);
@@ -134,7 +139,7 @@ fun test_deposit_increases_capacity() {
 }
 
 #[test]
-fun test_sliding_window_cleanup() {
+fun test_capacity_caps_at_max() {
     let (
         mut scenario,
         mut clock,
@@ -148,8 +153,8 @@ fun test_sliding_window_cleanup() {
         &mut registry,
         &maintainer_cap,
         1_000_000,
-        10_000,
-        HOUR_MS, // 1 hour window
+        10_000, // capacity
+        10, // refill rate
         true,
         &clock,
         &mut scenario,
@@ -164,32 +169,114 @@ fun test_sliding_window_cleanup() {
     let supply_coin = coin::mint_for_testing<USDC>(20_000, scenario.ctx());
     pool.supply(&registry, &supplier_cap, supply_coin, option::none(), &clock);
 
-    clock::increment_for_testing(&mut clock, 2 * HOUR_MS);
+    // Wait a very long time - capacity should cap at max (10_000)
+    clock::increment_for_testing(&mut clock, 10 * HOUR_MS);
 
-    let withdrawn1 = pool.withdraw(
+    let available = pool.get_available_withdrawal(&clock);
+    assert!(available == 10_000, 0);
+
+    // Withdraw exactly capacity
+    let withdrawn = pool.withdraw(
         &registry,
         &supplier_cap,
         option::some(10_000),
         &clock,
         scenario.ctx(),
     );
+    assert!(withdrawn.value() == 10_000, 1);
 
-    clock::increment_for_testing(&mut clock, 2 * HOUR_MS);
+    destroy_3!(withdrawn, supplier_cap, maintainer_cap);
+    destroy(admin_cap);
+    return_shared_2!(pool, registry);
+    clock.destroy_for_testing();
+    scenario.end();
+}
 
-    // Old withdrawal should be outside window, can withdraw another $10K
-    let withdrawn2 = pool.withdraw(
+#[test, expected_failure(abort_code = deepbook_margin::margin_pool::ERateLimitExceeded)]
+fun test_withdrawal_exceeds_limit_fails() {
+    let (
+        mut scenario,
+        mut clock,
+        admin_cap,
+        maintainer_cap,
+    ) = test_helpers::setup_margin_registry();
+
+    scenario.next_tx(admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let _pool_id = test_helpers::create_pool_with_rate_limit<USDC>(
+        &mut registry,
+        &maintainer_cap,
+        1_000_000,
+        10_000, // capacity
+        10, // refill rate
+        true,
+        &clock,
+        &mut scenario,
+    );
+    test_scenario::return_shared(registry);
+
+    scenario.next_tx(user1());
+    let mut pool = scenario.take_shared<MarginPool<USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+    let supplier_cap = margin_pool::mint_supplier_cap(&registry, &clock, scenario.ctx());
+
+    let supply_coin = coin::mint_for_testing<USDC>(20_000, scenario.ctx());
+    pool.supply(&registry, &supplier_cap, supply_coin, option::none(), &clock);
+
+    // Try to withdraw more than capacity - should fail
+    let withdrawn = pool.withdraw(
         &registry,
         &supplier_cap,
-        option::some(10_000),
+        option::some(15_000),
         &clock,
         scenario.ctx(),
     );
-    assert!(withdrawn2.value() == 10_000, 0);
 
-    // Current net withdrawal should only be 10K (from second withdrawal)
-    assert!(pool.get_current_net_withdrawal(&clock) == 10_000, 1);
+    abort // won't reach here
+}
 
-    destroy_4!(withdrawn1, withdrawn2, supplier_cap, maintainer_cap);
+#[test]
+fun test_disabled_rate_limiter() {
+    let (
+        mut scenario,
+        mut clock,
+        admin_cap,
+        maintainer_cap,
+    ) = test_helpers::setup_margin_registry();
+
+    scenario.next_tx(admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let _pool_id = test_helpers::create_pool_with_rate_limit<USDC>(
+        &mut registry,
+        &maintainer_cap,
+        1_000_000,
+        10_000, // capacity
+        10, // refill rate
+        false, // DISABLED
+        &clock,
+        &mut scenario,
+    );
+    test_scenario::return_shared(registry);
+
+    scenario.next_tx(user1());
+    let mut pool = scenario.take_shared<MarginPool<USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+    let supplier_cap = margin_pool::mint_supplier_cap(&registry, &clock, scenario.ctx());
+
+    let supply_coin = coin::mint_for_testing<USDC>(100_000, scenario.ctx());
+    pool.supply(&registry, &supplier_cap, supply_coin, option::none(), &clock);
+
+    // Should be able to withdraw any amount when disabled
+    let withdrawn = pool.withdraw(
+        &registry,
+        &supplier_cap,
+        option::some(50_000),
+        &clock,
+        scenario.ctx(),
+    );
+    assert!(withdrawn.value() == 50_000, 0);
+
+    destroy_3!(withdrawn, supplier_cap, maintainer_cap);
     destroy(admin_cap);
     return_shared_2!(pool, registry);
     clock.destroy_for_testing();

@@ -146,8 +146,8 @@ public fun create_margin_pool<Asset>(
         positions: position_manager::create_position_manager(ctx),
         allowed_deepbook_pools: vec_set::empty(),
         rate_limiter: rate_limiter::new(
-            config.rate_limit_window_ms(),
-            config.max_net_withdrawal(),
+            config.rate_limit_capacity(),
+            config.rate_limit_refill_rate_per_ms(),
             config.rate_limit_enabled(),
         ),
         extra_fields: vec_map::empty(),
@@ -250,8 +250,8 @@ public fun update_margin_pool_config<Asset>(
     self
         .rate_limiter
         .update_config(
-            protocol_config::rate_limit_window_ms_from_config(&margin_pool_config),
-            protocol_config::max_net_withdrawal_from_config(&margin_pool_config),
+            protocol_config::rate_limit_capacity_from_config(&margin_pool_config),
+            protocol_config::rate_limit_refill_rate_per_ms_from_config(&margin_pool_config),
             protocol_config::rate_limit_enabled_from_config(&margin_pool_config),
         );
 
@@ -312,7 +312,6 @@ public fun supply<Asset>(
     self.vault.join(balance);
 
     assert!(self.state.total_supply() <= self.config.supply_cap(), ESupplyCapExceeded);
-    self.rate_limiter.record_deposit(supply_amount, clock);
 
     event::emit(AssetSupplied {
         margin_pool_id: self.id(),
@@ -647,16 +646,11 @@ public(package) fun borrow_shares_to_amount<Asset>(
     self.state.borrow_shares_to_amount(shares, &self.config, clock)
 }
 
-// === Public View Functions ===
+// === Public View Functions (Rate Limiter) ===
 
 /// Returns the maximum amount that can be withdrawn without hitting rate limits
 public fun get_available_withdrawal<Asset>(self: &MarginPool<Asset>, clock: &Clock): u64 {
     self.rate_limiter.get_available_withdrawal(clock)
-}
-
-/// Returns the current net withdrawal amount in the sliding window
-public fun get_current_net_withdrawal<Asset>(self: &MarginPool<Asset>, clock: &Clock): u64 {
-    self.rate_limiter.current_net_withdrawal(clock)
 }
 
 /// Returns whether rate limiting is enabled
@@ -664,12 +658,12 @@ public fun is_rate_limit_enabled<Asset>(self: &MarginPool<Asset>): bool {
     self.rate_limiter.is_enabled()
 }
 
-/// Returns the rate limit window duration in milliseconds
-public fun rate_limit_window_ms<Asset>(self: &MarginPool<Asset>): u64 {
-    self.rate_limiter.window_duration_ms()
+/// Returns the rate limit capacity (max bucket size)
+public fun rate_limit_capacity<Asset>(self: &MarginPool<Asset>): u64 {
+    self.rate_limiter.capacity()
 }
 
-/// Returns the maximum net withdrawal allowed
-public fun max_net_withdrawal<Asset>(self: &MarginPool<Asset>): u64 {
-    self.rate_limiter.max_net_withdrawal()
+/// Returns the rate limit refill rate per millisecond
+public fun rate_limit_refill_rate_per_ms<Asset>(self: &MarginPool<Asset>): u64 {
+    self.rate_limiter.refill_rate_per_ms()
 }
