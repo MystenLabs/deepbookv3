@@ -1711,7 +1711,20 @@ impl Reader {
         end_time: i64,
         limit: i64,
         pool_id_filter: Option<String>,
-    ) -> Result<Vec<(String, String, String, i64, i64, String, String, Option<serde_json::Value>, i64)>, DeepBookError> {
+    ) -> Result<
+        Vec<(
+            String,
+            String,
+            String,
+            i64,
+            i64,
+            String,
+            String,
+            Option<serde_json::Value>,
+            i64,
+        )>,
+        DeepBookError,
+    > {
         let mut connection = self.db.connect().await?;
         let mut query = schema::deepbook_pool_registered::table
             .filter(
@@ -1739,7 +1752,17 @@ impl Reader {
 
         let _guard = self.metrics.db_latency.start_timer();
         let res = query
-            .load::<(String, String, String, i64, i64, String, String, Option<serde_json::Value>, i64)>(&mut connection)
+            .load::<(
+                String,
+                String,
+                String,
+                i64,
+                i64,
+                String,
+                String,
+                Option<serde_json::Value>,
+                i64,
+            )>(&mut connection)
             .await
             .map_err(|_| {
                 DeepBookError::InternalError(
