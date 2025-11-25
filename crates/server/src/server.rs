@@ -2715,9 +2715,10 @@ async fn deepbook_pool_registered(
                 checkpoint_timestamp_ms,
                 package,
                 pool_id,
+                config_json,
                 onchain_timestamp,
             )| {
-                HashMap::from([
+                let mut map = HashMap::from([
                     ("event_digest".to_string(), Value::from(event_digest)),
                     ("digest".to_string(), Value::from(digest)),
                     ("sender".to_string(), Value::from(sender)),
@@ -2732,7 +2733,11 @@ async fn deepbook_pool_registered(
                         "onchain_timestamp".to_string(),
                         Value::from(onchain_timestamp),
                     ),
-                ])
+                ]);
+                if let Some(config) = config_json {
+                    map.insert("config_json".to_string(), Value::from(config));
+                }
+                map
             },
         )
         .collect();

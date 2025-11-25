@@ -451,6 +451,7 @@ diesel::table! {
         checkpoint_timestamp_ms -> Int8,
         package -> Text,
         pool_id -> Text,
+        config_json -> Nullable<Jsonb>,
         onchain_timestamp -> Int8,
     }
 }

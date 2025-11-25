@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use deepbook_schema::models::DeepbookPoolRegistered as DeepbookPoolRegisteredModel;
 use deepbook_schema::schema::deepbook_pool_registered;
 use diesel_async::RunQueryDsl;
+use serde_json;
 use std::sync::Arc;
 use sui_indexer_alt_framework::pipeline::concurrent::Handler;
 use sui_indexer_alt_framework::pipeline::Processor;
@@ -46,6 +47,7 @@ impl Processor for DeepbookPoolRegisteredHandler {
             for (index, ev) in events.data.iter().enumerate() {
                 if DeepbookPoolRegistered::matches_event_type(&ev.type_, self.env) {
                     let event: DeepbookPoolRegistered = bcs::from_bytes(&ev.contents)?;
+                    let config_json = serde_json::to_value(&event.config)?;
                     let data = DeepbookPoolRegisteredModel {
                         event_digest: format!("{digest}{index}"),
                         digest: digest.to_string(),
@@ -54,6 +56,7 @@ impl Processor for DeepbookPoolRegisteredHandler {
                         checkpoint_timestamp_ms,
                         package: package.clone(),
                         pool_id: event.pool_id.to_string(),
+                        config_json: Some(config_json),
                         onchain_timestamp: event.timestamp as i64,
                     };
                     debug!("Observed DeepBook Margin Pool Registered {:?}", data);

@@ -38,6 +38,7 @@ const TESTNET_MARGIN_PACKAGES: &[&str] = &[
     "0x8fe69c287d99f8873d5080bf74aec39c4b79536cdbbe260bf43a1b46fd553be0",
     "0x442d21fd044b90274934614c3c41416c83582f42eaa8feb4fecea301aa6bdd54",
     "0xf74ec503c186327663e11b5b888bd8a654bb8afaba34342274d3172edf3abeef",
+    "0xb388009b59b09cd5d219dae79dd3e5d08a5734884363e59a37f3cbe6ef613424",
 ];
 
 // Module definitions
