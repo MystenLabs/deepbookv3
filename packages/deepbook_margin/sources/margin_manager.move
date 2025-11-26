@@ -179,32 +179,45 @@ public fun execute_pending_orders<BaseAsset, QuoteAsset>(
         registry,
         clock,
     );
-    let (conditions, conditional_orders) = self.conditional_orders().into_keys_values();
-    let valid_indices = conditional_orders.find_indices!(|value| {
+    let valid_conditional_orders = self.conditional_orders().filter!(|value| {
         (value.condition().trigger_below_price() && current_price < value.condition().trigger_price()) ||
         (!value.condition().trigger_below_price() && current_price > value.condition().trigger_price())
     });
 
     let mut order_infos = vector[];
-    valid_indices.do!(|index| {
-        let conditional_order = conditional_orders[index];
+    let mut conditional_order_identifiers_to_remove = vector[];
+    valid_conditional_orders.do!(|conditional_order| {
         let pending_order = conditional_order.pending_order();
         let is_limit_order = pending_order.is_limit_order();
-        let order_info = place_pending_order<BaseAsset, QuoteAsset>(
-            registry,
-            margin_manager,
-            pool,
-            &pending_order,
-            clock,
-            ctx,
-        );
-        order_infos.push_back(order_info);
+        let can_place_order = if (is_limit_order) {
+            abort
+        } else {
+            pool.can_place_market_order(
+                margin_manager.balance_manager(),
+                pending_order.quantity(),
+                pending_order.is_bid(),
+                pending_order.pay_with_deep(),
+                clock,
+            )
+        };
+
+        if (can_place_order) {
+            let order_info = place_pending_order<BaseAsset, QuoteAsset>(
+                registry,
+                margin_manager,
+                pool,
+                &pending_order,
+                clock,
+                ctx,
+            );
+            order_infos.push_back(order_info);
+            conditional_order_identifiers_to_remove.push_back(conditional_order.conditional_order_identifier());
+        }
     });
 
     // remove the pending orders
-    valid_indices.do!(|index| {
-        let pending_order_identifier = conditions[index];
-        self.conditional_orders_mut().remove(&pending_order_identifier);
+    conditional_order_identifiers_to_remove.do!(|conditional_order_identifier| {
+        self.remove_conditional_order(conditional_order_identifier);
     });
 
     order_infos
@@ -246,29 +259,6 @@ public fun current_price<BaseAsset, QuoteAsset>(
 //         quote_asset >= pending_order.quantity()
 //     }
 // }
-
-/// Checks if a pending market order can be placed.
-public fun can_place_pending_market_order<BaseAsset, QuoteAsset>(
-    self: &MarginManager<BaseAsset, QuoteAsset>,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    pending_order_identifier: u64,
-    clock: &Clock,
-): bool {
-    let conditional_order = self
-        .take_profit_stop_loss
-        .conditional_orders()
-        .get(&pending_order_identifier);
-
-    let pending_order = conditional_order.pending_order();
-    let balance_manager = self.balance_manager();
-    pool.can_place_market_order(
-        balance_manager,
-        pending_order.quantity(),
-        pending_order.is_bid(),
-        pending_order.pay_with_deep(),
-        clock,
-    )
-}
 
 fun place_pending_order<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,

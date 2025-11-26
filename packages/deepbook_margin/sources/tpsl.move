@@ -4,6 +4,7 @@
 module deepbook_margin::tpsl;
 
 use deepbook::math;
+use deepbook_margin::margin_constants;
 use deepbook_margin::margin_registry::MarginRegistry;
 use pyth::price_info::PriceInfoObject;
 use sui::clock::Clock;
@@ -11,13 +12,16 @@ use sui::vec_map::{Self, VecMap};
 
 // === Errors ===
 const EInvalidCondition: u64 = 1;
+const EConditionalOrderNotFound: u64 = 2;
+const EMaxConditionalOrdersReached: u64 = 3;
 
 // === Structs ===
 public struct TakeProfitStopLoss has drop, store {
-    conditional_orders: VecMap<u64, ConditionalOrder>,
+    conditional_orders: vector<ConditionalOrder>,
 }
 
 public struct ConditionalOrder has copy, drop, store {
+    conditional_order_identifier: u64,
     condition: Condition,
     pending_order: PendingOrder,
 }
@@ -46,7 +50,7 @@ public fun add_conditional_order(
     base_price_info_object: &PriceInfoObject,
     quote_price_info_object: &PriceInfoObject,
     registry: &MarginRegistry,
-    pending_order_identifier: u64,
+    conditional_order_identifier: u64,
     condition: Condition,
     pending_order: PendingOrder,
     clock: &Clock,
@@ -69,10 +73,15 @@ public fun add_conditional_order(
     );
 
     let conditional_order = ConditionalOrder {
+        conditional_order_identifier,
         condition,
         pending_order,
     };
-    self.conditional_orders.insert(pending_order_identifier, conditional_order);
+    assert!(
+        self.conditional_orders.length() < margin_constants::max_conditional_orders(),
+        EMaxConditionalOrdersReached,
+    );
+    self.conditional_orders.push_back(conditional_order);
 }
 
 public fun new_condition(trigger_below_price: bool, trigger_price: u64): Condition {
@@ -129,24 +138,25 @@ public fun new_pending_market_order(
     }
 }
 
-public fun cancel_conditional_order(self: &mut TakeProfitStopLoss, pending_order_identifier: u64) {
-    self.conditional_orders.remove(&pending_order_identifier);
+public fun cancel_conditional_order(
+    self: &mut TakeProfitStopLoss,
+    conditional_order_identifier: u64,
+) {
+    self.remove_conditional_order(conditional_order_identifier, true);
 }
 
 public fun new(): TakeProfitStopLoss {
     TakeProfitStopLoss {
-        conditional_orders: vec_map::empty(),
+        conditional_orders: vector[],
     }
 }
 
 // === Read-Only Functions ===
-public fun conditional_orders_mut(
-    self: &mut TakeProfitStopLoss,
-): &mut VecMap<u64, ConditionalOrder> {
+public fun conditional_orders_mut(self: &mut TakeProfitStopLoss): &mut vector<ConditionalOrder> {
     &mut self.conditional_orders
 }
 
-public fun conditional_orders(self: &TakeProfitStopLoss): VecMap<u64, ConditionalOrder> {
+public fun conditional_orders(self: &TakeProfitStopLoss): vector<ConditionalOrder> {
     self.conditional_orders
 }
 
@@ -155,6 +165,10 @@ public fun conditional_order(
     pending_order_identifier: u64,
 ): ConditionalOrder {
     *conditional_orders.get(&pending_order_identifier)
+}
+
+public fun conditional_order_identifier(conditional_order: &ConditionalOrder): u64 {
+    conditional_order.conditional_order_identifier
 }
 
 public fun condition(conditional_order: &ConditionalOrder): Condition {
@@ -211,4 +225,24 @@ public fun expire_timestamp(pending_order: &PendingOrder): Option<u64> {
 
 public fun is_limit_order(pending_order: &PendingOrder): bool {
     pending_order.is_limit_order
+}
+
+public(package) fun condtional_order_executed(
+    self: &mut TakeProfitStopLoss,
+    conditional_order_identifier: u64,
+) {
+    self.remove_conditional_order(conditional_order_identifier, false);
+}
+
+public(package) fun remove_conditional_order(
+    self: &mut TakeProfitStopLoss,
+    conditional_order_identifier: u64,
+    is_cancel: bool,
+) {
+    let index = self.conditional_orders.find_index!(|conditional_order| {
+        conditional_order.conditional_order_identifier == conditional_order_identifier
+    });
+    assert!(index.is_some(), EConditionalOrderNotFound);
+    self.conditional_orders.remove(index.destroy_some());
+    // emit event
 }
