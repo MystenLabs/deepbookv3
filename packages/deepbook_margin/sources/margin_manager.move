@@ -15,7 +15,7 @@ use deepbook::balance_manager::{
 use deepbook::constants;
 use deepbook::math;
 use deepbook::order_info::OrderInfo;
-use deepbook::pool::Pool;
+use deepbook::pool::{Pool, can_place_market_order};
 use deepbook::registry::Registry;
 use deepbook_margin::margin_constants;
 use deepbook_margin::margin_pool::MarginPool;
@@ -179,15 +179,17 @@ public fun execute_pending_orders<BaseAsset, QuoteAsset>(
         registry,
         clock,
     );
-    let (keys, values) = self.conditional_orders().into_keys_values();
-    let valid_indices = values.find_indices!(|value| {
+    let (conditions, conditional_orders) = self.conditional_orders().into_keys_values();
+    let valid_indices = conditional_orders.find_indices!(|value| {
         (value.condition().trigger_below_price() && current_price < value.condition().trigger_price()) ||
         (!value.condition().trigger_below_price() && current_price > value.condition().trigger_price())
     });
 
     let mut order_infos = vector[];
     valid_indices.do!(|index| {
-        let pending_order = values[index].pending_order();
+        let conditional_order = conditional_orders[index];
+        let pending_order = conditional_order.pending_order();
+        let is_limit_order = pending_order.is_limit_order();
         let order_info = place_pending_order<BaseAsset, QuoteAsset>(
             registry,
             margin_manager,
@@ -201,7 +203,7 @@ public fun execute_pending_orders<BaseAsset, QuoteAsset>(
 
     // remove the pending orders
     valid_indices.do!(|index| {
-        let pending_order_identifier = keys[index];
+        let pending_order_identifier = conditions[index];
         self.conditional_orders_mut().remove(&pending_order_identifier);
     });
 
@@ -245,13 +247,28 @@ public fun current_price<BaseAsset, QuoteAsset>(
 //     }
 // }
 
-// public fun can_place_market_order(
-//     self: &TakeProfitStopLoss,
-//     pending_order_identifier: u64,
-// ): bool {
-//     let conditional_order = self.conditional_orders.get(&pending_order_identifier);
-//     conditional_order.pending_order.is_market_order
-// }
+/// Checks if a pending market order can be placed.
+public fun can_place_pending_market_order<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    pending_order_identifier: u64,
+    clock: &Clock,
+): bool {
+    let conditional_order = self
+        .take_profit_stop_loss
+        .conditional_orders()
+        .get(&pending_order_identifier);
+
+    let pending_order = conditional_order.pending_order();
+    let balance_manager = self.balance_manager();
+    pool.can_place_market_order(
+        balance_manager,
+        pending_order.quantity(),
+        pending_order.is_bid(),
+        pending_order.pay_with_deep(),
+        clock,
+    )
+}
 
 fun place_pending_order<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
@@ -261,7 +278,7 @@ fun place_pending_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): OrderInfo {
-    assert!(pending_order.pool_id() == pool.id(), EIncorrectPool);
+    assert!(pending_order.pool_id() == pool.id());
 
     if (pending_order.is_limit_order()) {
         place_pending_limit_order<BaseAsset, QuoteAsset>(

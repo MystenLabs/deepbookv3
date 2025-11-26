@@ -1458,6 +1458,7 @@ public fun locked_balance<BaseAsset, QuoteAsset>(
 
 /// Check if a market order can be placed based on balance manager balances.
 /// Returns true if the balance manager has sufficient balance (accounting for fees) to place the order, false otherwise.
+/// Does not account for discounted taker fees
 public fun can_place_market_order<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
     balance_manager: &BalanceManager,
