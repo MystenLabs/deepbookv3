@@ -20,12 +20,8 @@ use deepbook::registry::Registry;
 use deepbook_margin::margin_constants;
 use deepbook_margin::margin_pool::MarginPool;
 use deepbook_margin::margin_registry::MarginRegistry;
-use deepbook_margin::oracle::{
-    calculate_target_currency,
-    get_pyth_price,
-    calculate_oracle_usd_price
-};
-use deepbook_margin::tpsl::{Self, TakeProfitStopLoss, PendingOrder};
+use deepbook_margin::oracle::{calculate_target_currency, get_pyth_price, calculate_price};
+use deepbook_margin::tpsl::{Self, TakeProfitStopLoss, PendingOrder, Condition};
 use pyth::price_info::PriceInfoObject;
 use std::string::String;
 use std::type_name::{Self, TypeName};
@@ -162,6 +158,37 @@ public struct WithdrawCollateralEvent has copy, drop {
 
 // === Functions - Take Profit Stop Loss ===
 
+public fun add_conditional_order<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    base_price_info_object: &PriceInfoObject,
+    quote_price_info_object: &PriceInfoObject,
+    registry: &MarginRegistry,
+    conditional_order_identifier: u64,
+    condition: Condition,
+    pending_order: PendingOrder,
+    clock: &Clock,
+) {
+    self
+        .take_profit_stop_loss
+        .add_conditional_order<BaseAsset, QuoteAsset>(
+            base_price_info_object,
+            quote_price_info_object,
+            registry,
+            conditional_order_identifier,
+            condition,
+            pending_order,
+            clock,
+        );
+}
+
+public fun cancel_conditional_order<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    conditional_order_identifier: u64,
+    clock: &Clock,
+) {
+    self.take_profit_stop_loss.cancel_conditional_order(conditional_order_identifier, clock);
+}
+
 public fun execute_pending_orders<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -171,10 +198,10 @@ public fun execute_pending_orders<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): vector<OrderInfo> {
-    let current_price = current_price<BaseAsset, QuoteAsset>(
+    let current_price = calculate_price<BaseAsset, QuoteAsset>(
+        registry,
         base_price_info_object,
         quote_price_info_object,
-        registry,
         clock,
     );
     let valid_conditional_orders = self.take_profit_stop_loss.conditional_orders().filter!(|value| {
@@ -218,34 +245,12 @@ public fun execute_pending_orders<BaseAsset, QuoteAsset>(
         }
     });
 
-    // remove the pending orders
+    // remove the executed orders
     conditional_order_identifiers_to_remove.do!(|conditional_order_identifier| {
         self.take_profit_stop_loss.condtional_order_executed(conditional_order_identifier, clock)
     });
 
     order_infos
-}
-
-/// Price of the base asset in the quote asset.
-/// TODO: account for decimals, so price matches the deepbook pool price, not just hardcoded to 9 decimals
-public fun current_price<BaseAsset, QuoteAsset>(
-    base_price_info_object: &PriceInfoObject,
-    quote_price_info_object: &PriceInfoObject,
-    registry: &MarginRegistry,
-    clock: &Clock,
-): u64 {
-    let base_usd_price = calculate_oracle_usd_price<BaseAsset>(
-        base_price_info_object,
-        registry,
-        clock,
-    );
-    let quote_usd_price = calculate_oracle_usd_price<QuoteAsset>(
-        quote_price_info_object,
-        registry,
-        clock,
-    );
-
-    math::div(base_usd_price, quote_usd_price)
 }
 
 fun place_pending_order<BaseAsset, QuoteAsset>(

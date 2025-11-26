@@ -5,6 +5,7 @@ module deepbook_margin::tpsl;
 
 use deepbook_margin::margin_constants;
 use deepbook_margin::margin_registry::MarginRegistry;
+use deepbook_margin::oracle::calculate_price;
 use pyth::price_info::PriceInfoObject;
 use sui::clock::Clock;
 use sui::event;
@@ -64,51 +65,6 @@ public struct ConditionalOrderExecuted has copy, drop {
 }
 
 // === Public Functions ===
-public(package) fun add_conditional_order(
-    self: &mut TakeProfitStopLoss,
-    base_price_info_object: &PriceInfoObject,
-    quote_price_info_object: &PriceInfoObject,
-    registry: &MarginRegistry,
-    conditional_order_identifier: u64,
-    condition: Condition,
-    pending_order: PendingOrder,
-    clock: &Clock,
-) {
-    let current_price = 0;
-    // let current_price = current_price(
-    //     base_price_info_object,
-    //     quote_price_info_object,
-    //     registry,
-    //     clock,
-    // );
-    let trigger_below_price = condition.trigger_below_price;
-    let trigger_price = condition.trigger_price;
-
-    // If order is triggered below trigger_price, trigger_price must be lower than current price
-    // If order is triggered above trigger_price, trigger_price must be higher than current price
-    assert!(
-        (trigger_below_price && trigger_price < current_price) || (!trigger_below_price && trigger_price > current_price),
-        EInvalidCondition,
-    );
-
-    let conditional_order = ConditionalOrder {
-        conditional_order_identifier,
-        condition,
-        pending_order,
-    };
-    assert!(
-        self.conditional_orders.length() < margin_constants::max_conditional_orders(),
-        EMaxConditionalOrdersReached,
-    );
-    self.conditional_orders.push_back(conditional_order);
-
-    event::emit(ConditionalOrderAdded {
-        conditional_order_identifier,
-        conditional_order,
-        timestamp: clock.timestamp_ms(),
-    });
-}
-
 public fun new_condition(trigger_below_price: bool, trigger_price: u64): Condition {
     Condition {
         trigger_below_price,
@@ -160,20 +116,6 @@ public fun new_pending_market_order(
         is_bid,
         pay_with_deep,
         expire_timestamp: option::none(),
-    }
-}
-
-public fun cancel_conditional_order(
-    self: &mut TakeProfitStopLoss,
-    conditional_order_identifier: u64,
-    clock: &Clock,
-) {
-    self.remove_conditional_order(conditional_order_identifier, true, clock);
-}
-
-public fun new(): TakeProfitStopLoss {
-    TakeProfitStopLoss {
-        conditional_orders: vector[],
     }
 }
 
@@ -254,6 +196,65 @@ public fun is_limit_order(pending_order: &PendingOrder): bool {
 }
 
 // === public(package) functions ===
+public(package) fun add_conditional_order<BaseAsset, QuoteAsset>(
+    self: &mut TakeProfitStopLoss,
+    base_price_info_object: &PriceInfoObject,
+    quote_price_info_object: &PriceInfoObject,
+    registry: &MarginRegistry,
+    conditional_order_identifier: u64,
+    condition: Condition,
+    pending_order: PendingOrder,
+    clock: &Clock,
+) {
+    let current_price = calculate_price<BaseAsset, QuoteAsset>(
+        registry,
+        base_price_info_object,
+        quote_price_info_object,
+        clock,
+    );
+
+    let trigger_below_price = condition.trigger_below_price;
+    let trigger_price = condition.trigger_price;
+
+    // If order is triggered below trigger_price, trigger_price must be lower than current price
+    // If order is triggered above trigger_price, trigger_price must be higher than current price
+    assert!(
+        (trigger_below_price && trigger_price < current_price) || (!trigger_below_price && trigger_price > current_price),
+        EInvalidCondition,
+    );
+
+    let conditional_order = ConditionalOrder {
+        conditional_order_identifier,
+        condition,
+        pending_order,
+    };
+    assert!(
+        self.conditional_orders.length() < margin_constants::max_conditional_orders(),
+        EMaxConditionalOrdersReached,
+    );
+    self.conditional_orders.push_back(conditional_order);
+
+    event::emit(ConditionalOrderAdded {
+        conditional_order_identifier,
+        conditional_order,
+        timestamp: clock.timestamp_ms(),
+    });
+}
+
+public(package) fun cancel_conditional_order(
+    self: &mut TakeProfitStopLoss,
+    conditional_order_identifier: u64,
+    clock: &Clock,
+) {
+    self.remove_conditional_order(conditional_order_identifier, true, clock);
+}
+
+public(package) fun new(): TakeProfitStopLoss {
+    TakeProfitStopLoss {
+        conditional_orders: vector[],
+    }
+}
+
 public(package) fun condtional_order_executed(
     self: &mut TakeProfitStopLoss,
     conditional_order_identifier: u64,
