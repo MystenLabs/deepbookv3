@@ -3,32 +3,32 @@
 
 module deepbook_margin::margin_manager;
 
-use deepbook::{
-    balance_manager::{
-        Self,
-        BalanceManager,
-        TradeCap,
-        DepositCap,
-        WithdrawCap,
-        TradeProof,
-        DeepBookReferral
-    },
-    constants,
-    math,
-    order_info::OrderInfo,
-    pool::{Pool, can_place_market_order},
-    registry::Registry
+use deepbook::balance_manager::{
+    Self,
+    BalanceManager,
+    TradeCap,
+    DepositCap,
+    WithdrawCap,
+    TradeProof,
+    DeepBookReferral
 };
-use deepbook_margin::{
-    margin_constants,
-    margin_pool::MarginPool,
-    margin_registry::MarginRegistry,
-    oracle::{calculate_target_currency, get_pyth_price, calculate_price},
-    tpsl::{Self, TakeProfitStopLoss, PendingOrder, Condition}
-};
+use deepbook::constants;
+use deepbook::math;
+use deepbook::order_info::OrderInfo;
+use deepbook::pool::{Pool, can_place_market_order};
+use deepbook::registry::Registry;
+use deepbook_margin::margin_constants;
+use deepbook_margin::margin_pool::MarginPool;
+use deepbook_margin::margin_registry::MarginRegistry;
+use deepbook_margin::oracle::{calculate_target_currency, get_pyth_price, calculate_price};
+use deepbook_margin::tpsl::{Self, TakeProfitStopLoss, PendingOrder, Condition};
 use pyth::price_info::PriceInfoObject;
-use std::{string::String, type_name::{Self, TypeName}};
-use sui::{clock::Clock, coin::Coin, event, vec_map::{Self, VecMap}};
+use std::string::String;
+use std::type_name::{Self, TypeName};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::event;
+use sui::vec_map::{Self, VecMap};
 use token::deep::DEEP;
 
 // === Errors ===
@@ -46,8 +46,7 @@ const EInvalidManagerForSharing: u64 = 11;
 const EInvalidDebtAsset: u64 = 12;
 const ERepayAmountTooLow: u64 = 13;
 const ERepaySharesTooLow: u64 = 14;
-const EIncorrectPool: u64 = 15;
-const EPoolNotEnabledForMarginTrading: u64 = 16;
+const EPoolNotEnabledForMarginTrading: u64 = 15;
 
 // === Structs ===
 /// Witness type for authorizing MarginManager to call protected features of the DeepBook
@@ -157,7 +156,6 @@ public struct WithdrawCollateralEvent has copy, drop {
 }
 
 // === Functions - Take Profit Stop Loss ===
-
 public fun add_conditional_order<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     base_price_info_object: &PriceInfoObject,
@@ -168,9 +166,11 @@ public fun add_conditional_order<BaseAsset, QuoteAsset>(
     pending_order: PendingOrder,
     clock: &Clock,
 ) {
+    let manager_id = self.id();
     self
         .take_profit_stop_loss
         .add_conditional_order<BaseAsset, QuoteAsset>(
+            manager_id,
             base_price_info_object,
             quote_price_info_object,
             registry,
@@ -186,7 +186,10 @@ public fun cancel_conditional_order<BaseAsset, QuoteAsset>(
     conditional_order_identifier: u64,
     clock: &Clock,
 ) {
-    self.take_profit_stop_loss.cancel_conditional_order(conditional_order_identifier, clock);
+    let manager_id = self.id();
+    self
+        .take_profit_stop_loss
+        .cancel_conditional_order(manager_id, conditional_order_identifier, clock);
 }
 
 public fun execute_pending_orders<BaseAsset, QuoteAsset>(
@@ -246,8 +249,11 @@ public fun execute_pending_orders<BaseAsset, QuoteAsset>(
     });
 
     // remove the executed orders
+    let manager_id = self.id();
     conditional_order_identifiers_to_remove.do!(|conditional_order_identifier| {
-        self.take_profit_stop_loss.condtional_order_executed(conditional_order_identifier, clock)
+        self
+            .take_profit_stop_loss
+            .remove_executed_conditional_order(manager_id, conditional_order_identifier, clock)
     });
 
     order_infos
@@ -261,8 +267,6 @@ fun place_pending_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): OrderInfo {
-    assert!(pending_order.pool_id() == pool.id());
-
     if (pending_order.is_limit_order()) {
         self.place_pending_limit_order<BaseAsset, QuoteAsset>(
             registry,

@@ -4,11 +4,15 @@
 /// Oracle module for margin trading.
 module deepbook_margin::oracle;
 
-use deepbook::{constants, math};
-use deepbook_margin::{margin_constants, margin_registry::MarginRegistry};
-use pyth::{price_info::PriceInfoObject, pyth};
-use std::{type_name::{Self, TypeName}, u128};
-use sui::{clock::Clock, coin::CoinMetadata, vec_map::{Self, VecMap}};
+use deepbook::math;
+use deepbook_margin::margin_constants;
+use deepbook_margin::margin_registry::MarginRegistry;
+use pyth::price_info::PriceInfoObject;
+use pyth::pyth;
+use std::type_name::{Self, TypeName};
+use sui::clock::Clock;
+use sui::coin::CoinMetadata;
+use sui::vec_map::{Self, VecMap};
 
 use fun get_config_for_type as MarginRegistry.get_config_for_type;
 
