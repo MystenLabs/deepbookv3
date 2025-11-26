@@ -58,7 +58,7 @@ fun setup_pool_liquidity<BaseAsset, QuoteAsset>(
         2 * constants::float_scaling(), // price: 2
         base_amount / 2, // quantity
         false, // is_bid
-        true, // pay_with_deep
+        false, // pay_with_deep = false
         constants::max_u64(),
         clock,
         scenario.ctx(),
@@ -74,7 +74,7 @@ fun setup_pool_liquidity<BaseAsset, QuoteAsset>(
         1 * constants::float_scaling(), // price: 1
         base_amount / 2, // quantity
         true, // is_bid
-        true, // pay_with_deep
+        false, // pay_with_deep = false
         constants::max_u64(),
         clock,
         scenario.ctx(),
@@ -311,7 +311,7 @@ fun test_tpsl_trigger_above_limit_order_executed() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared<Pool<USDT, USDC>>();
-    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let margin_registry = scenario.take_shared<MarginRegistry>();
 
     let order_infos = mm.execute_pending_orders<USDT, USDC>(
         &mut pool,
@@ -414,7 +414,7 @@ fun test_tpsl_trigger_below_market_order_executed() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared<Pool<USDT, USDC>>();
-    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let margin_registry = scenario.take_shared<MarginRegistry>();
 
     let order_infos = mm.execute_pending_orders<USDT, USDC>(
         &mut pool,
@@ -625,7 +625,7 @@ fun test_tpsl_trigger_below_limit_order_insufficient_balance() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared<Pool<USDT, USDC>>();
-    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let margin_registry = scenario.take_shared<MarginRegistry>();
 
     // Execute pending orders - should not place order due to insufficient balance
     let order_infos = mm.execute_pending_orders<USDT, USDC>(
@@ -734,7 +734,7 @@ fun test_tpsl_trigger_above_limit_order_insufficient_balance() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared<Pool<USDT, USDC>>();
-    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let margin_registry = scenario.take_shared<MarginRegistry>();
 
     let order_infos = mm.execute_pending_orders<USDT, USDC>(
         &mut pool,
@@ -836,7 +836,7 @@ fun test_tpsl_trigger_below_market_order_insufficient_balance() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared<Pool<USDT, USDC>>();
-    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let margin_registry = scenario.take_shared<MarginRegistry>();
 
     let order_infos = mm.execute_pending_orders<USDT, USDC>(
         &mut pool,
@@ -938,7 +938,7 @@ fun test_tpsl_trigger_above_market_order_insufficient_balance() {
 
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared<Pool<USDT, USDC>>();
-    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let margin_registry = scenario.take_shared<MarginRegistry>();
 
     let order_infos = mm.execute_pending_orders<USDT, USDC>(
         &mut pool,
