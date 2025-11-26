@@ -15,14 +15,16 @@ use deepbook::{
     },
     constants,
     math,
-    pool::Pool,
+    order_info::OrderInfo,
+    pool::{Pool, can_place_market_order},
     registry::Registry
 };
 use deepbook_margin::{
     margin_constants,
     margin_pool::MarginPool,
     margin_registry::MarginRegistry,
-    oracle::{calculate_target_currency, get_pyth_price}
+    oracle::{calculate_target_currency, get_pyth_price, calculate_price},
+    tpsl::{Self, TakeProfitStopLoss, PendingOrder, Condition}
 };
 use pyth::price_info::PriceInfoObject;
 use std::{string::String, type_name::{Self, TypeName}};
@@ -44,6 +46,8 @@ const EInvalidManagerForSharing: u64 = 11;
 const EInvalidDebtAsset: u64 = 12;
 const ERepayAmountTooLow: u64 = 13;
 const ERepaySharesTooLow: u64 = 14;
+const EIncorrectPool: u64 = 15;
+const EPoolNotEnabledForMarginTrading: u64 = 16;
 
 // === Structs ===
 /// Witness type for authorizing MarginManager to call protected features of the DeepBook
@@ -61,6 +65,7 @@ public struct MarginManager<phantom BaseAsset, phantom QuoteAsset> has key {
     trade_cap: TradeCap,
     borrowed_base_shares: u64,
     borrowed_quote_shares: u64,
+    take_profit_stop_loss: TakeProfitStopLoss,
     extra_fields: VecMap<String, u64>,
 }
 
@@ -141,6 +146,212 @@ public struct WithdrawCollateralEvent has copy, drop {
     quote_pyth_price: u64,
     quote_pyth_decimals: u8,
     timestamp: u64,
+}
+
+// === Functions - Take Profit Stop Loss ===
+
+public fun add_conditional_order<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    base_price_info_object: &PriceInfoObject,
+    quote_price_info_object: &PriceInfoObject,
+    registry: &MarginRegistry,
+    conditional_order_identifier: u64,
+    condition: Condition,
+    pending_order: PendingOrder,
+    clock: &Clock,
+) {
+    self
+        .take_profit_stop_loss
+        .add_conditional_order<BaseAsset, QuoteAsset>(
+            base_price_info_object,
+            quote_price_info_object,
+            registry,
+            conditional_order_identifier,
+            condition,
+            pending_order,
+            clock,
+        );
+}
+
+public fun cancel_conditional_order<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    conditional_order_identifier: u64,
+    clock: &Clock,
+) {
+    self.take_profit_stop_loss.cancel_conditional_order(conditional_order_identifier, clock);
+}
+
+public fun execute_pending_orders<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_price_info_object: &PriceInfoObject,
+    quote_price_info_object: &PriceInfoObject,
+    registry: &MarginRegistry,
+    clock: &Clock,
+    ctx: &TxContext,
+): vector<OrderInfo> {
+    let current_price = calculate_price<BaseAsset, QuoteAsset>(
+        registry,
+        base_price_info_object,
+        quote_price_info_object,
+        clock,
+    );
+    let valid_conditional_orders = self.take_profit_stop_loss.conditional_orders().filter!(|value| {
+        (value.condition().trigger_below_price() && current_price < value.condition().trigger_price()) ||
+        (!value.condition().trigger_below_price() && current_price > value.condition().trigger_price())
+    });
+
+    let mut order_infos = vector[];
+    let mut conditional_order_identifiers_to_remove = vector[];
+    valid_conditional_orders.do!(|conditional_order| {
+        let pending_order = conditional_order.pending_order();
+        let is_limit_order = pending_order.is_limit_order();
+        let can_place_order = if (is_limit_order) {
+            pool.can_place_limit_order(
+                self.balance_manager(),
+                pending_order.price().destroy_some(),
+                pending_order.quantity(),
+                pending_order.is_bid(),
+                pending_order.pay_with_deep(),
+            )
+        } else {
+            pool.can_place_market_order(
+                self.balance_manager(),
+                pending_order.quantity(),
+                pending_order.is_bid(),
+                pending_order.pay_with_deep(),
+                clock,
+            )
+        };
+
+        if (can_place_order) {
+            let order_info = self.place_pending_order<BaseAsset, QuoteAsset>(
+                registry,
+                pool,
+                &pending_order,
+                clock,
+                ctx,
+            );
+            order_infos.push_back(order_info);
+            conditional_order_identifiers_to_remove.push_back(conditional_order.conditional_order_identifier());
+        }
+    });
+
+    // remove the executed orders
+    conditional_order_identifiers_to_remove.do!(|conditional_order_identifier| {
+        self.take_profit_stop_loss.condtional_order_executed(conditional_order_identifier, clock)
+    });
+
+    order_infos
+}
+
+fun place_pending_order<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    pending_order: &PendingOrder,
+    clock: &Clock,
+    ctx: &TxContext,
+): OrderInfo {
+    assert!(pending_order.pool_id() == pool.id());
+
+    if (pending_order.is_limit_order()) {
+        self.place_pending_limit_order<BaseAsset, QuoteAsset>(
+            registry,
+            pool,
+            pending_order.client_order_id(),
+            pending_order.order_type().destroy_some(),
+            pending_order.self_matching_option(),
+            pending_order.price().destroy_some(),
+            pending_order.quantity(),
+            pending_order.is_bid(),
+            pending_order.pay_with_deep(),
+            pending_order.expire_timestamp().destroy_some(),
+            clock,
+            ctx,
+        )
+    } else {
+        self.place_market_order_conditional<BaseAsset, QuoteAsset>(
+            registry,
+            pool,
+            pending_order.client_order_id(),
+            pending_order.self_matching_option(),
+            pending_order.quantity(),
+            pending_order.is_bid(),
+            pending_order.pay_with_deep(),
+            clock,
+            ctx,
+        )
+    }
+}
+
+/// Only used for tpsl pending orders.
+fun place_pending_limit_order<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    client_order_id: u64,
+    order_type: u8,
+    self_matching_option: u8,
+    price: u64,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    expire_timestamp: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+): OrderInfo {
+    assert!(self.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
+    let trade_proof = self.trade_proof(ctx);
+    let balance_manager = self.balance_manager_unsafe_mut();
+    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
+
+    pool.place_limit_order(
+        balance_manager,
+        &trade_proof,
+        client_order_id,
+        order_type,
+        self_matching_option,
+        price,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp,
+        clock,
+        ctx,
+    )
+}
+
+/// Places a market order in the pool.
+/// Only used for tpsl pending orders.
+fun place_market_order_conditional<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    client_order_id: u64,
+    self_matching_option: u8,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    clock: &Clock,
+    ctx: &TxContext,
+): OrderInfo {
+    assert!(self.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
+    let trade_proof = self.trade_proof(ctx);
+    let balance_manager = self.balance_manager_unsafe_mut();
+    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
+
+    pool.place_market_order(
+        balance_manager,
+        &trade_proof,
+        client_order_id,
+        self_matching_option,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        clock,
+        ctx,
+    )
 }
 
 // === Public Functions - Margin Manager ===
@@ -882,6 +1093,12 @@ public(package) fun balance_manager_trading_mut<BaseAsset, QuoteAsset>(
     &mut self.balance_manager
 }
 
+public(package) fun balance_manager_unsafe_mut<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+): &mut BalanceManager {
+    &mut self.balance_manager
+}
+
 /// Withdraws settled amounts from the pool permissionlessly.
 /// Anyone can call this via the pool_proxy to settle balances.
 public(package) fun withdraw_settled_amounts_permissionless_int<BaseAsset, QuoteAsset>(
@@ -999,6 +1216,7 @@ fun new_margin_manager<BaseAsset, QuoteAsset>(
         trade_cap,
         borrowed_base_shares: 0,
         borrowed_quote_shares: 0,
+        take_profit_stop_loss: tpsl::new(),
         extra_fields: vec_map::empty(),
     }
 }
