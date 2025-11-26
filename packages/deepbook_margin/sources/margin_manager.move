@@ -162,7 +162,6 @@ public struct WithdrawCollateralEvent has copy, drop {
 
 // === Functions - Take Profit Stop Loss ===
 
-/// TODO: Execute one pending order per move call
 public fun execute_pending_orders<BaseAsset, QuoteAsset>(
     self: &mut TakeProfitStopLoss,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -217,7 +216,7 @@ public fun execute_pending_orders<BaseAsset, QuoteAsset>(
 
     // remove the pending orders
     conditional_order_identifiers_to_remove.do!(|conditional_order_identifier| {
-        self.remove_conditional_order(conditional_order_identifier);
+        self.condtional_order_executed(conditional_order_identifier, clock)
     });
 
     order_infos
@@ -244,21 +243,6 @@ public fun current_price<BaseAsset, QuoteAsset>(
 
     math::div(base_usd_price, quote_usd_price)
 }
-
-// public fun can_place_limit_order<BaseAsset, QuoteAsset>(
-//     self: &MarginManager<BaseAsset, QuoteAsset>,
-//     pending_order: PendingOrder,
-// ): bool {
-//     let base_asset = self.base_balance();
-//     let quote_asset = self.quote_balance();
-//     let is_bid = pending_order.is_bid();
-
-//     if (is_bid) {
-//         base_asset >= pending_order.quantity()
-//     } else {
-//         quote_asset >= pending_order.quantity()
-//     }
-// }
 
 fun place_pending_order<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,

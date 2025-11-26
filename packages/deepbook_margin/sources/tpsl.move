@@ -3,12 +3,12 @@
 
 module deepbook_margin::tpsl;
 
-use deepbook::math;
 use deepbook_margin::margin_constants;
 use deepbook_margin::margin_registry::MarginRegistry;
 use pyth::price_info::PriceInfoObject;
 use sui::clock::Clock;
-use sui::vec_map::{Self, VecMap};
+use sui::event;
+use sui::vec_map::VecMap;
 
 // === Errors ===
 const EInvalidCondition: u64 = 1;
@@ -44,8 +44,27 @@ public struct PendingOrder has copy, drop, store {
     expire_timestamp: Option<u64>,
 }
 
+// === Events ===
+public struct ConditionalOrderAdded has copy, drop {
+    conditional_order_identifier: u64,
+    conditional_order: ConditionalOrder,
+    timestamp: u64,
+}
+
+public struct ConditionalOrderCancelled has copy, drop {
+    conditional_order_identifier: u64,
+    conditional_order: ConditionalOrder,
+    timestamp: u64,
+}
+
+public struct ConditionalOrderExecuted has copy, drop {
+    conditional_order_identifier: u64,
+    conditional_order: ConditionalOrder,
+    timestamp: u64,
+}
+
 // === Public Functions ===
-public fun add_conditional_order(
+public(package) fun add_conditional_order(
     self: &mut TakeProfitStopLoss,
     base_price_info_object: &PriceInfoObject,
     quote_price_info_object: &PriceInfoObject,
@@ -82,6 +101,12 @@ public fun add_conditional_order(
         EMaxConditionalOrdersReached,
     );
     self.conditional_orders.push_back(conditional_order);
+
+    event::emit(ConditionalOrderAdded {
+        conditional_order_identifier,
+        conditional_order,
+        timestamp: clock.timestamp_ms(),
+    });
 }
 
 public fun new_condition(trigger_below_price: bool, trigger_price: u64): Condition {
@@ -141,8 +166,9 @@ public fun new_pending_market_order(
 public fun cancel_conditional_order(
     self: &mut TakeProfitStopLoss,
     conditional_order_identifier: u64,
+    clock: &Clock,
 ) {
-    self.remove_conditional_order(conditional_order_identifier, true);
+    self.remove_conditional_order(conditional_order_identifier, true, clock);
 }
 
 public fun new(): TakeProfitStopLoss {
@@ -227,22 +253,41 @@ public fun is_limit_order(pending_order: &PendingOrder): bool {
     pending_order.is_limit_order
 }
 
+// === public(package) functions ===
 public(package) fun condtional_order_executed(
     self: &mut TakeProfitStopLoss,
     conditional_order_identifier: u64,
+    clock: &Clock,
 ) {
-    self.remove_conditional_order(conditional_order_identifier, false);
+    self.remove_conditional_order(conditional_order_identifier, false, clock);
 }
 
 public(package) fun remove_conditional_order(
     self: &mut TakeProfitStopLoss,
     conditional_order_identifier: u64,
     is_cancel: bool,
+    clock: &Clock,
 ) {
     let index = self.conditional_orders.find_index!(|conditional_order| {
         conditional_order.conditional_order_identifier == conditional_order_identifier
     });
     assert!(index.is_some(), EConditionalOrderNotFound);
-    self.conditional_orders.remove(index.destroy_some());
-    // emit event
+    let conditional_order_index = index.destroy_some();
+    let conditional_order = self.conditional_orders[conditional_order_index];
+
+    if (is_cancel) {
+        event::emit(ConditionalOrderCancelled {
+            conditional_order_identifier,
+            conditional_order,
+            timestamp: clock.timestamp_ms(),
+        });
+    } else {
+        event::emit(ConditionalOrderExecuted {
+            conditional_order_identifier,
+            conditional_order,
+            timestamp: clock.timestamp_ms(),
+        });
+    };
+
+    self.conditional_orders.remove(conditional_order_index);
 }
