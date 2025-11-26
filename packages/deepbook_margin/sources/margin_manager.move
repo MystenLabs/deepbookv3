@@ -21,7 +21,7 @@ use deepbook_margin::margin_constants;
 use deepbook_margin::margin_pool::MarginPool;
 use deepbook_margin::margin_registry::MarginRegistry;
 use deepbook_margin::oracle::{calculate_target_currency, get_pyth_price, calculate_price};
-use deepbook_margin::tpsl::{Self, TakeProfitStopLoss, PendingOrder, Condition};
+use deepbook_margin::tpsl::{Self, TakeProfitStopLoss, PendingOrder, Condition, ConditionalOrder};
 use pyth::price_info::PriceInfoObject;
 use std::string::String;
 use std::type_name::{Self, TypeName};
@@ -1079,6 +1079,18 @@ public fun borrowed_quote_shares<BaseAsset, QuoteAsset>(
 
 public fun has_base_debt<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): bool {
     self.borrowed_base_shares > 0
+}
+
+public fun take_profit_stop_loss<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+): &TakeProfitStopLoss {
+    &self.take_profit_stop_loss
+}
+
+public fun conditional_orders<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+): vector<ConditionalOrder> {
+    self.take_profit_stop_loss.conditional_orders()
 }
 
 // === Public-Package Functions ===
