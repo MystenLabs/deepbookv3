@@ -62,7 +62,7 @@ public fun new_margin_pool_config(
     assert!(protocol_spread <= margin_constants::max_protocol_spread(), EInvalidRiskParam);
 
     let default_capacity = supply_cap / 10; // 10% of supply cap
-    let default_window_ms = 86_400_000u64; // 24 hours
+    let default_window_ms = margin_constants::day_ms();
     let default_refill_rate = default_capacity / default_window_ms;
 
     MarginPoolConfig {

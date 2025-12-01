@@ -5,6 +5,7 @@
 /// Reference: https://github.com/code-423n4/2024-11-chainlink/blob/main/contracts/src/ccip/libraries/RateLimiter.sol
 module deepbook_margin::rate_limiter;
 
+use std::u128::min;
 use sui::clock::Clock;
 
 public struct RateLimiter has store {
@@ -17,11 +18,7 @@ public struct RateLimiter has store {
 
 // === Public-Package Functions ===
 
-public(package) fun new(
-    capacity: u64,
-    refill_rate_per_ms: u64,
-    enabled: bool,
-): RateLimiter {
+public(package) fun new(capacity: u64, refill_rate_per_ms: u64, enabled: bool): RateLimiter {
     RateLimiter {
         available: capacity,
         last_updated_ms: 0,
@@ -57,16 +54,10 @@ public(package) fun get_available_withdrawal(self: &RateLimiter, clock: &Clock):
     } else {
         0
     };
-
     let refill_amount = (elapsed as u128) * (self.refill_rate_per_ms as u128);
     let new_available = (self.available as u128) + refill_amount;
-    let capped = if (new_available > (self.capacity as u128)) {
-        self.capacity
-    } else {
-        (new_available as u64)
-    };
 
-    capped
+    min(new_available, self.capacity as u128) as u64
 }
 
 public(package) fun update_config(
@@ -110,11 +101,7 @@ fun refill(self: &mut RateLimiter, clock: &Clock) {
     if (elapsed > 0) {
         let refill_amount = (elapsed as u128) * (self.refill_rate_per_ms as u128);
         let new_available = (self.available as u128) + refill_amount;
-        self.available = if (new_available > (self.capacity as u128)) {
-            self.capacity
-        } else {
-            (new_available as u64)
-        };
+        self.available = min(new_available, self.capacity as u128) as u64;
         self.last_updated_ms = current_time;
     }
 }

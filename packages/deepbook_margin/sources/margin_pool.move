@@ -646,8 +646,6 @@ public(package) fun borrow_shares_to_amount<Asset>(
     self.state.borrow_shares_to_amount(shares, &self.config, clock)
 }
 
-// === Public View Functions (Rate Limiter) ===
-
 /// Returns the maximum amount that can be withdrawn without hitting rate limits
 public fun get_available_withdrawal<Asset>(self: &MarginPool<Asset>, clock: &Clock): u64 {
     self.rate_limiter.get_available_withdrawal(clock)
