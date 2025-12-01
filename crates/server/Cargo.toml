@@ -15,6 +15,7 @@ diesel = { workspace = true, features = ["postgres", "uuid", "chrono", "serde_js
 diesel-async = { workspace = true, features = ["bb8", "postgres"] }
 bcs.workspace = true
 anyhow.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 url.workspace = true
 prometheus.workspace = true
