@@ -8,7 +8,7 @@ use deepbook_margin::{
     margin_registry::{MarginRegistry, MaintainerCap, MarginAdminCap, MarginPoolCap},
     margin_state::{Self, State},
     position_manager::{Self, PositionManager},
-    protocol_config::{Self, InterestConfig, MarginPoolConfig, ProtocolConfig},
+    protocol_config::{InterestConfig, MarginPoolConfig, ProtocolConfig},
     protocol_fees::{Self, ProtocolFees, SupplyReferral},
     rate_limiter::{Self, RateLimiter}
 };
@@ -149,6 +149,7 @@ public fun create_margin_pool<Asset>(
             config.rate_limit_capacity(),
             config.rate_limit_refill_rate_per_ms(),
             config.rate_limit_enabled(),
+            clock,
         ),
         extra_fields: vec_map::empty(),
     };
@@ -250,9 +251,9 @@ public fun update_margin_pool_config<Asset>(
     self
         .rate_limiter
         .update_config(
-            protocol_config::rate_limit_capacity_from_config(&margin_pool_config),
-            protocol_config::rate_limit_refill_rate_per_ms_from_config(&margin_pool_config),
-            protocol_config::rate_limit_enabled_from_config(&margin_pool_config),
+            margin_pool_config.rate_limit_capacity_from_config(),
+            margin_pool_config.rate_limit_refill_rate_per_ms_from_config(),
+            margin_pool_config.rate_limit_enabled_from_config(),
         );
 
     event::emit(MarginPoolConfigUpdated {

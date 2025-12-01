@@ -18,10 +18,15 @@ public struct RateLimiter has store {
 
 // === Public-Package Functions ===
 
-public(package) fun new(capacity: u64, refill_rate_per_ms: u64, enabled: bool): RateLimiter {
+public(package) fun new(
+    capacity: u64,
+    refill_rate_per_ms: u64,
+    enabled: bool,
+    clock: &Clock,
+): RateLimiter {
     RateLimiter {
         available: capacity,
-        last_updated_ms: 0,
+        last_updated_ms: clock.timestamp_ms(),
         capacity,
         refill_rate_per_ms,
         enabled,

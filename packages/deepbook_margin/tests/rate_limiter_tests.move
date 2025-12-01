@@ -18,7 +18,9 @@ const RATE: u64 = 100_000_000;
 
 #[test]
 fun constructor_works() {
-    let limiter = rate_limiter::new(CAPACITY, RATE, true);
+    let ctx = &mut tx_context::dummy();
+    let clock = clock::create_for_testing(ctx);
+    let limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
 
     assert!(limiter.available() == CAPACITY);
     assert!(limiter.capacity() == CAPACITY);
@@ -26,24 +28,28 @@ fun constructor_works() {
     assert!(limiter.is_enabled() == true);
     assert!(limiter.last_updated_ms() == 0);
 
+    clock.destroy_for_testing();
     destroy(limiter);
 }
 
 #[test]
 fun constructor_disabled() {
-    let limiter = rate_limiter::new(CAPACITY, RATE, false);
+    let ctx = &mut tx_context::dummy();
+    let clock = clock::create_for_testing(ctx);
+    let limiter = rate_limiter::new(CAPACITY, RATE, false, &clock);
 
     assert!(limiter.is_enabled() == false);
     assert!(limiter.available() == CAPACITY);
 
+    clock.destroy_for_testing();
     destroy(limiter);
 }
 
 #[test]
 fun get_available_withdrawal_returns_capacity_initially() {
-    let limiter = rate_limiter::new(CAPACITY, RATE, true);
     let ctx = &mut tx_context::dummy();
     let clock = clock::create_for_testing(ctx);
+    let limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
 
     let available = limiter.get_available_withdrawal(&clock);
     assert!(available == CAPACITY);
@@ -54,11 +60,11 @@ fun get_available_withdrawal_returns_capacity_initially() {
 
 #[test]
 fun refill_works() {
-    let mut limiter = rate_limiter::new(CAPACITY, RATE, true);
     let ctx = &mut tx_context::dummy();
     let mut clock = clock::create_for_testing(ctx);
-
     clock::set_for_testing(&mut clock, 1000);
+    let mut limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
+
     let success = limiter.check_and_record_withdrawal(CAPACITY, &clock);
     assert!(success == true);
     assert!(limiter.available() == 0);
@@ -77,11 +83,11 @@ fun refill_works() {
 
 #[test]
 fun refill_caps_at_capacity() {
-    let mut limiter = rate_limiter::new(CAPACITY, RATE, true);
     let ctx = &mut tx_context::dummy();
     let mut clock = clock::create_for_testing(ctx);
-
     clock::set_for_testing(&mut clock, 1000);
+    let mut limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
+
     let success = limiter.check_and_record_withdrawal(CAPACITY / 2, &clock);
     assert!(success == true);
     assert!(limiter.available() == CAPACITY / 2);
@@ -96,10 +102,10 @@ fun refill_caps_at_capacity() {
 
 #[test]
 fun consume_works() {
-    let mut limiter = rate_limiter::new(CAPACITY, RATE, true);
     let ctx = &mut tx_context::dummy();
     let mut clock = clock::create_for_testing(ctx);
     clock::set_for_testing(&mut clock, 1000);
+    let mut limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
 
     let consume_amount = CAPACITY / 4;
     let success = limiter.check_and_record_withdrawal(consume_amount, &clock);
@@ -112,10 +118,10 @@ fun consume_works() {
 
 #[test]
 fun consume_exact_capacity() {
-    let mut limiter = rate_limiter::new(CAPACITY, RATE, true);
     let ctx = &mut tx_context::dummy();
     let mut clock = clock::create_for_testing(ctx);
     clock::set_for_testing(&mut clock, 1000);
+    let mut limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
 
     let success = limiter.check_and_record_withdrawal(CAPACITY, &clock);
     assert!(success == true);
@@ -127,10 +133,10 @@ fun consume_exact_capacity() {
 
 #[test]
 fun consume_fails_when_exceeds_available() {
-    let mut limiter = rate_limiter::new(CAPACITY, RATE, true);
     let ctx = &mut tx_context::dummy();
     let mut clock = clock::create_for_testing(ctx);
     clock::set_for_testing(&mut clock, 1000);
+    let mut limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
 
     let success = limiter.check_and_record_withdrawal(CAPACITY + 1, &clock);
     assert!(success == false);
@@ -142,10 +148,10 @@ fun consume_fails_when_exceeds_available() {
 
 #[test]
 fun consume_fails_when_exceeds_capacity() {
-    let mut limiter = rate_limiter::new(CAPACITY, RATE, true);
     let ctx = &mut tx_context::dummy();
     let mut clock = clock::create_for_testing(ctx);
     clock::set_for_testing(&mut clock, 1000);
+    let mut limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
 
     let success = limiter.check_and_record_withdrawal(CAPACITY * 2, &clock);
     assert!(success == false);
@@ -156,10 +162,10 @@ fun consume_fails_when_exceeds_capacity() {
 
 #[test]
 fun multiple_consumptions_with_refill() {
-    let mut limiter = rate_limiter::new(CAPACITY, RATE, true);
     let ctx = &mut tx_context::dummy();
     let mut clock = clock::create_for_testing(ctx);
     clock::set_for_testing(&mut clock, 1000);
+    let mut limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
 
     let success1 = limiter.check_and_record_withdrawal(CAPACITY / 2, &clock);
     assert!(success1 == true);
@@ -179,10 +185,10 @@ fun multiple_consumptions_with_refill() {
 
 #[test]
 fun consume_then_wait_then_consume_again() {
-    let mut limiter = rate_limiter::new(CAPACITY, RATE, true);
     let ctx = &mut tx_context::dummy();
     let mut clock = clock::create_for_testing(ctx);
     clock::set_for_testing(&mut clock, 1000);
+    let mut limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
 
     let success1 = limiter.check_and_record_withdrawal(CAPACITY, &clock);
     assert!(success1 == true);
@@ -202,10 +208,10 @@ fun consume_then_wait_then_consume_again() {
 
 #[test]
 fun disabled_allows_any_amount() {
-    let mut limiter = rate_limiter::new(CAPACITY, RATE, false);
     let ctx = &mut tx_context::dummy();
     let mut clock = clock::create_for_testing(ctx);
     clock::set_for_testing(&mut clock, 1000);
+    let mut limiter = rate_limiter::new(CAPACITY, RATE, false, &clock);
 
     let success = limiter.check_and_record_withdrawal(CAPACITY * 10, &clock);
     assert!(success == true);
@@ -218,7 +224,9 @@ fun disabled_allows_any_amount() {
 
 #[test]
 fun update_config_increases_capacity() {
-    let mut limiter = rate_limiter::new(CAPACITY, RATE, true);
+    let ctx = &mut tx_context::dummy();
+    let clock = clock::create_for_testing(ctx);
+    let mut limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
 
     let new_capacity = CAPACITY * 2;
     limiter.update_config(new_capacity, RATE, true);
@@ -226,12 +234,15 @@ fun update_config_increases_capacity() {
     assert!(limiter.capacity() == new_capacity);
     assert!(limiter.available() == CAPACITY);
 
+    clock.destroy_for_testing();
     destroy(limiter);
 }
 
 #[test]
 fun update_config_decreases_capacity_caps_available() {
-    let mut limiter = rate_limiter::new(CAPACITY, RATE, true);
+    let ctx = &mut tx_context::dummy();
+    let clock = clock::create_for_testing(ctx);
+    let mut limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
 
     let new_capacity = CAPACITY / 2;
     limiter.update_config(new_capacity, RATE, true);
@@ -239,15 +250,16 @@ fun update_config_decreases_capacity_caps_available() {
     assert!(limiter.capacity() == new_capacity);
     assert!(limiter.available() == new_capacity);
 
+    clock.destroy_for_testing();
     destroy(limiter);
 }
 
 #[test]
 fun update_config_changes_rate() {
-    let mut limiter = rate_limiter::new(CAPACITY, RATE, true);
     let ctx = &mut tx_context::dummy();
     let mut clock = clock::create_for_testing(ctx);
     clock::set_for_testing(&mut clock, 1000);
+    let mut limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
 
     limiter.check_and_record_withdrawal(CAPACITY, &clock);
     assert!(limiter.available() == 0);
@@ -265,32 +277,38 @@ fun update_config_changes_rate() {
 
 #[test]
 fun update_config_enables() {
-    let mut limiter = rate_limiter::new(CAPACITY, RATE, false);
+    let ctx = &mut tx_context::dummy();
+    let clock = clock::create_for_testing(ctx);
+    let mut limiter = rate_limiter::new(CAPACITY, RATE, false, &clock);
     assert!(limiter.is_enabled() == false);
 
     limiter.update_config(CAPACITY, RATE, true);
     assert!(limiter.is_enabled() == true);
 
+    clock.destroy_for_testing();
     destroy(limiter);
 }
 
 #[test]
 fun update_config_disables() {
-    let mut limiter = rate_limiter::new(CAPACITY, RATE, true);
+    let ctx = &mut tx_context::dummy();
+    let clock = clock::create_for_testing(ctx);
+    let mut limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
     assert!(limiter.is_enabled() == true);
 
     limiter.update_config(CAPACITY, RATE, false);
     assert!(limiter.is_enabled() == false);
 
+    clock.destroy_for_testing();
     destroy(limiter);
 }
 
 #[test]
 fun zero_consumption_succeeds() {
-    let mut limiter = rate_limiter::new(CAPACITY, RATE, true);
     let ctx = &mut tx_context::dummy();
     let mut clock = clock::create_for_testing(ctx);
     clock::set_for_testing(&mut clock, 1000);
+    let mut limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
 
     let success = limiter.check_and_record_withdrawal(0, &clock);
     assert!(success == true);
@@ -302,9 +320,9 @@ fun zero_consumption_succeeds() {
 
 #[test]
 fun timestamp_at_zero_works() {
-    let limiter = rate_limiter::new(CAPACITY, RATE, true);
     let ctx = &mut tx_context::dummy();
     let clock = clock::create_for_testing(ctx);
+    let limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
 
     let available = limiter.get_available_withdrawal(&clock);
     assert!(available == CAPACITY);
@@ -318,10 +336,10 @@ fun partial_refill_precision() {
     let capacity: u64 = 1_000_000;
     let rate: u64 = 100;
 
-    let mut limiter = rate_limiter::new(capacity, rate, true);
     let ctx = &mut tx_context::dummy();
     let mut clock = clock::create_for_testing(ctx);
     clock::set_for_testing(&mut clock, 1000);
+    let mut limiter = rate_limiter::new(capacity, rate, true, &clock);
 
     limiter.check_and_record_withdrawal(capacity, &clock);
 
@@ -342,10 +360,10 @@ fun large_values_no_overflow() {
     let capacity: u64 = 18_446_744_073_709_551_615;
     let rate: u64 = 1_000_000_000_000;
 
-    let mut limiter = rate_limiter::new(capacity, rate, true);
     let ctx = &mut tx_context::dummy();
     let mut clock = clock::create_for_testing(ctx);
     clock::set_for_testing(&mut clock, 1000);
+    let mut limiter = rate_limiter::new(capacity, rate, true, &clock);
 
     let success = limiter.check_and_record_withdrawal(capacity, &clock);
     assert!(success == true);
@@ -360,10 +378,10 @@ fun large_values_no_overflow() {
 
 #[test]
 fun same_timestamp_no_double_refill() {
-    let mut limiter = rate_limiter::new(CAPACITY, RATE, true);
     let ctx = &mut tx_context::dummy();
     let mut clock = clock::create_for_testing(ctx);
     clock::set_for_testing(&mut clock, 1000);
+    let mut limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
 
     limiter.check_and_record_withdrawal(CAPACITY / 2, &clock);
     let after_first = limiter.available();
@@ -379,9 +397,9 @@ fun same_timestamp_no_double_refill() {
 
 #[test]
 fun last_updated_changes_on_consumption() {
-    let mut limiter = rate_limiter::new(CAPACITY, RATE, true);
     let ctx = &mut tx_context::dummy();
     let mut clock = clock::create_for_testing(ctx);
+    let mut limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
 
     assert!(limiter.last_updated_ms() == 0);
 
@@ -396,10 +414,10 @@ fun last_updated_changes_on_consumption() {
 
 #[test]
 fun wait_time_for_refill() {
-    let mut limiter = rate_limiter::new(CAPACITY, RATE, true);
     let ctx = &mut tx_context::dummy();
     let mut clock = clock::create_for_testing(ctx);
     clock::set_for_testing(&mut clock, 1000);
+    let mut limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
 
     limiter.check_and_record_withdrawal(CAPACITY, &clock);
     assert!(limiter.available() == 0);
@@ -419,10 +437,10 @@ fun wait_time_for_refill() {
 
 #[test]
 fun consume_after_partial_refill() {
-    let mut limiter = rate_limiter::new(CAPACITY, RATE, true);
     let ctx = &mut tx_context::dummy();
     let mut clock = clock::create_for_testing(ctx);
     clock::set_for_testing(&mut clock, 1000);
+    let mut limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
 
     limiter.check_and_record_withdrawal(CAPACITY, &clock);
 
@@ -441,10 +459,10 @@ fun consume_after_partial_refill() {
 
 #[test]
 fun burst_then_steady_consumption() {
-    let mut limiter = rate_limiter::new(CAPACITY, RATE, true);
     let ctx = &mut tx_context::dummy();
     let mut clock = clock::create_for_testing(ctx);
     clock::set_for_testing(&mut clock, 1000);
+    let mut limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
 
     let success1 = limiter.check_and_record_withdrawal(CAPACITY, &clock);
     assert!(success1 == true);
