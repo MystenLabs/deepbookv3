@@ -7141,6 +7141,7 @@ fun test_can_place_limit_order_bid_with_deep_sufficient() {
     {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
+        let clock = clock::create_for_testing(test.ctx());
 
         // Test: bid for 10 SUI at price 2 with pay_with_deep = true
         // Required quote = 10 * 2 = 20 USDC + DEEP fees
@@ -7150,9 +7151,12 @@ fun test_can_place_limit_order_bid_with_deep_sufficient() {
             10 * constants::float_scaling(), // quantity: 10 SUI
             true, // is_bid
             true, // pay_with_deep
+            constants::max_u64(), // expire_timestamp
+            &clock,
         );
         assert!(can_place);
 
+        clock.destroy_for_testing();
         return_shared(pool);
         return_shared(balance_manager);
     };
@@ -7197,6 +7201,7 @@ fun test_can_place_limit_order_bid_insufficient_quote() {
     {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
+        let clock = clock::create_for_testing(test.ctx());
 
         // Test: try to bid for 10 SUI at price 2 but only have 10 USDC (need 20)
         let can_place = pool.can_place_limit_order<SUI, USDC>(
@@ -7205,9 +7210,12 @@ fun test_can_place_limit_order_bid_insufficient_quote() {
             10 * constants::float_scaling(), // quantity: 10 SUI
             true, // is_bid
             true, // pay_with_deep
+            constants::max_u64(), // expire_timestamp
+            &clock,
         );
         assert!(!can_place);
 
+        clock.destroy_for_testing();
         return_shared(pool);
         return_shared(balance_manager);
     };
@@ -7254,6 +7262,7 @@ fun test_can_place_limit_order_bid_insufficient_deep() {
     {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
+        let clock = clock::create_for_testing(test.ctx());
 
         // Test: try to bid for 10 SUI with pay_with_deep but no DEEP
         let can_place = pool.can_place_limit_order<SUI, USDC>(
@@ -7262,9 +7271,12 @@ fun test_can_place_limit_order_bid_insufficient_deep() {
             10 * constants::float_scaling(), // quantity: 10 SUI
             true, // is_bid
             true, // pay_with_deep
+            constants::max_u64(), // expire_timestamp
+            &clock,
         );
         assert!(!can_place);
 
+        clock.destroy_for_testing();
         return_shared(pool);
         return_shared(balance_manager);
     };
@@ -7295,6 +7307,7 @@ fun test_can_place_limit_order_ask_with_deep_sufficient() {
     {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
+        let clock = clock::create_for_testing(test.ctx());
 
         // Test: ask (sell) 10 SUI at price 2 with pay_with_deep = true
         let can_place = pool.can_place_limit_order<SUI, USDC>(
@@ -7303,9 +7316,12 @@ fun test_can_place_limit_order_ask_with_deep_sufficient() {
             10 * constants::float_scaling(), // quantity: 10 SUI
             false, // is_bid = false (ask/sell)
             true, // pay_with_deep
+            constants::max_u64(), // expire_timestamp
+            &clock,
         );
         assert!(can_place);
 
+        clock.destroy_for_testing();
         return_shared(pool);
         return_shared(balance_manager);
     };
@@ -7350,6 +7366,7 @@ fun test_can_place_limit_order_ask_insufficient_base() {
     {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
+        let clock = clock::create_for_testing(test.ctx());
 
         // Test: try to ask (sell) 10 SUI but only have 5 SUI
         let can_place = pool.can_place_limit_order<SUI, USDC>(
@@ -7358,9 +7375,12 @@ fun test_can_place_limit_order_ask_insufficient_base() {
             10 * constants::float_scaling(), // quantity: 10 SUI
             false, // is_bid = false (ask/sell)
             true, // pay_with_deep
+            constants::max_u64(), // expire_timestamp
+            &clock,
         );
         assert!(!can_place);
 
+        clock.destroy_for_testing();
         return_shared(pool);
         return_shared(balance_manager);
     };
@@ -7407,6 +7427,7 @@ fun test_can_place_limit_order_ask_insufficient_deep() {
     {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
+        let clock = clock::create_for_testing(test.ctx());
 
         // Test: try to ask (sell) 10 SUI with pay_with_deep but no DEEP
         let can_place = pool.can_place_limit_order<SUI, USDC>(
@@ -7415,9 +7436,12 @@ fun test_can_place_limit_order_ask_insufficient_deep() {
             10 * constants::float_scaling(), // quantity: 10 SUI
             false, // is_bid = false (ask/sell)
             true, // pay_with_deep
+            constants::max_u64(), // expire_timestamp
+            &clock,
         );
         assert!(!can_place);
 
+        clock.destroy_for_testing();
         return_shared(pool);
         return_shared(balance_manager);
     };
@@ -7449,6 +7473,7 @@ fun test_can_place_limit_order_bid_input_fee_sufficient() {
     {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
+        let clock = clock::create_for_testing(test.ctx());
 
         // Test: bid for 10 SUI at price 2 with pay_with_deep = false (pay fees in USDC)
         let can_place = pool.can_place_limit_order<SUI, USDC>(
@@ -7457,9 +7482,12 @@ fun test_can_place_limit_order_bid_input_fee_sufficient() {
             10 * constants::float_scaling(), // quantity: 10 SUI
             true, // is_bid
             false, // pay_with_deep = false (fees in quote)
+            constants::max_u64(), // expire_timestamp
+            &clock,
         );
         assert!(can_place);
 
+        clock.destroy_for_testing();
         return_shared(pool);
         return_shared(balance_manager);
     };
@@ -7491,6 +7519,7 @@ fun test_can_place_limit_order_ask_input_fee_sufficient() {
     {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
+        let clock = clock::create_for_testing(test.ctx());
 
         // Test: ask (sell) 10 SUI at price 2 with pay_with_deep = false (pay fees in SUI)
         let can_place = pool.can_place_limit_order<SUI, USDC>(
@@ -7499,9 +7528,12 @@ fun test_can_place_limit_order_ask_input_fee_sufficient() {
             10 * constants::float_scaling(), // quantity: 10 SUI
             false, // is_bid = false (ask/sell)
             false, // pay_with_deep = false (fees in base)
+            constants::max_u64(), // expire_timestamp
+            &clock,
         );
         assert!(can_place);
 
+        clock.destroy_for_testing();
         return_shared(pool);
         return_shared(balance_manager);
     };
@@ -7542,6 +7574,7 @@ fun test_can_place_limit_order_ask_input_fee_insufficient() {
     {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
+        let clock = clock::create_for_testing(test.ctx());
 
         // Test: try to ask (sell) 10 SUI with pay_with_deep = false
         // Should fail because we need 10 SUI + fees, but only have 9 SUI
@@ -7551,9 +7584,12 @@ fun test_can_place_limit_order_ask_input_fee_insufficient() {
             10 * constants::float_scaling(), // quantity: 10 SUI
             false, // is_bid = false (ask/sell)
             false, // pay_with_deep = false (fees in base)
+            constants::max_u64(), // expire_timestamp
+            &clock,
         );
         assert!(!can_place);
 
+        clock.destroy_for_testing();
         return_shared(pool);
         return_shared(balance_manager);
     };
@@ -7584,6 +7620,7 @@ fun test_can_place_limit_order_zero_quantity() {
     {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
+        let clock = clock::create_for_testing(test.ctx());
 
         // Test: zero quantity should return true (no balance needed)
         let can_place = pool.can_place_limit_order<SUI, USDC>(
@@ -7592,9 +7629,12 @@ fun test_can_place_limit_order_zero_quantity() {
             0, // quantity: 0
             true, // is_bid
             true, // pay_with_deep
+            constants::max_u64(), // expire_timestamp
+            &clock,
         );
         assert!(can_place);
 
+        clock.destroy_for_testing();
         return_shared(pool);
         return_shared(balance_manager);
     };
@@ -7640,6 +7680,7 @@ fun test_can_place_limit_order_bid_exact_balance() {
     {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
+        let clock = clock::create_for_testing(test.ctx());
 
         // Test: bid for exactly 10 SUI at price 2 with exactly 20 USDC
         let can_place = pool.can_place_limit_order<SUI, USDC>(
@@ -7648,6 +7689,8 @@ fun test_can_place_limit_order_bid_exact_balance() {
             10 * constants::float_scaling(), // quantity: 10 SUI
             true, // is_bid
             true, // pay_with_deep
+            constants::max_u64(), // expire_timestamp
+            &clock,
         );
         assert!(can_place);
 
@@ -7658,9 +7701,12 @@ fun test_can_place_limit_order_bid_exact_balance() {
             11 * constants::float_scaling(), // quantity: 11 SUI
             true, // is_bid
             true, // pay_with_deep
+            constants::max_u64(), // expire_timestamp
+            &clock,
         );
         assert!(!can_place_more);
 
+        clock.destroy_for_testing();
         return_shared(pool);
         return_shared(balance_manager);
     };
@@ -7704,6 +7750,7 @@ fun test_can_place_limit_order_price_variations() {
     {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
+        let clock = clock::create_for_testing(test.ctx());
 
         // Test: bid for 10 SUI at price 5 (need 50 USDC, have 100)
         let can_place_low_price = pool.can_place_limit_order<SUI, USDC>(
@@ -7712,6 +7759,8 @@ fun test_can_place_limit_order_price_variations() {
             10 * constants::float_scaling(), // quantity: 10 SUI
             true, // is_bid
             true, // pay_with_deep
+            constants::max_u64(), // expire_timestamp
+            &clock,
         );
         assert!(can_place_low_price);
 
@@ -7722,9 +7771,12 @@ fun test_can_place_limit_order_price_variations() {
             10 * constants::float_scaling(), // quantity: 10 SUI
             true, // is_bid
             true, // pay_with_deep
+            constants::max_u64(), // expire_timestamp
+            &clock,
         );
         assert!(!can_place_high_price);
 
+        clock.destroy_for_testing();
         return_shared(pool);
         return_shared(balance_manager);
     };
@@ -7801,6 +7853,7 @@ fun test_can_place_limit_order_fee_penalty_not_doubled() {
         let balance_manager_insufficient = test.take_shared_by_id<BalanceManager>(
             balance_manager_id_insufficient,
         );
+        let clock = clock::create_for_testing(test.ctx());
 
         // Verify taker fee is set correctly
         let (taker_fee, _, _) = pool.pool_trade_params();
@@ -7813,6 +7866,8 @@ fun test_can_place_limit_order_fee_penalty_not_doubled() {
             quantity, // quantity: 1 SUI
             false, // is_bid = false (ask/sell)
             false, // pay_with_deep = false (fees in base)
+            constants::max_u64(), // expire_timestamp
+            &clock,
         );
         assert!(can_place_exact);
 
@@ -7823,12 +7878,90 @@ fun test_can_place_limit_order_fee_penalty_not_doubled() {
             quantity, // quantity: 1 SUI
             false, // is_bid = false (ask/sell)
             false, // pay_with_deep = false (fees in base)
+            constants::max_u64(), // expire_timestamp
+            &clock,
         );
         assert!(!can_place_insufficient);
 
+        clock.destroy_for_testing();
         return_shared(pool);
         return_shared(balance_manager_exact);
         return_shared(balance_manager_insufficient);
+    };
+
+    end(test);
+}
+
+/// Test limit order with expired timestamp (should return false even with sufficient balance)
+#[test]
+fun test_can_place_limit_order_expired_timestamp() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+
+    // Setup pool
+    let pool_id = setup_pool_with_default_fees<SUI, USDC>(
+        OWNER,
+        registry_id,
+        true,
+        false,
+        &mut test,
+    );
+
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
+        let mut clock = clock::create_for_testing(test.ctx());
+
+        // Set clock to 1000ms
+        clock.set_for_testing(1000);
+
+        // Test: sufficient balance but expire_timestamp is in the past (500ms < 1000ms)
+        // Should return false because the order would be expired
+        let can_place = pool.can_place_limit_order<SUI, USDC>(
+            &balance_manager,
+            2 * constants::float_scaling(), // price: 2 USDC per SUI
+            10 * constants::float_scaling(), // quantity: 10 SUI
+            true, // is_bid
+            true, // pay_with_deep
+            500, // expire_timestamp: 500ms (in the past)
+            &clock,
+        );
+        assert!(!can_place);
+
+        // Test: same order but with future expire_timestamp should succeed
+        let can_place_future = pool.can_place_limit_order<SUI, USDC>(
+            &balance_manager,
+            2 * constants::float_scaling(), // price: 2 USDC per SUI
+            10 * constants::float_scaling(), // quantity: 10 SUI
+            true, // is_bid
+            true, // pay_with_deep
+            2000, // expire_timestamp: 2000ms (in the future)
+            &clock,
+        );
+        assert!(can_place_future);
+
+        // Test: expire_timestamp exactly at current time should return true
+        // (order is valid at the moment of expiration)
+        let can_place_exact = pool.can_place_limit_order<SUI, USDC>(
+            &balance_manager,
+            2 * constants::float_scaling(), // price: 2 USDC per SUI
+            10 * constants::float_scaling(), // quantity: 10 SUI
+            true, // is_bid
+            true, // pay_with_deep
+            1000, // expire_timestamp: exactly at current time
+            &clock,
+        );
+        assert!(can_place_exact);
+
+        clock.destroy_for_testing();
+        return_shared(pool);
+        return_shared(balance_manager);
     };
 
     end(test);
