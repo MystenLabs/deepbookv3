@@ -159,7 +159,9 @@ public fun add_conditional_order<BaseAsset, QuoteAsset>(
     condition: Condition,
     pending_order: PendingOrder,
     clock: &Clock,
+    ctx: &mut TxContext,
 ) {
+    self.validate_owner(ctx);
     let manager_id = self.id();
     self
         .take_profit_stop_loss
@@ -179,7 +181,9 @@ public fun add_conditional_order<BaseAsset, QuoteAsset>(
 public fun cancel_all_conditional_orders<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     clock: &Clock,
+    ctx: &TxContext,
 ) {
+    self.validate_owner(ctx);
     let manager_id = self.id();
     let identifiers = self.take_profit_stop_loss.conditional_orders().keys();
     identifiers.do!(|identifier| {
@@ -192,7 +196,9 @@ public fun cancel_conditional_order<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     conditional_order_identifier: u64,
     clock: &Clock,
+    ctx: &TxContext,
 ) {
+    self.validate_owner(ctx);
     let manager_id = self.id();
     self
         .take_profit_stop_loss
