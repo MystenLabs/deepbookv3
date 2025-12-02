@@ -1403,9 +1403,14 @@ public fun can_place_limit_order<BaseAsset, QuoteAsset>(
     quantity: u64,
     is_bid: bool,
     pay_with_deep: bool,
+    expire_timestamp: u64,
+    clock: &Clock,
 ): bool {
     let whitelist = self.whitelisted();
     let pool_inner = self.load_inner();
+    if (expire_timestamp < clock.timestamp_ms()) {
+        return false
+    };
 
     // Get order deep price for fee calculation
     let order_deep_price = if (pay_with_deep) {
