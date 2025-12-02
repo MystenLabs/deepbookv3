@@ -16,6 +16,7 @@ const EInvalidTPSLOrderType: u64 = 4;
 const EDuplicateConditionalOrderIdentifier: u64 = 5;
 const EInvalidQuantity: u64 = 6;
 const EInvalidPrice: u64 = 7;
+const EInvalidExpireTimestamp: u64 = 8;
 
 // === Structs ===
 public struct TakeProfitStopLoss has drop, store {
@@ -216,6 +217,8 @@ public(package) fun add_conditional_order<BaseAsset, QuoteAsset>(
         let price = *pending_order.price.borrow();
         assert!(price >= constants::min_price() && price <= constants::max_price(), EInvalidPrice);
         assert!(price % tick_size == 0, EInvalidPrice);
+        let expire_timestamp = *pending_order.expire_timestamp.borrow();
+        assert!(expire_timestamp > clock.timestamp_ms(), EInvalidExpireTimestamp);
     };
     let current_price = calculate_price<BaseAsset, QuoteAsset>(
         registry,
