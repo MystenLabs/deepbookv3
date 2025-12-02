@@ -173,6 +173,19 @@ public fun add_conditional_order<BaseAsset, QuoteAsset>(
         );
 }
 
+/// Cancel all conditional orders.
+public fun cancel_all_conditional_orders<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    clock: &Clock,
+) {
+    let manager_id = self.id();
+    let identifiers = self.take_profit_stop_loss.conditional_orders().keys();
+    identifiers.do!(|identifier| {
+        self.take_profit_stop_loss.cancel_conditional_order(manager_id, identifier, clock);
+    });
+}
+
+/// Cancel a conditional order.
 public fun cancel_conditional_order<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     conditional_order_identifier: u64,
