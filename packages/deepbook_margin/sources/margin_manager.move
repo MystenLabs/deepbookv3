@@ -152,6 +152,7 @@ public struct WithdrawCollateralEvent has copy, drop {
 /// Specifies the conditions under which the order is triggered and the pending order to be placed.
 public fun add_conditional_order<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &Pool<BaseAsset, QuoteAsset>,
     base_price_info_object: &PriceInfoObject,
     quote_price_info_object: &PriceInfoObject,
     registry: &MarginRegistry,
@@ -163,6 +164,8 @@ public fun add_conditional_order<BaseAsset, QuoteAsset>(
 ) {
     self.validate_owner(ctx);
     let manager_id = self.id();
+    assert!(pool.id() == self.deepbook_pool(), EIncorrectDeepBookPool);
+    let (tick_size, lot_size, min_size) = pool.pool_book_params();
     self
         .take_profit_stop_loss
         .add_conditional_order<BaseAsset, QuoteAsset>(
@@ -173,6 +176,9 @@ public fun add_conditional_order<BaseAsset, QuoteAsset>(
             conditional_order_identifier,
             condition,
             pending_order,
+            tick_size,
+            lot_size,
+            min_size,
             clock,
         );
 }
@@ -244,6 +250,8 @@ public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
                 pending_order.quantity(),
                 pending_order.is_bid(),
                 pending_order.pay_with_deep(),
+                pending_order.expire_timestamp().destroy_some(),
+                clock,
             )
         } else {
             pool.can_place_market_order(
