@@ -270,6 +270,7 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     quote_oracle: &PriceInfoObject,
     pool: &Pool<BaseAsset, QuoteAsset>,
     withdraw_amount: u64,
+    withdraw_all: bool,
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<WithdrawAsset> {
@@ -279,11 +280,18 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
     let balance_manager = &mut self.balance_manager;
     let withdraw_cap = &self.withdraw_cap;
 
-    let coin = balance_manager.withdraw_with_cap<WithdrawAsset>(
-        withdraw_cap,
-        withdraw_amount,
-        ctx,
-    );
+    let coin = if (withdraw_all) {
+        balance_manager.withdraw_all_with_cap<WithdrawAsset>(
+            withdraw_cap,
+            ctx,
+        )
+    } else {
+        balance_manager.withdraw_with_cap<WithdrawAsset>(
+            withdraw_cap,
+            withdraw_amount,
+            ctx,
+        )
+    };
 
     if (self.margin_pool_id.contains(&base_margin_pool.id())) {
         let risk_ratio = self.risk_ratio_int(
