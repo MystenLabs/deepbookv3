@@ -203,6 +203,9 @@ public fun execute_pending_orders<BaseAsset, QuoteAsset>(
         (value.condition().trigger_below_price() && current_price < value.condition().trigger_price()) ||
         (!value.condition().trigger_below_price() && current_price > value.condition().trigger_price())
     });
+    if (valid_conditional_orders.length() == 0) {
+        return vector[]
+    };
 
     let mut order_infos = vector[];
     let mut conditional_order_identifiers_to_remove = vector[];

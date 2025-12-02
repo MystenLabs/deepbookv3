@@ -3,6 +3,7 @@
 
 module deepbook_margin::tpsl;
 
+use deepbook::constants;
 use deepbook_margin::{margin_constants, margin_registry::MarginRegistry, oracle::calculate_price};
 use pyth::price_info::PriceInfoObject;
 use sui::{clock::Clock, event, vec_map::VecMap};
@@ -11,6 +12,7 @@ use sui::{clock::Clock, event, vec_map::VecMap};
 const EInvalidCondition: u64 = 1;
 const EConditionalOrderNotFound: u64 = 2;
 const EMaxConditionalOrdersReached: u64 = 3;
+const EInvalidTPSLOrderType: u64 = 4;
 
 // === Structs ===
 public struct TakeProfitStopLoss has drop, store {
@@ -70,6 +72,8 @@ public fun new_condition(trigger_below_price: bool, trigger_price: u64): Conditi
     }
 }
 
+/// Creates a new pending limit order.
+/// Order type must be no restriction or immediate or cancel.
 public fun new_pending_limit_order(
     client_order_id: u64,
     order_type: u8,
@@ -80,6 +84,10 @@ public fun new_pending_limit_order(
     pay_with_deep: bool,
     expire_timestamp: u64,
 ): PendingOrder {
+    assert!(
+        order_type == constants::no_restriction() ||  order_type == constants::immediate_or_cancel(),
+        EInvalidTPSLOrderType,
+    );
     PendingOrder {
         is_limit_order: true,
         client_order_id,
