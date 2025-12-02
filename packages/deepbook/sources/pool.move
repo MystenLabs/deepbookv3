@@ -1450,9 +1450,9 @@ public fun can_place_limit_order<BaseAsset, QuoteAsset>(
     };
 
     // Get current balances from balance manager
-    let available_base = balance_manager::balance<BaseAsset>(balance_manager);
-    let available_quote = balance_manager::balance<QuoteAsset>(balance_manager);
-    let available_deep = balance_manager::balance<DEEP>(balance_manager);
+    let available_base = balance_manager.balance<BaseAsset>();
+    let available_quote = balance_manager.balance<QuoteAsset>();
+    let available_deep = balance_manager.balance<DEEP>();
 
     // Check if available balances are sufficient
     (available_base >= required_base) && (available_quote >= required_quote) && (available_deep >= required_deep)
@@ -1473,9 +1473,9 @@ public fun can_place_market_order<BaseAsset, QuoteAsset>(
     let mut required_deep = 0;
 
     // Get current balances from balance manager
-    let available_base = balance_manager::balance<BaseAsset>(balance_manager);
-    let available_quote = balance_manager::balance<QuoteAsset>(balance_manager);
-    let available_deep = balance_manager::balance<DEEP>(balance_manager);
+    let available_base = balance_manager.balance<BaseAsset>();
+    let available_quote = balance_manager.balance<QuoteAsset>();
+    let available_deep = balance_manager.balance<DEEP>();
 
     if (is_bid) {
         // For bid orders: check if available quote can return desired base quantity
