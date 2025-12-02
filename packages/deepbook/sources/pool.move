@@ -1430,10 +1430,7 @@ public fun can_place_limit_order<BaseAsset, QuoteAsset>(
         if (pay_with_deep) {
             required_deep = fee_balances.deep();
         } else {
-            let fee_quote = math::mul(
-                fee_balances.quote(),
-                math::mul(taker_fee, constants::fee_penalty_multiplier()),
-            );
+            let fee_quote = math::mul(fee_balances.quote(), taker_fee);
             required_quote = required_quote + fee_quote;
         };
     } else {
@@ -1441,10 +1438,7 @@ public fun can_place_limit_order<BaseAsset, QuoteAsset>(
         if (pay_with_deep) {
             required_deep = fee_balances.deep();
         } else {
-            let fee_base = math::mul(
-                fee_balances.base(),
-                math::mul(taker_fee, constants::fee_penalty_multiplier()),
-            );
+            let fee_base = math::mul(fee_balances.base(), taker_fee);
             required_base = required_base + fee_base;
         };
     };
