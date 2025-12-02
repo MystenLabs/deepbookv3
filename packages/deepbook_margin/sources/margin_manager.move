@@ -83,14 +83,6 @@ public struct MarginManagerCreatedEvent has copy, drop {
     timestamp: u64,
 }
 
-#[deprecated(note = b"This event is deprecated, replaced by `MarginManagerCreatedEvent`.")]
-public struct MarginManagerEvent has copy, drop {
-    margin_manager_id: ID,
-    balance_manager_id: ID,
-    owner: address,
-    timestamp: u64,
-}
-
 /// Event emitted when loan is borrowed
 public struct LoanBorrowedEvent has copy, drop {
     margin_manager_id: ID,
