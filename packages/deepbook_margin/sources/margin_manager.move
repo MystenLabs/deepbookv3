@@ -230,6 +230,7 @@ public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
 
     let mut order_infos = vector[];
     let mut identifiers_to_remove = vector[];
+    let mut expired_identifiers = vector[];
 
     let keys = self.take_profit_stop_loss.conditional_orders().keys();
     keys.do!(|identifier| {
@@ -273,11 +274,21 @@ public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
             );
             order_infos.push_back(order_info);
             identifiers_to_remove.push_back(identifier);
+        } else {
+            if (pending_order.is_limit_order()) {
+                let expire_timestamp = *pending_order.expire_timestamp().borrow();
+                if (expire_timestamp <= clock.timestamp_ms()) {
+                    expired_identifiers.push_back(identifier);
+                }
+            }
         }
     });
 
     // Remove executed orders
     let manager_id = self.id();
+    expired_identifiers.do!(|id| {
+        self.take_profit_stop_loss.cancel_conditional_order(manager_id, id, clock);
+    });
     identifiers_to_remove.do!(|id| {
         self.take_profit_stop_loss.remove_executed_conditional_order(manager_id, id, clock)
     });
