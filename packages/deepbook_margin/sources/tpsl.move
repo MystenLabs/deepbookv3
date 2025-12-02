@@ -6,21 +6,21 @@ module deepbook_margin::tpsl;
 use deepbook::constants;
 use deepbook_margin::{margin_constants, margin_registry::MarginRegistry, oracle::calculate_price};
 use pyth::price_info::PriceInfoObject;
-use sui::{clock::Clock, event, vec_map::VecMap};
+use sui::{clock::Clock, event, vec_map::{Self, VecMap}};
 
 // === Errors ===
 const EInvalidCondition: u64 = 1;
 const EConditionalOrderNotFound: u64 = 2;
 const EMaxConditionalOrdersReached: u64 = 3;
 const EInvalidTPSLOrderType: u64 = 4;
+const EDuplicateConditionalOrderIdentifier: u64 = 5;
 
 // === Structs ===
 public struct TakeProfitStopLoss has drop, store {
-    conditional_orders: vector<ConditionalOrder>,
+    conditional_orders: VecMap<u64, ConditionalOrder>,
 }
 
 public struct ConditionalOrder has copy, drop, store {
-    conditional_order_identifier: u64,
     condition: Condition,
     pending_order: PendingOrder,
 }
@@ -85,7 +85,7 @@ public fun new_pending_limit_order(
     expire_timestamp: u64,
 ): PendingOrder {
     assert!(
-        order_type == constants::no_restriction() ||  order_type == constants::immediate_or_cancel(),
+        order_type == constants::no_restriction() || order_type == constants::immediate_or_cancel(),
         EInvalidTPSLOrderType,
     );
     PendingOrder {
@@ -122,19 +122,15 @@ public fun new_pending_market_order(
 }
 
 // === Read-Only Functions ===
-public fun conditional_orders(self: &TakeProfitStopLoss): vector<ConditionalOrder> {
-    self.conditional_orders
+public fun conditional_orders(self: &TakeProfitStopLoss): &VecMap<u64, ConditionalOrder> {
+    &self.conditional_orders
 }
 
-public fun conditional_order(
-    conditional_orders: &VecMap<u64, ConditionalOrder>,
-    pending_order_identifier: u64,
-): ConditionalOrder {
-    *conditional_orders.get(&pending_order_identifier)
-}
-
-public fun conditional_order_identifier(conditional_order: &ConditionalOrder): u64 {
-    conditional_order.conditional_order_identifier
+public fun get_conditional_order(
+    self: &TakeProfitStopLoss,
+    conditional_order_identifier: &u64,
+): &ConditionalOrder {
+    self.conditional_orders.get(conditional_order_identifier)
 }
 
 public fun condition(conditional_order: &ConditionalOrder): Condition {
@@ -192,7 +188,7 @@ public fun is_limit_order(pending_order: &PendingOrder): bool {
 // === public(package) functions ===
 public(package) fun new(): TakeProfitStopLoss {
     TakeProfitStopLoss {
-        conditional_orders: vector[],
+        conditional_orders: vec_map::empty(),
     }
 }
 
@@ -220,20 +216,25 @@ public(package) fun add_conditional_order<BaseAsset, QuoteAsset>(
     // If order is triggered below trigger_price, trigger_price must be lower than current price
     // If order is triggered above trigger_price, trigger_price must be higher than current price
     assert!(
-        (trigger_below_price && trigger_price < current_price) || (!trigger_below_price && trigger_price > current_price),
+        (trigger_below_price && trigger_price < current_price) ||
+            (!trigger_below_price && trigger_price > current_price),
         EInvalidCondition,
     );
 
-    let conditional_order = ConditionalOrder {
-        conditional_order_identifier,
-        condition,
-        pending_order,
-    };
     assert!(
         self.conditional_orders.length() < margin_constants::max_conditional_orders(),
         EMaxConditionalOrdersReached,
     );
-    self.conditional_orders.push_back(conditional_order);
+    assert!(
+        !self.conditional_orders.contains(&conditional_order_identifier),
+        EDuplicateConditionalOrderIdentifier,
+    );
+
+    let conditional_order = ConditionalOrder {
+        condition,
+        pending_order,
+    };
+    self.conditional_orders.insert(conditional_order_identifier, conditional_order);
 
     event::emit(ConditionalOrderAdded {
         manager_id,
@@ -268,12 +269,11 @@ public(package) fun remove_conditional_order(
     is_cancel: bool,
     clock: &Clock,
 ) {
-    let index = self.conditional_orders.find_index!(|conditional_order| {
-        conditional_order.conditional_order_identifier == conditional_order_identifier
-    });
-    assert!(index.is_some(), EConditionalOrderNotFound);
-    let conditional_order_index = index.destroy_some();
-    let conditional_order = self.conditional_orders[conditional_order_index];
+    assert!(
+        self.conditional_orders.contains(&conditional_order_identifier),
+        EConditionalOrderNotFound,
+    );
+    let (_, conditional_order) = self.conditional_orders.remove(&conditional_order_identifier);
 
     if (is_cancel) {
         event::emit(ConditionalOrderCancelled {
@@ -290,6 +290,4 @@ public(package) fun remove_conditional_order(
             timestamp: clock.timestamp_ms(),
         });
     };
-
-    self.conditional_orders.remove(conditional_order_index);
 }

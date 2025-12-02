@@ -16,7 +16,7 @@ use deepbook::{
     constants,
     math,
     order_info::OrderInfo,
-    pool::{Pool, can_place_market_order},
+    pool::Pool,
     registry::Registry
 };
 use deepbook_margin::{
@@ -199,20 +199,24 @@ public fun execute_pending_orders<BaseAsset, QuoteAsset>(
         quote_price_info_object,
         clock,
     );
-    let valid_conditional_orders = self.take_profit_stop_loss.conditional_orders().filter!(|value| {
-        (value.condition().trigger_below_price() && current_price < value.condition().trigger_price()) ||
-        (!value.condition().trigger_below_price() && current_price > value.condition().trigger_price())
-    });
-    if (valid_conditional_orders.length() == 0) {
-        return vector[]
-    };
 
     let mut order_infos = vector[];
-    let mut conditional_order_identifiers_to_remove = vector[];
-    valid_conditional_orders.do!(|conditional_order| {
+    let mut identifiers_to_remove = vector[];
+
+    // Single pass: iterate through keys, check trigger, check balance, place order
+    let keys = self.take_profit_stop_loss.conditional_orders().keys();
+    keys.do!(|identifier| {
+        let conditional_order = self.take_profit_stop_loss.get_conditional_order(&identifier);
+        let condition = conditional_order.condition();
+
+        let triggered =
+            (condition.trigger_below_price() && current_price < condition.trigger_price()) ||
+            (!condition.trigger_below_price() && current_price > condition.trigger_price());
+
+        if (!triggered) return;
+
         let pending_order = conditional_order.pending_order();
-        let is_limit_order = pending_order.is_limit_order();
-        let can_place_order = if (is_limit_order) {
+        let can_place = if (pending_order.is_limit_order()) {
             pool.can_place_limit_order(
                 self.balance_manager(),
                 pending_order.price().destroy_some(),
@@ -230,7 +234,7 @@ public fun execute_pending_orders<BaseAsset, QuoteAsset>(
             )
         };
 
-        if (can_place_order) {
+        if (can_place) {
             let order_info = self.place_pending_order<BaseAsset, QuoteAsset>(
                 registry,
                 pool,
@@ -239,126 +243,17 @@ public fun execute_pending_orders<BaseAsset, QuoteAsset>(
                 ctx,
             );
             order_infos.push_back(order_info);
-            conditional_order_identifiers_to_remove.push_back(conditional_order.conditional_order_identifier());
+            identifiers_to_remove.push_back(identifier);
         }
     });
 
-    // remove the executed orders
+    // Remove executed orders
     let manager_id = self.id();
-    conditional_order_identifiers_to_remove.do!(|conditional_order_identifier| {
-        self
-            .take_profit_stop_loss
-            .remove_executed_conditional_order(manager_id, conditional_order_identifier, clock)
+    identifiers_to_remove.do!(|id| {
+        self.take_profit_stop_loss.remove_executed_conditional_order(manager_id, id, clock)
     });
 
     order_infos
-}
-
-fun place_pending_order<BaseAsset, QuoteAsset>(
-    self: &mut MarginManager<BaseAsset, QuoteAsset>,
-    registry: &MarginRegistry,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    pending_order: &PendingOrder,
-    clock: &Clock,
-    ctx: &TxContext,
-): OrderInfo {
-    if (pending_order.is_limit_order()) {
-        self.place_pending_limit_order<BaseAsset, QuoteAsset>(
-            registry,
-            pool,
-            pending_order.client_order_id(),
-            pending_order.order_type().destroy_some(),
-            pending_order.self_matching_option(),
-            pending_order.price().destroy_some(),
-            pending_order.quantity(),
-            pending_order.is_bid(),
-            pending_order.pay_with_deep(),
-            pending_order.expire_timestamp().destroy_some(),
-            clock,
-            ctx,
-        )
-    } else {
-        self.place_market_order_conditional<BaseAsset, QuoteAsset>(
-            registry,
-            pool,
-            pending_order.client_order_id(),
-            pending_order.self_matching_option(),
-            pending_order.quantity(),
-            pending_order.is_bid(),
-            pending_order.pay_with_deep(),
-            clock,
-            ctx,
-        )
-    }
-}
-
-/// Only used for tpsl pending orders.
-fun place_pending_limit_order<BaseAsset, QuoteAsset>(
-    self: &mut MarginManager<BaseAsset, QuoteAsset>,
-    registry: &MarginRegistry,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    client_order_id: u64,
-    order_type: u8,
-    self_matching_option: u8,
-    price: u64,
-    quantity: u64,
-    is_bid: bool,
-    pay_with_deep: bool,
-    expire_timestamp: u64,
-    clock: &Clock,
-    ctx: &TxContext,
-): OrderInfo {
-    assert!(self.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
-    let trade_proof = self.trade_proof(ctx);
-    let balance_manager = self.balance_manager_unsafe_mut();
-    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
-
-    pool.place_limit_order(
-        balance_manager,
-        &trade_proof,
-        client_order_id,
-        order_type,
-        self_matching_option,
-        price,
-        quantity,
-        is_bid,
-        pay_with_deep,
-        expire_timestamp,
-        clock,
-        ctx,
-    )
-}
-
-/// Places a market order in the pool.
-/// Only used for tpsl pending orders.
-fun place_market_order_conditional<BaseAsset, QuoteAsset>(
-    self: &mut MarginManager<BaseAsset, QuoteAsset>,
-    registry: &MarginRegistry,
-    pool: &mut Pool<BaseAsset, QuoteAsset>,
-    client_order_id: u64,
-    self_matching_option: u8,
-    quantity: u64,
-    is_bid: bool,
-    pay_with_deep: bool,
-    clock: &Clock,
-    ctx: &TxContext,
-): OrderInfo {
-    assert!(self.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
-    let trade_proof = self.trade_proof(ctx);
-    let balance_manager = self.balance_manager_unsafe_mut();
-    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
-
-    pool.place_market_order(
-        balance_manager,
-        &trade_proof,
-        client_order_id,
-        self_matching_option,
-        quantity,
-        is_bid,
-        pay_with_deep,
-        clock,
-        ctx,
-    )
 }
 
 // === Public Functions - Margin Manager ===
@@ -1084,7 +979,7 @@ public fun take_profit_stop_loss<BaseAsset, QuoteAsset>(
 
 public fun conditional_orders<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
-): vector<ConditionalOrder> {
+): &VecMap<u64, ConditionalOrder> {
     self.take_profit_stop_loss.conditional_orders()
 }
 
@@ -1336,4 +1231,111 @@ fun assets_in_debt_unit<BaseAsset, QuoteAsset>(
         calculate_target_currency<BaseAsset, QuoteAsset>(registry, base_oracle, quote_oracle, base_asset, clock) + quote_asset
     };
     (assets_in_debt_unit, base_asset, quote_asset)
+}
+
+fun place_pending_order<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    pending_order: &PendingOrder,
+    clock: &Clock,
+    ctx: &TxContext,
+): OrderInfo {
+    if (pending_order.is_limit_order()) {
+        self.place_pending_limit_order<BaseAsset, QuoteAsset>(
+            registry,
+            pool,
+            pending_order.client_order_id(),
+            pending_order.order_type().destroy_some(),
+            pending_order.self_matching_option(),
+            pending_order.price().destroy_some(),
+            pending_order.quantity(),
+            pending_order.is_bid(),
+            pending_order.pay_with_deep(),
+            pending_order.expire_timestamp().destroy_some(),
+            clock,
+            ctx,
+        )
+    } else {
+        self.place_market_order_conditional<BaseAsset, QuoteAsset>(
+            registry,
+            pool,
+            pending_order.client_order_id(),
+            pending_order.self_matching_option(),
+            pending_order.quantity(),
+            pending_order.is_bid(),
+            pending_order.pay_with_deep(),
+            clock,
+            ctx,
+        )
+    }
+}
+
+/// Only used for tpsl pending orders.
+fun place_pending_limit_order<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    client_order_id: u64,
+    order_type: u8,
+    self_matching_option: u8,
+    price: u64,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    expire_timestamp: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+): OrderInfo {
+    assert!(self.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
+    let trade_proof = self.trade_proof(ctx);
+    let balance_manager = self.balance_manager_unsafe_mut();
+    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
+
+    pool.place_limit_order(
+        balance_manager,
+        &trade_proof,
+        client_order_id,
+        order_type,
+        self_matching_option,
+        price,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp,
+        clock,
+        ctx,
+    )
+}
+
+/// Places a market order in the pool.
+/// Only used for tpsl pending orders.
+fun place_market_order_conditional<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    client_order_id: u64,
+    self_matching_option: u8,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    clock: &Clock,
+    ctx: &TxContext,
+): OrderInfo {
+    assert!(self.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
+    let trade_proof = self.trade_proof(ctx);
+    let balance_manager = self.balance_manager_unsafe_mut();
+    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
+
+    pool.place_market_order(
+        balance_manager,
+        &trade_proof,
+        client_order_id,
+        self_matching_option,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        clock,
+        ctx,
+    )
 }
