@@ -122,10 +122,6 @@ public fun new_pending_market_order(
 }
 
 // === Read-Only Functions ===
-public fun conditional_orders_mut(self: &mut TakeProfitStopLoss): &mut vector<ConditionalOrder> {
-    &mut self.conditional_orders
-}
-
 public fun conditional_orders(self: &TakeProfitStopLoss): vector<ConditionalOrder> {
     self.conditional_orders
 }
