@@ -312,6 +312,26 @@ public fun withdraw_with_cap<T>(
     coin
 }
 
+/// Withdraw all funds from a balance manager by a `WithdrawCap` owner.
+public fun withdraw_all_with_cap<T>(
+    balance_manager: &mut BalanceManager,
+    withdraw_cap: &WithdrawCap,
+    ctx: &mut TxContext,
+): Coin<T> {
+    let proof = balance_manager.generate_proof_as_withdrawer(
+        withdraw_cap,
+        ctx,
+    );
+    let coin = balance_manager.withdraw_with_proof(&proof, 0, true).into_coin(ctx);
+    balance_manager.emit_balance_event(
+        type_name::with_defining_ids<T>(),
+        coin.value(),
+        false,
+    );
+
+    coin
+}
+
 /// Withdraw funds from a balance_manager. Only owner can call this directly.
 /// If withdraw_all is true, amount is ignored and full balance withdrawn.
 /// If withdraw_all is false, withdraw_amount will be withdrawn.
