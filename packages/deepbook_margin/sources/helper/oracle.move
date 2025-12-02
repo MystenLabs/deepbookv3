@@ -4,7 +4,7 @@
 /// Oracle module for margin trading.
 module deepbook_margin::oracle;
 
-use deepbook::math;
+use deepbook::{constants, math};
 use deepbook_margin::{margin_constants, margin_registry::MarginRegistry};
 use pyth::{price_info::PriceInfoObject, pyth};
 use std::type_name::{Self, TypeName};
@@ -17,6 +17,7 @@ const ECurrencyNotSupported: u64 = 2;
 const EPriceFeedIdMismatch: u64 = 3;
 const EInvalidPythPriceConf: u64 = 4;
 const EInvalidOracleConfig: u64 = 5;
+const EInvalidPrice: u64 = 6;
 
 /// A buffer added to the exponent when doing currency conversions.
 const BUFFER: u8 = 10;
@@ -154,11 +155,17 @@ public(package) fun calculate_price<BaseAsset, QuoteAsset>(
     if (base_decimals > quote_decimals) {
         let decimal_diff = base_decimals - quote_decimals;
         let multiplier = 10u128.pow(decimal_diff);
-        ((price_ratio as u128) * multiplier) as u64
+        let price = (price_ratio as u128) * multiplier;
+        assert!(price <= constants::max_price() as u128, EInvalidPrice);
+
+        price as u64
     } else if (quote_decimals > base_decimals) {
         let decimal_diff = quote_decimals - base_decimals;
         let divisor = 10u128.pow(decimal_diff);
-        ((price_ratio as u128) / divisor) as u64
+        let price = price_ratio as u128 / divisor;
+        assert!(price <= constants::max_price() as u128, EInvalidPrice);
+
+        price as u64
     } else {
         price_ratio
     }
