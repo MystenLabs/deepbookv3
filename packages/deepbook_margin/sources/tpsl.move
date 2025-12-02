@@ -3,13 +3,9 @@
 
 module deepbook_margin::tpsl;
 
-use deepbook_margin::margin_constants;
-use deepbook_margin::margin_registry::MarginRegistry;
-use deepbook_margin::oracle::calculate_price;
+use deepbook_margin::{margin_constants, margin_registry::MarginRegistry, oracle::calculate_price};
 use pyth::price_info::PriceInfoObject;
-use sui::clock::Clock;
-use sui::event;
-use sui::vec_map::VecMap;
+use sui::{clock::Clock, event, vec_map::VecMap};
 
 // === Errors ===
 const EInvalidCondition: u64 = 1;
