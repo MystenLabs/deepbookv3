@@ -148,6 +148,8 @@ public struct WithdrawCollateralEvent has copy, drop {
 }
 
 // === Functions - Take Profit Stop Loss ===
+/// Add a conditional order.
+/// Specifies the conditions under which the order is triggered and the pending order to be placed.
 public fun add_conditional_order<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     base_price_info_object: &PriceInfoObject,
@@ -197,8 +199,8 @@ public fun cancel_conditional_order<BaseAsset, QuoteAsset>(
         .cancel_conditional_order(manager_id, conditional_order_identifier, clock);
 }
 
-/// Execute pending orders and return the order infos.
-public fun execute_pending_orders<BaseAsset, QuoteAsset>(
+/// Execute conditional orders and return the order infos.
+public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     base_price_info_object: &PriceInfoObject,
