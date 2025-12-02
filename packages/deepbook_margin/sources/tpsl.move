@@ -62,6 +62,7 @@ public struct ConditionalOrderCancelled has copy, drop {
 
 public struct ConditionalOrderExecuted has copy, drop {
     manager_id: ID,
+    pool_id: ID,
     conditional_order_identifier: u64,
     conditional_order: ConditionalOrder,
     timestamp: u64,
@@ -274,21 +275,35 @@ public(package) fun cancel_conditional_order(
     conditional_order_identifier: u64,
     clock: &Clock,
 ) {
-    self.remove_conditional_order(manager_id, conditional_order_identifier, true, clock);
+    self.remove_conditional_order(
+        manager_id,
+        option::none(),
+        conditional_order_identifier,
+        true,
+        clock,
+    );
 }
 
 public(package) fun remove_executed_conditional_order(
     self: &mut TakeProfitStopLoss,
     manager_id: ID,
+    pool_id: ID,
     conditional_order_identifier: u64,
     clock: &Clock,
 ) {
-    self.remove_conditional_order(manager_id, conditional_order_identifier, false, clock);
+    self.remove_conditional_order(
+        manager_id,
+        option::some(pool_id),
+        conditional_order_identifier,
+        false,
+        clock,
+    );
 }
 
 public(package) fun remove_conditional_order(
     self: &mut TakeProfitStopLoss,
     manager_id: ID,
+    pool_id: Option<ID>,
     conditional_order_identifier: u64,
     is_cancel: bool,
     clock: &Clock,
@@ -309,6 +324,7 @@ public(package) fun remove_conditional_order(
     } else {
         event::emit(ConditionalOrderExecuted {
             manager_id,
+            pool_id: pool_id.destroy_some(),
             conditional_order_identifier,
             conditional_order,
             timestamp: clock.timestamp_ms(),

@@ -300,7 +300,9 @@ public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
         self.take_profit_stop_loss.cancel_conditional_order(manager_id, id, clock);
     });
     identifiers_to_remove.do!(|id| {
-        self.take_profit_stop_loss.remove_executed_conditional_order(manager_id, id, clock)
+        self
+            .take_profit_stop_loss
+            .remove_executed_conditional_order(manager_id, pool.id(), id, clock)
     });
 
     order_infos
