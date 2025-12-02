@@ -10,6 +10,7 @@ const DEFAULT_POOL_LIQUIDATION_REWARD: u64 = 40_000_000; // 4%
 const MIN_LEVERAGE: u64 = 1_000_000_000; // 1x
 const MAX_LEVERAGE: u64 = 20_000_000_000; // 20x
 const YEAR_MS: u64 = 365 * 24 * 60 * 60 * 1000;
+const DAY_MS: u64 = 24 * 60 * 60 * 1000;
 const MIN_MIN_BORROW: u64 = 1000;
 const MAX_MARGIN_MANAGERS: u64 = 100;
 const DEFAULT_REFERRAL: address = @0x0;
@@ -77,4 +78,8 @@ public fun max_ewma_difference_bps(): u64 {
 
 public fun max_conditional_orders(): u64 {
     MAX_CONDITIONAL_ORDERS
+}
+
+public fun day_ms(): u64 {
+    DAY_MS
 }

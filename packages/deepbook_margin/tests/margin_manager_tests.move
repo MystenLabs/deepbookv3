@@ -9,7 +9,7 @@ use deepbook_margin::{
     margin_constants,
     margin_manager::{Self, MarginManager},
     margin_pool::{Self, MarginPool},
-    margin_registry::MarginRegistry,
+    margin_registry::{Self, MarginRegistry},
     test_constants::{Self, USDC, USDT, BTC, INVALID_ASSET, btc_multiplier},
     test_helpers::{
         Self,
@@ -29,6 +29,7 @@ use deepbook_margin::{
         destroy_3,
         return_shared_2,
         return_shared_3,
+        return_shared_4,
         advance_time,
         get_margin_pool_caps,
         return_to_sender_2
@@ -554,8 +555,7 @@ fun test_withdrawal_ok_when_risk_ratio_above_limit() {
     destroy(withdrawn_coin);
 
     destroy_2!(usdc_price, usdt_price);
-    return_shared_3!(usdc_pool, pool, usdt_pool);
-    return_shared(mm);
+    return_shared_4!(usdc_pool, pool, usdt_pool, mm);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -1052,11 +1052,11 @@ fun test_repay_exact_amount_no_rounding_errors() {
         );
 
         // Verify no rounding error: repaid amount should equal calculated amount
-        assert!(repaid_amount == exact_amount, 0);
+        assert!(repaid_amount == exact_amount);
 
         // Verify shares are zero
         let borrowed_quote_shares = mm.borrowed_quote_shares();
-        assert!(borrowed_quote_shares == 0, 0);
+        assert!(borrowed_quote_shares == 0);
 
         // Clean up any remaining debt
         if (borrowed_quote_shares > 0) {
@@ -1340,9 +1340,8 @@ fun test_risk_ratio_with_multiple_assets() {
     // Total debt: $2000 USDT
     // Risk ratio should be approximately 4.0 (400%)
 
-    return_shared_2!(usdt_pool, pool);
+    return_shared_3!(usdt_pool, pool, mm);
     destroy_2!(usdc_price, usdt_price);
-    return_shared(mm);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
@@ -2172,7 +2171,7 @@ fun test_borrow_at_exact_min_risk_ratio_no_rounding_issues() {
     );
 
     // Risk ratio should be exactly the minimum borrow risk ratio (1.25)
-    assert!(risk_ratio == test_constants::min_borrow_risk_ratio(), 0);
+    assert!(risk_ratio == test_constants::min_borrow_risk_ratio());
 
     return_shared(base_pool);
     destroy_2!(usdc_price, usdt_price);
@@ -2324,7 +2323,7 @@ fun test_borrow_at_exact_min_risk_ratio_with_custom_price() {
     // With the price difference, it might be slightly different
     // USDC at 0.99984495: (1 * 0.99984495 + 4 * 0.99984495) / (4 * 0.99984495) = 5/4 = 1.25
     // The ratio should still be exactly 1.25 since both assets use the same price
-    assert!(risk_ratio == test_constants::min_borrow_risk_ratio(), 0);
+    assert!(risk_ratio == test_constants::min_borrow_risk_ratio());
 
     return_shared(base_pool);
     destroy_2!(usdc_price, usdt_price);
@@ -2419,4 +2418,92 @@ fun test_liquidate_fails_with_too_low_repay_amount() {
     // Should never reach here
     destroy_3!(base_coin, quote_coin, remaining_debt);
     abort (0)
+}
+
+#[test]
+fun test_unregister_margin_manager() {
+    let (mut scenario, clock, admin_cap, maintainer_cap) = setup_margin_registry();
+
+    create_margin_pool<USDT>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+    create_margin_pool<USDC>(
+        &mut scenario,
+        &maintainer_cap,
+        default_protocol_config(),
+        &clock,
+    );
+
+    // Create DeepBook pool and enable margin trading on it
+    let (pool_id, registry_id) = create_pool_for_testing<USDC, USDT>(&mut scenario);
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    enable_deepbook_margin_on_pool<USDC, USDT>(
+        pool_id,
+        &mut registry,
+        &admin_cap,
+        &clock,
+        &mut scenario,
+    );
+    return_shared(registry);
+
+    // Create first margin manager
+    scenario.next_tx(test_constants::user1());
+    let pool = scenario.take_shared<Pool<USDC, USDT>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    let manager1_id = margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared_3!(deepbook_registry, pool, registry);
+
+    // Create second margin manager
+    scenario.next_tx(test_constants::user1());
+    let pool = scenario.take_shared<Pool<USDC, USDT>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    let manager2_id = margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared_3!(deepbook_registry, pool, registry);
+
+    // Verify both are registered
+    scenario.next_tx(test_constants::user1());
+    let registry = scenario.take_shared<MarginRegistry>();
+    let manager_ids = margin_registry::get_margin_manager_ids(&registry, test_constants::user1());
+    assert!(manager_ids.length() == 2);
+    assert!(manager_ids.contains(&manager1_id));
+    assert!(manager_ids.contains(&manager2_id));
+    return_shared(registry);
+
+    // Unregister first manager
+    scenario.next_tx(test_constants::user1());
+    let mut mm1 = scenario.take_shared_by_id<MarginManager<USDC, USDT>>(manager1_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    margin_manager::unregister_margin_manager<USDC, USDT>(
+        &mut mm1,
+        &mut registry,
+        scenario.ctx(),
+    );
+    return_shared_2!(mm1, registry);
+
+    // Verify only second manager remains
+    scenario.next_tx(test_constants::user1());
+    let registry = scenario.take_shared<MarginRegistry>();
+    let manager_ids = margin_registry::get_margin_manager_ids(&registry, test_constants::user1());
+    assert!(manager_ids.length() == 1);
+    assert!(!manager_ids.contains(&manager1_id));
+    assert!(manager_ids.contains(&manager2_id));
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }

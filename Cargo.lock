@@ -2153,6 +2153,7 @@ dependencies = [
  "diesel-async",
  "futures",
  "prometheus",
+ "serde",
  "serde_json",
  "sui-indexer-alt-metrics",
  "sui-json-rpc-types",

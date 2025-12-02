@@ -15,6 +15,7 @@ use diesel::{
 use diesel_async::methods::LoadQuery;
 use diesel_async::{AsyncPgConnection, RunQueryDsl};
 use prometheus::Registry;
+use serde_json;
 use std::sync::Arc;
 use sui_indexer_alt_metrics::db::DbConnectionStatsCollector;
 use sui_pg_db::{Db, DbArgs};
@@ -412,6 +413,7 @@ impl Reader {
             String,
             String,
             String,
+            Option<String>,
             String,
             i64,
         )>,
@@ -433,6 +435,7 @@ impl Reader {
                 schema::margin_manager_created::package,
                 schema::margin_manager_created::margin_manager_id,
                 schema::margin_manager_created::balance_manager_id,
+                schema::margin_manager_created::deepbook_pool_id,
                 schema::margin_manager_created::owner,
                 schema::margin_manager_created::onchain_timestamp,
             ))
@@ -454,6 +457,7 @@ impl Reader {
                 String,
                 String,
                 String,
+                Option<String>,
                 String,
                 i64,
             )>(&mut connection)
@@ -1710,7 +1714,20 @@ impl Reader {
         end_time: i64,
         limit: i64,
         pool_id_filter: Option<String>,
-    ) -> Result<Vec<(String, String, String, i64, i64, String, String, i64)>, DeepBookError> {
+    ) -> Result<
+        Vec<(
+            String,
+            String,
+            String,
+            i64,
+            i64,
+            String,
+            String,
+            Option<serde_json::Value>,
+            i64,
+        )>,
+        DeepBookError,
+    > {
         let mut connection = self.db.connect().await?;
         let mut query = schema::deepbook_pool_registered::table
             .filter(
@@ -1726,6 +1743,7 @@ impl Reader {
                 schema::deepbook_pool_registered::checkpoint_timestamp_ms,
                 schema::deepbook_pool_registered::package,
                 schema::deepbook_pool_registered::pool_id,
+                schema::deepbook_pool_registered::config_json,
                 schema::deepbook_pool_registered::onchain_timestamp,
             ))
             .limit(limit)
@@ -1737,7 +1755,17 @@ impl Reader {
 
         let _guard = self.metrics.db_latency.start_timer();
         let res = query
-            .load::<(String, String, String, i64, i64, String, String, i64)>(&mut connection)
+            .load::<(
+                String,
+                String,
+                String,
+                i64,
+                i64,
+                String,
+                String,
+                Option<serde_json::Value>,
+                i64,
+            )>(&mut connection)
             .await
             .map_err(|_| {
                 DeepBookError::InternalError(
@@ -2064,6 +2092,29 @@ impl Reader {
             .map_err(|_| {
                 DeepBookError::InternalError("Error fetching margin manager states".to_string())
             });
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    pub async fn get_watermarks(&self) -> Result<Vec<(String, i64, i64, i64)>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        let res = schema::watermarks::table
+            .select((
+                schema::watermarks::pipeline,
+                schema::watermarks::checkpoint_hi_inclusive,
+                schema::watermarks::timestamp_ms_hi_inclusive,
+                schema::watermarks::epoch_hi_inclusive,
+            ))
+            .load::<(String, i64, i64, i64)>(&mut connection)
+            .await
+            .map_err(|_| DeepBookError::InternalError("Error fetching watermarks".to_string()));
 
         if res.is_ok() {
             self.metrics.db_requests_succeeded.inc();

@@ -48,6 +48,13 @@ public macro fun destroy_3<$T1, $T2, $T3>($obj1: $T1, $obj2: $T2, $obj3: $T3) {
     destroy($obj3);
 }
 
+public macro fun destroy_4<$T1, $T2, $T3, $T4>($obj1: $T1, $obj2: $T2, $obj3: $T3, $obj4: $T4) {
+    destroy($obj1);
+    destroy($obj2);
+    destroy($obj3);
+    destroy($obj4);
+}
+
 public macro fun return_shared_2<$T1, $T2>($obj1: $T1, $obj2: $T2) {
     return_shared($obj1);
     return_shared($obj2);
@@ -155,7 +162,7 @@ public fun get_margin_pool_caps(
 public fun get_margin_pool_cap(scenario: &mut Scenario, pool_id: ID): MarginPoolCap {
     scenario.next_tx(test_constants::admin());
     let cap = scenario.take_from_sender<MarginPoolCap>();
-    assert!(cap.margin_pool_id() == pool_id, 0);
+    assert!(cap.margin_pool_id() == pool_id);
     cap
 }
 
@@ -174,6 +181,46 @@ public fun default_protocol_config(): ProtocolConfig {
     );
 
     protocol_config::new_protocol_config(margin_pool_config, interest_config)
+}
+
+public fun create_pool_with_rate_limit<Asset>(
+    registry: &mut MarginRegistry,
+    maintainer_cap: &MaintainerCap,
+    supply_cap: u64,
+    rate_limit_capacity: u64,
+    rate_limit_refill_rate_per_ms: u64,
+    rate_limit_enabled: bool,
+    clock: &Clock,
+    scenario: &mut Scenario,
+): ID {
+    scenario.next_tx(test_constants::admin());
+
+    let margin_pool_config = protocol_config::new_margin_pool_config_with_rate_limit(
+        supply_cap,
+        test_constants::max_utilization_rate(),
+        test_constants::protocol_spread(),
+        test_constants::min_borrow(),
+        rate_limit_capacity,
+        rate_limit_refill_rate_per_ms,
+        rate_limit_enabled,
+    );
+    let interest_config = protocol_config::new_interest_config(
+        test_constants::base_rate(),
+        test_constants::base_slope(),
+        test_constants::optimal_utilization(),
+        test_constants::excess_slope(),
+    );
+    let config = protocol_config::new_protocol_config(margin_pool_config, interest_config);
+
+    let pool_id = margin_pool::create_margin_pool<Asset>(
+        registry,
+        config,
+        maintainer_cap,
+        clock,
+        scenario.ctx(),
+    );
+
+    pool_id
 }
 
 public fun mint_coin<T>(amount: u64, ctx: &mut TxContext): Coin<T> {
