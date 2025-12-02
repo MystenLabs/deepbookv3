@@ -184,6 +184,7 @@ public fun cancel_conditional_order<BaseAsset, QuoteAsset>(
         .cancel_conditional_order(manager_id, conditional_order_identifier, clock);
 }
 
+/// Execute pending orders and return the order infos.
 public fun execute_pending_orders<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -203,7 +204,6 @@ public fun execute_pending_orders<BaseAsset, QuoteAsset>(
     let mut order_infos = vector[];
     let mut identifiers_to_remove = vector[];
 
-    // Single pass: iterate through keys, check trigger, check balance, place order
     let keys = self.take_profit_stop_loss.conditional_orders().keys();
     keys.do!(|identifier| {
         let conditional_order = self.take_profit_stop_loss.get_conditional_order(&identifier);
