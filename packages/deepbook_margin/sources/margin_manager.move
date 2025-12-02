@@ -218,9 +218,11 @@ public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
     base_price_info_object: &PriceInfoObject,
     quote_price_info_object: &PriceInfoObject,
     registry: &MarginRegistry,
+    max_orders_to_execute: u64,
     clock: &Clock,
     ctx: &TxContext,
 ): vector<OrderInfo> {
+    assert!(pool.id() == self.deepbook_pool(), EIncorrectDeepBookPool);
     let current_price = calculate_price<BaseAsset, QuoteAsset>(
         registry,
         base_price_info_object,
@@ -231,10 +233,12 @@ public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
     let mut order_infos = vector[];
     let mut identifiers_to_remove = vector[];
     let mut expired_identifiers = vector[];
+    let mut insufficient_funds_identifiers = vector[];
 
     let keys = self.take_profit_stop_loss.conditional_orders().keys();
     keys.do!(|identifier| {
-        let conditional_order = self.take_profit_stop_loss.get_conditional_order(&identifier);
+        if (order_infos.length() >= max_orders_to_execute) return;
+        let conditional_order = self.conditional_order(identifier);
         let condition = conditional_order.condition();
 
         let triggered =
@@ -279,13 +283,20 @@ public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
                 let expire_timestamp = *pending_order.expire_timestamp().borrow();
                 if (expire_timestamp <= clock.timestamp_ms()) {
                     expired_identifiers.push_back(identifier);
+                } else {
+                    insufficient_funds_identifiers.push_back(identifier);
                 }
+            } else {
+                insufficient_funds_identifiers.push_back(identifier);
             }
         }
     });
 
     // Remove executed orders
     let manager_id = self.id();
+    insufficient_funds_identifiers.do!(|id| {
+        self.take_profit_stop_loss.emit_insufficient_funds_event(manager_id, id, clock);
+    });
     expired_identifiers.do!(|id| {
         self.take_profit_stop_loss.cancel_conditional_order(manager_id, id, clock);
     });
@@ -1011,16 +1022,17 @@ public fun has_base_debt<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, 
     self.borrowed_base_shares > 0
 }
 
-public fun take_profit_stop_loss<BaseAsset, QuoteAsset>(
+public fun conditional_order_identifiers<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
-): &TakeProfitStopLoss {
-    &self.take_profit_stop_loss
+): vector<u64> {
+    self.take_profit_stop_loss.conditional_orders().keys()
 }
 
-public fun conditional_orders<BaseAsset, QuoteAsset>(
+public fun conditional_order<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
-): &VecMap<u64, ConditionalOrder> {
-    self.take_profit_stop_loss.conditional_orders()
+    conditional_order_identifier: u64,
+): ConditionalOrder {
+    *self.take_profit_stop_loss.get_conditional_order(&conditional_order_identifier)
 }
 
 // === Public-Package Functions ===

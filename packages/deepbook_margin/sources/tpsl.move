@@ -67,6 +67,13 @@ public struct ConditionalOrderExecuted has copy, drop {
     timestamp: u64,
 }
 
+public struct ConditionalOrderInsufficientFunds has copy, drop {
+    manager_id: ID,
+    conditional_order_identifier: u64,
+    conditional_order: ConditionalOrder,
+    timestamp: u64,
+}
+
 // === Public Functions ===
 public fun new_condition(trigger_below_price: bool, trigger_price: u64): Condition {
     Condition {
@@ -307,4 +314,19 @@ public(package) fun remove_conditional_order(
             timestamp: clock.timestamp_ms(),
         });
     };
+}
+
+public(package) fun emit_insufficient_funds_event(
+    self: &TakeProfitStopLoss,
+    manager_id: ID,
+    conditional_order_identifier: u64,
+    clock: &Clock,
+) {
+    let conditional_order = *self.get_conditional_order(&conditional_order_identifier);
+    event::emit(ConditionalOrderInsufficientFunds {
+        manager_id,
+        conditional_order_identifier,
+        conditional_order,
+        timestamp: clock.timestamp_ms(),
+    });
 }
