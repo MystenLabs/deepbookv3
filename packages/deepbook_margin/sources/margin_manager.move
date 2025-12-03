@@ -165,10 +165,10 @@ public fun add_conditional_order<BaseAsset, QuoteAsset>(
     self.validate_owner(ctx);
     let manager_id = self.id();
     assert!(pool.id() == self.deepbook_pool(), EIncorrectDeepBookPool);
-    let (tick_size, lot_size, min_size) = pool.pool_book_params();
     self
         .take_profit_stop_loss
         .add_conditional_order<BaseAsset, QuoteAsset>(
+            pool,
             manager_id,
             base_price_info_object,
             quote_price_info_object,
@@ -176,9 +176,6 @@ public fun add_conditional_order<BaseAsset, QuoteAsset>(
             conditional_order_id,
             condition,
             pending_order,
-            tick_size,
-            lot_size,
-            min_size,
             clock,
         );
 }

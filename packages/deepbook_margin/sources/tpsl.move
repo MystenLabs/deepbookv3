@@ -3,7 +3,7 @@
 
 module deepbook_margin::tpsl;
 
-use deepbook::constants;
+use deepbook::{constants, pool::Pool};
 use deepbook_margin::{margin_constants, margin_registry::MarginRegistry, oracle::calculate_price};
 use pyth::price_info::PriceInfoObject;
 use sui::{clock::Clock, event, vec_map::{Self, VecMap}};
@@ -14,9 +14,7 @@ const EConditionalOrderNotFound: u64 = 2;
 const EMaxConditionalOrdersReached: u64 = 3;
 const EInvalidTPSLOrderType: u64 = 4;
 const EDuplicateConditionalOrderIdentifier: u64 = 5;
-const EInvalidQuantity: u64 = 6;
-const EInvalidPrice: u64 = 7;
-const EInvalidExpireTimestamp: u64 = 8;
+const EInvalidOrderParams: u64 = 6;
 
 // === Structs ===
 public struct TakeProfitStopLoss has drop, store {
@@ -95,7 +93,6 @@ public fun new_pending_limit_order(
     pay_with_deep: bool,
     expire_timestamp: u64,
 ): PendingOrder {
-    assert!(quantity > 0, EInvalidQuantity);
     assert!(
         order_type == constants::no_restriction() || order_type == constants::immediate_or_cancel(),
         EInvalidTPSLOrderType,
@@ -120,7 +117,6 @@ public fun new_pending_market_order(
     is_bid: bool,
     pay_with_deep: bool,
 ): PendingOrder {
-    assert!(quantity > 0, EInvalidQuantity);
     PendingOrder {
         is_limit_order: false,
         client_order_id,
@@ -207,6 +203,7 @@ public(package) fun new(): TakeProfitStopLoss {
 
 public(package) fun add_conditional_order<BaseAsset, QuoteAsset>(
     self: &mut TakeProfitStopLoss,
+    pool: &Pool<BaseAsset, QuoteAsset>,
     manager_id: ID,
     base_price_info_object: &PriceInfoObject,
     quote_price_info_object: &PriceInfoObject,
@@ -214,19 +211,17 @@ public(package) fun add_conditional_order<BaseAsset, QuoteAsset>(
     conditional_order_id: u64,
     condition: Condition,
     pending_order: PendingOrder,
-    tick_size: u64,
-    lot_size: u64,
-    min_size: u64,
     clock: &Clock,
 ) {
-    assert!(pending_order.quantity >= min_size, EInvalidQuantity);
-    assert!(pending_order.quantity % lot_size == 0, EInvalidQuantity);
     if (pending_order.is_limit_order()) {
         let price = *pending_order.price.borrow();
-        assert!(price >= constants::min_price() && price <= constants::max_price(), EInvalidPrice);
-        assert!(price % tick_size == 0, EInvalidPrice);
         let expire_timestamp = *pending_order.expire_timestamp.borrow();
-        assert!(expire_timestamp > clock.timestamp_ms(), EInvalidExpireTimestamp);
+        assert!(
+            pool.check_limit_order_params(price, pending_order.quantity, expire_timestamp, clock),
+            EInvalidOrderParams,
+        );
+    } else {
+        assert!(pool.check_market_order_params(pending_order.quantity), EInvalidOrderParams);
     };
     let current_price = calculate_price<BaseAsset, QuoteAsset>(
         registry,
