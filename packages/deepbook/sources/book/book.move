@@ -5,13 +5,15 @@
 /// All order book operations are defined in this module.
 module deepbook::book;
 
-use deepbook::big_vector::{Self, BigVector, slice_borrow, slice_borrow_mut};
-use deepbook::constants;
-use deepbook::deep_price::OrderDeepPrice;
-use deepbook::math;
-use deepbook::order::Order;
-use deepbook::order_info::OrderInfo;
-use deepbook::utils;
+use deepbook::{
+    big_vector::{Self, BigVector, slice_borrow, slice_borrow_mut},
+    constants,
+    deep_price::OrderDeepPrice,
+    math,
+    order::Order,
+    order_info::OrderInfo,
+    utils
+};
 
 // === Errors ===
 const EInvalidAmountIn: u64 = 1;
@@ -188,9 +190,8 @@ public(package) fun get_quantity_out(
             if (matched_base_quantity == 0) break;
         };
 
-        (ref, offset) =
-            if (is_bid) book_side.next_slice(ref, offset)
-            else book_side.prev_slice(ref, offset);
+        (ref, offset) = if (is_bid) book_side.next_slice(ref, offset)
+        else book_side.prev_slice(ref, offset);
         current_fills = current_fills + 1;
     };
 
@@ -367,9 +368,8 @@ fun get_quantity_in(
             }
         };
 
-        (ref, offset) =
-            if (is_bid) book_side.next_slice(ref, offset)
-            else book_side.prev_slice(ref, offset);
+        (ref, offset) = if (is_bid) book_side.next_slice(ref, offset)
+        else book_side.prev_slice(ref, offset);
         current_fills = current_fills + 1;
     };
 
@@ -545,9 +545,8 @@ public(package) fun get_level2_range_and_ticks(
             };
         };
 
-        (ref, offset) =
-            if (is_bid) book_side.prev_slice(ref, offset)
-            else book_side.next_slice(ref, offset);
+        (ref, offset) = if (is_bid) book_side.prev_slice(ref, offset)
+        else book_side.next_slice(ref, offset);
     };
 
     if (cur_price != 0 && ticks_left > 0) {
@@ -613,9 +612,8 @@ fun match_against_book(self: &mut Book, order_info: &mut OrderInfo, timestamp: u
             offset,
         );
         if (!order_info.match_maker(maker_order, timestamp)) break;
-        (ref, offset) =
-            if (is_bid) book_side.next_slice(ref, offset)
-            else book_side.prev_slice(ref, offset);
+        (ref, offset) = if (is_bid) book_side.next_slice(ref, offset)
+        else book_side.prev_slice(ref, offset);
         current_fills = current_fills + 1;
     };
 

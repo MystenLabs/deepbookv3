@@ -4,36 +4,34 @@
 #[test_only]
 module deepbook::pool_tests;
 
-use deepbook::balance_manager::{
-    BalanceManager,
-    TradeCap,
-    DeepBookReferral,
-    DepositCap,
-    WithdrawCap
+use deepbook::{
+    balance_manager::{BalanceManager, TradeCap, DeepBookReferral, DepositCap, WithdrawCap},
+    balance_manager_tests::{
+        USDC,
+        USDT,
+        SPAM,
+        create_acct_and_share_with_funds,
+        create_acct_and_share_with_funds_typed,
+        create_caps,
+        asset_balance
+    },
+    big_vector::BigVector,
+    constants,
+    fill::Fill,
+    math,
+    order::Order,
+    order_info::OrderInfo,
+    pool::{Self, Pool},
+    registry::{Self, Registry},
+    utils
 };
-use deepbook::balance_manager_tests::{
-    USDC,
-    USDT,
-    SPAM,
-    create_acct_and_share_with_funds,
-    create_acct_and_share_with_funds_typed,
-    create_caps,
-    asset_balance
-};
-use deepbook::big_vector::BigVector;
-use deepbook::constants;
-use deepbook::fill::Fill;
-use deepbook::math;
-use deepbook::order::Order;
-use deepbook::order_info::OrderInfo;
-use deepbook::pool::{Self, Pool};
-use deepbook::registry::{Self, Registry};
-use deepbook::utils;
 use std::unit_test::{assert_eq, destroy};
-use sui::clock::{Self, Clock};
-use sui::coin::{Self, Coin, mint_for_testing};
-use sui::sui::SUI;
-use sui::test_scenario::{Scenario, begin, end, return_shared};
+use sui::{
+    clock::{Self, Clock},
+    coin::{Self, Coin, mint_for_testing},
+    sui::SUI,
+    test_scenario::{Scenario, begin, end, return_shared}
+};
 use token::deep::DEEP;
 
 const OWNER: address = @0x1;
@@ -6398,28 +6396,16 @@ fun test_get_base_quantity_in_multiple_levels() {
         );
 
         // Expected: Sell 10 at $3 (30), 5 at $2 (10), 10 at $1 (10) = 25 SUI for 50 USDC
-        std::debug::print(&b"Test 1: pay_with_deep = true");
-        std::debug::print(&b"base_in:");
-        std::debug::print(&base_in);
-        std::debug::print(&b"quote_out:");
-        std::debug::print(&quote_out);
-        std::debug::print(&b"deep_required:");
-        std::debug::print(&deep_required);
-
         assert!(base_in == 25 * constants::float_scaling(), 0);
         assert!(quote_out == 50 * constants::float_scaling(), 1);
 
         // DEEP fee calculation for sell order (is_bid = false):
         // fee_balances = deep_price.fee_quantity(25 SUI, 50 USDC, false)
         // Then multiply by taker_fee (0.001)
-        // The fee should be calculated on the base quantity (25 SUI)
-        // Using deep_multiplier and taker_fee
         let expected_deep = math::mul(
             constants::taker_fee(),
             math::mul(25 * constants::float_scaling(), constants::deep_multiplier()),
         );
-        std::debug::print(&b"expected_deep:");
-        std::debug::print(&expected_deep);
         assert!(deep_required == expected_deep, 2);
 
         // Test 2: Get base quantity needed for 50 USDC with pay_with_deep = false
@@ -6432,14 +6418,6 @@ fun test_get_base_quantity_in_multiple_levels() {
             &clock,
         );
 
-        std::debug::print(&b"Test 2: pay_with_deep = false");
-        std::debug::print(&b"base_in_no_deep:");
-        std::debug::print(&base_in_no_deep);
-        std::debug::print(&b"quote_out_no_deep:");
-        std::debug::print(&quote_out_no_deep);
-        std::debug::print(&b"deep_required_no_deep:");
-        std::debug::print(&deep_required_no_deep);
-
         // With fees in base, need extra base to cover fees
         // input_fee_rate = fee_penalty_multiplier (1.25) * taker_fee (0.001) = 0.00125
         // base_with_fee = base * (1 + 0.00125) = 25 * 1.00125 = 25.03125
@@ -6451,8 +6429,6 @@ fun test_get_base_quantity_in_multiple_levels() {
             25 * constants::float_scaling(),
             constants::float_scaling() + input_fee_rate,
         );
-        std::debug::print(&b"expected_base_with_fee:");
-        std::debug::print(&expected_base_with_fee);
 
         assert!(base_in_no_deep == expected_base_with_fee, 3);
         assert!(quote_out_no_deep == 50 * constants::float_scaling(), 4);
@@ -6460,38 +6436,23 @@ fun test_get_base_quantity_in_multiple_levels() {
 
         // Test 3: Target close to max liquidity
         // Available: 10 at $3 (30) + 5 at $2 (10) + 25 at $1 (25) = 65 USDC max
-        // (Note: 25 * $1 = 25, not 25 * 25!)
         let (base_in_partial, quote_out_partial, _) = pool.get_base_quantity_in<SUI, USDC>(
             60 * constants::float_scaling(), // target: 60 USDC
             true,
             &clock,
         );
 
-        std::debug::print(&b"Test 3: Partial liquidity (60 USDC)");
-        std::debug::print(&b"base_in_partial:");
-        std::debug::print(&base_in_partial);
-        std::debug::print(&b"quote_out_partial:");
-        std::debug::print(&quote_out_partial);
-
         // Should use: 10 at $3 (30) + 5 at $2 (10) + 20 at $1 (20) = 35 SUI for 60 USDC
         assert!(base_in_partial == 35 * constants::float_scaling(), 6);
         assert!(quote_out_partial == 60 * constants::float_scaling(), 7);
 
         // Test 4: Target exceeding available liquidity
-        // Max available: 10*3 + 5*2 + 25*1 = 30 + 10 + 25 = 65 USDC
+        // Max available: 10*3 + 5*2 + 25*1 = 65 USDC
         let (base_in_exceed, quote_out_exceed, deep_exceed) = pool.get_base_quantity_in<SUI, USDC>(
             100 * constants::float_scaling(), // target: 100 USDC (more than 65 available)
             true,
             &clock,
         );
-
-        std::debug::print(&b"Test 4: Exceeds liquidity (100 > 65)");
-        std::debug::print(&b"base_in_exceed:");
-        std::debug::print(&base_in_exceed);
-        std::debug::print(&b"quote_out_exceed:");
-        std::debug::print(&quote_out_exceed);
-        std::debug::print(&b"deep_exceed:");
-        std::debug::print(&deep_exceed);
 
         // Should return (0, 0, 0) since we can't meet the target
         assert!(base_in_exceed == 0, 8);
@@ -6505,14 +6466,6 @@ fun test_get_base_quantity_in_multiple_levels() {
             &clock,
         );
 
-        std::debug::print(&b"Test 5: Target = 65 (exactly available)");
-        std::debug::print(&b"base_in_65:");
-        std::debug::print(&base_in_65);
-        std::debug::print(&b"quote_out_65:");
-        std::debug::print(&quote_out_65);
-        std::debug::print(&b"deep_65:");
-        std::debug::print(&deep_65);
-
         // Should use all: 10 at $3 (30) + 5 at $2 (10) + 25 at $1 (25) = 40 SUI for 65 USDC
         assert!(base_in_65 == 40 * constants::float_scaling(), 11);
         assert!(quote_out_65 == 65 * constants::float_scaling(), 12);
@@ -6522,6 +6475,179 @@ fun test_get_base_quantity_in_multiple_levels() {
             math::mul(40 * constants::float_scaling(), constants::deep_multiplier()),
         );
         assert!(deep_65 == expected_deep_65, 13);
+
+        return_shared(pool);
+        return_shared(clock);
+    };
+
+    end(test);
+}
+
+// ============== get_quote_quantity_in tests ==============
+
+/// Test get_quote_quantity_in with multiple price levels
+/// Setup: Sell orders at $1 (qty 25), $2 (qty 5), $3 (qty 10)
+/// Target: 30 SUI
+/// Expected: Buy 25 SUI at $1 (25 USDC), 5 SUI at $2 (10 USDC) = 30 SUI for 35 USDC
+/// Result: 30 base_quantity_out, 35 quote_quantity_in
+#[test]
+fun test_get_quote_quantity_in_multiple_levels() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+
+    // Setup pool with reference pool (non-whitelisted) so we can test DEEP fees
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+
+    // Place ask (sell) orders at different price levels
+    // Order 1: Sell 25 SUI at $1 per SUI
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        1 * constants::float_scaling(), // price: $1
+        25 * constants::float_scaling(), // quantity: 25 SUI
+        false, // is_bid = false (sell order)
+        true, // pay_with_deep
+        constants::max_u64(),
+        &mut test,
+    );
+
+    // Order 2: Sell 5 SUI at $2 per SUI
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        2,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        2 * constants::float_scaling(), // price: $2
+        5 * constants::float_scaling(), // quantity: 5 SUI
+        false, // is_bid = false
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    // Order 3: Sell 10 SUI at $3 per SUI
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        3,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        3 * constants::float_scaling(), // price: $3
+        10 * constants::float_scaling(), // quantity: 10 SUI
+        false, // is_bid = false
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let clock = test.take_shared<Clock>();
+
+        // Test 1: Get quote quantity needed for 30 SUI with pay_with_deep = true
+        let (base_out, quote_in, deep_required) = pool.get_quote_quantity_in<SUI, USDC>(
+            30 * constants::float_scaling(), // target: 30 SUI
+            true, // pay_with_deep
+            &clock,
+        );
+
+        // Expected: Buy 25 at $1 (25) + 5 at $2 (10) = 30 SUI for 35 USDC
+        assert!(base_out == 30 * constants::float_scaling(), 0);
+        assert!(quote_in == 35 * constants::float_scaling(), 1);
+
+        // DEEP fee calculation for buy order (is_bid = true):
+        // fee_balances = deep_price.fee_quantity(30 SUI, 35 USDC, true)
+        // Then multiply by taker_fee (0.001)
+        let expected_deep = math::mul(
+            constants::taker_fee(),
+            math::mul(30 * constants::float_scaling(), constants::deep_multiplier()),
+        );
+        assert!(deep_required == expected_deep, 2);
+
+        // Test 2: Get quote quantity needed for 30 SUI with pay_with_deep = false
+        let (
+            base_out_no_deep,
+            quote_in_no_deep,
+            deep_required_no_deep,
+        ) = pool.get_quote_quantity_in<SUI, USDC>(
+            30 * constants::float_scaling(), // target: 30 SUI
+            false, // pay_with_deep = false (fees in quote)
+            &clock,
+        );
+
+        // With fees in quote, need extra quote to cover fees
+        // input_fee_rate = fee_penalty_multiplier (1.25) * taker_fee (0.001) = 0.00125
+        // quote_with_fee = quote * (1 + 0.00125) = 35 * 1.00125 = 35.04375
+        let input_fee_rate = math::mul(
+            constants::fee_penalty_multiplier(),
+            constants::taker_fee(),
+        );
+        let expected_quote_with_fee = math::mul(
+            35 * constants::float_scaling(),
+            constants::float_scaling() + input_fee_rate,
+        );
+
+        assert!(base_out_no_deep == 30 * constants::float_scaling(), 3);
+        assert!(quote_in_no_deep == expected_quote_with_fee, 4);
+        assert!(deep_required_no_deep == 0, 5);
+
+        // Test 3: Target that requires all liquidity (40 SUI total available)
+        let (base_out_all, quote_in_all, deep_all) = pool.get_quote_quantity_in<SUI, USDC>(
+            40 * constants::float_scaling(), // target: 40 SUI (exact match)
+            true,
+            &clock,
+        );
+
+        // Should use all: 25 at $1 (25) + 5 at $2 (10) + 10 at $3 (30) = 40 SUI for 65 USDC
+        assert!(base_out_all == 40 * constants::float_scaling(), 6);
+        assert!(quote_in_all == 65 * constants::float_scaling(), 7);
+
+        let expected_deep_all = math::mul(
+            constants::taker_fee(),
+            math::mul(40 * constants::float_scaling(), constants::deep_multiplier()),
+        );
+        assert!(deep_all == expected_deep_all, 8);
+
+        // Test 4: Target exceeding available liquidity (50 SUI, only 40 available)
+        let (base_out_exceed, quote_in_exceed, deep_exceed) = pool.get_quote_quantity_in<SUI, USDC>(
+            50 * constants::float_scaling(), // target: 50 SUI (more than 40 available)
+            true,
+            &clock,
+        );
+
+        // Should return (0, 0, 0) since we can't meet the target
+        assert!(base_out_exceed == 0, 9);
+        assert!(quote_in_exceed == 0, 10);
+        assert!(deep_exceed == 0, 11);
+
+        // Test 5: Small target (5 SUI)
+        let (base_out_small, quote_in_small, _) = pool.get_quote_quantity_in<SUI, USDC>(
+            5 * constants::float_scaling(), // target: 5 SUI
+            true,
+            &clock,
+        );
+
+        // Should buy 5 at $1 = 5 SUI for 5 USDC
+        assert!(base_out_small == 5 * constants::float_scaling(), 12);
+        assert!(quote_in_small == 5 * constants::float_scaling(), 13);
 
         return_shared(pool);
         return_shared(clock);
