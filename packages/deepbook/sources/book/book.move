@@ -290,8 +290,9 @@ fun get_quantity_in(
     );
     let lot_size = self.lot_size;
 
-    let mut input_quantity = 0; // This will be quote for bid, base for ask
+    let mut input_quantity = 0; // This will be quote for bid, base for ask (may include fees)
     let mut output_accumulated = 0; // This will be base for bid, quote for ask
+    let mut traded_base = 0; // Raw base traded, used for min_size checks on asks
 
     // For bid: traverse asks (we're buying base with quote)
     // For ask: traverse bids (we're selling base for quote)
@@ -341,6 +342,8 @@ fun get_quantity_in(
                 matched_base = matched_base - (matched_base % lot_size);
 
                 if (matched_base > 0) {
+                    traded_base = traded_base + matched_base;
+
                     let matched_quote = math::mul(matched_base, cur_price);
                     output_accumulated = output_accumulated + matched_quote;
 
@@ -390,7 +393,7 @@ fun get_quantity_in(
     let sufficient = if (is_bid) {
         output_accumulated >= target_base_quantity && output_accumulated >= self.min_size
     } else {
-        output_accumulated >= target_quote_quantity && input_quantity >= self.min_size
+        output_accumulated >= target_quote_quantity && traded_base >= self.min_size
     };
 
     if (!sufficient) {
