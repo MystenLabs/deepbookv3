@@ -1224,7 +1224,6 @@ public fun get_base_quantity_in<BaseAsset, QuoteAsset>(
             target_quote_quantity,
             taker_fee,
             deep_price,
-            self.book.lot_size(),
             pay_with_deep,
             clock.timestamp_ms(),
         )
@@ -1254,7 +1253,6 @@ public fun get_quote_quantity_in<BaseAsset, QuoteAsset>(
             target_base_quantity,
             taker_fee,
             deep_price,
-            self.book.lot_size(),
             pay_with_deep,
             clock.timestamp_ms(),
         )

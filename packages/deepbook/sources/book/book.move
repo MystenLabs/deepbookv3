@@ -235,17 +235,14 @@ public(package) fun get_base_quantity_in(
     target_quote_quantity: u64,
     taker_fee: u64,
     deep_price: OrderDeepPrice,
-    lot_size: u64,
     pay_with_deep: bool,
     current_timestamp: u64,
 ): (u64, u64, u64) {
-    get_quantity_in(
-        self,
+    self.get_quantity_in(
         0, // target_base_quantity = 0, we want quote
         target_quote_quantity,
         taker_fee,
         deep_price,
-        lot_size,
         pay_with_deep,
         current_timestamp,
     )
@@ -260,17 +257,14 @@ public(package) fun get_quote_quantity_in(
     target_base_quantity: u64,
     taker_fee: u64,
     deep_price: OrderDeepPrice,
-    lot_size: u64,
     pay_with_deep: bool,
     current_timestamp: u64,
 ): (u64, u64, u64) {
-    get_quantity_in(
-        self,
+    self.get_quantity_in(
         target_base_quantity,
         0, // target_quote_quantity = 0, we want base
         taker_fee,
         deep_price,
-        lot_size,
         pay_with_deep,
         current_timestamp,
     )
@@ -286,7 +280,6 @@ fun get_quantity_in(
     target_quote_quantity: u64,
     taker_fee: u64,
     deep_price: OrderDeepPrice,
-    lot_size: u64,
     pay_with_deep: bool,
     current_timestamp: u64,
 ): (u64, u64, u64) {
@@ -296,6 +289,7 @@ fun get_quantity_in(
         constants::fee_penalty_multiplier(),
         taker_fee,
     );
+    let lot_size = self.lot_size;
 
     let mut input_quantity = 0; // This will be quote for bid, base for ask
     let mut output_accumulated = 0; // This will be base for bid, quote for ask
