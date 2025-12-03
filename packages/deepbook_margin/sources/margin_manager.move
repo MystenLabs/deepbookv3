@@ -296,6 +296,7 @@ public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
     let manager_id = self.id();
     insufficient_funds_identifiers.do!(|id| {
         self.take_profit_stop_loss.emit_insufficient_funds_event(manager_id, id, clock);
+        self.take_profit_stop_loss.cancel_conditional_order(manager_id, id, clock);
     });
     expired_identifiers.do!(|id| {
         self.take_profit_stop_loss.cancel_conditional_order(manager_id, id, clock);

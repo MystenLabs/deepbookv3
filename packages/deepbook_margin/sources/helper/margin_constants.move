@@ -18,7 +18,7 @@ const MAX_PROTOCOL_SPREAD: u64 = 200_000_000; // 20%
 const MIN_LIQUIDATION_REPAY: u64 = 1000;
 const MAX_CONF_BPS: u64 = 10_000; // 100% - maximum allowed confidence interval
 const MAX_EWMA_DIFFERENCE_BPS: u64 = 10_000; // 100% - maximum allowed EWMA price difference
-const MAX_CONDITIONAL_ORDERS: u64 = 50;
+const MAX_CONDITIONAL_ORDERS: u64 = 10;
 
 public fun margin_version(): u64 {
     MARGIN_VERSION
