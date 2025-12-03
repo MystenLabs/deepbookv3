@@ -6,7 +6,7 @@ module deepbook_margin::tpsl;
 use deepbook::{constants, pool::Pool};
 use deepbook_margin::{margin_constants, margin_registry::MarginRegistry, oracle::calculate_price};
 use pyth::price_info::PriceInfoObject;
-use sui::{clock::Clock, event, vec_map::{Self, VecMap}};
+use sui::{clock::Clock, event};
 
 // === Errors ===
 const EInvalidCondition: u64 = 1;
@@ -17,11 +17,16 @@ const EDuplicateConditionalOrderIdentifier: u64 = 5;
 const EInvalidOrderParams: u64 = 6;
 
 // === Structs ===
+/// Stores conditional orders in two sorted vectors for efficient execution.
+/// trigger_below: Orders that trigger when price < trigger_price (sorted high to low)
+/// trigger_above: Orders that trigger when price > trigger_price (sorted low to high)
 public struct TakeProfitStopLoss has drop, store {
-    conditional_orders: VecMap<u64, ConditionalOrder>,
+    trigger_below: vector<ConditionalOrder>,
+    trigger_above: vector<ConditionalOrder>,
 }
 
 public struct ConditionalOrder has copy, drop, store {
+    conditional_order_id: u64,
     condition: Condition,
     pending_order: PendingOrder,
 }
@@ -131,15 +136,45 @@ public fun new_pending_market_order(
 }
 
 // === Read-Only Functions ===
-public fun conditional_orders(self: &TakeProfitStopLoss): &VecMap<u64, ConditionalOrder> {
-    &self.conditional_orders
+public fun trigger_below_orders(self: &TakeProfitStopLoss): &vector<ConditionalOrder> {
+    &self.trigger_below
+}
+
+public fun trigger_above_orders(self: &TakeProfitStopLoss): &vector<ConditionalOrder> {
+    &self.trigger_above
+}
+
+public fun num_conditional_orders(self: &TakeProfitStopLoss): u64 {
+    (self.trigger_below.length() + self.trigger_above.length()) as u64
+}
+
+public fun conditional_order_id(conditional_order: &ConditionalOrder): u64 {
+    conditional_order.conditional_order_id
 }
 
 public fun get_conditional_order(
     self: &TakeProfitStopLoss,
-    conditional_order_id: &u64,
-): &ConditionalOrder {
-    self.conditional_orders.get(conditional_order_id)
+    conditional_order_id: u64,
+): Option<ConditionalOrder> {
+    let mut i = 0;
+    while (i < self.trigger_below.length()) {
+        let order = &self.trigger_below[i];
+        if (order.conditional_order_id == conditional_order_id) {
+            return option::some(*order)
+        };
+        i = i + 1;
+    };
+
+    i = 0;
+    while (i < self.trigger_above.length()) {
+        let order = &self.trigger_above[i];
+        if (order.conditional_order_id == conditional_order_id) {
+            return option::some(*order)
+        };
+        i = i + 1;
+    };
+
+    option::none()
 }
 
 public fun condition(conditional_order: &ConditionalOrder): Condition {
@@ -197,7 +232,8 @@ public fun is_limit_order(pending_order: &PendingOrder): bool {
 // === public(package) functions ===
 public(package) fun new(): TakeProfitStopLoss {
     TakeProfitStopLoss {
-        conditional_orders: vec_map::empty(),
+        trigger_below: vector::empty(),
+        trigger_above: vector::empty(),
     }
 }
 
@@ -213,6 +249,7 @@ public(package) fun add_conditional_order<BaseAsset, QuoteAsset>(
     pending_order: PendingOrder,
     clock: &Clock,
 ) {
+    // Validate order parameters
     if (pending_order.is_limit_order()) {
         let price = *pending_order.price.borrow();
         let expire_timestamp = *pending_order.expire_timestamp.borrow();
@@ -223,6 +260,7 @@ public(package) fun add_conditional_order<BaseAsset, QuoteAsset>(
     } else {
         assert!(pool.check_market_order_params(pending_order.quantity), EInvalidOrderParams);
     };
+
     let current_price = calculate_price<BaseAsset, QuoteAsset>(
         registry,
         base_price_info_object,
@@ -233,8 +271,7 @@ public(package) fun add_conditional_order<BaseAsset, QuoteAsset>(
     let trigger_below_price = condition.trigger_below_price;
     let trigger_price = condition.trigger_price;
 
-    // If order is triggered below trigger_price, trigger_price must be lower than current price
-    // If order is triggered above trigger_price, trigger_price must be higher than current price
+    // Validate trigger condition
     assert!(
         (trigger_below_price && trigger_price < current_price) ||
             (!trigger_below_price && trigger_price > current_price),
@@ -242,19 +279,33 @@ public(package) fun add_conditional_order<BaseAsset, QuoteAsset>(
     );
 
     assert!(
-        self.conditional_orders.length() < margin_constants::max_conditional_orders(),
+        self.num_conditional_orders() < margin_constants::max_conditional_orders(),
         EMaxConditionalOrdersReached,
     );
+
     assert!(
-        !self.conditional_orders.contains(&conditional_order_id),
+        self.get_conditional_order(conditional_order_id).is_none(),
         EDuplicateConditionalOrderIdentifier,
     );
 
     let conditional_order = ConditionalOrder {
+        conditional_order_id,
         condition,
         pending_order,
     };
-    self.conditional_orders.insert(conditional_order_id, conditional_order);
+
+    // Insert in sorted order
+    if (trigger_below_price) {
+        self.trigger_below.push_back(conditional_order);
+        self
+            .trigger_below
+            .insertion_sort_by!(|a, b| a.condition.trigger_price > b.condition.trigger_price);
+    } else {
+        self.trigger_above.push_back(conditional_order);
+        self
+            .trigger_above
+            .insertion_sort_by!(|a, b| a.condition.trigger_price < b.condition.trigger_price);
+    };
 
     event::emit(ConditionalOrderAdded {
         manager_id,
@@ -270,13 +321,45 @@ public(package) fun cancel_conditional_order(
     conditional_order_id: u64,
     clock: &Clock,
 ) {
-    self.remove_conditional_order(
+    let conditional_order = self.find_and_remove_order(conditional_order_id);
+    assert!(conditional_order.is_some(), EConditionalOrderNotFound);
+
+    event::emit(ConditionalOrderCancelled {
         manager_id,
-        option::none(),
         conditional_order_id,
-        true,
-        clock,
-    );
+        conditional_order: conditional_order.destroy_some(),
+        timestamp: clock.timestamp_ms(),
+    });
+}
+
+public(package) fun cancel_all_conditional_orders(
+    self: &mut TakeProfitStopLoss,
+    manager_id: ID,
+    clock: &Clock,
+) {
+    let timestamp = clock.timestamp_ms();
+
+    // Cancel all trigger_below orders
+    while (!self.trigger_below.is_empty()) {
+        let conditional_order = self.trigger_below.pop_back();
+        event::emit(ConditionalOrderCancelled {
+            manager_id,
+            conditional_order_id: conditional_order.conditional_order_id,
+            conditional_order,
+            timestamp,
+        });
+    };
+
+    // Cancel all trigger_above orders
+    while (!self.trigger_above.is_empty()) {
+        let conditional_order = self.trigger_above.pop_back();
+        event::emit(ConditionalOrderCancelled {
+            manager_id,
+            conditional_order_id: conditional_order.conditional_order_id,
+            conditional_order,
+            timestamp,
+        });
+    };
 }
 
 public(package) fun remove_executed_conditional_order(
@@ -286,41 +369,41 @@ public(package) fun remove_executed_conditional_order(
     conditional_order_id: u64,
     clock: &Clock,
 ) {
-    self.remove_conditional_order(
+    let conditional_order = find_and_remove_order(self, conditional_order_id);
+    assert!(conditional_order.is_some(), EConditionalOrderNotFound);
+
+    event::emit(ConditionalOrderExecuted {
         manager_id,
-        option::some(pool_id),
+        pool_id,
         conditional_order_id,
-        false,
-        clock,
-    );
+        conditional_order: conditional_order.destroy_some(),
+        timestamp: clock.timestamp_ms(),
+    });
 }
 
-public(package) fun remove_conditional_order(
+/// Batch remove multiple executed orders efficiently
+public(package) fun remove_executed_conditional_orders(
     self: &mut TakeProfitStopLoss,
     manager_id: ID,
-    pool_id: Option<ID>,
-    conditional_order_id: u64,
-    is_cancel: bool,
+    pool_id: ID,
+    conditional_order_ids: vector<u64>,
     clock: &Clock,
 ) {
-    assert!(self.conditional_orders.contains(&conditional_order_id), EConditionalOrderNotFound);
-    let (_, conditional_order) = self.conditional_orders.remove(&conditional_order_id);
-
-    if (is_cancel) {
-        event::emit(ConditionalOrderCancelled {
-            manager_id,
-            conditional_order_id,
-            conditional_order,
-            timestamp: clock.timestamp_ms(),
-        });
-    } else {
-        event::emit(ConditionalOrderExecuted {
-            manager_id,
-            pool_id: pool_id.destroy_some(),
-            conditional_order_id,
-            conditional_order,
-            timestamp: clock.timestamp_ms(),
-        });
+    let timestamp = clock.timestamp_ms();
+    let mut i = 0;
+    while (i < conditional_order_ids.length()) {
+        let conditional_order_id = conditional_order_ids[i];
+        let conditional_order = find_and_remove_order(self, conditional_order_id);
+        if (conditional_order.is_some()) {
+            event::emit(ConditionalOrderExecuted {
+                manager_id,
+                pool_id,
+                conditional_order_id,
+                conditional_order: conditional_order.destroy_some(),
+                timestamp,
+            });
+        };
+        i = i + 1;
     };
 }
 
@@ -330,11 +413,80 @@ public(package) fun emit_insufficient_funds_event(
     conditional_order_id: u64,
     clock: &Clock,
 ) {
-    let conditional_order = *self.get_conditional_order(&conditional_order_id);
-    event::emit(ConditionalOrderInsufficientFunds {
-        manager_id,
-        conditional_order_id,
-        conditional_order,
-        timestamp: clock.timestamp_ms(),
-    });
+    let conditional_order = self.get_conditional_order(conditional_order_id);
+    if (conditional_order.is_some()) {
+        event::emit(ConditionalOrderInsufficientFunds {
+            manager_id,
+            conditional_order_id,
+            conditional_order: conditional_order.destroy_some(),
+            timestamp: clock.timestamp_ms(),
+        });
+    };
+}
+
+/// Returns vector of conditional order IDs that should be executed based on current price.
+/// Orders are returned in execution order (based on trigger price proximity).
+/// For trigger_below: checks orders from highest to lowest trigger price
+/// For trigger_above: checks orders from lowest to highest trigger price
+public(package) fun get_triggered_orders(
+    self: &TakeProfitStopLoss,
+    current_price: u64,
+): vector<u64> {
+    let mut triggered = vector::empty();
+
+    // Check trigger_below orders (sorted high to low)
+    // Continue while current_price < trigger_price
+    let mut i = 0;
+    while (i < self.trigger_below.length()) {
+        let order = &self.trigger_below[i];
+        if (current_price < order.condition.trigger_price) {
+            triggered.push_back(order.conditional_order_id);
+        } else {
+            // Price is >= trigger_price, no more orders will trigger
+            break
+        };
+        i = i + 1;
+    };
+
+    // Check trigger_above orders (sorted low to high)
+    // Continue while current_price > trigger_price
+    i = 0;
+    while (i < self.trigger_above.length()) {
+        let order = &self.trigger_above[i];
+        if (current_price > order.condition.trigger_price) {
+            triggered.push_back(order.conditional_order_id);
+        } else {
+            // Price is <= trigger_price, no more orders will trigger
+            break
+        };
+        i = i + 1;
+    };
+
+    triggered
+}
+
+/// Find and remove an order by ID from either vector
+fun find_and_remove_order(
+    self: &mut TakeProfitStopLoss,
+    conditional_order_id: u64,
+): Option<ConditionalOrder> {
+    // Search in trigger_below
+    let mut i = 0;
+    while (i < self.trigger_below.length()) {
+        if (self.trigger_below[i].conditional_order_id == conditional_order_id) {
+            return option::some(self.trigger_below.remove(i))
+        };
+        i = i + 1;
+    };
+
+    // Search in trigger_above
+    i = 0;
+    while (i < self.trigger_above.length()) {
+        if (self.trigger_above[i].conditional_order_id == conditional_order_id) {
+            return option::some(self.trigger_above.remove(i))
+        };
+        i = i + 1;
+    };
+
+    option::none()
 }

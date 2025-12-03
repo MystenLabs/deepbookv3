@@ -47,6 +47,7 @@ const EInvalidDebtAsset: u64 = 12;
 const ERepayAmountTooLow: u64 = 13;
 const ERepaySharesTooLow: u64 = 14;
 const EPoolNotEnabledForMarginTrading: u64 = 15;
+const EConditionalOrderNotFound: u64 = 16;
 
 // === Structs ===
 /// Witness type for authorizing MarginManager to call protected features of the DeepBook
@@ -188,10 +189,7 @@ public fun cancel_all_conditional_orders<BaseAsset, QuoteAsset>(
 ) {
     self.validate_owner(ctx);
     let manager_id = self.id();
-    let identifiers = self.take_profit_stop_loss.conditional_orders().keys();
-    identifiers.do!(|identifier| {
-        self.take_profit_stop_loss.cancel_conditional_order(manager_id, identifier, clock);
-    });
+    self.take_profit_stop_loss.cancel_all_conditional_orders(manager_id, clock);
 }
 
 /// Cancel a conditional order.
@@ -226,81 +224,95 @@ public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
         clock,
     );
 
+    let triggered_ids = self.take_profit_stop_loss.get_triggered_orders(current_price);
+
     let mut order_infos = vector[];
-    let mut executed_identifiers = vector[];
-    let mut expired_identifiers = vector[];
-    let mut insufficient_funds_identifiers = vector[];
+    let mut executed_ids = vector[];
+    let mut expired_ids = vector[];
+    let mut insufficient_funds_ids = vector[];
 
-    let keys = self.take_profit_stop_loss.conditional_orders().keys();
-    keys.do!(|identifier| {
-        if (order_infos.length() >= max_orders_to_execute) return;
-        let conditional_order = self.conditional_order(identifier);
-        let condition = conditional_order.condition();
+    let mut i = 0;
+    while (i < triggered_ids.length() && order_infos.length() < max_orders_to_execute) {
+        let conditional_order_id = triggered_ids[i];
+        let conditional_order_opt = self
+            .take_profit_stop_loss
+            .get_conditional_order(conditional_order_id);
 
-        let triggered =
-            (condition.trigger_below_price() && current_price < condition.trigger_price()) ||
-            (!condition.trigger_below_price() && current_price > condition.trigger_price());
+        if (conditional_order_opt.is_some()) {
+            let conditional_order = conditional_order_opt.destroy_some();
+            let pending_order = conditional_order.pending_order();
 
-        if (!triggered) return;
+            let can_place = if (pending_order.is_limit_order()) {
+                pool.can_place_limit_order(
+                    self.balance_manager(),
+                    pending_order.price().destroy_some(),
+                    pending_order.quantity(),
+                    pending_order.is_bid(),
+                    pending_order.pay_with_deep(),
+                    pending_order.expire_timestamp().destroy_some(),
+                    clock,
+                )
+            } else {
+                pool.can_place_market_order(
+                    self.balance_manager(),
+                    pending_order.quantity(),
+                    pending_order.is_bid(),
+                    pending_order.pay_with_deep(),
+                    clock,
+                )
+            };
 
-        let pending_order = conditional_order.pending_order();
-        let can_place = if (pending_order.is_limit_order()) {
-            pool.can_place_limit_order(
-                self.balance_manager(),
-                pending_order.price().destroy_some(),
-                pending_order.quantity(),
-                pending_order.is_bid(),
-                pending_order.pay_with_deep(),
-                pending_order.expire_timestamp().destroy_some(),
-                clock,
-            )
-        } else {
-            pool.can_place_market_order(
-                self.balance_manager(),
-                pending_order.quantity(),
-                pending_order.is_bid(),
-                pending_order.pay_with_deep(),
-                clock,
-            )
+            if (can_place) {
+                let order_info = self.place_pending_order<BaseAsset, QuoteAsset>(
+                    registry,
+                    pool,
+                    &pending_order,
+                    clock,
+                    ctx,
+                );
+                order_infos.push_back(order_info);
+                executed_ids.push_back(conditional_order_id);
+            } else {
+                if (pending_order.is_limit_order()) {
+                    let expire_timestamp = *pending_order.expire_timestamp().borrow();
+                    if (expire_timestamp <= clock.timestamp_ms()) {
+                        expired_ids.push_back(conditional_order_id);
+                    } else {
+                        insufficient_funds_ids.push_back(conditional_order_id);
+                    }
+                } else {
+                    insufficient_funds_ids.push_back(conditional_order_id);
+                }
+            }
         };
 
-        if (can_place) {
-            let order_info = self.place_pending_order<BaseAsset, QuoteAsset>(
-                registry,
-                pool,
-                &pending_order,
-                clock,
-                ctx,
-            );
-            order_infos.push_back(order_info);
-            executed_identifiers.push_back(identifier);
-        } else {
-            if (pending_order.is_limit_order()) {
-                let expire_timestamp = *pending_order.expire_timestamp().borrow();
-                if (expire_timestamp <= clock.timestamp_ms()) {
-                    expired_identifiers.push_back(identifier);
-                } else {
-                    insufficient_funds_identifiers.push_back(identifier);
-                }
-            } else {
-                insufficient_funds_identifiers.push_back(identifier);
-            }
-        }
+        i = i + 1;
+    };
+
+    // Emit events and remove orders
+    let manager_id = self.id();
+    let pool_id = pool.id();
+
+    insufficient_funds_ids.do!(|id| {
+        self.take_profit_stop_loss.emit_insufficient_funds_event(manager_id, id, clock);
     });
 
-    let manager_id = self.id();
-    insufficient_funds_identifiers.do!(|id| {
-        self.take_profit_stop_loss.emit_insufficient_funds_event(manager_id, id, clock);
+    // Batch remove cancelled orders (expired + insufficient funds)
+    let mut cancelled_ids = expired_ids;
+    cancelled_ids.append(insufficient_funds_ids);
+    cancelled_ids.do!(|id| {
         self.take_profit_stop_loss.cancel_conditional_order(manager_id, id, clock);
     });
-    expired_identifiers.do!(|id| {
-        self.take_profit_stop_loss.cancel_conditional_order(manager_id, id, clock);
-    });
-    executed_identifiers.do!(|id| {
-        self
-            .take_profit_stop_loss
-            .remove_executed_conditional_order(manager_id, pool.id(), id, clock)
-    });
+
+    // Batch remove executed orders
+    self
+        .take_profit_stop_loss
+        .remove_executed_conditional_orders(
+            manager_id,
+            pool_id,
+            executed_ids,
+            clock,
+        );
 
     order_infos
 }
@@ -1036,14 +1048,59 @@ public fun has_base_debt<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, 
 public fun conditional_order_ids<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
 ): vector<u64> {
-    self.take_profit_stop_loss.conditional_orders().keys()
+    let mut ids = vector::empty();
+
+    let trigger_below = self.take_profit_stop_loss.trigger_below_orders();
+    let mut i = 0;
+    while (i < trigger_below.length()) {
+        ids.push_back(trigger_below[i].conditional_order_id());
+        i = i + 1;
+    };
+
+    let trigger_above = self.take_profit_stop_loss.trigger_above_orders();
+    i = 0;
+    while (i < trigger_above.length()) {
+        ids.push_back(trigger_above[i].conditional_order_id());
+        i = i + 1;
+    };
+
+    ids
 }
 
 public fun conditional_order<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
     conditional_order_id: u64,
 ): ConditionalOrder {
-    *self.take_profit_stop_loss.get_conditional_order(&conditional_order_id)
+    let conditional_order = self.take_profit_stop_loss.get_conditional_order(conditional_order_id);
+    assert!(conditional_order.is_some(), EConditionalOrderNotFound);
+
+    conditional_order.destroy_some()
+}
+
+/// Returns the lowest trigger price for trigger_above orders
+/// Returns constants::max_u64() if there are no trigger_above orders
+public fun lowest_trigger_price_above<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+): u64 {
+    let trigger_above = self.take_profit_stop_loss.trigger_above_orders();
+    if (trigger_above.is_empty()) {
+        constants::max_u64()
+    } else {
+        trigger_above[0].condition().trigger_price()
+    }
+}
+
+/// Returns the highest trigger price for trigger_below orders
+/// Returns 0 if there are no trigger_below orders
+public fun highest_trigger_price_below<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+): u64 {
+    let trigger_below = self.take_profit_stop_loss.trigger_below_orders();
+    if (trigger_below.is_empty()) {
+        0
+    } else {
+        trigger_below[0].condition().trigger_price()
+    }
 }
 
 // === Public-Package Functions ===
