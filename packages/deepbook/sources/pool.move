@@ -1411,14 +1411,12 @@ public fun can_place_limit_order<BaseAsset, QuoteAsset>(
     let pool_inner = self.load_inner();
 
     if (
-        !pool_inner
-            .book
-            .check_limit_order_params(
-                price,
-                quantity,
-                expire_timestamp,
-                clock.timestamp_ms(),
-            )
+        !self.check_limit_order_params(
+            price,
+            quantity,
+            expire_timestamp,
+            clock,
+        )
     ) {
         return false
     };
@@ -1484,8 +1482,7 @@ public fun can_place_market_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
 ): bool {
     // Validate order parameters against pool book params
-    let pool_inner = self.load_inner();
-    if (!pool_inner.book.check_market_order_params(quantity)) {
+    if (!self.check_market_order_params(quantity)) {
         return false
     };
 
@@ -1546,6 +1543,31 @@ public fun can_place_market_order<BaseAsset, QuoteAsset>(
 
     // Check if available balances are sufficient
     (available_base >= required_base) && (available_deep >= required_deep)
+}
+
+/// Check if a market order can be placed based on pool book params.
+/// Returns true if the order parameters are valid, false otherwise.
+public fun check_market_order_params<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    quantity: u64,
+): bool {
+    let pool_inner = self.load_inner();
+    pool_inner.book.check_market_order_params(quantity)
+}
+
+/// Check if a limit order can be placed based on pool book params.
+/// Returns true if the order parameters are valid, false otherwise.
+public fun check_limit_order_params<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    price: u64,
+    quantity: u64,
+    expire_timestamp: u64,
+    clock: &Clock,
+): bool {
+    let pool_inner = self.load_inner();
+    pool_inner
+        .book
+        .check_limit_order_params(price, quantity, expire_timestamp, clock.timestamp_ms())
 }
 
 /// Returns the trade params for the pool.
