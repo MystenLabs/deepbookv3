@@ -14,6 +14,19 @@ public struct Balances has copy, drop, store {
     deep: u64,
 }
 
+// === Public-View Functions ===
+public fun base(balances: &Balances): u64 {
+    balances.base
+}
+
+public fun quote(balances: &Balances): u64 {
+    balances.quote
+}
+
+public fun deep(balances: &Balances): u64 {
+    balances.deep
+}
+
 // === Public-Package Functions ===
 public(package) fun empty(): Balances {
     Balances { base: 0, quote: 0, deep: 0 }
@@ -48,18 +61,6 @@ public(package) fun add_quote(balances: &mut Balances, quote: u64) {
 
 public(package) fun add_deep(balances: &mut Balances, deep: u64) {
     balances.deep = balances.deep + deep;
-}
-
-public(package) fun base(balances: &Balances): u64 {
-    balances.base
-}
-
-public(package) fun quote(balances: &Balances): u64 {
-    balances.quote
-}
-
-public(package) fun deep(balances: &Balances): u64 {
-    balances.deep
 }
 
 public(package) fun mul(balances: &mut Balances, factor: u64) {
