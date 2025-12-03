@@ -270,7 +270,6 @@ public(package) fun get_quote_quantity_in(
     )
 }
 
-/// Generic function to calculate quantity_in for either base or quote target.
 /// If target_base_quantity > 0: Calculate quote needed to buy that base (bid order)
 /// If target_quote_quantity > 0: Calculate base needed to get that quote (ask order)
 /// Returns (base_result, quote_result, deep_quantity_required)
