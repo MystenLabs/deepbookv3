@@ -58,36 +58,7 @@ public fun deep_per_asset(self: &OrderDeepPrice): u64 {
     self.deep_per_asset
 }
 
-// === Public-Package Functions ===
-public(package) fun empty(): DeepPrice {
-    DeepPrice {
-        base_prices: vector[],
-        cumulative_base: 0,
-        quote_prices: vector[],
-        cumulative_quote: 0,
-    }
-}
-
-public(package) fun new_order_deep_price(asset_is_base: bool, deep_per_asset: u64): OrderDeepPrice {
-    OrderDeepPrice {
-        asset_is_base: asset_is_base,
-        deep_per_asset: deep_per_asset,
-    }
-}
-
-public(package) fun get_order_deep_price(self: &DeepPrice, whitelisted: bool): OrderDeepPrice {
-    let (asset_is_base, deep_per_asset) = self.calculate_order_deep_price(
-        whitelisted,
-    );
-
-    new_order_deep_price(asset_is_base, deep_per_asset)
-}
-
-public(package) fun empty_deep_price(_self: &DeepPrice): OrderDeepPrice {
-    new_order_deep_price(false, 0)
-}
-
-public(package) fun fee_quantity(
+public fun fee_quantity(
     self: &OrderDeepPrice,
     base_quantity: u64,
     quote_quantity: u64,
@@ -117,6 +88,35 @@ public(package) fun fee_quantity(
             0,
         )
     }
+}
+
+// === Public-Package Functions ===
+public(package) fun empty(): DeepPrice {
+    DeepPrice {
+        base_prices: vector[],
+        cumulative_base: 0,
+        quote_prices: vector[],
+        cumulative_quote: 0,
+    }
+}
+
+public(package) fun new_order_deep_price(asset_is_base: bool, deep_per_asset: u64): OrderDeepPrice {
+    OrderDeepPrice {
+        asset_is_base: asset_is_base,
+        deep_per_asset: deep_per_asset,
+    }
+}
+
+public(package) fun get_order_deep_price(self: &DeepPrice, whitelisted: bool): OrderDeepPrice {
+    let (asset_is_base, deep_per_asset) = self.calculate_order_deep_price(
+        whitelisted,
+    );
+
+    new_order_deep_price(asset_is_base, deep_per_asset)
+}
+
+public(package) fun empty_deep_price(_self: &DeepPrice): OrderDeepPrice {
+    new_order_deep_price(false, 0)
 }
 
 public(package) fun deep_quantity_u128(
