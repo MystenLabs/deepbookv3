@@ -8,7 +8,8 @@ use deepbook_margin::{
     test_constants::{USDC, admin, user1},
     test_helpers::{Self, return_shared_2, destroy_3, destroy_4}
 };
-use sui::{clock, coin, test_scenario, test_utils::destroy};
+use std::unit_test::destroy;
+use sui::{clock, coin, test_scenario};
 
 const HOUR_MS: u64 = 3_600_000;
 const CAPACITY: u64 = 100_000_000_000;
@@ -485,12 +486,7 @@ fun burst_then_steady_consumption() {
 
 #[test]
 fun pool_basic_rate_limiting() {
-    let (
-        mut scenario,
-        mut clock,
-        admin_cap,
-        maintainer_cap,
-    ) = test_helpers::setup_margin_registry();
+    let (mut scenario, clock, admin_cap, maintainer_cap) = test_helpers::setup_margin_registry();
 
     scenario.next_tx(admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
@@ -654,12 +650,7 @@ fun pool_capacity_caps_at_max() {
 
 #[test, expected_failure(abort_code = deepbook_margin::margin_pool::ERateLimitExceeded)]
 fun pool_withdrawal_exceeds_limit_fails() {
-    let (
-        mut scenario,
-        mut clock,
-        admin_cap,
-        maintainer_cap,
-    ) = test_helpers::setup_margin_registry();
+    let (mut scenario, clock, _admin_cap, maintainer_cap) = test_helpers::setup_margin_registry();
 
     scenario.next_tx(admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
@@ -696,12 +687,7 @@ fun pool_withdrawal_exceeds_limit_fails() {
 
 #[test]
 fun pool_disabled_rate_limiter() {
-    let (
-        mut scenario,
-        mut clock,
-        admin_cap,
-        maintainer_cap,
-    ) = test_helpers::setup_margin_registry();
+    let (mut scenario, clock, admin_cap, maintainer_cap) = test_helpers::setup_margin_registry();
 
     scenario.next_tx(admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
