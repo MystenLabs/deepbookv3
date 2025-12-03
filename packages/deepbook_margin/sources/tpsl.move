@@ -48,14 +48,14 @@ public struct PendingOrder has copy, drop, store {
 // === Events ===
 public struct ConditionalOrderAdded has copy, drop {
     manager_id: ID,
-    conditional_order_identifier: u64,
+    conditional_order_id: u64,
     conditional_order: ConditionalOrder,
     timestamp: u64,
 }
 
 public struct ConditionalOrderCancelled has copy, drop {
     manager_id: ID,
-    conditional_order_identifier: u64,
+    conditional_order_id: u64,
     conditional_order: ConditionalOrder,
     timestamp: u64,
 }
@@ -63,14 +63,14 @@ public struct ConditionalOrderCancelled has copy, drop {
 public struct ConditionalOrderExecuted has copy, drop {
     manager_id: ID,
     pool_id: ID,
-    conditional_order_identifier: u64,
+    conditional_order_id: u64,
     conditional_order: ConditionalOrder,
     timestamp: u64,
 }
 
 public struct ConditionalOrderInsufficientFunds has copy, drop {
     manager_id: ID,
-    conditional_order_identifier: u64,
+    conditional_order_id: u64,
     conditional_order: ConditionalOrder,
     timestamp: u64,
 }
@@ -141,9 +141,9 @@ public fun conditional_orders(self: &TakeProfitStopLoss): &VecMap<u64, Condition
 
 public fun get_conditional_order(
     self: &TakeProfitStopLoss,
-    conditional_order_identifier: &u64,
+    conditional_order_id: &u64,
 ): &ConditionalOrder {
-    self.conditional_orders.get(conditional_order_identifier)
+    self.conditional_orders.get(conditional_order_id)
 }
 
 public fun condition(conditional_order: &ConditionalOrder): Condition {
@@ -211,7 +211,7 @@ public(package) fun add_conditional_order<BaseAsset, QuoteAsset>(
     base_price_info_object: &PriceInfoObject,
     quote_price_info_object: &PriceInfoObject,
     registry: &MarginRegistry,
-    conditional_order_identifier: u64,
+    conditional_order_id: u64,
     condition: Condition,
     pending_order: PendingOrder,
     tick_size: u64,
@@ -251,7 +251,7 @@ public(package) fun add_conditional_order<BaseAsset, QuoteAsset>(
         EMaxConditionalOrdersReached,
     );
     assert!(
-        !self.conditional_orders.contains(&conditional_order_identifier),
+        !self.conditional_orders.contains(&conditional_order_id),
         EDuplicateConditionalOrderIdentifier,
     );
 
@@ -259,11 +259,11 @@ public(package) fun add_conditional_order<BaseAsset, QuoteAsset>(
         condition,
         pending_order,
     };
-    self.conditional_orders.insert(conditional_order_identifier, conditional_order);
+    self.conditional_orders.insert(conditional_order_id, conditional_order);
 
     event::emit(ConditionalOrderAdded {
         manager_id,
-        conditional_order_identifier,
+        conditional_order_id,
         conditional_order,
         timestamp: clock.timestamp_ms(),
     });
@@ -272,13 +272,13 @@ public(package) fun add_conditional_order<BaseAsset, QuoteAsset>(
 public(package) fun cancel_conditional_order(
     self: &mut TakeProfitStopLoss,
     manager_id: ID,
-    conditional_order_identifier: u64,
+    conditional_order_id: u64,
     clock: &Clock,
 ) {
     self.remove_conditional_order(
         manager_id,
         option::none(),
-        conditional_order_identifier,
+        conditional_order_id,
         true,
         clock,
     );
@@ -288,13 +288,13 @@ public(package) fun remove_executed_conditional_order(
     self: &mut TakeProfitStopLoss,
     manager_id: ID,
     pool_id: ID,
-    conditional_order_identifier: u64,
+    conditional_order_id: u64,
     clock: &Clock,
 ) {
     self.remove_conditional_order(
         manager_id,
         option::some(pool_id),
-        conditional_order_identifier,
+        conditional_order_id,
         false,
         clock,
     );
@@ -304,20 +304,17 @@ public(package) fun remove_conditional_order(
     self: &mut TakeProfitStopLoss,
     manager_id: ID,
     pool_id: Option<ID>,
-    conditional_order_identifier: u64,
+    conditional_order_id: u64,
     is_cancel: bool,
     clock: &Clock,
 ) {
-    assert!(
-        self.conditional_orders.contains(&conditional_order_identifier),
-        EConditionalOrderNotFound,
-    );
-    let (_, conditional_order) = self.conditional_orders.remove(&conditional_order_identifier);
+    assert!(self.conditional_orders.contains(&conditional_order_id), EConditionalOrderNotFound);
+    let (_, conditional_order) = self.conditional_orders.remove(&conditional_order_id);
 
     if (is_cancel) {
         event::emit(ConditionalOrderCancelled {
             manager_id,
-            conditional_order_identifier,
+            conditional_order_id,
             conditional_order,
             timestamp: clock.timestamp_ms(),
         });
@@ -325,7 +322,7 @@ public(package) fun remove_conditional_order(
         event::emit(ConditionalOrderExecuted {
             manager_id,
             pool_id: pool_id.destroy_some(),
-            conditional_order_identifier,
+            conditional_order_id,
             conditional_order,
             timestamp: clock.timestamp_ms(),
         });
@@ -335,13 +332,13 @@ public(package) fun remove_conditional_order(
 public(package) fun emit_insufficient_funds_event(
     self: &TakeProfitStopLoss,
     manager_id: ID,
-    conditional_order_identifier: u64,
+    conditional_order_id: u64,
     clock: &Clock,
 ) {
-    let conditional_order = *self.get_conditional_order(&conditional_order_identifier);
+    let conditional_order = *self.get_conditional_order(&conditional_order_id);
     event::emit(ConditionalOrderInsufficientFunds {
         manager_id,
-        conditional_order_identifier,
+        conditional_order_id,
         conditional_order,
         timestamp: clock.timestamp_ms(),
     });

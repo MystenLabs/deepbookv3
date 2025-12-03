@@ -156,7 +156,7 @@ public fun add_conditional_order<BaseAsset, QuoteAsset>(
     base_price_info_object: &PriceInfoObject,
     quote_price_info_object: &PriceInfoObject,
     registry: &MarginRegistry,
-    conditional_order_identifier: u64,
+    conditional_order_id: u64,
     condition: Condition,
     pending_order: PendingOrder,
     clock: &Clock,
@@ -173,7 +173,7 @@ public fun add_conditional_order<BaseAsset, QuoteAsset>(
             base_price_info_object,
             quote_price_info_object,
             registry,
-            conditional_order_identifier,
+            conditional_order_id,
             condition,
             pending_order,
             tick_size,
@@ -200,15 +200,13 @@ public fun cancel_all_conditional_orders<BaseAsset, QuoteAsset>(
 /// Cancel a conditional order.
 public fun cancel_conditional_order<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
-    conditional_order_identifier: u64,
+    conditional_order_id: u64,
     clock: &Clock,
     ctx: &TxContext,
 ) {
     self.validate_owner(ctx);
     let manager_id = self.id();
-    self
-        .take_profit_stop_loss
-        .cancel_conditional_order(manager_id, conditional_order_identifier, clock);
+    self.take_profit_stop_loss.cancel_conditional_order(manager_id, conditional_order_id, clock);
 }
 
 /// Execute conditional orders and return the order infos.
@@ -1038,7 +1036,7 @@ public fun has_base_debt<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, 
     self.borrowed_base_shares > 0
 }
 
-public fun conditional_order_identifiers<BaseAsset, QuoteAsset>(
+public fun conditional_order_ids<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
 ): vector<u64> {
     self.take_profit_stop_loss.conditional_orders().keys()
@@ -1046,9 +1044,9 @@ public fun conditional_order_identifiers<BaseAsset, QuoteAsset>(
 
 public fun conditional_order<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
-    conditional_order_identifier: u64,
+    conditional_order_id: u64,
 ): ConditionalOrder {
-    *self.take_profit_stop_loss.get_conditional_order(&conditional_order_identifier)
+    *self.take_profit_stop_loss.get_conditional_order(&conditional_order_id)
 }
 
 // === Public-Package Functions ===
