@@ -4,34 +4,36 @@
 #[test_only]
 module deepbook::pool_tests;
 
-use deepbook::{
-    balance_manager::{BalanceManager, TradeCap, DeepBookReferral, DepositCap, WithdrawCap},
-    balance_manager_tests::{
-        USDC,
-        USDT,
-        SPAM,
-        create_acct_and_share_with_funds,
-        create_acct_and_share_with_funds_typed,
-        create_caps,
-        asset_balance
-    },
-    big_vector::BigVector,
-    constants,
-    fill::Fill,
-    math,
-    order::Order,
-    order_info::OrderInfo,
-    pool::{Self, Pool},
-    registry::{Self, Registry},
-    utils
+use deepbook::balance_manager::{
+    BalanceManager,
+    TradeCap,
+    DeepBookReferral,
+    DepositCap,
+    WithdrawCap
 };
+use deepbook::balance_manager_tests::{
+    USDC,
+    USDT,
+    SPAM,
+    create_acct_and_share_with_funds,
+    create_acct_and_share_with_funds_typed,
+    create_caps,
+    asset_balance
+};
+use deepbook::big_vector::BigVector;
+use deepbook::constants;
+use deepbook::fill::Fill;
+use deepbook::math;
+use deepbook::order::Order;
+use deepbook::order_info::OrderInfo;
+use deepbook::pool::{Self, Pool};
+use deepbook::registry::{Self, Registry};
+use deepbook::utils;
 use std::unit_test::{assert_eq, destroy};
-use sui::{
-    clock::{Self, Clock},
-    coin::{Self, Coin, mint_for_testing},
-    sui::SUI,
-    test_scenario::{Scenario, begin, end, return_shared}
-};
+use sui::clock::{Self, Clock};
+use sui::coin::{Self, Coin, mint_for_testing};
+use sui::sui::SUI;
+use sui::test_scenario::{Scenario, begin, end, return_shared};
 use token::deep::DEEP;
 
 const OWNER: address = @0x1;
@@ -6308,3 +6310,224 @@ fun advance_scenario_with_gas_price(test: &mut Scenario, gas_price: u64, timesta
     let ctx = test.ctx_builder().set_gas_price(gas_price).set_epoch_timestamp(ts);
     test.next_with_context(ctx);
 }
+
+// ============== get_base_quantity_in tests ==============
+
+/// Test get_base_quantity_in with multiple price levels
+/// Setup: Orders at $3 (qty 10), $2 (qty 5), $1 (qty 25)
+/// Target: 50 USDC
+/// Expected: Sell 10 SUI at $3 (30 USDC), 5 SUI at $2 (10 USDC), 10 SUI at $1 (10 USDC)
+/// Result: 25 base_quantity_in, 50 actual_quote_quantity_out
+#[test]
+fun test_get_base_quantity_in_multiple_levels() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+
+    // Setup pool with reference pool (non-whitelisted) so we can test DEEP fees
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+
+    // Place bid orders at different price levels
+    // Order 1: Buy 10 SUI at $3 per SUI
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        3 * constants::float_scaling(), // price: $3
+        10 * constants::float_scaling(), // quantity: 10 SUI
+        true, // is_bid (buy order)
+        true, // pay_with_deep
+        constants::max_u64(),
+        &mut test,
+    );
+
+    // Order 2: Buy 5 SUI at $2 per SUI
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        2,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        2 * constants::float_scaling(), // price: $2
+        5 * constants::float_scaling(), // quantity: 5 SUI
+        true, // is_bid
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    // Order 3: Buy 25 SUI at $1 per SUI
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        3,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        1 * constants::float_scaling(), // price: $1
+        25 * constants::float_scaling(), // quantity: 25 SUI
+        true, // is_bid
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let clock = test.take_shared<Clock>();
+
+        // Test 1: Get base quantity needed for 50 USDC with pay_with_deep = true
+        let (base_in, quote_out, deep_required) = pool.get_base_quantity_in<SUI, USDC>(
+            50 * constants::float_scaling(), // target: 50 USDC
+            true, // pay_with_deep
+            &clock,
+        );
+
+        // Expected: Sell 10 at $3 (30), 5 at $2 (10), 10 at $1 (10) = 25 SUI for 50 USDC
+        std::debug::print(&b"Test 1: pay_with_deep = true");
+        std::debug::print(&b"base_in:");
+        std::debug::print(&base_in);
+        std::debug::print(&b"quote_out:");
+        std::debug::print(&quote_out);
+        std::debug::print(&b"deep_required:");
+        std::debug::print(&deep_required);
+
+        assert!(base_in == 25 * constants::float_scaling(), 0);
+        assert!(quote_out == 50 * constants::float_scaling(), 1);
+
+        // DEEP fee calculation for sell order (is_bid = false):
+        // fee_balances = deep_price.fee_quantity(25 SUI, 50 USDC, false)
+        // Then multiply by taker_fee (0.001)
+        // The fee should be calculated on the base quantity (25 SUI)
+        // Using deep_multiplier and taker_fee
+        let expected_deep = math::mul(
+            constants::taker_fee(),
+            math::mul(25 * constants::float_scaling(), constants::deep_multiplier()),
+        );
+        std::debug::print(&b"expected_deep:");
+        std::debug::print(&expected_deep);
+        assert!(deep_required == expected_deep, 2);
+
+        // Test 2: Get base quantity needed for 50 USDC with pay_with_deep = false
+        let (base_in_no_deep, quote_out_no_deep, deep_required_no_deep) = pool.get_base_quantity_in<
+            SUI,
+            USDC,
+        >(
+            50 * constants::float_scaling(), // target: 50 USDC
+            false, // pay_with_deep = false (fees in base)
+            &clock,
+        );
+
+        std::debug::print(&b"Test 2: pay_with_deep = false");
+        std::debug::print(&b"base_in_no_deep:");
+        std::debug::print(&base_in_no_deep);
+        std::debug::print(&b"quote_out_no_deep:");
+        std::debug::print(&quote_out_no_deep);
+        std::debug::print(&b"deep_required_no_deep:");
+        std::debug::print(&deep_required_no_deep);
+
+        // With fees in base, need extra base to cover fees
+        // input_fee_rate = fee_penalty_multiplier (1.25) * taker_fee (0.001) = 0.00125
+        // base_with_fee = base * (1 + 0.00125) = 25 * 1.00125 = 25.03125
+        let input_fee_rate = math::mul(
+            constants::fee_penalty_multiplier(),
+            constants::taker_fee(),
+        );
+        let expected_base_with_fee = math::mul(
+            25 * constants::float_scaling(),
+            constants::float_scaling() + input_fee_rate,
+        );
+        std::debug::print(&b"expected_base_with_fee:");
+        std::debug::print(&expected_base_with_fee);
+
+        assert!(base_in_no_deep == expected_base_with_fee, 3);
+        assert!(quote_out_no_deep == 50 * constants::float_scaling(), 4);
+        assert!(deep_required_no_deep == 0, 5);
+
+        // Test 3: Target close to max liquidity
+        // Available: 10 at $3 (30) + 5 at $2 (10) + 25 at $1 (25) = 65 USDC max
+        // (Note: 25 * $1 = 25, not 25 * 25!)
+        let (base_in_partial, quote_out_partial, _) = pool.get_base_quantity_in<SUI, USDC>(
+            60 * constants::float_scaling(), // target: 60 USDC
+            true,
+            &clock,
+        );
+
+        std::debug::print(&b"Test 3: Partial liquidity (60 USDC)");
+        std::debug::print(&b"base_in_partial:");
+        std::debug::print(&base_in_partial);
+        std::debug::print(&b"quote_out_partial:");
+        std::debug::print(&quote_out_partial);
+
+        // Should use: 10 at $3 (30) + 5 at $2 (10) + 20 at $1 (20) = 35 SUI for 60 USDC
+        assert!(base_in_partial == 35 * constants::float_scaling(), 6);
+        assert!(quote_out_partial == 60 * constants::float_scaling(), 7);
+
+        // Test 4: Target exceeding available liquidity
+        // Max available: 10*3 + 5*2 + 25*1 = 30 + 10 + 25 = 65 USDC
+        let (base_in_exceed, quote_out_exceed, deep_exceed) = pool.get_base_quantity_in<SUI, USDC>(
+            100 * constants::float_scaling(), // target: 100 USDC (more than 65 available)
+            true,
+            &clock,
+        );
+
+        std::debug::print(&b"Test 4: Exceeds liquidity (100 > 65)");
+        std::debug::print(&b"base_in_exceed:");
+        std::debug::print(&base_in_exceed);
+        std::debug::print(&b"quote_out_exceed:");
+        std::debug::print(&quote_out_exceed);
+        std::debug::print(&b"deep_exceed:");
+        std::debug::print(&deep_exceed);
+
+        // Should return (0, 0, 0) since we can't meet the target
+        assert!(base_in_exceed == 0, 8);
+        assert!(quote_out_exceed == 0, 9);
+        assert!(deep_exceed == 0, 10);
+
+        // Test 5: Target exactly at max liquidity (65 USDC, exactly available)
+        let (base_in_65, quote_out_65, deep_65) = pool.get_base_quantity_in<SUI, USDC>(
+            65 * constants::float_scaling(), // target: 65 USDC (exact match)
+            true,
+            &clock,
+        );
+
+        std::debug::print(&b"Test 5: Target = 65 (exactly available)");
+        std::debug::print(&b"base_in_65:");
+        std::debug::print(&base_in_65);
+        std::debug::print(&b"quote_out_65:");
+        std::debug::print(&quote_out_65);
+        std::debug::print(&b"deep_65:");
+        std::debug::print(&deep_65);
+
+        // Should use all: 10 at $3 (30) + 5 at $2 (10) + 25 at $1 (25) = 40 SUI for 65 USDC
+        assert!(base_in_65 == 40 * constants::float_scaling(), 11);
+        assert!(quote_out_65 == 65 * constants::float_scaling(), 12);
+
+        let expected_deep_65 = math::mul(
+            constants::taker_fee(),
+            math::mul(40 * constants::float_scaling(), constants::deep_multiplier()),
+        );
+        assert!(deep_65 == expected_deep_65, 13);
+
+        return_shared(pool);
+        return_shared(clock);
+    };
+
+    end(test);
+}
+
+// ============== Helper functions ==============
