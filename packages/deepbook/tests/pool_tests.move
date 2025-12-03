@@ -7966,3 +7966,295 @@ fun test_can_place_limit_order_expired_timestamp() {
 
     end(test);
 }
+
+/// Test that can_place_limit_order includes settled balances
+/// Without settled balances, Alice wouldn't have enough USDC to place a bid.
+/// With settled balances from a previous trade, she can place the order.
+#[test]
+fun test_can_place_limit_order_with_settled_balances() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+
+    // Create Alice's balance manager with only SUI (no USDC)
+    test.next_tx(ALICE);
+    let balance_manager_id_alice;
+    {
+        let mut bm = balance_manager::new(test.ctx());
+        // Alice has 100 SUI but NO USDC
+        bm.deposit(
+            mint_for_testing<SUI>(100 * constants::float_scaling(), test.ctx()),
+            test.ctx(),
+        );
+        bm.deposit(
+            mint_for_testing<DEEP>(1000 * constants::float_scaling(), test.ctx()),
+            test.ctx(),
+        );
+        balance_manager_id_alice = bm.id();
+        transfer::public_share_object(bm);
+    };
+
+    // Create Bob's balance manager with USDC to buy Alice's SUI
+    test.next_tx(BOB);
+    let balance_manager_id_bob;
+    {
+        let mut bm = balance_manager::new(test.ctx());
+        // Bob has USDC to buy SUI
+        bm.deposit(
+            mint_for_testing<USDC>(200 * constants::float_scaling(), test.ctx()),
+            test.ctx(),
+        );
+        bm.deposit(
+            mint_for_testing<DEEP>(1000 * constants::float_scaling(), test.ctx()),
+            test.ctx(),
+        );
+        balance_manager_id_bob = bm.id();
+        transfer::public_share_object(bm);
+    };
+
+    // Setup whitelisted pool (no DEEP fees required for simplicity)
+    let pool_id = setup_pool_with_default_fees<SUI, USDC>(
+        OWNER,
+        registry_id,
+        true,
+        false,
+        &mut test,
+    );
+
+    // Alice places a limit sell order: sell 10 SUI at price 2 USDC per SUI
+    let client_order_id = 1;
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        client_order_id,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        2 * constants::float_scaling(), // price: 2 USDC per SUI
+        10 * constants::float_scaling(), // quantity: 10 SUI
+        false, // is_bid = false (sell/ask)
+        true, // pay_with_deep
+        constants::max_u64(),
+        &mut test,
+    );
+
+    // Bob places a market buy order: buy 10 SUI (pays 20 USDC)
+    // This fills Alice's order, giving Alice 20 USDC in settled balances
+    place_market_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        2,
+        constants::self_matching_allowed(),
+        10 * constants::float_scaling(), // quantity: 10 SUI
+        true, // is_bid = true (buy)
+        true, // pay_with_deep
+        &mut test,
+    );
+
+    // Now test: Alice has 0 direct USDC, but has 20 USDC settled from the trade
+    // She should be able to place a bid order for 5 SUI at price 2 (needs 10 USDC)
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let balance_manager_alice = test.take_shared_by_id<BalanceManager>(
+            balance_manager_id_alice,
+        );
+        let clock = clock::create_for_testing(test.ctx());
+
+        // Verify Alice has 0 direct USDC balance
+        let direct_usdc_balance = balance_manager_alice.balance<USDC>();
+        assert!(direct_usdc_balance == 0);
+
+        // But can_place_limit_order should return true because of settled balances
+        // Bid for 5 SUI at price 2 = 10 USDC required (she has 20 USDC settled)
+        let can_place = pool.can_place_limit_order<SUI, USDC>(
+            &balance_manager_alice,
+            2 * constants::float_scaling(), // price: 2 USDC per SUI
+            5 * constants::float_scaling(), // quantity: 5 SUI
+            true, // is_bid = true (buy)
+            true, // pay_with_deep
+            constants::max_u64(),
+            &clock,
+        );
+        assert!(can_place);
+
+        // Also verify that without enough settled balance, it would fail
+        // Bid for 15 SUI at price 2 = 30 USDC required (she only has 20 USDC settled)
+        let can_place_too_much = pool.can_place_limit_order<SUI, USDC>(
+            &balance_manager_alice,
+            2 * constants::float_scaling(), // price: 2 USDC per SUI
+            15 * constants::float_scaling(), // quantity: 15 SUI
+            true, // is_bid = true (buy)
+            true, // pay_with_deep
+            constants::max_u64(),
+            &clock,
+        );
+        assert!(!can_place_too_much);
+
+        clock.destroy_for_testing();
+        return_shared(pool);
+        return_shared(balance_manager_alice);
+    };
+
+    end(test);
+}
+
+/// Test that can_place_market_order includes settled balances
+/// Without settled balances, Alice wouldn't have enough USDC to place a market bid.
+/// With settled balances from a previous trade, she can place the order.
+#[test]
+fun test_can_place_market_order_with_settled_balances() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+
+    // Create Alice's balance manager with only SUI (no USDC)
+    test.next_tx(ALICE);
+    let balance_manager_id_alice;
+    {
+        let mut bm = balance_manager::new(test.ctx());
+        // Alice has 100 SUI but NO USDC
+        bm.deposit(
+            mint_for_testing<SUI>(100 * constants::float_scaling(), test.ctx()),
+            test.ctx(),
+        );
+        bm.deposit(
+            mint_for_testing<DEEP>(1000 * constants::float_scaling(), test.ctx()),
+            test.ctx(),
+        );
+        balance_manager_id_alice = bm.id();
+        transfer::public_share_object(bm);
+    };
+
+    // Create Bob's balance manager with USDC to buy Alice's SUI
+    test.next_tx(BOB);
+    let balance_manager_id_bob;
+    {
+        let mut bm = balance_manager::new(test.ctx());
+        // Bob has USDC to buy SUI
+        bm.deposit(
+            mint_for_testing<USDC>(200 * constants::float_scaling(), test.ctx()),
+            test.ctx(),
+        );
+        bm.deposit(
+            mint_for_testing<DEEP>(1000 * constants::float_scaling(), test.ctx()),
+            test.ctx(),
+        );
+        balance_manager_id_bob = bm.id();
+        transfer::public_share_object(bm);
+    };
+
+    // Create Carol's balance manager to provide liquidity (sell orders for Alice to buy)
+    test.next_tx(@0xCCCC);
+    let balance_manager_id_carol;
+    {
+        let mut bm = balance_manager::new(test.ctx());
+        bm.deposit(
+            mint_for_testing<SUI>(100 * constants::float_scaling(), test.ctx()),
+            test.ctx(),
+        );
+        bm.deposit(
+            mint_for_testing<DEEP>(1000 * constants::float_scaling(), test.ctx()),
+            test.ctx(),
+        );
+        balance_manager_id_carol = bm.id();
+        transfer::public_share_object(bm);
+    };
+
+    // Setup whitelisted pool
+    let pool_id = setup_pool_with_default_fees<SUI, USDC>(
+        OWNER,
+        registry_id,
+        true,
+        false,
+        &mut test,
+    );
+
+    // Alice places a limit sell order: sell 10 SUI at price 2 USDC per SUI
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        2 * constants::float_scaling(),
+        10 * constants::float_scaling(),
+        false, // sell
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    // Bob places a market buy order: buy 10 SUI (pays 20 USDC)
+    // This fills Alice's order, giving Alice 20 USDC in settled balances
+    place_market_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        2,
+        constants::self_matching_allowed(),
+        10 * constants::float_scaling(),
+        true, // buy
+        true,
+        &mut test,
+    );
+
+    // Carol places sell orders so Alice has liquidity to buy against
+    place_limit_order<SUI, USDC>(
+        @0xCCCC,
+        pool_id,
+        balance_manager_id_carol,
+        3,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        2 * constants::float_scaling(),
+        50 * constants::float_scaling(),
+        false, // sell
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    // Now test: Alice has 0 direct USDC, but has 20 USDC settled
+    // She should be able to place a market bid order
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let balance_manager_alice = test.take_shared_by_id<BalanceManager>(
+            balance_manager_id_alice,
+        );
+        let clock = clock::create_for_testing(test.ctx());
+
+        // Verify Alice has 0 direct USDC balance
+        let direct_usdc_balance = balance_manager_alice.balance<USDC>();
+        assert!(direct_usdc_balance == 0);
+
+        // can_place_market_order should return true because of settled balances
+        // Market bid for 5 SUI (will need ~10 USDC, she has 20 settled)
+        let can_place = pool.can_place_market_order<SUI, USDC>(
+            &balance_manager_alice,
+            5 * constants::float_scaling(), // quantity: 5 SUI
+            true, // is_bid = true (buy)
+            true, // pay_with_deep
+            &clock,
+        );
+        assert!(can_place);
+
+        // Also verify that without enough settled balance, it would fail
+        // Market bid for 15 SUI (would need ~30 USDC, she only has 20 settled)
+        let can_place_too_much = pool.can_place_market_order<SUI, USDC>(
+            &balance_manager_alice,
+            15 * constants::float_scaling(), // quantity: 15 SUI
+            true, // is_bid = true (buy)
+            true, // pay_with_deep
+            &clock,
+        );
+        assert!(!can_place_too_much);
+
+        clock.destroy_for_testing();
+        return_shared(pool);
+        return_shared(balance_manager_alice);
+    };
+
+    end(test);
+}
