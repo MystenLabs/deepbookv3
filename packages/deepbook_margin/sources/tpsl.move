@@ -3,10 +3,14 @@
 
 module deepbook_margin::tpsl;
 
-use deepbook::{constants, pool::Pool};
-use deepbook_margin::{margin_constants, margin_registry::MarginRegistry, oracle::calculate_price};
+use deepbook::constants;
+use deepbook::pool::Pool;
+use deepbook_margin::margin_constants;
+use deepbook_margin::margin_registry::MarginRegistry;
+use deepbook_margin::oracle::calculate_price;
 use pyth::price_info::PriceInfoObject;
-use sui::{clock::Clock, event};
+use sui::clock::Clock;
+use sui::event;
 
 // === Errors ===
 const EInvalidCondition: u64 = 1;
@@ -424,45 +428,14 @@ public(package) fun emit_insufficient_funds_event(
     };
 }
 
-/// Returns vector of conditional order IDs that should be executed based on current price.
-/// Orders are returned in execution order (based on trigger price proximity).
-/// For trigger_below: checks orders from highest to lowest trigger price
-/// For trigger_above: checks orders from lowest to highest trigger price
-public(package) fun get_triggered_orders(
-    self: &TakeProfitStopLoss,
-    current_price: u64,
-): vector<u64> {
-    let mut triggered = vector::empty();
+/// Returns reference to trigger_below vector (sorted high to low by trigger price)
+public(package) fun trigger_below(self: &TakeProfitStopLoss): &vector<ConditionalOrder> {
+    &self.trigger_below
+}
 
-    // Check trigger_below orders (sorted high to low)
-    // Continue while current_price < trigger_price
-    let mut i = 0;
-    while (i < self.trigger_below.length()) {
-        let order = &self.trigger_below[i];
-        if (current_price < order.condition.trigger_price) {
-            triggered.push_back(order.conditional_order_id);
-        } else {
-            // Price is >= trigger_price, no more orders will trigger
-            break
-        };
-        i = i + 1;
-    };
-
-    // Check trigger_above orders (sorted low to high)
-    // Continue while current_price > trigger_price
-    i = 0;
-    while (i < self.trigger_above.length()) {
-        let order = &self.trigger_above[i];
-        if (current_price > order.condition.trigger_price) {
-            triggered.push_back(order.conditional_order_id);
-        } else {
-            // Price is <= trigger_price, no more orders will trigger
-            break
-        };
-        i = i + 1;
-    };
-
-    triggered
+/// Returns reference to trigger_above vector (sorted low to high by trigger price)
+public(package) fun trigger_above(self: &TakeProfitStopLoss): &vector<ConditionalOrder> {
+    &self.trigger_above
 }
 
 /// Find and remove an order by ID from either vector

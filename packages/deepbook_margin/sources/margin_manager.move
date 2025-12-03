@@ -224,72 +224,137 @@ public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
         clock,
     );
 
-    let triggered_ids = self.take_profit_stop_loss.get_triggered_orders(current_price);
-
     let mut order_infos = vector[];
     let mut executed_ids = vector[];
     let mut expired_ids = vector[];
     let mut insufficient_funds_ids = vector[];
 
+    // Process trigger_below orders (sorted high to low)
     let mut i = 0;
-    while (i < triggered_ids.length() && order_infos.length() < max_orders_to_execute) {
-        let conditional_order_id = triggered_ids[i];
-        let conditional_order_opt = self
-            .take_profit_stop_loss
-            .get_conditional_order(conditional_order_id);
+    while (
+        i < self.take_profit_stop_loss.trigger_below().length()
+           && order_infos.length() < max_orders_to_execute
+    ) {
+        // Copy order data to avoid borrow conflicts
+        let conditional_order = *&self.take_profit_stop_loss.trigger_below()[i];
 
-        if (conditional_order_opt.is_some()) {
-            let conditional_order = conditional_order_opt.destroy_some();
-            let pending_order = conditional_order.pending_order();
+        // Break early if price doesn't trigger
+        if (current_price >= conditional_order.condition().trigger_price()) {
+            break
+        };
 
-            let can_place = if (pending_order.is_limit_order()) {
-                pool.can_place_limit_order(
-                    self.balance_manager(),
-                    pending_order.price().destroy_some(),
-                    pending_order.quantity(),
-                    pending_order.is_bid(),
-                    pending_order.pay_with_deep(),
-                    pending_order.expire_timestamp().destroy_some(),
-                    clock,
-                )
-            } else {
-                pool.can_place_market_order(
-                    self.balance_manager(),
-                    pending_order.quantity(),
-                    pending_order.is_bid(),
-                    pending_order.pay_with_deep(),
-                    clock,
-                )
-            };
+        let conditional_order_id = conditional_order.conditional_order_id();
+        let pending_order = conditional_order.pending_order();
 
-            if (can_place) {
-                let order_info = self.place_pending_order<BaseAsset, QuoteAsset>(
-                    registry,
-                    pool,
-                    &pending_order,
-                    clock,
-                    ctx,
-                );
-                order_infos.push_back(order_info);
-                executed_ids.push_back(conditional_order_id);
-            } else {
-                if (pending_order.is_limit_order()) {
-                    let expire_timestamp = *pending_order.expire_timestamp().borrow();
-                    if (expire_timestamp <= clock.timestamp_ms()) {
-                        expired_ids.push_back(conditional_order_id);
-                    } else {
-                        insufficient_funds_ids.push_back(conditional_order_id);
-                    }
+        let can_place = if (pending_order.is_limit_order()) {
+            pool.can_place_limit_order(
+                self.balance_manager(),
+                pending_order.price().destroy_some(),
+                pending_order.quantity(),
+                pending_order.is_bid(),
+                pending_order.pay_with_deep(),
+                pending_order.expire_timestamp().destroy_some(),
+                clock,
+            )
+        } else {
+            pool.can_place_market_order(
+                self.balance_manager(),
+                pending_order.quantity(),
+                pending_order.is_bid(),
+                pending_order.pay_with_deep(),
+                clock,
+            )
+        };
+
+        if (can_place) {
+            let order_info = self.place_pending_order<BaseAsset, QuoteAsset>(
+                registry,
+                pool,
+                &pending_order,
+                clock,
+                ctx,
+            );
+            order_infos.push_back(order_info);
+            executed_ids.push_back(conditional_order_id);
+        } else {
+            if (pending_order.is_limit_order()) {
+                let expire_timestamp = *pending_order.expire_timestamp().borrow();
+                if (expire_timestamp <= clock.timestamp_ms()) {
+                    expired_ids.push_back(conditional_order_id);
                 } else {
                     insufficient_funds_ids.push_back(conditional_order_id);
                 }
+            } else {
+                insufficient_funds_ids.push_back(conditional_order_id);
             }
         };
 
         i = i + 1;
     };
 
-    // Emit events and remove orders
+    // Process trigger_above orders (sorted low to high)
+    i = 0;
+    while (
+        i < self.take_profit_stop_loss.trigger_above().length()
+           && order_infos.length() < max_orders_to_execute
+    ) {
+        // Copy order data to avoid borrow conflicts
+        let conditional_order = *&self.take_profit_stop_loss.trigger_above()[i];
+
+        // Break early if price doesn't trigger
+        if (current_price <= conditional_order.condition().trigger_price()) {
+            break
+        };
+
+        let conditional_order_id = conditional_order.conditional_order_id();
+        let pending_order = conditional_order.pending_order();
+
+        let can_place = if (pending_order.is_limit_order()) {
+            pool.can_place_limit_order(
+                self.balance_manager(),
+                pending_order.price().destroy_some(),
+                pending_order.quantity(),
+                pending_order.is_bid(),
+                pending_order.pay_with_deep(),
+                pending_order.expire_timestamp().destroy_some(),
+                clock,
+            )
+        } else {
+            pool.can_place_market_order(
+                self.balance_manager(),
+                pending_order.quantity(),
+                pending_order.is_bid(),
+                pending_order.pay_with_deep(),
+                clock,
+            )
+        };
+
+        if (can_place) {
+            let order_info = self.place_pending_order<BaseAsset, QuoteAsset>(
+                registry,
+                pool,
+                &pending_order,
+                clock,
+                ctx,
+            );
+            order_infos.push_back(order_info);
+            executed_ids.push_back(conditional_order_id);
+        } else {
+            if (pending_order.is_limit_order()) {
+                let expire_timestamp = *pending_order.expire_timestamp().borrow();
+                if (expire_timestamp <= clock.timestamp_ms()) {
+                    expired_ids.push_back(conditional_order_id);
+                } else {
+                    insufficient_funds_ids.push_back(conditional_order_id);
+                }
+            } else {
+                insufficient_funds_ids.push_back(conditional_order_id);
+            }
+        };
+
+        i = i + 1;
+    };
+
     let manager_id = self.id();
     let pool_id = pool.id();
 
@@ -297,14 +362,12 @@ public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
         self.take_profit_stop_loss.emit_insufficient_funds_event(manager_id, id, clock);
     });
 
-    // Batch remove cancelled orders (expired + insufficient funds)
     let mut cancelled_ids = expired_ids;
     cancelled_ids.append(insufficient_funds_ids);
     cancelled_ids.do!(|id| {
         self.take_profit_stop_loss.cancel_conditional_order(manager_id, id, clock);
     });
 
-    // Batch remove executed orders
     self
         .take_profit_stop_loss
         .remove_executed_conditional_orders(
@@ -946,6 +1009,7 @@ public fun calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
 /// Returns (manager_id, deepbook_pool_id, risk_ratio, base_asset, quote_asset,
 ///          base_debt, quote_debt, base_pyth_price, base_pyth_decimals,
 ///          quote_pyth_price, quote_pyth_decimals)
+/// TODO: include two triggers, current_price calculation
 public fun manager_state<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
