@@ -1409,19 +1409,20 @@ public fun can_place_limit_order<BaseAsset, QuoteAsset>(
 ): bool {
     let whitelist = self.whitelisted();
     let pool_inner = self.load_inner();
-    if (expire_timestamp < clock.timestamp_ms()) {
-        return false
-    };
 
-    // Validate order parameters against pool book params
-    let (tick_size, lot_size, min_size) = self.pool_book_params();
     if (
-        quantity < min_size || quantity % lot_size != 0 || price % tick_size != 0 || price < constants::min_price() || price > constants::max_price()
+        !pool_inner
+            .book
+            .check_limit_order_params(
+                price,
+                quantity,
+                expire_timestamp,
+                clock.timestamp_ms(),
+            )
     ) {
         return false
     };
 
-    // Get order deep price for fee calculation
     let order_deep_price = if (pay_with_deep) {
         pool_inner.deep_price.get_order_deep_price(whitelist)
     } else {
@@ -1483,8 +1484,8 @@ public fun can_place_market_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
 ): bool {
     // Validate order parameters against pool book params
-    let (_, lot_size, min_size) = self.pool_book_params();
-    if (quantity < min_size || quantity % lot_size != 0) {
+    let pool_inner = self.load_inner();
+    if (!pool_inner.book.check_market_order_params(quantity)) {
         return false
     };
 

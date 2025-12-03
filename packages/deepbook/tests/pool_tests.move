@@ -7954,7 +7954,7 @@ fun test_can_place_limit_order_expired_timestamp() {
             10 * constants::float_scaling(), // quantity: 10 SUI
             true, // is_bid
             true, // pay_with_deep
-            1000, // expire_timestamp: exactly at current time
+            1001, // expire_timestamp: 1001ms (just after current time)
             &clock,
         );
         assert!(can_place_exact);
