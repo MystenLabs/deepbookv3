@@ -311,18 +311,11 @@ fun get_quantity_in(
             let output_needed = target - output_accumulated;
 
             if (is_bid) {
-                // Buying base with quote: need to calculate quote needed for base
-                let mut matched_base = output_needed.min(cur_quantity);
-                if (matched_base > 0 && matched_base < lot_size) {
-                    matched_base = lot_size.min(cur_quantity);
-                } else {
-                    let rounded = matched_base - (matched_base % lot_size);
-                    if (rounded < output_needed && rounded + lot_size <= cur_quantity) {
-                        matched_base = rounded + lot_size;
-                    } else {
-                        matched_base = rounded;
-                    }
-                };
+                // Buying base with quote: find smallest lot-multiple >= output_needed, capped by cur_quantity
+                let remainder = output_needed % lot_size;
+                let target_lots = if (remainder == 0) output_needed
+                else output_needed + lot_size - remainder;
+                let matched_base = target_lots.min(cur_quantity);
 
                 if (matched_base > 0) {
                     output_accumulated = output_accumulated + matched_base;
@@ -343,20 +336,12 @@ fun get_quantity_in(
 
                 if (matched_base == 0) break;
             } else {
-                // Selling base for quote: need to calculate base needed for quote
+                // Selling base for quote: find smallest lot-multiple of base that yields >= output_needed quote
                 let base_for_quote = math::div_round_up(output_needed, cur_price);
-                let mut matched_base = base_for_quote.min(cur_quantity);
-                if (matched_base > 0 && matched_base < lot_size) {
-                    matched_base = lot_size.min(cur_quantity);
-                } else {
-                    let rounded = matched_base - (matched_base % lot_size);
-                    let rounded_quote = math::mul(rounded, cur_price);
-                    if (rounded_quote < output_needed && rounded + lot_size <= cur_quantity) {
-                        matched_base = rounded + lot_size;
-                    } else {
-                        matched_base = rounded;
-                    }
-                };
+                let remainder = base_for_quote % lot_size;
+                let target_lots = if (remainder == 0) base_for_quote
+                else base_for_quote + lot_size - remainder;
+                let matched_base = target_lots.min(cur_quantity);
 
                 if (matched_base > 0) {
                     traded_base = traded_base + matched_base;
