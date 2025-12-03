@@ -1280,6 +1280,13 @@ public fun get_level2_ticks_from_mid<BaseAsset, QuoteAsset>(
     (bid_price, bid_quantity, ask_price, ask_quantity)
 }
 
+public fun bids_and_asks<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+): (&BigVector<Order>, &BigVector<Order>) {
+    let self = self.load_inner();
+    (self.book.bids(), self.book.asks())
+}
+
 /// Get all balances held in this pool.
 public fun vault_balances<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
