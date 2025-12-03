@@ -6652,4 +6652,137 @@ fun test_get_quote_quantity_in_multiple_levels() {
     end(test);
 }
 
+// ============== Fractional target tests ==============
+
+/// Test get_base_quantity_in with fractional target (slightly above round number)
+/// Target: 10.0000...01 USDC (10 * float_scaling + 1)
+/// This tests the rounding behavior when target is not exactly divisible
+#[test]
+fun test_get_base_quantity_in_fractional_target() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+
+    // Place a bid order at $1 per SUI with plenty of liquidity
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        1 * constants::float_scaling(), // price: $1
+        100 * constants::float_scaling(), // quantity: 100 SUI
+        true, // is_bid
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let clock = test.take_shared<Clock>();
+
+        // Target: 10 USDC + 1 unit (fractional)
+        // At price $1, we need slightly more than 10 base to get 10.0000...01 quote
+        // Due to lot_size rounding, we should get at least the target (possibly more)
+        let fractional_target = 10 * constants::float_scaling() + 1;
+        let (base_in, quote_out, _) = pool.get_base_quantity_in<SUI, USDC>(
+            fractional_target,
+            true,
+            &clock,
+        );
+
+        // base_in should be rounded to lot_size and sufficient to cover target
+        // quote_out should be >= fractional_target
+        assert!(quote_out >= fractional_target, 0);
+        // base_in should be a multiple of lot_size
+        assert!(base_in % constants::lot_size() == 0, 1);
+        // At $1, base_in * price = quote_out, so base_in should cover the target
+        assert!(base_in >= 10 * constants::float_scaling(), 2);
+
+        return_shared(pool);
+        return_shared(clock);
+    };
+
+    end(test);
+}
+
+/// Test get_quote_quantity_in with fractional target (slightly above round number)
+/// Target: 10.0000...01 SUI (10 * float_scaling + 1)
+/// This tests the rounding behavior when target is not exactly divisible
+#[test]
+fun test_get_quote_quantity_in_fractional_target() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+
+    // Place an ask (sell) order at $1 per SUI with plenty of liquidity
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        1 * constants::float_scaling(), // price: $1
+        100 * constants::float_scaling(), // quantity: 100 SUI
+        false, // is_bid = false (sell order)
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let clock = test.take_shared<Clock>();
+
+        // Target: 10 SUI + 1 unit (fractional)
+        // We want to buy slightly more than 10 SUI
+        // Due to lot_size rounding, we should get at least the target (possibly more)
+        let fractional_target = 10 * constants::float_scaling() + 1;
+        let (base_out, quote_in, _) = pool.get_quote_quantity_in<SUI, USDC>(
+            fractional_target,
+            true,
+            &clock,
+        );
+
+        // base_out should be >= fractional_target (we get at least what we asked for)
+        assert!(base_out >= fractional_target, 0);
+        // base_out should be a multiple of lot_size (rounded up from target)
+        assert!(base_out % constants::lot_size() == 0, 1);
+        // At $1, quote needed = base bought, so quote_in should match base_out
+        assert!(quote_in == base_out, 2);
+
+        return_shared(pool);
+        return_shared(clock);
+    };
+
+    end(test);
+}
+
 // ============== Helper functions ==============
