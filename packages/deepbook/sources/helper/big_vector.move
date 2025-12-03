@@ -304,7 +304,7 @@ public(package) fun remove_batch<E: store>(
 /// assuming it exists in the data structure. Returns the
 /// reference to the slice and the local offset within the slice
 /// if it exists, aborts with `ENotFound` otherwise.
-public(package) fun slice_around<E: store>(self: &BigVector<E>, key: u128): (SliceRef, u64) {
+public fun slice_around<E: store>(self: &BigVector<E>, key: u128): (SliceRef, u64) {
     if (self.root_id == NO_SLICE) {
         abort ENotFound
     };
@@ -325,7 +325,7 @@ public(package) fun slice_around<E: store>(self: &BigVector<E>, key: u128): (Sli
 /// reference to the slice and the local offset within the slice
 /// if it exists, or (NO_SLICE, 0), if there is no matching
 /// key-value pair.
-public(package) fun slice_following<E: store>(self: &BigVector<E>, key: u128): (SliceRef, u64) {
+public fun slice_following<E: store>(self: &BigVector<E>, key: u128): (SliceRef, u64) {
     if (self.root_id == NO_SLICE) {
         return (SliceRef { ix: NO_SLICE }, 0)
     };
@@ -342,7 +342,7 @@ public(package) fun slice_following<E: store>(self: &BigVector<E>, key: u128): (
 /// to the previous key in `self`. Returns the reference to the slice
 /// and the local offset within the slice if it exists, or (NO_SLICE, 0),
 /// if there is no matching key-value pair.
-public(package) fun slice_before<E: store>(self: &BigVector<E>, key: u128): (SliceRef, u64) {
+public fun slice_before<E: store>(self: &BigVector<E>, key: u128): (SliceRef, u64) {
     if (self.root_id == NO_SLICE) {
         return (SliceRef { ix: NO_SLICE }, 0)
     };
@@ -365,7 +365,7 @@ public(package) fun slice_before<E: store>(self: &BigVector<E>, key: u128): (Sli
 /// to the minimum key in `self`. Returns the reference to the
 /// slice and the local offset within the slice if it exists, or
 /// (NO_SLICE, 0), if there is no matching key-value pair.
-public(package) fun min_slice<E: store>(self: &BigVector<E>): (SliceRef, u64) {
+public fun min_slice<E: store>(self: &BigVector<E>): (SliceRef, u64) {
     if (self.root_id == NO_SLICE) {
         return (SliceRef { ix: NO_SLICE }, 0)
     };
@@ -378,7 +378,7 @@ public(package) fun min_slice<E: store>(self: &BigVector<E>): (SliceRef, u64) {
 /// to the maximum key in `self`. Returns the reference to the
 /// slice and the local offset within the slice if it exists, or
 /// (NO_SLICE, 0), if there is no matching key-value pair.
-public(package) fun max_slice<E: store>(self: &BigVector<E>): (SliceRef, u64) {
+public fun max_slice<E: store>(self: &BigVector<E>): (SliceRef, u64) {
     if (self.root_id == NO_SLICE) {
         return (SliceRef { ix: NO_SLICE }, 0)
     };
@@ -388,11 +388,7 @@ public(package) fun max_slice<E: store>(self: &BigVector<E>): (SliceRef, u64) {
 }
 
 /// Given the current slice and offset, get the next slice and offset. Can be null.
-public(package) fun next_slice<E: store>(
-    self: &BigVector<E>,
-    ref: SliceRef,
-    offset: u64,
-): (SliceRef, u64) {
+public fun next_slice<E: store>(self: &BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64) {
     let slice = self.borrow_slice(ref);
     if (offset + 1 < slice.vals.length()) {
         (ref, offset + 1)
@@ -402,11 +398,7 @@ public(package) fun next_slice<E: store>(
 }
 
 /// Given the current slice and offset, get the previous slice and offset. Can be null.
-public(package) fun prev_slice<E: store>(
-    self: &BigVector<E>,
-    ref: SliceRef,
-    offset: u64,
-): (SliceRef, u64) {
+public fun prev_slice<E: store>(self: &BigVector<E>, ref: SliceRef, offset: u64): (SliceRef, u64) {
     let slice = self.borrow_slice(ref);
     if (offset > 0) {
         (ref, offset - 1)
@@ -422,7 +414,7 @@ public(package) fun prev_slice<E: store>(
 }
 
 /// Borrow a slice from this vector.
-public(package) fun borrow_slice<E: store>(self: &BigVector<E>, ref: SliceRef): &Slice<E> {
+public fun borrow_slice<E: store>(self: &BigVector<E>, ref: SliceRef): &Slice<E> {
     df::borrow(&self.id, ref.ix)
 }
 
@@ -452,40 +444,40 @@ public use fun slice_bisect_right as Slice.bisect_right;
 /// Returns whether the SliceRef points to an actual slice, or the
 /// `NO_SLICE` sentinel. It is an error to attempt to borrow a
 /// slice from a `BigVector` if it doesn't exist.
-public(package) fun slice_is_null(self: &SliceRef): bool {
+public fun slice_is_null(self: &SliceRef): bool {
     self.ix == NO_SLICE
 }
 
 /// Returns whether the slice is a leaf node or not. Leaf nodes
 /// have as many keys as values.
-public(package) fun slice_is_leaf<E: store>(self: &Slice<E>): bool {
+public fun slice_is_leaf<E: store>(self: &Slice<E>): bool {
     self.vals.length() == self.keys.length()
 }
 
 /// Reference to the next (neighbouring) slice to this one.
-public(package) fun slice_next<E: store>(self: &Slice<E>): SliceRef {
+public fun slice_next<E: store>(self: &Slice<E>): SliceRef {
     SliceRef { ix: self.next }
 }
 
 /// Reference to the previous (neighbouring) slice to this one.
-public(package) fun slice_prev<E: store>(self: &Slice<E>): SliceRef {
+public fun slice_prev<E: store>(self: &Slice<E>): SliceRef {
     SliceRef { ix: self.prev }
 }
 
 /// Number of children (values) in this slice.
-public(package) fun slice_length<E: store>(self: &Slice<E>): u64 {
+public fun slice_length<E: store>(self: &Slice<E>): u64 {
     self.vals.length()
 }
 
 /// Access a key from this slice, referenced by its offset, local
 /// to the slice.
-public(package) fun slice_key<E: store>(self: &Slice<E>, ix: u64): u128 {
+public fun slice_key<E: store>(self: &Slice<E>, ix: u64): u128 {
     self.keys[ix]
 }
 
 /// Access a value from this slice, referenced by its offset,
 /// local to the slice.
-public(package) fun slice_borrow<E: store>(self: &Slice<E>, ix: u64): &E {
+public fun slice_borrow<E: store>(self: &Slice<E>, ix: u64): &E {
     &self.vals[ix]
 }
 
