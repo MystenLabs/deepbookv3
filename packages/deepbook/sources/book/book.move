@@ -314,12 +314,9 @@ fun get_quantity_in(
                 // Buying base with quote: need to calculate quote needed for base
                 let mut matched_base = output_needed.min(cur_quantity);
                 if (matched_base > 0 && matched_base < lot_size) {
-                    // Need less than a lot to complete, trade minimum lot (capped by available)
                     matched_base = lot_size.min(cur_quantity);
                 } else {
-                    // Round down to lot_size
                     let rounded = matched_base - (matched_base % lot_size);
-                    // If rounding down misses the target and we have more liquidity, round up
                     if (rounded < output_needed && rounded + lot_size <= cur_quantity) {
                         matched_base = rounded + lot_size;
                     } else {
@@ -350,15 +347,11 @@ fun get_quantity_in(
                 let base_for_quote = math::div_round_up(output_needed, cur_price);
                 let mut matched_base = base_for_quote.min(cur_quantity);
                 if (matched_base > 0 && matched_base < lot_size) {
-                    // Need less than a lot to complete, trade minimum lot (capped by available)
                     matched_base = lot_size.min(cur_quantity);
                 } else {
-                    // Round down to lot_size
                     let rounded = matched_base - (matched_base % lot_size);
-                    // Check if rounding down causes matched_quote to miss the target
                     let rounded_quote = math::mul(rounded, cur_price);
                     if (rounded_quote < output_needed && rounded + lot_size <= cur_quantity) {
-                        // Add one more lot to ensure we meet/exceed the target
                         matched_base = rounded + lot_size;
                     } else {
                         matched_base = rounded;
