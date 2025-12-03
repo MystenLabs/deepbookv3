@@ -7007,7 +7007,7 @@ fun test_can_place_market_order_zero_quantity() {
         let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
         let clock = test.take_shared<Clock>();
 
-        // Test: zero quantity should return true (no balance needed)
+        // Test: zero quantity should return false (fails min_size check)
         let can_place = pool.can_place_market_order<SUI, USDC>(
             &balance_manager,
             0, // quantity: 0
@@ -7015,7 +7015,7 @@ fun test_can_place_market_order_zero_quantity() {
             true, // pay_with_deep
             &clock,
         );
-        assert!(can_place);
+        assert!(!can_place);
 
         return_shared(pool);
         return_shared(balance_manager);
@@ -7622,7 +7622,7 @@ fun test_can_place_limit_order_zero_quantity() {
         let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
         let clock = clock::create_for_testing(test.ctx());
 
-        // Test: zero quantity should return true (no balance needed)
+        // Test: zero quantity should return false (fails min_size check)
         let can_place = pool.can_place_limit_order<SUI, USDC>(
             &balance_manager,
             2 * constants::float_scaling(), // price: 2 USDC per SUI
@@ -7632,7 +7632,7 @@ fun test_can_place_limit_order_zero_quantity() {
             constants::max_u64(), // expire_timestamp
             &clock,
         );
-        assert!(can_place);
+        assert!(!can_place);
 
         clock.destroy_for_testing();
         return_shared(pool);

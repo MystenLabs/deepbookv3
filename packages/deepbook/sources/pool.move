@@ -1413,6 +1413,12 @@ public fun can_place_limit_order<BaseAsset, QuoteAsset>(
         return false
     };
 
+    // Validate order parameters against pool book params
+    let (tick_size, lot_size, min_size) = self.pool_book_params();
+    if (quantity < min_size || quantity % lot_size != 0 || price % tick_size != 0) {
+        return false
+    };
+
     // Get order deep price for fee calculation
     let order_deep_price = if (pay_with_deep) {
         pool_inner.deep_price.get_order_deep_price(whitelist)
@@ -1474,6 +1480,12 @@ public fun can_place_market_order<BaseAsset, QuoteAsset>(
     pay_with_deep: bool,
     clock: &Clock,
 ): bool {
+    // Validate order parameters against pool book params
+    let (_, lot_size, min_size) = self.pool_book_params();
+    if (quantity < min_size || quantity % lot_size != 0) {
+        return false
+    };
+
     let mut required_base = 0;
     let mut required_deep = 0;
 
