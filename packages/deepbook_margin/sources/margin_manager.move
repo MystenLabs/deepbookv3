@@ -1167,7 +1167,7 @@ fun new_margin_manager<BaseAsset, QuoteAsset>(
 
     event::emit(MarginManagerCreatedEvent {
         margin_manager_id,
-        balance_manager_id: object::id(&balance_manager),
+        balance_manager_id: balance_manager.id(),
         deepbook_pool_id: pool.id(),
         owner,
         timestamp: clock.timestamp_ms(),
