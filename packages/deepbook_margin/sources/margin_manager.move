@@ -229,131 +229,50 @@ public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
     let mut expired_ids = vector[];
     let mut insufficient_funds_ids = vector[];
 
-    // Process trigger_below orders (sorted high to low)
+    // Collect orders to process (to avoid borrow conflicts)
+    let mut orders_to_process = vector[];
+
+    // Collect trigger_below orders (sorted high to low)
     let mut i = 0;
-    while (
-        i < self.take_profit_stop_loss.trigger_below().length()
-           && order_infos.length() < max_orders_to_execute
-    ) {
-        // Copy order data to avoid borrow conflicts
-        let conditional_order = *&self.take_profit_stop_loss.trigger_below()[i];
+    while (i < self.take_profit_stop_loss.trigger_below().length()) {
+        let conditional_order = &self.take_profit_stop_loss.trigger_below()[i];
 
         // Break early if price doesn't trigger
         if (current_price >= conditional_order.condition().trigger_price()) {
             break
         };
 
-        let conditional_order_id = conditional_order.conditional_order_id();
-        let pending_order = conditional_order.pending_order();
-
-        let can_place = if (pending_order.is_limit_order()) {
-            pool.can_place_limit_order(
-                self.balance_manager(),
-                pending_order.price().destroy_some(),
-                pending_order.quantity(),
-                pending_order.is_bid(),
-                pending_order.pay_with_deep(),
-                pending_order.expire_timestamp().destroy_some(),
-                clock,
-            )
-        } else {
-            pool.can_place_market_order(
-                self.balance_manager(),
-                pending_order.quantity(),
-                pending_order.is_bid(),
-                pending_order.pay_with_deep(),
-                clock,
-            )
-        };
-
-        if (can_place) {
-            let order_info = self.place_pending_order<BaseAsset, QuoteAsset>(
-                registry,
-                pool,
-                &pending_order,
-                clock,
-                ctx,
-            );
-            order_infos.push_back(order_info);
-            executed_ids.push_back(conditional_order_id);
-        } else {
-            if (pending_order.is_limit_order()) {
-                let expire_timestamp = *pending_order.expire_timestamp().borrow();
-                if (expire_timestamp <= clock.timestamp_ms()) {
-                    expired_ids.push_back(conditional_order_id);
-                } else {
-                    insufficient_funds_ids.push_back(conditional_order_id);
-                }
-            } else {
-                insufficient_funds_ids.push_back(conditional_order_id);
-            }
-        };
-
+        orders_to_process.push_back(*conditional_order);
         i = i + 1;
     };
 
-    // Process trigger_above orders (sorted low to high)
+    // Collect trigger_above orders (sorted low to high)
     i = 0;
-    while (
-        i < self.take_profit_stop_loss.trigger_above().length()
-           && order_infos.length() < max_orders_to_execute
-    ) {
-        // Copy order data to avoid borrow conflicts
-        let conditional_order = *&self.take_profit_stop_loss.trigger_above()[i];
+    while (i < self.take_profit_stop_loss.trigger_above().length()) {
+        let conditional_order = &self.take_profit_stop_loss.trigger_above()[i];
 
         // Break early if price doesn't trigger
         if (current_price <= conditional_order.condition().trigger_price()) {
             break
         };
 
-        let conditional_order_id = conditional_order.conditional_order_id();
-        let pending_order = conditional_order.pending_order();
-
-        let can_place = if (pending_order.is_limit_order()) {
-            pool.can_place_limit_order(
-                self.balance_manager(),
-                pending_order.price().destroy_some(),
-                pending_order.quantity(),
-                pending_order.is_bid(),
-                pending_order.pay_with_deep(),
-                pending_order.expire_timestamp().destroy_some(),
-                clock,
-            )
-        } else {
-            pool.can_place_market_order(
-                self.balance_manager(),
-                pending_order.quantity(),
-                pending_order.is_bid(),
-                pending_order.pay_with_deep(),
-                clock,
-            )
-        };
-
-        if (can_place) {
-            let order_info = self.place_pending_order<BaseAsset, QuoteAsset>(
-                registry,
-                pool,
-                &pending_order,
-                clock,
-                ctx,
-            );
-            order_infos.push_back(order_info);
-            executed_ids.push_back(conditional_order_id);
-        } else {
-            if (pending_order.is_limit_order()) {
-                let expire_timestamp = *pending_order.expire_timestamp().borrow();
-                if (expire_timestamp <= clock.timestamp_ms()) {
-                    expired_ids.push_back(conditional_order_id);
-                } else {
-                    insufficient_funds_ids.push_back(conditional_order_id);
-                }
-            } else {
-                insufficient_funds_ids.push_back(conditional_order_id);
-            }
-        };
-
+        orders_to_process.push_back(*conditional_order);
         i = i + 1;
     };
+
+    // Process collected orders
+    self.process_collected_orders(
+        pool,
+        registry,
+        orders_to_process,
+        &mut order_infos,
+        &mut executed_ids,
+        &mut expired_ids,
+        &mut insufficient_funds_ids,
+        max_orders_to_execute,
+        clock,
+        ctx,
+    );
 
     let manager_id = self.id();
     let pool_id = pool.id();
@@ -378,6 +297,73 @@ public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
         );
 
     order_infos
+}
+
+/// Helper function to process collected conditional orders
+fun process_collected_orders<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    orders: vector<ConditionalOrder>,
+    order_infos: &mut vector<OrderInfo>,
+    executed_ids: &mut vector<u64>,
+    expired_ids: &mut vector<u64>,
+    insufficient_funds_ids: &mut vector<u64>,
+    max_orders_to_execute: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    let mut i = 0;
+    while (i < orders.length() && order_infos.length() < max_orders_to_execute) {
+        let conditional_order = &orders[i];
+        let conditional_order_id = conditional_order.conditional_order_id();
+        let pending_order = conditional_order.pending_order();
+
+        let can_place = if (pending_order.is_limit_order()) {
+            pool.can_place_limit_order(
+                self.balance_manager(),
+                pending_order.price().destroy_some(),
+                pending_order.quantity(),
+                pending_order.is_bid(),
+                pending_order.pay_with_deep(),
+                pending_order.expire_timestamp().destroy_some(),
+                clock,
+            )
+        } else {
+            pool.can_place_market_order(
+                self.balance_manager(),
+                pending_order.quantity(),
+                pending_order.is_bid(),
+                pending_order.pay_with_deep(),
+                clock,
+            )
+        };
+
+        if (can_place) {
+            let order_info = self.place_pending_order<BaseAsset, QuoteAsset>(
+                registry,
+                pool,
+                &pending_order,
+                clock,
+                ctx,
+            );
+            order_infos.push_back(order_info);
+            executed_ids.push_back(conditional_order_id);
+        } else {
+            if (pending_order.is_limit_order()) {
+                let expire_timestamp = *pending_order.expire_timestamp().borrow();
+                if (expire_timestamp <= clock.timestamp_ms()) {
+                    expired_ids.push_back(conditional_order_id);
+                } else {
+                    insufficient_funds_ids.push_back(conditional_order_id);
+                }
+            } else {
+                insufficient_funds_ids.push_back(conditional_order_id);
+            }
+        };
+
+        i = i + 1;
+    }
 }
 
 // === Public Functions - Margin Manager ===
