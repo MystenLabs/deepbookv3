@@ -1415,7 +1415,9 @@ public fun can_place_limit_order<BaseAsset, QuoteAsset>(
 
     // Validate order parameters against pool book params
     let (tick_size, lot_size, min_size) = self.pool_book_params();
-    if (quantity < min_size || quantity % lot_size != 0 || price % tick_size != 0) {
+    if (
+        quantity < min_size || quantity % lot_size != 0 || price % tick_size != 0 || price < constants::min_price() || price > constants::max_price()
+    ) {
         return false
     };
 

@@ -8099,6 +8099,96 @@ fun test_can_place_limit_order_with_settled_balances() {
     end(test);
 }
 
+/// Test limit order with price = 0 (should fail min price check)
+#[test]
+fun test_can_place_limit_order_price_zero() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+
+    let pool_id = setup_pool_with_default_fees<SUI, USDC>(
+        OWNER,
+        registry_id,
+        true,
+        false,
+        &mut test,
+    );
+
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
+        let clock = clock::create_for_testing(test.ctx());
+
+        // Test: price = 0 should return false (fails min price check)
+        let can_place = pool.can_place_limit_order<SUI, USDC>(
+            &balance_manager,
+            0, // price: 0 (below min_price)
+            10 * constants::float_scaling(), // quantity: 10 SUI
+            true, // is_bid
+            true, // pay_with_deep
+            constants::max_u64(), // expire_timestamp
+            &clock,
+        );
+        assert!(!can_place);
+
+        clock.destroy_for_testing();
+        return_shared(pool);
+        return_shared(balance_manager);
+    };
+
+    end(test);
+}
+
+/// Test limit order with price = max_u64 (should fail max price check)
+#[test]
+fun test_can_place_limit_order_price_max_u64() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+
+    let pool_id = setup_pool_with_default_fees<SUI, USDC>(
+        OWNER,
+        registry_id,
+        true,
+        false,
+        &mut test,
+    );
+
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
+        let clock = clock::create_for_testing(test.ctx());
+
+        // Test: price = max_u64 should return false (exceeds max_price)
+        let can_place = pool.can_place_limit_order<SUI, USDC>(
+            &balance_manager,
+            constants::max_u64(), // price: max_u64 (above max_price)
+            10 * constants::float_scaling(), // quantity: 10 SUI
+            true, // is_bid
+            true, // pay_with_deep
+            constants::max_u64(), // expire_timestamp
+            &clock,
+        );
+        assert!(!can_place);
+
+        clock.destroy_for_testing();
+        return_shared(pool);
+        return_shared(balance_manager);
+    };
+
+    end(test);
+}
+
 /// Test that can_place_market_order includes settled balances
 /// Without settled balances, Alice wouldn't have enough USDC to place a market bid.
 /// With settled balances from a previous trade, she can place the order.
