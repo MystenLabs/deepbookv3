@@ -212,6 +212,7 @@ public fun cancel_conditional_order<BaseAsset, QuoteAsset>(
 }
 
 /// Execute conditional orders and return the order infos.
+/// This is a permissionless function that can be called by anyone.
 public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
