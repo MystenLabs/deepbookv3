@@ -15,6 +15,7 @@ use deepbook::{
         DepositCap,
         WithdrawCap
     },
+    balances,
     big_vector::BigVector,
     book::{Self, Book},
     constants,
@@ -1448,10 +1449,15 @@ public fun can_place_limit_order<BaseAsset, QuoteAsset>(
         };
     };
 
-    // Get current balances from balance manager
-    let available_base = balance_manager.balance<BaseAsset>();
-    let available_quote = balance_manager.balance<QuoteAsset>();
-    let available_deep = balance_manager.balance<DEEP>();
+    // Get current balances from balance manager. Accounts for settled balances.
+    let settled_balances = if (!self.account_exists(balance_manager)) {
+        balances::empty()
+    } else {
+        self.account(balance_manager).settled_balances()
+    };
+    let available_base = balance_manager.balance<BaseAsset>() + settled_balances.base();
+    let available_quote = balance_manager.balance<QuoteAsset>() + settled_balances.quote();
+    let available_deep = balance_manager.balance<DEEP>() + settled_balances.deep();
 
     // Check if available balances are sufficient
     (available_base >= required_base) && (available_quote >= required_quote) && (available_deep >= required_deep)
@@ -1471,10 +1477,15 @@ public fun can_place_market_order<BaseAsset, QuoteAsset>(
     let mut required_base = 0;
     let mut required_deep = 0;
 
-    // Get current balances from balance manager
-    let available_base = balance_manager.balance<BaseAsset>();
-    let available_quote = balance_manager.balance<QuoteAsset>();
-    let available_deep = balance_manager.balance<DEEP>();
+    // Get current balances from balance manager. Accounts for settled balances.
+    let settled_balances = if (!self.account_exists(balance_manager)) {
+        balances::empty()
+    } else {
+        self.account(balance_manager).settled_balances()
+    };
+    let available_base = balance_manager.balance<BaseAsset>() + settled_balances.base();
+    let available_quote = balance_manager.balance<QuoteAsset>() + settled_balances.quote();
+    let available_deep = balance_manager.balance<DEEP>() + settled_balances.deep();
 
     if (is_bid) {
         // For bid orders: check if available quote can return desired base quantity
@@ -1559,6 +1570,14 @@ public fun pool_book_params<BaseAsset, QuoteAsset>(
     let min_size = self.book.min_size();
 
     (tick_size, lot_size, min_size)
+}
+
+public fun account_exists<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    balance_manager: &BalanceManager,
+): bool {
+    let self = self.load_inner();
+    self.state.account_exists(balance_manager.id())
 }
 
 public fun account<BaseAsset, QuoteAsset>(
