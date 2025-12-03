@@ -5,15 +5,13 @@
 /// All order book operations are defined in this module.
 module deepbook::book;
 
-use deepbook::{
-    big_vector::{Self, BigVector, slice_borrow, slice_borrow_mut},
-    constants,
-    deep_price::OrderDeepPrice,
-    math,
-    order::Order,
-    order_info::OrderInfo,
-    utils
-};
+use deepbook::big_vector::{Self, BigVector, slice_borrow, slice_borrow_mut};
+use deepbook::constants;
+use deepbook::deep_price::OrderDeepPrice;
+use deepbook::math;
+use deepbook::order::Order;
+use deepbook::order_info::OrderInfo;
+use deepbook::utils;
 
 // === Errors ===
 const EInvalidAmountIn: u64 = 1;
@@ -190,8 +188,9 @@ public(package) fun get_quantity_out(
             if (matched_base_quantity == 0) break;
         };
 
-        (ref, offset) = if (is_bid) book_side.next_slice(ref, offset)
-        else book_side.prev_slice(ref, offset);
+        (ref, offset) =
+            if (is_bid) book_side.next_slice(ref, offset)
+            else book_side.prev_slice(ref, offset);
         current_fills = current_fills + 1;
     };
 
@@ -223,6 +222,96 @@ public(package) fun get_quantity_out(
         }
     } else {
         (quantity_in_left, quantity_out, deep_fee)
+    }
+}
+
+/// Given a target quote_quantity to receive from selling, calculate the minimum base_quantity needed.
+/// This is the inverse of get_quantity_out for ask orders.
+/// Returns (base_quantity_in, actual_quote_quantity_out, deep_quantity_required)
+/// Returns (0, 0, 0) if insufficient liquidity or if result would be below min_size.
+public(package) fun get_base_quantity_in(
+    self: &Book,
+    target_quote_quantity: u64,
+    taker_fee: u64,
+    deep_price: OrderDeepPrice,
+    lot_size: u64,
+    pay_with_deep: bool,
+    current_timestamp: u64,
+): (u64, u64, u64) {
+    let input_fee_rate = math::mul(
+        constants::fee_penalty_multiplier(),
+        taker_fee,
+    );
+
+    let mut base_quantity_in = 0;
+    let mut quote_accumulated = 0;
+
+    // Traverse bids (we're selling into bid orders)
+    let book_side = &self.bids;
+    let (mut ref, mut offset) = book_side.max_slice();
+    let max_fills = constants::max_fills();
+    let mut current_fills = 0;
+
+    while (
+        !ref.is_null() && quote_accumulated < target_quote_quantity && current_fills < max_fills
+    ) {
+        let order = slice_borrow(book_side.borrow_slice(ref), offset);
+        let cur_price = order.price();
+        let cur_quantity = order.quantity() - order.filled_quantity();
+
+        if (current_timestamp <= order.expire_timestamp()) {
+            // Calculate how much more quote we need
+            let quote_needed = target_quote_quantity - quote_accumulated;
+
+            // Calculate base needed to get the quote_needed at this price
+            // Using div to round down, then we'll add extra if needed
+            let base_for_quote = math::div_round_up(quote_needed, cur_price);
+            let mut matched_base = base_for_quote.min(cur_quantity);
+
+            // Round down to lot_size
+            matched_base = matched_base - (matched_base % lot_size);
+
+            if (matched_base > 0) {
+                let matched_quote = math::mul(matched_base, cur_price);
+                quote_accumulated = quote_accumulated + matched_quote;
+
+                // Calculate base needed including fees if not paying with deep
+                if (pay_with_deep) {
+                    base_quantity_in = base_quantity_in + matched_base;
+                } else {
+                    // Need extra base to cover fees (fees taken from input)
+                    let base_with_fee = math::mul(
+                        matched_base,
+                        constants::float_scaling() + input_fee_rate,
+                    );
+                    base_quantity_in = base_quantity_in + base_with_fee;
+                }
+            };
+
+            if (matched_base == 0) break;
+        };
+
+        (ref, offset) = book_side.prev_slice(ref, offset);
+        current_fills = current_fills + 1;
+    };
+
+    // Calculate deep fee if paying with DEEP
+    let deep_fee = if (!pay_with_deep) {
+        0
+    } else {
+        let fee_quantity = deep_price.fee_quantity(
+            base_quantity_in,
+            quote_accumulated,
+            false, // is_ask (selling base for quote)
+        );
+        math::mul(taker_fee, fee_quantity.deep())
+    };
+
+    // Check if we accumulated enough and meets min_size
+    if (quote_accumulated < target_quote_quantity || base_quantity_in < self.min_size) {
+        (0, 0, 0) // Couldn't satisfy the requirement
+    } else {
+        (base_quantity_in, quote_accumulated, deep_fee)
     }
 }
 
@@ -360,8 +449,9 @@ public(package) fun get_level2_range_and_ticks(
             };
         };
 
-        (ref, offset) = if (is_bid) book_side.prev_slice(ref, offset)
-        else book_side.next_slice(ref, offset);
+        (ref, offset) =
+            if (is_bid) book_side.prev_slice(ref, offset)
+            else book_side.next_slice(ref, offset);
     };
 
     if (cur_price != 0 && ticks_left > 0) {
@@ -427,8 +517,9 @@ fun match_against_book(self: &mut Book, order_info: &mut OrderInfo, timestamp: u
             offset,
         );
         if (!order_info.match_maker(maker_order, timestamp)) break;
-        (ref, offset) = if (is_bid) book_side.next_slice(ref, offset)
-        else book_side.prev_slice(ref, offset);
+        (ref, offset) =
+            if (is_bid) book_side.next_slice(ref, offset)
+            else book_side.prev_slice(ref, offset);
         current_fills = current_fills + 1;
     };
 
