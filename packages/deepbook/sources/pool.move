@@ -1200,7 +1200,7 @@ public fun get_quantity_out_input_fee<BaseAsset, QuoteAsset>(
         )
 }
 
-/// Dry run to determine the base quantity needed to receive a target quote quantity.
+/// Dry run to determine the base quantity needed to sell to receive a target quote quantity.
 /// Returns (base_quantity_in, actual_quote_quantity_out, deep_quantity_required)
 /// Returns (0, 0, 0) if insufficient liquidity or if result would be below min_size.
 public fun get_base_quantity_in<BaseAsset, QuoteAsset>(
@@ -1229,7 +1229,7 @@ public fun get_base_quantity_in<BaseAsset, QuoteAsset>(
         )
 }
 
-/// Dry run to determine the quote quantity needed to receive a target base quantity.
+/// Dry run to determine the quote quantity needed to buy a target base quantity.
 /// Returns (actual_base_quantity_out, quote_quantity_in, deep_quantity_required)
 /// Returns (0, 0, 0) if insufficient liquidity or if result would be below min_size.
 public fun get_quote_quantity_in<BaseAsset, QuoteAsset>(

@@ -6309,8 +6309,6 @@ fun advance_scenario_with_gas_price(test: &mut Scenario, gas_price: u64, timesta
     test.next_with_context(ctx);
 }
 
-// ============== get_base_quantity_in tests ==============
-
 /// Test get_base_quantity_in with multiple price levels
 /// Setup: Orders at $3 (qty 10), $2 (qty 5), $1 (qty 25)
 /// Target: 50 USDC
@@ -6482,8 +6480,6 @@ fun test_get_base_quantity_in_multiple_levels() {
 
     end(test);
 }
-
-// ============== get_quote_quantity_in tests ==============
 
 /// Test get_quote_quantity_in with multiple price levels
 /// Setup: Sell orders at $1 (qty 25), $2 (qty 5), $3 (qty 10)
