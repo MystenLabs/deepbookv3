@@ -4,27 +4,27 @@
 #[test_only]
 module deepbook_margin::tpsl_tests;
 
-use deepbook::constants;
-use deepbook::pool::Pool;
-use deepbook::registry::Registry;
-use deepbook_margin::margin_manager::{Self, MarginManager};
-use deepbook_margin::margin_pool;
-use deepbook_margin::margin_registry::{MarginRegistry, MarginAdminCap, MaintainerCap};
-use deepbook_margin::test_constants::{Self, SUI, USDC};
-use deepbook_margin::test_helpers::{
-    setup_margin_registry,
-    create_margin_pool,
-    default_protocol_config,
-    get_margin_pool_caps,
-    create_pool_for_testing,
-    enable_deepbook_margin_on_pool,
-    cleanup_margin_test,
-    mint_coin,
-    build_pyth_price_info_object,
-    destroy_2,
-    return_shared_2
+use deepbook::{constants, pool::Pool, registry::Registry};
+use deepbook_margin::{
+    margin_manager::{Self, MarginManager},
+    margin_pool,
+    margin_registry::{MarginRegistry, MarginAdminCap, MaintainerCap},
+    test_constants::{Self, SUI, USDC},
+    test_helpers::{
+        setup_margin_registry,
+        create_margin_pool,
+        default_protocol_config,
+        get_margin_pool_caps,
+        create_pool_for_testing,
+        enable_deepbook_margin_on_pool,
+        cleanup_margin_test,
+        mint_coin,
+        build_pyth_price_info_object,
+        destroy_2,
+        return_shared_2
+    },
+    tpsl
 };
-use deepbook_margin::tpsl;
 use std::unit_test::destroy;
 use sui::test_scenario::{Self, return_shared};
 
@@ -1579,6 +1579,84 @@ fun test_error_invalid_condition() {
 }
 
 #[test]
+#[expected_failure(abort_code = deepbook_margin::tpsl::EInvalidCondition)]
+fun test_error_invalid_condition_trigger_above() {
+    // Test EInvalidCondition: trigger_above price must be > current price
+    // Current price is $2.00, but trigger is set to $1.50 (below current price)
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+
+    let sui_price = build_sui_price_info_object_with_price(&mut scenario, 200, &clock); // $2.00
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price,
+        &usdc_price,
+        mint_coin<SUI>(10000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Invalid: trigger_above (false) with trigger price $1.50 < current price $2.00
+    let condition = tpsl::new_condition(false, 1_500_000_000_000); // $1.50
+    let pending_order = tpsl::new_pending_limit_order(
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        2_500_000_000_000,
+        100 * test_constants::sui_multiplier(),
+        false,
+        false,
+        constants::max_u64(),
+    );
+
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price,
+        &usdc_price,
+        &margin_registry,
+        1,
+        condition,
+        pending_order,
+        &clock,
+        scenario.ctx(),
+    );
+
+    destroy_2!(sui_price, usdc_price);
+    return_shared_2!(mm, pool);
+
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
 #[expected_failure(abort_code = deepbook_margin::tpsl::EConditionalOrderNotFound)]
 fun test_error_conditional_order_not_found() {
     // Test EConditionalOrderNotFound: trying to cancel a non-existent order
@@ -1621,7 +1699,7 @@ fun test_error_conditional_order_not_found() {
 #[test]
 #[expected_failure(abort_code = deepbook_margin::tpsl::EMaxConditionalOrdersReached)]
 fun test_error_max_conditional_orders_reached() {
-    // Test EMaxConditionalOrdersReached: trying to add more than 50 orders
+    // Test EMaxConditionalOrdersReached: trying to add more than 10 orders (max is 10)
 
     let (
         mut scenario,
@@ -1664,9 +1742,9 @@ fun test_error_max_conditional_orders_reached() {
         scenario.ctx(),
     );
 
-    // Add 51 orders (max is 50)
+    // Add 11 orders (max is 10)
     let mut i = 0;
-    while (i < 51) {
+    while (i < 11) {
         let condition = tpsl::new_condition(true, 1_500_000_000_000);
         let pending_order = tpsl::new_pending_limit_order(
             i + 1,
