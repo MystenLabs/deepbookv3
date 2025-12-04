@@ -1097,12 +1097,6 @@ public(package) fun balance_manager_trading_mut<BaseAsset, QuoteAsset>(
     &mut self.balance_manager
 }
 
-public(package) fun balance_manager_unsafe_mut<BaseAsset, QuoteAsset>(
-    self: &mut MarginManager<BaseAsset, QuoteAsset>,
-): &mut BalanceManager {
-    &mut self.balance_manager
-}
-
 /// Withdraws settled amounts from the pool permissionlessly.
 /// Anyone can call this via the pool_proxy to settle balances.
 public(package) fun withdraw_settled_amounts_permissionless_int<BaseAsset, QuoteAsset>(
@@ -1508,4 +1502,10 @@ fun process_collected_orders<BaseAsset, QuoteAsset>(
 
         i = i + 1;
     }
+}
+
+fun balance_manager_unsafe_mut<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+): &mut BalanceManager {
+    &mut self.balance_manager
 }

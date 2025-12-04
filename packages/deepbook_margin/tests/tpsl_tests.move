@@ -4,27 +4,27 @@
 #[test_only]
 module deepbook_margin::tpsl_tests;
 
-use deepbook::constants;
-use deepbook::pool::Pool;
-use deepbook::registry::Registry;
-use deepbook_margin::margin_manager::{Self, MarginManager};
-use deepbook_margin::margin_pool;
-use deepbook_margin::margin_registry::{MarginRegistry, MarginAdminCap, MaintainerCap};
-use deepbook_margin::test_constants::{Self, SUI, USDC};
-use deepbook_margin::test_helpers::{
-    setup_margin_registry,
-    create_margin_pool,
-    default_protocol_config,
-    get_margin_pool_caps,
-    create_pool_for_testing,
-    enable_deepbook_margin_on_pool,
-    cleanup_margin_test,
-    mint_coin,
-    build_pyth_price_info_object,
-    destroy_2,
-    return_shared_2
+use deepbook::{constants, pool::Pool, registry::Registry};
+use deepbook_margin::{
+    margin_manager::{Self, MarginManager},
+    margin_pool,
+    margin_registry::{MarginRegistry, MarginAdminCap, MaintainerCap},
+    test_constants::{Self, SUI, USDC},
+    test_helpers::{
+        setup_margin_registry,
+        create_margin_pool,
+        default_protocol_config,
+        get_margin_pool_caps,
+        create_pool_for_testing,
+        enable_deepbook_margin_on_pool,
+        cleanup_margin_test,
+        mint_coin,
+        build_pyth_price_info_object,
+        destroy_2,
+        return_shared_2
+    },
+    tpsl
 };
-use deepbook_margin::tpsl;
 use std::unit_test::destroy;
 use sui::test_scenario::{Self, return_shared};
 
@@ -463,6 +463,165 @@ fun test_tpsl_orders_sorted_correctly() {
     assert!(order_5.condition().trigger_price() < order_6.condition().trigger_price());
     assert!(order_6.condition().trigger_price() < order_7.condition().trigger_price());
     assert!(order_7.condition().trigger_price() < order_8.condition().trigger_price());
+
+    destroy_2!(sui_price, usdc_price);
+    return_shared_2!(mm, pool);
+    return_shared(margin_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let margin_registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    return_shared(deepbook_registry);
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_tpsl_trigger_price_getters() {
+    // This test verifies the lowest_trigger_price_above and highest_trigger_price_below functions:
+    // - Returns default values when no orders exist
+    // - Returns correct values from the first element of each sorted vector
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    // USER1 = ALICE creates a margin manager
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+
+    // Verify default values when no orders exist
+    assert!(mm.lowest_trigger_price_above() == constants::max_u64());
+    assert!(mm.highest_trigger_price_below() == 0);
+
+    // Initial prices: SUI = $2.00, USDC = $1.00
+    let sui_price = build_sui_price_info_object_with_price(&mut scenario, 200, &clock); // $2.00
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock); // $1.00
+
+    // Deposit collateral (SUI)
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price,
+        &usdc_price,
+        mint_coin<SUI>(10000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Add 4 trigger_below orders at different prices (intentionally out of order)
+    // After insertion, they will be sorted high to low: $1.80, $1.50, $1.20, $0.90
+    // highest_trigger_price_below should return the first element: $1.80
+    let trigger_prices_below = vector[
+        1_500_000_000_000, // $1.50
+        900_000_000_000, // $0.90
+        1_800_000_000_000, // $1.80 (this will be first after sorting)
+        1_200_000_000_000, // $1.20
+    ];
+
+    let mut i = 0;
+    while (i < trigger_prices_below.length()) {
+        let condition = tpsl::new_condition(
+            true, // trigger_is_below
+            trigger_prices_below[i],
+        );
+        let pending_order = tpsl::new_pending_limit_order(
+            i + 1, // client_order_id
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            800_000_000_000, // price: $0.80
+            100 * test_constants::sui_multiplier(),
+            false, // is_bid = false (SELL)
+            false,
+            constants::max_u64(),
+        );
+
+        mm.add_conditional_order<SUI, USDC>(
+            &pool,
+            &sui_price,
+            &usdc_price,
+            &margin_registry,
+            i + 1, // conditional_order_id
+            condition,
+            pending_order,
+            &clock,
+            scenario.ctx(),
+        );
+        i = i + 1;
+    };
+
+    // Verify highest_trigger_price_below returns the highest price (first element)
+    assert!(mm.highest_trigger_price_below() == 1_800_000_000_000); // $1.80
+    // lowest_trigger_price_above should still be default (no trigger_above orders yet)
+    assert!(mm.lowest_trigger_price_above() == constants::max_u64());
+
+    // Add 4 trigger_above orders at different prices (intentionally out of order)
+    // After insertion, they will be sorted low to high: $2.20, $2.50, $2.80, $3.10
+    // lowest_trigger_price_above should return the first element: $2.20
+    let trigger_prices_above = vector[
+        2_500_000_000_000, // $2.50
+        3_100_000_000_000, // $3.10
+        2_200_000_000_000, // $2.20 (this will be first after sorting)
+        2_800_000_000_000, // $2.80
+    ];
+
+    i = 0;
+    while (i < trigger_prices_above.length()) {
+        let condition = tpsl::new_condition(
+            false, // trigger_is_below = false (trigger_above)
+            trigger_prices_above[i],
+        );
+        let pending_order = tpsl::new_pending_limit_order(
+            i + 5, // client_order_id (5, 6, 7, 8)
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            3_500_000_000_000, // price: $3.50
+            100 * test_constants::sui_multiplier(),
+            false, // is_bid = false (SELL)
+            false,
+            constants::max_u64(),
+        );
+
+        mm.add_conditional_order<SUI, USDC>(
+            &pool,
+            &sui_price,
+            &usdc_price,
+            &margin_registry,
+            i + 5, // conditional_order_id (5, 6, 7, 8)
+            condition,
+            pending_order,
+            &clock,
+            scenario.ctx(),
+        );
+        i = i + 1;
+    };
+
+    // Verify both getters return the correct first elements
+    assert!(mm.highest_trigger_price_below() == 1_800_000_000_000); // $1.80 (highest in trigger_below)
+    assert!(mm.lowest_trigger_price_above() == 2_200_000_000_000); // $2.20 (lowest in trigger_above)
+
+    // Verify all orders are present
+    assert!(mm.conditional_order_ids().length() == 8);
 
     destroy_2!(sui_price, usdc_price);
     return_shared_2!(mm, pool);
