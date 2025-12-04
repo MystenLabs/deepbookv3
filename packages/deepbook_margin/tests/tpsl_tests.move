@@ -4,27 +4,27 @@
 #[test_only]
 module deepbook_margin::tpsl_tests;
 
-use deepbook::{constants, pool::Pool, registry::Registry};
-use deepbook_margin::{
-    margin_manager::{Self, MarginManager},
-    margin_pool,
-    margin_registry::{MarginRegistry, MarginAdminCap, MaintainerCap},
-    test_constants::{Self, SUI, USDC},
-    test_helpers::{
-        setup_margin_registry,
-        create_margin_pool,
-        default_protocol_config,
-        get_margin_pool_caps,
-        create_pool_for_testing,
-        enable_deepbook_margin_on_pool,
-        cleanup_margin_test,
-        mint_coin,
-        build_pyth_price_info_object,
-        destroy_2,
-        return_shared_2
-    },
-    tpsl
+use deepbook::constants;
+use deepbook::pool::Pool;
+use deepbook::registry::Registry;
+use deepbook_margin::margin_manager::{Self, MarginManager};
+use deepbook_margin::margin_pool;
+use deepbook_margin::margin_registry::{MarginRegistry, MarginAdminCap, MaintainerCap};
+use deepbook_margin::test_constants::{Self, SUI, USDC};
+use deepbook_margin::test_helpers::{
+    setup_margin_registry,
+    create_margin_pool,
+    default_protocol_config,
+    get_margin_pool_caps,
+    create_pool_for_testing,
+    enable_deepbook_margin_on_pool,
+    cleanup_margin_test,
+    mint_coin,
+    build_pyth_price_info_object,
+    destroy_2,
+    return_shared_2
 };
+use deepbook_margin::tpsl;
 use std::unit_test::destroy;
 use sui::test_scenario::{Self, return_shared};
 
@@ -712,10 +712,8 @@ fun test_tpsl_orders_sorted_correctly() {
 
     destroy_2!(sui_price, usdc_price);
     return_shared_2!(mm, pool);
-    return_shared(margin_registry);
 
     scenario.next_tx(test_constants::user1());
-    let margin_registry = scenario.take_shared<MarginRegistry>();
     let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
     return_shared(deepbook_registry);
     cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
@@ -871,10 +869,8 @@ fun test_tpsl_trigger_price_getters() {
 
     destroy_2!(sui_price, usdc_price);
     return_shared_2!(mm, pool);
-    return_shared(margin_registry);
 
     scenario.next_tx(test_constants::user1());
-    let margin_registry = scenario.take_shared<MarginRegistry>();
     let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
     return_shared(deepbook_registry);
     cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
@@ -1351,10 +1347,8 @@ fun test_tpsl_cancel_conditional_order() {
 
     destroy_2!(sui_price, usdc_price);
     return_shared_2!(mm, pool);
-    return_shared(margin_registry);
 
     scenario.next_tx(test_constants::user1());
-    let margin_registry = scenario.take_shared<MarginRegistry>();
     let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
     return_shared(deepbook_registry);
     cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
@@ -1497,11 +1491,791 @@ fun test_tpsl_cancel_all_conditional_orders() {
 
     destroy_2!(sui_price, usdc_price);
     return_shared_2!(mm, pool);
-    return_shared(margin_registry);
 
     scenario.next_tx(test_constants::user1());
-    let margin_registry = scenario.take_shared<MarginRegistry>();
     let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
     return_shared(deepbook_registry);
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+// === Error Code Tests ===
+
+#[test]
+#[expected_failure(abort_code = deepbook_margin::tpsl::EInvalidCondition)]
+fun test_error_invalid_condition() {
+    // Test EInvalidCondition: trigger_below price must be < current price
+    // Current price is $2.00, but trigger is set to $2.50 (above current price)
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+
+    let sui_price = build_sui_price_info_object_with_price(&mut scenario, 200, &clock); // $2.00
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price,
+        &usdc_price,
+        mint_coin<SUI>(10000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Invalid: trigger_below with trigger price $2.50 > current price $2.00
+    let condition = tpsl::new_condition(true, 2_500_000_000_000); // $2.50
+    let pending_order = tpsl::new_pending_limit_order(
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        800_000_000_000,
+        100 * test_constants::sui_multiplier(),
+        false,
+        false,
+        constants::max_u64(),
+    );
+
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price,
+        &usdc_price,
+        &margin_registry,
+        1,
+        condition,
+        pending_order,
+        &clock,
+        scenario.ctx(),
+    );
+
+    destroy_2!(sui_price, usdc_price);
+    return_shared_2!(mm, pool);
+
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+#[expected_failure(abort_code = deepbook_margin::tpsl::EConditionalOrderNotFound)]
+fun test_error_conditional_order_not_found() {
+    // Test EConditionalOrderNotFound: trying to cancel a non-existent order
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+
+    // Try to cancel non-existent order ID 999
+    mm.cancel_conditional_order<SUI, USDC>(999, &clock, scenario.ctx());
+
+    return_shared(mm);
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+#[expected_failure(abort_code = deepbook_margin::tpsl::EMaxConditionalOrdersReached)]
+fun test_error_max_conditional_orders_reached() {
+    // Test EMaxConditionalOrdersReached: trying to add more than 50 orders
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+
+    let sui_price = build_sui_price_info_object_with_price(&mut scenario, 200, &clock);
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price,
+        &usdc_price,
+        mint_coin<SUI>(10000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Add 51 orders (max is 50)
+    let mut i = 0;
+    while (i < 51) {
+        let condition = tpsl::new_condition(true, 1_500_000_000_000);
+        let pending_order = tpsl::new_pending_limit_order(
+            i + 1,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            800_000_000_000,
+            100 * test_constants::sui_multiplier(),
+            false,
+            false,
+            constants::max_u64(),
+        );
+
+        mm.add_conditional_order<SUI, USDC>(
+            &pool,
+            &sui_price,
+            &usdc_price,
+            &margin_registry,
+            i + 1,
+            condition,
+            pending_order,
+            &clock,
+            scenario.ctx(),
+        );
+        i = i + 1;
+    };
+
+    destroy_2!(sui_price, usdc_price);
+    return_shared_2!(mm, pool);
+
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+#[expected_failure(abort_code = deepbook_margin::tpsl::EInvalidTPSLOrderType)]
+fun test_error_invalid_tpsl_order_type() {
+    // Test EInvalidTPSLOrderType: only no_restriction and immediate_or_cancel are allowed
+    // fill_or_kill is not allowed
+
+    let _condition = tpsl::new_condition(true, 1_500_000_000_000);
+    let _pending_order = tpsl::new_pending_limit_order(
+        1,
+        constants::fill_or_kill(), // This should fail
+        constants::self_matching_allowed(),
+        800_000_000_000,
+        100 * test_constants::sui_multiplier(),
+        false,
+        false,
+        constants::max_u64(),
+    );
+}
+
+#[test]
+#[expected_failure(abort_code = deepbook_margin::tpsl::EDuplicateConditionalOrderIdentifier)]
+fun test_error_duplicate_conditional_order_identifier() {
+    // Test EDuplicateConditionalOrderIdentifier: trying to add order with existing ID
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+
+    let sui_price = build_sui_price_info_object_with_price(&mut scenario, 200, &clock);
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price,
+        &usdc_price,
+        mint_coin<SUI>(10000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Add first order with ID 1
+    let condition = tpsl::new_condition(true, 1_500_000_000_000);
+    let pending_order = tpsl::new_pending_limit_order(
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        800_000_000_000,
+        100 * test_constants::sui_multiplier(),
+        false,
+        false,
+        constants::max_u64(),
+    );
+
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price,
+        &usdc_price,
+        &margin_registry,
+        1,
+        condition,
+        pending_order,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Try to add another order with same ID 1
+    let condition2 = tpsl::new_condition(true, 1_000_000_000_000);
+    let pending_order2 = tpsl::new_pending_limit_order(
+        2,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        700_000_000_000,
+        100 * test_constants::sui_multiplier(),
+        false,
+        false,
+        constants::max_u64(),
+    );
+
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price,
+        &usdc_price,
+        &margin_registry,
+        1, // Duplicate ID
+        condition2,
+        pending_order2,
+        &clock,
+        scenario.ctx(),
+    );
+
+    destroy_2!(sui_price, usdc_price);
+    return_shared_2!(mm, pool);
+
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+#[expected_failure(abort_code = deepbook_margin::tpsl::EInvalidOrderParams)]
+fun test_error_invalid_order_params_quantity_too_small() {
+    // Test EInvalidOrderParams: quantity below min_size
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+
+    let sui_price = build_sui_price_info_object_with_price(&mut scenario, 200, &clock);
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price,
+        &usdc_price,
+        mint_coin<SUI>(10000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Invalid: quantity = 0 (below min_size)
+    let condition = tpsl::new_condition(true, 1_500_000_000_000);
+    let pending_order = tpsl::new_pending_limit_order(
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        800_000_000_000,
+        0, // Invalid quantity
+        false,
+        false,
+        constants::max_u64(),
+    );
+
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price,
+        &usdc_price,
+        &margin_registry,
+        1,
+        condition,
+        pending_order,
+        &clock,
+        scenario.ctx(),
+    );
+
+    destroy_2!(sui_price, usdc_price);
+    return_shared_2!(mm, pool);
+
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+#[expected_failure(abort_code = deepbook_margin::tpsl::EInvalidOrderParams)]
+fun test_error_invalid_order_params_quantity_not_lot_size_multiple() {
+    // Test EInvalidOrderParams: quantity not a multiple of lot_size
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+
+    let sui_price = build_sui_price_info_object_with_price(&mut scenario, 200, &clock);
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price,
+        &usdc_price,
+        mint_coin<SUI>(10000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Invalid: quantity = 1.5 * lot_size + 1 (not a multiple of lot_size)
+    // lot_size is typically 1 * base_multiplier (1 SUI = 1_000_000_000)
+    let condition = tpsl::new_condition(true, 1_500_000_000_000);
+    let pending_order = tpsl::new_pending_limit_order(
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        800_000_000_000,
+        test_constants::sui_multiplier() + 1, // 1 SUI + 1 nano (not a lot_size multiple)
+        false,
+        false,
+        constants::max_u64(),
+    );
+
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price,
+        &usdc_price,
+        &margin_registry,
+        1,
+        condition,
+        pending_order,
+        &clock,
+        scenario.ctx(),
+    );
+
+    destroy_2!(sui_price, usdc_price);
+    return_shared_2!(mm, pool);
+
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+#[expected_failure(abort_code = deepbook_margin::tpsl::EInvalidOrderParams)]
+fun test_error_invalid_order_params_price_not_tick_size_multiple() {
+    // Test EInvalidOrderParams: price not a multiple of tick_size for limit orders
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+
+    let sui_price = build_sui_price_info_object_with_price(&mut scenario, 200, &clock);
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price,
+        &usdc_price,
+        mint_coin<SUI>(10000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Invalid: price = 12345 (not a multiple of tick_size)
+    let condition = tpsl::new_condition(true, 1_500_000_000_000);
+    let pending_order = tpsl::new_pending_limit_order(
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        12345, // Invalid price (not tick_size multiple)
+        100 * test_constants::sui_multiplier(),
+        false,
+        false,
+        constants::max_u64(),
+    );
+
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price,
+        &usdc_price,
+        &margin_registry,
+        1,
+        condition,
+        pending_order,
+        &clock,
+        scenario.ctx(),
+    );
+
+    destroy_2!(sui_price, usdc_price);
+    return_shared_2!(mm, pool);
+
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+#[expected_failure(abort_code = deepbook_margin::tpsl::EInvalidOrderParams)]
+fun test_error_invalid_order_params_price_below_min() {
+    // Test EInvalidOrderParams: price < min_price for limit orders
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+
+    let sui_price = build_sui_price_info_object_with_price(&mut scenario, 200, &clock);
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price,
+        &usdc_price,
+        mint_coin<SUI>(10000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Invalid: price = 0 (< min_price)
+    let condition = tpsl::new_condition(true, 1_500_000_000_000);
+    let pending_order = tpsl::new_pending_limit_order(
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        0, // Invalid: price = 0
+        100 * test_constants::sui_multiplier(),
+        false,
+        false,
+        constants::max_u64(),
+    );
+
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price,
+        &usdc_price,
+        &margin_registry,
+        1,
+        condition,
+        pending_order,
+        &clock,
+        scenario.ctx(),
+    );
+
+    destroy_2!(sui_price, usdc_price);
+    return_shared_2!(mm, pool);
+
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+#[expected_failure(abort_code = deepbook_margin::tpsl::EInvalidOrderParams)]
+fun test_error_invalid_order_params_expired_timestamp() {
+    // Test EInvalidOrderParams: expire_timestamp in the past
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+
+    let sui_price = build_sui_price_info_object_with_price(&mut scenario, 200, &clock);
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price,
+        &usdc_price,
+        mint_coin<SUI>(10000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Invalid: expire_timestamp = 100 (< current clock time which is 1000000)
+    let condition = tpsl::new_condition(true, 1_500_000_000_000);
+    let pending_order = tpsl::new_pending_limit_order(
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        800_000_000_000,
+        100 * test_constants::sui_multiplier(),
+        false,
+        false,
+        100, // Already expired
+    );
+
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price,
+        &usdc_price,
+        &margin_registry,
+        1,
+        condition,
+        pending_order,
+        &clock,
+        scenario.ctx(),
+    );
+
+    destroy_2!(sui_price, usdc_price);
+    return_shared_2!(mm, pool);
+
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+#[expected_failure(abort_code = deepbook_margin::tpsl::EInvalidOrderParams)]
+fun test_error_invalid_order_params_market_order_quantity_too_small() {
+    // Test EInvalidOrderParams: market order quantity below min_size
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+
+    let sui_price = build_sui_price_info_object_with_price(&mut scenario, 200, &clock);
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price,
+        &usdc_price,
+        mint_coin<SUI>(10000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Invalid: market order quantity = 0 (below min_size)
+    let condition = tpsl::new_condition(true, 1_500_000_000_000);
+    let pending_order = tpsl::new_pending_market_order(
+        1,
+        constants::self_matching_allowed(),
+        0, // Invalid quantity
+        false,
+        false,
+    );
+
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price,
+        &usdc_price,
+        &margin_registry,
+        1,
+        condition,
+        pending_order,
+        &clock,
+        scenario.ctx(),
+    );
+
+    destroy_2!(sui_price, usdc_price);
+    return_shared_2!(mm, pool);
+
     cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
 }
