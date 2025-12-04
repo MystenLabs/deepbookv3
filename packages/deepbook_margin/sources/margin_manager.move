@@ -1484,7 +1484,7 @@ fun process_collected_orders<BaseAsset, QuoteAsset>(
         };
 
         if (can_place) {
-            let order_info = self.place_pending_order<BaseAsset, QuoteAsset>(
+            let order_info = self.place_pending_order(
                 registry,
                 pool,
                 &pending_order,
