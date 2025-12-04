@@ -4,27 +4,27 @@
 #[test_only]
 module deepbook_margin::tpsl_tests;
 
-use deepbook::{constants, pool::Pool, registry::Registry};
-use deepbook_margin::{
-    margin_manager::{Self, MarginManager},
-    margin_pool,
-    margin_registry::{MarginRegistry, MarginAdminCap, MaintainerCap},
-    test_constants::{Self, SUI, USDC},
-    test_helpers::{
-        setup_margin_registry,
-        create_margin_pool,
-        default_protocol_config,
-        get_margin_pool_caps,
-        create_pool_for_testing,
-        enable_deepbook_margin_on_pool,
-        cleanup_margin_test,
-        mint_coin,
-        build_pyth_price_info_object,
-        destroy_2,
-        return_shared_2
-    },
-    tpsl
+use deepbook::constants;
+use deepbook::pool::Pool;
+use deepbook::registry::Registry;
+use deepbook_margin::margin_manager::{Self, MarginManager};
+use deepbook_margin::margin_pool;
+use deepbook_margin::margin_registry::{MarginRegistry, MarginAdminCap, MaintainerCap};
+use deepbook_margin::test_constants::{Self, SUI, USDC};
+use deepbook_margin::test_helpers::{
+    setup_margin_registry,
+    create_margin_pool,
+    default_protocol_config,
+    get_margin_pool_caps,
+    create_pool_for_testing,
+    enable_deepbook_margin_on_pool,
+    cleanup_margin_test,
+    mint_coin,
+    build_pyth_price_info_object,
+    destroy_2,
+    return_shared_2
 };
+use deepbook_margin::tpsl;
 use std::unit_test::destroy;
 use sui::test_scenario::{Self, return_shared};
 
@@ -104,6 +104,106 @@ fun setup_sui_usdc_deepbook_margin(): (
     destroy(supplier_cap);
 
     (scenario, clock, admin_cap, maintainer_cap, usdc_pool_id, sui_pool_id, pool_id, registry_id)
+}
+
+// Helper to set up orderbook liquidity
+fun setup_orderbook_liquidity<BaseAsset, QuoteAsset>(
+    scenario: &mut test_scenario::Scenario,
+    pool_id: ID,
+    clock: &sui::clock::Clock,
+) {
+    use deepbook::balance_manager;
+    use token::deep::DEEP;
+
+    scenario.next_tx(test_constants::user2());
+    let mut pool = scenario.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+    let mut balance_manager = balance_manager::new(scenario.ctx());
+
+    // Deposit plenty of assets for liquidity provision
+    balance_manager.deposit(
+        mint_coin<BaseAsset>(1000 * test_constants::sui_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+    balance_manager.deposit(
+        mint_coin<QuoteAsset>(
+            1_000_000_000 * test_constants::usdc_multiplier(),
+            scenario.ctx(),
+        ), // 1B USDC
+        scenario.ctx(),
+    );
+    balance_manager.deposit(
+        mint_coin<DEEP>(10000 * test_constants::deep_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+
+    let trade_proof = balance_manager.generate_proof_as_owner(scenario.ctx());
+
+    // Place ask orders (sell SUI) at different prices
+    // Price in oracle terms: (USD_price / USDC_price) * 10^9 * 10^3
+    pool.place_limit_order<BaseAsset, QuoteAsset>(
+        &mut balance_manager,
+        &trade_proof,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        2_500_000_000_000, // $2.50
+        100 * test_constants::sui_multiplier(),
+        false, // is_bid = false (ask)
+        false,
+        constants::max_u64(),
+        clock,
+        scenario.ctx(),
+    );
+
+    pool.place_limit_order<BaseAsset, QuoteAsset>(
+        &mut balance_manager,
+        &trade_proof,
+        2,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        3_000_000_000_000, // $3.00
+        100 * test_constants::sui_multiplier(),
+        false, // is_bid = false (ask)
+        false,
+        constants::max_u64(),
+        clock,
+        scenario.ctx(),
+    );
+
+    // Place bid orders (buy SUI) at different prices
+    pool.place_limit_order<BaseAsset, QuoteAsset>(
+        &mut balance_manager,
+        &trade_proof,
+        3,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        1_500_000_000_000, // $1.50
+        100 * test_constants::sui_multiplier(),
+        true, // is_bid = true
+        false,
+        constants::max_u64(),
+        clock,
+        scenario.ctx(),
+    );
+
+    pool.place_limit_order<BaseAsset, QuoteAsset>(
+        &mut balance_manager,
+        &trade_proof,
+        4,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        1_000_000_000_000, // $1.00
+        100 * test_constants::sui_multiplier(),
+        true, // is_bid = true
+        false,
+        constants::max_u64(),
+        clock,
+        scenario.ctx(),
+    );
+
+    let _balance_manager_id = balance_manager.id();
+    transfer::public_share_object(balance_manager);
+    return_shared(pool);
 }
 
 // Helper to build price info objects with specific prices
@@ -775,6 +875,320 @@ fun test_tpsl_trigger_price_getters() {
 
     scenario.next_tx(test_constants::user1());
     let margin_registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    return_shared(deepbook_registry);
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_tpsl_trigger_below_market_order_executed() {
+    // This test demonstrates a stop-loss with MARKET ORDER where ALICE sets up a conditional order
+    // to sell SUI at market price when price drops below a trigger.
+    //
+    // Setup:
+    // - Orderbook has bid liquidity at $1.50 (100 SUI) and $1.00 (100 SUI)
+    // - Orderbook has ask liquidity at $2.50 (100 SUI) and $3.00 (100 SUI)
+    // - ALICE deposits 10,000 SUI when SUI = $2.00
+    // - ALICE creates stop-loss: if price drops below $1.50, sell 150 SUI at market
+    // - BOB triggers when price drops to $0.95
+    //
+    // Expected: Market sell (is_bid=false) fills against bids
+    // - 100 SUI at $1.50 = 150 USDC received
+    // - 50 SUI at $1.00 = 50 USDC received
+    // - Total: 150 SUI sold for 200 USDC
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    // Set up orderbook liquidity
+    setup_orderbook_liquidity<SUI, USDC>(&mut scenario, pool_id, &clock);
+
+    // USER1 = ALICE creates a margin manager
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+
+    // Initial prices: SUI = $2.00, USDC = $1.00
+    let sui_price_high = build_sui_price_info_object_with_price(&mut scenario, 200, &clock); // $2.00
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock); // $1.00
+
+    // Deposit collateral (SUI)
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price_high,
+        &usdc_price,
+        mint_coin<SUI>(10000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Add conditional order: trigger_is_below = true, trigger_price = $1.50
+    // When triggered, execute MARKET order to sell 150 SUI (< 200 bid liquidity available)
+    let condition = tpsl::new_condition(
+        true, // trigger_is_below
+        1_500_000_000_000, // trigger price: $1.50
+    );
+    let pending_order = tpsl::new_pending_market_order(
+        1, // client_order_id
+        constants::self_matching_allowed(),
+        150 * test_constants::sui_multiplier(), // quantity: 150 SUI (< 200 bid liquidity)
+        false, // is_bid = false (SELL at market, fills against bids)
+        false, // pay_with_deep
+    );
+
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price_high,
+        &usdc_price,
+        &margin_registry,
+        1, // conditional_order_identifier
+        condition,
+        pending_order,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Verify conditional order was added
+    assert!(mm.conditional_order_ids().length() == 1);
+
+    destroy_2!(sui_price_high, usdc_price);
+    return_shared(pool);
+    return_shared(margin_registry);
+
+    // USER2 = BOB executes conditional orders when price drops
+    scenario.next_tx(test_constants::user2());
+    let sui_price_low = build_sui_price_info_object_with_price(&mut scenario, 95, &clock); // $0.95
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    let mut pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let margin_registry = scenario.take_shared<MarginRegistry>();
+
+    // Execute conditional orders - should trigger and place market order
+    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+        &mut pool,
+        &sui_price_low,
+        &usdc_price,
+        &margin_registry,
+        10, // max_orders_to_execute
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Verify order was executed with accurate data
+    assert!(order_infos.length() == 1);
+    let order_info = &order_infos[0];
+
+    // Validate order details
+    assert!(order_info.client_order_id() == 1);
+    assert!(order_info.original_quantity() == 150 * test_constants::sui_multiplier()); // 150 SUI
+    assert!(order_info.is_bid() == false); // Sell order
+    assert!(order_info.balance_manager_id() == object::id(mm.balance_manager()));
+
+    // Validate fills - market sell fills against bid orders
+    let fills = order_info.fills();
+    assert!(fills.length() == 2); // Two fills: 100 at $1.50, 50 at $1.00
+
+    // First fill: 100 SUI at $1.50
+    assert!(fills[0].base_quantity() == 100 * test_constants::sui_multiplier());
+    assert!(fills[0].quote_quantity() == 150000000000000); // 100 * 1.5 in pool units
+
+    // Second fill: 50 SUI at $1.00
+    assert!(fills[1].base_quantity() == 50 * test_constants::sui_multiplier());
+    assert!(fills[1].quote_quantity() == 50000000000000); // 50 * 1.0 in pool units
+
+    // Total executed quantity should be 150 SUI
+    assert!(order_info.executed_quantity() == 150 * test_constants::sui_multiplier());
+
+    // Total quote in pool units
+    assert!(order_info.cumulative_quote_quantity() == 200000000000000);
+
+    destroy(order_infos[0]);
+
+    // Verify conditional order was removed after execution
+    assert!(mm.conditional_order_ids().length() == 0);
+
+    destroy_2!(sui_price_low, usdc_price);
+    return_shared_2!(mm, pool);
+
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    return_shared(deepbook_registry);
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_tpsl_trigger_above_market_order_executed() {
+    // This test demonstrates a take-profit with MARKET ORDER where ALICE sets up a conditional order
+    // to sell SUI at market price when price rises above a trigger.
+    //
+    // Setup:
+    // - Orderbook has bid liquidity at $1.50 (100 SUI) and $1.00 (100 SUI)
+    // - Orderbook has ask liquidity at $2.50 (100 SUI) and $3.00 (100 SUI)
+    // - ALICE deposits 10,000 SUI when SUI = $1.50
+    // - ALICE creates take-profit: if price rises above $2.00, sell 150 SUI at market
+    // - BOB triggers when price rises to $2.10
+    //
+    // Expected: Market sell (is_bid=false) fills against bids
+    // - 100 SUI at $1.50 = 150 USDC received
+    // - 50 SUI at $1.00 = 50 USDC received
+    // - Total: 150 SUI sold for 200 USDC
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    // Set up orderbook liquidity
+    setup_orderbook_liquidity<SUI, USDC>(&mut scenario, pool_id, &clock);
+
+    // USER1 = ALICE creates a margin manager
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+
+    // Initial prices: SUI = $1.50, USDC = $1.00
+    let sui_price_low = build_sui_price_info_object_with_price(&mut scenario, 150, &clock); // $1.50
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock); // $1.00
+
+    // Deposit collateral (SUI)
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price_low,
+        &usdc_price,
+        mint_coin<SUI>(10000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Add conditional order: trigger_is_below = false, trigger_price = $2.00
+    // When triggered, execute MARKET order to sell 150 SUI (< 200 total available)
+    let condition = tpsl::new_condition(
+        false, // trigger_is_below = false (trigger_above)
+        2_000_000_000_000, // trigger price: $2.00
+    );
+    let pending_order = tpsl::new_pending_market_order(
+        1, // client_order_id
+        constants::self_matching_allowed(),
+        150 * test_constants::sui_multiplier(), // quantity: 150 SUI (< 200 available)
+        false, // is_bid = false (SELL at market, crosses to fill against asks)
+        false, // pay_with_deep
+    );
+
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price_low,
+        &usdc_price,
+        &margin_registry,
+        1, // conditional_order_identifier
+        condition,
+        pending_order,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Verify conditional order was added
+    assert!(mm.conditional_order_ids().length() == 1);
+
+    destroy_2!(sui_price_low, usdc_price);
+    return_shared(pool);
+    return_shared(margin_registry);
+
+    // USER2 = BOB executes conditional orders when price rises
+    scenario.next_tx(test_constants::user2());
+    let sui_price_high = build_sui_price_info_object_with_price(&mut scenario, 210, &clock); // $2.10
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    let mut pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let margin_registry = scenario.take_shared<MarginRegistry>();
+
+    // Execute conditional orders - should trigger and place market order
+    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+        &mut pool,
+        &sui_price_high,
+        &usdc_price,
+        &margin_registry,
+        10, // max_orders_to_execute
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Verify order was executed with accurate data
+    assert!(order_infos.length() == 1);
+    let order_info = &order_infos[0];
+
+    // Validate order details
+    assert!(order_info.client_order_id() == 1);
+    assert!(order_info.original_quantity() == 150 * test_constants::sui_multiplier()); // 150 SUI
+    assert!(order_info.is_bid() == false); // Sell order
+    assert!(order_info.balance_manager_id() == object::id(mm.balance_manager()));
+
+    // Validate fills - market sell fills against bid orders (same as trigger_below)
+    let fills = order_info.fills();
+    assert!(fills.length() == 2); // Two fills: 100 at $1.50, 50 at $1.00
+
+    // First fill: 100 SUI at $1.50
+    assert!(fills[0].base_quantity() == 100 * test_constants::sui_multiplier());
+    assert!(fills[0].quote_quantity() == 150000000000000); // 100 * 1.5 in pool units
+
+    // Second fill: 50 SUI at $1.00
+    assert!(fills[1].base_quantity() == 50 * test_constants::sui_multiplier());
+    assert!(fills[1].quote_quantity() == 50000000000000); // 50 * 1.0 in pool units
+
+    // Total executed quantity should be 150 SUI
+    assert!(order_info.executed_quantity() == 150 * test_constants::sui_multiplier());
+
+    // Total quote in pool units (150 + 50 = 200 in pool units)
+    assert!(order_info.cumulative_quote_quantity() == 200000000000000);
+
+    destroy(order_infos[0]);
+
+    // Verify conditional order was removed after execution
+    assert!(mm.conditional_order_ids().length() == 0);
+
+    destroy_2!(sui_price_high, usdc_price);
+    return_shared_2!(mm, pool);
+
     let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
     return_shared(deepbook_registry);
     cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
