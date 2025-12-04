@@ -270,145 +270,6 @@ public(package) fun get_quote_quantity_in(
     )
 }
 
-/// If target_base_quantity > 0: Calculate quote needed to buy that base (bid order)
-/// If target_quote_quantity > 0: Calculate base needed to get that quote (ask order)
-/// Returns (base_result, quote_result, deep_quantity_required)
-fun get_quantity_in(
-    self: &Book,
-    target_base_quantity: u64,
-    target_quote_quantity: u64,
-    taker_fee: u64,
-    deep_price: OrderDeepPrice,
-    pay_with_deep: bool,
-    current_timestamp: u64,
-): (u64, u64, u64) {
-    assert!((target_base_quantity > 0) != (target_quote_quantity > 0), EInvalidAmountIn);
-    let is_bid = target_base_quantity > 0;
-    let input_fee_rate = math::mul(
-        constants::fee_penalty_multiplier(),
-        taker_fee,
-    );
-    let lot_size = self.lot_size;
-
-    let mut input_quantity = 0; // This will be quote for bid, base for ask (may include fees)
-    let mut output_accumulated = 0; // This will be base for bid, quote for ask
-    let mut traded_base = 0; // Raw base traded, used for min_size checks on asks
-
-    // For bid: traverse asks (we're buying base with quote)
-    // For ask: traverse bids (we're selling base for quote)
-    let book_side = if (is_bid) &self.asks else &self.bids;
-    let (mut ref, mut offset) = if (is_bid) book_side.min_slice() else book_side.max_slice();
-    let max_fills = constants::max_fills();
-    let mut current_fills = 0;
-    let target = if (is_bid) target_base_quantity else target_quote_quantity;
-
-    while (!ref.is_null() && output_accumulated < target && current_fills < max_fills) {
-        let order = slice_borrow(book_side.borrow_slice(ref), offset);
-        let cur_price = order.price();
-        let cur_quantity = order.quantity() - order.filled_quantity();
-
-        if (current_timestamp <= order.expire_timestamp()) {
-            let output_needed = target - output_accumulated;
-
-            if (is_bid) {
-                // Buying base with quote: find smallest lot-multiple >= output_needed, capped by cur_quantity
-                let remainder = output_needed % lot_size;
-                let target_lots = if (remainder == 0) output_needed
-                else output_needed + lot_size - remainder;
-                let matched_base = target_lots.min(cur_quantity);
-
-                if (matched_base > 0) {
-                    output_accumulated = output_accumulated + matched_base;
-                    let matched_quote = math::mul(matched_base, cur_price);
-
-                    // Calculate quote needed including fees
-                    if (pay_with_deep) {
-                        input_quantity = input_quantity + matched_quote;
-                    } else {
-                        // Need extra quote to cover fees (fees taken from input)
-                        let quote_with_fee = math::mul(
-                            matched_quote,
-                            constants::float_scaling() + input_fee_rate,
-                        );
-                        input_quantity = input_quantity + quote_with_fee;
-                    }
-                };
-
-                if (matched_base == 0) break;
-            } else {
-                // Selling base for quote: find smallest lot-multiple of base that yields >= output_needed quote
-                let base_for_quote = math::div_round_up(output_needed, cur_price);
-                let remainder = base_for_quote % lot_size;
-                let target_lots = if (remainder == 0) base_for_quote
-                else base_for_quote + lot_size - remainder;
-                let matched_base = target_lots.min(cur_quantity);
-
-                if (matched_base > 0) {
-                    traded_base = traded_base + matched_base;
-
-                    let matched_quote = math::mul(matched_base, cur_price);
-                    output_accumulated = output_accumulated + matched_quote;
-
-                    // Calculate base needed including fees
-                    if (pay_with_deep) {
-                        input_quantity = input_quantity + matched_base;
-                    } else {
-                        // Need extra base to cover fees (fees taken from input)
-                        let base_with_fee = math::mul(
-                            matched_base,
-                            constants::float_scaling() + input_fee_rate,
-                        );
-                        input_quantity = input_quantity + base_with_fee;
-                    }
-                };
-
-                if (matched_base == 0) break;
-            }
-        };
-
-        (ref, offset) = if (is_bid) book_side.next_slice(ref, offset)
-        else book_side.prev_slice(ref, offset);
-        current_fills = current_fills + 1;
-    };
-
-    // Calculate deep fee if paying with DEEP
-    let deep_fee = if (!pay_with_deep) {
-        0
-    } else {
-        let fee_quantity = if (is_bid) {
-            deep_price.fee_quantity(
-                output_accumulated,
-                input_quantity,
-                true, // is_bid
-            )
-        } else {
-            deep_price.fee_quantity(
-                input_quantity,
-                output_accumulated,
-                false, // is_ask
-            )
-        };
-        math::mul(taker_fee, fee_quantity.deep())
-    };
-
-    // Check if we accumulated enough and meets min_size
-    let sufficient = if (is_bid) {
-        output_accumulated >= target_base_quantity && output_accumulated >= self.min_size
-    } else {
-        output_accumulated >= target_quote_quantity && traded_base >= self.min_size
-    };
-
-    if (!sufficient) {
-        (0, 0, 0) // Couldn't satisfy the requirement
-    } else {
-        if (is_bid) {
-            (output_accumulated, input_quantity, deep_fee)
-        } else {
-            (input_quantity, output_accumulated, deep_fee)
-        }
-    }
-}
-
 /// Cancels an order given order_id
 public(package) fun cancel_order(self: &mut Book, order_id: u128): Order {
     self.book_side_mut(order_id).remove(order_id)
@@ -644,4 +505,146 @@ fun inject_limit_order(self: &mut Book, order_info: &OrderInfo) {
     } else {
         self.asks.insert(order_info.order_id(), order);
     };
+}
+
+/// Rounds up a quantity to the nearest lot_size multiple.
+/// Returns the smallest multiple of lot_size that is >= quantity.
+fun round_up_to_lot_size(quantity: u64, lot_size: u64): u64 {
+    let remainder = quantity % lot_size;
+    if (remainder == 0) quantity else quantity + lot_size - remainder
+}
+
+/// If target_base_quantity > 0: Calculate quote needed to buy that base (bid order)
+/// If target_quote_quantity > 0: Calculate base needed to get that quote (ask order)
+/// Returns (base_result, quote_result, deep_quantity_required)
+fun get_quantity_in(
+    self: &Book,
+    target_base_quantity: u64,
+    target_quote_quantity: u64,
+    taker_fee: u64,
+    deep_price: OrderDeepPrice,
+    pay_with_deep: bool,
+    current_timestamp: u64,
+): (u64, u64, u64) {
+    assert!((target_base_quantity > 0) != (target_quote_quantity > 0), EInvalidAmountIn);
+    let is_bid = target_base_quantity > 0;
+    let input_fee_rate = math::mul(
+        constants::fee_penalty_multiplier(),
+        taker_fee,
+    );
+    let lot_size = self.lot_size;
+
+    let mut input_quantity = 0; // This will be quote for bid, base for ask (may include fees)
+    let mut output_accumulated = 0; // This will be base for bid, quote for ask
+    let mut traded_base = 0; // Raw base traded, used for min_size checks on asks
+
+    // For bid: traverse asks (we're buying base with quote)
+    // For ask: traverse bids (we're selling base for quote)
+    let book_side = if (is_bid) &self.asks else &self.bids;
+    let (mut ref, mut offset) = if (is_bid) book_side.min_slice() else book_side.max_slice();
+    let max_fills = constants::max_fills();
+    let mut current_fills = 0;
+    let target = if (is_bid) target_base_quantity else target_quote_quantity;
+
+    while (!ref.is_null() && output_accumulated < target && current_fills < max_fills) {
+        let order = slice_borrow(book_side.borrow_slice(ref), offset);
+        let cur_price = order.price();
+        let cur_quantity = order.quantity() - order.filled_quantity();
+
+        if (current_timestamp <= order.expire_timestamp()) {
+            let output_needed = target - output_accumulated;
+
+            if (is_bid) {
+                // Buying base with quote: find smallest lot-multiple >= output_needed, capped by cur_quantity
+                let target_lots = round_up_to_lot_size(output_needed, lot_size);
+                let matched_base = target_lots.min(cur_quantity);
+
+                if (matched_base > 0) {
+                    output_accumulated = output_accumulated + matched_base;
+                    let matched_quote = math::mul(matched_base, cur_price);
+
+                    // Calculate quote needed including fees
+                    if (pay_with_deep) {
+                        input_quantity = input_quantity + matched_quote;
+                    } else {
+                        // Need extra quote to cover fees (fees taken from input)
+                        let quote_with_fee = math::mul(
+                            matched_quote,
+                            constants::float_scaling() + input_fee_rate,
+                        );
+                        input_quantity = input_quantity + quote_with_fee;
+                    }
+                };
+
+                if (matched_base == 0) break;
+            } else {
+                // Selling base for quote: find smallest lot-multiple of base that yields >= output_needed quote
+                let base_for_quote = math::div_round_up(output_needed, cur_price);
+                let target_lots = round_up_to_lot_size(base_for_quote, lot_size);
+                let matched_base = target_lots.min(cur_quantity);
+
+                if (matched_base > 0) {
+                    traded_base = traded_base + matched_base;
+
+                    let matched_quote = math::mul(matched_base, cur_price);
+                    output_accumulated = output_accumulated + matched_quote;
+
+                    // Calculate base needed including fees
+                    if (pay_with_deep) {
+                        input_quantity = input_quantity + matched_base;
+                    } else {
+                        // Need extra base to cover fees (fees taken from input)
+                        let base_with_fee = math::mul(
+                            matched_base,
+                            constants::float_scaling() + input_fee_rate,
+                        );
+                        input_quantity = input_quantity + base_with_fee;
+                    }
+                };
+
+                if (matched_base == 0) break;
+            }
+        };
+
+        (ref, offset) = if (is_bid) book_side.next_slice(ref, offset)
+        else book_side.prev_slice(ref, offset);
+        current_fills = current_fills + 1;
+    };
+
+    // Calculate deep fee if paying with DEEP
+    let deep_fee = if (!pay_with_deep) {
+        0
+    } else {
+        let fee_quantity = if (is_bid) {
+            deep_price.fee_quantity(
+                output_accumulated,
+                input_quantity,
+                true, // is_bid
+            )
+        } else {
+            deep_price.fee_quantity(
+                input_quantity,
+                output_accumulated,
+                false, // is_ask
+            )
+        };
+        math::mul(taker_fee, fee_quantity.deep())
+    };
+
+    // Check if we accumulated enough and meets min_size
+    let sufficient = if (is_bid) {
+        output_accumulated >= target_base_quantity && output_accumulated >= self.min_size
+    } else {
+        output_accumulated >= target_quote_quantity && traded_base >= self.min_size
+    };
+
+    if (!sufficient) {
+        (0, 0, 0) // Couldn't satisfy the requirement
+    } else {
+        if (is_bid) {
+            (output_accumulated, input_quantity, deep_fee)
+        } else {
+            (input_quantity, output_accumulated, deep_fee)
+        }
+    }
 }
