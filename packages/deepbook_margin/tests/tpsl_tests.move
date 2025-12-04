@@ -4,27 +4,27 @@
 #[test_only]
 module deepbook_margin::tpsl_tests;
 
-use deepbook::constants;
-use deepbook::pool::Pool;
-use deepbook::registry::Registry;
-use deepbook_margin::margin_manager::{Self, MarginManager};
-use deepbook_margin::margin_pool;
-use deepbook_margin::margin_registry::{MarginRegistry, MarginAdminCap, MaintainerCap};
-use deepbook_margin::test_constants::{Self, SUI, USDC};
-use deepbook_margin::test_helpers::{
-    setup_margin_registry,
-    create_margin_pool,
-    default_protocol_config,
-    get_margin_pool_caps,
-    create_pool_for_testing,
-    enable_deepbook_margin_on_pool,
-    cleanup_margin_test,
-    mint_coin,
-    build_pyth_price_info_object,
-    destroy_2,
-    return_shared_2
+use deepbook::{constants, pool::Pool, registry::Registry};
+use deepbook_margin::{
+    margin_manager::{Self, MarginManager},
+    margin_pool,
+    margin_registry::{MarginRegistry, MarginAdminCap, MaintainerCap},
+    test_constants::{Self, SUI, USDC},
+    test_helpers::{
+        setup_margin_registry,
+        create_margin_pool,
+        default_protocol_config,
+        get_margin_pool_caps,
+        create_pool_for_testing,
+        enable_deepbook_margin_on_pool,
+        cleanup_margin_test,
+        mint_coin,
+        build_pyth_price_info_object,
+        destroy_2,
+        return_shared_2
+    },
+    tpsl
 };
-use deepbook_margin::tpsl;
 use std::unit_test::destroy;
 use sui::test_scenario::{Self, return_shared};
 
@@ -233,7 +233,7 @@ fun test_tpsl_trigger_below_executed() {
     );
 
     // Verify conditional order was added
-    assert!(margin_manager::conditional_order_ids(&mm).length() == 1);
+    assert!(mm.conditional_order_ids().length() == 1);
 
     destroy_2!(sui_price_high, usdc_price);
     return_shared(pool);
@@ -260,12 +260,21 @@ fun test_tpsl_trigger_below_executed() {
         scenario.ctx(),
     );
 
-    // Verify order was executed
-    assert!(order_infos.length() == 1, 0);
+    // Verify order was executed with accurate data
+    assert!(order_infos.length() == 1);
+    let order_info = &order_infos[0];
+
+    // Validate order details
+    assert!(order_info.client_order_id() == 1); // client_order_id from pending_order
+    assert!(order_info.price() == 800_000_000_000); // price: $0.80
+    assert!(order_info.original_quantity() == 100 * test_constants::sui_multiplier()); // 100 SUI
+    assert!(order_info.is_bid() == false); // Sell order
+    assert!(order_info.balance_manager_id() == object::id(mm.balance_manager()));
+
     destroy(order_infos[0]);
 
     // Verify conditional order was removed after execution
-    assert!(margin_manager::conditional_order_ids(&mm).length() == 0, 1);
+    assert!(mm.conditional_order_ids().length() == 0);
 
     destroy_2!(sui_price_low, usdc_price);
     return_shared_2!(mm, pool);
