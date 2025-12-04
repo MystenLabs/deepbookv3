@@ -2782,11 +2782,12 @@ fun test_tpsl_early_exit_optimization() {
 
 #[test]
 fun test_tpsl_max_orders_to_execute_limit() {
-    // Test max_orders_to_execute limit:
+    // Test max_orders_to_execute limit with multiple execution calls:
     // - ALICE adds 5 trigger_below orders
     // - All 5 are triggered by price movement
-    // - max_orders_to_execute = 3
-    // - Only 3 orders should execute, 2 should remain
+    // - First execution: max_orders_to_execute = 2 (executes 2, 3 remain)
+    // - Second execution: max_orders_to_execute = 2 (executes 2 more, 1 remains)
+    // - Tests batched execution across multiple calls
 
     let (
         mut scenario,
@@ -2877,6 +2878,7 @@ fun test_tpsl_max_orders_to_execute_limit() {
     return_shared(margin_registry);
 
     // USER2 = BOB executes when price drops to $0.50 (triggers all 5 orders)
+    // First execution call with max = 2
     scenario.next_tx(test_constants::user2());
     let sui_price_low = build_sui_price_info_object_with_price(&mut scenario, 50, &clock); // $0.50
     let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
@@ -2884,39 +2886,68 @@ fun test_tpsl_max_orders_to_execute_limit() {
     let mut pool = scenario.take_shared<Pool<SUI, USDC>>();
     let margin_registry = scenario.take_shared<MarginRegistry>();
 
-    // Execute with max_orders_to_execute = 3
-    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+    // First execution: max_orders_to_execute = 2
+    let order_infos_1 = mm.execute_conditional_orders<SUI, USDC>(
         &mut pool,
         &sui_price_low,
         &usdc_price,
         &margin_registry,
-        3, // max_orders_to_execute limit
+        2, // Execute only 2 orders
         &clock,
         scenario.ctx(),
     );
 
-    // Only 3 orders should have been executed (highest priority: ID 1, 2, 3)
-    assert!(order_infos.length() == 3);
-    assert!(order_infos[0].client_order_id() == 1);
-    assert!(order_infos[1].client_order_id() == 2);
-    assert!(order_infos[2].client_order_id() == 3);
+    // First batch: 2 orders executed (ID 1, 2)
+    assert!(order_infos_1.length() == 2);
+    assert!(order_infos_1[0].client_order_id() == 1);
+    assert!(order_infos_1[1].client_order_id() == 2);
 
-    destroy(order_infos[0]);
-    destroy(order_infos[1]);
-    destroy(order_infos[2]);
+    destroy(order_infos_1[0]);
+    destroy(order_infos_1[1]);
 
-    // 2 orders should remain (ID 4, 5)
-    let remaining_ids = mm.conditional_order_ids();
-    assert!(remaining_ids.length() == 2);
-
-    // Verify remaining orders
-    let order_4 = mm.conditional_order(remaining_ids[0]);
-    let order_5 = mm.conditional_order(remaining_ids[1]);
-
-    assert!(order_4.condition().trigger_price() == 1_200_000_000_000); // $1.20
-    assert!(order_5.condition().trigger_price() == 1_000_000_000_000); // $1.00
+    // 3 orders should remain (ID 3, 4, 5)
+    assert!(mm.conditional_order_ids().length() == 3);
 
     destroy_2!(sui_price_low, usdc_price);
+    return_shared(pool);
+    return_shared(margin_registry);
+
+    // Second execution call with max = 2
+    scenario.next_tx(test_constants::user2());
+    let sui_price_low2 = build_sui_price_info_object_with_price(&mut scenario, 50, &clock); // $0.50
+    let usdc_price2 = build_usdc_price_info_object(&mut scenario, &clock);
+
+    let mut pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let margin_registry = scenario.take_shared<MarginRegistry>();
+
+    // Second execution: max_orders_to_execute = 2
+    let order_infos_2 = mm.execute_conditional_orders<SUI, USDC>(
+        &mut pool,
+        &sui_price_low2,
+        &usdc_price2,
+        &margin_registry,
+        2, // Execute 2 more orders
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Second batch: 2 more orders executed (ID 3, 4)
+    assert!(order_infos_2.length() == 2);
+    assert!(order_infos_2[0].client_order_id() == 3);
+    assert!(order_infos_2[1].client_order_id() == 4);
+
+    destroy(order_infos_2[0]);
+    destroy(order_infos_2[1]);
+
+    // Only 1 order should remain (ID 5)
+    let remaining_ids = mm.conditional_order_ids();
+    assert!(remaining_ids.length() == 1);
+
+    // Verify the remaining order
+    let order_5 = mm.conditional_order(remaining_ids[0]);
+    assert!(order_5.condition().trigger_price() == 1_000_000_000_000); // $1.00
+
+    destroy_2!(sui_price_low2, usdc_price2);
     return_shared_2!(mm, pool);
 
     let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
