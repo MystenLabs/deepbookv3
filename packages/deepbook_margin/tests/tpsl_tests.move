@@ -2511,3 +2511,415 @@ fun test_tpsl_insufficient_funds_second_order() {
     return_shared(deepbook_registry);
     cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
 }
+
+#[test]
+fun test_tpsl_expired_order_during_execution() {
+    // Test expired order scenario:
+    // - ALICE adds a trigger_below order with expiration timestamp
+    // - Time passes and the order expires
+    // - Price triggers the condition
+    // - Order should be removed due to expiration, not executed
+
+    let (
+        mut scenario,
+        mut clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    // USER1 = ALICE creates a margin manager
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+
+    // Initial prices: SUI = $2.00, USDC = $1.00
+    let sui_price_high = build_sui_price_info_object_with_price(&mut scenario, 200, &clock); // $2.00
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock); // $1.00
+
+    // Deposit collateral
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price_high,
+        &usdc_price,
+        mint_coin<SUI>(10000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Add order with short expiration (current time + 100ms)
+    let expire_timestamp = clock.timestamp_ms() + 100;
+    let condition = tpsl::new_condition(
+        true, // trigger_is_below
+        1_500_000_000_000, // $1.50
+    );
+    let pending_order = tpsl::new_pending_limit_order(
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        800_000_000_000,
+        100 * test_constants::sui_multiplier(),
+        false,
+        false,
+        expire_timestamp,
+    );
+
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price_high,
+        &usdc_price,
+        &margin_registry,
+        1,
+        condition,
+        pending_order,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Verify order was added
+    assert!(mm.conditional_order_ids().length() == 1);
+
+    destroy_2!(sui_price_high, usdc_price);
+    return_shared(pool);
+    return_shared(margin_registry);
+
+    // Advance time past expiration (current time + 200ms)
+    clock.increment_for_testing(200);
+
+    // USER2 = BOB tries to execute when price drops (after expiration)
+    scenario.next_tx(test_constants::user2());
+    let sui_price_low = build_sui_price_info_object_with_price(&mut scenario, 95, &clock); // $0.95
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    let mut pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let margin_registry = scenario.take_shared<MarginRegistry>();
+
+    // Execute conditional orders - order is triggered but expired
+    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+        &mut pool,
+        &sui_price_low,
+        &usdc_price,
+        &margin_registry,
+        10,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // No orders should have been executed (order was expired)
+    assert!(order_infos.length() == 0);
+
+    // Conditional order should be removed due to expiration
+    assert!(mm.conditional_order_ids().length() == 0);
+
+    destroy_2!(sui_price_low, usdc_price);
+    return_shared_2!(mm, pool);
+
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    return_shared(deepbook_registry);
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_tpsl_early_exit_optimization() {
+    // Test early exit optimization:
+    // - ALICE adds 5 trigger_below orders at different prices
+    // - Price only crosses 2 of them (highest 2)
+    // - Only 2 orders should execute, 3 should remain
+    // - Tests that the early exit optimization works (breaks when condition not met)
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    // USER1 = ALICE creates a margin manager
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+
+    // Initial prices: SUI = $2.00, USDC = $1.00
+    let sui_price_high = build_sui_price_info_object_with_price(&mut scenario, 200, &clock); // $2.00
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    // Deposit collateral
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price_high,
+        &usdc_price,
+        mint_coin<SUI>(10000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Add 5 trigger_below orders at different prices (will be sorted high to low)
+    let trigger_prices = vector[
+        1_800_000_000_000, // $1.80 - ID 1 - Will trigger
+        1_600_000_000_000, // $1.60 - ID 2 - Will trigger
+        1_400_000_000_000, // $1.40 - ID 3 - Won't trigger (price = $1.50)
+        1_200_000_000_000, // $1.20 - ID 4 - Won't trigger
+        1_000_000_000_000, // $1.00 - ID 5 - Won't trigger
+    ];
+
+    let mut i = 0;
+    while (i < trigger_prices.length()) {
+        let condition = tpsl::new_condition(true, trigger_prices[i]);
+        let pending_order = tpsl::new_pending_limit_order(
+            i + 1,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            800_000_000_000,
+            10 * test_constants::sui_multiplier(), // Small amounts to ensure all can execute
+            false,
+            false,
+            constants::max_u64(),
+        );
+
+        mm.add_conditional_order<SUI, USDC>(
+            &pool,
+            &sui_price_high,
+            &usdc_price,
+            &margin_registry,
+            i + 1,
+            condition,
+            pending_order,
+            &clock,
+            scenario.ctx(),
+        );
+        i = i + 1;
+    };
+
+    // Verify all 5 orders were added
+    assert!(mm.conditional_order_ids().length() == 5);
+
+    destroy_2!(sui_price_high, usdc_price);
+    return_shared(pool);
+    return_shared(margin_registry);
+
+    // USER2 = BOB executes when price drops to $1.50 (only crosses $1.80 and $1.60)
+    scenario.next_tx(test_constants::user2());
+    let sui_price_mid = build_sui_price_info_object_with_price(&mut scenario, 150, &clock); // $1.50
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    let mut pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let margin_registry = scenario.take_shared<MarginRegistry>();
+
+    // Execute conditional orders
+    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+        &mut pool,
+        &sui_price_mid,
+        &usdc_price,
+        &margin_registry,
+        10,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Only 2 orders should have been executed (ID 1 and ID 2)
+    assert!(order_infos.length() == 2);
+    assert!(order_infos[0].client_order_id() == 1); // $1.80
+    assert!(order_infos[1].client_order_id() == 2); // $1.60
+
+    destroy(order_infos[0]);
+    destroy(order_infos[1]);
+
+    // 3 orders should remain (ID 3, 4, 5)
+    let remaining_ids = mm.conditional_order_ids();
+    assert!(remaining_ids.length() == 3);
+
+    // Verify remaining orders are the correct ones (sorted high to low)
+    let order_3 = mm.conditional_order(remaining_ids[0]);
+    let order_4 = mm.conditional_order(remaining_ids[1]);
+    let order_5 = mm.conditional_order(remaining_ids[2]);
+
+    assert!(order_3.condition().trigger_price() == 1_400_000_000_000); // $1.40
+    assert!(order_4.condition().trigger_price() == 1_200_000_000_000); // $1.20
+    assert!(order_5.condition().trigger_price() == 1_000_000_000_000); // $1.00
+
+    destroy_2!(sui_price_mid, usdc_price);
+    return_shared_2!(mm, pool);
+
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    return_shared(deepbook_registry);
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_tpsl_max_orders_to_execute_limit() {
+    // Test max_orders_to_execute limit:
+    // - ALICE adds 5 trigger_below orders
+    // - All 5 are triggered by price movement
+    // - max_orders_to_execute = 3
+    // - Only 3 orders should execute, 2 should remain
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    // USER1 = ALICE creates a margin manager
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+
+    // Initial prices: SUI = $2.00, USDC = $1.00
+    let sui_price_high = build_sui_price_info_object_with_price(&mut scenario, 200, &clock); // $2.00
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    // Deposit collateral
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price_high,
+        &usdc_price,
+        mint_coin<SUI>(10000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Add 5 trigger_below orders at different prices (all will trigger when price drops to $0.50)
+    let trigger_prices = vector[
+        1_800_000_000_000, // $1.80 - ID 1
+        1_600_000_000_000, // $1.60 - ID 2
+        1_400_000_000_000, // $1.40 - ID 3
+        1_200_000_000_000, // $1.20 - ID 4
+        1_000_000_000_000, // $1.00 - ID 5
+    ];
+
+    let mut i = 0;
+    while (i < trigger_prices.length()) {
+        let condition = tpsl::new_condition(true, trigger_prices[i]);
+        let pending_order = tpsl::new_pending_limit_order(
+            i + 1,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            400_000_000_000, // $0.40
+            10 * test_constants::sui_multiplier(),
+            false,
+            false,
+            constants::max_u64(),
+        );
+
+        mm.add_conditional_order<SUI, USDC>(
+            &pool,
+            &sui_price_high,
+            &usdc_price,
+            &margin_registry,
+            i + 1,
+            condition,
+            pending_order,
+            &clock,
+            scenario.ctx(),
+        );
+        i = i + 1;
+    };
+
+    // Verify all 5 orders were added
+    assert!(mm.conditional_order_ids().length() == 5);
+
+    destroy_2!(sui_price_high, usdc_price);
+    return_shared(pool);
+    return_shared(margin_registry);
+
+    // USER2 = BOB executes when price drops to $0.50 (triggers all 5 orders)
+    scenario.next_tx(test_constants::user2());
+    let sui_price_low = build_sui_price_info_object_with_price(&mut scenario, 50, &clock); // $0.50
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    let mut pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let margin_registry = scenario.take_shared<MarginRegistry>();
+
+    // Execute with max_orders_to_execute = 3
+    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+        &mut pool,
+        &sui_price_low,
+        &usdc_price,
+        &margin_registry,
+        3, // max_orders_to_execute limit
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Only 3 orders should have been executed (highest priority: ID 1, 2, 3)
+    assert!(order_infos.length() == 3);
+    assert!(order_infos[0].client_order_id() == 1);
+    assert!(order_infos[1].client_order_id() == 2);
+    assert!(order_infos[2].client_order_id() == 3);
+
+    destroy(order_infos[0]);
+    destroy(order_infos[1]);
+    destroy(order_infos[2]);
+
+    // 2 orders should remain (ID 4, 5)
+    let remaining_ids = mm.conditional_order_ids();
+    assert!(remaining_ids.length() == 2);
+
+    // Verify remaining orders
+    let order_4 = mm.conditional_order(remaining_ids[0]);
+    let order_5 = mm.conditional_order(remaining_ids[1]);
+
+    assert!(order_4.condition().trigger_price() == 1_200_000_000_000); // $1.20
+    assert!(order_5.condition().trigger_price() == 1_000_000_000_000); // $1.00
+
+    destroy_2!(sui_price_low, usdc_price);
+    return_shared_2!(mm, pool);
+
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    return_shared(deepbook_registry);
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
