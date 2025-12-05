@@ -1,0 +1,602 @@
+openapi: 3.0.3
+info:
+  title: DeepBookV3 Indexer API
+  version: "1.0.0"
+  description: |
+    REST endpoints for DeepBookV3 order book + analytics data.
+    Volumes are returned in the smallest unit of the asset unless stated otherwise.
+servers:
+  - url: https://deepbook-indexer.mainnet.mystenlabs.com
+    description: Public DeepBookV3 Indexer
+
+tags:
+  - name: Pools
+  - name: Volume
+  - name: Market Data
+  - name: Order Flow
+  - name: Reference
+  - name: Health
+
+paths:
+  /:
+    get:
+      tags: [Health]
+      summary: Basic health check
+      description: Returns HTTP 200 if the server is running.
+      operationId: healthCheck
+      responses:
+        "200":
+          description: Server is running
+
+  /status:
+    get:
+      tags: [Health]
+      summary: Indexer synchronization status
+      description: |
+        Returns detailed information about indexer health, including:
+        - Current checkpoint lag (difference between on-chain and indexed checkpoints)
+        - Time lag (how long ago the last checkpoint was indexed)
+        - Per-pipeline status for multi-pipeline setups
+        
+        The client can specify custom health thresholds via query parameters.
+        The server will compute the status based on these thresholds.
+        
+        **Default thresholds:**
+        - `max_checkpoint_lag`: 100
+        - `max_time_lag_seconds`: 60
+        
+        **Health computation:**
+        - `healthy`: checkpoint_lag < max_checkpoint_lag AND time_lag < max_time_lag_seconds
+        - `degraded`: exceeds the specified thresholds
+      operationId: getStatus
+      parameters:
+        - in: query
+          name: max_checkpoint_lag
+          schema:
+            type: integer
+            format: int64
+            default: 100
+          description: Maximum acceptable checkpoint lag for "healthy" status
+        - in: query
+          name: max_time_lag_seconds
+          schema:
+            type: integer
+            format: int64
+            default: 60
+          description: Maximum acceptable time lag in seconds for "healthy" status
+      responses:
+        "200":
+          description: Indexer status and health metrics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IndexerStatus"
+      x-docs: "https://docs.sui.io/standards/deepbookv3-indexer"
+
+  /get_pools:
+    get:
+      tags: [Pools]
+      summary: Get all pool information
+      description: Returns all available pools with asset metadata and trading parameters.
+      operationId: getPools
+      responses:
+        "200":
+          description: List of pools
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Pool"
+      x-docs: "https://docs.sui.io/standards/deepbookv3-indexer" # reference
+
+  /historical_volume/{pool_names}:
+    get:
+      tags: [Volume]
+      summary: Historical volume for pools in a time range
+      description: |
+        Comma-delimited pool names. By default returns 24h volume in **quote** asset.
+        Set `volume_in_base=true` to return volumes in base asset units.
+      operationId: getHistoricalVolume
+      parameters:
+        - in: path
+          name: pool_names
+          required: true
+          schema:
+            type: string
+          description: Comma-separated list, e.g. `DEEP_SUI,SUI_USDC`.
+        - in: query
+          name: start_time
+          schema: { type: integer, format: int64 }
+          description: Unix timestamp (seconds)
+        - in: query
+          name: end_time
+          schema: { type: integer, format: int64 }
+          description: Unix timestamp (seconds)
+        - in: query
+          name: volume_in_base
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Map of pool -> total volume
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PoolVolumes"
+      x-docs: "https://docs.sui.io/standards/deepbookv3-indexer" # reference
+
+  /all_historical_volume:
+    get:
+      tags: [Volume]
+      summary: Historical volume for all pools
+      operationId: getAllHistoricalVolume
+      parameters:
+        - in: query
+          name: start_time
+          schema: { type: integer, format: int64 }
+        - in: query
+          name: end_time
+          schema: { type: integer, format: int64 }
+        - in: query
+          name: volume_in_base
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Map of pool -> total volume across all pools in range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PoolVolumes"
+      x-docs: "https://docs.sui.io/standards/deepbookv3-indexer"
+
+  /historical_volume_by_balance_manager_id/{pool_names}/{balance_manager_id}:
+    get:
+      tags: [Volume]
+      summary: Historical maker/taker volume for a BalanceManager
+      operationId: getHistoricalVolumeByBM
+      parameters:
+        - in: path
+          name: pool_names
+          required: true
+          schema: { type: string }
+          description: Comma-separated pool names.
+        - in: path
+          name: balance_manager_id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: start_time
+          schema: { type: integer, format: int64 }
+        - in: query
+          name: end_time
+          schema: { type: integer, format: int64 }
+        - in: query
+          name: volume_in_base
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Map of pool -> [maker_volume, taker_volume]
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PoolMakerTakerVolumes"
+      x-docs: "https://docs.sui.io/standards/deepbookv3-indexer"
+
+  /historical_volume_by_balance_manager_id_with_interval/{pool_names}/{balance_manager_id}:
+    get:
+      tags: [Volume]
+      summary: Intervalized maker/taker volume for a BalanceManager
+      operationId: getHistoricalVolumeByBMWithInterval
+      parameters:
+        - in: path
+          name: pool_names
+          required: true
+          schema: { type: string }
+        - in: path
+          name: balance_manager_id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: start_time
+          schema: { type: integer, format: int64 }
+        - in: query
+          name: end_time
+          schema: { type: integer, format: int64 }
+        - in: query
+          name: interval
+          required: true
+          schema: { type: integer, format: int64, minimum: 1 }
+          description: Interval length in seconds.
+        - in: query
+          name: volume_in_base
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: |
+            Map of "[start,end]" (Unix seconds) -> { pool: [maker,taker], ... }
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IntervalMakerTakerVolumes"
+      x-docs: "https://docs.sui.io/standards/deepbookv3-indexer"
+
+  /summary:
+    get:
+      tags: [Market Data]
+      summary: Summary for all trading pairs
+      operationId: getSummary
+      responses:
+        "200":
+          description: Array of summary objects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SummaryItem"
+      x-docs: "https://docs.sui.io/standards/deepbookv3-indexer"
+
+  /ticker:
+    get:
+      tags: [Market Data]
+      summary: Ticker info for all trading pairs
+      operationId: getTicker
+      responses:
+        "200":
+          description: Map of pair -> ticker fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TickerMap"
+      x-docs: "https://docs.sui.io/standards/deepbookv3-indexer"
+
+  /trades/{pool_name}:
+    get:
+      tags: [Market Data]
+      summary: Recent trades for a pool
+      operationId: getTrades
+      parameters:
+        - in: path
+          name: pool_name
+          required: true
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1 }
+          description: Number of trades to return.
+        - in: query
+          name: start_time
+          schema: { type: integer, format: int64 }
+          description: Unix timestamp (seconds)
+        - in: query
+          name: end_time
+          schema: { type: integer, format: int64 }
+          description: Unix timestamp (seconds)
+        - in: query
+          name: maker_balance_manager_id
+          schema: { type: string }
+        - in: query
+          name: taker_balance_manager_id
+          schema: { type: string }
+      responses:
+        "200":
+          description: List of trades (timestamp in ms)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Trade"
+      x-docs: "https://docs.sui.io/standards/deepbookv3-indexer"
+
+  /order_updates/{pool_name}:
+    get:
+      tags: [Order Flow]
+      summary: Recently placed or canceled orders in a pool
+      operationId: getOrderUpdates
+      parameters:
+        - in: path
+          name: pool_name
+          required: true
+          schema: { type: string }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: start_time
+          schema: { type: integer, format: int64 }
+        - in: query
+          name: end_time
+          schema: { type: integer, format: int64 }
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: ["Placed", "Canceled"]
+        - in: query
+          name: balance_manager_id
+          schema: { type: string }
+      responses:
+        "200":
+          description: Order update rows
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/OrderUpdate"
+      x-docs: "https://docs.sui.io/standards/deepbookv3-indexer"
+
+  /orderbook/{pool_name}:
+    get:
+      tags: [Market Data]
+      summary: Order book snapshot for a pool
+      operationId: getOrderbook
+      parameters:
+        - in: path
+          name: pool_name
+          required: true
+          schema: { type: string }
+        - in: query
+          name: level
+          schema:
+            type: integer
+            enum: [1, 2]
+          description: 1 = best bid/ask only; 2 = aggregated levels (default).
+        - in: query
+          name: depth
+          schema:
+            type: integer
+            minimum: 0
+          description: 0 = full book; >1 returns N/2 bids + N/2 asks.
+      responses:
+        "200":
+          description: Bids/asks sorted best→worst; timestamp in ms (string)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Orderbook"
+      x-docs: "https://docs.sui.io/standards/deepbookv3-indexer"
+
+  /assets:
+    get:
+      tags: [Reference]
+      summary: Asset information for all coins
+      operationId: getAssets
+      responses:
+        "200":
+          description: Symbol -> metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetsMap"
+      x-docs: "https://docs.sui.io/standards/deepbookv3-indexer"
+
+components:
+  schemas:
+    Pool:
+      type: object
+      required:
+        [
+          pool_id,
+          pool_name,
+          base_asset_id,
+          quote_asset_id,
+          min_size,
+          lot_size,
+          tick_size,
+        ]
+      properties:
+        pool_id: { type: string }
+        pool_name: { type: string }
+        base_asset_id: { type: string }
+        base_asset_decimals: { type: integer }
+        base_asset_symbol: { type: string }
+        base_asset_name: { type: string }
+        quote_asset_id: { type: string }
+        quote_asset_decimals: { type: integer }
+        quote_asset_symbol: { type: string }
+        quote_asset_name: { type: string }
+        min_size: { type: integer, description: "Smallest units of base asset" }
+        lot_size: { type: integer, description: "Increment in base units" }
+        tick_size: { type: integer, description: "Min price increment" }
+
+    PoolVolumes:
+      type: object
+      additionalProperties:
+        type: integer
+        description: Volume in smallest unit (base or quote depending on query)
+
+    PoolMakerTakerVolumes:
+      type: object
+      additionalProperties:
+        type: array
+        minItems: 2
+        maxItems: 2
+        items:
+          type: integer
+        description: "[maker_volume, taker_volume] in smallest units"
+
+    IntervalMakerTakerVolumes:
+      type: object
+      additionalProperties:
+        type: object
+        additionalProperties:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: { type: integer }
+
+    SummaryItem:
+      type: object
+      properties:
+        trading_pairs: { type: string }
+        quote_currency: { type: string }
+        last_price: { type: number }
+        lowest_price_24h: { type: number }
+        highest_bid: { type: number }
+        base_volume: { type: number }
+        price_change_percent_24h: { type: number }
+        quote_volume: { type: number }
+        lowest_ask: { type: number }
+        highest_price_24h: { type: number }
+        base_currency: { type: string }
+
+    TickerMap:
+      type: object
+      additionalProperties:
+        type: object
+        properties:
+          base_volume: { type: number }
+          quote_volume: { type: number }
+          last_price: { type: number }
+          isFrozen:
+            type: integer
+            enum: [0, 1]
+            description: "0=active, 1=inactive"
+
+    Trade:
+      type: object
+      properties:
+        trade_id: { type: string }
+        base_volume: { type: integer }
+        quote_volume: { type: integer }
+        price: { type: integer }
+        type: { type: string }
+        timestamp: { type: integer, format: int64, description: "Unix ms" }
+        maker_order_id: { type: string }
+        taker_order_id: { type: string }
+        maker_balance_manager_id: { type: string }
+        taker_balance_manager_id: { type: string }
+
+    OrderUpdate:
+      type: object
+      properties:
+        order_id: { type: string }
+        balance_manager_id: { type: string }
+        timestamp: { type: integer, format: int64, description: "Unix ms" }
+        original_quantity: { type: integer }
+        remaining_quantity: { type: integer }
+        filled_quantity: { type: integer }
+        price: { type: integer }
+        status:
+          type: string
+          enum: [Placed, Canceled]
+        type:
+          type: string
+          description: buy/sell
+
+    Orderbook:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          description: Unix ms as string
+        bids:
+          type: array
+          items:
+            type: array
+            minItems: 2
+            maxItems: 2
+            items:
+              type: string
+          description: "[price, size]; best → worst"
+        asks:
+          type: array
+          items:
+            type: array
+            minItems: 2
+            maxItems: 2
+            items:
+              type: string
+          description: "[price, size]; best → worst"
+
+    AssetsMap:
+      type: object
+      additionalProperties:
+        $ref: "#/components/schemas/Asset"
+
+    Asset:
+      type: object
+      properties:
+        unified_cryptoasset_id: { type: string }
+        name: { type: string }
+        contractAddress: { type: string }
+        contractAddressUrl: { type: string }
+        can_deposit: { type: string, enum: ["true", "false"] }
+        can_withdraw: { type: string, enum: ["true", "false"] }
+
+    IndexerStatus:
+      type: object
+      required: [status, latest_onchain_checkpoint, current_time_ms, earliest_checkpoint, max_lag_pipeline, pipelines, max_checkpoint_lag, max_time_lag_seconds]
+      properties:
+        status:
+          type: string
+          enum: [OK, UNHEALTHY]
+          description: "Overall indexer health status based on client-provided thresholds"
+        latest_onchain_checkpoint:
+          type: integer
+          format: int64
+          description: "Latest checkpoint sequence number on the blockchain"
+        current_time_ms:
+          type: integer
+          format: int64
+          description: "Current server timestamp in milliseconds"
+        earliest_checkpoint:
+          type: integer
+          format: int64
+          description: "The lowest checkpoint across all pipelines (useful for alerting)"
+        max_lag_pipeline:
+          type: string
+          description: "Name of the pipeline with the highest checkpoint lag (useful for alerting)"
+        pipelines:
+          type: array
+          items:
+            $ref: "#/components/schemas/PipelineStatus"
+          description: "Status for each indexer pipeline"
+        max_checkpoint_lag:
+          type: integer
+          format: int64
+          description: "Maximum checkpoint lag across all pipelines"
+        max_time_lag_seconds:
+          type: integer
+          format: int64
+          description: "Maximum time lag in seconds across all pipelines"
+
+    PipelineStatus:
+      type: object
+      required: [pipeline, indexed_checkpoint, indexed_epoch, indexed_timestamp_ms, checkpoint_lag, time_lag_seconds, latest_onchain_checkpoint]
+      properties:
+        pipeline:
+          type: string
+          description: "Pipeline name (e.g., 'deepbook_indexer')"
+        indexed_checkpoint:
+          type: integer
+          format: int64
+          description: "Latest checkpoint indexed by this pipeline"
+        indexed_epoch:
+          type: integer
+          format: int64
+          description: "Latest epoch indexed by this pipeline"
+        indexed_timestamp_ms:
+          type: integer
+          format: int64
+          description: "Timestamp of the latest indexed checkpoint in milliseconds"
+        checkpoint_lag:
+          type: integer
+          format: int64
+          description: "Difference between on-chain and indexed checkpoint"
+        time_lag_seconds:
+          type: integer
+          format: int64
+          description: "Time difference in seconds since last indexed checkpoint"
+        latest_onchain_checkpoint:
+          type: integer
+          format: int64
+          description: "Latest on-chain checkpoint (included for completeness)"
+
+x-notes:
+  asset_scalars: |
+    Asset “scalars” (decimal places for smallest unit) used by volume endpoints:
+    AUSD:6, bETH:8, DEEP:6, USDC:6, SUI:9, NS:6, TYPUS:9, wUSDC:6, wUSDT:6.
+    Convert human units by dividing by 10^SCALAR. (See docs.)
