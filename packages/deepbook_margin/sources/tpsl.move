@@ -394,14 +394,14 @@ public(package) fun remove_executed_conditional_orders(
     let timestamp = clock.timestamp_ms();
 
     // Partition trigger_below into orders to keep vs remove
-    let (keep_below, remove_below) = self.trigger_below.partition!(|order| {
-        !conditional_order_ids.contains(&order.conditional_order_id)
+    let (remove_below, keep_below) = self.trigger_below.partition!(|order| {
+        conditional_order_ids.contains(&order.conditional_order_id)
     });
     self.trigger_below = keep_below;
 
     // Partition trigger_above into orders to keep vs remove
-    let (keep_above, remove_above) = self.trigger_above.partition!(|order| {
-        !conditional_order_ids.contains(&order.conditional_order_id)
+    let (remove_above, keep_above) = self.trigger_above.partition!(|order| {
+        conditional_order_ids.contains(&order.conditional_order_id)
     });
     self.trigger_above = keep_above;
 
