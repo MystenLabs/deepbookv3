@@ -339,27 +339,29 @@ public(package) fun cancel_all_conditional_orders(
 ) {
     let timestamp = clock.timestamp_ms();
 
-    // Cancel all trigger_below orders
-    while (!self.trigger_below.is_empty()) {
-        let conditional_order = self.trigger_below.pop_back();
+    // Emit events for all trigger_below orders
+    self.trigger_below.do!(|conditional_order| {
         event::emit(ConditionalOrderCancelled {
             manager_id,
             conditional_order_id: conditional_order.conditional_order_id,
             conditional_order,
             timestamp,
         });
-    };
+    });
 
-    // Cancel all trigger_above orders
-    while (!self.trigger_above.is_empty()) {
-        let conditional_order = self.trigger_above.pop_back();
+    // Emit events for all trigger_above orders
+    self.trigger_above.do!(|conditional_order| {
         event::emit(ConditionalOrderCancelled {
             manager_id,
             conditional_order_id: conditional_order.conditional_order_id,
             conditional_order,
             timestamp,
         });
-    };
+    });
+
+    // Clear both vectors
+    self.trigger_below = vector[];
+    self.trigger_above = vector[];
 }
 
 public(package) fun remove_executed_conditional_order(
