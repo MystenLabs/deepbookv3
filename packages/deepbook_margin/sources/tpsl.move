@@ -392,21 +392,39 @@ public(package) fun remove_executed_conditional_orders(
     clock: &Clock,
 ) {
     let timestamp = clock.timestamp_ms();
-    let mut i = 0;
-    while (i < conditional_order_ids.length()) {
-        let conditional_order_id = conditional_order_ids[i];
-        let conditional_order = find_and_remove_order(self, conditional_order_id);
-        if (conditional_order.is_some()) {
-            event::emit(ConditionalOrderExecuted {
-                manager_id,
-                pool_id,
-                conditional_order_id,
-                conditional_order: conditional_order.destroy_some(),
-                timestamp,
-            });
-        };
-        i = i + 1;
-    };
+
+    // Partition trigger_below into orders to keep vs remove
+    let (keep_below, remove_below) = self.trigger_below.partition!(|order| {
+        !conditional_order_ids.contains(&order.conditional_order_id)
+    });
+    self.trigger_below = keep_below;
+
+    // Partition trigger_above into orders to keep vs remove
+    let (keep_above, remove_above) = self.trigger_above.partition!(|order| {
+        !conditional_order_ids.contains(&order.conditional_order_id)
+    });
+    self.trigger_above = keep_above;
+
+    // Emit events for removed orders
+    remove_below.do!(|conditional_order| {
+        event::emit(ConditionalOrderExecuted {
+            manager_id,
+            pool_id,
+            conditional_order_id: conditional_order.conditional_order_id,
+            conditional_order,
+            timestamp,
+        });
+    });
+
+    remove_above.do!(|conditional_order| {
+        event::emit(ConditionalOrderExecuted {
+            manager_id,
+            pool_id,
+            conditional_order_id: conditional_order.conditional_order_id,
+            conditional_order,
+            timestamp,
+        });
+    });
 }
 
 public(package) fun emit_insufficient_funds_event(
