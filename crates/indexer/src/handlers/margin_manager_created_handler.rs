@@ -1,5 +1,5 @@
 use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
-use crate::models::deepbook_margin::margin_manager::MarginManagerEvent;
+use crate::models::deepbook_margin::margin_manager::MarginManagerCreatedEvent;
 use crate::traits::MoveStruct;
 use crate::DeepbookEnv;
 use async_trait::async_trait;
@@ -44,8 +44,8 @@ impl Processor for MarginManagerCreatedHandler {
             let digest = tx.transaction.digest();
 
             for (index, ev) in events.data.iter().enumerate() {
-                if MarginManagerEvent::matches_event_type(&ev.type_, self.env) {
-                    let event: MarginManagerEvent = bcs::from_bytes(&ev.contents)?;
+                if MarginManagerCreatedEvent::matches_event_type(&ev.type_, self.env) {
+                    let event: MarginManagerCreatedEvent = bcs::from_bytes(&ev.contents)?;
                     let data = MarginManagerCreated {
                         event_digest: format!("{digest}{index}"),
                         digest: digest.to_string(),
@@ -55,6 +55,7 @@ impl Processor for MarginManagerCreatedHandler {
                         package: package.clone(),
                         margin_manager_id: event.margin_manager_id.to_string(),
                         balance_manager_id: event.balance_manager_id.to_string(),
+                        deepbook_pool_id: Some(event.deepbook_pool_id.to_string()),
                         owner: event.owner.to_string(),
                         onchain_timestamp: event.timestamp as i64,
                     };

@@ -4,6 +4,7 @@
 #[test_only]
 module deepbook_margin::margin_pool_tests;
 
+use deepbook::{constants, math};
 use deepbook_margin::{
     margin_constants,
     margin_pool::{Self, MarginPool},
@@ -13,13 +14,8 @@ use deepbook_margin::{
     test_constants::{Self, USDC, USDT},
     test_helpers::{Self, mint_coin, advance_time}
 };
-use std::unit_test::assert_eq;
-use sui::{
-    clock::Clock,
-    coin::Coin,
-    test_scenario::{Self as test, Scenario, return_shared},
-    test_utils::destroy
-};
+use std::unit_test::{assert_eq, destroy};
+use sui::{clock::Clock, coin::Coin, test_scenario::{Self as test, Scenario, return_shared}};
 
 fun setup_test(): (Scenario, Clock, MarginAdminCap, MaintainerCap, ID) {
     let (mut scenario, admin_cap) = test_helpers::setup_test();
@@ -1420,6 +1416,206 @@ fun test_withdraw_round_up_shares() {
     // Cleanup
     destroy(borrow_coin);
     destroy(withdrawn);
+    destroy(supplier_cap);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_total_supply_with_interest_no_borrow() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    scenario.next_tx(test_constants::user1());
+    let supply_amount = 100 * test_constants::usdc_multiplier();
+    let supplier_cap = test_helpers::supply_to_pool(
+        &mut pool,
+        &registry,
+        supply_amount,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // With no borrows, total_supply should equal total_supply_with_interest
+    let raw_supply = pool.total_supply();
+    let supply_with_interest = pool.total_supply_with_interest(&clock);
+    assert_eq!(raw_supply, supply_amount);
+    assert_eq!(supply_with_interest, supply_amount);
+
+    destroy(supplier_cap);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_total_supply_with_interest_after_year() {
+    let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    // Supply 100 USDC
+    scenario.next_tx(test_constants::user1());
+    let supply_amount = 100 * test_constants::usdc_multiplier();
+    let supplier_cap = test_helpers::supply_to_pool(
+        &mut pool,
+        &registry,
+        supply_amount,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Borrow 50 USDC (50% utilization)
+    scenario.next_tx(test_constants::user2());
+    let borrow_amount = 50 * test_constants::usdc_multiplier();
+    let borrowed_coin = test_borrow(
+        &mut pool,
+        borrow_amount,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Record initial values
+    let initial_supply = pool.total_supply();
+    assert_eq!(initial_supply, supply_amount);
+
+    // Advance time by 1 year
+    advance_time(&mut clock, margin_constants::year_ms());
+
+    // total_supply should still be the raw supply (not updated yet)
+    let raw_supply = pool.total_supply();
+    assert_eq!(raw_supply, initial_supply);
+
+    // total_supply_with_interest should include accrued interest
+    let supply_with_interest = pool.total_supply_with_interest(&clock);
+    let true_interest_rate = pool.true_interest_rate();
+
+    // Verify that supply_with_interest > raw_supply (interest has accrued)
+    assert_eq!(
+        supply_with_interest,
+        math::mul(raw_supply, constants::float_scaling() + true_interest_rate),
+    );
+
+    destroy(borrowed_coin);
+    destroy(supplier_cap);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_total_supply_with_interest_high_utilization() {
+    let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    // Supply 100 USDC
+    scenario.next_tx(test_constants::user1());
+    let supply_amount = 100 * test_constants::usdc_multiplier();
+    let supplier_cap = test_helpers::supply_to_pool(
+        &mut pool,
+        &registry,
+        supply_amount,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Borrow 79 USDC (79% utilization, close to optimal 80%)
+    scenario.next_tx(test_constants::user2());
+    let borrow_amount = 79 * test_constants::usdc_multiplier();
+    let borrowed_coin = test_borrow(
+        &mut pool,
+        borrow_amount,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Record initial values
+    let initial_supply = pool.total_supply();
+
+    // Advance time by 1 year
+    advance_time(&mut clock, margin_constants::year_ms());
+
+    // Raw supply should not have changed
+    let raw_supply_after_year = pool.total_supply();
+    assert_eq!(raw_supply_after_year, initial_supply);
+
+    // total_supply_with_interest should include accrued interest
+    let supply_with_interest = pool.total_supply_with_interest(&clock);
+    let true_interest_rate = pool.true_interest_rate();
+
+    // Verify exact calculation with true interest rate
+    assert_eq!(
+        supply_with_interest,
+        math::mul(raw_supply_after_year, constants::float_scaling() + true_interest_rate),
+    );
+
+    destroy(borrowed_coin);
+    destroy(supplier_cap);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_total_supply_with_interest_vs_update() {
+    let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    // Supply 100 USDC
+    scenario.next_tx(test_constants::user1());
+    let supply_amount = 100 * test_constants::usdc_multiplier();
+    let supplier_cap = test_helpers::supply_to_pool(
+        &mut pool,
+        &registry,
+        supply_amount,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Borrow 60 USDC (60% utilization)
+    scenario.next_tx(test_constants::user2());
+    let borrow_amount = 60 * test_constants::usdc_multiplier();
+    let borrowed_coin = test_borrow(
+        &mut pool,
+        borrow_amount,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Advance time by 1 year
+    advance_time(&mut clock, margin_constants::year_ms());
+
+    // Get supply with interest (without updating state)
+    let raw_supply_before = pool.total_supply();
+    let supply_with_interest_before_update = pool.total_supply_with_interest(&clock);
+    let true_interest_rate = pool.true_interest_rate();
+
+    // Verify exact calculation with true interest rate
+    assert_eq!(
+        supply_with_interest_before_update,
+        math::mul(raw_supply_before, constants::float_scaling() + true_interest_rate),
+    );
+
+    // Now actually update the state by withdrawing
+    scenario.next_tx(test_constants::user1());
+    let withdrawn = pool.withdraw<USDC>(
+        &registry,
+        &supplier_cap,
+        option::some(1), // Withdraw minimal amount to trigger state update
+        &clock,
+        scenario.ctx(),
+    );
+
+    // After update, raw supply should now include the interest (minus withdrawn amount)
+    let raw_supply_after = pool.total_supply();
+    let withdrawn_amount = withdrawn.value();
+    let expected_supply_after = supply_with_interest_before_update - withdrawn_amount;
+
+    // Verify the supply after update matches our prediction
+    assert_eq!(raw_supply_after, expected_supply_after);
+
+    destroy(withdrawn);
+    destroy(borrowed_coin);
     destroy(supplier_cap);
     test::return_shared(pool);
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);

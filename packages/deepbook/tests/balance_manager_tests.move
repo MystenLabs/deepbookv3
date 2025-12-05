@@ -4,25 +4,20 @@
 #[test_only]
 module deepbook::balance_manager_tests;
 
-use deepbook::balance_manager::{
-    Self,
-    BalanceManager,
-    TradeCap,
-    DepositCap,
-    WithdrawCap,
-    DeepBookReferral
+use deepbook::{
+    balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap, DeepBookReferral},
+    registry
 };
-use sui::{
-    coin::mint_for_testing,
-    sui::SUI,
-    test_scenario::{Scenario, begin, end, return_shared},
-    test_utils
-};
+use std::unit_test::destroy;
+use sui::{coin::mint_for_testing, sui::SUI, test_scenario::{Scenario, begin, end, return_shared}};
 use token::deep::DEEP;
 
 public struct SPAM has store {}
 public struct USDC has store {}
 public struct USDT has store {}
+
+// Unauthorized app for testing
+public struct UnauthorizedApp has drop {}
 
 #[test]
 fun test_deposit_ok() {
@@ -96,7 +91,7 @@ fun test_deposit_as_owner_e() {
     test.next_tx(alice);
     {
         let balance_manager = balance_manager::new(test.ctx());
-        balance_manager_id = object::id(&balance_manager);
+        balance_manager_id = balance_manager.id();
         transfer::public_share_object(balance_manager);
     };
 
@@ -125,7 +120,7 @@ fun test_remove_trader_e() {
     test.next_tx(alice);
     {
         let mut balance_manager = balance_manager::new(test.ctx());
-        balance_manager_id = object::id(&balance_manager);
+        balance_manager_id = balance_manager.id();
         let trade_cap = balance_manager.mint_trade_cap(test.ctx());
         trade_cap_id = object::id(&trade_cap);
         transfer::public_transfer(trade_cap, bob);
@@ -154,7 +149,7 @@ fun test_deposit_with_removed_trader_e() {
     test.next_tx(alice);
     {
         let mut balance_manager = balance_manager::new(test.ctx());
-        balance_manager_id = object::id(&balance_manager);
+        balance_manager_id = balance_manager.id();
         let trade_cap = balance_manager.mint_trade_cap(test.ctx());
         let trade_proof = balance_manager.generate_proof_as_trader(
             &trade_cap,
@@ -204,7 +199,7 @@ fun test_deposit_with_removed_deposit_cap_e() {
     test.next_tx(alice);
     {
         let mut balance_manager = balance_manager::new(test.ctx());
-        balance_manager_id = object::id(&balance_manager);
+        balance_manager_id = balance_manager.id();
         let deposit_cap = balance_manager.mint_deposit_cap(test.ctx());
         deposit_cap_id = object::id(&deposit_cap);
 
@@ -282,7 +277,7 @@ fun test_deposit_with_deposit_cap_ok() {
     test.next_tx(alice);
     {
         let mut balance_manager = balance_manager::new(test.ctx());
-        balance_manager_id = object::id(&balance_manager);
+        balance_manager_id = balance_manager.id();
         let deposit_cap = balance_manager.mint_deposit_cap(test.ctx());
 
         balance_manager.deposit_with_cap<SUI>(
@@ -329,7 +324,7 @@ fun test_withdraw_with_removed_withdraw_cap_e() {
     test.next_tx(alice);
     {
         let mut balance_manager = balance_manager::new(test.ctx());
-        balance_manager_id = object::id(&balance_manager);
+        balance_manager_id = balance_manager.id();
         let withdraw_cap = balance_manager.mint_withdraw_cap(test.ctx());
         withdraw_cap_id = object::id(&withdraw_cap);
         balance_manager.deposit(
@@ -420,7 +415,7 @@ fun test_withdraw_with_withdraw_cap_ok() {
     test.next_tx(alice);
     {
         let mut balance_manager = balance_manager::new(test.ctx());
-        balance_manager_id = object::id(&balance_manager);
+        balance_manager_id = balance_manager.id();
         let withdraw_cap = balance_manager.mint_withdraw_cap(test.ctx());
         balance_manager.deposit(
             mint_for_testing<SUI>(1000, test.ctx()),
@@ -571,7 +566,7 @@ fun test_referral_ok() {
         transfer::public_share_object(balance_manager);
         return_shared(referral1);
         return_shared(referral2);
-        test_utils::destroy(trade_cap);
+        destroy(trade_cap);
     };
 
     end(test);
@@ -589,10 +584,50 @@ fun test_unset_no_referral_ok() {
         assert!(balance_manager.get_referral_id() == option::none(), 0);
 
         transfer::public_share_object(balance_manager);
-        test_utils::destroy(trade_cap);
+        destroy(trade_cap);
     };
 
     end(test);
+}
+
+#[test, expected_failure(abort_code = registry::EAppNotAuthorized)]
+fun test_unauthorized_custom_owner_creation_e() {
+    let mut test = begin(@0xF);
+    let alice = @0xA;
+    let victim = @0xB;
+    let registry_id;
+
+    test.next_tx(alice);
+    {
+        registry_id = registry::test_registry(test.ctx());
+    };
+
+    // Attempt to use unauthorized app
+    test.next_tx(alice);
+    {
+        let deepbook_registry = test.take_shared_by_id<registry::Registry>(registry_id);
+
+        // Attempt to create a BalanceManager with custom owner using unauthorized app
+        // This should fail with EAppNotAuthorized since UnauthorizedApp is not registered
+        let (
+            balance_manager,
+            deposit_cap,
+            withdraw_cap,
+            trade_cap,
+        ) = balance_manager::new_with_custom_owner_caps<UnauthorizedApp>(
+            &deepbook_registry,
+            victim,
+            test.ctx(),
+        );
+
+        transfer::public_share_object(balance_manager);
+        destroy(deposit_cap);
+        destroy(withdraw_cap);
+        destroy(trade_cap);
+        return_shared(deepbook_registry);
+    };
+
+    abort 0
 }
 
 public(package) fun deposit_into_account<T>(
@@ -621,7 +656,7 @@ public(package) fun create_acct_and_share_with_funds(
         deposit_into_account<USDT>(&mut balance_manager, amount, test);
         let trade_cap = balance_manager.mint_trade_cap(test.ctx());
         transfer::public_transfer(trade_cap, sender);
-        let id = object::id(&balance_manager);
+        let id = balance_manager.id();
         transfer::public_share_object(balance_manager);
 
         id
@@ -683,7 +718,7 @@ public(package) fun create_acct_and_share_with_funds_typed<
         );
         let trade_cap = balance_manager.mint_trade_cap(test.ctx());
         transfer::public_transfer(trade_cap, sender);
-        let id = object::id(&balance_manager);
+        let id = balance_manager.id();
         transfer::public_share_object(balance_manager);
 
         id
