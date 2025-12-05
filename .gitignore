@@ -21,4 +21,4 @@ package-lock.json
 **/benchmark_data/
 tx-data.txt
 example.ts
-
+/data

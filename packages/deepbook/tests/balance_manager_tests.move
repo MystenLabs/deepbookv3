@@ -91,7 +91,7 @@ fun test_deposit_as_owner_e() {
     test.next_tx(alice);
     {
         let balance_manager = balance_manager::new(test.ctx());
-        balance_manager_id = object::id(&balance_manager);
+        balance_manager_id = balance_manager.id();
         transfer::public_share_object(balance_manager);
     };
 
@@ -120,7 +120,7 @@ fun test_remove_trader_e() {
     test.next_tx(alice);
     {
         let mut balance_manager = balance_manager::new(test.ctx());
-        balance_manager_id = object::id(&balance_manager);
+        balance_manager_id = balance_manager.id();
         let trade_cap = balance_manager.mint_trade_cap(test.ctx());
         trade_cap_id = object::id(&trade_cap);
         transfer::public_transfer(trade_cap, bob);
@@ -149,7 +149,7 @@ fun test_deposit_with_removed_trader_e() {
     test.next_tx(alice);
     {
         let mut balance_manager = balance_manager::new(test.ctx());
-        balance_manager_id = object::id(&balance_manager);
+        balance_manager_id = balance_manager.id();
         let trade_cap = balance_manager.mint_trade_cap(test.ctx());
         let trade_proof = balance_manager.generate_proof_as_trader(
             &trade_cap,
@@ -199,7 +199,7 @@ fun test_deposit_with_removed_deposit_cap_e() {
     test.next_tx(alice);
     {
         let mut balance_manager = balance_manager::new(test.ctx());
-        balance_manager_id = object::id(&balance_manager);
+        balance_manager_id = balance_manager.id();
         let deposit_cap = balance_manager.mint_deposit_cap(test.ctx());
         deposit_cap_id = object::id(&deposit_cap);
 
@@ -277,7 +277,7 @@ fun test_deposit_with_deposit_cap_ok() {
     test.next_tx(alice);
     {
         let mut balance_manager = balance_manager::new(test.ctx());
-        balance_manager_id = object::id(&balance_manager);
+        balance_manager_id = balance_manager.id();
         let deposit_cap = balance_manager.mint_deposit_cap(test.ctx());
 
         balance_manager.deposit_with_cap<SUI>(
@@ -324,7 +324,7 @@ fun test_withdraw_with_removed_withdraw_cap_e() {
     test.next_tx(alice);
     {
         let mut balance_manager = balance_manager::new(test.ctx());
-        balance_manager_id = object::id(&balance_manager);
+        balance_manager_id = balance_manager.id();
         let withdraw_cap = balance_manager.mint_withdraw_cap(test.ctx());
         withdraw_cap_id = object::id(&withdraw_cap);
         balance_manager.deposit(
@@ -415,7 +415,7 @@ fun test_withdraw_with_withdraw_cap_ok() {
     test.next_tx(alice);
     {
         let mut balance_manager = balance_manager::new(test.ctx());
-        balance_manager_id = object::id(&balance_manager);
+        balance_manager_id = balance_manager.id();
         let withdraw_cap = balance_manager.mint_withdraw_cap(test.ctx());
         balance_manager.deposit(
             mint_for_testing<SUI>(1000, test.ctx()),
@@ -656,7 +656,7 @@ public(package) fun create_acct_and_share_with_funds(
         deposit_into_account<USDT>(&mut balance_manager, amount, test);
         let trade_cap = balance_manager.mint_trade_cap(test.ctx());
         transfer::public_transfer(trade_cap, sender);
-        let id = object::id(&balance_manager);
+        let id = balance_manager.id();
         transfer::public_share_object(balance_manager);
 
         id
@@ -718,7 +718,7 @@ public(package) fun create_acct_and_share_with_funds_typed<
         );
         let trade_cap = balance_manager.mint_trade_cap(test.ctx());
         transfer::public_transfer(trade_cap, sender);
-        let id = object::id(&balance_manager);
+        let id = balance_manager.id();
         transfer::public_share_object(balance_manager);
 
         id

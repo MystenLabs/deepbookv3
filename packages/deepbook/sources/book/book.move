@@ -416,6 +416,36 @@ public(package) fun get_level2_range_and_ticks(
     (price_vec, quantity_vec)
 }
 
+public(package) fun check_limit_order_params(
+    self: &Book,
+    price: u64,
+    quantity: u64,
+    expire_timestamp: u64,
+    timestamp_ms: u64,
+): bool {
+    if (expire_timestamp <= timestamp_ms) {
+        return false
+    };
+    if (quantity < self.min_size || quantity % self.lot_size != 0) {
+        return false
+    };
+    if (
+        price % self.tick_size != 0 || price < constants::min_price() || price > constants::max_price()
+    ) {
+        return false
+    };
+
+    true
+}
+
+public(package) fun check_market_order_params(self: &Book, quantity: u64): bool {
+    if (quantity < self.min_size || quantity % self.lot_size != 0) {
+        return false
+    };
+
+    true
+}
+
 public(package) fun get_order(self: &Book, order_id: u128): Order {
     let order = self.book_side(order_id).borrow(order_id);
 
