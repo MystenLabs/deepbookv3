@@ -283,6 +283,7 @@ public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
 
     let mut cancelled_ids = expired_ids;
     cancelled_ids.append(insufficient_funds_ids);
+    // Canceled orders will include both expired and insufficient funds orders
     cancelled_ids.do!(|id| {
         self.take_profit_stop_loss.cancel_conditional_order(manager_id, id, clock);
     });
