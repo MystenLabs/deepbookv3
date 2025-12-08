@@ -527,6 +527,8 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
 ) {
     registry.load_inner();
     self.validate_owner(ctx);
+    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
+    assert!(pool.id() == self.deepbook_pool, EIncorrectDeepBookPool);
     assert!(self.can_borrow(base_margin_pool), ECannotHaveLoanInMoreThanOneMarginPool);
     assert!(
         base_margin_pool.deepbook_pool_allowed(self.deepbook_pool),
@@ -569,6 +571,8 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
 ) {
     registry.load_inner();
     self.validate_owner(ctx);
+    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
+    assert!(pool.id() == self.deepbook_pool, EIncorrectDeepBookPool);
     assert!(self.can_borrow(quote_margin_pool), ECannotHaveLoanInMoreThanOneMarginPool);
     assert!(
         quote_margin_pool.deepbook_pool_allowed(self.deepbook_pool),
