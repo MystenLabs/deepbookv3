@@ -526,6 +526,7 @@ public fun borrow_base<BaseAsset, QuoteAsset>(
     ctx: &mut TxContext,
 ) {
     registry.load_inner();
+    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
     self.validate_owner(ctx);
     assert!(self.can_borrow(base_margin_pool), ECannotHaveLoanInMoreThanOneMarginPool);
     assert!(
@@ -568,6 +569,7 @@ public fun borrow_quote<BaseAsset, QuoteAsset>(
     ctx: &mut TxContext,
 ) {
     registry.load_inner();
+    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
     self.validate_owner(ctx);
     assert!(self.can_borrow(quote_margin_pool), ECannotHaveLoanInMoreThanOneMarginPool);
     assert!(

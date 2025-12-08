@@ -2507,3 +2507,191 @@ fun test_unregister_margin_manager() {
     assert!(manager_ids.contains(&manager2_id));
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
+
+#[test]
+#[expected_failure(abort_code = margin_manager::EPoolNotEnabledForMarginTrading)]
+fun test_borrow_base_fails_when_pool_disabled() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        _maintainer_cap,
+        btc_pool_id,
+        _usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    // Supply liquidity to BTC pool
+    scenario.next_tx(test_constants::admin());
+    let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let supplier_cap = test_helpers::supply_to_pool(
+        &mut btc_pool,
+        &registry,
+        100 * btc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared_2!(btc_pool, registry);
+    destroy(supplier_cap);
+
+    // Create margin manager and deposit collateral
+    scenario.next_tx(test_constants::user1());
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared_2!(pool, registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let deposit_coin = mint_coin<USDC>(
+        5_000_000 * test_constants::usdc_multiplier(),
+        scenario.ctx(),
+    );
+    mm.deposit<BTC, USDC, USDC>(
+        &registry,
+        &btc_price,
+        &usdc_price,
+        deposit_coin,
+        &clock,
+        scenario.ctx(),
+    );
+    destroy_2!(btc_price, usdc_price);
+    return_shared_2!(mm, registry);
+
+    // Admin disables the deepbook pool
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    registry.disable_deepbook_pool<BTC, USDC>(&admin_cap, &mut pool, &clock);
+    return_shared_2!(registry, pool);
+
+    // User1 tries to borrow BTC - this should fail with EPoolNotEnabledForMarginTrading
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+    let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.borrow_base<BTC, USDC>(
+        &registry,
+        &mut btc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        10 * btc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Cleanup (unreachable due to expected failure above)
+    abort 0
+}
+
+#[test]
+#[expected_failure(abort_code = margin_manager::EPoolNotEnabledForMarginTrading)]
+fun test_borrow_quote_fails_when_pool_disabled() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        _maintainer_cap,
+        _btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    // Supply liquidity to USDC pool
+    scenario.next_tx(test_constants::admin());
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let supplier_cap = test_helpers::supply_to_pool(
+        &mut usdc_pool,
+        &registry,
+        10_000_000 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared_2!(usdc_pool, registry);
+    destroy(supplier_cap);
+
+    // Create margin manager and deposit collateral
+    scenario.next_tx(test_constants::user1());
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared_2!(pool, registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let deposit_coin = mint_coin<BTC>(
+        10 * btc_multiplier(),
+        scenario.ctx(),
+    );
+    mm.deposit<BTC, USDC, BTC>(
+        &registry,
+        &btc_price,
+        &usdc_price,
+        deposit_coin,
+        &clock,
+        scenario.ctx(),
+    );
+    destroy_2!(btc_price, usdc_price);
+    return_shared_2!(mm, registry);
+
+    // Admin disables the deepbook pool
+    scenario.next_tx(test_constants::admin());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    registry.disable_deepbook_pool<BTC, USDC>(&admin_cap, &mut pool, &clock);
+    return_shared_2!(registry, pool);
+
+    // User1 tries to borrow USDC - this should fail with EPoolNotEnabledForMarginTrading
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.borrow_quote<BTC, USDC>(
+        &registry,
+        &mut usdc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        100_000 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Cleanup (unreachable due to expected failure above)
+    abort 0
+}
