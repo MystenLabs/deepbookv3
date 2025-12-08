@@ -13,8 +13,8 @@ use deepbook_schema::models::{
     AssetSupplied, AssetWithdrawn, BalancesSummary, DeepbookPoolConfigUpdated,
     DeepbookPoolRegistered, DeepbookPoolUpdated, DeepbookPoolUpdatedRegistry,
     InterestParamsUpdated, Liquidation, LoanBorrowed, LoanRepaid, MaintainerCapUpdated,
-    MaintainerFeesWithdrawn, MarginManagerCreated, MarginPoolConfigUpdated, MarginPoolCreated,
-    PauseCapUpdated, Pools, ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn,
+    MaintainerFeesWithdrawn, MarginManagerCreated, MarginManagerState, MarginPoolConfigUpdated,
+    MarginPoolCreated, PauseCapUpdated, Pools, ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn,
     ReferralFeesClaimedEvent, SupplierCapMinted, SupplyReferralMinted,
 };
 use deepbook_schema::*;
@@ -1689,10 +1689,7 @@ async fn margin_manager_created(
         .start_time()
         .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
     let limit = params.limit();
-    let margin_manager_id_filter = params
-        .get("margin_manager_id")
-        .cloned()
-        .unwrap_or_default();
+    let margin_manager_id_filter = params.get("margin_manager_id").cloned().unwrap_or_default();
 
     let results = state
         .reader
@@ -1711,10 +1708,7 @@ async fn loan_borrowed(
         .start_time()
         .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
     let limit = params.limit();
-    let margin_manager_id_filter = params
-        .get("margin_manager_id")
-        .cloned()
-        .unwrap_or_default();
+    let margin_manager_id_filter = params.get("margin_manager_id").cloned().unwrap_or_default();
     let margin_pool_id_filter = params.get("margin_pool_id").cloned().unwrap_or_default();
 
     let results = state
@@ -1740,10 +1734,7 @@ async fn loan_repaid(
         .start_time()
         .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
     let limit = params.limit();
-    let margin_manager_id_filter = params
-        .get("margin_manager_id")
-        .cloned()
-        .unwrap_or_default();
+    let margin_manager_id_filter = params.get("margin_manager_id").cloned().unwrap_or_default();
     let margin_pool_id_filter = params.get("margin_pool_id").cloned().unwrap_or_default();
 
     let results = state
@@ -2209,7 +2200,7 @@ async fn margin_managers_info(
 async fn margin_manager_states(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<serde_json::Value>>, DeepBookError> {
+) -> Result<Json<Vec<MarginManagerState>>, DeepBookError> {
     let max_risk_ratio = params
         .get("max_risk_ratio")
         .and_then(|v| v.parse::<f64>().ok());

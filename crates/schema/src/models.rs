@@ -18,6 +18,7 @@ use crate::schema::{
     maintainer_fees_withdrawn,
     // Margin Manager Events
     margin_manager_created,
+    margin_manager_state,
     margin_pool_config_updated,
     // Margin Pool Admin Events
     margin_pool_created,
@@ -38,15 +39,36 @@ use crate::schema::{
     trade_params_update,
     votes,
 };
+use bigdecimal::BigDecimal;
 use diesel::deserialize::FromSql;
 use diesel::pg::{Pg, PgValue};
 use diesel::serialize::{Output, ToSql};
 use diesel::sql_types::Text;
 use diesel::{AsExpression, Identifiable, Insertable, Queryable, QueryableByName, Selectable};
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 use std::str::FromStr;
 use strum_macros::{AsRefStr, EnumString};
 use sui_field_count::FieldCount;
+
+fn serialize_bigdecimal_option<S>(
+    value: &Option<BigDecimal>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match value {
+        Some(v) => serializer.serialize_some(&v.to_string()),
+        None => serializer.serialize_none(),
+    }
+}
+
+fn serialize_datetime<S>(value: &chrono::NaiveDateTime, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&value.to_string())
+}
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
 #[diesel(table_name = order_updates, primary_key(event_digest))]
@@ -629,4 +651,37 @@ pub struct ReferralFeesClaimedEvent {
     pub owner: String,
     pub fees: i64,
     pub onchain_timestamp: i64,
+}
+
+// === Margin Manager State ===
+#[derive(Queryable, Selectable, Identifiable, Debug, Serialize)]
+#[diesel(table_name = margin_manager_state)]
+pub struct MarginManagerState {
+    pub id: i32,
+    pub margin_manager_id: String,
+    pub deepbook_pool_id: String,
+    pub base_margin_pool_id: Option<String>,
+    pub quote_margin_pool_id: Option<String>,
+    pub base_asset_id: Option<String>,
+    pub base_asset_symbol: Option<String>,
+    pub quote_asset_id: Option<String>,
+    pub quote_asset_symbol: Option<String>,
+    #[serde(serialize_with = "serialize_bigdecimal_option")]
+    pub risk_ratio: Option<BigDecimal>,
+    #[serde(serialize_with = "serialize_bigdecimal_option")]
+    pub base_asset: Option<BigDecimal>,
+    #[serde(serialize_with = "serialize_bigdecimal_option")]
+    pub quote_asset: Option<BigDecimal>,
+    #[serde(serialize_with = "serialize_bigdecimal_option")]
+    pub base_debt: Option<BigDecimal>,
+    #[serde(serialize_with = "serialize_bigdecimal_option")]
+    pub quote_debt: Option<BigDecimal>,
+    pub base_pyth_price: Option<i64>,
+    pub base_pyth_decimals: Option<i32>,
+    pub quote_pyth_price: Option<i64>,
+    pub quote_pyth_decimals: Option<i32>,
+    #[serde(serialize_with = "serialize_datetime")]
+    pub created_at: chrono::NaiveDateTime,
+    #[serde(serialize_with = "serialize_datetime")]
+    pub updated_at: chrono::NaiveDateTime,
 }

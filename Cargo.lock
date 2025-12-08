@@ -2129,6 +2129,8 @@ dependencies = [
 name = "deepbook-schema"
 version = "0.1.0"
 dependencies = [
+ "bigdecimal",
+ "chrono",
  "diesel",
  "diesel_migrations",
  "serde",
