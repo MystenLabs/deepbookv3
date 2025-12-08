@@ -1,21 +1,21 @@
 {
-    "name": "scripts",
-    "version": "1.0.0",
-    "description": "",
-    "main": "index.js",
-    "scripts": {
-        "test": "echo \"Error: no test specified\" && exit 1",
-        "create-pool": "pnpm tsx transactions/createPool.ts"
-    },
-    "keywords": [],
-    "author": "",
-    "license": "ISC",
-    "dependencies": {
-        "@mysten/deepbook-v3": "^0.15.16",
-        "@mysten/sui": "^1.45.2",
-        "dotenv": "^16.6.1",
-        "esbuild": "^0.20.2",
-        "ts-node": "^10.9.2",
-        "tsx": "^4.21.0"
-    }
+  "name": "scripts",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "create-pool": "pnpm tsx transactions/createPool.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@mysten/deepbook-v3": "^0.15.16",
+    "@mysten/sui": "1.37.4",
+    "dotenv": "^16.6.1",
+    "esbuild": "^0.20.2",
+    "ts-node": "^10.9.2",
+    "tsx": "^4.21.0"
+  }
 }
