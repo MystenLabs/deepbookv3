@@ -1,35 +1,40 @@
 use crate::DeepbookEnv;
+use std::sync::Arc;
 use sui_types::full_checkpoint_content::{CheckpointData, CheckpointTransaction};
 use sui_types::transaction::{Command, TransactionDataAPI};
 
 /// Captures common transaction metadata for event processing.
 /// Used by the `define_handler!` macro to avoid repetitive field extraction.
-#[derive(Clone)]
 pub struct EventMeta {
-    digest: String,
-    sender: String,
+    digest: Arc<str>,
+    sender: Arc<str>,
     checkpoint: i64,
     checkpoint_timestamp_ms: i64,
-    package: String,
+    package: Arc<str>,
     event_index: usize,
 }
 
 impl EventMeta {
     pub fn from_checkpoint_tx(checkpoint: &CheckpointData, tx: &CheckpointTransaction) -> Self {
         Self {
-            digest: tx.transaction.digest().to_string(),
-            sender: tx.transaction.sender_address().to_string(),
+            digest: tx.transaction.digest().to_string().into(),
+            sender: tx.transaction.sender_address().to_string().into(),
             checkpoint: checkpoint.checkpoint_summary.sequence_number as i64,
             checkpoint_timestamp_ms: checkpoint.checkpoint_summary.timestamp_ms as i64,
-            package: try_extract_move_call_package(tx).unwrap_or_default(),
+            package: try_extract_move_call_package(tx).unwrap_or_default().into(),
             event_index: 0,
         }
     }
 
     pub fn with_index(&self, index: usize) -> Self {
-        let mut meta = self.clone();
-        meta.event_index = index;
-        meta
+        Self {
+            digest: Arc::clone(&self.digest),
+            sender: Arc::clone(&self.sender),
+            checkpoint: self.checkpoint,
+            checkpoint_timestamp_ms: self.checkpoint_timestamp_ms,
+            package: Arc::clone(&self.package),
+            event_index: index,
+        }
     }
 
     pub fn event_digest(&self) -> String {
@@ -37,11 +42,11 @@ impl EventMeta {
     }
 
     pub fn digest(&self) -> String {
-        self.digest.clone()
+        self.digest.to_string()
     }
 
     pub fn sender(&self) -> String {
-        self.sender.clone()
+        self.sender.to_string()
     }
 
     pub fn checkpoint(&self) -> i64 {
@@ -53,7 +58,7 @@ impl EventMeta {
     }
 
     pub fn package(&self) -> String {
-        self.package.clone()
+        self.package.to_string()
     }
 }
 
@@ -122,6 +127,7 @@ macro_rules! define_handler {
                             let $ev: $event = bcs::from_bytes(&ev.contents)?;
                             let $meta = base_meta.with_index(index);
                             results.push($body);
+                            tracing::debug!("Observed {} event", $proc_name);
                         }
                     }
                 }
