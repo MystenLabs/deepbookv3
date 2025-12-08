@@ -1,6 +1,158 @@
 use crate::DeepbookEnv;
-use sui_types::full_checkpoint_content::CheckpointTransaction;
+use std::sync::Arc;
+use sui_types::full_checkpoint_content::{CheckpointData, CheckpointTransaction};
 use sui_types::transaction::{Command, TransactionDataAPI};
+
+/// Captures common transaction metadata for event processing.
+/// Used by the `define_handler!` macro to avoid repetitive field extraction.
+pub struct EventMeta {
+    digest: Arc<str>,
+    sender: Arc<str>,
+    checkpoint: i64,
+    checkpoint_timestamp_ms: i64,
+    package: Arc<str>,
+    event_index: usize,
+}
+
+impl EventMeta {
+    pub fn from_checkpoint_tx(checkpoint: &CheckpointData, tx: &CheckpointTransaction) -> Self {
+        Self {
+            digest: tx.transaction.digest().to_string().into(),
+            sender: tx.transaction.sender_address().to_string().into(),
+            checkpoint: checkpoint.checkpoint_summary.sequence_number as i64,
+            checkpoint_timestamp_ms: checkpoint.checkpoint_summary.timestamp_ms as i64,
+            package: try_extract_move_call_package(tx).unwrap_or_default().into(),
+            event_index: 0,
+        }
+    }
+
+    pub fn with_index(&self, index: usize) -> Self {
+        Self {
+            digest: Arc::clone(&self.digest),
+            sender: Arc::clone(&self.sender),
+            checkpoint: self.checkpoint,
+            checkpoint_timestamp_ms: self.checkpoint_timestamp_ms,
+            package: Arc::clone(&self.package),
+            event_index: index,
+        }
+    }
+
+    pub fn event_digest(&self) -> String {
+        format!("{}{}", self.digest, self.event_index)
+    }
+
+    pub fn digest(&self) -> String {
+        self.digest.to_string()
+    }
+
+    pub fn sender(&self) -> String {
+        self.sender.to_string()
+    }
+
+    pub fn checkpoint(&self) -> i64 {
+        self.checkpoint
+    }
+
+    pub fn checkpoint_timestamp_ms(&self) -> i64 {
+        self.checkpoint_timestamp_ms
+    }
+
+    pub fn package(&self) -> String {
+        self.package.to_string()
+    }
+}
+
+/// Macro to generate a complete handler from minimal configuration.
+///
+/// This macro generates the handler struct, constructor, `Processor` impl,
+/// and `Handler` impl from a declarative specification.
+///
+/// # Example
+/// ```ignore
+/// define_handler! {
+///     name: BalancesHandler,
+///     processor_name: "balances",
+///     event_type: BalanceEvent,
+///     db_model: Balances,
+///     table: balances,
+///     map_event: |event, meta| Balances {
+///         event_digest: meta.event_digest(),
+///         digest: meta.digest(),
+///         // ... field mappings
+///     }
+/// }
+/// ```
+#[macro_export]
+macro_rules! define_handler {
+    {
+        name: $handler:ident,
+        processor_name: $proc_name:literal,
+        event_type: $event:ty,
+        db_model: $model:ty,
+        table: $table:ident,
+        map_event: |$ev:ident, $meta:ident| $body:expr
+    } => {
+        pub struct $handler {
+            env: $crate::DeepbookEnv,
+        }
+
+        impl $handler {
+            pub fn new(env: $crate::DeepbookEnv) -> Self {
+                Self { env }
+            }
+        }
+
+        impl sui_indexer_alt_framework::pipeline::Processor for $handler {
+            const NAME: &'static str = $proc_name;
+            type Value = $model;
+
+            fn process(
+                &self,
+                checkpoint: &std::sync::Arc<sui_types::full_checkpoint_content::CheckpointData>,
+            ) -> anyhow::Result<Vec<Self::Value>> {
+                use $crate::handlers::{is_deepbook_tx, EventMeta};
+                use $crate::traits::MoveStruct;
+
+                let mut results = vec![];
+                for tx in &checkpoint.transactions {
+                    if !is_deepbook_tx(tx, self.env) {
+                        continue;
+                    }
+                    let Some(events) = &tx.events else { continue };
+
+                    let base_meta = EventMeta::from_checkpoint_tx(checkpoint, tx);
+
+                    for (index, ev) in events.data.iter().enumerate() {
+                        if <$event>::matches_event_type(&ev.type_, self.env) {
+                            let $ev: $event = bcs::from_bytes(&ev.contents)?;
+                            let $meta = base_meta.with_index(index);
+                            results.push($body);
+                            tracing::debug!("Observed {} event", $proc_name);
+                        }
+                    }
+                }
+                Ok(results)
+            }
+        }
+
+        #[async_trait::async_trait]
+        impl sui_indexer_alt_framework::pipeline::concurrent::Handler for $handler {
+            type Store = sui_pg_db::Db;
+
+            async fn commit<'a>(
+                values: &[Self::Value],
+                conn: &mut sui_pg_db::Connection<'a>,
+            ) -> anyhow::Result<usize> {
+                use diesel_async::RunQueryDsl;
+                Ok(diesel::insert_into(deepbook_schema::schema::$table::table)
+                    .values(values)
+                    .on_conflict_do_nothing()
+                    .execute(conn)
+                    .await?)
+            }
+        }
+    };
+}
 pub mod asset_supplied_handler;
 pub mod asset_withdrawn_handler;
 pub mod balances_handler;
