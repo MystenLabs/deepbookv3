@@ -484,6 +484,9 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
         base_pyth_decimals,
         quote_pyth_price,
         quote_pyth_decimals,
+        _,
+        _,
+        _,
     ) = self.manager_state(
         registry,
         base_oracle,
