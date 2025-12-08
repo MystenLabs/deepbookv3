@@ -484,6 +484,9 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
         base_pyth_decimals,
         quote_pyth_price,
         quote_pyth_decimals,
+        _,
+        _,
+        _,
     ) = self.manager_state(
         registry,
         base_oracle,
@@ -932,8 +935,8 @@ public fun calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
 /// Returns comprehensive state information for a margin manager.
 /// Returns (manager_id, deepbook_pool_id, risk_ratio, base_asset, quote_asset,
 ///          base_debt, quote_debt, base_pyth_price, base_pyth_decimals,
-///          quote_pyth_price, quote_pyth_decimals)
-/// TODO: include two triggers, current_price calculation
+///          quote_pyth_price, quote_pyth_decimals, current_price,
+///          lowest_trigger_above_price, highest_trigger_below_price)
 public fun manager_state<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -943,7 +946,7 @@ public fun manager_state<BaseAsset, QuoteAsset>(
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
     clock: &Clock,
-): (ID, ID, u64, u64, u64, u64, u64, u64, u8, u64, u8) {
+): (ID, ID, u64, u64, u64, u64, u64, u64, u8, u64, u8, u64, u64, u64) {
     let manager_id = self.id();
     let deepbook_pool_id = self.deepbook_pool;
     let (base_asset, quote_asset) = self.calculate_assets(pool);
@@ -978,6 +981,18 @@ public fun manager_state<BaseAsset, QuoteAsset>(
         clock,
     );
 
+    // Calculate current price
+    let current_price = calculate_price<BaseAsset, QuoteAsset>(
+        registry,
+        base_oracle,
+        quote_oracle,
+        clock,
+    );
+
+    // Get the lowest trigger above price and highest trigger below price
+    let lowest_trigger_above_price = self.lowest_trigger_above_price();
+    let highest_trigger_below_price = self.highest_trigger_below_price();
+
     (
         manager_id,
         deepbook_pool_id,
@@ -990,6 +1005,9 @@ public fun manager_state<BaseAsset, QuoteAsset>(
         base_pyth_decimals,
         quote_pyth_price,
         quote_pyth_decimals,
+        current_price,
+        lowest_trigger_above_price,
+        highest_trigger_below_price,
     )
 }
 
@@ -1067,7 +1085,7 @@ public fun conditional_order<BaseAsset, QuoteAsset>(
 
 /// Returns the lowest trigger price for trigger_above orders
 /// Returns constants::max_u64() if there are no trigger_above orders
-public fun lowest_trigger_price_above<BaseAsset, QuoteAsset>(
+public fun lowest_trigger_above_price<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
 ): u64 {
     let trigger_above = self.take_profit_stop_loss.trigger_above_orders();
@@ -1080,7 +1098,7 @@ public fun lowest_trigger_price_above<BaseAsset, QuoteAsset>(
 
 /// Returns the highest trigger price for trigger_below orders
 /// Returns 0 if there are no trigger_below orders
-public fun highest_trigger_price_below<BaseAsset, QuoteAsset>(
+public fun highest_trigger_below_price<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
 ): u64 {
     let trigger_below = self.take_profit_stop_loss.trigger_below_orders();

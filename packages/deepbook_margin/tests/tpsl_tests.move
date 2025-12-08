@@ -721,7 +721,7 @@ fun test_tpsl_orders_sorted_correctly() {
 
 #[test]
 fun test_tpsl_trigger_price_getters() {
-    // This test verifies the lowest_trigger_price_above and highest_trigger_price_below functions:
+    // This test verifies the lowest_trigger_above_price and highest_trigger_below_price functions:
     // - Returns default values when no orders exist
     // - Returns correct values from the first element of each sorted vector
 
@@ -756,8 +756,8 @@ fun test_tpsl_trigger_price_getters() {
     let pool = scenario.take_shared<Pool<SUI, USDC>>();
 
     // Verify default values when no orders exist
-    assert!(mm.lowest_trigger_price_above() == constants::max_u64());
-    assert!(mm.highest_trigger_price_below() == 0);
+    assert!(mm.lowest_trigger_above_price() == constants::max_u64());
+    assert!(mm.highest_trigger_below_price() == 0);
 
     // Initial prices: SUI = $2.00, USDC = $1.00
     let sui_price = build_sui_price_info_object_with_price(&mut scenario, 200, &clock); // $2.00
@@ -775,7 +775,7 @@ fun test_tpsl_trigger_price_getters() {
 
     // Add 4 trigger_below orders at different prices (intentionally out of order)
     // After insertion, they will be sorted high to low: $1.80, $1.50, $1.20, $0.90
-    // highest_trigger_price_below should return the first element: $1.80
+    // highest_trigger_below_price should return the first element: $1.80
     let trigger_prices_below = vector[
         1_500_000_000_000, // $1.50
         900_000_000_000, // $0.90
@@ -814,14 +814,14 @@ fun test_tpsl_trigger_price_getters() {
         i = i + 1;
     };
 
-    // Verify highest_trigger_price_below returns the highest price (first element)
-    assert!(mm.highest_trigger_price_below() == 1_800_000_000_000); // $1.80
-    // lowest_trigger_price_above should still be default (no trigger_above orders yet)
-    assert!(mm.lowest_trigger_price_above() == constants::max_u64());
+    // Verify highest_trigger_below_price returns the highest price (first element)
+    assert!(mm.highest_trigger_below_price() == 1_800_000_000_000); // $1.80
+    // lowest_trigger_above_price should still be default (no trigger_above orders yet)
+    assert!(mm.lowest_trigger_above_price() == constants::max_u64());
 
     // Add 4 trigger_above orders at different prices (intentionally out of order)
     // After insertion, they will be sorted low to high: $2.20, $2.50, $2.80, $3.10
-    // lowest_trigger_price_above should return the first element: $2.20
+    // lowest_trigger_above_price should return the first element: $2.20
     let trigger_prices_above = vector[
         2_500_000_000_000, // $2.50
         3_100_000_000_000, // $3.10
@@ -861,8 +861,8 @@ fun test_tpsl_trigger_price_getters() {
     };
 
     // Verify both getters return the correct first elements
-    assert!(mm.highest_trigger_price_below() == 1_800_000_000_000); // $1.80 (highest in trigger_below)
-    assert!(mm.lowest_trigger_price_above() == 2_200_000_000_000); // $2.20 (lowest in trigger_above)
+    assert!(mm.highest_trigger_below_price() == 1_800_000_000_000); // $1.80 (highest in trigger_below)
+    assert!(mm.lowest_trigger_above_price() == 2_200_000_000_000); // $2.20 (lowest in trigger_above)
 
     // Verify all orders are present
     assert!(mm.conditional_order_ids().length() == 8);
@@ -1486,8 +1486,8 @@ fun test_tpsl_cancel_all_conditional_orders() {
     assert!(mm.conditional_order_ids().length() == 0);
 
     // Verify trigger price getters return default values
-    assert!(mm.lowest_trigger_price_above() == constants::max_u64());
-    assert!(mm.highest_trigger_price_below() == 0);
+    assert!(mm.lowest_trigger_above_price() == constants::max_u64());
+    assert!(mm.highest_trigger_below_price() == 0);
 
     destroy_2!(sui_price, usdc_price);
     return_shared_2!(mm, pool);
