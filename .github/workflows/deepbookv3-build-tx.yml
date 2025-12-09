@@ -80,7 +80,7 @@ jobs:
           ORIGIN: gh_action
           RPC_URL: ${{ inputs.rpc }}
         run: |
-          cd scripts && pnpm ts-node transactions/mainPackageUpgrade.ts
+          cd scripts && pnpm install && pnpm ts-node transactions/mainPackageUpgrade.ts
 
       - name: Create Pool
         if: ${{ inputs.transaction_type == 'Create Pool' }}

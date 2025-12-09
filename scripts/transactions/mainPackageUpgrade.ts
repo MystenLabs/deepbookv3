@@ -20,7 +20,7 @@ const mainPackageUpgrade = async () => {
   const currentDir = process.cwd();
   const deepbookDir = `${currentDir}/../packages/deepbook`;
   const txFilePath = `${currentDir}/tx/tx-data.txt`;
-  const upgradeCall = `sui client upgrade --upgrade-capability ${upgradeCapID[network]} --gas-budget 2000000000 --gas ${gasObjectId} --skip-dependency-verification --serialize-unsigned-transaction`;
+  const upgradeCall = `sui client upgrade --upgrade-capability ${upgradeCapID[network]} --gas-budget 2000000000 --gas ${gasObjectId} --serialize-unsigned-transaction`;
 
   try {
     // Execute the command with the specified working directory and capture the output
