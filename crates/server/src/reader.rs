@@ -207,7 +207,7 @@ impl Reader {
             ));
         self.first(query)
             .await
-            .map_err(|_| DeepBookError::InternalError(format!("Pool '{}' not found", pool_name)))
+            .map_err(|_| DeepBookError::not_found(format!("Pool '{}'", pool_name)))
     }
 
     pub async fn get_orders(
@@ -296,8 +296,8 @@ impl Reader {
             )>(&mut connection)
             .await
             .map_err(|_| {
-                DeepBookError::InternalError(format!(
-                    "No trades found for pool '{}' in the specified time range",
+                DeepBookError::not_found(format!(
+                    "Trades for pool '{}' in the specified time range",
                     pool_name
                 ))
             });
@@ -351,7 +351,7 @@ impl Reader {
         let res = query
             .load::<(String, i64, i64, i64, i64, i64, bool, String, String)>(&mut connection)
             .await
-            .map_err(|_| DeepBookError::InternalError("Error fetching trade details".to_string()));
+            .map_err(|_| DeepBookError::database("Error fetching trade details"));
 
         if res.is_ok() {
             self.metrics.db_requests_succeeded.inc();
@@ -390,7 +390,7 @@ impl Reader {
         let res = diesel::sql_query(query_str)
             .load::<OhclvRow>(&mut connection)
             .await
-            .map_err(|e| DeepBookError::InternalError(format!("Error fetching OHCLV data: {}", e)))
+            .map_err(|e| DeepBookError::database(format!("Error fetching OHCLV data: {}", e)))
             .map(|rows| {
                 rows.into_iter()
                     .map(|row| {
@@ -974,9 +974,7 @@ impl Reader {
                     })
                     .collect()
             })
-            .map_err(|_| {
-                DeepBookError::InternalError("Error fetching margin managers info".to_string())
-            });
+            .map_err(|_| DeepBookError::database("Error fetching margin managers info"));
 
         if res.is_ok() {
             self.metrics.db_requests_succeeded.inc();
@@ -1020,9 +1018,7 @@ impl Reader {
             self.metrics.db_requests_failed.inc();
         }
 
-        res.map_err(|_| {
-            DeepBookError::InternalError("Error fetching margin manager states".to_string())
-        })
+        res.map_err(|_| DeepBookError::database("Error fetching margin manager states"))
     }
 
     pub async fn get_watermarks(&self) -> Result<Vec<(String, i64, i64, i64)>, DeepBookError> {
@@ -1038,7 +1034,7 @@ impl Reader {
             ))
             .load::<(String, i64, i64, i64)>(&mut connection)
             .await
-            .map_err(|_| DeepBookError::InternalError("Error fetching watermarks".to_string()));
+            .map_err(|_| DeepBookError::database("Error fetching watermarks"));
 
         if res.is_ok() {
             self.metrics.db_requests_succeeded.inc();
