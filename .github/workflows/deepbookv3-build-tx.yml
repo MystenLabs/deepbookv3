@@ -34,7 +34,7 @@ on:
 jobs:
   deepbook:
     name: deepbook create tx
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
 
     steps:
       - name: Selected transaction type
