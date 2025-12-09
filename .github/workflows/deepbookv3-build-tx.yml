@@ -71,6 +71,12 @@ jobs:
         run: |
           pnpm install
 
+      - name: Clear Move cache (prevent segfault)
+        if: ${{ inputs.transaction_type == 'Upgrade Protocol' }}
+        run: |
+          rm -rf ~/.move
+          echo "Move cache cleared"
+
       - name: Upgrade Protocol
         if: ${{ inputs.transaction_type == 'Upgrade Protocol' }}
         env:
@@ -79,6 +85,7 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
           RPC_URL: ${{ inputs.rpc }}
+          NODE_OPTIONS: --max-old-space-size=4096
         run: |
           cd scripts && pnpm install && pnpm ts-node transactions/mainPackageUpgrade.ts
 
