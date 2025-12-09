@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execSync } from "child_process";
+import { writeFileSync } from "fs";
 import { upgradeCapID } from "../config/constants";
 
 const network = "mainnet";
@@ -16,14 +17,19 @@ const mainPackageUpgrade = async () => {
   if (!gasObjectId)
     throw new Error("No gas object supplied for a mainnet transaction");
 
-  const upgradeCall = `sui client upgrade --upgrade-capability ${upgradeCapID[network]} --gas-budget 1000000000 --gas ${gasObjectId} --serialize-unsigned-transaction`;
+  const currentDir = process.cwd();
+  const deepbookDir = `${currentDir}/../packages/deepbook`;
+  const txFilePath = `${currentDir}/tx/tx-data.txt`;
+  const upgradeCall = `sui client upgrade --upgrade-capability ${upgradeCapID[network]} --gas-budget 2000000000 --gas ${gasObjectId} --skip-dependency-verification --serialize-unsigned-transaction`;
 
   try {
     // Execute the command with the specified working directory and capture the output
-    execSync(
-      `cd $PWD/../packages/deepbook && ${upgradeCall} > $PWD/../../scripts/tx/tx-data.txt`
-    );
+    const output = execSync(upgradeCall, {
+      cwd: deepbookDir,
+      stdio: "pipe",
+    }).toString();
 
+    writeFileSync(txFilePath, output);
     console.log(
       "Upgrade transaction successfully created and saved to tx-data.txt"
     );
