@@ -71,31 +71,6 @@ jobs:
         run: |
           pnpm install
 
-      - name: Debug - Show environment info
-        if: ${{ inputs.transaction_type == 'Upgrade Protocol' }}
-        run: |
-          echo "=== Current Directory ==="
-          pwd
-          echo ""
-          echo "=== Workspace Contents ==="
-          ls -la
-          echo ""
-          echo "=== Packages Directory ==="
-          ls -la packages/
-          echo ""
-          echo "=== DeepBook Package ==="
-          ls -la packages/deepbook/
-          echo ""
-          echo "=== Move.toml Contents ==="
-          cat packages/deepbook/Move.toml
-          echo ""
-          echo "=== Sui Version ==="
-          sui --version
-          echo ""
-          echo "=== Sui Client Info ==="
-          sui client active-env
-          sui client active-address
-
       - name: Upgrade Protocol
         if: ${{ inputs.transaction_type == 'Upgrade Protocol' }}
         env:
@@ -105,7 +80,7 @@ jobs:
           ORIGIN: gh_action
           RPC_URL: ${{ inputs.rpc }}
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/mainPackageUpgrade.ts
+          cd scripts && pnpm ts-node transactions/mainPackageUpgrade.ts
 
       - name: Create Pool
         if: ${{ inputs.transaction_type == 'Create Pool' }}
