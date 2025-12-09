@@ -293,9 +293,7 @@ async fn status(
         .read_api()
         .get_latest_checkpoint_sequence_number()
         .await
-        .map_err(|e| {
-            DeepBookError::rpc(format!("Failed to get latest checkpoint: {}", e))
-        })?;
+        .map_err(|e| DeepBookError::rpc(format!("Failed to get latest checkpoint: {}", e)))?;
 
     // Get current timestamp
     let current_time_ms = SystemTime::now()
@@ -524,7 +522,9 @@ async fn get_historical_volume_by_balance_manager_id_with_interval(
         .unwrap_or(3600); // Default interval: 1 hour
 
     if interval <= 0 {
-        return Err(DeepBookError::bad_request("Interval must be greater than 0"));
+        return Err(DeepBookError::bad_request(
+            "Interval must be greater than 0",
+        ));
     }
 
     let interval_ms = interval * 1000;
@@ -1170,10 +1170,11 @@ pub async fn assets(
         Option<String>,
         Option<String>,
         String,
-    )> =
-        state.reader.results(query).await.map_err(|err| {
-            DeepBookError::rpc(format!("Failed to query assets: {}", err))
-        })?;
+    )> = state
+        .reader
+        .results(query)
+        .await
+        .map_err(|err| DeepBookError::rpc(format!("Failed to query assets: {}", err)))?;
     let mut response = HashMap::new();
 
     for (symbol, name, ucid, package_address_url, package_id, asset_type) in assets {
@@ -1216,9 +1217,7 @@ async fn orderbook(
         .get("depth")
         .map(|v| v.parse::<u64>())
         .transpose()
-        .map_err(|_| {
-            DeepBookError::bad_request("Depth must be a non-negative integer")
-        })?
+        .map_err(|_| DeepBookError::bad_request("Depth must be a non-negative integer"))?
         .map(|depth| if depth == 0 { 200 } else { depth });
 
     if let Some(depth) = depth {
@@ -1273,22 +1272,18 @@ async fn orderbook(
         .read_api()
         .get_object_with_options(pool_address, SuiObjectDataOptions::full_content())
         .await?;
-    let pool_data: &SuiObjectData =
-        pool_object
-            .data
-            .as_ref()
-            .ok_or(DeepBookError::rpc(format!(
-                "Missing data in pool object response for '{}'",
-                pool_name
-            )))?;
+    let pool_data: &SuiObjectData = pool_object.data.as_ref().ok_or(DeepBookError::rpc(
+        format!("Missing data in pool object response for '{}'", pool_name),
+    ))?;
     let pool_object_ref: ObjectRef = (pool_data.object_id, pool_data.version, pool_data.digest);
 
     let pool_input = CallArg::Object(ObjectArg::ImmOrOwnedObject(pool_object_ref));
     ptb.input(pool_input)?;
 
-    let input_argument = CallArg::Pure(bcs::to_bytes(&ticks_from_mid).map_err(|_| {
-        DeepBookError::internal("Failed to serialize ticks_from_mid")
-    })?);
+    let input_argument = CallArg::Pure(
+        bcs::to_bytes(&ticks_from_mid)
+            .map_err(|_| DeepBookError::internal("Failed to serialize ticks_from_mid"))?,
+    );
     ptb.input(input_argument)?;
 
     let sui_clock_object_id = ObjectID::from_hex_literal(
@@ -1298,11 +1293,10 @@ async fn orderbook(
         .read_api()
         .get_object_with_options(sui_clock_object_id, SuiObjectDataOptions::full_content())
         .await?;
-    let clock_data: &SuiObjectData =
-        sui_clock_object
-            .data
-            .as_ref()
-            .ok_or(DeepBookError::rpc("Missing data in clock object response"))?;
+    let clock_data: &SuiObjectData = sui_clock_object
+        .data
+        .as_ref()
+        .ok_or(DeepBookError::rpc("Missing data in clock object response"))?;
 
     let sui_clock_object_ref: ObjectRef =
         (clock_data.object_id, clock_data.version, clock_data.digest);
@@ -1334,9 +1328,9 @@ async fn orderbook(
         .dev_inspect_transaction_block(SuiAddress::default(), tx, None, None, None)
         .await?;
 
-    let mut binding = result
-        .results
-        .ok_or(DeepBookError::rpc("No results from dev_inspect_transaction_block"))?;
+    let mut binding = result.results.ok_or(DeepBookError::rpc(
+        "No results from dev_inspect_transaction_block",
+    ))?;
     let bid_prices = &binding
         .first_mut()
         .ok_or(DeepBookError::rpc("No return values for bid prices"))?
@@ -1431,11 +1425,10 @@ async fn deep_supply(
             SuiObjectDataOptions::full_content(),
         )
         .await?;
-    let deep_treasury_data: &SuiObjectData =
-        deep_treasury_object
-            .data
-            .as_ref()
-            .ok_or(DeepBookError::rpc("Incorrect Treasury ID"))?;
+    let deep_treasury_data: &SuiObjectData = deep_treasury_object
+        .data
+        .as_ref()
+        .ok_or(DeepBookError::rpc("Incorrect Treasury ID"))?;
 
     let deep_treasury_ref: ObjectRef = (
         deep_treasury_data.object_id,
@@ -1446,9 +1439,8 @@ async fn deep_supply(
     let deep_treasury_input = CallArg::Object(ObjectArg::ImmOrOwnedObject(deep_treasury_ref));
     ptb.input(deep_treasury_input)?;
 
-    let package = ObjectID::from_hex_literal(&state.deep_token_package_id).map_err(|e| {
-        DeepBookError::bad_request(format!("Invalid deep token package ID: {}", e))
-    })?;
+    let package = ObjectID::from_hex_literal(&state.deep_token_package_id)
+        .map_err(|e| DeepBookError::bad_request(format!("Invalid deep token package ID: {}", e)))?;
     let module = DEEP_SUPPLY_MODULE.to_string();
     let function = DEEP_SUPPLY_FUNCTION.to_string();
 
@@ -1468,9 +1460,9 @@ async fn deep_supply(
         .dev_inspect_transaction_block(SuiAddress::default(), tx, None, None, None)
         .await?;
 
-    let mut binding = result
-        .results
-        .ok_or(DeepBookError::rpc("No results from dev_inspect_transaction_block"))?;
+    let mut binding = result.results.ok_or(DeepBookError::rpc(
+        "No results from dev_inspect_transaction_block",
+    ))?;
 
     let total_supply = &binding
         .first_mut()
