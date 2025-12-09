@@ -16,7 +16,7 @@ const mainPackageUpgrade = async () => {
   if (!gasObjectId)
     throw new Error("No gas object supplied for a mainnet transaction");
 
-  const upgradeCall = `sui client upgrade --upgrade-capability ${upgradeCapID[network]} --gas-budget 3000000000 --gas ${gasObjectId} --serialize-unsigned-transaction`;
+  const upgradeCall = `sui client upgrade --upgrade-capability ${upgradeCapID[network]} --gas-budget 1000000000 --gas ${gasObjectId} --serialize-unsigned-transaction`;
 
   try {
     // Execute the command with the specified working directory and capture the output
