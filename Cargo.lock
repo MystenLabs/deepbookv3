@@ -2163,6 +2163,7 @@ dependencies = [
  "sui-sdk",
  "sui-types",
  "telemetry-subscribers",
+ "thiserror 1.0.69",
  "tokio",
  "tokio-util 0.7.16",
  "tower-http 0.5.2",
