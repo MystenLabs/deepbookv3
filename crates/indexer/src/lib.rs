@@ -14,6 +14,7 @@ const MAINNET_PACKAGES: &[&str] = &[
     "0xb29d83c26cdd2a64959263abbcfc4a6937f0c9fccaf98580ca56faded65be244",
     "0x2c8d603bc51326b8c13cef9dd07031a408a48dddb541963357661df5d3204809",
     "0xcaf6ba059d539a97646d47f0b9ddf843e138d215e2a12ca1f4585d386f7aec3a",
+    "0x00c1a56ec8c4c623a848b2ed2f03d23a25d17570b670c22106f336eb933785cc", // Latest
 ];
 
 const TESTNET_PACKAGES: &[&str] = &[
@@ -27,6 +28,7 @@ const TESTNET_PACKAGES: &[&str] = &[
     "0x9592ac923593f37f4fed15ee15f760ebd4c39729f53ee3e8c214de7a17157769",
     "0x984757fc7c0e6dd5f15c2c66e881dd6e5aca98b725f3dbd83c445e057ebb790a",
     "0xfb28c4cbc6865bd1c897d26aecbe1f8792d1509a20ffec692c800660cbec6982",
+    "0x926c446869fa175ec3b0dbf6c4f14604d86a415c1fccd8c8f823cfc46a29baed", // Latest
 ];
 
 // Mainnet margin package is not yet deployed - using placeholder
@@ -39,6 +41,7 @@ const TESTNET_MARGIN_PACKAGES: &[&str] = &[
     "0x442d21fd044b90274934614c3c41416c83582f42eaa8feb4fecea301aa6bdd54",
     "0xf74ec503c186327663e11b5b888bd8a654bb8afaba34342274d3172edf3abeef",
     "0xb388009b59b09cd5d219dae79dd3e5d08a5734884363e59a37f3cbe6ef613424",
+    "0xb8620c24c9ea1a4a41e79613d2b3d1d93648d1bb6f6b789a7c8f261c94110e4b", // Latest
 ];
 
 // Module definitions
