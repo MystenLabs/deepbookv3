@@ -684,4 +684,7 @@ pub struct MarginManagerState {
     pub created_at: chrono::NaiveDateTime,
     #[serde(serialize_with = "serialize_datetime")]
     pub updated_at: chrono::NaiveDateTime,
+    pub current_price: Option<i64>,
+    pub lowest_trigger_above_price: Option<i64>,
+    pub highest_trigger_below_price: Option<i64>,
 }
