@@ -1,0 +1,8 @@
+[package]
+name = "dbtc"
+edition = "2024.beta"
+
+[dependencies]
+
+[addresses]
+dbtc = "0x0"
