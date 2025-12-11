@@ -341,8 +341,11 @@ pub mod deepbook_margin {
         pub struct MarginPoolConfig {
             pub supply_cap: u64,
             pub max_utilization_rate: u64,
-            pub referral_spread: u64,
+            pub protocol_spread: u64,
             pub min_borrow: u64,
+            pub rate_limit_capacity: u64,
+            pub rate_limit_refill_rate_per_ms: u64,
+            pub rate_limit_enabled: bool,
         }
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
