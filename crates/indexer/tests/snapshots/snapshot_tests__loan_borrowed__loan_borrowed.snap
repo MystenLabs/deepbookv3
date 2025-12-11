@@ -4,17 +4,17 @@ expression: rows
 ---
 [
   {
-    "event_digest": "3FVbHS8KwFMXfUYtzpd12SorYJ4m32yxBR77bZCuQfjj3",
-    "digest": "3FVbHS8KwFMXfUYtzpd12SorYJ4m32yxBR77bZCuQfjj",
-    "sender": "0x33fd8e77fe04f1684d2dd4cf1198fff8fa0c3f15e20b9c7574fb1a64d4f40075",
-    "checkpoint": "263026159",
+    "event_digest": "DexFS6kK2PjmFcFB8dXt4b3jegjijLu7oRyibL57ZZhP4",
+    "digest": "DexFS6kK2PjmFcFB8dXt4b3jegjijLu7oRyibL57ZZhP",
+    "sender": "0xb3d277c50f7b846a5f609a8d13428ae482b5826bb98437997373f3a0d60d280e",
+    "checkpoint": "273619256",
     "timestamp": "1970-01-01 00:00:00.000000",
-    "checkpoint_timestamp_ms": "1762881796935",
+    "checkpoint_timestamp_ms": "1765396605032",
     "package": "0x21473617f3565d704aa67be73ea41243e9e34a42d434c31f8182c67ba01ccf49",
-    "margin_manager_id": "0xbe9abcf86363f5f5ce77629e9f95854069c4d7775fb189f1f5d10c1bf2b1323f",
-    "margin_pool_id": "0xa363f544a496ba179e23d316c86decad37628622220a372e400448257533fb98",
-    "loan_amount": "9530400",
-    "onchain_timestamp": "1762881796935",
-    "loan_shares": "9530400"
+    "margin_manager_id": "0x8f43e4dc799eb497c99bc88f002cceb0c03225e3cc567433053ee3fd692b720d",
+    "margin_pool_id": "0xf3440b4aafcc8b12fc4b242e9590c52873b8238a0d0e52fbf9dae61d2970796a",
+    "loan_amount": "10000000",
+    "onchain_timestamp": "1765396604841",
+    "loan_shares": "10000000"
   }
 ]

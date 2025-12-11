@@ -4,17 +4,17 @@ expression: rows
 ---
 [
   {
-    "event_digest": "HiFZUU6xjfgi2qwEVwcvZf5Y2RJv5XLNovuSjG4UYKNw1",
-    "digest": "HiFZUU6xjfgi2qwEVwcvZf5Y2RJv5XLNovuSjG4UYKNw",
-    "sender": "0x33fd8e77fe04f1684d2dd4cf1198fff8fa0c3f15e20b9c7574fb1a64d4f40075",
-    "checkpoint": "262209098",
+    "event_digest": "7QTFma4AaVz5N9TTfNJqNqpiyDsd7md43iyv63frJ75Z4",
+    "digest": "7QTFma4AaVz5N9TTfNJqNqpiyDsd7md43iyv63frJ75Z",
+    "sender": "0xb3d277c50f7b846a5f609a8d13428ae482b5826bb98437997373f3a0d60d280e",
+    "checkpoint": "273618704",
     "timestamp": "1970-01-01 00:00:00.000000",
-    "checkpoint_timestamp_ms": "1762698341089",
-    "package": "0xf74ec503c186327663e11b5b888bd8a654bb8afaba34342274d3172edf3abeef",
-    "margin_manager_id": "0x02fd7e906091a083924434affc7337720821a166b43a98757e2a86ec5fbce809",
-    "balance_manager_id": "0x84a2372371d583dc10fa51ba523fd9608968696244ea848543ebd76f56e2c9e7",
-    "owner": "0x33fd8e77fe04f1684d2dd4cf1198fff8fa0c3f15e20b9c7574fb1a64d4f40075",
-    "onchain_timestamp": "1762698340945",
-    "deepbook_pool_id": "0x1c19362ca52b8ffd7a33cee805a67d40f31e6ba303753fd3a4cfdfacea7163a5"
+    "checkpoint_timestamp_ms": "1765396470673",
+    "package": "0x21473617f3565d704aa67be73ea41243e9e34a42d434c31f8182c67ba01ccf49",
+    "margin_manager_id": "0x8f43e4dc799eb497c99bc88f002cceb0c03225e3cc567433053ee3fd692b720d",
+    "balance_manager_id": "0xfdfb55bedf7f1724066c73fc93dd69dee36e43d416ee356e881c37859539488f",
+    "owner": "0xb3d277c50f7b846a5f609a8d13428ae482b5826bb98437997373f3a0d60d280e",
+    "onchain_timestamp": "1765396470673",
+    "deepbook_pool_id": "0x0dce0aa771074eb83d1f4a29d48be8248d4d2190976a5241f66b43ec18fa34de"
   }
 ]
