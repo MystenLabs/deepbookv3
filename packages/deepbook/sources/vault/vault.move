@@ -17,6 +17,8 @@ const EInvalidLoanQuantity: u64 = 3;
 const EIncorrectLoanPool: u64 = 4;
 const EIncorrectTypeReturned: u64 = 5;
 const EIncorrectQuantityReturned: u64 = 6;
+const ENoBalanceToSettle: u64 = 7;
+const EHasOwedBalances: u64 = 8;
 
 // === Structs ===
 public struct Vault<phantom BaseAsset, phantom QuoteAsset> has store {
@@ -99,6 +101,37 @@ public(package) fun settle_balance_manager<BaseAsset, QuoteAsset>(
     };
 }
 
+/// Transfer any settled amounts for the `balance_manager`.
+public(package) fun settle_balance_manager_permissionless<BaseAsset, QuoteAsset>(
+    self: &mut Vault<BaseAsset, QuoteAsset>,
+    balances_out: Balances,
+    balances_in: Balances,
+    balance_manager: &mut BalanceManager,
+) {
+    assert!(
+        balances_in.base() == 0 && balances_in.quote() == 0 && balances_in.deep() == 0,
+        EHasOwedBalances,
+    );
+    let has_settled_balances =
+        balances_out.base() > 0
+        || balances_out.quote() > 0
+        || balances_out.deep() > 0;
+    assert!(has_settled_balances, ENoBalanceToSettle);
+
+    if (balances_out.base() > 0) {
+        let balance = self.base_balance.split(balances_out.base());
+        balance_manager.deposit_permissionless(balance);
+    };
+    if (balances_out.quote() > 0) {
+        let balance = self.quote_balance.split(balances_out.quote());
+        balance_manager.deposit_permissionless(balance);
+    };
+    if (balances_out.deep() > 0) {
+        let balance = self.deep_balance.split(balances_out.deep());
+        balance_manager.deposit_permissionless(balance);
+    };
+}
+
 public(package) fun withdraw_deep_to_burn<BaseAsset, QuoteAsset>(
     self: &mut Vault<BaseAsset, QuoteAsset>,
     amount_to_burn: u64,
@@ -114,7 +147,7 @@ public(package) fun borrow_flashloan_base<BaseAsset, QuoteAsset>(
 ): (Coin<BaseAsset>, FlashLoan) {
     assert!(borrow_quantity > 0, EInvalidLoanQuantity);
     assert!(self.base_balance.value() >= borrow_quantity, ENotEnoughBaseForLoan);
-    let borrow_type_name = type_name::get<BaseAsset>();
+    let borrow_type_name = type_name::with_defining_ids<BaseAsset>();
     let borrow: Coin<BaseAsset> = self.base_balance.split(borrow_quantity).into_coin(ctx);
 
     let flash_loan = FlashLoan {
@@ -140,7 +173,7 @@ public(package) fun borrow_flashloan_quote<BaseAsset, QuoteAsset>(
 ): (Coin<QuoteAsset>, FlashLoan) {
     assert!(borrow_quantity > 0, EInvalidLoanQuantity);
     assert!(self.quote_balance.value() >= borrow_quantity, ENotEnoughQuoteForLoan);
-    let borrow_type_name = type_name::get<QuoteAsset>();
+    let borrow_type_name = type_name::with_defining_ids<QuoteAsset>();
     let borrow: Coin<QuoteAsset> = self.quote_balance.split(borrow_quantity).into_coin(ctx);
 
     let flash_loan = FlashLoan {
@@ -165,7 +198,10 @@ public(package) fun return_flashloan_base<BaseAsset, QuoteAsset>(
     flash_loan: FlashLoan,
 ) {
     assert!(pool_id == flash_loan.pool_id, EIncorrectLoanPool);
-    assert!(type_name::get<BaseAsset>() == flash_loan.type_name, EIncorrectTypeReturned);
+    assert!(
+        type_name::with_defining_ids<BaseAsset>() == flash_loan.type_name,
+        EIncorrectTypeReturned,
+    );
     assert!(coin.value() == flash_loan.borrow_quantity, EIncorrectQuantityReturned);
 
     self.base_balance.join(coin.into_balance<BaseAsset>());
@@ -184,7 +220,10 @@ public(package) fun return_flashloan_quote<BaseAsset, QuoteAsset>(
     flash_loan: FlashLoan,
 ) {
     assert!(pool_id == flash_loan.pool_id, EIncorrectLoanPool);
-    assert!(type_name::get<QuoteAsset>() == flash_loan.type_name, EIncorrectTypeReturned);
+    assert!(
+        type_name::with_defining_ids<QuoteAsset>() == flash_loan.type_name,
+        EIncorrectTypeReturned,
+    );
     assert!(coin.value() == flash_loan.borrow_quantity, EIncorrectQuantityReturned);
 
     self.quote_balance.join(coin.into_balance<QuoteAsset>());
