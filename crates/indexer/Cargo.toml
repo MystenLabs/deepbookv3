@@ -8,39 +8,24 @@ edition = "2021"
 
 [dependencies]
 tokio.workspace = true
-futures = "0.3.31"
-sui-indexer-alt-framework = { git = "https://github.com/MystenLabs/sui.git", rev = "88ba4e08e96ba1ab965c11ce1a915331dd3ed68d" }
-sui-config = { git = "https://github.com/MystenLabs/sui.git", rev = "88ba4e08e96ba1ab965c11ce1a915331dd3ed68d" }
-sui-data-ingestion-core = { git = "https://github.com/MystenLabs/sui.git", rev = "88ba4e08e96ba1ab965c11ce1a915331dd3ed68d" }
-fastcrypto = { git = "https://github.com/MystenLabs/fastcrypto" }
-reqwest = { version = "^0.12", features = ["blocking", "json"] }
-
-move-binding-derive = { git = "https://github.com/MystenLabs/move-binding.git", rev = "99f68a28c2f19be40a09e5f1281af748df9a8d3e" }
-move-types = { git = "https://github.com/MystenLabs/move-binding.git", rev = "99f68a28c2f19be40a09e5f1281af748df9a8d3e" }
-
-sui-sdk-types = { git = "https://github.com/mystenlabs/sui-rust-sdk", package = "sui-sdk-types", features = ["serde"], rev = "86a9e06" }
-sui-transaction-builder = { git = "https://github.com/mystenlabs/sui-rust-sdk", rev = "86a9e06" }
-
+sui-indexer-alt-framework = { git = "https://github.com/MystenLabs/sui.git", rev = "a0545a819fba114903c880f928339b5cd8805a4a" }
+sui-sdk-types = { git = "https://github.com/mystenlabs/sui-rust-sdk", features = ["serde"], rev = "048124e484f14b9bf2a402227c9bc255c7621bc1" }
+sui-transaction-builder = { git = "https://github.com/mystenlabs/sui-rust-sdk", rev = "048124e484f14b9bf2a402227c9bc255c7621bc1" }
 clap = { workspace = true, features = ["env"] }
-tempfile = "3.13.0"
-uuid = { version = "1.11.0", features = ["serde", "v4"] }
-bigdecimal = "0.4.5"
-itertools = "0.14.0"
 diesel = { workspace = true, features = ["postgres", "uuid", "chrono", "serde_json", "numeric"] }
 diesel-async = { workspace = true, features = ["bb8", "postgres"] }
+hex = "0.4"
 tracing.workspace = true
 async-trait.workspace = true
 bcs.workspace = true
 serde.workspace = true
+serde_json = { workspace = true }
 anyhow.workspace = true
-serde_json.workspace = true
-chrono.workspace = true
 url.workspace = true
 
 sui-pg-db.workspace = true
 prometheus.workspace = true
 sui-indexer-alt-metrics.workspace = true
-mysten-metrics.workspace = true
 sui-types.workspace = true
 move-core-types.workspace = true
 telemetry-subscribers.workspace = true
@@ -49,10 +34,12 @@ tokio-util.workspace = true
 deepbook-schema = { path = "../schema" }
 
 [dev-dependencies]
-sui-storage = { git = "https://github.com/MystenLabs/sui.git", rev = "88ba4e08e96ba1ab965c11ce1a915331dd3ed68d" }
+sui-storage = { git = "https://github.com/MystenLabs/sui.git", rev = "a0545a819fba114903c880f928339b5cd8805a4a" }
+insta = { version = "1.43.1", features = ["json"] }
+serde_json = "1.0.140"
 sqlx = { version = "0.8.3", features = ["runtime-tokio", "postgres", "chrono"] }
 fastcrypto = { git = "https://github.com/MystenLabs/fastcrypto" }
-insta = "1.42.2"
+chrono = "0.4.39"
 
 [[bin]]
 name = "deepbook-indexer"

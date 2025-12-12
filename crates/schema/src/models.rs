@@ -1,16 +1,74 @@
 use crate::schema::{
-    balances, balances_summary, flashloans, order_fills, order_updates, pool_prices, pools,
-    proposals, rebates, stakes, sui_error_transactions, trade_params_update, votes,
+    // Margin Pool Operations Events
+    asset_supplied,
+    asset_withdrawn,
+    balances,
+    deep_burned,
+    deepbook_pool_config_updated,
+    deepbook_pool_registered,
+    deepbook_pool_updated,
+    deepbook_pool_updated_registry,
+    flashloans,
+    interest_params_updated,
+    liquidation,
+    loan_borrowed,
+    loan_repaid,
+    // Margin Registry Events
+    maintainer_cap_updated,
+    maintainer_fees_withdrawn,
+    // Margin Manager Events
+    margin_manager_created,
+    margin_manager_state,
+    margin_pool_config_updated,
+    // Margin Pool Admin Events
+    margin_pool_created,
+    order_fills,
+    order_updates,
+    pause_cap_updated,
+    pool_prices,
+    pools,
+    proposals,
+    protocol_fees_increased,
+    protocol_fees_withdrawn,
+    rebates,
+    referral_fees_claimed,
+    stakes,
+    sui_error_transactions,
+    supplier_cap_minted,
+    supply_referral_minted,
+    trade_params_update,
+    votes,
 };
+use bigdecimal::BigDecimal;
 use diesel::deserialize::FromSql;
 use diesel::pg::{Pg, PgValue};
 use diesel::serialize::{Output, ToSql};
 use diesel::sql_types::Text;
 use diesel::{AsExpression, Identifiable, Insertable, Queryable, QueryableByName, Selectable};
-use serde::Serialize;
+use serde::{Serialize, Serializer};
 use std::str::FromStr;
 use strum_macros::{AsRefStr, EnumString};
 use sui_field_count::FieldCount;
+
+fn serialize_bigdecimal_option<S>(
+    value: &Option<BigDecimal>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    match value {
+        Some(v) => serializer.serialize_some(&v.to_string()),
+        None => serializer.serialize_none(),
+    }
+}
+
+fn serialize_datetime<S>(value: &chrono::NaiveDateTime, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&value.to_string())
+}
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
 #[diesel(table_name = order_updates, primary_key(event_digest))]
@@ -93,10 +151,12 @@ pub struct OrderFillSummary {
 }
 
 #[derive(QueryableByName, Debug, Serialize, FieldCount)]
-#[diesel(table_name = balances_summary)]
 pub struct BalancesSummary {
+    #[diesel(sql_type = Text)]
     pub asset: String,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
     pub amount: i64,
+    #[diesel(sql_type = diesel::sql_types::Bool)]
     pub deposit: bool,
 }
 
@@ -142,6 +202,19 @@ pub struct Balances {
     pub asset: String,
     pub amount: i64,
     pub deposit: bool,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[diesel(table_name = deep_burned, primary_key(event_digest))]
+pub struct DeepBurned {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub burned_amount: i64,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
@@ -237,9 +310,9 @@ pub struct Pools {
     pub quote_asset_decimals: i16,
     pub quote_asset_symbol: String,
     pub quote_asset_name: String,
-    pub min_size: i32,
-    pub lot_size: i32,
-    pub tick_size: i32,
+    pub min_size: i64,
+    pub lot_size: i64,
+    pub tick_size: i64,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
@@ -251,4 +324,370 @@ pub struct SuiErrorTransactions {
     pub failure_status: String,
     pub package: String,
     pub cmd_idx: Option<i64>,
+}
+
+// === Margin Manager Events ===
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = margin_manager_created, primary_key(event_digest))]
+pub struct MarginManagerCreated {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_manager_id: String,
+    pub balance_manager_id: String,
+    pub deepbook_pool_id: Option<String>,
+    pub owner: String,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = loan_borrowed, primary_key(event_digest))]
+pub struct LoanBorrowed {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_manager_id: String,
+    pub margin_pool_id: String,
+    pub loan_amount: i64,
+    pub loan_shares: i64,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = loan_repaid, primary_key(event_digest))]
+pub struct LoanRepaid {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_manager_id: String,
+    pub margin_pool_id: String,
+    pub repay_amount: i64,
+    pub repay_shares: i64,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = liquidation, primary_key(event_digest))]
+pub struct Liquidation {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_manager_id: String,
+    pub margin_pool_id: String,
+    pub liquidation_amount: i64,
+    pub pool_reward: i64,
+    pub pool_default: i64,
+    pub risk_ratio: i64,
+    pub onchain_timestamp: i64,
+}
+
+// === Margin Pool Operations Events ===
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = asset_supplied, primary_key(event_digest))]
+pub struct AssetSupplied {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_pool_id: String,
+    pub asset_type: String,
+    pub supplier: String,
+    pub amount: i64,
+    pub shares: i64,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = asset_withdrawn, primary_key(event_digest))]
+pub struct AssetWithdrawn {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_pool_id: String,
+    pub asset_type: String,
+    pub supplier: String,
+    pub amount: i64,
+    pub shares: i64,
+    pub onchain_timestamp: i64,
+}
+
+// === Margin Pool Admin Events ===
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = margin_pool_created, primary_key(event_digest))]
+pub struct MarginPoolCreated {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_pool_id: String,
+    pub maintainer_cap_id: String,
+    pub asset_type: String,
+    pub config_json: serde_json::Value,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = deepbook_pool_updated, primary_key(event_digest))]
+pub struct DeepbookPoolUpdated {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_pool_id: String,
+    pub deepbook_pool_id: String,
+    pub pool_cap_id: String,
+    pub enabled: bool,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = interest_params_updated, primary_key(event_digest))]
+pub struct InterestParamsUpdated {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_pool_id: String,
+    pub pool_cap_id: String,
+    pub config_json: serde_json::Value,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = margin_pool_config_updated, primary_key(event_digest))]
+pub struct MarginPoolConfigUpdated {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_pool_id: String,
+    pub pool_cap_id: String,
+    pub config_json: serde_json::Value,
+    pub onchain_timestamp: i64,
+}
+
+// === Margin Registry Events ===
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = maintainer_cap_updated, primary_key(event_digest))]
+pub struct MaintainerCapUpdated {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub maintainer_cap_id: String,
+    pub allowed: bool,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = deepbook_pool_registered, primary_key(event_digest))]
+pub struct DeepbookPoolRegistered {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub config_json: Option<serde_json::Value>,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = deepbook_pool_updated_registry, primary_key(event_digest))]
+pub struct DeepbookPoolUpdatedRegistry {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub enabled: bool,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = deepbook_pool_config_updated, primary_key(event_digest))]
+pub struct DeepbookPoolConfigUpdated {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub config_json: serde_json::Value,
+    pub onchain_timestamp: i64,
+}
+
+// === Additional Margin Pool Events ===
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = maintainer_fees_withdrawn, primary_key(event_digest))]
+pub struct MaintainerFeesWithdrawn {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_pool_id: String,
+    pub margin_pool_cap_id: String,
+    pub maintainer_fees: i64,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = protocol_fees_withdrawn, primary_key(event_digest))]
+pub struct ProtocolFeesWithdrawn {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_pool_id: String,
+    pub protocol_fees: i64,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = supplier_cap_minted, primary_key(event_digest))]
+pub struct SupplierCapMinted {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub supplier_cap_id: String,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = supply_referral_minted, primary_key(event_digest))]
+pub struct SupplyReferralMinted {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_pool_id: String,
+    pub supply_referral_id: String,
+    pub owner: String,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = pause_cap_updated, primary_key(event_digest))]
+pub struct PauseCapUpdated {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pause_cap_id: String,
+    pub allowed: bool,
+    pub onchain_timestamp: i64,
+}
+
+// === Protocol Fees Events ===
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = protocol_fees_increased, primary_key(event_digest))]
+pub struct ProtocolFeesIncreasedEvent {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub margin_pool_id: String,
+    pub total_shares: i64,
+    pub referral_fees: i64,
+    pub maintainer_fees: i64,
+    pub protocol_fees: i64,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = referral_fees_claimed, primary_key(event_digest))]
+pub struct ReferralFeesClaimedEvent {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub referral_id: String,
+    pub owner: String,
+    pub fees: i64,
+    pub onchain_timestamp: i64,
+}
+
+// === Margin Manager State ===
+#[derive(Queryable, Selectable, Identifiable, Debug, Serialize)]
+#[diesel(table_name = margin_manager_state)]
+pub struct MarginManagerState {
+    pub id: i32,
+    pub margin_manager_id: String,
+    pub deepbook_pool_id: String,
+    pub base_margin_pool_id: Option<String>,
+    pub quote_margin_pool_id: Option<String>,
+    pub base_asset_id: Option<String>,
+    pub base_asset_symbol: Option<String>,
+    pub quote_asset_id: Option<String>,
+    pub quote_asset_symbol: Option<String>,
+    #[serde(serialize_with = "serialize_bigdecimal_option")]
+    pub risk_ratio: Option<BigDecimal>,
+    #[serde(serialize_with = "serialize_bigdecimal_option")]
+    pub base_asset: Option<BigDecimal>,
+    #[serde(serialize_with = "serialize_bigdecimal_option")]
+    pub quote_asset: Option<BigDecimal>,
+    #[serde(serialize_with = "serialize_bigdecimal_option")]
+    pub base_debt: Option<BigDecimal>,
+    #[serde(serialize_with = "serialize_bigdecimal_option")]
+    pub quote_debt: Option<BigDecimal>,
+    pub base_pyth_price: Option<i64>,
+    pub base_pyth_decimals: Option<i32>,
+    pub quote_pyth_price: Option<i64>,
+    pub quote_pyth_decimals: Option<i32>,
+    #[serde(serialize_with = "serialize_datetime")]
+    pub created_at: chrono::NaiveDateTime,
+    #[serde(serialize_with = "serialize_datetime")]
+    pub updated_at: chrono::NaiveDateTime,
+    #[serde(serialize_with = "serialize_bigdecimal_option")]
+    pub current_price: Option<BigDecimal>,
+    #[serde(serialize_with = "serialize_bigdecimal_option")]
+    pub lowest_trigger_above_price: Option<BigDecimal>,
+    #[serde(serialize_with = "serialize_bigdecimal_option")]
+    pub highest_trigger_below_price: Option<BigDecimal>,
 }
