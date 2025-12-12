@@ -303,9 +303,9 @@ diesel::table! {
         quote_pyth_decimals -> Nullable<Int4>,
         created_at -> Timestamp,
         updated_at -> Timestamp,
-        current_price -> Nullable<Int8>,
-        lowest_trigger_above_price -> Nullable<Int8>,
-        highest_trigger_below_price -> Nullable<Int8>,
+        current_price -> Nullable<Numeric>,
+        lowest_trigger_above_price -> Nullable<Numeric>,
+        highest_trigger_below_price -> Nullable<Numeric>,
     }
 }
 
