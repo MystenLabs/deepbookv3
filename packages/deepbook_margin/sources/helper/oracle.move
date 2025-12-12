@@ -4,10 +4,11 @@
 /// Oracle module for margin trading.
 module deepbook_margin::oracle;
 
-use deepbook_margin::margin_registry::MarginRegistry;
+use deepbook::{constants, math};
+use deepbook_margin::{margin_constants, margin_registry::MarginRegistry};
 use pyth::{price_info::PriceInfoObject, pyth};
 use std::type_name::{Self, TypeName};
-use sui::{clock::Clock, coin::CoinMetadata, vec_map::{Self, VecMap}};
+use sui::{clock::Clock, coin::CoinMetadata, coin_registry::Currency, vec_map::{Self, VecMap}};
 
 use fun get_config_for_type as MarginRegistry.get_config_for_type;
 
@@ -15,6 +16,8 @@ const EInvalidPythPrice: u64 = 1;
 const ECurrencyNotSupported: u64 = 2;
 const EPriceFeedIdMismatch: u64 = 3;
 const EInvalidPythPriceConf: u64 = 4;
+const EInvalidOracleConfig: u64 = 5;
+const EInvalidPrice: u64 = 6;
 
 /// A buffer added to the exponent when doing currency conversions.
 const BUFFER: u8 = 10;
@@ -23,7 +26,6 @@ const BUFFER: u8 = 10;
 public struct PythConfig has drop, store {
     currencies: VecMap<TypeName, CoinTypeData>,
     max_age_secs: u64, // max age tolerance for pyth prices in seconds
-    max_conf_bps: u64, // max confidence interval tolerance
 }
 
 /// Find price feed IDs here https://www.pyth.network/developers/price-feed-ids
@@ -31,6 +33,8 @@ public struct CoinTypeData has copy, drop, store {
     decimals: u8,
     price_feed_id: vector<u8>, // Make sure to omit the `0x` prefix.
     type_name: TypeName,
+    max_conf_bps: u64, // max confidence interval tolerance
+    max_ewma_difference_bps: u64, // max difference between pyth price and ema price in bps
 }
 
 public struct ConversionConfig has copy, drop {
@@ -40,27 +44,44 @@ public struct ConversionConfig has copy, drop {
     pyth_decimals: u8,
 }
 
-/// Creates a new CoinTypeData struct of type T.
-/// Uses CoinMetadata to avoid any errors in decimals.
+#[deprecated(note = b"Use new_coin_type_data_from_currency instead")]
 public fun new_coin_type_data<T>(
-    coin_metadata: &CoinMetadata<T>,
-    price_feed_id: vector<u8>,
+    _coin_metadata: &CoinMetadata<T>,
+    _price_feed_id: vector<u8>,
+    _max_conf_bps: u64,
+    _max_ewma_difference_bps: u64,
 ): CoinTypeData {
+    abort 1337
+}
+
+/// Creates a new CoinTypeData struct of type T.
+/// Uses Currency to avoid any errors in decimals.
+public fun new_coin_type_data_from_currency<T>(
+    currency: &Currency<T>,
+    price_feed_id: vector<u8>,
+    max_conf_bps: u64,
+    max_ewma_difference_bps: u64,
+): CoinTypeData {
+    // Validate oracle configuration parameters
+    assert!(max_conf_bps <= margin_constants::max_conf_bps(), EInvalidOracleConfig);
+    assert!(
+        max_ewma_difference_bps <= margin_constants::max_ewma_difference_bps(),
+        EInvalidOracleConfig,
+    );
+
     let type_name = type_name::with_defining_ids<T>();
     CoinTypeData {
-        decimals: coin_metadata.get_decimals(),
+        decimals: currency.decimals(),
         price_feed_id,
         type_name,
+        max_conf_bps,
+        max_ewma_difference_bps,
     }
 }
 
 /// Creates a new PythConfig struct.
 /// Can be attached by the Admin to MarginRegistry to allow oracle to work.
-public fun new_pyth_config(
-    setups: vector<CoinTypeData>,
-    max_age_secs: u64,
-    max_conf_bps: u64,
-): PythConfig {
+public fun new_pyth_config(setups: vector<CoinTypeData>, max_age_secs: u64): PythConfig {
     let mut currencies: VecMap<TypeName, CoinTypeData> = vec_map::empty();
 
     setups.do!(|coin_type| {
@@ -70,7 +91,6 @@ public fun new_pyth_config(
     PythConfig {
         currencies,
         max_age_secs,
-        max_conf_bps,
     }
 }
 
@@ -114,7 +134,54 @@ public(package) fun calculate_usd_currency_amount(
     target_currency_amount
 }
 
-// Calculates the amount in target currency based on amount in asset A.
+/// Calculates the price of BaseAsset in QuoteAsset.
+/// Returns the price accounting for the decimal difference between the two assets.
+public(package) fun calculate_price<BaseAsset, QuoteAsset>(
+    registry: &MarginRegistry,
+    base_price_info_object: &PriceInfoObject,
+    quote_price_info_object: &PriceInfoObject,
+    clock: &Clock,
+): u64 {
+    let base_decimals = get_decimals<BaseAsset>(registry);
+    let quote_decimals = get_decimals<QuoteAsset>(registry);
+
+    let base_amount = 10u64.pow(base_decimals);
+    let base_usd_price = calculate_usd_price<BaseAsset>(
+        base_price_info_object,
+        registry,
+        base_amount,
+        clock,
+    );
+
+    let quote_amount = 10u64.pow(quote_decimals);
+    let quote_usd_price = calculate_usd_price<QuoteAsset>(
+        quote_price_info_object,
+        registry,
+        quote_amount,
+        clock,
+    );
+    let price_ratio = math::div(base_usd_price, quote_usd_price);
+
+    if (base_decimals > quote_decimals) {
+        let decimal_diff = base_decimals - quote_decimals;
+        let multiplier = 10u128.pow(decimal_diff);
+        let price = (price_ratio as u128) * multiplier;
+        assert!(price <= constants::max_price() as u128, EInvalidPrice);
+
+        price as u64
+    } else if (quote_decimals > base_decimals) {
+        let decimal_diff = quote_decimals - base_decimals;
+        let divisor = 10u128.pow(decimal_diff);
+        let price = price_ratio as u128 / divisor;
+        assert!(price <= constants::max_price() as u128, EInvalidPrice);
+
+        price as u64
+    } else {
+        price_ratio
+    }
+}
+
+/// Calculates the amount in target currency based on amount in asset A.
 public(package) fun calculate_target_currency<AssetA, AssetB>(
     registry: &MarginRegistry,
     price_info_object_a: &PriceInfoObject,
@@ -190,8 +257,10 @@ fun price_config<T>(
         clock,
     );
 
-    let config = registry.get_config<PythConfig>();
-    assert!(pyth_conf <= config.max_conf_bps * pyth_price / 10_000, EInvalidPythPriceConf);
+    assert!(
+        (pyth_conf as u128) * 10_000 <= (type_config.max_conf_bps as u128) * (pyth_price as u128),
+        EInvalidPythPriceConf,
+    );
 
     let target_decimals = if (is_usd_price_config) {
         9
@@ -255,6 +324,15 @@ fun get_validated_pyth_price<T>(
     let pyth_decimals = price.get_expo().get_magnitude_if_negative() as u8;
     let pyth_conf = price.get_conf();
 
+    // verify that the ewma price is not too different from the pyth price
+    let ewma_price_object = price_info.get_price_feed().get_ema_price();
+    let ewma_price = ewma_price_object.get_price().get_magnitude_if_positive();
+    assert!(
+        (pyth_price as u128) <= (ewma_price as u128) * ((10_000 + type_config.max_ewma_difference_bps) as u128) / 10_000 &&
+        (pyth_price as u128) >= (ewma_price as u128) * ((10_000 - type_config.max_ewma_difference_bps) as u128) / 10_000,
+        EInvalidPythPrice,
+    );
+
     (pyth_price, pyth_decimals, pyth_conf, type_config)
 }
 
@@ -264,6 +342,10 @@ fun get_config_for_type<T>(registry: &MarginRegistry): CoinTypeData {
     let payment_type = type_name::with_defining_ids<T>();
     assert!(config.currencies.contains(&payment_type), ECurrencyNotSupported);
     *config.currencies.get(&payment_type)
+}
+
+fun get_decimals<T>(registry: &MarginRegistry): u8 {
+    registry.get_config_for_type<T>().decimals
 }
 
 #[test_only]
@@ -288,5 +370,7 @@ public fun test_coin_type_data<T>(decimals: u8, price_feed_id: vector<u8>): Coin
         decimals,
         price_feed_id,
         type_name: type_name::with_defining_ids<T>(),
+        max_conf_bps: 1000, // 10%
+        max_ewma_difference_bps: 1500, // 15%
     }
 }

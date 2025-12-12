@@ -950,9 +950,9 @@ dependencies = [
 
 [[package]]
 name = "bigdecimal"
-version = "0.4.8"
+version = "0.4.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a22f228ab7a1b23027ccc6c350b72868017af7ea8356fbdf19f8d991c690013"
+checksum = "560f42649de9fa436b73517378a147ec21f6c997a546581df4b4b31677828934"
 dependencies = [
  "autocfg",
  "libm",
@@ -2129,6 +2129,8 @@ dependencies = [
 name = "deepbook-schema"
 version = "0.1.0"
 dependencies = [
+ "bigdecimal",
+ "chrono",
  "diesel",
  "diesel_migrations",
  "serde",
@@ -2145,12 +2147,15 @@ dependencies = [
  "anyhow",
  "axum 0.7.9",
  "bcs",
+ "bigdecimal",
+ "chrono",
  "clap",
  "deepbook-schema",
  "diesel",
  "diesel-async",
  "futures",
  "prometheus",
+ "serde",
  "serde_json",
  "sui-indexer-alt-metrics",
  "sui-json-rpc-types",
@@ -2158,6 +2163,7 @@ dependencies = [
  "sui-sdk",
  "sui-types",
  "telemetry-subscribers",
+ "thiserror 1.0.69",
  "tokio",
  "tokio-util 0.7.16",
  "tower-http 0.5.2",

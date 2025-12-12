@@ -11,7 +11,8 @@ use deepbook_margin::{
     test_constants::{Self, USDC, USDT},
     test_helpers::{Self, default_protocol_config}
 };
-use sui::{clock::Clock, test_scenario::{Scenario, return_shared}, test_utils::destroy};
+use std::unit_test::destroy;
+use sui::{clock::Clock, test_scenario::{Scenario, return_shared}};
 
 fun setup_test_with_margin_pools(): (Scenario, Clock, MarginAdminCap, MaintainerCap, ID, ID) {
     let (mut scenario, admin_cap) = test_helpers::setup_test();

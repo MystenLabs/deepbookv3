@@ -8,11 +8,15 @@ use deepbook::constants;
 use std::type_name::{Self, TypeName};
 use sui::{
     bag::{Self, Bag},
-    dynamic_field,
+    dynamic_field::{Self, Self as df},
     table::{Self, Table},
     vec_set::{Self, VecSet},
     versioned::{Self, Versioned}
 };
+
+use fun df::add as UID.add;
+use fun df::exists_ as UID.exists_;
+use fun df::remove as UID.remove;
 
 // === Errors ===
 const EPoolAlreadyExists: u64 = 1;
@@ -24,6 +28,7 @@ const ECannotDisableCurrentVersion: u64 = 6;
 const ECoinAlreadyWhitelisted: u64 = 7;
 const ECoinNotWhitelisted: u64 = 8;
 const EMaxBalanceManagersReached: u64 = 9;
+const EAppNotAuthorized: u64 = 10;
 
 public struct REGISTRY has drop {}
 
@@ -51,6 +56,27 @@ public struct PoolKey has copy, drop, store {
 
 public struct StableCoinKey has copy, drop, store {}
 public struct BalanceManagerKey has copy, drop, store {}
+
+// === App Auth ===
+
+/// An authorization Key kept in the Registry - allows applications access protected features of the DeepBook
+/// The `App` type parameter is a witness which should be defined in the original module
+public struct AppKey<phantom App: drop> has copy, drop, store {}
+
+/// Authorize an application to access protected features of the DeepBook.
+public fun authorize_app<App: drop>(self: &mut Registry, _admin_cap: &DeepbookAdminCap) {
+    self.id.add(AppKey<App> {}, true);
+}
+
+/// Deauthorize an application by removing its authorization key.
+public fun deauthorize_app<App: drop>(self: &mut Registry, _admin_cap: &DeepbookAdminCap): bool {
+    self.id.remove(AppKey<App> {})
+}
+
+/// Assert that an application is authorized to access protected features of DeepBook.
+public fun assert_app_is_authorized<App: drop>(self: &Registry) {
+    assert!(self.id.exists_(AppKey<App> {}), EAppNotAuthorized);
+}
 
 fun init(_: REGISTRY, ctx: &mut TxContext) {
     let registry_inner = RegistryInner {
