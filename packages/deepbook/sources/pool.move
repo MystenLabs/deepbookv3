@@ -11,6 +11,7 @@ use deepbook::{
         BalanceManager,
         TradeProof,
         DeepBookPoolReferral,
+        DeepBookReferral,
         TradeCap,
         DepositCap,
         WithdrawCap
@@ -882,14 +883,24 @@ public fun mint_referral<BaseAsset, QuoteAsset>(
 ]
 public fun update_referral_multiplier<BaseAsset, QuoteAsset>(
     _self: &mut Pool<BaseAsset, QuoteAsset>,
-    _referral: &DeepBookPoolReferral,
+    _referral: &DeepBookReferral,
     _multiplier: u64,
 ) {
     abort 1337
 }
 
-/// Update the multiplier for the referral.
+#[deprecated(note = b"This function is deprecated, use `update_pool_referral_multiplier` instead.")]
 public fun update_deepbook_referral_multiplier<BaseAsset, QuoteAsset>(
+    _self: &mut Pool<BaseAsset, QuoteAsset>,
+    _referral: &DeepBookReferral,
+    _multiplier: u64,
+    _ctx: &TxContext,
+) {
+    abort
+}
+
+/// Update the multiplier for the referral.
+public fun update_pool_referral_multiplier<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     referral: &DeepBookPoolReferral,
     multiplier: u64,
@@ -906,8 +917,17 @@ public fun update_deepbook_referral_multiplier<BaseAsset, QuoteAsset>(
     referral_rewards.multiplier = multiplier;
 }
 
-/// Claim the rewards for the referral.
+#[deprecated(note = b"This function is deprecated, use `claim_pool_referral_rewards` instead.")]
 public fun claim_referral_rewards<BaseAsset, QuoteAsset>(
+    _self: &mut Pool<BaseAsset, QuoteAsset>,
+    _referral: &DeepBookReferral,
+    _ctx: &mut TxContext,
+) {
+    abort
+}
+
+/// Claim the rewards for the referral.
+public fun claim_pool_referral_rewards<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     referral: &DeepBookPoolReferral,
     ctx: &mut TxContext,
@@ -1693,7 +1713,15 @@ public fun id<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): ID {
     self.load_inner().pool_id
 }
 
+#[deprecated(note = b"This function is deprecated, use `get_pool_referral_balances` instead.")]
 public fun get_referral_balances<BaseAsset, QuoteAsset>(
+    _self: &Pool<BaseAsset, QuoteAsset>,
+    _referral: &DeepBookReferral,
+): (u64, u64, u64) {
+    abort
+}
+
+public fun get_pool_referral_balances<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
     referral: &DeepBookPoolReferral,
 ): (u64, u64, u64) {
