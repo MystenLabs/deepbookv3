@@ -549,38 +549,92 @@ fun test_referral_ok() {
     let referral_id2;
     let pool_address = @0xD;
     let pool_id = pool_address.to_id();
+
+    // Second pool for testing multiple pools with same balance manager
+    let pool_address2 = @0xE;
+    let pool_id2 = pool_address2.to_id();
+    let referral_id3;
+    let referral_id4;
+
     test.next_tx(alice);
     {
         referral_id1 = balance_manager::mint_referral(pool_id, test.ctx());
         referral_id2 = balance_manager::mint_referral(pool_id, test.ctx());
+        referral_id3 = balance_manager::mint_referral(pool_id2, test.ctx());
+        referral_id4 = balance_manager::mint_referral(pool_id2, test.ctx());
     };
 
     test.next_tx(alice);
     {
         let referral1 = test.take_shared_by_id<DeepBookPoolReferral>(referral_id1);
-        assert!(referral1.balance_manager_referral_owner() == alice, 0);
+        assert!(referral1.balance_manager_referral_owner() == alice);
         let referral2 = test.take_shared_by_id<DeepBookPoolReferral>(referral_id2);
-        assert!(referral2.balance_manager_referral_owner() == alice, 0);
+        assert!(referral2.balance_manager_referral_owner() == alice);
+        let referral3 = test.take_shared_by_id<DeepBookPoolReferral>(referral_id3);
+        assert!(referral3.balance_manager_referral_owner() == alice);
+        let referral4 = test.take_shared_by_id<DeepBookPoolReferral>(referral_id4);
+        assert!(referral4.balance_manager_referral_owner() == alice);
 
         let mut balance_manager = balance_manager::new(test.ctx());
         let trade_cap = balance_manager.mint_trade_cap(test.ctx());
+
+        // Set referral for pool 1
         balance_manager.set_balance_manager_referral(&referral1, &trade_cap);
         assert!(
             balance_manager.get_balance_manager_referral_id(pool_id) == option::some(referral_id1),
-            0,
         );
+        // Pool 2 should still have no referral
+        assert!(balance_manager.get_balance_manager_referral_id(pool_id2) == option::none());
+
+        // Set referral for pool 2
+        balance_manager.set_balance_manager_referral(&referral3, &trade_cap);
+        assert!(
+            balance_manager.get_balance_manager_referral_id(pool_id2) == option::some(referral_id3),
+        );
+        // Pool 1 referral should be unchanged
+        assert!(
+            balance_manager.get_balance_manager_referral_id(pool_id) == option::some(referral_id1),
+        );
+
+        // Update referral for pool 1
         balance_manager.set_balance_manager_referral(&referral2, &trade_cap);
         assert!(
             balance_manager.get_balance_manager_referral_id(pool_id) == option::some(referral_id2),
-            0,
+        );
+        // Pool 2 referral should be unchanged
+        assert!(
+            balance_manager.get_balance_manager_referral_id(pool_id2) == option::some(referral_id3),
         );
 
+        // Update referral for pool 2
+        balance_manager.set_balance_manager_referral(&referral4, &trade_cap);
+        assert!(
+            balance_manager.get_balance_manager_referral_id(pool_id2) == option::some(referral_id4),
+        );
+        // Pool 1 referral should be unchanged
+        assert!(
+            balance_manager.get_balance_manager_referral_id(pool_id) == option::some(referral_id2),
+        );
+
+        // Unset referral for pool 1
         balance_manager.unset_balance_manager_referral(pool_id, &trade_cap);
-        assert!(balance_manager.get_balance_manager_referral_id(pool_id) == option::none(), 0);
+        assert!(balance_manager.get_balance_manager_referral_id(pool_id) == option::none());
+        // Pool 2 referral should be unchanged
+        assert!(
+            balance_manager.get_balance_manager_referral_id(pool_id2) == option::some(referral_id4),
+        );
+
+        // Unset referral for pool 2
+        balance_manager.unset_balance_manager_referral(pool_id2, &trade_cap);
+        assert!(balance_manager.get_balance_manager_referral_id(pool_id2) == option::none());
+        // Pool 1 referral should still be none
+        assert!(balance_manager.get_balance_manager_referral_id(pool_id) == option::none());
 
         transfer::public_share_object(balance_manager);
         return_shared(referral1);
         return_shared(referral2);
+        return_shared(referral3);
+        return_shared(referral4);
         destroy(trade_cap);
     };
 
