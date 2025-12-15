@@ -8,7 +8,7 @@
 /// a `TradeProof`. Generally, a high frequency trading engine will trade as the default owner.
 module deepbook::balance_manager;
 
-use deepbook::{constants, registry::Registry};
+use deepbook::registry::Registry;
 use std::type_name::{Self, TypeName};
 use sui::{
     bag::{Self, Bag},
@@ -63,6 +63,9 @@ public struct BalanceEvent has copy, drop {
 /// Balance identifier.
 public struct BalanceKey<phantom T> has copy, drop, store {}
 
+/// Referral identifier.
+public struct ReferralKey(ID) has copy, drop, store;
+
 /// Owners of a `TradeCap` need to get a `TradeProof` to trade across pools in a single PTB (drops after).
 public struct TradeCap has key, store {
     id: UID,
@@ -81,9 +84,16 @@ public struct WithdrawCap has key, store {
     balance_manager_id: ID,
 }
 
+#[deprecated(note = b"This struct is deprecated, replaced by `DeepBookPoolReferral`.")]
 public struct DeepBookReferral has key, store {
     id: UID,
     owner: address,
+}
+
+public struct DeepBookPoolReferral has key, store {
+    id: UID,
+    owner: address,
+    pool_id: ID,
 }
 
 public struct DeepBookReferralCreatedEvent has copy, drop {
@@ -161,15 +171,22 @@ public fun new_with_custom_owner_caps<App: drop>(
     (balance_manager, deposit_cap, withdraw_cap, trade_cap)
 }
 
-/// Set the referral for the balance manager.
+#[deprecated(note = b"This function is deprecated, use `set_balance_manager_referral` instead.")]
 public fun set_referral(
+    _balance_manager: &mut BalanceManager,
+    _referral: &DeepBookReferral,
+    _trade_cap: &TradeCap,
+) { abort }
+
+/// Set the referral for the balance manager.
+public fun set_balance_manager_referral(
     balance_manager: &mut BalanceManager,
-    referral: &DeepBookReferral,
+    referral: &DeepBookPoolReferral,
     trade_cap: &TradeCap,
 ) {
     balance_manager.validate_trader(trade_cap);
-    let _: Option<ID> = balance_manager.id.remove_if_exists(constants::referral_df_key());
-    balance_manager.id.add(constants::referral_df_key(), referral.id.to_inner());
+    let _: Option<ID> = balance_manager.id.remove_if_exists(ReferralKey(referral.pool_id));
+    balance_manager.id.add(ReferralKey(referral.pool_id), referral.id.to_inner());
 
     event::emit(DeepBookReferralSetEvent {
         referral_id: referral.id.to_inner(),
@@ -177,10 +194,19 @@ public fun set_referral(
     });
 }
 
+#[deprecated(note = b"This function is deprecated, use `unset_balance_manager_referral` instead.")]
+public fun unset_referral(_balance_manager: &mut BalanceManager, _trade_cap: &TradeCap) {
+    abort
+}
+
 /// Unset the referral for the balance manager.
-public fun unset_referral(balance_manager: &mut BalanceManager, trade_cap: &TradeCap) {
+public fun unset_balance_manager_referral(
+    balance_manager: &mut BalanceManager,
+    pool_id: ID,
+    trade_cap: &TradeCap,
+) {
     balance_manager.validate_trader(trade_cap);
-    let _: Option<ID> = balance_manager.id.remove_if_exists(constants::referral_df_key());
+    let _: Option<ID> = balance_manager.id.remove_if_exists(ReferralKey(pool_id));
 
     event::emit(DeepBookReferralSetEvent {
         referral_id: id_from_address(@0x0),
@@ -359,9 +385,17 @@ public fun register_balance_manager(
     registry.add_balance_manager(owner, manager_id);
 }
 
+#[deprecated(note = b"This function is deprecated, use `get_balance_manager_referral_id` instead.")]
+public fun get_referral_id(_balance_manager: &BalanceManager): Option<ID> {
+    abort
+}
+
 /// Get the referral id from the balance manager.
-public fun get_referral_id(balance_manager: &BalanceManager): Option<ID> {
-    let ref_key = constants::referral_df_key();
+public fun get_balance_manager_referral_id(
+    balance_manager: &BalanceManager,
+    pool_id: ID,
+): Option<ID> {
+    let ref_key = ReferralKey(pool_id);
     if (!balance_manager.id.exists_(ref_key)) {
         return option::none()
     };
@@ -384,18 +418,28 @@ public fun id(balance_manager: &BalanceManager): ID {
     balance_manager.id.to_inner()
 }
 
-public fun referral_owner(referral: &DeepBookReferral): address {
+#[deprecated(note = b"This function is deprecated, use `balance_manager_referral_owner` instead.")]
+public fun referral_owner(_referral: &DeepBookReferral): address {
+    abort
+}
+
+public fun balance_manager_referral_owner(referral: &DeepBookPoolReferral): address {
     referral.owner
+}
+
+public fun balance_manager_referral_pool_id(referral: &DeepBookPoolReferral): ID {
+    referral.pool_id
 }
 
 // === Public-Package Functions ===
 /// Mint a `DeepBookReferral` and share it.
-public(package) fun mint_referral(ctx: &mut TxContext): ID {
+public(package) fun mint_referral(pool_id: ID, ctx: &mut TxContext): ID {
     let id = object::new(ctx);
     let referral_id = id.to_inner();
-    let referral = DeepBookReferral {
+    let referral = DeepBookPoolReferral {
         id,
         owner: ctx.sender(),
+        pool_id,
     };
 
     event::emit(DeepBookReferralCreatedEvent {
@@ -408,7 +452,7 @@ public(package) fun mint_referral(ctx: &mut TxContext): ID {
     referral_id
 }
 
-public(package) fun assert_referral_owner(referral: &DeepBookReferral, ctx: &TxContext) {
+public(package) fun assert_referral_owner(referral: &DeepBookPoolReferral, ctx: &TxContext) {
     assert!(ctx.sender() == referral.owner, EInvalidReferralOwner);
 }
 

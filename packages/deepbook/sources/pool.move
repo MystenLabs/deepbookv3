@@ -10,6 +10,7 @@ use deepbook::{
         Self,
         BalanceManager,
         TradeProof,
+        DeepBookPoolReferral,
         DeepBookReferral,
         TradeCap,
         DepositCap,
@@ -859,7 +860,7 @@ public fun mint_referral<BaseAsset, QuoteAsset>(
     assert!(multiplier <= constants::referral_max_multiplier(), EInvalidReferralMultiplier);
     assert!(multiplier % constants::referral_multiplier() == 0, EInvalidReferralMultiplier);
     let _ = self.load_inner();
-    let referral_id = balance_manager::mint_referral(ctx);
+    let referral_id = balance_manager::mint_referral(self.id(), ctx);
     self
         .id
         .add(
@@ -888,10 +889,20 @@ public fun update_referral_multiplier<BaseAsset, QuoteAsset>(
     abort 1337
 }
 
-/// Update the multiplier for the referral.
+#[deprecated(note = b"This function is deprecated, use `update_pool_referral_multiplier` instead.")]
 public fun update_deepbook_referral_multiplier<BaseAsset, QuoteAsset>(
+    _self: &mut Pool<BaseAsset, QuoteAsset>,
+    _referral: &DeepBookReferral,
+    _multiplier: u64,
+    _ctx: &TxContext,
+) {
+    abort
+}
+
+/// Update the multiplier for the referral.
+public fun update_pool_referral_multiplier<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
-    referral: &DeepBookReferral,
+    referral: &DeepBookPoolReferral,
     multiplier: u64,
     ctx: &TxContext,
 ) {
@@ -906,10 +917,19 @@ public fun update_deepbook_referral_multiplier<BaseAsset, QuoteAsset>(
     referral_rewards.multiplier = multiplier;
 }
 
-/// Claim the rewards for the referral.
+#[deprecated(note = b"This function is deprecated, use `claim_pool_referral_rewards` instead.")]
 public fun claim_referral_rewards<BaseAsset, QuoteAsset>(
+    _self: &mut Pool<BaseAsset, QuoteAsset>,
+    _referral: &DeepBookReferral,
+    _ctx: &mut TxContext,
+): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
+    abort
+}
+
+/// Claim the rewards for the referral.
+public fun claim_pool_referral_rewards<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
-    referral: &DeepBookReferral,
+    referral: &DeepBookPoolReferral,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
     let _ = self.load_inner();
@@ -1693,9 +1713,17 @@ public fun id<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): ID {
     self.load_inner().pool_id
 }
 
+#[deprecated(note = b"This function is deprecated, use `get_pool_referral_balances` instead.")]
 public fun get_referral_balances<BaseAsset, QuoteAsset>(
+    _self: &Pool<BaseAsset, QuoteAsset>,
+    _referral: &DeepBookReferral,
+): (u64, u64, u64) {
+    abort
+}
+
+public fun get_pool_referral_balances<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
-    referral: &DeepBookReferral,
+    referral: &DeepBookPoolReferral,
 ): (u64, u64, u64) {
     let referral_id = object::id(referral);
     let referral_rewards: &ReferralRewards<BaseAsset, QuoteAsset> = self.id.borrow(referral_id);
@@ -1883,7 +1911,7 @@ fun process_referral_fees<BaseAsset, QuoteAsset>(
     balance_manager: &mut BalanceManager,
     trade_proof: &TradeProof,
 ) {
-    let referral_id = balance_manager.get_referral_id();
+    let referral_id = balance_manager.get_balance_manager_referral_id(self.id());
     if (referral_id.is_some()) {
         let referral_id = referral_id.destroy_some();
         let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
