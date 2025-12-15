@@ -3,32 +3,32 @@
 
 module deepbook_margin::margin_manager;
 
-use deepbook::{
-    balance_manager::{
-        Self,
-        BalanceManager,
-        TradeCap,
-        DepositCap,
-        WithdrawCap,
-        TradeProof,
-        DeepBookReferral
-    },
-    constants,
-    math,
-    order_info::OrderInfo,
-    pool::Pool,
-    registry::Registry
+use deepbook::balance_manager::{
+    Self,
+    BalanceManager,
+    TradeCap,
+    DepositCap,
+    WithdrawCap,
+    TradeProof,
+    DeepBookReferral
 };
-use deepbook_margin::{
-    margin_constants,
-    margin_pool::MarginPool,
-    margin_registry::MarginRegistry,
-    oracle::{calculate_target_currency, get_pyth_price, calculate_price},
-    tpsl::{Self, TakeProfitStopLoss, PendingOrder, Condition, ConditionalOrder}
-};
+use deepbook::constants;
+use deepbook::math;
+use deepbook::order_info::OrderInfo;
+use deepbook::pool::Pool;
+use deepbook::registry::Registry;
+use deepbook_margin::margin_constants;
+use deepbook_margin::margin_pool::MarginPool;
+use deepbook_margin::margin_registry::MarginRegistry;
+use deepbook_margin::oracle::{calculate_target_currency, get_pyth_price, calculate_price};
+use deepbook_margin::tpsl::{Self, TakeProfitStopLoss, PendingOrder, Condition, ConditionalOrder};
 use pyth::price_info::PriceInfoObject;
-use std::{string::String, type_name::{Self, TypeName}};
-use sui::{clock::Clock, coin::Coin, event, vec_map::{Self, VecMap}};
+use std::string::String;
+use std::type_name::{Self, TypeName};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::event;
+use sui::vec_map::{Self, VecMap};
 use token::deep::DEEP;
 
 // === Errors ===
@@ -432,6 +432,7 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
 ): Coin<WithdrawAsset> {
     registry.load_inner();
     self.validate_owner(ctx);
+    assert!(pool.id() == self.deepbook_pool(), EIncorrectDeepBookPool);
 
     let balance_manager = &mut self.balance_manager;
     let withdraw_cap = &self.withdraw_cap;
