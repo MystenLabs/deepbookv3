@@ -369,10 +369,11 @@ public fun set_referral<BaseAsset, QuoteAsset>(
 /// Unset the referral for the margin manager.
 public fun unset_referral<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool_id: ID,
     ctx: &mut TxContext,
 ) {
     self.validate_owner(ctx);
-    self.balance_manager.unset_referral(&self.trade_cap);
+    self.balance_manager.unset_referral(pool_id, &self.trade_cap);
 }
 
 // === Public Functions - Margin Manager ===

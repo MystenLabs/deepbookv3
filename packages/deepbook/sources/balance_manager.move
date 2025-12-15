@@ -397,6 +397,10 @@ public fun referral_owner(referral: &DeepBookPoolReferral): address {
     referral.owner
 }
 
+public fun referral_pool_id(referral: &DeepBookPoolReferral): ID {
+    referral.pool_id
+}
+
 // === Public-Package Functions ===
 /// Mint a `DeepBookReferral` and share it.
 public(package) fun mint_referral(pool_id: ID, ctx: &mut TxContext): ID {
