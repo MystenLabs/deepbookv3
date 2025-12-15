@@ -8,17 +8,16 @@
 /// a `TradeProof`. Generally, a high frequency trading engine will trade as the default owner.
 module deepbook::balance_manager;
 
-use deepbook::{constants, registry::Registry};
+use deepbook::constants;
+use deepbook::registry::Registry;
 use std::type_name::{Self, TypeName};
-use sui::{
-    bag::{Self, Bag},
-    balance::{Self, Balance},
-    coin::Coin,
-    dynamic_field as df,
-    event,
-    object::id_from_address,
-    vec_set::{Self, VecSet}
-};
+use sui::bag::{Self, Bag};
+use sui::balance::{Self, Balance};
+use sui::coin::Coin;
+use sui::dynamic_field as df;
+use sui::event;
+use sui::object::id_from_address;
+use sui::vec_set::{Self, VecSet};
 
 use fun df::borrow as UID.borrow;
 use fun df::exists_ as UID.exists_;
@@ -63,6 +62,9 @@ public struct BalanceEvent has copy, drop {
 /// Balance identifier.
 public struct BalanceKey<phantom T> has copy, drop, store {}
 
+/// Referral identifier.
+public struct ReferralKey(ID) has copy, drop, store;
+
 /// Owners of a `TradeCap` need to get a `TradeProof` to trade across pools in a single PTB (drops after).
 public struct TradeCap has key, store {
     id: UID,
@@ -81,9 +83,15 @@ public struct WithdrawCap has key, store {
     balance_manager_id: ID,
 }
 
-public struct DeepBookReferral has key, store {
+// public struct DeepBookReferral has key, store {
+//     id: UID,
+//     owner: address,
+// }
+
+public struct DeepBookPoolReferral has key, store {
     id: UID,
     owner: address,
+    pool_id: ID,
 }
 
 public struct DeepBookReferralCreatedEvent has copy, drop {
@@ -164,12 +172,12 @@ public fun new_with_custom_owner_caps<App: drop>(
 /// Set the referral for the balance manager.
 public fun set_referral(
     balance_manager: &mut BalanceManager,
-    referral: &DeepBookReferral,
+    referral: &DeepBookPoolReferral,
     trade_cap: &TradeCap,
 ) {
     balance_manager.validate_trader(trade_cap);
     let _: Option<ID> = balance_manager.id.remove_if_exists(constants::referral_df_key());
-    balance_manager.id.add(constants::referral_df_key(), referral.id.to_inner());
+    balance_manager.id.add(ReferralKey(referral.pool_id), referral.id.to_inner());
 
     event::emit(DeepBookReferralSetEvent {
         referral_id: referral.id.to_inner(),
@@ -384,18 +392,19 @@ public fun id(balance_manager: &BalanceManager): ID {
     balance_manager.id.to_inner()
 }
 
-public fun referral_owner(referral: &DeepBookReferral): address {
+public fun referral_owner(referral: &DeepBookPoolReferral): address {
     referral.owner
 }
 
 // === Public-Package Functions ===
 /// Mint a `DeepBookReferral` and share it.
-public(package) fun mint_referral(ctx: &mut TxContext): ID {
+public(package) fun mint_referral(pool_id: ID, ctx: &mut TxContext): ID {
     let id = object::new(ctx);
     let referral_id = id.to_inner();
-    let referral = DeepBookReferral {
+    let referral = DeepBookPoolReferral {
         id,
         owner: ctx.sender(),
+        pool_id,
     };
 
     event::emit(DeepBookReferralCreatedEvent {
@@ -408,7 +417,7 @@ public(package) fun mint_referral(ctx: &mut TxContext): ID {
     referral_id
 }
 
-public(package) fun assert_referral_owner(referral: &DeepBookReferral, ctx: &TxContext) {
+public(package) fun assert_referral_owner(referral: &DeepBookPoolReferral, ctx: &TxContext) {
     assert!(ctx.sender() == referral.owner, EInvalidReferralOwner);
 }
 

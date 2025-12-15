@@ -4,40 +4,36 @@
 /// Public-facing interface for the package.
 module deepbook::pool;
 
-use deepbook::{
-    account::Account,
-    balance_manager::{
-        Self,
-        BalanceManager,
-        TradeProof,
-        DeepBookReferral,
-        TradeCap,
-        DepositCap,
-        WithdrawCap
-    },
-    balances,
-    big_vector::BigVector,
-    book::{Self, Book},
-    constants,
-    deep_price::{Self, DeepPrice, OrderDeepPrice, emit_deep_price_added},
-    ewma::{init_ewma_state, EWMAState},
-    math,
-    order::Order,
-    order_info::{Self, OrderInfo},
-    registry::{DeepbookAdminCap, Registry},
-    state::{Self, State},
-    vault::{Self, Vault, FlashLoan}
+use deepbook::account::Account;
+use deepbook::balance_manager::{
+    Self,
+    BalanceManager,
+    TradeProof,
+    DeepBookPoolReferral,
+    TradeCap,
+    DepositCap,
+    WithdrawCap
 };
+use deepbook::balances;
+use deepbook::big_vector::BigVector;
+use deepbook::book::{Self, Book};
+use deepbook::constants;
+use deepbook::deep_price::{Self, DeepPrice, OrderDeepPrice, emit_deep_price_added};
+use deepbook::ewma::{init_ewma_state, EWMAState};
+use deepbook::math;
+use deepbook::order::Order;
+use deepbook::order_info::{Self, OrderInfo};
+use deepbook::registry::{DeepbookAdminCap, Registry};
+use deepbook::state::{Self, State};
+use deepbook::vault::{Self, Vault, FlashLoan};
 use std::type_name;
-use sui::{
-    balance::{Self, Balance},
-    clock::Clock,
-    coin::{Self, Coin},
-    dynamic_field as df,
-    event,
-    vec_set::{Self, VecSet},
-    versioned::{Self, Versioned}
-};
+use sui::balance::{Self, Balance};
+use sui::clock::Clock;
+use sui::coin::{Self, Coin};
+use sui::dynamic_field as df;
+use sui::event;
+use sui::vec_set::{Self, VecSet};
+use sui::versioned::{Self, Versioned};
 use token::deep::{DEEP, ProtectedTreasury};
 
 use fun df::add as UID.add;
@@ -366,10 +362,10 @@ public fun swap_exact_quantity<BaseAsset, QuoteAsset>(
     let is_bid = quote_quantity > 0;
     if (is_bid) {
         (base_quantity, _, _) = if (pay_with_deep) {
-            self.get_quantity_out(0, quote_quantity, clock)
-        } else {
-            self.get_quantity_out_input_fee(0, quote_quantity, clock)
-        }
+                self.get_quantity_out(0, quote_quantity, clock)
+            } else {
+                self.get_quantity_out_input_fee(0, quote_quantity, clock)
+            }
     } else {
         if (!pay_with_deep) {
             base_quantity =
@@ -859,7 +855,7 @@ public fun mint_referral<BaseAsset, QuoteAsset>(
     assert!(multiplier <= constants::referral_max_multiplier(), EInvalidReferralMultiplier);
     assert!(multiplier % constants::referral_multiplier() == 0, EInvalidReferralMultiplier);
     let _ = self.load_inner();
-    let referral_id = balance_manager::mint_referral(ctx);
+    let referral_id = balance_manager::mint_referral(self.id(), ctx);
     self
         .id
         .add(
@@ -882,7 +878,7 @@ public fun mint_referral<BaseAsset, QuoteAsset>(
 ]
 public fun update_referral_multiplier<BaseAsset, QuoteAsset>(
     _self: &mut Pool<BaseAsset, QuoteAsset>,
-    _referral: &DeepBookReferral,
+    _referral: &DeepBookPoolReferral,
     _multiplier: u64,
 ) {
     abort 1337
@@ -891,7 +887,7 @@ public fun update_referral_multiplier<BaseAsset, QuoteAsset>(
 /// Update the multiplier for the referral.
 public fun update_deepbook_referral_multiplier<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
-    referral: &DeepBookReferral,
+    referral: &DeepBookPoolReferral,
     multiplier: u64,
     ctx: &TxContext,
 ) {
@@ -909,7 +905,7 @@ public fun update_deepbook_referral_multiplier<BaseAsset, QuoteAsset>(
 /// Claim the rewards for the referral.
 public fun claim_referral_rewards<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
-    referral: &DeepBookReferral,
+    referral: &DeepBookPoolReferral,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
     let _ = self.load_inner();
@@ -1586,13 +1582,13 @@ public fun can_place_market_order<BaseAsset, QuoteAsset>(
 
         // If paying fees in base asset, need quantity + fees
         required_base = if (pay_with_deep) {
-            quantity
-        } else {
-            // Fees are deducted from base, so need more base to account for fees
-            let (taker_fee, _, _) = self.pool_trade_params();
-            let input_fee_rate = math::mul(taker_fee, constants::fee_penalty_multiplier());
-            math::mul(quantity, constants::float_scaling() + input_fee_rate)
-        };
+                quantity
+            } else {
+                // Fees are deducted from base, so need more base to account for fees
+                let (taker_fee, _, _) = self.pool_trade_params();
+                let input_fee_rate = math::mul(taker_fee, constants::fee_penalty_multiplier());
+                math::mul(quantity, constants::float_scaling() + input_fee_rate)
+            };
 
         if (pay_with_deep) {
             required_deep = deep_required;
@@ -1695,7 +1691,7 @@ public fun id<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): ID {
 
 public fun get_referral_balances<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
-    referral: &DeepBookReferral,
+    referral: &DeepBookPoolReferral,
 ): (u64, u64, u64) {
     let referral_id = object::id(referral);
     let referral_rewards: &ReferralRewards<BaseAsset, QuoteAsset> = self.id.borrow(referral_id);
