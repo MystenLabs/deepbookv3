@@ -3638,6 +3638,323 @@ fun test_process_order_referral_ok() {
 }
 
 #[test]
+fun test_referral_two_pools_comprehensive() {
+    let mut test = begin(OWNER);
+
+    // Setup registry
+    let registry_id = setup_test(OWNER, &mut test);
+
+    // Alice creates balance manager with funds for both pools
+    let balance_manager_id_alice;
+    test.next_tx(ALICE);
+    {
+        balance_manager_id_alice =
+            create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+                ALICE,
+                1000000 * constants::float_scaling(),
+                &mut test,
+            );
+    };
+
+    // Also deposit USDT into Alice's balance manager for pool 2
+    test.next_tx(ALICE);
+    {
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
+        balance_manager.deposit(
+            mint_for_testing<USDT>(1000000 * constants::float_scaling(), test.ctx()),
+            test.ctx(),
+        );
+        return_shared(balance_manager);
+    };
+
+    // Create reference pool (SUI/DEEP) with orders
+    let reference_pool_id = setup_reference_pool<SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        constants::deep_multiplier(),
+        &mut test,
+    );
+
+    set_time(0, &mut test);
+
+    // Setup pool 1: SUI/USDC
+    let pool_id_1 = setup_pool_with_default_fees<SUI, USDC>(
+        OWNER,
+        registry_id,
+        false,
+        false,
+        &mut test,
+    );
+
+    // Add deep price point for pool 1
+    add_deep_price_point<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        pool_id_1,
+        reference_pool_id,
+        &mut test,
+    );
+
+    // Place initial orders in pool 1
+    let client_order_id = 1;
+    let order_type = constants::no_restriction();
+    let expire_timestamp = constants::max_u64();
+
+    // Sell at $2
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id_1,
+        balance_manager_id_alice,
+        client_order_id,
+        order_type,
+        constants::self_matching_allowed(),
+        2 * constants::float_scaling(),
+        1000 * constants::float_scaling(),
+        false,
+        true,
+        expire_timestamp,
+        &mut test,
+    );
+
+    // Buy at $1
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id_1,
+        balance_manager_id_alice,
+        client_order_id,
+        order_type,
+        constants::self_matching_allowed(),
+        1 * constants::float_scaling(),
+        1000 * constants::float_scaling(),
+        true,
+        true,
+        expire_timestamp,
+        &mut test,
+    );
+
+    // Setup pool 2: SUI/USDT (shares SUI with reference pool SUI/DEEP)
+    let pool_id_2 = setup_pool_with_default_fees<SUI, USDT>(
+        OWNER,
+        registry_id,
+        false,
+        false,
+        &mut test,
+    );
+
+    // Add deep price point for pool 2 (reuse same reference pool)
+    add_deep_price_point<SUI, USDT, SUI, DEEP>(
+        ALICE,
+        pool_id_2,
+        reference_pool_id,
+        &mut test,
+    );
+
+    // Place initial orders in pool 2
+    // Alice places sell order at $2 in pool 2
+    place_limit_order<SUI, USDT>(
+        ALICE,
+        pool_id_2,
+        balance_manager_id_alice,
+        client_order_id,
+        order_type,
+        constants::self_matching_allowed(),
+        2 * constants::float_scaling(),
+        1000 * constants::float_scaling(),
+        false,
+        true,
+        expire_timestamp,
+        &mut test,
+    );
+
+    // Alice places buy order at $1 in pool 2
+    place_limit_order<SUI, USDT>(
+        ALICE,
+        pool_id_2,
+        balance_manager_id_alice,
+        client_order_id,
+        order_type,
+        constants::self_matching_allowed(),
+        1 * constants::float_scaling(),
+        1000 * constants::float_scaling(),
+        true,
+        true,
+        expire_timestamp,
+        &mut test,
+    );
+
+    // Bob mints referral for pool 1 with 0.5x multiplier (500_000_000)
+    let referral_id_pool1;
+    test.next_tx(BOB);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id_1);
+        referral_id_pool1 = pool.mint_referral(500_000_000, test.ctx());
+        return_shared(pool);
+    };
+
+    // Bob mints referral for pool 2 with 1x multiplier (1_000_000_000)
+    let referral_id_pool2;
+    test.next_tx(BOB);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDT>>(pool_id_2);
+        referral_id_pool2 = pool.mint_referral(1_000_000_000, test.ctx());
+        return_shared(pool);
+    };
+
+    // Alice sets Bob's referrals on her balance manager
+    test.next_tx(ALICE);
+    {
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
+        let referral1 = test.take_shared_by_id<DeepBookPoolReferral>(referral_id_pool1);
+        let referral2 = test.take_shared_by_id<DeepBookPoolReferral>(referral_id_pool2);
+        let trade_cap = test.take_from_sender<TradeCap>();
+
+        balance_manager.set_balance_manager_referral(&referral1, &trade_cap);
+        balance_manager.set_balance_manager_referral(&referral2, &trade_cap);
+
+        // Verify referrals are set correctly
+        assert!(
+            balance_manager.get_balance_manager_referral_id(pool_id_1) ==
+            option::some(referral_id_pool1),
+        );
+        assert!(
+            balance_manager.get_balance_manager_referral_id(pool_id_2) ==
+            option::some(referral_id_pool2),
+        );
+
+        return_shared(balance_manager);
+        return_shared(referral1);
+        return_shared(referral2);
+        test.return_to_sender(trade_cap);
+    };
+
+    // Alice trades in pool 1 (buy 1.5 SUI at $2)
+    test.next_tx(ALICE);
+    {
+        let order_info = place_market_order<SUI, USDC>(
+            ALICE,
+            pool_id_1,
+            balance_manager_id_alice,
+            1,
+            constants::self_matching_allowed(),
+            1_500_000_000, // 1.5 SUI
+            true,
+            true,
+            &mut test,
+        );
+        // 10bps fee on 1.5 SUI = 150_000_000 DEEP
+        assert_eq!(order_info.paid_fees(), 150_000_000);
+    };
+
+    // Alice trades in pool 2 (buy 2.0 SUI at $2)
+    test.next_tx(ALICE);
+    {
+        let order_info = place_market_order<SUI, USDT>(
+            ALICE,
+            pool_id_2,
+            balance_manager_id_alice,
+            1,
+            constants::self_matching_allowed(),
+            2_000_000_000, // 2.0 SUI
+            true,
+            true,
+            &mut test,
+        );
+        // 10bps fee on 2.0 SUI = 200_000_000 DEEP
+        assert_eq!(order_info.paid_fees(), 200_000_000);
+    };
+
+    // Verify referral balances before claiming
+    // Pool 1: 150_000_000 fees * 0.5 multiplier = 75_000_000 DEEP
+    test.next_tx(BOB);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id_1);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id_pool1);
+        let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
+        assert_eq!(base, 0);
+        assert_eq!(quote, 0);
+        assert_eq!(deep, 75_000_000); // 150_000_000 * 0.5 = 75_000_000
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    // Pool 2: 200_000_000 fees * 1.0 multiplier = 200_000_000 DEEP
+    test.next_tx(BOB);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDT>>(pool_id_2);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id_pool2);
+        let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
+        assert_eq!(base, 0);
+        assert_eq!(quote, 0);
+        assert_eq!(deep, 200_000_000); // 200_000_000 * 1.0 = 200_000_000
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    // Bob claims rewards from pool 1
+    test.next_tx(BOB);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id_1);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id_pool1);
+        let (base, quote, deep) = pool.claim_pool_referral_rewards(&referral, test.ctx());
+
+        assert_eq!(base.value(), 0);
+        assert_eq!(quote.value(), 0);
+        assert_eq!(deep.value(), 75_000_000);
+
+        destroy(base);
+        destroy(quote);
+        destroy(deep);
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    // Bob claims rewards from pool 2
+    test.next_tx(BOB);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDT>>(pool_id_2);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id_pool2);
+        let (base, quote, deep) = pool.claim_pool_referral_rewards(&referral, test.ctx());
+
+        assert_eq!(base.value(), 0);
+        assert_eq!(quote.value(), 0);
+        assert_eq!(deep.value(), 200_000_000);
+
+        destroy(base);
+        destroy(quote);
+        destroy(deep);
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    // Verify balances are (0,0,0) after claiming
+    test.next_tx(BOB);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id_1);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id_pool1);
+        let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
+        assert_eq!(base, 0);
+        assert_eq!(quote, 0);
+        assert_eq!(deep, 0);
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    test.next_tx(BOB);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDT>>(pool_id_2);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id_pool2);
+        let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
+        assert_eq!(base, 0);
+        assert_eq!(quote, 0);
+        assert_eq!(deep, 0);
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    end(test);
+}
+
+#[test]
 fun test_enable_ewma_params_ok() {
     let mut test = begin(OWNER);
     let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
