@@ -1043,4 +1043,31 @@ impl Reader {
         }
         res
     }
+
+    pub async fn get_deposited_assets_by_balance_managers(
+        &self,
+        balance_manager_ids: &[String],
+    ) -> Result<Vec<(String, String)>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        let res = schema::balances::table
+            .select((
+                schema::balances::balance_manager_id,
+                schema::balances::asset,
+            ))
+            .filter(schema::balances::balance_manager_id.eq_any(balance_manager_ids))
+            .filter(schema::balances::deposit.eq(true))
+            .distinct()
+            .load::<(String, String)>(&mut connection)
+            .await
+            .map_err(|_| DeepBookError::database("Error fetching deposited assets"));
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
 }

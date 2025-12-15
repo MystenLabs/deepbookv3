@@ -99,6 +99,7 @@ pub const DEEPBOOK_POOL_CONFIG_UPDATED_PATH: &str = "/deepbook_pool_config_updat
 pub const MARGIN_MANAGERS_INFO_PATH: &str = "/margin_managers_info";
 pub const MARGIN_MANAGER_STATES_PATH: &str = "/margin_manager_states";
 pub const STATUS_PATH: &str = "/status";
+pub const DEPOSITED_ASSETS_PATH: &str = "/deposited_assets/:balance_manager_ids";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -260,6 +261,7 @@ pub(crate) fn make_router(state: Arc<AppState>, rpc_url: Url) -> Router {
         )
         .route(MARGIN_MANAGERS_INFO_PATH, get(margin_managers_info))
         .route(MARGIN_MANAGER_STATES_PATH, get(margin_manager_states))
+        .route(DEPOSITED_ASSETS_PATH, get(deposited_assets))
         .with_state(state.clone());
 
     let rpc_routes = Router::new()
@@ -2142,4 +2144,53 @@ async fn margin_manager_states(
         .await?;
 
     Ok(Json(states))
+}
+
+#[derive(serde::Serialize)]
+struct BalanceManagerDepositedAssets {
+    balance_manager_id: String,
+    assets: Vec<String>,
+}
+
+async fn deposited_assets(
+    Path(balance_manager_ids): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<BalanceManagerDepositedAssets>>, DeepBookError> {
+    let ids: Vec<String> = balance_manager_ids
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if ids.is_empty() {
+        return Err(DeepBookError::bad_request(
+            "No balance manager IDs provided",
+        ));
+    }
+
+    let results = state
+        .reader
+        .get_deposited_assets_by_balance_managers(&ids)
+        .await?;
+
+    let mut assets_by_manager: HashMap<String, Vec<String>> = HashMap::new();
+    for (balance_manager_id, asset) in results {
+        assets_by_manager
+            .entry(balance_manager_id)
+            .or_default()
+            .push(asset);
+    }
+
+    let response: Vec<BalanceManagerDepositedAssets> = ids
+        .into_iter()
+        .map(|id| {
+            let assets = assets_by_manager.remove(&id).unwrap_or_default();
+            BalanceManagerDepositedAssets {
+                balance_manager_id: id,
+                assets,
+            }
+        })
+        .collect();
+
+    Ok(Json(response))
 }
