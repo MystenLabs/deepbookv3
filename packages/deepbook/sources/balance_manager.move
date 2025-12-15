@@ -427,11 +427,6 @@ public fun balance_manager_referral_owner(referral: &DeepBookPoolReferral): addr
     referral.owner
 }
 
-#[deprecated(note = b"This function is deprecated, use `balance_manager_referral_owner` instead.")]
-public fun referral_pool_id(_referral: &DeepBookReferral): ID {
-    abort
-}
-
 public fun balance_manager_referral_pool_id(referral: &DeepBookPoolReferral): ID {
     referral.pool_id
 }
