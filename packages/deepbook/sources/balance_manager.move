@@ -8,16 +8,17 @@
 /// a `TradeProof`. Generally, a high frequency trading engine will trade as the default owner.
 module deepbook::balance_manager;
 
-use deepbook::constants;
-use deepbook::registry::Registry;
+use deepbook::{constants, registry::Registry};
 use std::type_name::{Self, TypeName};
-use sui::bag::{Self, Bag};
-use sui::balance::{Self, Balance};
-use sui::coin::Coin;
-use sui::dynamic_field as df;
-use sui::event;
-use sui::object::id_from_address;
-use sui::vec_set::{Self, VecSet};
+use sui::{
+    bag::{Self, Bag},
+    balance::{Self, Balance},
+    coin::Coin,
+    dynamic_field as df,
+    event,
+    object::id_from_address,
+    vec_set::{Self, VecSet}
+};
 
 use fun df::borrow as UID.borrow;
 use fun df::exists_ as UID.exists_;
