@@ -922,7 +922,7 @@ public fun claim_referral_rewards<BaseAsset, QuoteAsset>(
     _self: &mut Pool<BaseAsset, QuoteAsset>,
     _referral: &DeepBookReferral,
     _ctx: &mut TxContext,
-) {
+): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
     abort
 }
 
