@@ -5,7 +5,14 @@
 module deepbook::pool_tests;
 
 use deepbook::{
-    balance_manager::{Self, BalanceManager, TradeCap, DeepBookReferral, DepositCap, WithdrawCap},
+    balance_manager::{
+        Self,
+        BalanceManager,
+        TradeCap,
+        DeepBookPoolReferral,
+        DepositCap,
+        WithdrawCap
+    },
     balance_manager_tests::{
         USDC,
         USDT,
@@ -3347,8 +3354,8 @@ fun mint_referral_ok() {
     test.next_tx(ALICE);
     {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
-        let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
-        let (base, quote, deep) = pool.get_referral_balances(&referral);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
         assert!(base == 0, 0);
         assert!(quote == 0, 0);
         assert!(deep == 0, 0);
@@ -3400,8 +3407,8 @@ fun test_update_deepbook_referral_multiplier_e() {
     test.next_tx(ALICE);
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
-        let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
-        pool.update_deepbook_referral_multiplier(&referral, 2_100_000_000, test.ctx());
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        pool.update_pool_referral_multiplier(&referral, 2_100_000_000, test.ctx());
     };
 
     abort (0)
@@ -3423,8 +3430,8 @@ fun test_update_deepbook_referral_multiplier_wrong_owner() {
     test.next_tx(BOB);
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
-        let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
-        pool.update_deepbook_referral_multiplier(&referral, 200_000_000, test.ctx());
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        pool.update_pool_referral_multiplier(&referral, 200_000_000, test.ctx());
     };
 
     abort (0)
@@ -3510,8 +3517,8 @@ fun test_process_order_referral_ok() {
     test.next_tx(ALICE);
     {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
-        let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
-        let (base, quote, deep) = pool.get_referral_balances(&referral);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
         assert_eq!(base, 0);
         assert_eq!(quote, 0);
         // 10bps fee, 0.1x multiplier
@@ -3524,8 +3531,8 @@ fun test_process_order_referral_ok() {
     test.next_tx(ALICE);
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
-        let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
-        pool.update_deepbook_referral_multiplier(&referral, 2_000_000_000, test.ctx());
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        pool.update_pool_referral_multiplier(&referral, 2_000_000_000, test.ctx());
         return_shared(pool);
         return_shared(referral);
     };
@@ -3550,8 +3557,8 @@ fun test_process_order_referral_ok() {
     test.next_tx(ALICE);
     {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
-        let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
-        let (base, quote, deep) = pool.get_referral_balances(&referral);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
         assert_eq!(base, 0);
         assert_eq!(quote, 0);
         // 10bps fee, 2x multiplier = 300_000_000
@@ -3584,7 +3591,7 @@ fun test_process_order_referral_ok() {
     test.next_tx(ALICE);
     {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
-        let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
         let (base, quote, deep) = pool.get_referral_balances(&referral);
         assert_eq!(base, 0);
         // fees paid in USDC = 3_750_000 with 2x multiple = 7_500_000
@@ -3617,7 +3624,7 @@ fun test_process_order_referral_ok() {
     test.next_tx(ALICE);
     {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
-        let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
         let (base, quote, deep) = pool.get_referral_balances(&referral);
         // fees paid in SUI = 1_875_000 with 2x multiple = 3_750_000
         assert_eq!(base, 3_750_000);
