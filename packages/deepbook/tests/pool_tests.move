@@ -3453,8 +3453,8 @@ fun test_claim_referral_rewards_wrong_owner() {
     test.next_tx(BOB);
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
-        let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
-        let (base, quote, deep) = pool.claim_referral_rewards(&referral, test.ctx());
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let (base, quote, deep) = pool.claim_pool_referral_rewards(&referral, test.ctx());
         destroy(base);
         destroy(quote);
         destroy(deep);
@@ -3489,9 +3489,9 @@ fun test_process_order_referral_ok() {
     test.next_tx(ALICE);
     {
         let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
-        let referral = test.take_shared_by_id<DeepBookReferral>(referral_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
         let trade_cap = balance_manager.mint_trade_cap(test.ctx());
-        balance_manager.set_referral(&referral, &trade_cap);
+        balance_manager.set_balance_manager_referral(&referral, &trade_cap);
         return_shared(balance_manager);
         return_shared(referral);
         destroy(trade_cap);
@@ -3592,7 +3592,7 @@ fun test_process_order_referral_ok() {
     {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
-        let (base, quote, deep) = pool.get_referral_balances(&referral);
+        let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
         assert_eq!(base, 0);
         // fees paid in USDC = 3_750_000 with 2x multiple = 7_500_000
         assert_eq!(quote, 7_500_000);
@@ -3625,7 +3625,7 @@ fun test_process_order_referral_ok() {
     {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
-        let (base, quote, deep) = pool.get_referral_balances(&referral);
+        let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
         // fees paid in SUI = 1_875_000 with 2x multiple = 3_750_000
         assert_eq!(base, 3_750_000);
         assert_eq!(quote, 7_500_000);
