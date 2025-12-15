@@ -171,8 +171,15 @@ public fun new_with_custom_owner_caps<App: drop>(
     (balance_manager, deposit_cap, withdraw_cap, trade_cap)
 }
 
-/// Set the referral for the balance manager.
+#[deprecated(note = b"This function is deprecated, use `set_balance_manager_referral` instead.")]
 public fun set_referral(
+    _balance_manager: &mut BalanceManager,
+    _referral: &DeepBookReferral,
+    _trade_cap: &TradeCap,
+) { abort }
+
+/// Set the referral for the balance manager.
+public fun set_balance_manager_referral(
     balance_manager: &mut BalanceManager,
     referral: &DeepBookPoolReferral,
     trade_cap: &TradeCap,
@@ -187,8 +194,17 @@ public fun set_referral(
     });
 }
 
+#[deprecated(note = b"This function is deprecated, use `unset_balance_manager_referral` instead.")]
+public fun unset_referral(_balance_manager: &mut BalanceManager, _trade_cap: &TradeCap) {
+    abort
+}
+
 /// Unset the referral for the balance manager.
-public fun unset_referral(balance_manager: &mut BalanceManager, pool_id: ID, trade_cap: &TradeCap) {
+public fun unset_balance_manager_referral(
+    balance_manager: &mut BalanceManager,
+    pool_id: ID,
+    trade_cap: &TradeCap,
+) {
     balance_manager.validate_trader(trade_cap);
     let _: Option<ID> = balance_manager.id.remove_if_exists(ReferralKey(pool_id));
 

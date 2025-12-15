@@ -556,12 +556,12 @@ fun test_referral_ok() {
         let mut balance_manager = balance_manager::new(test.ctx());
         let trade_cap = balance_manager.mint_trade_cap(test.ctx());
         balance_manager.set_referral(&referral1, &trade_cap);
-        assert!(balance_manager.get_referral_id() == option::some(referral_id1), 0);
+        assert!(balance_manager.get_balance_manager_referral_id() == option::some(referral_id1), 0);
         balance_manager.set_referral(&referral2, &trade_cap);
-        assert!(balance_manager.get_referral_id() == option::some(referral_id2), 0);
+        assert!(balance_manager.get_balance_manager_referral_id() == option::some(referral_id2), 0);
 
         balance_manager.unset_referral(&trade_cap);
-        assert!(balance_manager.get_referral_id() == option::none(), 0);
+        assert!(balance_manager.get_balance_manager_referral_id() == option::none(), 0);
 
         transfer::public_share_object(balance_manager);
         return_shared(referral1);
@@ -581,7 +581,7 @@ fun test_unset_no_referral_ok() {
         let mut balance_manager = balance_manager::new(test.ctx());
         let trade_cap = balance_manager.mint_trade_cap(test.ctx());
         balance_manager.unset_referral(&trade_cap);
-        assert!(balance_manager.get_referral_id() == option::none(), 0);
+        assert!(balance_manager.get_balance_manager_referral_id() == option::none(), 0);
 
         transfer::public_share_object(balance_manager);
         destroy(trade_cap);
