@@ -83,6 +83,7 @@ public struct WithdrawCap has key, store {
     balance_manager_id: ID,
 }
 
+// #[depreacted]
 // public struct DeepBookReferral has key, store {
 //     id: UID,
 //     owner: address,
@@ -176,7 +177,7 @@ public fun set_referral(
     trade_cap: &TradeCap,
 ) {
     balance_manager.validate_trader(trade_cap);
-    let _: Option<ID> = balance_manager.id.remove_if_exists(constants::referral_df_key());
+    let _: Option<ID> = balance_manager.id.remove_if_exists(ReferralKey(referral.pool_id));
     balance_manager.id.add(ReferralKey(referral.pool_id), referral.id.to_inner());
 
     event::emit(DeepBookReferralSetEvent {
@@ -186,9 +187,9 @@ public fun set_referral(
 }
 
 /// Unset the referral for the balance manager.
-public fun unset_referral(balance_manager: &mut BalanceManager, trade_cap: &TradeCap) {
+public fun unset_referral(balance_manager: &mut BalanceManager, pool_id: ID, trade_cap: &TradeCap) {
     balance_manager.validate_trader(trade_cap);
-    let _: Option<ID> = balance_manager.id.remove_if_exists(constants::referral_df_key());
+    let _: Option<ID> = balance_manager.id.remove_if_exists(ReferralKey(pool_id));
 
     event::emit(DeepBookReferralSetEvent {
         referral_id: id_from_address(@0x0),
@@ -368,8 +369,8 @@ public fun register_balance_manager(
 }
 
 /// Get the referral id from the balance manager.
-public fun get_referral_id(balance_manager: &BalanceManager): Option<ID> {
-    let ref_key = constants::referral_df_key();
+public fun get_referral_id(balance_manager: &BalanceManager, pool_id: ID): Option<ID> {
+    let ref_key = ReferralKey(pool_id);
     if (!balance_manager.id.exists_(ref_key)) {
         return option::none()
     };

@@ -261,9 +261,10 @@ public fun ewma_df_key(): vector<u8> {
     EWMA_DF_KEY
 }
 
-public fun referral_df_key(): vector<u8> {
-    REFERRAL_DF_KEY
-}
+// #[depreacted]
+// public fun referral_df_key(): vector<u8> {
+//     REFERRAL_DF_KEY
+// }
 
 public fun referral_max_multiplier(): u64 {
     REFERRAL_MAX_MULTIPLIER
