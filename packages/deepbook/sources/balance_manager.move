@@ -8,7 +8,7 @@
 /// a `TradeProof`. Generally, a high frequency trading engine will trade as the default owner.
 module deepbook::balance_manager;
 
-use deepbook::{constants, registry::Registry};
+use deepbook::registry::Registry;
 use std::type_name::{Self, TypeName};
 use sui::{
     bag::{Self, Bag},
@@ -84,11 +84,11 @@ public struct WithdrawCap has key, store {
     balance_manager_id: ID,
 }
 
-// #[depreacted]
-// public struct DeepBookReferral has key, store {
-//     id: UID,
-//     owner: address,
-// }
+#[deprecated(note = b"This struct is deprecated, replaced by `DeepBookPoolReferral`.")]
+public struct DeepBookReferral has key, store {
+    id: UID,
+    owner: address,
+}
 
 public struct DeepBookPoolReferral has key, store {
     id: UID,
@@ -369,8 +369,16 @@ public fun register_balance_manager(
     registry.add_balance_manager(owner, manager_id);
 }
 
+#[deprecated(note = b"This function is deprecated, use `get_balance_manager_referral_id` instead.")]
+public fun get_referral_id(_balance_manager: &BalanceManager): Option<ID> {
+    abort
+}
+
 /// Get the referral id from the balance manager.
-public fun get_referral_id(balance_manager: &BalanceManager, pool_id: ID): Option<ID> {
+public fun get_balance_manager_referral_id(
+    balance_manager: &BalanceManager,
+    pool_id: ID,
+): Option<ID> {
     let ref_key = ReferralKey(pool_id);
     if (!balance_manager.id.exists_(ref_key)) {
         return option::none()
@@ -394,11 +402,21 @@ public fun id(balance_manager: &BalanceManager): ID {
     balance_manager.id.to_inner()
 }
 
-public fun referral_owner(referral: &DeepBookPoolReferral): address {
+#[deprecated(note = b"This function is deprecated, use `balance_manager_referral_owner` instead.")]
+public fun referral_owner(_referral: &DeepBookReferral): address {
+    abort
+}
+
+public fun balance_manager_referral_owner(referral: &DeepBookPoolReferral): address {
     referral.owner
 }
 
-public fun referral_pool_id(referral: &DeepBookPoolReferral): ID {
+#[deprecated(note = b"This function is deprecated, use `balance_manager_referral_owner` instead.")]
+public fun referral_pool_id(_referral: &DeepBookReferral): ID {
+    abort
+}
+
+public fun balance_manager_referral_pool_id(referral: &DeepBookPoolReferral): ID {
     referral.pool_id
 }
 

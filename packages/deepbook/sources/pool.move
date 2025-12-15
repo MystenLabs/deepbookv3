@@ -1883,7 +1883,7 @@ fun process_referral_fees<BaseAsset, QuoteAsset>(
     balance_manager: &mut BalanceManager,
     trade_proof: &TradeProof,
 ) {
-    let referral_id = balance_manager.get_referral_id(self.id());
+    let referral_id = balance_manager.get_balance_manager_referral_id(self.id());
     if (referral_id.is_some()) {
         let referral_id = referral_id.destroy_some();
         let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
