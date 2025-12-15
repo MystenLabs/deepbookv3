@@ -29,6 +29,7 @@ const TESTNET_PACKAGES: &[&str] = &[
     "0x984757fc7c0e6dd5f15c2c66e881dd6e5aca98b725f3dbd83c445e057ebb790a",
     "0xfb28c4cbc6865bd1c897d26aecbe1f8792d1509a20ffec692c800660cbec6982",
     "0x926c446869fa175ec3b0dbf6c4f14604d86a415c1fccd8c8f823cfc46a29baed",
+    "0xa0936c6ea82fbfc0356eedc2e740e260dedaaa9f909a0715b1cc31e9a8283719",
     "0x9ae1cbfb7475f6a4c2d4d3273335459f8f9d265874c4d161c1966cdcbd4e9ebc", // Latest
 ];
 
