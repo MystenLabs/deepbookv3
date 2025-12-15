@@ -432,6 +432,7 @@ public fun withdraw<BaseAsset, QuoteAsset, WithdrawAsset>(
 ): Coin<WithdrawAsset> {
     registry.load_inner();
     self.validate_owner(ctx);
+    assert!(pool.id() == self.deepbook_pool(), EIncorrectDeepBookPool);
 
     let balance_manager = &mut self.balance_manager;
     let withdraw_cap = &self.withdraw_cap;
