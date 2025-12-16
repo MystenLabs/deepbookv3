@@ -511,6 +511,11 @@ public fun get_margin_manager_ids(self: &MarginRegistry, owner: address): VecSet
     }
 }
 
+public fun can_liquidate(self: &MarginRegistry, deepbook_pool_id: ID, risk_ratio: u64): bool {
+    let config = self.get_pool_config(deepbook_pool_id);
+    risk_ratio < config.risk_ratios.liquidation_risk_ratio
+}
+
 public fun base_margin_pool_id(self: &MarginRegistry, deepbook_pool_id: ID): ID {
     let config = self.get_pool_config(deepbook_pool_id);
     config.base_margin_pool_id
@@ -648,15 +653,6 @@ public(package) fun can_withdraw(
 public(package) fun can_borrow(self: &MarginRegistry, deepbook_pool_id: ID, risk_ratio: u64): bool {
     let config = self.get_pool_config(deepbook_pool_id);
     risk_ratio >= config.risk_ratios.min_borrow_risk_ratio
-}
-
-public(package) fun can_liquidate(
-    self: &MarginRegistry,
-    deepbook_pool_id: ID,
-    risk_ratio: u64,
-): bool {
-    let config = self.get_pool_config(deepbook_pool_id);
-    risk_ratio < config.risk_ratios.liquidation_risk_ratio
 }
 
 public(package) fun get_config<Config: store + drop>(self: &MarginRegistry): &Config {
