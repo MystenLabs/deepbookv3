@@ -1008,7 +1008,7 @@ impl Reader {
         if let Some(pool_id) = deepbook_pool_id_filter {
             query = query.filter(deepbook_pool_id.eq(pool_id));
         }
-        query = query.order(risk_ratio.desc().nulls_last());
+        query = query.order(risk_ratio.asc().nulls_last());
 
         let res = query.load::<MarginManagerState>(&mut connection).await;
 

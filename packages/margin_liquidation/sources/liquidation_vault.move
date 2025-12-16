@@ -86,26 +86,50 @@ public fun liquidate_base<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     base_oracle: &PriceInfoObject,
     quote_oracle: &PriceInfoObject,
-    margin_pool: &mut MarginPool<BaseAsset>,
+    base_margin_pool: &mut MarginPool<BaseAsset>,
+    quote_margin_pool: &mut MarginPool<QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
-    repay_amount: u64,
+    repay_amount: Option<u64>,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let balance = self.withdraw_int<BaseAsset>(repay_amount);
+    let risk_ratio = margin_manager.risk_ratio(
+        registry,
+        base_oracle,
+        quote_oracle,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        clock,
+    );
+    let base_balance = self.balance<BaseAsset>();
+    if (!registry.can_liquidate(pool.id(), risk_ratio) || base_balance == 0) {
+        return
+    };
+    let amount = repay_amount.destroy_with_default(base_balance);
+    let balance = self.withdraw_int<BaseAsset>(amount);
     let (mut base_coin, quote_coin, base_repay_coin) = margin_manager.liquidate<
         BaseAsset,
         QuoteAsset,
         BaseAsset,
-    >(registry, base_oracle, quote_oracle, margin_pool, pool, balance.into_coin(ctx), clock, ctx);
+    >(
+        registry,
+        base_oracle,
+        quote_oracle,
+        base_margin_pool,
+        pool,
+        balance.into_coin(ctx),
+        clock,
+        ctx,
+    );
     let repay_balance_remaining = base_repay_coin.value();
     let base_out = base_coin.value();
     let quote_out = quote_coin.value();
     event::emit(LiquidationByVault {
         vault_id: self.id(),
         margin_manager_id: margin_manager.id(),
-        margin_pool_id: margin_pool.id(),
-        base_in: repay_amount,
+        margin_pool_id: base_margin_pool.id(),
+        base_in: amount,
         quote_in: 0,
         base_out,
         quote_out,
@@ -124,13 +148,28 @@ public fun liquidate_quote<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     base_oracle: &PriceInfoObject,
     quote_oracle: &PriceInfoObject,
-    margin_pool: &mut MarginPool<QuoteAsset>,
+    base_margin_pool: &mut MarginPool<BaseAsset>,
+    quote_margin_pool: &mut MarginPool<QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
-    repay_amount: u64,
+    repay_amount: Option<u64>,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let balance = self.withdraw_int<QuoteAsset>(repay_amount);
+    let risk_ratio = margin_manager.risk_ratio(
+        registry,
+        base_oracle,
+        quote_oracle,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        clock,
+    );
+    let quote_balance = self.balance<QuoteAsset>();
+    if (!registry.can_liquidate(pool.id(), risk_ratio) || quote_balance == 0) {
+        return
+    };
+    let amount = repay_amount.destroy_with_default(quote_balance);
+    let balance = self.withdraw_int<QuoteAsset>(amount);
     let (base_coin, mut quote_coin, quote_repay_coin) = margin_manager.liquidate<
         BaseAsset,
         QuoteAsset,
@@ -139,7 +178,7 @@ public fun liquidate_quote<BaseAsset, QuoteAsset>(
         registry,
         base_oracle,
         quote_oracle,
-        margin_pool,
+        quote_margin_pool,
         pool,
         balance.into_coin(ctx),
         clock,
@@ -151,9 +190,9 @@ public fun liquidate_quote<BaseAsset, QuoteAsset>(
     event::emit(LiquidationByVault {
         vault_id: self.id(),
         margin_manager_id: margin_manager.id(),
-        margin_pool_id: margin_pool.id(),
+        margin_pool_id: quote_margin_pool.id(),
         base_in: 0,
-        quote_in: repay_amount,
+        quote_in: amount,
         base_out,
         quote_out,
         repay_balance_remaining,
