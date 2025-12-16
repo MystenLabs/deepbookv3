@@ -1270,14 +1270,33 @@ async fn orderbook(
 
     let pool_object: SuiObjectResponse = sui_client
         .read_api()
-        .get_object_with_options(pool_address, SuiObjectDataOptions::full_content())
+        .get_object_with_options(
+            pool_address,
+            SuiObjectDataOptions::full_content().with_owner(),
+        )
         .await?;
     let pool_data: &SuiObjectData = pool_object.data.as_ref().ok_or(DeepBookError::rpc(
         format!("Missing data in pool object response for '{}'", pool_name),
     ))?;
-    let pool_object_ref: ObjectRef = (pool_data.object_id, pool_data.version, pool_data.digest);
 
-    let pool_input = CallArg::Object(ObjectArg::ImmOrOwnedObject(pool_object_ref));
+    // Pool is a shared object, extract initial_shared_version from owner info
+    let initial_shared_version = match &pool_data.owner {
+        Some(sui_types::object::Owner::Shared {
+            initial_shared_version,
+        }) => *initial_shared_version,
+        _ => {
+            return Err(DeepBookError::rpc(format!(
+                "Pool '{}' is not a shared object or owner info missing",
+                pool_name
+            )));
+        }
+    };
+
+    let pool_input = CallArg::Object(ObjectArg::SharedObject {
+        id: pool_data.object_id,
+        initial_shared_version,
+        mutable: false,
+    });
     ptb.input(pool_input)?;
 
     let input_argument = CallArg::Pure(
@@ -1286,22 +1305,15 @@ async fn orderbook(
     );
     ptb.input(input_argument)?;
 
+    // Clock is a shared object with initial_shared_version = 1
     let sui_clock_object_id = ObjectID::from_hex_literal(
         "0x0000000000000000000000000000000000000000000000000000000000000006",
     )?;
-    let sui_clock_object: SuiObjectResponse = sui_client
-        .read_api()
-        .get_object_with_options(sui_clock_object_id, SuiObjectDataOptions::full_content())
-        .await?;
-    let clock_data: &SuiObjectData = sui_clock_object
-        .data
-        .as_ref()
-        .ok_or(DeepBookError::rpc("Missing data in clock object response"))?;
-
-    let sui_clock_object_ref: ObjectRef =
-        (clock_data.object_id, clock_data.version, clock_data.digest);
-
-    let clock_input = CallArg::Object(ObjectArg::ImmOrOwnedObject(sui_clock_object_ref));
+    let clock_input = CallArg::Object(ObjectArg::SharedObject {
+        id: sui_clock_object_id,
+        initial_shared_version: sui_types::base_types::SequenceNumber::from_u64(1),
+        mutable: false,
+    });
     ptb.input(clock_input)?;
 
     let base_coin_type = parse_type_input(&base_asset_id)?;
@@ -1422,7 +1434,7 @@ async fn deep_supply(
         .read_api()
         .get_object_with_options(
             deep_treasury_object_id,
-            SuiObjectDataOptions::full_content(),
+            SuiObjectDataOptions::full_content().with_owner(),
         )
         .await?;
     let deep_treasury_data: &SuiObjectData = deep_treasury_object
@@ -1430,13 +1442,24 @@ async fn deep_supply(
         .as_ref()
         .ok_or(DeepBookError::rpc("Incorrect Treasury ID"))?;
 
-    let deep_treasury_ref: ObjectRef = (
-        deep_treasury_data.object_id,
-        deep_treasury_data.version,
-        deep_treasury_data.digest,
-    );
-
-    let deep_treasury_input = CallArg::Object(ObjectArg::ImmOrOwnedObject(deep_treasury_ref));
+    // Handle treasury object based on owner type (shared or owned)
+    let deep_treasury_input = match &deep_treasury_data.owner {
+        Some(sui_types::object::Owner::Shared {
+            initial_shared_version,
+        }) => CallArg::Object(ObjectArg::SharedObject {
+            id: deep_treasury_data.object_id,
+            initial_shared_version: *initial_shared_version,
+            mutable: false,
+        }),
+        _ => {
+            let deep_treasury_ref: ObjectRef = (
+                deep_treasury_data.object_id,
+                deep_treasury_data.version,
+                deep_treasury_data.digest,
+            );
+            CallArg::Object(ObjectArg::ImmOrOwnedObject(deep_treasury_ref))
+        }
+    };
     ptb.input(deep_treasury_input)?;
 
     let package = ObjectID::from_hex_literal(&state.deep_token_package_id)
