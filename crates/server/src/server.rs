@@ -43,7 +43,7 @@ use sui_indexer_alt_metrics::{MetricsArgs, MetricsService};
 use sui_json_rpc_types::{SuiObjectData, SuiObjectDataOptions, SuiObjectResponse};
 use sui_sdk::SuiClientBuilder;
 use sui_types::{
-    base_types::{ObjectID, ObjectRef, SuiAddress},
+    base_types::{ObjectID, SuiAddress},
     programmable_transaction_builder::ProgrammableTransactionBuilder,
     transaction::{Argument, CallArg, Command, ObjectArg, ProgrammableMoveCall, TransactionKind},
     type_input::TypeInput,
@@ -1279,7 +1279,6 @@ async fn orderbook(
         format!("Missing data in pool object response for '{}'", pool_name),
     ))?;
 
-    // Pool is a shared object, extract initial_shared_version from owner info
     let initial_shared_version = match &pool_data.owner {
         Some(sui_types::object::Owner::Shared {
             initial_shared_version,
@@ -1305,7 +1304,6 @@ async fn orderbook(
     );
     ptb.input(input_argument)?;
 
-    // Clock is a shared object with initial_shared_version = 1
     let sui_clock_object_id = ObjectID::from_hex_literal(
         "0x0000000000000000000000000000000000000000000000000000000000000006",
     )?;
@@ -1442,24 +1440,19 @@ async fn deep_supply(
         .as_ref()
         .ok_or(DeepBookError::rpc("Incorrect Treasury ID"))?;
 
-    // Handle treasury object based on owner type (shared or owned)
-    let deep_treasury_input = match &deep_treasury_data.owner {
+    let initial_shared_version = match &deep_treasury_data.owner {
         Some(sui_types::object::Owner::Shared {
             initial_shared_version,
-        }) => CallArg::Object(ObjectArg::SharedObject {
-            id: deep_treasury_data.object_id,
-            initial_shared_version: *initial_shared_version,
-            mutable: false,
-        }),
+        }) => *initial_shared_version,
         _ => {
-            let deep_treasury_ref: ObjectRef = (
-                deep_treasury_data.object_id,
-                deep_treasury_data.version,
-                deep_treasury_data.digest,
-            );
-            CallArg::Object(ObjectArg::ImmOrOwnedObject(deep_treasury_ref))
+            return Err(DeepBookError::rpc("Treasury is not a shared object"));
         }
     };
+    let deep_treasury_input = CallArg::Object(ObjectArg::SharedObject {
+        id: deep_treasury_data.object_id,
+        initial_shared_version,
+        mutable: false,
+    });
     ptb.input(deep_treasury_input)?;
 
     let package = ObjectID::from_hex_literal(&state.deep_token_package_id)
