@@ -2,7 +2,7 @@
 
 [move]
 version = 3
-manifest_digest = "6F6AA7FA51C30550E149418421B1FF7C3934746AB90E5ECC18469129B689059B"
+manifest_digest = "2FEF0362F1ECBCE2DFD36A768D63E99B93E30BB4646ECAA578E319552D5B8908"
 deps_digest = "52B406A7A21811BEF51751CF88DA0E76DAEFFEAC888D4F4060B1A72BBE7D8D35"
 dependencies = [
   { id = "Bridge", name = "Bridge" },
@@ -29,7 +29,7 @@ source = { git = "https://github.com/MystenLabs/sui.git", rev = "c1f1ae650fb9f92
 
 [[move.package]]
 id = "Pyth"
-source = { git = "https://github.com/pyth-network/pyth-crosschain.git", rev = "sui-contract-testnet", subdir = "target_chains/sui/contracts" }
+source = { git = "https://github.com/pyth-network/pyth-crosschain.git", rev = "main", subdir = "target_chains/sui/contracts" }
 
 dependencies = [
   { id = "Sui", name = "Sui" },
@@ -55,7 +55,7 @@ dependencies = [
 
 [[move.package]]
 id = "Wormhole"
-source = { git = "https://github.com/wormhole-foundation/wormhole.git", rev = "sui/testnet", subdir = "sui/wormhole" }
+source = { git = "https://github.com/wormhole-foundation/wormhole.git", rev = "82d82bffd5a8566e4b5d94be4e4678ad55ab1f4f", subdir = "sui/wormhole" }
 
 dependencies = [
   { id = "Sui", name = "Sui" },
@@ -63,7 +63,7 @@ dependencies = [
 
 [[move.package]]
 id = "deepbook"
-source = { git = "https://github.com/MystenLabs/deepbookv3", rev = "margin-testnet", subdir = "packages/deepbook" }
+source = { git = "https://github.com/MystenLabs/deepbookv3", rev = "main", subdir = "packages/deepbook" }
 
 dependencies = [
   { id = "Bridge", name = "Bridge" },
@@ -75,7 +75,7 @@ dependencies = [
 
 [[move.package]]
 id = "deepbook_margin"
-source = { git = "https://github.com/MystenLabs/deepbookv3", rev = "margin-testnet", subdir = "packages/deepbook_margin" }
+source = { git = "https://github.com/MystenLabs/deepbookv3", rev = "main", subdir = "packages/deepbook_margin" }
 
 dependencies = [
   { id = "Bridge", name = "Bridge" },
