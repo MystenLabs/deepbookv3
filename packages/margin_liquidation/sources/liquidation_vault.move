@@ -4,15 +4,13 @@
 module margin_liquidation::liquidation_vault;
 
 use deepbook::pool::Pool;
-use deepbook_margin::margin_manager::{MarginManager, liquidate};
-use deepbook_margin::margin_pool::MarginPool;
-use deepbook_margin::margin_registry::MarginRegistry;
+use deepbook_margin::{
+    margin_manager::{MarginManager, liquidate},
+    margin_pool::MarginPool,
+    margin_registry::MarginRegistry
+};
 use pyth::price_info::PriceInfoObject;
-use sui::bag::{Self, Bag};
-use sui::balance::{Self, Balance};
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::event;
+use sui::{bag::{Self, Bag}, balance::{Self, Balance}, clock::Clock, coin::Coin, event};
 
 // === Errors ===
 const ENotEnoughBalanceInVault: u64 = 1;
