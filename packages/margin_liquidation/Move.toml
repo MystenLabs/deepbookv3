@@ -4,10 +4,10 @@ edition = "2024.beta"
 version = "0.0.1"
 
 [dependencies]
-deepbook_margin = { local = "../deepbook_margin" }
+deepbook_margin = { git = "https://github.com/MystenLabs/deepbookv3", subdir = "packages/deepbook_margin", rev = "margin-testnet" }
 
 # Pyth dependency
-Pyth = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/sui/contracts", rev = "main" }
+Pyth = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/sui/contracts", rev = "sui-contract-testnet" }
 
 [addresses]
 margin_liquidation = "0x0"

@@ -4,13 +4,15 @@
 module margin_liquidation::liquidation_vault;
 
 use deepbook::pool::Pool;
-use deepbook_margin::{
-    margin_manager::{MarginManager, liquidate},
-    margin_pool::MarginPool,
-    margin_registry::MarginRegistry
-};
+use deepbook_margin::margin_manager::{MarginManager, liquidate};
+use deepbook_margin::margin_pool::MarginPool;
+use deepbook_margin::margin_registry::MarginRegistry;
 use pyth::price_info::PriceInfoObject;
-use sui::{bag::{Self, Bag}, balance::{Self, Balance}, clock::Clock, coin::Coin, event};
+use sui::bag::{Self, Bag};
+use sui::balance::{Self, Balance};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::event;
 
 // === Errors ===
 const ENotEnoughBalanceInVault: u64 = 1;
@@ -89,7 +91,7 @@ public fun liquidate_base<BaseAsset, QuoteAsset>(
     base_margin_pool: &mut MarginPool<BaseAsset>,
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
-    repay_amount: u64,
+    repay_amount: Option<u64>,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
@@ -102,10 +104,12 @@ public fun liquidate_base<BaseAsset, QuoteAsset>(
         quote_margin_pool,
         clock,
     );
-    if (!registry.can_liquidate(pool.id(), risk_ratio)) {
+    let base_balance = self.balance<BaseAsset>();
+    if (!registry.can_liquidate(pool.id(), risk_ratio) || base_balance == 0) {
         return
     };
-    let balance = self.withdraw_int<BaseAsset>(repay_amount);
+    let amount = repay_amount.destroy_with_default(base_balance);
+    let balance = self.withdraw_int<BaseAsset>(amount);
     let (mut base_coin, quote_coin, base_repay_coin) = margin_manager.liquidate<
         BaseAsset,
         QuoteAsset,
@@ -127,7 +131,7 @@ public fun liquidate_base<BaseAsset, QuoteAsset>(
         vault_id: self.id(),
         margin_manager_id: margin_manager.id(),
         margin_pool_id: base_margin_pool.id(),
-        base_in: repay_amount,
+        base_in: amount,
         quote_in: 0,
         base_out,
         quote_out,
@@ -149,7 +153,7 @@ public fun liquidate_quote<BaseAsset, QuoteAsset>(
     base_margin_pool: &mut MarginPool<BaseAsset>,
     quote_margin_pool: &mut MarginPool<QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
-    repay_amount: u64,
+    repay_amount: Option<u64>,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
@@ -162,10 +166,12 @@ public fun liquidate_quote<BaseAsset, QuoteAsset>(
         quote_margin_pool,
         clock,
     );
-    if (!registry.can_liquidate(pool.id(), risk_ratio)) {
+    let quote_balance = self.balance<QuoteAsset>();
+    if (!registry.can_liquidate(pool.id(), risk_ratio) || quote_balance == 0) {
         return
     };
-    let balance = self.withdraw_int<QuoteAsset>(repay_amount);
+    let amount = repay_amount.destroy_with_default(quote_balance);
+    let balance = self.withdraw_int<QuoteAsset>(amount);
     let (base_coin, mut quote_coin, quote_repay_coin) = margin_manager.liquidate<
         BaseAsset,
         QuoteAsset,
@@ -188,7 +194,7 @@ public fun liquidate_quote<BaseAsset, QuoteAsset>(
         margin_manager_id: margin_manager.id(),
         margin_pool_id: quote_margin_pool.id(),
         base_in: 0,
-        quote_in: repay_amount,
+        quote_in: amount,
         base_out,
         quote_out,
         repay_balance_remaining,

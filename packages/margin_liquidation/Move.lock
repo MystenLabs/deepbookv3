@@ -2,7 +2,7 @@
 
 [move]
 version = 3
-manifest_digest = "16B2FF2BE540C78278A68837AAEDCF53FA39351907BF4BC4706FE07C24A3BFFD"
+manifest_digest = "6F6AA7FA51C30550E149418421B1FF7C3934746AB90E5ECC18469129B689059B"
 deps_digest = "52B406A7A21811BEF51751CF88DA0E76DAEFFEAC888D4F4060B1A72BBE7D8D35"
 dependencies = [
   { id = "Bridge", name = "Bridge" },
@@ -29,7 +29,7 @@ source = { git = "https://github.com/MystenLabs/sui.git", rev = "c1f1ae650fb9f92
 
 [[move.package]]
 id = "Pyth"
-source = { git = "https://github.com/pyth-network/pyth-crosschain.git", rev = "main", subdir = "target_chains/sui/contracts" }
+source = { git = "https://github.com/pyth-network/pyth-crosschain.git", rev = "sui-contract-testnet", subdir = "target_chains/sui/contracts" }
 
 dependencies = [
   { id = "Sui", name = "Sui" },
@@ -55,7 +55,7 @@ dependencies = [
 
 [[move.package]]
 id = "Wormhole"
-source = { git = "https://github.com/wormhole-foundation/wormhole.git", rev = "82d82bffd5a8566e4b5d94be4e4678ad55ab1f4f", subdir = "sui/wormhole" }
+source = { git = "https://github.com/wormhole-foundation/wormhole.git", rev = "sui/testnet", subdir = "sui/wormhole" }
 
 dependencies = [
   { id = "Sui", name = "Sui" },
@@ -63,7 +63,7 @@ dependencies = [
 
 [[move.package]]
 id = "deepbook"
-source = { local = "../deepbook" }
+source = { git = "https://github.com/MystenLabs/deepbookv3", rev = "margin-testnet", subdir = "packages/deepbook" }
 
 dependencies = [
   { id = "Bridge", name = "Bridge" },
@@ -75,7 +75,7 @@ dependencies = [
 
 [[move.package]]
 id = "deepbook_margin"
-source = { local = "../deepbook_margin" }
+source = { git = "https://github.com/MystenLabs/deepbookv3", rev = "margin-testnet", subdir = "packages/deepbook_margin" }
 
 dependencies = [
   { id = "Bridge", name = "Bridge" },
@@ -102,3 +102,11 @@ dependencies = [
 compiler-version = "1.61.2"
 edition = "2024.beta"
 flavor = "sui"
+
+[env]
+
+[env.testnet]
+chain-id = "4c78adac"
+original-published-id = "0x9cb448cb14012e7f6d60d95fffe311dec200d76580226c1cbb85a5b3fb308858"
+latest-published-id = "0x9cb448cb14012e7f6d60d95fffe311dec200d76580226c1cbb85a5b3fb308858"
+published-version = "1"
