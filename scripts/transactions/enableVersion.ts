@@ -9,7 +9,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
 (async () => {
   // Update constant for env
   const env = "mainnet";
-  const versionToEnable = 4;
+  const versionToEnable = 5;
 
   const dbClient = new DeepBookClient({
     address: "0x0",
