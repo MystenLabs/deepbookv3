@@ -464,7 +464,7 @@ public fun swap_exact_quantity_with_manager<BaseAsset, QuoteAsset>(
         ctx,
     );
 
-    let (base_out, quote_out) = if (is_bid) {
+    let (base_out_quantity, quote_out_quantity) = if (is_bid) {
         let quote_left = quote_quantity - order_info.cumulative_quote_quantity();
         (order_info.executed_quantity(), quote_left)
     } else {
@@ -472,8 +472,16 @@ public fun swap_exact_quantity_with_manager<BaseAsset, QuoteAsset>(
         (base_left, order_info.cumulative_quote_quantity())
     };
 
-    let base_out = balance_manager.withdraw_with_cap(withdraw_cap, base_out, ctx);
-    let quote_out = balance_manager.withdraw_with_cap(withdraw_cap, quote_out, ctx);
+    let base_out = if (base_out_quantity > 0) {
+        balance_manager.withdraw_with_cap(withdraw_cap, base_out_quantity, ctx)
+    } else {
+        coin::zero(ctx)
+    };
+    let quote_out = if (quote_out_quantity > 0) {
+        balance_manager.withdraw_with_cap(withdraw_cap, quote_out_quantity, ctx)
+    } else {
+        coin::zero(ctx)
+    };
 
     if (is_bid) {
         assert!(base_out.value() >= min_out, EMinimumQuantityOutNotMet);
