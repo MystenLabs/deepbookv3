@@ -1727,9 +1727,10 @@ public fun get_pool_referral_balances<BaseAsset, QuoteAsset>(
     referral: &DeepBookPoolReferral,
 ): (u64, u64, u64) {
     let _ = self.load_inner();
-    let referral_id = object::id(referral);
-    assert!(self.id.exists_(referral_id), EWrongPoolReferral);
-    let referral_rewards: &ReferralRewards<BaseAsset, QuoteAsset> = self.id.borrow(referral_id);
+    assert!(referral.balance_manager_referral_pool_id() == self.id(), EWrongPoolReferral);
+    let referral_rewards: &ReferralRewards<BaseAsset, QuoteAsset> = self
+        .id
+        .borrow(object::id(referral));
     let base = referral_rewards.base.value();
     let quote = referral_rewards.quote.value();
     let deep = referral_rewards.deep.value();
@@ -1742,9 +1743,10 @@ public fun pool_referral_multiplier<BaseAsset, QuoteAsset>(
     referral: &DeepBookPoolReferral,
 ): u64 {
     let _ = self.load_inner();
-    let referral_id = object::id(referral);
-    assert!(self.id.exists_(referral_id), EWrongPoolReferral);
-    let referral_rewards: &ReferralRewards<BaseAsset, QuoteAsset> = self.id.borrow(referral_id);
+    assert!(referral.balance_manager_referral_pool_id() == self.id(), EWrongPoolReferral);
+    let referral_rewards: &ReferralRewards<BaseAsset, QuoteAsset> = self
+        .id
+        .borrow(object::id(referral));
 
     referral_rewards.multiplier
 }
