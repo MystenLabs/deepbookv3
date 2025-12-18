@@ -19,6 +19,7 @@ use deepbook::{
         SPAM,
         create_acct_and_share_with_funds,
         create_acct_and_share_with_funds_typed,
+        create_acct_only_deep_and_share_with_funds,
         create_caps,
         asset_balance
     },
@@ -9341,14 +9342,14 @@ fun test_swap_with_manager_zero_out(is_base_to_quote: bool) {
         constants::self_matching_allowed(),
         price,
         quantity,
-        is_base_to_quote, // bid if base_to_quote, ask if quote_to_base
+        is_base_to_quote,
         pay_with_deep,
         expire_timestamp,
         &mut test,
     );
 
     // Create Bob's balance manager with caps
-    let bob_balance_manager_id = create_acct_and_share_with_funds(
+    let bob_balance_manager_id = create_acct_only_deep_and_share_with_funds(
         BOB,
         1000000 * constants::float_scaling(),
         &mut test,

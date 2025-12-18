@@ -734,6 +734,24 @@ public(package) fun create_acct_and_share_with_funds(
     }
 }
 
+public(package) fun create_acct_only_deep_and_share_with_funds(
+    sender: address,
+    amount: u64,
+    test: &mut Scenario,
+): ID {
+    test.next_tx(sender);
+    {
+        let mut balance_manager = balance_manager::new(test.ctx());
+        deposit_into_account<DEEP>(&mut balance_manager, amount, test);
+        let trade_cap = balance_manager.mint_trade_cap(test.ctx());
+        transfer::public_transfer(trade_cap, sender);
+        let id = balance_manager.id();
+        transfer::public_share_object(balance_manager);
+
+        id
+    }
+}
+
 public(package) fun create_caps(sender: address, balance_manager_id: ID, test: &mut Scenario) {
     test.next_tx(sender);
     {
