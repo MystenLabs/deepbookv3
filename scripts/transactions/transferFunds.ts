@@ -26,9 +26,9 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
 
   // Update receiving address as needed
   const recevingAddress =
-    "0xdca69f2c3651edc4037bf4621817a807b4346e5e4460ec3f410fcf07e3b743a7";
+    "0x0f97e5774fa2d0ad786ee0a562c4f65762e141397e469a736703351df85383cc";
   const coinType = "SUI"; // "SUI" or "DEEP"
-  const amount = 10_000;
+  const amount = 1_000;
 
   const totalAmount = amount * config[coinType].scalar;
   const coin = coinWithBalance({
