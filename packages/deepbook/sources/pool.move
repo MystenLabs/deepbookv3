@@ -65,6 +65,7 @@ const EInvalidReferralMultiplier: u64 = 16;
 const EInvalidEWMAAlpha: u64 = 17;
 const EInvalidZScoreThreshold: u64 = 18;
 const EInvalidAdditionalTakerFee: u64 = 19;
+const EWrongPoolReferral: u64 = 20;
 
 // === Structs ===
 public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
@@ -1124,6 +1125,18 @@ public fun stable_pool<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>
 
 public fun registered_pool<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): bool {
     self.load_inner().registered_pool
+}
+
+public fun pool_referral_multiplier<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    referral: &DeepBookPoolReferral,
+): u64 {
+    let _ = self.load_inner();
+    let referral_id = object::id(referral);
+    assert!(self.id.exists_(referral_id), EWrongPoolReferral);
+    let referral_rewards: &ReferralRewards<BaseAsset, QuoteAsset> = self.id.borrow(referral_id);
+
+    referral_rewards.multiplier
 }
 
 /// Dry run to determine the quote quantity out for a given base quantity.
