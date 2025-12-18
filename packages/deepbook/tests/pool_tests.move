@@ -9148,3 +9148,346 @@ fun test_get_quote_quantity_in_fractional_target() {
 
     end(test);
 }
+<<<<<<< Updated upstream
+=======
+
+#[test]
+fun pool_referral_multiplier_ok() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+    let referral_id;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        referral_id = pool.mint_referral(500_000_000, test.ctx());
+        return_shared(pool);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let multiplier = pool.pool_referral_multiplier(&referral);
+        assert_eq!(multiplier, 500_000_000);
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    end(test);
+}
+
+#[test]
+fun pool_referral_multiplier_after_update() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+    let referral_id;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        referral_id = pool.mint_referral(100_000_000, test.ctx());
+        return_shared(pool);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let multiplier = pool.pool_referral_multiplier(&referral);
+        assert_eq!(multiplier, 100_000_000);
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        pool.update_pool_referral_multiplier(&referral, 2_000_000_000, test.ctx());
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let multiplier = pool.pool_referral_multiplier(&referral);
+        assert_eq!(multiplier, 2_000_000_000);
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    end(test);
+}
+
+#[test, expected_failure(abort_code = ::deepbook::pool::EWrongPoolReferral)]
+fun pool_referral_multiplier_wrong_pool() {
+    let mut test = begin(OWNER);
+    let pool_id_1 = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+    let referral_id;
+
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id_1);
+        referral_id = pool.mint_referral(100_000_000, test.ctx());
+        return_shared(pool);
+    };
+
+    test.next_tx(OWNER);
+    let pool_id_2;
+    {
+        let mut registry = test.take_shared<Registry>();
+        pool_id_2 =
+            pool::create_permissionless_pool<SPAM, USDC>(
+                &mut registry,
+                constants::tick_size(),
+                constants::lot_size(),
+                constants::min_size(),
+                mint_for_testing<DEEP>(constants::pool_creation_fee(), test.ctx()),
+                test.ctx(),
+            );
+        return_shared(registry);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SPAM, USDC>>(pool_id_2);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        pool.pool_referral_multiplier(&referral);
+    };
+
+    abort
+}
+
+#[test, expected_failure(abort_code = ::deepbook::pool::EWrongPoolReferral)]
+fun get_pool_referral_balances_wrong_pool() {
+    let mut test = begin(OWNER);
+    let pool_id_1 = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+    let referral_id;
+
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id_1);
+        referral_id = pool.mint_referral(100_000_000, test.ctx());
+        return_shared(pool);
+    };
+
+    test.next_tx(OWNER);
+    let pool_id_2;
+    {
+        let mut registry = test.take_shared<Registry>();
+        pool_id_2 =
+            pool::create_permissionless_pool<SPAM, USDC>(
+                &mut registry,
+                constants::tick_size(),
+                constants::lot_size(),
+                constants::min_size(),
+                mint_for_testing<DEEP>(constants::pool_creation_fee(), test.ctx()),
+                test.ctx(),
+            );
+        return_shared(registry);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SPAM, USDC>>(pool_id_2);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        pool.get_pool_referral_balances(&referral);
+    };
+
+    abort (0)
+}
+
+#[test]
+fun swap_exact_quote_for_base_with_manager_ok() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+
+    let balance_manager_id_bob;
+    test.next_tx(BOB);
+    {
+        balance_manager_id_bob =
+            create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+                BOB,
+                1000000 * constants::float_scaling(),
+                &mut test,
+            );
+    };
+
+    test.next_tx(BOB);
+    {
+        create_caps(BOB, balance_manager_id_bob, &mut test);
+    };
+
+    let bob_sui_before = asset_balance<SUI>(BOB, balance_manager_id_bob, &mut test);
+    let bob_usdc_before = asset_balance<USDC>(BOB, balance_manager_id_bob, &mut test);
+    let bob_deep_before = asset_balance<DEEP>(BOB, balance_manager_id_bob, &mut test);
+
+    let quote_in_amount = 2 * constants::float_scaling();
+    test.next_tx(BOB);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let clock = test.take_shared<Clock>();
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_bob);
+        let trade_cap = test.take_from_sender<TradeCap>();
+        let deposit_cap = test.take_from_sender<DepositCap>();
+        let withdraw_cap = test.take_from_sender<WithdrawCap>();
+
+        let (base_out, quote_out) = pool.swap_exact_quote_for_base_with_manager(
+            &mut balance_manager,
+            &trade_cap,
+            &deposit_cap,
+            &withdraw_cap,
+            mint_for_testing<USDC>(quote_in_amount, test.ctx()),
+            0,
+            &clock,
+            test.ctx(),
+        );
+
+        assert!(base_out.value() > 0);
+        assert_eq!(quote_out.value(), 0);
+
+        destroy(base_out);
+        destroy(quote_out);
+
+        return_shared(pool);
+        return_shared(clock);
+        return_shared(balance_manager);
+        test.return_to_sender(trade_cap);
+        test.return_to_sender(deposit_cap);
+        test.return_to_sender(withdraw_cap);
+    };
+
+    let bob_sui_after = asset_balance<SUI>(BOB, balance_manager_id_bob, &mut test);
+    let bob_usdc_after = asset_balance<USDC>(BOB, balance_manager_id_bob, &mut test);
+    let bob_deep_after = asset_balance<DEEP>(BOB, balance_manager_id_bob, &mut test);
+
+    assert!(bob_sui_after == bob_sui_before);
+    assert!(bob_usdc_after == bob_usdc_before);
+    assert!(bob_deep_after < bob_deep_before);
+
+    end(test);
+}
+
+#[test]
+fun swap_exact_quote_for_base_with_manager_partial_fill() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+
+    let balance_manager_id_bob;
+    test.next_tx(BOB);
+    {
+        balance_manager_id_bob =
+            create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+                BOB,
+                1000000 * constants::float_scaling(),
+                &mut test,
+            );
+    };
+
+    test.next_tx(BOB);
+    {
+        create_caps(BOB, balance_manager_id_bob, &mut test);
+    };
+
+    let quote_in_amount = 5000 * constants::float_scaling();
+    test.next_tx(BOB);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let clock = test.take_shared<Clock>();
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_bob);
+        let trade_cap = test.take_from_sender<TradeCap>();
+        let deposit_cap = test.take_from_sender<DepositCap>();
+        let withdraw_cap = test.take_from_sender<WithdrawCap>();
+
+        let (base_out, quote_out) = pool.swap_exact_quote_for_base_with_manager(
+            &mut balance_manager,
+            &trade_cap,
+            &deposit_cap,
+            &withdraw_cap,
+            mint_for_testing<USDC>(quote_in_amount, test.ctx()),
+            0,
+            &clock,
+            test.ctx(),
+        );
+
+        assert!(base_out.value() > 0);
+        assert!(quote_out.value() > 0);
+        assert!(base_out.value() + quote_out.value() < quote_in_amount);
+
+        destroy(base_out);
+        destroy(quote_out);
+
+        return_shared(pool);
+        return_shared(clock);
+        return_shared(balance_manager);
+        test.return_to_sender(trade_cap);
+        test.return_to_sender(deposit_cap);
+        test.return_to_sender(withdraw_cap);
+    };
+
+    end(test);
+}
+
+#[test]
+fun swap_exact_quote_for_base_with_manager_values() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+
+    let balance_manager_id_bob;
+    test.next_tx(BOB);
+    {
+        balance_manager_id_bob =
+            create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+                BOB,
+                1000000 * constants::float_scaling(),
+                &mut test,
+            );
+    };
+
+    test.next_tx(BOB);
+    {
+        create_caps(BOB, balance_manager_id_bob, &mut test);
+    };
+
+    let quote_in_amount = 1 * constants::float_scaling();
+    test.next_tx(BOB);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let clock = test.take_shared<Clock>();
+
+        let (expected_base, _, _) = pool.get_quantity_out(0, quote_in_amount, &clock);
+
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_bob);
+        let trade_cap = test.take_from_sender<TradeCap>();
+        let deposit_cap = test.take_from_sender<DepositCap>();
+        let withdraw_cap = test.take_from_sender<WithdrawCap>();
+
+        let (base_out, quote_out) = pool.swap_exact_quote_for_base_with_manager(
+            &mut balance_manager,
+            &trade_cap,
+            &deposit_cap,
+            &withdraw_cap,
+            mint_for_testing<USDC>(quote_in_amount, test.ctx()),
+            0,
+            &clock,
+            test.ctx(),
+        );
+
+        assert_eq!(base_out.value(), expected_base);
+        assert_eq!(quote_out.value(), 0);
+
+        destroy(base_out);
+        destroy(quote_out);
+
+        return_shared(pool);
+        return_shared(clock);
+        return_shared(balance_manager);
+        test.return_to_sender(trade_cap);
+        test.return_to_sender(deposit_cap);
+        test.return_to_sender(withdraw_cap);
+    };
+
+    end(test);
+}
+>>>>>>> Stashed changes
