@@ -19,6 +19,7 @@ use deepbook::{
         SPAM,
         create_acct_and_share_with_funds,
         create_acct_and_share_with_funds_typed,
+        create_acct_only_deep_and_share_with_funds,
         create_caps,
         asset_balance
     },
@@ -669,6 +670,16 @@ fun test_swap_exact_not_fully_filled_maker_partial_ask_ok() {
 #[test]
 fun test_swap_exact_not_fully_filled_maker_partial_ask_with_manager_ok() {
     test_swap_exact_not_fully_filled(false, false, false, true, true);
+}
+
+#[test]
+fun test_swap_with_manager_zero_base_out_ok() {
+    test_swap_with_manager_zero_out(true);
+}
+
+#[test]
+fun test_swap_with_manager_zero_quote_out_ok() {
+    test_swap_with_manager_zero_out(false);
 }
 
 #[test]
@@ -9294,4 +9305,98 @@ fun get_pool_referral_balances_wrong_pool() {
     };
 
     abort (0)
+}
+
+/// Test that swap_exact_base_for_quote_with_manager and swap_exact_quote_for_base_with_manager
+/// work correctly when the swap results in zero leftover (base_out = 0 or quote_out = 0).
+/// This tests the fix for withdrawing 0 from balance manager.
+fun test_swap_with_manager_zero_out(is_base_to_quote: bool) {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+
+    let price = 2 * constants::float_scaling();
+    let quantity = 10 * constants::float_scaling();
+    let expire_timestamp = constants::max_u64();
+    let pay_with_deep = true;
+
+    // Place a maker order on the opposite side
+    // If we're swapping base to quote, we need a bid order to match against
+    // If we're swapping quote to base, we need an ask order to match against
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        is_base_to_quote,
+        pay_with_deep,
+        expire_timestamp,
+        &mut test,
+    );
+
+    // Create Bob's balance manager with caps
+    let bob_balance_manager_id = create_acct_only_deep_and_share_with_funds(
+        BOB,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    create_caps(BOB, bob_balance_manager_id, &mut test);
+
+    // Use an exact lot-size multiple so there's no leftover
+    let swap_quantity = 5 * constants::float_scaling();
+
+    if (is_base_to_quote) {
+        // Swap exactly 5 SUI for USDC - should result in base_out = 0
+        let (base_out, quote_out) = place_exact_base_for_quote_with_manager<SUI, USDC>(
+            pool_id,
+            BOB,
+            bob_balance_manager_id,
+            swap_quantity,
+            0,
+            &mut test,
+        );
+
+        // base_out should be 0 (all base was swapped)
+        assert!(base_out.value() == 0);
+        // quote_out should be swap_quantity * price = 5 * 2 = 10 USDC
+        assert!(quote_out.value() == math::mul(swap_quantity, price));
+
+        base_out.burn_for_testing();
+        quote_out.burn_for_testing();
+    } else {
+        // Swap exactly 10 USDC for SUI - should result in quote_out = 0
+        let quote_swap_quantity = 10 * constants::float_scaling();
+        let (base_out, quote_out) = place_exact_quote_for_base_with_manager<SUI, USDC>(
+            pool_id,
+            BOB,
+            bob_balance_manager_id,
+            quote_swap_quantity,
+            0,
+            &mut test,
+        );
+
+        // quote_out should be 0 (all quote was swapped)
+        assert!(quote_out.value() == 0);
+        // base_out should be quote_swap_quantity / price = 10 / 2 = 5 SUI
+        assert!(base_out.value() == math::div(quote_swap_quantity, price));
+
+        base_out.burn_for_testing();
+        quote_out.burn_for_testing();
+    };
+
+    end(test);
 }
