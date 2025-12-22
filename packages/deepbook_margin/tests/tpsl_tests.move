@@ -720,6 +720,190 @@ fun test_tpsl_orders_sorted_correctly() {
 }
 
 #[test]
+fun test_tpsl_orders_with_same_trigger_price_maintain_fifo_order() {
+    // This test verifies that the sort is stable: orders with the same trigger price
+    // maintain their insertion order (FIFO - first in, first out).
+    // The insertion_sort_by! macro requires >= and <= comparisons for stability.
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+
+    let sui_price = build_sui_price_info_object_with_price(&mut scenario, 200, &clock); // $2.00
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock); // $1.00
+
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price,
+        &usdc_price,
+        mint_coin<SUI>(10000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Add two trigger_below orders with the SAME trigger price
+    // Order ID 1 added first, Order ID 2 added second
+    let same_trigger_below_price = 1_500_000_000_000; // $1.50
+
+    let condition_1 = tpsl::new_condition(true, same_trigger_below_price);
+    let pending_order_1 = tpsl::new_pending_limit_order(
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        800_000_000_000,
+        100 * test_constants::sui_multiplier(),
+        false,
+        false,
+        constants::max_u64(),
+    );
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price,
+        &usdc_price,
+        &margin_registry,
+        1, // conditional_order_id
+        condition_1,
+        pending_order_1,
+        &clock,
+        scenario.ctx(),
+    );
+
+    let condition_2 = tpsl::new_condition(true, same_trigger_below_price);
+    let pending_order_2 = tpsl::new_pending_limit_order(
+        2,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        800_000_000_000,
+        100 * test_constants::sui_multiplier(),
+        false,
+        false,
+        constants::max_u64(),
+    );
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price,
+        &usdc_price,
+        &margin_registry,
+        2, // conditional_order_id
+        condition_2,
+        pending_order_2,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Add two trigger_above orders with the SAME trigger price
+    // Order ID 3 added first, Order ID 4 added second
+    let same_trigger_above_price = 2_500_000_000_000; // $2.50
+
+    let condition_3 = tpsl::new_condition(false, same_trigger_above_price);
+    let pending_order_3 = tpsl::new_pending_limit_order(
+        3,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        3_000_000_000_000,
+        100 * test_constants::sui_multiplier(),
+        false,
+        false,
+        constants::max_u64(),
+    );
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price,
+        &usdc_price,
+        &margin_registry,
+        3, // conditional_order_id
+        condition_3,
+        pending_order_3,
+        &clock,
+        scenario.ctx(),
+    );
+
+    let condition_4 = tpsl::new_condition(false, same_trigger_above_price);
+    let pending_order_4 = tpsl::new_pending_limit_order(
+        4,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        3_000_000_000_000,
+        100 * test_constants::sui_multiplier(),
+        false,
+        false,
+        constants::max_u64(),
+    );
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price,
+        &usdc_price,
+        &margin_registry,
+        4, // conditional_order_id
+        condition_4,
+        pending_order_4,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Verify all 4 orders were added
+    let order_ids = mm.conditional_order_ids();
+    assert!(order_ids.length() == 4);
+
+    // Verify trigger_below orders maintain FIFO order (order 1 before order 2)
+    let below_order_1 = mm.conditional_order(order_ids[0]);
+    let below_order_2 = mm.conditional_order(order_ids[1]);
+
+    assert!(below_order_1.condition().trigger_below_price() == true);
+    assert!(below_order_2.condition().trigger_below_price() == true);
+    assert!(below_order_1.condition().trigger_price() == same_trigger_below_price);
+    assert!(below_order_2.condition().trigger_price() == same_trigger_below_price);
+    // Order 1 (added first) should appear before Order 2 (added second)
+    assert!(below_order_1.conditional_order_id() == 1);
+    assert!(below_order_2.conditional_order_id() == 2);
+
+    // Verify trigger_above orders maintain FIFO order (order 3 before order 4)
+    let above_order_1 = mm.conditional_order(order_ids[2]);
+    let above_order_2 = mm.conditional_order(order_ids[3]);
+
+    assert!(above_order_1.condition().trigger_below_price() == false);
+    assert!(above_order_2.condition().trigger_below_price() == false);
+    assert!(above_order_1.condition().trigger_price() == same_trigger_above_price);
+    assert!(above_order_2.condition().trigger_price() == same_trigger_above_price);
+    // Order 3 (added first) should appear before Order 4 (added second)
+    assert!(above_order_1.conditional_order_id() == 3);
+    assert!(above_order_2.conditional_order_id() == 4);
+
+    destroy_2!(sui_price, usdc_price);
+    return_shared_2!(mm, pool);
+
+    scenario.next_tx(test_constants::user1());
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    return_shared(deepbook_registry);
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
 fun test_tpsl_trigger_price_getters() {
     // This test verifies the lowest_trigger_above_price and highest_trigger_below_price functions:
     // - Returns default values when no orders exist
