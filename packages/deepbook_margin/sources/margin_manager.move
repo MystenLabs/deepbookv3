@@ -3,33 +3,33 @@
 
 module deepbook_margin::margin_manager;
 
-use deepbook::{
-    balance_manager::{
-        Self,
-        BalanceManager,
-        TradeCap,
-        DepositCap,
-        WithdrawCap,
-        TradeProof,
-        DeepBookPoolReferral,
-        DeepBookReferral
-    },
-    constants,
-    math,
-    order_info::OrderInfo,
-    pool::Pool,
-    registry::Registry
+use deepbook::balance_manager::{
+    Self,
+    BalanceManager,
+    TradeCap,
+    DepositCap,
+    WithdrawCap,
+    TradeProof,
+    DeepBookPoolReferral,
+    DeepBookReferral
 };
-use deepbook_margin::{
-    margin_constants,
-    margin_pool::MarginPool,
-    margin_registry::MarginRegistry,
-    oracle::{calculate_target_currency, get_pyth_price, calculate_price},
-    tpsl::{Self, TakeProfitStopLoss, PendingOrder, Condition, ConditionalOrder}
-};
+use deepbook::constants;
+use deepbook::math;
+use deepbook::order_info::OrderInfo;
+use deepbook::pool::Pool;
+use deepbook::registry::Registry;
+use deepbook_margin::margin_constants;
+use deepbook_margin::margin_pool::MarginPool;
+use deepbook_margin::margin_registry::MarginRegistry;
+use deepbook_margin::oracle::{calculate_target_currency, get_pyth_price, calculate_price};
+use deepbook_margin::tpsl::{Self, TakeProfitStopLoss, PendingOrder, Condition, ConditionalOrder};
 use pyth::price_info::PriceInfoObject;
-use std::{string::String, type_name::{Self, TypeName}};
-use sui::{clock::Clock, coin::Coin, event, vec_map::{Self, VecMap}};
+use std::string::String;
+use std::type_name::{Self, TypeName};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::event;
+use sui::vec_map::{Self, VecMap};
 use token::deep::DEEP;
 
 // === Errors ===
@@ -49,6 +49,7 @@ const ERepayAmountTooLow: u64 = 13;
 const ERepaySharesTooLow: u64 = 14;
 const EPoolNotEnabledForMarginTrading: u64 = 15;
 const EConditionalOrderNotFound: u64 = 16;
+const EOutstandingDebt: u64 = 17;
 
 // === Structs ===
 /// Witness type for authorizing MarginManager to call protected features of the DeepBook
@@ -354,6 +355,10 @@ public fun unregister_margin_manager<BaseAsset, QuoteAsset>(
     ctx: &mut TxContext,
 ) {
     self.validate_owner(ctx);
+    assert!(self.borrowed_base_shares == 0, EOutstandingDebt);
+    assert!(self.borrowed_quote_shares == 0, EOutstandingDebt);
+    assert!(self.margin_pool_id.is_none(), EOutstandingDebt);
+
     margin_registry.remove_margin_manager(self.id(), ctx);
 }
 
