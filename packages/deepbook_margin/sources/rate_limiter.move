@@ -70,7 +70,10 @@ public(package) fun update_config(
     capacity: u64,
     refill_rate_per_ms: u64,
     enabled: bool,
+    clock: &Clock,
 ) {
+    // Accumulate available using the old rate before updating config
+    self.refill(clock);
     self.capacity = capacity;
     self.refill_rate_per_ms = refill_rate_per_ms;
     self.enabled = enabled;
