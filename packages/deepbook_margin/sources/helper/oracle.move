@@ -164,15 +164,15 @@ public(package) fun calculate_price<BaseAsset, QuoteAsset>(
 
     if (base_decimals > quote_decimals) {
         let decimal_diff = base_decimals - quote_decimals;
-        let multiplier = 10u128.pow(decimal_diff);
-        let price = (price_ratio as u128) * multiplier;
+        let divisor = 10u128.pow(decimal_diff);
+        let price = (price_ratio as u128) / divisor;
         assert!(price <= constants::max_price() as u128, EInvalidPrice);
 
         price as u64
     } else if (quote_decimals > base_decimals) {
         let decimal_diff = quote_decimals - base_decimals;
-        let divisor = 10u128.pow(decimal_diff);
-        let price = price_ratio as u128 / divisor;
+        let multiplier = 10u128.pow(decimal_diff);
+        let price = (price_ratio as u128) * multiplier;
         assert!(price <= constants::max_price() as u128, EInvalidPrice);
 
         price as u64
