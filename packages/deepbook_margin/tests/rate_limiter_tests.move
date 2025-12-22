@@ -217,7 +217,7 @@ fun disabled_allows_any_amount() {
     let success = limiter.check_and_record_withdrawal(CAPACITY * 10, &clock);
     assert!(success == true);
 
-    assert!(limiter.get_available_withdrawal(&clock) == CAPACITY);
+    assert!(limiter.get_available_withdrawal(&clock) == std::u64::max_value!());
 
     clock.destroy_for_testing();
     destroy(limiter);
