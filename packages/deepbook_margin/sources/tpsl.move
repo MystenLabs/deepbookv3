@@ -271,10 +271,10 @@ public(package) fun add_conditional_order<BaseAsset, QuoteAsset>(
     let trigger_below_price = condition.trigger_below_price;
     let trigger_price = condition.trigger_price;
 
-    // Validate trigger condition
+    // Validate trigger condition (use <= and >= for consistency with execute_conditional_orders)
     assert!(
-        (trigger_below_price && trigger_price < current_price) ||
-            (!trigger_below_price && trigger_price > current_price),
+        (trigger_below_price && trigger_price <= current_price) ||
+            (!trigger_below_price && trigger_price >= current_price),
         EInvalidCondition,
     );
 
