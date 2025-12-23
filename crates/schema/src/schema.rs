@@ -188,6 +188,14 @@ diesel::table! {
         pool_default -> Int8,
         risk_ratio -> Int8,
         onchain_timestamp -> Int8,
+        remaining_base_asset -> Int8,
+        remaining_quote_asset -> Int8,
+        remaining_base_debt -> Int8,
+        remaining_quote_debt -> Int8,
+        base_pyth_price -> Int8,
+        base_pyth_decimals -> Int2,
+        quote_pyth_price -> Int8,
+        quote_pyth_decimals -> Int2,
     }
 }
 

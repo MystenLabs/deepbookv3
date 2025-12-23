@@ -391,6 +391,14 @@ pub struct Liquidation {
     pub pool_default: i64,
     pub risk_ratio: i64,
     pub onchain_timestamp: i64,
+    pub remaining_base_asset: i64,
+    pub remaining_quote_asset: i64,
+    pub remaining_base_debt: i64,
+    pub remaining_quote_debt: i64,
+    pub base_pyth_price: i64,
+    pub base_pyth_decimals: i16,
+    pub quote_pyth_price: i64,
+    pub quote_pyth_decimals: i16,
 }
 
 // === Margin Pool Operations Events ===

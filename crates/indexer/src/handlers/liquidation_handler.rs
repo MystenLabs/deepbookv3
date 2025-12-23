@@ -22,5 +22,13 @@ define_handler! {
         pool_default: event.pool_default as i64,
         risk_ratio: event.risk_ratio as i64,
         onchain_timestamp: event.timestamp as i64,
+        remaining_base_asset: event.remaining_base_asset as i64,
+        remaining_quote_asset: event.remaining_quote_asset as i64,
+        remaining_base_debt: event.remaining_base_debt as i64,
+        remaining_quote_debt: event.remaining_quote_debt as i64,
+        base_pyth_price: event.base_pyth_price as i64,
+        base_pyth_decimals: event.base_pyth_decimals as i16,
+        quote_pyth_price: event.quote_pyth_price as i64,
+        quote_pyth_decimals: event.quote_pyth_decimals as i16,
     }
 }
