@@ -13,13 +13,13 @@ const EInvalidPrecision: u64 = 0;
 
 /// Multiply two floating numbers.
 /// This function will round down the result.
-public(package) fun mul(x: u64, y: u64): u64 {
+public fun mul(x: u64, y: u64): u64 {
     let (_, result) = mul_internal(x, y);
 
     result
 }
 
-public(package) fun mul_u128(x: u128, y: u128): u128 {
+public fun mul_u128(x: u128, y: u128): u128 {
     let (_, result) = mul_internal_u128(x, y);
 
     result
@@ -27,7 +27,7 @@ public(package) fun mul_u128(x: u128, y: u128): u128 {
 
 /// Multiply two floating numbers.
 /// This function will round up the result.
-public(package) fun mul_round_up(x: u64, y: u64): u64 {
+public fun mul_round_up(x: u64, y: u64): u64 {
     let (is_round_down, result) = mul_internal(x, y);
 
     result + is_round_down
@@ -35,13 +35,13 @@ public(package) fun mul_round_up(x: u64, y: u64): u64 {
 
 /// Divide two floating numbers.
 /// This function will round down the result.
-public(package) fun div(x: u64, y: u64): u64 {
+public fun div(x: u64, y: u64): u64 {
     let (_, result) = div_internal(x, y);
 
     result
 }
 
-public(package) fun div_u128(x: u128, y: u128): u128 {
+public fun div_u128(x: u128, y: u128): u128 {
     let (_, result) = div_internal_u128(x, y);
 
     result
@@ -49,14 +49,14 @@ public(package) fun div_u128(x: u128, y: u128): u128 {
 
 /// Divide two floating numbers.
 /// This function will round up the result.
-public(package) fun div_round_up(x: u64, y: u64): u64 {
+public fun div_round_up(x: u64, y: u64): u64 {
     let (is_round_down, result) = div_internal(x, y);
 
     result + is_round_down
 }
 
-/// given a vector of u64, return the median
-public(package) fun median(v: vector<u128>): u128 {
+/// given a vector of u128, return the median
+public fun median(v: vector<u128>): u128 {
     let n = v.length();
     if (n == 0) {
         return 0
@@ -77,7 +77,7 @@ public(package) fun median(v: vector<u128>): u128 {
 /// original value
 /// is scaled by precision. The result will be in the same floating-point
 /// representation.
-public(package) fun sqrt(x: u64, precision: u64): u64 {
+public fun sqrt(x: u64, precision: u64): u64 {
     assert!(precision <= FLOAT_SCALING, EInvalidPrecision);
     let multiplier = (FLOAT_SCALING / precision) as u128;
     let scaled_x: u128 = (x as u128) * multiplier * FLOAT_SCALING_U128;
@@ -86,7 +86,7 @@ public(package) fun sqrt(x: u64, precision: u64): u64 {
     (sqrt_scaled_x / multiplier) as u64
 }
 
-public(package) fun is_power_of_ten(n: u64): bool {
+public fun is_power_of_ten(n: u64): bool {
     let mut num = n;
 
     if (num < 1) {
