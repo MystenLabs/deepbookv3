@@ -7817,11 +7817,38 @@ fun test_can_place_limit_order_bid_insufficient_deep() {
     end(test);
 }
 
-/// Test bid limit order fails with one less unit of DEEP than needed
+/// Test bid limit order with exactly the DEEP needed for taker fees
 #[test]
-fun test_can_place_limit_order_bid_one_less_deep_than_needed() {
+fun test_can_place_limit_order_bid_exact_deep_for_taker_fee() {
     let mut test = begin(OWNER);
     let registry_id = setup_test(OWNER, &mut test);
+
+    // Calculate the exact DEEP fee needed for a bid of 10 SUI at price 2
+    // The SUI/DEEP reference pool sets deep_per_base (asset_is_base = true)
+    // So deep_quantity = math::mul(base_quantity, deep_per_asset)
+    // actual_deep_fee = math::mul(taker_fee, deep_quantity)
+    let price = 2 * constants::float_scaling();
+    let quantity = 10 * constants::float_scaling();
+    let quote_quantity = math::mul(quantity, price);
+    let deep_quantity = math::mul(quantity, constants::deep_multiplier()); // Use base quantity
+    let exact_deep_fee = math::mul(constants::taker_fee(), deep_quantity);
+
+    // Create balance manager with exactly enough USDC and exactly the DEEP fee needed
+    test.next_tx(ALICE);
+    let balance_manager_id_alice;
+    {
+        let mut bm = balance_manager::new(test.ctx());
+        bm.deposit(
+            mint_for_testing<USDC>(quote_quantity, test.ctx()),
+            test.ctx(),
+        );
+        bm.deposit(
+            mint_for_testing<DEEP>(exact_deep_fee, test.ctx()),
+            test.ctx(),
+        );
+        balance_manager_id_alice = bm.id();
+        transfer::public_share_object(bm);
+    };
 
     // Create balance manager for Bob with funds for reference pool setup
     let balance_manager_id_bob = create_acct_and_share_with_funds(
@@ -7837,6 +7864,38 @@ fun test_can_place_limit_order_bid_one_less_deep_than_needed() {
         balance_manager_id_bob,
         &mut test,
     );
+
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
+        let clock = clock::create_for_testing(test.ctx());
+
+        // Test: bid for 10 SUI at price 2 with exactly the DEEP needed
+        let can_place = pool.can_place_limit_order<SUI, USDC>(
+            &balance_manager,
+            price,
+            quantity,
+            true, // is_bid
+            true, // pay_with_deep
+            constants::max_u64(),
+            &clock,
+        );
+        assert!(can_place);
+
+        clock.destroy_for_testing();
+        return_shared(pool);
+        return_shared(balance_manager);
+    };
+
+    end(test);
+}
+
+/// Test bid limit order fails with one less unit of DEEP than needed
+#[test]
+fun test_can_place_limit_order_bid_one_less_deep_than_needed() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
 
     // Calculate the exact DEEP fee needed (using base quantity since asset_is_base = true)
     let price = 2 * constants::float_scaling();
@@ -7861,6 +7920,21 @@ fun test_can_place_limit_order_bid_one_less_deep_than_needed() {
         balance_manager_id_alice = bm.id();
         transfer::public_share_object(bm);
     };
+
+    // Create balance manager for Bob with funds for reference pool setup
+    let balance_manager_id_bob = create_acct_and_share_with_funds(
+        BOB,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+
+    // Setup pool with reference pool (non-whitelisted) so DEEP is required for fees
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        BOB,
+        registry_id,
+        balance_manager_id_bob,
+        &mut test,
+    );
 
     test.next_tx(ALICE);
     {

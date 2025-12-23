@@ -1528,7 +1528,7 @@ public fun can_place_limit_order<BaseAsset, QuoteAsset>(
     if (is_bid) {
         required_quote = quote_quantity;
         if (pay_with_deep) {
-            required_deep = fee_balances.deep();
+            required_deep = math::mul(fee_balances.deep(), taker_fee);
         } else {
             let fee_quote = math::mul(fee_balances.quote(), taker_fee);
             required_quote = required_quote + fee_quote;
@@ -1536,7 +1536,7 @@ public fun can_place_limit_order<BaseAsset, QuoteAsset>(
     } else {
         required_base = quantity;
         if (pay_with_deep) {
-            required_deep = fee_balances.deep();
+            required_deep = math::mul(fee_balances.deep(), taker_fee);
         } else {
             let fee_base = math::mul(fee_balances.base(), taker_fee);
             required_base = required_base + fee_base;
