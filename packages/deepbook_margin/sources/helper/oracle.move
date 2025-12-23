@@ -328,8 +328,8 @@ fun get_validated_pyth_price<T>(
     let ewma_price_object = price_info.get_price_feed().get_ema_price();
     let ewma_price = ewma_price_object.get_price().get_magnitude_if_positive();
     assert!(
-        (pyth_price as u128) <= (ewma_price as u128) * ((10_000 + type_config.max_ewma_difference_bps) as u128) / 10_000 &&
-        (pyth_price as u128) >= (ewma_price as u128) * ((10_000 - type_config.max_ewma_difference_bps) as u128) / 10_000,
+        (pyth_price as u128) * 10_000 <= (ewma_price as u128) * ((10_000 + type_config.max_ewma_difference_bps) as u128) &&
+        (pyth_price as u128) * 10_000 >= (ewma_price as u128) * ((10_000 - type_config.max_ewma_difference_bps) as u128),
         EInvalidPythPrice,
     );
 
