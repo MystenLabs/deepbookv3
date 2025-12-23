@@ -51,7 +51,7 @@ public(package) fun check_and_record_withdrawal(
 }
 
 public(package) fun get_available_withdrawal(self: &RateLimiter, clock: &Clock): u64 {
-    if (!self.enabled) return self.capacity;
+    if (!self.enabled) return std::u64::max_value!();
 
     let current_time = clock.timestamp_ms();
     let elapsed = if (current_time > self.last_updated_ms) {
