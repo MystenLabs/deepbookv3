@@ -294,17 +294,17 @@ public(package) fun add_conditional_order<BaseAsset, QuoteAsset>(
         pending_order,
     };
 
-    // Insert in sorted order
+    // Insert in sorted order (using >= and <= for stable sort)
     if (trigger_below_price) {
         self.trigger_below.push_back(conditional_order);
         self
             .trigger_below
-            .insertion_sort_by!(|a, b| a.condition.trigger_price > b.condition.trigger_price);
+            .insertion_sort_by!(|a, b| a.condition.trigger_price >= b.condition.trigger_price);
     } else {
         self.trigger_above.push_back(conditional_order);
         self
             .trigger_above
-            .insertion_sort_by!(|a, b| a.condition.trigger_price < b.condition.trigger_price);
+            .insertion_sort_by!(|a, b| a.condition.trigger_price <= b.condition.trigger_price);
     };
 
     event::emit(ConditionalOrderAdded {
