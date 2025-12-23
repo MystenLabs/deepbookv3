@@ -768,14 +768,14 @@ fun test_tpsl_orders_with_same_trigger_price_maintain_fifo_order() {
 
     // Add two trigger_below orders with the SAME trigger price
     // Order ID 1 added first, Order ID 2 added second
-    let same_trigger_below_price = 1_500_000_000_000; // $1.50
+    let same_trigger_below_price = 1_500_000; // $1.50
 
     let condition_1 = tpsl::new_condition(true, same_trigger_below_price);
     let pending_order_1 = tpsl::new_pending_limit_order(
         1,
         constants::no_restriction(),
         constants::self_matching_allowed(),
-        800_000_000_000,
+        800_000,
         100 * test_constants::sui_multiplier(),
         false,
         false,
