@@ -254,6 +254,7 @@ public fun update_margin_pool_config<Asset>(
             margin_pool_config.rate_limit_capacity_from_config(),
             margin_pool_config.rate_limit_refill_rate_per_ms_from_config(),
             margin_pool_config.rate_limit_enabled_from_config(),
+            clock,
         );
 
     event::emit(MarginPoolConfigUpdated {

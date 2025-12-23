@@ -217,7 +217,7 @@ fun disabled_allows_any_amount() {
     let success = limiter.check_and_record_withdrawal(CAPACITY * 10, &clock);
     assert!(success == true);
 
-    assert!(limiter.get_available_withdrawal(&clock) == CAPACITY);
+    assert!(limiter.get_available_withdrawal(&clock) == std::u64::max_value!());
 
     clock.destroy_for_testing();
     destroy(limiter);
@@ -230,7 +230,7 @@ fun update_config_increases_capacity() {
     let mut limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
 
     let new_capacity = CAPACITY * 2;
-    limiter.update_config(new_capacity, RATE, true);
+    limiter.update_config(new_capacity, RATE, true, &clock);
 
     assert!(limiter.capacity() == new_capacity);
     assert!(limiter.available() == CAPACITY);
@@ -246,7 +246,7 @@ fun update_config_decreases_capacity_caps_available() {
     let mut limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
 
     let new_capacity = CAPACITY / 2;
-    limiter.update_config(new_capacity, RATE, true);
+    limiter.update_config(new_capacity, RATE, true, &clock);
 
     assert!(limiter.capacity() == new_capacity);
     assert!(limiter.available() == new_capacity);
@@ -266,7 +266,7 @@ fun update_config_changes_rate() {
     assert!(limiter.available() == 0);
 
     let new_rate = RATE * 2;
-    limiter.update_config(CAPACITY, new_rate, true);
+    limiter.update_config(CAPACITY, new_rate, true, &clock);
 
     clock::set_for_testing(&mut clock, 1500);
     let available = limiter.get_available_withdrawal(&clock);
@@ -283,7 +283,7 @@ fun update_config_enables() {
     let mut limiter = rate_limiter::new(CAPACITY, RATE, false, &clock);
     assert!(limiter.is_enabled() == false);
 
-    limiter.update_config(CAPACITY, RATE, true);
+    limiter.update_config(CAPACITY, RATE, true, &clock);
     assert!(limiter.is_enabled() == true);
 
     clock.destroy_for_testing();
@@ -297,7 +297,7 @@ fun update_config_disables() {
     let mut limiter = rate_limiter::new(CAPACITY, RATE, true, &clock);
     assert!(limiter.is_enabled() == true);
 
-    limiter.update_config(CAPACITY, RATE, false);
+    limiter.update_config(CAPACITY, RATE, false, &clock);
     assert!(limiter.is_enabled() == false);
 
     clock.destroy_for_testing();

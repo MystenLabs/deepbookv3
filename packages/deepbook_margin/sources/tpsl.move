@@ -271,10 +271,10 @@ public(package) fun add_conditional_order<BaseAsset, QuoteAsset>(
     let trigger_below_price = condition.trigger_below_price;
     let trigger_price = condition.trigger_price;
 
-    // Validate trigger condition
+    // Validate trigger condition (use <= and >= for consistency with execute_conditional_orders)
     assert!(
-        (trigger_below_price && trigger_price < current_price) ||
-            (!trigger_below_price && trigger_price > current_price),
+        (trigger_below_price && trigger_price <= current_price) ||
+            (!trigger_below_price && trigger_price >= current_price),
         EInvalidCondition,
     );
 
@@ -294,17 +294,17 @@ public(package) fun add_conditional_order<BaseAsset, QuoteAsset>(
         pending_order,
     };
 
-    // Insert in sorted order
+    // Insert in sorted order (using >= and <= for stable sort)
     if (trigger_below_price) {
         self.trigger_below.push_back(conditional_order);
         self
             .trigger_below
-            .insertion_sort_by!(|a, b| a.condition.trigger_price > b.condition.trigger_price);
+            .insertion_sort_by!(|a, b| a.condition.trigger_price >= b.condition.trigger_price);
     } else {
         self.trigger_above.push_back(conditional_order);
         self
             .trigger_above
-            .insertion_sort_by!(|a, b| a.condition.trigger_price < b.condition.trigger_price);
+            .insertion_sort_by!(|a, b| a.condition.trigger_price <= b.condition.trigger_price);
     };
 
     event::emit(ConditionalOrderAdded {

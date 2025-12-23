@@ -1,0 +1,30 @@
+---
+source: crates/indexer/tests/snapshot_tests.rs
+expression: rows
+---
+[
+  {
+    "event_digest": "4qXMCRFj7WnEjQD3Z4KTsKeMEbTqJqvaR1BEfoJYUhvb5",
+    "digest": "4qXMCRFj7WnEjQD3Z4KTsKeMEbTqJqvaR1BEfoJYUhvb",
+    "sender": "0xb3d277c50f7b846a5f609a8d13428ae482b5826bb98437997373f3a0d60d280e",
+    "checkpoint": "275761458",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1765914264190",
+    "package": "0x21473617f3565d704aa67be73ea41243e9e34a42d434c31f8182c67ba01ccf49",
+    "margin_manager_id": "0x70a5f28a2400fca515adce1262da0b45ba8f3d1e48f1f2a9568aa29642b5c104",
+    "margin_pool_id": "0xcdbbe6a72e639b647296788e2e4b1cac5cea4246028ba388ba1332ff9a382eea",
+    "liquidation_amount": "8823529392",
+    "pool_reward": "176470607",
+    "pool_default": "0",
+    "risk_ratio": "34665470205",
+    "onchain_timestamp": "1765914264017",
+    "remaining_base_asset": "20735294119",
+    "remaining_quote_asset": "1000000000",
+    "remaining_base_debt": "11185504617",
+    "remaining_quote_debt": "0",
+    "base_pyth_price": "150667253",
+    "base_pyth_decimals": "8",
+    "quote_pyth_price": "99986190",
+    "quote_pyth_decimals": "8"
+  }
+]

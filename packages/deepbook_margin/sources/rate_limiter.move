@@ -51,7 +51,7 @@ public(package) fun check_and_record_withdrawal(
 }
 
 public(package) fun get_available_withdrawal(self: &RateLimiter, clock: &Clock): u64 {
-    if (!self.enabled) return self.capacity;
+    if (!self.enabled) return std::u64::max_value!();
 
     let current_time = clock.timestamp_ms();
     let elapsed = if (current_time > self.last_updated_ms) {
@@ -70,7 +70,10 @@ public(package) fun update_config(
     capacity: u64,
     refill_rate_per_ms: u64,
     enabled: bool,
+    clock: &Clock,
 ) {
+    // Accumulate available using the old rate before updating config
+    self.refill(clock);
     self.capacity = capacity;
     self.refill_rate_per_ms = refill_rate_per_ms;
     self.enabled = enabled;

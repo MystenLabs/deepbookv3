@@ -164,15 +164,15 @@ public(package) fun calculate_price<BaseAsset, QuoteAsset>(
 
     if (base_decimals > quote_decimals) {
         let decimal_diff = base_decimals - quote_decimals;
-        let multiplier = 10u128.pow(decimal_diff);
-        let price = (price_ratio as u128) * multiplier;
+        let divisor = 10u128.pow(decimal_diff);
+        let price = (price_ratio as u128) / divisor;
         assert!(price <= constants::max_price() as u128, EInvalidPrice);
 
         price as u64
     } else if (quote_decimals > base_decimals) {
         let decimal_diff = quote_decimals - base_decimals;
-        let divisor = 10u128.pow(decimal_diff);
-        let price = price_ratio as u128 / divisor;
+        let multiplier = 10u128.pow(decimal_diff);
+        let price = (price_ratio as u128) * multiplier;
         assert!(price <= constants::max_price() as u128, EInvalidPrice);
 
         price as u64
@@ -328,8 +328,8 @@ fun get_validated_pyth_price<T>(
     let ewma_price_object = price_info.get_price_feed().get_ema_price();
     let ewma_price = ewma_price_object.get_price().get_magnitude_if_positive();
     assert!(
-        (pyth_price as u128) <= (ewma_price as u128) * ((10_000 + type_config.max_ewma_difference_bps) as u128) / 10_000 &&
-        (pyth_price as u128) >= (ewma_price as u128) * ((10_000 - type_config.max_ewma_difference_bps) as u128) / 10_000,
+        (pyth_price as u128) * 10_000 <= (ewma_price as u128) * ((10_000 + type_config.max_ewma_difference_bps) as u128) &&
+        (pyth_price as u128) * 10_000 >= (ewma_price as u128) * ((10_000 - type_config.max_ewma_difference_bps) as u128),
         EInvalidPythPrice,
     );
 

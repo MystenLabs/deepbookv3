@@ -6861,6 +6861,204 @@ fun test_can_place_market_order_bid_insufficient_deep() {
     end(test);
 }
 
+/// Test bid market order with exactly the quote and DEEP needed
+#[test]
+fun test_can_place_market_order_bid_exact_quote_and_deep() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+
+    // Create balance manager for Bob with funds for liquidity and reference pool setup
+    let balance_manager_id_bob = create_acct_and_share_with_funds(
+        BOB,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+
+    // Setup pool with reference pool (non-whitelisted) so DEEP is required for fees
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        BOB,
+        registry_id,
+        balance_manager_id_bob,
+        &mut test,
+    );
+
+    // Place a sell order on the book by Bob
+    place_limit_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        2 * constants::float_scaling(), // price: 2 USDC per SUI
+        100 * constants::float_scaling(), // quantity: 100 SUI
+        false, // is_bid = false (sell order)
+        true, // pay_with_deep
+        constants::max_u64(),
+        &mut test,
+    );
+
+    // Get the exact quote and DEEP needed for a market bid of 10 SUI
+    let quantity = 10 * constants::float_scaling();
+    let quote_needed;
+    let deep_needed;
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let clock = test.take_shared<Clock>();
+
+        let (_base_out, quote_in, deep_required) = pool.get_quote_quantity_in(
+            quantity,
+            true, // pay_with_deep
+            &clock,
+        );
+        quote_needed = quote_in;
+        deep_needed = deep_required;
+
+        return_shared(pool);
+        return_shared(clock);
+    };
+
+    // Create balance manager for Alice with exactly the needed amounts
+    test.next_tx(ALICE);
+    let balance_manager_id_alice;
+    {
+        let mut bm = balance_manager::new(test.ctx());
+        bm.deposit(
+            mint_for_testing<USDC>(quote_needed, test.ctx()),
+            test.ctx(),
+        );
+        bm.deposit(
+            mint_for_testing<DEEP>(deep_needed, test.ctx()),
+            test.ctx(),
+        );
+        balance_manager_id_alice = bm.id();
+        transfer::public_share_object(bm);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
+        let clock = test.take_shared<Clock>();
+
+        // Test: bid for 10 SUI with exactly the quote and DEEP needed
+        let can_place = pool.can_place_market_order<SUI, USDC>(
+            &balance_manager,
+            quantity,
+            true, // is_bid
+            true, // pay_with_deep
+            &clock,
+        );
+        assert!(can_place);
+
+        return_shared(pool);
+        return_shared(balance_manager);
+        return_shared(clock);
+    };
+
+    end(test);
+}
+
+/// Test bid market order fails with one less unit of DEEP than needed
+#[test]
+fun test_can_place_market_order_bid_one_less_deep_than_needed() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+
+    // Create balance manager for Bob with funds for liquidity and reference pool setup
+    let balance_manager_id_bob = create_acct_and_share_with_funds(
+        BOB,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+
+    // Setup pool with reference pool (non-whitelisted) so DEEP is required for fees
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        BOB,
+        registry_id,
+        balance_manager_id_bob,
+        &mut test,
+    );
+
+    // Place a sell order on the book by Bob
+    place_limit_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        2 * constants::float_scaling(), // price: 2 USDC per SUI
+        100 * constants::float_scaling(), // quantity: 100 SUI
+        false, // is_bid = false (sell order)
+        true, // pay_with_deep
+        constants::max_u64(),
+        &mut test,
+    );
+
+    // Get the exact quote and DEEP needed for a market bid of 10 SUI
+    let quantity = 10 * constants::float_scaling();
+    let quote_needed;
+    let deep_needed;
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let clock = test.take_shared<Clock>();
+
+        let (_base_out, quote_in, deep_required) = pool.get_quote_quantity_in(
+            quantity,
+            true, // pay_with_deep
+            &clock,
+        );
+        quote_needed = quote_in;
+        deep_needed = deep_required;
+
+        return_shared(pool);
+        return_shared(clock);
+    };
+
+    // Create balance manager for Alice with exact quote but one less DEEP
+    test.next_tx(ALICE);
+    let balance_manager_id_alice;
+    {
+        let mut bm = balance_manager::new(test.ctx());
+        bm.deposit(
+            mint_for_testing<USDC>(quote_needed, test.ctx()),
+            test.ctx(),
+        );
+        bm.deposit(
+            mint_for_testing<DEEP>(deep_needed - 1, test.ctx()),
+            test.ctx(),
+        );
+        balance_manager_id_alice = bm.id();
+        transfer::public_share_object(bm);
+    };
+
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_alice);
+        let clock = test.take_shared<Clock>();
+
+        // Test: bid for 10 SUI with one less DEEP than needed should fail
+        let can_place = pool.can_place_market_order<SUI, USDC>(
+            &balance_manager,
+            quantity,
+            true, // is_bid
+            true, // pay_with_deep
+            &clock,
+        );
+        assert!(!can_place);
+
+        return_shared(pool);
+        return_shared(balance_manager);
+        return_shared(clock);
+    };
+
+    end(test);
+}
+
 /// Test ask market order with sufficient base balance and DEEP for fees
 #[test]
 fun test_can_place_market_order_ask_with_deep_sufficient() {

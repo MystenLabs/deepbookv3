@@ -310,6 +310,14 @@ pub mod deepbook_margin {
             pub pool_reward: u64,
             pub pool_default: u64,
             pub risk_ratio: u64,
+            pub remaining_base_asset: u64,
+            pub remaining_quote_asset: u64,
+            pub remaining_base_debt: u64,
+            pub remaining_quote_debt: u64,
+            pub base_pyth_price: u64,
+            pub base_pyth_decimals: u8,
+            pub quote_pyth_price: u64,
+            pub quote_pyth_decimals: u8,
             pub timestamp: u64,
         }
 

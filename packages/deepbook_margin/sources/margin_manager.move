@@ -49,6 +49,7 @@ const ERepayAmountTooLow: u64 = 13;
 const ERepaySharesTooLow: u64 = 14;
 const EPoolNotEnabledForMarginTrading: u64 = 15;
 const EConditionalOrderNotFound: u64 = 16;
+const EOutstandingDebt: u64 = 17;
 
 // === Structs ===
 /// Witness type for authorizing MarginManager to call protected features of the DeepBook
@@ -354,6 +355,10 @@ public fun unregister_margin_manager<BaseAsset, QuoteAsset>(
     ctx: &mut TxContext,
 ) {
     self.validate_owner(ctx);
+    assert!(self.borrowed_base_shares == 0, EOutstandingDebt);
+    assert!(self.borrowed_quote_shares == 0, EOutstandingDebt);
+    assert!(self.margin_pool_id.is_none(), EOutstandingDebt);
+
     margin_registry.remove_margin_manager(self.id(), ctx);
 }
 

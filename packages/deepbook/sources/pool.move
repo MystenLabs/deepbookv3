@@ -1587,16 +1587,16 @@ public fun can_place_market_order<BaseAsset, QuoteAsset>(
     let available_deep = balance_manager.balance<DEEP>() + settled_balances.deep();
 
     if (is_bid) {
-        // For bid orders: check if available quote can return desired base quantity
-        // get_quantity_out_input_fee already accounts for fees being deducted from quote
-        let (base_out, _, deep_required) = if (pay_with_deep) {
-            self.get_quantity_out(0, available_quote, clock)
-        } else {
-            self.get_quantity_out_input_fee(0, available_quote, clock)
-        };
+        // For bid orders: calculate quote needed to acquire desired base quantity
+        // get_quote_quantity_in returns (base_out, quote_needed, deep_required)
+        let (base_out, quote_needed, deep_required) = self.get_quote_quantity_in(
+            quantity,
+            pay_with_deep,
+            clock,
+        );
 
-        // Not enough quote balance for the base quantity
-        if (base_out < quantity) {
+        // Not enough liquidity or available quote for the base quantity
+        if (base_out < quantity || available_quote < quote_needed) {
             return false
         };
 
