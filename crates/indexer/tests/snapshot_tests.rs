@@ -1,3 +1,4 @@
+use bigdecimal::BigDecimal;
 use chrono::NaiveDateTime;
 use deepbook_indexer::handlers::asset_supplied_handler::AssetSuppliedHandler;
 use deepbook_indexer::handlers::asset_withdrawn_handler::AssetWithdrawnHandler;
@@ -413,6 +414,8 @@ async fn read_table(table_name: &str, db_url: &str) -> Result<Vec<Value>, anyhow
                 } else if let Ok(v) = row.try_get::<i32, _>(column_name) {
                     Value::String(v.to_string())
                 } else if let Ok(v) = row.try_get::<i64, _>(column_name) {
+                    Value::String(v.to_string())
+                } else if let Ok(v) = row.try_get::<BigDecimal, _>(column_name) {
                     Value::String(v.to_string())
                 } else if let Ok(v) = row.try_get::<bool, _>(column_name) {
                     Value::Bool(v)
