@@ -21,6 +21,10 @@ use deepbook_indexer::handlers::margin_manager_created_handler::MarginManagerCre
 // Margin Pool Operations Events
 use deepbook_indexer::handlers::asset_supplied_handler::AssetSuppliedHandler;
 use deepbook_indexer::handlers::asset_withdrawn_handler::AssetWithdrawnHandler;
+use deepbook_indexer::handlers::maintainer_fees_withdrawn_handler::MaintainerFeesWithdrawnHandler;
+use deepbook_indexer::handlers::protocol_fees_withdrawn_handler::ProtocolFeesWithdrawnHandler;
+use deepbook_indexer::handlers::supplier_cap_minted_handler::SupplierCapMintedHandler;
+use deepbook_indexer::handlers::supply_referral_minted_handler::SupplyReferralMintedHandler;
 
 // Margin Pool Admin Events
 use deepbook_indexer::handlers::deepbook_pool_updated_handler::DeepbookPoolUpdatedHandler;
@@ -33,6 +37,11 @@ use deepbook_indexer::handlers::deepbook_pool_config_updated_handler::DeepbookPo
 use deepbook_indexer::handlers::deepbook_pool_registered_handler::DeepbookPoolRegisteredHandler;
 use deepbook_indexer::handlers::deepbook_pool_updated_registry_handler::DeepbookPoolUpdatedRegistryHandler;
 use deepbook_indexer::handlers::maintainer_cap_updated_handler::MaintainerCapUpdatedHandler;
+use deepbook_indexer::handlers::pause_cap_updated_handler::PauseCapUpdatedHandler;
+
+// Protocol Fees Events
+use deepbook_indexer::handlers::protocol_fees_increased_handler::ProtocolFeesIncreasedHandler;
+use deepbook_indexer::handlers::referral_fees_claimed_handler::ReferralFeesClaimedHandler;
 use deepbook_indexer::DeepbookEnv;
 use deepbook_schema::MIGRATIONS;
 use prometheus::Registry;
@@ -72,7 +81,7 @@ struct Args {
     #[clap(env, long)]
     env: DeepbookEnv,
     /// Packages to index events for (can specify multiple)
-    #[clap(long, value_enum, default_values = ["deepbook"])]
+    #[clap(long, value_enum, default_values = ["deepbook", "deepbook-margin"])]
     packages: Vec<Package>,
 }
 
@@ -225,6 +234,30 @@ async fn main() -> Result<(), anyhow::Error> {
                         DeepbookPoolConfigUpdatedHandler::new(env),
                         Default::default(),
                     )
+                    .await?;
+                indexer
+                    .concurrent_pipeline(
+                        MaintainerFeesWithdrawnHandler::new(env),
+                        Default::default(),
+                    )
+                    .await?;
+                indexer
+                    .concurrent_pipeline(ProtocolFeesWithdrawnHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(SupplierCapMintedHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(SupplyReferralMintedHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(PauseCapUpdatedHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(ProtocolFeesIncreasedHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(ReferralFeesClaimedHandler::new(env), Default::default())
                     .await?;
             }
         }

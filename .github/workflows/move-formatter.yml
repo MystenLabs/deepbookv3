@@ -26,3 +26,4 @@ jobs:
       - run: npm i @mysten/prettier-plugin-move
       - run: npx prettier-move -c $PWD/../packages/deepbook/**/*.move
       - run: npx prettier-move -c $PWD/../packages/deepbook_margin/**/*.move
+      - run: npx prettier-move -c $PWD/../packages/margin_liquidation/**/*.move

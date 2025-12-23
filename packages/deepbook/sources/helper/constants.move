@@ -3,7 +3,7 @@
 
 module deepbook::constants;
 
-const CURRENT_VERSION: u64 = 4; // Update version during upgrades
+const CURRENT_VERSION: u64 = 5; // Update version during upgrades
 const POOL_CREATION_FEE: u64 = 500 * 1_000_000; // 500 DEEP
 const FLOAT_SCALING: u64 = 1_000_000_000;
 const FLOAT_SCALING_U128: u128 = 1_000_000_000;
@@ -16,7 +16,6 @@ const HALF: u64 = 500_000_000;
 const DEEP_UNIT: u64 = 1_000_000;
 const FEE_PENALTY_MULTIPLIER: u64 = 1_250_000_000; // 25% more than normal
 const EWMA_DF_KEY: vector<u8> = b"ewma";
-const REFERRAL_DF_KEY: vector<u8> = b"referral";
 const REFERRAL_MAX_MULTIPLIER: u64 = 2_000_000_000; // 2x multiplier
 const REFERRAL_MULTIPLIER: u64 = 100_000_000; // 0.1x multiplier
 const MAX_BALANCE_MANAGERS: u64 = 100;
@@ -261,10 +260,6 @@ public fun ewma_df_key(): vector<u8> {
     EWMA_DF_KEY
 }
 
-public fun referral_df_key(): vector<u8> {
-    REFERRAL_DF_KEY
-}
-
 public fun referral_max_multiplier(): u64 {
     REFERRAL_MAX_MULTIPLIER
 }
@@ -275,6 +270,11 @@ public fun referral_multiplier(): u64 {
 
 public fun max_balance_managers(): u64 {
     MAX_BALANCE_MANAGERS
+}
+
+#[deprecated]
+public fun referral_df_key(): vector<u8> {
+    abort
 }
 
 #[test_only]

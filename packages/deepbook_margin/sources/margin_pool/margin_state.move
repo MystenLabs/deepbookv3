@@ -217,6 +217,25 @@ public(package) fun total_supply(self: &State): u64 {
     self.total_supply
 }
 
+/// Return the total supply including accrued interest without updating state.
+public(package) fun total_supply_with_interest(
+    self: &State,
+    config: &ProtocolConfig,
+    clock: &Clock,
+): u64 {
+    let now = clock.timestamp_ms();
+    let elapsed = now - self.last_update_timestamp;
+
+    let interest = config.calculate_interest_with_borrow(
+        self.utilization_rate(),
+        elapsed,
+        self.total_borrow,
+    );
+    let protocol_fees = math::mul(interest, config.protocol_spread());
+
+    self.total_supply + interest - protocol_fees
+}
+
 /// Return the total supply shares of the margin pool.
 public(package) fun supply_shares(self: &State): u64 {
     self.supply_shares
