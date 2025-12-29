@@ -1620,3 +1620,53 @@ fun test_total_supply_with_interest_vs_update() {
     test::return_shared(pool);
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
+
+/// Test that withdrawing a tiny amount still burns at least 1 share.
+#[test]
+fun test_tiny_withdraw_burns_at_least_one_share() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+
+    scenario.next_tx(test_constants::admin());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    // User supplies a large amount: 1,000,000 USDC = 10^12 units
+    scenario.next_tx(test_constants::user1());
+    let large_supply = 1_000_000 * test_constants::usdc_multiplier(); // 10^12 units
+    let supplier_cap = test_helpers::supply_to_pool(
+        &mut pool,
+        &registry,
+        large_supply,
+        &clock,
+        scenario.ctx(),
+    );
+
+    let supplier_cap_id = object::id(&supplier_cap);
+    let shares_before = pool.user_supply_shares(supplier_cap_id);
+
+    // Verify initial shares equal supply (1:1 ratio at start)
+    assert_eq!(shares_before, large_supply);
+
+    // Withdraw just 1 unit - this would have burned 0 shares before the fix
+    // because: div(1, 10^12) = (1 * 10^9) / 10^12 = 0 (floor division)
+    let withdrawn = pool.withdraw<USDC>(
+        &registry,
+        &supplier_cap,
+        option::some(1),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Verify we received exactly 1 unit
+    assert_eq!(withdrawn.value(), 1);
+
+    let shares_after = pool.user_supply_shares(supplier_cap_id);
+    let shares_burned = shares_before - shares_after;
+
+    assert!(shares_burned >= 1);
+
+    destroy(withdrawn);
+    destroy(supplier_cap);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
