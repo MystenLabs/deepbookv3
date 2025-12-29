@@ -344,7 +344,7 @@ public fun withdraw<Asset>(
     let withdraw_amount = amount.destroy_with_default(supplied_amount);
     let withdraw_shares = math::mul_round_up(
         supplied_shares,
-        math::div(withdraw_amount, supplied_amount),
+        math::div_round_up(withdraw_amount, supplied_amount),
     );
     assert!(
         self.rate_limiter.check_and_record_withdrawal(withdraw_amount, clock),
