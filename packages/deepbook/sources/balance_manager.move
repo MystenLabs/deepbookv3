@@ -529,14 +529,12 @@ public(package) fun withdraw_with_proof<T>(
 
     let key = BalanceKey<T> {};
     let key_exists = balance_manager.balances.contains(key);
+    if (!key_exists) {
+        balance_manager.balances.add(key, balance::zero<T>());
+    };
     if (withdraw_all) {
-        if (key_exists) {
-            balance_manager.balances.remove(key)
-        } else {
-            balance::zero()
-        }
+        balance_manager.balances.remove(key)
     } else {
-        assert!(key_exists, EBalanceManagerBalanceTooLow);
         let acc_balance: &mut Balance<T> = &mut balance_manager.balances[key];
         let acc_value = acc_balance.value();
         assert!(acc_value >= withdraw_amount, EBalanceManagerBalanceTooLow);
