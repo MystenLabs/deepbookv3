@@ -103,7 +103,7 @@ public fun liquidate_base<BaseAsset, QuoteAsset>(
         clock,
     );
     let base_balance = self.balance<BaseAsset>();
-    if (!registry.can_liquidate(pool.id(), risk_ratio) || base_balance == 0) {
+    if (!registry.can_liquidate(pool.id(), risk_ratio) || base_balance < 1000) {
         return
     };
     let amount = repay_amount.destroy_with_default(base_balance);
@@ -165,7 +165,7 @@ public fun liquidate_quote<BaseAsset, QuoteAsset>(
         clock,
     );
     let quote_balance = self.balance<QuoteAsset>();
-    if (!registry.can_liquidate(pool.id(), risk_ratio) || quote_balance == 0) {
+    if (!registry.can_liquidate(pool.id(), risk_ratio) || quote_balance < 1000) {
         return
     };
     let amount = repay_amount.destroy_with_default(quote_balance);
