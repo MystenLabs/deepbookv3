@@ -46,6 +46,31 @@ public struct ReferralFeesClaimedEvent has copy, drop {
     fees: u64,
 }
 
+/// Get the maintainer fees.
+public fun maintainer_fees(self: &ProtocolFees): u64 {
+    self.maintainer_fees
+}
+
+/// Get the protocol fees.
+public fun protocol_fees(self: &ProtocolFees): u64 {
+    self.protocol_fees
+}
+
+public fun referral_tracker(self: &ProtocolFees, referral: ID): (u64, u64) {
+    let referral_tracker = self.referrals.borrow(referral);
+    let fees_per_share_delta = self.fees_per_share - referral_tracker.last_fees_per_share;
+    let unclaimed_fees = math::mul(referral_tracker.current_shares, fees_per_share_delta);
+    (referral_tracker.current_shares, referral_tracker.unclaimed_fees + unclaimed_fees)
+}
+
+public fun total_shares(self: &ProtocolFees): u64 {
+    self.total_shares
+}
+
+public fun fees_per_share(self: &ProtocolFees): u64 {
+    self.fees_per_share
+}
+
 // Initialize the referral fees with the default referral.
 public(package) fun default_protocol_fees(ctx: &mut TxContext): ProtocolFees {
     let default_id = margin_constants::default_referral();
@@ -200,31 +225,6 @@ public(package) fun claim_protocol_fees(self: &mut ProtocolFees): u64 {
     let fees = self.protocol_fees;
     self.protocol_fees = 0;
     fees
-}
-
-/// Get the maintainer fees.
-public(package) fun maintainer_fees(self: &ProtocolFees): u64 {
-    self.maintainer_fees
-}
-
-/// Get the protocol fees.
-public(package) fun protocol_fees(self: &ProtocolFees): u64 {
-    self.protocol_fees
-}
-
-public(package) fun referral_tracker(self: &ProtocolFees, referral: ID): (u64, u64) {
-    let referral_tracker = self.referrals.borrow(referral);
-    let fees_per_share_delta = self.fees_per_share - referral_tracker.last_fees_per_share;
-    let unclaimed_fees = math::mul(referral_tracker.current_shares, fees_per_share_delta);
-    (referral_tracker.current_shares, referral_tracker.unclaimed_fees + unclaimed_fees)
-}
-
-public(package) fun total_shares(self: &ProtocolFees): u64 {
-    self.total_shares
-}
-
-public(package) fun fees_per_share(self: &ProtocolFees): u64 {
-    self.fees_per_share
 }
 
 fun update_unclaimed_fees(referral: &mut ReferralTracker, fees_per_share: u64) {
