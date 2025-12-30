@@ -5,13 +5,8 @@
 module deepbook::governance_tests;
 
 use deepbook::{constants, governance};
-use std::unit_test::assert_eq;
-use sui::{
-    address,
-    object::id_from_address,
-    test_scenario::{next_tx, begin, end},
-    test_utils::destroy
-};
+use std::unit_test::{assert_eq, destroy};
+use sui::{address, object::id_from_address, test_scenario::{next_tx, begin, end}};
 
 const OWNER: address = @0xF;
 const ALICE: address = @0xA;

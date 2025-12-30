@@ -15,6 +15,7 @@ diesel = { workspace = true, features = ["postgres", "uuid", "chrono", "serde_js
 diesel-async = { workspace = true, features = ["bb8", "postgres"] }
 bcs.workspace = true
 anyhow.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 url.workspace = true
 prometheus.workspace = true
@@ -27,6 +28,9 @@ sui-json-rpc-types = { git = "https://github.com/MystenLabs/sui.git", rev = "a05
 sui-pg-db = { git = "https://github.com/MystenLabs/sui.git", rev = "a0545a819fba114903c880f928339b5cd8805a4a" }
 tower-http = { version = "0.5", features = ["cors"] }
 sui-sdk = { git = "https://github.com/MystenLabs/sui.git", rev = "a0545a819fba114903c880f928339b5cd8805a4a" }
+bigdecimal = "0.4.9"
+chrono = "0.4.42"
+thiserror = "1.0"
 
 [[bin]]
 name = "deepbook-server"

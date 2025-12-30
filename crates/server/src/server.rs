@@ -9,11 +9,19 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use deepbook_schema::models::{BalancesSummary, Pools};
+use deepbook_schema::models::{
+    AssetSupplied, AssetWithdrawn, BalancesSummary, DeepbookPoolConfigUpdated,
+    DeepbookPoolRegistered, DeepbookPoolUpdated, DeepbookPoolUpdatedRegistry,
+    InterestParamsUpdated, Liquidation, LoanBorrowed, LoanRepaid, MaintainerCapUpdated,
+    MaintainerFeesWithdrawn, MarginManagerCreated, MarginManagerState, MarginPoolConfigUpdated,
+    MarginPoolCreated, PauseCapUpdated, Pools, ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn,
+    ReferralFeesClaimedEvent, SupplierCapMinted, SupplyReferralMinted,
+};
 use deepbook_schema::*;
 use diesel::dsl::count_star;
 use diesel::dsl::{max, min};
 use diesel::{ExpressionMethods, QueryDsl};
+use serde::Deserialize;
 use serde_json::Value;
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -35,7 +43,7 @@ use sui_indexer_alt_metrics::{MetricsArgs, MetricsService};
 use sui_json_rpc_types::{SuiObjectData, SuiObjectDataOptions, SuiObjectResponse};
 use sui_sdk::SuiClientBuilder;
 use sui_types::{
-    base_types::{ObjectID, ObjectRef, SuiAddress},
+    base_types::{ObjectID, SuiAddress},
     programmable_transaction_builder::ProgrammableTransactionBuilder,
     transaction::{Argument, CallArg, Command, ObjectArg, ProgrammableMoveCall, TransactionKind},
     type_input::TypeInput,
@@ -78,9 +86,20 @@ pub const DEEPBOOK_POOL_UPDATED_PATH: &str = "/deepbook_pool_updated";
 pub const INTEREST_PARAMS_UPDATED_PATH: &str = "/interest_params_updated";
 pub const MARGIN_POOL_CONFIG_UPDATED_PATH: &str = "/margin_pool_config_updated";
 pub const MAINTAINER_CAP_UPDATED_PATH: &str = "/maintainer_cap_updated";
+pub const MAINTAINER_FEES_WITHDRAWN_PATH: &str = "/maintainer_fees_withdrawn";
+pub const PROTOCOL_FEES_WITHDRAWN_PATH: &str = "/protocol_fees_withdrawn";
+pub const SUPPLIER_CAP_MINTED_PATH: &str = "/supplier_cap_minted";
+pub const SUPPLY_REFERRAL_MINTED_PATH: &str = "/supply_referral_minted";
+pub const PAUSE_CAP_UPDATED_PATH: &str = "/pause_cap_updated";
+pub const PROTOCOL_FEES_INCREASED_PATH: &str = "/protocol_fees_increased";
+pub const REFERRAL_FEES_CLAIMED_PATH: &str = "/referral_fees_claimed";
 pub const DEEPBOOK_POOL_REGISTERED_PATH: &str = "/deepbook_pool_registered";
 pub const DEEPBOOK_POOL_UPDATED_REGISTRY_PATH: &str = "/deepbook_pool_updated_registry";
 pub const DEEPBOOK_POOL_CONFIG_UPDATED_PATH: &str = "/deepbook_pool_config_updated";
+pub const MARGIN_MANAGERS_INFO_PATH: &str = "/margin_managers_info";
+pub const MARGIN_MANAGER_STATES_PATH: &str = "/margin_manager_states";
+pub const STATUS_PATH: &str = "/status";
+pub const DEPOSITED_ASSETS_PATH: &str = "/deposited_assets/:balance_manager_ids";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -113,6 +132,25 @@ impl AppState {
     pub(crate) fn metrics(&self) -> &RpcMetrics {
         &self.metrics
     }
+}
+
+/// Query parameters for the /status endpoint
+#[derive(Debug, Deserialize)]
+pub struct StatusQueryParams {
+    /// Maximum acceptable checkpoint lag for "healthy" status (default: 100)
+    #[serde(default = "default_max_checkpoint_lag")]
+    pub max_checkpoint_lag: i64,
+    /// Maximum acceptable time lag in seconds for "healthy" status (default: 60)
+    #[serde(default = "default_max_time_lag_seconds")]
+    pub max_time_lag_seconds: i64,
+}
+
+fn default_max_checkpoint_lag() -> i64 {
+    100
+}
+
+fn default_max_time_lag_seconds() -> i64 {
+    60
 }
 
 pub async fn run_server(
@@ -202,6 +240,16 @@ pub(crate) fn make_router(state: Arc<AppState>, rpc_url: Url) -> Router {
             get(margin_pool_config_updated),
         )
         .route(MAINTAINER_CAP_UPDATED_PATH, get(maintainer_cap_updated))
+        .route(
+            MAINTAINER_FEES_WITHDRAWN_PATH,
+            get(maintainer_fees_withdrawn),
+        )
+        .route(PROTOCOL_FEES_WITHDRAWN_PATH, get(protocol_fees_withdrawn))
+        .route(SUPPLIER_CAP_MINTED_PATH, get(supplier_cap_minted))
+        .route(SUPPLY_REFERRAL_MINTED_PATH, get(supply_referral_minted))
+        .route(PAUSE_CAP_UPDATED_PATH, get(pause_cap_updated))
+        .route(PROTOCOL_FEES_INCREASED_PATH, get(protocol_fees_increased))
+        .route(REFERRAL_FEES_CLAIMED_PATH, get(referral_fees_claimed))
         .route(DEEPBOOK_POOL_REGISTERED_PATH, get(deepbook_pool_registered))
         .route(
             DEEPBOOK_POOL_UPDATED_REGISTRY_PATH,
@@ -211,12 +259,16 @@ pub(crate) fn make_router(state: Arc<AppState>, rpc_url: Url) -> Router {
             DEEPBOOK_POOL_CONFIG_UPDATED_PATH,
             get(deepbook_pool_config_updated),
         )
+        .route(MARGIN_MANAGERS_INFO_PATH, get(margin_managers_info))
+        .route(MARGIN_MANAGER_STATES_PATH, get(margin_manager_states))
+        .route(DEPOSITED_ASSETS_PATH, get(deposited_assets))
         .with_state(state.clone());
 
     let rpc_routes = Router::new()
         .route(LEVEL2_PATH, get(orderbook))
         .route(DEEP_SUPPLY_PATH, get(deep_supply))
         .route(SUMMARY_PATH, get(summary))
+        .route(STATUS_PATH, get(status))
         .with_state((state.clone(), rpc_url));
 
     db_routes
@@ -225,28 +277,90 @@ pub(crate) fn make_router(state: Arc<AppState>, rpc_url: Url) -> Router {
         .layer(from_fn_with_state(state, track_metrics))
 }
 
-impl axum::response::IntoResponse for DeepBookError {
-    // TODO: distinguish client error.
-    fn into_response(self) -> axum::response::Response {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Something went wrong: {:?}", self),
-        )
-            .into_response()
-    }
-}
-
-impl<E> From<E> for DeepBookError
-where
-    E: Into<anyhow::Error>,
-{
-    fn from(err: E) -> Self {
-        Self::InternalError(err.into().to_string())
-    }
-}
-
 async fn health_check() -> StatusCode {
     StatusCode::OK
+}
+
+/// Get indexer status including checkpoint lag
+async fn status(
+    Query(params): Query<StatusQueryParams>,
+    State((state, rpc_url)): State<(Arc<AppState>, Url)>,
+) -> Result<Json<serde_json::Value>, DeepBookError> {
+    // Get watermarks from the database
+    let watermarks = state.reader.get_watermarks().await?;
+
+    // Get the latest checkpoint from Sui RPC
+    let sui_client = SuiClientBuilder::default().build(rpc_url.as_str()).await?;
+    let latest_checkpoint = sui_client
+        .read_api()
+        .get_latest_checkpoint_sequence_number()
+        .await
+        .map_err(|e| DeepBookError::rpc(format!("Failed to get latest checkpoint: {}", e)))?;
+
+    // Get current timestamp
+    let current_time_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| DeepBookError::internal("System time error"))?
+        .as_millis() as i64;
+
+    // Build status for each pipeline
+    let mut pipelines = Vec::new();
+    let mut min_checkpoint = i64::MAX;
+    let mut max_lag_pipeline_name = String::new();
+    let mut max_checkpoint_lag = 0i64;
+
+    for (pipeline, checkpoint_hi, timestamp_ms_hi, epoch_hi) in watermarks {
+        let checkpoint_lag = latest_checkpoint as i64 - checkpoint_hi;
+        let time_lag_ms = current_time_ms - timestamp_ms_hi;
+        let time_lag_seconds = time_lag_ms / 1000;
+
+        // Track the earliest checkpoint and pipeline with max lag
+        if checkpoint_hi < min_checkpoint {
+            min_checkpoint = checkpoint_hi;
+        }
+        if checkpoint_lag > max_checkpoint_lag {
+            max_checkpoint_lag = checkpoint_lag;
+            max_lag_pipeline_name = pipeline.clone();
+        }
+
+        pipelines.push(serde_json::json!({
+            "pipeline": pipeline,
+            "indexed_checkpoint": checkpoint_hi,
+            "indexed_epoch": epoch_hi,
+            "indexed_timestamp_ms": timestamp_ms_hi,
+            "checkpoint_lag": checkpoint_lag,
+            "time_lag_seconds": time_lag_seconds,
+            "latest_onchain_checkpoint": latest_checkpoint,
+        }));
+    }
+
+    let max_time_lag_seconds = pipelines
+        .iter()
+        .filter_map(|p| p["time_lag_seconds"].as_i64())
+        .max()
+        .unwrap_or(0);
+
+    // Handle case where no pipelines exist
+    let earliest_checkpoint = if min_checkpoint == i64::MAX {
+        0
+    } else {
+        min_checkpoint
+    };
+
+    let is_healthy = max_checkpoint_lag < params.max_checkpoint_lag
+        && max_time_lag_seconds < params.max_time_lag_seconds;
+    let status_str = if is_healthy { "OK" } else { "UNHEALTHY" };
+
+    Ok(Json(serde_json::json!({
+        "status": status_str,
+        "latest_onchain_checkpoint": latest_checkpoint,
+        "current_time_ms": current_time_ms,
+        "earliest_checkpoint": earliest_checkpoint,
+        "max_lag_pipeline": max_lag_pipeline_name,
+        "pipelines": pipelines,
+        "max_checkpoint_lag": max_checkpoint_lag,
+        "max_time_lag_seconds": max_time_lag_seconds,
+    })))
 }
 
 /// Get all pools stored in database
@@ -273,9 +387,7 @@ async fn historical_volume(
         .collect();
 
     if pool_ids.is_empty() {
-        return Err(DeepBookError::InternalError(
-            "No valid pool names provided".to_string(),
-        ));
+        return Err(DeepBookError::bad_request("No valid pool names provided"));
     }
 
     // Parse start_time and end_time from query parameters (in seconds) and convert to milliseconds
@@ -341,9 +453,7 @@ async fn get_historical_volume_by_balance_manager_id(
         .collect();
 
     if pool_ids.is_empty() {
-        return Err(DeepBookError::InternalError(
-            "No valid pool names provided".to_string(),
-        ));
+        return Err(DeepBookError::bad_request("No valid pool names provided"));
     }
 
     // Parse start_time and end_time
@@ -404,9 +514,7 @@ async fn get_historical_volume_by_balance_manager_id_with_interval(
         .collect::<Vec<_>>();
 
     if pool_ids.is_empty() {
-        return Err(DeepBookError::InternalError(
-            "No valid pool names provided".to_string(),
-        ));
+        return Err(DeepBookError::bad_request("No valid pool names provided"));
     }
 
     // Parse interval
@@ -416,8 +524,8 @@ async fn get_historical_volume_by_balance_manager_id_with_interval(
         .unwrap_or(3600); // Default interval: 1 hour
 
     if interval <= 0 {
-        return Err(DeepBookError::InternalError(
-            "Interval must be greater than 0".to_string(),
+        return Err(DeepBookError::bad_request(
+            "Interval must be greater than 0",
         ));
     }
 
@@ -495,7 +603,7 @@ async fn ticker(
 
     let end_time = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|_| DeepBookError::InternalError("System time error".to_string()))?
+        .map_err(|_| DeepBookError::internal("System time error"))?
         .as_millis() as i64;
 
     // Calculate the start time for 24 hours ago
@@ -707,7 +815,7 @@ async fn high_low_prices_24h(
     // Get the current timestamp in milliseconds
     let end_time = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|_| DeepBookError::InternalError("System time error".to_string()))?
+        .map_err(|_| DeepBookError::internal("System time error"))?
         .as_millis() as i64;
 
     // Calculate the start time for 24 hours ago
@@ -748,7 +856,7 @@ async fn price_change_24h(
     // Calculate the timestamp for 24 hours ago
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|_| DeepBookError::InternalError("System time error".to_string()))?
+        .map_err(|_| DeepBookError::internal("System time error"))?
         .as_millis() as i64;
 
     let timestamp_24h_ago = now - (24 * 60 * 60 * 1000); // 24 hours in milliseconds
@@ -1033,10 +1141,10 @@ fn calculate_trade_id(maker_id: &str, taker_id: &str) -> Result<u128, DeepBookEr
     // Parse maker_id and taker_id as u128
     let maker_id = maker_id
         .parse::<u128>()
-        .map_err(|_| DeepBookError::InternalError("Invalid maker_id".to_string()))?;
+        .map_err(|_| DeepBookError::bad_request("Invalid maker_id"))?;
     let taker_id = taker_id
         .parse::<u128>()
-        .map_err(|_| DeepBookError::InternalError("Invalid taker_id".to_string()))?;
+        .map_err(|_| DeepBookError::bad_request("Invalid taker_id"))?;
 
     // Ignore the most significant bit for both IDs
     let maker_id = maker_id & !(1 << 127);
@@ -1064,10 +1172,11 @@ pub async fn assets(
         Option<String>,
         Option<String>,
         String,
-    )> =
-        state.reader.results(query).await.map_err(|err| {
-            DeepBookError::InternalError(format!("Failed to query assets: {}", err))
-        })?;
+    )> = state
+        .reader
+        .results(query)
+        .await
+        .map_err(|err| DeepBookError::rpc(format!("Failed to query assets: {}", err)))?;
     let mut response = HashMap::new();
 
     for (symbol, name, ucid, package_address_url, package_id, asset_type) in assets {
@@ -1110,16 +1219,13 @@ async fn orderbook(
         .get("depth")
         .map(|v| v.parse::<u64>())
         .transpose()
-        .map_err(|_| {
-            DeepBookError::InternalError("Depth must be a non-negative integer".to_string())
-        })?
+        .map_err(|_| DeepBookError::bad_request("Depth must be a non-negative integer"))?
         .map(|depth| if depth == 0 { 200 } else { depth });
 
     if let Some(depth) = depth {
         if depth == 1 {
-            return Err(DeepBookError::InternalError(
-                "Depth cannot be 1. Use a value greater than 1 or 0 for the entire orderbook"
-                    .to_string(),
+            return Err(DeepBookError::bad_request(
+                "Depth cannot be 1. Use a value greater than 1 or 0 for the entire orderbook",
             ));
         }
     }
@@ -1128,15 +1234,11 @@ async fn orderbook(
         .get("level")
         .map(|v| v.parse::<u64>())
         .transpose()
-        .map_err(|_| {
-            DeepBookError::InternalError("Level must be an integer between 1 and 2".to_string())
-        })?;
+        .map_err(|_| DeepBookError::bad_request("Level must be an integer between 1 and 2"))?;
 
     if let Some(level) = level {
         if !(1..=2).contains(&level) {
-            return Err(DeepBookError::InternalError(
-                "Level must be 1 or 2".to_string(),
-            ));
+            return Err(DeepBookError::bad_request("Level must be 1 or 2"));
         }
     }
 
@@ -1170,52 +1272,55 @@ async fn orderbook(
 
     let pool_object: SuiObjectResponse = sui_client
         .read_api()
-        .get_object_with_options(pool_address, SuiObjectDataOptions::full_content())
+        .get_object_with_options(
+            pool_address,
+            SuiObjectDataOptions::full_content().with_owner(),
+        )
         .await?;
-    let pool_data: &SuiObjectData =
-        pool_object
-            .data
-            .as_ref()
-            .ok_or(DeepBookError::InternalError(format!(
-                "Missing data in pool object response for '{}'",
-                pool_name
-            )))?;
-    let pool_object_ref: ObjectRef = (pool_data.object_id, pool_data.version, pool_data.digest);
+    let pool_data: &SuiObjectData = pool_object.data.as_ref().ok_or(DeepBookError::rpc(
+        format!("Missing data in pool object response for '{}'", pool_name),
+    ))?;
 
-    let pool_input = CallArg::Object(ObjectArg::ImmOrOwnedObject(pool_object_ref));
+    let initial_shared_version = match &pool_data.owner {
+        Some(sui_types::object::Owner::Shared {
+            initial_shared_version,
+        }) => *initial_shared_version,
+        _ => {
+            return Err(DeepBookError::rpc(format!(
+                "Pool '{}' is not a shared object or owner info missing",
+                pool_name
+            )));
+        }
+    };
+
+    let pool_input = CallArg::Object(ObjectArg::SharedObject {
+        id: pool_data.object_id,
+        initial_shared_version,
+        mutable: false,
+    });
     ptb.input(pool_input)?;
 
-    let input_argument = CallArg::Pure(bcs::to_bytes(&ticks_from_mid).map_err(|_| {
-        DeepBookError::InternalError("Failed to serialize ticks_from_mid".to_string())
-    })?);
+    let input_argument = CallArg::Pure(
+        bcs::to_bytes(&ticks_from_mid)
+            .map_err(|_| DeepBookError::internal("Failed to serialize ticks_from_mid"))?,
+    );
     ptb.input(input_argument)?;
 
     let sui_clock_object_id = ObjectID::from_hex_literal(
         "0x0000000000000000000000000000000000000000000000000000000000000006",
     )?;
-    let sui_clock_object: SuiObjectResponse = sui_client
-        .read_api()
-        .get_object_with_options(sui_clock_object_id, SuiObjectDataOptions::full_content())
-        .await?;
-    let clock_data: &SuiObjectData =
-        sui_clock_object
-            .data
-            .as_ref()
-            .ok_or(DeepBookError::InternalError(
-                "Missing data in clock object response".to_string(),
-            ))?;
-
-    let sui_clock_object_ref: ObjectRef =
-        (clock_data.object_id, clock_data.version, clock_data.digest);
-
-    let clock_input = CallArg::Object(ObjectArg::ImmOrOwnedObject(sui_clock_object_ref));
+    let clock_input = CallArg::Object(ObjectArg::SharedObject {
+        id: sui_clock_object_id,
+        initial_shared_version: sui_types::base_types::SequenceNumber::from_u64(1),
+        mutable: false,
+    });
     ptb.input(clock_input)?;
 
     let base_coin_type = parse_type_input(&base_asset_id)?;
     let quote_coin_type = parse_type_input(&quote_asset_id)?;
 
     let package = ObjectID::from_hex_literal(&state.deepbook_package_id)
-        .map_err(|e| DeepBookError::InternalError(format!("Invalid pool ID: {}", e)))?;
+        .map_err(|e| DeepBookError::bad_request(format!("Invalid pool ID: {}", e)))?;
     let module = LEVEL2_MODULE.to_string();
     let function = LEVEL2_FUNCTION.to_string();
 
@@ -1235,72 +1340,52 @@ async fn orderbook(
         .dev_inspect_transaction_block(SuiAddress::default(), tx, None, None, None)
         .await?;
 
-    let mut binding = result.results.ok_or(DeepBookError::InternalError(
-        "No results from dev_inspect_transaction_block".to_string(),
+    let mut binding = result.results.ok_or(DeepBookError::rpc(
+        "No results from dev_inspect_transaction_block",
     ))?;
     let bid_prices = &binding
         .first_mut()
-        .ok_or(DeepBookError::InternalError(
-            "No return values for bid prices".to_string(),
-        ))?
+        .ok_or(DeepBookError::rpc("No return values for bid prices"))?
         .return_values
         .first_mut()
-        .ok_or(DeepBookError::InternalError(
-            "No bid price data found".to_string(),
-        ))?
+        .ok_or(DeepBookError::rpc("No bid price data found"))?
         .0;
-    let bid_parsed_prices: Vec<u64> = bcs::from_bytes(bid_prices).map_err(|_| {
-        DeepBookError::InternalError("Failed to deserialize bid prices".to_string())
-    })?;
+    let bid_parsed_prices: Vec<u64> = bcs::from_bytes(bid_prices)
+        .map_err(|_| DeepBookError::deserialization("Failed to deserialize bid prices"))?;
     let bid_quantities = &binding
         .first_mut()
-        .ok_or(DeepBookError::InternalError(
-            "No return values for bid quantities".to_string(),
-        ))?
+        .ok_or(DeepBookError::rpc("No return values for bid quantities"))?
         .return_values
         .get(1)
-        .ok_or(DeepBookError::InternalError(
-            "No bid quantity data found".to_string(),
-        ))?
+        .ok_or(DeepBookError::rpc("No bid quantity data found"))?
         .0;
-    let bid_parsed_quantities: Vec<u64> = bcs::from_bytes(bid_quantities).map_err(|_| {
-        DeepBookError::InternalError("Failed to deserialize bid quantities".to_string())
-    })?;
+    let bid_parsed_quantities: Vec<u64> = bcs::from_bytes(bid_quantities)
+        .map_err(|_| DeepBookError::deserialization("Failed to deserialize bid quantities"))?;
 
     let ask_prices = &binding
         .first_mut()
-        .ok_or(DeepBookError::InternalError(
-            "No return values for ask prices".to_string(),
-        ))?
+        .ok_or(DeepBookError::rpc("No return values for ask prices"))?
         .return_values
         .get(2)
-        .ok_or(DeepBookError::InternalError(
-            "No ask price data found".to_string(),
-        ))?
+        .ok_or(DeepBookError::rpc("No ask price data found"))?
         .0;
-    let ask_parsed_prices: Vec<u64> = bcs::from_bytes(ask_prices).map_err(|_| {
-        DeepBookError::InternalError("Failed to deserialize ask prices".to_string())
-    })?;
+    let ask_parsed_prices: Vec<u64> = bcs::from_bytes(ask_prices)
+        .map_err(|_| DeepBookError::deserialization("Failed to deserialize ask prices"))?;
     let ask_quantities = &binding
         .first_mut()
-        .ok_or(DeepBookError::InternalError(
-            "No return values for ask quantities".to_string(),
-        ))?
+        .ok_or(DeepBookError::rpc("No return values for ask quantities"))?
         .return_values
         .get(3)
-        .ok_or(DeepBookError::InternalError(
-            "No ask quantity data found".to_string(),
-        ))?
+        .ok_or(DeepBookError::rpc("No ask quantity data found"))?
         .0;
-    let ask_parsed_quantities: Vec<u64> = bcs::from_bytes(ask_quantities).map_err(|_| {
-        DeepBookError::InternalError("Failed to deserialize ask quantities".to_string())
-    })?;
+    let ask_parsed_quantities: Vec<u64> = bcs::from_bytes(ask_quantities)
+        .map_err(|_| DeepBookError::deserialization("Failed to deserialize ask quantities"))?;
 
     let mut result = HashMap::new();
 
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|_| DeepBookError::InternalError("System time error".to_string()))?
+        .map_err(|_| DeepBookError::internal("System time error"))?
         .as_millis() as i64;
     result.insert("timestamp".to_string(), Value::from(timestamp.to_string()));
 
@@ -1349,29 +1434,31 @@ async fn deep_supply(
         .read_api()
         .get_object_with_options(
             deep_treasury_object_id,
-            SuiObjectDataOptions::full_content(),
+            SuiObjectDataOptions::full_content().with_owner(),
         )
         .await?;
-    let deep_treasury_data: &SuiObjectData =
-        deep_treasury_object
-            .data
-            .as_ref()
-            .ok_or(DeepBookError::InternalError(
-                "Incorrect Treasury ID".to_string(),
-            ))?;
+    let deep_treasury_data: &SuiObjectData = deep_treasury_object
+        .data
+        .as_ref()
+        .ok_or(DeepBookError::rpc("Incorrect Treasury ID"))?;
 
-    let deep_treasury_ref: ObjectRef = (
-        deep_treasury_data.object_id,
-        deep_treasury_data.version,
-        deep_treasury_data.digest,
-    );
-
-    let deep_treasury_input = CallArg::Object(ObjectArg::ImmOrOwnedObject(deep_treasury_ref));
+    let initial_shared_version = match &deep_treasury_data.owner {
+        Some(sui_types::object::Owner::Shared {
+            initial_shared_version,
+        }) => *initial_shared_version,
+        _ => {
+            return Err(DeepBookError::rpc("Treasury is not a shared object"));
+        }
+    };
+    let deep_treasury_input = CallArg::Object(ObjectArg::SharedObject {
+        id: deep_treasury_data.object_id,
+        initial_shared_version,
+        mutable: false,
+    });
     ptb.input(deep_treasury_input)?;
 
-    let package = ObjectID::from_hex_literal(&state.deep_token_package_id).map_err(|e| {
-        DeepBookError::InternalError(format!("Invalid deep token package ID: {}", e))
-    })?;
+    let package = ObjectID::from_hex_literal(&state.deep_token_package_id)
+        .map_err(|e| DeepBookError::bad_request(format!("Invalid deep token package ID: {}", e)))?;
     let module = DEEP_SUPPLY_MODULE.to_string();
     let function = DEEP_SUPPLY_FUNCTION.to_string();
 
@@ -1391,25 +1478,20 @@ async fn deep_supply(
         .dev_inspect_transaction_block(SuiAddress::default(), tx, None, None, None)
         .await?;
 
-    let mut binding = result.results.ok_or(DeepBookError::InternalError(
-        "No results from dev_inspect_transaction_block".to_string(),
+    let mut binding = result.results.ok_or(DeepBookError::rpc(
+        "No results from dev_inspect_transaction_block",
     ))?;
 
     let total_supply = &binding
         .first_mut()
-        .ok_or(DeepBookError::InternalError(
-            "No return values for total supply".to_string(),
-        ))?
+        .ok_or(DeepBookError::rpc("No return values for total supply"))?
         .return_values
         .first_mut()
-        .ok_or(DeepBookError::InternalError(
-            "No total supply data found".to_string(),
-        ))?
+        .ok_or(DeepBookError::rpc("No total supply data found"))?
         .0;
 
-    let total_supply_value: u64 = bcs::from_bytes(total_supply).map_err(|_| {
-        DeepBookError::InternalError("Failed to deserialize total supply".to_string())
-    })?;
+    let total_supply_value: u64 = bcs::from_bytes(total_supply)
+        .map_err(|_| DeepBookError::deserialization("Failed to deserialize total supply"))?;
 
     Ok(Json(total_supply_value))
 }
@@ -1506,7 +1588,7 @@ async fn ohclv(
     let pool = pools
         .iter()
         .find(|p| p.pool_name == pool_name)
-        .ok_or_else(|| DeepBookError::InternalError(format!("Pool '{}' not found", pool_name)))?;
+        .ok_or_else(|| DeepBookError::not_found(format!("Pool '{}'", pool_name)))?;
 
     let interval = params.get("interval").unwrap_or(&"1m".to_string()).clone();
     let start_time = params.get("start_time").and_then(|v| v.parse::<i64>().ok());
@@ -1515,7 +1597,7 @@ async fn ohclv(
 
     let valid_intervals = vec!["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w"];
     if !valid_intervals.contains(&interval.as_str()) {
-        return Err(DeepBookError::InternalError(format!(
+        return Err(DeepBookError::bad_request(format!(
             "Invalid interval: {}. Valid intervals are: {:?}",
             interval, valid_intervals
         )));
@@ -1549,76 +1631,33 @@ async fn ohclv(
 async fn margin_manager_created(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+) -> Result<Json<Vec<MarginManagerCreated>>, DeepBookError> {
     let end_time = params.end_time();
     let start_time = params
         .start_time()
         .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
     let limit = params.limit();
-    let margin_manager_id_filter = params.get("margin_manager_id").cloned();
+    let margin_manager_id_filter = params.get("margin_manager_id").cloned().unwrap_or_default();
 
     let results = state
         .reader
         .get_margin_manager_created(start_time, end_time, limit, margin_manager_id_filter)
         .await?;
 
-    let data: Vec<HashMap<String, Value>> = results
-        .into_iter()
-        .map(
-            |(
-                event_digest,
-                digest,
-                sender,
-                checkpoint,
-                checkpoint_timestamp_ms,
-                package,
-                margin_manager_id,
-                balance_manager_id,
-                owner,
-                onchain_timestamp,
-            )| {
-                HashMap::from([
-                    ("event_digest".to_string(), Value::from(event_digest)),
-                    ("digest".to_string(), Value::from(digest)),
-                    ("sender".to_string(), Value::from(sender)),
-                    ("checkpoint".to_string(), Value::from(checkpoint)),
-                    (
-                        "checkpoint_timestamp_ms".to_string(),
-                        Value::from(checkpoint_timestamp_ms),
-                    ),
-                    ("package".to_string(), Value::from(package)),
-                    (
-                        "margin_manager_id".to_string(),
-                        Value::from(margin_manager_id),
-                    ),
-                    (
-                        "balance_manager_id".to_string(),
-                        Value::from(balance_manager_id),
-                    ),
-                    ("owner".to_string(), Value::from(owner)),
-                    (
-                        "onchain_timestamp".to_string(),
-                        Value::from(onchain_timestamp),
-                    ),
-                ])
-            },
-        )
-        .collect();
-
-    Ok(Json(data))
+    Ok(Json(results))
 }
 
 async fn loan_borrowed(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+) -> Result<Json<Vec<LoanBorrowed>>, DeepBookError> {
     let end_time = params.end_time();
     let start_time = params
         .start_time()
         .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
     let limit = params.limit();
-    let margin_manager_id_filter = params.get("margin_manager_id").cloned();
-    let margin_pool_id_filter = params.get("margin_pool_id").cloned();
+    let margin_manager_id_filter = params.get("margin_manager_id").cloned().unwrap_or_default();
+    let margin_pool_id_filter = params.get("margin_pool_id").cloned().unwrap_or_default();
 
     let results = state
         .reader
@@ -1631,64 +1670,20 @@ async fn loan_borrowed(
         )
         .await?;
 
-    let data: Vec<HashMap<String, Value>> = results
-        .into_iter()
-        .map(
-            |(
-                event_digest,
-                digest,
-                sender,
-                checkpoint,
-                checkpoint_timestamp_ms,
-                package,
-                margin_manager_id,
-                margin_pool_id,
-                loan_amount,
-                total_borrow,
-                total_shares,
-                onchain_timestamp,
-            )| {
-                HashMap::from([
-                    ("event_digest".to_string(), Value::from(event_digest)),
-                    ("digest".to_string(), Value::from(digest)),
-                    ("sender".to_string(), Value::from(sender)),
-                    ("checkpoint".to_string(), Value::from(checkpoint)),
-                    (
-                        "checkpoint_timestamp_ms".to_string(),
-                        Value::from(checkpoint_timestamp_ms),
-                    ),
-                    ("package".to_string(), Value::from(package)),
-                    (
-                        "margin_manager_id".to_string(),
-                        Value::from(margin_manager_id),
-                    ),
-                    ("margin_pool_id".to_string(), Value::from(margin_pool_id)),
-                    ("loan_amount".to_string(), Value::from(loan_amount)),
-                    ("total_borrow".to_string(), Value::from(total_borrow)),
-                    ("total_shares".to_string(), Value::from(total_shares)),
-                    (
-                        "onchain_timestamp".to_string(),
-                        Value::from(onchain_timestamp),
-                    ),
-                ])
-            },
-        )
-        .collect();
-
-    Ok(Json(data))
+    Ok(Json(results))
 }
 
 async fn loan_repaid(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+) -> Result<Json<Vec<LoanRepaid>>, DeepBookError> {
     let end_time = params.end_time();
     let start_time = params
         .start_time()
         .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
     let limit = params.limit();
-    let margin_manager_id_filter = params.get("margin_manager_id").cloned();
-    let margin_pool_id_filter = params.get("margin_pool_id").cloned();
+    let margin_manager_id_filter = params.get("margin_manager_id").cloned().unwrap_or_default();
+    let margin_pool_id_filter = params.get("margin_pool_id").cloned().unwrap_or_default();
 
     let results = state
         .reader
@@ -1701,62 +1696,20 @@ async fn loan_repaid(
         )
         .await?;
 
-    let data: Vec<HashMap<String, Value>> = results
-        .into_iter()
-        .map(
-            |(
-                event_digest,
-                digest,
-                sender,
-                checkpoint,
-                checkpoint_timestamp_ms,
-                package,
-                margin_manager_id,
-                margin_pool_id,
-                repay_amount,
-                repay_shares,
-                onchain_timestamp,
-            )| {
-                HashMap::from([
-                    ("event_digest".to_string(), Value::from(event_digest)),
-                    ("digest".to_string(), Value::from(digest)),
-                    ("sender".to_string(), Value::from(sender)),
-                    ("checkpoint".to_string(), Value::from(checkpoint)),
-                    (
-                        "checkpoint_timestamp_ms".to_string(),
-                        Value::from(checkpoint_timestamp_ms),
-                    ),
-                    ("package".to_string(), Value::from(package)),
-                    (
-                        "margin_manager_id".to_string(),
-                        Value::from(margin_manager_id),
-                    ),
-                    ("margin_pool_id".to_string(), Value::from(margin_pool_id)),
-                    ("repay_amount".to_string(), Value::from(repay_amount)),
-                    ("repay_shares".to_string(), Value::from(repay_shares)),
-                    (
-                        "onchain_timestamp".to_string(),
-                        Value::from(onchain_timestamp),
-                    ),
-                ])
-            },
-        )
-        .collect();
-
-    Ok(Json(data))
+    Ok(Json(results))
 }
 
 async fn liquidation(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+) -> Result<Json<Vec<Liquidation>>, DeepBookError> {
     let end_time = params.end_time();
     let start_time = params
         .start_time()
         .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
     let limit = params.limit();
-    let margin_manager_id_filter = params.get("margin_manager_id").cloned();
-    let margin_pool_id_filter = params.get("margin_pool_id").cloned();
+    let margin_manager_id_filter = params.get("margin_manager_id").cloned().unwrap_or_default();
+    let margin_pool_id_filter = params.get("margin_pool_id").cloned().unwrap_or_default();
 
     let results = state
         .reader
@@ -1769,70 +1722,21 @@ async fn liquidation(
         )
         .await?;
 
-    let data: Vec<HashMap<String, Value>> = results
-        .into_iter()
-        .map(
-            |(
-                event_digest,
-                digest,
-                sender,
-                checkpoint,
-                checkpoint_timestamp_ms,
-                package,
-                margin_manager_id,
-                margin_pool_id,
-                liquidation_amount,
-                pool_reward,
-                pool_default,
-                risk_ratio,
-                onchain_timestamp,
-            )| {
-                HashMap::from([
-                    ("event_digest".to_string(), Value::from(event_digest)),
-                    ("digest".to_string(), Value::from(digest)),
-                    ("sender".to_string(), Value::from(sender)),
-                    ("checkpoint".to_string(), Value::from(checkpoint)),
-                    (
-                        "checkpoint_timestamp_ms".to_string(),
-                        Value::from(checkpoint_timestamp_ms),
-                    ),
-                    ("package".to_string(), Value::from(package)),
-                    (
-                        "margin_manager_id".to_string(),
-                        Value::from(margin_manager_id),
-                    ),
-                    ("margin_pool_id".to_string(), Value::from(margin_pool_id)),
-                    (
-                        "liquidation_amount".to_string(),
-                        Value::from(liquidation_amount),
-                    ),
-                    ("pool_reward".to_string(), Value::from(pool_reward)),
-                    ("pool_default".to_string(), Value::from(pool_default)),
-                    ("risk_ratio".to_string(), Value::from(risk_ratio)),
-                    (
-                        "onchain_timestamp".to_string(),
-                        Value::from(onchain_timestamp),
-                    ),
-                ])
-            },
-        )
-        .collect();
-
-    Ok(Json(data))
+    Ok(Json(results))
 }
 
 // === Margin Pool Operations Events Handlers ===
 async fn asset_supplied(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+) -> Result<Json<Vec<AssetSupplied>>, DeepBookError> {
     let end_time = params.end_time();
     let start_time = params
         .start_time()
         .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
     let limit = params.limit();
-    let margin_pool_id_filter = params.get("margin_pool_id").cloned();
-    let supplier_filter = params.get("supplier").cloned();
+    let margin_pool_id_filter = params.get("margin_pool_id").cloned().unwrap_or_default();
+    let supplier_filter = params.get("supplier").cloned().unwrap_or_default();
 
     let results = state
         .reader
@@ -1845,61 +1749,20 @@ async fn asset_supplied(
         )
         .await?;
 
-    let data: Vec<HashMap<String, Value>> = results
-        .into_iter()
-        .map(
-            |(
-                event_digest,
-                digest,
-                sender,
-                checkpoint,
-                checkpoint_timestamp_ms,
-                package,
-                margin_pool_id,
-                asset_type,
-                supplier,
-                amount,
-                shares,
-                onchain_timestamp,
-            )| {
-                HashMap::from([
-                    ("event_digest".to_string(), Value::from(event_digest)),
-                    ("digest".to_string(), Value::from(digest)),
-                    ("sender".to_string(), Value::from(sender)),
-                    ("checkpoint".to_string(), Value::from(checkpoint)),
-                    (
-                        "checkpoint_timestamp_ms".to_string(),
-                        Value::from(checkpoint_timestamp_ms),
-                    ),
-                    ("package".to_string(), Value::from(package)),
-                    ("margin_pool_id".to_string(), Value::from(margin_pool_id)),
-                    ("asset_type".to_string(), Value::from(asset_type)),
-                    ("supplier".to_string(), Value::from(supplier)),
-                    ("amount".to_string(), Value::from(amount)),
-                    ("shares".to_string(), Value::from(shares)),
-                    (
-                        "onchain_timestamp".to_string(),
-                        Value::from(onchain_timestamp),
-                    ),
-                ])
-            },
-        )
-        .collect();
-
-    Ok(Json(data))
+    Ok(Json(results))
 }
 
 async fn asset_withdrawn(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+) -> Result<Json<Vec<AssetWithdrawn>>, DeepBookError> {
     let end_time = params.end_time();
     let start_time = params
         .start_time()
         .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
     let limit = params.limit();
-    let margin_pool_id_filter = params.get("margin_pool_id").cloned();
-    let supplier_filter = params.get("supplier").cloned();
+    let margin_pool_id_filter = params.get("margin_pool_id").cloned().unwrap_or_default();
+    let supplier_filter = params.get("supplier").cloned().unwrap_or_default();
 
     let results = state
         .reader
@@ -1912,123 +1775,40 @@ async fn asset_withdrawn(
         )
         .await?;
 
-    let data: Vec<HashMap<String, Value>> = results
-        .into_iter()
-        .map(
-            |(
-                event_digest,
-                digest,
-                sender,
-                checkpoint,
-                checkpoint_timestamp_ms,
-                package,
-                margin_pool_id,
-                asset_type,
-                supplier,
-                amount,
-                shares,
-                onchain_timestamp,
-            )| {
-                HashMap::from([
-                    ("event_digest".to_string(), Value::from(event_digest)),
-                    ("digest".to_string(), Value::from(digest)),
-                    ("sender".to_string(), Value::from(sender)),
-                    ("checkpoint".to_string(), Value::from(checkpoint)),
-                    (
-                        "checkpoint_timestamp_ms".to_string(),
-                        Value::from(checkpoint_timestamp_ms),
-                    ),
-                    ("package".to_string(), Value::from(package)),
-                    ("margin_pool_id".to_string(), Value::from(margin_pool_id)),
-                    ("asset_type".to_string(), Value::from(asset_type)),
-                    ("supplier".to_string(), Value::from(supplier)),
-                    ("amount".to_string(), Value::from(amount)),
-                    ("shares".to_string(), Value::from(shares)),
-                    (
-                        "onchain_timestamp".to_string(),
-                        Value::from(onchain_timestamp),
-                    ),
-                ])
-            },
-        )
-        .collect();
-
-    Ok(Json(data))
+    Ok(Json(results))
 }
 
 // === Margin Pool Admin Events Handlers ===
 async fn margin_pool_created(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+) -> Result<Json<Vec<MarginPoolCreated>>, DeepBookError> {
     let end_time = params.end_time();
     let start_time = params
         .start_time()
         .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
     let limit = params.limit();
-    let margin_pool_id_filter = params.get("margin_pool_id").cloned();
+    let margin_pool_id_filter = params.get("margin_pool_id").cloned().unwrap_or_default();
 
     let results = state
         .reader
         .get_margin_pool_created(start_time, end_time, limit, margin_pool_id_filter)
         .await?;
 
-    let data: Vec<HashMap<String, Value>> = results
-        .into_iter()
-        .map(
-            |(
-                event_digest,
-                digest,
-                sender,
-                checkpoint,
-                checkpoint_timestamp_ms,
-                package,
-                margin_pool_id,
-                maintainer_cap_id,
-                asset_type,
-                config_json,
-                onchain_timestamp,
-            )| {
-                HashMap::from([
-                    ("event_digest".to_string(), Value::from(event_digest)),
-                    ("digest".to_string(), Value::from(digest)),
-                    ("sender".to_string(), Value::from(sender)),
-                    ("checkpoint".to_string(), Value::from(checkpoint)),
-                    (
-                        "checkpoint_timestamp_ms".to_string(),
-                        Value::from(checkpoint_timestamp_ms),
-                    ),
-                    ("package".to_string(), Value::from(package)),
-                    ("margin_pool_id".to_string(), Value::from(margin_pool_id)),
-                    (
-                        "maintainer_cap_id".to_string(),
-                        Value::from(maintainer_cap_id),
-                    ),
-                    ("asset_type".to_string(), Value::from(asset_type)),
-                    ("config_json".to_string(), config_json),
-                    (
-                        "onchain_timestamp".to_string(),
-                        Value::from(onchain_timestamp),
-                    ),
-                ])
-            },
-        )
-        .collect();
-
-    Ok(Json(data))
+    Ok(Json(results))
 }
 
 async fn deepbook_pool_updated(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+) -> Result<Json<Vec<DeepbookPoolUpdated>>, DeepBookError> {
     let end_time = params.end_time();
     let start_time = params
         .start_time()
         .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
     let limit = params.limit();
-    let margin_pool_id_filter = params.get("margin_pool_id").cloned();
-    let deepbook_pool_id_filter = params.get("deepbook_pool_id").cloned();
+    let margin_pool_id_filter = params.get("margin_pool_id").cloned().unwrap_or_default();
+    let deepbook_pool_id_filter = params.get("deepbook_pool_id").cloned().unwrap_or_default();
 
     let results = state
         .reader
@@ -2041,318 +1821,321 @@ async fn deepbook_pool_updated(
         )
         .await?;
 
-    let data: Vec<HashMap<String, Value>> = results
-        .into_iter()
-        .map(
-            |(
-                event_digest,
-                digest,
-                sender,
-                checkpoint,
-                checkpoint_timestamp_ms,
-                package,
-                margin_pool_id,
-                deepbook_pool_id,
-                pool_cap_id,
-                enabled,
-                onchain_timestamp,
-            )| {
-                HashMap::from([
-                    ("event_digest".to_string(), Value::from(event_digest)),
-                    ("digest".to_string(), Value::from(digest)),
-                    ("sender".to_string(), Value::from(sender)),
-                    ("checkpoint".to_string(), Value::from(checkpoint)),
-                    (
-                        "checkpoint_timestamp_ms".to_string(),
-                        Value::from(checkpoint_timestamp_ms),
-                    ),
-                    ("package".to_string(), Value::from(package)),
-                    ("margin_pool_id".to_string(), Value::from(margin_pool_id)),
-                    (
-                        "deepbook_pool_id".to_string(),
-                        Value::from(deepbook_pool_id),
-                    ),
-                    ("pool_cap_id".to_string(), Value::from(pool_cap_id)),
-                    ("enabled".to_string(), Value::from(enabled)),
-                    (
-                        "onchain_timestamp".to_string(),
-                        Value::from(onchain_timestamp),
-                    ),
-                ])
-            },
-        )
-        .collect();
-
-    Ok(Json(data))
+    Ok(Json(results))
 }
 
 async fn interest_params_updated(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+) -> Result<Json<Vec<InterestParamsUpdated>>, DeepBookError> {
     let end_time = params.end_time();
     let start_time = params
         .start_time()
         .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
     let limit = params.limit();
-    let margin_pool_id_filter = params.get("margin_pool_id").cloned();
+    let margin_pool_id_filter = params.get("margin_pool_id").cloned().unwrap_or_default();
 
     let results = state
         .reader
         .get_interest_params_updated(start_time, end_time, limit, margin_pool_id_filter)
         .await?;
 
-    let data: Vec<HashMap<String, Value>> = results
-        .into_iter()
-        .map(
-            |(
-                event_digest,
-                digest,
-                sender,
-                checkpoint,
-                checkpoint_timestamp_ms,
-                package,
-                margin_pool_id,
-                pool_cap_id,
-                config_json,
-                onchain_timestamp,
-            )| {
-                HashMap::from([
-                    ("event_digest".to_string(), Value::from(event_digest)),
-                    ("digest".to_string(), Value::from(digest)),
-                    ("sender".to_string(), Value::from(sender)),
-                    ("checkpoint".to_string(), Value::from(checkpoint)),
-                    (
-                        "checkpoint_timestamp_ms".to_string(),
-                        Value::from(checkpoint_timestamp_ms),
-                    ),
-                    ("package".to_string(), Value::from(package)),
-                    ("margin_pool_id".to_string(), Value::from(margin_pool_id)),
-                    ("pool_cap_id".to_string(), Value::from(pool_cap_id)),
-                    ("config_json".to_string(), config_json),
-                    (
-                        "onchain_timestamp".to_string(),
-                        Value::from(onchain_timestamp),
-                    ),
-                ])
-            },
-        )
-        .collect();
-
-    Ok(Json(data))
+    Ok(Json(results))
 }
 
 async fn margin_pool_config_updated(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+) -> Result<Json<Vec<MarginPoolConfigUpdated>>, DeepBookError> {
     let end_time = params.end_time();
     let start_time = params
         .start_time()
         .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
     let limit = params.limit();
-    let margin_pool_id_filter = params.get("margin_pool_id").cloned();
+    let margin_pool_id_filter = params.get("margin_pool_id").cloned().unwrap_or_default();
 
     let results = state
         .reader
         .get_margin_pool_config_updated(start_time, end_time, limit, margin_pool_id_filter)
         .await?;
 
-    let data: Vec<HashMap<String, Value>> = results
-        .into_iter()
-        .map(
-            |(
-                event_digest,
-                digest,
-                sender,
-                checkpoint,
-                checkpoint_timestamp_ms,
-                package,
-                margin_pool_id,
-                pool_cap_id,
-                config_json,
-                onchain_timestamp,
-            )| {
-                HashMap::from([
-                    ("event_digest".to_string(), Value::from(event_digest)),
-                    ("digest".to_string(), Value::from(digest)),
-                    ("sender".to_string(), Value::from(sender)),
-                    ("checkpoint".to_string(), Value::from(checkpoint)),
-                    (
-                        "checkpoint_timestamp_ms".to_string(),
-                        Value::from(checkpoint_timestamp_ms),
-                    ),
-                    ("package".to_string(), Value::from(package)),
-                    ("margin_pool_id".to_string(), Value::from(margin_pool_id)),
-                    ("pool_cap_id".to_string(), Value::from(pool_cap_id)),
-                    ("config_json".to_string(), config_json),
-                    (
-                        "onchain_timestamp".to_string(),
-                        Value::from(onchain_timestamp),
-                    ),
-                ])
-            },
-        )
-        .collect();
-
-    Ok(Json(data))
+    Ok(Json(results))
 }
 
 // === Margin Registry Events Handlers ===
 async fn maintainer_cap_updated(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+) -> Result<Json<Vec<MaintainerCapUpdated>>, DeepBookError> {
     let end_time = params.end_time();
     let start_time = params
         .start_time()
         .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
     let limit = params.limit();
-    let maintainer_cap_id_filter = params.get("maintainer_cap_id").cloned();
+    let maintainer_cap_id_filter = params.get("maintainer_cap_id").cloned().unwrap_or_default();
 
     let results = state
         .reader
         .get_maintainer_cap_updated(start_time, end_time, limit, maintainer_cap_id_filter)
         .await?;
 
-    let data: Vec<HashMap<String, Value>> = results
-        .into_iter()
-        .map(
-            |(
-                event_digest,
-                digest,
-                sender,
-                checkpoint,
-                checkpoint_timestamp_ms,
-                package,
-                maintainer_cap_id,
-                allowed,
-                onchain_timestamp,
-            )| {
-                HashMap::from([
-                    ("event_digest".to_string(), Value::from(event_digest)),
-                    ("digest".to_string(), Value::from(digest)),
-                    ("sender".to_string(), Value::from(sender)),
-                    ("checkpoint".to_string(), Value::from(checkpoint)),
-                    (
-                        "checkpoint_timestamp_ms".to_string(),
-                        Value::from(checkpoint_timestamp_ms),
-                    ),
-                    ("package".to_string(), Value::from(package)),
-                    (
-                        "maintainer_cap_id".to_string(),
-                        Value::from(maintainer_cap_id),
-                    ),
-                    ("allowed".to_string(), Value::from(allowed)),
-                    (
-                        "onchain_timestamp".to_string(),
-                        Value::from(onchain_timestamp),
-                    ),
-                ])
-            },
-        )
-        .collect();
-
-    Ok(Json(data))
+    Ok(Json(results))
 }
 
-async fn deepbook_pool_registered(
+async fn maintainer_fees_withdrawn(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+) -> Result<Json<Vec<MaintainerFeesWithdrawn>>, DeepBookError> {
     let end_time = params.end_time();
     let start_time = params
         .start_time()
         .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
     let limit = params.limit();
-    let pool_id_filter = params.get("pool_id").cloned();
+    let margin_pool_id_filter = params.get("margin_pool_id").cloned().unwrap_or_default();
+
+    let results = state
+        .reader
+        .get_maintainer_fees_withdrawn(start_time, end_time, limit, margin_pool_id_filter)
+        .await?;
+
+    Ok(Json(results))
+}
+
+async fn protocol_fees_withdrawn(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<ProtocolFeesWithdrawn>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let margin_pool_id_filter = params.get("margin_pool_id").cloned().unwrap_or_default();
+
+    let results = state
+        .reader
+        .get_protocol_fees_withdrawn(start_time, end_time, limit, margin_pool_id_filter)
+        .await?;
+
+    Ok(Json(results))
+}
+
+async fn supplier_cap_minted(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<SupplierCapMinted>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let supplier_cap_id_filter = params.get("supplier_cap_id").cloned().unwrap_or_default();
+
+    let results = state
+        .reader
+        .get_supplier_cap_minted(start_time, end_time, limit, supplier_cap_id_filter)
+        .await?;
+
+    Ok(Json(results))
+}
+
+async fn supply_referral_minted(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<SupplyReferralMinted>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let margin_pool_id_filter = params.get("margin_pool_id").cloned().unwrap_or_default();
+    let owner_filter = params.get("owner").cloned().unwrap_or_default();
+
+    let results = state
+        .reader
+        .get_supply_referral_minted(
+            start_time,
+            end_time,
+            limit,
+            margin_pool_id_filter,
+            owner_filter,
+        )
+        .await?;
+
+    Ok(Json(results))
+}
+
+async fn pause_cap_updated(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<PauseCapUpdated>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let pause_cap_id_filter = params.get("pause_cap_id").cloned().unwrap_or_default();
+
+    let results = state
+        .reader
+        .get_pause_cap_updated(start_time, end_time, limit, pause_cap_id_filter)
+        .await?;
+
+    Ok(Json(results))
+}
+
+async fn protocol_fees_increased(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<ProtocolFeesIncreasedEvent>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let margin_pool_id_filter = params.get("margin_pool_id").cloned().unwrap_or_default();
+
+    let results = state
+        .reader
+        .get_protocol_fees_increased(start_time, end_time, limit, margin_pool_id_filter)
+        .await?;
+
+    Ok(Json(results))
+}
+
+async fn referral_fees_claimed(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<ReferralFeesClaimedEvent>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let referral_id_filter = params.get("referral_id").cloned().unwrap_or_default();
+    let owner_filter = params.get("owner").cloned().unwrap_or_default();
+
+    let results = state
+        .reader
+        .get_referral_fees_claimed(
+            start_time,
+            end_time,
+            limit,
+            referral_id_filter,
+            owner_filter,
+        )
+        .await?;
+
+    Ok(Json(results))
+}
+
+async fn deepbook_pool_registered(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<DeepbookPoolRegistered>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let pool_id_filter = params.get("pool_id").cloned().unwrap_or_default();
 
     let results = state
         .reader
         .get_deepbook_pool_registered(start_time, end_time, limit, pool_id_filter)
         .await?;
 
-    let data: Vec<HashMap<String, Value>> = results
-        .into_iter()
-        .map(
-            |(
-                event_digest,
-                digest,
-                sender,
-                checkpoint,
-                checkpoint_timestamp_ms,
-                package,
-                pool_id,
-                onchain_timestamp,
-            )| {
-                HashMap::from([
-                    ("event_digest".to_string(), Value::from(event_digest)),
-                    ("digest".to_string(), Value::from(digest)),
-                    ("sender".to_string(), Value::from(sender)),
-                    ("checkpoint".to_string(), Value::from(checkpoint)),
-                    (
-                        "checkpoint_timestamp_ms".to_string(),
-                        Value::from(checkpoint_timestamp_ms),
-                    ),
-                    ("package".to_string(), Value::from(package)),
-                    ("pool_id".to_string(), Value::from(pool_id)),
-                    (
-                        "onchain_timestamp".to_string(),
-                        Value::from(onchain_timestamp),
-                    ),
-                ])
-            },
-        )
-        .collect();
-
-    Ok(Json(data))
+    Ok(Json(results))
 }
 
 async fn deepbook_pool_updated_registry(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+) -> Result<Json<Vec<DeepbookPoolUpdatedRegistry>>, DeepBookError> {
     let end_time = params.end_time();
     let start_time = params
         .start_time()
         .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
     let limit = params.limit();
-    let pool_id_filter = params.get("pool_id").cloned();
+    let pool_id_filter = params.get("pool_id").cloned().unwrap_or_default();
 
     let results = state
         .reader
         .get_deepbook_pool_updated_registry(start_time, end_time, limit, pool_id_filter)
         .await?;
 
+    Ok(Json(results))
+}
+
+async fn deepbook_pool_config_updated(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<DeepbookPoolConfigUpdated>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let pool_id_filter = params.get("pool_id").cloned().unwrap_or_default();
+
+    let results = state
+        .reader
+        .get_deepbook_pool_config_updated(start_time, end_time, limit, pool_id_filter)
+        .await?;
+
+    Ok(Json(results))
+}
+
+async fn margin_managers_info(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+    let results = state.reader.get_margin_managers_info().await?;
+
     let data: Vec<HashMap<String, Value>> = results
         .into_iter()
         .map(
             |(
-                event_digest,
-                digest,
-                sender,
-                checkpoint,
-                checkpoint_timestamp_ms,
-                package,
-                pool_id,
-                enabled,
-                onchain_timestamp,
+                margin_manager_id,
+                deepbook_pool_id,
+                base_asset_id,
+                base_asset_symbol,
+                quote_asset_id,
+                quote_asset_symbol,
+                base_margin_pool_id,
+                quote_margin_pool_id,
             )| {
                 HashMap::from([
-                    ("event_digest".to_string(), Value::from(event_digest)),
-                    ("digest".to_string(), Value::from(digest)),
-                    ("sender".to_string(), Value::from(sender)),
-                    ("checkpoint".to_string(), Value::from(checkpoint)),
                     (
-                        "checkpoint_timestamp_ms".to_string(),
-                        Value::from(checkpoint_timestamp_ms),
+                        "margin_manager_id".to_string(),
+                        Value::from(margin_manager_id),
                     ),
-                    ("package".to_string(), Value::from(package)),
-                    ("pool_id".to_string(), Value::from(pool_id)),
-                    ("enabled".to_string(), Value::from(enabled)),
                     (
-                        "onchain_timestamp".to_string(),
-                        Value::from(onchain_timestamp),
+                        "deepbook_pool_id".to_string(),
+                        deepbook_pool_id.map_or(Value::Null, Value::from),
+                    ),
+                    (
+                        "base_asset_id".to_string(),
+                        base_asset_id.map_or(Value::Null, Value::from),
+                    ),
+                    (
+                        "base_asset_symbol".to_string(),
+                        base_asset_symbol.map_or(Value::Null, Value::from),
+                    ),
+                    (
+                        "quote_asset_id".to_string(),
+                        quote_asset_id.map_or(Value::Null, Value::from),
+                    ),
+                    (
+                        "quote_asset_symbol".to_string(),
+                        quote_asset_symbol.map_or(Value::Null, Value::from),
+                    ),
+                    (
+                        "base_margin_pool_id".to_string(),
+                        base_margin_pool_id.map_or(Value::Null, Value::from),
+                    ),
+                    (
+                        "quote_margin_pool_id".to_string(),
+                        quote_margin_pool_id.map_or(Value::Null, Value::from),
                     ),
                 ])
             },
@@ -2362,56 +2145,68 @@ async fn deepbook_pool_updated_registry(
     Ok(Json(data))
 }
 
-async fn deepbook_pool_config_updated(
+async fn margin_manager_states(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
-    let end_time = params.end_time();
-    let start_time = params
-        .start_time()
-        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
-    let limit = params.limit();
-    let pool_id_filter = params.get("pool_id").cloned();
+) -> Result<Json<Vec<MarginManagerState>>, DeepBookError> {
+    let max_risk_ratio = params
+        .get("max_risk_ratio")
+        .and_then(|v| v.parse::<f64>().ok());
+    let deepbook_pool_id = params.get("deepbook_pool_id").cloned();
+
+    let states = state
+        .reader
+        .get_margin_manager_states(max_risk_ratio, deepbook_pool_id)
+        .await?;
+
+    Ok(Json(states))
+}
+
+#[derive(serde::Serialize)]
+struct BalanceManagerDepositedAssets {
+    balance_manager_id: String,
+    assets: Vec<String>,
+}
+
+async fn deposited_assets(
+    Path(balance_manager_ids): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<BalanceManagerDepositedAssets>>, DeepBookError> {
+    let ids: Vec<String> = balance_manager_ids
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if ids.is_empty() {
+        return Err(DeepBookError::bad_request(
+            "No balance manager IDs provided",
+        ));
+    }
 
     let results = state
         .reader
-        .get_deepbook_pool_config_updated(start_time, end_time, limit, pool_id_filter)
+        .get_deposited_assets_by_balance_managers(&ids)
         .await?;
 
-    let data: Vec<HashMap<String, Value>> = results
+    let mut assets_by_manager: HashMap<String, Vec<String>> = HashMap::new();
+    for (balance_manager_id, asset) in results {
+        assets_by_manager
+            .entry(balance_manager_id)
+            .or_default()
+            .push(asset);
+    }
+
+    let response: Vec<BalanceManagerDepositedAssets> = ids
         .into_iter()
-        .map(
-            |(
-                event_digest,
-                digest,
-                sender,
-                checkpoint,
-                checkpoint_timestamp_ms,
-                package,
-                pool_id,
-                config_json,
-                onchain_timestamp,
-            )| {
-                HashMap::from([
-                    ("event_digest".to_string(), Value::from(event_digest)),
-                    ("digest".to_string(), Value::from(digest)),
-                    ("sender".to_string(), Value::from(sender)),
-                    ("checkpoint".to_string(), Value::from(checkpoint)),
-                    (
-                        "checkpoint_timestamp_ms".to_string(),
-                        Value::from(checkpoint_timestamp_ms),
-                    ),
-                    ("package".to_string(), Value::from(package)),
-                    ("pool_id".to_string(), Value::from(pool_id)),
-                    ("config_json".to_string(), config_json),
-                    (
-                        "onchain_timestamp".to_string(),
-                        Value::from(onchain_timestamp),
-                    ),
-                ])
-            },
-        )
+        .map(|id| {
+            let assets = assets_by_manager.remove(&id).unwrap_or_default();
+            BalanceManagerDepositedAssets {
+                balance_manager_id: id,
+                assets,
+            }
+        })
         .collect();
 
-    Ok(Json(data))
+    Ok(Json(response))
 }

@@ -36,6 +36,7 @@ const EVersionAlreadyEnabled: u64 = 11;
 const EVersionNotEnabled: u64 = 12;
 const EMaxMarginManagersReached: u64 = 13;
 const EPauseCapNotValid: u64 = 14;
+const EMarginManagerNotRegistered: u64 = 15;
 
 public struct MARGIN_REGISTRY has drop {}
 
@@ -107,6 +108,7 @@ public struct PauseCapUpdated has copy, drop {
 
 public struct DeepbookPoolRegistered has copy, drop {
     pool_id: ID,
+    config: PoolConfig,
     timestamp: u64,
 }
 
@@ -202,6 +204,7 @@ public fun register_deepbook_pool<BaseAsset, QuoteAsset>(
 
     event::emit(DeepbookPoolRegistered {
         pool_id,
+        config: pool_config,
         timestamp: clock.timestamp_ms(),
     });
 }
@@ -508,6 +511,11 @@ public fun get_margin_manager_ids(self: &MarginRegistry, owner: address): VecSet
     }
 }
 
+public fun can_liquidate(self: &MarginRegistry, deepbook_pool_id: ID, risk_ratio: u64): bool {
+    let config = self.get_pool_config(deepbook_pool_id);
+    risk_ratio < config.risk_ratios.liquidation_risk_ratio
+}
+
 public fun base_margin_pool_id(self: &MarginRegistry, deepbook_pool_id: ID): ID {
     let config = self.get_pool_config(deepbook_pool_id);
     config.base_margin_pool_id
@@ -598,6 +606,18 @@ public(package) fun add_margin_manager(
     );
 }
 
+public(package) fun remove_margin_manager(
+    self: &mut MarginRegistry,
+    margin_manager_id: ID,
+    ctx: &TxContext,
+) {
+    let owner = ctx.sender();
+    let inner = self.load_inner_mut();
+    let margin_manager_ids = inner.margin_managers.borrow_mut(owner);
+    assert!(margin_manager_ids.contains(&margin_manager_id), EMarginManagerNotRegistered);
+    margin_manager_ids.remove(&margin_manager_id);
+}
+
 public(package) fun load_inner_mut(self: &mut MarginRegistry): &mut MarginRegistryInner {
     let inner: &mut MarginRegistryInner = self.inner.load_value_mut();
     let package_version = margin_constants::margin_version();
@@ -633,15 +653,6 @@ public(package) fun can_withdraw(
 public(package) fun can_borrow(self: &MarginRegistry, deepbook_pool_id: ID, risk_ratio: u64): bool {
     let config = self.get_pool_config(deepbook_pool_id);
     risk_ratio >= config.risk_ratios.min_borrow_risk_ratio
-}
-
-public(package) fun can_liquidate(
-    self: &MarginRegistry,
-    deepbook_pool_id: ID,
-    risk_ratio: u64,
-): bool {
-    let config = self.get_pool_config(deepbook_pool_id);
-    risk_ratio < config.risk_ratios.liquidation_risk_ratio
 }
 
 public(package) fun get_config<Config: store + drop>(self: &MarginRegistry): &Config {
