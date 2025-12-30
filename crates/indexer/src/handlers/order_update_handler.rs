@@ -1,92 +1,85 @@
-use crate::handlers::{is_deepbook_tx, struct_tag, try_extract_move_call_package};
+use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
 use crate::models::deepbook::order::{OrderCanceled, OrderModified};
 use crate::models::deepbook::order_info::{OrderExpired, OrderPlaced};
+use crate::traits::MoveStruct;
+use crate::DeepbookEnv;
 use deepbook_schema::models::{OrderUpdate, OrderUpdateStatus};
 use deepbook_schema::schema::order_updates;
 use diesel_async::RunQueryDsl;
-use move_core_types::account_address::AccountAddress;
-use move_core_types::language_storage::StructTag;
 use std::sync::Arc;
 use sui_indexer_alt_framework::pipeline::concurrent::Handler;
 use sui_indexer_alt_framework::pipeline::Processor;
-use sui_pg_db::Connection;
+use sui_pg_db::{Connection, Db};
 use sui_types::full_checkpoint_content::CheckpointData;
 use tracing::debug;
 
 type TransactionMetadata = (String, u64, u64, String, String);
 
 pub struct OrderUpdateHandler {
-    order_placed_type: StructTag,
-    order_modified_type: StructTag,
-    order_canceled_type: StructTag,
-    order_expired_type: StructTag,
+    env: DeepbookEnv,
 }
 
 impl OrderUpdateHandler {
-    pub fn new(package_id_override: Option<AccountAddress>) -> Self {
-        Self {
-            order_placed_type: struct_tag::<OrderPlaced>(package_id_override),
-            order_modified_type: struct_tag::<OrderModified>(package_id_override),
-            order_canceled_type: struct_tag::<OrderCanceled>(package_id_override),
-            order_expired_type: struct_tag::<OrderExpired>(package_id_override),
-        }
+    pub fn new(env: DeepbookEnv) -> Self {
+        Self { env }
     }
 }
 
 impl Processor for OrderUpdateHandler {
-    const NAME: &'static str = "OrderUpdate";
+    const NAME: &'static str = "order_update";
     type Value = OrderUpdate;
     fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {
-        checkpoint
-            .transactions
-            .iter()
-            .try_fold(vec![], |result, tx| {
-                if !is_deepbook_tx(tx) {
-                    return Ok(result);
+        let mut results = vec![];
+
+        for tx in &checkpoint.transactions {
+            if !is_deepbook_tx(tx, self.env) {
+                continue;
+            }
+            let Some(events) = &tx.events else {
+                continue;
+            };
+
+            let package = try_extract_move_call_package(tx).unwrap_or_default();
+            let metadata = (
+                tx.transaction.sender_address().to_string(),
+                checkpoint.checkpoint_summary.sequence_number,
+                checkpoint.checkpoint_summary.timestamp_ms,
+                tx.transaction.digest().to_string(),
+                package.clone(),
+            );
+
+            for (index, ev) in events.data.iter().enumerate() {
+                if OrderPlaced::matches_event_type(&ev.type_, self.env) {
+                    let event = bcs::from_bytes(&ev.contents)?;
+                    results.push(process_order_placed(event, metadata.clone(), index));
+                    debug!("Observed Deepbook Order Placed {:?}", tx);
+                } else if OrderModified::matches_event_type(&ev.type_, self.env) {
+                    let event = bcs::from_bytes(&ev.contents)?;
+                    results.push(process_order_modified(event, metadata.clone(), index));
+                    debug!("Observed Deepbook Order Modified {:?}", tx);
+                } else if OrderCanceled::matches_event_type(&ev.type_, self.env) {
+                    let event = bcs::from_bytes(&ev.contents)?;
+                    results.push(process_order_canceled(event, metadata.clone(), index));
+                    debug!("Observed Deepbook Order Canceled {:?}", tx);
+                } else if OrderExpired::matches_event_type(&ev.type_, self.env) {
+                    let event = bcs::from_bytes(&ev.contents)?;
+                    results.push(process_order_expired(event, metadata.clone(), index));
+                    debug!("Observed Deepbook Order Expired {:?}", tx);
                 }
-                let Some(events) = &tx.events else {
-                    return Ok(result);
-                };
-
-                let package = try_extract_move_call_package(tx).unwrap_or_default();
-                let metadata = (
-                    tx.transaction.sender_address().to_string(),
-                    checkpoint.checkpoint_summary.sequence_number,
-                    checkpoint.checkpoint_summary.timestamp_ms,
-                    tx.transaction.digest().to_string(),
-                    package.clone(),
-                );
-
-                return events.data.iter().enumerate().try_fold(
-                    result,
-                    |mut result, (index, ev)| {
-                        if ev.type_ == self.order_placed_type {
-                            let event = bcs::from_bytes(&ev.contents)?;
-                            result.push(process_order_placed(event, metadata.clone(), index));
-                            debug!("Observed Deepbook Order Placed {:?}", tx);
-                        } else if ev.type_ == self.order_modified_type {
-                            let event = bcs::from_bytes(&ev.contents)?;
-                            result.push(process_order_modified(event, metadata.clone(), index));
-                            debug!("Observed Deepbook Order Modified {:?}", tx);
-                        } else if ev.type_ == self.order_canceled_type {
-                            let event = bcs::from_bytes(&ev.contents)?;
-                            result.push(process_order_canceled(event, metadata.clone(), index));
-                            debug!("Observed Deepbook Order Canceled {:?}", tx);
-                        } else if ev.type_ == self.order_expired_type {
-                            let event = bcs::from_bytes(&ev.contents)?;
-                            result.push(process_order_expired(event, metadata.clone(), index));
-                            debug!("Observed Deepbook Order Expired {:?}", tx);
-                        }
-                        Ok(result)
-                    },
-                );
-            })
+            }
+        }
+        Ok(results)
     }
 }
 
 #[async_trait::async_trait]
 impl Handler for OrderUpdateHandler {
-    async fn commit(values: &[Self::Value], conn: &mut Connection<'_>) -> anyhow::Result<usize> {
+    type Store = Db;
+
+    async fn commit<'a>(
+        values: &[Self::Value],
+        conn: &mut Connection<'a>,
+    ) -> anyhow::Result<usize> {
         Ok(diesel::insert_into(order_updates::table)
             .values(values)
             .on_conflict_do_nothing()

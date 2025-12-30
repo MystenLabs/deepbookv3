@@ -13,9 +13,12 @@ build
 # Node.js
 node_modules
 package-lock.json
+**/pnpm-lock.yaml
 
 # misc
 .env
+.envrc
 **/benchmark_data/
 tx-data.txt
 example.ts
+/data

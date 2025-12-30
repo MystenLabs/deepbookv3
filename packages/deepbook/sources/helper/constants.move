@@ -3,7 +3,7 @@
 
 module deepbook::constants;
 
-const CURRENT_VERSION: u64 = 2; // Update version during upgrades
+const CURRENT_VERSION: u64 = 5; // Update version during upgrades
 const POOL_CREATION_FEE: u64 = 500 * 1_000_000; // 500 DEEP
 const FLOAT_SCALING: u64 = 1_000_000_000;
 const FLOAT_SCALING_U128: u128 = 1_000_000_000;
@@ -15,6 +15,17 @@ const DEFAULT_STAKE_REQUIRED: u64 = 100_000_000; // 100 DEEP
 const HALF: u64 = 500_000_000;
 const DEEP_UNIT: u64 = 1_000_000;
 const FEE_PENALTY_MULTIPLIER: u64 = 1_250_000_000; // 25% more than normal
+const EWMA_DF_KEY: vector<u8> = b"ewma";
+const REFERRAL_MAX_MULTIPLIER: u64 = 2_000_000_000; // 2x multiplier
+const REFERRAL_MULTIPLIER: u64 = 100_000_000; // 0.1x multiplier
+const MAX_BALANCE_MANAGERS: u64 = 100;
+
+const DEFAULT_EWMA_ALPHA: u64 = 10_000_000; // 1% smoothing factor. at 3 TPS ~ one minute alpha
+const MAX_EWMA_ALPHA: u64 = 100_000_000; // 10% smoothing factor. at 3 TPS ~ one minute alpha
+const DEFAULT_Z_SCORE_THRESHOLD: u64 = 3_000_000_000; // 3 standard deviations
+const MAX_Z_SCORE_THRESHOLD: u64 = 10_000_000_000; // 10 standard deviations
+const DEFAULT_ADDITIONAL_TAKER_FEE: u64 = 1_000_000; // 10 bps
+const MAX_ADDITIONAL_TAKER_FEE: u64 = 2_000_000; // 20 bps
 
 // Restrictions on limit orders.
 // No restriction on the order.
@@ -219,6 +230,51 @@ public fun max_fan_out(): u64 {
 
 public fun fee_penalty_multiplier(): u64 {
     FEE_PENALTY_MULTIPLIER
+}
+
+public fun default_ewma_alpha(): u64 {
+    DEFAULT_EWMA_ALPHA
+}
+
+public fun default_z_score_threshold(): u64 {
+    DEFAULT_Z_SCORE_THRESHOLD
+}
+
+public fun default_additional_taker_fee(): u64 {
+    DEFAULT_ADDITIONAL_TAKER_FEE
+}
+
+public fun max_ewma_alpha(): u64 {
+    MAX_EWMA_ALPHA
+}
+
+public fun max_z_score_threshold(): u64 {
+    MAX_Z_SCORE_THRESHOLD
+}
+
+public fun max_additional_taker_fee(): u64 {
+    MAX_ADDITIONAL_TAKER_FEE
+}
+
+public fun ewma_df_key(): vector<u8> {
+    EWMA_DF_KEY
+}
+
+public fun referral_max_multiplier(): u64 {
+    REFERRAL_MAX_MULTIPLIER
+}
+
+public fun referral_multiplier(): u64 {
+    REFERRAL_MULTIPLIER
+}
+
+public fun max_balance_managers(): u64 {
+    MAX_BALANCE_MANAGERS
+}
+
+#[deprecated]
+public fun referral_df_key(): vector<u8> {
+    abort
 }
 
 #[test_only]
