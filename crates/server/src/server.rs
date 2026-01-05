@@ -63,6 +63,7 @@ pub const GET_NET_DEPOSITS: &str = "/get_net_deposits/:asset_ids/:timestamp";
 pub const TICKER_PATH: &str = "/ticker";
 pub const TRADES_PATH: &str = "/trades/:pool_name";
 pub const ORDER_UPDATES_PATH: &str = "/order_updates/:pool_name";
+pub const ORDERS_PATH: &str = "/orders/:pool_name/:balance_manager_id";
 pub const TRADE_COUNT_PATH: &str = "/trade_count";
 pub const ASSETS_PATH: &str = "/assets";
 pub const SUMMARY_PATH: &str = "/summary";
@@ -223,6 +224,7 @@ pub(crate) fn make_router(state: Arc<AppState>, rpc_url: Url) -> Router {
         .route(TRADES_PATH, get(trades))
         .route(TRADE_COUNT_PATH, get(trade_count))
         .route(ORDER_UPDATES_PATH, get(order_updates))
+        .route(ORDERS_PATH, get(orders))
         .route(ASSETS_PATH, get(assets))
         .route(OHCLV_PATH, get(ohclv))
         // Deepbook Margin Events
@@ -981,6 +983,78 @@ async fn order_updates(
         .collect();
 
     Ok(Json(trade_data))
+}
+
+async fn orders(
+    Path((pool_name, balance_manager_id)): Path<(String, String)>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
+    let (pool_id, base_decimals, quote_decimals) =
+        state.reader.get_pool_decimals(&pool_name).await?;
+    let base_decimals = base_decimals as u8;
+    let quote_decimals = quote_decimals as u8;
+
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(1000);
+
+    let status_filter = params.get("status").map(|s| {
+        s.split(',')
+            .map(|status| status.trim().to_string())
+            .collect::<Vec<_>>()
+    });
+
+    let orders = state
+        .reader
+        .get_orders_status(pool_id, limit, Some(balance_manager_id), status_filter)
+        .await?;
+
+    let base_factor = 10u64.pow(base_decimals as u32);
+    let price_factor = 10u64.pow((9 - base_decimals + quote_decimals) as u32);
+
+    let order_data: Vec<HashMap<String, Value>> = orders
+        .into_iter()
+        .map(|order| {
+            let order_type = if order.is_bid { "buy" } else { "sell" };
+            HashMap::from([
+                ("order_id".to_string(), Value::from(order.order_id)),
+                (
+                    "balance_manager_id".to_string(),
+                    Value::from(order.balance_manager_id),
+                ),
+                ("type".to_string(), Value::from(order_type)),
+                (
+                    "current_status".to_string(),
+                    Value::from(order.current_status),
+                ),
+                (
+                    "price".to_string(),
+                    Value::from(order.price as f64 / price_factor as f64),
+                ),
+                ("placed_at".to_string(), Value::from(order.placed_at as u64)),
+                (
+                    "last_updated_at".to_string(),
+                    Value::from(order.last_updated_at as u64),
+                ),
+                (
+                    "original_quantity".to_string(),
+                    Value::from(order.original_quantity as f64 / base_factor as f64),
+                ),
+                (
+                    "filled_quantity".to_string(),
+                    Value::from(order.filled_quantity as f64 / base_factor as f64),
+                ),
+                (
+                    "remaining_quantity".to_string(),
+                    Value::from(order.remaining_quantity as f64 / base_factor as f64),
+                ),
+            ])
+        })
+        .collect();
+
+    Ok(Json(order_data))
 }
 
 async fn trades(
