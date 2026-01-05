@@ -25,7 +25,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     baseCoinKey: "LZWBTC", // 8
     quoteCoinKey: "USDC", // 6
     tickSize: 1,
-    lotSize: 0.000001, // $0.1
+    lotSize: 0.00001, // $1
     minSize: 0.00001, // $1
     whitelisted: false,
     stablePool: false,
