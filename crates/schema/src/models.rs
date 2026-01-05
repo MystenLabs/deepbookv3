@@ -115,6 +115,30 @@ impl ToSql<Text, Pg> for OrderUpdateStatus {
     }
 }
 
+#[derive(Debug, Clone, QueryableByName, Serialize)]
+pub struct OrderStatus {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub order_id: String,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub balance_manager_id: String,
+    #[diesel(sql_type = diesel::sql_types::Bool)]
+    pub is_bid: bool,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub current_status: String,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub price: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub placed_at: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub last_updated_at: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub original_quantity: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub filled_quantity: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub remaining_quantity: i64,
+}
+
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
 #[diesel(table_name = order_fills, primary_key(event_digest))]
 pub struct OrderFill {

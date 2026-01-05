@@ -4,7 +4,7 @@ use deepbook_schema::models::{
     AssetSupplied, AssetWithdrawn, DeepbookPoolConfigUpdated, DeepbookPoolRegistered,
     DeepbookPoolUpdated, DeepbookPoolUpdatedRegistry, InterestParamsUpdated, Liquidation,
     LoanBorrowed, LoanRepaid, MaintainerCapUpdated, MaintainerFeesWithdrawn, MarginManagerCreated,
-    MarginManagerState, MarginPoolConfigUpdated, MarginPoolCreated, OrderFillSummary,
+    MarginManagerState, MarginPoolConfigUpdated, MarginPoolCreated, OrderFillSummary, OrderStatus,
     PauseCapUpdated, Pools, ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn,
     ReferralFeesClaimedEvent, SupplierCapMinted, SupplyReferralMinted,
 };
@@ -352,6 +352,114 @@ impl Reader {
             .load::<(String, i64, i64, i64, i64, i64, bool, String, String)>(&mut connection)
             .await
             .map_err(|_| DeepBookError::database("Error fetching trade details"));
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    pub async fn get_orders_status(
+        &self,
+        pool_id: String,
+        limit: i64,
+        balance_manager_filter: Option<String>,
+        status_filter: Option<Vec<String>>,
+    ) -> Result<Vec<OrderStatus>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        let balance_manager_clause = balance_manager_filter
+            .map(|id| format!("AND balance_manager_id = '{}'", id))
+            .unwrap_or_default();
+
+        let status_clause = status_filter
+            .map(|statuses| {
+                let status_list = statuses
+                    .iter()
+                    .map(|s| format!("'{}'", s))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("WHERE current_status IN ({})", status_list)
+            })
+            .unwrap_or_default();
+
+        let query_str = format!(
+            r#"
+            WITH latest_events AS (
+                SELECT DISTINCT ON (order_id)
+                    order_id,
+                    balance_manager_id,
+                    is_bid,
+                    status as event_status,
+                    price,
+                    original_quantity,
+                    filled_quantity,
+                    quantity as remaining_quantity,
+                    checkpoint_timestamp_ms as last_updated_at
+                FROM order_updates
+                WHERE pool_id = '{pool_id}'
+                {balance_manager_clause}
+                ORDER BY order_id, checkpoint_timestamp_ms DESC
+            ),
+            placed_events AS (
+                SELECT DISTINCT ON (order_id)
+                    order_id,
+                    checkpoint_timestamp_ms as placed_at
+                FROM order_updates
+                WHERE pool_id = '{pool_id}'
+                    AND status = 'Placed'
+                ORDER BY order_id, checkpoint_timestamp_ms ASC
+            ),
+            order_status AS (
+                SELECT
+                    le.order_id,
+                    le.balance_manager_id,
+                    le.is_bid,
+                    CASE
+                        WHEN le.event_status = 'Canceled' THEN 'canceled'
+                        WHEN le.event_status = 'Expired' THEN 'expired'
+                        WHEN le.filled_quantity >= le.original_quantity THEN 'filled'
+                        WHEN le.filled_quantity > 0 THEN 'partially_filled'
+                        ELSE 'placed'
+                    END as current_status,
+                    le.price,
+                    COALESCE(pe.placed_at, le.last_updated_at) as placed_at,
+                    le.last_updated_at,
+                    le.original_quantity,
+                    le.filled_quantity,
+                    le.remaining_quantity
+                FROM latest_events le
+                LEFT JOIN placed_events pe ON le.order_id = pe.order_id
+            )
+            SELECT
+                order_id::text,
+                balance_manager_id::text,
+                is_bid,
+                current_status::text,
+                price,
+                placed_at,
+                last_updated_at,
+                original_quantity,
+                filled_quantity,
+                remaining_quantity
+            FROM order_status
+            {status_clause}
+            ORDER BY last_updated_at DESC
+            LIMIT {limit}
+            "#,
+            pool_id = pool_id,
+            balance_manager_clause = balance_manager_clause,
+            status_clause = status_clause,
+            limit = limit,
+        );
+
+        let res = diesel::sql_query(query_str)
+            .load::<OrderStatus>(&mut connection)
+            .await
+            .map_err(|e| DeepBookError::database(format!("Error fetching order status: {}", e)));
 
         if res.is_ok() {
             self.metrics.db_requests_succeeded.inc();
