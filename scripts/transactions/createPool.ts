@@ -24,7 +24,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
   dbClient.deepBookAdmin.createPoolAdmin({
     baseCoinKey: "LZWBTC", // 9
     quoteCoinKey: "USDC", // 6
-    tickSize: 0.1,
+    tickSize: 1,
     lotSize: 0.000001, // $0.1
     minSize: 0.00001, // $1
     whitelisted: false,
