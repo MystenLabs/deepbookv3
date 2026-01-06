@@ -351,6 +351,24 @@ diesel::table! {
 }
 
 diesel::table! {
+    margin_pool_snapshots (id) {
+        id -> Int8,
+        margin_pool_id -> Text,
+        asset_type -> Text,
+        timestamp -> Timestamp,
+        total_supply -> Int8,
+        total_borrow -> Int8,
+        vault_balance -> Int8,
+        supply_cap -> Int8,
+        interest_rate -> Int8,
+        available_withdrawal -> Int8,
+        utilization_rate -> Float8,
+        solvency_ratio -> Nullable<Float8>,
+        available_liquidity_pct -> Nullable<Float8>,
+    }
+}
+
+diesel::table! {
     ohclv_1d (pool_id, bucket_time) {
         pool_id -> Text,
         bucket_time -> Date,
@@ -692,6 +710,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     margin_manager_state,
     margin_pool_config_updated,
     margin_pool_created,
+    margin_pool_snapshots,
     ohclv_1d,
     ohclv_1m,
     order_fills,
