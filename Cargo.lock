@@ -2157,6 +2157,7 @@ dependencies = [
  "diesel-async",
  "futures",
  "prometheus",
+ "rand 0.8.5",
  "serde",
  "serde_json",
  "sui-indexer-alt-metrics",
