@@ -33,9 +33,11 @@ use tokio::sync::OnceCell;
 use tower_http::cors::{AllowMethods, Any, CorsLayer};
 use url::Url;
 
+use crate::admin::routes::admin_routes;
 use crate::metrics::middleware::track_metrics;
 use crate::metrics::RpcMetrics;
 use crate::reader::Reader;
+use crate::writer::Writer;
 use axum::middleware::from_fn_with_state;
 use futures::future::join_all;
 use prometheus::Registry;
@@ -110,12 +112,14 @@ pub const GET_POINTS_PATH: &str = "/get_points";
 #[derive(Clone)]
 pub struct AppState {
     reader: Reader,
+    writer: Writer,
     metrics: Arc<RpcMetrics>,
     rpc_url: Url,
     sui_client: Arc<OnceCell<sui_sdk::SuiClient>>,
     deepbook_package_id: String,
     deep_token_package_id: String,
     deep_treasury_id: String,
+    admin_tokens: Vec<String>,
 }
 
 impl AppState {
@@ -127,17 +131,31 @@ impl AppState {
         deepbook_package_id: String,
         deep_token_package_id: String,
         deep_treasury_id: String,
+        admin_tokens: Option<String>,
     ) -> Result<Self, anyhow::Error> {
         let metrics = RpcMetrics::new(registry);
-        let reader = Reader::new(database_url, args, metrics.clone(), registry).await?;
+        let reader = Reader::new(database_url.clone(), args.clone(), metrics.clone(), registry).await?;
+        let writer = Writer::new(database_url, args).await?;
+
+        let admin_tokens = admin_tokens
+            .map(|s| {
+                s.split(',')
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+
         Ok(Self {
             reader,
+            writer,
             metrics,
             rpc_url,
             sui_client: Arc::new(OnceCell::new()),
             deepbook_package_id,
             deep_token_package_id,
             deep_treasury_id,
+            admin_tokens,
         })
     }
 
@@ -153,9 +171,16 @@ impl AppState {
             .await
             .map_err(DeepBookError::from)
     }
-
     pub(crate) fn metrics(&self) -> &RpcMetrics {
         &self.metrics
+    }
+
+    pub fn writer(&self) -> &Writer {
+        &self.writer
+    }
+
+    pub fn is_valid_admin_token(&self, token: &str) -> bool {
+        self.admin_tokens.iter().any(|t| t == token)
     }
 }
 
@@ -189,6 +214,7 @@ pub async fn run_server(
     deep_treasury_id: String,
     margin_poll_interval_secs: u64,
     margin_package_id: Option<String>,
+    admin_tokens: Option<String>,
 ) -> Result<(), anyhow::Error> {
     let registry = Registry::new_custom(Some("deepbook_api".into()), None)
         .expect("Failed to create Prometheus registry.");
@@ -203,6 +229,7 @@ pub async fn run_server(
         deepbook_package_id,
         deep_token_package_id,
         deep_treasury_id,
+        admin_tokens,
     )
     .await?;
     let socket_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), server_port);
@@ -260,7 +287,13 @@ pub async fn run_server(
 }
 pub(crate) fn make_router(state: Arc<AppState>) -> Router {
     let cors = CorsLayer::new()
-        .allow_methods(AllowMethods::list(vec![Method::GET, Method::OPTIONS]))
+        .allow_methods(AllowMethods::list(vec![
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+        ]))
         .allow_headers(Any)
         .allow_origin(Any);
 
@@ -334,8 +367,11 @@ pub(crate) fn make_router(state: Arc<AppState>) -> Router {
         .route(STATUS_PATH, get(status))
         .with_state(state.clone());
 
+    let admin = admin_routes(state.clone()).with_state(state.clone());
+
     db_routes
         .merge(rpc_routes)
+        .nest("/admin", admin)
         .layer(cors)
         .layer(from_fn_with_state(state, track_metrics))
 }

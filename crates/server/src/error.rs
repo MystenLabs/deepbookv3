@@ -23,6 +23,9 @@ pub enum DeepBookError {
 
     #[error("Internal error: {0}")]
     Internal(String),
+
+    #[error("Unauthorized")]
+    Unauthorized,
 }
 
 impl DeepBookError {
@@ -58,6 +61,7 @@ impl IntoResponse for DeepBookError {
         let (status, message) = match &self {
             DeepBookError::NotFound { .. } => (StatusCode::NOT_FOUND, self.to_string()),
             DeepBookError::BadRequest(_) => (StatusCode::BAD_REQUEST, self.to_string()),
+            DeepBookError::Unauthorized => (StatusCode::UNAUTHORIZED, self.to_string()),
             DeepBookError::Database(_)
             | DeepBookError::Rpc(_)
             | DeepBookError::Deserialization(_)
