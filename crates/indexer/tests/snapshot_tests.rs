@@ -6,7 +6,6 @@ use deepbook_indexer::handlers::balances_handler::BalancesHandler;
 use deepbook_indexer::handlers::deep_burned_handler::DeepBurnedHandler;
 use deepbook_indexer::handlers::deepbook_pool_config_updated_handler::DeepbookPoolConfigUpdatedHandler;
 use deepbook_indexer::handlers::deepbook_pool_registered_handler::DeepbookPoolRegisteredHandler;
-use deepbook_indexer::handlers::pool_created_handler::PoolCreatedHandler;
 use deepbook_indexer::handlers::deepbook_pool_updated_handler::DeepbookPoolUpdatedHandler;
 use deepbook_indexer::handlers::deepbook_pool_updated_registry_handler::DeepbookPoolUpdatedRegistryHandler;
 use deepbook_indexer::handlers::flash_loan_handler::FlashLoanHandler;
@@ -22,6 +21,7 @@ use deepbook_indexer::handlers::margin_pool_created_handler::MarginPoolCreatedHa
 use deepbook_indexer::handlers::order_fill_handler::OrderFillHandler;
 use deepbook_indexer::handlers::order_update_handler::OrderUpdateHandler;
 use deepbook_indexer::handlers::pause_cap_updated_handler::PauseCapUpdatedHandler;
+use deepbook_indexer::handlers::pool_created_handler::PoolCreatedHandler;
 use deepbook_indexer::handlers::pool_price_handler::PoolPriceHandler;
 use deepbook_indexer::handlers::protocol_fees_increased_handler::ProtocolFeesIncreasedHandler;
 use deepbook_indexer::handlers::protocol_fees_withdrawn_handler::ProtocolFeesWithdrawnHandler;
