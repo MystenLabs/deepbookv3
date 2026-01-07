@@ -6,6 +6,7 @@ use deepbook_indexer::handlers::balances_handler::BalancesHandler;
 use deepbook_indexer::handlers::deep_burned_handler::DeepBurnedHandler;
 use deepbook_indexer::handlers::deepbook_pool_config_updated_handler::DeepbookPoolConfigUpdatedHandler;
 use deepbook_indexer::handlers::deepbook_pool_registered_handler::DeepbookPoolRegisteredHandler;
+use deepbook_indexer::handlers::pool_created_handler::PoolCreatedHandler;
 use deepbook_indexer::handlers::deepbook_pool_updated_handler::DeepbookPoolUpdatedHandler;
 use deepbook_indexer::handlers::deepbook_pool_updated_registry_handler::DeepbookPoolUpdatedRegistryHandler;
 use deepbook_indexer::handlers::flash_loan_handler::FlashLoanHandler;
@@ -85,6 +86,13 @@ async fn pool_price_test() -> Result<(), anyhow::Error> {
 async fn deep_burned_test() -> Result<(), anyhow::Error> {
     let handler = DeepBurnedHandler::new(DeepbookEnv::Mainnet);
     data_test("deep_burned", handler, ["deep_burned"]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn pool_created_test() -> Result<(), anyhow::Error> {
+    let handler = PoolCreatedHandler::new(DeepbookEnv::Mainnet);
+    data_test("pool_created", handler, ["pool_created"]).await?;
     Ok(())
 }
 
