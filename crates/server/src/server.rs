@@ -207,7 +207,10 @@ pub async fn run_server(
                 eprintln!("[margin_poller] Margin poller failed: {}", e);
             }
         });
-        println!("Margin metrics poller started (interval: {}s)", margin_poll_interval_secs);
+        println!(
+            "Margin metrics poller started (interval: {}s)",
+            margin_poll_interval_secs
+        );
     }
 
     let _metrics_handle = tokio::spawn(async move {

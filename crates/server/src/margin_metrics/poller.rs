@@ -168,11 +168,13 @@ impl MarginPoller {
                     asset_type.clone()
                 };
 
-                decimals_map.get(&normalized).map(|&decimals| MarginPoolInfo {
-                    pool_id,
-                    asset_type,
-                    decimals,
-                })
+                decimals_map
+                    .get(&normalized)
+                    .map(|&decimals| MarginPoolInfo {
+                        pool_id,
+                        asset_type,
+                        decimals,
+                    })
             })
             .collect())
     }

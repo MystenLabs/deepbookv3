@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use std::str::FromStr;
 use sui_sdk::SuiClient;
 use sui_types::{
     base_types::{ObjectID, SequenceNumber, SuiAddress},
@@ -7,10 +8,10 @@ use sui_types::{
     type_input::TypeInput,
     TypeTag,
 };
-use std::str::FromStr;
 
 const MARGIN_POOL_MODULE: &str = "margin_pool";
-const SUI_CLOCK_OBJECT_ID: &str = "0x0000000000000000000000000000000000000000000000000000000000000006";
+const SUI_CLOCK_OBJECT_ID: &str =
+    "0x0000000000000000000000000000000000000000000000000000000000000006";
 
 /// Normalize asset type by ensuring the address has a 0x prefix.
 /// The DB stores types like "abc123::module::Type" but TypeTag parser needs "0xabc123::module::Type"
@@ -49,11 +50,7 @@ impl MarginRpcClient {
         })
     }
 
-    pub async fn get_pool_state(
-        &self,
-        pool_id: &str,
-        asset_type: &str,
-    ) -> Result<MarginPoolState> {
+    pub async fn get_pool_state(&self, pool_id: &str, asset_type: &str) -> Result<MarginPoolState> {
         let pool_object_id = ObjectID::from_hex_literal(pool_id)
             .map_err(|e| anyhow!("Invalid pool ID '{}': {}", pool_id, e))?;
 
