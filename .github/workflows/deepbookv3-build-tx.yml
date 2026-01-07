@@ -56,7 +56,8 @@ jobs:
 
       - name: YAML Setup
         run: |
-          sui client switch --env mainnet
+          sui client --yes new-env --rpc https://fullnode.mainnet.sui.io:443 --alias mainnet-env
+          sui client switch --env mainnet-env
 
       - name: NPM BUILD TX Environment
         uses: actions/setup-node@v4
