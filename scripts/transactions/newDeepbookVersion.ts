@@ -24,8 +24,8 @@ const mainnetPlugin = namedPackagesPlugin({
   const data = {
     repository: "https://github.com/MystenLabs/deepbookv3",
     packageInfo: deepbookPackageInfo,
-    sha: "v5.0.0",
-    version: "5",
+    sha: "v6.0.0",
+    version: "6",
     path: "packages/deepbook",
   };
 
