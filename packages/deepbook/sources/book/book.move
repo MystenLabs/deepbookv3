@@ -356,9 +356,9 @@ public(package) fun get_level2_range_and_ticks(
 
     // convert price_low and price_high to keys for searching
     let msb = if (is_bid) {
-        (0 as u128)
+        0u128
     } else {
-        (1 as u128) << 127
+        1u128 << 127
     };
     let key_low = ((price_low as u128) << 64) + msb;
     let key_high = ((price_high as u128) << 64) + (((1u128 << 64) - 1) as u128) + msb;
