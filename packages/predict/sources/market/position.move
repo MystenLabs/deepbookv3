@@ -19,7 +19,8 @@
 /// 4. Position coins are burned on redemption
 module deepbook_predict::position;
 
-use sui::{coin::{Coin, TreasuryCap}, coin_registry::{Self, CoinRegistry, MetadataCap}};
+use sui::coin::{Coin, TreasuryCap};
+use sui::coin_registry::{Self, CoinRegistry, MetadataCap};
 
 // === Errors ===
 const EInvalidDirection: u64 = 0;
@@ -89,7 +90,7 @@ public(package) fun create_market<Asset>(
     strike: u64,
     direction: u8,
     ctx: &mut TxContext,
-): (ID, Market<Asset, PositionCoin<Asset>>) {
+): (PositionCoin<Asset>, Market<Asset, PositionCoin<Asset>>) {
     assert!(direction == DIRECTION_UP || direction == DIRECTION_DOWN, EInvalidDirection);
 
     // Create the PositionCoin type object (shared, represents this market's coin type)
@@ -99,7 +100,6 @@ public(package) fun create_market<Asset>(
         strike,
         direction,
     };
-    let position_coin_id = object::id(&position_coin);
 
     // Register the new currency with coin_registry
     let (initializer, treasury_cap) = coin_registry::new_currency<PositionCoin<Asset>>(
@@ -113,16 +113,13 @@ public(package) fun create_market<Asset>(
     );
     let metadata_cap = initializer.finalize(ctx);
 
-    // Share the PositionCoin (must be done in this module)
-    transfer::share_object(position_coin);
-
     // Return the Market
     let market = Market<Asset, PositionCoin<Asset>> {
         treasury_cap,
         metadata_cap,
     };
 
-    (position_coin_id, market)
+    (position_coin, market)
 }
 
 /// Mint position coins for this market.
