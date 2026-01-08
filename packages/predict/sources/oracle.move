@@ -13,7 +13,7 @@
 /// - Staleness checks (data older than 30s is considered stale)
 /// - Freeze settlement price on first update after expiry
 ///
-/// Strikes are defined at oracle creation and must be updated in the same order.
+/// Strikes are defined at oracle creation as keys in the implied_vols VecMap.
 module deepbook_predict::oracle;
 
 use deepbook_predict::{constants, registry::AdminCap};
