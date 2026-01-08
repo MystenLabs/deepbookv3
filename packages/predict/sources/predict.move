@@ -30,22 +30,27 @@
 /// All events are emitted from this module.
 module deepbook_predict::predict;
 
+use deepbook_predict::market_manager::{Self, Markets};
 
+// === Structs ===
 
-// === Imports ===
+/// Main shared object for the DeepBook Predict protocol.
+public struct Predict<phantom Asset> has key {
+    id: UID,
+    /// All binary option markets
+    markets: Markets<Asset>,
+}
 
-// === Errors ===
+// === Public Functions ===
 
-// === Events ===
+// === Public-Package Functions ===
 
-// === Public Functions * LP * ===
-
-// === Public Functions * TRADING * ===
-
-// === Public Functions * COLLATERAL * ===
-
-// === Public Functions * ADMIN * ===
-
-// === Public Functions * ORACLE * ===
+/// Create a new Predict object. Called during package initialization.
+public(package) fun new<Asset>(ctx: &mut TxContext): Predict<Asset> {
+    Predict {
+        id: object::new(ctx),
+        markets: market_manager::new(ctx),
+    }
+}
 
 // === Private Functions ===

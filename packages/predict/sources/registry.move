@@ -16,9 +16,6 @@ module deepbook_predict::registry;
 // === Imports ===
 
 // === Errors ===
-const ENotAuthorized: u64 = 0;
-const EMarketAlreadyExists: u64 = 1;
-const EMarketNotFound: u64 = 2;
 
 // === Structs ===
 
