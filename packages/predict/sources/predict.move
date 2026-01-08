@@ -45,12 +45,16 @@ public struct Predict<phantom Asset> has key {
 
 // === Public-Package Functions ===
 
-/// Create a new Predict object. Called during package initialization.
-public(package) fun new<Asset>(ctx: &mut TxContext): Predict<Asset> {
-    Predict {
+/// Create and share the Predict object. Returns its ID.
+public(package) fun create<Asset>(ctx: &mut TxContext): ID {
+    let predict = Predict<Asset> {
         id: object::new(ctx),
-        markets: market_manager::new(ctx),
-    }
+        markets: market_manager::new<Asset>(ctx),
+    };
+    let predict_id = object::id(&predict);
+    transfer::share_object(predict);
+
+    predict_id
 }
 
 // === Private Functions ===

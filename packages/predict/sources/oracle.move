@@ -16,7 +16,7 @@
 /// Strikes are defined at oracle creation as keys in the implied_vols VecMap.
 module deepbook_predict::oracle;
 
-use deepbook_predict::{constants, registry::AdminCap};
+use deepbook_predict::constants;
 use sui::{clock::Clock, event, vec_map::{Self, VecMap}};
 
 // === Errors ===
@@ -84,56 +84,6 @@ public struct OracleUpdated<phantom Asset> has copy, drop {
 }
 
 // === Public Functions ===
-
-/// Create a new OracleCap. Called by admin, transferred to Block Scholes.
-public fun create_oracle_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): OracleCap {
-    OracleCap { id: object::new(ctx) }
-}
-
-/// Create a new Oracle for an underlying asset and expiry.
-/// Called by Block Scholes using their OracleCap.
-/// Strikes are fixed at creation.
-public fun create_oracle<Asset>(
-    cap: &OracleCap,
-    expiry: u64,
-    strikes: vector<u64>,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    let num_strikes = strikes.length();
-    assert!(num_strikes > 0, EEmptyStrikes);
-    assert!(num_strikes <= constants::max_strikes_quantity(), ETooManyStrikes);
-
-    let oracle_id = object::new(ctx);
-    let oracle_id_inner = oracle_id.to_inner();
-
-    // Initialize implied_vols VecMap with zeros for each strike
-    let mut implied_vols = vec_map::empty();
-    strikes.do_ref!(|strike| {
-        implied_vols.insert(*strike, 0);
-    });
-
-    let oracle = Oracle<Asset> {
-        id: oracle_id,
-        oracle_cap_id: cap.id.to_inner(),
-        expiry,
-        active: false,
-        spot_price: 0,
-        implied_vols,
-        risk_free_rate: 0,
-        timestamp: 0,
-        settlement_price: option::none(),
-    };
-    transfer::share_object(oracle);
-
-    event::emit(OracleCreated<Asset> {
-        oracle_id: oracle_id_inner,
-        oracle_cap_id: cap.id.to_inner(),
-        expiry,
-        strikes,
-        created_at: clock.timestamp_ms(),
-    });
-}
 
 /// Activate the oracle. Can only be called by the OracleCap owner.
 /// Must be called before the oracle can be used for pricing.
@@ -247,11 +197,61 @@ public fun is_active<Asset>(oracle: &Oracle<Asset>): bool {
 
 // === Public-Package Functions ===
 
+/// Create a new OracleCap.
+public(package) fun create_oracle_cap(ctx: &mut TxContext): OracleCap {
+    OracleCap { id: object::new(ctx) }
+}
+
+/// Create a new Oracle for an underlying asset and expiry.
+/// Strikes are fixed at creation. Returns the oracle ID.
+public(package) fun create_oracle<Asset>(
+    cap: &OracleCap,
+    expiry: u64,
+    strikes: vector<u64>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): ID {
+    let num_strikes = strikes.length();
+    assert!(num_strikes > 0, EEmptyStrikes);
+    assert!(num_strikes <= constants::max_strikes_quantity(), ETooManyStrikes);
+
+    let oracle_id = object::new(ctx);
+    let oracle_id_inner = oracle_id.to_inner();
+
+    let mut implied_vols = vec_map::empty();
+    strikes.do_ref!(|strike| {
+        implied_vols.insert(*strike, 0);
+    });
+
+    let oracle = Oracle<Asset> {
+        id: oracle_id,
+        oracle_cap_id: cap.id.to_inner(),
+        expiry,
+        active: false,
+        spot_price: 0,
+        implied_vols,
+        risk_free_rate: 0,
+        timestamp: 0,
+        settlement_price: option::none(),
+    };
+    transfer::share_object(oracle);
+
+    event::emit(OracleCreated<Asset> {
+        oracle_id: oracle_id_inner,
+        oracle_cap_id: cap.id.to_inner(),
+        expiry,
+        strikes,
+        created_at: clock.timestamp_ms(),
+    });
+
+    oracle_id_inner
+}
+
 /// Get implied volatility for a specific strike.
 /// Aborts if strike is not found in the oracle's strikes.
 public(package) fun get_iv<Asset>(oracle: &Oracle<Asset>, strike: u64): u64 {
     assert!(oracle.implied_vols.contains(&strike), EStrikeNotFound);
-    
+
     *oracle.implied_vols.get(&strike)
 }
 
