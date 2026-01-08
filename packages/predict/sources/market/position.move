@@ -19,8 +19,7 @@
 /// 4. Position coins are burned on redemption
 module deepbook_predict::position;
 
-use sui::coin::{Coin, TreasuryCap};
-use sui::coin_registry::{Self, CoinRegistry, MetadataCap};
+use sui::{coin::{Coin, TreasuryCap}, coin_registry::{Self, CoinRegistry, MetadataCap}};
 
 // === Errors ===
 const EInvalidDirection: u64 = 0;
@@ -82,14 +81,15 @@ public fun is_down<Asset>(position: &PositionCoin<Asset>): bool {
 // === Public-Package Functions ===
 
 /// Create a new market. Called when admin activates a market.
-/// Creates a PositionCoin type and Market with TreasuryCap.
+/// Creates PositionCoin (shared) and returns Market with TreasuryCap.
+/// Returns (position_coin_id, Market).
 public(package) fun create_market<Asset>(
     registry: &mut CoinRegistry,
     oracle_id: ID,
     strike: u64,
     direction: u8,
     ctx: &mut TxContext,
-): (PositionCoin<Asset>, Market<Asset, PositionCoin<Asset>>) {
+): (ID, Market<Asset, PositionCoin<Asset>>) {
     assert!(direction == DIRECTION_UP || direction == DIRECTION_DOWN, EInvalidDirection);
 
     // Create the PositionCoin type object (shared, represents this market's coin type)
@@ -99,6 +99,7 @@ public(package) fun create_market<Asset>(
         strike,
         direction,
     };
+    let position_coin_id = object::id(&position_coin);
 
     // Register the new currency with coin_registry
     let (initializer, treasury_cap) = coin_registry::new_currency<PositionCoin<Asset>>(
@@ -112,13 +113,16 @@ public(package) fun create_market<Asset>(
     );
     let metadata_cap = initializer.finalize(ctx);
 
+    // Share the PositionCoin (must be done in this module)
+    transfer::share_object(position_coin);
+
     // Return the Market
     let market = Market<Asset, PositionCoin<Asset>> {
         treasury_cap,
         metadata_cap,
     };
 
-    (position_coin, market)
+    (position_coin_id, market)
 }
 
 /// Mint position coins for this market.
