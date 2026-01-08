@@ -1,0 +1,9 @@
+[package]
+name = "deepbook_predict"
+edition = "2024.beta"
+version = "0.0.1"
+
+[dependencies]
+
+[addresses]
+deepbook_predict = "0x0"
