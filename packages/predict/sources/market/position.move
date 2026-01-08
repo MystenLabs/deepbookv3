@@ -1,36 +1,146 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Position module - represents user holdings in binary options markets.
+/// Position module - defines markets and position coins for binary options.
 ///
-/// Core struct:
-/// - `Position` owned object representing a user's position:
-///   - market_id (which market this position is for)
-///   - amount (number of contracts, each pays $1 if winning)
+/// Each market has two types:
+/// - `PositionCoin<Asset>` - unique marker type for the market (oracle + strike + direction)
+/// - `Market<Asset>` - shared object holding the TreasuryCap for minting/burning
 ///
-/// Positions are fungible within the same market - two positions with the same
-/// market_id can be merged. This enables secondary market trading.
+/// Users hold `Coin<PositionCoin<Asset>>` representing their positions:
+/// - Coin balance = number of contracts
+/// - Each contract pays $1 if the market settles in their favor
+/// - Coins from different markets cannot be mixed (enforced by TreasuryCap)
 ///
-/// Position lifecycle:
-/// 1. Created via mint() - user pays ask price
-/// 2. Can be transferred, split, merged
-/// 3. Redeemed via redeem() - user receives bid (pre-expiry) or settlement value (post-expiry)
-/// 4. Destroyed when redeemed
-///
-/// For collateral operations, positions can be locked in CollateralManager
-/// to mint positions at different strikes.
+/// Market lifecycle:
+/// 1. Created via create_market() - initializes PositionCoin and Market with TreasuryCap
+/// 2. Users mint position coins by paying the ask price
+/// 3. Users redeem position coins for bid price (pre-expiry) or settlement value (post-expiry)
+/// 4. Position coins are burned on redemption
 module deepbook_predict::position;
 
-
-
-// === Imports ===
+use sui::coin::{Coin, TreasuryCap};
+use sui::coin_registry::{Self, CoinRegistry, MetadataCap};
 
 // === Errors ===
+const EInvalidDirection: u64 = 0;
+
+// === Constants ===
+const DIRECTION_UP: u8 = 0;
+const DIRECTION_DOWN: u8 = 1;
 
 // === Structs ===
 
+/// Unique marker type for a specific market's position coins.
+/// Each market (oracle + strike + direction) gets its own PositionCoin type.
+public struct PositionCoin<phantom Asset> has key {
+    id: UID,
+    /// Oracle ID this market is based on
+    oracle_id: ID,
+    /// Strike price for this market
+    strike: u64,
+    /// Direction: 0 = UP (wins if price > strike), 1 = DOWN (wins if price <= strike)
+    direction: u8,
+}
+
+/// Shared object holding the TreasuryCap for a market.
+/// Used to mint/burn position coins for this specific market.
+public struct Market<phantom Asset, phantom PositionCoin> has store {
+    /// TreasuryCap for minting/burning position coins
+    treasury_cap: TreasuryCap<PositionCoin>,
+    /// MetadataCap for the position coin (from coin_registry)
+    metadata_cap: MetadataCap<PositionCoin>,
+}
+
 // === Public Functions ===
 
+/// Get the oracle ID for this market.
+public fun oracle_id<Asset>(position: &PositionCoin<Asset>): ID {
+    position.oracle_id
+}
+
+/// Get the strike price for this market.
+public fun strike<Asset>(position: &PositionCoin<Asset>): u64 {
+    position.strike
+}
+
+/// Get the direction for this market.
+public fun direction<Asset>(position: &PositionCoin<Asset>): u8 {
+    position.direction
+}
+
+/// Check if this is an UP market (wins if price > strike).
+public fun is_up<Asset>(position: &PositionCoin<Asset>): bool {
+    position.direction == DIRECTION_UP
+}
+
+/// Check if this is a DOWN market (wins if price <= strike).
+public fun is_down<Asset>(position: &PositionCoin<Asset>): bool {
+    position.direction == DIRECTION_DOWN
+}
+
 // === Public-Package Functions ===
+
+/// Create a new market. Called when admin activates a market.
+/// Creates a PositionCoin type and Market with TreasuryCap.
+public(package) fun create_market<Asset>(
+    registry: &mut CoinRegistry,
+    oracle_id: ID,
+    strike: u64,
+    direction: u8,
+    ctx: &mut TxContext,
+): (PositionCoin<Asset>, Market<Asset, PositionCoin<Asset>>) {
+    assert!(direction == DIRECTION_UP || direction == DIRECTION_DOWN, EInvalidDirection);
+
+    // Create the PositionCoin type object (shared, represents this market's coin type)
+    let position_coin = PositionCoin<Asset> {
+        id: object::new(ctx),
+        oracle_id,
+        strike,
+        direction,
+    };
+
+    // Register the new currency with coin_registry
+    let (initializer, treasury_cap) = coin_registry::new_currency<PositionCoin<Asset>>(
+        registry,
+        6, // decimals (same as USDC)
+        b"POS".to_string(),
+        b"Position".to_string(),
+        b"Binary option position coin".to_string(),
+        b"".to_string(),
+        ctx,
+    );
+    let metadata_cap = initializer.finalize(ctx);
+
+    // Return the Market
+    let market = Market<Asset, PositionCoin<Asset>> {
+        treasury_cap,
+        metadata_cap,
+    };
+
+    (position_coin, market)
+}
+
+/// Mint position coins for this market.
+public(package) fun mint<Asset, PositionCoin>(
+    market: &mut Market<Asset, PositionCoin>,
+    quantity: u64,
+    ctx: &mut TxContext,
+): Coin<PositionCoin> {
+    market.treasury_cap.mint(quantity, ctx)
+}
+
+/// Burn position coins for this market.
+public(package) fun burn<Asset, PositionCoin>(
+    market: &mut Market<Asset, PositionCoin>,
+    coin: Coin<PositionCoin>,
+): u64 {
+    market.treasury_cap.burn(coin)
+}
+
+/// Get the total supply of position coins for this market.
+public(package) fun total_supply<Asset, PositionCoin>(market: &Market<Asset, PositionCoin>): u64 {
+    market.treasury_cap.total_supply()
+}
 
 // === Private Functions ===
