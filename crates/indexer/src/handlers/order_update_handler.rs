@@ -3,14 +3,16 @@ use crate::models::deepbook::order::{OrderCanceled, OrderModified};
 use crate::models::deepbook::order_info::{OrderExpired, OrderPlaced};
 use crate::traits::MoveStruct;
 use crate::DeepbookEnv;
+use async_trait::async_trait;
 use deepbook_schema::models::{OrderUpdate, OrderUpdateStatus};
 use deepbook_schema::schema::order_updates;
 use diesel_async::RunQueryDsl;
 use std::sync::Arc;
-use sui_indexer_alt_framework::pipeline::concurrent::Handler;
 use sui_indexer_alt_framework::pipeline::Processor;
-use sui_pg_db::{Connection, Db};
-use sui_types::full_checkpoint_content::CheckpointData;
+use sui_indexer_alt_framework::postgres::handler::Handler;
+use sui_indexer_alt_framework::postgres::Connection;
+use sui_indexer_alt_framework::types::full_checkpoint_content::Checkpoint;
+use sui_types::transaction::TransactionDataAPI;
 use tracing::debug;
 
 type TransactionMetadata = (String, u64, u64, String, String);
@@ -25,14 +27,16 @@ impl OrderUpdateHandler {
     }
 }
 
+#[async_trait]
 impl Processor for OrderUpdateHandler {
     const NAME: &'static str = "order_update";
     type Value = OrderUpdate;
-    fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {
+
+    async fn process(&self, checkpoint: &Arc<Checkpoint>) -> anyhow::Result<Vec<Self::Value>> {
         let mut results = vec![];
 
         for tx in &checkpoint.transactions {
-            if !is_deepbook_tx(tx, self.env) {
+            if !is_deepbook_tx(tx, &checkpoint.object_set, self.env) {
                 continue;
             }
             let Some(events) = &tx.events else {
@@ -41,9 +45,9 @@ impl Processor for OrderUpdateHandler {
 
             let package = try_extract_move_call_package(tx).unwrap_or_default();
             let metadata = (
-                tx.transaction.sender_address().to_string(),
-                checkpoint.checkpoint_summary.sequence_number,
-                checkpoint.checkpoint_summary.timestamp_ms,
+                tx.transaction.sender().to_string(),
+                checkpoint.summary.sequence_number,
+                checkpoint.summary.timestamp_ms,
                 tx.transaction.digest().to_string(),
                 package.clone(),
             );
@@ -72,10 +76,8 @@ impl Processor for OrderUpdateHandler {
     }
 }
 
-#[async_trait::async_trait]
+#[async_trait]
 impl Handler for OrderUpdateHandler {
-    type Store = Db;
-
     async fn commit<'a>(
         values: &[Self::Value],
         conn: &mut Connection<'a>,
