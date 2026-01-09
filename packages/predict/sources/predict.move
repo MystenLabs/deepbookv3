@@ -5,38 +5,23 @@
 ///
 /// This module exposes all public functions for interacting with the binary options protocol:
 ///
-/// LP Actions:
-/// - `deposit()` - LP deposits USDC into vault, receives VaultShare
-/// - `withdraw()` - LP burns VaultShare, receives USDC (after 24h lockup)
-///
 /// Trading Actions:
-/// - `get_quote()` - Returns current (bid, ask) for a market
-/// - `mint()` - Trader pays ask price in USDC, receives Position token
-/// - `redeem()` - Trader returns Position, receives bid (pre-expiry) or settlement value (post-expiry)
-///
-/// Collateral Actions (for spreads):
-/// - `mint_with_collateral()` - Lock a position as collateral to mint another position
-/// - `unlock_collateral()` - Return minted position (or nothing if worthless) to unlock collateral
+/// - `mint()` - Buy a position: pays USDC from PredictManager, receives position in manager
+/// - `redeem()` - Sell a position: returns position, receives USDC into manager
 ///
 /// Admin Actions (require AdminCap):
-/// - `create_market()` - Create a new binary options market
-/// - `pause_trading()` / `unpause_trading()` - Emergency trading controls
-/// - `pause_withdrawals()` / `unpause_withdrawals()` - Emergency withdrawal controls
-/// - `update_*()` - Update risk parameters
-///
-/// Oracle Actions:
-/// - `update_oracle()` - Oracle provider pushes new price/volatility data
+/// - `enable_market()` - Enable trading for an oracle + strike pair
 ///
 /// All events are emitted from this module.
 module deepbook_predict::predict;
 
-use deepbook_predict::{
-    market_manager::{Self, Markets, PositionCoin},
-    oracle::Oracle,
-    pricing::{Self, Pricing},
-    vault::{Self, Vault}
-};
-use sui::{clock::Clock, coin::Coin};
+use deepbook_predict::market_manager::{Self, Markets};
+use deepbook_predict::oracle::Oracle;
+use deepbook_predict::position_key::PositionKey;
+use deepbook_predict::predict_manager::PredictManager;
+use deepbook_predict::pricing::{Self, Pricing};
+use deepbook_predict::vault::{Self, Vault};
+use sui::clock::Clock;
 
 // === Structs ===
 
@@ -44,8 +29,8 @@ use sui::{clock::Clock, coin::Coin};
 /// Quote is the collateral asset (e.g., USDC).
 public struct Predict<phantom Quote> has key {
     id: UID,
-    /// All binary option markets
-    markets: Markets<Quote>,
+    /// Enabled markets tracker
+    markets: Markets,
     /// Vault holding USDC and tracking exposure
     vault: Vault<Quote>,
     /// Pricing configuration
@@ -53,129 +38,74 @@ public struct Predict<phantom Quote> has key {
 }
 
 // === Errors ===
-const EInsufficientPayment: u64 = 0;
-const EPositionMismatch: u64 = 1;
+const EOracleMismatch: u64 = 0;
+const EExpiryMismatch: u64 = 1;
 
 // === Public Functions ===
 
-/// Mint position coins by paying USDC.
-/// Takes both UP and DOWN PositionCoins to query net exposure.
-/// Returns position coins and any change from overpayment.
+/// Buy a position. Cost is withdrawn from the PredictManager's balance.
+/// Position quantity is added to the PredictManager's positions.
 public fun mint<Underlying, Quote>(
     predict: &mut Predict<Quote>,
+    manager: &mut PredictManager,
     oracle: &Oracle<Underlying>,
-    position_up: &PositionCoin<Quote>,
-    position_down: &PositionCoin<Quote>,
-    buying_up: bool,
+    key: PositionKey,
     quantity: u64,
-    mut payment: Coin<Quote>,
     clock: &Clock,
     ctx: &mut TxContext,
-): (Coin<PositionCoin<Quote>>, Coin<Quote>) {
-    // Validate positions match the oracle
-    assert!(position_up.oracle_id() == oracle.id(), EPositionMismatch);
-    assert!(position_down.oracle_id() == oracle.id(), EPositionMismatch);
-    assert!(position_up.strike() == position_down.strike(), EPositionMismatch);
-
+) {
+    assert!(key.oracle_id() == oracle.id(), EOracleMismatch);
+    assert!(key.expiry() == oracle.expiry(), EExpiryMismatch);
     oracle.assert_not_stale(clock);
-    position_up.assert_is_up();
-    position_down.assert_is_down();
+    predict.markets.assert_enabled(oracle.id(), key.strike());
 
-    // Query net exposure for dynamic pricing
-    let up_short = predict.vault.position(position_up);
-    let down_short = predict.vault.position(position_down);
+    // Get vault exposure for pricing
+    let (up_short, down_short) = predict.vault.pair_position(key);
 
-    // Get cost from pricing
-    let strike = position_up.strike();
-    let cost = predict
-        .pricing
-        .get_mint_cost(
-            oracle,
-            strike,
-            buying_up,
-            quantity,
-            up_short,
-            down_short,
-            clock,
-        );
-    assert!(payment.value() >= cost, EInsufficientPayment);
+    // Calculate cost
+    let cost = predict.pricing.get_mint_cost(oracle, &key, quantity, up_short, down_short, clock);
 
-    // Split exact cost, keep change
-    let cost_coin = payment.split(cost, ctx);
-    let change = payment;
+    // Withdraw cost from manager
+    let payment = manager.withdraw<Quote>(cost, ctx);
 
-    // Determine which position we're minting
-    let position = if (buying_up) {
-        position_up
-    } else {
-        position_down
-    };
+    // Vault receives payment and goes short
+    predict.vault.increase_exposure(key, quantity, payment);
 
-    // Deposit payment into vault and record short
-    predict.vault.increase_exposure(position, quantity, cost_coin);
-
-    // Mint position coins
-    let position_coins = predict.markets.mint_position(position, quantity, ctx);
-
-    (position_coins, change)
+    // Manager records long position
+    manager.increase_position(key, quantity);
 }
 
-/// Redeem position coins for USDC.
-/// Pre-expiry: receives bid price.
-/// Post-expiry: receives settlement value ($1 if won, $0 if lost).
-/// Takes both UP and DOWN PositionCoins to query net exposure.
+/// Sell a position. Payout is deposited into the PredictManager's balance.
+/// Position quantity is removed from the PredictManager's positions.
 public fun redeem<Underlying, Quote>(
     predict: &mut Predict<Quote>,
+    manager: &mut PredictManager,
     oracle: &Oracle<Underlying>,
-    position_up: &PositionCoin<Quote>,
-    position_down: &PositionCoin<Quote>,
-    redeeming_up: bool,
-    position_coins: Coin<PositionCoin<Quote>>,
+    key: PositionKey,
+    quantity: u64,
     clock: &Clock,
     ctx: &mut TxContext,
-): Coin<Quote> {
-    // Validate positions match the oracle
-    assert!(position_up.oracle_id() == oracle.id(), EPositionMismatch);
-    assert!(position_down.oracle_id() == oracle.id(), EPositionMismatch);
-    assert!(position_up.strike() == position_down.strike(), EPositionMismatch);
+) {
+    assert!(key.oracle_id() == oracle.id(), EOracleMismatch);
+    assert!(key.expiry() == oracle.expiry(), EExpiryMismatch);
 
-    position_up.assert_is_up();
-    position_down.assert_is_down();
+    // Get vault exposure for pricing
+    let (up_short, down_short) = predict.vault.pair_position(key);
 
-    let quantity = position_coins.value();
-
-    // Query net exposure for dynamic pricing
-    let up_short = predict.vault.position(position_up);
-    let down_short = predict.vault.position(position_down);
-
-    // Get payout from pricing
-    let strike = position_up.strike();
+    // Calculate payout
     let payout = predict
         .pricing
-        .get_redeem_payout(
-            oracle,
-            strike,
-            redeeming_up,
-            quantity,
-            up_short,
-            down_short,
-            clock,
-        );
+        .get_redeem_payout(oracle, &key, quantity, up_short, down_short, clock);
 
-    // Determine which position we're redeeming
-    let position = if (redeeming_up) {
-        position_up
-    } else {
-        position_down
-    };
+    // Manager reduces long position
+    manager.decrease_position(key, quantity);
 
-    // Burn position coins
-    predict.markets.burn_position(position, position_coins);
+    // Vault reduces short and pays out
+    let payout_balance = predict.vault.decrease_exposure(key, quantity, payout);
 
-    // Reduce vault exposure and get payout
-    let payout_balance = predict.vault.decrease_exposure(position, quantity, payout);
-
-    payout_balance.into_coin(ctx)
+    // Deposit payout into manager
+    let payout_coin = payout_balance.into_coin(ctx);
+    manager.deposit(payout_coin, ctx);
 }
 
 // === Public-Package Functions ===
@@ -184,7 +114,7 @@ public fun redeem<Underlying, Quote>(
 public(package) fun create<Quote>(ctx: &mut TxContext): ID {
     let predict = Predict<Quote> {
         id: object::new(ctx),
-        markets: market_manager::new<Quote>(ctx),
+        markets: market_manager::new(),
         vault: vault::new<Quote>(ctx),
         pricing: pricing::new(),
     };
@@ -194,4 +124,11 @@ public(package) fun create<Quote>(ctx: &mut TxContext): ID {
     predict_id
 }
 
-// === Private Functions ===
+/// Enable a market for trading.
+public(package) fun enable_market<Underlying, Quote>(
+    predict: &mut Predict<Quote>,
+    oracle: &Oracle<Underlying>,
+    strike: u64,
+) {
+    predict.markets.enable_market(oracle, strike);
+}

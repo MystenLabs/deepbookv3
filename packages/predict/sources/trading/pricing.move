@@ -32,7 +32,7 @@
 /// This encourages balanced order flow and reduces vault risk.
 module deepbook_predict::pricing;
 
-use deepbook_predict::{constants, oracle::Oracle};
+use deepbook_predict::{constants, oracle::Oracle, position_key::PositionKey};
 use sui::clock::Clock;
 
 // === Structs ===
@@ -46,15 +46,15 @@ public struct Pricing has store {
 // === Public Functions ===
 
 /// Get bid and ask prices for a market.
-/// Underlying is the oracle's asset (BTC, ETH).
 /// Returns (bid, ask) in PRICE_SCALING (1e6).
 public fun get_quote<Underlying>(
     pricing: &Pricing,
     oracle: &Oracle<Underlying>,
-    strike: u64,
-    is_up: bool,
+    key: &PositionKey,
     clock: &Clock,
 ): (u64, u64) {
+    let strike = key.strike();
+    let is_up = key.is_up();
     let (spot, iv, rfr, tte) = oracle.get_pricing_data(strike, clock);
 
     let theoretical = calculate_binary_price(spot, strike, iv, rfr, tte, is_up);
@@ -72,8 +72,7 @@ public fun get_quote<Underlying>(
 public fun get_mint_cost<Underlying>(
     _pricing: &Pricing,
     _oracle: &Oracle<Underlying>,
-    _strike: u64,
-    _buying_up: bool,
+    _key: &PositionKey,
     quantity: u64,
     _up_short: u64,
     _down_short: u64,
@@ -97,14 +96,15 @@ public fun get_mint_cost<Underlying>(
 public fun get_redeem_payout<Underlying>(
     _pricing: &Pricing,
     oracle: &Oracle<Underlying>,
-    strike: u64,
-    is_up: bool,
+    key: &PositionKey,
     quantity: u64,
     _up_short: u64,
     _down_short: u64,
     _clock: &Clock,
 ): u64 {
-    // Check if oracle is settled
+    let strike = key.strike();
+    let is_up = key.is_up();
+
     if (oracle.is_settled()) {
         let settlement_price = oracle.settlement_price().destroy_some();
         let won = if (is_up) {

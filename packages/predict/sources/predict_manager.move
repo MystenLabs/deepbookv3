@@ -8,20 +8,14 @@
 module deepbook_predict::predict_manager;
 
 use deepbook::balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap};
+use deepbook_predict::position_key::PositionKey;
 use sui::{coin::Coin, table::{Self, Table}};
-
-// === Constants ===
-const DIRECTION_UP: u8 = 0;
-const DIRECTION_DOWN: u8 = 1;
 
 // === Errors ===
 const EInvalidOwner: u64 = 0;
 const EInsufficientPosition: u64 = 1;
 
 // === Structs ===
-
-/// Key for a position: (oracle_id, expiry, strike, direction)
-public struct PositionKey(ID, u64, u64, u8) has copy, drop, store;
 
 /// PredictManager wraps a BalanceManager and tracks positions.
 public struct PredictManager has key {
@@ -72,43 +66,6 @@ public fun deposit<T>(self: &mut PredictManager, coin: Coin<T>, ctx: &TxContext)
 public fun withdraw<T>(self: &mut PredictManager, amount: u64, ctx: &mut TxContext): Coin<T> {
     assert!(ctx.sender() == self.owner, EInvalidOwner);
     self.balance_manager.withdraw_with_cap(&self.withdraw_cap, amount, ctx)
-}
-
-// === PositionKey Functions ===
-
-/// Create a new PositionKey for an UP position.
-public fun position_key_up(oracle_id: ID, expiry: u64, strike: u64): PositionKey {
-    PositionKey(oracle_id, expiry, strike, DIRECTION_UP)
-}
-
-/// Create a new PositionKey for a DOWN position.
-public fun position_key_down(oracle_id: ID, expiry: u64, strike: u64): PositionKey {
-    PositionKey(oracle_id, expiry, strike, DIRECTION_DOWN)
-}
-
-/// Get the oracle_id from a PositionKey.
-public fun key_oracle_id(key: &PositionKey): ID {
-    key.0
-}
-
-/// Get the expiry from a PositionKey.
-public fun key_expiry(key: &PositionKey): u64 {
-    key.1
-}
-
-/// Get the strike from a PositionKey.
-public fun key_strike(key: &PositionKey): u64 {
-    key.2
-}
-
-/// Get the direction from a PositionKey.
-public fun key_direction(key: &PositionKey): u8 {
-    key.3
-}
-
-/// Check if a PositionKey is for an UP position.
-public fun key_is_up(key: &PositionKey): bool {
-    key.3 == DIRECTION_UP
 }
 
 // === Public-Package Functions ===
