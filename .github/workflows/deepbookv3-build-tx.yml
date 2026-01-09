@@ -18,6 +18,7 @@ on:
           - Adjust Min Lot Size
           - Transfer Funds
           - Prep Deepbook MVR
+          - Margin Setup
       sui_tools_image:
         description: "image reference of sui_tools"
         default: "mysten/sui-tools:mainnet"
