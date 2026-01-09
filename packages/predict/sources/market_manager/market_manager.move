@@ -19,11 +19,10 @@
 module deepbook_predict::market_manager;
 
 use deepbook_predict::oracle::Oracle;
-use sui::{
-    coin::{Coin, TreasuryCap},
-    coin_registry::{Self, CoinRegistry, MetadataCap},
-    table::{Self, Table}
-};
+use sui::coin::{Coin, TreasuryCap};
+use sui::coin_registry::{Self, CoinRegistry, MetadataCap};
+use sui::table::{Self, Table};
+use std::string::String;
 
 // === Errors ===
 const EMarketAlreadyExists: u64 = 0;
@@ -89,6 +88,37 @@ public fun is_down<Quote>(position: &PositionCoin<Quote>): bool {
     position.direction == DIRECTION_DOWN
 }
 
+public fun id<Quote>(position: &PositionCoin<Quote>): ID {
+    position.id.to_inner()
+}
+
+public fun symbol_string<Quote>(position: &PositionCoin<Quote>): String {
+    let mut symbol = b"DB_".to_string();
+    if (position.direction == DIRECTION_UP) {
+        symbol.append("UP@");
+    } else {
+        symbol.append("DOWN@");
+    };
+    symbol.append(position.strike.to_string());
+
+    symbol
+}
+
+public fun name_string<Quote>(position: &PositionCoin<Quote>): String {
+    let mut name = b"DeepBook Position ".to_string();
+    name.append(position.symbol_string());
+
+    name
+}
+
+public fun description_string<Quote>(position: &PositionCoin<Quote>): String {
+    let mut description = b"Prediction position coin for DeepBook market: ".to_string();
+    description.append(position.symbol_string());
+    description.append(b". Pays $1 if the market settles in favor of this position.".to_string());
+
+    description
+}
+
 /// Check if a market exists for a given PositionCoin ID.
 public fun has_market<Quote>(markets: &Markets<Quote>, position_coin_id: ID): bool {
     markets.markets.contains(position_coin_id)
@@ -131,26 +161,32 @@ public(package) fun add_market<Underlying, Quote>(
     (up_id, down_id)
 }
 
-/// Mint position coins for a market.
-public(package) fun mint<Quote, PositionCoin>(
-    market: &mut Market<Quote, PositionCoin>,
-    quantity: u64,
-    ctx: &mut TxContext,
-): Coin<PositionCoin> {
-    market.treasury_cap.mint(quantity, ctx)
-}
-
-/// Burn position coins for a market.
-public(package) fun burn<Quote, PositionCoin>(
-    market: &mut Market<Quote, PositionCoin>,
-    coin: Coin<PositionCoin>,
-): u64 {
-    market.treasury_cap.burn(coin)
-}
-
 /// Get the total supply of position coins for a market.
 public(package) fun total_supply<Quote, PositionCoin>(market: &Market<Quote, PositionCoin>): u64 {
     market.treasury_cap.total_supply()
+}
+
+/// Mint position coins for a market by PositionCoin ID.
+public(package) fun mint_position<Quote>(
+    markets: &mut Markets<Quote>,
+    position_coin: &PositionCoin<Quote>,
+    quantity: u64,
+    ctx: &mut TxContext,
+): Coin<PositionCoin<Quote>> {
+    let market = &mut markets.markets[position_coin.id()];
+
+    market.treasury_cap.mint(quantity, ctx)
+}
+
+/// Burn position coins for a market by PositionCoin ID.
+public(package) fun burn_position<Quote>(
+    markets: &mut Markets<Quote>,
+    position_coin: &PositionCoin<Quote>,
+    coin: Coin<PositionCoin<Quote>>,
+): u64 {
+    let market = &mut markets.markets[position_coin.id()];
+
+    market.treasury_cap.burn(coin)
 }
 
 // === Private Functions ===
@@ -195,14 +231,14 @@ fun create_single_market<Quote>(
         strike,
         direction,
     };
-    let position_coin_id = object::id(&position_coin);
+    let position_coin_id = position_coin.id();
 
     let (initializer, treasury_cap) = coin_registry::new_currency<PositionCoin<Quote>>(
         registry,
         6,
-        b"POS".to_string(),
-        b"Position".to_string(),
-        b"Binary option position coin".to_string(),
+        position_coin.symbol_string(),
+        position_coin.name_string(),
+        position_coin.description_string(),
         b"".to_string(),
         ctx,
     );

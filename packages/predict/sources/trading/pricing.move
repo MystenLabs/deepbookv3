@@ -66,6 +66,29 @@ public fun get_quote<Underlying>(
     (bid, ask)
 }
 
+/// Calculate the cost to buy a position.
+/// Takes vault's current short positions for dynamic spread calculation.
+/// Returns cost in Quote units (e.g., USDC with 6 decimals).
+public fun get_mint_cost<Underlying>(
+    _pricing: &Pricing,
+    _oracle: &Oracle<Underlying>,
+    _strike: u64,
+    _buying_up: bool,
+    quantity: u64,
+    _up_short: u64,
+    _down_short: u64,
+    _clock: &Clock,
+): u64 {
+    // TODO: Calculate cost based on:
+    // 1. Get theoretical price from Black-Scholes
+    // 2. Calculate net exposure = up_short - down_short
+    // 3. Apply dynamic spread based on net exposure
+    // 4. Return ask * quantity
+
+    // Placeholder: 50 cents per contract
+    500_000 * quantity
+}
+
 // === Public-Package Functions ===
 
 /// Create a new Pricing config with default values.
