@@ -1,0 +1,9 @@
+ALTER TABLE liquidation
+    DROP COLUMN remaining_base_asset,
+    DROP COLUMN remaining_quote_asset,
+    DROP COLUMN remaining_base_debt,
+    DROP COLUMN remaining_quote_debt,
+    DROP COLUMN base_pyth_price,
+    DROP COLUMN base_pyth_decimals,
+    DROP COLUMN quote_pyth_price,
+    DROP COLUMN quote_pyth_decimals;

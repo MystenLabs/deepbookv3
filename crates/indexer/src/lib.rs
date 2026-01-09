@@ -14,6 +14,8 @@ const MAINNET_PACKAGES: &[&str] = &[
     "0xb29d83c26cdd2a64959263abbcfc4a6937f0c9fccaf98580ca56faded65be244",
     "0x2c8d603bc51326b8c13cef9dd07031a408a48dddb541963357661df5d3204809",
     "0xcaf6ba059d539a97646d47f0b9ddf843e138d215e2a12ca1f4585d386f7aec3a",
+    "0x00c1a56ec8c4c623a848b2ed2f03d23a25d17570b670c22106f336eb933785cc",
+    "0x2d93777cc8b67c064b495e8606f2f8f5fd578450347bbe7b36e0bc03963c1c40", // Latest
 ];
 
 const TESTNET_PACKAGES: &[&str] = &[
@@ -27,6 +29,13 @@ const TESTNET_PACKAGES: &[&str] = &[
     "0x9592ac923593f37f4fed15ee15f760ebd4c39729f53ee3e8c214de7a17157769",
     "0x984757fc7c0e6dd5f15c2c66e881dd6e5aca98b725f3dbd83c445e057ebb790a",
     "0xfb28c4cbc6865bd1c897d26aecbe1f8792d1509a20ffec692c800660cbec6982",
+    "0x926c446869fa175ec3b0dbf6c4f14604d86a415c1fccd8c8f823cfc46a29baed",
+    "0xa0936c6ea82fbfc0356eedc2e740e260dedaaa9f909a0715b1cc31e9a8283719",
+    "0x9ae1cbfb7475f6a4c2d4d3273335459f8f9d265874c4d161c1966cdcbd4e9ebc",
+    "0xb48d47cb5f56d0f489f48f186d06672df59d64bd2f514b2f0ba40cbb8c8fd487",
+    "0xbc331f09e5c737d45f074ad2d17c3038421b3b9018699e370d88d94938c53d28",
+    "0x23018638bb4f11ef9ffb0de922519bea52f960e7a5891025ca9aaeeaff7d5034",
+    "0x22be4cade64bf2d02412c7e8d0e8beea2f78828b948118d46735315409371a3c", // Latest
 ];
 
 // Mainnet margin package is not yet deployed - using placeholder
@@ -34,8 +43,13 @@ const TESTNET_PACKAGES: &[&str] = &[
 // When the margin package is deployed on mainnet, replace this with the actual address
 const MAINNET_MARGIN_PACKAGES: &[&str] = &[NOT_MAINNET_PACKAGE];
 const TESTNET_MARGIN_PACKAGES: &[&str] = &[
-    "0x3f44af8fcef3cd753a221a4f25a61d2d6c74b4ca0b6809f6e670764b9debf08a",
-    "0x8fe69c287d99f8873d5080bf74aec39c4b79536cdbbe260bf43a1b46fd553be0",
+    "0xb8620c24c9ea1a4a41e79613d2b3d1d93648d1bb6f6b789a7c8f261c94110e4b",
+    "0xf978cf2b601c24e40ef82b6e51512b448696b44cb014c0a1162422aa8b9cb811",
+    "0x16d781c327a919dc55390f5cc60d58c7ec4535bb317e88850961222bbd5d4d9e",
+    "0x3ca7f6ee86b42ebe05ab8de70fbc96832e65615f64f10dbdc1820fa599904c7b",
+    "0xf0a090340d74ea598d59868378f27d2cc5e46a562ec3a5b26b5117572905d9f3",
+    "0xd6a42f4df4db73d68cbeb52be66698d2fe6a9464f45ad113ca52b0c6ebd918b6",
+    "0xb388009b59b09cd5d219dae79dd3e5d08a5734884363e59a37f3cbe6ef613424", // Latest
 ];
 
 // Module definitions
@@ -52,7 +66,12 @@ pub const CORE_MODULES: &[&str] = &[
 ];
 
 /// Margin trading modules that handle lending and borrowing
-pub const MARGIN_MODULES: &[&str] = &["margin_manager", "margin_pool", "margin_registry"];
+pub const MARGIN_MODULES: &[&str] = &[
+    "margin_manager",
+    "margin_pool",
+    "margin_registry",
+    "protocol_fees",
+];
 
 /// SUI system modules
 pub const SUI_MODULES: &[&str] = &["sui"];
