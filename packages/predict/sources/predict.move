@@ -30,15 +30,18 @@
 /// All events are emitted from this module.
 module deepbook_predict::predict;
 
-use deepbook_predict::market_manager::{Self, Markets};
+use deepbook_predict::{market_manager::{Self, Markets}, pricing::{Self, Pricing}};
 
 // === Structs ===
 
 /// Main shared object for the DeepBook Predict protocol.
-public struct Predict<phantom Asset> has key {
+/// Quote is the collateral asset (e.g., USDC).
+public struct Predict<phantom Quote> has key {
     id: UID,
     /// All binary option markets
-    markets: Markets<Asset>,
+    markets: Markets<Quote>,
+    /// Pricing configuration
+    pricing: Pricing,
 }
 
 // === Public Functions ===
@@ -46,10 +49,11 @@ public struct Predict<phantom Asset> has key {
 // === Public-Package Functions ===
 
 /// Create and share the Predict object. Returns its ID.
-public(package) fun create<Asset>(ctx: &mut TxContext): ID {
-    let predict = Predict<Asset> {
+public(package) fun create<Quote>(ctx: &mut TxContext): ID {
+    let predict = Predict<Quote> {
         id: object::new(ctx),
-        markets: market_manager::new<Asset>(ctx),
+        markets: market_manager::new<Quote>(ctx),
+        pricing: pricing::new(),
     };
     let predict_id = object::id(&predict);
     transfer::share_object(predict);

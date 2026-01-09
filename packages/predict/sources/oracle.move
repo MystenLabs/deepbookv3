@@ -4,7 +4,7 @@
 /// Oracle module for the Predict protocol.
 ///
 /// Manages external price data from Block Scholes:
-/// - `Oracle<Asset>` shared object (one per underlying + expiry)
+/// - `Oracle<Underlying>` shared object (one per underlying + expiry)
 /// - `OracleCap` capability for Block Scholes to create oracles and push updates
 ///
 /// Key responsibilities:
@@ -34,7 +34,7 @@ const EOracleExpired: u64 = 8;
 
 /// Shared object storing price data for one underlying + expiry combination.
 /// Created by Block Scholes using OracleCap.
-public struct Oracle<phantom Asset> has key {
+public struct Oracle<phantom Underlying> has key {
     id: UID,
     /// ID of the OracleCap that created this oracle
     oracle_cap_id: ID,
@@ -65,7 +65,7 @@ public struct OracleCap has key, store {
 // === Events ===
 
 /// Emitted when a new oracle is created.
-public struct OracleCreated<phantom Asset> has copy, drop {
+public struct OracleCreated<phantom Underlying> has copy, drop {
     oracle_id: ID,
     oracle_cap_id: ID,
     expiry: u64,
@@ -74,7 +74,7 @@ public struct OracleCreated<phantom Asset> has copy, drop {
 }
 
 /// Emitted on each oracle update.
-public struct OracleUpdated<phantom Asset> has copy, drop {
+public struct OracleUpdated<phantom Underlying> has copy, drop {
     oracle_id: ID,
     spot_price: u64,
     implied_vols: VecMap<u64, u64>,
@@ -87,7 +87,7 @@ public struct OracleUpdated<phantom Asset> has copy, drop {
 
 /// Activate the oracle. Can only be called by the OracleCap owner.
 /// Must be called before the oracle can be used for pricing.
-public fun activate<Asset>(oracle: &mut Oracle<Asset>, cap: &OracleCap, clock: &Clock) {
+public fun activate<Underlying>(oracle: &mut Oracle<Underlying>, cap: &OracleCap, clock: &Clock) {
     assert!(clock.timestamp_ms() < oracle.expiry, EOracleExpired);
     assert!(oracle.oracle_cap_id == cap.id.to_inner(), EInvalidOracleCap);
     assert!(!oracle.active, EOracleAlreadyActive);
@@ -98,8 +98,8 @@ public fun activate<Asset>(oracle: &mut Oracle<Asset>, cap: &OracleCap, clock: &
 /// Called by Block Scholes (~1 update/second).
 /// implied_vols keys must exactly match the oracle's strikes.
 /// If timestamp > expiry and settlement_price is None, freezes settlement price and deactivates.
-public fun update<Asset>(
-    oracle: &mut Oracle<Asset>,
+public fun update<Underlying>(
+    oracle: &mut Oracle<Underlying>,
     cap: &OracleCap,
     spot_price: u64,
     implied_vols: VecMap<u64, u64>,
@@ -125,7 +125,7 @@ public fun update<Asset>(
     oracle.risk_free_rate = risk_free_rate;
     oracle.timestamp = now;
 
-    event::emit(OracleUpdated<Asset> {
+    event::emit(OracleUpdated<Underlying> {
         oracle_id: oracle.id.to_inner(),
         spot_price,
         implied_vols,
@@ -138,47 +138,47 @@ public fun update<Asset>(
 // === Public View Functions ===
 
 /// Get the oracle ID.
-public fun id<Asset>(oracle: &Oracle<Asset>): ID {
+public fun id<Underlying>(oracle: &Oracle<Underlying>): ID {
     oracle.id.to_inner()
 }
 
 /// Get the current spot price.
-public fun spot_price<Asset>(oracle: &Oracle<Asset>): u64 {
+public fun spot_price<Underlying>(oracle: &Oracle<Underlying>): u64 {
     oracle.spot_price
 }
 
 /// Get the expiry timestamp.
-public fun expiry<Asset>(oracle: &Oracle<Asset>): u64 {
+public fun expiry<Underlying>(oracle: &Oracle<Underlying>): u64 {
     oracle.expiry
 }
 
 /// Get the strikes for this oracle.
-public fun strikes<Asset>(oracle: &Oracle<Asset>): vector<u64> {
+public fun strikes<Underlying>(oracle: &Oracle<Underlying>): vector<u64> {
     oracle.implied_vols.keys()
 }
 
 /// Get the number of strikes.
-public fun num_strikes<Asset>(oracle: &Oracle<Asset>): u64 {
+public fun num_strikes<Underlying>(oracle: &Oracle<Underlying>): u64 {
     oracle.implied_vols.length()
 }
 
 /// Get the risk-free rate.
-public fun risk_free_rate<Asset>(oracle: &Oracle<Asset>): u64 {
+public fun risk_free_rate<Underlying>(oracle: &Oracle<Underlying>): u64 {
     oracle.risk_free_rate
 }
 
 /// Get the last update timestamp.
-public fun timestamp<Asset>(oracle: &Oracle<Asset>): u64 {
+public fun timestamp<Underlying>(oracle: &Oracle<Underlying>): u64 {
     oracle.timestamp
 }
 
 /// Get the settlement price (only valid after settlement).
-public fun settlement_price<Asset>(oracle: &Oracle<Asset>): Option<u64> {
+public fun settlement_price<Underlying>(oracle: &Oracle<Underlying>): Option<u64> {
     oracle.settlement_price
 }
 
 /// Check if the oracle data is stale (> 30s since last update).
-public fun is_stale<Asset>(oracle: &Oracle<Asset>, clock: &Clock): bool {
+public fun is_stale<Underlying>(oracle: &Oracle<Underlying>, clock: &Clock): bool {
     let now = clock.timestamp_ms();
     let staleness_threshold = constants::default_oracle_staleness_ms();
 
@@ -186,12 +186,12 @@ public fun is_stale<Asset>(oracle: &Oracle<Asset>, clock: &Clock): bool {
 }
 
 /// Check if the oracle has been settled (settlement price frozen).
-public fun is_settled<Asset>(oracle: &Oracle<Asset>): bool {
+public fun is_settled<Underlying>(oracle: &Oracle<Underlying>): bool {
     oracle.settlement_price.is_some()
 }
 
 /// Check if the oracle is active.
-public fun is_active<Asset>(oracle: &Oracle<Asset>): bool {
+public fun is_active<Underlying>(oracle: &Oracle<Underlying>): bool {
     oracle.active
 }
 
@@ -204,7 +204,7 @@ public(package) fun create_oracle_cap(ctx: &mut TxContext): OracleCap {
 
 /// Create a new Oracle for an underlying asset and expiry.
 /// Strikes are fixed at creation. Returns the oracle ID.
-public(package) fun create_oracle<Asset>(
+public(package) fun create_oracle<Underlying>(
     cap: &OracleCap,
     expiry: u64,
     strikes: vector<u64>,
@@ -223,7 +223,7 @@ public(package) fun create_oracle<Asset>(
         implied_vols.insert(*strike, 0);
     });
 
-    let oracle = Oracle<Asset> {
+    let oracle = Oracle<Underlying> {
         id: oracle_id,
         oracle_cap_id: cap.id.to_inner(),
         expiry,
@@ -236,7 +236,7 @@ public(package) fun create_oracle<Asset>(
     };
     transfer::share_object(oracle);
 
-    event::emit(OracleCreated<Asset> {
+    event::emit(OracleCreated<Underlying> {
         oracle_id: oracle_id_inner,
         oracle_cap_id: cap.id.to_inner(),
         expiry,
@@ -249,32 +249,32 @@ public(package) fun create_oracle<Asset>(
 
 /// Get implied volatility for a specific strike.
 /// Aborts if strike is not found in the oracle's strikes.
-public(package) fun get_iv<Asset>(oracle: &Oracle<Asset>, strike: u64): u64 {
+public(package) fun get_iv<Underlying>(oracle: &Oracle<Underlying>, strike: u64): u64 {
     assert!(oracle.implied_vols.contains(&strike), EStrikeNotFound);
 
     *oracle.implied_vols.get(&strike)
 }
 
 /// Check if a strike exists in this oracle.
-public(package) fun has_strike<Asset>(oracle: &Oracle<Asset>, strike: u64): bool {
+public(package) fun has_strike<Underlying>(oracle: &Oracle<Underlying>, strike: u64): bool {
     oracle.implied_vols.contains(&strike)
 }
 
 /// Assert that the oracle is not stale. Aborts if stale.
-public(package) fun assert_not_stale<Asset>(oracle: &Oracle<Asset>, clock: &Clock) {
+public(package) fun assert_not_stale<Underlying>(oracle: &Oracle<Underlying>, clock: &Clock) {
     assert!(!is_stale(oracle, clock), EOracleStale);
 }
 
 /// Assert that the oracle is active. Aborts if not active.
-public(package) fun assert_active<Asset>(oracle: &Oracle<Asset>) {
+public(package) fun assert_active<Underlying>(oracle: &Oracle<Underlying>) {
     assert!(oracle.active, EOracleNotActive);
 }
 
 /// Get all pricing data in one call for efficiency.
 /// Returns (spot_price, implied_volatility, risk_free_rate, time_to_expiry_ms).
 /// Aborts if strike is not found.
-public(package) fun get_pricing_data<Asset>(
-    oracle: &Oracle<Asset>,
+public(package) fun get_pricing_data<Underlying>(
+    oracle: &Oracle<Underlying>,
     strike: u64,
     clock: &Clock,
 ): (u64, u64, u64, u64) {

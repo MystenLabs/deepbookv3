@@ -43,14 +43,15 @@ public struct Registry has key {
 // === Public Functions ===
 
 /// Create the Predict shared object. Can only be called once.
-public fun create_predict<Asset>(
+/// Quote is the collateral asset (e.g., USDC).
+public fun create_predict<Quote>(
     registry: &mut Registry,
     _admin_cap: &AdminCap,
     ctx: &mut TxContext,
 ): ID {
     assert!(registry.predict_id.is_none(), EPredictAlreadyCreated);
 
-    let predict_id = predict::create<Asset>(ctx);
+    let predict_id = predict::create<Quote>(ctx);
     registry.predict_id = option::some(predict_id);
 
     predict_id
@@ -62,7 +63,8 @@ public fun create_oracle_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): Oracle
 }
 
 /// Create a new Oracle. Returns the oracle ID.
-public fun create_oracle<Asset>(
+/// Underlying is the asset being tracked (e.g., BTC, ETH).
+public fun create_oracle<Underlying>(
     registry: &mut Registry,
     _admin_cap: &AdminCap,
     cap: &OracleCap,
@@ -71,7 +73,7 @@ public fun create_oracle<Asset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
-    let oracle_id = oracle::create_oracle<Asset>(cap, expiry, strikes, clock, ctx);
+    let oracle_id = oracle::create_oracle<Underlying>(cap, expiry, strikes, clock, ctx);
     let cap_id = object::id(cap);
 
     if (!registry.oracle_ids.contains(cap_id)) {
