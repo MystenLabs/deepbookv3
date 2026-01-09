@@ -7,9 +7,8 @@
 /// When a market is enabled, both UP and DOWN positions can be traded at that strike.
 module deepbook_predict::market_manager;
 
-use deepbook_predict::oracle::Oracle;
+use deepbook_predict::{oracle::Oracle, position_key::PositionKey};
 use sui::vec_set::{Self, VecSet};
-use deepbook_predict::position_key::PositionKey;
 
 // === Errors ===
 const EMarketAlreadyEnabled: u64 = 0;

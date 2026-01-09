@@ -15,12 +15,14 @@
 /// All events are emitted from this module.
 module deepbook_predict::predict;
 
-use deepbook_predict::market_manager::{Self, Markets};
-use deepbook_predict::oracle::Oracle;
-use deepbook_predict::position_key::PositionKey;
-use deepbook_predict::predict_manager::PredictManager;
-use deepbook_predict::pricing::{Self, Pricing};
-use deepbook_predict::vault::{Self, Vault};
+use deepbook_predict::{
+    market_manager::{Self, Markets},
+    oracle::Oracle,
+    position_key::PositionKey,
+    predict_manager::PredictManager,
+    pricing::{Self, Pricing},
+    vault::{Self, Vault}
+};
 use sui::clock::Clock;
 
 // === Structs ===
@@ -57,7 +59,7 @@ public fun mint<Underlying, Quote>(
     assert!(key.oracle_id() == oracle.id(), EOracleMismatch);
     assert!(key.expiry() == oracle.expiry(), EExpiryMismatch);
     oracle.assert_not_stale(clock);
-    predict.markets.assert_enabled(oracle.id(), key.strike());
+    predict.markets.assert_enabled(&key);
 
     // Get vault exposure for pricing
     let (up_short, down_short) = predict.vault.pair_position(key);
@@ -128,7 +130,7 @@ public(package) fun create<Quote>(ctx: &mut TxContext): ID {
 public(package) fun enable_market<Underlying, Quote>(
     predict: &mut Predict<Quote>,
     oracle: &Oracle<Underlying>,
-    strike: u64,
+    key: PositionKey,
 ) {
-    predict.markets.enable_market(oracle, strike);
+    predict.markets.enable_market(oracle, key);
 }
