@@ -89,6 +89,43 @@ public fun get_mint_cost<Underlying>(
     500_000 * quantity
 }
 
+/// Calculate the payout for redeeming a position.
+/// If oracle is settled, returns settlement value ($1 if won, $0 if lost).
+/// If not settled, returns bid price * quantity.
+/// Takes vault's current short positions for dynamic spread calculation.
+/// Returns payout in Quote units (e.g., USDC with 6 decimals).
+public fun get_redeem_payout<Underlying>(
+    _pricing: &Pricing,
+    oracle: &Oracle<Underlying>,
+    strike: u64,
+    is_up: bool,
+    quantity: u64,
+    _up_short: u64,
+    _down_short: u64,
+    _clock: &Clock,
+): u64 {
+    // Check if oracle is settled
+    if (oracle.is_settled()) {
+        let settlement_price = oracle.settlement_price().destroy_some();
+        let won = if (is_up) {
+            settlement_price > strike
+        } else {
+            settlement_price <= strike
+        };
+        // $1 per contract if won, $0 if lost
+        if (won) { constants::price_scaling() * quantity } else { 0 }
+    } else {
+        // TODO: Calculate payout based on:
+        // 1. Get theoretical price from Black-Scholes
+        // 2. Calculate net exposure = up_short - down_short
+        // 3. Apply dynamic spread based on net exposure
+        // 4. Return bid * quantity
+
+        // Placeholder: 40 cents per contract (bid = theoretical - spread)
+        400_000 * quantity
+    }
+}
+
 // === Public-Package Functions ===
 
 /// Create a new Pricing config with default values.

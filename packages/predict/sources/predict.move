@@ -109,7 +109,7 @@ public fun mint<Underlying, Quote>(
         position_up
     } else {
         position_down
-    }; 
+    };
 
     // Deposit payment into vault and record short
     predict.vault.increase_exposure(position, quantity, cost_coin);
@@ -118,6 +118,64 @@ public fun mint<Underlying, Quote>(
     let position_coins = predict.markets.mint_position(position, quantity, ctx);
 
     (position_coins, change)
+}
+
+/// Redeem position coins for USDC.
+/// Pre-expiry: receives bid price.
+/// Post-expiry: receives settlement value ($1 if won, $0 if lost).
+/// Takes both UP and DOWN PositionCoins to query net exposure.
+public fun redeem<Underlying, Quote>(
+    predict: &mut Predict<Quote>,
+    oracle: &Oracle<Underlying>,
+    position_up: &PositionCoin<Quote>,
+    position_down: &PositionCoin<Quote>,
+    redeeming_up: bool,
+    position_coins: Coin<PositionCoin<Quote>>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Coin<Quote> {
+    // Validate positions match the oracle
+    assert!(position_up.oracle_id() == oracle.id(), EPositionMismatch);
+    assert!(position_down.oracle_id() == oracle.id(), EPositionMismatch);
+    assert!(position_up.strike() == position_down.strike(), EPositionMismatch);
+
+    position_up.assert_is_up();
+    position_down.assert_is_down();
+
+    let quantity = position_coins.value();
+
+    // Query net exposure for dynamic pricing
+    let up_short = predict.vault.position(position_up);
+    let down_short = predict.vault.position(position_down);
+
+    // Get payout from pricing
+    let strike = position_up.strike();
+    let payout = predict
+        .pricing
+        .get_redeem_payout(
+            oracle,
+            strike,
+            redeeming_up,
+            quantity,
+            up_short,
+            down_short,
+            clock,
+        );
+
+    // Determine which position we're redeeming
+    let position = if (redeeming_up) {
+        position_up
+    } else {
+        position_down
+    };
+
+    // Burn position coins
+    predict.markets.burn_position(position, position_coins);
+
+    // Reduce vault exposure and get payout
+    let payout_balance = predict.vault.decrease_exposure(position, quantity, payout);
+
+    payout_balance.into_coin(ctx)
 }
 
 // === Public-Package Functions ===
