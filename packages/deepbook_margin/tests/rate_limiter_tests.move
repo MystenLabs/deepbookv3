@@ -468,7 +468,7 @@ fun burst_then_steady_consumption() {
     let success1 = limiter.check_and_record_withdrawal(CAPACITY, &clock);
     assert!(success1 == true);
 
-    let mut i = 0;
+    let mut i = 0u64;
     while (i < 10) {
         clock::increment_for_testing(&mut clock, 1);
         let success = limiter.check_and_record_withdrawal(RATE, &clock);

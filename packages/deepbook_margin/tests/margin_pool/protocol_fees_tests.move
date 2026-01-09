@@ -4,12 +4,8 @@
 #[test_only]
 module deepbook_margin::protocol_fees_tests;
 
-use deepbook_margin::{
-    constants,
-    protocol_fees::{Self, SupplyReferral},
-    test_constants,
-    test_helpers
-};
+use deepbook::constants;
+use deepbook_margin::{protocol_fees::{Self, SupplyReferral}, test_constants, test_helpers};
 use std::unit_test::{assert_eq, destroy};
 use sui::test_scenario::return_shared;
 
