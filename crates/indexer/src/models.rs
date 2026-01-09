@@ -252,6 +252,27 @@ pub mod deepbook {
         use super::*;
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct PoolCreated<BaseAsset, QuoteAsset> {
+            pub pool_id: ObjectID,
+            pub taker_fee: u64,
+            pub maker_fee: u64,
+            pub tick_size: u64,
+            pub lot_size: u64,
+            pub min_size: u64,
+            pub whitelisted_pool: bool,
+            pub treasury_address: Address,
+            #[serde(skip)]
+            pub phantom_base: PhantomData<BaseAsset>,
+            #[serde(skip)]
+            pub phantom_quote: PhantomData<QuoteAsset>,
+        }
+
+        impl<BaseAsset, QuoteAsset> MoveStruct for PoolCreated<BaseAsset, QuoteAsset> {
+            const MODULE: &'static str = "pool";
+            const NAME: &'static str = "PoolCreated";
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct DeepBurned<BaseAsset, QuoteAsset> {
             pub pool_id: ObjectID,
             pub deep_burned: u64,
