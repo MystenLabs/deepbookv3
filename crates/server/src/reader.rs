@@ -1096,6 +1096,8 @@ impl Reader {
         &self,
         max_risk_ratio: Option<f64>,
         deepbook_pool_id_filter: Option<String>,
+        base_asset_symbol_filter: Option<String>,
+        quote_asset_symbol_filter: Option<String>,
     ) -> Result<Vec<MarginManagerState>, DeepBookError> {
         use bigdecimal::BigDecimal;
         use deepbook_schema::schema::margin_manager_state::dsl::*;
@@ -1115,6 +1117,12 @@ impl Reader {
         }
         if let Some(pool_id) = deepbook_pool_id_filter {
             query = query.filter(deepbook_pool_id.eq(pool_id));
+        }
+        if let Some(base_symbol) = base_asset_symbol_filter {
+            query = query.filter(base_asset_symbol.eq(base_symbol));
+        }
+        if let Some(quote_symbol) = quote_asset_symbol_filter {
+            query = query.filter(quote_asset_symbol.eq(quote_symbol));
         }
         query = query.order(risk_ratio.asc().nulls_last());
 

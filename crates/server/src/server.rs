@@ -2228,9 +2228,27 @@ async fn margin_manager_states(
         .and_then(|v| v.parse::<f64>().ok());
     let deepbook_pool_id = params.get("deepbook_pool_id").cloned();
 
+    // Parse pool parameter (e.g., "SUI_USDC" -> base="SUI", quote="USDC")
+    let (base_asset_symbol, quote_asset_symbol) = params
+        .get("pool")
+        .map(|p| {
+            let parts: Vec<&str> = p.split('_').collect();
+            if parts.len() == 2 {
+                (Some(parts[0].to_string()), Some(parts[1].to_string()))
+            } else {
+                (None, None)
+            }
+        })
+        .unwrap_or((None, None));
+
     let states = state
         .reader
-        .get_margin_manager_states(max_risk_ratio, deepbook_pool_id)
+        .get_margin_manager_states(
+            max_risk_ratio,
+            deepbook_pool_id,
+            base_asset_symbol,
+            quote_asset_symbol,
+        )
         .await?;
 
     Ok(Json(states))
