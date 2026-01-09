@@ -28,6 +28,8 @@ use std::string::String;
 const EMarketAlreadyExists: u64 = 0;
 const EOracleNotActive: u64 = 1;
 const EStrikeNotFound: u64 = 2;
+const EPositionCoinNotUp: u64 = 3;
+const EPositionCoinNotDown: u64 = 4;
 
 // === Constants ===
 const DIRECTION_UP: u8 = 0;
@@ -129,6 +131,14 @@ public fun has_market<Quote>(markets: &Markets<Quote>, position_coin_id: ID): bo
 /// Create a new Markets table.
 public(package) fun new<Quote>(ctx: &mut TxContext): Markets<Quote> {
     Markets { markets: table::new(ctx) }
+}
+
+public(package) fun assert_is_up<Quote>(position: &PositionCoin<Quote>) {
+    assert!(position.direction == DIRECTION_UP, EPositionCoinNotUp);
+}
+
+public(package) fun assert_is_down<Quote>(position: &PositionCoin<Quote>) {
+    assert!(position.direction == DIRECTION_DOWN, EPositionCoinNotDown);
 }
 
 /// Add UP and DOWN markets for a given oracle and strike.

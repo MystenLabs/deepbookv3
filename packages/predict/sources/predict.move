@@ -78,6 +78,8 @@ public fun mint<Underlying, Quote>(
     assert!(position_up.strike() == position_down.strike(), EPositionMismatch);
 
     oracle.assert_not_stale(clock);
+    position_up.assert_is_up();
+    position_down.assert_is_down();
 
     // Query net exposure for dynamic pricing
     let up_short = predict.vault.position(position_up);
