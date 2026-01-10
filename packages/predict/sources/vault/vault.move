@@ -55,9 +55,9 @@ public fun pair_position<Quote>(vault: &Vault<Quote>, key: MarketKey): (u64, u64
     (vault.position(up_key), vault.position(down_key))
 }
 
-public fun net_exposure<Quote>(vault: &Vault<Quote>, key: MarketKey): u64 {
+public fun max_exposure<Quote>(vault: &Vault<Quote>, key: MarketKey): u64 {
     let (up, down) = vault.pair_position(key);
-    abs_diff(up, down)
+    if (up > down) { up } else { down }
 }
 
 // === Public-Package Functions ===
@@ -79,9 +79,9 @@ public(package) fun increase_exposure<Quote>(
     let cost = payment.value();
     vault.balance.join(payment.into_balance());
 
-    let old_net = vault.net_exposure(key);
+    let old_net = vault.max_exposure(key);
     vault.add_position(key, quantity);
-    let new_net = vault.net_exposure(key);
+    let new_net = vault.max_exposure(key);
     vault.adjust_liability(old_net, new_net);
 
     cost
@@ -93,9 +93,9 @@ public(package) fun decrease_exposure<Quote>(
     quantity: u64,
     quote_out: u64,
 ): Balance<Quote> {
-    let old_net = vault.net_exposure(key);
+    let old_net = vault.max_exposure(key);
     vault.remove_position(key, quantity);
-    let new_net = vault.net_exposure(key);
+    let new_net = vault.max_exposure(key);
     vault.adjust_liability(old_net, new_net);
 
     vault.balance.split(quote_out)
@@ -125,8 +125,4 @@ fun adjust_liability<Quote>(vault: &mut Vault<Quote>, old_net: u64, new_net: u64
     } else {
         vault.max_liability = vault.max_liability - ((old_net - new_net) * price);
     }
-}
-
-fun abs_diff(a: u64, b: u64): u64 {
-    if (a > b) { a - b } else { b - a }
 }
