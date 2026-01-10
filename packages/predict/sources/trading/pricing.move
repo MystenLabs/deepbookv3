@@ -32,7 +32,7 @@
 /// This encourages balanced order flow and reduces vault risk.
 module deepbook_predict::pricing;
 
-use deepbook_predict::{constants, oracle::Oracle, position_key::PositionKey};
+use deepbook_predict::{constants, market_key::MarketKey, oracle::Oracle};
 use sui::clock::Clock;
 
 // === Structs ===
@@ -50,7 +50,7 @@ public struct Pricing has store {
 public fun get_quote<Underlying>(
     pricing: &Pricing,
     oracle: &Oracle<Underlying>,
-    key: &PositionKey,
+    key: &MarketKey,
     clock: &Clock,
 ): (u64, u64) {
     let strike = key.strike();
@@ -72,7 +72,7 @@ public fun get_quote<Underlying>(
 public fun get_mint_cost<Underlying>(
     _pricing: &Pricing,
     _oracle: &Oracle<Underlying>,
-    _key: &PositionKey,
+    _key: &MarketKey,
     quantity: u64,
     _up_short: u64,
     _down_short: u64,
@@ -96,7 +96,7 @@ public fun get_mint_cost<Underlying>(
 public fun get_redeem_payout<Underlying>(
     _pricing: &Pricing,
     oracle: &Oracle<Underlying>,
-    key: &PositionKey,
+    key: &MarketKey,
     quantity: u64,
     _up_short: u64,
     _down_short: u64,

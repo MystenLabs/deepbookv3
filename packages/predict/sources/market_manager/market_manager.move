@@ -7,7 +7,7 @@
 /// When a market is enabled, both UP and DOWN positions can be traded at that strike.
 module deepbook_predict::market_manager;
 
-use deepbook_predict::{oracle::Oracle, position_key::PositionKey};
+use deepbook_predict::{market_key::MarketKey, oracle::Oracle};
 use sui::vec_set::{Self, VecSet};
 
 // === Errors ===
@@ -22,13 +22,13 @@ const EStrikeNotFound: u64 = 3;
 /// Stored in the main Predict object.
 public struct Markets has store {
     /// Set of enabled market keys
-    enabled: VecSet<PositionKey>,
+    enabled: VecSet<MarketKey>,
 }
 
 // === Public Functions ===
 
 /// Check if a market is enabled.
-public fun is_enabled(markets: &Markets, key: &PositionKey): bool {
+public fun is_enabled(markets: &Markets, key: &MarketKey): bool {
     markets.enabled.contains(key)
 }
 
@@ -44,7 +44,7 @@ public(package) fun new(): Markets {
 public(package) fun enable_market<Underlying>(
     markets: &mut Markets,
     oracle: &Oracle<Underlying>,
-    key: PositionKey,
+    key: MarketKey,
 ) {
     assert!(oracle.is_active(), EOracleNotActive);
     assert!(oracle.has_strike(key.strike()), EStrikeNotFound);
@@ -55,13 +55,13 @@ public(package) fun enable_market<Underlying>(
 }
 
 /// Disable a market.
-public(package) fun disable_market(markets: &mut Markets, key: &PositionKey) {
+public(package) fun disable_market(markets: &mut Markets, key: &MarketKey) {
     assert!(markets.enabled.contains(key), EMarketNotEnabled);
 
     markets.enabled.remove(key);
 }
 
 /// Assert that a market is enabled.
-public(package) fun assert_enabled(markets: &Markets, key: &PositionKey) {
+public(package) fun assert_enabled(markets: &Markets, key: &MarketKey) {
     assert!(is_enabled(markets, key), EMarketNotEnabled);
 }

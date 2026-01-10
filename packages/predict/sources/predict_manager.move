@@ -4,11 +4,11 @@
 /// PredictManager wraps a BalanceManager for binary options trading.
 ///
 /// Users deposit USDC into the PredictManager, which is stored in the inner BalanceManager.
-/// Positions are tracked in a Table mapping PositionKey to quantity.
+/// Positions are tracked in a Table mapping MarketKey to quantity.
 module deepbook_predict::predict_manager;
 
 use deepbook::balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap};
-use deepbook_predict::position_key::PositionKey;
+use deepbook_predict::market_key::MarketKey;
 use sui::{coin::Coin, table::{Self, Table}};
 
 // === Errors ===
@@ -25,8 +25,8 @@ public struct PredictManager has key {
     deposit_cap: DepositCap,
     withdraw_cap: WithdrawCap,
     trade_cap: TradeCap,
-    /// PositionKey -> quantity
-    positions: Table<PositionKey, u64>,
+    /// MarketKey -> quantity
+    positions: Table<MarketKey, u64>,
 }
 
 // === Public Functions ===
@@ -43,7 +43,7 @@ public fun id(self: &PredictManager): ID {
 
 /// Get the position quantity for a given key.
 /// Returns 0 if no position exists.
-public fun position(self: &PredictManager, key: PositionKey): u64 {
+public fun position(self: &PredictManager, key: MarketKey): u64 {
     if (self.positions.contains(key)) {
         self.positions[key]
     } else {
@@ -80,7 +80,7 @@ public(package) fun new(ctx: &mut TxContext): ID {
 }
 
 /// Increase a position quantity. Called when user buys a position.
-public(package) fun increase_position(self: &mut PredictManager, key: PositionKey, quantity: u64) {
+public(package) fun increase_position(self: &mut PredictManager, key: MarketKey, quantity: u64) {
     if (self.positions.contains(key)) {
         let current = &mut self.positions[key];
         *current = *current + quantity;
@@ -90,7 +90,7 @@ public(package) fun increase_position(self: &mut PredictManager, key: PositionKe
 }
 
 /// Decrease a position quantity. Called when user sells a position.
-public(package) fun decrease_position(self: &mut PredictManager, key: PositionKey, quantity: u64) {
+public(package) fun decrease_position(self: &mut PredictManager, key: MarketKey, quantity: u64) {
     assert!(self.positions.contains(key), EInsufficientPosition);
     let current = &mut self.positions[key];
     assert!(*current >= quantity, EInsufficientPosition);

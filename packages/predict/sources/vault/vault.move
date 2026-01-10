@@ -9,13 +9,13 @@
 /// - When user redeems, vault pays out and closes its short
 ///
 /// Position tracking:
-/// - `positions` maps PositionKey to vault's short quantity
+/// - `positions` maps MarketKey to vault's short quantity
 /// - Net exposure is calculated by comparing UP vs DOWN shorts at the same strike
 ///
 /// Invariant: balance >= max_liability (max of UP shorts vs DOWN shorts per strike * $1)
 module deepbook_predict::vault;
 
-use deepbook_predict::position_key::PositionKey;
+use deepbook_predict::market_key::MarketKey;
 use sui::{balance::{Self, Balance}, coin::Coin, table::{Self, Table}};
 
 // === Errors ===
@@ -28,8 +28,8 @@ const ENoShortPosition: u64 = 0;
 public struct Vault<phantom Quote> has store {
     /// USDC balance held by the vault
     balance: Balance<Quote>,
-    /// PositionKey -> quantity short
-    positions: Table<PositionKey, u64>,
+    /// MarketKey -> quantity short
+    positions: Table<MarketKey, u64>,
 }
 
 // === Public Functions ===
@@ -41,7 +41,7 @@ public fun balance<Quote>(vault: &Vault<Quote>): u64 {
 
 /// Get the vault's short position for a specific market.
 /// Returns 0 if no position exists.
-public fun position<Quote>(vault: &Vault<Quote>, key: PositionKey): u64 {
+public fun position<Quote>(vault: &Vault<Quote>, key: MarketKey): u64 {
     if (vault.positions.contains(key)) {
         vault.positions[key]
     } else {
@@ -49,7 +49,7 @@ public fun position<Quote>(vault: &Vault<Quote>, key: PositionKey): u64 {
     }
 }
 
-public fun pair_position<Quote>(vault: &Vault<Quote>, key: PositionKey): (u64, u64) {
+public fun pair_position<Quote>(vault: &Vault<Quote>, key: MarketKey): (u64, u64) {
     let up_key = if (key.is_up()) { key } else { key.opposite() };
     let down_key = if (key.is_up()) { key.opposite() } else { key };
 
@@ -70,7 +70,7 @@ public(package) fun new<Quote>(ctx: &mut TxContext): Vault<Quote> {
 /// Returns the cost paid by the user.
 public(package) fun increase_exposure<Quote>(
     vault: &mut Vault<Quote>,
-    key: PositionKey,
+    key: MarketKey,
     quantity: u64,
     payment: Coin<Quote>,
 ): u64 {
@@ -91,7 +91,7 @@ public(package) fun increase_exposure<Quote>(
 /// Returns the payout as Balance.
 public(package) fun decrease_exposure<Quote>(
     vault: &mut Vault<Quote>,
-    key: PositionKey,
+    key: MarketKey,
     quantity: u64,
     quote_out: u64,
 ): Balance<Quote> {

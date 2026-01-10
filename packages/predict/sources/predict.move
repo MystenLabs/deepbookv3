@@ -16,9 +16,9 @@
 module deepbook_predict::predict;
 
 use deepbook_predict::{
+    market_key::MarketKey,
     market_manager::{Self, Markets},
     oracle::Oracle,
-    position_key::PositionKey,
     predict_manager::PredictManager,
     pricing::{Self, Pricing},
     vault::{Self, Vault}
@@ -51,7 +51,7 @@ public fun mint<Underlying, Quote>(
     predict: &mut Predict<Quote>,
     manager: &mut PredictManager,
     oracle: &Oracle<Underlying>,
-    key: PositionKey,
+    key: MarketKey,
     quantity: u64,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -83,7 +83,7 @@ public fun redeem<Underlying, Quote>(
     predict: &mut Predict<Quote>,
     manager: &mut PredictManager,
     oracle: &Oracle<Underlying>,
-    key: PositionKey,
+    key: MarketKey,
     quantity: u64,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -130,7 +130,7 @@ public(package) fun create<Quote>(ctx: &mut TxContext): ID {
 public(package) fun enable_market<Underlying, Quote>(
     predict: &mut Predict<Quote>,
     oracle: &Oracle<Underlying>,
-    key: PositionKey,
+    key: MarketKey,
 ) {
     predict.markets.enable_market(oracle, key);
 }
