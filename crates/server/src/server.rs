@@ -28,6 +28,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::{collections::HashMap, net::SocketAddr};
 use sui_pg_db::DbArgs;
 use tokio::net::TcpListener;
+use tokio::sync::oneshot;
 use tower_http::cors::{AllowMethods, Any, CorsLayer};
 use url::Url;
 
@@ -39,6 +40,7 @@ use futures::future::join_all;
 use prometheus::Registry;
 use std::str::FromStr;
 use std::sync::Arc;
+use sui_futures::service::Service;
 use sui_indexer_alt_metrics::{MetricsArgs, MetricsService};
 use sui_json_rpc_types::{SuiObjectData, SuiObjectDataOptions, SuiObjectResponse};
 use sui_sdk::SuiClientBuilder;
@@ -50,7 +52,6 @@ use sui_types::{
     TypeTag,
 };
 use tokio::join;
-use tokio_util::sync::CancellationToken;
 
 pub const GET_POOLS_PATH: &str = "/get_pools";
 pub const GET_HISTORICAL_VOLUME_BY_BALANCE_MANAGER_ID_WITH_INTERVAL: &str =
@@ -159,7 +160,6 @@ pub async fn run_server(
     database_url: Url,
     db_arg: DbArgs,
     rpc_url: Url,
-    cancellation_token: CancellationToken,
     metrics_address: SocketAddr,
     deepbook_package_id: String,
     deep_token_package_id: String,
@@ -168,11 +168,7 @@ pub async fn run_server(
     let registry = Registry::new_custom(Some("deepbook_api".into()), None)
         .expect("Failed to create Prometheus registry.");
 
-    let metrics = MetricsService::new(
-        MetricsArgs { metrics_address },
-        registry,
-        cancellation_token.clone(),
-    );
+    let metrics = MetricsService::new(MetricsArgs { metrics_address }, registry);
 
     let state = AppState::new(
         database_url,
@@ -187,15 +183,26 @@ pub async fn run_server(
 
     println!("🚀 Server started successfully on port {}", server_port);
 
-    let _handle = tokio::spawn(async move {
-        let _ = metrics.run().await;
-    });
+    let s_metrics = metrics.run().await?;
 
     let listener = TcpListener::bind(socket_address).await?;
-    axum::serve(listener, make_router(Arc::new(state), rpc_url))
-        .with_graceful_shutdown(async move {
-            cancellation_token.cancelled().await;
+    let (stx, srx) = oneshot::channel::<()>();
+
+    Service::new()
+        .attach(s_metrics)
+        .with_shutdown_signal(async move {
+            let _ = stx.send(());
         })
+        .spawn(async move {
+            axum::serve(listener, make_router(Arc::new(state), rpc_url))
+                .with_graceful_shutdown(async move {
+                    let _ = srx.await;
+                })
+                .await?;
+
+            Ok(())
+        })
+        .main()
         .await?;
 
     Ok(())
@@ -1370,7 +1377,7 @@ async fn orderbook(
     let pool_input = CallArg::Object(ObjectArg::SharedObject {
         id: pool_data.object_id,
         initial_shared_version,
-        mutable: false,
+        mutability: sui_types::transaction::SharedObjectMutability::Immutable,
     });
     ptb.input(pool_input)?;
 
@@ -1386,7 +1393,7 @@ async fn orderbook(
     let clock_input = CallArg::Object(ObjectArg::SharedObject {
         id: sui_clock_object_id,
         initial_shared_version: sui_types::base_types::SequenceNumber::from_u64(1),
-        mutable: false,
+        mutability: sui_types::transaction::SharedObjectMutability::Immutable,
     });
     ptb.input(clock_input)?;
 
@@ -1527,7 +1534,7 @@ async fn deep_supply(
     let deep_treasury_input = CallArg::Object(ObjectArg::SharedObject {
         id: deep_treasury_data.object_id,
         initial_shared_version,
-        mutable: false,
+        mutability: sui_types::transaction::SharedObjectMutability::Immutable,
     });
     ptb.input(deep_treasury_input)?;
 

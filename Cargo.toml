@@ -8,7 +8,7 @@ members = [
 ]
 
 [workspace.dependencies]
-tokio = "1.45.1"
+tokio = "1.47.1"
 serde = "1.0.217"
 serde_json = "1.0.138"
 diesel = "2.2.12"
@@ -21,10 +21,10 @@ async-trait = "0.1.83"
 bcs = "0.1.6"
 url = "2.5.4"
 prometheus = "0.13.4"
-tokio-util = "0.7.13"
 
-sui-indexer-alt-metrics = { git = "https://github.com/MystenLabs/sui.git", rev = "a0545a819fba114903c880f928339b5cd8805a4a" }
-telemetry-subscribers = { git = "https://github.com/MystenLabs/sui.git", rev = "a0545a819fba114903c880f928339b5cd8805a4a" }
-sui-pg-db = { git = "https://github.com/MystenLabs/sui.git", rev = "a0545a819fba114903c880f928339b5cd8805a4a" }
-move-core-types = { git = "https://github.com/MystenLabs/sui.git", rev = "a0545a819fba114903c880f928339b5cd8805a4a" }
-sui-types = { git = "https://github.com/MystenLabs/sui.git", rev = "a0545a819fba114903c880f928339b5cd8805a4a" }
+sui-futures = { git = "https://github.com/MystenLabs/sui.git", rev = "a14d9e8ddadfcea837de46b43d0b72a289320afb" }
+sui-indexer-alt-metrics = { git = "https://github.com/MystenLabs/sui.git", rev = "a14d9e8ddadfcea837de46b43d0b72a289320afb" }
+telemetry-subscribers = { git = "https://github.com/MystenLabs/sui.git", rev = "a14d9e8ddadfcea837de46b43d0b72a289320afb" }
+sui-pg-db = { git = "https://github.com/MystenLabs/sui.git", rev = "a14d9e8ddadfcea837de46b43d0b72a289320afb" }
+move-core-types = { git = "https://github.com/MystenLabs/sui.git", rev = "a14d9e8ddadfcea837de46b43d0b72a289320afb" }
+sui-types = { git = "https://github.com/MystenLabs/sui.git", rev = "a14d9e8ddadfcea837de46b43d0b72a289320afb" }

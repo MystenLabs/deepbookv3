@@ -45,6 +45,7 @@ use sui_pg_db::Connection;
 use sui_pg_db::Db;
 use sui_pg_db::DbArgs;
 use sui_storage::blob::Blob;
+use sui_types::full_checkpoint_content::Checkpoint;
 use sui_types::full_checkpoint_content::CheckpointData;
 
 #[tokio::test]
@@ -317,7 +318,8 @@ async fn data_test<H, I>(
 ) -> Result<(), anyhow::Error>
 where
     I: IntoIterator<Item = &'static str>,
-    H: Handler + Processor,
+    H: Processor,
+    H: Handler<Batch = Vec<<H as Processor>::Value>>,
     for<'a> H::Store: Store<Connection<'a> = Connection<'a>>,
 {
     // Set up database URL based on environment
@@ -366,18 +368,21 @@ where
     Ok(())
 }
 
-async fn run_pipeline<'c, T: Handler + Processor, P: AsRef<Path>>(
-    handler: &T,
+async fn run_pipeline<'c, H, P: AsRef<Path>>(
+    handler: &H,
     path: P,
     conn: &mut Connection<'c>,
 ) -> Result<(), anyhow::Error>
 where
-    T::Store: Store<Connection<'c> = Connection<'c>>,
+    H: Processor,
+    H: Handler<Batch = Vec<<H as Processor>::Value>>,
+    H::Store: Store<Connection<'c> = Connection<'c>>,
 {
     let bytes = fs::read(path)?;
-    let cp = Blob::from_bytes::<CheckpointData>(&bytes)?;
-    let result = handler.process(&Arc::new(cp))?;
-    T::commit(&result, conn).await?;
+    let data = Blob::from_bytes::<CheckpointData>(&bytes)?;
+    let cp: Checkpoint = data.into();
+    let result = handler.process(&Arc::new(cp)).await?;
+    handler.commit(&result, conn).await?;
     Ok(())
 }
 
