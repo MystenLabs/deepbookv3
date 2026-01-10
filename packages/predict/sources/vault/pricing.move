@@ -46,11 +46,14 @@ public struct Pricing has store {
 // === Public Functions ===
 
 /// Get bid and ask prices for a market.
+/// Takes vault's current short positions for dynamic spread calculation.
 /// Returns (bid, ask) in PRICE_SCALING (1e6).
 public fun get_quote<Underlying>(
     pricing: &Pricing,
     oracle: &Oracle<Underlying>,
     key: &MarketKey,
+    _up_short: u64,
+    _down_short: u64,
     clock: &Clock,
 ): (u64, u64) {
     let strike = key.strike();
@@ -59,6 +62,9 @@ public fun get_quote<Underlying>(
 
     let theoretical = calculate_binary_price(spot, strike, iv, rfr, tte, is_up);
 
+    // TODO: Apply dynamic spread based on net exposure
+    // exposure_ratio = (up_short - down_short) / max_exposure
+    // adjustment = exposure_ratio * max_spread_adjustment
     let spread = (theoretical * pricing.base_spread_bps) / constants::bps_scaling();
     let bid = if (theoretical > spread) { theoretical - spread } else { 0 };
     let ask = theoretical + spread;

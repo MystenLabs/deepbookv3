@@ -20,7 +20,6 @@ use deepbook_predict::{
     market_manager::{Self, Markets},
     oracle::Oracle,
     predict_manager::PredictManager,
-    pricing::{Self, Pricing},
     vault::{Self, Vault}
 };
 use sui::clock::Clock;
@@ -35,8 +34,6 @@ public struct Predict<phantom Quote> has key {
     markets: Markets,
     /// Vault holding USDC and tracking exposure
     vault: Vault<Quote>,
-    /// Pricing configuration
-    pricing: Pricing,
 }
 
 // === Errors ===
@@ -61,17 +58,12 @@ public fun mint<Underlying, Quote>(
     oracle.assert_not_stale(clock);
     predict.markets.assert_enabled(&key);
 
-    // Get vault exposure for pricing
-    let (up_short, down_short) = predict.vault.pair_position(key);
-
-    // Calculate cost
-    let cost = predict.pricing.get_mint_cost(oracle, &key, quantity, up_short, down_short, clock);
-
-    // Withdraw cost from manager
+    // Calculate cost and withdraw from manager
+    let cost = predict.vault.estimate_mint_cost(oracle, &key, quantity, clock);
     let payment = manager.withdraw<Quote>(cost, ctx);
 
-    // Vault receives payment and goes short
-    predict.vault.increase_exposure(key, quantity, payment);
+    // Vault executes trade and marks to market
+    predict.vault.mint(oracle, key, quantity, payment, clock);
 
     // Manager records long position
     manager.increase_position(key, quantity);
@@ -91,19 +83,11 @@ public fun redeem<Underlying, Quote>(
     assert!(key.oracle_id() == oracle.id(), EOracleMismatch);
     assert!(key.expiry() == oracle.expiry(), EExpiryMismatch);
 
-    // Get vault exposure for pricing
-    let (up_short, down_short) = predict.vault.pair_position(key);
-
-    // Calculate payout
-    let payout = predict
-        .pricing
-        .get_redeem_payout(oracle, &key, quantity, up_short, down_short, clock);
-
-    // Manager reduces long position
+    // Manager reduces long position first
     manager.decrease_position(key, quantity);
 
-    // Vault reduces short and pays out
-    let payout_balance = predict.vault.decrease_exposure(key, quantity, payout);
+    // Vault executes trade, marks to market, returns payout
+    let payout_balance = predict.vault.redeem(oracle, key, quantity, clock);
 
     // Deposit payout into manager
     let payout_coin = payout_balance.into_coin(ctx);
@@ -118,7 +102,6 @@ public(package) fun create<Quote>(ctx: &mut TxContext): ID {
         id: object::new(ctx),
         markets: market_manager::new(),
         vault: vault::new<Quote>(ctx),
-        pricing: pricing::new(),
     };
     let predict_id = object::id(&predict);
     transfer::share_object(predict);
