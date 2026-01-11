@@ -43,7 +43,7 @@ public struct Pricing has store {
 public fun get_quote<Underlying>(
     pricing: &Pricing,
     oracle: &Oracle<Underlying>,
-    key: &MarketKey,
+    key: MarketKey,
     _up_short: u64,
     _down_short: u64,
     clock: &Clock,
@@ -77,7 +77,7 @@ public fun get_quote<Underlying>(
 public fun get_mint_cost<Underlying>(
     pricing: &Pricing,
     oracle: &Oracle<Underlying>,
-    key: &MarketKey,
+    key: MarketKey,
     quantity: u64,
     up_short: u64,
     down_short: u64,
@@ -94,7 +94,7 @@ public fun get_mint_cost<Underlying>(
 public fun get_redeem_payout<Underlying>(
     pricing: &Pricing,
     oracle: &Oracle<Underlying>,
-    key: &MarketKey,
+    key: MarketKey,
     quantity: u64,
     up_short: u64,
     down_short: u64,

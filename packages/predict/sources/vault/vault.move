@@ -18,13 +18,8 @@
 /// 2. Mark-to-market: get prices using post-trade exposure, update unrealized liability
 module deepbook_predict::vault;
 
-use deepbook_predict::market_key::MarketKey;
-use deepbook_predict::oracle::Oracle;
-use deepbook_predict::pricing::{Self, Pricing};
-use sui::balance::{Self, Balance};
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::table::{Self, Table};
+use deepbook_predict::{market_key::MarketKey, oracle::Oracle, pricing::{Self, Pricing}};
+use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Table}};
 
 // === Errors ===
 const ENoShortPosition: u64 = 0;
@@ -105,11 +100,11 @@ public fun pair_position<Quote>(vault: &Vault<Quote>, key: MarketKey): (u64, u64
 public fun get_mint_cost<Underlying, Quote>(
     vault: &Vault<Quote>,
     oracle: &Oracle<Underlying>,
-    key: &MarketKey,
+    key: MarketKey,
     quantity: u64,
     clock: &Clock,
 ): u64 {
-    let (up_short, down_short) = vault.pair_position(*key);
+    let (up_short, down_short) = vault.pair_position(key);
     vault.pricing.get_mint_cost(oracle, key, quantity, up_short, down_short, clock)
 }
 
@@ -117,11 +112,11 @@ public fun get_mint_cost<Underlying, Quote>(
 public fun get_redeem_payout<Underlying, Quote>(
     vault: &Vault<Quote>,
     oracle: &Oracle<Underlying>,
-    key: &MarketKey,
+    key: MarketKey,
     quantity: u64,
     clock: &Clock,
 ): u64 {
-    let (up_short, down_short) = vault.pair_position(*key);
+    let (up_short, down_short) = vault.pair_position(key);
     vault.pricing.get_redeem_payout(oracle, key, quantity, up_short, down_short, clock)
 }
 
@@ -135,8 +130,10 @@ public(package) fun settle<Underlying, Quote>(
 ) {
     assert!(oracle.is_settled(), EMarketNotSettled);
 
-    // Get old max/min before mark_to_market updates unrealized values
-    let (old_max, old_min) = vault.exposure(key);
+    let (up_qty, down_qty) = vault.pair_position(key);
+    let (old_max, old_min) = if (up_qty > down_qty) { (up_qty, down_qty) } else {
+        (down_qty, up_qty)
+    };
 
     // mark_to_market uses get_quote which returns settlement prices (100%/0%) when settled
     vault.mark_to_market(oracle, key, clock);
@@ -144,12 +141,7 @@ public(package) fun settle<Underlying, Quote>(
     // Update max/min liability: after settlement, actual = winning side's quantity
     let settlement_price = oracle.settlement_price().destroy_some();
     let up_wins = settlement_price > key.strike();
-    let (up_qty, down_qty) = vault.pair_position(key);
-    let actual_liability = if (up_wins) {
-        up_qty
-    } else {
-        down_qty
-    };
+    let actual_liability = if (up_wins) { up_qty } else { down_qty };
 
     vault.max_liability = vault.max_liability + actual_liability - old_max;
     vault.min_liability = vault.min_liability + actual_liability - old_min;
@@ -183,7 +175,7 @@ public(package) fun mint<Underlying, Quote>(
 ): u64 {
     // Step 1: Calculate cost using PRE-TRADE exposure
     let (up_short, down_short) = vault.pair_position(key);
-    let cost = vault.pricing.get_mint_cost(oracle, &key, quantity, up_short, down_short, clock);
+    let cost = vault.pricing.get_mint_cost(oracle, key, quantity, up_short, down_short, clock);
     assert!(payment.value() == cost, EInsufficientPayment);
 
     // Execute trade
@@ -217,7 +209,7 @@ public(package) fun redeem<Underlying, Quote>(
     let (up_short, down_short) = vault.pair_position(key);
     let payout = vault
         .pricing
-        .get_redeem_payout(oracle, &key, quantity, up_short, down_short, clock);
+        .get_redeem_payout(oracle, key, quantity, up_short, down_short, clock);
     assert!(vault.balance.value() >= payout, EInsufficientBalance);
 
     // Execute trade
@@ -259,10 +251,10 @@ fun mark_to_market<Underlying, Quote>(
 
     // New unrealized using get_mint_cost
     let (up_qty, down_qty) = vault.pair_position(key);
-    let new_up = vault.pricing.get_mint_cost(oracle, &up_key, up_qty, up_qty, down_qty, clock);
+    let new_up = vault.pricing.get_mint_cost(oracle, up_key, up_qty, up_qty, down_qty, clock);
     let new_down = vault
         .pricing
-        .get_mint_cost(oracle, &down_key, down_qty, up_qty, down_qty, clock);
+        .get_mint_cost(oracle, down_key, down_qty, up_qty, down_qty, clock);
 
     // Update stored values
     vault.update_unrealized_liability(up_key, new_up);

@@ -59,7 +59,7 @@ public fun mint<Underlying, Quote>(
     predict.markets.assert_enabled(&key);
 
     // Calculate cost and withdraw from manager
-    let cost = predict.vault.estimate_mint_cost(oracle, &key, quantity, clock);
+    let cost = predict.vault.get_mint_cost(oracle, &key, quantity, clock);
     let payment = manager.withdraw<Quote>(cost, ctx);
 
     // Vault executes trade and marks to market
