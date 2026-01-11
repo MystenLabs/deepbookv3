@@ -20,16 +20,12 @@ const USDC_UNIT: u64 = 1_000_000;
 const BPS_SCALING: u64 = 10_000;
 
 // === Default Config ===
-/// Max single trade as % of available capital (5% in FLOAT_SCALING)
-const DEFAULT_MAX_SINGLE_TRADE_PCT: u64 = 50_000_000;
 /// Max exposure per market as % of vault capital (20% in FLOAT_SCALING)
 const DEFAULT_MAX_EXPOSURE_PER_MARKET_PCT: u64 = 200_000_000;
 /// Max total exposure as % of vault capital (80% in FLOAT_SCALING)
 const DEFAULT_MAX_TOTAL_EXPOSURE_PCT: u64 = 800_000_000;
 /// Base spread (1% in FLOAT_SCALING = 10_000_000)
 const DEFAULT_BASE_SPREAD: u64 = 10_000_000;
-/// Max spread adjustment (2% in FLOAT_SCALING = 20_000_000)
-const DEFAULT_MAX_SPREAD_ADJUSTMENT: u64 = 20_000_000;
 /// Oracle staleness threshold (30 seconds)
 const DEFAULT_ORACLE_STALENESS_MS: u64 = 30_000;
 /// LP withdrawal lockup period (24 hours)
@@ -60,15 +56,11 @@ public fun usdc_unit(): u64 { USDC_UNIT }
 
 public fun bps_scaling(): u64 { BPS_SCALING }
 
-public fun default_max_single_trade_pct(): u64 { DEFAULT_MAX_SINGLE_TRADE_PCT }
-
 public fun default_max_exposure_per_market_pct(): u64 { DEFAULT_MAX_EXPOSURE_PER_MARKET_PCT }
 
 public fun default_max_total_exposure_pct(): u64 { DEFAULT_MAX_TOTAL_EXPOSURE_PCT }
 
 public fun default_base_spread(): u64 { DEFAULT_BASE_SPREAD }
-
-public fun default_max_spread_adjustment(): u64 { DEFAULT_MAX_SPREAD_ADJUSTMENT }
 
 public fun default_oracle_staleness_ms(): u64 { DEFAULT_ORACLE_STALENESS_MS }
 
