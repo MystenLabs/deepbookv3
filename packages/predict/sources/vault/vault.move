@@ -18,8 +18,13 @@
 /// 2. Mark-to-market: get prices using post-trade exposure, update unrealized liability
 module deepbook_predict::vault;
 
-use deepbook_predict::{market_key::MarketKey, oracle::Oracle, pricing::{Self, Pricing}};
-use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Table}};
+use deepbook_predict::market_key::MarketKey;
+use deepbook_predict::oracle::Oracle;
+use deepbook_predict::pricing::{Self, Pricing};
+use sui::balance::{Self, Balance};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::table::{Self, Table};
 
 // === Errors ===
 const ENoShortPosition: u64 = 0;
@@ -74,7 +79,11 @@ public fun cumulative_payouts<Quote>(vault: &Vault<Quote>): u64 {
 }
 
 public fun position<Quote>(vault: &Vault<Quote>, key: MarketKey): u64 {
-    if (vault.positions.contains(key)) { vault.positions[key].quantity } else { 0 }
+    if (vault.positions.contains(key)) {
+        vault.positions[key].quantity
+    } else {
+        0
+    }
 }
 
 public fun position_data<Quote>(vault: &Vault<Quote>, key: MarketKey): (u64, u64, u64, u64) {
@@ -88,13 +97,12 @@ public fun position_data<Quote>(vault: &Vault<Quote>, key: MarketKey): (u64, u64
 
 /// Returns (up_quantity, down_quantity) for the strike.
 public fun pair_position<Quote>(vault: &Vault<Quote>, key: MarketKey): (u64, u64) {
-    let up_key = if (key.is_up()) { key } else { key.opposite() };
-    let down_key = up_key.opposite();
+    let (up_key, down_key) = key.up_down_pair();
     (vault.position(up_key), vault.position(down_key))
 }
 
-/// Estimate the cost to mint a position (for UI/preview).
-public fun estimate_mint_cost<Underlying, Quote>(
+/// Get the cost to mint a position (for UI/preview).
+public fun get_mint_cost<Underlying, Quote>(
     vault: &Vault<Quote>,
     oracle: &Oracle<Underlying>,
     key: &MarketKey,
@@ -105,8 +113,8 @@ public fun estimate_mint_cost<Underlying, Quote>(
     vault.pricing.get_mint_cost(oracle, key, quantity, up_short, down_short, clock)
 }
 
-/// Estimate the payout for redeeming a position (for UI/preview).
-public fun estimate_redeem_payout<Underlying, Quote>(
+/// Get the payout for redeeming a position (for UI/preview).
+public fun get_redeem_payout<Underlying, Quote>(
     vault: &Vault<Quote>,
     oracle: &Oracle<Underlying>,
     key: &MarketKey,
@@ -137,7 +145,11 @@ public(package) fun settle<Underlying, Quote>(
     let settlement_price = oracle.settlement_price().destroy_some();
     let up_wins = settlement_price > key.strike();
     let (up_qty, down_qty) = vault.pair_position(key);
-    let actual_liability = if (up_wins) { up_qty } else { down_qty };
+    let actual_liability = if (up_wins) {
+        up_qty
+    } else {
+        down_qty
+    };
 
     vault.max_liability = vault.max_liability + actual_liability - old_max;
     vault.min_liability = vault.min_liability + actual_liability - old_min;
@@ -229,7 +241,11 @@ public(package) fun redeem<Underlying, Quote>(
 /// Returns (max_exposure, min_exposure) for the strike.
 fun exposure<Quote>(vault: &Vault<Quote>, key: MarketKey): (u64, u64) {
     let (up, down) = vault.pair_position(key);
-    if (up > down) { (up, down) } else { (down, up) }
+    if (up > down) {
+        (up, down)
+    } else {
+        (down, up)
+    }
 }
 
 /// Mark-to-market: compute cost to close each position and update unrealized_liability.
@@ -239,15 +255,7 @@ fun mark_to_market<Underlying, Quote>(
     key: MarketKey,
     clock: &Clock,
 ) {
-    let up_key = if (key.is_up()) { key } else { key.opposite() };
-    let down_key = up_key.opposite();
-
-    // Old unrealized from stored values
-    let old_up = if (vault.positions.contains(up_key)) { vault.positions[up_key].unrealized_cost }
-    else { 0 };
-    let old_down = if (vault.positions.contains(down_key)) {
-        vault.positions[down_key].unrealized_cost
-    } else { 0 };
+    let (up_key, down_key) = key.up_down_pair();
 
     // New unrealized using get_mint_cost
     let (up_qty, down_qty) = vault.pair_position(key);
@@ -257,33 +265,42 @@ fun mark_to_market<Underlying, Quote>(
         .get_mint_cost(oracle, &down_key, down_qty, up_qty, down_qty, clock);
 
     // Update stored values
-    if (vault.positions.contains(up_key)) { vault.positions[up_key].unrealized_cost = new_up; };
-    if (vault.positions.contains(down_key)) {
-        vault.positions[down_key].unrealized_cost = new_down;
-    };
-
-    // Update aggregate
-    vault.unrealized_liability = vault.unrealized_liability + new_up + new_down - old_up - old_down;
+    vault.update_unrealized_liability(up_key, new_up);
+    vault.update_unrealized_liability(down_key, new_down);
 }
 
-fun add_position<Quote>(vault: &mut Vault<Quote>, key: MarketKey, quantity: u64, premium: u64) {
-    if (vault.positions.contains(key)) {
-        let data = &mut vault.positions[key];
-        data.quantity = data.quantity + quantity;
-        data.premiums = data.premiums + premium;
-    } else {
+fun update_unrealized_liability<Quote>(
+    vault: &mut Vault<Quote>,
+    key: MarketKey,
+    new_unrealized: u64,
+) {
+    vault.add_position_entry(key);
+    let old_unrealized = vault.positions[key].unrealized_cost;
+    vault.positions[key].unrealized_cost = new_unrealized;
+    vault.unrealized_liability = vault.unrealized_liability + new_unrealized - old_unrealized;
+}
+
+fun add_position_entry<Quote>(vault: &mut Vault<Quote>, key: MarketKey) {
+    if (!vault.positions.contains(key)) {
         vault
             .positions
             .add(
                 key,
                 PositionData {
-                    quantity,
-                    premiums: premium,
+                    quantity: 0,
+                    premiums: 0,
                     payouts: 0,
                     unrealized_cost: 0,
                 },
             );
-    }
+    };
+}
+
+fun add_position<Quote>(vault: &mut Vault<Quote>, key: MarketKey, quantity: u64, premium: u64) {
+    vault.add_position_entry(key);
+    let data = &mut vault.positions[key];
+    data.quantity = data.quantity + quantity;
+    data.premiums = data.premiums + premium;
 }
 
 fun remove_position<Quote>(vault: &mut Vault<Quote>, key: MarketKey, quantity: u64, payout: u64) {
