@@ -20,9 +20,10 @@ use deepbook_predict::{
     market_manager::{Self, Markets},
     oracle::Oracle,
     predict_manager::PredictManager,
+    pricing::{Self, Pricing},
     vault::{Self, Vault}
 };
-use sui::clock::Clock;
+use sui::{clock::Clock, coin::Coin};
 
 // === Structs ===
 
@@ -34,6 +35,8 @@ public struct Predict<phantom Quote> has key {
     markets: Markets,
     /// Vault holding USDC and tracking exposure
     vault: Vault<Quote>,
+    /// Pricing configuration (admin-controlled)
+    pricing: Pricing,
 }
 
 // === Errors ===
@@ -59,11 +62,11 @@ public fun mint<Underlying, Quote>(
     predict.markets.assert_enabled(&key);
 
     // Calculate cost and withdraw from manager
-    let cost = predict.vault.get_mint_cost(oracle, &key, quantity, clock);
+    let cost = predict.vault.get_mint_cost(&predict.pricing, oracle, key, quantity, clock);
     let payment = manager.withdraw<Quote>(cost, ctx);
 
     // Vault executes trade and marks to market
-    predict.vault.mint(oracle, key, quantity, payment, clock);
+    predict.vault.mint(&predict.pricing, oracle, key, quantity, payment, clock);
 
     // Manager records long position
     manager.increase_position(key, quantity);
@@ -87,7 +90,7 @@ public fun redeem<Underlying, Quote>(
     manager.decrease_position(key, quantity);
 
     // Vault executes trade, marks to market, returns payout
-    let payout_balance = predict.vault.redeem(oracle, key, quantity, clock);
+    let payout_balance = predict.vault.redeem(&predict.pricing, oracle, key, quantity, clock);
 
     // Deposit payout into manager
     let payout_coin = payout_balance.into_coin(ctx);
@@ -106,7 +109,21 @@ public fun settle<Underlying, Quote>(
     assert!(key.oracle_id() == oracle.id(), EOracleMismatch);
     assert!(key.expiry() == oracle.expiry(), EExpiryMismatch);
 
-    predict.vault.settle(oracle, key, clock);
+    predict.vault.settle(&predict.pricing, oracle, key, clock);
+}
+
+/// Supply USDC to the vault, receive shares.
+public fun supply<Quote>(predict: &mut Predict<Quote>, coin: Coin<Quote>, ctx: &TxContext): u64 {
+    predict.vault.supply(coin, ctx)
+}
+
+/// Withdraw USDC from the vault by burning shares.
+public fun withdraw<Quote>(
+    predict: &mut Predict<Quote>,
+    shares: u64,
+    ctx: &mut TxContext,
+): Coin<Quote> {
+    predict.vault.withdraw(shares, ctx).into_coin(ctx)
 }
 
 // === Public-Package Functions ===
@@ -117,6 +134,7 @@ public(package) fun create<Quote>(ctx: &mut TxContext): ID {
         id: object::new(ctx),
         markets: market_manager::new(),
         vault: vault::new<Quote>(ctx),
+        pricing: pricing::new(),
     };
     let predict_id = object::id(&predict);
     transfer::share_object(predict);
