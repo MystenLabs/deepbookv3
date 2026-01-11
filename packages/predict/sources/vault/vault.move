@@ -104,6 +104,12 @@ public fun pair_position<Quote>(vault: &Vault<Quote>, key: MarketKey): (u64, u64
     (vault.position(up_key), vault.position(down_key))
 }
 
+/// Returns the worst-case liability for a strike (max of up/down quantity).
+public fun market_liability<Quote>(vault: &Vault<Quote>, key: MarketKey): u64 {
+    let (up, down) = vault.pair_position(key);
+    if (up > down) { up } else { down }
+}
+
 // === Public-Package Functions ===
 
 public(package) fun new<Quote>(ctx: &mut TxContext): Vault<Quote> {

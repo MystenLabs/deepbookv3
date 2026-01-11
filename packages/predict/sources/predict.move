@@ -9,6 +9,7 @@
 /// - Handles mark-to-market after each trade
 module deepbook_predict::predict;
 
+use deepbook::math;
 use deepbook_predict::{
     lp_config::{Self, LPConfig},
     market_key::MarketKey,
@@ -16,6 +17,7 @@ use deepbook_predict::{
     oracle::Oracle,
     predict_manager::PredictManager,
     pricing::{Self, Pricing},
+    risk_config::{Self, RiskConfig},
     vault::{Self, Vault}
 };
 use sui::{clock::Clock, coin::Coin};
@@ -34,12 +36,16 @@ public struct Predict<phantom Quote> has key {
     pricing: Pricing,
     /// LP configuration (admin-controlled)
     lp_config: LPConfig,
+    /// Risk limits (admin-controlled)
+    risk_config: RiskConfig,
 }
 
 // === Errors ===
 const EOracleMismatch: u64 = 0;
 const EExpiryMismatch: u64 = 1;
 const EMarketNotSettled: u64 = 2;
+const EExceedsMaxTotalExposure: u64 = 3;
+const EExceedsMaxMarketExposure: u64 = 4;
 
 // === Public Functions ===
 
@@ -89,6 +95,9 @@ public fun mint<Underlying, Quote>(
 
     // Execute trade
     predict.vault.execute_mint(key, quantity, payment);
+
+    // Risk checks
+    predict.assert_vault_exposure(key);
 
     // Mark-to-market using post-trade exposure
     predict.mark_to_market(oracle, key, clock);
@@ -181,6 +190,7 @@ public(package) fun create<Quote>(ctx: &mut TxContext): ID {
         vault: vault::new<Quote>(ctx),
         pricing: pricing::new(),
         lp_config: lp_config::new(),
+        risk_config: risk_config::new(),
     };
     let predict_id = object::id(&predict);
     transfer::share_object(predict);
@@ -218,4 +228,14 @@ fun mark_to_market<Underlying, Quote>(
     // Update vault
     predict.vault.update_unrealized(up_key, new_up);
     predict.vault.update_unrealized(down_key, new_down);
+}
+
+fun assert_vault_exposure<Quote>(predict: &Predict<Quote>, key: MarketKey) {
+    let balance = predict.vault.balance();
+    let max_liability = predict.vault.max_liability();
+    let market_liability = predict.vault.market_liability(key);
+    let max_total_pct = predict.risk_config.max_total_exposure_pct();
+    let max_market_pct = predict.risk_config.max_per_market_exposure_pct();
+    assert!(max_liability <= math::mul(balance, max_total_pct), EExceedsMaxTotalExposure);
+    assert!(market_liability <= math::mul(balance, max_market_pct), EExceedsMaxMarketExposure);
 }
