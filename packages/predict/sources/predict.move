@@ -10,6 +10,7 @@
 module deepbook_predict::predict;
 
 use deepbook_predict::{
+    lp_config::{Self, LPConfig},
     market_key::MarketKey,
     market_manager::{Self, Markets},
     oracle::Oracle,
@@ -31,6 +32,8 @@ public struct Predict<phantom Quote> has key {
     vault: Vault<Quote>,
     /// Pricing configuration (admin-controlled)
     pricing: Pricing,
+    /// LP configuration (admin-controlled)
+    lp_config: LPConfig,
 }
 
 // === Errors ===
@@ -146,17 +149,25 @@ public fun settle<Underlying, Quote>(
 }
 
 /// Supply USDC to the vault, receive shares.
-public fun supply<Quote>(predict: &mut Predict<Quote>, coin: Coin<Quote>, ctx: &TxContext): u64 {
-    predict.vault.supply(coin, ctx)
+public fun supply<Quote>(
+    predict: &mut Predict<Quote>,
+    coin: Coin<Quote>,
+    clock: &Clock,
+    ctx: &TxContext,
+): u64 {
+    predict.vault.supply(coin, clock, ctx)
 }
 
 /// Withdraw USDC from the vault by burning shares.
+/// Fails if lockup period has not elapsed since last supply.
 public fun withdraw<Quote>(
     predict: &mut Predict<Quote>,
     shares: u64,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Quote> {
-    predict.vault.withdraw(shares, ctx).into_coin(ctx)
+    let lockup_period_ms = predict.lp_config.lockup_period_ms();
+    predict.vault.withdraw(shares, lockup_period_ms, clock, ctx).into_coin(ctx)
 }
 
 // === Public-Package Functions ===
@@ -168,6 +179,7 @@ public(package) fun create<Quote>(ctx: &mut TxContext): ID {
         markets: market_manager::new(),
         vault: vault::new<Quote>(ctx),
         pricing: pricing::new(),
+        lp_config: lp_config::new(),
     };
     let predict_id = object::id(&predict);
     transfer::share_object(predict);

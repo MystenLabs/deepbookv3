@@ -12,7 +12,7 @@
 module deepbook_predict::vault;
 
 use deepbook_predict::{market_key::MarketKey, supply_manager::{Self, SupplyManager}};
-use sui::{balance::{Self, Balance}, coin::Coin, table::{Self, Table}};
+use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Table}};
 
 // === Errors ===
 const ENoShortPosition: u64 = 0;
@@ -192,12 +192,13 @@ public(package) fun finalize_settlement<Quote>(
 public(package) fun supply<Quote>(
     vault: &mut Vault<Quote>,
     coin: Coin<Quote>,
+    clock: &Clock,
     ctx: &TxContext,
 ): u64 {
     let amount = coin.value();
     let shares = vault
         .supply_manager
-        .supply(amount, vault.balance.value(), vault.unrealized_liability, ctx);
+        .supply(amount, vault.balance.value(), vault.unrealized_liability, clock, ctx);
     vault.balance.join(coin.into_balance());
 
     shares
@@ -207,11 +208,20 @@ public(package) fun supply<Quote>(
 public(package) fun withdraw<Quote>(
     vault: &mut Vault<Quote>,
     shares: u64,
+    lockup_period_ms: u64,
+    clock: &Clock,
     ctx: &TxContext,
 ): Balance<Quote> {
     let amount = vault
         .supply_manager
-        .withdraw(shares, vault.balance.value(), vault.unrealized_liability, ctx);
+        .withdraw(
+            shares,
+            vault.balance.value(),
+            vault.unrealized_liability,
+            lockup_period_ms,
+            clock,
+            ctx,
+        );
 
     vault.balance.split(amount)
 }
