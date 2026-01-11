@@ -3,16 +3,10 @@
 
 /// Main entry point for the DeepBook Predict protocol.
 ///
-/// This module exposes all public functions for interacting with the binary options protocol:
-///
-/// Trading Actions:
-/// - `mint()` - Buy a position: pays USDC from PredictManager, receives position in manager
-/// - `redeem()` - Sell a position: returns position, receives USDC into manager
-///
-/// Admin Actions (require AdminCap):
-/// - `enable_market()` - Enable trading for an oracle + strike pair
-///
-/// All events are emitted from this module.
+/// This module orchestrates all operations:
+/// - Coordinates between Vault (state), Pricing (calculations), and Oracle (data)
+/// - Exposes public functions for trading and LP operations
+/// - Handles mark-to-market after each trade
 module deepbook_predict::predict;
 
 use deepbook_predict::{
@@ -42,8 +36,33 @@ public struct Predict<phantom Quote> has key {
 // === Errors ===
 const EOracleMismatch: u64 = 0;
 const EExpiryMismatch: u64 = 1;
+const EMarketNotSettled: u64 = 2;
 
 // === Public Functions ===
+
+/// Get the cost to mint a position (for UI/preview).
+public fun get_mint_cost<Underlying, Quote>(
+    predict: &Predict<Quote>,
+    oracle: &Oracle<Underlying>,
+    key: MarketKey,
+    quantity: u64,
+    clock: &Clock,
+): u64 {
+    let (up_short, down_short) = predict.vault.pair_position(key);
+    predict.pricing.get_mint_cost(oracle, key, quantity, up_short, down_short, clock)
+}
+
+/// Get the payout for redeeming a position (for UI/preview).
+public fun get_redeem_payout<Underlying, Quote>(
+    predict: &Predict<Quote>,
+    oracle: &Oracle<Underlying>,
+    key: MarketKey,
+    quantity: u64,
+    clock: &Clock,
+): u64 {
+    let (up_short, down_short) = predict.vault.pair_position(key);
+    predict.pricing.get_redeem_payout(oracle, key, quantity, up_short, down_short, clock)
+}
 
 /// Buy a position. Cost is withdrawn from the PredictManager's balance.
 /// Position quantity is added to the PredictManager's positions.
@@ -61,12 +80,18 @@ public fun mint<Underlying, Quote>(
     oracle.assert_not_stale(clock);
     predict.markets.assert_enabled(&key);
 
-    // Calculate cost and withdraw from manager
-    let cost = predict.vault.get_mint_cost(&predict.pricing, oracle, key, quantity, clock);
+    // Calculate cost using pre-trade exposure
+    let (up_short, down_short) = predict.vault.pair_position(key);
+    let cost = predict.pricing.get_mint_cost(oracle, key, quantity, up_short, down_short, clock);
+
+    // Withdraw payment from manager
     let payment = manager.withdraw<Quote>(cost, ctx);
 
-    // Vault executes trade and marks to market
-    predict.vault.mint(&predict.pricing, oracle, key, quantity, payment, clock);
+    // Execute trade
+    predict.vault.execute_mint(key, quantity, payment);
+
+    // Mark-to-market using post-trade exposure
+    predict.mark_to_market(oracle, key, clock);
 
     // Manager records long position
     manager.increase_position(key, quantity);
@@ -89,8 +114,17 @@ public fun redeem<Underlying, Quote>(
     // Manager reduces long position first
     manager.decrease_position(key, quantity);
 
-    // Vault executes trade, marks to market, returns payout
-    let payout_balance = predict.vault.redeem(&predict.pricing, oracle, key, quantity, clock);
+    // Calculate payout using pre-trade exposure
+    let (up_short, down_short) = predict.vault.pair_position(key);
+    let payout = predict
+        .pricing
+        .get_redeem_payout(oracle, key, quantity, up_short, down_short, clock);
+
+    // Execute trade
+    let payout_balance = predict.vault.execute_redeem(key, quantity, payout);
+
+    // Mark-to-market using post-trade exposure
+    predict.mark_to_market(oracle, key, clock);
 
     // Deposit payout into manager
     let payout_coin = payout_balance.into_coin(ctx);
@@ -108,8 +142,15 @@ public fun settle<Underlying, Quote>(
 ) {
     assert!(key.oracle_id() == oracle.id(), EOracleMismatch);
     assert!(key.expiry() == oracle.expiry(), EExpiryMismatch);
+    assert!(oracle.is_settled(), EMarketNotSettled);
 
-    predict.vault.settle(&predict.pricing, oracle, key, clock);
+    // Mark-to-market uses settlement prices (100%/0%)
+    predict.mark_to_market(oracle, key, clock);
+
+    // Determine winner and finalize
+    let settlement_price = oracle.settlement_price().destroy_some();
+    let up_wins = settlement_price > key.strike();
+    predict.vault.finalize_settlement(key, up_wins);
 }
 
 /// Supply USDC to the vault, receive shares.
@@ -149,4 +190,27 @@ public(package) fun enable_market<Underlying, Quote>(
     key: MarketKey,
 ) {
     predict.markets.enable_market(oracle, key);
+}
+
+// === Private Functions ===
+
+/// Mark-to-market: calculate cost to close each position and update unrealized liability.
+fun mark_to_market<Underlying, Quote>(
+    predict: &mut Predict<Quote>,
+    oracle: &Oracle<Underlying>,
+    key: MarketKey,
+    clock: &Clock,
+) {
+    let (up_key, down_key) = key.up_down_pair();
+    let (up_qty, down_qty) = predict.vault.pair_position(key);
+
+    // Calculate new unrealized costs
+    let new_up = predict.pricing.get_mint_cost(oracle, up_key, up_qty, up_qty, down_qty, clock);
+    let new_down = predict
+        .pricing
+        .get_mint_cost(oracle, down_key, down_qty, up_qty, down_qty, clock);
+
+    // Update vault
+    predict.vault.update_unrealized(up_key, new_up);
+    predict.vault.update_unrealized(down_key, new_down);
 }

@@ -1,36 +1,22 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Vault module - counterparty for all trades.
+/// Vault module - pure state machine for trade execution.
+///
+/// The vault holds USDC and takes the opposite side of every trade.
+/// All pricing logic is handled by the orchestrator (predict.move).
 ///
 /// Scaling conventions (aligned with DeepBook):
 /// - Quantities are in Quote units (USDC): 1_000_000 = 1 contract = $1 at settlement
 /// - All liabilities (max, min, unrealized) are in Quote units
-/// - At settlement, winners receive `quantity` directly (no multiplication needed)
-///
-/// The vault holds USDC and takes the opposite side of every trade:
-/// - When user mints UP position, vault receives USDC and is short UP
-/// - When user mints DOWN position, vault receives USDC and is short DOWN
-/// - When user redeems, vault pays out and closes its short
-///
-/// Two-step process for each trade:
-/// 1. Execute trade: calculate cost/payout using pre-trade exposure, update position
-/// 2. Mark-to-market: get prices using post-trade exposure, update unrealized liability
 module deepbook_predict::vault;
 
-use deepbook_predict::{
-    market_key::MarketKey,
-    oracle::Oracle,
-    pricing::Pricing,
-    supply_manager::{Self, SupplyManager}
-};
-use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Table}};
+use deepbook_predict::{market_key::MarketKey, supply_manager::{Self, SupplyManager}};
+use sui::{balance::{Self, Balance}, coin::Coin, table::{Self, Table}};
 
 // === Errors ===
 const ENoShortPosition: u64 = 0;
 const EInsufficientBalance: u64 = 1;
-const EInsufficientPayment: u64 = 2;
-const EMarketNotSettled: u64 = 3;
 
 // === Structs ===
 
@@ -109,32 +95,6 @@ public fun pair_position<Quote>(vault: &Vault<Quote>, key: MarketKey): (u64, u64
     (vault.position(up_key), vault.position(down_key))
 }
 
-/// Get the cost to mint a position (for UI/preview).
-public fun get_mint_cost<Underlying, Quote>(
-    vault: &Vault<Quote>,
-    pricing: &Pricing,
-    oracle: &Oracle<Underlying>,
-    key: MarketKey,
-    quantity: u64,
-    clock: &Clock,
-): u64 {
-    let (up_short, down_short) = vault.pair_position(key);
-    pricing.get_mint_cost(oracle, key, quantity, up_short, down_short, clock)
-}
-
-/// Get the payout for redeeming a position (for UI/preview).
-public fun get_redeem_payout<Underlying, Quote>(
-    vault: &Vault<Quote>,
-    pricing: &Pricing,
-    oracle: &Oracle<Underlying>,
-    key: MarketKey,
-    quantity: u64,
-    clock: &Clock,
-): u64 {
-    let (up_short, down_short) = vault.pair_position(key);
-    pricing.get_redeem_payout(oracle, key, quantity, up_short, down_short, clock)
-}
-
 // === Public-Package Functions ===
 
 public(package) fun new<Quote>(ctx: &mut TxContext): Vault<Quote> {
@@ -150,22 +110,15 @@ public(package) fun new<Quote>(ctx: &mut TxContext): Vault<Quote> {
     }
 }
 
-/// Mint a position. Two-step process:
-/// 1. Calculate cost using pre-trade exposure, execute trade
-/// 2. Mark-to-market using post-trade exposure
-public(package) fun mint<Underlying, Quote>(
+/// Execute a mint trade. Updates positions and liabilities.
+/// Cost calculation is done by the orchestrator.
+public(package) fun execute_mint<Quote>(
     vault: &mut Vault<Quote>,
-    pricing: &Pricing,
-    oracle: &Oracle<Underlying>,
     key: MarketKey,
     quantity: u64,
     payment: Coin<Quote>,
-    clock: &Clock,
-): u64 {
-    // Step 1: Calculate cost using PRE-TRADE exposure
-    let (up_short, down_short) = vault.pair_position(key);
-    let cost = pricing.get_mint_cost(oracle, key, quantity, up_short, down_short, clock);
-    assert!(payment.value() == cost, EInsufficientPayment);
+) {
+    let cost = payment.value();
 
     // Execute trade
     vault.balance.join(payment.into_balance());
@@ -177,27 +130,16 @@ public(package) fun mint<Underlying, Quote>(
     let (new_max, new_min) = vault.exposure(key);
     vault.max_liability = vault.max_liability + new_max - old_max;
     vault.min_liability = vault.min_liability + new_min - old_min;
-
-    // Step 2: Mark-to-market using POST-TRADE exposure
-    vault.mark_to_market(pricing, oracle, key, clock);
-
-    cost
 }
 
-/// Redeem a position. Two-step process:
-/// 1. Calculate payout using pre-trade exposure, execute trade
-/// 2. Mark-to-market using post-trade exposure
-public(package) fun redeem<Underlying, Quote>(
+/// Execute a redeem trade. Updates positions and liabilities.
+/// Payout calculation is done by the orchestrator.
+public(package) fun execute_redeem<Quote>(
     vault: &mut Vault<Quote>,
-    pricing: &Pricing,
-    oracle: &Oracle<Underlying>,
     key: MarketKey,
     quantity: u64,
-    clock: &Clock,
+    payout: u64,
 ): Balance<Quote> {
-    // Step 1: Calculate payout using PRE-TRADE exposure
-    let (up_short, down_short) = vault.pair_position(key);
-    let payout = pricing.get_redeem_payout(oracle, key, quantity, up_short, down_short, clock);
     assert!(vault.balance.value() >= payout, EInsufficientBalance);
 
     // Execute trade
@@ -210,34 +152,36 @@ public(package) fun redeem<Underlying, Quote>(
     vault.max_liability = vault.max_liability + new_max - old_max;
     vault.min_liability = vault.min_liability + new_min - old_min;
 
-    // Step 2: Mark-to-market using POST-TRADE exposure
-    vault.mark_to_market(pricing, oracle, key, clock);
-
     vault.balance.split(payout)
 }
 
-/// Settle a market after expiry. Updates vault accounting to reflect actual outcome.
-/// Idempotent - calling multiple times has no effect after first call.
-public(package) fun settle<Underlying, Quote>(
+/// Update unrealized liability for a position.
+/// Called by orchestrator after calculating new cost via pricing.
+public(package) fun update_unrealized<Quote>(
     vault: &mut Vault<Quote>,
-    pricing: &Pricing,
-    oracle: &Oracle<Underlying>,
     key: MarketKey,
-    clock: &Clock,
+    new_unrealized: u64,
 ) {
-    assert!(oracle.is_settled(), EMarketNotSettled);
+    vault.add_position_entry(key);
+    let old_unrealized = vault.positions[key].unrealized_cost;
+    vault.positions[key].unrealized_cost = new_unrealized;
+    vault.unrealized_liability = vault.unrealized_liability + new_unrealized - old_unrealized;
+}
 
-    // mark_to_market uses get_quote which returns settlement prices (100%/0%) when settled
-    vault.mark_to_market(pricing, oracle, key, clock);
-
+/// Finalize settlement by updating max/min liability to actual.
+/// Called by orchestrator after mark-to-market.
+public(package) fun finalize_settlement<Quote>(
+    vault: &mut Vault<Quote>,
+    key: MarketKey,
+    up_wins: bool,
+) {
     let (up_qty, down_qty) = vault.pair_position(key);
-    let (old_max, old_min) = if (up_qty > down_qty) { (up_qty, down_qty) } else {
+    let (old_max, old_min) = if (up_qty > down_qty) {
+        (up_qty, down_qty)
+    } else {
         (down_qty, up_qty)
     };
 
-    // Update max/min liability: after settlement, actual = winning side's quantity
-    let settlement_price = oracle.settlement_price().destroy_some();
-    let up_wins = settlement_price > key.strike();
     let actual_liability = if (up_wins) { up_qty } else { down_qty };
 
     vault.max_liability = vault.max_liability + actual_liability - old_max;
@@ -282,37 +226,6 @@ fun exposure<Quote>(vault: &Vault<Quote>, key: MarketKey): (u64, u64) {
     } else {
         (down, up)
     }
-}
-
-/// Mark-to-market: compute cost to close each position and update unrealized_liability.
-fun mark_to_market<Underlying, Quote>(
-    vault: &mut Vault<Quote>,
-    pricing: &Pricing,
-    oracle: &Oracle<Underlying>,
-    key: MarketKey,
-    clock: &Clock,
-) {
-    let (up_key, down_key) = key.up_down_pair();
-
-    // New unrealized using get_mint_cost
-    let (up_qty, down_qty) = vault.pair_position(key);
-    let new_up = pricing.get_mint_cost(oracle, up_key, up_qty, up_qty, down_qty, clock);
-    let new_down = pricing.get_mint_cost(oracle, down_key, down_qty, up_qty, down_qty, clock);
-
-    // Update stored values
-    vault.update_unrealized_liability(up_key, new_up);
-    vault.update_unrealized_liability(down_key, new_down);
-}
-
-fun update_unrealized_liability<Quote>(
-    vault: &mut Vault<Quote>,
-    key: MarketKey,
-    new_unrealized: u64,
-) {
-    vault.add_position_entry(key);
-    let old_unrealized = vault.positions[key].unrealized_cost;
-    vault.positions[key].unrealized_cost = new_unrealized;
-    vault.unrealized_liability = vault.unrealized_liability + new_unrealized - old_unrealized;
 }
 
 fun add_position<Quote>(vault: &mut Vault<Quote>, key: MarketKey, quantity: u64, premium: u64) {
