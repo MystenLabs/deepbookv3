@@ -80,11 +80,8 @@ public fun mint<Underlying, Quote>(
     oracle.assert_not_stale(clock);
     predict.markets.assert_enabled(&key);
 
-    // Calculate cost using pre-trade exposure
-    let (up_short, down_short) = predict.vault.pair_position(key);
-    let cost = predict.pricing.get_mint_cost(oracle, key, quantity, up_short, down_short, clock);
-
-    // Withdraw payment from manager
+    // Calculate cost and withdraw payment from manager
+    let cost = predict.get_mint_cost(oracle, key, quantity, clock);
     let payment = manager.withdraw<Quote>(cost, ctx);
 
     // Execute trade
@@ -114,13 +111,8 @@ public fun redeem<Underlying, Quote>(
     // Manager reduces long position first
     manager.decrease_position(key, quantity);
 
-    // Calculate payout using pre-trade exposure
-    let (up_short, down_short) = predict.vault.pair_position(key);
-    let payout = predict
-        .pricing
-        .get_redeem_payout(oracle, key, quantity, up_short, down_short, clock);
-
-    // Execute trade
+    // Calculate payout and execute trade
+    let payout = predict.get_redeem_payout(oracle, key, quantity, clock);
     let payout_balance = predict.vault.execute_redeem(key, quantity, payout);
 
     // Mark-to-market using post-trade exposure
