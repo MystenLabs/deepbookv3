@@ -94,6 +94,21 @@ public fun redeem<Underlying, Quote>(
     manager.deposit(payout_coin, ctx);
 }
 
+/// Settle a market after expiry. Updates vault accounting to reflect actual outcome.
+/// Anyone can call this once the oracle has a settlement price.
+/// Idempotent - calling multiple times has no effect after first call.
+public fun settle<Underlying, Quote>(
+    predict: &mut Predict<Quote>,
+    oracle: &Oracle<Underlying>,
+    key: MarketKey,
+    clock: &Clock,
+) {
+    assert!(key.oracle_id() == oracle.id(), EOracleMismatch);
+    assert!(key.expiry() == oracle.expiry(), EExpiryMismatch);
+
+    predict.vault.settle(oracle, key, clock);
+}
+
 // === Public-Package Functions ===
 
 /// Create and share the Predict object. Returns its ID.

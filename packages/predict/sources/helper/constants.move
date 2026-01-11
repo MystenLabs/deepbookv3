@@ -2,27 +2,34 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Constants module - all protocol constants.
+///
+/// Scaling conventions (aligned with DeepBook):
+/// - Prices/percentages use FLOAT_SCALING (1e9): 500_000_000 = 50%
+/// - Quantities are in Quote units (USDC with 6 decimals): 1_000_000 = 1 contract = $1
+/// - At settlement, winners receive `quantity` directly (already in USDC units)
+/// - Use deepbook::math for all mul/div operations
 module deepbook_predict::constants;
 
 // === Scaling ===
-/// Fixed-point scaling factor (1e9) for math operations
+/// Fixed-point scaling factor (1e9) for math operations and prices.
+/// 500_000_000 = 50%, 1_000_000_000 = 100%
 const FLOAT_SCALING: u64 = 1_000_000_000;
-/// Price scaling factor (1e6) - USDC has 6 decimals
-const PRICE_SCALING: u64 = 1_000_000;
-/// Basis points scaling (10_000 = 100%)
+/// USDC has 6 decimals. 1 contract = 1_000_000 units = $1 at settlement.
+const USDC_UNIT: u64 = 1_000_000;
+/// Basis points scaling (10_000 = 100%), used for converting BPS to FLOAT_SCALING.
 const BPS_SCALING: u64 = 10_000;
 
 // === Default Config ===
-/// Max single trade as % of available capital (5%)
-const DEFAULT_MAX_SINGLE_TRADE_PCT: u64 = 500_000_000; // 5% in FLOAT_SCALING
-/// Max exposure per market as % of vault capital (20%)
-const DEFAULT_MAX_EXPOSURE_PER_MARKET_PCT: u64 = 200_000_000; // 20%
-/// Max total exposure as % of vault capital (80%)
-const DEFAULT_MAX_TOTAL_EXPOSURE_PCT: u64 = 800_000_000; // 80%
-/// Base spread in basis points (1%)
-const DEFAULT_BASE_SPREAD_BPS: u64 = 100;
-/// Max spread adjustment in basis points (2%)
-const DEFAULT_MAX_SPREAD_ADJUSTMENT_BPS: u64 = 200;
+/// Max single trade as % of available capital (5% in FLOAT_SCALING)
+const DEFAULT_MAX_SINGLE_TRADE_PCT: u64 = 50_000_000;
+/// Max exposure per market as % of vault capital (20% in FLOAT_SCALING)
+const DEFAULT_MAX_EXPOSURE_PER_MARKET_PCT: u64 = 200_000_000;
+/// Max total exposure as % of vault capital (80% in FLOAT_SCALING)
+const DEFAULT_MAX_TOTAL_EXPOSURE_PCT: u64 = 800_000_000;
+/// Base spread (1% in FLOAT_SCALING = 10_000_000)
+const DEFAULT_BASE_SPREAD: u64 = 10_000_000;
+/// Max spread adjustment (2% in FLOAT_SCALING = 20_000_000)
+const DEFAULT_MAX_SPREAD_ADJUSTMENT: u64 = 20_000_000;
 /// Oracle staleness threshold (30 seconds)
 const DEFAULT_ORACLE_STALENESS_MS: u64 = 30_000;
 /// LP withdrawal lockup period (24 hours)
@@ -49,7 +56,7 @@ const MS_PER_YEAR: u64 = 31_536_000_000;
 
 public fun float_scaling(): u64 { FLOAT_SCALING }
 
-public fun price_scaling(): u64 { PRICE_SCALING }
+public fun usdc_unit(): u64 { USDC_UNIT }
 
 public fun bps_scaling(): u64 { BPS_SCALING }
 
@@ -59,9 +66,9 @@ public fun default_max_exposure_per_market_pct(): u64 { DEFAULT_MAX_EXPOSURE_PER
 
 public fun default_max_total_exposure_pct(): u64 { DEFAULT_MAX_TOTAL_EXPOSURE_PCT }
 
-public fun default_base_spread_bps(): u64 { DEFAULT_BASE_SPREAD_BPS }
+public fun default_base_spread(): u64 { DEFAULT_BASE_SPREAD }
 
-public fun default_max_spread_adjustment_bps(): u64 { DEFAULT_MAX_SPREAD_ADJUSTMENT_BPS }
+public fun default_max_spread_adjustment(): u64 { DEFAULT_MAX_SPREAD_ADJUSTMENT }
 
 public fun default_oracle_staleness_ms(): u64 { DEFAULT_ORACLE_STALENESS_MS }
 

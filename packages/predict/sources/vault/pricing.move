@@ -3,10 +3,11 @@
 
 /// Pricing module - calculates binary option prices.
 ///
-/// Key responsibilities:
-/// - Black-Scholes pricing for binary options
-/// - Interpolate implied volatility from oracle's volatility surface
-/// - Apply dynamic spread based on vault inventory/exposure
+/// Scaling conventions (aligned with DeepBook):
+/// - Prices are in FLOAT_SCALING (1e9): 500_000_000 = 50 cents
+/// - Quantities are in Quote units (USDC): 1_000_000 = 1 contract = $1
+/// - cost = math::mul(price, quantity) returns Quote units
+/// - At settlement, winners receive `quantity` directly
 ///
 /// Binary option pricing formula:
 ///   Binary Call (UP) = e^(-rT) * N(d2)
@@ -14,40 +15,31 @@
 ///
 ///   where:
 ///   d2 = [ln(S/K) + (r - 0.5*σ²)*T] / (σ*√T)
-///   S = spot price (from oracle)
-///   K = strike price
-///   r = risk-free rate (from oracle)
-///   σ = implied volatility (interpolated from oracle surface)
-///   T = time to expiry
-///   N() = cumulative normal distribution
+///   S = spot price, K = strike, r = risk-free rate
+///   σ = implied volatility, T = time to expiry, N() = CDF
 ///
 /// Dynamic spread adjustment:
-///   exposure_ratio = net_exposure / max_exposure  (-1 to +1)
-///   adjustment = exposure_ratio * max_spread_adjustment
-///
-///   If vault is long UP (positive exposure):
-///   - UP becomes more expensive to buy (higher ask)
-///   - DOWN becomes cheaper to buy (incentivized)
-///
-/// This encourages balanced order flow and reduces vault risk.
+///   spread = math::mul(theoretical, base_spread)
+///   If vault has imbalanced exposure, adjust spread to incentivize balance.
 module deepbook_predict::pricing;
 
+use deepbook::math;
 use deepbook_predict::{constants, market_key::MarketKey, oracle::Oracle};
 use sui::clock::Clock;
 
 // === Structs ===
 
-/// Pricing configuration stored in the Predict object.
+/// Pricing configuration stored in the Vault.
 public struct Pricing has store {
-    /// Base spread in basis points (e.g., 100 = 1%)
-    base_spread_bps: u64,
+    /// Base spread in FLOAT_SCALING (e.g., 10_000_000 = 1%)
+    base_spread: u64,
 }
 
 // === Public Functions ===
 
 /// Get bid and ask prices for a market.
-/// Takes vault's current short positions for dynamic spread calculation.
-/// Returns (bid, ask) in PRICE_SCALING (1e6).
+/// If oracle is settled, returns settlement prices (100% for winner, 0% for loser).
+/// Returns (bid, ask) in FLOAT_SCALING (1e9).
 public fun get_quote<Underlying>(
     pricing: &Pricing,
     oracle: &Oracle<Underlying>,
@@ -58,93 +50,71 @@ public fun get_quote<Underlying>(
 ): (u64, u64) {
     let strike = key.strike();
     let is_up = key.is_up();
-    let (spot, iv, rfr, tte) = oracle.get_pricing_data(strike, clock);
 
+    // After settlement, return definitive prices
+    if (oracle.is_settled()) {
+        let settlement_price = oracle.settlement_price().destroy_some();
+        let up_wins = settlement_price > strike;
+        let won = if (is_up) { up_wins } else { !up_wins };
+        // Winner: 100%, Loser: 0%
+        let price = if (won) { constants::float_scaling() } else { 0 };
+        return (price, price)
+    };
+
+    let (spot, iv, rfr, tte) = oracle.get_pricing_data(strike, clock);
     let theoretical = calculate_binary_price(spot, strike, iv, rfr, tte, is_up);
 
     // TODO: Apply dynamic spread based on net exposure
-    // exposure_ratio = (up_short - down_short) / max_exposure
-    // adjustment = exposure_ratio * max_spread_adjustment
-    let spread = (theoretical * pricing.base_spread_bps) / constants::bps_scaling();
+    let spread = math::mul(theoretical, pricing.base_spread);
     let bid = if (theoretical > spread) { theoretical - spread } else { 0 };
     let ask = theoretical + spread;
 
     (bid, ask)
 }
 
-/// Calculate the cost to buy a position.
-/// Takes vault's current short positions for dynamic spread calculation.
-/// Returns cost in Quote units (e.g., USDC with 6 decimals).
+/// Calculate the cost to mint (buy) a position.
+/// Returns cost in Quote units (USDC).
 public fun get_mint_cost<Underlying>(
-    _pricing: &Pricing,
-    _oracle: &Oracle<Underlying>,
-    _key: &MarketKey,
-    quantity: u64,
-    _up_short: u64,
-    _down_short: u64,
-    _clock: &Clock,
-): u64 {
-    // TODO: Calculate cost based on:
-    // 1. Get theoretical price from Black-Scholes
-    // 2. Calculate net exposure = up_short - down_short
-    // 3. Apply dynamic spread based on net exposure
-    // 4. Return ask * quantity
-
-    // Placeholder: 50 cents per contract
-    500_000 * quantity
-}
-
-/// Calculate the payout for redeeming a position.
-/// If oracle is settled, returns settlement value ($1 if won, $0 if lost).
-/// If not settled, returns bid price * quantity.
-/// Takes vault's current short positions for dynamic spread calculation.
-/// Returns payout in Quote units (e.g., USDC with 6 decimals).
-public fun get_redeem_payout<Underlying>(
-    _pricing: &Pricing,
+    pricing: &Pricing,
     oracle: &Oracle<Underlying>,
     key: &MarketKey,
     quantity: u64,
-    _up_short: u64,
-    _down_short: u64,
-    _clock: &Clock,
+    up_short: u64,
+    down_short: u64,
+    clock: &Clock,
 ): u64 {
-    let strike = key.strike();
-    let is_up = key.is_up();
+    let (_bid, ask) = get_quote(pricing, oracle, key, up_short, down_short, clock);
+    // cost = ask_price * quantity / FLOAT_SCALING
+    math::mul(ask, quantity)
+}
 
-    if (oracle.is_settled()) {
-        let settlement_price = oracle.settlement_price().destroy_some();
-        let won = if (is_up) {
-            settlement_price > strike
-        } else {
-            settlement_price <= strike
-        };
-        // $1 per contract if won, $0 if lost
-        if (won) { constants::price_scaling() * quantity } else { 0 }
-    } else {
-        // TODO: Calculate payout based on:
-        // 1. Get theoretical price from Black-Scholes
-        // 2. Calculate net exposure = up_short - down_short
-        // 3. Apply dynamic spread based on net exposure
-        // 4. Return bid * quantity
-
-        // Placeholder: 40 cents per contract (bid = theoretical - spread)
-        400_000 * quantity
-    }
+/// Calculate the payout for redeeming (selling) a position.
+/// Returns payout in Quote units (USDC).
+/// After settlement, get_quote returns 100%/0% so this returns quantity or 0.
+public fun get_redeem_payout<Underlying>(
+    pricing: &Pricing,
+    oracle: &Oracle<Underlying>,
+    key: &MarketKey,
+    quantity: u64,
+    up_short: u64,
+    down_short: u64,
+    clock: &Clock,
+): u64 {
+    let (bid, _ask) = get_quote(pricing, oracle, key, up_short, down_short, clock);
+    math::mul(bid, quantity)
 }
 
 // === Public-Package Functions ===
 
 /// Create a new Pricing config with default values.
 public(package) fun new(): Pricing {
-    Pricing {
-        base_spread_bps: constants::default_base_spread_bps(),
-    }
+    Pricing { base_spread: constants::default_base_spread() }
 }
 
 // === Private Functions ===
 
 /// Calculate theoretical binary option price.
-/// Returns price in PRICE_SCALING (1e6), where 1_000_000 = $1.
+/// Returns price in FLOAT_SCALING (1e9), where 1_000_000_000 = $1 = 100%.
 fun calculate_binary_price(
     _spot: u64,
     _strike: u64,
@@ -154,6 +124,6 @@ fun calculate_binary_price(
     _is_up: bool,
 ): u64 {
     // TODO: Implement Black-Scholes for binary options
-    // For now, return 50 cents as placeholder
-    500_000
+    // For now, return 50% as placeholder (500_000_000 in FLOAT_SCALING)
+    500_000_000
 }

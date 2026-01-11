@@ -3,6 +3,11 @@
 
 /// Vault module - counterparty for all trades.
 ///
+/// Scaling conventions (aligned with DeepBook):
+/// - Quantities are in Quote units (USDC): 1_000_000 = 1 contract = $1 at settlement
+/// - All liabilities (max, min, unrealized) are in Quote units
+/// - At settlement, winners receive `quantity` directly (no multiplication needed)
+///
 /// The vault holds USDC and takes the opposite side of every trade:
 /// - When user mints UP position, vault receives USDC and is short UP
 /// - When user mints DOWN position, vault receives USDC and is short DOWN
@@ -20,6 +25,7 @@ use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Tabl
 const ENoShortPosition: u64 = 0;
 const EInsufficientBalance: u64 = 1;
 const EInsufficientPayment: u64 = 2;
+const EMarketNotSettled: u64 = 3;
 
 // === Structs ===
 
@@ -109,6 +115,32 @@ public fun estimate_redeem_payout<Underlying, Quote>(
 ): u64 {
     let (up_short, down_short) = vault.pair_position(*key);
     vault.pricing.get_redeem_payout(oracle, key, quantity, up_short, down_short, clock)
+}
+
+/// Settle a market after expiry. Updates vault accounting to reflect actual outcome.
+/// Idempotent - calling multiple times has no effect after first call.
+public(package) fun settle<Underlying, Quote>(
+    vault: &mut Vault<Quote>,
+    oracle: &Oracle<Underlying>,
+    key: MarketKey,
+    clock: &Clock,
+) {
+    assert!(oracle.is_settled(), EMarketNotSettled);
+
+    // Get old max/min before mark_to_market updates unrealized values
+    let (old_max, old_min) = vault.exposure(key);
+
+    // mark_to_market uses get_quote which returns settlement prices (100%/0%) when settled
+    vault.mark_to_market(oracle, key, clock);
+
+    // Update max/min liability: after settlement, actual = winning side's quantity
+    let settlement_price = oracle.settlement_price().destroy_some();
+    let up_wins = settlement_price > key.strike();
+    let (up_qty, down_qty) = vault.pair_position(key);
+    let actual_liability = if (up_wins) { up_qty } else { down_qty };
+
+    vault.max_liability = vault.max_liability - old_max + actual_liability;
+    vault.min_liability = vault.min_liability - old_min + actual_liability;
 }
 
 // === Public-Package Functions ===
