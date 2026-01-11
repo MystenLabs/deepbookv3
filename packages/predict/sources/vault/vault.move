@@ -28,13 +28,21 @@ public struct PositionData has copy, drop, store {
 }
 
 public struct Vault<phantom Quote> has store {
+    /// USDC balance held by the vault
     balance: Balance<Quote>,
+    /// MarketKey -> PositionData for each short position
     positions: Table<MarketKey, PositionData>,
+    /// Tracks LP shares and supply timestamps
     supply_manager: SupplyManager,
+    /// Maximum possible payout if worst-case outcome occurs
     max_liability: u64,
+    /// Minimum possible payout if best-case outcome occurs
     min_liability: u64,
+    /// Current mark-to-market liability (cost to close all positions)
     unrealized_liability: u64,
+    /// Total premiums collected from traders
     cumulative_premiums: u64,
+    /// Total payouts made to traders
     cumulative_payouts: u64,
 }
 
@@ -266,5 +274,5 @@ fun add_position_entry<Quote>(vault: &mut Vault<Quote>, key: MarketKey) {
                     unrealized_cost: 0,
                 },
             );
-    };
+    }
 }

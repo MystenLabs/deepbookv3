@@ -99,7 +99,7 @@ public(package) fun decrease_position(self: &mut PredictManager, key: MarketKey,
 fun add_position_entry(self: &mut PredictManager, key: MarketKey) {
     if (!self.positions.contains(key)) {
         self.positions.add(key, 0);
-    };
+    }
 }
 
 fun new_predict_manager(ctx: &mut TxContext): PredictManager {

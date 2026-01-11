@@ -137,5 +137,5 @@ public(package) fun withdraw(
 fun add_supply_entry(self: &mut SupplyManager, owner: address) {
     if (!self.supplies.contains(owner)) {
         self.supplies.add(owner, SupplyData { shares: 0, last_supply_ms: 0 });
-    };
+    }
 }
