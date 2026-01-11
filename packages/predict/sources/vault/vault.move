@@ -120,33 +120,6 @@ public fun get_redeem_payout<Underlying, Quote>(
     vault.pricing.get_redeem_payout(oracle, key, quantity, up_short, down_short, clock)
 }
 
-/// Settle a market after expiry. Updates vault accounting to reflect actual outcome.
-/// Idempotent - calling multiple times has no effect after first call.
-public(package) fun settle<Underlying, Quote>(
-    vault: &mut Vault<Quote>,
-    oracle: &Oracle<Underlying>,
-    key: MarketKey,
-    clock: &Clock,
-) {
-    assert!(oracle.is_settled(), EMarketNotSettled);
-
-    let (up_qty, down_qty) = vault.pair_position(key);
-    let (old_max, old_min) = if (up_qty > down_qty) { (up_qty, down_qty) } else {
-        (down_qty, up_qty)
-    };
-
-    // mark_to_market uses get_quote which returns settlement prices (100%/0%) when settled
-    vault.mark_to_market(oracle, key, clock);
-
-    // Update max/min liability: after settlement, actual = winning side's quantity
-    let settlement_price = oracle.settlement_price().destroy_some();
-    let up_wins = settlement_price > key.strike();
-    let actual_liability = if (up_wins) { up_qty } else { down_qty };
-
-    vault.max_liability = vault.max_liability + actual_liability - old_max;
-    vault.min_liability = vault.min_liability + actual_liability - old_min;
-}
-
 // === Public-Package Functions ===
 
 public(package) fun new<Quote>(ctx: &mut TxContext): Vault<Quote> {
@@ -228,6 +201,33 @@ public(package) fun redeem<Underlying, Quote>(
     vault.balance.split(payout)
 }
 
+/// Settle a market after expiry. Updates vault accounting to reflect actual outcome.
+/// Idempotent - calling multiple times has no effect after first call.
+public(package) fun settle<Underlying, Quote>(
+    vault: &mut Vault<Quote>,
+    oracle: &Oracle<Underlying>,
+    key: MarketKey,
+    clock: &Clock,
+) {
+    assert!(oracle.is_settled(), EMarketNotSettled);
+
+    // mark_to_market uses get_quote which returns settlement prices (100%/0%) when settled
+    vault.mark_to_market(oracle, key, clock);
+
+    let (up_qty, down_qty) = vault.pair_position(key);
+    let (old_max, old_min) = if (up_qty > down_qty) { (up_qty, down_qty) } else {
+        (down_qty, up_qty)
+    };
+
+    // Update max/min liability: after settlement, actual = winning side's quantity
+    let settlement_price = oracle.settlement_price().destroy_some();
+    let up_wins = settlement_price > key.strike();
+    let actual_liability = if (up_wins) { up_qty } else { down_qty };
+
+    vault.max_liability = vault.max_liability + actual_liability - old_max;
+    vault.min_liability = vault.min_liability + actual_liability - old_min;
+}
+
 // === Private Functions ===
 
 /// Returns (max_exposure, min_exposure) for the strike.
@@ -272,6 +272,20 @@ fun update_unrealized_liability<Quote>(
     vault.unrealized_liability = vault.unrealized_liability + new_unrealized - old_unrealized;
 }
 
+fun add_position<Quote>(vault: &mut Vault<Quote>, key: MarketKey, quantity: u64, premium: u64) {
+    vault.add_position_entry(key);
+    let data = &mut vault.positions[key];
+    data.quantity = data.quantity + quantity;
+    data.premiums = data.premiums + premium;
+}
+
+fun remove_position<Quote>(vault: &mut Vault<Quote>, key: MarketKey, quantity: u64, payout: u64) {
+    assert!(vault.positions.contains(key), ENoShortPosition);
+    let data = &mut vault.positions[key];
+    data.quantity = data.quantity - quantity;
+    data.payouts = data.payouts + payout;
+}
+
 fun add_position_entry<Quote>(vault: &mut Vault<Quote>, key: MarketKey) {
     if (!vault.positions.contains(key)) {
         vault
@@ -286,18 +300,4 @@ fun add_position_entry<Quote>(vault: &mut Vault<Quote>, key: MarketKey) {
                 },
             );
     };
-}
-
-fun add_position<Quote>(vault: &mut Vault<Quote>, key: MarketKey, quantity: u64, premium: u64) {
-    vault.add_position_entry(key);
-    let data = &mut vault.positions[key];
-    data.quantity = data.quantity + quantity;
-    data.premiums = data.premiums + premium;
-}
-
-fun remove_position<Quote>(vault: &mut Vault<Quote>, key: MarketKey, quantity: u64, payout: u64) {
-    assert!(vault.positions.contains(key), ENoShortPosition);
-    let data = &mut vault.positions[key];
-    data.quantity = data.quantity - quantity;
-    data.payouts = data.payouts + payout;
 }
