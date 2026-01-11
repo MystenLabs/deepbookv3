@@ -139,8 +139,8 @@ public(package) fun settle<Underlying, Quote>(
     let (up_qty, down_qty) = vault.pair_position(key);
     let actual_liability = if (up_wins) { up_qty } else { down_qty };
 
-    vault.max_liability = vault.max_liability - old_max + actual_liability;
-    vault.min_liability = vault.min_liability - old_min + actual_liability;
+    vault.max_liability = vault.max_liability + actual_liability - old_max;
+    vault.min_liability = vault.min_liability + actual_liability - old_min;
 }
 
 // === Public-Package Functions ===
@@ -182,8 +182,8 @@ public(package) fun mint<Underlying, Quote>(
     let (old_max, old_min) = vault.exposure(key);
     vault.add_position(key, quantity, cost);
     let (new_max, new_min) = vault.exposure(key);
-    vault.max_liability = vault.max_liability - old_max + new_max;
-    vault.min_liability = vault.min_liability - old_min + new_min;
+    vault.max_liability = vault.max_liability + new_max - old_max;
+    vault.min_liability = vault.min_liability + new_min - old_min;
 
     // Step 2: Mark-to-market using POST-TRADE exposure
     vault.mark_to_market(oracle, key, clock);
@@ -215,8 +215,8 @@ public(package) fun redeem<Underlying, Quote>(
     let (old_max, old_min) = vault.exposure(key);
     vault.remove_position(key, quantity, payout);
     let (new_max, new_min) = vault.exposure(key);
-    vault.max_liability = vault.max_liability - old_max + new_max;
-    vault.min_liability = vault.min_liability - old_min + new_min;
+    vault.max_liability = vault.max_liability + new_max - old_max;
+    vault.min_liability = vault.min_liability + new_min - old_min;
 
     // Step 2: Mark-to-market using POST-TRADE exposure
     vault.mark_to_market(oracle, key, clock);
@@ -263,7 +263,7 @@ fun mark_to_market<Underlying, Quote>(
     };
 
     // Update aggregate
-    vault.unrealized_liability = vault.unrealized_liability - old_up - old_down + new_up + new_down;
+    vault.unrealized_liability = vault.unrealized_liability + new_up + new_down - old_up - old_down;
 }
 
 fun add_position<Quote>(vault: &mut Vault<Quote>, key: MarketKey, quantity: u64, premium: u64) {
