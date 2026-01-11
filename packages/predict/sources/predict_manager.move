@@ -81,12 +81,9 @@ public(package) fun new(ctx: &mut TxContext): ID {
 
 /// Increase a position quantity. Called when user buys a position.
 public(package) fun increase_position(self: &mut PredictManager, key: MarketKey, quantity: u64) {
-    if (self.positions.contains(key)) {
-        let current = &mut self.positions[key];
-        *current = *current + quantity;
-    } else {
-        self.positions.add(key, quantity);
-    }
+    self.add_position_entry(key);
+    let current = &mut self.positions[key];
+    *current = *current + quantity;
 }
 
 /// Decrease a position quantity. Called when user sells a position.
@@ -98,6 +95,12 @@ public(package) fun decrease_position(self: &mut PredictManager, key: MarketKey,
 }
 
 // === Private Functions ===
+
+fun add_position_entry(self: &mut PredictManager, key: MarketKey) {
+    if (!self.positions.contains(key)) {
+        self.positions.add(key, 0);
+    };
+}
 
 fun new_predict_manager(ctx: &mut TxContext): PredictManager {
     let id = object::new(ctx);
