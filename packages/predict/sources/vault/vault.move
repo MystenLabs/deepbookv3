@@ -64,8 +64,9 @@ public fun cumulative_payouts<Quote>(vault: &Vault<Quote>): u64 {
     vault.cumulative_payouts
 }
 
-public fun shares<Quote>(vault: &Vault<Quote>, owner: address): u64 {
-    vault.supply_manager.shares(owner)
+/// Returns (shares, last_supply_ms) for an owner.
+public fun supply_data<Quote>(vault: &Vault<Quote>, owner: address): (u64, u64) {
+    vault.supply_manager.supply_data(owner)
 }
 
 public fun total_shares<Quote>(vault: &Vault<Quote>): u64 {

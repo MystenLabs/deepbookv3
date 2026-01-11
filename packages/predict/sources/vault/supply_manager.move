@@ -34,24 +34,18 @@ public struct SupplyManager has store {
 
 // === Public Functions ===
 
-public fun shares(self: &SupplyManager, owner: address): u64 {
+/// Returns (shares, last_supply_ms) for an owner.
+public fun supply_data(self: &SupplyManager, owner: address): (u64, u64) {
     if (self.supplies.contains(owner)) {
-        self.supplies[owner].shares
+        let data = self.supplies[owner];
+        (data.shares, data.last_supply_ms)
     } else {
-        0
+        (0, 0)
     }
 }
 
 public fun total_shares(self: &SupplyManager): u64 {
     self.total_shares
-}
-
-public fun last_supply_ms(self: &SupplyManager, owner: address): u64 {
-    if (self.supplies.contains(owner)) {
-        self.supplies[owner].last_supply_ms
-    } else {
-        0
-    }
 }
 
 // === Public-Package Functions ===
@@ -89,23 +83,12 @@ public(package) fun supply(
 
     // Update supply data
     let depositor = ctx.sender();
-    let now = clock.timestamp_ms();
+    self.add_supply_entry(depositor);
 
-    if (self.supplies.contains(depositor)) {
-        let data = &mut self.supplies[depositor];
-        data.shares = data.shares + shares_to_mint;
-        data.last_supply_ms = now;
-    } else {
-        self
-            .supplies
-            .add(
-                depositor,
-                SupplyData {
-                    shares: shares_to_mint,
-                    last_supply_ms: now,
-                },
-            );
-    };
+    let data = &mut self.supplies[depositor];
+    data.shares = data.shares + shares_to_mint;
+    data.last_supply_ms = clock.timestamp_ms();
+
     self.total_shares = self.total_shares + shares_to_mint;
 
     shares_to_mint
@@ -147,4 +130,12 @@ public(package) fun withdraw(
     self.total_shares = self.total_shares - shares;
 
     amount
+}
+
+// === Private Functions ===
+
+fun add_supply_entry(self: &mut SupplyManager, owner: address) {
+    if (!self.supplies.contains(owner)) {
+        self.supplies.add(owner, SupplyData { shares: 0, last_supply_ms: 0 });
+    };
 }
