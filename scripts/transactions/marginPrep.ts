@@ -26,41 +26,110 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
 
   const tx = new Transaction();
 
-  // 1. Enable Margin package in core deepbook
-  dbClient.deepBookAdmin.authorizeMarginApp()(tx);
+  // // 1. Enable Margin package in core deepbook
+  // dbClient.deepBookAdmin.authorizeMarginApp()(tx);
 
-  // 2. PauseCap distribution
-  const pauseCap1 = dbClient.marginAdmin.mintPauseCap()(tx);
-  const pauseCap2 = dbClient.marginAdmin.mintPauseCap()(tx);
-  const pauseCap3 = dbClient.marginAdmin.mintPauseCap()(tx);
-  tx.transferObjects(
-    [pauseCap1],
-    "0x517f822cd3c45a3ac3dbfab73c060d9a0d96bec7fffa204c341e7e0877c9787c"
-  );
-  tx.transferObjects(
-    [pauseCap2],
-    "0x1b71380623813c8aee2ab9a68d96c19d0e45fc872e8c22dd70dfedfb76cbb192"
-  );
-  tx.transferObjects(
-    [pauseCap3],
-    "0x7da4267928e568da4f64f5a80f5b63680f3c2e008f4f96f475b60ff1c48c0dcf"
-  );
+  // // 2. PauseCap distribution
+  // const pauseCap1 = dbClient.marginAdmin.mintPauseCap()(tx);
+  // const pauseCap2 = dbClient.marginAdmin.mintPauseCap()(tx);
+  // const pauseCap3 = dbClient.marginAdmin.mintPauseCap()(tx);
+  // tx.transferObjects(
+  //   [pauseCap1],
+  //   "0x517f822cd3c45a3ac3dbfab73c060d9a0d96bec7fffa204c341e7e0877c9787c"
+  // );
+  // tx.transferObjects(
+  //   [pauseCap2],
+  //   "0x1b71380623813c8aee2ab9a68d96c19d0e45fc872e8c22dd70dfedfb76cbb192"
+  // );
+  // tx.transferObjects(
+  //   [pauseCap3],
+  //   "0x7da4267928e568da4f64f5a80f5b63680f3c2e008f4f96f475b60ff1c48c0dcf"
+  // );
 
-  // 3. Mint maintainerCap
-  const maintainerCap = dbClient.marginAdmin.mintMaintainerCap()(tx);
-  tx.transferObjects([maintainerCap], adminCapOwner[env]);
+  // // 3. Mint maintainerCap
+  // const maintainerCap = dbClient.marginAdmin.mintMaintainerCap()(tx);
+  // tx.transferObjects([maintainerCap], adminCapOwner[env]);
 
-  // 4. Pyth Config
-  const pythConfig = dbClient.marginAdmin.newPythConfig(
-    [
-      { coinKey: "SUI", maxConfBps: 300, maxEwmaDifferenceBps: 1500 }, // maxConfBps: 3%, maxEwmaDifferenceBps: 15%
-      { coinKey: "USDC", maxConfBps: 100, maxEwmaDifferenceBps: 500 }, // maxConfBps: 1%, maxEwmaDifferenceBps: 5%
-      { coinKey: "DEEP", maxConfBps: 500, maxEwmaDifferenceBps: 3000 }, // maxConfBps: 5%, maxEwmaDifferenceBps: 30%
-      { coinKey: "WAL", maxConfBps: 500, maxEwmaDifferenceBps: 3000 }, // maxConfBps: 5%, maxEwmaDifferenceBps: 30%
-    ],
-    30 // maxAgeSeconds: 30 seconds
+  // // 4. Pyth Config
+  // const pythConfig = dbClient.marginAdmin.newPythConfig(
+  //   [
+  //     { coinKey: "SUI", maxConfBps: 300, maxEwmaDifferenceBps: 1500 }, // maxConfBps: 3%, maxEwmaDifferenceBps: 15%
+  //     { coinKey: "USDC", maxConfBps: 100, maxEwmaDifferenceBps: 500 }, // maxConfBps: 1%, maxEwmaDifferenceBps: 5%
+  //     { coinKey: "DEEP", maxConfBps: 500, maxEwmaDifferenceBps: 3000 }, // maxConfBps: 5%, maxEwmaDifferenceBps: 30%
+  //     { coinKey: "WAL", maxConfBps: 500, maxEwmaDifferenceBps: 3000 }, // maxConfBps: 5%, maxEwmaDifferenceBps: 30%
+  //   ],
+  //   30 // maxAgeSeconds: 30 seconds
+  // )(tx);
+  // dbClient.marginAdmin.addConfig(pythConfig)(tx);
+
+  // 5. Create margin pools
+  const USDCprotocolConfig = dbClient.marginMaintainer.newProtocolConfig(
+    "USDC",
+    {
+      supplyCap: 1000000,
+      maxUtilizationRate: 0.95,
+      referralSpread: 0.1,
+      minBorrow: 0.1,
+    },
+    {
+      baseRate: 0.045,
+      baseSlope: 0.058,
+      optimalUtilization: 0.9,
+      excessSlope: 16,
+    }
   )(tx);
-  dbClient.marginAdmin.addConfig(pythConfig)(tx);
+  dbClient.marginMaintainer.createMarginPool("USDC", USDCprotocolConfig)(tx);
+
+  const SUIprotocolConfig = dbClient.marginMaintainer.newProtocolConfig(
+    "SUI",
+    {
+      supplyCap: 1000000,
+      maxUtilizationRate: 0.95,
+      referralSpread: 0.1,
+      minBorrow: 0.1,
+    },
+    {
+      baseRate: 0.03,
+      baseSlope: 0.09,
+      optimalUtilization: 0.75,
+      excessSlope: 3,
+    }
+  )(tx);
+  dbClient.marginMaintainer.createMarginPool("SUI", SUIprotocolConfig)(tx);
+
+  const DEEPprotocolConfig = dbClient.marginMaintainer.newProtocolConfig(
+    "DEEP",
+    {
+      supplyCap: 1000000,
+      maxUtilizationRate: 0.95,
+      referralSpread: 0.1,
+      minBorrow: 0.1,
+    },
+    {
+      baseRate: 0.1,
+      baseSlope: 0.059,
+      optimalUtilization: 0.85,
+      excessSlope: 10,
+    }
+  )(tx);
+  dbClient.marginMaintainer.createMarginPool("DEEP", DEEPprotocolConfig)(tx);
+
+  const WALprotocolConfig = dbClient.marginMaintainer.newProtocolConfig(
+    "WAL",
+    {
+      supplyCap: 1000000,
+      maxUtilizationRate: 0.95,
+      referralSpread: 0.1,
+      minBorrow: 0.00001,
+    },
+    {
+      baseRate: 0.1,
+      baseSlope: 0.177,
+      optimalUtilization: 0.85,
+      excessSlope: 6,
+    }
+  )(tx);
+  dbClient.marginMaintainer.createMarginPool("WAL", WALprotocolConfig)(tx);
 
   let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
