@@ -21,7 +21,8 @@ const EInsufficientBalance: u64 = 1;
 // === Structs ===
 
 public struct PositionData has copy, drop, store {
-    quantity: u64,
+    qty_minted: u64,
+    qty_redeemed: u64,
     premiums: u64,
     payouts: u64,
     unrealized_cost: u64,
@@ -81,20 +82,13 @@ public fun total_shares<Quote>(vault: &Vault<Quote>): u64 {
     vault.supply_manager.total_shares()
 }
 
+/// Returns net position (qty_minted - qty_redeemed).
 public fun position<Quote>(vault: &Vault<Quote>, key: MarketKey): u64 {
     if (vault.positions.contains(key)) {
-        vault.positions[key].quantity
+        let data = vault.positions[key];
+        data.qty_minted - data.qty_redeemed
     } else {
         0
-    }
-}
-
-public fun position_data<Quote>(vault: &Vault<Quote>, key: MarketKey): (u64, u64, u64, u64) {
-    if (vault.positions.contains(key)) {
-        let data = vault.positions[key];
-        (data.quantity, data.premiums, data.payouts, data.unrealized_cost)
-    } else {
-        (0, 0, 0, 0)
     }
 }
 
@@ -256,14 +250,14 @@ fun exposure<Quote>(vault: &Vault<Quote>, key: MarketKey): (u64, u64) {
 fun add_position<Quote>(vault: &mut Vault<Quote>, key: MarketKey, quantity: u64, premium: u64) {
     vault.add_position_entry(key);
     let data = &mut vault.positions[key];
-    data.quantity = data.quantity + quantity;
+    data.qty_minted = data.qty_minted + quantity;
     data.premiums = data.premiums + premium;
 }
 
 fun remove_position<Quote>(vault: &mut Vault<Quote>, key: MarketKey, quantity: u64, payout: u64) {
     assert!(vault.positions.contains(key), ENoShortPosition);
     let data = &mut vault.positions[key];
-    data.quantity = data.quantity - quantity;
+    data.qty_redeemed = data.qty_redeemed + quantity;
     data.payouts = data.payouts + payout;
 }
 
@@ -274,7 +268,8 @@ fun add_position_entry<Quote>(vault: &mut Vault<Quote>, key: MarketKey) {
             .add(
                 key,
                 PositionData {
-                    quantity: 0,
+                    qty_minted: 0,
+                    qty_redeemed: 0,
                     premiums: 0,
                     payouts: 0,
                     unrealized_cost: 0,
