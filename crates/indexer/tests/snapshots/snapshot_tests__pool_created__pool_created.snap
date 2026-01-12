@@ -1,0 +1,57 @@
+---
+source: crates/indexer/tests/snapshot_tests.rs
+expression: rows
+---
+[
+  {
+    "event_digest": "99Z2f9MPDsRDXs5wDLZHF4ZuuiE3z31VFHz77Hfuvkmq0",
+    "digest": "99Z2f9MPDsRDXs5wDLZHF4ZuuiE3z31VFHz77Hfuvkmq",
+    "sender": "0xd0ec0b201de6b4e7f425918bbd7151c37fc1b06c59b3961a2a00db74f6ea865e",
+    "checkpoint": "231798277",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1767732971503",
+    "package": "0x00c1a56ec8c4c623a848b2ed2f03d23a25d17570b670c22106f336eb933785cc",
+    "pool_id": "0xf5142aafa24866107df628bf92d0358c7da6acc46c2f10951690fd2b8570f117",
+    "taker_fee": "1000000",
+    "maker_fee": "500000",
+    "tick_size": "10000000",
+    "lot_size": "1000",
+    "min_size": "1000",
+    "whitelisted_pool": false,
+    "treasury_address": "0x37f187e1e54e9c9b8c78b6c46a7281f644ebc62e75493623edcaa6d1dfcf64d2"
+  },
+  {
+    "event_digest": "9EhhYMmFPYoq5kvKMYraznXEhgmcXjmjNvXeNxXoR2wK0",
+    "digest": "9EhhYMmFPYoq5kvKMYraznXEhgmcXjmjNvXeNxXoR2wK",
+    "sender": "0xbd1d25f49cc9b65f1e41d6c264ad0e065923de7ce6fd8b86d87d25c0a58742b9",
+    "checkpoint": "67459304",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1728568237549",
+    "package": "0x2c8d603bc51326b8c13cef9dd07031a408a48dddb541963357661df5d3204809",
+    "pool_id": "0xe9aecf5859310f8b596fbe8488222a7fb15a55003455c9f42d1b60fab9cca9ba",
+    "taker_fee": "0",
+    "maker_fee": "0",
+    "tick_size": "1000000000",
+    "lot_size": "1000000",
+    "min_size": "10000000",
+    "whitelisted_pool": true,
+    "treasury_address": "0xbd1d25f49cc9b65f1e41d6c264ad0e065923de7ce6fd8b86d87d25c0a58742b9"
+  },
+  {
+    "event_digest": "9EhhYMmFPYoq5kvKMYraznXEhgmcXjmjNvXeNxXoR2wK1",
+    "digest": "9EhhYMmFPYoq5kvKMYraznXEhgmcXjmjNvXeNxXoR2wK",
+    "sender": "0xbd1d25f49cc9b65f1e41d6c264ad0e065923de7ce6fd8b86d87d25c0a58742b9",
+    "checkpoint": "67459304",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1728568237549",
+    "package": "0x2c8d603bc51326b8c13cef9dd07031a408a48dddb541963357661df5d3204809",
+    "pool_id": "0xde096bb2c59538a25c89229127fe0bc8b63ecdbe52a3693099cc40a1d8a2cfd4",
+    "taker_fee": "0",
+    "maker_fee": "0",
+    "tick_size": "1000000",
+    "lot_size": "1000000",
+    "min_size": "10000000",
+    "whitelisted_pool": true,
+    "treasury_address": "0xbd1d25f49cc9b65f1e41d6c264ad0e065923de7ce6fd8b86d87d25c0a58742b9"
+  }
+]

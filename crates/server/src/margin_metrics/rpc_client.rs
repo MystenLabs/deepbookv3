@@ -111,7 +111,7 @@ impl MarginRpcClient {
         let pool_input = CallArg::Object(ObjectArg::SharedObject {
             id: pool_id,
             initial_shared_version,
-            mutable: false,
+            mutability: sui_types::transaction::SharedObjectMutability::Immutable,
         });
         ptb.input(pool_input)?;
 
@@ -120,7 +120,7 @@ impl MarginRpcClient {
         let clock_input = CallArg::Object(ObjectArg::SharedObject {
             id: clock_id,
             initial_shared_version: SequenceNumber::from_u64(1),
-            mutable: false,
+            mutability: sui_types::transaction::SharedObjectMutability::Immutable,
         });
         ptb.input(clock_input)?;
 

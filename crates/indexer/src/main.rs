@@ -46,12 +46,13 @@ use deepbook_indexer::DeepbookEnv;
 use deepbook_schema::MIGRATIONS;
 use prometheus::Registry;
 use std::net::SocketAddr;
-use sui_indexer_alt_framework::ingestion::ClientArgs;
+use sui_indexer_alt_framework::ingestion::ingestion_client::IngestionClientArgs;
+use sui_indexer_alt_framework::ingestion::{ClientArgs, IngestionConfig};
 use sui_indexer_alt_framework::{Indexer, IndexerArgs};
 use sui_indexer_alt_metrics::db::DbConnectionStatsCollector;
 use sui_indexer_alt_metrics::{MetricsArgs, MetricsService};
 use sui_pg_db::{Db, DbArgs};
-use tokio_util::sync::CancellationToken;
+
 use url::Url;
 
 #[derive(Debug, Clone, clap::ValueEnum)]
@@ -100,14 +101,9 @@ async fn main() -> Result<(), anyhow::Error> {
         packages,
     } = Args::parse();
 
-    let cancel = CancellationToken::new();
     let registry = Registry::new_custom(Some("deepbook".into()), None)
         .context("Failed to create Prometheus registry.")?;
-    let metrics = MetricsService::new(
-        MetricsArgs { metrics_address },
-        registry.clone(),
-        cancel.child_token(),
-    );
+    let metrics = MetricsService::new(MetricsArgs { metrics_address }, registry.clone());
 
     // Prepare the store for the indexer
     let store = Db::for_write(database_url, db_args)
@@ -128,16 +124,18 @@ async fn main() -> Result<(), anyhow::Error> {
         store,
         indexer_args,
         ClientArgs {
-            remote_store_url: Some(env.remote_store_url()),
-            local_ingestion_path: None,
-            rpc_api_url: None,
-            rpc_username: None,
-            rpc_password: None,
+            ingestion: IngestionClientArgs {
+                remote_store_url: Some(env.remote_store_url()),
+                local_ingestion_path: None,
+                rpc_api_url: None,
+                rpc_username: None,
+                rpc_password: None,
+            },
+            streaming: Default::default(),
         },
-        Default::default(),
+        IngestionConfig::default(),
         None,
         metrics.registry(),
-        cancel.clone(),
     )
     .await?;
 
@@ -263,12 +261,9 @@ async fn main() -> Result<(), anyhow::Error> {
         }
     }
 
-    let h_indexer = indexer.run().await?;
-    let h_metrics = metrics.run().await?;
+    let s_indexer = indexer.run().await?;
+    let s_metrics = metrics.run().await?;
 
-    let _ = h_indexer.await;
-    cancel.cancel();
-    let _ = h_metrics.await;
-
+    s_indexer.attach(s_metrics).main().await?;
     Ok(())
 }

@@ -19,18 +19,19 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 url.workspace = true
 prometheus.workspace = true
+sui-futures.workspace = true
 sui-types.workspace = true
-tokio-util.workspace = true
 sui-indexer-alt-metrics.workspace = true
 telemetry-subscribers.workspace = true
 axum = { version = "0.7", features = ["json"] }
-sui-json-rpc-types = { git = "https://github.com/MystenLabs/sui.git", rev = "a0545a819fba114903c880f928339b5cd8805a4a" }
-sui-pg-db = { git = "https://github.com/MystenLabs/sui.git", rev = "a0545a819fba114903c880f928339b5cd8805a4a" }
+sui-json-rpc-types = { git = "https://github.com/MystenLabs/sui.git", rev = "a14d9e8ddadfcea837de46b43d0b72a289320afb" }
+sui-pg-db.workspace = true
 tower-http = { version = "0.5", features = ["cors"] }
-sui-sdk = { git = "https://github.com/MystenLabs/sui.git", rev = "a0545a819fba114903c880f928339b5cd8805a4a" }
+sui-sdk = { git = "https://github.com/MystenLabs/sui.git", rev = "a14d9e8ddadfcea837de46b43d0b72a289320afb" }
 bigdecimal = "0.4.9"
 chrono = "0.4.42"
 thiserror = "1.0"
+tokio-util = "0.7"
 
 [[bin]]
 name = "deepbook-server"

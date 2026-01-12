@@ -477,7 +477,7 @@ fun remove_proposal_vote_e() {
     assert!(trade_params.maker_fee() == 200000, 0);
     assert!(trade_params.stake_required() == 10000, 0);
 
-    assert!(gov.proposals().length() == (100 as u64), 0);
+    assert!(gov.proposals().length() == 100u64, 0);
 
     // Charlie makes a new proposal, proposal ALICE should be removed, not BOB
     gov.adjust_vote(

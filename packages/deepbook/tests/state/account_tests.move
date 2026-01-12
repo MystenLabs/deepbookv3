@@ -59,7 +59,7 @@ fun process_maker_fill_ok() {
     assert_eq!(owed, balances::new(0, 0, 0));
     assert!(account.total_volume() == 100, 0);
     assert!(account.open_orders().length() == 1, 0);
-    assert!(account.open_orders().contains(&(1 as u128)), 0);
+    assert!(account.open_orders().contains(&1u128), 0);
 
     account.add_order(2);
     let fill = fill::new(
@@ -84,8 +84,8 @@ fun process_maker_fill_ok() {
     assert_eq!(owed, balances::new(0, 0, 0));
     assert!(account.total_volume() == 200, 0);
     assert!(account.open_orders().length() == 1, 0);
-    assert!(account.open_orders().contains(&(1 as u128)), 0);
-    assert!(!account.open_orders().contains(&(2 as u128)), 0);
+    assert!(account.open_orders().contains(&1u128), 0);
+    assert!(!account.open_orders().contains(&2u128), 0);
 
     account.add_order(3);
     let fill = fill::new(
@@ -110,9 +110,9 @@ fun process_maker_fill_ok() {
     assert_eq!(owed, balances::new(0, 0, 0));
     assert!(account.total_volume() == 200, 0);
     assert!(account.open_orders().length() == 1, 0);
-    assert!(account.open_orders().contains(&(1 as u128)), 0);
-    assert!(!account.open_orders().contains(&(2 as u128)), 0);
-    assert!(!account.open_orders().contains(&(3 as u128)), 0);
+    assert!(account.open_orders().contains(&1u128), 0);
+    assert!(!account.open_orders().contains(&2u128), 0);
+    assert!(!account.open_orders().contains(&3u128), 0);
 
     account.add_order(4);
     let fill = fill::new(
@@ -137,10 +137,10 @@ fun process_maker_fill_ok() {
     assert_eq!(owed, balances::new(0, 0, 0));
     assert!(account.total_volume() == 300, 0);
     assert!(account.open_orders().length() == 1, 0);
-    assert!(account.open_orders().contains(&(1 as u128)), 0);
-    assert!(!account.open_orders().contains(&(2 as u128)), 0);
-    assert!(!account.open_orders().contains(&(3 as u128)), 0);
-    assert!(!account.open_orders().contains(&(4 as u128)), 0);
+    assert!(account.open_orders().contains(&1u128), 0);
+    assert!(!account.open_orders().contains(&2u128), 0);
+    assert!(!account.open_orders().contains(&3u128), 0);
+    assert!(!account.open_orders().contains(&4u128), 0);
 
     test.end();
 }

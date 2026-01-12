@@ -1,11 +1,11 @@
 use crate::handlers::{is_deepbook_tx, try_extract_move_call_package};
-use crate::models::deepbook::pool::DeepBurned as DeepBurnedEvent;
+use crate::models::deepbook::pool::PoolCreated as PoolCreatedEvent;
 use crate::models::sui::sui::SUI;
 use crate::traits::MoveStruct;
 use crate::DeepbookEnv;
 use async_trait::async_trait;
-use deepbook_schema::models::DeepBurned;
-use deepbook_schema::schema::deep_burned;
+use deepbook_schema::models::PoolCreated;
+use deepbook_schema::schema::pool_created;
 use diesel_async::RunQueryDsl;
 use std::sync::Arc;
 use sui_indexer_alt_framework::pipeline::Processor;
@@ -15,20 +15,20 @@ use sui_indexer_alt_framework::types::full_checkpoint_content::Checkpoint;
 use sui_types::transaction::TransactionDataAPI;
 use tracing::debug;
 
-pub struct DeepBurnedHandler {
+pub struct PoolCreatedHandler {
     env: DeepbookEnv,
 }
 
-impl DeepBurnedHandler {
+impl PoolCreatedHandler {
     pub fn new(env: DeepbookEnv) -> Self {
         Self { env }
     }
 }
 
 #[async_trait]
-impl Processor for DeepBurnedHandler {
-    const NAME: &'static str = "deep_burned";
-    type Value = DeepBurned;
+impl Processor for PoolCreatedHandler {
+    const NAME: &'static str = "pool_created";
+    type Value = PoolCreated;
 
     async fn process(&self, checkpoint: &Arc<Checkpoint>) -> anyhow::Result<Vec<Self::Value>> {
         let mut results = vec![];
@@ -47,14 +47,12 @@ impl Processor for DeepBurnedHandler {
             let digest = tx.transaction.digest();
 
             for (index, ev) in events.data.iter().enumerate() {
-                // Match base type (ignore type parameters)
-                if !DeepBurnedEvent::<SUI, SUI>::matches_event_type(&ev.type_, self.env) {
+                if !PoolCreatedEvent::<SUI, SUI>::matches_event_type(&ev.type_, self.env) {
                     continue;
                 }
 
-                // Can use <SUI,SUI> since it doesn't affect deserialization
-                let event: DeepBurnedEvent<SUI, SUI> = bcs::from_bytes(&ev.contents)?;
-                let data = DeepBurned {
+                let event: PoolCreatedEvent<SUI, SUI> = bcs::from_bytes(&ev.contents)?;
+                let data = PoolCreated {
                     digest: digest.to_string(),
                     event_digest: format!("{digest}{index}"),
                     sender: tx.transaction.sender().to_string(),
@@ -62,9 +60,15 @@ impl Processor for DeepBurnedHandler {
                     checkpoint_timestamp_ms,
                     package: package.clone(),
                     pool_id: event.pool_id.to_string(),
-                    burned_amount: event.deep_burned as i64,
+                    taker_fee: event.taker_fee as i64,
+                    maker_fee: event.maker_fee as i64,
+                    tick_size: event.tick_size as i64,
+                    lot_size: event.lot_size as i64,
+                    min_size: event.min_size as i64,
+                    whitelisted_pool: event.whitelisted_pool,
+                    treasury_address: event.treasury_address.to_string(),
                 };
-                debug!("Observed Deepbook DeepBurned {:?}", data);
+                debug!("Observed Deepbook PoolCreated {:?}", data);
                 results.push(data);
             }
         }
@@ -73,12 +77,12 @@ impl Processor for DeepBurnedHandler {
 }
 
 #[async_trait]
-impl Handler for DeepBurnedHandler {
+impl Handler for PoolCreatedHandler {
     async fn commit<'a>(
         values: &[Self::Value],
         conn: &mut Connection<'a>,
     ) -> anyhow::Result<usize> {
-        Ok(diesel::insert_into(deep_burned::table)
+        Ok(diesel::insert_into(pool_created::table)
             .values(values)
             .on_conflict_do_nothing()
             .execute(conn)

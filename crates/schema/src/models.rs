@@ -27,6 +27,7 @@ use crate::schema::{
     order_fills,
     order_updates,
     pause_cap_updated,
+    pool_created,
     pool_prices,
     pools,
     proposals,
@@ -241,6 +242,25 @@ pub struct DeepBurned {
     pub package: String,
     pub pool_id: String,
     pub burned_amount: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = pool_created, primary_key(event_digest))]
+pub struct PoolCreated {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub taker_fee: i64,
+    pub maker_fee: i64,
+    pub tick_size: i64,
+    pub lot_size: i64,
+    pub min_size: i64,
+    pub whitelisted_pool: bool,
+    pub treasury_address: String,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]

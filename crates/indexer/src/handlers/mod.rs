@@ -1,6 +1,9 @@
 use crate::DeepbookEnv;
 use std::sync::Arc;
-use sui_types::full_checkpoint_content::{CheckpointData, CheckpointTransaction};
+use sui_indexer_alt_framework::types::full_checkpoint_content::{
+    Checkpoint, ExecutedTransaction, ObjectSet,
+};
+use sui_types::effects::TransactionEffectsAPI;
 use sui_types::transaction::{Command, TransactionDataAPI};
 
 /// Captures common transaction metadata for event processing.
@@ -15,12 +18,12 @@ pub struct EventMeta {
 }
 
 impl EventMeta {
-    pub fn from_checkpoint_tx(checkpoint: &CheckpointData, tx: &CheckpointTransaction) -> Self {
+    pub fn from_checkpoint_tx(checkpoint: &Checkpoint, tx: &ExecutedTransaction) -> Self {
         Self {
-            digest: tx.transaction.digest().to_string().into(),
-            sender: tx.transaction.sender_address().to_string().into(),
-            checkpoint: checkpoint.checkpoint_summary.sequence_number as i64,
-            checkpoint_timestamp_ms: checkpoint.checkpoint_summary.timestamp_ms as i64,
+            digest: tx.effects.transaction_digest().to_string().into(),
+            sender: tx.transaction.sender().to_string().into(),
+            checkpoint: checkpoint.summary.sequence_number as i64,
+            checkpoint_timestamp_ms: checkpoint.summary.timestamp_ms as i64,
             package: try_extract_move_call_package(tx).unwrap_or_default().into(),
             event_index: 0,
         }
@@ -102,20 +105,21 @@ macro_rules! define_handler {
             }
         }
 
+        #[async_trait::async_trait]
         impl sui_indexer_alt_framework::pipeline::Processor for $handler {
             const NAME: &'static str = $proc_name;
             type Value = $model;
 
-            fn process(
+            async fn process(
                 &self,
-                checkpoint: &std::sync::Arc<sui_types::full_checkpoint_content::CheckpointData>,
+                checkpoint: &std::sync::Arc<sui_indexer_alt_framework::types::full_checkpoint_content::Checkpoint>,
             ) -> anyhow::Result<Vec<Self::Value>> {
                 use $crate::handlers::{is_deepbook_tx, EventMeta};
                 use $crate::traits::MoveStruct;
 
                 let mut results = vec![];
                 for tx in &checkpoint.transactions {
-                    if !is_deepbook_tx(tx, self.env) {
+                    if !is_deepbook_tx(tx, &checkpoint.object_set, self.env) {
                         continue;
                     }
                     let Some(events) = &tx.events else { continue };
@@ -136,9 +140,7 @@ macro_rules! define_handler {
         }
 
         #[async_trait::async_trait]
-        impl sui_indexer_alt_framework::pipeline::concurrent::Handler for $handler {
-            type Store = sui_pg_db::Db;
-
+        impl sui_indexer_alt_framework::postgres::handler::Handler for $handler {
             async fn commit<'a>(
                 values: &[Self::Value],
                 conn: &mut sui_pg_db::Connection<'a>,
@@ -174,6 +176,7 @@ pub mod margin_pool_created_handler;
 pub mod order_fill_handler;
 pub mod order_update_handler;
 pub mod pause_cap_updated_handler;
+pub mod pool_created_handler;
 pub mod pool_price_handler;
 pub mod proposals_handler;
 pub mod protocol_fees_increased_handler;
@@ -186,12 +189,16 @@ pub mod supply_referral_minted_handler;
 pub mod trade_params_update_handler;
 pub mod vote_handler;
 
-pub(crate) fn is_deepbook_tx(tx: &CheckpointTransaction, env: DeepbookEnv) -> bool {
+pub(crate) fn is_deepbook_tx(
+    tx: &ExecutedTransaction,
+    checkpoint_objects: &ObjectSet,
+    env: DeepbookEnv,
+) -> bool {
     let deepbook_addresses = env.package_addresses();
     let deepbook_packages = env.package_ids();
 
     // Check input objects against all known package versions
-    let has_deepbook_input = tx.input_objects.iter().any(|obj| {
+    let has_deepbook_input = tx.input_objects(checkpoint_objects).any(|obj| {
         obj.data
             .type_()
             .map(|t| deepbook_addresses.iter().any(|addr| t.address() == *addr))
@@ -209,14 +216,13 @@ pub(crate) fn is_deepbook_tx(tx: &CheckpointTransaction, env: DeepbookEnv) -> bo
                 .iter()
                 .any(|addr| event.type_.address == *addr)
         });
-
         if has_deepbook_event {
             return true;
         }
     }
 
     // Check if transaction calls a deepbook function from any version
-    let txn_kind = tx.transaction.transaction_data().kind();
+    let txn_kind = tx.transaction.kind();
     let has_deepbook_call = txn_kind.iter_commands().any(|cmd| {
         if let Command::MoveCall(move_call) = cmd {
             deepbook_packages
@@ -230,8 +236,8 @@ pub(crate) fn is_deepbook_tx(tx: &CheckpointTransaction, env: DeepbookEnv) -> bo
     has_deepbook_call
 }
 
-pub(crate) fn try_extract_move_call_package(tx: &CheckpointTransaction) -> Option<String> {
-    let txn_kind = tx.transaction.transaction_data().kind();
+pub(crate) fn try_extract_move_call_package(tx: &ExecutedTransaction) -> Option<String> {
+    let txn_kind = tx.transaction.kind();
     let first_command = txn_kind.iter_commands().next()?;
     if let Command::MoveCall(move_call) = first_command {
         Some(move_call.package.to_string())

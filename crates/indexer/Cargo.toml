@@ -8,7 +8,7 @@ edition = "2021"
 
 [dependencies]
 tokio.workspace = true
-sui-indexer-alt-framework = { git = "https://github.com/MystenLabs/sui.git", rev = "a0545a819fba114903c880f928339b5cd8805a4a" }
+sui-indexer-alt-framework = { git = "https://github.com/MystenLabs/sui.git", rev = "a14d9e8ddadfcea837de46b43d0b72a289320afb" }
 sui-sdk-types = { git = "https://github.com/mystenlabs/sui-rust-sdk", features = ["serde"], rev = "048124e484f14b9bf2a402227c9bc255c7621bc1" }
 sui-transaction-builder = { git = "https://github.com/mystenlabs/sui-rust-sdk", rev = "048124e484f14b9bf2a402227c9bc255c7621bc1" }
 clap = { workspace = true, features = ["env"] }
@@ -30,19 +30,17 @@ sui-indexer-alt-metrics.workspace = true
 sui-types.workspace = true
 move-core-types.workspace = true
 telemetry-subscribers.workspace = true
-tokio-util.workspace = true
 
 deepbook-schema = { path = "../schema" }
 
 [dev-dependencies]
-sui-storage = { git = "https://github.com/MystenLabs/sui.git", rev = "a0545a819fba114903c880f928339b5cd8805a4a" }
+sui-storage = { git = "https://github.com/MystenLabs/sui.git", rev = "a14d9e8ddadfcea837de46b43d0b72a289320afb" }
 insta = { version = "1.43.1", features = ["json"] }
 serde_json = "1.0.140"
 sqlx = { version = "0.8.3", features = ["runtime-tokio", "postgres", "chrono", "bigdecimal"] }
-fastcrypto = { git = "https://github.com/MystenLabs/fastcrypto" }
+fastcrypto = { git = "https://github.com/MystenLabs/fastcrypto", rev = "4db0e90c732bbf7420ca20de808b698883148d9c" }
 chrono = "0.4.39"
 
 [[bin]]
 name = "deepbook-indexer"
 path = "src/main.rs"
-

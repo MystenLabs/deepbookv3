@@ -1039,7 +1039,7 @@ fun test_master(error_code: u64) {
 
     // Advance to epoch 28
     let quantity = 1 * constants::float_scaling();
-    let mut i = 23;
+    let mut i = 23u64;
     // For 23 epochs, Alice and Bob will both make 1 quantity per epoch, and
     // should get the full rebate
     // Alice will place a bid for quantity 1, bob will place ask for quantity 2,
@@ -1052,7 +1052,7 @@ fun test_master(error_code: u64) {
     // Total fees collected should be 0.065% for each epoch
     // Alice should have 46 more SUI at the end of the loop
     // Bob should have 92 more USDC at the end of the loop
-    while (i > 0) {
+    while (i > 0u64) {
         test.next_epoch(OWNER);
         execute_cross_trading<SUI, USDC>(
             pool1_id,
@@ -1775,7 +1775,7 @@ fun test_master_input_tokens(error_code: u64) {
 
     // Advance to epoch 28
     let quantity = 1 * constants::float_scaling();
-    let mut i = 23;
+    let mut i = 23u64;
     // For 23 epochs, Alice and Bob will both make 1 quantity per epoch, and
     // should get the full rebate
     // Alice will place a bid for quantity 1, bob will place ask for quantity 2,
@@ -1787,7 +1787,7 @@ fun test_master_input_tokens(error_code: u64) {
     // 0.06% taker for Bob
     // Alice should have 46 more SUI at the end of the loop
     // Bob should have 92 more USDC at the end of the loop
-    while (i > 0) {
+    while (i > 0u64) {
         test.next_epoch(OWNER);
         execute_cross_trading<SUI, USDC>(
             pool1_id,

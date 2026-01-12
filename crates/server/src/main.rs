@@ -5,7 +5,6 @@ use clap::Parser;
 use deepbook_server::server::run_server;
 use std::net::SocketAddr;
 use sui_pg_db::DbArgs;
-use tokio_util::sync::CancellationToken;
 use url::Url;
 
 #[derive(Parser)]
@@ -69,14 +68,12 @@ async fn main() -> Result<(), anyhow::Error> {
         margin_poll_interval_secs,
         margin_package_id,
     } = Args::parse();
-    let cancel = CancellationToken::new();
 
     run_server(
         server_port,
         database_url,
         db_args,
         rpc_url,
-        cancel.child_token(),
         metrics_address,
         deepbook_package_id,
         deep_token_package_id,
