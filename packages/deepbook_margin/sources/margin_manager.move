@@ -11,8 +11,7 @@ use deepbook::{
         DepositCap,
         WithdrawCap,
         TradeProof,
-        DeepBookPoolReferral,
-        DeepBookReferral
+        DeepBookPoolReferral
     },
     constants,
     math,
@@ -362,15 +361,6 @@ public fun unregister_margin_manager<BaseAsset, QuoteAsset>(
     margin_registry.remove_margin_manager(self.id(), ctx);
 }
 
-#[deprecated(note = b"This function is deprecated, use `set_margin_manager_referral` instead.")]
-public fun set_referral<BaseAsset, QuoteAsset>(
-    _self: &mut MarginManager<BaseAsset, QuoteAsset>,
-    _referral_cap: &DeepBookReferral,
-    _ctx: &mut TxContext,
-) {
-    abort
-}
-
 /// Set the referral for the margin manager.
 public fun set_margin_manager_referral<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
@@ -379,14 +369,6 @@ public fun set_margin_manager_referral<BaseAsset, QuoteAsset>(
 ) {
     self.validate_owner(ctx);
     self.balance_manager.set_balance_manager_referral(referral_cap, &self.trade_cap);
-}
-
-#[deprecated(note = b"This function is deprecated, use `unset_margin_manager_referral` instead.")]
-public fun unset_referral<BaseAsset, QuoteAsset>(
-    _self: &mut MarginManager<BaseAsset, QuoteAsset>,
-    _ctx: &mut TxContext,
-) {
-    abort
 }
 
 /// Unset the referral for the margin manager.
