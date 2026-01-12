@@ -2153,7 +2153,13 @@ async fn referral_fee_events(
 
     let results = state
         .reader
-        .get_referral_fee_events(start_time, end_time, limit, pool_id_filter, referral_id_filter)
+        .get_referral_fee_events(
+            start_time,
+            end_time,
+            limit,
+            pool_id_filter,
+            referral_id_filter,
+        )
         .await?;
 
     Ok(Json(results))
