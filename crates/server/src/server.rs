@@ -29,6 +29,7 @@ use std::{collections::HashMap, net::SocketAddr};
 use sui_pg_db::DbArgs;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
+use tokio::sync::OnceCell;
 use tower_http::cors::{AllowMethods, Any, CorsLayer};
 use url::Url;
 
@@ -107,6 +108,8 @@ pub const DEPOSITED_ASSETS_PATH: &str = "/deposited_assets/:balance_manager_ids"
 pub struct AppState {
     reader: Reader,
     metrics: Arc<RpcMetrics>,
+    rpc_url: Url,
+    sui_client: Arc<OnceCell<sui_sdk::SuiClient>>,
     deepbook_package_id: String,
     deep_token_package_id: String,
     deep_treasury_id: String,
@@ -117,6 +120,7 @@ impl AppState {
         database_url: Url,
         args: DbArgs,
         registry: &Registry,
+        rpc_url: Url,
         deepbook_package_id: String,
         deep_token_package_id: String,
         deep_treasury_id: String,
@@ -126,11 +130,27 @@ impl AppState {
         Ok(Self {
             reader,
             metrics,
+            rpc_url,
+            sui_client: Arc::new(OnceCell::new()),
             deepbook_package_id,
             deep_token_package_id,
             deep_treasury_id,
         })
     }
+
+    /// Returns a reference to the shared SuiClient instance.
+    /// Lazily initializes the client on first access and caches it for subsequent calls
+    pub async fn sui_client(&self) -> Result<&sui_sdk::SuiClient, DeepBookError> {
+        self.sui_client
+            .get_or_try_init(|| async {
+                SuiClientBuilder::default()
+                    .build(self.rpc_url.as_str())
+                    .await
+            })
+            .await
+            .map_err(DeepBookError::from)
+    }
+
     pub(crate) fn metrics(&self) -> &RpcMetrics {
         &self.metrics
     }
@@ -176,6 +196,7 @@ pub async fn run_server(
         database_url.clone(),
         db_arg.clone(),
         metrics.registry(),
+        rpc_url.clone(),
         deepbook_package_id,
         deep_token_package_id,
         deep_treasury_id,
@@ -221,7 +242,7 @@ pub async fn run_server(
             let _ = stx.send(());
         })
         .spawn(async move {
-            axum::serve(listener, make_router(Arc::new(state), rpc_url))
+            axum::serve(listener, make_router(Arc::new(state)))
                 .with_graceful_shutdown(async move {
                     let _ = srx.await;
                 })
@@ -234,7 +255,7 @@ pub async fn run_server(
 
     Ok(())
 }
-pub(crate) fn make_router(state: Arc<AppState>, rpc_url: Url) -> Router {
+pub(crate) fn make_router(state: Arc<AppState>) -> Router {
     let cors = CorsLayer::new()
         .allow_methods(AllowMethods::list(vec![Method::GET, Method::OPTIONS]))
         .allow_headers(Any)
@@ -305,7 +326,7 @@ pub(crate) fn make_router(state: Arc<AppState>, rpc_url: Url) -> Router {
         .route(DEEP_SUPPLY_PATH, get(deep_supply))
         .route(SUMMARY_PATH, get(summary))
         .route(STATUS_PATH, get(status))
-        .with_state((state.clone(), rpc_url));
+        .with_state(state.clone());
 
     db_routes
         .merge(rpc_routes)
@@ -320,13 +341,13 @@ async fn health_check() -> StatusCode {
 /// Get indexer status including checkpoint lag
 async fn status(
     Query(params): Query<StatusQueryParams>,
-    State((state, rpc_url)): State<(Arc<AppState>, Url)>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, DeepBookError> {
     // Get watermarks from the database
     let watermarks = state.reader.get_watermarks().await?;
 
     // Get the latest checkpoint from Sui RPC
-    let sui_client = SuiClientBuilder::default().build(rpc_url.as_str()).await?;
+    let sui_client = state.sui_client().await?;
     let latest_checkpoint = sui_client
         .read_api()
         .get_latest_checkpoint_sequence_number()
@@ -714,7 +735,7 @@ async fn fetch_historical_volume(
 
 #[allow(clippy::get_first)]
 async fn summary(
-    State((state, rpc_url)): State<(Arc<AppState>, Url)>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<HashMap<String, Value>>>, DeepBookError> {
     // Fetch pools metadata first since it's required for other functions
     let pools = state.reader.get_pools().await?;
@@ -756,7 +777,7 @@ async fn summary(
             orderbook(
                 Path(pool_name_clone),
                 Query(HashMap::from([("level".to_string(), "1".to_string())])),
-                State((state.clone(), rpc_url.clone())),
+                State(state.clone()),
             )
         })
         .collect();
@@ -1321,7 +1342,7 @@ pub async fn assets(
 async fn orderbook(
     Path(pool_name): Path<String>,
     Query(params): Query<HashMap<String, String>>,
-    State((state, rpc_url)): State<(Arc<AppState>, Url)>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<HashMap<String, Value>>, DeepBookError> {
     let depth = params
         .get("depth")
@@ -1375,7 +1396,7 @@ async fn orderbook(
 
     let pool_address = ObjectID::from_hex_literal(&pool_id)?;
 
-    let sui_client = SuiClientBuilder::default().build(rpc_url.as_str()).await?;
+    let sui_client = state.sui_client().await?;
     let mut ptb = ProgrammableTransactionBuilder::new();
 
     let pool_object: SuiObjectResponse = sui_client
@@ -1531,10 +1552,8 @@ async fn orderbook(
 }
 
 /// DEEP total supply
-async fn deep_supply(
-    State((state, rpc_url)): State<(Arc<AppState>, Url)>,
-) -> Result<Json<u64>, DeepBookError> {
-    let sui_client = SuiClientBuilder::default().build(rpc_url.as_str()).await?;
+async fn deep_supply(State(state): State<Arc<AppState>>) -> Result<Json<u64>, DeepBookError> {
+    let sui_client = state.sui_client().await?;
     let mut ptb = ProgrammableTransactionBuilder::new();
 
     let deep_treasury_object_id = ObjectID::from_hex_literal(&state.deep_treasury_id)?;
