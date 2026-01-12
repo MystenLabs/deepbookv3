@@ -73,7 +73,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     },
     {
       baseRate: 0.045,
-      baseSlope: 0.116,
+      baseSlope: 0.232,
       optimalUtilization: 0.75,
       excessSlope: 16,
     }

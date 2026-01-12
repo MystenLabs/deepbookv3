@@ -140,7 +140,7 @@
             </div>
             <div class="params-grid">
                 <div class="param"><span class="param-label">Base Rate</span><span class="param-value">4.5%</span></div>
-                <div class="param"><span class="param-label">Base Slope</span><span class="param-value">11.6%</span></div>
+                <div class="param"><span class="param-label">Base Slope</span><span class="param-value">23.2%</span></div>
                 <div class="param"><span class="param-label">Optimal Util.</span><span class="param-value">75%</span></div>
                 <div class="param"><span class="param-label">Excess Slope</span><span class="param-value">1600%</span></div>
             </div>
@@ -201,6 +201,59 @@
         </div>
     </div>
 
+    <h2 style="text-align: center; margin: 48px 0 8px; color: #fff; font-size: 24px;">Supply APR Curves</h2>
+    <p class="subtitle">Utilization vs Supply APR (Borrow APR × Utilization)</p>
+
+    <div class="charts-container">
+        <div class="chart-card">
+            <div class="chart-header">
+                <div class="chart-title">
+                    <span>USDC</span>
+                    <span class="asset-badge usdc-badge">Supply</span>
+                </div>
+            </div>
+            <div class="chart-wrapper">
+                <canvas id="usdcSupplyChart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-card">
+            <div class="chart-header">
+                <div class="chart-title">
+                    <span>SUI</span>
+                    <span class="asset-badge sui-badge">Supply</span>
+                </div>
+            </div>
+            <div class="chart-wrapper">
+                <canvas id="suiSupplyChart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-card">
+            <div class="chart-header">
+                <div class="chart-title">
+                    <span>DEEP</span>
+                    <span class="asset-badge deep-badge">Supply</span>
+                </div>
+            </div>
+            <div class="chart-wrapper">
+                <canvas id="deepSupplyChart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-card">
+            <div class="chart-header">
+                <div class="chart-title">
+                    <span>WAL</span>
+                    <span class="asset-badge wal-badge">Supply</span>
+                </div>
+            </div>
+            <div class="chart-wrapper">
+                <canvas id="walSupplyChart"></canvas>
+            </div>
+        </div>
+    </div>
+
     <div class="formula-section">
         <div class="formula-title">Interest Rate Formula</div>
         <div class="formula">
@@ -215,7 +268,7 @@
         const assets = {
             usdc: {
                 baseRate: 0.045,
-                baseSlope: 0.116,
+                baseSlope: 0.232,
                 optimalUtilization: 0.75,
                 excessSlope: 16,
                 color: '#2775ca',
@@ -360,11 +413,122 @@
             });
         }
 
-        // Create all charts
+        // Create all borrow charts
         createChart('usdcChart', assets.usdc, 'USDC');
         createChart('suiChart', assets.sui, 'SUI');
         createChart('deepChart', assets.deep, 'DEEP');
         createChart('walChart', assets.wal, 'WAL');
+
+        // Supply APR = Borrow APR × Utilization
+        function generateSupplyData(config) {
+            const data = [];
+            for (let u = 0; u <= 80; u++) {
+                const utilization = u / 100;
+                const borrowRate = calculateInterestRate(utilization, config);
+                const supplyRate = borrowRate * utilization * 100;
+                data.push({ x: u, y: supplyRate });
+            }
+            return data;
+        }
+
+        function createSupplyChart(canvasId, config, assetName) {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            const data = generateSupplyData(config);
+
+            const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+            gradient.addColorStop(0, config.gradient[0]);
+            gradient.addColorStop(1, config.gradient[1]);
+
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: [{
+                        label: 'Supply APR',
+                        data: data,
+                        borderColor: config.color,
+                        backgroundColor: gradient,
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.1,
+                        pointRadius: 0,
+                        pointHoverRadius: 6,
+                        pointHoverBackgroundColor: config.color,
+                        pointHoverBorderColor: '#fff',
+                        pointHoverBorderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: '#1a1a24',
+                            titleColor: '#fff',
+                            bodyColor: '#e0e0e0',
+                            borderColor: '#2a2a3a',
+                            borderWidth: 1,
+                            padding: 12,
+                            displayColors: false,
+                            callbacks: {
+                                title: (items) => `Utilization: ${items[0].parsed.x}%`,
+                                label: (item) => `Supply APR: ${item.parsed.y.toFixed(2)}%`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            min: 0,
+                            max: 80,
+                            title: {
+                                display: true,
+                                text: 'Utilization %',
+                                color: '#888',
+                                font: { size: 11 }
+                            },
+                            ticks: {
+                                color: '#666',
+                                font: { size: 10 },
+                                callback: (val) => val + '%'
+                            },
+                            grid: {
+                                color: '#1a1a24',
+                                drawBorder: false
+                            }
+                        },
+                        y: {
+                            min: 0,
+                            title: {
+                                display: true,
+                                text: 'Supply APR %',
+                                color: '#888',
+                                font: { size: 11 }
+                            },
+                            ticks: {
+                                color: '#666',
+                                font: { size: 10 },
+                                callback: (val) => val + '%'
+                            },
+                            grid: {
+                                color: '#1a1a24',
+                                drawBorder: false
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Create all supply charts
+        createSupplyChart('usdcSupplyChart', assets.usdc, 'USDC');
+        createSupplyChart('suiSupplyChart', assets.sui, 'SUI');
+        createSupplyChart('deepSupplyChart', assets.deep, 'DEEP');
+        createSupplyChart('walSupplyChart', assets.wal, 'WAL');
     </script>
 </body>
 </html>
