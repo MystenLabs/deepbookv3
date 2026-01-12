@@ -107,9 +107,9 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     },
     {
       baseRate: 0.1,
-      baseSlope: 0.118,
+      baseSlope: 0.354,
       optimalUtilization: 0.65,
-      excessSlope: 10,
+      excessSlope: 6,
     }
   )(tx);
   dbClient.marginMaintainer.createMarginPool("DEEP", DEEPprotocolConfig)(tx);
