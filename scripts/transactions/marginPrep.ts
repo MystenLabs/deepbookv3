@@ -75,8 +75,8 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
       minBorrow: 0.1,
     },
     {
-      baseRate: 0.05,
-      baseSlope: 0.25,
+      baseRate: 0.1,
+      baseSlope: 0.2,
       optimalUtilization: 0.75,
       excessSlope: 16,
     }
@@ -92,8 +92,8 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
       minBorrow: 0.1,
     },
     {
-      baseRate: 0.05,
-      baseSlope: 0.25,
+      baseRate: 0.1,
+      baseSlope: 0.2,
       optimalUtilization: 0.75,
       excessSlope: 16,
     }
