@@ -74,7 +74,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     {
       baseRate: 0.045,
       baseSlope: 0.116,
-      optimalUtilization: 0.9,
+      optimalUtilization: 0.75,
       excessSlope: 16,
     }
   )(tx);
@@ -91,7 +91,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     {
       baseRate: 0.03,
       baseSlope: 0.18,
-      optimalUtilization: 0.75,
+      optimalUtilization: 0.70,
       excessSlope: 3,
     }
   )(tx);
@@ -108,7 +108,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     {
       baseRate: 0.1,
       baseSlope: 0.118,
-      optimalUtilization: 0.85,
+      optimalUtilization: 0.65,
       excessSlope: 10,
     }
   )(tx);
@@ -125,7 +125,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     {
       baseRate: 0.1,
       baseSlope: 0.354,
-      optimalUtilization: 0.85,
+      optimalUtilization: 0.65,
       excessSlope: 6,
     }
   )(tx);

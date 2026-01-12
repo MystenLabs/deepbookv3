@@ -141,7 +141,7 @@
             <div class="params-grid">
                 <div class="param"><span class="param-label">Base Rate</span><span class="param-value">4.5%</span></div>
                 <div class="param"><span class="param-label">Base Slope</span><span class="param-value">11.6%</span></div>
-                <div class="param"><span class="param-label">Optimal Util.</span><span class="param-value">90%</span></div>
+                <div class="param"><span class="param-label">Optimal Util.</span><span class="param-value">75%</span></div>
                 <div class="param"><span class="param-label">Excess Slope</span><span class="param-value">1600%</span></div>
             </div>
         </div>
@@ -159,7 +159,7 @@
             <div class="params-grid">
                 <div class="param"><span class="param-label">Base Rate</span><span class="param-value">3%</span></div>
                 <div class="param"><span class="param-label">Base Slope</span><span class="param-value">18%</span></div>
-                <div class="param"><span class="param-label">Optimal Util.</span><span class="param-value">75%</span></div>
+                <div class="param"><span class="param-label">Optimal Util.</span><span class="param-value">70%</span></div>
                 <div class="param"><span class="param-label">Excess Slope</span><span class="param-value">300%</span></div>
             </div>
         </div>
@@ -177,7 +177,7 @@
             <div class="params-grid">
                 <div class="param"><span class="param-label">Base Rate</span><span class="param-value">10%</span></div>
                 <div class="param"><span class="param-label">Base Slope</span><span class="param-value">11.8%</span></div>
-                <div class="param"><span class="param-label">Optimal Util.</span><span class="param-value">85%</span></div>
+                <div class="param"><span class="param-label">Optimal Util.</span><span class="param-value">65%</span></div>
                 <div class="param"><span class="param-label">Excess Slope</span><span class="param-value">1000%</span></div>
             </div>
         </div>
@@ -195,7 +195,7 @@
             <div class="params-grid">
                 <div class="param"><span class="param-label">Base Rate</span><span class="param-value">10%</span></div>
                 <div class="param"><span class="param-label">Base Slope</span><span class="param-value">35.4%</span></div>
-                <div class="param"><span class="param-label">Optimal Util.</span><span class="param-value">85%</span></div>
+                <div class="param"><span class="param-label">Optimal Util.</span><span class="param-value">65%</span></div>
                 <div class="param"><span class="param-label">Excess Slope</span><span class="param-value">600%</span></div>
             </div>
         </div>
@@ -216,7 +216,7 @@
             usdc: {
                 baseRate: 0.045,
                 baseSlope: 0.116,
-                optimalUtilization: 0.9,
+                optimalUtilization: 0.75,
                 excessSlope: 16,
                 color: '#2775ca',
                 gradient: ['rgba(39, 117, 202, 0.3)', 'rgba(39, 117, 202, 0.0)']
@@ -224,7 +224,7 @@
             sui: {
                 baseRate: 0.03,
                 baseSlope: 0.18,
-                optimalUtilization: 0.75,
+                optimalUtilization: 0.70,
                 excessSlope: 3,
                 color: '#6fbcf0',
                 gradient: ['rgba(111, 188, 240, 0.3)', 'rgba(111, 188, 240, 0.0)']
@@ -232,7 +232,7 @@
             deep: {
                 baseRate: 0.1,
                 baseSlope: 0.118,
-                optimalUtilization: 0.85,
+                optimalUtilization: 0.65,
                 excessSlope: 10,
                 color: '#8b5cf6',
                 gradient: ['rgba(139, 92, 246, 0.3)', 'rgba(139, 92, 246, 0.0)']
@@ -240,7 +240,7 @@
             wal: {
                 baseRate: 0.1,
                 baseSlope: 0.354,
-                optimalUtilization: 0.85,
+                optimalUtilization: 0.65,
                 excessSlope: 6,
                 color: '#10b981',
                 gradient: ['rgba(16, 185, 129, 0.3)', 'rgba(16, 185, 129, 0.0)']
@@ -259,7 +259,7 @@
 
         function generateData(config) {
             const data = [];
-            for (let u = 0; u <= 100; u++) {
+            for (let u = 0; u <= 80; u++) {
                 const utilization = u / 100;
                 const rate = calculateInterestRate(utilization, config) * 100;
                 data.push({ x: u, y: rate });
@@ -320,7 +320,7 @@
                         x: {
                             type: 'linear',
                             min: 0,
-                            max: 100,
+                            max: 80,
                             title: {
                                 display: true,
                                 text: 'Utilization %',
