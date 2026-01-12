@@ -21,7 +21,10 @@ const EInsufficientBalance: u64 = 1;
 // === Structs ===
 
 public struct PositionData has copy, drop, store {
+    /// Naked (uncollateralized) short quantity
     quantity: u64,
+    /// Collateralized short quantity (backed by locked collateral)
+    collateralized_qty: u64,
     premiums: u64,
     payouts: u64,
     unrealized_cost: u64,
@@ -81,6 +84,7 @@ public fun total_shares<Quote>(vault: &Vault<Quote>): u64 {
     vault.supply_manager.total_shares()
 }
 
+/// Returns naked (uncollateralized) position quantity.
 public fun position<Quote>(vault: &Vault<Quote>, key: MarketKey): u64 {
     if (vault.positions.contains(key)) {
         vault.positions[key].quantity
@@ -89,12 +93,25 @@ public fun position<Quote>(vault: &Vault<Quote>, key: MarketKey): u64 {
     }
 }
 
-public fun position_data<Quote>(vault: &Vault<Quote>, key: MarketKey): (u64, u64, u64, u64) {
+/// Returns total position quantity (naked + collateralized) for settlement.
+public fun total_position<Quote>(vault: &Vault<Quote>, key: MarketKey): u64 {
     if (vault.positions.contains(key)) {
         let data = vault.positions[key];
-        (data.quantity, data.premiums, data.payouts, data.unrealized_cost)
+        data.quantity + data.collateralized_qty
     } else {
-        (0, 0, 0, 0)
+        0
+    }
+}
+
+public fun position_data<Quote>(
+    vault: &Vault<Quote>,
+    key: MarketKey,
+): (u64, u64, u64, u64, u64) {
+    if (vault.positions.contains(key)) {
+        let data = vault.positions[key];
+        (data.quantity, data.collateralized_qty, data.premiums, data.payouts, data.unrealized_cost)
+    } else {
+        (0, 0, 0, 0, 0)
     }
 }
 
@@ -145,6 +162,18 @@ public(package) fun execute_mint<Quote>(
     let (new_max, new_min) = vault.exposure(key);
     vault.max_liability = vault.max_liability + new_max - old_max;
     vault.min_liability = vault.min_liability + new_min - old_min;
+}
+
+/// Execute a collateralized mint. Updates collateralized_qty only.
+/// Does NOT update max_liability since this is backed by locked collateral.
+public(package) fun execute_mint_collateralized<Quote>(
+    vault: &mut Vault<Quote>,
+    key: MarketKey,
+    quantity: u64,
+) {
+    vault.add_position_entry(key);
+    let data = &mut vault.positions[key];
+    data.collateralized_qty = data.collateralized_qty + quantity;
 }
 
 /// Execute a redeem trade. Updates positions and liabilities.
@@ -275,6 +304,7 @@ fun add_position_entry<Quote>(vault: &mut Vault<Quote>, key: MarketKey) {
                 key,
                 PositionData {
                     quantity: 0,
+                    collateralized_qty: 0,
                     premiums: 0,
                     payouts: 0,
                     unrealized_cost: 0,
