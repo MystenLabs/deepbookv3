@@ -5,7 +5,7 @@ use deepbook_schema::models::{
     DeepbookPoolUpdated, DeepbookPoolUpdatedRegistry, InterestParamsUpdated, Liquidation,
     LoanBorrowed, LoanRepaid, MaintainerCapUpdated, MaintainerFeesWithdrawn, MarginManagerCreated,
     MarginManagerState, MarginPoolConfigUpdated, MarginPoolCreated, OrderFillSummary, OrderStatus,
-    PauseCapUpdated, Pools, ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn,
+    PauseCapUpdated, Pools, ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn, ReferralFeeEvent,
     ReferralFeesClaimedEvent, SupplierCapMinted, SupplyReferralMinted,
 };
 use deepbook_schema::schema;
@@ -923,6 +923,27 @@ impl Reader {
             )
             .filter(schema::referral_fees_claimed::owner.like(to_pattern(&owner_filter)))
             .order_by(schema::referral_fees_claimed::checkpoint_timestamp_ms.desc())
+            .limit(limit);
+
+        Ok(self.results(query).await?)
+    }
+
+    pub async fn get_referral_fee_events(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        pool_id_filter: String,
+        referral_id_filter: String,
+    ) -> Result<Vec<ReferralFeeEvent>, DeepBookError> {
+        let query = schema::referral_fee_events::table
+            .select(ReferralFeeEvent::as_select())
+            .filter(
+                schema::referral_fee_events::checkpoint_timestamp_ms.between(start_time, end_time),
+            )
+            .filter(schema::referral_fee_events::pool_id.like(to_pattern(&pool_id_filter)))
+            .filter(schema::referral_fee_events::referral_id.like(to_pattern(&referral_id_filter)))
+            .order_by(schema::referral_fee_events::checkpoint_timestamp_ms.desc())
             .limit(limit);
 
         Ok(self.results(query).await?)

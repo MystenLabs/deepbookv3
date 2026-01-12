@@ -15,7 +15,7 @@ use deepbook_schema::models::{
     InterestParamsUpdated, Liquidation, LoanBorrowed, LoanRepaid, MaintainerCapUpdated,
     MaintainerFeesWithdrawn, MarginManagerCreated, MarginManagerState, MarginPoolConfigUpdated,
     MarginPoolCreated, PauseCapUpdated, Pools, ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn,
-    ReferralFeesClaimedEvent, SupplierCapMinted, SupplyReferralMinted,
+    ReferralFeeEvent, ReferralFeesClaimedEvent, SupplierCapMinted, SupplyReferralMinted,
 };
 use deepbook_schema::*;
 use diesel::dsl::count_star;
@@ -95,6 +95,7 @@ pub const SUPPLY_REFERRAL_MINTED_PATH: &str = "/supply_referral_minted";
 pub const PAUSE_CAP_UPDATED_PATH: &str = "/pause_cap_updated";
 pub const PROTOCOL_FEES_INCREASED_PATH: &str = "/protocol_fees_increased";
 pub const REFERRAL_FEES_CLAIMED_PATH: &str = "/referral_fees_claimed";
+pub const REFERRAL_FEE_EVENTS_PATH: &str = "/referral_fee_events";
 pub const DEEPBOOK_POOL_REGISTERED_PATH: &str = "/deepbook_pool_registered";
 pub const DEEPBOOK_POOL_UPDATED_REGISTRY_PATH: &str = "/deepbook_pool_updated_registry";
 pub const DEEPBOOK_POOL_CONFIG_UPDATED_PATH: &str = "/deepbook_pool_config_updated";
@@ -286,6 +287,7 @@ pub(crate) fn make_router(state: Arc<AppState>, rpc_url: Url) -> Router {
         .route(PAUSE_CAP_UPDATED_PATH, get(pause_cap_updated))
         .route(PROTOCOL_FEES_INCREASED_PATH, get(protocol_fees_increased))
         .route(REFERRAL_FEES_CLAIMED_PATH, get(referral_fees_claimed))
+        .route(REFERRAL_FEE_EVENTS_PATH, get(referral_fee_events))
         .route(DEEPBOOK_POOL_REGISTERED_PATH, get(deepbook_pool_registered))
         .route(
             DEEPBOOK_POOL_UPDATED_REGISTRY_PATH,
@@ -2132,6 +2134,26 @@ async fn referral_fees_claimed(
             referral_id_filter,
             owner_filter,
         )
+        .await?;
+
+    Ok(Json(results))
+}
+
+async fn referral_fee_events(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<ReferralFeeEvent>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let pool_id_filter = params.get("pool_id").cloned().unwrap_or_default();
+    let referral_id_filter = params.get("referral_id").cloned().unwrap_or_default();
+
+    let results = state
+        .reader
+        .get_referral_fee_events(start_time, end_time, limit, pool_id_filter, referral_id_filter)
         .await?;
 
     Ok(Json(results))

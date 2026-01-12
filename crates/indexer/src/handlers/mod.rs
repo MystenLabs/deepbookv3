@@ -182,6 +182,7 @@ pub mod proposals_handler;
 pub mod protocol_fees_increased_handler;
 pub mod protocol_fees_withdrawn_handler;
 pub mod rebates_handler;
+pub mod referral_fee_event_handler;
 pub mod referral_fees_claimed_handler;
 pub mod stakes_handler;
 pub mod supplier_cap_minted_handler;
