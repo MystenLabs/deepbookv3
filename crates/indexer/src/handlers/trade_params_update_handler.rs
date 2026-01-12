@@ -7,10 +7,11 @@ use deepbook_schema::models::TradeParamsUpdate;
 use deepbook_schema::schema::trade_params_update;
 use diesel_async::RunQueryDsl;
 use std::sync::Arc;
-use sui_indexer_alt_framework::pipeline::concurrent::Handler;
 use sui_indexer_alt_framework::pipeline::Processor;
-use sui_pg_db::{Connection, Db};
-use sui_types::full_checkpoint_content::CheckpointData;
+use sui_indexer_alt_framework::postgres::handler::Handler;
+use sui_indexer_alt_framework::postgres::Connection;
+use sui_indexer_alt_framework::types::full_checkpoint_content::Checkpoint;
+use sui_types::transaction::TransactionDataAPI;
 use tracing::debug;
 
 pub struct TradeParamsUpdateHandler {
@@ -23,14 +24,15 @@ impl TradeParamsUpdateHandler {
     }
 }
 
+#[async_trait]
 impl Processor for TradeParamsUpdateHandler {
     const NAME: &'static str = "trade_params_update";
     type Value = TradeParamsUpdate;
 
-    fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {
+    async fn process(&self, checkpoint: &Arc<Checkpoint>) -> anyhow::Result<Vec<Self::Value>> {
         let mut results = vec![];
         for tx in &checkpoint.transactions {
-            if !is_deepbook_tx(tx, self.env) {
+            if !is_deepbook_tx(tx, &checkpoint.object_set, self.env) {
                 continue;
             }
             let Some(events) = &tx.events else {
@@ -38,16 +40,15 @@ impl Processor for TradeParamsUpdateHandler {
             };
 
             let package = try_extract_move_call_package(tx).unwrap_or_default();
-            let checkpoint_timestamp_ms = checkpoint.checkpoint_summary.timestamp_ms as i64;
-            let checkpoint = checkpoint.checkpoint_summary.sequence_number as i64;
+            let checkpoint_timestamp_ms = checkpoint.summary.timestamp_ms as i64;
+            let checkpoint_seq = checkpoint.summary.sequence_number as i64;
             let digest = tx.transaction.digest();
 
             // Get package addresses for deepbook
             let deepbook_addresses = self.env.package_addresses();
 
             let pool = tx
-                .input_objects
-                .iter()
+                .input_objects(&checkpoint.object_set)
                 .find(|o| matches!(o.data.struct_tag(), Some(struct_tag)
                         if deepbook_addresses.iter().any(|addr| struct_tag.address == *addr) && struct_tag.name.as_str() == "Pool"));
             let pool_id = pool
@@ -62,8 +63,8 @@ impl Processor for TradeParamsUpdateHandler {
                 let data = TradeParamsUpdate {
                     digest: digest.to_string(),
                     event_digest: format!("{digest}{index}"),
-                    sender: tx.transaction.sender_address().to_string(),
-                    checkpoint,
+                    sender: tx.transaction.sender().to_string(),
+                    checkpoint: checkpoint_seq,
                     checkpoint_timestamp_ms,
                     package: package.clone(),
                     pool_id: pool_id.clone(),
@@ -81,8 +82,6 @@ impl Processor for TradeParamsUpdateHandler {
 
 #[async_trait]
 impl Handler for TradeParamsUpdateHandler {
-    type Store = Db;
-
     async fn commit<'a>(
         values: &[Self::Value],
         conn: &mut Connection<'a>,
