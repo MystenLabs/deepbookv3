@@ -75,8 +75,8 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
       minBorrow: 0.1,
     },
     {
-      baseRate: 0.045,
-      baseSlope: 0.232,
+      baseRate: 0.05,
+      baseSlope: 0.25,
       optimalUtilization: 0.75,
       excessSlope: 16,
     }
@@ -92,10 +92,10 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
       minBorrow: 0.1,
     },
     {
-      baseRate: 0.03,
-      baseSlope: 0.18,
-      optimalUtilization: 0.7,
-      excessSlope: 3,
+      baseRate: 0.05,
+      baseSlope: 0.25,
+      optimalUtilization: 0.75,
+      excessSlope: 16,
     }
   )(tx);
   dbClient.marginMaintainer.createMarginPool("SUI", SUIprotocolConfig)(tx);
@@ -110,8 +110,8 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     },
     {
       baseRate: 0.1,
-      baseSlope: 0.354,
-      optimalUtilization: 0.65,
+      baseSlope: 0.36,
+      optimalUtilization: 0.70,
       excessSlope: 6,
     }
   )(tx);
@@ -127,8 +127,8 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     },
     {
       baseRate: 0.1,
-      baseSlope: 0.354,
-      optimalUtilization: 0.65,
+      baseSlope: 0.36,
+      optimalUtilization: 0.70,
       excessSlope: 6,
     }
   )(tx);
