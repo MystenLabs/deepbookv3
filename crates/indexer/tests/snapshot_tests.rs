@@ -314,9 +314,8 @@ async fn protocol_fees_increased_test() -> Result<(), anyhow::Error> {
 }
 
 #[tokio::test]
-#[ignore = "Requires checkpoint with ReferralFeeEvent - see tests/checkpoints/referral_fee_events/README.md"]
 async fn referral_fee_event_test() -> Result<(), anyhow::Error> {
-    let handler = ReferralFeeEventHandler::new(DeepbookEnv::Testnet);
+    let handler = ReferralFeeEventHandler::new(DeepbookEnv::Mainnet);
     data_test("referral_fee_events", handler, ["referral_fee_events"]).await?;
     Ok(())
 }

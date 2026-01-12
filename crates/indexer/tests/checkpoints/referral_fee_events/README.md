@@ -1,27 +1,39 @@
 # ReferralFeeEvent Checkpoint
 
-This directory should contain a checkpoint file (`.chk`) with a `ReferralFeeEvent` from mainnet or testnet.
+This directory contains checkpoint files with `ReferralFeeEvent` events from mainnet.
 
-The event is emitted when a spot trade occurs through a balance manager with an associated referral ID.
+## Checkpoint 233962755
 
-To obtain a checkpoint:
-1. Find a transaction with ReferralFeeEvent on-chain (has been emitting since Sept 2025)
-2. Use the indexer's checkpoint extraction tool to create the `.chk` file
-3. Add it here with the checkpoint sequence number as the filename (e.g., `123456789.chk`)
+- **Transaction**: `D2YQEZ6D3SfUZ2bVGpMbrzGPoZAbrLYwy5m249aHwqL1`
+- **Pool**: SUI/USDC (`0xe05dafb5133bcffb8d59f4e12465dc0e9faeaa05e3e342a08fe135800e3e4407`)
+- **Referral ID**: `0xf66fc08674e5592b471d965c82410af5a2b44e2b4b92f191d91c7147d378bcaa`
+- **Generated**: January 2026
 
-Expected snapshot output in `snapshots/snapshot_tests__referral_fee_events__referral_fee_events.snap`:
-```json
-{
-  "event_digest": "<tx_digest><event_index>",
-  "digest": "<tx_digest>",
-  "sender": "<sender_address>",
-  "checkpoint": <checkpoint_number>,
-  "checkpoint_timestamp_ms": <timestamp>,
-  "package": "<deepbook_package_id>",
-  "pool_id": "<pool_object_id>",
-  "referral_id": "<referral_object_id>",
-  "base_fee": <base_token_fee_amount>,
-  "quote_fee": <quote_token_fee_amount>,
-  "deep_fee": <deep_token_fee_amount>
-}
+The event was generated using the script in `_local_scripts/generate-referral-event/`.
+
+## Event Details
+
+The `ReferralFeeEvent` is emitted when a spot trade executes through a balance manager
+that has an associated referral ID set via `set_balance_manager_referral()`.
+
+Event fields:
+- `pool_id`: The trading pool where the order executed
+- `referral_id`: The DeepBookPoolReferral object linked to the balance manager
+- `base_fee`: Fee amount in base token (e.g., SUI)
+- `quote_fee`: Fee amount in quote token (e.g., USDC)
+- `deep_fee`: Fee amount in DEEP token
+
+## How to Generate More Test Data
+
+```bash
+cd _local_scripts/generate-referral-event
+cp .env.example .env
+# Edit .env with your private key
+npm install
+npx tsx generate-referral-event-simple.ts
+```
+
+The script will output the checkpoint number. Download with:
+```bash
+curl -o <checkpoint>.chk "https://checkpoints.mainnet.sui.io/<checkpoint>.chk"
 ```
