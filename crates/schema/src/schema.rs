@@ -465,6 +465,26 @@ diesel::table! {
 }
 
 diesel::table! {
+    pool_created (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pool_id -> Text,
+        taker_fee -> Int8,
+        maker_fee -> Int8,
+        tick_size -> Int8,
+        lot_size -> Int8,
+        min_size -> Int8,
+        whitelisted_pool -> Bool,
+        treasury_address -> Text,
+    }
+}
+
+diesel::table! {
     pools (pool_id) {
         pool_id -> Text,
         pool_name -> Text,
@@ -697,6 +717,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     order_fills,
     order_updates,
     pause_cap_updated,
+    pool_created,
     pool_prices,
     pools,
     proposals,

@@ -176,6 +176,7 @@ pub mod margin_pool_created_handler;
 pub mod order_fill_handler;
 pub mod order_update_handler;
 pub mod pause_cap_updated_handler;
+pub mod pool_created_handler;
 pub mod pool_price_handler;
 pub mod proposals_handler;
 pub mod protocol_fees_increased_handler;

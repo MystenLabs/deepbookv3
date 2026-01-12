@@ -21,6 +21,7 @@ use deepbook_indexer::handlers::margin_pool_created_handler::MarginPoolCreatedHa
 use deepbook_indexer::handlers::order_fill_handler::OrderFillHandler;
 use deepbook_indexer::handlers::order_update_handler::OrderUpdateHandler;
 use deepbook_indexer::handlers::pause_cap_updated_handler::PauseCapUpdatedHandler;
+use deepbook_indexer::handlers::pool_created_handler::PoolCreatedHandler;
 use deepbook_indexer::handlers::pool_price_handler::PoolPriceHandler;
 use deepbook_indexer::handlers::protocol_fees_increased_handler::ProtocolFeesIncreasedHandler;
 use deepbook_indexer::handlers::protocol_fees_withdrawn_handler::ProtocolFeesWithdrawnHandler;
@@ -86,6 +87,13 @@ async fn pool_price_test() -> Result<(), anyhow::Error> {
 async fn deep_burned_test() -> Result<(), anyhow::Error> {
     let handler = DeepBurnedHandler::new(DeepbookEnv::Mainnet);
     data_test("deep_burned", handler, ["deep_burned"]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn pool_created_test() -> Result<(), anyhow::Error> {
+    let handler = PoolCreatedHandler::new(DeepbookEnv::Mainnet);
+    data_test("pool_created", handler, ["pool_created"]).await?;
     Ok(())
 }
 
