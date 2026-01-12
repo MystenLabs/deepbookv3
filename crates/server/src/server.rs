@@ -196,7 +196,7 @@ pub async fn run_server(
         database_url.clone(),
         db_arg.clone(),
         metrics.registry(),
-        rpc_url,
+        rpc_url.clone(),
         deepbook_package_id,
         deep_token_package_id,
         deep_treasury_id,
