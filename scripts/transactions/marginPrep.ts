@@ -66,7 +66,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
   const USDCprotocolConfig = dbClient.marginMaintainer.newProtocolConfig(
     "USDC",
     {
-      supplyCap: 1000000,
+      supplyCap: 1_000_000,
       maxUtilizationRate: 0.8,
       referralSpread: 0.2,
       minBorrow: 0.1,
@@ -83,7 +83,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
   const SUIprotocolConfig = dbClient.marginMaintainer.newProtocolConfig(
     "SUI",
     {
-      supplyCap: 1000000,
+      supplyCap: 500_000,
       maxUtilizationRate: 0.8,
       referralSpread: 0.2,
       minBorrow: 0.1,
@@ -100,7 +100,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
   const DEEPprotocolConfig = dbClient.marginMaintainer.newProtocolConfig(
     "DEEP",
     {
-      supplyCap: 1000000,
+      supplyCap: 20_000_000,
       maxUtilizationRate: 0.8,
       referralSpread: 0.2,
       minBorrow: 0.1,
@@ -117,7 +117,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
   const WALprotocolConfig = dbClient.marginMaintainer.newProtocolConfig(
     "WAL",
     {
-      supplyCap: 1000000,
+      supplyCap: 7_000_000,
       maxUtilizationRate: 0.8,
       referralSpread: 0.2,
       minBorrow: 0.00001,
