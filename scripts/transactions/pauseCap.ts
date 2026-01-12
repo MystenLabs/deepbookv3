@@ -91,8 +91,7 @@ const mainnetPlugin = namedPackagesPlugin({
   tx.addSerializationPlugin(mainnetPlugin);
 
   const dbClient = new DeepBookClient({
-    address:
-      "0xb3d277c50f7b846a5f609a8d13428ae482b5826bb98437997373f3a0d60d280e",
+    address: getActiveAddress(),
     env: env,
     client: new SuiClient({
       url: getFullnodeUrl(env),

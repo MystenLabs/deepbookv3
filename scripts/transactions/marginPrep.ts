@@ -13,6 +13,8 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
 (async () => {
   // Update constant for env
   const env = "mainnet";
+  const marginMaintainerCap =
+    "0xfa7c092fac70a0c2f9e8245748449c087727646ffe80e08efe702e4114402c9e";
 
   const dbClient = new DeepBookClient({
     address: "0x0",
@@ -22,6 +24,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     }),
     adminCap: adminCapID[env],
     marginAdminCap: marginAdminCapID[env],
+    marginMaintainerCap,
   });
 
   const tx = new Transaction();
@@ -91,7 +94,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     {
       baseRate: 0.03,
       baseSlope: 0.18,
-      optimalUtilization: 0.70,
+      optimalUtilization: 0.7,
       excessSlope: 3,
     }
   )(tx);
