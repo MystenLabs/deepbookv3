@@ -42,6 +42,12 @@ struct Args {
         default_value = "0x032abf8948dda67a271bcc18e776dbbcfb0d58c8d288a700ff0d5521e57a1ffe"
     )]
     deep_treasury_id: String,
+
+    // Margin metrics polling configuration
+    #[clap(env, long, default_value_t = 30)]
+    margin_poll_interval_secs: u64,
+    #[clap(env, long)]
+    margin_package_id: Option<String>,
 }
 
 #[tokio::main]
@@ -59,6 +65,8 @@ async fn main() -> Result<(), anyhow::Error> {
         deepbook_package_id,
         deep_token_package_id,
         deep_treasury_id,
+        margin_poll_interval_secs,
+        margin_package_id,
     } = Args::parse();
 
     run_server(
@@ -70,6 +78,8 @@ async fn main() -> Result<(), anyhow::Error> {
         deepbook_package_id,
         deep_token_package_id,
         deep_treasury_id,
+        margin_poll_interval_secs,
+        margin_package_id,
     )
     .await?;
 

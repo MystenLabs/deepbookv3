@@ -8,10 +8,11 @@ use deepbook_schema::models::PoolCreated;
 use deepbook_schema::schema::pool_created;
 use diesel_async::RunQueryDsl;
 use std::sync::Arc;
-use sui_indexer_alt_framework::pipeline::concurrent::Handler;
 use sui_indexer_alt_framework::pipeline::Processor;
-use sui_pg_db::{Connection, Db};
-use sui_types::full_checkpoint_content::CheckpointData;
+use sui_indexer_alt_framework::postgres::handler::Handler;
+use sui_indexer_alt_framework::postgres::Connection;
+use sui_indexer_alt_framework::types::full_checkpoint_content::Checkpoint;
+use sui_types::transaction::TransactionDataAPI;
 use tracing::debug;
 
 pub struct PoolCreatedHandler {
@@ -24,15 +25,16 @@ impl PoolCreatedHandler {
     }
 }
 
+#[async_trait]
 impl Processor for PoolCreatedHandler {
     const NAME: &'static str = "pool_created";
     type Value = PoolCreated;
 
-    fn process(&self, checkpoint: &Arc<CheckpointData>) -> anyhow::Result<Vec<Self::Value>> {
+    async fn process(&self, checkpoint: &Arc<Checkpoint>) -> anyhow::Result<Vec<Self::Value>> {
         let mut results = vec![];
 
         for tx in &checkpoint.transactions {
-            if !is_deepbook_tx(tx, self.env) {
+            if !is_deepbook_tx(tx, &checkpoint.object_set, self.env) {
                 continue;
             }
             let Some(events) = &tx.events else {
@@ -40,8 +42,8 @@ impl Processor for PoolCreatedHandler {
             };
 
             let package = try_extract_move_call_package(tx).unwrap_or_default();
-            let checkpoint_timestamp_ms = checkpoint.checkpoint_summary.timestamp_ms as i64;
-            let checkpoint = checkpoint.checkpoint_summary.sequence_number as i64;
+            let checkpoint_timestamp_ms = checkpoint.summary.timestamp_ms as i64;
+            let checkpoint_seq = checkpoint.summary.sequence_number as i64;
             let digest = tx.transaction.digest();
 
             for (index, ev) in events.data.iter().enumerate() {
@@ -53,8 +55,8 @@ impl Processor for PoolCreatedHandler {
                 let data = PoolCreated {
                     digest: digest.to_string(),
                     event_digest: format!("{digest}{index}"),
-                    sender: tx.transaction.sender_address().to_string(),
-                    checkpoint,
+                    sender: tx.transaction.sender().to_string(),
+                    checkpoint: checkpoint_seq,
                     checkpoint_timestamp_ms,
                     package: package.clone(),
                     pool_id: event.pool_id.to_string(),
@@ -76,8 +78,6 @@ impl Processor for PoolCreatedHandler {
 
 #[async_trait]
 impl Handler for PoolCreatedHandler {
-    type Store = Db;
-
     async fn commit<'a>(
         values: &[Self::Value],
         conn: &mut Connection<'a>,

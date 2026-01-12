@@ -164,6 +164,8 @@ pub async fn run_server(
     deepbook_package_id: String,
     deep_token_package_id: String,
     deep_treasury_id: String,
+    margin_poll_interval_secs: u64,
+    margin_package_id: Option<String>,
 ) -> Result<(), anyhow::Error> {
     let registry = Registry::new_custom(Some("deepbook_api".into()), None)
         .expect("Failed to create Prometheus registry.");
@@ -171,8 +173,8 @@ pub async fn run_server(
     let metrics = MetricsService::new(MetricsArgs { metrics_address }, registry);
 
     let state = AppState::new(
-        database_url,
-        db_arg,
+        database_url.clone(),
+        db_arg.clone(),
         metrics.registry(),
         deepbook_package_id,
         deep_token_package_id,
@@ -181,7 +183,32 @@ pub async fn run_server(
     .await?;
     let socket_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), server_port);
 
-    println!("🚀 Server started successfully on port {}", server_port);
+    println!("Server started successfully on port {}", server_port);
+
+    // Start margin metrics poller if margin_package_id is provided
+    // Must be done before spawning the metrics service since we need access to the registry
+    if let Some(margin_pkg_id) = margin_package_id {
+        let cancellation_token = tokio_util::sync::CancellationToken::new();
+        let margin_metrics = crate::margin_metrics::MarginMetrics::new(metrics.registry());
+        let margin_db = sui_pg_db::Db::for_read(database_url, db_arg).await?;
+        let margin_poller = crate::margin_metrics::MarginPoller::new(
+            margin_db,
+            rpc_url.clone(),
+            margin_pkg_id,
+            margin_metrics,
+            margin_poll_interval_secs,
+            cancellation_token,
+        );
+        tokio::spawn(async move {
+            if let Err(e) = margin_poller.run().await {
+                eprintln!("[margin_poller] Margin poller failed: {}", e);
+            }
+        });
+        println!(
+            "Margin metrics poller started (interval: {}s)",
+            margin_poll_interval_secs
+        );
+    }
 
     let s_metrics = metrics.run().await?;
 

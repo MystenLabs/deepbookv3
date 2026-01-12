@@ -31,6 +31,7 @@ sui-sdk = { git = "https://github.com/MystenLabs/sui.git", rev = "a14d9e8ddadfce
 bigdecimal = "0.4.9"
 chrono = "0.4.42"
 thiserror = "1.0"
+tokio-util = "0.7"
 
 [[bin]]
 name = "deepbook-server"

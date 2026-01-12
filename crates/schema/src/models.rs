@@ -22,6 +22,8 @@ use crate::schema::{
     margin_pool_config_updated,
     // Margin Pool Admin Events
     margin_pool_created,
+    // snapshots for analytics
+    margin_pool_snapshots,
     order_fills,
     order_updates,
     pause_cap_updated,
@@ -742,4 +744,40 @@ pub struct MarginManagerState {
     pub lowest_trigger_above_price: Option<BigDecimal>,
     #[serde(serialize_with = "serialize_bigdecimal_option")]
     pub highest_trigger_below_price: Option<BigDecimal>,
+}
+
+// === Margin Pool Snapshots (for metrics polling) ===
+#[derive(Queryable, Selectable, Insertable, Debug, Serialize)]
+#[diesel(table_name = margin_pool_snapshots)]
+pub struct MarginPoolSnapshot {
+    pub id: i64,
+    pub margin_pool_id: String,
+    pub asset_type: String,
+    #[serde(serialize_with = "serialize_datetime")]
+    pub timestamp: chrono::NaiveDateTime,
+    pub total_supply: i64,
+    pub total_borrow: i64,
+    pub vault_balance: i64,
+    pub supply_cap: i64,
+    pub interest_rate: i64,
+    pub available_withdrawal: i64,
+    pub utilization_rate: f64,
+    pub solvency_ratio: Option<f64>,
+    pub available_liquidity_pct: Option<f64>,
+}
+
+#[derive(Insertable, Debug)]
+#[diesel(table_name = margin_pool_snapshots)]
+pub struct NewMarginPoolSnapshot {
+    pub margin_pool_id: String,
+    pub asset_type: String,
+    pub total_supply: i64,
+    pub total_borrow: i64,
+    pub vault_balance: i64,
+    pub supply_cap: i64,
+    pub interest_rate: i64,
+    pub available_withdrawal: i64,
+    pub utilization_rate: f64,
+    pub solvency_ratio: Option<f64>,
+    pub available_liquidity_pct: Option<f64>,
 }
