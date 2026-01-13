@@ -209,7 +209,8 @@ public(package) fun enable_market<Underlying, Quote>(
 
 // === Private Functions ===
 
-/// Mark-to-market: calculate cost to close each position and update unrealized liability.
+/// Mark-to-market: calculate cost to close each position and update unrealized.
+/// Short positions have unrealized_liability, long positions have unrealized_assets.
 fun mark_to_market<Underlying, Quote>(
     predict: &mut Predict<Quote>,
     oracle: &Oracle<Underlying>,
@@ -217,17 +218,33 @@ fun mark_to_market<Underlying, Quote>(
     clock: &Clock,
 ) {
     let (up_key, down_key) = key.up_down_pair();
-    let (up_qty, down_qty) = predict.vault.pair_position(key);
+    let (up_short, down_short) = predict.vault.pair_position(key);
 
-    // Calculate new unrealized costs
-    let new_up = predict.pricing.get_mint_cost(oracle, up_key, up_qty, up_qty, down_qty, clock);
-    let new_down = predict
-        .pricing
-        .get_mint_cost(oracle, down_key, down_qty, up_qty, down_qty, clock);
+    update_position_mtm(predict, oracle, up_key, up_short, down_short, clock);
+    update_position_mtm(predict, oracle, down_key, up_short, down_short, clock);
+}
 
-    // Update vault (TODO: handle long positions with assets)
-    predict.vault.update_unrealized(up_key, new_up, 0);
-    predict.vault.update_unrealized(down_key, new_down, 0);
+fun update_position_mtm<Underlying, Quote>(
+    predict: &mut Predict<Quote>,
+    oracle: &Oracle<Underlying>,
+    key: MarketKey,
+    up_short: u64,
+    down_short: u64,
+    clock: &Clock,
+) {
+    let (minted, redeemed) = predict.vault.position_quantities(key);
+
+    let (liability, assets) = if (minted > redeemed) {
+        let qty = minted - redeemed;
+        (predict.pricing.get_mint_cost(oracle, key, qty, up_short, down_short, clock), 0)
+    } else if (redeemed > minted) {
+        let qty = redeemed - minted;
+        (0, predict.pricing.get_redeem_payout(oracle, key, qty, up_short, down_short, clock))
+    } else {
+        (0, 0)
+    };
+
+    predict.vault.update_unrealized(key, liability, assets);
 }
 
 fun assert_vault_exposure<Quote>(predict: &Predict<Quote>, key: MarketKey) {
