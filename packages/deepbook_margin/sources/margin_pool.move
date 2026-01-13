@@ -247,6 +247,9 @@ public fun update_margin_pool_config<Asset>(
 ) {
     registry.load_inner();
     assert!(margin_pool_cap.margin_pool_id() == self.id(), EInvalidMarginPoolCap);
+    let margin_pool_id = self.id();
+    let protocol_fees = self.state.update(&self.config, clock);
+    self.protocol_fees.increase_fees_accrued(margin_pool_id, protocol_fees);
     self.config.set_margin_pool_config(margin_pool_config);
     self
         .rate_limiter
