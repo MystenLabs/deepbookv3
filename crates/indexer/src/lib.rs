@@ -42,7 +42,7 @@ const TESTNET_PACKAGES: &[&str] = &[
 // This will cause the indexer to fail fast if margin modules are requested on mainnet
 // When the margin package is deployed on mainnet, replace this with the actual address
 const MAINNET_MARGIN_PACKAGES: &[&str] =
-    &["0xdd8400e6da54a2d4216f157f9f242af9ec81d011acc75756ff6bcc81dd78d3be"];
+    &["0x97d9473771b01f77b0940c589484184b49f6444627ec121314fae6a6d36fb86b"];
 const TESTNET_MARGIN_PACKAGES: &[&str] = &[
     "0xb8620c24c9ea1a4a41e79613d2b3d1d93648d1bb6f6b789a7c8f261c94110e4b",
     "0xf978cf2b601c24e40ef82b6e51512b448696b44cb014c0a1162422aa8b9cb811",
