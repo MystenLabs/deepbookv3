@@ -70,15 +70,18 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     "USDC",
     {
       supplyCap: 1_000_000,
-      maxUtilizationRate: 0.8,
+      maxUtilizationRate: 0.9,
       referralSpread: 0.2,
       minBorrow: 0.1,
+      rateLimitCapacity: 200_000,
+      rateLimitRefillRatePerMs: 0.002315, // 200_000 / 86_400_000
+      rateLimitEnabled: true,
     },
     {
-      baseRate: 0.1,
-      baseSlope: 0.2,
-      optimalUtilization: 0.75,
-      excessSlope: 16,
+      baseRate: 0.05,
+      baseSlope: 0.25,
+      optimalUtilization: 0.85,
+      excessSlope: 5,
     }
   )(tx);
   dbClient.marginMaintainer.createMarginPool("USDC", USDCprotocolConfig)(tx);
@@ -87,15 +90,18 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     "SUI",
     {
       supplyCap: 500_000,
-      maxUtilizationRate: 0.8,
+      maxUtilizationRate: 0.9,
       referralSpread: 0.2,
       minBorrow: 0.1,
+      rateLimitCapacity: 100_000,
+      rateLimitRefillRatePerMs: 0.001157407, // 100_000 / 86_400_000
+      rateLimitEnabled: true,
     },
     {
-      baseRate: 0.1,
-      baseSlope: 0.2,
+      baseRate: 0.05,
+      baseSlope: 0.25,
       optimalUtilization: 0.75,
-      excessSlope: 16,
+      excessSlope: 5,
     }
   )(tx);
   dbClient.marginMaintainer.createMarginPool("SUI", SUIprotocolConfig)(tx);
@@ -104,15 +110,18 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     "DEEP",
     {
       supplyCap: 20_000_000,
-      maxUtilizationRate: 0.8,
+      maxUtilizationRate: 0.9,
       referralSpread: 0.2,
       minBorrow: 0.1,
+      rateLimitCapacity: 4_000_000,
+      rateLimitRefillRatePerMs: 0.046296, // 4_000_000 / 86_400_000
+      rateLimitEnabled: true,
     },
     {
       baseRate: 0.1,
-      baseSlope: 0.36,
-      optimalUtilization: 0.70,
-      excessSlope: 6,
+      baseSlope: 0.35,
+      optimalUtilization: 0.75,
+      excessSlope: 5,
     }
   )(tx);
   dbClient.marginMaintainer.createMarginPool("DEEP", DEEPprotocolConfig)(tx);
@@ -121,15 +130,18 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     "WAL",
     {
       supplyCap: 7_000_000,
-      maxUtilizationRate: 0.8,
+      maxUtilizationRate: 0.9,
       referralSpread: 0.2,
       minBorrow: 0.00001,
+      rateLimitCapacity: 1_400_000,
+      rateLimitRefillRatePerMs: 0.016203704, // 1_400_000 / 86_400_000
+      rateLimitEnabled: true,
     },
     {
       baseRate: 0.1,
-      baseSlope: 0.36,
-      optimalUtilization: 0.70,
-      excessSlope: 6,
+      baseSlope: 0.35,
+      optimalUtilization: 0.75,
+      excessSlope: 5,
     }
   )(tx);
   dbClient.marginMaintainer.createMarginPool("WAL", WALprotocolConfig)(tx);
