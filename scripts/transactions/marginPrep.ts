@@ -94,7 +94,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
       referralSpread: 0.2,
       minBorrow: 0.1,
       rateLimitCapacity: 100_000,
-      rateLimitRefillRatePerMs: 0.004629630, // 100_000 / 21_600_000 (6 hours)
+      rateLimitRefillRatePerMs: 0.00462963, // 100_000 / 21_600_000 (6 hours)
       rateLimitEnabled: true,
     },
     {
@@ -132,7 +132,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
       supplyCap: 7_000_000,
       maxUtilizationRate: 0.8,
       referralSpread: 0.2,
-      minBorrow: 0.00001,
+      minBorrow: 0.1,
       rateLimitCapacity: 1_400_000,
       rateLimitRefillRatePerMs: 0.064814815, // 1_400_000 / 21_600_000 (6 hours)
       rateLimitEnabled: true,
