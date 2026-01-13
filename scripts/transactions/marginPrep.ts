@@ -70,17 +70,17 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     "USDC",
     {
       supplyCap: 1_000_000,
-      maxUtilizationRate: 0.9,
+      maxUtilizationRate: 0.8,
       referralSpread: 0.2,
       minBorrow: 0.1,
       rateLimitCapacity: 200_000,
-      rateLimitRefillRatePerMs: 0.002315, // 200_000 / 86_400_000
+      rateLimitRefillRatePerMs: 0.009259, // 200_000 / 21_600_000 (6 hours)
       rateLimitEnabled: true,
     },
     {
-      baseRate: 0.05,
-      baseSlope: 0.25,
-      optimalUtilization: 0.85,
+      baseRate: 0.1,
+      baseSlope: 0.15,
+      optimalUtilization: 0.8,
       excessSlope: 5,
     }
   )(tx);
@@ -94,13 +94,13 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
       referralSpread: 0.2,
       minBorrow: 0.1,
       rateLimitCapacity: 100_000,
-      rateLimitRefillRatePerMs: 0.001157407, // 100_000 / 86_400_000
+      rateLimitRefillRatePerMs: 0.004629630, // 100_000 / 21_600_000 (6 hours)
       rateLimitEnabled: true,
     },
     {
-      baseRate: 0.05,
-      baseSlope: 0.25,
-      optimalUtilization: 0.75,
+      baseRate: 0.1,
+      baseSlope: 0.2,
+      optimalUtilization: 0.8,
       excessSlope: 5,
     }
   )(tx);
@@ -114,13 +114,13 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
       referralSpread: 0.2,
       minBorrow: 0.1,
       rateLimitCapacity: 4_000_000,
-      rateLimitRefillRatePerMs: 0.046296, // 4_000_000 / 86_400_000
+      rateLimitRefillRatePerMs: 0.185185, // 4_000_000 / 21_600_000 (6 hours)
       rateLimitEnabled: true,
     },
     {
-      baseRate: 0.1,
-      baseSlope: 0.35,
-      optimalUtilization: 0.7,
+      baseRate: 0.15,
+      baseSlope: 0.2,
+      optimalUtilization: 0.8,
       excessSlope: 5,
     }
   )(tx);
@@ -134,13 +134,13 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
       referralSpread: 0.2,
       minBorrow: 0.00001,
       rateLimitCapacity: 1_400_000,
-      rateLimitRefillRatePerMs: 0.016203704, // 1_400_000 / 86_400_000
+      rateLimitRefillRatePerMs: 0.064814815, // 1_400_000 / 21_600_000 (6 hours)
       rateLimitEnabled: true,
     },
     {
-      baseRate: 0.1,
-      baseSlope: 0.35,
-      optimalUtilization: 0.7,
+      baseRate: 0.15,
+      baseSlope: 0.2,
+      optimalUtilization: 0.8,
       excessSlope: 5,
     }
   )(tx);
