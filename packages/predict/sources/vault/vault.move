@@ -200,6 +200,17 @@ public(package) fun execute_mint_collateralized<Quote>(
         vault.positions[key].qty_minted_collateralized + quantity;
 }
 
+/// Execute a collateralized redeem. Only updates qty_minted_collateralized.
+/// Does not affect vault risk since position was backed by collateral.
+public(package) fun execute_redeem_collateralized<Quote>(
+    vault: &mut Vault<Quote>,
+    key: MarketKey,
+    quantity: u64,
+) {
+    vault.positions[key].qty_minted_collateralized =
+        vault.positions[key].qty_minted_collateralized - quantity;
+}
+
 /// Update unrealized liability and assets for a position.
 /// Called by orchestrator after calculating via pricing.
 /// For short positions: new_liability > 0, new_assets = 0

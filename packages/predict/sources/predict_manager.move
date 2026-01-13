@@ -4,7 +4,7 @@
 /// PredictManager wraps a BalanceManager for binary options trading.
 ///
 /// Users deposit USDC into the PredictManager, which is stored in the inner BalanceManager.
-/// Positions are tracked in a Table mapping MarketKey to quantity.
+/// Positions are tracked in a Table mapping MarketKey to PositionData (free, locked).
 module deepbook_predict::predict_manager;
 
 use deepbook::balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap};
@@ -14,8 +14,20 @@ use sui::{coin::Coin, table::{Self, Table}};
 // === Errors ===
 const EInvalidOwner: u64 = 0;
 const EInsufficientPosition: u64 = 1;
+const EInsufficientFreePosition: u64 = 2;
+const EInsufficientCollateral: u64 = 3;
 
 // === Structs ===
+
+public struct PositionData has copy, drop, store {
+    free: u64,
+    locked: u64,
+}
+
+public struct CollateralKey has copy, drop, store {
+    locked_key: MarketKey,
+    minted_key: MarketKey,
+}
 
 /// PredictManager wraps a BalanceManager and tracks positions.
 public struct PredictManager has key {
@@ -25,8 +37,10 @@ public struct PredictManager has key {
     deposit_cap: DepositCap,
     withdraw_cap: WithdrawCap,
     trade_cap: TradeCap,
-    /// MarketKey -> quantity
-    positions: Table<MarketKey, u64>,
+    /// MarketKey -> PositionData (free, locked)
+    positions: Table<MarketKey, PositionData>,
+    /// CollateralKey -> locked quantity per collateral relationship
+    collateral: Table<CollateralKey, u64>,
 }
 
 // === Public Functions ===
@@ -41,13 +55,13 @@ public fun id(self: &PredictManager): ID {
     self.id.to_inner()
 }
 
-/// Get the position quantity for a given key.
-/// Returns 0 if no position exists.
-public fun position(self: &PredictManager, key: MarketKey): u64 {
+/// Get position quantities for a given key. Returns (free, locked).
+public fun position(self: &PredictManager, key: MarketKey): (u64, u64) {
     if (self.positions.contains(key)) {
-        self.positions[key]
+        let data = self.positions[key];
+        (data.free, data.locked)
     } else {
-        0
+        (0, 0)
     }
 }
 
@@ -79,26 +93,74 @@ public(package) fun new(ctx: &mut TxContext): ID {
     manager_id
 }
 
-/// Increase a position quantity. Called when user buys a position.
+/// Increase free position quantity. Called when user mints.
 public(package) fun increase_position(self: &mut PredictManager, key: MarketKey, quantity: u64) {
     self.add_position_entry(key);
-    let current = &mut self.positions[key];
-    *current = *current + quantity;
+    let data = &mut self.positions[key];
+    data.free = data.free + quantity;
 }
 
-/// Decrease a position quantity. Called when user sells a position.
+/// Decrease free position quantity. Called when user redeems.
 public(package) fun decrease_position(self: &mut PredictManager, key: MarketKey, quantity: u64) {
     assert!(self.positions.contains(key), EInsufficientPosition);
-    let current = &mut self.positions[key];
-    assert!(*current >= quantity, EInsufficientPosition);
-    *current = *current - quantity;
+    let data = &mut self.positions[key];
+    assert!(data.free >= quantity, EInsufficientFreePosition);
+    data.free = data.free - quantity;
+}
+
+/// Lock collateral for a collateralized mint.
+public(package) fun lock_collateral(
+    self: &mut PredictManager,
+    locked_key: MarketKey,
+    minted_key: MarketKey,
+    quantity: u64,
+) {
+    assert!(self.positions.contains(locked_key), EInsufficientPosition);
+    let data = &mut self.positions[locked_key];
+    assert!(data.free >= quantity, EInsufficientFreePosition);
+
+    // Move from free to locked
+    data.free = data.free - quantity;
+    data.locked = data.locked + quantity;
+
+    // Track collateral relationship
+    let collateral_key = CollateralKey { locked_key, minted_key };
+    self.add_collateral_entry(collateral_key);
+    let collateral_qty = &mut self.collateral[collateral_key];
+    *collateral_qty = *collateral_qty + quantity;
+}
+
+/// Release collateral when redeeming a collateralized position.
+public(package) fun release_collateral(
+    self: &mut PredictManager,
+    locked_key: MarketKey,
+    minted_key: MarketKey,
+    quantity: u64,
+) {
+    let collateral_key = CollateralKey { locked_key, minted_key };
+    assert!(self.collateral.contains(collateral_key), EInsufficientCollateral);
+
+    let collateral_qty = &mut self.collateral[collateral_key];
+    assert!(*collateral_qty >= quantity, EInsufficientCollateral);
+    *collateral_qty = *collateral_qty - quantity;
+
+    // Move from locked to free
+    let data = &mut self.positions[locked_key];
+    data.locked = data.locked - quantity;
+    data.free = data.free + quantity;
 }
 
 // === Private Functions ===
 
 fun add_position_entry(self: &mut PredictManager, key: MarketKey) {
     if (!self.positions.contains(key)) {
-        self.positions.add(key, 0);
+        self.positions.add(key, PositionData { free: 0, locked: 0 });
+    }
+}
+
+fun add_collateral_entry(self: &mut PredictManager, key: CollateralKey) {
+    if (!self.collateral.contains(key)) {
+        self.collateral.add(key, 0);
     }
 }
 
@@ -119,5 +181,6 @@ fun new_predict_manager(ctx: &mut TxContext): PredictManager {
         withdraw_cap,
         trade_cap,
         positions: table::new(ctx),
+        collateral: table::new(ctx),
     }
 }

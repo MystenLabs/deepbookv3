@@ -46,6 +46,7 @@ const EExpiryMismatch: u64 = 1;
 const EMarketNotSettled: u64 = 2;
 const EExceedsMaxTotalExposure: u64 = 3;
 const EExceedsMaxMarketExposure: u64 = 4;
+const EInvalidCollateralPair: u64 = 5;
 
 // === Public Functions ===
 
@@ -134,6 +135,69 @@ public fun redeem<Underlying, Quote>(
     // Deposit payout into manager
     let payout_coin = payout_balance.into_coin(ctx);
     manager.deposit(payout_coin, ctx);
+}
+
+/// Mint a position using another position as collateral (no USDC cost).
+/// - UP collateral (lower strike) → UP minted (higher strike)
+/// - DOWN collateral (higher strike) → DOWN minted (lower strike)
+public fun mint_collateralized<Underlying, Quote>(
+    predict: &mut Predict<Quote>,
+    manager: &mut PredictManager,
+    oracle: &Oracle<Underlying>,
+    locked_key: MarketKey,
+    minted_key: MarketKey,
+    quantity: u64,
+    clock: &Clock,
+) {
+    assert!(locked_key.oracle_id() == oracle.id(), EOracleMismatch);
+    assert!(locked_key.expiry() == oracle.expiry(), EExpiryMismatch);
+    assert!(minted_key.oracle_id() == oracle.id(), EOracleMismatch);
+    assert!(minted_key.expiry() == oracle.expiry(), EExpiryMismatch);
+    oracle.assert_not_stale(clock);
+    predict.markets.assert_enabled(&locked_key);
+    predict.markets.assert_enabled(&minted_key);
+
+    // Validate collateral pair
+    assert!(locked_key.oracle_id() == minted_key.oracle_id(), EInvalidCollateralPair);
+    assert!(locked_key.expiry() == minted_key.expiry(), EInvalidCollateralPair);
+
+    let valid_pair = if (locked_key.is_up() && minted_key.is_up()) {
+        // UP collateral must have lower strike than minted UP
+        locked_key.strike() < minted_key.strike()
+    } else if (locked_key.is_down() && minted_key.is_down()) {
+        // DOWN collateral must have higher strike than minted DOWN
+        locked_key.strike() > minted_key.strike()
+    } else {
+        false
+    };
+    assert!(valid_pair, EInvalidCollateralPair);
+
+    // Lock collateral in manager (moves from free to locked)
+    manager.lock_collateral(locked_key, minted_key, quantity);
+
+    // Record collateralized mint in vault (no risk impact)
+    predict.vault.execute_mint_collateralized(minted_key, quantity);
+
+    // Manager records minted position
+    manager.increase_position(minted_key, quantity);
+}
+
+/// Redeem a collateralized position, releasing the locked collateral.
+public fun redeem_collateralized<Quote>(
+    predict: &mut Predict<Quote>,
+    manager: &mut PredictManager,
+    locked_key: MarketKey,
+    minted_key: MarketKey,
+    quantity: u64,
+) {
+    // Reduce minted position
+    manager.decrease_position(minted_key, quantity);
+
+    // Release collateral (moves from locked to free)
+    manager.release_collateral(locked_key, minted_key, quantity);
+
+    // Update vault accounting
+    predict.vault.execute_redeem_collateralized(minted_key, quantity);
 }
 
 /// Settle a market after expiry. Updates vault accounting to reflect actual outcome.
