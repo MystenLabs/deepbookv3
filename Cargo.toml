@@ -22,9 +22,9 @@ bcs = "0.1.6"
 url = "2.5.4"
 prometheus = "0.13.4"
 
-sui-futures = { git = "https://github.com/MystenLabs/sui.git", rev = "a14d9e8ddadfcea837de46b43d0b72a289320afb" }
-sui-indexer-alt-metrics = { git = "https://github.com/MystenLabs/sui.git", rev = "a14d9e8ddadfcea837de46b43d0b72a289320afb" }
-telemetry-subscribers = { git = "https://github.com/MystenLabs/sui.git", rev = "a14d9e8ddadfcea837de46b43d0b72a289320afb" }
-sui-pg-db = { git = "https://github.com/MystenLabs/sui.git", rev = "a14d9e8ddadfcea837de46b43d0b72a289320afb" }
-move-core-types = { git = "https://github.com/MystenLabs/sui.git", rev = "a14d9e8ddadfcea837de46b43d0b72a289320afb" }
-sui-types = { git = "https://github.com/MystenLabs/sui.git", rev = "a14d9e8ddadfcea837de46b43d0b72a289320afb" }
+sui-futures = { git = "https://github.com/MystenLabs/sui.git", rev = "0def7a08f11a2ec992e11123c5f5ac5e0279e0a0" }
+sui-indexer-alt-metrics = { git = "https://github.com/MystenLabs/sui.git", rev = "0def7a08f11a2ec992e11123c5f5ac5e0279e0a0" }
+telemetry-subscribers = { git = "https://github.com/MystenLabs/sui.git", rev = "0def7a08f11a2ec992e11123c5f5ac5e0279e0a0" }
+sui-pg-db = { git = "https://github.com/MystenLabs/sui.git", rev = "0def7a08f11a2ec992e11123c5f5ac5e0279e0a0" }
+move-core-types = { git = "https://github.com/MystenLabs/sui.git", rev = "0def7a08f11a2ec992e11123c5f5ac5e0279e0a0" }
+sui-types = { git = "https://github.com/MystenLabs/sui.git", rev = "0def7a08f11a2ec992e11123c5f5ac5e0279e0a0" }
