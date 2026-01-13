@@ -312,6 +312,7 @@ public fun supply<Asset>(
 
     let balance = coin.into_balance();
     self.vault.join(balance);
+    self.rate_limiter.record_deposit(supply_amount, clock);
 
     assert!(self.state.total_supply() <= self.config.supply_cap(), ESupplyCapExceeded);
 
