@@ -225,9 +225,9 @@ fun mark_to_market<Underlying, Quote>(
         .pricing
         .get_mint_cost(oracle, down_key, down_qty, up_qty, down_qty, clock);
 
-    // Update vault
-    predict.vault.update_unrealized(up_key, new_up);
-    predict.vault.update_unrealized(down_key, new_down);
+    // Update vault (TODO: handle long positions with assets)
+    predict.vault.update_unrealized(up_key, new_up, 0);
+    predict.vault.update_unrealized(down_key, new_down, 0);
 }
 
 fun assert_vault_exposure<Quote>(predict: &Predict<Quote>, key: MarketKey) {

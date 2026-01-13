@@ -22,16 +22,18 @@ const EInsufficientBalance: u64 = 1;
 
 public struct PositionData has copy, drop, store {
     qty_minted: u64,
+    qty_minted_collateralized: u64,
     qty_redeemed: u64,
     premiums: u64,
     payouts: u64,
-    unrealized_cost: u64,
+    unrealized_liability: u64,
+    unrealized_assets: u64,
 }
 
 public struct Vault<phantom Quote> has store {
     /// USDC balance held by the vault
     balance: Balance<Quote>,
-    /// MarketKey -> PositionData for each short position
+    /// MarketKey -> PositionData for each position
     positions: Table<MarketKey, PositionData>,
     /// Tracks LP shares and supply timestamps
     supply_manager: SupplyManager,
@@ -39,8 +41,10 @@ public struct Vault<phantom Quote> has store {
     max_liability: u64,
     /// Minimum possible payout if best-case outcome occurs
     min_liability: u64,
-    /// Current mark-to-market liability (cost to close all positions)
+    /// Cost to close all short positions
     unrealized_liability: u64,
+    /// Value from closing all long positions
+    unrealized_assets: u64,
     /// Total premiums collected from traders
     cumulative_premiums: u64,
     /// Total payouts made to traders
@@ -65,6 +69,10 @@ public fun unrealized_liability<Quote>(vault: &Vault<Quote>): u64 {
     vault.unrealized_liability
 }
 
+public fun unrealized_assets<Quote>(vault: &Vault<Quote>): u64 {
+    vault.unrealized_assets
+}
+
 public fun cumulative_premiums<Quote>(vault: &Vault<Quote>): u64 {
     vault.cumulative_premiums
 }
@@ -82,13 +90,28 @@ public fun total_shares<Quote>(vault: &Vault<Quote>): u64 {
     vault.supply_manager.total_shares()
 }
 
-/// Returns net position (qty_minted - qty_redeemed).
+/// Returns net short position, clamped to 0 if long.
+/// Used for settlement liability calculations.
 public fun position<Quote>(vault: &Vault<Quote>, key: MarketKey): u64 {
     if (vault.positions.contains(key)) {
         let data = vault.positions[key];
-        data.qty_minted - data.qty_redeemed
+        if (data.qty_minted > data.qty_redeemed) {
+            data.qty_minted - data.qty_redeemed
+        } else {
+            0
+        }
     } else {
         0
+    }
+}
+
+/// Returns raw (qty_minted, qty_redeemed) for a position.
+public fun position_quantities<Quote>(vault: &Vault<Quote>, key: MarketKey): (u64, u64) {
+    if (vault.positions.contains(key)) {
+        let data = vault.positions[key];
+        (data.qty_minted, data.qty_redeemed)
+    } else {
+        (0, 0)
     }
 }
 
@@ -114,6 +137,7 @@ public(package) fun new<Quote>(ctx: &mut TxContext): Vault<Quote> {
         max_liability: 0,
         min_liability: 0,
         unrealized_liability: 0,
+        unrealized_assets: 0,
         cumulative_premiums: 0,
         cumulative_payouts: 0,
     }
@@ -164,17 +188,39 @@ public(package) fun execute_redeem<Quote>(
     vault.balance.split(payout)
 }
 
-/// Update unrealized liability for a position.
-/// Called by orchestrator after calculating new cost via pricing.
+/// Execute a collateralized mint. Only updates qty_minted_collateralized.
+/// Does not affect vault risk since position is backed by collateral.
+public(package) fun execute_mint_collateralized<Quote>(
+    vault: &mut Vault<Quote>,
+    key: MarketKey,
+    quantity: u64,
+) {
+    vault.add_position_entry(key);
+    vault.positions[key].qty_minted_collateralized =
+        vault.positions[key].qty_minted_collateralized + quantity;
+}
+
+/// Update unrealized liability and assets for a position.
+/// Called by orchestrator after calculating via pricing.
+/// For short positions: new_liability > 0, new_assets = 0
+/// For long positions: new_liability = 0, new_assets > 0
 public(package) fun update_unrealized<Quote>(
     vault: &mut Vault<Quote>,
     key: MarketKey,
-    new_unrealized: u64,
+    new_liability: u64,
+    new_assets: u64,
 ) {
     vault.add_position_entry(key);
-    let old_unrealized = vault.positions[key].unrealized_cost;
-    vault.positions[key].unrealized_cost = new_unrealized;
-    vault.unrealized_liability = vault.unrealized_liability + new_unrealized - old_unrealized;
+    let data = &mut vault.positions[key];
+
+    let old_liability = data.unrealized_liability;
+    let old_assets = data.unrealized_assets;
+
+    data.unrealized_liability = new_liability;
+    data.unrealized_assets = new_assets;
+
+    vault.unrealized_liability = vault.unrealized_liability + new_liability - old_liability;
+    vault.unrealized_assets = vault.unrealized_assets + new_assets - old_assets;
 }
 
 /// Finalize settlement by updating max/min liability to actual.
@@ -269,10 +315,12 @@ fun add_position_entry<Quote>(vault: &mut Vault<Quote>, key: MarketKey) {
                 key,
                 PositionData {
                     qty_minted: 0,
+                    qty_minted_collateralized: 0,
                     qty_redeemed: 0,
                     premiums: 0,
                     payouts: 0,
-                    unrealized_cost: 0,
+                    unrealized_liability: 0,
+                    unrealized_assets: 0,
                 },
             );
     }
