@@ -22,6 +22,6 @@ export const adminCapID = {
 };
 
 export const marginAdminCapID = {
-  mainnet: "0x3bc7ecd159795a6d9aec0994bf2e7d3095457068e1c867a688e9994c01145fa2",
+  mainnet: "0x3ec65d06f0be30905cc1742b903aa497791c702820331db263176b74e74c95c8",
   testnet: "0x42a2e769541d272e624c54fff72b878fb0be670776c2b34ef07be5308480650e",
 };
