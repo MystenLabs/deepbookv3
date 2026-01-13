@@ -6,6 +6,11 @@ import {
   adminCapOwner,
   adminCapID,
   marginAdminCapID,
+  marginMaintainerCapID,
+  suiMarginPoolCapID,
+  usdcMarginPoolCapID,
+  deepMarginPoolCapID,
+  walMarginPoolCapID,
 } from "../config/constants";
 import { DeepBookClient } from "@mysten/deepbook-v3";
 import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
@@ -13,12 +18,6 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
 (async () => {
   // Update constant for env
   const env = "mainnet";
-  const marginMaintainerCap =
-    "0xf44fb36ebfe03ff7696f8c17723bbc6af3db1e5eff7944aa65d092575851ca72";
-  const suiMarginPoolCap = "";
-  const usdcMarginPoolCap = "";
-  const deepMarginPoolCap = "";
-  const walMarginPoolCap = "";
 
   const dbClient = new DeepBookClient({
     address: "0x0",
@@ -28,7 +27,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     }),
     adminCap: adminCapID[env],
     marginAdminCap: marginAdminCapID[env],
-    marginMaintainerCap,
+    marginMaintainerCap: marginMaintainerCapID[env],
   });
 
   const tx = new Transaction();
@@ -177,7 +176,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
   )(tx);
   dbClient.marginAdmin.enableDeepbookPool("DEEP_USDC")(tx);
 
-  const poolConfigDeepSui = dbClient.marginAdmin.newPoolConfig("WAL_USDC", {
+  const poolConfigWalUsdc = dbClient.marginAdmin.newPoolConfig("WAL_USDC", {
     minWithdrawRiskRatio: 2,
     minBorrowRiskRatio: 1.4999,
     liquidationRiskRatio: 1.2,
@@ -185,39 +184,39 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     userLiquidationReward: 0.02,
     poolLiquidationReward: 0.03,
   })(tx);
-  dbClient.marginAdmin.registerDeepbookPool("WAL_USDC", poolConfigDeepSui)(tx);
+  dbClient.marginAdmin.registerDeepbookPool("WAL_USDC", poolConfigWalUsdc)(tx);
   dbClient.marginAdmin.enableDeepbookPool("WAL_USDC")(tx);
 
   // 4. Enable deepbook pool for loan
   dbClient.marginMaintainer.enableDeepbookPoolForLoan(
     "SUI_USDC",
     "USDC",
-    tx.object(usdcMarginPoolCap)
+    tx.object(usdcMarginPoolCapID[env])
   )(tx);
   dbClient.marginMaintainer.enableDeepbookPoolForLoan(
     "DEEP_USDC",
     "USDC",
-    tx.object(usdcMarginPoolCap)
+    tx.object(usdcMarginPoolCapID[env])
   )(tx);
   dbClient.marginMaintainer.enableDeepbookPoolForLoan(
     "WAL_USDC",
     "USDC",
-    tx.object(usdcMarginPoolCap)
+    tx.object(usdcMarginPoolCapID[env])
   )(tx);
   dbClient.marginMaintainer.enableDeepbookPoolForLoan(
     "DEEP_USDC",
     "DEEP",
-    tx.object(deepMarginPoolCap)
+    tx.object(deepMarginPoolCapID[env])
   )(tx);
   dbClient.marginMaintainer.enableDeepbookPoolForLoan(
     "SUI_USDC",
     "SUI",
-    tx.object(suiMarginPoolCap)
+    tx.object(suiMarginPoolCapID[env])
   )(tx);
   dbClient.marginMaintainer.enableDeepbookPoolForLoan(
     "WAL_USDC",
     "WAL",
-    tx.object(walMarginPoolCap)
+    tx.object(walMarginPoolCapID[env])
   )(tx);
 
   let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);

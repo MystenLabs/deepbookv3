@@ -25,3 +25,28 @@ export const marginAdminCapID = {
   mainnet: "0x3ec65d06f0be30905cc1742b903aa497791c702820331db263176b74e74c95c8",
   testnet: "0x42a2e769541d272e624c54fff72b878fb0be670776c2b34ef07be5308480650e",
 };
+
+export const marginMaintainerCapID = {
+  mainnet: "0xf44fb36ebfe03ff7696f8c17723bbc6af3db1e5eff7944aa65d092575851ca72",
+  testnet: "",
+};
+
+export const suiMarginPoolCapID = {
+  mainnet: "0x4894832150466e190359716e415f92d6260d4e86c5e29f919fff8b5afa6682cb",
+  testnet: "",
+};
+
+export const usdcMarginPoolCapID = {
+  mainnet: "0x3c6278f0b21ebf51cec6485e312123c1dbad6d89fca9bb7cfe027dad32c275d8",
+  testnet: "",
+};
+
+export const deepMarginPoolCapID = {
+  mainnet: "0xa9532986275e3eac41b8c59da91c29d591b017422b96071276e833f7c9ed855f",
+  testnet: "",
+};
+
+export const walMarginPoolCapID = {
+  mainnet: "0x8aa9345ea5b61e095e5de9dc5a498cf8c8cec9469d7916552b8772d313b41dc8",
+  testnet: "",
+};
