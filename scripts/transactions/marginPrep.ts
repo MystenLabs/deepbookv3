@@ -90,7 +90,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     "SUI",
     {
       supplyCap: 500_000,
-      maxUtilizationRate: 0.9,
+      maxUtilizationRate: 0.8,
       referralSpread: 0.2,
       minBorrow: 0.1,
       rateLimitCapacity: 100_000,
@@ -110,7 +110,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     "DEEP",
     {
       supplyCap: 20_000_000,
-      maxUtilizationRate: 0.9,
+      maxUtilizationRate: 0.8,
       referralSpread: 0.2,
       minBorrow: 0.1,
       rateLimitCapacity: 4_000_000,
@@ -120,7 +120,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     {
       baseRate: 0.1,
       baseSlope: 0.35,
-      optimalUtilization: 0.75,
+      optimalUtilization: 0.7,
       excessSlope: 5,
     }
   )(tx);
@@ -130,7 +130,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     "WAL",
     {
       supplyCap: 7_000_000,
-      maxUtilizationRate: 0.9,
+      maxUtilizationRate: 0.8,
       referralSpread: 0.2,
       minBorrow: 0.00001,
       rateLimitCapacity: 1_400_000,
@@ -140,7 +140,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     {
       baseRate: 0.1,
       baseSlope: 0.35,
-      optimalUtilization: 0.75,
+      optimalUtilization: 0.7,
       excessSlope: 5,
     }
   )(tx);
