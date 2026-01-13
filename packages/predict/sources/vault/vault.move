@@ -253,7 +253,14 @@ public(package) fun supply<Quote>(
     let amount = coin.value();
     let shares = vault
         .supply_manager
-        .supply(amount, vault.balance.value(), vault.unrealized_liability, clock, ctx);
+        .supply(
+            amount,
+            vault.balance.value(),
+            vault.unrealized_liability,
+            vault.unrealized_assets,
+            clock,
+            ctx,
+        );
     vault.balance.join(coin.into_balance());
 
     shares
@@ -273,6 +280,7 @@ public(package) fun withdraw<Quote>(
             shares,
             vault.balance.value(),
             vault.unrealized_liability,
+            vault.unrealized_assets,
             lockup_period_ms,
             clock,
             ctx,
