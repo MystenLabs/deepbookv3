@@ -50,6 +50,15 @@ public(package) fun check_and_record_withdrawal(
     true
 }
 
+public(package) fun record_deposit(self: &mut RateLimiter, amount: u64, clock: &Clock) {
+    if (!self.enabled) return;
+
+    self.refill(clock);
+
+    let new_available = (self.available as u128) + (amount as u128);
+    self.available = min(new_available, self.capacity as u128) as u64;
+}
+
 public(package) fun get_available_withdrawal(self: &RateLimiter, clock: &Clock): u64 {
     if (!self.enabled) return std::u64::max_value!();
 

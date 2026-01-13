@@ -1670,3 +1670,74 @@ fun test_tiny_withdraw_burns_at_least_one_share() {
     test::return_shared(pool);
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
+
+#[test]
+/// Test that update_margin_pool_config accrues interest using old params before applying new config.
+fun test_update_margin_pool_config_accrues_interest_with_old_params() {
+    let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let margin_pool_cap = scenario.take_from_sender<MarginPoolCap>();
+
+    // Verify initial protocol_spread is 10%
+    let old_protocol_spread = pool.protocol_spread();
+    assert_eq!(old_protocol_spread, test_constants::protocol_spread());
+
+    // Supply 100 USDC
+    scenario.next_tx(test_constants::user1());
+    let supply_amount = 100 * test_constants::usdc_multiplier();
+    let supplier_cap = test_helpers::supply_to_pool(
+        &mut pool,
+        &registry,
+        supply_amount,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Borrow 60 USDC (60% utilization)
+    scenario.next_tx(test_constants::user2());
+    let borrow_amount = 60 * test_constants::usdc_multiplier();
+    let borrowed_coin = test_borrow(&mut pool, borrow_amount, &clock, scenario.ctx());
+
+    // Advance time by 1 year to accrue interest
+    advance_time(&mut clock, margin_constants::year_ms());
+
+    // Get expected supply with interest before config update (using old protocol_spread)
+    let supply_with_interest_before = pool.total_supply_with_interest(&clock);
+    let raw_supply_before = pool.total_supply();
+    let protocol_fees_before = pool.protocol_fees().protocol_fees();
+
+    // Supply with interest should be greater than raw supply (interest has accrued)
+    assert!(supply_with_interest_before > raw_supply_before);
+
+    // Now update margin_pool_config with new protocol_spread (5% instead of 10%)
+    scenario.next_tx(test_constants::admin());
+    let new_protocol_spread = 50_000_000; // 5%
+    let new_margin_pool_config = protocol_config::new_margin_pool_config(
+        test_constants::supply_cap(),
+        test_constants::max_utilization_rate(),
+        new_protocol_spread,
+        test_constants::min_borrow(),
+    );
+
+    pool.update_margin_pool_config(&registry, new_margin_pool_config, &margin_pool_cap, &clock);
+
+    // After config update, interest should have been accrued using old protocol_spread
+    let raw_supply_after = pool.total_supply();
+    let protocol_fees_after = pool.protocol_fees().protocol_fees();
+
+    // Verify state was updated: raw supply should now include accrued interest
+    assert_eq!(raw_supply_after, supply_with_interest_before);
+
+    // Verify protocol fees increased (interest was calculated with old protocol_spread)
+    assert!(protocol_fees_after > protocol_fees_before);
+
+    // Verify new protocol_spread is in effect
+    assert_eq!(pool.protocol_spread(), new_protocol_spread);
+
+    scenario.return_to_sender(margin_pool_cap);
+    destroy(borrowed_coin);
+    destroy(supplier_cap);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
