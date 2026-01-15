@@ -34,6 +34,7 @@ use crate::schema::{
     protocol_fees_increased,
     protocol_fees_withdrawn,
     rebates,
+    referral_fee_events,
     referral_fees_claimed,
     stakes,
     sui_error_transactions,
@@ -293,6 +294,22 @@ pub struct Rebates {
     pub balance_manager_id: String,
     pub epoch: i64,
     pub claim_amount: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = referral_fee_events, primary_key(event_digest))]
+pub struct ReferralFeeEvent {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub referral_id: String,
+    pub base_fee: i64,
+    pub quote_fee: i64,
+    pub deep_fee: i64,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]

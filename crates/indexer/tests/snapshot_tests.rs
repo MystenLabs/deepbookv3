@@ -25,6 +25,7 @@ use deepbook_indexer::handlers::pool_created_handler::PoolCreatedHandler;
 use deepbook_indexer::handlers::pool_price_handler::PoolPriceHandler;
 use deepbook_indexer::handlers::protocol_fees_increased_handler::ProtocolFeesIncreasedHandler;
 use deepbook_indexer::handlers::protocol_fees_withdrawn_handler::ProtocolFeesWithdrawnHandler;
+use deepbook_indexer::handlers::referral_fee_event_handler::ReferralFeeEventHandler;
 use deepbook_indexer::handlers::referral_fees_claimed_handler::ReferralFeesClaimedHandler;
 use deepbook_indexer::handlers::supplier_cap_minted_handler::SupplierCapMintedHandler;
 use deepbook_indexer::handlers::supply_referral_minted_handler::SupplyReferralMintedHandler;
@@ -309,6 +310,13 @@ async fn protocol_fees_increased_test() -> Result<(), anyhow::Error> {
         ["protocol_fees_increased"],
     )
     .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn referral_fee_event_test() -> Result<(), anyhow::Error> {
+    let handler = ReferralFeeEventHandler::new(DeepbookEnv::Mainnet);
+    data_test("referral_fee_events", handler, ["referral_fee_events"]).await?;
     Ok(())
 }
 

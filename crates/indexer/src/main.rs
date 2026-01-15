@@ -8,6 +8,7 @@ use deepbook_indexer::handlers::order_update_handler::OrderUpdateHandler;
 use deepbook_indexer::handlers::pool_price_handler::PoolPriceHandler;
 use deepbook_indexer::handlers::proposals_handler::ProposalsHandler;
 use deepbook_indexer::handlers::rebates_handler::RebatesHandler;
+use deepbook_indexer::handlers::referral_fee_event_handler::ReferralFeeEventHandler;
 use deepbook_indexer::handlers::stakes_handler::StakesHandler;
 use deepbook_indexer::handlers::trade_params_update_handler::TradeParamsUpdateHandler;
 use deepbook_indexer::handlers::vote_handler::VotesHandler;
@@ -167,6 +168,9 @@ async fn main() -> Result<(), anyhow::Error> {
                     .await?;
                 indexer
                     .concurrent_pipeline(RebatesHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(ReferralFeeEventHandler::new(env), Default::default())
                     .await?;
                 indexer
                     .concurrent_pipeline(StakesHandler::new(env), Default::default())

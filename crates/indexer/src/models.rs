@@ -286,6 +286,20 @@ pub mod deepbook {
             const MODULE: &'static str = "pool";
             const NAME: &'static str = "DeepBurned";
         }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct ReferralFeeEvent {
+            pub pool_id: ObjectID,
+            pub referral_id: ObjectID,
+            pub base_fee: u64,
+            pub quote_fee: u64,
+            pub deep_fee: u64,
+        }
+
+        impl MoveStruct for ReferralFeeEvent {
+            const MODULE: &'static str = "pool";
+            const NAME: &'static str = "ReferralFeeEvent";
+        }
     }
 }
 

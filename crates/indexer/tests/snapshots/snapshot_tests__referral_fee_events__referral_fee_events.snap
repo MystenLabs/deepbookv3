@@ -1,0 +1,20 @@
+---
+source: crates/indexer/tests/snapshot_tests.rs
+expression: rows
+---
+[
+  {
+    "event_digest": "D2YQEZ6D3SfUZ2bVGpMbrzGPoZAbrLYwy5m249aHwqL14",
+    "digest": "D2YQEZ6D3SfUZ2bVGpMbrzGPoZAbrLYwy5m249aHwqL1",
+    "sender": "0x064d87c3da8b7201b18c05bfc3189eb817920b2d089b33e207d1d99dc5ce08e0",
+    "checkpoint": "233962755",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1768251049003",
+    "package": "0x2d93777cc8b67c064b495e8606f2f8f5fd578450347bbe7b36e0bc03963c1c40",
+    "pool_id": "0xe05dafb5133bcffb8d59f4e12465dc0e9faeaa05e3e342a08fe135800e3e4407",
+    "referral_id": "0xf66fc08674e5592b471d965c82410af5a2b44e2b4b92f191d91c7147d378bcaa",
+    "base_fee": "12500",
+    "quote_fee": "0",
+    "deep_fee": "0"
+  }
+]
