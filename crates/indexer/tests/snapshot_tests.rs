@@ -349,9 +349,7 @@ async fn withdraw_collateral_test() -> Result<(), anyhow::Error> {
 
 // === TPSL (Take Profit / Stop Loss) Events Tests ===
 // Checkpoint 234928955 - TX: HRj2fF9ifRA8kXipJy2g6y6UKgMFNeKvvZqfrKY2L825
-// TODO: BCS deserialization has "remaining input" error - needs struct alignment investigation
 #[tokio::test]
-#[ignore]
 async fn conditional_order_added_test() -> Result<(), anyhow::Error> {
     let handler = ConditionalOrderAddedHandler::new(DeepbookEnv::Mainnet);
     data_test(
@@ -364,9 +362,7 @@ async fn conditional_order_added_test() -> Result<(), anyhow::Error> {
 }
 
 // Checkpoint 234928968 - TX: 5QcwuLcE7jmunStKgUSCrHPpAw1WC8B9XQLPph3jrKGn
-// TODO: BCS deserialization has "remaining input" error - needs struct alignment investigation
 #[tokio::test]
-#[ignore]
 async fn conditional_order_cancelled_test() -> Result<(), anyhow::Error> {
     let handler = ConditionalOrderCancelledHandler::new(DeepbookEnv::Mainnet);
     data_test(

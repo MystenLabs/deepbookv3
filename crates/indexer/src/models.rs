@@ -708,13 +708,13 @@ pub mod deepbook_margin {
         pub struct PendingOrder {
             pub is_limit_order: bool,
             pub client_order_id: u64,
-            pub order_type: u8,
+            pub order_type: Option<u8>,
             pub self_matching_option: u8,
-            pub price: u64,
+            pub price: Option<u64>,
             pub quantity: u64,
             pub is_bid: bool,
             pub pay_with_deep: bool,
-            pub expire_timestamp: u64,
+            pub expire_timestamp: Option<u64>,
         }
 
         /// Complete conditional order containing both condition and pending order
