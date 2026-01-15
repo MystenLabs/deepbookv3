@@ -3,18 +3,15 @@ use crate::schema::{
     asset_supplied,
     asset_withdrawn,
     balances,
+    // Collateral Events (deposit/withdraw)
+    collateral_events,
     // TPSL (Take Profit/Stop Loss) Events
-    conditional_order_added,
-    conditional_order_cancelled,
-    conditional_order_executed,
-    conditional_order_insufficient_funds,
+    conditional_order_events,
     deep_burned,
     deepbook_pool_config_updated,
     deepbook_pool_registered,
     deepbook_pool_updated,
     deepbook_pool_updated_registry,
-    // Collateral Events
-    deposit_collateral,
     flashloans,
     interest_params_updated,
     liquidation,
@@ -48,7 +45,6 @@ use crate::schema::{
     supply_referral_minted,
     trade_params_update,
     votes,
-    withdraw_collateral,
 };
 use bigdecimal::BigDecimal;
 use diesel::deserialize::FromSql;
@@ -792,133 +788,45 @@ pub struct NewMarginPoolSnapshot {
 
 // === Collateral Events ===
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = deposit_collateral, primary_key(event_digest))]
-pub struct DepositCollateral {
+#[diesel(table_name = collateral_events, primary_key(event_digest))]
+pub struct CollateralEvent {
     pub event_digest: String,
     pub digest: String,
     pub sender: String,
     pub checkpoint: i64,
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
+    pub event_type: String,
     pub margin_manager_id: String,
     pub amount: BigDecimal,
     pub asset_type: String,
     pub pyth_decimals: i16,
     pub pyth_price: BigDecimal,
-    pub onchain_timestamp: i64,
-}
-
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = withdraw_collateral, primary_key(event_digest))]
-pub struct WithdrawCollateral {
-    pub event_digest: String,
-    pub digest: String,
-    pub sender: String,
-    pub checkpoint: i64,
-    pub checkpoint_timestamp_ms: i64,
-    pub package: String,
-    pub margin_manager_id: String,
-    pub amount: BigDecimal,
-    pub asset_type: String,
-    pub withdraw_base_asset: bool,
-    pub base_pyth_decimals: i16,
-    pub base_pyth_price: BigDecimal,
-    pub quote_pyth_decimals: i16,
-    pub quote_pyth_price: BigDecimal,
-    pub remaining_base_asset: BigDecimal,
-    pub remaining_quote_asset: BigDecimal,
-    pub remaining_base_debt: BigDecimal,
-    pub remaining_quote_debt: BigDecimal,
+    pub withdraw_base_asset: Option<bool>,
+    pub base_pyth_decimals: Option<i16>,
+    pub base_pyth_price: Option<BigDecimal>,
+    pub quote_pyth_decimals: Option<i16>,
+    pub quote_pyth_price: Option<BigDecimal>,
+    pub remaining_base_asset: Option<BigDecimal>,
+    pub remaining_quote_asset: Option<BigDecimal>,
+    pub remaining_base_debt: Option<BigDecimal>,
+    pub remaining_quote_debt: Option<BigDecimal>,
     pub onchain_timestamp: i64,
 }
 
 // === TPSL (Take Profit / Stop Loss) Events ===
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = conditional_order_added, primary_key(event_digest))]
-pub struct ConditionalOrderAdded {
+#[diesel(table_name = conditional_order_events, primary_key(event_digest))]
+pub struct ConditionalOrderEvent {
     pub event_digest: String,
     pub digest: String,
     pub sender: String,
     pub checkpoint: i64,
     pub checkpoint_timestamp_ms: i64,
     pub package: String,
+    pub event_type: String,
     pub manager_id: String,
-    pub conditional_order_id: i64,
-    pub trigger_below_price: bool,
-    pub trigger_price: BigDecimal,
-    pub is_limit_order: bool,
-    pub client_order_id: i64,
-    pub order_type: i16,
-    pub self_matching_option: i16,
-    pub price: BigDecimal,
-    pub quantity: BigDecimal,
-    pub is_bid: bool,
-    pub pay_with_deep: bool,
-    pub expire_timestamp: i64,
-    pub onchain_timestamp: i64,
-}
-
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = conditional_order_cancelled, primary_key(event_digest))]
-pub struct ConditionalOrderCancelled {
-    pub event_digest: String,
-    pub digest: String,
-    pub sender: String,
-    pub checkpoint: i64,
-    pub checkpoint_timestamp_ms: i64,
-    pub package: String,
-    pub manager_id: String,
-    pub conditional_order_id: i64,
-    pub trigger_below_price: bool,
-    pub trigger_price: BigDecimal,
-    pub is_limit_order: bool,
-    pub client_order_id: i64,
-    pub order_type: i16,
-    pub self_matching_option: i16,
-    pub price: BigDecimal,
-    pub quantity: BigDecimal,
-    pub is_bid: bool,
-    pub pay_with_deep: bool,
-    pub expire_timestamp: i64,
-    pub onchain_timestamp: i64,
-}
-
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = conditional_order_executed, primary_key(event_digest))]
-pub struct ConditionalOrderExecuted {
-    pub event_digest: String,
-    pub digest: String,
-    pub sender: String,
-    pub checkpoint: i64,
-    pub checkpoint_timestamp_ms: i64,
-    pub package: String,
-    pub manager_id: String,
-    pub pool_id: String,
-    pub conditional_order_id: i64,
-    pub trigger_below_price: bool,
-    pub trigger_price: BigDecimal,
-    pub is_limit_order: bool,
-    pub client_order_id: i64,
-    pub order_type: i16,
-    pub self_matching_option: i16,
-    pub price: BigDecimal,
-    pub quantity: BigDecimal,
-    pub is_bid: bool,
-    pub pay_with_deep: bool,
-    pub expire_timestamp: i64,
-    pub onchain_timestamp: i64,
-}
-
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = conditional_order_insufficient_funds, primary_key(event_digest))]
-pub struct ConditionalOrderInsufficientFunds {
-    pub event_digest: String,
-    pub digest: String,
-    pub sender: String,
-    pub checkpoint: i64,
-    pub checkpoint_timestamp_ms: i64,
-    pub package: String,
-    pub manager_id: String,
+    pub pool_id: Option<String>,
     pub conditional_order_id: i64,
     pub trigger_below_price: bool,
     pub trigger_price: BigDecimal,

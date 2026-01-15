@@ -1,8 +1,9 @@
 -- Migration: Add TPSL (Take Profit/Stop Loss) and Collateral event tables
 -- These tables support the margin module events that were previously missing from the indexer
 
--- Deposit Collateral Event - tracks user collateral deposits into margin positions
-CREATE TABLE deposit_collateral (
+-- Collateral Events - tracks user collateral deposits and withdrawals into margin positions
+-- event_type: 'deposit' or 'withdraw'
+CREATE TABLE collateral_events (
     event_digest                TEXT        PRIMARY KEY,
     digest                      TEXT        NOT NULL,
     sender                      TEXT        NOT NULL,
@@ -10,16 +11,29 @@ CREATE TABLE deposit_collateral (
     timestamp                   TIMESTAMP   DEFAULT CURRENT_TIMESTAMP NOT NULL,
     checkpoint_timestamp_ms     BIGINT      NOT NULL,
     package                     TEXT        NOT NULL,
+    event_type                  TEXT        NOT NULL,
     margin_manager_id           TEXT        NOT NULL,
     amount                      NUMERIC     NOT NULL,
     asset_type                  TEXT        NOT NULL,
+    -- Deposit fields (also used for withdraw single-asset pricing)
     pyth_decimals               SMALLINT    NOT NULL,
     pyth_price                  NUMERIC     NOT NULL,
+    -- Withdraw-specific fields (nullable for deposits)
+    withdraw_base_asset         BOOLEAN,
+    base_pyth_decimals          SMALLINT,
+    base_pyth_price             NUMERIC,
+    quote_pyth_decimals         SMALLINT,
+    quote_pyth_price            NUMERIC,
+    remaining_base_asset        NUMERIC,
+    remaining_quote_asset       NUMERIC,
+    remaining_base_debt         NUMERIC,
+    remaining_quote_debt        NUMERIC,
     onchain_timestamp           BIGINT      NOT NULL
 );
 
--- Withdraw Collateral Event - tracks user collateral withdrawals from margin positions
-CREATE TABLE withdraw_collateral (
+-- Conditional Order Events - tracks TPSL (take profit/stop loss) order lifecycle
+-- event_type: 'added', 'cancelled', 'executed', 'insufficient_funds'
+CREATE TABLE conditional_order_events (
     event_digest                TEXT        PRIMARY KEY,
     digest                      TEXT        NOT NULL,
     sender                      TEXT        NOT NULL,
@@ -27,107 +41,9 @@ CREATE TABLE withdraw_collateral (
     timestamp                   TIMESTAMP   DEFAULT CURRENT_TIMESTAMP NOT NULL,
     checkpoint_timestamp_ms     BIGINT      NOT NULL,
     package                     TEXT        NOT NULL,
-    margin_manager_id           TEXT        NOT NULL,
-    amount                      NUMERIC     NOT NULL,
-    asset_type                  TEXT        NOT NULL,
-    withdraw_base_asset         BOOLEAN     NOT NULL,
-    base_pyth_decimals          SMALLINT    NOT NULL,
-    base_pyth_price             NUMERIC     NOT NULL,
-    quote_pyth_decimals         SMALLINT    NOT NULL,
-    quote_pyth_price            NUMERIC     NOT NULL,
-    remaining_base_asset        NUMERIC     NOT NULL,
-    remaining_quote_asset       NUMERIC     NOT NULL,
-    remaining_base_debt         NUMERIC     NOT NULL,
-    remaining_quote_debt        NUMERIC     NOT NULL,
-    onchain_timestamp           BIGINT      NOT NULL
-);
-
--- Conditional Order Added - tracks creation of TPSL (take profit/stop loss) orders
-CREATE TABLE conditional_order_added (
-    event_digest                TEXT        PRIMARY KEY,
-    digest                      TEXT        NOT NULL,
-    sender                      TEXT        NOT NULL,
-    checkpoint                  BIGINT      NOT NULL,
-    timestamp                   TIMESTAMP   DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    checkpoint_timestamp_ms     BIGINT      NOT NULL,
-    package                     TEXT        NOT NULL,
+    event_type                  TEXT        NOT NULL,
     manager_id                  TEXT        NOT NULL,
-    conditional_order_id        BIGINT      NOT NULL,
-    trigger_below_price         BOOLEAN     NOT NULL,
-    trigger_price               NUMERIC     NOT NULL,
-    is_limit_order              BOOLEAN     NOT NULL,
-    client_order_id             BIGINT      NOT NULL,
-    order_type                  SMALLINT    NOT NULL,
-    self_matching_option        SMALLINT    NOT NULL,
-    price                       NUMERIC     NOT NULL,
-    quantity                    NUMERIC     NOT NULL,
-    is_bid                      BOOLEAN     NOT NULL,
-    pay_with_deep               BOOLEAN     NOT NULL,
-    expire_timestamp            BIGINT      NOT NULL,
-    onchain_timestamp           BIGINT      NOT NULL
-);
-
--- Conditional Order Cancelled - tracks cancellation of TPSL orders
-CREATE TABLE conditional_order_cancelled (
-    event_digest                TEXT        PRIMARY KEY,
-    digest                      TEXT        NOT NULL,
-    sender                      TEXT        NOT NULL,
-    checkpoint                  BIGINT      NOT NULL,
-    timestamp                   TIMESTAMP   DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    checkpoint_timestamp_ms     BIGINT      NOT NULL,
-    package                     TEXT        NOT NULL,
-    manager_id                  TEXT        NOT NULL,
-    conditional_order_id        BIGINT      NOT NULL,
-    trigger_below_price         BOOLEAN     NOT NULL,
-    trigger_price               NUMERIC     NOT NULL,
-    is_limit_order              BOOLEAN     NOT NULL,
-    client_order_id             BIGINT      NOT NULL,
-    order_type                  SMALLINT    NOT NULL,
-    self_matching_option        SMALLINT    NOT NULL,
-    price                       NUMERIC     NOT NULL,
-    quantity                    NUMERIC     NOT NULL,
-    is_bid                      BOOLEAN     NOT NULL,
-    pay_with_deep               BOOLEAN     NOT NULL,
-    expire_timestamp            BIGINT      NOT NULL,
-    onchain_timestamp           BIGINT      NOT NULL
-);
-
--- Conditional Order Executed - tracks when TPSL orders are triggered and executed
-CREATE TABLE conditional_order_executed (
-    event_digest                TEXT        PRIMARY KEY,
-    digest                      TEXT        NOT NULL,
-    sender                      TEXT        NOT NULL,
-    checkpoint                  BIGINT      NOT NULL,
-    timestamp                   TIMESTAMP   DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    checkpoint_timestamp_ms     BIGINT      NOT NULL,
-    package                     TEXT        NOT NULL,
-    manager_id                  TEXT        NOT NULL,
-    pool_id                     TEXT        NOT NULL,
-    conditional_order_id        BIGINT      NOT NULL,
-    trigger_below_price         BOOLEAN     NOT NULL,
-    trigger_price               NUMERIC     NOT NULL,
-    is_limit_order              BOOLEAN     NOT NULL,
-    client_order_id             BIGINT      NOT NULL,
-    order_type                  SMALLINT    NOT NULL,
-    self_matching_option        SMALLINT    NOT NULL,
-    price                       NUMERIC     NOT NULL,
-    quantity                    NUMERIC     NOT NULL,
-    is_bid                      BOOLEAN     NOT NULL,
-    pay_with_deep               BOOLEAN     NOT NULL,
-    expire_timestamp            BIGINT      NOT NULL,
-    onchain_timestamp           BIGINT      NOT NULL
-);
-
--- Conditional Order Insufficient Funds - tracks when TPSL orders fail due to lack of funds
-CREATE TABLE conditional_order_insufficient_funds (
-    event_digest                TEXT        PRIMARY KEY,
-    digest                      TEXT        NOT NULL,
-    sender                      TEXT        NOT NULL,
-    checkpoint                  BIGINT      NOT NULL,
-    timestamp                   TIMESTAMP   DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    checkpoint_timestamp_ms     BIGINT      NOT NULL,
-    package                     TEXT        NOT NULL,
-    manager_id                  TEXT        NOT NULL,
+    pool_id                     TEXT,
     conditional_order_id        BIGINT      NOT NULL,
     trigger_below_price         BOOLEAN     NOT NULL,
     trigger_price               NUMERIC     NOT NULL,
@@ -144,25 +60,12 @@ CREATE TABLE conditional_order_insufficient_funds (
 );
 
 -- Create indexes for common query patterns
-CREATE INDEX idx_deposit_collateral_margin_manager ON deposit_collateral(margin_manager_id);
-CREATE INDEX idx_deposit_collateral_checkpoint ON deposit_collateral(checkpoint);
+CREATE INDEX idx_collateral_events_margin_manager ON collateral_events(margin_manager_id);
+CREATE INDEX idx_collateral_events_checkpoint ON collateral_events(checkpoint);
+CREATE INDEX idx_collateral_events_type ON collateral_events(event_type);
 
-CREATE INDEX idx_withdraw_collateral_margin_manager ON withdraw_collateral(margin_manager_id);
-CREATE INDEX idx_withdraw_collateral_checkpoint ON withdraw_collateral(checkpoint);
-
-CREATE INDEX idx_conditional_order_added_manager ON conditional_order_added(manager_id);
-CREATE INDEX idx_conditional_order_added_checkpoint ON conditional_order_added(checkpoint);
-CREATE INDEX idx_conditional_order_added_order_id ON conditional_order_added(conditional_order_id);
-
-CREATE INDEX idx_conditional_order_cancelled_manager ON conditional_order_cancelled(manager_id);
-CREATE INDEX idx_conditional_order_cancelled_checkpoint ON conditional_order_cancelled(checkpoint);
-CREATE INDEX idx_conditional_order_cancelled_order_id ON conditional_order_cancelled(conditional_order_id);
-
-CREATE INDEX idx_conditional_order_executed_manager ON conditional_order_executed(manager_id);
-CREATE INDEX idx_conditional_order_executed_pool ON conditional_order_executed(pool_id);
-CREATE INDEX idx_conditional_order_executed_checkpoint ON conditional_order_executed(checkpoint);
-CREATE INDEX idx_conditional_order_executed_order_id ON conditional_order_executed(conditional_order_id);
-
-CREATE INDEX idx_conditional_order_insufficient_funds_manager ON conditional_order_insufficient_funds(manager_id);
-CREATE INDEX idx_conditional_order_insufficient_funds_checkpoint ON conditional_order_insufficient_funds(checkpoint);
-CREATE INDEX idx_conditional_order_insufficient_funds_order_id ON conditional_order_insufficient_funds(conditional_order_id);
+CREATE INDEX idx_conditional_order_events_manager ON conditional_order_events(manager_id);
+CREATE INDEX idx_conditional_order_events_pool ON conditional_order_events(pool_id);
+CREATE INDEX idx_conditional_order_events_checkpoint ON conditional_order_events(checkpoint);
+CREATE INDEX idx_conditional_order_events_order_id ON conditional_order_events(conditional_order_id);
+CREATE INDEX idx_conditional_order_events_type ON conditional_order_events(event_type);

@@ -2,22 +2,24 @@ use bigdecimal::BigDecimal;
 
 use crate::define_handler;
 use crate::models::deepbook_margin::tpsl::ConditionalOrderCancelled as ConditionalOrderCancelledEvent;
-use deepbook_schema::models::ConditionalOrderCancelled;
+use deepbook_schema::models::ConditionalOrderEvent;
 
 define_handler! {
     name: ConditionalOrderCancelledHandler,
     processor_name: "conditional_order_cancelled",
     event_type: ConditionalOrderCancelledEvent,
-    db_model: ConditionalOrderCancelled,
-    table: conditional_order_cancelled,
-    map_event: |event, meta| ConditionalOrderCancelled {
+    db_model: ConditionalOrderEvent,
+    table: conditional_order_events,
+    map_event: |event, meta| ConditionalOrderEvent {
         event_digest: meta.event_digest(),
         digest: meta.digest(),
         sender: meta.sender(),
         checkpoint: meta.checkpoint(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
         package: meta.package(),
+        event_type: "cancelled".to_string(),
         manager_id: event.manager_id.to_string(),
+        pool_id: None,
         conditional_order_id: event.conditional_order_id as i64,
         trigger_below_price: event.conditional_order.condition.trigger_below_price,
         trigger_price: BigDecimal::from(event.conditional_order.condition.trigger_price),
