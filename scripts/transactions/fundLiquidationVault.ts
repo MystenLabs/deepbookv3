@@ -26,6 +26,7 @@ import { adminCapOwner, liquidationAdminCapID } from "../config/constants";
   const deepAmount = 190_000;
   const walAmount = 73_000;
 
+  // Deposit into liquidation vault
   dbClient.marginLiquidations.deposit(
     vaultId,
     liquidationAdminCapID[env],
@@ -53,6 +54,11 @@ import { adminCapOwner, liquidationAdminCapID } from "../config/constants";
     "WAL",
     walAmount
   )(tx);
+
+  // Supply 10,000 USDC to margin pool
+  const supplierCap = dbClient.marginPool.mintSupplierCap()(tx);
+  dbClient.marginPool.supplyToMarginPool("USDC", supplierCap, 10_000)(tx);
+  tx.transferObjects([supplierCap], adminCapOwner[env]);
 
   let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
