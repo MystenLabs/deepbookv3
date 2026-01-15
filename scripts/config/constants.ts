@@ -50,3 +50,8 @@ export const walMarginPoolCapID = {
   mainnet: "0x8aa9345ea5b61e095e5de9dc5a498cf8c8cec9469d7916552b8772d313b41dc8",
   testnet: "",
 };
+
+export const liquidationAdminCapID = {
+  mainnet: "0x21521b9ddc1cfc76b6f4c9462957b4d58a998a23eb100ab2821d27d55c60d0a9",
+  testnet: "",
+};
