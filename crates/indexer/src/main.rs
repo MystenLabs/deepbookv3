@@ -42,6 +42,17 @@ use deepbook_indexer::handlers::pause_cap_updated_handler::PauseCapUpdatedHandle
 // Protocol Fees Events
 use deepbook_indexer::handlers::protocol_fees_increased_handler::ProtocolFeesIncreasedHandler;
 use deepbook_indexer::handlers::referral_fees_claimed_handler::ReferralFeesClaimedHandler;
+
+// Collateral Events
+use deepbook_indexer::handlers::deposit_collateral_handler::DepositCollateralHandler;
+use deepbook_indexer::handlers::withdraw_collateral_handler::WithdrawCollateralHandler;
+
+// TPSL (Take Profit / Stop Loss) Events
+use deepbook_indexer::handlers::conditional_order_added_handler::ConditionalOrderAddedHandler;
+use deepbook_indexer::handlers::conditional_order_cancelled_handler::ConditionalOrderCancelledHandler;
+use deepbook_indexer::handlers::conditional_order_executed_handler::ConditionalOrderExecutedHandler;
+use deepbook_indexer::handlers::conditional_order_insufficient_funds_handler::ConditionalOrderInsufficientFundsHandler;
+
 use deepbook_indexer::DeepbookEnv;
 use deepbook_schema::MIGRATIONS;
 use prometheus::Registry;
@@ -256,6 +267,37 @@ async fn main() -> Result<(), anyhow::Error> {
                     .await?;
                 indexer
                     .concurrent_pipeline(ReferralFeesClaimedHandler::new(env), Default::default())
+                    .await?;
+
+                // Collateral Events
+                indexer
+                    .concurrent_pipeline(DepositCollateralHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(WithdrawCollateralHandler::new(env), Default::default())
+                    .await?;
+
+                // TPSL (Take Profit / Stop Loss) Events
+                indexer
+                    .concurrent_pipeline(ConditionalOrderAddedHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(
+                        ConditionalOrderCancelledHandler::new(env),
+                        Default::default(),
+                    )
+                    .await?;
+                indexer
+                    .concurrent_pipeline(
+                        ConditionalOrderExecutedHandler::new(env),
+                        Default::default(),
+                    )
+                    .await?;
+                indexer
+                    .concurrent_pipeline(
+                        ConditionalOrderInsufficientFundsHandler::new(env),
+                        Default::default(),
+                    )
                     .await?;
             }
         }

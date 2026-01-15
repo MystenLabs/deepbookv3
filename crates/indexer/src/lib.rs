@@ -72,6 +72,7 @@ pub const MARGIN_MODULES: &[&str] = &[
     "margin_pool",
     "margin_registry",
     "protocol_fees",
+    "tpsl",
 ];
 
 /// SUI system modules

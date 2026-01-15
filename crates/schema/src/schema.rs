@@ -65,6 +65,111 @@ diesel::table! {
 }
 
 diesel::table! {
+    conditional_order_added (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        manager_id -> Text,
+        conditional_order_id -> Int8,
+        trigger_below_price -> Bool,
+        trigger_price -> Numeric,
+        is_limit_order -> Bool,
+        client_order_id -> Int8,
+        order_type -> Int2,
+        self_matching_option -> Int2,
+        price -> Numeric,
+        quantity -> Numeric,
+        is_bid -> Bool,
+        pay_with_deep -> Bool,
+        expire_timestamp -> Int8,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    conditional_order_cancelled (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        manager_id -> Text,
+        conditional_order_id -> Int8,
+        trigger_below_price -> Bool,
+        trigger_price -> Numeric,
+        is_limit_order -> Bool,
+        client_order_id -> Int8,
+        order_type -> Int2,
+        self_matching_option -> Int2,
+        price -> Numeric,
+        quantity -> Numeric,
+        is_bid -> Bool,
+        pay_with_deep -> Bool,
+        expire_timestamp -> Int8,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    conditional_order_executed (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        manager_id -> Text,
+        pool_id -> Text,
+        conditional_order_id -> Int8,
+        trigger_below_price -> Bool,
+        trigger_price -> Numeric,
+        is_limit_order -> Bool,
+        client_order_id -> Int8,
+        order_type -> Int2,
+        self_matching_option -> Int2,
+        price -> Numeric,
+        quantity -> Numeric,
+        is_bid -> Bool,
+        pay_with_deep -> Bool,
+        expire_timestamp -> Int8,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    conditional_order_insufficient_funds (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        manager_id -> Text,
+        conditional_order_id -> Int8,
+        trigger_below_price -> Bool,
+        trigger_price -> Numeric,
+        is_limit_order -> Bool,
+        client_order_id -> Int8,
+        order_type -> Int2,
+        self_matching_option -> Int2,
+        price -> Numeric,
+        quantity -> Numeric,
+        is_bid -> Bool,
+        pay_with_deep -> Bool,
+        expire_timestamp -> Int8,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
     deep_burned (event_digest) {
         event_digest -> Text,
         digest -> Text,
@@ -75,6 +180,24 @@ diesel::table! {
         package -> Text,
         pool_id -> Text,
         burned_amount -> Int8,
+    }
+}
+
+diesel::table! {
+    deposit_collateral (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        margin_manager_id -> Text,
+        amount -> Numeric,
+        asset_type -> Text,
+        pyth_decimals -> Int2,
+        pyth_price -> Numeric,
+        onchain_timestamp -> Int8,
     }
 }
 
@@ -697,6 +820,31 @@ diesel::table! {
 }
 
 diesel::table! {
+    withdraw_collateral (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        margin_manager_id -> Text,
+        amount -> Numeric,
+        asset_type -> Text,
+        withdraw_base_asset -> Bool,
+        base_pyth_decimals -> Int2,
+        base_pyth_price -> Numeric,
+        quote_pyth_decimals -> Int2,
+        quote_pyth_price -> Numeric,
+        remaining_base_asset -> Numeric,
+        remaining_quote_asset -> Numeric,
+        remaining_base_debt -> Numeric,
+        remaining_quote_debt -> Numeric,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
     watermarks (pipeline) {
         pipeline -> Text,
         epoch_hi_inclusive -> Int8,
@@ -714,7 +862,12 @@ diesel::allow_tables_to_appear_in_same_query!(
     asset_withdrawn,
     assets,
     balances,
+    conditional_order_added,
+    conditional_order_cancelled,
+    conditional_order_executed,
+    conditional_order_insufficient_funds,
     deep_burned,
+    deposit_collateral,
     deepbook_pool_config_updated,
     deepbook_pool_registered,
     deepbook_pool_updated,
@@ -751,4 +904,5 @@ diesel::allow_tables_to_appear_in_same_query!(
     trade_params_update,
     votes,
     watermarks,
+    withdraw_collateral,
 );
