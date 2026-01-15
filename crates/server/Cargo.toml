@@ -24,10 +24,10 @@ sui-types.workspace = true
 sui-indexer-alt-metrics.workspace = true
 telemetry-subscribers.workspace = true
 axum = { version = "0.7", features = ["json"] }
-sui-json-rpc-types = { git = "https://github.com/MystenLabs/sui.git", rev = "0def7a08f11a2ec992e11123c5f5ac5e0279e0a0" }
+sui-json-rpc-types = { git = "https://github.com/MystenLabs/sui.git", branch = "testnet" }
 sui-pg-db.workspace = true
 tower-http = { version = "0.5", features = ["cors"] }
-sui-sdk = { git = "https://github.com/MystenLabs/sui.git", rev = "0def7a08f11a2ec992e11123c5f5ac5e0279e0a0" }
+sui-sdk = { git = "https://github.com/MystenLabs/sui.git", branch = "testnet" }
 bigdecimal = "0.4.9"
 chrono = "0.4.42"
 thiserror = "1.0"
