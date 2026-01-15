@@ -355,7 +355,7 @@ async fn conditional_order_added_test() -> Result<(), anyhow::Error> {
     data_test(
         "conditional_order_added",
         handler,
-        ["conditional_order_added"],
+        ["conditional_order_events"],
     )
     .await?;
     Ok(())
@@ -368,7 +368,7 @@ async fn conditional_order_cancelled_test() -> Result<(), anyhow::Error> {
     data_test(
         "conditional_order_cancelled",
         handler,
-        ["conditional_order_cancelled"],
+        ["conditional_order_events"],
     )
     .await?;
     Ok(())
