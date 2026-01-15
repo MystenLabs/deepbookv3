@@ -134,7 +134,6 @@ diesel::table! {
     }
 }
 
-
 diesel::table! {
     deepbook_pool_config_updated (event_digest) {
         event_digest -> Text,
@@ -752,7 +751,6 @@ diesel::table! {
         stake -> Int8,
     }
 }
-
 
 diesel::table! {
     watermarks (pipeline) {
