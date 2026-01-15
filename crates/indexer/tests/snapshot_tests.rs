@@ -335,7 +335,7 @@ async fn referral_fees_claimed_test() -> Result<(), anyhow::Error> {
 #[tokio::test]
 async fn deposit_collateral_test() -> Result<(), anyhow::Error> {
     let handler = DepositCollateralHandler::new(DeepbookEnv::Mainnet);
-    data_test("deposit_collateral", handler, ["deposit_collateral"]).await?;
+    data_test("deposit_collateral", handler, ["collateral_events"]).await?;
     Ok(())
 }
 
@@ -343,7 +343,7 @@ async fn deposit_collateral_test() -> Result<(), anyhow::Error> {
 #[tokio::test]
 async fn withdraw_collateral_test() -> Result<(), anyhow::Error> {
     let handler = WithdrawCollateralHandler::new(DeepbookEnv::Mainnet);
-    data_test("withdraw_collateral", handler, ["withdraw_collateral"]).await?;
+    data_test("withdraw_collateral", handler, ["collateral_events"]).await?;
     Ok(())
 }
 
