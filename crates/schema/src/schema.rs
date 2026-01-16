@@ -65,6 +65,62 @@ diesel::table! {
 }
 
 diesel::table! {
+    collateral_events (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        event_type -> Text,
+        margin_manager_id -> Text,
+        amount -> Numeric,
+        asset_type -> Text,
+        pyth_decimals -> Int2,
+        pyth_price -> Numeric,
+        withdraw_base_asset -> Nullable<Bool>,
+        base_pyth_decimals -> Nullable<Int2>,
+        base_pyth_price -> Nullable<Numeric>,
+        quote_pyth_decimals -> Nullable<Int2>,
+        quote_pyth_price -> Nullable<Numeric>,
+        remaining_base_asset -> Nullable<Numeric>,
+        remaining_quote_asset -> Nullable<Numeric>,
+        remaining_base_debt -> Nullable<Numeric>,
+        remaining_quote_debt -> Nullable<Numeric>,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    conditional_order_events (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        event_type -> Text,
+        manager_id -> Text,
+        pool_id -> Nullable<Text>,
+        conditional_order_id -> Int8,
+        trigger_below_price -> Bool,
+        trigger_price -> Numeric,
+        is_limit_order -> Bool,
+        client_order_id -> Int8,
+        order_type -> Int2,
+        self_matching_option -> Int2,
+        price -> Numeric,
+        quantity -> Numeric,
+        is_bid -> Bool,
+        pay_with_deep -> Bool,
+        expire_timestamp -> Int8,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
     deep_burned (event_digest) {
         event_digest -> Text,
         digest -> Text,
@@ -731,6 +787,8 @@ diesel::allow_tables_to_appear_in_same_query!(
     asset_withdrawn,
     assets,
     balances,
+    collateral_events,
+    conditional_order_events,
     deep_burned,
     deepbook_pool_config_updated,
     deepbook_pool_registered,
