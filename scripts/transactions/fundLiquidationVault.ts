@@ -10,7 +10,8 @@ import { adminCapOwner, liquidationAdminCapID } from "../config/constants";
 (async () => {
   const env = "mainnet";
   const tx = new Transaction();
-  const vaultId = "";
+  const vaultId =
+    "0xae8e060630107720560d49e99f352b41a9f1696675021f087b69b57d35d814b6";
 
   const dbClient = new DeepBookClient({
     address: adminCapOwner[env],
@@ -53,6 +54,10 @@ import { adminCapOwner, liquidationAdminCapID } from "../config/constants";
     "WAL",
     walAmount
   )(tx);
+
+  const supplierCap = dbClient.marginPool.mintSupplierCap()(tx);
+  dbClient.marginPool.supplyToMarginPool("USDC", supplierCap, 10_000)(tx);
+  tx.transferObjects([supplierCap], adminCapOwner[env]);
 
   let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
