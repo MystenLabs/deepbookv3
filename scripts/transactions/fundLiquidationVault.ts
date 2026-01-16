@@ -56,7 +56,7 @@ import { adminCapOwner, liquidationAdminCapID } from "../config/constants";
   )(tx);
 
   const supplierCap = dbClient.marginPool.mintSupplierCap()(tx);
-  dbClient.marginPool.supplyToMarginPool("SUI", supplierCap, 10_000)(tx);
+  dbClient.marginPool.supplyToMarginPool("USDC", supplierCap, 10_000)(tx);
   tx.transferObjects([supplierCap], adminCapOwner[env]);
 
   let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
