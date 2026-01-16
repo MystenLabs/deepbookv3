@@ -1207,4 +1207,93 @@ impl Reader {
         }
         res
     }
+
+    /// Query net deposits using the materialized view for efficiency.
+    /// Triggers a concurrent refresh of the view and queries for net deposits up to timestamp.
+    pub async fn get_net_deposits_from_view(
+        &self,
+        asset_ids: &[String],
+        timestamp_ms: i64,
+    ) -> Result<std::collections::HashMap<String, i64>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        // Trigger concurrent refresh (non-blocking, won't fail if already refreshing)
+        let _ = diesel::sql_query("REFRESH MATERIALIZED VIEW CONCURRENTLY net_deposits_hourly")
+            .execute(&mut connection)
+            .await;
+
+        // Calculate the hour boundary for the timestamp
+        let hour_bucket_ms = (timestamp_ms / 3600000) * 3600000;
+
+        // Build asset filter for SQL
+        let asset_filter: String = asset_ids
+            .iter()
+            .map(|a| {
+                let trimmed = a.strip_prefix("0x").unwrap_or(a);
+                format!("'{}'", trimmed)
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+
+        // Query: sum all hourly deltas up to the hour boundary, then add partial hour from balances
+        let query_str = format!(
+            r#"
+            WITH hourly_totals AS (
+                SELECT asset, SUM(net_amount_delta) AS net_amount
+                FROM net_deposits_hourly
+                WHERE hour_bucket_ms < {hour_bucket_ms}
+                  AND asset IN ({asset_filter})
+                GROUP BY asset
+            ),
+            partial_hour AS (
+                SELECT asset, SUM(CASE WHEN deposit THEN amount ELSE -amount END) AS net_amount
+                FROM balances
+                WHERE checkpoint_timestamp_ms >= {hour_bucket_ms}
+                  AND checkpoint_timestamp_ms < {timestamp_ms}
+                  AND asset IN ({asset_filter})
+                GROUP BY asset
+            )
+            SELECT
+                COALESCE(h.asset, p.asset) AS asset,
+                (COALESCE(h.net_amount, 0) + COALESCE(p.net_amount, 0))::bigint AS net_amount
+            FROM hourly_totals h
+            FULL OUTER JOIN partial_hour p ON h.asset = p.asset
+            "#,
+            hour_bucket_ms = hour_bucket_ms,
+            timestamp_ms = timestamp_ms,
+            asset_filter = asset_filter,
+        );
+
+        #[derive(QueryableByName)]
+        struct NetDepositRow {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            asset: String,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            net_amount: i64,
+        }
+
+        let res = diesel::sql_query(query_str)
+            .load::<NetDepositRow>(&mut connection)
+            .await;
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+
+        res.map(|rows| {
+            rows.into_iter()
+                .map(|row| {
+                    let mut asset = row.asset;
+                    if !asset.starts_with("0x") {
+                        asset.insert_str(0, "0x");
+                    }
+                    (asset, row.net_amount)
+                })
+                .collect()
+        })
+        .map_err(|e| DeepBookError::database(format!("Error fetching net deposits: {}", e)))
+    }
 }

@@ -10,12 +10,12 @@ use axum::{
     Json, Router,
 };
 use deepbook_schema::models::{
-    AssetSupplied, AssetWithdrawn, BalancesSummary, DeepbookPoolConfigUpdated,
-    DeepbookPoolRegistered, DeepbookPoolUpdated, DeepbookPoolUpdatedRegistry,
-    InterestParamsUpdated, Liquidation, LoanBorrowed, LoanRepaid, MaintainerCapUpdated,
-    MaintainerFeesWithdrawn, MarginManagerCreated, MarginManagerState, MarginPoolConfigUpdated,
-    MarginPoolCreated, PauseCapUpdated, Pools, ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn,
-    ReferralFeeEvent, ReferralFeesClaimedEvent, SupplierCapMinted, SupplyReferralMinted,
+    AssetSupplied, AssetWithdrawn, DeepbookPoolConfigUpdated, DeepbookPoolRegistered,
+    DeepbookPoolUpdated, DeepbookPoolUpdatedRegistry, InterestParamsUpdated, Liquidation,
+    LoanBorrowed, LoanRepaid, MaintainerCapUpdated, MaintainerFeesWithdrawn, MarginManagerCreated,
+    MarginManagerState, MarginPoolConfigUpdated, MarginPoolCreated, PauseCapUpdated, Pools,
+    ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn, ReferralFeeEvent, ReferralFeesClaimedEvent,
+    SupplierCapMinted, SupplyReferralMinted,
 };
 use deepbook_schema::*;
 use diesel::dsl::count_star;
@@ -1629,36 +1629,17 @@ async fn get_net_deposits(
     Path((asset_ids, timestamp)): Path<(String, String)>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<HashMap<String, i64>>, DeepBookError> {
-    let mut query =
-      "SELECT asset, SUM(amount)::bigint AS amount, deposit FROM balances WHERE checkpoint_timestamp_ms < "
-          .to_string();
-    query.push_str(&timestamp);
-    query.push_str("000 AND asset in (");
-    for asset in asset_ids.split(",") {
-        if asset.starts_with("0x") {
-            let len = asset.len();
-            query.push_str(&format!("'{}',", &asset[2..len]));
-        } else {
-            query.push_str(&format!("'{}',", asset));
-        }
-    }
-    query.pop();
-    query.push_str(") GROUP BY asset, deposit");
+    let timestamp_ms = timestamp
+        .parse::<i64>()
+        .map_err(|_| DeepBookError::bad_request("Invalid timestamp"))?
+        * 1000; // Convert seconds to milliseconds
 
-    let results: Vec<BalancesSummary> = state.reader.results(diesel::sql_query(query)).await?;
-    let mut net_deposits = HashMap::new();
-    for result in results {
-        let mut asset = result.asset;
-        if !asset.starts_with("0x") {
-            asset.insert_str(0, "0x");
-        }
-        let amount = result.amount;
-        if result.deposit {
-            *net_deposits.entry(asset).or_insert(0) += amount;
-        } else {
-            *net_deposits.entry(asset).or_insert(0) -= amount;
-        }
-    }
+    let assets: Vec<String> = asset_ids.split(',').map(|s| s.to_string()).collect();
+
+    let net_deposits = state
+        .reader
+        .get_net_deposits_from_view(&assets, timestamp_ms)
+        .await?;
 
     Ok(Json(net_deposits))
 }
