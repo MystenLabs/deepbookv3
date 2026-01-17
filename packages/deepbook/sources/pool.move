@@ -10,11 +10,13 @@ use deepbook::{
         Self,
         BalanceManager,
         TradeProof,
+        DeepBookPoolReferral,
         DeepBookReferral,
         TradeCap,
         DepositCap,
         WithdrawCap
     },
+    balances,
     big_vector::BigVector,
     book::{Self, Book},
     constants,
@@ -63,6 +65,7 @@ const EInvalidReferralMultiplier: u64 = 16;
 const EInvalidEWMAAlpha: u64 = 17;
 const EInvalidZScoreThreshold: u64 = 18;
 const EInvalidAdditionalTakerFee: u64 = 19;
+const EWrongPoolReferral: u64 = 20;
 
 // === Structs ===
 public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
@@ -461,7 +464,7 @@ public fun swap_exact_quantity_with_manager<BaseAsset, QuoteAsset>(
         ctx,
     );
 
-    let (base_out, quote_out) = if (is_bid) {
+    let (base_out_quantity, quote_out_quantity) = if (is_bid) {
         let quote_left = quote_quantity - order_info.cumulative_quote_quantity();
         (order_info.executed_quantity(), quote_left)
     } else {
@@ -469,8 +472,16 @@ public fun swap_exact_quantity_with_manager<BaseAsset, QuoteAsset>(
         (base_left, order_info.cumulative_quote_quantity())
     };
 
-    let base_out = balance_manager.withdraw_with_cap(withdraw_cap, base_out, ctx);
-    let quote_out = balance_manager.withdraw_with_cap(withdraw_cap, quote_out, ctx);
+    let base_out = if (base_out_quantity > 0) {
+        balance_manager.withdraw_with_cap(withdraw_cap, base_out_quantity, ctx)
+    } else {
+        coin::zero(ctx)
+    };
+    let quote_out = if (quote_out_quantity > 0) {
+        balance_manager.withdraw_with_cap(withdraw_cap, quote_out_quantity, ctx)
+    } else {
+        coin::zero(ctx)
+    };
 
     if (is_bid) {
         assert!(base_out.value() >= min_out, EMinimumQuantityOutNotMet);
@@ -858,7 +869,7 @@ public fun mint_referral<BaseAsset, QuoteAsset>(
     assert!(multiplier <= constants::referral_max_multiplier(), EInvalidReferralMultiplier);
     assert!(multiplier % constants::referral_multiplier() == 0, EInvalidReferralMultiplier);
     let _ = self.load_inner();
-    let referral_id = balance_manager::mint_referral(ctx);
+    let referral_id = balance_manager::mint_referral(self.id(), ctx);
     self
         .id
         .add(
@@ -874,10 +885,33 @@ public fun mint_referral<BaseAsset, QuoteAsset>(
     referral_id
 }
 
-/// Update the multiplier for the referral.
+#[
+    deprecated(
+        note = b"This function is deprecated, use `update_deepbook_referral_multiplier` instead.",
+    ),
+]
 public fun update_referral_multiplier<BaseAsset, QuoteAsset>(
+    _self: &mut Pool<BaseAsset, QuoteAsset>,
+    _referral: &DeepBookReferral,
+    _multiplier: u64,
+) {
+    abort 1337
+}
+
+#[deprecated(note = b"This function is deprecated, use `update_pool_referral_multiplier` instead.")]
+public fun update_deepbook_referral_multiplier<BaseAsset, QuoteAsset>(
+    _self: &mut Pool<BaseAsset, QuoteAsset>,
+    _referral: &DeepBookReferral,
+    _multiplier: u64,
+    _ctx: &TxContext,
+) {
+    abort
+}
+
+/// Update the multiplier for the referral.
+public fun update_pool_referral_multiplier<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
-    referral: &DeepBookReferral,
+    referral: &DeepBookPoolReferral,
     multiplier: u64,
     ctx: &TxContext,
 ) {
@@ -892,10 +926,19 @@ public fun update_referral_multiplier<BaseAsset, QuoteAsset>(
     referral_rewards.multiplier = multiplier;
 }
 
-/// Claim the rewards for the referral.
+#[deprecated(note = b"This function is deprecated, use `claim_pool_referral_rewards` instead.")]
 public fun claim_referral_rewards<BaseAsset, QuoteAsset>(
+    _self: &mut Pool<BaseAsset, QuoteAsset>,
+    _referral: &DeepBookReferral,
+    _ctx: &mut TxContext,
+): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
+    abort
+}
+
+/// Claim the rewards for the referral.
+public fun claim_pool_referral_rewards<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
-    referral: &DeepBookReferral,
+    referral: &DeepBookPoolReferral,
     ctx: &mut TxContext,
 ): (Coin<BaseAsset>, Coin<QuoteAsset>, Coin<DEEP>) {
     let _ = self.load_inner();
@@ -1187,6 +1230,64 @@ public fun get_quantity_out_input_fee<BaseAsset, QuoteAsset>(
         )
 }
 
+/// Dry run to determine the base quantity needed to sell to receive a target quote quantity.
+/// Returns (base_quantity_in, actual_quote_quantity_out, deep_quantity_required)
+/// Returns (0, 0, 0) if insufficient liquidity or if result would be below min_size.
+public fun get_base_quantity_in<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    target_quote_quantity: u64,
+    pay_with_deep: bool,
+    clock: &Clock,
+): (u64, u64, u64) {
+    let whitelist = self.whitelisted();
+    let self = self.load_inner();
+    let params = self.state.governance().trade_params();
+    let taker_fee = params.taker_fee();
+    let deep_price = if (pay_with_deep) {
+        self.deep_price.get_order_deep_price(whitelist)
+    } else {
+        self.deep_price.empty_deep_price()
+    };
+    self
+        .book
+        .get_base_quantity_in(
+            target_quote_quantity,
+            taker_fee,
+            deep_price,
+            pay_with_deep,
+            clock.timestamp_ms(),
+        )
+}
+
+/// Dry run to determine the quote quantity needed to buy a target base quantity.
+/// Returns (actual_base_quantity_out, quote_quantity_in, deep_quantity_required)
+/// Returns (0, 0, 0) if insufficient liquidity or if result would be below min_size.
+public fun get_quote_quantity_in<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    target_base_quantity: u64,
+    pay_with_deep: bool,
+    clock: &Clock,
+): (u64, u64, u64) {
+    let whitelist = self.whitelisted();
+    let self = self.load_inner();
+    let params = self.state.governance().trade_params();
+    let taker_fee = params.taker_fee();
+    let deep_price = if (pay_with_deep) {
+        self.deep_price.get_order_deep_price(whitelist)
+    } else {
+        self.deep_price.empty_deep_price()
+    };
+    self
+        .book
+        .get_quote_quantity_in(
+            target_base_quantity,
+            taker_fee,
+            deep_price,
+            pay_with_deep,
+            clock.timestamp_ms(),
+        )
+}
+
 /// Returns the mid price of the pool.
 public fun mid_price<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
@@ -1380,7 +1481,184 @@ public fun locked_balance<BaseAsset, QuoteAsset>(
     (base_quantity, quote_quantity, deep_quantity)
 }
 
+/// Check if a limit order can be placed based on balance manager balances.
+/// Returns true if the balance manager has sufficient balance (accounting for fees) to place the order, false otherwise.
+/// Assumes the limit order is a taker order as a worst case scenario.
+public fun can_place_limit_order<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    balance_manager: &BalanceManager,
+    price: u64,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    expire_timestamp: u64,
+    clock: &Clock,
+): bool {
+    let whitelist = self.whitelisted();
+    let pool_inner = self.load_inner();
+
+    if (
+        !self.check_limit_order_params(
+            price,
+            quantity,
+            expire_timestamp,
+            clock,
+        )
+    ) {
+        return false
+    };
+
+    let order_deep_price = if (pay_with_deep) {
+        pool_inner.deep_price.get_order_deep_price(whitelist)
+    } else {
+        pool_inner.deep_price.empty_deep_price()
+    };
+
+    let quote_quantity = math::mul(quantity, price);
+
+    // Calculate fee quantity using taker fee (worst case for limit orders)
+    let taker_fee = pool_inner.state.governance().trade_params().taker_fee();
+    let fee_balances = order_deep_price.fee_quantity(quantity, quote_quantity, is_bid);
+
+    // Calculate required balances
+    let mut required_base = 0;
+    let mut required_quote = 0;
+    let mut required_deep = 0;
+
+    if (is_bid) {
+        required_quote = quote_quantity;
+        if (pay_with_deep) {
+            required_deep = math::mul(fee_balances.deep(), taker_fee);
+        } else {
+            let fee_quote = math::mul(fee_balances.quote(), taker_fee);
+            required_quote = required_quote + fee_quote;
+        };
+    } else {
+        required_base = quantity;
+        if (pay_with_deep) {
+            required_deep = math::mul(fee_balances.deep(), taker_fee);
+        } else {
+            let fee_base = math::mul(fee_balances.base(), taker_fee);
+            required_base = required_base + fee_base;
+        };
+    };
+
+    // Get current balances from balance manager. Accounts for settled balances.
+    let settled_balances = if (!self.account_exists(balance_manager)) {
+        balances::empty()
+    } else {
+        self.account(balance_manager).settled_balances()
+    };
+    let available_base = balance_manager.balance<BaseAsset>() + settled_balances.base();
+    let available_quote = balance_manager.balance<QuoteAsset>() + settled_balances.quote();
+    let available_deep = balance_manager.balance<DEEP>() + settled_balances.deep();
+
+    // Check if available balances are sufficient
+    (available_base >= required_base) && (available_quote >= required_quote) && (available_deep >= required_deep)
+}
+
+/// Check if a market order can be placed based on balance manager balances.
+/// Returns true if the balance manager has sufficient balance (accounting for fees) to place the order, false otherwise.
+/// Does not account for discounted taker fees
+public fun can_place_market_order<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    balance_manager: &BalanceManager,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    clock: &Clock,
+): bool {
+    // Validate order parameters against pool book params
+    if (!self.check_market_order_params(quantity)) {
+        return false
+    };
+
+    let mut required_base = 0;
+    let mut required_deep = 0;
+
+    // Get current balances from balance manager. Accounts for settled balances.
+    let settled_balances = if (!self.account_exists(balance_manager)) {
+        balances::empty()
+    } else {
+        self.account(balance_manager).settled_balances()
+    };
+    let available_base = balance_manager.balance<BaseAsset>() + settled_balances.base();
+    let available_quote = balance_manager.balance<QuoteAsset>() + settled_balances.quote();
+    let available_deep = balance_manager.balance<DEEP>() + settled_balances.deep();
+
+    if (is_bid) {
+        // For bid orders: calculate quote needed to acquire desired base quantity
+        // get_quote_quantity_in returns (base_out, quote_needed, deep_required)
+        let (base_out, quote_needed, deep_required) = self.get_quote_quantity_in(
+            quantity,
+            pay_with_deep,
+            clock,
+        );
+
+        // Not enough liquidity or available quote for the base quantity
+        if (base_out < quantity || available_quote < quote_needed) {
+            return false
+        };
+
+        if (pay_with_deep) {
+            required_deep = deep_required;
+        };
+    } else {
+        // For ask orders: if paying fees in input token (base), need quantity + fees
+        // get_quantity_out_input_fee accounts for fees, so we need to check if we have enough base
+        // including fees that will be deducted
+        let (_, _, deep_required) = if (pay_with_deep) {
+            self.get_quantity_out(quantity, 0, clock)
+        } else {
+            self.get_quantity_out_input_fee(quantity, 0, clock)
+        };
+
+        // If paying fees in base asset, need quantity + fees
+        required_base = if (pay_with_deep) {
+            quantity
+        } else {
+            // Fees are deducted from base, so need more base to account for fees
+            let (taker_fee, _, _) = self.pool_trade_params();
+            let input_fee_rate = math::mul(taker_fee, constants::fee_penalty_multiplier());
+            math::mul(quantity, constants::float_scaling() + input_fee_rate)
+        };
+
+        if (pay_with_deep) {
+            required_deep = deep_required;
+        };
+    };
+
+    // Check if available balances are sufficient
+    (available_base >= required_base) && (available_deep >= required_deep)
+}
+
+/// Check if a market order can be placed based on pool book params.
+/// Returns true if the order parameters are valid, false otherwise.
+public fun check_market_order_params<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    quantity: u64,
+): bool {
+    let pool_inner = self.load_inner();
+    pool_inner.book.check_market_order_params(quantity)
+}
+
+/// Check if a limit order can be placed based on pool book params.
+/// Returns true if the order parameters are valid, false otherwise.
+public fun check_limit_order_params<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    price: u64,
+    quantity: u64,
+    expire_timestamp: u64,
+    clock: &Clock,
+): bool {
+    let pool_inner = self.load_inner();
+    pool_inner
+        .book
+        .check_limit_order_params(price, quantity, expire_timestamp, clock.timestamp_ms())
+}
+
 /// Returns the trade params for the pool.
+/// Returns (taker_fee, maker_fee, stake_required)
 public fun pool_trade_params<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
 ): (u64, u64, u64) {
@@ -1418,6 +1696,14 @@ public fun pool_book_params<BaseAsset, QuoteAsset>(
     (tick_size, lot_size, min_size)
 }
 
+public fun account_exists<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    balance_manager: &BalanceManager,
+): bool {
+    let self = self.load_inner();
+    self.state.account_exists(balance_manager.id())
+}
+
 public fun account<BaseAsset, QuoteAsset>(
     self: &Pool<BaseAsset, QuoteAsset>,
     balance_manager: &BalanceManager,
@@ -1436,17 +1722,41 @@ public fun id<BaseAsset, QuoteAsset>(self: &Pool<BaseAsset, QuoteAsset>): ID {
     self.load_inner().pool_id
 }
 
+#[deprecated(note = b"This function is deprecated, use `get_pool_referral_balances` instead.")]
 public fun get_referral_balances<BaseAsset, QuoteAsset>(
-    self: &Pool<BaseAsset, QuoteAsset>,
-    referral: &DeepBookReferral,
+    _self: &Pool<BaseAsset, QuoteAsset>,
+    _referral: &DeepBookReferral,
 ): (u64, u64, u64) {
-    let referral_id = object::id(referral);
-    let referral_rewards: &ReferralRewards<BaseAsset, QuoteAsset> = self.id.borrow(referral_id);
+    abort
+}
+
+public fun get_pool_referral_balances<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    referral: &DeepBookPoolReferral,
+): (u64, u64, u64) {
+    let _ = self.load_inner();
+    assert!(referral.balance_manager_referral_pool_id() == self.id(), EWrongPoolReferral);
+    let referral_rewards: &ReferralRewards<BaseAsset, QuoteAsset> = self
+        .id
+        .borrow(object::id(referral));
     let base = referral_rewards.base.value();
     let quote = referral_rewards.quote.value();
     let deep = referral_rewards.deep.value();
 
     (base, quote, deep)
+}
+
+public fun pool_referral_multiplier<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    referral: &DeepBookPoolReferral,
+): u64 {
+    let _ = self.load_inner();
+    assert!(referral.balance_manager_referral_pool_id() == self.id(), EWrongPoolReferral);
+    let referral_rewards: &ReferralRewards<BaseAsset, QuoteAsset> = self
+        .id
+        .borrow(object::id(referral));
+
+    referral_rewards.multiplier
 }
 
 // === Public-Package Functions ===
@@ -1626,7 +1936,7 @@ fun process_referral_fees<BaseAsset, QuoteAsset>(
     balance_manager: &mut BalanceManager,
     trade_proof: &TradeProof,
 ) {
-    let referral_id = balance_manager.get_referral_id();
+    let referral_id = balance_manager.get_balance_manager_referral_id(self.id());
     if (referral_id.is_some()) {
         let referral_id = referral_id.destroy_some();
         let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self

@@ -5,8 +5,8 @@
 module deepbook::ewma_tests;
 
 use deepbook::{constants, ewma::{Self, EWMAState}};
-use std::unit_test::assert_eq;
-use sui::{clock, test_scenario::{begin, end, Scenario}, test_utils};
+use std::unit_test::{assert_eq, destroy};
+use sui::{clock, test_scenario::{begin, end, Scenario}};
 
 #[test_only]
 const TEST_POOL_ID: address = @0x1234;
@@ -131,7 +131,7 @@ fun test_update_ewma_state() {
     let new_taker_fee = ewma_state.apply_taker_penalty(taker_fee, test.ctx());
     assert_eq!(new_taker_fee, taker_fee);
 
-    test_utils::destroy(clock);
+    destroy(clock);
     end(test);
 }
 
@@ -192,7 +192,7 @@ fun test_apply_taker_penalty_gas_below_mean() {
     let fee_with_penalty = ewma_state.apply_taker_penalty(base_taker_fee, test.ctx());
     assert_eq!(fee_with_penalty, base_taker_fee);
 
-    test_utils::destroy(clock);
+    destroy(clock);
     end(test);
 }
 
@@ -225,7 +225,7 @@ fun test_apply_taker_penalty_gas_above_mean_below_threshold() {
     let fee_with_penalty = ewma_state.apply_taker_penalty(base_taker_fee, test.ctx());
     assert_eq!(fee_with_penalty, base_taker_fee);
 
-    test_utils::destroy(clock);
+    destroy(clock);
     end(test);
 }
 
@@ -272,7 +272,7 @@ fun test_apply_taker_penalty_z_score_above_threshold() {
     let fee_with_penalty = ewma_state.apply_taker_penalty(base_taker_fee, test.ctx());
     assert_eq!(fee_with_penalty, base_taker_fee + additional_fee);
 
-    test_utils::destroy(clock);
+    destroy(clock);
     end(test);
 }
 
@@ -315,7 +315,7 @@ fun test_dynamic_additional_taker_fee_changes() {
     let fee_3 = ewma_state.apply_taker_penalty(base_taker_fee, test.ctx());
     assert_eq!(fee_3, base_taker_fee + constants::max_additional_taker_fee());
 
-    test_utils::destroy(clock);
+    destroy(clock);
     end(test);
 }
 
@@ -346,7 +346,7 @@ fun test_ewma_state_timestamping() {
     ewma_state.update(TEST_POOL_ID.to_id(), &clock, test.ctx());
     assert_eq!(ewma_state.last_updated_timestamp(), 10000);
 
-    test_utils::destroy(clock);
+    destroy(clock);
     end(test);
 }
 
@@ -408,6 +408,6 @@ fun test_alpha_parameter_effect() {
     // With alpha = 0.01: new_mean = 0.01 * 2000 + 0.99 * 1000 = 1010 * float_scaling
     assert_eq!(ewma_low_alpha.mean(), 1_010 * constants::float_scaling());
 
-    test_utils::destroy(clock);
+    destroy(clock);
     end(test);
 }

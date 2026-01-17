@@ -18,13 +18,13 @@ const mainnetPlugin = namedPackagesPlugin({
 
   // appcap holding address
   const holdingAddress =
-    "0x10a1fc2b9170c6bac858fdafc7d3cb1f4ea659fed748d18eff98d08debf82042";
+    "0xd0ec0b201de6b4e7f425918bbd7151c37fc1b06c59b3961a2a00db74f6ea865e";
 
   const testnetPackageInfo =
-    "0x56f7070d688e0f993b6558d3b39efcec5a3806008ac1c4a5070cdec7489ae755";
+    "0xe808fd86b2d2ee53c3968c662c4c1149866dcb5d3a7ea525603692de01757b0f";
 
   const testnetPackageId =
-    "0x5ba487dff6b6d0a1f0560f1895aabd72f1f8db314dea5032187149443b98c6ff";
+    "0xb8620c24c9ea1a4a41e79613d2b3d1d93648d1bb6f6b789a7c8f261c94110e4b";
 
   const appCap = transaction.moveCall({
     target: `@mvr/core::move_registry::register`,
@@ -50,7 +50,9 @@ const mainnetPlugin = namedPackagesPlugin({
       ),
       appCap,
       transaction.pure.string("description"), // key
-      transaction.pure.string("Deepbook Margin Trading"), // value
+      transaction.pure.string(
+        "DeepBook Margin extends the trading capabilities of DeepBookV3 by enabling leveraged trading positions. With margin trading, users can borrow funds to increase their buying power."
+      ), // value
     ],
   });
 
@@ -62,7 +64,7 @@ const mainnetPlugin = namedPackagesPlugin({
       ),
       appCap,
       transaction.pure.string("documentation_url"), // key
-      transaction.pure.string("https://docs.sui.io/standards/deepbook"), // value
+      transaction.pure.string("https://docs.sui.io/standards/deepbook-margin"), // value
     ],
   });
 

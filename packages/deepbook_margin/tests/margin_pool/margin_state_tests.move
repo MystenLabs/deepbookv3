@@ -6,8 +6,8 @@ module deepbook_margin::margin_state_tests;
 
 use deepbook::{constants, math};
 use deepbook_margin::{margin_constants, margin_state, protocol_config_tests, test_constants};
-use std::unit_test::assert_eq;
-use sui::{clock, test_scenario::begin, test_utils::destroy};
+use std::unit_test::{assert_eq, destroy};
+use sui::{clock, test_scenario::begin};
 
 #[test]
 fun margin_state_operations_work() {

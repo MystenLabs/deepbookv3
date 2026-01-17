@@ -4,63 +4,36 @@ expression: rows
 ---
 [
   {
-    "event_digest": "AuYN8GAEotdhBiEUBCi6gTn5V7Spb54ny6TRGVKiwdYh0",
-    "digest": "AuYN8GAEotdhBiEUBCi6gTn5V7Spb54ny6TRGVKiwdYh",
+    "event_digest": "826yfHmNs86XEcG52fZvF8wjNJR1cjKpJUttBq6cpX4w0",
+    "digest": "826yfHmNs86XEcG52fZvF8wjNJR1cjKpJUttBq6cpX4w",
     "sender": "0xb3d277c50f7b846a5f609a8d13428ae482b5826bb98437997373f3a0d60d280e",
-    "checkpoint": "248053448",
+    "checkpoint": "273561287",
     "timestamp": "1970-01-01 00:00:00.000000",
-    "checkpoint_timestamp_ms": "1759426606516",
-    "package": "0x442d21fd044b90274934614c3c41416c83582f42eaa8feb4fecea301aa6bdd54",
-    "margin_pool_id": "0xfca47443db2177b3e7d93fdb4b3a7d33c3102688419146c9bac2628d735a7545",
-    "maintainer_cap_id": "0x9cde7db3fac442ec0f7954bd3c39a5e0a3151deb22d5804ecdff19c77cbf6b51",
-    "asset_type": "f7152c05930480cd740d7311b5b8b45c6f488e3a53a11c3f74a6fac36a52e0d7::DBUSDC::DBUSDC",
-    "config_json": {
-      "extra_fields": {
-        "contents": []
-      },
-      "interest_config": {
-        "base_rate": 45000000,
-        "base_slope": 80000000,
-        "excess_slope": 4500000000,
-        "optimal_utilization": 900000000
-      },
-      "margin_pool_config": {
-        "min_borrow": 100000,
-        "supply_cap": 1000000000000,
-        "referral_spread": 100000000,
-        "max_utilization_rate": 950000000
-      }
-    },
-    "onchain_timestamp": "1759426606516"
-  },
-  {
-    "event_digest": "AuYN8GAEotdhBiEUBCi6gTn5V7Spb54ny6TRGVKiwdYh1",
-    "digest": "AuYN8GAEotdhBiEUBCi6gTn5V7Spb54ny6TRGVKiwdYh",
-    "sender": "0xb3d277c50f7b846a5f609a8d13428ae482b5826bb98437997373f3a0d60d280e",
-    "checkpoint": "248053448",
-    "timestamp": "1970-01-01 00:00:00.000000",
-    "checkpoint_timestamp_ms": "1759426606516",
-    "package": "0x442d21fd044b90274934614c3c41416c83582f42eaa8feb4fecea301aa6bdd54",
-    "margin_pool_id": "0x52fae759e70a7fd35f2a4538589a949ad120dc67fa1bda7bf0b12dcc650b173a",
-    "maintainer_cap_id": "0x9cde7db3fac442ec0f7954bd3c39a5e0a3151deb22d5804ecdff19c77cbf6b51",
-    "asset_type": "0000000000000000000000000000000000000000000000000000000000000002::sui::SUI",
+    "checkpoint_timestamp_ms": "1765382716273",
+    "package": "0xb8620c24c9ea1a4a41e79613d2b3d1d93648d1bb6f6b789a7c8f261c94110e4b",
+    "margin_pool_id": "0xf3440b4aafcc8b12fc4b242e9590c52873b8238a0d0e52fbf9dae61d2970796a",
+    "maintainer_cap_id": "0xc4bc2b7a2b1f317b8a664294c5cc8501520289c3a6e9b9cc04eef668415b59bf",
+    "asset_type": "6502dae813dbe5e42643c119a6450a518481f03063febc7e20238e43b6ea9e86::dbtc::DBTC",
     "config_json": {
       "extra_fields": {
         "contents": []
       },
       "interest_config": {
         "base_rate": 0,
-        "base_slope": 150000000,
-        "excess_slope": 3000000000,
-        "optimal_utilization": 700000000
+        "base_slope": 6250000,
+        "excess_slope": 4000000000,
+        "optimal_utilization": 800000000
       },
       "margin_pool_config": {
-        "min_borrow": 100000000,
-        "supply_cap": 1000000000000000,
-        "referral_spread": 100000000,
-        "max_utilization_rate": 900000000
+        "min_borrow": 1000,
+        "supply_cap": 5000000000,
+        "protocol_spread": 100000000,
+        "rate_limit_enabled": false,
+        "rate_limit_capacity": 500000000,
+        "max_utilization_rate": 900000000,
+        "rate_limit_refill_rate_per_ms": 5
       }
     },
-    "onchain_timestamp": "1759426606516"
+    "onchain_timestamp": "1765382716212"
   }
 ]
