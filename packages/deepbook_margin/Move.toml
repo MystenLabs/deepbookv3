@@ -1,0 +1,17 @@
+[package]
+name = "deepbook_margin"
+edition = "2024.alpha"
+version = "0.0.1"
+
+[dependencies]
+token = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "main"}
+deepbook = { local = "../deepbook" }
+
+# Pyth dependency
+Pyth = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/sui/contracts", rev = "sui-contract-mainnet" }
+
+[dep-replacements.testnet]
+pyth = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/sui/contracts", rev = "sui-contract-testnet" }
+
+[addresses]
+deepbook_margin = "0x0"
