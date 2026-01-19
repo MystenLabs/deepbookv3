@@ -15,7 +15,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 
 RUN cargo build --profile $PROFILE --bin deepbook-indexer --config net.git-fetch-with-cli=true
 
-FROM debian:bookworm-slim AS runtime
+FROM debian:trixie-slim AS runtime
 
 RUN apt-get update
 RUN apt-get -y --no-install-recommends install wget \
