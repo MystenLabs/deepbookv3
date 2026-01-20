@@ -20,7 +20,7 @@ on:
           - Prep Deepbook MVR
           - Margin Setup
           - Margin Prep
-          - Create Liquidation Vault
+          - Fund Margin Pool
           - Fund Liquidation Vault
       sui_tools_image:
         description: "image reference of sui_tools"
@@ -316,6 +316,16 @@ jobs:
           ORIGIN: gh_action
         run: |
           cd scripts && pnpm install && pnpm ts-node transactions/marginPrep.ts
+
+      - name: Fund Margin Pool
+        if: ${{ inputs.transaction_type == 'Fund Margin Pool' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/supplyToMarginPool.ts
 
       - name: Create Liquidation Vault
         if: ${{ inputs.transaction_type == 'Create Liquidation Vault' }}

@@ -55,3 +55,8 @@ export const liquidationAdminCapID = {
   mainnet: "0x21521b9ddc1cfc76b6f4c9462957b4d58a998a23eb100ab2821d27d55c60d0a9",
   testnet: "",
 };
+
+export const supplierCapID = {
+  mainnet: "0xe0e64f2b0037304e29647fd5ef2c5ea758828a8e5aea73bb0bd5f227c1c20204",
+  testnet: "",
+};
