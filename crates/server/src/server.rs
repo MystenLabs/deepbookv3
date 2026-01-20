@@ -10,12 +10,12 @@ use axum::{
     Json, Router,
 };
 use deepbook_schema::models::{
-    AssetSupplied, AssetWithdrawn, DeepbookPoolConfigUpdated, DeepbookPoolRegistered,
-    DeepbookPoolUpdated, DeepbookPoolUpdatedRegistry, InterestParamsUpdated, Liquidation,
-    LoanBorrowed, LoanRepaid, MaintainerCapUpdated, MaintainerFeesWithdrawn, MarginManagerCreated,
-    MarginManagerState, MarginPoolConfigUpdated, MarginPoolCreated, PauseCapUpdated, Pools,
-    ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn, ReferralFeeEvent, ReferralFeesClaimedEvent,
-    SupplierCapMinted, SupplyReferralMinted,
+    AssetSupplied, AssetWithdrawn, CollateralEvent, DeepbookPoolConfigUpdated,
+    DeepbookPoolRegistered, DeepbookPoolUpdated, DeepbookPoolUpdatedRegistry,
+    InterestParamsUpdated, Liquidation, LoanBorrowed, LoanRepaid, MaintainerCapUpdated,
+    MaintainerFeesWithdrawn, MarginManagerCreated, MarginManagerState, MarginPoolConfigUpdated,
+    MarginPoolCreated, PauseCapUpdated, Pools, ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn,
+    ReferralFeeEvent, ReferralFeesClaimedEvent, SupplierCapMinted, SupplyReferralMinted,
 };
 use deepbook_schema::*;
 use diesel::dsl::count_star;
@@ -104,6 +104,7 @@ pub const MARGIN_MANAGERS_INFO_PATH: &str = "/margin_managers_info";
 pub const MARGIN_MANAGER_STATES_PATH: &str = "/margin_manager_states";
 pub const STATUS_PATH: &str = "/status";
 pub const DEPOSITED_ASSETS_PATH: &str = "/deposited_assets/:balance_manager_ids";
+pub const COLLATERAL_EVENTS_PATH: &str = "/collateral_events";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -321,6 +322,7 @@ pub(crate) fn make_router(state: Arc<AppState>) -> Router {
         .route(MARGIN_MANAGERS_INFO_PATH, get(margin_managers_info))
         .route(MARGIN_MANAGER_STATES_PATH, get(margin_manager_states))
         .route(DEPOSITED_ASSETS_PATH, get(deposited_assets))
+        .route(COLLATERAL_EVENTS_PATH, get(collateral_events))
         .with_state(state.clone());
 
     let rpc_routes = Router::new()
@@ -2363,4 +2365,32 @@ async fn deposited_assets(
         .collect();
 
     Ok(Json(response))
+}
+
+async fn collateral_events(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<CollateralEvent>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let margin_manager_id_filter = params.get("margin_manager_id").cloned().unwrap_or_default();
+    let event_type_filter = params.get("type").cloned().unwrap_or_default();
+    let is_base_filter = params.get("is_base").and_then(|v| v.parse::<bool>().ok());
+
+    let results = state
+        .reader
+        .get_collateral_events(
+            start_time,
+            end_time,
+            limit,
+            margin_manager_id_filter,
+            event_type_filter,
+            is_base_filter,
+        )
+        .await?;
+
+    Ok(Json(results))
 }
