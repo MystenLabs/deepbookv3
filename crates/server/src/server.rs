@@ -105,7 +105,7 @@ pub const MARGIN_MANAGER_STATES_PATH: &str = "/margin_manager_states";
 pub const STATUS_PATH: &str = "/status";
 pub const DEPOSITED_ASSETS_PATH: &str = "/deposited_assets/:balance_manager_ids";
 pub const COLLATERAL_EVENTS_PATH: &str = "/collateral_events";
-pub const GET_POINTS_PATH: &str = "/get_points/:address";
+pub const GET_POINTS_PATH: &str = "/get_points";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -2398,13 +2398,30 @@ async fn collateral_events(
 }
 
 // === Points ===
+#[derive(Deserialize)]
+struct GetPointsQuery {
+    addresses: Option<String>,
+}
+
 async fn get_points(
-    Path(address): Path<String>,
+    Query(params): Query<GetPointsQuery>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, DeepBookError> {
-    let total_points = state.reader.get_points_total(&address).await?;
-    Ok(Json(serde_json::json!({
-        "address": address,
-        "total_points": total_points
-    })))
+) -> Result<Json<Vec<serde_json::Value>>, DeepBookError> {
+    let addresses = params
+        .addresses
+        .map(|s| s.split(',').map(|a| a.trim().to_string()).collect::<Vec<_>>());
+
+    let results = state.reader.get_points(addresses.as_deref()).await?;
+
+    Ok(Json(
+        results
+            .into_iter()
+            .map(|(addr, pts)| {
+                serde_json::json!({
+                    "address": addr,
+                    "total_points": pts
+                })
+            })
+            .collect(),
+    ))
 }

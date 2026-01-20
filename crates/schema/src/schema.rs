@@ -773,9 +773,8 @@ diesel::table! {
     points (id) {
         id -> Int8,
         address -> Text,
-        amount -> Numeric,
+        amount -> Int8,
         week -> Int4,
-        is_add -> Bool,
         timestamp -> Timestamp,
     }
 }

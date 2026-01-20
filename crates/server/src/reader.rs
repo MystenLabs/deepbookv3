@@ -1339,30 +1339,41 @@ impl Reader {
         res.map_err(|_| DeepBookError::database("Error fetching collateral events"))
     }
 
-    pub async fn get_points_total(&self, address: &str) -> Result<String, DeepBookError> {
+    pub async fn get_points(
+        &self,
+        addresses: Option<&[String]>,
+    ) -> Result<Vec<(String, i64)>, DeepBookError> {
         let mut connection = self.db.connect().await?;
         let _guard = self.metrics.db_latency.start_timer();
 
+        let where_clause = addresses
+            .filter(|a| !a.is_empty())
+            .map(|addrs| {
+                let list = addrs
+                    .iter()
+                    .map(|a| format!("'{}'", a))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("WHERE address IN ({})", list)
+            })
+            .unwrap_or_default();
+
         let query_str = format!(
-            r#"
-            SELECT COALESCE(
-                SUM(CASE WHEN is_add THEN amount ELSE -amount END),
-                0
-            )::text as total
-            FROM points
-            WHERE address = '{}'
-            "#,
-            address
+            "SELECT address, COALESCE(SUM(amount), 0)::bigint as total_points \
+             FROM points {} GROUP BY address",
+            where_clause
         );
 
         #[derive(QueryableByName)]
-        struct PointsTotal {
+        struct PointsRow {
             #[diesel(sql_type = diesel::sql_types::Text)]
-            total: String,
+            address: String,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            total_points: i64,
         }
 
         let res = diesel::sql_query(query_str)
-            .get_result::<PointsTotal>(&mut connection)
+            .load::<PointsRow>(&mut connection)
             .await;
 
         if res.is_ok() {
@@ -1371,7 +1382,7 @@ impl Reader {
             self.metrics.db_requests_failed.inc();
         }
 
-        res.map(|row| row.total)
+        res.map(|rows| rows.into_iter().map(|r| (r.address, r.total_points)).collect())
             .map_err(|e| DeepBookError::database(format!("Error fetching points: {}", e)))
     }
 }

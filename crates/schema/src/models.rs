@@ -866,9 +866,8 @@ pub struct ConditionalOrderEvent {
 pub struct Points {
     pub id: i64,
     pub address: String,
-    pub amount: BigDecimal,
+    pub amount: i64,
     pub week: i32,
-    pub is_add: bool,
     #[serde(serialize_with = "serialize_datetime")]
     pub timestamp: chrono::NaiveDateTime,
 }
