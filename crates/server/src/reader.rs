@@ -1,12 +1,13 @@
 use crate::error::DeepBookError;
 use crate::metrics::RpcMetrics;
 use deepbook_schema::models::{
-    AssetSupplied, AssetWithdrawn, DeepbookPoolConfigUpdated, DeepbookPoolRegistered,
-    DeepbookPoolUpdated, DeepbookPoolUpdatedRegistry, InterestParamsUpdated, Liquidation,
-    LoanBorrowed, LoanRepaid, MaintainerCapUpdated, MaintainerFeesWithdrawn, MarginManagerCreated,
-    MarginManagerState, MarginPoolConfigUpdated, MarginPoolCreated, OrderFillSummary, OrderStatus,
-    PauseCapUpdated, Pools, ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn, ReferralFeeEvent,
-    ReferralFeesClaimedEvent, SupplierCapMinted, SupplyReferralMinted,
+    AssetSupplied, AssetWithdrawn, CollateralEvent, DeepbookPoolConfigUpdated,
+    DeepbookPoolRegistered, DeepbookPoolUpdated, DeepbookPoolUpdatedRegistry,
+    InterestParamsUpdated, Liquidation, LoanBorrowed, LoanRepaid, MaintainerCapUpdated,
+    MaintainerFeesWithdrawn, MarginManagerCreated, MarginManagerState, MarginPoolConfigUpdated,
+    MarginPoolCreated, OrderFillSummary, OrderStatus, PauseCapUpdated, Pools,
+    ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn, ReferralFeeEvent, ReferralFeesClaimedEvent,
+    SupplierCapMinted, SupplyReferralMinted,
 };
 use deepbook_schema::schema;
 use diesel::deserialize::FromSqlRow;
@@ -1295,6 +1296,47 @@ impl Reader {
                 .collect()
         })
         .map_err(|e| DeepBookError::database(format!("Error fetching net deposits: {}", e)))
+    }
+
+    pub async fn get_collateral_events(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        margin_manager_id_filter: String,
+        event_type_filter: String,
+        is_base_filter: Option<bool>,
+    ) -> Result<Vec<CollateralEvent>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        let mut query = schema::collateral_events::table
+            .select(CollateralEvent::as_select())
+            .filter(
+                schema::collateral_events::checkpoint_timestamp_ms.between(start_time, end_time),
+            )
+            .filter(
+                schema::collateral_events::margin_manager_id
+                    .like(to_pattern(&margin_manager_id_filter)),
+            )
+            .filter(schema::collateral_events::event_type.like(to_pattern(&event_type_filter)))
+            .order_by(schema::collateral_events::checkpoint_timestamp_ms.desc())
+            .limit(limit)
+            .into_boxed();
+
+        if let Some(is_base) = is_base_filter {
+            query = query.filter(schema::collateral_events::withdraw_base_asset.eq(Some(is_base)));
+        }
+
+        let res = query.load::<CollateralEvent>(&mut connection).await;
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+
+        res.map_err(|_| DeepBookError::database("Error fetching collateral events"))
     }
 
     pub async fn get_points_total(&self, address: &str) -> Result<String, DeepBookError> {
