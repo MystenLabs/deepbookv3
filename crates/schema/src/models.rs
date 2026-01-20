@@ -31,6 +31,7 @@ use crate::schema::{
     order_fills,
     order_updates,
     pause_cap_updated,
+    points,
     pool_created,
     pool_prices,
     pools,
@@ -857,4 +858,17 @@ pub struct ConditionalOrderEvent {
     pub pay_with_deep: bool,
     pub expire_timestamp: i64,
     pub onchain_timestamp: i64,
+}
+
+// === Points ===
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = points, primary_key(id))]
+pub struct Points {
+    pub id: i64,
+    pub address: String,
+    pub amount: BigDecimal,
+    pub week: i32,
+    pub is_add: bool,
+    #[serde(serialize_with = "serialize_datetime")]
+    pub timestamp: chrono::NaiveDateTime,
 }
