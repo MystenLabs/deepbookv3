@@ -770,6 +770,16 @@ diesel::table! {
 }
 
 diesel::table! {
+    points (id) {
+        id -> Int8,
+        address -> Text,
+        amount -> Int8,
+        week -> Int4,
+        timestamp -> Timestamp,
+    }
+}
+
+diesel::table! {
     watermarks (pipeline) {
         pipeline -> Text,
         epoch_hi_inclusive -> Int8,
@@ -811,6 +821,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     order_fills,
     order_updates,
     pause_cap_updated,
+    points,
     pool_created,
     pool_prices,
     pools,

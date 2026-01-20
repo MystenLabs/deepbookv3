@@ -1338,4 +1338,55 @@ impl Reader {
 
         res.map_err(|_| DeepBookError::database("Error fetching collateral events"))
     }
+
+    pub async fn get_points(
+        &self,
+        addresses: Option<&[String]>,
+    ) -> Result<Vec<(String, i64)>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        let where_clause = addresses
+            .filter(|a| !a.is_empty())
+            .map(|addrs| {
+                let list = addrs
+                    .iter()
+                    .map(|a| format!("'{}'", a))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                format!("WHERE address IN ({})", list)
+            })
+            .unwrap_or_default();
+
+        let query_str = format!(
+            "SELECT address, COALESCE(SUM(amount), 0)::bigint as total_points \
+             FROM points {} GROUP BY address",
+            where_clause
+        );
+
+        #[derive(QueryableByName)]
+        struct PointsRow {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            address: String,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            total_points: i64,
+        }
+
+        let res = diesel::sql_query(query_str)
+            .load::<PointsRow>(&mut connection)
+            .await;
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+
+        res.map(|rows| {
+            rows.into_iter()
+                .map(|r| (r.address, r.total_points))
+                .collect()
+        })
+        .map_err(|e| DeepBookError::database(format!("Error fetching points: {}", e)))
+    }
 }
