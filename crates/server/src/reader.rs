@@ -1296,4 +1296,40 @@ impl Reader {
         })
         .map_err(|e| DeepBookError::database(format!("Error fetching net deposits: {}", e)))
     }
+
+    pub async fn get_points_total(&self, address: &str) -> Result<String, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        let query_str = format!(
+            r#"
+            SELECT COALESCE(
+                SUM(CASE WHEN is_add THEN amount ELSE -amount END),
+                0
+            )::text as total
+            FROM points
+            WHERE address = '{}'
+            "#,
+            address
+        );
+
+        #[derive(QueryableByName)]
+        struct PointsTotal {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            total: String,
+        }
+
+        let res = diesel::sql_query(query_str)
+            .get_result::<PointsTotal>(&mut connection)
+            .await;
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+
+        res.map(|row| row.total)
+            .map_err(|e| DeepBookError::database(format!("Error fetching points: {}", e)))
+    }
 }
