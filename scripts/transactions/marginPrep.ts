@@ -57,16 +57,18 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
   // tx.transferObjects([maintainerCap], adminCapOwner[env]);
 
   // // 4. Pyth Config
-  // const pythConfig = dbClient.marginAdmin.newPythConfig(
-  //   [
-  //     { coinKey: "SUI", maxConfBps: 300, maxEwmaDifferenceBps: 1500 }, // maxConfBps: 3%, maxEwmaDifferenceBps: 15%
-  //     { coinKey: "USDC", maxConfBps: 100, maxEwmaDifferenceBps: 500 }, // maxConfBps: 1%, maxEwmaDifferenceBps: 5%
-  //     { coinKey: "DEEP", maxConfBps: 500, maxEwmaDifferenceBps: 3000 }, // maxConfBps: 5%, maxEwmaDifferenceBps: 30%
-  //     { coinKey: "WAL", maxConfBps: 500, maxEwmaDifferenceBps: 3000 }, // maxConfBps: 5%, maxEwmaDifferenceBps: 30%
-  //   ],
-  //   30 // maxAgeSeconds: 30 seconds
-  // )(tx);
-  // dbClient.marginAdmin.addConfig(pythConfig)(tx);
+  const maxAgeSeconds = 70;
+  const pythConfig = dbClient.marginAdmin.newPythConfig(
+    [
+      { coinKey: "SUI", maxConfBps: 300, maxEwmaDifferenceBps: 1500 }, // maxConfBps: 3%, maxEwmaDifferenceBps: 15%
+      { coinKey: "USDC", maxConfBps: 100, maxEwmaDifferenceBps: 500 }, // maxConfBps: 1%, maxEwmaDifferenceBps: 5%
+      { coinKey: "DEEP", maxConfBps: 500, maxEwmaDifferenceBps: 3000 }, // maxConfBps: 5%, maxEwmaDifferenceBps: 30%
+      { coinKey: "WAL", maxConfBps: 500, maxEwmaDifferenceBps: 3000 }, // maxConfBps: 5%, maxEwmaDifferenceBps: 30%
+    ],
+    maxAgeSeconds // maxAgeSeconds: 70 seconds
+  )(tx);
+  dbClient.marginAdmin.removeConfig()(tx);
+  dbClient.marginAdmin.addConfig(pythConfig)(tx);
 
   // // 5. Create margin pools
   // const USDCprotocolConfig = dbClient.marginMaintainer.newProtocolConfig(
@@ -149,75 +151,75 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
   // )(tx);
   // dbClient.marginMaintainer.createMarginPool("WAL", WALprotocolConfig)(tx);
 
-  // 3. Registering SUI_DBUSDC pool
-  const PoolConfigSUIUSDC = dbClient.marginAdmin.newPoolConfig("SUI_USDC", {
-    minWithdrawRiskRatio: 2,
-    minBorrowRiskRatio: 1.2499,
-    liquidationRiskRatio: 1.1,
-    targetLiquidationRiskRatio: 1.25,
-    userLiquidationReward: 0.02,
-    poolLiquidationReward: 0.03,
-  })(tx);
+  // // 3. Registering SUI_DBUSDC pool
+  // const PoolConfigSUIUSDC = dbClient.marginAdmin.newPoolConfig("SUI_USDC", {
+  //   minWithdrawRiskRatio: 2,
+  //   minBorrowRiskRatio: 1.2499,
+  //   liquidationRiskRatio: 1.1,
+  //   targetLiquidationRiskRatio: 1.25,
+  //   userLiquidationReward: 0.02,
+  //   poolLiquidationReward: 0.03,
+  // })(tx);
 
-  dbClient.marginAdmin.registerDeepbookPool("SUI_USDC", PoolConfigSUIUSDC)(tx);
-  dbClient.marginAdmin.enableDeepbookPool("SUI_USDC")(tx);
+  // dbClient.marginAdmin.registerDeepbookPool("SUI_USDC", PoolConfigSUIUSDC)(tx);
+  // dbClient.marginAdmin.enableDeepbookPool("SUI_USDC")(tx);
 
-  const PoolConfigDEEPUSDC = dbClient.marginAdmin.newPoolConfig("DEEP_USDC", {
-    minWithdrawRiskRatio: 2,
-    minBorrowRiskRatio: 1.4999,
-    liquidationRiskRatio: 1.2,
-    targetLiquidationRiskRatio: 1.5,
-    userLiquidationReward: 0.02,
-    poolLiquidationReward: 0.03,
-  })(tx);
-  dbClient.marginAdmin.registerDeepbookPool(
-    "DEEP_USDC",
-    PoolConfigDEEPUSDC
-  )(tx);
-  dbClient.marginAdmin.enableDeepbookPool("DEEP_USDC")(tx);
+  // const PoolConfigDEEPUSDC = dbClient.marginAdmin.newPoolConfig("DEEP_USDC", {
+  //   minWithdrawRiskRatio: 2,
+  //   minBorrowRiskRatio: 1.4999,
+  //   liquidationRiskRatio: 1.2,
+  //   targetLiquidationRiskRatio: 1.5,
+  //   userLiquidationReward: 0.02,
+  //   poolLiquidationReward: 0.03,
+  // })(tx);
+  // dbClient.marginAdmin.registerDeepbookPool(
+  //   "DEEP_USDC",
+  //   PoolConfigDEEPUSDC
+  // )(tx);
+  // dbClient.marginAdmin.enableDeepbookPool("DEEP_USDC")(tx);
 
-  const poolConfigWalUsdc = dbClient.marginAdmin.newPoolConfig("WAL_USDC", {
-    minWithdrawRiskRatio: 2,
-    minBorrowRiskRatio: 1.4999,
-    liquidationRiskRatio: 1.2,
-    targetLiquidationRiskRatio: 1.5,
-    userLiquidationReward: 0.02,
-    poolLiquidationReward: 0.03,
-  })(tx);
-  dbClient.marginAdmin.registerDeepbookPool("WAL_USDC", poolConfigWalUsdc)(tx);
-  dbClient.marginAdmin.enableDeepbookPool("WAL_USDC")(tx);
+  // const poolConfigWalUsdc = dbClient.marginAdmin.newPoolConfig("WAL_USDC", {
+  //   minWithdrawRiskRatio: 2,
+  //   minBorrowRiskRatio: 1.4999,
+  //   liquidationRiskRatio: 1.2,
+  //   targetLiquidationRiskRatio: 1.5,
+  //   userLiquidationReward: 0.02,
+  //   poolLiquidationReward: 0.03,
+  // })(tx);
+  // dbClient.marginAdmin.registerDeepbookPool("WAL_USDC", poolConfigWalUsdc)(tx);
+  // dbClient.marginAdmin.enableDeepbookPool("WAL_USDC")(tx);
 
-  // 4. Enable deepbook pool for loan
-  dbClient.marginMaintainer.enableDeepbookPoolForLoan(
-    "SUI_USDC",
-    "USDC",
-    tx.object(usdcMarginPoolCapID[env])
-  )(tx);
-  dbClient.marginMaintainer.enableDeepbookPoolForLoan(
-    "DEEP_USDC",
-    "USDC",
-    tx.object(usdcMarginPoolCapID[env])
-  )(tx);
-  dbClient.marginMaintainer.enableDeepbookPoolForLoan(
-    "WAL_USDC",
-    "USDC",
-    tx.object(usdcMarginPoolCapID[env])
-  )(tx);
-  dbClient.marginMaintainer.enableDeepbookPoolForLoan(
-    "DEEP_USDC",
-    "DEEP",
-    tx.object(deepMarginPoolCapID[env])
-  )(tx);
-  dbClient.marginMaintainer.enableDeepbookPoolForLoan(
-    "SUI_USDC",
-    "SUI",
-    tx.object(suiMarginPoolCapID[env])
-  )(tx);
-  dbClient.marginMaintainer.enableDeepbookPoolForLoan(
-    "WAL_USDC",
-    "WAL",
-    tx.object(walMarginPoolCapID[env])
-  )(tx);
+  // // 4. Enable deepbook pool for loan
+  // dbClient.marginMaintainer.enableDeepbookPoolForLoan(
+  //   "SUI_USDC",
+  //   "USDC",
+  //   tx.object(usdcMarginPoolCapID[env])
+  // )(tx);
+  // dbClient.marginMaintainer.enableDeepbookPoolForLoan(
+  //   "DEEP_USDC",
+  //   "USDC",
+  //   tx.object(usdcMarginPoolCapID[env])
+  // )(tx);
+  // dbClient.marginMaintainer.enableDeepbookPoolForLoan(
+  //   "WAL_USDC",
+  //   "USDC",
+  //   tx.object(usdcMarginPoolCapID[env])
+  // )(tx);
+  // dbClient.marginMaintainer.enableDeepbookPoolForLoan(
+  //   "DEEP_USDC",
+  //   "DEEP",
+  //   tx.object(deepMarginPoolCapID[env])
+  // )(tx);
+  // dbClient.marginMaintainer.enableDeepbookPoolForLoan(
+  //   "SUI_USDC",
+  //   "SUI",
+  //   tx.object(suiMarginPoolCapID[env])
+  // )(tx);
+  // dbClient.marginMaintainer.enableDeepbookPoolForLoan(
+  //   "WAL_USDC",
+  //   "WAL",
+  //   tx.object(walMarginPoolCapID[env])
+  // )(tx);
 
   let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
