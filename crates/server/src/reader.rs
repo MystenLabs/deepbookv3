@@ -1382,7 +1382,11 @@ impl Reader {
             self.metrics.db_requests_failed.inc();
         }
 
-        res.map(|rows| rows.into_iter().map(|r| (r.address, r.total_points)).collect())
-            .map_err(|e| DeepBookError::database(format!("Error fetching points: {}", e)))
+        res.map(|rows| {
+            rows.into_iter()
+                .map(|r| (r.address, r.total_points))
+                .collect()
+        })
+        .map_err(|e| DeepBookError::database(format!("Error fetching points: {}", e)))
     }
 }

@@ -2407,9 +2407,11 @@ async fn get_points(
     Query(params): Query<GetPointsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<serde_json::Value>>, DeepBookError> {
-    let addresses = params
-        .addresses
-        .map(|s| s.split(',').map(|a| a.trim().to_string()).collect::<Vec<_>>());
+    let addresses = params.addresses.map(|s| {
+        s.split(',')
+            .map(|a| a.trim().to_string())
+            .collect::<Vec<_>>()
+    });
 
     let results = state.reader.get_points(addresses.as_deref()).await?;
 
