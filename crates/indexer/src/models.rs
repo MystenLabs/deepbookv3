@@ -388,8 +388,8 @@ pub mod deepbook_margin {
             pub margin_manager_id: ObjectID,
             pub amount: u64,
             pub asset: TypeName,
-            pub pyth_decimals: u8,
             pub pyth_price: u64,
+            pub pyth_decimals: u8,
             pub timestamp: u64,
         }
 
@@ -399,14 +399,14 @@ pub mod deepbook_margin {
             pub amount: u64,
             pub asset: TypeName,
             pub withdraw_base_asset: bool,
-            pub base_pyth_decimals: u8,
-            pub base_pyth_price: u64,
-            pub quote_pyth_decimals: u8,
-            pub quote_pyth_price: u64,
             pub remaining_base_asset: u64,
             pub remaining_quote_asset: u64,
             pub remaining_base_debt: u64,
             pub remaining_quote_debt: u64,
+            pub base_pyth_price: u64,
+            pub base_pyth_decimals: u8,
+            pub quote_pyth_price: u64,
+            pub quote_pyth_decimals: u8,
             pub timestamp: u64,
         }
 
