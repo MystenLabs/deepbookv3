@@ -1,4 +1,3 @@
-use crate::define_handler;
 use crate::models::deepbook_margin::margin_registry::MaintainerCapUpdated;
 use deepbook_schema::models::MaintainerCapUpdated as MaintainerCapUpdatedModel;
 
