@@ -21,6 +21,7 @@ on:
           - Margin Setup
           - Margin Prep
           - Fund Margin Pool
+          - Fund Abyss Vault
           - Fund Liquidation Vault
       sui_tools_image:
         description: "image reference of sui_tools"
@@ -326,6 +327,16 @@ jobs:
           ORIGIN: gh_action
         run: |
           cd scripts && pnpm install && pnpm ts-node transactions/supplyToMarginPool.ts
+
+      - name: Fund Abyss Vault
+        if: ${{ inputs.transaction_type == 'Fund Abyss Vault' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/fundAbyssVault.ts
 
       - name: Create Liquidation Vault
         if: ${{ inputs.transaction_type == 'Create Liquidation Vault' }}
