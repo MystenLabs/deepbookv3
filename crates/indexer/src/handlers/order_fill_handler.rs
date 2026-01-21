@@ -1,4 +1,3 @@
-use crate::define_handler;
 use crate::models::deepbook::order_info::OrderFilled;
 use deepbook_schema::models::OrderFill;
 
