@@ -2407,23 +2407,32 @@ async fn get_points(
     Query(params): Query<GetPointsQuery>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<serde_json::Value>>, DeepBookError> {
-    let addresses = params.addresses.map(|s| {
-        s.split(',')
-            .map(|a| a.trim().to_string())
-            .collect::<Vec<_>>()
-    });
+    let addresses = params
+        .addresses
+        .map(|s| {
+            s.split(',')
+                .map(|a| a.trim().to_string())
+                .filter(|a| !a.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .filter(|v| !v.is_empty());
 
-    let results = state.reader.get_points(addresses.as_deref()).await?;
+    let Some(requested) = addresses else {
+        return Ok(Json(vec![]));
+    };
 
-    Ok(Json(
-        results
-            .into_iter()
-            .map(|(addr, pts)| {
-                serde_json::json!({
-                    "address": addr,
-                    "total_points": pts
-                })
+    let results = state.reader.get_points(Some(&requested)).await?;
+    let results_map: std::collections::HashMap<_, _> = results.into_iter().collect();
+
+    let response = requested
+        .iter()
+        .map(|addr| {
+            serde_json::json!({
+                "address": addr,
+                "total_points": results_map.get(addr).copied().unwrap_or(0)
             })
-            .collect(),
-    ))
+        })
+        .collect();
+
+    Ok(Json(response))
 }
