@@ -27,25 +27,9 @@ const abyssSupplierCap =
 
 (async () => {
   const env = "mainnet";
-  const dbClient = new DeepBookClient({
-    address: adminCapOwner[env],
-    env,
-    client: new SuiClient({
-      url: getFullnodeUrl(env),
-    }),
-  });
   const tx = new Transaction();
-  const withdrawCoin = dbClient.marginPool.withdrawFromMarginPool(
-    "USDC",
-    tx.object(supplierCapID[env]),
-    100_000,
-  );
 
-  const supplyAmount = 1_000_000_000; // 1000 USDC
-
-  // Split coin for supply - replace with actual USDC coin object ID
-  const [coinToSupply] = tx.splitCoins(withdrawCoin, [supplyAmount]);
-
+  // Supply 90k into abyss vault
   const yieldTokens = tx.moveCall({
     target: `${ABYSS_VAULT_PACKAGE}::abyss_vault::supply`,
     typeArguments: [USDC_TYPE, ATOKEN_TYPE],
@@ -54,7 +38,9 @@ const abyssSupplierCap =
       tx.object(marginPool),
       tx.object(vaultRegistry),
       tx.object(marginRegistry),
-      coinToSupply,
+      tx.object(
+        "0x392b92d4a872bff969d9ef8d51c3d7a4223fe2b75da29d7befb2aee25c017562",
+      ),
       tx.object(abyssSupplierCap),
       tx.pure.option(
         "id",
@@ -63,7 +49,7 @@ const abyssSupplierCap =
       tx.object.clock(),
     ],
   });
-  tx.transferObjects([withdrawCoin, yieldTokens], adminCapOwner[env]);
+  tx.transferObjects([yieldTokens], adminCapOwner[env]);
 
   let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
