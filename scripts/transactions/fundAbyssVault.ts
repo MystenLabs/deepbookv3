@@ -29,7 +29,7 @@ const abyssSupplierCap =
   const env = "mainnet";
   const tx = new Transaction();
 
-  // Supply 90k into abyss vault
+  // Supply 99k into abyss vault
   const yieldTokens = tx.moveCall({
     target: `${ABYSS_VAULT_PACKAGE}::abyss_vault::supply`,
     typeArguments: [USDC_TYPE, ATOKEN_TYPE],
