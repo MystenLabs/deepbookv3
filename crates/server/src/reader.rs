@@ -220,6 +220,7 @@ impl Reader {
         limit: i64,
         maker_balance_manager: Option<String>,
         taker_balance_manager: Option<String>,
+        balance_manager: Option<String>,
     ) -> Result<
         Vec<(
             String,
@@ -253,6 +254,13 @@ impl Reader {
         }
         if let Some(taker_id) = taker_balance_manager {
             query = query.filter(schema::order_fills::taker_balance_manager_id.eq(taker_id));
+        }
+        if let Some(bm_id) = balance_manager {
+            query = query.filter(
+                schema::order_fills::maker_balance_manager_id
+                    .eq(bm_id.clone())
+                    .or(schema::order_fills::taker_balance_manager_id.eq(bm_id)),
+            );
         }
 
         let _guard = self.metrics.db_latency.start_timer();
