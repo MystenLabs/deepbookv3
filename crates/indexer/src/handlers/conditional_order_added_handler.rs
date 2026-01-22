@@ -1,6 +1,5 @@
 use bigdecimal::BigDecimal;
 
-use crate::define_handler;
 use crate::models::deepbook_margin::tpsl::ConditionalOrderAdded as ConditionalOrderAddedEvent;
 use deepbook_schema::models::ConditionalOrderEvent;
 

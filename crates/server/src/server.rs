@@ -1180,6 +1180,7 @@ async fn trades(
     // Parse optional filters for balance managers
     let maker_balance_manager_filter = params.get("maker_balance_manager_id").cloned();
     let taker_balance_manager_filter = params.get("taker_balance_manager_id").cloned();
+    let balance_manager_filter = params.get("balance_manager_id").cloned();
 
     let base_decimals = base_decimals as u8;
     let quote_decimals = quote_decimals as u8;
@@ -1194,6 +1195,7 @@ async fn trades(
             limit,
             maker_balance_manager_filter,
             taker_balance_manager_filter,
+            balance_manager_filter,
         )
         .await?;
 

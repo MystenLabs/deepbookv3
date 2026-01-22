@@ -1,4 +1,3 @@
-use crate::define_handler;
 use crate::models::deepbook_margin::margin_pool::MaintainerFeesWithdrawn;
 use deepbook_schema::models::MaintainerFeesWithdrawn as MaintainerFeesWithdrawnModel;
 

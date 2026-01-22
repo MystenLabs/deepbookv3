@@ -1,4 +1,3 @@
-use crate::define_handler;
 use crate::models::deepbook::pool::ReferralFeeEvent;
 use deepbook_schema::models::ReferralFeeEvent as ReferralFeeEventModel;
 
