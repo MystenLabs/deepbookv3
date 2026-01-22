@@ -4,10 +4,19 @@
 use crate::admin::handlers::{CreateAssetRequest, CreatePoolRequest, UpdatePoolRequest};
 use crate::error::DeepBookError;
 use deepbook_schema::schema;
-use diesel::{ExpressionMethods, QueryDsl};
+use diesel::{AsChangeset, ExpressionMethods, QueryDsl};
 use diesel_async::RunQueryDsl;
 use sui_pg_db::{Db, DbArgs};
 use url::Url;
+
+#[derive(AsChangeset)]
+#[diesel(table_name = schema::pools)]
+struct PoolChangeset {
+    pool_name: Option<String>,
+    min_size: Option<i64>,
+    lot_size: Option<i64>,
+    tick_size: Option<i64>,
+}
 
 #[derive(Clone)]
 pub struct Writer {
@@ -56,31 +65,22 @@ impl Writer {
             .await
             .map_err(|e| DeepBookError::database(e.to_string()))?;
 
-        if let Some(name) = req.pool_name {
-            diesel::update(schema::pools::table.filter(schema::pools::pool_id.eq(id)))
-                .set(schema::pools::pool_name.eq(name))
-                .execute(&mut conn)
-                .await?;
-        }
-        if let Some(size) = req.min_size {
-            diesel::update(schema::pools::table.filter(schema::pools::pool_id.eq(id)))
-                .set(schema::pools::min_size.eq(size))
-                .execute(&mut conn)
-                .await?;
-        }
-        if let Some(size) = req.lot_size {
-            diesel::update(schema::pools::table.filter(schema::pools::pool_id.eq(id)))
-                .set(schema::pools::lot_size.eq(size))
-                .execute(&mut conn)
-                .await?;
-        }
-        if let Some(size) = req.tick_size {
-            diesel::update(schema::pools::table.filter(schema::pools::pool_id.eq(id)))
-                .set(schema::pools::tick_size.eq(size))
-                .execute(&mut conn)
-                .await?;
-        }
+        let changeset = PoolChangeset {
+            pool_name: req.pool_name,
+            min_size: req.min_size,
+            lot_size: req.lot_size,
+            tick_size: req.tick_size,
+        };
 
+        let rows_affected =
+            diesel::update(schema::pools::table.filter(schema::pools::pool_id.eq(id)))
+                .set(changeset)
+                .execute(&mut conn)
+                .await?;
+
+        if rows_affected == 0 {
+            return Err(DeepBookError::not_found(format!("pool {id}")));
+        }
         Ok(())
     }
 
@@ -91,10 +91,14 @@ impl Writer {
             .await
             .map_err(|e| DeepBookError::database(e.to_string()))?;
 
-        diesel::delete(schema::pools::table.filter(schema::pools::pool_id.eq(id)))
-            .execute(&mut conn)
-            .await?;
+        let rows_affected =
+            diesel::delete(schema::pools::table.filter(schema::pools::pool_id.eq(id)))
+                .execute(&mut conn)
+                .await?;
 
+        if rows_affected == 0 {
+            return Err(DeepBookError::not_found(format!("pool {id}")));
+        }
         Ok(())
     }
 
@@ -128,10 +132,14 @@ impl Writer {
             .await
             .map_err(|e| DeepBookError::database(e.to_string()))?;
 
-        diesel::delete(schema::assets::table.filter(schema::assets::asset_type.eq(id)))
-            .execute(&mut conn)
-            .await?;
+        let rows_affected =
+            diesel::delete(schema::assets::table.filter(schema::assets::asset_type.eq(id)))
+                .execute(&mut conn)
+                .await?;
 
+        if rows_affected == 0 {
+            return Err(DeepBookError::not_found(format!("asset {id}")));
+        }
         Ok(())
     }
 }
