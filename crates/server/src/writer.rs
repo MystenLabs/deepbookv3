@@ -72,11 +72,15 @@ impl Writer {
             tick_size: req.tick_size,
         };
 
-        diesel::update(schema::pools::table.filter(schema::pools::pool_id.eq(id)))
-            .set(changeset)
-            .execute(&mut conn)
-            .await?;
+        let rows_affected =
+            diesel::update(schema::pools::table.filter(schema::pools::pool_id.eq(id)))
+                .set(changeset)
+                .execute(&mut conn)
+                .await?;
 
+        if rows_affected == 0 {
+            return Err(DeepBookError::not_found(format!("pool {id}")));
+        }
         Ok(())
     }
 
