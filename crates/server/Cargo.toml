@@ -32,6 +32,7 @@ bigdecimal = "0.4.9"
 chrono = "0.4.42"
 thiserror = "1.0"
 tokio-util = "0.7"
+subtle = "2.5"
 
 [[bin]]
 name = "deepbook-server"

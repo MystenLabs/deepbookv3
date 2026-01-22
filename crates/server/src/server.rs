@@ -186,7 +186,10 @@ impl AppState {
     }
 
     pub fn is_valid_admin_token(&self, token: &str) -> bool {
-        self.admin_tokens.iter().any(|t| t == token)
+        use subtle::ConstantTimeEq;
+        self.admin_tokens
+            .iter()
+            .any(|t| t.as_bytes().ct_eq(token.as_bytes()).into())
     }
 }
 
