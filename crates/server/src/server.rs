@@ -24,6 +24,7 @@ use diesel::{ExpressionMethods, QueryDsl};
 use serde::Deserialize;
 use serde_json::Value;
 use governor::{Quota, RateLimiter};
+use secrecy::{ExposeSecret, Secret};
 use std::net::{IpAddr, Ipv4Addr};
 use std::num::NonZeroU32;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -127,7 +128,7 @@ pub struct AppState {
     deepbook_package_id: String,
     deep_token_package_id: String,
     deep_treasury_id: String,
-    admin_tokens: Vec<String>,
+    admin_tokens: Vec<Secret<String>>,
     admin_auth_limiter: Arc<AdminRateLimiter>,
 }
 
@@ -152,11 +153,12 @@ impl AppState {
         .await?;
         let writer = Writer::new(database_url, args).await?;
 
-        let admin_tokens = admin_tokens
+        let admin_tokens: Vec<Secret<String>> = admin_tokens
             .map(|s| {
                 s.split(',')
                     .map(|t| t.trim().to_string())
                     .filter(|t| !t.is_empty())
+                    .map(Secret::new)
                     .collect()
             })
             .unwrap_or_default();
@@ -204,7 +206,7 @@ impl AppState {
         use subtle::ConstantTimeEq;
         self.admin_tokens
             .iter()
-            .any(|t| t.as_bytes().ct_eq(token.as_bytes()).into())
+            .any(|t| t.expose_secret().as_bytes().ct_eq(token.as_bytes()).into())
     }
 
     pub fn check_admin_rate_limit(&self) -> bool {
