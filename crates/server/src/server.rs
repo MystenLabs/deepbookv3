@@ -163,6 +163,12 @@ impl AppState {
             })
             .unwrap_or_default();
 
+        if admin_tokens.is_empty() {
+            tracing::warn!(
+                "No admin tokens configured (ADMIN_TOKENS env var). Admin endpoints will reject all requests."
+            );
+        }
+
         // Rate limiter: 10 attempts per minute for admin auth failures
         let admin_auth_limiter = Arc::new(RateLimiter::direct(Quota::per_minute(
             NonZeroU32::new(10).unwrap(),
