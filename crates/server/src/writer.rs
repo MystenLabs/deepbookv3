@@ -21,7 +21,11 @@ impl Writer {
     }
 
     pub async fn create_pool(&self, req: CreatePoolRequest) -> Result<(), DeepBookError> {
-        let mut conn = self.db.connect().await.map_err(|e| DeepBookError::database(e.to_string()))?;
+        let mut conn = self
+            .db
+            .connect()
+            .await
+            .map_err(|e| DeepBookError::database(e.to_string()))?;
 
         diesel::insert_into(schema::pools::table)
             .values((
@@ -46,7 +50,11 @@ impl Writer {
     }
 
     pub async fn update_pool(&self, id: &str, req: UpdatePoolRequest) -> Result<(), DeepBookError> {
-        let mut conn = self.db.connect().await.map_err(|e| DeepBookError::database(e.to_string()))?;
+        let mut conn = self
+            .db
+            .connect()
+            .await
+            .map_err(|e| DeepBookError::database(e.to_string()))?;
 
         if let Some(name) = req.pool_name {
             diesel::update(schema::pools::table.filter(schema::pools::pool_id.eq(id)))
@@ -77,7 +85,11 @@ impl Writer {
     }
 
     pub async fn delete_pool(&self, id: &str) -> Result<(), DeepBookError> {
-        let mut conn = self.db.connect().await.map_err(|e| DeepBookError::database(e.to_string()))?;
+        let mut conn = self
+            .db
+            .connect()
+            .await
+            .map_err(|e| DeepBookError::database(e.to_string()))?;
 
         diesel::delete(schema::pools::table.filter(schema::pools::pool_id.eq(id)))
             .execute(&mut conn)
@@ -87,7 +99,11 @@ impl Writer {
     }
 
     pub async fn create_asset(&self, req: CreateAssetRequest) -> Result<(), DeepBookError> {
-        let mut conn = self.db.connect().await.map_err(|e| DeepBookError::database(e.to_string()))?;
+        let mut conn = self
+            .db
+            .connect()
+            .await
+            .map_err(|e| DeepBookError::database(e.to_string()))?;
 
         diesel::insert_into(schema::assets::table)
             .values((
@@ -106,7 +122,11 @@ impl Writer {
     }
 
     pub async fn delete_asset(&self, id: &str) -> Result<(), DeepBookError> {
-        let mut conn = self.db.connect().await.map_err(|e| DeepBookError::database(e.to_string()))?;
+        let mut conn = self
+            .db
+            .connect()
+            .await
+            .map_err(|e| DeepBookError::database(e.to_string()))?;
 
         diesel::delete(schema::assets::table.filter(schema::assets::asset_type.eq(id)))
             .execute(&mut conn)

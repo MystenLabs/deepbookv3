@@ -134,7 +134,13 @@ impl AppState {
         admin_tokens: Option<String>,
     ) -> Result<Self, anyhow::Error> {
         let metrics = RpcMetrics::new(registry);
-        let reader = Reader::new(database_url.clone(), args.clone(), metrics.clone(), registry).await?;
+        let reader = Reader::new(
+            database_url.clone(),
+            args.clone(),
+            metrics.clone(),
+            registry,
+        )
+        .await?;
         let writer = Writer::new(database_url, args).await?;
 
         let admin_tokens = admin_tokens
