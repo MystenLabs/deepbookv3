@@ -18,6 +18,12 @@ pub async fn require_admin_auth(
     req: Request<Body>,
     next: Next,
 ) -> Result<Response, StatusCode> {
+    // Check rate limit before processing auth
+    if !state.check_admin_rate_limit() {
+        tracing::warn!("Admin auth rate limit exceeded");
+        return Err(StatusCode::TOO_MANY_REQUESTS);
+    }
+
     let auth_header = req
         .headers()
         .get(AUTHORIZATION)
@@ -29,9 +35,13 @@ pub async fn require_admin_auth(
             if state.is_valid_admin_token(token) {
                 Ok(next.run(req).await)
             } else {
+                tracing::warn!("Invalid admin token provided");
                 Err(StatusCode::UNAUTHORIZED)
             }
         }
-        _ => Err(StatusCode::UNAUTHORIZED),
+        _ => {
+            tracing::warn!("Missing or malformed admin authorization header");
+            Err(StatusCode::UNAUTHORIZED)
+        }
     }
 }

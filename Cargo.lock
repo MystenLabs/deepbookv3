@@ -2181,6 +2181,7 @@ dependencies = [
  "diesel",
  "diesel-async",
  "futures",
+ "governor",
  "prometheus",
  "serde",
  "serde_json",
@@ -2196,6 +2197,7 @@ dependencies = [
  "tokio",
  "tokio-util 0.7.18",
  "tower-http 0.5.2",
+ "tracing",
  "url",
 ]
 

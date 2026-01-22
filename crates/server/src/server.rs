@@ -23,7 +23,9 @@ use diesel::dsl::{max, min};
 use diesel::{ExpressionMethods, QueryDsl};
 use serde::Deserialize;
 use serde_json::Value;
+use governor::{Quota, RateLimiter};
 use std::net::{IpAddr, Ipv4Addr};
+use std::num::NonZeroU32;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{collections::HashMap, net::SocketAddr};
 use sui_pg_db::DbArgs;
@@ -109,6 +111,12 @@ pub const DEPOSITED_ASSETS_PATH: &str = "/deposited_assets/:balance_manager_ids"
 pub const COLLATERAL_EVENTS_PATH: &str = "/collateral_events";
 pub const GET_POINTS_PATH: &str = "/get_points";
 
+type AdminRateLimiter = RateLimiter<
+    governor::state::NotKeyed,
+    governor::state::InMemoryState,
+    governor::clock::DefaultClock,
+>;
+
 #[derive(Clone)]
 pub struct AppState {
     reader: Reader,
@@ -120,6 +128,7 @@ pub struct AppState {
     deep_token_package_id: String,
     deep_treasury_id: String,
     admin_tokens: Vec<String>,
+    admin_auth_limiter: Arc<AdminRateLimiter>,
 }
 
 impl AppState {
@@ -152,6 +161,11 @@ impl AppState {
             })
             .unwrap_or_default();
 
+        // Rate limiter: 10 attempts per minute for admin auth failures
+        let admin_auth_limiter = Arc::new(RateLimiter::direct(Quota::per_minute(
+            NonZeroU32::new(10).unwrap(),
+        )));
+
         Ok(Self {
             reader,
             writer,
@@ -162,6 +176,7 @@ impl AppState {
             deep_token_package_id,
             deep_treasury_id,
             admin_tokens,
+            admin_auth_limiter,
         })
     }
 
@@ -190,6 +205,10 @@ impl AppState {
         self.admin_tokens
             .iter()
             .any(|t| t.as_bytes().ct_eq(token.as_bytes()).into())
+    }
+
+    pub fn check_admin_rate_limit(&self) -> bool {
+        self.admin_auth_limiter.check().is_ok()
     }
 }
 
