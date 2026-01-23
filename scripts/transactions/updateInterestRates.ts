@@ -35,7 +35,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     "USDC",
     tx.object(usdcMarginPoolCapID[env]),
     {
-      baseRate: 0.05,
+      baseRate: 0,
       baseSlope: 0.15,
       optimalUtilization: 0.8,
       excessSlope: 5,
