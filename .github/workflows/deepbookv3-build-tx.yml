@@ -23,6 +23,7 @@ on:
           - Fund Margin Pool
           - Fund Abyss Vault
           - Fund Liquidation Vault
+          - Update Interest Rates
       sui_tools_image:
         description: "image reference of sui_tools"
         default: "mysten/sui-tools:mainnet"
@@ -367,6 +368,16 @@ jobs:
           ORIGIN: gh_action
         run: |
           cd scripts && pnpm install && pnpm ts-node transactions/fundLiquidationVault.ts
+
+      - name: Update Interest Rates
+        if: ${{ inputs.transaction_type == 'Update Interest Rates' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/updateInterestRates.ts
 
       - name: Prep Deepbook MVR
         if: ${{ inputs.transaction_type == 'Prep Deepbook MVR' }}
