@@ -57,18 +57,18 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
   // tx.transferObjects([maintainerCap], adminCapOwner[env]);
 
   // // 4. Pyth Config
-  const maxAgeSeconds = 70;
-  const pythConfig = dbClient.marginAdmin.newPythConfig(
-    [
-      { coinKey: "SUI", maxConfBps: 300, maxEwmaDifferenceBps: 1500 }, // maxConfBps: 3%, maxEwmaDifferenceBps: 15%
-      { coinKey: "USDC", maxConfBps: 100, maxEwmaDifferenceBps: 500 }, // maxConfBps: 1%, maxEwmaDifferenceBps: 5%
-      { coinKey: "DEEP", maxConfBps: 500, maxEwmaDifferenceBps: 3000 }, // maxConfBps: 5%, maxEwmaDifferenceBps: 30%
-      { coinKey: "WAL", maxConfBps: 500, maxEwmaDifferenceBps: 3000 }, // maxConfBps: 5%, maxEwmaDifferenceBps: 30%
-    ],
-    maxAgeSeconds // maxAgeSeconds: 70 seconds
-  )(tx);
-  dbClient.marginAdmin.removeConfig()(tx);
-  dbClient.marginAdmin.addConfig(pythConfig)(tx);
+  // const maxAgeSeconds = 70;
+  // const pythConfig = dbClient.marginAdmin.newPythConfig(
+  //   [
+  //     { coinKey: "SUI", maxConfBps: 300, maxEwmaDifferenceBps: 1500 }, // maxConfBps: 3%, maxEwmaDifferenceBps: 15%
+  //     { coinKey: "USDC", maxConfBps: 100, maxEwmaDifferenceBps: 500 }, // maxConfBps: 1%, maxEwmaDifferenceBps: 5%
+  //     { coinKey: "DEEP", maxConfBps: 500, maxEwmaDifferenceBps: 3000 }, // maxConfBps: 5%, maxEwmaDifferenceBps: 30%
+  //     { coinKey: "WAL", maxConfBps: 500, maxEwmaDifferenceBps: 3000 }, // maxConfBps: 5%, maxEwmaDifferenceBps: 30%
+  //   ],
+  //   maxAgeSeconds // maxAgeSeconds: 70 seconds
+  // )(tx);
+  // dbClient.marginAdmin.removeConfig()(tx);
+  // dbClient.marginAdmin.addConfig(pythConfig)(tx);
 
   // // 5. Create margin pools
   // const USDCprotocolConfig = dbClient.marginMaintainer.newProtocolConfig(
