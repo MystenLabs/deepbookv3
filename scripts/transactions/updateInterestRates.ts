@@ -85,8 +85,8 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     "DEEP",
     tx.object(deepMarginPoolCapID[env]),
     {
-      baseRate: 0.1,
-      baseSlope: 0.2,
+      baseRate: 0.05,
+      baseSlope: 0.25,
       optimalUtilization: 0.8,
       excessSlope: 5,
     },
@@ -110,8 +110,8 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     "WAL",
     tx.object(walMarginPoolCapID[env]),
     {
-      baseRate: 0.1,
-      baseSlope: 0.2,
+      baseRate: 0.05,
+      baseSlope: 0.25,
       optimalUtilization: 0.8,
       excessSlope: 5,
     },
