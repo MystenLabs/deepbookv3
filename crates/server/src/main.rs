@@ -48,6 +48,9 @@ struct Args {
     margin_poll_interval_secs: u64,
     #[clap(env, long)]
     margin_package_id: Option<String>,
+    /// Comma-separated list of valid admin bearer tokens
+    #[clap(env = "ADMIN_TOKENS", long)]
+    admin_tokens: Option<String>,
 }
 
 #[tokio::main]
@@ -67,6 +70,7 @@ async fn main() -> Result<(), anyhow::Error> {
         deep_treasury_id,
         margin_poll_interval_secs,
         margin_package_id,
+        admin_tokens,
     } = Args::parse();
 
     run_server(
@@ -80,6 +84,7 @@ async fn main() -> Result<(), anyhow::Error> {
         deep_treasury_id,
         margin_poll_interval_secs,
         margin_package_id,
+        admin_tokens,
     )
     .await?;
 
