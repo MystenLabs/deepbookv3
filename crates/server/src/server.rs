@@ -2019,16 +2019,11 @@ async fn margin_pool_created(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<MarginPoolCreated>>, DeepBookError> {
-    let end_time = params.end_time();
-    let start_time = params
-        .start_time()
-        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
-    let limit = params.limit();
     let margin_pool_id_filter = params.get("margin_pool_id").cloned().unwrap_or_default();
 
     let results = state
         .reader
-        .get_margin_pool_created(start_time, end_time, limit, margin_pool_id_filter)
+        .get_margin_pool_created(margin_pool_id_filter)
         .await?;
 
     Ok(Json(results))
