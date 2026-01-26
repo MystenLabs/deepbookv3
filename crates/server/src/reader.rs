@@ -661,16 +661,11 @@ impl Reader {
 
     pub async fn get_margin_pool_created(
         &self,
-        start_time: i64,
-        end_time: i64,
         limit: i64,
         margin_pool_id_filter: String,
     ) -> Result<Vec<MarginPoolCreated>, DeepBookError> {
         let query = schema::margin_pool_created::table
             .select(MarginPoolCreated::as_select())
-            .filter(
-                schema::margin_pool_created::checkpoint_timestamp_ms.between(start_time, end_time),
-            )
             .filter(
                 schema::margin_pool_created::margin_pool_id
                     .like(to_pattern(&margin_pool_id_filter)),
