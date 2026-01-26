@@ -1665,8 +1665,9 @@ async fn margin_supply(
     let mut result: HashMap<String, u64> = HashMap::new();
 
     for (pool_id, asset_type) in pools {
-        let pool_object_id = ObjectID::from_hex_literal(&pool_id)
-            .map_err(|e| DeepBookError::bad_request(format!("Invalid pool ID '{}': {}", pool_id, e)))?;
+        let pool_object_id = ObjectID::from_hex_literal(&pool_id).map_err(|e| {
+            DeepBookError::bad_request(format!("Invalid pool ID '{}': {}", pool_id, e))
+        })?;
 
         // Get the pool object to find its initial_shared_version
         let pool_object: SuiObjectResponse = sui_client
@@ -1691,7 +1692,8 @@ async fn margin_supply(
         };
 
         // Normalize asset type (ensure 0x prefix)
-        let normalized_asset_type = if asset_type.starts_with("0x") || asset_type.starts_with("0X") {
+        let normalized_asset_type = if asset_type.starts_with("0x") || asset_type.starts_with("0X")
+        {
             asset_type.clone()
         } else {
             format!("0x{}", asset_type)
