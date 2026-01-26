@@ -19,7 +19,7 @@ on:
           - Transfer Funds
           - Prep Deepbook MVR
           - Margin Setup
-          - Margin Prep
+          - Margin PackageInfo Creation
           - Fund Margin Pool
           - Fund Abyss Vault
           - Fund Liquidation Vault
@@ -309,15 +309,15 @@ jobs:
         run: |
           cd scripts && pnpm install && pnpm ts-node transactions/marginSetup.ts
 
-      - name: Margin Prep
-        if: ${{ inputs.transaction_type == 'Margin Prep' }}
+      - name: Margin PackageInfo Creation
+        if: ${{ inputs.transaction_type == 'Margin PackageInfo Creation' }}
         env:
           NODE_ENV: production
           GAS_OBJECT: ${{ inputs.gas_object_id }}
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/marginPrep.ts
+          cd scripts && pnpm install && pnpm ts-node transactions/marginPackageInfo.ts
 
       - name: Fund Margin Pool
         if: ${{ inputs.transaction_type == 'Fund Margin Pool' }}
