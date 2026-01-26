@@ -2019,12 +2019,11 @@ async fn margin_pool_created(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<MarginPoolCreated>>, DeepBookError> {
-    let limit = params.limit();
     let margin_pool_id_filter = params.get("margin_pool_id").cloned().unwrap_or_default();
 
     let results = state
         .reader
-        .get_margin_pool_created(limit, margin_pool_id_filter)
+        .get_margin_pool_created(margin_pool_id_filter)
         .await?;
 
     Ok(Json(results))

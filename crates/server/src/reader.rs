@@ -661,7 +661,6 @@ impl Reader {
 
     pub async fn get_margin_pool_created(
         &self,
-        limit: i64,
         margin_pool_id_filter: String,
     ) -> Result<Vec<MarginPoolCreated>, DeepBookError> {
         let query = schema::margin_pool_created::table
@@ -670,8 +669,7 @@ impl Reader {
                 schema::margin_pool_created::margin_pool_id
                     .like(to_pattern(&margin_pool_id_filter)),
             )
-            .order_by(schema::margin_pool_created::checkpoint_timestamp_ms.desc())
-            .limit(limit);
+            .order_by(schema::margin_pool_created::checkpoint_timestamp_ms.desc());
 
         Ok(self.results(query).await?)
     }
