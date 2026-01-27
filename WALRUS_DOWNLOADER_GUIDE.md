@@ -22,12 +22,13 @@ cargo run --release --bin deepbook-indexer -- \
 - `--verification-start <CP>`: The starting checkpoint sequence number (default: 0).
 - `--verification-limit <COUNT>`: The number of checkpoints to download (default: 10000).
 - `--env`: The environment (`mainnet` or `testnet`).
+- `--walrus-cli-path <PATH>`: (Optional) Path to the `walrus` CLI binary. If provided, full blobs will be downloaded via storage nodes (avoiding aggregator timeouts) and cached locally.
 - `WALRUS_ARCHIVAL_URL`: (Optional Env Var) URL for the Walrus archival service.
 - `WALRUS_AGGREGATOR_URL`: (Optional Env Var) URL for the Walrus aggregator.
 
-### Example
+### Example (Standard Aggregator)
 
-Download 1,000 checkpoints starting from sequence number 238,300,000 to the `./checkpoints` directory:
+Download 1,000 checkpoints using the HTTP aggregator:
 
 ```bash
 cargo run --release --bin deepbook-indexer -- \
@@ -36,6 +37,21 @@ cargo run --release --bin deepbook-indexer -- \
   --verification-limit 1000 \
   --env mainnet
 ```
+
+### Example (Walrus CLI - Recommended for Backfills)
+
+Download checkpoints using the `walrus` CLI for maximum reliability:
+
+```bash
+cargo run --release --bin deepbook-indexer -- \
+  --download-walrus-to ./checkpoints \
+  --verification-start 238300000 \
+  --verification-limit 1000 \
+  --env mainnet \
+  --walrus-cli-path walrus
+```
+
+> **Note:** The first time a blob is needed, the CLI will download the full 3GB blob to the cache directory (`./checkpoint_cache` by default). Subsequent extractions from the same blob will be extremely fast.
 
 ### Output
 

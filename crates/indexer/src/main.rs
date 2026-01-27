@@ -374,6 +374,7 @@ async fn run_walrus_verification(
                 config.walrus_aggregator_url.clone(),
                 config.cache_dir.clone(),
                 config.cache_max_size_gb,
+                config.walrus_cli_path.clone(),
             )?;
 
             // Initialize blob metadata
@@ -432,11 +433,12 @@ async fn run_walrus_download(
 ) -> Result<(), anyhow::Error> {
     tracing::info!("Initializing Walrus storage for download...");
 
-    let mut storage = WalrusCheckpointStorage::new(
+    let storage = WalrusCheckpointStorage::new(
         config.walrus_archival_url,
         config.walrus_aggregator_url,
         config.cache_dir,
         config.cache_max_size_gb,
+        config.walrus_cli_path,
     )?;
 
     // Initialize blob metadata

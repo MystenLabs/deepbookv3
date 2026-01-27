@@ -63,4 +63,8 @@ pub struct CheckpointStorageConfig {
     /// Maximum cache size in GB (0 = unlimited)
     #[arg(long, env = "CHECKPOINT_CACHE_MAX_SIZE_GB", default_value = "100")]
     pub cache_max_size_gb: u64,
+
+    /// Path to the Walrus CLI binary (optional, used if aggregator is skipped)
+    #[arg(long, env = "WALRUS_CLI_PATH")]
+    pub walrus_cli_path: Option<PathBuf>,
 }

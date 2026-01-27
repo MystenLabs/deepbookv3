@@ -8,11 +8,13 @@ use futures::stream::{self, StreamExt};
 use reqwest::Client;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::sync::Arc;
 use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::CheckpointSequenceNumber;
+use tokio::process::Command;
 use tokio::sync::RwLock;
 
 use super::checkpoint_storage::CheckpointStorage;
@@ -75,13 +77,19 @@ struct BlobIndexEntry {
 /// 1. Fetch blob metadata from walrus-sui-archival service
 /// 2. Download blobs (2-3 GB each) or use local cache
 /// 3. Extract checkpoints from blobs using internal index
+#[derive(Clone)]
 pub struct WalrusCheckpointStorage {
+    inner: Arc<Inner>,
+}
+
+struct Inner {
     archival_url: String,
     aggregator_url: String,
+    cache_dir: PathBuf,
+    walrus_cli_path: Option<PathBuf>,
     client: Client,
-    // Cache for parsed blob indices: blob_id -> (checkpoint_number -> entry)
-    index_cache: Arc<RwLock<HashMap<String, HashMap<u64, BlobIndexEntry>>>>,
-    metadata: Vec<BlobMetadata>,
+    index_cache: RwLock<HashMap<String, HashMap<u64, BlobIndexEntry>>>,
+    metadata: RwLock<Vec<BlobMetadata>>,
 }
 
 impl WalrusCheckpointStorage {
@@ -89,27 +97,37 @@ impl WalrusCheckpointStorage {
     pub fn new(
         archival_url: String,
         aggregator_url: String,
-        _cache_dir: PathBuf,
-        _cache_max_size: u64, // Unused in partial download strategy
+        cache_dir: PathBuf,
+        _cache_max_size: u64,
+        walrus_cli_path: Option<PathBuf>,
     ) -> Result<Self> {
+        if walrus_cli_path.is_some() {
+            // Ensure cache directory exists if using CLI mode
+            std::fs::create_dir_all(&cache_dir).context("failed to create cache dir for walrus cli")?;
+        }
+
         Ok(Self {
-            archival_url,
-            aggregator_url,
-            client: Client::builder()
-                .timeout(std::time::Duration::from_secs(30)) // 30s timeout is enough for small ranges
-                .build()
-                .expect("Failed to create HTTP client"),
-            index_cache: Arc::new(RwLock::new(HashMap::new())),
-            metadata: Vec::new(),
+            inner: Arc::new(Inner {
+                archival_url,
+                aggregator_url,
+                cache_dir,
+                walrus_cli_path,
+                client: Client::builder()
+                    .timeout(std::time::Duration::from_secs(30)) // 30s timeout is enough for small ranges
+                    .build()
+                    .expect("Failed to create HTTP client"),
+                index_cache: RwLock::new(HashMap::new()),
+                metadata: RwLock::new(Vec::new()),
+            }),
         })
     }
 
     /// Initialize by fetching blob metadata from archival service
-    pub async fn initialize(&mut self) -> Result<()> {
-        tracing::info!("fetching Walrus blob metadata from: {}", self.archival_url);
+    pub async fn initialize(&self) -> Result<()> {
+        tracing::info!("fetching Walrus blob metadata from: {}", self.inner.archival_url);
 
-        let url = format!("{}/v1/app_blobs", self.archival_url);
-        let response = self
+        let url = format!("{}/v1/app_blobs", self.inner.archival_url);
+        let response = self.inner
             .client
             .get(&url)
             .send()
@@ -128,30 +146,33 @@ impl WalrusCheckpointStorage {
             .await
             .context("failed to parse blobs response")?;
 
-        self.metadata = blobs.blobs;
+        let mut metadata = self.inner.metadata.write().await;
+        *metadata = blobs.blobs;
 
         tracing::info!(
             "fetched {} Walrus blobs covering checkpoints {}..{}",
-            self.metadata.len(),
-            self.metadata.first().map(|b| b.start_checkpoint).unwrap_or(0),
-            self.metadata.last().map(|b| b.end_checkpoint).unwrap_or(0)
+            metadata.len(),
+            metadata.first().map(|b| b.start_checkpoint).unwrap_or(0),
+            metadata.last().map(|b| b.end_checkpoint).unwrap_or(0)
         );
 
         Ok(())
     }
 
     /// Find blob containing a specific checkpoint
-    fn find_blob_for_checkpoint(&self, checkpoint: u64) -> Option<&BlobMetadata> {
-        self.metadata
+    async fn find_blob_for_checkpoint(&self, checkpoint: u64) -> Option<BlobMetadata> {
+        let metadata = self.inner.metadata.read().await;
+        metadata
             .iter()
             .find(|blob| checkpoint >= blob.start_checkpoint && checkpoint <= blob.end_checkpoint)
+            .cloned()
     }
 
     /// Load (or fetch) the index for a blob
     async fn load_blob_index(&self, blob_id: &str) -> Result<HashMap<u64, BlobIndexEntry>> {
         // 1. Check memory cache
         {
-            let cache = self.index_cache.read().await;
+            let cache = self.inner.index_cache.read().await;
             if let Some(index) = cache.get(blob_id) {
                 return Ok(index.clone());
             }
@@ -160,8 +181,8 @@ impl WalrusCheckpointStorage {
         tracing::info!("fetching index for blob {}", blob_id);
 
         // 2. Fetch Footer (last 24 bytes)
-        let url = format!("{}/v1/blobs/{}", self.aggregator_url, blob_id);
-        let response = self.client.get(&url)
+        let url = format!("{}/v1/blobs/{}", self.inner.aggregator_url, blob_id);
+        let response = self.inner.client.get(&url)
             .header("Range", "bytes=-24")
             .send()
             .await
@@ -193,7 +214,7 @@ impl WalrusCheckpointStorage {
         tracing::debug!("blob {} index: count={}, start={}", blob_id, count, index_start_offset);
 
         // 3. Fetch Index (from start offset to end)
-        let response = self.client.get(&url)
+        let response = self.inner.client.get(&url)
             .header("Range", format!("bytes={}-", index_start_offset))
             .send()
             .await
@@ -236,21 +257,85 @@ impl WalrusCheckpointStorage {
 
         // 4. Update Cache
         {
-            let mut cache = self.index_cache.write().await;
+            let mut cache = self.inner.index_cache.write().await;
             cache.insert(blob_id.to_string(), index.clone());
         }
 
         Ok(index)
     }
 
-    /// Download a specific range from a blob
+    /// Check if blob exists in cache
+    fn get_cached_blob_path(&self, blob_id: &str) -> PathBuf {
+        self.inner.cache_dir.join(blob_id)
+    }
+
+    /// Download full blob using Walrus CLI
+    async fn download_blob_via_cli(&self, blob_id: &str) -> Result<PathBuf> {
+        let cli_path = self.inner.walrus_cli_path.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Walrus CLI path not configured"))?;
+        
+        let output_path = self.get_cached_blob_path(blob_id);
+        
+        // If file exists and size matches metadata, skip
+        if output_path.exists() {
+            // Optional: verify size matches metadata
+            return Ok(output_path);
+        }
+
+        tracing::info!("downloading blob {} via CLI to {}", blob_id, output_path.display());
+
+        let status = Command::new(cli_path)
+            .arg("read")
+            .arg(blob_id)
+            .arg("--out")
+            .arg(&output_path)
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()
+            .await
+            .context("failed to execute walrus cli")?;
+
+        if !status.success() {
+            return Err(anyhow::anyhow!("walrus cli failed with status {}", status));
+        }
+
+        Ok(output_path)
+    }
+
+    /// Download a specific range from a blob (HTTP or Local File)
     async fn download_range(&self, blob_id: &str, start: u64, length: u64) -> Result<Vec<u8>> {
-        let url = format!("{}/v1/blobs/{}", self.aggregator_url, blob_id);
+        // 1. Check if we have the file locally (or should force download it via CLI)
+        let cached_path = self.get_cached_blob_path(blob_id);
+        
+        // If configured to use CLI, ensure it's downloaded
+        if self.inner.walrus_cli_path.is_some() {
+            // This is a heavy operation (downloading full blob), but guarantees availability
+            // Only performed once per blob
+            if !cached_path.exists() {
+                self.download_blob_via_cli(blob_id).await?;
+            }
+        }
+
+        // 2. If local file exists, read from it
+        if cached_path.exists() {
+            // tracing::debug!("reading range {}-{} from local file {}", start, start + length, cached_path.display());
+            let mut file = std::fs::File::open(&cached_path)
+                .with_context(|| format!("failed to open cached blob {}", cached_path.display()))?;
+            
+            file.seek(SeekFrom::Start(start))?;
+            let mut buffer = vec![0u8; length as usize];
+            file.read_exact(&mut buffer)?;
+            
+            return Ok(buffer);
+        }
+
+        // 3. Fallback to HTTP Range request (Aggregator)
+        let url = format!("{}/v1/blobs/{}", self.inner.aggregator_url, blob_id);
         let end = start + length - 1;
         
         tracing::debug!("downloading range {}-{} (len {}) from {}", start, end, length, blob_id);
 
-        let response = self.client.get(&url)
+        let response = self.inner.client.get(&url)
             .header("Range", format!("bytes={}-{}", start, end))
             .send()
             .await?;
@@ -261,8 +346,6 @@ impl WalrusCheckpointStorage {
 
         let bytes = response.bytes().await?.to_vec();
         if bytes.len() as u64 != length {
-             // It's possible we got less if we hit EOF, but for checkpoints we expect exact match
-             // unless the index was wrong.
              tracing::warn!("expected {} bytes, got {}", length, bytes.len());
         }
 
@@ -278,10 +361,13 @@ impl WalrusCheckpointStorage {
     ) -> Result<()> {
         tokio::fs::create_dir_all(&output_dir).await?;
 
+        let metadata = self.inner.metadata.read().await;
         // Find all needed blobs
-        let blobs: Vec<&BlobMetadata> = self.metadata.iter()
+        let blobs: Vec<BlobMetadata> = metadata.iter()
             .filter(|b| b.end_checkpoint >= range.start && b.start_checkpoint < range.end)
+            .cloned()
             .collect();
+        drop(metadata); // Release lock
 
         if blobs.is_empty() {
             return Ok(());
@@ -306,14 +392,19 @@ impl WalrusCheckpointStorage {
 
              tracing::info!("downloading {} checkpoints from blob {} to {}", tasks.len(), blob.blob_id, output_dir.display());
 
+             // If using CLI, ensure blob is downloaded ONCE before spawning tasks
+             if self.inner.walrus_cli_path.is_some() {
+                 self.download_blob_via_cli(&blob.blob_id).await?;
+             }
+
              // Download in parallel
              let concurrency = 50;
              let output_dir = output_dir.clone();
              
              let results: Vec<Result<()>> = stream::iter(tasks)
                 .map(|(cp_num, entry)| {
-                    let client = self.client.clone();
-                    let url = format!("{}/v1/blobs/{}", self.aggregator_url, blob.blob_id);
+                    let storage = self.clone();
+                    let blob_id = blob.blob_id.clone();
                     let file_path = output_dir.join(format!("{}.chk", cp_num));
                     
                     async move {
@@ -322,17 +413,7 @@ impl WalrusCheckpointStorage {
                             return Ok(());
                         }
 
-                        let end = entry.offset + entry.length - 1;
-                        let response = client.get(&url)
-                            .header("Range", format!("bytes={}-{}", entry.offset, end))
-                            .send()
-                            .await?;
-
-                        if !response.status().is_success() {
-                             return Err(anyhow::anyhow!("failed to fetch range: status {}", response.status()));
-                        }
-
-                        let bytes = response.bytes().await?;
+                        let bytes = storage.download_range(&blob_id, entry.offset, entry.length).await?;
                         tokio::fs::write(&file_path, bytes).await?;
                         Ok(())
                     }
@@ -360,6 +441,7 @@ impl CheckpointStorage for WalrusCheckpointStorage {
         // Find blob containing this checkpoint
         let blob = self
             .find_blob_for_checkpoint(checkpoint)
+            .await
             .ok_or_else(|| anyhow::anyhow!("no blob found for checkpoint {}", checkpoint))?;
 
         // Load index (cached or fetch)
@@ -383,10 +465,13 @@ impl CheckpointStorage for WalrusCheckpointStorage {
         &self,
         range: std::ops::Range<CheckpointSequenceNumber>,
     ) -> Result<Vec<CheckpointData>> {
+        let metadata: tokio::sync::RwLockReadGuard<Vec<BlobMetadata>> = self.inner.metadata.read().await;
         // Find all needed blobs
-        let blobs: Vec<&BlobMetadata> = self.metadata.iter()
+        let blobs: Vec<BlobMetadata> = metadata.iter()
             .filter(|b| b.end_checkpoint >= range.start && b.start_checkpoint < range.end)
+            .cloned()
             .collect();
+        drop(metadata);
 
         if blobs.is_empty() {
             return Ok(Vec::new());
@@ -413,26 +498,20 @@ impl CheckpointStorage for WalrusCheckpointStorage {
 
              tracing::debug!("downloading {} checkpoints from blob {}", tasks.len(), blob.blob_id);
 
+             // If using CLI, ensure blob is downloaded ONCE before spawning tasks
+             if self.inner.walrus_cli_path.is_some() {
+                 self.download_blob_via_cli(&blob.blob_id).await?;
+             }
+
              // Download in parallel with concurrency limit
              let concurrency = 50; // High concurrency for small ranges
              let downloaded: Vec<Result<CheckpointData>> = stream::iter(tasks)
                 .map(|(cp_num, entry)| {
-                    // Capture necessary data to avoid lifetime issues with &self
-                    let client = self.client.clone();
-                    let url = format!("{}/v1/blobs/{}", self.aggregator_url, blob.blob_id);
+                    let storage = self.clone();
+                    let blob_id = blob.blob_id.clone();
                     
                     async move {
-                        let end = entry.offset + entry.length - 1;
-                        let response = client.get(&url)
-                            .header("Range", format!("bytes={}-{}", entry.offset, end))
-                            .send()
-                            .await?;
-
-                        if !response.status().is_success() {
-                             return Err(anyhow::anyhow!("failed to fetch range: status {}", response.status()));
-                        }
-
-                        let cp_bytes = response.bytes().await?;
+                        let cp_bytes = storage.download_range(&blob_id, entry.offset, entry.length).await?;
                         sui_storage::blob::Blob::from_bytes::<CheckpointData>(&cp_bytes)
                              .with_context(|| format!("failed to deserialize checkpoint {}", cp_num))
                     }
@@ -457,12 +536,13 @@ impl CheckpointStorage for WalrusCheckpointStorage {
         checkpoint: CheckpointSequenceNumber,
     ) -> Result<bool> {
         // Check if any blob contains this checkpoint
-        Ok(self.find_blob_for_checkpoint(checkpoint).is_some())
+        Ok(self.find_blob_for_checkpoint(checkpoint).await.is_some())
     }
 
     async fn get_latest_checkpoint(&self) -> Result<Option<CheckpointSequenceNumber>> {
+        let metadata: tokio::sync::RwLockReadGuard<Vec<BlobMetadata>> = self.inner.metadata.read().await;
         // Find highest checkpoint in blob metadata
-        self.metadata
+        metadata
             .iter()
             .map(|blob| blob.end_checkpoint)
             .max()
