@@ -445,10 +445,13 @@ impl CheckpointStorage for WalrusCheckpointStorage {
         &self,
         range: std::ops::Range<CheckpointSequenceNumber>,
     ) -> Result<Vec<CheckpointData>> {
+        use futures::stream::{self, StreamExt};
+
         // For initial implementation, download checkpoints individually
         // (Future optimization: download full blobs and extract locally)
 
         let count = (range.end - range.start) as usize;
+        let concurrent_requests = 10;
 
         if count > 1000 {
             tracing::warn!(
@@ -458,20 +461,29 @@ impl CheckpointStorage for WalrusCheckpointStorage {
         }
 
         tracing::info!(
-            "downloading checkpoints {}..{} from Walrus ({} checkpoints)",
+            "downloading checkpoints {}..{} from Walrus ({} checkpoints, {} concurrent)",
             range.start,
             range.end - 1,
-            count
+            count,
+            concurrent_requests
         );
 
-        let mut checkpoints = Vec::with_capacity(count);
+        let checkpoints_results: Vec<Result<CheckpointData>> = stream::iter(range)
+            .map(|checkpoint| {
+                let storage = &self;
+                async move { storage.get_checkpoint(checkpoint).await }
+            })
+            .buffer_unordered(concurrent_requests)
+            .collect()
+            .await;
 
-        for checkpoint in range {
-            let cp = self.get_checkpoint(checkpoint).await?;
-            checkpoints.push(cp);
+        // Process results and handle errors
+        let mut checkpoints = Vec::with_capacity(count);
+        for result in checkpoints_results {
+            checkpoints.push(result?);
         }
 
-        // Sort by checkpoint number
+        // Sort by checkpoint number since buffer_unordered returns in random order
         checkpoints.sort_by_key(|cp| cp.checkpoint_summary.sequence_number);
 
         tracing::info!("downloaded {} checkpoints from Walrus", checkpoints.len());

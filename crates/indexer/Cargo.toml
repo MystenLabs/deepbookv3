@@ -34,6 +34,7 @@ telemetry-subscribers.workspace = true
 deepbook-schema = { path = "../schema" }
 sui-storage = { git = "https://github.com/MystenLabs/sui.git", branch = "testnet" }
 reqwest = { version = "0.12", features = ["json"] }
+futures = "0.3"
 
 [dev-dependencies]
 sui-storage = { git = "https://github.com/MystenLabs/sui.git", branch = "testnet" }
