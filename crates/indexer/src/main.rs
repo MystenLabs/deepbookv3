@@ -54,7 +54,10 @@ use deepbook_indexer::handlers::conditional_order_cancelled_handler::Conditional
 use deepbook_indexer::handlers::conditional_order_executed_handler::ConditionalOrderExecutedHandler;
 use deepbook_indexer::handlers::conditional_order_insufficient_funds_handler::ConditionalOrderInsufficientFundsHandler;
 
-use deepbook_indexer::DeepbookEnv;
+use deepbook_indexer::{
+    CheckpointStorage, CheckpointStorageConfig, CheckpointStorageType, DeepbookEnv,
+    SuiCheckpointStorage, WalrusCheckpointStorage,
+};
 use deepbook_schema::MIGRATIONS;
 use prometheus::Registry;
 use std::net::SocketAddr;
@@ -96,6 +99,14 @@ struct Args {
     /// Packages to index events for (can specify multiple)
     #[clap(long, value_enum, default_values = ["deepbook", "deepbook-margin"])]
     packages: Vec<Package>,
+
+    /// Checkpoint storage configuration
+    #[command(flatten)]
+    storage_config: CheckpointStorageConfig,
+
+    /// Run a Walrus backfill verification test and exit
+    #[clap(long)]
+    verify_walrus_backfill: bool,
 }
 
 #[tokio::main]
@@ -111,7 +122,14 @@ async fn main() -> Result<(), anyhow::Error> {
         database_url,
         env,
         packages,
+        storage_config,
+        verify_walrus_backfill,
     } = Args::parse();
+
+    if verify_walrus_backfill {
+        tracing::info!("Starting Walrus backfill verification...");
+        return run_walrus_verification(storage_config).await;
+    }
 
     let registry = Registry::new_custom(Some("deepbook".into()), None)
         .context("Failed to create Prometheus registry.")?;
@@ -311,5 +329,69 @@ async fn main() -> Result<(), anyhow::Error> {
     let s_metrics = metrics.run().await?;
 
     s_indexer.attach(s_metrics).main().await?;
+    Ok(())
+}
+
+async fn run_walrus_verification(config: CheckpointStorageConfig) -> Result<(), anyhow::Error> {
+    tracing::info!("Initializing checkpoint storage: {}", config.storage);
+
+    // Create checkpoint storage service
+    let checkpoint_storage: Box<dyn CheckpointStorage> = match config.storage {
+        CheckpointStorageType::Sui => {
+            let storage = SuiCheckpointStorage::new(
+                Url::parse("https://checkpoints.mainnet.sui.io").unwrap(),
+            );
+            Box::new(storage)
+        }
+        CheckpointStorageType::Walrus => {
+            let mut storage = WalrusCheckpointStorage::new(
+                config.walrus_archival_url.clone(),
+                config.walrus_aggregator_url.clone(),
+                config.cache_dir.clone(),
+                config.cache_max_size_gb,
+            )?;
+
+            // Initialize blob metadata
+            storage.initialize().await?;
+            Box::new(storage)
+        }
+    };
+
+    // Run a small backfill test
+    let start_cp = 100_000_000;
+    let count = 10;
+    tracing::info!(
+        "Fetching {} checkpoints starting from {}...",
+        count,
+        start_cp
+    );
+
+    let start_time = std::time::Instant::now();
+
+    for i in 0..count {
+        let cp = start_cp + i;
+        match checkpoint_storage.get_checkpoint(cp).await {
+            Ok(data) => {
+                tracing::info!(
+                    "✓ Fetched checkpoint {}: txs={}, time={}",
+                    cp,
+                    data.transactions.len(),
+                    data.checkpoint_summary.timestamp_ms
+                );
+            }
+            Err(e) => {
+                tracing::error!("✗ Failed to fetch checkpoint {}: {}", cp, e);
+            }
+        }
+    }
+
+    let elapsed = start_time.elapsed();
+    tracing::info!(
+        "Verification complete! Fetched {} checkpoints in {:.2}s ({:.2} cp/s)",
+        count,
+        elapsed.as_secs_f64(),
+        count as f64 / elapsed.as_secs_f64()
+    );
+
     Ok(())
 }

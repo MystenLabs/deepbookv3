@@ -1,5 +1,9 @@
 use url::Url;
 
+pub mod checkpoint_storage;
+pub mod checkpoint_storage_config;
+pub mod walrus_storage;
+
 pub mod handlers;
 pub(crate) mod models;
 pub mod traits;
@@ -251,3 +255,8 @@ impl DeepbookEnv {
             .collect()
     }
 }
+
+// Re-export checkpoint storage types
+pub use checkpoint_storage::{CheckpointStorage, SuiCheckpointStorage};
+pub use checkpoint_storage_config::{CheckpointStorageType, CheckpointStorageConfig};
+pub use walrus_storage::WalrusCheckpointStorage;
