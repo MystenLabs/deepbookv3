@@ -67,9 +67,19 @@ The tool will save files named `<SEQUENCE_NUMBER>.chk` in the specified director
 ...
 ```
 
-## Performance
+## Performance & Benchmarks
 
-The downloader uses parallel fetching (concurrency: 50) and "Smart Partial Downloads" to retrieve individual checkpoints from large Walrus blobs without downloading the entire blob. This significantly reduces bandwidth usage and improves speed.
+The downloader uses parallel fetching (concurrency: 50) for extraction, but the primary bottleneck is the Walrus blob download speed.
+
+**Observed Metrics (Mainnet):**
+- **Network Speed:** ~1.2 MB/s to 2.1 MB/s (varies by network/node).
+- **Throughput:** ~6 to 12 Checkpoints/sec (end-to-end including download).
+- **Extraction Speed:** >12,000 Checkpoints/sec (once blob is cached).
+
+**Example Data:**
+- **Blob Size:** ~2.7 GB
+- **Checkpoints per Blob:** ~14,000
+- **Download Time:** ~20-40 minutes per blob.
 
 ## Integration
 
