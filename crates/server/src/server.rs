@@ -108,6 +108,7 @@ pub const STATUS_PATH: &str = "/status";
 pub const DEPOSITED_ASSETS_PATH: &str = "/deposited_assets/:balance_manager_ids";
 pub const COLLATERAL_EVENTS_PATH: &str = "/collateral_events";
 pub const GET_POINTS_PATH: &str = "/get_points";
+pub const HISTORICAL_MARGIN_SUPPLY_PATH: &str = "/historical_margin_supply";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -331,6 +332,7 @@ pub(crate) fn make_router(state: Arc<AppState>) -> Router {
         .route(DEPOSITED_ASSETS_PATH, get(deposited_assets))
         .route(COLLATERAL_EVENTS_PATH, get(collateral_events))
         .route(GET_POINTS_PATH, get(get_points))
+        .route(HISTORICAL_MARGIN_SUPPLY_PATH, get(historical_margin_supply))
         .with_state(state.clone());
 
     let rpc_routes = Router::new()
@@ -2562,4 +2564,19 @@ async fn get_points(
         .collect();
 
     Ok(Json(response))
+}
+
+// === Historical Margin Supply ===
+async fn historical_margin_supply(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<HashMap<String, i64>>, DeepBookError> {
+    let end_time = params
+        .get("end_time")
+        .and_then(|v| v.parse::<i64>().ok())
+        .map(|t| t * 1000);
+
+    let results = state.reader.get_historical_margin_supply(end_time).await?;
+
+    Ok(Json(results))
 }
