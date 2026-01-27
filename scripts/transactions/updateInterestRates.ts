@@ -130,6 +130,11 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
   //     rateLimitEnabled: true,
   //   },
   // )(tx);
+  const maintainerCap = dbClient.marginAdmin.mintMaintainerCap()(tx);
+  tx.transferObjects(
+    [maintainerCap],
+    "0x6b9f717104d04a5e53cbcd95213c6fbe3616809d396ec4c31076f7dddc497362",
+  );
 
   let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
