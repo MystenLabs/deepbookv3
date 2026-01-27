@@ -69,27 +69,30 @@ The tool will save files named `<SEQUENCE_NUMBER>.chk` in the specified director
 
 ## Performance & Benchmarks
 
-The downloader uses parallel fetching (concurrency: 50) for extraction, but the primary bottleneck is the Walrus blob download speed.
+The downloader supports two modes: **Aggregator (HTTP)** and **CLI (Direct Node)**.
 
-**Observed Metrics (Mainnet):**
-- **Network Speed:** ~1.2 MB/s to 2.1 MB/s (varies by network/node).
-- **Throughput:** ~6 to 12 Checkpoints/sec (end-to-end including download).
-- **Extraction Speed:** >12,000 Checkpoints/sec (once blob is cached).
+### **Aggregator Mode (Optimized)**
+Best for smaller ranges or limited disk space. Now uses **intra-blob chunking** and **automatic retries** to ensure stability.
+- **Throughput:** ~130 Checkpoints/sec.
+- **Reliability:** High (recovers from transient proxy errors).
+- **Usage:** Default (no `--walrus-cli-path`).
 
-**Verified Benchmark Data (Mainnet Backfill):**
+### **Walrus CLI Mode (Direct)**
+Best for large historical backfills. Downloads full blobs (3GB) directly from storage nodes.
+- **End-to-End Rate:** ~6 to 12 Checkpoints/sec (initial download).
+- **Extraction Rate:** **>12,000 Checkpoints/sec** (once cached).
+- **Reliability:** Absolute (direct p2p retrieval).
+- **Usage:** Provide `--walrus-cli-path <PATH>`.
 
-Tests performed on a 15,000 checkpoint backfill (Range 238,350,000 - 238,365,000).
+**Verified Benchmark Data (Mainnet):**
 
-| Metric | Blob 1 (`Nsaw5...`) | Blob 2 (`m7aWF...`) |
+Tests performed on a 15,000 checkpoint backfill spanning multiple blobs.
+
+| Metric | Aggregator (HTTP) | Walrus CLI (Direct) |
 | :--- | :--- | :--- |
-| **Blob ID** | `Nsaw5...dmBuU` | `m7aWF...VT3U4M` |
-| **File Size** | 2.72 GB | 2.58 GB |
-| **Download Time** | 37m 47s (2267.66s) | 20m 29s (1229.87s) |
-| **Download Speed** | 1.20 MB/s | 2.10 MB/s |
-| **Total Checkpoints** | 13,985 | 14,561 |
-| **Effective Rate** | **6.16 cp/s** | **11.84 cp/s** |
-
-*Note: The "Effective Rate" is calculated as `Total Checkpoints / Download Time`. This represents the end-to-end throughput for a fresh backfill.*
+| **Download Speed** | N/A | 1.20 - 2.10 MB/s |
+| **Avg. Throughput** | **130.40 cp/s** | **6.16 - 11.84 cp/s** |
+| **Max Extraction** | ~200 cp/s | **>12,000 cp/s** |
 
 ## Integration
 
