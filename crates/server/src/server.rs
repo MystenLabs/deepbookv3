@@ -1226,11 +1226,11 @@ async fn trades(
                     ("taker_order_id".to_string(), Value::from(taker_order_id)),
                     (
                         "maker_client_order_id".to_string(),
-                        Value::from(maker_client_order_id),
+                        Value::from(maker_client_order_id.to_string()),
                     ),
                     (
                         "taker_client_order_id".to_string(),
-                        Value::from(taker_client_order_id),
+                        Value::from(taker_client_order_id.to_string()),
                     ),
                     (
                         "maker_balance_manager_id".to_string(),
