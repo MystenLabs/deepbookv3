@@ -1179,6 +1179,8 @@ async fn trades(
                 digest,
                 maker_order_id,
                 taker_order_id,
+                maker_client_order_id,
+                taker_client_order_id,
                 price,
                 base_quantity,
                 quote_quantity,
@@ -1222,6 +1224,14 @@ async fn trades(
                     ("trade_id".to_string(), Value::from(trade_id.to_string())),
                     ("maker_order_id".to_string(), Value::from(maker_order_id)),
                     ("taker_order_id".to_string(), Value::from(taker_order_id)),
+                    (
+                        "maker_client_order_id".to_string(),
+                        Value::from(maker_client_order_id),
+                    ),
+                    (
+                        "taker_client_order_id".to_string(),
+                        Value::from(taker_client_order_id),
+                    ),
                     (
                         "maker_balance_manager_id".to_string(),
                         Value::from(maker_balance_manager_id),
