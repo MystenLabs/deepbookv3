@@ -331,6 +331,7 @@ impl WalrusCheckpointStorage {
         }
 
         tracing::info!("downloading blob {} via CLI to {}", blob_id, output_path.display());
+        let start_time = std::time::Instant::now();
 
         let status = Command::new(cli_path)
             .arg("read")
@@ -346,6 +347,13 @@ impl WalrusCheckpointStorage {
         if !status.success() {
             return Err(anyhow::anyhow!("walrus cli failed with status {}", status));
         }
+
+        let elapsed = start_time.elapsed();
+        tracing::info!("blob {} download finished in {:.2}s ({:.2} MB/s)", 
+            blob_id, 
+            elapsed.as_secs_f64(),
+            (output_path.metadata()?.len() as f64 / 1_000_000.0) / elapsed.as_secs_f64()
+        );
 
         Ok(output_path)
     }
@@ -445,6 +453,8 @@ impl WalrusCheckpointStorage {
 
              tracing::info!("downloading {} checkpoints from blob {} to {}", tasks.len(), blob.blob_id, output_dir.display());
 
+             let start_extract = std::time::Instant::now();
+
              // Download in parallel
              let concurrency = 50;
              let output_dir = output_dir.clone();
@@ -471,8 +481,20 @@ impl WalrusCheckpointStorage {
                 .await;
 
              // Check for errors
+             let mut count = 0;
              for result in results {
                  result?;
+                 count += 1;
+             }
+
+             let elapsed_extract = start_extract.elapsed();
+             if count > 0 {
+                 tracing::info!("extracted {} checkpoints from blob {} in {:.2}s ({:.2} cp/s)", 
+                    count, 
+                    blob.blob_id, 
+                    elapsed_extract.as_secs_f64(),
+                    count as f64 / elapsed_extract.as_secs_f64()
+                 );
              }
         }
         
