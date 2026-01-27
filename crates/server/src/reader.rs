@@ -1396,4 +1396,73 @@ impl Reader {
         })
         .map_err(|e| DeepBookError::database(format!("Error fetching points: {}", e)))
     }
+
+    pub async fn get_historical_margin_supply(
+        &self,
+        end_time: Option<i64>,
+    ) -> Result<std::collections::HashMap<String, i64>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        let time_filter = end_time
+            .map(|t| format!("checkpoint_timestamp_ms <= {}", t))
+            .unwrap_or_else(|| "TRUE".to_string());
+
+        let query_str = format!(
+            "WITH supplies AS (
+                SELECT asset_type, COALESCE(SUM(amount), 0) as total_supplied
+                FROM asset_supplied
+                WHERE {}
+                GROUP BY asset_type
+            ),
+            withdrawals AS (
+                SELECT asset_type, COALESCE(SUM(amount), 0) as total_withdrawn
+                FROM asset_withdrawn
+                WHERE {}
+                GROUP BY asset_type
+            )
+            SELECT
+                COALESCE(s.asset_type, w.asset_type) as asset_type,
+                (COALESCE(s.total_supplied, 0) - COALESCE(w.total_withdrawn, 0))::bigint as net_supply
+            FROM supplies s
+            FULL OUTER JOIN withdrawals w ON s.asset_type = w.asset_type
+            ORDER BY asset_type",
+            time_filter, time_filter
+        );
+
+        #[derive(QueryableByName)]
+        struct NetSupplyRow {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            asset_type: String,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            net_supply: i64,
+        }
+
+        let res = diesel::sql_query(query_str)
+            .load::<NetSupplyRow>(&mut connection)
+            .await;
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+
+        res.map(|rows| {
+            rows.into_iter()
+                .map(|r| {
+                    let asset_name = r
+                        .asset_type
+                        .rsplit("::")
+                        .next()
+                        .unwrap_or(&r.asset_type)
+                        .to_string();
+                    (asset_name, r.net_supply)
+                })
+                .collect()
+        })
+        .map_err(|e| {
+            DeepBookError::database(format!("Error fetching historical margin supply: {}", e))
+        })
+    }
 }
