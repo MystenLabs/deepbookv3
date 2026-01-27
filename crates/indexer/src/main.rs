@@ -358,8 +358,8 @@ async fn run_walrus_verification(config: CheckpointStorageConfig) -> Result<(), 
     };
 
     // Run a small backfill test
-    let start_cp = 100_000_000;
-    let count = 10;
+    let start_cp = 238300000;
+    let count = 1000; // Increased count to test blob optimization
     tracing::info!(
         "Fetching {} checkpoints starting from {}...",
         count,
@@ -368,20 +368,23 @@ async fn run_walrus_verification(config: CheckpointStorageConfig) -> Result<(), 
 
     let start_time = std::time::Instant::now();
 
-    for i in 0..count {
-        let cp = start_cp + i;
-        match checkpoint_storage.get_checkpoint(cp).await {
-            Ok(data) => {
+    match checkpoint_storage
+        .get_checkpoints(start_cp..start_cp + count)
+        .await
+    {
+        Ok(checkpoints) => {
+            for data in checkpoints {
                 tracing::info!(
                     "✓ Fetched checkpoint {}: txs={}, time={}",
-                    cp,
+                    data.checkpoint_summary.sequence_number,
                     data.transactions.len(),
                     data.checkpoint_summary.timestamp_ms
                 );
             }
-            Err(e) => {
-                tracing::error!("✗ Failed to fetch checkpoint {}: {}", cp, e);
-            }
+        }
+        Err(e) => {
+            tracing::error!("✗ Failed to fetch batch of checkpoints: {}", e);
+            return Err(e);
         }
     }
 

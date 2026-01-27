@@ -3,15 +3,18 @@
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use byteorder::{LittleEndian, ReadBytesExt};
+use futures::stream::{self, StreamExt};
 use reqwest::Client;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fs;
+use std::io::{Cursor, Read};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use sui_types::full_checkpoint_content::CheckpointData;
 use sui_types::messages_checkpoint::CheckpointSequenceNumber;
+use tokio::sync::RwLock;
 
 use super::checkpoint_storage::CheckpointStorage;
 
@@ -58,13 +61,13 @@ pub struct WalrusCheckpointResponse {
     pub content: Option<serde_json::Value>,
 }
 
-/// Blob cache entry
+/// Parsed index entry from a blob
 #[derive(Debug, Clone)]
-struct BlobCacheEntry {
-    pub blob_id: String,
-    pub path: PathBuf,
-    pub size: u64,
-    pub accessed_at: std::time::Instant,
+struct BlobIndexEntry {
+    #[allow(dead_code)]
+    pub checkpoint_number: u64,
+    pub offset: u64,
+    pub length: u64,
 }
 
 /// Walrus checkpoint storage (blob-based)
@@ -72,14 +75,13 @@ struct BlobCacheEntry {
 /// Downloads checkpoints from Walrus aggregator using blob-based storage:
 /// 1. Fetch blob metadata from walrus-sui-archival service
 /// 2. Download blobs (2-3 GB each) or use local cache
-/// 3. Extract checkpoints from blobs
+/// 3. Extract checkpoints from blobs using internal index
 pub struct WalrusCheckpointStorage {
     archival_url: String,
     aggregator_url: String,
     client: Client,
-    cache_dir: PathBuf,
-    cache_max_size: u64,
-    cache: Arc<RwLock<HashMap<String, BlobCacheEntry>>>,
+    // Cache for parsed blob indices: blob_id -> (checkpoint_number -> entry)
+    index_cache: Arc<RwLock<HashMap<String, HashMap<u64, BlobIndexEntry>>>>,
     metadata: Vec<BlobMetadata>,
 }
 
@@ -88,23 +90,17 @@ impl WalrusCheckpointStorage {
     pub fn new(
         archival_url: String,
         aggregator_url: String,
-        cache_dir: PathBuf,
-        cache_max_size: u64,
+        _cache_dir: PathBuf,
+        _cache_max_size: u64, // Unused in partial download strategy
     ) -> Result<Self> {
-        // Create cache directory
-        fs::create_dir_all(&cache_dir)
-            .with_context(|| format!("failed to create cache directory: {}", cache_dir.display()))?;
-
         Ok(Self {
             archival_url,
             aggregator_url,
             client: Client::builder()
-                .timeout(std::time::Duration::from_secs(300)) // 5 min timeout for blobs
+                .timeout(std::time::Duration::from_secs(30)) // 30s timeout is enough for small ranges
                 .build()
                 .expect("Failed to create HTTP client"),
-            cache_dir,
-            cache_max_size: cache_max_size * 1024 * 1024 * 1024, // Convert GB to bytes
-            cache: Arc::new(RwLock::new(HashMap::new())),
+            index_cache: Arc::new(RwLock::new(HashMap::new())),
             metadata: Vec::new(),
         })
     }
@@ -142,9 +138,6 @@ impl WalrusCheckpointStorage {
             self.metadata.last().map(|b| b.end_checkpoint).unwrap_or(0)
         );
 
-        // Load existing cache
-        self.load_cache()?;
-
         Ok(())
     }
 
@@ -155,211 +148,126 @@ impl WalrusCheckpointStorage {
             .find(|blob| checkpoint >= blob.start_checkpoint && checkpoint <= blob.end_checkpoint)
     }
 
-    /// Get or download blob (with caching)
-    async fn get_or_download_blob(&self, blob_id: &str, total_size: u64) -> Result<Vec<u8>> {
-        // Check cache
+    /// Load (or fetch) the index for a blob
+    async fn load_blob_index(&self, blob_id: &str) -> Result<HashMap<u64, BlobIndexEntry>> {
+        // 1. Check memory cache
         {
-            let cache = self.cache.read().await;
-            if let Some(entry) = cache.get(blob_id) {
-                if entry.path.exists() {
-                    tracing::debug!(
-                        "using cached blob: {} ({} MB)",
-                        blob_id,
-                        entry.size / 1024 / 1024
-                    );
-                    return Ok(fs::read(&entry.path).with_context(|| {
-                        format!("failed to read cached blob: {}", entry.path.display())
-                    })?);
-                }
+            let cache = self.index_cache.read().await;
+            if let Some(index) = cache.get(blob_id) {
+                return Ok(index.clone());
             }
         }
 
-        // Download blob
-        let size_mb = total_size / 1024 / 1024;
-        tracing::info!("downloading Walrus blob: {} ({} MB)", blob_id, size_mb);
+        tracing::info!("fetching index for blob {}", blob_id);
 
-        let url = format!(
-            "{}/v1/blobs/{}/byte-range?start=0&length={}",
-            self.aggregator_url, blob_id, total_size
-        );
-
-        let start = std::time::Instant::now();
-        let response = self
-            .client
-            .get(&url)
+        // 2. Fetch Footer (last 24 bytes)
+        let url = format!("{}/v1/blobs/{}", self.aggregator_url, blob_id);
+        let response = self.client.get(&url)
+            .header("Range", "bytes=-24")
             .send()
             .await
-            .with_context(|| format!("failed to download blob from: {}", url))?;
+            .with_context(|| format!("failed to fetch footer for blob {}", blob_id))?;
 
         if !response.status().is_success() {
-            return Err(anyhow::anyhow!(
-                "Walrus aggregator returned error status {} for blob {}",
-                response.status(),
-                blob_id
+             return Err(anyhow::anyhow!(
+                "failed to fetch footer: status {}", response.status()
             ));
         }
 
-        let blob_data = response
-            .bytes()
+        let footer_bytes = response.bytes().await?;
+        if footer_bytes.len() != 24 {
+             return Err(anyhow::anyhow!("invalid footer length: {}", footer_bytes.len()));
+        }
+
+        // Parse Footer
+        let mut cursor = Cursor::new(&footer_bytes);
+        let magic = cursor.read_u32::<LittleEndian>()?;
+        if magic != 0x574c4244 { // "DBLW"
+            return Err(anyhow::anyhow!("invalid blob footer magic: {:x}", magic));
+        }
+
+        let _version = cursor.read_u32::<LittleEndian>()?;
+        let index_start_offset = cursor.read_u64::<LittleEndian>()?;
+        let count = cursor.read_u32::<LittleEndian>()?;
+        // CRC ignored for now
+
+        tracing::debug!("blob {} index: count={}, start={}", blob_id, count, index_start_offset);
+
+        // 3. Fetch Index (from start offset to end)
+        let response = self.client.get(&url)
+            .header("Range", format!("bytes={}-", index_start_offset))
+            .send()
             .await
-            .with_context(|| "failed to read blob response")?
-            .to_vec();
+            .with_context(|| format!("failed to fetch index for blob {}", blob_id))?;
 
-        let elapsed = start.elapsed();
+        if !response.status().is_success() {
+             return Err(anyhow::anyhow!("failed to fetch index: status {}", response.status()));
+        }
 
-        let throughput_mbps = (total_size as f64) / 1024.0 / 1024.0 / elapsed.as_secs_f64();
-        tracing::info!(
-            "downloaded blob {} in {:.2}s ({:.2} MB/s)",
-            blob_id,
-            elapsed.as_secs_f64(),
-            throughput_mbps
-        );
+        let index_bytes = response.bytes().await?;
+        
+        // Parse Index
+        let mut cursor = Cursor::new(&index_bytes);
+        let mut index = HashMap::with_capacity(count as usize);
 
-        // Evict if cache is full
-        self.evict_cache_if_needed(total_size).await?;
+        for _ in 0..count {
+            let name_len = cursor.read_u32::<LittleEndian>()?;
+            let mut name_bytes = vec![0u8; name_len as usize];
+            cursor.read_exact(&mut name_bytes)?;
 
-        // Write to cache
-        let cache_path = self.cache_dir.join(format!("{}.bin", blob_id));
-        fs::write(&cache_path, &blob_data).with_context(|| {
-            format!("failed to write blob to cache: {}", cache_path.display())
-        })?;
+            let name_str = String::from_utf8(name_bytes)
+                .context("invalid utf8 in checkpoint name")?;
+            let checkpoint_number = name_str
+                .parse::<u64>()
+                .context("invalid checkpoint number string")?;
 
-        // Add to cache
-        {
-            let mut cache = self.cache.write().await;
-            cache.insert(
-                blob_id.to_string(),
-                BlobCacheEntry {
-                    blob_id: blob_id.to_string(),
-                    path: cache_path,
-                    size: total_size,
-                    accessed_at: std::time::Instant::now(),
+            let offset = cursor.read_u64::<LittleEndian>()?;
+            let length = cursor.read_u64::<LittleEndian>()?;
+            let _entry_crc = cursor.read_u32::<LittleEndian>()?;
+
+            index.insert(
+                checkpoint_number,
+                BlobIndexEntry {
+                    checkpoint_number,
+                    offset,
+                    length,
                 },
             );
         }
 
-        Ok(blob_data)
+        // 4. Update Cache
+        {
+            let mut cache = self.index_cache.write().await;
+            cache.insert(blob_id.to_string(), index.clone());
+        }
+
+        Ok(index)
     }
 
-    /// Evict old cache entries if needed (LRU)
-    async fn evict_cache_if_needed(&self, needed_size: u64) -> Result<()> {
-        let cache_size: u64 = {
-            let cache = self.cache.read().await;
-            cache.values().map(|e| e.size).sum()
-        };
+    /// Download a specific range from a blob
+    async fn download_range(&self, blob_id: &str, start: u64, length: u64) -> Result<Vec<u8>> {
+        let url = format!("{}/v1/blobs/{}", self.aggregator_url, blob_id);
+        let end = start + length - 1;
+        
+        tracing::debug!("downloading range {}-{} (len {}) from {}", start, end, length, blob_id);
 
-        let target_size = self.cache_max_size / 2; // Evict to 50%
+        let response = self.client.get(&url)
+            .header("Range", format!("bytes={}-{}", start, end))
+            .send()
+            .await?;
 
-        if cache_size + needed_size <= self.cache_max_size {
-            return Ok(());
+        if !response.status().is_success() {
+             return Err(anyhow::anyhow!("failed to fetch range: status {}", response.status()));
         }
 
-        tracing::info!(
-            "evicting cache (current: {} MB, needed: {} MB, max: {} MB)",
-            cache_size / 1024 / 1024,
-            needed_size / 1024 / 1024,
-            self.cache_max_size / 1024 / 1024
-        );
-
-        // Sort by last accessed time
-        let mut entries: Vec<_> = {
-            let cache = self.cache.read().await;
-            cache.values().cloned().collect()
-        };
-        entries.sort_by_key(|e| e.accessed_at);
-
-        // Evict oldest entries
-        let mut evicted = 0;
-        let mut cache = self.cache.write().await;
-
-        for entry in entries {
-            let current_size: u64 = cache.values().map(|e| e.size).sum();
-
-            if current_size <= target_size {
-                break;
-            }
-
-            if let Err(e) = fs::remove_file(&entry.path) {
-                tracing::warn!("failed to evict blob {}: {}", entry.blob_id, e);
-            } else {
-                cache.remove(&entry.blob_id);
-                evicted += 1;
-                tracing::debug!(
-                    "evicted blob: {} ({} MB)",
-                    entry.blob_id,
-                    entry.size / 1024 / 1024
-                );
-            }
+        let bytes = response.bytes().await?.to_vec();
+        if bytes.len() as u64 != length {
+             // It's possible we got less if we hit EOF, but for checkpoints we expect exact match
+             // unless the index was wrong.
+             tracing::warn!("expected {} bytes, got {}", length, bytes.len());
         }
 
-        tracing::info!("evicted {} blobs from cache", evicted);
-
-        Ok(())
-    }
-
-    /// Load existing cache entries from disk
-    fn load_cache(&self) -> Result<()> {
-        if !self.cache_dir.exists() {
-            return Ok(());
-        }
-
-        tracing::info!(
-            "loading Walrus blob cache from: {}",
-            self.cache_dir.display()
-        );
-
-        let mut loaded = 0;
-        let mut total_size = 0;
-
-        for entry in fs::read_dir(&self.cache_dir).with_context(|| {
-            format!(
-                "failed to read cache directory: {}",
-                self.cache_dir.display()
-            )
-        })? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if path.extension().map_or(false, |ext| ext == "bin") {
-                let blob_id = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .ok_or_else(|| anyhow::anyhow!("invalid cache file name: {}", path.display()))?
-                    .to_string();
-
-                let metadata = fs::metadata(&path).with_context(|| {
-                    format!("failed to read cache file metadata: {}", path.display())
-                })?;
-                let size = metadata.len();
-
-                // Add to cache via runtime (for RwLock)
-                let cache = Arc::clone(&self.cache);
-                tokio::task::block_in_place(|| {
-                    let mut cache = cache.blocking_write();
-                    cache.insert(
-                        blob_id.clone(),
-                        BlobCacheEntry {
-                            blob_id,
-                            path,
-                            size,
-                            accessed_at: std::time::Instant::now(),
-                        },
-                    );
-                    Ok::<_, anyhow::Error>(())
-                })?;
-
-                loaded += 1;
-                total_size += size;
-            }
-        }
-
-        tracing::info!(
-            "loaded {} cached blobs ({} MB)",
-            loaded,
-            total_size / 1024 / 1024
-        );
-
-        Ok(())
+        Ok(bytes)
     }
 }
 
@@ -369,125 +277,98 @@ impl CheckpointStorage for WalrusCheckpointStorage {
         &self,
         checkpoint: CheckpointSequenceNumber,
     ) -> Result<CheckpointData> {
-        // For individual checkpoint, use Walrus API to get offset/length
-        let url = format!(
-            "{}/v1/app_checkpoint?checkpoint={}",
-            self.archival_url, checkpoint
-        );
+        // Find blob containing this checkpoint
+        let blob = self
+            .find_blob_for_checkpoint(checkpoint)
+            .ok_or_else(|| anyhow::anyhow!("no blob found for checkpoint {}", checkpoint))?;
 
-        tracing::debug!("fetching checkpoint {} from: {}", checkpoint, url);
+        // Load index (cached or fetch)
+        let index = self.load_blob_index(&blob.blob_id).await?;
 
-        let response = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .with_context(|| format!("failed to fetch checkpoint {} metadata", checkpoint))?;
+        // Find checkpoint in index
+        let entry = index.get(&checkpoint)
+            .ok_or_else(|| anyhow::anyhow!("checkpoint {} not found in blob index", checkpoint))?;
 
-        if !response.status().is_success() {
-            if response.status() == 404 {
-                return Err(anyhow::anyhow!(
-                    "checkpoint {} not found in Walrus archival service",
-                    checkpoint
-                ));
-            }
-            return Err(anyhow::anyhow!(
-                "Walrus archival service returned error status {} for checkpoint {}",
-                response.status(),
-                checkpoint
-            ));
-        }
+        // Download checkpoint data
+        let cp_bytes = self.download_range(&blob.blob_id, entry.offset, entry.length).await?;
 
-        let checkpoint_info: WalrusCheckpointResponse = response
-            .json()
-            .await
-            .context("failed to parse checkpoint metadata")?;
-
-        // Fetch checkpoint byte range from blob
-        let blob_url = format!(
-            "{}/v1/blobs/{}/byte-range?start={}&length={}",
-            self.aggregator_url,
-            checkpoint_info.blob_id,
-            checkpoint_info.offset,
-            checkpoint_info.length
-        );
-
-        tracing::debug!("downloading checkpoint {} from blob: {}", checkpoint, blob_url);
-
-        let response = self
-            .client
-            .get(&blob_url)
-            .send()
-            .await
-            .with_context(|| format!("failed to download checkpoint {} from blob", checkpoint))?;
-
-        if !response.status().is_success() {
-            return Err(anyhow::anyhow!(
-                "Walrus aggregator returned error status {} for checkpoint {}",
-                response.status(),
-                checkpoint
-            ));
-        }
-
-        let blob_data = response
-            .bytes()
-            .await
-            .context("failed to read checkpoint data")?;
-
-        // Parse BCS checkpoint data
-        let checkpoint_data = sui_storage::blob::Blob::from_bytes::<CheckpointData>(&blob_data)
+        // Deserialize
+        let checkpoint = sui_storage::blob::Blob::from_bytes::<CheckpointData>(&cp_bytes)
             .with_context(|| format!("failed to deserialize checkpoint {}", checkpoint))?;
 
-        Ok(checkpoint_data)
+        Ok(checkpoint)
     }
 
     async fn get_checkpoints(
         &self,
         range: std::ops::Range<CheckpointSequenceNumber>,
     ) -> Result<Vec<CheckpointData>> {
-        use futures::stream::{self, StreamExt};
+        // Find all needed blobs
+        let blobs: Vec<&BlobMetadata> = self.metadata.iter()
+            .filter(|b| b.end_checkpoint >= range.start && b.start_checkpoint < range.end)
+            .collect();
 
-        // For initial implementation, download checkpoints individually
-        // (Future optimization: download full blobs and extract locally)
-
-        let count = (range.end - range.start) as usize;
-        let concurrent_requests = 10;
-
-        if count > 1000 {
-            tracing::warn!(
-                "downloading {} checkpoints individually from Walrus (consider blob optimization for >1000 checkpoints)",
-                count
-            );
+        if blobs.is_empty() {
+            return Ok(Vec::new());
         }
 
-        tracing::info!(
-            "downloading checkpoints {}..{} from Walrus ({} checkpoints, {} concurrent)",
-            range.start,
-            range.end - 1,
-            count,
-            concurrent_requests
-        );
+        let mut checkpoints = Vec::new();
 
-        let checkpoints_results: Vec<Result<CheckpointData>> = stream::iter(range)
-            .map(|checkpoint| {
-                let storage = &self;
-                async move { storage.get_checkpoint(checkpoint).await }
-            })
-            .buffer_unordered(concurrent_requests)
-            .collect()
-            .await;
+        // Process blobs sequentially (metadata is light), but downloads in parallel
+        for blob in blobs {
+             // Load index (cached or fetch - light operation)
+             let index = self.load_blob_index(&blob.blob_id).await?;
 
-        // Process results and handle errors
-        let mut checkpoints = Vec::with_capacity(count);
-        for result in checkpoints_results {
-            checkpoints.push(result?);
+             // Identify checkpoints to fetch from this blob
+             let mut tasks = Vec::new();
+             for cp_num in range.start..range.end {
+                 if let Some(entry) = index.get(&cp_num) {
+                     tasks.push((cp_num, entry.clone()));
+                 }
+             }
+
+             if tasks.is_empty() {
+                 continue;
+             }
+
+             tracing::debug!("downloading {} checkpoints from blob {}", tasks.len(), blob.blob_id);
+
+             // Download in parallel with concurrency limit
+             let concurrency = 50; // High concurrency for small ranges
+             let downloaded: Vec<Result<CheckpointData>> = stream::iter(tasks)
+                .map(|(cp_num, entry)| {
+                    // Capture necessary data to avoid lifetime issues with &self
+                    let client = self.client.clone();
+                    let url = format!("{}/v1/blobs/{}", self.aggregator_url, blob.blob_id);
+                    
+                    async move {
+                        let end = entry.offset + entry.length - 1;
+                        let response = client.get(&url)
+                            .header("Range", format!("bytes={}-{}", entry.offset, end))
+                            .send()
+                            .await?;
+
+                        if !response.status().is_success() {
+                             return Err(anyhow::anyhow!("failed to fetch range: status {}", response.status()));
+                        }
+
+                        let cp_bytes = response.bytes().await?;
+                        sui_storage::blob::Blob::from_bytes::<CheckpointData>(&cp_bytes)
+                             .with_context(|| format!("failed to deserialize checkpoint {}", cp_num))
+                    }
+                })
+                .buffer_unordered(concurrency)
+                .collect()
+                .await;
+
+             for result in downloaded {
+                 checkpoints.push(result?);
+             }
         }
-
-        // Sort by checkpoint number since buffer_unordered returns in random order
+        
+        // Sort
         checkpoints.sort_by_key(|cp| cp.checkpoint_summary.sequence_number);
-
-        tracing::info!("downloaded {} checkpoints from Walrus", checkpoints.len());
-
+        
         Ok(checkpoints)
     }
 
