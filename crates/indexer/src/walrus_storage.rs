@@ -8,7 +8,6 @@ use futures::stream::{self, StreamExt};
 use reqwest::Client;
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::fs;
 use std::io::{Cursor, Read};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -268,6 +267,87 @@ impl WalrusCheckpointStorage {
         }
 
         Ok(bytes)
+    }
+
+    /// Download checkpoints to a local directory as .chk files
+    /// Files contain the raw BCS bytes of the CheckpointData
+    pub async fn download_checkpoints_to_dir(
+        &self,
+        range: std::ops::Range<CheckpointSequenceNumber>,
+        output_dir: PathBuf,
+    ) -> Result<()> {
+        tokio::fs::create_dir_all(&output_dir).await?;
+
+        // Find all needed blobs
+        let blobs: Vec<&BlobMetadata> = self.metadata.iter()
+            .filter(|b| b.end_checkpoint >= range.start && b.start_checkpoint < range.end)
+            .collect();
+
+        if blobs.is_empty() {
+            return Ok(());
+        }
+
+        // Process blobs sequentially
+        for blob in blobs {
+             // Load index
+             let index = self.load_blob_index(&blob.blob_id).await?;
+
+             // Identify checkpoints to fetch
+             let mut tasks = Vec::new();
+             for cp_num in range.start..range.end {
+                 if let Some(entry) = index.get(&cp_num) {
+                     tasks.push((cp_num, entry.clone()));
+                 }
+             }
+
+             if tasks.is_empty() {
+                 continue;
+             }
+
+             tracing::info!("downloading {} checkpoints from blob {} to {}", tasks.len(), blob.blob_id, output_dir.display());
+
+             // Download in parallel
+             let concurrency = 50;
+             let output_dir = output_dir.clone();
+             
+             let results: Vec<Result<()>> = stream::iter(tasks)
+                .map(|(cp_num, entry)| {
+                    let client = self.client.clone();
+                    let url = format!("{}/v1/blobs/{}", self.aggregator_url, blob.blob_id);
+                    let file_path = output_dir.join(format!("{}.chk", cp_num));
+                    
+                    async move {
+                        // Check if file already exists to avoid re-downloading
+                        if tokio::fs::try_exists(&file_path).await.unwrap_or(false) {
+                            return Ok(());
+                        }
+
+                        let end = entry.offset + entry.length - 1;
+                        let response = client.get(&url)
+                            .header("Range", format!("bytes={}-{}", entry.offset, end))
+                            .send()
+                            .await?;
+
+                        if !response.status().is_success() {
+                             return Err(anyhow::anyhow!("failed to fetch range: status {}", response.status()));
+                        }
+
+                        let bytes = response.bytes().await?;
+                        tokio::fs::write(&file_path, bytes).await?;
+                        Ok(())
+                    }
+                })
+                .buffer_unordered(concurrency)
+                .collect()
+                .await;
+
+             // Check for errors
+             for result in results {
+                 result?;
+             }
+        }
+        
+        Ok(())
     }
 }
 

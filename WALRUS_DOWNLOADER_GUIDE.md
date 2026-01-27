@@ -1,0 +1,63 @@
+# Walrus Checkpoint Downloader
+
+This tool allows you to efficiently download Sui checkpoints from Walrus storage to a local directory. The downloaded files are in the standard `.chk` format (BCS encoded `CheckpointData`) and can be consumed by standard Sui indexers using the `local_ingestion_path` configuration.
+
+## Usage
+
+The downloader is integrated into the `deepbook-indexer` binary.
+
+### Command
+
+```bash
+cargo run --release --bin deepbook-indexer -- \
+  --download-walrus-to <OUTPUT_DIR> \
+  --verification-start <START_CHECKPOINT> \
+  --verification-limit <COUNT> \
+  --env mainnet
+```
+
+### Parameters
+
+- `--download-walrus-to <DIR>`: The target directory where checkpoint files will be saved. The directory will be created if it doesn't exist.
+- `--verification-start <CP>`: The starting checkpoint sequence number (default: 0).
+- `--verification-limit <COUNT>`: The number of checkpoints to download (default: 10000).
+- `--env`: The environment (`mainnet` or `testnet`).
+- `WALRUS_ARCHIVAL_URL`: (Optional Env Var) URL for the Walrus archival service.
+- `WALRUS_AGGREGATOR_URL`: (Optional Env Var) URL for the Walrus aggregator.
+
+### Example
+
+Download 1,000 checkpoints starting from sequence number 238,300,000 to the `./checkpoints` directory:
+
+```bash
+cargo run --release --bin deepbook-indexer -- \
+  --download-walrus-to ./checkpoints \
+  --verification-start 238300000 \
+  --verification-limit 1000 \
+  --env mainnet
+```
+
+### Output
+
+The tool will save files named `<SEQUENCE_NUMBER>.chk` in the specified directory:
+
+```
+./checkpoints/
+├── 238300000.chk
+├── 238300001.chk
+├── 238300002.chk
+...
+```
+
+## Performance
+
+The downloader uses parallel fetching (concurrency: 50) and "Smart Partial Downloads" to retrieve individual checkpoints from large Walrus blobs without downloading the entire blob. This significantly reduces bandwidth usage and improves speed.
+
+## Integration
+
+The downloaded checkpoints can be used with any Sui indexer that supports local file ingestion:
+
+```bash
+cargo run --bin sui-indexer -- --local-ingestion-path ./checkpoints ...
+```
+

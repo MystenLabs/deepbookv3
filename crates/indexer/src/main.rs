@@ -61,6 +61,7 @@ use deepbook_indexer::{
 use deepbook_schema::MIGRATIONS;
 use prometheus::Registry;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use sui_indexer_alt_framework::ingestion::ingestion_client::IngestionClientArgs;
 use sui_indexer_alt_framework::ingestion::{ClientArgs, IngestionConfig};
 use sui_indexer_alt_framework::{Indexer, IndexerArgs};
@@ -107,6 +108,18 @@ struct Args {
     /// Run a Walrus backfill verification test and exit
     #[clap(long)]
     verify_walrus_backfill: bool,
+
+    /// Start checkpoint for verification (defaults to 238300000)
+    #[clap(long)]
+    verification_start: Option<u64>,
+
+    /// Number of checkpoints to verify (defaults to 1000)
+    #[clap(long)]
+    verification_limit: Option<u64>,
+
+    /// Download Walrus checkpoints to a local directory (for ingestion)
+    #[clap(long)]
+    download_walrus_to: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -124,11 +137,19 @@ async fn main() -> Result<(), anyhow::Error> {
         packages,
         storage_config,
         verify_walrus_backfill,
+        verification_start,
+        verification_limit,
+        download_walrus_to,
     } = Args::parse();
+
+    if let Some(output_dir) = download_walrus_to {
+        tracing::info!("Starting Walrus checkpoint download to {}...", output_dir.display());
+        return run_walrus_download(storage_config, verification_start, verification_limit, output_dir).await;
+    }
 
     if verify_walrus_backfill {
         tracing::info!("Starting Walrus backfill verification...");
-        return run_walrus_verification(storage_config).await;
+        return run_walrus_verification(storage_config, verification_start, verification_limit).await;
     }
 
     let registry = Registry::new_custom(Some("deepbook".into()), None)
@@ -332,7 +353,11 @@ async fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-async fn run_walrus_verification(config: CheckpointStorageConfig) -> Result<(), anyhow::Error> {
+async fn run_walrus_verification(
+    config: CheckpointStorageConfig,
+    start: Option<u64>,
+    limit: Option<u64>,
+) -> Result<(), anyhow::Error> {
     tracing::info!("Initializing checkpoint storage: {}", config.storage);
 
     // Create checkpoint storage service
@@ -358,8 +383,8 @@ async fn run_walrus_verification(config: CheckpointStorageConfig) -> Result<(), 
     };
 
     // Run a small backfill test
-    let start_cp = 238300000;
-    let count = 1000; // Increased count to test blob optimization
+    let start_cp = start.unwrap_or(238300000);
+    let count = limit.unwrap_or(1000);
     tracing::info!(
         "Fetching {} checkpoints starting from {}...",
         count,
@@ -391,6 +416,51 @@ async fn run_walrus_verification(config: CheckpointStorageConfig) -> Result<(), 
     let elapsed = start_time.elapsed();
     tracing::info!(
         "Verification complete! Fetched {} checkpoints in {:.2}s ({:.2} cp/s)",
+        count,
+        elapsed.as_secs_f64(),
+        count as f64 / elapsed.as_secs_f64()
+    );
+
+    Ok(())
+}
+
+async fn run_walrus_download(
+    config: CheckpointStorageConfig,
+    start: Option<u64>,
+    limit: Option<u64>,
+    output_dir: PathBuf,
+) -> Result<(), anyhow::Error> {
+    tracing::info!("Initializing Walrus storage for download...");
+
+    let mut storage = WalrusCheckpointStorage::new(
+        config.walrus_archival_url,
+        config.walrus_aggregator_url,
+        config.cache_dir,
+        config.cache_max_size_gb,
+    )?;
+
+    // Initialize blob metadata
+    storage.initialize().await?;
+
+    let start_cp = start.unwrap_or(0);
+    let count = limit.unwrap_or(10000); // Default to a larger batch for download
+    let range = start_cp..start_cp + count;
+
+    tracing::info!(
+        "Downloading {} checkpoints ({}-{}) to {}...",
+        count,
+        range.start,
+        range.end,
+        output_dir.display()
+    );
+
+    let start_time = std::time::Instant::now();
+
+    storage.download_checkpoints_to_dir(range, output_dir).await?;
+
+    let elapsed = start_time.elapsed();
+    tracing::info!(
+        "Download complete! Saved {} checkpoints in {:.2}s ({:.2} cp/s)",
         count,
         elapsed.as_secs_f64(),
         count as f64 / elapsed.as_secs_f64()
