@@ -178,9 +178,57 @@ impl WalrusCheckpointStorage {
             }
         }
 
-        tracing::info!("fetching index for blob {}", blob_id);
+        // 2. Try reading from local file (CLI/Cache mode)
+        let cached_path = self.get_cached_blob_path(blob_id);
+        if cached_path.exists() {
+            tracing::info!("loading index from cached blob {}", cached_path.display());
+            let mut file = std::fs::File::open(&cached_path)?;
+            
+            // Read Footer (last 24 bytes)
+            let file_len = file.metadata()?.len();
+            if file_len < 24 {
+                return Err(anyhow::anyhow!("cached blob too small"));
+            }
+            file.seek(SeekFrom::Start(file_len - 24))?;
+            let magic = file.read_u32::<LittleEndian>()?;
+            if magic != 0x574c4244 {
+                return Err(anyhow::anyhow!("invalid blob footer magic"));
+            }
+            let _version = file.read_u32::<LittleEndian>()?;
+            let index_start_offset = file.read_u64::<LittleEndian>()?;
+            let count = file.read_u32::<LittleEndian>()?;
 
-        // 2. Fetch Footer (last 24 bytes)
+            // Read Index
+            file.seek(SeekFrom::Start(index_start_offset))?;
+            // Read remaining bytes for index
+            let mut index_bytes = Vec::new();
+            file.read_to_end(&mut index_bytes)?;
+            
+            let mut cursor = Cursor::new(&index_bytes);
+            let mut index = HashMap::with_capacity(count as usize);
+
+            for _ in 0..count {
+                let name_len = cursor.read_u32::<LittleEndian>()?;
+                let mut name_bytes = vec![0u8; name_len as usize];
+                cursor.read_exact(&mut name_bytes)?;
+                let name_str = String::from_utf8(name_bytes)?;
+                let checkpoint_number = name_str.parse::<u64>()?;
+                let offset = cursor.read_u64::<LittleEndian>()?;
+                let length = cursor.read_u64::<LittleEndian>()?;
+                let _entry_crc = cursor.read_u32::<LittleEndian>()?;
+
+                index.insert(checkpoint_number, BlobIndexEntry { checkpoint_number, offset, length });
+            }
+
+            // Update Cache
+            let mut cache = self.inner.index_cache.write().await;
+            cache.insert(blob_id.to_string(), index.clone());
+            return Ok(index);
+        }
+
+        tracing::info!("fetching index for blob {} from aggregator", blob_id);
+
+        // 3. Fetch Footer (last 24 bytes) from Aggregator
         let url = format!("{}/v1/blobs/{}", self.inner.aggregator_url, blob_id);
         let response = self.inner.client.get(&url)
             .header("Range", "bytes=-24")
@@ -375,6 +423,11 @@ impl WalrusCheckpointStorage {
 
         // Process blobs sequentially
         for blob in blobs {
+             // If using CLI, ensure blob is downloaded ONCE before parsing index
+             if self.inner.walrus_cli_path.is_some() {
+                 self.download_blob_via_cli(&blob.blob_id).await?;
+             }
+
              // Load index
              let index = self.load_blob_index(&blob.blob_id).await?;
 
@@ -391,11 +444,6 @@ impl WalrusCheckpointStorage {
              }
 
              tracing::info!("downloading {} checkpoints from blob {} to {}", tasks.len(), blob.blob_id, output_dir.display());
-
-             // If using CLI, ensure blob is downloaded ONCE before spawning tasks
-             if self.inner.walrus_cli_path.is_some() {
-                 self.download_blob_via_cli(&blob.blob_id).await?;
-             }
 
              // Download in parallel
              let concurrency = 50;
@@ -481,6 +529,11 @@ impl CheckpointStorage for WalrusCheckpointStorage {
 
         // Process blobs sequentially (metadata is light), but downloads in parallel
         for blob in blobs {
+             // If using CLI, ensure blob is downloaded ONCE before parsing index
+             if self.inner.walrus_cli_path.is_some() {
+                 self.download_blob_via_cli(&blob.blob_id).await?;
+             }
+
              // Load index (cached or fetch - light operation)
              let index = self.load_blob_index(&blob.blob_id).await?;
 
@@ -497,11 +550,6 @@ impl CheckpointStorage for WalrusCheckpointStorage {
              }
 
              tracing::debug!("downloading {} checkpoints from blob {}", tasks.len(), blob.blob_id);
-
-             // If using CLI, ensure blob is downloaded ONCE before spawning tasks
-             if self.inner.walrus_cli_path.is_some() {
-                 self.download_blob_via_cli(&blob.blob_id).await?;
-             }
 
              // Download in parallel with concurrency limit
              let concurrency = 50; // High concurrency for small ranges

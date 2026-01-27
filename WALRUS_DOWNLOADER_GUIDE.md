@@ -52,6 +52,8 @@ cargo run --release --bin deepbook-indexer -- \
 ```
 
 > **Note:** The first time a blob is needed, the CLI will download the full 3GB blob to the cache directory (`./checkpoint_cache` by default). Subsequent extractions from the same blob will be extremely fast.
+>
+> **Robustness:** In CLI mode, the downloader parses blob indices directly from the downloaded files. This makes the process fully independent of the Walrus Aggregator's HTTP endpoints once the blobs are cached, protecting against aggregator timeouts or downtime.
 
 ### Output
 
