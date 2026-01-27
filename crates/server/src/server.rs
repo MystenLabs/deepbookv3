@@ -108,7 +108,7 @@ pub const STATUS_PATH: &str = "/status";
 pub const DEPOSITED_ASSETS_PATH: &str = "/deposited_assets/:balance_manager_ids";
 pub const COLLATERAL_EVENTS_PATH: &str = "/collateral_events";
 pub const GET_POINTS_PATH: &str = "/get_points";
-pub const HISTORICAL_MARGIN_SUPPLY_PATH: &str = "/historical_margin_supply";
+pub const GET_NET_MARGIN_POOL_SUPPLY_PATH: &str = "/get_net_margin_pool_supply";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -332,7 +332,10 @@ pub(crate) fn make_router(state: Arc<AppState>) -> Router {
         .route(DEPOSITED_ASSETS_PATH, get(deposited_assets))
         .route(COLLATERAL_EVENTS_PATH, get(collateral_events))
         .route(GET_POINTS_PATH, get(get_points))
-        .route(HISTORICAL_MARGIN_SUPPLY_PATH, get(historical_margin_supply))
+        .route(
+            GET_NET_MARGIN_POOL_SUPPLY_PATH,
+            get(get_net_margin_pool_supply),
+        )
         .with_state(state.clone());
 
     let rpc_routes = Router::new()
@@ -2566,8 +2569,8 @@ async fn get_points(
     Ok(Json(response))
 }
 
-// === Historical Margin Supply ===
-async fn historical_margin_supply(
+// === Net Margin Pool Supply ===
+async fn get_net_margin_pool_supply(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<HashMap<String, i64>>, DeepBookError> {
