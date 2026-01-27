@@ -4,10 +4,11 @@
 Historical backfills using the Walrus Aggregator (HTTP) consistently failed for large blobs (2-3 GB) due to gateway timeouts.
 
 ## Solution
-This PR implements a robust **CLI-native download strategy**:
-1.  **Direct Retrieval:** Uses the `walrus` CLI to download full blobs directly from storage nodes.
-2.  **Parallelization:** Added support for concurrent blob downloads (Concurrency: 3) to maximize bandwidth utilization.
-3.  **Local Indexing:** Parses blob indices directly from cached files, removing all dependency on HTTP proxies.
+This PR implements a robust **Dual-Mode Walrus Backend** (defaults to Aggregator):
+1.  **Aggregator Mode (Default):** Uses HTTP Range requests with new **intra-blob chunking** and **automatic retries** to provide stable ~130 CP/s throughput.
+2.  **CLI-Native Mode (Optional):** Uses the `walrus` CLI to download full blobs directly from storage nodes for 100% reliability during massive historical backfills.
+3.  **Parallelization:** Added support for concurrent blob processing to maximize bandwidth utilization.
+4.  **Local Indexing:** Parses blob indices directly from cached files in CLI mode, removing dependency on HTTP proxies.
 
 ## Performance Data (Verified)
 We implemented a **Dual-Mode Benchmark** on Mainnet (Range: 238,350,000 - 238,365,000).

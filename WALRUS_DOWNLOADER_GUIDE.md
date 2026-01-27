@@ -71,18 +71,18 @@ The tool will save files named `<SEQUENCE_NUMBER>.chk` in the specified director
 
 The downloader supports two modes: **Aggregator (HTTP)** and **CLI (Direct Node)**.
 
-### **Aggregator Mode (Optimized)**
-Best for smaller ranges or limited disk space. Now uses **intra-blob chunking** and **automatic retries** to ensure stability.
+### **Aggregator Mode (Default)**
+The default mode uses the Walrus Aggregator (HTTP Range requests). It is best for smaller ranges or limited disk space.
 - **Throughput:** ~130 Checkpoints/sec.
-- **Reliability:** High (recovers from transient proxy errors).
-- **Usage:** Default (no `--walrus-cli-path`).
+- **Reliability:** High (now uses intra-blob chunking and automatic retries to handle proxy errors).
+- **Usage:** Run the command normally without `--walrus-cli-path`.
 
-### **Walrus CLI Mode (Direct)**
-Best for large historical backfills. Downloads full blobs (3GB) directly from storage nodes.
+### **Walrus CLI Mode (Optional)**
+Optional high-reliability mode for massive historical backfills. Downloads full blobs (3GB) directly from storage nodes.
 - **End-to-End Rate:** ~6 to 12 Checkpoints/sec (initial download).
 - **Extraction Rate:** **>12,000 Checkpoints/sec** (once cached).
 - **Reliability:** Absolute (direct p2p retrieval).
-- **Usage:** Provide `--walrus-cli-path <PATH>`.
+- **Usage:** Provide `--walrus-cli-path <PATH>` (e.g., `--walrus-cli-path walrus`).
 
 **Verified Benchmark Data (Mainnet):**
 
