@@ -18,10 +18,10 @@ We ran a verification backfill of **15,000 checkpoints** (Range: 238,350,000 - 2
 | **Total Checkpoints in Blob** | 13,985 | 14,561 |
 | **Download Time** | 37m 47s (2267s) | 20m 29s (1229s) |
 | **Network Speed** | 1.20 MB/s | 2.10 MB/s |
-| **Est. Throughput** | **~6.16 CP/s** | **~11.84 CP/s** |
+| **Effective Rate** | **6.16 CP/s** | **11.84 CP/s** |
 | **Extraction Speed** | >12,000 CP/s (Disk I/O) | >11,000 CP/s (Disk I/O) |
 
-**Key Takeaway:** The bottleneck is strictly network download speed. While slow (~4-12 CP/s), it is **100% reliable**, whereas the HTTP Aggregator method yielded 0% success for these ranges.
+**Key Takeaway:** The bottleneck is strictly network download speed. While slow (~6-12 CP/s), it is **100% reliable**, whereas the HTTP Aggregator method yielded 0% success for these ranges.
 
 ## How to Test
 1.  Install the [Walrus CLI](https://docs.walrus.site/usage/client-cli.html) and ensure `walrus` is in your PATH.

@@ -76,10 +76,20 @@ The downloader uses parallel fetching (concurrency: 50) for extraction, but the 
 - **Throughput:** ~6 to 12 Checkpoints/sec (end-to-end including download).
 - **Extraction Speed:** >12,000 Checkpoints/sec (once blob is cached).
 
-**Example Data:**
-- **Blob Size:** ~2.7 GB
-- **Checkpoints per Blob:** ~14,000
-- **Download Time:** ~20-40 minutes per blob.
+**Verified Benchmark Data (Mainnet Backfill):**
+
+Tests performed on a 15,000 checkpoint backfill (Range 238,350,000 - 238,365,000).
+
+| Metric | Blob 1 (`Nsaw5...`) | Blob 2 (`m7aWF...`) |
+| :--- | :--- | :--- |
+| **Blob ID** | `Nsaw5...dmBuU` | `m7aWF...VT3U4M` |
+| **File Size** | 2.72 GB | 2.58 GB |
+| **Download Time** | 37m 47s (2267.66s) | 20m 29s (1229.87s) |
+| **Download Speed** | 1.20 MB/s | 2.10 MB/s |
+| **Total Checkpoints** | 13,985 | 14,561 |
+| **Effective Rate** | **6.16 cp/s** | **11.84 cp/s** |
+
+*Note: The "Effective Rate" is calculated as `Total Checkpoints / Download Time`. This represents the end-to-end throughput for a fresh backfill.*
 
 ## Integration
 
