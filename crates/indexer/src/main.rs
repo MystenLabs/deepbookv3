@@ -120,6 +120,10 @@ struct Args {
     /// Download Walrus checkpoints to a local directory (for ingestion)
     #[clap(long)]
     download_walrus_to: Option<PathBuf>,
+
+    /// Path to a local directory for ingestion (overrides remote store)
+    #[clap(long)]
+    local_ingestion_path: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -140,6 +144,7 @@ async fn main() -> Result<(), anyhow::Error> {
         verification_start,
         verification_limit,
         download_walrus_to,
+        local_ingestion_path,
     } = Args::parse();
 
     if let Some(output_dir) = download_walrus_to {
@@ -176,8 +181,8 @@ async fn main() -> Result<(), anyhow::Error> {
         indexer_args,
         ClientArgs {
             ingestion: IngestionClientArgs {
-                remote_store_url: Some(env.remote_store_url()),
-                local_ingestion_path: None,
+                remote_store_url: if local_ingestion_path.is_some() { None } else { Some(env.remote_store_url()) },
+                local_ingestion_path: local_ingestion_path.clone(),
                 rpc_api_url: None,
                 rpc_username: None,
                 rpc_password: None,
