@@ -92,19 +92,19 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
   //   },
   // )(tx);
 
-  // dbClient.marginMaintainer.updateMarginPoolConfig(
-  //   "DEEP",
-  //   tx.object(deepMarginPoolCapID[env]),
-  //   {
-  //     supplyCap: 20_000_000,
-  //     maxUtilizationRate: 0.9,
-  //     referralSpread: 0.2,
-  //     minBorrow: 0.1,
-  //     rateLimitCapacity: 4_000_000,
-  //     rateLimitRefillRatePerMs: 0.185185, // 4_000_000 / 21_600_000 (6 hours)
-  //     rateLimitEnabled: true,
-  //   },
-  // )(tx);
+  dbClient.marginMaintainer.updateMarginPoolConfig(
+    "DEEP",
+    tx.object(deepMarginPoolCapID[env]),
+    {
+      supplyCap: 20_000_000,
+      maxUtilizationRate: 0.9,
+      referralSpread: 0.2,
+      minBorrow: 0.1,
+      rateLimitCapacity: 4_000_000,
+      rateLimitRefillRatePerMs: 0.185185, // 4_000_000 / 21_600_000 (6 hours)
+      rateLimitEnabled: true,
+    },
+  )(tx);
 
   // dbClient.marginMaintainer.updateInterestParams(
   //   "WAL",
@@ -117,24 +117,19 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
   //   },
   // )(tx);
 
-  // dbClient.marginMaintainer.updateMarginPoolConfig(
-  //   "WAL",
-  //   tx.object(walMarginPoolCapID[env]),
-  //   {
-  //     supplyCap: 7_000_000,
-  //     maxUtilizationRate: 0.9,
-  //     referralSpread: 0.2,
-  //     minBorrow: 0.1,
-  //     rateLimitCapacity: 1_400_000,
-  //     rateLimitRefillRatePerMs: 0.064814815, // 1_400_000 / 21_600_000 (6 hours)
-  //     rateLimitEnabled: true,
-  //   },
-  // )(tx);
-  const maintainerCap = dbClient.marginAdmin.mintMaintainerCap()(tx);
-  tx.transferObjects(
-    [maintainerCap],
-    "0x6b9f717104d04a5e53cbcd95213c6fbe3616809d396ec4c31076f7dddc497362",
-  );
+  dbClient.marginMaintainer.updateMarginPoolConfig(
+    "WAL",
+    tx.object(walMarginPoolCapID[env]),
+    {
+      supplyCap: 7_000_000,
+      maxUtilizationRate: 0.9,
+      referralSpread: 0.2,
+      minBorrow: 0.1,
+      rateLimitCapacity: 1_400_000,
+      rateLimitRefillRatePerMs: 0.064814815, // 1_400_000 / 21_600_000 (6 hours)
+      rateLimitEnabled: true,
+    },
+  )(tx);
 
   let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
