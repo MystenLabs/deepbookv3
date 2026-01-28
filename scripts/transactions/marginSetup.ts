@@ -22,11 +22,23 @@ const mainnetPlugin = namedPackagesPlugin({
   const repository = "https://github.com/MystenLabs/deepbookv3";
 
   const data = {
-    packageInfo: "", // Fill in package info
+    packageInfo:
+      "0x11c2e0f7292ea1b84ed894302b96146872fea53a99b933122fb193e48dac1005",
     sha: "margin-v1.0.0",
     version: "1",
     path: "packages/deepbook_margin",
   };
+
+  const display = transaction.moveCall({
+    target: `@mvr/metadata::display::default`,
+    arguments: [transaction.pure.string("DeepBookV3 - Margin Metadata")],
+  });
+
+  // Set that display object to our info object.
+  transaction.moveCall({
+    target: `@mvr/metadata::package_info::set_display`,
+    arguments: [transaction.object(data.packageInfo), display],
+  });
 
   const git = transaction.moveCall({
     target: `@mvr/metadata::git::new`,
