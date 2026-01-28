@@ -505,8 +505,8 @@ impl Reader {
             "SELECT EXTRACT(EPOCH FROM bucket_time)::bigint * 1000 as timestamp_ms, \
              open::float8, high::float8, low::float8, close::float8, base_volume::float8 \
              FROM get_ohclv('{}', '{}', {}::timestamp, {}::timestamp, {})",
-            interval,
-            pool_id,
+            escape_sql(&interval),
+            escape_sql(&pool_id),
             start_time
                 .map(|ts| format!("to_timestamp({})", ts / 1000))
                 .unwrap_or_else(|| "NULL".to_string()),
