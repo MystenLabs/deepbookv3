@@ -54,10 +54,14 @@ use deepbook_indexer::handlers::conditional_order_cancelled_handler::Conditional
 use deepbook_indexer::handlers::conditional_order_executed_handler::ConditionalOrderExecutedHandler;
 use deepbook_indexer::handlers::conditional_order_insufficient_funds_handler::ConditionalOrderInsufficientFundsHandler;
 
-use deepbook_indexer::DeepbookEnv;
+use deepbook_indexer::{
+    CheckpointStorage, CheckpointStorageConfig, CheckpointStorageType, DeepbookEnv,
+    SuiCheckpointStorage, WalrusCheckpointStorage,
+};
 use deepbook_schema::MIGRATIONS;
 use prometheus::Registry;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use sui_indexer_alt_framework::ingestion::ingestion_client::IngestionClientArgs;
 use sui_indexer_alt_framework::ingestion::{ClientArgs, IngestionConfig};
 use sui_indexer_alt_framework::{Indexer, IndexerArgs};
@@ -96,6 +100,30 @@ struct Args {
     /// Packages to index events for (can specify multiple)
     #[clap(long, value_enum, default_values = ["deepbook", "deepbook-margin"])]
     packages: Vec<Package>,
+
+    /// Checkpoint storage configuration
+    #[command(flatten)]
+    storage_config: CheckpointStorageConfig,
+
+    /// Run a Walrus backfill verification test and exit
+    #[clap(long)]
+    verify_walrus_backfill: bool,
+
+    /// Start checkpoint for verification (defaults to 238300000)
+    #[clap(long)]
+    verification_start: Option<u64>,
+
+    /// Number of checkpoints to verify (defaults to 1000)
+    #[clap(long)]
+    verification_limit: Option<u64>,
+
+    /// Download Walrus checkpoints to a local directory (for ingestion)
+    #[clap(long)]
+    download_walrus_to: Option<PathBuf>,
+
+    /// Path to a local directory for ingestion (overrides remote store)
+    #[clap(long)]
+    local_ingestion_path: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -111,7 +139,23 @@ async fn main() -> Result<(), anyhow::Error> {
         database_url,
         env,
         packages,
+        storage_config,
+        verify_walrus_backfill,
+        verification_start,
+        verification_limit,
+        download_walrus_to,
+        local_ingestion_path,
     } = Args::parse();
+
+    if let Some(output_dir) = download_walrus_to {
+        tracing::info!("Starting Walrus checkpoint download to {}...", output_dir.display());
+        return run_walrus_download(storage_config, verification_start, verification_limit, output_dir).await;
+    }
+
+    if verify_walrus_backfill {
+        tracing::info!("Starting Walrus backfill verification...");
+        return run_walrus_verification(storage_config, verification_start, verification_limit).await;
+    }
 
     let registry = Registry::new_custom(Some("deepbook".into()), None)
         .context("Failed to create Prometheus registry.")?;
@@ -137,8 +181,8 @@ async fn main() -> Result<(), anyhow::Error> {
         indexer_args,
         ClientArgs {
             ingestion: IngestionClientArgs {
-                remote_store_url: Some(env.remote_store_url()),
-                local_ingestion_path: None,
+                remote_store_url: if local_ingestion_path.is_some() { None } else { Some(env.remote_store_url()) },
+                local_ingestion_path: local_ingestion_path.clone(),
                 rpc_api_url: None,
                 rpc_username: None,
                 rpc_password: None,
@@ -311,5 +355,123 @@ async fn main() -> Result<(), anyhow::Error> {
     let s_metrics = metrics.run().await?;
 
     s_indexer.attach(s_metrics).main().await?;
+    Ok(())
+}
+
+async fn run_walrus_verification(
+    config: CheckpointStorageConfig,
+    start: Option<u64>,
+    limit: Option<u64>,
+) -> Result<(), anyhow::Error> {
+    tracing::info!("Initializing checkpoint storage: {}", config.storage);
+
+    // Create checkpoint storage service
+    let checkpoint_storage: Box<dyn CheckpointStorage> = match config.storage {
+        CheckpointStorageType::Sui => {
+            let storage = SuiCheckpointStorage::new(
+                Url::parse("https://checkpoints.mainnet.sui.io").unwrap(),
+            );
+            Box::new(storage)
+        }
+        CheckpointStorageType::Walrus => {
+            let mut storage = WalrusCheckpointStorage::new(
+                config.walrus_archival_url.clone(),
+                config.walrus_aggregator_url.clone(),
+                config.cache_dir.clone(),
+                config.cache_max_size_gb,
+                config.walrus_cli_path.clone(),
+            )?;
+
+            // Initialize blob metadata
+            storage.initialize().await?;
+            Box::new(storage)
+        }
+    };
+
+    // Run a small backfill test
+    let start_cp = start.unwrap_or(238300000);
+    let count = limit.unwrap_or(1000);
+    tracing::info!(
+        "Fetching {} checkpoints starting from {}...",
+        count,
+        start_cp
+    );
+
+    let start_time = std::time::Instant::now();
+
+    match checkpoint_storage
+        .get_checkpoints(start_cp..start_cp + count)
+        .await
+    {
+        Ok(checkpoints) => {
+            for data in checkpoints {
+                tracing::info!(
+                    "✓ Fetched checkpoint {}: txs={}, time={}",
+                    data.checkpoint_summary.sequence_number,
+                    data.transactions.len(),
+                    data.checkpoint_summary.timestamp_ms
+                );
+            }
+        }
+        Err(e) => {
+            tracing::error!("✗ Failed to fetch batch of checkpoints: {}", e);
+            return Err(e);
+        }
+    }
+
+    let elapsed = start_time.elapsed();
+    tracing::info!(
+        "Verification complete! Fetched {} checkpoints in {:.2}s ({:.2} cp/s)",
+        count,
+        elapsed.as_secs_f64(),
+        count as f64 / elapsed.as_secs_f64()
+    );
+
+    Ok(())
+}
+
+async fn run_walrus_download(
+    config: CheckpointStorageConfig,
+    start: Option<u64>,
+    limit: Option<u64>,
+    output_dir: PathBuf,
+) -> Result<(), anyhow::Error> {
+    tracing::info!("Initializing Walrus storage for download...");
+
+    let storage = WalrusCheckpointStorage::new(
+        config.walrus_archival_url,
+        config.walrus_aggregator_url,
+        config.cache_dir,
+        config.cache_max_size_gb,
+        config.walrus_cli_path,
+    )?;
+
+    // Initialize blob metadata
+    storage.initialize().await?;
+
+    let start_cp = start.unwrap_or(0);
+    let count = limit.unwrap_or(10000); // Default to a larger batch for download
+    let range = start_cp..start_cp + count;
+
+    tracing::info!(
+        "Downloading {} checkpoints ({}-{}) to {}...",
+        count,
+        range.start,
+        range.end,
+        output_dir.display()
+    );
+
+    let start_time = std::time::Instant::now();
+
+    storage.download_checkpoints_to_dir(range, output_dir).await?;
+
+    let elapsed = start_time.elapsed();
+    tracing::info!(
+        "Download complete! Saved {} checkpoints in {:.2}s ({:.2} cp/s)",
+        count,
+        elapsed.as_secs_f64(),
+        count as f64 / elapsed.as_secs_f64()
+    );
+
     Ok(())
 }
