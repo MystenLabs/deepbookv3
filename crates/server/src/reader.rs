@@ -32,6 +32,12 @@ fn to_pattern(s: &str) -> String {
         s.to_string()
     }
 }
+
+/// Escapes single quotes in a string for safe SQL interpolation.
+/// Prevents SQL injection by replacing ' with ''.
+fn escape_sql(s: &str) -> String {
+    s.replace('\'', "''")
+}
 use diesel_async::methods::LoadQuery;
 use diesel_async::{AsyncPgConnection, RunQueryDsl};
 use prometheus::Registry;
@@ -387,14 +393,14 @@ impl Reader {
         let _guard = self.metrics.db_latency.start_timer();
 
         let balance_manager_clause = balance_manager_filter
-            .map(|id| format!("AND balance_manager_id = '{}'", id))
+            .map(|id| format!("AND balance_manager_id = '{}'", escape_sql(&id)))
             .unwrap_or_default();
 
         let status_clause = status_filter
             .map(|statuses| {
                 let status_list = statuses
                     .iter()
-                    .map(|s| format!("'{}'", s))
+                    .map(|s| format!("'{}'", escape_sql(s)))
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!("WHERE current_status IN ({})", status_list)
@@ -465,7 +471,7 @@ impl Reader {
             ORDER BY last_updated_at DESC
             LIMIT {limit}
             "#,
-            pool_id = pool_id,
+            pool_id = escape_sql(&pool_id),
             balance_manager_clause = balance_manager_clause,
             status_clause = status_clause,
             limit = limit,
@@ -1239,7 +1245,7 @@ impl Reader {
             .iter()
             .map(|a| {
                 let trimmed = a.strip_prefix("0x").unwrap_or(a);
-                format!("'{}'", trimmed)
+                format!("'{}'", escape_sql(trimmed))
             })
             .collect::<Vec<_>>()
             .join(",");
@@ -1358,7 +1364,7 @@ impl Reader {
             .map(|addrs| {
                 let list = addrs
                     .iter()
-                    .map(|a| format!("'{}'", a))
+                    .map(|a| format!("'{}'", escape_sql(a)))
                     .collect::<Vec<_>>()
                     .join(",");
                 format!("WHERE address IN ({})", list)

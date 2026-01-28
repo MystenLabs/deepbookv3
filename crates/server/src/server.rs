@@ -108,6 +108,7 @@ pub const STATUS_PATH: &str = "/status";
 pub const DEPOSITED_ASSETS_PATH: &str = "/deposited_assets/:balance_manager_ids";
 pub const COLLATERAL_EVENTS_PATH: &str = "/collateral_events";
 pub const GET_POINTS_PATH: &str = "/get_points";
+pub const GET_NET_MARGIN_POOL_SUPPLY_PATH: &str = "/get_net_margin_pool_supply";
 
 #[derive(Clone)]
 pub struct AppState {
