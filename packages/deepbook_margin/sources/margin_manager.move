@@ -681,6 +681,7 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     assert!(registry.can_liquidate(pool.id(), risk_ratio), ECannotLiquidate);
     assert!(repay_coin.value() >= margin_constants::min_liquidation_repay(), ERepayAmountTooLow);
     let trade_proof = self.trade_proof(ctx);
+    pool.withdraw_settled_amounts(&mut self.balance_manager, &trade_proof);
     pool.cancel_all_orders(&mut self.balance_manager, &trade_proof, clock, ctx);
 
     // 2. Calculate the maximum debt that can be repaid. The margin manager can be in three scenarios:
