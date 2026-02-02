@@ -86,7 +86,12 @@ export const getSigner = () => {
 /// Get the client for the specified network.
 export const getClient = (network: Network) => {
 	const url = process.env.RPC_URL || getJsonRpcFullnodeUrl(network);
-	const mvrUrl = network === 'mainnet' ? 'https://mainnet.mvr.mystenlabs.com' : undefined;
+	const mvrUrl =
+		network === 'mainnet'
+			? 'https://mainnet.mvr.mystenlabs.com'
+			: network === 'testnet'
+				? 'https://testnet.mvr.mystenlabs.com'
+				: undefined;
 	return new SuiJsonRpcClient({
 		url,
 		network,
