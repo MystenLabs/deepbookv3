@@ -129,6 +129,16 @@ jobs:
         run: |
           cd scripts && pnpm install && pnpm ts-node transactions/disableVersion.ts
 
+      - name: Enable Margin Version
+        if: ${{ inputs.transaction_type == 'Enable Margin Version' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm ts-node transactions/enableMarginVersion.ts
+
       - name: Prep MVR
         if: ${{ inputs.transaction_type == 'Prep MVR' }}
         env:
