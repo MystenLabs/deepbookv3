@@ -1,8 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 import { Transaction } from "@mysten/sui/transactions";
-import { prepareMultisigTx } from "../utils/utils";
-import { adminCapOwner, adminCapID } from "../config/constants";
+import { prepareMultisigTx } from "../utils/utils.js";
+import { adminCapOwner, adminCapID } from "../config/constants.js";
 import { deepbook } from "@mysten/deepbook-v3";
 import { SuiGrpcClient } from "@mysten/sui/grpc";
 
