@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { namedPackagesPlugin, Transaction } from "@mysten/sui/transactions";
-import { prepareMultisigTx } from "../utils/utils";
+import { prepareMultisigTx } from "../utils/utils.js";
 
 export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
 

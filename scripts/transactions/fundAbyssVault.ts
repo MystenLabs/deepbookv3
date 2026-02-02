@@ -2,10 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Transaction } from "@mysten/sui/transactions";
-import { prepareMultisigTx } from "../utils/utils";
-import { adminCapOwner, supplierCapID } from "../config/constants";
-import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
-import { DeepBookClient } from "@mysten/deepbook-v3";
+import { prepareMultisigTx } from "../utils/utils.js";
+import { adminCapOwner } from "../config/constants.js";
 
 const ABYSS_VAULT_PACKAGE =
   "0x90a75f641859f4d77a4349d67e518e1dd9ecb4fac079e220fa46b7a7f164e0a5";

@@ -2,24 +2,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Transaction } from "@mysten/sui/transactions";
-import { prepareMultisigTx } from "../utils/utils";
-import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
-import { DeepBookClient } from "@mysten/deepbook-v3";
-import { adminCapOwner, liquidationAdminCapID } from "../config/constants";
+import { prepareMultisigTx } from "../utils/utils.js";
+import { deepbook } from "@mysten/deepbook-v3";
+import { SuiGrpcClient } from "@mysten/sui/grpc";
+import { adminCapOwner, liquidationAdminCapID } from "../config/constants.js";
 
 (async () => {
   const env = "mainnet";
   const tx = new Transaction();
 
-  const dbClient = new DeepBookClient({
-    address: adminCapOwner[env],
-    env,
-    client: new SuiClient({
-      url: getFullnodeUrl(env),
+  const client = new SuiGrpcClient({
+    url: "https://sui-mainnet.mystenlabs.com",
+    network: "mainnet",
+  }).$extend(
+    deepbook({
+      address: adminCapOwner[env],
     }),
-  });
+  );
 
-  dbClient.marginLiquidations.createLiquidationVault(
+  client.deepbook.marginLiquidations.createLiquidationVault(
     liquidationAdminCapID[env]
   )(tx);
   let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);

@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { prepareMultisigTx } from "../utils/utils";
+import { prepareMultisigTx } from "../utils/utils.js";
 import { namedPackagesPlugin, Transaction } from "@mysten/sui/transactions";
 
 export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
