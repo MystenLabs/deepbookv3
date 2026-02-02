@@ -23,7 +23,14 @@ use deepbook_margin::{
     margin_constants,
     margin_pool::MarginPool,
     margin_registry::MarginRegistry,
-    oracle::{calculate_target_currency, get_pyth_price, get_pyth_price_unsafe, calculate_price},
+    oracle::{
+        calculate_target_currency,
+        calculate_target_currency_unsafe,
+        get_pyth_price,
+        get_pyth_price_unsafe,
+        calculate_price,
+        calculate_price_unsafe
+    },
     tpsl::{Self, TakeProfitStopLoss, PendingOrder, Condition, ConditionalOrder}
 };
 use pyth::price_info::PriceInfoObject;
@@ -871,6 +878,40 @@ public fun risk_ratio<BaseAsset, QuoteAsset>(
     }
 }
 
+/// Returns the risk ratio without validating oracle price staleness or confidence.
+/// Use for read-only queries where stale prices are acceptable.
+public fun risk_ratio_unsafe<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+    clock: &Clock,
+): u64 {
+    let debt_is_base = self.borrowed_base_shares > 0;
+    if (debt_is_base) {
+        self.risk_ratio_int_unsafe(
+            registry,
+            base_oracle,
+            quote_oracle,
+            pool,
+            base_margin_pool,
+            clock,
+        )
+    } else {
+        self.risk_ratio_int_unsafe(
+            registry,
+            base_oracle,
+            quote_oracle,
+            pool,
+            quote_margin_pool,
+            clock,
+        )
+    }
+}
+
 // === Public Functions - Read Only ===
 public fun balance_manager<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
@@ -967,7 +1008,7 @@ public fun manager_state<BaseAsset, QuoteAsset>(
     } else {
         (0, 0)
     };
-    let risk_ratio = self.risk_ratio(
+    let risk_ratio = self.risk_ratio_unsafe(
         registry,
         base_oracle,
         quote_oracle,
@@ -977,7 +1018,6 @@ public fun manager_state<BaseAsset, QuoteAsset>(
         clock,
     );
 
-    // Get raw Pyth oracle prices and decimals
     let (base_pyth_price, base_pyth_decimals) = get_pyth_price_unsafe<BaseAsset>(
         base_oracle,
         registry,
@@ -987,12 +1027,10 @@ public fun manager_state<BaseAsset, QuoteAsset>(
         registry,
     );
 
-    // Calculate current price
-    let current_price = calculate_price<BaseAsset, QuoteAsset>(
+    let current_price = calculate_price_unsafe<BaseAsset, QuoteAsset>(
         registry,
         base_oracle,
         quote_oracle,
-        clock,
     );
 
     // Get the lowest trigger above price and highest trigger below price
@@ -1198,6 +1236,35 @@ fun risk_ratio_int<BaseAsset, QuoteAsset, DebtAsset>(
     }
 }
 
+fun risk_ratio_int_unsafe<BaseAsset, QuoteAsset, DebtAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    margin_pool: &MarginPool<DebtAsset>,
+    clock: &Clock,
+): u64 {
+    assert!(
+        self.margin_pool_id.contains(&margin_pool.id()) || self.margin_pool_id.is_none(),
+        EIncorrectMarginPool,
+    );
+    let (assets_in_debt_unit, _, _) = self.assets_in_debt_unit_unsafe(
+        registry,
+        pool,
+        base_oracle,
+        quote_oracle,
+    );
+    let borrowed_shares = self.borrowed_base_shares.max(self.borrowed_quote_shares);
+    let debt = margin_pool.borrow_shares_to_amount(borrowed_shares, clock);
+    let max_risk_ratio = margin_constants::max_risk_ratio();
+    if (assets_in_debt_unit >= math::mul(debt, max_risk_ratio)) {
+        max_risk_ratio
+    } else {
+        math::div(assets_in_debt_unit, debt)
+    }
+}
+
 fun new_margin_manager<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
     deepbook_registry: &Registry,
@@ -1355,6 +1422,26 @@ fun assets_in_debt_unit<BaseAsset, QuoteAsset>(
         calculate_target_currency<QuoteAsset, BaseAsset>(registry, quote_oracle, base_oracle, quote_asset, clock) + base_asset
     } else {
         calculate_target_currency<BaseAsset, QuoteAsset>(registry, base_oracle, quote_oracle, base_asset, clock) + quote_asset
+    };
+    (assets_in_debt_unit, base_asset, quote_asset)
+}
+
+fun assets_in_debt_unit_unsafe<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+): (u64, u64, u64) {
+    let (base_asset, quote_asset) = self.calculate_assets(pool);
+    if (self.margin_pool_id.is_none()) {
+        return (0, base_asset, quote_asset)
+    };
+
+    let assets_in_debt_unit = if (self.borrowed_base_shares > 0) {
+        calculate_target_currency_unsafe<QuoteAsset, BaseAsset>(registry, quote_oracle, base_oracle, quote_asset) + base_asset
+    } else {
+        calculate_target_currency_unsafe<BaseAsset, QuoteAsset>(registry, base_oracle, quote_oracle, base_asset) + quote_asset
     };
     (assets_in_debt_unit, base_asset, quote_asset)
 }
