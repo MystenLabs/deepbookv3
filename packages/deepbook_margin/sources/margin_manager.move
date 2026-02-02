@@ -23,7 +23,7 @@ use deepbook_margin::{
     margin_constants,
     margin_pool::MarginPool,
     margin_registry::MarginRegistry,
-    oracle::{calculate_target_currency, get_pyth_price, calculate_price},
+    oracle::{calculate_target_currency, get_pyth_price, get_pyth_price_unsafe, calculate_price},
     tpsl::{Self, TakeProfitStopLoss, PendingOrder, Condition, ConditionalOrder}
 };
 use pyth::price_info::PriceInfoObject;
@@ -978,15 +978,13 @@ public fun manager_state<BaseAsset, QuoteAsset>(
     );
 
     // Get raw Pyth oracle prices and decimals
-    let (base_pyth_price, base_pyth_decimals) = get_pyth_price<BaseAsset>(
+    let (base_pyth_price, base_pyth_decimals) = get_pyth_price_unsafe<BaseAsset>(
         base_oracle,
         registry,
-        clock,
     );
-    let (quote_pyth_price, quote_pyth_decimals) = get_pyth_price<QuoteAsset>(
+    let (quote_pyth_price, quote_pyth_decimals) = get_pyth_price_unsafe<QuoteAsset>(
         quote_oracle,
         registry,
-        clock,
     );
 
     // Calculate current price

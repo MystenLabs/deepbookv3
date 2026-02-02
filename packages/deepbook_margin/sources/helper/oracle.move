@@ -287,6 +287,18 @@ public(package) fun get_pyth_price<T>(
     (pyth_price, pyth_decimals)
 }
 
+public(package) fun get_pyth_price_unsafe<T>(
+    price_info_object: &PriceInfoObject,
+    registry: &MarginRegistry,
+): (u64, u8) {
+    let (pyth_price, pyth_decimals) = get_unsafe_pyth_price<T>(
+        price_info_object,
+        registry,
+    );
+
+    (pyth_price, pyth_decimals)
+}
+
 /// Helper function to get and validate Pyth price data
 /// Returns (pyth_price, pyth_decimals, pyth_conf, type_config)
 fun get_validated_pyth_price<T>(
@@ -324,6 +336,31 @@ fun get_validated_pyth_price<T>(
     );
 
     (pyth_price, pyth_decimals, pyth_conf, type_config)
+}
+
+/// Helper function to get and validate Pyth price data
+/// Returns (pyth_price, pyth_decimals, pyth_conf, type_config)
+fun get_unsafe_pyth_price<T>(
+    price_info_object: &PriceInfoObject,
+    registry: &MarginRegistry,
+): (u64, u8) {
+    let type_config = registry.get_config_for_type<T>();
+
+    let price = pyth::get_price_unsafe(
+        price_info_object,
+    );
+    let price_info = price_info_object.get_price_info_from_price_info_object();
+
+    // verify that the price feed id matches the one we have in our config.
+    assert!(
+        price_info.get_price_identifier().get_bytes() == type_config.price_feed_id,
+        EPriceFeedIdMismatch,
+    );
+
+    let pyth_price = price.get_price().get_magnitude_if_positive();
+    let pyth_decimals = price.get_expo().get_magnitude_if_negative() as u8;
+
+    (pyth_price, pyth_decimals)
 }
 
 /// Gets the configuration for a given currency type.
