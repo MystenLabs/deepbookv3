@@ -22,42 +22,38 @@ import { adminCapOwner, liquidationAdminCapID } from "../config/constants";
   });
 
   // Amounts to deposit
-  const suiAmount = 5_494;
-  const usdcAmount = 10_000;
-  const deepAmount = 190_000;
-  const walAmount = 73_000;
+  // const suiAmount = 5_494;
+  const usdcAmount = 50_000;
+  // const deepAmount = 190_000;
+  // const walAmount = 73_000;
 
-  dbClient.marginLiquidations.deposit(
-    vaultId,
-    liquidationAdminCapID[env],
-    "SUI",
-    suiAmount
-  )(tx);
+  // dbClient.marginLiquidations.deposit(
+  //   vaultId,
+  //   liquidationAdminCapID[env],
+  //   "SUI",
+  //   suiAmount,
+  // )(tx);
 
   dbClient.marginLiquidations.deposit(
     vaultId,
     liquidationAdminCapID[env],
     "USDC",
-    usdcAmount
+    usdcAmount,
   )(tx);
 
-  dbClient.marginLiquidations.deposit(
-    vaultId,
-    liquidationAdminCapID[env],
-    "DEEP",
-    deepAmount
-  )(tx);
+  // dbClient.marginLiquidations.deposit(
+  //   vaultId,
+  //   liquidationAdminCapID[env],
+  //   "DEEP",
+  //   deepAmount,
+  // )(tx);
 
-  dbClient.marginLiquidations.deposit(
-    vaultId,
-    liquidationAdminCapID[env],
-    "WAL",
-    walAmount
-  )(tx);
-
-  const supplierCap = dbClient.marginPool.mintSupplierCap()(tx);
-  dbClient.marginPool.supplyToMarginPool("USDC", supplierCap, 10_000)(tx);
-  tx.transferObjects([supplierCap], adminCapOwner[env]);
+  // dbClient.marginLiquidations.deposit(
+  //   vaultId,
+  //   liquidationAdminCapID[env],
+  //   "WAL",
+  //   walAmount,
+  // )(tx);
 
   let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
