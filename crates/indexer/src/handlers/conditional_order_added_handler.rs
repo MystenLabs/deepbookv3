@@ -23,7 +23,7 @@ define_handler! {
         trigger_below_price: event.conditional_order.condition.trigger_below_price,
         trigger_price: BigDecimal::from(event.conditional_order.condition.trigger_price),
         is_limit_order: event.conditional_order.pending_order.is_limit_order,
-        client_order_id: event.conditional_order.pending_order.client_order_id as i64,
+        client_order_id: BigDecimal::from(event.conditional_order.pending_order.client_order_id),
         order_type: event.conditional_order.pending_order.order_type.unwrap_or(0) as i16,
         self_matching_option: event.conditional_order.pending_order.self_matching_option as i16,
         price: BigDecimal::from(event.conditional_order.pending_order.price.unwrap_or(0)),
