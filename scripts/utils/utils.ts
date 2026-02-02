@@ -4,7 +4,7 @@ import { execFileSync, execSync } from 'child_process';
 import fs, { readFileSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
-import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
+import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Secp256k1Keypair } from '@mysten/sui/keypairs/secp256k1';
@@ -85,8 +85,8 @@ export const getSigner = () => {
 
 /// Get the client for the specified network.
 export const getClient = (network: Network) => {
-	const url = process.env.RPC_URL || getFullnodeUrl(network);
-	return new SuiClient({ url });
+	const url = process.env.RPC_URL || getJsonRpcFullnodeUrl(network);
+	return new SuiJsonRpcClient({ url, network });
 };
 
 /// Builds a transaction (unsigned) and saves it on `setup/tx/tx-data.txt` (on production)
@@ -130,7 +130,7 @@ export const prepareMultisigTx = async (
 };
 
 /// Fetch the gas Object and setup the payment for the tx.
-async function setupGasPayment(tx: Transaction, gasObjectId: string, client: SuiClient) {
+async function setupGasPayment(tx: Transaction, gasObjectId: string, client: SuiJsonRpcClient) {
 	const gasObject = await client.getObject({
 		id: gasObjectId,
 	});
@@ -148,7 +148,7 @@ async function setupGasPayment(tx: Transaction, gasObjectId: string, client: Sui
 }
 
 /// A helper to dev inspect a transaction.
-async function inspectTransaction(tx: Transaction, client: SuiClient) {
+async function inspectTransaction(tx: Transaction, client: SuiJsonRpcClient) {
 	const result = await client.dryRunTransactionBlock({
 		transactionBlock: await tx.build({ client: client }),
 	});

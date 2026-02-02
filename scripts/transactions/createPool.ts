@@ -3,30 +3,31 @@
 import { Transaction } from "@mysten/sui/transactions";
 import { prepareMultisigTx } from "../utils/utils";
 import { adminCapOwner, adminCapID } from "../config/constants";
-import { DeepBookClient } from "@mysten/deepbook-v3";
-import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
+import { deepbook } from "@mysten/deepbook-v3";
+import { SuiGrpcClient } from "@mysten/sui/grpc";
 
 (async () => {
   // Update constant for env
   const env = "mainnet";
 
-  const dbClient = new DeepBookClient({
-    address: "0x0",
-    env: env,
-    client: new SuiClient({
-      url: getFullnodeUrl(env),
+  const client = new SuiGrpcClient({
+    baseUrl: "https://fullnode.mainnet.sui.io:443",
+    network: "mainnet",
+  }).$extend(
+    deepbook({
+      address: adminCapOwner[env],
+      adminCap: adminCapID[env],
     }),
-    adminCap: adminCapID[env],
-  });
+  );
 
   const tx = new Transaction();
 
-  dbClient.deepBookAdmin.createPoolAdmin({
-    baseCoinKey: "LZWBTC", // 8
-    quoteCoinKey: "USDC", // 6
+  client.deepbook.deepBookAdmin.createPoolAdmin({
+    baseCoinKey: "SUI",
+    quoteCoinKey: "USDE",
     tickSize: 1,
-    lotSize: 0.00001, // $1
-    minSize: 0.00001, // $1
+    lotSize: 0.00001,
+    minSize: 0.00001,
     whitelisted: false,
     stablePool: false,
   })(tx);
