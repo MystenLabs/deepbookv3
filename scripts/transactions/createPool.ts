@@ -25,11 +25,21 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   client.deepbook.deepBookAdmin.createPoolAdmin({
     baseCoinKey: "SUI",
     quoteCoinKey: "USDE",
-    tickSize: 1,
-    lotSize: 0.00001,
-    minSize: 0.00001,
+    tickSize: 0.0001,
+    lotSize: 0.1,
+    minSize: 0.1,
     whitelisted: false,
     stablePool: false,
+  })(tx);
+
+  client.deepbook.deepBookAdmin.createPoolAdmin({
+    baseCoinKey: "USDE",
+    quoteCoinKey: "USDC",
+    tickSize: 0.000001,
+    lotSize: 0.1,
+    minSize: 0.1,
+    whitelisted: false,
+    stablePool: true,
   })(tx);
 
   let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
