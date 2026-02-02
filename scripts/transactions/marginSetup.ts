@@ -1,20 +1,13 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { namedPackagesPlugin, Transaction } from "@mysten/sui/transactions";
+import { Transaction } from "@mysten/sui/transactions";
 import { prepareMultisigTx } from "../utils/utils.js";
-
-export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
-
-const mainnetPlugin = namedPackagesPlugin({
-  url: "https://mainnet.mvr.mystenlabs.com",
-});
 
 (async () => {
   // Update constant for env
   const env = "mainnet";
   const transaction = new Transaction();
-  transaction.addSerializationPlugin(mainnetPlugin);
 
   const appCap =
     "0x9e120e97c91434c8102024edc0a64c2d18ab702333da947791707dee6a45da2c"; // @deepbook/margin-trading appCap

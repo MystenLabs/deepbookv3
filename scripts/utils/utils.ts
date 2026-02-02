@@ -86,7 +86,12 @@ export const getSigner = () => {
 /// Get the client for the specified network.
 export const getClient = (network: Network) => {
 	const url = process.env.RPC_URL || getJsonRpcFullnodeUrl(network);
-	return new SuiJsonRpcClient({ url, network });
+	const mvrUrl = network === 'mainnet' ? 'https://mainnet.mvr.mystenlabs.com' : undefined;
+	return new SuiJsonRpcClient({
+		url,
+		network,
+		mvr: mvrUrl ? { url: mvrUrl } : undefined,
+	});
 };
 
 /// Builds a transaction (unsigned) and saves it on `setup/tx/tx-data.txt` (on production)
