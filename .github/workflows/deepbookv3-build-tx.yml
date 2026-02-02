@@ -12,6 +12,7 @@ on:
           - Upgrade Protocol
           - Enable Version
           - Disable Version
+          - Enable Margin Version
           - Unregister Pool and Create
           - Add Stable Coins
           - Adjust Tick Size
