@@ -2,6 +2,7 @@
   "name": "scripts",
   "version": "1.0.0",
   "description": "",
+  "type": "module",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
@@ -11,11 +12,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@mysten/deepbook-v3": "^0.27.0",
-    "@mysten/sui": "^1.45.2",
-    "dotenv": "^16.6.1",
-    "esbuild": "^0.20.2",
-    "ts-node": "^10.9.2",
+    "@mysten/deepbook-v3": "^1.0.1",
+    "@mysten/sui": "^2.1.0",
+    "esbuild": "^0.27.2",
     "tsx": "^4.21.0"
   }
 }

@@ -16,7 +16,7 @@ use diesel::expression::QueryMetadata;
 use diesel::pg::Pg;
 use diesel::query_builder::{Query, QueryFragment, QueryId};
 use diesel::query_dsl::CompatibleType;
-use diesel::sql_types::{BigInt, Double};
+use diesel::sql_types::{Array, BigInt, Double, Integer, Nullable, Text};
 use diesel::{
     BoolExpressionMethods, ExpressionMethods, QueryDsl, QueryableByName, SelectableHelper,
     TextExpressionMethods,
@@ -32,6 +32,7 @@ fn to_pattern(s: &str) -> String {
         s.to_string()
     }
 }
+
 use diesel_async::methods::LoadQuery;
 use diesel_async::{AsyncPgConnection, RunQueryDsl};
 use prometheus::Registry;
@@ -231,6 +232,8 @@ impl Reader {
             i64,
             i64,
             i64,
+            i64,
+            i64,
             bool,
             String,
             String,
@@ -274,6 +277,8 @@ impl Reader {
                 schema::order_fills::digest,
                 schema::order_fills::maker_order_id,
                 schema::order_fills::taker_order_id,
+                schema::order_fills::maker_client_order_id,
+                schema::order_fills::taker_client_order_id,
                 schema::order_fills::price,
                 schema::order_fills::base_quantity,
                 schema::order_fills::quote_quantity,
@@ -291,6 +296,8 @@ impl Reader {
                 String,
                 String,
                 String,
+                i64,
+                i64,
                 i64,
                 i64,
                 i64,
@@ -380,22 +387,7 @@ impl Reader {
         let mut connection = self.db.connect().await?;
         let _guard = self.metrics.db_latency.start_timer();
 
-        let balance_manager_clause = balance_manager_filter
-            .map(|id| format!("AND balance_manager_id = '{}'", id))
-            .unwrap_or_default();
-
-        let status_clause = status_filter
-            .map(|statuses| {
-                let status_list = statuses
-                    .iter()
-                    .map(|s| format!("'{}'", s))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("WHERE current_status IN ({})", status_list)
-            })
-            .unwrap_or_default();
-
-        let query_str = format!(
+        let res = diesel::sql_query(
             r#"
             WITH latest_events AS (
                 SELECT DISTINCT ON (order_id)
@@ -409,8 +401,8 @@ impl Reader {
                     quantity as remaining_quantity,
                     checkpoint_timestamp_ms as last_updated_at
                 FROM order_updates
-                WHERE pool_id = '{pool_id}'
-                {balance_manager_clause}
+                WHERE pool_id = $1
+                AND ($2 IS NULL OR balance_manager_id = $2)
                 ORDER BY order_id, checkpoint_timestamp_ms DESC
             ),
             placed_events AS (
@@ -418,7 +410,7 @@ impl Reader {
                     order_id,
                     checkpoint_timestamp_ms as placed_at
                 FROM order_updates
-                WHERE pool_id = '{pool_id}'
+                WHERE pool_id = $1
                     AND status = 'Placed'
                 ORDER BY order_id, checkpoint_timestamp_ms ASC
             ),
@@ -455,20 +447,18 @@ impl Reader {
                 filled_quantity,
                 remaining_quantity
             FROM order_status
-            {status_clause}
+            WHERE ($3 IS NULL OR current_status = ANY($3))
             ORDER BY last_updated_at DESC
-            LIMIT {limit}
+            LIMIT $4
             "#,
-            pool_id = pool_id,
-            balance_manager_clause = balance_manager_clause,
-            status_clause = status_clause,
-            limit = limit,
-        );
-
-        let res = diesel::sql_query(query_str)
-            .load::<OrderStatus>(&mut connection)
-            .await
-            .map_err(|e| DeepBookError::database(format!("Error fetching order status: {}", e)));
+        )
+        .bind::<Text, _>(&pool_id)
+        .bind::<Nullable<Text>, _>(&balance_manager_filter)
+        .bind::<Nullable<Array<Text>>, _>(&status_filter)
+        .bind::<BigInt, _>(limit)
+        .load::<OrderStatus>(&mut connection)
+        .await
+        .map_err(|e| DeepBookError::database(format!("Error fetching order status: {}", e)));
 
         if res.is_ok() {
             self.metrics.db_requests_succeeded.inc();
@@ -489,39 +479,41 @@ impl Reader {
         let mut connection = self.db.connect().await?;
         let limit_val = limit.unwrap_or(1000);
         let _guard = self.metrics.db_latency.start_timer();
-        let query_str = format!(
+
+        // Convert milliseconds to seconds for to_timestamp()
+        let start_secs = start_time.map(|ts| ts / 1000);
+        let end_secs = end_time.map(|ts| ts / 1000);
+
+        let res = diesel::sql_query(
             "SELECT EXTRACT(EPOCH FROM bucket_time)::bigint * 1000 as timestamp_ms, \
              open::float8, high::float8, low::float8, close::float8, base_volume::float8 \
-             FROM get_ohclv('{}', '{}', {}::timestamp, {}::timestamp, {})",
-            interval,
-            pool_id,
-            start_time
-                .map(|ts| format!("to_timestamp({})", ts / 1000))
-                .unwrap_or_else(|| "NULL".to_string()),
-            end_time
-                .map(|ts| format!("to_timestamp({})", ts / 1000))
-                .unwrap_or_else(|| "NULL".to_string()),
-            limit_val
-        );
-
-        let res = diesel::sql_query(query_str)
-            .load::<OhclvRow>(&mut connection)
-            .await
-            .map_err(|e| DeepBookError::database(format!("Error fetching OHCLV data: {}", e)))
-            .map(|rows| {
-                rows.into_iter()
-                    .map(|row| {
-                        (
-                            row.timestamp_ms,
-                            row.open,
-                            row.high,
-                            row.low,
-                            row.close,
-                            row.base_volume,
-                        )
-                    })
-                    .collect()
-            });
+             FROM get_ohclv($1, $2, \
+                CASE WHEN $3 IS NULL THEN NULL ELSE to_timestamp($3) END, \
+                CASE WHEN $4 IS NULL THEN NULL ELSE to_timestamp($4) END, \
+                $5)",
+        )
+        .bind::<Text, _>(&interval)
+        .bind::<Text, _>(&pool_id)
+        .bind::<Nullable<BigInt>, _>(&start_secs)
+        .bind::<Nullable<BigInt>, _>(&end_secs)
+        .bind::<Integer, _>(limit_val)
+        .load::<OhclvRow>(&mut connection)
+        .await
+        .map_err(|e| DeepBookError::database(format!("Error fetching OHCLV data: {}", e)))
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| {
+                    (
+                        row.timestamp_ms,
+                        row.open,
+                        row.high,
+                        row.low,
+                        row.close,
+                        row.base_volume,
+                    )
+                })
+                .collect()
+        });
 
         if res.is_ok() {
             self.metrics.db_requests_succeeded.inc();
@@ -661,22 +653,15 @@ impl Reader {
 
     pub async fn get_margin_pool_created(
         &self,
-        start_time: i64,
-        end_time: i64,
-        limit: i64,
         margin_pool_id_filter: String,
     ) -> Result<Vec<MarginPoolCreated>, DeepBookError> {
         let query = schema::margin_pool_created::table
             .select(MarginPoolCreated::as_select())
             .filter(
-                schema::margin_pool_created::checkpoint_timestamp_ms.between(start_time, end_time),
-            )
-            .filter(
                 schema::margin_pool_created::margin_pool_id
                     .like(to_pattern(&margin_pool_id_filter)),
             )
-            .order_by(schema::margin_pool_created::checkpoint_timestamp_ms.desc())
-            .limit(limit);
+            .order_by(schema::margin_pool_created::checkpoint_timestamp_ms.desc());
 
         Ok(self.results(query).await?)
     }
@@ -1235,44 +1220,11 @@ impl Reader {
         // Calculate the hour boundary for the timestamp
         let hour_bucket_ms = (timestamp_ms / 3600000) * 3600000;
 
-        // Build asset filter for SQL
-        let asset_filter: String = asset_ids
+        // Strip 0x prefix from asset_ids for database comparison
+        let cleaned_assets: Vec<String> = asset_ids
             .iter()
-            .map(|a| {
-                let trimmed = a.strip_prefix("0x").unwrap_or(a);
-                format!("'{}'", trimmed)
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-
-        // Query: sum all hourly deltas up to the hour boundary, then add partial hour from balances
-        let query_str = format!(
-            r#"
-            WITH hourly_totals AS (
-                SELECT asset, SUM(net_amount_delta) AS net_amount
-                FROM net_deposits_hourly
-                WHERE hour_bucket_ms < {hour_bucket_ms}
-                  AND asset IN ({asset_filter})
-                GROUP BY asset
-            ),
-            partial_hour AS (
-                SELECT asset, SUM(CASE WHEN deposit THEN amount ELSE -amount END) AS net_amount
-                FROM balances
-                WHERE checkpoint_timestamp_ms >= {hour_bucket_ms}
-                  AND checkpoint_timestamp_ms < {timestamp_ms}
-                  AND asset IN ({asset_filter})
-                GROUP BY asset
-            )
-            SELECT
-                COALESCE(h.asset, p.asset) AS asset,
-                (COALESCE(h.net_amount, 0) + COALESCE(p.net_amount, 0))::bigint AS net_amount
-            FROM hourly_totals h
-            FULL OUTER JOIN partial_hour p ON h.asset = p.asset
-            "#,
-            hour_bucket_ms = hour_bucket_ms,
-            timestamp_ms = timestamp_ms,
-            asset_filter = asset_filter,
-        );
+            .map(|a| a.strip_prefix("0x").unwrap_or(a).to_string())
+            .collect();
 
         #[derive(QueryableByName)]
         struct NetDepositRow {
@@ -1282,9 +1234,36 @@ impl Reader {
             net_amount: i64,
         }
 
-        let res = diesel::sql_query(query_str)
-            .load::<NetDepositRow>(&mut connection)
-            .await;
+        // Query: sum all hourly deltas up to the hour boundary, then add partial hour from balances
+        let res = diesel::sql_query(
+            r#"
+            WITH hourly_totals AS (
+                SELECT asset, SUM(net_amount_delta) AS net_amount
+                FROM net_deposits_hourly
+                WHERE hour_bucket_ms < $1
+                  AND asset = ANY($2)
+                GROUP BY asset
+            ),
+            partial_hour AS (
+                SELECT asset, SUM(CASE WHEN deposit THEN amount ELSE -amount END) AS net_amount
+                FROM balances
+                WHERE checkpoint_timestamp_ms >= $1
+                  AND checkpoint_timestamp_ms < $3
+                  AND asset = ANY($2)
+                GROUP BY asset
+            )
+            SELECT
+                COALESCE(h.asset, p.asset) AS asset,
+                (COALESCE(h.net_amount, 0) + COALESCE(p.net_amount, 0))::bigint AS net_amount
+            FROM hourly_totals h
+            FULL OUTER JOIN partial_hour p ON h.asset = p.asset
+            "#,
+        )
+        .bind::<BigInt, _>(hour_bucket_ms)
+        .bind::<Array<Text>, _>(&cleaned_assets)
+        .bind::<BigInt, _>(timestamp_ms)
+        .load::<NetDepositRow>(&mut connection)
+        .await;
 
         if res.is_ok() {
             self.metrics.db_requests_succeeded.inc();
@@ -1354,23 +1333,9 @@ impl Reader {
         let mut connection = self.db.connect().await?;
         let _guard = self.metrics.db_latency.start_timer();
 
-        let where_clause = addresses
-            .filter(|a| !a.is_empty())
-            .map(|addrs| {
-                let list = addrs
-                    .iter()
-                    .map(|a| format!("'{}'", a))
-                    .collect::<Vec<_>>()
-                    .join(",");
-                format!("WHERE address IN ({})", list)
-            })
-            .unwrap_or_default();
-
-        let query_str = format!(
-            "SELECT address, COALESCE(SUM(amount), 0)::bigint as total_points \
-             FROM points {} GROUP BY address",
-            where_clause
-        );
+        // Convert to owned Vec for binding, None if empty or not provided
+        let addr_filter: Option<Vec<String>> =
+            addresses.filter(|a| !a.is_empty()).map(|a| a.to_vec());
 
         #[derive(QueryableByName)]
         struct PointsRow {
@@ -1380,9 +1345,15 @@ impl Reader {
             total_points: i64,
         }
 
-        let res = diesel::sql_query(query_str)
-            .load::<PointsRow>(&mut connection)
-            .await;
+        let res = diesel::sql_query(
+            "SELECT address, COALESCE(SUM(amount), 0)::bigint as total_points \
+             FROM points \
+             WHERE ($1 IS NULL OR address = ANY($1)) \
+             GROUP BY address",
+        )
+        .bind::<Nullable<Array<Text>>, _>(&addr_filter)
+        .load::<PointsRow>(&mut connection)
+        .await;
 
         if res.is_ok() {
             self.metrics.db_requests_succeeded.inc();
