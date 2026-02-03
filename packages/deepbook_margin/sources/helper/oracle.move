@@ -235,6 +235,79 @@ public(package) fun calculate_target_currency_amount(
     target_currency_amount
 }
 
+public(package) fun calculate_usd_price_unsafe<T>(
+    price_info_object: &PriceInfoObject,
+    registry: &MarginRegistry,
+    amount: u64,
+): u64 {
+    let config = price_config_unsafe<T>(price_info_object, registry, true);
+    config.calculate_usd_currency_amount(amount)
+}
+
+public(package) fun calculate_price_unsafe<BaseAsset, QuoteAsset>(
+    registry: &MarginRegistry,
+    base_price_info_object: &PriceInfoObject,
+    quote_price_info_object: &PriceInfoObject,
+): u64 {
+    let base_decimals = get_decimals<BaseAsset>(registry);
+    let quote_decimals = get_decimals<QuoteAsset>(registry);
+
+    let base_amount = 10u64.pow(base_decimals);
+    let base_usd_price = calculate_usd_price_unsafe<BaseAsset>(
+        base_price_info_object,
+        registry,
+        base_amount,
+    );
+
+    let quote_amount = 10u64.pow(quote_decimals);
+    let quote_usd_price = calculate_usd_price_unsafe<QuoteAsset>(
+        quote_price_info_object,
+        registry,
+        quote_amount,
+    );
+    let price_ratio = math::div(base_usd_price, quote_usd_price);
+
+    if (base_decimals > quote_decimals) {
+        let decimal_diff = base_decimals - quote_decimals;
+        let divisor = 10u128.pow(decimal_diff);
+        let price = (price_ratio as u128) / divisor;
+        assert!(price <= constants::max_price() as u128, EInvalidPrice);
+        price as u64
+    } else if (quote_decimals > base_decimals) {
+        let decimal_diff = quote_decimals - base_decimals;
+        let multiplier = 10u128.pow(decimal_diff);
+        let price = (price_ratio as u128) * multiplier;
+        assert!(price <= constants::max_price() as u128, EInvalidPrice);
+        price as u64
+    } else {
+        price_ratio
+    }
+}
+
+public(package) fun calculate_target_currency_unsafe<AssetA, AssetB>(
+    registry: &MarginRegistry,
+    price_info_object_a: &PriceInfoObject,
+    price_info_object_b: &PriceInfoObject,
+    amount: u64,
+): u64 {
+    let usd_value = calculate_usd_price_unsafe<AssetA>(price_info_object_a, registry, amount);
+    let target_value = calculate_target_amount_unsafe<AssetB>(
+        price_info_object_b,
+        registry,
+        usd_value,
+    );
+    target_value
+}
+
+public(package) fun calculate_target_amount_unsafe<T>(
+    price_info_object: &PriceInfoObject,
+    registry: &MarginRegistry,
+    usd_amount: u64,
+): u64 {
+    let config = price_config_unsafe<T>(price_info_object, registry, false);
+    calculate_target_currency_amount(config, usd_amount)
+}
+
 fun price_config<T>(
     price_info_object: &PriceInfoObject,
     registry: &MarginRegistry,
@@ -262,6 +335,28 @@ fun price_config<T>(
     } else {
         9
     }; // Our starting decimals
+
+    ConversionConfig {
+        target_decimals,
+        base_decimals,
+        pyth_price,
+        pyth_decimals,
+    }
+}
+
+fun price_config_unsafe<T>(
+    price_info_object: &PriceInfoObject,
+    registry: &MarginRegistry,
+    is_usd_price_config: bool,
+): ConversionConfig {
+    let (pyth_price, pyth_decimals) = get_pyth_price_unsafe<T>(
+        price_info_object,
+        registry,
+    );
+    let type_config = registry.get_config_for_type<T>();
+
+    let target_decimals = if (is_usd_price_config) { 9 } else { type_config.decimals };
+    let base_decimals = if (is_usd_price_config) { type_config.decimals } else { 9 };
 
     ConversionConfig {
         target_decimals,
@@ -324,6 +419,28 @@ fun get_validated_pyth_price<T>(
     );
 
     (pyth_price, pyth_decimals, pyth_conf, type_config)
+}
+
+/// Gets Pyth price data without staleness or confidence validation.
+/// Only validates price feed ID. Returns (pyth_price, pyth_decimals)
+public(package) fun get_pyth_price_unsafe<T>(
+    price_info_object: &PriceInfoObject,
+    registry: &MarginRegistry,
+): (u64, u8) {
+    let type_config = registry.get_config_for_type<T>();
+
+    let price = pyth::get_price_unsafe(price_info_object);
+    let price_info = price_info_object.get_price_info_from_price_info_object();
+
+    assert!(
+        price_info.get_price_identifier().get_bytes() == type_config.price_feed_id,
+        EPriceFeedIdMismatch,
+    );
+
+    let pyth_price = price.get_price().get_magnitude_if_positive();
+    let pyth_decimals = price.get_expo().get_magnitude_if_negative() as u8;
+
+    (pyth_price, pyth_decimals)
 }
 
 /// Gets the configuration for a given currency type.

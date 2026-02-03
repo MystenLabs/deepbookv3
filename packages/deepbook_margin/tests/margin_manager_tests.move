@@ -23,6 +23,8 @@ use deepbook_margin::{
         build_demo_usdc_price_info_object,
         build_demo_usdt_price_info_object,
         build_btc_price_info_object,
+        build_stale_btc_price_info_object,
+        build_stale_usdc_price_info_object,
         setup_btc_usd_deepbook_margin,
         setup_usdc_usdt_deepbook_margin,
         destroy_2,
@@ -2896,4 +2898,510 @@ fun test_unregister_margin_manager_fails_with_outstanding_quote_debt() {
 
     // Cleanup (unreachable due to expected failure above)
     abort 0
+}
+
+#[test]
+/// Test that liquidation works when there are unsettled maker fill balances.
+/// This tests the fix where withdraw_settled_amounts is called before cancel_all_orders
+/// to ensure any filled maker orders have their proceeds deposited to balance_manager.
+fun liquidation_with_unsettled_maker_fills() {
+    use deepbook::{balance_manager, constants};
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    // Step 1: User1 creates margin manager, deposits BTC, borrows USDC
+    scenario.next_tx(test_constants::user1());
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    // Deposit 1 BTC worth $50k
+    mm.deposit<BTC, USDC, BTC>(
+        &registry,
+        &btc_price,
+        &usdc_price,
+        mint_coin<BTC>(btc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Borrow $40k USDC
+    mm.borrow_quote<BTC, USDC>(
+        &registry,
+        &mut usdc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        40_000_000_000,
+        &clock,
+        scenario.ctx(),
+    );
+
+    destroy_2!(btc_price, usdc_price);
+    return_shared_4!(mm, usdc_pool, pool, registry);
+
+    // Step 2: User1 places a maker BID order (buy BTC with USDC)
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    // Place a bid for 0.1 BTC at a price that will sit in the book as maker
+    let bid_price = 500_000u64; // price in pool units
+    let bid_quantity = btc_multiplier() / 10; // 0.1 BTC
+
+    deepbook_margin::pool_proxy::place_limit_order<BTC, USDC>(
+        &registry,
+        &mut mm,
+        &mut pool,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        bid_price,
+        bid_quantity,
+        true, // is_bid
+        false, // pay_with_deep
+        18446744073709551615,
+        &clock,
+        scenario.ctx(),
+    );
+
+    destroy_2!(btc_price, usdc_price);
+    return_shared_3!(mm, pool, registry);
+
+    // Step 3: Taker fills User1's bid by selling BTC
+    scenario.next_tx(test_constants::user2());
+    let mut taker_bm = balance_manager::new(scenario.ctx());
+    taker_bm.deposit(mint_coin<BTC>(btc_multiplier(), scenario.ctx()), scenario.ctx());
+    let trade_proof = taker_bm.generate_proof_as_owner(scenario.ctx());
+
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+
+    // Place IOC sell order that crosses User1's bid
+    pool.place_limit_order<BTC, USDC>(
+        &mut taker_bm,
+        &trade_proof,
+        2,
+        constants::immediate_or_cancel(),
+        constants::self_matching_allowed(),
+        bid_price,
+        bid_quantity,
+        false, // is_bid = false (selling)
+        false,
+        18446744073709551615,
+        &clock,
+        scenario.ctx(),
+    );
+
+    return_shared(pool);
+    transfer::public_share_object(taker_bm);
+
+    // User1's margin manager now has BTC in settled_balances (NOT in balance_manager yet)
+
+    // Step 4: Price drops to make User1 liquidatable
+    scenario.next_tx(test_constants::liquidator());
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+
+    let btc_price_dropped = build_btc_price_info_object(&mut scenario, 2000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    // Step 5: Liquidator liquidates - should succeed because withdraw_settled_amounts
+    // is called first, depositing the BTC from filled maker order to balance_manager
+    let debt_coin = mint_coin<USDC>(50_000_000_000, scenario.ctx());
+
+    let (base_coin, quote_coin, remaining_debt) = mm.liquidate<BTC, USDC, USDC>(
+        &registry,
+        &btc_price_dropped,
+        &usdc_price,
+        &mut usdc_pool,
+        &mut pool,
+        debt_coin,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Liquidation succeeded - liquidator received assets
+    assert!(base_coin.value() > 0 || quote_coin.value() > 0);
+
+    destroy_3!(remaining_debt, base_coin, quote_coin);
+    destroy_2!(btc_price_dropped, usdc_price);
+    return_shared_3!(mm, usdc_pool, pool);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+/// Tests that manager_state works with stale oracle prices (older than max_age_secs).
+/// The config sets max_age_secs to 60, but we use prices that are 120 seconds old.
+fun manager_state_works_with_stale_oracles() {
+    let (
+        mut scenario,
+        mut clock,
+        admin_cap,
+        maintainer_cap,
+        btc_pool_id,
+        usdc_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    // Create margin manager
+    scenario.next_tx(test_constants::user1());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+    return_shared(registry);
+
+    // Deposit USDC as collateral
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    let deposit_coin = mint_coin<USDC>(100_000_000_000, scenario.ctx()); // 100k USDC
+    mm.deposit<BTC, USDC, USDC>(
+        &registry,
+        &btc_price,
+        &usdc_price,
+        deposit_coin,
+        &clock,
+        scenario.ctx(),
+    );
+
+    destroy_2!(btc_price, usdc_price);
+    return_shared_3!(mm, pool, registry);
+
+    // Advance time by 120 seconds to make future oracle prices stale
+    // (config has max_age_secs = 60)
+    clock.increment_for_testing(120_000); // 120 seconds in ms
+
+    // Create stale price info objects (120 seconds old relative to current clock)
+    scenario.next_tx(test_constants::user1());
+    let stale_btc_price = build_stale_btc_price_info_object(&mut scenario, 50000, &clock, 120);
+    let stale_usdc_price = build_stale_usdc_price_info_object(&mut scenario, &clock, 120);
+
+    let mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+
+    // Call manager_state with stale oracles - should succeed because it uses unsafe functions
+    let (
+        manager_id,
+        deepbook_pool_id,
+        risk_ratio,
+        base_asset,
+        quote_asset,
+        base_debt,
+        quote_debt,
+        base_pyth_price,
+        base_pyth_decimals,
+        quote_pyth_price,
+        quote_pyth_decimals,
+        current_price,
+        _lowest_trigger_above_price,
+        _highest_trigger_below_price,
+    ) = mm.manager_state<BTC, USDC>(
+        &registry,
+        &stale_btc_price,
+        &stale_usdc_price,
+        &pool,
+        &btc_pool,
+        &usdc_pool,
+        &clock,
+    );
+
+    // Verify returned values are sensible
+    assert!(manager_id == mm.id());
+    assert!(deepbook_pool_id == pool_id);
+    assert!(risk_ratio > 0); // Should have max risk ratio since no debt
+    assert!(base_asset == 0); // No BTC deposited
+    assert!(quote_asset == 100_000_000_000); // 100k USDC deposited
+    assert!(base_debt == 0);
+    assert!(quote_debt == 0);
+    assert!(base_pyth_price > 0); // BTC price should be non-zero
+    assert!(base_pyth_decimals == 8); // Pyth uses 8 decimals
+    assert!(quote_pyth_price > 0); // USDC price should be non-zero
+    assert!(quote_pyth_decimals == 8);
+    assert!(current_price > 0);
+
+    destroy_2!(stale_btc_price, stale_usdc_price);
+    return_shared_4!(mm, pool, btc_pool, usdc_pool);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+/// Tests that manager_state returns accurate values with stale oracles.
+/// Verifies exact price values, debt amounts, and asset balances.
+fun manager_state_returns_accurate_values_with_stale_oracles() {
+    let (
+        mut scenario,
+        mut clock,
+        admin_cap,
+        maintainer_cap,
+        btc_pool_id,
+        usdc_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    // Create margin manager
+    scenario.next_tx(test_constants::user1());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+    return_shared(registry);
+
+    // Deposit USDC as collateral and borrow BTC
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    // Deposit 100k USDC
+    let usdc_deposit = 100_000_000_000u64; // 100k USDC (6 decimals)
+    let deposit_coin = mint_coin<USDC>(usdc_deposit, scenario.ctx());
+    mm.deposit<BTC, USDC, USDC>(
+        &registry,
+        &btc_price,
+        &usdc_price,
+        deposit_coin,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Borrow 0.5 BTC (worth $25k at $50k/BTC, ~25% of collateral)
+    let btc_borrow = 50_000_000u64; // 0.5 BTC (8 decimals)
+    mm.borrow_base<BTC, USDC>(
+        &registry,
+        &mut btc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        btc_borrow,
+        &clock,
+        scenario.ctx(),
+    );
+
+    destroy_2!(btc_price, usdc_price);
+    return_shared_4!(mm, pool, btc_pool, registry);
+
+    // Advance time by 120 seconds to make oracle prices stale
+    clock.increment_for_testing(120_000);
+
+    // Create stale price info objects
+    scenario.next_tx(test_constants::user1());
+    let btc_price_usd = 50000u64;
+    let stale_btc_price = build_stale_btc_price_info_object(
+        &mut scenario,
+        btc_price_usd,
+        &clock,
+        120,
+    );
+    let stale_usdc_price = build_stale_usdc_price_info_object(&mut scenario, &clock, 120);
+
+    let mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+
+    let (
+        manager_id,
+        deepbook_pool_id,
+        risk_ratio,
+        base_asset,
+        quote_asset,
+        base_debt,
+        quote_debt,
+        base_pyth_price,
+        base_pyth_decimals,
+        quote_pyth_price,
+        quote_pyth_decimals,
+        current_price,
+        _lowest_trigger_above_price,
+        _highest_trigger_below_price,
+    ) = mm.manager_state<BTC, USDC>(
+        &registry,
+        &stale_btc_price,
+        &stale_usdc_price,
+        &pool,
+        &btc_pool,
+        &usdc_pool,
+        &clock,
+    );
+
+    // Verify IDs
+    assert!(manager_id == mm.id());
+    assert!(deepbook_pool_id == pool_id);
+
+    // Verify asset balances
+    // Borrowed BTC goes to balance manager, so base_asset = btc_borrow
+    assert!(base_asset == btc_borrow); // 0.5 BTC
+    assert!(quote_asset == usdc_deposit); // 100k USDC
+
+    // Verify debt - base_debt should be the borrowed amount (may have tiny interest)
+    // With 120 seconds elapsed, interest should be minimal
+    assert!(base_debt >= btc_borrow); // At least the borrowed amount
+    assert!(base_debt < btc_borrow + 1000); // Less than borrowed + tiny interest buffer
+    assert!(quote_debt == 0); // No quote debt
+
+    // Verify Pyth prices are exact
+    // BTC price: 50000 * 10^8 (pyth_multiplier) = 5_000_000_000_000
+    let expected_btc_pyth_price = btc_price_usd * test_constants::pyth_multiplier();
+    assert!(base_pyth_price == expected_btc_pyth_price);
+    assert!(base_pyth_decimals == 8);
+
+    // USDC price: 1 * 10^8 (pyth_multiplier) = 100_000_000
+    let expected_usdc_pyth_price = 1 * test_constants::pyth_multiplier();
+    assert!(quote_pyth_price == expected_usdc_pyth_price);
+    assert!(quote_pyth_decimals == 8);
+
+    // Verify current_price is reasonable
+    // BTC/USDC price should be around 50000 * 10^6 (USDC has 6 decimals, BTC has 8)
+    // Price = (BTC_USD_price / USDC_USD_price) adjusted for decimals
+    // With BTC at $50k and USDC at $1, price should be ~50000 * 10^6 = 50_000_000_000
+    assert!(current_price > 0);
+
+    // Verify risk ratio is reasonable
+    // With $100k collateral and ~$25k debt (0.5 BTC at $50k), risk ratio should be healthy
+    assert!(risk_ratio > 0);
+
+    destroy_2!(stale_btc_price, stale_usdc_price);
+    return_shared_4!(mm, pool, btc_pool, usdc_pool);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = pyth::pyth::E_STALE_PRICE_UPDATE)]
+/// Tests that borrow_base fails when oracle prices are stale.
+/// This confirms that state-changing functions still use validated price checks.
+fun borrow_base_fails_with_stale_oracles() {
+    let (
+        mut scenario,
+        mut clock,
+        _admin_cap,
+        _maintainer_cap,
+        btc_pool_id,
+        _usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    // Create margin manager
+    scenario.next_tx(test_constants::user1());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+    return_shared(registry);
+
+    // Deposit USDC as collateral with fresh prices
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    let deposit_coin = mint_coin<USDC>(100_000_000_000, scenario.ctx()); // 100k USDC
+    mm.deposit<BTC, USDC, USDC>(
+        &registry,
+        &btc_price,
+        &usdc_price,
+        deposit_coin,
+        &clock,
+        scenario.ctx(),
+    );
+
+    destroy_2!(btc_price, usdc_price);
+    return_shared_3!(mm, pool, registry);
+
+    // Advance time by 120 seconds to make prices stale
+    clock.increment_for_testing(120_000);
+
+    // Try to borrow with stale prices - should fail
+    scenario.next_tx(test_constants::user1());
+    let stale_btc_price = build_stale_btc_price_info_object(&mut scenario, 50000, &clock, 120);
+    let stale_usdc_price = build_stale_usdc_price_info_object(&mut scenario, &clock, 120);
+
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+
+    // This should fail with E_STALE_PRICE_UPDATE
+    mm.borrow_base<BTC, USDC>(
+        &registry,
+        &mut btc_pool,
+        &stale_btc_price,
+        &stale_usdc_price,
+        &pool,
+        10_000_000, // 0.1 BTC
+        &clock,
+        scenario.ctx(),
+    );
+
+    abort 0 // Never reached
 }

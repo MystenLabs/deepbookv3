@@ -77,6 +77,8 @@ pub const LEVEL2_FUNCTION: &str = "get_level2_ticks_from_mid";
 pub const DEEP_SUPPLY_MODULE: &str = "deep";
 pub const DEEP_SUPPLY_FUNCTION: &str = "total_supply";
 pub const DEEP_SUPPLY_PATH: &str = "/deep_supply";
+pub const MARGIN_SUPPLY_PATH: &str = "/margin_supply";
+pub const MARGIN_POOL_MODULE: &str = "margin_pool";
 pub const OHCLV_PATH: &str = "/ohclv/:pool_name";
 
 // Deepbook Margin Events
@@ -120,6 +122,7 @@ pub struct AppState {
     deep_token_package_id: String,
     deep_treasury_id: String,
     admin_tokens: Vec<String>,
+    margin_package_id: Option<String>,
 }
 
 impl AppState {
@@ -132,6 +135,7 @@ impl AppState {
         deep_token_package_id: String,
         deep_treasury_id: String,
         admin_tokens: Option<String>,
+        margin_package_id: Option<String>,
     ) -> Result<Self, anyhow::Error> {
         let metrics = RpcMetrics::new(registry);
         let reader = Reader::new(
@@ -162,6 +166,7 @@ impl AppState {
             deep_token_package_id,
             deep_treasury_id,
             admin_tokens,
+            margin_package_id,
         })
     }
 
@@ -236,6 +241,7 @@ pub async fn run_server(
         deep_token_package_id,
         deep_treasury_id,
         admin_tokens,
+        margin_package_id.clone(),
     )
     .await?;
     let socket_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), server_port);
@@ -369,6 +375,7 @@ pub(crate) fn make_router(state: Arc<AppState>) -> Router {
     let rpc_routes = Router::new()
         .route(LEVEL2_PATH, get(orderbook))
         .route(DEEP_SUPPLY_PATH, get(deep_supply))
+        .route(MARGIN_SUPPLY_PATH, get(margin_supply))
         .route(SUMMARY_PATH, get(summary))
         .route(STATUS_PATH, get(status))
         .with_state(state.clone());
@@ -1214,6 +1221,8 @@ async fn trades(
                 digest,
                 maker_order_id,
                 taker_order_id,
+                maker_client_order_id,
+                taker_client_order_id,
                 price,
                 base_quantity,
                 quote_quantity,
@@ -1257,6 +1266,14 @@ async fn trades(
                     ("trade_id".to_string(), Value::from(trade_id.to_string())),
                     ("maker_order_id".to_string(), Value::from(maker_order_id)),
                     ("taker_order_id".to_string(), Value::from(taker_order_id)),
+                    (
+                        "maker_client_order_id".to_string(),
+                        Value::from(maker_client_order_id.to_string()),
+                    ),
+                    (
+                        "taker_client_order_id".to_string(),
+                        Value::from(taker_client_order_id.to_string()),
+                    ),
                     (
                         "maker_balance_manager_id".to_string(),
                         Value::from(maker_balance_manager_id),
@@ -1673,6 +1690,119 @@ async fn deep_supply(State(state): State<Arc<AppState>>) -> Result<Json<u64>, De
     Ok(Json(total_supply_value))
 }
 
+/// Get total supply for all margin pools
+async fn margin_supply(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<HashMap<String, u64>>, DeepBookError> {
+    let margin_package_id = state
+        .margin_package_id
+        .as_ref()
+        .ok_or_else(|| DeepBookError::bad_request("Margin package ID not configured"))?;
+
+    // Query all margin pools from the database
+    let query = schema::margin_pool_created::table.select((
+        schema::margin_pool_created::margin_pool_id,
+        schema::margin_pool_created::asset_type,
+    ));
+    let pools: Vec<(String, String)> = state.reader.results(query).await?;
+
+    if pools.is_empty() {
+        return Ok(Json(HashMap::new()));
+    }
+
+    let sui_client = state.sui_client().await?;
+    let package = ObjectID::from_hex_literal(margin_package_id)
+        .map_err(|e| DeepBookError::bad_request(format!("Invalid margin package ID: {}", e)))?;
+
+    let mut result: HashMap<String, u64> = HashMap::new();
+
+    for (pool_id, asset_type) in pools {
+        let pool_object_id = ObjectID::from_hex_literal(&pool_id).map_err(|e| {
+            DeepBookError::bad_request(format!("Invalid pool ID '{}': {}", pool_id, e))
+        })?;
+
+        // Get the pool object to find its initial_shared_version
+        let pool_object: SuiObjectResponse = sui_client
+            .read_api()
+            .get_object_with_options(
+                pool_object_id,
+                SuiObjectDataOptions::full_content().with_owner(),
+            )
+            .await?;
+
+        let pool_data: &SuiObjectData = pool_object.data.as_ref().ok_or(DeepBookError::rpc(
+            format!("Missing data in pool object response for '{}'", pool_id),
+        ))?;
+
+        let initial_shared_version = match &pool_data.owner {
+            Some(sui_types::object::Owner::Shared {
+                initial_shared_version,
+            }) => *initial_shared_version,
+            _ => {
+                continue;
+            }
+        };
+
+        // Normalize asset type (ensure 0x prefix)
+        let normalized_asset_type = if asset_type.starts_with("0x") || asset_type.starts_with("0X")
+        {
+            asset_type.clone()
+        } else {
+            format!("0x{}", asset_type)
+        };
+
+        let type_tag = match TypeTag::from_str(&normalized_asset_type) {
+            Ok(t) => t,
+            Err(_) => continue,
+        };
+        let type_input = TypeInput::from(type_tag);
+
+        // Build PTB for total_supply call
+        let mut ptb = ProgrammableTransactionBuilder::new();
+
+        let pool_input = CallArg::Object(ObjectArg::SharedObject {
+            id: pool_data.object_id,
+            initial_shared_version,
+            mutability: sui_types::transaction::SharedObjectMutability::Immutable,
+        });
+        ptb.input(pool_input)?;
+
+        ptb.command(Command::MoveCall(Box::new(ProgrammableMoveCall {
+            package,
+            module: MARGIN_POOL_MODULE.to_string(),
+            function: "total_supply".to_string(),
+            type_arguments: vec![type_input],
+            arguments: vec![Argument::Input(0)],
+        })));
+
+        let builder = ptb.finish();
+        let tx = TransactionKind::ProgrammableTransaction(builder);
+
+        let inspect_result = sui_client
+            .read_api()
+            .dev_inspect_transaction_block(SuiAddress::default(), tx, None, None, None)
+            .await?;
+
+        if let Some(mut results) = inspect_result.results {
+            if let Some(first_result) = results.first_mut() {
+                if let Some(return_value) = first_result.return_values.first() {
+                    if let Ok(total_supply) = bcs::from_bytes::<u64>(&return_value.0) {
+                        // Extract asset name from asset_type (e.g., "0x2::sui::SUI" -> "SUI")
+                        let asset_name = asset_type
+                            .rsplit("::")
+                            .next()
+                            .unwrap_or(&asset_type)
+                            .to_string();
+                        result.insert(asset_name, total_supply);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(Json(result))
+}
+
 async fn get_net_deposits(
     Path((asset_ids, timestamp)): Path<(String, String)>,
     State(state): State<Arc<AppState>>,
@@ -1941,16 +2071,11 @@ async fn margin_pool_created(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<MarginPoolCreated>>, DeepBookError> {
-    let end_time = params.end_time();
-    let start_time = params
-        .start_time()
-        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
-    let limit = params.limit();
     let margin_pool_id_filter = params.get("margin_pool_id").cloned().unwrap_or_default();
 
     let results = state
         .reader
-        .get_margin_pool_created(start_time, end_time, limit, margin_pool_id_filter)
+        .get_margin_pool_created(margin_pool_id_filter)
         .await?;
 
     Ok(Json(results))

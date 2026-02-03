@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Transaction, coinWithBalance } from "@mysten/sui/transactions";
-import { prepareMultisigTx } from "../utils/utils";
+import { prepareMultisigTx } from "../utils/utils.js";
 
 export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
 
@@ -26,9 +26,9 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
 
   // Update receiving address as needed
   const recevingAddress =
-    "0x0f97e5774fa2d0ad786ee0a562c4f65762e141397e469a736703351df85383cc";
+    "0x126bdaa2ef314de60c8214c82a2248e4cc21875330a5c32977eb303be585cab8";
   const coinType = "SUI"; // "SUI" or "DEEP"
-  const amount = 1_000;
+  const amount = 10_000;
 
   const totalAmount = amount * config[coinType].scalar;
   const coin = coinWithBalance({

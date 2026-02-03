@@ -3,7 +3,7 @@
 
 import { execSync } from "child_process";
 import { writeFileSync } from "fs";
-import { upgradeCapID } from "../config/constants";
+import { upgradeCapID } from "../config/constants.js";
 
 const network = "mainnet";
 
