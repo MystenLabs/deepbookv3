@@ -1,28 +1,29 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 import { Transaction } from "@mysten/sui/transactions";
-import { prepareMultisigTx } from "../utils/utils";
-import { adminCapOwner, marginAdminCapID } from "../config/constants";
-import { DeepBookClient } from "@mysten/deepbook-v3";
-import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
+import { prepareMultisigTx } from "../utils/utils.js";
+import { adminCapOwner, marginAdminCapID } from "../config/constants.js";
+import { deepbook } from "@mysten/deepbook-v3";
+import { SuiGrpcClient } from "@mysten/sui/grpc";
 
 (async () => {
   // Update constant for env
   const env = "mainnet";
   const versionToEnable = 2;
 
-  const dbClient = new DeepBookClient({
-    address: adminCapOwner[env],
-    env: env,
-    client: new SuiClient({
-      url: getFullnodeUrl(env),
+  const client = new SuiGrpcClient({
+    url: "https://sui-mainnet.mystenlabs.com",
+    network: "mainnet",
+  }).$extend(
+    deepbook({
+      address: adminCapOwner[env],
+      marginAdminCap: marginAdminCapID[env],
     }),
-    marginAdminCap: marginAdminCapID[env],
-  });
+  );
 
   const tx = new Transaction();
 
-  dbClient.marginAdmin.enableVersion(versionToEnable)(tx);
+  client.deepbook.marginAdmin.enableVersion(versionToEnable)(tx);
 
   let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 

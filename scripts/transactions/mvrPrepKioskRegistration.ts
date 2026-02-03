@@ -1,15 +1,13 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { newTransaction } from "./transaction";
-import { prepareMultisigTx } from "../utils/utils";
-
-export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
+import { Transaction } from "@mysten/sui/transactions";
+import { prepareMultisigTx } from "../utils/utils.js";
 
 (async () => {
   // Update constant for env
   const env = "mainnet";
-  const transaction = newTransaction();
+  const transaction = new Transaction();
 
   /// We pass in our UpgradeCap
   const packageInfo = transaction.moveCall({

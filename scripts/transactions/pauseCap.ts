@@ -4,15 +4,15 @@ import { execSync } from "child_process";
 import { readFileSync } from "fs";
 import { homedir } from "os";
 import path from "path";
-import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
+import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
+import { SuiGrpcClient } from "@mysten/sui/grpc";
 import { decodeSuiPrivateKey } from "@mysten/sui/cryptography";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { Secp256k1Keypair } from "@mysten/sui/keypairs/secp256k1";
 import { Secp256r1Keypair } from "@mysten/sui/keypairs/secp256r1";
 import { Transaction } from "@mysten/sui/transactions";
 import { fromBase64 } from "@mysten/sui/utils";
-import { namedPackagesPlugin } from "@mysten/sui/transactions";
-import { DeepBookClient } from "@mysten/deepbook-v3";
+import { deepbook } from "@mysten/deepbook-v3";
 
 const SUI = process.env.SUI_BINARY ?? `sui`;
 
@@ -58,6 +58,8 @@ export const getSigner = () => {
   throw new Error(`keypair not found for sender: ${sender}`);
 };
 
+export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
+
 export const signAndExecute = async (txb: Transaction, network: Network) => {
   const client = getClient(network);
   const signer = getSigner();
@@ -71,16 +73,11 @@ export const signAndExecute = async (txb: Transaction, network: Network) => {
     },
   });
 };
+
 export const getClient = (network: Network) => {
-  const url = process.env.RPC_URL || getFullnodeUrl(network);
-  return new SuiClient({ url });
+  const url = process.env.RPC_URL || getJsonRpcFullnodeUrl(network);
+  return new SuiJsonRpcClient({ url, network });
 };
-
-export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
-
-const mainnetPlugin = namedPackagesPlugin({
-  url: "https://mainnet.mvr.mystenlabs.com",
-});
 
 (async () => {
   // Update constant for env
@@ -88,17 +85,18 @@ const mainnetPlugin = namedPackagesPlugin({
   const version = 1; // Version to pause
   const pauseCapID = ""; // Fill in the pause cap ID
   const tx = new Transaction();
-  tx.addSerializationPlugin(mainnetPlugin);
 
-  const dbClient = new DeepBookClient({
-    address: getActiveAddress(),
-    env: env,
-    client: new SuiClient({
-      url: getFullnodeUrl(env),
-    }),
-  });
+  const client = new SuiGrpcClient({
+    url: "https://sui-mainnet.mystenlabs.com",
+    network: "mainnet",
+  }).$extend(
+    deepbook({
+      address: getActiveAddress(),
+      adminCap: "",
+    })
+  );
 
-  dbClient.marginAdmin.disableVersionPauseCap(version, pauseCapID)(tx);
+  client.deepbook.marginAdmin.disableVersionPauseCap(version, pauseCapID)(tx);
 
   let res = await signAndExecute(tx, env);
 

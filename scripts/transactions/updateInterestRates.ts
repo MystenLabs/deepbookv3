@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 import { Transaction } from "@mysten/sui/transactions";
-import { prepareMultisigTx } from "../utils/utils";
+import { prepareMultisigTx } from "../utils/utils.js";
 import {
   adminCapOwner,
   adminCapID,
@@ -11,27 +11,28 @@ import {
   usdcMarginPoolCapID,
   deepMarginPoolCapID,
   walMarginPoolCapID,
-} from "../config/constants";
-import { DeepBookClient } from "@mysten/deepbook-v3";
-import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
+} from "../config/constants.js";
+import { deepbook } from "@mysten/deepbook-v3";
+import { SuiGrpcClient } from "@mysten/sui/grpc";
 
 (async () => {
   const env = "mainnet";
 
-  const dbClient = new DeepBookClient({
-    address: "0x0",
-    env: env,
-    client: new SuiClient({
-      url: getFullnodeUrl(env),
+  const client = new SuiGrpcClient({
+    url: "https://sui-mainnet.mystenlabs.com",
+    network: "mainnet",
+  }).$extend(
+    deepbook({
+      address: "0x0",
+      adminCap: adminCapID[env],
+      marginAdminCap: marginAdminCapID[env],
+      marginMaintainerCap: marginMaintainerCapID[env],
     }),
-    adminCap: adminCapID[env],
-    marginAdminCap: marginAdminCapID[env],
-    marginMaintainerCap: marginMaintainerCapID[env],
-  });
+  );
 
   const tx = new Transaction();
 
-  // dbClient.marginMaintainer.updateInterestParams(
+  // client.deepbook.marginMaintainer.updateInterestParams(
   //   "USDC",
   //   tx.object(usdcMarginPoolCapID[env]),
   //   {
@@ -42,7 +43,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
   //   },
   // )(tx);
 
-  dbClient.marginMaintainer.updateMarginPoolConfig(
+  client.deepbook.marginMaintainer.updateMarginPoolConfig(
     "USDC",
     tx.object(usdcMarginPoolCapID[env]),
     {
@@ -56,7 +57,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     },
   )(tx);
 
-  // dbClient.marginMaintainer.updateInterestParams(
+  // client.deepbook.marginMaintainer.updateInterestParams(
   //   "SUI",
   //   tx.object(suiMarginPoolCapID[env]),
   //   {
@@ -67,7 +68,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
   //   },
   // )(tx);
 
-  dbClient.marginMaintainer.updateMarginPoolConfig(
+  client.deepbook.marginMaintainer.updateMarginPoolConfig(
     "SUI",
     tx.object(suiMarginPoolCapID[env]),
     {
@@ -81,7 +82,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     },
   )(tx);
 
-  // dbClient.marginMaintainer.updateInterestParams(
+  // client.deepbook.marginMaintainer.updateInterestParams(
   //   "DEEP",
   //   tx.object(deepMarginPoolCapID[env]),
   //   {
@@ -92,7 +93,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
   //   },
   // )(tx);
 
-  dbClient.marginMaintainer.updateMarginPoolConfig(
+  client.deepbook.marginMaintainer.updateMarginPoolConfig(
     "DEEP",
     tx.object(deepMarginPoolCapID[env]),
     {
@@ -106,7 +107,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
     },
   )(tx);
 
-  // dbClient.marginMaintainer.updateInterestParams(
+  // client.deepbook.marginMaintainer.updateInterestParams(
   //   "WAL",
   //   tx.object(walMarginPoolCapID[env]),
   //   {
@@ -117,7 +118,7 @@ import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
   //   },
   // )(tx);
 
-  dbClient.marginMaintainer.updateMarginPoolConfig(
+  client.deepbook.marginMaintainer.updateMarginPoolConfig(
     "WAL",
     tx.object(walMarginPoolCapID[env]),
     {
