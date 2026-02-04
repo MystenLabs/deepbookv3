@@ -21,9 +21,12 @@ use deepbook_schema::*;
 use diesel::dsl::count_star;
 use diesel::dsl::{max, min};
 use diesel::{ExpressionMethods, QueryDsl};
+use governor::{Quota, RateLimiter};
+use secrecy::{ExposeSecret, Secret};
 use serde::Deserialize;
 use serde_json::Value;
 use std::net::{IpAddr, Ipv4Addr};
+use std::num::NonZeroU32;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{collections::HashMap, net::SocketAddr};
 use sui_pg_db::DbArgs;
@@ -33,9 +36,11 @@ use tokio::sync::OnceCell;
 use tower_http::cors::{AllowMethods, Any, CorsLayer};
 use url::Url;
 
+use crate::admin::routes::admin_routes;
 use crate::metrics::middleware::track_metrics;
 use crate::metrics::RpcMetrics;
 use crate::reader::Reader;
+use crate::writer::Writer;
 use axum::middleware::from_fn_with_state;
 use futures::future::join_all;
 use prometheus::Registry;
@@ -109,15 +114,24 @@ pub const DEPOSITED_ASSETS_PATH: &str = "/deposited_assets/:balance_manager_ids"
 pub const COLLATERAL_EVENTS_PATH: &str = "/collateral_events";
 pub const GET_POINTS_PATH: &str = "/get_points";
 
+type AdminRateLimiter = RateLimiter<
+    governor::state::NotKeyed,
+    governor::state::InMemoryState,
+    governor::clock::DefaultClock,
+>;
+
 #[derive(Clone)]
 pub struct AppState {
     reader: Reader,
+    writer: Writer,
     metrics: Arc<RpcMetrics>,
     rpc_url: Url,
     sui_client: Arc<OnceCell<sui_sdk::SuiClient>>,
     deepbook_package_id: String,
     deep_token_package_id: String,
     deep_treasury_id: String,
+    admin_tokens: Vec<Secret<String>>,
+    admin_auth_limiter: Arc<AdminRateLimiter>,
     margin_package_id: Option<String>,
 }
 
@@ -130,18 +144,51 @@ impl AppState {
         deepbook_package_id: String,
         deep_token_package_id: String,
         deep_treasury_id: String,
+        admin_tokens: Option<String>,
         margin_package_id: Option<String>,
     ) -> Result<Self, anyhow::Error> {
         let metrics = RpcMetrics::new(registry);
-        let reader = Reader::new(database_url, args, metrics.clone(), registry).await?;
+        let reader = Reader::new(
+            database_url.clone(),
+            args.clone(),
+            metrics.clone(),
+            registry,
+        )
+        .await?;
+        let writer = Writer::new(database_url, args).await?;
+
+        let admin_tokens: Vec<Secret<String>> = admin_tokens
+            .map(|s| {
+                s.split(',')
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty())
+                    .map(Secret::new)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if admin_tokens.is_empty() {
+            tracing::warn!(
+                "No admin tokens configured (ADMIN_TOKENS env var). Admin endpoints will reject all requests."
+            );
+        }
+
+        // Rate limiter: 10 attempts per minute for admin auth failures
+        let admin_auth_limiter = Arc::new(RateLimiter::direct(Quota::per_minute(
+            NonZeroU32::new(10).unwrap(),
+        )));
+
         Ok(Self {
             reader,
+            writer,
             metrics,
             rpc_url,
             sui_client: Arc::new(OnceCell::new()),
             deepbook_package_id,
             deep_token_package_id,
             deep_treasury_id,
+            admin_tokens,
+            admin_auth_limiter,
             margin_package_id,
         })
     }
@@ -158,9 +205,23 @@ impl AppState {
             .await
             .map_err(DeepBookError::from)
     }
-
     pub(crate) fn metrics(&self) -> &RpcMetrics {
         &self.metrics
+    }
+
+    pub fn writer(&self) -> &Writer {
+        &self.writer
+    }
+
+    pub fn is_valid_admin_token(&self, token: &str) -> bool {
+        use subtle::ConstantTimeEq;
+        self.admin_tokens
+            .iter()
+            .any(|t| t.expose_secret().as_bytes().ct_eq(token.as_bytes()).into())
+    }
+
+    pub fn check_admin_rate_limit(&self) -> bool {
+        self.admin_auth_limiter.check().is_ok()
     }
 }
 
@@ -194,6 +255,7 @@ pub async fn run_server(
     deep_treasury_id: String,
     margin_poll_interval_secs: u64,
     margin_package_id: Option<String>,
+    admin_tokens: Option<String>,
 ) -> Result<(), anyhow::Error> {
     let registry = Registry::new_custom(Some("deepbook_api".into()), None)
         .expect("Failed to create Prometheus registry.");
@@ -208,6 +270,7 @@ pub async fn run_server(
         deepbook_package_id,
         deep_token_package_id,
         deep_treasury_id,
+        admin_tokens,
         margin_package_id.clone(),
     )
     .await?;
@@ -266,7 +329,13 @@ pub async fn run_server(
 }
 pub(crate) fn make_router(state: Arc<AppState>) -> Router {
     let cors = CorsLayer::new()
-        .allow_methods(AllowMethods::list(vec![Method::GET, Method::OPTIONS]))
+        .allow_methods(AllowMethods::list(vec![
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+        ]))
         .allow_headers(Any)
         .allow_origin(Any);
 
@@ -341,8 +410,11 @@ pub(crate) fn make_router(state: Arc<AppState>) -> Router {
         .route(STATUS_PATH, get(status))
         .with_state(state.clone());
 
+    let admin = admin_routes(state.clone()).with_state(state.clone());
+
     db_routes
         .merge(rpc_routes)
+        .nest("/admin", admin)
         .layer(cors)
         .layer(from_fn_with_state(state, track_metrics))
 }
