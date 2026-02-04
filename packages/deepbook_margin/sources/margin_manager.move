@@ -3,40 +3,40 @@
 
 module deepbook_margin::margin_manager;
 
-use deepbook::balance_manager::{
-    Self,
-    BalanceManager,
-    TradeCap,
-    DepositCap,
-    WithdrawCap,
-    TradeProof,
-    DeepBookPoolReferral,
-    DeepBookReferral
+use deepbook::{
+    balance_manager::{
+        Self,
+        BalanceManager,
+        TradeCap,
+        DepositCap,
+        WithdrawCap,
+        TradeProof,
+        DeepBookPoolReferral,
+        DeepBookReferral
+    },
+    constants,
+    math,
+    order_info::OrderInfo,
+    pool::Pool,
+    registry::Registry
 };
-use deepbook::constants;
-use deepbook::math;
-use deepbook::order_info::OrderInfo;
-use deepbook::pool::Pool;
-use deepbook::registry::Registry;
-use deepbook_margin::margin_constants;
-use deepbook_margin::margin_pool::MarginPool;
-use deepbook_margin::margin_registry::MarginRegistry;
-use deepbook_margin::oracle::{
-    calculate_target_currency,
-    calculate_target_currency_unsafe,
-    get_pyth_price,
-    get_pyth_price_unsafe,
-    calculate_price,
-    calculate_price_unsafe
+use deepbook_margin::{
+    margin_constants,
+    margin_pool::MarginPool,
+    margin_registry::MarginRegistry,
+    oracle::{
+        calculate_target_currency,
+        calculate_target_currency_unsafe,
+        get_pyth_price,
+        get_pyth_price_unsafe,
+        calculate_price,
+        calculate_price_unsafe
+    },
+    tpsl::{Self, TakeProfitStopLoss, PendingOrder, Condition, ConditionalOrder}
 };
-use deepbook_margin::tpsl::{Self, TakeProfitStopLoss, PendingOrder, Condition, ConditionalOrder};
 use pyth::price_info::PriceInfoObject;
-use std::string::String;
-use std::type_name::{Self, TypeName};
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::event;
-use sui::vec_map::{Self, VecMap};
+use std::{string::String, type_name::{Self, TypeName}};
+use sui::{clock::Clock, coin::Coin, event, vec_map::{Self, VecMap}};
 use token::deep::DEEP;
 
 // === Errors ===
@@ -1056,109 +1056,6 @@ public fun manager_state<BaseAsset, QuoteAsset>(
     )
 }
 
-/// Returns comprehensive state information for multiple margin managers.
-/// Same as manager_state but takes a vector and returns vectors of all values.
-/// All managers must be of the same type.
-public fun manager_states<BaseAsset, QuoteAsset>(
-    margin_managers: &vector<MarginManager<BaseAsset, QuoteAsset>>,
-    registry: &MarginRegistry,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    base_margin_pool: &MarginPool<BaseAsset>,
-    quote_margin_pool: &MarginPool<QuoteAsset>,
-    clock: &Clock,
-): (
-    vector<ID>,
-    vector<ID>,
-    vector<u64>,
-    vector<u64>,
-    vector<u64>,
-    vector<u64>,
-    vector<u64>,
-    vector<u64>,
-    vector<u8>,
-    vector<u64>,
-    vector<u8>,
-    vector<u64>,
-    vector<u64>,
-    vector<u64>,
-) {
-    let mut manager_ids = vector[];
-    let mut deepbook_pool_ids = vector[];
-    let mut risk_ratios = vector[];
-    let mut base_assets = vector[];
-    let mut quote_assets = vector[];
-    let mut base_debts = vector[];
-    let mut quote_debts = vector[];
-    let mut base_pyth_prices = vector[];
-    let mut base_pyth_decimals_vec = vector[];
-    let mut quote_pyth_prices = vector[];
-    let mut quote_pyth_decimals_vec = vector[];
-    let mut current_prices = vector[];
-    let mut lowest_trigger_above_prices = vector[];
-    let mut highest_trigger_below_prices = vector[];
-
-    margin_managers.do_ref!(|manager| {
-        let (
-            manager_id,
-            deepbook_pool_id,
-            risk_ratio,
-            base_asset,
-            quote_asset,
-            base_debt,
-            quote_debt,
-            base_pyth_price,
-            base_pyth_decimals,
-            quote_pyth_price,
-            quote_pyth_decimals,
-            current_price,
-            lowest_trigger_above_price,
-            highest_trigger_below_price,
-        ) = manager.manager_state(
-            registry,
-            base_oracle,
-            quote_oracle,
-            pool,
-            base_margin_pool,
-            quote_margin_pool,
-            clock,
-        );
-
-        manager_ids.push_back(manager_id);
-        deepbook_pool_ids.push_back(deepbook_pool_id);
-        risk_ratios.push_back(risk_ratio);
-        base_assets.push_back(base_asset);
-        quote_assets.push_back(quote_asset);
-        base_debts.push_back(base_debt);
-        quote_debts.push_back(quote_debt);
-        base_pyth_prices.push_back(base_pyth_price);
-        base_pyth_decimals_vec.push_back(base_pyth_decimals);
-        quote_pyth_prices.push_back(quote_pyth_price);
-        quote_pyth_decimals_vec.push_back(quote_pyth_decimals);
-        current_prices.push_back(current_price);
-        lowest_trigger_above_prices.push_back(lowest_trigger_above_price);
-        highest_trigger_below_prices.push_back(highest_trigger_below_price);
-    });
-
-    (
-        manager_ids,
-        deepbook_pool_ids,
-        risk_ratios,
-        base_assets,
-        quote_assets,
-        base_debts,
-        quote_debts,
-        base_pyth_prices,
-        base_pyth_decimals_vec,
-        quote_pyth_prices,
-        quote_pyth_decimals_vec,
-        current_prices,
-        lowest_trigger_above_prices,
-        highest_trigger_below_prices,
-    )
-}
-
 public fun id<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, QuoteAsset>): ID {
     self.id.to_inner()
 }
@@ -1742,6 +1639,35 @@ public fun set_referral<BaseAsset, QuoteAsset>(
 public fun unset_referral<BaseAsset, QuoteAsset>(
     _self: &mut MarginManager<BaseAsset, QuoteAsset>,
     _ctx: &mut TxContext,
+) {
+    abort
+}
+
+#[deprecated]
+public fun manager_states<BaseAsset, QuoteAsset>(
+    _margin_managers: &vector<MarginManager<BaseAsset, QuoteAsset>>,
+    _registry: &MarginRegistry,
+    _base_oracle: &PriceInfoObject,
+    _quote_oracle: &PriceInfoObject,
+    _pool: &Pool<BaseAsset, QuoteAsset>,
+    _base_margin_pool: &MarginPool<BaseAsset>,
+    _quote_margin_pool: &MarginPool<QuoteAsset>,
+    _clock: &Clock,
+): (
+    vector<ID>,
+    vector<ID>,
+    vector<u64>,
+    vector<u64>,
+    vector<u64>,
+    vector<u64>,
+    vector<u64>,
+    vector<u64>,
+    vector<u8>,
+    vector<u64>,
+    vector<u8>,
+    vector<u64>,
+    vector<u64>,
+    vector<u64>,
 ) {
     abort (0)
 }
