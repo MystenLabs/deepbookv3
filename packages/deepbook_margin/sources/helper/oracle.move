@@ -355,8 +355,16 @@ fun price_config_unsafe<T>(
     );
     let type_config = registry.get_config_for_type<T>();
 
-    let target_decimals = if (is_usd_price_config) { 9 } else { type_config.decimals };
-    let base_decimals = if (is_usd_price_config) { type_config.decimals } else { 9 };
+    let target_decimals = if (is_usd_price_config) {
+        9
+    } else {
+        type_config.decimals
+    };
+    let base_decimals = if (is_usd_price_config) {
+        type_config.decimals
+    } else {
+        9
+    };
 
     ConversionConfig {
         target_decimals,
