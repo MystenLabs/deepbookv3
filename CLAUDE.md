@@ -1,19 +1,32 @@
-## Contextual Skills
+# DeepBook V3
 
-When working on **Move smart contracts** (files in `packages/`), read `.claude/skills/move.md` for:
-- Sui Move fundamentals and object ownership model
-- Code quality checklist and best practices
-- Modern Move 2024 syntax patterns
-- Testing conventions
+DeepBook is a decentralized order book on the Sui blockchain.
 
-**Important:** When you discover new Move insights (patterns, gotchas, best practices), update `.claude/skills/move.md` to capture these learnings for future sessions.
+## Project Structure
 
----
+- `packages/` - Sui Move smart contracts
+- `crates/` - Rust indexer and server
+- `scripts/` - TypeScript transaction scripts
 
-When working on **indexer changes** (files in `crates/server/`, `crates/schema/`, `crates/indexer/`), read `.claude/skills/indexer.md` for:
-- Database query patterns and performance optimization
-- Recommended indices for slow queries
-- Diesel migration best practices
-- Common issues (504 timeouts, TransactionExpiration errors)
+## Quick Commands
 
-**Important:** When you discover new indexer insights (performance issues, query patterns, debugging tips, common errors), update `.claude/skills/indexer.md` to capture these learnings for future sessions.
+### Move
+- `sui move build` - Build Move packages
+- `sui move test` - Run Move tests
+- `bunx prettier-move -c *.move --write` - Format Move code
+
+### Indexer
+- `cargo build -p deepbook-server` - Build indexer
+- `cargo test -p deepbook-server` - Run indexer tests
+
+## Skills & Rules
+
+Claude automatically loads contextual knowledge:
+- **Move files** (`packages/**/*.move`) - Code quality rules auto-load
+- **Indexer files** (`crates/server/**`, `crates/schema/**`, `crates/indexer/**`) - Indexer rules auto-load
+
+Skills in `.claude/skills/` contain deeper domain knowledge that Claude can reference when needed.
+
+**Important:** Update skills when discovering new insights:
+- `.claude/skills/move/SKILL.md` - Move patterns and gotchas
+- `.claude/skills/indexer/SKILL.md` - Database optimization and debugging

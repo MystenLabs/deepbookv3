@@ -1,6 +1,8 @@
 # Indexer Skill
 
-Load this skill when working on indexer-related changes (crates/server, crates/schema, crates/indexer).
+DeepBook indexer development knowledge including database optimization, query patterns, and common issues.
+
+**Update this skill** when you discover new indexer insights, performance issues, or debugging tips.
 
 ## Codebase Structure
 
