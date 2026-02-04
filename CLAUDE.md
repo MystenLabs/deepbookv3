@@ -1,3 +1,15 @@
+## Contextual Skills
+
+When working on **indexer changes** (files in `crates/server/`, `crates/schema/`, `crates/indexer/`), read `.claude/skills/indexer.md` for indexer-specific knowledge including:
+- Database query patterns and performance optimization
+- Recommended indices for slow queries
+- Diesel migration best practices
+- Common issues (504 timeouts, TransactionExpiration errors)
+
+**Important:** When you discover new indexer insights (performance issues, query patterns, debugging tips, common errors), update `.claude/skills/indexer.md` to capture these learnings for future sessions.
+
+---
+
 Sui Move instructions (.move files):
 
 - Only put comments to document functions, struct fields, and items that need clarification. DO NOT PUT EXTRANEOUS COMMENTS THROUGHOUT 
