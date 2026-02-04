@@ -19,14 +19,10 @@ DeepBook is a decentralized order book on the Sui blockchain.
 - `cargo build -p deepbook-server` - Build indexer
 - `cargo test -p deepbook-server` - Run indexer tests
 
-## Skills & Rules
+## Auto-Loaded Rules
 
-Claude automatically loads contextual knowledge:
-- **Move files** (`packages/**/*.move`) - Code quality rules auto-load
-- **Indexer files** (`crates/server/**`, `crates/schema/**`, `crates/indexer/**`) - Indexer rules auto-load
+Claude automatically loads contextual knowledge based on files being edited:
+- **Move files** (`packages/**/*.move`) → `.claude/rules/move.md`
+- **Indexer files** (`crates/server/**`, `crates/schema/**`, `crates/indexer/**`) → `.claude/rules/indexer.md`
 
-Skills in `.claude/skills/` contain deeper domain knowledge that Claude can reference when needed.
-
-**Important:** Update skills when discovering new insights:
-- `.claude/skills/move/SKILL.md` - Move patterns and gotchas
-- `.claude/skills/indexer/SKILL.md` - Database optimization and debugging
+**Important:** Update rule files when discovering new insights during sessions.
