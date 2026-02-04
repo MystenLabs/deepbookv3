@@ -244,16 +244,6 @@ public(package) fun calculate_usd_price_unsafe<T>(
     config.calculate_usd_currency_amount(amount)
 }
 
-#[deprecated(note = b"Use new_coin_type_data_from_currency instead")]
-public fun new_coin_type_data<T>(
-    _coin_metadata: &CoinMetadata<T>,
-    _price_feed_id: vector<u8>,
-    _max_conf_bps: u64,
-    _max_ewma_difference_bps: u64,
-): CoinTypeData {
-    abort 1337
-}
-
 public(package) fun calculate_price_unsafe<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     base_price_info_object: &PriceInfoObject,

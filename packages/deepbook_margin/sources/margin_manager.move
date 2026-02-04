@@ -11,8 +11,7 @@ use deepbook::{
         DepositCap,
         WithdrawCap,
         TradeProof,
-        DeepBookPoolReferral,
-        DeepBookReferral
+        DeepBookPoolReferral
     },
     constants,
     math,
@@ -1625,49 +1624,4 @@ fun balance_manager_unsafe_mut<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
 ): &mut BalanceManager {
     &mut self.balance_manager
-}
-
-public fun set_referral<BaseAsset, QuoteAsset>(
-    _self: &mut MarginManager<BaseAsset, QuoteAsset>,
-    _referral_cap: &DeepBookReferral,
-    _ctx: &mut TxContext,
-) {
-    abort
-}
-
-#[deprecated(note = b"This function is deprecated, use `unset_margin_manager_referral` instead.")]
-public fun unset_referral<BaseAsset, QuoteAsset>(
-    _self: &mut MarginManager<BaseAsset, QuoteAsset>,
-    _ctx: &mut TxContext,
-) {
-    abort
-}
-
-#[deprecated]
-public fun manager_states<BaseAsset, QuoteAsset>(
-    _margin_managers: &vector<MarginManager<BaseAsset, QuoteAsset>>,
-    _registry: &MarginRegistry,
-    _base_oracle: &PriceInfoObject,
-    _quote_oracle: &PriceInfoObject,
-    _pool: &Pool<BaseAsset, QuoteAsset>,
-    _base_margin_pool: &MarginPool<BaseAsset>,
-    _quote_margin_pool: &MarginPool<QuoteAsset>,
-    _clock: &Clock,
-): (
-    vector<ID>,
-    vector<ID>,
-    vector<u64>,
-    vector<u64>,
-    vector<u64>,
-    vector<u64>,
-    vector<u64>,
-    vector<u64>,
-    vector<u8>,
-    vector<u64>,
-    vector<u8>,
-    vector<u64>,
-    vector<u64>,
-    vector<u64>,
-) {
-    abort (0)
 }
