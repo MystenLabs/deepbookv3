@@ -3,40 +3,40 @@
 
 module deepbook_margin::margin_manager;
 
-use deepbook::{
-    balance_manager::{
-        Self,
-        BalanceManager,
-        TradeCap,
-        DepositCap,
-        WithdrawCap,
-        TradeProof,
-        DeepBookPoolReferral,
-        DeepBookReferral
-    },
-    constants,
-    math,
-    order_info::OrderInfo,
-    pool::Pool,
-    registry::Registry
+use deepbook::balance_manager::{
+    Self,
+    BalanceManager,
+    TradeCap,
+    DepositCap,
+    WithdrawCap,
+    TradeProof,
+    DeepBookPoolReferral,
+    DeepBookReferral
 };
-use deepbook_margin::{
-    margin_constants,
-    margin_pool::MarginPool,
-    margin_registry::MarginRegistry,
-    oracle::{
-        calculate_target_currency,
-        calculate_target_currency_unsafe,
-        get_pyth_price,
-        get_pyth_price_unsafe,
-        calculate_price,
-        calculate_price_unsafe
-    },
-    tpsl::{Self, TakeProfitStopLoss, PendingOrder, Condition, ConditionalOrder}
+use deepbook::constants;
+use deepbook::math;
+use deepbook::order_info::OrderInfo;
+use deepbook::pool::Pool;
+use deepbook::registry::Registry;
+use deepbook_margin::margin_constants;
+use deepbook_margin::margin_pool::MarginPool;
+use deepbook_margin::margin_registry::MarginRegistry;
+use deepbook_margin::oracle::{
+    calculate_target_currency,
+    calculate_target_currency_unsafe,
+    get_pyth_price,
+    get_pyth_price_unsafe,
+    calculate_price,
+    calculate_price_unsafe
 };
+use deepbook_margin::tpsl::{Self, TakeProfitStopLoss, PendingOrder, Condition, ConditionalOrder};
 use pyth::price_info::PriceInfoObject;
-use std::{string::String, type_name::{Self, TypeName}};
-use sui::{clock::Clock, coin::Coin, event, vec_map::{Self, VecMap}};
+use std::string::String;
+use std::type_name::{Self, TypeName};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::event;
+use sui::vec_map::{Self, VecMap};
 use token::deep::DEEP;
 
 // === Errors ===
@@ -1255,12 +1255,6 @@ public fun highest_trigger_below_price<BaseAsset, QuoteAsset>(
     } else {
         trigger_below[0].condition().trigger_price()
     }
-}
-
-/// Returns the balance of a specific asset type in the margin manager.
-/// Asset can be BaseAsset, QuoteAsset, or DEEP.
-public fun balance<BaseAsset, QuoteAsset, Asset>(self: &MarginManager<BaseAsset, QuoteAsset>): u64 {
-    self.balance_manager.balance<Asset>()
 }
 
 // === Public-Package Functions ===
