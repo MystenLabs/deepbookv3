@@ -8,7 +8,7 @@ use deepbook::{constants, math};
 use deepbook_margin::{margin_constants, margin_registry::MarginRegistry};
 use pyth::{price_info::PriceInfoObject, pyth};
 use std::type_name::{Self, TypeName};
-use sui::{clock::Clock, coin::CoinMetadata, coin_registry::Currency, vec_map::{Self, VecMap}};
+use sui::{clock::Clock, coin_registry::Currency, vec_map::{Self, VecMap}};
 
 use fun get_config_for_type as MarginRegistry.get_config_for_type;
 
