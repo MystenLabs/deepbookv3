@@ -59,6 +59,7 @@ use deepbook_schema::MIGRATIONS;
 use prometheus::Registry;
 use std::net::SocketAddr;
 use sui_indexer_alt_framework::ingestion::ingestion_client::IngestionClientArgs;
+use sui_indexer_alt_framework::ingestion::streaming_client::StreamingClientArgs;
 use sui_indexer_alt_framework::ingestion::{ClientArgs, IngestionConfig};
 use sui_indexer_alt_framework::{Indexer, IndexerArgs};
 use sui_indexer_alt_metrics::db::DbConnectionStatsCollector;
@@ -82,6 +83,8 @@ struct Args {
     db_args: DbArgs,
     #[command(flatten)]
     indexer_args: IndexerArgs,
+    #[command(flatten)]
+    streaming_args: StreamingClientArgs,
     #[clap(env, long, default_value = "0.0.0.0:9184")]
     metrics_address: SocketAddr,
     #[clap(
@@ -107,6 +110,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let Args {
         db_args,
         indexer_args,
+        streaming_args,
         metrics_address,
         database_url,
         env,
@@ -143,7 +147,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 rpc_username: None,
                 rpc_password: None,
             },
-            streaming: Default::default(),
+            streaming: streaming_args,
         },
         IngestionConfig::default(),
         None,
