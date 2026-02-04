@@ -11,7 +11,8 @@ use deepbook::{
         DepositCap,
         WithdrawCap,
         TradeProof,
-        DeepBookPoolReferral
+        DeepBookPoolReferral,
+        DeepBookReferral
     },
     constants,
     math,
@@ -1256,6 +1257,12 @@ public fun highest_trigger_below_price<BaseAsset, QuoteAsset>(
     }
 }
 
+/// Returns the balance of a specific asset type in the margin manager.
+/// Asset can be BaseAsset, QuoteAsset, or DEEP.
+public fun balance<BaseAsset, QuoteAsset, Asset>(self: &MarginManager<BaseAsset, QuoteAsset>): u64 {
+    self.balance_manager.balance<Asset>()
+}
+
 // === Public-Package Functions ===
 /// Unwraps balance manager for trading in deepbook.
 public(package) fun balance_manager_trading_mut<BaseAsset, QuoteAsset>(
@@ -1727,4 +1734,20 @@ fun balance_manager_unsafe_mut<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
 ): &mut BalanceManager {
     &mut self.balance_manager
+}
+
+public fun set_referral<BaseAsset, QuoteAsset>(
+    _self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    _referral_cap: &DeepBookReferral,
+    _ctx: &mut TxContext,
+) {
+    abort
+}
+
+#[deprecated(note = b"This function is deprecated, use `unset_margin_manager_referral` instead.")]
+public fun unset_referral<BaseAsset, QuoteAsset>(
+    _self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    _ctx: &mut TxContext,
+) {
+    abort (0)
 }

@@ -4,11 +4,17 @@
 /// Oracle module for margin trading.
 module deepbook_margin::oracle;
 
-use deepbook::{constants, math};
-use deepbook_margin::{margin_constants, margin_registry::MarginRegistry};
-use pyth::{price_info::PriceInfoObject, pyth};
+use deepbook::constants;
+use deepbook::math;
+use deepbook_margin::margin_constants;
+use deepbook_margin::margin_registry::MarginRegistry;
+use pyth::price_info::PriceInfoObject;
+use pyth::pyth;
 use std::type_name::{Self, TypeName};
-use sui::{clock::Clock, coin_registry::Currency, vec_map::{Self, VecMap}};
+use sui::clock::Clock;
+use sui::coin::CoinMetadata;
+use sui::coin_registry::Currency;
+use sui::vec_map::{Self, VecMap};
 
 use fun get_config_for_type as MarginRegistry.get_config_for_type;
 
@@ -244,6 +250,16 @@ public(package) fun calculate_usd_price_unsafe<T>(
     config.calculate_usd_currency_amount(amount)
 }
 
+#[deprecated(note = b"Use new_coin_type_data_from_currency instead")]
+public fun new_coin_type_data<T>(
+    _coin_metadata: &CoinMetadata<T>,
+    _price_feed_id: vector<u8>,
+    _max_conf_bps: u64,
+    _max_ewma_difference_bps: u64,
+): CoinTypeData {
+    abort 1337
+}
+
 public(package) fun calculate_price_unsafe<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     base_price_info_object: &PriceInfoObject,
@@ -355,8 +371,16 @@ fun price_config_unsafe<T>(
     );
     let type_config = registry.get_config_for_type<T>();
 
-    let target_decimals = if (is_usd_price_config) { 9 } else { type_config.decimals };
-    let base_decimals = if (is_usd_price_config) { type_config.decimals } else { 9 };
+    let target_decimals = if (is_usd_price_config) {
+        9
+    } else {
+        type_config.decimals
+    };
+    let base_decimals = if (is_usd_price_config) {
+        type_config.decimals
+    } else {
+        9
+    };
 
     ConversionConfig {
         target_decimals,

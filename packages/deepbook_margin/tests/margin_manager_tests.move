@@ -3648,3 +3648,91 @@ fun manager_states_returns_accurate_values() {
     return_shared_2!(mm2, mm3);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
+
+#[test]
+/// Tests that balance function returns correct values for different asset types.
+fun balance_returns_correct_values() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _btc_pool_id,
+        _usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    // Create margin manager
+    scenario.next_tx(test_constants::user1());
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+    return_shared(registry);
+
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    // Deposit different asset types
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    // Deposit BTC (base asset)
+    let btc_amount = 100_000_000; // 1 BTC (8 decimals)
+    let btc_deposit = mint_coin<BTC>(btc_amount, scenario.ctx());
+    mm.deposit<BTC, USDC, BTC>(
+        &registry,
+        &btc_price,
+        &usdc_price,
+        btc_deposit,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Deposit USDC (quote asset)
+    let usdc_amount = 50_000_000_000; // 50k USDC (6 decimals)
+    let usdc_deposit = mint_coin<USDC>(usdc_amount, scenario.ctx());
+    mm.deposit<BTC, USDC, USDC>(
+        &registry,
+        &btc_price,
+        &usdc_price,
+        usdc_deposit,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Deposit DEEP
+    let deep_amount = 1_000_000_000_000; // 1000 DEEP (9 decimals)
+    let deep_deposit = mint_coin<DEEP>(deep_amount, scenario.ctx());
+    mm.deposit<BTC, USDC, DEEP>(
+        &registry,
+        &btc_price,
+        &usdc_price,
+        deep_deposit,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Verify balances using the generic balance function
+    assert!(mm.balance<BTC, USDC, BTC>() == btc_amount);
+    assert!(mm.balance<BTC, USDC, USDC>() == usdc_amount);
+    assert!(mm.balance<BTC, USDC, DEEP>() == deep_amount);
+
+    // Verify DEEP balance matches the dedicated deep_balance function
+    assert!(mm.balance<BTC, USDC, DEEP>() == mm.deep_balance());
+
+    // Cleanup
+    destroy_2!(btc_price, usdc_price);
+    return_shared(mm);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
