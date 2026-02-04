@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS idx_order_fills_pool_id_checkpoint_timestamp_ms;
+DROP INDEX IF EXISTS idx_order_fills_pool_id_checkpoint_timestamp_ms_desc;
