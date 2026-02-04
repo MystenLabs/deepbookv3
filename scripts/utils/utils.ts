@@ -116,6 +116,10 @@ export const prepareMultisigTx = async (
 	// Prevent any possible RGP changes across epoch change, which would invalidate the transaction.
 	tx.setGasPrice(1_000);
 
+	// Set epoch-based expiration to avoid ValidDuring which older tools don't support.
+	const { epoch } = await client.getLatestSuiSystemState();
+	tx.setExpiration({ Epoch: Number(epoch) + 5 });
+
 	// set the sender to be the admin address from config.
 	tx.setSender(adminAddress as string);
 
