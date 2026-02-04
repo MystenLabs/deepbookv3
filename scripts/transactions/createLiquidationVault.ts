@@ -12,7 +12,7 @@ import { adminCapOwner, liquidationAdminCapID } from "../config/constants.js";
   const tx = new Transaction();
 
   const client = new SuiGrpcClient({
-    url: "https://sui-mainnet.mystenlabs.com",
+    baseUrl: "https://sui-mainnet.mystenlabs.com",
     network: "mainnet",
   }).$extend(
     deepbook({
@@ -21,7 +21,7 @@ import { adminCapOwner, liquidationAdminCapID } from "../config/constants.js";
   );
 
   client.deepbook.marginLiquidations.createLiquidationVault(
-    liquidationAdminCapID[env]
+    liquidationAdminCapID[env],
   )(tx);
   let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
