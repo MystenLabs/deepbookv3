@@ -488,8 +488,8 @@ impl Reader {
             "SELECT EXTRACT(EPOCH FROM bucket_time)::bigint * 1000 as timestamp_ms, \
              open::float8, high::float8, low::float8, close::float8, base_volume::float8 \
              FROM get_ohclv($1, $2, \
-                CASE WHEN $3 IS NULL THEN NULL ELSE to_timestamp($3) END, \
-                CASE WHEN $4 IS NULL THEN NULL ELSE to_timestamp($4) END, \
+                CASE WHEN $3 IS NULL THEN NULL ELSE to_timestamp($3)::timestamp END, \
+                CASE WHEN $4 IS NULL THEN NULL ELSE to_timestamp($4)::timestamp END, \
                 $5)",
         )
         .bind::<Text, _>(&interval)
