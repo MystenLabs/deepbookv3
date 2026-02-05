@@ -18,6 +18,10 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
       type: "0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::deep::DEEP",
       scalar: 1_000_000,
     },
+    USDC: {
+      type: "0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC",
+      scalar: 1_000_000,
+    },
   };
 
   // admin address
@@ -26,9 +30,9 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
 
   // Update receiving address as needed
   const recevingAddress =
-    "0x126bdaa2ef314de60c8214c82a2248e4cc21875330a5c32977eb303be585cab8";
-  const coinType = "SUI"; // "SUI" or "DEEP"
-  const amount = 10_000;
+    "0x3298a2fdc3949db7c066fbaff92671b7ffc519e473cd89956f0c0d27e5a6326d";
+  const coinType = "USDC"; // "SUI" or "DEEP" or "USDC"
+  const amount = 5;
 
   const totalAmount = amount * config[coinType].scalar;
   const coin = coinWithBalance({
