@@ -109,3 +109,31 @@ Fix: Set explicit epoch-based expiration before building transaction:
 const { epoch } = await client.getLatestSuiSystemState();
 tx.setExpiration({ Epoch: Number(epoch) + 5 });
 ```
+
+### PostgreSQL Function Type Mismatch
+PostgreSQL function matching requires **exact parameter types**. `TIMESTAMP` and `TIMESTAMP WITH TIME ZONE` are different types.
+
+`to_timestamp()` returns `TIMESTAMPTZ`, so if a function expects `TIMESTAMP`, you must cast:
+```sql
+-- Wrong: function get_ohclv(text, text, timestamptz, ...) does not exist
+to_timestamp($3)
+
+-- Correct: cast to match function signature
+to_timestamp($3)::timestamp
+```
+
+### Default Limit of 1
+The `ParameterUtil` trait (`server.rs:1893-1897`) defaults to `limit=1` when not provided. This affects 24 endpoints:
+- `order_updates`, `trades`, `margin_manager_created`, `loan_borrowed`, `loan_repaid`, `liquidation`, `asset_supplied`, `asset_withdrawn`, `deepbook_pool_updated`, `interest_params_updated`, `margin_pool_config_updated`, `maintainer_cap_updated`, `maintainer_fees_withdrawn`, `protocol_fees_withdrawn`, `supplier_cap_minted`, `supply_referral_minted`, `pause_cap_updated`, `protocol_fees_increased`, `referral_fees_claimed`, `referral_fee_events`, `deepbook_pool_registered`, `deepbook_pool_updated_registry`, `deepbook_pool_config_updated`, `collateral_events`
+
+### No Pagination on /margin_manager_states
+Returns ALL rows without limit. Can cause timeouts/memory issues with large tables.
+
+## Connection Pools
+
+The server creates **3 separate connection pools**:
+1. **Reader** (`server.rs:151`) - API read queries
+2. **Writer** (`server.rs:158`) - Admin writes
+3. **margin_db** (`server.rs:286`) - Margin poller
+
+Each pool has its own connections. Monitor total connections if experiencing pool exhaustion.
