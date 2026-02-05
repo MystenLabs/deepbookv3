@@ -10,6 +10,7 @@ on:
         options:
           - Create Pool
           - Upgrade Protocol
+          - Upgrade Margin Protocol
           - Enable Version
           - Disable Version
           - Enable Margin Version
@@ -89,6 +90,17 @@ jobs:
           RPC_URL: ${{ inputs.rpc }}
         run: |
           cd scripts && pnpm install && pnpm tsx transactions/mainPackageUpgrade.ts
+
+      - name: Upgrade Margin Protocol
+        if: ${{ inputs.transaction_type == 'Upgrade Margin Protocol' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/marginPackageUpgrade.ts
 
       - name: Create Pool
         if: ${{ inputs.transaction_type == 'Create Pool' }}
