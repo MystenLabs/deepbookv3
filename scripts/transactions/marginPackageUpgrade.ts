@@ -26,7 +26,11 @@ const marginPackageUpgrade = async () => {
       stdio: "pipe",
     }).toString();
 
-    writeFileSync(txFilePath, output);
+    // Extract only the base64 transaction bytes (last non-empty line)
+    const lines = output.trim().split("\n");
+    const txBytes = lines[lines.length - 1].trim();
+
+    writeFileSync(txFilePath, txBytes);
     console.log(
       "Margin upgrade transaction successfully created and saved to tx-data.txt",
     );
