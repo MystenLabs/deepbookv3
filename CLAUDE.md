@@ -24,6 +24,7 @@ DeepBook is a decentralized order book on the Sui blockchain.
 Claude automatically loads contextual knowledge based on files being edited:
 - **Move files** (`packages/**/*.move`) → `.claude/rules/move.md`
 - **Indexer files** (`crates/server/**`, `crates/schema/**`, `crates/indexer/**`) → `.claude/rules/indexer.md`
+- **Scripts** (`scripts/**`) → `.claude/rules/scripts.md`
 
 **Important:** Update rule files when discovering new insights during sessions, including:
 - Bug fixes and their root causes
