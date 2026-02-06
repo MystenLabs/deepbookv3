@@ -1,4 +1,5 @@
 use crate::models::deepbook::order_info::OrderFilled;
+use bigdecimal::BigDecimal;
 use deepbook_schema::models::OrderFill;
 
 define_handler! {
@@ -17,8 +18,8 @@ define_handler! {
         pool_id: event.pool_id.to_string(),
         maker_order_id: event.maker_order_id.to_string(),
         taker_order_id: event.taker_order_id.to_string(),
-        maker_client_order_id: event.maker_client_order_id as i64,
-        taker_client_order_id: event.taker_client_order_id as i64,
+        maker_client_order_id: BigDecimal::from(event.maker_client_order_id),
+        taker_client_order_id: BigDecimal::from(event.taker_client_order_id),
         price: event.price as i64,
         taker_is_bid: event.taker_is_bid,
         taker_fee: event.taker_fee as i64,

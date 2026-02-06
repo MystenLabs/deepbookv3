@@ -4,6 +4,7 @@ use crate::models::deepbook::order_info::{OrderExpired, OrderPlaced};
 use crate::traits::MoveStruct;
 use crate::DeepbookEnv;
 use async_trait::async_trait;
+use bigdecimal::BigDecimal;
 use deepbook_schema::models::{OrderUpdate, OrderUpdateStatus};
 use deepbook_schema::schema::order_updates;
 use diesel_async::RunQueryDsl;
@@ -106,7 +107,7 @@ fn process_order_placed(
         status: OrderUpdateStatus::Placed,
         pool_id: order_placed.pool_id.to_string(),
         order_id: order_placed.order_id.to_string(),
-        client_order_id: order_placed.client_order_id as i64,
+        client_order_id: BigDecimal::from(order_placed.client_order_id),
         price: order_placed.price as i64,
         is_bid: order_placed.is_bid,
         onchain_timestamp: order_placed.timestamp as i64,
@@ -134,7 +135,7 @@ fn process_order_modified(
         status: OrderUpdateStatus::Modified,
         pool_id: order_modified.pool_id.to_string(),
         order_id: order_modified.order_id.to_string(),
-        client_order_id: order_modified.client_order_id as i64,
+        client_order_id: BigDecimal::from(order_modified.client_order_id),
         price: order_modified.price as i64,
         is_bid: order_modified.is_bid,
         onchain_timestamp: order_modified.timestamp as i64,
@@ -162,7 +163,7 @@ fn process_order_canceled(
         status: OrderUpdateStatus::Canceled,
         pool_id: order_canceled.pool_id.to_string(),
         order_id: order_canceled.order_id.to_string(),
-        client_order_id: order_canceled.client_order_id as i64,
+        client_order_id: BigDecimal::from(order_canceled.client_order_id),
         price: order_canceled.price as i64,
         is_bid: order_canceled.is_bid,
         onchain_timestamp: order_canceled.timestamp as i64,
@@ -191,7 +192,7 @@ fn process_order_expired(
         status: OrderUpdateStatus::Expired,
         pool_id: order_expired.pool_id.to_string(),
         order_id: order_expired.order_id.to_string(),
-        client_order_id: order_expired.client_order_id as i64,
+        client_order_id: BigDecimal::from(order_expired.client_order_id),
         price: order_expired.price as i64,
         is_bid: order_expired.is_bid,
         onchain_timestamp: order_expired.timestamp as i64,
