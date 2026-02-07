@@ -113,11 +113,12 @@ export const prepareMultisigTx = async (
 	// enabling the gas Object check only on mainnet, to allow testnet multisig tests.
 	if (!gasObjectId) throw new Error('No gas object supplied for a mainnet transaction');
 
-	// Prevent any possible RGP changes across epoch change, which would invalidate the transaction.
-	tx.setGasPrice(1_000);
-
 	// Set epoch-based expiration to avoid ValidDuring which older tools don't support.
-	const { epoch } = await client.getLatestSuiSystemState();
+	// Use current reference gas price with 20% buffer to account for potential RGP increases
+	// between transaction generation and execution (e.g., across epoch boundaries).
+	const { epoch, referenceGasPrice } = await client.getLatestSuiSystemState();
+	const gasPriceWithBuffer = (BigInt(referenceGasPrice) * 120n) / 100n;
+	tx.setGasPrice(gasPriceWithBuffer);
 	tx.setExpiration({ Epoch: Number(epoch) + 5 });
 
 	// set the sender to be the admin address from config.

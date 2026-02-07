@@ -17,7 +17,8 @@ const marginPackageUpgrade = async () => {
   const currentDir = process.cwd();
   const marginDir = `${currentDir}/../packages/deepbook_margin`;
   const txFilePath = `${currentDir}/tx/tx-data.txt`;
-  const upgradeCall = `sui client upgrade --gas-budget 2000000000 --gas ${gasObjectId} --serialize-unsigned-transaction`;
+  // Use gas-price of 1000 to avoid RGP increases between tx generation and execution
+  const upgradeCall = `sui client upgrade --gas-budget 2000000000 --gas ${gasObjectId} --gas-price 1000 --serialize-unsigned-transaction`;
 
   try {
     // Execute the command with the specified working directory and capture the output
