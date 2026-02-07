@@ -1,4 +1,3 @@
-use crate::define_handler;
 use crate::models::deepbook_margin::margin_registry::PauseCapUpdated;
 use deepbook_schema::models::PauseCapUpdated as PauseCapUpdatedModel;
 

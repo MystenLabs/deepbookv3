@@ -25,9 +25,21 @@ use deepbook_indexer::handlers::pool_created_handler::PoolCreatedHandler;
 use deepbook_indexer::handlers::pool_price_handler::PoolPriceHandler;
 use deepbook_indexer::handlers::protocol_fees_increased_handler::ProtocolFeesIncreasedHandler;
 use deepbook_indexer::handlers::protocol_fees_withdrawn_handler::ProtocolFeesWithdrawnHandler;
+use deepbook_indexer::handlers::referral_fee_event_handler::ReferralFeeEventHandler;
 use deepbook_indexer::handlers::referral_fees_claimed_handler::ReferralFeesClaimedHandler;
 use deepbook_indexer::handlers::supplier_cap_minted_handler::SupplierCapMintedHandler;
 use deepbook_indexer::handlers::supply_referral_minted_handler::SupplyReferralMintedHandler;
+
+// Collateral Events
+use deepbook_indexer::handlers::deposit_collateral_handler::DepositCollateralHandler;
+use deepbook_indexer::handlers::withdraw_collateral_handler::WithdrawCollateralHandler;
+
+// TPSL (Take Profit / Stop Loss) Events
+use deepbook_indexer::handlers::conditional_order_added_handler::ConditionalOrderAddedHandler;
+use deepbook_indexer::handlers::conditional_order_cancelled_handler::ConditionalOrderCancelledHandler;
+use deepbook_indexer::handlers::conditional_order_executed_handler::ConditionalOrderExecutedHandler;
+use deepbook_indexer::handlers::conditional_order_insufficient_funds_handler::ConditionalOrderInsufficientFundsHandler;
+
 use deepbook_indexer::DeepbookEnv;
 use deepbook_schema::MIGRATIONS;
 use fastcrypto::hash::{HashFunction, Sha256};
@@ -313,9 +325,86 @@ async fn protocol_fees_increased_test() -> Result<(), anyhow::Error> {
 }
 
 #[tokio::test]
+async fn referral_fee_event_test() -> Result<(), anyhow::Error> {
+    let handler = ReferralFeeEventHandler::new(DeepbookEnv::Mainnet);
+    data_test("referral_fee_events", handler, ["referral_fee_events"]).await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn referral_fees_claimed_test() -> Result<(), anyhow::Error> {
     let handler = ReferralFeesClaimedHandler::new(DeepbookEnv::Testnet);
     data_test("referral_fees_claimed", handler, ["referral_fees_claimed"]).await?;
+    Ok(())
+}
+
+// === Collateral Events Tests ===
+// Checkpoint 234918188 - TX: GSNpevf2UcTeq3ACPMGRsvLFRRGB9w2H4KB9BR1cEYcQ
+#[tokio::test]
+async fn deposit_collateral_test() -> Result<(), anyhow::Error> {
+    let handler = DepositCollateralHandler::new(DeepbookEnv::Mainnet);
+    data_test("deposit_collateral", handler, ["collateral_events"]).await?;
+    Ok(())
+}
+
+// Checkpoint 234920766 - TX: 73DkKzySTo824MBEQREnhNwXbbSpX8YEEb7qbfxxaHGG
+#[tokio::test]
+async fn withdraw_collateral_test() -> Result<(), anyhow::Error> {
+    let handler = WithdrawCollateralHandler::new(DeepbookEnv::Mainnet);
+    data_test("withdraw_collateral", handler, ["collateral_events"]).await?;
+    Ok(())
+}
+
+// === TPSL (Take Profit / Stop Loss) Events Tests ===
+// Checkpoint 234928955 - TX: HRj2fF9ifRA8kXipJy2g6y6UKgMFNeKvvZqfrKY2L825
+#[tokio::test]
+async fn conditional_order_added_test() -> Result<(), anyhow::Error> {
+    let handler = ConditionalOrderAddedHandler::new(DeepbookEnv::Mainnet);
+    data_test(
+        "conditional_order_added",
+        handler,
+        ["conditional_order_events"],
+    )
+    .await?;
+    Ok(())
+}
+
+// Checkpoint 234928968 - TX: 5QcwuLcE7jmunStKgUSCrHPpAw1WC8B9XQLPph3jrKGn
+#[tokio::test]
+async fn conditional_order_cancelled_test() -> Result<(), anyhow::Error> {
+    let handler = ConditionalOrderCancelledHandler::new(DeepbookEnv::Mainnet);
+    data_test(
+        "conditional_order_cancelled",
+        handler,
+        ["conditional_order_events"],
+    )
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore] // No mainnet transactions yet - ConditionalOrderExecuted requires price trigger
+async fn conditional_order_executed_test() -> Result<(), anyhow::Error> {
+    let handler = ConditionalOrderExecutedHandler::new(DeepbookEnv::Mainnet);
+    data_test(
+        "conditional_order_executed",
+        handler,
+        ["conditional_order_executed"],
+    )
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore] // No mainnet transactions yet - ConditionalOrderInsufficientFunds requires trigger with low balance
+async fn conditional_order_insufficient_funds_test() -> Result<(), anyhow::Error> {
+    let handler = ConditionalOrderInsufficientFundsHandler::new(DeepbookEnv::Mainnet);
+    data_test(
+        "conditional_order_insufficient_funds",
+        handler,
+        ["conditional_order_insufficient_funds"],
+    )
+    .await?;
     Ok(())
 }
 

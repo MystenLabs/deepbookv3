@@ -1,20 +1,13 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { namedPackagesPlugin, Transaction } from "@mysten/sui/transactions";
-import { prepareMultisigTx } from "../utils/utils";
-
-export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
-
-const mainnetPlugin = namedPackagesPlugin({
-  url: "https://mainnet.mvr.mystenlabs.com",
-});
+import { Transaction } from "@mysten/sui/transactions";
+import { prepareMultisigTx } from "../utils/utils.js";
 
 (async () => {
   // Update constant for env
   const env = "mainnet";
   const transaction = new Transaction();
-  transaction.addSerializationPlugin(mainnetPlugin);
   // const appCapObjectId =
   //   "0xae2d10803aa2f22e3756235d0f98da17e3aa3e4de8dd0062822e2e899e901a04";
   const packageInfoId =

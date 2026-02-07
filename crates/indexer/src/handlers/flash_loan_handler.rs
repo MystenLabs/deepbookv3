@@ -1,4 +1,3 @@
-use crate::define_handler;
 use crate::models::deepbook::vault::FlashLoanBorrowed;
 use deepbook_schema::models::Flashloan;
 

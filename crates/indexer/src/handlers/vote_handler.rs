@@ -1,4 +1,3 @@
-use crate::define_handler;
 use crate::models::deepbook::state::VoteEvent;
 use deepbook_schema::models::Votes;
 

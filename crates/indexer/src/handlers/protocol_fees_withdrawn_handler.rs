@@ -1,4 +1,3 @@
-use crate::define_handler;
 use crate::models::deepbook_margin::margin_pool::ProtocolFeesWithdrawn;
 use deepbook_schema::models::ProtocolFeesWithdrawn as ProtocolFeesWithdrawnModel;
 

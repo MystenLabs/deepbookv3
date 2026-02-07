@@ -3,7 +3,7 @@
 
 import { execSync } from "child_process";
 import { writeFileSync } from "fs";
-import { upgradeCapID } from "../config/constants";
+import { upgradeCapID } from "../config/constants.js";
 
 const network = "mainnet";
 
@@ -20,7 +20,8 @@ const mainPackageUpgrade = async () => {
   const currentDir = process.cwd();
   const deepbookDir = `${currentDir}/../packages/deepbook`;
   const txFilePath = `${currentDir}/tx/tx-data.txt`;
-  const upgradeCall = `sui client upgrade --upgrade-capability ${upgradeCapID[network]} --gas-budget 2000000000 --gas ${gasObjectId} --serialize-unsigned-transaction`;
+  // Use gas-price of 1000 to avoid RGP increases between tx generation and execution
+  const upgradeCall = `sui client upgrade --upgrade-capability ${upgradeCapID[network]} --gas-budget 2000000000 --gas ${gasObjectId} --gas-price 1000 --serialize-unsigned-transaction`;
 
   try {
     // Execute the command with the specified working directory and capture the output

@@ -1,4 +1,3 @@
-use crate::define_handler;
 use crate::models::deepbook::state::ProposalEvent;
 use deepbook_schema::models::Proposals;
 

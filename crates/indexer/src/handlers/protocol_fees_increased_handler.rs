@@ -1,4 +1,3 @@
-use crate::define_handler;
 use crate::models::deepbook_margin::protocol_fees::ProtocolFeesIncreasedEvent;
 use deepbook_schema::models::ProtocolFeesIncreasedEvent as ProtocolFeesIncreasedEventModel;
 

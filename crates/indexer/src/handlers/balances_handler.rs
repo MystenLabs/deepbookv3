@@ -1,4 +1,3 @@
-use crate::define_handler;
 use crate::models::deepbook::balance_manager::BalanceEvent;
 use deepbook_schema::models::Balances;
 

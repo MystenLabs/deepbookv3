@@ -1,0 +1,8 @@
+DROP INDEX IF EXISTS idx_order_fills_pool_id_checkpoint_timestamp_ms;
+DROP INDEX IF EXISTS idx_order_fills_pool_id_checkpoint_timestamp_ms_desc;
+DROP INDEX IF EXISTS idx_order_fills_maker_balance_manager_id;
+DROP INDEX IF EXISTS idx_order_fills_taker_balance_manager_id;
+DROP INDEX IF EXISTS idx_order_updates_pool_id_status_balance_manager_id;
+DROP INDEX IF EXISTS idx_balances_balance_manager_id_asset_deposit;
+DROP INDEX IF EXISTS idx_collateral_events_margin_manager_id_checkpoint_timestamp_ms;
+DROP INDEX IF EXISTS idx_margin_manager_state_deepbook_pool_id;

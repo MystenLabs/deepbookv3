@@ -1,4 +1,3 @@
-use crate::define_handler;
 use crate::models::deepbook::deep_price::PriceAdded;
 use deepbook_schema::models::PoolPrice;
 

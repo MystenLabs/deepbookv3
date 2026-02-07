@@ -1,4 +1,3 @@
-use crate::define_handler;
 use crate::models::deepbook::state::StakeEvent;
 use deepbook_schema::models::Stakes;
 

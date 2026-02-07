@@ -158,11 +158,16 @@ macro_rules! define_handler {
 pub mod asset_supplied_handler;
 pub mod asset_withdrawn_handler;
 pub mod balances_handler;
+pub mod conditional_order_added_handler;
+pub mod conditional_order_cancelled_handler;
+pub mod conditional_order_executed_handler;
+pub mod conditional_order_insufficient_funds_handler;
 pub mod deep_burned_handler;
 pub mod deepbook_pool_config_updated_handler;
 pub mod deepbook_pool_registered_handler;
 pub mod deepbook_pool_updated_handler;
 pub mod deepbook_pool_updated_registry_handler;
+pub mod deposit_collateral_handler;
 pub mod flash_loan_handler;
 pub mod interest_params_updated_handler;
 pub mod liquidation_handler;
@@ -182,12 +187,14 @@ pub mod proposals_handler;
 pub mod protocol_fees_increased_handler;
 pub mod protocol_fees_withdrawn_handler;
 pub mod rebates_handler;
+pub mod referral_fee_event_handler;
 pub mod referral_fees_claimed_handler;
 pub mod stakes_handler;
 pub mod supplier_cap_minted_handler;
 pub mod supply_referral_minted_handler;
 pub mod trade_params_update_handler;
 pub mod vote_handler;
+pub mod withdraw_collateral_handler;
 
 pub(crate) fn is_deepbook_tx(
     tx: &ExecutedTransaction,

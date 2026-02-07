@@ -88,8 +88,8 @@ impl MarginRpcClient {
             .await?;
 
         Ok(MarginPoolState {
-            pool_id: pool_id.to_string(),
-            asset_type: asset_type.to_string(),
+            pool_id: pool_object_id.to_hex_literal(),
+            asset_type: normalized_asset_type,
             total_supply: state.0,
             total_borrow: state.1,
             vault_balance: state.2,
