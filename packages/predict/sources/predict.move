@@ -14,7 +14,7 @@ use deepbook_predict::{
     lp_config::{Self, LPConfig},
     market_key::MarketKey,
     market_manager::{Self, Markets},
-    oracle::Oracle,
+    oracle_block_scholes::OracleSVI,
     predict_manager::PredictManager,
     pricing::{Self, Pricing},
     risk_config::{Self, RiskConfig},
@@ -53,7 +53,7 @@ const EInvalidCollateralPair: u64 = 5;
 /// Get the cost to mint a position (for UI/preview).
 public fun get_mint_cost<Underlying, Quote>(
     predict: &Predict<Quote>,
-    oracle: &Oracle<Underlying>,
+    oracle: &OracleSVI<Underlying>,
     key: MarketKey,
     quantity: u64,
     clock: &Clock,
@@ -65,7 +65,7 @@ public fun get_mint_cost<Underlying, Quote>(
 /// Get the payout for redeeming a position (for UI/preview).
 public fun get_redeem_payout<Underlying, Quote>(
     predict: &Predict<Quote>,
-    oracle: &Oracle<Underlying>,
+    oracle: &OracleSVI<Underlying>,
     key: MarketKey,
     quantity: u64,
     clock: &Clock,
@@ -79,7 +79,7 @@ public fun get_redeem_payout<Underlying, Quote>(
 public fun mint<Underlying, Quote>(
     predict: &mut Predict<Quote>,
     manager: &mut PredictManager,
-    oracle: &Oracle<Underlying>,
+    oracle: &OracleSVI<Underlying>,
     key: MarketKey,
     quantity: u64,
     clock: &Clock,
@@ -112,7 +112,7 @@ public fun mint<Underlying, Quote>(
 public fun redeem<Underlying, Quote>(
     predict: &mut Predict<Quote>,
     manager: &mut PredictManager,
-    oracle: &Oracle<Underlying>,
+    oracle: &OracleSVI<Underlying>,
     key: MarketKey,
     quantity: u64,
     clock: &Clock,
@@ -143,7 +143,7 @@ public fun redeem<Underlying, Quote>(
 public fun mint_collateralized<Underlying, Quote>(
     predict: &mut Predict<Quote>,
     manager: &mut PredictManager,
-    oracle: &Oracle<Underlying>,
+    oracle: &OracleSVI<Underlying>,
     locked_key: MarketKey,
     minted_key: MarketKey,
     quantity: u64,
@@ -205,7 +205,7 @@ public fun redeem_collateralized<Quote>(
 /// Idempotent - calling multiple times has no effect after first call.
 public fun settle<Underlying, Quote>(
     predict: &mut Predict<Quote>,
-    oracle: &Oracle<Underlying>,
+    oracle: &OracleSVI<Underlying>,
     key: MarketKey,
     clock: &Clock,
 ) {
@@ -265,7 +265,7 @@ public(package) fun create<Quote>(ctx: &mut TxContext): ID {
 /// Enable a market for trading.
 public(package) fun enable_market<Underlying, Quote>(
     predict: &mut Predict<Quote>,
-    oracle: &Oracle<Underlying>,
+    oracle: &OracleSVI<Underlying>,
     key: MarketKey,
 ) {
     predict.markets.enable_market(oracle, key);
@@ -277,7 +277,7 @@ public(package) fun enable_market<Underlying, Quote>(
 /// Short positions have unrealized_liability, long positions have unrealized_assets.
 fun mark_to_market<Underlying, Quote>(
     predict: &mut Predict<Quote>,
-    oracle: &Oracle<Underlying>,
+    oracle: &OracleSVI<Underlying>,
     key: MarketKey,
     clock: &Clock,
 ) {
@@ -290,7 +290,7 @@ fun mark_to_market<Underlying, Quote>(
 
 fun update_position_mtm<Underlying, Quote>(
     predict: &mut Predict<Quote>,
-    oracle: &Oracle<Underlying>,
+    oracle: &OracleSVI<Underlying>,
     key: MarketKey,
     up_short: u64,
     down_short: u64,

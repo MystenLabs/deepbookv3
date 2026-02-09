@@ -1,3 +1,15 @@
+## Triggers
+
+### "wrap up predict"
+When the user says "wrap up predict", review the current session's work on the predict package and update `packages/predict/PROGRESS.md`:
+1. Read the current PROGRESS.md
+2. Update module statuses if any changed
+3. Add/remove TODOs based on work completed or new issues discovered
+4. Append a new entry to the Session Log with today's date and bullet points summarizing: key changes made, decisions taken, problems encountered, and what to pick up next time
+5. Keep the file concise - no fluff
+
+---
+
 Sui Move instructions (.move files):
 
 - Only put comments to document functions, struct fields, and items that need clarification. DO NOT PUT EXTRANEOUS COMMENTS THROUGHOUT 

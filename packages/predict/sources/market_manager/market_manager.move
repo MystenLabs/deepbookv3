@@ -7,14 +7,13 @@
 /// When a market is enabled, both UP and DOWN positions can be traded at that strike.
 module deepbook_predict::market_manager;
 
-use deepbook_predict::{market_key::MarketKey, oracle::Oracle};
+use deepbook_predict::{market_key::MarketKey, oracle_block_scholes::OracleSVI};
 use sui::vec_set::{Self, VecSet};
 
 // === Errors ===
 const EMarketAlreadyEnabled: u64 = 0;
 const EMarketNotEnabled: u64 = 1;
 const EOracleNotActive: u64 = 2;
-const EStrikeNotFound: u64 = 3;
 
 // === Structs ===
 
@@ -43,12 +42,10 @@ public(package) fun new(): Markets {
 /// Validates that the oracle is active and the strike exists.
 public(package) fun enable_market<Underlying>(
     markets: &mut Markets,
-    oracle: &Oracle<Underlying>,
+    oracle: &OracleSVI<Underlying>,
     key: MarketKey,
 ) {
     assert!(oracle.is_active(), EOracleNotActive);
-    assert!(oracle.has_strike(key.strike()), EStrikeNotFound);
-
     assert!(!markets.enabled.contains(&key), EMarketAlreadyEnabled);
 
     markets.enabled.insert(key);

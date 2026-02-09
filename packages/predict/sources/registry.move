@@ -13,8 +13,8 @@
 /// AdminCap is transferred to the deployer (expected to be a multisig).
 module deepbook_predict::registry;
 
-use deepbook_predict::{oracle::{Self, OracleCap}, predict};
-use sui::{clock::Clock, table::{Self, Table}};
+use deepbook_predict::{oracle_block_scholes::{Self, OracleCapSVI}, predict};
+use sui::table::{Self, Table};
 
 // === Errors ===
 const EPredictAlreadyCreated: u64 = 0;
@@ -58,8 +58,8 @@ public fun create_predict<Quote>(
 }
 
 /// Create a new OracleCap. Transferred to Block Scholes operator.
-public fun create_oracle_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): OracleCap {
-    oracle::create_oracle_cap(ctx)
+public fun create_oracle_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): OracleCapSVI {
+    oracle_block_scholes::create_oracle_cap(ctx)
 }
 
 /// Create a new Oracle. Returns the oracle ID.
@@ -67,13 +67,11 @@ public fun create_oracle_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): Oracle
 public fun create_oracle<Underlying>(
     registry: &mut Registry,
     _admin_cap: &AdminCap,
-    cap: &OracleCap,
+    cap: &OracleCapSVI,
     expiry: u64,
-    strikes: vector<u64>,
-    clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
-    let oracle_id = oracle::create_oracle<Underlying>(cap, expiry, strikes, clock, ctx);
+    let oracle_id = oracle_block_scholes::create_oracle<Underlying>(cap, expiry, ctx);
     let cap_id = object::id(cap);
 
     if (!registry.oracle_ids.contains(cap_id)) {

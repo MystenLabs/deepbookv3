@@ -24,7 +24,7 @@
 module deepbook_predict::pricing;
 
 use deepbook::math;
-use deepbook_predict::{constants, market_key::MarketKey, oracle::Oracle};
+use deepbook_predict::{constants, market_key::MarketKey, oracle_block_scholes::OracleSVI};
 use sui::clock::Clock;
 
 // === Structs ===
@@ -42,7 +42,7 @@ public struct Pricing has store {
 /// Returns (bid, ask) in FLOAT_SCALING (1e9).
 public fun get_quote<Underlying>(
     pricing: &Pricing,
-    oracle: &Oracle<Underlying>,
+    oracle: &OracleSVI<Underlying>,
     key: MarketKey,
     _up_short: u64,
     _down_short: u64,
@@ -76,7 +76,7 @@ public fun get_quote<Underlying>(
 /// Returns cost in Quote units (USDC).
 public fun get_mint_cost<Underlying>(
     pricing: &Pricing,
-    oracle: &Oracle<Underlying>,
+    oracle: &OracleSVI<Underlying>,
     key: MarketKey,
     quantity: u64,
     up_short: u64,
@@ -93,7 +93,7 @@ public fun get_mint_cost<Underlying>(
 /// After settlement, get_quote returns 100%/0% so this returns quantity or 0.
 public fun get_redeem_payout<Underlying>(
     pricing: &Pricing,
-    oracle: &Oracle<Underlying>,
+    oracle: &OracleSVI<Underlying>,
     key: MarketKey,
     quantity: u64,
     up_short: u64,
