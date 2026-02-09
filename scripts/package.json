@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "create-pool": "pnpm tsx transactions/createPool.ts"
+    "create-pool": "pnpm tsx transactions/createPool.ts",
+    "localnet": "pnpm tsx transactions/localnetDeploy.ts"
   },
   "keywords": [],
   "author": "",

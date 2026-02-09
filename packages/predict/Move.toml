@@ -8,3 +8,6 @@ deepbook = { local = "../deepbook" }
 
 [addresses]
 deepbook_predict = "0x0"
+
+[environments]
+local = "b485d3e3"
