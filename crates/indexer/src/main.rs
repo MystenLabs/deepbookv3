@@ -8,6 +8,7 @@ use deepbook_indexer::handlers::order_update_handler::OrderUpdateHandler;
 use deepbook_indexer::handlers::pool_price_handler::PoolPriceHandler;
 use deepbook_indexer::handlers::proposals_handler::ProposalsHandler;
 use deepbook_indexer::handlers::rebates_handler::RebatesHandler;
+use deepbook_indexer::handlers::referral_fee_event_handler::ReferralFeeEventHandler;
 use deepbook_indexer::handlers::stakes_handler::StakesHandler;
 use deepbook_indexer::handlers::trade_params_update_handler::TradeParamsUpdateHandler;
 use deepbook_indexer::handlers::vote_handler::VotesHandler;
@@ -42,16 +43,29 @@ use deepbook_indexer::handlers::pause_cap_updated_handler::PauseCapUpdatedHandle
 // Protocol Fees Events
 use deepbook_indexer::handlers::protocol_fees_increased_handler::ProtocolFeesIncreasedHandler;
 use deepbook_indexer::handlers::referral_fees_claimed_handler::ReferralFeesClaimedHandler;
+
+// Collateral Events
+use deepbook_indexer::handlers::deposit_collateral_handler::DepositCollateralHandler;
+use deepbook_indexer::handlers::withdraw_collateral_handler::WithdrawCollateralHandler;
+
+// TPSL (Take Profit / Stop Loss) Events
+use deepbook_indexer::handlers::conditional_order_added_handler::ConditionalOrderAddedHandler;
+use deepbook_indexer::handlers::conditional_order_cancelled_handler::ConditionalOrderCancelledHandler;
+use deepbook_indexer::handlers::conditional_order_executed_handler::ConditionalOrderExecutedHandler;
+use deepbook_indexer::handlers::conditional_order_insufficient_funds_handler::ConditionalOrderInsufficientFundsHandler;
+
 use deepbook_indexer::DeepbookEnv;
 use deepbook_schema::MIGRATIONS;
 use prometheus::Registry;
 use std::net::SocketAddr;
-use sui_indexer_alt_framework::ingestion::ClientArgs;
+use sui_indexer_alt_framework::ingestion::ingestion_client::IngestionClientArgs;
+use sui_indexer_alt_framework::ingestion::streaming_client::StreamingClientArgs;
+use sui_indexer_alt_framework::ingestion::{ClientArgs, IngestionConfig};
 use sui_indexer_alt_framework::{Indexer, IndexerArgs};
 use sui_indexer_alt_metrics::db::DbConnectionStatsCollector;
 use sui_indexer_alt_metrics::{MetricsArgs, MetricsService};
 use sui_pg_db::{Db, DbArgs};
-use tokio_util::sync::CancellationToken;
+
 use url::Url;
 
 #[derive(Debug, Clone, clap::ValueEnum)]
@@ -69,6 +83,8 @@ struct Args {
     db_args: DbArgs,
     #[command(flatten)]
     indexer_args: IndexerArgs,
+    #[command(flatten)]
+    streaming_args: StreamingClientArgs,
     #[clap(env, long, default_value = "0.0.0.0:9184")]
     metrics_address: SocketAddr,
     #[clap(
@@ -94,20 +110,16 @@ async fn main() -> Result<(), anyhow::Error> {
     let Args {
         db_args,
         indexer_args,
+        streaming_args,
         metrics_address,
         database_url,
         env,
         packages,
     } = Args::parse();
 
-    let cancel = CancellationToken::new();
     let registry = Registry::new_custom(Some("deepbook".into()), None)
         .context("Failed to create Prometheus registry.")?;
-    let metrics = MetricsService::new(
-        MetricsArgs { metrics_address },
-        registry.clone(),
-        cancel.child_token(),
-    );
+    let metrics = MetricsService::new(MetricsArgs { metrics_address }, registry.clone());
 
     // Prepare the store for the indexer
     let store = Db::for_write(database_url, db_args)
@@ -128,16 +140,18 @@ async fn main() -> Result<(), anyhow::Error> {
         store,
         indexer_args,
         ClientArgs {
-            remote_store_url: Some(env.remote_store_url()),
-            local_ingestion_path: None,
-            rpc_api_url: None,
-            rpc_username: None,
-            rpc_password: None,
+            ingestion: IngestionClientArgs {
+                remote_store_url: Some(env.remote_store_url()),
+                local_ingestion_path: None,
+                rpc_api_url: None,
+                rpc_username: None,
+                rpc_password: None,
+            },
+            streaming: streaming_args,
         },
-        Default::default(),
+        IngestionConfig::default(),
         None,
         metrics.registry(),
-        cancel.clone(),
     )
     .await?;
 
@@ -169,6 +183,9 @@ async fn main() -> Result<(), anyhow::Error> {
                     .await?;
                 indexer
                     .concurrent_pipeline(RebatesHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(ReferralFeeEventHandler::new(env), Default::default())
                     .await?;
                 indexer
                     .concurrent_pipeline(StakesHandler::new(env), Default::default())
@@ -259,16 +276,44 @@ async fn main() -> Result<(), anyhow::Error> {
                 indexer
                     .concurrent_pipeline(ReferralFeesClaimedHandler::new(env), Default::default())
                     .await?;
+
+                // Collateral Events
+                indexer
+                    .concurrent_pipeline(DepositCollateralHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(WithdrawCollateralHandler::new(env), Default::default())
+                    .await?;
+
+                // TPSL (Take Profit / Stop Loss) Events
+                indexer
+                    .concurrent_pipeline(ConditionalOrderAddedHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(
+                        ConditionalOrderCancelledHandler::new(env),
+                        Default::default(),
+                    )
+                    .await?;
+                indexer
+                    .concurrent_pipeline(
+                        ConditionalOrderExecutedHandler::new(env),
+                        Default::default(),
+                    )
+                    .await?;
+                indexer
+                    .concurrent_pipeline(
+                        ConditionalOrderInsufficientFundsHandler::new(env),
+                        Default::default(),
+                    )
+                    .await?;
             }
         }
     }
 
-    let h_indexer = indexer.run().await?;
-    let h_metrics = metrics.run().await?;
+    let s_indexer = indexer.run().await?;
+    let s_metrics = metrics.run().await?;
 
-    let _ = h_indexer.await;
-    cancel.cancel();
-    let _ = h_metrics.await;
-
+    s_indexer.attach(s_metrics).main().await?;
     Ok(())
 }

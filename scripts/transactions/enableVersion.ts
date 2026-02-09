@@ -1,45 +1,48 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 import { Transaction } from "@mysten/sui/transactions";
-import { prepareMultisigTx } from "../utils/utils";
-import { adminCapOwner, adminCapID } from "../config/constants";
-import { DeepBookClient } from "@mysten/deepbook-v3";
-import { getFullnodeUrl, SuiClient } from "@mysten/sui/client";
+import { prepareMultisigTx } from "../utils/utils.js";
+import { adminCapOwner, adminCapID } from "../config/constants.js";
+import { deepbook } from "@mysten/deepbook-v3";
+import { SuiGrpcClient } from "@mysten/sui/grpc";
 
 (async () => {
   // Update constant for env
   const env = "mainnet";
-  const versionToEnable = 5;
+  const versionToEnable = 6;
 
-  const dbClient = new DeepBookClient({
-    address: "0x0",
-    env: env,
-    client: new SuiClient({
-      url: getFullnodeUrl(env),
+  const client = new SuiGrpcClient({
+    url: "https://sui-mainnet.mystenlabs.com",
+    network: "mainnet",
+  }).$extend(
+    deepbook({
+      address: "0x0",
+      adminCap: adminCapID[env],
     }),
-    adminCap: adminCapID[env],
-  });
+  );
 
   const tx = new Transaction();
 
-  dbClient.deepBookAdmin.enableVersion(versionToEnable)(tx);
-  dbClient.deepBookAdmin.updateAllowedVersions("DEEP_SUI")(tx);
-  dbClient.deepBookAdmin.updateAllowedVersions("SUI_USDC")(tx);
-  dbClient.deepBookAdmin.updateAllowedVersions("DEEP_USDC")(tx);
-  dbClient.deepBookAdmin.updateAllowedVersions("WUSDT_USDC")(tx);
-  dbClient.deepBookAdmin.updateAllowedVersions("WUSDC_USDC")(tx);
-  dbClient.deepBookAdmin.updateAllowedVersions("BETH_USDC")(tx);
-  dbClient.deepBookAdmin.updateAllowedVersions("NS_USDC")(tx);
-  dbClient.deepBookAdmin.updateAllowedVersions("NS_SUI")(tx);
-  dbClient.deepBookAdmin.updateAllowedVersions("TYPUS_SUI")(tx);
-  dbClient.deepBookAdmin.updateAllowedVersions("SUI_AUSD")(tx);
-  dbClient.deepBookAdmin.updateAllowedVersions("AUSD_USDC")(tx);
-  dbClient.deepBookAdmin.updateAllowedVersions("DRF_SUI")(tx);
-  dbClient.deepBookAdmin.updateAllowedVersions("SEND_USDC")(tx);
-  dbClient.deepBookAdmin.updateAllowedVersions("WAL_USDC")(tx);
-  dbClient.deepBookAdmin.updateAllowedVersions("WAL_SUI")(tx);
-  dbClient.deepBookAdmin.updateAllowedVersions("XBTC_USDC")(tx);
-  dbClient.deepBookAdmin.updateAllowedVersions("IKA_USDC")(tx);
+  client.deepbook.deepBookAdmin.enableVersion(versionToEnable)(tx);
+  client.deepbook.deepBookAdmin.updateAllowedVersions("DEEP_SUI")(tx);
+  client.deepbook.deepBookAdmin.updateAllowedVersions("SUI_USDC")(tx);
+  client.deepbook.deepBookAdmin.updateAllowedVersions("DEEP_USDC")(tx);
+  client.deepbook.deepBookAdmin.updateAllowedVersions("WUSDT_USDC")(tx);
+  client.deepbook.deepBookAdmin.updateAllowedVersions("WUSDC_USDC")(tx);
+  client.deepbook.deepBookAdmin.updateAllowedVersions("BETH_USDC")(tx);
+  client.deepbook.deepBookAdmin.updateAllowedVersions("NS_USDC")(tx);
+  client.deepbook.deepBookAdmin.updateAllowedVersions("NS_SUI")(tx);
+  client.deepbook.deepBookAdmin.updateAllowedVersions("TYPUS_SUI")(tx);
+  client.deepbook.deepBookAdmin.updateAllowedVersions("SUI_AUSD")(tx);
+  client.deepbook.deepBookAdmin.updateAllowedVersions("AUSD_USDC")(tx);
+  client.deepbook.deepBookAdmin.updateAllowedVersions("DRF_SUI")(tx);
+  client.deepbook.deepBookAdmin.updateAllowedVersions("SEND_USDC")(tx);
+  client.deepbook.deepBookAdmin.updateAllowedVersions("WAL_USDC")(tx);
+  client.deepbook.deepBookAdmin.updateAllowedVersions("WAL_SUI")(tx);
+  client.deepbook.deepBookAdmin.updateAllowedVersions("XBTC_USDC")(tx);
+  client.deepbook.deepBookAdmin.updateAllowedVersions("IKA_USDC")(tx);
+  client.deepbook.deepBookAdmin.updateAllowedVersions("ALKIMI_SUI")(tx);
+  client.deepbook.deepBookAdmin.updateAllowedVersions("LZWBTC_USDC")(tx);
 
   let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 

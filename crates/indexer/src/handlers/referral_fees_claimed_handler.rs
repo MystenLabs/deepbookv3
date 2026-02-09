@@ -1,4 +1,3 @@
-use crate::define_handler;
 use crate::models::deepbook_margin::protocol_fees::ReferralFeesClaimedEvent;
 use deepbook_schema::models::ReferralFeesClaimedEvent as ReferralFeesClaimedEventModel;
 

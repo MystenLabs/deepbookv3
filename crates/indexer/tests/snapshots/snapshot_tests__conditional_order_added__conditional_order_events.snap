@@ -1,0 +1,31 @@
+---
+source: crates/indexer/tests/snapshot_tests.rs
+expression: rows
+---
+[
+  {
+    "event_digest": "HRj2fF9ifRA8kXipJy2g6y6UKgMFNeKvvZqfrKY2L8250",
+    "digest": "HRj2fF9ifRA8kXipJy2g6y6UKgMFNeKvvZqfrKY2L825",
+    "sender": "0x064d87c3da8b7201b18c05bfc3189eb817920b2d089b33e207d1d99dc5ce08e0",
+    "checkpoint": "234928955",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1768504212477",
+    "package": "0x97d9473771b01f77b0940c589484184b49f6444627ec121314fae6a6d36fb86b",
+    "event_type": "added",
+    "manager_id": "0x16d8a37cfcacb4436a68f91eaf5d8e7d0aa1482a1958f8a90588f8d348ca9fc4",
+    "pool_id": null,
+    "conditional_order_id": "1768504199749",
+    "trigger_below_price": false,
+    "trigger_price": "5000000",
+    "is_limit_order": true,
+    "client_order_id": "1768504199749",
+    "order_type": "0",
+    "self_matching_option": "0",
+    "price": "5000000",
+    "quantity": "1000000000",
+    "is_bid": false,
+    "pay_with_deep": true,
+    "expire_timestamp": "1844674407370955161",
+    "onchain_timestamp": "1768504212477"
+  }
+]

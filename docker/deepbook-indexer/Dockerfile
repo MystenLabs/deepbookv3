@@ -1,4 +1,4 @@
-FROM rust:1.87.0 AS builder
+FROM rust:1.90.0 AS builder
 
 ARG PROFILE=release
 ARG GIT_REVISION
@@ -15,7 +15,7 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 
 RUN cargo build --profile $PROFILE --bin deepbook-indexer --config net.git-fetch-with-cli=true
 
-FROM debian:bookworm-slim AS runtime
+FROM debian:trixie-slim AS runtime
 
 RUN apt-get update
 RUN apt-get -y --no-install-recommends install wget \

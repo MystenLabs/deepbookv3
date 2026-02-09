@@ -10,14 +10,22 @@ on:
         options:
           - Create Pool
           - Upgrade Protocol
+          - Upgrade Margin Protocol
           - Enable Version
           - Disable Version
+          - Enable Margin Version
           - Unregister Pool and Create
           - Add Stable Coins
           - Adjust Tick Size
           - Adjust Min Lot Size
           - Transfer Funds
           - Prep Deepbook MVR
+          - Margin Setup
+          - Margin PackageInfo Creation
+          - Fund Margin Pool
+          - Fund Abyss Vault
+          - Fund Liquidation Vault
+          - Update Interest Rates
       sui_tools_image:
         description: "image reference of sui_tools"
         default: "mysten/sui-tools:mainnet"
@@ -56,13 +64,13 @@ jobs:
 
       - name: YAML Setup
         run: |
-          sui client --yes new-env --rpc https://fullnode.mainnet.sui.io:443 --alias mainnet
-          sui client switch --env mainnet
+          sui client --yes new-env --rpc https://fullnode.mainnet.sui.io:443 --alias mainnet-env
+          sui client switch --env mainnet-env
 
       - name: NPM BUILD TX Environment
         uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 22
 
       - name: Do a global PNPM install
         run: |
@@ -81,7 +89,18 @@ jobs:
           ORIGIN: gh_action
           RPC_URL: ${{ inputs.rpc }}
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/mainPackageUpgrade.ts
+          cd scripts && pnpm install && pnpm tsx transactions/mainPackageUpgrade.ts
+
+      - name: Upgrade Margin Protocol
+        if: ${{ inputs.transaction_type == 'Upgrade Margin Protocol' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/marginPackageUpgrade.ts
 
       - name: Create Pool
         if: ${{ inputs.transaction_type == 'Create Pool' }}
@@ -91,7 +110,7 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/createPool.ts
+          cd scripts && pnpm install && pnpm tsx transactions/createPool.ts
 
       - name: Unregister Pool and Create
         if: ${{ inputs.transaction_type == 'Unregister Pool and Create' }}
@@ -101,7 +120,7 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/unregisterPoolAndCreate.ts
+          cd scripts && pnpm install && pnpm tsx transactions/unregisterPoolAndCreate.ts
 
       - name: Enable Version
         if: ${{ inputs.transaction_type == 'Enable Version' }}
@@ -111,7 +130,7 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/enableVersion.ts
+          cd scripts && pnpm install && pnpm tsx transactions/enableVersion.ts
 
       - name: Disable Version
         if: ${{ inputs.transaction_type == 'Disable Version' }}
@@ -121,7 +140,17 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/disableVersion.ts
+          cd scripts && pnpm install && pnpm tsx transactions/disableVersion.ts
+
+      - name: Enable Margin Version
+        if: ${{ inputs.transaction_type == 'Enable Margin Version' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/enableMarginVersion.ts
 
       - name: Prep MVR
         if: ${{ inputs.transaction_type == 'Prep MVR' }}
@@ -131,7 +160,7 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/mvrPrep.ts
+          cd scripts && pnpm install && pnpm tsx transactions/mvrPrep.ts
 
       - name: Prep Kiosk MVR
         if: ${{ inputs.transaction_type == 'Prep Kiosk MVR' }}
@@ -141,7 +170,7 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/mvrPrepKiosk.ts
+          cd scripts && pnpm install && pnpm tsx transactions/mvrPrepKiosk.ts
 
       - name: Prep Kiosk MVR Registration
         if: ${{ inputs.transaction_type == 'Prep Kiosk MVR Registration' }}
@@ -151,7 +180,7 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/mvrPrepKioskRegistration.ts
+          cd scripts && pnpm install && pnpm tsx transactions/mvrPrepKioskRegistration.ts
 
       - name: Package Info Creation
         if: ${{ inputs.transaction_type == 'Package Info Creation' }}
@@ -161,7 +190,7 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/packageInfoCreation.ts
+          cd scripts && pnpm install && pnpm tsx transactions/packageInfoCreation.ts
 
       - name: Register Deepbook with MVR
         if: ${{ inputs.transaction_type == 'Register Deepbook with MVR' }}
@@ -171,7 +200,7 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/linkPackageInfo.ts
+          cd scripts && pnpm install && pnpm tsx transactions/linkPackageInfo.ts
 
       - name: Add Stable Coins
         if: ${{ inputs.transaction_type == 'Add Stable Coins' }}
@@ -181,7 +210,7 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/addStablecoin.ts
+          cd scripts && pnpm install && pnpm tsx transactions/addStablecoin.ts
 
       - name: Transfer Mvr Kiosk
         if: ${{ inputs.transaction_type == 'Transfer Mvr Kiosk' }}
@@ -191,7 +220,7 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/transferMvrObjectsKiosk.ts
+          cd scripts && pnpm install && pnpm tsx transactions/transferMvrObjectsKiosk.ts
 
       - name: Finish MVR Setup
         if: ${{ inputs.transaction_type == 'Finish MVR Setup' }}
@@ -201,7 +230,7 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/allMvrSetup.ts
+          cd scripts && pnpm install && pnpm tsx transactions/allMvrSetup.ts
 
       - name: MVR Package Reverse Resolution
         if: ${{ inputs.transaction_type == 'MVR Package Reverse Resolution' }}
@@ -211,7 +240,7 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/mvrPackageReverseResolution.ts
+          cd scripts && pnpm install && pnpm tsx transactions/mvrPackageReverseResolution.ts
 
       - name: Setup Denylist
         if: ${{ inputs.transaction_type == 'Setup Denylist' }}
@@ -221,7 +250,7 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/setupDenylist.ts
+          cd scripts && pnpm install && pnpm tsx transactions/setupDenylist.ts
 
       - name: MVR Package Metadata
         if: ${{ inputs.transaction_type == 'MVR Package Metadata' }}
@@ -231,7 +260,7 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/mvrPackageMetadata.ts
+          cd scripts && pnpm install && pnpm tsx transactions/mvrPackageMetadata.ts
 
       - name: Adjust Tick Size
         if: ${{ inputs.transaction_type == 'Adjust Tick Size' }}
@@ -241,7 +270,7 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/updatePoolTickSize.ts
+          cd scripts && pnpm install && pnpm tsx transactions/updatePoolTickSize.ts
 
       - name: Adjust Min Lot Size
         if: ${{ inputs.transaction_type == 'Adjust Min Lot Size' }}
@@ -251,7 +280,7 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/updatePoolMinLotSize.ts
+          cd scripts && pnpm install && pnpm tsx transactions/updatePoolMinLotSize.ts
 
       - name: Fix MVR Path
         if: ${{ inputs.transaction_type == 'Fix MVR Path' }}
@@ -261,7 +290,7 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/mvrFix.ts
+          cd scripts && pnpm install && pnpm tsx transactions/mvrFix.ts
 
       - name: Setup Walrus Site
         if: ${{ inputs.transaction_type == 'Setup Walrus Site' }}
@@ -271,7 +300,7 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/walrusSitesSetup.ts
+          cd scripts && pnpm install && pnpm tsx transactions/walrusSitesSetup.ts
 
       - name: Nautilus Setup
         if: ${{ inputs.transaction_type == 'Nautilus Setup' }}
@@ -281,7 +310,7 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/nautilus-setup.ts
+          cd scripts && pnpm install && pnpm tsx transactions/nautilus-setup.ts
 
       - name: Payment Setup
         if: ${{ inputs.transaction_type == 'Payment Setup' }}
@@ -291,7 +320,7 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/paymentSetup.ts
+          cd scripts && pnpm install && pnpm tsx transactions/paymentSetup.ts
 
       - name: Margin Setup
         if: ${{ inputs.transaction_type == 'Margin Setup' }}
@@ -301,7 +330,47 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/marginSetup.ts
+          cd scripts && pnpm install && pnpm tsx transactions/marginSetup.ts
+
+      - name: Margin PackageInfo Creation
+        if: ${{ inputs.transaction_type == 'Margin PackageInfo Creation' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/marginPackageInfo.ts
+
+      - name: Fund Margin Pool
+        if: ${{ inputs.transaction_type == 'Fund Margin Pool' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/supplyToMarginPool.ts
+
+      - name: Fund Abyss Vault
+        if: ${{ inputs.transaction_type == 'Fund Abyss Vault' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/fundAbyssVault.ts
+
+      - name: Create Liquidation Vault
+        if: ${{ inputs.transaction_type == 'Create Liquidation Vault' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/createLiquidationVault.ts
 
       - name: Transfer Funds
         if: ${{ inputs.transaction_type == 'Transfer Funds' }}
@@ -311,7 +380,27 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/transferFunds.ts
+          cd scripts && pnpm install && pnpm tsx transactions/transferFunds.ts
+
+      - name: Fund Liquidation Vault
+        if: ${{ inputs.transaction_type == 'Fund Liquidation Vault' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/fundLiquidationVault.ts
+
+      - name: Update Interest Rates
+        if: ${{ inputs.transaction_type == 'Update Interest Rates' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/updateInterestRates.ts
 
       - name: Prep Deepbook MVR
         if: ${{ inputs.transaction_type == 'Prep Deepbook MVR' }}
@@ -321,7 +410,7 @@ jobs:
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm ts-node transactions/newDeepbookVersion.ts
+          cd scripts && pnpm install && pnpm tsx transactions/newDeepbookVersion.ts
 
       - name: Show Transaction Data (To sign)
         run: |

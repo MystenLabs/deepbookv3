@@ -4,7 +4,7 @@ import { execFileSync, execSync } from 'child_process';
 import fs, { readFileSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
-import { getFullnodeUrl, SuiClient } from '@mysten/sui/client';
+import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Secp256k1Keypair } from '@mysten/sui/keypairs/secp256k1';
@@ -85,8 +85,18 @@ export const getSigner = () => {
 
 /// Get the client for the specified network.
 export const getClient = (network: Network) => {
-	const url = process.env.RPC_URL || getFullnodeUrl(network);
-	return new SuiClient({ url });
+	const url = process.env.RPC_URL || getJsonRpcFullnodeUrl(network);
+	const mvrUrl =
+		network === 'mainnet'
+			? 'https://mainnet.mvr.mystenlabs.com'
+			: network === 'testnet'
+				? 'https://testnet.mvr.mystenlabs.com'
+				: undefined;
+	return new SuiJsonRpcClient({
+		url,
+		network,
+		mvr: mvrUrl ? { url: mvrUrl } : undefined,
+	});
 };
 
 /// Builds a transaction (unsigned) and saves it on `setup/tx/tx-data.txt` (on production)
@@ -103,8 +113,13 @@ export const prepareMultisigTx = async (
 	// enabling the gas Object check only on mainnet, to allow testnet multisig tests.
 	if (!gasObjectId) throw new Error('No gas object supplied for a mainnet transaction');
 
-	// Prevent any possible RGP changes across epoch change, which would invalidate the transaction.
-	tx.setGasPrice(1_000);
+	// Set epoch-based expiration to avoid ValidDuring which older tools don't support.
+	// Use current reference gas price with 20% buffer to account for potential RGP increases
+	// between transaction generation and execution (e.g., across epoch boundaries).
+	const { epoch, referenceGasPrice } = await client.getLatestSuiSystemState();
+	const gasPriceWithBuffer = (BigInt(referenceGasPrice) * 120n) / 100n;
+	tx.setGasPrice(gasPriceWithBuffer);
+	tx.setExpiration({ Epoch: Number(epoch) + 5 });
 
 	// set the sender to be the admin address from config.
 	tx.setSender(adminAddress as string);
@@ -130,7 +145,7 @@ export const prepareMultisigTx = async (
 };
 
 /// Fetch the gas Object and setup the payment for the tx.
-async function setupGasPayment(tx: Transaction, gasObjectId: string, client: SuiClient) {
+async function setupGasPayment(tx: Transaction, gasObjectId: string, client: SuiJsonRpcClient) {
 	const gasObject = await client.getObject({
 		id: gasObjectId,
 	});
@@ -148,7 +163,7 @@ async function setupGasPayment(tx: Transaction, gasObjectId: string, client: Sui
 }
 
 /// A helper to dev inspect a transaction.
-async function inspectTransaction(tx: Transaction, client: SuiClient) {
+async function inspectTransaction(tx: Transaction, client: SuiJsonRpcClient) {
 	const result = await client.dryRunTransactionBlock({
 		transactionBlock: await tx.build({ client: client }),
 	});

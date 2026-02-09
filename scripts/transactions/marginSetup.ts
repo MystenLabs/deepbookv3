@@ -1,150 +1,73 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { namedPackagesPlugin, Transaction } from "@mysten/sui/transactions";
-import { prepareMultisigTx } from "../utils/utils";
-
-export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
-
-const mainnetPlugin = namedPackagesPlugin({
-  url: "https://mainnet.mvr.mystenlabs.com",
-});
+import { Transaction } from "@mysten/sui/transactions";
+import { prepareMultisigTx } from "../utils/utils.js";
 
 (async () => {
   // Update constant for env
   const env = "mainnet";
   const transaction = new Transaction();
-  transaction.addSerializationPlugin(mainnetPlugin);
 
-  // appcap holding address
-  const holdingAddress =
-    "0x10a1fc2b9170c6bac858fdafc7d3cb1f4ea659fed748d18eff98d08debf82042";
+  const appCap =
+    "0x9e120e97c91434c8102024edc0a64c2d18ab702333da947791707dee6a45da2c"; // @deepbook/margin-trading appCap
 
-  const testnetPackageInfo =
-    "0x56f7070d688e0f993b6558d3b39efcec5a3806008ac1c4a5070cdec7489ae755";
+  const repository = "https://github.com/MystenLabs/deepbookv3";
 
-  const testnetPackageId =
-    "0x5ba487dff6b6d0a1f0560f1895aabd72f1f8db314dea5032187149443b98c6ff";
+  const data = {
+    packageInfo:
+      "0x11c2e0f7292ea1b84ed894302b96146872fea53a99b933122fb193e48dac1005",
+    sha: "margin-v1.0.0",
+    version: "1",
+    path: "packages/deepbook_margin",
+  };
 
-  const appCap = transaction.moveCall({
-    target: `@mvr/core::move_registry::register`,
-    arguments: [
-      // the registry obj: Can also be resolved as `registry-obj@mvr` from mainnet SuiNS.
-      transaction.object(
-        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727"
-      ),
-      transaction.object(
-        "0xd0815f9867a0a02690a9fe3b5be9a044bb381f96c660ba6aa28dfaaaeb76af76"
-      ), // deepbook domain ID
-      transaction.pure.string("margin-trading"), // name
-      transaction.object.clock(),
-    ],
+  const display = transaction.moveCall({
+    target: `@mvr/metadata::display::default`,
+    arguments: [transaction.pure.string("DeepBookV3 - Margin Metadata")],
   });
 
-  // Set all metadata for margin-trading
+  // Set that display object to our info object.
   transaction.moveCall({
-    target: `@mvr/core::move_registry::set_metadata`,
+    target: `@mvr/metadata::package_info::set_display`,
+    arguments: [transaction.object(data.packageInfo), display],
+  });
+
+  const git = transaction.moveCall({
+    target: `@mvr/metadata::git::new`,
     arguments: [
-      transaction.object(
-        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
-      ),
-      appCap,
-      transaction.pure.string("description"), // key
-      transaction.pure.string("Deepbook Margin Trading"), // value
+      transaction.pure.string(repository),
+      transaction.pure.string(data.path),
+      transaction.pure.string(data.sha),
     ],
   });
 
   transaction.moveCall({
-    target: `@mvr/core::move_registry::set_metadata`,
+    target: `@mvr/metadata::package_info::set_git_versioning`,
     arguments: [
-      transaction.object(
-        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
-      ),
-      appCap,
-      transaction.pure.string("documentation_url"), // key
-      transaction.pure.string("https://docs.sui.io/standards/deepbook"), // value
+      transaction.object(data.packageInfo),
+      transaction.pure.u64(data.version),
+      git,
     ],
   });
 
+  // Link margin to correct packageInfo
+  // Important to check these two
   transaction.moveCall({
-    target: `@mvr/core::move_registry::set_metadata`,
+    target: `@mvr/core::move_registry::assign_package`,
     arguments: [
       transaction.object(
-        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
+        `0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727`,
       ),
-      appCap,
-      transaction.pure.string("homepage_url"), // key
-      transaction.pure.string("https://deepbook.tech/"), // value
+      transaction.object(appCap),
+      transaction.object(data.packageInfo),
     ],
   });
-
-  transaction.moveCall({
-    target: `@mvr/core::move_registry::set_metadata`,
-    arguments: [
-      transaction.object(
-        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727" // Move registry
-      ),
-      appCap,
-      transaction.pure.string("icon_url"), // key
-      transaction.pure.string("https://images.deepbook.tech/icon.svg"), // value
-    ],
-  });
-
-  // Set testnet information for margin-trading
-  const appInfo = transaction.moveCall({
-    target: `@mvr/core::app_info::new`,
-    arguments: [
-      transaction.pure.option(
-        "address",
-        testnetPackageInfo // PackageInfo object on testnet
-      ),
-      transaction.pure.option(
-        "address",
-        testnetPackageId // V1 of the margin-trading package on testnet
-      ),
-      transaction.pure.option("address", null),
-    ],
-  });
-
-  transaction.moveCall({
-    target: `@mvr/core::move_registry::set_network`,
-    arguments: [
-      // the registry obj: Can also be resolved as `registry-obj@mvr` from mainnet SuiNS.
-      transaction.object(
-        "0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727"
-      ),
-      appCap,
-      transaction.pure.string("4c78adac"), // testnet
-      appInfo,
-    ],
-  });
-
-  // // Link payment-kit to correct packageInfo
-  // // Important to check these two
-  // transaction.moveCall({
-  //   target: `@mvr/core::move_registry::assign_package`,
-  //   arguments: [
-  //     transaction.object(
-  //       `0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727`
-  //     ),
-  //     appCap,
-  //     transaction.object(mainnetPackageInfo),
-  //   ],
-  // });
-
-  transaction.transferObjects([appCap], holdingAddress);
-  // transaction.moveCall({
-  //   target: `@mvr/metadata::package_info::transfer`,
-  //   arguments: [
-  //     transaction.object(mainnetPackageInfo),
-  //     transaction.pure.address(holdingAddress),
-  //   ],
-  // });
 
   let res = await prepareMultisigTx(
     transaction,
     env,
-    "0xb5b39d11ddbd0abb0166cd369c155409a2cca9868659bda6d9ce3804c510b949"
+    "0xd0ec0b201de6b4e7f425918bbd7151c37fc1b06c59b3961a2a00db74f6ea865e",
   ); // multisig address
 
   console.dir(res, { depth: null });

@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DeepBook Margin - Interest Rate Curves</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: #0a0a0f;
+            color: #e0e0e0;
+            min-height: 100vh;
+            padding: 24px;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 8px;
+            color: #fff;
+            font-size: 28px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #888;
+            margin-bottom: 32px;
+            font-size: 14px;
+        }
+        .charts-container {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 24px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .chart-card {
+            background: #12121a;
+            border-radius: 12px;
+            padding: 24px;
+            border: 1px solid #2a2a3a;
+        }
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        .chart-title {
+            font-size: 20px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .asset-badge {
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .usdc-badge { background: #2775ca20; color: #2775ca; }
+        .sui-badge { background: #6fbcf020; color: #6fbcf0; }
+        .deep-badge { background: #8b5cf620; color: #8b5cf6; }
+        .wal-badge { background: #10b98120; color: #10b981; }
+        .chart-wrapper {
+            height: 300px;
+            position: relative;
+        }
+        .params-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-top: 16px;
+            padding-top: 16px;
+            border-top: 1px solid #2a2a3a;
+        }
+        .param {
+            display: flex;
+            justify-content: space-between;
+            font-size: 13px;
+        }
+        .param-label {
+            color: #888;
+        }
+        .param-value {
+            color: #fff;
+            font-weight: 500;
+        }
+        .formula-section {
+            max-width: 1400px;
+            margin: 32px auto 0;
+            background: #12121a;
+            border-radius: 12px;
+            padding: 24px;
+            border: 1px solid #2a2a3a;
+        }
+        .formula-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: #fff;
+        }
+        .formula {
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            background: #1a1a24;
+            padding: 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            line-height: 1.8;
+            color: #a0a0b0;
+        }
+        .formula .keyword { color: #c792ea; }
+        .formula .var { color: #82aaff; }
+        .formula .op { color: #89ddff; }
+        @media (max-width: 900px) {
+            .charts-container {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>DeepBook Margin Interest Rate Curves</h1>
+    <p class="subtitle">Utilization vs Borrow APR for each margin pool</p>
+
+    <div class="charts-container">
+        <div class="chart-card">
+            <div class="chart-header">
+                <div class="chart-title">
+                    <span>USDC</span>
+                    <span class="asset-badge usdc-badge">Stablecoin</span>
+                </div>
+            </div>
+            <div class="chart-wrapper">
+                <canvas id="usdcChart"></canvas>
+            </div>
+            <div class="params-grid">
+                <div class="param"><span class="param-label">Base Rate</span><span class="param-value">0%</span></div>
+                <div class="param"><span class="param-label">Base Slope</span><span class="param-value">15%</span></div>
+                <div class="param"><span class="param-label">Optimal Util.</span><span class="param-value">80%</span></div>
+                <div class="param"><span class="param-label">Excess Slope</span><span class="param-value">500%</span></div>
+            </div>
+        </div>
+
+        <div class="chart-card">
+            <div class="chart-header">
+                <div class="chart-title">
+                    <span>SUI</span>
+                    <span class="asset-badge sui-badge">Native</span>
+                </div>
+            </div>
+            <div class="chart-wrapper">
+                <canvas id="suiChart"></canvas>
+            </div>
+            <div class="params-grid">
+                <div class="param"><span class="param-label">Base Rate</span><span class="param-value">3%</span></div>
+                <div class="param"><span class="param-label">Base Slope</span><span class="param-value">20%</span></div>
+                <div class="param"><span class="param-label">Optimal Util.</span><span class="param-value">80%</span></div>
+                <div class="param"><span class="param-label">Excess Slope</span><span class="param-value">500%</span></div>
+            </div>
+        </div>
+
+        <div class="chart-card">
+            <div class="chart-header">
+                <div class="chart-title">
+                    <span>DEEP</span>
+                    <span class="asset-badge deep-badge">Protocol</span>
+                </div>
+            </div>
+            <div class="chart-wrapper">
+                <canvas id="deepChart"></canvas>
+            </div>
+            <div class="params-grid">
+                <div class="param"><span class="param-label">Base Rate</span><span class="param-value">5%</span></div>
+                <div class="param"><span class="param-label">Base Slope</span><span class="param-value">25%</span></div>
+                <div class="param"><span class="param-label">Optimal Util.</span><span class="param-value">80%</span></div>
+                <div class="param"><span class="param-label">Excess Slope</span><span class="param-value">500%</span></div>
+            </div>
+        </div>
+
+        <div class="chart-card">
+            <div class="chart-header">
+                <div class="chart-title">
+                    <span>WAL</span>
+                    <span class="asset-badge wal-badge">Walrus</span>
+                </div>
+            </div>
+            <div class="chart-wrapper">
+                <canvas id="walChart"></canvas>
+            </div>
+            <div class="params-grid">
+                <div class="param"><span class="param-label">Base Rate</span><span class="param-value">5%</span></div>
+                <div class="param"><span class="param-label">Base Slope</span><span class="param-value">25%</span></div>
+                <div class="param"><span class="param-label">Optimal Util.</span><span class="param-value">80%</span></div>
+                <div class="param"><span class="param-label">Excess Slope</span><span class="param-value">500%</span></div>
+            </div>
+        </div>
+    </div>
+
+    <h2 style="text-align: center; margin: 48px 0 8px; color: #fff; font-size: 24px;">Supply APR Curves</h2>
+    <p class="subtitle">Utilization vs Supply APR (Borrow APR × Utilization × 0.8)</p>
+
+    <div class="charts-container">
+        <div class="chart-card">
+            <div class="chart-header">
+                <div class="chart-title">
+                    <span>USDC</span>
+                    <span class="asset-badge usdc-badge">Supply</span>
+                </div>
+            </div>
+            <div class="chart-wrapper">
+                <canvas id="usdcSupplyChart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-card">
+            <div class="chart-header">
+                <div class="chart-title">
+                    <span>SUI</span>
+                    <span class="asset-badge sui-badge">Supply</span>
+                </div>
+            </div>
+            <div class="chart-wrapper">
+                <canvas id="suiSupplyChart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-card">
+            <div class="chart-header">
+                <div class="chart-title">
+                    <span>DEEP</span>
+                    <span class="asset-badge deep-badge">Supply</span>
+                </div>
+            </div>
+            <div class="chart-wrapper">
+                <canvas id="deepSupplyChart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-card">
+            <div class="chart-header">
+                <div class="chart-title">
+                    <span>WAL</span>
+                    <span class="asset-badge wal-badge">Supply</span>
+                </div>
+            </div>
+            <div class="chart-wrapper">
+                <canvas id="walSupplyChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <div class="formula-section">
+        <div class="formula-title">Interest Rate Formula</div>
+        <div class="formula">
+            <span class="keyword">if</span> <span class="var">utilization</span> <span class="op">&lt;</span> <span class="var">optimalUtilization</span>:<br>
+            &nbsp;&nbsp;&nbsp;&nbsp;<span class="var">rate</span> <span class="op">=</span> <span class="var">baseRate</span> <span class="op">+</span> <span class="var">utilization</span> <span class="op">×</span> <span class="var">baseSlope</span><br><br>
+            <span class="keyword">else</span>:<br>
+            &nbsp;&nbsp;&nbsp;&nbsp;<span class="var">rate</span> <span class="op">=</span> <span class="var">baseRate</span> <span class="op">+</span> <span class="var">optimalUtilization</span> <span class="op">×</span> <span class="var">baseSlope</span> <span class="op">+</span> (<span class="var">utilization</span> <span class="op">-</span> <span class="var">optimalUtilization</span>) <span class="op">×</span> <span class="var">excessSlope</span>
+        </div>
+    </div>
+
+    <script>
+        const assets = {
+            usdc: {
+                baseRate: 0,
+                baseSlope: 0.15,
+                optimalUtilization: 0.80,
+                excessSlope: 5,
+                maxUtilization: 0.90,
+                color: '#2775ca',
+                gradient: ['rgba(39, 117, 202, 0.3)', 'rgba(39, 117, 202, 0.0)']
+            },
+            sui: {
+                baseRate: 0.03,
+                baseSlope: 0.2,
+                optimalUtilization: 0.80,
+                excessSlope: 5,
+                maxUtilization: 0.90,
+                color: '#6fbcf0',
+                gradient: ['rgba(111, 188, 240, 0.3)', 'rgba(111, 188, 240, 0.0)']
+            },
+            deep: {
+                baseRate: 0.05,
+                baseSlope: 0.25,
+                optimalUtilization: 0.80,
+                excessSlope: 5,
+                maxUtilization: 0.90,
+                color: '#8b5cf6',
+                gradient: ['rgba(139, 92, 246, 0.3)', 'rgba(139, 92, 246, 0.0)']
+            },
+            wal: {
+                baseRate: 0.05,
+                baseSlope: 0.25,
+                optimalUtilization: 0.80,
+                excessSlope: 5,
+                maxUtilization: 0.90,
+                color: '#10b981',
+                gradient: ['rgba(16, 185, 129, 0.3)', 'rgba(16, 185, 129, 0.0)']
+            }
+        };
+
+        function calculateInterestRate(utilization, config) {
+            if (utilization < config.optimalUtilization) {
+                return config.baseRate + utilization * config.baseSlope;
+            } else {
+                const baseInterest = config.baseRate + config.optimalUtilization * config.baseSlope;
+                const excessUtilization = utilization - config.optimalUtilization;
+                return baseInterest + excessUtilization * config.excessSlope;
+            }
+        }
+
+        function generateData(config) {
+            const data = [];
+            for (let u = 0; u <= 90; u++) {
+                const utilization = u / 100;
+                const rate = calculateInterestRate(utilization, config) * 100;
+                data.push({ x: u, y: rate });
+            }
+            return data;
+        }
+
+        function createChart(canvasId, config, assetName) {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            const data = generateData(config);
+
+            const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+            gradient.addColorStop(0, config.gradient[0]);
+            gradient.addColorStop(1, config.gradient[1]);
+
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: [{
+                        label: 'Borrow APR',
+                        data: data,
+                        borderColor: config.color,
+                        backgroundColor: gradient,
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.1,
+                        pointRadius: 0,
+                        pointHoverRadius: 6,
+                        pointHoverBackgroundColor: config.color,
+                        pointHoverBorderColor: '#fff',
+                        pointHoverBorderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: '#1a1a24',
+                            titleColor: '#fff',
+                            bodyColor: '#e0e0e0',
+                            borderColor: '#2a2a3a',
+                            borderWidth: 1,
+                            padding: 12,
+                            displayColors: false,
+                            callbacks: {
+                                title: (items) => `Utilization: ${items[0].parsed.x}%`,
+                                label: (item) => `Borrow APR: ${item.parsed.y.toFixed(2)}%`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            min: 0,
+                            max: 90,
+                            title: {
+                                display: true,
+                                text: 'Utilization %',
+                                color: '#888',
+                                font: { size: 11 }
+                            },
+                            ticks: {
+                                color: '#666',
+                                font: { size: 10 },
+                                callback: (val) => val + '%'
+                            },
+                            grid: {
+                                color: '#1a1a24',
+                                drawBorder: false
+                            }
+                        },
+                        y: {
+                            min: 0,
+                            max: 80,
+                            title: {
+                                display: true,
+                                text: 'Borrow APR %',
+                                color: '#888',
+                                font: { size: 11 }
+                            },
+                            ticks: {
+                                color: '#666',
+                                font: { size: 10 },
+                                callback: (val) => val + '%'
+                            },
+                            grid: {
+                                color: '#1a1a24',
+                                drawBorder: false
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Create all borrow charts
+        createChart('usdcChart', assets.usdc, 'USDC');
+        createChart('suiChart', assets.sui, 'SUI');
+        createChart('deepChart', assets.deep, 'DEEP');
+        createChart('walChart', assets.wal, 'WAL');
+
+        // Supply APR = Borrow APR × Utilization × 0.8 (20% goes to protocol)
+        function generateSupplyData(config) {
+            const data = [];
+            for (let u = 0; u <= 90; u++) {
+                const utilization = u / 100;
+                const borrowRate = calculateInterestRate(utilization, config);
+                const supplyRate = borrowRate * utilization * 0.8 * 100;
+                data.push({ x: u, y: supplyRate });
+            }
+            return data;
+        }
+
+        function createSupplyChart(canvasId, config, assetName) {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            const data = generateSupplyData(config);
+
+            const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+            gradient.addColorStop(0, config.gradient[0]);
+            gradient.addColorStop(1, config.gradient[1]);
+
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: [{
+                        label: 'Supply APR',
+                        data: data,
+                        borderColor: config.color,
+                        backgroundColor: gradient,
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.1,
+                        pointRadius: 0,
+                        pointHoverRadius: 6,
+                        pointHoverBackgroundColor: config.color,
+                        pointHoverBorderColor: '#fff',
+                        pointHoverBorderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: '#1a1a24',
+                            titleColor: '#fff',
+                            bodyColor: '#e0e0e0',
+                            borderColor: '#2a2a3a',
+                            borderWidth: 1,
+                            padding: 12,
+                            displayColors: false,
+                            callbacks: {
+                                title: (items) => `Utilization: ${items[0].parsed.x}%`,
+                                label: (item) => `Supply APR: ${item.parsed.y.toFixed(2)}%`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            type: 'linear',
+                            min: 0,
+                            max: 90,
+                            title: {
+                                display: true,
+                                text: 'Utilization %',
+                                color: '#888',
+                                font: { size: 11 }
+                            },
+                            ticks: {
+                                color: '#666',
+                                font: { size: 10 },
+                                callback: (val) => val + '%'
+                            },
+                            grid: {
+                                color: '#1a1a24',
+                                drawBorder: false
+                            }
+                        },
+                        y: {
+                            min: 0,
+                            max: 80,
+                            title: {
+                                display: true,
+                                text: 'Supply APR %',
+                                color: '#888',
+                                font: { size: 11 }
+                            },
+                            ticks: {
+                                color: '#666',
+                                font: { size: 10 },
+                                callback: (val) => val + '%'
+                            },
+                            grid: {
+                                color: '#1a1a24',
+                                drawBorder: false
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Create all supply charts
+        createSupplyChart('usdcSupplyChart', assets.usdc, 'USDC');
+        createSupplyChart('suiSupplyChart', assets.sui, 'SUI');
+        createSupplyChart('deepSupplyChart', assets.deep, 'DEEP');
+        createSupplyChart('walSupplyChart', assets.wal, 'WAL');
+    </script>
+</body>
+</html>

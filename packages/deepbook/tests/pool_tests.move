@@ -2091,7 +2091,7 @@ fun test_order_limit(is_bid: bool) {
             &mut test,
         );
 
-        num_orders = num_orders - 1;
+        num_orders = num_orders - 1u64;
     };
 
     let match_quantity = 1000 * constants::float_scaling();

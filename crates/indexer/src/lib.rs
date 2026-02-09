@@ -41,15 +41,22 @@ const TESTNET_PACKAGES: &[&str] = &[
 // Mainnet margin package is not yet deployed - using placeholder
 // This will cause the indexer to fail fast if margin modules are requested on mainnet
 // When the margin package is deployed on mainnet, replace this with the actual address
-const MAINNET_MARGIN_PACKAGES: &[&str] = &[NOT_MAINNET_PACKAGE];
+const MAINNET_MARGIN_PACKAGES: &[&str] =
+    &["0x97d9473771b01f77b0940c589484184b49f6444627ec121314fae6a6d36fb86b"];
 const TESTNET_MARGIN_PACKAGES: &[&str] = &[
     "0xb8620c24c9ea1a4a41e79613d2b3d1d93648d1bb6f6b789a7c8f261c94110e4b",
     "0xf978cf2b601c24e40ef82b6e51512b448696b44cb014c0a1162422aa8b9cb811",
     "0x16d781c327a919dc55390f5cc60d58c7ec4535bb317e88850961222bbd5d4d9e",
+    "0xbf9e1b079fa68ffc54a84533b1c3d357019178b19e9901f262fb925454425177",
+    "0xe673d499eb03f1c31e8079dc73a700f2f085ff7b69c4aff396fad52d07ae6338",
+    "0x229d3cdbb327082a5c6773e8344b16c4040b360235e3cda75e1f232d4e9184cb",
+    "0x3d02a90ae1d2eff63ca8ae9bfd89ffa0f7e12d780563259c8271833c270ae842",
     "0x3ca7f6ee86b42ebe05ab8de70fbc96832e65615f64f10dbdc1820fa599904c7b",
+    "0xb284008ea0a6ac0a68c41f50a631207cd8d9c197ba0884e0df29ea204256777e",
+    "0xc21637e41d3db1c7ca6258fb4de567ba09d4e41610da44a148b26e99b68e11b5",
     "0xf0a090340d74ea598d59868378f27d2cc5e46a562ec3a5b26b5117572905d9f3",
+    "0x32e32dd608c4d83f82c64331a547bcb4bbfb819d4591197f2fe442b1661873d8",
     "0xd6a42f4df4db73d68cbeb52be66698d2fe6a9464f45ad113ca52b0c6ebd918b6",
-    "0xb388009b59b09cd5d219dae79dd3e5d08a5734884363e59a37f3cbe6ef613424", // Latest
 ];
 
 // Module definitions
@@ -71,6 +78,7 @@ pub const MARGIN_MODULES: &[&str] = &[
     "margin_pool",
     "margin_registry",
     "protocol_fees",
+    "tpsl",
 ];
 
 /// SUI system modules

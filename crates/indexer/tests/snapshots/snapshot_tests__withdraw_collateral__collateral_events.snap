@@ -1,0 +1,31 @@
+---
+source: crates/indexer/tests/snapshot_tests.rs
+expression: rows
+---
+[
+  {
+    "event_digest": "73DkKzySTo824MBEQREnhNwXbbSpX8YEEb7qbfxxaHGG1",
+    "digest": "73DkKzySTo824MBEQREnhNwXbbSpX8YEEb7qbfxxaHGG",
+    "sender": "0x064d87c3da8b7201b18c05bfc3189eb817920b2d089b33e207d1d99dc5ce08e0",
+    "checkpoint": "234920766",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1768502033827",
+    "package": "0x97d9473771b01f77b0940c589484184b49f6444627ec121314fae6a6d36fb86b",
+    "event_type": "withdraw",
+    "margin_manager_id": "0x16d8a37cfcacb4436a68f91eaf5d8e7d0aa1482a1958f8a90588f8d348ca9fc4",
+    "amount": "5000000",
+    "asset_type": "dba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC",
+    "pyth_decimals": "8",
+    "pyth_price": "177211899",
+    "withdraw_base_asset": false,
+    "base_pyth_decimals": "8",
+    "base_pyth_price": "177211899",
+    "quote_pyth_decimals": "8",
+    "quote_pyth_price": "99977717",
+    "remaining_base_asset": "109999944",
+    "remaining_quote_asset": "0",
+    "remaining_base_debt": "0",
+    "remaining_quote_debt": "0",
+    "onchain_timestamp": "1768502033827"
+  }
+]

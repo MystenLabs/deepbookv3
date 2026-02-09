@@ -252,6 +252,27 @@ pub mod deepbook {
         use super::*;
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct PoolCreated<BaseAsset, QuoteAsset> {
+            pub pool_id: ObjectID,
+            pub taker_fee: u64,
+            pub maker_fee: u64,
+            pub tick_size: u64,
+            pub lot_size: u64,
+            pub min_size: u64,
+            pub whitelisted_pool: bool,
+            pub treasury_address: Address,
+            #[serde(skip)]
+            pub phantom_base: PhantomData<BaseAsset>,
+            #[serde(skip)]
+            pub phantom_quote: PhantomData<QuoteAsset>,
+        }
+
+        impl<BaseAsset, QuoteAsset> MoveStruct for PoolCreated<BaseAsset, QuoteAsset> {
+            const MODULE: &'static str = "pool";
+            const NAME: &'static str = "PoolCreated";
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct DeepBurned<BaseAsset, QuoteAsset> {
             pub pool_id: ObjectID,
             pub deep_burned: u64,
@@ -265,12 +286,33 @@ pub mod deepbook {
             const MODULE: &'static str = "pool";
             const NAME: &'static str = "DeepBurned";
         }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct ReferralFeeEvent {
+            pub pool_id: ObjectID,
+            pub referral_id: ObjectID,
+            pub base_fee: u64,
+            pub quote_fee: u64,
+            pub deep_fee: u64,
+        }
+
+        impl MoveStruct for ReferralFeeEvent {
+            const MODULE: &'static str = "pool";
+            const NAME: &'static str = "ReferralFeeEvent";
+        }
     }
+}
+
+/// Represents a Sui TypeName (package::module::Type)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TypeName {
+    pub name: String,
 }
 
 // DeepBook Margin module
 pub mod deepbook_margin {
     use super::*;
+    use crate::models::TypeName;
 
     pub mod margin_manager {
         use super::*;
@@ -339,6 +381,43 @@ pub mod deepbook_margin {
         impl MoveStruct for LiquidationEvent {
             const MODULE: &'static str = "margin_manager";
             const NAME: &'static str = "LiquidationEvent";
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct DepositCollateralEvent {
+            pub margin_manager_id: ObjectID,
+            pub amount: u64,
+            pub asset: TypeName,
+            pub pyth_price: u64,
+            pub pyth_decimals: u8,
+            pub timestamp: u64,
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct WithdrawCollateralEvent {
+            pub margin_manager_id: ObjectID,
+            pub amount: u64,
+            pub asset: TypeName,
+            pub withdraw_base_asset: bool,
+            pub remaining_base_asset: u64,
+            pub remaining_quote_asset: u64,
+            pub remaining_base_debt: u64,
+            pub remaining_quote_debt: u64,
+            pub base_pyth_price: u64,
+            pub base_pyth_decimals: u8,
+            pub quote_pyth_price: u64,
+            pub quote_pyth_decimals: u8,
+            pub timestamp: u64,
+        }
+
+        impl MoveStruct for DepositCollateralEvent {
+            const MODULE: &'static str = "margin_manager";
+            const NAME: &'static str = "DepositCollateralEvent";
+        }
+
+        impl MoveStruct for WithdrawCollateralEvent {
+            const MODULE: &'static str = "margin_manager";
+            const NAME: &'static str = "WithdrawCollateralEvent";
         }
     }
 
@@ -625,6 +704,96 @@ pub mod deepbook_margin {
         impl MoveStruct for ReferralFeesClaimedEvent {
             const MODULE: &'static str = "protocol_fees";
             const NAME: &'static str = "ReferralFeesClaimedEvent";
+        }
+    }
+
+    pub mod tpsl {
+        use super::*;
+
+        /// Condition for triggering a conditional order (take profit or stop loss)
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct Condition {
+            pub trigger_below_price: bool,
+            pub trigger_price: u64,
+        }
+
+        /// Pending order details that will be placed when the condition is met
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct PendingOrder {
+            pub is_limit_order: bool,
+            pub client_order_id: u64,
+            pub order_type: Option<u8>,
+            pub self_matching_option: u8,
+            pub price: Option<u64>,
+            pub quantity: u64,
+            pub is_bid: bool,
+            pub pay_with_deep: bool,
+            pub expire_timestamp: Option<u64>,
+        }
+
+        /// Complete conditional order containing both condition and pending order
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct ConditionalOrder {
+            pub conditional_order_id: u64,
+            pub condition: Condition,
+            pub pending_order: PendingOrder,
+        }
+
+        /// Emitted when a new conditional order (TPSL) is created
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct ConditionalOrderAdded {
+            pub manager_id: ObjectID,
+            pub conditional_order_id: u64,
+            pub conditional_order: ConditionalOrder,
+            pub timestamp: u64,
+        }
+
+        /// Emitted when a conditional order is cancelled
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct ConditionalOrderCancelled {
+            pub manager_id: ObjectID,
+            pub conditional_order_id: u64,
+            pub conditional_order: ConditionalOrder,
+            pub timestamp: u64,
+        }
+
+        /// Emitted when a conditional order is triggered and executed
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct ConditionalOrderExecuted {
+            pub manager_id: ObjectID,
+            pub pool_id: ObjectID,
+            pub conditional_order_id: u64,
+            pub conditional_order: ConditionalOrder,
+            pub timestamp: u64,
+        }
+
+        /// Emitted when a conditional order fails due to insufficient funds
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct ConditionalOrderInsufficientFunds {
+            pub manager_id: ObjectID,
+            pub conditional_order_id: u64,
+            pub conditional_order: ConditionalOrder,
+            pub timestamp: u64,
+        }
+
+        impl MoveStruct for ConditionalOrderAdded {
+            const MODULE: &'static str = "tpsl";
+            const NAME: &'static str = "ConditionalOrderAdded";
+        }
+
+        impl MoveStruct for ConditionalOrderCancelled {
+            const MODULE: &'static str = "tpsl";
+            const NAME: &'static str = "ConditionalOrderCancelled";
+        }
+
+        impl MoveStruct for ConditionalOrderExecuted {
+            const MODULE: &'static str = "tpsl";
+            const NAME: &'static str = "ConditionalOrderExecuted";
+        }
+
+        impl MoveStruct for ConditionalOrderInsufficientFunds {
+            const MODULE: &'static str = "tpsl";
+            const NAME: &'static str = "ConditionalOrderInsufficientFunds";
         }
     }
 }

@@ -3,7 +3,7 @@
 
 module deepbook::constants;
 
-const CURRENT_VERSION: u64 = 5; // Update version during upgrades
+const CURRENT_VERSION: u64 = 6; // Update version during upgrades
 const POOL_CREATION_FEE: u64 = 500 * 1_000_000; // 500 DEEP
 const FLOAT_SCALING: u64 = 1_000_000_000;
 const FLOAT_SCALING_U128: u128 = 1_000_000_000;

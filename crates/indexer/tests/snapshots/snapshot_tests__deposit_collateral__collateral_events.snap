@@ -1,0 +1,31 @@
+---
+source: crates/indexer/tests/snapshot_tests.rs
+expression: rows
+---
+[
+  {
+    "event_digest": "GSNpevf2UcTeq3ACPMGRsvLFRRGB9w2H4KB9BR1cEYcQ1",
+    "digest": "GSNpevf2UcTeq3ACPMGRsvLFRRGB9w2H4KB9BR1cEYcQ",
+    "sender": "0x064d87c3da8b7201b18c05bfc3189eb817920b2d089b33e207d1d99dc5ce08e0",
+    "checkpoint": "234918188",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1768501353090",
+    "package": "",
+    "event_type": "deposit",
+    "margin_manager_id": "0x16d8a37cfcacb4436a68f91eaf5d8e7d0aa1482a1958f8a90588f8d348ca9fc4",
+    "amount": "10000000",
+    "asset_type": "dba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC",
+    "pyth_decimals": "8",
+    "pyth_price": "99975279",
+    "withdraw_base_asset": null,
+    "base_pyth_decimals": null,
+    "base_pyth_price": null,
+    "quote_pyth_decimals": null,
+    "quote_pyth_price": null,
+    "remaining_base_asset": null,
+    "remaining_quote_asset": null,
+    "remaining_base_debt": null,
+    "remaining_quote_debt": null,
+    "onchain_timestamp": "1768501352962"
+  }
+]
