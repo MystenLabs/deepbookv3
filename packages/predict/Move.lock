@@ -4,6 +4,36 @@
 [move]
 version = 4
 
+[pinned.mainnet.MoveStdlib]
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "868c226359ef914f1f3b080518f27eb13d8967f5" }
+use_environment = "mainnet"
+manifest_digest = "C4FE4C91DE74CBF223B2E380AE40F592177D21870DC2D7EB6227D2D694E05363"
+deps = {}
+
+[pinned.mainnet.Sui]
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "868c226359ef914f1f3b080518f27eb13d8967f5" }
+use_environment = "mainnet"
+manifest_digest = "CD547CB1ACCE0880C835DAED2D8FFCB91D56C833AE5240D3AA5B918398263195"
+deps = { MoveStdlib = "MoveStdlib" }
+
+[pinned.mainnet.deepbook]
+source = { local = "../deepbook" }
+use_environment = "mainnet"
+manifest_digest = "BBE7F8BFEF088532C5358623C6F5B3153EE14B3265ABA833B0F3CF9D313264A7"
+deps = { std = "MoveStdlib", sui = "Sui", token = "token" }
+
+[pinned.mainnet.deepbook_predict]
+source = { root = true }
+use_environment = "mainnet"
+manifest_digest = "530EBD642C5DCE23081CD794F9316CB85F7F6C33D8E27D11F4A54A6F7B16C683"
+deps = { deepbook = "deepbook", std = "MoveStdlib", sui = "Sui" }
+
+[pinned.mainnet.token]
+source = { local = "../token" }
+use_environment = "mainnet"
+manifest_digest = "E41BBD67BE8940D26C79D78B028477EF5B33BA217A1282C78ACB344CF8A5ECF6"
+deps = { std = "MoveStdlib", sui = "Sui" }
+
 [pinned.testnet.MoveStdlib]
 source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "22f9fc9781732d651e18384c9a8eb1dabddf73a6" }
 use_environment = "testnet"
