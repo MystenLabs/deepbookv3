@@ -1638,11 +1638,10 @@ fun process_collected_orders<BaseAsset, QuoteAsset>(
                 };
             } else {
                 // For market sell orders, calculate execution price
-                let (base_out, quote_out, _) = if (pending_order.pay_with_deep()) {
-                    pool.get_quote_quantity_out(pending_order.quantity(), clock)
-                } else {
-                    pool.get_quote_quantity_out_input_fee(pending_order.quantity(), clock)
-                };
+                let (base_out, quote_out, _) = pool.get_quote_quantity_out(
+                    pending_order.quantity(),
+                    clock,
+                );
                 let base_used = pending_order.quantity() - base_out;
                 // Cancel if insufficient liquidity or price out of bounds
                 if (base_used == 0) {

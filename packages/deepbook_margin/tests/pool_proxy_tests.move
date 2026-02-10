@@ -4051,3 +4051,153 @@ fun test_limit_order_price_stale() {
 
     abort
 }
+
+#[test]
+/// Test that market sell order at min_size works with input fee (no DEEP in manager).
+/// This verifies the fix for get_quote_quantity_out_input_fee min_size issue.
+fun test_market_sell_min_size_input_fee_ok() {
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        _base_pool_id,
+        _quote_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_pool_proxy_test_env<USDC, USDT>();
+
+    // Set up orderbook with bids to match against
+    setup_orderbook_liquidity_stablecoin<USDC, USDT>(&mut scenario, pool_id, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+
+    // Deposit enough USDC to sell min_size (no DEEP deposited - will use input fee).
+    // When using input fee, fee is deducted from the sell amount, so we need slightly more.
+    // Deposit min_size + 10% to cover the taker fee.
+    mm.deposit<USDC, USDT, USDC>(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        mint_coin<USDC>(constants::min_size() + constants::min_size() / 10, scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    destroy_2!(usdc_price, usdt_price);
+
+    // Market sell exactly min_size USDC with input fee (pay_with_deep = false)
+    let order_info = pool_proxy::place_market_order<USDC, USDT>(
+        &registry,
+        &mut mm,
+        &mut pool,
+        1,
+        constants::self_matching_allowed(),
+        constants::min_size(), // exactly min_size
+        false, // is_bid = false (sell)
+        false, // pay_with_deep = false (use input fee)
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Verify order executed
+    assert!(order_info.status() == constants::filled());
+
+    return_shared_2!(mm, pool);
+    cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
+}
+
+#[test]
+/// Test that market buy order at min_size works with input fee (no DEEP in manager).
+/// For bids, input fee is taken from quote, not base, so this should work.
+fun test_market_buy_min_size_input_fee_ok() {
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        _base_pool_id,
+        _quote_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_pool_proxy_test_env<USDC, USDT>();
+
+    // Set up orderbook with asks to match against
+    setup_orderbook_liquidity_stablecoin<USDC, USDT>(&mut scenario, pool_id, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+
+    // Deposit quote (USDT) to buy base (USDC) - no DEEP deposited (will use input fee)
+    // Need enough quote to cover min_size base + fees
+    // At $1.01 price, min_size base costs ~10100 quote + fees
+    mm.deposit<USDC, USDT, USDT>(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        mint_coin<USDT>(100000, scenario.ctx()), // enough to cover min_size + fees
+        &clock,
+        scenario.ctx(),
+    );
+    destroy_2!(usdc_price, usdt_price);
+
+    // Market buy exactly min_size USDC with input fee (pay_with_deep = false)
+    // For bids, fee is taken from quote input, not base output
+    // So this should work regardless of the fix
+    let order_info = pool_proxy::place_market_order<USDC, USDT>(
+        &registry,
+        &mut mm,
+        &mut pool,
+        1,
+        constants::self_matching_allowed(),
+        constants::min_size(), // exactly min_size base to buy
+        true, // is_bid = true (buy)
+        false, // pay_with_deep = false (use input fee)
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Verify order executed
+    assert!(order_info.status() == constants::filled());
+
+    return_shared_2!(mm, pool);
+    cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
+}

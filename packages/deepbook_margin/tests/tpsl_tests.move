@@ -19,6 +19,7 @@ use deepbook_margin::{
         create_pool_for_testing,
         enable_deepbook_margin_on_pool,
         initialize_pool_price,
+        setup_deep_price,
         cleanup_margin_test,
         mint_coin,
         build_pyth_price_info_object,
@@ -63,6 +64,10 @@ fun setup_sui_usdc_deepbook_margin(): (
     let (usdc_pool_cap, sui_pool_cap) = get_margin_pool_caps(&mut scenario, usdc_pool_id);
 
     let (pool_id, registry_id) = create_pool_for_testing<SUI, USDC>(&mut scenario);
+
+    // Set up deep price data for the pool (required for get_quote_quantity_out)
+    setup_deep_price<SUI, USDC>(&mut scenario, pool_id, registry_id, &clock);
+
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
     enable_deepbook_margin_on_pool<SUI, USDC>(

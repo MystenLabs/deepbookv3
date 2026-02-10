@@ -919,6 +919,16 @@ public fun setup_pool_proxy_test_env<BaseAsset, QuoteAsset>(): (
     // Create DeepBook pool
     let (pool_id, registry_id) = create_pool_for_testing<BaseAsset, QuoteAsset>(&mut scenario);
 
+    // Set up deep price data for the pool (required for get_quote_quantity_out).
+    // Skip if DEEP is one of the pool's assets - DEEP pools can use their own trades for deep price.
+    let base_is_deep =
+        std::type_name::with_defining_ids<BaseAsset>() == std::type_name::with_defining_ids<DEEP>();
+    let quote_is_deep =
+        std::type_name::with_defining_ids<QuoteAsset>() == std::type_name::with_defining_ids<DEEP>();
+    if (!base_is_deep && !quote_is_deep) {
+        setup_deep_price<BaseAsset, QuoteAsset>(&mut scenario, pool_id, registry_id, &clock);
+    };
+
     // Enable margin trading
     scenario.next_tx(test_constants::admin());
     let mut registry = scenario.take_shared<MarginRegistry>();
@@ -1095,4 +1105,100 @@ public fun setup_orderbook_liquidity_out_of_bounds_stablecoin<BaseAsset, QuoteAs
 
     transfer::public_transfer(balance_manager, test_constants::user2());
     return_shared(pool);
+}
+
+/// Sets up deep price data for a pool by creating a USDC/DEEP reference pool.
+/// This is required for pools to use get_quote_quantity_out which needs deep price data.
+/// Returns the reference pool ID for cleanup.
+public fun setup_deep_price<BaseAsset, QuoteAsset>(
+    scenario: &mut Scenario,
+    target_pool_id: ID,
+    registry_id: ID,
+    clock: &Clock,
+): ID {
+    use deepbook::balance_manager;
+
+    // Create whitelisted USDC/DEEP reference pool (whitelisted pools don't need deep price to place orders)
+    scenario.next_tx(test_constants::admin());
+    let admin_cap = registry::get_admin_cap_for_testing(scenario.ctx());
+    let mut registry = scenario.take_shared_by_id<Registry>(registry_id);
+    let reference_pool_id = pool::create_pool_admin<USDC, DEEP>(
+        &mut registry,
+        constants::tick_size(),
+        constants::lot_size(),
+        constants::min_size(),
+        true, // whitelisted_pool
+        false, // stable_pool
+        &admin_cap,
+        scenario.ctx(),
+    );
+    return_shared(registry);
+    destroy(admin_cap);
+
+    // Set up liquidity in the reference pool for mid_price calculation
+    scenario.next_tx(test_constants::user2());
+    let mut reference_pool = scenario.take_shared_by_id<Pool<USDC, DEEP>>(reference_pool_id);
+    let mut balance_manager = balance_manager::new(scenario.ctx());
+
+    balance_manager.deposit(
+        mint_coin<USDC>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+    balance_manager.deposit(
+        mint_coin<DEEP>(1_000_000 * test_constants::deep_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+
+    let trade_proof = balance_manager.generate_proof_as_owner(scenario.ctx());
+
+    // Place bid slightly below mid price (spread to prevent matching)
+    reference_pool.place_limit_order<USDC, DEEP>(
+        &mut balance_manager,
+        &trade_proof,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        9_000_000, // 0.009 * 1e9 (bid below)
+        100 * test_constants::deep_multiplier(),
+        true, // is_bid
+        true, // pay_with_deep
+        constants::max_u64(),
+        clock,
+        scenario.ctx(),
+    );
+
+    // Place ask slightly above mid price (spread to prevent matching)
+    reference_pool.place_limit_order<USDC, DEEP>(
+        &mut balance_manager,
+        &trade_proof,
+        2,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        11_000_000, // 0.011 * 1e9 (ask above)
+        100 * test_constants::deep_multiplier(),
+        false, // is_bid
+        true, // pay_with_deep
+        constants::max_u64(),
+        clock,
+        scenario.ctx(),
+    );
+
+    transfer::public_transfer(balance_manager, test_constants::user2());
+    return_shared(reference_pool);
+
+    // Add deep price point to target pool
+    scenario.next_tx(test_constants::admin());
+    let mut target_pool = scenario.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(target_pool_id);
+    let reference_pool = scenario.take_shared_by_id<Pool<USDC, DEEP>>(reference_pool_id);
+
+    pool::add_deep_price_point<BaseAsset, QuoteAsset, USDC, DEEP>(
+        &mut target_pool,
+        &reference_pool,
+        clock,
+    );
+
+    return_shared(target_pool);
+    return_shared(reference_pool);
+
+    reference_pool_id
 }

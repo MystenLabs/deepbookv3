@@ -484,11 +484,7 @@ fun calculate_effective_price<BaseAsset, QuoteAsset>(
         assert!(base_out > 0, ENoLiquidityInOrderbook);
         (math::div(quote_in, base_out), quote_in)
     } else {
-        let (base_out, quote_out, _) = if (pay_with_deep) {
-            pool.get_quote_quantity_out(quantity, clock)
-        } else {
-            pool.get_quote_quantity_out_input_fee(quantity, clock)
-        };
+        let (base_out, quote_out, _) = pool.get_quote_quantity_out(quantity, clock);
         let base_used = quantity - base_out;
         assert!(base_used > 0, ENoLiquidityInOrderbook);
         (math::div(quote_out, base_used), quote_out)
