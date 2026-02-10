@@ -13,6 +13,8 @@
 module deepbook_predict::oracle_block_scholes;
 
 use sui::clock::Clock;
+use deepbook_predict::math;
+use deepbook::math as deepbook_math;
 
 // === Errors ===
 
@@ -21,6 +23,7 @@ const EOracleStale: u64 = 1;
 const EOracleNotActive: u64 = 2;
 const EOracleAlreadyActive: u64 = 3;
 const EOracleExpired: u64 = 4;
+const ECannotBeNegative: u64 = 5;
 
 // === Structs ===
 
@@ -243,12 +246,21 @@ public(package) fun create_oracle<Underlying>(
 ///
 /// Requires: ln() and sqrt() math utilities
 public(package) fun compute_iv<Underlying>(
-    _oracle: &OracleSVI<Underlying>,
-    _strike: u64,
-    _clock: &Clock,
+    oracle: &OracleSVI<Underlying>,
+    strike: u64,
+    clock: &Clock,
 ): u64 {
-    // TODO: Implement SVI formula - needs math utilities (ln, sqrt)
-    abort 0
+    let ratio = deepbook::math::div(strike, oracle.prices.forward);
+    let (k, k_negative) = math::ln(ratio);
+    let (k_minus_m, k_minus_m_negative) = math::sub_signed_u64(k, k_negative, oracle.svi.m, oracle.svi.m_negative);
+    let sq = deepbook_math::sqrt(deepbook_math::mul(k_minus_m, k_minus_m) + deepbook_math::mul(oracle.svi.sigma, oracle.svi.sigma), 1_000_000_000);
+    let rho_k_minus_m = deepbook_math::mul(oracle.svi.rho, k_minus_m);
+    let (inner, inner_negative) = math::add_signed_u64(rho_k_minus_m, k_minus_m_negative, sq, false);
+    assert!(!inner_negative, ECannotBeNegative); // SVI formula should not produce negative variance
+    let total_var = oracle.svi.a + deepbook_math::mul(oracle.svi.b, inner);
+    let iv = deepbook_math::sqrt(deepbook_math::div(total_var, deepbook_math::div(oracle.expiry - clock.timestamp_ms(), 1000 * 60 * 60 * 24)), 1_000_000_000);
+
+    iv
 }
 
 /// Get all pricing data in one call for efficiency.
