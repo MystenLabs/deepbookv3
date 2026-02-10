@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@mysten/deepbook-v3':
-        specifier: ^1.0.1
-        version: 1.0.1(@mysten/sui@2.1.0(typescript@5.9.3))
+        specifier: ^1.0.5
+        version: 1.0.5(@mysten/sui@2.1.0(typescript@5.9.3))
       '@mysten/sui':
         specifier: ^2.1.0
         version: 2.1.0(typescript@5.9.3)
@@ -221,11 +221,11 @@ packages:
   '@mysten/bcs@2.0.1':
     resolution: {integrity: sha512-/q1uC5Vw/RjXzR4fE9QiIwmTvRx9BstduxkR1j1Z5EbE7ZJynLkFKcJJlXRcnnEytIPcsyiR+TkQixzSbz3msQ==}
 
-  '@mysten/deepbook-v3@1.0.1':
-    resolution: {integrity: sha512-cBXLIbl9Ag1RuZr4LS+fH0LHpfdkIEC5Uc3GZsetiblMYOYVDb9nZM6c79gcKVCnoJMklGe1iK7nmpJOWXu2ew==}
+  '@mysten/deepbook-v3@1.0.5':
+    resolution: {integrity: sha512-6+3OVD9yXUto+8J9WsjIIpWHR1uZu8LIs8c3kxQosHOc+tZ2wkyaNLVrhBy21xZ2qfC5Lv0e52Q47l6KGYMIiA==}
     engines: {node: '>=22'}
     peerDependencies:
-      '@mysten/sui': ^2.1.0
+      '@mysten/sui': ^2.3.1
 
   '@mysten/sui@2.1.0':
     resolution: {integrity: sha512-q1keHOsvNrkfM+rCUHJRFDHagrdr7rCIsNGhM9NrtShAMtCEgCiChuCFGHGVjb3/J2CFj+SxPIG5fEb5bj+9UQ==}
@@ -268,8 +268,8 @@ packages:
     peerDependencies:
       axios: 0.x || 1.x
 
-  axios@1.13.4:
-    resolution: {integrity: sha512-1wVkUaAO6WyaYtCkcYCOx12ZgpGf9Zif+qXa4n+oYzK558YryKqiL6UWwd5DqiH3VRW0GYhTZQ/vlgJrCoNQlg==}
+  axios@1.13.5:
+    resolution: {integrity: sha512-cz4ur7Vb0xS4/KUN0tPWe44eqxrIu31me+fbang3ijiNscE129POzipJJA6zniq2C/Z6sJCjMimjS8Lc/GAs8Q==}
 
   call-bind-apply-helpers@1.0.2:
     resolution: {integrity: sha512-Sp1ablJ0ivDkSzjcaJdxEunN5/XvksFJ2sMBFfq6x0ryhQV/2b/KwFe21cMpmHtPOSij8K99/wSfoEuTObmuMQ==}
@@ -521,13 +521,13 @@ snapshots:
       '@mysten/utils': 0.3.0
       '@scure/base': 2.0.0
 
-  '@mysten/deepbook-v3@1.0.1(@mysten/sui@2.1.0(typescript@5.9.3))':
+  '@mysten/deepbook-v3@1.0.5(@mysten/sui@2.1.0(typescript@5.9.3))':
     dependencies:
       '@mysten/bcs': 2.0.1
       '@mysten/sui': 2.1.0(typescript@5.9.3)
       '@noble/hashes': 2.0.1
-      axios: 1.13.4
-      axios-retry: 4.5.0(axios@1.13.4)
+      axios: 1.13.5
+      axios-retry: 4.5.0(axios@1.13.5)
     transitivePeerDependencies:
       - debug
 
@@ -589,12 +589,12 @@ snapshots:
 
   asynckit@0.4.0: {}
 
-  axios-retry@4.5.0(axios@1.13.4):
+  axios-retry@4.5.0(axios@1.13.5):
     dependencies:
-      axios: 1.13.4
+      axios: 1.13.5
       is-retry-allowed: 2.2.0
 
-  axios@1.13.4:
+  axios@1.13.5:
     dependencies:
       follow-redirects: 1.15.11
       form-data: 4.0.5
