@@ -14,7 +14,7 @@ import { adminCapOwner, liquidationAdminCapID } from "../config/constants.js";
     "0xae8e060630107720560d49e99f352b41a9f1696675021f087b69b57d35d814b6";
 
   const client = new SuiGrpcClient({
-    url: "https://sui-mainnet.mystenlabs.com",
+    baseUrl: "https://sui-mainnet.mystenlabs.com",
     network: "mainnet",
   }).$extend(
     deepbook({

@@ -17,6 +17,7 @@ use deepbook_margin::{
         MarginPoolCap
     },
     oracle::{Self, PythConfig},
+    pool_proxy,
     protocol_config::{Self, ProtocolConfig},
     test_constants::{Self, USDC, USDT, BTC, SUI}
 };
@@ -292,6 +293,91 @@ public fun enable_deepbook_margin_on_pool<BaseAsset, QuoteAsset>(
     return_shared(pool);
 }
 
+/// Initialize the current price for a pool (required before trading)
+/// This function builds price info objects based on the asset types and updates the registry
+public fun initialize_pool_price<BaseAsset, QuoteAsset>(
+    pool_id: ID,
+    margin_registry: &mut MarginRegistry,
+    clock: &Clock,
+    scenario: &mut Scenario,
+) {
+    scenario.next_tx(test_constants::admin());
+    let pool = scenario.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+
+    // Build price info objects for base and quote
+    let base_price = build_price_info_for_type<BaseAsset>(scenario, clock);
+    let quote_price = build_price_info_for_type<QuoteAsset>(scenario, clock);
+
+    // Update the current price in the registry
+    pool_proxy::update_current_price<BaseAsset, QuoteAsset>(
+        margin_registry,
+        &pool,
+        &base_price,
+        &quote_price,
+        clock,
+    );
+
+    destroy(base_price);
+    destroy(quote_price);
+    return_shared(pool);
+}
+
+/// Build a price info object based on the asset type
+fun build_price_info_for_type<Asset>(scenario: &mut Scenario, clock: &Clock): PriceInfoObject {
+    let type_name = std::type_name::with_defining_ids<Asset>();
+    let type_string = type_name.into_string().into_bytes();
+
+    // Match on common test asset types
+    let usdc = b"USDC";
+    let usdt = b"USDT";
+    let btc = b"BTC";
+    let sui = b"SUI";
+    let deep = b"DEEP";
+
+    if (contains_substring(&type_string, &usdc)) {
+        build_demo_usdc_price_info_object(scenario, clock)
+    } else if (contains_substring(&type_string, &usdt)) {
+        build_demo_usdt_price_info_object(scenario, clock)
+    } else if (contains_substring(&type_string, &btc)) {
+        build_btc_price_info_object(scenario, 50000, clock) // $50,000
+    } else if (contains_substring(&type_string, &sui)) {
+        build_sui_price_info_object(scenario, 1, clock) // $1
+    } else if (contains_substring(&type_string, &deep)) {
+        build_deep_price_info_object(scenario, clock) // $0.10
+    } else {
+        // Default to $1 price for unknown assets
+        build_demo_usdc_price_info_object(scenario, clock)
+    }
+}
+
+/// Check if a byte vector contains a substring
+fun contains_substring(haystack: &vector<u8>, needle: &vector<u8>): bool {
+    let haystack_len = haystack.length();
+    let needle_len = needle.length();
+
+    if (needle_len > haystack_len) {
+        return false
+    };
+
+    let mut i = 0;
+    while (i <= haystack_len - needle_len) {
+        let mut found = true;
+        let mut j = 0;
+        while (j < needle_len) {
+            if (haystack[i + j] != needle[j]) {
+                found = false;
+                break
+            };
+            j = j + 1;
+        };
+        if (found) {
+            return true
+        };
+        i = i + 1;
+    };
+    false
+}
+
 /// Create a test pool configuration
 public fun create_test_pool_config<BaseAsset, QuoteAsset>(
     margin_registry: &MarginRegistry,
@@ -429,6 +515,19 @@ public fun build_sui_price_info_object(
     )
 }
 
+/// Build a DEEP price info object at $0.10
+public fun build_deep_price_info_object(scenario: &mut Scenario, clock: &Clock): PriceInfoObject {
+    // DEEP at $0.10
+    build_pyth_price_info_object(
+        scenario,
+        test_constants::deep_price_feed_id(),
+        10_000_000, // $0.10 in 8 decimals (0.10 * 10^8)
+        100000,
+        test_constants::pyth_decimals(),
+        clock.timestamp_ms() / 1000,
+    )
+}
+
 /// Build a stale BTC price info object (timestamp is stale_seconds before clock time)
 public fun build_stale_btc_price_info_object(
     scenario: &mut Scenario,
@@ -506,6 +605,13 @@ public fun create_test_pyth_config(): PythConfig {
     );
     coin_data_vec.push_back(sui_data);
 
+    // Add DEEP configuration (6 decimals)
+    let deep_data = oracle::test_coin_type_data<token::deep::DEEP>(
+        6, // decimals
+        test_constants::deep_price_feed_id(),
+    );
+    coin_data_vec.push_back(deep_data);
+
     oracle::new_pyth_config(
         coin_data_vec,
         60, // max age 60 seconds
@@ -551,6 +657,10 @@ public fun setup_usdc_usdt_deepbook_margin(): (
         &clock,
         &mut scenario,
     );
+
+    // Initialize price for the pool (required for price protection)
+    initialize_pool_price<USDT, USDC>(pool_id, &mut registry, &clock, &mut scenario);
+
     return_shared(registry);
 
     scenario.next_tx(test_constants::admin());
@@ -628,6 +738,10 @@ public fun setup_btc_usd_deepbook_margin(): (
         &clock,
         &mut scenario,
     );
+
+    // Initialize price for the pool (required for price protection)
+    initialize_pool_price<BTC, USDC>(pool_id, &mut registry, &clock, &mut scenario);
+
     return_shared(registry);
 
     scenario.next_tx(test_constants::admin());
@@ -705,6 +819,10 @@ public fun setup_btc_sui_deepbook_margin(): (
         &clock,
         &mut scenario,
     );
+
+    // Initialize price for the pool (required for price protection)
+    initialize_pool_price<BTC, SUI>(pool_id, &mut registry, &clock, &mut scenario);
+
     return_shared(registry);
 
     scenario.next_tx(test_constants::admin());
@@ -811,6 +929,10 @@ public fun setup_pool_proxy_test_env<BaseAsset, QuoteAsset>(): (
         &clock,
         &mut scenario,
     );
+
+    // Initialize price for the pool (required for price protection)
+    initialize_pool_price<BaseAsset, QuoteAsset>(pool_id, &mut registry, &clock, &mut scenario);
+
     return_shared(registry);
 
     // Setup liquidity for margin pools
@@ -844,4 +966,133 @@ public fun setup_pool_proxy_test_env<BaseAsset, QuoteAsset>(): (
     destroy(supplier_cap);
 
     (scenario, clock, admin_cap, maintainer_cap, base_pool_id, quote_pool_id, pool_id, registry_id)
+}
+
+/// Set up orderbook liquidity for market orders (USDC/USDT at ~1.0 price)
+public fun setup_orderbook_liquidity_stablecoin<BaseAsset, QuoteAsset>(
+    scenario: &mut Scenario,
+    pool_id: ID,
+    clock: &Clock,
+) {
+    use deepbook::balance_manager;
+
+    scenario.next_tx(test_constants::user2());
+    let mut pool = scenario.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+    let mut balance_manager = balance_manager::new(scenario.ctx());
+
+    // Deposit assets for liquidity provision
+    balance_manager.deposit(
+        mint_coin<BaseAsset>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+    balance_manager.deposit(
+        mint_coin<QuoteAsset>(1_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+    balance_manager.deposit(
+        mint_coin<DEEP>(10000 * test_constants::deep_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+
+    let trade_proof = balance_manager.generate_proof_as_owner(scenario.ctx());
+
+    // Place ask orders (sell base) slightly above oracle (within 5% tolerance)
+    pool.place_limit_order<BaseAsset, QuoteAsset>(
+        &mut balance_manager,
+        &trade_proof,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        1_010_000_000, // $1.01 (1% above oracle, within 5% tolerance)
+        10000 * test_constants::usdc_multiplier(),
+        false, // is_bid = false (ask)
+        false,
+        constants::max_u64(),
+        clock,
+        scenario.ctx(),
+    );
+
+    // Place bid orders slightly below oracle (within 5% tolerance)
+    pool.place_limit_order<BaseAsset, QuoteAsset>(
+        &mut balance_manager,
+        &trade_proof,
+        2,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        990_000_000, // $0.99 (1% below oracle, within 5% tolerance)
+        10000 * test_constants::usdc_multiplier(),
+        true, // is_bid = true
+        false,
+        constants::max_u64(),
+        clock,
+        scenario.ctx(),
+    );
+
+    transfer::public_transfer(balance_manager, test_constants::user2());
+    return_shared(pool);
+}
+
+/// Sets up orderbook liquidity with prices OUTSIDE the 5% tolerance for testing price bound failures.
+/// Asks at $1.10 (10% above oracle) - will fail upper bound check for market buys
+/// Bids at $0.90 (10% below oracle) - will fail lower bound check for market sells
+public fun setup_orderbook_liquidity_out_of_bounds_stablecoin<BaseAsset, QuoteAsset>(
+    scenario: &mut Scenario,
+    pool_id: ID,
+    clock: &Clock,
+) {
+    use deepbook::balance_manager;
+
+    scenario.next_tx(test_constants::user2());
+    let mut pool = scenario.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+    let mut balance_manager = balance_manager::new(scenario.ctx());
+
+    balance_manager.deposit(
+        mint_coin<BaseAsset>(1_000_000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+    balance_manager.deposit(
+        mint_coin<QuoteAsset>(1_000_000 * test_constants::usdt_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+    balance_manager.deposit(
+        mint_coin<DEEP>(10000 * test_constants::deep_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+
+    let trade_proof = balance_manager.generate_proof_as_owner(scenario.ctx());
+
+    // Place ask orders at $1.10 (10% above oracle, exceeds 5% tolerance)
+    pool.place_limit_order<BaseAsset, QuoteAsset>(
+        &mut balance_manager,
+        &trade_proof,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        1_100_000_000, // $1.10 (10% above oracle at $1.00)
+        10000 * test_constants::usdc_multiplier(),
+        false, // is_bid = false (ask)
+        false,
+        constants::max_u64(),
+        clock,
+        scenario.ctx(),
+    );
+
+    // Place bid orders at $0.90 (10% below oracle, exceeds 5% tolerance)
+    pool.place_limit_order<BaseAsset, QuoteAsset>(
+        &mut balance_manager,
+        &trade_proof,
+        2,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        900_000_000, // $0.90 (10% below oracle at $1.00)
+        10000 * test_constants::usdc_multiplier(),
+        true, // is_bid = true
+        false,
+        constants::max_u64(),
+        clock,
+        scenario.ctx(),
+    );
+
+    transfer::public_transfer(balance_manager, test_constants::user2());
+    return_shared(pool);
 }

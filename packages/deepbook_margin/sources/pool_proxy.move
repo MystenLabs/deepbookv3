@@ -7,8 +7,10 @@ use deepbook::{math, order_info::OrderInfo, pool::Pool};
 use deepbook_margin::{
     margin_manager::MarginManager,
     margin_pool::MarginPool,
-    margin_registry::MarginRegistry
+    margin_registry::MarginRegistry,
+    oracle
 };
+use pyth::price_info::PriceInfoObject;
 use std::type_name;
 use sui::clock::Clock;
 use token::deep::DEEP;
@@ -18,6 +20,28 @@ const ECannotStakeWithDeepMarginManager: u64 = 1;
 const EPoolNotEnabledForMarginTrading: u64 = 2;
 const ENotReduceOnlyOrder: u64 = 3;
 const EIncorrectDeepBookPool: u64 = 4;
+const ENoLiquidityInOrderbook: u64 = 5;
+
+// === Public Functions - Price Protection ===
+/// Updates the current price for a pool using safe oracle price calculation.
+/// Anyone can call this to update the price oracle used for order validation.
+public fun update_current_price<BaseAsset, QuoteAsset>(
+    registry: &mut MarginRegistry,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    base_price_info_object: &PriceInfoObject,
+    quote_price_info_object: &PriceInfoObject,
+    clock: &Clock,
+) {
+    // Calculate current price using safe oracle (with staleness, confidence, EWMA checks)
+    let price = oracle::calculate_price<BaseAsset, QuoteAsset>(
+        registry,
+        base_price_info_object,
+        quote_price_info_object,
+        clock,
+    );
+
+    registry.update_current_price(pool.id(), price, clock);
+}
 
 // === Public Proxy Functions - Trading ===
 /// Places a limit order in the pool.
@@ -37,9 +61,12 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
     ctx: &TxContext,
 ): OrderInfo {
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
+    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
+
+    registry.assert_price(pool.id(), price, is_bid, clock);
+
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
-    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
 
     pool.place_limit_order(
         balance_manager,
@@ -71,9 +98,19 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
     ctx: &TxContext,
 ): OrderInfo {
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
+    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
+
+    let (effective_price, _) = calculate_effective_price(
+        pool,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        clock,
+    );
+    registry.assert_price(pool.id(), effective_price, is_bid, clock);
+
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
-    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
 
     pool.place_market_order(
         balance_manager,
@@ -107,6 +144,9 @@ public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset, DebtAsset>(
 ): OrderInfo {
     registry.load_inner();
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
+
+    registry.assert_price(pool.id(), price, is_bid, clock);
+
     let (base_debt, quote_debt) = margin_manager.calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
         margin_pool,
         clock,
@@ -156,6 +196,7 @@ public fun place_reduce_only_market_order<BaseAsset, QuoteAsset, DebtAsset>(
 ): OrderInfo {
     registry.load_inner();
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
+
     let (base_debt, quote_debt) = margin_manager.calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
         margin_pool,
         clock,
@@ -164,11 +205,13 @@ public fun place_reduce_only_market_order<BaseAsset, QuoteAsset, DebtAsset>(
         pool,
     );
 
-    let (_, quote_quantity, _) = if (pay_with_deep) {
-        pool.get_quote_quantity_out(quantity, clock)
-    } else {
-        pool.get_quote_quantity_out_input_fee(quantity, clock)
-    };
+    let (effective_price, quote_quantity) = calculate_effective_price(
+        pool,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        clock,
+    );
 
     // The order is a bid, and quantity is less than the net base debt.
     // The order is a ask, and quote quantity is less than the net quote debt.
@@ -177,6 +220,8 @@ public fun place_reduce_only_market_order<BaseAsset, QuoteAsset, DebtAsset>(
             (!is_bid && quote_debt > quote_asset && quote_quantity <= quote_debt - quote_asset),
         ENotReduceOnlyOrder,
     );
+
+    registry.assert_price(pool.id(), effective_price, is_bid, clock);
 
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
@@ -421,4 +466,31 @@ public fun claim_rebates<BaseAsset, QuoteAsset>(
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
     pool.claim_rebates(balance_manager, &trade_proof, ctx);
+}
+
+// === Internal Functions ===
+
+/// Calculates the effective price for a market order by querying the pool.
+/// Returns (effective_price, quote_amount) where quote_amount is quote_in for bids and quote_out for asks.
+fun calculate_effective_price<BaseAsset, QuoteAsset>(
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    clock: &Clock,
+): (u64, u64) {
+    if (is_bid) {
+        let (base_out, quote_in, _) = pool.get_quote_quantity_in(quantity, pay_with_deep, clock);
+        assert!(base_out > 0, ENoLiquidityInOrderbook);
+        (math::div(quote_in, base_out), quote_in)
+    } else {
+        let (base_out, quote_out, _) = if (pay_with_deep) {
+            pool.get_quote_quantity_out(quantity, clock)
+        } else {
+            pool.get_quote_quantity_out_input_fee(quantity, clock)
+        };
+        let base_used = quantity - base_out;
+        assert!(base_used > 0, ENoLiquidityInOrderbook);
+        (math::div(quote_out, base_used), quote_out)
+    }
 }

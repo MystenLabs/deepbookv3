@@ -14,6 +14,7 @@ on:
           - Enable Version
           - Disable Version
           - Enable Margin Version
+          - Disable Deepbook Pool
           - Unregister Pool and Create
           - Add Stable Coins
           - Adjust Tick Size
@@ -151,6 +152,16 @@ jobs:
           ORIGIN: gh_action
         run: |
           cd scripts && pnpm install && pnpm tsx transactions/enableMarginVersion.ts
+
+      - name: Disable Deepbook Pool
+        if: ${{ inputs.transaction_type == 'Disable Deepbook Pool' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/disableDeepbookPool.ts
 
       - name: Prep MVR
         if: ${{ inputs.transaction_type == 'Prep MVR' }}

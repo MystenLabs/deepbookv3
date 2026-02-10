@@ -70,7 +70,7 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   };
 
   const client = new SuiGrpcClient({
-    url: "https://sui-mainnet.mystenlabs.com",
+    baseUrl: "https://sui-mainnet.mystenlabs.com",
     network: "mainnet",
   }).$extend(
     deepbook({

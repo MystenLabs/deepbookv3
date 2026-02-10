@@ -9,6 +9,7 @@ use deepbook_margin::{
     margin_manager::{Self, MarginManager},
     margin_pool,
     margin_registry::{MarginRegistry, MarginAdminCap, MaintainerCap},
+    pool_proxy,
     test_constants::{Self, SUI, USDC},
     test_helpers::{
         setup_margin_registry,
@@ -17,6 +18,7 @@ use deepbook_margin::{
         get_margin_pool_caps,
         create_pool_for_testing,
         enable_deepbook_margin_on_pool,
+        initialize_pool_price,
         cleanup_margin_test,
         mint_coin,
         build_pyth_price_info_object,
@@ -70,6 +72,10 @@ fun setup_sui_usdc_deepbook_margin(): (
         &clock,
         &mut scenario,
     );
+
+    // Initialize price for the pool (required for price protection)
+    initialize_pool_price<SUI, USDC>(pool_id, &mut registry, &clock, &mut scenario);
+
     return_shared(registry);
 
     scenario.next_tx(test_constants::admin());
@@ -139,14 +145,15 @@ fun setup_orderbook_liquidity<BaseAsset, QuoteAsset>(
     let trade_proof = balance_manager.generate_proof_as_owner(scenario.ctx());
 
     // Place ask orders (sell SUI) at different prices
-    // Price in oracle terms: (USD_price / USDC_price) * 10^9 / 10^3
+    // Prices must be within 5% of oracle at execution for market orders to pass
+    // For trigger_above tests: oracle at $2.10, so asks should be around $2.00-$2.20
     pool.place_limit_order<BaseAsset, QuoteAsset>(
         &mut balance_manager,
         &trade_proof,
         1,
         constants::no_restriction(),
         constants::self_matching_allowed(),
-        2_500_000, // $2.50
+        2_100_000, // $2.10 (within 5% of oracle at trigger_above execution)
         100 * test_constants::sui_multiplier(),
         false, // is_bid = false (ask)
         false,
@@ -161,7 +168,7 @@ fun setup_orderbook_liquidity<BaseAsset, QuoteAsset>(
         2,
         constants::no_restriction(),
         constants::self_matching_allowed(),
-        3_000_000, // $3.00
+        2_150_000, // $2.15 (within 5% of oracle at trigger_above execution)
         100 * test_constants::sui_multiplier(),
         false, // is_bid = false (ask)
         false,
@@ -170,14 +177,14 @@ fun setup_orderbook_liquidity<BaseAsset, QuoteAsset>(
         scenario.ctx(),
     );
 
-    // Place bid orders (buy SUI) at different prices
+    // Place bid orders at LOW prices for trigger_below tests (oracle at $0.95)
     pool.place_limit_order<BaseAsset, QuoteAsset>(
         &mut balance_manager,
         &trade_proof,
         3,
         constants::no_restriction(),
         constants::self_matching_allowed(),
-        1_500_000, // $1.50
+        950_000, // $0.95 (matches oracle at trigger_below execution)
         100 * test_constants::sui_multiplier(),
         true, // is_bid = true
         false,
@@ -192,7 +199,38 @@ fun setup_orderbook_liquidity<BaseAsset, QuoteAsset>(
         4,
         constants::no_restriction(),
         constants::self_matching_allowed(),
-        1_000_000, // $1.00
+        940_000, // $0.94 (within 5% of oracle at trigger_below execution)
+        100 * test_constants::sui_multiplier(),
+        true, // is_bid = true
+        false,
+        constants::max_u64(),
+        clock,
+        scenario.ctx(),
+    );
+
+    // Place bid orders at HIGH prices for trigger_above tests (oracle at $2.10)
+    pool.place_limit_order<BaseAsset, QuoteAsset>(
+        &mut balance_manager,
+        &trade_proof,
+        5,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        2_050_000, // $2.05 (within 5% of oracle at trigger_above execution $2.10)
+        100 * test_constants::sui_multiplier(),
+        true, // is_bid = true
+        false,
+        constants::max_u64(),
+        clock,
+        scenario.ctx(),
+    );
+
+    pool.place_limit_order<BaseAsset, QuoteAsset>(
+        &mut balance_manager,
+        &trade_proof,
+        6,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        2_000_000, // $2.00 (within 5% of oracle at trigger_above execution $2.10)
         100 * test_constants::sui_multiplier(),
         true, // is_bid = true
         false,
@@ -202,6 +240,74 @@ fun setup_orderbook_liquidity<BaseAsset, QuoteAsset>(
     );
 
     let _balance_manager_id = balance_manager.id();
+    transfer::public_share_object(balance_manager);
+    return_shared(pool);
+}
+
+/// Sets up orderbook liquidity with only LOW price bids (for trigger_below market order tests)
+/// This ensures market sells fill at prices within 5% of the oracle when it's around $0.95
+fun setup_orderbook_liquidity_low_bids<BaseAsset, QuoteAsset>(
+    scenario: &mut test_scenario::Scenario,
+    pool_id: ID,
+    clock: &sui::clock::Clock,
+) {
+    use deepbook::balance_manager;
+    use token::deep::DEEP;
+
+    scenario.next_tx(test_constants::user2());
+    let mut pool = scenario.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+    let mut balance_manager = balance_manager::new(scenario.ctx());
+
+    // Deposit plenty of assets for liquidity provision
+    balance_manager.deposit(
+        mint_coin<BaseAsset>(1000 * test_constants::sui_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+    balance_manager.deposit(
+        mint_coin<QuoteAsset>(
+            1_000_000_000 * test_constants::usdc_multiplier(),
+            scenario.ctx(),
+        ), // 1B USDC
+        scenario.ctx(),
+    );
+    balance_manager.deposit(
+        mint_coin<DEEP>(10000 * test_constants::deep_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+
+    let trade_proof = balance_manager.generate_proof_as_owner(scenario.ctx());
+
+    // Place bid orders at LOW prices only (for trigger_below tests with oracle at $0.95)
+    pool.place_limit_order<BaseAsset, QuoteAsset>(
+        &mut balance_manager,
+        &trade_proof,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        950_000, // $0.95 (matches oracle at trigger_below execution)
+        100 * test_constants::sui_multiplier(),
+        true, // is_bid = true
+        false,
+        constants::max_u64(),
+        clock,
+        scenario.ctx(),
+    );
+
+    pool.place_limit_order<BaseAsset, QuoteAsset>(
+        &mut balance_manager,
+        &trade_proof,
+        2,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        940_000, // $0.94 (within 5% of oracle at trigger_below execution)
+        100 * test_constants::sui_multiplier(),
+        true, // is_bid = true
+        false,
+        constants::max_u64(),
+        clock,
+        scenario.ctx(),
+    );
+
     transfer::public_share_object(balance_manager);
     return_shared(pool);
 }
@@ -309,11 +415,12 @@ fun test_tpsl_trigger_below_executed() {
         true, // trigger_is_below
         1_500_000, // trigger price: $1.50
     );
+    // Price must be within 5% of oracle price at execution (950_000 for SUI at $0.95)
     let pending_order = tpsl::new_pending_limit_order(
         1, // client_order_id
         constants::no_restriction(),
         constants::self_matching_allowed(),
-        800_000, // price: $0.80 (sell when price drops)
+        950_000, // price: $0.95 (within 5% of oracle price at execution)
         100 * test_constants::sui_multiplier(), // quantity: 100 SUI
         false, // is_bid = false (SELL SUI for USDC)
         false, // pay_with_deep
@@ -366,7 +473,7 @@ fun test_tpsl_trigger_below_executed() {
 
     // Validate order details
     assert!(order_info.client_order_id() == 1); // client_order_id from pending_order
-    assert!(order_info.price() == 800_000); // price: $0.80
+    assert!(order_info.price() == 950_000); // price: $0.95 (within 5% of oracle)
     assert!(order_info.original_quantity() == 100 * test_constants::sui_multiplier()); // 100 SUI
     assert!(order_info.is_bid() == false); // Sell order
     assert!(order_info.balance_manager_id() == object::id(mm.balance_manager()));
@@ -455,11 +562,12 @@ fun test_tpsl_trigger_above_executed() {
         false, // trigger_is_below = false (trigger_above)
         2_000_000, // trigger price: $2.00
     );
+    // Price must be within 5% of oracle price at execution (2_100_000 for SUI at $2.10)
     let pending_order = tpsl::new_pending_limit_order(
         1, // client_order_id
         constants::no_restriction(),
         constants::self_matching_allowed(),
-        2_500_000, // price: $2.50 (sell at higher price)
+        2_100_000, // price: $2.10 (within 5% of oracle price at execution)
         100 * test_constants::sui_multiplier(), // quantity: 100 SUI
         false, // is_bid = false (SELL SUI for USDC)
         false, // pay_with_deep
@@ -493,7 +601,16 @@ fun test_tpsl_trigger_above_executed() {
     let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
 
     let mut pool = scenario.take_shared<Pool<SUI, USDC>>();
-    let margin_registry = scenario.take_shared<MarginRegistry>();
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+
+    // Update the current price in the registry to match the new oracle price
+    pool_proxy::update_current_price<SUI, USDC>(
+        &mut margin_registry,
+        &pool,
+        &sui_price_high,
+        &usdc_price,
+        &clock,
+    );
 
     // Execute conditional orders - should trigger and place order
     let order_infos = mm.execute_conditional_orders<SUI, USDC>(
@@ -512,7 +629,7 @@ fun test_tpsl_trigger_above_executed() {
 
     // Validate order details
     assert!(order_info.client_order_id() == 1); // client_order_id from pending_order
-    assert!(order_info.price() == 2_500_000); // price: $2.50
+    assert!(order_info.price() == 2_100_000); // price: $2.10 (within 5% of oracle)
     assert!(order_info.original_quantity() == 100 * test_constants::sui_multiplier()); // 100 SUI
     assert!(order_info.is_bid() == false); // Sell order
     assert!(order_info.balance_manager_id() == object::id(mm.balance_manager()));
@@ -1066,16 +1183,15 @@ fun test_tpsl_trigger_below_market_order_executed() {
     // to sell SUI at market price when price drops below a trigger.
     //
     // Setup:
-    // - Orderbook has bid liquidity at $1.50 (100 SUI) and $1.00 (100 SUI)
-    // - Orderbook has ask liquidity at $2.50 (100 SUI) and $3.00 (100 SUI)
+    // - Orderbook has bid liquidity at $0.95 (100 SUI) and $0.94 (100 SUI)
     // - ALICE deposits 10,000 SUI when SUI = $2.00
     // - ALICE creates stop-loss: if price drops below $1.50, sell 150 SUI at market
     // - BOB triggers when price drops to $0.95
     //
     // Expected: Market sell (is_bid=false) fills against bids
-    // - 100 SUI at $1.50 = 150 USDC received
-    // - 50 SUI at $1.00 = 50 USDC received
-    // - Total: 150 SUI sold for 200 USDC
+    // - 100 SUI at $0.95 = 95 USDC received
+    // - 50 SUI at $0.94 = 47 USDC received
+    // - Total: 150 SUI sold for 142 USDC
 
     let (
         mut scenario,
@@ -1088,8 +1204,8 @@ fun test_tpsl_trigger_below_market_order_executed() {
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
 
-    // Set up orderbook liquidity
-    setup_orderbook_liquidity<SUI, USDC>(&mut scenario, pool_id, &clock);
+    // Set up orderbook liquidity with LOW price bids only (for trigger_below tests)
+    setup_orderbook_liquidity_low_bids<SUI, USDC>(&mut scenario, pool_id, &clock);
 
     // USER1 = ALICE creates a margin manager
     scenario.next_tx(test_constants::user1());
@@ -1163,7 +1279,16 @@ fun test_tpsl_trigger_below_market_order_executed() {
     let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
 
     let mut pool = scenario.take_shared<Pool<SUI, USDC>>();
-    let margin_registry = scenario.take_shared<MarginRegistry>();
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+
+    // Update the current price in the registry to match the new oracle price
+    pool_proxy::update_current_price<SUI, USDC>(
+        &mut margin_registry,
+        &pool,
+        &sui_price_low,
+        &usdc_price,
+        &clock,
+    );
 
     // Execute conditional orders - should trigger and place market order
     let order_infos = mm.execute_conditional_orders<SUI, USDC>(
@@ -1186,23 +1311,23 @@ fun test_tpsl_trigger_below_market_order_executed() {
     assert!(order_info.is_bid() == false); // Sell order
     assert!(order_info.balance_manager_id() == object::id(mm.balance_manager()));
 
-    // Validate fills - market sell fills against bid orders
+    // Validate fills - market sell fills against bid orders (at $0.95 and $0.94)
     let fills = order_info.fills();
-    assert!(fills.length() == 2); // Two fills: 100 at $1.50, 50 at $1.00
+    assert!(fills.length() == 2); // Two fills: 100 at $0.95, 50 at $0.94
 
-    // First fill: 100 SUI at $1.50
+    // First fill: 100 SUI at $0.95
     assert!(fills[0].base_quantity() == 100 * test_constants::sui_multiplier());
-    assert!(fills[0].quote_quantity() == 150_000_000); // 100 * 1.5 in pool units
+    assert!(fills[0].quote_quantity() == 95_000_000); // 100 * 0.95 in pool units
 
-    // Second fill: 50 SUI at $1.00
+    // Second fill: 50 SUI at $0.94
     assert!(fills[1].base_quantity() == 50 * test_constants::sui_multiplier());
-    assert!(fills[1].quote_quantity() == 50_000_000); // 50 * 1.0 in pool units
+    assert!(fills[1].quote_quantity() == 47_000_000); // 50 * 0.94 in pool units
 
     // Total executed quantity should be 150 SUI
     assert!(order_info.executed_quantity() == 150 * test_constants::sui_multiplier());
 
-    // Total quote in pool units
-    assert!(order_info.cumulative_quote_quantity() == 200_000_000);
+    // Total quote in pool units (95 + 47 = 142 million)
+    assert!(order_info.cumulative_quote_quantity() == 142_000_000);
 
     destroy(order_infos[0]);
 
@@ -1320,7 +1445,16 @@ fun test_tpsl_trigger_above_market_order_executed() {
     let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
 
     let mut pool = scenario.take_shared<Pool<SUI, USDC>>();
-    let margin_registry = scenario.take_shared<MarginRegistry>();
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+
+    // Update the current price in the registry to match the new oracle price
+    pool_proxy::update_current_price<SUI, USDC>(
+        &mut margin_registry,
+        &pool,
+        &sui_price_high,
+        &usdc_price,
+        &clock,
+    );
 
     // Execute conditional orders - should trigger and place market order
     let order_infos = mm.execute_conditional_orders<SUI, USDC>(
@@ -1343,23 +1477,23 @@ fun test_tpsl_trigger_above_market_order_executed() {
     assert!(order_info.is_bid() == false); // Sell order
     assert!(order_info.balance_manager_id() == object::id(mm.balance_manager()));
 
-    // Validate fills - market sell fills against bid orders (same as trigger_below)
+    // Validate fills - market sell fills against highest bid orders ($2.05 and $2.00)
     let fills = order_info.fills();
-    assert!(fills.length() == 2); // Two fills: 100 at $1.50, 50 at $1.00
+    assert!(fills.length() == 2); // Two fills: 100 at $2.05, 50 at $2.00
 
-    // First fill: 100 SUI at $1.50
+    // First fill: 100 SUI at $2.05
     assert!(fills[0].base_quantity() == 100 * test_constants::sui_multiplier());
-    assert!(fills[0].quote_quantity() == 150_000_000); // 100 * 1.5 in pool units
+    assert!(fills[0].quote_quantity() == 205_000_000); // 100 * 2.05 in pool units
 
-    // Second fill: 50 SUI at $1.00
+    // Second fill: 50 SUI at $2.00
     assert!(fills[1].base_quantity() == 50 * test_constants::sui_multiplier());
-    assert!(fills[1].quote_quantity() == 50_000_000); // 50 * 1.0 in pool units
+    assert!(fills[1].quote_quantity() == 100_000_000); // 50 * 2.00 in pool units
 
     // Total executed quantity should be 150 SUI
     assert!(order_info.executed_quantity() == 150 * test_constants::sui_multiplier());
 
-    // Total quote in pool units (150 + 50 = 200 in pool units)
-    assert!(order_info.cumulative_quote_quantity() == 200_000_000);
+    // Total quote in pool units (205 + 100 = 305 million)
+    assert!(order_info.cumulative_quote_quantity() == 305_000_000);
 
     destroy(order_infos[0]);
 
@@ -2589,11 +2723,12 @@ fun test_tpsl_insufficient_funds_second_order() {
         true, // trigger_is_below
         1_800_000, // $1.80
     );
+    // Price must be within 5% of oracle at execution time ($0.95 = 950_000)
     let pending_order1 = tpsl::new_pending_limit_order(
         1,
         constants::no_restriction(),
         constants::self_matching_allowed(),
-        800_000,
+        950_000, // price within 5% of oracle at execution ($0.95)
         100 * test_constants::sui_multiplier(), // 100 SUI
         false,
         false,
@@ -2617,11 +2752,12 @@ fun test_tpsl_insufficient_funds_second_order() {
         true, // trigger_is_below
         1_500_000, // $1.50
     );
+    // Price must be within 5% of oracle at execution time ($0.95 = 950_000)
     let pending_order2 = tpsl::new_pending_limit_order(
         2,
         constants::no_restriction(),
         constants::self_matching_allowed(),
-        700_000_000_000,
+        950_000, // price within 5% of oracle at execution ($0.95)
         100 * test_constants::sui_multiplier(), // 100 SUI
         false,
         false,
@@ -2653,7 +2789,16 @@ fun test_tpsl_insufficient_funds_second_order() {
     let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
 
     let mut pool = scenario.take_shared<Pool<SUI, USDC>>();
-    let margin_registry = scenario.take_shared<MarginRegistry>();
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+
+    // Update the current price in the registry to match the new oracle price
+    pool_proxy::update_current_price<SUI, USDC>(
+        &mut margin_registry,
+        &pool,
+        &sui_price_low,
+        &usdc_price,
+        &clock,
+    );
 
     // Execute conditional orders - both are triggered, but only first succeeds
     let order_infos = mm.execute_conditional_orders<SUI, USDC>(
@@ -2874,11 +3019,12 @@ fun test_tpsl_early_exit_optimization() {
     let mut i = 0;
     while (i < trigger_prices.length()) {
         let condition = tpsl::new_condition(true, trigger_prices[i]);
+        // Price must be within 5% of oracle at execution time ($1.50 = 1_500_000)
         let pending_order = tpsl::new_pending_limit_order(
             i + 1,
             constants::no_restriction(),
             constants::self_matching_allowed(),
-            800_000,
+            1_500_000, // price within 5% of oracle at execution ($1.50)
             10 * test_constants::sui_multiplier(), // Small amounts to ensure all can execute
             false,
             false,
@@ -2912,7 +3058,16 @@ fun test_tpsl_early_exit_optimization() {
     let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
 
     let mut pool = scenario.take_shared<Pool<SUI, USDC>>();
-    let margin_registry = scenario.take_shared<MarginRegistry>();
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+
+    // Update the current price in the registry to match the new oracle price
+    pool_proxy::update_current_price<SUI, USDC>(
+        &mut margin_registry,
+        &pool,
+        &sui_price_mid,
+        &usdc_price,
+        &clock,
+    );
 
     // Execute conditional orders
     let order_infos = mm.execute_conditional_orders<SUI, USDC>(
@@ -3019,11 +3174,12 @@ fun test_tpsl_max_orders_to_execute_limit() {
     let mut i = 0;
     while (i < trigger_prices.length()) {
         let condition = tpsl::new_condition(true, trigger_prices[i]);
+        // Price must be within 5% of oracle at execution time ($0.50 = 500_000)
         let pending_order = tpsl::new_pending_limit_order(
             i + 1,
             constants::no_restriction(),
             constants::self_matching_allowed(),
-            400_000_000_000, // $0.40
+            500_000, // price within 5% of oracle at execution ($0.50)
             10 * test_constants::sui_multiplier(),
             false,
             false,
@@ -3058,7 +3214,16 @@ fun test_tpsl_max_orders_to_execute_limit() {
     let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
 
     let mut pool = scenario.take_shared<Pool<SUI, USDC>>();
-    let margin_registry = scenario.take_shared<MarginRegistry>();
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+
+    // Update the current price in the registry to match the new oracle price
+    pool_proxy::update_current_price<SUI, USDC>(
+        &mut margin_registry,
+        &pool,
+        &sui_price_low,
+        &usdc_price,
+        &clock,
+    );
 
     // First execution: max_orders_to_execute = 2
     let order_infos_1 = mm.execute_conditional_orders<SUI, USDC>(
@@ -3122,6 +3287,822 @@ fun test_tpsl_max_orders_to_execute_limit() {
     assert!(order_5.condition().trigger_price() == 1_000_000); // $1.00
 
     destroy_2!(sui_price_low2, usdc_price2);
+    return_shared_2!(mm, pool);
+
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    return_shared(deepbook_registry);
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+// === Price Bounds Tests ===
+
+/// Sets up orderbook liquidity with prices FAR from oracle (for out-of-bounds tests)
+/// Oracle at $2.00, but orderbook prices at $1.00 (50% below - outside 5% tolerance)
+fun setup_orderbook_liquidity_out_of_bounds<BaseAsset, QuoteAsset>(
+    scenario: &mut test_scenario::Scenario,
+    pool_id: ID,
+    clock: &sui::clock::Clock,
+) {
+    use deepbook::balance_manager;
+    use token::deep::DEEP;
+
+    scenario.next_tx(test_constants::user2());
+    let mut pool = scenario.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+    let mut balance_manager = balance_manager::new(scenario.ctx());
+
+    balance_manager.deposit(
+        mint_coin<BaseAsset>(1000 * test_constants::sui_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+    balance_manager.deposit(
+        mint_coin<QuoteAsset>(
+            1_000_000_000 * test_constants::usdc_multiplier(),
+            scenario.ctx(),
+        ),
+        scenario.ctx(),
+    );
+    balance_manager.deposit(
+        mint_coin<DEEP>(10000 * test_constants::deep_multiplier(), scenario.ctx()),
+        scenario.ctx(),
+    );
+
+    let trade_proof = balance_manager.generate_proof_as_owner(scenario.ctx());
+
+    // Place ask orders at $1.00 (50% below oracle of $2.00 - out of bounds)
+    pool.place_limit_order<BaseAsset, QuoteAsset>(
+        &mut balance_manager,
+        &trade_proof,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        1_000_000, // $1.00 (way below oracle at $2.00)
+        100 * test_constants::sui_multiplier(),
+        false, // is_bid = false (ask)
+        false,
+        constants::max_u64(),
+        clock,
+        scenario.ctx(),
+    );
+
+    // Place bid orders at $1.00 (50% below oracle of $2.00 - out of bounds)
+    pool.place_limit_order<BaseAsset, QuoteAsset>(
+        &mut balance_manager,
+        &trade_proof,
+        2,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        1_000_000, // $1.00 (way below oracle at $2.00)
+        100 * test_constants::sui_multiplier(),
+        true, // is_bid = true
+        false,
+        constants::max_u64(),
+        clock,
+        scenario.ctx(),
+    );
+
+    transfer::public_share_object(balance_manager);
+    return_shared(pool);
+}
+
+#[test]
+fun test_tpsl_limit_order_price_below_lower_bound_cancelled() {
+    // Test that a limit order with price below the lower bound gets cancelled
+    // Oracle at $2.00, tolerance 5%, lower bound = $1.90
+    // Limit order at $1.80 should be cancelled
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    // USER1 creates margin manager and adds conditional order
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+
+    let sui_price = build_sui_price_info_object_with_price(&mut scenario, 200, &clock); // $2.00
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    // Deposit collateral
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price,
+        &usdc_price,
+        mint_coin<SUI>(10000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Add conditional order with limit price $1.80 (below 5% tolerance of $2.00)
+    // Lower bound = $2.00 * 0.95 = $1.90, so $1.80 is out of bounds
+    let condition = tpsl::new_condition(
+        false, // trigger_above
+        2_100_000, // trigger at $2.10
+    );
+    let pending_order = tpsl::new_pending_limit_order(
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        1_800_000, // $1.80 - below lower bound of $1.90
+        100 * test_constants::sui_multiplier(),
+        false, // is_bid = false (sell)
+        false,
+        constants::max_u64(),
+    );
+
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price,
+        &usdc_price,
+        &margin_registry,
+        1,
+        condition,
+        pending_order,
+        &clock,
+        scenario.ctx(),
+    );
+
+    assert!(mm.conditional_order_ids().length() == 1);
+
+    destroy_2!(sui_price, usdc_price);
+    return_shared(pool);
+    return_shared(margin_registry);
+
+    // Trigger execution - price goes above trigger
+    scenario.next_tx(test_constants::user2());
+    let sui_price_trigger = build_sui_price_info_object_with_price(&mut scenario, 215, &clock); // $2.15
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    let mut pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+
+    // Update current price in registry
+    pool_proxy::update_current_price<SUI, USDC>(
+        &mut margin_registry,
+        &pool,
+        &sui_price_trigger,
+        &usdc_price,
+        &clock,
+    );
+
+    // Execute - should cancel due to price out of bounds
+    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+        &mut pool,
+        &sui_price_trigger,
+        &usdc_price,
+        &margin_registry,
+        10,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Order should NOT have executed
+    assert!(order_infos.length() == 0);
+
+    // Conditional order should be removed (cancelled)
+    assert!(mm.conditional_order_ids().length() == 0);
+
+    destroy_2!(sui_price_trigger, usdc_price);
+    return_shared_2!(mm, pool);
+
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    return_shared(deepbook_registry);
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_tpsl_limit_order_price_above_upper_bound_cancelled() {
+    // Test that a limit order with price above the upper bound gets cancelled
+    // Oracle at $2.00, tolerance 5%, upper bound = $2.10
+    // Limit order at $2.50 should be cancelled
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+
+    let sui_price = build_sui_price_info_object_with_price(&mut scenario, 200, &clock);
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price,
+        &usdc_price,
+        mint_coin<SUI>(10000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Add conditional order with limit price $2.50 (above 5% tolerance of $2.00)
+    // Upper bound = $2.00 * 1.05 = $2.10, so $2.50 is out of bounds
+    let condition = tpsl::new_condition(
+        false, // trigger_above
+        2_100_000, // trigger at $2.10
+    );
+    let pending_order = tpsl::new_pending_limit_order(
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        2_500_000, // $2.50 - above upper bound of $2.10
+        100 * test_constants::sui_multiplier(),
+        true, // is_bid = true (buy)
+        false,
+        constants::max_u64(),
+    );
+
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price,
+        &usdc_price,
+        &margin_registry,
+        1,
+        condition,
+        pending_order,
+        &clock,
+        scenario.ctx(),
+    );
+
+    assert!(mm.conditional_order_ids().length() == 1);
+
+    destroy_2!(sui_price, usdc_price);
+    return_shared(pool);
+    return_shared(margin_registry);
+
+    // Trigger execution
+    scenario.next_tx(test_constants::user2());
+    let sui_price_trigger = build_sui_price_info_object_with_price(&mut scenario, 215, &clock);
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    let mut pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+
+    pool_proxy::update_current_price<SUI, USDC>(
+        &mut margin_registry,
+        &pool,
+        &sui_price_trigger,
+        &usdc_price,
+        &clock,
+    );
+
+    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+        &mut pool,
+        &sui_price_trigger,
+        &usdc_price,
+        &margin_registry,
+        10,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Order should NOT have executed
+    assert!(order_infos.length() == 0);
+    assert!(mm.conditional_order_ids().length() == 0);
+
+    destroy_2!(sui_price_trigger, usdc_price);
+    return_shared_2!(mm, pool);
+
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    return_shared(deepbook_registry);
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_tpsl_market_sell_order_price_out_of_bounds_cancelled() {
+    // Test that a market sell order gets cancelled when execution price is out of bounds
+    // Oracle at $2.00, but orderbook bids are at $1.00 (50% below)
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    // Set up orderbook with out-of-bounds prices
+    setup_orderbook_liquidity_out_of_bounds<SUI, USDC>(&mut scenario, pool_id, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+
+    let sui_price = build_sui_price_info_object_with_price(&mut scenario, 200, &clock); // $2.00
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price,
+        &usdc_price,
+        mint_coin<SUI>(10000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Add market sell order - will try to fill against $1.00 bids (out of bounds)
+    let condition = tpsl::new_condition(
+        false, // trigger_above
+        2_100_000, // trigger at $2.10
+    );
+    let pending_order = tpsl::new_pending_market_order(
+        1,
+        constants::self_matching_allowed(),
+        50 * test_constants::sui_multiplier(), // 50 SUI
+        false, // is_bid = false (market sell)
+        false,
+    );
+
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price,
+        &usdc_price,
+        &margin_registry,
+        1,
+        condition,
+        pending_order,
+        &clock,
+        scenario.ctx(),
+    );
+
+    assert!(mm.conditional_order_ids().length() == 1);
+
+    destroy_2!(sui_price, usdc_price);
+    return_shared(pool);
+    return_shared(margin_registry);
+
+    // Trigger execution - oracle stays at $2.00, but orderbook at $1.00
+    scenario.next_tx(test_constants::user2());
+    let sui_price_trigger = build_sui_price_info_object_with_price(&mut scenario, 215, &clock);
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    let mut pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+
+    pool_proxy::update_current_price<SUI, USDC>(
+        &mut margin_registry,
+        &pool,
+        &sui_price_trigger,
+        &usdc_price,
+        &clock,
+    );
+
+    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+        &mut pool,
+        &sui_price_trigger,
+        &usdc_price,
+        &margin_registry,
+        10,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Market sell should be cancelled due to out-of-bounds execution price
+    assert!(order_infos.length() == 0);
+    assert!(mm.conditional_order_ids().length() == 0);
+
+    destroy_2!(sui_price_trigger, usdc_price);
+    return_shared_2!(mm, pool);
+
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    return_shared(deepbook_registry);
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_tpsl_market_buy_order_price_out_of_bounds_cancelled() {
+    // Test that a market buy order gets cancelled when execution price is out of bounds
+    // Oracle at $2.00, but orderbook asks are at $1.00 (50% below - still out of bounds)
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    // Set up orderbook with out-of-bounds prices
+    setup_orderbook_liquidity_out_of_bounds<SUI, USDC>(&mut scenario, pool_id, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+
+    let sui_price = build_sui_price_info_object_with_price(&mut scenario, 200, &clock);
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    // Deposit USDC for buying
+    mm.deposit<SUI, USDC, USDC>(
+        &margin_registry,
+        &sui_price,
+        &usdc_price,
+        mint_coin<USDC>(10000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Add market buy order - will try to fill against $1.00 asks (out of bounds from $2.00)
+    let condition = tpsl::new_condition(
+        false, // trigger_above
+        2_100_000, // trigger at $2.10
+    );
+    let pending_order = tpsl::new_pending_market_order(
+        1,
+        constants::self_matching_allowed(),
+        50 * test_constants::sui_multiplier(), // 50 SUI
+        true, // is_bid = true (market buy)
+        false,
+    );
+
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price,
+        &usdc_price,
+        &margin_registry,
+        1,
+        condition,
+        pending_order,
+        &clock,
+        scenario.ctx(),
+    );
+
+    assert!(mm.conditional_order_ids().length() == 1);
+
+    destroy_2!(sui_price, usdc_price);
+    return_shared(pool);
+    return_shared(margin_registry);
+
+    // Trigger execution
+    scenario.next_tx(test_constants::user2());
+    let sui_price_trigger = build_sui_price_info_object_with_price(&mut scenario, 215, &clock);
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    let mut pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+
+    pool_proxy::update_current_price<SUI, USDC>(
+        &mut margin_registry,
+        &pool,
+        &sui_price_trigger,
+        &usdc_price,
+        &clock,
+    );
+
+    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+        &mut pool,
+        &sui_price_trigger,
+        &usdc_price,
+        &margin_registry,
+        10,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Market buy should be cancelled due to out-of-bounds execution price
+    assert!(order_infos.length() == 0);
+    assert!(mm.conditional_order_ids().length() == 0);
+
+    destroy_2!(sui_price_trigger, usdc_price);
+    return_shared_2!(mm, pool);
+
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    return_shared(deepbook_registry);
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_tpsl_market_buy_order_no_liquidity_cancelled() {
+    // Test that a market buy order gets cancelled when there's no liquidity
+    // (base_out == 0 from get_quote_quantity_in)
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    // NO orderbook liquidity setup - empty orderbook
+
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+
+    let sui_price = build_sui_price_info_object_with_price(&mut scenario, 200, &clock);
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<SUI, USDC, USDC>(
+        &margin_registry,
+        &sui_price,
+        &usdc_price,
+        mint_coin<USDC>(10000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Add market buy order - no liquidity to fill
+    let condition = tpsl::new_condition(
+        false, // trigger_above
+        2_100_000,
+    );
+    let pending_order = tpsl::new_pending_market_order(
+        1,
+        constants::self_matching_allowed(),
+        50 * test_constants::sui_multiplier(),
+        true, // is_bid = true (market buy)
+        false,
+    );
+
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price,
+        &usdc_price,
+        &margin_registry,
+        1,
+        condition,
+        pending_order,
+        &clock,
+        scenario.ctx(),
+    );
+
+    assert!(mm.conditional_order_ids().length() == 1);
+
+    destroy_2!(sui_price, usdc_price);
+    return_shared(pool);
+    return_shared(margin_registry);
+
+    // Trigger execution
+    scenario.next_tx(test_constants::user2());
+    let sui_price_trigger = build_sui_price_info_object_with_price(&mut scenario, 215, &clock);
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    let mut pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+
+    pool_proxy::update_current_price<SUI, USDC>(
+        &mut margin_registry,
+        &pool,
+        &sui_price_trigger,
+        &usdc_price,
+        &clock,
+    );
+
+    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+        &mut pool,
+        &sui_price_trigger,
+        &usdc_price,
+        &margin_registry,
+        10,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Market buy should be cancelled due to no liquidity (base_out == 0)
+    assert!(order_infos.length() == 0);
+    assert!(mm.conditional_order_ids().length() == 0);
+
+    destroy_2!(sui_price_trigger, usdc_price);
+    return_shared_2!(mm, pool);
+
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    return_shared(deepbook_registry);
+    cleanup_margin_test(margin_registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_tpsl_mixed_orders_some_cancelled_some_executed() {
+    // Test that when multiple orders are triggered, some execute and some get cancelled
+    // based on their prices being within or outside bounds
+
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _usdc_pool_id,
+        _sui_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_sui_usdc_deepbook_margin();
+
+    // Set up normal orderbook liquidity
+    setup_orderbook_liquidity<SUI, USDC>(&mut scenario, pool_id, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<SUI, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut margin_registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+    return_shared(pool);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<SUI, USDC>>();
+    let pool = scenario.take_shared<Pool<SUI, USDC>>();
+
+    let sui_price = build_sui_price_info_object_with_price(&mut scenario, 200, &clock);
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<SUI, USDC, SUI>(
+        &margin_registry,
+        &sui_price,
+        &usdc_price,
+        mint_coin<SUI>(10000 * test_constants::sui_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Order 1: Limit order with price WITHIN bounds - should execute
+    // Oracle at $2.10, tolerance 5%, bounds = $2.00 to $2.21
+    let condition1 = tpsl::new_condition(false, 2_050_000); // trigger above $2.05
+    let pending_order1 = tpsl::new_pending_limit_order(
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        2_100_000, // $2.10 - within bounds
+        10 * test_constants::sui_multiplier(),
+        false, // sell
+        false,
+        constants::max_u64(),
+    );
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price,
+        &usdc_price,
+        &margin_registry,
+        1,
+        condition1,
+        pending_order1,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Order 2: Limit order with price OUTSIDE bounds - should be cancelled
+    let condition2 = tpsl::new_condition(false, 2_050_000); // trigger above $2.05
+    let pending_order2 = tpsl::new_pending_limit_order(
+        2,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        1_500_000, // $1.50 - way outside bounds
+        10 * test_constants::sui_multiplier(),
+        false, // sell
+        false,
+        constants::max_u64(),
+    );
+    mm.add_conditional_order<SUI, USDC>(
+        &pool,
+        &sui_price,
+        &usdc_price,
+        &margin_registry,
+        2,
+        condition2,
+        pending_order2,
+        &clock,
+        scenario.ctx(),
+    );
+
+    assert!(mm.conditional_order_ids().length() == 2);
+
+    destroy_2!(sui_price, usdc_price);
+    return_shared(pool);
+    return_shared(margin_registry);
+
+    // Trigger execution at $2.10
+    scenario.next_tx(test_constants::user2());
+    let sui_price_trigger = build_sui_price_info_object_with_price(&mut scenario, 210, &clock);
+    let usdc_price = build_usdc_price_info_object(&mut scenario, &clock);
+
+    let mut pool = scenario.take_shared<Pool<SUI, USDC>>();
+    let mut margin_registry = scenario.take_shared<MarginRegistry>();
+
+    pool_proxy::update_current_price<SUI, USDC>(
+        &mut margin_registry,
+        &pool,
+        &sui_price_trigger,
+        &usdc_price,
+        &clock,
+    );
+
+    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+        &mut pool,
+        &sui_price_trigger,
+        &usdc_price,
+        &margin_registry,
+        10,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Only 1 order should have executed (the one within bounds)
+    assert!(order_infos.length() == 1);
+    assert!(order_infos[0].client_order_id() == 1);
+
+    // Both orders should be removed (one executed, one cancelled)
+    assert!(mm.conditional_order_ids().length() == 0);
+
+    destroy(order_infos[0]);
+    destroy_2!(sui_price_trigger, usdc_price);
     return_shared_2!(mm, pool);
 
     let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);

@@ -78,6 +78,13 @@ public struct ConditionalOrderInsufficientFunds has copy, drop {
     timestamp: u64,
 }
 
+public struct ConditionalOrderPriceOutOfBounds has copy, drop {
+    manager_id: ID,
+    conditional_order_id: u64,
+    conditional_order: ConditionalOrder,
+    timestamp: u64,
+}
+
 // === Public Functions ===
 public fun new_condition(trigger_below_price: bool, trigger_price: u64): Condition {
     Condition {
@@ -115,6 +122,7 @@ public fun new_pending_limit_order(
     }
 }
 
+/// Creates a new pending market order.
 public fun new_pending_market_order(
     client_order_id: u64,
     self_matching_option: u8,
@@ -436,6 +444,23 @@ public(package) fun emit_insufficient_funds_event(
     let conditional_order = self.get_conditional_order(conditional_order_id);
     if (conditional_order.is_some()) {
         event::emit(ConditionalOrderInsufficientFunds {
+            manager_id,
+            conditional_order_id,
+            conditional_order: conditional_order.destroy_some(),
+            timestamp: clock.timestamp_ms(),
+        });
+    };
+}
+
+public(package) fun emit_price_out_of_bounds_event(
+    self: &TakeProfitStopLoss,
+    manager_id: ID,
+    conditional_order_id: u64,
+    clock: &Clock,
+) {
+    let conditional_order = self.get_conditional_order(conditional_order_id);
+    if (conditional_order.is_some()) {
+        event::emit(ConditionalOrderPriceOutOfBounds {
             manager_id,
             conditional_order_id,
             conditional_order: conditional_order.destroy_some(),
