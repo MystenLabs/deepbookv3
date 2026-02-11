@@ -4,7 +4,6 @@
 /// SupplyManager tracks LP shares and supply timestamps per address.
 ///
 /// Share calculation uses DeepBook math (FLOAT_SCALING = 1e9):
-/// - vault_value = balance + unrealized_assets - unrealized_liability
 /// - share_ratio = vault_value / total_shares (or FLOAT_SCALING if no shares)
 /// - Supply: shares = amount / share_ratio
 /// - Withdraw: amount = shares * share_ratio
@@ -62,24 +61,16 @@ public(package) fun new(ctx: &mut TxContext): SupplyManager {
 public(package) fun supply(
     self: &mut SupplyManager,
     amount: u64,
-    balance: u64,
-    unrealized_liability: u64,
-    unrealized_assets: u64,
+    vault_value: u64,
     clock: &Clock,
     ctx: &TxContext,
 ): u64 {
     assert!(amount > 0, EZeroAmount);
 
     let shares_to_mint = if (self.total_shares == 0) {
-        // First deposit: 1:1 ratio
         amount
     } else {
-        // vault_value = balance + unrealized_assets - unrealized_liability (before deposit)
-        let vault_value = balance + unrealized_assets - unrealized_liability;
-        // share_ratio = vault_value / total_shares
-        let share_ratio = math::div(vault_value, self.total_shares);
-        // shares = amount / share_ratio
-        math::div(amount, share_ratio)
+        math::div(amount, self.share_ratio(vault_value))
     };
 
     // Update supply data
@@ -101,9 +92,7 @@ public(package) fun supply(
 public(package) fun withdraw(
     self: &mut SupplyManager,
     shares: u64,
-    balance: u64,
-    unrealized_liability: u64,
-    unrealized_assets: u64,
+    vault_value: u64,
     lockup_period_ms: u64,
     clock: &Clock,
     ctx: &TxContext,
@@ -113,6 +102,8 @@ public(package) fun withdraw(
     let depositor = ctx.sender();
     assert!(self.supplies.contains(depositor), EInsufficientShares);
 
+    let ratio = self.share_ratio(vault_value);
+
     let data = &mut self.supplies[depositor];
     assert!(data.shares >= shares, EInsufficientShares);
 
@@ -120,12 +111,7 @@ public(package) fun withdraw(
     let elapsed = clock.timestamp_ms() - data.last_supply_ms;
     assert!(elapsed >= lockup_period_ms, ELockupNotElapsed);
 
-    // vault_value = balance + unrealized_assets - unrealized_liability
-    let vault_value = balance + unrealized_assets - unrealized_liability;
-    // share_ratio = vault_value / total_shares
-    let share_ratio = math::div(vault_value, self.total_shares);
-    // amount = shares * share_ratio
-    let amount = math::mul(shares, share_ratio);
+    let amount = math::mul(shares, ratio);
 
     // Update shares
     data.shares = data.shares - shares;
@@ -135,6 +121,10 @@ public(package) fun withdraw(
 }
 
 // === Private Functions ===
+
+fun share_ratio(self: &SupplyManager, vault_value: u64): u64 {
+    math::div(vault_value, self.total_shares)
+}
 
 fun add_supply_entry(self: &mut SupplyManager, owner: address) {
     if (!self.supplies.contains(owner)) {

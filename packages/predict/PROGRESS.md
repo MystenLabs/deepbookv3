@@ -13,17 +13,17 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 ### Core (Done)
 | Module | Status | Notes |
 |--------|--------|-------|
-| `registry.move` | Done | init, AdminCap, create_predict, create_oracle, create_oracle_cap, pause flags |
-| `predict.move` | Done | Orchestrator + pricing: mint, redeem, mint/redeem_collateralized, settle, supply, withdraw, get_quote, mark_to_market, risk checks |
-| `vault/vault.move` | Done | State machine: execute_mint/redeem, collateralized mint/redeem, exposure tracking (max/min liability), unrealized liability/assets, finalize_settlement |
-| `vault/supply_manager.move` | Done | LP share accounting: supply (shares minted), withdraw (shares burned), lockup enforcement, vault_value = balance + unrealized_assets - unrealized_liability |
+| `registry.move` | Done | init, AdminCap, create_predict, create_oracle, create_oracle_cap, set_trading_paused, set_withdrawals_paused |
+| `predict.move` | Done | Orchestrator + pricing: mint, redeem, mint/redeem_collateralized, settle, supply, withdraw, get_quote, mark_to_market, risk checks, pause enforcement |
+| `vault/vault.move` | Done | State machine: execute_mint/redeem, collateralized mint/redeem, exposure tracking (max/min liability), unrealized liability/assets, finalize_settlement, assert_exposure (risk checks), vault_value helper |
+| `vault/supply_manager.move` | Done | LP share accounting: supply (shares minted), withdraw (shares burned), lockup enforcement, vault_value param, share_ratio helper |
 | `predict_manager.move` | Done | User-side: wraps BalanceManager, tracks positions (free/locked), collateral lock/release |
-| `market_manager/market_key.move` | Done | Positional struct: (oracle_id, expiry, strike, direction), UP/DOWN helpers, opposite(), up_down_pair() |
+| `market_manager/market_key.move` | Done | Positional struct: (oracle_id, expiry, strike, direction), UP/DOWN helpers, opposite(), up_down_pair(), assert_matches_oracle() |
 | `market_manager/market_manager.move` | Done | VecSet of enabled MarketKeys, enable/disable/assert_enabled |
 | `config/pricing_config.move` | Done | base_spread (1%), max_skew_multiplier (1x) |
 | `config/risk_config.move` | Done | max_total_exposure_pct (80%), max_per_market_exposure_pct (20%) |
 | `config/lp_config.move` | Done | lockup_period_ms (24h default) |
-| `helper/constants.move` | Done | FLOAT_SCALING (1e9), USDC_UNIT (1e6), defaults, time constants |
+| `helper/constants.move` | Done | All constants as `public macro fun`. FLOAT_SCALING (1e9), USDC_UNIT (1e6), defaults, time constants |
 | `helper/math.move` | Done | ln, exp, normal_cdf, signed arithmetic (add/sub/mul) |
 
 ### Oracle (Done)
@@ -44,7 +44,7 @@ All P0 items complete.
 - [ ] **Events**: Most modules don't emit events beyond oracle. Add events for mints, redeems, settlements, supply/withdraw.
 - [ ] **Admin functions**: No admin setters exposed through predict.move for risk_config, lp_config, pricing_config params
 - [ ] **Registry oracle_block_scholes integration**: Registry only creates `Oracle`, not `OracleSVI`
-- [ ] **Pause enforcement**: trading_paused/withdrawals_paused exist in Registry but aren't checked in predict.move
+- [x] **Pause enforcement**: trading_paused/withdrawals_paused in Predict struct, checked in mint/mint_collateralized/withdraw. Redeems always allowed.
 - [ ] **PredictManager creation**: `predict_manager::new()` is `public(package)` but no public entry point exists for users to create one
 
 ## Design Decisions Made
@@ -58,10 +58,13 @@ All P0 items complete.
 - Mark-to-market runs after every trade on both UP and DOWN for the strike
 - Risk limits: 80% max total exposure, 20% max per market (as % of vault balance)
 - LP shares use vault_value = balance + unrealized_assets - unrealized_liability
+- Pause state lives in `Predict` (not `Registry`) to avoid circular dependency (registry → predict)
+- Pause blocks mints only, not redeems — users can always exit positions
 
 ## Established Patterns
 - **Section ordering**: Errors → Structs → Public Functions → Public-Package Functions → Private Functions
 - **Config pattern**: pure data struct (`has store`) in `config/` with public getters, `public(package)` setters and `new()`
+- **Constants pattern**: `public macro fun` (no `const` + wrapper functions)
 - **Constructor**: `public(package) fun new()` for internal structs
 - **Getters**: named after field directly (e.g., `balance()`, `max_liability()`)
 - **Error naming**: `EPascalCase` with sequential numbering starting at 0
@@ -99,3 +102,22 @@ All P0 items complete.
 - Moved pricing logic (get_quote, spread calc) from `pricing/pricing.move` into `predict.move` as private functions
 - Deleted `pricing/pricing.move` and `pricing/` directory
 - Documented established patterns in PROGRESS.md
+
+### Session: 2026-02-11 (pause enforcement)
+- Implemented pause enforcement: `trading_paused` blocks `mint` and `mint_collateralized`, `withdrawals_paused` blocks `withdraw`
+- Redeems (`redeem`, `redeem_collateralized`) and `settle` always allowed — users can exit even when paused
+- Pause state lives in `Predict` struct (not `Registry`) to avoid circular dependency
+- Admin setters in `registry.move` (`set_trading_paused`, `set_withdrawals_paused`) call through to predict's `public(package)` setters
+- Fixed pre-existing mutable borrow conflict in `supply_manager.move` (moved `share_ratio()` call before `&mut self.supplies` borrow)
+
+### Session: 2026-02-11 (refactor)
+- **Removed duplicate logic and improved encapsulation across all modules:**
+  1. Removed redundant collateral pair asserts in `mint_collateralized` (oracle transitivity)
+  2. Extracted `assert_matches_oracle()` onto `MarketKey` — replaced 10 lines of asserts across 4 functions in predict.move
+  3. Extracted `apply_exposure_delta()` in vault.move — centralized max/min liability delta math
+  4. Extracted `share_ratio()` in supply_manager.move — deduplicated vault_value/share calculation
+  5. Internalized `pair_position` into `get_quote` — removed boilerplate from all callers, simplified `update_position_mtm` signature
+  6. `market_liability` and `finalize_settlement` now delegate to `exposure()` — removed reimplemented max/min logic
+  7. Simplified SupplyManager API — takes single `vault_value` param instead of 3 decomposed vault internals; added `vault_value()` helper to vault
+  8. Moved risk check into vault as `assert_exposure()` — vault owns its own risk validation, predict.move just passes thresholds
+  9. Converted all constants from `const` + wrapper functions to `public macro fun` — updated 8 call sites across 5 files

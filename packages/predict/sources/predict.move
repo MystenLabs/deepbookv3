@@ -24,12 +24,10 @@ use deepbook_predict::{
 use sui::{clock::Clock, coin::Coin};
 
 // === Errors ===
-const EOracleMismatch: u64 = 0;
-const EExpiryMismatch: u64 = 1;
+const ETradingPaused: u64 = 1;
 const EMarketNotSettled: u64 = 2;
-const EExceedsMaxTotalExposure: u64 = 3;
-const EExceedsMaxMarketExposure: u64 = 4;
 const EInvalidCollateralPair: u64 = 5;
+const EWithdrawalsPaused: u64 = 6;
 
 // === Structs ===
 
@@ -47,6 +45,10 @@ public struct Predict<phantom Quote> has key {
     lp_config: LPConfig,
     /// Risk limits (admin-controlled)
     risk_config: RiskConfig,
+    /// Whether trading (mint) is globally paused
+    trading_paused: bool,
+    /// Whether LP withdrawals are globally paused
+    withdrawals_paused: bool,
 }
 
 // === Public Functions ===
@@ -59,8 +61,7 @@ public fun get_mint_cost<Underlying, Quote>(
     quantity: u64,
     clock: &Clock,
 ): u64 {
-    let (up_short, down_short) = predict.vault.pair_position(key);
-    let (_bid, ask) = get_quote(predict, oracle, key, up_short, down_short, clock);
+    let (_bid, ask) = get_quote(predict, oracle, key, clock);
     math::mul(ask, quantity)
 }
 
@@ -72,8 +73,7 @@ public fun get_redeem_payout<Underlying, Quote>(
     quantity: u64,
     clock: &Clock,
 ): u64 {
-    let (up_short, down_short) = predict.vault.pair_position(key);
-    let (bid, _ask) = get_quote(predict, oracle, key, up_short, down_short, clock);
+    let (bid, _ask) = get_quote(predict, oracle, key, clock);
     math::mul(bid, quantity)
 }
 
@@ -88,8 +88,8 @@ public fun mint<Underlying, Quote>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    assert!(key.oracle_id() == oracle.id(), EOracleMismatch);
-    assert!(key.expiry() == oracle.expiry(), EExpiryMismatch);
+    assert!(!predict.trading_paused, ETradingPaused);
+    key.assert_matches_oracle(oracle);
     oracle.assert_not_stale(clock);
     predict.markets.assert_enabled(&key);
 
@@ -101,7 +101,11 @@ public fun mint<Underlying, Quote>(
     predict.vault.execute_mint(key, quantity, payment);
 
     // Risk checks
-    predict.assert_vault_exposure(key);
+    predict.vault.assert_exposure(
+        key,
+        predict.risk_config.max_total_exposure_pct(),
+        predict.risk_config.max_per_market_exposure_pct(),
+    );
 
     // Mark-to-market using post-trade exposure
     predict.mark_to_market(oracle, key, clock);
@@ -121,8 +125,7 @@ public fun redeem<Underlying, Quote>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    assert!(key.oracle_id() == oracle.id(), EOracleMismatch);
-    assert!(key.expiry() == oracle.expiry(), EExpiryMismatch);
+    key.assert_matches_oracle(oracle);
     if (!oracle.is_settled()) {
         oracle.assert_not_stale(clock);
     };
@@ -154,18 +157,14 @@ public fun mint_collateralized<Underlying, Quote>(
     quantity: u64,
     clock: &Clock,
 ) {
-    assert!(locked_key.oracle_id() == oracle.id(), EOracleMismatch);
-    assert!(locked_key.expiry() == oracle.expiry(), EExpiryMismatch);
-    assert!(minted_key.oracle_id() == oracle.id(), EOracleMismatch);
-    assert!(minted_key.expiry() == oracle.expiry(), EExpiryMismatch);
+    assert!(!predict.trading_paused, ETradingPaused);
+    locked_key.assert_matches_oracle(oracle);
+    minted_key.assert_matches_oracle(oracle);
     oracle.assert_not_stale(clock);
     predict.markets.assert_enabled(&locked_key);
     predict.markets.assert_enabled(&minted_key);
 
     // Validate collateral pair
-    assert!(locked_key.oracle_id() == minted_key.oracle_id(), EInvalidCollateralPair);
-    assert!(locked_key.expiry() == minted_key.expiry(), EInvalidCollateralPair);
-
     let valid_pair = if (locked_key.is_up() && minted_key.is_up()) {
         // UP collateral must have lower strike than minted UP
         locked_key.strike() < minted_key.strike()
@@ -214,8 +213,7 @@ public fun settle<Underlying, Quote>(
     key: MarketKey,
     clock: &Clock,
 ) {
-    assert!(key.oracle_id() == oracle.id(), EOracleMismatch);
-    assert!(key.expiry() == oracle.expiry(), EExpiryMismatch);
+    key.assert_matches_oracle(oracle);
     assert!(oracle.is_settled(), EMarketNotSettled);
 
     // Mark-to-market uses settlement prices (100%/0%)
@@ -245,6 +243,7 @@ public fun withdraw<Quote>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Quote> {
+    assert!(!predict.withdrawals_paused, EWithdrawalsPaused);
     let lockup_period_ms = predict.lp_config.lockup_period_ms();
     predict.vault.withdraw(shares, lockup_period_ms, clock, ctx).into_coin(ctx)
 }
@@ -260,6 +259,8 @@ public(package) fun create<Quote>(ctx: &mut TxContext): ID {
         pricing_config: pricing_config::new(),
         lp_config: lp_config::new(),
         risk_config: risk_config::new(),
+        trading_paused: false,
+        withdrawals_paused: false,
     };
     let predict_id = object::id(&predict);
     transfer::share_object(predict);
@@ -276,6 +277,16 @@ public(package) fun enable_market<Underlying, Quote>(
     predict.markets.enable_market(oracle, key);
 }
 
+/// Set trading pause state.
+public(package) fun set_trading_paused<Quote>(predict: &mut Predict<Quote>, paused: bool) {
+    predict.trading_paused = paused;
+}
+
+/// Set withdrawals pause state.
+public(package) fun set_withdrawals_paused<Quote>(predict: &mut Predict<Quote>, paused: bool) {
+    predict.withdrawals_paused = paused;
+}
+
 // === Private Functions ===
 
 /// Get bid and ask prices for a market.
@@ -285,19 +296,18 @@ fun get_quote<Underlying, Quote>(
     predict: &Predict<Quote>,
     oracle: &OracleSVI<Underlying>,
     key: MarketKey,
-    up_short: u64,
-    down_short: u64,
     clock: &Clock,
 ): (u64, u64) {
     let strike = key.strike();
     let is_up = key.is_up();
+    let (up_short, down_short) = predict.vault.pair_position(key);
 
     // After settlement, return definitive prices
     if (oracle.is_settled()) {
         let settlement_price = oracle.settlement_price().destroy_some();
         let up_wins = settlement_price > strike;
         let won = if (is_up) { up_wins } else { !up_wins };
-        let price = if (won) { constants::float_scaling() } else { 0 };
+        let price = if (won) { constants::float_scaling!() } else { 0 };
         return (price, price)
     };
 
@@ -329,22 +339,19 @@ fun mark_to_market<Underlying, Quote>(
     clock: &Clock,
 ) {
     let (up_key, down_key) = key.up_down_pair();
-    let (up_short, down_short) = predict.vault.pair_position(key);
 
-    update_position_mtm(predict, oracle, up_key, up_short, down_short, clock);
-    update_position_mtm(predict, oracle, down_key, up_short, down_short, clock);
+    update_position_mtm(predict, oracle, up_key, clock);
+    update_position_mtm(predict, oracle, down_key, clock);
 }
 
 fun update_position_mtm<Underlying, Quote>(
     predict: &mut Predict<Quote>,
     oracle: &OracleSVI<Underlying>,
     key: MarketKey,
-    up_short: u64,
-    down_short: u64,
     clock: &Clock,
 ) {
     let (minted, redeemed) = predict.vault.position_quantities(key);
-    let (bid, ask) = get_quote(predict, oracle, key, up_short, down_short, clock);
+    let (bid, ask) = get_quote(predict, oracle, key, clock);
 
     let (liability, assets) = if (minted > redeemed) {
         let qty = minted - redeemed;
@@ -359,12 +366,3 @@ fun update_position_mtm<Underlying, Quote>(
     predict.vault.update_unrealized(key, liability, assets);
 }
 
-fun assert_vault_exposure<Quote>(predict: &Predict<Quote>, key: MarketKey) {
-    let balance = predict.vault.balance();
-    let max_liability = predict.vault.max_liability();
-    let market_liability = predict.vault.market_liability(key);
-    let max_total_pct = predict.risk_config.max_total_exposure_pct();
-    let max_market_pct = predict.risk_config.max_per_market_exposure_pct();
-    assert!(max_liability <= math::mul(balance, max_total_pct), EExceedsMaxTotalExposure);
-    assert!(market_liability <= math::mul(balance, max_market_pct), EExceedsMaxMarketExposure);
-}

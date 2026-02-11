@@ -11,12 +11,15 @@
 /// - All liabilities (max, min, unrealized) are in Quote units
 module deepbook_predict::vault;
 
+use deepbook::math;
 use deepbook_predict::{market_key::MarketKey, supply_manager::{Self, SupplyManager}};
 use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Table}};
 
 // === Errors ===
 const ENoShortPosition: u64 = 0;
 const EInsufficientBalance: u64 = 1;
+const EExceedsMaxTotalExposure: u64 = 2;
+const EExceedsMaxMarketExposure: u64 = 3;
 
 // === Structs ===
 
@@ -123,8 +126,8 @@ public fun pair_position<Quote>(vault: &Vault<Quote>, key: MarketKey): (u64, u64
 
 /// Returns the worst-case liability for a strike (max of up/down quantity).
 public fun market_liability<Quote>(vault: &Vault<Quote>, key: MarketKey): u64 {
-    let (up, down) = vault.pair_position(key);
-    if (up > down) { up } else { down }
+    let (max, _min) = vault.exposure(key);
+    max
 }
 
 // === Public-Package Functions ===
@@ -160,9 +163,7 @@ public(package) fun execute_mint<Quote>(
     // Update max/min liability
     let (old_max, old_min) = vault.exposure(key);
     vault.add_position(key, quantity, cost);
-    let (new_max, new_min) = vault.exposure(key);
-    vault.max_liability = vault.max_liability + new_max - old_max;
-    vault.min_liability = vault.min_liability + new_min - old_min;
+    vault.apply_exposure_delta(key, old_max, old_min);
 }
 
 /// Execute a redeem trade. Updates positions and liabilities.
@@ -181,9 +182,7 @@ public(package) fun execute_redeem<Quote>(
     // Update max/min liability
     let (old_max, old_min) = vault.exposure(key);
     vault.remove_position(key, quantity, payout);
-    let (new_max, new_min) = vault.exposure(key);
-    vault.max_liability = vault.max_liability + new_max - old_max;
-    vault.min_liability = vault.min_liability + new_min - old_min;
+    vault.apply_exposure_delta(key, old_max, old_min);
 
     vault.balance.split(payout)
 }
@@ -241,17 +240,24 @@ public(package) fun finalize_settlement<Quote>(
     key: MarketKey,
     up_wins: bool,
 ) {
+    let (old_max, old_min) = vault.exposure(key);
     let (up_qty, down_qty) = vault.pair_position(key);
-    let (old_max, old_min) = if (up_qty > down_qty) {
-        (up_qty, down_qty)
-    } else {
-        (down_qty, up_qty)
-    };
-
     let actual_liability = if (up_wins) { up_qty } else { down_qty };
 
     vault.max_liability = vault.max_liability + actual_liability - old_max;
     vault.min_liability = vault.min_liability + actual_liability - old_min;
+}
+
+/// Assert that vault exposure is within risk limits.
+public(package) fun assert_exposure<Quote>(
+    vault: &Vault<Quote>,
+    key: MarketKey,
+    max_total_pct: u64,
+    max_market_pct: u64,
+) {
+    let balance = vault.balance.value();
+    assert!(vault.max_liability <= math::mul(balance, max_total_pct), EExceedsMaxTotalExposure);
+    assert!(vault.market_liability(key) <= math::mul(balance, max_market_pct), EExceedsMaxMarketExposure);
 }
 
 /// Supply USDC to the vault, receive shares.
@@ -262,16 +268,8 @@ public(package) fun supply<Quote>(
     ctx: &TxContext,
 ): u64 {
     let amount = coin.value();
-    let shares = vault
-        .supply_manager
-        .supply(
-            amount,
-            vault.balance.value(),
-            vault.unrealized_liability,
-            vault.unrealized_assets,
-            clock,
-            ctx,
-        );
+    let vault_value = vault.vault_value();
+    let shares = vault.supply_manager.supply(amount, vault_value, clock, ctx);
     vault.balance.join(coin.into_balance());
 
     shares
@@ -285,22 +283,23 @@ public(package) fun withdraw<Quote>(
     clock: &Clock,
     ctx: &TxContext,
 ): Balance<Quote> {
-    let amount = vault
-        .supply_manager
-        .withdraw(
-            shares,
-            vault.balance.value(),
-            vault.unrealized_liability,
-            vault.unrealized_assets,
-            lockup_period_ms,
-            clock,
-            ctx,
-        );
+    let vault_value = vault.vault_value();
+    let amount = vault.supply_manager.withdraw(shares, vault_value, lockup_period_ms, clock, ctx);
 
     vault.balance.split(amount)
 }
 
 // === Private Functions ===
+
+fun vault_value<Quote>(vault: &Vault<Quote>): u64 {
+    vault.balance.value() + vault.unrealized_assets - vault.unrealized_liability
+}
+
+fun apply_exposure_delta<Quote>(vault: &mut Vault<Quote>, key: MarketKey, old_max: u64, old_min: u64) {
+    let (new_max, new_min) = vault.exposure(key);
+    vault.max_liability = vault.max_liability + new_max - old_max;
+    vault.min_liability = vault.min_liability + new_min - old_min;
+}
 
 /// Returns (max_exposure, min_exposure) for the strike.
 fun exposure<Quote>(vault: &Vault<Quote>, key: MarketKey): (u64, u64) {

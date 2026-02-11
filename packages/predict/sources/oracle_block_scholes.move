@@ -303,7 +303,7 @@ public(package) fun get_binary_price<Underlying>(
     clock: &Clock,
 ): u64 {
     let (forward, iv, rfr, tte_ms) = get_pricing_data(oracle, strike, clock);
-    let t = math::div(tte_ms, constants::ms_per_year());
+    let t = math::div(tte_ms, constants::ms_per_year!());
     let (ln_fk, ln_fk_neg) = predict_math::ln(math::div(forward, strike));
     let half_vol_sq_t = math::mul(math::mul(iv, iv), t) / 2;
     let (d2_num, d2_num_neg) = predict_math::sub_signed_u64(
@@ -312,7 +312,7 @@ public(package) fun get_binary_price<Underlying>(
         half_vol_sq_t,
         false,
     );
-    let sqrt_t = math::sqrt(t, constants::float_scaling());
+    let sqrt_t = math::sqrt(t, constants::float_scaling!());
     let d2_den = math::mul(iv, sqrt_t);
     let d2 = math::div(d2_num, d2_den);
     let cdf_neg = if (is_up) { d2_num_neg } else { !d2_num_neg };

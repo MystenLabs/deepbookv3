@@ -31,8 +31,8 @@ public fun max_skew_multiplier(config: &PricingConfig): u64 {
 
 public(package) fun new(): PricingConfig {
     PricingConfig {
-        base_spread: constants::default_base_spread(),
-        max_skew_multiplier: constants::default_max_skew_multiplier(),
+        base_spread: constants::default_base_spread!(),
+        max_skew_multiplier: constants::default_max_skew_multiplier!(),
     }
 }
 

@@ -34,10 +34,6 @@ public struct Registry has key {
     predict_id: Option<ID>,
     /// OracleCap ID -> vector of oracle IDs created by that cap
     oracle_ids: Table<ID, vector<ID>>,
-    /// Whether trading is globally paused
-    trading_paused: bool,
-    /// Whether LP withdrawals are globally paused
-    withdrawals_paused: bool,
 }
 
 // === Public Functions ===
@@ -82,16 +78,22 @@ public fun create_oracle<Underlying>(
     oracle_id
 }
 
-// === Public-Package Functions ===
-
-/// Check if trading is paused.
-public(package) fun is_trading_paused(registry: &Registry): bool {
-    registry.trading_paused
+/// Set trading pause state.
+public fun set_trading_paused<Quote>(
+    predict: &mut predict::Predict<Quote>,
+    _admin_cap: &AdminCap,
+    paused: bool,
+) {
+    predict.set_trading_paused(paused);
 }
 
-/// Check if withdrawals are paused.
-public(package) fun is_withdrawals_paused(registry: &Registry): bool {
-    registry.withdrawals_paused
+/// Set withdrawals pause state.
+public fun set_withdrawals_paused<Quote>(
+    predict: &mut predict::Predict<Quote>,
+    _admin_cap: &AdminCap,
+    paused: bool,
+) {
+    predict.set_withdrawals_paused(paused);
 }
 
 // === Private Functions ===
@@ -102,8 +104,6 @@ fun init(ctx: &mut TxContext) {
         id: object::new(ctx),
         predict_id: option::none(),
         oracle_ids: table::new(ctx),
-        trading_paused: false,
-        withdrawals_paused: false,
     };
     transfer::share_object(registry);
 

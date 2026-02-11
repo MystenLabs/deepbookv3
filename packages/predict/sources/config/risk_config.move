@@ -29,8 +29,8 @@ public fun max_per_market_exposure_pct(config: &RiskConfig): u64 {
 
 public(package) fun new(): RiskConfig {
     RiskConfig {
-        max_total_exposure_pct: constants::default_max_total_exposure_pct(),
-        max_per_market_exposure_pct: constants::default_max_exposure_per_market_pct(),
+        max_total_exposure_pct: constants::default_max_total_exposure_pct!(),
+        max_per_market_exposure_pct: constants::default_max_exposure_per_market_pct!(),
     }
 }
 

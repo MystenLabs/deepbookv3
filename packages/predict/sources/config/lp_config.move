@@ -22,7 +22,7 @@ public fun lockup_period_ms(config: &LPConfig): u64 {
 
 public(package) fun new(): LPConfig {
     LPConfig {
-        lockup_period_ms: constants::default_min_lockup_ms(),
+        lockup_period_ms: constants::default_min_lockup_ms!(),
     }
 }
 
