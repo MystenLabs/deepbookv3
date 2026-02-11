@@ -38,6 +38,10 @@ use sui::clock::Clock;
 public struct Pricing has store {
     /// Base spread in FLOAT_SCALING (e.g., 10_000_000 = 1%)
     base_spread: u64,
+    /// Max skew multiplier in FLOAT_SCALING (e.g., 1_000_000_000 = 1x).
+    /// Controls how much vault imbalance affects the spread.
+    /// Spread ranges from 0 to 2 * max_skew_multiplier * base_spread.
+    max_skew_multiplier: u64,
 }
 
 // === Public Functions ===
@@ -49,8 +53,8 @@ public fun get_quote<Underlying>(
     pricing: &Pricing,
     oracle: &OracleSVI<Underlying>,
     key: MarketKey,
-    _up_short: u64,
-    _down_short: u64,
+    up_short: u64,
+    down_short: u64,
     clock: &Clock,
 ): (u64, u64) {
     let strike = key.strike();
@@ -67,12 +71,21 @@ public fun get_quote<Underlying>(
     };
 
     let (forward, iv, rfr, tte) = oracle.get_pricing_data(strike, clock);
-    let theoretical = calculate_binary_price(forward, strike, iv, rfr, tte, is_up);
+    let price = calculate_binary_price(forward, strike, iv, rfr, tte, is_up);
 
-    // TODO: Apply dynamic spread based on net exposure
-    let spread = math::mul(theoretical, pricing.base_spread);
-    let bid = if (theoretical > spread) { theoretical - spread } else { 0 };
-    let ask = theoretical + spread;
+    // Dynamic spread: widen on the heavy side, tighten on the light side.
+    // ratio = this_side / total (0 to 1), multiplier = 2 * ratio (0x to 2x)
+    let spread = if (up_short == 0 && down_short == 0) {
+        math::mul(price, pricing.base_spread)
+    } else {
+        let this_side = if (is_up) { up_short } else { down_short };
+        let total = up_short + down_short;
+        let ratio = math::div(this_side, total);
+        let multiplier = math::mul(2 * ratio, pricing.max_skew_multiplier);
+        math::mul(price, math::mul(pricing.base_spread, multiplier))
+    };
+    let bid = if (price > spread) { price - spread } else { 0 };
+    let ask = price + spread;
 
     (bid, ask)
 }
@@ -113,7 +126,10 @@ public fun get_redeem_payout<Underlying>(
 
 /// Create a new Pricing config with default values.
 public(package) fun new(): Pricing {
-    Pricing { base_spread: constants::default_base_spread() }
+    Pricing {
+        base_spread: constants::default_base_spread(),
+        max_skew_multiplier: constants::default_max_skew_multiplier(),
+    }
 }
 
 // === Private Functions ===

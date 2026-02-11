@@ -26,6 +26,9 @@ const DEFAULT_MAX_EXPOSURE_PER_MARKET_PCT: u64 = 200_000_000;
 const DEFAULT_MAX_TOTAL_EXPOSURE_PCT: u64 = 800_000_000;
 /// Base spread (1% in FLOAT_SCALING = 10_000_000)
 const DEFAULT_BASE_SPREAD: u64 = 10_000_000;
+/// Max skew multiplier applied to base spread (1x in FLOAT_SCALING)
+/// At full imbalance, spread ranges from 0 to 2 * max_skew_multiplier * base_spread
+const DEFAULT_MAX_SKEW_MULTIPLIER: u64 = 1_000_000_000;
 /// Oracle staleness threshold (30 seconds)
 const DEFAULT_ORACLE_STALENESS_MS: u64 = 30_000;
 /// LP withdrawal lockup period (24 hours)
@@ -61,6 +64,8 @@ public fun default_max_exposure_per_market_pct(): u64 { DEFAULT_MAX_EXPOSURE_PER
 public fun default_max_total_exposure_pct(): u64 { DEFAULT_MAX_TOTAL_EXPOSURE_PCT }
 
 public fun default_base_spread(): u64 { DEFAULT_BASE_SPREAD }
+
+public fun default_max_skew_multiplier(): u64 { DEFAULT_MAX_SKEW_MULTIPLIER }
 
 public fun default_oracle_staleness_ms(): u64 { DEFAULT_ORACLE_STALENESS_MS }
 
