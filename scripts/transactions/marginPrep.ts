@@ -164,7 +164,7 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
       rateLimitEnabled: true,
     },
     {
-      baseRate: 0.1,
+      baseRate: 0,
       baseSlope: 0.15,
       optimalUtilization: 0.8,
       excessSlope: 5,
