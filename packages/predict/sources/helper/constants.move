@@ -38,12 +38,6 @@ const GRACE_PERIOD_MS: u64 = 604_800_000;
 /// Maximum number of strikes per oracle
 const MAX_STRIKES_QUANTITY: u64 = 20;
 
-// === Market Constants ===
-/// Direction: price above strike at expiry
-const DIRECTION_UP: u8 = 0;
-/// Direction: price below strike at expiry
-const DIRECTION_DOWN: u8 = 1;
-
 // === Time Constants ===
 const MS_PER_SECOND: u64 = 1_000;
 const MS_PER_MINUTE: u64 = 60_000;
@@ -74,10 +68,6 @@ public fun default_min_lockup_ms(): u64 { DEFAULT_MIN_LOCKUP_MS }
 public fun grace_period_ms(): u64 { GRACE_PERIOD_MS }
 
 public fun max_strikes_quantity(): u64 { MAX_STRIKES_QUANTITY }
-
-public fun direction_up(): u8 { DIRECTION_UP }
-
-public fun direction_down(): u8 { DIRECTION_DOWN }
 
 public fun ms_per_second(): u64 { MS_PER_SECOND }
 

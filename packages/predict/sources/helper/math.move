@@ -1,3 +1,13 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+/// Math utilities for fixed-point arithmetic (FLOAT_SCALING = 1e9).
+///
+/// Provides:
+/// - ln(x): natural logarithm
+/// - exp(x): exponential function
+/// - normal_cdf(x): standard normal CDF (Abramowitz & Stegun 26.2.17)
+/// - Signed arithmetic helpers (add, sub, mul for (magnitude, is_negative) pairs)
 module deepbook_predict::math;
 
 use deepbook::math;
@@ -93,7 +103,8 @@ fun cdf_poly(t: u64): u64 {
     let t4 = math::mul(t3, t);
     let t5 = math::mul(t4, t);
 
-    let pos = math::mul(319_381_530, t)
+    let pos =
+        math::mul(319_381_530, t)
         + math::mul(1_781_477_937, t3)
         + math::mul(1_330_274_429, t5);
 

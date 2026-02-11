@@ -4,23 +4,32 @@
 /// Main entry point for the DeepBook Predict protocol.
 ///
 /// This module orchestrates all operations:
-/// - Coordinates between Vault (state), Pricing (calculations), and Oracle (data)
+/// - Coordinates between Vault (state), Oracle (data), and config
 /// - Exposes public functions for trading and LP operations
-/// - Handles mark-to-market after each trade
+/// - Handles pricing (spread calculation) and mark-to-market
 module deepbook_predict::predict;
 
 use deepbook::math;
 use deepbook_predict::{
+    constants,
     lp_config::{Self, LPConfig},
     market_key::MarketKey,
     market_manager::{Self, Markets},
     oracle_block_scholes::OracleSVI,
     predict_manager::PredictManager,
-    pricing::{Self, Pricing},
+    pricing_config::{Self, PricingConfig},
     risk_config::{Self, RiskConfig},
     vault::{Self, Vault}
 };
 use sui::{clock::Clock, coin::Coin};
+
+// === Errors ===
+const EOracleMismatch: u64 = 0;
+const EExpiryMismatch: u64 = 1;
+const EMarketNotSettled: u64 = 2;
+const EExceedsMaxTotalExposure: u64 = 3;
+const EExceedsMaxMarketExposure: u64 = 4;
+const EInvalidCollateralPair: u64 = 5;
 
 // === Structs ===
 
@@ -33,20 +42,12 @@ public struct Predict<phantom Quote> has key {
     /// Vault holding USDC and tracking exposure
     vault: Vault<Quote>,
     /// Pricing configuration (admin-controlled)
-    pricing: Pricing,
+    pricing_config: PricingConfig,
     /// LP configuration (admin-controlled)
     lp_config: LPConfig,
     /// Risk limits (admin-controlled)
     risk_config: RiskConfig,
 }
-
-// === Errors ===
-const EOracleMismatch: u64 = 0;
-const EExpiryMismatch: u64 = 1;
-const EMarketNotSettled: u64 = 2;
-const EExceedsMaxTotalExposure: u64 = 3;
-const EExceedsMaxMarketExposure: u64 = 4;
-const EInvalidCollateralPair: u64 = 5;
 
 // === Public Functions ===
 
@@ -59,7 +60,8 @@ public fun get_mint_cost<Underlying, Quote>(
     clock: &Clock,
 ): u64 {
     let (up_short, down_short) = predict.vault.pair_position(key);
-    predict.pricing.get_mint_cost(oracle, key, quantity, up_short, down_short, clock)
+    let (_bid, ask) = get_quote(predict, oracle, key, up_short, down_short, clock);
+    math::mul(ask, quantity)
 }
 
 /// Get the payout for redeeming a position (for UI/preview).
@@ -71,7 +73,8 @@ public fun get_redeem_payout<Underlying, Quote>(
     clock: &Clock,
 ): u64 {
     let (up_short, down_short) = predict.vault.pair_position(key);
-    predict.pricing.get_redeem_payout(oracle, key, quantity, up_short, down_short, clock)
+    let (bid, _ask) = get_quote(predict, oracle, key, up_short, down_short, clock);
+    math::mul(bid, quantity)
 }
 
 /// Buy a position. Cost is withdrawn from the PredictManager's balance.
@@ -254,7 +257,7 @@ public(package) fun create<Quote>(ctx: &mut TxContext): ID {
         id: object::new(ctx),
         markets: market_manager::new(),
         vault: vault::new<Quote>(ctx),
-        pricing: pricing::new(),
+        pricing_config: pricing_config::new(),
         lp_config: lp_config::new(),
         risk_config: risk_config::new(),
     };
@@ -274,6 +277,48 @@ public(package) fun enable_market<Underlying, Quote>(
 }
 
 // === Private Functions ===
+
+/// Get bid and ask prices for a market.
+/// If oracle is settled, returns settlement prices (100% for winner, 0% for loser).
+/// Returns (bid, ask) in FLOAT_SCALING (1e9).
+fun get_quote<Underlying, Quote>(
+    predict: &Predict<Quote>,
+    oracle: &OracleSVI<Underlying>,
+    key: MarketKey,
+    up_short: u64,
+    down_short: u64,
+    clock: &Clock,
+): (u64, u64) {
+    let strike = key.strike();
+    let is_up = key.is_up();
+
+    // After settlement, return definitive prices
+    if (oracle.is_settled()) {
+        let settlement_price = oracle.settlement_price().destroy_some();
+        let up_wins = settlement_price > strike;
+        let won = if (is_up) { up_wins } else { !up_wins };
+        let price = if (won) { constants::float_scaling() } else { 0 };
+        return (price, price)
+    };
+
+    let price = oracle.get_binary_price(strike, is_up, clock);
+
+    // Dynamic spread: widen on the heavy side, tighten on the light side.
+    // ratio = this_side / total (0 to 1), multiplier = 2 * ratio (0x to 2x)
+    let spread = if (up_short == 0 && down_short == 0) {
+        math::mul(price, predict.pricing_config.base_spread())
+    } else {
+        let this_side = if (is_up) { up_short } else { down_short };
+        let total = up_short + down_short;
+        let ratio = math::div(this_side, total);
+        let multiplier = math::mul(2 * ratio, predict.pricing_config.max_skew_multiplier());
+        math::mul(price, math::mul(predict.pricing_config.base_spread(), multiplier))
+    };
+    let bid = if (price > spread) { price - spread } else { 0 };
+    let ask = price + spread;
+
+    (bid, ask)
+}
 
 /// Mark-to-market: calculate cost to close each position and update unrealized.
 /// Short positions have unrealized_liability, long positions have unrealized_assets.
@@ -299,13 +344,14 @@ fun update_position_mtm<Underlying, Quote>(
     clock: &Clock,
 ) {
     let (minted, redeemed) = predict.vault.position_quantities(key);
+    let (bid, ask) = get_quote(predict, oracle, key, up_short, down_short, clock);
 
     let (liability, assets) = if (minted > redeemed) {
         let qty = minted - redeemed;
-        (predict.pricing.get_mint_cost(oracle, key, qty, up_short, down_short, clock), 0)
+        (math::mul(ask, qty), 0)
     } else if (redeemed > minted) {
         let qty = redeemed - minted;
-        (0, predict.pricing.get_redeem_payout(oracle, key, qty, up_short, down_short, clock))
+        (0, math::mul(bid, qty))
     } else {
         (0, 0)
     };

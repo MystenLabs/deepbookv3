@@ -12,8 +12,8 @@
 ///   implied_vol = sqrt(total_variance / time_to_expiry)
 module deepbook_predict::oracle_block_scholes;
 
-use deepbook::math as deepbook_math;
-use deepbook_predict::{constants, math};
+use deepbook::math;
+use deepbook_predict::{constants, math as predict_math};
 use sui::clock::Clock;
 
 // === Errors ===
@@ -82,7 +82,7 @@ public struct OracleCapSVI has key, store {
     id: UID,
 }
 
-// === Public Functions (Block Scholes operator calls) ===
+// === Public Functions ===
 
 /// Activate the oracle. Must be called before oracle can be used for pricing.
 public fun activate<Underlying>(
@@ -133,8 +133,6 @@ public fun update_svi<Underlying>(
     oracle.risk_free_rate = risk_free_rate;
     oracle.timestamp = clock.timestamp_ms();
 }
-
-// === Public View Functions (getters) ===
 
 /// Get the oracle ID.
 public fun id<Underlying>(oracle: &OracleSVI<Underlying>): ID {
@@ -250,31 +248,31 @@ public(package) fun compute_iv<Underlying>(
     strike: u64,
     clock: &Clock,
 ): u64 {
-    let ratio = deepbook::math::div(strike, oracle.prices.forward);
-    let (k, k_negative) = math::ln(ratio);
-    let (k_minus_m, k_minus_m_negative) = math::sub_signed_u64(
+    let ratio = math::div(strike, oracle.prices.forward);
+    let (k, k_negative) = predict_math::ln(ratio);
+    let (k_minus_m, k_minus_m_negative) = predict_math::sub_signed_u64(
         k,
         k_negative,
         oracle.svi.m,
         oracle.svi.m_negative,
     );
-    let sq = deepbook_math::sqrt(
-        deepbook_math::mul(k_minus_m, k_minus_m) + deepbook_math::mul(oracle.svi.sigma, oracle.svi.sigma),
+    let sq = math::sqrt(
+        math::mul(k_minus_m, k_minus_m) + math::mul(oracle.svi.sigma, oracle.svi.sigma),
         1_000_000_000,
     );
-    let rho_k_minus_m = deepbook_math::mul(oracle.svi.rho, k_minus_m);
-    let (inner, inner_negative) = math::add_signed_u64(
+    let rho_k_minus_m = math::mul(oracle.svi.rho, k_minus_m);
+    let (inner, inner_negative) = predict_math::add_signed_u64(
         rho_k_minus_m,
         k_minus_m_negative,
         sq,
         false,
     );
     assert!(!inner_negative, ECannotBeNegative); // SVI formula should not produce negative variance
-    let total_var = oracle.svi.a + deepbook_math::mul(oracle.svi.b, inner);
-    let iv = deepbook_math::sqrt(
-        deepbook_math::div(
+    let total_var = oracle.svi.a + math::mul(oracle.svi.b, inner);
+    let iv = math::sqrt(
+        math::div(
             total_var,
-            deepbook_math::div(oracle.expiry - clock.timestamp_ms(), 1000 * 60 * 60 * 24),
+            math::div(oracle.expiry - clock.timestamp_ms(), 1000 * 60 * 60 * 24),
         ),
         1_000_000_000,
     );
@@ -305,24 +303,24 @@ public(package) fun get_binary_price<Underlying>(
     clock: &Clock,
 ): u64 {
     let (forward, iv, rfr, tte_ms) = get_pricing_data(oracle, strike, clock);
-    let t = deepbook_math::div(tte_ms, constants::ms_per_year());
-    let (ln_fk, ln_fk_neg) = math::ln(deepbook_math::div(forward, strike));
-    let half_vol_sq_t = deepbook_math::mul(deepbook_math::mul(iv, iv), t) / 2;
-    let (d2_num, d2_num_neg) = math::sub_signed_u64(
+    let t = math::div(tte_ms, constants::ms_per_year());
+    let (ln_fk, ln_fk_neg) = predict_math::ln(math::div(forward, strike));
+    let half_vol_sq_t = math::mul(math::mul(iv, iv), t) / 2;
+    let (d2_num, d2_num_neg) = predict_math::sub_signed_u64(
         ln_fk,
         ln_fk_neg,
         half_vol_sq_t,
         false,
     );
-    let sqrt_t = deepbook_math::sqrt(t, constants::float_scaling());
-    let d2_den = deepbook_math::mul(iv, sqrt_t);
-    let d2 = deepbook_math::div(d2_num, d2_den);
+    let sqrt_t = math::sqrt(t, constants::float_scaling());
+    let d2_den = math::mul(iv, sqrt_t);
+    let d2 = math::div(d2_num, d2_den);
     let cdf_neg = if (is_up) { d2_num_neg } else { !d2_num_neg };
-    let nd2 = math::normal_cdf(d2, cdf_neg);
-    let rt = deepbook_math::mul(rfr, t);
-    let discount = math::exp(rt, true);
+    let nd2 = predict_math::normal_cdf(d2, cdf_neg);
+    let rt = math::mul(rfr, t);
+    let discount = predict_math::exp(rt, true);
 
-    deepbook_math::mul(discount, nd2)
+    math::mul(discount, nd2)
 }
 
 /// Assert that the oracle is not stale. Aborts if stale.
@@ -334,8 +332,6 @@ public(package) fun assert_not_stale<Underlying>(oracle: &OracleSVI<Underlying>,
 public(package) fun assert_active<Underlying>(oracle: &OracleSVI<Underlying>) {
     assert!(oracle.active, EOracleNotActive);
 }
-
-// === Helper Functions for Creating Structs ===
 
 /// Create a new PriceData struct.
 public fun new_price_data(spot: u64, forward: u64): PriceData {
