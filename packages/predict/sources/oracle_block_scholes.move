@@ -260,10 +260,15 @@ public(package) fun compute_iv<Underlying>(
         math::mul(k_minus_m, k_minus_m) + math::mul(oracle.svi.sigma, oracle.svi.sigma),
         1_000_000_000,
     );
-    let rho_k_minus_m = math::mul(oracle.svi.rho, k_minus_m);
+    let (rho_k_minus_m, rho_km_neg) = predict_math::mul_signed_u64(
+        oracle.svi.rho,
+        oracle.svi.rho_negative,
+        k_minus_m,
+        k_minus_m_negative,
+    );
     let (inner, inner_negative) = predict_math::add_signed_u64(
         rho_k_minus_m,
-        k_minus_m_negative,
+        rho_km_neg,
         sq,
         false,
     );
@@ -272,7 +277,7 @@ public(package) fun compute_iv<Underlying>(
     let iv = math::sqrt(
         math::div(
             total_var,
-            math::div(oracle.expiry - clock.timestamp_ms(), 1000 * 60 * 60 * 24),
+            math::div(oracle.expiry - clock.timestamp_ms(), constants::ms_per_year!()),
         ),
         1_000_000_000,
     );

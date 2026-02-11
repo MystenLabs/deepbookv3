@@ -13,17 +13,17 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 ### Core (Done)
 | Module | Status | Notes |
 |--------|--------|-------|
-| `registry.move` | Done | init, AdminCap, create_predict, create_oracle, create_oracle_cap, set_trading_paused, set_withdrawals_paused |
-| `predict.move` | Done | Orchestrator + pricing: mint, redeem, mint/redeem_collateralized, settle, supply, withdraw, get_quote, mark_to_market, risk checks, pause enforcement |
+| `registry.move` | Done | init, AdminCap, create_predict, create_oracle, create_oracle_cap, enable_market, pause setters, config setters (lockup, spread, skew, exposure limits) |
+| `predict.move` | Done | Orchestrator + pricing: create_manager, mint, redeem, mint/redeem_collateralized, settle, supply, withdraw, get_quote, mark_to_market, risk checks, pause enforcement, config forwarders |
 | `vault/vault.move` | Done | State machine: execute_mint/redeem, collateralized mint/redeem, exposure tracking (max/min liability), unrealized liability/assets, finalize_settlement, assert_exposure (risk checks), vault_value helper |
 | `vault/supply_manager.move` | Done | LP share accounting: supply (shares minted), withdraw (shares burned), lockup enforcement, vault_value param, share_ratio helper |
-| `predict_manager.move` | Done | User-side: wraps BalanceManager, tracks positions (free/locked), collateral lock/release |
+| `predict_manager.move` | Done | User-side: wraps BalanceManager (deposit/withdraw caps), tracks positions (free/locked), collateral lock/release |
 | `market_manager/market_key.move` | Done | Positional struct: (oracle_id, expiry, strike, direction), UP/DOWN helpers, opposite(), up_down_pair(), assert_matches_oracle() |
 | `market_manager/market_manager.move` | Done | VecSet of enabled MarketKeys, enable/disable/assert_enabled |
 | `config/pricing_config.move` | Done | base_spread (1%), max_skew_multiplier (1x) |
 | `config/risk_config.move` | Done | max_total_exposure_pct (80%), max_per_market_exposure_pct (20%) |
 | `config/lp_config.move` | Done | lockup_period_ms (24h default) |
-| `helper/constants.move` | Done | All constants as `public macro fun`. FLOAT_SCALING (1e9), USDC_UNIT (1e6), defaults, time constants |
+| `helper/constants.move` | Done | `public macro fun`: FLOAT_SCALING (1e9), config defaults, ms_per_year |
 | `helper/math.move` | Done | ln, exp, normal_cdf, signed arithmetic (add/sub/mul) |
 
 ### Oracle (Done)
@@ -38,14 +38,13 @@ All P0 items complete.
 
 ### P1 - Important
 - [x] **Dynamic spread**: spread adjusts based on vault net exposure. Widens on heavy side (0x-2x base_spread), tightens on light side. Configurable via `max_skew_multiplier`.
+- [x] **Admin functions**: All config setters wired through registry.move (lockup, spread, skew, exposure limits, enable_market)
+- [x] **PredictManager creation**: `predict::create_manager()` public function added
 - [ ] **Tests**: No test files exist yet
 
 ### P2 - Nice to Have
 - [ ] **Events**: Most modules don't emit events beyond oracle. Add events for mints, redeems, settlements, supply/withdraw.
-- [ ] **Admin functions**: No admin setters exposed through predict.move for risk_config, lp_config, pricing_config params
-- [ ] **Registry oracle_block_scholes integration**: Registry only creates `Oracle`, not `OracleSVI`
 - [x] **Pause enforcement**: trading_paused/withdrawals_paused in Predict struct, checked in mint/mint_collateralized/withdraw. Redeems always allowed.
-- [ ] **PredictManager creation**: `predict_manager::new()` is `public(package)` but no public entry point exists for users to create one
 
 ## Design Decisions Made
 - Vault is the counterparty to all trades (short every position)
@@ -109,6 +108,14 @@ All P0 items complete.
 - Pause state lives in `Predict` struct (not `Registry`) to avoid circular dependency
 - Admin setters in `registry.move` (`set_trading_paused`, `set_withdrawals_paused`) call through to predict's `public(package)` setters
 - Fixed pre-existing mutable borrow conflict in `supply_manager.move` (moved `share_ratio()` call before `&mut self.supplies` borrow)
+
+### Session: 2026-02-11 (audit + fixes)
+- **Full codebase audit**: read all 12 source files, identified bugs, dead code, and missing wiring
+- **Fixed `compute_iv` bug #1**: `rho_negative` was ignored in SVI formula — now uses `mul_signed_u64` for correct signed `rho * (k-m)` product
+- **Fixed `compute_iv` bug #2**: time-to-expiry divided by ms_per_day instead of ms_per_year — IV was off by sqrt(365). Now uses `constants::ms_per_year!()`
+- **Wired admin config setters**: added `public(package)` forwarders in predict.move + public admin functions in registry.move for: `enable_market`, `set_lockup_period`, `set_base_spread`, `set_max_skew_multiplier`, `set_max_total_exposure_pct`, `set_max_per_market_exposure_pct`
+- **Added `create_manager`**: public function in predict.move so users can create their own PredictManager
+- **Removed dead code**: 9 unused constants (usdc_unit, bps_scaling, staleness, grace_period, max_strikes, ms_per_second/minute/hour/day), unused `trade_cap` field + TradeCap import from PredictManager
 
 ### Session: 2026-02-11 (refactor)
 - **Removed duplicate logic and improved encapsulation across all modules:**

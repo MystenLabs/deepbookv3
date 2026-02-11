@@ -7,7 +7,7 @@
 /// Positions are tracked in a Table mapping MarketKey to PositionData (free, locked).
 module deepbook_predict::predict_manager;
 
-use deepbook::balance_manager::{Self, BalanceManager, TradeCap, DepositCap, WithdrawCap};
+use deepbook::balance_manager::{Self, BalanceManager, DepositCap, WithdrawCap};
 use deepbook_predict::market_key::MarketKey;
 use sui::{coin::Coin, table::{Self, Table}};
 
@@ -36,7 +36,6 @@ public struct PredictManager has key {
     balance_manager: BalanceManager,
     deposit_cap: DepositCap,
     withdraw_cap: WithdrawCap,
-    trade_cap: TradeCap,
     /// MarketKey -> PositionData (free, locked)
     positions: Table<MarketKey, PositionData>,
     /// CollateralKey -> locked quantity per collateral relationship
@@ -171,7 +170,6 @@ fun new_predict_manager(ctx: &mut TxContext): PredictManager {
     let mut balance_manager = balance_manager::new(ctx);
     let deposit_cap = balance_manager.mint_deposit_cap(ctx);
     let withdraw_cap = balance_manager.mint_withdraw_cap(ctx);
-    let trade_cap = balance_manager.mint_trade_cap(ctx);
 
     PredictManager {
         id,
@@ -179,7 +177,6 @@ fun new_predict_manager(ctx: &mut TxContext): PredictManager {
         balance_manager,
         deposit_cap,
         withdraw_cap,
-        trade_cap,
         positions: table::new(ctx),
         collateral: table::new(ctx),
     }

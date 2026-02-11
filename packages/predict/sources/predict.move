@@ -16,7 +16,7 @@ use deepbook_predict::{
     market_key::MarketKey,
     market_manager::{Self, Markets},
     oracle_block_scholes::OracleSVI,
-    predict_manager::PredictManager,
+    predict_manager::{Self, PredictManager},
     pricing_config::{Self, PricingConfig},
     risk_config::{Self, RiskConfig},
     vault::{Self, Vault}
@@ -52,6 +52,11 @@ public struct Predict<phantom Quote> has key {
 }
 
 // === Public Functions ===
+
+/// Create a new PredictManager for the caller.
+public fun create_manager(ctx: &mut TxContext): ID {
+    predict_manager::new(ctx)
+}
 
 /// Get the cost to mint a position (for UI/preview).
 public fun get_mint_cost<Underlying, Quote>(
@@ -101,11 +106,13 @@ public fun mint<Underlying, Quote>(
     predict.vault.execute_mint(key, quantity, payment);
 
     // Risk checks
-    predict.vault.assert_exposure(
-        key,
-        predict.risk_config.max_total_exposure_pct(),
-        predict.risk_config.max_per_market_exposure_pct(),
-    );
+    predict
+        .vault
+        .assert_exposure(
+            key,
+            predict.risk_config.max_total_exposure_pct(),
+            predict.risk_config.max_per_market_exposure_pct(),
+        );
 
     // Mark-to-market using post-trade exposure
     predict.mark_to_market(oracle, key, clock);
@@ -206,7 +213,7 @@ public fun redeem_collateralized<Quote>(
 
 /// Settle a market after expiry. Updates vault accounting to reflect actual outcome.
 /// Anyone can call this once the oracle has a settlement price.
-/// Idempotent - calling multiple times has no effect after first call.
+/// Idempotent - mark_to_market overwrites absolute values, not deltas.
 public fun settle<Underlying, Quote>(
     predict: &mut Predict<Quote>,
     oracle: &OracleSVI<Underlying>,
@@ -218,11 +225,6 @@ public fun settle<Underlying, Quote>(
 
     // Mark-to-market uses settlement prices (100%/0%)
     predict.mark_to_market(oracle, key, clock);
-
-    // Determine winner and finalize
-    let settlement_price = oracle.settlement_price().destroy_some();
-    let up_wins = settlement_price > key.strike();
-    predict.vault.finalize_settlement(key, up_wins);
 }
 
 /// Supply USDC to the vault, receive shares.
@@ -285,6 +287,31 @@ public(package) fun set_trading_paused<Quote>(predict: &mut Predict<Quote>, paus
 /// Set withdrawals pause state.
 public(package) fun set_withdrawals_paused<Quote>(predict: &mut Predict<Quote>, paused: bool) {
     predict.withdrawals_paused = paused;
+}
+
+/// Set LP lockup period.
+public(package) fun set_lockup_period<Quote>(predict: &mut Predict<Quote>, period_ms: u64) {
+    predict.lp_config.set_lockup_period(period_ms);
+}
+
+/// Set base spread.
+public(package) fun set_base_spread<Quote>(predict: &mut Predict<Quote>, spread: u64) {
+    predict.pricing_config.set_base_spread(spread);
+}
+
+/// Set max skew multiplier.
+public(package) fun set_max_skew_multiplier<Quote>(predict: &mut Predict<Quote>, multiplier: u64) {
+    predict.pricing_config.set_max_skew_multiplier(multiplier);
+}
+
+/// Set max total exposure percentage.
+public(package) fun set_max_total_exposure_pct<Quote>(predict: &mut Predict<Quote>, pct: u64) {
+    predict.risk_config.set_max_total_exposure_pct(pct);
+}
+
+/// Set max per-market exposure percentage.
+public(package) fun set_max_per_market_exposure_pct<Quote>(predict: &mut Predict<Quote>, pct: u64) {
+    predict.risk_config.set_max_per_market_exposure_pct(pct);
 }
 
 // === Private Functions ===
@@ -365,4 +392,3 @@ fun update_position_mtm<Underlying, Quote>(
 
     predict.vault.update_unrealized(key, liability, assets);
 }
-

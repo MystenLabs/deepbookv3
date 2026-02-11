@@ -96,16 +96,8 @@ public fun total_shares<Quote>(vault: &Vault<Quote>): u64 {
 /// Returns net short position, clamped to 0 if long.
 /// Used for settlement liability calculations.
 public fun position<Quote>(vault: &Vault<Quote>, key: MarketKey): u64 {
-    if (vault.positions.contains(key)) {
-        let data = vault.positions[key];
-        if (data.qty_minted > data.qty_redeemed) {
-            data.qty_minted - data.qty_redeemed
-        } else {
-            0
-        }
-    } else {
-        0
-    }
+    let (minted, redeemed) = vault.position_quantities(key);
+    if (minted > redeemed) { minted - redeemed } else { 0 }
 }
 
 /// Returns raw (qty_minted, qty_redeemed) for a position.
@@ -233,21 +225,6 @@ public(package) fun update_unrealized<Quote>(
     vault.unrealized_assets = vault.unrealized_assets + new_assets - old_assets;
 }
 
-/// Finalize settlement by updating max/min liability to actual.
-/// Called by orchestrator after mark-to-market.
-public(package) fun finalize_settlement<Quote>(
-    vault: &mut Vault<Quote>,
-    key: MarketKey,
-    up_wins: bool,
-) {
-    let (old_max, old_min) = vault.exposure(key);
-    let (up_qty, down_qty) = vault.pair_position(key);
-    let actual_liability = if (up_wins) { up_qty } else { down_qty };
-
-    vault.max_liability = vault.max_liability + actual_liability - old_max;
-    vault.min_liability = vault.min_liability + actual_liability - old_min;
-}
-
 /// Assert that vault exposure is within risk limits.
 public(package) fun assert_exposure<Quote>(
     vault: &Vault<Quote>,
@@ -257,7 +234,10 @@ public(package) fun assert_exposure<Quote>(
 ) {
     let balance = vault.balance.value();
     assert!(vault.max_liability <= math::mul(balance, max_total_pct), EExceedsMaxTotalExposure);
-    assert!(vault.market_liability(key) <= math::mul(balance, max_market_pct), EExceedsMaxMarketExposure);
+    assert!(
+        vault.market_liability(key) <= math::mul(balance, max_market_pct),
+        EExceedsMaxMarketExposure,
+    );
 }
 
 /// Supply USDC to the vault, receive shares.
@@ -295,7 +275,12 @@ fun vault_value<Quote>(vault: &Vault<Quote>): u64 {
     vault.balance.value() + vault.unrealized_assets - vault.unrealized_liability
 }
 
-fun apply_exposure_delta<Quote>(vault: &mut Vault<Quote>, key: MarketKey, old_max: u64, old_min: u64) {
+fun apply_exposure_delta<Quote>(
+    vault: &mut Vault<Quote>,
+    key: MarketKey,
+    old_max: u64,
+    old_min: u64,
+) {
     let (new_max, new_min) = vault.exposure(key);
     vault.max_liability = vault.max_liability + new_max - old_max;
     vault.min_liability = vault.min_liability + new_min - old_min;

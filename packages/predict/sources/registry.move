@@ -13,7 +13,11 @@
 /// AdminCap is transferred to the deployer (expected to be a multisig).
 module deepbook_predict::registry;
 
-use deepbook_predict::{oracle_block_scholes::{Self, OracleCapSVI}, predict};
+use deepbook_predict::{
+    market_key::MarketKey,
+    oracle_block_scholes::{Self, OracleCapSVI, OracleSVI},
+    predict
+};
 use sui::table::{Self, Table};
 
 // === Errors ===
@@ -94,6 +98,61 @@ public fun set_withdrawals_paused<Quote>(
     paused: bool,
 ) {
     predict.set_withdrawals_paused(paused);
+}
+
+/// Enable a market for trading.
+public fun enable_market<Underlying, Quote>(
+    predict: &mut predict::Predict<Quote>,
+    _admin_cap: &AdminCap,
+    oracle: &OracleSVI<Underlying>,
+    key: MarketKey,
+) {
+    predict.enable_market(oracle, key);
+}
+
+/// Set LP lockup period.
+public fun set_lockup_period<Quote>(
+    predict: &mut predict::Predict<Quote>,
+    _admin_cap: &AdminCap,
+    period_ms: u64,
+) {
+    predict.set_lockup_period(period_ms);
+}
+
+/// Set base spread.
+public fun set_base_spread<Quote>(
+    predict: &mut predict::Predict<Quote>,
+    _admin_cap: &AdminCap,
+    spread: u64,
+) {
+    predict.set_base_spread(spread);
+}
+
+/// Set max skew multiplier.
+public fun set_max_skew_multiplier<Quote>(
+    predict: &mut predict::Predict<Quote>,
+    _admin_cap: &AdminCap,
+    multiplier: u64,
+) {
+    predict.set_max_skew_multiplier(multiplier);
+}
+
+/// Set max total exposure percentage.
+public fun set_max_total_exposure_pct<Quote>(
+    predict: &mut predict::Predict<Quote>,
+    _admin_cap: &AdminCap,
+    pct: u64,
+) {
+    predict.set_max_total_exposure_pct(pct);
+}
+
+/// Set max per-market exposure percentage.
+public fun set_max_per_market_exposure_pct<Quote>(
+    predict: &mut predict::Predict<Quote>,
+    _admin_cap: &AdminCap,
+    pct: u64,
+) {
+    predict.set_max_per_market_exposure_pct(pct);
 }
 
 // === Private Functions ===
