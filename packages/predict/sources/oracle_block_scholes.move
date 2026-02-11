@@ -13,7 +13,7 @@
 module deepbook_predict::oracle_block_scholes;
 
 use deepbook::math as deepbook_math;
-use deepbook_predict::math;
+use deepbook_predict::{constants, math};
 use sui::clock::Clock;
 
 // === Errors ===
@@ -293,6 +293,36 @@ public(package) fun get_pricing_data<Underlying>(
     let iv = compute_iv(oracle, strike, clock);
     let tte_ms = oracle.expiry - clock.timestamp_ms();
     (oracle.prices.forward, iv, oracle.risk_free_rate, tte_ms)
+}
+
+/// Calculate binary option price for a given strike and direction.
+/// Uses Black-Scholes: Binary Call = e^(-rT) * N(d2), Binary Put = e^(-rT) * N(-d2)
+/// Returns price in FLOAT_SCALING (1e9), where 1_000_000_000 = 100%.
+public(package) fun get_binary_price<Underlying>(
+    oracle: &OracleSVI<Underlying>,
+    strike: u64,
+    is_up: bool,
+    clock: &Clock,
+): u64 {
+    let (forward, iv, rfr, tte_ms) = get_pricing_data(oracle, strike, clock);
+    let t = deepbook_math::div(tte_ms, constants::ms_per_year());
+    let (ln_fk, ln_fk_neg) = math::ln(deepbook_math::div(forward, strike));
+    let half_vol_sq_t = deepbook_math::mul(deepbook_math::mul(iv, iv), t) / 2;
+    let (d2_num, d2_num_neg) = math::sub_signed_u64(
+        ln_fk,
+        ln_fk_neg,
+        half_vol_sq_t,
+        false,
+    );
+    let sqrt_t = deepbook_math::sqrt(t, constants::float_scaling());
+    let d2_den = deepbook_math::mul(iv, sqrt_t);
+    let d2 = deepbook_math::div(d2_num, d2_den);
+    let cdf_neg = if (is_up) { d2_num_neg } else { !d2_num_neg };
+    let nd2 = math::normal_cdf(d2, cdf_neg);
+    let rt = deepbook_math::mul(rfr, t);
+    let discount = math::exp(rt, true);
+
+    deepbook_math::mul(discount, nd2)
 }
 
 /// Assert that the oracle is not stale. Aborts if stale.

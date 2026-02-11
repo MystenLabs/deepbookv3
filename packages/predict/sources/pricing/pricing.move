@@ -24,12 +24,7 @@
 module deepbook_predict::pricing;
 
 use deepbook::math;
-use deepbook_predict::{
-    constants,
-    market_key::MarketKey,
-    math as predict_math,
-    oracle_block_scholes::OracleSVI
-};
+use deepbook_predict::{constants, market_key::MarketKey, oracle_block_scholes::OracleSVI};
 use sui::clock::Clock;
 
 // === Structs ===
@@ -70,8 +65,7 @@ public fun get_quote<Underlying>(
         return (price, price)
     };
 
-    let (forward, iv, rfr, tte) = oracle.get_pricing_data(strike, clock);
-    let price = calculate_binary_price(forward, strike, iv, rfr, tte, is_up);
+    let price = oracle.get_binary_price(strike, is_up, clock);
 
     // Dynamic spread: widen on the heavy side, tighten on the light side.
     // ratio = this_side / total (0 to 1), multiplier = 2 * ratio (0x to 2x)
@@ -130,31 +124,4 @@ public(package) fun new(): Pricing {
         base_spread: constants::default_base_spread(),
         max_skew_multiplier: constants::default_max_skew_multiplier(),
     }
-}
-
-// === Private Functions ===
-
-/// Calculate theoretical binary option price.
-/// Returns price in FLOAT_SCALING (1e9), where 1_000_000_000 = $1 = 100%.
-fun calculate_binary_price(
-    forward: u64,
-    strike: u64,
-    iv: u64,
-    rfr: u64,
-    tte_ms: u64,
-    is_up: bool,
-): u64 {
-    let t = math::div(tte_ms, constants::ms_per_year());
-    let (ln_fk, ln_fk_neg) = predict_math::ln(math::div(forward, strike));
-    let half_vol_sq_t = math::mul(math::mul(iv, iv), t) / 2;
-    let (d2_num, d2_num_neg) = predict_math::sub_signed_u64(ln_fk, ln_fk_neg, half_vol_sq_t, false);
-    let sqrt_t = math::sqrt(t, constants::float_scaling());
-    let d2_den = math::mul(iv, sqrt_t);
-    let d2 = math::div(d2_num, d2_den);
-    let cdf_neg = if (is_up) { d2_num_neg } else { !d2_num_neg };
-    let nd2 = predict_math::normal_cdf(d2, cdf_neg);
-    let rt = math::mul(rfr, t);
-    let discount = predict_math::exp(rt, true);
-
-    math::mul(discount, nd2)
 }
