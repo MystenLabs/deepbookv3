@@ -38,11 +38,11 @@ const TESTNET_PACKAGES: &[&str] = &[
     "0x22be4cade64bf2d02412c7e8d0e8beea2f78828b948118d46735315409371a3c", // Latest
 ];
 
-// Mainnet margin package is not yet deployed - using placeholder
-// This will cause the indexer to fail fast if margin modules are requested on mainnet
-// When the margin package is deployed on mainnet, replace this with the actual address
-const MAINNET_MARGIN_PACKAGES: &[&str] =
-    &["0x97d9473771b01f77b0940c589484184b49f6444627ec121314fae6a6d36fb86b"];
+// Mainnet margin package addresses
+const MAINNET_MARGIN_PACKAGES: &[&str] = &[
+    "0x97d9473771b01f77b0940c589484184b49f6444627ec121314fae6a6d36fb86b",
+    "0xcb4fc91921494ebe6979e201fdb2d67388ffdf6a1b1eb4952526259074de8d0b", // Latest
+];
 const TESTNET_MARGIN_PACKAGES: &[&str] = &[
     "0xb8620c24c9ea1a4a41e79613d2b3d1d93648d1bb6f6b789a7c8f261c94110e4b",
     "0xf978cf2b601c24e40ef82b6e51512b448696b44cb014c0a1162422aa8b9cb811",
