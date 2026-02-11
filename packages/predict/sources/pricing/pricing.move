@@ -24,7 +24,12 @@
 module deepbook_predict::pricing;
 
 use deepbook::math;
-use deepbook_predict::{constants, math as predict_math, market_key::MarketKey, oracle_block_scholes::OracleSVI};
+use deepbook_predict::{
+    constants,
+    market_key::MarketKey,
+    math as predict_math,
+    oracle_block_scholes::OracleSVI
+};
 use sui::clock::Clock;
 
 // === Structs ===

@@ -28,12 +28,12 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 | Module | Status | Notes |
 |--------|--------|-------|
 | `oracle.move` | Done | Per-strike IV oracle: VecMap<strike, iv>, spot, rfr. Block Scholes pushes pre-computed IVs per strike. Settlement freezing on expiry. |
-| `oracle_block_scholes.move` | Partial | SVI parametric oracle: stores SVI params (a,b,rho,m,sigma) + spot/forward prices. `compute_iv()` and `get_pricing_data()` are TODO stubs (need ln/sqrt math). |
+| `oracle_block_scholes.move` | Done | SVI parametric oracle: stores SVI params (a,b,rho,m,sigma) + spot/forward prices. `compute_iv()` implements SVI formula. `get_pricing_data()` returns (forward, iv, rfr, tte_ms). |
 
 ### Pricing (Partial)
 | Module | Status | Notes |
 |--------|--------|-------|
-| `pricing/pricing.move` | Partial | get_quote (bid/ask), get_mint_cost, get_redeem_payout all work. `calculate_binary_price()` returns hardcoded 50% - needs Black-Scholes implementation (N(d2) CDF). Dynamic spread TODO. |
+| `pricing/pricing.move` | Done | get_quote (bid/ask), get_mint_cost, get_redeem_payout all work. `calculate_binary_price()` implements Black-Scholes digital option formula: e^(-rT) * N(±d2) using forward price. Dynamic spread TODO. |
 
 ### Collateral (Skeleton)
 | Module | Status | Notes |
@@ -44,19 +44,11 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 ## Key TODOs
 
 ### P0 - Blocking
-- [ ] **Black-Scholes pricing** (`pricing.move:118-129`): `calculate_binary_price()` is a 50% stub. Needs:
-  - `ln(S/K)` - natural log
-  - `sqrt(T)` - square root
-  - `N(d2)` - standard normal CDF approximation
-  - `e^(-rT)` - discount factor
-  - All in fixed-point arithmetic (FLOAT_SCALING = 1e9)
+All P0 items complete.
 
 ### P1 - Important
-- [ ] **SVI oracle compute_iv** (`oracle_block_scholes.move:245-252`): needs ln() and sqrt() math utilities to compute IV from SVI params on-chain
-- [ ] **SVI oracle get_pricing_data** (`oracle_block_scholes.move:257-264`): depends on compute_iv
 - [ ] **Dynamic spread** (`pricing.move:67`): spread should adjust based on vault net exposure (incentivize balance)
 - [ ] **Tests**: No test files exist yet
-- [ ] **Claim/settlement flow for users**: After settle(), users need a way to claim winning positions from PredictManager
 
 ### P2 - Nice to Have
 - [ ] **Clean up collateral modules**: `collateral.move` and `record.move` are empty skeletons. Logic lives in PredictManager now - decide if these files should be removed or filled in.
@@ -82,3 +74,9 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 - Created this progress tracker
 - Package builds successfully (`sui move build`)
 - No tests written yet
+
+### Session: 2026-02-11
+- Implemented `get_pricing_data()` in oracle_block_scholes.move — returns (forward, iv, rfr, tte_ms)
+- Updated pricing formula to use forward price instead of spot (matches Python demo: `ln(F/K)` not `ln(S/K)`)
+- Implemented `calculate_binary_price()` — full Black-Scholes digital option: `e^(-rT) * N(±d2)`
+- Fixed post-settlement claim flow: `redeem` now skips staleness check when oracle is settled

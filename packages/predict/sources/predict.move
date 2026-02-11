@@ -120,7 +120,9 @@ public fun redeem<Underlying, Quote>(
 ) {
     assert!(key.oracle_id() == oracle.id(), EOracleMismatch);
     assert!(key.expiry() == oracle.expiry(), EExpiryMismatch);
-    oracle.assert_not_stale(clock);
+    if (!oracle.is_settled()) {
+        oracle.assert_not_stale(clock);
+    };
 
     // Manager reduces long position first
     manager.decrease_position(key, quantity);
