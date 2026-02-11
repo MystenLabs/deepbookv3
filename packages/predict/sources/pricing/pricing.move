@@ -14,8 +14,8 @@
 ///   Binary Put (DOWN) = e^(-rT) * N(-d2)
 ///
 ///   where:
-///   d2 = [ln(S/K) + (r - 0.5*σ²)*T] / (σ*√T)
-///   S = spot price, K = strike, r = risk-free rate
+///   d2 = [ln(F/K) - 0.5*σ²*T] / (σ*√T)
+///   F = forward price, K = strike, r = risk-free rate
 ///   σ = implied volatility, T = time to expiry, N() = CDF
 ///
 /// Dynamic spread adjustment:
@@ -24,7 +24,7 @@
 module deepbook_predict::pricing;
 
 use deepbook::math;
-use deepbook_predict::{constants, market_key::MarketKey, oracle_block_scholes::OracleSVI};
+use deepbook_predict::{constants, math as predict_math, market_key::MarketKey, oracle_block_scholes::OracleSVI};
 use sui::clock::Clock;
 
 // === Structs ===
@@ -61,8 +61,8 @@ public fun get_quote<Underlying>(
         return (price, price)
     };
 
-    let (spot, iv, rfr, tte) = oracle.get_pricing_data(strike, clock);
-    let theoretical = calculate_binary_price(spot, strike, iv, rfr, tte, is_up);
+    let (forward, iv, rfr, tte) = oracle.get_pricing_data(strike, clock);
+    let theoretical = calculate_binary_price(forward, strike, iv, rfr, tte, is_up);
 
     // TODO: Apply dynamic spread based on net exposure
     let spread = math::mul(theoretical, pricing.base_spread);
@@ -116,14 +116,24 @@ public(package) fun new(): Pricing {
 /// Calculate theoretical binary option price.
 /// Returns price in FLOAT_SCALING (1e9), where 1_000_000_000 = $1 = 100%.
 fun calculate_binary_price(
-    _spot: u64,
-    _strike: u64,
-    _iv: u64,
-    _rfr: u64,
-    _tte_ms: u64,
-    _is_up: bool,
+    forward: u64,
+    strike: u64,
+    iv: u64,
+    rfr: u64,
+    tte_ms: u64,
+    is_up: bool,
 ): u64 {
-    // TODO: Implement Black-Scholes for binary options
-    // For now, return 50% as placeholder (500_000_000 in FLOAT_SCALING)
-    500_000_000
+    let t = math::div(tte_ms, constants::ms_per_year());
+    let (ln_fk, ln_fk_neg) = predict_math::ln(math::div(forward, strike));
+    let half_vol_sq_t = math::mul(math::mul(iv, iv), t) / 2;
+    let (d2_num, d2_num_neg) = predict_math::sub_signed_u64(ln_fk, ln_fk_neg, half_vol_sq_t, false);
+    let sqrt_t = math::sqrt(t, constants::float_scaling());
+    let d2_den = math::mul(iv, sqrt_t);
+    let d2 = math::div(d2_num, d2_den);
+    let cdf_neg = if (is_up) { d2_num_neg } else { !d2_num_neg };
+    let nd2 = predict_math::normal_cdf(d2, cdf_neg);
+    let rt = math::mul(rfr, t);
+    let discount = predict_math::exp(rt, true);
+
+    math::mul(discount, nd2)
 }

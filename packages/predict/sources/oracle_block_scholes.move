@@ -264,15 +264,16 @@ public(package) fun compute_iv<Underlying>(
 }
 
 /// Get all pricing data in one call for efficiency.
-/// Returns (spot_price, implied_vol, risk_free_rate, time_to_expiry_ms).
+/// Returns (forward_price, implied_vol, risk_free_rate, time_to_expiry_ms).
 /// Computes IV on-demand using SVI formula.
 public(package) fun get_pricing_data<Underlying>(
-    _oracle: &OracleSVI<Underlying>,
-    _strike: u64,
-    _clock: &Clock,
+    oracle: &OracleSVI<Underlying>,
+    strike: u64,
+    clock: &Clock,
 ): (u64, u64, u64, u64) {
-    // TODO: Implement - calls compute_iv()
-    abort 0
+    let iv = compute_iv(oracle, strike, clock);
+    let tte_ms = oracle.expiry - clock.timestamp_ms();
+    (oracle.prices.forward, iv, oracle.risk_free_rate, tte_ms)
 }
 
 /// Assert that the oracle is not stale. Aborts if stale.
