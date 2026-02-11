@@ -156,7 +156,7 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
     "USDE",
     {
       supplyCap: 1_000_000,
-      maxUtilizationRate: 0.8,
+      maxUtilizationRate: 0.9,
       referralSpread: 0.2,
       minBorrow: 0.1,
       rateLimitCapacity: 200_000,
