@@ -19,6 +19,8 @@ use sui::{
 
 use fun df::add as UID.add;
 use fun df::borrow as UID.borrow;
+use fun df::borrow_mut as UID.borrow_mut;
+use fun df::exists_with_type as UID.exists_with_type;
 use fun df::remove as UID.remove;
 
 // === Errors ===
@@ -37,6 +39,13 @@ const EVersionNotEnabled: u64 = 12;
 const EMaxMarginManagersReached: u64 = 13;
 const EPauseCapNotValid: u64 = 14;
 const EMarginManagerNotRegistered: u64 = 15;
+const EPriceDeviationTooHigh: u64 = 16;
+const EPriceUpdateRequired: u64 = 17;
+const EPriceNotInitialized: u64 = 18;
+const EToleranceTooLow: u64 = 19;
+const EToleranceTooHigh: u64 = 20;
+const EMaxPriceAgeTooLow: u64 = 21;
+const EMaxPriceAgeTooHigh: u64 = 22;
 
 public struct MARGIN_REGISTRY has drop {}
 
@@ -74,6 +83,19 @@ public struct RiskRatios has copy, drop, store {
 }
 
 public struct ConfigKey<phantom Config> has copy, drop, store {}
+
+/// Dynamic field key for storing current price of a pool
+public struct CurrentPriceKey has copy, drop, store {
+    pool_id: ID,
+}
+
+/// Stored current price data for a pool
+public struct CurrentPriceData has store {
+    price: u64,
+    last_price_update_ms: u64,
+    tolerance: u64,
+    max_price_age_ms: u64,
+}
 
 // === Caps ===
 public struct MarginAdminCap has key, store {
@@ -121,6 +143,24 @@ public struct DeepbookPoolUpdated has copy, drop {
 public struct DeepbookPoolConfigUpdated has copy, drop {
     pool_id: ID,
     config: PoolConfig,
+    timestamp: u64,
+}
+
+public struct CurrentPriceUpdated has copy, drop {
+    pool_id: ID,
+    price: u64,
+    timestamp: u64,
+}
+
+public struct PriceToleranceUpdated has copy, drop {
+    pool_id: ID,
+    tolerance: u64,
+    timestamp: u64,
+}
+
+public struct MaxPriceAgeUpdated has copy, drop {
+    pool_id: ID,
+    max_age_ms: u64,
     timestamp: u64,
 }
 
@@ -399,6 +439,65 @@ public fun revoke_pause_cap(
     });
 }
 
+/// Set price deviation tolerance for a pool
+/// tolerance is in 9 decimals where 1.0 = 1_000_000_000 (e.g., 100_000_000 = 0.1 = 10%)
+/// Only Admin can set tolerance
+/// Requires price to be initialized first via update_current_price
+public fun set_price_tolerance<BaseAsset, QuoteAsset>(
+    self: &mut MarginRegistry,
+    _admin_cap: &MarginAdminCap,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    tolerance: u64,
+    clock: &Clock,
+) {
+    assert!(tolerance >= margin_constants::min_price_tolerance(), EToleranceTooLow);
+    assert!(tolerance <= margin_constants::max_price_tolerance(), EToleranceTooHigh);
+
+    self.load_inner();
+    let pool_id = pool.id();
+    let key = CurrentPriceKey { pool_id };
+
+    assert!(self.id.exists_with_type<CurrentPriceKey, CurrentPriceData>(key), EPriceNotInitialized);
+
+    let price_data: &mut CurrentPriceData = self.id.borrow_mut(key);
+    price_data.tolerance = tolerance;
+
+    event::emit(PriceToleranceUpdated {
+        pool_id,
+        tolerance,
+        timestamp: clock.timestamp_ms(),
+    });
+}
+
+/// Set maximum price age in milliseconds for a pool
+/// Only Admin can set max price age
+/// Requires price to be initialized first via update_current_price
+public fun set_max_price_age<BaseAsset, QuoteAsset>(
+    self: &mut MarginRegistry,
+    _admin_cap: &MarginAdminCap,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    max_age_ms: u64,
+    clock: &Clock,
+) {
+    assert!(max_age_ms >= margin_constants::min_price_age_ms(), EMaxPriceAgeTooLow);
+    assert!(max_age_ms <= margin_constants::max_price_age_ms(), EMaxPriceAgeTooHigh);
+
+    self.load_inner();
+    let pool_id = pool.id();
+    let key = CurrentPriceKey { pool_id };
+
+    assert!(self.id.exists_with_type<CurrentPriceKey, CurrentPriceData>(key), EPriceNotInitialized);
+
+    let price_data: &mut CurrentPriceData = self.id.borrow_mut(key);
+    price_data.max_price_age_ms = max_age_ms;
+
+    event::emit(MaxPriceAgeUpdated {
+        pool_id,
+        max_age_ms,
+        timestamp: clock.timestamp_ms(),
+    });
+}
+
 // === Public Helper Functions ===
 /// Create a PoolConfig with margin pool IDs and risk parameters
 /// Enable is false by default, must be enabled after registration
@@ -567,6 +666,45 @@ public fun allowed_pause_caps(self: &MarginRegistry): VecSet<ID> {
 }
 
 // === Public-Package Functions ===
+/// Updates the current price for a pool.
+/// Called internally with a pre-calculated safe oracle price.
+/// Creates the price storage on first call, updates on subsequent calls.
+public(package) fun update_current_price(
+    self: &mut MarginRegistry,
+    pool_id: ID,
+    price: u64,
+    clock: &Clock,
+) {
+    self.load_inner();
+    let key = CurrentPriceKey { pool_id };
+    let timestamp = clock.timestamp_ms();
+
+    if (!self.id.exists_with_type<CurrentPriceKey, CurrentPriceData>(key)) {
+        self
+            .id
+            .add(
+                key,
+                CurrentPriceData {
+                    price,
+                    last_price_update_ms: timestamp,
+                    tolerance: margin_constants::default_price_tolerance(),
+                    max_price_age_ms: margin_constants::default_max_price_age_ms(),
+                },
+            );
+    };
+
+    let price_data: &mut CurrentPriceData = self.id.borrow_mut(key);
+    price_data.price = price;
+    price_data.last_price_update_ms = timestamp;
+
+    event::emit(CurrentPriceUpdated {
+        pool_id,
+        price,
+        timestamp,
+    });
+}
+
+// === Public-Package Functions ===
 #[allow(lint(self_transfer))]
 public(package) fun register_margin_pool(
     self: &mut MarginRegistry,
@@ -680,6 +818,51 @@ public(package) fun assert_maintainer_cap_valid(
         inner.allowed_maintainers.contains(&maintainer_cap.id.to_inner()),
         EMaintainerCapNotValid,
     );
+}
+
+/// Returns the valid price bounds (lower_bound, upper_bound) for a pool.
+/// Requires stored price to be fresh (within max_price_age).
+/// Aborts if stored price is stale or if price not initialized.
+public(package) fun get_price_bounds(
+    self: &MarginRegistry,
+    pool_id: ID,
+    clock: &Clock,
+): (u64, u64) {
+    self.load_inner();
+    let key = CurrentPriceKey { pool_id };
+
+    assert!(self.id.exists_with_type<CurrentPriceKey, CurrentPriceData>(key), EPriceNotInitialized);
+
+    let price_data: &CurrentPriceData = self.id.borrow(key);
+    let current_price = price_data.price;
+    let price_age_ms = clock.timestamp_ms() - price_data.last_price_update_ms;
+
+    assert!(price_age_ms <= price_data.max_price_age_ms, EPriceUpdateRequired);
+
+    let tolerance = price_data.tolerance;
+    let lower_bound = math::mul(current_price, constants::float_scaling() - tolerance);
+    let upper_bound = math::mul(current_price, constants::float_scaling() + tolerance);
+
+    (lower_bound, upper_bound)
+}
+
+/// Checks if a price is within the configured tolerance of the stored current price.
+/// For bids: only checks upper bound (buying above oracle is bad, below is fine).
+/// For asks: only checks lower bound (selling below oracle is bad, above is fine).
+/// Aborts if price deviation exceeds tolerance, if stored price is stale, or if price not initialized.
+public(package) fun assert_price(
+    self: &MarginRegistry,
+    pool_id: ID,
+    price: u64,
+    is_bid: bool,
+    clock: &Clock,
+) {
+    let (lower_bound, upper_bound) = self.get_price_bounds(pool_id, clock);
+    if (is_bid) {
+        assert!(price <= upper_bound, EPriceDeviationTooHigh);
+    } else {
+        assert!(price >= lower_bound, EPriceDeviationTooHigh);
+    };
 }
 
 /// Calculate risk parameters based on leverage factor

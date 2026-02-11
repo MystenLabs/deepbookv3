@@ -50,6 +50,7 @@ const USDC_PRICE_FEED_ID: vector<u8> = b"USDC0000000000000000000000000000";
 const USDT_PRICE_FEED_ID: vector<u8> = b"USDT0000000000000000000000000000";
 const BTC_PRICE_FEED_ID: vector<u8> = b"BTC00000000000000000000000000000";
 const SUI_PRICE_FEED_ID: vector<u8> = b"SUI00000000000000000000000000000";
+const DEEP_PRICE_FEED_ID: vector<u8> = b"DEEP0000000000000000000000000000";
 
 public fun supply_cap(): u64 {
     SUPPLY_CAP
@@ -143,6 +144,10 @@ public fun btc_price_feed_id(): vector<u8> {
 
 public fun sui_price_feed_id(): vector<u8> {
     SUI_PRICE_FEED_ID
+}
+
+public fun deep_price_feed_id(): vector<u8> {
+    DEEP_PRICE_FEED_ID
 }
 
 public fun usdc_multiplier(): u64 {

@@ -44,12 +44,18 @@ paths:
 
 - Prefer macros over constants.
 
-- Put public functions first, then public(package), then private.
+- Function ordering within a module (top to bottom):
+  1. `public fun` - external API functions
+  2. `public(package) fun` - package-internal functions
+  3. `fun` - private/internal helper functions
+
+  Exception: `init` function typically comes early (after struct definitions).
 
 ## Tool Calling Instructions
 
 - `sui move build` to build the package, must be run in a directory with Move.toml in it
 - `sui move test` to run tests, must be run in a directory with Move.toml in it
+- When `sui move test` shows warnings (e.g., unused `mut` modifiers, unused variables), fix them immediately before proceeding
 - can pass `--skip-fetch-latest-git-deps` if the dependencies haven't changed after an initial successful build
 - when you have completed making changes, run `bunx prettier-move -c *.move --write` on any files that are modified to format them correctly.
 

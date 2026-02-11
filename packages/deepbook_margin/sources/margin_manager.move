@@ -236,6 +236,7 @@ public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
     let mut executed_ids = vector[];
     let mut expired_ids = vector[];
     let mut insufficient_funds_ids = vector[];
+    let mut out_of_bounds_ids = vector[];
 
     // Collect orders to process (to avoid borrow conflicts)
     let mut orders_to_process = vector[];
@@ -277,6 +278,7 @@ public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
         &mut executed_ids,
         &mut expired_ids,
         &mut insufficient_funds_ids,
+        &mut out_of_bounds_ids,
         max_orders_to_execute,
         clock,
         ctx,
@@ -289,9 +291,13 @@ public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
         self.take_profit_stop_loss.emit_insufficient_funds_event(manager_id, id, clock);
     });
 
+    out_of_bounds_ids.do!(|id| {
+        self.take_profit_stop_loss.emit_price_out_of_bounds_event(manager_id, id, clock);
+    });
+
     let mut cancelled_ids = expired_ids;
     cancelled_ids.append(insufficient_funds_ids);
-    // Canceled orders will include both expired and insufficient funds orders
+    cancelled_ids.append(out_of_bounds_ids);
     cancelled_ids.do!(|id| {
         self.take_profit_stop_loss.cancel_conditional_order(manager_id, id, clock);
     });
@@ -1501,9 +1507,12 @@ fun place_pending_limit_order<BaseAsset, QuoteAsset>(
     ctx: &TxContext,
 ): OrderInfo {
     assert!(self.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
+    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
+
+    registry.assert_price(pool.id(), price, is_bid, clock);
+
     let trade_proof = self.trade_proof(ctx);
     let balance_manager = self.balance_manager_unsafe_mut();
-    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
 
     pool.place_limit_order(
         balance_manager,
@@ -1536,9 +1545,10 @@ fun place_market_order_conditional<BaseAsset, QuoteAsset>(
     ctx: &TxContext,
 ): OrderInfo {
     assert!(self.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
+    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
+
     let trade_proof = self.trade_proof(ctx);
     let balance_manager = self.balance_manager_unsafe_mut();
-    assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
 
     pool.place_market_order(
         balance_manager,
@@ -1563,6 +1573,7 @@ fun process_collected_orders<BaseAsset, QuoteAsset>(
     executed_ids: &mut vector<u64>,
     expired_ids: &mut vector<u64>,
     insufficient_funds_ids: &mut vector<u64>,
+    out_of_bounds_ids: &mut vector<u64>,
     max_orders_to_execute: u64,
     clock: &Clock,
     ctx: &TxContext,
@@ -1594,6 +1605,58 @@ fun process_collected_orders<BaseAsset, QuoteAsset>(
         };
 
         if (can_place) {
+            // Check price bounds before placing
+            // For bids: only check upper bound (buying above oracle is bad, below is fine)
+            // For asks: only check lower bound (selling below oracle is bad, above is fine)
+            let (lower_bound, upper_bound) = registry.get_price_bounds(pool.id(), clock);
+            let is_bid = pending_order.is_bid();
+            if (pending_order.is_limit_order()) {
+                let price = *pending_order.price().borrow();
+                if ((is_bid && price > upper_bound) || (!is_bid && price < lower_bound)) {
+                    out_of_bounds_ids.push_back(conditional_order_id);
+                    i = i + 1;
+                    continue
+                };
+            } else if (is_bid) {
+                // For market buy orders, calculate execution price
+                let (base_out, quote_in, _) = pool.get_quote_quantity_in(
+                    pending_order.quantity(),
+                    pending_order.pay_with_deep(),
+                    clock,
+                );
+                // Cancel if insufficient liquidity or price out of bounds
+                if (base_out == 0) {
+                    out_of_bounds_ids.push_back(conditional_order_id);
+                    i = i + 1;
+                    continue
+                };
+                let effective_price = math::div(quote_in, base_out);
+                if (effective_price > upper_bound) {
+                    out_of_bounds_ids.push_back(conditional_order_id);
+                    i = i + 1;
+                    continue
+                };
+            } else {
+                // For market sell orders, calculate execution price
+                let (base_out, quote_out, _) = pool.get_quote_quantity_out(
+                    pending_order.quantity(),
+                    clock,
+                );
+                let base_used = pending_order.quantity() - base_out;
+                // Cancel if insufficient liquidity or price out of bounds
+                if (base_used == 0) {
+                    out_of_bounds_ids.push_back(conditional_order_id);
+                    i = i + 1;
+                    continue
+                };
+                let effective_price = math::div(quote_out, base_used);
+                if (effective_price < lower_bound) {
+                    out_of_bounds_ids.push_back(conditional_order_id);
+                    i = i + 1;
+                    continue
+                };
+            };
+
             let order_info = self.place_pending_order(
                 registry,
                 pool,
