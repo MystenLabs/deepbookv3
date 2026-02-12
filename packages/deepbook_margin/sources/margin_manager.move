@@ -171,6 +171,7 @@ public fun add_conditional_order<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    registry.load_inner();
     self.validate_owner(ctx);
     let manager_id = self.id();
     assert!(pool.id() == self.deepbook_pool(), EIncorrectDeepBookPool);
@@ -224,6 +225,7 @@ public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
     clock: &Clock,
     ctx: &TxContext,
 ): vector<OrderInfo> {
+    registry.load_inner();
     assert!(pool.id() == self.deepbook_pool(), EIncorrectDeepBookPool);
     let current_price = calculate_price<BaseAsset, QuoteAsset>(
         registry,
