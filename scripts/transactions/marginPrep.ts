@@ -152,27 +152,28 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   // )(tx);
   // client.deepbook.marginMaintainer.createMarginPool("WAL", WALprotocolConfig)(tx);
 
-  const USDEprotocolConfig = client.deepbook.marginMaintainer.newProtocolConfig(
-    "USDE",
-    {
-      supplyCap: 1_000_000,
-      maxUtilizationRate: 0.9,
-      referralSpread: 0.2,
-      minBorrow: 0.1,
-      rateLimitCapacity: 200_000,
-      rateLimitRefillRatePerMs: 0.009259, // 200_000 / 21_600_000 (6 hours)
-      rateLimitEnabled: true,
-    },
-    {
-      baseRate: 0,
-      baseSlope: 0.15,
-      optimalUtilization: 0.8,
-      excessSlope: 5,
-    },
-  )(tx);
+  const SUIUSDEprotocolConfig =
+    client.deepbook.marginMaintainer.newProtocolConfig(
+      "SUIUSDE",
+      {
+        supplyCap: 1_000_000,
+        maxUtilizationRate: 0.9,
+        referralSpread: 0.2,
+        minBorrow: 0.1,
+        rateLimitCapacity: 200_000,
+        rateLimitRefillRatePerMs: 0.009259, // 200_000 / 21_600_000 (6 hours)
+        rateLimitEnabled: true,
+      },
+      {
+        baseRate: 0,
+        baseSlope: 0.15,
+        optimalUtilization: 0.8,
+        excessSlope: 5,
+      },
+    )(tx);
   client.deepbook.marginMaintainer.createMarginPool(
-    "USDE",
-    USDEprotocolConfig,
+    "SUIUSDE",
+    SUIUSDEprotocolConfig,
   )(tx);
 
   // // 3. Registering SUI_DBUSDC pool
