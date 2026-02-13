@@ -29,6 +29,7 @@ on:
           - Fund Liquidation Vault
           - Update Interest Rates
           - Margin Prep
+          - Revoke Pausecap
       sui_tools_image:
         description: "image reference of sui_tools"
         default: "mysten/sui-tools:mainnet"
@@ -435,6 +436,17 @@ jobs:
           ORIGIN: gh_action
         run: |
           cd scripts && pnpm install && pnpm tsx transactions/marginPrep.ts
+
+      - name: Revoke Pausecap
+        if: ${{ inputs.transaction_type == 'Revoke Pausecap' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/revokePausecap.ts
 
       - name: Prep Deepbook MVR
         if: ${{ inputs.transaction_type == 'Prep Deepbook MVR' }}
