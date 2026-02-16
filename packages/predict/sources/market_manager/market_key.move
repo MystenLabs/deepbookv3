@@ -69,11 +69,6 @@ public fun strike(key: &MarketKey): u64 {
     key.2
 }
 
-/// Get the direction from a MarketKey.
-public fun direction(key: &MarketKey): u8 {
-    key.3
-}
-
 /// Check if a MarketKey is for an UP position.
 public fun is_up(key: &MarketKey): bool {
     key.3 == DIRECTION_UP
@@ -86,20 +81,9 @@ public fun is_down(key: &MarketKey): bool {
 
 /// Get the opposite direction key (same oracle + expiry + strike, flipped direction).
 public fun opposite(key: &MarketKey): MarketKey {
-    let new_direction = if (key.3 == DIRECTION_UP) {
-        DIRECTION_DOWN
-    } else {
-        DIRECTION_UP
-    };
-    MarketKey(key.0, key.1, key.2, new_direction)
+    new(key.0, key.1, key.2, !key.is_up())
 }
 
 public fun up_down_pair(key: &MarketKey): (MarketKey, MarketKey) {
-    let up_key = if (key.3 == DIRECTION_UP) {
-        *key
-    } else {
-        MarketKey(key.0, key.1, key.2, DIRECTION_UP)
-    };
-
-    (up_key, up_key.opposite())
+    (up(key.0, key.1, key.2), down(key.0, key.1, key.2))
 }

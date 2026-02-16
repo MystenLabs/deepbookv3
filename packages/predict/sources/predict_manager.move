@@ -4,7 +4,7 @@
 /// PredictManager wraps a BalanceManager for binary options trading.
 ///
 /// Users deposit USDC into the PredictManager, which is stored in the inner BalanceManager.
-/// Positions are tracked in a Table mapping MarketKey to PositionData (free, locked).
+/// Positions are tracked in a Table mapping MarketKey to UserPosition (free, locked).
 module deepbook_predict::predict_manager;
 
 use deepbook::balance_manager::{Self, BalanceManager, DepositCap, WithdrawCap};
@@ -19,7 +19,7 @@ const EInsufficientCollateral: u64 = 3;
 
 // === Structs ===
 
-public struct PositionData has copy, drop, store {
+public struct UserPosition has copy, drop, store {
     free: u64,
     locked: u64,
 }
@@ -36,8 +36,8 @@ public struct PredictManager has key {
     balance_manager: BalanceManager,
     deposit_cap: DepositCap,
     withdraw_cap: WithdrawCap,
-    /// MarketKey -> PositionData (free, locked)
-    positions: Table<MarketKey, PositionData>,
+    /// MarketKey -> UserPosition (free, locked)
+    positions: Table<MarketKey, UserPosition>,
     /// CollateralKey -> locked quantity per collateral relationship
     collateral: Table<CollateralKey, u64>,
 }
@@ -153,7 +153,7 @@ public(package) fun release_collateral(
 
 fun add_position_entry(self: &mut PredictManager, key: MarketKey) {
     if (!self.positions.contains(key)) {
-        self.positions.add(key, PositionData { free: 0, locked: 0 });
+        self.positions.add(key, UserPosition { free: 0, locked: 0 });
     }
 }
 

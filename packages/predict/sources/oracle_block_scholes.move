@@ -20,7 +20,6 @@ use sui::clock::Clock;
 
 const EInvalidOracleCap: u64 = 0;
 const EOracleStale: u64 = 1;
-const EOracleNotActive: u64 = 2;
 const EOracleAlreadyActive: u64 = 3;
 const EOracleExpired: u64 = 4;
 const ECannotBeNegative: u64 = 5;
@@ -331,11 +330,6 @@ public(package) fun get_binary_price<Underlying>(
 /// Assert that the oracle is not stale. Aborts if stale.
 public(package) fun assert_not_stale<Underlying>(oracle: &OracleSVI<Underlying>, clock: &Clock) {
     assert!(!is_stale(oracle, clock), EOracleStale);
-}
-
-/// Assert that the oracle is active. Aborts if not active.
-public(package) fun assert_active<Underlying>(oracle: &OracleSVI<Underlying>) {
-    assert!(oracle.active, EOracleNotActive);
 }
 
 /// Create a new PriceData struct.

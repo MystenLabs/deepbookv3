@@ -15,7 +15,7 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 |--------|--------|-------|
 | `registry.move` | Done | init, AdminCap, create_predict, create_oracle, create_oracle_cap, enable_market, pause setters, config setters (lockup, spread, skew, exposure limits) |
 | `predict.move` | Done | Orchestrator + pricing: create_manager, mint, redeem, mint/redeem_collateralized, settle, supply, withdraw, get_quote, mark_to_market, risk checks, pause enforcement, config forwarders |
-| `vault/vault.move` | Done | State machine: execute_mint/redeem, collateralized mint/redeem, exposure tracking (max/min liability), unrealized liability/assets, finalize_settlement, assert_exposure (risk checks), vault_value helper |
+| `vault/vault.move` | Done | State machine: execute_mint/redeem, collateralized mint/redeem, exposure tracking (max/min liability), unrealized liability/assets, assert_exposure (risk checks), vault_value helper |
 | `vault/supply_manager.move` | Done | LP share accounting: supply (shares minted), withdraw (shares burned), lockup enforcement, vault_value param, share_ratio helper |
 | `predict_manager.move` | Done | User-side: wraps BalanceManager (deposit/withdraw caps), tracks positions (free/locked), collateral lock/release |
 | `market_manager/market_key.move` | Done | Positional struct: (oracle_id, expiry, strike, direction), UP/DOWN helpers, opposite(), up_down_pair(), assert_matches_oracle() |
@@ -128,3 +128,27 @@ All P0 items complete.
   7. Simplified SupplyManager API — takes single `vault_value` param instead of 3 decomposed vault internals; added `vault_value()` helper to vault
   8. Moved risk check into vault as `assert_exposure()` — vault owns its own risk validation, predict.move just passes thresholds
   9. Converted all constants from `const` + wrapper functions to `public macro fun` — updated 8 call sites across 5 files
+
+### Session: 2026-02-11 (simplification review)
+- Reviewed 6 proposed simplifications, applied 3:
+  1. **MarketKey cleanup**: simplified `opposite()` to use `new()`, simplified `up_down_pair()` to use `up()`/`down()` directly, removed unused `direction()` getter
+  2. **Oracle dead code**: removed unused `assert_active()` and `EOracleNotActive` error constant
+  3. **Renamed `PositionData`** in predict_manager.move to `UserPosition` — resolved name collision with vault's `PositionData`
+- Skipped 3 proposed changes:
+  - Config module merge: separation is meaningful (LP/pricing/risk are distinct concerns), keeps struct layout stable
+  - Predict.move forwarder removal: forwarders provide proper encapsulation of Predict internals
+  - Inline `get_pricing_data`: clean abstraction worth keeping for future pricing functions
+
+### Session: 2026-02-11 (deep review)
+- **Thorough review of all 13 source files** — traced flows, verified invariants, identified bugs
+- **Fixed `finalize_settlement` idempotency bug**: calling `settle()` twice applied the same liability delta repeatedly, corrupting `max_liability`/`min_liability`. Removed `finalize_settlement` entirely — `settle()` now only calls `mark_to_market` (naturally idempotent). Liability headroom releases as users redeem.
+- **Analyzed and dismissed 3 issues as non-problems:**
+  - `vault_value` underflow: unreachable with current parameters (80% exposure cap keeps `unrealized_liability < balance`)
+  - Missing ownership check on `redeem`: `deposit()` catches it atomically; worst case (zero-payout skip) only burns worthless positions
+  - Oracle IV units: already fixed in earlier session (`ms_per_year` confirmed)
+- **Remaining issues documented** (not yet addressed):
+  - P1: No events emitted (skipped for now)
+  - P2: Unused `grace_period_ms` / `max_strikes_quantity` constants (never enforced)
+  - P2: Spread discontinuity at zero positions (doubles on first trade)
+  - P3: `VecSet` for markets is O(n) (could use `Table`)
+  - P3: Registry `oracle_ids` is write-only (dead storage)
