@@ -23,13 +23,13 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 | `config/pricing_config.move` | Done | base_spread (1%), max_skew_multiplier (1x) |
 | `config/risk_config.move` | Done | max_total_exposure_pct (80%), max_per_market_exposure_pct (20%) |
 | `config/lp_config.move` | Done | lockup_period_ms (24h default) |
-| `helper/constants.move` | Done | `public macro fun`: FLOAT_SCALING (1e9), config defaults, ms_per_year |
+| `helper/constants.move` | Done | `public macro fun`: FLOAT_SCALING (1e9), config defaults, ms_per_year, staleness_threshold_ms |
 | `helper/math.move` | Done | ln, exp, normal_cdf, signed arithmetic (add/sub/mul) |
 
 ### Oracle (Done)
 | Module | Status | Notes |
 |--------|--------|-------|
-| `oracle_block_scholes.move` | Done | SVI parametric oracle: stores SVI params (a,b,rho,m,sigma) + spot/forward prices. `compute_iv()` implements SVI formula. `get_pricing_data()` returns (forward, iv, rfr, tte_ms). `get_binary_price()` computes full Black-Scholes digital option price. |
+| `oracle.move` | Done | SVI parametric oracle: stores SVI params (a,b,rho,m,sigma) + spot/forward prices. Single `get_binary_price()` inlines SVI total variance + Black-Scholes d2 in one pass (no intermediate IV computation — time cancels out of d2). |
 
 ## Key TODOs
 
@@ -40,7 +40,7 @@ All P0 items complete.
 - [x] **Dynamic spread**: spread adjusts based on vault net exposure. Widens on heavy side (0x-2x base_spread), tightens on light side. Configurable via `max_skew_multiplier`.
 - [x] **Admin functions**: All config setters wired through registry.move (lockup, spread, skew, exposure limits, enable_market)
 - [x] **PredictManager creation**: `predict::create_manager()` public function added
-- [ ] **Tests**: No test files exist yet
+- [ ] **Tests**: Oracle pricing tests added (`tests/oracle_tests.move`). Need tests for mint/redeem flows, vault, supply_manager.
 
 ### P2 - Nice to Have
 - [ ] **Events**: Most modules don't emit events beyond oracle. Add events for mints, redeems, settlements, supply/withdraw.
@@ -137,7 +137,7 @@ All P0 items complete.
 - Skipped 3 proposed changes:
   - Config module merge: separation is meaningful (LP/pricing/risk are distinct concerns), keeps struct layout stable
   - Predict.move forwarder removal: forwarders provide proper encapsulation of Predict internals
-  - Inline `get_pricing_data`: clean abstraction worth keeping for future pricing functions
+  - ~~Inline `get_pricing_data`~~: done in 2026-02-17 session (total variance cancellation made it clearly better)
 
 ### Session: 2026-02-11 (deep review)
 - **Thorough review of all 13 source files** — traced flows, verified invariants, identified bugs
@@ -152,3 +152,9 @@ All P0 items complete.
   - P2: Spread discontinuity at zero positions (doubles on first trade)
   - P3: `VecSet` for markets is O(n) (could use `Table`)
   - P3: Registry `oracle_ids` is write-only (dead storage)
+
+### Session: 2026-02-17
+- **Renamed `oracle_block_scholes.move` → `oracle.move`**: updated module declaration and all 6 import sites across 4 files
+- **Replaced magic numbers with named constants**: all `1_000_000_000` → `constants::float_scaling!()` in math.move (18 occurrences) and oracle.move (2 occurrences). Added `staleness_threshold_ms!()` constant for the 30s oracle staleness check.
+- **Simplified pricing math**: inlined `compute_iv` + `get_pricing_data` + `get_binary_price` into a single `get_binary_price`. Key insight: SVI gives total_variance directly, and `iv²*t = total_var`, `iv*√t = √(total_var)`, so d2 = `(-k - total_var/2) / √(total_var)` — time cancels out of d2 entirely, IV is never computed. Saves 1 `ln`, 1 `sqrt`, several `mul`/`div` per call. Net -45 lines.
+- **First test file**: `tests/oracle_tests.move` with 5 tests — UP+DOWN sum to discount factor invariant, directional correctness (OTM call/put), parameter variations (shifted m, positive rho), short expiry (1 day).
