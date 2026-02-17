@@ -10,10 +10,19 @@ use deepbook_margin::{
     margin_registry::MarginRegistry
 };
 use pyth::price_info::PriceInfoObject;
-use sui::{bag::{Self, Bag}, balance::{Self, Balance}, clock::Clock, coin::Coin, event};
+use sui::{
+    bag::{Self, Bag},
+    balance::{Self, Balance},
+    clock::Clock,
+    coin::Coin,
+    event,
+    vec_set::{Self, VecSet}
+};
+use token::deep::DEEP;
 
 // === Errors ===
 const ENotEnoughBalanceInVault: u64 = 1;
+const ETraderNotAuthorized: u64 = 2;
 
 public struct LIQUIDATION_VAULT has drop {}
 
@@ -24,6 +33,8 @@ public struct LiquidationVault has key {
 }
 
 public struct BalanceKey<phantom T> has copy, drop, store {}
+
+public struct AuthorizedTradersKey has copy, drop, store {}
 
 // === Caps ===
 public struct LiquidationAdminCap has key, store {
@@ -77,6 +88,81 @@ public fun create_liquidation_vault(_liquidation_cap: &LiquidationAdminCap, ctx:
         vault: bag::new(ctx),
     };
     transfer::share_object(liquidation_vault);
+}
+
+public fun authorize_trader(
+    self: &mut LiquidationVault,
+    _liquidation_cap: &LiquidationAdminCap,
+    authorized_address: address,
+) {
+    let key = AuthorizedTradersKey {};
+    if (!self.vault.contains(key)) {
+        self.vault.add(key, vec_set::empty<address>());
+    };
+    let traders: &mut VecSet<address> = &mut self.vault[key];
+    traders.insert(authorized_address);
+}
+
+public fun deauthorize_trader(
+    self: &mut LiquidationVault,
+    _liquidation_cap: &LiquidationAdminCap,
+    authorized_address: address,
+) {
+    let key = AuthorizedTradersKey {};
+    let traders: &mut VecSet<address> = &mut self.vault[key];
+    traders.remove(&authorized_address);
+}
+
+public fun swap_base_to_quote<BaseAsset, QuoteAsset>(
+    self: &mut LiquidationVault,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_in: u64,
+    deep_in: u64,
+    min_quote_out: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    self.assert_trader(ctx);
+    let base_coin = self.withdraw_int<BaseAsset>(base_in).into_coin(ctx);
+    let deep_coin = self.withdraw_int<DEEP>(deep_in).into_coin(ctx);
+
+    let (base_out, quote_out, deep_out) = pool.swap_exact_base_for_quote(
+        base_coin,
+        deep_coin,
+        min_quote_out,
+        clock,
+        ctx,
+    );
+
+    self.deposit_int(base_out.into_balance());
+    self.deposit_int(quote_out.into_balance());
+    self.deposit_int(deep_out.into_balance());
+}
+
+public fun swap_quote_to_base<BaseAsset, QuoteAsset>(
+    self: &mut LiquidationVault,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    quote_in: u64,
+    deep_in: u64,
+    min_base_out: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    self.assert_trader(ctx);
+    let quote_coin = self.withdraw_int<QuoteAsset>(quote_in).into_coin(ctx);
+    let deep_coin = self.withdraw_int<DEEP>(deep_in).into_coin(ctx);
+
+    let (base_out, quote_out, deep_out) = pool.swap_exact_quote_for_base(
+        quote_coin,
+        deep_coin,
+        min_base_out,
+        clock,
+        ctx,
+    );
+
+    self.deposit_int(base_out.into_balance());
+    self.deposit_int(quote_out.into_balance());
+    self.deposit_int(deep_out.into_balance());
 }
 
 // === Public Functions * LIQUIDATION * ===
@@ -237,6 +323,12 @@ fun withdraw_int<T>(self: &mut LiquidationVault, amount: u64): Balance<T> {
     assert!(balance.value() >= amount, ENotEnoughBalanceInVault);
 
     balance.split(amount)
+}
+
+fun assert_trader(self: &LiquidationVault, ctx: &TxContext) {
+    let key = AuthorizedTradersKey {};
+    let traders: &VecSet<address> = &self.vault[key];
+    assert!(traders.contains(&ctx.sender()), ETraderNotAuthorized);
 }
 
 fun id(self: &LiquidationVault): ID {
