@@ -10,10 +10,25 @@ use deepbook_margin::{
     margin_registry::MarginRegistry
 };
 use pyth::price_info::PriceInfoObject;
-use sui::{bag::{Self, Bag}, balance::{Self, Balance}, clock::Clock, coin::Coin, event};
+use sui::{
+    bag::{Self, Bag},
+    balance::{Self, Balance},
+    clock::Clock,
+    coin::Coin,
+    dynamic_field as df,
+    event,
+    vec_set::{Self, VecSet}
+};
+use token::deep::DEEP;
+
+use fun df::add as UID.add;
+use fun df::borrow as UID.borrow;
+use fun df::borrow_mut as UID.borrow_mut;
+use fun df::exists_ as UID.exists_;
 
 // === Errors ===
 const ENotEnoughBalanceInVault: u64 = 1;
+const ETraderNotAuthorized: u64 = 2;
 
 public struct LIQUIDATION_VAULT has drop {}
 
@@ -24,6 +39,8 @@ public struct LiquidationVault has key {
 }
 
 public struct BalanceKey<phantom T> has copy, drop, store {}
+
+public struct AuthorizedTradersKey has copy, drop, store {}
 
 // === Caps ===
 public struct LiquidationAdminCap has key, store {
@@ -77,6 +94,81 @@ public fun create_liquidation_vault(_liquidation_cap: &LiquidationAdminCap, ctx:
         vault: bag::new(ctx),
     };
     transfer::share_object(liquidation_vault);
+}
+
+public fun authorize_trader(
+    self: &mut LiquidationVault,
+    _liquidation_cap: &LiquidationAdminCap,
+    authorized_address: address,
+) {
+    let key = AuthorizedTradersKey {};
+    if (!self.id.exists_(key)) {
+        self.id.add(key, vec_set::empty<address>());
+    };
+    let traders: &mut VecSet<address> = self.id.borrow_mut(key);
+    traders.insert(authorized_address);
+}
+
+public fun deauthorize_trader(
+    self: &mut LiquidationVault,
+    _liquidation_cap: &LiquidationAdminCap,
+    authorized_address: address,
+) {
+    let key = AuthorizedTradersKey {};
+    let traders: &mut VecSet<address> = self.id.borrow_mut(key);
+    traders.remove(&authorized_address);
+}
+
+public fun swap_base_to_quote<BaseAsset, QuoteAsset>(
+    self: &mut LiquidationVault,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_in: u64,
+    deep_in: u64,
+    min_quote_out: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    self.assert_trader(ctx);
+    let base_coin = self.withdraw_int<BaseAsset>(base_in).into_coin(ctx);
+    let deep_coin = self.withdraw_int<DEEP>(deep_in).into_coin(ctx);
+
+    let (base_out, quote_out, deep_out) = pool.swap_exact_base_for_quote(
+        base_coin,
+        deep_coin,
+        min_quote_out,
+        clock,
+        ctx,
+    );
+
+    self.deposit_int(base_out.into_balance());
+    self.deposit_int(quote_out.into_balance());
+    self.deposit_int(deep_out.into_balance());
+}
+
+public fun swap_quote_to_base<BaseAsset, QuoteAsset>(
+    self: &mut LiquidationVault,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    quote_in: u64,
+    deep_in: u64,
+    min_base_out: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    self.assert_trader(ctx);
+    let quote_coin = self.withdraw_int<QuoteAsset>(quote_in).into_coin(ctx);
+    let deep_coin = self.withdraw_int<DEEP>(deep_in).into_coin(ctx);
+
+    let (base_out, quote_out, deep_out) = pool.swap_exact_quote_for_base(
+        quote_coin,
+        deep_coin,
+        min_base_out,
+        clock,
+        ctx,
+    );
+
+    self.deposit_int(base_out.into_balance());
+    self.deposit_int(quote_out.into_balance());
+    self.deposit_int(deep_out.into_balance());
 }
 
 // === Public Functions * LIQUIDATION * ===
@@ -239,6 +331,31 @@ fun withdraw_int<T>(self: &mut LiquidationVault, amount: u64): Balance<T> {
     balance.split(amount)
 }
 
+fun assert_trader(self: &LiquidationVault, ctx: &TxContext) {
+    let key = AuthorizedTradersKey {};
+    let traders: &VecSet<address> = self.id.borrow(key);
+    assert!(traders.contains(&ctx.sender()), ETraderNotAuthorized);
+}
+
 fun id(self: &LiquidationVault): ID {
     self.id.to_inner()
+}
+
+// === Test Only ===
+#[test_only]
+public fun create_liquidation_vault_for_testing(ctx: &mut TxContext): LiquidationVault {
+    LiquidationVault {
+        id: object::new(ctx),
+        vault: bag::new(ctx),
+    }
+}
+
+#[test_only]
+public fun create_admin_cap_for_testing(ctx: &mut TxContext): LiquidationAdminCap {
+    LiquidationAdminCap { id: object::new(ctx) }
+}
+
+#[test_only]
+public fun assert_trader_for_testing(self: &LiquidationVault, ctx: &TxContext) {
+    self.assert_trader(ctx);
 }
