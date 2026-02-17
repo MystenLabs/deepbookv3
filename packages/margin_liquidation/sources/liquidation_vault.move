@@ -4,22 +4,23 @@
 module margin_liquidation::liquidation_vault;
 
 use deepbook::pool::Pool;
-use deepbook_margin::{
-    margin_manager::{MarginManager, liquidate},
-    margin_pool::MarginPool,
-    margin_registry::MarginRegistry
-};
+use deepbook_margin::margin_manager::{MarginManager, liquidate};
+use deepbook_margin::margin_pool::MarginPool;
+use deepbook_margin::margin_registry::MarginRegistry;
 use pyth::price_info::PriceInfoObject;
-use sui::{
-    bag::{Self, Bag},
-    balance::{Self, Balance},
-    clock::Clock,
-    coin::Coin,
-    dynamic_field as df,
-    event,
-    vec_set::{Self, VecSet}
-};
+use sui::bag::{Self, Bag};
+use sui::balance::{Self, Balance};
+use sui::clock::Clock;
+use sui::coin::Coin;
+use sui::dynamic_field as df;
+use sui::event;
+use sui::vec_set::{Self, VecSet};
 use token::deep::DEEP;
+
+use fun df::add as UID.add;
+use fun df::borrow as UID.borrow;
+use fun df::borrow_mut as UID.borrow_mut;
+use fun df::exists_ as UID.exists_;
 
 // === Errors ===
 const ENotEnoughBalanceInVault: u64 = 1;
@@ -97,10 +98,10 @@ public fun authorize_trader(
     authorized_address: address,
 ) {
     let key = AuthorizedTradersKey {};
-    if (!df::exists_(&self.id, key)) {
-        df::add(&mut self.id, key, vec_set::empty<address>());
+    if (!self.id.exists_(key)) {
+        self.id.add(key, vec_set::empty<address>());
     };
-    let traders: &mut VecSet<address> = df::borrow_mut(&mut self.id, key);
+    let traders: &mut VecSet<address> = self.id.borrow_mut(key);
     traders.insert(authorized_address);
 }
 
@@ -110,7 +111,7 @@ public fun deauthorize_trader(
     authorized_address: address,
 ) {
     let key = AuthorizedTradersKey {};
-    let traders: &mut VecSet<address> = df::borrow_mut(&mut self.id, key);
+    let traders: &mut VecSet<address> = self.id.borrow_mut(key);
     traders.remove(&authorized_address);
 }
 
@@ -328,7 +329,7 @@ fun withdraw_int<T>(self: &mut LiquidationVault, amount: u64): Balance<T> {
 
 fun assert_trader(self: &LiquidationVault, ctx: &TxContext) {
     let key = AuthorizedTradersKey {};
-    let traders: &VecSet<address> = df::borrow(&self.id, key);
+    let traders: &VecSet<address> = self.id.borrow(key);
     assert!(traders.contains(&ctx.sender()), ETraderNotAuthorized);
 }
 
