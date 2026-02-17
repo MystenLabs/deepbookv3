@@ -20,9 +20,9 @@ use sui::clock::Clock;
 
 const EInvalidOracleCap: u64 = 0;
 const EOracleStale: u64 = 1;
-const EOracleAlreadyActive: u64 = 3;
-const EOracleExpired: u64 = 4;
-const ECannotBeNegative: u64 = 5;
+const EOracleAlreadyActive: u64 = 2;
+const EOracleExpired: u64 = 3;
+const ECannotBeNegative: u64 = 4;
 
 // === Structs ===
 
@@ -234,19 +234,45 @@ public(package) fun create_oracle<Underlying>(
     oracle_id
 }
 
-/// Binary option price using SVI + Black-Scholes in a single pass.
-///
-/// SVI gives total_variance directly, and in d2 the IV and time cancel:
-///   iv = sqrt(total_var / t), so iv² * t = total_var, iv * sqrt(t) = sqrt(total_var)
-///   d2 = (ln(F/K) - total_var/2) / sqrt(total_var)
-///
-/// Time only appears in the discount factor e^(-r*t).
+/// Binary option price using SVI + Black-Scholes, discounted by e^(-r*t).
 /// Returns price in FLOAT_SCALING (1e9).
 public(package) fun get_binary_price<Underlying>(
     oracle: &OracleSVI<Underlying>,
     strike: u64,
     is_up: bool,
     clock: &Clock,
+): u64 {
+    let nd2 = compute_nd2(oracle, strike, is_up);
+
+    // Discount: e^(-r * t), time only needed here
+    let tte_ms = oracle.expiry - clock.timestamp_ms();
+    let t = math::div(tte_ms, constants::ms_per_year!());
+    let rt = math::mul(oracle.risk_free_rate, t);
+    let discount = predict_math::exp(rt, true);
+
+    math::mul(discount, nd2)
+}
+
+/// Binary option price without discount factor (assumes r ≈ 0).
+/// No clock needed — time cancels entirely from the formula.
+/// Returns price in FLOAT_SCALING (1e9).
+public(package) fun get_binary_price_undiscounted<Underlying>(
+    oracle: &OracleSVI<Underlying>,
+    strike: u64,
+    is_up: bool,
+): u64 {
+    compute_nd2(oracle, strike, is_up)
+}
+
+/// SVI + Black-Scholes N(d2) in a single pass.
+///
+/// SVI gives total_variance directly, so IV and time cancel in d2:
+///   iv = sqrt(total_var / t), iv * sqrt(t) = sqrt(total_var)
+///   d2 = (ln(F/K) - total_var/2) / sqrt(total_var)
+fun compute_nd2<Underlying>(
+    oracle: &OracleSVI<Underlying>,
+    strike: u64,
+    is_up: bool,
 ): u64 {
     let forward = oracle.prices.forward;
 
@@ -272,20 +298,13 @@ public(package) fun get_binary_price<Underlying>(
     assert!(!inner_neg, ECannotBeNegative);
     let total_var = oracle.svi.a + math::mul(oracle.svi.b, inner);
 
-    // d2 = (-k - total_var/2) / sqrt(total_var)
+    // d2 = (-k - total_var/2) / sqrt(total_var), then N(±d2)
     let sqrt_var = math::sqrt(total_var, constants::float_scaling!());
     let (d2, d2_neg) = predict_math::sub_signed_u64(k, !k_neg, total_var / 2, false);
     let d2 = math::div(d2, sqrt_var);
     let cdf_neg = if (is_up) { d2_neg } else { !d2_neg };
-    let nd2 = predict_math::normal_cdf(d2, cdf_neg);
 
-    // Discount: e^(-r * t), time only needed here
-    let tte_ms = oracle.expiry - clock.timestamp_ms();
-    let t = math::div(tte_ms, constants::ms_per_year!());
-    let rt = math::mul(oracle.risk_free_rate, t);
-    let discount = predict_math::exp(rt, true);
-
-    math::mul(discount, nd2)
+    predict_math::normal_cdf(d2, cdf_neg)
 }
 
 /// Assert that the oracle is not stale. Aborts if stale.

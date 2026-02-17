@@ -49,11 +49,6 @@ public fun owner(self: &PredictManager): address {
     self.owner
 }
 
-/// Get the ID of the PredictManager.
-public fun id(self: &PredictManager): ID {
-    self.id.to_inner()
-}
-
 /// Get position quantities for a given key. Returns (free, locked).
 public fun position(self: &PredictManager, key: MarketKey): (u64, u64) {
     if (self.positions.contains(key)) {
@@ -62,11 +57,6 @@ public fun position(self: &PredictManager, key: MarketKey): (u64, u64) {
     } else {
         (0, 0)
     }
-}
-
-/// Get balance of a specific asset in the PredictManager.
-public fun balance<T>(self: &PredictManager): u64 {
-    self.balance_manager.balance<T>()
 }
 
 /// Deposit coins into the PredictManager.
@@ -85,8 +75,23 @@ public fun withdraw<T>(self: &mut PredictManager, amount: u64, ctx: &mut TxConte
 
 /// Create a new PredictManager and share it.
 public(package) fun new(ctx: &mut TxContext): ID {
-    let manager = new_predict_manager(ctx);
-    let manager_id = manager.id();
+    let id = object::new(ctx);
+    let owner = ctx.sender();
+
+    let mut balance_manager = balance_manager::new(ctx);
+    let deposit_cap = balance_manager.mint_deposit_cap(ctx);
+    let withdraw_cap = balance_manager.mint_withdraw_cap(ctx);
+
+    let manager = PredictManager {
+        id,
+        owner,
+        balance_manager,
+        deposit_cap,
+        withdraw_cap,
+        positions: table::new(ctx),
+        collateral: table::new(ctx),
+    };
+    let manager_id = object::id(&manager);
     transfer::share_object(manager);
 
     manager_id
@@ -94,7 +99,9 @@ public(package) fun new(ctx: &mut TxContext): ID {
 
 /// Increase free position quantity. Called when user mints.
 public(package) fun increase_position(self: &mut PredictManager, key: MarketKey, quantity: u64) {
-    self.add_position_entry(key);
+    if (!self.positions.contains(key)) {
+        self.positions.add(key, UserPosition { free: 0, locked: 0 });
+    };
     let data = &mut self.positions[key];
     data.free = data.free + quantity;
 }
@@ -124,7 +131,9 @@ public(package) fun lock_collateral(
 
     // Track collateral relationship
     let collateral_key = CollateralKey { locked_key, minted_key };
-    self.add_collateral_entry(collateral_key);
+    if (!self.collateral.contains(collateral_key)) {
+        self.collateral.add(collateral_key, 0);
+    };
     let collateral_qty = &mut self.collateral[collateral_key];
     *collateral_qty = *collateral_qty + quantity;
 }
@@ -149,35 +158,3 @@ public(package) fun release_collateral(
     data.free = data.free + quantity;
 }
 
-// === Private Functions ===
-
-fun add_position_entry(self: &mut PredictManager, key: MarketKey) {
-    if (!self.positions.contains(key)) {
-        self.positions.add(key, UserPosition { free: 0, locked: 0 });
-    }
-}
-
-fun add_collateral_entry(self: &mut PredictManager, key: CollateralKey) {
-    if (!self.collateral.contains(key)) {
-        self.collateral.add(key, 0);
-    }
-}
-
-fun new_predict_manager(ctx: &mut TxContext): PredictManager {
-    let id = object::new(ctx);
-    let owner = ctx.sender();
-
-    let mut balance_manager = balance_manager::new(ctx);
-    let deposit_cap = balance_manager.mint_deposit_cap(ctx);
-    let withdraw_cap = balance_manager.mint_withdraw_cap(ctx);
-
-    PredictManager {
-        id,
-        owner,
-        balance_manager,
-        deposit_cap,
-        withdraw_cap,
-        positions: table::new(ctx),
-        collateral: table::new(ctx),
-    }
-}

@@ -24,10 +24,10 @@ use deepbook_predict::{
 use sui::{clock::Clock, coin::Coin};
 
 // === Errors ===
-const ETradingPaused: u64 = 1;
-const EMarketNotSettled: u64 = 2;
-const EInvalidCollateralPair: u64 = 5;
-const EWithdrawalsPaused: u64 = 6;
+const ETradingPaused: u64 = 0;
+const EMarketNotSettled: u64 = 1;
+const EInvalidCollateralPair: u64 = 2;
+const EWithdrawalsPaused: u64 = 3;
 
 // === Structs ===
 

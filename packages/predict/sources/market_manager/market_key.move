@@ -79,11 +79,6 @@ public fun is_down(key: &MarketKey): bool {
     key.3 == DIRECTION_DOWN
 }
 
-/// Get the opposite direction key (same oracle + expiry + strike, flipped direction).
-public fun opposite(key: &MarketKey): MarketKey {
-    new(key.0, key.1, key.2, !key.is_up())
-}
-
 public fun up_down_pair(key: &MarketKey): (MarketKey, MarketKey) {
     (up(key.0, key.1, key.2), down(key.0, key.1, key.2))
 }

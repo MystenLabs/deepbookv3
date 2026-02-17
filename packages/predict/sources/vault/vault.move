@@ -33,6 +33,18 @@ public struct PositionData has copy, drop, store {
     unrealized_assets: u64,
 }
 
+public fun premiums(data: &PositionData): u64 {
+    data.premiums
+}
+
+public fun payouts(data: &PositionData): u64 {
+    data.payouts
+}
+
+public fun qty_minted_collateralized(data: &PositionData): u64 {
+    data.qty_minted_collateralized
+}
+
 public struct Vault<phantom Quote> has store {
     /// USDC balance held by the vault
     balance: Balance<Quote>,
@@ -98,6 +110,23 @@ public fun total_shares<Quote>(vault: &Vault<Quote>): u64 {
 public fun position<Quote>(vault: &Vault<Quote>, key: MarketKey): u64 {
     let (minted, redeemed) = vault.position_quantities(key);
     if (minted > redeemed) { minted - redeemed } else { 0 }
+}
+
+/// Returns the full PositionData for a market key.
+public fun position_data<Quote>(vault: &Vault<Quote>, key: MarketKey): PositionData {
+    if (vault.positions.contains(key)) {
+        vault.positions[key]
+    } else {
+        PositionData {
+            qty_minted: 0,
+            qty_minted_collateralized: 0,
+            qty_redeemed: 0,
+            premiums: 0,
+            payouts: 0,
+            unrealized_liability: 0,
+            unrealized_assets: 0,
+        }
+    }
 }
 
 /// Returns raw (qty_minted, qty_redeemed) for a position.
