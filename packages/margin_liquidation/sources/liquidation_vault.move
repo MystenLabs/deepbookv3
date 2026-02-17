@@ -4,17 +4,21 @@
 module margin_liquidation::liquidation_vault;
 
 use deepbook::pool::Pool;
-use deepbook_margin::margin_manager::{MarginManager, liquidate};
-use deepbook_margin::margin_pool::MarginPool;
-use deepbook_margin::margin_registry::MarginRegistry;
+use deepbook_margin::{
+    margin_manager::{MarginManager, liquidate},
+    margin_pool::MarginPool,
+    margin_registry::MarginRegistry
+};
 use pyth::price_info::PriceInfoObject;
-use sui::bag::{Self, Bag};
-use sui::balance::{Self, Balance};
-use sui::clock::Clock;
-use sui::coin::Coin;
-use sui::dynamic_field as df;
-use sui::event;
-use sui::vec_set::{Self, VecSet};
+use sui::{
+    bag::{Self, Bag},
+    balance::{Self, Balance},
+    clock::Clock,
+    coin::Coin,
+    dynamic_field as df,
+    event,
+    vec_set::{Self, VecSet}
+};
 use token::deep::DEEP;
 
 use fun df::add as UID.add;
