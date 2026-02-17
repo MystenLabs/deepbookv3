@@ -334,3 +334,22 @@ fun assert_trader(self: &LiquidationVault, ctx: &TxContext) {
 fun id(self: &LiquidationVault): ID {
     self.id.to_inner()
 }
+
+// === Test Only ===
+#[test_only]
+public fun create_liquidation_vault_for_testing(ctx: &mut TxContext): LiquidationVault {
+    LiquidationVault {
+        id: object::new(ctx),
+        vault: bag::new(ctx),
+    }
+}
+
+#[test_only]
+public fun create_admin_cap_for_testing(ctx: &mut TxContext): LiquidationAdminCap {
+    LiquidationAdminCap { id: object::new(ctx) }
+}
+
+#[test_only]
+public fun assert_trader_for_testing(self: &LiquidationVault, ctx: &TxContext) {
+    self.assert_trader(ctx);
+}
