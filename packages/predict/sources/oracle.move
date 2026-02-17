@@ -10,7 +10,7 @@
 ///   k = ln(strike / forward)
 ///   total_variance = a + b * (rho * (k - m) + sqrt((k - m)² + sigma²))
 ///   implied_vol = sqrt(total_variance / time_to_expiry)
-module deepbook_predict::oracle_block_scholes;
+module deepbook_predict::oracle;
 
 use deepbook::math;
 use deepbook_predict::{constants, math as predict_math};
@@ -181,7 +181,7 @@ public fun settlement_price<Underlying>(oracle: &OracleSVI<Underlying>): Option<
 /// Check if the oracle data is stale (> 30s since last update).
 public fun is_stale<Underlying>(oracle: &OracleSVI<Underlying>, clock: &Clock): bool {
     let now = clock.timestamp_ms();
-    now > oracle.timestamp + 30_000
+    now > oracle.timestamp + constants::staleness_threshold_ms!()
 }
 
 /// Check if the oracle has been settled.
@@ -234,94 +234,55 @@ public(package) fun create_oracle<Underlying>(
     oracle_id
 }
 
-/// Compute implied volatility for a given strike using SVI formula.
+/// Binary option price using SVI + Black-Scholes in a single pass.
 ///
-/// SVI formula:
-///   k = ln(strike / forward)
-///   total_var = a + b * (rho * (k - m) + sqrt((k - m)² + sigma²))
-///   iv = sqrt(total_var / time_to_expiry)
+/// SVI gives total_variance directly, and in d2 the IV and time cancel:
+///   iv = sqrt(total_var / t), so iv² * t = total_var, iv * sqrt(t) = sqrt(total_var)
+///   d2 = (ln(F/K) - total_var/2) / sqrt(total_var)
 ///
-/// Requires: ln() and sqrt() math utilities
-public(package) fun compute_iv<Underlying>(
-    oracle: &OracleSVI<Underlying>,
-    strike: u64,
-    clock: &Clock,
-): u64 {
-    let ratio = math::div(strike, oracle.prices.forward);
-    let (k, k_negative) = predict_math::ln(ratio);
-    let (k_minus_m, k_minus_m_negative) = predict_math::sub_signed_u64(
-        k,
-        k_negative,
-        oracle.svi.m,
-        oracle.svi.m_negative,
-    );
-    let sq = math::sqrt(
-        math::mul(k_minus_m, k_minus_m) + math::mul(oracle.svi.sigma, oracle.svi.sigma),
-        1_000_000_000,
-    );
-    let (rho_k_minus_m, rho_km_neg) = predict_math::mul_signed_u64(
-        oracle.svi.rho,
-        oracle.svi.rho_negative,
-        k_minus_m,
-        k_minus_m_negative,
-    );
-    let (inner, inner_negative) = predict_math::add_signed_u64(
-        rho_k_minus_m,
-        rho_km_neg,
-        sq,
-        false,
-    );
-    assert!(!inner_negative, ECannotBeNegative); // SVI formula should not produce negative variance
-    let total_var = oracle.svi.a + math::mul(oracle.svi.b, inner);
-    let iv = math::sqrt(
-        math::div(
-            total_var,
-            math::div(oracle.expiry - clock.timestamp_ms(), constants::ms_per_year!()),
-        ),
-        1_000_000_000,
-    );
-
-    iv
-}
-
-/// Get all pricing data in one call for efficiency.
-/// Returns (forward_price, implied_vol, risk_free_rate, time_to_expiry_ms).
-/// Computes IV on-demand using SVI formula.
-public(package) fun get_pricing_data<Underlying>(
-    oracle: &OracleSVI<Underlying>,
-    strike: u64,
-    clock: &Clock,
-): (u64, u64, u64, u64) {
-    let iv = compute_iv(oracle, strike, clock);
-    let tte_ms = oracle.expiry - clock.timestamp_ms();
-    (oracle.prices.forward, iv, oracle.risk_free_rate, tte_ms)
-}
-
-/// Calculate binary option price for a given strike and direction.
-/// Uses Black-Scholes: Binary Call = e^(-rT) * N(d2), Binary Put = e^(-rT) * N(-d2)
-/// Returns price in FLOAT_SCALING (1e9), where 1_000_000_000 = 100%.
+/// Time only appears in the discount factor e^(-r*t).
+/// Returns price in FLOAT_SCALING (1e9).
 public(package) fun get_binary_price<Underlying>(
     oracle: &OracleSVI<Underlying>,
     strike: u64,
     is_up: bool,
     clock: &Clock,
 ): u64 {
-    let (forward, iv, rfr, tte_ms) = get_pricing_data(oracle, strike, clock);
-    let t = math::div(tte_ms, constants::ms_per_year!());
-    let (ln_fk, ln_fk_neg) = predict_math::ln(math::div(forward, strike));
-    let half_vol_sq_t = math::mul(math::mul(iv, iv), t) / 2;
-    let (d2_num, d2_num_neg) = predict_math::sub_signed_u64(
-        ln_fk,
-        ln_fk_neg,
-        half_vol_sq_t,
-        false,
+    let forward = oracle.prices.forward;
+
+    // SVI: compute total variance from log-moneyness
+    let (k, k_neg) = predict_math::ln(math::div(strike, forward));
+    let (k_minus_m, km_neg) = predict_math::sub_signed_u64(
+        k,
+        k_neg,
+        oracle.svi.m,
+        oracle.svi.m_negative,
     );
-    let sqrt_t = math::sqrt(t, constants::float_scaling!());
-    let d2_den = math::mul(iv, sqrt_t);
-    let d2 = math::div(d2_num, d2_den);
-    let cdf_neg = if (is_up) { d2_num_neg } else { !d2_num_neg };
+    let sq = math::sqrt(
+        math::mul(k_minus_m, k_minus_m) + math::mul(oracle.svi.sigma, oracle.svi.sigma),
+        constants::float_scaling!(),
+    );
+    let (rho_km, rho_km_neg) = predict_math::mul_signed_u64(
+        oracle.svi.rho,
+        oracle.svi.rho_negative,
+        k_minus_m,
+        km_neg,
+    );
+    let (inner, inner_neg) = predict_math::add_signed_u64(rho_km, rho_km_neg, sq, false);
+    assert!(!inner_neg, ECannotBeNegative);
+    let total_var = oracle.svi.a + math::mul(oracle.svi.b, inner);
+
+    // d2 = (-k - total_var/2) / sqrt(total_var)
+    let sqrt_var = math::sqrt(total_var, constants::float_scaling!());
+    let (d2, d2_neg) = predict_math::sub_signed_u64(k, !k_neg, total_var / 2, false);
+    let d2 = math::div(d2, sqrt_var);
+    let cdf_neg = if (is_up) { d2_neg } else { !d2_neg };
     let nd2 = predict_math::normal_cdf(d2, cdf_neg);
-    let rt = math::mul(rfr, t);
+
+    // Discount: e^(-r * t), time only needed here
+    let tte_ms = oracle.expiry - clock.timestamp_ms();
+    let t = math::div(tte_ms, constants::ms_per_year!());
+    let rt = math::mul(oracle.risk_free_rate, t);
     let discount = predict_math::exp(rt, true);
 
     math::mul(discount, nd2)
@@ -330,6 +291,29 @@ public(package) fun get_binary_price<Underlying>(
 /// Assert that the oracle is not stale. Aborts if stale.
 public(package) fun assert_not_stale<Underlying>(oracle: &OracleSVI<Underlying>, clock: &Clock) {
     assert!(!is_stale(oracle, clock), EOracleStale);
+}
+
+#[test_only]
+/// Create a test oracle with given params. Bypasses cap/share requirements.
+public(package) fun create_test_oracle<Underlying>(
+    svi: SVIParams,
+    prices: PriceData,
+    risk_free_rate: u64,
+    expiry: u64,
+    timestamp: u64,
+    ctx: &mut TxContext,
+): OracleSVI<Underlying> {
+    OracleSVI<Underlying> {
+        id: object::new(ctx),
+        oracle_cap_id: object::id_from_address(@0x0),
+        expiry,
+        active: true,
+        prices,
+        svi,
+        risk_free_rate,
+        timestamp,
+        settlement_price: option::none(),
+    }
 }
 
 /// Create a new PriceData struct.

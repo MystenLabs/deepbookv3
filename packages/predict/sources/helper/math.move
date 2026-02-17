@@ -11,6 +11,7 @@
 module deepbook_predict::math;
 
 use deepbook::math;
+use deepbook_predict::constants;
 
 const EInputZero: u64 = 0;
 
@@ -20,10 +21,10 @@ const LN2: u64 = 693_147_181;
 /// Returns (|result|, is_negative) in FLOAT_SCALING.
 public fun ln(x: u64): (u64, bool) {
     assert!(x > 0, EInputZero);
-    if (x == 1_000_000_000) return (0, false);
+    if (x == constants::float_scaling!()) return (0, false);
 
-    if (x < 1_000_000_000) {
-        let inv = math::div(1_000_000_000, x);
+    if (x < constants::float_scaling!()) {
+        let inv = math::div(constants::float_scaling!(), x);
         let (result, _) = ln(inv);
         return (result, true)
     };
@@ -38,14 +39,14 @@ public fun ln(x: u64): (u64, bool) {
 
 /// Exponential function. Returns e^(±x) in FLOAT_SCALING.
 public fun exp(x: u64, x_negative: bool): u64 {
-    if (x == 0) return 1_000_000_000;
+    if (x == 0) return constants::float_scaling!();
 
     let (r, n) = reduce_exp(x);
     let exp_r = exp_series(r);
 
     if (x_negative) {
         // e^(-x) = (1/e^r) / 2^n
-        let mut result = math::div(1_000_000_000, exp_r);
+        let mut result = math::div(constants::float_scaling!(), exp_r);
         let mut j: u64 = 0;
         while (j < n) {
             result = result / 2;
@@ -67,8 +68,8 @@ public fun exp(x: u64, x_negative: bool): u64 {
 
 /// Standard normal CDF Φ(±x) using Abramowitz & Stegun (26.2.17).
 public fun normal_cdf(x: u64, x_negative: bool): u64 {
-    if (x > 8_000_000_000) {
-        return if (x_negative) { 0 } else { 1_000_000_000 }
+    if (x > 8 * constants::float_scaling!()) {
+        return if (x_negative) { 0 } else { constants::float_scaling!() }
     };
 
     let t = cdf_t(x);
@@ -76,18 +77,18 @@ public fun normal_cdf(x: u64, x_negative: bool): u64 {
     let pdf = cdf_pdf(x);
     let complement = math::mul(pdf, poly);
 
-    let cdf = if (1_000_000_000 > complement) {
-        1_000_000_000 - complement
+    let cdf = if (constants::float_scaling!() > complement) {
+        constants::float_scaling!() - complement
     } else {
         0
     };
 
-    if (x_negative) { 1_000_000_000 - cdf } else { cdf }
+    if (x_negative) { constants::float_scaling!() - cdf } else { cdf }
 }
 
 /// t = 1 / (1 + 0.2316419 * x)
 fun cdf_t(x: u64): u64 {
-    math::div(1_000_000_000, 1_000_000_000 + math::mul(231_641_900, x))
+    math::div(constants::float_scaling!(), constants::float_scaling!() + math::mul(231_641_900, x))
 }
 
 /// φ(x) = exp(-x²/2) * (1/√(2π))
@@ -123,11 +124,11 @@ fun reduce_exp(x: u64): (u64, u64) {
 
 /// Taylor series: e^r = 1 + r + r²/2! + r³/3! + ...
 fun exp_series(r: u64): u64 {
-    let mut sum = 1_000_000_000;
-    let mut term = 1_000_000_000;
+    let mut sum = constants::float_scaling!();
+    let mut term = constants::float_scaling!();
     let mut k: u64 = 1;
     while (k <= 12) {
-        term = math::div(math::mul(term, r), k * 1_000_000_000);
+        term = math::div(math::mul(term, r), k * constants::float_scaling!());
         if (term == 0) break;
         sum = sum + term;
         k = k + 1;
@@ -142,16 +143,16 @@ fun ln_series(z: u64): u64 {
     let mut sum = 0;
     let mut k: u64 = 1;
     while (k <= 13) {
-        sum = sum + math::div(term, k * 1_000_000_000);
+        sum = sum + math::div(term, k * constants::float_scaling!());
         term = math::mul(term, z2);
         k = k + 2;
     };
-    math::mul(2_000_000_000, sum)
+    math::mul(2 * constants::float_scaling!(), sum)
 }
 
 /// Compute z = (y - 1) / (y + 1) where y is in FLOAT_SCALING.
 fun log_ratio(y: u64): u64 {
-    math::div(y - 1_000_000_000, y + 1_000_000_000)
+    math::div(y - constants::float_scaling!(), y + constants::float_scaling!())
 }
 
 /// Normalize x into [FLOAT_SCALING, 2*FLOAT_SCALING) by halving.
@@ -159,7 +160,7 @@ fun log_ratio(y: u64): u64 {
 fun normalize(x: u64): (u64, u64) {
     let mut y = x;
     let mut n: u64 = 0;
-    while (y >= 2_000_000_000) {
+    while (y >= 2 * constants::float_scaling!()) {
         y = y / 2;
         n = n + 1;
     };

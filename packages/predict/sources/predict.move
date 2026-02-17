@@ -15,7 +15,7 @@ use deepbook_predict::{
     lp_config::{Self, LPConfig},
     market_key::MarketKey,
     market_manager::{Self, Markets},
-    oracle_block_scholes::OracleSVI,
+    oracle::OracleSVI,
     predict_manager::{Self, PredictManager},
     pricing_config::{Self, PricingConfig},
     risk_config::{Self, RiskConfig},

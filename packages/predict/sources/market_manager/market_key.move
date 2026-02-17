@@ -10,7 +10,7 @@
 /// - direction: UP (0) or DOWN (1)
 module deepbook_predict::market_key;
 
-use deepbook_predict::oracle_block_scholes::OracleSVI;
+use deepbook_predict::oracle::OracleSVI;
 
 // === Errors ===
 const EOracleMismatch: u64 = 0;

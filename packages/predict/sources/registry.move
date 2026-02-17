@@ -15,7 +15,7 @@ module deepbook_predict::registry;
 
 use deepbook_predict::{
     market_key::MarketKey,
-    oracle_block_scholes::{Self, OracleCapSVI, OracleSVI},
+    oracle::{Self, OracleCapSVI, OracleSVI},
     predict
 };
 use sui::table::{Self, Table};
@@ -59,7 +59,7 @@ public fun create_predict<Quote>(
 
 /// Create a new OracleCap. Transferred to Block Scholes operator.
 public fun create_oracle_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): OracleCapSVI {
-    oracle_block_scholes::create_oracle_cap(ctx)
+    oracle::create_oracle_cap(ctx)
 }
 
 /// Create a new Oracle. Returns the oracle ID.
@@ -71,7 +71,7 @@ public fun create_oracle<Underlying>(
     expiry: u64,
     ctx: &mut TxContext,
 ): ID {
-    let oracle_id = oracle_block_scholes::create_oracle<Underlying>(cap, expiry, ctx);
+    let oracle_id = oracle::create_oracle<Underlying>(cap, expiry, ctx);
     let cap_id = object::id(cap);
 
     if (!registry.oracle_ids.contains(cap_id)) {

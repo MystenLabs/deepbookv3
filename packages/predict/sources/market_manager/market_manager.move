@@ -7,7 +7,7 @@
 /// When a market is enabled, both UP and DOWN positions can be traded at that strike.
 module deepbook_predict::market_manager;
 
-use deepbook_predict::{market_key::MarketKey, oracle_block_scholes::OracleSVI};
+use deepbook_predict::{market_key::MarketKey, oracle::OracleSVI};
 use sui::vec_set::{Self, VecSet};
 
 // === Errors ===

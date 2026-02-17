@@ -37,3 +37,6 @@ public macro fun default_min_lockup_ms(): u64 { 86_400_000 }
 // === Time Constants ===
 
 public macro fun ms_per_year(): u64 { 31_536_000_000 }
+
+/// Oracle staleness threshold (30 seconds)
+public macro fun staleness_threshold_ms(): u64 { 30_000 }
