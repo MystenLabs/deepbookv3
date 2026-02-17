@@ -15,6 +15,7 @@ use sui::{
     balance::{Self, Balance},
     clock::Clock,
     coin::Coin,
+    dynamic_field as df,
     event,
     vec_set::{Self, VecSet}
 };
@@ -96,10 +97,10 @@ public fun authorize_trader(
     authorized_address: address,
 ) {
     let key = AuthorizedTradersKey {};
-    if (!self.vault.contains(key)) {
-        self.vault.add(key, vec_set::empty<address>());
+    if (!df::exists_(&self.id, key)) {
+        df::add(&mut self.id, key, vec_set::empty<address>());
     };
-    let traders: &mut VecSet<address> = &mut self.vault[key];
+    let traders: &mut VecSet<address> = df::borrow_mut(&mut self.id, key);
     traders.insert(authorized_address);
 }
 
@@ -109,7 +110,7 @@ public fun deauthorize_trader(
     authorized_address: address,
 ) {
     let key = AuthorizedTradersKey {};
-    let traders: &mut VecSet<address> = &mut self.vault[key];
+    let traders: &mut VecSet<address> = df::borrow_mut(&mut self.id, key);
     traders.remove(&authorized_address);
 }
 
@@ -327,7 +328,7 @@ fun withdraw_int<T>(self: &mut LiquidationVault, amount: u64): Balance<T> {
 
 fun assert_trader(self: &LiquidationVault, ctx: &TxContext) {
     let key = AuthorizedTradersKey {};
-    let traders: &VecSet<address> = &self.vault[key];
+    let traders: &VecSet<address> = df::borrow(&self.id, key);
     assert!(traders.contains(&ctx.sender()), ETraderNotAuthorized);
 }
 
