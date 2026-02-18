@@ -1565,8 +1565,10 @@ impl Reader {
         .await;
 
         // --- LP positions ---
-        // Uses supplier (balance_manager_id) rather than sender (wallet address) to leverage
-        // idx_asset_supplied_supplier / idx_asset_withdrawn_supplier indices.
+        // Filters on sender (wallet address). Note: asset_supplied/asset_withdrawn do not have
+        // an index on sender; a future migration adding idx_asset_supplied_sender and
+        // idx_asset_withdrawn_sender would improve performance at scale. The supplier column
+        // stores the SupplierCap NFT object ID, which is distinct from the wallet address.
         let lp_res = diesel::sql_query(
             r#"
             WITH hourly_prices AS (
@@ -1600,22 +1602,17 @@ impl Reader {
                 UNION
                 SELECT DISTINCT quote_asset_id, quote_asset_decimals, quote_asset_symbol FROM pools
             ),
-            wallet_suppliers AS (
-                SELECT DISTINCT balance_manager_id
-                FROM margin_manager_created
-                WHERE owner = $1
-            ),
             lp_supplied AS (
-                SELECT s.margin_pool_id, s.asset_type, SUM(s.amount) as supplied, SUM(s.shares) as supplied_shares
-                FROM asset_supplied s
-                JOIN wallet_suppliers ws ON s.supplier = ws.balance_manager_id
-                GROUP BY s.margin_pool_id, s.asset_type
+                SELECT margin_pool_id, asset_type, SUM(amount) as supplied, SUM(shares) as supplied_shares
+                FROM asset_supplied
+                WHERE sender = $1
+                GROUP BY margin_pool_id, asset_type
             ),
             lp_withdrawn AS (
-                SELECT w.margin_pool_id, w.asset_type, SUM(w.amount) as withdrawn, SUM(w.shares) as withdrawn_shares
-                FROM asset_withdrawn w
-                JOIN wallet_suppliers ws ON w.supplier = ws.balance_manager_id
-                GROUP BY w.margin_pool_id, w.asset_type
+                SELECT margin_pool_id, asset_type, SUM(amount) as withdrawn, SUM(shares) as withdrawn_shares
+                FROM asset_withdrawn
+                WHERE sender = $1
+                GROUP BY margin_pool_id, asset_type
             )
             SELECT
                 s.margin_pool_id::text,
