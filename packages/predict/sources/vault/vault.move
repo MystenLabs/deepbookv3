@@ -34,9 +34,14 @@ public struct Vault<phantom Quote> has store {
     total_up_short: u64,
     /// Total DOWN contracts the vault is short
     total_down_short: u64,
+    /// Σ(quantity × strike) for UP positions — used to derive weighted-average strike
+    sum_up_strike_qty: u128,
+    /// Σ(quantity × strike) for DOWN positions — used to derive weighted-average strike
+    sum_down_strike_qty: u128,
     /// Total collateralized contracts (not backed by vault)
     total_collateralized: u64,
-    /// Worst-case payout: max(total_up_short, total_down_short)
+    /// Worst-case payout: total_up_short + total_down_short
+    /// Conservative bound since both sides can win at intermediate settlements
     max_liability: u64,
     /// Total premiums collected from traders
     cumulative_premiums: u64,
@@ -74,6 +79,14 @@ public fun total_collateralized<Quote>(vault: &Vault<Quote>): u64 {
     vault.total_collateralized
 }
 
+public fun sum_up_strike_qty<Quote>(vault: &Vault<Quote>): u128 {
+    vault.sum_up_strike_qty
+}
+
+public fun sum_down_strike_qty<Quote>(vault: &Vault<Quote>): u128 {
+    vault.sum_down_strike_qty
+}
+
 /// Returns (shares, last_supply_ms) for an owner.
 public fun supply_data<Quote>(vault: &Vault<Quote>, owner: address): (u64, u64) {
     vault.supply_manager.supply_data(owner)
@@ -91,6 +104,8 @@ public(package) fun new<Quote>(ctx: &mut TxContext): Vault<Quote> {
         supply_manager: supply_manager::new(ctx),
         total_up_short: 0,
         total_down_short: 0,
+        sum_up_strike_qty: 0,
+        sum_down_strike_qty: 0,
         total_collateralized: 0,
         max_liability: 0,
         cumulative_premiums: 0,
@@ -98,35 +113,47 @@ public(package) fun new<Quote>(ctx: &mut TxContext): Vault<Quote> {
     }
 }
 
-/// Execute a mint trade. Updates aggregate exposure.
+/// Execute a mint trade. Updates aggregate exposure and strike-weighted sums.
 /// Cost calculation is done by the orchestrator.
 public(package) fun execute_mint<Quote>(
     vault: &mut Vault<Quote>,
     is_up: bool,
     quantity: u64,
+    strike: u64,
     payment: Coin<Quote>,
 ) {
     let cost = payment.value();
     vault.balance.join(payment.into_balance());
     vault.cumulative_premiums = vault.cumulative_premiums + cost;
-    if (is_up) { vault.total_up_short = vault.total_up_short + quantity } else {
-        vault.total_down_short = vault.total_down_short + quantity
+    let strike_qty = (quantity as u128) * (strike as u128);
+    if (is_up) {
+        vault.total_up_short = vault.total_up_short + quantity;
+        vault.sum_up_strike_qty = vault.sum_up_strike_qty + strike_qty;
+    } else {
+        vault.total_down_short = vault.total_down_short + quantity;
+        vault.sum_down_strike_qty = vault.sum_down_strike_qty + strike_qty;
     };
     vault.recompute_max_liability();
 }
 
-/// Execute a redeem trade. Updates aggregate exposure.
+/// Execute a redeem trade. Updates aggregate exposure and strike-weighted sums.
 /// Payout calculation is done by the orchestrator.
 public(package) fun execute_redeem<Quote>(
     vault: &mut Vault<Quote>,
     is_up: bool,
     quantity: u64,
+    strike: u64,
     payout: u64,
 ): Balance<Quote> {
     assert!(vault.balance.value() >= payout, EInsufficientBalance);
     vault.cumulative_payouts = vault.cumulative_payouts + payout;
-    if (is_up) { vault.total_up_short = vault.total_up_short - quantity } else {
-        vault.total_down_short = vault.total_down_short - quantity
+    let strike_qty = (quantity as u128) * (strike as u128);
+    if (is_up) {
+        vault.total_up_short = vault.total_up_short - quantity;
+        vault.sum_up_strike_qty = vault.sum_up_strike_qty - strike_qty;
+    } else {
+        vault.total_down_short = vault.total_down_short - quantity;
+        vault.sum_down_strike_qty = vault.sum_down_strike_qty - strike_qty;
     };
     vault.recompute_max_liability();
     vault.balance.split(payout)
@@ -188,9 +215,5 @@ fun vault_value<Quote>(vault: &Vault<Quote>): u64 {
 }
 
 fun recompute_max_liability<Quote>(vault: &mut Vault<Quote>) {
-    vault.max_liability = if (vault.total_up_short > vault.total_down_short) {
-        vault.total_up_short
-    } else {
-        vault.total_down_short
-    };
+    vault.max_liability = vault.total_up_short + vault.total_down_short;
 }

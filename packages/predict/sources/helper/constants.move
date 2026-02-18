@@ -28,6 +28,10 @@ public macro fun default_base_spread(): u64 { 10_000_000 }
 /// At full imbalance, spread ranges from 0 to 2 * max_skew_multiplier * base_spread
 public macro fun default_max_skew_multiplier(): u64 { 1_000_000_000 }
 
+/// Utilization multiplier applied to base spread (2x in FLOAT_SCALING)
+/// Controls how aggressively spread widens as vault approaches capacity
+public macro fun default_utilization_multiplier(): u64 { 2_000_000_000 }
+
 /// LP withdrawal lockup period (24 hours)
 public macro fun default_min_lockup_ms(): u64 { 86_400_000 }
 

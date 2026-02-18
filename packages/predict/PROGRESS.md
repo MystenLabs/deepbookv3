@@ -14,12 +14,12 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 | Module | Status | Notes |
 |--------|--------|-------|
 | `registry.move` | Done | init, AdminCap, create_predict, create_oracle, create_oracle_cap, pause setters, config setters (lockup, spread, skew, exposure limit) |
-| `predict.move` | Done | Orchestrator + pricing: create_manager, mint, redeem, mint/redeem_collateralized, supply, withdraw, get_quote (aggregate skew), risk checks, pause enforcement, config forwarders |
-| `vault/vault.move` | Done | Aggregate state machine: execute_mint/redeem (by is_up), collateralized mint/redeem, total_up_short/total_down_short/max_liability tracking, assert_total_exposure, conservative vault_value (balance - max_liability) |
+| `predict.move` | Done | Orchestrator + pricing: create_manager, mint, redeem, mint/redeem_collateralized, supply, withdraw, get_quote (additive 3-component spread: base + skew + utilization), expected_liability (oracle-weighted), risk checks, pause enforcement, config forwarders |
+| `vault/vault.move` | Done | Aggregate state machine: execute_mint/redeem (by is_up, with strike threading), collateralized mint/redeem, total_up_short/total_down_short/sum_up_strike_qty/sum_down_strike_qty/max_liability tracking, assert_total_exposure, conservative vault_value (balance - max_liability) |
 | `vault/supply_manager.move` | Done | LP share accounting: supply (shares minted), withdraw (shares burned), lockup enforcement, vault_value param, share_ratio helper |
 | `predict_manager.move` | Done | User-side: wraps BalanceManager (deposit/withdraw caps), tracks positions (free/locked), collateral lock/release |
 | `market_key/market_key.move` | Done | Positional struct: (oracle_id, expiry, strike, direction), UP/DOWN helpers, assert_matches_oracle() |
-| `config/pricing_config.move` | Done | base_spread (1%), max_skew_multiplier (1x) |
+| `config/pricing_config.move` | Done | base_spread (1%), max_skew_multiplier (1x), utilization_multiplier (2x) |
 | `config/risk_config.move` | Done | max_total_exposure_pct (80%) |
 | `config/lp_config.move` | Done | lockup_period_ms (24h default) |
 | `helper/constants.move` | Done | `public macro fun`: FLOAT_SCALING (1e9), config defaults, ms_per_year, staleness_threshold_ms |
@@ -156,10 +156,23 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 - **Simplified pricing math**: inlined `compute_iv` + `get_pricing_data` + `get_binary_price` into a single `get_binary_price`. Key insight: SVI gives total_variance directly, and `iv²*t = total_var`, `iv*√t = √(total_var)`, so d2 = `(-k - total_var/2) / √(total_var)` — time cancels out of d2 entirely, IV is never computed. Saves 1 `ln`, 1 `sqrt`, several `mul`/`div` per call. Net -45 lines.
 - **First test file**: `tests/oracle_tests.move` with 5 tests — UP+DOWN sum to discount factor invariant, directional correctness (OTM call/put), parameter variations (shifted m, positive rho), short expiry (1 day).
 
-### Session: 2026-02-18
+### Session: 2026-02-18 (aggregate vault)
 - **Vault refactored to aggregate-only tracking**: replaced `Table<MarketKey, PositionData>` with simple counters (`total_up_short`, `total_down_short`, `total_collateralized`, `max_liability`). Removed `PositionData` struct, per-market position tracking, `min_liability`, `unrealized_liability`/`unrealized_assets`, MTM functions.
 - **Removed mark-to-market**: no more `mark_to_market`, `update_position_mtm`, `update_unrealized`, or `settle` function. LP share pricing uses conservative formula (`balance - max_liability`) instead.
 - **Removed per-market risk limit**: deleted `max_per_market_exposure_pct` from `RiskConfig`, `assert_exposure` from vault (kept `assert_total_exposure`), `default_max_exposure_per_market_pct` macro from constants, `set_max_per_market_exposure_pct` from predict.move and registry.move.
 - **Removed discrete market enablement**: deleted `market_manager.move` entirely, removed `Markets` field from `Predict` struct, removed `enable_market` from predict.move and registry.move.
 - **Unified continuous entry points**: removed gated `mint`/`mint_collateralized` (which called `assert_enabled`), renamed `mint_continuous` → `mint` and `mint_collateralized_continuous` → `mint_collateralized`.
 - **Cleanup**: removed dead `up_down_pair()` from market_key.move, renamed `sources/market_manager/` → `sources/market_key/` directory.
+
+### Session: 2026-02-18 (skew analysis + spread refactor)
+- **Spread refactored to additive 3-component formula**: `effective_spread = base_spread + skew_component + utilization_component`. Previously spread was multiplicative (`price × base_spread × multiplier`), now additive which gives more predictable behavior.
+- **Inventory skew**: uses oracle-weighted expected liability per side. Computes `expected_liability = total_short × oracle.price(avg_strike, is_up)` using strike-weighted averages (`sum_up_strike_qty`, `sum_down_strike_qty`). Only penalizes the heavy side; light side gets no skew penalty.
+- **Utilization spread**: `base_spread × util_multiplier × util²` applied to both sides. Gentle-then-aggressive curve as vault approaches capacity.
+- **Added `utilization_multiplier`** to `PricingConfig` (default 2x). Wired through predict.move and registry.move.
+- **Vault tracks strike-weighted sums**: added `sum_up_strike_qty: u128`, `sum_down_strike_qty: u128`. Updated `execute_mint`/`execute_redeem` to accumulate/decrement `quantity × strike`.
+- **Changed `max_liability`** from `max(up, down)` to `up + down` (conservative bound — both sides can win at intermediate settlements).
+- **Skew approach analysis** (documented in `SKEW.md`): evaluated 3 approaches for computing imbalance:
+  1. Strike-weighted avg + oracle (current) — captures moneyness via expected liability, has bounded Jensen's inequality approximation error
+  2. Per-side premiums - payouts — fundamentally flawed due to historical pollution (cumulative P&L mixes closed/open positions)
+  3. Quantity-only (`total_up_short` vs `total_down_short`) — clean but ignores moneyness
+- **Kept approach #1** (strike-weighted + oracle) after analysis showed premiums-payouts doesn't measure current risk (past redeems pollute the signal), and quantity-only ignores that ITM positions carry far more vault risk than OTM.

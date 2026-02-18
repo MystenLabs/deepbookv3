@@ -131,6 +131,15 @@ public fun set_max_skew_multiplier<Quote>(
     predict.set_max_skew_multiplier(multiplier);
 }
 
+/// Set utilization multiplier.
+public fun set_utilization_multiplier<Quote>(
+    predict: &mut predict::Predict<Quote>,
+    _admin_cap: &AdminCap,
+    multiplier: u64,
+) {
+    predict.set_utilization_multiplier(multiplier);
+}
+
 /// Set max total exposure percentage.
 public fun set_max_total_exposure_pct<Quote>(
     predict: &mut predict::Predict<Quote>,
