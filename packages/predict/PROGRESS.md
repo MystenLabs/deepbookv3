@@ -15,7 +15,7 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 |--------|--------|-------|
 | `registry.move` | Done | init, AdminCap, create_predict, create_oracle, create_oracle_cap, pause setters, config setters (lockup, spread, skew, exposure limit) |
 | `predict.move` | Done | Orchestrator + pricing: create_manager, mint, redeem, mint/redeem_collateralized, supply, withdraw, get_quote (additive 3-component spread: base + skew + utilization), expected_liability (oracle-weighted), risk checks, pause enforcement, config forwarders |
-| `vault/vault.move` | Done | Aggregate state machine: execute_mint/redeem (by is_up, with strike threading), collateralized mint/redeem, total_up_short/total_down_short/sum_up_strike_qty/sum_down_strike_qty/max_liability tracking, assert_total_exposure, conservative vault_value (balance - max_liability) |
+| `vault/vault.move` | Done | Aggregate state machine: execute_mint/redeem (is_up, strike, quantity), collateralized mint/redeem, total_up_short/total_down_short/sum_up_strike_qty/sum_down_strike_qty/max_liability tracking, assert_total_exposure. Supply/withdraw receive vault_value from orchestrator (expected NAV). |
 | `vault/supply_manager.move` | Done | LP share accounting: supply (shares minted), withdraw (shares burned), lockup enforcement, vault_value param, share_ratio helper |
 | `predict_manager.move` | Done | User-side: wraps BalanceManager (deposit/withdraw caps), tracks positions (free/locked), collateral lock/release |
 | `market_key/market_key.move` | Done | Positional struct: (oracle_id, expiry, strike, direction), UP/DOWN helpers, assert_matches_oracle() |
@@ -53,7 +53,7 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 - Pricing logic (get_quote, spread calculation) lives in predict.move as private functions
 - Collateralized minting lives in PredictManager (free/locked positions), not a separate CollateralManager
 - **Aggregate-only vault**: no per-market Table, just total_up_short/total_down_short/total_collateralized counters. Skew pricing uses aggregate exposure.
-- **Conservative LP pricing**: vault_value = balance - max_liability (no MTM). Protects existing LPs from dilution; corrects as positions are redeemed.
+- **Expected NAV for LP share pricing**: vault_value = balance - expected_liabilities (oracle-weighted). Gives LPs fair share pricing instead of worst-case. Conservative max_liability still used for exposure risk checks. **TODO: revisit — likely gameable via oracle manipulation or timing attacks.**
 - Risk limits: 80% max total exposure (as % of vault balance). No per-market limit (unnecessary with aggregate tracking).
 - **No settle function**: oracle freezes settlement price at expiry. Redeems return 100%/0% for settled oracles. max_liability decreases naturally as positions are redeemed.
 - Pause state lives in `Predict` (not `Registry`) to avoid circular dependency (registry → predict)
@@ -176,3 +176,12 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
   2. Per-side premiums - payouts — fundamentally flawed due to historical pollution (cumulative P&L mixes closed/open positions)
   3. Quantity-only (`total_up_short` vs `total_down_short`) — clean but ignores moneyness
 - **Kept approach #1** (strike-weighted + oracle) after analysis showed premiums-payouts doesn't measure current risk (past redeems pollute the signal), and quantity-only ignores that ITM positions carry far more vault risk than OTM.
+
+### Session: 2026-02-18 (vault value + cleanup)
+- **strike_qty fields changed from u128 to u64**: use `math::mul(quantity, strike)` for accumulation (fixed-point aware) and `math::div(sum, qty)` for avg_strike recovery. No u128 needed.
+- **Swapped `execute_mint`/`execute_redeem` arg order**: `(is_up, strike, quantity, ...)` groups market identity fields together.
+- **Fixed `vault_value` bug**: `vault.max_liability` (field access) → `vault.max_liability()` (function call).
+- **LP share pricing switched to expected NAV**: `supply`/`withdraw` now take oracle, compute `expected_vault_value = balance - expected_up - expected_down` using oracle-weighted liabilities. Conservative `max_liability` still used for `assert_total_exposure`. Vault stays oracle-free — receives `vault_value` as a parameter from predict.move.
+- **Removed `cumulative_premiums`/`cumulative_payouts`**: unused informational counters — never read on-chain.
+- **Collateral + regular redeem interaction is safe**: analyzed scenario where user mints UP-65k (vault-backed), locks it as collateral to mint UP-75k, then redeems UP-75k via regular `redeem`. Vault aggregate accounting (`total_up_short`) stays correct because: (1) the locked UP-65k cannot be redeemed against the vault until the user re-acquires UP-75k (which requires a new vault mint, restoring `total_up_short`), (2) the collateral lock forces re-engagement with the vault before the locked position is accessible, so exposure is genuinely zero in the intermediate state.
+- **Open concern**: expected NAV for share pricing is probably gameable (oracle manipulation, timing around large market moves). Needs future hardening.

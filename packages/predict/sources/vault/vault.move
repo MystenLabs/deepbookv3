@@ -16,7 +16,7 @@
 module deepbook_predict::vault;
 
 use deepbook::math;
-use deepbook_predict::supply_manager::{Self, SupplyManager};
+use deepbook_predict::{math as predict_math, supply_manager::{Self, SupplyManager}};
 use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin};
 
 // === Errors ===
@@ -34,16 +34,14 @@ public struct Vault<phantom Quote> has store {
     total_up_short: u64,
     /// Total DOWN contracts the vault is short
     total_down_short: u64,
-    /// Σ(quantity × strike) for UP positions — used to derive weighted-average strike
+    /// Σ(quantity × strike) for UP positions — used to derive weighted-average strike (signed)
     sum_up_strike_qty: u64,
-    /// Σ(quantity × strike) for DOWN positions — used to derive weighted-average strike
+    sum_up_strike_qty_negative: bool,
+    /// Σ(quantity × strike) for DOWN positions — used to derive weighted-average strike (signed)
     sum_down_strike_qty: u64,
+    sum_down_strike_qty_negative: bool,
     /// Total collateralized contracts (not backed by vault)
     total_collateralized: u64,
-    /// Total premiums collected from traders
-    cumulative_premiums: u64,
-    /// Total payouts made to traders
-    cumulative_payouts: u64,
 }
 
 // === Public Functions ===
@@ -54,14 +52,6 @@ public fun balance<Quote>(vault: &Vault<Quote>): u64 {
 
 public fun max_liability<Quote>(vault: &Vault<Quote>): u64 {
     vault.total_up_short + vault.total_down_short
-}
-
-public fun cumulative_premiums<Quote>(vault: &Vault<Quote>): u64 {
-    vault.cumulative_premiums
-}
-
-public fun cumulative_payouts<Quote>(vault: &Vault<Quote>): u64 {
-    vault.cumulative_payouts
 }
 
 public fun total_up_short<Quote>(vault: &Vault<Quote>): u64 {
@@ -76,12 +66,12 @@ public fun total_collateralized<Quote>(vault: &Vault<Quote>): u64 {
     vault.total_collateralized
 }
 
-public fun sum_up_strike_qty<Quote>(vault: &Vault<Quote>): u64 {
-    vault.sum_up_strike_qty
+public fun sum_up_strike_qty<Quote>(vault: &Vault<Quote>): (u64, bool) {
+    (vault.sum_up_strike_qty, vault.sum_up_strike_qty_negative)
 }
 
-public fun sum_down_strike_qty<Quote>(vault: &Vault<Quote>): u64 {
-    vault.sum_down_strike_qty
+public fun sum_down_strike_qty<Quote>(vault: &Vault<Quote>): (u64, bool) {
+    (vault.sum_down_strike_qty, vault.sum_down_strike_qty_negative)
 }
 
 /// Returns (shares, last_supply_ms) for an owner.
@@ -102,10 +92,10 @@ public(package) fun new<Quote>(ctx: &mut TxContext): Vault<Quote> {
         total_up_short: 0,
         total_down_short: 0,
         sum_up_strike_qty: 0,
+        sum_up_strike_qty_negative: false,
         sum_down_strike_qty: 0,
+        sum_down_strike_qty_negative: false,
         total_collateralized: 0,
-        cumulative_premiums: 0,
-        cumulative_payouts: 0,
     }
 }
 
@@ -114,20 +104,32 @@ public(package) fun new<Quote>(ctx: &mut TxContext): Vault<Quote> {
 public(package) fun execute_mint<Quote>(
     vault: &mut Vault<Quote>,
     is_up: bool,
-    quantity: u64,
     strike: u64,
+    quantity: u64,
     payment: Coin<Quote>,
 ) {
-    let cost = payment.value();
     vault.balance.join(payment.into_balance());
-    vault.cumulative_premiums = vault.cumulative_premiums + cost;
     let strike_qty = math::mul(quantity, strike);
     if (is_up) {
         vault.total_up_short = vault.total_up_short + quantity;
-        vault.sum_up_strike_qty = vault.sum_up_strike_qty + strike_qty;
+        let (new_sum, new_neg) = predict_math::add_signed_u64(
+            vault.sum_up_strike_qty,
+            vault.sum_up_strike_qty_negative,
+            strike_qty,
+            false,
+        );
+        vault.sum_up_strike_qty = new_sum;
+        vault.sum_up_strike_qty_negative = new_neg;
     } else {
         vault.total_down_short = vault.total_down_short + quantity;
-        vault.sum_down_strike_qty = vault.sum_down_strike_qty + strike_qty;
+        let (new_sum, new_neg) = predict_math::add_signed_u64(
+            vault.sum_down_strike_qty,
+            vault.sum_down_strike_qty_negative,
+            strike_qty,
+            false,
+        );
+        vault.sum_down_strike_qty = new_sum;
+        vault.sum_down_strike_qty_negative = new_neg;
     };
 }
 
@@ -136,19 +138,32 @@ public(package) fun execute_mint<Quote>(
 public(package) fun execute_redeem<Quote>(
     vault: &mut Vault<Quote>,
     is_up: bool,
-    quantity: u64,
     strike: u64,
+    quantity: u64,
     payout: u64,
 ): Balance<Quote> {
     assert!(vault.balance.value() >= payout, EInsufficientBalance);
-    vault.cumulative_payouts = vault.cumulative_payouts + payout;
     let strike_qty = math::mul(quantity, strike);
     if (is_up) {
         vault.total_up_short = vault.total_up_short - quantity;
-        vault.sum_up_strike_qty = vault.sum_up_strike_qty - strike_qty;
+        let (new_sum, new_neg) = predict_math::sub_signed_u64(
+            vault.sum_up_strike_qty,
+            vault.sum_up_strike_qty_negative,
+            strike_qty,
+            false,
+        );
+        vault.sum_up_strike_qty = new_sum;
+        vault.sum_up_strike_qty_negative = new_neg;
     } else {
         vault.total_down_short = vault.total_down_short - quantity;
-        vault.sum_down_strike_qty = vault.sum_down_strike_qty - strike_qty;
+        let (new_sum, new_neg) = predict_math::sub_signed_u64(
+            vault.sum_down_strike_qty,
+            vault.sum_down_strike_qty_negative,
+            strike_qty,
+            false,
+        );
+        vault.sum_down_strike_qty = new_sum;
+        vault.sum_down_strike_qty_negative = new_neg;
     };
     vault.balance.split(payout)
 }
@@ -172,14 +187,15 @@ public(package) fun assert_total_exposure<Quote>(vault: &Vault<Quote>, max_total
 }
 
 /// Supply USDC to the vault, receive shares.
+/// `vault_value` is the expected NAV computed by the orchestrator.
 public(package) fun supply<Quote>(
     vault: &mut Vault<Quote>,
     coin: Coin<Quote>,
+    vault_value: u64,
     clock: &Clock,
     ctx: &TxContext,
 ): u64 {
     let amount = coin.value();
-    let vault_value = vault.vault_value();
     let shares = vault.supply_manager.supply(amount, vault_value, clock, ctx);
     vault.balance.join(coin.into_balance());
 
@@ -187,23 +203,16 @@ public(package) fun supply<Quote>(
 }
 
 /// Withdraw USDC from the vault by burning shares.
+/// `vault_value` is the expected NAV computed by the orchestrator.
 public(package) fun withdraw<Quote>(
     vault: &mut Vault<Quote>,
     shares: u64,
+    vault_value: u64,
     lockup_period_ms: u64,
     clock: &Clock,
     ctx: &TxContext,
 ): Balance<Quote> {
-    let vault_value = vault.vault_value();
     let amount = vault.supply_manager.withdraw(shares, vault_value, lockup_period_ms, clock, ctx);
 
     vault.balance.split(amount)
-}
-
-// === Private Functions ===
-
-/// Conservative vault value: balance - max_liability, floored at 0.
-fun vault_value<Quote>(vault: &Vault<Quote>): u64 {
-    let bal = vault.balance.value();
-    if (bal > vault.max_liability) { bal - vault.max_liability } else { 0 }
 }

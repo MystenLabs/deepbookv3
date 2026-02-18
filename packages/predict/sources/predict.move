@@ -84,7 +84,7 @@ public fun mint<Underlying, Quote>(
 
     let (cost, _payout) = predict.get_trade_amounts(oracle, key, quantity, clock);
     let payment = manager.withdraw<Quote>(cost, ctx);
-    predict.vault.execute_mint(key.is_up(), quantity, key.strike(), payment);
+    predict.vault.execute_mint(key.is_up(), key.strike(), quantity, payment);
     predict.vault.assert_total_exposure(predict.risk_config.max_total_exposure_pct());
     manager.increase_position(key, quantity);
 }
@@ -108,7 +108,7 @@ public fun redeem<Underlying, Quote>(
     manager.decrease_position(key, quantity);
 
     let (_cost, payout) = predict.get_trade_amounts(oracle, key, quantity, clock);
-    let payout_balance = predict.vault.execute_redeem(key.is_up(), quantity, key.strike(), payout);
+    let payout_balance = predict.vault.execute_redeem(key.is_up(), key.strike(), quantity, payout);
 
     let payout_coin = payout_balance.into_coin(ctx);
     manager.deposit(payout_coin, ctx);
@@ -159,26 +159,32 @@ public fun redeem_collateralized<Quote>(
 }
 
 /// Supply USDC to the vault, receive shares.
-public fun supply<Quote>(
+/// Share price is based on expected NAV (oracle-weighted liabilities).
+public fun supply<Underlying, Quote>(
     predict: &mut Predict<Quote>,
+    oracle: &OracleSVI<Underlying>,
     coin: Coin<Quote>,
     clock: &Clock,
     ctx: &TxContext,
 ): u64 {
-    predict.vault.supply(coin, clock, ctx)
+    let vault_value = predict.expected_vault_value(oracle, clock);
+    predict.vault.supply(coin, vault_value, clock, ctx)
 }
 
 /// Withdraw USDC from the vault by burning shares.
+/// Share price is based on expected NAV (oracle-weighted liabilities).
 /// Fails if lockup period has not elapsed since last supply.
-public fun withdraw<Quote>(
+public fun withdraw<Underlying, Quote>(
     predict: &mut Predict<Quote>,
+    oracle: &OracleSVI<Underlying>,
     shares: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Quote> {
     assert!(!predict.withdrawals_paused, EWithdrawalsPaused);
+    let vault_value = predict.expected_vault_value(oracle, clock);
     let lockup_period_ms = predict.lp_config.lockup_period_ms();
-    predict.vault.withdraw(shares, lockup_period_ms, clock, ctx).into_coin(ctx)
+    predict.vault.withdraw(shares, vault_value, lockup_period_ms, clock, ctx).into_coin(ctx)
 }
 
 // === Public-Package Functions ===
@@ -274,7 +280,8 @@ fun get_quote<Underlying, Quote>(
     let price = oracle.get_binary_price(strike, is_up, clock);
     let base_spread = predict.pricing_config.base_spread();
 
-    let spread = base_spread
+    let spread =
+        base_spread
         + predict.inventory_skew(oracle, is_up, clock)
         + predict.utilization_spread();
 
@@ -328,7 +335,20 @@ fun utilization_spread<Quote>(predict: &Predict<Quote>): u64 {
     )
 }
 
-/// Expected liability for one side: total_short × oracle.price(avg_strike, is_up).
+/// Vault value using oracle-weighted expected liabilities.
+/// balance - expected_up - expected_down, floored at 0.
+fun expected_vault_value<Underlying, Quote>(
+    predict: &Predict<Quote>,
+    oracle: &OracleSVI<Underlying>,
+    clock: &Clock,
+): u64 {
+    let bal = predict.vault.balance();
+    let (expected_up, expected_down) = expected_liabilities(predict, oracle, clock);
+    let expected_total = expected_up + expected_down;
+    if (bal > expected_total) { bal - expected_total } else { 0 }
+}
+
+/// Expected liability per side: total_short × oracle.price(avg_strike, is_up).
 fun expected_liabilities<Underlying, Quote>(
     predict: &Predict<Quote>,
     oracle: &OracleSVI<Underlying>,
@@ -337,17 +357,19 @@ fun expected_liabilities<Underlying, Quote>(
     let up_qty = predict.vault.total_up_short();
     let down_qty = predict.vault.total_down_short();
 
-    let expected_up = if (up_qty == 0) {
+    let (sum_up_qty, sum_up_neg) = predict.vault.sum_up_strike_qty();
+    let expected_up = if (up_qty == 0 || sum_up_neg) {
         0
     } else {
-        let avg_up_strike = math::div(predict.vault.sum_up_strike_qty(), up_qty);
+        let avg_up_strike = math::div(sum_up_qty, up_qty);
         math::mul(up_qty, oracle.get_binary_price(avg_up_strike, true, clock))
     };
 
-    let expected_down = if (down_qty == 0) {
+    let (sum_down_qty, sum_down_neg) = predict.vault.sum_down_strike_qty();
+    let expected_down = if (down_qty == 0 || sum_down_neg) {
         0
     } else {
-        let avg_down_strike = math::div(predict.vault.sum_down_strike_qty(), down_qty);
+        let avg_down_strike = math::div(sum_down_qty, down_qty);
         math::mul(down_qty, oracle.get_binary_price(avg_down_strike, false, clock))
     };
 

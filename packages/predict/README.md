@@ -1,189 +1,109 @@
 # deepbook_predict
 
-Binary options protocol built on Sui. Users bet on whether asset prices will be above or below a strike price at expiration.
+Binary options protocol built on Sui. Users bet on whether asset prices will be above (UP) or below (DOWN) a strike price at expiration. The vault acts as counterparty to all trades.
 
-## MVP Scope
+## Architecture
 
-- Core trading (mint/redeem/get_quote)
-- Vault with LP deposits/withdrawals and share accounting
-- Oracle integration (Block Scholes volatility surface)
-- Exposure tracking
-- Inventory-based dynamic spread adjustment
-- Position limits and circuit breakers
-- Withdrawal delays (24h lockup)
-- Admin controls (pause, parameter updates, market creation)
-- Collateral manager (position-as-collateral for spreads)
+A single `Predict` shared object orchestrates all operations. It holds the vault, pricing config, LP config, and risk config. Users interact through `PredictManager` objects that hold their USDC balances and position state.
 
-**Not Included:**
-- Hedging infrastructure
+Pricing uses an on-chain SVI volatility surface oracle (provided by Block Scholes) to compute Black-Scholes binary option prices for any strike.
 
 ## Module Structure
 
 ```
 sources/
-├── predict.move                 # Main entry point: all public functions + events
-├── registry.move                # Registry + AdminCap + market registration
-├── oracle.move                  # Oracle shared object, data updates, staleness
+├── predict.move              # Entry point: mint, redeem, collateral, supply, withdraw, pricing
+├── registry.move             # AdminCap, Registry shared object, oracle/predict creation
+├── oracle.move               # SVI oracle: volatility surface, binary pricing, settlement
+├── predict_manager.move      # User state: USDC balance, positions, collateral locks
 │
 ├── vault/
-│   ├── vault.move               # Vault struct, balance, shares
-│   ├── state.move               # Exposure tracking per market
-│   └── config.move              # VaultConfig risk parameters
+│   ├── vault.move            # Vault: USDC balance, exposure tracking, LP supply/withdraw
+│   └── supply_manager.move   # LP share accounting, lockup enforcement
 │
-├── market/
-│   ├── market.move              # Market struct, MarketId, lifecycle
-│   ├── position.move            # Position token representation
-│   └── settlement.move          # Settlement price, outcome determination
+├── config/
+│   ├── pricing_config.move   # Spread parameters (base_spread, skew, utilization)
+│   ├── risk_config.move      # Exposure limits (max_total_exposure_pct)
+│   └── lp_config.move        # LP settings (lockup period)
 │
-├── collateral/
-│   ├── collateral.move          # CollateralManager, records table
-│   └── record.move              # CollateralRecord struct
-│
-├── trading/
-│   ├── pricing.move             # Black-Scholes calc, spread adjustment
-│   └── risk.move                # Position limits, circuit breaker validation
+├── market_key/
+│   └── market_key.move       # MarketKey: (oracle_id, expiry, strike, direction)
 │
 └── helper/
-    ├── constants.move           # All constants
-    └── math.move                # Math utilities (exp, ln, normal CDF)
+    ├── constants.move        # Scaling factors, default config, time constants
+    └── math.move             # ln, exp, normal_cdf, signed arithmetic
 ```
 
-## Components
+## Key Concepts
 
-### Registry (`registry.move`)
-- `Registry` shared object - tracks all markets
-- `AdminCap` capability for admin operations
-- Market registration/lookup
-- Global pause flags
+### Vault as Counterparty
 
-### Oracle (`oracle.move`)
-- `Oracle` shared object per expiry
-- `OracleData` struct (spot_price, volatility_surface, risk_free_rate, timestamp)
-- `update()` - oracle provider pushes data
-- Staleness check (30s threshold)
+The vault holds LP-supplied USDC and takes the opposite side of every trade. When a user mints UP, the vault goes short UP. When the user redeems, the vault buys back that exposure. Vault value is `balance - expected_liabilities`, used to price LP shares.
 
-### Vault (`vault/`)
-- `Vault` shared object holding LP funds
-- `VaultShare` object for LP positions (with deposit timestamp for lockup)
-- `State` - exposure tracking per market, total liability
-- `Config` - risk parameters (limits, spread params, lockup duration)
+### Two Ways to Mint
 
-### Market (`market/`)
-- `Market` struct (underlying, strike, expiry, direction)
-- `MarketId` - unique identifier for each market
-- `Position` - token wrapper for user holdings
-- Settlement logic - compare settlement price vs strike
+1. **Regular mint**: User pays USDC. Vault takes on short exposure.
+2. **Collateralized mint**: User locks an existing position to mint a new one (e.g., lock UP-50k to mint UP-60k). No USDC, no additional vault exposure — the locked collateral always covers the minted position.
 
-### Collateral Manager (`collateral/`)
-- `CollateralManager` shared object
-- `CollateralRecord` - tracks locked collateral and minted positions
-- Validates collateral rules (same expiry, valid strike relationship)
+### Spread Pricing
 
-### Trading (`trading/`)
-- `pricing.move` - Black-Scholes for binary options, IV interpolation, dynamic spread
-- `risk.move` - position limit checks, circuit breaker conditions
+Spread has three additive components:
+- **Base spread**: fixed parameter
+- **Inventory skew**: penalizes the heavy side using oracle-weighted expected liability per direction
+- **Utilization**: penalizes both sides as vault approaches capacity (uses util²)
 
-### Helper (`helper/`)
-- `constants.move` - scaling factors, default limits, time constants
-- `math.move` - fixed-point math, exp/ln approximations, normal CDF
+### Settlement
 
-## Public Functions (in `predict.move`)
+After expiry, the oracle freezes a settlement price. Winners receive $1 per contract (= `quantity` in USDC units), losers receive $0. Redeem works both pre-expiry (at bid price) and post-expiry (at settlement value).
 
-### LP Actions
-```move
-public fun deposit(vault, usdc, clock, ctx) → VaultShare
-public fun withdraw(vault, share, clock, ctx) → Coin<USDC>
-```
+## Public Functions
 
-### Trading Actions
-```move
-public fun get_quote(vault, oracle, market_id, clock) → (bid, ask)
-public fun mint(vault, oracle, market_id, usdc, clock, ctx) → Position
-public fun redeem(vault, oracle, position, clock, ctx) → Coin<USDC>
-```
-
-### Collateral Actions (Spreads)
-```move
-public fun mint_with_collateral(vault, collateral_mgr, collateral_position, target_market, clock, ctx) → (Position, ID)
-public fun unlock_collateral(vault, collateral_mgr, oracle, record_id, minted_position_opt, clock, ctx) → Position
-```
-
-### Admin Actions (require AdminCap)
-```move
-public fun create_market(registry, admin_cap, underlying, strike, expiry, clock, ctx)
-public fun pause_trading(registry, admin_cap)
-public fun unpause_trading(registry, admin_cap)
-public fun pause_withdrawals(registry, admin_cap)
-public fun unpause_withdrawals(registry, admin_cap)
-public fun update_max_single_trade_pct(registry, admin_cap, value)
-public fun update_max_exposure_per_market_pct(registry, admin_cap, value)
-public fun update_base_spread_bps(registry, admin_cap, value)
-// ... etc for each config parameter
-```
-
-### Oracle Actions
-```move
-public fun update_oracle(oracle, oracle_cap, data, clock)
-```
-
-## Events (emitted from `predict.move`)
+### Trading
 
 ```move
-// Trading
-PositionMinted { market_id, trader, amount, price, usdc_paid }
-PositionRedeemed { market_id, trader, amount, price, usdc_received, is_settlement }
-
-// Vault
-LiquidityDeposited { depositor, usdc_amount, shares_minted, share_value }
-LiquidityWithdrawn { withdrawer, shares_burned, usdc_received, share_value }
-
-// Market
-MarketCreated { market_id, underlying, strike, expiry }
-MarketSettled { market_id, settlement_price, up_wins }
-
-// Collateral
-CollateralDeposited { record_id, owner, collateral_market_id, minted_market_id, amount }
-CollateralUnlocked { record_id, owner }
-
-// Admin
-TradingPaused { paused_by }
-TradingUnpaused { unpaused_by }
-WithdrawalsPaused { paused_by }
-WithdrawalsUnpaused { unpaused_by }
-RiskParameterUpdated { parameter, old_value, new_value }
+get_trade_amounts(predict, oracle, key, quantity, clock) → (mint_cost, redeem_payout)
+mint(predict, manager, oracle, key, quantity, clock, ctx)
+redeem(predict, manager, oracle, key, quantity, clock, ctx)
 ```
 
-## Key Design Decisions
+### Collateral
 
-1. **Single Vault** - One vault acts as counterparty to all markets
-2. **Spread-Only Fees** - No trading fees, vault profits from bid/ask spread (100% to LPs)
-3. **Inventory-Based Spreads** - Spread widens when vault exposure is imbalanced
-4. **24h LP Lockup** - Prevents deposit-before-settlement attacks
-5. **Automatic Settlement** - redeem() handles both pre-expiry (bid price) and post-expiry (settlement)
-6. **7-Day Grace Period** - Unclaimed positions after grace period go to vault
-7. **AdminCap in Multisig** - Single capability, no timelocks, immediate parameter updates
-
-## Internal Flow
-
+```move
+mint_collateralized(predict, manager, oracle, locked_key, minted_key, quantity, clock)
+redeem_collateralized(predict, manager, locked_key, minted_key, quantity)
 ```
-mint(market_id, usdc):
-  1. Check oracle not stale
-  2. Calculate ask price (pricing.move)
-  3. Validate against risk limits (risk.move)
-  4. Update vault exposure (state.move)
-  5. Mint position token
-  6. Emit PositionMinted event
 
-redeem(position):
-  1. Check if market expired
-  2. If pre-expiry: calculate bid price
-  3. If post-expiry: determine settlement (win=$1, lose=$0)
-  4. Update vault exposure
-  5. Burn position token
-  6. Transfer USDC to user
-  7. Emit PositionRedeemed event
+### LP Operations
+
+```move
+supply(predict, oracle, coin, clock, ctx) → shares
+withdraw(predict, oracle, shares, clock, ctx) → Coin<Quote>
+```
+
+### Admin (via Registry + AdminCap)
+
+```move
+create_predict(registry, admin_cap, ctx)
+create_oracle_cap(admin_cap, ctx)
+create_oracle(registry, admin_cap, cap, expiry, ctx)
+set_trading_paused(predict, admin_cap, paused)
+set_withdrawals_paused(predict, admin_cap, paused)
+set_lockup_period(predict, admin_cap, period_ms)
+set_base_spread(predict, admin_cap, spread)
+set_max_skew_multiplier(predict, admin_cap, multiplier)
+set_utilization_multiplier(predict, admin_cap, multiplier)
+set_max_total_exposure_pct(predict, admin_cap, pct)
+```
+
+### Oracle (via OracleCapSVI)
+
+```move
+activate(oracle, cap, clock)
+update_prices(oracle, cap, prices, clock)
+update_svi(oracle, cap, svi, risk_free_rate, clock)
 ```
 
 ## Dependencies
 
-- Sui Framework (Clock, Coin, Balance, Table, etc.)
+- Sui Framework (Clock, Coin, Balance, Table)
+- DeepBook (math, BalanceManager)
