@@ -54,28 +54,17 @@ public fun create_manager(ctx: &mut TxContext): ID {
     predict_manager::new(ctx)
 }
 
-/// Get the cost to mint a position (for UI/preview).
-public fun get_mint_cost<Underlying, Quote>(
+/// Get the amounts for mint/redeem (for UI/preview).
+/// Returns (mint_cost, redeem_payout).
+public fun get_trade_amounts<Underlying, Quote>(
     predict: &Predict<Quote>,
     oracle: &OracleSVI<Underlying>,
     key: MarketKey,
     quantity: u64,
     clock: &Clock,
-): u64 {
-    let (_bid, ask) = get_quote(predict, oracle, key, clock);
-    math::mul(ask, quantity)
-}
-
-/// Get the payout for redeeming a position (for UI/preview).
-public fun get_redeem_payout<Underlying, Quote>(
-    predict: &Predict<Quote>,
-    oracle: &OracleSVI<Underlying>,
-    key: MarketKey,
-    quantity: u64,
-    clock: &Clock,
-): u64 {
-    let (bid, _ask) = get_quote(predict, oracle, key, clock);
-    math::mul(bid, quantity)
+): (u64, u64) {
+    let (bid, ask) = predict.get_quote(oracle, key, clock);
+    (math::mul(ask, quantity), math::mul(bid, quantity))
 }
 
 /// Buy a position. Cost is withdrawn from the PredictManager's balance.
@@ -93,7 +82,7 @@ public fun mint<Underlying, Quote>(
     key.assert_matches_oracle(oracle);
     oracle.assert_not_stale(clock);
 
-    let cost = predict.get_mint_cost(oracle, key, quantity, clock);
+    let (cost, _payout) = predict.get_trade_amounts(oracle, key, quantity, clock);
     let payment = manager.withdraw<Quote>(cost, ctx);
     predict.vault.execute_mint(key.is_up(), quantity, key.strike(), payment);
     predict.vault.assert_total_exposure(predict.risk_config.max_total_exposure_pct());
@@ -118,7 +107,7 @@ public fun redeem<Underlying, Quote>(
 
     manager.decrease_position(key, quantity);
 
-    let payout = predict.get_redeem_payout(oracle, key, quantity, clock);
+    let (_cost, payout) = predict.get_trade_amounts(oracle, key, quantity, clock);
     let payout_balance = predict.vault.execute_redeem(key.is_up(), quantity, key.strike(), payout);
 
     let payout_coin = payout_balance.into_coin(ctx);
@@ -286,8 +275,8 @@ fun get_quote<Underlying, Quote>(
     let base_spread = predict.pricing_config.base_spread();
 
     let spread = base_spread
-        + inventory_skew(predict, oracle, is_up, clock)
-        + utilization_spread(predict);
+        + predict.inventory_skew(oracle, is_up, clock)
+        + predict.utilization_spread();
 
     let bid = if (price > spread) { price - spread } else { 0 };
     let ask = price + spread;
@@ -304,12 +293,7 @@ fun inventory_skew<Underlying, Quote>(
     is_up: bool,
     clock: &Clock,
 ): u64 {
-    let up_short = predict.vault.total_up_short();
-    let down_short = predict.vault.total_down_short();
-    if (up_short + down_short == 0) return 0;
-
-    let expected_up = expected_liability(predict, oracle, true, clock);
-    let expected_down = expected_liability(predict, oracle, false, clock);
+    let (expected_up, expected_down) = predict.expected_liabilities(oracle, clock);
     let expected_total = expected_up + expected_down;
     if (expected_total == 0) return 0;
 
@@ -326,15 +310,16 @@ fun inventory_skew<Underlying, Quote>(
 
 /// Utilization spread: penalizes both sides as vault approaches capacity.
 /// Uses util² for a gentle-then-aggressive curve.
+/// Utilization is based on worst-case liability vs balance.
 fun utilization_spread<Quote>(predict: &Predict<Quote>): u64 {
-    let total = predict.vault.total_up_short() + predict.vault.total_down_short();
+    let liability = predict.vault.max_liability();
     let balance = predict.vault.balance();
-    if (balance == 0 || total == 0) return 0;
+    if (balance == 0 || liability == 0) return 0;
 
-    let util = if (total >= balance) {
+    let util = if (liability >= balance) {
         constants::float_scaling!()
     } else {
-        math::div(total, balance)
+        math::div(liability, balance)
     };
     let util_sq = math::mul(util, util);
     math::mul(
@@ -344,18 +329,27 @@ fun utilization_spread<Quote>(predict: &Predict<Quote>): u64 {
 }
 
 /// Expected liability for one side: total_short × oracle.price(avg_strike, is_up).
-fun expected_liability<Underlying, Quote>(
+fun expected_liabilities<Underlying, Quote>(
     predict: &Predict<Quote>,
     oracle: &OracleSVI<Underlying>,
-    is_up: bool,
     clock: &Clock,
-): u64 {
-    let (qty, sum_strike_qty) = if (is_up) {
-        (predict.vault.total_up_short(), predict.vault.sum_up_strike_qty())
+): (u64, u64) {
+    let up_qty = predict.vault.total_up_short();
+    let down_qty = predict.vault.total_down_short();
+
+    let expected_up = if (up_qty == 0) {
+        0
     } else {
-        (predict.vault.total_down_short(), predict.vault.sum_down_strike_qty())
+        let avg_up_strike = math::div(predict.vault.sum_up_strike_qty(), up_qty);
+        math::mul(up_qty, oracle.get_binary_price(avg_up_strike, true, clock))
     };
-    if (qty == 0) return 0;
-    let avg_strike = (sum_strike_qty / (qty as u128) as u64);
-    math::mul(qty, oracle.get_binary_price(avg_strike, is_up, clock))
+
+    let expected_down = if (down_qty == 0) {
+        0
+    } else {
+        let avg_down_strike = math::div(predict.vault.sum_down_strike_qty(), down_qty);
+        math::mul(down_qty, oracle.get_binary_price(avg_down_strike, false, clock))
+    };
+
+    (expected_up, expected_down)
 }
