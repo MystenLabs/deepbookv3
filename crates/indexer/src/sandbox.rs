@@ -8,7 +8,7 @@ use std::sync::OnceLock;
 
 #[derive(Debug)]
 struct PackageOverride {
-    core: &'static [&'static str], // Deebook package id
+    core: &'static [&'static str],   // Deebook package id
     margin: &'static [&'static str], // lending / liquidation
 }
 

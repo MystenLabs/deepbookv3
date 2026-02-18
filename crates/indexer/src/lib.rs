@@ -182,9 +182,10 @@ pub fn get_margin_package_addresses(env: DeepbookEnv) -> &'static [&'static str]
 /// Get the first valid margin package address for the given environment with validation
 pub fn get_margin_package_address(env: DeepbookEnv) -> Result<&'static str, String> {
     if let Some(margin) = sandbox::margin_packages() {
-        return margin.first().copied().ok_or_else(|| {
-            "No margin packages configured in sandbox mode".to_string()
-        });
+        return margin
+            .first()
+            .copied()
+            .ok_or_else(|| "No margin packages configured in sandbox mode".to_string());
     }
 
     let packages = get_margin_package_addresses(env);
@@ -231,9 +232,7 @@ impl DeepbookEnv {
 
     /// Get all package addresses (DeepBook + Margin) for this environment
     fn get_all_package_strings(&self) -> Vec<&str> {
-        if let (Some(core), Some(margin)) =
-            (sandbox::core_packages(), sandbox::margin_packages())
-        {
+        if let (Some(core), Some(margin)) = (sandbox::core_packages(), sandbox::margin_packages()) {
             let mut all = core.to_vec();
             all.extend_from_slice(margin);
             return all;
