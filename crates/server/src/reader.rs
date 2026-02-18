@@ -1531,6 +1531,7 @@ impl Reader {
                 FROM daily_prices d
                 LEFT JOIN hourly_prices h ON d.symbol = h.symbol
             ),
+            -- UNION (not UNION ALL) intentionally deduplicates assets that appear as both base and quote
             asset_meta AS (
                 SELECT DISTINCT base_asset_id as asset_id, base_asset_decimals as decimals, base_asset_symbol as symbol FROM pools
                 UNION
@@ -1543,9 +1544,9 @@ impl Reader {
             )
             SELECT
                 am.symbol::text as asset,
-                ROUND(SUM(CASE WHEN b.deposit THEN b.amount ELSE -b.amount END) / POWER(10, am.decimals)::numeric, 6)::float8 as balance,
+                ROUND(SUM(CASE WHEN b.deposit THEN b.amount ELSE -b.amount END) / POWER(10, COALESCE(am.decimals, 9))::numeric, 6)::float8 as balance,
                 ROUND(
-                    (SUM(CASE WHEN b.deposit THEN b.amount ELSE -b.amount END) / POWER(10, am.decimals)::numeric) *
+                    (SUM(CASE WHEN b.deposit THEN b.amount ELSE -b.amount END) / POWER(10, COALESCE(am.decimals, 9))::numeric) *
                     CASE WHEN UPPER(am.symbol) IN ('USDC','USDT','AUSD') THEN 1 ELSE COALESCE(lp.price_usd, 0) END
                 , 2)::float8 as balance_usd
             FROM balances b
@@ -1597,6 +1598,7 @@ impl Reader {
                 FROM daily_prices d
                 LEFT JOIN hourly_prices h ON d.symbol = h.symbol
             ),
+            -- UNION (not UNION ALL) intentionally deduplicates assets that appear as both base and quote
             asset_meta AS (
                 SELECT DISTINCT base_asset_id as asset_id, base_asset_decimals as decimals, base_asset_symbol as symbol FROM pools
                 UNION
