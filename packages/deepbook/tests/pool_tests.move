@@ -497,6 +497,11 @@ fun test_get_quantity_out_input_fee_ask_bid_zero() {
     test_get_quantity_out_zero(false);
 }
 
+#[test]
+fun test_get_quantity_out_ask_dust_rejected() {
+    test_get_quantity_out_ask_min_size_enforced();
+}
+
 #[test, expected_failure(abort_code = ::deepbook::big_vector::ENotFound)]
 fun test_cancel_all_orders_bid_e() {
     test_cancel_all_orders(true, true);
@@ -9740,6 +9745,80 @@ fun test_swap_with_manager_zero_out(is_base_to_quote: bool) {
         base_out.burn_for_testing();
         quote_out.burn_for_testing();
     };
+
+    end(test);
+}
+
+/// Verifies that get_quantity_out rejects ask (sell) orders where the executed
+/// base quantity is below min_size, matching the existing behavior for bids.
+/// Scenario: A bid rests with only lot_size remaining after partial fill.
+/// A sell simulation should be rejected since it can only fill lot_size < min_size.
+fun test_get_quantity_out_ask_min_size_enforced() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+
+    let price = 2 * constants::float_scaling();
+    let expire_timestamp = constants::max_u64();
+    let pay_with_deep = true;
+
+    // Place a bid for min_size + lot_size (11000)
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        constants::min_size() + constants::lot_size(),
+        true,
+        pay_with_deep,
+        expire_timestamp,
+        &mut test,
+    );
+
+    // Partially fill the bid by selling min_size (10000), leaving only lot_size (1000) remaining
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        2,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        constants::min_size(),
+        false,
+        pay_with_deep,
+        expire_timestamp,
+        &mut test,
+    );
+
+    // Now only lot_size (1000) of the bid remains, which is < min_size (10000).
+    // Selling a large quantity should be rejected because the executed base
+    // would only be lot_size, which is below min_size.
+    let sell_quantity = 10 * constants::min_size();
+    let (base_out, quote_out, deep_required) = get_quote_quantity_out<SUI, USDC>(
+        pool_id,
+        sell_quantity,
+        &mut test,
+    );
+
+    // With the fix, get_quantity_out should reject the dust fill and return
+    // the original sell_quantity as base_out (unchanged) with 0 quote and 0 deep.
+    assert_eq!(base_out, sell_quantity);
+    assert_eq!(quote_out, 0);
+    assert_eq!(deep_required, 0);
 
     end(test);
 }

@@ -222,7 +222,12 @@ public(package) fun get_quantity_out(
             (quantity_out, quantity_in_left, deep_fee)
         }
     } else {
-        (quantity_in_left, quantity_out, deep_fee)
+        let executed_base = base_quantity - quantity_in_left;
+        if (executed_base > 0 && executed_base < self.min_size) {
+            (base_quantity, quote_quantity, 0)
+        } else {
+            (quantity_in_left, quantity_out, deep_fee)
+        }
     }
 }
 

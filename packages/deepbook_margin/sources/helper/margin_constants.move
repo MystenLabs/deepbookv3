@@ -3,7 +3,7 @@
 
 module deepbook_margin::margin_constants;
 
-const MARGIN_VERSION: u64 = 2;
+const MARGIN_VERSION: u64 = 3;
 const MAX_RISK_RATIO: u64 = 1_000 * 1_000_000_000; // Risk ratio above 1000 will be considered as 1000
 const DEFAULT_USER_LIQUIDATION_REWARD: u64 = 10_000_000; // 1%
 const DEFAULT_POOL_LIQUIDATION_REWARD: u64 = 40_000_000; // 4%
@@ -19,6 +19,12 @@ const MIN_LIQUIDATION_REPAY: u64 = 1000;
 const MAX_CONF_BPS: u64 = 10_000; // 100% - maximum allowed confidence interval
 const MAX_EWMA_DIFFERENCE_BPS: u64 = 10_000; // 100% - maximum allowed EWMA price difference
 const MAX_CONDITIONAL_ORDERS: u64 = 10;
+const DEFAULT_MAX_PRICE_AGE_MS: u64 = 5 * 60 * 1000; // 5 minutes
+const DEFAULT_PRICE_TOLERANCE: u64 = 50_000_000; // 5%
+const MIN_PRICE_AGE_MS: u64 = 30_000; // 30 seconds
+const MAX_PRICE_AGE_MS: u64 = 3_600_000; // 1 hour
+const MIN_PRICE_TOLERANCE: u64 = 10_000_000; // 1%
+const MAX_PRICE_TOLERANCE: u64 = 500_000_000; // 50%
 
 public fun margin_version(): u64 {
     MARGIN_VERSION
@@ -82,4 +88,28 @@ public fun max_conditional_orders(): u64 {
 
 public fun day_ms(): u64 {
     DAY_MS
+}
+
+public fun default_max_price_age_ms(): u64 {
+    DEFAULT_MAX_PRICE_AGE_MS
+}
+
+public fun default_price_tolerance(): u64 {
+    DEFAULT_PRICE_TOLERANCE
+}
+
+public fun min_price_age_ms(): u64 {
+    MIN_PRICE_AGE_MS
+}
+
+public fun max_price_age_ms(): u64 {
+    MAX_PRICE_AGE_MS
+}
+
+public fun min_price_tolerance(): u64 {
+    MIN_PRICE_TOLERANCE
+}
+
+public fun max_price_tolerance(): u64 {
+    MAX_PRICE_TOLERANCE
 }

@@ -4,6 +4,7 @@ edition = "2024.alpha"
 version = "0.0.1"
 
 [dependencies]
+deepbook = { local = "../deepbook" }
 deepbook_margin = { local = "../deepbook_margin" }
 
 [addresses]

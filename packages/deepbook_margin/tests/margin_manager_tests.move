@@ -2972,7 +2972,9 @@ fun liquidation_with_unsettled_maker_fills() {
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
 
     // Place a bid for 0.1 BTC at a price that will sit in the book as maker
-    let bid_price = 500_000u64; // price in pool units
+    // Price must be within 5% of oracle price. For BTC at $50,000 and USDC at $1:
+    // Pool price = 50000 * 10^9 / 10^(8-6) = 50000 * 10^7 = 500_000_000_000
+    let bid_price = 500_000_000_000u64; // price in pool units (within 5% of oracle)
     let bid_quantity = btc_multiplier() / 10; // 0.1 BTC
 
     deepbook_margin::pool_proxy::place_limit_order<BTC, USDC>(

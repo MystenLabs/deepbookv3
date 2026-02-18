@@ -32,7 +32,7 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
   const recevingAddress =
     "0x3298a2fdc3949db7c066fbaff92671b7ffc519e473cd89956f0c0d27e5a6326d";
   const coinType = "USDC"; // "SUI" or "DEEP" or "USDC"
-  const amount = 5;
+  const amount = 349_995;
 
   const totalAmount = amount * config[coinType].scalar;
   const coin = coinWithBalance({

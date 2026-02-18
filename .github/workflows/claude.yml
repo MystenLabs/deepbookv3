@@ -42,9 +42,9 @@ jobs:
           additional_permissions: |
             actions: read
 
-          # Use review prompt for simple @claude mentions in PR comments, otherwise follow specific instructions
+          # When @claude is mentioned on a PR, provide a review prompt. Claude will also follow any additional instructions in the comment.
           prompt: |
-            ${{ github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.body == '@claude' &&
+            ${{ github.event_name == 'issue_comment' && github.event.issue.pull_request &&
             format('Please review pull request #{0} and provide feedback on:
             - Code quality and best practices
             - Potential bugs or issues

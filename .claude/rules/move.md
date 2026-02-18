@@ -40,16 +40,33 @@ paths:
 
 - Don't worry about "missing imports", because the compiler includes many std::/sui:: imports by default.
 
+- When using `sui::dynamic_field`, always define `use fun` aliases for method syntax on UID:
+```move
+use sui::dynamic_field as df;
+
+use fun df::add as UID.add;
+use fun df::borrow as UID.borrow;
+use fun df::borrow_mut as UID.borrow_mut;
+use fun df::exists_ as UID.exists_;
+```
+Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(key)`, `self.id.borrow_mut(key)` instead of `df::exists_(&self.id, key)` etc.
+
 - Don't worry about emitting additional events.
 
 - Prefer macros over constants.
 
-- Put public functions first, then public(package), then private.
+- Function ordering within a module (top to bottom):
+  1. `public fun` - external API functions
+  2. `public(package) fun` - package-internal functions
+  3. `fun` - private/internal helper functions
+
+  Exception: `init` function typically comes early (after struct definitions).
 
 ## Tool Calling Instructions
 
 - `sui move build` to build the package, must be run in a directory with Move.toml in it
 - `sui move test` to run tests, must be run in a directory with Move.toml in it
+- When `sui move test` shows warnings (e.g., unused `mut` modifiers, unused variables), fix them immediately before proceeding
 - can pass `--skip-fetch-latest-git-deps` if the dependencies haven't changed after an initial successful build
 - when you have completed making changes, run `bunx prettier-move -c *.move --write` on any files that are modified to format them correctly.
 

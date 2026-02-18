@@ -11,9 +11,11 @@ on:
           - Create Pool
           - Upgrade Protocol
           - Upgrade Margin Protocol
+          - Upgrade Vault Protocol
           - Enable Version
           - Disable Version
           - Enable Margin Version
+          - Disable Deepbook Pool
           - Unregister Pool and Create
           - Add Stable Coins
           - Adjust Tick Size
@@ -26,6 +28,8 @@ on:
           - Fund Abyss Vault
           - Fund Liquidation Vault
           - Update Interest Rates
+          - Margin Prep
+          - Revoke Pausecap
       sui_tools_image:
         description: "image reference of sui_tools"
         default: "mysten/sui-tools:mainnet"
@@ -102,6 +106,17 @@ jobs:
         run: |
           cd scripts && pnpm install && pnpm tsx transactions/marginPackageUpgrade.ts
 
+      - name: Upgrade Vault Protocol
+        if: ${{ inputs.transaction_type == 'Upgrade Vault Protocol' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/vaultPackageUpgrade.ts
+
       - name: Create Pool
         if: ${{ inputs.transaction_type == 'Create Pool' }}
         env:
@@ -151,6 +166,16 @@ jobs:
           ORIGIN: gh_action
         run: |
           cd scripts && pnpm install && pnpm tsx transactions/enableMarginVersion.ts
+
+      - name: Disable Deepbook Pool
+        if: ${{ inputs.transaction_type == 'Disable Deepbook Pool' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/disableDeepbookPool.ts
 
       - name: Prep MVR
         if: ${{ inputs.transaction_type == 'Prep MVR' }}
@@ -401,6 +426,27 @@ jobs:
           ORIGIN: gh_action
         run: |
           cd scripts && pnpm install && pnpm tsx transactions/updateInterestRates.ts
+
+      - name: Margin Prep
+        if: ${{ inputs.transaction_type == 'Margin Prep' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/marginPrep.ts
+
+      - name: Revoke Pausecap
+        if: ${{ inputs.transaction_type == 'Revoke Pausecap' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/revokePausecap.ts
 
       - name: Prep Deepbook MVR
         if: ${{ inputs.transaction_type == 'Prep Deepbook MVR' }}
