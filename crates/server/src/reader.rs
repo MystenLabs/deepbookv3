@@ -1368,4 +1368,381 @@ impl Reader {
         })
         .map_err(|e| DeepBookError::database(format!("Error fetching points: {}", e)))
     }
+
+    /// Get a comprehensive margin portfolio for a wallet address.
+    /// Returns margin positions, collateral balances, and LP positions with USD valuations.
+    /// Prices are sourced from hourly ohclv_1m candles (falling back to daily ohclv_1d).
+    ///
+    /// NOTE: LP positions use flow-based approximation (cumulative supply - withdraw).
+    /// This does not account for interest accrual on lending positions (~3-4% undercount).
+    /// Shares are exact; only the share-to-amount conversion is approximate.
+    /// This will be resolved once margin_pool_snapshots is populated in production.
+    pub async fn get_portfolio(
+        &self,
+        wallet_address: &str,
+    ) -> Result<PortfolioQueryResult, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        // --- Margin positions ---
+        #[derive(QueryableByName, Debug)]
+        struct MarginPositionRow {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            margin_manager_id: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            pool_name: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            base_asset_symbol: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            quote_asset_symbol: String,
+            #[diesel(sql_type = diesel::sql_types::Double)]
+            base_asset: f64,
+            #[diesel(sql_type = diesel::sql_types::Double)]
+            quote_asset: f64,
+            #[diesel(sql_type = diesel::sql_types::Double)]
+            base_debt: f64,
+            #[diesel(sql_type = diesel::sql_types::Double)]
+            quote_debt: f64,
+            #[diesel(sql_type = diesel::sql_types::Double)]
+            base_asset_usd: f64,
+            #[diesel(sql_type = diesel::sql_types::Double)]
+            quote_asset_usd: f64,
+            #[diesel(sql_type = diesel::sql_types::Double)]
+            base_debt_usd: f64,
+            #[diesel(sql_type = diesel::sql_types::Double)]
+            quote_debt_usd: f64,
+            #[diesel(sql_type = diesel::sql_types::Double)]
+            risk_ratio: f64,
+        }
+
+        let margin_res = diesel::sql_query(
+            r#"
+            WITH hourly_prices AS (
+                SELECT DISTINCT ON (p.base_asset_symbol)
+                    p.base_asset_symbol as symbol,
+                    o.close as price_usd
+                FROM pools p
+                JOIN ohclv_1m o ON p.pool_id = o.pool_id
+                WHERE p.quote_asset_symbol = 'USDC'
+                  AND o.bucket_time >= NOW() - INTERVAL '2 hours'
+                ORDER BY p.base_asset_symbol, o.bucket_time DESC
+            ),
+            daily_prices AS (
+                SELECT DISTINCT ON (p.base_asset_symbol)
+                    p.base_asset_symbol as symbol,
+                    o.close as price_usd
+                FROM pools p
+                JOIN ohclv_1d o ON p.pool_id = o.pool_id
+                WHERE p.quote_asset_symbol = 'USDC'
+                ORDER BY p.base_asset_symbol, o.bucket_time DESC
+            ),
+            latest_prices AS (
+                SELECT
+                    COALESCE(h.symbol, d.symbol) as symbol,
+                    COALESCE(h.price_usd, d.price_usd) as price_usd
+                FROM daily_prices d
+                LEFT JOIN hourly_prices h ON d.symbol = h.symbol
+            )
+            SELECT
+                c.margin_manager_id::text,
+                p.pool_name::text,
+                s.base_asset_symbol::text,
+                s.quote_asset_symbol::text,
+                ROUND(s.base_asset::numeric, 6)::float8 as base_asset,
+                ROUND(s.quote_asset::numeric, 6)::float8 as quote_asset,
+                ROUND(s.base_debt::numeric, 6)::float8 as base_debt,
+                ROUND(s.quote_debt::numeric, 6)::float8 as quote_debt,
+                ROUND((s.base_asset * COALESCE(bp.price_usd, 0))::numeric, 2)::float8 as base_asset_usd,
+                ROUND((s.quote_asset::numeric * CASE WHEN UPPER(s.quote_asset_symbol) IN ('USDC','USDT','AUSD') THEN 1 ELSE COALESCE(qp.price_usd, 0) END)::numeric, 2)::float8 as quote_asset_usd,
+                ROUND((s.base_debt * COALESCE(bp.price_usd, 0))::numeric, 2)::float8 as base_debt_usd,
+                ROUND((s.quote_debt::numeric * CASE WHEN UPPER(s.quote_asset_symbol) IN ('USDC','USDT','AUSD') THEN 1 ELSE COALESCE(qp.price_usd, 0) END)::numeric, 2)::float8 as quote_debt_usd,
+                ROUND(s.risk_ratio::numeric, 4)::float8 as risk_ratio
+            FROM margin_manager_created c
+            JOIN margin_manager_state s ON c.margin_manager_id = s.margin_manager_id
+            JOIN pools p ON s.deepbook_pool_id = p.pool_id
+            LEFT JOIN latest_prices bp ON s.base_asset_symbol = bp.symbol
+            LEFT JOIN latest_prices qp ON s.quote_asset_symbol = qp.symbol
+            WHERE c.owner = $1
+              AND (s.base_asset <> 0 OR s.quote_asset <> 0 OR s.base_debt <> 0 OR s.quote_debt <> 0)
+            "#,
+        )
+        .bind::<Text, _>(wallet_address)
+        .load::<MarginPositionRow>(&mut connection)
+        .await;
+
+        // --- Collateral balances ---
+        #[derive(QueryableByName, Debug)]
+        struct CollateralRow {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            asset: String,
+            #[diesel(sql_type = diesel::sql_types::Double)]
+            balance: f64,
+            #[diesel(sql_type = diesel::sql_types::Double)]
+            balance_usd: f64,
+        }
+
+        let collateral_res = diesel::sql_query(
+            r#"
+            WITH hourly_prices AS (
+                SELECT DISTINCT ON (p.base_asset_symbol)
+                    p.base_asset_symbol as symbol,
+                    o.close as price_usd
+                FROM pools p
+                JOIN ohclv_1m o ON p.pool_id = o.pool_id
+                WHERE p.quote_asset_symbol = 'USDC'
+                  AND o.bucket_time >= NOW() - INTERVAL '2 hours'
+                ORDER BY p.base_asset_symbol, o.bucket_time DESC
+            ),
+            daily_prices AS (
+                SELECT DISTINCT ON (p.base_asset_symbol)
+                    p.base_asset_symbol as symbol,
+                    o.close as price_usd
+                FROM pools p
+                JOIN ohclv_1d o ON p.pool_id = o.pool_id
+                WHERE p.quote_asset_symbol = 'USDC'
+                ORDER BY p.base_asset_symbol, o.bucket_time DESC
+            ),
+            latest_prices AS (
+                SELECT
+                    COALESCE(h.symbol, d.symbol) as symbol,
+                    COALESCE(h.price_usd, d.price_usd) as price_usd
+                FROM daily_prices d
+                LEFT JOIN hourly_prices h ON d.symbol = h.symbol
+            ),
+            asset_meta AS (
+                SELECT DISTINCT base_asset_id as asset_id, base_asset_decimals as decimals, base_asset_symbol as symbol FROM pools
+                UNION
+                SELECT DISTINCT quote_asset_id, quote_asset_decimals, quote_asset_symbol FROM pools
+            ),
+            wallet_bms AS (
+                SELECT DISTINCT balance_manager_id
+                FROM margin_manager_created
+                WHERE owner = $1
+            )
+            SELECT
+                am.symbol::text as asset,
+                ROUND(SUM(CASE WHEN b.deposit THEN b.amount ELSE -b.amount END) / POWER(10, am.decimals)::numeric, 6)::float8 as balance,
+                ROUND(
+                    (SUM(CASE WHEN b.deposit THEN b.amount ELSE -b.amount END) / POWER(10, am.decimals)::numeric) *
+                    CASE WHEN UPPER(am.symbol) IN ('USDC','USDT','AUSD') THEN 1 ELSE COALESCE(lp.price_usd, 0) END
+                , 2)::float8 as balance_usd
+            FROM balances b
+            JOIN wallet_bms wbm ON b.balance_manager_id = wbm.balance_manager_id
+            LEFT JOIN asset_meta am ON b.asset LIKE '%' || SUBSTRING(am.asset_id FROM 3) || '%'
+            LEFT JOIN latest_prices lp ON am.symbol = lp.symbol
+            WHERE am.symbol IS NOT NULL
+            GROUP BY am.symbol, am.decimals, lp.price_usd
+            HAVING SUM(CASE WHEN b.deposit THEN b.amount ELSE -b.amount END) > 0
+            "#,
+        )
+        .bind::<Text, _>(wallet_address)
+        .load::<CollateralRow>(&mut connection)
+        .await;
+
+        // --- LP positions ---
+        #[derive(QueryableByName, Debug)]
+        struct LpPositionRow {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            margin_pool_id: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            asset: String,
+            #[diesel(sql_type = diesel::sql_types::Double)]
+            net_supplied: f64,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            net_shares: i64,
+            #[diesel(sql_type = diesel::sql_types::Double)]
+            supplied_usd: f64,
+        }
+
+        let lp_res = diesel::sql_query(
+            r#"
+            WITH hourly_prices AS (
+                SELECT DISTINCT ON (p.base_asset_symbol)
+                    p.base_asset_symbol as symbol,
+                    o.close as price_usd
+                FROM pools p
+                JOIN ohclv_1m o ON p.pool_id = o.pool_id
+                WHERE p.quote_asset_symbol = 'USDC'
+                  AND o.bucket_time >= NOW() - INTERVAL '2 hours'
+                ORDER BY p.base_asset_symbol, o.bucket_time DESC
+            ),
+            daily_prices AS (
+                SELECT DISTINCT ON (p.base_asset_symbol)
+                    p.base_asset_symbol as symbol,
+                    o.close as price_usd
+                FROM pools p
+                JOIN ohclv_1d o ON p.pool_id = o.pool_id
+                WHERE p.quote_asset_symbol = 'USDC'
+                ORDER BY p.base_asset_symbol, o.bucket_time DESC
+            ),
+            latest_prices AS (
+                SELECT
+                    COALESCE(h.symbol, d.symbol) as symbol,
+                    COALESCE(h.price_usd, d.price_usd) as price_usd
+                FROM daily_prices d
+                LEFT JOIN hourly_prices h ON d.symbol = h.symbol
+            ),
+            asset_meta AS (
+                SELECT DISTINCT base_asset_id as asset_id, base_asset_decimals as decimals, base_asset_symbol as symbol FROM pools
+                UNION
+                SELECT DISTINCT quote_asset_id, quote_asset_decimals, quote_asset_symbol FROM pools
+            ),
+            lp_supplied AS (
+                SELECT margin_pool_id, asset_type, SUM(amount) as supplied, SUM(shares) as supplied_shares
+                FROM asset_supplied
+                WHERE sender = $1
+                GROUP BY margin_pool_id, asset_type
+            ),
+            lp_withdrawn AS (
+                SELECT margin_pool_id, asset_type, SUM(amount) as withdrawn, SUM(shares) as withdrawn_shares
+                FROM asset_withdrawn
+                WHERE sender = $1
+                GROUP BY margin_pool_id, asset_type
+            )
+            SELECT
+                s.margin_pool_id::text,
+                am.symbol::text as asset,
+                ROUND((s.supplied - COALESCE(w.withdrawn, 0)) / POWER(10, COALESCE(am.decimals, 9))::numeric, 6)::float8 as net_supplied,
+                (s.supplied_shares - COALESCE(w.withdrawn_shares, 0))::bigint as net_shares,
+                ROUND(
+                    ((s.supplied - COALESCE(w.withdrawn, 0)) / POWER(10, COALESCE(am.decimals, 9))::numeric) *
+                    CASE WHEN UPPER(am.symbol) IN ('USDC','USDT','AUSD') THEN 1 ELSE COALESCE(lp2.price_usd, 0) END
+                , 2)::float8 as supplied_usd
+            FROM lp_supplied s
+            LEFT JOIN lp_withdrawn w ON s.margin_pool_id = w.margin_pool_id AND s.asset_type = w.asset_type
+            LEFT JOIN asset_meta am ON s.asset_type LIKE '%' || SUBSTRING(am.asset_id FROM 3) || '%'
+            LEFT JOIN latest_prices lp2 ON am.symbol = lp2.symbol
+            WHERE am.symbol IS NOT NULL
+              AND (s.supplied - COALESCE(w.withdrawn, 0)) > 0
+            "#,
+        )
+        .bind::<Text, _>(wallet_address)
+        .load::<LpPositionRow>(&mut connection)
+        .await;
+
+        // Check results and build response
+        let margin_positions = margin_res.map_err(|e| {
+            DeepBookError::database(format!("Error fetching margin positions: {}", e))
+        })?;
+        let collateral = collateral_res
+            .map_err(|e| DeepBookError::database(format!("Error fetching collateral: {}", e)))?;
+        let lp_positions = lp_res
+            .map_err(|e| DeepBookError::database(format!("Error fetching LP positions: {}", e)))?;
+
+        self.metrics.db_requests_succeeded.inc();
+
+        // Compute summary
+        let collateral_total_usd: f64 = collateral.iter().map(|c| c.balance_usd).sum();
+        let margin_equity_usd: f64 = margin_positions
+            .iter()
+            .map(|m| m.base_asset_usd + m.quote_asset_usd)
+            .sum();
+        let margin_debt_usd: f64 = margin_positions
+            .iter()
+            .map(|m| m.base_debt_usd + m.quote_debt_usd)
+            .sum();
+        let lp_total_usd: f64 = lp_positions.iter().map(|l| l.supplied_usd).sum();
+
+        Ok(PortfolioQueryResult {
+            margin_positions: margin_positions
+                .into_iter()
+                .map(|m| PortfolioMarginPosition {
+                    margin_manager_id: m.margin_manager_id,
+                    pool: m.pool_name,
+                    base_asset_symbol: m.base_asset_symbol,
+                    quote_asset_symbol: m.quote_asset_symbol,
+                    base_asset: m.base_asset,
+                    quote_asset: m.quote_asset,
+                    base_debt: m.base_debt,
+                    quote_debt: m.quote_debt,
+                    base_asset_usd: m.base_asset_usd,
+                    quote_asset_usd: m.quote_asset_usd,
+                    base_debt_usd: m.base_debt_usd,
+                    quote_debt_usd: m.quote_debt_usd,
+                    total_debt_usd: m.base_debt_usd + m.quote_debt_usd,
+                    net_value_usd: m.base_asset_usd + m.quote_asset_usd
+                        - m.base_debt_usd
+                        - m.quote_debt_usd,
+                    risk_ratio: m.risk_ratio,
+                })
+                .collect(),
+            collateral_balances: collateral
+                .into_iter()
+                .map(|c| PortfolioCollateralBalance {
+                    asset: c.asset,
+                    balance: c.balance,
+                    balance_usd: c.balance_usd,
+                })
+                .collect(),
+            lp_positions: lp_positions
+                .into_iter()
+                .map(|l| PortfolioLpPosition {
+                    margin_pool_id: l.margin_pool_id,
+                    asset: l.asset,
+                    supplied: l.net_supplied,
+                    shares: l.net_shares,
+                    supplied_usd: l.supplied_usd,
+                })
+                .collect(),
+            summary: PortfolioSummary {
+                total_equity_usd: (collateral_total_usd + margin_equity_usd + lp_total_usd) + 0.0,
+                total_debt_usd: margin_debt_usd + 0.0,
+                net_value_usd: (collateral_total_usd + margin_equity_usd + lp_total_usd
+                    - margin_debt_usd)
+                    + 0.0,
+            },
+        })
+    }
+}
+
+// --- Portfolio response types ---
+
+#[derive(Debug, serde::Serialize)]
+pub struct PortfolioQueryResult {
+    pub margin_positions: Vec<PortfolioMarginPosition>,
+    pub collateral_balances: Vec<PortfolioCollateralBalance>,
+    pub lp_positions: Vec<PortfolioLpPosition>,
+    pub summary: PortfolioSummary,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct PortfolioMarginPosition {
+    pub margin_manager_id: String,
+    pub pool: String,
+    pub base_asset_symbol: String,
+    pub quote_asset_symbol: String,
+    pub base_asset: f64,
+    pub quote_asset: f64,
+    pub base_debt: f64,
+    pub quote_debt: f64,
+    pub base_asset_usd: f64,
+    pub quote_asset_usd: f64,
+    pub base_debt_usd: f64,
+    pub quote_debt_usd: f64,
+    pub total_debt_usd: f64,
+    pub net_value_usd: f64,
+    pub risk_ratio: f64,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct PortfolioCollateralBalance {
+    pub asset: String,
+    pub balance: f64,
+    pub balance_usd: f64,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct PortfolioLpPosition {
+    pub margin_pool_id: String,
+    pub asset: String,
+    pub supplied: f64,
+    pub shares: i64,
+    pub supplied_usd: f64,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct PortfolioSummary {
+    pub total_equity_usd: f64,
+    pub total_debt_usd: f64,
+    pub net_value_usd: f64,
 }
