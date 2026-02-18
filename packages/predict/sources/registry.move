@@ -42,6 +42,15 @@ public struct Registry has key {
 
 // === Public Functions ===
 
+/// Get oracle IDs created by a given OracleCap.
+public fun oracle_ids(registry: &Registry, cap_id: ID): vector<ID> {
+    if (registry.oracle_ids.contains(cap_id)) {
+        registry.oracle_ids[cap_id]
+    } else {
+        vector[]
+    }
+}
+
 /// Create the Predict shared object. Can only be called once.
 /// Quote is the collateral asset (e.g., USDC).
 public fun create_predict<Quote>(
