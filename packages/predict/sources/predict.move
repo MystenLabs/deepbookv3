@@ -121,6 +121,30 @@ public fun mint<Underlying, Quote>(
     manager.increase_position(key, quantity);
 }
 
+/// Buy a position at any strike (continuous). No admin-enabled market required.
+public fun mint_continuous<Underlying, Quote>(
+    predict: &mut Predict<Quote>,
+    manager: &mut PredictManager,
+    oracle: &OracleSVI<Underlying>,
+    key: MarketKey,
+    quantity: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    assert!(!predict.trading_paused, ETradingPaused);
+    key.assert_matches_oracle(oracle);
+    oracle.assert_not_stale(clock);
+
+    let cost = predict.get_mint_cost(oracle, key, quantity, clock);
+    let payment = manager.withdraw<Quote>(cost, ctx);
+    predict.vault.execute_mint(key, quantity, payment);
+    predict
+        .vault
+        .assert_total_exposure(predict.risk_config.max_total_exposure_pct());
+    predict.mark_to_market(oracle, key, clock);
+    manager.increase_position(key, quantity);
+}
+
 /// Sell a position. Payout is deposited into the PredictManager's balance.
 /// Position quantity is removed from the PredictManager's positions.
 public fun redeem<Underlying, Quote>(
@@ -190,6 +214,35 @@ public fun mint_collateralized<Underlying, Quote>(
     predict.vault.execute_mint_collateralized(minted_key, quantity);
 
     // Manager records minted position
+    manager.increase_position(minted_key, quantity);
+}
+
+/// Mint a collateralized position at any strike (continuous). No admin-enabled market required.
+public fun mint_collateralized_continuous<Underlying, Quote>(
+    predict: &mut Predict<Quote>,
+    manager: &mut PredictManager,
+    oracle: &OracleSVI<Underlying>,
+    locked_key: MarketKey,
+    minted_key: MarketKey,
+    quantity: u64,
+    clock: &Clock,
+) {
+    assert!(!predict.trading_paused, ETradingPaused);
+    locked_key.assert_matches_oracle(oracle);
+    minted_key.assert_matches_oracle(oracle);
+    oracle.assert_not_stale(clock);
+
+    let valid_pair = if (locked_key.is_up() && minted_key.is_up()) {
+        locked_key.strike() < minted_key.strike()
+    } else if (locked_key.is_down() && minted_key.is_down()) {
+        locked_key.strike() > minted_key.strike()
+    } else {
+        false
+    };
+    assert!(valid_pair, EInvalidCollateralPair);
+
+    manager.lock_collateral(locked_key, minted_key, quantity);
+    predict.vault.execute_mint_collateralized(minted_key, quantity);
     manager.increase_position(minted_key, quantity);
 }
 

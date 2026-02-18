@@ -33,8 +33,24 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 
 ## Key TODOs
 
-### P0 - Blocking
-All P0 items complete.
+### P0 - Blocking: Continuous Strikes
+Remove the discrete strike enablement system. The oracle already prices any strike via SVI — the market layer should allow it.
+
+**Already continuous (no changes needed):**
+- `oracle.move` — `get_binary_price()` accepts any `strike: u64`
+- `vault.move` — `Table<MarketKey, PositionData>` with lazy entry creation
+- `predict_manager.move` — `Table<MarketKey, UserPosition>` with lazy creation
+- `market_key.move` — still needed as position identifier
+- `supply_manager.move`, `*_config.move` — no strike awareness
+
+**Step 1: Add continuous entry points in `predict.move`**
+- [ ] New `mint` / `redeem` / `mint_collateralized` that skip `assert_enabled`
+- [ ] Optional: oracle-level strike bounds validation (prevent degenerate strikes near 0 or infinity)
+
+**Step 2: Remove old gated path**
+- [ ] `predict.move`: remove `markets: Markets` field, `assert_enabled` calls (lines 39, 99, 171-172, 259), `enable_market()` fn (274-280), `market_manager` import
+- [ ] `registry.move`: remove `enable_market()` admin fn (113-120)
+- [ ] `market_manager.move`: delete entire module (Markets struct, enable/disable/assert_enabled)
 
 ### P1 - Important
 - [x] **Dynamic spread**: spread adjusts based on vault net exposure. Widens on heavy side (0x-2x base_spread), tightens on light side. Configurable via `max_skew_multiplier`.
@@ -158,3 +174,7 @@ All P0 items complete.
 - **Replaced magic numbers with named constants**: all `1_000_000_000` → `constants::float_scaling!()` in math.move (18 occurrences) and oracle.move (2 occurrences). Added `staleness_threshold_ms!()` constant for the 30s oracle staleness check.
 - **Simplified pricing math**: inlined `compute_iv` + `get_pricing_data` + `get_binary_price` into a single `get_binary_price`. Key insight: SVI gives total_variance directly, and `iv²*t = total_var`, `iv*√t = √(total_var)`, so d2 = `(-k - total_var/2) / √(total_var)` — time cancels out of d2 entirely, IV is never computed. Saves 1 `ln`, 1 `sqrt`, several `mul`/`div` per call. Net -45 lines.
 - **First test file**: `tests/oracle_tests.move` with 5 tests — UP+DOWN sum to discount factor invariant, directional correctness (OTM call/put), parameter variations (shifted m, positive rho), short expiry (1 day).
+
+### Session: 2026-02-18
+- **Continuous strikes design**: analyzed oracle capabilities vs market enablement system. Oracle already supports any strike via SVI parametric surface — the only gate is the discrete `Markets` / `VecSet<MarketKey>` in market_manager.move + `assert_enabled` checks in predict.move.
+- **Migration plan**: Step 1 — add new continuous entry points (no enablement check). Step 2 — remove old gated path (market_manager.move, Markets field, enable_market in registry).

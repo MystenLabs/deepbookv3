@@ -269,6 +269,15 @@ public(package) fun assert_exposure<Quote>(
     );
 }
 
+/// Assert that total vault exposure is within risk limits (no per-market check).
+public(package) fun assert_total_exposure<Quote>(
+    vault: &Vault<Quote>,
+    max_total_pct: u64,
+) {
+    let balance = vault.balance.value();
+    assert!(vault.max_liability <= math::mul(balance, max_total_pct), EExceedsMaxTotalExposure);
+}
+
 /// Supply USDC to the vault, receive shares.
 public(package) fun supply<Quote>(
     vault: &mut Vault<Quote>,
