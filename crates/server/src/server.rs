@@ -2642,10 +2642,6 @@ async fn portfolio(
     Path(wallet_address): Path<String>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<PortfolioQueryResult>, DeepBookError> {
-    if wallet_address.is_empty() {
-        return Err(DeepBookError::bad_request("No wallet address provided"));
-    }
-
     let result = state.reader.get_portfolio(&wallet_address).await?;
     Ok(Json(result))
 }

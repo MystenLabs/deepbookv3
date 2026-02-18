@@ -1381,10 +1381,17 @@ impl Reader {
         &self,
         wallet_address: &str,
     ) -> Result<PortfolioQueryResult, DeepBookError> {
+        // Validate: must be 0x-prefixed 64-character hex string
+        if !wallet_address.starts_with("0x") || wallet_address.len() != 66 {
+            return Err(DeepBookError::bad_request(
+                "Invalid wallet address: expected 0x-prefixed 64-character hex string",
+            ));
+        }
+
         let mut connection = self.db.connect().await?;
         let _guard = self.metrics.db_latency.start_timer();
 
-        // --- Margin positions ---
+        // --- Row types ---
         #[derive(QueryableByName, Debug)]
         struct MarginPositionRow {
             #[diesel(sql_type = diesel::sql_types::Text)]
@@ -1415,6 +1422,31 @@ impl Reader {
             risk_ratio: f64,
         }
 
+        #[derive(QueryableByName, Debug)]
+        struct CollateralRow {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            asset: String,
+            #[diesel(sql_type = diesel::sql_types::Double)]
+            balance: f64,
+            #[diesel(sql_type = diesel::sql_types::Double)]
+            balance_usd: f64,
+        }
+
+        #[derive(QueryableByName, Debug)]
+        struct LpPositionRow {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            margin_pool_id: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            asset: String,
+            #[diesel(sql_type = diesel::sql_types::Double)]
+            net_supplied: f64,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            net_shares: i64,
+            #[diesel(sql_type = diesel::sql_types::Double)]
+            supplied_usd: f64,
+        }
+
+        // --- Margin positions ---
         let margin_res = diesel::sql_query(
             r#"
             WITH hourly_prices AS (
@@ -1471,16 +1503,6 @@ impl Reader {
         .await;
 
         // --- Collateral balances ---
-        #[derive(QueryableByName, Debug)]
-        struct CollateralRow {
-            #[diesel(sql_type = diesel::sql_types::Text)]
-            asset: String,
-            #[diesel(sql_type = diesel::sql_types::Double)]
-            balance: f64,
-            #[diesel(sql_type = diesel::sql_types::Double)]
-            balance_usd: f64,
-        }
-
         let collateral_res = diesel::sql_query(
             r#"
             WITH hourly_prices AS (
@@ -1528,6 +1550,9 @@ impl Reader {
                 , 2)::float8 as balance_usd
             FROM balances b
             JOIN wallet_bms wbm ON b.balance_manager_id = wbm.balance_manager_id
+            -- asset_id matching strips the 0x prefix for a suffix LIKE match; this is intentional
+            -- and consistent with other queries in the codebase. Assumes asset IDs are unique enough
+            -- that no two assets share the same suffix, which holds for all current DeepBook pools.
             LEFT JOIN asset_meta am ON b.asset LIKE '%' || SUBSTRING(am.asset_id FROM 3) || '%'
             LEFT JOIN latest_prices lp ON am.symbol = lp.symbol
             WHERE am.symbol IS NOT NULL
@@ -1540,20 +1565,8 @@ impl Reader {
         .await;
 
         // --- LP positions ---
-        #[derive(QueryableByName, Debug)]
-        struct LpPositionRow {
-            #[diesel(sql_type = diesel::sql_types::Text)]
-            margin_pool_id: String,
-            #[diesel(sql_type = diesel::sql_types::Text)]
-            asset: String,
-            #[diesel(sql_type = diesel::sql_types::Double)]
-            net_supplied: f64,
-            #[diesel(sql_type = diesel::sql_types::BigInt)]
-            net_shares: i64,
-            #[diesel(sql_type = diesel::sql_types::Double)]
-            supplied_usd: f64,
-        }
-
+        // Uses supplier (balance_manager_id) rather than sender (wallet address) to leverage
+        // idx_asset_supplied_supplier / idx_asset_withdrawn_supplier indices.
         let lp_res = diesel::sql_query(
             r#"
             WITH hourly_prices AS (
@@ -1587,17 +1600,22 @@ impl Reader {
                 UNION
                 SELECT DISTINCT quote_asset_id, quote_asset_decimals, quote_asset_symbol FROM pools
             ),
+            wallet_suppliers AS (
+                SELECT DISTINCT balance_manager_id
+                FROM margin_manager_created
+                WHERE owner = $1
+            ),
             lp_supplied AS (
-                SELECT margin_pool_id, asset_type, SUM(amount) as supplied, SUM(shares) as supplied_shares
-                FROM asset_supplied
-                WHERE sender = $1
-                GROUP BY margin_pool_id, asset_type
+                SELECT s.margin_pool_id, s.asset_type, SUM(s.amount) as supplied, SUM(s.shares) as supplied_shares
+                FROM asset_supplied s
+                JOIN wallet_suppliers ws ON s.supplier = ws.balance_manager_id
+                GROUP BY s.margin_pool_id, s.asset_type
             ),
             lp_withdrawn AS (
-                SELECT margin_pool_id, asset_type, SUM(amount) as withdrawn, SUM(shares) as withdrawn_shares
-                FROM asset_withdrawn
-                WHERE sender = $1
-                GROUP BY margin_pool_id, asset_type
+                SELECT w.margin_pool_id, w.asset_type, SUM(w.amount) as withdrawn, SUM(w.shares) as withdrawn_shares
+                FROM asset_withdrawn w
+                JOIN wallet_suppliers ws ON w.supplier = ws.balance_manager_id
+                GROUP BY w.margin_pool_id, w.asset_type
             )
             SELECT
                 s.margin_pool_id::text,
@@ -1610,6 +1628,7 @@ impl Reader {
                 , 2)::float8 as supplied_usd
             FROM lp_supplied s
             LEFT JOIN lp_withdrawn w ON s.margin_pool_id = w.margin_pool_id AND s.asset_type = w.asset_type
+            -- see comment in collateral query re: LIKE asset matching
             LEFT JOIN asset_meta am ON s.asset_type LIKE '%' || SUBSTRING(am.asset_id FROM 3) || '%'
             LEFT JOIN latest_prices lp2 ON am.symbol = lp2.symbol
             WHERE am.symbol IS NOT NULL
@@ -1620,18 +1639,23 @@ impl Reader {
         .load::<LpPositionRow>(&mut connection)
         .await;
 
-        // Check results and build response
+        // Propagate errors and increment failure metric on any query failure
         let margin_positions = margin_res.map_err(|e| {
+            self.metrics.db_requests_failed.inc();
             DeepBookError::database(format!("Error fetching margin positions: {}", e))
         })?;
-        let collateral = collateral_res
-            .map_err(|e| DeepBookError::database(format!("Error fetching collateral: {}", e)))?;
-        let lp_positions = lp_res
-            .map_err(|e| DeepBookError::database(format!("Error fetching LP positions: {}", e)))?;
+        let collateral = collateral_res.map_err(|e| {
+            self.metrics.db_requests_failed.inc();
+            DeepBookError::database(format!("Error fetching collateral: {}", e))
+        })?;
+        let lp_positions = lp_res.map_err(|e| {
+            self.metrics.db_requests_failed.inc();
+            DeepBookError::database(format!("Error fetching LP positions: {}", e))
+        })?;
 
         self.metrics.db_requests_succeeded.inc();
 
-        // Compute summary
+        // Compute summary totals
         let collateral_total_usd: f64 = collateral.iter().map(|c| c.balance_usd).sum();
         let margin_equity_usd: f64 = margin_positions
             .iter()
@@ -1685,11 +1709,10 @@ impl Reader {
                 })
                 .collect(),
             summary: PortfolioSummary {
-                total_equity_usd: (collateral_total_usd + margin_equity_usd + lp_total_usd) + 0.0,
-                total_debt_usd: margin_debt_usd + 0.0,
-                net_value_usd: (collateral_total_usd + margin_equity_usd + lp_total_usd
-                    - margin_debt_usd)
-                    + 0.0,
+                total_equity_usd: collateral_total_usd + margin_equity_usd + lp_total_usd,
+                total_debt_usd: margin_debt_usd,
+                net_value_usd: collateral_total_usd + margin_equity_usd + lp_total_usd
+                    - margin_debt_usd,
             },
         })
     }
