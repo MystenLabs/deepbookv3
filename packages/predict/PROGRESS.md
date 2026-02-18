@@ -6,22 +6,21 @@ Branch: `at/predict`
 
 Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN positions on underlying assets (BTC, ETH) at specific strikes and expiries. A vault takes the opposite side of every trade. Prices are derived from oracle data (Block Scholes volatility surface).
 
-**Flow:** Registry (admin) -> Oracle (price data) -> Predict (orchestrator + pricing logic) -> Vault (state) + PredictManager (user positions)
+**Flow:** Registry (admin) -> Oracle (price data) -> Predict (orchestrator + pricing) -> Vault (aggregate state) + PredictManager (user positions)
 
 ## Module Status
 
 ### Core (Done)
 | Module | Status | Notes |
 |--------|--------|-------|
-| `registry.move` | Done | init, AdminCap, create_predict, create_oracle, create_oracle_cap, enable_market, pause setters, config setters (lockup, spread, skew, exposure limits) |
-| `predict.move` | Done | Orchestrator + pricing: create_manager, mint, redeem, mint/redeem_collateralized, settle, supply, withdraw, get_quote, mark_to_market, risk checks, pause enforcement, config forwarders |
-| `vault/vault.move` | Done | State machine: execute_mint/redeem, collateralized mint/redeem, exposure tracking (max/min liability), unrealized liability/assets, assert_exposure (risk checks), vault_value helper |
+| `registry.move` | Done | init, AdminCap, create_predict, create_oracle, create_oracle_cap, pause setters, config setters (lockup, spread, skew, exposure limit) |
+| `predict.move` | Done | Orchestrator + pricing: create_manager, mint, redeem, mint/redeem_collateralized, supply, withdraw, get_quote (aggregate skew), risk checks, pause enforcement, config forwarders |
+| `vault/vault.move` | Done | Aggregate state machine: execute_mint/redeem (by is_up), collateralized mint/redeem, total_up_short/total_down_short/max_liability tracking, assert_total_exposure, conservative vault_value (balance - max_liability) |
 | `vault/supply_manager.move` | Done | LP share accounting: supply (shares minted), withdraw (shares burned), lockup enforcement, vault_value param, share_ratio helper |
 | `predict_manager.move` | Done | User-side: wraps BalanceManager (deposit/withdraw caps), tracks positions (free/locked), collateral lock/release |
-| `market_manager/market_key.move` | Done | Positional struct: (oracle_id, expiry, strike, direction), UP/DOWN helpers, opposite(), up_down_pair(), assert_matches_oracle() |
-| `market_manager/market_manager.move` | Done | VecSet of enabled MarketKeys, enable/disable/assert_enabled |
+| `market_key/market_key.move` | Done | Positional struct: (oracle_id, expiry, strike, direction), UP/DOWN helpers, assert_matches_oracle() |
 | `config/pricing_config.move` | Done | base_spread (1%), max_skew_multiplier (1x) |
-| `config/risk_config.move` | Done | max_total_exposure_pct (80%), max_per_market_exposure_pct (20%) |
+| `config/risk_config.move` | Done | max_total_exposure_pct (80%) |
 | `config/lp_config.move` | Done | lockup_period_ms (24h default) |
 | `helper/constants.move` | Done | `public macro fun`: FLOAT_SCALING (1e9), config defaults, ms_per_year, staleness_threshold_ms |
 | `helper/math.move` | Done | ln, exp, normal_cdf, signed arithmetic (add/sub/mul) |
@@ -33,34 +32,17 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 
 ## Key TODOs
 
-### P0 - Blocking: Continuous Strikes
-Remove the discrete strike enablement system. The oracle already prices any strike via SVI — the market layer should allow it.
-
-**Already continuous (no changes needed):**
-- `oracle.move` — `get_binary_price()` accepts any `strike: u64`
-- `vault.move` — `Table<MarketKey, PositionData>` with lazy entry creation
-- `predict_manager.move` — `Table<MarketKey, UserPosition>` with lazy creation
-- `market_key.move` — still needed as position identifier
-- `supply_manager.move`, `*_config.move` — no strike awareness
-
-**Step 1: Add continuous entry points in `predict.move`**
-- [ ] New `mint` / `redeem` / `mint_collateralized` that skip `assert_enabled`
-- [ ] Optional: oracle-level strike bounds validation (prevent degenerate strikes near 0 or infinity)
-
-**Step 2: Remove old gated path**
-- [ ] `predict.move`: remove `markets: Markets` field, `assert_enabled` calls (lines 39, 99, 171-172, 259), `enable_market()` fn (274-280), `market_manager` import
-- [ ] `registry.move`: remove `enable_market()` admin fn (113-120)
-- [ ] `market_manager.move`: delete entire module (Markets struct, enable/disable/assert_enabled)
-
 ### P1 - Important
+- [x] **Continuous strikes**: removed discrete market enablement system entirely. Any strike is valid if the oracle can price it.
 - [x] **Dynamic spread**: spread adjusts based on vault net exposure. Widens on heavy side (0x-2x base_spread), tightens on light side. Configurable via `max_skew_multiplier`.
-- [x] **Admin functions**: All config setters wired through registry.move (lockup, spread, skew, exposure limits, enable_market)
+- [x] **Admin functions**: All config setters wired through registry.move (lockup, spread, skew, exposure limit)
 - [x] **PredictManager creation**: `predict::create_manager()` public function added
 - [ ] **Tests**: Oracle pricing tests added (`tests/oracle_tests.move`). Need tests for mint/redeem flows, vault, supply_manager.
 
 ### P2 - Nice to Have
 - [ ] **Events**: Most modules don't emit events beyond oracle. Add events for mints, redeems, settlements, supply/withdraw.
 - [x] **Pause enforcement**: trading_paused/withdrawals_paused in Predict struct, checked in mint/mint_collateralized/withdraw. Redeems always allowed.
+- [ ] **Settled-side liability cleanup**: after settlement, losing-side liability never pays out but stays in max_liability until redeemed. A future function could zero out losing-side counts for settled oracles to improve LP share pricing.
 
 ## Design Decisions Made
 - Vault is the counterparty to all trades (short every position)
@@ -70,11 +52,13 @@ Remove the discrete strike enablement system. The oracle already prices any stri
 - Config structs (PricingConfig, RiskConfig, LPConfig) are pure data in `config/` with getters + `public(package)` setters
 - Pricing logic (get_quote, spread calculation) lives in predict.move as private functions
 - Collateralized minting lives in PredictManager (free/locked positions), not a separate CollateralManager
-- Mark-to-market runs after every trade on both UP and DOWN for the strike
-- Risk limits: 80% max total exposure, 20% max per market (as % of vault balance)
-- LP shares use vault_value = balance + unrealized_assets - unrealized_liability
+- **Aggregate-only vault**: no per-market Table, just total_up_short/total_down_short/total_collateralized counters. Skew pricing uses aggregate exposure.
+- **Conservative LP pricing**: vault_value = balance - max_liability (no MTM). Protects existing LPs from dilution; corrects as positions are redeemed.
+- Risk limits: 80% max total exposure (as % of vault balance). No per-market limit (unnecessary with aggregate tracking).
+- **No settle function**: oracle freezes settlement price at expiry. Redeems return 100%/0% for settled oracles. max_liability decreases naturally as positions are redeemed.
 - Pause state lives in `Predict` (not `Registry`) to avoid circular dependency (registry → predict)
 - Pause blocks mints only, not redeems — users can always exit positions
+- **Continuous strikes**: any strike is valid if the oracle can price it. No admin market enablement required.
 
 ## Established Patterns
 - **Section ordering**: Errors → Structs → Public Functions → Public-Package Functions → Private Functions
@@ -164,10 +148,7 @@ Remove the discrete strike enablement system. The oracle already prices any stri
   - Oracle IV units: already fixed in earlier session (`ms_per_year` confirmed)
 - **Remaining issues documented** (not yet addressed):
   - P1: No events emitted (skipped for now)
-  - P2: Unused `grace_period_ms` / `max_strikes_quantity` constants (never enforced)
   - P2: Spread discontinuity at zero positions (doubles on first trade)
-  - P3: `VecSet` for markets is O(n) (could use `Table`)
-  - P3: Registry `oracle_ids` is write-only (dead storage)
 
 ### Session: 2026-02-17
 - **Renamed `oracle_block_scholes.move` → `oracle.move`**: updated module declaration and all 6 import sites across 4 files
@@ -176,5 +157,9 @@ Remove the discrete strike enablement system. The oracle already prices any stri
 - **First test file**: `tests/oracle_tests.move` with 5 tests — UP+DOWN sum to discount factor invariant, directional correctness (OTM call/put), parameter variations (shifted m, positive rho), short expiry (1 day).
 
 ### Session: 2026-02-18
-- **Continuous strikes design**: analyzed oracle capabilities vs market enablement system. Oracle already supports any strike via SVI parametric surface — the only gate is the discrete `Markets` / `VecSet<MarketKey>` in market_manager.move + `assert_enabled` checks in predict.move.
-- **Migration plan**: Step 1 — add new continuous entry points (no enablement check). Step 2 — remove old gated path (market_manager.move, Markets field, enable_market in registry).
+- **Vault refactored to aggregate-only tracking**: replaced `Table<MarketKey, PositionData>` with simple counters (`total_up_short`, `total_down_short`, `total_collateralized`, `max_liability`). Removed `PositionData` struct, per-market position tracking, `min_liability`, `unrealized_liability`/`unrealized_assets`, MTM functions.
+- **Removed mark-to-market**: no more `mark_to_market`, `update_position_mtm`, `update_unrealized`, or `settle` function. LP share pricing uses conservative formula (`balance - max_liability`) instead.
+- **Removed per-market risk limit**: deleted `max_per_market_exposure_pct` from `RiskConfig`, `assert_exposure` from vault (kept `assert_total_exposure`), `default_max_exposure_per_market_pct` macro from constants, `set_max_per_market_exposure_pct` from predict.move and registry.move.
+- **Removed discrete market enablement**: deleted `market_manager.move` entirely, removed `Markets` field from `Predict` struct, removed `enable_market` from predict.move and registry.move.
+- **Unified continuous entry points**: removed gated `mint`/`mint_collateralized` (which called `assert_enabled`), renamed `mint_continuous` → `mint` and `mint_collateralized_continuous` → `mint_collateralized`.
+- **Cleanup**: removed dead `up_down_pair()` from market_key.move, renamed `sources/market_manager/` → `sources/market_key/` directory.

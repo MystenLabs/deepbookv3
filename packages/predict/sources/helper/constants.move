@@ -18,9 +18,6 @@ public macro fun float_scaling(): u64 { 1_000_000_000 }
 
 // === Default Config ===
 
-/// Max exposure per market as % of vault capital (20% in FLOAT_SCALING)
-public macro fun default_max_exposure_per_market_pct(): u64 { 200_000_000 }
-
 /// Max total exposure as % of vault capital (80% in FLOAT_SCALING)
 public macro fun default_max_total_exposure_pct(): u64 { 800_000_000 }
 

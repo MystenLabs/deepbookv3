@@ -11,8 +11,6 @@ use deepbook_predict::constants;
 public struct RiskConfig has store {
     /// Max total liability as % of balance (e.g., 800_000_000 = 80%)
     max_total_exposure_pct: u64,
-    /// Max single market liability as % of balance (e.g., 200_000_000 = 20%)
-    max_per_market_exposure_pct: u64,
 }
 
 // === Public Functions ===
@@ -21,23 +19,14 @@ public fun max_total_exposure_pct(config: &RiskConfig): u64 {
     config.max_total_exposure_pct
 }
 
-public fun max_per_market_exposure_pct(config: &RiskConfig): u64 {
-    config.max_per_market_exposure_pct
-}
-
 // === Public-Package Functions ===
 
 public(package) fun new(): RiskConfig {
     RiskConfig {
         max_total_exposure_pct: constants::default_max_total_exposure_pct!(),
-        max_per_market_exposure_pct: constants::default_max_exposure_per_market_pct!(),
     }
 }
 
 public(package) fun set_max_total_exposure_pct(config: &mut RiskConfig, pct: u64) {
     config.max_total_exposure_pct = pct;
-}
-
-public(package) fun set_max_per_market_exposure_pct(config: &mut RiskConfig, pct: u64) {
-    config.max_per_market_exposure_pct = pct;
 }

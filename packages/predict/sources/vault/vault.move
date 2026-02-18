@@ -6,60 +6,38 @@
 /// The vault holds USDC and takes the opposite side of every trade.
 /// All pricing logic is handled by the orchestrator (predict.move).
 ///
+/// Tracks aggregate short exposure (total_up_short, total_down_short)
+/// instead of per-market positions. LP share pricing uses conservative
+/// formula: balance - max_liability.
+///
 /// Scaling conventions (aligned with DeepBook):
 /// - Quantities are in Quote units (USDC): 1_000_000 = 1 contract = $1 at settlement
-/// - All liabilities (max, min, unrealized) are in Quote units
+/// - All liabilities (max_liability) are in Quote units
 module deepbook_predict::vault;
 
 use deepbook::math;
-use deepbook_predict::{market_key::MarketKey, supply_manager::{Self, SupplyManager}};
-use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin, table::{Self, Table}};
+use deepbook_predict::supply_manager::{Self, SupplyManager};
+use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin};
 
 // === Errors ===
-const ENoShortPosition: u64 = 0;
 const EInsufficientBalance: u64 = 1;
 const EExceedsMaxTotalExposure: u64 = 2;
-const EExceedsMaxMarketExposure: u64 = 3;
 
 // === Structs ===
-
-public struct PositionData has copy, drop, store {
-    qty_minted: u64,
-    qty_minted_collateralized: u64,
-    qty_redeemed: u64,
-    premiums: u64,
-    payouts: u64,
-    unrealized_liability: u64,
-    unrealized_assets: u64,
-}
-
-public fun premiums(data: &PositionData): u64 {
-    data.premiums
-}
-
-public fun payouts(data: &PositionData): u64 {
-    data.payouts
-}
-
-public fun qty_minted_collateralized(data: &PositionData): u64 {
-    data.qty_minted_collateralized
-}
 
 public struct Vault<phantom Quote> has store {
     /// USDC balance held by the vault
     balance: Balance<Quote>,
-    /// MarketKey -> PositionData for each position
-    positions: Table<MarketKey, PositionData>,
     /// Tracks LP shares and supply timestamps
     supply_manager: SupplyManager,
-    /// Maximum possible payout if worst-case outcome occurs
+    /// Total UP contracts the vault is short
+    total_up_short: u64,
+    /// Total DOWN contracts the vault is short
+    total_down_short: u64,
+    /// Total collateralized contracts (not backed by vault)
+    total_collateralized: u64,
+    /// Worst-case payout: max(total_up_short, total_down_short)
     max_liability: u64,
-    /// Minimum possible payout if best-case outcome occurs
-    min_liability: u64,
-    /// Cost to close all short positions
-    unrealized_liability: u64,
-    /// Value from closing all long positions
-    unrealized_assets: u64,
     /// Total premiums collected from traders
     cumulative_premiums: u64,
     /// Total payouts made to traders
@@ -76,24 +54,24 @@ public fun max_liability<Quote>(vault: &Vault<Quote>): u64 {
     vault.max_liability
 }
 
-public fun min_liability<Quote>(vault: &Vault<Quote>): u64 {
-    vault.min_liability
-}
-
-public fun unrealized_liability<Quote>(vault: &Vault<Quote>): u64 {
-    vault.unrealized_liability
-}
-
-public fun unrealized_assets<Quote>(vault: &Vault<Quote>): u64 {
-    vault.unrealized_assets
-}
-
 public fun cumulative_premiums<Quote>(vault: &Vault<Quote>): u64 {
     vault.cumulative_premiums
 }
 
 public fun cumulative_payouts<Quote>(vault: &Vault<Quote>): u64 {
     vault.cumulative_payouts
+}
+
+public fun total_up_short<Quote>(vault: &Vault<Quote>): u64 {
+    vault.total_up_short
+}
+
+public fun total_down_short<Quote>(vault: &Vault<Quote>): u64 {
+    vault.total_down_short
+}
+
+public fun total_collateralized<Quote>(vault: &Vault<Quote>): u64 {
+    vault.total_collateralized
 }
 
 /// Returns (shares, last_supply_ms) for an owner.
@@ -105,175 +83,69 @@ public fun total_shares<Quote>(vault: &Vault<Quote>): u64 {
     vault.supply_manager.total_shares()
 }
 
-/// Returns net short position, clamped to 0 if long.
-/// Used for settlement liability calculations.
-public fun position<Quote>(vault: &Vault<Quote>, key: MarketKey): u64 {
-    let (minted, redeemed) = vault.position_quantities(key);
-    if (minted > redeemed) { minted - redeemed } else { 0 }
-}
-
-/// Returns the full PositionData for a market key.
-public fun position_data<Quote>(vault: &Vault<Quote>, key: MarketKey): PositionData {
-    if (vault.positions.contains(key)) {
-        vault.positions[key]
-    } else {
-        PositionData {
-            qty_minted: 0,
-            qty_minted_collateralized: 0,
-            qty_redeemed: 0,
-            premiums: 0,
-            payouts: 0,
-            unrealized_liability: 0,
-            unrealized_assets: 0,
-        }
-    }
-}
-
-/// Returns raw (qty_minted, qty_redeemed) for a position.
-public fun position_quantities<Quote>(vault: &Vault<Quote>, key: MarketKey): (u64, u64) {
-    if (vault.positions.contains(key)) {
-        let data = vault.positions[key];
-        (data.qty_minted, data.qty_redeemed)
-    } else {
-        (0, 0)
-    }
-}
-
-/// Returns (up_quantity, down_quantity) for the strike.
-public fun pair_position<Quote>(vault: &Vault<Quote>, key: MarketKey): (u64, u64) {
-    let (up_key, down_key) = key.up_down_pair();
-    (vault.position(up_key), vault.position(down_key))
-}
-
-/// Returns the worst-case liability for a strike (max of up/down quantity).
-public fun market_liability<Quote>(vault: &Vault<Quote>, key: MarketKey): u64 {
-    let (max, _min) = vault.exposure(key);
-    max
-}
-
 // === Public-Package Functions ===
 
 public(package) fun new<Quote>(ctx: &mut TxContext): Vault<Quote> {
     Vault {
         balance: balance::zero(),
-        positions: table::new(ctx),
         supply_manager: supply_manager::new(ctx),
+        total_up_short: 0,
+        total_down_short: 0,
+        total_collateralized: 0,
         max_liability: 0,
-        min_liability: 0,
-        unrealized_liability: 0,
-        unrealized_assets: 0,
         cumulative_premiums: 0,
         cumulative_payouts: 0,
     }
 }
 
-/// Execute a mint trade. Updates positions and liabilities.
+/// Execute a mint trade. Updates aggregate exposure.
 /// Cost calculation is done by the orchestrator.
 public(package) fun execute_mint<Quote>(
     vault: &mut Vault<Quote>,
-    key: MarketKey,
+    is_up: bool,
     quantity: u64,
     payment: Coin<Quote>,
 ) {
     let cost = payment.value();
-
-    // Execute trade
     vault.balance.join(payment.into_balance());
     vault.cumulative_premiums = vault.cumulative_premiums + cost;
-
-    // Update max/min liability
-    let (old_max, old_min) = vault.exposure(key);
-    vault.add_position(key, quantity, cost);
-    vault.apply_exposure_delta(key, old_max, old_min);
+    if (is_up) { vault.total_up_short = vault.total_up_short + quantity } else {
+        vault.total_down_short = vault.total_down_short + quantity
+    };
+    vault.recompute_max_liability();
 }
 
-/// Execute a redeem trade. Updates positions and liabilities.
+/// Execute a redeem trade. Updates aggregate exposure.
 /// Payout calculation is done by the orchestrator.
 public(package) fun execute_redeem<Quote>(
     vault: &mut Vault<Quote>,
-    key: MarketKey,
+    is_up: bool,
     quantity: u64,
     payout: u64,
 ): Balance<Quote> {
     assert!(vault.balance.value() >= payout, EInsufficientBalance);
-
-    // Execute trade
     vault.cumulative_payouts = vault.cumulative_payouts + payout;
-
-    // Update max/min liability
-    let (old_max, old_min) = vault.exposure(key);
-    vault.remove_position(key, quantity, payout);
-    vault.apply_exposure_delta(key, old_max, old_min);
-
+    if (is_up) { vault.total_up_short = vault.total_up_short - quantity } else {
+        vault.total_down_short = vault.total_down_short - quantity
+    };
+    vault.recompute_max_liability();
     vault.balance.split(payout)
 }
 
-/// Execute a collateralized mint. Only updates qty_minted_collateralized.
+/// Execute a collateralized mint. Only updates total_collateralized.
 /// Does not affect vault risk since position is backed by collateral.
-public(package) fun execute_mint_collateralized<Quote>(
-    vault: &mut Vault<Quote>,
-    key: MarketKey,
-    quantity: u64,
-) {
-    vault.add_position_entry(key);
-    vault.positions[key].qty_minted_collateralized =
-        vault.positions[key].qty_minted_collateralized + quantity;
+public(package) fun execute_mint_collateralized<Quote>(vault: &mut Vault<Quote>, quantity: u64) {
+    vault.total_collateralized = vault.total_collateralized + quantity;
 }
 
-/// Execute a collateralized redeem. Only updates qty_minted_collateralized.
+/// Execute a collateralized redeem. Only updates total_collateralized.
 /// Does not affect vault risk since position was backed by collateral.
-public(package) fun execute_redeem_collateralized<Quote>(
-    vault: &mut Vault<Quote>,
-    key: MarketKey,
-    quantity: u64,
-) {
-    vault.positions[key].qty_minted_collateralized =
-        vault.positions[key].qty_minted_collateralized - quantity;
+public(package) fun execute_redeem_collateralized<Quote>(vault: &mut Vault<Quote>, quantity: u64) {
+    vault.total_collateralized = vault.total_collateralized - quantity;
 }
 
-/// Update unrealized liability and assets for a position.
-/// Called by orchestrator after calculating via pricing.
-/// For short positions: new_liability > 0, new_assets = 0
-/// For long positions: new_liability = 0, new_assets > 0
-public(package) fun update_unrealized<Quote>(
-    vault: &mut Vault<Quote>,
-    key: MarketKey,
-    new_liability: u64,
-    new_assets: u64,
-) {
-    vault.add_position_entry(key);
-    let data = &mut vault.positions[key];
-
-    let old_liability = data.unrealized_liability;
-    let old_assets = data.unrealized_assets;
-
-    data.unrealized_liability = new_liability;
-    data.unrealized_assets = new_assets;
-
-    vault.unrealized_liability = vault.unrealized_liability + new_liability - old_liability;
-    vault.unrealized_assets = vault.unrealized_assets + new_assets - old_assets;
-}
-
-/// Assert that vault exposure is within risk limits.
-public(package) fun assert_exposure<Quote>(
-    vault: &Vault<Quote>,
-    key: MarketKey,
-    max_total_pct: u64,
-    max_market_pct: u64,
-) {
-    let balance = vault.balance.value();
-    assert!(vault.max_liability <= math::mul(balance, max_total_pct), EExceedsMaxTotalExposure);
-    assert!(
-        vault.market_liability(key) <= math::mul(balance, max_market_pct),
-        EExceedsMaxMarketExposure,
-    );
-}
-
-/// Assert that total vault exposure is within risk limits (no per-market check).
-public(package) fun assert_total_exposure<Quote>(
-    vault: &Vault<Quote>,
-    max_total_pct: u64,
-) {
+/// Assert that total vault exposure is within risk limits.
+public(package) fun assert_total_exposure<Quote>(vault: &Vault<Quote>, max_total_pct: u64) {
     let balance = vault.balance.value();
     assert!(vault.max_liability <= math::mul(balance, max_total_pct), EExceedsMaxTotalExposure);
 }
@@ -309,60 +181,16 @@ public(package) fun withdraw<Quote>(
 
 // === Private Functions ===
 
+/// Conservative vault value: balance - max_liability, floored at 0.
 fun vault_value<Quote>(vault: &Vault<Quote>): u64 {
-    vault.balance.value() + vault.unrealized_assets - vault.unrealized_liability
+    let bal = vault.balance.value();
+    if (bal > vault.max_liability) { bal - vault.max_liability } else { 0 }
 }
 
-fun apply_exposure_delta<Quote>(
-    vault: &mut Vault<Quote>,
-    key: MarketKey,
-    old_max: u64,
-    old_min: u64,
-) {
-    let (new_max, new_min) = vault.exposure(key);
-    vault.max_liability = vault.max_liability + new_max - old_max;
-    vault.min_liability = vault.min_liability + new_min - old_min;
-}
-
-/// Returns (max_exposure, min_exposure) for the strike.
-fun exposure<Quote>(vault: &Vault<Quote>, key: MarketKey): (u64, u64) {
-    let (up, down) = vault.pair_position(key);
-    if (up > down) {
-        (up, down)
+fun recompute_max_liability<Quote>(vault: &mut Vault<Quote>) {
+    vault.max_liability = if (vault.total_up_short > vault.total_down_short) {
+        vault.total_up_short
     } else {
-        (down, up)
-    }
-}
-
-fun add_position<Quote>(vault: &mut Vault<Quote>, key: MarketKey, quantity: u64, premium: u64) {
-    vault.add_position_entry(key);
-    let data = &mut vault.positions[key];
-    data.qty_minted = data.qty_minted + quantity;
-    data.premiums = data.premiums + premium;
-}
-
-fun remove_position<Quote>(vault: &mut Vault<Quote>, key: MarketKey, quantity: u64, payout: u64) {
-    assert!(vault.positions.contains(key), ENoShortPosition);
-    let data = &mut vault.positions[key];
-    data.qty_redeemed = data.qty_redeemed + quantity;
-    data.payouts = data.payouts + payout;
-}
-
-fun add_position_entry<Quote>(vault: &mut Vault<Quote>, key: MarketKey) {
-    if (!vault.positions.contains(key)) {
-        vault
-            .positions
-            .add(
-                key,
-                PositionData {
-                    qty_minted: 0,
-                    qty_minted_collateralized: 0,
-                    qty_redeemed: 0,
-                    premiums: 0,
-                    payouts: 0,
-                    unrealized_liability: 0,
-                    unrealized_assets: 0,
-                },
-            );
-    }
+        vault.total_down_short
+    };
 }

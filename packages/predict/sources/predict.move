@@ -6,7 +6,7 @@
 /// This module orchestrates all operations:
 /// - Coordinates between Vault (state), Oracle (data), and config
 /// - Exposes public functions for trading and LP operations
-/// - Handles pricing (spread calculation) and mark-to-market
+/// - Handles pricing (spread calculation)
 module deepbook_predict::predict;
 
 use deepbook::math;
@@ -14,7 +14,6 @@ use deepbook_predict::{
     constants,
     lp_config::{Self, LPConfig},
     market_key::MarketKey,
-    market_manager::{Self, Markets},
     oracle::OracleSVI,
     predict_manager::{Self, PredictManager},
     pricing_config::{Self, PricingConfig},
@@ -25,7 +24,6 @@ use sui::{clock::Clock, coin::Coin};
 
 // === Errors ===
 const ETradingPaused: u64 = 0;
-const EMarketNotSettled: u64 = 1;
 const EInvalidCollateralPair: u64 = 2;
 const EWithdrawalsPaused: u64 = 3;
 
@@ -35,8 +33,6 @@ const EWithdrawalsPaused: u64 = 3;
 /// Quote is the collateral asset (e.g., USDC).
 public struct Predict<phantom Quote> has key {
     id: UID,
-    /// Enabled markets tracker
-    markets: Markets,
     /// Vault holding USDC and tracking exposure
     vault: Vault<Quote>,
     /// Pricing configuration (admin-controlled)
@@ -96,52 +92,11 @@ public fun mint<Underlying, Quote>(
     assert!(!predict.trading_paused, ETradingPaused);
     key.assert_matches_oracle(oracle);
     oracle.assert_not_stale(clock);
-    predict.markets.assert_enabled(&key);
-
-    // Calculate cost and withdraw payment from manager
-    let cost = predict.get_mint_cost(oracle, key, quantity, clock);
-    let payment = manager.withdraw<Quote>(cost, ctx);
-
-    // Execute trade
-    predict.vault.execute_mint(key, quantity, payment);
-
-    // Risk checks
-    predict
-        .vault
-        .assert_exposure(
-            key,
-            predict.risk_config.max_total_exposure_pct(),
-            predict.risk_config.max_per_market_exposure_pct(),
-        );
-
-    // Mark-to-market using post-trade exposure
-    predict.mark_to_market(oracle, key, clock);
-
-    // Manager records long position
-    manager.increase_position(key, quantity);
-}
-
-/// Buy a position at any strike (continuous). No admin-enabled market required.
-public fun mint_continuous<Underlying, Quote>(
-    predict: &mut Predict<Quote>,
-    manager: &mut PredictManager,
-    oracle: &OracleSVI<Underlying>,
-    key: MarketKey,
-    quantity: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    assert!(!predict.trading_paused, ETradingPaused);
-    key.assert_matches_oracle(oracle);
-    oracle.assert_not_stale(clock);
 
     let cost = predict.get_mint_cost(oracle, key, quantity, clock);
     let payment = manager.withdraw<Quote>(cost, ctx);
-    predict.vault.execute_mint(key, quantity, payment);
-    predict
-        .vault
-        .assert_total_exposure(predict.risk_config.max_total_exposure_pct());
-    predict.mark_to_market(oracle, key, clock);
+    predict.vault.execute_mint(key.is_up(), quantity, payment);
+    predict.vault.assert_total_exposure(predict.risk_config.max_total_exposure_pct());
     manager.increase_position(key, quantity);
 }
 
@@ -161,24 +116,18 @@ public fun redeem<Underlying, Quote>(
         oracle.assert_not_stale(clock);
     };
 
-    // Manager reduces long position first
     manager.decrease_position(key, quantity);
 
-    // Calculate payout and execute trade
     let payout = predict.get_redeem_payout(oracle, key, quantity, clock);
-    let payout_balance = predict.vault.execute_redeem(key, quantity, payout);
+    let payout_balance = predict.vault.execute_redeem(key.is_up(), quantity, payout);
 
-    // Mark-to-market using post-trade exposure
-    predict.mark_to_market(oracle, key, clock);
-
-    // Deposit payout into manager
     let payout_coin = payout_balance.into_coin(ctx);
     manager.deposit(payout_coin, ctx);
 }
 
 /// Mint a position using another position as collateral (no USDC cost).
-/// - UP collateral (lower strike) → UP minted (higher strike)
-/// - DOWN collateral (higher strike) → DOWN minted (lower strike)
+/// - UP collateral (lower strike) -> UP minted (higher strike)
+/// - DOWN collateral (higher strike) -> DOWN minted (lower strike)
 public fun mint_collateralized<Underlying, Quote>(
     predict: &mut Predict<Quote>,
     manager: &mut PredictManager,
@@ -192,45 +141,6 @@ public fun mint_collateralized<Underlying, Quote>(
     locked_key.assert_matches_oracle(oracle);
     minted_key.assert_matches_oracle(oracle);
     oracle.assert_not_stale(clock);
-    predict.markets.assert_enabled(&locked_key);
-    predict.markets.assert_enabled(&minted_key);
-
-    // Validate collateral pair
-    let valid_pair = if (locked_key.is_up() && minted_key.is_up()) {
-        // UP collateral must have lower strike than minted UP
-        locked_key.strike() < minted_key.strike()
-    } else if (locked_key.is_down() && minted_key.is_down()) {
-        // DOWN collateral must have higher strike than minted DOWN
-        locked_key.strike() > minted_key.strike()
-    } else {
-        false
-    };
-    assert!(valid_pair, EInvalidCollateralPair);
-
-    // Lock collateral in manager (moves from free to locked)
-    manager.lock_collateral(locked_key, minted_key, quantity);
-
-    // Record collateralized mint in vault (no risk impact)
-    predict.vault.execute_mint_collateralized(minted_key, quantity);
-
-    // Manager records minted position
-    manager.increase_position(minted_key, quantity);
-}
-
-/// Mint a collateralized position at any strike (continuous). No admin-enabled market required.
-public fun mint_collateralized_continuous<Underlying, Quote>(
-    predict: &mut Predict<Quote>,
-    manager: &mut PredictManager,
-    oracle: &OracleSVI<Underlying>,
-    locked_key: MarketKey,
-    minted_key: MarketKey,
-    quantity: u64,
-    clock: &Clock,
-) {
-    assert!(!predict.trading_paused, ETradingPaused);
-    locked_key.assert_matches_oracle(oracle);
-    minted_key.assert_matches_oracle(oracle);
-    oracle.assert_not_stale(clock);
 
     let valid_pair = if (locked_key.is_up() && minted_key.is_up()) {
         locked_key.strike() < minted_key.strike()
@@ -242,7 +152,7 @@ public fun mint_collateralized_continuous<Underlying, Quote>(
     assert!(valid_pair, EInvalidCollateralPair);
 
     manager.lock_collateral(locked_key, minted_key, quantity);
-    predict.vault.execute_mint_collateralized(minted_key, quantity);
+    predict.vault.execute_mint_collateralized(quantity);
     manager.increase_position(minted_key, quantity);
 }
 
@@ -254,30 +164,9 @@ public fun redeem_collateralized<Quote>(
     minted_key: MarketKey,
     quantity: u64,
 ) {
-    // Reduce minted position
     manager.decrease_position(minted_key, quantity);
-
-    // Release collateral (moves from locked to free)
     manager.release_collateral(locked_key, minted_key, quantity);
-
-    // Update vault accounting
-    predict.vault.execute_redeem_collateralized(minted_key, quantity);
-}
-
-/// Settle a market after expiry. Updates vault accounting to reflect actual outcome.
-/// Anyone can call this once the oracle has a settlement price.
-/// Idempotent - mark_to_market overwrites absolute values, not deltas.
-public fun settle<Underlying, Quote>(
-    predict: &mut Predict<Quote>,
-    oracle: &OracleSVI<Underlying>,
-    key: MarketKey,
-    clock: &Clock,
-) {
-    key.assert_matches_oracle(oracle);
-    assert!(oracle.is_settled(), EMarketNotSettled);
-
-    // Mark-to-market uses settlement prices (100%/0%)
-    predict.mark_to_market(oracle, key, clock);
+    predict.vault.execute_redeem_collateralized(quantity);
 }
 
 /// Supply USDC to the vault, receive shares.
@@ -309,7 +198,6 @@ public fun withdraw<Quote>(
 public(package) fun create<Quote>(ctx: &mut TxContext): ID {
     let predict = Predict<Quote> {
         id: object::new(ctx),
-        markets: market_manager::new(),
         vault: vault::new<Quote>(ctx),
         pricing_config: pricing_config::new(),
         lp_config: lp_config::new(),
@@ -321,15 +209,6 @@ public(package) fun create<Quote>(ctx: &mut TxContext): ID {
     transfer::share_object(predict);
 
     predict_id
-}
-
-/// Enable a market for trading.
-public(package) fun enable_market<Underlying, Quote>(
-    predict: &mut Predict<Quote>,
-    oracle: &OracleSVI<Underlying>,
-    key: MarketKey,
-) {
-    predict.markets.enable_market(oracle, key);
 }
 
 /// Set trading pause state.
@@ -362,11 +241,6 @@ public(package) fun set_max_total_exposure_pct<Quote>(predict: &mut Predict<Quot
     predict.risk_config.set_max_total_exposure_pct(pct);
 }
 
-/// Set max per-market exposure percentage.
-public(package) fun set_max_per_market_exposure_pct<Quote>(predict: &mut Predict<Quote>, pct: u64) {
-    predict.risk_config.set_max_per_market_exposure_pct(pct);
-}
-
 // === Private Functions ===
 
 /// Get bid and ask prices for a market.
@@ -380,7 +254,8 @@ fun get_quote<Underlying, Quote>(
 ): (u64, u64) {
     let strike = key.strike();
     let is_up = key.is_up();
-    let (up_short, down_short) = predict.vault.pair_position(key);
+    let up_short = predict.vault.total_up_short();
+    let down_short = predict.vault.total_down_short();
 
     // After settlement, return definitive prices
     if (oracle.is_settled()) {
@@ -408,40 +283,4 @@ fun get_quote<Underlying, Quote>(
     let ask = price + spread;
 
     (bid, ask)
-}
-
-/// Mark-to-market: calculate cost to close each position and update unrealized.
-/// Short positions have unrealized_liability, long positions have unrealized_assets.
-fun mark_to_market<Underlying, Quote>(
-    predict: &mut Predict<Quote>,
-    oracle: &OracleSVI<Underlying>,
-    key: MarketKey,
-    clock: &Clock,
-) {
-    let (up_key, down_key) = key.up_down_pair();
-
-    update_position_mtm(predict, oracle, up_key, clock);
-    update_position_mtm(predict, oracle, down_key, clock);
-}
-
-fun update_position_mtm<Underlying, Quote>(
-    predict: &mut Predict<Quote>,
-    oracle: &OracleSVI<Underlying>,
-    key: MarketKey,
-    clock: &Clock,
-) {
-    let (minted, redeemed) = predict.vault.position_quantities(key);
-    let (bid, ask) = get_quote(predict, oracle, key, clock);
-
-    let (liability, assets) = if (minted > redeemed) {
-        let qty = minted - redeemed;
-        (math::mul(ask, qty), 0)
-    } else if (redeemed > minted) {
-        let qty = redeemed - minted;
-        (0, math::mul(bid, qty))
-    } else {
-        (0, 0)
-    };
-
-    predict.vault.update_unrealized(key, liability, assets);
 }

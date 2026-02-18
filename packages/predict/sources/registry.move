@@ -4,20 +4,15 @@
 /// Registry module for the Predict protocol.
 ///
 /// Manages:
-/// - `Registry` shared object that tracks all markets
+/// - `Registry` shared object that tracks oracles and the Predict ID
 /// - `AdminCap` capability for admin operations
-/// - Market registration and lookup
 /// - Global pause flags for trading and withdrawals
 ///
 /// The Registry is created once during package initialization.
 /// AdminCap is transferred to the deployer (expected to be a multisig).
 module deepbook_predict::registry;
 
-use deepbook_predict::{
-    market_key::MarketKey,
-    oracle::{Self, OracleCapSVI, OracleSVI},
-    predict
-};
+use deepbook_predict::{oracle::{Self, OracleCapSVI}, predict};
 use sui::table::{Self, Table};
 
 // === Errors ===
@@ -109,16 +104,6 @@ public fun set_withdrawals_paused<Quote>(
     predict.set_withdrawals_paused(paused);
 }
 
-/// Enable a market for trading.
-public fun enable_market<Underlying, Quote>(
-    predict: &mut predict::Predict<Quote>,
-    _admin_cap: &AdminCap,
-    oracle: &OracleSVI<Underlying>,
-    key: MarketKey,
-) {
-    predict.enable_market(oracle, key);
-}
-
 /// Set LP lockup period.
 public fun set_lockup_period<Quote>(
     predict: &mut predict::Predict<Quote>,
@@ -153,15 +138,6 @@ public fun set_max_total_exposure_pct<Quote>(
     pct: u64,
 ) {
     predict.set_max_total_exposure_pct(pct);
-}
-
-/// Set max per-market exposure percentage.
-public fun set_max_per_market_exposure_pct<Quote>(
-    predict: &mut predict::Predict<Quote>,
-    _admin_cap: &AdminCap,
-    pct: u64,
-) {
-    predict.set_max_per_market_exposure_pct(pct);
 }
 
 // === Private Functions ===
