@@ -32,9 +32,6 @@ public macro fun default_max_skew_multiplier(): u64 { 1_000_000_000 }
 /// Controls how aggressively spread widens as vault approaches capacity
 public macro fun default_utilization_multiplier(): u64 { 2_000_000_000 }
 
-/// LP withdrawal lockup period (24 hours)
-public macro fun default_min_lockup_ms(): u64 { 86_400_000 }
-
 // === Time Constants ===
 
 public macro fun ms_per_year(): u64 { 31_536_000_000 }

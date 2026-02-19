@@ -6,14 +6,14 @@
 /// Manages:
 /// - `Registry` shared object that tracks oracles and the Predict ID
 /// - `AdminCap` capability for admin operations
-/// - Global pause flags for trading and withdrawals
+/// - Global pause flags for trading
 ///
 /// The Registry is created once during package initialization.
 /// AdminCap is transferred to the deployer (expected to be a multisig).
 module deepbook_predict::registry;
 
 use deepbook_predict::{oracle::{Self, OracleCapSVI}, predict};
-use sui::table::{Self, Table};
+use sui::{coin::Coin, table::{Self, Table}};
 
 // === Errors ===
 const EPredictAlreadyCreated: u64 = 0;
@@ -86,6 +86,25 @@ public fun create_oracle<Underlying>(
     oracle_id
 }
 
+/// Admin deposits USDC into the vault.
+public fun admin_deposit<Quote>(
+    predict: &mut predict::Predict<Quote>,
+    _admin_cap: &AdminCap,
+    coin: Coin<Quote>,
+) {
+    predict.deposit(coin);
+}
+
+/// Admin withdraws USDC from the vault.
+public fun admin_withdraw<Quote>(
+    predict: &mut predict::Predict<Quote>,
+    _admin_cap: &AdminCap,
+    amount: u64,
+    ctx: &mut TxContext,
+): Coin<Quote> {
+    predict.withdraw(amount, ctx)
+}
+
 /// Set trading pause state.
 public fun set_trading_paused<Quote>(
     predict: &mut predict::Predict<Quote>,
@@ -93,24 +112,6 @@ public fun set_trading_paused<Quote>(
     paused: bool,
 ) {
     predict.set_trading_paused(paused);
-}
-
-/// Set withdrawals pause state.
-public fun set_withdrawals_paused<Quote>(
-    predict: &mut predict::Predict<Quote>,
-    _admin_cap: &AdminCap,
-    paused: bool,
-) {
-    predict.set_withdrawals_paused(paused);
-}
-
-/// Set LP lockup period.
-public fun set_lockup_period<Quote>(
-    predict: &mut predict::Predict<Quote>,
-    _admin_cap: &AdminCap,
-    period_ms: u64,
-) {
-    predict.set_lockup_period(period_ms);
 }
 
 /// Set base spread.
