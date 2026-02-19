@@ -3,7 +3,10 @@ use chrono::NaiveDateTime;
 use deepbook_indexer::handlers::asset_supplied_handler::AssetSuppliedHandler;
 use deepbook_indexer::handlers::asset_withdrawn_handler::AssetWithdrawnHandler;
 use deepbook_indexer::handlers::balances_handler::BalancesHandler;
+use deepbook_indexer::handlers::balance_manager_event_handler::BalanceManagerEventHandler;
 use deepbook_indexer::handlers::deep_burned_handler::DeepBurnedHandler;
+use deepbook_indexer::handlers::deepbook_referral_created_event_handler::DeepBookReferralCreatedEventHandler;
+use deepbook_indexer::handlers::deepbook_referral_set_event_handler::DeepBookReferralSetEventHandler;
 use deepbook_indexer::handlers::deepbook_pool_config_updated_handler::DeepbookPoolConfigUpdatedHandler;
 use deepbook_indexer::handlers::deepbook_pool_registered_handler::DeepbookPoolRegisteredHandler;
 use deepbook_indexer::handlers::deepbook_pool_updated_handler::DeepbookPoolUpdatedHandler;
@@ -65,6 +68,27 @@ use sui_types::full_checkpoint_content::CheckpointData;
 async fn balances_test() -> Result<(), anyhow::Error> {
     let handler = BalancesHandler::new(DeepbookEnv::Mainnet);
     data_test("balances", handler, ["balances"]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn balance_manager_event_test() -> Result<(), anyhow::Error> {
+    let handler = BalanceManagerEventHandler::new(DeepbookEnv::Mainnet);
+    data_test("balance_managers", handler, ["balance_managers"]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn deepbook_referral_created_event_test() -> Result<(), anyhow::Error> {
+    let handler = DeepBookReferralCreatedEventHandler::new(DeepbookEnv::Mainnet);
+    data_test("deepbook_referral_created", handler, ["deepbook_referral_created"]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn deepbook_referral_set_event_test() -> Result<(), anyhow::Error> {
+    let handler = DeepBookReferralSetEventHandler::new(DeepbookEnv::Mainnet);
+    data_test("deepbook_referral_set", handler, ["deepbook_referral_set"]).await?;
     Ok(())
 }
 
