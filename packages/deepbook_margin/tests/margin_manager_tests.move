@@ -4,7 +4,7 @@
 #[test_only]
 module deepbook_margin::margin_manager_tests;
 
-use deepbook::{constants, pool::Pool, registry::Registry};
+use deepbook::{balance_manager, constants, pool::Pool, registry::Registry};
 use deepbook_margin::{
     margin_constants,
     margin_manager::{Self, MarginManager},
@@ -2907,8 +2907,6 @@ fun test_unregister_margin_manager_fails_with_outstanding_quote_debt() {
 /// This tests the fix where withdraw_settled_amounts is called before cancel_all_orders
 /// to ensure any filled maker orders have their proceeds deposited to balance_manager.
 fun liquidation_with_unsettled_maker_fills() {
-    use deepbook::balance_manager;
-
     let (
         mut scenario,
         clock,
