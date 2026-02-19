@@ -110,7 +110,7 @@ enum Command {
     Sandbox(SandboxArgs),
 }
 
-#[derive(Parser)]
+#[derive(clap::Args)]
 #[clap(rename_all = "kebab-case")]
 struct SandboxArgs {
     /// Sandbox environment
@@ -193,8 +193,9 @@ async fn main() -> Result<(), anyhow::Error> {
                 packages.retain(|p| matches!(p, Package::Deepbook));
             }
 
-            // env is unused for package resolution (override handles it),
-            // but handlers still receive it for type compatibility
+            // In sandbox mode the OnceLock override handles all package resolution,
+            // so this env value is only used for type compatibility in handler constructors.
+            // It does not affect which packages are indexed.
             (env.unwrap_or(DeepbookEnv::Mainnet), ingestion, packages)
         }
     };
