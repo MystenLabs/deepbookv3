@@ -15,6 +15,7 @@ use deepbook::{
     },
     constants,
     math,
+    order::Order,
     order_info::OrderInfo,
     pool::Pool,
     registry::Registry
@@ -35,7 +36,7 @@ use deepbook_margin::{
 };
 use pyth::price_info::PriceInfoObject;
 use std::{string::String, type_name::{Self, TypeName}};
-use sui::{clock::Clock, coin::Coin, event, vec_map::{Self, VecMap}};
+use sui::{clock::Clock, coin::Coin, event, vec_map::{Self, VecMap}, vec_set::VecSet};
 use token::deep::DEEP;
 
 // === Errors ===
@@ -1159,6 +1160,27 @@ public fun highest_trigger_below_price<BaseAsset, QuoteAsset>(
     } else {
         trigger_below[0].condition().trigger_price()
     }
+}
+
+public fun get_account_order_details<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+): vector<Order> {
+    pool.get_account_order_details(&self.balance_manager)
+}
+
+public fun account_open_orders<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+): VecSet<u128> {
+    pool.account_open_orders(&self.balance_manager)
+}
+
+public fun locked_balance<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+): (u64, u64, u64) {
+    pool.locked_balance(&self.balance_manager)
 }
 
 // === Public-Package Functions ===
