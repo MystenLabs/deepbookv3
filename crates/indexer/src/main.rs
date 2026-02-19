@@ -154,7 +154,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let (env, ingestion_args, packages) = match sandbox {
         None => {
             // Production mode — --env is required
-            let env = env.expect("--env is required when not using a subcommand");
+            let env = env.context("--env is required when not using a subcommand")?;
             let ingestion = IngestionClientArgs {
                 remote_store_url: Some(env.remote_store_url()),
                 ..Default::default()
@@ -174,7 +174,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 SandboxEnv::Localnet => IngestionClientArgs {
                     local_ingestion_path: Some(
                         sb.local_ingestion_path
-                            .expect("--local-ingestion-path is required for localnet"),
+                            .context("--local-ingestion-path is required for localnet")?,
                     ),
                     ..Default::default()
                 },
@@ -194,9 +194,12 @@ async fn main() -> Result<(), anyhow::Error> {
             }
 
             // In sandbox mode the OnceLock override handles all package resolution,
-            // so this env value is only used for type compatibility in handler constructors.
-            // It does not affect which packages are indexed.
-            (env.unwrap_or(DeepbookEnv::Mainnet), ingestion, packages)
+            // so this env is only used for type compatibility in handler constructors.
+            // Map both sandbox variants to Testnet (the closest DeepbookEnv equivalent).
+            let deepbook_env = match sb.env {
+                SandboxEnv::Testnet | SandboxEnv::Localnet => DeepbookEnv::Testnet,
+            };
+            (deepbook_env, ingestion, packages)
         }
     };
 

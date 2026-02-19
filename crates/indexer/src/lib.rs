@@ -232,6 +232,8 @@ impl DeepbookEnv {
 
     /// Get all package addresses (DeepBook + Margin) for this environment
     fn get_all_package_strings(&self) -> Vec<&str> {
+        // If sandbox mode is active, both overrides are set together by init_package_override
+        // (margin may be an empty slice). Use them instead of the hardcoded constants.
         if let (Some(core), Some(margin)) = (sandbox::core_packages(), sandbox::margin_packages()) {
             let mut all = core.to_vec();
             all.extend_from_slice(margin);
