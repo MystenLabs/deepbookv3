@@ -173,10 +173,16 @@ async fn main() -> Result<(), anyhow::Error> {
                     .concurrent_pipeline(DeepBurnedHandler::new(env), Default::default())
                     .await?;
                 indexer
-                    .concurrent_pipeline(DeepBookReferralCreatedEventHandler::new(env), Default::default())
+                    .concurrent_pipeline(
+                        DeepBookReferralCreatedEventHandler::new(env),
+                        Default::default(),
+                    )
                     .await?;
                 indexer
-                    .concurrent_pipeline(DeepBookReferralSetEventHandler::new(env), Default::default())
+                    .concurrent_pipeline(
+                        DeepBookReferralSetEventHandler::new(env),
+                        Default::default(),
+                    )
                     .await?;
                 indexer
                     .concurrent_pipeline(FlashLoanHandler::new(env), Default::default())
