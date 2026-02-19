@@ -57,6 +57,60 @@ struct OhclvRow {
     base_volume: f64,
 }
 
+#[derive(QueryableByName, Debug)]
+struct MarginPositionRow {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    margin_manager_id: String,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pool_name: String,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    base_asset_symbol: String,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    quote_asset_symbol: String,
+    #[diesel(sql_type = diesel::sql_types::Double)]
+    base_asset: f64,
+    #[diesel(sql_type = diesel::sql_types::Double)]
+    quote_asset: f64,
+    #[diesel(sql_type = diesel::sql_types::Double)]
+    base_debt: f64,
+    #[diesel(sql_type = diesel::sql_types::Double)]
+    quote_debt: f64,
+    #[diesel(sql_type = diesel::sql_types::Double)]
+    base_asset_usd: f64,
+    #[diesel(sql_type = diesel::sql_types::Double)]
+    quote_asset_usd: f64,
+    #[diesel(sql_type = diesel::sql_types::Double)]
+    base_debt_usd: f64,
+    #[diesel(sql_type = diesel::sql_types::Double)]
+    quote_debt_usd: f64,
+    #[diesel(sql_type = diesel::sql_types::Double)]
+    risk_ratio: f64,
+}
+
+#[derive(QueryableByName, Debug)]
+struct CollateralRow {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    asset: String,
+    #[diesel(sql_type = diesel::sql_types::Double)]
+    balance: f64,
+    #[diesel(sql_type = diesel::sql_types::Double)]
+    balance_usd: f64,
+}
+
+#[derive(QueryableByName, Debug)]
+struct LpPositionRow {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    margin_pool_id: String,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    asset: String,
+    #[diesel(sql_type = diesel::sql_types::Double)]
+    net_supplied: f64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    net_shares: i64,
+    #[diesel(sql_type = diesel::sql_types::Double)]
+    supplied_usd: f64,
+}
+
 #[derive(Clone)]
 pub struct Reader {
     db: Db,
@@ -1382,7 +1436,10 @@ impl Reader {
         wallet_address: &str,
     ) -> Result<PortfolioQueryResult, DeepBookError> {
         // Validate: must be 0x-prefixed 64-character hex string
-        if !wallet_address.starts_with("0x") || wallet_address.len() != 66 {
+        if !wallet_address.starts_with("0x")
+            || wallet_address.len() != 66
+            || !wallet_address[2..].chars().all(|c| c.is_ascii_hexdigit())
+        {
             return Err(DeepBookError::bad_request(
                 "Invalid wallet address: expected 0x-prefixed 64-character hex string",
             ));
@@ -1390,61 +1447,6 @@ impl Reader {
 
         let mut connection = self.db.connect().await?;
         let _guard = self.metrics.db_latency.start_timer();
-
-        // --- Row types ---
-        #[derive(QueryableByName, Debug)]
-        struct MarginPositionRow {
-            #[diesel(sql_type = diesel::sql_types::Text)]
-            margin_manager_id: String,
-            #[diesel(sql_type = diesel::sql_types::Text)]
-            pool_name: String,
-            #[diesel(sql_type = diesel::sql_types::Text)]
-            base_asset_symbol: String,
-            #[diesel(sql_type = diesel::sql_types::Text)]
-            quote_asset_symbol: String,
-            #[diesel(sql_type = diesel::sql_types::Double)]
-            base_asset: f64,
-            #[diesel(sql_type = diesel::sql_types::Double)]
-            quote_asset: f64,
-            #[diesel(sql_type = diesel::sql_types::Double)]
-            base_debt: f64,
-            #[diesel(sql_type = diesel::sql_types::Double)]
-            quote_debt: f64,
-            #[diesel(sql_type = diesel::sql_types::Double)]
-            base_asset_usd: f64,
-            #[diesel(sql_type = diesel::sql_types::Double)]
-            quote_asset_usd: f64,
-            #[diesel(sql_type = diesel::sql_types::Double)]
-            base_debt_usd: f64,
-            #[diesel(sql_type = diesel::sql_types::Double)]
-            quote_debt_usd: f64,
-            #[diesel(sql_type = diesel::sql_types::Double)]
-            risk_ratio: f64,
-        }
-
-        #[derive(QueryableByName, Debug)]
-        struct CollateralRow {
-            #[diesel(sql_type = diesel::sql_types::Text)]
-            asset: String,
-            #[diesel(sql_type = diesel::sql_types::Double)]
-            balance: f64,
-            #[diesel(sql_type = diesel::sql_types::Double)]
-            balance_usd: f64,
-        }
-
-        #[derive(QueryableByName, Debug)]
-        struct LpPositionRow {
-            #[diesel(sql_type = diesel::sql_types::Text)]
-            margin_pool_id: String,
-            #[diesel(sql_type = diesel::sql_types::Text)]
-            asset: String,
-            #[diesel(sql_type = diesel::sql_types::Double)]
-            net_supplied: f64,
-            #[diesel(sql_type = diesel::sql_types::BigInt)]
-            net_shares: i64,
-            #[diesel(sql_type = diesel::sql_types::Double)]
-            supplied_usd: f64,
-        }
 
         // --- Margin positions ---
         let margin_res = diesel::sql_query(
@@ -1554,6 +1556,10 @@ impl Reader {
             -- asset_id matching strips the 0x prefix for a suffix LIKE match; this is intentional
             -- and consistent with other queries in the codebase. Assumes asset IDs are unique enough
             -- that no two assets share the same suffix, which holds for all current DeepBook pools.
+            -- TODO: leading '%' wildcard prevents B-tree index use on balances.asset, causing a
+            -- sequential scan for wallets with many balance events. Consider adding a normalized
+            -- asset column or a functional index to avoid this. Same concern as the missing
+            -- idx_asset_supplied_sender / idx_asset_withdrawn_sender indexes noted in the LP query.
             LEFT JOIN asset_meta am ON b.asset LIKE '%' || SUBSTRING(am.asset_id FROM 3) || '%'
             LEFT JOIN latest_prices lp ON am.symbol = lp.symbol
             WHERE am.symbol IS NOT NULL
@@ -1638,21 +1644,46 @@ impl Reader {
         .load::<LpPositionRow>(&mut connection)
         .await;
 
-        // Propagate errors and increment failure metric on any query failure
-        let margin_positions = margin_res.map_err(|e| {
-            self.metrics.db_requests_failed.inc();
-            DeepBookError::database(format!("Error fetching margin positions: {}", e))
-        })?;
-        let collateral = collateral_res.map_err(|e| {
-            self.metrics.db_requests_failed.inc();
-            DeepBookError::database(format!("Error fetching collateral: {}", e))
-        })?;
-        let lp_positions = lp_res.map_err(|e| {
-            self.metrics.db_requests_failed.inc();
-            DeepBookError::database(format!("Error fetching LP positions: {}", e))
-        })?;
-
-        self.metrics.db_requests_succeeded.inc();
+        // Increment metrics per-query (1 query = 1 metric) for consistency with rest of codebase
+        let margin_positions = match margin_res {
+            Ok(v) => {
+                self.metrics.db_requests_succeeded.inc();
+                v
+            }
+            Err(e) => {
+                self.metrics.db_requests_failed.inc();
+                return Err(DeepBookError::database(format!(
+                    "Error fetching margin positions: {}",
+                    e
+                )));
+            }
+        };
+        let collateral = match collateral_res {
+            Ok(v) => {
+                self.metrics.db_requests_succeeded.inc();
+                v
+            }
+            Err(e) => {
+                self.metrics.db_requests_failed.inc();
+                return Err(DeepBookError::database(format!(
+                    "Error fetching collateral: {}",
+                    e
+                )));
+            }
+        };
+        let lp_positions = match lp_res {
+            Ok(v) => {
+                self.metrics.db_requests_succeeded.inc();
+                v
+            }
+            Err(e) => {
+                self.metrics.db_requests_failed.inc();
+                return Err(DeepBookError::database(format!(
+                    "Error fetching LP positions: {}",
+                    e
+                )));
+            }
+        };
 
         // Compute summary totals
         let collateral_total_usd: f64 = collateral.iter().map(|c| c.balance_usd).sum();
