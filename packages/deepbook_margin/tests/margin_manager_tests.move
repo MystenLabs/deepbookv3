@@ -4,12 +4,13 @@
 #[test_only]
 module deepbook_margin::margin_manager_tests;
 
-use deepbook::{pool::Pool, registry::Registry};
+use deepbook::{constants, pool::Pool, registry::Registry};
 use deepbook_margin::{
     margin_constants,
     margin_manager::{Self, MarginManager},
     margin_pool::{Self, MarginPool},
     margin_registry::{Self, MarginRegistry},
+    pool_proxy,
     test_constants::{Self, USDC, USDT, BTC, INVALID_ASSET, btc_multiplier},
     test_helpers::{
         Self,
@@ -27,6 +28,7 @@ use deepbook_margin::{
         build_stale_usdc_price_info_object,
         setup_btc_usd_deepbook_margin,
         setup_usdc_usdt_deepbook_margin,
+        setup_pool_proxy_test_env,
         destroy_2,
         destroy_3,
         return_shared_2,
@@ -2905,7 +2907,7 @@ fun test_unregister_margin_manager_fails_with_outstanding_quote_debt() {
 /// This tests the fix where withdraw_settled_amounts is called before cancel_all_orders
 /// to ensure any filled maker orders have their proceeds deposited to balance_manager.
 fun liquidation_with_unsettled_maker_fills() {
-    use deepbook::{balance_manager, constants};
+    use deepbook::balance_manager;
 
     let (
         mut scenario,
@@ -3406,4 +3408,231 @@ fun borrow_base_fails_with_stale_oracles() {
     );
 
     abort 0 // Never reached
+}
+
+// === Read-Only Accessor Tests ===
+
+#[test]
+fun get_account_order_details_returns_open_orders() {
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        _base_pool_id,
+        _quote_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_pool_proxy_test_env<USDC, USDT>();
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    mm.deposit<USDC, USDT, USDC>(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        mint_coin<USDC>(10000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    destroy_2!(usdc_price, usdt_price);
+
+    let order_info = pool_proxy::place_limit_order<USDC, USDT>(
+        &registry,
+        &mut mm,
+        &mut pool,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        1_000_000_000,
+        100 * test_constants::usdc_multiplier(),
+        false,
+        false,
+        2000000,
+        &clock,
+        scenario.ctx(),
+    );
+    let expected_order_id = order_info.order_id();
+    destroy(order_info);
+
+    let orders = mm.get_account_order_details(&pool);
+    assert!(orders.length() == 1);
+    assert!(orders[0].order_id() == expected_order_id);
+    assert!(orders[0].client_order_id() == 1);
+    assert!(orders[0].quantity() == 100 * test_constants::usdc_multiplier());
+
+    return_shared_2!(mm, pool);
+    cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun account_open_orders_returns_order_ids() {
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        _base_pool_id,
+        _quote_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_pool_proxy_test_env<USDC, USDT>();
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    mm.deposit<USDC, USDT, USDC>(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        mint_coin<USDC>(10000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    destroy_2!(usdc_price, usdt_price);
+
+    // No orders yet
+    let open_orders = mm.account_open_orders(&pool);
+    assert!(open_orders.length() == 0);
+
+    // Place two orders
+    let order1 = pool_proxy::place_limit_order<USDC, USDT>(
+        &registry,
+        &mut mm,
+        &mut pool,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        1_000_000_000,
+        100 * test_constants::usdc_multiplier(),
+        false,
+        false,
+        2000000,
+        &clock,
+        scenario.ctx(),
+    );
+    let order2 = pool_proxy::place_limit_order<USDC, USDT>(
+        &registry,
+        &mut mm,
+        &mut pool,
+        2,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        1_000_000_000,
+        200 * test_constants::usdc_multiplier(),
+        false,
+        false,
+        2000000,
+        &clock,
+        scenario.ctx(),
+    );
+
+    let open_orders = mm.account_open_orders(&pool);
+    assert!(open_orders.length() == 2);
+    assert!(open_orders.contains(&order1.order_id()));
+    assert!(open_orders.contains(&order2.order_id()));
+
+    destroy_2!(order1, order2);
+    return_shared_2!(mm, pool);
+    cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun locked_balance_reflects_open_orders() {
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        _base_pool_id,
+        _quote_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_pool_proxy_test_env<USDC, USDT>();
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+    mm.deposit<USDC, USDT, USDC>(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        mint_coin<USDC>(10000 * test_constants::usdc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    destroy_2!(usdc_price, usdt_price);
+
+    // No locked balance before placing orders
+    let (locked_base, locked_quote, locked_deep) = mm.locked_balance(&pool);
+    assert!(locked_base == 0);
+    assert!(locked_quote == 0);
+    assert!(locked_deep == 0);
+
+    // Place an ask order (sell USDC for USDT) — locks base (USDC)
+    let order_info = pool_proxy::place_limit_order<USDC, USDT>(
+        &registry,
+        &mut mm,
+        &mut pool,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        1_000_000_000,
+        100 * test_constants::usdc_multiplier(),
+        false,
+        false,
+        2000000,
+        &clock,
+        scenario.ctx(),
+    );
+    destroy(order_info);
+
+    let (locked_base, _locked_quote, _locked_deep) = mm.locked_balance(&pool);
+    assert!(locked_base > 0);
+
+    return_shared_2!(mm, pool);
+    cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
 }
