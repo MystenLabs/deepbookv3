@@ -2,8 +2,8 @@ use crate::schema::{
     // Margin Pool Operations Events
     asset_supplied,
     asset_withdrawn,
-    balances,
     balance_managers,
+    balances,
     // Collateral Events (deposit/withdraw)
     collateral_events,
     // TPSL (Take Profit/Stop Loss) Events
