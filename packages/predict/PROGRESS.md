@@ -14,8 +14,8 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 | Module | Status | Notes |
 |--------|--------|-------|
 | `registry.move` | Done | init, AdminCap, create_predict, create_oracle, create_oracle_cap, pause setters, config setters (lockup, spread, skew, exposure limit) |
-| `predict.move` | Done | Orchestrator + pricing: create_manager, mint, redeem, mint/redeem_collateralized, supply, withdraw, get_quote (additive 3-component spread: base + skew + utilization), expected_liability (oracle-weighted), risk checks, pause enforcement, config forwarders |
-| `vault/vault.move` | Done | Aggregate state machine: execute_mint/redeem (is_up, strike, quantity), collateralized mint/redeem, total_up_short/total_down_short/sum_up_strike_qty/sum_down_strike_qty/max_liability tracking, assert_total_exposure. Supply/withdraw receive vault_value from orchestrator (expected NAV). |
+| `predict.move` | Done | Orchestrator + pricing: create_manager, mint, redeem, mint/redeem_collateralized, supply, withdraw, get_quote (additive 3-component spread: base + skew + utilization), quantity-based inventory skew, risk checks, pause enforcement, config forwarders |
+| `vault/vault.move` | Done | Aggregate state machine: execute_mint/redeem (is_up, quantity), collateralized mint/redeem, total_up_short/total_down_short/max_liability tracking, assert_total_exposure. Supply/withdraw receive vault_value from orchestrator (expected NAV). |
 | `vault/supply_manager.move` | Done | LP share accounting: supply (shares minted), withdraw (shares burned), lockup enforcement, vault_value param, share_ratio helper |
 | `predict_manager.move` | Done | User-side: wraps BalanceManager (deposit/withdraw caps), tracks positions (free/locked), collateral lock/release |
 | `market_key/market_key.move` | Done | Positional struct: (oracle_id, expiry, strike, direction), UP/DOWN helpers, assert_matches_oracle() |
@@ -37,7 +37,7 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 - [x] **Dynamic spread**: spread adjusts based on vault net exposure. Widens on heavy side (0x-2x base_spread), tightens on light side. Configurable via `max_skew_multiplier`.
 - [x] **Admin functions**: All config setters wired through registry.move (lockup, spread, skew, exposure limit)
 - [x] **PredictManager creation**: `predict::create_manager()` public function added
-- [ ] **Tests**: Oracle pricing tests added (`tests/oracle_tests.move`). Need tests for mint/redeem flows, vault, supply_manager.
+- [ ] **Tests**: Oracle pricing tests (`tests/oracle_tests.move`) and vault tests (`tests/vault/vault_tests.move`) done. Need tests for mint/redeem flows, supply_manager.
 
 ### P2 - Nice to Have
 - [ ] **Events**: Most modules don't emit events beyond oracle. Add events for mints, redeems, settlements, supply/withdraw.
@@ -52,7 +52,7 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 - Config structs (PricingConfig, RiskConfig, LPConfig) are pure data in `config/` with getters + `public(package)` setters
 - Pricing logic (get_quote, spread calculation) lives in predict.move as private functions
 - Collateralized minting lives in PredictManager (free/locked positions), not a separate CollateralManager
-- **Aggregate-only vault**: no per-market Table, just total_up_short/total_down_short/total_collateralized counters. Skew pricing uses aggregate exposure.
+- **Aggregate-only vault**: no per-market Table, just total_up_short/total_down_short/total_collateralized counters. Skew pricing uses aggregate quantity imbalance.
 - **Expected NAV for LP share pricing**: vault_value = balance - expected_liabilities (oracle-weighted). Gives LPs fair share pricing instead of worst-case. Conservative max_liability still used for exposure risk checks. **TODO: revisit — likely gameable via oracle manipulation or timing attacks.**
 - Risk limits: 80% max total exposure (as % of vault balance). No per-market limit (unnecessary with aggregate tracking).
 - **No settle function**: oracle freezes settlement price at expiry. Redeems return 100%/0% for settled oracles. max_liability decreases naturally as positions are redeemed.
@@ -67,7 +67,7 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 - **Constructor**: `public(package) fun new()` for internal structs
 - **Getters**: named after field directly (e.g., `balance()`, `max_liability()`)
 - **Error naming**: `EPascalCase` with sequential numbering starting at 0
-- **Import aliasing**: `deepbook::math` as `math` everywhere; `deepbook_predict::math` as `predict_math` when both needed
+- **Import aliasing**: `deepbook::math` as `math` everywhere; `deepbook_predict::math` as `predict_math` when needed (e.g., oracle.move for signed arithmetic)
 - **Copyright header**: every file starts with `// Copyright (c) Mysten Labs, Inc.` + `// SPDX-License-Identifier: Apache-2.0`
 
 ## Session Log
@@ -185,3 +185,21 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 - **Removed `cumulative_premiums`/`cumulative_payouts`**: unused informational counters — never read on-chain.
 - **Collateral + regular redeem interaction is safe**: analyzed scenario where user mints UP-65k (vault-backed), locks it as collateral to mint UP-75k, then redeems UP-75k via regular `redeem`. Vault aggregate accounting (`total_up_short`) stays correct because: (1) the locked UP-65k cannot be redeemed against the vault until the user re-acquires UP-75k (which requires a new vault mint, restoring `total_up_short`), (2) the collateral lock forces re-engagement with the vault before the locked position is accessible, so exposure is genuinely zero in the intermediate state.
 - **Open concern**: expected NAV for share pricing is probably gameable (oracle manipulation, timing around large market moves). Needs future hardening.
+
+### Session: 2026-02-19 (simplify skew to quantity-based)
+- **Replaced oracle-weighted skew with quantity-based skew**: `inventory_skew` now uses raw `total_up_short` vs `total_down_short` for imbalance instead of oracle-weighted expected liabilities. Imbalance = `(this_side - other_side) / (this_side + other_side)`. Removes oracle call from spread calculation.
+- **Removed `expected_liabilities()` function** from predict.move — no longer needed.
+- **Removed `inventory_skew` oracle/clock params**: simplified signature to just `(predict, is_up)`.
+- **Removed strike-weighted sum tracking from vault**: deleted 4 struct fields (`sum_up_strike_qty`, `sum_up_strike_qty_negative`, `sum_down_strike_qty`, `sum_down_strike_qty_negative`), their accessor functions, and all signed arithmetic in `execute_mint`/`execute_redeem`.
+- **Simplified `execute_mint`/`execute_redeem` signatures**: removed `strike` parameter (only used for strike-qty tracking).
+- **Removed `predict_math` import from vault.move**: signed arithmetic (`add_signed_u64`/`sub_signed_u64`) no longer needed in vault. Still used by oracle.move for SVI calculations.
+- **Rationale**: every binary contract has the same $1 max payout, so raw quantities already capture imbalance. Oracle-weighted skew added complexity (4 struct fields, signed math on every trade, oracle call during spread calc) with minimal pricing impact.
+
+### Session: 2026-02-19 (vault tests)
+- **Created `tests/vault/vault_tests.move`**: 14 tests covering every public and public(package) function in `vault.move`.
+- **Test helpers**: `usdc!()` and `contracts!()` macros for realistic USDC-scaled amounts (1_000_000 = $1 / 1 contract), matching codebase conventions.
+- **Happy-path tests** (8): `new_vault_empty`, `deposit_increases_balance`, `withdraw_decreases_balance`, `mint_up_updates_exposure`, `mint_down_updates_exposure`, `mint_multiple_oracles_independent`, `redeem_updates_exposure`, `full_cycle_mint_redeem_all`.
+- **Custom error tests** (2): `redeem_insufficient_balance_aborts` (EInsufficientBalance), `assert_total_exposure_exceeded` (EExceedsMaxTotalExposure). Uses `constants::float_scaling!()` for percentage limits.
+- **Implicit failure tests** (3): `withdraw_insufficient_balance_aborts` (framework balance split), `redeem_more_than_minted_aborts` (arithmetic underflow), `redeem_unknown_oracle_aborts` (table key not found).
+- **Exposure boundary test** (1): `assert_total_exposure_ok` — liability within limit passes.
+- All 19 tests pass (5 oracle + 14 vault).

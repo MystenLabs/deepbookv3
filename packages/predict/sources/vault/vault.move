@@ -15,13 +15,18 @@
 module deepbook_predict::vault;
 
 use deepbook::math;
-use sui::{balance::{Self, Balance}, coin::Coin};
+use sui::{balance::{Self, Balance}, coin::Coin, table::{Self, Table}};
 
 // === Errors ===
 const EInsufficientBalance: u64 = 1;
 const EExceedsMaxTotalExposure: u64 = 2;
 
 // === Structs ===
+
+public struct OracleExposure has copy, drop, store {
+    up_short: u64,
+    down_short: u64,
+}
 
 public struct Vault<phantom Quote> has store {
     /// USDC balance held by the vault
@@ -30,8 +35,8 @@ public struct Vault<phantom Quote> has store {
     total_up_short: u64,
     /// Total DOWN contracts the vault is short
     total_down_short: u64,
-    /// Total collateralized contracts (not backed by vault)
-    total_collateralized: u64,
+    /// Per-oracle exposure tracking for skew calculation
+    oracle_exposure: Table<ID, OracleExposure>,
 }
 
 // === Public Functions ===
@@ -52,18 +57,20 @@ public fun total_down_short<Quote>(vault: &Vault<Quote>): u64 {
     vault.total_down_short
 }
 
-public fun total_collateralized<Quote>(vault: &Vault<Quote>): u64 {
-    vault.total_collateralized
+public fun oracle_exposure<Quote>(vault: &Vault<Quote>, oracle_id: ID): (u64, u64) {
+    if (!vault.oracle_exposure.contains(oracle_id)) return (0, 0);
+    let exp = &vault.oracle_exposure[oracle_id];
+    (exp.up_short, exp.down_short)
 }
 
 // === Public-Package Functions ===
 
-public(package) fun new<Quote>(): Vault<Quote> {
+public(package) fun new<Quote>(ctx: &mut TxContext): Vault<Quote> {
     Vault {
         balance: balance::zero(),
         total_up_short: 0,
         total_down_short: 0,
-        total_collateralized: 0,
+        oracle_exposure: table::new(ctx),
     }
 }
 
@@ -71,6 +78,7 @@ public(package) fun new<Quote>(): Vault<Quote> {
 /// Cost calculation is done by the orchestrator.
 public(package) fun execute_mint<Quote>(
     vault: &mut Vault<Quote>,
+    oracle_id: ID,
     is_up: bool,
     quantity: u64,
     payment: Coin<Quote>,
@@ -81,12 +89,21 @@ public(package) fun execute_mint<Quote>(
     } else {
         vault.total_down_short = vault.total_down_short + quantity;
     };
+
+    if (!vault.oracle_exposure.contains(oracle_id)) {
+        vault.oracle_exposure.add(oracle_id, OracleExposure { up_short: 0, down_short: 0 });
+    };
+    let exp = &mut vault.oracle_exposure[oracle_id];
+    if (is_up) { exp.up_short = exp.up_short + quantity } else {
+        exp.down_short = exp.down_short + quantity
+    };
 }
 
 /// Execute a redeem trade. Updates aggregate exposure.
 /// Payout calculation is done by the orchestrator.
 public(package) fun execute_redeem<Quote>(
     vault: &mut Vault<Quote>,
+    oracle_id: ID,
     is_up: bool,
     quantity: u64,
     payout: u64,
@@ -97,19 +114,13 @@ public(package) fun execute_redeem<Quote>(
     } else {
         vault.total_down_short = vault.total_down_short - quantity;
     };
+
+    let exp = &mut vault.oracle_exposure[oracle_id];
+    if (is_up) { exp.up_short = exp.up_short - quantity } else {
+        exp.down_short = exp.down_short - quantity
+    };
+
     vault.balance.split(payout)
-}
-
-/// Execute a collateralized mint. Only updates total_collateralized.
-/// Does not affect vault risk since position is backed by collateral.
-public(package) fun execute_mint_collateralized<Quote>(vault: &mut Vault<Quote>, quantity: u64) {
-    vault.total_collateralized = vault.total_collateralized + quantity;
-}
-
-/// Execute a collateralized redeem. Only updates total_collateralized.
-/// Does not affect vault risk since position was backed by collateral.
-public(package) fun execute_redeem_collateralized<Quote>(vault: &mut Vault<Quote>, quantity: u64) {
-    vault.total_collateralized = vault.total_collateralized - quantity;
 }
 
 /// Assert that total vault exposure is within risk limits.

@@ -23,7 +23,7 @@ use sui::{clock::Clock, coin::Coin};
 
 // === Errors ===
 const ETradingPaused: u64 = 0;
-const EInvalidCollateralPair: u64 = 2;
+const EInvalidCollateralPair: u64 = 1;
 
 // === Structs ===
 
@@ -78,7 +78,7 @@ public fun mint<Underlying, Quote>(
 
     let (cost, _payout) = predict.get_trade_amounts(oracle, key, quantity, clock);
     let payment = manager.withdraw<Quote>(cost, ctx);
-    predict.vault.execute_mint(key.is_up(), quantity, payment);
+    predict.vault.execute_mint(oracle.id(), key.is_up(), quantity, payment);
     predict.vault.assert_total_exposure(predict.risk_config.max_total_exposure_pct());
     manager.increase_position(key, quantity);
 }
@@ -102,7 +102,7 @@ public fun redeem<Underlying, Quote>(
     manager.decrease_position(key, quantity);
 
     let (_cost, payout) = predict.get_trade_amounts(oracle, key, quantity, clock);
-    let payout_balance = predict.vault.execute_redeem(key.is_up(), quantity, payout);
+    let payout_balance = predict.vault.execute_redeem(oracle.id(), key.is_up(), quantity, payout);
 
     let payout_coin = payout_balance.into_coin(ctx);
     manager.deposit(payout_coin, ctx);
@@ -135,13 +135,12 @@ public fun mint_collateralized<Underlying, Quote>(
     assert!(valid_pair, EInvalidCollateralPair);
 
     manager.lock_collateral(locked_key, minted_key, quantity);
-    predict.vault.execute_mint_collateralized(quantity);
     manager.increase_position(minted_key, quantity);
 }
 
 /// Redeem a collateralized position, releasing the locked collateral.
 public fun redeem_collateralized<Quote>(
-    predict: &mut Predict<Quote>,
+    _predict: &mut Predict<Quote>,
     manager: &mut PredictManager,
     locked_key: MarketKey,
     minted_key: MarketKey,
@@ -149,7 +148,6 @@ public fun redeem_collateralized<Quote>(
 ) {
     manager.decrease_position(minted_key, quantity);
     manager.release_collateral(locked_key, minted_key, quantity);
-    predict.vault.execute_redeem_collateralized(quantity);
 }
 
 // === Public-Package Functions ===
@@ -158,7 +156,7 @@ public fun redeem_collateralized<Quote>(
 public(package) fun create<Quote>(ctx: &mut TxContext): ID {
     let predict = Predict<Quote> {
         id: object::new(ctx),
-        vault: vault::new<Quote>(),
+        vault: vault::new<Quote>(ctx),
         pricing_config: pricing_config::new(),
         risk_config: risk_config::new(),
         trading_paused: false,
@@ -244,7 +242,7 @@ fun get_quote<Underlying, Quote>(
 
     let spread =
         base_spread
-        + predict.inventory_skew(is_up)
+        + predict.inventory_skew(oracle.id(), is_up)
         + predict.utilization_spread();
 
     let bid = if (price > spread) { price - spread } else { 0 };
@@ -253,10 +251,9 @@ fun get_quote<Underlying, Quote>(
     (bid, ask)
 }
 
-/// Skew spread: penalizes the heavy side using raw quantity imbalance.
-fun inventory_skew<Quote>(predict: &Predict<Quote>, is_up: bool): u64 {
-    let up_qty = predict.vault.total_up_short();
-    let down_qty = predict.vault.total_down_short();
+/// Skew spread: penalizes the heavy side using per-oracle quantity imbalance.
+fun inventory_skew<Quote>(predict: &Predict<Quote>, oracle_id: ID, is_up: bool): u64 {
+    let (up_qty, down_qty) = predict.vault.oracle_exposure(oracle_id);
     let total = up_qty + down_qty;
     if (total == 0) return 0;
 
