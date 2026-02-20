@@ -37,7 +37,8 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 - [x] **Dynamic spread**: spread adjusts based on vault net exposure. Widens on heavy side (0x-2x base_spread), tightens on light side. Configurable via `max_skew_multiplier`.
 - [x] **Admin functions**: All config setters wired through registry.move (lockup, spread, skew, exposure limit)
 - [x] **PredictManager creation**: `predict::create_manager()` public function added
-- [x] **Tests**: Oracle (5), vault (36), predict_manager (31), predict (26) done. Need tests for supply_manager, market_key, math.
+- [x] **Tests**: All modules tested — oracle (5), vault (36), predict_manager (31), predict (26), market_key (18), math (47), cross-validation (14). 177 total.
+- [x] **Cross-validation**: Move binary option pricing verified against Python/scipy reference implementation. Max deviation ~0.000007% (68 parts per billion).
 
 ### P2 - Nice to Have
 - [ ] **Events**: Most modules don't emit events beyond oracle. Add events for mints, redeems, settlements, supply/withdraw.
@@ -236,4 +237,25 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 - **Collateralized mint/redeem** (7): UP low→UP high happy path, DOWN high→DOWN low happy path, UP→DOWN direction mismatch aborts (`EInvalidCollateralPair`), wrong strike order aborts, same strike aborts, paused aborts, redeem releases collateral.
 - **Full integration** (1): deposit→mint UP+DOWN→settle→redeem winner+loser end-to-end.
 - **Design note**: settlement at exactly strike resolves as DOWN win (`settlement_price > strike` is false) — intentional tie-breaking rule.
-- All 98 tests pass (5 oracle + 36 vault + 31 predict_manager + 26 predict).
+- All 163 tests pass (5 oracle + 36 vault + 31 predict_manager + 26 predict + 18 market_key + 47 math).
+
+### Session: 2026-02-20 (market_key + math tests)
+- **Created `tests/market_key_tests.move`**: 18 tests covering all public functions in `market_key.move`.
+- **Constructor tests** (4): `up()`, `down()`, `new(true)`, `new(false)` — verify direction and field values.
+- **Equality tests** (7): same params equal, different direction/strike/expiry/oracle_id not equal, `new()` matches `up()`/`down()` constructors.
+- **assert_matches_oracle tests** (5): happy path, wrong oracle_id aborts (`EOracleMismatch`), wrong expiry aborts (`EExpiryMismatch`), any strike passes, DOWN direction passes.
+- **Edge cases** (2): zero strike/expiry, max u64 strike/expiry.
+- **Created `tests/math_tests.move`**: 47 tests covering all public functions in `math.move`.
+- **ln tests** (9): ln(1)=0, ln(e)≈1, ln(2)≈0.693, ln(10)≈2.303, ln(<1) negative, ln(0.01), ln(100), inverse symmetry, ln(0) aborts.
+- **exp tests** (8): exp(0)=1, exp(1)≈2.718, exp(-1)≈0.368, exp(2)≈7.389, exp(ln2)≈2, large negative→0, exp(ln(x))≈x roundtrip (x=5, x=0.25).
+- **normal_cdf tests** (10): Φ(0)=0.5, symmetry at 1.0 and 2.0, Φ(1)≈0.841, Φ(-1)≈0.159, Φ(2)≈0.977, large positive→1, large negative→0, monotonicity, Φ(0.5)≈0.691.
+- **Signed arithmetic tests** (20): add_signed_u64 (9 — same/different signs, cancellation, zero identity, -0 normalization), sub_signed_u64 (6 — all sign combinations, equal values), mul_signed_u64 (5 — sign rules, zero, identity).
+- **Note**: `supply_manager` no longer exists — removed in earlier refactor. All current source modules now have test coverage.
+### Session: 2026-02-20 (cross-validation tests)
+- **Created `cross_validation.py`**: Python harness that computes binary option prices using the exact same math path as the Move contract (SVI → total_var → d2 → N(d2) → discount), outputting all values in FLOAT_SCALING (1e9) integer format.
+- **Created `tests/cross_validation_tests.move`**: 14 tests comparing Move output against Python/scipy reference values.
+- **Scenario 1 — Real BTC (126 days)**: SVI params from live BlockScholes API (a=0.01178, b=0.18226, rho=-0.28796, m=0.02823, sigma=0.34312), spot=$67,293, forward=$68,071, r=3.5%. Tested ATM, OTM (+$10k), ITM (-$10k), Deep ITM (-$20k) — both discounted and undiscounted.
+- **Scenario 2 — Synthetic (30 days)**: a=0.04, b=0.1, rho=-0.3, m=0, sigma=0.1, spot=$100k, forward=$100.5k, r=5%. Tested ATM, OTM ($110k), ITM ($90k) — both discounted and undiscounted.
+- **Precision results**: maximum deviation between Move and Python is ~68 out of 1,000,000,000 (0.000007%). Tolerance set to 0.01% (100,000) — 1,000x above actual deviation. The Move fixed-point Taylor series (ln/exp) and Abramowitz-Stegun (normal_cdf) approximations are extremely accurate.
+- **Also verified**: UP + DOWN sum equals discount factor (put-call parity for binary options) holds in all test cases within tolerance.
+- All 177 tests pass (5 oracle + 36 vault + 31 predict_manager + 26 predict + 18 market_key + 47 math + 14 cross-validation).
