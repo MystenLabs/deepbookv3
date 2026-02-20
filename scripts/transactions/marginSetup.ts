@@ -14,53 +14,55 @@ import { prepareMultisigTx } from "../utils/utils.js";
 
   const repository = "https://github.com/MystenLabs/deepbookv3";
 
-  const data = {
+  const data2 = {
     packageInfo:
       "0x11c2e0f7292ea1b84ed894302b96146872fea53a99b933122fb193e48dac1005",
-    sha: "margin-v1.0.0",
-    version: "1",
+    sha: "margin-v2.0.0",
+    version: "2",
     path: "packages/deepbook_margin",
   };
 
-  const display = transaction.moveCall({
-    target: `@mvr/metadata::display::default`,
-    arguments: [transaction.pure.string("DeepBookV3 - Margin Metadata")],
-  });
-
-  // Set that display object to our info object.
-  transaction.moveCall({
-    target: `@mvr/metadata::package_info::set_display`,
-    arguments: [transaction.object(data.packageInfo), display],
-  });
-
-  const git = transaction.moveCall({
+  const git2 = transaction.moveCall({
     target: `@mvr/metadata::git::new`,
     arguments: [
       transaction.pure.string(repository),
-      transaction.pure.string(data.path),
-      transaction.pure.string(data.sha),
+      transaction.pure.string(data2.path),
+      transaction.pure.string(data2.sha),
     ],
   });
 
   transaction.moveCall({
     target: `@mvr/metadata::package_info::set_git_versioning`,
     arguments: [
-      transaction.object(data.packageInfo),
-      transaction.pure.u64(data.version),
-      git,
+      transaction.object(data2.packageInfo),
+      transaction.pure.u64(data2.version),
+      git2,
     ],
   });
 
-  // Link margin to correct packageInfo
-  // Important to check these two
-  transaction.moveCall({
-    target: `@mvr/core::move_registry::assign_package`,
+  const data3 = {
+    packageInfo:
+      "0x11c2e0f7292ea1b84ed894302b96146872fea53a99b933122fb193e48dac1005",
+    sha: "margin-v3.0.0",
+    version: "3",
+    path: "packages/deepbook_margin",
+  };
+
+  const git3 = transaction.moveCall({
+    target: `@mvr/metadata::git::new`,
     arguments: [
-      transaction.object(
-        `0x0e5d473a055b6b7d014af557a13ad9075157fdc19b6d51562a18511afd397727`,
-      ),
-      transaction.object(appCap),
-      transaction.object(data.packageInfo),
+      transaction.pure.string(repository),
+      transaction.pure.string(data3.path),
+      transaction.pure.string(data3.sha),
+    ],
+  });
+
+  transaction.moveCall({
+    target: `@mvr/metadata::package_info::set_git_versioning`,
+    arguments: [
+      transaction.object(data3.packageInfo),
+      transaction.pure.u64(data3.version),
+      git3,
     ],
   });
 

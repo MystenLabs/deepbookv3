@@ -153,6 +153,23 @@ use my_package::my_module::{Self};
 use my_package::my_module;
 ```
 
+### All `use` Statements at Module Top Level
+
+```move
+// bad! function-local imports
+fun my_function() {
+    use my_package::my_module;
+    // ...
+}
+
+// good! all imports at module top level
+use my_package::my_module;
+
+fun my_function() {
+    // ...
+}
+```
+
 ### Group `use` Statements with `Self`
 
 ```move

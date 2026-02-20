@@ -54,10 +54,11 @@ use deepbook_indexer::handlers::conditional_order_cancelled_handler::Conditional
 use deepbook_indexer::handlers::conditional_order_executed_handler::ConditionalOrderExecutedHandler;
 use deepbook_indexer::handlers::conditional_order_insufficient_funds_handler::ConditionalOrderInsufficientFundsHandler;
 
-use deepbook_indexer::DeepbookEnv;
+use deepbook_indexer::{DeepbookEnv, TESTNET_REMOTE_STORE_URL};
 use deepbook_schema::MIGRATIONS;
 use prometheus::Registry;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use sui_indexer_alt_framework::ingestion::ingestion_client::IngestionClientArgs;
 use sui_indexer_alt_framework::ingestion::streaming_client::StreamingClientArgs;
 use sui_indexer_alt_framework::ingestion::{ClientArgs, IngestionConfig};
@@ -93,12 +94,43 @@ struct Args {
         default_value = "postgres://postgres:postgrespw@localhost:5432/deepbook"
     )]
     database_url: Url,
-    /// Deepbook environment, defaulted to SUI mainnet.
+    /// Deepbook environment (required in production mode, ignored with sandbox subcommand)
     #[clap(env, long)]
-    env: DeepbookEnv,
+    env: Option<DeepbookEnv>,
     /// Packages to index events for (can specify multiple)
     #[clap(long, value_enum, default_values = ["deepbook", "deepbook-margin"])]
     packages: Vec<Package>,
+    #[command(subcommand)]
+    sandbox: Option<Command>,
+}
+
+#[derive(clap::Subcommand)]
+enum Command {
+    /// Run the indexer in sandbox mode with custom package IDs
+    Sandbox(SandboxArgs),
+}
+
+#[derive(clap::Args)]
+#[clap(rename_all = "kebab-case")]
+struct SandboxArgs {
+    /// Sandbox environment
+    #[clap(long, default_value = "localnet")]
+    env: SandboxEnv,
+    /// DeepBook core package ID(s) — can be specified multiple times
+    #[clap(long, required = true)]
+    deepbook_package_id: Vec<String>,
+    /// Margin package ID(s) — optional, skip margin indexing if omitted
+    #[clap(long)]
+    margin_packages: Vec<String>,
+    /// Path to local checkpoint directory (required for localnet)
+    #[clap(long)]
+    local_ingestion_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum SandboxEnv {
+    Testnet,
+    Localnet,
 }
 
 #[tokio::main]
@@ -115,7 +147,61 @@ async fn main() -> Result<(), anyhow::Error> {
         database_url,
         env,
         packages,
+        sandbox,
     } = Args::parse();
+
+    // Resolve mode-specific config: env, ingestion source, and which packages to index
+    let (env, ingestion_args, packages) = match sandbox {
+        None => {
+            // Production mode — --env is required
+            let env = env.context("--env is required when not using a subcommand")?;
+            let ingestion = IngestionClientArgs {
+                remote_store_url: Some(env.remote_store_url()),
+                ..Default::default()
+            };
+            (env, ingestion, packages)
+        }
+        Some(Command::Sandbox(sb)) => {
+            // Sandbox mode — override package addresses (even on testnet, because
+            // sandbox deploys its own DeepBook instance), then pick ingestion source
+            let has_margin = !sb.margin_packages.is_empty();
+            deepbook_indexer::sandbox::init_package_override(
+                sb.deepbook_package_id,
+                sb.margin_packages,
+            );
+
+            let ingestion = match sb.env {
+                SandboxEnv::Localnet => IngestionClientArgs {
+                    local_ingestion_path: Some(
+                        sb.local_ingestion_path
+                            .context("--local-ingestion-path is required for localnet")?,
+                    ),
+                    ..Default::default()
+                },
+                SandboxEnv::Testnet => IngestionClientArgs {
+                    remote_store_url: Some(
+                        Url::parse(TESTNET_REMOTE_STORE_URL)
+                            .expect("invalid testnet remote store URL"),
+                    ),
+                    ..Default::default()
+                },
+            };
+
+            // Skip margin handlers if no margin packages provided
+            let mut packages = packages;
+            if !has_margin {
+                packages.retain(|p| matches!(p, Package::Deepbook));
+            }
+
+            // In sandbox mode the OnceLock override handles all package resolution,
+            // so this env is only used for type compatibility in handler constructors.
+            // Map both sandbox variants to Testnet (the closest DeepbookEnv equivalent).
+            let deepbook_env = match sb.env {
+                SandboxEnv::Testnet | SandboxEnv::Localnet => DeepbookEnv::Testnet,
+            };
+            (deepbook_env, ingestion, packages)
+        }
+    };
 
     let registry = Registry::new_custom(Some("deepbook".into()), None)
         .context("Failed to create Prometheus registry.")?;
@@ -140,13 +226,7 @@ async fn main() -> Result<(), anyhow::Error> {
         store,
         indexer_args,
         ClientArgs {
-            ingestion: IngestionClientArgs {
-                remote_store_url: Some(env.remote_store_url()),
-                local_ingestion_path: None,
-                rpc_api_url: None,
-                rpc_username: None,
-                rpc_password: None,
-            },
+            ingestion: ingestion_args,
             streaming: streaming_args,
         },
         IngestionConfig::default(),
