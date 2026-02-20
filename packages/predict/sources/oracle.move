@@ -269,11 +269,7 @@ public(package) fun get_binary_price_undiscounted<Underlying>(
 /// SVI gives total_variance directly, so IV and time cancel in d2:
 ///   iv = sqrt(total_var / t), iv * sqrt(t) = sqrt(total_var)
 ///   d2 = (ln(F/K) - total_var/2) / sqrt(total_var)
-fun compute_nd2<Underlying>(
-    oracle: &OracleSVI<Underlying>,
-    strike: u64,
-    is_up: bool,
-): u64 {
+fun compute_nd2<Underlying>(oracle: &OracleSVI<Underlying>, strike: u64, is_up: bool): u64 {
     let forward = oracle.prices.forward;
 
     // SVI: compute total variance from log-moneyness
@@ -333,6 +329,13 @@ public(package) fun create_test_oracle<Underlying>(
         timestamp,
         settlement_price: option::none(),
     }
+}
+
+#[test_only]
+/// Force-settle the oracle at a given price for testing.
+public(package) fun settle_test_oracle<Underlying>(oracle: &mut OracleSVI<Underlying>, price: u64) {
+    oracle.settlement_price = option::some(price);
+    oracle.active = false;
 }
 
 /// Create a new PriceData struct.

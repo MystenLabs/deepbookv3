@@ -209,6 +209,33 @@ public(package) fun set_max_total_exposure_pct<Quote>(predict: &mut Predict<Quot
     predict.risk_config.set_max_total_exposure_pct(pct);
 }
 
+#[test_only]
+/// Create a Predict object for testing without sharing it.
+public(package) fun create_test_predict<Quote>(ctx: &mut TxContext): Predict<Quote> {
+    Predict<Quote> {
+        id: object::new(ctx),
+        vault: vault::new<Quote>(ctx),
+        pricing_config: pricing_config::new(),
+        risk_config: risk_config::new(),
+        trading_paused: false,
+    }
+}
+
+#[test_only]
+public(package) fun vault_mut<Quote>(predict: &mut Predict<Quote>): &mut Vault<Quote> {
+    &mut predict.vault
+}
+
+#[test_only]
+public(package) fun vault_balance<Quote>(predict: &Predict<Quote>): u64 {
+    predict.vault.balance()
+}
+
+#[test_only]
+public(package) fun vault_exposure<Quote>(predict: &Predict<Quote>, oracle_id: ID): (u64, u64) {
+    predict.vault.oracle_exposure(oracle_id)
+}
+
 // === Private Functions ===
 
 /// Get bid and ask prices for a market.

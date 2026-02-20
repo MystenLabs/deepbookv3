@@ -37,7 +37,7 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 - [x] **Dynamic spread**: spread adjusts based on vault net exposure. Widens on heavy side (0x-2x base_spread), tightens on light side. Configurable via `max_skew_multiplier`.
 - [x] **Admin functions**: All config setters wired through registry.move (lockup, spread, skew, exposure limit)
 - [x] **PredictManager creation**: `predict::create_manager()` public function added
-- [ ] **Tests**: Oracle pricing tests (`tests/oracle_tests.move`) and vault tests (`tests/vault/vault_tests.move`) done. Need tests for mint/redeem flows, supply_manager.
+- [x] **Tests**: Oracle (5), vault (36), predict_manager (31), predict (26) done. Need tests for supply_manager, market_key, math.
 
 ### P2 - Nice to Have
 - [ ] **Events**: Most modules don't emit events beyond oracle. Add events for mints, redeems, settlements, supply/withdraw.
@@ -203,3 +203,37 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 - **Implicit failure tests** (3): `withdraw_insufficient_balance_aborts` (framework balance split), `redeem_more_than_minted_aborts` (arithmetic underflow), `redeem_unknown_oracle_aborts` (table key not found).
 - **Exposure boundary test** (1): `assert_total_exposure_ok` — liability within limit passes.
 - All 19 tests pass (5 oracle + 14 vault).
+
+### Session: 2026-02-19 (vault edge case tests)
+- **Added 22 edge case tests to `tests/vault/vault_tests.move`** (14 → 36 total):
+- **Underflow/overflow** (2): wrong-side redeem underflows `total_down_short`, large mint overflows `total_up_short` (2^63 + 2^63).
+- **Zero-value edge cases** (3): mint zero quantity (takes payment, no exposure), redeem zero payout (closes exposure for free), deposit/withdraw zero.
+- **Exposure boundary precision** (8): exact boundary (liability == balance × pct), one unit over, 50% limit pass/fail, zero balance + zero liability, 0% limit rejects any liability, 80% default boundary exact/exceeded.
+- **Balance draining** (3): withdraw exact full balance, redeem drains to exactly zero, one unit over balance aborts.
+- **Accumulation/multi-oracle** (5): sequential mints accumulate, same oracle UP+DOWN, partial redeems to zero, max_liability sums both sides across 3 oracles, 5-oracle mint/redeem with per-oracle isolation.
+
+### Session: 2026-02-20 (predict_manager tests)
+- **Created `tests/predict_manager_tests.move`**: 31 tests covering position tracking and collateral accounting.
+- **Test setup**: `test_scenario`-based (required because `new()` calls `transfer::share_object`), with `setup()`/`teardown()` helpers.
+- **Position basics** (6): new manager has no positions, increase creates entry, increase accumulates, decrease subtracts, decrease to zero, independent keys don't interfere.
+- **Decrease failures** (3): nonexistent key (`EInsufficientPosition`), more than free (`EInsufficientFreePosition`), locked portion not counted as free.
+- **Collateral locking** (7): free→locked transition, lock all free, accumulate same pair, different minted keys, nonexistent position aborts, more than free aborts, partial lock then exceed remaining.
+- **Collateral releasing** (5): locked→free transition, release all, nonexistent collateral aborts, more than locked aborts, wrong minted key aborts, wrong locked key aborts.
+- **Full cycles** (3): increase→lock→release→decrease, partial release then decrease, lock all then decrease aborts.
+- **Zero quantities** (4): increase/decrease/lock/release with 0 are noops.
+- **Isolation** (1): two collateral pairs on same locked_key released independently.
+- **Owner** (1): owner address set correctly from tx sender.
+- All 72 tests pass (5 oracle + 36 vault + 31 predict_manager).
+
+### Session: 2026-02-20 (predict.move tests)
+- **Created `tests/predict_tests.move`**: 26 tests covering the main orchestration module — spread pricing, mint/redeem flows, collateralized mint/redeem, and settlement.
+- **Test helpers added to source modules**:
+  - `predict.move`: `create_test_predict()` (bypasses `share_object`), `vault_mut()`, `vault_balance()`, `vault_exposure()` — all `#[test_only]`.
+  - `oracle.move`: `settle_test_oracle()` — force-sets settlement price and deactivates oracle for testing.
+- **Pricing / spread behavior** (9): spread is positive (ask > bid), UP+DOWN costs sum near quantity (market completeness), skew widens heavy side after imbalanced mints, skew is zero when balanced or empty, utilization widens spread at high liability/balance ratio, utilization is zero with no liability, settlement winner gets full price (1.0), settlement loser gets zero.
+- **Mint orchestration** (4): happy path (balance/position/exposure updates), trading paused aborts (`ETradingPaused`), stale oracle aborts (`EOracleStale`), exposure limit aborts (`EExceedsMaxTotalExposure`).
+- **Redeem orchestration** (5): happy path, settled winner gets full payout, settled loser gets zero payout, stale+settled oracle succeeds (stale check skipped), stale+unsettled aborts.
+- **Collateralized mint/redeem** (7): UP low→UP high happy path, DOWN high→DOWN low happy path, UP→DOWN direction mismatch aborts (`EInvalidCollateralPair`), wrong strike order aborts, same strike aborts, paused aborts, redeem releases collateral.
+- **Full integration** (1): deposit→mint UP+DOWN→settle→redeem winner+loser end-to-end.
+- **Design note**: settlement at exactly strike resolves as DOWN win (`settlement_price > strike` is false) — intentional tie-breaking rule.
+- All 98 tests pass (5 oracle + 36 vault + 31 predict_manager + 26 predict).
