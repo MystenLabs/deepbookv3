@@ -6,7 +6,7 @@ define_handler! {
     processor_name: "balance_manager_event",
     event_type: BalanceManagerEvent,
     db_model: BalanceManagerEventModel,
-    table: balance_managers,
+    table: balance_manager_created,
     map_event: |event, meta| BalanceManagerEventModel {
         event_digest: meta.event_digest(),
         digest: meta.digest(),

@@ -49,7 +49,7 @@ diesel::table! {
 }
 
 diesel::table! {
-    balance_managers (event_digest) {
+    balance_manager_created (event_digest) {
         event_digest -> Text,
         digest -> Text,
         sender -> Text,
@@ -838,7 +838,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     asset_supplied,
     asset_withdrawn,
     assets,
-    balance_managers,
+    balance_manager_created,
     balances,
     collateral_events,
     conditional_order_events,

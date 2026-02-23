@@ -74,7 +74,12 @@ async fn balances_test() -> Result<(), anyhow::Error> {
 #[tokio::test]
 async fn balance_manager_event_test() -> Result<(), anyhow::Error> {
     let handler = BalanceManagerEventHandler::new(DeepbookEnv::Mainnet);
-    data_test("balance_managers", handler, ["balance_managers"]).await?;
+    data_test(
+        "balance_manager_created",
+        handler,
+        ["balance_manager_created"],
+    )
+    .await?;
     Ok(())
 }
 

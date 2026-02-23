@@ -2,7 +2,7 @@ use crate::schema::{
     // Margin Pool Operations Events
     asset_supplied,
     asset_withdrawn,
-    balance_managers,
+    balance_manager_created,
     balances,
     // Collateral Events (deposit/withdraw)
     collateral_events,
@@ -865,7 +865,7 @@ pub struct ConditionalOrderEvent {
 
 // === Balance Manager Event ===
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = balance_managers, primary_key(event_digest))]
+#[diesel(table_name = balance_manager_created, primary_key(event_digest))]
 pub struct BalanceManagerEvent {
     pub event_digest: String,
     pub digest: String,
