@@ -59,55 +59,55 @@ struct OhclvRow {
 
 #[derive(QueryableByName, Debug)]
 struct MarginPositionRow {
-    #[diesel(sql_type = diesel::sql_types::Text)]
+    #[diesel(sql_type = Text)]
     margin_manager_id: String,
-    #[diesel(sql_type = diesel::sql_types::Text)]
+    #[diesel(sql_type = Text)]
     pool_name: String,
-    #[diesel(sql_type = diesel::sql_types::Text)]
+    #[diesel(sql_type = Text)]
     base_asset_symbol: String,
-    #[diesel(sql_type = diesel::sql_types::Text)]
+    #[diesel(sql_type = Text)]
     quote_asset_symbol: String,
-    #[diesel(sql_type = diesel::sql_types::Double)]
+    #[diesel(sql_type = Double)]
     base_asset: f64,
-    #[diesel(sql_type = diesel::sql_types::Double)]
+    #[diesel(sql_type = Double)]
     quote_asset: f64,
-    #[diesel(sql_type = diesel::sql_types::Double)]
+    #[diesel(sql_type = Double)]
     base_debt: f64,
-    #[diesel(sql_type = diesel::sql_types::Double)]
+    #[diesel(sql_type = Double)]
     quote_debt: f64,
-    #[diesel(sql_type = diesel::sql_types::Double)]
+    #[diesel(sql_type = Double)]
     base_asset_usd: f64,
-    #[diesel(sql_type = diesel::sql_types::Double)]
+    #[diesel(sql_type = Double)]
     quote_asset_usd: f64,
-    #[diesel(sql_type = diesel::sql_types::Double)]
+    #[diesel(sql_type = Double)]
     base_debt_usd: f64,
-    #[diesel(sql_type = diesel::sql_types::Double)]
+    #[diesel(sql_type = Double)]
     quote_debt_usd: f64,
-    #[diesel(sql_type = diesel::sql_types::Double)]
+    #[diesel(sql_type = Double)]
     risk_ratio: f64,
 }
 
 #[derive(QueryableByName, Debug)]
 struct CollateralRow {
-    #[diesel(sql_type = diesel::sql_types::Text)]
+    #[diesel(sql_type = Text)]
     asset: String,
-    #[diesel(sql_type = diesel::sql_types::Double)]
+    #[diesel(sql_type = Double)]
     balance: f64,
-    #[diesel(sql_type = diesel::sql_types::Double)]
+    #[diesel(sql_type = Double)]
     balance_usd: f64,
 }
 
 #[derive(QueryableByName, Debug)]
 struct LpPositionRow {
-    #[diesel(sql_type = diesel::sql_types::Text)]
+    #[diesel(sql_type = Text)]
     margin_pool_id: String,
-    #[diesel(sql_type = diesel::sql_types::Text)]
+    #[diesel(sql_type = Text)]
     asset: String,
-    #[diesel(sql_type = diesel::sql_types::Double)]
+    #[diesel(sql_type = Double)]
     net_supplied: f64,
-    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    #[diesel(sql_type = BigInt)]
     net_shares: i64,
-    #[diesel(sql_type = diesel::sql_types::Double)]
+    #[diesel(sql_type = Double)]
     supplied_usd: f64,
 }
 
@@ -1563,7 +1563,7 @@ impl Reader {
             LEFT JOIN asset_meta am ON b.asset LIKE '%' || SUBSTRING(am.asset_id FROM 3) || '%'
             LEFT JOIN latest_prices lp ON am.symbol = lp.symbol
             WHERE am.symbol IS NOT NULL
-            GROUP BY am.symbol, am.decimals, lp.price_usd
+            GROUP BY am.symbol, am.decimals
             HAVING SUM(CASE WHEN b.deposit THEN b.amount ELSE -b.amount END) > 0
             "#,
         )
