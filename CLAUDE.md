@@ -33,3 +33,9 @@ Claude automatically loads contextual knowledge based on files being edited:
 - Deployment issues (Pulumi conflicts, Kubernetes errors)
 - API quirks (default values, missing pagination)
 - Any debugging knowledge that would help future sessions
+
+## PR Descriptions
+
+When asked for a PR summary/description, always use this format:
+- **Summary**: Bullet points describing what changed and why
+- **Test plan**: Checklist of manual or automated verification steps

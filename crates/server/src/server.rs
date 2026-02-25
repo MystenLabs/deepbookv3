@@ -515,12 +515,20 @@ async fn historical_volume(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<HashMap<String, u64>>, DeepBookError> {
-    // Fetch all pools to map names to IDs
     let pools = state.reader.get_pools().await?;
-    let pool_name_to_id = pools
-        .into_iter()
-        .map(|pool| (pool.pool_name, pool.pool_id))
-        .collect::<HashMap<_, _>>();
+    historical_volume_with_pools(&pool_names, &params, &state, &pools).await
+}
+
+async fn historical_volume_with_pools(
+    pool_names: &str,
+    params: &HashMap<String, String>,
+    state: &Arc<AppState>,
+    pools: &[Pools],
+) -> Result<Json<HashMap<String, u64>>, DeepBookError> {
+    let pool_name_to_id: HashMap<String, String> = pools
+        .iter()
+        .map(|pool| (pool.pool_name.clone(), pool.pool_id.clone()))
+        .collect();
 
     // Map provided pool names to pool IDs
     let pool_ids: Vec<String> = pool_names
@@ -568,14 +576,21 @@ async fn all_historical_volume(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<HashMap<String, u64>>, DeepBookError> {
     let pools = state.reader.get_pools().await?;
+    all_historical_volume_with_pools(&params, &state, &pools).await
+}
 
+async fn all_historical_volume_with_pools(
+    params: &HashMap<String, String>,
+    state: &Arc<AppState>,
+    pools: &[Pools],
+) -> Result<Json<HashMap<String, u64>>, DeepBookError> {
     let pool_names: String = pools
-        .into_iter()
-        .map(|pool| pool.pool_name)
+        .iter()
+        .map(|pool| pool.pool_name.clone())
         .collect::<Vec<String>>()
         .join(",");
 
-    historical_volume(Path(pool_names), Query(params), State(state)).await
+    historical_volume_with_pools(&pool_names, params, state, pools).await
 }
 
 async fn get_historical_volume_by_balance_manager_id(
@@ -732,12 +747,16 @@ async fn ticker(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<HashMap<String, HashMap<String, Value>>>, DeepBookError> {
-    // Fetch base and quote historical volumes
-    let base_volumes = fetch_historical_volume(&params, true, &state).await?;
-    let quote_volumes = fetch_historical_volume(&params, false, &state).await?;
-
-    // Fetch pools data for metadata
+    // Fetch pools data once for reuse
     let pools = state.reader.get_pools().await?;
+
+    // Fetch base and quote historical volumes in parallel
+    let (base_volumes, quote_volumes) = join!(
+        fetch_historical_volume_with_pools(&params, true, &state, &pools),
+        fetch_historical_volume_with_pools(&params, false, &state, &pools),
+    );
+    let base_volumes = base_volumes?;
+    let quote_volumes = quote_volumes?;
     let pool_map: HashMap<String, &Pools> = pools
         .iter()
         .map(|pool| (pool.pool_id.clone(), pool))
@@ -805,15 +824,16 @@ async fn ticker(
     Ok(Json(response))
 }
 
-async fn fetch_historical_volume(
+async fn fetch_historical_volume_with_pools(
     params: &HashMap<String, String>,
     volume_in_base: bool,
     state: &Arc<AppState>,
+    pools: &[Pools],
 ) -> Result<HashMap<String, u64>, DeepBookError> {
     let mut params_with_volume = params.clone();
     params_with_volume.insert("volume_in_base".to_string(), volume_in_base.to_string());
 
-    all_historical_volume(Query(params_with_volume), State(state.clone()))
+    all_historical_volume_with_pools(&params_with_volume, state, pools)
         .await
         .map(|Json(volumes)| volumes)
 }
