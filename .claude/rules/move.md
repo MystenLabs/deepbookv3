@@ -65,7 +65,7 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 ## Tool Calling Instructions
 
 - `sui move build` to build the package, must be run in a directory with Move.toml in it
-- `sui move test` to run tests, must be run in a directory with Move.toml in it
+- `sui move test --gas-limit 100000000000` to run tests, must be run in a directory with Move.toml in it. The high gas limit is needed because sui 1.66+ lowered the default test gas budget, causing complex tests to time out.
 - When `sui move test` shows warnings (e.g., unused `mut` modifiers, unused variables), fix them immediately before proceeding
 - can pass `--skip-fetch-latest-git-deps` if the dependencies haven't changed after an initial successful build
 - when you have completed making changes, run `bunx prettier-move -c *.move --write` on any files that are modified to format them correctly.
