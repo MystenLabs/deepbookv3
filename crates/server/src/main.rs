@@ -51,6 +51,9 @@ struct Args {
     /// Comma-separated list of valid admin bearer tokens
     #[clap(env = "ADMIN_TOKENS", long)]
     admin_tokens: Option<String>,
+    /// Maximum requests per second per IP for public endpoints
+    #[clap(env, long, default_value_t = 10)]
+    rate_limit_per_second: u32,
 }
 
 #[tokio::main]
@@ -71,6 +74,7 @@ async fn main() -> Result<(), anyhow::Error> {
         margin_poll_interval_secs,
         margin_package_id,
         admin_tokens,
+        rate_limit_per_second,
     } = Args::parse();
 
     run_server(
@@ -85,6 +89,7 @@ async fn main() -> Result<(), anyhow::Error> {
         margin_poll_interval_secs,
         margin_package_id,
         admin_tokens,
+        rate_limit_per_second,
     )
     .await?;
 
