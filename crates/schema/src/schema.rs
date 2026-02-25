@@ -49,6 +49,20 @@ diesel::table! {
 }
 
 diesel::table! {
+    balance_manager_created (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        balance_manager_id -> Text,
+        owner -> Text,
+    }
+}
+
+diesel::table! {
     balances (event_digest) {
         event_digest -> Text,
         digest -> Text,
@@ -193,6 +207,34 @@ diesel::table! {
         pool_id -> Text,
         enabled -> Bool,
         onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    deepbook_referral_created (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        referral_id -> Text,
+        owner -> Text,
+    }
+}
+
+diesel::table! {
+    deepbook_referral_set (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        referral_id -> Text,
+        balance_manager_id -> Text,
     }
 }
 
@@ -796,6 +838,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     asset_supplied,
     asset_withdrawn,
     assets,
+    balance_manager_created,
     balances,
     collateral_events,
     conditional_order_events,
@@ -804,6 +847,8 @@ diesel::allow_tables_to_appear_in_same_query!(
     deepbook_pool_registered,
     deepbook_pool_updated,
     deepbook_pool_updated_registry,
+    deepbook_referral_created,
+    deepbook_referral_set,
     flashloans,
     interest_params_updated,
     liquidation,

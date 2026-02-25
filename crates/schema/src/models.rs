@@ -2,6 +2,7 @@ use crate::schema::{
     // Margin Pool Operations Events
     asset_supplied,
     asset_withdrawn,
+    balance_manager_created,
     balances,
     // Collateral Events (deposit/withdraw)
     collateral_events,
@@ -12,6 +13,8 @@ use crate::schema::{
     deepbook_pool_registered,
     deepbook_pool_updated,
     deepbook_pool_updated_registry,
+    deepbook_referral_created,
+    deepbook_referral_set,
     flashloans,
     interest_params_updated,
     liquidation,
@@ -858,6 +861,48 @@ pub struct ConditionalOrderEvent {
     pub pay_with_deep: bool,
     pub expire_timestamp: i64,
     pub onchain_timestamp: i64,
+}
+
+// === Balance Manager Event ===
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = balance_manager_created, primary_key(event_digest))]
+pub struct BalanceManagerEvent {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub balance_manager_id: String,
+    pub owner: String,
+}
+
+// === Referral Created Event ===
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = deepbook_referral_created, primary_key(event_digest))]
+pub struct DeepBookReferralCreatedEvent {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub referral_id: String,
+    pub owner: String,
+}
+
+// === Referral Set Event ===
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = deepbook_referral_set, primary_key(event_digest))]
+pub struct DeepBookReferralSetEvent {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub referral_id: String,
+    pub balance_manager_id: String,
 }
 
 // === Points ===
