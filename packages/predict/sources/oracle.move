@@ -14,7 +14,7 @@ module deepbook_predict::oracle;
 
 use deepbook::math;
 use deepbook_predict::{constants, math as predict_math};
-use sui::clock::Clock;
+use sui::{clock::Clock, event};
 
 // === Errors ===
 
@@ -23,6 +23,21 @@ const EOracleStale: u64 = 1;
 const EOracleAlreadyActive: u64 = 2;
 const EOracleExpired: u64 = 3;
 const ECannotBeNegative: u64 = 4;
+
+// === Events ===
+
+public struct OracleActivated has copy, drop, store {
+    oracle_id: ID,
+    expiry: u64,
+    timestamp: u64,
+}
+
+public struct OracleSettled has copy, drop, store {
+    oracle_id: ID,
+    expiry: u64,
+    settlement_price: u64,
+    timestamp: u64,
+}
 
 // === Structs ===
 
@@ -94,6 +109,12 @@ public fun activate<Underlying>(
     assert!(clock.timestamp_ms() < oracle.expiry, EOracleExpired);
 
     oracle.active = true;
+
+    event::emit(OracleActivated {
+        oracle_id: oracle.id.to_inner(),
+        expiry: oracle.expiry,
+        timestamp: clock.timestamp_ms(),
+    });
 }
 
 /// Push spot and forward prices (high frequency ~1s).
@@ -112,6 +133,13 @@ public fun update_prices<Underlying>(
     if (now > oracle.expiry && oracle.settlement_price.is_none()) {
         oracle.settlement_price = option::some(prices.spot);
         oracle.active = false;
+
+        event::emit(OracleSettled {
+            oracle_id: oracle.id.to_inner(),
+            expiry: oracle.expiry,
+            settlement_price: prices.spot,
+            timestamp: now,
+        });
     };
 
     oracle.prices = prices;

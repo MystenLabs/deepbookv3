@@ -9,13 +9,20 @@ module deepbook_predict::predict_manager;
 
 use deepbook::balance_manager::{Self, BalanceManager, DepositCap, WithdrawCap};
 use deepbook_predict::market_key::MarketKey;
-use sui::{coin::Coin, table::{Self, Table}};
+use sui::{coin::Coin, event, table::{Self, Table}};
 
 // === Errors ===
 const EInvalidOwner: u64 = 0;
 const EInsufficientPosition: u64 = 1;
 const EInsufficientFreePosition: u64 = 2;
 const EInsufficientCollateral: u64 = 3;
+
+// === Events ===
+
+public struct PredictManagerCreated has copy, drop, store {
+    manager_id: ID,
+    owner: address,
+}
 
 // === Structs ===
 
@@ -94,6 +101,11 @@ public(package) fun new(ctx: &mut TxContext): ID {
     let manager_id = object::id(&manager);
     transfer::share_object(manager);
 
+    event::emit(PredictManagerCreated {
+        manager_id,
+        owner,
+    });
+
     manager_id
 }
 
@@ -157,4 +169,3 @@ public(package) fun release_collateral(
     data.locked = data.locked - quantity;
     data.free = data.free + quantity;
 }
-

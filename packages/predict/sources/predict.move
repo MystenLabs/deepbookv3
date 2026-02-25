@@ -19,11 +19,85 @@ use deepbook_predict::{
     risk_config::{Self, RiskConfig},
     vault::{Self, Vault}
 };
-use sui::{clock::Clock, coin::Coin};
+use sui::{clock::Clock, coin::Coin, event};
 
 // === Errors ===
 const ETradingPaused: u64 = 0;
 const EInvalidCollateralPair: u64 = 1;
+
+// === Events ===
+
+public struct PositionMinted has copy, drop, store {
+    predict_id: ID,
+    manager_id: ID,
+    trader: address,
+    oracle_id: ID,
+    expiry: u64,
+    strike: u64,
+    is_up: bool,
+    quantity: u64,
+    cost: u64,
+    ask_price: u64,
+}
+
+public struct PositionRedeemed has copy, drop, store {
+    predict_id: ID,
+    manager_id: ID,
+    trader: address,
+    oracle_id: ID,
+    expiry: u64,
+    strike: u64,
+    is_up: bool,
+    quantity: u64,
+    payout: u64,
+    bid_price: u64,
+    is_settled: bool,
+}
+
+public struct CollateralizedPositionMinted has copy, drop, store {
+    predict_id: ID,
+    manager_id: ID,
+    trader: address,
+    oracle_id: ID,
+    locked_expiry: u64,
+    locked_strike: u64,
+    locked_is_up: bool,
+    minted_expiry: u64,
+    minted_strike: u64,
+    minted_is_up: bool,
+    quantity: u64,
+}
+
+public struct CollateralizedPositionRedeemed has copy, drop, store {
+    predict_id: ID,
+    manager_id: ID,
+    trader: address,
+    oracle_id: ID,
+    locked_expiry: u64,
+    locked_strike: u64,
+    locked_is_up: bool,
+    minted_expiry: u64,
+    minted_strike: u64,
+    minted_is_up: bool,
+    quantity: u64,
+}
+
+public struct TradingPauseUpdated has copy, drop, store {
+    predict_id: ID,
+    paused: bool,
+}
+
+public struct PricingConfigUpdated has copy, drop, store {
+    predict_id: ID,
+    base_spread: u64,
+    max_skew_multiplier: u64,
+    utilization_multiplier: u64,
+}
+
+public struct RiskConfigUpdated has copy, drop, store {
+    predict_id: ID,
+    max_total_exposure_pct: u64,
+}
 
 // === Structs ===
 
@@ -76,11 +150,25 @@ public fun mint<Underlying, Quote>(
     key.assert_matches_oracle(oracle);
     oracle.assert_not_stale(clock);
 
-    let (cost, _payout) = predict.get_trade_amounts(oracle, key, quantity, clock);
+    let (_bid, ask) = predict.get_quote(oracle, key, clock);
+    let cost = math::mul(ask, quantity);
     let payment = manager.withdraw<Quote>(cost, ctx);
     predict.vault.execute_mint(oracle.id(), key.is_up(), quantity, payment);
     predict.vault.assert_total_exposure(predict.risk_config.max_total_exposure_pct());
     manager.increase_position(key, quantity);
+
+    event::emit(PositionMinted {
+        predict_id: object::id(predict),
+        manager_id: object::id(manager),
+        trader: manager.owner(),
+        oracle_id: key.oracle_id(),
+        expiry: key.expiry(),
+        strike: key.strike(),
+        is_up: key.is_up(),
+        quantity,
+        cost,
+        ask_price: ask,
+    });
 }
 
 /// Sell a position. Payout is deposited into the PredictManager's balance.
@@ -101,11 +189,26 @@ public fun redeem<Underlying, Quote>(
 
     manager.decrease_position(key, quantity);
 
-    let (_cost, payout) = predict.get_trade_amounts(oracle, key, quantity, clock);
+    let (bid, _ask) = predict.get_quote(oracle, key, clock);
+    let payout = math::mul(bid, quantity);
     let payout_balance = predict.vault.execute_redeem(oracle.id(), key.is_up(), quantity, payout);
 
     let payout_coin = payout_balance.into_coin(ctx);
     manager.deposit(payout_coin, ctx);
+
+    event::emit(PositionRedeemed {
+        predict_id: object::id(predict),
+        manager_id: object::id(manager),
+        trader: manager.owner(),
+        oracle_id: key.oracle_id(),
+        expiry: key.expiry(),
+        strike: key.strike(),
+        is_up: key.is_up(),
+        quantity,
+        payout,
+        bid_price: bid,
+        is_settled: oracle.is_settled(),
+    });
 }
 
 /// Mint a position using another position as collateral (no USDC cost).
@@ -136,11 +239,25 @@ public fun mint_collateralized<Underlying, Quote>(
 
     manager.lock_collateral(locked_key, minted_key, quantity);
     manager.increase_position(minted_key, quantity);
+
+    event::emit(CollateralizedPositionMinted {
+        predict_id: object::id(predict),
+        manager_id: object::id(manager),
+        trader: manager.owner(),
+        oracle_id: locked_key.oracle_id(),
+        locked_expiry: locked_key.expiry(),
+        locked_strike: locked_key.strike(),
+        locked_is_up: locked_key.is_up(),
+        minted_expiry: minted_key.expiry(),
+        minted_strike: minted_key.strike(),
+        minted_is_up: minted_key.is_up(),
+        quantity,
+    });
 }
 
 /// Redeem a collateralized position, releasing the locked collateral.
 public fun redeem_collateralized<Quote>(
-    _predict: &mut Predict<Quote>,
+    predict: &mut Predict<Quote>,
     manager: &mut PredictManager,
     locked_key: MarketKey,
     minted_key: MarketKey,
@@ -148,6 +265,20 @@ public fun redeem_collateralized<Quote>(
 ) {
     manager.decrease_position(minted_key, quantity);
     manager.release_collateral(locked_key, minted_key, quantity);
+
+    event::emit(CollateralizedPositionRedeemed {
+        predict_id: object::id(predict),
+        manager_id: object::id(manager),
+        trader: manager.owner(),
+        oracle_id: locked_key.oracle_id(),
+        locked_expiry: locked_key.expiry(),
+        locked_strike: locked_key.strike(),
+        locked_is_up: locked_key.is_up(),
+        minted_expiry: minted_key.expiry(),
+        minted_strike: minted_key.strike(),
+        minted_is_up: minted_key.is_up(),
+        quantity,
+    });
 }
 
 // === Public-Package Functions ===
@@ -184,16 +315,32 @@ public(package) fun withdraw<Quote>(
 /// Set trading pause state.
 public(package) fun set_trading_paused<Quote>(predict: &mut Predict<Quote>, paused: bool) {
     predict.trading_paused = paused;
+    event::emit(TradingPauseUpdated {
+        predict_id: object::id(predict),
+        paused,
+    });
 }
 
 /// Set base spread.
 public(package) fun set_base_spread<Quote>(predict: &mut Predict<Quote>, spread: u64) {
     predict.pricing_config.set_base_spread(spread);
+    event::emit(PricingConfigUpdated {
+        predict_id: object::id(predict),
+        base_spread: predict.pricing_config.base_spread(),
+        max_skew_multiplier: predict.pricing_config.max_skew_multiplier(),
+        utilization_multiplier: predict.pricing_config.utilization_multiplier(),
+    });
 }
 
 /// Set max skew multiplier.
 public(package) fun set_max_skew_multiplier<Quote>(predict: &mut Predict<Quote>, multiplier: u64) {
     predict.pricing_config.set_max_skew_multiplier(multiplier);
+    event::emit(PricingConfigUpdated {
+        predict_id: object::id(predict),
+        base_spread: predict.pricing_config.base_spread(),
+        max_skew_multiplier: predict.pricing_config.max_skew_multiplier(),
+        utilization_multiplier: predict.pricing_config.utilization_multiplier(),
+    });
 }
 
 /// Set utilization multiplier.
@@ -202,11 +349,21 @@ public(package) fun set_utilization_multiplier<Quote>(
     multiplier: u64,
 ) {
     predict.pricing_config.set_utilization_multiplier(multiplier);
+    event::emit(PricingConfigUpdated {
+        predict_id: object::id(predict),
+        base_spread: predict.pricing_config.base_spread(),
+        max_skew_multiplier: predict.pricing_config.max_skew_multiplier(),
+        utilization_multiplier: predict.pricing_config.utilization_multiplier(),
+    });
 }
 
 /// Set max total exposure percentage.
 public(package) fun set_max_total_exposure_pct<Quote>(predict: &mut Predict<Quote>, pct: u64) {
     predict.risk_config.set_max_total_exposure_pct(pct);
+    event::emit(RiskConfigUpdated {
+        predict_id: object::id(predict),
+        max_total_exposure_pct: predict.risk_config.max_total_exposure_pct(),
+    });
 }
 
 #[test_only]

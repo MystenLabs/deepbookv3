@@ -14,14 +14,12 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 | Module | Status | Notes |
 |--------|--------|-------|
 | `registry.move` | Done | init, AdminCap, create_predict, create_oracle, create_oracle_cap, pause setters, config setters (lockup, spread, skew, exposure limit) |
-| `predict.move` | Done | Orchestrator + pricing: create_manager, mint, redeem, mint/redeem_collateralized, supply, withdraw, get_quote (additive 3-component spread: base + skew + utilization), quantity-based inventory skew, risk checks, pause enforcement, config forwarders |
-| `vault/vault.move` | Done | Aggregate state machine: execute_mint/redeem (is_up, quantity), collateralized mint/redeem, total_up_short/total_down_short/max_liability tracking, assert_total_exposure. Supply/withdraw receive vault_value from orchestrator (expected NAV). |
-| `vault/supply_manager.move` | Done | LP share accounting: supply (shares minted), withdraw (shares burned), lockup enforcement, vault_value param, share_ratio helper |
+| `predict.move` | Done | Orchestrator + pricing: create_manager, mint, redeem, mint/redeem_collateralized, get_quote (additive 3-component spread: base + skew + utilization), quantity-based inventory skew, risk checks, pause enforcement, config forwarders |
+| `vault/vault.move` | Done | Aggregate state machine: execute_mint/redeem (is_up, quantity), collateralized mint/redeem, total_up_short/total_down_short/max_liability tracking, assert_total_exposure. Admin deposit/withdraw. |
 | `predict_manager.move` | Done | User-side: wraps BalanceManager (deposit/withdraw caps), tracks positions (free/locked), collateral lock/release |
 | `market_key/market_key.move` | Done | Positional struct: (oracle_id, expiry, strike, direction), UP/DOWN helpers, assert_matches_oracle() |
 | `config/pricing_config.move` | Done | base_spread (1%), max_skew_multiplier (1x), utilization_multiplier (2x) |
 | `config/risk_config.move` | Done | max_total_exposure_pct (80%) |
-| `config/lp_config.move` | Done | lockup_period_ms (24h default) |
 | `helper/constants.move` | Done | `public macro fun`: FLOAT_SCALING (1e9), config defaults, ms_per_year, staleness_threshold_ms |
 | `helper/math.move` | Done | ln, exp, normal_cdf, signed arithmetic (add/sub/mul) |
 
@@ -41,20 +39,19 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 - [x] **Cross-validation**: Move binary option pricing verified against Python/scipy reference implementation. Max deviation ~0.000007% (68 parts per billion).
 
 ### P2 - Nice to Have
-- [ ] **Events**: Most modules don't emit events beyond oracle. Add events for mints, redeems, settlements, supply/withdraw.
+- [ ] **Events**: Most modules don't emit events beyond oracle. Add events for mints, redeems, settlements, deposit/withdraw.
 - [x] **Pause enforcement**: trading_paused/withdrawals_paused in Predict struct, checked in mint/mint_collateralized/withdraw. Redeems always allowed.
-- [ ] **Settled-side liability cleanup**: after settlement, losing-side liability never pays out but stays in max_liability until redeemed. A future function could zero out losing-side counts for settled oracles to improve LP share pricing.
+- [ ] **Settled-side liability cleanup**: after settlement, losing-side liability never pays out but stays in max_liability until redeemed. A future function could zero out losing-side counts for settled oracles.
 
 ## Design Decisions Made
 - Vault is the counterparty to all trades (short every position)
 - Quantities are in USDC units (1_000_000 = 1 contract = $1)
 - Prices use FLOAT_SCALING (1e9): 500_000_000 = 50%
 - Oracle owns the pricing math (`get_binary_price`), predict.move handles spread/cost/payout
-- Config structs (PricingConfig, RiskConfig, LPConfig) are pure data in `config/` with getters + `public(package)` setters
+- Config structs (PricingConfig, RiskConfig) are pure data in `config/` with getters + `public(package)` setters
 - Pricing logic (get_quote, spread calculation) lives in predict.move as private functions
 - Collateralized minting lives in PredictManager (free/locked positions), not a separate CollateralManager
 - **Aggregate-only vault**: no per-market Table, just total_up_short/total_down_short/total_collateralized counters. Skew pricing uses aggregate quantity imbalance.
-- **Expected NAV for LP share pricing**: vault_value = balance - expected_liabilities (oracle-weighted). Gives LPs fair share pricing instead of worst-case. Conservative max_liability still used for exposure risk checks. **TODO: revisit — likely gameable via oracle manipulation or timing attacks.**
 - Risk limits: 80% max total exposure (as % of vault balance). No per-market limit (unnecessary with aggregate tracking).
 - **No settle function**: oracle freezes settlement price at expiry. Redeems return 100%/0% for settled oracles. max_liability decreases naturally as positions are redeemed.
 - Pause state lives in `Predict` (not `Registry`) to avoid circular dependency (registry → predict)
@@ -98,7 +95,7 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 - Removed dead `DIRECTION_UP/DOWN` constants from `constants.move` (only used in `market_key.move`)
 - Consolidated oracle_block_scholes.move sections into standard Public → Public-Package layout
 - Fixed import aliasing: `deepbook::math` as `math`, `deepbook_predict::math` as `predict_math`
-- Extracted `PricingConfig` to `config/pricing_config.move` (pure data + getters + setters, matches RiskConfig/LPConfig pattern)
+- Extracted `PricingConfig` to `config/pricing_config.move` (pure data + getters + setters, matches RiskConfig pattern)
 - Moved pricing logic (get_quote, spread calc) from `pricing/pricing.move` into `predict.move` as private functions
 - Deleted `pricing/pricing.move` and `pricing/` directory
 - Documented established patterns in PROGRESS.md
@@ -136,7 +133,7 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
   2. **Oracle dead code**: removed unused `assert_active()` and `EOracleNotActive` error constant
   3. **Renamed `PositionData`** in predict_manager.move to `UserPosition` — resolved name collision with vault's `PositionData`
 - Skipped 3 proposed changes:
-  - Config module merge: separation is meaningful (LP/pricing/risk are distinct concerns), keeps struct layout stable
+  - Config module merge: separation is meaningful (pricing/risk are distinct concerns), keeps struct layout stable
   - Predict.move forwarder removal: forwarders provide proper encapsulation of Predict internals
   - ~~Inline `get_pricing_data`~~: done in 2026-02-17 session (total variance cancellation made it clearly better)
 
@@ -185,7 +182,6 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 - **LP share pricing switched to expected NAV**: `supply`/`withdraw` now take oracle, compute `expected_vault_value = balance - expected_up - expected_down` using oracle-weighted liabilities. Conservative `max_liability` still used for `assert_total_exposure`. Vault stays oracle-free — receives `vault_value` as a parameter from predict.move.
 - **Removed `cumulative_premiums`/`cumulative_payouts`**: unused informational counters — never read on-chain.
 - **Collateral + regular redeem interaction is safe**: analyzed scenario where user mints UP-65k (vault-backed), locks it as collateral to mint UP-75k, then redeems UP-75k via regular `redeem`. Vault aggregate accounting (`total_up_short`) stays correct because: (1) the locked UP-65k cannot be redeemed against the vault until the user re-acquires UP-75k (which requires a new vault mint, restoring `total_up_short`), (2) the collateral lock forces re-engagement with the vault before the locked position is accessible, so exposure is genuinely zero in the intermediate state.
-- **Open concern**: expected NAV for share pricing is probably gameable (oracle manipulation, timing around large market moves). Needs future hardening.
 
 ### Session: 2026-02-19 (simplify skew to quantity-based)
 - **Replaced oracle-weighted skew with quantity-based skew**: `inventory_skew` now uses raw `total_up_short` vs `total_down_short` for imbalance instead of oracle-weighted expected liabilities. Imbalance = `(this_side - other_side) / (this_side + other_side)`. Removes oracle call from spread calculation.
@@ -259,3 +255,22 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 - **Precision results**: maximum deviation between Move and Python is ~68 out of 1,000,000,000 (0.000007%). Tolerance set to 0.01% (100,000) — 1,000x above actual deviation. The Move fixed-point Taylor series (ln/exp) and Abramowitz-Stegun (normal_cdf) approximations are extremely accurate.
 - **Also verified**: UP + DOWN sum equals discount factor (put-call parity for binary options) holds in all test cases within tolerance.
 - All 177 tests pass (5 oracle + 36 vault + 31 predict_manager + 26 predict + 18 market_key + 47 math + 14 cross-validation).
+
+### Session: 2026-02-20 (testnet deployment)
+- **Deployed full predict stack to testnet** with deployment scripts in `scripts/transactions/predict/`:
+  - `dusdc` package: mintable test USDC (6 decimals) at `packages/dusdc/`
+  - `deepbook_predict` package: published to testnet
+  - `Predict<DUSDC>` shared object initialized
+  - OracleCap created (owned by deployer)
+  - `OracleSVI<SUI>` shared object created (SUI as phantom Underlying for BTC price feed, 30-day expiry)
+  - 1M DUSDC deposited into vault
+- **Deployment scripts created** (`scripts/transactions/predict/`):
+  - `dusdcPublish.ts` / `dusdcMint.ts` — deploy and mint test USDC
+  - `publish.ts` — publish predict package, writes IDs to constants
+  - `init.ts` — create Predict<DUSDC>, writes object ID to constants
+  - `deposit.ts` — mint DUSDC + deposit into vault (default 1M, configurable via `AMOUNT` env var)
+  - `createOracleCap.ts` — create OracleCap, writes ID to constants
+  - `createOracle.ts` — create Oracle shared object (default 30-day expiry, configurable via `EXPIRY` env var)
+- **All scripts auto-write IDs to `scripts/config/constants.ts`** — no manual copy-paste between steps
+- **npm scripts added**: `dusdc-publish`, `dusdc-mint`, `predict-publish`, `predict-init`, `predict-deposit`, `predict-create-oracle-cap`, `predict-create-oracle`
+- **Testnet state**: package deployed, Predict<DUSDC> initialized, vault funded with 1M DUSDC, OracleCap + Oracle created. Oracle not yet activated or fed data — ready for Block Scholes integration.

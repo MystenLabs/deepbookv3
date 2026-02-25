@@ -13,10 +13,28 @@
 module deepbook_predict::registry;
 
 use deepbook_predict::{oracle::{Self, OracleCapSVI}, predict};
-use sui::{coin::Coin, table::{Self, Table}};
+use sui::{coin::Coin, event, table::{Self, Table}};
 
 // === Errors ===
 const EPredictAlreadyCreated: u64 = 0;
+
+// === Events ===
+
+public struct PredictCreated has copy, drop, store {
+    predict_id: ID,
+}
+
+public struct OracleCreated has copy, drop, store {
+    oracle_id: ID,
+    oracle_cap_id: ID,
+    expiry: u64,
+}
+
+public struct AdminVaultBalanceChanged has copy, drop, store {
+    predict_id: ID,
+    amount: u64,
+    deposit: bool,
+}
 
 // === Structs ===
 
@@ -58,6 +76,8 @@ public fun create_predict<Quote>(
     let predict_id = predict::create<Quote>(ctx);
     registry.predict_id = option::some(predict_id);
 
+    event::emit(PredictCreated { predict_id });
+
     predict_id
 }
 
@@ -83,6 +103,12 @@ public fun create_oracle<Underlying>(
     };
     registry.oracle_ids[cap_id].push_back(oracle_id);
 
+    event::emit(OracleCreated {
+        oracle_id,
+        oracle_cap_id: cap_id,
+        expiry,
+    });
+
     oracle_id
 }
 
@@ -92,7 +118,13 @@ public fun admin_deposit<Quote>(
     _admin_cap: &AdminCap,
     coin: Coin<Quote>,
 ) {
+    let amount = coin.value();
     predict.deposit(coin);
+    event::emit(AdminVaultBalanceChanged {
+        predict_id: object::id(predict),
+        amount,
+        deposit: true,
+    });
 }
 
 /// Admin withdraws USDC from the vault.
@@ -102,7 +134,13 @@ public fun admin_withdraw<Quote>(
     amount: u64,
     ctx: &mut TxContext,
 ): Coin<Quote> {
-    predict.withdraw(amount, ctx)
+    let coin = predict.withdraw(amount, ctx);
+    event::emit(AdminVaultBalanceChanged {
+        predict_id: object::id(predict),
+        amount,
+        deposit: false,
+    });
+    coin
 }
 
 /// Set trading pause state.
