@@ -7,7 +7,14 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "create-pool": "pnpm tsx transactions/createPool.ts",
-    "localnet": "pnpm tsx transactions/localnetDeploy.ts"
+    "localnet": "pnpm tsx transactions/localnetDeploy.ts",
+    "dusdc-publish": "pnpm tsx transactions/predict/dusdcPublish.ts",
+    "dusdc-mint": "pnpm tsx transactions/predict/dusdcMint.ts",
+    "predict-publish": "pnpm tsx transactions/predict/publish.ts",
+    "predict-init": "pnpm tsx transactions/predict/init.ts",
+    "predict-deposit": "pnpm tsx transactions/predict/deposit.ts",
+    "predict-create-oracle-cap": "pnpm tsx transactions/predict/createOracleCap.ts",
+    "predict-create-oracle": "pnpm tsx transactions/predict/createOracle.ts"
   },
   "keywords": [],
   "author": "",

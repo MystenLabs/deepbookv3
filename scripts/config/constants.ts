@@ -65,3 +65,50 @@ export const supplierCapID = {
   mainnet: "0xe0e64f2b0037304e29647fd5ef2c5ea758828a8e5aea73bb0bd5f227c1c20204",
   testnet: "",
 };
+
+// DUSDC test token
+export const dusdcPackageID = {
+  mainnet: "",
+  testnet: "0xe938d10063044757264ed23858209a08cd724f22b0ec9dab02f04a31ea4e160c",
+};
+
+export const dusdcTreasuryCapID = {
+  mainnet: "",
+  testnet: "0xa39b8d0c16e0914c642fb435162968245df862174cf0d98b19caa99ba57a88cb",
+};
+
+// Predict package
+export const predictPackageID = {
+  mainnet: "",
+  testnet: "0xd1d0dec719f255a8c33b9ffba017b51375509aeb5cd13b1bb030f3cd6f51a60c",
+};
+
+export const predictRegistryID = {
+  mainnet: "",
+  testnet: "0x7616b335f75720a180cf87f806c222e0c472d5a1f6683a89cd55fde713d53b35",
+};
+
+export const predictAdminCapID = {
+  mainnet: "",
+  testnet: "0x186b10eaa09c5e5714c9ce7c196a92b6483bd5e503842d9322ddd935404599bf",
+};
+
+export const predictUpgradeCapID = {
+  mainnet: "",
+  testnet: "0xbf9758da05c231fc35b8510539290165863155f4348776b6d49dc2faaa643fed",
+};
+
+export const predictObjectID = {
+  mainnet: "",
+  testnet: "0x39bd5717210f66bcc54dd12a8f48f233be176e232de6045058e088e2ba7b3f83",
+};
+
+export const predictOracleCapID = {
+  mainnet: "",
+  testnet: "0x4a9fefa7a1f5434dbc8032e7f7b5d17aa7d7b3b3c674ad7bbab2aee51ab702a3",
+};
+
+export const predictOracleID = {
+  mainnet: "",
+  testnet: "0xd1fa546d31733a6806374f004479a2c5b593c5912fe4a432729846cb9106ebba",
+};
