@@ -40,6 +40,7 @@ use crate::admin::routes::admin_routes;
 use crate::metrics::middleware::track_metrics;
 use crate::metrics::RpcMetrics;
 use crate::reader::Reader;
+use crate::slush::routes::slush_routes;
 use crate::writer::Writer;
 use axum::middleware::from_fn_with_state;
 use futures::future::join_all;
@@ -209,8 +210,16 @@ impl AppState {
         &self.metrics
     }
 
+    pub(crate) fn reader(&self) -> &Reader {
+        &self.reader
+    }
+
     pub fn writer(&self) -> &Writer {
         &self.writer
+    }
+
+    pub(crate) fn margin_package_id(&self) -> Option<&str> {
+        self.margin_package_id.as_deref()
     }
 
     pub fn is_valid_admin_token(&self, token: &str) -> bool {
@@ -411,10 +420,12 @@ pub(crate) fn make_router(state: Arc<AppState>) -> Router {
         .with_state(state.clone());
 
     let admin = admin_routes(state.clone()).with_state(state.clone());
+    let slush = slush_routes().with_state(state.clone());
 
     db_routes
         .merge(rpc_routes)
         .nest("/admin", admin)
+        .nest("/slush", slush)
         .layer(cors)
         .layer(from_fn_with_state(state, track_metrics))
 }

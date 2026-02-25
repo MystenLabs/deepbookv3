@@ -36,6 +36,7 @@ subtle = "2.5"
 tracing.workspace = true
 governor = "0.6"
 secrecy = "0.8"
+base64 = "0.22"
 
 [[bin]]
 name = "deepbook-server"
