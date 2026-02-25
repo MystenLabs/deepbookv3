@@ -34,9 +34,8 @@ const MARGIN_POOL_MODULE: &str = "margin_pool";
 const SUI_CLOCK_OBJECT_ID: &str =
     "0x0000000000000000000000000000000000000000000000000000000000000006";
 
-/// Mainnet MarginRegistry shared object ID.
-/// TODO: make this configurable via environment variable.
-const MARGIN_REGISTRY_ID: &str =
+/// Default MarginRegistry shared object ID (mainnet).
+const DEFAULT_MARGIN_REGISTRY_ID: &str =
     "0x0e40998b359a9ccbab22a98ed21bd4346abf19158bc7980c8291908086b3a742";
 
 /// DeepBook app URL for constructing strategy/position links.
@@ -132,7 +131,7 @@ pub async fn create_deposit(
         (
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(TransactionBuildError {
-                _tag: "TransactionBuildError".to_string(),
+                tag: "TransactionBuildError".to_string(),
                 message: Some(e.to_string()),
             }),
         )
@@ -148,7 +147,7 @@ pub async fn create_withdraw(
         (
             StatusCode::UNPROCESSABLE_ENTITY,
             Json(TransactionBuildError {
-                _tag: "TransactionBuildError".to_string(),
+                tag: "TransactionBuildError".to_string(),
                 message: Some(e.to_string()),
             }),
         )
@@ -156,23 +155,23 @@ pub async fn create_withdraw(
 }
 
 /// POST /v1/withdraw/cancel — DeepBook withdrawals are instant, so return 501
-pub async fn cancel_withdraw(
-    Json(_req): Json<WithdrawCancelRequest>,
-) -> impl IntoResponse {
+pub async fn cancel_withdraw() -> impl IntoResponse {
     (
         StatusCode::NOT_IMPLEMENTED,
         Json(NotImplementedError {
-            _tag: "NotImplementedError".to_string(),
+            tag: "NotImplementedError".to_string(),
         }),
     )
 }
 
 // === Internal Helpers ===
 
-/// Normalize an asset type string to ensure it has a 0x prefix.
+/// Normalize an asset type string to ensure it has a lowercase 0x prefix.
 fn normalize_asset_type(asset_type: &str) -> String {
-    if asset_type.starts_with("0x") || asset_type.starts_with("0X") {
-        asset_type.to_string()
+    if let Some(rest) = asset_type.strip_prefix("0x") {
+        format!("0x{}", rest)
+    } else if let Some(rest) = asset_type.strip_prefix("0X") {
+        format!("0x{}", rest)
     } else {
         format!("0x{}", asset_type)
     }
@@ -267,8 +266,8 @@ async fn build_all_strategies(state: &AppState) -> Result<Vec<Strategy>, DeepBoo
         let depositors_count =
             count_depositors(state, pool_id_str).await.unwrap_or(0);
 
-        // Compute volume 24h from borrow/repay events (simplified: use supply/withdraw volume)
-        let _volume_24h = compute_volume_24h(state, pool_id_str).await.unwrap_or(0);
+        // TODO: volume_24h computation requires a price oracle for USD conversion.
+        // See compute_volume_24h() for the base-unit implementation when ready.
 
         // Build strategy
         let coin_type = normalized.clone();
@@ -414,7 +413,6 @@ fn compute_supply_apy(interest_rate: u64, total_supply: u64, total_borrow: u64) 
 /// Uses indexed asset_supplied and asset_withdrawn events.
 async fn count_depositors(state: &AppState, pool_id: &str) -> Result<i64, DeepBookError> {
     let pool_id_owned = pool_id.to_string();
-    let pool_id_owned2 = pool_id.to_string();
 
     // Get all supply events for this pool
     let supplied: Vec<AssetSupplied> = state
@@ -422,7 +420,7 @@ async fn count_depositors(state: &AppState, pool_id: &str) -> Result<i64, DeepBo
         .results(
             schema::asset_supplied::table
                 .select(AssetSupplied::as_select())
-                .filter(schema::asset_supplied::margin_pool_id.eq(pool_id_owned)),
+                .filter(schema::asset_supplied::margin_pool_id.eq(pool_id_owned.clone())),
         )
         .await?;
 
@@ -432,7 +430,7 @@ async fn count_depositors(state: &AppState, pool_id: &str) -> Result<i64, DeepBo
         .results(
             schema::asset_withdrawn::table
                 .select(AssetWithdrawn::as_select())
-                .filter(schema::asset_withdrawn::margin_pool_id.eq(pool_id_owned2)),
+                .filter(schema::asset_withdrawn::margin_pool_id.eq(pool_id_owned)),
         )
         .await?;
 
@@ -464,9 +462,12 @@ async fn count_depositors(state: &AppState, pool_id: &str) -> Result<i64, DeepBo
 }
 
 /// Compute 24h volume from supply/withdraw events (in base units).
+/// Compute 24h volume from supply/withdraw events (in base units).
+/// NOTE: Currently unused since USD conversion requires a price oracle.
+/// This will be called from build_all_strategies once the oracle is integrated.
+#[allow(dead_code)]
 async fn compute_volume_24h(state: &AppState, pool_id: &str) -> Result<i64, DeepBookError> {
     let pool_id_owned = pool_id.to_string();
-    let pool_id_owned2 = pool_id.to_string();
 
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -479,7 +480,7 @@ async fn compute_volume_24h(state: &AppState, pool_id: &str) -> Result<i64, Deep
         .results(
             schema::asset_supplied::table
                 .select(AssetSupplied::as_select())
-                .filter(schema::asset_supplied::margin_pool_id.eq(pool_id_owned))
+                .filter(schema::asset_supplied::margin_pool_id.eq(pool_id_owned.clone()))
                 .filter(schema::asset_supplied::checkpoint_timestamp_ms.between(start_ms, now_ms)),
         )
         .await?;
@@ -489,7 +490,7 @@ async fn compute_volume_24h(state: &AppState, pool_id: &str) -> Result<i64, Deep
         .results(
             schema::asset_withdrawn::table
                 .select(AssetWithdrawn::as_select())
-                .filter(schema::asset_withdrawn::margin_pool_id.eq(pool_id_owned2))
+                .filter(schema::asset_withdrawn::margin_pool_id.eq(pool_id_owned))
                 .filter(
                     schema::asset_withdrawn::checkpoint_timestamp_ms.between(start_ms, now_ms),
                 ),
@@ -515,7 +516,6 @@ async fn build_positions_for_address(
     address: &str,
 ) -> Result<Vec<Position>, DeepBookError> {
     let address_owned = address.to_string();
-    let address_owned2 = address.to_string();
 
     // Get all supply events where sender = address
     let supplied: Vec<AssetSupplied> = state
@@ -523,7 +523,7 @@ async fn build_positions_for_address(
         .results(
             schema::asset_supplied::table
                 .select(AssetSupplied::as_select())
-                .filter(schema::asset_supplied::sender.eq(address_owned)),
+                .filter(schema::asset_supplied::sender.eq(address_owned.clone())),
         )
         .await?;
 
@@ -537,7 +537,7 @@ async fn build_positions_for_address(
         .results(
             schema::asset_withdrawn::table
                 .select(AssetWithdrawn::as_select())
-                .filter(schema::asset_withdrawn::sender.eq(address_owned2)),
+                .filter(schema::asset_withdrawn::sender.eq(address_owned)),
         )
         .await?;
 
@@ -616,7 +616,6 @@ async fn build_position_by_id(
     position_id: &str,
 ) -> Result<Position, DeepBookError> {
     let position_id_owned = position_id.to_string();
-    let position_id_owned2 = position_id.to_string();
 
     // Get all supply events for this supplier_cap_id
     let supplied: Vec<AssetSupplied> = state
@@ -624,7 +623,7 @@ async fn build_position_by_id(
         .results(
             schema::asset_supplied::table
                 .select(AssetSupplied::as_select())
-                .filter(schema::asset_supplied::supplier.eq(position_id_owned)),
+                .filter(schema::asset_supplied::supplier.eq(position_id_owned.clone())),
         )
         .await?;
 
@@ -640,7 +639,7 @@ async fn build_position_by_id(
         .results(
             schema::asset_withdrawn::table
                 .select(AssetWithdrawn::as_select())
-                .filter(schema::asset_withdrawn::supplier.eq(position_id_owned2)),
+                .filter(schema::asset_withdrawn::supplier.eq(position_id_owned)),
         )
         .await?;
 
@@ -724,7 +723,9 @@ async fn build_deposit_tx(
     };
 
     // Get MarginRegistry object
-    let registry_id = ObjectID::from_hex_literal(MARGIN_REGISTRY_ID)?;
+    let registry_id = ObjectID::from_hex_literal(
+            state.margin_registry_id().unwrap_or(DEFAULT_MARGIN_REGISTRY_ID),
+        )?;
     let registry_object = sui_client
         .read_api()
         .get_object_with_options(
@@ -907,7 +908,9 @@ async fn build_withdraw_tx(
     };
 
     // Get MarginRegistry object
-    let registry_id = ObjectID::from_hex_literal(MARGIN_REGISTRY_ID)?;
+    let registry_id = ObjectID::from_hex_literal(
+            state.margin_registry_id().unwrap_or(DEFAULT_MARGIN_REGISTRY_ID),
+        )?;
     let registry_object = sui_client
         .read_api()
         .get_object_with_options(
@@ -1029,7 +1032,7 @@ async fn build_withdraw_tx(
     }))
 }
 
-/// Base64 encode bytes using standard encoding (no padding).
+/// Base64 encode bytes using standard encoding (with padding).
 fn base64_encode(bytes: &[u8]) -> String {
     use base64::engine::general_purpose::STANDARD;
     use base64::Engine;

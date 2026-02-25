@@ -169,6 +169,8 @@ pub struct WithdrawResponse {
     pub fees: Option<Vec<CoinValue>>,
 }
 
+/// Defined per the Slush spec for future use when cancel_withdraw is implemented.
+#[allow(dead_code)]
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WithdrawCancelRequest {
@@ -179,21 +181,18 @@ pub struct WithdrawCancelRequest {
     pub sender_address: String,
 }
 
-#[derive(Serialize)]
-pub struct WithdrawCancelResponse {
-    pub bytes: String,
-}
-
 // === Error types ===
 
 #[derive(Serialize)]
 pub struct NotImplementedError {
-    pub _tag: String,
+    #[serde(rename = "_tag")]
+    pub tag: String,
 }
 
 #[derive(Serialize)]
 pub struct TransactionBuildError {
-    pub _tag: String,
+    #[serde(rename = "_tag")]
+    pub tag: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
 }

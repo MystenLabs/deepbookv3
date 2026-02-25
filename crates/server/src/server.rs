@@ -134,6 +134,7 @@ pub struct AppState {
     admin_tokens: Vec<Secret<String>>,
     admin_auth_limiter: Arc<AdminRateLimiter>,
     margin_package_id: Option<String>,
+    margin_registry_id: Option<String>,
 }
 
 impl AppState {
@@ -147,6 +148,7 @@ impl AppState {
         deep_treasury_id: String,
         admin_tokens: Option<String>,
         margin_package_id: Option<String>,
+        margin_registry_id: Option<String>,
     ) -> Result<Self, anyhow::Error> {
         let metrics = RpcMetrics::new(registry);
         let reader = Reader::new(
@@ -191,6 +193,7 @@ impl AppState {
             admin_tokens,
             admin_auth_limiter,
             margin_package_id,
+            margin_registry_id,
         })
     }
 
@@ -220,6 +223,10 @@ impl AppState {
 
     pub(crate) fn margin_package_id(&self) -> Option<&str> {
         self.margin_package_id.as_deref()
+    }
+
+    pub(crate) fn margin_registry_id(&self) -> Option<&str> {
+        self.margin_registry_id.as_deref()
     }
 
     pub fn is_valid_admin_token(&self, token: &str) -> bool {
@@ -264,6 +271,7 @@ pub async fn run_server(
     deep_treasury_id: String,
     margin_poll_interval_secs: u64,
     margin_package_id: Option<String>,
+    margin_registry_id: Option<String>,
     admin_tokens: Option<String>,
 ) -> Result<(), anyhow::Error> {
     let registry = Registry::new_custom(Some("deepbook_api".into()), None)
@@ -281,6 +289,7 @@ pub async fn run_server(
         deep_treasury_id,
         admin_tokens,
         margin_package_id.clone(),
+        margin_registry_id,
     )
     .await?;
     let socket_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), server_port);
