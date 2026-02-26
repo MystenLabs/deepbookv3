@@ -23,10 +23,7 @@ pub fn slush_routes() -> Router<Arc<AppState>> {
         .route("/v1/strategies/{strategyId}", get(handlers::get_strategy))
         // Positions
         .route("/v1/positions", get(handlers::list_positions))
-        .route(
-            "/v1/positions/{positionId}",
-            get(handlers::get_position),
-        )
+        .route("/v1/positions/{positionId}", get(handlers::get_position))
         // Transactions
         .route("/v1/deposit", post(handlers::create_deposit))
         .route("/v1/withdraw", post(handlers::create_withdraw))

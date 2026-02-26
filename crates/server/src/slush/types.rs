@@ -169,7 +169,9 @@ pub struct WithdrawResponse {
     pub fees: Option<Vec<CoinValue>>,
 }
 
-/// Defined per the Slush spec for future use when cancel_withdraw is implemented.
+/// Forward-compatible placeholder defined per the Slush spec.
+/// DeepBook withdrawals are instant, so cancel_withdraw returns 501.
+/// Kept here so the type is ready if a delayed-withdrawal mode is added later.
 #[allow(dead_code)]
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

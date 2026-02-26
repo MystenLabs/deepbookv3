@@ -35,6 +35,8 @@ const SUI_CLOCK_OBJECT_ID: &str =
     "0x0000000000000000000000000000000000000000000000000000000000000006";
 
 /// Default MarginRegistry shared object ID (mainnet).
+/// WARNING: This is used as a fallback when --margin-registry-id is not configured.
+/// In non-mainnet deployments, ensure the registry ID is explicitly set.
 const DEFAULT_MARGIN_REGISTRY_ID: &str =
     "0x0e40998b359a9ccbab22a98ed21bd4346abf19158bc7980c8291908086b3a742";
 
@@ -86,6 +88,10 @@ pub async fn list_strategies(
 }
 
 /// GET /v1/strategies/{strategyId} — get a single strategy by pool ID
+///
+/// TODO: This currently calls build_all_strategies and filters, making it O(N) in the
+/// number of margin pools (2N RPC calls). Refactor to build a single strategy directly
+/// from the pool ID to avoid unnecessary RPC calls for the other pools.
 pub async fn get_strategy(
     Path(strategy_id): Path<String>,
     State(state): State<Arc<AppState>>,
@@ -127,15 +133,9 @@ pub async fn create_deposit(
     State(state): State<Arc<AppState>>,
     Json(req): Json<DepositRequest>,
 ) -> Result<Json<DepositResponse>, (StatusCode, Json<TransactionBuildError>)> {
-    build_deposit_tx(&state, &req).await.map_err(|e| {
-        (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(TransactionBuildError {
-                tag: "TransactionBuildError".to_string(),
-                message: Some(e.to_string()),
-            }),
-        )
-    })
+    build_deposit_tx(&state, &req)
+        .await
+        .map_err(|e| sanitized_tx_error(e))
 }
 
 /// POST /v1/withdraw — build a withdraw PTB
@@ -143,15 +143,43 @@ pub async fn create_withdraw(
     State(state): State<Arc<AppState>>,
     Json(req): Json<WithdrawRequest>,
 ) -> Result<Json<WithdrawResponse>, (StatusCode, Json<TransactionBuildError>)> {
-    build_withdraw_tx(&state, &req).await.map_err(|e| {
-        (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(TransactionBuildError {
-                tag: "TransactionBuildError".to_string(),
-                message: Some(e.to_string()),
-            }),
-        )
-    })
+    build_withdraw_tx(&state, &req)
+        .await
+        .map_err(|e| sanitized_tx_error(e))
+}
+
+/// Convert a DeepBookError into a sanitized transaction build error response.
+/// RPC and internal errors are logged but their details are not exposed to the client.
+fn sanitized_tx_error(e: DeepBookError) -> (StatusCode, Json<TransactionBuildError>) {
+    let (status, message) = match &e {
+        // Client errors: safe to expose
+        DeepBookError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+        DeepBookError::NotFound { resource } => {
+            (StatusCode::NOT_FOUND, format!("Not found: {}", resource))
+        }
+        // Server/RPC errors: log detail, return generic message
+        DeepBookError::Rpc(_) | DeepBookError::Internal(_) | DeepBookError::Database(_) => {
+            tracing::error!("Transaction build failed: {}", e);
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "Failed to build transaction".to_string(),
+            )
+        }
+        _ => {
+            tracing::error!("Transaction build failed: {}", e);
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "Failed to build transaction".to_string(),
+            )
+        }
+    };
+    (
+        status,
+        Json(TransactionBuildError {
+            tag: "TransactionBuildError".to_string(),
+            message: Some(message),
+        }),
+    )
 }
 
 /// POST /v1/withdraw/cancel — DeepBook withdrawals are instant, so return 501
@@ -166,18 +194,51 @@ pub async fn cancel_withdraw() -> impl IntoResponse {
 
 // === Internal Helpers ===
 
-/// Normalize an asset type string to ensure it has a lowercase 0x prefix.
+/// Return the configured margin registry ID, or fall back to the mainnet default
+/// with a warning log so operators notice the implicit fallback.
+fn resolve_margin_registry_id(state: &AppState) -> &str {
+    match state.margin_registry_id() {
+        Some(id) => id,
+        None => {
+            tracing::warn!(
+                "margin-registry-id not configured, falling back to mainnet default ({}). \
+                 Set --margin-registry-id for non-mainnet deployments.",
+                DEFAULT_MARGIN_REGISTRY_ID
+            );
+            DEFAULT_MARGIN_REGISTRY_ID
+        }
+    }
+}
+
+/// Normalize an asset type string to canonical lowercase hex form.
+/// Ensures the `0x` prefix is lowercase and normalizes the hex address portion
+/// (up to the first `::`) to lowercase, preserving module/type names as-is.
 fn normalize_asset_type(asset_type: &str) -> String {
-    if let Some(rest) = asset_type.strip_prefix("0x") {
+    let s = if let Some(rest) = asset_type.strip_prefix("0x") {
         format!("0x{}", rest)
     } else if let Some(rest) = asset_type.strip_prefix("0X") {
         format!("0x{}", rest)
     } else {
         format!("0x{}", asset_type)
+    };
+
+    // Lowercase the hex address portion (before the first `::`)
+    if let Some(idx) = s.find("::") {
+        let (addr, rest) = s.split_at(idx);
+        format!("{}{}", addr.to_lowercase(), rest)
+    } else {
+        s.to_lowercase()
     }
 }
 
 /// Query all margin pools from the DB and build Strategy objects.
+///
+/// TODO(perf): The per-pool RPC calls (get_object + dev_inspect) are sequential.
+/// These are independent and should be parallelized with `futures::future::join_all`
+/// to reduce latency from 2N sequential round-trips to ~2 concurrent batches.
+///
+/// TODO(perf): Consider adding a short TTL in-memory cache (e.g. 30s) for pool state
+/// to reduce RPC load under concurrent traffic.
 async fn build_all_strategies(state: &AppState) -> Result<Vec<Strategy>, DeepBookError> {
     let margin_package_id = state
         .margin_package_id()
@@ -263,18 +324,14 @@ async fn build_all_strategies(state: &AppState) -> Result<Vec<Strategy>, DeepBoo
         let current_apy = compute_supply_apy(interest_rate, total_supply, total_borrow);
 
         // Count depositors: distinct suppliers from asset_supplied minus fully-withdrawn
-        let depositors_count =
-            count_depositors(state, pool_id_str).await.unwrap_or(0);
+        let depositors_count = count_depositors(state, pool_id_str).await.unwrap_or(0);
 
         // TODO: volume_24h computation requires a price oracle for USD conversion.
         // See compute_volume_24h() for the base-unit implementation when ready.
 
         // Build strategy
         let coin_type = normalized.clone();
-        let asset_name = asset_type
-            .rsplit("::")
-            .next()
-            .unwrap_or(asset_type);
+        let asset_name = asset_type.rsplit("::").next().unwrap_or(asset_type);
 
         strategies.push(Strategy {
             id: pool_id_str.clone(),
@@ -296,16 +353,13 @@ async fn build_all_strategies(state: &AppState) -> Result<Vec<Strategy>, DeepBoo
                 avg30d: current_apy,
             },
             depositors_count,
-            tvl_usd: 0.0, // Requires price oracle for USD conversion
+            tvl_usd: 0.0,       // Requires price oracle for USD conversion
             volume24h_usd: 0.0, // Requires price oracle for USD conversion
             fees: FeesInfo {
                 deposit_bps: "0".to_string(),
                 withdraw_bps: "0".to_string(),
             },
-            url: Some(format!(
-                "{}/earn/{}",
-                DEEPBOOK_APP_URL, asset_name
-            )),
+            url: Some(format!("{}/earn/{}", DEEPBOOK_APP_URL, asset_name)),
         });
     }
 
@@ -400,6 +454,11 @@ fn extract_u64(
 /// Compute supply APY from on-chain interest rate and utilization.
 /// The interest rate from the contract is the borrow rate in 9-decimal fixed-point.
 /// Supply APY = borrow_rate * utilization, where utilization = total_borrow / total_supply.
+///
+/// TODO: Verify that `interest_rate` from the contract is already annualized.
+/// If it's a per-second or per-epoch rate, it needs to be scaled up accordingly.
+/// Additionally, this computes a simple rate (not compound APY). If the spec
+/// requires true compound APY, use: (1 + rate/n)^n - 1.
 fn compute_supply_apy(interest_rate: u64, total_supply: u64, total_borrow: u64) -> f64 {
     if total_supply == 0 {
         return 0.0;
@@ -411,6 +470,10 @@ fn compute_supply_apy(interest_rate: u64, total_supply: u64, total_borrow: u64) 
 
 /// Count distinct depositors (suppliers) for a pool who have a positive net balance.
 /// Uses indexed asset_supplied and asset_withdrawn events.
+///
+/// TODO(perf): This is called once per pool in build_all_strategies (N+1 pattern).
+/// Batch into a single SQL query with GROUP BY across all pools, or use a
+/// SUM(shares) aggregate query per pool instead of loading all rows into memory.
 async fn count_depositors(state: &AppState, pool_id: &str) -> Result<i64, DeepBookError> {
     let pool_id_owned = pool_id.to_string();
 
@@ -462,7 +525,6 @@ async fn count_depositors(state: &AppState, pool_id: &str) -> Result<i64, DeepBo
 }
 
 /// Compute 24h volume from supply/withdraw events (in base units).
-/// Compute 24h volume from supply/withdraw events (in base units).
 /// NOTE: Currently unused since USD conversion requires a price oracle.
 /// This will be called from build_all_strategies once the oracle is integrated.
 #[allow(dead_code)]
@@ -491,9 +553,7 @@ async fn compute_volume_24h(state: &AppState, pool_id: &str) -> Result<i64, Deep
             schema::asset_withdrawn::table
                 .select(AssetWithdrawn::as_select())
                 .filter(schema::asset_withdrawn::margin_pool_id.eq(pool_id_owned))
-                .filter(
-                    schema::asset_withdrawn::checkpoint_timestamp_ms.between(start_ms, now_ms),
-                ),
+                .filter(schema::asset_withdrawn::checkpoint_timestamp_ms.between(start_ms, now_ms)),
         )
         .await?;
 
@@ -510,20 +570,29 @@ async fn compute_total_tvl_usd(_state: &AppState) -> Result<f64, DeepBookError> 
     Ok(0.0)
 }
 
+/// Maximum number of supply/withdraw events to load per address.
+/// Prevents unbounded memory usage for very active users.
+const MAX_EVENTS_PER_ADDRESS: i64 = 10_000;
+
 /// Build positions for a given wallet address.
 async fn build_positions_for_address(
     state: &AppState,
     address: &str,
 ) -> Result<Vec<Position>, DeepBookError> {
+    // Validate address format
+    SuiAddress::from_str(address)
+        .map_err(|_| DeepBookError::bad_request(format!("Invalid Sui address: {}", address)))?;
+
     let address_owned = address.to_string();
 
-    // Get all supply events where sender = address
+    // Get supply events where sender = address (capped)
     let supplied: Vec<AssetSupplied> = state
         .reader()
         .results(
             schema::asset_supplied::table
                 .select(AssetSupplied::as_select())
-                .filter(schema::asset_supplied::sender.eq(address_owned.clone())),
+                .filter(schema::asset_supplied::sender.eq(address_owned.clone()))
+                .limit(MAX_EVENTS_PER_ADDRESS),
         )
         .await?;
 
@@ -531,13 +600,14 @@ async fn build_positions_for_address(
         return Ok(vec![]);
     }
 
-    // Get all withdraw events where sender = address
+    // Get withdraw events where sender = address (capped)
     let withdrawn: Vec<AssetWithdrawn> = state
         .reader()
         .results(
             schema::asset_withdrawn::table
                 .select(AssetWithdrawn::as_select())
-                .filter(schema::asset_withdrawn::sender.eq(address_owned)),
+                .filter(schema::asset_withdrawn::sender.eq(address_owned))
+                .limit(MAX_EVENTS_PER_ADDRESS),
         )
         .await?;
 
@@ -577,7 +647,7 @@ async fn build_positions_for_address(
             continue;
         }
 
-        let net_amount = agg.total_supplied_amount - agg.total_withdrawn_amount;
+        let net_amount = (agg.total_supplied_amount - agg.total_withdrawn_amount).max(0);
         let coin_type = normalize_asset_type(&agg.asset_type);
         let asset_name = agg
             .asset_type
@@ -651,7 +721,7 @@ async fn build_position_by_id(
 
     let total_supplied: i64 = supplied.iter().map(|s| s.amount).sum();
     let total_withdrawn: i64 = withdrawn.iter().map(|w| w.amount).sum();
-    let net_amount = total_supplied - total_withdrawn;
+    let net_amount = (total_supplied - total_withdrawn).max(0);
 
     Ok(Position {
         id: position_id.to_string(),
@@ -688,6 +758,11 @@ async fn build_deposit_tx(
     state: &AppState,
     req: &DepositRequest,
 ) -> Result<Json<DepositResponse>, DeepBookError> {
+    // Validate sender address
+    SuiAddress::from_str(&req.sender_address).map_err(|_| {
+        DeepBookError::bad_request(format!("Invalid sender address: {}", req.sender_address))
+    })?;
+
     let margin_package_id = state
         .margin_package_id()
         .ok_or_else(|| DeepBookError::bad_request("Margin package ID not configured"))?
@@ -723,9 +798,7 @@ async fn build_deposit_tx(
     };
 
     // Get MarginRegistry object
-    let registry_id = ObjectID::from_hex_literal(
-            state.margin_registry_id().unwrap_or(DEFAULT_MARGIN_REGISTRY_ID),
-        )?;
+    let registry_id = ObjectID::from_hex_literal(resolve_margin_registry_id(state))?;
     let registry_object = sui_client
         .read_api()
         .get_object_with_options(
@@ -842,6 +915,11 @@ async fn build_withdraw_tx(
     state: &AppState,
     req: &WithdrawRequest,
 ) -> Result<Json<WithdrawResponse>, DeepBookError> {
+    // Validate sender address
+    SuiAddress::from_str(&req.sender_address).map_err(|_| {
+        DeepBookError::bad_request(format!("Invalid sender address: {}", req.sender_address))
+    })?;
+
     let margin_package_id = state
         .margin_package_id()
         .ok_or_else(|| DeepBookError::bad_request("Margin package ID not configured"))?
@@ -851,9 +929,7 @@ async fn build_withdraw_tx(
     let coin_type = normalize_asset_type(&req.principal.coin_type);
 
     // For mode="usdc" on non-USDC pools, return an error
-    if req.mode == "usdc"
-        && !coin_type.ends_with("::usdc::USDC")
-        && !coin_type.ends_with("::USDC")
+    if req.mode == "usdc" && !coin_type.ends_with("::usdc::USDC") && !coin_type.ends_with("::USDC")
     {
         return Err(DeepBookError::bad_request(
             "mode=usdc is only supported for USDC pools. Use mode=as-is for other coin types.",
@@ -908,9 +984,7 @@ async fn build_withdraw_tx(
     };
 
     // Get MarginRegistry object
-    let registry_id = ObjectID::from_hex_literal(
-            state.margin_registry_id().unwrap_or(DEFAULT_MARGIN_REGISTRY_ID),
-        )?;
+    let registry_id = ObjectID::from_hex_literal(resolve_margin_registry_id(state))?;
     let registry_object = sui_client
         .read_api()
         .get_object_with_options(

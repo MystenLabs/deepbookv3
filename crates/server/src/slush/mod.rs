@@ -1,6 +1,6 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-pub mod handlers;
-pub mod routes;
-pub mod types;
+pub(crate) mod handlers;
+pub(crate) mod routes;
+pub(crate) mod types;
