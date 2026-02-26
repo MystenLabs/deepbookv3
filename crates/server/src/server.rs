@@ -39,7 +39,7 @@ use url::Url;
 use crate::admin::routes::admin_routes;
 use crate::metrics::middleware::track_metrics;
 use crate::metrics::RpcMetrics;
-use crate::reader::Reader;
+use crate::reader::{PortfolioQueryResult, Reader};
 use crate::writer::Writer;
 use axum::middleware::from_fn_with_state;
 use futures::future::join_all;
@@ -113,6 +113,7 @@ pub const STATUS_PATH: &str = "/status";
 pub const DEPOSITED_ASSETS_PATH: &str = "/deposited_assets/:balance_manager_ids";
 pub const COLLATERAL_EVENTS_PATH: &str = "/collateral_events";
 pub const GET_POINTS_PATH: &str = "/get_points";
+pub const PORTFOLIO_PATH: &str = "/portfolio/:wallet_address";
 
 type AdminRateLimiter = RateLimiter<
     governor::state::NotKeyed,
@@ -400,6 +401,7 @@ pub(crate) fn make_router(state: Arc<AppState>) -> Router {
         .route(DEPOSITED_ASSETS_PATH, get(deposited_assets))
         .route(COLLATERAL_EVENTS_PATH, get(collateral_events))
         .route(GET_POINTS_PATH, get(get_points))
+        .route(PORTFOLIO_PATH, get(portfolio))
         .with_state(state.clone());
 
     let rpc_routes = Router::new()
@@ -2654,4 +2656,12 @@ async fn get_points(
         .collect();
 
     Ok(Json(response))
+}
+
+async fn portfolio(
+    Path(wallet_address): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<PortfolioQueryResult>, DeepBookError> {
+    let result = state.reader.get_portfolio(&wallet_address).await?;
+    Ok(Json(result))
 }
