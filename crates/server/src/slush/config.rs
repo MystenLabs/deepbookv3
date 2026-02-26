@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use std::collections::HashMap;
+use tracing::warn;
 
 /// Configuration for the Slush DeFi Quickstart Provider API.
 #[derive(Debug, Clone)]
@@ -21,7 +22,19 @@ impl SlushConfig {
         vault_mapping_json: Option<String>,
     ) -> Self {
         let vault_mapping = vault_mapping_json
-            .and_then(|json| serde_json::from_str::<HashMap<String, String>>(&json).ok())
+            .and_then(
+                |json| match serde_json::from_str::<HashMap<String, String>>(&json) {
+                    Ok(map) => Some(map),
+                    Err(e) => {
+                        warn!(
+                            "Failed to parse SLUSH_VAULT_MAPPING as JSON: {}. \
+                             APY lookups will be disabled.",
+                            e
+                        );
+                        None
+                    }
+                },
+            )
             .unwrap_or_default();
         Self {
             margin_registry_id,

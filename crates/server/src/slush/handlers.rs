@@ -76,7 +76,9 @@ pub async fn provider(
         .await
         .map_err(|e| SlushApiError::Internal(format!("Failed to get pools: {}", e)))?;
 
-    // Compute aggregate TVL from snapshots
+    // Compute aggregate TVL from snapshots.
+    // TODO: This is token quantity, not USD. Accurate only for stablecoins.
+    // Integrate a price oracle for proper USD conversion.
     let total_tvl_usd: f64 = snapshots
         .iter()
         .map(|s| {
@@ -287,8 +289,18 @@ pub async fn withdraw(
             SlushApiError::TransactionBuild(format!("Failed to get registry object version: {}", e))
         })?;
 
-    // Parse the requested withdrawal amount
-    let withdraw_amount: Option<u64> = req.principal.amount.parse::<u64>().ok();
+    // Parse the requested withdrawal amount.
+    // An empty string means "withdraw all"; otherwise it must be a valid u64.
+    let withdraw_amount: Option<u64> = if req.principal.amount.is_empty() {
+        None
+    } else {
+        Some(req.principal.amount.parse::<u64>().map_err(|_| {
+            SlushApiError::TransactionBuild(format!(
+                "Invalid withdrawal amount '{}': must be a non-negative integer",
+                req.principal.amount
+            ))
+        })?)
+    };
 
     let bytes = ptb::build_withdraw_ptb(
         &config.margin_package_id,
@@ -375,7 +387,10 @@ async fn build_strategies(state: &Arc<AppState>) -> Result<Vec<Strategy>, SlushA
     for (pool_id, asset_type, decimals) in &pools {
         let normalized_asset = ptb::normalize_asset_type(asset_type);
 
-        // Get TVL from latest snapshot
+        // Get TVL from latest snapshot.
+        // TODO: This computes token quantity, not USD value. It is only correct
+        // for stablecoins with a 1:1 USD peg. Integrate a price oracle to get
+        // accurate USD values for non-stablecoin assets.
         let snapshot = snapshots.iter().find(|s| s.margin_pool_id == *pool_id);
         let tvl_raw = snapshot.map(|s| s.total_supply).unwrap_or(0);
         let tvl_usd = tvl_raw as f64 / 10f64.powi(*decimals as i32);
@@ -411,6 +426,8 @@ async fn build_strategies(state: &Arc<AppState>) -> Result<Vec<Strategy>, SlushA
                 amount: "0".to_string(),
                 value_usd: None,
             }],
+            // TODO: avg_24h/7d/30d currently mirror current_apy. Persist
+            // historical APY snapshots and compute rolling averages.
             apy: ApyInfo {
                 current: current_apy,
                 avg_24h: current_apy,
@@ -419,7 +436,7 @@ async fn build_strategies(state: &Arc<AppState>) -> Result<Vec<Strategy>, SlushA
             },
             depositors_count,
             tvl_usd,
-            volume_24h_usd: 0.0,
+            volume_24h_usd: 0.0, // TODO: Compute from recent trade events
             fees: FeesInfo {
                 deposit_bps: "0".to_string(),
                 withdraw_bps: "0".to_string(),
@@ -465,15 +482,13 @@ async fn build_positions(
         let total_supplied: i64 = events
             .iter()
             .filter(|(_, _, is_supply, _)| *is_supply)
-            .map(|(_, _, _, amount)| *amount)
-            .sum();
+            .fold(0i64, |acc, (_, _, _, amount)| acc.saturating_add(*amount));
         let total_withdrawn: i64 = events
             .iter()
             .filter(|(_, _, is_supply, _)| !(*is_supply))
-            .map(|(_, _, _, amount)| *amount)
-            .sum();
+            .fold(0i64, |acc, (_, _, _, amount)| acc.saturating_add(*amount));
 
-        let net_amount = (total_supplied - total_withdrawn).max(0);
+        let net_amount = total_supplied.saturating_sub(total_withdrawn).max(0);
 
         if net_amount == 0 {
             continue;
