@@ -40,6 +40,9 @@ use crate::admin::routes::admin_routes;
 use crate::metrics::middleware::track_metrics;
 use crate::metrics::RpcMetrics;
 use crate::reader::Reader;
+use crate::slush::apy::ApyCache;
+use crate::slush::config::SlushConfig;
+use crate::slush::routes::slush_routes;
 use crate::writer::Writer;
 use axum::middleware::from_fn_with_state;
 use futures::future::join_all;
@@ -133,6 +136,9 @@ pub struct AppState {
     admin_tokens: Vec<Secret<String>>,
     admin_auth_limiter: Arc<AdminRateLimiter>,
     margin_package_id: Option<String>,
+    slush_config: Option<SlushConfig>,
+    apy_cache: ApyCache,
+    http_client: reqwest::Client,
 }
 
 impl AppState {
@@ -146,6 +152,7 @@ impl AppState {
         deep_treasury_id: String,
         admin_tokens: Option<String>,
         margin_package_id: Option<String>,
+        slush_config: Option<SlushConfig>,
     ) -> Result<Self, anyhow::Error> {
         let metrics = RpcMetrics::new(registry);
         let reader = Reader::new(
@@ -190,6 +197,9 @@ impl AppState {
             admin_tokens,
             admin_auth_limiter,
             margin_package_id,
+            slush_config,
+            apy_cache: crate::slush::apy::new_apy_cache(),
+            http_client: reqwest::Client::new(),
         })
     }
 
@@ -222,6 +232,22 @@ impl AppState {
 
     pub fn check_admin_rate_limit(&self) -> bool {
         self.admin_auth_limiter.check().is_ok()
+    }
+
+    pub fn reader(&self) -> &Reader {
+        &self.reader
+    }
+
+    pub fn slush_config(&self) -> Option<&SlushConfig> {
+        self.slush_config.as_ref()
+    }
+
+    pub fn apy_cache(&self) -> &ApyCache {
+        &self.apy_cache
+    }
+
+    pub fn http_client(&self) -> &reqwest::Client {
+        &self.http_client
     }
 }
 
@@ -256,11 +282,22 @@ pub async fn run_server(
     margin_poll_interval_secs: u64,
     margin_package_id: Option<String>,
     admin_tokens: Option<String>,
+    margin_registry_id: Option<String>,
+    slush_vault_mapping: Option<String>,
 ) -> Result<(), anyhow::Error> {
     let registry = Registry::new_custom(Some("deepbook_api".into()), None)
         .expect("Failed to create Prometheus registry.");
 
     let metrics = MetricsService::new(MetricsArgs { metrics_address }, registry);
+
+    // Build SlushConfig if margin_registry_id is provided
+    let slush_config = margin_registry_id.map(|registry_id| {
+        SlushConfig::new(
+            registry_id,
+            margin_package_id.clone().unwrap_or_default(),
+            slush_vault_mapping,
+        )
+    });
 
     let state = AppState::new(
         database_url.clone(),
@@ -272,6 +309,7 @@ pub async fn run_server(
         deep_treasury_id,
         admin_tokens,
         margin_package_id.clone(),
+        slush_config,
     )
     .await?;
     let socket_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), server_port);
@@ -412,9 +450,12 @@ pub(crate) fn make_router(state: Arc<AppState>) -> Router {
 
     let admin = admin_routes(state.clone()).with_state(state.clone());
 
+    let slush = slush_routes().with_state(state.clone());
+
     db_routes
         .merge(rpc_routes)
         .nest("/admin", admin)
+        .nest("/slush/v1", slush)
         .layer(cors)
         .layer(from_fn_with_state(state, track_metrics))
 }
