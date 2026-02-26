@@ -3,8 +3,6 @@ name: Publish Deepbookv3 crate images to Dockerhub
 run-name: Publish deepbookv3 docker images for ${{ inputs.tag || github.ref_name }}
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag:
