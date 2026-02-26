@@ -39,3 +39,7 @@ Claude automatically loads contextual knowledge based on files being edited:
 When asked for a PR summary/description, always use this format:
 - **Summary**: Bullet points describing what changed and why
 - **Test plan**: Checklist of manual or automated verification steps
+
+## Wrap Up
+
+When I say "wrap up", follow the instructions in `.claude/rules/wrap-up.md`.
