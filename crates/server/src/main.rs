@@ -51,6 +51,14 @@ struct Args {
     /// Comma-separated list of valid admin bearer tokens
     #[clap(env = "ADMIN_TOKENS", long)]
     admin_tokens: Option<String>,
+
+    // Slush DeFi Quickstart Provider API configuration
+    /// Object ID of the MarginRegistry shared object
+    #[clap(env = "MARGIN_REGISTRY_ID", long)]
+    margin_registry_id: Option<String>,
+    /// JSON mapping of margin_pool_id → Abyss vault address for APY lookups
+    #[clap(env = "SLUSH_VAULT_MAPPING", long)]
+    slush_vault_mapping: Option<String>,
 }
 
 #[tokio::main]
@@ -71,6 +79,8 @@ async fn main() -> Result<(), anyhow::Error> {
         margin_poll_interval_secs,
         margin_package_id,
         admin_tokens,
+        margin_registry_id,
+        slush_vault_mapping,
     } = Args::parse();
 
     run_server(
@@ -85,6 +95,8 @@ async fn main() -> Result<(), anyhow::Error> {
         margin_poll_interval_secs,
         margin_package_id,
         admin_tokens,
+        margin_registry_id,
+        slush_vault_mapping,
     )
     .await?;
 

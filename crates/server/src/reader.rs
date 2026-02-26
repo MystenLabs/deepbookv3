@@ -1368,4 +1368,259 @@ impl Reader {
         })
         .map_err(|e| DeepBookError::database(format!("Error fetching points: {}", e)))
     }
+
+    // ── Slush API query methods ──
+
+    /// Get all margin pools with their asset types and decimals.
+    /// Returns (margin_pool_id, asset_type, decimals).
+    pub async fn get_all_margin_pools(&self) -> Result<Vec<(String, String, i16)>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        #[derive(QueryableByName)]
+        struct PoolInfo {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            margin_pool_id: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            asset_type: String,
+            #[diesel(sql_type = diesel::sql_types::SmallInt)]
+            decimals: i16,
+        }
+
+        let res = diesel::sql_query(
+            r#"
+            SELECT DISTINCT
+                mpc.margin_pool_id,
+                mpc.asset_type,
+                COALESCE(a.decimals, 9) as decimals
+            FROM margin_pool_created mpc
+            LEFT JOIN assets a
+                ON a.asset_type = mpc.asset_type
+                OR a.asset_type = '0x' || mpc.asset_type
+                OR '0x' || a.asset_type = mpc.asset_type
+            ORDER BY mpc.margin_pool_id
+            "#,
+        )
+        .load::<PoolInfo>(&mut connection)
+        .await;
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+
+        res.map(|rows| {
+            rows.into_iter()
+                .map(|r| (r.margin_pool_id, r.asset_type, r.decimals))
+                .collect()
+        })
+        .map_err(|e| DeepBookError::database(format!("Error fetching margin pools: {}", e)))
+    }
+
+    /// Get the latest margin pool snapshot for each pool.
+    pub async fn get_latest_margin_pool_snapshots(
+        &self,
+    ) -> Result<Vec<deepbook_schema::models::MarginPoolSnapshot>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        // Get the latest snapshot per pool using DISTINCT ON
+        #[derive(QueryableByName)]
+        struct SnapshotRow {
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            id: i64,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            margin_pool_id: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            asset_type: String,
+            #[diesel(sql_type = diesel::sql_types::Timestamp)]
+            timestamp: chrono::NaiveDateTime,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            total_supply: i64,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            total_borrow: i64,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            vault_balance: i64,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            supply_cap: i64,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            interest_rate: i64,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            available_withdrawal: i64,
+            #[diesel(sql_type = diesel::sql_types::Double)]
+            utilization_rate: f64,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Double>)]
+            solvency_ratio: Option<f64>,
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Double>)]
+            available_liquidity_pct: Option<f64>,
+        }
+
+        let res = diesel::sql_query(
+            r#"
+            SELECT DISTINCT ON (margin_pool_id)
+                id, margin_pool_id, asset_type, timestamp,
+                total_supply, total_borrow, vault_balance, supply_cap,
+                interest_rate, available_withdrawal, utilization_rate,
+                solvency_ratio, available_liquidity_pct
+            FROM margin_pool_snapshots
+            ORDER BY margin_pool_id, timestamp DESC
+            "#,
+        )
+        .load::<SnapshotRow>(&mut connection)
+        .await;
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+
+        res.map(|rows| {
+            rows.into_iter()
+                .map(|r| deepbook_schema::models::MarginPoolSnapshot {
+                    id: r.id,
+                    margin_pool_id: r.margin_pool_id,
+                    asset_type: r.asset_type,
+                    timestamp: r.timestamp,
+                    total_supply: r.total_supply,
+                    total_borrow: r.total_borrow,
+                    vault_balance: r.vault_balance,
+                    supply_cap: r.supply_cap,
+                    interest_rate: r.interest_rate,
+                    available_withdrawal: r.available_withdrawal,
+                    utilization_rate: r.utilization_rate,
+                    solvency_ratio: r.solvency_ratio,
+                    available_liquidity_pct: r.available_liquidity_pct,
+                })
+                .collect()
+        })
+        .map_err(|e| {
+            DeepBookError::database(format!("Error fetching margin pool snapshots: {}", e))
+        })
+    }
+
+    /// Get all supplier caps minted by a given address.
+    pub async fn get_supplier_caps_for_address(
+        &self,
+        address: &str,
+    ) -> Result<Vec<SupplierCapMinted>, DeepBookError> {
+        let address = address.to_string();
+        let query = schema::supplier_cap_minted::table
+            .select(SupplierCapMinted::as_select())
+            .filter(schema::supplier_cap_minted::sender.eq(address))
+            .order_by(schema::supplier_cap_minted::checkpoint_timestamp_ms.desc());
+
+        Ok(self.results(query).await?)
+    }
+
+    /// Get supplier caps by cap ID.
+    pub async fn get_supplier_caps_by_cap_id(
+        &self,
+        cap_id: &str,
+    ) -> Result<Vec<SupplierCapMinted>, DeepBookError> {
+        let cap_id = cap_id.to_string();
+        let query = schema::supplier_cap_minted::table
+            .select(SupplierCapMinted::as_select())
+            .filter(schema::supplier_cap_minted::supplier_cap_id.eq(cap_id));
+
+        Ok(self.results(query).await?)
+    }
+
+    /// Get supply and withdraw events for a given supplier_cap_id.
+    /// Returns (margin_pool_id, asset_type, is_supply, amount).
+    pub async fn get_supply_events_for_cap(
+        &self,
+        supplier_cap_id: &str,
+    ) -> Result<Vec<(String, String, bool, i64)>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        #[derive(QueryableByName)]
+        struct SupplyEvent {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            margin_pool_id: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            asset_type: String,
+            #[diesel(sql_type = diesel::sql_types::Bool)]
+            is_supply: bool,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            amount: i64,
+        }
+
+        let res = diesel::sql_query(
+            r#"
+            SELECT margin_pool_id, asset_type, TRUE as is_supply, amount
+            FROM asset_supplied
+            WHERE supplier = $1
+            UNION ALL
+            SELECT margin_pool_id, asset_type, FALSE as is_supply, amount
+            FROM asset_withdrawn
+            WHERE supplier = $1
+            ORDER BY amount DESC
+            "#,
+        )
+        .bind::<diesel::sql_types::Text, _>(supplier_cap_id)
+        .load::<SupplyEvent>(&mut connection)
+        .await;
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+
+        res.map(|rows| {
+            rows.into_iter()
+                .map(|r| (r.margin_pool_id, r.asset_type, r.is_supply, r.amount))
+                .collect()
+        })
+        .map_err(|e| DeepBookError::database(format!("Error fetching supply events: {}", e)))
+    }
+
+    /// Count active depositors for a margin pool.
+    /// Active = supplier_cap_id with net positive supply (sum(supplied) - sum(withdrawn) > 0).
+    pub async fn count_active_depositors(
+        &self,
+        margin_pool_id_val: &str,
+    ) -> Result<i64, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        #[derive(QueryableByName)]
+        struct CountRow {
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            cnt: i64,
+        }
+
+        let res = diesel::sql_query(
+            r#"
+            SELECT COUNT(*)::bigint as cnt
+            FROM (
+                SELECT supplier
+                FROM (
+                    SELECT supplier, amount FROM asset_supplied WHERE margin_pool_id = $1
+                    UNION ALL
+                    SELECT supplier, -amount FROM asset_withdrawn WHERE margin_pool_id = $1
+                ) combined
+                GROUP BY supplier
+                HAVING SUM(amount) > 0
+            ) active_suppliers
+            "#,
+        )
+        .bind::<diesel::sql_types::Text, _>(margin_pool_id_val)
+        .load::<CountRow>(&mut connection)
+        .await;
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+
+        res.map(|rows| rows.into_iter().next().map(|r| r.cnt).unwrap_or(0))
+            .map_err(|e| {
+                DeepBookError::database(format!("Error counting active depositors: {}", e))
+            })
+    }
 }
