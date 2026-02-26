@@ -1563,7 +1563,7 @@ impl Reader {
             LEFT JOIN asset_meta am ON b.asset LIKE '%' || SUBSTRING(am.asset_id FROM 3) || '%'
             LEFT JOIN latest_prices lp ON am.symbol = lp.symbol
             WHERE am.symbol IS NOT NULL
-            GROUP BY am.symbol, am.decimals
+            GROUP BY am.symbol, am.decimals, lp.price_usd
             HAVING SUM(CASE WHEN b.deposit THEN b.amount ELSE -b.amount END) > 0
             "#,
         )
