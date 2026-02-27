@@ -13,6 +13,7 @@ jobs:
   dispatch:
     name: Dispatch to sui-operations
     runs-on: ubuntu-latest
+    environment: production
     permissions:
       contents: read
     steps:
