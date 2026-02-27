@@ -1,0 +1,26 @@
+# Dispatch Docker image build event to sui-operations repository.
+name: Publish Deepbookv3 crate images to Dockerhub
+run-name: Publish deepbookv3 docker images for ${{ inputs.tag || github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v1.0.0). Defaults to the current branch/tag name."
+        required: false
+
+jobs:
+  dispatch:
+    name: Dispatch to sui-operations
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - name: Dispatch deepbookv3 images to Dockerhub
+        uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # pin@v3.0.0
+        with:
+          repository: MystenLabs/sui-operations
+          token: ${{ secrets.SUI_OPS_DISPATCH_TOKEN }}
+          event-type: deepbookv3-crates-to-dockerhub
+          client-payload: '{"tag": "${{ inputs.tag || github.ref_name }}"}'
