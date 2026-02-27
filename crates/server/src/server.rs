@@ -4,8 +4,11 @@
 use crate::error::DeepBookError;
 use axum::http::Method;
 use axum::{
-    extract::{Path, Query, State},
-    http::StatusCode,
+    body::Body,
+    extract::{ConnectInfo, Path, Query, State},
+    http::{Request, StatusCode},
+    middleware::Next,
+    response::IntoResponse,
     routing::get,
     Json, Router,
 };
@@ -121,6 +124,12 @@ type AdminRateLimiter = RateLimiter<
     governor::clock::DefaultClock,
 >;
 
+type IpRateLimiter = RateLimiter<
+    IpAddr,
+    governor::state::keyed::DashMapStateStore<IpAddr>,
+    governor::clock::DefaultClock,
+>;
+
 #[derive(Clone)]
 pub struct AppState {
     reader: Reader,
@@ -133,6 +142,7 @@ pub struct AppState {
     deep_treasury_id: String,
     admin_tokens: Vec<Secret<String>>,
     admin_auth_limiter: Arc<AdminRateLimiter>,
+    ip_rate_limiter: Arc<IpRateLimiter>,
     margin_package_id: Option<String>,
 }
 
@@ -147,6 +157,7 @@ impl AppState {
         deep_treasury_id: String,
         admin_tokens: Option<String>,
         margin_package_id: Option<String>,
+        rate_limit_per_second: u32,
     ) -> Result<Self, anyhow::Error> {
         let metrics = RpcMetrics::new(registry);
         let reader = Reader::new(
@@ -179,6 +190,12 @@ impl AppState {
             NonZeroU32::new(10).unwrap(),
         )));
 
+        // Per-IP rate limiter for public endpoints
+        let ip_rate_limiter = Arc::new(RateLimiter::keyed(Quota::per_second(
+            NonZeroU32::new(rate_limit_per_second)
+                .expect("rate_limit_per_second must be greater than 0"),
+        )));
+
         Ok(Self {
             reader,
             writer,
@@ -190,6 +207,7 @@ impl AppState {
             deep_treasury_id,
             admin_tokens,
             admin_auth_limiter,
+            ip_rate_limiter,
             margin_package_id,
         })
     }
@@ -224,6 +242,10 @@ impl AppState {
     pub fn check_admin_rate_limit(&self) -> bool {
         self.admin_auth_limiter.check().is_ok()
     }
+
+    pub fn check_ip_rate_limit(&self, ip: IpAddr) -> bool {
+        self.ip_rate_limiter.check_key(&ip).is_ok()
+    }
 }
 
 /// Query parameters for the /status endpoint
@@ -257,6 +279,7 @@ pub async fn run_server(
     margin_poll_interval_secs: u64,
     margin_package_id: Option<String>,
     admin_tokens: Option<String>,
+    rate_limit_per_second: u32,
 ) -> Result<(), anyhow::Error> {
     let registry = Registry::new_custom(Some("deepbook_api".into()), None)
         .expect("Failed to create Prometheus registry.");
@@ -273,6 +296,7 @@ pub async fn run_server(
         deep_treasury_id,
         admin_tokens,
         margin_package_id.clone(),
+        rate_limit_per_second,
     )
     .await?;
     let socket_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), server_port);
@@ -315,7 +339,11 @@ pub async fn run_server(
             let _ = stx.send(());
         })
         .spawn(async move {
-            axum::serve(listener, make_router(Arc::new(state)))
+            axum::serve(
+                listener,
+                make_router(Arc::new(state))
+                    .into_make_service_with_connect_info::<SocketAddr>(),
+            )
                 .with_graceful_shutdown(async move {
                     let _ = srx.await;
                 })
@@ -328,6 +356,19 @@ pub async fn run_server(
 
     Ok(())
 }
+async fn ip_rate_limit(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    req: Request<Body>,
+    next: Next,
+) -> Result<impl IntoResponse, StatusCode> {
+    if state.check_ip_rate_limit(addr.ip()) {
+        Ok(next.run(req).await)
+    } else {
+        Err(StatusCode::TOO_MANY_REQUESTS)
+    }
+}
+
 pub(crate) fn make_router(state: Arc<AppState>) -> Router {
     let cors = CorsLayer::new()
         .allow_methods(AllowMethods::list(vec![
@@ -414,8 +455,11 @@ pub(crate) fn make_router(state: Arc<AppState>) -> Router {
 
     let admin = admin_routes(state.clone()).with_state(state.clone());
 
-    db_routes
+    let public_routes = db_routes
         .merge(rpc_routes)
+        .layer(from_fn_with_state(state.clone(), ip_rate_limit));
+
+    public_routes
         .nest("/admin", admin)
         .layer(cors)
         .layer(from_fn_with_state(state, track_metrics))
