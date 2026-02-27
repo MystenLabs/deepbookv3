@@ -94,7 +94,7 @@ pub struct OrderUpdate {
     pub status: OrderUpdateStatus,
     pub pool_id: String,
     pub order_id: String, // u128
-    pub client_order_id: i64,
+    pub client_order_id: BigDecimal,
     pub price: i64,
     pub is_bid: bool,
     pub original_quantity: i64,
@@ -163,8 +163,8 @@ pub struct OrderFill {
     pub pool_id: String,
     pub maker_order_id: String, // u128
     pub taker_order_id: String, // u128
-    pub maker_client_order_id: i64,
-    pub taker_client_order_id: i64,
+    pub maker_client_order_id: BigDecimal,
+    pub taker_client_order_id: BigDecimal,
     pub price: i64,
     pub taker_fee: i64,
     pub taker_fee_is_deep: bool,
@@ -852,7 +852,7 @@ pub struct ConditionalOrderEvent {
     pub trigger_below_price: bool,
     pub trigger_price: BigDecimal,
     pub is_limit_order: bool,
-    pub client_order_id: i64,
+    pub client_order_id: BigDecimal,
     pub order_type: i16,
     pub self_matching_option: i16,
     pub price: BigDecimal,
