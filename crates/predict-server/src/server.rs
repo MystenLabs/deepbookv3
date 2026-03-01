@@ -117,6 +117,7 @@ pub(crate) fn make_router(state: Arc<AppState>) -> Router {
         .allow_origin(Any);
 
     let routes = Router::new()
+        .route("/", get(health_check))
         .route(HEALTH_PATH, get(health_check))
         // Oracle endpoints
         .route(ORACLES_PATH, get(get_oracles))
