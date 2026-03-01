@@ -89,12 +89,10 @@ const GAS_PER_LANE = 10_000_000_000; // 10 SUI
   // -------------------------------------------------------------------------
   // Step 2: Register each new cap on all oracles
   // -------------------------------------------------------------------------
-  console.log(`\n--- Step 2: Register caps on ${oracles.length} oracles ---`);
+  console.log(`\n--- Step 2: Register all caps on ${oracles.length} oracles ---`);
 
-  for (let i = 0; i < newCapIds.length; i++) {
-    const capId = newCapIds[i];
-    const regTx = new Transaction();
-
+  const regTx = new Transaction();
+  for (const capId of newCapIds) {
     for (const oracle of oracles) {
       regTx.moveCall({
         target: `${pkg}::registry::register_oracle_cap`,
@@ -106,23 +104,23 @@ const GAS_PER_LANE = 10_000_000_000; // 10 SUI
         ],
       });
     }
-
-    const regResult = await client.signAndExecuteTransaction({
-      transaction: regTx,
-      signer,
-      options: { showEffects: true },
-    });
-    await client.waitForTransaction({ digest: regResult.digest });
-
-    if (regResult.effects?.status.status !== "success") {
-      console.error(`Register cap ${i + 1} failed:`, regResult.effects?.status);
-      process.exit(1);
-    }
-
-    console.log(
-      `  Cap ${i + 1}/${newCapIds.length} registered on ${oracles.length} oracles: ${regResult.digest.slice(0, 16)}...`,
-    );
   }
+
+  const regResult = await client.signAndExecuteTransaction({
+    transaction: regTx,
+    signer,
+    options: { showEffects: true },
+  });
+  await client.waitForTransaction({ digest: regResult.digest });
+
+  if (regResult.effects?.status.status !== "success") {
+    console.error("Register caps failed:", regResult.effects?.status);
+    process.exit(1);
+  }
+
+  console.log(
+    `  Registered ${newCapIds.length} caps on ${oracles.length} oracles in 1 tx: ${regResult.digest}`,
+  );
 
   // -------------------------------------------------------------------------
   // Step 3: Merge all SUI coins and split into 20 gas lanes
@@ -245,7 +243,7 @@ const GAS_PER_LANE = 10_000_000_000; // 10 SUI
   const replacement = `export const predictOracleCapIDs: Record<string, string[]> = {\n  mainnet: [],\n  testnet: [\n${capArrayStr},\n  ],\n};`;
 
   constants = constants.replace(
-    /export const predictOracleCapIDs: Record<string, string\[\]> = \{[^}]*\{[^}]*\}[^}]*\};/s,
+    /export const predictOracleCapIDs[\s\S]*?^};/m,
     replacement,
   );
 

@@ -17,6 +17,7 @@
     "predict-create-oracle": "pnpm tsx transactions/predict/createOracle.ts",
     "predict-deploy-oracles": "pnpm tsx transactions/predict/deployOracles.ts",
     "predict-redeploy": "pnpm tsx transactions/predict/redeploy.ts",
+    "predict-setup-cap-lanes": "pnpm tsx transactions/predict/setupOracleCapLanes.ts",
     "oracle-feed": "pnpm tsx services/oracle-feed.ts",
     "oracle-dashboard": "pnpm tsx services/oracle-dashboard.ts"
   },
