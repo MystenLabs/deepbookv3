@@ -271,6 +271,18 @@ diesel::table! {
     }
 }
 
+// === System tables ===
+
+diesel::table! {
+    watermarks (pipeline) {
+        pipeline -> Text,
+        epoch_hi_inclusive -> Int8,
+        checkpoint_hi_inclusive -> Int8,
+        tx_hi -> Int8,
+        timestamp_ms_hi_inclusive -> Int8,
+    }
+}
+
 diesel::allow_tables_to_appear_in_same_query!(
     oracle_activated,
     oracle_settled,
@@ -287,4 +299,5 @@ diesel::allow_tables_to_appear_in_same_query!(
     pricing_config_updated,
     risk_config_updated,
     predict_manager_created,
+    watermarks,
 );

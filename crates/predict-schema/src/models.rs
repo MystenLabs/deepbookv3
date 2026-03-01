@@ -5,11 +5,12 @@ use crate::schema::{
     predict_manager_created, pricing_config_updated, risk_config_updated, trading_pause_updated,
 };
 use diesel::{Identifiable, Insertable, Queryable, Selectable};
+use serde::Serialize;
 use sui_field_count::FieldCount;
 
 // === Oracle tables ===
 
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
 #[diesel(table_name = oracle_activated, primary_key(event_digest))]
 pub struct OracleActivatedRow {
     pub event_digest: String,
@@ -23,7 +24,7 @@ pub struct OracleActivatedRow {
     pub onchain_timestamp: i64,
 }
 
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
 #[diesel(table_name = oracle_settled, primary_key(event_digest))]
 pub struct OracleSettledRow {
     pub event_digest: String,
@@ -38,7 +39,7 @@ pub struct OracleSettledRow {
     pub onchain_timestamp: i64,
 }
 
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
 #[diesel(table_name = oracle_prices_updated, primary_key(event_digest))]
 pub struct OraclePricesUpdatedRow {
     pub event_digest: String,
@@ -53,7 +54,7 @@ pub struct OraclePricesUpdatedRow {
     pub onchain_timestamp: i64,
 }
 
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
 #[diesel(table_name = oracle_svi_updated, primary_key(event_digest))]
 pub struct OracleSviUpdatedRow {
     pub event_digest: String,
@@ -76,7 +77,7 @@ pub struct OracleSviUpdatedRow {
 
 // === Registry tables ===
 
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
 #[diesel(table_name = predict_created, primary_key(event_digest))]
 pub struct PredictCreatedRow {
     pub event_digest: String,
@@ -88,7 +89,7 @@ pub struct PredictCreatedRow {
     pub predict_id: String,
 }
 
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
 #[diesel(table_name = oracle_created, primary_key(event_digest))]
 pub struct OracleCreatedRow {
     pub event_digest: String,
@@ -102,7 +103,7 @@ pub struct OracleCreatedRow {
     pub expiry: i64,
 }
 
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
 #[diesel(table_name = admin_vault_balance_changed, primary_key(event_digest))]
 pub struct AdminVaultBalanceChangedRow {
     pub event_digest: String,
@@ -118,7 +119,7 @@ pub struct AdminVaultBalanceChangedRow {
 
 // === Trading tables ===
 
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
 #[diesel(table_name = position_minted, primary_key(event_digest))]
 pub struct PositionMintedRow {
     pub event_digest: String,
@@ -139,7 +140,7 @@ pub struct PositionMintedRow {
     pub ask_price: i64,
 }
 
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
 #[diesel(table_name = position_redeemed, primary_key(event_digest))]
 pub struct PositionRedeemedRow {
     pub event_digest: String,
@@ -161,7 +162,7 @@ pub struct PositionRedeemedRow {
     pub is_settled: bool,
 }
 
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
 #[diesel(table_name = collateralized_position_minted, primary_key(event_digest))]
 pub struct CollateralizedPositionMintedRow {
     pub event_digest: String,
@@ -183,7 +184,7 @@ pub struct CollateralizedPositionMintedRow {
     pub quantity: i64,
 }
 
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
 #[diesel(table_name = collateralized_position_redeemed, primary_key(event_digest))]
 pub struct CollateralizedPositionRedeemedRow {
     pub event_digest: String,
@@ -207,7 +208,7 @@ pub struct CollateralizedPositionRedeemedRow {
 
 // === Admin tables ===
 
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
 #[diesel(table_name = trading_pause_updated, primary_key(event_digest))]
 pub struct TradingPauseUpdatedRow {
     pub event_digest: String,
@@ -220,7 +221,7 @@ pub struct TradingPauseUpdatedRow {
     pub paused: bool,
 }
 
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
 #[diesel(table_name = pricing_config_updated, primary_key(event_digest))]
 pub struct PricingConfigUpdatedRow {
     pub event_digest: String,
@@ -235,7 +236,7 @@ pub struct PricingConfigUpdatedRow {
     pub utilization_multiplier: i64,
 }
 
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
 #[diesel(table_name = risk_config_updated, primary_key(event_digest))]
 pub struct RiskConfigUpdatedRow {
     pub event_digest: String,
@@ -250,7 +251,7 @@ pub struct RiskConfigUpdatedRow {
 
 // === User tables ===
 
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
 #[diesel(table_name = predict_manager_created, primary_key(event_digest))]
 pub struct PredictManagerCreatedRow {
     pub event_digest: String,

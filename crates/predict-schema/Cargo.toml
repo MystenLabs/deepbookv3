@@ -10,3 +10,4 @@ edition = "2021"
 sui-field-count = { git = "https://github.com/MystenLabs/sui.git", branch = "testnet" }
 diesel = { workspace = true, features = ["postgres", "chrono"] }
 diesel_migrations.workspace = true
+serde = { workspace = true, features = ["derive"] }
