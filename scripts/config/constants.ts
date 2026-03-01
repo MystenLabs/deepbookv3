@@ -69,43 +69,48 @@ export const supplierCapID = {
 // DUSDC test token
 export const dusdcPackageID = {
   mainnet: "",
-  testnet: "0xe938d10063044757264ed23858209a08cd724f22b0ec9dab02f04a31ea4e160c",
+  testnet: "0x2ff52f1b7cc2d7332cead8f6b812e1f017047e00e9ca843979d92f70aeca75b1",
 };
 
 export const dusdcTreasuryCapID = {
   mainnet: "",
-  testnet: "0xa39b8d0c16e0914c642fb435162968245df862174cf0d98b19caa99ba57a88cb",
+  testnet: "0x02becc90ac3a62e7197693a6faef8126e50b79fa47f95cc375d19a551f3af9c5",
 };
 
 // Predict package
 export const predictPackageID = {
   mainnet: "",
-  testnet: "0x8dd5f91ee86d898d84e89f7696b5cbbdf16716474640af9e81c7999ebb247870",
+  testnet: "0x01db8fc74ead463c7167f9c609af72e64ac4eeb0f6b9c05da17c16ad0fd348d0",
 };
 
 export const predictRegistryID = {
   mainnet: "",
-  testnet: "0x5a83a2550b8b465106a8ae9faf6bf9d8726648ce5c5f708b051f762fc6cbf15e",
+  testnet: "0xc30b84b73d64472c19f12bc5357273ddce6d76ef04116306808b022078080d0a",
 };
 
 export const predictAdminCapID = {
   mainnet: "",
-  testnet: "0x071451484c1d4b57d4d1825b8c3c2c7a1bb81c6432e87019fda5b7f2e4b0caa0",
+  testnet: "0x9ed9f87992ebf99e707f39105ba727bb33894a0e1c684810e1fb462f5d3e7d03",
 };
 
 export const predictUpgradeCapID = {
   mainnet: "",
-  testnet: "0x03eb1b45bc91e2b5f62a074f9ac8457938ef1e2b797247d5f7a89c33267a88f2",
+  testnet: "0x082c8c4d6636848bfacbbce0bf73ba7df210574f1bf4b064d05af1b5a1d3a09b",
 };
 
 export const predictObjectID = {
   mainnet: "",
-  testnet: "0x542e6e5c8f78406e1f942ca487cee5b31a93bcaa7c2c566a2cd0871d59993afd",
+  testnet: "0x25970603328dd3a95a92596cac4d7baebae93f59fd4c51e95ebaae5540d94c8b",
 };
 
 export const predictOracleCapID = {
   mainnet: "",
-  testnet: "0x8e30682d7503ea14820a8583be82abe848e3472e04726e9472a911a616531203",
+  testnet: "0xb40eea2aec22bd62ece95342806c1ee18a826e29afdc859530fec3842faaa391",
+};
+
+export const predictOracleCapIDs: Record<string, string[]> = {
+  mainnet: [],
+  testnet: [], // populated by setupOracleCapLanes script
 };
 
 export const predictOracleID = {

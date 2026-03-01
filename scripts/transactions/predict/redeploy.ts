@@ -16,7 +16,6 @@
 
 import { Transaction } from "@mysten/sui/transactions";
 import {
-  getActiveAddress,
   getClient,
   getSigner,
   publishPackage,
@@ -534,7 +533,7 @@ function resetDatabase() {
   const pgPort = process.env.PGPORT ?? "5433";
   try {
     execSync(
-      `psql -p ${pgPort} postgres -c "DROP DATABASE IF EXISTS predict" -c "CREATE DATABASE predict"`,
+      `psql -p ${pgPort} postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'predict' AND pid <> pg_backend_pid()" -c "DROP DATABASE IF EXISTS predict" -c "CREATE DATABASE predict"`,
       { stdio: "inherit" },
     );
     console.log("  Database reset complete (predict dropped & recreated)");
@@ -551,7 +550,7 @@ function resetDatabase() {
 (async () => {
   const client = getClient(network);
   const signer = getSigner();
-  const address = getActiveAddress();
+  const address = signer.toSuiAddress();
 
   console.log("=".repeat(60));
   console.log("Predict Redeployment — Full Pipeline");

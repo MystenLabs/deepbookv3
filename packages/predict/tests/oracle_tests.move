@@ -4,9 +4,9 @@
 #[test_only]
 module deepbook_predict::oracle_tests;
 
-use deepbook_predict::{constants, oracle};
+use deepbook_predict::{constants, oracle, registry};
 use std::unit_test::destroy;
-use sui::clock;
+use sui::{clock, test_scenario};
 
 public struct BTC has drop {}
 
@@ -246,4 +246,102 @@ fun short_expiry_sum_invariant() {
 
     destroy(oracle);
     clock.destroy_for_testing();
+}
+
+/// A secondary cap registered via register_oracle_cap can update prices.
+#[test]
+fun multi_cap_auth_works() {
+    let sender = @0x1;
+    let mut test = test_scenario::begin(sender);
+
+    let admin_cap = registry::create_admin_cap_for_testing(test.ctx());
+    let original_cap = oracle::create_oracle_cap(test.ctx());
+    let secondary_cap = oracle::create_oracle_cap(test.ctx());
+
+    let now_ms = 1_000_000_000u64;
+    let expiry_ms = now_ms + 604_800_000;
+    oracle::create_oracle<BTC>(&original_cap, expiry_ms, test.ctx());
+
+    // Advance so shared oracle is visible
+    test.next_tx(sender);
+    let mut oracle = test.take_shared<oracle::OracleSVI<BTC>>();
+
+    // Register secondary cap
+    registry::register_oracle_cap(&mut oracle, &admin_cap, &secondary_cap);
+
+    // Activate with original cap
+    let mut clock = clock::create_for_testing(test.ctx());
+    clock.set_for_testing(now_ms);
+    oracle::activate(&mut oracle, &original_cap, &clock);
+
+    // Update prices with secondary cap — should succeed
+    let prices = oracle::new_price_data(100_000_000_000_000, 100_500_000_000_000);
+    oracle::update_prices(&mut oracle, &secondary_cap, prices, &clock);
+
+    assert!(oracle.spot_price() == 100_000_000_000_000);
+
+    // Update SVI with secondary cap — should succeed
+    let svi = oracle::new_svi_params(
+        40_000_000, 100_000_000, 300_000_000, true, 0, false, 100_000_000,
+    );
+    oracle::update_svi(&mut oracle, &secondary_cap, svi, 50_000_000, &clock);
+
+    test_scenario::return_shared(oracle);
+    clock.destroy_for_testing();
+    destroy(original_cap);
+    destroy(secondary_cap);
+    destroy(admin_cap);
+    test.end();
+}
+
+/// An unregistered cap should fail.
+#[test, expected_failure(abort_code = oracle::EInvalidOracleCap)]
+fun unregistered_cap_fails() {
+    let sender = @0x1;
+    let mut test = test_scenario::begin(sender);
+
+    let original_cap = oracle::create_oracle_cap(test.ctx());
+    let rogue_cap = oracle::create_oracle_cap(test.ctx());
+
+    let now_ms = 1_000_000_000u64;
+    let expiry_ms = now_ms + 604_800_000;
+    oracle::create_oracle<BTC>(&original_cap, expiry_ms, test.ctx());
+
+    test.next_tx(sender);
+    let mut oracle = test.take_shared<oracle::OracleSVI<BTC>>();
+
+    let mut clock = clock::create_for_testing(test.ctx());
+    clock.set_for_testing(now_ms);
+
+    // Activate with original cap first
+    oracle::activate(&mut oracle, &original_cap, &clock);
+
+    // Try update_prices with rogue cap — should abort
+    let prices = oracle::new_price_data(100_000_000_000_000, 100_500_000_000_000);
+    oracle::update_prices(&mut oracle, &rogue_cap, prices, &clock);
+
+    abort // unreachable
+}
+
+/// Registering the same cap twice should fail.
+#[test, expected_failure(abort_code = oracle::ECapAlreadyRegistered)]
+fun double_register_fails() {
+    let sender = @0x1;
+    let mut test = test_scenario::begin(sender);
+
+    let admin_cap = registry::create_admin_cap_for_testing(test.ctx());
+    let original_cap = oracle::create_oracle_cap(test.ctx());
+    let secondary_cap = oracle::create_oracle_cap(test.ctx());
+
+    let expiry_ms = 2_000_000_000u64;
+    oracle::create_oracle<BTC>(&original_cap, expiry_ms, test.ctx());
+
+    test.next_tx(sender);
+    let mut oracle = test.take_shared<oracle::OracleSVI<BTC>>();
+
+    registry::register_oracle_cap(&mut oracle, &admin_cap, &secondary_cap);
+    // Second registration should fail
+    registry::register_oracle_cap(&mut oracle, &admin_cap, &secondary_cap);
+
+    abort // unreachable
 }

@@ -4,6 +4,8 @@ import { execFileSync, execSync } from 'child_process';
 import fs, { readFileSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
+import dotenv from 'dotenv';
 import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from '@mysten/sui/jsonRpc';
 import { decodeSuiPrivateKey } from '@mysten/sui/cryptography';
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
@@ -11,6 +13,10 @@ import { Secp256k1Keypair } from '@mysten/sui/keypairs/secp256k1';
 import { Secp256r1Keypair } from '@mysten/sui/keypairs/secp256r1';
 import { Transaction } from '@mysten/sui/transactions';
 import { fromBase64, toBase64 } from '@mysten/sui/utils';
+
+// Load .env from repo root
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 export type Network = 'mainnet' | 'testnet' | 'devnet' | 'localnet';
 
@@ -53,11 +59,11 @@ export const publishPackage = (txb: Transaction, path: string, configPath?: stri
 export const getSigner = () => {
 	if (process.env.PRIVATE_KEY) {
 		console.log('Using supplied private key.');
-		const { schema, secretKey } = decodeSuiPrivateKey(process.env.PRIVATE_KEY);
+		const { scheme, secretKey } = decodeSuiPrivateKey(process.env.PRIVATE_KEY);
 
-		if (schema === 'ED25519') return Ed25519Keypair.fromSecretKey(secretKey);
-		if (schema === 'Secp256k1') return Secp256k1Keypair.fromSecretKey(secretKey);
-		if (schema === 'Secp256r1') return Secp256r1Keypair.fromSecretKey(secretKey);
+		if (scheme === 'ED25519') return Ed25519Keypair.fromSecretKey(secretKey);
+		if (scheme === 'Secp256k1') return Secp256k1Keypair.fromSecretKey(secretKey);
+		if (scheme === 'Secp256r1') return Secp256r1Keypair.fromSecretKey(secretKey);
 
 		throw new Error('Keypair not supported.');
 	}

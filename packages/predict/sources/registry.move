@@ -81,6 +81,15 @@ public fun create_predict<Quote>(
     predict_id
 }
 
+/// Register an additional OracleCapSVI as authorized to update an oracle.
+public fun register_oracle_cap<Underlying>(
+    oracle: &mut oracle::OracleSVI<Underlying>,
+    _admin_cap: &AdminCap,
+    cap: &OracleCapSVI,
+) {
+    oracle::register_cap(oracle, cap);
+}
+
 /// Create a new OracleCap. Transferred to Block Scholes operator.
 public fun create_oracle_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): OracleCapSVI {
     oracle::create_oracle_cap(ctx)

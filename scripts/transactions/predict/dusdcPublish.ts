@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Transaction } from '@mysten/sui/transactions';
-import { getActiveAddress, getClient, getSigner, publishPackage } from '../../utils/utils';
+import { getClient, getSigner, publishPackage } from '../../utils/utils';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -20,7 +20,7 @@ function updateConstant(content: string, name: string, network: string, value: s
 	const network = 'testnet' as const;
 	const client = getClient(network);
 	const signer = getSigner();
-	const address = getActiveAddress();
+	const address = signer.toSuiAddress();
 
 	console.log(`Publishing dusdc package to ${network}...`);
 	console.log(`Deployer: ${address}`);

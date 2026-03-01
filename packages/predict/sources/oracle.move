@@ -14,7 +14,10 @@ module deepbook_predict::oracle;
 
 use deepbook::math;
 use deepbook_predict::{constants, math as predict_math};
-use sui::{clock::Clock, event};
+use sui::{clock::Clock, dynamic_field as df, event};
+
+use fun df::exists_ as UID.exists_;
+use fun df::add as UID.add;
 
 // === Errors ===
 
@@ -23,6 +26,7 @@ const EOracleStale: u64 = 1;
 const EOracleAlreadyActive: u64 = 2;
 const EOracleExpired: u64 = 3;
 const ECannotBeNegative: u64 = 4;
+const ECapAlreadyRegistered: u64 = 5;
 
 // === Events ===
 
@@ -60,6 +64,9 @@ public struct OracleSVIUpdated has copy, drop, store {
 }
 
 // === Structs ===
+
+/// Dynamic field key for additional authorized caps on an oracle.
+public struct AuthorizedCapKey(ID) has copy, drop, store;
 
 /// SVI volatility surface parameters.
 /// All values scaled by FLOAT_SCALING (1e9).
@@ -124,7 +131,7 @@ public fun activate<Underlying>(
     cap: &OracleCapSVI,
     clock: &Clock,
 ) {
-    assert!(oracle.oracle_cap_id == cap.id.to_inner(), EInvalidOracleCap);
+    assert_authorized_cap(oracle, cap);
     assert!(!oracle.active, EOracleAlreadyActive);
     assert!(clock.timestamp_ms() < oracle.expiry, EOracleExpired);
 
@@ -145,7 +152,7 @@ public fun update_prices<Underlying>(
     prices: PriceData,
     clock: &Clock,
 ) {
-    assert!(oracle.oracle_cap_id == cap.id.to_inner(), EInvalidOracleCap);
+    assert_authorized_cap(oracle, cap);
 
     let now = clock.timestamp_ms();
 
@@ -181,7 +188,7 @@ public fun update_svi<Underlying>(
     risk_free_rate: u64,
     clock: &Clock,
 ) {
-    assert!(oracle.oracle_cap_id == cap.id.to_inner(), EInvalidOracleCap);
+    assert_authorized_cap(oracle, cap);
 
     oracle.svi = svi;
     oracle.risk_free_rate = risk_free_rate;
@@ -263,6 +270,16 @@ public fun is_active<Underlying>(oracle: &OracleSVI<Underlying>): bool {
 }
 
 // === Public-Package Functions ===
+
+/// Register an additional cap as authorized to update an oracle.
+public(package) fun register_cap<Underlying>(
+    oracle: &mut OracleSVI<Underlying>,
+    cap: &OracleCapSVI,
+) {
+    let cap_id = cap.id.to_inner();
+    assert!(!oracle.id.exists_<AuthorizedCapKey>(AuthorizedCapKey(cap_id)), ECapAlreadyRegistered);
+    oracle.id.add(AuthorizedCapKey(cap_id), true);
+}
 
 /// Create a new OracleCap. Called by registry during setup.
 public(package) fun create_oracle_cap(ctx: &mut TxContext): OracleCapSVI {
@@ -369,6 +386,16 @@ fun compute_nd2<Underlying>(oracle: &OracleSVI<Underlying>, strike: u64, is_up: 
     let cdf_neg = if (is_up) { d2_neg } else { !d2_neg };
 
     predict_math::normal_cdf(d2, cdf_neg)
+}
+
+/// Check that the cap is the original creator cap or a registered additional cap.
+fun assert_authorized_cap<Underlying>(oracle: &OracleSVI<Underlying>, cap: &OracleCapSVI) {
+    let cap_id = cap.id.to_inner();
+    assert!(
+        oracle.oracle_cap_id == cap_id ||
+            oracle.id.exists_<AuthorizedCapKey>(AuthorizedCapKey(cap_id)),
+        EInvalidOracleCap,
+    );
 }
 
 /// Assert that the oracle is not stale. Aborts if stale.

@@ -10,7 +10,7 @@ pub mod traits;
 pub const TESTNET_REMOTE_STORE_URL: &str = "https://checkpoints.testnet.sui.io";
 
 const TESTNET_PREDICT_PACKAGES: &[&str] = &[
-    "0x8dd5f91ee86d898d84e89f7696b5cbbdf16716474640af9e81c7999ebb247870",
+    "0x01db8fc74ead463c7167f9c609af72e64ac4eeb0f6b9c05da17c16ad0fd348d0",
 ];
 
 pub const PREDICT_MODULES: &[&str] = &["oracle", "registry", "predict", "predict_manager"];
