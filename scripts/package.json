@@ -14,7 +14,11 @@
     "predict-init": "pnpm tsx transactions/predict/init.ts",
     "predict-deposit": "pnpm tsx transactions/predict/deposit.ts",
     "predict-create-oracle-cap": "pnpm tsx transactions/predict/createOracleCap.ts",
-    "predict-create-oracle": "pnpm tsx transactions/predict/createOracle.ts"
+    "predict-create-oracle": "pnpm tsx transactions/predict/createOracle.ts",
+    "predict-deploy-oracles": "pnpm tsx transactions/predict/deployOracles.ts",
+    "predict-redeploy": "pnpm tsx transactions/predict/redeploy.ts",
+    "oracle-feed": "pnpm tsx services/oracle-feed.ts",
+    "oracle-dashboard": "pnpm tsx services/oracle-dashboard.ts"
   },
   "keywords": [],
   "author": "",
@@ -23,6 +27,10 @@
     "@mysten/deepbook-v3": "^1.0.9",
     "@mysten/sui": "^2.1.0",
     "esbuild": "^0.27.2",
+    "pg": "^8.19.0",
     "tsx": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.18.0"
   }
 }

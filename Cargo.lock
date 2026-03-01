@@ -6154,6 +6154,41 @@ dependencies = [
 ]
 
 [[package]]
+name = "predict-indexer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bcs",
+ "clap",
+ "diesel",
+ "diesel-async",
+ "hex",
+ "move-core-types",
+ "predict-schema",
+ "prometheus",
+ "serde",
+ "sui-indexer-alt-framework",
+ "sui-indexer-alt-metrics",
+ "sui-pg-db",
+ "sui-sdk-types 0.0.7",
+ "sui-types",
+ "telemetry-subscribers",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "predict-schema"
+version = "0.1.0"
+dependencies = [
+ "diesel",
+ "diesel_migrations",
+ "sui-field-count",
+]
+
+[[package]]
 name = "prettyplease"
 version = "0.2.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"

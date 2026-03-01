@@ -5,6 +5,8 @@ members = [
     "crates/indexer",
     "crates/schema",
     "crates/server",
+    "crates/predict-schema",
+    "crates/predict-indexer",
 ]
 
 [workspace.dependencies]

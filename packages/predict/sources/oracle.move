@@ -39,6 +39,26 @@ public struct OracleSettled has copy, drop, store {
     timestamp: u64,
 }
 
+public struct OraclePricesUpdated has copy, drop, store {
+    oracle_id: ID,
+    spot: u64,
+    forward: u64,
+    timestamp: u64,
+}
+
+public struct OracleSVIUpdated has copy, drop, store {
+    oracle_id: ID,
+    a: u64,
+    b: u64,
+    rho: u64,
+    rho_negative: bool,
+    m: u64,
+    m_negative: bool,
+    sigma: u64,
+    risk_free_rate: u64,
+    timestamp: u64,
+}
+
 // === Structs ===
 
 /// SVI volatility surface parameters.
@@ -144,6 +164,13 @@ public fun update_prices<Underlying>(
 
     oracle.prices = prices;
     oracle.timestamp = now;
+
+    event::emit(OraclePricesUpdated {
+        oracle_id: oracle.id.to_inner(),
+        spot: prices.spot,
+        forward: prices.forward,
+        timestamp: now,
+    });
 }
 
 /// Push SVI parameters and risk-free rate (low frequency ~10-20s).
@@ -159,6 +186,19 @@ public fun update_svi<Underlying>(
     oracle.svi = svi;
     oracle.risk_free_rate = risk_free_rate;
     oracle.timestamp = clock.timestamp_ms();
+
+    event::emit(OracleSVIUpdated {
+        oracle_id: oracle.id.to_inner(),
+        a: svi.a,
+        b: svi.b,
+        rho: svi.rho,
+        rho_negative: svi.rho_negative,
+        m: svi.m,
+        m_negative: svi.m_negative,
+        sigma: svi.sigma,
+        risk_free_rate,
+        timestamp: oracle.timestamp,
+    });
 }
 
 /// Get the oracle ID.

@@ -1,0 +1,12 @@
+[package]
+name = "predict-schema"
+version = "0.1.0"
+authors = ["Mysten Labs <build@mystenlabs.com>"]
+license = "Apache-2.0"
+publish = false
+edition = "2021"
+
+[dependencies]
+sui-field-count = { git = "https://github.com/MystenLabs/sui.git", branch = "testnet" }
+diesel = { workspace = true, features = ["postgres", "chrono"] }
+diesel_migrations.workspace = true

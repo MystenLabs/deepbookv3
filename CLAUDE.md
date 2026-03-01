@@ -13,7 +13,7 @@ DeepBook is a decentralized order book on the Sui blockchain.
 ### Move
 - `sui move build` - Build Move packages
 - `sui move test --gas-limit 100000000000` - Run Move tests
-- `bunx prettier-move -c *.move --write` - Format Move code
+- `npx prettier --plugin @mysten/prettier-plugin-move --write <file>` - Format Move code
 
 ### Indexer
 - `cargo build -p deepbook-server` - Build indexer

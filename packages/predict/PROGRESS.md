@@ -39,7 +39,7 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 - [x] **Cross-validation**: Move binary option pricing verified against Python/scipy reference implementation. Max deviation ~0.000007% (68 parts per billion).
 
 ### P2 - Nice to Have
-- [ ] **Events**: Most modules don't emit events beyond oracle. Add events for mints, redeems, settlements, deposit/withdraw.
+- [x] **Events**: All modules now emit events — oracle (OracleActivated, OracleSettled, OraclePricesUpdated, OracleSVIUpdated), registry (PredictCreated, OracleCreated, AdminVaultBalanceChanged), predict (PositionMinted, PositionRedeemed, CollateralizedPositionMinted/Redeemed, TradingPauseUpdated, PricingConfigUpdated, RiskConfigUpdated), predict_manager (PredictManagerCreated). Indexer covers all 15.
 - [x] **Pause enforcement**: trading_paused/withdrawals_paused in Predict struct, checked in mint/mint_collateralized/withdraw. Redeems always allowed.
 - [ ] **Settled-side liability cleanup**: after settlement, losing-side liability never pays out but stays in max_liability until redeemed. A future function could zero out losing-side counts for settled oracles.
 
@@ -274,3 +274,91 @@ Binary options prediction market protocol built on DeepBook. Users buy UP/DOWN p
 - **All scripts auto-write IDs to `scripts/config/constants.ts`** — no manual copy-paste between steps
 - **npm scripts added**: `dusdc-publish`, `dusdc-mint`, `predict-publish`, `predict-init`, `predict-deposit`, `predict-create-oracle-cap`, `predict-create-oracle`
 - **Testnet state**: package deployed, Predict<DUSDC> initialized, vault funded with 1M DUSDC, OracleCap + Oracle created. Oracle not yet activated or fed data — ready for Block Scholes integration.
+
+### Session: 2026-03-01 (oracle events + indexer + oracle feed)
+
+#### Move Changes
+- **Added `OraclePricesUpdated` event** to `oracle.move`: emitted in `update_prices` with `oracle_id`, `spot`, `forward`, `timestamp`
+- **Added `OracleSVIUpdated` event** to `oracle.move`: emitted in `update_svi` with `oracle_id`, all SVI params (`a`, `b`, `rho`, `rho_negative`, `m`, `m_negative`, `sigma`), `risk_free_rate`, `timestamp`
+- **NOT YET DEPLOYED** — testnet package still has old code without these events
+
+#### Predict Indexer (`crates/predict-indexer/` — new crate)
+- Rust indexer using `sui_indexer_alt_framework` with 15 concurrent pipeline handlers
+- **Oracle** (4): OracleActivated, OracleSettled, OraclePricesUpdated, OracleSviUpdated
+- **Registry** (3): PredictCreated, OracleCreated, AdminVaultBalanceChanged
+- **Trading** (4): PositionMinted, PositionRedeemed, CollateralizedPositionMinted, CollateralizedPositionRedeemed
+- **Admin** (3): TradingPauseUpdated, PricingConfigUpdated, RiskConfigUpdated
+- **User** (1): PredictManagerCreated
+- `define_handler!` macro eliminates per-handler boilerplate (~400 lines → ~15 lines each)
+- `MoveStruct` trait for BCS event type matching by package address + module + event name
+- `is_predict_tx` filter checks input objects, events, and Move calls
+- `PredictConfig` supports testnet default + CLI override (`--predict-package-id`)
+- Prometheus metrics on `:9185`
+- All 15 event structs verified against Move source (field names, types, BCS ordering all match)
+
+#### Predict Schema (`crates/predict-schema/` — new crate)
+- 15 Diesel tables (one per event), all with `event_digest` primary key
+- Standard metadata columns: `digest`, `sender`, `checkpoint`, `timestamp`, `checkpoint_timestamp_ms`, `package`
+- Migration: `2026-03-01-000000_predict_initial/up.sql`
+
+#### Oracle Feed Service (`scripts/services/` — new)
+- **`oracle-feed.ts`** — long-running service polling BlockScholes API, pushes data on-chain via PTBs
+  - Price updates every 500ms (spot shared across oracles + forward per expiry)
+  - SVI parameter updates every 20s
+  - Scales floats to u64 (1e9 multiplier), handles signed params (magnitude + negative flag)
+  - Activates oracles on startup, hardcoded 3.5% domestic risk-free rate
+- **`blockscholes-oracle.ts`** — full pricing library (TypeScript)
+  - BlockScholes REST API client (spot, forward, SVI) with X-API-Key auth
+  - In-memory data storage with versioning and SHA256-hashed feed keys
+  - SVI implied vol calculator, Black-Scholes option pricing (calls, puts, digitals)
+  - Greeks: delta, gamma, vega, theta, volga, vanna
+  - Derived data provider pattern (SVI → IV → Option Price)
+
+#### Oracle Config & Deployment
+- **`scripts/config/predict-oracles.ts`** — 5 testnet BTC oracles (expiries: Mar 6/13/20/27, Apr 24)
+- **`scripts/transactions/predict/deployOracles.ts`** — creates OracleSVI objects, writes IDs back to config
+- **`scripts/package.json`** — added `oracle-feed` script
+
+#### Local Indexer Testing
+- Verified: `cargo build -p predict-indexer` and `cargo build -p predict-schema` both clean
+- Ran indexer locally against Postgres (port 5433, database `predict`)
+- Migrations ran successfully, all 15 pipelines started
+- Caught up to testnet tip at ~700 cps, tailed real-time at ~4 cps
+- **No events indexed** — predict package needs redeployment with new oracle events
+
+#### Minor Fixes
+- Updated Move formatter command in `.claude/rules/move.md` and `CLAUDE.md` to `npx prettier --plugin @mysten/prettier-plugin-move --write <file>`
+
+#### Current Blocker
+~~**Predict package needs redeployment to testnet.**~~ — Resolved in Session 2026-03-01 (redeploy).
+
+#### Not Yet Built
+- Server/API layer (HTTP endpoints to query indexed data)
+- Database indexes (secondary indexes on oracle_id, trader, checkpoint)
+- `down.sql` migration (rollback)
+- Deployment config (Dockerfile, K8s, Pulumi)
+
+### Session: 2026-03-01 (redeploy)
+
+#### Unified Redeploy Script (`scripts/transactions/predict/redeploy.ts` — new)
+- **Single script** runs full 8-step deployment pipeline end-to-end: discover expiries → publish → init → create oracle cap → deploy oracles → deposit DUSDC → update indexer package ID → reset database
+- **Step 1 — Expiry discovery**: probes BlockScholes API (`fetchSVIParams` + `fetchForwardPrice`) for next 12 Thursdays, falls back to Fridays, keeps first 5 with valid data on both endpoints
+- **Steps 2–6**: reuse patterns from individual scripts (`publish.ts`, `init.ts`, `createOracleCap.ts`, `deployOracles.ts`, `deposit.ts`), passing IDs as local variables between steps
+- **Step 7**: regex-replaces package ID in `crates/predict-indexer/src/lib.rs`
+- **Step 8**: resets Postgres database via `psql` (port configurable via `PGPORT`, defaults to 5433)
+- `waitForTransaction` after every `signAndExecuteTransaction` to prevent stale shared object / package-not-found errors
+- Added `predict-redeploy` npm script to `scripts/package.json`
+
+#### Bug Fixes
+- **`blockscholes-oracle.ts`**: guarded top-level `main()` demo so it only runs when executed directly, not when imported by other scripts
+- **Expiry discovery**: must probe both `fetchSVIParams` AND `fetchForwardPrice` — some dates have SVI data but no forward price data (causes oracle feed 404s)
+
+#### Oracle Feed Improvements
+- **Parallel API fetches**: spot + all forward prices + all SVI params now fetched via `Promise.all` instead of sequentially (cuts API fetch time from ~6 serial round trips to ~1)
+
+#### Redeployment Complete
+- Package redeployed with oracle events (`OraclePricesUpdated`, `OracleSVIUpdated`)
+- 5 oracles created with BlockScholes-validated expiry dates
+- 1M DUSDC deposited into vault
+- Indexer package ID updated, database reset
+- Oracle feed running, indexer catching up

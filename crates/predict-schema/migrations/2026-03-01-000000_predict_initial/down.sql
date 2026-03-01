@@ -1,0 +1,15 @@
+DROP TABLE IF EXISTS predict_manager_created;
+DROP TABLE IF EXISTS risk_config_updated;
+DROP TABLE IF EXISTS pricing_config_updated;
+DROP TABLE IF EXISTS trading_pause_updated;
+DROP TABLE IF EXISTS collateralized_position_redeemed;
+DROP TABLE IF EXISTS collateralized_position_minted;
+DROP TABLE IF EXISTS position_redeemed;
+DROP TABLE IF EXISTS position_minted;
+DROP TABLE IF EXISTS admin_vault_balance_changed;
+DROP TABLE IF EXISTS oracle_created;
+DROP TABLE IF EXISTS predict_created;
+DROP TABLE IF EXISTS oracle_svi_updated;
+DROP TABLE IF EXISTS oracle_prices_updated;
+DROP TABLE IF EXISTS oracle_settled;
+DROP TABLE IF EXISTS oracle_activated;
