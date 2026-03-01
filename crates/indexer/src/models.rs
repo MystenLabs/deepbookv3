@@ -24,6 +24,39 @@ pub mod deepbook {
             const MODULE: &'static str = "balance_manager";
             const NAME: &'static str = "BalanceEvent";
         }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct BalanceManagerEvent {
+            pub balance_manager_id: ObjectID,
+            pub owner: Address,
+        }
+
+        impl MoveStruct for BalanceManagerEvent {
+            const MODULE: &'static str = "balance_manager";
+            const NAME: &'static str = "BalanceManagerEvent";
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct DeepBookReferralCreatedEvent {
+            pub referral_id: ObjectID,
+            pub owner: Address,
+        }
+
+        impl MoveStruct for DeepBookReferralCreatedEvent {
+            const MODULE: &'static str = "balance_manager";
+            const NAME: &'static str = "DeepBookReferralCreatedEvent";
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct DeepBookReferralSetEvent {
+            pub referral_id: ObjectID,
+            pub balance_manager_id: ObjectID,
+        }
+
+        impl MoveStruct for DeepBookReferralSetEvent {
+            const MODULE: &'static str = "balance_manager";
+            const NAME: &'static str = "DeepBookReferralSetEvent";
+        }
     }
 
     pub mod order {

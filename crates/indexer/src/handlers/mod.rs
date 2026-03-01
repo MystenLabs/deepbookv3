@@ -157,6 +157,7 @@ macro_rules! define_handler {
 }
 pub mod asset_supplied_handler;
 pub mod asset_withdrawn_handler;
+pub mod balance_manager_event_handler;
 pub mod balances_handler;
 pub mod conditional_order_added_handler;
 pub mod conditional_order_cancelled_handler;
@@ -167,6 +168,8 @@ pub mod deepbook_pool_config_updated_handler;
 pub mod deepbook_pool_registered_handler;
 pub mod deepbook_pool_updated_handler;
 pub mod deepbook_pool_updated_registry_handler;
+pub mod deepbook_referral_created_event_handler;
+pub mod deepbook_referral_set_event_handler;
 pub mod deposit_collateral_handler;
 pub mod flash_loan_handler;
 pub mod interest_params_updated_handler;

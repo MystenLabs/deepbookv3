@@ -1,0 +1,17 @@
+---
+source: crates/indexer/tests/snapshot_tests.rs
+expression: rows
+---
+[
+  {
+    "event_digest": "AJVP3XjsLegvGWvYZidok47VB39Eet5LZmVgRHxD8zvH0",
+    "digest": "AJVP3XjsLegvGWvYZidok47VB39Eet5LZmVgRHxD8zvH",
+    "sender": "0xc2f45aa0ee89058023c1bbfd64a710d43ec5f6b16e52590bbad92d6a09a235e6",
+    "checkpoint": "231403165",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1767641118304",
+    "package": "0x2d93777cc8b67c064b495e8606f2f8f5fd578450347bbe7b36e0bc03963c1c40",
+    "referral_id": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "balance_manager_id": "0xee7dbd70069a7a536fa1e259bcaa4f8ef8c0cb6f04c21fe0ac74321793d309ab"
+  }
+]

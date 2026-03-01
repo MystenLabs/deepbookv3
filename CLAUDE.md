@@ -12,7 +12,7 @@ DeepBook is a decentralized order book on the Sui blockchain.
 
 ### Move
 - `sui move build` - Build Move packages
-- `sui move test` - Run Move tests
+- `sui move test --gas-limit 100000000000` - Run Move tests
 - `bunx prettier-move -c *.move --write` - Format Move code
 
 ### Indexer
@@ -33,3 +33,13 @@ Claude automatically loads contextual knowledge based on files being edited:
 - Deployment issues (Pulumi conflicts, Kubernetes errors)
 - API quirks (default values, missing pagination)
 - Any debugging knowledge that would help future sessions
+
+## PR Descriptions
+
+When asked for a PR summary/description, always use this format:
+- **Summary**: Bullet points describing what changed and why
+- **Test plan**: Checklist of manual or automated verification steps
+
+## Wrap Up
+
+When I say "wrap up", follow the instructions in `.claude/rules/wrap-up.md`.

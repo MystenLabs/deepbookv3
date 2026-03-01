@@ -35,5 +35,5 @@ jobs:
           for dir in packages/*; do
             dir_name=$(basename "$dir")
             echo "Running sui move test in $dir"
-            sui move test -i 100000000 --path "$dir"
+            sui move test --gas-limit 100000000000 --path "$dir"
           done
