@@ -159,6 +159,7 @@ pub mod asset_supplied_handler;
 pub mod asset_withdrawn_handler;
 pub mod balance_manager_event_handler;
 pub mod balances_handler;
+pub mod book_params_updated_handler;
 pub mod conditional_order_added_handler;
 pub mod conditional_order_cancelled_handler;
 pub mod conditional_order_executed_handler;

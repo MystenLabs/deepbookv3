@@ -306,6 +306,24 @@ pub mod deepbook {
         }
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct BookParamsUpdated<BaseAsset, QuoteAsset> {
+            pub pool_id: ObjectID,
+            pub tick_size: u64,
+            pub lot_size: u64,
+            pub min_size: u64,
+            pub timestamp: u64,
+            #[serde(skip)]
+            pub phantom_base: PhantomData<BaseAsset>,
+            #[serde(skip)]
+            pub phantom_quote: PhantomData<QuoteAsset>,
+        }
+
+        impl<BaseAsset, QuoteAsset> MoveStruct for BookParamsUpdated<BaseAsset, QuoteAsset> {
+            const MODULE: &'static str = "pool";
+            const NAME: &'static str = "BookParamsUpdated";
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
         pub struct DeepBurned<BaseAsset, QuoteAsset> {
             pub pool_id: ObjectID,
             pub deep_burned: u64,

@@ -4,6 +4,7 @@ use deepbook_indexer::handlers::asset_supplied_handler::AssetSuppliedHandler;
 use deepbook_indexer::handlers::asset_withdrawn_handler::AssetWithdrawnHandler;
 use deepbook_indexer::handlers::balance_manager_event_handler::BalanceManagerEventHandler;
 use deepbook_indexer::handlers::balances_handler::BalancesHandler;
+use deepbook_indexer::handlers::book_params_updated_handler::BookParamsUpdatedHandler;
 use deepbook_indexer::handlers::deep_burned_handler::DeepBurnedHandler;
 use deepbook_indexer::handlers::deepbook_pool_config_updated_handler::DeepbookPoolConfigUpdatedHandler;
 use deepbook_indexer::handlers::deepbook_pool_registered_handler::DeepbookPoolRegisteredHandler;
@@ -140,6 +141,13 @@ async fn deep_burned_test() -> Result<(), anyhow::Error> {
 async fn pool_created_test() -> Result<(), anyhow::Error> {
     let handler = PoolCreatedHandler::new(DeepbookEnv::Mainnet);
     data_test("pool_created", handler, ["pool_created"]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn book_params_updated_test() -> Result<(), anyhow::Error> {
+    let handler = BookParamsUpdatedHandler::new(DeepbookEnv::Mainnet);
+    data_test("book_params_updated", handler, ["book_params_updated"]).await?;
     Ok(())
 }
 
