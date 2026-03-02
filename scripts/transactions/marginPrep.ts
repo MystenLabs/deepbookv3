@@ -202,7 +202,7 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
     XBTCprotocolConfig,
   )(tx);
 
-  // // 3. Registering SUI_DBUSDC pool
+  // // 3. Registering and enabling pools
   // const PoolConfigSUIUSDC = client.deepbook.marginAdmin.newPoolConfig("SUI_USDC", {
   //   minWithdrawRiskRatio: 2,
   //   minBorrowRiskRatio: 1.2499,
@@ -239,6 +239,40 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   // })(tx);
   // client.deepbook.marginAdmin.registerDeepbookPool("WAL_USDC", poolConfigWalUsdc)(tx);
   // client.deepbook.marginAdmin.enableDeepbookPool("WAL_USDC")(tx);
+
+  const poolConfigSuiSuiusde = client.deepbook.marginAdmin.newPoolConfig(
+    "SUI_SUIUSDE",
+    {
+      minWithdrawRiskRatio: 2,
+      minBorrowRiskRatio: 1.2499,
+      liquidationRiskRatio: 1.1,
+      targetLiquidationRiskRatio: 1.25,
+      userLiquidationReward: 0.02,
+      poolLiquidationReward: 0.03,
+    },
+  )(tx);
+  client.deepbook.marginAdmin.registerDeepbookPool(
+    "SUI_SUIUSDE",
+    poolConfigSuiSuiusde,
+  )(tx);
+  client.deepbook.marginAdmin.enableDeepbookPool("SUI_SUIUSDE")(tx);
+
+  const poolConfigSuiusdeUsdc = client.deepbook.marginAdmin.newPoolConfig(
+    "SUIUSDE_USDC",
+    {
+      minWithdrawRiskRatio: 2,
+      minBorrowRiskRatio: 1.2499,
+      liquidationRiskRatio: 1.1,
+      targetLiquidationRiskRatio: 1.25,
+      userLiquidationReward: 0.02,
+      poolLiquidationReward: 0.03,
+    },
+  )(tx);
+  client.deepbook.marginAdmin.registerDeepbookPool(
+    "SUIUSDE_USDC",
+    poolConfigSuiusdeUsdc,
+  )(tx);
+  client.deepbook.marginAdmin.enableDeepbookPool("SUIUSDE_USDC")(tx);
 
   // // 4. Enable deepbook pool for loan
   // client.deepbook.marginMaintainer.enableDeepbookPoolForLoan(
