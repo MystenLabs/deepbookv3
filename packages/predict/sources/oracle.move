@@ -14,6 +14,7 @@ module deepbook_predict::oracle;
 
 use deepbook::math;
 use deepbook_predict::{constants, math as predict_math};
+use std::string::String;
 use sui::{clock::Clock, dynamic_field as df, event};
 
 use fun df::exists_ as UID.exists_;
@@ -98,10 +99,12 @@ public struct PriceData has copy, drop, store {
 
 /// Shared oracle object storing SVI volatility surface data.
 /// One oracle per underlying + expiry combination.
-public struct OracleSVI<phantom Underlying> has key {
+public struct OracleSVI has key {
     id: UID,
     /// ID of the OracleCap authorized to update this oracle
     oracle_cap_id: ID,
+    /// The underlying asset this oracle tracks (e.g., "BTC", "ETH")
+    underlying_asset: String,
     /// Expiration timestamp in milliseconds
     expiry: u64,
     /// Whether the oracle is active
@@ -126,11 +129,7 @@ public struct OracleCapSVI has key, store {
 // === Public Functions ===
 
 /// Activate the oracle. Must be called before oracle can be used for pricing.
-public fun activate<Underlying>(
-    oracle: &mut OracleSVI<Underlying>,
-    cap: &OracleCapSVI,
-    clock: &Clock,
-) {
+public fun activate(oracle: &mut OracleSVI, cap: &OracleCapSVI, clock: &Clock) {
     assert_authorized_cap(oracle, cap);
     assert!(!oracle.active, EOracleAlreadyActive);
 
@@ -148,8 +147,8 @@ public fun activate<Underlying>(
 
 /// Push spot and forward prices (high frequency ~1s).
 /// If past expiry and not settled, freezes settlement price and deactivates.
-public fun update_prices<Underlying>(
-    oracle: &mut OracleSVI<Underlying>,
+public fun update_prices(
+    oracle: &mut OracleSVI,
     cap: &OracleCapSVI,
     prices: PriceData,
     clock: &Clock,
@@ -184,8 +183,8 @@ public fun update_prices<Underlying>(
 }
 
 /// Push SVI parameters and risk-free rate (low frequency ~10-20s).
-public fun update_svi<Underlying>(
-    oracle: &mut OracleSVI<Underlying>,
+public fun update_svi(
+    oracle: &mut OracleSVI,
     cap: &OracleCapSVI,
     svi: SVIParams,
     risk_free_rate: u64,
@@ -214,63 +213,68 @@ public fun update_svi<Underlying>(
 }
 
 /// Get the oracle ID.
-public fun id<Underlying>(oracle: &OracleSVI<Underlying>): ID {
+public fun id(oracle: &OracleSVI): ID {
     oracle.id.to_inner()
 }
 
+/// Get the underlying asset name.
+public fun underlying_asset(oracle: &OracleSVI): String {
+    oracle.underlying_asset
+}
+
 /// Get the current spot price.
-public fun spot_price<Underlying>(oracle: &OracleSVI<Underlying>): u64 {
+public fun spot_price(oracle: &OracleSVI): u64 {
     oracle.prices.spot
 }
 
 /// Get the forward price for this expiry.
-public fun forward_price<Underlying>(oracle: &OracleSVI<Underlying>): u64 {
+public fun forward_price(oracle: &OracleSVI): u64 {
     oracle.prices.forward
 }
 
 /// Get the price data.
-public fun prices<Underlying>(oracle: &OracleSVI<Underlying>): PriceData {
+public fun prices(oracle: &OracleSVI): PriceData {
     oracle.prices
 }
 
 /// Get the SVI parameters.
-public fun svi<Underlying>(oracle: &OracleSVI<Underlying>): SVIParams {
+public fun svi(oracle: &OracleSVI): SVIParams {
     oracle.svi
 }
 
 /// Get the expiry timestamp.
-public fun expiry<Underlying>(oracle: &OracleSVI<Underlying>): u64 {
+public fun expiry(oracle: &OracleSVI): u64 {
     oracle.expiry
 }
 
 /// Get the risk-free rate.
-public fun risk_free_rate<Underlying>(oracle: &OracleSVI<Underlying>): u64 {
+public fun risk_free_rate(oracle: &OracleSVI): u64 {
     oracle.risk_free_rate
 }
 
 /// Get the last update timestamp.
-public fun timestamp<Underlying>(oracle: &OracleSVI<Underlying>): u64 {
+public fun timestamp(oracle: &OracleSVI): u64 {
     oracle.timestamp
 }
 
 /// Get the settlement price (only valid after settlement).
-public fun settlement_price<Underlying>(oracle: &OracleSVI<Underlying>): Option<u64> {
+public fun settlement_price(oracle: &OracleSVI): Option<u64> {
     oracle.settlement_price
 }
 
 /// Check if the oracle data is stale (> 30s since last update).
-public fun is_stale<Underlying>(oracle: &OracleSVI<Underlying>, clock: &Clock): bool {
+public fun is_stale(oracle: &OracleSVI, clock: &Clock): bool {
     let now = clock.timestamp_ms();
     now > oracle.timestamp + constants::staleness_threshold_ms!()
 }
 
 /// Check if the oracle has been settled.
-public fun is_settled<Underlying>(oracle: &OracleSVI<Underlying>): bool {
+public fun is_settled(oracle: &OracleSVI): bool {
     oracle.settlement_price.is_some()
 }
 
 /// Check if the oracle is active.
-public fun is_active<Underlying>(oracle: &OracleSVI<Underlying>): bool {
+public fun is_active(oracle: &OracleSVI): bool {
     oracle.active
 }
 
@@ -295,10 +299,7 @@ public fun new_svi_params(
 // === Public-Package Functions ===
 
 /// Register an additional cap as authorized to update an oracle.
-public(package) fun register_cap<Underlying>(
-    oracle: &mut OracleSVI<Underlying>,
-    cap: &OracleCapSVI,
-) {
+public(package) fun register_cap(oracle: &mut OracleSVI, cap: &OracleCapSVI) {
     let cap_id = cap.id.to_inner();
     assert!(!oracle.id.exists_<AuthorizedCapKey>(AuthorizedCapKey(cap_id)), ECapAlreadyRegistered);
     oracle.id.add(AuthorizedCapKey(cap_id), true);
@@ -310,17 +311,19 @@ public(package) fun create_oracle_cap(ctx: &mut TxContext): OracleCapSVI {
 }
 
 /// Create a new SVI Oracle for an underlying + expiry. Returns the oracle ID.
-public(package) fun create_oracle<Underlying>(
+public(package) fun create_oracle(
     cap: &OracleCapSVI,
+    underlying_asset: String,
     expiry: u64,
     ctx: &mut TxContext,
 ): ID {
     let oracle_uid = object::new(ctx);
     let oracle_id = oracle_uid.to_inner();
 
-    let oracle = OracleSVI<Underlying> {
+    let oracle = OracleSVI {
         id: oracle_uid,
         oracle_cap_id: cap.id.to_inner(),
+        underlying_asset,
         expiry,
         active: false,
         prices: PriceData { spot: 0, forward: 0 },
@@ -344,8 +347,8 @@ public(package) fun create_oracle<Underlying>(
 
 /// Binary option price using SVI + Black-Scholes, discounted by e^(-r*t).
 /// Returns price in FLOAT_SCALING (1e9).
-public(package) fun get_binary_price<Underlying>(
-    oracle: &OracleSVI<Underlying>,
+public(package) fun get_binary_price(
+    oracle: &OracleSVI,
     strike: u64,
     is_up: bool,
     clock: &Clock,
@@ -364,20 +367,27 @@ public(package) fun get_binary_price<Underlying>(
 /// Binary option price without discount factor (assumes r ≈ 0).
 /// No clock needed — time cancels entirely from the formula.
 /// Returns price in FLOAT_SCALING (1e9).
-public(package) fun get_binary_price_undiscounted<Underlying>(
-    oracle: &OracleSVI<Underlying>,
+public(package) fun get_binary_price_undiscounted(
+    oracle: &OracleSVI,
     strike: u64,
     is_up: bool,
 ): u64 {
     compute_nd2(oracle, strike, is_up)
 }
 
+/// Assert that the oracle is not stale. Aborts if stale.
+public(package) fun assert_not_stale(oracle: &OracleSVI, clock: &Clock) {
+    assert!(!is_stale(oracle, clock), EOracleStale);
+}
+
+// === Private Functions ===
+
 /// SVI + Black-Scholes N(d2) in a single pass.
 ///
 /// SVI gives total_variance directly, so IV and time cancel in d2:
 ///   iv = sqrt(total_var / t), iv * sqrt(t) = sqrt(total_var)
 ///   d2 = (ln(F/K) - total_var/2) / sqrt(total_var)
-fun compute_nd2<Underlying>(oracle: &OracleSVI<Underlying>, strike: u64, is_up: bool): u64 {
+fun compute_nd2(oracle: &OracleSVI, strike: u64, is_up: bool): u64 {
     let forward = oracle.prices.forward;
 
     // SVI: compute total variance from log-moneyness
@@ -412,7 +422,7 @@ fun compute_nd2<Underlying>(oracle: &OracleSVI<Underlying>, strike: u64, is_up: 
 }
 
 /// Check that the cap is the original creator cap or a registered additional cap.
-fun assert_authorized_cap<Underlying>(oracle: &OracleSVI<Underlying>, cap: &OracleCapSVI) {
+fun assert_authorized_cap(oracle: &OracleSVI, cap: &OracleCapSVI) {
     let cap_id = cap.id.to_inner();
     assert!(
         oracle.oracle_cap_id == cap_id ||
@@ -421,24 +431,21 @@ fun assert_authorized_cap<Underlying>(oracle: &OracleSVI<Underlying>, cap: &Orac
     );
 }
 
-/// Assert that the oracle is not stale. Aborts if stale.
-public(package) fun assert_not_stale<Underlying>(oracle: &OracleSVI<Underlying>, clock: &Clock) {
-    assert!(!is_stale(oracle, clock), EOracleStale);
-}
-
 #[test_only]
 /// Create a test oracle with given params. Bypasses cap/share requirements.
-public(package) fun create_test_oracle<Underlying>(
+public(package) fun create_test_oracle(
+    underlying_asset: String,
     svi: SVIParams,
     prices: PriceData,
     risk_free_rate: u64,
     expiry: u64,
     timestamp: u64,
     ctx: &mut TxContext,
-): OracleSVI<Underlying> {
-    OracleSVI<Underlying> {
+): OracleSVI {
+    OracleSVI {
         id: object::new(ctx),
         oracle_cap_id: object::id_from_address(@0x0),
+        underlying_asset,
         expiry,
         active: true,
         prices,
@@ -451,7 +458,7 @@ public(package) fun create_test_oracle<Underlying>(
 
 #[test_only]
 /// Force-settle the oracle at a given price for testing.
-public(package) fun settle_test_oracle<Underlying>(oracle: &mut OracleSVI<Underlying>, price: u64) {
+public(package) fun settle_test_oracle(oracle: &mut OracleSVI, price: u64) {
     oracle.settlement_price = option::some(price);
     oracle.active = false;
 }
