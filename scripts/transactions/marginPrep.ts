@@ -58,18 +58,20 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   // tx.transferObjects([maintainerCap], adminCapOwner[env]);
 
   // // 4. Pyth Config
-  // const maxAgeSeconds = 70;
-  // const pythConfig = client.deepbook.marginAdmin.newPythConfig(
-  //   [
-  //     { coinKey: "SUI", maxConfBps: 300, maxEwmaDifferenceBps: 1500 }, // maxConfBps: 3%, maxEwmaDifferenceBps: 15%
-  //     { coinKey: "USDC", maxConfBps: 100, maxEwmaDifferenceBps: 500 }, // maxConfBps: 1%, maxEwmaDifferenceBps: 5%
-  //     { coinKey: "DEEP", maxConfBps: 500, maxEwmaDifferenceBps: 3000 }, // maxConfBps: 5%, maxEwmaDifferenceBps: 30%
-  //     { coinKey: "WAL", maxConfBps: 500, maxEwmaDifferenceBps: 3000 }, // maxConfBps: 5%, maxEwmaDifferenceBps: 30%
-  //   ],
-  //   maxAgeSeconds // maxAgeSeconds: 70 seconds
-  // )(tx);
-  // client.deepbook.marginAdmin.removeConfig()(tx);
-  // client.deepbook.marginAdmin.addConfig(pythConfig)(tx);
+  const maxAgeSeconds = 70;
+  const pythConfig = client.deepbook.marginAdmin.newPythConfig(
+    [
+      { coinKey: "SUI", maxConfBps: 300, maxEwmaDifferenceBps: 1500 }, // maxConfBps: 3%, maxEwmaDifferenceBps: 15%
+      { coinKey: "USDC", maxConfBps: 100, maxEwmaDifferenceBps: 500 }, // maxConfBps: 1%, maxEwmaDifferenceBps: 5%
+      { coinKey: "DEEP", maxConfBps: 500, maxEwmaDifferenceBps: 3000 }, // maxConfBps: 5%, maxEwmaDifferenceBps: 30%
+      { coinKey: "WAL", maxConfBps: 500, maxEwmaDifferenceBps: 3000 }, // maxConfBps: 5%, maxEwmaDifferenceBps: 30%
+      { coinKey: "SUIUSDE", maxConfBps: 100, maxEwmaDifferenceBps: 500 }, // maxConfBps: 1%, maxEwmaDifferenceBps: 5%
+      { coinKey: "XBTC", maxConfBps: 200, maxEwmaDifferenceBps: 1000 }, // maxConfBps: 2%, maxEwmaDifferenceBps: 10%
+    ],
+    maxAgeSeconds, // maxAgeSeconds: 70 seconds
+  )(tx);
+  client.deepbook.marginAdmin.removeConfig()(tx);
+  client.deepbook.marginAdmin.addConfig(pythConfig)(tx);
 
   // // 5. Create margin pools
   // const USDCprotocolConfig = client.deepbook.marginMaintainer.newProtocolConfig(
