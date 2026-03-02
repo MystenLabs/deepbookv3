@@ -197,6 +197,7 @@ public fun add_signed_u64(a: u64, a_neg: bool, b: u64, b_neg: bool): (u64, bool)
 
 public fun mul_signed_u64(a: u64, a_neg: bool, b: u64, b_neg: bool): (u64, bool) {
     let product = math::mul(a, b);
+    if (product == 0) return (0, false);
     let is_negative = a_neg != b_neg; // XOR for sign
     (product, is_negative)
 }

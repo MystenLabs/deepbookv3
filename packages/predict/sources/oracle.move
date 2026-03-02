@@ -133,14 +133,16 @@ public fun activate<Underlying>(
 ) {
     assert_authorized_cap(oracle, cap);
     assert!(!oracle.active, EOracleAlreadyActive);
-    assert!(clock.timestamp_ms() < oracle.expiry, EOracleExpired);
+
+    let now = clock.timestamp_ms();
+    assert!(now < oracle.expiry, EOracleExpired);
 
     oracle.active = true;
 
     event::emit(OracleActivated {
         oracle_id: oracle.id.to_inner(),
         expiry: oracle.expiry,
-        timestamp: clock.timestamp_ms(),
+        timestamp: now,
     });
 }
 
@@ -155,6 +157,7 @@ public fun update_prices<Underlying>(
     assert_authorized_cap(oracle, cap);
 
     let now = clock.timestamp_ms();
+    let oracle_id = oracle.id.to_inner();
 
     // If past expiry and not yet settled, freeze settlement price and deactivate
     if (now > oracle.expiry && oracle.settlement_price.is_none()) {
@@ -162,7 +165,7 @@ public fun update_prices<Underlying>(
         oracle.active = false;
 
         event::emit(OracleSettled {
-            oracle_id: oracle.id.to_inner(),
+            oracle_id,
             expiry: oracle.expiry,
             settlement_price: prices.spot,
             timestamp: now,
@@ -173,7 +176,7 @@ public fun update_prices<Underlying>(
     oracle.timestamp = now;
 
     event::emit(OraclePricesUpdated {
-        oracle_id: oracle.id.to_inner(),
+        oracle_id,
         spot: prices.spot,
         forward: prices.forward,
         timestamp: now,
@@ -190,9 +193,11 @@ public fun update_svi<Underlying>(
 ) {
     assert_authorized_cap(oracle, cap);
 
+    let now = clock.timestamp_ms();
+
     oracle.svi = svi;
     oracle.risk_free_rate = risk_free_rate;
-    oracle.timestamp = clock.timestamp_ms();
+    oracle.timestamp = now;
 
     event::emit(OracleSVIUpdated {
         oracle_id: oracle.id.to_inner(),
@@ -204,7 +209,7 @@ public fun update_svi<Underlying>(
         m_negative: svi.m_negative,
         sigma: svi.sigma,
         risk_free_rate,
-        timestamp: oracle.timestamp,
+        timestamp: now,
     });
 }
 
@@ -267,6 +272,24 @@ public fun is_settled<Underlying>(oracle: &OracleSVI<Underlying>): bool {
 /// Check if the oracle is active.
 public fun is_active<Underlying>(oracle: &OracleSVI<Underlying>): bool {
     oracle.active
+}
+
+/// Create a new PriceData struct.
+public fun new_price_data(spot: u64, forward: u64): PriceData {
+    PriceData { spot, forward }
+}
+
+/// Create a new SVIParams struct.
+public fun new_svi_params(
+    a: u64,
+    b: u64,
+    rho: u64,
+    rho_negative: bool,
+    m: u64,
+    m_negative: bool,
+    sigma: u64,
+): SVIParams {
+    SVIParams { a, b, rho, rho_negative, m, m_negative, sigma }
 }
 
 // === Public-Package Functions ===
@@ -431,22 +454,4 @@ public(package) fun create_test_oracle<Underlying>(
 public(package) fun settle_test_oracle<Underlying>(oracle: &mut OracleSVI<Underlying>, price: u64) {
     oracle.settlement_price = option::some(price);
     oracle.active = false;
-}
-
-/// Create a new PriceData struct.
-public fun new_price_data(spot: u64, forward: u64): PriceData {
-    PriceData { spot, forward }
-}
-
-/// Create a new SVIParams struct.
-public fun new_svi_params(
-    a: u64,
-    b: u64,
-    rho: u64,
-    rho_negative: bool,
-    m: u64,
-    m_negative: bool,
-    sigma: u64,
-): SVIParams {
-    SVIParams { a, b, rho, rho_negative, m, m_negative, sigma }
 }
