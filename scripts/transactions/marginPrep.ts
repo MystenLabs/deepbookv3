@@ -11,6 +11,7 @@ import {
   usdcMarginPoolCapID,
   deepMarginPoolCapID,
   walMarginPoolCapID,
+  suiUsdeMarginPoolCapID,
 } from "../config/constants.js";
 import { deepbook } from "@mysten/deepbook-v3";
 import { SuiGrpcClient } from "@mysten/sui/grpc";
@@ -270,6 +271,37 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   //   "WAL",
   //   tx.object(walMarginPoolCapID[env])
   // )(tx);
+
+  // Enable SUIUSDE_USDC for loan from SUIUSDE and USDC pools
+  client.deepbook.marginMaintainer.enableDeepbookPoolForLoan(
+    "SUIUSDE_USDC",
+    "SUIUSDE",
+    tx.object(suiUsdeMarginPoolCapID[env]),
+  )(tx);
+  client.deepbook.marginMaintainer.enableDeepbookPoolForLoan(
+    "SUIUSDE_USDC",
+    "USDC",
+    tx.object(usdcMarginPoolCapID[env]),
+  )(tx);
+
+  // Enable SUI_SUIUSDE for loan from SUI and SUIUSDE pools
+  client.deepbook.marginMaintainer.enableDeepbookPoolForLoan(
+    "SUI_SUIUSDE",
+    "SUI",
+    tx.object(suiMarginPoolCapID[env]),
+  )(tx);
+  client.deepbook.marginMaintainer.enableDeepbookPoolForLoan(
+    "SUI_SUIUSDE",
+    "SUIUSDE",
+    tx.object(suiUsdeMarginPoolCapID[env]),
+  )(tx);
+
+  // Enable XBTC_USDC for loan from USDC pool
+  client.deepbook.marginMaintainer.enableDeepbookPoolForLoan(
+    "XBTC_USDC",
+    "USDC",
+    tx.object(usdcMarginPoolCapID[env]),
+  )(tx);
 
   let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
