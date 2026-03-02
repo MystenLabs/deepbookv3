@@ -10,13 +10,13 @@ use axum::{
     Json, Router,
 };
 use deepbook_schema::models::{
-    AssetSupplied, AssetWithdrawn, CollateralEvent, DeepbookPoolConfigUpdated,
+    AssetSupplied, AssetWithdrawn, BookParamsUpdated, CollateralEvent, DeepbookPoolConfigUpdated,
     DeepbookPoolRegistered, DeepbookPoolUpdated, DeepbookPoolUpdatedRegistry,
-    BookParamsUpdated, InterestParamsUpdated, Liquidation, LoanBorrowed, LoanRepaid,
-    MaintainerCapUpdated, MaintainerFeesWithdrawn, MarginManagerCreated, MarginManagerState,
-    MarginPoolConfigUpdated, MarginPoolCreated, PauseCapUpdated, PoolCreated, Pools,
-    ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn, ReferralFeeEvent, ReferralFeesClaimedEvent,
-    SupplierCapMinted, SupplyReferralMinted,
+    InterestParamsUpdated, Liquidation, LoanBorrowed, LoanRepaid, MaintainerCapUpdated,
+    MaintainerFeesWithdrawn, MarginManagerCreated, MarginManagerState, MarginPoolConfigUpdated,
+    MarginPoolCreated, PauseCapUpdated, PoolCreated, Pools, ProtocolFeesIncreasedEvent,
+    ProtocolFeesWithdrawn, ReferralFeeEvent, ReferralFeesClaimedEvent, SupplierCapMinted,
+    SupplyReferralMinted,
 };
 use deepbook_schema::*;
 use diesel::dsl::count_star;
@@ -1890,9 +1890,7 @@ async fn book_params_updated(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Option<BookParamsUpdated>>, DeepBookError> {
     let pool_id = params.get("pool_id").cloned().unwrap_or_default();
-    Ok(Json(
-        state.reader.get_book_params_updated(pool_id).await?,
-    ))
+    Ok(Json(state.reader.get_book_params_updated(pool_id).await?))
 }
 
 fn parse_type_input(type_str: &str) -> Result<TypeInput, DeepBookError> {

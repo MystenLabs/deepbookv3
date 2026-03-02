@@ -1,13 +1,13 @@
 use crate::error::DeepBookError;
 use crate::metrics::RpcMetrics;
 use deepbook_schema::models::{
-    AssetSupplied, AssetWithdrawn, CollateralEvent, DeepbookPoolConfigUpdated,
+    AssetSupplied, AssetWithdrawn, BookParamsUpdated, CollateralEvent, DeepbookPoolConfigUpdated,
     DeepbookPoolRegistered, DeepbookPoolUpdated, DeepbookPoolUpdatedRegistry,
     InterestParamsUpdated, Liquidation, LoanBorrowed, LoanRepaid, MaintainerCapUpdated,
     MaintainerFeesWithdrawn, MarginManagerCreated, MarginManagerState, MarginPoolConfigUpdated,
-    MarginPoolCreated, OrderFillSummary, OrderStatus, PauseCapUpdated, Pools,
-    BookParamsUpdated, PoolCreated, ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn,
-    ReferralFeeEvent, ReferralFeesClaimedEvent, SupplierCapMinted, SupplyReferralMinted,
+    MarginPoolCreated, OrderFillSummary, OrderStatus, PauseCapUpdated, PoolCreated, Pools,
+    ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn, ReferralFeeEvent, ReferralFeesClaimedEvent,
+    SupplierCapMinted, SupplyReferralMinted,
 };
 use deepbook_schema::schema;
 use diesel::deserialize::FromSqlRow;
