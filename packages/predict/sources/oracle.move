@@ -15,10 +15,7 @@ module deepbook_predict::oracle;
 use deepbook::math;
 use deepbook_predict::{constants, math as predict_math};
 use std::string::String;
-use sui::{clock::Clock, dynamic_field as df, event};
-
-use fun df::exists_ as UID.exists_;
-use fun df::add as UID.add;
+use sui::{clock::Clock, event, vec_set::{Self, VecSet}};
 
 // === Errors ===
 
@@ -27,7 +24,6 @@ const EOracleStale: u64 = 1;
 const EOracleAlreadyActive: u64 = 2;
 const EOracleExpired: u64 = 3;
 const ECannotBeNegative: u64 = 4;
-const ECapAlreadyRegistered: u64 = 5;
 
 // === Events ===
 
@@ -66,9 +62,6 @@ public struct OracleSVIUpdated has copy, drop, store {
 
 // === Structs ===
 
-/// Dynamic field key for additional authorized caps on an oracle.
-public struct AuthorizedCapKey(ID) has copy, drop, store;
-
 /// SVI volatility surface parameters.
 /// All values scaled by FLOAT_SCALING (1e9).
 public struct SVIParams has copy, drop, store {
@@ -101,8 +94,8 @@ public struct PriceData has copy, drop, store {
 /// One oracle per underlying + expiry combination.
 public struct OracleSVI has key {
     id: UID,
-    /// ID of the OracleCap authorized to update this oracle
-    oracle_cap_id: ID,
+    /// IDs of OracleCaps authorized to update this oracle
+    authorized_caps: VecSet<ID>,
     /// The underlying asset this oracle tracks (e.g., "BTC", "ETH")
     underlying_asset: String,
     /// Expiration timestamp in milliseconds
@@ -300,9 +293,7 @@ public fun new_svi_params(
 
 /// Register an additional cap as authorized to update an oracle.
 public(package) fun register_cap(oracle: &mut OracleSVI, cap: &OracleCapSVI) {
-    let cap_id = cap.id.to_inner();
-    assert!(!oracle.id.exists_<AuthorizedCapKey>(AuthorizedCapKey(cap_id)), ECapAlreadyRegistered);
-    oracle.id.add(AuthorizedCapKey(cap_id), true);
+    oracle.authorized_caps.insert(cap.id.to_inner());
 }
 
 /// Create a new OracleCap. Called by registry during setup.
@@ -320,9 +311,12 @@ public(package) fun create_oracle(
     let oracle_uid = object::new(ctx);
     let oracle_id = oracle_uid.to_inner();
 
+    let mut authorized_caps = vec_set::empty();
+    authorized_caps.insert(cap.id.to_inner());
+
     let oracle = OracleSVI {
         id: oracle_uid,
-        oracle_cap_id: cap.id.to_inner(),
+        authorized_caps,
         underlying_asset,
         expiry,
         active: false,
@@ -421,14 +415,8 @@ fun compute_nd2(oracle: &OracleSVI, strike: u64, is_up: bool): u64 {
     predict_math::normal_cdf(d2, cdf_neg)
 }
 
-/// Check that the cap is the original creator cap or a registered additional cap.
 fun assert_authorized_cap(oracle: &OracleSVI, cap: &OracleCapSVI) {
-    let cap_id = cap.id.to_inner();
-    assert!(
-        oracle.oracle_cap_id == cap_id ||
-            oracle.id.exists_<AuthorizedCapKey>(AuthorizedCapKey(cap_id)),
-        EInvalidOracleCap,
-    );
+    assert!(oracle.authorized_caps.contains(&cap.id.to_inner()), EInvalidOracleCap);
 }
 
 #[test_only]
@@ -444,7 +432,7 @@ public(package) fun create_test_oracle(
 ): OracleSVI {
     OracleSVI {
         id: object::new(ctx),
-        oracle_cap_id: object::id_from_address(@0x0),
+        authorized_caps: vec_set::empty(),
         underlying_asset,
         expiry,
         active: true,
