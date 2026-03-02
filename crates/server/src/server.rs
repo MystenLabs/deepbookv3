@@ -12,10 +12,11 @@ use axum::{
 use deepbook_schema::models::{
     AssetSupplied, AssetWithdrawn, CollateralEvent, DeepbookPoolConfigUpdated,
     DeepbookPoolRegistered, DeepbookPoolUpdated, DeepbookPoolUpdatedRegistry,
-    InterestParamsUpdated, Liquidation, LoanBorrowed, LoanRepaid, MaintainerCapUpdated,
-    MaintainerFeesWithdrawn, MarginManagerCreated, MarginManagerState, MarginPoolConfigUpdated,
-    MarginPoolCreated, PauseCapUpdated, Pools, ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn,
-    ReferralFeeEvent, ReferralFeesClaimedEvent, SupplierCapMinted, SupplyReferralMinted,
+    BookParamsUpdated, InterestParamsUpdated, Liquidation, LoanBorrowed, LoanRepaid,
+    MaintainerCapUpdated, MaintainerFeesWithdrawn, MarginManagerCreated, MarginManagerState,
+    MarginPoolConfigUpdated, MarginPoolCreated, PauseCapUpdated, PoolCreated, Pools,
+    ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn, ReferralFeeEvent, ReferralFeesClaimedEvent,
+    SupplierCapMinted, SupplyReferralMinted,
 };
 use deepbook_schema::*;
 use diesel::dsl::count_star;
@@ -114,6 +115,8 @@ pub const DEPOSITED_ASSETS_PATH: &str = "/deposited_assets/:balance_manager_ids"
 pub const COLLATERAL_EVENTS_PATH: &str = "/collateral_events";
 pub const GET_POINTS_PATH: &str = "/get_points";
 pub const PORTFOLIO_PATH: &str = "/portfolio/:wallet_address";
+pub const POOL_CREATED_PATH: &str = "/pool_created";
+pub const BOOK_PARAMS_UPDATED_PATH: &str = "/book_params_updated";
 
 type AdminRateLimiter = RateLimiter<
     governor::state::NotKeyed,
@@ -402,6 +405,8 @@ pub(crate) fn make_router(state: Arc<AppState>) -> Router {
         .route(COLLATERAL_EVENTS_PATH, get(collateral_events))
         .route(GET_POINTS_PATH, get(get_points))
         .route(PORTFOLIO_PATH, get(portfolio))
+        .route(POOL_CREATED_PATH, get(pool_created))
+        .route(BOOK_PARAMS_UPDATED_PATH, get(book_params_updated))
         .with_state(state.clone());
 
     let rpc_routes = Router::new()
@@ -1872,6 +1877,22 @@ async fn get_net_deposits(
         .await?;
 
     Ok(Json(net_deposits))
+}
+
+async fn pool_created(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<PoolCreated>>, DeepBookError> {
+    Ok(Json(state.reader.get_pool_created().await?))
+}
+
+async fn book_params_updated(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Option<BookParamsUpdated>>, DeepBookError> {
+    let pool_id = params.get("pool_id").cloned().unwrap_or_default();
+    Ok(Json(
+        state.reader.get_book_params_updated(pool_id).await?,
+    ))
 }
 
 fn parse_type_input(type_str: &str) -> Result<TypeInput, DeepBookError> {

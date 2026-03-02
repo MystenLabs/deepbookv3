@@ -6,8 +6,8 @@ use deepbook_schema::models::{
     InterestParamsUpdated, Liquidation, LoanBorrowed, LoanRepaid, MaintainerCapUpdated,
     MaintainerFeesWithdrawn, MarginManagerCreated, MarginManagerState, MarginPoolConfigUpdated,
     MarginPoolCreated, OrderFillSummary, OrderStatus, PauseCapUpdated, Pools,
-    ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn, ReferralFeeEvent, ReferralFeesClaimedEvent,
-    SupplierCapMinted, SupplyReferralMinted,
+    BookParamsUpdated, PoolCreated, ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn,
+    ReferralFeeEvent, ReferralFeesClaimedEvent, SupplierCapMinted, SupplyReferralMinted,
 };
 use deepbook_schema::schema;
 use diesel::deserialize::FromSqlRow;
@@ -1745,6 +1745,25 @@ impl Reader {
                     - margin_debt_usd,
             },
         })
+    }
+
+    pub async fn get_pool_created(&self) -> Result<Vec<PoolCreated>, DeepBookError> {
+        let query = schema::pool_created::table
+            .select(PoolCreated::as_select())
+            .order_by(schema::pool_created::checkpoint_timestamp_ms.desc());
+        Ok(self.results(query).await?)
+    }
+
+    pub async fn get_book_params_updated(
+        &self,
+        pool_id: String,
+    ) -> Result<Option<BookParamsUpdated>, DeepBookError> {
+        let query = schema::book_params_updated::table
+            .select(BookParamsUpdated::as_select())
+            .filter(schema::book_params_updated::pool_id.eq(pool_id))
+            .order_by(schema::book_params_updated::checkpoint_timestamp_ms.desc())
+            .limit(1);
+        Ok(self.results(query).await?.into_iter().next())
     }
 }
 

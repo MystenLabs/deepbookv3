@@ -1,6 +1,8 @@
 use anyhow::Context;
 use clap::Parser;
 use deepbook_indexer::handlers::balance_manager_event_handler::BalanceManagerEventHandler;
+use deepbook_indexer::handlers::book_params_updated_handler::BookParamsUpdatedHandler;
+use deepbook_indexer::handlers::pool_created_handler::PoolCreatedHandler;
 use deepbook_indexer::handlers::balances_handler::BalancesHandler;
 use deepbook_indexer::handlers::deep_burned_handler::DeepBurnedHandler;
 use deepbook_indexer::handlers::deepbook_referral_created_event_handler::DeepBookReferralCreatedEventHandler;
@@ -293,6 +295,12 @@ async fn main() -> Result<(), anyhow::Error> {
                     .await?;
                 indexer
                     .concurrent_pipeline(VotesHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(PoolCreatedHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(BookParamsUpdatedHandler::new(env), Default::default())
                     .await?;
             }
             Package::DeepbookMargin => {
