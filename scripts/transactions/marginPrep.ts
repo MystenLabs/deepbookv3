@@ -185,7 +185,7 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
       supplyCap: 15,
       maxUtilizationRate: 0.9,
       referralSpread: 0.2,
-      minBorrow: 0.1,
+      minBorrow: 0.00001,
       rateLimitCapacity: 3,
       rateLimitRefillRatePerMs: 0.00000014, // 3 / 21_600_000 (6 hours)
       rateLimitEnabled: true,
@@ -303,7 +303,7 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
     tx.object(usdcMarginPoolCapID[env]),
   )(tx);
 
-  let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
+  const res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
   console.dir(res, { depth: null });
 })();
