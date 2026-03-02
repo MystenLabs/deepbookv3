@@ -85,7 +85,7 @@ fun cdf_pdf(x: u64): u64 {
     math::mul(exp(x_sq_half, true), 398_942_280)
 }
 
-/// A&S polynomial using grouped Horner's method (6 muls instead of 9).
+/// A&S polynomial using grouped Horner's method.
 /// pos = t * (a1 + t² * (a3 + t² * a5))
 /// neg = t² * (a2 + t² * a4)
 fun cdf_poly(t: u64): u64 {
@@ -145,7 +145,7 @@ fun log_ratio(y: u64): u64 {
 }
 
 /// Normalize x into [FLOAT_SCALING, 2*FLOAT_SCALING) via binary search.
-/// Returns (y, n) where x = y * 2^n. O(1) — 6 comparisons + shifts.
+/// Returns (y, n) where x = y * 2^n.
 fun normalize(x: u64): (u64, u64) {
     let mut y = x;
     let mut n: u64 = 0;
