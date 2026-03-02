@@ -178,25 +178,24 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   //   SUIUSDEprotocolConfig,
   // )(tx);
 
-  const XBTCprotocolConfig =
-    client.deepbook.marginMaintainer.newProtocolConfig(
-      "XBTC",
-      {
-        supplyCap: 15,
-        maxUtilizationRate: 0.9,
-        referralSpread: 0.2,
-        minBorrow: 0.1,
-        rateLimitCapacity: 3,
-        rateLimitRefillRatePerMs: 0.00000014, // 3 / 21_600_000 (6 hours)
-        rateLimitEnabled: true,
-      },
-      {
-        baseRate: 0.02,
-        baseSlope: 0.15,
-        optimalUtilization: 0.8,
-        excessSlope: 5,
-      },
-    )(tx);
+  const XBTCprotocolConfig = client.deepbook.marginMaintainer.newProtocolConfig(
+    "XBTC",
+    {
+      supplyCap: 15,
+      maxUtilizationRate: 0.9,
+      referralSpread: 0.2,
+      minBorrow: 0.1,
+      rateLimitCapacity: 3,
+      rateLimitRefillRatePerMs: 0.00000014, // 3 / 21_600_000 (6 hours)
+      rateLimitEnabled: true,
+    },
+    {
+      baseRate: 0.02,
+      baseSlope: 0.15,
+      optimalUtilization: 0.8,
+      excessSlope: 5,
+    },
+  )(tx);
   client.deepbook.marginMaintainer.createMarginPool(
     "XBTC",
     XBTCprotocolConfig,
