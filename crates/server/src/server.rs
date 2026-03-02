@@ -1889,7 +1889,11 @@ async fn book_params_updated(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Option<BookParamsUpdated>>, DeepBookError> {
-    let pool_id = params.get("pool_id").cloned().unwrap_or_default();
+    let pool_id = params
+        .get("pool_id")
+        .cloned()
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| DeepBookError::bad_request("pool_id is required"))?;
     Ok(Json(state.reader.get_book_params_updated(pool_id).await?))
 }
 
