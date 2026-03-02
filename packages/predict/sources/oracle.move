@@ -303,7 +303,6 @@ public(package) fun create_oracle_cap(ctx: &mut TxContext): OracleCapSVI {
 
 /// Create a new SVI Oracle for an underlying + expiry. Returns the oracle ID.
 public(package) fun create_oracle(
-    cap: &OracleCapSVI,
     underlying_asset: String,
     expiry: u64,
     ctx: &mut TxContext,
@@ -311,12 +310,9 @@ public(package) fun create_oracle(
     let oracle_uid = object::new(ctx);
     let oracle_id = oracle_uid.to_inner();
 
-    let mut authorized_caps = vec_set::empty();
-    authorized_caps.insert(cap.id.to_inner());
-
     let oracle = OracleSVI {
         id: oracle_uid,
-        authorized_caps,
+        authorized_caps: vec_set::empty(),
         underlying_asset,
         expiry,
         active: false,
