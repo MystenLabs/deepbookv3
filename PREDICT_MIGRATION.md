@@ -24,8 +24,10 @@ Tests ship separately at the end (split into unit + integration).
 - [ ] `packages/predict/sources/oracle.move`
 
 **What ships:**
-- `OracleSVI<Underlying>` — shared object: SVI params, spot/forward, settlement
+- `OracleSVI` — shared object: SVI params, spot/forward, settlement, `underlying_asset: String` (no phantom type)
 - `OracleCapSVI` — operator capability for price feeds
+- `authorized_caps: VecSet<ID>` — cap authorization via VecSet (no dynamic fields)
+- `create_oracle` — no cap param; registry gates creation, caps registered separately via `register_cap`
 - `compute_nd2` → Black-Scholes N(d2) via SVI surface
 - `get_binary_price` — main pricing entry point
 - Staleness checks, activation, settlement
@@ -73,6 +75,8 @@ Tests ship separately at the end (split into unit + integration).
 - `PredictManager` — per-user shared object wrapping DeepBook `BalanceManager`
 - Position table: `Table<MarketKey, UserPosition>` (free + locked)
 - Collateral table: `Table<CollateralKey, u64>` (paired position locks)
+
+**Note:** Oracle is now non-generic (`OracleSVI` not `OracleSVI<T>`), so `assert_matches_oracle` takes `&OracleSVI` directly.
 
 ---
 
@@ -188,7 +192,7 @@ PR 1  Oracle (+ constants, math)       ← no deps, start here
 
 | PR | Branch | Status | Link |
 |----|--------|--------|------|
-| 1 | | pending | |
+| 1 | `at/predict-pr1-oracle` | open | [#877](https://github.com/MystenLabs/deepbookv3/pull/877) |
 | 2 | | blocked on 1 | |
 | 3 | | blocked on 1 | |
 | 4 | | blocked on 2,3 | |
