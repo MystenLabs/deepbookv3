@@ -566,6 +566,23 @@ diesel::table! {
 }
 
 diesel::table! {
+    book_params_updated (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pool_id -> Text,
+        tick_size -> Int8,
+        lot_size -> Int8,
+        min_size -> Int8,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
     pool_prices (event_digest) {
         event_digest -> Text,
         digest -> Text,
@@ -840,6 +857,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     assets,
     balance_manager_created,
     balances,
+    book_params_updated,
     collateral_events,
     conditional_order_events,
     deep_burned,

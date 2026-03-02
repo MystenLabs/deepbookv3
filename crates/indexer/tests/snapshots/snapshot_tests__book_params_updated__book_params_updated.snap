@@ -1,0 +1,49 @@
+---
+source: crates/indexer/tests/snapshot_tests.rs
+expression: rows
+snapshot_kind: text
+---
+[
+  {
+    "event_digest": "CKtJFhYSm7dAvVozv1SnrfzzfgkYJ15nJXWyUtkNRXNR0",
+    "digest": "CKtJFhYSm7dAvVozv1SnrfzzfgkYJ15nJXWyUtkNRXNR",
+    "sender": "0xd0ec0b201de6b4e7f425918bbd7151c37fc1b06c59b3961a2a00db74f6ea865e",
+    "checkpoint": "144783257",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1747162116903",
+    "package": "0xcaf6ba059d539a97646d47f0b9ddf843e138d215e2a12ca1f4585d386f7aec3a",
+    "pool_id": "0xe05dafb5133bcffb8d59f4e12465dc0e9faeaa05e3e342a08fe135800e3e4407",
+    "tick_size": "100",
+    "lot_size": "100000000",
+    "min_size": "1000000000",
+    "onchain_timestamp": "1747162116831"
+  },
+  {
+    "event_digest": "CKtJFhYSm7dAvVozv1SnrfzzfgkYJ15nJXWyUtkNRXNR1",
+    "digest": "CKtJFhYSm7dAvVozv1SnrfzzfgkYJ15nJXWyUtkNRXNR",
+    "sender": "0xd0ec0b201de6b4e7f425918bbd7151c37fc1b06c59b3961a2a00db74f6ea865e",
+    "checkpoint": "144783257",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1747162116903",
+    "package": "0xcaf6ba059d539a97646d47f0b9ddf843e138d215e2a12ca1f4585d386f7aec3a",
+    "pool_id": "0xa01557a2c5cb12fa6046d7c6921fa6665b7c009a1adec531947e1170ebbb0695",
+    "tick_size": "10000",
+    "lot_size": "100000000000000000",
+    "min_size": "1000000000000000000",
+    "onchain_timestamp": "1747162116831"
+  },
+  {
+    "event_digest": "CKtJFhYSm7dAvVozv1SnrfzzfgkYJ15nJXWyUtkNRXNR2",
+    "digest": "CKtJFhYSm7dAvVozv1SnrfzzfgkYJ15nJXWyUtkNRXNR",
+    "sender": "0xd0ec0b201de6b4e7f425918bbd7151c37fc1b06c59b3961a2a00db74f6ea865e",
+    "checkpoint": "144783257",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1747162116903",
+    "package": "0xcaf6ba059d539a97646d47f0b9ddf843e138d215e2a12ca1f4585d386f7aec3a",
+    "pool_id": "0xa01557a2c5cb12fa6046d7c6921fa6665b7c009a1adec531947e1170ebbb0695",
+    "tick_size": "10000",
+    "lot_size": "100000000",
+    "min_size": "1000000000",
+    "onchain_timestamp": "1747162116831"
+  }
+]

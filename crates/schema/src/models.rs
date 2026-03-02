@@ -4,6 +4,7 @@ use crate::schema::{
     asset_withdrawn,
     balance_manager_created,
     balances,
+    book_params_updated,
     // Collateral Events (deposit/withdraw)
     collateral_events,
     // TPSL (Take Profit/Stop Loss) Events
@@ -270,6 +271,22 @@ pub struct PoolCreated {
     pub min_size: i64,
     pub whitelisted_pool: bool,
     pub treasury_address: String,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = book_params_updated, primary_key(event_digest))]
+pub struct BookParamsUpdated {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub tick_size: i64,
+    pub lot_size: i64,
+    pub min_size: i64,
+    pub onchain_timestamp: i64,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
