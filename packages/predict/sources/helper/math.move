@@ -46,6 +46,7 @@ public fun exp(x: u64, x_negative: bool): u64 {
 
     if (x_negative) {
         // e^(-x) = (1/e^r) / 2^n
+        if (n >= 64) return 0;
         let result = math::div(constants::float_scaling!(), exp_r);
         result >> (n as u8)
     } else {
