@@ -1,0 +1,13 @@
+[package]
+name = "deepbook_predict"
+edition = "2024.beta"
+version = "0.0.1"
+
+[dependencies]
+deepbook = { local = "../deepbook" }
+
+[addresses]
+deepbook_predict = "0x0"
+
+[environments]
+local = "b485d3e3"
