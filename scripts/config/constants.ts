@@ -56,6 +56,11 @@ export const suiUsdeMarginPoolCapID = {
   testnet: "",
 };
 
+export const xbtcMarginPoolCapID = {
+  mainnet: "0x2c419c0e02ed1a3ea6a1bbbba95b039680afc99eae6ae313a98bcc9f5a9caa58",
+  testnet: "",
+};
+
 export const liquidationAdminCapID = {
   mainnet: "0x21521b9ddc1cfc76b6f4c9462957b4d58a998a23eb100ab2821d27d55c60d0a9",
   testnet: "",
