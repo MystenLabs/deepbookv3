@@ -40,7 +40,7 @@ When asked for a PR summary/description, or when creating a PR, always use this 
 - **Summary**: Bullet points describing what changed and why
 - **Test plan**: Checklist of manual or automated verification steps
 
-When creating a PR with `gh pr create`, use the branch name convention `tlee/<topic>` and format the body as:
+When creating a PR with `gh pr create`, use the branch name convention `<username>/<topic>` and format the body as:
 ```
 ## Summary
 - <bullet points>
