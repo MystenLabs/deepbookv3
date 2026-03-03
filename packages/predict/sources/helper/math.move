@@ -46,6 +46,7 @@ public fun exp(x: u64, x_negative: bool): u64 {
 
     if (x_negative) {
         // e^(-x) = (1/e^r) / 2^n
+        if (n >= 64) return 0;
         let result = math::div(constants::float_scaling!(), exp_r);
         result >> (n as u8)
     } else {
@@ -85,20 +86,21 @@ fun cdf_pdf(x: u64): u64 {
     math::mul(exp(x_sq_half, true), 398_942_280)
 }
 
-/// A&S polynomial with positive/negative coefficient split.
+/// A&S polynomial using grouped Horner's method.
+/// pos = t * (a1 + t² * (a3 + t² * a5))
+/// neg = t² * (a2 + t² * a4)
 fun cdf_poly(t: u64): u64 {
     let t2 = math::mul(t, t);
-    let t3 = math::mul(t2, t);
-    let t4 = math::mul(t3, t);
-    let t5 = math::mul(t4, t);
 
-    let pos =
-        math::mul(319_381_530, t)
-        + math::mul(1_781_477_937, t3)
-        + math::mul(1_330_274_429, t5);
+    let pos = math::mul(
+        t,
+        319_381_530
+        + math::mul(t2, 1_781_477_937
+            + math::mul(t2, 1_330_274_429)),
+    );
 
-    let neg = math::mul(356_563_782, t2)
-        + math::mul(1_821_255_978, t4);
+    let neg = math::mul(t2, 356_563_782
+        + math::mul(t2, 1_821_255_978));
 
     pos - neg
 }
@@ -143,15 +145,20 @@ fun log_ratio(y: u64): u64 {
     math::div(y - constants::float_scaling!(), y + constants::float_scaling!())
 }
 
-/// Normalize x into [FLOAT_SCALING, 2*FLOAT_SCALING) by halving.
+/// Normalize x into [FLOAT_SCALING, 2*FLOAT_SCALING) via binary search.
 /// Returns (y, n) where x = y * 2^n.
 fun normalize(x: u64): (u64, u64) {
     let mut y = x;
     let mut n: u64 = 0;
-    while (y >= 2 * constants::float_scaling!()) {
-        y = y / 2;
-        n = n + 1;
-    };
+    let scale = constants::float_scaling!();
+
+    if (y >= scale << 32) { y = y >> 32; n = n + 32; };
+    if (y >= scale << 16) { y = y >> 16; n = n + 16; };
+    if (y >= scale << 8) { y = y >> 8; n = n + 8; };
+    if (y >= scale << 4) { y = y >> 4; n = n + 4; };
+    if (y >= scale << 2) { y = y >> 2; n = n + 2; };
+    if (y >= scale << 1) { y = y >> 1; n = n + 1; };
+
     (y, n)
 }
 
