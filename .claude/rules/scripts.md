@@ -19,6 +19,11 @@ paths:
 - Run script: `pnpm tsx transactions/<script>.ts`
 - With gas object: `GAS_OBJECT=0x... pnpm tsx transactions/<script>.ts`
 
+## User Preferences
+
+### "Update SDK"
+When the user says "update sdk", directly update the version in `scripts/package.json` and run `pnpm install` in the `scripts/` directory. Do not ask for confirmation — just do it.
+
 ## Key Patterns
 
 ### Transaction Setup

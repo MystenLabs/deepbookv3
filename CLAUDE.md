@@ -36,9 +36,18 @@ Claude automatically loads contextual knowledge based on files being edited:
 
 ## PR Descriptions
 
-When asked for a PR summary/description, always use this format:
+When asked for a PR summary/description, or when creating a PR, always use this format:
 - **Summary**: Bullet points describing what changed and why
 - **Test plan**: Checklist of manual or automated verification steps
+
+When creating a PR with `gh pr create`, use the branch name convention `tlee/<topic>` and format the body as:
+```
+## Summary
+- <bullet points>
+
+## Test plan
+- [ ] <checklist items>
+```
 
 ## Wrap Up
 
