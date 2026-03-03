@@ -162,6 +162,7 @@ public fun update_prices(
             settlement_price: prices.spot,
             timestamp: now,
         });
+        return
     };
 
     oracle.prices = prices;
@@ -184,6 +185,7 @@ public fun update_svi(
     clock: &Clock,
 ) {
     assert_authorized_cap(oracle, cap);
+    assert!(!is_settled(oracle), EOracleExpired);
 
     let now = clock.timestamp_ms();
 

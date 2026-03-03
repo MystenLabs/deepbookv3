@@ -46,23 +46,11 @@ public fun exp(x: u64, x_negative: bool): u64 {
 
     if (x_negative) {
         // e^(-x) = (1/e^r) / 2^n
-        let mut result = math::div(constants::float_scaling!(), exp_r);
-        let mut j: u64 = 0;
-        while (j < n) {
-            result = result / 2;
-            if (result == 0) return 0;
-            j = j + 1;
-        };
-        result
+        let result = math::div(constants::float_scaling!(), exp_r);
+        result >> (n as u8)
     } else {
         // e^x = e^r * 2^n
-        let mut result = exp_r;
-        let mut j: u64 = 0;
-        while (j < n) {
-            result = result * 2;
-            j = j + 1;
-        };
-        result
+        exp_r << (n as u8)
     }
 }
 
