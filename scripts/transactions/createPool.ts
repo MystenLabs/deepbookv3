@@ -24,7 +24,7 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
 
   client.deepbook.deepBookAdmin.createPoolAdmin({
     baseCoinKey: "SUI",
-    quoteCoinKey: "USDE",
+    quoteCoinKey: "USDSUI",
     tickSize: 0.0001,
     lotSize: 0.1,
     minSize: 0.1,
@@ -33,7 +33,7 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   })(tx);
 
   client.deepbook.deepBookAdmin.createPoolAdmin({
-    baseCoinKey: "USDE",
+    baseCoinKey: "USDSUI",
     quoteCoinKey: "USDC",
     tickSize: 0.000001,
     lotSize: 0.1,
