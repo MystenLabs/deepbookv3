@@ -20,6 +20,8 @@ use sui::{balance::{Self, Balance}, coin::Coin, table::{Self, Table}};
 // === Errors ===
 const EInsufficientBalance: u64 = 1;
 const EExceedsMaxTotalExposure: u64 = 2;
+const EOracleExposureNotFound: u64 = 3;
+const EWithdrawExceedsAvailable: u64 = 4;
 
 // === Structs ===
 
@@ -115,6 +117,7 @@ public(package) fun execute_redeem<Quote>(
         vault.total_down_short = vault.total_down_short - quantity;
     };
 
+    assert!(vault.oracle_exposure.contains(oracle_id), EOracleExposureNotFound);
     let exp = &mut vault.oracle_exposure[oracle_id];
     if (is_up) { exp.up_short = exp.up_short - quantity } else {
         exp.down_short = exp.down_short - quantity
@@ -135,6 +138,9 @@ public(package) fun deposit<Quote>(vault: &mut Vault<Quote>, coin: Coin<Quote>) 
 }
 
 /// Admin withdraws USDC from the vault.
+/// Cannot withdraw more than balance minus total exposure.
 public(package) fun withdraw<Quote>(vault: &mut Vault<Quote>, amount: u64): Balance<Quote> {
+    let available = vault.balance.value() - vault.max_liability();
+    assert!(amount <= available, EWithdrawExceedsAvailable);
     vault.balance.split(amount)
 }
