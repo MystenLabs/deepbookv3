@@ -245,27 +245,29 @@ async fn main() -> Result<(), anyhow::Error> {
         match package {
             Package::Deepbook => {
                 // DeepBook core event handlers
-                indexer
-                    .concurrent_pipeline(BalanceManagerEventHandler::new(env), Default::default())
-                    .await?;
+                // TODO: Re-enable after indexer catches up to tip
+                // indexer
+                //     .concurrent_pipeline(BalanceManagerEventHandler::new(env), Default::default())
+                //     .await?;
                 indexer
                     .concurrent_pipeline(BalancesHandler::new(env), Default::default())
                     .await?;
                 indexer
                     .concurrent_pipeline(DeepBurnedHandler::new(env), Default::default())
                     .await?;
-                indexer
-                    .concurrent_pipeline(
-                        DeepBookReferralCreatedEventHandler::new(env),
-                        Default::default(),
-                    )
-                    .await?;
-                indexer
-                    .concurrent_pipeline(
-                        DeepBookReferralSetEventHandler::new(env),
-                        Default::default(),
-                    )
-                    .await?;
+                // TODO: Re-enable after indexer catches up to tip
+                // indexer
+                //     .concurrent_pipeline(
+                //         DeepBookReferralCreatedEventHandler::new(env),
+                //         Default::default(),
+                //     )
+                //     .await?;
+                // indexer
+                //     .concurrent_pipeline(
+                //         DeepBookReferralSetEventHandler::new(env),
+                //         Default::default(),
+                //     )
+                //     .await?;
                 indexer
                     .concurrent_pipeline(FlashLoanHandler::new(env), Default::default())
                     .await?;
@@ -296,12 +298,13 @@ async fn main() -> Result<(), anyhow::Error> {
                 indexer
                     .concurrent_pipeline(VotesHandler::new(env), Default::default())
                     .await?;
-                indexer
-                    .concurrent_pipeline(PoolCreatedHandler::new(env), Default::default())
-                    .await?;
-                indexer
-                    .concurrent_pipeline(BookParamsUpdatedHandler::new(env), Default::default())
-                    .await?;
+                // TODO: Re-enable after indexer catches up to tip
+                // indexer
+                //     .concurrent_pipeline(PoolCreatedHandler::new(env), Default::default())
+                //     .await?;
+                // indexer
+                //     .concurrent_pipeline(BookParamsUpdatedHandler::new(env), Default::default())
+                //     .await?;
             }
             Package::DeepbookMargin => {
                 indexer
