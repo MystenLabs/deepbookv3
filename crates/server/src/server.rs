@@ -462,14 +462,17 @@ async fn status(
         let checkpoint_lag = latest_checkpoint as i64 - checkpoint_hi;
         let time_lag_ms = current_time_ms - timestamp_ms_hi;
         let time_lag_seconds = time_lag_ms / 1000;
+        let is_backfill = pipeline.contains("@backfill");
 
-        // Track the earliest checkpoint and pipeline with max lag
-        if checkpoint_hi < min_checkpoint {
-            min_checkpoint = checkpoint_hi;
-        }
-        if checkpoint_lag > max_checkpoint_lag {
-            max_checkpoint_lag = checkpoint_lag;
-            max_lag_pipeline_name = pipeline.clone();
+        // Exclude backfill pipelines from health calculation
+        if !is_backfill {
+            if checkpoint_hi < min_checkpoint {
+                min_checkpoint = checkpoint_hi;
+            }
+            if checkpoint_lag > max_checkpoint_lag {
+                max_checkpoint_lag = checkpoint_lag;
+                max_lag_pipeline_name = pipeline.clone();
+            }
         }
 
         pipelines.push(serde_json::json!({
@@ -480,12 +483,19 @@ async fn status(
             "checkpoint_lag": checkpoint_lag,
             "time_lag_seconds": time_lag_seconds,
             "latest_onchain_checkpoint": latest_checkpoint,
+            "is_backfill": is_backfill,
         }));
     }
 
     let max_time_lag_seconds = pipelines
         .iter()
-        .filter_map(|p| p["time_lag_seconds"].as_i64())
+        .filter_map(|p| {
+            if p["is_backfill"].as_bool() == Some(true) {
+                None
+            } else {
+                p["time_lag_seconds"].as_i64()
+            }
+        })
         .max()
         .unwrap_or(0);
 
