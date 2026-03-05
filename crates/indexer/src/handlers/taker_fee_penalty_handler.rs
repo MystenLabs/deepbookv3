@@ -1,5 +1,4 @@
 use crate::models::deepbook::state::TakerFeePenaltyApplied;
-use bigdecimal::BigDecimal;
 use deepbook_schema::models::TakerFeePenaltyApplied as TakerFeePenaltyAppliedModel;
 
 define_handler! {
@@ -17,7 +16,7 @@ define_handler! {
         package: meta.package(),
         pool_id: event.pool_id.to_string(),
         balance_manager_id: event.balance_manager_id.to_string(),
-        order_id: BigDecimal::from(event.order_id),
+        order_id: event.order_id.to_string(),
         taker_fee_without_penalty: event.taker_fee_without_penalty as i64,
         taker_fee: event.taker_fee as i64,
     }

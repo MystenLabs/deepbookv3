@@ -42,7 +42,7 @@ CREATE TABLE taker_fee_penalty_applied (
     package                     TEXT        NOT NULL,
     pool_id                     TEXT        NOT NULL,
     balance_manager_id          TEXT        NOT NULL,
-    order_id                    NUMERIC     NOT NULL,
+    order_id                    TEXT     NOT NULL,
     taker_fee_without_penalty   BIGINT      NOT NULL,
     taker_fee                   BIGINT      NOT NULL
 );

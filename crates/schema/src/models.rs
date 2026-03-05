@@ -368,9 +368,6 @@ pub struct EwmaUpdate {
     pub package: String,
     pub pool_id: String,
     pub gas_price: i64,
-    // *****************************************************
-    // Check the values of those to not cause overflow
-    // because o fu64 / i64 discrepancy
     pub mean: i64,
     pub variance: i64,
     pub onchain_timestamp: i64,
@@ -387,7 +384,7 @@ pub struct TakerFeePenaltyApplied {
     pub package: String,
     pub pool_id: String,
     pub balance_manager_id: String,
-    pub order_id: BigDecimal,
+    pub order_id: String, // u128
     pub taker_fee_without_penalty: i64,
     pub taker_fee: i64,
 }
