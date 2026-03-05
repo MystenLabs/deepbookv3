@@ -14,56 +14,33 @@ Tests ship separately at the end (split into unit + integration).
 
 ## Phase 1: Smart Contracts (source only, no tests)
 
-### PR 1 — Oracle
+### PR 1 — Oracle ✅
 > SVI volatility oracle with Black-Scholes binary option pricing (~700 lines)
 
-**New files:**
-- [ ] `packages/predict/Move.toml`
-- [ ] `packages/predict/sources/helper/constants.move` (only 3 macros: `float_scaling`, `staleness_threshold_ms`, `ms_per_year`)
-- [ ] `packages/predict/sources/helper/math.move`
-- [ ] `packages/predict/sources/oracle.move`
+**Merged:** [#877](https://github.com/MystenLabs/deepbookv3/pull/877) → `main`
 
-**What ships:**
-- `OracleSVI` — shared object: SVI params, spot/forward, settlement, `underlying_asset: String` (no phantom type)
-- `OracleCapSVI` — operator capability for price feeds
-- `authorized_caps: VecSet<ID>` — cap authorization via VecSet (no dynamic fields)
-- `create_oracle` — no cap param; registry gates creation, caps registered separately via `register_cap`
-- `compute_nd2` → Black-Scholes N(d2) via SVI surface
-- `get_binary_price` — main pricing entry point
-- Staleness checks, activation, settlement
-- Math library: `ln`, `exp`, `normal_cdf`, signed arithmetic
-- Constants: only the 3 macros oracle actually uses
-
-**Helper usage:**
-| Helper | Functions used |
-|--------|--------------|
-| `constants` | `float_scaling!()`, `staleness_threshold_ms!()`, `ms_per_year!()` |
-| `math` | `ln()`, `exp()`, `normal_cdf()`, `sub_signed_u64()`, `add_signed_u64()`, `mul_signed_u64()` |
-| `deepbook::math` | `mul()`, `div()`, `sqrt()` |
+**Shipped:**
+- [x] `packages/predict/Move.toml`
+- [x] `packages/predict/sources/helper/constants.move`
+- [x] `packages/predict/sources/helper/math.move`
+- [x] `packages/predict/sources/oracle.move`
 
 ---
 
-### PR 2 — Vault + Configs
+### PR 2 — Vault + Configs ✅
 > Protocol treasury, exposure tracking, tunable parameters (~230 lines)
 
-**New files:**
-- [ ] `packages/predict/sources/vault/vault.move`
-- [ ] `packages/predict/sources/config/pricing_config.move`
-- [ ] `packages/predict/sources/config/risk_config.move`
+**Merged:** [#883](https://github.com/MystenLabs/deepbookv3/pull/883) → `main`
 
-**Update existing:**
-- [ ] `packages/predict/sources/helper/constants.move` — add 4 config default macros: `default_base_spread`, `default_max_skew_multiplier`, `default_utilization_multiplier`, `default_max_total_exposure_pct`
-
-**What ships:**
-- `Vault<Quote>` — holds protocol USDC, tracks per-oracle UP/DOWN short exposure
-- `execute_mint` / `execute_redeem` — atomic balance + exposure updates
-- `assert_total_exposure` — risk invariant: max liability ≤ balance × max_pct
-- `PricingConfig` — base_spread, max_skew_multiplier, utilization_multiplier
-- `RiskConfig` — max_total_exposure_pct
+**Shipped:**
+- [x] `packages/predict/sources/vault/vault.move`
+- [x] `packages/predict/sources/config/pricing_config.move`
+- [x] `packages/predict/sources/config/risk_config.move`
+- [x] `packages/predict/sources/helper/constants.move` — added config default macros
 
 ---
 
-### PR 3 — Market Key + Predict Manager
+### PR 3 — Market Key + Predict Manager ← NEXT
 > Position identifiers and per-user state (~250 lines)
 
 **New files:**
@@ -76,7 +53,10 @@ Tests ship separately at the end (split into unit + integration).
 - Position table: `Table<MarketKey, UserPosition>` (free + locked)
 - Collateral table: `Table<CollateralKey, u64>` (paired position locks)
 
-**Note:** Oracle is now non-generic (`OracleSVI` not `OracleSVI<T>`), so `assert_matches_oracle` takes `&OracleSVI` directly.
+**Adaptation notes:**
+- `at/predict` branch uses generic `OracleSVI<Underlying>` (phantom type) — main uses non-generic `OracleSVI` with `underlying_asset: String`
+- `market_key.move`: `assert_matches_oracle` takes `&OracleSVI` (no type param)
+- Source from `at/predict` must be adapted to main's oracle API before merging
 
 ---
 
@@ -86,6 +66,12 @@ Tests ship separately at the end (split into unit + integration).
 **New files:**
 - [ ] `packages/predict/sources/predict.move`
 - [ ] `packages/predict/sources/registry.move`
+
+**Updates to existing files (from `at/predict` diff):**
+- [ ] `packages/predict/sources/vault/vault.move` — `Balance<Quote>` → `Coin<Quote>` in `execute_mint`/`deposit`, remove `EOracleExposureNotFound`/`EWithdrawExceedsAvailable` assertions
+- [ ] `packages/predict/sources/config/pricing_config.move` — remove `EExceedsMaxSpread` assertion
+- [ ] `packages/predict/sources/config/risk_config.move` — remove `EExceedsMaxPct` assertion
+- [ ] `packages/predict/sources/helper/math.move` — fix `exp()` for large negative exponents
 
 **What ships:**
 - `Predict<Quote>` — main shared object, owns `Vault` + configs
@@ -192,9 +178,9 @@ PR 1  Oracle (+ constants, math)       ← no deps, start here
 
 | PR | Branch | Status | Link |
 |----|--------|--------|------|
-| 1 | `at/predict-pr1-oracle` | open | [#877](https://github.com/MystenLabs/deepbookv3/pull/877) |
-| 2 | | blocked on 1 | |
-| 3 | | blocked on 1 | |
-| 4 | | blocked on 2,3 | |
-| 5a | | blocked on 4 | |
-| 5b | | blocked on 5a | |
+| 1 | `at/predict-pr1-oracle` | ✅ merged | [#877](https://github.com/MystenLabs/deepbookv3/pull/877) |
+| 2 | `at/predict-pr2-vault` | ✅ merged | [#883](https://github.com/MystenLabs/deepbookv3/pull/883) |
+| 3 | — | **next** | — |
+| 4 | — | blocked on 3 | — |
+| 5a | — | blocked on 4 | — |
+| 5b | — | blocked on 5a | — |
