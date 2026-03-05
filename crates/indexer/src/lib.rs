@@ -70,6 +70,7 @@ pub const CORE_MODULES: &[&str] = &[
     "vault",
     "deep_price",
     "state",
+    "ewma",
     "governance",
     "pool",
 ];

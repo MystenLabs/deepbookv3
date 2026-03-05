@@ -839,6 +839,58 @@ diesel::table! {
 }
 
 diesel::table! {
+    referral_claimed (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pool_id -> Text,
+        referral_id -> Text,
+        owner -> Text,
+        base_amount -> Int8,
+        quote_amount -> Int8,
+        deep_amount -> Int8,
+    }
+}
+
+diesel::table! {
+    ewma_updates (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pool_id -> Text,
+        gas_price -> Int8,
+        mean -> Int8,
+        variance -> Int8,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
+    taker_fee_penalty_applied (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pool_id -> Text,
+        balance_manager_id -> Text,
+        order_id -> Numeric,
+        taker_fee_without_penalty -> Int8,
+        taker_fee -> Int8,
+    }
+}
+
+diesel::table! {
     watermarks (pipeline) {
         pipeline -> Text,
         epoch_hi_inclusive -> Int8,
@@ -863,6 +915,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     deep_burned,
     deepbook_pool_config_updated,
     deepbook_pool_registered,
+    ewma_updates,
     deepbook_pool_updated,
     deepbook_pool_updated_registry,
     deepbook_referral_created,
@@ -892,12 +945,14 @@ diesel::allow_tables_to_appear_in_same_query!(
     protocol_fees_increased,
     protocol_fees_withdrawn,
     rebates,
+    referral_claimed,
     referral_fee_events,
     referral_fees_claimed,
     stakes,
     sui_error_transactions,
     supplier_cap_minted,
     supply_referral_minted,
+    taker_fee_penalty_applied,
     trade_params_update,
     votes,
     watermarks,

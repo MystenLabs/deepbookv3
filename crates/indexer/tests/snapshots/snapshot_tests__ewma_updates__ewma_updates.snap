@@ -1,0 +1,20 @@
+---
+source: crates/indexer/tests/snapshot_tests.rs
+expression: rows
+---
+[
+  {
+    "event_digest": "DzKeDBxmQNqe9GfHhwm895qspZpQp8b9RVc1FXUhkzCY5",
+    "digest": "DzKeDBxmQNqe9GfHhwm895qspZpQp8b9RVc1FXUhkzCY",
+    "sender": "0xd1c816dfa5af79c0aa8d6b7e17f3a26404dd6ce6b2806b1f34c8ea90e5575b5d",
+    "checkpoint": "222155035",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1765520077397",
+    "package": "0x2c8d603bc51326b8c13cef9dd07031a408a48dddb541963357661df5d3204809",
+    "pool_id": "0xe05dafb5133bcffb8d59f4e12465dc0e9faeaa05e3e342a08fe135800e3e4407",
+    "gas_price": "765000000000",
+    "mean": "577672330979",
+    "variance": "62832790334074",
+    "onchain_timestamp": "1765520077397"
+  }
+]
