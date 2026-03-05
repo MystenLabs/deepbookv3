@@ -15,7 +15,7 @@
 module deepbook_predict::vault;
 
 use deepbook::math;
-use sui::{balance::{Self, Balance}, coin::Coin, table::{Self, Table}};
+use sui::{balance::{Self, Balance}, table::{Self, Table}};
 
 // === Errors ===
 const EInsufficientBalance: u64 = 1;
@@ -83,9 +83,9 @@ public(package) fun execute_mint<Quote>(
     oracle_id: ID,
     is_up: bool,
     quantity: u64,
-    payment: Coin<Quote>,
+    payment: Balance<Quote>,
 ) {
-    vault.balance.join(payment.into_balance());
+    vault.balance.join(payment);
     if (is_up) {
         vault.total_up_short = vault.total_up_short + quantity;
     } else {
@@ -133,14 +133,15 @@ public(package) fun assert_total_exposure<Quote>(vault: &Vault<Quote>, max_total
 }
 
 /// Admin deposits USDC into the vault.
-public(package) fun deposit<Quote>(vault: &mut Vault<Quote>, coin: Coin<Quote>) {
-    vault.balance.join(coin.into_balance());
+public(package) fun deposit<Quote>(vault: &mut Vault<Quote>, deposit: Balance<Quote>) {
+    vault.balance.join(deposit);
 }
 
 /// Admin withdraws USDC from the vault.
 /// Cannot withdraw more than balance minus total exposure.
 public(package) fun withdraw<Quote>(vault: &mut Vault<Quote>, amount: u64): Balance<Quote> {
-    let available = vault.balance.value() - vault.max_liability();
-    assert!(amount <= available, EWithdrawExceedsAvailable);
+    let bal = vault.balance.value();
+    let liability = vault.max_liability();
+    assert!(bal >= liability && amount <= bal - liability, EWithdrawExceedsAvailable);
     vault.balance.split(amount)
 }
