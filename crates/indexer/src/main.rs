@@ -6,6 +6,7 @@ use deepbook_indexer::handlers::book_params_updated_handler::BookParamsUpdatedHa
 use deepbook_indexer::handlers::deep_burned_handler::DeepBurnedHandler;
 use deepbook_indexer::handlers::deepbook_referral_created_event_handler::DeepBookReferralCreatedEventHandler;
 use deepbook_indexer::handlers::deepbook_referral_set_event_handler::DeepBookReferralSetEventHandler;
+use deepbook_indexer::handlers::ewma_update_handler::EwmaUpdateHandler;
 use deepbook_indexer::handlers::flash_loan_handler::FlashLoanHandler;
 use deepbook_indexer::handlers::order_fill_handler::OrderFillHandler;
 use deepbook_indexer::handlers::order_update_handler::OrderUpdateHandler;
@@ -13,8 +14,10 @@ use deepbook_indexer::handlers::pool_created_handler::PoolCreatedHandler;
 use deepbook_indexer::handlers::pool_price_handler::PoolPriceHandler;
 use deepbook_indexer::handlers::proposals_handler::ProposalsHandler;
 use deepbook_indexer::handlers::rebates_handler::RebatesHandler;
+use deepbook_indexer::handlers::referral_claimed_handler::ReferralClaimedHandler;
 use deepbook_indexer::handlers::referral_fee_event_handler::ReferralFeeEventHandler;
 use deepbook_indexer::handlers::stakes_handler::StakesHandler;
+use deepbook_indexer::handlers::taker_fee_penalty_handler::TakerFeePenaltyHandler;
 use deepbook_indexer::handlers::trade_params_update_handler::TradeParamsUpdateHandler;
 use deepbook_indexer::handlers::vote_handler::VotesHandler;
 
@@ -305,6 +308,15 @@ async fn main() -> Result<(), anyhow::Error> {
                 // indexer
                 //     .concurrent_pipeline(BookParamsUpdatedHandler::new(env), Default::default())
                 //     .await?;
+                indexer
+                    .concurrent_pipeline(ReferralClaimedHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(EwmaUpdateHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(TakerFeePenaltyHandler::new(env), Default::default())
+                    .await?;
             }
             Package::DeepbookMargin => {
                 indexer

@@ -12,6 +12,7 @@ use deepbook_indexer::handlers::deepbook_pool_updated_handler::DeepbookPoolUpdat
 use deepbook_indexer::handlers::deepbook_pool_updated_registry_handler::DeepbookPoolUpdatedRegistryHandler;
 use deepbook_indexer::handlers::deepbook_referral_created_event_handler::DeepBookReferralCreatedEventHandler;
 use deepbook_indexer::handlers::deepbook_referral_set_event_handler::DeepBookReferralSetEventHandler;
+use deepbook_indexer::handlers::ewma_update_handler::EwmaUpdateHandler;
 use deepbook_indexer::handlers::flash_loan_handler::FlashLoanHandler;
 use deepbook_indexer::handlers::interest_params_updated_handler::InterestParamsUpdatedHandler;
 use deepbook_indexer::handlers::liquidation_handler::LiquidationHandler;
@@ -29,10 +30,12 @@ use deepbook_indexer::handlers::pool_created_handler::PoolCreatedHandler;
 use deepbook_indexer::handlers::pool_price_handler::PoolPriceHandler;
 use deepbook_indexer::handlers::protocol_fees_increased_handler::ProtocolFeesIncreasedHandler;
 use deepbook_indexer::handlers::protocol_fees_withdrawn_handler::ProtocolFeesWithdrawnHandler;
+use deepbook_indexer::handlers::referral_claimed_handler::ReferralClaimedHandler;
 use deepbook_indexer::handlers::referral_fee_event_handler::ReferralFeeEventHandler;
 use deepbook_indexer::handlers::referral_fees_claimed_handler::ReferralFeesClaimedHandler;
 use deepbook_indexer::handlers::supplier_cap_minted_handler::SupplierCapMintedHandler;
 use deepbook_indexer::handlers::supply_referral_minted_handler::SupplyReferralMintedHandler;
+use deepbook_indexer::handlers::taker_fee_penalty_handler::TakerFeePenaltyHandler;
 
 // Collateral Events
 use deepbook_indexer::handlers::deposit_collateral_handler::DepositCollateralHandler;
@@ -148,6 +151,20 @@ async fn pool_created_test() -> Result<(), anyhow::Error> {
 async fn book_params_updated_test() -> Result<(), anyhow::Error> {
     let handler = BookParamsUpdatedHandler::new(DeepbookEnv::Mainnet);
     data_test("book_params_updated", handler, ["book_params_updated"]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn referral_claimed_test() -> Result<(), anyhow::Error> {
+    let handler = ReferralClaimedHandler::new(DeepbookEnv::Mainnet);
+    data_test("referral_claimed", handler, ["referral_claimed"]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn ewma_update_test() -> Result<(), anyhow::Error> {
+    let handler = EwmaUpdateHandler::new(DeepbookEnv::Mainnet);
+    data_test("ewma_updates", handler, ["ewma_updates"]).await?;
     Ok(())
 }
 
@@ -447,6 +464,14 @@ async fn conditional_order_insufficient_funds_test() -> Result<(), anyhow::Error
         ["conditional_order_insufficient_funds"],
     )
     .await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore] // Event not emitted yet on mainnet
+async fn taker_fee_penalty_test() -> Result<(), anyhow::Error> {
+    let handler = TakerFeePenaltyHandler::new(DeepbookEnv::Mainnet);
+    data_test("taker_fee_penalty", handler, ["taker_fee_penalty_applied"]).await?;
     Ok(())
 }
 
