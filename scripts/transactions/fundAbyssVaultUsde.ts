@@ -24,7 +24,7 @@ const abyssSupplierCap =
   "0x3d0faab3953525d243275b39cbed465cb310fe2d4dd2c15428b8f7cf5962c2c0";
 const referralId =
   "0x36902236c237324616edb97d829c103367e4006258f37cac2f9464212fdf1a82";
-const amount = 10;
+const amount = 249_990;
 const scalar = 1_000_000;
 
 (async () => {
