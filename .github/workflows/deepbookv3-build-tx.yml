@@ -26,6 +26,7 @@ on:
           - Margin PackageInfo Creation
           - Fund Margin Pool
           - Fund Abyss Vault
+          - Fund Abyss Vault USDE
           - Fund Liquidation Vault
           - Update Interest Rates
           - Margin Prep
@@ -386,6 +387,16 @@ jobs:
           ORIGIN: gh_action
         run: |
           cd scripts && pnpm install && pnpm tsx transactions/fundAbyssVault.ts
+
+      - name: Fund Abyss Vault USDE
+        if: ${{ inputs.transaction_type == 'Fund Abyss Vault USDE' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/fundAbyssVaultUsde.ts
 
       - name: Create Liquidation Vault
         if: ${{ inputs.transaction_type == 'Create Liquidation Vault' }}
