@@ -262,6 +262,38 @@ pub mod deepbook {
             const MODULE: &'static str = "state";
             const NAME: &'static str = "ProposalEvent";
         }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct TakerFeePenaltyApplied {
+            pub pool_id: ObjectID,
+            pub balance_manager_id: ObjectID,
+            pub order_id: u128,
+            pub taker_fee_without_penalty: u64,
+            pub taker_fee: u64,
+        }
+
+        impl MoveStruct for TakerFeePenaltyApplied {
+            const MODULE: &'static str = "state";
+            const NAME: &'static str = "TakerFeePenaltyApplied";
+        }
+    }
+
+    pub mod ewma {
+        use super::*;
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct EWMAUpdate {
+            pub pool_id: ObjectID,
+            pub gas_price: u64,
+            pub mean: u64,
+            pub variance: u64,
+            pub timestamp: u64,
+        }
+
+        impl MoveStruct for EWMAUpdate {
+            const MODULE: &'static str = "ewma";
+            const NAME: &'static str = "EWMAUpdate";
+        }
     }
 
     pub mod governance {
@@ -350,6 +382,21 @@ pub mod deepbook {
         impl MoveStruct for ReferralFeeEvent {
             const MODULE: &'static str = "pool";
             const NAME: &'static str = "ReferralFeeEvent";
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct ReferralClaimed {
+            pub pool_id: ObjectID,
+            pub referral_id: ObjectID,
+            pub owner: Address,
+            pub base_amount: u64,
+            pub quote_amount: u64,
+            pub deep_amount: u64,
+        }
+
+        impl MoveStruct for ReferralClaimed {
+            const MODULE: &'static str = "pool";
+            const NAME: &'static str = "ReferralClaimed";
         }
     }
 }

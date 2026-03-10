@@ -16,6 +16,7 @@ use crate::schema::{
     deepbook_pool_updated_registry,
     deepbook_referral_created,
     deepbook_referral_set,
+    ewma_updates,
     flashloans,
     interest_params_updated,
     liquidation,
@@ -43,12 +44,14 @@ use crate::schema::{
     protocol_fees_increased,
     protocol_fees_withdrawn,
     rebates,
+    referral_claimed,
     referral_fee_events,
     referral_fees_claimed,
     stakes,
     sui_error_transactions,
     supplier_cap_minted,
     supply_referral_minted,
+    taker_fee_penalty_applied,
     trade_params_update,
     votes,
 };
@@ -335,6 +338,55 @@ pub struct ReferralFeeEvent {
     pub base_fee: i64,
     pub quote_fee: i64,
     pub deep_fee: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[diesel(table_name = referral_claimed, primary_key(event_digest))]
+pub struct ReferralClaimed {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub referral_id: String,
+    pub owner: String,
+    pub base_amount: i64,
+    pub quote_amount: i64,
+    pub deep_amount: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[diesel(table_name = ewma_updates, primary_key(event_digest))]
+pub struct EwmaUpdate {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub gas_price: i64,
+    pub mean: i64,
+    pub variance: i64,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[diesel(table_name = taker_fee_penalty_applied, primary_key(event_digest))]
+pub struct TakerFeePenaltyApplied {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub balance_manager_id: String,
+    pub order_id: String, // u128
+    pub taker_fee_without_penalty: i64,
+    pub taker_fee: i64,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
