@@ -6,6 +6,9 @@ module deepbook_predict::risk_config;
 
 use deepbook_predict::constants;
 
+// === Errors ===
+const EExceedsMaxPct: u64 = 1;
+
 // === Structs ===
 
 public struct RiskConfig has store {
@@ -28,5 +31,6 @@ public(package) fun new(): RiskConfig {
 }
 
 public(package) fun set_max_total_exposure_pct(config: &mut RiskConfig, pct: u64) {
+    assert!(pct > 0 && pct <= constants::float_scaling!(), EExceedsMaxPct);
     config.max_total_exposure_pct = pct;
 }

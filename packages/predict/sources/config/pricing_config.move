@@ -6,6 +6,9 @@ module deepbook_predict::pricing_config;
 
 use deepbook_predict::constants;
 
+// === Errors ===
+const EExceedsMaxSpread: u64 = 1;
+
 // === Structs ===
 
 public struct PricingConfig has store {
@@ -44,6 +47,7 @@ public(package) fun new(): PricingConfig {
 }
 
 public(package) fun set_base_spread(config: &mut PricingConfig, spread: u64) {
+    assert!(spread > 0 && spread <= constants::float_scaling!(), EExceedsMaxSpread);
     config.base_spread = spread;
 }
 

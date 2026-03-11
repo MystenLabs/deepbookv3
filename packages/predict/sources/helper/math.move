@@ -41,27 +41,28 @@ public fun ln(x: u64): (u64, bool) {
 public fun exp(x: u64, x_negative: bool): u64 {
     if (x == 0) return constants::float_scaling!();
 
-    let (r, n) = reduce_exp(x);
+    let (r, mut n) = reduce_exp(x);
     let exp_r = exp_series(r);
 
     if (x_negative) {
         // e^(-x) = (1/e^r) / 2^n
         let mut result = math::div(constants::float_scaling!(), exp_r);
-        let mut i = 0;
-        while (i < n) {
-            result = result / 2;
-            if (result == 0) return 0;
-            i = i + 1;
-        };
+        if (n >= 32) { result = result >> 32; if (result == 0) return 0; n = n - 32; };
+        if (n >= 16) { result = result >> 16; if (result == 0) return 0; n = n - 16; };
+        if (n >= 8) { result = result >> 8; if (result == 0) return 0; n = n - 8; };
+        if (n >= 4) { result = result >> 4; if (result == 0) return 0; n = n - 4; };
+        if (n >= 2) { result = result >> 2; if (result == 0) return 0; n = n - 2; };
+        if (n >= 1) { result = result >> 1; };
         result
     } else {
         // e^x = e^r * 2^n
         let mut result = exp_r;
-        let mut i = 0;
-        while (i < n) {
-            result = result * 2;
-            i = i + 1;
-        };
+        if (n >= 32) { result = result << 32; n = n - 32; };
+        if (n >= 16) { result = result << 16; n = n - 16; };
+        if (n >= 8) { result = result << 8; n = n - 8; };
+        if (n >= 4) { result = result << 4; n = n - 4; };
+        if (n >= 2) { result = result << 2; n = n - 2; };
+        if (n >= 1) { result = result << 1; };
         result
     }
 }
@@ -155,17 +156,19 @@ fun log_ratio(y: u64): u64 {
     math::div(y - constants::float_scaling!(), y + constants::float_scaling!())
 }
 
-/// Normalize x into [FLOAT_SCALING, 2*FLOAT_SCALING) via while loop.
+/// Normalize x into [FLOAT_SCALING, 2*FLOAT_SCALING) via binary search.
 /// Returns (y, n) where x = y * 2^n.
 fun normalize(x: u64): (u64, u64) {
     let mut y = x;
     let mut n: u64 = 0;
     let scale = constants::float_scaling!();
 
-    while (y >= scale * 2) {
-        y = y / 2;
-        n = n + 1;
-    };
+    if (y >> 32 >= scale) { y = y >> 32; n = n + 32; };
+    if (y >> 16 >= scale) { y = y >> 16; n = n + 16; };
+    if (y >> 8 >= scale) { y = y >> 8; n = n + 8; };
+    if (y >> 4 >= scale) { y = y >> 4; n = n + 4; };
+    if (y >> 2 >= scale) { y = y >> 2; n = n + 2; };
+    if (y >> 1 >= scale) { y = y >> 1; n = n + 1; };
 
     (y, n)
 }

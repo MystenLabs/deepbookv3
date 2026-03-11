@@ -20,6 +20,7 @@ use sui::{balance::{Self, Balance}, table::{Self, Table}};
 // === Errors ===
 const EInsufficientBalance: u64 = 1;
 const EExceedsMaxTotalExposure: u64 = 2;
+const EWithdrawExceedsAvailable: u64 = 3;
 
 // === Structs ===
 
@@ -135,6 +136,10 @@ public(package) fun deposit<Quote>(vault: &mut Vault<Quote>, deposit: Balance<Qu
 }
 
 /// Admin withdraws USDC from the vault.
+/// Cannot withdraw more than balance minus total exposure.
 public(package) fun withdraw<Quote>(vault: &mut Vault<Quote>, amount: u64): Balance<Quote> {
+    let bal = vault.balance.value();
+    let liability = vault.max_liability();
+    assert!(bal >= liability && amount <= bal - liability, EWithdrawExceedsAvailable);
     vault.balance.split(amount)
 }
