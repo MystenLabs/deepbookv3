@@ -121,6 +121,7 @@ public fun create_oracle(
 }
 
 /// Admin deposits USDC into the vault.
+/// TODO: source capital from margin pool
 public fun admin_deposit<Quote>(
     predict: &mut predict::Predict<Quote>,
     _admin_cap: &AdminCap,
@@ -136,6 +137,7 @@ public fun admin_deposit<Quote>(
 }
 
 /// Admin withdraws USDC from the vault.
+/// TODO: source capital from margin pool
 public fun admin_withdraw<Quote>(
     predict: &mut predict::Predict<Quote>,
     _admin_cap: &AdminCap,

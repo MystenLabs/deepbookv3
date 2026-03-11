@@ -38,6 +38,9 @@ public fun ln(x: u64): (u64, bool) {
 }
 
 /// Exponential function. Returns e^(±x) in FLOAT_SCALING.
+/// Negative: gracefully returns 0 for large x (result shifts to zero).
+/// Positive: aborts on overflow for x > ~22.9e9 (n > 33). In practice only
+/// called with x_negative=true (discount factor, normal PDF), so this is safe.
 public fun exp(x: u64, x_negative: bool): u64 {
     if (x == 0) return constants::float_scaling!();
 
@@ -45,7 +48,7 @@ public fun exp(x: u64, x_negative: bool): u64 {
     let exp_r = exp_series(r);
 
     if (x_negative) {
-        // e^(-x) = (1/e^r) / 2^n
+        // e^(-x) = (1/e^r) / 2^n; returns 0 if result shifts away
         let mut result = math::div(constants::float_scaling!(), exp_r);
         if (n >= 32) { result = result >> 32; if (result == 0) return 0; n = n - 32; };
         if (n >= 16) { result = result >> 16; if (result == 0) return 0; n = n - 16; };
@@ -55,7 +58,7 @@ public fun exp(x: u64, x_negative: bool): u64 {
         if (n >= 1) { result = result >> 1; };
         result
     } else {
-        // e^x = e^r * 2^n
+        // e^x = e^r * 2^n; aborts on u64 overflow (unreachable in current callers)
         let mut result = exp_r;
         if (n >= 32) { result = result << 32; n = n - 32; };
         if (n >= 16) { result = result << 16; n = n - 16; };
@@ -98,7 +101,9 @@ fun cdf_pdf(x: u64): u64 {
     math::mul(exp(x_sq_half, true), 398_942_280)
 }
 
-/// A&S polynomial with explicit powers.
+/// Abramowitz & Stegun 26.2.17 polynomial for normal CDF approximation.
+/// Coefficients (scaled to 1e9): a1=0.3194, a2=-0.3566, a3=1.7815, a4=-1.8213, a5=1.3303.
+/// Split into pos (a1*t + a3*t³ + a5*t⁵) and neg (a2*t² + a4*t⁴) to avoid signed math.
 fun cdf_poly(t: u64): u64 {
     let t2 = math::mul(t, t);
     let t3 = math::mul(t2, t);

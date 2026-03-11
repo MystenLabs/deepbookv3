@@ -429,6 +429,8 @@ fun get_quote<Quote>(
     let price = oracle.get_binary_price(strike, is_up, clock);
     let base_spread = predict.pricing_config.base_spread();
 
+    // TODO: add size-dependent spread — larger orders should widen the spread
+    // to simulate order book depth (price impact proportional to quantity).
     let spread =
         base_spread
         + predict.inventory_skew(oracle.id(), is_up)
