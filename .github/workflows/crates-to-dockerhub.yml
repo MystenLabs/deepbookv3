@@ -17,10 +17,20 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # pin@v4.2.2
+        with:
+          ref: ${{ inputs.tag || github.ref_name }}
+          fetch-depth: 1
+
+      - name: Get latest commit SHA
+        id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Dispatch deepbookv3 images to Dockerhub
         uses: peter-evans/repository-dispatch@ff45666b9427631e3450c54a1bcbee4d9ff4d7c0 # pin@v3.0.0
         with:
           repository: MystenLabs/sui-operations
           token: ${{ secrets.SUI_OPS_DISPATCH_TOKEN }}
           event-type: deepbookv3-crates-to-dockerhub
-          client-payload: '{"tag": "${{ inputs.tag || github.ref_name }}"}'
+          client-payload: '{"sha": "${{ steps.commit.outputs.sha }}"}'
