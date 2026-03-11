@@ -28,6 +28,7 @@ public struct PredictCreated has copy, drop, store {
 public struct OracleCreated has copy, drop, store {
     oracle_id: ID,
     oracle_cap_id: ID,
+    underlying_asset: String,
     expiry: u64,
 }
 
@@ -112,6 +113,7 @@ public fun create_oracle(
     event::emit(OracleCreated {
         oracle_id,
         oracle_cap_id: cap_id,
+        underlying_asset,
         expiry,
     });
 

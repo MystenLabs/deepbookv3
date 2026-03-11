@@ -24,6 +24,7 @@ use sui::{clock::Clock, coin::Coin, event};
 // === Errors ===
 const ETradingPaused: u64 = 0;
 const EInvalidCollateralPair: u64 = 1;
+const ENotOwner: u64 = 2;
 
 // === Events ===
 
@@ -182,6 +183,7 @@ public fun redeem<Quote>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    assert!(ctx.sender() == manager.owner(), ENotOwner);
     key.assert_matches_oracle(oracle);
     if (!oracle.is_settled()) {
         oracle.assert_not_stale(clock);
@@ -269,7 +271,9 @@ public fun redeem_collateralized<Quote>(
     locked_key: MarketKey,
     minted_key: MarketKey,
     quantity: u64,
+    ctx: &TxContext,
 ) {
+    assert!(ctx.sender() == manager.owner(), ENotOwner);
     manager.decrease_position(minted_key, quantity);
     manager.release_collateral(locked_key, minted_key, quantity);
 
@@ -431,7 +435,7 @@ fun get_quote<Quote>(
         + predict.utilization_spread();
 
     let bid = if (price > spread) { price - spread } else { 0 };
-    let ask = price + spread;
+    let ask = (price + spread).min(constants::float_scaling!());
 
     (bid, ask)
 }
