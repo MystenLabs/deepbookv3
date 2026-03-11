@@ -154,6 +154,12 @@ class OracleFeedService {
     );
   }
 
+  /** Returns only oracles that have not yet expired. */
+  private activeOracles(): OracleEntry[] {
+    const now = Date.now();
+    return this.oracles.filter((o) => now < o.expiryMs);
+  }
+
   async start() {
     await this.checkActivation();
     await this.initGasLanes();
@@ -168,7 +174,7 @@ class OracleFeedService {
 
   private async checkActivation() {
     console.log(`\nChecking oracle activation status...`);
-    for (const oracle of this.oracles) {
+    for (const oracle of this.activeOracles()) {
       const obj = await this.client.getObject({
         id: oracle.oracleId,
         options: { showContent: true },
@@ -184,6 +190,11 @@ class OracleFeedService {
           console.log(`  ${oracle.expiry} — needs activation`);
         }
       }
+    }
+
+    const expired = this.oracles.length - this.activeOracles().length;
+    if (expired > 0) {
+      console.log(`  Skipping ${expired} expired oracle(s)`);
     }
   }
 
@@ -341,18 +352,19 @@ class OracleFeedService {
       try {
         const now = Date.now();
         const includeSvi = now - lastSviFetch >= SVI_POLL_MS;
+        const live = this.activeOracles();
 
         // Fetch spot + all forwards in parallel
         const [spotResult, ...forwardResults] = await Promise.all([
           fetchSpotPrice(),
-          ...this.oracles.map((o) => fetchForwardPrice(o.expiry)),
+          ...live.map((o) => fetchForwardPrice(o.expiry)),
         ]);
 
         const spotScaled = scaleToU64(spotResult.price);
         const forwards = new Map<string, number>();
-        for (let i = 0; i < this.oracles.length; i++) {
+        for (let i = 0; i < live.length; i++) {
           forwards.set(
-            this.oracles[i].oracleId,
+            live[i].oracleId,
             scaleToU64(forwardResults[i].price),
           );
         }
@@ -361,11 +373,11 @@ class OracleFeedService {
         // Every SVI_POLL_MS, also fetch SVIs
         if (includeSvi) {
           const sviResults = await Promise.all(
-            this.oracles.map((o) => fetchSVIParams(o.expiry)),
+            live.map((o) => fetchSVIParams(o.expiry)),
           );
           const svis = new Map<string, SVIParamsResult>();
-          for (let i = 0; i < this.oracles.length; i++) {
-            svis.set(this.oracles[i].oracleId, sviResults[i]);
+          for (let i = 0; i < live.length; i++) {
+            svis.set(live[i].oracleId, sviResults[i]);
           }
           this.state.updateSvis(svis);
           lastSviFetch = Date.now();
@@ -501,9 +513,10 @@ class OracleFeedService {
 
   private buildPTB(snapshot: OracleSnapshot, capId: string): Transaction {
     const tx = new Transaction();
+    const live = this.activeOracles();
 
     // Activate any inactive oracles
-    for (const oracle of this.oracles) {
+    for (const oracle of live) {
       if (!this.activated.has(oracle.oracleId)) {
         tx.moveCall({
           target: `${pkg}::oracle::activate`,
@@ -520,7 +533,7 @@ class OracleFeedService {
     }
 
     // Price updates for each oracle
-    for (const oracle of this.oracles) {
+    for (const oracle of live) {
       const forwardScaled =
         snapshot.forwards.get(oracle.oracleId) ?? snapshot.spotScaled;
 
@@ -546,7 +559,7 @@ class OracleFeedService {
 
     // SVI updates (only when snapshot includes fresh SVIs)
     if (snapshot.svis !== null) {
-      for (const oracle of this.oracles) {
+      for (const oracle of live) {
         const svi = snapshot.svis.get(oracle.oracleId);
         if (!svi) continue;
 

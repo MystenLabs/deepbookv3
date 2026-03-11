@@ -12,7 +12,10 @@ import {
   predictAdminCapID,
   predictOracleCapID,
 } from "../../config/constants";
-import type { OracleEntry } from "../../config/predict-oracles";
+import {
+  predictOracles,
+  type OracleEntry,
+} from "../../config/predict-oracles";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -26,13 +29,12 @@ const ORACLES_CONFIG_PATH = path.resolve(
 const network = "testnet" as const;
 const UNDERLYING_TYPE = "0x2::sui::SUI";
 
-// BlockScholes BTC expiries (all 08:00 UTC)
+// New BlockScholes BTC expiries to deploy (all 08:00 UTC)
 const EXPIRIES = [
-  "2026-03-06T08:00:00.000Z",
-  "2026-03-13T08:00:00.000Z",
-  "2026-03-20T08:00:00.000Z",
-  "2026-03-27T08:00:00.000Z",
-  "2026-04-24T08:00:00.000Z",
+  "2026-05-29T08:00:00.000Z",
+  "2026-06-26T08:00:00.000Z",
+  "2026-09-25T08:00:00.000Z",
+  "2026-12-25T08:00:00.000Z",
 ];
 
 (async () => {
@@ -108,7 +110,15 @@ const EXPIRIES = [
     });
   }
 
-  // Write config
+  // Merge with existing non-expired oracles
+  const now = Date.now();
+  const existing = (predictOracles[network] ?? []).filter(
+    (o) => o.expiryMs > now,
+  );
+  const allOracles = [...existing, ...entries].sort(
+    (a, b) => a.expiryMs - b.expiryMs,
+  );
+
   const configContent = `// Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -120,11 +130,11 @@ export interface OracleEntry {
 }
 
 export const predictOracles: Record<string, OracleEntry[]> = {
-  testnet: ${JSON.stringify(entries, null, 4)},
+  testnet: ${JSON.stringify(allOracles, null, 4)},
   mainnet: [],
 };
 `;
 
   fs.writeFileSync(ORACLES_CONFIG_PATH, configContent);
-  console.log(`Written ${entries.length} oracle entries to config/predict-oracles.ts`);
+  console.log(`Written ${allOracles.length} oracle entries to config/predict-oracles.ts (${existing.length} existing + ${entries.length} new)`);
 })();
