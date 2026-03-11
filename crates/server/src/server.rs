@@ -287,7 +287,7 @@ pub async fn run_server(
     if let Some(margin_pkg_id) = margin_package_id {
         let cancellation_token = tokio_util::sync::CancellationToken::new();
         let margin_metrics = crate::margin_metrics::MarginMetrics::new(metrics.registry());
-        let margin_db = sui_pg_db::Db::for_read(database_url, db_arg).await?;
+        let margin_db = sui_pg_db::Db::for_write(database_url, db_arg).await?;
         let margin_poller = crate::margin_metrics::MarginPoller::new(
             margin_db,
             rpc_url.clone(),
