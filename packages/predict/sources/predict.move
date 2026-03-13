@@ -28,6 +28,11 @@ const ENotOwner: u64 = 2;
 
 // === Events ===
 
+public struct ManagerCreated has copy, drop, store {
+    manager_id: ID,
+    owner: address,
+}
+
 public struct PositionMinted has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
@@ -120,7 +125,12 @@ public struct Predict<phantom Quote> has key {
 
 /// Create a new PredictManager for the caller.
 public fun create_manager(ctx: &mut TxContext): ID {
-    predict_manager::new(ctx)
+    let manager_id = predict_manager::new(ctx);
+    event::emit(ManagerCreated {
+        manager_id,
+        owner: ctx.sender(),
+    });
+    manager_id
 }
 
 /// Get the amounts for mint/redeem (for UI/preview).
@@ -147,6 +157,7 @@ public fun mint<Quote>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(!predict.trading_paused, ETradingPaused);
     key.assert_matches_oracle(oracle);
     oracle.assert_not_stale(clock);
@@ -231,7 +242,9 @@ public fun mint_collateralized<Quote>(
     minted_key: MarketKey,
     quantity: u64,
     clock: &Clock,
+    ctx: &TxContext,
 ) {
+    assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(!predict.trading_paused, ETradingPaused);
     locked_key.assert_matches_oracle(oracle);
     minted_key.assert_matches_oracle(oracle);
@@ -420,6 +433,7 @@ fun get_quote<Quote>(
     // After settlement, return definitive prices
     if (oracle.is_settled()) {
         let settlement_price = oracle.settlement_price().destroy_some();
+        // At-the-money (price == strike) settles as DOWN win
         let up_wins = settlement_price > strike;
         let won = if (is_up) { up_wins } else { !up_wins };
         let price = if (won) { constants::float_scaling!() } else { 0 };
