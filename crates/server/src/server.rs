@@ -722,8 +722,8 @@ async fn get_historical_volume_by_balance_manager_id_with_interval(
         let results = state
             .reader
             .get_order_fill_summary(
-                start_time,
-                end_time,
+                current_start,
+                current_end,
                 &pool_ids,
                 &balance_manager_id,
                 volume_in_base,
