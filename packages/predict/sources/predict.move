@@ -96,7 +96,6 @@ public struct TradingPauseUpdated has copy, drop, store {
 public struct PricingConfigUpdated has copy, drop, store {
     predict_id: ID,
     base_spread: u64,
-    max_skew_multiplier: u64,
     utilization_multiplier: u64,
 }
 
@@ -348,13 +347,7 @@ public(package) fun set_trading_paused<Quote>(predict: &mut Predict<Quote>, paus
 /// Set base spread.
 public(package) fun set_base_spread<Quote>(predict: &mut Predict<Quote>, spread: u64) {
     predict.pricing_config.set_base_spread(spread);
-    predict.emit_pricing_updated();
-}
-
-/// Set max skew multiplier.
-public(package) fun set_max_skew_multiplier<Quote>(predict: &mut Predict<Quote>, multiplier: u64) {
-    predict.pricing_config.set_max_skew_multiplier(multiplier);
-    predict.emit_pricing_updated();
+    predict.emit_pricing_config_updated();
 }
 
 /// Set utilization multiplier.
@@ -363,7 +356,7 @@ public(package) fun set_utilization_multiplier<Quote>(
     multiplier: u64,
 ) {
     predict.pricing_config.set_utilization_multiplier(multiplier);
-    predict.emit_pricing_updated();
+    predict.emit_pricing_config_updated();
 }
 
 /// Set max total exposure percentage.
@@ -404,22 +397,20 @@ public(package) fun vault_exposure<Quote>(predict: &Predict<Quote>, oracle_id: I
 
 // === Private Functions ===
 
+fun emit_pricing_config_updated<Quote>(predict: &Predict<Quote>) {
+    event::emit(PricingConfigUpdated {
+        predict_id: object::id(predict),
+        base_spread: predict.pricing_config.base_spread(),
+        utilization_multiplier: predict.pricing_config.utilization_multiplier(),
+    });
+}
+
 /// Get bid and ask prices for a market.
 /// If oracle is settled, returns settlement prices (100% for winner, 0% for loser).
 /// Returns (bid, ask) in FLOAT_SCALING (1e9).
 ///
 /// Spread formula (additive components):
-fun emit_pricing_updated<Quote>(predict: &Predict<Quote>) {
-    event::emit(PricingConfigUpdated {
-        predict_id: object::id(predict),
-        base_spread: predict.pricing_config.base_spread(),
-        max_skew_multiplier: predict.pricing_config.max_skew_multiplier(),
-        utilization_multiplier: predict.pricing_config.utilization_multiplier(),
-    });
-}
-
 ///   effective_spread = base_spread
-///     + base_spread * skew_multiplier * imbalance    (heavy side only)
 ///     + base_spread * util_multiplier * util^2        (both sides)
 fun get_quote<Quote>(
     predict: &Predict<Quote>,
@@ -443,34 +434,13 @@ fun get_quote<Quote>(
     let price = oracle.get_binary_price(strike, is_up, clock);
     let base_spread = predict.pricing_config.base_spread();
 
-    // TODO: add size-dependent spread — larger orders should widen the spread
-    // to simulate order book depth (price impact proportional to quantity).
-    let spread =
-        base_spread
-        + predict.inventory_skew(oracle.id(), is_up)
+    let spread = base_spread
         + predict.utilization_spread();
 
     let bid = if (price > spread) { price - spread } else { 0 };
     let ask = (price + spread).min(constants::float_scaling!());
 
     (bid, ask)
-}
-
-/// Skew spread: penalizes the heavy side using per-oracle quantity imbalance.
-fun inventory_skew<Quote>(predict: &Predict<Quote>, oracle_id: ID, is_up: bool): u64 {
-    let (up_qty, down_qty) = predict.vault.oracle_exposure(oracle_id);
-    let total = up_qty + down_qty;
-    if (total == 0) return 0;
-
-    let this_qty = if (is_up) { up_qty } else { down_qty };
-    let other_qty = if (is_up) { down_qty } else { up_qty };
-    if (this_qty <= other_qty) return 0;
-
-    let imbalance = math::div(this_qty - other_qty, total);
-    math::mul(
-        predict.pricing_config.base_spread(),
-        math::mul(predict.pricing_config.max_skew_multiplier(), imbalance),
-    )
 }
 
 /// Utilization spread: penalizes both sides as vault approaches capacity.

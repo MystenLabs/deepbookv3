@@ -171,15 +171,6 @@ public fun set_base_spread<Quote>(
     predict.set_base_spread(spread);
 }
 
-/// Set max skew multiplier.
-public fun set_max_skew_multiplier<Quote>(
-    predict: &mut predict::Predict<Quote>,
-    _admin_cap: &AdminCap,
-    multiplier: u64,
-) {
-    predict.set_max_skew_multiplier(multiplier);
-}
-
 /// Set utilization multiplier.
 public fun set_utilization_multiplier<Quote>(
     predict: &mut predict::Predict<Quote>,
