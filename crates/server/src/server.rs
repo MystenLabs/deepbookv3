@@ -1183,9 +1183,21 @@ async fn orders(
             .collect::<Vec<_>>()
     });
 
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 7 * 24 * 60 * 60 * 1000);
+
     let orders = state
         .reader
-        .get_orders_status(pool_id, limit, Some(balance_manager_id), status_filter)
+        .get_orders_status(
+            pool_id,
+            limit,
+            Some(balance_manager_id),
+            status_filter,
+            start_time,
+            end_time,
+        )
         .await?;
 
     let base_factor = 10u64.pow(base_decimals as u32);
