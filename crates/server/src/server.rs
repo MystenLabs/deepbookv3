@@ -1190,7 +1190,14 @@ async fn orders(
 
     let orders = state
         .reader
-        .get_orders_status(pool_id, limit, Some(balance_manager_id), status_filter, start_time, end_time)
+        .get_orders_status(
+            pool_id,
+            limit,
+            Some(balance_manager_id),
+            status_filter,
+            start_time,
+            end_time,
+        )
         .await?;
 
     let base_factor = 10u64.pow(base_decimals as u32);
