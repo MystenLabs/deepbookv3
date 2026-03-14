@@ -9822,3 +9822,986 @@ fun test_get_quantity_out_ask_min_size_enforced() {
 
     end(test);
 }
+
+#[test]
+fun pool_referral_fee_rate_ok() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+    let referral_id;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        referral_id = pool.mint_referral(0, test.ctx()); // 0 multiplier
+        return_shared(pool);
+    };
+
+    // Set 10 bps fee rate (1000 * 1000 = 1_000_000, which is 0.1% of 10^9)
+    let fee_rate = 1_000_000;
+
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    // Set the referral for BOB (the taker)
+    let balance_manager_id_bob = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        BOB,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    test.next_tx(BOB);
+    {
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_bob);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let trade_cap = balance_manager.mint_trade_cap(test.ctx());
+        balance_manager.set_balance_manager_referral(&referral, &trade_cap);
+
+        transfer::public_transfer(trade_cap, BOB);
+        return_shared(referral);
+        return_shared(balance_manager);
+    };
+
+    // Place a market order from BOB (taker)
+    // Buy 100 SUI at market price (approx $2/SUI from setup_everything)
+    // Volume = 100 SUI * $2 = 200 USDC
+    // Fee = 200 USDC * 0.1% = 0.2 USDC
+    let quantity = 100 * constants::float_scaling();
+
+    place_market_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::self_matching_allowed(),
+        quantity,
+        true, // is_bid (buy)
+        false, // pay_with_deep = false (pay in quote/base)
+        &mut test,
+    );
+
+    // Check referral rewards
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
+
+        // Fee is in Quote (USDC) because it's a Buy order paying in input (Quote)
+        // Volume = 200 USDC (100 qty * 2 price)
+        // Fee = 200 * 0.001 = 0.2 USDC = 200_000_000 (scaled)
+        assert_eq!(quote, 200_000_000);
+        assert_eq!(base, 0);
+        assert_eq!(deep, 0);
+
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    end(test);
+}
+
+#[test]
+fun pool_referral_fee_rate_base_asset() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+    let referral_id;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        referral_id = pool.mint_referral(0, test.ctx()); // 0 multiplier
+        return_shared(pool);
+    };
+
+    // Set 10 bps fee rate
+    let fee_rate = 1_000_000;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    // Set the referral for BOB (the taker)
+    let balance_manager_id_bob = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        BOB,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    test.next_tx(BOB);
+    {
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_bob);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let trade_cap = balance_manager.mint_trade_cap(test.ctx());
+        balance_manager.set_balance_manager_referral(&referral, &trade_cap);
+        transfer::public_transfer(trade_cap, BOB);
+        return_shared(referral);
+        return_shared(balance_manager);
+    };
+
+    // Place a market Sell order from BOB (taker)
+    // Sell 100 SUI at market price (approx $1/SUI best bid from setup_everything)
+    // Volume = 100 SUI
+    // Fee = 100 SUI * 0.1% = 0.1 SUI
+    let quantity = 100 * constants::float_scaling();
+
+    place_market_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::self_matching_allowed(),
+        quantity,
+        false, // is_bid = false (Sell)
+        false, // pay_with_deep = false
+        &mut test,
+    );
+
+    // Check referral rewards
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
+
+        // Fee is in Base (SUI) because it's a Sell order paying in input (Base)
+        // Volume = 100 SUI
+        // Fee = 100 * 0.001 = 0.1 SUI = 100_000_000 (scaled)
+        assert_eq!(base, 100_000_000);
+        assert_eq!(quote, 0);
+        assert_eq!(deep, 0);
+
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    end(test);
+}
+
+#[test]
+fun pool_referral_fee_rate_deep() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+    let referral_id;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        referral_id = pool.mint_referral(0, test.ctx()); // 0 multiplier
+        return_shared(pool);
+    };
+
+    // Set 10 bps fee rate
+    let fee_rate = 1_000_000;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    // Set the referral for BOB (the taker)
+    let balance_manager_id_bob = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        BOB,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    test.next_tx(BOB);
+    {
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_bob);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let trade_cap = balance_manager.mint_trade_cap(test.ctx());
+        balance_manager.set_balance_manager_referral(&referral, &trade_cap);
+        transfer::public_transfer(trade_cap, BOB);
+        return_shared(referral);
+        return_shared(balance_manager);
+    };
+
+    // Place a market Buy order from BOB (taker), paying in DEEP
+    // Buy 100 SUI at market price ($2)
+    // Volume = 200 USDC
+    // Fee = 200 USDC * 0.1% = 0.2 USDC value
+    // Converted to DEEP
+    let quantity = 100 * constants::float_scaling();
+
+    place_market_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::self_matching_allowed(),
+        quantity,
+        true, // is_bid (buy)
+        true, // pay_with_deep = true
+        &mut test,
+    );
+
+    // Check referral rewards
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
+
+        // Fee should be in DEEP.
+        assert_eq!(base, 0);
+        assert_eq!(quote, 0);
+        assert!(deep > 0, 0);
+
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    end(test);
+}
+
+#[test]
+fun pool_referral_combined_fees() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+    let referral_id;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        // Mint referral with 50% multiplier (5000 bps = 50%)
+        // 0.5 * float_scaling = 500_000_000
+        referral_id = pool.mint_referral(500_000_000, test.ctx());
+        return_shared(pool);
+    };
+
+    // Set 10 bps volume fee rate
+    let fee_rate = 1_000_000;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    // Set the referral for BOB
+    let balance_manager_id_bob = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        BOB,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    test.next_tx(BOB);
+    {
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_bob);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let trade_cap = balance_manager.mint_trade_cap(test.ctx());
+        balance_manager.set_balance_manager_referral(&referral, &trade_cap);
+        transfer::public_transfer(trade_cap, BOB);
+        return_shared(referral);
+        return_shared(balance_manager);
+    };
+
+    // Place a market Buy order from BOB (taker)
+    // Buy 100 SUI at market price ($2)
+    // Volume = 200 USDC
+    let quantity = 100 * constants::float_scaling();
+
+    place_market_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::self_matching_allowed(),
+        quantity,
+        true, // is_bid (buy)
+        false, // pay_with_deep = false
+        &mut test,
+    );
+
+    // Check referral rewards
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
+
+        // Fee is in Quote (USDC)
+        // We expect combined fee > volume fee (0.2 USDC = 200_000_000).
+        assert!(quote > 200_000_000, 0);
+
+        assert_eq!(base, 0);
+        assert_eq!(deep, 0);
+
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    end(test);
+}
+
+#[test]
+fun pool_referral_combined_fees_base_asset() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+    let referral_id;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        referral_id = pool.mint_referral(500_000_000, test.ctx()); // 50% multiplier
+        return_shared(pool);
+    };
+
+    // Set 10 bps volume fee rate
+    let fee_rate = 1_000_000;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    // Set the referral for BOB
+    let balance_manager_id_bob = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        BOB,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    test.next_tx(BOB);
+    {
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_bob);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let trade_cap = balance_manager.mint_trade_cap(test.ctx());
+        balance_manager.set_balance_manager_referral(&referral, &trade_cap);
+        transfer::public_transfer(trade_cap, BOB);
+        return_shared(referral);
+        return_shared(balance_manager);
+    };
+
+    // Place a market Sell order from BOB (taker)
+    // Sell 100 SUI at market price ($1)
+    // Volume = 100 SUI
+    let quantity = 100 * constants::float_scaling();
+
+    place_market_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::self_matching_allowed(),
+        quantity,
+        false, // is_bid = false (Sell)
+        false, // pay_with_deep = false
+        &mut test,
+    );
+
+    // Check referral rewards
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
+
+        // Fee is in Base (SUI)
+        // We expect combined fee > volume fee (0.1 SUI = 100_000_000).
+        assert!(base > 100_000_000, 0);
+
+        assert_eq!(quote, 0);
+        assert_eq!(deep, 0);
+
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    end(test);
+}
+
+#[test]
+fun pool_referral_combined_fees_deep() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+    let referral_id;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        referral_id = pool.mint_referral(500_000_000, test.ctx()); // 50% multiplier
+        return_shared(pool);
+    };
+
+    // Set 10 bps volume fee rate
+    let fee_rate = 1_000_000;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    // Set the referral for BOB
+    let balance_manager_id_bob = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        BOB,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    test.next_tx(BOB);
+    {
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_bob);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let trade_cap = balance_manager.mint_trade_cap(test.ctx());
+        balance_manager.set_balance_manager_referral(&referral, &trade_cap);
+        transfer::public_transfer(trade_cap, BOB);
+        return_shared(referral);
+        return_shared(balance_manager);
+    };
+
+    // Place a market Buy order from BOB (taker), paying in DEEP
+    // Buy 100 SUI at market price ($2)
+    // Volume = 200 USDC
+    let quantity = 100 * constants::float_scaling();
+
+    place_market_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::self_matching_allowed(),
+        quantity,
+        true, // is_bid (buy)
+        true, // pay_with_deep = true
+        &mut test,
+    );
+
+    // Check referral rewards
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
+
+        // Fee is in DEEP
+        // We expect combined fee > 0
+        assert!(deep > 0, 0);
+
+        assert_eq!(base, 0);
+        assert_eq!(quote, 0);
+
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    end(test);
+}
+
+#[test]
+fun whitelisted_pool_referral_fee() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+
+    let balance_manager_id_alice = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+
+    // Create whitelisted pool
+    let pool_id = setup_pool_with_default_fees<SUI, USDC>(
+        OWNER,
+        registry_id,
+        true, // whitelisted_pool = true
+        false, // stable_pool = false
+        &mut test,
+    );
+
+    // Alice places limit orders to provide liquidity
+    let client_order_id = 1;
+    let order_type = constants::no_restriction();
+    let price = 2 * constants::float_scaling(); // Sell SUI at 2 USDC
+    let quantity = 1000 * constants::float_scaling();
+    let expire_timestamp = constants::max_u64();
+
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        client_order_id,
+        order_type,
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        false, // is_bid = false (Ask/Sell)
+        true, // pay_with_deep (irrelevant for whitelisted but required arg)
+        expire_timestamp,
+        &mut test,
+    );
+
+    let referral_id;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        referral_id = pool.mint_referral(0, test.ctx()); // 0 multiplier
+        return_shared(pool);
+    };
+
+    // Set 10 bps fee rate
+    let fee_rate = 1_000_000;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    // Setup Bob
+    let balance_manager_id_bob = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        BOB,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    test.next_tx(BOB);
+    {
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_bob);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let trade_cap = balance_manager.mint_trade_cap(test.ctx());
+        balance_manager.set_balance_manager_referral(&referral, &trade_cap);
+        transfer::public_transfer(trade_cap, BOB);
+        return_shared(referral);
+        return_shared(balance_manager);
+    };
+
+    // Bob places market order (Buy SUI with USDC)
+    // 100 SUI * 2 USDC = 200 USDC volume
+    let quantity = 100 * constants::float_scaling();
+
+    place_market_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        2,
+        constants::self_matching_allowed(),
+        quantity,
+        true, // is_bid (buy)
+        false, // pay_with_deep = false
+        &mut test,
+    );
+
+    // Check referral rewards
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
+
+        // Fee is in Quote (USDC)
+        // Volume = 200 USDC
+        // Referral Fee = 200 * 0.001 = 0.2 USDC = 200_000_000
+        assert_eq!(quote, 200_000_000);
+        assert_eq!(base, 0);
+        assert_eq!(deep, 0);
+
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    end(test);
+}
+
+#[test]
+fun pool_referral_fee_zero() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+    let referral_id;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        referral_id = pool.mint_referral(0, test.ctx());
+        return_shared(pool);
+    };
+
+    // Set 0 bps fee rate
+    let fee_rate = 0;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    // Set the referral for BOB
+    let balance_manager_id_bob = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        BOB,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    test.next_tx(BOB);
+    {
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_bob);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let trade_cap = balance_manager.mint_trade_cap(test.ctx());
+        balance_manager.set_balance_manager_referral(&referral, &trade_cap);
+        transfer::public_transfer(trade_cap, BOB);
+        return_shared(referral);
+        return_shared(balance_manager);
+    };
+
+    // Place a market order
+    let quantity = 100 * constants::float_scaling();
+    place_market_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::self_matching_allowed(),
+        quantity,
+        true,
+        false,
+        &mut test,
+    );
+
+    // Check referral rewards - should be 0
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
+
+        assert_eq!(quote, 0);
+        assert_eq!(base, 0);
+        assert_eq!(deep, 0);
+
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    end(test);
+}
+
+#[test]
+fun pool_referral_fee_update() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+    let referral_id;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        referral_id = pool.mint_referral(0, test.ctx());
+        return_shared(pool);
+    };
+
+    // Set 10 bps fee rate
+    let fee_rate_1 = 1_000_000;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        pool.update_pool_referral_fee_rate(&referral, fee_rate_1, test.ctx());
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    // Update to 20 bps fee rate
+    let fee_rate_2 = 2_000_000;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        pool.update_pool_referral_fee_rate(&referral, fee_rate_2, test.ctx());
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    // Set referral for BOB and trade
+    let balance_manager_id_bob = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        BOB,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    test.next_tx(BOB);
+    {
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_bob);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let trade_cap = balance_manager.mint_trade_cap(test.ctx());
+        balance_manager.set_balance_manager_referral(&referral, &trade_cap);
+        transfer::public_transfer(trade_cap, BOB);
+        return_shared(referral);
+        return_shared(balance_manager);
+    };
+
+    // Trade
+    let quantity = 100 * constants::float_scaling();
+    place_market_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::self_matching_allowed(),
+        quantity,
+        true,
+        false,
+        &mut test,
+    );
+
+    // Check referral rewards - should reflect 20 bps
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let (_, quote, _) = pool.get_pool_referral_balances(&referral);
+
+        // Volume = 200 USDC
+        // Fee = 200 * 0.002 = 0.4 USDC = 400_000_000
+        assert_eq!(quote, 400_000_000);
+
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    end(test);
+}
+
+#[test]
+fun pool_referral_fee_maker_no_fill() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+    let referral_id;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        referral_id = pool.mint_referral(0, test.ctx());
+        return_shared(pool);
+    };
+
+    // Set 10 bps fee rate
+    let fee_rate = 1_000_000;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    // Set referral for BOB
+    let balance_manager_id_bob = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        BOB,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    test.next_tx(BOB);
+    {
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_bob);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let trade_cap = balance_manager.mint_trade_cap(test.ctx());
+        balance_manager.set_balance_manager_referral(&referral, &trade_cap);
+        transfer::public_transfer(trade_cap, BOB);
+        return_shared(referral);
+        return_shared(balance_manager);
+    };
+
+    // Place a LIMIT order that rests on the book (Maker)
+    // Current best ask is $2. Place bid at $1.5.
+    let price = 1500000000; // 1.5
+    let quantity = 100 * constants::float_scaling();
+
+    place_limit_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        true, // is_bid (buy)
+        false, // pay_with_deep = false
+        constants::max_u64(),
+        &mut test,
+    );
+
+    // Check referral rewards - should be 0 as it's a maker order (no fill)
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
+
+        assert_eq!(quote, 0);
+        assert_eq!(base, 0);
+        assert_eq!(deep, 0);
+
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    end(test);
+}
+
+#[test]
+fun pool_referral_fee_maker_partial_fill() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+    let referral_id;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        referral_id = pool.mint_referral(0, test.ctx());
+        return_shared(pool);
+    };
+
+    // Set 10 bps fee rate
+    let fee_rate = 1_000_000;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    // Set referral for BOB
+    let balance_manager_id_bob = create_acct_and_share_with_funds_typed<SUI, USDC, SUI, DEEP>(
+        BOB,
+        1000000 * constants::float_scaling(),
+        &mut test,
+    );
+    test.next_tx(BOB);
+    {
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(balance_manager_id_bob);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let trade_cap = balance_manager.mint_trade_cap(test.ctx());
+        balance_manager.set_balance_manager_referral(&referral, &trade_cap);
+        transfer::public_transfer(trade_cap, BOB);
+        return_shared(referral);
+        return_shared(balance_manager);
+    };
+
+    // Place a LIMIT order that crosses the spread (Taker) but only partially fills
+    // Setup: Best Ask is $2 (1000 qty).
+    // Bob places Buy Limit at $2 for 1500 qty.
+    // Matches 1000 at $2 (Taker).
+    // Remaining 500 sits at $2 (Maker).
+
+    let quantity = 1500 * constants::float_scaling();
+    let price = 2 * constants::float_scaling();
+
+    place_limit_order<SUI, USDC>(
+        BOB,
+        pool_id,
+        balance_manager_id_bob,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        price,
+        quantity,
+        true, // is_bid (buy)
+        false, // pay_with_deep = false
+        constants::max_u64(),
+        &mut test,
+    );
+
+    // Check referral rewards
+    test.next_tx(ALICE);
+    {
+        let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
+
+        // Fee is in Quote (USDC)
+        // Volume = 2000 USDC (1000 filled * 2)
+        // Fee = 2000 * 0.001 = 2 USDC = 2_000_000_000
+        assert_eq!(quote, 2_000_000_000);
+        assert_eq!(base, 0);
+        assert_eq!(deep, 0);
+
+        return_shared(referral);
+        return_shared(pool);
+    };
+
+    end(test);
+}
+
+#[test, expected_failure(abort_code = ::deepbook::pool::EInvalidReferralFeeRate)]
+fun pool_referral_fee_max_exceeded() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+    let referral_id;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        referral_id = pool.mint_referral(0, test.ctx());
+        return_shared(pool);
+    };
+
+    // Set 21 bps fee rate (Max is 20 bps = 2_000_000)
+    let fee_rate = 2_100_000;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        return_shared(referral);
+        return_shared(pool);
+    };
+    end(test);
+}
+
+#[test, expected_failure(abort_code = ::deepbook::pool::EInvalidReferralFeeRate)]
+fun pool_referral_fee_invalid_precision() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+    let referral_id;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        referral_id = pool.mint_referral(0, test.ctx());
+        return_shared(pool);
+    };
+
+    // Set fee rate not multiple of 1000 (0.01 bps)
+    // 1_000_001
+    let fee_rate = 1_000_001;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        return_shared(referral);
+        return_shared(pool);
+    };
+    end(test);
+}
+
+#[test, expected_failure(abort_code = ::deepbook::balance_manager::EInvalidReferralOwner)]
+fun pool_referral_fee_unauthorized_update() {
+    let mut test = begin(OWNER);
+    let pool_id = setup_everything<SUI, USDC, SUI, DEEP>(&mut test);
+    let referral_id;
+    test.next_tx(ALICE);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        referral_id = pool.mint_referral(0, test.ctx());
+        return_shared(pool);
+    };
+
+    // Try to update fee rate by BOB (not owner)
+    let fee_rate = 1_000_000;
+    test.next_tx(BOB);
+    {
+        let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
+        let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
+        pool.update_pool_referral_fee_rate(&referral, fee_rate, test.ctx());
+        return_shared(referral);
+        return_shared(pool);
+    };
+    end(test);
+}
