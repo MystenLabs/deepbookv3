@@ -437,6 +437,8 @@ impl Reader {
         limit: i64,
         balance_manager_filter: Option<String>,
         status_filter: Option<Vec<String>>,
+        start_time: i64,
+        end_time: i64,
     ) -> Result<Vec<OrderStatus>, DeepBookError> {
         let mut connection = self.db.connect().await?;
         let _guard = self.metrics.db_latency.start_timer();
@@ -457,6 +459,8 @@ impl Reader {
                 FROM order_updates
                 WHERE pool_id = $1
                 AND ($2 IS NULL OR balance_manager_id = $2)
+                AND checkpoint_timestamp_ms >= $5
+                AND checkpoint_timestamp_ms <= $6
                 ORDER BY order_id, checkpoint_timestamp_ms DESC
             ),
             placed_events AS (
@@ -466,6 +470,8 @@ impl Reader {
                 FROM order_updates
                 WHERE pool_id = $1
                     AND status = 'Placed'
+                    AND checkpoint_timestamp_ms >= $5
+                    AND checkpoint_timestamp_ms <= $6
                 ORDER BY order_id, checkpoint_timestamp_ms ASC
             ),
             order_status AS (
@@ -510,6 +516,8 @@ impl Reader {
         .bind::<Nullable<Text>, _>(&balance_manager_filter)
         .bind::<Nullable<Array<Text>>, _>(&status_filter)
         .bind::<BigInt, _>(limit)
+        .bind::<BigInt, _>(start_time)
+        .bind::<BigInt, _>(end_time)
         .load::<OrderStatus>(&mut connection)
         .await
         .map_err(|e| DeepBookError::database(format!("Error fetching order status: {}", e)));
