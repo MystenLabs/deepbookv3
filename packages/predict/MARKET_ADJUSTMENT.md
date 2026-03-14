@@ -93,3 +93,89 @@ This is where time-to-expiry matters on the **output** side. Given an aggregate 
 
 This is the "virtual depth" or "liquidity resistance" question. It likely should scale with the vault balance — a $1M vault should require more flow to move than a $10k vault. But what's the right ratio?
 
+## Initial Direction
+
+One approach we've been exploring. Not prescriptive — poking holes is encouraged.
+
+### The idea in plain language
+
+We keep a single number — call it the **flow signal** — that represents the market's collective bullish/bearish opinion based on actual trades. Think of it like a tug-of-war:
+
+- Every dollar spent buying UP pulls the signal toward bullish.
+- Every dollar spent buying DOWN pulls it toward bearish.
+- Over time, the signal fades back to neutral (the oracle takes over again).
+
+When we quote a price for any oracle, we take the oracle's price and nudge it by the flow signal. Three things control how much:
+
+1. **How big is the signal?** More one-sided flow = bigger nudge.
+2. **How recent is the signal?** It decays over time — a signal from 2 minutes ago matters less than one from 5 seconds ago.
+3. **How close is this oracle to expiry?** Near-expiry oracles get nudged more. A 5-minute oracle is very sensitive; a 3-week oracle barely moves.
+
+### Two places where time-to-expiry matters
+
+**When a trade comes in** — a 30-minute-to-expiry trade is a strong, urgent signal ("BTC is going up RIGHT NOW"). A 7-day trade is weaker as a near-term signal. So near-expiry trades push the flow signal harder.
+
+**When we quote an oracle** — a 5-minute-to-expiry oracle should be very reactive to the flow signal. A 3-hour oracle should be mostly anchored to its oracle price. So near-expiry oracles are more sensitive to the flow signal.
+
+### What we store
+
+A single fixed-size aggregate (O(1) space):
+
+```
+value: u64         // how strong the signal is
+is_negative: bool  // bullish (+) or bearish (-)
+last_update_ms: u64
+```
+
+### Configurable parameters
+
+| Parameter | What it controls |
+|-----------|-----------------|
+| `depth_multiplier` | How much capital it takes to move the signal. Scales with vault balance — a bigger vault is harder to push around. |
+| `half_life_ms` | How fast the signal fades. Short = trust oracle more. Long = trust flow more. |
+| `max_adjustment` | Cap on how far the mid-price can drift from the oracle. Safety rail. |
+| `reference_tte_ms` | The "crossover point" for time-to-expiry weighting. Oracles/trades at this tte get 50% weight. Shorter gets more, longer gets less. |
+
+### Walked through example
+
+Setup: Three oracles for BTC, all at strike $70k. Current BTC price is around $70.1k.
+
+| Oracle | Time to expiry | Oracle UP price | Intuition |
+|--------|---------------|-----------------|-----------|
+| 30min  | 30 minutes    | 20c             | Unlikely to hit $70k in 30min |
+| 24hr   | 24 hours      | 40c             | Decent chance over a day |
+| 7d     | 7 days        | 70c             | Likely over a week |
+
+Vault holds $100k. Parameters: depth_multiplier = 2x, half_life = 30s, reference_tte = 30min. Flow signal starts at **0** (neutral).
+
+**A trader buys $10k of UP on the 30min oracle.**
+```
+Trade impact  = $10k / ($100k vault * 2x depth) = 0.05
+Ingest weight = 30min ref / (30min ref + 30min tte) = 0.5
+Signal update = 0 + 0.05 * 0.5 = +0.025
+```
+
+This single trade shifts quotes across all three oracles:
+
+| Oracle | Output weight | Mid shift | New UP price |
+|--------|--------------|-----------|--------------|
+| 30min  | 30 / (30 + 30) = 0.50    | +1.25c | 20c → **21.25c** |
+| 24hr   | 30 / (30 + 1440) = 0.02  | +0.05c | 40c → **40.05c** |
+| 7d     | 30 / (30 + 10080) = 0.003 | +0.01c | 70c → **70.01c** |
+
+The 30min oracle moves meaningfully. The 24hr oracle barely notices. The 7d oracle is essentially unchanged. This makes sense — a short-term bullish trade is mostly a short-term signal.
+
+**30 seconds pass, no trades.**
+```
+Decay: 1 full half-life → signal halves from 0.025 to 0.0125
+```
+
+| Oracle | New UP price |
+|--------|-------------|
+| 30min  | 20c → **20.63c** |
+| 24hr   | 40c → **40.03c** |
+| 7d     | 70c → **70.00c** |
+
+The signal is fading back. If no one else trades, all prices return to their oracle values.
+
+The key dynamic: if traders keep buying UP, the mid keeps climbing. If they stop, it fades back. The oracle is the gravity; flow is the force pulling away from it.
