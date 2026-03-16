@@ -1,0 +1,31 @@
+[package]
+name = "deepbook-scripts"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+anyhow = "1.0.98"
+bcs = "0.1.6"
+dirs = "6"
+serde = { version = "1.0.217", features = ["derive"] }
+serde_yaml = "0.9"
+tokio = { version = "1.47.1", features = ["full"] }
+sui-sdk = { git = "https://github.com/MystenLabs/sui.git", branch = "testnet" }
+sui-json-rpc-types = { git = "https://github.com/MystenLabs/sui.git", branch = "testnet" }
+sui-types = { git = "https://github.com/MystenLabs/sui.git", branch = "testnet" }
+sui-config = { git = "https://github.com/MystenLabs/sui.git", branch = "testnet" }
+sui-keys = { git = "https://github.com/MystenLabs/sui.git", branch = "testnet" }
+shared-crypto = { git = "https://github.com/MystenLabs/sui.git", branch = "testnet" }
+
+[[example]]
+name = "place_limit_order"
+path = "examples/place_limit_order.rs"
+
+[[example]]
+name = "create_balance_manager"
+path = "examples/create_balance_manager.rs"
+
+[[example]]
+name = "deposit"
+path = "examples/deposit.rs"
