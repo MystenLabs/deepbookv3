@@ -21,6 +21,7 @@ use std::str::FromStr;
 use anyhow::{anyhow, Result};
 use deepbook_scripts::constants::*;
 use deepbook_scripts::sui_utils::{get_active_env, get_shared_object_version};
+
 use shared_crypto::intent::Intent;
 use sui_config::{sui_config_dir, SUI_KEYSTORE_FILENAME};
 use sui_keys::keystore::{AccountKeystore, FileBasedKeystore};
@@ -154,15 +155,40 @@ async fn main() -> Result<()> {
         arguments: vec![Argument::Input(1)], // balance_manager
     })));
 
-    // --- Pure inputs for order parameters ---
+    // --- Order parameters (human-readable) ---
     //
-    // These are scalar values serialized via BCS. ptb.pure() handles the
-    // serialization for standard types (u8, u64, bool, etc.).
+    // Set your desired price and quantity here as plain numbers.
+    // They are automatically converted to on-chain u64 values using the
+    // coin scalars from constants.
+    //
+    // Price is in quote asset per base asset (e.g. 0.03 means 0.03 SUI per DEEP).
+    // Quantity is in base asset terms (e.g. 10.0 means 10 DEEP).
+    let price_human: f64 = 0.03; // SUI per DEEP
+    let quantity_human: f64 = 10.0; // DEEP
+
+    let price_on_chain = convert_price(price_human, &quote_coin, &base_coin);
+    let quantity_on_chain = convert_quantity(quantity_human, &base_coin);
+
+    println!(
+        "Order: {} {} {} @ {} {}/{}",
+        if true { "BUY" } else { "SELL" },
+        quantity_human,
+        pool.base_coin,
+        price_human,
+        pool.quote_coin,
+        pool.base_coin,
+    );
+    println!(
+        "  on-chain: price={}, quantity={}",
+        price_on_chain, quantity_on_chain
+    );
+
+    // --- Pure inputs ---
     let client_order_id = ptb.pure(1u64)?;
     let order_type = ptb.pure(NO_RESTRICTION)?;
     let self_matching_option = ptb.pure(SELF_MATCHING_ALLOWED)?;
-    let price = ptb.pure(1_000_000u64)?; // price in quote lots
-    let quantity = ptb.pure(10_000_000u64)?; // quantity in base lots
+    let price = ptb.pure(price_on_chain)?;
+    let quantity = ptb.pure(quantity_on_chain)?;
     let is_bid = ptb.pure(true)?; // true = buy, false = sell
     let pay_with_deep = ptb.pure(true)?; // pay fees in DEEP token
     let expire_timestamp = ptb.pure(MAX_TIMESTAMP)?; // no expiry

@@ -37,8 +37,8 @@ use sui_sdk::{
     SuiClientBuilder,
 };
 
-/// 10 SUI in MIST.
-const DEPOSIT_AMOUNT: u64 = 10_000_000_000;
+/// Human-readable deposit amount. Converted to on-chain value using the coin scalar.
+const DEPOSIT_AMOUNT: f64 = 10.0;
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
@@ -52,9 +52,9 @@ fn required_env(key: &str) -> Result<String> {
 async fn main() -> Result<()> {
     // ── 1. Read active env ──────────────────────────────────────────────
     let active = get_active_env()?;
-    let package_ids = match active.alias.as_str() {
-        "mainnet" => MAINNET_PACKAGE_IDS,
-        "testnet" => TESTNET_PACKAGE_IDS,
+    let (package_ids, sui_coin) = match active.alias.as_str() {
+        "mainnet" => (MAINNET_PACKAGE_IDS, MAINNET_SUI),
+        "testnet" => (TESTNET_PACKAGE_IDS, TESTNET_SUI),
         other => {
             return Err(anyhow!(
                 "Unsupported network '{}'. Expected 'mainnet' or 'testnet'.",
@@ -64,6 +64,7 @@ async fn main() -> Result<()> {
     };
     let balance_manager_id_str = required_env("BALANCE_MANAGER_ID")?;
     let gas_budget: u64 = env_or("GAS_BUDGET", &GAS_BUDGET.to_string()).parse()?;
+    let deposit_amount = convert_quantity(DEPOSIT_AMOUNT, &sui_coin);
 
     // ── 2. Connect to Sui RPC ───────────────────────────────────────────
     let sui = SuiClientBuilder::default().build(&active.rpc).await?;
@@ -82,9 +83,8 @@ async fn main() -> Result<()> {
 
     println!("BalanceManager: {balance_manager_id_str}");
     println!(
-        "Deposit amount: {} MIST ({:.4} SUI)",
-        DEPOSIT_AMOUNT,
-        DEPOSIT_AMOUNT as f64 / 1e9
+        "Deposit amount: {} SUI ({} MIST)",
+        DEPOSIT_AMOUNT, deposit_amount
     );
 
     // ── 4. Build the PTB ────────────────────────────────────────────────
@@ -98,7 +98,7 @@ async fn main() -> Result<()> {
     }))?;
 
     // Command 0: SplitCoins(GasCoin, [amount]) → Coin<SUI>
-    let amount = ptb.pure(DEPOSIT_AMOUNT)?;
+    let amount = ptb.pure(deposit_amount)?;
     ptb.command(Command::SplitCoins(Argument::GasCoin, vec![amount]));
 
     // Command 1: balance_manager::deposit<SUI>(bm, coin, ctx)

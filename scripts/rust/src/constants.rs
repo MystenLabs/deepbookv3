@@ -22,6 +22,30 @@ pub const SUI_CLOCK_OBJECT_ID: &str =
     "0x0000000000000000000000000000000000000000000000000000000000000006";
 
 // ---------------------------------------------------------------------------
+// Conversion helpers (mirrors ts-sdk conversion.ts)
+// ---------------------------------------------------------------------------
+
+/// Convert a human-readable quantity to the on-chain u64 representation.
+///
+/// Example: `convert_quantity(10.0, &MAINNET_SUI)` → 10_000_000_000
+///
+/// Formula: `value * coin.scalar`
+pub fn convert_quantity(value: f64, coin: &Coin) -> u64 {
+    (value * coin.scalar as f64).round() as u64
+}
+
+/// Convert a human-readable price to the on-chain u64 representation.
+///
+/// The price is in quote asset per base asset terms
+/// (e.g., "1.5 USDC per SUI" → `convert_price(1.5, &MAINNET_USDC, &MAINNET_SUI)`).
+///
+/// Formula: `value * FLOAT_SCALAR * quote_coin.scalar / base_coin.scalar`
+pub fn convert_price(value: f64, quote_coin: &Coin, base_coin: &Coin) -> u64 {
+    (value * FLOAT_SCALAR as f64 * quote_coin.scalar as f64 / base_coin.scalar as f64).round()
+        as u64
+}
+
+// ---------------------------------------------------------------------------
 // Order types
 // ---------------------------------------------------------------------------
 
