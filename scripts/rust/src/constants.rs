@@ -126,6 +126,51 @@ pub fn get_coin(network: &str, name: &str) -> Option<Coin> {
     }
 }
 
+/// Look up a pool by its key (e.g. "SUI_USDC", "DEEP_SUI") for a given network.
+pub fn get_pool(network: &str, key: &str) -> Option<Pool> {
+    let key_upper = key.to_uppercase();
+    match network {
+        "mainnet" => match key_upper.as_str() {
+            "DEEP_SUI" => Some(MAINNET_POOL_DEEP_SUI),
+            "SUI_USDC" => Some(MAINNET_POOL_SUI_USDC),
+            "DEEP_USDC" => Some(MAINNET_POOL_DEEP_USDC),
+            "WUSDT_USDC" => Some(MAINNET_POOL_WUSDT_USDC),
+            "WUSDC_USDC" => Some(MAINNET_POOL_WUSDC_USDC),
+            "BETH_USDC" => Some(MAINNET_POOL_BETH_USDC),
+            "NS_USDC" => Some(MAINNET_POOL_NS_USDC),
+            "NS_SUI" => Some(MAINNET_POOL_NS_SUI),
+            "TYPUS_SUI" => Some(MAINNET_POOL_TYPUS_SUI),
+            "SUI_AUSD" => Some(MAINNET_POOL_SUI_AUSD),
+            "AUSD_USDC" => Some(MAINNET_POOL_AUSD_USDC),
+            "DRF_SUI" => Some(MAINNET_POOL_DRF_SUI),
+            "SEND_USDC" => Some(MAINNET_POOL_SEND_USDC),
+            "WAL_USDC" => Some(MAINNET_POOL_WAL_USDC),
+            "WAL_SUI" => Some(MAINNET_POOL_WAL_SUI),
+            "XBTC_USDC" => Some(MAINNET_POOL_XBTC_USDC),
+            "IKA_USDC" => Some(MAINNET_POOL_IKA_USDC),
+            "LZWBTC_USDC" => Some(MAINNET_POOL_LZWBTC_USDC),
+            "USDT_USDC" => Some(MAINNET_POOL_USDT_USDC),
+            "SUIUSDE_USDC" => Some(MAINNET_POOL_SUIUSDE_USDC),
+            "SUI_SUIUSDE" => Some(MAINNET_POOL_SUI_SUIUSDE),
+            "SUI_USDSUI" => Some(MAINNET_POOL_SUI_USDSUI),
+            "USDSUI_USDC" => Some(MAINNET_POOL_USDSUI_USDC),
+            "ALKIMI_SUI" => Some(MAINNET_POOL_ALKIMI_SUI),
+            _ => None,
+        },
+        "testnet" => match key_upper.as_str() {
+            "DEEP_SUI" => Some(TESTNET_POOL_DEEP_SUI),
+            "SUI_DBUSDC" => Some(TESTNET_POOL_SUI_DBUSDC),
+            "DEEP_DBUSDC" => Some(TESTNET_POOL_DEEP_DBUSDC),
+            "DBUSDT_DBUSDC" => Some(TESTNET_POOL_DBUSDT_DBUSDC),
+            "WAL_DBUSDC" => Some(TESTNET_POOL_WAL_DBUSDC),
+            "WAL_SUI" => Some(TESTNET_POOL_WAL_SUI),
+            "DBTC_DBUSDC" => Some(TESTNET_POOL_DBTC_DBUSDC),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Pool {
     pub address: &'static str,
