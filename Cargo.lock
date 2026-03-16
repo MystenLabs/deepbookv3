@@ -2172,7 +2172,6 @@ name = "deepbook-scripts"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bcs",
  "dirs 6.0.0",
  "serde",
  "serde_yaml 0.9.34+deprecated",
