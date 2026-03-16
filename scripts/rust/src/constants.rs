@@ -66,17 +66,67 @@ pub const CANCEL_MAKER: u8 = 2;
 // Network configuration
 // ---------------------------------------------------------------------------
 
+#[derive(Clone, Copy)]
 pub struct PackageIds {
     pub deepbook_package_id: &'static str,
     pub registry_id: &'static str,
     pub deep_treasury_id: &'static str,
 }
 
+#[derive(Clone, Copy)]
 pub struct Coin {
     pub coin_type: &'static str,
     pub scalar: u64,
 }
 
+/// SUI coin type (same on all networks).
+const SUI_COIN_TYPE: &str =
+    "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI";
+
+impl Coin {
+    /// Returns true if this is the native SUI coin.
+    pub fn is_sui(&self) -> bool {
+        self.coin_type == SUI_COIN_TYPE
+    }
+}
+
+/// Look up a coin by its short name (e.g. "SUI", "USDC", "DEEP") for a given network.
+pub fn get_coin(network: &str, name: &str) -> Option<Coin> {
+    let name_upper = name.to_uppercase();
+    match network {
+        "mainnet" => match name_upper.as_str() {
+            "SUI" => Some(MAINNET_SUI),
+            "DEEP" => Some(MAINNET_DEEP),
+            "USDC" => Some(MAINNET_USDC),
+            "WAL" => Some(MAINNET_WAL),
+            "SUIUSDE" => Some(MAINNET_SUIUSDE),
+            "XBTC" => Some(MAINNET_XBTC),
+            "USDSUI" => Some(MAINNET_USDSUI),
+            "WUSDC" => Some(MAINNET_WUSDC),
+            "WETH" => Some(MAINNET_WETH),
+            "BETH" => Some(MAINNET_BETH),
+            "WBTC" => Some(MAINNET_WBTC),
+            "WUSDT" => Some(MAINNET_WUSDT),
+            "NS" => Some(MAINNET_NS),
+            "TYPUS" => Some(MAINNET_TYPUS),
+            "AUSD" => Some(MAINNET_AUSD),
+            "USDT" => Some(MAINNET_USDT),
+            _ => None,
+        },
+        "testnet" => match name_upper.as_str() {
+            "SUI" => Some(TESTNET_SUI),
+            "DEEP" => Some(TESTNET_DEEP),
+            "DBUSDC" => Some(TESTNET_DBUSDC),
+            "DBTC" => Some(TESTNET_DBTC),
+            "DBUSDT" => Some(TESTNET_DBUSDT),
+            "WAL" => Some(TESTNET_WAL),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+#[derive(Clone, Copy)]
 pub struct Pool {
     pub address: &'static str,
     pub base_coin: &'static str,

@@ -1,16 +1,16 @@
-/// Example: Deposit SUI into a BalanceManager.
-///
-/// The PTB does two things:
-///   1. Split 10 SUI from the gas coin → Coin<SUI>
-///   2. Call `balance_manager::deposit<SUI>(bm, coin, ctx)`
+/// Example: Deposit coins into a BalanceManager.
 ///
 /// Automatically uses the active env and address from `sui client`.
 ///
+/// ┌─────────────────────────────────────────────────────────────────┐
+/// │  CONFIGURE YOUR DEPOSIT HERE                                    │
+/// ├─────────────────────────────────────────────────────────────────┤
+/// │  DEPOSIT_COIN  — coin name: "SUI", "USDC", "DEEP", etc.       │
+/// │  DEPOSIT_AMOUNT — human-readable amount (e.g. 10.0 = 10 SUI)   │
+/// └─────────────────────────────────────────────────────────────────┘
+///
 /// Required environment variables:
 ///   BALANCE_MANAGER_ID - Your BalanceManager shared object ID
-///
-/// Optional environment variables:
-///   GAS_BUDGET - Gas budget in MIST (default: 1_000_000_000 = 1 SUI)
 ///
 /// Usage:
 ///   BALANCE_MANAGER_ID=0x... cargo run --example deposit
@@ -37,8 +37,17 @@ use sui_sdk::{
     SuiClientBuilder,
 };
 
-/// Human-readable deposit amount. Converted to on-chain value using the coin scalar.
+// ═══════════════════════════════════════════════════════════════════════
+// CONFIGURE YOUR DEPOSIT HERE
+// ═══════════════════════════════════════════════════════════════════════
+
+/// Which coin to deposit. Use the short name: "SUI", "USDC", "DEEP", etc.
+const DEPOSIT_COIN: &str = "SUI";
+
+/// How much to deposit (human-readable). 10.0 = 10 tokens.
 const DEPOSIT_AMOUNT: f64 = 10.0;
+
+// ═══════════════════════════════════════════════════════════════════════
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
@@ -52,9 +61,9 @@ fn required_env(key: &str) -> Result<String> {
 async fn main() -> Result<()> {
     // ── 1. Read active env ──────────────────────────────────────────────
     let active = get_active_env()?;
-    let (package_ids, sui_coin) = match active.alias.as_str() {
-        "mainnet" => (MAINNET_PACKAGE_IDS, MAINNET_SUI),
-        "testnet" => (TESTNET_PACKAGE_IDS, TESTNET_SUI),
+    let package_ids = match active.alias.as_str() {
+        "mainnet" => MAINNET_PACKAGE_IDS,
+        "testnet" => TESTNET_PACKAGE_IDS,
         other => {
             return Err(anyhow!(
                 "Unsupported network '{}'. Expected 'mainnet' or 'testnet'.",
@@ -62,9 +71,18 @@ async fn main() -> Result<()> {
             ))
         }
     };
+
+    let coin = get_coin(&active.alias, DEPOSIT_COIN).ok_or_else(|| {
+        anyhow!(
+            "Unknown coin '{}' on {}. Check constants.rs for available coins.",
+            DEPOSIT_COIN,
+            active.alias
+        )
+    })?;
+
     let balance_manager_id_str = required_env("BALANCE_MANAGER_ID")?;
     let gas_budget: u64 = env_or("GAS_BUDGET", &GAS_BUDGET.to_string()).parse()?;
-    let deposit_amount = convert_quantity(DEPOSIT_AMOUNT, &sui_coin);
+    let deposit_on_chain = convert_quantity(DEPOSIT_AMOUNT, &coin);
 
     // ── 2. Connect to Sui RPC ───────────────────────────────────────────
     let sui = SuiClientBuilder::default().build(&active.rpc).await?;
@@ -83,8 +101,8 @@ async fn main() -> Result<()> {
 
     println!("BalanceManager: {balance_manager_id_str}");
     println!(
-        "Deposit amount: {} SUI ({} MIST)",
-        DEPOSIT_AMOUNT, deposit_amount
+        "Deposit: {} {} ({} on-chain)",
+        DEPOSIT_AMOUNT, DEPOSIT_COIN, deposit_on_chain
     );
 
     // ── 4. Build the PTB ────────────────────────────────────────────────
@@ -97,30 +115,51 @@ async fn main() -> Result<()> {
         mutability: sui_types::transaction::SharedObjectMutability::Mutable,
     }))?;
 
-    // Command 0: SplitCoins(GasCoin, [amount]) → Coin<SUI>
-    let amount = ptb.pure(deposit_amount)?;
-    ptb.command(Command::SplitCoins(Argument::GasCoin, vec![amount]));
-
-    // Command 1: balance_manager::deposit<SUI>(bm, coin, ctx)
+    // Get the coin to deposit.
     //
-    // Move signature (packages/deepbook/sources/balance_manager.move:292):
-    //   public fun deposit<T>(
-    //       balance_manager: &mut BalanceManager,
-    //       coin: Coin<T>,
-    //       ctx: &mut TxContext,
-    //   )
-    let sui_type = TypeInput::from(TypeTag::from_str(
-        "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI",
-    )?);
+    // For SUI: split from the gas coin (always available).
+    // For other coins: fetch a Coin<T> object from the sender's wallet and
+    //   split the needed amount from it.
+    let deposit_coin_arg = if coin.is_sui() {
+        // SplitCoins(GasCoin, [amount]) → Coin<SUI>
+        let amount = ptb.pure(deposit_on_chain)?;
+        ptb.command(Command::SplitCoins(Argument::GasCoin, vec![amount]));
+        Argument::Result(0)
+    } else {
+        // Fetch a Coin<T> from the wallet
+        let coin_type_tag = TypeTag::from_str(coin.coin_type)?;
+        let wallet_coins = sui
+            .coin_read_api()
+            .get_coins(sender, Some(coin_type_tag.to_string()), None, None)
+            .await?;
+        let source_coin = wallet_coins.data.into_iter().next().ok_or_else(|| {
+            anyhow!(
+                "No {} coins found in wallet for {sender}",
+                DEPOSIT_COIN
+            )
+        })?;
+
+        // Add the coin object as an owned input
+        let coin_ref = source_coin.object_ref();
+        ptb.input(CallArg::Object(ObjectArg::ImmOrOwnedObject(coin_ref)))?;
+
+        // SplitCoins(Input(1), [amount]) → Coin<T>
+        let amount = ptb.pure(deposit_on_chain)?;
+        ptb.command(Command::SplitCoins(Argument::Input(1), vec![amount]));
+        Argument::Result(0)
+    };
+
+    // Call balance_manager::deposit<T>(bm, coin, ctx)
+    let coin_type_input = TypeInput::from(TypeTag::from_str(coin.coin_type)?);
 
     ptb.command(Command::MoveCall(Box::new(ProgrammableMoveCall {
         package: deepbook_package,
         module: "balance_manager".to_string(),
         function: "deposit".to_string(),
-        type_arguments: vec![sui_type],
+        type_arguments: vec![coin_type_input],
         arguments: vec![
-            Argument::Input(0),  // balance_manager
-            Argument::Result(0), // coin from SplitCoins
+            Argument::Input(0), // balance_manager
+            deposit_coin_arg,   // coin from SplitCoins
         ],
     })));
 
