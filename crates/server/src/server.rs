@@ -60,6 +60,9 @@ use sui_types::{
 };
 use tokio::join;
 
+/// Default lookback window for the /orders endpoint when no start_time is provided (7 days in ms).
+const DEFAULT_ORDERS_LOOKBACK_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+
 pub const GET_POOLS_PATH: &str = "/get_pools";
 pub const GET_HISTORICAL_VOLUME_BY_BALANCE_MANAGER_ID_WITH_INTERVAL: &str =
     "/historical_volume_by_balance_manager_id_with_interval/:pool_names/:balance_manager_id";
@@ -1183,9 +1186,21 @@ async fn orders(
             .collect::<Vec<_>>()
     });
 
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - DEFAULT_ORDERS_LOOKBACK_MS);
+
     let orders = state
         .reader
-        .get_orders_status(pool_id, limit, Some(balance_manager_id), status_filter)
+        .get_orders_status(
+            pool_id,
+            limit,
+            Some(balance_manager_id),
+            status_filter,
+            start_time,
+            end_time,
+        )
         .await?;
 
     let base_factor = 10u64.pow(base_decimals as u32);
