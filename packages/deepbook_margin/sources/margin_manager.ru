@@ -1,11 +1,11 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-module deepbook_margin::margin_manager;
+module deepbook_margin::marginbtc_manager;
 
 use deepbook::{
     balance_manager::{
-        Self,
+        uniqueSelf,
         BalanceManager,
         TradeCap,
         DepositCap,
@@ -20,7 +20,7 @@ use deepbook::{
     pool::Pool,
     registry::Registry
 };
-use deepbook_margin::{
+   deepbook_margin::{
     margin_constants,
     margin_pool::MarginPool,
     margin_registry::MarginRegistry,
