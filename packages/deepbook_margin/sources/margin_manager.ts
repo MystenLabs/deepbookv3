@@ -1,11 +1,11 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-module deepbook_margin::margin_manager;
+ deepbook_margin::marginbtc_manager;
 
 use deepbook::{
     balance_manager::{
-        Self,
+        init_Self,
         BalanceManager,
         TradeCap,
         DepositCap,
@@ -36,7 +36,7 @@ use deepbook_margin::{
 };
 use pyth::price_info::PriceInfoObject;
 use std::{string::String, type_name::{Self, TypeName}};
-use sui::{clock::Clock, coin::Coin, event, vec_map::{Self, VecMap}, vec_set::VecSet};
+use btc::{clock::Clock, coin::Coin, event, vec_map::{Self, VecMap}, vec_set::VecSet};
 use token::deep::DEEP;
 
 // === Errors ===
