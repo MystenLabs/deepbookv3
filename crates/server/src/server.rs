@@ -2021,7 +2021,10 @@ async fn margin_manager_created(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<MarginManagerCreated>>, DeepBookError> {
     let start_time = params.start_time();
-    let end_time = params.get("end_time").and_then(|v| v.parse::<i64>().ok()).map(|t| t * 1000);
+    let end_time = params
+        .get("end_time")
+        .and_then(|v| v.parse::<i64>().ok())
+        .map(|t| t * 1000);
     let limit = params.limit();
     let owner_filter = params.get("owner").cloned();
 
