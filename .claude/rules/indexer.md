@@ -24,7 +24,7 @@ paths:
 
 ## Pre-Push Checklist
 
-Before committing or pushing Rust changes, always run:
+Before committing/pushing Rust changes or creating a PR, always run:
 1. `cargo fmt -p deepbook-server` — CI runs `rustfmt` and will fail on formatting issues
 2. `cargo build -p deepbook-server` — catch compile errors locally
 

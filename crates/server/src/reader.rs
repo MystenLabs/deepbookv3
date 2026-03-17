@@ -588,25 +588,30 @@ impl Reader {
     // === Deepbook Margin Events ===
     pub async fn get_margin_manager_created(
         &self,
-        start_time: i64,
-        end_time: i64,
+        start_time: Option<i64>,
+        end_time: Option<i64>,
         limit: i64,
-        margin_manager_id_filter: String,
+        owner_filter: Option<String>,
     ) -> Result<Vec<MarginManagerCreated>, DeepBookError> {
-        let query = schema::margin_manager_created::table
+        let mut connection = self.db.connect().await?;
+        let mut query = schema::margin_manager_created::table
             .select(MarginManagerCreated::as_select())
-            .filter(
-                schema::margin_manager_created::checkpoint_timestamp_ms
-                    .between(start_time, end_time),
-            )
-            .filter(
-                schema::margin_manager_created::margin_manager_id
-                    .like(to_pattern(&margin_manager_id_filter)),
-            )
             .order_by(schema::margin_manager_created::checkpoint_timestamp_ms.desc())
-            .limit(limit);
+            .limit(limit)
+            .into_boxed();
 
-        Ok(self.results(query).await?)
+        if let Some(start) = start_time {
+            query = query.filter(schema::margin_manager_created::checkpoint_timestamp_ms.ge(start));
+        }
+        if let Some(end) = end_time {
+            query = query.filter(schema::margin_manager_created::checkpoint_timestamp_ms.le(end));
+        }
+        if let Some(owner) = owner_filter {
+            query = query.filter(schema::margin_manager_created::owner.eq(owner));
+        }
+
+        let _guard = self.metrics.db_latency.start_timer();
+        Ok(query.get_results(&mut connection).await?)
     }
 
     pub async fn get_loan_borrowed(
