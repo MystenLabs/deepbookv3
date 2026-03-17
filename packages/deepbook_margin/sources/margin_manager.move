@@ -363,6 +363,16 @@ public fun share<BaseAsset, QuoteAsset>(
     } = initializer;
 }
 
+/// Register the margin manager back to the margin registry.
+public fun register_margin_manager<BaseAsset, QuoteAsset>(
+    self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    margin_registry: &mut MarginRegistry,
+    ctx: &mut TxContext,
+) {
+    self.validate_owner(ctx);
+    margin_registry.add_margin_manager(self.id(), ctx);
+}
+
 /// Unregister the margin manager from the margin registry.
 public fun unregister_margin_manager<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
