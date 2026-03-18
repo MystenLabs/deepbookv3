@@ -20,6 +20,13 @@ paths:
 
 - Build: `cargo build -p deepbook-server`
 - Test: `cargo test -p deepbook-server`
+- Format: `cargo fmt -p deepbook-server`
+
+## Pre-Push Checklist
+
+Before committing/pushing Rust changes or creating a PR, always run:
+1. `cargo fmt -p deepbook-server` — CI runs `rustfmt` and will fail on formatting issues
+2. `cargo build -p deepbook-server` — catch compile errors locally
 
 ## Performance-Critical Endpoints
 
