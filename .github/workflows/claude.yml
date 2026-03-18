@@ -41,7 +41,6 @@ jobs:
           # This is an optional setting that allows Claude to read CI results on PRs
           additional_permissions: |
             actions: read
-
           # When @claude is mentioned on a PR, provide a review prompt. Claude will also follow any additional instructions in the comment.
           prompt: |
             ${{ github.event_name == 'issue_comment' && github.event.issue.pull_request &&
@@ -51,13 +50,10 @@ jobs:
             - Performance considerations
             - Security concerns
             - Test coverage
-
             Use the repository''s CLAUDE.md for guidance on style and conventions. Be constructive and helpful in your feedback.
-
             Use `gh pr comment {0}` with your Bash tool to leave your review as a comment on the PR.', github.event.issue.number) || '' }}
-
           # Optional: Add claude_args to customize behavior and configuration
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://docs.anthropic.com/en/docs/claude-code/sdk#command-line for available options
           claude_args: '--allowed-tools "Bash(gh issue view:*),Bash(gh search:*),Bash(gh issue list:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh pr list:*)"'
-
+          
