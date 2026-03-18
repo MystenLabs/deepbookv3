@@ -6,7 +6,7 @@ Outputs:
   2. normal_cdf() constants: 16 piecewise cubic polynomial coefficients
 
 Usage:
-    python scripts/generate_cdf_coefficients.py
+    python research/predict_math/generate_cdf_coefficients.py
 
 Requires only the Python standard library (math.erfc).
 """

@@ -231,15 +231,17 @@ public fun sqrt(x: u64, precision: u64): u64 {
 /// = 2*z*(1 + w*(1/3 + w*(1/5 + w*(1/7 + w*(1/9 + w*(1/11 + w/13))))))
 /// where w = z². Reciprocals precomputed — no div() calls.
 fun ln_horner(z: u64): u64 {
-    let w = math::mul(z, z);
-    let mut h = math::mul(w, INV_13);
-    h = math::mul(INV_11 + h, w);
-    h = math::mul(INV_9 + h, w);
-    h = math::mul(INV_7 + h, w);
-    h = math::mul(INV_5 + h, w);
-    h = math::mul(INV_3 + h, w);
-    let f = constants::float_scaling!() + h;
-    math::mul(math::mul(2 * constants::float_scaling!(), z), f)
+    let scale = constants::float_scaling!() as u128;
+    let z = z as u128;
+    let w = mul_scaled_u128(z, z);
+    let mut h = mul_scaled_u128(w, INV_13 as u128);
+    h = mul_scaled_u128((INV_11 as u128) + h, w);
+    h = mul_scaled_u128((INV_9 as u128) + h, w);
+    h = mul_scaled_u128((INV_7 as u128) + h, w);
+    h = mul_scaled_u128((INV_5 as u128) + h, w);
+    h = mul_scaled_u128((INV_3 as u128) + h, w);
+    let f = scale + h;
+    mul_scaled_u128(mul_scaled_u128(2 * scale, z), f) as u64
 }
 
 /// Normalize x into [float_scaling, 2*float_scaling) via bit-shift binary search.
@@ -259,6 +261,10 @@ fun normalize(x: u64): (u64, u64) {
 
 fun log_ratio(y: u64): u64 {
     math::div(y - constants::float_scaling!(), y + constants::float_scaling!())
+}
+
+fun mul_scaled_u128(x: u128, y: u128): u128 {
+    x * y / (constants::float_scaling!() as u128)
 }
 
 /// Integer sqrt of u128 via bit-length initial guess + 7 unrolled Newton steps.
