@@ -4,6 +4,7 @@
 module deepbook_margin::margin_manager;
 
 use deepbook::{
+    account::Account,
     balance_manager::{
         Self,
         BalanceManager,
@@ -1195,6 +1196,71 @@ public fun locked_balance<BaseAsset, QuoteAsset>(
     pool: &Pool<BaseAsset, QuoteAsset>,
 ): (u64, u64, u64) {
     pool.locked_balance(&self.balance_manager)
+}
+
+public fun balance_manager_id<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+): ID {
+    self.balance_manager.id()
+}
+
+public fun get_balance_manager_referral_id<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+    pool_id: ID,
+): Option<ID> {
+    self.balance_manager.get_balance_manager_referral_id(pool_id)
+}
+
+public fun account_exists<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+): bool {
+    pool.account_exists(&self.balance_manager)
+}
+
+public fun account<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+): Account {
+    pool.account(&self.balance_manager)
+}
+
+public fun can_place_limit_order<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    price: u64,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    expire_timestamp: u64,
+    clock: &Clock,
+): bool {
+    pool.can_place_limit_order(
+        &self.balance_manager,
+        price,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp,
+        clock,
+    )
+}
+
+public fun can_place_market_order<BaseAsset, QuoteAsset>(
+    self: &MarginManager<BaseAsset, QuoteAsset>,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    clock: &Clock,
+): bool {
+    pool.can_place_market_order(
+        &self.balance_manager,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        clock,
+    )
 }
 
 // === Public-Package Functions ===
