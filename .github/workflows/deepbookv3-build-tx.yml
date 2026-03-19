@@ -30,7 +30,7 @@ on:
           - Fund Liquidation Vault
           - Update Interest Rates
           - Margin Prep
-          - Create Balance Manager
+          - Prep Balance Manager
           - Revoke Pausecap
       sui_tools_image:
         description: "image reference of sui_tools"
@@ -449,15 +449,15 @@ jobs:
         run: |
           cd scripts && pnpm install && pnpm tsx transactions/marginPrep.ts
 
-      - name: Create Balance Manager
-        if: ${{ inputs.transaction_type == 'Create Balance Manager' }}
+      - name: Prep Balance Manager
+        if: ${{ inputs.transaction_type == 'Prep Balance Manager' }}
         env:
           NODE_ENV: production
           GAS_OBJECT: ${{ inputs.gas_object_id }}
           NETWORK: mainnet
           ORIGIN: gh_action
         run: |
-          cd scripts && pnpm install && pnpm tsx transactions/createBalanceManager.ts
+          cd scripts && pnpm install && pnpm tsx transactions/prepBalanceManager.ts
 
       - name: Revoke Pausecap
         if: ${{ inputs.transaction_type == 'Revoke Pausecap' }}
