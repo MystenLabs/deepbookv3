@@ -1779,9 +1779,9 @@ async fn deep_supply(State(state): State<Arc<AppState>>) -> Result<Json<u64>, De
 #[derive(serde::Serialize)]
 struct PoolFees {
     pool_id: String,
-    taker_fee: u64,
-    maker_fee: u64,
-    stake_required: u64,
+    taker_fee: f64,
+    maker_fee: f64,
+    stake_required: f64,
 }
 
 /// Returns maker_fee, taker_fee, and stake_required for all pools via a single PTB
@@ -1903,9 +1903,9 @@ async fn fees(
             pool.pool_name.clone(),
             PoolFees {
                 pool_id: pool.pool_id.clone(),
-                taker_fee,
-                maker_fee,
-                stake_required,
+                taker_fee: taker_fee as f64 / 1_000_000_000.0,
+                maker_fee: maker_fee as f64 / 1_000_000_000.0,
+                stake_required: stake_required as f64 / 1_000_000.0,
             },
         );
     }
