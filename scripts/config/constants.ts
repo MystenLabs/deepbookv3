@@ -57,7 +57,7 @@ export const suiUsdeMarginPoolCapID = {
 };
 
 export const usdSuiMarginPoolCapID = {
-  mainnet: "",
+  mainnet: "0x44a74705863f509117c5dfa215b0eef2bae9f5273039f206bec4cf2ba005902d",
   testnet: "",
 };
 
