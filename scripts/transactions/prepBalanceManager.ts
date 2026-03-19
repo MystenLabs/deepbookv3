@@ -11,7 +11,8 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   const env = "mainnet";
   const balanceManagers = {
     BALANCE_MANAGER_1: {
-      address: "", // Update this
+      address:
+        "0xedd38a1faf45147923c4b020af940e1e09f0888d311e45267ed2bd05b5f648a8",
     },
   };
   const receivingAddress =
