@@ -7,6 +7,7 @@ import { deepbook } from "@mysten/deepbook-v3";
 import { SuiGrpcClient } from "@mysten/sui/grpc";
 
 (async () => {
+  // Update constant for env
   const env = "mainnet";
 
   const client = new SuiGrpcClient({
@@ -21,7 +22,7 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
 
   const tx = new Transaction();
 
-  client.deepbook.deepBookAdmin.initBalanceManagerMap()(tx);
+  client.deepbook.balanceManager.createAndShareBalanceManager()(tx);
 
   const res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
