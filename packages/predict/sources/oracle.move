@@ -114,6 +114,13 @@ public struct OracleSVI has key {
     settlement_price: Option<u64>,
 }
 
+/// Curve sample point with strike and both UP/DOWN prices.
+public struct CurvePoint has copy, drop, store {
+    strike: u64,
+    up_price: u64,
+    dn_price: u64,
+}
+
 /// Capability for Block Scholes operator to create and update oracles.
 public struct OracleCapSVI has key, store {
     id: UID,
@@ -291,6 +298,16 @@ public fun new_svi_params(
     SVIParams { a, b, rho, rho_negative, m, m_negative, sigma }
 }
 
+public fun new_curve_point(strike: u64, up_price: u64, dn_price: u64): CurvePoint {
+    CurvePoint { strike, up_price, dn_price }
+}
+
+public fun strike(point: &CurvePoint): u64 { point.strike }
+
+public fun up_price(point: &CurvePoint): u64 { point.up_price }
+
+public fun dn_price(point: &CurvePoint): u64 { point.dn_price }
+
 // === Public-Package Functions ===
 
 /// Register an additional cap as authorized to update an oracle.
@@ -333,7 +350,9 @@ public(package) fun create_oracle(underlying_asset: String, expiry: u64, ctx: &m
     oracle_id
 }
 
-/// Binary option price using SVI + Black-Scholes, discounted by e^(-r*t).
+/// Binary option price. If settled, returns deterministic 0/100%.
+/// Otherwise uses SVI + Black-Scholes, discounted by e^(-r*t).
+/// At-the-money (price == strike) settles as DOWN win.
 /// Returns price in FLOAT_SCALING (1e9).
 public(package) fun get_binary_price(
     oracle: &OracleSVI,
@@ -341,31 +360,109 @@ public(package) fun get_binary_price(
     is_up: bool,
     clock: &Clock,
 ): u64 {
+    if (oracle.settlement_price.is_some()) {
+        let settlement_price = oracle.settlement_price.destroy_some();
+        let up_wins = settlement_price > strike;
+        let won = if (is_up) { up_wins } else { !up_wins };
+        return if (won) { constants::float_scaling!() } else { 0 }
+    };
+
     let nd2 = compute_nd2(oracle, strike, is_up);
-
-    // Discount: e^(-r * t), time only needed here
-    let tte_ms = oracle.expiry - clock.timestamp_ms();
-    let t = math::div(tte_ms, constants::ms_per_year!());
-    let rt = math::mul(oracle.risk_free_rate, t);
-    let discount = predict_math::exp(rt, true);
-
+    let discount = compute_discount(oracle, clock);
     math::mul(discount, nd2)
-}
-
-/// Binary option price without discount factor (assumes r ≈ 0).
-/// No clock needed — time cancels entirely from the formula.
-/// Returns price in FLOAT_SCALING (1e9).
-public(package) fun get_binary_price_undiscounted(
-    oracle: &OracleSVI,
-    strike: u64,
-    is_up: bool,
-): u64 {
-    compute_nd2(oracle, strike, is_up)
 }
 
 /// Assert that the oracle is not stale. Aborts if stale.
 public(package) fun assert_not_stale(oracle: &OracleSVI, clock: &Clock) {
     assert!(!is_stale(oracle, clock), EOracleStale);
+}
+
+/// Build an adaptive piecewise-linear approximation of the pricing curve.
+/// Concentrates sample points near ATM where the sigmoid is steepest.
+/// For settled oracles, returns a step-function curve at the settlement price.
+/// Returns a sorted vector of CurvePoints for use with treap.evaluate().
+public(package) fun build_curve(
+    oracle: &OracleSVI,
+    min_strike: u64,
+    max_strike: u64,
+    clock: &Clock,
+): vector<CurvePoint> {
+    if (oracle.is_settled()) {
+        let settlement = oracle.settlement_price().destroy_some();
+        let full_price = constants::float_scaling!();
+        return vector[
+            new_curve_point(settlement - 1, full_price, 0),
+            new_curve_point(settlement, 0, full_price),
+        ]
+    };
+
+    let sample_limit = constants::default_curve_samples!();
+    let discount = compute_discount(oracle, clock);
+
+    // Single-strike edge case
+    if (min_strike == max_strike) {
+        return vector[oracle.eval_strike(min_strike, discount)]
+    };
+
+    // Seed with min, forward (if in range), max — deduplicating
+    let forward = oracle.prices.forward;
+    let mut points = vector[oracle.eval_strike(min_strike, discount)];
+    let mut used = 1u64;
+
+    if (forward > min_strike && forward < max_strike) {
+        points.push_back(oracle.eval_strike(forward, discount));
+        used = used + 1;
+    };
+    points.push_back(oracle.eval_strike(max_strike, discount));
+    used = used + 1;
+
+    // Adaptive refinement: pick interval with max error, bisect it
+    while (used < sample_limit) {
+        let len = points.length();
+        let mut best_score = 0u64;
+        let mut best_idx = 0u64;
+        let mut i = 0;
+        while (i < len - 1) {
+            let interval = points[i + 1].strike() - points[i].strike();
+            if (interval < constants::min_curve_interval!()) {
+                i = i + 1;
+                continue
+            };
+
+            let score = if (i > 0 && i < len - 2) {
+                // Interior: second finite difference
+                let sum_ends = points[i - 1].up_price() + points[i + 1].up_price();
+                let twice_mid = 2 * points[i].up_price();
+                sum_ends.diff(twice_mid) * interval
+            } else {
+                // Edge: use slope magnitude
+                points[i].up_price().diff(points[i + 1].up_price()) * interval
+            };
+
+            if (score > best_score) {
+                best_score = score;
+                best_idx = i;
+            };
+            i = i + 1;
+        };
+
+        // No refineable interval found
+        if (best_score == 0) break;
+
+        let mid_strike = (points[best_idx].strike() + points[best_idx + 1].strike()) / 2;
+        let new_point = oracle.eval_strike(mid_strike, discount);
+
+        // Insert at sorted position (best_idx + 1)
+        points.push_back(new_point); // append to end
+        let mut j = points.length() - 1;
+        while (j > best_idx + 1) {
+            points.swap(j, j - 1);
+            j = j - 1;
+        };
+        used = used + 1;
+    };
+
+    points
 }
 
 // === Private Functions ===
@@ -407,6 +504,27 @@ fun compute_nd2(oracle: &OracleSVI, strike: u64, is_up: bool): u64 {
     let cdf_neg = if (is_up) { d2_neg } else { !d2_neg };
 
     predict_math::normal_cdf(d2, cdf_neg)
+}
+
+/// Compute discount factor e^(-r * t).
+/// Past expiry returns 1.0 (no discounting) to handle the window between
+/// expiry and settlement.
+fun compute_discount(oracle: &OracleSVI, clock: &Clock): u64 {
+    let now = clock.timestamp_ms();
+    if (now >= oracle.expiry) return constants::float_scaling!();
+    let tte_ms = oracle.expiry - now;
+    let t = math::div(tte_ms, constants::ms_per_year!());
+    let rt = math::mul(oracle.risk_free_rate, t);
+    predict_math::exp(rt, true)
+}
+
+/// Evaluate one strike, returning a CurvePoint with both UP and DOWN prices.
+/// Uses the complement property: dn = discount - up, costing only 1 compute_nd2 call.
+fun eval_strike(oracle: &OracleSVI, strike: u64, discount: u64): CurvePoint {
+    let nd2 = compute_nd2(oracle, strike, true);
+    let up = math::mul(discount, nd2);
+    let dn = if (discount > up) { discount - up } else { 0 };
+    new_curve_point(strike, up, dn)
 }
 
 fun assert_authorized_cap(oracle: &OracleSVI, cap: &OracleCapSVI) {

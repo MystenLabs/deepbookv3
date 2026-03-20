@@ -34,3 +34,11 @@ public macro fun ms_per_year(): u64 { 31_536_000_000 }
 
 /// Oracle staleness threshold (30 seconds)
 public macro fun staleness_threshold_ms(): u64 { 30_000 }
+
+// === Curve Builder ===
+
+/// Default number of sample points for adaptive curve building
+public macro fun default_curve_samples(): u64 { 50 }
+
+/// Minimum interval between curve sample points ($0.001 in FLOAT_SCALING)
+public macro fun min_curve_interval(): u64 { 1_000_000 }
