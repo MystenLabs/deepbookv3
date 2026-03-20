@@ -183,8 +183,9 @@ fun remove_at(
     let node = nodes[root_strike];
 
     if (strike == root_strike) {
-        if (is_up) { assert!(node.q_up >= qty, EInsufficientQuantity) }
-        else { assert!(node.q_dn >= qty, EInsufficientQuantity) };
+        if (is_up) { assert!(node.q_up >= qty, EInsufficientQuantity) } else {
+            assert!(node.q_dn >= qty, EInsufficientQuantity)
+        };
 
         let new_q_up = if (is_up) { node.q_up - qty } else { node.q_up };
         let new_q_dn = if (!is_up) { node.q_dn - qty } else { node.q_dn };
@@ -212,14 +213,7 @@ fun remove_at(
         nodes[root_strike].right = new_right;
     };
 
-    let n = &mut nodes[root_strike];
-    if (is_up) {
-        n.agg_q_up = n.agg_q_up - qty;
-        n.agg_qk_up = n.agg_qk_up - math::mul(qty, strike);
-    } else {
-        n.agg_q_dn = n.agg_q_dn - qty;
-        n.agg_qk_dn = n.agg_qk_dn - math::mul(qty, strike);
-    };
+    recompute_agg(nodes, root_strike);
     option::some(root_strike)
 }
 
@@ -426,10 +420,11 @@ fun interp_at(curve: &vector<CurvePoint>, cursor: u64, strike: u64, is_up: bool)
     if (range == 0) return p_lo;
 
     let offset = strike - k_lo;
+    let ratio = math::div(offset, range);
     if (p_hi >= p_lo) {
-        p_lo + (p_hi - p_lo) * offset / range
+        p_lo + math::mul(p_hi - p_lo, ratio)
     } else {
-        p_lo - (p_lo - p_hi) * offset / range
+        p_lo - math::mul(p_lo - p_hi, ratio)
     }
 }
 
