@@ -12,6 +12,7 @@ import {
   deepMarginPoolCapID,
   walMarginPoolCapID,
   suiUsdeMarginPoolCapID,
+  usdSuiMarginPoolCapID,
   xbtcMarginPoolCapID,
 } from "../config/constants.js";
 import { deepbook } from "@mysten/deepbook-v3";
@@ -60,20 +61,21 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   // tx.transferObjects([maintainerCap], adminCapOwner[env]);
 
   // // 4. Pyth Config
-  // const maxAgeSeconds = 70;
-  // const pythConfig = client.deepbook.marginAdmin.newPythConfig(
-  //   [
-  //     { coinKey: "SUI", maxConfBps: 300, maxEwmaDifferenceBps: 1500 }, // maxConfBps: 3%, maxEwmaDifferenceBps: 15%
-  //     { coinKey: "USDC", maxConfBps: 100, maxEwmaDifferenceBps: 500 }, // maxConfBps: 1%, maxEwmaDifferenceBps: 5%
-  //     { coinKey: "DEEP", maxConfBps: 500, maxEwmaDifferenceBps: 3000 }, // maxConfBps: 5%, maxEwmaDifferenceBps: 30%
-  //     { coinKey: "WAL", maxConfBps: 500, maxEwmaDifferenceBps: 3000 }, // maxConfBps: 5%, maxEwmaDifferenceBps: 30%
-  //     { coinKey: "SUIUSDE", maxConfBps: 100, maxEwmaDifferenceBps: 500 }, // maxConfBps: 1%, maxEwmaDifferenceBps: 5%
-  //     { coinKey: "XBTC", maxConfBps: 200, maxEwmaDifferenceBps: 1000 }, // maxConfBps: 2%, maxEwmaDifferenceBps: 10%
-  //   ],
-  //   maxAgeSeconds, // maxAgeSeconds: 70 seconds
-  // )(tx);
-  // client.deepbook.marginAdmin.removeConfig()(tx);
-  // client.deepbook.marginAdmin.addConfig(pythConfig)(tx);
+  const maxAgeSeconds = 70;
+  const pythConfig = client.deepbook.marginAdmin.newPythConfig(
+    [
+      { coinKey: "SUI", maxConfBps: 300, maxEwmaDifferenceBps: 1500 }, // maxConfBps: 3%, maxEwmaDifferenceBps: 15%
+      { coinKey: "USDC", maxConfBps: 100, maxEwmaDifferenceBps: 500 }, // maxConfBps: 1%, maxEwmaDifferenceBps: 5%
+      { coinKey: "DEEP", maxConfBps: 500, maxEwmaDifferenceBps: 3000 }, // maxConfBps: 5%, maxEwmaDifferenceBps: 30%
+      { coinKey: "WAL", maxConfBps: 500, maxEwmaDifferenceBps: 3000 }, // maxConfBps: 5%, maxEwmaDifferenceBps: 30%
+      { coinKey: "SUIUSDE", maxConfBps: 100, maxEwmaDifferenceBps: 500 }, // maxConfBps: 1%, maxEwmaDifferenceBps: 5%
+      { coinKey: "XBTC", maxConfBps: 200, maxEwmaDifferenceBps: 1000 }, // maxConfBps: 2%, maxEwmaDifferenceBps: 10%
+      { coinKey: "USDSUI", maxConfBps: 100, maxEwmaDifferenceBps: 500 }, // maxConfBps: 1%, maxEwmaDifferenceBps: 5%
+    ],
+    maxAgeSeconds, // maxAgeSeconds: 70 seconds
+  )(tx);
+  client.deepbook.marginAdmin.removeConfig()(tx);
+  client.deepbook.marginAdmin.addConfig(pythConfig)(tx);
 
   // // 5. Create margin pools
   // const USDCprotocolConfig = client.deepbook.marginMaintainer.newProtocolConfig(
@@ -240,39 +242,39 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   // client.deepbook.marginAdmin.registerDeepbookPool("SUI_USDC", PoolConfigSUIUSDC)(tx);
   // client.deepbook.marginAdmin.enableDeepbookPool("SUI_USDC")(tx);
 
-  const PoolConfigDEEPUSDC = client.deepbook.marginAdmin.newPoolConfig(
-    "DEEP_USDC",
-    {
-      minWithdrawRiskRatio: 2,
-      minBorrowRiskRatio: 1.2499,
-      liquidationRiskRatio: 1.1,
-      targetLiquidationRiskRatio: 1.25,
-      userLiquidationReward: 0.02,
-      poolLiquidationReward: 0.03,
-    },
-  )(tx);
-  client.deepbook.marginAdmin.updateRiskParams(
-    "DEEP_USDC",
-    PoolConfigDEEPUSDC,
-  )(tx);
-  client.deepbook.marginAdmin.enableDeepbookPool("DEEP_USDC")(tx);
+  // const PoolConfigDEEPUSDC = client.deepbook.marginAdmin.newPoolConfig(
+  //   "DEEP_USDC",
+  //   {
+  //     minWithdrawRiskRatio: 2,
+  //     minBorrowRiskRatio: 1.2499,
+  //     liquidationRiskRatio: 1.1,
+  //     targetLiquidationRiskRatio: 1.25,
+  //     userLiquidationReward: 0.02,
+  //     poolLiquidationReward: 0.03,
+  //   },
+  // )(tx);
+  // client.deepbook.marginAdmin.updateRiskParams(
+  //   "DEEP_USDC",
+  //   PoolConfigDEEPUSDC,
+  // )(tx);
+  // client.deepbook.marginAdmin.enableDeepbookPool("DEEP_USDC")(tx);
 
-  const poolConfigWalUsdc = client.deepbook.marginAdmin.newPoolConfig(
-    "WAL_USDC",
-    {
-      minWithdrawRiskRatio: 2,
-      minBorrowRiskRatio: 1.2499,
-      liquidationRiskRatio: 1.1,
-      targetLiquidationRiskRatio: 1.25,
-      userLiquidationReward: 0.02,
-      poolLiquidationReward: 0.03,
-    },
-  )(tx);
-  client.deepbook.marginAdmin.updateRiskParams(
-    "WAL_USDC",
-    poolConfigWalUsdc,
-  )(tx);
-  client.deepbook.marginAdmin.enableDeepbookPool("WAL_USDC")(tx);
+  // const poolConfigWalUsdc = client.deepbook.marginAdmin.newPoolConfig(
+  //   "WAL_USDC",
+  //   {
+  //     minWithdrawRiskRatio: 2,
+  //     minBorrowRiskRatio: 1.2499,
+  //     liquidationRiskRatio: 1.1,
+  //     targetLiquidationRiskRatio: 1.25,
+  //     userLiquidationReward: 0.02,
+  //     poolLiquidationReward: 0.03,
+  //   },
+  // )(tx);
+  // client.deepbook.marginAdmin.updateRiskParams(
+  //   "WAL_USDC",
+  //   poolConfigWalUsdc,
+  // )(tx);
+  // client.deepbook.marginAdmin.enableDeepbookPool("WAL_USDC")(tx);
 
   // const poolConfigSuiSuiusde = client.deepbook.marginAdmin.newPoolConfig(
   //   "SUI_SUIUSDE",
@@ -307,6 +309,42 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   //   poolConfigSuiusdeUsdc,
   // )(tx);
   // client.deepbook.marginAdmin.enableDeepbookPool("SUIUSDE_USDC")(tx);
+
+  // Register and enable SUI_USDSUI pool
+  const poolConfigSuiUsdsui = client.deepbook.marginAdmin.newPoolConfig(
+    "SUI_USDSUI",
+    {
+      minWithdrawRiskRatio: 2,
+      minBorrowRiskRatio: 1.2499,
+      liquidationRiskRatio: 1.1,
+      targetLiquidationRiskRatio: 1.25,
+      userLiquidationReward: 0.02,
+      poolLiquidationReward: 0.03,
+    },
+  )(tx);
+  client.deepbook.marginAdmin.registerDeepbookPool(
+    "SUI_USDSUI",
+    poolConfigSuiUsdsui,
+  )(tx);
+  client.deepbook.marginAdmin.enableDeepbookPool("SUI_USDSUI")(tx);
+
+  // Register and enable USDSUI_USDC pool
+  const poolConfigUsdsuiUsdc = client.deepbook.marginAdmin.newPoolConfig(
+    "USDSUI_USDC",
+    {
+      minWithdrawRiskRatio: 2,
+      minBorrowRiskRatio: 1.2499,
+      liquidationRiskRatio: 1.1,
+      targetLiquidationRiskRatio: 1.25,
+      userLiquidationReward: 0.02,
+      poolLiquidationReward: 0.03,
+    },
+  )(tx);
+  client.deepbook.marginAdmin.registerDeepbookPool(
+    "USDSUI_USDC",
+    poolConfigUsdsuiUsdc,
+  )(tx);
+  client.deepbook.marginAdmin.enableDeepbookPool("USDSUI_USDC")(tx);
 
   // // 4. Enable deepbook pool for loan
   // client.deepbook.marginMaintainer.enableDeepbookPoolForLoan(
@@ -393,6 +431,30 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   //   "XBTC",
   //   tx.object(xbtcMarginPoolCapID[env]),
   // )(tx);
+
+  // Enable SUI_USDSUI for loan from SUI and USDSUI pools
+  client.deepbook.marginMaintainer.enableDeepbookPoolForLoan(
+    "SUI_USDSUI",
+    "SUI",
+    tx.object(suiMarginPoolCapID[env]),
+  )(tx);
+  client.deepbook.marginMaintainer.enableDeepbookPoolForLoan(
+    "SUI_USDSUI",
+    "USDSUI",
+    tx.object(usdSuiMarginPoolCapID[env]),
+  )(tx);
+
+  // Enable USDSUI_USDC for loan from USDSUI and USDC pools
+  client.deepbook.marginMaintainer.enableDeepbookPoolForLoan(
+    "USDSUI_USDC",
+    "USDSUI",
+    tx.object(usdSuiMarginPoolCapID[env]),
+  )(tx);
+  client.deepbook.marginMaintainer.enableDeepbookPoolForLoan(
+    "USDSUI_USDC",
+    "USDC",
+    tx.object(usdcMarginPoolCapID[env]),
+  )(tx);
 
   const res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
