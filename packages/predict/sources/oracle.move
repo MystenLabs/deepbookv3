@@ -433,10 +433,10 @@ public(package) fun build_curve(
                 // Interior: second finite difference
                 let sum_ends = points[i - 1].up_price() + points[i + 1].up_price();
                 let twice_mid = 2 * points[i].up_price();
-                sum_ends.diff(twice_mid) * interval
+                math::mul(sum_ends.diff(twice_mid), interval)
             } else {
                 // Edge: use slope magnitude
-                points[i].up_price().diff(points[i + 1].up_price()) * interval
+                math::mul(points[i].up_price().diff(points[i + 1].up_price()), interval)
             };
 
             if (score > best_score) {

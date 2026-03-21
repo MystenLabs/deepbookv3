@@ -28,6 +28,30 @@ use_environment = "mainnet"
 manifest_digest = "E41BBD67BE8940D26C79D78B028477EF5B33BA217A1282C78ACB344CF8A5ECF6"
 deps = { std = "MoveStdlib", sui = "Sui" }
 
+[pinned.sim.MoveStdlib]
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "b38bca86f0323b3fe8b6b7f4ca0cd7ae7faebe4b" }
+use_environment = "sim"
+manifest_digest = "C4FE4C91DE74CBF223B2E380AE40F592177D21870DC2D7EB6227D2D694E05363"
+deps = {}
+
+[pinned.sim.Sui]
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "b38bca86f0323b3fe8b6b7f4ca0cd7ae7faebe4b" }
+use_environment = "sim"
+manifest_digest = "35B5237791A394F709CED772CFEFA4915605AD733A30C970ECA3D81A4C229ADC"
+deps = { MoveStdlib = "MoveStdlib" }
+
+[pinned.sim.deepbook]
+source = { root = true }
+use_environment = "sim"
+manifest_digest = "E79C8443097C19EC82AC0CC8CDDDD8E807B7C8D71656C4C1EB78A69BD5F2BBEB"
+deps = { std = "MoveStdlib", sui = "Sui", token = "token" }
+
+[pinned.sim.token]
+source = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "e8c5f4d084e079eb6eb8dcf085f334b2ecab181f" }
+use_environment = "sim"
+manifest_digest = "10B11813D5034DCAFF773A47A50FE389E24450A138B8583A7268E113FF3ED81D"
+deps = { std = "MoveStdlib", sui = "Sui" }
+
 [pinned.testnet.MoveStdlib]
 source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "22f9fc9781732d651e18384c9a8eb1dabddf73a6" }
 use_environment = "testnet"
