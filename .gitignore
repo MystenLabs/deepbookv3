@@ -15,6 +15,18 @@ node_modules
 package-lock.json
 **/pnpm-lock.yaml
 
+# Jupyter
+.ipynb_checkpoints/
+
+# Sui replay
+.replay/
+
+# Python
+__pycache__/
+
+# Research
+predict_research/
+
 # misc
 .env
 .envrc

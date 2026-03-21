@@ -25,6 +25,7 @@ use sui::{clock::Clock, coin::Coin, event};
 const ETradingPaused: u64 = 0;
 const EInvalidCollateralPair: u64 = 1;
 const ENotOwner: u64 = 2;
+const EOracleSettled: u64 = 3;
 
 // === Events ===
 
@@ -159,12 +160,19 @@ public fun mint<Quote>(
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(!predict.trading_paused, ETradingPaused);
     key.assert_matches_oracle(oracle);
+    assert!(!oracle.is_settled(), EOracleSettled);
     oracle.assert_not_stale(clock);
+
+    let strike = key.strike();
+    let is_up = key.is_up();
+
+    predict.vault.insert_position(oracle, is_up, strike, quantity, clock, ctx);
 
     let (_bid, ask) = predict.get_quote(oracle, key, clock);
     let cost = math::mul(ask, quantity);
+
     let payment = manager.withdraw<Quote>(cost, ctx).into_balance();
-    predict.vault.execute_mint(oracle.id(), key.is_up(), quantity, payment);
+    predict.vault.accept_payment(payment);
     predict.vault.assert_total_exposure(predict.risk_config.max_total_exposure_pct());
     manager.increase_position(key, quantity);
 
@@ -174,8 +182,8 @@ public fun mint<Quote>(
         trader: manager.owner(),
         oracle_id: key.oracle_id(),
         expiry: key.expiry(),
-        strike: key.strike(),
-        is_up: key.is_up(),
+        strike,
+        is_up,
         quantity,
         cost,
         ask_price: ask,
@@ -195,23 +203,18 @@ public fun redeem<Quote>(
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     key.assert_matches_oracle(oracle);
-    if (!oracle.is_settled()) {
-        oracle.assert_not_stale(clock);
-    };
-
+    if (!oracle.is_settled()) oracle.assert_not_stale(clock);
     manager.decrease_position(key, quantity);
+
+    let strike = key.strike();
+    let is_up = key.is_up();
+
+    predict.vault.remove_position(oracle, is_up, strike, quantity, clock);
 
     let (bid, _ask) = predict.get_quote(oracle, key, clock);
     let payout = math::mul(bid, quantity);
-    let payout_balance = predict
-        .vault
-        .execute_redeem(
-            oracle.id(),
-            key.is_up(),
-            quantity,
-            payout,
-        );
 
+    let payout_balance = predict.vault.dispense_payout(payout);
     let payout_coin = payout_balance.into_coin(ctx);
     manager.deposit(payout_coin, ctx);
 
@@ -221,8 +224,8 @@ public fun redeem<Quote>(
         trader: manager.owner(),
         oracle_id: key.oracle_id(),
         expiry: key.expiry(),
-        strike: key.strike(),
-        is_up: key.is_up(),
+        strike,
+        is_up,
         quantity,
         payout,
         bid_price: bid,
@@ -390,11 +393,6 @@ public(package) fun vault_balance<Quote>(predict: &Predict<Quote>): u64 {
     predict.vault.balance()
 }
 
-#[test_only]
-public(package) fun vault_exposure<Quote>(predict: &Predict<Quote>, oracle_id: ID): (u64, u64) {
-    predict.vault.oracle_exposure(oracle_id)
-}
-
 // === Private Functions ===
 
 fun emit_pricing_config_updated<Quote>(predict: &Predict<Quote>) {
@@ -406,12 +404,7 @@ fun emit_pricing_config_updated<Quote>(predict: &Predict<Quote>) {
 }
 
 /// Get bid and ask prices for a market.
-/// If oracle is settled, returns settlement prices (100% for winner, 0% for loser).
 /// Returns (bid, ask) in FLOAT_SCALING (1e9).
-///
-/// Spread formula (additive components):
-///   effective_spread = base_spread
-///     + base_spread * util_multiplier * util^2        (both sides)
 fun get_quote<Quote>(
     predict: &Predict<Quote>,
     oracle: &OracleSVI,
@@ -420,22 +413,11 @@ fun get_quote<Quote>(
 ): (u64, u64) {
     let strike = key.strike();
     let is_up = key.is_up();
-
-    // After settlement, return definitive prices
-    if (oracle.is_settled()) {
-        let settlement_price = oracle.settlement_price().destroy_some();
-        // At-the-money (price == strike) settles as DOWN win
-        let up_wins = settlement_price > strike;
-        let won = if (is_up) { up_wins } else { !up_wins };
-        let price = if (won) { constants::float_scaling!() } else { 0 };
-        return (price, price)
-    };
-
     let price = oracle.get_binary_price(strike, is_up, clock);
-    let base_spread = predict.pricing_config.base_spread();
 
-    let spread = base_spread
-        + predict.utilization_spread();
+    if (oracle.is_settled()) return (price, price);
+
+    let spread = predict.pricing_config.base_spread() + predict.utilization_spread();
 
     let bid = if (price > spread) { price - spread } else { 0 };
     let ask = (price + spread).min(constants::float_scaling!());
@@ -446,7 +428,7 @@ fun get_quote<Quote>(
 /// Utilization spread: penalizes both sides as vault approaches capacity.
 /// Uses util^2 for a gentle-then-aggressive curve.
 fun utilization_spread<Quote>(predict: &Predict<Quote>): u64 {
-    let liability = predict.vault.max_liability();
+    let liability = predict.vault.total_mtm();
     let balance = predict.vault.balance();
     if (balance == 0 || liability == 0) return 0;
 
