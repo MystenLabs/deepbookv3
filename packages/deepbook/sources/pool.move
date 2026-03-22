@@ -935,7 +935,8 @@ public fun update_pool_referral_multiplier<BaseAsset, QuoteAsset>(
     referral_rewards.multiplier = multiplier;
 }
 
-/// Update the fee rate for the referral.
+/// Update the referral fee rate, attaching a `ReferralFeeConfig` dynamic field if one doesn't
+/// exist yet.
 public fun update_pool_referral_fee_rate<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     referral: &DeepBookPoolReferral,
@@ -951,9 +952,11 @@ public fun update_pool_referral_fee_rate<BaseAsset, QuoteAsset>(
     let referral_id = object::id(referral);
     let key = ReferralFeeConfigKey(referral_id);
     if (self.id.exists_(key)) {
+        // Update existing config
         let config: &mut ReferralFeeConfig = self.id.borrow_mut(key);
         config.fee_rate = fee_rate;
     } else {
+        // Attach new config
         self.id.add(key, ReferralFeeConfig { fee_rate });
     }
 }
