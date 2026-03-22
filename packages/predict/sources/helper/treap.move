@@ -55,6 +55,8 @@ public struct Node has copy, drop, store {
     // Subtree strike range for curve intersection checks
     sub_min: u64,
     sub_max: u64,
+    // Worst-case payout for this subtree at any settlement price
+    max_payout: u64,
 }
 
 // === Public-Package API ===
@@ -118,6 +120,12 @@ public(package) fun strike_range(self: &Treap): (u64, u64) {
     (root.sub_min, root.sub_max)
 }
 
+/// Worst-case payout across all settlement prices.
+public(package) fun max_payout(self: &Treap): u64 {
+    if (self.root.is_none()) return 0;
+    self.nodes[*self.root.borrow()].max_payout
+}
+
 /// Whether the treap has no positions.
 public(package) fun is_empty(self: &Treap): bool {
     self.root.is_none()
@@ -139,12 +147,11 @@ fun insert_at(
     };
 
     let root_strike = *root.borrow();
-    let delta = new_leaf(strike, qty, is_up);
 
     if (strike == root_strike) {
         let n = &mut nodes[root_strike];
         if (is_up) { n.q_up = n.q_up + qty } else { n.q_dn = n.q_dn + qty };
-        add_aggs(&mut nodes[root_strike], &delta);
+        recompute_agg(nodes, root_strike);
         return root_strike
     };
 
@@ -164,7 +171,7 @@ fun insert_at(
         nodes[root_strike].right = option::some(new_child);
     };
 
-    add_aggs(&mut nodes[root_strike], &delta);
+    recompute_agg(nodes, root_strike);
     root_strike
 }
 
@@ -191,17 +198,9 @@ fun remove_at(
         let new_q_dn = if (!is_up) { node.q_dn - qty } else { node.q_dn };
         if (new_q_up == 0 && new_q_dn == 0) return remove_node(nodes, root_strike);
 
-        if (is_up) {
-            let n = &mut nodes[root_strike];
-            n.q_up = n.q_up - qty;
-            n.agg_q_up = n.agg_q_up - qty;
-            n.agg_qk_up = n.agg_qk_up - math::mul(qty, strike);
-        } else {
-            let n = &mut nodes[root_strike];
-            n.q_dn = n.q_dn - qty;
-            n.agg_q_dn = n.agg_q_dn - qty;
-            n.agg_qk_dn = n.agg_qk_dn - math::mul(qty, strike);
-        };
+        let n = &mut nodes[root_strike];
+        if (is_up) { n.q_up = n.q_up - qty } else { n.q_dn = n.q_dn - qty };
+        recompute_agg(nodes, root_strike);
         return option::some(root_strike)
     };
 
@@ -301,14 +300,26 @@ fun recompute_agg(nodes: &mut Table<u64, Node>, strike: u64) {
     n.sub_min = strike;
     n.sub_max = strike;
 
+    let mut left_agg_q_up = 0;
+    let mut left_max_payout = 0;
+    let mut right_agg_q_dn = 0;
+    let mut right_max_payout = 0;
+
     if (node.left.is_some()) {
         let left = nodes[*node.left.borrow()];
+        left_agg_q_up = left.agg_q_up;
+        left_max_payout = left.max_payout;
         add_aggs(&mut nodes[strike], &left);
     };
     if (node.right.is_some()) {
         let right = nodes[*node.right.borrow()];
+        right_agg_q_dn = right.agg_q_dn;
+        right_max_payout = right.max_payout;
         add_aggs(&mut nodes[strike], &right);
     };
+
+    nodes[strike].max_payout = (left_max_payout + node.q_dn + right_agg_q_dn)
+        .max(left_agg_q_up + node.q_up + right_max_payout);
 }
 
 /// Add b's aggregate values to a.
@@ -457,5 +468,6 @@ fun new_leaf(strike: u64, qty: u64, is_up: bool): Node {
         agg_qk_dn: math::mul(q_dn, strike),
         sub_min: strike,
         sub_max: strike,
+        max_payout: q_up.max(q_dn),
     }
 }

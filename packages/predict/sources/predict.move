@@ -17,6 +17,7 @@ use deepbook_predict::{
     predict_manager::{Self, PredictManager},
     pricing_config::{Self, PricingConfig},
     risk_config::{Self, RiskConfig},
+    supply_manager::{Self, SupplyManager},
     vault::{Self, Vault}
 };
 use sui::{clock::Clock, coin::Coin, event};
@@ -26,6 +27,7 @@ const ETradingPaused: u64 = 0;
 const EInvalidCollateralPair: u64 = 1;
 const ENotOwner: u64 = 2;
 const EOracleSettled: u64 = 3;
+const EWithdrawExceedsAvailable: u64 = 4;
 
 // === Events ===
 
@@ -105,6 +107,20 @@ public struct RiskConfigUpdated has copy, drop, store {
     max_total_exposure_pct: u64,
 }
 
+public struct Supplied has copy, drop, store {
+    predict_id: ID,
+    supplier: address,
+    amount: u64,
+    shares_minted: u64,
+}
+
+public struct Withdrawn has copy, drop, store {
+    predict_id: ID,
+    supplier: address,
+    amount: u64,
+    shares_burned: u64,
+}
+
 // === Structs ===
 
 /// Main shared object for the DeepBook Predict protocol.
@@ -113,6 +129,8 @@ public struct Predict<phantom Quote> has key {
     id: UID,
     /// Vault holding USDC and tracking exposure
     vault: Vault<Quote>,
+    /// Per-user supply share accounting
+    supply_manager: SupplyManager,
     /// Pricing configuration (admin-controlled)
     pricing_config: PricingConfig,
     /// Risk limits (admin-controlled)
@@ -307,6 +325,55 @@ public fun redeem_collateralized<Quote>(
     });
 }
 
+/// Supply USDC into the vault. Returns shares minted.
+public fun supply<Quote>(predict: &mut Predict<Quote>, coin: Coin<Quote>, ctx: &TxContext): u64 {
+    let amount = coin.value();
+    let vault_value = predict.vault.vault_value();
+    predict.vault.accept_payment(coin.into_balance());
+    let shares_minted = predict.supply_manager.supply(amount, vault_value, ctx.sender());
+    event::emit(Supplied {
+        predict_id: object::id(predict),
+        supplier: ctx.sender(),
+        amount,
+        shares_minted,
+    });
+    shares_minted
+}
+
+/// Withdraw USDC from the vault by specifying amount.
+public fun withdraw<Quote>(
+    predict: &mut Predict<Quote>,
+    amount: u64,
+    ctx: &mut TxContext,
+): Coin<Quote> {
+    let available = predict.vault.balance() - predict.vault.total_max_payout();
+    assert!(amount <= available, EWithdrawExceedsAvailable);
+    let vault_value = predict.vault.vault_value();
+    let shares_burned = predict.supply_manager.withdraw(amount, vault_value, ctx.sender());
+    event::emit(Withdrawn {
+        predict_id: object::id(predict),
+        supplier: ctx.sender(),
+        amount,
+        shares_burned,
+    });
+    predict.vault.dispense_payout(amount).into_coin(ctx)
+}
+
+/// Withdraw all of sender's supplied USDC from the vault.
+public fun withdraw_all<Quote>(predict: &mut Predict<Quote>, ctx: &mut TxContext): Coin<Quote> {
+    let vault_value = predict.vault.vault_value();
+    let (amount, shares_burned) = predict.supply_manager.withdraw_all(vault_value, ctx.sender());
+    let available = predict.vault.balance() - predict.vault.total_max_payout();
+    assert!(amount <= available, EWithdrawExceedsAvailable);
+    event::emit(Withdrawn {
+        predict_id: object::id(predict),
+        supplier: ctx.sender(),
+        amount,
+        shares_burned,
+    });
+    predict.vault.dispense_payout(amount).into_coin(ctx)
+}
+
 // === Public-Package Functions ===
 
 /// Create and share the Predict object. Returns its ID.
@@ -314,6 +381,7 @@ public(package) fun create<Quote>(ctx: &mut TxContext): ID {
     let predict = Predict<Quote> {
         id: object::new(ctx),
         vault: vault::new<Quote>(ctx),
+        supply_manager: supply_manager::new(ctx),
         pricing_config: pricing_config::new(),
         risk_config: risk_config::new(),
         trading_paused: false,
@@ -322,20 +390,6 @@ public(package) fun create<Quote>(ctx: &mut TxContext): ID {
     transfer::share_object(predict);
 
     predict_id
-}
-
-/// Admin deposits USDC into the vault.
-public(package) fun deposit<Quote>(predict: &mut Predict<Quote>, coin: Coin<Quote>) {
-    predict.vault.deposit(coin.into_balance());
-}
-
-/// Admin withdraws USDC from the vault.
-public(package) fun withdraw<Quote>(
-    predict: &mut Predict<Quote>,
-    amount: u64,
-    ctx: &mut TxContext,
-): Coin<Quote> {
-    predict.vault.withdraw(amount).into_coin(ctx)
 }
 
 /// Set trading pause state.
@@ -377,6 +431,7 @@ public(package) fun create_test_predict<Quote>(ctx: &mut TxContext): Predict<Quo
     Predict<Quote> {
         id: object::new(ctx),
         vault: vault::new<Quote>(ctx),
+        supply_manager: supply_manager::new(ctx),
         pricing_config: pricing_config::new(),
         risk_config: risk_config::new(),
         trading_paused: false,
