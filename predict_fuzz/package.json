@@ -1,0 +1,23 @@
+{
+  "name": "predict-fuzz",
+  "type": "module",
+  "scripts": {
+    "init": "tsx src/init.ts",
+    "deploy": "tsx src/deploy.ts",
+    "oracle-manager": "tsx src/oracle-manager.ts",
+    "oracle-updater": "tsx src/oracle-updater.ts",
+    "fuzz": "tsx src/fuzz-worker.ts",
+    "replay": "tsx src/replay-service.ts",
+    "analyze": "tsx src/analyze.ts",
+    "health": "tsx src/check-health.ts"
+  },
+  "dependencies": {
+    "@mysten/sui": "^2.5.0",
+    "dotenv": "^16.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}

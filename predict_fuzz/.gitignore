@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+packages.json
+packages.json.lock/
+digests/
+replays/
+oracle-data/
+logs/
+analysis/
+.replay/
+*.heartbeat
+*.key
+.deployer.lock/
