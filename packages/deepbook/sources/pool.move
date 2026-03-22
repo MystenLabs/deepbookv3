@@ -67,6 +67,7 @@ const EInvalidZScoreThreshold: u64 = 18;
 const EInvalidAdditionalTakerFee: u64 = 19;
 const EWrongPoolReferral: u64 = 20;
 const EInvalidReferralFeeRate: u64 = 21;
+const EConflictingReferralFee: u64 = 22;
 
 // === Structs ===
 public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
@@ -917,7 +918,7 @@ public fun update_deepbook_referral_multiplier<BaseAsset, QuoteAsset>(
     abort
 }
 
-/// Update the multiplier for the referral.
+/// Update the multiplier for the referral. Only allowed when the referral fee rate in bps is absent or 0.
 public fun update_pool_referral_multiplier<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     referral: &DeepBookPoolReferral,
@@ -928,7 +929,15 @@ public fun update_pool_referral_multiplier<BaseAsset, QuoteAsset>(
     referral.assert_referral_owner(ctx);
     assert!(multiplier <= constants::referral_max_multiplier(), EInvalidReferralMultiplier);
     assert!(multiplier % constants::referral_multiplier() == 0, EInvalidReferralMultiplier);
+
     let referral_id = object::id(referral);
+    let bps_config_key = ReferralFeeConfigKey(referral_id);
+    if (self.id.exists_(bps_config_key)) {
+        // Referral fee rate in bps must be 0
+        let config: &ReferralFeeConfig = self.id.borrow(bps_config_key);
+        assert!(config.fee_rate == 0, EConflictingReferralFee);
+    };
+
     let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
         .id
         .borrow_mut(referral_id);
@@ -936,7 +945,7 @@ public fun update_pool_referral_multiplier<BaseAsset, QuoteAsset>(
 }
 
 /// Update the referral fee rate, attaching a `ReferralFeeConfig` dynamic field if one doesn't
-/// exist yet.
+/// exist yet. Only allowed when the referral fee multiplier is 0.
 public fun update_pool_referral_fee_rate<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     referral: &DeepBookPoolReferral,
@@ -950,6 +959,10 @@ public fun update_pool_referral_fee_rate<BaseAsset, QuoteAsset>(
     assert!(fee_rate % constants::fee_precision_multiple() == 0, EInvalidReferralFeeRate);
 
     let referral_id = object::id(referral);
+    // Referral fee multiplier must be 0
+    let rewards: &ReferralRewards<BaseAsset, QuoteAsset> = self.id.borrow(referral_id);
+    assert!(rewards.multiplier == 0, EConflictingReferralFee);
+
     let key = ReferralFeeConfigKey(referral_id);
     if (self.id.exists_(key)) {
         // Update existing config
@@ -1965,6 +1978,7 @@ fun place_order_int<BaseAsset, QuoteAsset>(
     order_info
 }
 
+// Process referral fee: exactly one of multiplier or bps mode is active at a time
 fun process_referral_fees<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     order_info: &OrderInfo,
@@ -1974,9 +1988,17 @@ fun process_referral_fees<BaseAsset, QuoteAsset>(
     let referral_id = balance_manager.get_balance_manager_referral_id(self.id());
     if (referral_id.is_some()) {
         let referral_id = referral_id.destroy_some();
-        let mut volume_fee = 0;
-        if (self.id.exists_(ReferralFeeConfigKey(referral_id))) {
-            let config: &ReferralFeeConfig = self.id.borrow(ReferralFeeConfigKey(referral_id));
+
+        let bps_config_key = ReferralFeeConfigKey(referral_id);
+        let bps_fee_rate = if (self.id.exists_(bps_config_key)) {
+            let config: &ReferralFeeConfig = self.id.borrow(bps_config_key);
+            config.fee_rate
+        } else {
+            0
+        };
+
+        let referral_fee = if (bps_fee_rate > 0) {
+            // BPS mode: fee is a fraction of the traded volume
             let volume = if (order_info.fee_is_deep()) {
                 let deep_quantity = order_info
                     .order_deep_price()
@@ -1997,38 +2019,40 @@ fun process_referral_fees<BaseAsset, QuoteAsset>(
             } else {
                 order_info.executed_quantity()
             };
-            volume_fee = math::mul(volume, config.fee_rate);
+
+            math::mul(volume, bps_fee_rate)
+        } else {
+            // Multiplier mode: fee is a fraction of the fees paid by the trader
+            let rewards: &ReferralRewards<BaseAsset, QuoteAsset> = self.id.borrow(referral_id);
+            let multiplier = rewards.multiplier;
+            if (multiplier == 0) { return }; // Both bps fee rate and multiplier are 0, no referral fee
+            math::mul(order_info.paid_fees(), multiplier)
         };
+
+        // Covers: zero paid_fees in multiplier mode (e.g. whitelisted pool), or bps fee is too small.
+        if (referral_fee == 0) { return };
 
         let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
             .id
             .borrow_mut(referral_id);
-        let referral_multiplier = referral_rewards.multiplier;
-        let multiplier_fee = math::mul(order_info.paid_fees(), referral_multiplier);
-
-        let total_referral_fee = multiplier_fee + volume_fee;
-        if (total_referral_fee == 0) {
-            return
-        };
-
         let mut base_fee = 0;
         let mut quote_fee = 0;
         let mut deep_fee = 0;
         if (order_info.fee_is_deep()) {
             referral_rewards
                 .deep
-                .join(balance_manager.withdraw_with_proof(trade_proof, total_referral_fee, false));
-            deep_fee = total_referral_fee;
+                .join(balance_manager.withdraw_with_proof(trade_proof, referral_fee, false));
+            deep_fee = referral_fee;
         } else if (!order_info.is_bid()) {
             referral_rewards
                 .base
-                .join(balance_manager.withdraw_with_proof(trade_proof, total_referral_fee, false));
-            base_fee = total_referral_fee;
+                .join(balance_manager.withdraw_with_proof(trade_proof, referral_fee, false));
+            base_fee = referral_fee;
         } else {
             referral_rewards
                 .quote
-                .join(balance_manager.withdraw_with_proof(trade_proof, total_referral_fee, false));
-            quote_fee = total_referral_fee;
+                .join(balance_manager.withdraw_with_proof(trade_proof, referral_fee, false));
+            quote_fee = referral_fee;
         };
 
         event::emit(ReferralFeeEvent {
