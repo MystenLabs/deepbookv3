@@ -6,6 +6,7 @@ and verifies treap.max_payout() and MTM accuracy at each step.
 """
 
 import csv
+import math as pymath
 import os
 import random
 from dataclasses import dataclass
@@ -27,7 +28,8 @@ MIN_PRICE_PCT = 1               # Min contract price (1c)
 MAX_PRICE_PCT = 99              # Max contract price (99c)
 REMOVE_PROBABILITY = 0.3        # Chance of remove vs insert
 INITIAL_VAULT_BALANCE = 1_000_000 * 1_000_000  # $1M initial vault supply
-BASE_SPREAD = 10_000_000        # 1% (matches default_base_spread)
+BASE_SPREAD = 20_000_000        # 2% (matches default_base_spread)
+MIN_SPREAD = 5_000_000          # 0.5% (matches default_min_spread)
 UTIL_MULTIPLIER = 2_000_000_000 # 2x (matches default_utilization_multiplier)
 VERIFY_MAX_PAYOUT = False       # Brute force max_payout check (slow, O(N) per step)
 VERIFY_MTM = True               # Brute force MTM check (sampled every MTM_EVERY steps)
@@ -111,6 +113,13 @@ def load_oracle_events(prices_csv: str, svi_csv: str) -> list[OracleEvent]:
 
 def get_quote(mid_price: int, mtm: int, balance: int) -> tuple[int, int]:
     """Compute bid/ask from mid price with spread, mirroring predict.move::get_quote."""
+    # Bernoulli variance spread: base_spread * √(price * (1 - price))
+    complement = FLOAT_SCALING - mid_price
+    variance = mul(mid_price, complement)
+    bernoulli_factor = pymath.isqrt(variance * FLOAT_SCALING)
+    bernoulli_spread = mul(BASE_SPREAD, bernoulli_factor)
+    base = max(bernoulli_spread, MIN_SPREAD)
+
     if balance == 0 or mtm == 0:
         util_spread = 0
     else:
@@ -118,7 +127,7 @@ def get_quote(mid_price: int, mtm: int, balance: int) -> tuple[int, int]:
         util_sq = mul(util, util)
         util_spread = mul(BASE_SPREAD, mul(UTIL_MULTIPLIER, util_sq))
 
-    spread = BASE_SPREAD + util_spread
+    spread = base + util_spread
     bid = max(mid_price - spread, 0)
     ask = min(mid_price + spread, FLOAT_SCALING)
     return (bid, ask)
@@ -190,8 +199,10 @@ def pick_strike(
     if price < FLOAT_SCALING * MIN_PRICE_PCT // 100 or price > FLOAT_SCALING * MAX_PRICE_PCT // 100:
         return None
 
-    # Target a fixed notional cost ($50-$500), derive qty from price
-    target_cost = rng.randint(MIN_TRADE_COST, MAX_TRADE_COST) * 1_000_000
+    # Scale target cost with √(price) — traders spend less on cheap longshots
+    price_frac = price / FLOAT_SCALING
+    base_cost = rng.randint(MIN_TRADE_COST, MAX_TRADE_COST) * 1_000_000
+    target_cost = int(base_cost * pymath.sqrt(price_frac))
     price_per_contract = mul(1_000_000, price)  # cost for 1 contract (1_000_000 qty)
     if price_per_contract == 0:
         return None

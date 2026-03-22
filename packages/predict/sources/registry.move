@@ -114,7 +114,6 @@ public fun create_oracle(
     oracle_id
 }
 
-
 /// Set trading pause state.
 public fun set_trading_paused<Quote>(
     predict: &mut predict::Predict<Quote>,
@@ -131,6 +130,15 @@ public fun set_base_spread<Quote>(
     spread: u64,
 ) {
     predict.set_base_spread(spread);
+}
+
+/// Set min spread.
+public fun set_min_spread<Quote>(
+    predict: &mut predict::Predict<Quote>,
+    _admin_cap: &AdminCap,
+    spread: u64,
+) {
+    predict.set_min_spread(spread);
 }
 
 /// Set utilization multiplier.

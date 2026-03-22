@@ -99,6 +99,7 @@ public struct TradingPauseUpdated has copy, drop, store {
 public struct PricingConfigUpdated has copy, drop, store {
     predict_id: ID,
     base_spread: u64,
+    min_spread: u64,
     utilization_multiplier: u64,
 }
 
@@ -407,6 +408,12 @@ public(package) fun set_base_spread<Quote>(predict: &mut Predict<Quote>, spread:
     predict.emit_pricing_config_updated();
 }
 
+/// Set min spread.
+public(package) fun set_min_spread<Quote>(predict: &mut Predict<Quote>, spread: u64) {
+    predict.pricing_config.set_min_spread(spread);
+    predict.emit_pricing_config_updated();
+}
+
 /// Set utilization multiplier.
 public(package) fun set_utilization_multiplier<Quote>(
     predict: &mut Predict<Quote>,
@@ -454,6 +461,7 @@ fun emit_pricing_config_updated<Quote>(predict: &Predict<Quote>) {
     event::emit(PricingConfigUpdated {
         predict_id: object::id(predict),
         base_spread: predict.pricing_config.base_spread(),
+        min_spread: predict.pricing_config.min_spread(),
         utilization_multiplier: predict.pricing_config.utilization_multiplier(),
     });
 }
@@ -472,7 +480,13 @@ fun get_quote<Quote>(
 
     if (oracle.is_settled()) return (price, price);
 
-    let spread = predict.pricing_config.base_spread() + predict.utilization_spread();
+    let complement = constants::float_scaling!() - price;
+    let variance = math::mul(price, complement);
+    let bernoulli_factor = math::sqrt(variance, constants::float_scaling!());
+    let bernoulli_spread = math::mul(predict.pricing_config.base_spread(), bernoulli_factor);
+    let spread =
+        bernoulli_spread.max(predict.pricing_config.min_spread())
+        + predict.utilization_spread();
 
     let bid = if (price > spread) { price - spread } else { 0 };
     let ask = (price + spread).min(constants::float_scaling!());
