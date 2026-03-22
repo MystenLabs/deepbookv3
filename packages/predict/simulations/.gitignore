@@ -1,6 +1,5 @@
-node_modules/
 .localnet/
 .env.localnet
-Pub.*.toml
 artifacts/
-data/*.json
+data/setup.json
+node_modules/
