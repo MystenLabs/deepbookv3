@@ -108,7 +108,7 @@ public struct DeepBurned<phantom BaseAsset, phantom QuoteAsset> has copy, drop, 
     deep_burned: u64,
 }
 
-/// The configuration for the referral fee rate.
+/// The configuration for the referral fee rate in bps.
 public struct ReferralFeeConfig has store {
     fee_rate: u64,
 }
