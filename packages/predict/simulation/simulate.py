@@ -18,7 +18,7 @@ from scipy.stats import norm
 
 EXPIRY = 1773734400000          # Mar 17 08:00 UTC (Deribit expiry)
 MAX_EVENTS = 2_000_000            # Max oracle events to process
-TRADE_EVERY = 20                # Trade every N oracle events
+TRADE_EVERY = 200               # Trade every N oracle events
 MTM_EVERY = 10                   # Compute MTM every N snapshots
 SEED = 42                       # RNG seed
 MIN_TRADE_COST = 50             # Min trade cost in USD
@@ -26,6 +26,9 @@ MAX_TRADE_COST = 500            # Max trade cost in USD
 MIN_PRICE_PCT = 1               # Min contract price (1c)
 MAX_PRICE_PCT = 99              # Max contract price (99c)
 REMOVE_PROBABILITY = 0.3        # Chance of remove vs insert
+INITIAL_VAULT_BALANCE = 1_000_000 * 1_000_000  # $1M initial vault supply
+BASE_SPREAD = 10_000_000        # 1% (matches default_base_spread)
+UTIL_MULTIPLIER = 2_000_000_000 # 2x (matches default_utilization_multiplier)
 VERIFY_MAX_PAYOUT = False       # Brute force max_payout check (slow, O(N) per step)
 VERIFY_MTM = True               # Brute force MTM check (sampled every MTM_EVERY steps)
 PRICES_CSV = "oracle_prices_mar17.csv"
@@ -101,6 +104,24 @@ def load_oracle_events(prices_csv: str, svi_csv: str) -> list[OracleEvent]:
 
     events.sort(key=lambda e: e.timestamp)
     return events
+
+
+# === Pricing ===
+
+
+def get_quote(mid_price: int, mtm: int, balance: int) -> tuple[int, int]:
+    """Compute bid/ask from mid price with spread, mirroring predict.move::get_quote."""
+    if balance == 0 or mtm == 0:
+        util_spread = 0
+    else:
+        util = min(mtm * FLOAT_SCALING // balance, FLOAT_SCALING)
+        util_sq = mul(util, util)
+        util_spread = mul(BASE_SPREAD, mul(UTIL_MULTIPLIER, util_sq))
+
+    spread = BASE_SPREAD + util_spread
+    bid = max(mid_price - spread, 0)
+    ask = min(mid_price + spread, FLOAT_SCALING)
+    return (bid, ask)
 
 
 # === Strike Picker ===
@@ -250,6 +271,19 @@ def brute_force_mtm_vectorized(
     return int(total)
 
 
+# === Mint Tracking ===
+
+
+@dataclass
+class MintRecord:
+    timestamp: int
+    strike: int
+    is_up: bool
+    qty: int
+    cost: int  # total premium paid (qty * ask price)
+    mid_price: int  # oracle mid price for bucket classification
+
+
 # === Simulation ===
 
 
@@ -260,6 +294,7 @@ class Snapshot:
     event_kind: str
     action: str  # "insert", "remove", "none"
     treap_size: int
+    vault_balance: int
     treap_mtm: int
     brute_force_mtm: int
     mtm_deviation: int
@@ -275,7 +310,7 @@ def run_simulation(
     max_events: Optional[int] = None,
     trade_every: int = 10,
     mtm_every: int = 50,
-) -> tuple[list[Snapshot], SimulationStats, "Treap"]:
+) -> tuple[list[Snapshot], list[MintRecord], SimulationStats, "Treap"]:
     rng = random.Random(seed)
     oracle = OracleSVI(underlying_asset="BTC", expiry=expiry)
     treap = Treap()
@@ -285,6 +320,9 @@ def run_simulation(
     # Track outstanding positions: (strike, is_up) -> qty
     outstanding: dict[tuple[int, bool], int] = {}
     snapshots: list[Snapshot] = []
+    mint_records: list[MintRecord] = []
+    vault_balance = INITIAL_VAULT_BALANCE
+    last_mtm = 0
 
     has_price = False
     has_svi = False
@@ -339,6 +377,10 @@ def run_simulation(
                 remove_qty = rng.randint(1, current_qty // 1_000_000) * 1_000_000
                 if remove_qty > 0:
                     strike, is_up = key
+                    mid_price = oracle.get_binary_price(strike, is_up, now)
+                    bid, _ask = get_quote(mid_price, last_mtm, vault_balance)
+                    payout = mul(remove_qty, bid)
+                    vault_balance -= payout
                     instrumented.reset_counters()
                     treap.remove(strike, remove_qty, is_up)
                     sim_stats.record("remove", strike, remove_qty, is_up, instrumented.snapshot())
@@ -353,9 +395,17 @@ def run_simulation(
             result = pick_strike(oracle, now, rng)
             if result is not None:
                 strike, qty, is_up = result
+                mid_price = oracle.get_binary_price(strike, is_up, now)
+                _bid, ask = get_quote(mid_price, last_mtm, vault_balance)
+                premium = mul(qty, ask)
+                vault_balance += premium
                 instrumented.reset_counters()
                 treap.insert(strike, qty, is_up)
                 sim_stats.record("insert", strike, qty, is_up, instrumented.snapshot())
+                mint_records.append(MintRecord(
+                    timestamp=now, strike=strike, is_up=is_up,
+                    qty=qty, cost=premium, mid_price=mid_price,
+                ))
                 key = (strike, is_up)
                 outstanding[key] = outstanding.get(key, 0) + qty
                 action = "insert"
@@ -366,6 +416,7 @@ def run_simulation(
             min_s, max_s = treap.strike_range()
             curve = oracle.build_curve(min_s, max_s, now)
             treap_mtm_val = treap.evaluate(curve)
+        last_mtm = treap_mtm_val
 
         # Brute force MTM (sampled)
         bf_mtm = 0
@@ -384,6 +435,7 @@ def run_simulation(
                 event_kind=event.kind,
                 action=action,
                 treap_size=treap.size,
+                vault_balance=vault_balance,
                 treap_mtm=treap_mtm_val,
                 brute_force_mtm=bf_mtm,
                 mtm_deviation=deviation,
@@ -401,7 +453,7 @@ def run_simulation(
                 f"max_payout_ok={treap_mp == bf_mp}"
             )
 
-    return snapshots, sim_stats, treap
+    return snapshots, mint_records, sim_stats, treap
 
 
 def print_summary(snapshots: list[Snapshot]):
@@ -479,7 +531,7 @@ if __name__ == "__main__":
     print(f"Loaded {len(events)} events")
 
     print("Running simulation...")
-    snapshots, sim_stats, treap = run_simulation(
+    snapshots, mint_records, sim_stats, treap = run_simulation(
         events,
         expiry=EXPIRY,
         seed=SEED,
@@ -493,3 +545,20 @@ if __name__ == "__main__":
     sim_stats.print_summary()
     print()
     print_tree_shape(treap)
+
+    from charts import generate_charts, generate_mint_analysis
+
+    # Find settlement price (last spot before expiry)
+    settlement_price = None
+    for event in events:
+        if event.kind == "price" and event.timestamp <= EXPIRY:
+            settlement_price = event.spot
+
+    print("\nGenerating charts...")
+    generate_charts(snapshots, output_dir=script_dir)
+    if settlement_price is not None:
+        print(f"Settlement price: {settlement_price / FLOAT_SCALING:.2f}")
+        generate_mint_analysis(mint_records, settlement_price, output_dir=script_dir)
+    else:
+        print("No settlement price found, skipping mint analysis.")
+    print("Charts saved.")
