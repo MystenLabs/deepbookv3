@@ -955,7 +955,7 @@ public fun update_pool_referral_fee_rate<BaseAsset, QuoteAsset>(
     let _ = self.load_inner();
     referral.assert_referral_owner(ctx);
     assert!(referral.balance_manager_referral_pool_id() == self.id(), EWrongPoolReferral);
-    assert!(fee_rate <= constants::max_referral_fee_rate(), EInvalidReferralFeeRate);
+    assert!(fee_rate <= constants::max_referral_taker_fee_rate(), EInvalidReferralFeeRate);
     assert!(fee_rate % constants::fee_precision_multiple() == 0, EInvalidReferralFeeRate);
 
     let referral_id = object::id(referral);
