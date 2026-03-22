@@ -2000,20 +2000,12 @@ fun process_referral_fees<BaseAsset, QuoteAsset>(
         let referral_fee = if (bps_fee_rate > 0) {
             // BPS mode: fee is a fraction of the traded volume
             let volume = if (order_info.fee_is_deep()) {
-                let deep_quantity = order_info
+                order_info
                     .order_deep_price()
                     .deep_quantity_u128(
                         order_info.executed_quantity() as u128,
                         order_info.cumulative_quote_quantity() as u128,
-                    );
-
-                // Cap the volume at MAX_U64 to prevent the transaction from aborting due to overflow
-                // during the cast. MAX_U64 DEEP is far greater than the total supply.
-                if (deep_quantity > (constants::max_u64() as u128)) {
-                    constants::max_u64()
-                } else {
-                    deep_quantity as u64
-                }
+                    ) as u64
             } else if (order_info.is_bid()) {
                 order_info.cumulative_quote_quantity()
             } else {
