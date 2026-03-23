@@ -52,6 +52,12 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
     30000,
   )(tx);
 
+  client.deepbook.balanceManager.depositIntoManager(
+    "BALANCE_MANAGER_2",
+    "USDC",
+    1000,
+  )(tx);
+
   const res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
   console.dir(res, { depth: null });
