@@ -1394,3 +1394,127 @@ fun live_prices_bounded_between_zero_and_discount() {
     destroy(oracle);
     clock.destroy_for_testing();
 }
+
+// ============================================================
+// Abort code coverage
+// ============================================================
+
+#[test, expected_failure(abort_code = oracle::EInvalidOracleCap)]
+fun activate_with_unauthorized_cap_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
+    let prices = new_price_data(100 * FLOAT, 100 * FLOAT);
+    let mut oracle = oracle::create_test_oracle(
+        b"BTC".to_string(),
+        svi,
+        prices,
+        0,
+        1_000_000,
+        0,
+        ctx,
+    );
+    oracle.set_active_for_testing(false);
+    let cap = oracle::create_oracle_cap(ctx);
+    let clock = clock::create_for_testing(ctx);
+
+    // Cap is not registered on this oracle
+    oracle.activate(&cap, &clock);
+
+    abort
+}
+
+#[test, expected_failure(abort_code = oracle::EOracleAlreadyActive)]
+fun activate_already_active_oracle_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
+    let prices = new_price_data(100 * FLOAT, 100 * FLOAT);
+    let mut oracle = oracle::create_test_oracle(
+        b"BTC".to_string(),
+        svi,
+        prices,
+        0,
+        1_000_000,
+        0,
+        ctx,
+    );
+    let cap = oracle::create_oracle_cap(ctx);
+    oracle::register_cap(&mut oracle, &cap);
+    let clock = clock::create_for_testing(ctx);
+
+    // Oracle is already active (create_test_oracle sets active=true)
+    oracle.activate(&cap, &clock);
+
+    abort
+}
+
+#[test, expected_failure(abort_code = oracle::EOracleExpired)]
+fun activate_expired_oracle_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
+    let prices = new_price_data(100 * FLOAT, 100 * FLOAT);
+    let mut oracle = oracle::create_test_oracle(
+        b"BTC".to_string(),
+        svi,
+        prices,
+        0,
+        100_000,
+        0,
+        ctx,
+    );
+    oracle.set_active_for_testing(false);
+    let cap = oracle::create_oracle_cap(ctx);
+    oracle::register_cap(&mut oracle, &cap);
+    let mut clock = clock::create_for_testing(ctx);
+    clock.set_for_testing(200_000);
+
+    oracle.activate(&cap, &clock);
+
+    abort
+}
+
+#[test, expected_failure(abort_code = oracle::EOracleExpired)]
+fun update_svi_on_settled_oracle_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
+    let prices = new_price_data(100 * FLOAT, 100 * FLOAT);
+    let mut oracle = oracle::create_test_oracle(
+        b"BTC".to_string(),
+        svi,
+        prices,
+        0,
+        100_000,
+        0,
+        ctx,
+    );
+    let cap = oracle::create_oracle_cap(ctx);
+    oracle::register_cap(&mut oracle, &cap);
+    oracle::settle_test_oracle(&mut oracle, 100 * FLOAT);
+
+    let clock = clock::create_for_testing(ctx);
+    let new_svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
+    oracle.update_svi(&cap, new_svi, 0, &clock);
+
+    abort
+}
+
+#[test, expected_failure(abort_code = oracle::ECannotBeNegative)]
+fun compute_nd2_negative_inner_aborts() {
+    let ctx = &mut tx_context::dummy();
+    // Adversarial SVI: rho=-1.0, sigma~0 makes inner term negative for large k
+    let svi = new_svi_params(0, FLOAT, FLOAT, true, 0, false, 1);
+    let prices = new_price_data(100 * FLOAT, 100 * FLOAT);
+    let oracle = oracle::create_test_oracle(
+        b"BTC".to_string(),
+        svi,
+        prices,
+        0,
+        1_000_000,
+        0,
+        ctx,
+    );
+
+    let clock = clock::create_for_testing(ctx);
+    oracle.get_binary_price(1000 * FLOAT, true, &clock);
+
+    abort
+}

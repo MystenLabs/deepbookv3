@@ -557,6 +557,12 @@ public(package) fun create_test_oracle(
 }
 
 #[test_only]
+/// Set oracle active state for testing.
+public(package) fun set_active_for_testing(oracle: &mut OracleSVI, active: bool) {
+    oracle.active = active;
+}
+
+#[test_only]
 /// Force-settle the oracle at a given price for testing.
 public(package) fun settle_test_oracle(oracle: &mut OracleSVI, price: u64) {
     oracle.settlement_price = option::some(price);

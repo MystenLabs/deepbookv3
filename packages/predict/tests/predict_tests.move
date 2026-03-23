@@ -580,3 +580,60 @@ fun mint_collateralized_when_paused_aborts() {
 // settled mtm == max_payout, so available == vault_value. To test
 // EWithdrawExceedsAvailable on withdraw_all, we'd need live oracle positions
 // where max_payout > mtm. The withdraw() test above covers this abort path.
+
+#[test, expected_failure(abort_code = predict::EOracleSettled)]
+fun mint_against_settled_oracle_aborts() {
+    let mut scenario = setup_with_manager(100 * FLOAT);
+    let mut predict = create_predict(scenario.ctx());
+
+    let liq = coin::mint_for_testing<SUI>(1000 * FLOAT, scenario.ctx());
+    predict.supply(liq, scenario.ctx());
+
+    let mut oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(oracle_id, oracle.expiry(), 50 * FLOAT);
+
+    // Settle the oracle before minting
+    oracle::settle_test_oracle(&mut oracle, 200 * FLOAT);
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        predict.mint(&mut manager, &oracle, key, 10 * FLOAT, &clock, scenario.ctx());
+
+        abort
+    }
+}
+
+#[test, expected_failure(abort_code = predict::EInvalidCollateralPair)]
+fun collateralized_mint_equal_strikes_aborts() {
+    let mut scenario = setup_with_manager(100 * FLOAT);
+    let mut predict = create_predict(scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+
+    // Same strike for both locked and minted — should be rejected
+    let locked_key = market_key::up(oracle_id, oracle.expiry(), 100 * FLOAT);
+    let minted_key = market_key::up(oracle_id, oracle.expiry(), 100 * FLOAT);
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        manager.increase_position(locked_key, 5 * FLOAT);
+
+        predict.mint_collateralized(
+            &mut manager,
+            &oracle,
+            locked_key,
+            minted_key,
+            5 * FLOAT,
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
