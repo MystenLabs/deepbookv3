@@ -1518,3 +1518,25 @@ fun compute_nd2_negative_inner_aborts() {
 
     abort
 }
+
+#[test, expected_failure(abort_code = oracle::EZeroVariance)]
+fun zero_svi_params_on_live_oracle_aborts() {
+    let ctx = &mut tx_context::dummy();
+    // a=0, b=0 → total_var = 0 → division by zero in compute_nd2
+    let svi = new_svi_params(0, 0, 0, false, 0, false, 0);
+    let prices = new_price_data(100 * FLOAT, 100 * FLOAT);
+    let oracle = oracle::create_test_oracle(
+        b"BTC".to_string(),
+        svi,
+        prices,
+        0,
+        1_000_000,
+        0,
+        ctx,
+    );
+
+    let clock = clock::create_for_testing(ctx);
+    oracle.get_binary_price(100 * FLOAT, true, &clock);
+
+    abort
+}
