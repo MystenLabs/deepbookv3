@@ -21,6 +21,7 @@ use sui::{balance::{Self, Balance}, clock::Clock, table::{Self, Table}};
 const EInsufficientBalance: u64 = 1;
 const EExceedsMaxTotalExposure: u64 = 2;
 const EOracleExposureNotFound: u64 = 3;
+const EMtmExceedsBalance: u64 = 4;
 
 // === Structs ===
 
@@ -46,6 +47,7 @@ public fun total_mtm<Quote>(vault: &Vault<Quote>): u64 {
 }
 
 public fun vault_value<Quote>(vault: &Vault<Quote>): u64 {
+    assert!(vault.balance.value() >= vault.total_mtm, EMtmExceedsBalance);
     vault.balance.value() - vault.total_mtm
 }
 

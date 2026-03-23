@@ -79,6 +79,9 @@ public(package) fun supply(
 
 /// Withdraw `amount` of USDC. Converts to shares and burns them.
 /// Returns the number of shares burned.
+/// Note: fixed-point truncation may round shares up relative to the amount,
+/// so withdrawing an exact deposited amount can fail with EInsufficientShares.
+/// Use `withdraw_all()` to fully exit a position without rounding issues.
 public(package) fun withdraw(
     self: &mut SupplyManager,
     amount: u64,
@@ -94,6 +97,7 @@ public(package) fun withdraw(
 
     *user = *user - shares;
     self.total_shares = self.total_shares - shares;
+    if (*user == 0) { self.user_shares.remove(sender); };
 
     shares
 }
@@ -114,8 +118,7 @@ public(package) fun withdraw_all(
         math::mul(shares, math::div(vault_value, self.total_shares))
     };
 
-    let user = &mut self.user_shares[sender];
-    *user = 0;
+    self.user_shares.remove(sender);
     self.total_shares = self.total_shares - shares;
 
     (amount, shares)
