@@ -14,7 +14,12 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
       address:
         "0xedd38a1faf45147923c4b020af940e1e09f0888d311e45267ed2bd05b5f648a8",
     },
+    BALANCE_MANAGER_2: {
+      address:
+        "0xc915672c93be17e55a35455a24a600fccf81afe1beb81e9ca9e12d5dc49195e7",
+    },
   };
+
   const receivingAddress =
     "0x946a9773c1acfe7a20ac926f948ed4e6d77148b75e00d60f83ac10abae4ea9d7";
 
@@ -23,7 +28,7 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
     network: "mainnet",
   }).$extend(
     deepbook({
-      address: "0x0",
+      address: adminCapOwner[env],
       adminCap: adminCapID[env],
       balanceManagers,
     }),
@@ -31,14 +36,20 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
 
   const tx = new Transaction();
 
-  client.deepbook.balanceManager.createAndShareBalanceManager()(tx);
   const tradeCap =
-    client.deepbook.balanceManager.mintTradeCap("BALANCE_MANAGER_1")(tx);
+    client.deepbook.balanceManager.mintTradeCap("BALANCE_MANAGER_2")(tx);
   tx.transferObjects([tradeCap], receivingAddress);
+
   client.deepbook.balanceManager.depositIntoManager(
     "BALANCE_MANAGER_1",
-    "USDC",
-    1000,
+    "DEEP",
+    110000,
+  )(tx);
+
+  client.deepbook.balanceManager.depositIntoManager(
+    "BALANCE_MANAGER_2",
+    "DEEP",
+    30000,
   )(tx);
 
   const res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
