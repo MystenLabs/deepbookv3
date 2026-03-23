@@ -20,6 +20,9 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
     },
   };
 
+  const receivingAddress =
+    "0x946a9773c1acfe7a20ac926f948ed4e6d77148b75e00d60f83ac10abae4ea9d7";
+
   const client = new SuiGrpcClient({
     baseUrl: "https://sui-mainnet.mystenlabs.com",
     network: "mainnet",
@@ -35,10 +38,7 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
 
   const tradeCap =
     client.deepbook.balanceManager.mintTradeCap("BALANCE_MANAGER_2")(tx);
-  tx.transferObjects(
-    [tradeCap],
-    "0x946a9773c1acfe7a20ac926f948ed4e6d77148b75e00d60f83ac10abae4ea9d7",
-  );
+  tx.transferObjects([tradeCap], receivingAddress);
 
   client.deepbook.balanceManager.depositIntoManager(
     "BALANCE_MANAGER_1",
