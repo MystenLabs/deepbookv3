@@ -509,3 +509,112 @@ fun rounding_asymmetry_supply_vs_withdraw() {
 
     destroy(sm);
 }
+
+// ============================================================
+// Zero-share attacks (adversarial rounding tests)
+// ============================================================
+
+#[test, expected_failure(abort_code = supply_manager::EZeroSharesMinted)]
+/// Depositing a tiny amount into a large vault would yield 0 shares.
+/// The contract must reject this to prevent donation of funds to existing LPs.
+fun supply_rejects_zero_share_mint() {
+    let ctx = &mut tx_context::dummy();
+    let mut sm = supply_manager::new(ctx);
+
+    sm.supply(1_000_000, 0, ALICE);
+
+    // 1 unit into a 1B vault → mul(1, div(1M, 1B)) = mul(1, 1M) = 0 shares
+    sm.supply(1, 1_000_000_000, BOB);
+
+    abort
+}
+
+#[test, expected_failure(abort_code = supply_manager::EZeroSharesMinted)]
+/// Classic ERC-4626 inflation attack: first depositor deposits 1 unit,
+/// donates to inflate share price, next depositor gets 0 shares.
+/// The contract must reject the second deposit.
+fun inflation_attack_blocked() {
+    let ctx = &mut tx_context::dummy();
+    let mut sm = supply_manager::new(ctx);
+
+    sm.supply(1, 0, ALICE);
+
+    // Attacker donates to inflate vault to 1_000_001
+    // Bob deposits 1_000_000 → div(1, 1_000_001) = 999, mul(1M, 999) = 0
+    sm.supply(1_000_000, 1_000_001, BOB);
+
+    abort
+}
+
+#[test, expected_failure(abort_code = supply_manager::EZeroSharesMinted)]
+/// Even amounts just below the threshold must be rejected.
+/// div(1M, 3M) = 333_333_333, mul(3, 333_333_333) = 999_999_999/1e9 = 0
+fun supply_rejects_below_threshold_amount() {
+    let ctx = &mut tx_context::dummy();
+    let mut sm = supply_manager::new(ctx);
+
+    sm.supply(1_000_000, 0, ALICE);
+
+    sm.supply(3, 3_000_000, BOB);
+
+    abort
+}
+
+#[test]
+/// The minimum deposit that yields 1 share must succeed.
+fun supply_accepts_minimum_for_one_share() {
+    let ctx = &mut tx_context::dummy();
+    let mut sm = supply_manager::new(ctx);
+
+    sm.supply(1_000_000, 0, ALICE);
+
+    // 4 units → mul(4, 333_333_333) = 1_333_333_332/1e9 = 1 share
+    let shares = sm.supply(4, 3_000_000, BOB);
+    assert_eq!(shares, 1);
+
+    destroy(sm);
+}
+
+#[test, expected_failure(abort_code = supply_manager::EZeroSharesBurned)]
+/// Withdrawing a tiny amount from a large vault would burn 0 shares.
+/// The contract must reject this — otherwise the user gets free money.
+fun withdraw_rejects_zero_share_burn() {
+    let ctx = &mut tx_context::dummy();
+    let mut sm = supply_manager::new(ctx);
+
+    sm.supply(1_000_000, 0, ALICE);
+
+    // 1 unit from 1B vault → mul(1, div(1M, 1B)) = 0 shares burned
+    sm.withdraw(1, 1_000_000_000, ALICE);
+
+    abort
+}
+
+#[test, expected_failure(abort_code = supply_manager::EZeroSharesBurned)]
+/// Even a single 0-share withdrawal must be rejected.
+fun withdraw_rejects_small_amount_at_high_vault_value() {
+    let ctx = &mut tx_context::dummy();
+    let mut sm = supply_manager::new(ctx);
+
+    sm.supply(1_000_000, 0, ALICE);
+
+    // 3 units from 3M vault → mul(3, div(1M, 3M)) = mul(3, 333_333_333) = 0
+    sm.withdraw(3, 3_000_000, ALICE);
+
+    abort
+}
+
+#[test]
+/// The minimum withdrawal that burns 1 share must succeed.
+fun withdraw_accepts_minimum_for_one_share() {
+    let ctx = &mut tx_context::dummy();
+    let mut sm = supply_manager::new(ctx);
+
+    sm.supply(1_000_000, 0, ALICE);
+
+    // 4 units from 3M vault → mul(4, 333_333_333) = 1 share burned
+    let burned = sm.withdraw(4, 3_000_000, ALICE);
+    assert_eq!(burned, 1);
+
+    destroy(sm);
+}
