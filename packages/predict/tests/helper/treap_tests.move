@@ -55,6 +55,9 @@ fun insert_same_strike_accumulates() {
     t.insert(50 * FLOAT, 10 * FLOAT, true);
     t.insert(50 * FLOAT, 7 * FLOAT, true);
     assert_eq!(t.size(), 1);
+    let (q_up, q_dn) = t.quantities(50 * FLOAT);
+    assert_eq!(q_up, 17 * FLOAT);
+    assert_eq!(q_dn, 0);
 
     destroy(t);
 }
@@ -124,8 +127,10 @@ fun remove_partial_quantity() {
 
     t.insert(50 * FLOAT, 10 * FLOAT, true);
     t.remove(50 * FLOAT, 3 * FLOAT, true);
-    // Node still exists (7 * FLOAT remaining)
     assert_eq!(t.size(), 1);
+    let (q_up, q_dn) = t.quantities(50 * FLOAT);
+    assert_eq!(q_up, 7 * FLOAT);
+    assert_eq!(q_dn, 0);
 
     destroy(t);
 }
@@ -153,6 +158,9 @@ fun remove_one_direction_keeps_node() {
     t.remove(50 * FLOAT, 10 * FLOAT, true);
     // DN quantity remains — node should still exist
     assert_eq!(t.size(), 1);
+    let (q_up, q_dn) = t.quantities(50 * FLOAT);
+    assert_eq!(q_up, 0);
+    assert_eq!(q_dn, 5 * FLOAT);
 
     destroy(t);
 }

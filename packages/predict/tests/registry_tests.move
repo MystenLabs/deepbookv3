@@ -268,7 +268,9 @@ fun set_trading_paused_via_registry() {
     {
         let mut predict = scenario.take_shared<Predict<SUI>>();
         registry::set_trading_paused(&mut predict, &admin_cap, true);
+        assert_eq!(predict.trading_paused(), true);
         registry::set_trading_paused(&mut predict, &admin_cap, false);
+        assert_eq!(predict.trading_paused(), false);
         test_scenario::return_shared(predict);
     };
 
@@ -290,6 +292,7 @@ fun set_base_spread_via_registry() {
     {
         let mut predict = scenario.take_shared<Predict<SUI>>();
         registry::set_base_spread(&mut predict, &admin_cap, 100_000_000);
+        assert_eq!(predict.base_spread(), 100_000_000);
         test_scenario::return_shared(predict);
     };
 
@@ -311,6 +314,7 @@ fun set_min_spread_via_registry() {
     {
         let mut predict = scenario.take_shared<Predict<SUI>>();
         registry::set_min_spread(&mut predict, &admin_cap, 10_000_000);
+        assert_eq!(predict.min_spread(), 10_000_000);
         test_scenario::return_shared(predict);
     };
 
@@ -332,6 +336,7 @@ fun set_utilization_multiplier_via_registry() {
     {
         let mut predict = scenario.take_shared<Predict<SUI>>();
         registry::set_utilization_multiplier(&mut predict, &admin_cap, 3_000_000_000);
+        assert_eq!(predict.utilization_multiplier(), 3_000_000_000);
         test_scenario::return_shared(predict);
     };
 
@@ -353,6 +358,7 @@ fun set_max_total_exposure_pct_via_registry() {
     {
         let mut predict = scenario.take_shared<Predict<SUI>>();
         registry::set_max_total_exposure_pct(&mut predict, &admin_cap, 500_000_000);
+        assert_eq!(predict.max_total_exposure_pct(), 500_000_000);
         test_scenario::return_shared(predict);
     };
 

@@ -254,7 +254,16 @@ fun redeem_settled_up_wins_full_payout() {
         oracle::settle_test_oracle(&mut oracle, 200 * FLOAT);
 
         // Redeem: settled UP wins at strike 50. bid = 1e9. payout = mul(1e9, 10*FLOAT) = 10*FLOAT
+        let balance_before = predict::vault_balance(&predict);
         predict.redeem(&mut manager, &oracle, key, 10 * FLOAT, &clock, scenario.ctx());
+        let balance_after = predict::vault_balance(&predict);
+
+        // Payout dispensed = 10*FLOAT
+        assert_eq!(balance_before - balance_after, 10 * FLOAT);
+        // Position fully redeemed
+        let (free, locked) = manager.position(key);
+        assert_eq!(free, 0);
+        assert_eq!(locked, 0);
 
         test_scenario::return_shared(manager);
     };
@@ -398,8 +407,9 @@ fun collateralized_mint_dn_higher_to_lower_strike() {
         assert_eq!(free, 0);
         assert_eq!(locked, 3 * FLOAT);
 
-        let (free_m, _) = manager.position(minted_key);
+        let (free_m, locked_m) = manager.position(minted_key);
         assert_eq!(free_m, 3 * FLOAT);
+        assert_eq!(locked_m, 0);
 
         test_scenario::return_shared(manager);
     };
@@ -570,4 +580,3 @@ fun mint_collateralized_when_paused_aborts() {
 // settled mtm == max_payout, so available == vault_value. To test
 // EWithdrawExceedsAvailable on withdraw_all, we'd need live oracle positions
 // where max_payout > mtm. The withdraw() test above covers this abort path.
-

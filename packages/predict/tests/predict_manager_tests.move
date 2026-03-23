@@ -185,6 +185,12 @@ fun lock_collateral_moves_free_to_locked() {
         let (free, locked) = manager.position(up_key);
         assert_eq!(free, 120);
         assert_eq!(locked, 80);
+
+        // Down key should be unaffected
+        let (free_dn, locked_dn) = manager.position(down_key);
+        assert_eq!(free_dn, 0);
+        assert_eq!(locked_dn, 0);
+
         test_scenario::return_shared(manager);
     };
     scenario.end();
@@ -427,6 +433,7 @@ fun deposit_adds_funds() {
         let mut manager = scenario.take_shared<PredictManager>();
         let coin = coin::mint_for_testing<SUI>(1000, scenario.ctx());
         manager.deposit(coin, scenario.ctx());
+        assert_eq!(manager.balance<SUI>(), 1000);
         test_scenario::return_shared(manager);
     };
     scenario.end();
@@ -446,6 +453,7 @@ fun withdraw_removes_funds() {
 
         let withdrawn = manager.withdraw<SUI>(400, scenario.ctx());
         assert_eq!(withdrawn.value(), 400);
+        assert_eq!(manager.balance<SUI>(), 600);
         destroy(withdrawn);
         test_scenario::return_shared(manager);
     };
