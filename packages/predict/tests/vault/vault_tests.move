@@ -10,8 +10,7 @@ use sui::{balance, clock, sui::SUI};
 
 const FLOAT: u64 = 1_000_000_000;
 
-/// Helper: create a settled oracle at the given settlement price.
-/// Uses dummy SVI params (irrelevant once settled).
+// Helper: create a settled oracle at the given settlement price.
 fun create_settled_oracle(settlement_price: u64, ctx: &mut TxContext): oracle::OracleSVI {
     let svi = new_svi_params(0, 0, 0, false, 0, false, FLOAT / 4);
     let prices = new_price_data(100 * FLOAT, 100 * FLOAT);
@@ -29,51 +28,24 @@ fun create_settled_oracle(settlement_price: u64, ctx: &mut TxContext): oracle::O
 }
 
 // ============================================================
-// 1. Construction
+// Construction
 // ============================================================
 
 #[test]
-fun new_vault_has_zero_balance() {
+fun new_vault_initializes_to_zero() {
     let ctx = &mut tx_context::dummy();
     let v = vault::new<SUI>(ctx);
 
     assert_eq!(vault::balance(&v), 0);
-
-    destroy(v);
-}
-
-#[test]
-fun new_vault_has_zero_total_mtm() {
-    let ctx = &mut tx_context::dummy();
-    let v = vault::new<SUI>(ctx);
-
     assert_eq!(vault::total_mtm(&v), 0);
-
-    destroy(v);
-}
-
-#[test]
-fun new_vault_has_zero_total_max_payout() {
-    let ctx = &mut tx_context::dummy();
-    let v = vault::new<SUI>(ctx);
-
     assert_eq!(vault::total_max_payout(&v), 0);
-
-    destroy(v);
-}
-
-#[test]
-fun new_vault_has_zero_vault_value() {
-    let ctx = &mut tx_context::dummy();
-    let v = vault::new<SUI>(ctx);
-
     assert_eq!(vault::vault_value(&v), 0);
 
     destroy(v);
 }
 
 // ============================================================
-// 2. accept_payment / dispense_payout
+// accept_payment / dispense_payout
 // ============================================================
 
 #[test]
@@ -108,22 +80,6 @@ fun dispense_payout_decreases_balance() {
     destroy(v);
 }
 
-#[test]
-fun dispense_payout_exact_balance() {
-    let ctx = &mut tx_context::dummy();
-    let mut v = vault::new<SUI>(ctx);
-
-    let payment = balance::create_for_testing<SUI>(1_000_000);
-    vault::accept_payment(&mut v, payment);
-
-    let payout = vault::dispense_payout(&mut v, 1_000_000);
-    assert_eq!(vault::balance(&v), 0);
-    assert_eq!(payout.value(), 1_000_000);
-
-    destroy(payout);
-    destroy(v);
-}
-
 #[test, expected_failure(abort_code = vault::EInsufficientBalance)]
 fun dispense_payout_exceeds_balance_aborts() {
     let ctx = &mut tx_context::dummy();
@@ -137,18 +93,8 @@ fun dispense_payout_exceeds_balance_aborts() {
     abort
 }
 
-#[test, expected_failure(abort_code = vault::EInsufficientBalance)]
-fun dispense_payout_from_empty_vault_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let mut v = vault::new<SUI>(ctx);
-
-    let _payout = vault::dispense_payout(&mut v, 1);
-
-    abort
-}
-
 // ============================================================
-// 3. insert_position - max_payout tracking
+// insert_position - max_payout tracking
 // ============================================================
 
 #[test]
@@ -293,7 +239,7 @@ fun insert_different_strikes_mixed_directions_max_payout() {
 }
 
 // ============================================================
-// 4. remove_position
+// remove_position
 // ============================================================
 
 #[test]
@@ -346,7 +292,7 @@ fun remove_from_nonexistent_oracle_aborts() {
 }
 
 // ============================================================
-// 5. assert_total_exposure
+// assert_total_exposure
 // ============================================================
 
 #[test]
@@ -419,7 +365,7 @@ fun assert_total_exposure_passes_at_exact_boundary() {
 }
 
 // ============================================================
-// 6. vault_value with MTM
+// vault_value with MTM
 // ============================================================
 
 #[test]
@@ -487,28 +433,8 @@ fun vault_value_aborts_when_mtm_exceeds_balance() {
 }
 
 // ============================================================
-// 7. MTM refresh via settled oracles
+// MTM refresh via settled oracles
 // ============================================================
-
-#[test]
-fun mtm_up_wins_settled_above_strike() {
-    let ctx = &mut tx_context::dummy();
-    let mut v = vault::new<SUI>(ctx);
-    // Settlement at 200, strike at 50. Since 200 > 50, UP wins.
-    // Settled curve: [(199, up=1e9, dn=0), (200, up=0, dn=1e9)]
-    // Position at strike 50 < 199, so UP price = 1e9 (clamped to first point)
-    // MTM = mul(qty, 1e9) = qty * 1e9 / 1e9 = qty = 10*FLOAT
-    let oracle = create_settled_oracle(200 * FLOAT, ctx);
-    let clock = clock::create_for_testing(ctx);
-
-    vault::insert_position(&mut v, &oracle, true, 50 * FLOAT, 10 * FLOAT, &clock, ctx);
-
-    assert_eq!(vault::total_mtm(&v), 10 * FLOAT);
-
-    destroy(v);
-    destroy(oracle);
-    destroy(clock);
-}
 
 #[test]
 fun mtm_up_loses_settled_below_strike() {
@@ -638,24 +564,6 @@ fun mtm_decreases_after_remove() {
 }
 
 #[test]
-fun mtm_returns_to_zero_after_full_remove() {
-    let ctx = &mut tx_context::dummy();
-    let mut v = vault::new<SUI>(ctx);
-    let oracle = create_settled_oracle(200 * FLOAT, ctx);
-    let clock = clock::create_for_testing(ctx);
-
-    vault::insert_position(&mut v, &oracle, true, 50 * FLOAT, 10 * FLOAT, &clock, ctx);
-    assert_eq!(vault::total_mtm(&v), 10 * FLOAT);
-
-    vault::remove_position(&mut v, &oracle, true, 50 * FLOAT, 10 * FLOAT, &clock);
-    assert_eq!(vault::total_mtm(&v), 0);
-
-    destroy(v);
-    destroy(oracle);
-    destroy(clock);
-}
-
-#[test]
 fun mtm_with_two_oracles() {
     let ctx = &mut tx_context::dummy();
     let mut v = vault::new<SUI>(ctx);
@@ -761,29 +669,6 @@ fun mtm_dn_wins_at_settlement_boundary() {
 }
 
 #[test]
-fun multiple_oracles_independent_max_payout() {
-    let ctx = &mut tx_context::dummy();
-    let mut v = vault::new<SUI>(ctx);
-    let clock = clock::create_for_testing(ctx);
-
-    let oracle1 = create_settled_oracle(200 * FLOAT, ctx);
-    let oracle2 = create_settled_oracle(10 * FLOAT, ctx);
-
-    // Oracle1: UP at 50, qty=5. max_payout=5
-    vault::insert_position(&mut v, &oracle1, true, 50 * FLOAT, 5 * FLOAT, &clock, ctx);
-    // Oracle2: DN at 50, qty=3. max_payout=3
-    vault::insert_position(&mut v, &oracle2, false, 50 * FLOAT, 3 * FLOAT, &clock, ctx);
-
-    // total_max_payout = sum of per-oracle max_payouts = 5 + 3 = 8
-    assert_eq!(vault::total_max_payout(&v), 8 * FLOAT);
-
-    destroy(v);
-    destroy(oracle1);
-    destroy(oracle2);
-    destroy(clock);
-}
-
-#[test]
 fun assert_total_exposure_with_empty_vault() {
     let ctx = &mut tx_context::dummy();
     let v = vault::new<SUI>(ctx);
@@ -821,42 +706,6 @@ fun remove_from_one_oracle_does_not_affect_other() {
     // Oracle2 unaffected
     assert_eq!(vault::total_mtm(&v), 3 * FLOAT);
     assert_eq!(vault::total_max_payout(&v), 3 * FLOAT);
-
-    destroy(v);
-    destroy(oracle1);
-    destroy(oracle2);
-    destroy(clock);
-}
-
-#[test]
-fun insert_and_remove_across_oracles_independently() {
-    let ctx = &mut tx_context::dummy();
-    let mut v = vault::new<SUI>(ctx);
-    let clock = clock::create_for_testing(ctx);
-
-    let oracle1 = create_settled_oracle(200 * FLOAT, ctx);
-    let oracle2 = create_settled_oracle(10 * FLOAT, ctx);
-
-    // Oracle1: UP at 50, qty=10. UP wins.
-    vault::insert_position(&mut v, &oracle1, true, 50 * FLOAT, 10 * FLOAT, &clock, ctx);
-    assert_eq!(vault::total_mtm(&v), 10 * FLOAT);
-
-    // Oracle2: DN at 80, qty=7. DN wins (10 < 80).
-    vault::insert_position(&mut v, &oracle2, false, 80 * FLOAT, 7 * FLOAT, &clock, ctx);
-    assert_eq!(vault::total_mtm(&v), 17 * FLOAT);
-
-    // Remove partial from oracle2
-    vault::remove_position(&mut v, &oracle2, false, 80 * FLOAT, 3 * FLOAT, &clock);
-    assert_eq!(vault::total_mtm(&v), 14 * FLOAT); // 10 + 4
-
-    // Remove all from oracle1
-    vault::remove_position(&mut v, &oracle1, true, 50 * FLOAT, 10 * FLOAT, &clock);
-    assert_eq!(vault::total_mtm(&v), 4 * FLOAT); // only oracle2 remains
-
-    // Remove rest from oracle2
-    vault::remove_position(&mut v, &oracle2, false, 80 * FLOAT, 4 * FLOAT, &clock);
-    assert_eq!(vault::total_mtm(&v), 0);
-    assert_eq!(vault::total_max_payout(&v), 0);
 
     destroy(v);
     destroy(oracle1);

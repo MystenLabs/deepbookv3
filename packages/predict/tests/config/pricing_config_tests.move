@@ -18,17 +18,6 @@ fun new_returns_correct_defaults() {
     destroy(config);
 }
 
-// === Getters ===
-
-#[test]
-fun getters_return_values_after_construction() {
-    let config = pricing_config::new();
-    assert_eq!(pricing_config::base_spread(&config), 20_000_000);
-    assert_eq!(pricing_config::min_spread(&config), 5_000_000);
-    assert_eq!(pricing_config::utilization_multiplier(&config), 2_000_000_000);
-    destroy(config);
-}
-
 // === set_base_spread ===
 
 #[test]

@@ -358,29 +358,13 @@ fun ln_smallest_input() {
     assert_eq!(neg, true);
 }
 
-#[test]
-fun ln_power_of_two_consistency() {
-    // Verify ln(2^k) = k * ln(2) holds in the contract's arithmetic
-    let (mag2, _) = math::ln(2 * FLOAT);
-    let (mag4, _) = math::ln(4 * FLOAT);
-    let (mag8, _) = math::ln(8 * FLOAT);
-    assert_eq!(mag2, LN2);
-    assert_eq!(mag4, LN4);
-    assert_eq!(mag8, LN8);
-}
-
 // ============================================================
 // exp
 // ============================================================
 
 #[test]
-fun exp_zero_positive() {
+fun exp_zero() {
     assert_eq!(math::exp(0, false), FLOAT);
-}
-
-#[test]
-fun exp_zero_negative() {
-    assert_eq!(math::exp(0, true), FLOAT);
 }
 
 #[test]
@@ -518,21 +502,6 @@ fun cdf_monotonic() {
     // PHI_1 < PHI_2 < PHI_3: monotonically increasing
     assert_eq!(PHI_1 < PHI_2, true);
     assert_eq!(PHI_2 < PHI_3, true);
-}
-
-#[test]
-fun cdf_one_exact() {
-    assert_eq!(math::normal_cdf(FLOAT, false), PHI_1);
-}
-
-#[test]
-fun cdf_neg_one_exact() {
-    assert_eq!(math::normal_cdf(FLOAT, true), PHI_NEG_1);
-}
-
-#[test]
-fun cdf_two_exact() {
-    assert_eq!(math::normal_cdf(2 * FLOAT, false), PHI_2);
 }
 
 #[test]

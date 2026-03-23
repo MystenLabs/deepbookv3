@@ -16,7 +16,7 @@ fun dummy_oracle_id(ctx: &mut TxContext): ID {
 }
 
 // ============================================================
-// 1. Construction
+// Construction
 // ============================================================
 
 #[test]
@@ -35,7 +35,7 @@ fun new_creates_manager_with_correct_owner() {
 }
 
 // ============================================================
-// 2. Position tracking
+// Position tracking
 // ============================================================
 
 #[test]
@@ -163,7 +163,7 @@ fun decrease_position_aborts_insufficient_free() {
 }
 
 // ============================================================
-// 3. Collateral lock / release
+// Collateral lock / release
 // ============================================================
 
 #[test]
@@ -413,7 +413,7 @@ fun different_collateral_pairs_tracked_independently() {
 }
 
 // ============================================================
-// 4. Deposit / Withdraw
+// Deposit / Withdraw
 // ============================================================
 
 #[test]
@@ -493,7 +493,7 @@ fun withdraw_aborts_if_not_owner() {
 }
 
 // ============================================================
-// 5. Edge cases
+// Edge cases
 // ============================================================
 
 #[test, expected_failure(abort_code = predict_manager::EInsufficientFreePosition)]

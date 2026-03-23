@@ -16,15 +16,6 @@ fun new_returns_correct_default() {
     destroy(config);
 }
 
-// === Getter ===
-
-#[test]
-fun getter_returns_value_after_construction() {
-    let config = risk_config::new();
-    assert_eq!(risk_config::max_total_exposure_pct(&config), 800_000_000);
-    destroy(config);
-}
-
 // === set_max_total_exposure_pct ===
 
 #[test]

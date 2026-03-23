@@ -11,8 +11,6 @@ use deepbook_predict::oracle::{Self, new_price_data, new_svi_params};
 use std::unit_test::{assert_eq, destroy};
 use sui::clock;
 
-const FLOAT: u64 = 1_000_000_000;
-
 const S0_SPOT: u64 = 70_189_182_420_000;
 const S0_FORWARD: u64 = 70_204_457_950_000;
 const S0_A: u64 = 2_020_000;

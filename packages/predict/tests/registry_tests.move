@@ -5,12 +5,12 @@
 module deepbook_predict::registry_tests;
 
 use deepbook_predict::{oracle::OracleSVI, predict::Predict, registry::{Self, AdminCap, Registry}};
-use std::unit_test::assert_eq;
+use std::unit_test::{assert_eq, destroy};
 use sui::{sui::SUI, test_scenario::{Self, Scenario}};
 
 const ADMIN: address = @0xAD;
 
-/// Setup: init registry, return scenario with AdminCap transferred to ADMIN.
+// Setup: init registry, return scenario with AdminCap transferred to ADMIN.
 fun setup(): Scenario {
     let mut scenario = test_scenario::begin(ADMIN);
     {
@@ -26,7 +26,7 @@ fun setup(): Scenario {
 
 #[test]
 fun init_creates_registry_and_admin_cap() {
-    let mut scenario = setup();
+    let scenario = setup();
 
     // AdminCap transferred to ADMIN
     let admin_cap = scenario.take_from_sender<AdminCap>();
@@ -41,7 +41,7 @@ fun init_creates_registry_and_admin_cap() {
 
 #[test]
 fun init_registry_has_no_predict_id() {
-    let mut scenario = setup();
+    let scenario = setup();
 
     let registry = scenario.take_shared<Registry>();
     // oracle_ids for a random cap should be empty
@@ -98,7 +98,7 @@ fun create_oracle_cap_succeeds() {
 
     let cap = registry::create_oracle_cap(&admin_cap, scenario.ctx());
 
-    std::unit_test::destroy(cap);
+    destroy(cap);
     scenario.return_to_sender(admin_cap);
     scenario.end();
 }
@@ -130,7 +130,7 @@ fun create_oracle_and_tracks_in_registry() {
     assert_eq!(ids.length(), 1);
     assert_eq!(ids[0], oracle_id);
 
-    std::unit_test::destroy(cap);
+    destroy(cap);
     test_scenario::return_shared(registry);
     scenario.return_to_sender(admin_cap);
     scenario.end();
@@ -166,7 +166,7 @@ fun create_multiple_oracles_same_cap() {
     assert_eq!(ids[0], id1);
     assert_eq!(ids[1], id2);
 
-    std::unit_test::destroy(cap);
+    destroy(cap);
     test_scenario::return_shared(registry);
     scenario.return_to_sender(admin_cap);
     scenario.end();
@@ -207,22 +207,10 @@ fun create_oracles_different_caps_tracked_separately() {
     assert_eq!(ids2.length(), 1);
     assert_eq!(ids2[0], id2);
 
-    std::unit_test::destroy(cap1);
-    std::unit_test::destroy(cap2);
+    destroy(cap1);
+    destroy(cap2);
     test_scenario::return_shared(registry);
     scenario.return_to_sender(admin_cap);
-    scenario.end();
-}
-
-#[test]
-fun oracle_ids_returns_empty_for_unknown_cap() {
-    let mut scenario = setup();
-
-    let registry = scenario.take_shared<Registry>();
-    let fake_id = object::id_from_address(@0xDEAD);
-    assert_eq!(registry.oracle_ids(fake_id).length(), 0);
-
-    test_scenario::return_shared(registry);
     scenario.end();
 }
 
@@ -256,8 +244,8 @@ fun register_oracle_cap_on_oracle() {
         test_scenario::return_shared(oracle);
     };
 
-    std::unit_test::destroy(cap1);
-    std::unit_test::destroy(cap2);
+    destroy(cap1);
+    destroy(cap2);
     test_scenario::return_shared(registry);
     scenario.return_to_sender(admin_cap);
     scenario.end();

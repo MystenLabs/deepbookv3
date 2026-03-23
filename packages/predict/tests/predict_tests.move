@@ -1,10 +1,6 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Tests for the main Predict orchestrator module.
-///
-/// Uses settled oracles for deterministic pricing where possible.
-/// Uses test_scenario for shared PredictManager objects.
 #[test_only]
 module deepbook_predict::predict_tests;
 
@@ -19,18 +15,17 @@ use sui::{clock, coin, sui::SUI, test_scenario::{Self, Scenario}};
 
 const FLOAT: u64 = 1_000_000_000;
 const ALICE: address = @0xA;
-const BOB: address = @0xB;
 
 // === Helpers ===
 
-/// Create a non-shared Predict<SUI> for testing.
+// Create a non-shared Predict<SUI> for testing.
 fun create_predict(ctx: &mut TxContext): Predict<SUI> {
     predict::create_test_predict<SUI>(ctx)
 }
 
-/// Create a live (non-settled) oracle with simple params.
-/// Uses a=0, b=1, rho=0, m=0, sigma=0.25, rate=0.
-/// expiry far in the future, timestamp=0 (not stale when clock=0).
+// Create a live (non-settled) oracle with simple params.
+// Uses a=0, b=1, rho=0, m=0, sigma=0.25, rate=0.
+// expiry far in the future, timestamp=0 (not stale when clock=0).
 fun create_live_oracle(ctx: &mut TxContext): oracle::OracleSVI {
     let svi = new_svi_params(0, FLOAT, 0, false, 0, false, 250_000_000);
     let prices = new_price_data(100 * FLOAT, 100 * FLOAT);
@@ -45,7 +40,7 @@ fun create_live_oracle(ctx: &mut TxContext): oracle::OracleSVI {
     )
 }
 
-/// Create a settled oracle at the given settlement price.
+// Create a settled oracle at the given settlement price.
 fun create_settled_oracle(settlement_price: u64, ctx: &mut TxContext): oracle::OracleSVI {
     let svi = new_svi_params(0, 0, 0, false, 0, false, 0);
     let prices = new_price_data(0, 0);
@@ -62,8 +57,8 @@ fun create_settled_oracle(settlement_price: u64, ctx: &mut TxContext): oracle::O
     oracle
 }
 
-/// Setup: create PredictManager for ALICE via test_scenario,
-/// deposit funds, then return the scenario.
+// Setup: create PredictManager for ALICE via test_scenario,
+// deposit funds, then return the scenario.
 fun setup_with_manager(funds: u64): Scenario {
     let mut scenario = test_scenario::begin(ALICE);
     {

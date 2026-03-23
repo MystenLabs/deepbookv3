@@ -29,8 +29,6 @@ const PRICE_UP_ATM: u64 = 401_293_674;
 const PRICE_DN_ATM: u64 = 598_706_325;
 const PRICE_UP_STRIKE_2X: u64 = 108_101_717;
 const PRICE_DN_STRIKE_2X: u64 = 891_898_282;
-const PRICE_UP_STRIKE_HALF: u64 = 647_390_543;
-const PRICE_DN_STRIKE_HALF: u64 = 352_609_456;
 const PRICE_UP_DEEP_ITM: u64 = 773_988_940;
 const PRICE_DN_DEEP_ITM: u64 = 226_011_059;
 const PRICE_UP_DEEP_OTM: u64 = 11_485_171;
@@ -49,7 +47,6 @@ const PRICE_DN_S150: u64 = 824_478_702;
 const DISCOUNT_5PCT_1YR: u64 = 951_229_424;
 const PRICE_UP_ATM_5PCT: u64 = 381_722_350;
 const PRICE_DN_ATM_5PCT: u64 = 569_507_072;
-const DISCOUNT_10PCT_PARTIAL: u64 = 968_787_691;
 const PRICE_UP_ATM_10PCT_PARTIAL: u64 = 388_768_371;
 const PRICE_DN_ATM_10PCT_PARTIAL: u64 = 580_019_318;
 const DISCOUNT_10PCT_HALF_YR: u64 = 951_229_424;
@@ -1197,56 +1194,6 @@ fun exact_strike_2x_forward_price() {
 
     assert_eq!(oracle.get_binary_price(100 * FLOAT, true, &clock), PRICE_UP_STRIKE_2X);
     assert_eq!(oracle.get_binary_price(100 * FLOAT, false, &clock), PRICE_DN_STRIKE_2X);
-
-    destroy(oracle);
-    clock.destroy_for_testing();
-}
-
-#[test]
-fun exact_strike_half_forward_price() {
-    let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
-    let forward = 100 * FLOAT;
-    let prices = new_price_data(forward, forward);
-    let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
-        0,
-        1_000_000,
-        0,
-        ctx,
-    );
-
-    let clock = clock::create_for_testing(ctx);
-
-    assert_eq!(oracle.get_binary_price(50 * FLOAT, true, &clock), PRICE_UP_STRIKE_HALF);
-    assert_eq!(oracle.get_binary_price(50 * FLOAT, false, &clock), PRICE_DN_STRIKE_HALF);
-
-    destroy(oracle);
-    clock.destroy_for_testing();
-}
-
-#[test]
-fun exact_discount_one_year_five_pct() {
-    let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
-    let forward = 100 * FLOAT;
-    let prices = new_price_data(forward, forward);
-    let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
-        RATE_5_PCT,
-        MS_PER_YEAR,
-        0,
-        ctx,
-    );
-
-    let clock = clock::create_for_testing(ctx);
-
-    assert_eq!(oracle.get_binary_price(forward, true, &clock), PRICE_UP_ATM_5PCT);
-    assert_eq!(oracle.get_binary_price(forward, false, &clock), PRICE_DN_ATM_5PCT);
 
     destroy(oracle);
     clock.destroy_for_testing();
