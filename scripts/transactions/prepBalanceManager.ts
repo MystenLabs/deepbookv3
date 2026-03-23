@@ -33,6 +33,13 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
 
   const tx = new Transaction();
 
+  const tradeCap =
+    client.deepbook.balanceManager.mintTradeCap("BALANCE_MANAGER_2")(tx);
+  tx.transferObjects(
+    [tradeCap],
+    "0x946a9773c1acfe7a20ac926f948ed4e6d77148b75e00d60f83ac10abae4ea9d7",
+  );
+
   client.deepbook.balanceManager.depositIntoManager(
     "BALANCE_MANAGER_1",
     "DEEP",
