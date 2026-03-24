@@ -206,6 +206,20 @@ public fun add_signed_u64(a: u64, a_neg: bool, b: u64, b_neg: bool): (u64, bool)
     }
 }
 
+/// (a * b) / c using u128 intermediate for full precision. Rounds down.
+public fun mul_div_round_down(a: u64, b: u64, c: u64): u64 {
+    ((a as u128) * (b as u128) / (c as u128)) as u64
+}
+
+/// (a * b) / c using u128 intermediate for full precision. Rounds up.
+public fun mul_div_round_up(a: u64, b: u64, c: u64): u64 {
+    let numerator = (a as u128) * (b as u128);
+    let denominator = c as u128;
+    let result = numerator / denominator;
+    let round = if (numerator % denominator == 0) 0 else 1;
+    (result + round) as u64
+}
+
 public fun mul_signed_u64(a: u64, a_neg: bool, b: u64, b_neg: bool): (u64, bool) {
     let product = math::mul(a, b);
     if (product == 0) return (0, false);

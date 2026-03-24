@@ -14,7 +14,7 @@ module deepbook_predict::registry;
 
 use deepbook_predict::{oracle::{Self, OracleCapSVI, OracleSVI}, predict};
 use std::string::String;
-use sui::{coin::Coin, event, table::{Self, Table}};
+use sui::{event, table::{Self, Table}};
 
 // === Errors ===
 const EPredictAlreadyCreated: u64 = 0;
@@ -30,12 +30,6 @@ public struct OracleCreated has copy, drop, store {
     oracle_cap_id: ID,
     underlying_asset: String,
     expiry: u64,
-}
-
-public struct AdminVaultBalanceChanged has copy, drop, store {
-    predict_id: ID,
-    amount: u64,
-    deposit: bool,
 }
 
 // === Structs ===
@@ -120,39 +114,6 @@ public fun create_oracle(
     oracle_id
 }
 
-/// Admin deposits USDC into the vault.
-/// TODO: source capital from margin pool
-public fun admin_deposit<Quote>(
-    predict: &mut predict::Predict<Quote>,
-    _admin_cap: &AdminCap,
-    coin: Coin<Quote>,
-) {
-    let amount = coin.value();
-    predict.deposit(coin);
-    event::emit(AdminVaultBalanceChanged {
-        predict_id: object::id(predict),
-        amount,
-        deposit: true,
-    });
-}
-
-/// Admin withdraws USDC from the vault.
-/// TODO: source capital from margin pool
-public fun admin_withdraw<Quote>(
-    predict: &mut predict::Predict<Quote>,
-    _admin_cap: &AdminCap,
-    amount: u64,
-    ctx: &mut TxContext,
-): Coin<Quote> {
-    let coin = predict.withdraw(amount, ctx);
-    event::emit(AdminVaultBalanceChanged {
-        predict_id: object::id(predict),
-        amount,
-        deposit: false,
-    });
-    coin
-}
-
 /// Set trading pause state.
 public fun set_trading_paused<Quote>(
     predict: &mut predict::Predict<Quote>,
@@ -169,6 +130,15 @@ public fun set_base_spread<Quote>(
     spread: u64,
 ) {
     predict.set_base_spread(spread);
+}
+
+/// Set min spread.
+public fun set_min_spread<Quote>(
+    predict: &mut predict::Predict<Quote>,
+    _admin_cap: &AdminCap,
+    spread: u64,
+) {
+    predict.set_min_spread(spread);
 }
 
 /// Set utilization multiplier.
