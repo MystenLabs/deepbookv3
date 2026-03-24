@@ -19,7 +19,7 @@ use std::unit_test::destroy;
 use sui::{clock, coin, sui::SUI, test_scenario};
 
 const ALICE: address = @0xA;
-const THRESHOLD: u64 = 10;
+const THRESHOLD: u64 = 1;
 
 fun run_sequence(steps: vector<TradeStep>, num_trades: u64) {
     let first = &steps[0];
