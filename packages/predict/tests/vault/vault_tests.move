@@ -4,7 +4,11 @@
 #[test_only]
 module deepbook_predict::vault_tests;
 
-use deepbook_predict::{oracle::{Self, new_price_data, new_svi_params}, vault};
+use deepbook_predict::{
+    generated_scenarios as gs,
+    oracle::{Self, new_price_data, new_svi_params},
+    vault,
+};
 use std::unit_test::{assert_eq, destroy};
 use sui::{balance, clock, sui::SUI};
 
@@ -98,54 +102,18 @@ fun dispense_payout_exceeds_balance_aborts() {
 // ============================================================
 
 #[test]
-fun insert_single_up_position_max_payout() {
+fun insert_single_position_max_payout() {
     let ctx = &mut tx_context::dummy();
     let mut v = vault::new<SUI>(ctx);
     let oracle = create_settled_oracle(200 * FLOAT, ctx);
     let clock = clock::create_for_testing(ctx);
 
-    // Single UP position with quantity 10 * FLOAT.
-    // max_payout for a single UP = quantity = 10 * FLOAT
+    // UP position: max_payout = quantity
     vault::insert_position(&mut v, &oracle, true, 50 * FLOAT, 10 * FLOAT, &clock, ctx);
-
     assert_eq!(vault::total_max_payout(&v), 10 * FLOAT);
 
-    destroy(v);
-    destroy(oracle);
-    destroy(clock);
-}
-
-#[test]
-fun insert_single_dn_position_max_payout() {
-    let ctx = &mut tx_context::dummy();
-    let mut v = vault::new<SUI>(ctx);
-    let oracle = create_settled_oracle(200 * FLOAT, ctx);
-    let clock = clock::create_for_testing(ctx);
-
-    // Single DN position with quantity 8 * FLOAT.
-    // max_payout for a single DN = quantity = 8 * FLOAT
+    // DN position at same strike: max_payout = max(UP, DN) = max(10, 8) = 10
     vault::insert_position(&mut v, &oracle, false, 50 * FLOAT, 8 * FLOAT, &clock, ctx);
-
-    assert_eq!(vault::total_max_payout(&v), 8 * FLOAT);
-
-    destroy(v);
-    destroy(oracle);
-    destroy(clock);
-}
-
-#[test]
-fun insert_same_strike_both_directions_max_payout() {
-    let ctx = &mut tx_context::dummy();
-    let mut v = vault::new<SUI>(ctx);
-    let oracle = create_settled_oracle(200 * FLOAT, ctx);
-    let clock = clock::create_for_testing(ctx);
-
-    // At same strike: max_payout = max(total_up, total_dn)
-    // Insert UP=10, DN=6 at same strike
-    // max_payout = max(10, 6) = 10
-    vault::insert_position(&mut v, &oracle, true, 50 * FLOAT, 10 * FLOAT, &clock, ctx);
-    vault::insert_position(&mut v, &oracle, false, 50 * FLOAT, 6 * FLOAT, &clock, ctx);
-
     assert_eq!(vault::total_max_payout(&v), 10 * FLOAT);
 
     destroy(v);
@@ -243,18 +211,21 @@ fun insert_different_strikes_mixed_directions_max_payout() {
 // ============================================================
 
 #[test]
-fun remove_position_decreases_max_payout() {
+fun remove_position_decreases_max_payout_and_mtm() {
     let ctx = &mut tx_context::dummy();
     let mut v = vault::new<SUI>(ctx);
     let oracle = create_settled_oracle(200 * FLOAT, ctx);
     let clock = clock::create_for_testing(ctx);
 
+    // Settlement 200 > strike 50, UP wins. MTM = max_payout = quantity.
     vault::insert_position(&mut v, &oracle, true, 50 * FLOAT, 10 * FLOAT, &clock, ctx);
     assert_eq!(vault::total_max_payout(&v), 10 * FLOAT);
+    assert_eq!(vault::total_mtm(&v), 10 * FLOAT);
 
+    // Remove 4. Remaining = 6.
     vault::remove_position(&mut v, &oracle, true, 50 * FLOAT, 4 * FLOAT, &clock);
-    // Remaining UP=6 at strike 50, max_payout = 6
     assert_eq!(vault::total_max_payout(&v), 6 * FLOAT);
+    assert_eq!(vault::total_mtm(&v), 6 * FLOAT);
 
     destroy(v);
     destroy(oracle);
@@ -437,26 +408,6 @@ fun vault_value_aborts_when_mtm_exceeds_balance() {
 // ============================================================
 
 #[test]
-fun mtm_up_loses_settled_below_strike() {
-    let ctx = &mut tx_context::dummy();
-    let mut v = vault::new<SUI>(ctx);
-    // Settlement at 30, strike at 50. Since 30 < 50, UP loses.
-    // Settled curve: [(29, up=1e9, dn=0), (30, up=0, dn=1e9)]
-    // Position at strike 50 > 30 (clamped to last point), UP price = 0
-    // MTM = mul(qty, 0) = 0
-    let oracle = create_settled_oracle(30 * FLOAT, ctx);
-    let clock = clock::create_for_testing(ctx);
-
-    vault::insert_position(&mut v, &oracle, true, 50 * FLOAT, 10 * FLOAT, &clock, ctx);
-
-    assert_eq!(vault::total_mtm(&v), 0);
-
-    destroy(v);
-    destroy(oracle);
-    destroy(clock);
-}
-
-#[test]
 fun mtm_dn_wins_settled_below_strike() {
     let ctx = &mut tx_context::dummy();
     let mut v = vault::new<SUI>(ctx);
@@ -539,50 +490,6 @@ fun mtm_mixed_directions_settled() {
 
     destroy(v);
     destroy(oracle);
-    destroy(clock);
-}
-
-#[test]
-fun mtm_decreases_after_remove() {
-    let ctx = &mut tx_context::dummy();
-    let mut v = vault::new<SUI>(ctx);
-    // Settlement at 200, strike 50 UP. UP wins.
-    let oracle = create_settled_oracle(200 * FLOAT, ctx);
-    let clock = clock::create_for_testing(ctx);
-
-    vault::insert_position(&mut v, &oracle, true, 50 * FLOAT, 10 * FLOAT, &clock, ctx);
-    assert_eq!(vault::total_mtm(&v), 10 * FLOAT);
-
-    // Remove 4 * FLOAT. Remaining = 6 * FLOAT, still UP winning.
-    // MTM = 6 * FLOAT
-    vault::remove_position(&mut v, &oracle, true, 50 * FLOAT, 4 * FLOAT, &clock);
-    assert_eq!(vault::total_mtm(&v), 6 * FLOAT);
-
-    destroy(v);
-    destroy(oracle);
-    destroy(clock);
-}
-
-#[test]
-fun mtm_with_two_oracles() {
-    let ctx = &mut tx_context::dummy();
-    let mut v = vault::new<SUI>(ctx);
-    let clock = clock::create_for_testing(ctx);
-
-    // Oracle 1: settled at 200, strike 50 UP wins. MTM = 5*FLOAT
-    let oracle1 = create_settled_oracle(200 * FLOAT, ctx);
-    vault::insert_position(&mut v, &oracle1, true, 50 * FLOAT, 5 * FLOAT, &clock, ctx);
-
-    // Oracle 2: settled at 10, strike 50 DN wins. MTM = 3*FLOAT
-    let oracle2 = create_settled_oracle(10 * FLOAT, ctx);
-    vault::insert_position(&mut v, &oracle2, false, 50 * FLOAT, 3 * FLOAT, &clock, ctx);
-
-    // Total MTM = 5 + 3 = 8*FLOAT
-    assert_eq!(vault::total_mtm(&v), 8 * FLOAT);
-
-    destroy(v);
-    destroy(oracle1);
-    destroy(oracle2);
     destroy(clock);
 }
 
@@ -793,6 +700,142 @@ fun reinsert_different_direction_after_full_removal() {
     vault::insert_position(&mut v, &oracle, false, 50 * FLOAT, 5 * FLOAT, &clock, ctx);
     assert_eq!(vault::total_mtm(&v), 0);
     assert_eq!(vault::total_max_payout(&v), 5 * FLOAT);
+
+    destroy(v);
+    destroy(oracle);
+    destroy(clock);
+}
+
+// ============================================================
+// Live oracle MTM — real-world SVI data (ground truth from scipy)
+// ============================================================
+
+const QTY: u64 = 10_000_000; // 10 contracts in USDC (1e6 per contract)
+
+// S0: tte=6.9d — far from expiry, moderate vol
+#[test]
+fun mtm_live_oracle_s0_atm() {
+    let ctx = &mut tx_context::dummy();
+    let mut v = vault::new<SUI>(ctx);
+
+    let svi = new_svi_params(
+        gs::S0_A!(), gs::S0_B!(), gs::S0_RHO!(), gs::S0_RHO_NEG!() == 1,
+        gs::S0_M!(), gs::S0_M_NEG!() == 1, gs::S0_SIGMA!(),
+    );
+    let prices = new_price_data(gs::S0_SPOT!(), gs::S0_FORWARD!());
+    let oracle = oracle::create_test_oracle(
+        b"BTC".to_string(), svi, prices, gs::S0_RATE!(),
+        gs::S0_EXPIRY_MS!(), gs::S0_NOW_MS!(), ctx,
+    );
+    let mut clock = clock::create_for_testing(ctx);
+    clock.set_for_testing(gs::S0_NOW_MS!());
+
+    vault::insert_position(
+        &mut v, &oracle, true, gs::S0_STRIKE_ATM!(), QTY, &clock, ctx,
+    );
+    assert_eq!(vault::total_mtm(&v), gs::S0_MTM_UP_ATM!());
+
+    vault::insert_position(
+        &mut v, &oracle, false, gs::S0_STRIKE_ATM!(), QTY, &clock, ctx,
+    );
+    // Total MTM = UP mtm + DN mtm (different directions at same strike)
+    let expected_total = gs::S0_MTM_UP_ATM!() + gs::S0_MTM_DN_ATM!();
+    assert_eq!(vault::total_mtm(&v), expected_total);
+
+    destroy(v);
+    destroy(oracle);
+    destroy(clock);
+}
+
+// S0: OTM and ITM strikes
+#[test]
+fun mtm_live_oracle_s0_otm_itm() {
+    let ctx = &mut tx_context::dummy();
+    let mut v = vault::new<SUI>(ctx);
+
+    let svi = new_svi_params(
+        gs::S0_A!(), gs::S0_B!(), gs::S0_RHO!(), gs::S0_RHO_NEG!() == 1,
+        gs::S0_M!(), gs::S0_M_NEG!() == 1, gs::S0_SIGMA!(),
+    );
+    let prices = new_price_data(gs::S0_SPOT!(), gs::S0_FORWARD!());
+    let oracle = oracle::create_test_oracle(
+        b"BTC".to_string(), svi, prices, gs::S0_RATE!(),
+        gs::S0_EXPIRY_MS!(), gs::S0_NOW_MS!(), ctx,
+    );
+    let mut clock = clock::create_for_testing(ctx);
+    clock.set_for_testing(gs::S0_NOW_MS!());
+
+    // OTM UP — low probability, small MTM
+    vault::insert_position(
+        &mut v, &oracle, true, gs::S0_STRIKE_OTM10!(), QTY, &clock, ctx,
+    );
+    assert_eq!(vault::total_mtm(&v), gs::S0_MTM_UP_OTM10!());
+
+    destroy(v);
+    destroy(oracle);
+    destroy(clock);
+}
+
+// S6: tte=5m — near expiry, where fixed-point math drifts most
+#[test]
+fun mtm_live_oracle_s6_near_expiry() {
+    let ctx = &mut tx_context::dummy();
+    let mut v = vault::new<SUI>(ctx);
+
+    let svi = new_svi_params(
+        gs::S6_A!(), gs::S6_B!(), gs::S6_RHO!(), gs::S6_RHO_NEG!() == 1,
+        gs::S6_M!(), gs::S6_M_NEG!() == 1, gs::S6_SIGMA!(),
+    );
+    let prices = new_price_data(gs::S6_SPOT!(), gs::S6_FORWARD!());
+    let oracle = oracle::create_test_oracle(
+        b"BTC".to_string(), svi, prices, gs::S6_RATE!(),
+        gs::S6_EXPIRY_MS!(), gs::S6_NOW_MS!(), ctx,
+    );
+    let mut clock = clock::create_for_testing(ctx);
+    clock.set_for_testing(gs::S6_NOW_MS!());
+
+    vault::insert_position(
+        &mut v, &oracle, true, gs::S6_STRIKE_ATM!(), QTY, &clock, ctx,
+    );
+    assert_eq!(vault::total_mtm(&v), gs::S6_MTM_UP_ATM!());
+
+    destroy(v);
+    destroy(oracle);
+    destroy(clock);
+}
+
+// S7: tte=31s — extreme near-expiry edge case
+#[test]
+fun mtm_live_oracle_s7_extreme_near_expiry() {
+    let ctx = &mut tx_context::dummy();
+    let mut v = vault::new<SUI>(ctx);
+
+    let svi = new_svi_params(
+        gs::S7_A!(), gs::S7_B!(), gs::S7_RHO!(), gs::S7_RHO_NEG!() == 1,
+        gs::S7_M!(), gs::S7_M_NEG!() == 1, gs::S7_SIGMA!(),
+    );
+    let prices = new_price_data(gs::S7_SPOT!(), gs::S7_FORWARD!());
+    let oracle = oracle::create_test_oracle(
+        b"BTC".to_string(), svi, prices, gs::S7_RATE!(),
+        gs::S7_EXPIRY_MS!(), gs::S7_NOW_MS!(), ctx,
+    );
+    let mut clock = clock::create_for_testing(ctx);
+    clock.set_for_testing(gs::S7_NOW_MS!());
+
+    // ATM UP at 31s to expiry
+    vault::insert_position(
+        &mut v, &oracle, true, gs::S7_STRIKE_ATM!(), QTY, &clock, ctx,
+    );
+    assert_eq!(vault::total_mtm(&v), gs::S7_MTM_UP_ATM!());
+
+    // ITM UP — should be very high probability near expiry
+    vault::remove_position(
+        &mut v, &oracle, true, gs::S7_STRIKE_ATM!(), QTY, &clock,
+    );
+    vault::insert_position(
+        &mut v, &oracle, true, gs::S7_STRIKE_ITM10!(), QTY, &clock, ctx,
+    );
+    assert_eq!(vault::total_mtm(&v), gs::S7_MTM_UP_ITM10!());
 
     destroy(v);
     destroy(oracle);

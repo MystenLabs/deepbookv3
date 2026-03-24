@@ -5,6 +5,7 @@
 module deepbook_predict::predict_tests;
 
 use deepbook_predict::{
+    generated_scenarios as gs,
     market_key,
     oracle::{Self, new_price_data, new_svi_params},
     predict::{Self, Predict},
@@ -636,4 +637,214 @@ fun collateralized_mint_equal_strikes_aborts() {
 
         abort
     }
+}
+
+// ============================================================
+// Real-world mint pricing — ground truth from scipy
+// ============================================================
+
+// Helper: create a live oracle + clock from generated scenario params.
+fun create_realworld_oracle(
+    spot: u64,
+    forward: u64,
+    a: u64,
+    b: u64,
+    rho: u64,
+    rho_neg: u64,
+    m: u64,
+    m_neg: u64,
+    sigma: u64,
+    rate: u64,
+    expiry_ms: u64,
+    now_ms: u64,
+    ctx: &mut TxContext,
+): (oracle::OracleSVI, sui::clock::Clock) {
+    let svi = new_svi_params(a, b, rho, rho_neg == 1, m, m_neg == 1, sigma);
+    let prices = new_price_data(spot, forward);
+    let oracle = oracle::create_test_oracle(
+        b"BTC".to_string(), svi, prices, rate, expiry_ms, now_ms, ctx,
+    );
+    let mut clock = clock::create_for_testing(ctx);
+    clock.set_for_testing(now_ms);
+    (oracle, clock)
+}
+
+// Helper: create a funded Predict<SUI> with zero utilization.
+fun create_funded_predict(amount: u64, ctx: &mut TxContext): Predict<SUI> {
+    let mut predict = predict::create_test_predict<SUI>(ctx);
+    let coin = coin::mint_for_testing<SUI>(amount, ctx);
+    predict.supply(coin, ctx);
+    predict
+}
+
+// M0: tte=6.9d — far from expiry, zero utilization
+#[test]
+fun mint_cost_realworld_m0_atm_up() {
+    let ctx = &mut tx_context::dummy();
+    let predict = create_funded_predict(1_000_000 * FLOAT, ctx);
+    let (oracle, clock) = create_realworld_oracle(
+        gs::M0_SPOT!(), gs::M0_FORWARD!(),
+        gs::M0_A!(), gs::M0_B!(), gs::M0_RHO!(), gs::M0_RHO_NEG!(),
+        gs::M0_M!(), gs::M0_M_NEG!(), gs::M0_SIGMA!(), gs::M0_RATE!(),
+        gs::M0_EXPIRY_MS!(), gs::M0_NOW_MS!(), ctx,
+    );
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(oracle_id, oracle.expiry(), gs::M0_ATM_UP_STRIKE!());
+
+    let (mint_cost, redeem_payout) = predict.get_trade_amounts(
+        &oracle, key, gs::M0_ATM_UP_QUANTITY!(), &clock,
+    );
+    assert_eq!(mint_cost, gs::M0_ATM_UP_COST!());
+    assert_eq!(redeem_payout, gs::M0_ATM_UP_REDEEM_PAYOUT!());
+
+    destroy(predict);
+    destroy(oracle);
+    destroy(clock);
+}
+
+#[test]
+fun mint_cost_realworld_m0_atm_dn() {
+    let ctx = &mut tx_context::dummy();
+    let predict = create_funded_predict(1_000_000 * FLOAT, ctx);
+    let (oracle, clock) = create_realworld_oracle(
+        gs::M0_SPOT!(), gs::M0_FORWARD!(),
+        gs::M0_A!(), gs::M0_B!(), gs::M0_RHO!(), gs::M0_RHO_NEG!(),
+        gs::M0_M!(), gs::M0_M_NEG!(), gs::M0_SIGMA!(), gs::M0_RATE!(),
+        gs::M0_EXPIRY_MS!(), gs::M0_NOW_MS!(), ctx,
+    );
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::down(oracle_id, oracle.expiry(), gs::M0_ATM_DN_STRIKE!());
+
+    let (mint_cost, redeem_payout) = predict.get_trade_amounts(
+        &oracle, key, gs::M0_ATM_DN_QUANTITY!(), &clock,
+    );
+    assert_eq!(mint_cost, gs::M0_ATM_DN_COST!());
+    assert_eq!(redeem_payout, gs::M0_ATM_DN_REDEEM_PAYOUT!());
+
+    destroy(predict);
+    destroy(oracle);
+    destroy(clock);
+}
+
+#[test]
+fun mint_cost_realworld_m0_otm_up() {
+    let ctx = &mut tx_context::dummy();
+    let predict = create_funded_predict(1_000_000 * FLOAT, ctx);
+    let (oracle, clock) = create_realworld_oracle(
+        gs::M0_SPOT!(), gs::M0_FORWARD!(),
+        gs::M0_A!(), gs::M0_B!(), gs::M0_RHO!(), gs::M0_RHO_NEG!(),
+        gs::M0_M!(), gs::M0_M_NEG!(), gs::M0_SIGMA!(), gs::M0_RATE!(),
+        gs::M0_EXPIRY_MS!(), gs::M0_NOW_MS!(), ctx,
+    );
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(oracle_id, oracle.expiry(), gs::M0_OTM_UP_STRIKE!());
+
+    let (mint_cost, redeem_payout) = predict.get_trade_amounts(
+        &oracle, key, gs::M0_OTM_UP_QUANTITY!(), &clock,
+    );
+    assert_eq!(mint_cost, gs::M0_OTM_UP_COST!());
+    assert_eq!(redeem_payout, gs::M0_OTM_UP_REDEEM_PAYOUT!());
+
+    destroy(predict);
+    destroy(oracle);
+    destroy(clock);
+}
+
+#[test]
+fun mint_cost_realworld_m0_itm_up() {
+    let ctx = &mut tx_context::dummy();
+    let predict = create_funded_predict(1_000_000 * FLOAT, ctx);
+    let (oracle, clock) = create_realworld_oracle(
+        gs::M0_SPOT!(), gs::M0_FORWARD!(),
+        gs::M0_A!(), gs::M0_B!(), gs::M0_RHO!(), gs::M0_RHO_NEG!(),
+        gs::M0_M!(), gs::M0_M_NEG!(), gs::M0_SIGMA!(), gs::M0_RATE!(),
+        gs::M0_EXPIRY_MS!(), gs::M0_NOW_MS!(), ctx,
+    );
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(oracle_id, oracle.expiry(), gs::M0_ITM_UP_STRIKE!());
+
+    let (mint_cost, redeem_payout) = predict.get_trade_amounts(
+        &oracle, key, gs::M0_ITM_UP_QUANTITY!(), &clock,
+    );
+    assert_eq!(mint_cost, gs::M0_ITM_UP_COST!());
+    assert_eq!(redeem_payout, gs::M0_ITM_UP_REDEEM_PAYOUT!());
+
+    destroy(predict);
+    destroy(oracle);
+    destroy(clock);
+}
+
+// M5: tte=1.1h — short term
+#[test]
+fun mint_cost_realworld_m5_atm_up() {
+    let ctx = &mut tx_context::dummy();
+    let predict = create_funded_predict(1_000_000 * FLOAT, ctx);
+    let (oracle, clock) = create_realworld_oracle(
+        gs::M5_SPOT!(), gs::M5_FORWARD!(),
+        gs::M5_A!(), gs::M5_B!(), gs::M5_RHO!(), gs::M5_RHO_NEG!(),
+        gs::M5_M!(), gs::M5_M_NEG!(), gs::M5_SIGMA!(), gs::M5_RATE!(),
+        gs::M5_EXPIRY_MS!(), gs::M5_NOW_MS!(), ctx,
+    );
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(oracle_id, oracle.expiry(), gs::M5_ATM_UP_STRIKE!());
+
+    let (mint_cost, redeem_payout) = predict.get_trade_amounts(
+        &oracle, key, gs::M5_ATM_UP_QUANTITY!(), &clock,
+    );
+    assert_eq!(mint_cost, gs::M5_ATM_UP_COST!());
+    assert_eq!(redeem_payout, gs::M5_ATM_UP_REDEEM_PAYOUT!());
+
+    destroy(predict);
+    destroy(oracle);
+    destroy(clock);
+}
+
+// M6: tte=5m — near expiry
+#[test]
+fun mint_cost_realworld_m6_atm_up() {
+    let ctx = &mut tx_context::dummy();
+    let predict = create_funded_predict(1_000_000 * FLOAT, ctx);
+    let (oracle, clock) = create_realworld_oracle(
+        gs::M6_SPOT!(), gs::M6_FORWARD!(),
+        gs::M6_A!(), gs::M6_B!(), gs::M6_RHO!(), gs::M6_RHO_NEG!(),
+        gs::M6_M!(), gs::M6_M_NEG!(), gs::M6_SIGMA!(), gs::M6_RATE!(),
+        gs::M6_EXPIRY_MS!(), gs::M6_NOW_MS!(), ctx,
+    );
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(oracle_id, oracle.expiry(), gs::M6_ATM_UP_STRIKE!());
+
+    let (mint_cost, redeem_payout) = predict.get_trade_amounts(
+        &oracle, key, gs::M6_ATM_UP_QUANTITY!(), &clock,
+    );
+    assert_eq!(mint_cost, gs::M6_ATM_UP_COST!());
+    assert_eq!(redeem_payout, gs::M6_ATM_UP_REDEEM_PAYOUT!());
+
+    destroy(predict);
+    destroy(oracle);
+    destroy(clock);
+}
+
+// M7: tte=31s — extreme near expiry
+#[test]
+fun mint_cost_realworld_m7_atm_up() {
+    let ctx = &mut tx_context::dummy();
+    let predict = create_funded_predict(1_000_000 * FLOAT, ctx);
+    let (oracle, clock) = create_realworld_oracle(
+        gs::M7_SPOT!(), gs::M7_FORWARD!(),
+        gs::M7_A!(), gs::M7_B!(), gs::M7_RHO!(), gs::M7_RHO_NEG!(),
+        gs::M7_M!(), gs::M7_M_NEG!(), gs::M7_SIGMA!(), gs::M7_RATE!(),
+        gs::M7_EXPIRY_MS!(), gs::M7_NOW_MS!(), ctx,
+    );
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(oracle_id, oracle.expiry(), gs::M7_ATM_UP_STRIKE!());
+
+    let (mint_cost, redeem_payout) = predict.get_trade_amounts(
+        &oracle, key, gs::M7_ATM_UP_QUANTITY!(), &clock,
+    );
+    assert_eq!(mint_cost, gs::M7_ATM_UP_COST!());
+    assert_eq!(redeem_payout, gs::M7_ATM_UP_REDEEM_PAYOUT!());
+
+    destroy(predict);
+    destroy(oracle);
+    destroy(clock);
 }
