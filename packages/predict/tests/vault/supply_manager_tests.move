@@ -361,11 +361,10 @@ fun withdraw_rounding_truncation() {
 
     // Now total_shares = 1_999_999, vault_value changed, say 2_000_000
     // Withdraw 1_000_001 from remaining
-    // div(1_999_999, 2_000_000) = 1_999_999 * 1_000_000_000 / 2_000_000 = 999_999_500
-    // mul(1_000_001, 999_999_500) = 1_000_001 * 999_999_500 / 1_000_000_000
-    //   = 1_000_000_499_999_500 / 1_000_000_000 = 1_000_000 (truncated)
+    // mul_div_round_up(1_000_001, 1_999_999, 2_000_000)
+    //   = ceil(1_000_001 * 1_999_999 / 2_000_000) = ceil(1_000_000.4999995) = 1_000_001
     let burned2 = sm.withdraw(1_000_001, 2_000_000, ALICE);
-    assert_eq!(burned2, 1_000_000);
+    assert_eq!(burned2, 1_000_001);
 
     destroy(sm);
 }
@@ -553,32 +552,32 @@ fun supply_accepts_minimum_for_one_share() {
     destroy(sm);
 }
 
-#[test, expected_failure(abort_code = supply_manager::EZeroSharesBurned)]
-// Withdrawing a tiny amount from a large vault would burn 0 shares.
-// The contract must reject this — otherwise the user gets free money.
-fun withdraw_rejects_zero_share_burn() {
+#[test]
+// With round-up, even a tiny withdrawal burns at least 1 share.
+fun withdraw_tiny_amount_burns_one_share() {
     let ctx = &mut tx_context::dummy();
     let mut sm = supply_manager::new(ctx);
 
     sm.supply(1_000_000, 0, ALICE);
 
-    // 1 unit from 1B vault → mul(1, div(1M, 1B)) = 0 shares burned
-    sm.withdraw(1, 1_000_000_000, ALICE);
+    // 1 unit from 1B vault: ceil(1 * 1_000_000 / 1_000_000_000) = 1
+    let burned = sm.withdraw(1, 1_000_000_000, ALICE);
+    assert_eq!(burned, 1);
 
-    abort
+    destroy(sm);
 }
 
 #[test]
-// The minimum withdrawal that burns 1 share must succeed.
-fun withdraw_accepts_minimum_for_one_share() {
+// With round-up, 4 units from 3M vault burns 2 shares.
+// ceil(4 * 1_000_000 / 3_000_000) = ceil(1.333) = 2
+fun withdraw_small_amount_rounds_up() {
     let ctx = &mut tx_context::dummy();
     let mut sm = supply_manager::new(ctx);
 
     sm.supply(1_000_000, 0, ALICE);
 
-    // 4 units from 3M vault → mul(4, 333_333_333) = 1 share burned
     let burned = sm.withdraw(4, 3_000_000, ALICE);
-    assert_eq!(burned, 1);
+    assert_eq!(burned, 2);
 
     destroy(sm);
 }
