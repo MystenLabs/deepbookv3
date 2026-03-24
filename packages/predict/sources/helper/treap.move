@@ -318,8 +318,10 @@ fun recompute_agg(nodes: &mut Table<u64, Node>, strike: u64) {
         add_aggs(&mut nodes[strike], &right);
     };
 
-    nodes[strike].max_payout = (left_max_payout + node.q_dn + right_agg_q_dn)
-        .max(left_agg_q_up + node.q_up + right_max_payout);
+    nodes[strike].max_payout =
+        (left_max_payout + node.q_dn + right_agg_q_dn).max(
+            left_agg_q_up + node.q_up + right_max_payout,
+        );
 }
 
 /// Add b's aggregate values to a.

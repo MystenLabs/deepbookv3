@@ -347,7 +347,9 @@ public fun withdraw<Quote>(
     amount: u64,
     ctx: &mut TxContext,
 ): Coin<Quote> {
-    let available = predict.vault.balance() - predict.vault.total_max_payout();
+    let balance = predict.vault.balance();
+    let max_payout = predict.vault.total_max_payout();
+    let available = if (balance > max_payout) { balance - max_payout } else { 0 };
     assert!(amount <= available, EWithdrawExceedsAvailable);
     let vault_value = predict.vault.vault_value();
     let shares_burned = predict.supply_manager.withdraw(amount, vault_value, ctx.sender());
@@ -364,7 +366,9 @@ public fun withdraw<Quote>(
 public fun withdraw_all<Quote>(predict: &mut Predict<Quote>, ctx: &mut TxContext): Coin<Quote> {
     let vault_value = predict.vault.vault_value();
     let (amount, shares_burned) = predict.supply_manager.withdraw_all(vault_value, ctx.sender());
-    let available = predict.vault.balance() - predict.vault.total_max_payout();
+    let balance = predict.vault.balance();
+    let max_payout = predict.vault.total_max_payout();
+    let available = if (balance > max_payout) { balance - max_payout } else { 0 };
     assert!(amount <= available, EWithdrawExceedsAvailable);
     event::emit(Withdrawn {
         predict_id: object::id(predict),

@@ -123,11 +123,7 @@ public(package) fun assert_total_exposure<Quote>(vault: &Vault<Quote>, max_total
 }
 
 /// Refresh cached MTM for one oracle.
-fun refresh_oracle_risk<Quote>(
-    vault: &mut Vault<Quote>,
-    oracle: &OracleSVI,
-    clock: &Clock,
-) {
+fun refresh_oracle_risk<Quote>(vault: &mut Vault<Quote>, oracle: &OracleSVI, clock: &Clock) {
     let oracle_id = oracle.id();
     let treap = &vault.oracle_treaps[oracle_id];
     let (min_strike, max_strike) = treap.strike_range();

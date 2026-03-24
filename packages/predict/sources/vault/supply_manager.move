@@ -5,7 +5,7 @@
 /// Share value is derived from vault_value = balance - total_mtm.
 module deepbook_predict::supply_manager;
 
-use deepbook::math;
+use deepbook_predict::math::{mul_div_round_down, mul_div_round_up};
 use sui::table::{Self, Table};
 
 const EZeroAmount: u64 = 0;
@@ -37,7 +37,7 @@ public(package) fun user_supply_amount(
 ): u64 {
     let shares = self.user_shares(sender);
     if (shares == 0 || self.total_shares == 0) return 0;
-    math::mul(shares, math::div(vault_value, self.total_shares))
+    mul_div_round_down(shares, vault_value, self.total_shares)
 }
 
 public(package) fun new(ctx: &mut TxContext): SupplyManager {
@@ -62,7 +62,7 @@ public(package) fun supply(
         amount
     } else {
         assert!(vault_value > 0, EZeroVaultValue);
-        math::mul(amount, math::div(self.total_shares, vault_value))
+        mul_div_round_down(amount, self.total_shares, vault_value)
     };
 
     self.total_shares = self.total_shares + shares;
@@ -91,7 +91,7 @@ public(package) fun withdraw(
     assert!(amount > 0, EZeroAmount);
     assert!(vault_value > 0, EZeroVaultValue);
 
-    let shares = math::mul(amount, math::div(self.total_shares, vault_value));
+    let shares = mul_div_round_up(amount, self.total_shares, vault_value);
     let user = &mut self.user_shares[sender];
     assert!(*user >= shares, EInsufficientShares);
 
@@ -115,7 +115,7 @@ public(package) fun withdraw_all(
         vault_value
     } else {
         assert!(vault_value > 0, EZeroVaultValue);
-        math::mul(shares, math::div(vault_value, self.total_shares))
+        mul_div_round_down(shares, vault_value, self.total_shares)
     };
 
     self.user_shares.remove(sender);
