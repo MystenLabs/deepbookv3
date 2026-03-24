@@ -714,9 +714,6 @@ def generate_trade_sequence(
         t = tte_ms / 1000.0 / SECONDS_IN_YEAR
         forward = forward_int / FLOAT_SCALING
 
-        # Reprice all positions at current market before computing spread
-        vault_mtm = recompute_mtm(positions, forward, svi_f, svi_f["rate"], t)
-
         # Decide mint vs redeem: first 40% always mint, then alternate
         can_redeem = len(positions) > 0 and i >= num_steps * 0.4
         is_mint = not can_redeem or (i % 3 != 0)
@@ -725,6 +722,11 @@ def generate_trade_sequence(
             strike_factor, is_up = STRIKE_PATTERNS[i % len(STRIKE_PATTERNS)]
             strike = forward * strike_factor
             quantity = TRADE_QUANTITY
+
+            # Insert position before pricing (matches contract: insert_position then get_quote)
+            key = (strike, is_up)
+            positions[key] = positions.get(key, 0.0) + quantity
+            vault_mtm = recompute_mtm(positions, forward, svi_f, svi_f["rate"], t)
 
             price = binary_price(
                 forward, strike, svi_f["a"], svi_f["b"], svi_f["rho"],
@@ -738,15 +740,17 @@ def generate_trade_sequence(
             ask = min(1.0, price + spread + util_spr)
             trade_amount = ask * quantity
 
-            # Update vault state
             vault_balance += trade_amount
-            key = (strike, is_up)
-            positions[key] = positions.get(key, 0.0) + quantity
         else:
-            # Redeem oldest position
+            # Remove position before pricing (matches contract: remove_position then get_quote)
             key = list(positions.keys())[0]
             strike, is_up = key
             quantity = min(positions[key], TRADE_QUANTITY)
+
+            positions[key] -= quantity
+            if positions[key] <= 1e-12:
+                del positions[key]
+            vault_mtm = recompute_mtm(positions, forward, svi_f, svi_f["rate"], t)
 
             price = binary_price(
                 forward, strike, svi_f["a"], svi_f["b"], svi_f["rho"],
@@ -760,14 +764,7 @@ def generate_trade_sequence(
             bid = max(0.0, price - spread - util_spr)
             trade_amount = bid * quantity
 
-            # Update vault state
             vault_balance -= trade_amount
-            positions[key] -= quantity
-            if positions[key] <= 1e-12:
-                del positions[key]
-
-        # Recompute MTM after the trade with updated positions
-        vault_mtm = recompute_mtm(positions, forward, svi_f, svi_f["rate"], t)
 
         steps.append({
             "spot": spot_int,
@@ -873,10 +870,9 @@ def generate_bulk_file(price_rows, svi_rows, expiry_ms):
         "public fun initial_vault_balance(): u64 { INITIAL_VAULT_BALANCE }"
     )
 
-    for count in [10, 100]:
-        steps = generate_trade_sequence(price_rows, svi_rows, expiry_ms, count)
-        print(f"  Sequence {count}: {len(steps)} steps")
-        emit_trade_sequence(w, f"sequence_{count}", steps)
+    steps = generate_trade_sequence(price_rows, svi_rows, expiry_ms, 100)
+    print(f"  Sequence: {len(steps)} steps")
+    emit_trade_sequence(w, "sequence", steps)
 
     w.write(BULK_OUTPUT_FILE)
 

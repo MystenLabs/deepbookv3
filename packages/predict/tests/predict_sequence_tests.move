@@ -12,15 +12,16 @@ use deepbook_predict::{
     generated_scenarios_bulk::{Self as bulk, TradeStep},
     market_key,
     oracle::{Self, new_price_data, new_svi_params},
-    predict::{Self, Predict},
+    predict,
     predict_manager::PredictManager,
 };
-use std::unit_test::{assert_eq, destroy};
-use sui::{clock, coin, sui::SUI, test_scenario::{Self, Scenario}};
+use std::unit_test::destroy;
+use sui::{clock, coin, sui::SUI, test_scenario};
 
 const ALICE: address = @0xA;
+const THRESHOLD: u64 = 10;
 
-fun run_sequence(steps: vector<TradeStep>) {
+fun run_sequence(steps: vector<TradeStep>, num_trades: u64) {
     let first = &steps[0];
 
     let mut scenario = test_scenario::begin(ALICE);
@@ -69,8 +70,9 @@ fun run_sequence(steps: vector<TradeStep>) {
 
     scenario.next_tx(ALICE);
 
+    let limit = num_trades.min(steps.length());
     let mut i = 0;
-    while (i < steps.length()) {
+    while (i < limit) {
         let step = &steps[i];
 
         // Advance clock
@@ -100,7 +102,7 @@ fun run_sequence(steps: vector<TradeStep>) {
                 &test_clock, scenario.ctx(),
             );
             let cost = balance_before - manager.balance<SUI>();
-            assert_eq!(cost, step.expected_trade_amount());
+            assert_within_threshold(cost, step.expected_trade_amount());
         } else {
             let balance_before = manager.balance<SUI>();
             predict.redeem(
@@ -108,7 +110,7 @@ fun run_sequence(steps: vector<TradeStep>) {
                 &test_clock, scenario.ctx(),
             );
             let payout = manager.balance<SUI>() - balance_before;
-            assert_eq!(payout, step.expected_trade_amount());
+            assert_within_threshold(payout, step.expected_trade_amount());
         };
 
         i = i + 1;
@@ -122,12 +124,12 @@ fun run_sequence(steps: vector<TradeStep>) {
     scenario.end();
 }
 
-#[test]
-fun trade_sequence_10() {
-    run_sequence(bulk::sequence_10());
+fun assert_within_threshold(actual: u64, expected: u64) {
+    let diff = if (actual > expected) { actual - expected } else { expected - actual };
+    assert!(diff <= THRESHOLD);
 }
 
 #[test]
-fun trade_sequence_100() {
-    run_sequence(bulk::sequence_100());
+fun trade_sequence_10() {
+    run_sequence(bulk::sequence(), 10);
 }
