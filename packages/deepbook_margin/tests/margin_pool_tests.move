@@ -961,9 +961,9 @@ fun test_partial_liquidation_with_default() {
         &clock,
     );
 
-    assert!(amount == required_amount);
+    assert!(amount <= required_amount && amount >= required_amount - 1);
     assert!(reward == 0);
-    assert!(default == required_amount - insufficient_amount);
+    assert!(default == amount - insufficient_amount);
 
     let remaining_shares = total_shares - partial_shares;
     let remaining_amount = pool.borrow_shares_to_amount(remaining_shares, &clock);

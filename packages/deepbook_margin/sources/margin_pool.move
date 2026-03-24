@@ -346,10 +346,11 @@ public fun withdraw<Asset>(
     let supplied_shares = self.positions.user_supply_shares(supplier_cap_id);
     let supplied_amount = self.state.supply_shares_to_amount(supplied_shares, &self.config, clock);
     let withdraw_amount = amount.destroy_with_default(supplied_amount);
-    let withdraw_shares = math::mul_round_up(
-        supplied_shares,
-        math::div_round_up(withdraw_amount, supplied_amount),
-    );
+    let numerator = (supplied_shares as u128) * (withdraw_amount as u128);
+    let denominator = supplied_amount as u128;
+    let result = numerator / denominator;
+    let round = if (numerator % denominator == 0) 0 else 1;
+    let withdraw_shares = (result + round) as u64;
     assert!(
         self.rate_limiter.check_and_record_withdrawal(withdraw_amount, clock),
         ERateLimitExceeded,

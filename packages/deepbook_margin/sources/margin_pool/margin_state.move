@@ -61,8 +61,11 @@ public(package) fun decrease_supply_shares(
     clock: &Clock,
 ): (u64, u64) {
     let protocol_fees = self.update(config, clock);
-    let ratio = self.supply_ratio();
-    let amount = math::mul(shares, ratio);
+    let amount = if (self.supply_shares == 0) {
+        shares
+    } else {
+        ((shares as u128) * (self.total_supply as u128) / (self.supply_shares as u128)) as u64
+    };
     self.supply_shares = self.supply_shares - shares;
     self.total_supply = self.total_supply - amount;
 
@@ -107,8 +110,11 @@ public(package) fun decrease_borrow_shares(
     clock: &Clock,
 ): (u64, u64) {
     let protocol_fees = self.update(config, clock);
-    let ratio = self.borrow_ratio();
-    let amount = math::mul(shares, ratio);
+    let amount = if (self.borrow_shares == 0) {
+        shares
+    } else {
+        ((shares as u128) * (self.total_borrow as u128) / (self.borrow_shares as u128)) as u64
+    };
     self.borrow_shares = self.borrow_shares - shares;
     self.total_borrow = self.total_borrow - amount;
 
@@ -160,13 +166,11 @@ public(package) fun supply_shares_to_amount(
     );
     let protocol_fees = math::mul(interest, config.protocol_spread());
     let supply = self.total_supply + interest - protocol_fees;
-    let ratio = if (self.supply_shares == 0) {
-        constants::float_scaling()
+    if (self.supply_shares == 0) {
+        shares
     } else {
-        math::div(supply, self.supply_shares)
-    };
-
-    math::mul(shares, ratio)
+        ((shares as u128) * (supply as u128) / (self.supply_shares as u128)) as u64
+    }
 }
 
 /// Convert the borrow shares to the corresponding amount.
@@ -185,13 +189,15 @@ public(package) fun borrow_shares_to_amount(
         self.total_borrow,
     );
     let borrow = self.total_borrow + interest;
-    let ratio = if (self.borrow_shares == 0) {
-        constants::float_scaling()
+    if (self.borrow_shares == 0) {
+        shares
     } else {
-        math::div(borrow, self.borrow_shares)
-    };
-
-    math::mul_round_up(shares, ratio)
+        let numerator = (shares as u128) * (borrow as u128);
+        let denominator = self.borrow_shares as u128;
+        let result = numerator / denominator;
+        let round = if (numerator % denominator == 0) 0 else 1;
+        (result + round) as u64
+    }
 }
 
 /// Return the supply ratio of the margin pool.
