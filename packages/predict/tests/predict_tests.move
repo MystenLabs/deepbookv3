@@ -5,7 +5,7 @@
 module deepbook_predict::predict_tests;
 
 use deepbook_predict::{
-    generated_scenarios as gs,
+    generated_predict as gs,
     market_key,
     oracle::{Self, new_price_data, new_svi_params},
     precision,

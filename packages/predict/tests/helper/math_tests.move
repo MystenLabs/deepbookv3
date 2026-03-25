@@ -4,7 +4,7 @@
 #[test_only]
 module deepbook_predict::math_tests;
 
-use deepbook_predict::{generated_scenarios as gs, math, precision};
+use deepbook_predict::{generated_math as gs, math, precision};
 use std::unit_test::assert_eq;
 
 const FLOAT: u64 = 1_000_000_000;

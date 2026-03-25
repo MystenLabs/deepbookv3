@@ -5,7 +5,7 @@
 module deepbook_predict::vault_tests;
 
 use deepbook_predict::{
-    generated_scenarios as gs,
+    generated_oracle as gs,
     oracle::{Self, new_price_data, new_svi_params},
     precision,
     vault
