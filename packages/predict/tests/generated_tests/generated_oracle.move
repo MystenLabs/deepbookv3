@@ -7,44 +7,45 @@ module deepbook_predict::generated_oracle;
 
 
 // === Synthetic oracle scenarios ===
-// Hand-picked SVI params to test specific pricing behaviors.
-// All inputs are pure math — no contract conventions (ms, FLOAT_SCALING).
+// SVI params to test specific pricing behaviors.
+// Strikes chosen so prices fall within quote bounds [0.001, 0.999].
+// Operating range: |d2| <= 5.20
 // Move tests must construct oracles that produce matching t values.
 
 // Standard SVI (a=0, b=1, rho=0, m=0, sigma=0.25), rate=0, t=0.0000317098yr
-public macro fun SYN_STD_UP_ATM(): u64 { 401_293_674 }
-public macro fun SYN_STD_DN_ATM(): u64 { 598_706_325 }
-public macro fun SYN_STD_UP_STRIKE_2X(): u64 { 108_101_717 }
-public macro fun SYN_STD_DN_STRIKE_2X(): u64 { 891_898_282 }
-public macro fun SYN_STD_UP_DEEP_ITM(): u64 { 773_988_940 }
-public macro fun SYN_STD_DN_DEEP_ITM(): u64 { 226_011_059 }
-public macro fun SYN_STD_UP_DEEP_OTM(): u64 { 11_485_171 }
-public macro fun SYN_STD_DN_DEEP_OTM(): u64 { 988_514_828 }
-public macro fun SYN_STD_UP_S50(): u64 { 647_390_543 }
-public macro fun SYN_STD_DN_S50(): u64 { 352_609_456 }
-public macro fun SYN_STD_UP_S80(): u64 { 538_253_668 }
-public macro fun SYN_STD_DN_S80(): u64 { 461_746_331 }
-public macro fun SYN_STD_UP_S100(): u64 { 401_293_674 }
-public macro fun SYN_STD_DN_S100(): u64 { 598_706_325 }
-public macro fun SYN_STD_UP_S120(): u64 { 272_292_717 }
-public macro fun SYN_STD_DN_S120(): u64 { 727_707_282 }
-public macro fun SYN_STD_UP_S150(): u64 { 175_521_297 }
-public macro fun SYN_STD_DN_S150(): u64 { 824_478_702 }
+public macro fun SYN_STD_STRIKE_OTM_D3(): u64 { 5_473_991_791_244 } // strike=5473.9918
+public macro fun SYN_STD_UP_OTM_D3(): u64 { 1_349_898 }
+public macro fun SYN_STD_DN_OTM_D3(): u64 { 998_650_101 }
+public macro fun SYN_STD_STRIKE_OTM_D2(): u64 { 595_073_573_828 } // strike=595.0736
+public macro fun SYN_STD_UP_OTM_D2(): u64 { 22_750_131 }
+public macro fun SYN_STD_DN_OTM_D2(): u64 { 977_249_868 }
+public macro fun SYN_STD_STRIKE_OTM_D1(): u64 { 158_748_641_308 } // strike=158.7486
+public macro fun SYN_STD_UP_OTM_D1(): u64 { 158_655_253 }
+public macro fun SYN_STD_DN_OTM_D1(): u64 { 841_344_746 }
+public macro fun SYN_STD_STRIKE_ATM(): u64 { 86_559_550_200 } // strike=86.5596
+public macro fun SYN_STD_UP_ATM(): u64 { 500_000_000 }
+public macro fun SYN_STD_DN_ATM(): u64 { 499_999_999 }
+public macro fun SYN_STD_STRIKE_ITM_D1(): u64 { 1_789_524_890 } // strike=1.7895
+public macro fun SYN_STD_UP_ITM_D1(): u64 { 841_344_746 }
+public macro fun SYN_STD_DN_ITM_D1(): u64 { 158_655_253 }
 
 // Standard SVI with 5% rate, t=1.0yr
 public macro fun SYN_DISCOUNT_5PCT_1YR(): u64 { 951_229_424 } // e^(-0.05*1.0) = 0.951229425
-public macro fun SYN_5PCT_UP_S60(): u64 { 587_883_669 }
-public macro fun SYN_5PCT_DN_S60(): u64 { 363_345_754 }
-public macro fun SYN_5PCT_UP_S80(): u64 { 512_002_726 }
-public macro fun SYN_5PCT_DN_S80(): u64 { 439_226_697 }
-public macro fun SYN_5PCT_UP_S100(): u64 { 381_722_350 }
-public macro fun SYN_5PCT_DN_S100(): u64 { 569_507_073 }
-public macro fun SYN_5PCT_UP_S120(): u64 { 259_012_845 }
-public macro fun SYN_5PCT_DN_S120(): u64 { 692_216_579 }
-public macro fun SYN_5PCT_UP_S140(): u64 { 189_768_394 }
-public macro fun SYN_5PCT_DN_S140(): u64 { 761_461_029 }
-public macro fun SYN_5PCT_UP_ATM(): u64 { 381_722_350 }
-public macro fun SYN_5PCT_DN_ATM(): u64 { 569_507_073 }
+public macro fun SYN_5PCT_STRIKE_OTM_D3(): u64 { 5_473_991_791_244 } // strike=5473.9918
+public macro fun SYN_5PCT_UP_OTM_D3(): u64 { 1_284_062 }
+public macro fun SYN_5PCT_DN_OTM_D3(): u64 { 949_945_361 }
+public macro fun SYN_5PCT_STRIKE_OTM_D2(): u64 { 595_073_573_828 } // strike=595.0736
+public macro fun SYN_5PCT_UP_OTM_D2(): u64 { 21_640_594 }
+public macro fun SYN_5PCT_DN_OTM_D2(): u64 { 929_588_829 }
+public macro fun SYN_5PCT_STRIKE_OTM_D1(): u64 { 158_748_641_308 } // strike=158.7486
+public macro fun SYN_5PCT_UP_OTM_D1(): u64 { 150_917_545 }
+public macro fun SYN_5PCT_DN_OTM_D1(): u64 { 800_311_878 }
+public macro fun SYN_5PCT_STRIKE_ATM(): u64 { 86_559_550_200 } // strike=86.5596
+public macro fun SYN_5PCT_UP_ATM(): u64 { 475_614_712 }
+public macro fun SYN_5PCT_DN_ATM(): u64 { 475_614_712 }
+public macro fun SYN_5PCT_STRIKE_ITM_D1(): u64 { 1_789_524_890 } // strike=1.7895
+public macro fun SYN_5PCT_UP_ITM_D1(): u64 { 800_311_878 }
+public macro fun SYN_5PCT_DN_ITM_D1(): u64 { 150_917_545 }
 
 // Standard SVI with 10% rate, t=0.5yr
 public macro fun SYN_DISCOUNT_10PCT_HALF_YR(): u64 { 951_229_424 } // e^(-0.10*0.5) = 0.951229425
@@ -67,24 +68,34 @@ public macro fun SYN_SMALL_SIGMA_DN_ATM(): u64 { 519_938_805 }
 public macro fun SYN_A100M_UP_ATM(): u64 { 383_689_888 }
 
 // Negative rho (rho=-0.3), rate=0, t=0.0000317098yr — skews the smile
-public macro fun SYN_NEG_RHO_UP_S80(): u64 { 513_915_360 }
-public macro fun SYN_NEG_RHO_DN_S80(): u64 { 486_084_639 }
-public macro fun SYN_NEG_RHO_UP_S100(): u64 { 401_293_674 }
-public macro fun SYN_NEG_RHO_DN_S100(): u64 { 598_706_325 }
-public macro fun SYN_NEG_RHO_UP_S120(): u64 { 269_740_854 }
-public macro fun SYN_NEG_RHO_DN_S120(): u64 { 730_259_145 }
+public macro fun SYN_NEG_RHO_STRIKE_OTM_D2(): u64 { 471_074_611_923 }
+public macro fun SYN_NEG_RHO_UP_OTM_D2(): u64 { 22_750_131 }
+public macro fun SYN_NEG_RHO_DN_OTM_D2(): u64 { 977_249_868 }
+public macro fun SYN_NEG_RHO_STRIKE_OTM_D1(): u64 { 152_368_002_076 }
+public macro fun SYN_NEG_RHO_UP_OTM_D1(): u64 { 158_655_253 }
+public macro fun SYN_NEG_RHO_DN_OTM_D1(): u64 { 841_344_746 }
+public macro fun SYN_NEG_RHO_STRIKE_ATM(): u64 { 83_372_785_580 }
+public macro fun SYN_NEG_RHO_UP_ATM(): u64 { 500_000_000 }
+public macro fun SYN_NEG_RHO_DN_ATM(): u64 { 500_000_000 }
 
 // Nonzero m (m=0.1), rate=0, t=0.0000317098yr — shifts the smile center
-public macro fun SYN_M_UP_S80(): u64 { 511_771_599 }
-public macro fun SYN_M_DN_S80(): u64 { 488_228_400 }
-public macro fun SYN_M_UP_S100(): u64 { 397_643_836 }
-public macro fun SYN_M_DN_S100(): u64 { 602_356_163 }
-public macro fun SYN_M_UP_S120(): u64 { 270_303_319 }
-public macro fun SYN_M_DN_S120(): u64 { 729_696_680 }
+public macro fun SYN_M_STRIKE_OTM_D2(): u64 { 574_868_119_731 }
+public macro fun SYN_M_UP_OTM_D2(): u64 { 22_750_131 }
+public macro fun SYN_M_DN_OTM_D2(): u64 { 977_249_868 }
+public macro fun SYN_M_STRIKE_OTM_D1(): u64 { 154_997_178_141 }
+public macro fun SYN_M_UP_OTM_D1(): u64 { 158_655_253 }
+public macro fun SYN_M_DN_OTM_D1(): u64 { 841_344_746 }
+public macro fun SYN_M_STRIKE_ATM(): u64 { 82_504_017_221 }
+public macro fun SYN_M_UP_ATM(): u64 { 500_000_000 }
+public macro fun SYN_M_DN_ATM(): u64 { 500_000_000 }
+public macro fun SYN_M_STRIKE_ITM_D1(): u64 { 1_342_205_441 }
+public macro fun SYN_M_UP_ITM_D1(): u64 { 841_344_746 }
+public macro fun SYN_M_DN_ITM_D1(): u64 { 158_655_253 }
 
 // === Oracle pricing scenarios from real Block Scholes data ===
 // Sampled by time-to-expiry diversity: 7d, 3d, 1d, 6h, 1h, 5m, <1m
 // MTM values use quantity = 10.0
+// Strikes filtered to quote bounds [0.001, 0.999]
 
 // --- S0: spot=70770.30, forward=70782.88, tte=7.0d ---
 public macro fun S0_SPOT(): u64 { 70_770_295_760_000 }

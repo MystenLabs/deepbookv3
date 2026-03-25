@@ -29,7 +29,7 @@ public macro fun LN_1_001(): u64 { 999_500 } // |ln(1.001)| = 0.000999500333083
 public macro fun LN_100_0(): u64 { 4_605_170_185 } // |ln(100.0)| = 4.605170185988092
 public macro fun LN_1000_0(): u64 { 6_907_755_278 } // |ln(1000.0)| = 6.907755278982137
 
-// === exp — non-trivial inputs (exercise exp_series with nonzero r) ===
+// === exp — operating range: max input = 13.52 (from max |d2| = 5.1993) ===
 public macro fun EXP_0_001(): u64 { 1_001_000_500 } // e^0.001 = 1.001000500166708
 public macro fun EXP_NEG_0_001(): u64 { 999_000_499 } // e^(-0.001) = 0.999000499833375
 public macro fun EXP_0_01(): u64 { 1_010_050_167 } // e^0.01 = 1.010050167084168
@@ -44,49 +44,37 @@ public macro fun EXP_1_5(): u64 { 4_481_689_070 } // e^1.5 = 4.481689070338065
 public macro fun EXP_NEG_1_5(): u64 { 223_130_160 } // e^(-1.5) = 0.223130160148430
 public macro fun EXP_2_5(): u64 { 12_182_493_960 } // e^2.5 = 12.182493960703473
 public macro fun EXP_NEG_2_5(): u64 { 82_084_998 } // e^(-2.5) = 0.082084998623899
-public macro fun EXP_20_0(): u64 { 485_165_195_409_790_272 } // e^20.0 = 485165195.409790277481079
-public macro fun EXP_NEG_20_0(): u64 { 2 } // e^(-20.0) = 0.000000002061154
-public macro fun EXP_22_0(): u64 { 3_584_912_846_131_591_680 } // e^22.0 = 3584912846.131591796875000
-public macro fun EXP_NEG_22_0(): u64 { 0 } // e^(-22.0) = 0.000000000278947
+public macro fun EXP_6_8(): u64 { 897_847_291_650 } // e^6.8 = 897.847291650417560
+public macro fun EXP_NEG_6_8(): u64 { 1_113_775 } // e^(-6.8) = 0.001113775147845
+public macro fun EXP_12_2(): u64 { 198_789_151_142_954 } // e^12.2 = 198789.151142954389798
+public macro fun EXP_NEG_12_2(): u64 { 5_030 } // e^(-12.2) = 0.000005030455607
 
-// === Normal CDF ===
+// === Normal CDF — operating range: |d2| <= 5.1993 (from 0.1c—99.9c quote bounds) ===
 public macro fun PHI_0(): u64 { 500_000_000 } // Φ(0)
 public macro fun PHI_NEG_0(): u64 { 500_000_000 } // Φ(-0)
+public macro fun PHI_0_01(): u64 { 503_989_356 } // Φ(0.01)
+public macro fun PHI_NEG_0_01(): u64 { 496_010_643 } // Φ(-0.01)
+public macro fun PHI_0_05(): u64 { 519_938_805 } // Φ(0.05)
+public macro fun PHI_NEG_0_05(): u64 { 480_061_194 } // Φ(-0.05)
 public macro fun PHI_0_1(): u64 { 539_827_837 } // Φ(0.1)
 public macro fun PHI_NEG_0_1(): u64 { 460_172_162 } // Φ(-0.1)
 public macro fun PHI_0_25(): u64 { 598_706_325 } // Φ(0.25)
 public macro fun PHI_NEG_0_25(): u64 { 401_293_674 } // Φ(-0.25)
 public macro fun PHI_0_5(): u64 { 691_462_461 } // Φ(0.5)
 public macro fun PHI_NEG_0_5(): u64 { 308_537_538 } // Φ(-0.5)
-public macro fun PHI_1(): u64 { 841_344_746 } // Φ(1)
-public macro fun PHI_NEG_1(): u64 { 158_655_253 } // Φ(-1)
-public macro fun PHI_2(): u64 { 977_249_868 } // Φ(2)
-public macro fun PHI_NEG_2(): u64 { 22_750_131 } // Φ(-2)
-public macro fun PHI_3(): u64 { 998_650_101 } // Φ(3)
-public macro fun PHI_NEG_3(): u64 { 1_349_898 } // Φ(-3)
-public macro fun PHI_5(): u64 { 999_999_713 } // Φ(5)
-public macro fun PHI_NEG_5(): u64 { 286 } // Φ(-5)
-public macro fun PHI_8(): u64 { 999_999_999 } // Φ(8)
-public macro fun PHI_NEG_8(): u64 { 0 } // Φ(-8)
-
-// === Normal CDF — additional inputs (fill gaps, test boundaries) ===
-public macro fun PHI_0_01(): u64 { 503_989_356 } // Φ(0.01)
-public macro fun PHI_NEG_0_01(): u64 { 496_010_643 } // Φ(-0.01)
-public macro fun PHI_0_05(): u64 { 519_938_805 } // Φ(0.05)
-public macro fun PHI_NEG_0_05(): u64 { 480_061_194 } // Φ(-0.05)
 public macro fun PHI_0_75(): u64 { 773_372_647 } // Φ(0.75)
 public macro fun PHI_NEG_0_75(): u64 { 226_627_352 } // Φ(-0.75)
+public macro fun PHI_1_0(): u64 { 841_344_746 } // Φ(1.0)
+public macro fun PHI_NEG_1_0(): u64 { 158_655_253 } // Φ(-1.0)
 public macro fun PHI_1_5(): u64 { 933_192_798 } // Φ(1.5)
 public macro fun PHI_NEG_1_5(): u64 { 66_807_201 } // Φ(-1.5)
+public macro fun PHI_2_0(): u64 { 977_249_868 } // Φ(2.0)
+public macro fun PHI_NEG_2_0(): u64 { 22_750_131 } // Φ(-2.0)
 public macro fun PHI_2_5(): u64 { 993_790_334 } // Φ(2.5)
 public macro fun PHI_NEG_2_5(): u64 { 6_209_665 } // Φ(-2.5)
-public macro fun PHI_4_0(): u64 { 999_968_328 } // Φ(4.0)
-public macro fun PHI_NEG_4_0(): u64 { 31_671 } // Φ(-4.0)
-public macro fun PHI_6_0(): u64 { 999_999_999 } // Φ(6.0)
-public macro fun PHI_NEG_6_0(): u64 { 0 } // Φ(-6.0)
-public macro fun PHI_7_0(): u64 { 999_999_999 } // Φ(7.0)
-public macro fun PHI_NEG_7_0(): u64 { 0 } // Φ(-7.0)
-public macro fun PHI_7_9(): u64 { 999_999_999 } // Φ(7.9)
-public macro fun PHI_NEG_7_9(): u64 { 0 } // Φ(-7.9)
-public macro fun PHI_7_99(): u64 { 999_999_999 } // Φ(7.99)
-public macro fun PHI_NEG_7_99(): u64 { 0 } // Φ(-7.99)
+public macro fun PHI_3_0(): u64 { 998_650_101 } // Φ(3.0)
+public macro fun PHI_NEG_3_0(): u64 { 1_349_898 } // Φ(-3.0)
+public macro fun PHI_5_2(): u64 { 999_999_900 } // Φ(5.2)
+public macro fun PHI_NEG_5_2(): u64 { 99 } // Φ(-5.2)
+public macro fun PHI_8_0(): u64 { 999_999_999 } // Φ(8.0)
+public macro fun PHI_NEG_8_0(): u64 { 0 } // Φ(-8.0)

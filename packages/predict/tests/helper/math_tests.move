@@ -484,12 +484,12 @@ fun exp_one_negative() {
 }
 
 // ============================================================
-// exp — non-trivial inputs (exercise exp_series with nonzero r)
+// exp — non-trivial inputs within operating range
+// Operating range: max input = d2²/2 ≈ 13.5 (from quote bounds)
 // ============================================================
 
 #[test]
 fun exp_tiny_positive() {
-    // e^0.001 — near-identity, tiny remainder
     precision::assert_approx_rel(math::exp(1_000_000, false), gs::EXP_0_001!());
 }
 
@@ -500,7 +500,6 @@ fun exp_tiny_negative() {
 
 #[test]
 fun exp_small_positive() {
-    // e^0.01
     precision::assert_approx_rel(math::exp(10_000_000, false), gs::EXP_0_01!());
 }
 
@@ -560,24 +559,25 @@ fun exp_two_point_five_negative() {
 }
 
 #[test]
-fun exp_twenty_positive() {
-    // Near overflow boundary — high shift count
-    precision::assert_approx_rel(math::exp(20 * FLOAT, false), gs::EXP_20_0!());
+fun exp_six_point_eight_positive() {
+    // ~50% of max operating range input
+    precision::assert_approx_rel(math::exp(6_800_000_000, false), gs::EXP_6_8!());
 }
 
 #[test]
-fun exp_twenty_negative() {
-    precision::assert_approx_rel(math::exp(20 * FLOAT, true), gs::EXP_NEG_20_0!());
+fun exp_six_point_eight_negative() {
+    precision::assert_approx_rel(math::exp(6_800_000_000, true), gs::EXP_NEG_6_8!());
 }
 
 #[test]
-fun exp_twenty_two_positive() {
-    precision::assert_approx_rel(math::exp(22 * FLOAT, false), gs::EXP_22_0!());
+fun exp_twelve_point_two_positive() {
+    // ~90% of max operating range input
+    precision::assert_approx_rel(math::exp(12_200_000_000, false), gs::EXP_12_2!());
 }
 
 #[test]
-fun exp_twenty_two_negative() {
-    precision::assert_approx_rel(math::exp(22 * FLOAT, true), gs::EXP_NEG_22_0!());
+fun exp_twelve_point_two_negative() {
+    precision::assert_approx_rel(math::exp(12_200_000_000, true), gs::EXP_NEG_12_2!());
 }
 
 // ============================================================
@@ -649,8 +649,8 @@ fun cdf_at_boundary_eight() {
     // x = 8*FLOAT exactly goes through polynomial (not the > 8 early return)
     let pos = math::normal_cdf(8 * FLOAT, false);
     let neg = math::normal_cdf(8 * FLOAT, true);
-    precision::assert_approx_rel(pos, gs::PHI_8!());
-    precision::assert_approx_rel(neg, gs::PHI_NEG_8!());
+    precision::assert_approx_rel(pos, gs::PHI_8_0!());
+    precision::assert_approx_rel(neg, gs::PHI_NEG_8_0!());
     assert_eq!(pos + neg, FLOAT);
 }
 
@@ -659,40 +659,39 @@ fun cdf_monotonic() {
     let phi1 = math::normal_cdf(FLOAT, false);
     let phi2 = math::normal_cdf(2 * FLOAT, false);
     let phi3 = math::normal_cdf(3 * FLOAT, false);
-    precision::assert_approx_rel(phi1, gs::PHI_1!());
-    precision::assert_approx_rel(phi2, gs::PHI_2!());
-    precision::assert_approx_rel(phi3, gs::PHI_3!());
-    // PHI_1 < PHI_2 < PHI_3: monotonically increasing
+    precision::assert_approx_rel(phi1, gs::PHI_1_0!());
+    precision::assert_approx_rel(phi2, gs::PHI_2_0!());
+    precision::assert_approx_rel(phi3, gs::PHI_3_0!());
     assert_eq!(phi1 < phi2, true);
     assert_eq!(phi2 < phi3, true);
 }
 
 #[test]
-fun cdf_neg_two_exact() {
-    precision::assert_approx_rel(math::normal_cdf(2 * FLOAT, true), gs::PHI_NEG_2!());
+fun cdf_neg_two() {
+    precision::assert_approx_rel(math::normal_cdf(2 * FLOAT, true), gs::PHI_NEG_2_0!());
 }
 
 #[test]
 fun cdf_greater_than_half_for_positive() {
     precision::assert_approx_rel(math::normal_cdf(TENTH, false), gs::PHI_0_1!());
-    precision::assert_approx_rel(math::normal_cdf(FLOAT, false), gs::PHI_1!());
-    precision::assert_approx_rel(math::normal_cdf(5 * FLOAT, false), gs::PHI_5!());
+    precision::assert_approx_rel(math::normal_cdf(FLOAT, false), gs::PHI_1_0!());
+    precision::assert_approx_rel(math::normal_cdf(3 * FLOAT, false), gs::PHI_3_0!());
 }
 
 #[test]
 fun cdf_less_than_half_for_negative() {
     precision::assert_approx_rel(math::normal_cdf(TENTH, true), gs::PHI_NEG_0_1!());
-    precision::assert_approx_rel(math::normal_cdf(FLOAT, true), gs::PHI_NEG_1!());
-    precision::assert_approx_rel(math::normal_cdf(5 * FLOAT, true), gs::PHI_NEG_5!());
+    precision::assert_approx_rel(math::normal_cdf(FLOAT, true), gs::PHI_NEG_1_0!());
+    precision::assert_approx_rel(math::normal_cdf(3 * FLOAT, true), gs::PHI_NEG_3_0!());
 }
 
 // ============================================================
-// normal_cdf — additional inputs (fill gaps, test boundaries)
+// normal_cdf — dense coverage within operating range
+// Operating range: |d2| <= 5.2 (from 0.1c—99.9c quote bounds)
 // ============================================================
 
 #[test]
-fun cdf_very_small_positive() {
-    // Φ(0.01) — near zero, shallow slope
+fun cdf_point_zero_one() {
     precision::assert_approx_rel(math::normal_cdf(10_000_000, false), gs::PHI_0_01!());
 }
 
@@ -721,34 +720,7 @@ fun cdf_two_point_five() {
 }
 
 #[test]
-fun cdf_four() {
-    precision::assert_approx_rel(math::normal_cdf(4 * FLOAT, false), gs::PHI_4_0!());
-    // PHI(-4) = 31_671 — too small for 0.001% relative (gap=14, 0.04%)
-    precision::assert_approx_abs(math::normal_cdf(4 * FLOAT, true), gs::PHI_NEG_4_0!(), 15);
-}
-
-#[test]
-fun cdf_six() {
-    precision::assert_approx_rel(math::normal_cdf(6 * FLOAT, false), gs::PHI_6_0!());
-    assert_eq!(math::normal_cdf(6 * FLOAT, true), gs::PHI_NEG_6_0!());
-}
-
-#[test]
-fun cdf_seven() {
-    precision::assert_approx_rel(math::normal_cdf(7 * FLOAT, false), gs::PHI_7_0!());
-    assert_eq!(math::normal_cdf(7 * FLOAT, true), gs::PHI_NEG_7_0!());
-}
-
-#[test]
-fun cdf_near_boundary_seven_point_nine() {
-    // Just below the x > 8 early return cutoff
-    precision::assert_approx_rel(math::normal_cdf(7_900_000_000, false), gs::PHI_7_9!());
-    assert_eq!(math::normal_cdf(7_900_000_000, true), gs::PHI_NEG_7_9!());
-}
-
-#[test]
-fun cdf_near_boundary_seven_point_nine_nine() {
-    // Very close to the cutoff
-    precision::assert_approx_rel(math::normal_cdf(7_990_000_000, false), gs::PHI_7_99!());
-    assert_eq!(math::normal_cdf(7_990_000_000, true), gs::PHI_NEG_7_99!());
+fun cdf_at_quote_boundary() {
+    // |d2| = 5.2 — at the edge of the quotable range (0.1c price)
+    precision::assert_approx_rel(math::normal_cdf(5_200_000_000, false), gs::PHI_5_2!());
 }

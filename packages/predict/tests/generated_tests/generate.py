@@ -317,203 +317,207 @@ class MoveWriter:
 # ====================================================================
 
 
+# ====================================================================
+# Protocol & provider bounds (inputs to operating range analysis)
+# ====================================================================
+
 # Protocol quote bounds: only produce quotes between 0.1c and 99.9c
 MIN_QUOTE_PRICE = 0.001   # 0.1 cent
 MAX_QUOTE_PRICE = 0.999   # 99.9 cents
 
+# Block Scholes provider SVI parameter bounds.
+# Source: provider enforces via butterfly no-arb, positive min variance,
+# and calendar consistency across expiries.
+# a, m: market-dependent, no fixed global bounds from provider.
+# Constraint: a + b * sigma * sqrt(1 - rho^2) >= 0
+SVI_B_MIN = 1e-4
+SVI_B_MAX = 1.0
+SVI_RHO_MAX_ABS = 0.95       # |rho| < 1, provider caps at 0.95
+SVI_SIGMA_MIN = 1e-3
+SVI_SIGMA_MAX = 100.0
 
-def compute_operating_ranges():
+# Lee's moment formula: b * (1 + |rho|) <= 2
+# With |rho| = 0.95: b <= 2 / 1.95 = 1.026 → b_max=1.0 is valid
+LEE_BOUND = 2.0
+
+# Conservative upper bound on 'a' — not provider-bounded, but
+# a > 1 would mean >100% base total variance, unrealistic
+A_MAX_CONSERVATIVE = 1.0
+
+# Max risk-free rate and time to expiry we support
+MAX_RATE = 0.15
+MAX_TIME_YEARS = 1.0
+
+
+def compute_smart_contract_bounds():
     """
-    Reverse-engineer the legal input boundaries for each math function
-    from the protocol's quote bounds (0.1c — 99.9c).
+    Derive on-chain validation constants from protocol quote bounds
+    and provider SVI parameter bounds.
 
-    The pricing pipeline is:
-      ln(strike/forward) → SVI total_var → d2 → normal_cdf(d2) → price
-      exp(-r*t) → discount
+    Returns a dict of constants ready to be enforced in Move smart contracts.
+
+    Pricing pipeline (forward direction):
+      SVI params → ln(strike/forward) → total_var → d2 → normal_cdf → price
+      rate + time → exp(-rt) → discount
       final_price = discount * cdf(d2)
 
-    We work backwards from the quote bounds to find what inputs each
-    function will actually receive in production.
+    We work backwards from the quote clamp to derive what each
+    function's inputs must be bounded to.
     """
-    ranges = {}
 
-    # --- normal_cdf ---
-    # price = discount * CDF(d2)
-    # At discount=1: CDF(d2) must be in [MIN_QUOTE, MAX_QUOTE]
-    # At lower discount: CDF must be higher to reach MIN_QUOTE
-    d2_at_min = norm.ppf(MIN_QUOTE_PRICE)
-    d2_at_max = norm.ppf(MAX_QUOTE_PRICE)
-
-    # With discount < 1, the CDF range widens on the upper end
-    # Worst case discount: high rate (10%) * long time (1yr) = e^(-0.1) ≈ 0.905
-    worst_discount = math.exp(-0.10 * 1.0)
-    cdf_upper_for_discount = min(MAX_QUOTE_PRICE / worst_discount, 1.0)
-    d2_at_max_discounted = norm.ppf(min(cdf_upper_for_discount, 0.9999999))
-
-    max_abs_d2 = max(abs(d2_at_min), abs(d2_at_max), abs(d2_at_max_discounted))
-
-    ranges["normal_cdf"] = {
-        "d2_min": d2_at_min,
-        "d2_max": d2_at_max,
-        "d2_max_discounted": d2_at_max_discounted,
-        "max_abs_d2": max_abs_d2,
-        "max_abs_d2_scaled": int(max_abs_d2 * FLOAT_SCALING),
-    }
-
-    # --- exp (discount factor) ---
+    # ================================================================
+    # Derived: discount factor bounds
+    # ================================================================
     # discount = exp(-r * t)
-    # rate: observed [0.035, 0.035], allow up to 0.15
-    # time: up to 1 year
-    max_rate = 0.15
-    max_time = 1.0  # 1 year
-    max_rt = max_rate * max_time
-    min_discount = math.exp(-max_rt)
+    MAX_RT = MAX_RATE * MAX_TIME_YEARS
+    MIN_DISCOUNT = math.exp(-MAX_RT)
 
-    ranges["exp_discount"] = {
-        "max_rt": max_rt,
-        "max_rt_scaled": int(max_rt * FLOAT_SCALING),
-        "min_discount": min_discount,
-        "min_discount_scaled": to_float_scaled(min_discount),
-    }
-
-    # --- exp (inside cdf_pdf) ---
-    # cdf_pdf computes exp(-x²/2) where x = |d2|
-    # max x²/2 = max_abs_d2² / 2
-    max_x_sq_half = max_abs_d2 ** 2 / 2
-
-    ranges["exp_cdf_pdf"] = {
-        "max_input": max_x_sq_half,
-        "max_input_scaled": to_float_scaled(max_x_sq_half),
-        "output_at_max": math.exp(-max_x_sq_half),
-    }
-
-    # --- ln ---
-    # ln(strike/forward) = k
-    # d2 = (-k - tv/2) / sqrt(tv)
-    # For |d2| <= max_abs_d2, with SVI total variance,
-    # what's the max |k|?
+    # ================================================================
+    # Derived: normal_cdf input bounds
+    # ================================================================
+    # price = discount * CDF(d2)
+    # CDF(d2) = price / discount
     #
-    # Block Scholes provider hard bounds:
-    #   b:     [1e-4, 1]
-    #   rho:   [-0.95, 0.95]
-    #   sigma: [1e-3, 100]
-    #   a, m:  market-dependent (no fixed global bounds)
-    #   Constraint: a + b*sigma*sqrt(1-rho^2) >= 0
-    #   Additional: butterfly no-arb, positive min variance, calendar consistency
-    svi_provider_bounds = {
-        "b_min": 1e-4, "b_max": 1.0,
-        "rho_min": -0.95, "rho_max": 0.95,
-        "sigma_min": 1e-3, "sigma_max": 100.0,
+    # At discount=1 (no discounting):
+    #   CDF range = [MIN_QUOTE, MAX_QUOTE] = [0.001, 0.999]
+    #   d2 range = [ppf(0.001), ppf(0.999)] = [-3.09, +3.09]
+    #
+    # At min discount (max rate, max time):
+    #   CDF upper = MAX_QUOTE / MIN_DISCOUNT = 0.999 / 0.861 = 1.161
+    #   Capped at 1.0 → d2 upper unconstrained from this side
+    #   CDF lower = MIN_QUOTE / 1.0 = 0.001 (discount helps the lower end)
+    #
+    # The binding constraint is the lower end (deep OTM), giving |d2| ≈ 3.09
+    # But with discount < 1, the upper CDF can exceed MAX_QUOTE at d2 values
+    # beyond ppf(MAX_QUOTE), up to ppf(MAX_QUOTE / MIN_DISCOUNT)
+    d2_at_min_quote = norm.ppf(MIN_QUOTE_PRICE)
+    d2_at_max_quote = norm.ppf(MAX_QUOTE_PRICE)
+    cdf_upper_with_discount = min(MAX_QUOTE_PRICE / MIN_DISCOUNT, 1.0)
+    d2_at_max_with_discount = norm.ppf(min(cdf_upper_with_discount, 0.9999999))
+    MAX_ABS_D2 = max(abs(d2_at_min_quote), abs(d2_at_max_quote),
+                     abs(d2_at_max_with_discount))
+
+    # ================================================================
+    # Derived: exp bounds (inside cdf_pdf)
+    # ================================================================
+    # cdf_pdf computes exp(-x^2/2) where x = |d2|
+    MAX_EXP_CDF_INPUT = MAX_ABS_D2 ** 2 / 2
+
+    # ================================================================
+    # Derived: total variance bounds
+    # ================================================================
+    # tv = a + b * (rho*(k-m) + sqrt((k-m)^2 + sigma^2))
+    # Min: provider enforces a + b*sigma*sqrt(1-rho^2) >= 0, so tv > 0
+    # Max at ATM (k=0): a + b*sigma
+    TV_MAX = A_MAX_CONSERVATIVE + SVI_B_MAX * SVI_SIGMA_MAX
+
+    # ================================================================
+    # Derived: ln bounds (strike/forward ratio)
+    # ================================================================
+    # d2 = (-k - tv/2) / sqrt(tv)
+    # |d2| <= MAX_ABS_D2
+    # Solving for k: |k| <= |d2| * sqrt(tv) + tv/2
+    # With large tv, this can be very large — meaning ln itself
+    # doesn't need a bound, the SVI params + quote clamp handle it.
+    # But we can compute the theoretical max for documentation:
+    MAX_ABS_K = MAX_ABS_D2 * math.sqrt(TV_MAX) + TV_MAX / 2
+    MAX_STRIKE_RATIO = math.exp(MAX_ABS_K)
+    MIN_STRIKE_RATIO = math.exp(-MAX_ABS_K)
+
+    # ================================================================
+    # Build output: smart contract constants
+    # ================================================================
+    bounds = {
+        "on_chain_constants": {
+            # --- update_svi validation ---
+            "svi_b_min": to_float_scaled(SVI_B_MIN),
+            "svi_b_max": to_float_scaled(SVI_B_MAX),
+            "svi_rho_max": to_float_scaled(SVI_RHO_MAX_ABS),
+            "svi_sigma_min": to_float_scaled(SVI_SIGMA_MIN),
+            "svi_sigma_max": to_float_scaled(SVI_SIGMA_MAX),
+            # Lee's moment formula: b * (FLOAT + rho) <= 2 * FLOAT
+            "lee_bound_scaled": to_float_scaled(LEE_BOUND),
+            # Min variance: a + b*sigma*sqrt(FLOAT^2 - rho^2) / FLOAT >= 0
+
+            # --- compute_discount validation ---
+            "max_rt": to_float_scaled(MAX_RT),
+
+            # --- normal_cdf operating range ---
+            "max_abs_d2": to_float_scaled(MAX_ABS_D2),
+
+            # --- quote clamp (applied after pricing) ---
+            "min_quote": to_usdc(MIN_QUOTE_PRICE),
+            "max_quote": to_usdc(MAX_QUOTE_PRICE),
+        },
+        "derived_info": {
+            "d2_range_no_discount": (d2_at_min_quote, d2_at_max_quote),
+            "d2_range_with_discount": (d2_at_min_quote, d2_at_max_with_discount),
+            "max_abs_d2": MAX_ABS_D2,
+            "min_discount": MIN_DISCOUNT,
+            "max_exp_cdf_input": MAX_EXP_CDF_INPUT,
+            "tv_max": TV_MAX,
+            "max_abs_k": MAX_ABS_K,
+            "strike_ratio_range": (MIN_STRIKE_RATIO, MAX_STRIKE_RATIO),
+        },
     }
 
-    # Our observed BTC data ranges (subset of provider bounds)
-    svi_observed = {
-        "a_min": 0.00002, "a_max": 0.00349,
-        "b_min": 0.0001, "b_max": 0.04228,
-        "rho_min": -0.94, "rho_max": 0.21,
-        "m_min": -0.04258, "m_max": 0.03562,
-        "sigma_min": 0.001, "sigma_max": 0.14339,
-    }
-
-    ranges["svi_provider_bounds"] = svi_provider_bounds
-    ranges["svi_observed"] = svi_observed
-
-    # Total variance bounds:
-    # Min tv: constrained by a + b*sigma*sqrt(1-rho^2) >= 0 (provider enforces)
-    # Practical min from observed data (ATM, k≈0):
-    tv_min = svi_observed["a_min"] + svi_observed["b_min"] * svi_observed["sigma_min"]
-
-    # Max tv at ATM with observed params:
-    tv_max_atm = svi_observed["a_max"] + svi_observed["b_max"] * svi_observed["sigma_max"]
-
-    # Max tv with provider bounds (extreme):
-    # sigma can be 100, b can be 1 → b*sigma = 100 at ATM
-    # This is theoretical max; in practice calendar-consistency and
-    # butterfly-no-arb prevent this
-    tv_max_provider = 1.0 + 1.0 * 100.0  # a~1 + b*sigma
-
-    # Max |k| that keeps |d2| within bounds (conservative: use min tv)
-    # |d2| = |(-k - tv/2)| / sqrt(tv) ≈ |k| / sqrt(tv) for large |k|
-    max_abs_k = max_abs_d2 * math.sqrt(tv_max_atm)
-
-    # strike/forward ratio from k
-    max_strike_ratio = math.exp(max_abs_k)
-    min_strike_ratio = math.exp(-max_abs_k)
-
-    # ln input = math::div(strike, forward) = (strike/forward) * FLOAT
-    max_ln_input = max_strike_ratio * FLOAT_SCALING
-    min_ln_input = min_strike_ratio * FLOAT_SCALING
-
-    ranges["ln"] = {
-        "max_abs_k": max_abs_k,
-        "max_abs_k_scaled": to_float_scaled(max_abs_k),
-        "strike_ratio_range": (min_strike_ratio, max_strike_ratio),
-        "ln_input_range_scaled": (int(min_ln_input), int(max_ln_input)),
-        "tv_min": tv_min,
-        "tv_max_atm": tv_max_atm,
-    }
-
-    # --- Signed arithmetic ---
-    # All intermediate values in compute_nd2 are bounded by the above
-    ranges["signed_arithmetic"] = {
-        "max_k": max_abs_k,
-        "max_total_var": tv_max_atm,
-        "note": "All intermediates bounded by SVI params and d2 range",
-    }
-
-    return ranges
+    return bounds
 
 
 def print_operating_ranges():
-    """Print a human-readable summary of operating ranges."""
-    ranges = compute_operating_ranges()
+    """Print smart contract bounds derived from quote clamp + provider SVI bounds."""
+    b = compute_smart_contract_bounds()
+    constants = b["on_chain_constants"]
+    derived = b["derived_info"]
 
     print("\n" + "=" * 80)
-    print("  OPERATING RANGE ANALYSIS")
-    print(f"  Quote bounds: {MIN_QUOTE_PRICE*100:.1f}c — {MAX_QUOTE_PRICE*100:.1f}c")
+    print("  SMART CONTRACT BOUNDS")
+    print(f"  Derived from: quote clamp [{MIN_QUOTE_PRICE}, {MAX_QUOTE_PRICE}]")
+    print(f"              + Block Scholes provider SVI bounds")
     print("=" * 80)
 
-    cdf = ranges["normal_cdf"]
-    print(f"\n  normal_cdf(d2):")
-    print(f"    d2 range (no discount):    [{cdf['d2_min']:+.4f}, {cdf['d2_max']:+.4f}]")
-    print(f"    d2 range (with discount):  [{cdf['d2_min']:+.4f}, {cdf['d2_max_discounted']:+.4f}]")
-    print(f"    max |d2|:                  {cdf['max_abs_d2']:.4f}")
-    print(f"    max |d2| (FLOAT):          {cdf['max_abs_d2_scaled']:,}")
+    print(f"\n  INPUTS")
+    print(f"  {'─'*76}")
+    print(f"    Quote clamp:     [{MIN_QUOTE_PRICE}, {MAX_QUOTE_PRICE}]")
+    print(f"    SVI b:           [{SVI_B_MIN}, {SVI_B_MAX}]")
+    print(f"    SVI |rho|:       [0, {SVI_RHO_MAX_ABS}]")
+    print(f"    SVI sigma:       [{SVI_SIGMA_MIN}, {SVI_SIGMA_MAX}]")
+    print(f"    Lee bound:       b*(1+|rho|) <= {LEE_BOUND}")
+    print(f"    Max rate:        {MAX_RATE}")
+    print(f"    Max time:        {MAX_TIME_YEARS} year")
 
-    exp_d = ranges["exp_discount"]
-    print(f"\n  exp(-rt) discount factor:")
-    print(f"    max r*t:                   {exp_d['max_rt']:.4f}")
-    print(f"    max r*t (FLOAT):           {exp_d['max_rt_scaled']:,}")
-    print(f"    min discount:              {exp_d['min_discount']:.9f}")
+    print(f"\n  ON-CHAIN CONSTANTS (FLOAT_SCALING = 1e9, USDC = 1e6)")
+    print(f"  {'─'*76}")
+    print(f"    // update_svi validation")
+    print(f"    SVI_B_MIN:       {constants['svi_b_min']:>20,}")
+    print(f"    SVI_B_MAX:       {constants['svi_b_max']:>20,}")
+    print(f"    SVI_RHO_MAX:     {constants['svi_rho_max']:>20,}")
+    print(f"    SVI_SIGMA_MIN:   {constants['svi_sigma_min']:>20,}")
+    print(f"    SVI_SIGMA_MAX:   {constants['svi_sigma_max']:>20,}")
+    print(f"    LEE_BOUND:       {constants['lee_bound_scaled']:>20,}  // b*(FLOAT+rho) <= this")
+    print(f"")
+    print(f"    // compute_discount validation")
+    print(f"    MAX_RT:          {constants['max_rt']:>20,}")
+    print(f"")
+    print(f"    // normal_cdf operating range")
+    print(f"    MAX_ABS_D2:      {constants['max_abs_d2']:>20,}")
+    print(f"")
+    print(f"    // quote clamp (applied after pricing)")
+    print(f"    MIN_QUOTE:       {constants['min_quote']:>20,}  // 0.1 cent in USDC")
+    print(f"    MAX_QUOTE:       {constants['max_quote']:>20,}  // 99.9 cents in USDC")
 
-    exp_p = ranges["exp_cdf_pdf"]
-    print(f"\n  exp(-x²/2) inside cdf_pdf:")
-    print(f"    max x²/2:                  {exp_p['max_input']:.4f}")
-    print(f"    max x²/2 (FLOAT):          {exp_p['max_input_scaled']:,}")
-    print(f"    output at max:             {exp_p['output_at_max']:.2e}")
+    print(f"\n  DERIVED (for documentation, not enforced on-chain)")
+    print(f"  {'─'*76}")
+    d = derived
+    print(f"    d2 range (no discount):   [{d['d2_range_no_discount'][0]:+.4f}, {d['d2_range_no_discount'][1]:+.4f}]")
+    print(f"    d2 range (with discount): [{d['d2_range_with_discount'][0]:+.4f}, {d['d2_range_with_discount'][1]:+.4f}]")
+    print(f"    max |d2|:                 {d['max_abs_d2']:.4f}")
+    print(f"    min discount:             {d['min_discount']:.9f}")
+    print(f"    max exp input (cdf_pdf):  {d['max_exp_cdf_input']:.4f}")
+    print(f"    max total_var:            {d['tv_max']:.4f}")
+    print(f"    max |k| = |ln(S/F)|:      {d['max_abs_k']:.4f}")
+    print(f"    strike/forward range:     [{d['strike_ratio_range'][0]:.6f}, {d['strike_ratio_range'][1]:.6f}]")
 
-    ln = ranges["ln"]
-    print(f"\n  ln(strike/forward):")
-    print(f"    max |k|:                   {ln['max_abs_k']:.6f}")
-    print(f"    max |k| (FLOAT):           {ln['max_abs_k_scaled']:,}")
-    print(f"    strike/forward range:      [{ln['strike_ratio_range'][0]:.6f}, {ln['strike_ratio_range'][1]:.6f}]")
-    print(f"    ln input range (FLOAT):    [{ln['ln_input_range_scaled'][0]:,}, {ln['ln_input_range_scaled'][1]:,}]")
-    print(f"    total_var range:           [{ln['tv_min']:.8f}, {ln['tv_max_atm']:.8f}]")
-
-    svi_p = ranges["svi_provider_bounds"]
-    svi_o = ranges["svi_observed"]
-    print(f"\n  SVI parameter bounds:")
-    print(f"    {'Param':<8} {'Provider':<22} {'Observed (BTC)':<22}")
-    print(f"    {'─'*8} {'─'*22} {'─'*22}")
-    print(f"    {'b':<8} [{svi_p['b_min']}, {svi_p['b_max']}]{'':<8} [{svi_o['b_min']}, {svi_o['b_max']}]")
-    print(f"    {'rho':<8} [{svi_p['rho_min']}, {svi_p['rho_max']}]{'':<6} [{svi_o['rho_min']}, {svi_o['rho_max']}]")
-    print(f"    {'sigma':<8} [{svi_p['sigma_min']}, {svi_p['sigma_max']}]{'':<7} [{svi_o['sigma_min']}, {svi_o['sigma_max']}]")
-    print(f"    {'a':<8} market-dependent{'':<12} [{svi_o['a_min']}, {svi_o['a_max']}]")
-    print(f"    {'m':<8} market-dependent{'':<12} [{svi_o['m_min']}, {svi_o['m_max']}]")
-    print(f"    Constraint: a + b*sigma*sqrt(1-rho²) >= 0")
-
-    print(f"\n  Signed arithmetic:")
-    print(f"    All bounded by d2 and SVI param ranges above")
     print("=" * 80 + "\n")
 
 
@@ -523,6 +527,10 @@ def print_operating_ranges():
 
 
 def generate_math_constants(w: MoveWriter):
+    bounds = compute_smart_contract_bounds()
+    max_abs_d2 = bounds["derived_info"]["max_abs_d2"]
+    max_exp_input = bounds["derived_info"]["max_exp_cdf_input"]
+
     w.section("Math constants")
 
     w.const("LN2", to_float_scaled(math.log(2)), f"ln(2) = {math.log(2):.15f}")
@@ -536,30 +544,62 @@ def generate_math_constants(w: MoveWriter):
     w.const("E_INV", to_float_scaled(1.0 / math.e), f"1/e = {1 / math.e:.15f}")
 
     # --- ln: non-power-of-2 inputs that exercise the series approximation ---
+    # ln is not directly bounded by the quote clamp — it receives
+    # strike/forward which is constrained by SVI params. With provider
+    # bounds (sigma up to 100), the strike ratio is effectively unbounded.
+    # These test points exercise the series approximation at various scales.
     w.section("ln — non-trivial inputs (exercise ln_series with nonzero z)")
     for x in [1.5, 3.0, 5.0, 7.0, 10.0, 0.1, 0.3, 0.7, 0.999, 1.001, 100.0, 1000.0]:
         name = str(x).replace(".", "_")
         w.const(f"LN_{name}", to_float_scaled(abs(math.log(x))),
                 f"|ln({x})| = {abs(math.log(x)):.15f}")
 
-    # --- exp: non-multiple-of-ln2 inputs that exercise exp_series with r != 0 ---
-    w.section("exp — non-trivial inputs (exercise exp_series with nonzero r)")
-    for x in [0.001, 0.01, 0.1, 0.3, 0.5, 1.5, 2.5, 20.0, 22.0]:
+    # --- exp: bounded by cdf_pdf input range ---
+    # In production, exp is called from two places:
+    #   1. compute_discount: exp(-rt, true) — max input = MAX_RT
+    #   2. cdf_pdf: exp(-d2²/2, true) — max input = max_abs_d2² / 2
+    # Both always use x_negative=true. We test positive exp too for
+    # function correctness, but cap at the operating range.
+    w.section(
+        f"exp — operating range: max input = {max_exp_input:.2f} "
+        f"(from max |d2| = {max_abs_d2:.4f})"
+    )
+    exp_points = [0.001, 0.01, 0.1, 0.3, 0.5, 1.5, 2.5]
+    # Add points near the operating boundary
+    exp_points.append(round(max_exp_input * 0.5, 1))   # 50% of max
+    exp_points.append(round(max_exp_input * 0.9, 1))    # 90% of max
+    exp_points = sorted(set(exp_points))
+
+    for x in exp_points:
         name = str(x).replace(".", "_")
         w.const(f"EXP_{name}", to_float_scaled(math.exp(x)),
                 f"e^{x} = {math.exp(x):.15f}")
         w.const(f"EXP_NEG_{name}", to_float_scaled(math.exp(-x)),
                 f"e^(-{x}) = {math.exp(-x):.15f}")
 
-    w.section("Normal CDF")
-    for x in [0, 0.1, 0.25, 0.5, 1, 2, 3, 5, 8]:
-        name = str(x).replace(".", "_")
-        w.const(f"PHI_{name}", to_float_scaled(norm.cdf(x)), f"Φ({x})")
-        w.const(f"PHI_NEG_{name}", to_float_scaled(norm.cdf(-x)), f"Φ(-{x})")
+    # --- normal_cdf: bounded by quote clamp ---
+    # Protocol produces quotes between 0.1c and 99.9c.
+    # price = discount * CDF(d2), so CDF operates in a range that
+    # maps to |d2| <= {max_abs_d2:.4f}.
+    # We generate dense coverage within this range, plus the contract's
+    # clamp boundary at x = 8*FLOAT.
+    w.section(
+        f"Normal CDF — operating range: |d2| <= {max_abs_d2:.4f} "
+        f"(from {MIN_QUOTE_PRICE*100:.1f}c—{MAX_QUOTE_PRICE*100:.1f}c quote bounds)"
+    )
 
-    # --- normal_cdf: fill gaps and test edge cases ---
-    w.section("Normal CDF — additional inputs (fill gaps, test boundaries)")
-    for x in [0.01, 0.05, 0.75, 1.5, 2.5, 4.0, 6.0, 7.0, 7.9, 7.99]:
+    # Dense coverage within operating range [0, ceil(max_abs_d2)]
+    cdf_limit = math.ceil(max_abs_d2 * 2) / 2  # round up to nearest 0.5
+    cdf_points = [0, 0.01, 0.05, 0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 2.5, 3.0]
+    # Add the boundary point
+    cdf_boundary = round(max_abs_d2, 2)
+    if cdf_boundary not in cdf_points:
+        cdf_points.append(cdf_boundary)
+    # Add the contract's clamp boundary (tests the early-return path)
+    cdf_points.append(8.0)
+    cdf_points = sorted(set(cdf_points))
+
+    for x in cdf_points:
         name = str(x).replace(".", "_")
         w.const(f"PHI_{name}", to_float_scaled(norm.cdf(x)), f"Φ({x})")
         w.const(f"PHI_NEG_{name}", to_float_scaled(norm.cdf(-x)), f"Φ(-{x})")
@@ -628,6 +668,7 @@ def generate_oracle_scenarios(w: MoveWriter, snapshots, svi_rows, expiry_ms):
     w.section("Oracle pricing scenarios from real Block Scholes data")
     w.comment("Sampled by time-to-expiry diversity: 7d, 3d, 1d, 6h, 1h, 5m, <1m")
     w.comment(f"MTM values use quantity = {ORACLE_TEST_QUANTITY}")
+    w.comment(f"Strikes filtered to quote bounds [{MIN_QUOTE_PRICE}, {MAX_QUOTE_PRICE}]")
 
     for idx, price_row in enumerate(snapshots):
         prefix = f"S{idx}"
@@ -636,7 +677,8 @@ def generate_oracle_scenarios(w: MoveWriter, snapshots, svi_rows, expiry_ms):
             continue
         svi_f, _, t, forward = result
 
-        strikes = [
+        # Candidate strikes — ATM plus offsets
+        candidates = [
             ("ATM", forward),
             ("OTM5", forward * 1.05),
             ("OTM10", forward * 1.10),
@@ -644,7 +686,7 @@ def generate_oracle_scenarios(w: MoveWriter, snapshots, svi_rows, expiry_ms):
             ("ITM10", forward * 0.90),
         ]
 
-        for label, strike in strikes:
+        for label, strike in candidates:
             up = binary_price(
                 forward, strike, svi_f["a"], svi_f["b"], svi_f["rho"],
                 svi_f["m"], svi_f["sigma"], svi_f["rate"], t, True,
@@ -653,6 +695,12 @@ def generate_oracle_scenarios(w: MoveWriter, snapshots, svi_rows, expiry_ms):
                 forward, strike, svi_f["a"], svi_f["b"], svi_f["rho"],
                 svi_f["m"], svi_f["sigma"], svi_f["rate"], t, False,
             )
+
+            # Skip strikes where price falls outside quotable range
+            if up < MIN_QUOTE_PRICE and dn < MIN_QUOTE_PRICE:
+                w.comment(f"{prefix}_{label}: skipped (price outside quote bounds)")
+                continue
+
             up_mtm = up * ORACLE_TEST_QUANTITY
             dn_mtm = dn * ORACLE_TEST_QUANTITY
             w.const(f"{prefix}_STRIKE_{label}", to_float_scaled(strike))
@@ -739,10 +787,65 @@ def generate_mint_scenarios(w: MoveWriter, snapshots, svi_rows, expiry_ms):
 # ====================================================================
 
 
+def find_strikes_in_quote_range(
+    forward: float, svi: dict, rate: float, t: float,
+    target_d2s: list[float],
+) -> list[tuple[str, float, float]]:
+    """Find strikes that produce specific d2 values, filtering to quote bounds.
+
+    Returns list of (label, strike, up_price) tuples where the price is
+    within [MIN_QUOTE_PRICE, MAX_QUOTE_PRICE].
+    """
+    from scipy.optimize import brentq
+
+    results = []
+    discount = math.exp(-rate * t)
+
+    for d2_target in target_d2s:
+        # Compute what CDF(d2) and price would be
+        cdf_val = norm.cdf(d2_target)
+        price = discount * cdf_val
+
+        if price < MIN_QUOTE_PRICE or price > MAX_QUOTE_PRICE:
+            continue
+
+        # Reverse-solve for strike: find strike where d2 = target
+        # d2(strike) is monotonically decreasing in strike (for UP)
+        def d2_at_strike(s):
+            if s <= 0:
+                return 100.0
+            k = math.log(s / forward)
+            tv = svi_total_variance(k, svi["a"], svi["b"], svi["rho"], svi["m"], svi["sigma"])
+            if tv <= 0:
+                return 100.0
+            return (-k - tv / 2) / math.sqrt(tv) - d2_target
+
+        try:
+            strike = brentq(d2_at_strike, forward * 0.001, forward * 100.0)
+        except ValueError:
+            continue
+
+        # Label based on d2 value
+        if abs(d2_target) < 0.01:
+            label = "ATM"
+        elif d2_target > 0:
+            label = f"ITM_D{abs(d2_target):.0f}" if d2_target == int(d2_target) else f"ITM_D{abs(d2_target):.1f}"
+        else:
+            label = f"OTM_D{abs(d2_target):.0f}" if d2_target == int(d2_target) else f"OTM_D{abs(d2_target):.1f}"
+
+        results.append((label, strike, price))
+
+    return results
+
+
 def generate_synthetic_oracle_scenarios(w: MoveWriter):
+    bounds = compute_smart_contract_bounds()
+    max_abs_d2 = bounds["derived_info"]["max_abs_d2"]
+
     w.section("Synthetic oracle scenarios")
-    w.comment("Hand-picked SVI params to test specific pricing behaviors.")
-    w.comment("All inputs are pure math — no contract conventions (ms, FLOAT_SCALING).")
+    w.comment("SVI params to test specific pricing behaviors.")
+    w.comment(f"Strikes chosen so prices fall within quote bounds [{MIN_QUOTE_PRICE}, {MAX_QUOTE_PRICE}].")
+    w.comment(f"Operating range: |d2| <= {max_abs_d2:.2f}")
     w.comment("Move tests must construct oracles that produce matching t values.")
 
     forward = 100.0
@@ -750,25 +853,21 @@ def generate_synthetic_oracle_scenarios(w: MoveWriter):
     # Short TTE (~0.0000317 years). Move tests: expiry=1_000_000ms, clock=0.
     t_short = 1e6 / (SECONDS_IN_YEAR * 1000)
 
+    # Target d2 values within operating range — evenly spaced
+    target_d2s = [-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0]
+
     # --- Standard SVI: a=0, b=1, rho=0, m=0, sigma=0.25, rate=0 ---
     std = {"a": 0.0, "b": 1.0, "rho": 0.0, "m": 0.0, "sigma": 0.25}
 
     w.blank()
     w.comment(f"Standard SVI (a=0, b=1, rho=0, m=0, sigma=0.25), rate=0, t={t_short:.10f}yr")
-    strikes_std = [
-        ("ATM", 100.0),
-        ("STRIKE_2X", 200.0),
-        ("DEEP_ITM", 10.0),
-        ("DEEP_OTM", 1000.0),
-        ("S50", 50.0),
-        ("S80", 80.0),
-        ("S100", 100.0),
-        ("S120", 120.0),
-        ("S150", 150.0),
-    ]
-    for label, strike in strikes_std:
+
+    strikes_std = find_strikes_in_quote_range(forward, std, 0.0, t_short, target_d2s)
+    for label, strike, _ in strikes_std:
         up = binary_price(forward, strike, **std, rate=0.0, t=t_short, is_call=True)
         dn = binary_price(forward, strike, **std, rate=0.0, t=t_short, is_call=False)
+        w.const(f"SYN_STD_STRIKE_{label}", to_float_scaled(strike),
+                f"strike={strike:.4f}")
         w.const(f"SYN_STD_UP_{label}", to_float_scaled(up))
         w.const(f"SYN_STD_DN_{label}", to_float_scaled(dn))
 
@@ -780,23 +879,14 @@ def generate_synthetic_oracle_scenarios(w: MoveWriter):
     w.const("SYN_DISCOUNT_5PCT_1YR", to_float_scaled(discount_5pct),
             f"e^(-0.05*{t_1yr}) = {discount_5pct:.9f}")
 
-    strikes_5pct = [
-        ("S60", 60.0),
-        ("S80", 80.0),
-        ("S100", 100.0),
-        ("S120", 120.0),
-        ("S140", 140.0),
-    ]
-    for label, strike in strikes_5pct:
+    strikes_5pct = find_strikes_in_quote_range(forward, std, 0.05, t_1yr, target_d2s)
+    for label, strike, _ in strikes_5pct:
         up = binary_price(forward, strike, **std, rate=0.05, t=t_1yr, is_call=True)
         dn = binary_price(forward, strike, **std, rate=0.05, t=t_1yr, is_call=False)
+        w.const(f"SYN_5PCT_STRIKE_{label}", to_float_scaled(strike),
+                f"strike={strike:.4f}")
         w.const(f"SYN_5PCT_UP_{label}", to_float_scaled(up))
         w.const(f"SYN_5PCT_DN_{label}", to_float_scaled(dn))
-
-    w.const("SYN_5PCT_UP_ATM", to_float_scaled(
-        binary_price(forward, 100.0, **std, rate=0.05, t=t_1yr, is_call=True)))
-    w.const("SYN_5PCT_DN_ATM", to_float_scaled(
-        binary_price(forward, 100.0, **std, rate=0.05, t=t_1yr, is_call=False)))
 
     # --- With 10% rate, t=0.5 years ---
     w.blank()
@@ -821,8 +911,8 @@ def generate_synthetic_oracle_scenarios(w: MoveWriter):
 
     # --- Full SVI: a=0.05, b=0.8, rho=-0.3, m=0.1, sigma=0.2, rate=0 ---
     w.blank()
-    w.comment(f"Full SVI (a=0.05, b=0.8, rho=-0.3, m=0.1, sigma=0.2), rate=0, t={t_short:.10f}yr")
     full = {"a": 0.05, "b": 0.8, "rho": -0.3, "m": 0.1, "sigma": 0.2}
+    w.comment(f"Full SVI (a=0.05, b=0.8, rho=-0.3, m=0.1, sigma=0.2), rate=0, t={t_short:.10f}yr")
     up = binary_price(forward, 100.0, **full, rate=0.0, t=t_short, is_call=True)
     dn = binary_price(forward, 100.0, **full, rate=0.0, t=t_short, is_call=False)
     w.const("SYN_FULL_UP_ATM", to_float_scaled(up))
@@ -844,23 +934,29 @@ def generate_synthetic_oracle_scenarios(w: MoveWriter):
     up = binary_price(forward, 100.0, **nonzero_a, rate=0.0, t=t_short, is_call=True)
     w.const("SYN_A100M_UP_ATM", to_float_scaled(up))
 
-    # --- Negative rho: rho=-0.3 ---
+    # --- Negative rho: rho=-0.3, strikes within quote range ---
     w.blank()
     w.comment(f"Negative rho (rho=-0.3), rate=0, t={t_short:.10f}yr — skews the smile")
     neg_rho = {**std, "rho": -0.3}
-    for label, strike in [("S80", 80.0), ("S100", 100.0), ("S120", 120.0)]:
+    strikes_rho = find_strikes_in_quote_range(forward, neg_rho, 0.0, t_short,
+                                               [-2.0, -1.0, 0.0, 1.0, 2.0])
+    for label, strike, _ in strikes_rho:
         up = binary_price(forward, strike, **neg_rho, rate=0.0, t=t_short, is_call=True)
         dn = binary_price(forward, strike, **neg_rho, rate=0.0, t=t_short, is_call=False)
+        w.const(f"SYN_NEG_RHO_STRIKE_{label}", to_float_scaled(strike))
         w.const(f"SYN_NEG_RHO_UP_{label}", to_float_scaled(up))
         w.const(f"SYN_NEG_RHO_DN_{label}", to_float_scaled(dn))
 
-    # --- Nonzero m: m=0.1 ---
+    # --- Nonzero m: m=0.1, strikes within quote range ---
     w.blank()
     w.comment(f"Nonzero m (m=0.1), rate=0, t={t_short:.10f}yr — shifts the smile center")
     nonzero_m = {**std, "m": 0.1}
-    for label, strike in [("S80", 80.0), ("S100", 100.0), ("S120", 120.0)]:
+    strikes_m = find_strikes_in_quote_range(forward, nonzero_m, 0.0, t_short,
+                                             [-2.0, -1.0, 0.0, 1.0, 2.0])
+    for label, strike, _ in strikes_m:
         up = binary_price(forward, strike, **nonzero_m, rate=0.0, t=t_short, is_call=True)
         dn = binary_price(forward, strike, **nonzero_m, rate=0.0, t=t_short, is_call=False)
+        w.const(f"SYN_M_STRIKE_{label}", to_float_scaled(strike))
         w.const(f"SYN_M_UP_{label}", to_float_scaled(up))
         w.const(f"SYN_M_DN_{label}", to_float_scaled(dn))
 
