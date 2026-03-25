@@ -326,8 +326,31 @@ def generate_math_constants(w: MoveWriter):
     w.const("E", to_float_scaled(math.e), f"e = {math.e:.15f}")
     w.const("E_INV", to_float_scaled(1.0 / math.e), f"1/e = {1 / math.e:.15f}")
 
+    # --- ln: non-power-of-2 inputs that exercise the series approximation ---
+    w.section("ln — non-trivial inputs (exercise ln_series with nonzero z)")
+    for x in [1.5, 3.0, 5.0, 7.0, 10.0, 0.1, 0.3, 0.7, 0.999, 1.001, 100.0, 1000.0]:
+        name = str(x).replace(".", "_")
+        w.const(f"LN_{name}", to_float_scaled(abs(math.log(x))),
+                f"|ln({x})| = {abs(math.log(x)):.15f}")
+
+    # --- exp: non-multiple-of-ln2 inputs that exercise exp_series with r != 0 ---
+    w.section("exp — non-trivial inputs (exercise exp_series with nonzero r)")
+    for x in [0.001, 0.01, 0.1, 0.3, 0.5, 1.5, 2.5, 20.0, 22.0]:
+        name = str(x).replace(".", "_")
+        w.const(f"EXP_{name}", to_float_scaled(math.exp(x)),
+                f"e^{x} = {math.exp(x):.15f}")
+        w.const(f"EXP_NEG_{name}", to_float_scaled(math.exp(-x)),
+                f"e^(-{x}) = {math.exp(-x):.15f}")
+
     w.section("Normal CDF")
     for x in [0, 0.1, 0.25, 0.5, 1, 2, 3, 5, 8]:
+        name = str(x).replace(".", "_")
+        w.const(f"PHI_{name}", to_float_scaled(norm.cdf(x)), f"Φ({x})")
+        w.const(f"PHI_NEG_{name}", to_float_scaled(norm.cdf(-x)), f"Φ(-{x})")
+
+    # --- normal_cdf: fill gaps and test edge cases ---
+    w.section("Normal CDF — additional inputs (fill gaps, test boundaries)")
+    for x in [0.01, 0.05, 0.75, 1.5, 2.5, 4.0, 6.0, 7.0, 7.9, 7.99]:
         name = str(x).replace(".", "_")
         w.const(f"PHI_{name}", to_float_scaled(norm.cdf(x)), f"Φ({x})")
         w.const(f"PHI_NEG_{name}", to_float_scaled(norm.cdf(-x)), f"Φ(-{x})")

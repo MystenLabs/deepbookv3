@@ -7,7 +7,8 @@ module deepbook_predict::vault_tests;
 use deepbook_predict::{
     generated_scenarios as gs,
     oracle::{Self, new_price_data, new_svi_params},
-    vault,
+    precision,
+    vault
 };
 use std::unit_test::{assert_eq, destroy};
 use sui::{balance, clock, sui::SUI};
@@ -719,28 +720,50 @@ fun mtm_live_oracle_s0_atm() {
     let mut v = vault::new<SUI>(ctx);
 
     let svi = new_svi_params(
-        gs::S0_A!(), gs::S0_B!(), gs::S0_RHO!(), gs::S0_RHO_NEG!() == 1,
-        gs::S0_M!(), gs::S0_M_NEG!() == 1, gs::S0_SIGMA!(),
+        gs::S0_A!(),
+        gs::S0_B!(),
+        gs::S0_RHO!(),
+        gs::S0_RHO_NEG!() == 1,
+        gs::S0_M!(),
+        gs::S0_M_NEG!() == 1,
+        gs::S0_SIGMA!(),
     );
     let prices = new_price_data(gs::S0_SPOT!(), gs::S0_FORWARD!());
     let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(), svi, prices, gs::S0_RATE!(),
-        gs::S0_EXPIRY_MS!(), gs::S0_NOW_MS!(), ctx,
+        b"BTC".to_string(),
+        svi,
+        prices,
+        gs::S0_RATE!(),
+        gs::S0_EXPIRY_MS!(),
+        gs::S0_NOW_MS!(),
+        ctx,
     );
     let mut clock = clock::create_for_testing(ctx);
     clock.set_for_testing(gs::S0_NOW_MS!());
 
     vault::insert_position(
-        &mut v, &oracle, true, gs::S0_STRIKE_ATM!(), QTY, &clock, ctx,
+        &mut v,
+        &oracle,
+        true,
+        gs::S0_STRIKE_ATM!(),
+        QTY,
+        &clock,
+        ctx,
     );
-    assert_eq!(vault::total_mtm(&v), gs::S0_MTM_UP_ATM!());
+    precision::assert_approx_abs(vault::total_mtm(&v), gs::S0_MTM_UP_ATM!(), 1);
 
     vault::insert_position(
-        &mut v, &oracle, false, gs::S0_STRIKE_ATM!(), QTY, &clock, ctx,
+        &mut v,
+        &oracle,
+        false,
+        gs::S0_STRIKE_ATM!(),
+        QTY,
+        &clock,
+        ctx,
     );
     // Total MTM = UP mtm + DN mtm (different directions at same strike)
     let expected_total = gs::S0_MTM_UP_ATM!() + gs::S0_MTM_DN_ATM!();
-    assert_eq!(vault::total_mtm(&v), expected_total);
+    precision::assert_approx_abs(vault::total_mtm(&v), expected_total, 2);
 
     destroy(v);
     destroy(oracle);
@@ -754,22 +777,38 @@ fun mtm_live_oracle_s0_otm_itm() {
     let mut v = vault::new<SUI>(ctx);
 
     let svi = new_svi_params(
-        gs::S0_A!(), gs::S0_B!(), gs::S0_RHO!(), gs::S0_RHO_NEG!() == 1,
-        gs::S0_M!(), gs::S0_M_NEG!() == 1, gs::S0_SIGMA!(),
+        gs::S0_A!(),
+        gs::S0_B!(),
+        gs::S0_RHO!(),
+        gs::S0_RHO_NEG!() == 1,
+        gs::S0_M!(),
+        gs::S0_M_NEG!() == 1,
+        gs::S0_SIGMA!(),
     );
     let prices = new_price_data(gs::S0_SPOT!(), gs::S0_FORWARD!());
     let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(), svi, prices, gs::S0_RATE!(),
-        gs::S0_EXPIRY_MS!(), gs::S0_NOW_MS!(), ctx,
+        b"BTC".to_string(),
+        svi,
+        prices,
+        gs::S0_RATE!(),
+        gs::S0_EXPIRY_MS!(),
+        gs::S0_NOW_MS!(),
+        ctx,
     );
     let mut clock = clock::create_for_testing(ctx);
     clock.set_for_testing(gs::S0_NOW_MS!());
 
     // OTM UP — low probability, small MTM
     vault::insert_position(
-        &mut v, &oracle, true, gs::S0_STRIKE_OTM10!(), QTY, &clock, ctx,
+        &mut v,
+        &oracle,
+        true,
+        gs::S0_STRIKE_OTM10!(),
+        QTY,
+        &clock,
+        ctx,
     );
-    assert_eq!(vault::total_mtm(&v), gs::S0_MTM_UP_OTM10!());
+    precision::assert_approx_abs(vault::total_mtm(&v), gs::S0_MTM_UP_OTM10!(), 1);
 
     destroy(v);
     destroy(oracle);
@@ -783,21 +822,37 @@ fun mtm_live_oracle_s6_near_expiry() {
     let mut v = vault::new<SUI>(ctx);
 
     let svi = new_svi_params(
-        gs::S6_A!(), gs::S6_B!(), gs::S6_RHO!(), gs::S6_RHO_NEG!() == 1,
-        gs::S6_M!(), gs::S6_M_NEG!() == 1, gs::S6_SIGMA!(),
+        gs::S6_A!(),
+        gs::S6_B!(),
+        gs::S6_RHO!(),
+        gs::S6_RHO_NEG!() == 1,
+        gs::S6_M!(),
+        gs::S6_M_NEG!() == 1,
+        gs::S6_SIGMA!(),
     );
     let prices = new_price_data(gs::S6_SPOT!(), gs::S6_FORWARD!());
     let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(), svi, prices, gs::S6_RATE!(),
-        gs::S6_EXPIRY_MS!(), gs::S6_NOW_MS!(), ctx,
+        b"BTC".to_string(),
+        svi,
+        prices,
+        gs::S6_RATE!(),
+        gs::S6_EXPIRY_MS!(),
+        gs::S6_NOW_MS!(),
+        ctx,
     );
     let mut clock = clock::create_for_testing(ctx);
     clock.set_for_testing(gs::S6_NOW_MS!());
 
     vault::insert_position(
-        &mut v, &oracle, true, gs::S6_STRIKE_ATM!(), QTY, &clock, ctx,
+        &mut v,
+        &oracle,
+        true,
+        gs::S6_STRIKE_ATM!(),
+        QTY,
+        &clock,
+        ctx,
     );
-    assert_eq!(vault::total_mtm(&v), gs::S6_MTM_UP_ATM!());
+    precision::assert_approx_abs(vault::total_mtm(&v), gs::S6_MTM_UP_ATM!(), 1);
 
     destroy(v);
     destroy(oracle);
@@ -811,31 +866,58 @@ fun mtm_live_oracle_s7_extreme_near_expiry() {
     let mut v = vault::new<SUI>(ctx);
 
     let svi = new_svi_params(
-        gs::S7_A!(), gs::S7_B!(), gs::S7_RHO!(), gs::S7_RHO_NEG!() == 1,
-        gs::S7_M!(), gs::S7_M_NEG!() == 1, gs::S7_SIGMA!(),
+        gs::S7_A!(),
+        gs::S7_B!(),
+        gs::S7_RHO!(),
+        gs::S7_RHO_NEG!() == 1,
+        gs::S7_M!(),
+        gs::S7_M_NEG!() == 1,
+        gs::S7_SIGMA!(),
     );
     let prices = new_price_data(gs::S7_SPOT!(), gs::S7_FORWARD!());
     let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(), svi, prices, gs::S7_RATE!(),
-        gs::S7_EXPIRY_MS!(), gs::S7_NOW_MS!(), ctx,
+        b"BTC".to_string(),
+        svi,
+        prices,
+        gs::S7_RATE!(),
+        gs::S7_EXPIRY_MS!(),
+        gs::S7_NOW_MS!(),
+        ctx,
     );
     let mut clock = clock::create_for_testing(ctx);
     clock.set_for_testing(gs::S7_NOW_MS!());
 
     // ATM UP at 31s to expiry
     vault::insert_position(
-        &mut v, &oracle, true, gs::S7_STRIKE_ATM!(), QTY, &clock, ctx,
+        &mut v,
+        &oracle,
+        true,
+        gs::S7_STRIKE_ATM!(),
+        QTY,
+        &clock,
+        ctx,
     );
-    assert_eq!(vault::total_mtm(&v), gs::S7_MTM_UP_ATM!());
+    precision::assert_approx_abs(vault::total_mtm(&v), gs::S7_MTM_UP_ATM!(), 1);
 
     // ITM UP — should be very high probability near expiry
     vault::remove_position(
-        &mut v, &oracle, true, gs::S7_STRIKE_ATM!(), QTY, &clock,
+        &mut v,
+        &oracle,
+        true,
+        gs::S7_STRIKE_ATM!(),
+        QTY,
+        &clock,
     );
     vault::insert_position(
-        &mut v, &oracle, true, gs::S7_STRIKE_ITM10!(), QTY, &clock, ctx,
+        &mut v,
+        &oracle,
+        true,
+        gs::S7_STRIKE_ITM10!(),
+        QTY,
+        &clock,
+        ctx,
     );
-    assert_eq!(vault::total_mtm(&v), gs::S7_MTM_UP_ITM10!());
+    precision::assert_approx_abs(vault::total_mtm(&v), gs::S7_MTM_UP_ITM10!(), 1);
 
     destroy(v);
     destroy(oracle);

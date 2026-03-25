@@ -12,14 +12,14 @@ use deepbook_predict::{
     generated_scenarios_bulk::{Self as bulk, TradeStep},
     market_key,
     oracle::{Self, new_price_data, new_svi_params},
+    precision,
     predict,
-    predict_manager::PredictManager,
+    predict_manager::PredictManager
 };
 use std::unit_test::destroy;
 use sui::{clock, coin, sui::SUI, test_scenario};
 
 const ALICE: address = @0xA;
-const THRESHOLD: u64 = 1;
 
 fun run_sequence(steps: vector<TradeStep>, num_trades: u64) {
     let first = &steps[0];
@@ -49,8 +49,13 @@ fun run_sequence(steps: vector<TradeStep>, num_trades: u64) {
 
     // Create oracle with cap from first step's params
     let svi = new_svi_params(
-        first.a(), first.b(), first.rho(), first.rho_neg(),
-        first.m(), first.m_neg(), first.sigma(),
+        first.a(),
+        first.b(),
+        first.rho(),
+        first.rho_neg(),
+        first.m(),
+        first.m_neg(),
+        first.sigma(),
     );
     let prices = new_price_data(first.spot(), first.forward());
     let mut oracle = oracle::create_test_oracle(
@@ -83,8 +88,13 @@ fun run_sequence(steps: vector<TradeStep>, num_trades: u64) {
         oracle.update_prices(&cap, new_prices, &test_clock);
 
         let new_svi = new_svi_params(
-            step.a(), step.b(), step.rho(), step.rho_neg(),
-            step.m(), step.m_neg(), step.sigma(),
+            step.a(),
+            step.b(),
+            step.rho(),
+            step.rho_neg(),
+            step.m(),
+            step.m_neg(),
+            step.sigma(),
         );
         oracle.update_svi(&cap, new_svi, step.rate(), &test_clock);
 
@@ -98,19 +108,27 @@ fun run_sequence(steps: vector<TradeStep>, num_trades: u64) {
         if (step.is_mint()) {
             let balance_before = manager.balance<SUI>();
             predict.mint(
-                &mut manager, &oracle, key, step.quantity(),
-                &test_clock, scenario.ctx(),
+                &mut manager,
+                &oracle,
+                key,
+                step.quantity(),
+                &test_clock,
+                scenario.ctx(),
             );
             let cost = balance_before - manager.balance<SUI>();
-            assert_within_threshold(cost, step.expected_trade_amount());
+            precision::assert_approx_abs(cost, step.expected_trade_amount(), 1);
         } else {
             let balance_before = manager.balance<SUI>();
             predict.redeem(
-                &mut manager, &oracle, key, step.quantity(),
-                &test_clock, scenario.ctx(),
+                &mut manager,
+                &oracle,
+                key,
+                step.quantity(),
+                &test_clock,
+                scenario.ctx(),
             );
             let payout = manager.balance<SUI>() - balance_before;
-            assert_within_threshold(payout, step.expected_trade_amount());
+            precision::assert_approx_abs(payout, step.expected_trade_amount(), 1);
         };
 
         i = i + 1;
@@ -122,11 +140,6 @@ fun run_sequence(steps: vector<TradeStep>, num_trades: u64) {
     destroy(test_clock);
     test_scenario::return_shared(manager);
     scenario.end();
-}
-
-fun assert_within_threshold(actual: u64, expected: u64) {
-    let diff = if (actual > expected) { actual - expected } else { expected - actual };
-    assert!(diff <= THRESHOLD);
 }
 
 #[test]

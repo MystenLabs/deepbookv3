@@ -15,6 +15,40 @@ public macro fun LN_1E9(): u64 { 20_723_265_836 } // ln(1e9) = 20.72326583694641
 public macro fun E(): u64 { 2_718_281_828 } // e = 2.718281828459045
 public macro fun E_INV(): u64 { 367_879_441 } // 1/e = 0.367879441171442
 
+// === ln — non-trivial inputs (exercise ln_series with nonzero z) ===
+public macro fun LN_1_5(): u64 { 405_465_108 } // |ln(1.5)| = 0.405465108108164
+public macro fun LN_3_0(): u64 { 1_098_612_288 } // |ln(3.0)| = 1.098612288668110
+public macro fun LN_5_0(): u64 { 1_609_437_912 } // |ln(5.0)| = 1.609437912434100
+public macro fun LN_7_0(): u64 { 1_945_910_149 } // |ln(7.0)| = 1.945910149055313
+public macro fun LN_10_0(): u64 { 2_302_585_092 } // |ln(10.0)| = 2.302585092994046
+public macro fun LN_0_1(): u64 { 2_302_585_092 } // |ln(0.1)| = 2.302585092994045
+public macro fun LN_0_3(): u64 { 1_203_972_804 } // |ln(0.3)| = 1.203972804325936
+public macro fun LN_0_7(): u64 { 356_674_943 } // |ln(0.7)| = 0.356674943938732
+public macro fun LN_0_999(): u64 { 1_000_500 } // |ln(0.999)| = 0.001000500333584
+public macro fun LN_1_001(): u64 { 999_500 } // |ln(1.001)| = 0.000999500333083
+public macro fun LN_100_0(): u64 { 4_605_170_185 } // |ln(100.0)| = 4.605170185988092
+public macro fun LN_1000_0(): u64 { 6_907_755_278 } // |ln(1000.0)| = 6.907755278982137
+
+// === exp — non-trivial inputs (exercise exp_series with nonzero r) ===
+public macro fun EXP_0_001(): u64 { 1_001_000_500 } // e^0.001 = 1.001000500166708
+public macro fun EXP_NEG_0_001(): u64 { 999_000_499 } // e^(-0.001) = 0.999000499833375
+public macro fun EXP_0_01(): u64 { 1_010_050_167 } // e^0.01 = 1.010050167084168
+public macro fun EXP_NEG_0_01(): u64 { 990_049_833 } // e^(-0.01) = 0.990049833749168
+public macro fun EXP_0_1(): u64 { 1_105_170_918 } // e^0.1 = 1.105170918075648
+public macro fun EXP_NEG_0_1(): u64 { 904_837_418 } // e^(-0.1) = 0.904837418035960
+public macro fun EXP_0_3(): u64 { 1_349_858_807 } // e^0.3 = 1.349858807576003
+public macro fun EXP_NEG_0_3(): u64 { 740_818_220 } // e^(-0.3) = 0.740818220681718
+public macro fun EXP_0_5(): u64 { 1_648_721_270 } // e^0.5 = 1.648721270700128
+public macro fun EXP_NEG_0_5(): u64 { 606_530_659 } // e^(-0.5) = 0.606530659712633
+public macro fun EXP_1_5(): u64 { 4_481_689_070 } // e^1.5 = 4.481689070338065
+public macro fun EXP_NEG_1_5(): u64 { 223_130_160 } // e^(-1.5) = 0.223130160148430
+public macro fun EXP_2_5(): u64 { 12_182_493_960 } // e^2.5 = 12.182493960703473
+public macro fun EXP_NEG_2_5(): u64 { 82_084_998 } // e^(-2.5) = 0.082084998623899
+public macro fun EXP_20_0(): u64 { 485_165_195_409_790_272 } // e^20.0 = 485165195.409790277481079
+public macro fun EXP_NEG_20_0(): u64 { 2 } // e^(-20.0) = 0.000000002061154
+public macro fun EXP_22_0(): u64 { 3_584_912_846_131_591_680 } // e^22.0 = 3584912846.131591796875000
+public macro fun EXP_NEG_22_0(): u64 { 0 } // e^(-22.0) = 0.000000000278947
+
 // === Normal CDF ===
 public macro fun PHI_0(): u64 { 500_000_000 } // Φ(0)
 public macro fun PHI_NEG_0(): u64 { 500_000_000 } // Φ(-0)
@@ -34,6 +68,28 @@ public macro fun PHI_5(): u64 { 999_999_713 } // Φ(5)
 public macro fun PHI_NEG_5(): u64 { 286 } // Φ(-5)
 public macro fun PHI_8(): u64 { 999_999_999 } // Φ(8)
 public macro fun PHI_NEG_8(): u64 { 0 } // Φ(-8)
+
+// === Normal CDF — additional inputs (fill gaps, test boundaries) ===
+public macro fun PHI_0_01(): u64 { 503_989_356 } // Φ(0.01)
+public macro fun PHI_NEG_0_01(): u64 { 496_010_643 } // Φ(-0.01)
+public macro fun PHI_0_05(): u64 { 519_938_805 } // Φ(0.05)
+public macro fun PHI_NEG_0_05(): u64 { 480_061_194 } // Φ(-0.05)
+public macro fun PHI_0_75(): u64 { 773_372_647 } // Φ(0.75)
+public macro fun PHI_NEG_0_75(): u64 { 226_627_352 } // Φ(-0.75)
+public macro fun PHI_1_5(): u64 { 933_192_798 } // Φ(1.5)
+public macro fun PHI_NEG_1_5(): u64 { 66_807_201 } // Φ(-1.5)
+public macro fun PHI_2_5(): u64 { 993_790_334 } // Φ(2.5)
+public macro fun PHI_NEG_2_5(): u64 { 6_209_665 } // Φ(-2.5)
+public macro fun PHI_4_0(): u64 { 999_968_328 } // Φ(4.0)
+public macro fun PHI_NEG_4_0(): u64 { 31_671 } // Φ(-4.0)
+public macro fun PHI_6_0(): u64 { 999_999_999 } // Φ(6.0)
+public macro fun PHI_NEG_6_0(): u64 { 0 } // Φ(-6.0)
+public macro fun PHI_7_0(): u64 { 999_999_999 } // Φ(7.0)
+public macro fun PHI_NEG_7_0(): u64 { 0 } // Φ(-7.0)
+public macro fun PHI_7_9(): u64 { 999_999_999 } // Φ(7.9)
+public macro fun PHI_NEG_7_9(): u64 { 0 } // Φ(-7.9)
+public macro fun PHI_7_99(): u64 { 999_999_999 } // Φ(7.99)
+public macro fun PHI_NEG_7_99(): u64 { 0 } // Φ(-7.99)
 
 // === Synthetic oracle scenarios ===
 // Hand-picked SVI params to test specific pricing behaviors.

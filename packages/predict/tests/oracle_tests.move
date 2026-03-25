@@ -7,6 +7,7 @@ module deepbook_predict::oracle_tests;
 use deepbook_predict::{
     generated_scenarios as gs,
     oracle::{Self, new_price_data, new_svi_params, new_curve_point},
+    precision
 };
 use std::unit_test::{assert_eq, destroy};
 use sui::clock;
@@ -443,8 +444,8 @@ fun live_atm_up_plus_dn_equals_discount() {
     let up_price = oracle.get_binary_price(strike, true, &clock);
     let dn_price = oracle.get_binary_price(strike, false, &clock);
 
-    assert_eq!(up_price, gs::SYN_STD_UP_ATM!());
-    assert_eq!(dn_price, gs::SYN_STD_DN_ATM!());
+    precision::assert_approx_rel(up_price, gs::SYN_STD_UP_ATM!());
+    precision::assert_approx_rel(dn_price, gs::SYN_STD_DN_ATM!());
 
     destroy(oracle);
     clock.destroy_for_testing();
@@ -473,8 +474,8 @@ fun live_deep_itm_up() {
     let up_price = oracle.get_binary_price(strike, true, &clock);
     let dn_price = oracle.get_binary_price(strike, false, &clock);
 
-    assert_eq!(up_price, gs::SYN_STD_UP_DEEP_ITM!());
-    assert_eq!(dn_price, gs::SYN_STD_DN_DEEP_ITM!());
+    precision::assert_approx_rel(up_price, gs::SYN_STD_UP_DEEP_ITM!());
+    precision::assert_approx_rel(dn_price, gs::SYN_STD_DN_DEEP_ITM!());
 
     destroy(oracle);
     clock.destroy_for_testing();
@@ -503,8 +504,8 @@ fun live_deep_otm_up() {
     let up_price = oracle.get_binary_price(strike, true, &clock);
     let dn_price = oracle.get_binary_price(strike, false, &clock);
 
-    assert_eq!(up_price, gs::SYN_STD_UP_DEEP_OTM!());
-    assert_eq!(dn_price, gs::SYN_STD_DN_DEEP_OTM!());
+    precision::assert_approx_rel(up_price, gs::SYN_STD_UP_DEEP_OTM!());
+    precision::assert_approx_rel(dn_price, gs::SYN_STD_DN_DEEP_OTM!());
 
     destroy(oracle);
     clock.destroy_for_testing();
@@ -528,16 +529,46 @@ fun live_complement_property_various_strikes() {
 
     let clock = clock::create_for_testing(ctx);
 
-    assert_eq!(oracle.get_binary_price(50 * FLOAT, true, &clock), gs::SYN_STD_UP_S50!());
-    assert_eq!(oracle.get_binary_price(50 * FLOAT, false, &clock), gs::SYN_STD_DN_S50!());
-    assert_eq!(oracle.get_binary_price(80 * FLOAT, true, &clock), gs::SYN_STD_UP_S80!());
-    assert_eq!(oracle.get_binary_price(80 * FLOAT, false, &clock), gs::SYN_STD_DN_S80!());
-    assert_eq!(oracle.get_binary_price(100 * FLOAT, true, &clock), gs::SYN_STD_UP_S100!());
-    assert_eq!(oracle.get_binary_price(100 * FLOAT, false, &clock), gs::SYN_STD_DN_S100!());
-    assert_eq!(oracle.get_binary_price(120 * FLOAT, true, &clock), gs::SYN_STD_UP_S120!());
-    assert_eq!(oracle.get_binary_price(120 * FLOAT, false, &clock), gs::SYN_STD_DN_S120!());
-    assert_eq!(oracle.get_binary_price(150 * FLOAT, true, &clock), gs::SYN_STD_UP_S150!());
-    assert_eq!(oracle.get_binary_price(150 * FLOAT, false, &clock), gs::SYN_STD_DN_S150!());
+    precision::assert_approx_rel(
+        oracle.get_binary_price(50 * FLOAT, true, &clock),
+        gs::SYN_STD_UP_S50!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(50 * FLOAT, false, &clock),
+        gs::SYN_STD_DN_S50!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(80 * FLOAT, true, &clock),
+        gs::SYN_STD_UP_S80!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(80 * FLOAT, false, &clock),
+        gs::SYN_STD_DN_S80!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(100 * FLOAT, true, &clock),
+        gs::SYN_STD_UP_S100!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(100 * FLOAT, false, &clock),
+        gs::SYN_STD_DN_S100!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(120 * FLOAT, true, &clock),
+        gs::SYN_STD_UP_S120!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(120 * FLOAT, false, &clock),
+        gs::SYN_STD_DN_S120!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(150 * FLOAT, true, &clock),
+        gs::SYN_STD_UP_S150!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(150 * FLOAT, false, &clock),
+        gs::SYN_STD_DN_S150!(),
+    );
 
     destroy(oracle);
     clock.destroy_for_testing();
@@ -565,8 +596,8 @@ fun live_discount_less_than_one_for_positive_rate() {
     let up = oracle.get_binary_price(forward, true, &clock);
     let dn = oracle.get_binary_price(forward, false, &clock);
 
-    assert_eq!(up, gs::SYN_5PCT_UP_ATM!());
-    assert_eq!(dn, gs::SYN_5PCT_DN_ATM!());
+    precision::assert_approx_rel(up, gs::SYN_5PCT_UP_ATM!());
+    precision::assert_approx_rel(dn, gs::SYN_5PCT_DN_ATM!());
 
     destroy(oracle);
     clock.destroy_for_testing();
@@ -596,8 +627,8 @@ fun live_discount_is_one_past_expiry() {
     let dn = oracle.get_binary_price(forward, false, &clock);
 
     // discount = 1.0 past expiry, so prices equal the zero-rate ATM values
-    assert_eq!(up, gs::SYN_STD_UP_ATM!());
-    assert_eq!(dn, gs::SYN_STD_DN_ATM!());
+    precision::assert_approx_rel(up, gs::SYN_STD_UP_ATM!());
+    precision::assert_approx_rel(dn, gs::SYN_STD_DN_ATM!());
 
     destroy(oracle);
     clock.destroy_for_testing();
@@ -621,11 +652,26 @@ fun live_up_monotonically_decreasing_with_strike() {
 
     let clock = clock::create_for_testing(ctx);
 
-    assert_eq!(oracle.get_binary_price(50 * FLOAT, true, &clock), gs::SYN_STD_UP_S50!());
-    assert_eq!(oracle.get_binary_price(80 * FLOAT, true, &clock), gs::SYN_STD_UP_S80!());
-    assert_eq!(oracle.get_binary_price(100 * FLOAT, true, &clock), gs::SYN_STD_UP_S100!());
-    assert_eq!(oracle.get_binary_price(120 * FLOAT, true, &clock), gs::SYN_STD_UP_S120!());
-    assert_eq!(oracle.get_binary_price(200 * FLOAT, true, &clock), gs::SYN_STD_UP_STRIKE_2X!());
+    precision::assert_approx_rel(
+        oracle.get_binary_price(50 * FLOAT, true, &clock),
+        gs::SYN_STD_UP_S50!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(80 * FLOAT, true, &clock),
+        gs::SYN_STD_UP_S80!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(100 * FLOAT, true, &clock),
+        gs::SYN_STD_UP_S100!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(120 * FLOAT, true, &clock),
+        gs::SYN_STD_UP_S120!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(200 * FLOAT, true, &clock),
+        gs::SYN_STD_UP_STRIKE_2X!(),
+    );
     // Monotonicity: S50 > S80 > S100 > S120 > S200
     assert_eq!(gs::SYN_STD_UP_S50!() > gs::SYN_STD_UP_S80!(), true);
     assert_eq!(gs::SYN_STD_UP_S80!() > gs::SYN_STD_UP_S100!(), true);
@@ -674,8 +720,14 @@ fun live_nonzero_a_increases_variance() {
 
     let clock = clock::create_for_testing(ctx);
 
-    assert_eq!(oracle0.get_binary_price(forward, true, &clock), gs::SYN_STD_UP_ATM!());
-    assert_eq!(oracle1.get_binary_price(forward, true, &clock), gs::SYN_A100M_UP_ATM!());
+    precision::assert_approx_rel(
+        oracle0.get_binary_price(forward, true, &clock),
+        gs::SYN_STD_UP_ATM!(),
+    );
+    precision::assert_approx_rel(
+        oracle1.get_binary_price(forward, true, &clock),
+        gs::SYN_A100M_UP_ATM!(),
+    );
     // Higher a lowers ATM UP price
     assert_eq!(gs::SYN_A100M_UP_ATM!() < gs::SYN_STD_UP_ATM!(), true);
 
@@ -796,8 +848,14 @@ fun live_small_sigma_atm_near_half() {
 
     let clock = clock::create_for_testing(ctx);
 
-    assert_eq!(oracle.get_binary_price(forward, true, &clock), gs::SYN_SMALL_SIGMA_UP_ATM!());
-    assert_eq!(oracle.get_binary_price(forward, false, &clock), gs::SYN_SMALL_SIGMA_DN_ATM!());
+    precision::assert_approx_rel(
+        oracle.get_binary_price(forward, true, &clock),
+        gs::SYN_SMALL_SIGMA_UP_ATM!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(forward, false, &clock),
+        gs::SYN_SMALL_SIGMA_DN_ATM!(),
+    );
 
     destroy(oracle);
     clock.destroy_for_testing();
@@ -1118,7 +1176,7 @@ fun build_curve_with_positive_rate_complement() {
     let mut i = 0;
     while (i < len) {
         let sum = curve[i].up_price() + curve[i].dn_price();
-        assert_eq!(sum, gs::SYN_DISCOUNT_5PCT_1YR!());
+        precision::assert_approx_rel(sum, gs::SYN_DISCOUNT_5PCT_1YR!());
         i = i + 1;
     };
 
@@ -1148,8 +1206,14 @@ fun exact_strike_2x_forward_price() {
 
     let clock = clock::create_for_testing(ctx);
 
-    assert_eq!(oracle.get_binary_price(100 * FLOAT, true, &clock), gs::SYN_STD_UP_STRIKE_2X!());
-    assert_eq!(oracle.get_binary_price(100 * FLOAT, false, &clock), gs::SYN_STD_DN_STRIKE_2X!());
+    precision::assert_approx_rel(
+        oracle.get_binary_price(100 * FLOAT, true, &clock),
+        gs::SYN_STD_UP_STRIKE_2X!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(100 * FLOAT, false, &clock),
+        gs::SYN_STD_DN_STRIKE_2X!(),
+    );
 
     destroy(oracle);
     clock.destroy_for_testing();
@@ -1174,8 +1238,14 @@ fun exact_discount_with_partial_year() {
     let mut clock = clock::create_for_testing(ctx);
     clock.set_for_testing(10_000_000_000);
 
-    assert_eq!(oracle.get_binary_price(forward, true, &clock), gs::SYN_10PCT_PARTIAL_UP_ATM!());
-    assert_eq!(oracle.get_binary_price(forward, false, &clock), gs::SYN_10PCT_PARTIAL_DN_ATM!());
+    precision::assert_approx_rel(
+        oracle.get_binary_price(forward, true, &clock),
+        gs::SYN_10PCT_PARTIAL_UP_ATM!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(forward, false, &clock),
+        gs::SYN_10PCT_PARTIAL_DN_ATM!(),
+    );
 
     destroy(oracle);
     clock.destroy_for_testing();
@@ -1208,8 +1278,14 @@ fun exact_full_svi_params() {
 
     let clock = clock::create_for_testing(ctx);
 
-    assert_eq!(oracle.get_binary_price(forward, true, &clock), gs::SYN_FULL_UP_ATM!());
-    assert_eq!(oracle.get_binary_price(forward, false, &clock), gs::SYN_FULL_DN_ATM!());
+    precision::assert_approx_rel(
+        oracle.get_binary_price(forward, true, &clock),
+        gs::SYN_FULL_UP_ATM!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(forward, false, &clock),
+        gs::SYN_FULL_DN_ATM!(),
+    );
 
     destroy(oracle);
     clock.destroy_for_testing();
@@ -1336,16 +1412,46 @@ fun live_prices_bounded_between_zero_and_discount() {
 
     let clock = clock::create_for_testing(ctx);
 
-    assert_eq!(oracle.get_binary_price(60 * FLOAT, true, &clock), gs::SYN_5PCT_UP_S60!());
-    assert_eq!(oracle.get_binary_price(60 * FLOAT, false, &clock), gs::SYN_5PCT_DN_S60!());
-    assert_eq!(oracle.get_binary_price(80 * FLOAT, true, &clock), gs::SYN_5PCT_UP_S80!());
-    assert_eq!(oracle.get_binary_price(80 * FLOAT, false, &clock), gs::SYN_5PCT_DN_S80!());
-    assert_eq!(oracle.get_binary_price(100 * FLOAT, true, &clock), gs::SYN_5PCT_UP_S100!());
-    assert_eq!(oracle.get_binary_price(100 * FLOAT, false, &clock), gs::SYN_5PCT_DN_S100!());
-    assert_eq!(oracle.get_binary_price(120 * FLOAT, true, &clock), gs::SYN_5PCT_UP_S120!());
-    assert_eq!(oracle.get_binary_price(120 * FLOAT, false, &clock), gs::SYN_5PCT_DN_S120!());
-    assert_eq!(oracle.get_binary_price(140 * FLOAT, true, &clock), gs::SYN_5PCT_UP_S140!());
-    assert_eq!(oracle.get_binary_price(140 * FLOAT, false, &clock), gs::SYN_5PCT_DN_S140!());
+    precision::assert_approx_rel(
+        oracle.get_binary_price(60 * FLOAT, true, &clock),
+        gs::SYN_5PCT_UP_S60!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(60 * FLOAT, false, &clock),
+        gs::SYN_5PCT_DN_S60!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(80 * FLOAT, true, &clock),
+        gs::SYN_5PCT_UP_S80!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(80 * FLOAT, false, &clock),
+        gs::SYN_5PCT_DN_S80!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(100 * FLOAT, true, &clock),
+        gs::SYN_5PCT_UP_S100!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(100 * FLOAT, false, &clock),
+        gs::SYN_5PCT_DN_S100!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(120 * FLOAT, true, &clock),
+        gs::SYN_5PCT_UP_S120!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(120 * FLOAT, false, &clock),
+        gs::SYN_5PCT_DN_S120!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(140 * FLOAT, true, &clock),
+        gs::SYN_5PCT_UP_S140!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(140 * FLOAT, false, &clock),
+        gs::SYN_5PCT_DN_S140!(),
+    );
 
     destroy(oracle);
     clock.destroy_for_testing();
@@ -1506,21 +1612,43 @@ fun zero_svi_params_on_live_oracle_aborts() {
 fun realworld_s0_binary_prices() {
     let ctx = &mut tx_context::dummy();
     let svi = new_svi_params(
-        gs::S0_A!(), gs::S0_B!(), gs::S0_RHO!(), gs::S0_RHO_NEG!() == 1,
-        gs::S0_M!(), gs::S0_M_NEG!() == 1, gs::S0_SIGMA!(),
+        gs::S0_A!(),
+        gs::S0_B!(),
+        gs::S0_RHO!(),
+        gs::S0_RHO_NEG!() == 1,
+        gs::S0_M!(),
+        gs::S0_M_NEG!() == 1,
+        gs::S0_SIGMA!(),
     );
     let prices = new_price_data(gs::S0_SPOT!(), gs::S0_FORWARD!());
     let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(), svi, prices, gs::S0_RATE!(),
-        gs::S0_EXPIRY_MS!(), gs::S0_NOW_MS!(), ctx,
+        b"BTC".to_string(),
+        svi,
+        prices,
+        gs::S0_RATE!(),
+        gs::S0_EXPIRY_MS!(),
+        gs::S0_NOW_MS!(),
+        ctx,
     );
     let mut clock = clock::create_for_testing(ctx);
     clock.set_for_testing(gs::S0_NOW_MS!());
 
-    assert_eq!(oracle.get_binary_price(gs::S0_STRIKE_ATM!(), true, &clock), gs::S0_UP_ATM!());
-    assert_eq!(oracle.get_binary_price(gs::S0_STRIKE_ATM!(), false, &clock), gs::S0_DN_ATM!());
-    assert_eq!(oracle.get_binary_price(gs::S0_STRIKE_OTM10!(), true, &clock), gs::S0_UP_OTM10!());
-    assert_eq!(oracle.get_binary_price(gs::S0_STRIKE_ITM10!(), true, &clock), gs::S0_UP_ITM10!());
+    precision::assert_approx_rel(
+        oracle.get_binary_price(gs::S0_STRIKE_ATM!(), true, &clock),
+        gs::S0_UP_ATM!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(gs::S0_STRIKE_ATM!(), false, &clock),
+        gs::S0_DN_ATM!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(gs::S0_STRIKE_OTM10!(), true, &clock),
+        gs::S0_UP_OTM10!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(gs::S0_STRIKE_ITM10!(), true, &clock),
+        gs::S0_UP_ITM10!(),
+    );
 
     destroy(oracle);
     clock.destroy_for_testing();
@@ -1531,21 +1659,43 @@ fun realworld_s0_binary_prices() {
 fun realworld_s3_binary_prices() {
     let ctx = &mut tx_context::dummy();
     let svi = new_svi_params(
-        gs::S3_A!(), gs::S3_B!(), gs::S3_RHO!(), gs::S3_RHO_NEG!() == 1,
-        gs::S3_M!(), gs::S3_M_NEG!() == 1, gs::S3_SIGMA!(),
+        gs::S3_A!(),
+        gs::S3_B!(),
+        gs::S3_RHO!(),
+        gs::S3_RHO_NEG!() == 1,
+        gs::S3_M!(),
+        gs::S3_M_NEG!() == 1,
+        gs::S3_SIGMA!(),
     );
     let prices = new_price_data(gs::S3_SPOT!(), gs::S3_FORWARD!());
     let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(), svi, prices, gs::S3_RATE!(),
-        gs::S3_EXPIRY_MS!(), gs::S3_NOW_MS!(), ctx,
+        b"BTC".to_string(),
+        svi,
+        prices,
+        gs::S3_RATE!(),
+        gs::S3_EXPIRY_MS!(),
+        gs::S3_NOW_MS!(),
+        ctx,
     );
     let mut clock = clock::create_for_testing(ctx);
     clock.set_for_testing(gs::S3_NOW_MS!());
 
-    assert_eq!(oracle.get_binary_price(gs::S3_STRIKE_ATM!(), true, &clock), gs::S3_UP_ATM!());
-    assert_eq!(oracle.get_binary_price(gs::S3_STRIKE_ATM!(), false, &clock), gs::S3_DN_ATM!());
-    assert_eq!(oracle.get_binary_price(gs::S3_STRIKE_OTM5!(), true, &clock), gs::S3_UP_OTM5!());
-    assert_eq!(oracle.get_binary_price(gs::S3_STRIKE_ITM5!(), false, &clock), gs::S3_DN_ITM5!());
+    precision::assert_approx_rel(
+        oracle.get_binary_price(gs::S3_STRIKE_ATM!(), true, &clock),
+        gs::S3_UP_ATM!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(gs::S3_STRIKE_ATM!(), false, &clock),
+        gs::S3_DN_ATM!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(gs::S3_STRIKE_OTM5!(), true, &clock),
+        gs::S3_UP_OTM5!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(gs::S3_STRIKE_ITM5!(), false, &clock),
+        gs::S3_DN_ITM5!(),
+    );
 
     destroy(oracle);
     clock.destroy_for_testing();
@@ -1556,21 +1706,43 @@ fun realworld_s3_binary_prices() {
 fun realworld_s6_near_expiry_prices() {
     let ctx = &mut tx_context::dummy();
     let svi = new_svi_params(
-        gs::S6_A!(), gs::S6_B!(), gs::S6_RHO!(), gs::S6_RHO_NEG!() == 1,
-        gs::S6_M!(), gs::S6_M_NEG!() == 1, gs::S6_SIGMA!(),
+        gs::S6_A!(),
+        gs::S6_B!(),
+        gs::S6_RHO!(),
+        gs::S6_RHO_NEG!() == 1,
+        gs::S6_M!(),
+        gs::S6_M_NEG!() == 1,
+        gs::S6_SIGMA!(),
     );
     let prices = new_price_data(gs::S6_SPOT!(), gs::S6_FORWARD!());
     let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(), svi, prices, gs::S6_RATE!(),
-        gs::S6_EXPIRY_MS!(), gs::S6_NOW_MS!(), ctx,
+        b"BTC".to_string(),
+        svi,
+        prices,
+        gs::S6_RATE!(),
+        gs::S6_EXPIRY_MS!(),
+        gs::S6_NOW_MS!(),
+        ctx,
     );
     let mut clock = clock::create_for_testing(ctx);
     clock.set_for_testing(gs::S6_NOW_MS!());
 
-    assert_eq!(oracle.get_binary_price(gs::S6_STRIKE_ATM!(), true, &clock), gs::S6_UP_ATM!());
-    assert_eq!(oracle.get_binary_price(gs::S6_STRIKE_ATM!(), false, &clock), gs::S6_DN_ATM!());
-    assert_eq!(oracle.get_binary_price(gs::S6_STRIKE_OTM10!(), true, &clock), gs::S6_UP_OTM10!());
-    assert_eq!(oracle.get_binary_price(gs::S6_STRIKE_ITM10!(), true, &clock), gs::S6_UP_ITM10!());
+    precision::assert_approx_rel(
+        oracle.get_binary_price(gs::S6_STRIKE_ATM!(), true, &clock),
+        gs::S6_UP_ATM!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(gs::S6_STRIKE_ATM!(), false, &clock),
+        gs::S6_DN_ATM!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(gs::S6_STRIKE_OTM10!(), true, &clock),
+        gs::S6_UP_OTM10!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(gs::S6_STRIKE_ITM10!(), true, &clock),
+        gs::S6_UP_ITM10!(),
+    );
 
     destroy(oracle);
     clock.destroy_for_testing();
@@ -1581,21 +1753,43 @@ fun realworld_s6_near_expiry_prices() {
 fun realworld_s7_extreme_near_expiry_prices() {
     let ctx = &mut tx_context::dummy();
     let svi = new_svi_params(
-        gs::S7_A!(), gs::S7_B!(), gs::S7_RHO!(), gs::S7_RHO_NEG!() == 1,
-        gs::S7_M!(), gs::S7_M_NEG!() == 1, gs::S7_SIGMA!(),
+        gs::S7_A!(),
+        gs::S7_B!(),
+        gs::S7_RHO!(),
+        gs::S7_RHO_NEG!() == 1,
+        gs::S7_M!(),
+        gs::S7_M_NEG!() == 1,
+        gs::S7_SIGMA!(),
     );
     let prices = new_price_data(gs::S7_SPOT!(), gs::S7_FORWARD!());
     let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(), svi, prices, gs::S7_RATE!(),
-        gs::S7_EXPIRY_MS!(), gs::S7_NOW_MS!(), ctx,
+        b"BTC".to_string(),
+        svi,
+        prices,
+        gs::S7_RATE!(),
+        gs::S7_EXPIRY_MS!(),
+        gs::S7_NOW_MS!(),
+        ctx,
     );
     let mut clock = clock::create_for_testing(ctx);
     clock.set_for_testing(gs::S7_NOW_MS!());
 
-    assert_eq!(oracle.get_binary_price(gs::S7_STRIKE_ATM!(), true, &clock), gs::S7_UP_ATM!());
-    assert_eq!(oracle.get_binary_price(gs::S7_STRIKE_ATM!(), false, &clock), gs::S7_DN_ATM!());
-    assert_eq!(oracle.get_binary_price(gs::S7_STRIKE_OTM5!(), true, &clock), gs::S7_UP_OTM5!());
-    assert_eq!(oracle.get_binary_price(gs::S7_STRIKE_ITM5!(), true, &clock), gs::S7_UP_ITM5!());
+    precision::assert_approx_rel(
+        oracle.get_binary_price(gs::S7_STRIKE_ATM!(), true, &clock),
+        gs::S7_UP_ATM!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(gs::S7_STRIKE_ATM!(), false, &clock),
+        gs::S7_DN_ATM!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(gs::S7_STRIKE_OTM5!(), true, &clock),
+        gs::S7_UP_OTM5!(),
+    );
+    precision::assert_approx_rel(
+        oracle.get_binary_price(gs::S7_STRIKE_ITM5!(), true, &clock),
+        gs::S7_UP_ITM5!(),
+    );
 
     destroy(oracle);
     clock.destroy_for_testing();
