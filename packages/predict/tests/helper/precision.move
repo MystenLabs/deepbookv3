@@ -43,15 +43,15 @@ public fun assert_approx_rel(actual: u64, expected: u64) {
     assert!(diff * 200_000 <= expected, 0);
 }
 
-/// Assert that `actual` is within `max_diff` units of `expected`.
+/// Assert that `actual` is within 1 unit of `expected`.
 /// Use for end-to-end outcomes (mint cost, redeem payout) where
 /// values are at 1e6 USDC scale — the 1e9→1e6 scaling absorbs
 /// math layer error, so only 1 unit of absolute tolerance is needed.
-public fun assert_approx_abs(actual: u64, expected: u64, max_diff: u64) {
+public fun assert_approx_abs(actual: u64, expected: u64) {
     let diff = if (actual > expected) {
         actual - expected
     } else {
         expected - actual
     };
-    assert!(diff <= max_diff);
+    assert!(diff <= 1);
 }

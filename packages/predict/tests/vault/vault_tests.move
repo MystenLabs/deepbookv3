@@ -750,7 +750,7 @@ fun mtm_live_oracle_s0_atm() {
         &clock,
         ctx,
     );
-    precision::assert_approx_abs(vault::total_mtm(&v), gs::S0_MTM_UP_ATM!(), 1);
+    precision::assert_approx_abs(vault::total_mtm(&v), gs::S0_MTM_UP_ATM!());
 
     vault::insert_position(
         &mut v,
@@ -763,7 +763,7 @@ fun mtm_live_oracle_s0_atm() {
     );
     // Total MTM = UP mtm + DN mtm (different directions at same strike)
     let expected_total = gs::S0_MTM_UP_ATM!() + gs::S0_MTM_DN_ATM!();
-    precision::assert_approx_abs(vault::total_mtm(&v), expected_total, 2);
+    precision::assert_approx_abs(vault::total_mtm(&v), expected_total);
 
     destroy(v);
     destroy(oracle);
@@ -808,7 +808,7 @@ fun mtm_live_oracle_s0_otm_itm() {
         &clock,
         ctx,
     );
-    precision::assert_approx_abs(vault::total_mtm(&v), gs::S0_MTM_UP_OTM10!(), 1);
+    precision::assert_approx_abs(vault::total_mtm(&v), gs::S0_MTM_UP_OTM10!());
 
     destroy(v);
     destroy(oracle);
@@ -852,7 +852,7 @@ fun mtm_live_oracle_s6_near_expiry() {
         &clock,
         ctx,
     );
-    precision::assert_approx_abs(vault::total_mtm(&v), gs::S6_MTM_UP_ATM!(), 1);
+    precision::assert_approx_abs(vault::total_mtm(&v), gs::S6_MTM_UP_ATM!());
 
     destroy(v);
     destroy(oracle);
@@ -897,7 +897,7 @@ fun mtm_live_oracle_s7_extreme_near_expiry() {
         &clock,
         ctx,
     );
-    precision::assert_approx_abs(vault::total_mtm(&v), gs::S7_MTM_UP_ATM!(), 1);
+    precision::assert_approx_abs(vault::total_mtm(&v), gs::S7_MTM_UP_ATM!());
 
     // ITM UP — should be very high probability near expiry
     vault::remove_position(
@@ -917,7 +917,7 @@ fun mtm_live_oracle_s7_extreme_near_expiry() {
         &clock,
         ctx,
     );
-    precision::assert_approx_abs(vault::total_mtm(&v), gs::S7_MTM_UP_ITM10!(), 1);
+    precision::assert_approx_abs(vault::total_mtm(&v), gs::S7_MTM_UP_ITM10!());
 
     destroy(v);
     destroy(oracle);

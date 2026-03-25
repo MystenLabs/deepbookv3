@@ -116,7 +116,7 @@ fun run_sequence(steps: vector<TradeStep>, num_trades: u64) {
                 scenario.ctx(),
             );
             let cost = balance_before - manager.balance<SUI>();
-            precision::assert_approx_abs(cost, step.expected_trade_amount(), 1);
+            precision::assert_approx_abs(cost, step.expected_trade_amount());
         } else {
             let balance_before = manager.balance<SUI>();
             predict.redeem(
@@ -128,7 +128,7 @@ fun run_sequence(steps: vector<TradeStep>, num_trades: u64) {
                 scenario.ctx(),
             );
             let payout = manager.balance<SUI>() - balance_before;
-            precision::assert_approx_abs(payout, step.expected_trade_amount(), 1);
+            precision::assert_approx_abs(payout, step.expected_trade_amount());
         };
 
         i = i + 1;

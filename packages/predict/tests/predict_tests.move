@@ -713,8 +713,8 @@ fun mint_cost_realworld_m0_atm_up() {
         gs::M0_ATM_UP_QUANTITY!(),
         &clock,
     );
-    precision::assert_approx_abs(mint_cost, gs::M0_ATM_UP_COST!(), 1);
-    precision::assert_approx_abs(redeem_payout, gs::M0_ATM_UP_REDEEM_PAYOUT!(), 1);
+    precision::assert_approx_abs(mint_cost, gs::M0_ATM_UP_COST!());
+    precision::assert_approx_abs(redeem_payout, gs::M0_ATM_UP_REDEEM_PAYOUT!());
 
     destroy(predict);
     destroy(oracle);
@@ -749,8 +749,8 @@ fun mint_cost_realworld_m0_atm_dn() {
         gs::M0_ATM_DN_QUANTITY!(),
         &clock,
     );
-    precision::assert_approx_abs(mint_cost, gs::M0_ATM_DN_COST!(), 1);
-    precision::assert_approx_abs(redeem_payout, gs::M0_ATM_DN_REDEEM_PAYOUT!(), 1);
+    precision::assert_approx_abs(mint_cost, gs::M0_ATM_DN_COST!());
+    precision::assert_approx_abs(redeem_payout, gs::M0_ATM_DN_REDEEM_PAYOUT!());
 
     destroy(predict);
     destroy(oracle);
@@ -785,8 +785,8 @@ fun mint_cost_realworld_m0_otm_up() {
         gs::M0_OTM_UP_QUANTITY!(),
         &clock,
     );
-    precision::assert_approx_abs(mint_cost, gs::M0_OTM_UP_COST!(), 1);
-    precision::assert_approx_abs(redeem_payout, gs::M0_OTM_UP_REDEEM_PAYOUT!(), 1);
+    precision::assert_approx_abs(mint_cost, gs::M0_OTM_UP_COST!());
+    precision::assert_approx_abs(redeem_payout, gs::M0_OTM_UP_REDEEM_PAYOUT!());
 
     destroy(predict);
     destroy(oracle);
@@ -821,8 +821,8 @@ fun mint_cost_realworld_m0_itm_up() {
         gs::M0_ITM_UP_QUANTITY!(),
         &clock,
     );
-    precision::assert_approx_abs(mint_cost, gs::M0_ITM_UP_COST!(), 1);
-    precision::assert_approx_abs(redeem_payout, gs::M0_ITM_UP_REDEEM_PAYOUT!(), 1);
+    precision::assert_approx_abs(mint_cost, gs::M0_ITM_UP_COST!());
+    precision::assert_approx_abs(redeem_payout, gs::M0_ITM_UP_REDEEM_PAYOUT!());
 
     destroy(predict);
     destroy(oracle);
@@ -858,8 +858,8 @@ fun mint_cost_realworld_m5_atm_up() {
         gs::M5_ATM_UP_QUANTITY!(),
         &clock,
     );
-    precision::assert_approx_abs(mint_cost, gs::M5_ATM_UP_COST!(), 1);
-    precision::assert_approx_abs(redeem_payout, gs::M5_ATM_UP_REDEEM_PAYOUT!(), 1);
+    precision::assert_approx_abs(mint_cost, gs::M5_ATM_UP_COST!());
+    precision::assert_approx_abs(redeem_payout, gs::M5_ATM_UP_REDEEM_PAYOUT!());
 
     destroy(predict);
     destroy(oracle);
@@ -895,8 +895,8 @@ fun mint_cost_realworld_m6_atm_up() {
         gs::M6_ATM_UP_QUANTITY!(),
         &clock,
     );
-    precision::assert_approx_abs(mint_cost, gs::M6_ATM_UP_COST!(), 1);
-    precision::assert_approx_abs(redeem_payout, gs::M6_ATM_UP_REDEEM_PAYOUT!(), 1);
+    precision::assert_approx_abs(mint_cost, gs::M6_ATM_UP_COST!());
+    precision::assert_approx_abs(redeem_payout, gs::M6_ATM_UP_REDEEM_PAYOUT!());
 
     destroy(predict);
     destroy(oracle);
@@ -932,8 +932,8 @@ fun mint_cost_realworld_m7_atm_up() {
         gs::M7_ATM_UP_QUANTITY!(),
         &clock,
     );
-    precision::assert_approx_abs(mint_cost, gs::M7_ATM_UP_COST!(), 1);
-    precision::assert_approx_abs(redeem_payout, gs::M7_ATM_UP_REDEEM_PAYOUT!(), 1);
+    precision::assert_approx_abs(mint_cost, gs::M7_ATM_UP_COST!());
+    precision::assert_approx_abs(redeem_payout, gs::M7_ATM_UP_REDEEM_PAYOUT!());
 
     destroy(predict);
     destroy(oracle);
