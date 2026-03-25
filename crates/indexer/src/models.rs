@@ -739,6 +739,27 @@ pub mod deepbook_margin {
             pub timestamp: u64,
         }
 
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct CurrentPriceUpdated {
+            pub pool_id: ObjectID,
+            pub price: u64,
+            pub timestamp: u64,
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct PriceToleranceUpdated {
+            pub pool_id: ObjectID,
+            pub tolerance: u64,
+            pub timestamp: u64,
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct MaxPriceAgeUpdated {
+            pub pool_id: ObjectID,
+            pub max_age_ms: u64,
+            pub timestamp: u64,
+        }
+
         impl MoveStruct for RiskRatios {
             const MODULE: &'static str = "margin_registry";
             const NAME: &'static str = "RiskRatios";
@@ -772,6 +793,21 @@ pub mod deepbook_margin {
         impl MoveStruct for PauseCapUpdated {
             const MODULE: &'static str = "margin_registry";
             const NAME: &'static str = "PauseCapUpdated";
+        }
+
+        impl MoveStruct for CurrentPriceUpdated {
+            const MODULE: &'static str = "margin_registry";
+            const NAME: &'static str = "CurrentPriceUpdated";
+        }
+
+        impl MoveStruct for PriceToleranceUpdated {
+            const MODULE: &'static str = "margin_registry";
+            const NAME: &'static str = "PriceToleranceUpdated";
+        }
+
+        impl MoveStruct for MaxPriceAgeUpdated {
+            const MODULE: &'static str = "margin_registry";
+            const NAME: &'static str = "MaxPriceAgeUpdated";
         }
     }
 

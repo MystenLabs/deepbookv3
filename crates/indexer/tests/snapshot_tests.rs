@@ -5,6 +5,7 @@ use deepbook_indexer::handlers::asset_withdrawn_handler::AssetWithdrawnHandler;
 use deepbook_indexer::handlers::balance_manager_event_handler::BalanceManagerEventHandler;
 use deepbook_indexer::handlers::balances_handler::BalancesHandler;
 use deepbook_indexer::handlers::book_params_updated_handler::BookParamsUpdatedHandler;
+use deepbook_indexer::handlers::current_price_updated_handler::CurrentPriceUpdatedHandler;
 use deepbook_indexer::handlers::deep_burned_handler::DeepBurnedHandler;
 use deepbook_indexer::handlers::deepbook_pool_config_updated_handler::DeepbookPoolConfigUpdatedHandler;
 use deepbook_indexer::handlers::deepbook_pool_registered_handler::DeepbookPoolRegisteredHandler;
@@ -23,11 +24,13 @@ use deepbook_indexer::handlers::maintainer_fees_withdrawn_handler::MaintainerFee
 use deepbook_indexer::handlers::margin_manager_created_handler::MarginManagerCreatedHandler;
 use deepbook_indexer::handlers::margin_pool_config_updated_handler::MarginPoolConfigUpdatedHandler;
 use deepbook_indexer::handlers::margin_pool_created_handler::MarginPoolCreatedHandler;
+use deepbook_indexer::handlers::max_price_age_updated_handler::MaxPriceAgeUpdatedHandler;
 use deepbook_indexer::handlers::order_fill_handler::OrderFillHandler;
 use deepbook_indexer::handlers::order_update_handler::OrderUpdateHandler;
 use deepbook_indexer::handlers::pause_cap_updated_handler::PauseCapUpdatedHandler;
 use deepbook_indexer::handlers::pool_created_handler::PoolCreatedHandler;
 use deepbook_indexer::handlers::pool_price_handler::PoolPriceHandler;
+use deepbook_indexer::handlers::price_tolerance_updated_handler::PriceToleranceUpdatedHandler;
 use deepbook_indexer::handlers::protocol_fees_increased_handler::ProtocolFeesIncreasedHandler;
 use deepbook_indexer::handlers::protocol_fees_withdrawn_handler::ProtocolFeesWithdrawnHandler;
 use deepbook_indexer::handlers::referral_claimed_handler::ReferralClaimedHandler;
@@ -315,6 +318,34 @@ async fn deepbook_pool_config_updated_test() -> Result<(), anyhow::Error> {
         ["deepbook_pool_config_updated"],
     )
     .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn current_price_updated_test() -> Result<(), anyhow::Error> {
+    let handler = CurrentPriceUpdatedHandler::new(DeepbookEnv::Mainnet);
+    data_test("current_price_updated", handler, ["current_price_updated"]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore] // Event not emitted yet
+async fn price_tolerance_updated_test() -> Result<(), anyhow::Error> {
+    let handler = PriceToleranceUpdatedHandler::new(DeepbookEnv::Testnet);
+    data_test(
+        "price_tolerance_updated",
+        handler,
+        ["price_tolerance_updated"],
+    )
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+#[ignore] // Event not emitted yet
+async fn max_price_age_updated_test() -> Result<(), anyhow::Error> {
+    let handler = MaxPriceAgeUpdatedHandler::new(DeepbookEnv::Testnet);
+    data_test("max_price_age_updated", handler, ["max_price_age_updated"]).await?;
     Ok(())
 }
 
