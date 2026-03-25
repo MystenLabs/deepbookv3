@@ -8,6 +8,7 @@ module deepbook_predict::generated_predict;
 
 // === Mint pricing scenarios from real Block Scholes data ===
 // Same snapshots as oracle scenarios, with spread + cost calculations.
+// Prices filtered to quote bounds [0.001, 0.999]
 // Default config: base_spread=0.02, min_spread=0.005, util_mult=2.0
 
 // --- M0: spot=70770.30, forward=70782.88, tte=7.0d ---

@@ -27,20 +27,20 @@
 #[test_only]
 module deepbook_predict::precision;
 
-/// Assert that `actual` is within 0.001% of `expected`.
+/// Assert that `actual` is within 0.0005% of `expected`.
 /// Use for math primitives (ln, exp, cdf) and oracle pricing
 /// where values are at 1e9 scale.
 ///
-/// 0.001% = 1 / 100_000, so we check: diff * 100_000 <= expected.
-/// At expected=500_000_000 this allows a gap of up to 5_000 units,
-/// which is well above the observed max of 74.
+/// 0.0005% = 1 / 200_000, so we check: diff * 200_000 <= expected.
+/// At expected=500_000_000 this allows a gap of up to 2_500 units.
+/// Observed max gap is ~70 units (at PHI(-2) = 22,750,131).
 public fun assert_approx_rel(actual: u64, expected: u64) {
     let diff = if (actual > expected) {
         actual - expected
     } else {
         expected - actual
     };
-    assert!(diff * 100_000 <= expected, 0);
+    assert!(diff * 200_000 <= expected, 0);
 }
 
 /// Assert that `actual` is within `max_diff` units of `expected`.

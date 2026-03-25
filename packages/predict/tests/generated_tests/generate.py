@@ -713,6 +713,7 @@ def generate_oracle_scenarios(w: MoveWriter, snapshots, svi_rows, expiry_ms):
 def generate_mint_scenarios(w: MoveWriter, snapshots, svi_rows, expiry_ms):
     w.section("Mint pricing scenarios from real Block Scholes data")
     w.comment("Same snapshots as oracle scenarios, with spread + cost calculations.")
+    w.comment(f"Prices filtered to quote bounds [{MIN_QUOTE_PRICE}, {MAX_QUOTE_PRICE}]")
     w.comment(
         f"Default config: base_spread={DEFAULT_BASE_SPREAD}, "
         f"min_spread={DEFAULT_MIN_SPREAD}, util_mult={DEFAULT_UTIL_MULTIPLIER}"
@@ -754,6 +755,10 @@ def generate_mint_scenarios(w: MoveWriter, snapshots, svi_rows, expiry_ms):
                 vault_liability, vault_balance,
             )
             total_spread = spread + util_spr
+            # Skip strikes where price falls outside quotable range
+            if price < MIN_QUOTE_PRICE or price > MAX_QUOTE_PRICE:
+                continue
+
             ask = min(1.0, price + total_spread)
             bid = max(0.0, price - total_spread)
             cost = ask * quantity
