@@ -9,12 +9,6 @@ use std::unit_test::{destroy, assert_eq};
 
 const FLOAT: u64 = 1_000_000_000;
 
-/// Assert that `actual` is within `tolerance` of `expected`.
-fun assert_approx(actual: u64, expected: u64, tolerance: u64) {
-    let diff = if (actual >= expected) { actual - expected } else { expected - actual };
-    assert!(diff <= tolerance);
-}
-
 // === Insert & Size ===
 
 #[test]
@@ -61,6 +55,9 @@ fun insert_same_strike_accumulates() {
     t.insert(50 * FLOAT, 10 * FLOAT, true);
     t.insert(50 * FLOAT, 7 * FLOAT, true);
     assert_eq!(t.size(), 1);
+    let (q_up, q_dn) = t.quantities(50 * FLOAT);
+    assert_eq!(q_up, 17 * FLOAT);
+    assert_eq!(q_dn, 0);
 
     destroy(t);
 }
@@ -130,8 +127,10 @@ fun remove_partial_quantity() {
 
     t.insert(50 * FLOAT, 10 * FLOAT, true);
     t.remove(50 * FLOAT, 3 * FLOAT, true);
-    // Node still exists (7 * FLOAT remaining)
     assert_eq!(t.size(), 1);
+    let (q_up, q_dn) = t.quantities(50 * FLOAT);
+    assert_eq!(q_up, 7 * FLOAT);
+    assert_eq!(q_dn, 0);
 
     destroy(t);
 }
@@ -159,6 +158,9 @@ fun remove_one_direction_keeps_node() {
     t.remove(50 * FLOAT, 10 * FLOAT, true);
     // DN quantity remains — node should still exist
     assert_eq!(t.size(), 1);
+    let (q_up, q_dn) = t.quantities(50 * FLOAT);
+    assert_eq!(q_up, 0);
+    assert_eq!(q_dn, 5 * FLOAT);
 
     destroy(t);
 }
@@ -628,10 +630,11 @@ fun evaluate_interpolated_midpoint() {
         new_curve_point(60 * FLOAT, 400_000_000, 600_000_000),
     ];
 
-    // Interpolated UP at 50 = 0.8 - (0.8 - 0.4) * 10/20 = 0.6
-    // value = 10 * 0.6 = 6 FLOAT
+    // interp_at: offset=10*F, range=20*F, ratio=div(10*F,20*F)=500_000_000
+    // p_lo=800M > p_hi=400M: 800M - mul(400M, 500M) = 800M - 200M = 600M
+    // value = mul(10*F, 600M) = 6*F
     let value = t.evaluate(&curve);
-    assert_approx(value, 6 * FLOAT, 1);
+    assert_eq!(value, 6 * FLOAT);
 
     destroy(t);
 }
@@ -650,10 +653,11 @@ fun evaluate_interpolated_off_center() {
         new_curve_point(60 * FLOAT, 400_000_000, 600_000_000),
     ];
 
-    // UP at 47 = 0.8 - (0.8 - 0.4) * 7/20 = 0.8 - 0.14 = 0.66
-    // value = 10 * 0.66 = 6.6 FLOAT
+    // interp_at: offset=7*F, range=20*F, ratio=div(7*F,20*F)=350_000_000
+    // 800M - mul(400M, 350M) = 800M - 140M = 660M
+    // value = mul(10*F, 660M) = 6_600_000_000
     let value = t.evaluate(&curve);
-    assert_approx(value, 6_600_000_000, 1);
+    assert_eq!(value, 6_600_000_000);
 
     destroy(t);
 }
@@ -671,10 +675,11 @@ fun evaluate_interpolated_dn_direction() {
         new_curve_point(60 * FLOAT, 400_000_000, 600_000_000),
     ];
 
-    // DN at 50 = 0.2 + (0.6 - 0.2) * 10/20 = 0.4
-    // value = 8 * 0.4 = 3.2 FLOAT
+    // interp_at DN: offset=10*F, range=20*F, ratio=500M
+    // p_lo=200M < p_hi=600M: 200M + mul(400M, 500M) = 200M + 200M = 400M
+    // value = mul(8*F, 400M) = 3_200_000_000
     let value = t.evaluate(&curve);
-    assert_approx(value, 3_200_000_000, 1);
+    assert_eq!(value, 3_200_000_000);
 
     destroy(t);
 }
@@ -697,11 +702,13 @@ fun evaluate_interpolated_multi_segment_curve() {
         new_curve_point(80 * FLOAT, 200_000_000, 800_000_000),
     ];
 
-    // UP at 35 = 0.9 - (0.9 - 0.5) * 5/20 = 0.9 - 0.1 = 0.8
-    // UP at 75 = 0.5 - (0.5 - 0.2) * 25/30 = 0.5 - 0.25 = 0.25
-    // value = 10 * 0.8 + 10 * 0.25 = 8 + 2.5 = 10.5 FLOAT
+    // Node 35: ratio=div(5*F,20*F)=250M. 900M - mul(400M,250M) = 800M.
+    //   val = mul(10*F, 800M) = 8_000_000_000
+    // Node 75: ratio=div(25*F,30*F)=833_333_333. mul(300M,833_333_333)=249_999_999.
+    //   price = 500M - 249_999_999 = 250_000_001. val = mul(10*F, 250_000_001) = 2_500_000_010
+    // total = 8_000_000_000 + 2_500_000_010 = 10_500_000_010
     let value = t.evaluate(&curve);
-    assert_approx(value, 10_500_000_000, 100);
+    assert_eq!(value, 10_500_000_010);
 
     destroy(t);
 }
@@ -720,10 +727,11 @@ fun evaluate_interpolated_both_directions_sloped() {
         new_curve_point(60 * FLOAT, 300_000_000, 700_000_000),
     ];
 
-    // At midpoint 50: UP = 0.5, DN = 0.5
-    // value = 10 * 0.5 + 10 * 0.5 = 10 FLOAT
+    // interp_at: midpoint ratio=500M
+    // UP: 700M - mul(400M, 500M) = 500M. DN: 300M + mul(400M, 500M) = 500M.
+    // value = mul(10*F, 500M) + mul(10*F, 500M) = 5*F + 5*F = 10*F
     let value = t.evaluate(&curve);
-    assert_approx(value, 10 * FLOAT, 1);
+    assert_eq!(value, 10 * FLOAT);
 
     destroy(t);
 }
@@ -746,14 +754,15 @@ fun evaluate_many_positions_sloped_curve() {
         new_curve_point(110 * FLOAT, 100_000_000, 900_000_000),
     ];
 
-    // UP at 20 = 0.9 - 0.8 * 10/100 = 0.82
-    // UP at 40 = 0.9 - 0.8 * 30/100 = 0.66
-    // UP at 60 = 0.9 - 0.8 * 50/100 = 0.50
-    // UP at 80 = 0.9 - 0.8 * 70/100 = 0.34
-    // UP at 100 = 0.9 - 0.8 * 90/100 = 0.18
-    // value = 2 * (0.82 + 0.66 + 0.50 + 0.34 + 0.18) = 2 * 2.50 = 5.0 FLOAT
+    // No interior curve points (only 2 curve points, both outside strike range),
+    // so treap uses aggregates:
+    // agg_q_up = 10*F, agg_qk_up = sum of mul(2*F, strike) for each strike
+    // k_avg = div(agg_qk_up, agg_q_up) = 60*F (weighted average strike)
+    // interp_at: offset=50*F, range=100*F, ratio=div(50*F,100*F)=500M
+    // 900M - mul(800M, 500M) = 900M - 400M = 500M
+    // value = mul(10*F, 500M) = 5*F
     let value = t.evaluate(&curve);
-    assert_approx(value, 5 * FLOAT, 5);
+    assert_eq!(value, 5 * FLOAT);
 
     destroy(t);
 }

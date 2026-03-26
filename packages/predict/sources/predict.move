@@ -397,6 +397,31 @@ public(package) fun create<Quote>(ctx: &mut TxContext): ID {
     predict_id
 }
 
+/// Whether trading is currently paused.
+public fun trading_paused<Quote>(predict: &Predict<Quote>): bool {
+    predict.trading_paused
+}
+
+/// Get the base spread.
+public fun base_spread<Quote>(predict: &Predict<Quote>): u64 {
+    predict.pricing_config.base_spread()
+}
+
+/// Get the min spread.
+public fun min_spread<Quote>(predict: &Predict<Quote>): u64 {
+    predict.pricing_config.min_spread()
+}
+
+/// Get the utilization multiplier.
+public fun utilization_multiplier<Quote>(predict: &Predict<Quote>): u64 {
+    predict.pricing_config.utilization_multiplier()
+}
+
+/// Get the max total exposure percentage.
+public fun max_total_exposure_pct<Quote>(predict: &Predict<Quote>): u64 {
+    predict.risk_config.max_total_exposure_pct()
+}
+
 /// Set trading pause state.
 public(package) fun set_trading_paused<Quote>(predict: &mut Predict<Quote>, paused: bool) {
     predict.trading_paused = paused;

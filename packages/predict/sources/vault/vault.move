@@ -126,6 +126,13 @@ public(package) fun assert_total_exposure<Quote>(vault: &Vault<Quote>, max_total
 fun refresh_oracle_risk<Quote>(vault: &mut Vault<Quote>, oracle: &OracleSVI, clock: &Clock) {
     let oracle_id = oracle.id();
     let treap = &vault.oracle_treaps[oracle_id];
+    if (treap.is_empty()) {
+        let old_mtm = treap.mtm();
+        let treap = &mut vault.oracle_treaps[oracle_id];
+        treap.set_mtm(0);
+        vault.total_mtm = vault.total_mtm - old_mtm;
+        return
+    };
     let (min_strike, max_strike) = treap.strike_range();
     let curve = oracle.build_curve(min_strike, max_strike, clock);
     let old_mtm = treap.mtm();

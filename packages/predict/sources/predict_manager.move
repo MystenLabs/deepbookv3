@@ -66,6 +66,11 @@ public fun position(self: &PredictManager, key: MarketKey): (u64, u64) {
     }
 }
 
+/// Get the balance of a specific coin type in the PredictManager.
+public fun balance<T>(self: &PredictManager): u64 {
+    self.balance_manager.balance<T>()
+}
+
 /// Deposit coins into the PredictManager.
 public fun deposit<T>(self: &mut PredictManager, coin: Coin<T>, ctx: &TxContext) {
     assert!(ctx.sender() == self.owner, EInvalidOwner);
