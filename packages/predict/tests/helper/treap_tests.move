@@ -707,6 +707,8 @@ fun evaluate_interpolated_multi_segment_curve() {
     // Node 75: ratio=div(25*F,30*F)=833_333_333. mul(300M,833_333_333)=249_999_999.
     //   price = 500M - 249_999_999 = 250_000_001. val = mul(10*F, 250_000_001) = 2_500_000_010
     // total = 8_000_000_000 + 2_500_000_010 = 10_500_000_010
+    // Note: +10 offset vs clean 10_500_000_000 is from cascading floor divisions in
+    // math::div and math::mul during interpolation (~1 ppb, sub-dust and non-exploitable).
     let value = t.evaluate(&curve);
     assert_eq!(value, 10_500_000_010);
 
