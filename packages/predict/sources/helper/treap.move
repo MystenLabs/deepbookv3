@@ -131,6 +131,14 @@ public(package) fun is_empty(self: &Treap): bool {
     self.root.is_none()
 }
 
+#[test_only]
+/// Get (q_up, q_dn) at a given strike. Returns (0, 0) if not found.
+public(package) fun quantities(self: &Treap, strike: u64): (u64, u64) {
+    if (!self.nodes.contains(strike)) return (0, 0);
+    let node = self.nodes[strike];
+    (node.q_up, node.q_dn)
+}
+
 // === Private: Insert ===
 
 /// Recursive insert. Returns new subtree root strike.

@@ -11,6 +11,8 @@ use sui::table::{Self, Table};
 const EZeroAmount: u64 = 0;
 const EInsufficientShares: u64 = 1;
 const EZeroVaultValue: u64 = 2;
+const EZeroSharesMinted: u64 = 3;
+const EZeroSharesBurned: u64 = 4;
 
 public struct SupplyManager has store {
     /// Total shares outstanding across all suppliers
@@ -64,6 +66,7 @@ public(package) fun supply(
         assert!(vault_value > 0, EZeroVaultValue);
         mul_div_round_down(amount, self.total_shares, vault_value)
     };
+    assert!(shares > 0, EZeroSharesMinted);
 
     self.total_shares = self.total_shares + shares;
 
@@ -92,6 +95,7 @@ public(package) fun withdraw(
     assert!(vault_value > 0, EZeroVaultValue);
 
     let shares = mul_div_round_up(amount, self.total_shares, vault_value);
+    assert!(shares > 0, EZeroSharesBurned);
     let user = &mut self.user_shares[sender];
     assert!(*user >= shares, EInsufficientShares);
 
