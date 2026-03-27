@@ -194,76 +194,85 @@ def compute_cdf(input_scaled: int, is_negative: bool) -> int:
 # ====================================================================
 
 
-def random_ln_inputs(rng: random.Random, n: int) -> list[int]:
+def random_ln_inputs(rng: random.Random, n: int, existing: list[int]) -> list[int]:
     """Log-uniform sample across [FLOAT_SCALING, u64_max] for ln, biased toward small inputs.
 
     Sub-FLOAT inputs (negative ln domain) are covered by handpicked edge cases.
-    Random sampling starts at 10^0 = 1.0 to avoid duplicating input=1.
+    Skips duplicates of existing or previously generated inputs.
     """
-    cases = []
-    for _ in range(n):
-        # Bias toward small: square a uniform [0,1] then scale to exponent range
-        t = rng.random() ** 2  # concentrated near 0
+    cases = list(existing)
+    while len(cases) < len(existing) + n:
+        t = rng.random() ** 2
         exp = t * LN_EXP_MAX
         x = min(U64_MAX, max(FLOAT_SCALING, int(10 ** exp)))
-        cases.append(x)
-    return cases
+        if x not in cases:
+            cases.append(x)
+    return cases[len(existing):]
 
 
-def random_exp_inputs(rng: random.Random, n: int) -> list[tuple[int, bool]]:
-    """Random exp inputs, biased toward small values. Skips trivial zero results.
+def random_exp_inputs(rng: random.Random, n: int, existing: list[tuple[int, bool]]) -> list[tuple[int, bool]]:
+    """Random exp inputs, biased toward small values.
 
     Positive: biased sample in [0, MAX_EXP_INPUT].
-    Negative: biased sample, retrying if result would be 0.
+    Negative: biased sample, skips if result would be 0.
+    Skips duplicates.
     """
-    cases = []
+    cases = list(existing)
     half = n // 2
+    pos_added = 0
+    neg_added = 0
 
-    # Positive: all inputs in range produce nonzero results
-    for _ in range(half):
+    while pos_added + neg_added < n:
         t = rng.random() ** 2
-        x = int(t * MAX_EXP_INPUT)
-        cases.append((x, False))
+        if pos_added < half:
+            entry = (int(t * MAX_EXP_INPUT), False)
+            if entry not in cases:
+                cases.append(entry)
+                pos_added += 1
+        else:
+            x = int(t * EXP_NEG_MAX)
+            entry = (x, True)
+            if entry not in cases and compute_exp(x, True) > 0:
+                cases.append(entry)
+                neg_added += 1
 
-    # Negative: skip inputs where exp(-x) rounds to 0
-    attempts = 0
-    while len(cases) < n and attempts < n * 10:
-        attempts += 1
-        t = rng.random() ** 2
-        x = int(t * EXP_NEG_MAX)  # same range as positive, biased toward 0
-        expected = compute_exp(x, True)
-        if expected > 0:
-            cases.append((x, True))
-
-    return cases
-
-
-def random_exp_overflow_inputs(rng: random.Random, n: int) -> list[int]:
-    """Random inputs above MAX_EXP_INPUT that must abort."""
-    return [rng.randint(MAX_EXP_INPUT + 1, U64_MAX) for _ in range(n)]
+    return cases[len(existing):]
 
 
-def random_cdf_inputs(rng: random.Random, n: int) -> list[tuple[int, bool]]:
-    """Random CDF inputs, biased toward small values. Skips trivial 0/FLOAT results.
+def random_exp_overflow_inputs(rng: random.Random, n: int, existing: list[int]) -> list[int]:
+    """Random inputs above MAX_EXP_INPUT that must abort. Skips duplicates."""
+    cases = list(existing)
+    while len(cases) < len(existing) + n:
+        x = rng.randint(MAX_EXP_INPUT + 1, U64_MAX)
+        if x not in cases:
+            cases.append(x)
+    return cases[len(existing):]
+
+
+def random_cdf_inputs(rng: random.Random, n: int, existing: list[tuple[int, bool]]) -> list[tuple[int, bool]]:
+    """Random CDF inputs, biased toward small values.
 
     Samples in [0, 8*FLOAT] (the polynomial range). Inputs beyond 8*FLOAT
-    are covered by edge cases.
+    are covered by edge cases. Skips trivial 0/FLOAT results and duplicates.
     """
-    cases = []
+    cases = list(existing)
     half = n // 2
-    attempts = 0
-    while len(cases) < n and attempts < n * 10:
-        attempts += 1
+    added = 0
+
+    while added < n:
         t = rng.random() ** 2
         x = int(t * CDF_RAND_MAX)
-        is_neg = len(cases) >= half
+        is_neg = added >= half
+        entry = (x, is_neg)
+        if entry in cases:
+            continue
         expected = compute_cdf(x, is_neg)
-        # Skip trivial clamp results
         if expected < 1_000 or expected > FLOAT_SCALING - 1_000:
             continue
-        cases.append((x, is_neg))
+        cases.append(entry)
+        added += 1
 
-    return cases
+    return cases[len(existing):]
 
 
 # ====================================================================
@@ -408,11 +417,18 @@ def emit_cdf_vector(w: MoveWriter, cases: list[tuple[int, bool]]):
 def main():
     rng = random.Random(SEED)
 
-    # Build vectors: handpicked + edge cases + random
-    ln_cases = LN_HANDPICKED + LN_EDGE_CASES + random_ln_inputs(rng, N_RANDOM_PER_FUNCTION)
-    exp_cases = EXP_HANDPICKED + EXP_EDGE_CASES + random_exp_inputs(rng, N_RANDOM_PER_FUNCTION)
-    exp_overflow = EXP_OVERFLOW_HANDPICKED + random_exp_overflow_inputs(rng, 16)
-    cdf_cases = CDF_HANDPICKED + CDF_EDGE_CASES + random_cdf_inputs(rng, N_RANDOM_PER_FUNCTION)
+    # Build vectors: handpicked + edge cases + random (deduped)
+    ln_fixed = LN_HANDPICKED + LN_EDGE_CASES
+    ln_cases = ln_fixed + random_ln_inputs(rng, N_RANDOM_PER_FUNCTION, ln_fixed)
+
+    exp_fixed = EXP_HANDPICKED + EXP_EDGE_CASES
+    exp_cases = exp_fixed + random_exp_inputs(rng, N_RANDOM_PER_FUNCTION, exp_fixed)
+
+    overflow_fixed = EXP_OVERFLOW_HANDPICKED
+    exp_overflow = overflow_fixed + random_exp_overflow_inputs(rng, 16, overflow_fixed)
+
+    cdf_fixed = CDF_HANDPICKED + CDF_EDGE_CASES
+    cdf_cases = cdf_fixed + random_cdf_inputs(rng, N_RANDOM_PER_FUNCTION, cdf_fixed)
 
     w = MoveWriter()
     w.header("generated_math")
