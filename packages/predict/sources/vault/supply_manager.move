@@ -118,7 +118,6 @@ public(package) fun withdraw_all(
     let amount = if (self.total_shares == shares) {
         vault_value
     } else {
-        assert!(vault_value > 0, EZeroVaultValue);
         mul_div_round_down(shares, vault_value, self.total_shares)
     };
 

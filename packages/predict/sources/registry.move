@@ -51,6 +51,11 @@ public struct Registry has key {
 
 // === Public Functions ===
 
+/// Get the Predict ID (None if not yet created).
+public fun predict_id(registry: &Registry): Option<ID> {
+    registry.predict_id
+}
+
 /// Get oracle IDs created by a given OracleCap.
 public fun oracle_ids(registry: &Registry, cap_id: ID): vector<ID> {
     if (registry.oracle_ids.contains(cap_id)) {

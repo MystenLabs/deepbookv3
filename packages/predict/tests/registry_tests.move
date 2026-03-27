@@ -47,7 +47,17 @@ fun init_registry_has_no_predict_id() {
     let scenario = setup();
 
     let registry = scenario.take_shared<Registry>();
-    // oracle_ids for a random cap should be empty
+    assert!(registry.predict_id().is_none());
+    test_scenario::return_shared(registry);
+
+    scenario.end();
+}
+
+#[test]
+fun init_registry_has_no_oracle_ids() {
+    let scenario = setup();
+
+    let registry = scenario.take_shared<Registry>();
     let fake_id = object::id_from_address(@0x1);
     assert_eq!(registry.oracle_ids(fake_id).length(), 0);
     test_scenario::return_shared(registry);
@@ -67,8 +77,8 @@ fun create_predict_succeeds() {
     let mut registry = scenario.take_shared<Registry>();
 
     let predict_id = registry.create_predict<SUI>(&admin_cap, scenario.ctx());
-    // predict_id should be non-zero (valid object)
-    assert!(predict_id != object::id_from_address(@0x0));
+    // Returned ID matches the one stored in registry
+    assert_eq!(registry.predict_id(), option::some(predict_id));
 
     test_scenario::return_shared(registry);
     scenario.return_to_sender(admin_cap);

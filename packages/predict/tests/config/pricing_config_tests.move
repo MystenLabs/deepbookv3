@@ -52,7 +52,7 @@ fun set_base_spread_upper_boundary() {
     destroy(config);
 }
 
-#[test, expected_failure(abort_code = pricing_config::EExceedsMaxSpread)]
+#[test, expected_failure(abort_code = pricing_config::EInvalidSpread)]
 fun set_base_spread_zero_aborts() {
     let mut config = pricing_config::new();
     config.set_base_spread(0);
@@ -60,7 +60,7 @@ fun set_base_spread_zero_aborts() {
     abort
 }
 
-#[test, expected_failure(abort_code = pricing_config::EExceedsMaxSpread)]
+#[test, expected_failure(abort_code = pricing_config::EInvalidSpread)]
 fun set_base_spread_exceeds_max_aborts() {
     let mut config = pricing_config::new();
     config.set_base_spread(FLOAT + 1);
@@ -94,7 +94,7 @@ fun set_min_spread_upper_boundary() {
     destroy(config);
 }
 
-#[test, expected_failure(abort_code = pricing_config::EExceedsMaxSpread)]
+#[test, expected_failure(abort_code = pricing_config::EInvalidSpread)]
 fun set_min_spread_exceeds_max_aborts() {
     let mut config = pricing_config::new();
     config.set_min_spread(FLOAT + 1);
