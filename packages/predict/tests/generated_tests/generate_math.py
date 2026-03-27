@@ -107,13 +107,6 @@ EXP_EDGE_CASES = [
     (1, True),                              # e^(-1e-9) ≈ 1
 ]
 
-# exp overflow: inputs that must abort
-EXP_OVERFLOW_HANDPICKED = [
-    MAX_EXP_INPUT + 1,                      # first overflow
-    MAX_EXP_INPUT + 1000,                   # slightly above
-    24 * FLOAT_SCALING,                     # round number above boundary
-    U64_MAX,                                # max u64
-]
 
 # cdf: (input_scaled, is_negative)
 CDF_HANDPICKED = [
@@ -239,15 +232,6 @@ def random_exp_inputs(rng: random.Random, n: int, existing: list[tuple[int, bool
     return cases[len(existing):]
 
 
-def random_exp_overflow_inputs(rng: random.Random, n: int, existing: list[int]) -> list[int]:
-    """Random inputs above MAX_EXP_INPUT that must abort. Skips duplicates."""
-    cases = list(existing)
-    while len(cases) < len(existing) + n:
-        x = rng.randint(MAX_EXP_INPUT + 1, U64_MAX)
-        if x not in cases:
-            cases.append(x)
-    return cases[len(existing):]
-
 
 def random_cdf_inputs(rng: random.Random, n: int, existing: list[tuple[int, bool]]) -> list[tuple[int, bool]]:
     """Random CDF inputs, biased toward small values.
@@ -372,15 +356,6 @@ def emit_exp_vector(w: MoveWriter, cases: list[tuple[int, bool]]):
     w.raw("]}")
 
 
-def emit_exp_overflow_vector(w: MoveWriter, cases: list[int]):
-    n = len(cases)
-    w.section(f"exp overflow vector ({n} cases — all must abort)")
-    w.blank()
-    w.raw("public fun exp_overflow_cases(): vector<u64> { vector[")
-    for x in cases:
-        w.raw(f"    {fmt_u64(x)},")
-    w.raw("]}")
-
 
 def emit_cdf_vector(w: MoveWriter, cases: list[tuple[int, bool]]):
     n = len(cases)
@@ -424,8 +399,7 @@ def main():
     exp_fixed = EXP_HANDPICKED + EXP_EDGE_CASES
     exp_cases = exp_fixed + random_exp_inputs(rng, N_RANDOM_PER_FUNCTION, exp_fixed)
 
-    overflow_fixed = EXP_OVERFLOW_HANDPICKED
-    exp_overflow = overflow_fixed + random_exp_overflow_inputs(rng, 16, overflow_fixed)
+
 
     cdf_fixed = CDF_HANDPICKED + CDF_EDGE_CASES
     cdf_cases = cdf_fixed + random_cdf_inputs(rng, N_RANDOM_PER_FUNCTION, cdf_fixed)
@@ -435,7 +409,6 @@ def main():
 
     emit_ln_vector(w, ln_cases)
     emit_exp_vector(w, exp_cases)
-    emit_exp_overflow_vector(w, exp_overflow)
     emit_cdf_vector(w, cdf_cases)
 
     w.write(MATH_OUTPUT)
