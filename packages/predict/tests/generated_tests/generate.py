@@ -451,16 +451,19 @@ def compute_strike_prices(
 
 
 def svi_to_move(svi: dict, rate: float) -> dict:
-    """Convert signed-float SVI params to Move-format unsigned + sign flag."""
+    """Convert signed-float SVI params to Move-format unsigned + sign flag.
+    Uses round() to avoid floating-point truncation artifacts."""
+    def to_scaled(v: float) -> int:
+        return round(abs(v) * FLOAT_SCALING)
     return {
-        "a": to_float_scaled(abs(svi["a"])),
-        "b": to_float_scaled(abs(svi["b"])),
-        "rho": to_float_scaled(abs(svi["rho"])),
+        "a": to_scaled(svi["a"]),
+        "b": to_scaled(svi["b"]),
+        "rho": to_scaled(svi["rho"]),
         "rho_neg": svi["rho"] < 0,
-        "m": to_float_scaled(abs(svi["m"])),
+        "m": to_scaled(svi["m"]),
         "m_neg": svi["m"] < 0,
-        "sigma": to_float_scaled(svi["sigma"]),
-        "rate": to_float_scaled(rate),
+        "sigma": to_scaled(svi["sigma"]),
+        "rate": to_scaled(rate),
     }
 
 
@@ -501,8 +504,6 @@ REAL_WORLD_SNAPSHOTS = [
                 "m": -0.00302, "sigma": 0.12698},
         "rate": 0.035,
         "expiry_ms": 1_773_843_002_405, "now_ms": 1_773_241_327_070,
-        "ints": {"a": 1_080_000, "b": 42_280_000, "rho": 332_660_000,
-                 "m": 3_020_000, "sigma": 126_980_000, "rate": 35_000_000},
     },
     {   # S1: ~1.2d TTE
         "spot": 74_228_286_720_000, "forward": 74_241_496_580_000,
@@ -510,8 +511,6 @@ REAL_WORLD_SNAPSHOTS = [
                 "m": -0.00416, "sigma": 0.07540},
         "rate": 0.035,
         "expiry_ms": 1_773_843_002_405, "now_ms": 1_773_735_844_810,
-        "ints": {"a": 550_000, "b": 26_870_000, "rho": 360_900_000,
-                 "m": 4_160_000, "sigma": 75_400_000, "rate": 35_000_000},
     },
     {   # S2: ~5h TTE
         "spot": 74_105_490_370_000, "forward": 74_127_848_210_000,
@@ -519,8 +518,6 @@ REAL_WORLD_SNAPSHOTS = [
                 "m": -0.01601, "sigma": 0.03118},
         "rate": 0.035,
         "expiry_ms": 1_773_843_002_405, "now_ms": 1_773_825_103_183,
-        "ints": {"a": 960_000, "b": 12_900_000, "rho": 640_610_000,
-                 "m": 16_010_000, "sigma": 31_180_000, "rate": 35_000_000},
     },
     {   # S3: ~1h TTE
         "spot": 72_385_193_560_000, "forward": 72_523_227_120_000,
@@ -528,8 +525,6 @@ REAL_WORLD_SNAPSHOTS = [
                 "m": -0.00369, "sigma": 0.05032},
         "rate": 0.035,
         "expiry_ms": 1_773_843_002_405, "now_ms": 1_773_838_922_225,
-        "ints": {"a": 1_050_000, "b": 12_360_000, "rho": 526_610_000,
-                 "m": 3_690_000, "sigma": 50_320_000, "rate": 35_000_000},
     },
     {   # S4: ~2m TTE
         "spot": 72_137_857_040_000, "forward": 72_167_958_690_000,
@@ -537,8 +532,6 @@ REAL_WORLD_SNAPSHOTS = [
                 "m": 0.00454, "sigma": 0.05436},
         "rate": 0.035,
         "expiry_ms": 1_773_843_002_405, "now_ms": 1_773_842_876_472,
-        "ints": {"a": 770_000, "b": 15_490_000, "rho": 399_060_000,
-                 "m": 4_540_000, "sigma": 54_360_000, "rate": 35_000_000},
     },
     {   # S5: ~31s TTE
         "spot": 72_137_857_040_000, "forward": 72_167_958_690_000,
@@ -546,8 +539,6 @@ REAL_WORLD_SNAPSHOTS = [
                 "m": 0.00454, "sigma": 0.05436},
         "rate": 0.035,
         "expiry_ms": 1_773_843_002_405, "now_ms": 1_773_842_971_565,
-        "ints": {"a": 770_000, "b": 15_490_000, "rho": 399_060_000,
-                 "m": 4_540_000, "sigma": 54_360_000, "rate": 35_000_000},
     },
 ]
 
@@ -642,17 +633,13 @@ def build_real_world_scenarios() -> tuple[list[dict], list[tuple[str, int]]]:
             ("ITM10", forward * 0.90),
         ]
 
-        ints = snap["ints"]
         strike_points = compute_strike_prices(
             forward, snap["svi"], snap["rate"], t, strike_specs)
 
         scenario = {
             "spot": snap["spot"],
             "forward": snap["forward"],
-            "a": ints["a"], "b": ints["b"],
-            "rho": ints["rho"], "rho_neg": snap["svi"]["rho"] < 0,
-            "m": ints["m"], "m_neg": snap["svi"]["m"] < 0,
-            "sigma": ints["sigma"], "rate": ints["rate"],
+            **svi_to_move(snap["svi"], snap["rate"]),
             "expiry_ms": snap["expiry_ms"],
             "now_ms": snap["now_ms"],
             "strike_points": strike_points,

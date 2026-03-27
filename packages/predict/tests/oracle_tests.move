@@ -133,7 +133,7 @@ fun curve_point_getters() {
 #[test]
 fun is_stale_returns_false_when_fresh() {
     let ctx = &mut tx_context::dummy();
-    let (oracle, clock) = oracle_helper::create_simple_oracle(
+    let (oracle, mut clock) = oracle_helper::create_simple_oracle(
         50 * FLOAT,
         50 * FLOAT,
         1_000_000,
@@ -141,7 +141,8 @@ fun is_stale_returns_false_when_fresh() {
         ctx,
     );
 
-    // now=0 <= 10_000 + STALENESS_THRESHOLD_MS = 40_000
+    // now=15_000 <= 10_000 + STALENESS_THRESHOLD_MS = 40_000
+    clock.set_for_testing(15_000);
     assert_eq!(oracle.is_stale(&clock), false);
 
     destroy(oracle);
@@ -749,6 +750,7 @@ fun live_forward_one_unit_above_strike() {
     destroy(clock);
 }
 
+// Aborts with VM arithmetic error (division by zero in math::div) — no named constant
 #[test, expected_failure]
 fun live_price_with_zero_forward_aborts() {
     let ctx = &mut tx_context::dummy();
@@ -923,8 +925,8 @@ fun activate_with_unauthorized_cap_aborts() {
     abort
 }
 
-#[test, expected_failure(abort_code = oracle::EOracleAlreadyActive)]
-fun activate_already_active_oracle_aborts() {
+#[test, expected_failure(abort_code = oracle::EInvalidOracleCap)]
+fun update_prices_with_unauthorized_cap_aborts() {
     let ctx = &mut tx_context::dummy();
     let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
     let prices = new_price_data(100 * FLOAT, 100 * FLOAT);
@@ -938,8 +940,43 @@ fun activate_already_active_oracle_aborts() {
         ctx,
     );
     let cap = oracle::create_oracle_cap(ctx);
-    oracle::register_cap(&mut oracle, &cap);
     let clock = clock::create_for_testing(ctx);
+
+    // Cap is not registered on this oracle
+    let new_prices = new_price_data(105 * FLOAT, 106 * FLOAT);
+    oracle.update_prices(&cap, new_prices, &clock);
+
+    abort
+}
+
+#[test, expected_failure(abort_code = oracle::EInvalidOracleCap)]
+fun update_svi_with_unauthorized_cap_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
+    let prices = new_price_data(100 * FLOAT, 100 * FLOAT);
+    let mut oracle = oracle::create_test_oracle(
+        b"BTC".to_string(),
+        svi,
+        prices,
+        0,
+        1_000_000,
+        0,
+        ctx,
+    );
+    let cap = oracle::create_oracle_cap(ctx);
+    let clock = clock::create_for_testing(ctx);
+
+    // Cap is not registered on this oracle
+    let new_svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
+    oracle.update_svi(&cap, new_svi, 0, &clock);
+
+    abort
+}
+
+#[test, expected_failure(abort_code = oracle::EOracleAlreadyActive)]
+fun activate_already_active_oracle_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let (mut oracle, cap, clock) = oracle_helper::create_oracle_with_cap(ctx);
 
     // Oracle is already active (create_test_oracle sets active=true)
     oracle.activate(&cap, &clock);
@@ -950,22 +987,9 @@ fun activate_already_active_oracle_aborts() {
 #[test, expected_failure(abort_code = oracle::EOracleExpired)]
 fun activate_expired_oracle_aborts() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
-    let prices = new_price_data(100 * FLOAT, 100 * FLOAT);
-    let mut oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
-        0,
-        100_000,
-        0,
-        ctx,
-    );
+    let (mut oracle, cap, mut clock) = oracle_helper::create_oracle_with_cap(ctx);
     oracle.set_active_for_testing(false);
-    let cap = oracle::create_oracle_cap(ctx);
-    oracle::register_cap(&mut oracle, &cap);
-    let mut clock = clock::create_for_testing(ctx);
-    clock.set_for_testing(200_000);
+    clock.set_for_testing(2_000_000); // past expiry (1_000_000)
 
     oracle.activate(&cap, &clock);
 
@@ -975,22 +999,9 @@ fun activate_expired_oracle_aborts() {
 #[test, expected_failure(abort_code = oracle::EOracleExpired)]
 fun update_svi_on_settled_oracle_aborts() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
-    let prices = new_price_data(100 * FLOAT, 100 * FLOAT);
-    let mut oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
-        0,
-        100_000,
-        0,
-        ctx,
-    );
-    let cap = oracle::create_oracle_cap(ctx);
-    oracle::register_cap(&mut oracle, &cap);
+    let (mut oracle, cap, clock) = oracle_helper::create_oracle_with_cap(ctx);
     oracle.settle_test_oracle(100 * FLOAT);
 
-    let clock = clock::create_for_testing(ctx);
     let new_svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
     oracle.update_svi(&cap, new_svi, 0, &clock);
 
@@ -1039,6 +1050,64 @@ fun zero_svi_params_on_live_oracle_aborts() {
     oracle.get_binary_price(100 * FLOAT, true, &clock);
 
     abort
+}
+
+// ============================================================
+// Expiry boundary tests
+// ============================================================
+
+#[test, expected_failure(abort_code = oracle::EOracleExpired)]
+fun activate_at_exact_expiry_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let (mut oracle, cap, mut clock) = oracle_helper::create_oracle_with_cap(ctx);
+    oracle.set_active_for_testing(false);
+    clock.set_for_testing(1_000_000); // exactly at expiry; guard is now < expiry
+
+    oracle.activate(&cap, &clock);
+
+    abort
+}
+
+#[test]
+fun update_prices_at_exact_expiry_does_not_settle() {
+    let ctx = &mut tx_context::dummy();
+    let (mut oracle, cap, mut clock) = oracle_helper::create_oracle_with_cap(ctx);
+    clock.set_for_testing(1_000_000); // exactly at expiry; guard is now > expiry
+
+    let new_prices = new_price_data(105 * FLOAT, 106 * FLOAT);
+    oracle.update_prices(&cap, new_prices, &clock);
+
+    // Should NOT have settled — just updated prices
+    assert!(oracle.settlement_price().is_none());
+    assert_eq!(oracle.spot_price(), 105 * FLOAT);
+
+    destroy(oracle);
+    destroy(cap);
+    destroy(clock);
+}
+
+#[test]
+fun update_prices_on_settled_oracle_preserves_settlement() {
+    let ctx = &mut tx_context::dummy();
+    let (mut oracle, cap, mut clock) = oracle_helper::create_oracle_with_cap(ctx);
+
+    // First, settle the oracle by calling update_prices past expiry
+    clock.set_for_testing(2_000_000);
+    let prices1 = new_price_data(105 * FLOAT, 106 * FLOAT);
+    oracle.update_prices(&cap, prices1, &clock);
+    assert_eq!(oracle.settlement_price().destroy_some(), 105 * FLOAT);
+
+    // Call update_prices again — settlement_price.is_some(), so settlement branch is skipped
+    let prices2 = new_price_data(110 * FLOAT, 111 * FLOAT);
+    oracle.update_prices(&cap, prices2, &clock);
+
+    // Settlement price unchanged, but prices updated
+    assert_eq!(oracle.settlement_price().destroy_some(), 105 * FLOAT);
+    assert_eq!(oracle.spot_price(), 110 * FLOAT);
+
+    destroy(oracle);
+    destroy(cap);
+    destroy(clock);
 }
 
 // ============================================================

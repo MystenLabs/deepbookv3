@@ -7,7 +7,7 @@ module deepbook_predict::oracle_helper;
 
 use deepbook_predict::{
     generated_oracle::OracleScenario,
-    oracle::{Self, OracleSVI, new_price_data, new_svi_params}
+    oracle::{Self, OracleSVI, OracleCapSVI, new_price_data, new_svi_params}
 };
 use sui::clock::{Self, Clock};
 
@@ -69,6 +69,26 @@ public fun create_std_oracle(ctx: &mut TxContext): (OracleSVI, Clock) {
     );
     let clock = clock::create_for_testing(ctx);
     (oracle, clock)
+}
+
+/// Standard oracle with a registered cap, ready for guarded function calls.
+/// Returns (oracle, cap, clock). Clock starts at 0.
+public fun create_oracle_with_cap(ctx: &mut TxContext): (OracleSVI, OracleCapSVI, Clock) {
+    let svi = new_svi_params(0, 1_000_000_000, 0, false, 0, false, 250_000_000);
+    let prices = new_price_data(100_000_000_000, 100_000_000_000);
+    let mut oracle = oracle::create_test_oracle(
+        b"BTC".to_string(),
+        svi,
+        prices,
+        0,
+        1_000_000,
+        0,
+        ctx,
+    );
+    let cap = oracle::create_oracle_cap(ctx);
+    oracle::register_cap(&mut oracle, &cap);
+    let clock = clock::create_for_testing(ctx);
+    (oracle, cap, clock)
 }
 
 /// Settled oracle for unit tests. SVI params are zeroed (irrelevant for settled path).
