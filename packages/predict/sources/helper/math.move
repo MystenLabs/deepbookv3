@@ -291,7 +291,7 @@ public fun mul_div_round_up(a: u64, b: u64, c: u64): u64 {
 }
 
 public fun mul_signed_u64(a: u64, a_neg: bool, b: u64, b_neg: bool): (u64, bool) {
-    let product = ((a as u128) * (b as u128) / F as u64);
+    let product = (((a as u128) * (b as u128) / F) as u64);
     if (product == 0) return (0, false);
     let is_negative = a_neg != b_neg;
     (product, is_negative)

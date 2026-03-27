@@ -264,6 +264,62 @@ fun mul_neg_times_pos() {
 }
 
 // ============================================================
+// mul_div_round_down
+// ============================================================
+
+#[test]
+fun mul_div_round_down_exact() {
+    // 10 * 20 / 5 = 40
+    assert_eq!(math::mul_div_round_down(10, 20, 5), 40);
+}
+
+#[test]
+fun mul_div_round_down_truncates() {
+    // 10 * 3 / 7 = 30/7 = 4.28... → 4
+    assert_eq!(math::mul_div_round_down(10, 3, 7), 4);
+}
+
+#[test]
+fun mul_div_round_down_zero_numerator() {
+    assert_eq!(math::mul_div_round_down(0, 100, 7), 0);
+}
+
+#[test, expected_failure]
+fun mul_div_round_down_zero_denominator_aborts() {
+    math::mul_div_round_down(10, 20, 0);
+
+    abort
+}
+
+// ============================================================
+// mul_div_round_up
+// ============================================================
+
+#[test]
+fun mul_div_round_up_exact() {
+    // 10 * 20 / 5 = 40 (no rounding needed)
+    assert_eq!(math::mul_div_round_up(10, 20, 5), 40);
+}
+
+#[test]
+fun mul_div_round_up_rounds() {
+    // 10 * 3 / 7 = 30/7 = 4.28... → 5
+    assert_eq!(math::mul_div_round_up(10, 3, 7), 5);
+}
+
+#[test]
+fun mul_div_round_up_zero_numerator() {
+    assert_eq!(math::mul_div_round_up(0, 100, 7), 0);
+}
+
+#[test, expected_failure]
+fun mul_div_round_up_zero_denominator_aborts() {
+    math::mul_div_round_up(10, 20, 0);
+
+    abort
+}
+
+// ============================================================
 // ln — property tests
 // ============================================================
 

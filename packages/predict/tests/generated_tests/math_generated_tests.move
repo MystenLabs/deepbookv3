@@ -9,6 +9,11 @@ module deepbook_predict::math_generated_tests;
 use deepbook_predict::{generated_math as gs, math, precision};
 use std::unit_test::assert_eq;
 
+// Below this threshold, CDF values are in the deep tail where the contract
+// clamps at sqrt(32). Scipy and the contract may differ by more than
+// assert_approx tolerance, so we only check both are near 0 (or near FLOAT).
+const CDF_TAIL_THRESHOLD: u64 = 1_000;
+
 #[test]
 fun ln_matches_scipy() {
     gs::ln_cases().do_ref!(|c| {
@@ -37,12 +42,10 @@ fun cdf_matches_scipy() {
     gs::cdf_cases().do_ref!(|c| {
         let result = math::normal_cdf(gs::cdf_input(c), gs::cdf_is_negative(c));
         let expected = gs::cdf_expected(c);
-        if (expected < 1_000) {
-            // Deep tail: contract clamps at sqrt(32), allow small absolute error
-            assert!(result < 1_000);
-        } else if (expected > f - 1_000) {
-            // Near FLOAT: symmetric to deep tail
-            assert!(result > f - 1_000);
+        if (expected < CDF_TAIL_THRESHOLD) {
+            assert!(result < CDF_TAIL_THRESHOLD);
+        } else if (expected > f - CDF_TAIL_THRESHOLD) {
+            assert!(result > f - CDF_TAIL_THRESHOLD);
         } else {
             precision::assert_approx(result, expected);
         };
