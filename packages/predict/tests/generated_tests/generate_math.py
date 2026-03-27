@@ -42,9 +42,17 @@ N_LN_CASES = 200
 N_EXP_CASES = 200
 N_CDF_CASES = 200
 
+# ln input domain: u64 scaled by 1e9, so x in [1e-9, ~1.8e10].
+# We sample log-uniformly via 10^exp where exp is in [LN_EXP_MIN, LN_EXP_MAX].
+LN_EXP_MIN = -9   # 10^-9 = 1e-9 → input = 1 (minimum valid)
+LN_EXP_MAX = 6    # 10^6 = 1e6 → input = 1e15
+
 # exp(x) overflows u64 at ~22.18 (e^22.18 * 1e9 > u64_max)
 # Cap at 21 to stay safely within u64 range for positive exp.
 EXP_MAX_INPUT = 21.0
+
+# e^(-50) * 1e9 < 1, so it floors to 0. Covers the full underflow range.
+EXP_NEG_MAX_INPUT = 50.0
 
 # normal_cdf clamps at 8*FLOAT internally
 CDF_MAX_INPUT = 8.0
@@ -173,8 +181,7 @@ def emit_ln_vector(w: MoveWriter, rng: random.Random):
     """Generate ln test cases sampling the full valid domain.
 
     ln input is u64 representing x * 1e9, so x > 0.
-    We sample log-uniformly to cover tiny fractions and large values.
-    Range: [1, 1e15] in scaled units (1e-9 to 1e6 in float).
+    We sample log-uniformly via 10^exp to cover tiny fractions and large values.
     """
     w.section(f"ln test vector ({N_LN_CASES} randomized cases)")
     w.blank()
@@ -191,7 +198,7 @@ def emit_ln_vector(w: MoveWriter, rng: random.Random):
     w.raw("public fun ln_cases(): vector<LnCase> { vector[")
 
     for _ in range(N_LN_CASES):
-        exp = rng.uniform(-9, 6)
+        exp = rng.uniform(LN_EXP_MIN, LN_EXP_MAX)
         x_float = 10 ** exp
         x_scaled = max(1, to_float_scaled(x_float))
 
@@ -212,8 +219,8 @@ def emit_ln_vector(w: MoveWriter, rng: random.Random):
 def emit_exp_vector(w: MoveWriter, rng: random.Random):
     """Generate exp test cases sampling the full valid domain.
 
-    Positive: [0, 21] (above ~22.18, e^x * 1e9 overflows u64)
-    Negative: [0, 50] (e^(-50) underflows to 0, which is fine)
+    Positive: [0, EXP_MAX_INPUT] before u64 overflow.
+    Negative: [0, EXP_NEG_MAX_INPUT] covering full underflow range.
     """
     w.section(f"exp test vector ({N_EXP_CASES} randomized cases)")
     w.blank()
@@ -240,7 +247,7 @@ def emit_exp_vector(w: MoveWriter, rng: random.Random):
         )
 
     for _ in range(N_EXP_CASES - half):
-        x = rng.uniform(0, 50)
+        x = rng.uniform(0, EXP_NEG_MAX_INPUT)
         x_scaled = to_float_scaled(x)
         expected = to_float_scaled(math.exp(-x))
         w.raw(
