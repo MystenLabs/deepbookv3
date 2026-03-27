@@ -57,6 +57,12 @@ EXP_NEG_MAX_INPUT = 50.0
 # normal_cdf clamps at 8*FLOAT internally
 CDF_MAX_INPUT = 8.0
 
+# Hand-picked test points for named constants.
+# These exercise specific code paths and are referenced by hand-written property tests.
+LN_TEST_POINTS = [1.5, 3.0, 5.0, 7.0, 10.0, 0.1, 0.3, 0.7, 0.999, 1.001, 100.0, 1000.0]
+EXP_TEST_POINTS = [0.001, 0.01, 0.1, 0.3, 0.5, 1.5, 2.5, 6.8, 12.2]
+CDF_TEST_POINTS = [0, 0.01, 0.05, 0.1, 0.75, 1.0, 1.5, 2.0, 2.5, 3.0, 5.2, 8.0]
+
 
 # ====================================================================
 # Scaling helpers
@@ -141,9 +147,7 @@ def emit_named_constants(w: MoveWriter):
     w.const("E_INV", to_float_scaled(1.0 / math.e), f"1/e = {1 / math.e:.15f}")
 
     w.section("ln — non-trivial inputs (exercise ln_series with nonzero z)")
-    for x in [
-        1.5, 3.0, 5.0, 7.0, 10.0, 0.1, 0.3, 0.7, 0.999, 1.001, 100.0, 1000.0,
-    ]:
+    for x in LN_TEST_POINTS:
         name = str(x).replace(".", "_")
         w.const(
             f"LN_{name}",
@@ -152,7 +156,7 @@ def emit_named_constants(w: MoveWriter):
         )
 
     w.section("exp — selected test points")
-    for x in [0.001, 0.01, 0.1, 0.3, 0.5, 1.5, 2.5, 6.8, 12.2]:
+    for x in EXP_TEST_POINTS:
         name = str(x).replace(".", "_")
         w.const(
             f"EXP_{name}",
@@ -166,7 +170,7 @@ def emit_named_constants(w: MoveWriter):
         )
 
     w.section("Normal CDF — selected test points")
-    for x in [0, 0.01, 0.05, 0.1, 0.75, 1.0, 1.5, 2.0, 2.5, 3.0, 5.2, 8.0]:
+    for x in CDF_TEST_POINTS:
         name = str(x).replace(".", "_")
         w.const(f"PHI_{name}", to_float_scaled(norm.cdf(x)), f"Φ({x})")
         w.const(f"PHI_NEG_{name}", to_float_scaled(norm.cdf(-x)), f"Φ(-{x})")
