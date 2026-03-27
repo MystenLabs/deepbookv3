@@ -6,7 +6,7 @@
 /// Provides:
 /// - ln(x): natural logarithm
 /// - exp(x): exponential function
-/// - normal_cdf(x): standard normal CDF (Abramowitz & Stegun 26.2.17)
+/// - normal_cdf(x): standard normal CDF (Cody rational Chebyshev approximation)
 /// - Signed arithmetic helpers (add, sub, mul for (magnitude, is_negative) pairs)
 ///
 /// Public functions take u64; internal math uses u128 to minimize truncation.
@@ -18,7 +18,7 @@ const EInputZero: u64 = 0;
 
 // u128 constants for internal math
 const F: u128 = 1_000_000_000;
-const LN2_U128: u128 = 693_147_181;
+const LN2_U128: u128 = 693_147_180;
 
 // Cody rational approximation coefficients (scaled to F = 1e9)
 // Source: W.J. Cody (1969), as implemented in GSL gauss.c

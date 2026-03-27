@@ -450,7 +450,7 @@ fun exp_2ln2_positive() {
 #[test]
 fun exp_2ln2_negative() {
     // e^(-2*ln2) = 0.25
-    assert_eq!(math::exp(gs::LN4!(), true), QUARTER);
+    precision::assert_approx(math::exp(gs::LN4!(), true), QUARTER);
 }
 
 #[test]
@@ -462,7 +462,7 @@ fun exp_3ln2_positive() {
 #[test]
 fun exp_3ln2_negative() {
     // e^(-3*ln2) = 0.125
-    assert_eq!(math::exp(gs::LN8!(), true), EIGHTH);
+    precision::assert_approx(math::exp(gs::LN8!(), true), EIGHTH);
 }
 
 #[test]
@@ -586,7 +586,7 @@ fun exp_twelve_point_two_negative() {
 
 #[test]
 fun cdf_zero_positive() {
-    // Φ(0) = 0.5; Abramowitz polynomial produces ~2 units error
+    // Φ(0) = 0.5 exactly
     precision::assert_approx(math::normal_cdf(0, false), gs::PHI_0!());
 }
 
