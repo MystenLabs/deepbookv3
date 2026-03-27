@@ -82,7 +82,28 @@ fun mint_against_settled_oracle_aborts() {
 }
 ```
 
-### 5. Name all constants — no magic numbers in test bodies
+### 5. Every test must call the function under test
+
+A test that only validates test data (checking generated inputs are above a threshold, verifying vector lengths, asserting constants match) is not a test. Every test function must call the contract function it claims to test and assert on the result.
+
+```move
+// BAD — tests the generator, not the contract
+#[test]
+fun exp_overflow_cases_valid() {
+    gs::overflow_cases().do!(|x| {
+        assert!(x > 23_638_153_699); // never calls math::exp()
+    });
+}
+
+// GOOD — tests the contract
+#[test, expected_failure(abort_code = math::EExpOverflow)]
+fun exp_overflow_aborts() {
+    math::exp(23_638_153_700, false);
+    abort
+}
+```
+
+### 6. Name all constants — no magic numbers in test bodies
 
 Raw numeric literals make tests unreadable and unverifiable. Define every constant with a name that explains what it represents.
 
@@ -95,7 +116,7 @@ const LN2: u64 = 693_147_181; // ln(2) * 1e9, from generate_constants.py
 assert_eq!(math::ln(2 * FLOAT), LN2);
 ```
 
-### 6. Test edge cases and boundaries
+### 7. Test edge cases and boundaries
 
 Bugs live at boundaries. Every test file should include:
 - **Zero values**: zero amount, zero shares, zero price
@@ -104,7 +125,7 @@ Bugs live at boundaries. Every test file should include:
 - **Rounding direction**: verify truncation vs round-up behavior with small values where 1 unit matters
 - **Off-by-one**: values just inside and just outside valid ranges
 
-### 7. Use `assert_eq!`, never `assert_approx`
+### 8. Use `assert_eq!`, never `assert_approx`
 
 In smart contracts, 1 unit of precision loss can mean an exploit. Do not use approximate assertions or range checks. Every expected value must be exact.
 
@@ -116,7 +137,7 @@ assert!(up > 390_000_000 && up < 410_000_000);
 assert_eq!(up, 399_512_345);
 ```
 
-### 8. Use `generate_constants.py` for math-heavy tests
+### 9. Use `generate_constants.py` for math-heavy tests
 
 For any test involving math operations (ln, exp, normal_cdf, SVI pricing, binary option prices), the expected values must come from `generate_constants.py`, which uses scipy as ground truth. Do not hand-compute complex math — use the script, commit the constants, and reference the script in comments.
 

@@ -28,6 +28,12 @@ Accumulated from real PR review feedback. Update this file when reviewers catch 
 - Every `expected_failure` test should trigger the abort on a specific line. The trailing `abort` is a guard — if execution passes the expected abort point, the bare `abort` produces a different code and fails the test.
 - When a test checks a return value against a stored value, use a getter to read the stored value directly. Don't use indirect checks like "ID is non-zero" when you can assert the exact value matches.
 
+## Generated Test Data
+
+- Every generated test vector must be exercised against the contract. If generated data isn't passed to the function under test, delete it.
+- Don't add workarounds (magic thresholds, special-case branches) in test assertions to make generated tests pass. If a test can't assert directly, understand why and fix the root cause.
+- Review generated output before committing — check for duplicates, trivial cases (100 inputs that all return 0), and wasted coverage.
+
 ## Self-Review Checklist (before pushing)
 
 - [ ] Do all comments match the actual code they describe?
@@ -35,3 +41,6 @@ Accumulated from real PR review feedback. Update this file when reviewers catch 
 - [ ] Do error constant names make sense for every case that triggers them?
 - [ ] Are utility module guards strictly about math correctness, not application policy?
 - [ ] Are assertions in `expected_failure` tests targeting the right abort codes?
+- [ ] Does every test call the function it claims to test?
+- [ ] Is all generated test data exercised against the contract?
+- [ ] Are there any workaround thresholds or special-case branches hiding assertion failures?
