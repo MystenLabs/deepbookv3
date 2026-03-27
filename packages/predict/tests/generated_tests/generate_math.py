@@ -42,20 +42,24 @@ N_LN_CASES = 200
 N_EXP_CASES = 200
 N_CDF_CASES = 200
 
-# ln input domain: u64 scaled by 1e9, so x in [1e-9, ~1.8e10].
-# We sample log-uniformly via 10^exp where exp is in [LN_EXP_MIN, LN_EXP_MAX].
-LN_EXP_MIN = -9   # 10^-9 = 1e-9 → input = 1 (minimum valid)
-LN_EXP_MAX = 6    # 10^6 = 1e6 → input = 1e15
+U64_MAX = 2**64 - 1
 
-# exp(x) overflows u64 at ~22.18 (e^22.18 * 1e9 > u64_max)
-# Cap at 21 to stay safely within u64 range for positive exp.
-EXP_MAX_INPUT = 21.0
+# ln: any u64 > 0 is valid. Sample log-uniformly across the full range.
+LN_EXP_MIN = -9    # 10^-9 → input = 1 (minimum valid)
+LN_EXP_MAX = 10    # 10^10 → input ≈ 1e19 (near u64_max)
 
-# e^(-50) * 1e9 < 1, so it floors to 0. Covers the full underflow range.
-EXP_NEG_MAX_INPUT = 50.0
+# exp positive: contract aborts at MAX_EXP_INPUT + 1 = 23_638_153_700.
+# We generate valid cases up to the boundary and overflow cases above it.
+MAX_EXP_INPUT = 23_638_153_699
+N_EXP_OVERFLOW_CASES = 20  # cases that should abort with EExpOverflow
 
-# normal_cdf clamps at 8*FLOAT internally
-CDF_MAX_INPUT = 8.0
+# exp negative: any u64 is valid (gracefully returns 0 for large inputs).
+# Sample up to u64_max.
+EXP_NEG_MAX_INPUT = U64_MAX
+
+# normal_cdf: any u64 is valid (clamps at 8*FLOAT internally).
+# Sample up to u64_max.
+CDF_MAX_INPUT = U64_MAX
 
 
 # ====================================================================
@@ -148,10 +152,10 @@ def emit_named_constants(w: MoveWriter):
 
 
 def emit_ln_vector(w: MoveWriter, rng: random.Random):
-    """Generate ln test cases sampling the full valid domain.
+    """Generate ln test cases sampling the full u64 domain (x > 0).
 
-    ln input is u64 representing x * 1e9, so x > 0.
-    We sample log-uniformly via 10^exp to cover tiny fractions and large values.
+    We sample log-uniformly via 10^exp to get even coverage across
+    orders of magnitude, from x=1 (minimum valid) to near u64_max.
     """
     w.section(f"ln test vector ({N_LN_CASES} randomized cases)")
     w.blank()
@@ -189,10 +193,10 @@ def emit_ln_vector(w: MoveWriter, rng: random.Random):
 def emit_exp_vector(w: MoveWriter, rng: random.Random):
     """Generate exp test cases sampling the full valid domain.
 
-    Positive: [0, EXP_MAX_INPUT] before u64 overflow.
-    Negative: [0, EXP_NEG_MAX_INPUT] covering full underflow range.
+    Positive: uniform over [0, MAX_EXP_INPUT] (valid inputs).
+    Negative: uniform over [0, u64_max] (all valid, gracefully returns 0).
     """
-    w.section(f"exp test vector ({N_EXP_CASES} randomized cases)")
+    w.section(f"exp test vector ({N_EXP_CASES} valid + {N_EXP_OVERFLOW_CASES} overflow cases)")
     w.blank()
     w.raw("public struct ExpCase has copy, drop {")
     w.raw("    input: u64,")
@@ -204,34 +208,43 @@ def emit_exp_vector(w: MoveWriter, rng: random.Random):
     w.raw("public fun exp_is_negative(c: &ExpCase): bool { c.is_negative }")
     w.raw("public fun exp_expected(c: &ExpCase): u64 { c.expected }")
     w.blank()
-    w.raw("public fun exp_cases(): vector<ExpCase> { vector[")
 
+    # Valid positive cases: [0, MAX_EXP_INPUT]
+    w.raw("public fun exp_cases(): vector<ExpCase> { vector[")
     half = N_EXP_CASES // 2
     for _ in range(half):
-        x = rng.uniform(0, EXP_MAX_INPUT)
-        x_scaled = to_float_scaled(x)
-        expected = to_float_scaled(math.exp(x))
+        x_scaled = rng.randint(0, MAX_EXP_INPUT)
+        expected = to_float_scaled(math.exp(x_scaled / FLOAT_SCALING))
         w.raw(
             f"    ExpCase {{ input: {fmt_u64(x_scaled)}, "
             f"is_negative: false, expected: {fmt_u64(expected)} }},"
         )
 
+    # Valid negative cases: [0, u64_max]
     for _ in range(N_EXP_CASES - half):
-        x = rng.uniform(0, EXP_NEG_MAX_INPUT)
-        x_scaled = to_float_scaled(x)
-        expected = to_float_scaled(math.exp(-x))
+        x_scaled = rng.randint(0, U64_MAX)
+        expected = to_float_scaled(math.exp(-x_scaled / FLOAT_SCALING))
         w.raw(
             f"    ExpCase {{ input: {fmt_u64(x_scaled)}, "
             f"is_negative: true, expected: {fmt_u64(expected)} }},"
         )
+    w.raw("]}")
 
+    # Overflow cases: positive inputs above MAX_EXP_INPUT
+    w.blank()
+    w.raw("public fun exp_overflow_cases(): vector<u64> { vector[")
+    for _ in range(N_EXP_OVERFLOW_CASES):
+        x_scaled = rng.randint(MAX_EXP_INPUT + 1, U64_MAX)
+        w.raw(f"    {fmt_u64(x_scaled)},")
     w.raw("]}")
 
 
 def emit_cdf_vector(w: MoveWriter, rng: random.Random):
-    """Generate normal_cdf test cases sampling the full valid domain.
+    """Generate normal_cdf test cases sampling the full u64 domain.
 
-    The contract clamps at 8*FLOAT, so we sample [0, 8].
+    All u64 inputs are valid. The contract clamps at 8*FLOAT, so inputs
+    above that return FLOAT (positive) or 0 (negative). We sample the
+    full range to verify both the polynomial and clamp paths.
     """
     w.section(f"Normal CDF test vector ({N_CDF_CASES} randomized cases)")
     w.blank()
@@ -249,10 +262,14 @@ def emit_cdf_vector(w: MoveWriter, rng: random.Random):
 
     half = N_CDF_CASES // 2
     for i in range(N_CDF_CASES):
-        x = rng.uniform(0, CDF_MAX_INPUT)
-        x_scaled = to_float_scaled(x)
+        x_scaled = rng.randint(0, U64_MAX)
+        x_float = x_scaled / FLOAT_SCALING
         is_neg = i >= half
-        expected = to_float_scaled(norm.cdf(-x if is_neg else x))
+        # For inputs > 8, contract clamps to FLOAT or 0
+        if x_float > 8.0:
+            expected = 0 if is_neg else FLOAT_SCALING
+        else:
+            expected = to_float_scaled(norm.cdf(-x_float if is_neg else x_float))
         neg_str = "true" if is_neg else "false"
         w.raw(
             f"    CdfCase {{ input: {fmt_u64(x_scaled)}, "

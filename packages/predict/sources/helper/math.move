@@ -15,10 +15,16 @@ module deepbook_predict::math;
 use deepbook_predict::constants;
 
 const EInputZero: u64 = 0;
+const EExpOverflow: u64 = 1;
 
 // u128 constants for internal math
 const F: u128 = 1_000_000_000;
 const LN2_U128: u128 = 693_147_180;
+
+// Max input for exp(x, false) before u64 overflow.
+// Derived: with LN2_U128=693_147_180, at x=23_638_153_700 the bit-shift
+// produces 2^64 exactly. One below is the last safe input.
+const MAX_EXP_INPUT: u64 = 23_638_153_699;
 
 // Cody rational approximation coefficients (scaled to F = 1e9)
 // Source: W.J. Cody (1969), as implemented in GSL gauss.c
@@ -81,8 +87,8 @@ public fun ln(x: u64): (u64, bool) {
 /// Exponential function. Returns e^(±x) in FLOAT_SCALING.
 public fun exp(x: u64, x_negative: bool): u64 {
     if (x == 0) return constants::float_scaling!();
+    if (!x_negative) assert!(x <= MAX_EXP_INPUT, EExpOverflow);
 
-    // Range reduction needs u64 division
     let n = x / (LN2_U128 as u64);
     let r = x - n * (LN2_U128 as u64);
     (exp_u128((r as u128), (n as u128), x_negative) as u64)

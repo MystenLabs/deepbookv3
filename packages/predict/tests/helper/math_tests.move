@@ -479,7 +479,7 @@ fun cdf_negative_less_than_half() {
 }
 
 // ============================================================
-// Randomized vector tests (scipy ground truth, 200 cases each)
+// Randomized vector tests (scipy ground truth)
 // ============================================================
 
 #[test]
@@ -519,5 +519,28 @@ fun cdf_matches_scipy() {
         } else {
             precision::assert_approx(result, expected);
         };
+    });
+}
+
+#[test, expected_failure(abort_code = math::EExpOverflow)]
+fun exp_overflow_aborts() {
+    // Any input above MAX_EXP_INPUT should abort
+    math::exp(23_638_153_700, false);
+
+    abort
+}
+
+#[test]
+fun exp_at_max_input_succeeds() {
+    // Exactly at the boundary — should not abort
+    let result = math::exp(23_638_153_699, false);
+    assert!(result > 0);
+}
+
+#[test]
+fun exp_overflow_cases_all_above_max() {
+    // Verify all generated overflow inputs are above the boundary
+    gs::exp_overflow_cases().do!(|x| {
+        assert!(x > 23_638_153_699);
     });
 }
