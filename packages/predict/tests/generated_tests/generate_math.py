@@ -190,23 +190,46 @@ def compute_cdf(input_scaled: int, is_negative: bool) -> int:
 
 
 def random_ln_inputs(rng: random.Random, n: int) -> list[int]:
-    """Log-uniform sample across [1, u64_max] for ln."""
+    """Log-uniform sample across [1, u64_max] for ln, biased toward small inputs.
+
+    Uses exp^2 to concentrate samples near the low end where the series
+    approximation is most sensitive.
+    """
     cases = []
     for _ in range(n):
-        exp = rng.uniform(-9, 19.26)  # 10^19.26 ≈ u64_max
+        # Bias toward small: square a uniform [0,1] then scale to exponent range
+        t = rng.random() ** 2  # concentrated near 0
+        exp = -9 + t * 28.26  # range [-9, 19.26], 10^19.26 ≈ u64_max
         x = min(U64_MAX, max(1, int(10 ** exp)))
         cases.append(x)
     return cases
 
 
 def random_exp_inputs(rng: random.Random, n: int) -> list[tuple[int, bool]]:
-    """Uniform sample: half positive [0, MAX_EXP_INPUT], half negative [0, u64_max]."""
+    """Random exp inputs, biased toward small values. Skips trivial zero results.
+
+    Positive: biased sample in [0, MAX_EXP_INPUT].
+    Negative: biased sample, retrying if result would be 0.
+    """
     cases = []
     half = n // 2
+
+    # Positive: all inputs in range produce nonzero results
     for _ in range(half):
-        cases.append((rng.randint(0, MAX_EXP_INPUT), False))
-    for _ in range(n - half):
-        cases.append((rng.randint(0, U64_MAX), True))
+        t = rng.random() ** 2
+        x = int(t * MAX_EXP_INPUT)
+        cases.append((x, False))
+
+    # Negative: skip inputs where exp(-x) rounds to 0
+    attempts = 0
+    while len(cases) < n and attempts < n * 10:
+        attempts += 1
+        t = rng.random() ** 2
+        x = int(t * MAX_EXP_INPUT)  # same range as positive, biased toward 0
+        expected = compute_exp(x, True)
+        if expected > 0:
+            cases.append((x, True))
+
     return cases
 
 
@@ -216,11 +239,26 @@ def random_exp_overflow_inputs(rng: random.Random, n: int) -> list[int]:
 
 
 def random_cdf_inputs(rng: random.Random, n: int) -> list[tuple[int, bool]]:
-    """Uniform sample across [0, u64_max], half positive half negative."""
+    """Random CDF inputs, biased toward small values. Skips trivial 0/FLOAT results.
+
+    Samples in [0, 8*FLOAT] (the polynomial range). Inputs beyond 8*FLOAT
+    are covered by edge cases.
+    """
+    cdf_max = 8 * FLOAT_SCALING
     cases = []
     half = n // 2
-    for i in range(n):
-        cases.append((rng.randint(0, U64_MAX), i >= half))
+    attempts = 0
+    while len(cases) < n and attempts < n * 10:
+        attempts += 1
+        t = rng.random() ** 2
+        x = int(t * cdf_max)
+        is_neg = len(cases) >= half
+        expected = compute_cdf(x, is_neg)
+        # Skip trivial clamp results
+        if expected < 1_000 or expected > FLOAT_SCALING - 1_000:
+            continue
+        cases.append((x, is_neg))
+
     return cases
 
 
