@@ -20,6 +20,8 @@ import { readManifest } from "./manifest.js";
 import { fetchSpotPrice } from "./blockscholes.js";
 import { Logger } from "./logger.js";
 import type { FuzzMint, DigestEntry, PackageEntry, OracleEntry } from "./types.js";
+import type { SpotPriceSource } from "./spot-price-source.js";
+import { LiveSpotSource, CsvSpotSource } from "./spot-price-source.js";
 
 const logger = new Logger("fuzz-worker");
 
@@ -29,6 +31,8 @@ const logger = new Logger("fuzz-worker");
 
 let currentSpot: number | null = null;
 let spotFetchedAt = 0;
+let spotSource: SpotPriceSource | null = null;
+let spotExhausted = false;
 
 const SPOT_POLL_INTERVAL_MS = 5_000;
 const SPOT_STALE_THRESHOLD_MS = 30_000;
@@ -224,8 +228,16 @@ async function executeMint(mint: FuzzMint): Promise<DigestEntry> {
 // ---------------------------------------------------------------------------
 
 async function pollSpot(): Promise<void> {
+  if (!spotSource || spotExhausted) return;
+
   try {
-    const price = await fetchSpotPrice();
+    const price = await spotSource.next();
+    if (price === null) {
+      spotExhausted = true;
+      logger.info("Spot price source exhausted");
+      running = false;
+      return;
+    }
     currentSpot = price;
     spotFetchedAt = Date.now();
     logger.debug("Spot price updated", { spot: price });
@@ -236,12 +248,14 @@ async function pollSpot(): Promise<void> {
 
 async function waitForFirstSpot(): Promise<void> {
   logger.info("Waiting for first spot price fetch...");
-  while (currentSpot === null) {
+  while (currentSpot === null && !spotExhausted) {
     await pollSpot();
     if (currentSpot !== null) break;
     await sleep(1_000);
   }
-  logger.info("Initial spot price fetched", { spot: currentSpot });
+  if (currentSpot !== null) {
+    logger.info("Initial spot price fetched", { spot: currentSpot });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -249,9 +263,13 @@ async function waitForFirstSpot(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 async function tick(): Promise<void> {
-  // Check spot freshness
-  if (currentSpot === null || Date.now() - spotFetchedAt > SPOT_STALE_THRESHOLD_MS) {
-    logger.warn("Spot price stale or missing, pausing minting");
+  // Check spot freshness (for live source, enforce staleness; for CSV, always fresh)
+  if (currentSpot === null) {
+    logger.warn("Spot price missing, pausing minting");
+    return;
+  }
+  if (spotSource instanceof LiveSpotSource && Date.now() - spotFetchedAt > SPOT_STALE_THRESHOLD_MS) {
+    logger.warn("Spot price stale, pausing minting");
     return;
   }
 
@@ -361,6 +379,35 @@ function sleep(ms: number): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
+// CLI arg parsing
+// ---------------------------------------------------------------------------
+
+function parseSpotSource(): SpotPriceSource {
+  const args = process.argv.slice(2);
+  let csvPath = "";
+  let priceColumn = "";
+
+  for (let i = 0; i < args.length; i++) {
+    switch (args[i]) {
+      case "--spot-csv":
+        csvPath = args[++i];
+        break;
+      case "--price-column":
+        priceColumn = args[++i];
+        break;
+    }
+  }
+
+  if (csvPath) {
+    logger.info("Using CSV spot price source", { path: csvPath, column: priceColumn || "auto" });
+    return new CsvSpotSource(csvPath, priceColumn || undefined);
+  }
+
+  logger.info("Using live Block Scholes spot price source");
+  return new LiveSpotSource(fetchSpotPrice);
+}
+
+// ---------------------------------------------------------------------------
 // Main loop with graceful shutdown
 // ---------------------------------------------------------------------------
 
@@ -377,14 +424,25 @@ async function main(): Promise<void> {
 
   logger.info("Fuzz worker starting");
 
+  // Initialize spot price source
+  spotSource = parseSpotSource();
+
   // Block until we have a spot price
   await waitForFirstSpot();
 
-  // Start background spot price polling
-  const spotInterval = setInterval(pollSpot, SPOT_POLL_INTERVAL_MS);
+  // Start background spot price polling (for live source)
+  const spotInterval = spotSource instanceof LiveSpotSource
+    ? setInterval(pollSpot, SPOT_POLL_INTERVAL_MS)
+    : null;
 
   try {
     while (running) {
+      // For CSV source, advance spot price each tick
+      if (!(spotSource instanceof LiveSpotSource)) {
+        await pollSpot();
+        if (spotExhausted) break;
+      }
+
       try {
         await tick();
       } catch (err: any) {
@@ -393,7 +451,7 @@ async function main(): Promise<void> {
       if (running) await sleep(TICK_INTERVAL_MS);
     }
   } finally {
-    clearInterval(spotInterval);
+    if (spotInterval) clearInterval(spotInterval);
     logger.info("Fuzz worker stopped");
   }
 }

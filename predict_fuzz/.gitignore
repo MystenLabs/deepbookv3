@@ -12,3 +12,4 @@ analysis/
 *.heartbeat
 *.key
 .deployer.lock/
+data/

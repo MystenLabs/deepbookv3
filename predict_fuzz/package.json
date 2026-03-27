@@ -9,7 +9,8 @@
     "fuzz": "tsx src/fuzz-worker.ts",
     "replay": "tsx src/replay-service.ts",
     "analyze": "tsx src/analyze.ts",
-    "health": "tsx src/check-health.ts"
+    "health": "tsx src/check-health.ts",
+    "simulate": "tsx src/simulate.ts"
   },
   "dependencies": {
     "@mysten/sui": "^2.5.0",
