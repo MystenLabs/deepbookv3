@@ -50,8 +50,9 @@ fun cdf_matches_scipy() {
 }
 
 #[test]
-fun exp_overflow_cases_all_abort() {
-    // Verify all generated overflow inputs are above MAX_EXP_INPUT
+fun exp_overflow_inputs_above_max() {
+    // Verify all generated overflow inputs are above MAX_EXP_INPUT.
+    // Actual abort coverage is in math_tests::exp_overflow_aborts.
     gs::exp_overflow_cases().do!(|x| {
         assert!(x > 23_638_153_699);
     });

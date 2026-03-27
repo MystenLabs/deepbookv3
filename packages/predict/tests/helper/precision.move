@@ -21,9 +21,6 @@
 /// These helpers are temporary. Remove them when ln/exp/cdf are
 /// replaced with native Sui math functions, then revert all call
 /// sites back to assert_eq!.
-///
-/// Run `python3 tests/generated_tests/precision_report.py` to see
-/// the current gap report across all test assertions.
 #[test_only]
 module deepbook_predict::precision;
 

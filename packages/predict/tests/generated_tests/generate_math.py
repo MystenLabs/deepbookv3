@@ -35,6 +35,11 @@ N_RANDOM_PER_FUNCTION = 200
 # exp positive: contract aborts above this with EExpOverflow
 MAX_EXP_INPUT = 23_638_153_699
 
+# Random sampling ranges
+LN_EXP_MAX = 19.26              # 10^19.26 ≈ u64_max; ln samples [0, LN_EXP_MAX]
+EXP_NEG_MAX = MAX_EXP_INPUT     # negative exp: same range as positive, skip zeros
+CDF_RAND_MAX = 8 * FLOAT_SCALING  # CDF polynomial range; clamp region in edge cases
+
 # ====================================================================
 # Handpicked + edge case inputs
 # ====================================================================
@@ -190,17 +195,17 @@ def compute_cdf(input_scaled: int, is_negative: bool) -> int:
 
 
 def random_ln_inputs(rng: random.Random, n: int) -> list[int]:
-    """Log-uniform sample across [1, u64_max] for ln, biased toward small inputs.
+    """Log-uniform sample across [FLOAT_SCALING, u64_max] for ln, biased toward small inputs.
 
-    Uses exp^2 to concentrate samples near the low end where the series
-    approximation is most sensitive.
+    Sub-FLOAT inputs (negative ln domain) are covered by handpicked edge cases.
+    Random sampling starts at 10^0 = 1.0 to avoid duplicating input=1.
     """
     cases = []
     for _ in range(n):
         # Bias toward small: square a uniform [0,1] then scale to exponent range
         t = rng.random() ** 2  # concentrated near 0
-        exp = -9 + t * 28.26  # range [-9, 19.26], 10^19.26 ≈ u64_max
-        x = min(U64_MAX, max(1, int(10 ** exp)))
+        exp = t * LN_EXP_MAX
+        x = min(U64_MAX, max(FLOAT_SCALING, int(10 ** exp)))
         cases.append(x)
     return cases
 
@@ -225,7 +230,7 @@ def random_exp_inputs(rng: random.Random, n: int) -> list[tuple[int, bool]]:
     while len(cases) < n and attempts < n * 10:
         attempts += 1
         t = rng.random() ** 2
-        x = int(t * MAX_EXP_INPUT)  # same range as positive, biased toward 0
+        x = int(t * EXP_NEG_MAX)  # same range as positive, biased toward 0
         expected = compute_exp(x, True)
         if expected > 0:
             cases.append((x, True))
@@ -244,14 +249,13 @@ def random_cdf_inputs(rng: random.Random, n: int) -> list[tuple[int, bool]]:
     Samples in [0, 8*FLOAT] (the polynomial range). Inputs beyond 8*FLOAT
     are covered by edge cases.
     """
-    cdf_max = 8 * FLOAT_SCALING
     cases = []
     half = n // 2
     attempts = 0
     while len(cases) < n and attempts < n * 10:
         attempts += 1
         t = rng.random() ** 2
-        x = int(t * cdf_max)
+        x = int(t * CDF_RAND_MAX)
         is_neg = len(cases) >= half
         expected = compute_cdf(x, is_neg)
         # Skip trivial clamp results
