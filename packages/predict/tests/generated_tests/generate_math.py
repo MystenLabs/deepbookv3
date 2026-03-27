@@ -60,7 +60,7 @@ def to_float_scaled(value: float) -> int:
     return int(value * FLOAT_SCALING)
 
 
-def fmt(value: int) -> str:
+def fmt_u64(value: int) -> str:
     """Format an integer with underscore separators for Move readability."""
     return f"{value:_}"
 
@@ -100,7 +100,7 @@ class MoveWriter:
     def const(self, name: str, value: int, comment: str = ""):
         suffix = f" // {comment}" if comment else ""
         self.lines.append(
-            f"public macro fun {name}(): u64 {{ {fmt(value)} }}{suffix}"
+            f"public macro fun {name}(): u64 {{ {fmt_u64(value)} }}{suffix}"
         )
 
     def raw(self, text: str):
@@ -118,7 +118,7 @@ class MoveWriter:
 # ====================================================================
 
 
-def generate_named_constants(w: MoveWriter):
+def emit_named_constants(w: MoveWriter):
     w.section("Math constants")
     w.const("LN2", to_float_scaled(math.log(2)), f"ln(2) = {math.log(2):.15f}")
     w.const("LN4", to_float_scaled(math.log(4)), f"ln(4) = {math.log(4):.15f}")
@@ -195,14 +195,15 @@ def emit_ln_vector(w: MoveWriter, rng: random.Random):
         x_float = 10 ** exp
         x_scaled = max(1, to_float_scaled(x_float))
 
+        # Recompute from scaled integer to match what the contract receives
         x_actual = x_scaled / FLOAT_SCALING
         ln_val = math.log(x_actual)
         mag = to_float_scaled(abs(ln_val))
         neg = "true" if ln_val < 0 else "false"
 
         w.raw(
-            f"    LnCase {{ input: {fmt(x_scaled)}, "
-            f"expected_mag: {fmt(mag)}, expected_neg: {neg} }},"
+            f"    LnCase {{ input: {fmt_u64(x_scaled)}, "
+            f"expected_mag: {fmt_u64(mag)}, expected_neg: {neg} }},"
         )
 
     w.raw("]}")
@@ -234,8 +235,8 @@ def emit_exp_vector(w: MoveWriter, rng: random.Random):
         x_scaled = to_float_scaled(x)
         expected = to_float_scaled(math.exp(x))
         w.raw(
-            f"    ExpCase {{ input: {fmt(x_scaled)}, "
-            f"is_negative: false, expected: {fmt(expected)} }},"
+            f"    ExpCase {{ input: {fmt_u64(x_scaled)}, "
+            f"is_negative: false, expected: {fmt_u64(expected)} }},"
         )
 
     for _ in range(N_EXP_CASES - half):
@@ -243,8 +244,8 @@ def emit_exp_vector(w: MoveWriter, rng: random.Random):
         x_scaled = to_float_scaled(x)
         expected = to_float_scaled(math.exp(-x))
         w.raw(
-            f"    ExpCase {{ input: {fmt(x_scaled)}, "
-            f"is_negative: true, expected: {fmt(expected)} }},"
+            f"    ExpCase {{ input: {fmt_u64(x_scaled)}, "
+            f"is_negative: true, expected: {fmt_u64(expected)} }},"
         )
 
     w.raw("]}")
@@ -277,8 +278,8 @@ def emit_cdf_vector(w: MoveWriter, rng: random.Random):
         expected = to_float_scaled(norm.cdf(-x if is_neg else x))
         neg_str = "true" if is_neg else "false"
         w.raw(
-            f"    CdfCase {{ input: {fmt(x_scaled)}, "
-            f"is_negative: {neg_str}, expected: {fmt(expected)} }},"
+            f"    CdfCase {{ input: {fmt_u64(x_scaled)}, "
+            f"is_negative: {neg_str}, expected: {fmt_u64(expected)} }},"
         )
 
     w.raw("]}")
@@ -295,7 +296,7 @@ def main():
     w = MoveWriter()
     w.header("generated_math")
 
-    generate_named_constants(w)
+    emit_named_constants(w)
     emit_ln_vector(w, rng)
     emit_exp_vector(w, rng)
     emit_cdf_vector(w, rng)
