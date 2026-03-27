@@ -66,6 +66,8 @@ const EInvalidEWMAAlpha: u64 = 17;
 const EInvalidZScoreThreshold: u64 = 18;
 const EInvalidAdditionalTakerFee: u64 = 19;
 const EWrongPoolReferral: u64 = 20;
+const EInvalidReferralFeeRate: u64 = 21;
+const EConflictingReferralFee: u64 = 22;
 
 // === Structs ===
 public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
@@ -106,6 +108,14 @@ public struct DeepBurned<phantom BaseAsset, phantom QuoteAsset> has copy, drop, 
     pool_id: ID,
     deep_burned: u64,
 }
+
+/// The configuration for the referral taker fee rate in bps.
+public struct ReferralTakerFeeConfig has store {
+    taker_fee_rate: u64,
+}
+
+/// The key for the referral taker fee configuration.
+public struct ReferralTakerFeeConfigKey(ID) has copy, drop, store;
 
 public struct ReferralRewards<phantom BaseAsset, phantom QuoteAsset> has store {
     multiplier: u64,
@@ -908,7 +918,7 @@ public fun update_deepbook_referral_multiplier<BaseAsset, QuoteAsset>(
     abort
 }
 
-/// Update the multiplier for the referral.
+/// Update the multiplier for the referral. Only allowed when the referral taker fee rate in bps is absent or 0.
 public fun update_pool_referral_multiplier<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     referral: &DeepBookPoolReferral,
@@ -919,11 +929,49 @@ public fun update_pool_referral_multiplier<BaseAsset, QuoteAsset>(
     referral.assert_referral_owner(ctx);
     assert!(multiplier <= constants::referral_max_multiplier(), EInvalidReferralMultiplier);
     assert!(multiplier % constants::referral_multiplier() == 0, EInvalidReferralMultiplier);
+
     let referral_id = object::id(referral);
+    let bps_config_key = ReferralTakerFeeConfigKey(referral_id);
+    if (self.id.exists_(bps_config_key)) {
+        // Referral taker fee rate in bps must be 0
+        let config: &ReferralTakerFeeConfig = self.id.borrow(bps_config_key);
+        assert!(config.taker_fee_rate == 0, EConflictingReferralFee);
+    };
+
     let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
         .id
         .borrow_mut(referral_id);
     referral_rewards.multiplier = multiplier;
+}
+
+/// Update the referral taker fee rate, attaching a `ReferralTakerFeeConfig` dynamic field if one doesn't
+/// exist yet. Only allowed when the referral fee multiplier is 0.
+public fun update_pool_referral_taker_fee_rate<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    referral: &DeepBookPoolReferral,
+    taker_fee_rate: u64,
+    ctx: &TxContext,
+) {
+    let _ = self.load_inner();
+    referral.assert_referral_owner(ctx);
+    assert!(referral.balance_manager_referral_pool_id() == self.id(), EWrongPoolReferral);
+    assert!(taker_fee_rate <= constants::max_referral_taker_fee_rate(), EInvalidReferralFeeRate);
+    assert!(taker_fee_rate % constants::fee_precision_multiple() == 0, EInvalidReferralFeeRate);
+
+    let referral_id = object::id(referral);
+    // Referral fee multiplier must be 0
+    let rewards: &ReferralRewards<BaseAsset, QuoteAsset> = self.id.borrow(referral_id);
+    assert!(rewards.multiplier == 0, EConflictingReferralFee);
+
+    let key = ReferralTakerFeeConfigKey(referral_id);
+    if (self.id.exists_(key)) {
+        // Update existing config
+        let config: &mut ReferralTakerFeeConfig = self.id.borrow_mut(key);
+        config.taker_fee_rate = taker_fee_rate;
+    } else {
+        // Attach new config
+        self.id.add(key, ReferralTakerFeeConfig { taker_fee_rate });
+    }
 }
 
 #[deprecated(note = b"This function is deprecated, use `claim_pool_referral_rewards` instead.")]
@@ -1930,6 +1978,7 @@ fun place_order_int<BaseAsset, QuoteAsset>(
     order_info
 }
 
+// Process referral fee: exactly one of multiplier or bps mode is active at a time
 fun process_referral_fees<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     order_info: &OrderInfo,
@@ -1939,14 +1988,45 @@ fun process_referral_fees<BaseAsset, QuoteAsset>(
     let referral_id = balance_manager.get_balance_manager_referral_id(self.id());
     if (referral_id.is_some()) {
         let referral_id = referral_id.destroy_some();
+
+        let bps_config_key = ReferralTakerFeeConfigKey(referral_id);
+        let bps_fee_rate = if (self.id.exists_(bps_config_key)) {
+            let config: &ReferralTakerFeeConfig = self.id.borrow(bps_config_key);
+            config.taker_fee_rate
+        } else {
+            0
+        };
+
+        let referral_fee = if (bps_fee_rate > 0) {
+            // BPS mode: fee is a fraction of the traded volume
+            let volume = if (order_info.fee_is_deep()) {
+                order_info
+                    .order_deep_price()
+                    .deep_quantity_u128(
+                        order_info.executed_quantity() as u128,
+                        order_info.cumulative_quote_quantity() as u128,
+                    ) as u64
+            } else if (order_info.is_bid()) {
+                order_info.cumulative_quote_quantity()
+            } else {
+                order_info.executed_quantity()
+            };
+
+            math::mul(volume, bps_fee_rate)
+        } else {
+            // Multiplier mode: fee is a fraction of the fees paid by the trader
+            let rewards: &ReferralRewards<BaseAsset, QuoteAsset> = self.id.borrow(referral_id);
+            let multiplier = rewards.multiplier;
+            if (multiplier == 0) { return }; // Both bps fee rate and multiplier are 0, no referral fee
+            math::mul(order_info.paid_fees(), multiplier)
+        };
+
+        // Covers: zero paid_fees in multiplier mode (e.g. whitelisted pool), or bps fee is too small.
+        if (referral_fee == 0) { return };
+
         let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
             .id
             .borrow_mut(referral_id);
-        let referral_multiplier = referral_rewards.multiplier;
-        let referral_fee = math::mul(order_info.paid_fees(), referral_multiplier);
-        if (referral_fee == 0) {
-            return
-        };
         let mut base_fee = 0;
         let mut quote_fee = 0;
         let mut deep_fee = 0;
