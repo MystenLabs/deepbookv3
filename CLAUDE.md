@@ -26,6 +26,9 @@ Claude automatically loads contextual knowledge based on files being edited:
 - **Indexer files** (`crates/server/**`, `crates/schema/**`, `crates/indexer/**`) → `.claude/rules/indexer.md`
 - **Scripts** (`scripts/**`) → `.claude/rules/scripts.md`
 - **Unit tests** (`packages/**/tests/**`) → `.claude/rules/unit-tests.md`
+- **Code review** (`packages/**/*.move`) → `.claude/rules/code-review.md`
+
+When reviewing code in this repo, always read `.claude/rules/code-review.md` and check against its patterns.
 
 **Important:** Update rule files when discovering new insights during sessions, including:
 - Bug fixes and their root causes
