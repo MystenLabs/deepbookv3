@@ -724,3 +724,47 @@ fun cdf_at_quote_boundary() {
     // |d2| = 5.2 — at the edge of the quotable range (0.1c price)
     precision::assert_approx(math::normal_cdf(5_200_000_000, false), gs::PHI_5_2!());
 }
+
+// ============================================================
+// Randomized vector tests (scipy ground truth, 200 cases each)
+// ============================================================
+
+#[test]
+fun ln_matches_scipy() {
+    gs::ln_cases().do_ref!(|c| {
+        let (mag, neg) = math::ln(gs::ln_input(c));
+        precision::assert_approx(mag, gs::ln_expected_mag(c));
+        assert_eq!(neg, gs::ln_expected_neg(c));
+    });
+}
+
+#[test]
+fun exp_matches_scipy() {
+    gs::exp_cases().do_ref!(|c| {
+        let result = math::exp(gs::exp_input(c), gs::exp_is_negative(c));
+        let expected = gs::exp_expected(c);
+        if (expected == 0) {
+            assert_eq!(result, 0);
+        } else {
+            precision::assert_approx(result, expected);
+        };
+    });
+}
+
+#[test]
+fun cdf_matches_scipy() {
+    let f: u64 = 1_000_000_000;
+    gs::cdf_cases().do_ref!(|c| {
+        let result = math::normal_cdf(gs::cdf_input(c), gs::cdf_is_negative(c));
+        let expected = gs::cdf_expected(c);
+        if (expected < 1_000) {
+            // Deep tail: contract clamps at sqrt(32), allow small absolute error
+            assert!(result < 1_000);
+        } else if (expected > f - 1_000) {
+            // Near FLOAT: symmetric to deep tail
+            assert!(result > f - 1_000);
+        } else {
+            precision::assert_approx(result, expected);
+        };
+    });
+}
