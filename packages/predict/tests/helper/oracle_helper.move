@@ -30,7 +30,7 @@ public fun create_from_scenario(s: &OracleScenario, ctx: &mut TxContext): (Oracl
 }
 
 /// Zero-SVI oracle for staleness/settlement tests.
-/// Clock starts at 0; caller sets it if needed.
+/// Clock is set to `now_ms` for consistency with `create_from_scenario`.
 public fun create_simple_oracle(
     spot: u64,
     forward: u64,
@@ -49,7 +49,8 @@ public fun create_simple_oracle(
         now_ms,
         ctx,
     );
-    let clock = clock::create_for_testing(ctx);
+    let mut clock = clock::create_for_testing(ctx);
+    clock.set_for_testing(now_ms);
     (oracle, clock)
 }
 
@@ -74,36 +75,17 @@ public fun create_std_oracle(ctx: &mut TxContext): (OracleSVI, Clock) {
 /// Standard oracle with a registered cap, ready for guarded function calls.
 /// Returns (oracle, cap, clock). Clock starts at 0.
 public fun create_oracle_with_cap(ctx: &mut TxContext): (OracleSVI, OracleCapSVI, Clock) {
-    let svi = new_svi_params(0, 1_000_000_000, 0, false, 0, false, 250_000_000);
-    let prices = new_price_data(100_000_000_000, 100_000_000_000);
-    let mut oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
-        0,
-        1_000_000,
-        0,
-        ctx,
-    );
+    let (mut oracle, clock) = create_std_oracle(ctx);
     let cap = oracle::create_oracle_cap(ctx);
     oracle::register_cap(&mut oracle, &cap);
-    let clock = clock::create_for_testing(ctx);
     (oracle, cap, clock)
 }
 
-/// Settled oracle for unit tests. SVI params are zeroed (irrelevant for settled path).
-public fun create_settled_oracle(settlement_price: u64, ctx: &mut TxContext): OracleSVI {
-    let svi = new_svi_params(0, 0, 0, false, 0, false, 0);
-    let prices = new_price_data(0, 0);
-    let mut oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
-        0,
-        100_000,
-        0,
-        ctx,
-    );
-    oracle::settle_test_oracle(&mut oracle, settlement_price);
-    oracle
+/// Oracle + cap where the cap is NOT registered (for unauthorized-cap abort tests).
+public fun create_oracle_with_unregistered_cap(
+    ctx: &mut TxContext,
+): (OracleSVI, OracleCapSVI, Clock) {
+    let (oracle, clock) = create_std_oracle(ctx);
+    let cap = oracle::create_oracle_cap(ctx);
+    (oracle, cap, clock)
 }

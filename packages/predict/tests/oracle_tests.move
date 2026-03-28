@@ -15,13 +15,13 @@ use sui::clock;
 
 const FLOAT: u64 = 1_000_000_000;
 
-// === Time constants ===
+// === Time constants (must stay in sync with constants module) ===
 const MS_PER_YEAR: u64 = 31_536_000_000;
 const STALENESS_THRESHOLD_MS: u64 = 30_000;
 const HALF_YEAR_MS: u64 = 15_768_000_000;
 
 // === Common test SVI params ===
-const SIGMA_25: u64 = 250_000_000;
+const SVI_SIGMA_0_25: u64 = 250_000_000;
 
 // === Interest rates ===
 const RATE_5_PCT: u64 = 50_000_000;
@@ -350,7 +350,7 @@ fun live_discount_is_one_past_expiry() {
     // Even though rate=5%, discount clamps to 1.0 when time_to_expiry <= 0.
     // So prices should match the zero-rate scenario (scenario 0 ATM).
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
+    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SVI_SIGMA_0_25);
     let forward = 100 * FLOAT;
     let prices = new_price_data(forward, forward);
     let oracle = oracle::create_test_oracle(
@@ -438,7 +438,7 @@ fun nonzero_m_shifts_otm_strikes() {
 fun discount_positive_rate_half_year() {
     // rate=10%, half year: UP + DN = e^(-0.10*0.5) = DISCOUNT_10PCT_HALF_YR
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
+    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SVI_SIGMA_0_25);
     let forward = 100 * FLOAT;
     let prices = new_price_data(forward, forward);
 
@@ -466,7 +466,7 @@ fun discount_positive_rate_half_year() {
 fun exact_discount_with_partial_year() {
     // rate=10%, expiry=20B ms, clock=10B ms → t ≈ 0.317 years
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
+    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SVI_SIGMA_0_25);
     let forward = 100 * FLOAT;
     let prices = new_price_data(forward, forward);
     let oracle = oracle::create_test_oracle(
@@ -502,7 +502,7 @@ fun exact_discount_with_partial_year() {
 #[test]
 fun build_curve_settled_oracle() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
+    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SVI_SIGMA_0_25);
     let forward = 100 * FLOAT;
     let prices = new_price_data(forward, forward);
     let mut oracle = oracle::create_test_oracle(
@@ -540,7 +540,7 @@ fun build_curve_settled_oracle() {
 #[test]
 fun build_curve_settled_at_75() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
+    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SVI_SIGMA_0_25);
     let prices = new_price_data(100 * FLOAT, 100 * FLOAT);
     let mut oracle = oracle::create_test_oracle(
         b"BTC".to_string(),
@@ -666,7 +666,7 @@ fun build_curve_endpoints_match_min_max() {
 #[test]
 fun build_curve_forward_outside_range() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
+    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SVI_SIGMA_0_25);
     let forward = 200 * FLOAT; // outside [50,150]
     let prices = new_price_data(forward, forward);
     let oracle = oracle::create_test_oracle(
@@ -701,7 +701,7 @@ fun build_curve_forward_outside_range() {
 fun build_curve_with_positive_rate_complement() {
     // With positive rate, UP + DN = discount < FLOAT
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
+    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SVI_SIGMA_0_25);
     let forward = 100 * FLOAT;
     let prices = new_price_data(forward, forward);
 
@@ -754,7 +754,7 @@ fun live_forward_one_unit_above_strike() {
 #[test, expected_failure]
 fun live_price_with_zero_forward_aborts() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
+    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SVI_SIGMA_0_25);
     let prices = new_price_data(0, 0);
     let oracle = oracle::create_test_oracle(
         b"BTC".to_string(),
@@ -779,7 +779,7 @@ fun live_price_with_zero_forward_aborts() {
 #[test]
 fun activate_succeeds_with_registered_cap() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
+    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SVI_SIGMA_0_25);
     let prices = new_price_data(100 * FLOAT, 100 * FLOAT);
     let mut oracle = oracle::create_test_oracle(
         b"BTC".to_string(),
@@ -808,7 +808,7 @@ fun activate_succeeds_with_registered_cap() {
 #[test]
 fun update_prices_updates_spot_and_forward() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
+    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SVI_SIGMA_0_25);
     let prices = new_price_data(100 * FLOAT, 100 * FLOAT);
     let mut oracle = oracle::create_test_oracle(
         b"BTC".to_string(),
@@ -838,7 +838,7 @@ fun update_prices_updates_spot_and_forward() {
 fun update_prices_past_expiry_settles_oracle() {
     // update_prices past expiry freezes settlement price from spot
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
+    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SVI_SIGMA_0_25);
     let prices = new_price_data(100 * FLOAT, 100 * FLOAT);
     let mut oracle = oracle::create_test_oracle(
         b"BTC".to_string(),
@@ -870,7 +870,7 @@ fun update_prices_past_expiry_settles_oracle() {
 #[test]
 fun update_svi_updates_rate_and_timestamp() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
+    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SVI_SIGMA_0_25);
     let prices = new_price_data(100 * FLOAT, 100 * FLOAT);
     let mut oracle = oracle::create_test_oracle(
         b"BTC".to_string(),
@@ -886,7 +886,7 @@ fun update_svi_updates_rate_and_timestamp() {
     let mut clock = clock::create_for_testing(ctx);
     clock.set_for_testing(5_000);
 
-    let new_svi = new_svi_params(100, FLOAT, 0, false, 0, false, SIGMA_25);
+    let new_svi = new_svi_params(100, FLOAT, 0, false, 0, false, SVI_SIGMA_0_25);
     oracle.update_svi(&cap, new_svi, RATE_5_PCT, &clock);
 
     assert_eq!(oracle.risk_free_rate(), RATE_5_PCT);
@@ -904,22 +904,9 @@ fun update_svi_updates_rate_and_timestamp() {
 #[test, expected_failure(abort_code = oracle::EInvalidOracleCap)]
 fun activate_with_unauthorized_cap_aborts() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
-    let prices = new_price_data(100 * FLOAT, 100 * FLOAT);
-    let mut oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
-        0,
-        1_000_000,
-        0,
-        ctx,
-    );
+    let (mut oracle, cap, clock) = oracle_helper::create_oracle_with_unregistered_cap(ctx);
     oracle.set_active_for_testing(false);
-    let cap = oracle::create_oracle_cap(ctx);
-    let clock = clock::create_for_testing(ctx);
 
-    // Cap is not registered on this oracle
     oracle.activate(&cap, &clock);
 
     abort
@@ -928,21 +915,8 @@ fun activate_with_unauthorized_cap_aborts() {
 #[test, expected_failure(abort_code = oracle::EInvalidOracleCap)]
 fun update_prices_with_unauthorized_cap_aborts() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
-    let prices = new_price_data(100 * FLOAT, 100 * FLOAT);
-    let mut oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
-        0,
-        1_000_000,
-        0,
-        ctx,
-    );
-    let cap = oracle::create_oracle_cap(ctx);
-    let clock = clock::create_for_testing(ctx);
+    let (mut oracle, cap, clock) = oracle_helper::create_oracle_with_unregistered_cap(ctx);
 
-    // Cap is not registered on this oracle
     let new_prices = new_price_data(105 * FLOAT, 106 * FLOAT);
     oracle.update_prices(&cap, new_prices, &clock);
 
@@ -952,22 +926,9 @@ fun update_prices_with_unauthorized_cap_aborts() {
 #[test, expected_failure(abort_code = oracle::EInvalidOracleCap)]
 fun update_svi_with_unauthorized_cap_aborts() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
-    let prices = new_price_data(100 * FLOAT, 100 * FLOAT);
-    let mut oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
-        0,
-        1_000_000,
-        0,
-        ctx,
-    );
-    let cap = oracle::create_oracle_cap(ctx);
-    let clock = clock::create_for_testing(ctx);
+    let (mut oracle, cap, clock) = oracle_helper::create_oracle_with_unregistered_cap(ctx);
 
-    // Cap is not registered on this oracle
-    let new_svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
+    let new_svi = new_svi_params(0, FLOAT, 0, false, 0, false, SVI_SIGMA_0_25);
     oracle.update_svi(&cap, new_svi, 0, &clock);
 
     abort
@@ -1002,7 +963,7 @@ fun update_svi_on_settled_oracle_aborts() {
     let (mut oracle, cap, clock) = oracle_helper::create_oracle_with_cap(ctx);
     oracle.settle_test_oracle(100 * FLOAT);
 
-    let new_svi = new_svi_params(0, FLOAT, 0, false, 0, false, SIGMA_25);
+    let new_svi = new_svi_params(0, FLOAT, 0, false, 0, false, SVI_SIGMA_0_25);
     oracle.update_svi(&cap, new_svi, 0, &clock);
 
     abort

@@ -36,7 +36,9 @@ ORACLE_OUTPUT = DATA_DIR / "generated_oracle.move"
 
 
 def to_float_scaled(value: float) -> int:
-    """Convert to FLOAT_SCALING (1e9), floor-truncated."""
+    """Convert to FLOAT_SCALING (1e9), floor-truncated via int().
+    Note: svi_to_move() uses round() instead to avoid float representation
+    artifacts (e.g. 0.00416 * 1e9 = 4159999.999...)."""
     return int(value * FLOAT_SCALING)
 
 
@@ -67,7 +69,7 @@ class MoveWriter:
             "// Source of truth: scipy.stats.norm + Python math"
         )
         self.lines.append(
-            "// Regenerate: cd tests/generated_tests && python3 generate.py"
+            "// Regenerate: cd tests/generated_tests && python3 generate.py && bunx prettier-move -c *.move --write"
         )
         self.lines.append("")
         self.lines.append("#[test_only]")
@@ -661,10 +663,7 @@ ORACLE_FIELDS = [
     ("expiry_ms", "u64"), ("now_ms", "u64"),
 ]
 
-SCENARIO_FIELDS = [
-    "spot", "forward", "a", "b", "rho", "rho_neg",
-    "m", "m_neg", "sigma", "rate", "expiry_ms", "now_ms",
-]
+SCENARIO_FIELDS = [name for name, _ in ORACLE_FIELDS]
 
 
 def emit_oracle_structs(w: MoveWriter):
