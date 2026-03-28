@@ -9,6 +9,7 @@ use crate::schema::{
     collateral_events,
     // TPSL (Take Profit/Stop Loss) Events
     conditional_order_events,
+    current_price_updated,
     deep_burned,
     deepbook_pool_config_updated,
     deepbook_pool_registered,
@@ -33,6 +34,7 @@ use crate::schema::{
     margin_pool_created,
     // snapshots for analytics
     margin_pool_snapshots,
+    max_price_age_updated,
     order_fills,
     order_updates,
     pause_cap_updated,
@@ -40,6 +42,7 @@ use crate::schema::{
     pool_created,
     pool_prices,
     pools,
+    price_tolerance_updated,
     proposals,
     protocol_fees_increased,
     protocol_fees_withdrawn,
@@ -765,6 +768,49 @@ pub struct PauseCapUpdated {
     pub package: String,
     pub pause_cap_id: String,
     pub allowed: bool,
+    pub onchain_timestamp: i64,
+}
+
+// === Margin Registry Price Events ===
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = current_price_updated, primary_key(event_digest))]
+pub struct CurrentPriceUpdated {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub price: i64,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = price_tolerance_updated, primary_key(event_digest))]
+pub struct PriceToleranceUpdated {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub tolerance: i64,
+    pub onchain_timestamp: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = max_price_age_updated, primary_key(event_digest))]
+pub struct MaxPriceAgeUpdated {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub max_age_ms: i64,
     pub onchain_timestamp: i64,
 }
 
