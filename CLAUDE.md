@@ -49,6 +49,9 @@ When creating a PR with `gh pr create`, always ask the user for a branch name be
 ## Summary
 - <bullet points>
 
+## Key decisions
+- <decisions that teammates should know about: trade-offs, design choices, why something was done a certain way>
+
 ## Test plan
 - [ ] <checklist items>
 ```
