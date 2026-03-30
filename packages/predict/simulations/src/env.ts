@@ -4,10 +4,15 @@ import { fileURLToPath } from "url";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { fromBase64 } from "@mysten/sui/utils";
 
-const ENV_FILE = fileURLToPath(new URL("../.env.localnet", import.meta.url));
-const DEFAULT_KEYSTORE_PATH = fileURLToPath(
-  new URL("../.localnet/sui.keystore", import.meta.url)
-);
+function resolveInstanceDir(): string {
+  const dir = process.env.INSTANCE_DIR;
+  if (dir) return dir;
+  return fileURLToPath(new URL("..", import.meta.url));
+}
+
+const instanceDir = resolveInstanceDir();
+const ENV_FILE = path.join(instanceDir, ".env.localnet");
+const DEFAULT_KEYSTORE_PATH = path.join(instanceDir, "localnet", "sui.keystore");
 
 function loadEnv(): Record<string, string> {
   const lines = readFileSync(ENV_FILE, "utf8").replace(/\r/g, "").split("\n");

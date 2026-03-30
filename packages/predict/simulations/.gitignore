@@ -1,5 +1,6 @@
 .localnet/
 .env.localnet
 artifacts/
+runs/
 data/setup.json
 node_modules/

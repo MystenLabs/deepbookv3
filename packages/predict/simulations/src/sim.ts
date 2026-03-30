@@ -1,19 +1,19 @@
 import {
   ARTIFACTS_DIR,
-  DIGESTS_PATH,
+  RESULTS_PATH,
   STATE_PATH,
-  type DigestEntry,
-  type DigestsFile,
   type ScenarioRow,
   type SimState,
+  type TxResult,
   loadScenario,
+  readJson,
   ts,
   writeJson,
 } from "./shared.js";
 import {
   activateOracleTx,
   address,
-  adminDepositTx,
+  supplyTx,
   buildFastExecutorState,
   createManagerTx,
   createOracleCapTx,
@@ -36,6 +36,7 @@ const EXPIRY_MS = BigInt(Date.now()) + 7n * 24n * 60n * 60n * 1000n;
 function parseArgs() {
   return {
     setupOnly: process.argv.includes("--setup-only"),
+    executeOnly: process.argv.includes("--execute-only"),
   };
 }
 
@@ -107,7 +108,7 @@ async function setupSimulation(rows: ScenarioRow[]): Promise<SimState> {
   console.log(`[${ts()}]   Initial oracle data set`);
 
   const vaultSeed = 500_000n * DUSDC_DECIMALS;
-  await executeAndWait(adminDepositTx(predictId, vaultSeed), "admin_deposit");
+  await executeAndWait(supplyTx(predictId, vaultSeed), "supply");
   console.log(`[${ts()}]   Vault funded: ${vaultSeed / DUSDC_DECIMALS} DUSDC`);
 
   result = await executeAndWait(createManagerTx(), "create_manager");
@@ -136,7 +137,7 @@ async function setupSimulation(rows: ScenarioRow[]): Promise<SimState> {
   return state;
 }
 
-async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<DigestsFile> {
+async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<void> {
   const expiry = BigInt(state.expiry);
   const mintRows = rows.filter((row) => row.action === "mint");
 
@@ -144,25 +145,23 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<Di
   loadFastExecutor(state.fastExecutor);
   console.log(`[${ts()}] --- Executing ${rows.length} actions ---\n`);
 
-  const digests: DigestEntry[] = [];
+  const results: TxResult[] = [];
   let mintIndex = 0;
-  let oracleUpdateCount = 0;
 
   for (let index = 0; index < rows.length; index++) {
     const row = rows[index];
     const startedAt = performance.now();
 
     if (row.action === "update_prices") {
-      const digest = await executeFast(
+      const exec = await executeFast(
         updatePricesTx(state.oracleId, state.oracleCapId, BigInt(row.spot), BigInt(row.forward), "fast")
       );
-      digests.push({ index, action: "update_prices", digest, wallMs: performance.now() - startedAt });
-      oracleUpdateCount++;
+      results.push({ index, action: "update_prices", wallMs: performance.now() - startedAt, ...exec });
       continue;
     }
 
     if (row.action === "update_svi") {
-      const digest = await executeFast(
+      const exec = await executeFast(
         updateSviTx(
           state.oracleId,
           state.oracleCapId,
@@ -179,14 +178,14 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<Di
           "fast"
         )
       );
-      digests.push({ index, action: "update_svi", digest, wallMs: performance.now() - startedAt });
+      results.push({ index, action: "update_svi", wallMs: performance.now() - startedAt, ...exec });
       continue;
     }
 
     if (row.action === "mint") {
       mintIndex++;
       const isUp = row.is_up === "true";
-      const digest = await executeFast(
+      const exec = await executeFast(
         mintTx(
           {
             predictId: state.predictId,
@@ -202,11 +201,11 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<Di
       );
 
       const wallMs = performance.now() - startedAt;
-      digests.push({
+      results.push({
         index,
         action: "mint",
-        digest,
         wallMs,
+        ...exec,
         strike: row.strike,
         isUp,
         quantity: row.quantity,
@@ -218,37 +217,28 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<Di
     }
   }
 
-  const output: DigestsFile = {
-    predictId: state.predictId,
-    oracleId: state.oracleId,
-    managerId: state.managerId,
-    summary: {
-      totalRows: rows.length,
-      byAction: {
-        update_prices: oracleUpdateCount,
-        update_svi: rows.filter((row) => row.action === "update_svi").length,
-        mint: mintIndex,
-      },
-    },
-    digests,
-  };
+  writeJson(RESULTS_PATH, results);
 
-  writeJson(DIGESTS_PATH, output);
-
-  const mintDigests = digests.filter((entry) => entry.action === "mint");
-  const averageMs = mintDigests.reduce((sum, entry) => sum + entry.wallMs, 0) / mintDigests.length;
+  const mintResults = results.filter((r) => r.action === "mint");
+  const avgMs = mintResults.reduce((sum, r) => sum + r.wallMs, 0) / mintResults.length;
+  const avgGas = mintResults.reduce((sum, r) => sum + r.gasTotal, 0) / mintResults.length;
 
   console.log(`\n[${ts()}] --- Done ---`);
-  console.log(`[${ts()}]   ${digests.length} txs, ${mintIndex} mints, ${oracleUpdateCount} oracle updates`);
-  console.log(`[${ts()}]   Avg mint: ${averageMs.toFixed(0)}ms`);
-  console.log(`[${ts()}]   Digests saved to ${DIGESTS_PATH}`);
-
-  return output;
+  console.log(`[${ts()}]   ${results.length} txs, ${mintIndex} mints`);
+  console.log(`[${ts()}]   Avg mint: ${avgMs.toFixed(0)}ms, avg gas: ${(avgGas / 1e9).toFixed(6)} SUI`);
+  console.log(`[${ts()}]   Results saved to ${RESULTS_PATH}`);
 }
 
 async function main() {
   const args = parseArgs();
   const rows = loadScenario();
+
+  if (args.executeOnly) {
+    const state = readJson<SimState>(STATE_PATH);
+    await executeScenario(rows, state);
+    return;
+  }
+
   const state = await setupSimulation(rows);
 
   if (args.setupOnly) {

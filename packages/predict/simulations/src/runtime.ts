@@ -240,7 +240,7 @@ export function updateSviTx(
   return tx;
 }
 
-export function adminDepositTx(predictId: string, amount: bigint): Transaction {
+export function supplyTx(predictId: string, amount: bigint): Transaction {
   const tx = new Transaction();
   const [coin] = tx.moveCall({
     target: "0x2::coin::mint",
@@ -248,9 +248,9 @@ export function adminDepositTx(predictId: string, amount: bigint): Transaction {
     arguments: [tx.object(TREASURY_CAP_ID), tx.pure.u64(amount)],
   });
   tx.moveCall({
-    target: target("registry", "admin_deposit"),
+    target: target("predict", "supply"),
     typeArguments: [DUSDC_TYPE],
-    arguments: [tx.object(predictId), tx.object(ADMIN_CAP_ID), coin],
+    arguments: [tx.object(predictId), coin],
   });
   return tx;
 }
@@ -493,7 +493,15 @@ export function loadFastExecutor(state: FastExecutorState): void {
   console.log(`  Fast executor: ${cache.size} objects cached, gas price ${gasPrice}`);
 }
 
-export async function executeFast(tx: Transaction): Promise<string> {
+export interface ExecutionResult {
+  digest: string;
+  computationCost: number;
+  storageCost: number;
+  storageRebate: number;
+  gasTotal: number;
+}
+
+export async function executeFast(tx: Transaction): Promise<ExecutionResult> {
   if (!gasCoin) {
     throw new Error("Fast executor has not been initialized");
   }
@@ -519,5 +527,16 @@ export async function executeFast(tx: Transaction): Promise<string> {
   applyEffectsToCache(effects);
   gasCoin = extractGasCoinRef(effects) ?? await pickGasCoin();
 
-  return raw.digest;
+  const gasUsed = effects.gasUsed ?? {};
+  const computationCost = Number(gasUsed.computationCost ?? 0);
+  const storageCost = Number(gasUsed.storageCost ?? 0);
+  const storageRebate = Number(gasUsed.storageRebate ?? 0);
+
+  return {
+    digest: raw.digest,
+    computationCost,
+    storageCost,
+    storageRebate,
+    gasTotal: computationCost + storageCost - storageRebate,
+  };
 }

@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from "fs";
-import { dirname } from "path";
+import path from "path";
 import { fileURLToPath } from "url";
 
 import type { FastExecutorState } from "./runtime.js";
@@ -23,11 +23,15 @@ export interface ScenarioRow {
   quantity: string;
 }
 
-export interface DigestEntry {
+export interface TxResult {
   index: number;
   action: ActionName;
   digest: string;
   wallMs: number;
+  computationCost: number;
+  storageCost: number;
+  storageRebate: number;
+  gasTotal: number;
   strike?: string;
   isUp?: boolean;
   quantity?: string;
@@ -42,102 +46,18 @@ export interface SimState {
   fastExecutor: FastExecutorState;
 }
 
-export interface DigestsFile {
-  predictId: string;
-  oracleId: string;
-  managerId: string;
-  summary: {
-    totalRows: number;
-    byAction: Record<ActionName, number>;
-  };
-  digests: DigestEntry[];
+function resolveInstanceDir(): string {
+  const dir = process.env.INSTANCE_DIR;
+  if (dir) return dir;
+  return fileURLToPath(new URL("..", import.meta.url));
 }
 
-export interface TxMetricRow {
-  index: number;
-  action: ActionName;
-  digest: string;
-  wallMs: number;
-  computationCost: number;
-  computationCostSui: number;
-  storageCost: number;
-  storageCostSui: number;
-  storageRebate: number;
-  storageRebateSui: number;
-  gasTotal: number;
-  gasTotalSui: number;
-  timestampMs: string | null;
-}
-
-export interface MintAnalysisRow extends TxMetricRow {
-  mintIndex: number;
-  strike: string;
-  isUp: boolean;
-  quantity: string;
-  cost: string | null;
-  askPrice: string | null;
-  predictVersionBefore: string;
-  predictVersionAfter: string;
-  vaultBalanceBefore: string;
-  vaultBalanceAfter: string;
-  vaultBalanceDelta: string;
-  vaultTotalMtmBefore: string;
-  vaultTotalMtmAfter: string;
-  vaultTotalMtmDelta: string;
-}
-
-export interface MetricSummary {
-  count: number;
-  gas: {
-    avg: number;
-    min: number;
-    max: number;
-    avgSui: number;
-    minSui: number;
-    maxSui: number;
-  };
-  wallMs: {
-    avg: number;
-    min: number;
-    max: number;
-  };
-  computationCost: {
-    avg: number;
-    min: number;
-    max: number;
-    avgSui: number;
-  };
-  storageCost: {
-    avg: number;
-    min: number;
-    max: number;
-    avgSui: number;
-  };
-  storageRebate: {
-    avg: number;
-    min: number;
-    max: number;
-    avgSui: number;
-  };
-}
-
-export interface ResultsFile {
-  summary: {
-    totalTxs: number;
-    byAction: Record<ActionName, MetricSummary>;
-    vault: {
-      balance: string;
-      totalMtm: string;
-    };
-  };
-  mints: MintAnalysisRow[];
-}
+const instanceDir = resolveInstanceDir();
 
 export const SCENARIO_PATH = fileURLToPath(new URL("../data/scenario_mar6_1000mints.csv", import.meta.url));
-export const ARTIFACTS_DIR = fileURLToPath(new URL("../artifacts", import.meta.url));
-export const STATE_PATH = fileURLToPath(new URL("../artifacts/state.json", import.meta.url));
-export const DIGESTS_PATH = fileURLToPath(new URL("../artifacts/digests.json", import.meta.url));
-export const RESULTS_PATH = fileURLToPath(new URL("../artifacts/results.json", import.meta.url));
+export const ARTIFACTS_DIR = path.join(instanceDir, "artifacts");
+export const STATE_PATH = path.join(instanceDir, "artifacts", "state.json");
+export const RESULTS_PATH = path.join(instanceDir, "artifacts", "results.json");
 
 export function ts(): string {
   return new Date().toISOString().slice(11, 23);
@@ -166,7 +86,7 @@ export function readJson<T>(path: string): T {
   return JSON.parse(readFileSync(path, "utf8")) as T;
 }
 
-export function writeJson(path: string, value: unknown): void {
-  ensureDir(dirname(path));
-  writeFileSync(path, JSON.stringify(value, null, 2));
+export function writeJson(filePath: string, value: unknown): void {
+  ensureDir(path.dirname(filePath));
+  writeFileSync(filePath, JSON.stringify(value, null, 2));
 }
