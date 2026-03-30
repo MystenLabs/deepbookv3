@@ -1,66 +1,58 @@
 # Predict Simulations
 
-This folder is a self-contained localnet harness for the `predict` package. A full run:
+This folder is a localnet harness for the `predict` package. The core workflow is:
 
-- creates a fresh local Sui network
-- publishes `deepbook`, `dusdc`, and `predict`
-- sets up one predict market, oracle, and manager
-- executes the scenario CSV
-- analyzes gas and mint-level vault state
+- run a fresh simulation to produce `runs/<run-id>/artifacts/results.json`
+- render charts from that `results.json`
 
 ## Prerequisites
 
 - `sui` available on `PATH`
 - Node.js available on `PATH`
+- Python 3 with `matplotlib` and `numpy` installed for charting
 - dependencies installed in this folder
 
-## Commands
+## Workflow
 
-Run the full flow:
+Fresh run:
 
 ```bash
 bash packages/predict/simulations/run.sh
 ```
 
-Run setup only:
-
-```bash
-bash packages/predict/simulations/run.sh --setup-only
-```
-
-Skip analysis:
-
-```bash
-bash packages/predict/simulations/run.sh --skip-analysis
-```
-
-Run analysis again against an existing localnet state:
+Analyze existing results:
 
 ```bash
 cd packages/predict/simulations
-npx tsx src/analyze.ts
+npm run analyze -- runs/<run-id>/artifacts/results.json
 ```
 
-## Generated Files
+## Outputs
 
-- `.localnet/`: ephemeral local chain state and local client config
-- `.env.localnet`: generated package IDs and signer config for the TS scripts
-- `artifacts/state.json`: setup object IDs and fast-executor cache snapshot
-- `artifacts/digests.json`: digest and wall-time record for every scenario transaction
-- `artifacts/results.json`: grouped gas summary plus per-mint gas and vault MTM deltas
+- `runs/<run-id>/artifacts/results.json`: simulation output consumed by `visualize.py`
+- `runs/<run-id>/artifacts/chart_*.png`: optional charts emitted by `visualize.py`
+- `runs/<run-id>/artifacts/state.json`: setup state for resumed execution
+- `runs/<run-id>/localnet/` and `runs/<run-id>/.env.localnet`: localnet implementation details
 
-## Result Shape
+## Schema
 
-`results.json` is split by transaction type under `summary.byAction`, so mint gas is not averaged together with oracle updates.
+`results.json` uses schema `results_v2`:
 
-Each mint row includes:
+- `summary.totalTxs`
+- `summary.byAction.{update_prices,update_svi,mint}`
+- `mints[]`
 
-- gas components in MIST and SUI
-- wall-clock latency
-- strike, direction, quantity, cost, and ask price
-- predict object version before and after the mint
-- vault balance and total MTM before, after, and delta
+Each action summary has `count`, `gas.{avg,min,max}`, and `wallMs.{avg,min,max}`.
+Each mint row has `wallMs`, `computationCost`, `storageCost`, `storageRebate`, and `gasTotal`.
+
+## Advanced
+
+- `bash packages/predict/simulations/run.sh --setup`
+- `bash packages/predict/simulations/run.sh --list`
+- `bash packages/predict/simulations/run.sh --resume <run-id>`
+- `bash packages/predict/simulations/run.sh --resume <run-id> --sim`
+- `bash packages/predict/simulations/run.sh --skip-analysis`
 
 ## Localnet Limitation
 
-This harness does not produce replay-derived trace profiles. The useful localnet output is transaction gas, mint economics, and vault MTM state extracted into `results.json`.
+This harness does not produce replay-derived trace profiles. The useful localnet output is transaction gas, latency, and mint-level execution data extracted into `results.json`.

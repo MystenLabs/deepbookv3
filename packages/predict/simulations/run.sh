@@ -16,6 +16,7 @@ RUN_SETUP=0
 RUN_SIM=0
 EXPLICIT_PHASES=0
 LIST=0
+SKIP_ANALYSIS=0
 
 usage() {
   cat <<EOF
@@ -25,6 +26,7 @@ Options:
   --resume <id>    Resume an existing instance
   --setup          Only run setup phase (publish + create objects)
   --sim            Only run sim phase (execute mints + analyze)
+  --skip-analysis  Skip the post-run visualization step
   --list           List existing instances
   -h, --help       Show this help
 
@@ -33,6 +35,7 @@ Examples:
   $0 --setup                      # new instance, stop after setup
   $0 --resume mar30-1422          # resume, auto-detect missing phases
   $0 --resume mar30-1422 --sim    # resume, only run sim + analyze
+  $0 --resume mar30-1422 --sim --skip-analysis
 EOF
 }
 
@@ -55,6 +58,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --list)
       LIST=1
+      shift
+      ;;
+    --skip-analysis)
+      SKIP_ANALYSIS=1
       shift
       ;;
     -h|--help)
@@ -353,6 +360,12 @@ elif [ "$RUN_SETUP" -eq 1 ] && [ "$RUN_SIM" -eq 1 ]; then
 elif [ "$RUN_SIM" -eq 1 ]; then
   echo "==> Running simulation (execute only)..."
   npx tsx src/sim.ts --execute-only
+fi
+
+if [ "$RUN_SIM" -eq 1 ] && [ "$SKIP_ANALYSIS" -eq 0 ] && [ -f "$INSTANCE_DIR/artifacts/results.json" ]; then
+  echo ""
+  echo "==> Analyzing results..."
+  python3 visualize.py "$INSTANCE_DIR/artifacts/results.json"
 fi
 
 echo ""

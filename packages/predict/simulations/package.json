@@ -4,9 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "sim": "tsx src/sim.ts",
-    "sim:setup": "tsx src/sim.ts --setup-only",
-    "analyze": "tsx src/analyze.ts"
+    "analyze": "python3 visualize.py"
   },
   "dependencies": {
     "@mysten/sui": "^2.5.0",

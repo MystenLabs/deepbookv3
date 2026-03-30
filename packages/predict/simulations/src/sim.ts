@@ -1,10 +1,13 @@
 import {
-  ARTIFACTS_DIR,
   RESULTS_PATH,
+  RESULTS_SCHEMA_VERSION,
   STATE_PATH,
+  type ActionName,
+  type ActionSummary,
+  type ExecutionResult,
+  type ResultsFile,
   type ScenarioRow,
   type SimState,
-  type TxResult,
   loadScenario,
   readJson,
   ts,
@@ -13,24 +16,21 @@ import {
 import {
   activateOracleTx,
   address,
-  supplyTx,
-  buildFastExecutorState,
   createManagerTx,
   createOracleCapTx,
   createOracleTx,
   createPredictTx,
   depositToManagerTx,
+  execute,
   executeAndWait,
-  executeFast,
-  loadFastExecutor,
   mintTx,
   registerOracleCapTx,
+  supplyTx,
   updatePricesTx,
   updateSviTx,
 } from "./runtime.js";
 
 const DUSDC_DECIMALS = 1_000_000n;
-const QUANTITY_SCALE = 1000n;
 const EXPIRY_MS = BigInt(Date.now()) + 7n * 24n * 60n * 60n * 1000n;
 
 function parseArgs() {
@@ -40,15 +40,42 @@ function parseArgs() {
   };
 }
 
-function findFirst(rows: ScenarioRow[], action: string): ScenarioRow {
-  const row = rows.find((entry) => entry.action === action);
-  if (!row) {
-    throw new Error(`Scenario is missing a required ${action} row`);
-  }
-  return row;
+function summarizeRows(rows: ExecutionResult[]): ActionSummary {
+  return {
+    count: rows.length,
+    gas: {
+      avg: rows.reduce((sum, row) => sum + row.gasTotal, 0) / rows.length,
+      min: Math.min(...rows.map((row) => row.gasTotal)),
+      max: Math.max(...rows.map((row) => row.gasTotal)),
+    },
+    wallMs: {
+      avg: rows.reduce((sum, row) => sum + row.wallMs, 0) / rows.length,
+      min: Math.min(...rows.map((row) => row.wallMs)),
+      max: Math.max(...rows.map((row) => row.wallMs)),
+    },
+  };
 }
 
-async function setupSimulation(rows: ScenarioRow[]): Promise<SimState> {
+function buildResultsFile(byAction: Record<ActionName, ExecutionResult[]>): ResultsFile {
+  const summaryByAction: ResultsFile["summary"]["byAction"] = {};
+
+  for (const action of ["update_prices", "update_svi", "mint"] as const) {
+    if (byAction[action].length > 0) {
+      summaryByAction[action] = summarizeRows(byAction[action]);
+    }
+  }
+
+  return {
+    schema_version: RESULTS_SCHEMA_VERSION,
+    summary: {
+      totalTxs: byAction.update_prices.length + byAction.update_svi.length + byAction.mint.length,
+      byAction: summaryByAction,
+    },
+    mints: byAction.mint,
+  };
+}
+
+async function setupSimulation(): Promise<SimState> {
   console.log(`[${ts()}] --- Setup ---`);
 
   let result = await executeAndWait(createPredictTx(), "create_predict");
@@ -81,32 +108,6 @@ async function setupSimulation(rows: ScenarioRow[]): Promise<SimState> {
   await executeAndWait(activateOracleTx(oracleId, oracleCapId), "activate_oracle");
   console.log(`[${ts()}]   Oracle activated`);
 
-  const firstPrice = findFirst(rows, "update_prices");
-  const firstSvi = findFirst(rows, "update_svi");
-
-  await executeAndWait(
-    updatePricesTx(oracleId, oracleCapId, BigInt(firstPrice.spot), BigInt(firstPrice.forward)),
-    "update_prices"
-  );
-  await executeAndWait(
-    updateSviTx(
-      oracleId,
-      oracleCapId,
-      {
-        a: BigInt(firstSvi.a),
-        b: BigInt(firstSvi.b),
-        rho: BigInt(firstSvi.rho),
-        rhoNegative: firstSvi.rho_negative === "true",
-        m: BigInt(firstSvi.m),
-        mNegative: firstSvi.m_negative === "true",
-        sigma: BigInt(firstSvi.sigma),
-      },
-      BigInt(firstSvi.risk_free_rate)
-    ),
-    "update_svi"
-  );
-  console.log(`[${ts()}]   Initial oracle data set`);
-
   const vaultSeed = 500_000n * DUSDC_DECIMALS;
   await executeAndWait(supplyTx(predictId, vaultSeed), "supply");
   console.log(`[${ts()}]   Vault funded: ${vaultSeed / DUSDC_DECIMALS} DUSDC`);
@@ -120,112 +121,101 @@ async function setupSimulation(rows: ScenarioRow[]): Promise<SimState> {
   await executeAndWait(depositToManagerTx(managerId, userFunds), "deposit_to_manager");
   console.log(`[${ts()}]   Manager funded: ${userFunds / DUSDC_DECIMALS} DUSDC`);
 
-  const fastExecutor = await buildFastExecutorState([predictId, oracleId, oracleCapId, managerId]);
-
   const state: SimState = {
     predictId,
     oracleId,
     oracleCapId,
     managerId,
     expiry: String(EXPIRY_MS),
-    fastExecutor,
   };
 
   writeJson(STATE_PATH, state);
-  console.log(`[${ts()}]   State saved to ${ARTIFACTS_DIR}`);
+  console.log(`[${ts()}]   State saved to ${STATE_PATH}`);
 
   return state;
 }
 
 async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<void> {
   const expiry = BigInt(state.expiry);
-  const mintRows = rows.filter((row) => row.action === "mint");
+  const mintRows = rows.filter((row): row is Extract<ScenarioRow, { action: "mint" }> => row.action === "mint");
 
   console.log(`\n[${ts()}] Loaded ${rows.length} rows (${mintRows.length} mints)`);
-  loadFastExecutor(state.fastExecutor);
   console.log(`[${ts()}] --- Executing ${rows.length} actions ---\n`);
 
-  const results: TxResult[] = [];
+  const byAction: Record<ActionName, ExecutionResult[]> = {
+    update_prices: [],
+    update_svi: [],
+    mint: [],
+  };
   let mintIndex = 0;
 
-  for (let index = 0; index < rows.length; index++) {
-    const row = rows[index];
+  for (const row of rows) {
     const startedAt = performance.now();
 
     if (row.action === "update_prices") {
-      const exec = await executeFast(
-        updatePricesTx(state.oracleId, state.oracleCapId, BigInt(row.spot), BigInt(row.forward), "fast")
+      const gas = await execute(
+        updatePricesTx(state.oracleId, state.oracleCapId, row.spot, row.forward),
+        "update_prices"
       );
-      results.push({ index, action: "update_prices", wallMs: performance.now() - startedAt, ...exec });
+      byAction.update_prices.push({ wallMs: performance.now() - startedAt, ...gas });
       continue;
     }
 
     if (row.action === "update_svi") {
-      const exec = await executeFast(
+      const gas = await execute(
         updateSviTx(
           state.oracleId,
           state.oracleCapId,
           {
-            a: BigInt(row.a),
-            b: BigInt(row.b),
-            rho: BigInt(row.rho),
-            rhoNegative: row.rho_negative === "true",
-            m: BigInt(row.m),
-            mNegative: row.m_negative === "true",
-            sigma: BigInt(row.sigma),
+            a: row.a,
+            b: row.b,
+            rho: row.rho,
+            rhoNegative: row.rhoNegative,
+            m: row.m,
+            mNegative: row.mNegative,
+            sigma: row.sigma,
           },
-          BigInt(row.risk_free_rate),
-          "fast"
-        )
+          row.riskFreeRate
+        ),
+        "update_svi"
       );
-      results.push({ index, action: "update_svi", wallMs: performance.now() - startedAt, ...exec });
+      byAction.update_svi.push({ wallMs: performance.now() - startedAt, ...gas });
       continue;
     }
 
-    if (row.action === "mint") {
-      mintIndex++;
-      const isUp = row.is_up === "true";
-      const exec = await executeFast(
-        mintTx(
-          {
-            predictId: state.predictId,
-            managerId: state.managerId,
-            oracleId: state.oracleId,
-            expiry,
-            strike: BigInt(row.strike),
-            isUp,
-            quantity: BigInt(row.quantity) / QUANTITY_SCALE,
-          },
-          "fast"
-        )
-      );
-
-      const wallMs = performance.now() - startedAt;
-      results.push({
-        index,
-        action: "mint",
-        wallMs,
-        ...exec,
+    mintIndex++;
+    const gas = await execute(
+      mintTx({
+        predictId: state.predictId,
+        managerId: state.managerId,
+        oracleId: state.oracleId,
+        expiry,
         strike: row.strike,
-        isUp,
+        isUp: row.isUp,
         quantity: row.quantity,
-      });
+      }),
+      "mint"
+    );
 
-      const direction = isUp ? "UP" : "DN";
-      const strikeUsd = (Number(BigInt(row.strike)) / 1e9).toFixed(0);
-      process.stdout.write(`[${ts()}]   [${mintIndex}/${mintRows.length}] ${direction} $${strikeUsd} ${wallMs.toFixed(0)}ms\n`);
-    }
+    const wallMs = performance.now() - startedAt;
+    byAction.mint.push({ wallMs, ...gas });
+
+    const direction = row.isUp ? "UP" : "DN";
+    const strikeUsd = (Number(row.strike) / 1e9).toFixed(0);
+    process.stdout.write(`[${ts()}]   [${mintIndex}/${mintRows.length}] ${direction} $${strikeUsd} ${wallMs.toFixed(0)}ms\n`);
   }
 
+  const results = buildResultsFile(byAction);
   writeJson(RESULTS_PATH, results);
 
-  const mintResults = results.filter((r) => r.action === "mint");
-  const avgMs = mintResults.reduce((sum, r) => sum + r.wallMs, 0) / mintResults.length;
-  const avgGas = mintResults.reduce((sum, r) => sum + r.gasTotal, 0) / mintResults.length;
-
+  const mintSummary = results.summary.byAction.mint;
   console.log(`\n[${ts()}] --- Done ---`);
-  console.log(`[${ts()}]   ${results.length} txs, ${mintIndex} mints`);
-  console.log(`[${ts()}]   Avg mint: ${avgMs.toFixed(0)}ms, avg gas: ${(avgGas / 1e9).toFixed(6)} SUI`);
+  console.log(`[${ts()}]   ${results.summary.totalTxs} txs, ${results.mints.length} mints`);
+  if (mintSummary) {
+    console.log(
+      `[${ts()}]   Avg mint: ${mintSummary.wallMs.avg.toFixed(0)}ms, avg gas: ${(mintSummary.gas.avg / 1e9).toFixed(6)} SUI`
+    );
+  }
   console.log(`[${ts()}]   Results saved to ${RESULTS_PATH}`);
 }
 
@@ -239,7 +229,7 @@ async function main() {
     return;
   }
 
-  const state = await setupSimulation(rows);
+  const state = await setupSimulation();
 
   if (args.setupOnly) {
     console.log(`[${ts()}] Setup complete`);

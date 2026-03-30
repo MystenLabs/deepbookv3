@@ -3,7 +3,7 @@
 
 Usage:
     python visualize.py <path-to-results.json>
-    python visualize.py runs/mar30-1137/artifacts/results.json
+    python visualize.py runs/<id>/artifacts/results.json
 """
 
 import json
@@ -14,40 +14,55 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 MIST_PER_SUI = 1_000_000_000
+REQUIRED_ACTIONS = ("update_prices", "update_svi", "mint")
 
 
-def load_results(path: str) -> list[dict]:
+def load_results(path: str) -> dict:
     with open(path) as f:
-        return json.load(f)
+        data = json.load(f)
+
+    if not isinstance(data, dict) or data.get("schema_version") != "results_v2":
+        raise ValueError("results.json must use schema_version='results_v2'")
+    if not isinstance(data.get("summary"), dict) or not isinstance(data.get("mints"), list):
+        raise ValueError("results.json must contain summary and mints")
+
+    return data
 
 
 def to_sui(mist: int | float) -> float:
     return mist / MIST_PER_SUI
 
 
-def print_gas_summary(txs: list[dict]):
+def action_rows(summary_by_action: dict):
+    for action in REQUIRED_ACTIONS:
+        row = summary_by_action.get(action)
+        if row:
+            yield action, row
+
+
+def print_gas_summary(summary_by_action: dict):
     print("\n=== Gas Summary ===\n")
     fmt = "  {:<16s} {:>6s}  {:>12s}  {:>12s}  {:>12s}"
     print(fmt.format("Action", "Count", "Avg (SUI)", "Min (SUI)", "Max (SUI)"))
     print(fmt.format("------", "-----", "---------", "---------", "---------"))
-    for action in ("update_prices", "update_svi", "mint"):
-        rows = [t for t in txs if t["action"] == action]
-        if not rows:
-            continue
-        gas = [t["gasTotal"] for t in rows]
+    for action, row in action_rows(summary_by_action):
+        gas = row["gas"]
         print(
             fmt.format(
                 action,
-                str(len(rows)),
-                f"{to_sui(np.mean(gas)):.6f}",
-                f"{to_sui(np.min(gas)):.6f}",
-                f"{to_sui(np.max(gas)):.6f}",
+                str(row["count"]),
+                f"{to_sui(gas['avg']):.6f}",
+                f"{to_sui(gas['min']):.6f}",
+                f"{to_sui(gas['max']):.6f}",
             )
         )
 
 
 def print_mint_gas_breakdown(mints: list[dict]):
     print("\n=== Mint Gas Breakdown ===\n")
+    if not mints:
+        print("  No mint rows found.")
+        return
     fmt = "  {:<18s} {:>12s}  {:>12s}  {:>12s}"
     print(fmt.format("Component", "Avg (SUI)", "Min (SUI)", "Max (SUI)"))
     print(fmt.format("---------", "---------", "---------", "---------"))
@@ -57,7 +72,7 @@ def print_mint_gas_breakdown(mints: list[dict]):
         ("Storage Rebate", "storageRebate"),
         ("Total", "gasTotal"),
     ]:
-        values = [t[key] for t in mints]
+        values = [mint[key] for mint in mints]
         print(
             fmt.format(
                 label,
@@ -68,31 +83,31 @@ def print_mint_gas_breakdown(mints: list[dict]):
         )
 
 
-def print_latency_summary(txs: list[dict]):
+def print_latency_summary(summary_by_action: dict):
     print("\n=== Latency ===\n")
     fmt = "  {:<16s} {:>6s}  {:>10s}  {:>10s}  {:>10s}"
     print(fmt.format("Action", "Count", "Avg (ms)", "Min (ms)", "Max (ms)"))
     print(fmt.format("------", "-----", "--------", "--------", "--------"))
-    for action in ("update_prices", "update_svi", "mint"):
-        rows = [t for t in txs if t["action"] == action]
-        if not rows:
-            continue
-        wall = [t["wallMs"] for t in rows]
+    for action, row in action_rows(summary_by_action):
+        wall = row["wallMs"]
         print(
             fmt.format(
                 action,
-                str(len(rows)),
-                f"{np.mean(wall):.0f}",
-                f"{np.min(wall):.0f}",
-                f"{np.max(wall):.0f}",
+                str(row["count"]),
+                f"{wall['avg']:.0f}",
+                f"{wall['min']:.0f}",
+                f"{wall['max']:.0f}",
             )
         )
 
 
 def plot_gas_over_time(mints: list[dict], out_dir: str):
+    if not mints:
+        print("  Skipping gas-over-time chart: no mint rows found")
+        return
     indices = list(range(1, len(mints) + 1))
-    total_gas = [to_sui(m["gasTotal"]) for m in mints]
-    comp_gas = [to_sui(m["computationCost"]) for m in mints]
+    total_gas = [to_sui(mint["gasTotal"]) for mint in mints]
+    comp_gas = [to_sui(mint["computationCost"]) for mint in mints]
 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
 
@@ -124,7 +139,10 @@ def plot_gas_over_time(mints: list[dict], out_dir: str):
 
 
 def plot_gas_histogram(mints: list[dict], out_dir: str):
-    total_gas = [to_sui(m["gasTotal"]) for m in mints]
+    if not mints:
+        print("  Skipping gas histogram: no mint rows found")
+        return
+    total_gas = [to_sui(mint["gasTotal"]) for mint in mints]
 
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.hist(total_gas, bins=50, color="#2563eb", edgecolor="white", linewidth=0.5)
@@ -143,9 +161,12 @@ def plot_gas_histogram(mints: list[dict], out_dir: str):
 
 
 def plot_gas_components_stacked(mints: list[dict], out_dir: str):
+    if not mints:
+        print("  Skipping gas-components chart: no mint rows found")
+        return
     indices = list(range(1, len(mints) + 1))
-    comp = [to_sui(m["computationCost"]) for m in mints]
-    net_storage = [to_sui(m["storageCost"] - m["storageRebate"]) for m in mints]
+    comp = [to_sui(mint["computationCost"]) for mint in mints]
+    net_storage = [to_sui(mint["storageCost"] - mint["storageRebate"]) for mint in mints]
 
     fig, ax = plt.subplots(figsize=(12, 5))
     ax.stackplot(
@@ -170,8 +191,11 @@ def plot_gas_components_stacked(mints: list[dict], out_dir: str):
 
 
 def plot_latency_over_time(mints: list[dict], out_dir: str):
+    if not mints:
+        print("  Skipping latency chart: no mint rows found")
+        return
     indices = list(range(1, len(mints) + 1))
-    wall = [m["wallMs"] for m in mints]
+    wall = [mint["wallMs"] for mint in mints]
 
     fig, ax = plt.subplots(figsize=(12, 4))
     ax.scatter(indices, wall, s=4, alpha=0.5, c="#2563eb")
@@ -202,13 +226,14 @@ def main():
         print(f"ERROR: File not found: {results_path}")
         sys.exit(1)
 
+    data = load_results(results_path)
+    summary_by_action = data["summary"]["byAction"]
+    mints = data["mints"]
     out_dir = os.path.dirname(os.path.abspath(results_path))
-    txs = load_results(results_path)
-    mints = [t for t in txs if t["action"] == "mint"]
 
-    print_gas_summary(txs)
+    print_gas_summary(summary_by_action)
     print_mint_gas_breakdown(mints)
-    print_latency_summary(txs)
+    print_latency_summary(summary_by_action)
 
     print("\n=== Charts ===\n")
     plot_gas_over_time(mints, out_dir)
@@ -216,7 +241,7 @@ def main():
     plot_gas_components_stacked(mints, out_dir)
     plot_latency_over_time(mints, out_dir)
 
-    print(f"\nDone. {len(txs)} txs ({len(mints)} mints) analyzed.")
+    print(f"\nDone. {data['summary']['totalTxs']} txs ({len(mints)} mints) analyzed.")
 
 
 if __name__ == "__main__":
