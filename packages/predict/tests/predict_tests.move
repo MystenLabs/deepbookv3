@@ -61,15 +61,18 @@ fun setup_with_manager(funds: u64): Scenario {
     scenario
 }
 
+/// Read cached vault MTM from the test predict object.
 fun vault_mtm(predict: &mut Predict<SUI>): u64 {
     vault::total_mtm(predict.vault_mut())
 }
 
+/// Read cached max payout from the test predict object.
 fun vault_max_payout(predict: &mut Predict<SUI>): u64 {
     vault::total_max_payout(predict.vault_mut())
 }
 
 #[test]
+/// First LP deposit sees an empty vault, so shares mint 1:1 with assets.
 fun supply_first_deposit_one_to_one_shares() {
     let ctx = &mut tx_context::dummy();
     let mut predict = create_predict(ctx);
@@ -84,6 +87,7 @@ fun supply_first_deposit_one_to_one_shares() {
 }
 
 #[test]
+/// Second LP deposit into an idle vault should mint proportionally at the same rate.
 fun supply_second_deposit_proportional_shares() {
     let ctx = &mut tx_context::dummy();
     let mut predict = create_predict(ctx);
@@ -100,6 +104,7 @@ fun supply_second_deposit_proportional_shares() {
 }
 
 #[test]
+/// Withdrawing from an idle vault should return the exact requested amount.
 fun withdraw_returns_correct_amount() {
     let mut scenario = test_scenario::begin(ALICE);
     let mut predict = create_predict(scenario.ctx());
@@ -118,6 +123,7 @@ fun withdraw_returns_correct_amount() {
 }
 
 #[test]
+/// Withdrawing all shares from an idle vault should empty the vault balance.
 fun withdraw_all_returns_full_amount() {
     let mut scenario = test_scenario::begin(ALICE);
     let mut predict = create_predict(scenario.ctx());
@@ -136,6 +142,7 @@ fun withdraw_all_returns_full_amount() {
 }
 
 #[test, expected_failure(abort_code = predict::EWithdrawExceedsAvailable)]
+/// Settled winning exposure reserves max payout, blocking withdrawals above free capital.
 fun withdraw_blocked_by_max_payout() {
     let mut scenario = test_scenario::begin(ALICE);
     let mut predict = create_predict(scenario.ctx());
@@ -166,6 +173,7 @@ fun withdraw_blocked_by_max_payout() {
 }
 
 #[test]
+/// Withdrawing exactly the unencumbered balance should succeed even with reserved payout.
 fun withdraw_up_to_available_succeeds() {
     let mut scenario = test_scenario::begin(ALICE);
     let mut predict = create_predict(scenario.ctx());
@@ -201,6 +209,7 @@ fun withdraw_up_to_available_succeeds() {
 }
 
 #[test, expected_failure(abort_code = predict::EWithdrawExceedsAvailable)]
+/// Live exposure also reserves capital via max payout, so withdraw_all can be blocked.
 fun withdraw_all_blocked_by_live_max_payout() {
     let mut scenario = test_scenario::begin(ALICE);
     let mut predict = create_predict(scenario.ctx());
@@ -228,6 +237,7 @@ fun withdraw_all_blocked_by_live_max_payout() {
 }
 
 #[test]
+/// Minting a live position should move funds from manager to vault and add free exposure.
 fun mint_live_oracle_updates_manager_and_vault_state() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
@@ -260,6 +270,8 @@ fun mint_live_oracle_updates_manager_and_vault_state() {
         let actual_cost = balance_before - balance_after;
         let (free, locked) = manager.position(key);
 
+        // Exact quote parity is covered by the generated scenario tests below; here we assert
+        // the state transition invariants for a representative live mint path.
         assert_eq!(vault_balance_after - vault_balance_before, actual_cost);
         assert!(actual_cost > 0);
         assert_eq!(free, 10 * constants::float_scaling!());
@@ -277,6 +289,7 @@ fun mint_live_oracle_updates_manager_and_vault_state() {
 }
 
 #[test]
+/// Repeated minting on the same market should widen quotes and double payout liability.
 fun repeated_mint_same_market_increases_ask_and_doubles_max_payout() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
@@ -336,6 +349,7 @@ fun repeated_mint_same_market_increases_ask_and_doubles_max_payout() {
 }
 
 #[test]
+/// Partial redeem should reduce remaining liability and improve the next redeem quote.
 fun partial_redeem_reduces_liability_and_improves_payout() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
@@ -401,6 +415,7 @@ fun partial_redeem_reduces_liability_and_improves_payout() {
 }
 
 #[test, expected_failure(abort_code = vault::EExceedsMaxTotalExposure)]
+/// Mint should fail once the vault MTM exceeds the configured total exposure budget.
 fun mint_aborts_when_total_exposure_limit_exceeded() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
@@ -431,6 +446,7 @@ fun mint_aborts_when_total_exposure_limit_exceeded() {
 }
 
 #[test]
+/// Buying and immediately selling the same live market should lose spread and clear exposure.
 fun round_trip_trade_loses_spread() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
@@ -479,6 +495,7 @@ fun round_trip_trade_loses_spread() {
 }
 
 #[test]
+/// Removing one leg should leave the other leg active and still impacted by remaining liability.
 fun removing_one_leg_keeps_other_leg_exposure_active() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
@@ -552,6 +569,7 @@ fun removing_one_leg_keeps_other_leg_exposure_active() {
 }
 
 #[test]
+/// A settled winning UP position should redeem for the full contract quantity.
 fun redeem_settled_up_wins_full_payout() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
@@ -608,6 +626,7 @@ fun redeem_settled_up_wins_full_payout() {
 }
 
 #[test]
+/// A settled losing UP position should redeem for zero and leave vault balance unchanged.
 fun redeem_settled_up_loses_zero_payout() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
@@ -661,6 +680,7 @@ fun redeem_settled_up_loses_zero_payout() {
 }
 
 #[test, expected_failure(abort_code = predict::ETradingPaused)]
+/// Trading pause should block minting even with healthy manager/vault state.
 fun mint_when_paused_aborts() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
@@ -691,6 +711,7 @@ fun mint_when_paused_aborts() {
 }
 
 #[test, expected_failure(abort_code = oracle::EOracleStale)]
+/// Mint should reject live quotes once the oracle timestamp is beyond staleness threshold.
 fun mint_against_stale_oracle_aborts() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
@@ -726,6 +747,7 @@ fun mint_against_stale_oracle_aborts() {
 }
 
 #[test, expected_failure(abort_code = predict::ENotOwner)]
+/// Only the manager owner can mint against a Predict manager.
 fun mint_aborts_if_not_owner() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
@@ -755,6 +777,7 @@ fun mint_aborts_if_not_owner() {
 }
 
 #[test, expected_failure(abort_code = oracle::EOracleStale)]
+/// Redeem should enforce staleness checks for live oracles until settlement occurs.
 fun redeem_against_stale_live_oracle_aborts() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
@@ -799,6 +822,7 @@ fun redeem_against_stale_live_oracle_aborts() {
 }
 
 #[test, expected_failure(abort_code = predict::ENotOwner)]
+/// Only the manager owner can redeem a live position.
 fun redeem_aborts_if_not_owner() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
@@ -842,6 +866,7 @@ fun redeem_aborts_if_not_owner() {
 }
 
 #[test]
+/// UP collateral can only mint a higher-strike UP leg from the same oracle/expiry.
 fun collateralized_mint_up_lower_to_higher_strike() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
@@ -886,6 +911,7 @@ fun collateralized_mint_up_lower_to_higher_strike() {
 }
 
 #[test]
+/// DOWN collateral can only mint a lower-strike DOWN leg from the same oracle/expiry.
 fun collateralized_mint_dn_higher_to_lower_strike() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
@@ -934,6 +960,7 @@ fun collateralized_mint_dn_higher_to_lower_strike() {
 }
 
 #[test]
+/// Redeeming a collateralized mint should burn the minted leg and release the locked leg.
 fun collateralized_redeem_releases_collateral() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
@@ -985,6 +1012,7 @@ fun collateralized_redeem_releases_collateral() {
 }
 
 #[test, expected_failure(abort_code = predict::EInvalidCollateralPair)]
+/// UP collateral cannot mint a lower-strike UP leg.
 fun collateralized_mint_up_wrong_direction_aborts() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
@@ -1016,6 +1044,7 @@ fun collateralized_mint_up_wrong_direction_aborts() {
 }
 
 #[test, expected_failure(abort_code = predict::EInvalidCollateralPair)]
+/// Collateralization only supports same-direction vertical spreads.
 fun collateralized_mint_mixed_directions_aborts() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
@@ -1051,6 +1080,7 @@ fun collateralized_mint_mixed_directions_aborts() {
 }
 
 #[test, expected_failure(abort_code = predict::ETradingPaused)]
+/// Trading pause should also block collateralized mints.
 fun mint_collateralized_when_paused_aborts() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
@@ -1084,6 +1114,7 @@ fun mint_collateralized_when_paused_aborts() {
 }
 
 #[test, expected_failure(abort_code = predict::EOracleSettled)]
+/// Minting should reject an oracle that has already been force-settled.
 fun mint_against_settled_oracle_aborts() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
@@ -1115,6 +1146,7 @@ fun mint_against_settled_oracle_aborts() {
 }
 
 #[test, expected_failure(abort_code = predict::EInvalidCollateralPair)]
+/// Equal strikes do not define a valid collateralized vertical spread.
 fun collateralized_mint_equal_strikes_aborts() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
@@ -1145,6 +1177,7 @@ fun collateralized_mint_equal_strikes_aborts() {
     }
 }
 
+/// Compare fresh-state preview quotes against generated Python fixtures for selected live snapshots.
 fun run_predict_scenario(idx: u64) {
     let scenarios = gp::scenarios();
     let scenario = &scenarios[idx];
@@ -1171,6 +1204,8 @@ fun run_predict_scenario(idx: u64) {
             tc.quantity(),
             &clock,
         );
+        // Fixtures come from independent Python/Scipy math, while the contract uses fixed-point
+        // integer approximations, so we compare through the shared bounded-tolerance helper.
         precision::assert_approx(mint_cost, tc.expected_cost());
         precision::assert_approx(redeem_payout, tc.expected_redeem_payout());
     });
@@ -1181,16 +1216,21 @@ fun run_predict_scenario(idx: u64) {
 }
 
 #[test]
+/// Real-world snapshot S0: fresh-state quote previews should match generated expectations.
 fun predict_scenario_s0() { run_predict_scenario(0); }
 
 #[test]
+/// Real-world snapshot S1: fresh-state quote previews should match generated expectations.
 fun predict_scenario_s1() { run_predict_scenario(1); }
 
 #[test]
+/// Real-world snapshot S3: fresh-state quote previews should match generated expectations.
 fun predict_scenario_s3() { run_predict_scenario(2); }
 
 #[test]
+/// Real-world snapshot S4: fresh-state quote previews should match generated expectations.
 fun predict_scenario_s4() { run_predict_scenario(3); }
 
 #[test]
+/// Real-world snapshot S5: fresh-state quote previews should match generated expectations.
 fun predict_scenario_s5() { run_predict_scenario(4); }

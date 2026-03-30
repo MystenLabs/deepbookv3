@@ -11,6 +11,9 @@ use sui::{balance, clock, sui::SUI};
 const QTY: u64 = 10_000_000; // 10 units at 1e6 quote precision.
 const MAX_EXPOSURE_PCT_80: u64 = 800_000_000; // 80%
 const MAX_EXPOSURE_PCT_50: u64 = 500_000_000; // 50%
+const ORACLE_SCENARIO_S0: u64 = 7;
+const ORACLE_SCENARIO_S4: u64 = 11;
+const ORACLE_SCENARIO_S5: u64 = 12;
 
 fun create_test_vault(
     settlement_price: u64,
@@ -22,6 +25,9 @@ fun create_test_vault(
     (v, oracle, clock)
 }
 
+/// Scale an externally generated binary price into MTM for the fixed test quantity.
+/// This does not reimplement vault risk logic; it only converts generated oracle prices
+/// into quote units so tests can compare vault output to independent fixture data.
 fun expected_mtm(sp: &go::StrikePoint, is_up: bool): u64 {
     let price = if (is_up) sp.expected_up() else sp.expected_dn();
     (((QTY as u128) * (price as u128) / (constants::float_scaling!() as u128)) as u64)
@@ -39,22 +45,23 @@ fun create_generated_oracle(
 fun create_live_oracle_s0(
     ctx: &mut TxContext,
 ): (go::OracleScenario, oracle::OracleSVI, clock::Clock) {
-    create_generated_oracle(7, ctx)
+    create_generated_oracle(ORACLE_SCENARIO_S0, ctx)
 }
 
 fun create_live_oracle_s4(
     ctx: &mut TxContext,
 ): (go::OracleScenario, oracle::OracleSVI, clock::Clock) {
-    create_generated_oracle(11, ctx)
+    create_generated_oracle(ORACLE_SCENARIO_S4, ctx)
 }
 
 fun create_live_oracle_s5(
     ctx: &mut TxContext,
 ): (go::OracleScenario, oracle::OracleSVI, clock::Clock) {
-    create_generated_oracle(12, ctx)
+    create_generated_oracle(ORACLE_SCENARIO_S5, ctx)
 }
 
 #[test]
+/// A new vault should start with zero balance, zero MTM, and zero payout liability.
 fun new_vault_initializes_to_zero() {
     let ctx = &mut tx_context::dummy();
     let v = vault::new<SUI>(ctx);
@@ -68,6 +75,7 @@ fun new_vault_initializes_to_zero() {
 }
 
 #[test]
+/// Accepting payment should increase vault balance by the deposited amount.
 fun accept_payment_increases_balance() {
     let ctx = &mut tx_context::dummy();
     let mut v = vault::new<SUI>(ctx);
@@ -84,6 +92,7 @@ fun accept_payment_increases_balance() {
 }
 
 #[test]
+/// Dispensing payout should split vault balance and reduce stored balance accordingly.
 fun dispense_payout_decreases_balance() {
     let ctx = &mut tx_context::dummy();
     let mut v = vault::new<SUI>(ctx);
@@ -100,6 +109,7 @@ fun dispense_payout_decreases_balance() {
 }
 
 #[test, expected_failure(abort_code = vault::EInsufficientBalance)]
+/// Dispensing more than the current balance should abort.
 fun dispense_payout_exceeds_balance_aborts() {
     let ctx = &mut tx_context::dummy();
     let mut v = vault::new<SUI>(ctx);
@@ -113,6 +123,7 @@ fun dispense_payout_exceeds_balance_aborts() {
 }
 
 #[test]
+/// A single winning position should set max payout equal to its contract quantity.
 fun insert_single_position_max_payout() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
@@ -145,6 +156,7 @@ fun insert_single_position_max_payout() {
 }
 
 #[test]
+/// Opposite-direction exposure at the same strike should use the larger directional payout.
 fun insert_same_strike_dn_exceeds_up_max_payout() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
@@ -176,6 +188,7 @@ fun insert_same_strike_dn_exceeds_up_max_payout() {
 }
 
 #[test]
+/// Winning exposure across two UP strikes should add linearly in the settled step curve.
 fun insert_different_strikes_max_payout() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
@@ -207,6 +220,7 @@ fun insert_different_strikes_max_payout() {
 }
 
 #[test]
+/// Mixed-direction winning exposure across different strikes should add into total payout.
 fun insert_different_strikes_mixed_directions_max_payout() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
@@ -238,6 +252,7 @@ fun insert_different_strikes_mixed_directions_max_payout() {
 }
 
 #[test]
+/// Removing part of a settled winning position should reduce both MTM and max payout.
 fun remove_position_decreases_max_payout_and_mtm() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
@@ -271,6 +286,7 @@ fun remove_position_decreases_max_payout_and_mtm() {
 }
 
 #[test]
+/// Removing the full position should clear cached payout liability for that oracle.
 fun remove_all_positions_returns_max_payout_to_zero() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
@@ -301,6 +317,7 @@ fun remove_all_positions_returns_max_payout_to_zero() {
 }
 
 #[test, expected_failure(abort_code = vault::EOracleExposureNotFound)]
+/// Removing exposure for an oracle with no tracked treap should abort.
 fun remove_from_nonexistent_oracle_aborts() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
@@ -318,6 +335,7 @@ fun remove_from_nonexistent_oracle_aborts() {
 }
 
 #[test]
+/// Total exposure check should pass when MTM stays below the configured percentage of balance.
 fun assert_total_exposure_passes_when_within_limit() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
@@ -343,6 +361,7 @@ fun assert_total_exposure_passes_when_within_limit() {
 }
 
 #[test, expected_failure(abort_code = vault::EExceedsMaxTotalExposure)]
+/// Total exposure check should fail when MTM exceeds the configured budget.
 fun assert_total_exposure_fails_when_exceeds_limit() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
@@ -366,6 +385,7 @@ fun assert_total_exposure_fails_when_exceeds_limit() {
 }
 
 #[test]
+/// Total exposure should pass exactly on the 100% utilization boundary.
 fun assert_total_exposure_passes_at_exact_boundary() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
@@ -391,6 +411,7 @@ fun assert_total_exposure_passes_at_exact_boundary() {
 }
 
 #[test]
+/// Vault value is free balance after subtracting cached MTM liability.
 fun vault_value_equals_balance_minus_mtm() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
@@ -416,6 +437,7 @@ fun vault_value_equals_balance_minus_mtm() {
 }
 
 #[test]
+/// Losing settled exposure contributes zero MTM, so vault value equals raw balance.
 fun vault_value_zero_mtm() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(10 * constants::float_scaling!(), ctx);
@@ -442,6 +464,7 @@ fun vault_value_zero_mtm() {
 }
 
 #[test, expected_failure(abort_code = vault::EMtmExceedsBalance)]
+/// Vault value should abort when cached MTM exceeds available balance.
 fun vault_value_aborts_when_mtm_exceeds_balance() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
@@ -465,6 +488,7 @@ fun vault_value_aborts_when_mtm_exceeds_balance() {
 }
 
 #[test]
+/// A settled DOWN position wins when settlement is below strike.
 fun mtm_dn_wins_settled_below_strike() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(30 * constants::float_scaling!(), ctx);
@@ -487,6 +511,7 @@ fun mtm_dn_wins_settled_below_strike() {
 }
 
 #[test]
+/// A settled DOWN position loses when settlement is above strike.
 fun mtm_dn_loses_settled_above_strike() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
@@ -509,6 +534,7 @@ fun mtm_dn_loses_settled_above_strike() {
 }
 
 #[test]
+/// Multiple settled winning positions should accumulate MTM across strikes.
 fun mtm_multiple_positions_both_win() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
@@ -540,6 +566,7 @@ fun mtm_multiple_positions_both_win() {
 }
 
 #[test]
+/// Mixed settled UP and DOWN winners should both contribute to total MTM.
 fun mtm_mixed_directions_settled() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(60 * constants::float_scaling!(), ctx);
@@ -571,6 +598,7 @@ fun mtm_mixed_directions_settled() {
 }
 
 #[test]
+/// Inserting and then partially removing settled exposure should keep cached aggregates consistent.
 fun insert_and_remove_lifecycle() {
     let ctx = &mut tx_context::dummy();
     let mut v = vault::new<SUI>(ctx);
@@ -632,6 +660,7 @@ fun insert_and_remove_lifecycle() {
 }
 
 #[test]
+/// UP binary settles strictly above strike, so equality should produce zero UP payout.
 fun mtm_at_settlement_boundary() {
     let ctx = &mut tx_context::dummy();
     let mut v = vault::new<SUI>(ctx);
@@ -657,6 +686,7 @@ fun mtm_at_settlement_boundary() {
 }
 
 #[test]
+/// DOWN binary wins at the settlement boundary because UP requires settlement > strike.
 fun mtm_dn_wins_at_settlement_boundary() {
     let ctx = &mut tx_context::dummy();
     let mut v = vault::new<SUI>(ctx);
@@ -682,6 +712,7 @@ fun mtm_dn_wins_at_settlement_boundary() {
 }
 
 #[test]
+/// Empty vault should trivially satisfy total exposure checks.
 fun assert_total_exposure_with_empty_vault() {
     let ctx = &mut tx_context::dummy();
     let v = vault::new<SUI>(ctx);
@@ -692,6 +723,7 @@ fun assert_total_exposure_with_empty_vault() {
 }
 
 #[test]
+/// Removing one oracle's positions should not disturb cached risk for another oracle.
 fun remove_from_one_oracle_does_not_affect_other() {
     let ctx = &mut tx_context::dummy();
     let mut v = vault::new<SUI>(ctx);
@@ -741,6 +773,7 @@ fun remove_from_one_oracle_does_not_affect_other() {
 }
 
 #[test]
+/// Vault can dispense balance below max payout; the risk check is performed separately.
 fun dispense_payout_reduces_balance_below_max_payout() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
@@ -770,6 +803,7 @@ fun dispense_payout_reduces_balance_below_max_payout() {
 }
 
 #[test]
+/// After fully removing an oracle's exposure, reinserting should rebuild MTM and payout cleanly.
 fun reinsert_after_full_removal() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
@@ -825,6 +859,7 @@ fun reinsert_after_full_removal() {
 }
 
 #[test]
+/// Rebuilding exposure in the opposite direction after full removal should use fresh risk state.
 fun reinsert_different_direction_after_full_removal() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
@@ -865,6 +900,7 @@ fun reinsert_different_direction_after_full_removal() {
 }
 
 #[test]
+/// Live snapshot S0 ATM prices should flow through the vault curve into cached MTM.
 fun mtm_live_oracle_s0_atm() {
     let ctx = &mut tx_context::dummy();
     let mut v = vault::new<SUI>(ctx);
@@ -885,6 +921,7 @@ fun mtm_live_oracle_s0_atm() {
 }
 
 #[test]
+/// Live snapshot S0 OTM UP pricing should match generated oracle fixture data.
 fun mtm_live_oracle_s0_otm() {
     let ctx = &mut tx_context::dummy();
     let mut v = vault::new<SUI>(ctx);
@@ -901,6 +938,7 @@ fun mtm_live_oracle_s0_otm() {
 }
 
 #[test]
+/// Near-expiry snapshot S4 should still evaluate to the generated live oracle price.
 fun mtm_live_oracle_s4_near_expiry() {
     let ctx = &mut tx_context::dummy();
     let mut v = vault::new<SUI>(ctx);
@@ -917,6 +955,7 @@ fun mtm_live_oracle_s4_near_expiry() {
 }
 
 #[test]
+/// Extreme near-expiry snapshot S5 should refresh correctly across remove/reinsert cycles.
 fun mtm_live_oracle_s5_extreme_near_expiry() {
     let ctx = &mut tx_context::dummy();
     let mut v = vault::new<SUI>(ctx);
@@ -938,6 +977,7 @@ fun mtm_live_oracle_s5_extreme_near_expiry() {
 }
 
 #[test]
+/// Live snapshot S0 OTM DOWN pricing should match generated oracle fixture data.
 fun mtm_live_oracle_s0_dn_otm10() {
     let ctx = &mut tx_context::dummy();
     let mut v = vault::new<SUI>(ctx);
@@ -954,6 +994,7 @@ fun mtm_live_oracle_s0_dn_otm10() {
 }
 
 #[test]
+/// Live snapshot S5 ATM DOWN pricing should match generated oracle fixture data.
 fun mtm_live_oracle_s5_dn_atm() {
     let ctx = &mut tx_context::dummy();
     let mut v = vault::new<SUI>(ctx);
