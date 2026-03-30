@@ -521,7 +521,11 @@ fun redeem_aborts_on_wrong_expiry() {
 
     let oracle = create_live_oracle(scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
-    let key = market_key::up(oracle::id(&oracle), oracle.expiry(), 100 * constants::float_scaling!());
+    let key = market_key::up(
+        oracle::id(&oracle),
+        oracle.expiry(),
+        100 * constants::float_scaling!(),
+    );
     let wrong_key = market_key::up(
         oracle::id(&oracle),
         oracle.expiry() + 1,
@@ -643,7 +647,11 @@ fun get_trade_amounts_settled_has_no_spread() {
 
     let mut oracle = create_live_oracle(ctx);
     let clock = clock::create_for_testing(ctx);
-    let key = market_key::up(oracle::id(&oracle), oracle.expiry(), 50 * constants::float_scaling!());
+    let key = market_key::up(
+        oracle::id(&oracle),
+        oracle.expiry(),
+        50 * constants::float_scaling!(),
+    );
     let qty = 10 * constants::float_scaling!();
 
     oracle::settle_test_oracle(&mut oracle, 200 * constants::float_scaling!());
@@ -1228,7 +1236,11 @@ fun collateralized_mint_wrong_oracle_id_aborts() {
 
     let oracle = create_live_oracle(scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
-    let minted_key = market_key::up(oracle::id(&oracle), oracle.expiry(), 120 * constants::float_scaling!());
+    let minted_key = market_key::up(
+        oracle::id(&oracle),
+        oracle.expiry(),
+        120 * constants::float_scaling!(),
+    );
     let wrong_locked_key = market_key::up(
         object::id_from_address(@0x1),
         oracle.expiry(),
