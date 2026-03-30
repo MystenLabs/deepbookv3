@@ -437,6 +437,32 @@ fun vault_value_equals_balance_minus_mtm() {
 }
 
 #[test]
+/// Vault value should be exactly zero when balance matches cached MTM liability.
+fun vault_value_zero_at_exact_mtm_boundary() {
+    let ctx = &mut tx_context::dummy();
+    let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
+
+    let payment = balance::create_for_testing<SUI>(10 * constants::float_scaling!());
+    vault::accept_payment(&mut v, payment);
+
+    vault::insert_position(
+        &mut v,
+        &oracle,
+        true,
+        50 * constants::float_scaling!(),
+        10 * constants::float_scaling!(),
+        &clock,
+        ctx,
+    );
+
+    assert_eq!(vault::vault_value(&v), 0);
+
+    destroy(v);
+    destroy(oracle);
+    destroy(clock);
+}
+
+#[test]
 /// Losing settled exposure contributes zero MTM, so vault value equals raw balance.
 fun vault_value_zero_mtm() {
     let ctx = &mut tx_context::dummy();
@@ -483,6 +509,27 @@ fun vault_value_aborts_when_mtm_exceeds_balance() {
     );
 
     let _val = vault::vault_value(&v);
+
+    abort
+}
+
+#[test, expected_failure(abort_code = vault::EExceedsMaxTotalExposure)]
+/// Any nonzero liability should fail the exposure check when vault balance is zero.
+fun assert_total_exposure_zero_balance_with_liability_fails() {
+    let ctx = &mut tx_context::dummy();
+    let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
+
+    vault::insert_position(
+        &mut v,
+        &oracle,
+        true,
+        50 * constants::float_scaling!(),
+        10 * constants::float_scaling!(),
+        &clock,
+        ctx,
+    );
+
+    vault::assert_total_exposure(&v, MAX_EXPOSURE_PCT_80);
 
     abort
 }

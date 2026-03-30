@@ -13,7 +13,8 @@ use deepbook_predict::{
     oracle_helper,
     precision,
     predict::{Self, Predict},
-    predict_manager::PredictManager,
+    predict_manager::{Self as predict_manager, PredictManager},
+    supply_manager,
     vault
 };
 use std::unit_test::{assert_eq, destroy};
@@ -101,6 +102,35 @@ fun supply_second_deposit_proportional_shares() {
     assert_eq!(predict::vault_balance(&predict), 1_500_000);
 
     destroy(predict);
+}
+
+#[test, expected_failure(abort_code = vault::EMtmExceedsBalance)]
+/// Public supply currently cannot recapitalize a vault once cached MTM already exceeds balance.
+fun supply_aborts_when_vault_is_underwater() {
+    let ctx = &mut tx_context::dummy();
+    let mut predict = create_predict(ctx);
+
+    let initial_liq = coin::mint_for_testing<SUI>(10 * constants::float_scaling!(), ctx);
+    predict.supply(initial_liq, ctx);
+
+    let oracle = oracle_helper::create_settled_oracle(200 * constants::float_scaling!(), ctx);
+    let clock = clock::create_for_testing(ctx);
+
+    predict
+        .vault_mut()
+        .insert_position(
+            &oracle,
+            true,
+            50 * constants::float_scaling!(),
+            11 * constants::float_scaling!(),
+            &clock,
+            ctx,
+        );
+
+    let recapitalization = coin::mint_for_testing<SUI>(5 * constants::float_scaling!(), ctx);
+    let _shares = predict.supply(recapitalization, ctx);
+
+    abort
 }
 
 #[test]
@@ -288,6 +318,72 @@ fun mint_live_oracle_updates_manager_and_vault_state() {
     scenario.end();
 }
 
+#[test, expected_failure(abort_code = market_key::EOracleMismatch)]
+/// Public mint should reject a key whose oracle id does not match the provided oracle.
+fun mint_aborts_on_wrong_oracle_id() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
+    predict.supply(liq, scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let wrong_key = market_key::up(
+        object::id_from_address(@0x1),
+        oracle.expiry(),
+        100 * constants::float_scaling!(),
+    );
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        predict.mint(
+            &mut manager,
+            &oracle,
+            wrong_key,
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
+#[test, expected_failure(abort_code = market_key::EExpiryMismatch)]
+/// Public mint should reject a key whose expiry does not match the provided oracle.
+fun mint_aborts_on_wrong_expiry() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
+    predict.supply(liq, scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let wrong_key = market_key::up(
+        oracle::id(&oracle),
+        oracle.expiry() + 1,
+        100 * constants::float_scaling!(),
+    );
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        predict.mint(
+            &mut manager,
+            &oracle,
+            wrong_key,
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
 #[test]
 /// Repeated minting on the same market should widen quotes and double payout liability.
 fun repeated_mint_same_market_increases_ask_and_doubles_max_payout() {
@@ -414,6 +510,48 @@ fun partial_redeem_reduces_liability_and_improves_payout() {
     scenario.end();
 }
 
+#[test, expected_failure(abort_code = market_key::EExpiryMismatch)]
+/// Public redeem should reject a key whose expiry no longer matches the provided oracle.
+fun redeem_aborts_on_wrong_expiry() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
+    predict.supply(liq, scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let key = market_key::up(oracle::id(&oracle), oracle.expiry(), 100 * constants::float_scaling!());
+    let wrong_key = market_key::up(
+        oracle::id(&oracle),
+        oracle.expiry() + 1,
+        100 * constants::float_scaling!(),
+    );
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        predict.mint(
+            &mut manager,
+            &oracle,
+            key,
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+        predict.redeem(
+            &mut manager,
+            &oracle,
+            wrong_key,
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
 #[test, expected_failure(abort_code = vault::EExceedsMaxTotalExposure)]
 /// Mint should fail once the vault MTM exceeds the configured total exposure budget.
 fun mint_aborts_when_total_exposure_limit_exceeded() {
@@ -492,6 +630,31 @@ fun round_trip_trade_loses_spread() {
     destroy(oracle);
     destroy(clock);
     scenario.end();
+}
+
+#[test]
+/// Once an oracle is settled, preview quotes should collapse to the same payout on both sides.
+fun get_trade_amounts_settled_has_no_spread() {
+    let ctx = &mut tx_context::dummy();
+    let mut predict = create_predict(ctx);
+
+    let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), ctx);
+    predict.supply(liq, ctx);
+
+    let mut oracle = create_live_oracle(ctx);
+    let clock = clock::create_for_testing(ctx);
+    let key = market_key::up(oracle::id(&oracle), oracle.expiry(), 50 * constants::float_scaling!());
+    let qty = 10 * constants::float_scaling!();
+
+    oracle::settle_test_oracle(&mut oracle, 200 * constants::float_scaling!());
+
+    let (mint_cost, redeem_payout) = predict.get_trade_amounts(&oracle, key, qty, &clock);
+    assert_eq!(mint_cost, qty);
+    assert_eq!(redeem_payout, qty);
+
+    destroy(predict);
+    destroy(oracle);
+    destroy(clock);
 }
 
 #[test]
@@ -669,6 +832,52 @@ fun redeem_settled_up_loses_zero_payout() {
         let balance_after = predict::vault_balance(&predict);
 
         assert_eq!(balance_before, balance_after);
+
+        test_scenario::return_shared(manager);
+    };
+
+    destroy(predict);
+    destroy(oracle);
+    destroy(clock);
+    scenario.end();
+}
+
+#[test]
+/// Once the oracle is settled, redeem should succeed even if the last live update is stale.
+fun redeem_settled_oracle_ignores_staleness() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
+    predict.supply(liq, scenario.ctx());
+
+    let mut oracle = create_live_oracle(scenario.ctx());
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(oracle_id, oracle.expiry(), 50 * constants::float_scaling!());
+    let qty = 10 * constants::float_scaling!();
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        predict.mint(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
+        test_scenario::return_shared(manager);
+    };
+
+    oracle::settle_test_oracle(&mut oracle, 200 * constants::float_scaling!());
+    clock.set_for_testing(constants::staleness_threshold_ms!() + 1);
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        let balance_before = manager.balance<SUI>();
+        predict.redeem(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
+        let balance_after = manager.balance<SUI>();
+
+        assert_eq!(balance_after - balance_before, qty);
+        let (free, locked) = manager.position(key);
+        assert_eq!(free, 0);
+        assert_eq!(locked, 0);
 
         test_scenario::return_shared(manager);
     };
@@ -1011,6 +1220,246 @@ fun collateralized_redeem_releases_collateral() {
     scenario.end();
 }
 
+#[test, expected_failure(abort_code = market_key::EOracleMismatch)]
+/// Collateralized mint should reject a locked key whose oracle id does not match the oracle.
+fun collateralized_mint_wrong_oracle_id_aborts() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let minted_key = market_key::up(oracle::id(&oracle), oracle.expiry(), 120 * constants::float_scaling!());
+    let wrong_locked_key = market_key::up(
+        object::id_from_address(@0x1),
+        oracle.expiry(),
+        80 * constants::float_scaling!(),
+    );
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        manager.increase_position(wrong_locked_key, 5 * constants::float_scaling!());
+
+        predict.mint_collateralized(
+            &mut manager,
+            &oracle,
+            wrong_locked_key,
+            minted_key,
+            5 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
+#[test, expected_failure(abort_code = predict::ENotOwner)]
+/// Only the manager owner can mint a collateralized position.
+fun collateralized_mint_not_owner_aborts() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+
+    let locked_key = market_key::up(oracle_id, oracle.expiry(), 80 * constants::float_scaling!());
+    let minted_key = market_key::up(oracle_id, oracle.expiry(), 120 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        manager.increase_position(locked_key, 5 * constants::float_scaling!());
+        test_scenario::return_shared(manager);
+    };
+
+    scenario.next_tx(BOB);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        predict.mint_collateralized(
+            &mut manager,
+            &oracle,
+            locked_key,
+            minted_key,
+            5 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
+#[test, expected_failure(abort_code = supply_manager::EZeroAmount)]
+/// Public withdraw should propagate zero-amount rejection from the supply manager.
+fun withdraw_zero_amount_aborts_via_predict() {
+    let mut scenario = test_scenario::begin(ALICE);
+    let mut predict = create_predict(scenario.ctx());
+
+    let coin = coin::mint_for_testing<SUI>(1_000_000, scenario.ctx());
+    predict.supply(coin, scenario.ctx());
+
+    scenario.next_tx(ALICE);
+    let _withdrawn = predict.withdraw(0, scenario.ctx());
+
+    abort
+}
+
+#[test, expected_failure(abort_code = supply_manager::EZeroAmount)]
+/// Public withdraw_all should abort when the caller owns no shares.
+fun withdraw_all_without_shares_aborts_via_predict() {
+    let mut scenario = test_scenario::begin(ALICE);
+    let mut predict = create_predict(scenario.ctx());
+
+    let coin = coin::mint_for_testing<SUI>(1_000_000, scenario.ctx());
+    predict.supply(coin, scenario.ctx());
+
+    scenario.next_tx(BOB);
+    let _withdrawn = predict.withdraw_all(scenario.ctx());
+
+    abort
+}
+
+#[test, expected_failure(abort_code = oracle::EOracleStale)]
+/// Collateralized mint should reject stale live oracles just like regular mint.
+fun collateralized_mint_stale_oracle_aborts() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(constants::staleness_threshold_ms!() + 1);
+    let oracle_id = oracle::id(&oracle);
+
+    let locked_key = market_key::up(oracle_id, oracle.expiry(), 80 * constants::float_scaling!());
+    let minted_key = market_key::up(oracle_id, oracle.expiry(), 120 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        manager.increase_position(locked_key, 5 * constants::float_scaling!());
+
+        predict.mint_collateralized(
+            &mut manager,
+            &oracle,
+            locked_key,
+            minted_key,
+            5 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
+#[test, expected_failure(abort_code = predict::EOracleSettled)]
+/// Collateralized mint should reject already settled markets just like regular mint.
+fun collateralized_mint_settled_oracle_aborts() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let mut oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+
+    let locked_key = market_key::up(oracle_id, oracle.expiry(), 80 * constants::float_scaling!());
+    let minted_key = market_key::up(oracle_id, oracle.expiry(), 120 * constants::float_scaling!());
+
+    oracle::settle_test_oracle(&mut oracle, 100 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        manager.increase_position(locked_key, 5 * constants::float_scaling!());
+
+        predict.mint_collateralized(
+            &mut manager,
+            &oracle,
+            locked_key,
+            minted_key,
+            5 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
+#[test, expected_failure(abort_code = predict::ENotOwner)]
+/// Only the manager owner can redeem a collateralized position.
+fun collateralized_redeem_not_owner_aborts() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+
+    let locked_key = market_key::up(oracle_id, oracle.expiry(), 80 * constants::float_scaling!());
+    let minted_key = market_key::up(oracle_id, oracle.expiry(), 120 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        manager.increase_position(locked_key, 5 * constants::float_scaling!());
+        predict.mint_collateralized(
+            &mut manager,
+            &oracle,
+            locked_key,
+            minted_key,
+            5 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+        test_scenario::return_shared(manager);
+    };
+
+    scenario.next_tx(BOB);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        predict.redeem_collateralized(
+            &mut manager,
+            locked_key,
+            minted_key,
+            5 * constants::float_scaling!(),
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
+#[test, expected_failure(abort_code = predict_manager::EInsufficientCollateral)]
+/// Redeeming a collateralized leg without a tracked collateral relation should abort.
+fun collateralized_redeem_without_collateral_relation_aborts() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+    let locked_key = market_key::up(oracle_id, oracle.expiry(), 80 * constants::float_scaling!());
+    let minted_key = market_key::up(oracle_id, oracle.expiry(), 120 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        manager.increase_position(minted_key, 5 * constants::float_scaling!());
+
+        predict.redeem_collateralized(
+            &mut manager,
+            locked_key,
+            minted_key,
+            5 * constants::float_scaling!(),
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
 #[test, expected_failure(abort_code = predict::EInvalidCollateralPair)]
 /// UP collateral cannot mint a lower-strike UP leg.
 fun collateralized_mint_up_wrong_direction_aborts() {
@@ -1170,6 +1619,142 @@ fun collateralized_mint_equal_strikes_aborts() {
             minted_key,
             5 * constants::float_scaling!(),
             &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
+#[test, expected_failure(abort_code = predict::EZeroQuantity)]
+/// Zero-quantity mint should be rejected before it can create an empty position entry.
+fun mint_zero_quantity_aborts() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(oracle_id, oracle.expiry(), 100 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        predict.mint(
+            &mut manager,
+            &oracle,
+            key,
+            0,
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
+#[test, expected_failure(abort_code = predict::EZeroQuantity)]
+/// Zero-quantity redeem should be rejected even when the caller holds a valid position.
+fun redeem_zero_quantity_aborts() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+    let liq = coin::mint_for_testing<SUI>(1_000_000 * constants::float_scaling!(), scenario.ctx());
+    predict.supply(liq, scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(oracle_id, oracle.expiry(), 100 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        predict.mint(
+            &mut manager,
+            &oracle,
+            key,
+            5 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        predict.redeem(
+            &mut manager,
+            &oracle,
+            key,
+            0,
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
+#[test, expected_failure(abort_code = predict::EZeroQuantity)]
+/// Zero-quantity collateralized mint should be rejected before locking collateral.
+fun collateralized_mint_zero_quantity_aborts() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+
+    let locked_key = market_key::up(oracle_id, oracle.expiry(), 80 * constants::float_scaling!());
+    let minted_key = market_key::up(oracle_id, oracle.expiry(), 120 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        manager.increase_position(locked_key, 5 * constants::float_scaling!());
+
+        predict.mint_collateralized(
+            &mut manager,
+            &oracle,
+            locked_key,
+            minted_key,
+            0,
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
+#[test, expected_failure(abort_code = predict::EZeroQuantity)]
+/// Zero-quantity collateralized redeem should be rejected before touching position state.
+fun collateralized_redeem_zero_quantity_aborts() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+
+    let locked_key = market_key::up(oracle_id, oracle.expiry(), 80 * constants::float_scaling!());
+    let minted_key = market_key::up(oracle_id, oracle.expiry(), 120 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        manager.increase_position(locked_key, 5 * constants::float_scaling!());
+        predict.mint_collateralized(
+            &mut manager,
+            &oracle,
+            locked_key,
+            minted_key,
+            5 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        predict.redeem_collateralized(
+            &mut manager,
+            locked_key,
+            minted_key,
+            0,
             scenario.ctx(),
         );
 
