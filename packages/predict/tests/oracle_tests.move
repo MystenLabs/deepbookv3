@@ -5,7 +5,7 @@
 module deepbook_predict::oracle_tests;
 
 use deepbook_predict::{
-    constants, constants::float_scaling as float,
+    constants::{Self, float_scaling as float},
     generated_oracle as go,
     oracle::{Self, new_price_data, new_svi_params, new_curve_point},
     oracle_helper,
