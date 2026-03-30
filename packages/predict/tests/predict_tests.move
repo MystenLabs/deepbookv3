@@ -1,0 +1,1196 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+#[test_only]
+module deepbook_predict::predict_tests;
+
+use deepbook_predict::{
+    constants,
+    generated_oracle as go,
+    generated_predict as gp,
+    market_key,
+    oracle::{Self, new_price_data, new_svi_params},
+    oracle_helper,
+    precision,
+    predict::{Self, Predict},
+    predict_manager::PredictManager,
+    vault
+};
+use std::unit_test::{assert_eq, destroy};
+use sui::{clock, coin, sui::SUI, test_scenario::{Self, Scenario}};
+
+const ALICE: address = @0xA;
+const BOB: address = @0xB;
+
+fun create_predict(ctx: &mut TxContext): Predict<SUI> {
+    predict::create_test_predict<SUI>(ctx)
+}
+
+fun create_live_oracle(ctx: &mut TxContext): oracle::OracleSVI {
+    // Flat 25% vol SVI around a 100 strike / 100 forward market.
+    let svi = new_svi_params(0, constants::float_scaling!(), 0, false, 0, false, 250_000_000);
+    let prices = new_price_data(
+        100 * constants::float_scaling!(),
+        100 * constants::float_scaling!(),
+    );
+    oracle::create_test_oracle(
+        b"BTC".to_string(),
+        svi,
+        prices,
+        0,
+        // Arbitrary far-future expiry for synthetic live-oracle tests.
+        1_000_000_000,
+        0,
+        ctx,
+    )
+}
+
+fun setup_with_manager(funds: u64): Scenario {
+    let mut scenario = test_scenario::begin(ALICE);
+    {
+        predict::create_manager(scenario.ctx());
+    };
+    scenario.next_tx(ALICE);
+    if (funds > 0) {
+        let mut manager = scenario.take_shared<PredictManager>();
+        let coin = coin::mint_for_testing<SUI>(funds, scenario.ctx());
+        manager.deposit(coin, scenario.ctx());
+        test_scenario::return_shared(manager);
+        scenario.next_tx(ALICE);
+    };
+    scenario
+}
+
+fun vault_mtm(predict: &mut Predict<SUI>): u64 {
+    vault::total_mtm(predict.vault_mut())
+}
+
+fun vault_max_payout(predict: &mut Predict<SUI>): u64 {
+    vault::total_max_payout(predict.vault_mut())
+}
+
+#[test]
+fun supply_first_deposit_one_to_one_shares() {
+    let ctx = &mut tx_context::dummy();
+    let mut predict = create_predict(ctx);
+
+    let coin = coin::mint_for_testing<SUI>(1_000_000, ctx);
+    let shares = predict.supply(coin, ctx);
+
+    assert_eq!(shares, 1_000_000);
+    assert_eq!(predict::vault_balance(&predict), 1_000_000);
+
+    destroy(predict);
+}
+
+#[test]
+fun supply_second_deposit_proportional_shares() {
+    let ctx = &mut tx_context::dummy();
+    let mut predict = create_predict(ctx);
+
+    let coin1 = coin::mint_for_testing<SUI>(1_000_000, ctx);
+    predict.supply(coin1, ctx);
+
+    let coin2 = coin::mint_for_testing<SUI>(500_000, ctx);
+    let shares2 = predict.supply(coin2, ctx);
+    assert_eq!(shares2, 500_000);
+    assert_eq!(predict::vault_balance(&predict), 1_500_000);
+
+    destroy(predict);
+}
+
+#[test]
+fun withdraw_returns_correct_amount() {
+    let mut scenario = test_scenario::begin(ALICE);
+    let mut predict = create_predict(scenario.ctx());
+
+    let coin = coin::mint_for_testing<SUI>(1_000_000, scenario.ctx());
+    predict.supply(coin, scenario.ctx());
+
+    scenario.next_tx(ALICE);
+    let withdrawn = predict.withdraw(500_000, scenario.ctx());
+    assert_eq!(withdrawn.value(), 500_000);
+    assert_eq!(predict::vault_balance(&predict), 500_000);
+
+    destroy(withdrawn);
+    destroy(predict);
+    scenario.end();
+}
+
+#[test]
+fun withdraw_all_returns_full_amount() {
+    let mut scenario = test_scenario::begin(ALICE);
+    let mut predict = create_predict(scenario.ctx());
+
+    let coin = coin::mint_for_testing<SUI>(1_000_000, scenario.ctx());
+    predict.supply(coin, scenario.ctx());
+
+    scenario.next_tx(ALICE);
+    let withdrawn = predict.withdraw_all(scenario.ctx());
+    assert_eq!(withdrawn.value(), 1_000_000);
+    assert_eq!(predict::vault_balance(&predict), 0);
+
+    destroy(withdrawn);
+    destroy(predict);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = predict::EWithdrawExceedsAvailable)]
+fun withdraw_blocked_by_max_payout() {
+    let mut scenario = test_scenario::begin(ALICE);
+    let mut predict = create_predict(scenario.ctx());
+
+    let coin = coin::mint_for_testing<SUI>(100 * constants::float_scaling!(), scenario.ctx());
+    predict.supply(coin, scenario.ctx());
+
+    let oracle = oracle_helper::create_settled_oracle(
+        200 * constants::float_scaling!(),
+        scenario.ctx(),
+    );
+    let clock = clock::create_for_testing(scenario.ctx());
+    predict
+        .vault_mut()
+        .insert_position(
+            &oracle,
+            true,
+            50 * constants::float_scaling!(),
+            80 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+    scenario.next_tx(ALICE);
+    let _coin = predict.withdraw(30 * constants::float_scaling!(), scenario.ctx());
+
+    abort
+}
+
+#[test]
+fun withdraw_up_to_available_succeeds() {
+    let mut scenario = test_scenario::begin(ALICE);
+    let mut predict = create_predict(scenario.ctx());
+
+    let coin = coin::mint_for_testing<SUI>(100 * constants::float_scaling!(), scenario.ctx());
+    predict.supply(coin, scenario.ctx());
+
+    let oracle = oracle_helper::create_settled_oracle(
+        200 * constants::float_scaling!(),
+        scenario.ctx(),
+    );
+    let clock = clock::create_for_testing(scenario.ctx());
+    predict
+        .vault_mut()
+        .insert_position(
+            &oracle,
+            true,
+            50 * constants::float_scaling!(),
+            80 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+    scenario.next_tx(ALICE);
+    let withdrawn = predict.withdraw(20 * constants::float_scaling!(), scenario.ctx());
+    assert_eq!(withdrawn.value(), 20 * constants::float_scaling!());
+
+    destroy(withdrawn);
+    destroy(predict);
+    destroy(oracle);
+    destroy(clock);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = predict::EWithdrawExceedsAvailable)]
+fun withdraw_all_blocked_by_live_max_payout() {
+    let mut scenario = test_scenario::begin(ALICE);
+    let mut predict = create_predict(scenario.ctx());
+
+    let coin = coin::mint_for_testing<SUI>(100 * constants::float_scaling!(), scenario.ctx());
+    predict.supply(coin, scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    predict
+        .vault_mut()
+        .insert_position(
+            &oracle,
+            true,
+            150 * constants::float_scaling!(),
+            80 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+    scenario.next_tx(ALICE);
+    let _coin = predict.withdraw_all(scenario.ctx());
+
+    abort
+}
+
+#[test]
+fun mint_live_oracle_updates_manager_and_vault_state() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
+    predict.supply(liq, scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(oracle_id, oracle.expiry(), 100 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        let balance_before = manager.balance<SUI>();
+        let vault_balance_before = predict::vault_balance(&predict);
+
+        predict.mint(
+            &mut manager,
+            &oracle,
+            key,
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        let balance_after = manager.balance<SUI>();
+        let vault_balance_after = predict::vault_balance(&predict);
+        let actual_cost = balance_before - balance_after;
+        let (free, locked) = manager.position(key);
+
+        assert_eq!(vault_balance_after - vault_balance_before, actual_cost);
+        assert!(actual_cost > 0);
+        assert_eq!(free, 10 * constants::float_scaling!());
+        assert_eq!(locked, 0);
+        assert_eq!(vault::total_max_payout(predict.vault_mut()), 10 * constants::float_scaling!());
+        assert!(vault::total_mtm(predict.vault_mut()) > 0);
+
+        test_scenario::return_shared(manager);
+    };
+
+    destroy(predict);
+    destroy(oracle);
+    destroy(clock);
+    scenario.end();
+}
+
+#[test]
+fun repeated_mint_same_market_increases_ask_and_doubles_max_payout() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
+    predict.supply(liq, scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(
+        oracle_id,
+        oracle.expiry(),
+        100 * constants::float_scaling!(),
+    );
+    let qty = 10 * constants::float_scaling!();
+    let (cost_before, _payout_before) = predict.get_trade_amounts(
+        &oracle,
+        key,
+        qty,
+        &clock,
+    );
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+
+        predict.mint(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
+        let mtm_after_first = vault_mtm(&mut predict);
+        let max_payout_after_first = vault_max_payout(&mut predict);
+        let (cost_after_first, _payout_after_first) = predict.get_trade_amounts(
+            &oracle,
+            key,
+            qty,
+            &clock,
+        );
+
+        predict.mint(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
+        let mtm_after_second = vault_mtm(&mut predict);
+        let max_payout_after_second = vault_max_payout(&mut predict);
+        let (free, locked) = manager.position(key);
+
+        assert_eq!(max_payout_after_first, qty);
+        assert_eq!(max_payout_after_second, 2 * qty);
+        assert!(cost_after_first > cost_before);
+        assert!(mtm_after_second > mtm_after_first);
+        assert_eq!(free, 2 * qty);
+        assert_eq!(locked, 0);
+
+        test_scenario::return_shared(manager);
+    };
+
+    destroy(predict);
+    destroy(oracle);
+    destroy(clock);
+    scenario.end();
+}
+
+#[test]
+fun partial_redeem_reduces_liability_and_improves_payout() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
+    predict.supply(liq, scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(
+        oracle_id,
+        oracle.expiry(),
+        100 * constants::float_scaling!(),
+    );
+    let total_qty = 20 * constants::float_scaling!();
+    let redeem_qty = 10 * constants::float_scaling!();
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        predict.mint(&mut manager, &oracle, key, total_qty, &clock, scenario.ctx());
+
+        let mtm_before = vault_mtm(&mut predict);
+        let max_payout_before = vault_max_payout(&mut predict);
+        let (_cost_before, payout_before) = predict.get_trade_amounts(
+            &oracle,
+            key,
+            redeem_qty,
+            &clock,
+        );
+        let balance_before = manager.balance<SUI>();
+
+        predict.redeem(&mut manager, &oracle, key, redeem_qty, &clock, scenario.ctx());
+
+        let balance_after = manager.balance<SUI>();
+        let actual_payout = balance_after - balance_before;
+        let mtm_after = vault_mtm(&mut predict);
+        let max_payout_after = vault_max_payout(&mut predict);
+        let (_cost_after, payout_after) = predict.get_trade_amounts(
+            &oracle,
+            key,
+            redeem_qty,
+            &clock,
+        );
+        let (free, locked) = manager.position(key);
+
+        assert_eq!(max_payout_before, total_qty);
+        assert_eq!(max_payout_after, redeem_qty);
+        assert!(mtm_after < mtm_before);
+        assert!(payout_after > payout_before);
+        assert!(actual_payout > 0);
+        assert_eq!(free, redeem_qty);
+        assert_eq!(locked, 0);
+
+        test_scenario::return_shared(manager);
+    };
+
+    destroy(predict);
+    destroy(oracle);
+    destroy(clock);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = vault::EExceedsMaxTotalExposure)]
+fun mint_aborts_when_total_exposure_limit_exceeded() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let liq = coin::mint_for_testing<SUI>(10 * constants::float_scaling!(), scenario.ctx());
+    predict.supply(liq, scenario.ctx());
+    predict.set_max_total_exposure_pct(1);
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(oracle_id, oracle.expiry(), 100 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        predict.mint(
+            &mut manager,
+            &oracle,
+            key,
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
+#[test]
+fun round_trip_trade_loses_spread() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let lp_deposit = 1_000 * constants::float_scaling!();
+    let liq = coin::mint_for_testing<SUI>(lp_deposit, scenario.ctx());
+    predict.supply(liq, scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(
+        oracle_id,
+        oracle.expiry(),
+        100 * constants::float_scaling!(),
+    );
+    let qty = 10 * constants::float_scaling!();
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        let manager_balance_before = manager.balance<SUI>();
+        let vault_balance_before = predict::vault_balance(&predict);
+
+        predict.mint(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
+        predict.redeem(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
+
+        let manager_balance_after = manager.balance<SUI>();
+        let vault_balance_after = predict::vault_balance(&predict);
+        let (free, locked) = manager.position(key);
+
+        assert!(manager_balance_after < manager_balance_before);
+        assert!(vault_balance_after > vault_balance_before);
+        assert_eq!(free, 0);
+        assert_eq!(locked, 0);
+        assert_eq!(vault_max_payout(&mut predict), 0);
+        assert_eq!(vault_mtm(&mut predict), 0);
+
+        test_scenario::return_shared(manager);
+    };
+
+    destroy(predict);
+    destroy(oracle);
+    destroy(clock);
+    scenario.end();
+}
+
+#[test]
+fun removing_one_leg_keeps_other_leg_exposure_active() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
+    predict.supply(liq, scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+    let atm_key = market_key::up(
+        oracle_id,
+        oracle.expiry(),
+        100 * constants::float_scaling!(),
+    );
+    let otm_key = market_key::up(
+        oracle_id,
+        oracle.expiry(),
+        120 * constants::float_scaling!(),
+    );
+    let atm_qty = 10 * constants::float_scaling!();
+    let otm_qty = 5 * constants::float_scaling!();
+    let (fresh_otm_cost, _fresh_otm_payout) = predict.get_trade_amounts(
+        &oracle,
+        otm_key,
+        otm_qty,
+        &clock,
+    );
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        predict.mint(&mut manager, &oracle, atm_key, atm_qty, &clock, scenario.ctx());
+        predict.mint(&mut manager, &oracle, otm_key, otm_qty, &clock, scenario.ctx());
+
+        let mtm_with_both = vault_mtm(&mut predict);
+        let max_payout_with_both = vault_max_payout(&mut predict);
+        let (cost_with_both, _payout_with_both) = predict.get_trade_amounts(
+            &oracle,
+            otm_key,
+            otm_qty,
+            &clock,
+        );
+        predict.redeem(&mut manager, &oracle, atm_key, atm_qty, &clock, scenario.ctx());
+        let mtm_after_remove_atm = vault_mtm(&mut predict);
+        let (cost_after_remove_atm, _payout_after_remove_atm) = predict.get_trade_amounts(
+            &oracle,
+            otm_key,
+            otm_qty,
+            &clock,
+        );
+        let (otm_free, otm_locked) = manager.position(otm_key);
+
+        assert!(cost_with_both > fresh_otm_cost);
+        assert!(cost_after_remove_atm < cost_with_both);
+        assert!(cost_after_remove_atm > fresh_otm_cost);
+        assert_eq!(max_payout_with_both, atm_qty + otm_qty);
+        assert_eq!(otm_free, otm_qty);
+        assert_eq!(otm_locked, 0);
+        assert_eq!(vault_max_payout(&mut predict), otm_qty);
+        assert!(mtm_after_remove_atm < mtm_with_both);
+        assert!(vault_mtm(&mut predict) > 0);
+
+        test_scenario::return_shared(manager);
+    };
+
+    destroy(predict);
+    destroy(oracle);
+    destroy(clock);
+    scenario.end();
+}
+
+#[test]
+fun redeem_settled_up_wins_full_payout() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let liq = coin::mint_for_testing<SUI>(1000 * constants::float_scaling!(), scenario.ctx());
+    predict.supply(liq, scenario.ctx());
+
+    let mut oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(oracle_id, oracle.expiry(), 50 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        manager.increase_position(key, 10 * constants::float_scaling!());
+
+        predict
+            .vault_mut()
+            .insert_position(
+                &oracle,
+                true,
+                50 * constants::float_scaling!(),
+                10 * constants::float_scaling!(),
+                &clock,
+                scenario.ctx(),
+            );
+
+        oracle::settle_test_oracle(&mut oracle, 200 * constants::float_scaling!());
+
+        let balance_before = predict::vault_balance(&predict);
+        predict.redeem(
+            &mut manager,
+            &oracle,
+            key,
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+        let balance_after = predict::vault_balance(&predict);
+
+        assert_eq!(balance_before - balance_after, 10 * constants::float_scaling!());
+        let (free, locked) = manager.position(key);
+        assert_eq!(free, 0);
+        assert_eq!(locked, 0);
+
+        test_scenario::return_shared(manager);
+    };
+
+    destroy(predict);
+    destroy(oracle);
+    destroy(clock);
+    scenario.end();
+}
+
+#[test]
+fun redeem_settled_up_loses_zero_payout() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let liq = coin::mint_for_testing<SUI>(1000 * constants::float_scaling!(), scenario.ctx());
+    predict.supply(liq, scenario.ctx());
+
+    let mut oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(oracle_id, oracle.expiry(), 150 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        manager.increase_position(key, 10 * constants::float_scaling!());
+
+        predict
+            .vault_mut()
+            .insert_position(
+                &oracle,
+                true,
+                150 * constants::float_scaling!(),
+                10 * constants::float_scaling!(),
+                &clock,
+                scenario.ctx(),
+            );
+
+        oracle::settle_test_oracle(&mut oracle, 50 * constants::float_scaling!());
+
+        let balance_before = predict::vault_balance(&predict);
+        predict.redeem(
+            &mut manager,
+            &oracle,
+            key,
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+        let balance_after = predict::vault_balance(&predict);
+
+        assert_eq!(balance_before, balance_after);
+
+        test_scenario::return_shared(manager);
+    };
+
+    destroy(predict);
+    destroy(oracle);
+    destroy(clock);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = predict::ETradingPaused)]
+fun mint_when_paused_aborts() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
+    predict.supply(liq, scenario.ctx());
+    predict.set_trading_paused(true);
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(oracle_id, oracle.expiry(), 100 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        predict.mint(
+            &mut manager,
+            &oracle,
+            key,
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
+#[test, expected_failure(abort_code = oracle::EOracleStale)]
+fun mint_against_stale_oracle_aborts() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
+    predict.supply(liq, scenario.ctx());
+
+    let (oracle, mut clock) = oracle_helper::create_simple_oracle(
+        100 * constants::float_scaling!(),
+        100 * constants::float_scaling!(),
+        100_000,
+        0,
+        scenario.ctx(),
+    );
+    clock.set_for_testing(constants::staleness_threshold_ms!() + 1);
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(oracle_id, oracle.expiry(), 100 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        predict.mint(
+            &mut manager,
+            &oracle,
+            key,
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
+#[test, expected_failure(abort_code = predict::ENotOwner)]
+fun mint_aborts_if_not_owner() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
+    predict.supply(liq, scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(oracle_id, oracle.expiry(), 100 * constants::float_scaling!());
+
+    scenario.next_tx(BOB);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        predict.mint(
+            &mut manager,
+            &oracle,
+            key,
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
+#[test, expected_failure(abort_code = oracle::EOracleStale)]
+fun redeem_against_stale_live_oracle_aborts() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
+    predict.supply(liq, scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(oracle_id, oracle.expiry(), 100 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        predict.mint(
+            &mut manager,
+            &oracle,
+            key,
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+        test_scenario::return_shared(manager);
+    };
+
+    clock.set_for_testing(constants::staleness_threshold_ms!() + 1);
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        predict.redeem(
+            &mut manager,
+            &oracle,
+            key,
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
+#[test, expected_failure(abort_code = predict::ENotOwner)]
+fun redeem_aborts_if_not_owner() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
+    predict.supply(liq, scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(oracle_id, oracle.expiry(), 100 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        predict.mint(
+            &mut manager,
+            &oracle,
+            key,
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+        test_scenario::return_shared(manager);
+    };
+
+    scenario.next_tx(BOB);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        predict.redeem(
+            &mut manager,
+            &oracle,
+            key,
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
+#[test]
+fun collateralized_mint_up_lower_to_higher_strike() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+
+    let locked_key = market_key::up(oracle_id, oracle.expiry(), 80 * constants::float_scaling!());
+    let minted_key = market_key::up(oracle_id, oracle.expiry(), 120 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        manager.increase_position(locked_key, 5 * constants::float_scaling!());
+
+        predict.mint_collateralized(
+            &mut manager,
+            &oracle,
+            locked_key,
+            minted_key,
+            5 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        let (free, locked) = manager.position(locked_key);
+        assert_eq!(free, 0);
+        assert_eq!(locked, 5 * constants::float_scaling!());
+
+        let (free_m, locked_m) = manager.position(minted_key);
+        assert_eq!(free_m, 5 * constants::float_scaling!());
+        assert_eq!(locked_m, 0);
+
+        test_scenario::return_shared(manager);
+    };
+
+    destroy(predict);
+    destroy(oracle);
+    destroy(clock);
+    scenario.end();
+}
+
+#[test]
+fun collateralized_mint_dn_higher_to_lower_strike() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+
+    let locked_key = market_key::down(
+        oracle_id,
+        oracle.expiry(),
+        120 * constants::float_scaling!(),
+    );
+    let minted_key = market_key::down(oracle_id, oracle.expiry(), 80 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        manager.increase_position(locked_key, 3 * constants::float_scaling!());
+
+        predict.mint_collateralized(
+            &mut manager,
+            &oracle,
+            locked_key,
+            minted_key,
+            3 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        let (free, locked) = manager.position(locked_key);
+        assert_eq!(free, 0);
+        assert_eq!(locked, 3 * constants::float_scaling!());
+
+        let (free_m, locked_m) = manager.position(minted_key);
+        assert_eq!(free_m, 3 * constants::float_scaling!());
+        assert_eq!(locked_m, 0);
+
+        test_scenario::return_shared(manager);
+    };
+
+    destroy(predict);
+    destroy(oracle);
+    destroy(clock);
+    scenario.end();
+}
+
+#[test]
+fun collateralized_redeem_releases_collateral() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+
+    let locked_key = market_key::up(oracle_id, oracle.expiry(), 80 * constants::float_scaling!());
+    let minted_key = market_key::up(oracle_id, oracle.expiry(), 120 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        manager.increase_position(locked_key, 5 * constants::float_scaling!());
+
+        predict.mint_collateralized(
+            &mut manager,
+            &oracle,
+            locked_key,
+            minted_key,
+            5 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        predict.redeem_collateralized(
+            &mut manager,
+            locked_key,
+            minted_key,
+            5 * constants::float_scaling!(),
+            scenario.ctx(),
+        );
+
+        let (free, locked) = manager.position(locked_key);
+        assert_eq!(free, 5 * constants::float_scaling!());
+        assert_eq!(locked, 0);
+
+        let (free_m, _) = manager.position(minted_key);
+        assert_eq!(free_m, 0);
+
+        test_scenario::return_shared(manager);
+    };
+
+    destroy(predict);
+    destroy(oracle);
+    destroy(clock);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = predict::EInvalidCollateralPair)]
+fun collateralized_mint_up_wrong_direction_aborts() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+
+    let locked_key = market_key::up(oracle_id, oracle.expiry(), 120 * constants::float_scaling!());
+    let minted_key = market_key::up(oracle_id, oracle.expiry(), 80 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        manager.increase_position(locked_key, 5 * constants::float_scaling!());
+
+        predict.mint_collateralized(
+            &mut manager,
+            &oracle,
+            locked_key,
+            minted_key,
+            5 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
+#[test, expected_failure(abort_code = predict::EInvalidCollateralPair)]
+fun collateralized_mint_mixed_directions_aborts() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+
+    let locked_key = market_key::up(oracle_id, oracle.expiry(), 80 * constants::float_scaling!());
+    let minted_key = market_key::down(
+        oracle_id,
+        oracle.expiry(),
+        120 * constants::float_scaling!(),
+    );
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        manager.increase_position(locked_key, 5 * constants::float_scaling!());
+
+        predict.mint_collateralized(
+            &mut manager,
+            &oracle,
+            locked_key,
+            minted_key,
+            5 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
+#[test, expected_failure(abort_code = predict::ETradingPaused)]
+fun mint_collateralized_when_paused_aborts() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    predict.set_trading_paused(true);
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+
+    let locked_key = market_key::up(oracle_id, oracle.expiry(), 80 * constants::float_scaling!());
+    let minted_key = market_key::up(oracle_id, oracle.expiry(), 120 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        manager.increase_position(locked_key, 5 * constants::float_scaling!());
+
+        predict.mint_collateralized(
+            &mut manager,
+            &oracle,
+            locked_key,
+            minted_key,
+            5 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
+#[test, expected_failure(abort_code = predict::EOracleSettled)]
+fun mint_against_settled_oracle_aborts() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let liq = coin::mint_for_testing<SUI>(1000 * constants::float_scaling!(), scenario.ctx());
+    predict.supply(liq, scenario.ctx());
+
+    let mut oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(oracle_id, oracle.expiry(), 50 * constants::float_scaling!());
+
+    oracle::settle_test_oracle(&mut oracle, 200 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        predict.mint(
+            &mut manager,
+            &oracle,
+            key,
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
+#[test, expected_failure(abort_code = predict::EInvalidCollateralPair)]
+fun collateralized_mint_equal_strikes_aborts() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let oracle_id = oracle::id(&oracle);
+
+    let locked_key = market_key::up(oracle_id, oracle.expiry(), 100 * constants::float_scaling!());
+    let minted_key = market_key::up(oracle_id, oracle.expiry(), 100 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        manager.increase_position(locked_key, 5 * constants::float_scaling!());
+
+        predict.mint_collateralized(
+            &mut manager,
+            &oracle,
+            locked_key,
+            minted_key,
+            5 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
+fun run_predict_scenario(idx: u64) {
+    let scenarios = gp::scenarios();
+    let scenario = &scenarios[idx];
+    let oracle_scenarios = go::scenarios();
+    let oracle_scenario = &oracle_scenarios[scenario.oracle_scenario_idx()];
+    let ctx = &mut tx_context::dummy();
+
+    let (oracle, clock) = oracle_helper::create_from_scenario(oracle_scenario, ctx);
+    let mut predict = predict::create_test_predict<SUI>(ctx);
+    let liq = coin::mint_for_testing<SUI>(1_000_000 * constants::float_scaling!(), ctx);
+    predict.supply(liq, ctx);
+
+    // Generated predict fixtures model fresh-state previews with zero utilization.
+    scenario.trade_cases().do_ref!(|tc| {
+        let oracle_id = oracle::id(&oracle);
+        let key = if (tc.is_up()) {
+            market_key::up(oracle_id, oracle.expiry(), tc.strike())
+        } else {
+            market_key::down(oracle_id, oracle.expiry(), tc.strike())
+        };
+        let (mint_cost, redeem_payout) = predict.get_trade_amounts(
+            &oracle,
+            key,
+            tc.quantity(),
+            &clock,
+        );
+        precision::assert_approx(mint_cost, tc.expected_cost());
+        precision::assert_approx(redeem_payout, tc.expected_redeem_payout());
+    });
+
+    destroy(predict);
+    destroy(oracle);
+    destroy(clock);
+}
+
+#[test]
+fun predict_scenario_s0() { run_predict_scenario(0); }
+
+#[test]
+fun predict_scenario_s1() { run_predict_scenario(1); }
+
+#[test]
+fun predict_scenario_s3() { run_predict_scenario(2); }
+
+#[test]
+fun predict_scenario_s4() { run_predict_scenario(3); }
+
+#[test]
+fun predict_scenario_s5() { run_predict_scenario(4); }
