@@ -12,9 +12,9 @@
 /// AdminCap is transferred to the deployer (expected to be a multisig).
 module deepbook_predict::registry;
 
-use deepbook_predict::{constants, oracle::{Self, OracleCapSVI, OracleSVI}, predict};
+use deepbook_predict::{constants, oracle::{Self, OracleCapSVI, OracleSVI}, plp::PLP, predict};
 use std::string::String;
-use sui::{event, table::{Self, Table}};
+use sui::{coin::TreasuryCap, event, table::{Self, Table}};
 
 // === Errors ===
 const EPredictAlreadyCreated: u64 = 0;
@@ -73,11 +73,12 @@ public fun oracle_ids(registry: &Registry, cap_id: ID): vector<ID> {
 public fun create_predict<Quote>(
     registry: &mut Registry,
     _admin_cap: &AdminCap,
+    treasury_cap: TreasuryCap<PLP>,
     ctx: &mut TxContext,
 ): ID {
     assert!(registry.predict_id.is_none(), EPredictAlreadyCreated);
 
-    let predict_id = predict::create<Quote>(ctx);
+    let predict_id = predict::create<Quote>(treasury_cap, ctx);
     registry.predict_id = option::some(predict_id);
 
     event::emit(PredictCreated { predict_id });

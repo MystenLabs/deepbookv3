@@ -7,11 +7,12 @@ module deepbook_predict::registry_tests;
 use deepbook_predict::{
     constants::oracle_strike_grid_ticks,
     oracle::{Self, OracleSVI},
+    plp::PLP,
     predict::Predict,
     registry::{Self, AdminCap, Registry}
 };
 use std::unit_test::{assert_eq, destroy};
-use sui::{sui::SUI, test_scenario::{Self, Scenario}};
+use sui::{coin, sui::SUI, test_scenario::{Self, Scenario}};
 
 const ADMIN: address = @0xAD;
 const TEST_MIN_STRIKE: u64 = 1_000_000_000;
@@ -83,7 +84,8 @@ fun create_predict_succeeds() {
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut registry = scenario.take_shared<Registry>();
 
-    let predict_id = registry.create_predict<SUI>(&admin_cap, scenario.ctx());
+    let treasury_cap = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
+    let predict_id = registry.create_predict<SUI>(&admin_cap, treasury_cap, scenario.ctx());
     // Returned ID matches the one stored in registry
     assert_eq!(registry.predict_id(), option::some(predict_id));
 
@@ -99,9 +101,11 @@ fun create_predict_twice_aborts() {
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut registry = scenario.take_shared<Registry>();
 
-    registry.create_predict<SUI>(&admin_cap, scenario.ctx());
+    let tc1 = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
+    registry.create_predict<SUI>(&admin_cap, tc1, scenario.ctx());
     // Second call should abort
-    registry.create_predict<SUI>(&admin_cap, scenario.ctx());
+    let tc2 = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
+    registry.create_predict<SUI>(&admin_cap, tc2, scenario.ctx());
 
     abort
 }
@@ -372,7 +376,8 @@ fun set_trading_paused_via_registry() {
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut registry = scenario.take_shared<Registry>();
 
-    registry.create_predict<SUI>(&admin_cap, scenario.ctx());
+    let tc = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
+    registry.create_predict<SUI>(&admin_cap, tc, scenario.ctx());
 
     scenario.next_tx(ADMIN);
     {
@@ -396,7 +401,8 @@ fun set_base_spread_via_registry() {
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut registry = scenario.take_shared<Registry>();
 
-    registry.create_predict<SUI>(&admin_cap, scenario.ctx());
+    let tc = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
+    registry.create_predict<SUI>(&admin_cap, tc, scenario.ctx());
 
     scenario.next_tx(ADMIN);
     {
@@ -418,7 +424,8 @@ fun set_min_spread_via_registry() {
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut registry = scenario.take_shared<Registry>();
 
-    registry.create_predict<SUI>(&admin_cap, scenario.ctx());
+    let tc = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
+    registry.create_predict<SUI>(&admin_cap, tc, scenario.ctx());
 
     scenario.next_tx(ADMIN);
     {
@@ -440,7 +447,8 @@ fun set_utilization_multiplier_via_registry() {
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut registry = scenario.take_shared<Registry>();
 
-    registry.create_predict<SUI>(&admin_cap, scenario.ctx());
+    let tc = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
+    registry.create_predict<SUI>(&admin_cap, tc, scenario.ctx());
 
     scenario.next_tx(ADMIN);
     {
@@ -462,7 +470,8 @@ fun set_max_total_exposure_pct_via_registry() {
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut registry = scenario.take_shared<Registry>();
 
-    registry.create_predict<SUI>(&admin_cap, scenario.ctx());
+    let tc = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
+    registry.create_predict<SUI>(&admin_cap, tc, scenario.ctx());
 
     scenario.next_tx(ADMIN);
     {
