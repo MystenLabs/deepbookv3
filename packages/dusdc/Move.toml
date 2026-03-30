@@ -1,0 +1,8 @@
+[package]
+name = "dusdc"
+edition = "2024.beta"
+
+[dependencies]
+
+[addresses]
+dusdc = "0x0"
