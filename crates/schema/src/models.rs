@@ -804,8 +804,8 @@ pub struct ReferralFeesClaimedEvent {
 // === Margin Manager State ===
 #[derive(Queryable, Selectable, Identifiable, Debug, Serialize)]
 #[diesel(table_name = margin_manager_state)]
+#[diesel(primary_key(margin_manager_id))]
 pub struct MarginManagerState {
-    pub id: i32,
     pub margin_manager_id: String,
     pub deepbook_pool_id: String,
     pub base_margin_pool_id: Option<String>,

@@ -24,6 +24,10 @@ package-lock.json
 # Python
 __pycache__/
 
+# Simulation data and output
+packages/predict/simulation/*.csv
+packages/predict/simulation/*.png
+
 # Research
 predict_research/
 

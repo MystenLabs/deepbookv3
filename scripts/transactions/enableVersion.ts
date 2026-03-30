@@ -12,7 +12,7 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   const versionToEnable = 6;
 
   const client = new SuiGrpcClient({
-    url: "https://sui-mainnet.mystenlabs.com",
+    baseUrl: "https://sui-mainnet.mystenlabs.com",
     network: "mainnet",
   }).$extend(
     deepbook({
@@ -44,7 +44,7 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   client.deepbook.deepBookAdmin.updateAllowedVersions("ALKIMI_SUI")(tx);
   client.deepbook.deepBookAdmin.updateAllowedVersions("LZWBTC_USDC")(tx);
 
-  let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
+  const res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
   console.dir(res, { depth: null });
 })();

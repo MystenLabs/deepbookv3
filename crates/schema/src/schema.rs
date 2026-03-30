@@ -380,8 +380,7 @@ diesel::table! {
 }
 
 diesel::table! {
-    margin_manager_state (id) {
-        id -> Int4,
+    margin_manager_state (margin_manager_id) {
         #[max_length = 66]
         margin_manager_id -> Varchar,
         #[max_length = 66]

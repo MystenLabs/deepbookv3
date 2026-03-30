@@ -87,6 +87,9 @@ pub const DEEP_SUPPLY_PATH: &str = "/deep_supply";
 pub const MARGIN_SUPPLY_PATH: &str = "/margin_supply";
 pub const MARGIN_POOL_MODULE: &str = "margin_pool";
 pub const OHCLV_PATH: &str = "/ohclv/:pool_name";
+pub const FEES_PATH: &str = "/fees";
+pub const FEES_MODULE: &str = "pool";
+pub const FEES_FUNCTION: &str = "pool_trade_params";
 
 // Deepbook Margin Events
 pub const MARGIN_MANAGER_CREATED_PATH: &str = "/margin_manager_created";
@@ -418,6 +421,7 @@ pub(crate) fn make_router(state: Arc<AppState>) -> Router {
         .route(MARGIN_SUPPLY_PATH, get(margin_supply))
         .route(SUMMARY_PATH, get(summary))
         .route(STATUS_PATH, get(status))
+        .route(FEES_PATH, get(fees))
         .with_state(state.clone());
 
     let admin = admin_routes(state.clone()).with_state(state.clone());
@@ -1770,6 +1774,143 @@ async fn deep_supply(State(state): State<Arc<AppState>>) -> Result<Json<u64>, De
         .map_err(|_| DeepBookError::deserialization("Failed to deserialize total supply"))?;
 
     Ok(Json(total_supply_value))
+}
+
+#[derive(serde::Serialize)]
+struct PoolFees {
+    pool_id: String,
+    taker_fee: f64,
+    maker_fee: f64,
+    stake_required: f64,
+}
+
+/// Returns maker_fee, taker_fee, and stake_required for all pools via a single PTB
+async fn fees(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<HashMap<String, PoolFees>>, DeepBookError> {
+    let pools: Vec<Pools> = state.reader.get_pools().await?;
+    let sui_client = state.sui_client().await?;
+    let package = ObjectID::from_hex_literal(&state.deepbook_package_id)
+        .map_err(|e| DeepBookError::bad_request(format!("Invalid package ID: {}", e)))?;
+
+    // Fetch all pool objects to get initial_shared_version
+    let pool_object_futures = pools.iter().map(|pool| {
+        let pool_id = pool.pool_id.clone();
+        async move {
+            let pool_address = ObjectID::from_hex_literal(&pool_id)?;
+            let pool_object: SuiObjectResponse = sui_client
+                .read_api()
+                .get_object_with_options(
+                    pool_address,
+                    SuiObjectDataOptions::full_content().with_owner(),
+                )
+                .await?;
+            Ok::<_, DeepBookError>(pool_object)
+        }
+    });
+    let pool_objects: Vec<Result<SuiObjectResponse, DeepBookError>> =
+        join_all(pool_object_futures).await;
+
+    let mut ptb = ProgrammableTransactionBuilder::new();
+    let mut valid_pools: Vec<&Pools> = Vec::new();
+
+    for (pool, pool_object_result) in pools.iter().zip(pool_objects.into_iter()) {
+        let pool_object = match pool_object_result {
+            Ok(obj) => obj,
+            Err(_) => continue,
+        };
+        let pool_data = match pool_object.data.as_ref() {
+            Some(data) => data,
+            None => continue,
+        };
+        let initial_shared_version = match &pool_data.owner {
+            Some(sui_types::object::Owner::Shared {
+                initial_shared_version,
+            }) => *initial_shared_version,
+            _ => continue,
+        };
+
+        let input_idx = valid_pools.len() as u16;
+        let pool_input = CallArg::Object(ObjectArg::SharedObject {
+            id: pool_data.object_id,
+            initial_shared_version,
+            mutability: sui_types::transaction::SharedObjectMutability::Immutable,
+        });
+        ptb.input(pool_input)?;
+
+        let base_coin_type = parse_type_input(&pool.base_asset_id)?;
+        let quote_coin_type = parse_type_input(&pool.quote_asset_id)?;
+
+        ptb.command(Command::MoveCall(Box::new(ProgrammableMoveCall {
+            package,
+            module: FEES_MODULE.to_string(),
+            function: FEES_FUNCTION.to_string(),
+            type_arguments: vec![base_coin_type, quote_coin_type],
+            arguments: vec![Argument::Input(input_idx)],
+        })));
+
+        valid_pools.push(pool);
+    }
+
+    if valid_pools.is_empty() {
+        return Ok(Json(HashMap::new()));
+    }
+
+    let builder = ptb.finish();
+    let tx = TransactionKind::ProgrammableTransaction(builder);
+
+    let result = sui_client
+        .read_api()
+        .dev_inspect_transaction_block(SuiAddress::default(), tx, None, None, None)
+        .await?;
+
+    let results = result.results.ok_or(DeepBookError::rpc(
+        "No results from dev_inspect_transaction_block",
+    ))?;
+
+    let mut fees = HashMap::new();
+    for (i, pool) in valid_pools.iter().enumerate() {
+        let return_values = &results
+            .get(i)
+            .ok_or(DeepBookError::rpc("Missing result for pool"))?
+            .return_values;
+
+        let taker_fee: u64 = bcs::from_bytes(
+            &return_values
+                .first()
+                .ok_or(DeepBookError::rpc("Missing taker_fee"))?
+                .0,
+        )
+        .map_err(|_| DeepBookError::deserialization("Failed to deserialize taker_fee"))?;
+
+        let maker_fee: u64 = bcs::from_bytes(
+            &return_values
+                .get(1)
+                .ok_or(DeepBookError::rpc("Missing maker_fee"))?
+                .0,
+        )
+        .map_err(|_| DeepBookError::deserialization("Failed to deserialize maker_fee"))?;
+
+        let stake_required: u64 = bcs::from_bytes(
+            &return_values
+                .get(2)
+                .ok_or(DeepBookError::rpc("Missing stake_required"))?
+                .0,
+        )
+        .map_err(|_| DeepBookError::deserialization("Failed to deserialize stake_required"))?;
+
+        fees.insert(
+            pool.pool_name.clone(),
+            PoolFees {
+                pool_id: pool.pool_id.clone(),
+                taker_fee: taker_fee as f64 / 1_000_000_000.0,
+                maker_fee: maker_fee as f64 / 1_000_000_000.0,
+                stake_required: stake_required as f64 / 1_000_000.0,
+            },
+        );
+    }
+
+    Ok(Json(fees))
 }
 
 /// Get total supply for all margin pools

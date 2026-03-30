@@ -62,6 +62,8 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 
   Exception: `init` function typically comes early (after struct definitions).
 
+- Utility and math modules should only guard against mathematical preconditions (division by zero, overflow, insufficient balance in a data structure). They should not encode application-level policy decisions like "this state shouldn't happen" or "this user type gets different treatment." Application-level guards belong in the calling module.
+
 ## Tool Calling Instructions
 
 - `sui move build` to build the package, must be run in a directory with Move.toml in it

@@ -21,7 +21,7 @@ use sui::{balance::{Self, Balance}, clock::Clock, table::{Self, Table}};
 const EInsufficientBalance: u64 = 1;
 const EExceedsMaxTotalExposure: u64 = 2;
 const EOracleExposureNotFound: u64 = 3;
-const EWithdrawExceedsAvailable: u64 = 4;
+const EMtmExceedsBalance: u64 = 4;
 
 // === Structs ===
 
@@ -32,6 +32,8 @@ public struct Vault<phantom Quote> has store {
     oracle_treaps: Table<ID, Treap>,
     /// Sum of all oracle treap MTM values
     total_mtm: u64,
+    /// Sum of all oracle treap max payout values
+    total_max_payout: u64,
 }
 
 // === Public Functions ===
@@ -44,6 +46,15 @@ public fun total_mtm<Quote>(vault: &Vault<Quote>): u64 {
     vault.total_mtm
 }
 
+public fun vault_value<Quote>(vault: &Vault<Quote>): u64 {
+    assert!(vault.balance.value() >= vault.total_mtm, EMtmExceedsBalance);
+    vault.balance.value() - vault.total_mtm
+}
+
+public fun total_max_payout<Quote>(vault: &Vault<Quote>): u64 {
+    vault.total_max_payout
+}
+
 // === Public-Package Functions ===
 
 public(package) fun new<Quote>(ctx: &mut TxContext): Vault<Quote> {
@@ -51,10 +62,11 @@ public(package) fun new<Quote>(ctx: &mut TxContext): Vault<Quote> {
         balance: balance::zero(),
         oracle_treaps: table::new(ctx),
         total_mtm: 0,
+        total_max_payout: 0,
     }
 }
 
-/// Insert a position into the treap and refresh MTM.
+/// Insert a position into the treap and refresh risk metrics.
 public(package) fun insert_position<Quote>(
     vault: &mut Vault<Quote>,
     oracle: &OracleSVI,
@@ -68,8 +80,11 @@ public(package) fun insert_position<Quote>(
     if (!vault.oracle_treaps.contains(oracle_id)) {
         vault.oracle_treaps.add(oracle_id, treap::new(ctx));
     };
+    let old_max_payout = vault.oracle_treaps[oracle_id].max_payout();
     vault.oracle_treaps[oracle_id].insert(strike, quantity, is_up);
-    vault.refresh_oracle_mtm(oracle, clock);
+    let new_max_payout = vault.oracle_treaps[oracle_id].max_payout();
+    vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
+    vault.refresh_oracle_risk(oracle, clock);
 }
 
 /// Accept payment into vault balance.
@@ -77,7 +92,7 @@ public(package) fun accept_payment<Quote>(vault: &mut Vault<Quote>, payment: Bal
     vault.balance.join(payment);
 }
 
-/// Remove a position from the treap and refresh MTM.
+/// Remove a position from the treap and refresh risk metrics.
 public(package) fun remove_position<Quote>(
     vault: &mut Vault<Quote>,
     oracle: &OracleSVI,
@@ -88,8 +103,11 @@ public(package) fun remove_position<Quote>(
 ) {
     let oracle_id = oracle.id();
     assert!(vault.oracle_treaps.contains(oracle_id), EOracleExposureNotFound);
+    let old_max_payout = vault.oracle_treaps[oracle_id].max_payout();
     vault.oracle_treaps[oracle_id].remove(strike, quantity, is_up);
-    vault.refresh_oracle_mtm(oracle, clock);
+    let new_max_payout = vault.oracle_treaps[oracle_id].max_payout();
+    vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
+    vault.refresh_oracle_risk(oracle, clock);
 }
 
 /// Dispense payout from vault balance.
@@ -104,19 +122,17 @@ public(package) fun assert_total_exposure<Quote>(vault: &Vault<Quote>, max_total
     assert!(vault.total_mtm <= math::mul(balance, max_total_pct), EExceedsMaxTotalExposure);
 }
 
-/// Admin deposits USDC into the vault.
-public(package) fun deposit<Quote>(vault: &mut Vault<Quote>, deposit: Balance<Quote>) {
-    vault.balance.join(deposit);
-}
-
-/// Refresh cached MTM for one oracle. Updates both the treap's mtm and the global total.
-fun refresh_oracle_mtm<Quote>(
-    vault: &mut Vault<Quote>,
-    oracle: &OracleSVI,
-    clock: &Clock,
-) {
+/// Refresh cached MTM for one oracle.
+fun refresh_oracle_risk<Quote>(vault: &mut Vault<Quote>, oracle: &OracleSVI, clock: &Clock) {
     let oracle_id = oracle.id();
     let treap = &vault.oracle_treaps[oracle_id];
+    if (treap.is_empty()) {
+        let old_mtm = treap.mtm();
+        let treap = &mut vault.oracle_treaps[oracle_id];
+        treap.set_mtm(0);
+        vault.total_mtm = vault.total_mtm - old_mtm;
+        return
+    };
     let (min_strike, max_strike) = treap.strike_range();
     let curve = oracle.build_curve(min_strike, max_strike, clock);
     let old_mtm = treap.mtm();
@@ -124,12 +140,4 @@ fun refresh_oracle_mtm<Quote>(
     let treap = &mut vault.oracle_treaps[oracle_id];
     treap.set_mtm(new_mtm);
     vault.total_mtm = vault.total_mtm + new_mtm - old_mtm;
-}
-
-/// Admin withdraws USDC from the vault.
-/// Cannot withdraw more than balance minus total MTM liability.
-public(package) fun withdraw<Quote>(vault: &mut Vault<Quote>, amount: u64): Balance<Quote> {
-    let bal = vault.balance.value();
-    assert!(bal >= vault.total_mtm && amount <= bal - vault.total_mtm, EWithdrawExceedsAvailable);
-    vault.balance.split(amount)
 }

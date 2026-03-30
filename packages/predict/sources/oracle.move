@@ -24,6 +24,7 @@ const EOracleStale: u64 = 1;
 const EOracleAlreadyActive: u64 = 2;
 const EOracleExpired: u64 = 3;
 const ECannotBeNegative: u64 = 4;
+const EZeroVariance: u64 = 5;
 
 // === Events ===
 
@@ -496,6 +497,7 @@ fun compute_nd2(oracle: &OracleSVI, strike: u64, is_up: bool): u64 {
     let (inner, inner_neg) = predict_math::add_signed_u64(rho_km, rho_km_neg, sq, false);
     assert!(!inner_neg, ECannotBeNegative);
     let total_var = oracle.svi.a + math::mul(oracle.svi.b, inner);
+    assert!(total_var > 0, EZeroVariance);
 
     // d2 = (-k - total_var/2) / sqrt(total_var), then N(±d2)
     let sqrt_var = math::sqrt(total_var, constants::float_scaling!());
@@ -554,6 +556,12 @@ public(package) fun create_test_oracle(
         timestamp,
         settlement_price: option::none(),
     }
+}
+
+#[test_only]
+/// Set oracle active state for testing.
+public(package) fun set_active_for_testing(oracle: &mut OracleSVI, active: bool) {
+    oracle.active = active;
 }
 
 #[test_only]
