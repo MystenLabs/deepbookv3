@@ -103,7 +103,41 @@ fun exp_overflow_aborts() {
 }
 ```
 
-### 6. Name all constants — no magic numbers in test bodies
+### 6. Don't test weaker properties already covered by exact assertions
+
+If a scenario runner asserts exact contract output at every strike point against scipy, a separate test asserting a weaker property (monotonicity, ordering, complement summing to 1) on the same data is redundant. The exact assertion subsumes the weaker one — if the contract breaks monotonicity, the exact values won't match.
+
+```move
+// BAD — run_oracle_scenario(0) already asserts exact values at every strike.
+// If monotonicity breaks, the exact assertions catch it first.
+#[test]
+fun live_up_monotonically_decreasing_with_strike() {
+    let s = get_scenario(0);
+    let points = s.strike_points();
+    assert!(points[3].expected_up() > points[2].expected_up()); // also tests generator, not contract
+}
+
+// GOOD — the scenario runner IS the test for this property
+#[test]
+fun scenario_std() { run_oracle_scenario(0); }
+```
+
+### 7. Import constants from the constants module — don't duplicate
+
+If a value exists in the `constants` module, import it. Hardcoded duplicates with "must stay in sync" comments are a code smell. Use macro aliases for frequently-used macros (macros can't be used in `const` initializers).
+
+```move
+// BAD — duplicates constants module, will silently drift
+const MS_PER_YEAR: u64 = 31_536_000_000;
+const STALENESS_THRESHOLD_MS: u64 = 30_000;
+
+// GOOD — import and alias
+use deepbook_predict::{constants, constants::float_scaling as float};
+clock.set_for_testing(10_000 + constants::staleness_threshold_ms!() + 1);
+let prices = new_price_data(50 * float!(), 51 * float!());
+```
+
+### 8. Name all constants — no magic numbers in test bodies
 
 Raw numeric literals make tests unreadable and unverifiable. Define every constant with a name that explains what it represents.
 
@@ -116,7 +150,7 @@ const LN2: u64 = 693_147_181; // ln(2) * 1e9, from generate_constants.py
 assert_eq!(math::ln(2 * FLOAT), LN2);
 ```
 
-### 7. Test edge cases and boundaries
+### 9. Test edge cases and boundaries
 
 Bugs live at boundaries. Every test file should include:
 - **Zero values**: zero amount, zero shares, zero price
@@ -125,7 +159,7 @@ Bugs live at boundaries. Every test file should include:
 - **Rounding direction**: verify truncation vs round-up behavior with small values where 1 unit matters
 - **Off-by-one**: values just inside and just outside valid ranges
 
-### 8. Use `assert_eq!`, never `assert_approx`
+### 10. Use `assert_eq!`, never `assert_approx`
 
 In smart contracts, 1 unit of precision loss can mean an exploit. Do not use approximate assertions or range checks. Every expected value must be exact.
 
@@ -137,7 +171,7 @@ assert!(up > 390_000_000 && up < 410_000_000);
 assert_eq!(up, 399_512_345);
 ```
 
-### 9. Use `generate_constants.py` for math-heavy tests
+### 11. Use `generate_constants.py` for math-heavy tests
 
 For any test involving math operations (ln, exp, normal_cdf, SVI pricing, binary option prices), the expected values must come from `generate_constants.py`, which uses scipy as ground truth. Do not hand-compute complex math — use the script, commit the constants, and reference the script in comments.
 

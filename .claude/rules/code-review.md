@@ -34,6 +34,11 @@ Accumulated from real PR review feedback. Update this file when reviewers catch 
 - Don't add workarounds (magic thresholds, special-case branches) in test assertions to make generated tests pass. If a test can't assert directly, understand why and fix the root cause.
 - Review generated output before committing — check for duplicates, trivial cases (100 inputs that all return 0), and wasted coverage.
 
+## Constants and Configuration
+
+- Don't hardcode values in tests that exist in the `constants` module. Import the macro instead. A "must stay in sync" comment is a sign you should be importing.
+- Protocol parameters that may need tuning (e.g., staleness thresholds) should be configurable via config structs, not compile-time constants. Pattern: constant defines the default, config struct stores the runtime value, `new()` initializes from default, `set_*` lets admin update.
+
 ## Self-Review Checklist (before pushing)
 
 - [ ] Do all comments match the actual code they describe?
@@ -44,3 +49,6 @@ Accumulated from real PR review feedback. Update this file when reviewers catch 
 - [ ] Does every test call the function it claims to test?
 - [ ] Is all generated test data exercised against the contract?
 - [ ] Are there any workaround thresholds or special-case branches hiding assertion failures?
+- [ ] Are all constants imported from the `constants` module, not hardcoded?
+- [ ] Do all `expected_failure` tests specify a named abort code (no bare `expected_failure`)?
+- [ ] Do timestamp updates match the field's documented semantics?

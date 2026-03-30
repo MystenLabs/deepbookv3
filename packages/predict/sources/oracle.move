@@ -25,6 +25,7 @@ const EOracleAlreadyActive: u64 = 2;
 const EOracleExpired: u64 = 3;
 const ECannotBeNegative: u64 = 4;
 const EZeroVariance: u64 = 5;
+const EZeroForward: u64 = 6;
 
 // === Events ===
 
@@ -199,7 +200,6 @@ public fun update_svi(
 
     oracle.svi = svi;
     oracle.risk_free_rate = risk_free_rate;
-    oracle.timestamp = now;
 
     event::emit(OracleSVIUpdated {
         oracle_id: oracle.id.to_inner(),
@@ -475,6 +475,7 @@ public(package) fun build_curve(
 ///   d2 = (ln(F/K) - total_var/2) / sqrt(total_var)
 fun compute_nd2(oracle: &OracleSVI, strike: u64, is_up: bool): u64 {
     let forward = oracle.prices.forward;
+    assert!(forward > 0, EZeroForward);
 
     // SVI: compute total variance from log-moneyness
     let (k, k_neg) = predict_math::ln(math::div(strike, forward));
