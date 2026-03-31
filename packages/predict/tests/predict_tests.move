@@ -105,7 +105,7 @@ fun supply_second_deposit_proportional_shares() {
 }
 
 #[test, expected_failure(abort_code = vault::EMtmExceedsBalance)]
-/// Public supply currently cannot recapitalize a vault once cached MTM already exceeds balance.
+/// Supply aborts when the vault is underwater — recapitalization requires a dedicated design.
 fun supply_aborts_when_vault_is_underwater() {
     let ctx = &mut tx_context::dummy();
     let mut predict = create_predict(ctx);
@@ -1598,6 +1598,71 @@ fun mint_against_settled_oracle_aborts() {
             &oracle,
             key,
             10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
+#[test, expected_failure(abort_code = predict::EOracleExpired)]
+/// Mint must abort when clock >= oracle expiry even if oracle is not yet settled.
+fun mint_expired_but_unsettled_oracle_aborts() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let liq = coin::mint_for_testing<SUI>(1000 * constants::float_scaling!(), scenario.ctx());
+    predict.supply(liq, scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    // Advance clock to expiry — oracle is NOT settled yet
+    clock.set_for_testing(oracle.expiry());
+    let oracle_id = oracle::id(&oracle);
+    let key = market_key::up(oracle_id, oracle.expiry(), 50 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        predict.mint(
+            &mut manager,
+            &oracle,
+            key,
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
+}
+
+#[test, expected_failure(abort_code = predict::EOracleExpired)]
+/// Collateralized mint must also abort when clock >= oracle expiry before settlement.
+fun collateralized_mint_expired_but_unsettled_oracle_aborts() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let oracle = create_live_oracle(scenario.ctx());
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(oracle.expiry());
+    let oracle_id = oracle::id(&oracle);
+
+    let locked_key = market_key::up(oracle_id, oracle.expiry(), 80 * constants::float_scaling!());
+    let minted_key = market_key::up(oracle_id, oracle.expiry(), 120 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        manager.increase_position(locked_key, 5 * constants::float_scaling!());
+
+        predict.mint_collateralized(
+            &mut manager,
+            &oracle,
+            locked_key,
+            minted_key,
+            5 * constants::float_scaling!(),
             &clock,
             scenario.ctx(),
         );
