@@ -23,14 +23,12 @@ fun sub_pos_minus_smaller_pos() {
     assert_eq!(mag, 2);
     assert_eq!(neg, false);
 }
-
 #[test]
 fun sub_smaller_pos_minus_larger_pos() {
     let (mag, neg) = math::sub_signed_u64(3, false, 5, false);
     assert_eq!(mag, 2);
     assert_eq!(neg, true);
 }
-
 #[test]
 fun sub_neg_minus_neg_larger_a() {
     let (mag, neg) = math::sub_signed_u64(5, true, 3, true);
@@ -362,6 +360,40 @@ fun exp_overflow_aborts() {
 fun exp_at_max_input_succeeds() {
     let result = math::exp(23_638_153_699, false);
     assert!(result > 0);
+}
+
+#[test]
+fun sqrt_matches_deepbook_math() {
+    let xs: vector<u64> = vector[
+        0,
+        1,
+        2,
+        10,
+        100,
+        10_000,
+        100_000_000,
+        500_000_000,
+        constants::float_scaling!(),
+        2 * constants::float_scaling!(),
+        4 * constants::float_scaling!(),
+        9 * constants::float_scaling!(),
+        10 * constants::float_scaling!(),
+        100 * constants::float_scaling!(),
+        1_000 * constants::float_scaling!(),
+        18_446_744_073_709_551_615,
+    ];
+    let precisions: vector<u64> = vector[
+        constants::float_scaling!(),
+        100_000_000,
+        1_000_000,
+    ];
+    precisions.do_ref!(|precision| {
+        xs.do_ref!(|x| {
+            let expected = deepbook::math::sqrt(*x, *precision);
+            let actual = math::sqrt(*x, *precision);
+            assert_eq!(actual, expected);
+        });
+    });
 }
 
 // ============================================================

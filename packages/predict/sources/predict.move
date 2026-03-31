@@ -12,6 +12,7 @@ module deepbook_predict::predict;
 use deepbook::math;
 use deepbook_predict::{
     constants,
+    math as predict_math,
     market_key::MarketKey,
     oracle::OracleSVI,
     predict_manager::{Self, PredictManager},
@@ -511,7 +512,7 @@ fun get_quote<Quote>(
 
     let complement = constants::float_scaling!() - price;
     let variance = math::mul(price, complement);
-    let bernoulli_factor = math::sqrt(variance, constants::float_scaling!());
+    let bernoulli_factor = predict_math::sqrt(variance, constants::float_scaling!());
     let bernoulli_spread = math::mul(predict.pricing_config.base_spread(), bernoulli_factor);
     let spread =
         bernoulli_spread.max(predict.pricing_config.min_spread())

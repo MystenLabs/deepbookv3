@@ -485,7 +485,7 @@ fun compute_nd2(oracle: &OracleSVI, strike: u64, is_up: bool): u64 {
         oracle.svi.m,
         oracle.svi.m_negative,
     );
-    let sq = math::sqrt(
+    let sq = predict_math::sqrt(
         math::mul(k_minus_m, k_minus_m) + math::mul(oracle.svi.sigma, oracle.svi.sigma),
         constants::float_scaling!(),
     );
@@ -501,7 +501,7 @@ fun compute_nd2(oracle: &OracleSVI, strike: u64, is_up: bool): u64 {
     assert!(total_var > 0, EZeroVariance);
 
     // d2 = (-k - total_var/2) / sqrt(total_var), then N(±d2)
-    let sqrt_var = math::sqrt(total_var, constants::float_scaling!());
+    let sqrt_var = predict_math::sqrt(total_var, constants::float_scaling!());
     let (d2, d2_neg) = predict_math::sub_signed_u64(k, !k_neg, total_var / 2, false);
     let d2 = math::div(d2, sqrt_var);
     let cdf_neg = if (is_up) { d2_neg } else { !d2_neg };
