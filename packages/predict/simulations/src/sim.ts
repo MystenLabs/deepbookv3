@@ -32,6 +32,10 @@ import {
 
 const DUSDC_DECIMALS = 1_000_000n;
 const EXPIRY_MS = BigInt(Date.now()) + 7n * 24n * 60n * 60n * 1000n;
+const FLOAT_SCALING = 1_000_000_000n;
+const ORACLE_MIN_STRIKE = 50_000n * FLOAT_SCALING;
+const ORACLE_MAX_STRIKE = 150_000n * FLOAT_SCALING;
+const ORACLE_TICK_SIZE = 1n * FLOAT_SCALING;
 
 function parseArgs() {
   return {
@@ -95,6 +99,9 @@ async function setupSimulation(): Promise<SimState> {
       oracleCapId,
       underlyingAsset: "BTC",
       expiry: EXPIRY_MS,
+      minStrike: ORACLE_MIN_STRIKE,
+      maxStrike: ORACLE_MAX_STRIKE,
+      tickSize: ORACLE_TICK_SIZE,
     }),
     "create_oracle"
   );

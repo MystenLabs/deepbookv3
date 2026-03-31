@@ -101,6 +101,9 @@ export function createOracleTx(params: {
   oracleCapId: string;
   underlyingAsset: string;
   expiry: bigint;
+  minStrike: bigint;
+  maxStrike: bigint;
+  tickSize: bigint;
 }): Transaction {
   const tx = new Transaction();
   tx.moveCall({
@@ -111,6 +114,9 @@ export function createOracleTx(params: {
       tx.object(params.oracleCapId),
       tx.pure.string(params.underlyingAsset),
       tx.pure.u64(params.expiry),
+      tx.pure.u64(params.minStrike),
+      tx.pure.u64(params.maxStrike),
+      tx.pure.u64(params.tickSize),
     ],
   });
   return tx;
