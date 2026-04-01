@@ -5,6 +5,7 @@ Generates ground-truth test vectors for the predict package.
 Outputs:
   generated_math.move   — ln, exp, normal_cdf test vectors
   generated_oracle.move — SVI + Black-Scholes oracle pricing scenarios
+  generated_predict.move — Predict quote scenarios derived from frozen oracle fixtures
 
 Source of truth: scipy.stats.norm + Python math
 Usage: python3 generate.py
@@ -13,6 +14,7 @@ Dependencies: pip install scipy
 
 import math
 import random
+import re
 from pathlib import Path
 
 from scipy.stats import norm
@@ -26,8 +28,11 @@ U64_MAX = 2**64 - 1
 SECONDS_IN_YEAR = 365.0 * 24 * 60 * 60
 
 DATA_DIR = Path(__file__).parent
+PREDICT_DIR = DATA_DIR.parents[1]
+CONSTANTS_MOVE = PREDICT_DIR / "sources" / "helper" / "constants.move"
 MATH_OUTPUT = DATA_DIR / "generated_math.move"
 ORACLE_OUTPUT = DATA_DIR / "generated_oracle.move"
+PREDICT_OUTPUT = DATA_DIR / "generated_predict.move"
 
 # ====================================================================
 # Shared scaling helpers
@@ -49,6 +54,15 @@ def to_bool(val) -> str:
 def fmt_u64(value: int) -> str:
     """Format an integer with underscore separators for Move readability."""
     return f"{value:_}"
+
+
+def read_move_macro_u64(name: str) -> int:
+    """Read a u64-valued macro from constants.move so generator math stays in sync."""
+    pattern = rf"public macro fun {re.escape(name)}\(\): u64 \{{ ([0-9_]+) \}}"
+    match = re.search(pattern, CONSTANTS_MOVE.read_text())
+    if not match:
+        raise ValueError(f"Could not find macro {name} in {CONSTANTS_MOVE}")
+    return int(match.group(1).replace("_", ""))
 
 
 # ====================================================================
@@ -387,6 +401,11 @@ def generate_math():
 # Oracle constants
 # ====================================================================
 
+assert read_move_macro_u64("float_scaling") == FLOAT_SCALING
+DEFAULT_BASE_SPREAD = read_move_macro_u64("default_base_spread") / FLOAT_SCALING
+DEFAULT_MIN_SPREAD = read_move_macro_u64("default_min_spread") / FLOAT_SCALING
+DEFAULT_UTIL_MULTIPLIER = read_move_macro_u64("default_utilization_multiplier") / FLOAT_SCALING
+
 # ====================================================================
 # Oracle ground truth computation
 # ====================================================================
@@ -442,6 +461,20 @@ def price_legal_strikes(
         })
 
     return priced
+
+
+def mint_spread(price: float) -> float:
+    """Bernoulli spread with a floor at the configured minimum."""
+    variance = price * (1.0 - price)
+    return max(DEFAULT_BASE_SPREAD * math.sqrt(variance), DEFAULT_MIN_SPREAD)
+
+
+def utilization_spread(liability: float, balance: float) -> float:
+    """Current predict quote model penalizes utilization quadratically."""
+    if liability <= 0.0 or balance <= 0.0:
+        return 0.0
+    util = min(liability / balance, 1.0)
+    return DEFAULT_BASE_SPREAD * DEFAULT_UTIL_MULTIPLIER * util * util
 
 
 def svi_to_move(svi: dict, rate: float) -> dict:
@@ -647,6 +680,55 @@ ORACLE_SCENARIOS = [
     },
 ]
 
+# Frozen grouped predict previews keyed to the legal oracle fixtures above.
+# Each trade case resolves its strike from the referenced oracle fixture by
+# strike-point index, so oracle/predict fixtures stay aligned.
+PREDICT_TRADE_CASES = [
+    {"strike_idx": 2, "quantity": 10_000_000, "is_up": True},
+    {"strike_idx": 2, "quantity": 10_000_000, "is_up": False},
+    {"strike_idx": 4, "quantity": 10_000_000, "is_up": True},
+    {"strike_idx": 0, "quantity": 10_000_000, "is_up": True},
+    {"strike_idx": 0, "quantity": 10_000_000, "is_up": False},
+    {"strike_idx": 2, "quantity": 1_000, "is_up": True},
+    {"strike_idx": 2, "quantity": 500_000_000, "is_up": True},
+]
+
+PREDICT_SCENARIOS = [
+    {
+        "name": "S0",
+        "oracle_name": "S0",
+        "trade_cases": PREDICT_TRADE_CASES,
+    },
+    {
+        "name": "S1",
+        "oracle_name": "S1",
+        "trade_cases": PREDICT_TRADE_CASES,
+    },
+    {
+        "name": "S3",
+        "oracle_name": "S3",
+        "trade_cases": PREDICT_TRADE_CASES,
+    },
+    {
+        "name": "S4",
+        "oracle_name": "S4",
+        "trade_cases": PREDICT_TRADE_CASES,
+    },
+    {
+        "name": "S5",
+        "oracle_name": "S5",
+        "trade_cases": PREDICT_TRADE_CASES,
+    },
+]
+
+
+def oracle_scenario_by_name(name: str) -> tuple[int, dict]:
+    for idx, scenario in enumerate(ORACLE_SCENARIOS):
+        if scenario["name"] == name:
+            return idx, scenario
+    raise ValueError(f"Unknown oracle scenario name: {name}")
+
+
 # ====================================================================
 # Oracle scenario building
 # ====================================================================
@@ -772,6 +854,117 @@ def generate_oracle():
 
 
 # ####################################################################
+#  PREDICT — quote scenarios derived from frozen oracle snapshots
+# ####################################################################
+
+
+def emit_predict_structs(w: MoveWriter):
+    w.blank()
+    w.raw("public struct TradeCase has copy, drop {")
+    w.raw("    strike: u64,")
+    w.raw("    quantity: u64,")
+    w.raw("    is_up: bool,")
+    w.raw("    expected_cost: u64,")
+    w.raw("    expected_redeem_payout: u64,")
+    w.raw("}")
+    w.blank()
+    w.raw("public struct PredictScenario has copy, drop {")
+    w.raw("    oracle_scenario_idx: u64,")
+    w.raw("    trade_cases: vector<TradeCase>,")
+    w.raw("}")
+
+
+def emit_predict_getters(w: MoveWriter):
+    w.blank()
+    w.raw(
+        "public fun oracle_scenario_idx(s: &PredictScenario): u64 { s.oracle_scenario_idx }"
+    )
+    w.raw("public fun trade_cases(s: &PredictScenario): &vector<TradeCase> { &s.trade_cases }")
+    w.blank()
+    w.raw("public fun strike(tc: &TradeCase): u64 { tc.strike }")
+    w.raw("public fun quantity(tc: &TradeCase): u64 { tc.quantity }")
+    w.raw("public fun is_up(tc: &TradeCase): bool { tc.is_up }")
+    w.raw("public fun expected_cost(tc: &TradeCase): u64 { tc.expected_cost }")
+    w.raw("public fun expected_redeem_payout(tc: &TradeCase): u64 { tc.expected_redeem_payout }")
+
+
+def emit_predict_scenarios_vector(w: MoveWriter, scenarios: list[dict]):
+    w.blank()
+    w.raw("public fun scenarios(): vector<PredictScenario> {")
+    w.raw("    vector[")
+    for idx, scenario in enumerate(scenarios):
+        w.raw(f"        // Index {idx}: {scenario['name']}")
+        w.raw("        PredictScenario {")
+        w.raw(f"            oracle_scenario_idx: {fmt_u64(scenario['oracle_scenario_idx'])},")
+        w.raw("            trade_cases: vector[")
+        for tc in scenario["trade_cases"]:
+            w.raw(
+                f"                TradeCase {{ "
+                f"strike: {fmt_u64(tc['strike'])}, "
+                f"quantity: {fmt_u64(tc['quantity'])}, "
+                f"is_up: {to_bool(tc['is_up'])}, "
+                f"expected_cost: {fmt_u64(tc['expected_cost'])}, "
+                f"expected_redeem_payout: {fmt_u64(tc['expected_redeem_payout'])} }},"
+            )
+        w.raw("            ],")
+        w.raw("        },")
+    w.raw("    ]")
+    w.raw("}")
+
+
+def generate_predict():
+    """Generate generated_predict.move."""
+    scenarios = []
+
+    for scenario in PREDICT_SCENARIOS:
+        oracle_idx, oracle_scenario = oracle_scenario_by_name(scenario["oracle_name"])
+        forward = oracle_scenario["forward"] / FLOAT_SCALING
+        t = (
+            (oracle_scenario["expiry_ms"] - oracle_scenario["now_ms"])
+            / 1000.0
+            / SECONDS_IN_YEAR
+        )
+
+        trade_cases = []
+        for tc in scenario["trade_cases"]:
+            strike = oracle_scenario["strikes"][tc["strike_idx"]]
+            price = binary_price(
+                forward,
+                strike / FLOAT_SCALING,
+                **oracle_scenario["svi"],
+                rate=oracle_scenario["rate"],
+                t=t,
+                is_call=tc["is_up"],
+            )
+            spread = mint_spread(price) + utilization_spread(0.0, 0.0)
+            ask = min(1.0, price + spread)
+            bid = max(0.0, price - spread)
+
+            trade_cases.append({
+                "strike": strike,
+                "quantity": tc["quantity"],
+                "is_up": tc["is_up"],
+                "expected_cost": int(ask * tc["quantity"]),
+                "expected_redeem_payout": int(bid * tc["quantity"]),
+            })
+
+        scenarios.append({
+            "name": scenario["name"],
+            "oracle_scenario_idx": oracle_idx,
+            "trade_cases": trade_cases,
+        })
+
+    print(f"Predict: {len(PREDICT_SCENARIOS)} frozen grouped scenarios")
+
+    w = MoveWriter()
+    w.header("generated_predict")
+    emit_predict_structs(w)
+    emit_predict_getters(w)
+    emit_predict_scenarios_vector(w, scenarios)
+    w.write(PREDICT_OUTPUT)
+
+
+# ####################################################################
 #  Main
 # ####################################################################
 
@@ -779,6 +972,7 @@ def generate_oracle():
 def main():
     generate_math()
     generate_oracle()
+    generate_predict()
 
 
 if __name__ == "__main__":

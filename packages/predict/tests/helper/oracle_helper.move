@@ -111,3 +111,23 @@ public fun create_oracle_with_unregistered_cap(
     let cap = oracle::create_oracle_cap(ctx);
     (oracle, cap, clock)
 }
+
+/// Settled oracle for deterministic unit tests.
+public fun create_settled_oracle(settlement_price: u64, ctx: &mut TxContext): OracleSVI {
+    let svi = new_svi_params(0, 0, 0, false, 0, false, 0);
+    let prices = new_price_data(0, 0);
+    let mut oracle = oracle::create_test_oracle(
+        b"BTC".to_string(),
+        svi,
+        prices,
+        0,
+        100_000,
+        0,
+        simple_grid_min_strike(),
+        simple_grid_max_strike(),
+        simple_grid_tick_size(),
+        ctx,
+    );
+    oracle::settle_test_oracle(&mut oracle, settlement_price);
+    oracle
+}
