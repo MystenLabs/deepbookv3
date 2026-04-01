@@ -25,7 +25,7 @@ fun get_trade_amounts_invalid_strike_aborts() {
     let predict = predict::create_test_predict<SUI>(ctx);
     let svi = new_svi_params(0, float!(), 0, false, 0, false, 250_000_000);
     let prices = new_price_data(500_000_000, 500_000_000);
-    let oracle = oracle::create_test_oracle_with_grid(
+    let oracle = oracle::create_test_oracle(
         b"BTC".to_string(),
         svi,
         prices,
@@ -52,7 +52,7 @@ fun get_trade_amounts_inactive_oracle_aborts() {
     let predict = predict::create_test_predict<SUI>(ctx);
     let svi = new_svi_params(0, float!(), 0, false, 0, false, 250_000_000);
     let prices = new_price_data(500_000_000, 500_000_000);
-    let mut oracle = oracle::create_test_oracle_with_grid(
+    let mut oracle = oracle::create_test_oracle(
         b"BTC".to_string(),
         svi,
         prices,
