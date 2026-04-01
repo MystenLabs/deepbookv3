@@ -4,7 +4,7 @@
 #[test_only]
 module deepbook_predict::risk_config_tests;
 
-use deepbook_predict::{risk_config, constants};
+use deepbook_predict::{constants, risk_config};
 use std::unit_test::{assert_eq, destroy};
 
 // === new() defaults ===

@@ -5,9 +5,10 @@
 module deepbook_predict::registry_tests;
 
 use deepbook_predict::{
+    constants::oracle_strike_grid_ticks,
     oracle::{Self, OracleSVI},
     predict::Predict,
-    registry::{Self, AdminCap, Registry},
+    registry::{Self, AdminCap, Registry}
 };
 use std::unit_test::{assert_eq, destroy};
 use sui::{sui::SUI, test_scenario::{Self, Scenario}};
@@ -15,7 +16,8 @@ use sui::{sui::SUI, test_scenario::{Self, Scenario}};
 const ADMIN: address = @0xAD;
 const TEST_MIN_STRIKE: u64 = 0;
 const TEST_TICK_SIZE: u64 = 1_000_000_000;
-const TEST_MAX_STRIKE: u64 = 100_000 * TEST_TICK_SIZE;
+
+fun test_max_strike(): u64 { oracle_strike_grid_ticks!() * TEST_TICK_SIZE }
 
 // Setup: init registry, return scenario with AdminCap transferred to ADMIN.
 fun setup(): Scenario {
@@ -143,7 +145,7 @@ fun create_oracle_and_tracks_in_registry() {
         b"BTC".to_string(),
         1_000_000,
         TEST_MIN_STRIKE,
-        TEST_MAX_STRIKE,
+        test_max_strike(),
         TEST_TICK_SIZE,
         scenario.ctx(),
     );
@@ -173,7 +175,7 @@ fun create_oracle_persists_grid_on_oracle() {
         b"BTC".to_string(),
         1_000_000,
         TEST_MIN_STRIKE,
-        TEST_MAX_STRIKE,
+        test_max_strike(),
         TEST_TICK_SIZE,
         scenario.ctx(),
     );
@@ -182,7 +184,7 @@ fun create_oracle_persists_grid_on_oracle() {
     {
         let oracle = scenario.take_shared<OracleSVI>();
         assert_eq!(oracle::min_strike(&oracle), TEST_MIN_STRIKE);
-        assert_eq!(oracle::max_strike(&oracle), TEST_MAX_STRIKE);
+        assert_eq!(oracle::max_strike(&oracle), test_max_strike());
         assert_eq!(oracle::tick_size(&oracle), TEST_TICK_SIZE);
         test_scenario::return_shared(oracle);
     };
@@ -207,7 +209,7 @@ fun create_oracle_invalid_tick_size_aborts() {
         b"BTC".to_string(),
         1_000_000,
         TEST_MIN_STRIKE,
-        TEST_MAX_STRIKE,
+        test_max_strike(),
         1,
         scenario.ctx(),
     );
@@ -229,7 +231,7 @@ fun create_oracle_invalid_grid_span_aborts() {
         b"BTC".to_string(),
         1_000_000,
         TEST_MIN_STRIKE,
-        TEST_MAX_STRIKE - TEST_TICK_SIZE,
+        test_max_strike() - TEST_TICK_SIZE,
         TEST_TICK_SIZE,
         scenario.ctx(),
     );
@@ -253,7 +255,7 @@ fun create_multiple_oracles_same_cap() {
         b"BTC".to_string(),
         1_000_000,
         TEST_MIN_STRIKE,
-        TEST_MAX_STRIKE,
+        test_max_strike(),
         TEST_TICK_SIZE,
         scenario.ctx(),
     );
@@ -263,7 +265,7 @@ fun create_multiple_oracles_same_cap() {
         b"ETH".to_string(),
         2_000_000,
         TEST_MIN_STRIKE,
-        TEST_MAX_STRIKE,
+        test_max_strike(),
         TEST_TICK_SIZE,
         scenario.ctx(),
     );
@@ -297,7 +299,7 @@ fun create_oracles_different_caps_tracked_separately() {
         b"BTC".to_string(),
         1_000_000,
         TEST_MIN_STRIKE,
-        TEST_MAX_STRIKE,
+        test_max_strike(),
         TEST_TICK_SIZE,
         scenario.ctx(),
     );
@@ -307,7 +309,7 @@ fun create_oracles_different_caps_tracked_separately() {
         b"ETH".to_string(),
         2_000_000,
         TEST_MIN_STRIKE,
-        TEST_MAX_STRIKE,
+        test_max_strike(),
         TEST_TICK_SIZE,
         scenario.ctx(),
     );
@@ -345,7 +347,7 @@ fun register_oracle_cap_on_oracle() {
         b"BTC".to_string(),
         1_000_000,
         TEST_MIN_STRIKE,
-        TEST_MAX_STRIKE,
+        test_max_strike(),
         TEST_TICK_SIZE,
         scenario.ctx(),
     );

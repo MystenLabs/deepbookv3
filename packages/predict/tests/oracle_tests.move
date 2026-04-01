@@ -5,7 +5,7 @@
 module deepbook_predict::oracle_tests;
 
 use deepbook_predict::{
-    constants::{Self, float_scaling as float},
+    constants::{Self, float_scaling as float, min_oracle_tick_size, oracle_strike_grid_ticks},
     generated_oracle as go,
     oracle::{Self, new_price_data, new_svi_params, new_curve_point},
     oracle_helper,
@@ -15,11 +15,18 @@ use std::unit_test::{assert_eq, destroy};
 use sui::clock;
 
 const HALF_YEAR_MS: u64 = 15_768_000_000;
-const GRID_MIN_STRIKE: u64 = 0;
-const GRID_TICK_SIZE: u64 = 10_000;
-const GRID_MAX_STRIKE: u64 = GRID_TICK_SIZE * 100_000;
-const BOUNDED_GRID_MIN_STRIKE: u64 = 10_000;
-const BOUNDED_GRID_MAX_STRIKE: u64 = BOUNDED_GRID_MIN_STRIKE + GRID_TICK_SIZE * 100_000;
+
+fun grid_min_strike(): u64 { 0 }
+
+fun grid_tick_size(): u64 { min_oracle_tick_size!() }
+
+fun grid_max_strike(): u64 { grid_tick_size() * oracle_strike_grid_ticks!() }
+
+fun bounded_grid_min_strike(): u64 { min_oracle_tick_size!() }
+
+fun bounded_grid_max_strike(): u64 {
+    bounded_grid_min_strike() + grid_tick_size() * oracle_strike_grid_ticks!()
+}
 
 // === Common test SVI params ===
 const SVI_SIGMA_0_25: u64 = 250_000_000;
@@ -131,17 +138,38 @@ fun create_test_oracle_with_grid_stores_grid_params() {
         0,
         100_000,
         0,
-        GRID_MIN_STRIKE,
-        GRID_MAX_STRIKE,
-        GRID_TICK_SIZE,
+        grid_min_strike(),
+        grid_max_strike(),
+        grid_tick_size(),
         ctx,
     );
 
-    assert_eq!(oracle.min_strike(), GRID_MIN_STRIKE);
-    assert_eq!(oracle.max_strike(), GRID_MAX_STRIKE);
-    assert_eq!(oracle.tick_size(), GRID_TICK_SIZE);
+    assert_eq!(oracle.min_strike(), grid_min_strike());
+    assert_eq!(oracle.max_strike(), grid_max_strike());
+    assert_eq!(oracle.tick_size(), grid_tick_size());
 
     destroy(oracle);
+}
+
+#[test, expected_failure(abort_code = oracle::EPriceOutOfRange)]
+fun create_test_oracle_with_grid_rejects_out_of_range_prices() {
+    let ctx = &mut tx_context::dummy();
+    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
+    let prices = new_price_data(bounded_grid_max_strike() + grid_tick_size(), 500_000_000);
+    let oracle = oracle::create_test_oracle_with_grid(
+        b"BTC".to_string(),
+        svi,
+        prices,
+        0,
+        100_000,
+        0,
+        bounded_grid_min_strike(),
+        bounded_grid_max_strike(),
+        grid_tick_size(),
+        ctx,
+    );
+    destroy(oracle);
+    abort
 }
 
 #[test]
@@ -156,15 +184,15 @@ fun get_binary_price_at_min_and_max_strike_succeeds() {
         0,
         100_000,
         0,
-        BOUNDED_GRID_MIN_STRIKE,
-        BOUNDED_GRID_MAX_STRIKE,
-        GRID_TICK_SIZE,
+        bounded_grid_min_strike(),
+        bounded_grid_max_strike(),
+        grid_tick_size(),
         ctx,
     );
 
     let clock = clock::create_for_testing(ctx);
-    let min_up = oracle.get_binary_price(BOUNDED_GRID_MIN_STRIKE, true, &clock);
-    let max_up = oracle.get_binary_price(BOUNDED_GRID_MAX_STRIKE, true, &clock);
+    let min_up = oracle.get_binary_price(bounded_grid_min_strike(), true, &clock);
+    let max_up = oracle.get_binary_price(bounded_grid_max_strike(), true, &clock);
 
     assert!(min_up <= float!());
     assert!(max_up <= float!());
@@ -841,20 +869,20 @@ fun update_prices_accepts_boundary_values() {
         0,
         1_000_000,
         0,
-        BOUNDED_GRID_MIN_STRIKE,
-        BOUNDED_GRID_MAX_STRIKE,
-        GRID_TICK_SIZE,
+        bounded_grid_min_strike(),
+        bounded_grid_max_strike(),
+        grid_tick_size(),
         ctx,
     );
     let cap = oracle::create_oracle_cap(ctx);
     oracle::register_cap(&mut oracle, &cap);
     let clock = clock::create_for_testing(ctx);
 
-    let boundary_prices = new_price_data(BOUNDED_GRID_MIN_STRIKE, BOUNDED_GRID_MAX_STRIKE);
+    let boundary_prices = new_price_data(bounded_grid_min_strike(), bounded_grid_max_strike());
     oracle.update_prices(&cap, boundary_prices, &clock);
 
-    assert_eq!(oracle.spot_price(), BOUNDED_GRID_MIN_STRIKE);
-    assert_eq!(oracle.forward_price(), BOUNDED_GRID_MAX_STRIKE);
+    assert_eq!(oracle.spot_price(), bounded_grid_min_strike());
+    assert_eq!(oracle.forward_price(), bounded_grid_max_strike());
 
     destroy(oracle);
     destroy(cap);
@@ -963,9 +991,9 @@ fun update_prices_out_of_range_deactivates_oracle() {
         0,
         1_000_000,
         0,
-        GRID_MIN_STRIKE,
-        GRID_MAX_STRIKE,
-        GRID_TICK_SIZE,
+        grid_min_strike(),
+        grid_max_strike(),
+        grid_tick_size(),
         ctx,
     );
     let cap = oracle::create_oracle_cap(ctx);
@@ -975,7 +1003,7 @@ fun update_prices_out_of_range_deactivates_oracle() {
     let old_timestamp = oracle.timestamp();
     let clock = clock::create_for_testing(ctx);
 
-    let out_of_range_prices = new_price_data(GRID_MAX_STRIKE + 1, 500_000_000);
+    let out_of_range_prices = new_price_data(grid_max_strike() + 1, 500_000_000);
     oracle.update_prices(&cap, out_of_range_prices, &clock);
 
     assert_eq!(oracle.is_active(), false);
@@ -1000,9 +1028,9 @@ fun update_prices_past_expiry_settles_even_when_out_of_range() {
         0,
         100_000,
         0,
-        GRID_MIN_STRIKE,
-        GRID_MAX_STRIKE,
-        GRID_TICK_SIZE,
+        grid_min_strike(),
+        grid_max_strike(),
+        grid_tick_size(),
         ctx,
     );
     let cap = oracle::create_oracle_cap(ctx);
@@ -1010,12 +1038,12 @@ fun update_prices_past_expiry_settles_even_when_out_of_range() {
     let mut clock = clock::create_for_testing(ctx);
     clock.set_for_testing(200_000);
 
-    let out_of_range_prices = new_price_data(GRID_MAX_STRIKE + 1, GRID_MAX_STRIKE + 2);
+    let out_of_range_prices = new_price_data(grid_max_strike() + 1, grid_max_strike() + 2);
     oracle.update_prices(&cap, out_of_range_prices, &clock);
 
     assert_eq!(oracle.is_settled(), true);
     assert_eq!(oracle.is_active(), false);
-    assert_eq!(oracle.settlement_price().destroy_some(), GRID_MAX_STRIKE + 1);
+    assert_eq!(oracle.settlement_price().destroy_some(), grid_max_strike() + 1);
 
     destroy(oracle);
     destroy(cap);
@@ -1102,9 +1130,9 @@ fun get_binary_price_strike_not_on_tick_aborts() {
         0,
         1_000_000,
         0,
-        GRID_MIN_STRIKE,
-        GRID_MAX_STRIKE,
-        GRID_TICK_SIZE,
+        grid_min_strike(),
+        grid_max_strike(),
+        grid_tick_size(),
         ctx,
     );
 
@@ -1126,14 +1154,14 @@ fun get_binary_price_below_min_strike_aborts() {
         0,
         1_000_000,
         0,
-        BOUNDED_GRID_MIN_STRIKE,
-        BOUNDED_GRID_MAX_STRIKE,
-        GRID_TICK_SIZE,
+        bounded_grid_min_strike(),
+        bounded_grid_max_strike(),
+        grid_tick_size(),
         ctx,
     );
 
     let clock = clock::create_for_testing(ctx);
-    oracle.get_binary_price(BOUNDED_GRID_MIN_STRIKE - GRID_TICK_SIZE, true, &clock);
+    oracle.get_binary_price(bounded_grid_min_strike() - grid_tick_size(), true, &clock);
 
     abort
 }
@@ -1150,14 +1178,14 @@ fun get_binary_price_above_max_strike_aborts() {
         0,
         1_000_000,
         0,
-        BOUNDED_GRID_MIN_STRIKE,
-        BOUNDED_GRID_MAX_STRIKE,
-        GRID_TICK_SIZE,
+        bounded_grid_min_strike(),
+        bounded_grid_max_strike(),
+        grid_tick_size(),
         ctx,
     );
 
     let clock = clock::create_for_testing(ctx);
-    oracle.get_binary_price(BOUNDED_GRID_MAX_STRIKE + GRID_TICK_SIZE, true, &clock);
+    oracle.get_binary_price(bounded_grid_max_strike() + grid_tick_size(), true, &clock);
 
     abort
 }

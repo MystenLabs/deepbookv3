@@ -5,16 +5,18 @@
 module deepbook_predict::predict_tests;
 
 use deepbook_predict::{
-    constants::float_scaling as float,
+    constants::{float_scaling as float, min_oracle_tick_size, oracle_strike_grid_ticks},
     market_key,
     oracle::{Self, new_price_data, new_svi_params},
-    predict,
+    predict
 };
 use sui::{clock, sui::SUI};
 
-const GRID_MIN_STRIKE: u64 = 10_000;
-const GRID_TICK_SIZE: u64 = 10_000;
-const GRID_MAX_STRIKE: u64 = GRID_MIN_STRIKE + GRID_TICK_SIZE * 100_000;
+fun grid_min_strike(): u64 { min_oracle_tick_size!() }
+
+fun grid_tick_size(): u64 { min_oracle_tick_size!() }
+
+fun grid_max_strike(): u64 { grid_min_strike() + grid_tick_size() * oracle_strike_grid_ticks!() }
 
 #[test, expected_failure(abort_code = oracle::EStrikeNotOnTick)]
 fun get_trade_amounts_invalid_strike_aborts() {
@@ -30,9 +32,9 @@ fun get_trade_amounts_invalid_strike_aborts() {
         0,
         1_000_000,
         0,
-        GRID_MIN_STRIKE,
-        GRID_MAX_STRIKE,
-        GRID_TICK_SIZE,
+        grid_min_strike(),
+        grid_max_strike(),
+        grid_tick_size(),
         ctx,
     );
     let key = market_key::up(oracle::id(&oracle), oracle::expiry(&oracle), 500_000_001);
@@ -57,13 +59,13 @@ fun get_trade_amounts_inactive_oracle_aborts() {
         0,
         1_000_000,
         0,
-        GRID_MIN_STRIKE,
-        GRID_MAX_STRIKE,
-        GRID_TICK_SIZE,
+        grid_min_strike(),
+        grid_max_strike(),
+        grid_tick_size(),
         ctx,
     );
     oracle::set_active_for_testing(&mut oracle, false);
-    let key = market_key::up(oracle::id(&oracle), oracle::expiry(&oracle), GRID_MIN_STRIKE);
+    let key = market_key::up(oracle::id(&oracle), oracle::expiry(&oracle), grid_min_strike());
     let clock = clock::create_for_testing(ctx);
 
     predict::get_trade_amounts(&predict, &oracle, key, 1, &clock);

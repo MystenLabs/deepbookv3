@@ -12,8 +12,8 @@ module deepbook_predict::predict;
 use deepbook::math;
 use deepbook_predict::{
     constants,
-    math as predict_math,
     market_key::MarketKey,
+    math as predict_math,
     oracle::{Self, OracleSVI},
     predict_manager::{Self, PredictManager},
     pricing_config::{Self, PricingConfig},
@@ -165,7 +165,6 @@ public fun get_trade_amounts<Quote>(
 ): (u64, u64) {
     if (!oracle.is_settled()) assert!(oracle.is_active(), EOracleInactive);
     if (!oracle.is_settled()) oracle.assert_not_stale(clock);
-    oracle::assert_valid_strike(oracle, key.strike());
     let (bid, ask) = predict.get_quote(oracle, key, clock);
     (math::mul(ask, quantity), math::mul(bid, quantity))
 }
@@ -190,7 +189,6 @@ public fun mint<Quote>(
 
     let strike = key.strike();
     let is_up = key.is_up();
-    oracle::assert_valid_strike(oracle, strike);
 
     predict.vault.insert_position(oracle, is_up, strike, quantity, clock, ctx);
 
@@ -237,7 +235,6 @@ public fun redeem<Quote>(
 
     let strike = key.strike();
     let is_up = key.is_up();
-    oracle::assert_valid_strike(oracle, strike);
 
     predict.vault.remove_position(oracle, is_up, strike, quantity, clock);
 
@@ -280,6 +277,7 @@ public fun mint_collateralized<Quote>(
     assert!(!predict.trading_paused, ETradingPaused);
     locked_key.assert_matches_oracle(oracle);
     minted_key.assert_matches_oracle(oracle);
+    assert!(!oracle.is_settled(), EOracleSettled);
     assert!(oracle.is_active(), EOracleInactive);
     oracle.assert_not_stale(clock);
     oracle::assert_valid_strike(oracle, locked_key.strike());
@@ -518,7 +516,6 @@ fun get_quote<Quote>(
     clock: &Clock,
 ): (u64, u64) {
     let strike = key.strike();
-    oracle::assert_valid_strike(oracle, strike);
     let is_up = key.is_up();
     let price = oracle.get_binary_price(strike, is_up, clock);
 

@@ -28,21 +28,35 @@ public struct OracleScenario has copy, drop {
 }
 
 public fun spot(s: &OracleScenario): u64 { s.spot }
+
 public fun forward(s: &OracleScenario): u64 { s.forward }
+
 public fun a(s: &OracleScenario): u64 { s.a }
+
 public fun b(s: &OracleScenario): u64 { s.b }
+
 public fun rho(s: &OracleScenario): u64 { s.rho }
+
 public fun rho_neg(s: &OracleScenario): bool { s.rho_neg }
+
 public fun m(s: &OracleScenario): u64 { s.m }
+
 public fun m_neg(s: &OracleScenario): bool { s.m_neg }
+
 public fun sigma(s: &OracleScenario): u64 { s.sigma }
+
 public fun rate(s: &OracleScenario): u64 { s.rate }
+
 public fun expiry_ms(s: &OracleScenario): u64 { s.expiry_ms }
+
 public fun now_ms(s: &OracleScenario): u64 { s.now_ms }
+
 public fun strike_points(s: &OracleScenario): &vector<StrikePoint> { &s.strike_points }
 
 public fun strike(sp: &StrikePoint): u64 { sp.strike }
+
 public fun expected_up(sp: &StrikePoint): u64 { sp.expected_up }
+
 public fun expected_dn(sp: &StrikePoint): u64 { sp.expected_dn }
 
 public fun scenarios(): vector<OracleScenario> {
@@ -62,10 +76,26 @@ public fun scenarios(): vector<OracleScenario> {
             expiry_ms: 1_000_000,
             now_ms: 0,
             strike_points: vector[
-                StrikePoint { strike: 595_073_573_828, expected_up: 22_750_131, expected_dn: 977_249_868 },
-                StrikePoint { strike: 158_748_641_308, expected_up: 158_655_253, expected_dn: 841_344_746 },
-                StrikePoint { strike: 86_559_550_200, expected_up: 500_000_000, expected_dn: 499_999_999 },
-                StrikePoint { strike: 1_789_524_890, expected_up: 841_344_746, expected_dn: 158_655_253 },
+                StrikePoint {
+                    strike: 595_073_573_828,
+                    expected_up: 22_750_131,
+                    expected_dn: 977_249_868,
+                },
+                StrikePoint {
+                    strike: 158_748_641_308,
+                    expected_up: 158_655_253,
+                    expected_dn: 841_344_746,
+                },
+                StrikePoint {
+                    strike: 86_559_550_200,
+                    expected_up: 500_000_000,
+                    expected_dn: 499_999_999,
+                },
+                StrikePoint {
+                    strike: 1_789_524_890,
+                    expected_up: 841_344_746,
+                    expected_dn: 158_655_253,
+                },
             ],
         },
         // Index 1: STD_5PCT_1YR
@@ -83,10 +113,26 @@ public fun scenarios(): vector<OracleScenario> {
             expiry_ms: 31_536_000_000,
             now_ms: 0,
             strike_points: vector[
-                StrikePoint { strike: 595_073_573_828, expected_up: 21_640_594, expected_dn: 929_588_829 },
-                StrikePoint { strike: 158_748_641_308, expected_up: 150_917_545, expected_dn: 800_311_878 },
-                StrikePoint { strike: 86_559_550_200, expected_up: 475_614_712, expected_dn: 475_614_712 },
-                StrikePoint { strike: 1_789_524_890, expected_up: 800_311_878, expected_dn: 150_917_545 },
+                StrikePoint {
+                    strike: 595_073_573_828,
+                    expected_up: 21_640_594,
+                    expected_dn: 929_588_829,
+                },
+                StrikePoint {
+                    strike: 158_748_641_308,
+                    expected_up: 150_917_545,
+                    expected_dn: 800_311_878,
+                },
+                StrikePoint {
+                    strike: 86_559_550_200,
+                    expected_up: 475_614_712,
+                    expected_dn: 475_614_712,
+                },
+                StrikePoint {
+                    strike: 1_789_524_890,
+                    expected_up: 800_311_878,
+                    expected_dn: 150_917_545,
+                },
             ],
         },
         // Index 2: FULL_SVI
@@ -104,7 +150,11 @@ public fun scenarios(): vector<OracleScenario> {
             expiry_ms: 1_000_000,
             now_ms: 0,
             strike_points: vector[
-                StrikePoint { strike: 100_000_000_000, expected_up: 400_737_521, expected_dn: 599_262_478 },
+                StrikePoint {
+                    strike: 100_000_000_000,
+                    expected_up: 400_737_521,
+                    expected_dn: 599_262_478,
+                },
             ],
         },
         // Index 3: SMALL_SIGMA
@@ -122,7 +172,11 @@ public fun scenarios(): vector<OracleScenario> {
             expiry_ms: 1_000_000,
             now_ms: 0,
             strike_points: vector[
-                StrikePoint { strike: 100_000_000_000, expected_up: 480_061_194, expected_dn: 519_938_805 },
+                StrikePoint {
+                    strike: 100_000_000_000,
+                    expected_up: 480_061_194,
+                    expected_dn: 519_938_805,
+                },
             ],
         },
         // Index 4: NONZERO_A
@@ -140,7 +194,11 @@ public fun scenarios(): vector<OracleScenario> {
             expiry_ms: 1_000_000,
             now_ms: 0,
             strike_points: vector[
-                StrikePoint { strike: 100_000_000_000, expected_up: 383_689_888, expected_dn: 616_310_111 },
+                StrikePoint {
+                    strike: 100_000_000_000,
+                    expected_up: 383_689_888,
+                    expected_dn: 616_310_111,
+                },
             ],
         },
         // Index 5: NEG_RHO
@@ -158,9 +216,21 @@ public fun scenarios(): vector<OracleScenario> {
             expiry_ms: 1_000_000,
             now_ms: 0,
             strike_points: vector[
-                StrikePoint { strike: 471_074_611_923, expected_up: 22_750_131, expected_dn: 977_249_868 },
-                StrikePoint { strike: 152_368_002_076, expected_up: 158_655_253, expected_dn: 841_344_746 },
-                StrikePoint { strike: 83_372_785_580, expected_up: 500_000_000, expected_dn: 500_000_000 },
+                StrikePoint {
+                    strike: 471_074_611_923,
+                    expected_up: 22_750_131,
+                    expected_dn: 977_249_868,
+                },
+                StrikePoint {
+                    strike: 152_368_002_076,
+                    expected_up: 158_655_253,
+                    expected_dn: 841_344_746,
+                },
+                StrikePoint {
+                    strike: 83_372_785_580,
+                    expected_up: 500_000_000,
+                    expected_dn: 500_000_000,
+                },
             ],
         },
         // Index 6: NONZERO_M
@@ -178,10 +248,26 @@ public fun scenarios(): vector<OracleScenario> {
             expiry_ms: 1_000_000,
             now_ms: 0,
             strike_points: vector[
-                StrikePoint { strike: 574_868_119_731, expected_up: 22_750_131, expected_dn: 977_249_868 },
-                StrikePoint { strike: 154_997_178_141, expected_up: 158_655_253, expected_dn: 841_344_746 },
-                StrikePoint { strike: 82_504_017_221, expected_up: 500_000_000, expected_dn: 500_000_000 },
-                StrikePoint { strike: 1_342_205_441, expected_up: 841_344_746, expected_dn: 158_655_253 },
+                StrikePoint {
+                    strike: 574_868_119_731,
+                    expected_up: 22_750_131,
+                    expected_dn: 977_249_868,
+                },
+                StrikePoint {
+                    strike: 154_997_178_141,
+                    expected_up: 158_655_253,
+                    expected_dn: 841_344_746,
+                },
+                StrikePoint {
+                    strike: 82_504_017_221,
+                    expected_up: 500_000_000,
+                    expected_dn: 500_000_000,
+                },
+                StrikePoint {
+                    strike: 1_342_205_441,
+                    expected_up: 841_344_746,
+                    expected_dn: 158_655_253,
+                },
             ],
         },
         // Index 7: S0
@@ -199,11 +285,31 @@ public fun scenarios(): vector<OracleScenario> {
             expiry_ms: 1_773_843_002_405,
             now_ms: 1_773_241_327_070,
             strike_points: vector[
-                StrikePoint { strike: 70_782_878_010_000, expected_up: 483_713_788, expected_dn: 515_618_669 },
-                StrikePoint { strike: 74_322_021_910_500, expected_up: 254_016_436, expected_dn: 745_316_021 },
-                StrikePoint { strike: 77_861_165_811_000, expected_up: 110_475_331, expected_dn: 888_857_126 },
-                StrikePoint { strike: 67_243_734_109_500, expected_up: 707_981_468, expected_dn: 291_350_988 },
-                StrikePoint { strike: 63_704_590_209_000, expected_up: 849_644_865, expected_dn: 149_687_592 },
+                StrikePoint {
+                    strike: 70_782_878_010_000,
+                    expected_up: 483_713_788,
+                    expected_dn: 515_618_669,
+                },
+                StrikePoint {
+                    strike: 74_322_021_910_500,
+                    expected_up: 254_016_436,
+                    expected_dn: 745_316_021,
+                },
+                StrikePoint {
+                    strike: 77_861_165_811_000,
+                    expected_up: 110_475_331,
+                    expected_dn: 888_857_126,
+                },
+                StrikePoint {
+                    strike: 67_243_734_109_500,
+                    expected_up: 707_981_468,
+                    expected_dn: 291_350_988,
+                },
+                StrikePoint {
+                    strike: 63_704_590_209_000,
+                    expected_up: 849_644_865,
+                    expected_dn: 149_687_592,
+                },
             ],
         },
         // Index 8: S1
@@ -221,11 +327,31 @@ public fun scenarios(): vector<OracleScenario> {
             expiry_ms: 1_773_843_002_405,
             now_ms: 1_773_735_844_810,
             strike_points: vector[
-                StrikePoint { strike: 74_241_496_580_000, expected_up: 489_892_266, expected_dn: 509_988_812 },
-                StrikePoint { strike: 77_953_571_409_000, expected_up: 159_001_188, expected_dn: 840_879_890 },
-                StrikePoint { strike: 81_665_646_238_000, expected_up: 37_116_900, expected_dn: 962_764_178 },
-                StrikePoint { strike: 70_529_421_751_000, expected_up: 802_521_926, expected_dn: 197_359_152 },
-                StrikePoint { strike: 66_817_346_922_000, expected_up: 928_652_729, expected_dn: 71_228_349 },
+                StrikePoint {
+                    strike: 74_241_496_580_000,
+                    expected_up: 489_892_266,
+                    expected_dn: 509_988_812,
+                },
+                StrikePoint {
+                    strike: 77_953_571_409_000,
+                    expected_up: 159_001_188,
+                    expected_dn: 840_879_890,
+                },
+                StrikePoint {
+                    strike: 81_665_646_238_000,
+                    expected_up: 37_116_900,
+                    expected_dn: 962_764_178,
+                },
+                StrikePoint {
+                    strike: 70_529_421_751_000,
+                    expected_up: 802_521_926,
+                    expected_dn: 197_359_152,
+                },
+                StrikePoint {
+                    strike: 66_817_346_922_000,
+                    expected_up: 928_652_729,
+                    expected_dn: 71_228_349,
+                },
             ],
         },
         // Index 9: S2
@@ -243,11 +369,31 @@ public fun scenarios(): vector<OracleScenario> {
             expiry_ms: 1_773_843_002_405,
             now_ms: 1_773_825_103_183,
             strike_points: vector[
-                StrikePoint { strike: 74_127_848_210_000, expected_up: 492_854_532, expected_dn: 507_125_601 },
-                StrikePoint { strike: 77_834_240_620_500, expected_up: 89_274_331, expected_dn: 910_705_803 },
-                StrikePoint { strike: 81_540_633_031_000, expected_up: 7_041_435, expected_dn: 992_938_699 },
-                StrikePoint { strike: 70_421_455_799_500, expected_up: 878_599_456, expected_dn: 121_380_678 },
-                StrikePoint { strike: 66_715_063_389_000, expected_up: 972_743_617, expected_dn: 27_236_517 },
+                StrikePoint {
+                    strike: 74_127_848_210_000,
+                    expected_up: 492_854_532,
+                    expected_dn: 507_125_601,
+                },
+                StrikePoint {
+                    strike: 77_834_240_620_500,
+                    expected_up: 89_274_331,
+                    expected_dn: 910_705_803,
+                },
+                StrikePoint {
+                    strike: 81_540_633_031_000,
+                    expected_up: 7_041_435,
+                    expected_dn: 992_938_699,
+                },
+                StrikePoint {
+                    strike: 70_421_455_799_500,
+                    expected_up: 878_599_456,
+                    expected_dn: 121_380_678,
+                },
+                StrikePoint {
+                    strike: 66_715_063_389_000,
+                    expected_up: 972_743_617,
+                    expected_dn: 27_236_517,
+                },
             ],
         },
         // Index 10: S3
@@ -265,11 +411,31 @@ public fun scenarios(): vector<OracleScenario> {
             expiry_ms: 1_773_843_002_405,
             now_ms: 1_773_838_922_225,
             strike_points: vector[
-                StrikePoint { strike: 72_523_227_120_000, expected_up: 491_896_737, expected_dn: 508_098_734 },
-                StrikePoint { strike: 76_149_388_476_000, expected_up: 108_022_023, expected_dn: 891_973_448 },
-                StrikePoint { strike: 79_775_549_832_000, expected_up: 11_266_430, expected_dn: 988_729_041 },
-                StrikePoint { strike: 68_897_065_764_000, expected_up: 856_802_910, expected_dn: 143_192_561 },
-                StrikePoint { strike: 65_270_904_407_999, expected_up: 968_567_058, expected_dn: 31_428_412 },
+                StrikePoint {
+                    strike: 72_523_227_120_000,
+                    expected_up: 491_896_737,
+                    expected_dn: 508_098_734,
+                },
+                StrikePoint {
+                    strike: 76_149_388_476_000,
+                    expected_up: 108_022_023,
+                    expected_dn: 891_973_448,
+                },
+                StrikePoint {
+                    strike: 79_775_549_832_000,
+                    expected_up: 11_266_430,
+                    expected_dn: 988_729_041,
+                },
+                StrikePoint {
+                    strike: 68_897_065_764_000,
+                    expected_up: 856_802_910,
+                    expected_dn: 143_192_561,
+                },
+                StrikePoint {
+                    strike: 65_270_904_407_999,
+                    expected_up: 968_567_058,
+                    expected_dn: 31_428_412,
+                },
             ],
         },
         // Index 11: S4
@@ -287,11 +453,31 @@ public fun scenarios(): vector<OracleScenario> {
             expiry_ms: 1_773_843_002_405,
             now_ms: 1_773_842_876_472,
             strike_points: vector[
-                StrikePoint { strike: 72_167_958_690_000, expected_up: 491_915_056, expected_dn: 508_084_803 },
-                StrikePoint { strike: 75_776_356_624_500, expected_up: 106_294_469, expected_dn: 893_705_391 },
-                StrikePoint { strike: 79_384_754_559_000, expected_up: 12_586_700, expected_dn: 987_413_159 },
-                StrikePoint { strike: 68_559_560_755_500, expected_up: 850_904_533, expected_dn: 149_095_326 },
-                StrikePoint { strike: 64_951_162_821_000, expected_up: 963_418_037, expected_dn: 36_581_823 },
+                StrikePoint {
+                    strike: 72_167_958_690_000,
+                    expected_up: 491_915_056,
+                    expected_dn: 508_084_803,
+                },
+                StrikePoint {
+                    strike: 75_776_356_624_500,
+                    expected_up: 106_294_469,
+                    expected_dn: 893_705_391,
+                },
+                StrikePoint {
+                    strike: 79_384_754_559_000,
+                    expected_up: 12_586_700,
+                    expected_dn: 987_413_159,
+                },
+                StrikePoint {
+                    strike: 68_559_560_755_500,
+                    expected_up: 850_904_533,
+                    expected_dn: 149_095_326,
+                },
+                StrikePoint {
+                    strike: 64_951_162_821_000,
+                    expected_up: 963_418_037,
+                    expected_dn: 36_581_823,
+                },
             ],
         },
         // Index 12: S5
@@ -309,11 +495,31 @@ public fun scenarios(): vector<OracleScenario> {
             expiry_ms: 1_773_843_002_405,
             now_ms: 1_773_842_971_565,
             strike_points: vector[
-                StrikePoint { strike: 72_167_958_690_000, expected_up: 491_915_108, expected_dn: 508_084_857 },
-                StrikePoint { strike: 75_776_356_624_500, expected_up: 106_294_480, expected_dn: 893_705_485 },
-                StrikePoint { strike: 79_384_754_559_000, expected_up: 12_586_702, expected_dn: 987_413_263 },
-                StrikePoint { strike: 68_559_560_755_500, expected_up: 850_904_623, expected_dn: 149_095_342 },
-                StrikePoint { strike: 64_951_162_821_000, expected_up: 963_418_138, expected_dn: 36_581_826 },
+                StrikePoint {
+                    strike: 72_167_958_690_000,
+                    expected_up: 491_915_108,
+                    expected_dn: 508_084_857,
+                },
+                StrikePoint {
+                    strike: 75_776_356_624_500,
+                    expected_up: 106_294_480,
+                    expected_dn: 893_705_485,
+                },
+                StrikePoint {
+                    strike: 79_384_754_559_000,
+                    expected_up: 12_586_702,
+                    expected_dn: 987_413_263,
+                },
+                StrikePoint {
+                    strike: 68_559_560_755_500,
+                    expected_up: 850_904_623,
+                    expected_dn: 149_095_342,
+                },
+                StrikePoint {
+                    strike: 64_951_162_821_000,
+                    expected_up: 963_418_138,
+                    expected_dn: 36_581_826,
+                },
             ],
         },
     ]

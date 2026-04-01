@@ -29,10 +29,11 @@ const EZeroForward: u64 = 6;
 const EInvalidStrikeGrid: u64 = 7;
 const EStrikeOutOfRange: u64 = 8;
 const EStrikeNotOnTick: u64 = 9;
+#[test_only]
 const EPriceOutOfRange: u64 = 10;
 const EInvalidTickSize: u64 = 11;
 #[test_only]
-const TEST_MAX_STRIKE: u64 = 18_446_744_073_709_551_615;
+const TEST_MAX_STRIKE: u64 = 18_446_744_073_709_551_615; // u64::MAX
 
 // === Events ===
 
@@ -588,11 +589,14 @@ fun assert_authorized_cap(oracle: &OracleSVI, cap: &OracleCapSVI) {
 
 fun assert_valid_strike_grid(min_strike: u64, max_strike: u64, tick_size: u64) {
     assert!(tick_size > 0, EInvalidTickSize);
-    assert!(tick_size % 10_000 == 0, EInvalidTickSize);
+    assert!(tick_size % constants::min_oracle_tick_size!() == 0, EInvalidTickSize);
     assert!(min_strike % tick_size == 0, EInvalidStrikeGrid);
     assert!(max_strike % tick_size == 0, EInvalidStrikeGrid);
     assert!(max_strike > min_strike, EInvalidStrikeGrid);
-    assert!(max_strike - min_strike == tick_size * 100_000, EInvalidStrikeGrid);
+    assert!(
+        max_strike - min_strike == tick_size * constants::oracle_strike_grid_ticks!(),
+        EInvalidStrikeGrid,
+    );
 }
 
 fun price_in_range(oracle: &OracleSVI, price: u64): bool {

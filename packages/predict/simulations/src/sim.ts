@@ -33,6 +33,8 @@ import {
 const DUSDC_DECIMALS = 1_000_000n;
 const EXPIRY_MS = BigInt(Date.now()) + 7n * 24n * 60n * 60n * 1000n;
 const FLOAT_SCALING = 1_000_000_000n;
+// Must satisfy the on-chain invariant:
+// max_strike - min_strike == tick_size * 100_000
 const ORACLE_MIN_STRIKE = 50_000n * FLOAT_SCALING;
 const ORACLE_MAX_STRIKE = 150_000n * FLOAT_SCALING;
 const ORACLE_TICK_SIZE = 1n * FLOAT_SCALING;

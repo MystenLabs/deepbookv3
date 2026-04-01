@@ -46,3 +46,11 @@ public macro fun default_curve_samples(): u64 { 50 }
 
 /// Minimum interval between curve sample points ($0.001 in FLOAT_SCALING)
 public macro fun min_curve_interval(): u64 { 1_000_000 }
+
+// === Oracle Strike Grid ===
+
+/// Fixed number of strike ticks each oracle must cover.
+public macro fun oracle_strike_grid_ticks(): u64 { 100_000 }
+
+/// Minimum allowed oracle tick size ($0.00001 in FLOAT_SCALING).
+public macro fun min_oracle_tick_size(): u64 { 10_000 }

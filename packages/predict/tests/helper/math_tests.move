@@ -382,11 +382,7 @@ fun sqrt_matches_deepbook_math() {
         1_000 * constants::float_scaling!(),
         18_446_744_073_709_551_615,
     ];
-    let precisions: vector<u64> = vector[
-        constants::float_scaling!(),
-        100_000_000,
-        1_000_000,
-    ];
+    let precisions: vector<u64> = vector[constants::float_scaling!(), 100_000_000, 1_000_000];
     precisions.do_ref!(|precision| {
         xs.do_ref!(|x| {
             let expected = deepbook::math::sqrt(*x, *precision);
