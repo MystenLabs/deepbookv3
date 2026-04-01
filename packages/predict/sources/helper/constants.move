@@ -52,5 +52,5 @@ public macro fun min_curve_interval(): u64 { 1_000_000 }
 /// Fixed number of strike ticks each oracle must cover.
 public macro fun oracle_strike_grid_ticks(): u64 { 100_000 }
 
-/// Minimum allowed oracle tick size ($0.00001 in FLOAT_SCALING).
-public macro fun min_oracle_tick_size(): u64 { 10_000 }
+/// Granularity unit for oracle tick sizes; every tick_size must be a multiple of this value.
+public macro fun oracle_tick_size_unit(): u64 { 10_000 }

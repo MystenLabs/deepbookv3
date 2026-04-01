@@ -6,7 +6,7 @@
 module deepbook_predict::oracle_helper;
 
 use deepbook_predict::{
-    constants::{float_scaling as float, min_oracle_tick_size},
+    constants::{float_scaling as float, oracle_tick_size_unit},
     generated_oracle::OracleScenario,
     oracle::{Self, OracleSVI, OracleCapSVI, new_price_data, new_svi_params}
 };
@@ -18,7 +18,7 @@ fun simple_grid_tick_size(): u64 { 2_000_000 }
 
 fun std_grid_min_strike(): u64 { 50 * float!() }
 
-fun std_grid_tick_size(): u64 { min_oracle_tick_size!() * 100 }
+fun std_grid_tick_size(): u64 { oracle_tick_size_unit!() * 100 }
 
 /// Create oracle + clock from an OracleScenario struct.
 public fun create_from_scenario(s: &OracleScenario, ctx: &mut TxContext): (OracleSVI, Clock) {

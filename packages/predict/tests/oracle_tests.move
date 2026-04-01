@@ -5,7 +5,7 @@
 module deepbook_predict::oracle_tests;
 
 use deepbook_predict::{
-    constants::{Self, float_scaling as float, min_oracle_tick_size, oracle_strike_grid_ticks},
+    constants::{Self, float_scaling as float, oracle_tick_size_unit, oracle_strike_grid_ticks},
     generated_oracle as go,
     oracle::{Self, new_price_data, new_svi_params, new_curve_point},
     oracle_helper,
@@ -16,13 +16,13 @@ use sui::clock;
 
 const HALF_YEAR_MS: u64 = 15_768_000_000;
 
-fun grid_min_strike(): u64 { min_oracle_tick_size!() }
+fun grid_min_strike(): u64 { oracle_tick_size_unit!() }
 
-fun grid_tick_size(): u64 { min_oracle_tick_size!() }
+fun grid_tick_size(): u64 { oracle_tick_size_unit!() }
 
 fun grid_max_strike(): u64 { grid_min_strike() + grid_tick_size() * oracle_strike_grid_ticks!() }
 
-fun bounded_grid_min_strike(): u64 { min_oracle_tick_size!() }
+fun bounded_grid_min_strike(): u64 { oracle_tick_size_unit!() }
 
 fun bounded_grid_max_strike(): u64 {
     bounded_grid_min_strike() + grid_tick_size() * oracle_strike_grid_ticks!()

@@ -5,7 +5,7 @@
 module deepbook_predict::predict_tests;
 
 use deepbook_predict::{
-    constants::{Self, min_oracle_tick_size, oracle_strike_grid_ticks},
+    constants::{Self, oracle_tick_size_unit, oracle_strike_grid_ticks},
     generated_oracle as go,
     generated_predict as gp,
     market_key,
@@ -27,9 +27,9 @@ fun live_grid_min_strike(): u64 { 50 * constants::float_scaling!() }
 
 fun live_grid_tick_size(): u64 { 1_000_000 }
 
-fun quote_grid_min_strike(): u64 { min_oracle_tick_size!() }
+fun quote_grid_min_strike(): u64 { oracle_tick_size_unit!() }
 
-fun quote_grid_tick_size(): u64 { min_oracle_tick_size!() }
+fun quote_grid_tick_size(): u64 { oracle_tick_size_unit!() }
 
 fun create_predict(ctx: &mut TxContext): Predict<SUI> {
     predict::create_test_predict<SUI>(ctx)

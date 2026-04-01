@@ -586,7 +586,7 @@ fun assert_authorized_cap(oracle: &OracleSVI, cap: &OracleCapSVI) {
 
 fun assert_valid_strike_grid(min_strike: u64, tick_size: u64) {
     assert!(tick_size > 0, EInvalidTickSize);
-    assert!(tick_size % constants::min_oracle_tick_size!() == 0, EInvalidTickSize);
+    assert!(tick_size % constants::oracle_tick_size_unit!() == 0, EInvalidTickSize);
     assert!(min_strike > 0, EInvalidStrikeGrid);
     assert!(min_strike % tick_size == 0, EInvalidStrikeGrid);
 }
