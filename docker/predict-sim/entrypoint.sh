@@ -29,6 +29,7 @@ echo "Results at ${RESULTS}"
 if [ -n "${CALLBACK_URL:-}" ]; then
     curl -sf -X POST \
         -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${BENCH_API_TOKEN}" \
         -d @"${RESULTS}" \
         "${CALLBACK_URL}"
     echo "Results posted to ${CALLBACK_URL}"

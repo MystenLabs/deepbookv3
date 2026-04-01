@@ -108,6 +108,18 @@ git checkout {sha}"#,
                 value: Some(callback_url),
                 ..Default::default()
             },
+            EnvVar {
+                name: "BENCH_API_TOKEN".to_string(),
+                value_from: Some(EnvVarSource {
+                    secret_key_ref: Some(SecretKeySelector {
+                        name: "bench-secrets".to_string(),
+                        key: "api-tokens".to_string(),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
         ]),
         volume_mounts: Some(vec![VolumeMount {
             name: "workspace".to_string(),

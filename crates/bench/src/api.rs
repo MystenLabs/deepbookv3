@@ -6,7 +6,7 @@ use crate::metrics::{self, BenchMetrics, RunStatus};
 use crate::queue::{Job, RunInfo, RunStore};
 use axum::body::Body;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, Request, StatusCode};
+use axum::http::{Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
@@ -27,16 +27,15 @@ pub struct AppState {
 pub fn router(state: Arc<AppState>) -> Router {
     let authed = Router::new()
         .route("/api/v1/benchmark", post(create_benchmark))
+        .route("/api/v1/benchmark/{run_id}", get(get_benchmark))
+        .route("/api/v1/benchmark/{run_id}/results", post(receive_results))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
         ));
 
     let public = Router::new()
-        .route("/api/v1/benchmark/{run_id}", get(get_benchmark))
-        .route("/api/v1/benchmark/{run_id}/results", post(receive_results))
-        .route("/api/v1/health", get(health))
-        .route("/api/v1/webhook/github", post(github_webhook));
+        .route("/api/v1/health", get(health));
 
     Router::new()
         .merge(authed)
@@ -146,51 +145,6 @@ async fn receive_results(
     Ok(StatusCode::OK)
 }
 
-// -- GitHub Webhook --
-
-#[derive(Deserialize)]
-struct GitHubPushPayload {
-    after: String,
-}
-
-async fn github_webhook(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    body: axum::body::Bytes,
-) -> ApiResult<BenchmarkResponse> {
-    if let Some(ref secret) = state.config.github_webhook_secret {
-        let sig_header = headers
-            .get("x-hub-signature-256")
-            .and_then(|v| v.to_str().ok())
-            .ok_or_else(|| api_err(StatusCode::UNAUTHORIZED, "missing signature header"))?;
-
-        if !verify_github_signature(secret, &body, sig_header) {
-            return Err(api_err(StatusCode::UNAUTHORIZED, "invalid signature"));
-        }
-    }
-
-    let payload: GitHubPushPayload = serde_json::from_slice(&body)
-        .map_err(|_| api_err(StatusCode::BAD_REQUEST, "invalid payload"))?;
-
-    if let Err(msg) = validate_sha(&state.config, &payload.after).await {
-        warn!(sha = %payload.after, "SHA rejected: {}", msg);
-        return Err(api_err(StatusCode::FORBIDDEN, msg));
-    }
-
-    let (run_id, job) = make_job(payload.after);
-    register_run(&state.runs, &run_id, &job.sha).await;
-
-    state.tx.send(job).await.map_err(|_| {
-        warn!("job queue full or closed");
-        api_err(StatusCode::SERVICE_UNAVAILABLE, "job queue unavailable")
-    })?;
-
-    Ok(Json(BenchmarkResponse {
-        run_id,
-        status: "queued".to_string(),
-    }))
-}
-
 // -- Helpers --
 
 fn make_job(sha: String) -> (String, Job) {
@@ -279,25 +233,6 @@ async fn validate_sha(config: &Config, sha: &str) -> Result<(), String> {
     }
 
     Ok(())
-}
-
-fn verify_github_signature(secret: &str, payload: &[u8], signature_header: &str) -> bool {
-    use hmac::{Hmac, Mac};
-    use sha2::Sha256;
-    use subtle::ConstantTimeEq;
-
-    let Some(hex_sig) = signature_header.strip_prefix("sha256=") else {
-        return false;
-    };
-    let Ok(expected) = hex::decode(hex_sig) else {
-        return false;
-    };
-    let Ok(mut mac) = Hmac::<Sha256>::new_from_slice(secret.as_bytes()) else {
-        return false;
-    };
-    mac.update(payload);
-    let computed = mac.finalize().into_bytes();
-    computed.as_slice().ct_eq(&expected).into()
 }
 
 // -- Auth Middleware --

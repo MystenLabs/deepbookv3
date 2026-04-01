@@ -26,10 +26,6 @@ pub struct Config {
     #[clap(env = "BENCH_K8S_NAMESPACE", long, default_value = "predict-bench")]
     pub k8s_namespace: String,
 
-    /// GitHub webhook secret for signature verification.
-    #[clap(env = "GITHUB_WEBHOOK_SECRET", long)]
-    pub github_webhook_secret: Option<String>,
-
     /// GitHub repo in owner/repo format (e.g. "MystenLabs/deepbookv3").
     #[clap(env = "GITHUB_REPO", long, default_value = "MystenLabs/deepbookv3")]
     pub github_repo: String,
