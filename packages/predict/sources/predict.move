@@ -165,8 +165,10 @@ public fun get_trade_amounts<Quote>(
     quantity: u64,
     clock: &Clock,
 ): (u64, u64) {
-    if (!oracle.is_settled()) assert!(oracle.is_active(), EOracleInactive);
-    if (!oracle.is_settled()) oracle.assert_not_stale(clock);
+    if (!oracle.is_settled()) {
+        assert!(oracle.is_active(), EOracleInactive);
+        oracle.assert_not_stale(clock);
+    };
     let (bid, ask) = predict.get_quote(oracle, key, clock);
     (math::mul(ask, quantity), math::mul(bid, quantity))
 }
