@@ -1,0 +1,10 @@
+[package]
+name = "deepbook_order_wrapper"
+edition = "2024.beta"
+version = "0.0.1"
+
+[dependencies]
+deepbook = { local = "../deepbook" }
+
+[addresses]
+deepbook_order_wrapper = "0x0"
