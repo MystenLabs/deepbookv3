@@ -15,9 +15,6 @@ DeepBook is a decentralized order book on the Sui blockchain.
 - `sui move test --gas-limit 100000000000` - Run Move tests
 - `bunx prettier-move -c *.move --write` - Format Move code
 
-### Tooling
-- Use `sui 1.68.1` for Move work in this repo. `sui 1.69.1` produced `MISSING_DEPENDENCY (1021)` failures in `sui move test --path packages/predict` even when the package built successfully.
-
 ### Indexer
 - `cargo build -p deepbook-server` - Build indexer
 - `cargo test -p deepbook-server` - Run indexer tests
