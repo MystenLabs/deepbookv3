@@ -5,6 +5,7 @@ Generates ground-truth test vectors for the predict package.
 Outputs:
   generated_math.move   — ln, exp, normal_cdf test vectors
   generated_oracle.move — SVI + Black-Scholes oracle pricing scenarios
+  generated_predict.move — Predict quote scenarios derived from oracle snapshots
 
 Source of truth: scipy.stats.norm + Python math
 Usage: python3 generate.py
@@ -13,6 +14,7 @@ Dependencies: pip install scipy
 
 import math
 import random
+import re
 from pathlib import Path
 
 from scipy.optimize import brentq
@@ -27,8 +29,12 @@ U64_MAX = 2**64 - 1
 SECONDS_IN_YEAR = 365.0 * 24 * 60 * 60
 
 DATA_DIR = Path(__file__).parent
+PREDICT_DIR = DATA_DIR.parents[1]
+CONSTANTS_MOVE = PREDICT_DIR / "sources" / "helper" / "constants.move"
 MATH_OUTPUT = DATA_DIR / "generated_math.move"
 ORACLE_OUTPUT = DATA_DIR / "generated_oracle.move"
+PREDICT_OUTPUT = DATA_DIR / "generated_predict.move"
+USDC_SCALING = 1_000_000
 
 # ====================================================================
 # Shared scaling helpers
@@ -50,6 +56,20 @@ def to_bool(val) -> str:
 def fmt_u64(value: int) -> str:
     """Format an integer with underscore separators for Move readability."""
     return f"{value:_}"
+
+
+def to_usdc(value: float) -> int:
+    """Convert a contract quantity or payout to 1e6-scaled quote units."""
+    return int(value * USDC_SCALING)
+
+
+def read_move_macro_u64(name: str) -> int:
+    """Read a u64-valued macro from constants.move so generator math stays in sync."""
+    pattern = rf"public macro fun {re.escape(name)}\(\): u64 \{{ ([0-9_]+) \}}"
+    match = re.search(pattern, CONSTANTS_MOVE.read_text())
+    if not match:
+        raise ValueError(f"Could not find macro {name} in {CONSTANTS_MOVE}")
+    return int(match.group(1).replace("_", ""))
 
 
 # ====================================================================
@@ -391,6 +411,10 @@ def generate_math():
 # Protocol quote bounds: only produce strikes where price is in [0.1c, 99.9c]
 MIN_QUOTE_PRICE = 0.001
 MAX_QUOTE_PRICE = 0.999
+assert read_move_macro_u64("float_scaling") == FLOAT_SCALING
+DEFAULT_BASE_SPREAD = read_move_macro_u64("default_base_spread") / FLOAT_SCALING
+DEFAULT_MIN_SPREAD = read_move_macro_u64("default_min_spread") / FLOAT_SCALING
+DEFAULT_UTIL_MULTIPLIER = read_move_macro_u64("default_utilization_multiplier") / FLOAT_SCALING
 
 # ====================================================================
 # Oracle ground truth computation
@@ -450,6 +474,20 @@ def compute_strike_prices(
             "expected_dn": to_float_scaled(dn),
         })
     return points
+
+
+def mint_spread(price: float) -> float:
+    """Bernoulli spread with a floor at the configured minimum."""
+    variance = price * (1.0 - price)
+    return max(DEFAULT_BASE_SPREAD * math.sqrt(variance), DEFAULT_MIN_SPREAD)
+
+
+def utilization_spread(liability: float, balance: float) -> float:
+    """Current predict quote model penalizes utilization quadratically."""
+    if liability <= 0.0 or balance <= 0.0:
+        return 0.0
+    util = min(liability / balance, 1.0)
+    return DEFAULT_BASE_SPREAD * DEFAULT_UTIL_MULTIPLIER * util * util
 
 
 def svi_to_move(svi: dict, rate: float) -> dict:
@@ -748,6 +786,145 @@ def generate_oracle():
 
 
 # ####################################################################
+#  PREDICT — quote scenarios derived from real-world oracle snapshots
+# ####################################################################
+
+PREDICT_SNAPSHOTS = [
+    ("S0", 0),
+    ("S1", 1),
+    ("S3", 3),
+    ("S4", 4),
+    ("S5", 5),
+]
+PREDICT_CASES = [
+    ("ATM_UP", 1.00, True, 10.0),
+    ("ATM_DN", 1.00, False, 10.0),
+    ("OTM_UP", 1.10, True, 10.0),
+    ("ITM_UP", 0.90, True, 10.0),
+    ("OTM_DN", 0.90, False, 10.0),
+    ("ATM_UP_SMALL", 1.00, True, 0.001),
+    ("ATM_UP_LARGE", 1.00, True, 500.0),
+]
+
+
+def build_predict_scenarios() -> list[dict]:
+    """Build predict quote scenarios from selected real-world oracle snapshots."""
+    scenarios = []
+    oracle_real_offset = len(SYNTHETIC_SCENARIOS)
+
+    for label, real_idx in PREDICT_SNAPSHOTS:
+        snap = REAL_WORLD_SNAPSHOTS[real_idx]
+        forward = snap["forward"] / FLOAT_SCALING
+        tte_ms = snap["expiry_ms"] - snap["now_ms"]
+        t = tte_ms / 1000.0 / SECONDS_IN_YEAR
+
+        trade_cases = []
+        for _name, strike_factor, is_up, quantity in PREDICT_CASES:
+            strike = forward * strike_factor
+            price = binary_price(
+                forward,
+                strike,
+                **snap["svi"],
+                rate=snap["rate"],
+                t=t,
+                is_call=is_up,
+            )
+            if price < MIN_QUOTE_PRICE or price > MAX_QUOTE_PRICE:
+                raise ValueError(
+                    f"Predict case out of quote bounds: {label} strike={strike} price={price}"
+                )
+
+            # These generated fixtures model stateless quote previews on a fresh predict.
+            spread = mint_spread(price) + utilization_spread(0.0, 0.0)
+            ask = min(1.0, price + spread)
+            bid = max(0.0, price - spread)
+
+            trade_cases.append({
+                "strike": to_float_scaled(strike),
+                "quantity": to_usdc(quantity),
+                "is_up": is_up,
+                "expected_cost": to_usdc(ask * quantity),
+                "expected_redeem_payout": to_usdc(bid * quantity),
+            })
+
+        scenarios.append({
+            "label": label,
+            "oracle_scenario_idx": oracle_real_offset + real_idx,
+            "trade_cases": trade_cases,
+        })
+
+    return scenarios
+
+
+def emit_predict_structs(w: MoveWriter):
+    w.blank()
+    w.raw("public struct TradeCase has copy, drop {")
+    w.raw("    strike: u64,")
+    w.raw("    quantity: u64,")
+    w.raw("    is_up: bool,")
+    w.raw("    expected_cost: u64,")
+    w.raw("    expected_redeem_payout: u64,")
+    w.raw("}")
+    w.blank()
+    w.raw("public struct PredictScenario has copy, drop {")
+    w.raw("    oracle_scenario_idx: u64,")
+    w.raw("    trade_cases: vector<TradeCase>,")
+    w.raw("}")
+
+
+def emit_predict_getters(w: MoveWriter):
+    w.blank()
+    w.raw(
+        "public fun oracle_scenario_idx(s: &PredictScenario): u64 { s.oracle_scenario_idx }"
+    )
+    w.raw("public fun trade_cases(s: &PredictScenario): &vector<TradeCase> { &s.trade_cases }")
+    w.blank()
+    w.raw("public fun strike(tc: &TradeCase): u64 { tc.strike }")
+    w.raw("public fun quantity(tc: &TradeCase): u64 { tc.quantity }")
+    w.raw("public fun is_up(tc: &TradeCase): bool { tc.is_up }")
+    w.raw("public fun expected_cost(tc: &TradeCase): u64 { tc.expected_cost }")
+    w.raw("public fun expected_redeem_payout(tc: &TradeCase): u64 { tc.expected_redeem_payout }")
+
+
+def emit_predict_scenarios_vector(w: MoveWriter, scenarios: list[dict]):
+    w.blank()
+    w.raw("public fun scenarios(): vector<PredictScenario> {")
+    w.raw("    vector[")
+    for i, scenario in enumerate(scenarios):
+        w.raw(f"        // Index {i}: {scenario['label']}")
+        w.raw("        PredictScenario {")
+        w.raw(f"            oracle_scenario_idx: {fmt_u64(scenario['oracle_scenario_idx'])},")
+        w.raw("            trade_cases: vector[")
+        for tc in scenario["trade_cases"]:
+            w.raw(
+                f"                TradeCase {{ "
+                f"strike: {fmt_u64(tc['strike'])}, "
+                f"quantity: {fmt_u64(tc['quantity'])}, "
+                f"is_up: {to_bool(tc['is_up'])}, "
+                f"expected_cost: {fmt_u64(tc['expected_cost'])}, "
+                f"expected_redeem_payout: {fmt_u64(tc['expected_redeem_payout'])} }},"
+            )
+        w.raw("            ],")
+        w.raw("        },")
+    w.raw("    ]")
+    w.raw("}")
+
+
+def generate_predict():
+    """Generate generated_predict.move."""
+    scenarios = build_predict_scenarios()
+
+    print(f"Predict: {len(scenarios)} real-world quote scenarios")
+
+    w = MoveWriter()
+    w.header("generated_predict")
+    emit_predict_structs(w)
+    emit_predict_getters(w)
+    emit_predict_scenarios_vector(w, scenarios)
+    w.write(PREDICT_OUTPUT)
+
+
+# ####################################################################
 #  Main
 # ####################################################################
 
@@ -755,6 +932,7 @@ def generate_oracle():
 def main():
     generate_math()
     generate_oracle()
+    generate_predict()
 
 
 if __name__ == "__main__":

@@ -28,6 +28,8 @@ const EInvalidCollateralPair: u64 = 1;
 const ENotOwner: u64 = 2;
 const EOracleSettled: u64 = 3;
 const EWithdrawExceedsAvailable: u64 = 4;
+const EOracleExpired: u64 = 5;
+const EZeroQuantity: u64 = 6;
 
 // === Events ===
 
@@ -178,8 +180,10 @@ public fun mint<Quote>(
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(!predict.trading_paused, ETradingPaused);
+    assert!(quantity > 0, EZeroQuantity);
     key.assert_matches_oracle(oracle);
     assert!(!oracle.is_settled(), EOracleSettled);
+    assert!(clock.timestamp_ms() < oracle.expiry(), EOracleExpired);
     oracle.assert_not_stale(clock);
 
     let strike = key.strike();
@@ -221,6 +225,7 @@ public fun redeem<Quote>(
     ctx: &mut TxContext,
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
+    assert!(quantity > 0, EZeroQuantity);
     key.assert_matches_oracle(oracle);
     if (!oracle.is_settled()) oracle.assert_not_stale(clock);
     manager.decrease_position(key, quantity);
@@ -267,8 +272,11 @@ public fun mint_collateralized<Quote>(
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(!predict.trading_paused, ETradingPaused);
+    assert!(quantity > 0, EZeroQuantity);
     locked_key.assert_matches_oracle(oracle);
     minted_key.assert_matches_oracle(oracle);
+    assert!(!oracle.is_settled(), EOracleSettled);
+    assert!(clock.timestamp_ms() < oracle.expiry(), EOracleExpired);
     oracle.assert_not_stale(clock);
 
     let valid_pair = if (locked_key.is_up() && minted_key.is_up()) {
@@ -308,6 +316,7 @@ public fun redeem_collateralized<Quote>(
     ctx: &TxContext,
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
+    assert!(quantity > 0, EZeroQuantity);
     manager.decrease_position(minted_key, quantity);
     manager.release_collateral(locked_key, minted_key, quantity);
 
