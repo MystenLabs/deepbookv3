@@ -105,6 +105,59 @@ public fun create_oracle_with_unregistered_cap(
     (oracle, cap, clock)
 }
 
+/// Flat 25%-vol oracle with custom market params. Covers the majority of
+/// oracle_tests that only vary rate, expiry, prices, or grid.
+public fun create_flat_vol_oracle(
+    spot: u64,
+    forward: u64,
+    rate: u64,
+    expiry: u64,
+    min_strike: u64,
+    tick_size: u64,
+    ctx: &mut TxContext,
+): (OracleSVI, Clock) {
+    let svi = new_svi_params(0, 1_000_000_000, 0, false, 0, false, 250_000_000);
+    let prices = new_price_data(spot, forward);
+    let oracle = oracle::create_test_oracle(
+        b"BTC".to_string(),
+        svi,
+        prices,
+        rate,
+        expiry,
+        0,
+        min_strike,
+        tick_size,
+        ctx,
+    );
+    let clock = clock::create_for_testing(ctx);
+    (oracle, clock)
+}
+
+/// Flat 25%-vol oracle with a registered cap. For tests that call
+/// activate, update_prices, or update_svi.
+public fun create_flat_vol_oracle_with_cap(
+    spot: u64,
+    forward: u64,
+    rate: u64,
+    expiry: u64,
+    min_strike: u64,
+    tick_size: u64,
+    ctx: &mut TxContext,
+): (OracleSVI, OracleCapSVI, Clock) {
+    let (mut oracle, clock) = create_flat_vol_oracle(
+        spot,
+        forward,
+        rate,
+        expiry,
+        min_strike,
+        tick_size,
+        ctx,
+    );
+    let cap = oracle::create_oracle_cap(ctx);
+    oracle::register_cap(&mut oracle, &cap);
+    (oracle, cap, clock)
+}
+
 /// Settled oracle for deterministic unit tests.
 public fun create_settled_oracle(settlement_price: u64, ctx: &mut TxContext): OracleSVI {
     let svi = new_svi_params(0, 0, 0, false, 0, false, 0);

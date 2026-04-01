@@ -143,15 +143,11 @@ fun create_test_oracle_with_nonzero_params() {
 #[test]
 fun create_test_oracle_stores_grid_params() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
-    let prices = new_price_data(500_000_000, 500_000_000);
-    let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
+    let (oracle, _clock) = oracle_helper::create_flat_vol_oracle(
+        500_000_000,
+        500_000_000,
         0,
         100_000,
-        0,
         grid_min_strike(),
         grid_tick_size(),
         ctx,
@@ -162,6 +158,7 @@ fun create_test_oracle_stores_grid_params() {
     assert_eq!(oracle.tick_size(), grid_tick_size());
 
     destroy(oracle);
+    destroy(_clock);
 }
 
 #[test, expected_failure(abort_code = oracle::EInvalidStrikeGrid)]
@@ -188,21 +185,15 @@ fun create_test_oracle_zero_min_strike_aborts() {
 #[test]
 fun get_binary_price_at_min_and_max_strike_succeeds() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
-    let prices = new_price_data(500_000_000, 500_000_000);
-    let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
+    let (oracle, clock) = oracle_helper::create_flat_vol_oracle(
+        500_000_000,
+        500_000_000,
         0,
         100_000,
-        0,
         bounded_grid_min_strike(),
         grid_tick_size(),
         ctx,
     );
-
-    let clock = clock::create_for_testing(ctx);
     let min_up = oracle.get_binary_price(bounded_grid_min_strike(), true, &clock);
     let max_up = oracle.get_binary_price(bounded_grid_max_strike(), true, &clock);
 
@@ -433,33 +424,25 @@ fun live_discount_is_one_past_expiry() {
     // Even though rate=5%, discount clamps to 1.0 when time_to_expiry <= 0.
     // So prices should match the same oracle with zero rate at the same strike.
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
     let forward = 100 * float!();
-    let prices = new_price_data(forward, forward);
-    let oracle_with_rate = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
+    let (oracle_with_rate, mut clock) = oracle_helper::create_flat_vol_oracle(
+        forward,
+        forward,
         RATE_5_PCT,
         100_000,
-        0,
         std_grid_min_strike(),
         std_grid_tick_size(),
         ctx,
     );
-    let oracle_zero_rate = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25),
-        new_price_data(forward, forward),
+    let (oracle_zero_rate, _clock2) = oracle_helper::create_flat_vol_oracle(
+        forward,
+        forward,
         0,
         100_000,
-        0,
         std_grid_min_strike(),
         std_grid_tick_size(),
         ctx,
     );
-
-    let mut clock = clock::create_for_testing(ctx);
     clock.set_for_testing(200_000); // past expiry
 
     let strike = forward;
@@ -475,6 +458,7 @@ fun live_discount_is_one_past_expiry() {
     destroy(oracle_with_rate);
     destroy(oracle_zero_rate);
     destroy(clock);
+    destroy(_clock2);
 }
 
 // ============================================================
@@ -485,23 +469,16 @@ fun live_discount_is_one_past_expiry() {
 fun discount_positive_rate_half_year() {
     // rate=10%, half year: UP + DN = e^(-0.10*0.5) = DISCOUNT_10PCT_HALF_YR
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
     let forward = 100 * float!();
-    let prices = new_price_data(forward, forward);
-
-    let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
+    let (oracle, clock) = oracle_helper::create_flat_vol_oracle(
+        forward,
+        forward,
         RATE_10_PCT,
         HALF_YEAR_MS,
-        0,
         std_grid_min_strike(),
         std_grid_tick_size(),
         ctx,
     );
-
-    let clock = clock::create_for_testing(ctx);
     let up = oracle.get_binary_price(forward, true, &clock);
     let dn = oracle.get_binary_price(forward, false, &clock);
 
@@ -515,22 +492,16 @@ fun discount_positive_rate_half_year() {
 fun exact_discount_with_partial_year() {
     // rate=10%, expiry=20B ms, clock=10B ms → t ≈ 0.317 years
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
     let forward = 100 * float!();
-    let prices = new_price_data(forward, forward);
-    let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
+    let (oracle, mut clock) = oracle_helper::create_flat_vol_oracle(
+        forward,
+        forward,
         RATE_10_PCT,
         20_000_000_000,
-        0,
         std_grid_min_strike(),
         std_grid_tick_size(),
         ctx,
     );
-
-    let mut clock = clock::create_for_testing(ctx);
     clock.set_for_testing(10_000_000_000);
 
     precision::assert_approx(
@@ -553,16 +524,12 @@ fun exact_discount_with_partial_year() {
 #[test]
 fun build_curve_settled_oracle() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
     let forward = 100 * float!();
-    let prices = new_price_data(forward, forward);
-    let mut oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
+    let (mut oracle, clock) = oracle_helper::create_flat_vol_oracle(
+        forward,
+        forward,
         0,
         100_000,
-        0,
         std_grid_min_strike(),
         std_grid_tick_size(),
         ctx,
@@ -570,7 +537,6 @@ fun build_curve_settled_oracle() {
 
     oracle.settle_test_oracle(100 * float!());
 
-    let clock = clock::create_for_testing(ctx);
     let curve = oracle.build_curve(50 * float!(), 150 * float!(), &clock);
 
     // Settled oracle returns 2-point step function
@@ -593,22 +559,17 @@ fun build_curve_settled_oracle() {
 #[test]
 fun build_curve_settled_at_75() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
-    let prices = new_price_data(100 * float!(), 100 * float!());
-    let mut oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
+    let forward = 100 * float!();
+    let (mut oracle, clock) = oracle_helper::create_flat_vol_oracle(
+        forward,
+        forward,
         0,
         100_000,
-        0,
         std_grid_min_strike(),
         std_grid_tick_size(),
         ctx,
     );
     oracle.settle_test_oracle(75 * float!());
-
-    let clock = clock::create_for_testing(ctx);
     let curve = oracle.build_curve(50 * float!(), 150 * float!(), &clock);
 
     assert_eq!(curve.length(), 2);
@@ -721,22 +682,16 @@ fun build_curve_endpoints_match_min_max() {
 #[test]
 fun build_curve_forward_outside_range() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
     let forward = 200 * float!(); // outside [50,150]
-    let prices = new_price_data(forward, forward);
-    let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
+    let (oracle, clock) = oracle_helper::create_flat_vol_oracle(
+        forward,
+        forward,
         0,
         1_000_000,
-        0,
         upper_grid_min_strike(),
         upper_grid_tick_size(),
         ctx,
     );
-
-    let clock = clock::create_for_testing(ctx);
     let curve = oracle.build_curve(50 * float!(), 150 * float!(), &clock);
 
     assert!(curve.length() >= 2);
@@ -758,23 +713,16 @@ fun build_curve_forward_outside_range() {
 fun build_curve_with_positive_rate_complement() {
     // With positive rate, UP + DN = discount < float!()
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
     let forward = 100 * float!();
-    let prices = new_price_data(forward, forward);
-
-    let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
+    let (oracle, clock) = oracle_helper::create_flat_vol_oracle(
+        forward,
+        forward,
         RATE_5_PCT,
         constants::ms_per_year!(),
-        0,
         std_grid_min_strike(),
         std_grid_tick_size(),
         ctx,
     );
-
-    let clock = clock::create_for_testing(ctx);
     let curve = oracle.build_curve(50 * float!(), 150 * float!(), &clock);
 
     let len = curve.length();
@@ -796,21 +744,16 @@ fun build_curve_with_positive_rate_complement() {
 #[test]
 fun live_forward_one_unit_above_strike() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
     let forward = 100 * float!();
-    let prices = new_price_data(forward, forward);
-    let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
+    let (oracle, clock) = oracle_helper::create_flat_vol_oracle(
+        forward,
+        forward,
         0,
         1_000_000,
-        0,
         std_grid_min_strike(),
         std_grid_tick_size(),
         ctx,
     );
-    let clock = clock::create_for_testing(ctx);
     let strike = forward - std_grid_tick_size();
 
     let up = oracle.get_binary_price(strike, true, &clock);
@@ -825,21 +768,15 @@ fun live_forward_one_unit_above_strike() {
 #[test, expected_failure(abort_code = oracle::EZeroForward)]
 fun live_price_with_zero_forward_aborts() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
-    let prices = new_price_data(0, 0);
-    let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
+    let (oracle, clock) = oracle_helper::create_flat_vol_oracle(
+        0,
+        0,
         0,
         1_000_000,
-        0,
         wide_grid_min_strike(),
         wide_grid_tick_size(),
         ctx,
     );
-
-    let clock = clock::create_for_testing(ctx);
     oracle.get_binary_price(50 * float!(), true, &clock);
 
     abort
@@ -852,25 +789,9 @@ fun live_price_with_zero_forward_aborts() {
 #[test]
 fun activate_succeeds_with_registered_cap() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
-    let prices = new_price_data(100 * float!(), 100 * float!());
-    let mut oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
-        0,
-        1_000_000,
-        0,
-        std_grid_min_strike(),
-        std_grid_tick_size(),
-        ctx,
-    );
+    let (mut oracle, cap, clock) = oracle_helper::create_oracle_with_cap(ctx);
     oracle.set_active_for_testing(false);
     assert_eq!(oracle.is_active(), false);
-
-    let cap = oracle::create_oracle_cap(ctx);
-    oracle::register_cap(&mut oracle, &cap);
-    let clock = clock::create_for_testing(ctx);
 
     oracle.activate(&cap, &clock);
     assert_eq!(oracle.is_active(), true);
@@ -883,22 +804,7 @@ fun activate_succeeds_with_registered_cap() {
 #[test]
 fun update_prices_updates_spot_and_forward() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
-    let prices = new_price_data(100 * float!(), 100 * float!());
-    let mut oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
-        0,
-        1_000_000,
-        0,
-        std_grid_min_strike(),
-        std_grid_tick_size(),
-        ctx,
-    );
-    let cap = oracle::create_oracle_cap(ctx);
-    oracle::register_cap(&mut oracle, &cap);
-    let mut clock = clock::create_for_testing(ctx);
+    let (mut oracle, cap, mut clock) = oracle_helper::create_oracle_with_cap(ctx);
     clock.set_for_testing(5_000);
 
     let new_prices = new_price_data(105 * float!(), 106 * float!());
@@ -916,22 +822,15 @@ fun update_prices_updates_spot_and_forward() {
 #[test]
 fun update_prices_accepts_boundary_values() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
-    let prices = new_price_data(500_000_000, 500_000_000);
-    let mut oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
+    let (mut oracle, cap, clock) = oracle_helper::create_flat_vol_oracle_with_cap(
+        500_000_000,
+        500_000_000,
         0,
         1_000_000,
-        0,
         bounded_grid_min_strike(),
         grid_tick_size(),
         ctx,
     );
-    let cap = oracle::create_oracle_cap(ctx);
-    oracle::register_cap(&mut oracle, &cap);
-    let clock = clock::create_for_testing(ctx);
 
     let boundary_prices = new_price_data(bounded_grid_min_strike(), bounded_grid_max_strike());
     oracle.update_prices(&cap, boundary_prices, &clock);
@@ -948,22 +847,16 @@ fun update_prices_accepts_boundary_values() {
 fun update_prices_past_expiry_settles_oracle() {
     // update_prices past expiry freezes settlement price from spot
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
-    let prices = new_price_data(100 * float!(), 100 * float!());
-    let mut oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
+    let forward = 100 * float!();
+    let (mut oracle, cap, mut clock) = oracle_helper::create_flat_vol_oracle_with_cap(
+        forward,
+        forward,
         0,
         100_000,
-        0,
         std_grid_min_strike(),
         std_grid_tick_size(),
         ctx,
     );
-    let cap = oracle::create_oracle_cap(ctx);
-    oracle::register_cap(&mut oracle, &cap);
-    let mut clock = clock::create_for_testing(ctx);
     clock.set_for_testing(200_000); // past expiry
 
     let new_prices = new_price_data(105 * float!(), 106 * float!());
@@ -982,22 +875,7 @@ fun update_prices_past_expiry_settles_oracle() {
 #[test]
 fun update_svi_updates_rate_but_not_timestamp() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
-    let prices = new_price_data(100 * float!(), 100 * float!());
-    let mut oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
-        0,
-        1_000_000,
-        0,
-        std_grid_min_strike(),
-        std_grid_tick_size(),
-        ctx,
-    );
-    let cap = oracle::create_oracle_cap(ctx);
-    oracle::register_cap(&mut oracle, &cap);
-    let mut clock = clock::create_for_testing(ctx);
+    let (mut oracle, cap, mut clock) = oracle_helper::create_oracle_with_cap(ctx);
     clock.set_for_testing(5_000);
 
     let new_svi = new_svi_params(100, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
@@ -1041,22 +919,15 @@ fun update_prices_with_unauthorized_cap_aborts() {
 #[test, expected_failure(abort_code = oracle::EPriceOutOfRange)]
 fun update_prices_out_of_range_aborts() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
-    let prices = new_price_data(500_000_000, 500_000_000);
-    let mut oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
+    let (mut oracle, cap, clock) = oracle_helper::create_flat_vol_oracle_with_cap(
+        500_000_000,
+        500_000_000,
         0,
         1_000_000,
-        0,
         grid_min_strike(),
         grid_tick_size(),
         ctx,
     );
-    let cap = oracle::create_oracle_cap(ctx);
-    oracle::register_cap(&mut oracle, &cap);
-    let clock = clock::create_for_testing(ctx);
 
     let out_of_range_prices = new_price_data(grid_max_strike() + 1, 500_000_000);
     oracle.update_prices(&cap, out_of_range_prices, &clock);
@@ -1067,22 +938,15 @@ fun update_prices_out_of_range_aborts() {
 #[test, expected_failure(abort_code = oracle::EPriceOutOfRange)]
 fun update_prices_forward_out_of_range_aborts() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
-    let prices = new_price_data(500_000_000, 500_000_000);
-    let mut oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
+    let (mut oracle, cap, clock) = oracle_helper::create_flat_vol_oracle_with_cap(
+        500_000_000,
+        500_000_000,
         0,
         1_000_000,
-        0,
         grid_min_strike(),
         grid_tick_size(),
         ctx,
     );
-    let cap = oracle::create_oracle_cap(ctx);
-    oracle::register_cap(&mut oracle, &cap);
-    let clock = clock::create_for_testing(ctx);
 
     let out_of_range_prices = new_price_data(500_000_000, grid_max_strike() + 1);
     oracle.update_prices(&cap, out_of_range_prices, &clock);
@@ -1093,22 +957,15 @@ fun update_prices_forward_out_of_range_aborts() {
 #[test]
 fun update_prices_past_expiry_settles_even_when_out_of_range() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
-    let prices = new_price_data(500_000_000, 500_000_000);
-    let mut oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
+    let (mut oracle, cap, mut clock) = oracle_helper::create_flat_vol_oracle_with_cap(
+        500_000_000,
+        500_000_000,
         0,
         100_000,
-        0,
         grid_min_strike(),
         grid_tick_size(),
         ctx,
     );
-    let cap = oracle::create_oracle_cap(ctx);
-    oracle::register_cap(&mut oracle, &cap);
-    let mut clock = clock::create_for_testing(ctx);
     clock.set_for_testing(200_000);
 
     let out_of_range_prices = new_price_data(grid_max_strike() + 1, grid_max_strike() + 2);
@@ -1196,21 +1053,15 @@ fun compute_nd2_negative_inner_aborts() {
 #[test, expected_failure(abort_code = oracle::EStrikeNotOnTick)]
 fun get_binary_price_strike_not_on_tick_aborts() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
-    let prices = new_price_data(500_000_000, 500_000_000);
-    let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
+    let (oracle, clock) = oracle_helper::create_flat_vol_oracle(
+        500_000_000,
+        500_000_000,
         0,
         1_000_000,
-        0,
         grid_min_strike(),
         grid_tick_size(),
         ctx,
     );
-
-    let clock = clock::create_for_testing(ctx);
     oracle.get_binary_price(500_000_001, true, &clock);
 
     abort
@@ -1219,21 +1070,15 @@ fun get_binary_price_strike_not_on_tick_aborts() {
 #[test, expected_failure(abort_code = oracle::EStrikeOutOfRange)]
 fun get_binary_price_below_min_strike_aborts() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
-    let prices = new_price_data(500_000_000, 500_000_000);
-    let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
+    let (oracle, clock) = oracle_helper::create_flat_vol_oracle(
+        500_000_000,
+        500_000_000,
         0,
         1_000_000,
-        0,
         bounded_grid_min_strike(),
         grid_tick_size(),
         ctx,
     );
-
-    let clock = clock::create_for_testing(ctx);
     oracle.get_binary_price(bounded_grid_min_strike() - grid_tick_size(), true, &clock);
 
     abort
@@ -1242,21 +1087,15 @@ fun get_binary_price_below_min_strike_aborts() {
 #[test, expected_failure(abort_code = oracle::EStrikeOutOfRange)]
 fun get_binary_price_above_max_strike_aborts() {
     let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
-    let prices = new_price_data(500_000_000, 500_000_000);
-    let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
+    let (oracle, clock) = oracle_helper::create_flat_vol_oracle(
+        500_000_000,
+        500_000_000,
         0,
         1_000_000,
-        0,
         bounded_grid_min_strike(),
         grid_tick_size(),
         ctx,
     );
-
-    let clock = clock::create_for_testing(ctx);
     oracle.get_binary_price(bounded_grid_max_strike() + grid_tick_size(), true, &clock);
 
     abort
