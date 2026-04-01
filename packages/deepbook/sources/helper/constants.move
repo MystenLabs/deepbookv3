@@ -16,8 +16,10 @@ const HALF: u64 = 500_000_000;
 const DEEP_UNIT: u64 = 1_000_000;
 const FEE_PENALTY_MULTIPLIER: u64 = 1_250_000_000; // 25% more than normal
 const EWMA_DF_KEY: vector<u8> = b"ewma";
-const REFERRAL_MAX_MULTIPLIER: u64 = 2_000_000_000; // 2x multiplier
+const REFERRAL_MAX_MULTIPLIER: u64 = 10_000_000_000; // 10x multiplier
 const REFERRAL_MULTIPLIER: u64 = 100_000_000; // 0.1x multiplier
+const REFERRAL_MAX_BPS: u64 = 1_000_000; // 10 bps = 0.1%
+const REFERRAL_BPS_STEP: u64 = 100_000; // 1 bps = 0.01%
 const MAX_BALANCE_MANAGERS: u64 = 100;
 
 const DEFAULT_EWMA_ALPHA: u64 = 10_000_000; // 1% smoothing factor. at 3 TPS ~ one minute alpha
@@ -266,6 +268,14 @@ public fun referral_max_multiplier(): u64 {
 
 public fun referral_multiplier(): u64 {
     REFERRAL_MULTIPLIER
+}
+
+public fun referral_max_bps(): u64 {
+    REFERRAL_MAX_BPS
+}
+
+public fun referral_bps_step(): u64 {
+    REFERRAL_BPS_STEP
 }
 
 public fun max_balance_managers(): u64 {

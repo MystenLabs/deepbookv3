@@ -66,6 +66,8 @@ const EInvalidEWMAAlpha: u64 = 17;
 const EInvalidZScoreThreshold: u64 = 18;
 const EInvalidAdditionalTakerFee: u64 = 19;
 const EWrongPoolReferral: u64 = 20;
+const EInvalidReferralBps: u64 = 21;
+const EPoolNotWhitelisted: u64 = 22;
 
 // === Structs ===
 public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
@@ -106,6 +108,8 @@ public struct DeepBurned<phantom BaseAsset, phantom QuoteAsset> has copy, drop, 
     pool_id: ID,
     deep_burned: u64,
 }
+
+public struct ReferralBpsKey(ID) has copy, drop, store;
 
 public struct ReferralRewards<phantom BaseAsset, phantom QuoteAsset> has store {
     multiplier: u64,
@@ -885,6 +889,34 @@ public fun mint_referral<BaseAsset, QuoteAsset>(
     referral_id
 }
 
+/// Mint a referral with custom bps for whitelisted pools.
+/// The referral fee is charged as bps of the output asset.
+public fun mint_referral_with_bps<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    referral_bps: u64,
+    ctx: &mut TxContext,
+): ID {
+    let _ = self.load_inner();
+    assert!(self.whitelisted(), EPoolNotWhitelisted);
+    assert!(referral_bps <= constants::referral_max_bps(), EInvalidReferralBps);
+    assert!(referral_bps % constants::referral_bps_step() == 0, EInvalidReferralBps);
+    let referral_id = balance_manager::mint_referral(self.id(), ctx);
+    self
+        .id
+        .add(
+            referral_id,
+            ReferralRewards<BaseAsset, QuoteAsset> {
+                multiplier: 0,
+                base: balance::zero(),
+                quote: balance::zero(),
+                deep: balance::zero(),
+            },
+        );
+    self.id.add(ReferralBpsKey(referral_id), referral_bps);
+
+    referral_id
+}
+
 #[
     deprecated(
         note = b"This function is deprecated, use `update_deepbook_referral_multiplier` instead.",
@@ -924,6 +956,27 @@ public fun update_pool_referral_multiplier<BaseAsset, QuoteAsset>(
         .id
         .borrow_mut(referral_id);
     referral_rewards.multiplier = multiplier;
+}
+
+/// Update the bps for a whitelisted pool referral.
+public fun update_pool_referral_bps<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    referral: &DeepBookPoolReferral,
+    referral_bps: u64,
+    ctx: &TxContext,
+) {
+    let _ = self.load_inner();
+    referral.assert_referral_owner(ctx);
+    assert!(self.whitelisted(), EPoolNotWhitelisted);
+    assert!(referral_bps <= constants::referral_max_bps(), EInvalidReferralBps);
+    assert!(referral_bps % constants::referral_bps_step() == 0, EInvalidReferralBps);
+    let referral_id = object::id(referral);
+    if (self.id.exists_(ReferralBpsKey(referral_id))) {
+        let bps: &mut u64 = self.id.borrow_mut(ReferralBpsKey(referral_id));
+        *bps = referral_bps;
+    } else {
+        self.id.add(ReferralBpsKey(referral_id), referral_bps);
+    };
 }
 
 #[deprecated(note = b"This function is deprecated, use `claim_pool_referral_rewards` instead.")]
@@ -1759,6 +1812,20 @@ public fun pool_referral_multiplier<BaseAsset, QuoteAsset>(
     referral_rewards.multiplier
 }
 
+public fun pool_referral_bps<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    referral: &DeepBookPoolReferral,
+): u64 {
+    let _ = self.load_inner();
+    assert!(referral.balance_manager_referral_pool_id() == self.id(), EWrongPoolReferral);
+    let referral_id = object::id(referral);
+    if (self.id.exists_(ReferralBpsKey(referral_id))) {
+        *self.id.borrow(ReferralBpsKey(referral_id))
+    } else {
+        0
+    }
+}
+
 // === Public-Package Functions ===
 public(package) fun create_pool<BaseAsset, QuoteAsset>(
     registry: &mut Registry,
@@ -1939,32 +2006,79 @@ fun process_referral_fees<BaseAsset, QuoteAsset>(
     let referral_id = balance_manager.get_balance_manager_referral_id(self.id());
     if (referral_id.is_some()) {
         let referral_id = referral_id.destroy_some();
+
+        // Read bps before taking mutable borrow on referral_rewards.
+        let referral_bps = if (self.id.exists_(ReferralBpsKey(referral_id))) {
+            *self.id.borrow(ReferralBpsKey(referral_id))
+        } else {
+            0
+        };
+
         let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
             .id
             .borrow_mut(referral_id);
-        let referral_multiplier = referral_rewards.multiplier;
-        let referral_fee = math::mul(order_info.paid_fees(), referral_multiplier);
-        if (referral_fee == 0) {
-            return
-        };
+
         let mut base_fee = 0;
         let mut quote_fee = 0;
         let mut deep_fee = 0;
-        if (order_info.fee_is_deep()) {
-            referral_rewards
-                .deep
-                .join(balance_manager.withdraw_with_proof(trade_proof, referral_fee, false));
-            deep_fee = referral_fee;
-        } else if (!order_info.is_bid()) {
-            referral_rewards
-                .base
-                .join(balance_manager.withdraw_with_proof(trade_proof, referral_fee, false));
-            base_fee = referral_fee;
+
+        if (referral_bps > 0) {
+            // Whitelisted pool: fee is bps of output asset.
+            if (order_info.is_bid()) {
+                // Output is base.
+                let fee = math::mul(order_info.executed_quantity(), referral_bps);
+                if (fee == 0) { return };
+                referral_rewards
+                    .base
+                    .join(balance_manager.withdraw_with_proof(trade_proof, fee, false));
+                base_fee = fee;
+            } else {
+                // Output is quote.
+                let fee = math::mul(
+                    order_info.cumulative_quote_quantity(),
+                    referral_bps,
+                );
+                if (fee == 0) { return };
+                referral_rewards
+                    .quote
+                    .join(balance_manager.withdraw_with_proof(trade_proof, fee, false));
+                quote_fee = fee;
+            };
         } else {
-            referral_rewards
-                .quote
-                .join(balance_manager.withdraw_with_proof(trade_proof, referral_fee, false));
-            quote_fee = referral_fee;
+            // Non-whitelisted pool: fee is multiplier of paid_fees.
+            let referral_multiplier = referral_rewards.multiplier;
+            let referral_fee = math::mul(order_info.paid_fees(), referral_multiplier);
+            if (referral_fee == 0) {
+                return
+            };
+            if (order_info.fee_is_deep()) {
+                referral_rewards
+                    .deep
+                    .join(balance_manager.withdraw_with_proof(
+                        trade_proof,
+                        referral_fee,
+                        false,
+                    ));
+                deep_fee = referral_fee;
+            } else if (!order_info.is_bid()) {
+                referral_rewards
+                    .base
+                    .join(balance_manager.withdraw_with_proof(
+                        trade_proof,
+                        referral_fee,
+                        false,
+                    ));
+                base_fee = referral_fee;
+            } else {
+                referral_rewards
+                    .quote
+                    .join(balance_manager.withdraw_with_proof(
+                        trade_proof,
+                        referral_fee,
+                        false,
+                    ));
+                quote_fee = referral_fee;
+            };
         };
 
         event::emit(ReferralFeeEvent {
