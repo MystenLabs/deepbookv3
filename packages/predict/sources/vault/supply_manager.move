@@ -10,8 +10,8 @@ use deepbook_predict::{math::mul_div_round_down, plp::PLP};
 use sui::coin::{Self, Coin, TreasuryCap};
 
 const EZeroAmount: u64 = 0;
-const EZeroVaultValue: u64 = 2;
-const EZeroSharesMinted: u64 = 3;
+const EZeroVaultValue: u64 = 1;
+const EZeroSharesMinted: u64 = 2;
 
 public struct SupplyManager has store {
     /// Treasury cap for minting/burning LP tokens

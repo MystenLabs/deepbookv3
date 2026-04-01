@@ -100,7 +100,6 @@ fun create_predict_twice_aborts() {
 
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut registry = scenario.take_shared<Registry>();
-
     let tc1 = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
     registry.create_predict<SUI>(&admin_cap, tc1, scenario.ctx());
     // Second call should abort

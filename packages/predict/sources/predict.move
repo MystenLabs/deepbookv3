@@ -377,11 +377,12 @@ public fun withdraw<Quote>(
 ): Coin<Quote> {
     let vault_value = predict.vault.vault_value();
     let shares_burned = lp_coin.value();
-    let amount = predict.supply_manager.withdraw(lp_coin, vault_value);
+    let amount = predict.supply_manager.shares_to_amount(shares_burned, vault_value);
     let balance = predict.vault.balance();
     let max_payout = predict.vault.total_max_payout();
     let available = if (balance > max_payout) { balance - max_payout } else { 0 };
     assert!(amount <= available, EWithdrawExceedsAvailable);
+    let amount = predict.supply_manager.withdraw(lp_coin, vault_value);
     event::emit(Withdrawn {
         predict_id: object::id(predict),
         withdrawer: ctx.sender(),
@@ -407,11 +408,6 @@ public(package) fun create<Quote>(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxCo
     transfer::share_object(predict);
 
     predict_id
-}
-
-/// Returns the USDC value of `shares` LP tokens at current vault value.
-public fun shares_to_amount<Quote>(predict: &Predict<Quote>, shares: u64): u64 {
-    predict.supply_manager.shares_to_amount(shares, predict.vault.vault_value())
 }
 
 /// Whether trading is currently paused.

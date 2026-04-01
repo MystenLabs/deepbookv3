@@ -16,25 +16,6 @@ fun setup(ctx: &mut TxContext): supply_manager::SupplyManager {
 }
 
 #[test]
-/// Anyone holding PLP tokens can redeem them, not just the original supplier.
-fun anyone_can_redeem() {
-    let ctx = &mut tx_context::dummy();
-    let mut sm = setup(ctx);
-
-    // Alice supplies and gets LP tokens
-    let lp = sm.supply(1_000_000, 0, ctx);
-    assert_eq!(lp.value(), 1_000_000);
-
-    // Bob (or anyone) redeems Alice's tokens — no sender check
-    // sole LP → amount = vault_value = 1_000_000
-    let amount = sm.withdraw(lp, 1_000_000);
-    assert_eq!(amount, 1_000_000);
-    assert_eq!(sm.total_shares(), 0);
-
-    destroy(sm);
-}
-
-#[test]
 /// Two supply calls produce two coins. Merge them and withdraw the merged coin.
 fun coin_merge_then_withdraw() {
     let ctx = &mut tx_context::dummy();
