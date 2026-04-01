@@ -28,6 +28,30 @@ fun bounded_grid_max_strike(): u64 {
     bounded_grid_min_strike() + grid_tick_size() * oracle_strike_grid_ticks!()
 }
 
+fun wide_grid_min_strike(): u64 { 0 }
+
+fun wide_grid_tick_size(): u64 { 1_000_000 }
+
+fun wide_grid_max_strike(): u64 { 100 * float!() }
+
+fun std_grid_min_strike(): u64 { 50 * float!() }
+
+fun std_grid_tick_size(): u64 { 1_000_000 }
+
+fun std_grid_max_strike(): u64 { 150 * float!() }
+
+fun upper_grid_min_strike(): u64 { 150 * float!() }
+
+fun upper_grid_tick_size(): u64 { 1_000_000 }
+
+fun upper_grid_max_strike(): u64 { 250 * float!() }
+
+fun far_grid_min_strike(): u64 { 0 }
+
+fun far_grid_tick_size(): u64 { 10_000_000 }
+
+fun far_grid_max_strike(): u64 { 1000 * float!() }
+
 // === Common test SVI params ===
 const SVI_SIGMA_0_25: u64 = 250_000_000;
 
@@ -40,12 +64,6 @@ const DISCOUNT_5PCT_1YR: u64 = 951_229_424; // e^(-0.05*1.0)
 const DISCOUNT_10PCT_HALF_YR: u64 = 951_229_424; // e^(-0.10*0.5)
 const PARTIAL_10PCT_UP_ATM: u64 = 388_768_372; // UP price at rate=10%, partial year
 const PARTIAL_10PCT_DN_ATM: u64 = 580_019_318; // DN price at rate=10%, partial year
-
-// === Helpers ===
-
-fun get_scenario(idx: u64): go::OracleScenario {
-    go::scenarios()[idx]
-}
 
 fun run_oracle_scenario(idx: u64) {
     let scenarios = go::scenarios();
@@ -84,6 +102,9 @@ fun create_test_oracle_initial_state() {
         0,
         100_000,
         0,
+        grid_min_strike(),
+        grid_max_strike(),
+        grid_tick_size(),
         ctx,
     );
 
@@ -113,6 +134,9 @@ fun create_test_oracle_with_nonzero_params() {
         42,
         999_999,
         12345,
+        wide_grid_min_strike(),
+        wide_grid_max_strike(),
+        wide_grid_tick_size(),
         ctx,
     );
 
@@ -127,11 +151,11 @@ fun create_test_oracle_with_nonzero_params() {
 }
 
 #[test]
-fun create_test_oracle_with_grid_stores_grid_params() {
+fun create_test_oracle_stores_grid_params() {
     let ctx = &mut tx_context::dummy();
     let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
     let prices = new_price_data(500_000_000, 500_000_000);
-    let oracle = oracle::create_test_oracle_with_grid(
+    let oracle = oracle::create_test_oracle(
         b"BTC".to_string(),
         svi,
         prices,
@@ -151,33 +175,12 @@ fun create_test_oracle_with_grid_stores_grid_params() {
     destroy(oracle);
 }
 
-#[test, expected_failure(abort_code = oracle::EPriceOutOfRange)]
-fun create_test_oracle_with_grid_rejects_out_of_range_prices() {
-    let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
-    let prices = new_price_data(bounded_grid_max_strike() + grid_tick_size(), 500_000_000);
-    let oracle = oracle::create_test_oracle_with_grid(
-        b"BTC".to_string(),
-        svi,
-        prices,
-        0,
-        100_000,
-        0,
-        bounded_grid_min_strike(),
-        bounded_grid_max_strike(),
-        grid_tick_size(),
-        ctx,
-    );
-    destroy(oracle);
-    abort
-}
-
 #[test]
 fun get_binary_price_at_min_and_max_strike_succeeds() {
     let ctx = &mut tx_context::dummy();
     let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
     let prices = new_price_data(500_000_000, 500_000_000);
-    let oracle = oracle::create_test_oracle_with_grid(
+    let oracle = oracle::create_test_oracle(
         b"BTC".to_string(),
         svi,
         prices,
@@ -419,36 +422,51 @@ fun is_settled_true_after_settle() {
 fun live_discount_is_one_past_expiry() {
     // Past expiry but not settled: compute_discount returns 1.0
     // Even though rate=5%, discount clamps to 1.0 when time_to_expiry <= 0.
-    // So prices should match the zero-rate scenario (scenario 0 ATM).
+    // So prices should match the same oracle with zero rate at the same strike.
     let ctx = &mut tx_context::dummy();
     let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
     let forward = 100 * float!();
     let prices = new_price_data(forward, forward);
-    let oracle = oracle::create_test_oracle(
+    let oracle_with_rate = oracle::create_test_oracle(
         b"BTC".to_string(),
         svi,
         prices,
         RATE_5_PCT,
         100_000,
         0,
+        std_grid_min_strike(),
+        std_grid_max_strike(),
+        std_grid_tick_size(),
+        ctx,
+    );
+    let oracle_zero_rate = oracle::create_test_oracle(
+        b"BTC".to_string(),
+        new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25),
+        new_price_data(forward, forward),
+        0,
+        100_000,
+        0,
+        std_grid_min_strike(),
+        std_grid_max_strike(),
+        std_grid_tick_size(),
         ctx,
     );
 
     let mut clock = clock::create_for_testing(ctx);
     clock.set_for_testing(200_000); // past expiry
 
-    // Scenario 0 (STD) has rate=0, same SVI params, same forward.
-    // ATM strike for STD is at index 2.
-    let s = get_scenario(0);
-    let atm = &s.strike_points()[2];
+    let strike = forward;
 
-    let up = oracle.get_binary_price(atm.strike(), true, &clock);
-    let dn = oracle.get_binary_price(atm.strike(), false, &clock);
+    let up = oracle_with_rate.get_binary_price(strike, true, &clock);
+    let dn = oracle_with_rate.get_binary_price(strike, false, &clock);
+    let up_zero_rate = oracle_zero_rate.get_binary_price(strike, true, &clock);
+    let dn_zero_rate = oracle_zero_rate.get_binary_price(strike, false, &clock);
 
-    precision::assert_approx(up, atm.expected_up());
-    precision::assert_approx(dn, atm.expected_dn());
+    precision::assert_approx(up, up_zero_rate);
+    precision::assert_approx(dn, dn_zero_rate);
 
-    destroy(oracle);
+    destroy(oracle_with_rate);
+    destroy(oracle_zero_rate);
     destroy(clock);
 }
 
@@ -471,6 +489,9 @@ fun discount_positive_rate_half_year() {
         RATE_10_PCT,
         HALF_YEAR_MS,
         0,
+        std_grid_min_strike(),
+        std_grid_max_strike(),
+        std_grid_tick_size(),
         ctx,
     );
 
@@ -498,6 +519,9 @@ fun exact_discount_with_partial_year() {
         RATE_10_PCT,
         20_000_000_000,
         0,
+        std_grid_min_strike(),
+        std_grid_max_strike(),
+        std_grid_tick_size(),
         ctx,
     );
 
@@ -534,6 +558,9 @@ fun build_curve_settled_oracle() {
         0,
         100_000,
         0,
+        std_grid_min_strike(),
+        std_grid_max_strike(),
+        std_grid_tick_size(),
         ctx,
     );
 
@@ -571,6 +598,9 @@ fun build_curve_settled_at_75() {
         0,
         100_000,
         0,
+        std_grid_min_strike(),
+        std_grid_max_strike(),
+        std_grid_tick_size(),
         ctx,
     );
     oracle.settle_test_oracle(75 * float!());
@@ -698,6 +728,9 @@ fun build_curve_forward_outside_range() {
         0,
         1_000_000,
         0,
+        upper_grid_min_strike(),
+        upper_grid_max_strike(),
+        upper_grid_tick_size(),
         ctx,
     );
 
@@ -734,6 +767,9 @@ fun build_curve_with_positive_rate_complement() {
         RATE_5_PCT,
         constants::ms_per_year!(),
         0,
+        std_grid_min_strike(),
+        std_grid_max_strike(),
+        std_grid_tick_size(),
         ctx,
     );
 
@@ -759,9 +795,23 @@ fun build_curve_with_positive_rate_complement() {
 #[test]
 fun live_forward_one_unit_above_strike() {
     let ctx = &mut tx_context::dummy();
-    let (oracle, clock) = oracle_helper::create_std_oracle(ctx);
+    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
     let forward = 100 * float!();
-    let strike = forward - 1;
+    let prices = new_price_data(forward, forward);
+    let oracle = oracle::create_test_oracle(
+        b"BTC".to_string(),
+        svi,
+        prices,
+        0,
+        1_000_000,
+        0,
+        std_grid_min_strike(),
+        std_grid_max_strike(),
+        std_grid_tick_size(),
+        ctx,
+    );
+    let clock = clock::create_for_testing(ctx);
+    let strike = forward - std_grid_tick_size();
 
     let up = oracle.get_binary_price(strike, true, &clock);
     let dn = oracle.get_binary_price(strike, false, &clock);
@@ -784,6 +834,9 @@ fun live_price_with_zero_forward_aborts() {
         0,
         1_000_000,
         0,
+        wide_grid_min_strike(),
+        wide_grid_max_strike(),
+        wide_grid_tick_size(),
         ctx,
     );
 
@@ -809,6 +862,9 @@ fun activate_succeeds_with_registered_cap() {
         0,
         1_000_000,
         0,
+        std_grid_min_strike(),
+        std_grid_max_strike(),
+        std_grid_tick_size(),
         ctx,
     );
     oracle.set_active_for_testing(false);
@@ -838,6 +894,9 @@ fun update_prices_updates_spot_and_forward() {
         0,
         1_000_000,
         0,
+        std_grid_min_strike(),
+        std_grid_max_strike(),
+        std_grid_tick_size(),
         ctx,
     );
     let cap = oracle::create_oracle_cap(ctx);
@@ -862,7 +921,7 @@ fun update_prices_accepts_boundary_values() {
     let ctx = &mut tx_context::dummy();
     let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
     let prices = new_price_data(500_000_000, 500_000_000);
-    let mut oracle = oracle::create_test_oracle_with_grid(
+    let mut oracle = oracle::create_test_oracle(
         b"BTC".to_string(),
         svi,
         prices,
@@ -902,6 +961,9 @@ fun update_prices_past_expiry_settles_oracle() {
         0,
         100_000,
         0,
+        std_grid_min_strike(),
+        std_grid_max_strike(),
+        std_grid_tick_size(),
         ctx,
     );
     let cap = oracle::create_oracle_cap(ctx);
@@ -934,6 +996,9 @@ fun update_svi_updates_rate_but_not_timestamp() {
         0,
         1_000_000,
         0,
+        std_grid_min_strike(),
+        std_grid_max_strike(),
+        std_grid_tick_size(),
         ctx,
     );
     let cap = oracle::create_oracle_cap(ctx);
@@ -984,7 +1049,7 @@ fun update_prices_out_of_range_deactivates_oracle() {
     let ctx = &mut tx_context::dummy();
     let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
     let prices = new_price_data(500_000_000, 500_000_000);
-    let mut oracle = oracle::create_test_oracle_with_grid(
+    let mut oracle = oracle::create_test_oracle(
         b"BTC".to_string(),
         svi,
         prices,
@@ -1021,7 +1086,7 @@ fun update_prices_past_expiry_settles_even_when_out_of_range() {
     let ctx = &mut tx_context::dummy();
     let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
     let prices = new_price_data(500_000_000, 500_000_000);
-    let mut oracle = oracle::create_test_oracle_with_grid(
+    let mut oracle = oracle::create_test_oracle(
         b"BTC".to_string(),
         svi,
         prices,
@@ -1109,6 +1174,9 @@ fun compute_nd2_negative_inner_aborts() {
         0,
         1_000_000,
         0,
+        far_grid_min_strike(),
+        far_grid_max_strike(),
+        far_grid_tick_size(),
         ctx,
     );
 
@@ -1123,7 +1191,7 @@ fun get_binary_price_strike_not_on_tick_aborts() {
     let ctx = &mut tx_context::dummy();
     let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
     let prices = new_price_data(500_000_000, 500_000_000);
-    let oracle = oracle::create_test_oracle_with_grid(
+    let oracle = oracle::create_test_oracle(
         b"BTC".to_string(),
         svi,
         prices,
@@ -1147,7 +1215,7 @@ fun get_binary_price_below_min_strike_aborts() {
     let ctx = &mut tx_context::dummy();
     let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
     let prices = new_price_data(500_000_000, 500_000_000);
-    let oracle = oracle::create_test_oracle_with_grid(
+    let oracle = oracle::create_test_oracle(
         b"BTC".to_string(),
         svi,
         prices,
@@ -1171,7 +1239,7 @@ fun get_binary_price_above_max_strike_aborts() {
     let ctx = &mut tx_context::dummy();
     let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
     let prices = new_price_data(500_000_000, 500_000_000);
-    let oracle = oracle::create_test_oracle_with_grid(
+    let oracle = oracle::create_test_oracle(
         b"BTC".to_string(),
         svi,
         prices,
@@ -1203,6 +1271,9 @@ fun zero_svi_params_on_live_oracle_aborts() {
         0,
         1_000_000,
         0,
+        std_grid_min_strike(),
+        std_grid_max_strike(),
+        std_grid_tick_size(),
         ctx,
     );
 

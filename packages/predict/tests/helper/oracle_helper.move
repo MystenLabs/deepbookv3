@@ -6,10 +6,23 @@
 module deepbook_predict::oracle_helper;
 
 use deepbook_predict::{
+    constants::{float_scaling as float, min_oracle_tick_size},
     generated_oracle::OracleScenario,
     oracle::{Self, OracleSVI, OracleCapSVI, new_price_data, new_svi_params}
 };
 use sui::clock::{Self, Clock};
+
+fun simple_grid_min_strike(): u64 { 0 }
+
+fun simple_grid_tick_size(): u64 { 2_000_000 }
+
+fun simple_grid_max_strike(): u64 { 200 * float!() }
+
+fun std_grid_min_strike(): u64 { 50 * float!() }
+
+fun std_grid_tick_size(): u64 { min_oracle_tick_size!() * 100 }
+
+fun std_grid_max_strike(): u64 { 150 * float!() }
 
 /// Create oracle + clock from an OracleScenario struct.
 public fun create_from_scenario(s: &OracleScenario, ctx: &mut TxContext): (OracleSVI, Clock) {
@@ -22,6 +35,9 @@ public fun create_from_scenario(s: &OracleScenario, ctx: &mut TxContext): (Oracl
         s.rate(),
         s.expiry_ms(),
         s.now_ms(),
+        s.min_strike(),
+        s.max_strike(),
+        s.tick_size(),
         ctx,
     );
     let mut clock = clock::create_for_testing(ctx);
@@ -47,6 +63,9 @@ public fun create_simple_oracle(
         0,
         expiry_ms,
         now_ms,
+        simple_grid_min_strike(),
+        simple_grid_max_strike(),
+        simple_grid_tick_size(),
         ctx,
     );
     let mut clock = clock::create_for_testing(ctx);
@@ -66,6 +85,9 @@ public fun create_std_oracle(ctx: &mut TxContext): (OracleSVI, Clock) {
         0,
         1_000_000,
         0,
+        std_grid_min_strike(),
+        std_grid_max_strike(),
+        std_grid_tick_size(),
         ctx,
     );
     let clock = clock::create_for_testing(ctx);

@@ -15,7 +15,6 @@ import math
 import random
 from pathlib import Path
 
-from scipy.optimize import brentq
 from scipy.stats import norm
 
 # ====================================================================
@@ -388,10 +387,6 @@ def generate_math():
 # Oracle constants
 # ====================================================================
 
-# Protocol quote bounds: only produce strikes where price is in [0.1c, 99.9c]
-MIN_QUOTE_PRICE = 0.001
-MAX_QUOTE_PRICE = 0.999
-
 # ====================================================================
 # Oracle ground truth computation
 # ====================================================================
@@ -432,24 +427,21 @@ def binary_price(
     discount = math.exp(-rate * t)
     return discount * norm.cdf(d2 if is_call else -d2)
 
-
-def compute_strike_prices(
-    forward: float, svi: dict, rate: float, t: float,
-    strike_specs: list[tuple[str, float]],
+def price_legal_strikes(
+    forward: float, svi: dict, rate: float, t: float, strikes: list[int],
 ) -> list[dict]:
-    """Compute expected UP/DN prices for a list of strikes."""
-    points = []
-    for _label, strike in strike_specs:
-        up = binary_price(forward, strike, **svi, rate=rate, t=t, is_call=True)
-        dn = binary_price(forward, strike, **svi, rate=rate, t=t, is_call=False)
-        if up < MIN_QUOTE_PRICE and dn < MIN_QUOTE_PRICE:
-            continue
-        points.append({
-            "strike": to_float_scaled(strike),
+    priced = []
+    for strike in strikes:
+        strike_float = strike / FLOAT_SCALING
+        up = binary_price(forward, strike_float, **svi, rate=rate, t=t, is_call=True)
+        dn = binary_price(forward, strike_float, **svi, rate=rate, t=t, is_call=False)
+        priced.append({
+            "strike": strike,
             "expected_up": to_float_scaled(up),
             "expected_dn": to_float_scaled(dn),
         })
-    return points
+
+    return priced
 
 
 def svi_to_move(svi: dict, rate: float) -> dict:
@@ -483,173 +475,209 @@ NOW_SHORT = 0
 T_1YR = 1.0
 EXPIRY_1YR = int(SECONDS_IN_YEAR * 1000)
 
-TARGET_D2S = [-2.0, -1.0, 0.0, 1.0, 2.0]
-
-# (name, svi_params, rate, t, expiry_ms, now_ms, strike_mode)
-SYNTHETIC_SCENARIOS = [
-    ("STD",          STD_SVI,                              0.0,  T_SHORT, EXPIRY_SHORT, NOW_SHORT, "d2"),
-    ("STD_5PCT_1YR", STD_SVI,                              0.05, T_1YR,   EXPIRY_1YR,   0,         "d2"),
-    ("FULL_SVI",     {"a": 0.05, "b": 0.8, "rho": -0.3,
-                      "m": 0.1, "sigma": 0.2},             0.0,  T_SHORT, EXPIRY_SHORT, NOW_SHORT, "atm"),
-    ("SMALL_SIGMA",  {**STD_SVI, "sigma": 0.01},           0.0,  T_SHORT, EXPIRY_SHORT, NOW_SHORT, "atm"),
-    ("NONZERO_A",    {**STD_SVI, "a": 0.1},                0.0,  T_SHORT, EXPIRY_SHORT, NOW_SHORT, "atm"),
-    ("NEG_RHO",      {**STD_SVI, "rho": -0.3},             0.0,  T_SHORT, EXPIRY_SHORT, NOW_SHORT, "d2"),
-    ("NONZERO_M",    {**STD_SVI, "m": 0.1},                0.0,  T_SHORT, EXPIRY_SHORT, NOW_SHORT, "d2"),
-]
-
-# Extracted from oracle_prices_mar17.csv + oracle_svi_mar17.csv.
-# 6 diversity-sampled snapshots at varying time-to-expiry (7d → 31s).
-REAL_WORLD_SNAPSHOTS = [
+# Predefined legal oracle inputs.
+#
+# These are frozen production-valid fixtures, not raw scenario intents:
+# - the oracle grid is already legal
+# - the strikes are already final legal strikes on that grid
+# - expected prices are computed later from these exact inputs
+#
+# Edit these as legal oracle fixtures. Do not add a second legalization pass
+# or reintroduce raw/off-grid strike generation here.
+ORACLE_SCENARIOS = [
+    {
+        "name": "STD",
+        "spot": 100_000_000_000,
+        "forward": 100_000_000_000,
+        "svi": STD_SVI,
+        "rate": 0.0,
+        "expiry_ms": EXPIRY_SHORT,
+        "now_ms": NOW_SHORT,
+        "min_strike": 1_075_140_000,
+        "max_strike": 595_075_140_000,
+        "tick_size": 5_940_000,
+        "strikes": [1_787_940_000, 86_557_680_000, 158_746_500_000, 595_075_140_000],
+    },
+    {
+        "name": "STD_5PCT_1YR",
+        "spot": 100_000_000_000,
+        "forward": 100_000_000_000,
+        "svi": STD_SVI,
+        "rate": 0.05,
+        "expiry_ms": EXPIRY_1YR,
+        "now_ms": 0,
+        "min_strike": 1_075_140_000,
+        "max_strike": 595_075_140_000,
+        "tick_size": 5_940_000,
+        "strikes": [1_787_940_000, 86_557_680_000, 158_746_500_000, 595_075_140_000],
+    },
+    {
+        "name": "FULL_SVI",
+        "spot": 100_000_000_000,
+        "forward": 100_000_000_000,
+        "svi": {"a": 0.05, "b": 0.8, "rho": -0.3, "m": 0.1, "sigma": 0.2},
+        "rate": 0.0,
+        "expiry_ms": EXPIRY_SHORT,
+        "now_ms": NOW_SHORT,
+        "min_strike": 99_000_010_000,
+        "max_strike": 100_000_010_000,
+        "tick_size": 10_000,
+        "strikes": [100_000_000_000],
+    },
+    {
+        "name": "SMALL_SIGMA",
+        "spot": 100_000_000_000,
+        "forward": 100_000_000_000,
+        "svi": {**STD_SVI, "sigma": 0.01},
+        "rate": 0.0,
+        "expiry_ms": EXPIRY_SHORT,
+        "now_ms": NOW_SHORT,
+        "min_strike": 99_000_010_000,
+        "max_strike": 100_000_010_000,
+        "tick_size": 10_000,
+        "strikes": [100_000_000_000],
+    },
+    {
+        "name": "NONZERO_A",
+        "spot": 100_000_000_000,
+        "forward": 100_000_000_000,
+        "svi": {**STD_SVI, "a": 0.1},
+        "rate": 0.0,
+        "expiry_ms": EXPIRY_SHORT,
+        "now_ms": NOW_SHORT,
+        "min_strike": 99_000_010_000,
+        "max_strike": 100_000_010_000,
+        "tick_size": 10_000,
+        "strikes": [100_000_000_000],
+    },
+    {
+        "name": "NEG_RHO",
+        "spot": 100_000_000_000,
+        "forward": 100_000_000_000,
+        "svi": {**STD_SVI, "rho": -0.3},
+        "rate": 0.0,
+        "expiry_ms": EXPIRY_SHORT,
+        "now_ms": NOW_SHORT,
+        "min_strike": 83_074_680_000,
+        "max_strike": 471_074_680_000,
+        "tick_size": 3_880_000,
+        "strikes": [83_373_440_000, 152_367_600_000, 471_074_680_000],
+    },
+    {
+        "name": "NONZERO_M",
+        "spot": 100_000_000_000,
+        "forward": 100_000_000_000,
+        "svi": {**STD_SVI, "m": 0.1},
+        "rate": 0.0,
+        "expiry_ms": EXPIRY_SHORT,
+        "now_ms": NOW_SHORT,
+        "min_strike": 872_480_000,
+        "max_strike": 574_872_480_000,
+        "tick_size": 5_740_000,
+        "strikes": [1_343_160_000, 82_506_760_000, 154_997_220_000, 574_866_740_000],
+    },
+    # Extracted from oracle_prices_mar17.csv + oracle_svi_mar17.csv.
+    # 6 diversity-sampled snapshots at varying time-to-expiry (7d -> 31s),
+    # frozen as final legal oracle fixtures.
     {   # S0: ~7d TTE
+        "name": "S0",
         "spot": 70_770_295_760_000, "forward": 70_782_878_010_000,
         "svi": {"a": 0.00108, "b": 0.04228, "rho": -0.33266,
                 "m": -0.00302, "sigma": 0.12698},
         "rate": 0.035,
         "expiry_ms": 1_773_843_002_405, "now_ms": 1_773_241_327_070,
+        "min_strike": 63_704_659_590_000, "max_strike": 77_861_659_590_000,
+        "tick_size": 141_570_000,
+        "strikes": [63_704_659_590_000, 67_243_768_020_000, 70_782_876_450_000, 74_321_984_880_000, 77_861_234_880_000],
     },
     {   # S1: ~1.2d TTE
+        "name": "S1",
         "spot": 74_228_286_720_000, "forward": 74_241_496_580_000,
         "svi": {"a": 0.00055, "b": 0.02687, "rho": -0.36090,
                 "m": -0.00416, "sigma": 0.07540},
         "rate": 0.035,
         "expiry_ms": 1_773_843_002_405, "now_ms": 1_773_735_844_810,
+        "min_strike": 66_817_381_710_000, "max_strike": 81_666_381_710_000,
+        "tick_size": 148_490_000,
+        "strikes": [66_817_381_710_000, 70_529_483_220_000, 74_241_436_240_000, 77_953_537_750_000, 81_665_639_260_000],
     },
     {   # S2: ~5h TTE
+        "name": "S2",
         "spot": 74_105_490_370_000, "forward": 74_127_848_210_000,
         "svi": {"a": 0.00096, "b": 0.01290, "rho": -0.64061,
                 "m": -0.01601, "sigma": 0.03118},
         "rate": 0.035,
         "expiry_ms": 1_773_843_002_405, "now_ms": 1_773_825_103_183,
+        "min_strike": 66_715_072_620_000, "max_strike": 81_541_072_620_000,
+        "tick_size": 148_260_000,
+        "strikes": [66_715_072_620_000, 70_421_424_360_000, 74_127_776_100_000, 77_834_276_100_000, 81_540_627_840_000],
     },
     {   # S3: ~1h TTE
+        "name": "S3",
         "spot": 72_385_193_560_000, "forward": 72_523_227_120_000,
         "svi": {"a": 0.00105, "b": 0.01236, "rho": -0.52661,
                 "m": -0.00369, "sigma": 0.05032},
         "rate": 0.035,
         "expiry_ms": 1_773_843_002_405, "now_ms": 1_773_838_922_225,
+        "min_strike": 65_270_904_450_000, "max_strike": 79_775_904_450_000,
+        "tick_size": 145_050_000,
+        "strikes": [65_270_904_450_000, 68_897_009_400_000, 72_523_259_400_000, 76_149_364_350_000, 79_775_614_350_000],
     },
     {   # S4: ~2m TTE
+        "name": "S4",
         "spot": 72_137_857_040_000, "forward": 72_167_958_690_000,
         "svi": {"a": 0.00077, "b": 0.01549, "rho": -0.39906,
                 "m": 0.00454, "sigma": 0.05436},
         "rate": 0.035,
         "expiry_ms": 1_773_843_002_405, "now_ms": 1_773_842_876_472,
+        "min_strike": 64_951_123_580_000, "max_strike": 79_385_123_580_000,
+        "tick_size": 144_340_000,
+        "strikes": [64_951_123_580_000, 68_559_623_580_000, 72_167_979_240_000, 75_776_334_900_000, 79_384_690_560_000],
     },
     {   # S5: ~31s TTE
+        "name": "S5",
         "spot": 72_137_857_040_000, "forward": 72_167_958_690_000,
         "svi": {"a": 0.00077, "b": 0.01549, "rho": -0.39906,
                 "m": 0.00454, "sigma": 0.05436},
         "rate": 0.035,
         "expiry_ms": 1_773_843_002_405, "now_ms": 1_773_842_971_565,
+        "min_strike": 64_951_123_580_000, "max_strike": 79_385_123_580_000,
+        "tick_size": 144_340_000,
+        "strikes": [64_951_123_580_000, 68_559_623_580_000, 72_167_979_240_000, 75_776_334_900_000, 79_384_690_560_000],
     },
 ]
-
-# ====================================================================
-# Oracle strike generation
-# ====================================================================
-
-
-def find_strikes_for_d2_targets(
-    forward: float, svi: dict, rate: float, t: float,
-) -> list[tuple[str, float]]:
-    """Reverse-solve for strikes that produce specific d2 values."""
-    results = []
-    discount = math.exp(-rate * t)
-
-    for d2_target in TARGET_D2S:
-        price = discount * norm.cdf(d2_target)
-        if price < MIN_QUOTE_PRICE or price > MAX_QUOTE_PRICE:
-            continue
-
-        def d2_at_strike(s, _target=d2_target):
-            if s <= 0:
-                return 100.0
-            k = math.log(s / forward)
-            tv = svi_total_variance(k, **svi)
-            if tv <= 0:
-                return 100.0
-            return (-k - tv / 2) / math.sqrt(tv) - _target
-
-        try:
-            strike = brentq(d2_at_strike, forward * 0.001, forward * 100.0)
-        except ValueError:
-            continue
-
-        if abs(d2_target) < 0.01:
-            label = "ATM"
-        elif d2_target > 0:
-            label = f"ITM_D{abs(d2_target):.0f}"
-        else:
-            label = f"OTM_D{abs(d2_target):.0f}"
-
-        results.append((label, strike))
-
-    return results
-
 
 # ====================================================================
 # Oracle scenario building
 # ====================================================================
 
 
-def build_synthetic_scenarios() -> tuple[list[dict], list[tuple[str, int]]]:
+def build_priced_scenarios_from_legal_inputs(
+    legal_inputs: list[dict],
+) -> list[dict]:
     scenarios = []
-    index_names = []
 
-    for name, svi, rate, t, expiry_ms, now_ms, strike_mode in SYNTHETIC_SCENARIOS:
-        forward = 100.0
-        if strike_mode == "d2":
-            strike_specs = find_strikes_for_d2_targets(forward, svi, rate, t)
-        else:
-            strike_specs = [("ATM", forward)]
-
-        strike_points = compute_strike_prices(forward, svi, rate, t, strike_specs)
+    for s in legal_inputs:
+        forward = s["forward"] / FLOAT_SCALING
+        t = (s["expiry_ms"] - s["now_ms"]) / 1000.0 / SECONDS_IN_YEAR
+        strike_points = price_legal_strikes(
+            forward, s["svi"], s["rate"], t, s["strikes"]
+        )
         scenario = {
-            "spot": to_float_scaled(forward),
-            "forward": to_float_scaled(forward),
-            **svi_to_move(svi, rate),
-            "expiry_ms": expiry_ms,
-            "now_ms": now_ms,
+            "name": s["name"],
+            "spot": s["spot"],
+            "forward": s["forward"],
+            **svi_to_move(s["svi"], s["rate"]),
+            "expiry_ms": s["expiry_ms"],
+            "now_ms": s["now_ms"],
+            "min_strike": s["min_strike"],
+            "max_strike": s["max_strike"],
+            "tick_size": s["tick_size"],
             "strike_points": strike_points,
         }
         scenarios.append(scenario)
-        index_names.append((name, len(scenarios) - 1))
 
-    return scenarios, index_names
-
-
-def build_real_world_scenarios() -> tuple[list[dict], list[tuple[str, int]]]:
-    scenarios = []
-    index_names = []
-
-    for idx, snap in enumerate(REAL_WORLD_SNAPSHOTS):
-        forward = snap["forward"] / FLOAT_SCALING
-        tte_ms = snap["expiry_ms"] - snap["now_ms"]
-        t = tte_ms / 1000.0 / SECONDS_IN_YEAR
-
-        strike_specs = [
-            ("ATM", forward),
-            ("OTM5", forward * 1.05),
-            ("OTM10", forward * 1.10),
-            ("ITM5", forward * 0.95),
-            ("ITM10", forward * 0.90),
-        ]
-
-        strike_points = compute_strike_prices(
-            forward, snap["svi"], snap["rate"], t, strike_specs)
-
-        scenario = {
-            "spot": snap["spot"],
-            "forward": snap["forward"],
-            **svi_to_move(snap["svi"], snap["rate"]),
-            "expiry_ms": snap["expiry_ms"],
-            "now_ms": snap["now_ms"],
-            "strike_points": strike_points,
-        }
-        scenarios.append(scenario)
-        index_names.append((f"S{idx}", len(scenarios) - 1))
-
-    return scenarios, index_names
+    return scenarios
 
 
 # ====================================================================
@@ -661,6 +689,7 @@ ORACLE_FIELDS = [
     ("a", "u64"), ("b", "u64"), ("rho", "u64"), ("rho_neg", "bool"),
     ("m", "u64"), ("m_neg", "bool"), ("sigma", "u64"), ("rate", "u64"),
     ("expiry_ms", "u64"), ("now_ms", "u64"),
+    ("min_strike", "u64"), ("max_strike", "u64"), ("tick_size", "u64"),
 ]
 
 SCENARIO_FIELDS = [name for name, _ in ORACLE_FIELDS]
@@ -715,35 +744,30 @@ def emit_oracle_scenario(w: MoveWriter, scenario: dict, label: str, index: int):
 
 
 def emit_scenarios_vector(
-    w: MoveWriter, scenarios: list[dict], index_names: list[tuple[str, int]],
+    w: MoveWriter, scenarios: list[dict],
 ):
     w.blank()
     w.raw("public fun scenarios(): vector<OracleScenario> {")
     w.raw("    vector[")
     for i, scenario in enumerate(scenarios):
-        label = next((n for n, idx in index_names if idx == i), f"Index {i}")
-        emit_oracle_scenario(w, scenario, label, i)
+        emit_oracle_scenario(w, scenario, scenario["name"], i)
     w.raw("    ]")
     w.raw("}")
 
 
 def generate_oracle():
     """Generate generated_oracle.move."""
-    syn_scenarios, syn_names = build_synthetic_scenarios()
-    real_scenarios, real_names = build_real_world_scenarios()
+    all_scenarios = build_priced_scenarios_from_legal_inputs(ORACLE_SCENARIOS)
 
-    all_scenarios = syn_scenarios + real_scenarios
-    all_names = syn_names + [
-        (name, idx + len(syn_scenarios)) for name, idx in real_names
-    ]
-
-    print(f"Oracle: {len(syn_scenarios)} synthetic + {len(real_scenarios)} real-world scenarios")
+    print(
+        f"Oracle: {len(ORACLE_SCENARIOS)} frozen legal scenarios"
+    )
 
     w = MoveWriter()
     w.header("generated_oracle")
     emit_oracle_structs(w)
     emit_oracle_getters(w)
-    emit_scenarios_vector(w, all_scenarios, all_names)
+    emit_scenarios_vector(w, all_scenarios)
     w.write(ORACLE_OUTPUT)
 
 

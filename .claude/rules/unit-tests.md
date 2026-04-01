@@ -175,6 +175,35 @@ assert_eq!(up, 399_512_345);
 
 For any test involving math operations (ln, exp, normal_cdf, SVI pricing, binary option prices), the expected values must come from `generate_constants.py`, which uses scipy as ground truth. Do not hand-compute complex math — use the script, commit the constants, and reference the script in comments.
 
+### 12. Production-behavior tests must use production-valid fixtures
+
+If a test claims to model a real protocol scenario, its fixture must be valid under production creation and validation rules. Do not silently bypass oracle/grid/range/tick constraints just to make a scenario compile or pass. If the scenario cannot exist in production, it should fail immediately during setup.
+
+- **Production-behavior tests** should go through production-like constructors and flows, and should fail fast when inputs would be rejected in real usage.
+- **Pure math/internal tests** may use permissive helpers, but those helpers must be explicitly named as non-production fixtures (for example `create_unbounded_test_oracle`) so they cannot be confused with real oracle setup.
+- Do not add test-only error codes or bypass paths just to validate a helper constructor itself unless the helper is the thing being intentionally tested.
+
+```move
+// BAD — hides an impossible production state behind a permissive helper
+let oracle = oracle::create_test_oracle(...); // unconstrained strike grid
+predict::mint(&mut predict, &mut manager, &oracle, key, quantity, &clock, ctx);
+
+// GOOD — production-behavior test uses production-valid fixture rules
+let oracle = oracle::create_test_oracle_with_grid(
+    b"BTC".to_string(),
+    svi,
+    prices,
+    0,
+    expiry,
+    0,
+    min_strike,
+    max_strike,
+    tick_size,
+    ctx,
+);
+predict::mint(&mut predict, &mut manager, &oracle, key, quantity, &clock, ctx);
+```
+
 ## Move Test Syntax
 
 ### Merge `#[test]` and `#[expected_failure(...)]`

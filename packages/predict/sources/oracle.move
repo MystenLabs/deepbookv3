@@ -29,12 +29,7 @@ const EZeroForward: u64 = 6;
 const EInvalidStrikeGrid: u64 = 7;
 const EStrikeOutOfRange: u64 = 8;
 const EStrikeNotOnTick: u64 = 9;
-#[test_only]
-const EPriceOutOfRange: u64 = 10;
-const EInvalidTickSize: u64 = 11;
-#[test_only]
-const TEST_MAX_STRIKE: u64 = 18_446_744_073_709_551_615; // u64::MAX
-
+const EInvalidTickSize: u64 = 10;
 // === Events ===
 
 public struct OracleActivated has copy, drop, store {
@@ -604,36 +599,8 @@ fun price_in_range(oracle: &OracleSVI, price: u64): bool {
 }
 
 #[test_only]
-/// Create a test oracle with given params. Bypasses cap/share requirements.
+/// Create a test oracle with an explicit strike grid. Mirrors production grid validation.
 public(package) fun create_test_oracle(
-    underlying_asset: String,
-    svi: SVIParams,
-    prices: PriceData,
-    risk_free_rate: u64,
-    expiry: u64,
-    timestamp: u64,
-    ctx: &mut TxContext,
-): OracleSVI {
-    OracleSVI {
-        id: object::new(ctx),
-        authorized_caps: vec_set::empty(),
-        underlying_asset,
-        expiry,
-        min_strike: 0,
-        max_strike: TEST_MAX_STRIKE,
-        tick_size: 1,
-        active: true,
-        prices,
-        svi,
-        risk_free_rate,
-        timestamp,
-        settlement_price: option::none(),
-    }
-}
-
-#[test_only]
-/// Create a test oracle with an explicit strike grid. Mirrors production validation.
-public(package) fun create_test_oracle_with_grid(
     underlying_asset: String,
     svi: SVIParams,
     prices: PriceData,
@@ -646,8 +613,6 @@ public(package) fun create_test_oracle_with_grid(
     ctx: &mut TxContext,
 ): OracleSVI {
     assert_valid_strike_grid(min_strike, max_strike, tick_size);
-    assert!(prices.spot >= min_strike && prices.spot <= max_strike, EPriceOutOfRange);
-    assert!(prices.forward >= min_strike && prices.forward <= max_strike, EPriceOutOfRange);
     OracleSVI {
         id: object::new(ctx),
         authorized_caps: vec_set::empty(),
