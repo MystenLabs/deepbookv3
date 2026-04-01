@@ -67,7 +67,7 @@ const EInvalidZScoreThreshold: u64 = 18;
 const EInvalidAdditionalTakerFee: u64 = 19;
 const EWrongPoolReferral: u64 = 20;
 const EInvalidReferralBps: u64 = 21;
-const EPoolNotWhitelisted: u64 = 22;
+const EConflictingReferralFee: u64 = 22;
 
 // === Structs ===
 public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
@@ -889,15 +889,13 @@ public fun mint_referral<BaseAsset, QuoteAsset>(
     referral_id
 }
 
-/// Mint a referral with custom bps for whitelisted pools.
-/// The referral fee is charged as bps of the output asset.
+/// Mint a referral with custom bps. The referral fee is charged as bps of the output asset.
 public fun mint_referral_with_bps<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     referral_bps: u64,
     ctx: &mut TxContext,
 ): ID {
     let _ = self.load_inner();
-    assert!(self.whitelisted(), EPoolNotWhitelisted);
     assert!(referral_bps <= constants::referral_max_bps(), EInvalidReferralBps);
     assert!(referral_bps % constants::referral_bps_step() == 0, EInvalidReferralBps);
     let referral_id = balance_manager::mint_referral(self.id(), ctx);
@@ -952,13 +950,17 @@ public fun update_pool_referral_multiplier<BaseAsset, QuoteAsset>(
     assert!(multiplier <= constants::referral_max_multiplier(), EInvalidReferralMultiplier);
     assert!(multiplier % constants::referral_multiplier() == 0, EInvalidReferralMultiplier);
     let referral_id = object::id(referral);
+    if (self.id.exists_(ReferralBpsKey(referral_id))) {
+        let bps: &u64 = self.id.borrow(ReferralBpsKey(referral_id));
+        assert!(*bps == 0, EConflictingReferralFee);
+    };
     let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
         .id
         .borrow_mut(referral_id);
     referral_rewards.multiplier = multiplier;
 }
 
-/// Update the bps for a whitelisted pool referral.
+/// Update the bps for a referral. Only allowed when multiplier is 0.
 public fun update_pool_referral_bps<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
     referral: &DeepBookPoolReferral,
@@ -967,16 +969,63 @@ public fun update_pool_referral_bps<BaseAsset, QuoteAsset>(
 ) {
     let _ = self.load_inner();
     referral.assert_referral_owner(ctx);
-    assert!(self.whitelisted(), EPoolNotWhitelisted);
     assert!(referral_bps <= constants::referral_max_bps(), EInvalidReferralBps);
     assert!(referral_bps % constants::referral_bps_step() == 0, EInvalidReferralBps);
     let referral_id = object::id(referral);
+    let rewards: &ReferralRewards<BaseAsset, QuoteAsset> = self.id.borrow(referral_id);
+    assert!(rewards.multiplier == 0, EConflictingReferralFee);
     if (self.id.exists_(ReferralBpsKey(referral_id))) {
         let bps: &mut u64 = self.id.borrow_mut(ReferralBpsKey(referral_id));
         *bps = referral_bps;
     } else {
         self.id.add(ReferralBpsKey(referral_id), referral_bps);
     };
+}
+
+/// Atomically switch from multiplier mode to bps mode.
+public fun switch_referral_to_bps<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    referral: &DeepBookPoolReferral,
+    referral_bps: u64,
+    ctx: &TxContext,
+) {
+    let _ = self.load_inner();
+    referral.assert_referral_owner(ctx);
+    assert!(referral_bps <= constants::referral_max_bps(), EInvalidReferralBps);
+    assert!(referral_bps % constants::referral_bps_step() == 0, EInvalidReferralBps);
+    let referral_id = object::id(referral);
+    let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
+        .id
+        .borrow_mut(referral_id);
+    referral_rewards.multiplier = 0;
+    if (self.id.exists_(ReferralBpsKey(referral_id))) {
+        let bps: &mut u64 = self.id.borrow_mut(ReferralBpsKey(referral_id));
+        *bps = referral_bps;
+    } else {
+        self.id.add(ReferralBpsKey(referral_id), referral_bps);
+    };
+}
+
+/// Atomically switch from bps mode to multiplier mode.
+public fun switch_referral_to_multiplier<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    referral: &DeepBookPoolReferral,
+    multiplier: u64,
+    ctx: &TxContext,
+) {
+    let _ = self.load_inner();
+    referral.assert_referral_owner(ctx);
+    assert!(multiplier <= constants::referral_max_multiplier(), EInvalidReferralMultiplier);
+    assert!(multiplier % constants::referral_multiplier() == 0, EInvalidReferralMultiplier);
+    let referral_id = object::id(referral);
+    if (self.id.exists_(ReferralBpsKey(referral_id))) {
+        let bps: &mut u64 = self.id.borrow_mut(ReferralBpsKey(referral_id));
+        *bps = 0;
+    };
+    let referral_rewards: &mut ReferralRewards<BaseAsset, QuoteAsset> = self
+        .id
+        .borrow_mut(referral_id);
+    referral_rewards.multiplier = multiplier;
 }
 
 #[deprecated(note = b"This function is deprecated, use `claim_pool_referral_rewards` instead.")]
@@ -2023,7 +2072,7 @@ fun process_referral_fees<BaseAsset, QuoteAsset>(
         let mut deep_fee = 0;
 
         if (referral_bps > 0) {
-            // Whitelisted pool: fee is bps of output asset.
+            // BPS mode: fee is bps of output asset.
             if (order_info.is_bid()) {
                 // Output is base.
                 let fee = math::mul(order_info.executed_quantity(), referral_bps);
