@@ -13,8 +13,31 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  SUI_VERSION: mainnet-v1.68.1
+
 jobs:
-  test:
+  test-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install Sui CLI
+        run: |
+          curl -fsSL "https://github.com/MystenLabs/sui/releases/download/${SUI_VERSION}/sui-${SUI_VERSION}-ubuntu-x86_64.tgz" \
+            | tar -xz -C /usr/local/bin
+
+      - name: Run Move tests
+        run: |
+          for dir in packages/*; do
+            echo "Running sui move test in $dir"
+            sui move test --gas-limit 100000000000 --path "$dir"
+          done
+
+  test-macos:
     runs-on: macos-latest
 
     steps:
@@ -22,18 +45,14 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Install Homebrew
+      - name: Install Sui CLI
         run: |
-          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-          echo "/home/linuxbrew/.linuxbrew/bin" >> $GITHUB_PATH
+          curl -fsSL "https://github.com/MystenLabs/sui/releases/download/${SUI_VERSION}/sui-${SUI_VERSION}-macos-arm64.tgz" \
+            | tar -xz -C /usr/local/bin
 
-      - name: Install Sui using Homebrew
-        run: brew install sui
-
-      - name: Run Move tests in all package subdirectories, with exclusions
+      - name: Run Move tests
         run: |
           for dir in packages/*; do
-            dir_name=$(basename "$dir")
             echo "Running sui move test in $dir"
             sui move test --gas-limit 100000000000 --path "$dir"
           done
