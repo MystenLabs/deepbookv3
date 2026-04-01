@@ -9,7 +9,7 @@ SIM_DIR="/workspace/repo/packages/predict/simulations"
 
 # Install simulation dependencies.
 cd "${SIM_DIR}"
-npm ci
+npm install
 cd /workspace/repo
 
 # Run the full localnet simulation (setup + sim, skip python analysis).
