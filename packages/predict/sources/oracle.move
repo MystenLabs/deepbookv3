@@ -30,6 +30,7 @@ const EInvalidStrikeGrid: u64 = 7;
 const EStrikeOutOfRange: u64 = 8;
 const EStrikeNotOnTick: u64 = 9;
 const EInvalidTickSize: u64 = 10;
+const EPriceOutOfRange: u64 = 11;
 // === Events ===
 
 public struct OracleActivated has copy, drop, store {
@@ -158,6 +159,7 @@ public fun activate(oracle: &mut OracleSVI, cap: &OracleCapSVI, clock: &Clock) {
 
 /// Push spot and forward prices (high frequency ~1s).
 /// If past expiry and not settled, freezes settlement price and deactivates.
+/// Live updates must stay within the configured strike grid.
 public fun update_prices(
     oracle: &mut OracleSVI,
     cap: &OracleCapSVI,
@@ -183,10 +185,10 @@ public fun update_prices(
         return
     };
 
-    if (!price_in_range(oracle, prices.spot) || !price_in_range(oracle, prices.forward)) {
-        oracle.active = false;
-        return
-    };
+    assert!(
+        price_in_range(oracle, prices.spot) && price_in_range(oracle, prices.forward),
+        EPriceOutOfRange,
+    );
 
     oracle.prices = prices;
     oracle.timestamp = now;
@@ -585,6 +587,7 @@ fun assert_authorized_cap(oracle: &OracleSVI, cap: &OracleCapSVI) {
 fun assert_valid_strike_grid(min_strike: u64, max_strike: u64, tick_size: u64) {
     assert!(tick_size > 0, EInvalidTickSize);
     assert!(tick_size % constants::min_oracle_tick_size!() == 0, EInvalidTickSize);
+    assert!(min_strike > 0, EInvalidStrikeGrid);
     assert!(min_strike % tick_size == 0, EInvalidStrikeGrid);
     assert!(max_strike % tick_size == 0, EInvalidStrikeGrid);
     assert!(max_strike > min_strike, EInvalidStrikeGrid);

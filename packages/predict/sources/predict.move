@@ -29,9 +29,9 @@ const EInvalidCollateralPair: u64 = 1;
 const ENotOwner: u64 = 2;
 const EOracleSettled: u64 = 3;
 const EWithdrawExceedsAvailable: u64 = 4;
-const EOracleInactive: u64 = 5;
-const EOracleExpired: u64 = 6;
-const EZeroQuantity: u64 = 7;
+const EOracleExpired: u64 = 5;
+const EZeroQuantity: u64 = 6;
+const EOracleInactive: u64 = 7;
 
 // === Events ===
 

@@ -12,11 +12,11 @@ use deepbook_predict::{
 };
 use sui::clock::{Self, Clock};
 
-fun simple_grid_min_strike(): u64 { 0 }
+fun simple_grid_min_strike(): u64 { 2_000_000 }
 
 fun simple_grid_tick_size(): u64 { 2_000_000 }
 
-fun simple_grid_max_strike(): u64 { 200 * float!() }
+fun simple_grid_max_strike(): u64 { simple_grid_min_strike() + 200 * float!() }
 
 fun std_grid_min_strike(): u64 { 50 * float!() }
 

@@ -16,11 +16,11 @@ use sui::clock;
 
 const HALF_YEAR_MS: u64 = 15_768_000_000;
 
-fun grid_min_strike(): u64 { 0 }
+fun grid_min_strike(): u64 { min_oracle_tick_size!() }
 
 fun grid_tick_size(): u64 { min_oracle_tick_size!() }
 
-fun grid_max_strike(): u64 { grid_tick_size() * oracle_strike_grid_ticks!() }
+fun grid_max_strike(): u64 { grid_min_strike() + grid_tick_size() * oracle_strike_grid_ticks!() }
 
 fun bounded_grid_min_strike(): u64 { min_oracle_tick_size!() }
 
@@ -28,11 +28,11 @@ fun bounded_grid_max_strike(): u64 {
     bounded_grid_min_strike() + grid_tick_size() * oracle_strike_grid_ticks!()
 }
 
-fun wide_grid_min_strike(): u64 { 0 }
+fun wide_grid_min_strike(): u64 { 1_000_000 }
 
 fun wide_grid_tick_size(): u64 { 1_000_000 }
 
-fun wide_grid_max_strike(): u64 { 100 * float!() }
+fun wide_grid_max_strike(): u64 { wide_grid_min_strike() + 100 * float!() }
 
 fun std_grid_min_strike(): u64 { 50 * float!() }
 
@@ -46,11 +46,11 @@ fun upper_grid_tick_size(): u64 { 1_000_000 }
 
 fun upper_grid_max_strike(): u64 { 250 * float!() }
 
-fun far_grid_min_strike(): u64 { 0 }
+fun far_grid_min_strike(): u64 { 10_000_000 }
 
 fun far_grid_tick_size(): u64 { 10_000_000 }
 
-fun far_grid_max_strike(): u64 { 1000 * float!() }
+fun far_grid_max_strike(): u64 { far_grid_min_strike() + 1000 * float!() }
 
 // === Common test SVI params ===
 const SVI_SIGMA_0_25: u64 = 250_000_000;
@@ -174,6 +174,30 @@ fun create_test_oracle_stores_grid_params() {
 
     destroy(oracle);
 }
+
+#[test, expected_failure(abort_code = oracle::EInvalidStrikeGrid)]
+fun create_test_oracle_zero_min_strike_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
+    let prices = new_price_data(500_000_000, 500_000_000);
+    let tick = grid_tick_size();
+    let oracle = oracle::create_test_oracle(
+        b"BTC".to_string(),
+        svi,
+        prices,
+        0,
+        100_000,
+        0,
+        0,
+        tick * oracle_strike_grid_ticks!(),
+        tick,
+        ctx,
+    );
+    destroy(oracle);
+
+    abort
+}
+
 
 #[test]
 fun get_binary_price_at_min_and_max_strike_succeeds() {
@@ -1044,8 +1068,8 @@ fun update_prices_with_unauthorized_cap_aborts() {
     abort
 }
 
-#[test]
-fun update_prices_out_of_range_deactivates_oracle() {
+#[test, expected_failure(abort_code = oracle::EPriceOutOfRange)]
+fun update_prices_out_of_range_aborts() {
     let ctx = &mut tx_context::dummy();
     let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
     let prices = new_price_data(500_000_000, 500_000_000);
@@ -1063,22 +1087,12 @@ fun update_prices_out_of_range_deactivates_oracle() {
     );
     let cap = oracle::create_oracle_cap(ctx);
     oracle::register_cap(&mut oracle, &cap);
-    let old_spot = oracle.spot_price();
-    let old_forward = oracle.forward_price();
-    let old_timestamp = oracle.timestamp();
     let clock = clock::create_for_testing(ctx);
 
     let out_of_range_prices = new_price_data(grid_max_strike() + 1, 500_000_000);
     oracle.update_prices(&cap, out_of_range_prices, &clock);
 
-    assert_eq!(oracle.is_active(), false);
-    assert_eq!(oracle.spot_price(), old_spot);
-    assert_eq!(oracle.forward_price(), old_forward);
-    assert_eq!(oracle.timestamp(), old_timestamp);
-
-    destroy(oracle);
-    destroy(cap);
-    destroy(clock);
+    abort
 }
 
 #[test]
