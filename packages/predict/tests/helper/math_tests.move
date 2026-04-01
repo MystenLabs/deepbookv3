@@ -392,6 +392,12 @@ fun sqrt_matches_deepbook_math() {
     });
 }
 
+#[test, expected_failure(abort_code = math::EInvalidPrecision)]
+fun sqrt_zero_precision_aborts() {
+    math::sqrt(1, 0);
+    abort
+}
+
 // ============================================================
 // normal_cdf — property tests
 // ============================================================

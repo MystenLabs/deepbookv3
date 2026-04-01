@@ -114,7 +114,7 @@ public fun normal_cdf(x: u64, x_negative: bool): u64 {
 /// Fixed-point square root using a bit-length initial guess and
 /// unrolled Newton iterations.
 public fun sqrt(x: u64, precision: u64): u64 {
-    assert!(precision <= constants::float_scaling!(), EInvalidPrecision);
+    assert!(precision > 0 && precision <= constants::float_scaling!(), EInvalidPrecision);
     let multiplier = (constants::float_scaling!() / precision) as u128;
     let scaled = (x as u128) * multiplier * F;
     (sqrt_u128(scaled) / multiplier) as u64
