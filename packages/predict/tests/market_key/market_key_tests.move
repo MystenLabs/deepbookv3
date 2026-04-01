@@ -22,8 +22,6 @@ fun grid_min_strike(): u64 { 50 * float!() }
 
 fun grid_tick_size(): u64 { 1_000_000 }
 
-fun grid_max_strike(): u64 { 150 * float!() }
-
 // === Helpers ===
 
 fun dummy_svi(): oracle::SVIParams {
@@ -43,7 +41,6 @@ fun create_oracle(expiry: u64, ctx: &mut TxContext): oracle::OracleSVI {
         expiry,
         0,
         grid_min_strike(),
-        grid_max_strike(),
         grid_tick_size(),
         ctx,
     )

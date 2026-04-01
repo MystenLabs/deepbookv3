@@ -12,7 +12,7 @@
 /// AdminCap is transferred to the deployer (expected to be a multisig).
 module deepbook_predict::registry;
 
-use deepbook_predict::{oracle::{Self, OracleCapSVI, OracleSVI}, predict};
+use deepbook_predict::{constants, oracle::{Self, OracleCapSVI, OracleSVI}, predict};
 use std::string::String;
 use sui::{event, table::{Self, Table}};
 
@@ -103,7 +103,6 @@ public fun create_oracle(
     underlying_asset: String,
     expiry: u64,
     min_strike: u64,
-    max_strike: u64,
     tick_size: u64,
     ctx: &mut TxContext,
 ): ID {
@@ -111,7 +110,6 @@ public fun create_oracle(
         underlying_asset,
         expiry,
         min_strike,
-        max_strike,
         tick_size,
         ctx,
     );
@@ -122,6 +120,7 @@ public fun create_oracle(
     };
     registry.oracle_ids[cap_id].push_back(oracle_id);
 
+    let max_strike = min_strike + tick_size * constants::oracle_strike_grid_ticks!();
     event::emit(OracleCreated {
         oracle_id,
         oracle_cap_id: cap_id,

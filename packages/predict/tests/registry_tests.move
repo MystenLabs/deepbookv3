@@ -17,8 +17,6 @@ const ADMIN: address = @0xAD;
 const TEST_MIN_STRIKE: u64 = 1_000_000_000;
 const TEST_TICK_SIZE: u64 = 1_000_000_000;
 
-fun test_max_strike(): u64 { TEST_MIN_STRIKE + oracle_strike_grid_ticks!() * TEST_TICK_SIZE }
-
 // Setup: init registry, return scenario with AdminCap transferred to ADMIN.
 fun setup(): Scenario {
     let mut scenario = test_scenario::begin(ADMIN);
@@ -145,7 +143,6 @@ fun create_oracle_and_tracks_in_registry() {
         b"BTC".to_string(),
         1_000_000,
         TEST_MIN_STRIKE,
-        test_max_strike(),
         TEST_TICK_SIZE,
         scenario.ctx(),
     );
@@ -175,7 +172,6 @@ fun create_oracle_persists_grid_on_oracle() {
         b"BTC".to_string(),
         1_000_000,
         TEST_MIN_STRIKE,
-        test_max_strike(),
         TEST_TICK_SIZE,
         scenario.ctx(),
     );
@@ -184,7 +180,10 @@ fun create_oracle_persists_grid_on_oracle() {
     {
         let oracle = scenario.take_shared<OracleSVI>();
         assert_eq!(oracle::min_strike(&oracle), TEST_MIN_STRIKE);
-        assert_eq!(oracle::max_strike(&oracle), test_max_strike());
+        assert_eq!(
+            oracle::max_strike(&oracle),
+            TEST_MIN_STRIKE + oracle_strike_grid_ticks!() * TEST_TICK_SIZE,
+        );
         assert_eq!(oracle::tick_size(&oracle), TEST_TICK_SIZE);
         test_scenario::return_shared(oracle);
     };
@@ -209,30 +208,7 @@ fun create_oracle_invalid_tick_size_aborts() {
         b"BTC".to_string(),
         1_000_000,
         TEST_MIN_STRIKE,
-        test_max_strike(),
         1,
-        scenario.ctx(),
-    );
-
-    abort
-}
-
-#[test, expected_failure(abort_code = oracle::EInvalidStrikeGrid)]
-fun create_oracle_invalid_grid_span_aborts() {
-    let mut scenario = setup();
-
-    let admin_cap = scenario.take_from_sender<AdminCap>();
-    let mut registry = scenario.take_shared<Registry>();
-    let cap = registry::create_oracle_cap(&admin_cap, scenario.ctx());
-
-    registry.create_oracle(
-        &admin_cap,
-        &cap,
-        b"BTC".to_string(),
-        1_000_000,
-        TEST_MIN_STRIKE,
-        test_max_strike() - TEST_TICK_SIZE,
-        TEST_TICK_SIZE,
         scenario.ctx(),
     );
 
@@ -253,14 +229,12 @@ fun create_oracle_zero_min_strike_aborts() {
         b"BTC".to_string(),
         1_000_000,
         0,
-        oracle_strike_grid_ticks!() * TEST_TICK_SIZE,
         TEST_TICK_SIZE,
         scenario.ctx(),
     );
 
     abort
 }
-
 
 #[test]
 fun create_multiple_oracles_same_cap() {
@@ -278,7 +252,6 @@ fun create_multiple_oracles_same_cap() {
         b"BTC".to_string(),
         1_000_000,
         TEST_MIN_STRIKE,
-        test_max_strike(),
         TEST_TICK_SIZE,
         scenario.ctx(),
     );
@@ -288,7 +261,6 @@ fun create_multiple_oracles_same_cap() {
         b"ETH".to_string(),
         2_000_000,
         TEST_MIN_STRIKE,
-        test_max_strike(),
         TEST_TICK_SIZE,
         scenario.ctx(),
     );
@@ -322,7 +294,6 @@ fun create_oracles_different_caps_tracked_separately() {
         b"BTC".to_string(),
         1_000_000,
         TEST_MIN_STRIKE,
-        test_max_strike(),
         TEST_TICK_SIZE,
         scenario.ctx(),
     );
@@ -332,7 +303,6 @@ fun create_oracles_different_caps_tracked_separately() {
         b"ETH".to_string(),
         2_000_000,
         TEST_MIN_STRIKE,
-        test_max_strike(),
         TEST_TICK_SIZE,
         scenario.ctx(),
     );
@@ -370,7 +340,6 @@ fun register_oracle_cap_on_oracle() {
         b"BTC".to_string(),
         1_000_000,
         TEST_MIN_STRIKE,
-        test_max_strike(),
         TEST_TICK_SIZE,
         scenario.ctx(),
     );

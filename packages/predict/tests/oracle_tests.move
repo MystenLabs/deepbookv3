@@ -32,25 +32,17 @@ fun wide_grid_min_strike(): u64 { 1_000_000 }
 
 fun wide_grid_tick_size(): u64 { 1_000_000 }
 
-fun wide_grid_max_strike(): u64 { wide_grid_min_strike() + 100 * float!() }
-
 fun std_grid_min_strike(): u64 { 50 * float!() }
 
 fun std_grid_tick_size(): u64 { 1_000_000 }
-
-fun std_grid_max_strike(): u64 { 150 * float!() }
 
 fun upper_grid_min_strike(): u64 { 150 * float!() }
 
 fun upper_grid_tick_size(): u64 { 1_000_000 }
 
-fun upper_grid_max_strike(): u64 { 250 * float!() }
-
 fun far_grid_min_strike(): u64 { 10_000_000 }
 
 fun far_grid_tick_size(): u64 { 10_000_000 }
-
-fun far_grid_max_strike(): u64 { far_grid_min_strike() + 1000 * float!() }
 
 // === Common test SVI params ===
 const SVI_SIGMA_0_25: u64 = 250_000_000;
@@ -103,7 +95,6 @@ fun create_test_oracle_initial_state() {
         100_000,
         0,
         grid_min_strike(),
-        grid_max_strike(),
         grid_tick_size(),
         ctx,
     );
@@ -135,7 +126,6 @@ fun create_test_oracle_with_nonzero_params() {
         999_999,
         12345,
         wide_grid_min_strike(),
-        wide_grid_max_strike(),
         wide_grid_tick_size(),
         ctx,
     );
@@ -163,7 +153,6 @@ fun create_test_oracle_stores_grid_params() {
         100_000,
         0,
         grid_min_strike(),
-        grid_max_strike(),
         grid_tick_size(),
         ctx,
     );
@@ -180,7 +169,6 @@ fun create_test_oracle_zero_min_strike_aborts() {
     let ctx = &mut tx_context::dummy();
     let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
     let prices = new_price_data(500_000_000, 500_000_000);
-    let tick = grid_tick_size();
     let oracle = oracle::create_test_oracle(
         b"BTC".to_string(),
         svi,
@@ -189,15 +177,13 @@ fun create_test_oracle_zero_min_strike_aborts() {
         100_000,
         0,
         0,
-        tick * oracle_strike_grid_ticks!(),
-        tick,
+        grid_tick_size(),
         ctx,
     );
     destroy(oracle);
 
     abort
 }
-
 
 #[test]
 fun get_binary_price_at_min_and_max_strike_succeeds() {
@@ -212,7 +198,6 @@ fun get_binary_price_at_min_and_max_strike_succeeds() {
         100_000,
         0,
         bounded_grid_min_strike(),
-        bounded_grid_max_strike(),
         grid_tick_size(),
         ctx,
     );
@@ -459,7 +444,6 @@ fun live_discount_is_one_past_expiry() {
         100_000,
         0,
         std_grid_min_strike(),
-        std_grid_max_strike(),
         std_grid_tick_size(),
         ctx,
     );
@@ -471,7 +455,6 @@ fun live_discount_is_one_past_expiry() {
         100_000,
         0,
         std_grid_min_strike(),
-        std_grid_max_strike(),
         std_grid_tick_size(),
         ctx,
     );
@@ -514,7 +497,6 @@ fun discount_positive_rate_half_year() {
         HALF_YEAR_MS,
         0,
         std_grid_min_strike(),
-        std_grid_max_strike(),
         std_grid_tick_size(),
         ctx,
     );
@@ -544,7 +526,6 @@ fun exact_discount_with_partial_year() {
         20_000_000_000,
         0,
         std_grid_min_strike(),
-        std_grid_max_strike(),
         std_grid_tick_size(),
         ctx,
     );
@@ -583,7 +564,6 @@ fun build_curve_settled_oracle() {
         100_000,
         0,
         std_grid_min_strike(),
-        std_grid_max_strike(),
         std_grid_tick_size(),
         ctx,
     );
@@ -623,7 +603,6 @@ fun build_curve_settled_at_75() {
         100_000,
         0,
         std_grid_min_strike(),
-        std_grid_max_strike(),
         std_grid_tick_size(),
         ctx,
     );
@@ -753,7 +732,6 @@ fun build_curve_forward_outside_range() {
         1_000_000,
         0,
         upper_grid_min_strike(),
-        upper_grid_max_strike(),
         upper_grid_tick_size(),
         ctx,
     );
@@ -792,7 +770,6 @@ fun build_curve_with_positive_rate_complement() {
         constants::ms_per_year!(),
         0,
         std_grid_min_strike(),
-        std_grid_max_strike(),
         std_grid_tick_size(),
         ctx,
     );
@@ -830,7 +807,6 @@ fun live_forward_one_unit_above_strike() {
         1_000_000,
         0,
         std_grid_min_strike(),
-        std_grid_max_strike(),
         std_grid_tick_size(),
         ctx,
     );
@@ -859,7 +835,6 @@ fun live_price_with_zero_forward_aborts() {
         1_000_000,
         0,
         wide_grid_min_strike(),
-        wide_grid_max_strike(),
         wide_grid_tick_size(),
         ctx,
     );
@@ -887,7 +862,6 @@ fun activate_succeeds_with_registered_cap() {
         1_000_000,
         0,
         std_grid_min_strike(),
-        std_grid_max_strike(),
         std_grid_tick_size(),
         ctx,
     );
@@ -919,7 +893,6 @@ fun update_prices_updates_spot_and_forward() {
         1_000_000,
         0,
         std_grid_min_strike(),
-        std_grid_max_strike(),
         std_grid_tick_size(),
         ctx,
     );
@@ -953,7 +926,6 @@ fun update_prices_accepts_boundary_values() {
         1_000_000,
         0,
         bounded_grid_min_strike(),
-        bounded_grid_max_strike(),
         grid_tick_size(),
         ctx,
     );
@@ -986,7 +958,6 @@ fun update_prices_past_expiry_settles_oracle() {
         100_000,
         0,
         std_grid_min_strike(),
-        std_grid_max_strike(),
         std_grid_tick_size(),
         ctx,
     );
@@ -1021,7 +992,6 @@ fun update_svi_updates_rate_but_not_timestamp() {
         1_000_000,
         0,
         std_grid_min_strike(),
-        std_grid_max_strike(),
         std_grid_tick_size(),
         ctx,
     );
@@ -1081,7 +1051,6 @@ fun update_prices_out_of_range_aborts() {
         1_000_000,
         0,
         grid_min_strike(),
-        grid_max_strike(),
         grid_tick_size(),
         ctx,
     );
@@ -1108,7 +1077,6 @@ fun update_prices_forward_out_of_range_aborts() {
         1_000_000,
         0,
         grid_min_strike(),
-        grid_max_strike(),
         grid_tick_size(),
         ctx,
     );
@@ -1135,7 +1103,6 @@ fun update_prices_past_expiry_settles_even_when_out_of_range() {
         100_000,
         0,
         grid_min_strike(),
-        grid_max_strike(),
         grid_tick_size(),
         ctx,
     );
@@ -1216,7 +1183,6 @@ fun compute_nd2_negative_inner_aborts() {
         1_000_000,
         0,
         far_grid_min_strike(),
-        far_grid_max_strike(),
         far_grid_tick_size(),
         ctx,
     );
@@ -1240,7 +1206,6 @@ fun get_binary_price_strike_not_on_tick_aborts() {
         1_000_000,
         0,
         grid_min_strike(),
-        grid_max_strike(),
         grid_tick_size(),
         ctx,
     );
@@ -1264,7 +1229,6 @@ fun get_binary_price_below_min_strike_aborts() {
         1_000_000,
         0,
         bounded_grid_min_strike(),
-        bounded_grid_max_strike(),
         grid_tick_size(),
         ctx,
     );
@@ -1288,7 +1252,6 @@ fun get_binary_price_above_max_strike_aborts() {
         1_000_000,
         0,
         bounded_grid_min_strike(),
-        bounded_grid_max_strike(),
         grid_tick_size(),
         ctx,
     );
@@ -1313,7 +1276,6 @@ fun zero_svi_params_on_live_oracle_aborts() {
         1_000_000,
         0,
         std_grid_min_strike(),
-        std_grid_max_strike(),
         std_grid_tick_size(),
         ctx,
     );

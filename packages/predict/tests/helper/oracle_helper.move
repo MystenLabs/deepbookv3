@@ -16,13 +16,9 @@ fun simple_grid_min_strike(): u64 { 2_000_000 }
 
 fun simple_grid_tick_size(): u64 { 2_000_000 }
 
-fun simple_grid_max_strike(): u64 { simple_grid_min_strike() + 200 * float!() }
-
 fun std_grid_min_strike(): u64 { 50 * float!() }
 
 fun std_grid_tick_size(): u64 { min_oracle_tick_size!() * 100 }
-
-fun std_grid_max_strike(): u64 { 150 * float!() }
 
 /// Create oracle + clock from an OracleScenario struct.
 public fun create_from_scenario(s: &OracleScenario, ctx: &mut TxContext): (OracleSVI, Clock) {
@@ -36,7 +32,6 @@ public fun create_from_scenario(s: &OracleScenario, ctx: &mut TxContext): (Oracl
         s.expiry_ms(),
         s.now_ms(),
         s.min_strike(),
-        s.max_strike(),
         s.tick_size(),
         ctx,
     );
@@ -64,7 +59,6 @@ public fun create_simple_oracle(
         expiry_ms,
         now_ms,
         simple_grid_min_strike(),
-        simple_grid_max_strike(),
         simple_grid_tick_size(),
         ctx,
     );
@@ -86,7 +80,6 @@ public fun create_std_oracle(ctx: &mut TxContext): (OracleSVI, Clock) {
         1_000_000,
         0,
         std_grid_min_strike(),
-        std_grid_max_strike(),
         std_grid_tick_size(),
         ctx,
     );
@@ -124,7 +117,6 @@ public fun create_settled_oracle(settlement_price: u64, ctx: &mut TxContext): Or
         100_000,
         0,
         simple_grid_min_strike(),
-        simple_grid_max_strike(),
         simple_grid_tick_size(),
         ctx,
     );

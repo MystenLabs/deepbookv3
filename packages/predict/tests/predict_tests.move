@@ -27,15 +27,9 @@ fun live_grid_min_strike(): u64 { 50 * constants::float_scaling!() }
 
 fun live_grid_tick_size(): u64 { 1_000_000 }
 
-fun live_grid_max_strike(): u64 { 150 * constants::float_scaling!() }
-
 fun quote_grid_min_strike(): u64 { min_oracle_tick_size!() }
 
 fun quote_grid_tick_size(): u64 { min_oracle_tick_size!() }
-
-fun quote_grid_max_strike(): u64 {
-    quote_grid_min_strike() + quote_grid_tick_size() * oracle_strike_grid_ticks!()
-}
 
 fun create_predict(ctx: &mut TxContext): Predict<SUI> {
     predict::create_test_predict<SUI>(ctx)
@@ -57,7 +51,6 @@ fun create_live_oracle(ctx: &mut TxContext): oracle::OracleSVI {
         1_000_000_000,
         0,
         live_grid_min_strike(),
-        live_grid_max_strike(),
         live_grid_tick_size(),
         ctx,
     )
@@ -1929,7 +1922,6 @@ fun get_trade_amounts_invalid_strike_aborts() {
         1_000_000,
         0,
         quote_grid_min_strike(),
-        quote_grid_max_strike(),
         quote_grid_tick_size(),
         ctx,
     );
@@ -1956,7 +1948,6 @@ fun get_trade_amounts_inactive_oracle_aborts() {
         1_000_000,
         0,
         quote_grid_min_strike(),
-        quote_grid_max_strike(),
         quote_grid_tick_size(),
         ctx,
     );

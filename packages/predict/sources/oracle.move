@@ -357,11 +357,11 @@ public(package) fun create_oracle(
     underlying_asset: String,
     expiry: u64,
     min_strike: u64,
-    max_strike: u64,
     tick_size: u64,
     ctx: &mut TxContext,
 ): ID {
-    assert_valid_strike_grid(min_strike, max_strike, tick_size);
+    assert_valid_strike_grid(min_strike, tick_size);
+    let max_strike = min_strike + tick_size * constants::oracle_strike_grid_ticks!();
 
     let oracle_uid = object::new(ctx);
     let oracle_id = oracle_uid.to_inner();
@@ -584,17 +584,11 @@ fun assert_authorized_cap(oracle: &OracleSVI, cap: &OracleCapSVI) {
     assert!(oracle.authorized_caps.contains(&cap.id.to_inner()), EInvalidOracleCap);
 }
 
-fun assert_valid_strike_grid(min_strike: u64, max_strike: u64, tick_size: u64) {
+fun assert_valid_strike_grid(min_strike: u64, tick_size: u64) {
     assert!(tick_size > 0, EInvalidTickSize);
     assert!(tick_size % constants::min_oracle_tick_size!() == 0, EInvalidTickSize);
     assert!(min_strike > 0, EInvalidStrikeGrid);
     assert!(min_strike % tick_size == 0, EInvalidStrikeGrid);
-    assert!(max_strike % tick_size == 0, EInvalidStrikeGrid);
-    assert!(max_strike > min_strike, EInvalidStrikeGrid);
-    assert!(
-        max_strike - min_strike == tick_size * constants::oracle_strike_grid_ticks!(),
-        EInvalidStrikeGrid,
-    );
 }
 
 fun price_in_range(oracle: &OracleSVI, price: u64): bool {
@@ -611,11 +605,11 @@ public(package) fun create_test_oracle(
     expiry: u64,
     timestamp: u64,
     min_strike: u64,
-    max_strike: u64,
     tick_size: u64,
     ctx: &mut TxContext,
 ): OracleSVI {
-    assert_valid_strike_grid(min_strike, max_strike, tick_size);
+    assert_valid_strike_grid(min_strike, tick_size);
+    let max_strike = min_strike + tick_size * constants::oracle_strike_grid_ticks!();
     OracleSVI {
         id: object::new(ctx),
         authorized_caps: vec_set::empty(),
