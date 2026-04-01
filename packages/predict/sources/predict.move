@@ -29,6 +29,7 @@ const EInvalidCollateralPair: u64 = 1;
 const ENotOwner: u64 = 2;
 const EOracleSettled: u64 = 3;
 const EWithdrawExceedsAvailable: u64 = 4;
+const EOracleInactive: u64 = 5;
 
 // === Events ===
 
@@ -162,6 +163,8 @@ public fun get_trade_amounts<Quote>(
     quantity: u64,
     clock: &Clock,
 ): (u64, u64) {
+    if (!oracle.is_settled()) assert!(oracle.is_active(), EOracleInactive);
+    if (!oracle.is_settled()) oracle.assert_not_stale(clock);
     oracle::assert_valid_strike(oracle, key.strike());
     let (bid, ask) = predict.get_quote(oracle, key, clock);
     (math::mul(ask, quantity), math::mul(bid, quantity))
@@ -182,6 +185,7 @@ public fun mint<Quote>(
     assert!(!predict.trading_paused, ETradingPaused);
     key.assert_matches_oracle(oracle);
     assert!(!oracle.is_settled(), EOracleSettled);
+    assert!(oracle.is_active(), EOracleInactive);
     oracle.assert_not_stale(clock);
 
     let strike = key.strike();
@@ -225,7 +229,10 @@ public fun redeem<Quote>(
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     key.assert_matches_oracle(oracle);
-    if (!oracle.is_settled()) oracle.assert_not_stale(clock);
+    if (!oracle.is_settled()) {
+        assert!(oracle.is_active(), EOracleInactive);
+        oracle.assert_not_stale(clock);
+    };
     manager.decrease_position(key, quantity);
 
     let strike = key.strike();
@@ -273,6 +280,7 @@ public fun mint_collateralized<Quote>(
     assert!(!predict.trading_paused, ETradingPaused);
     locked_key.assert_matches_oracle(oracle);
     minted_key.assert_matches_oracle(oracle);
+    assert!(oracle.is_active(), EOracleInactive);
     oracle.assert_not_stale(clock);
     oracle::assert_valid_strike(oracle, locked_key.strike());
     oracle::assert_valid_strike(oracle, minted_key.strike());

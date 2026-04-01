@@ -42,3 +42,31 @@ fun get_trade_amounts_invalid_strike_aborts() {
 
     abort
 }
+
+#[test, expected_failure(abort_code = predict::EOracleInactive)]
+fun get_trade_amounts_inactive_oracle_aborts() {
+    let ctx = &mut tx_context::dummy();
+
+    let predict = predict::create_test_predict<SUI>(ctx);
+    let svi = new_svi_params(0, float!(), 0, false, 0, false, 250_000_000);
+    let prices = new_price_data(500_000_000, 500_000_000);
+    let mut oracle = oracle::create_test_oracle_with_grid(
+        b"BTC".to_string(),
+        svi,
+        prices,
+        0,
+        1_000_000,
+        0,
+        GRID_MIN_STRIKE,
+        GRID_MAX_STRIKE,
+        GRID_TICK_SIZE,
+        ctx,
+    );
+    oracle::set_active_for_testing(&mut oracle, false);
+    let key = market_key::up(oracle::id(&oracle), oracle::expiry(&oracle), GRID_MIN_STRIKE);
+    let clock = clock::create_for_testing(ctx);
+
+    predict::get_trade_amounts(&predict, &oracle, key, 1, &clock);
+
+    abort
+}

@@ -951,8 +951,8 @@ fun update_prices_with_unauthorized_cap_aborts() {
     abort
 }
 
-#[test, expected_failure(abort_code = oracle::EPriceOutOfRange)]
-fun update_prices_out_of_range_aborts() {
+#[test]
+fun update_prices_out_of_range_deactivates_oracle() {
     let ctx = &mut tx_context::dummy();
     let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
     let prices = new_price_data(500_000_000, 500_000_000);
@@ -970,12 +970,56 @@ fun update_prices_out_of_range_aborts() {
     );
     let cap = oracle::create_oracle_cap(ctx);
     oracle::register_cap(&mut oracle, &cap);
+    let old_spot = oracle.spot_price();
+    let old_forward = oracle.forward_price();
+    let old_timestamp = oracle.timestamp();
     let clock = clock::create_for_testing(ctx);
 
     let out_of_range_prices = new_price_data(GRID_MAX_STRIKE + 1, 500_000_000);
     oracle.update_prices(&cap, out_of_range_prices, &clock);
 
-    abort
+    assert_eq!(oracle.is_active(), false);
+    assert_eq!(oracle.spot_price(), old_spot);
+    assert_eq!(oracle.forward_price(), old_forward);
+    assert_eq!(oracle.timestamp(), old_timestamp);
+
+    destroy(oracle);
+    destroy(cap);
+    destroy(clock);
+}
+
+#[test]
+fun update_prices_past_expiry_settles_even_when_out_of_range() {
+    let ctx = &mut tx_context::dummy();
+    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
+    let prices = new_price_data(500_000_000, 500_000_000);
+    let mut oracle = oracle::create_test_oracle_with_grid(
+        b"BTC".to_string(),
+        svi,
+        prices,
+        0,
+        100_000,
+        0,
+        GRID_MIN_STRIKE,
+        GRID_MAX_STRIKE,
+        GRID_TICK_SIZE,
+        ctx,
+    );
+    let cap = oracle::create_oracle_cap(ctx);
+    oracle::register_cap(&mut oracle, &cap);
+    let mut clock = clock::create_for_testing(ctx);
+    clock.set_for_testing(200_000);
+
+    let out_of_range_prices = new_price_data(GRID_MAX_STRIKE + 1, GRID_MAX_STRIKE + 2);
+    oracle.update_prices(&cap, out_of_range_prices, &clock);
+
+    assert_eq!(oracle.is_settled(), true);
+    assert_eq!(oracle.is_active(), false);
+    assert_eq!(oracle.settlement_price().destroy_some(), GRID_MAX_STRIKE + 1);
+
+    destroy(oracle);
+    destroy(cap);
+    destroy(clock);
 }
 
 #[test, expected_failure(abort_code = oracle::EInvalidOracleCap)]

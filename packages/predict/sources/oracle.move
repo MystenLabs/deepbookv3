@@ -169,8 +169,6 @@ public fun update_prices(
     clock: &Clock,
 ) {
     assert_authorized_cap(oracle, cap);
-    assert_price_in_range(oracle, prices.spot);
-    assert_price_in_range(oracle, prices.forward);
 
     let now = clock.timestamp_ms();
     let oracle_id = oracle.id.to_inner();
@@ -186,6 +184,11 @@ public fun update_prices(
             settlement_price: prices.spot,
             timestamp: now,
         });
+        return
+    };
+
+    if (!price_in_range(oracle, prices.spot) || !price_in_range(oracle, prices.forward)) {
+        oracle.active = false;
         return
     };
 
@@ -592,8 +595,8 @@ fun assert_valid_strike_grid(min_strike: u64, max_strike: u64, tick_size: u64) {
     assert!(max_strike - min_strike == tick_size * 100_000, EInvalidStrikeGrid);
 }
 
-fun assert_price_in_range(oracle: &OracleSVI, price: u64) {
-    assert!(price >= oracle.min_strike && price <= oracle.max_strike, EPriceOutOfRange);
+fun price_in_range(oracle: &OracleSVI, price: u64): bool {
+    price >= oracle.min_strike && price <= oracle.max_strike
 }
 
 #[test_only]
