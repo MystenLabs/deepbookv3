@@ -143,7 +143,7 @@ fun create_test_oracle_with_nonzero_params() {
 #[test]
 fun create_test_oracle_stores_grid_params() {
     let ctx = &mut tx_context::dummy();
-    let (oracle, _clock) = oracle_helper::create_flat_vol_oracle(
+    let (oracle, clock) = oracle_helper::create_flat_vol_oracle(
         500_000_000,
         500_000_000,
         0,
@@ -158,7 +158,7 @@ fun create_test_oracle_stores_grid_params() {
     assert_eq!(oracle.tick_size(), grid_tick_size());
 
     destroy(oracle);
-    destroy(_clock);
+    destroy(clock);
 }
 
 #[test, expected_failure(abort_code = oracle::EInvalidStrikeGrid)]
@@ -434,7 +434,7 @@ fun live_discount_is_one_past_expiry() {
         std_grid_tick_size(),
         ctx,
     );
-    let (oracle_zero_rate, _clock2) = oracle_helper::create_flat_vol_oracle(
+    let (oracle_zero_rate, clock2) = oracle_helper::create_flat_vol_oracle(
         forward,
         forward,
         0,
@@ -458,7 +458,7 @@ fun live_discount_is_one_past_expiry() {
     destroy(oracle_with_rate);
     destroy(oracle_zero_rate);
     destroy(clock);
-    destroy(_clock2);
+    destroy(clock2);
 }
 
 // ============================================================
