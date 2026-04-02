@@ -13,6 +13,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  SUI_VERSION_FALLBACK: mainnet-v1.68.1
+
 jobs:
   test-linux:
     runs-on: ubuntu-latest
@@ -26,7 +29,11 @@ jobs:
         id: sui-version
         run: |
           SUI_VERSION=$(curl -sf https://api.github.com/repos/MystenLabs/sui/releases \
-            | jq -r '[.[] | select(.tag_name | startswith("mainnet-v"))][0].tag_name')
+            | jq -r '[.[] | select(.tag_name | startswith("mainnet-v"))][0].tag_name // empty')
+          if [ -z "$SUI_VERSION" ]; then
+            echo "Failed to fetch latest version, falling back to ${SUI_VERSION_FALLBACK}"
+            SUI_VERSION="${SUI_VERSION_FALLBACK}"
+          fi
           echo "version=$SUI_VERSION" >> "$GITHUB_OUTPUT"
           echo "Using Sui $SUI_VERSION"
 
@@ -55,7 +62,11 @@ jobs:
         id: sui-version
         run: |
           SUI_VERSION=$(curl -sf https://api.github.com/repos/MystenLabs/sui/releases \
-            | jq -r '[.[] | select(.tag_name | startswith("mainnet-v"))][0].tag_name')
+            | jq -r '[.[] | select(.tag_name | startswith("mainnet-v"))][0].tag_name // empty')
+          if [ -z "$SUI_VERSION" ]; then
+            echo "Failed to fetch latest version, falling back to ${SUI_VERSION_FALLBACK}"
+            SUI_VERSION="${SUI_VERSION_FALLBACK}"
+          fi
           echo "version=$SUI_VERSION" >> "$GITHUB_OUTPUT"
           echo "Using Sui $SUI_VERSION"
 
