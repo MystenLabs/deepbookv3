@@ -6,11 +6,13 @@ mod config;
 mod metrics;
 mod queue;
 mod runner;
+mod store;
 
 use crate::api::AppState;
 use crate::config::Config;
 use crate::metrics::BenchMetrics;
-use crate::queue::{new_run_store, spawn_worker};
+use crate::queue::spawn_worker;
+use crate::store::RunStore;
 use axum::routing::get;
 use axum::Router;
 use clap::Parser;
@@ -29,7 +31,7 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::parse();
     let registry = Registry::new();
     let metrics = BenchMetrics::new(&registry);
-    let runs = new_run_store();
+    let runs = RunStore::new(&config.redis_url).await?;
     let (tx, rx) = mpsc::channel(64);
 
     spawn_worker(rx, config.clone(), metrics.clone(), runs.clone());
@@ -41,10 +43,8 @@ async fn main() -> anyhow::Result<()> {
         runs,
     });
 
-    // API server with /health baked in.
     let app = api::router(state);
 
-    // Metrics server on separate port (same pattern as infra-metadata-service).
     let metrics_registry = Arc::new(registry);
     let metrics_app = Router::new().route(
         "/metrics",

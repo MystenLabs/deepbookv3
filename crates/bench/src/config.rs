@@ -33,6 +33,10 @@ pub struct Config {
     /// GitHub token for API calls (needs read access to the repo).
     #[clap(env = "GITHUB_TOKEN", long)]
     pub github_token: Option<String>,
+
+    /// Redis URL for persistent run state.
+    #[clap(env = "REDIS_URL", long, default_value = "redis://redis:6379")]
+    pub redis_url: String,
 }
 
 impl Config {

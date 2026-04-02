@@ -3,7 +3,8 @@
 
 use crate::config::Config;
 use crate::metrics::{self, BenchMetrics, RunStatus};
-use crate::queue::{Job, RunInfo, RunStore};
+use crate::queue::Job;
+use crate::store::{RunInfo, RunStore};
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{Request, StatusCode};
@@ -21,7 +22,7 @@ pub struct AppState {
     pub config: Config,
     pub metrics: Arc<BenchMetrics>,
     pub tx: mpsc::Sender<Job>,
-    pub runs: RunStore,
+    pub runs: Arc<RunStore>,
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -73,8 +74,20 @@ async fn create_benchmark(
     State(state): State<Arc<AppState>>,
     Json(req): Json<BenchmarkRequest>,
 ) -> ApiResult<BenchmarkResponse> {
-    let (run_id, job) = make_job(req.sha);
-    register_run(&state.runs, &run_id, &job.sha).await;
+    let (run_id, job) = make_job(req.sha.clone());
+
+    let info = RunInfo {
+        run_id: run_id.clone(),
+        sha: req.sha,
+        status: "queued".to_string(),
+        error: None,
+        started_at_ts: None,
+    };
+    state
+        .runs
+        .insert(&info)
+        .await
+        .map_err(|e| api_err(StatusCode::INTERNAL_SERVER_ERROR, format!("redis: {}", e)))?;
 
     state.tx.send(job).await.map_err(|_| {
         warn!("job queue full or closed");
@@ -91,9 +104,12 @@ async fn get_benchmark(
     State(state): State<Arc<AppState>>,
     Path(run_id): Path<String>,
 ) -> Result<Json<RunInfo>, StatusCode> {
-    let runs = state.runs.read().await;
-    runs.get(&run_id)
-        .cloned()
+    state
+        .runs
+        .get(&run_id)
+        .await
+        .ok()
+        .flatten()
         .map(Json)
         .ok_or(StatusCode::NOT_FOUND)
 }
@@ -104,18 +120,25 @@ async fn receive_started(
     State(state): State<Arc<AppState>>,
     Path(run_id): Path<String>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    let sha = {
-        let mut runs = state.runs.write().await;
-        let info = runs
-            .get_mut(&run_id)
-            .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "unknown run_id"))?;
-        info.status = "running".to_string();
-        info.started_at = Some(std::time::Instant::now());
-        info.sha.clone()
-    };
+    let info = state
+        .runs
+        .get(&run_id)
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "unknown run_id"))?;
 
-    tracing::info!(run_id = %run_id, sha = %sha, "benchmark started");
-    state.metrics.set_status(&sha, RunStatus::Running).await;
+    tracing::info!(run_id = %run_id, sha = %info.sha, "benchmark started");
+
+    state
+        .runs
+        .update_started(&run_id)
+        .await
+        .map_err(|e| api_err(StatusCode::INTERNAL_SERVER_ERROR, format!("redis: {}", e)))?;
+    state
+        .metrics
+        .set_status(&info.sha, RunStatus::Running)
+        .await;
 
     Ok(StatusCode::OK)
 }
@@ -127,13 +150,13 @@ async fn receive_results(
     Path(run_id): Path<String>,
     body: axum::body::Bytes,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    let (sha, started_at) = {
-        let runs = state.runs.read().await;
-        let info = runs
-            .get(&run_id)
-            .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "unknown run_id"))?;
-        (info.sha.clone(), info.started_at)
-    };
+    let info = state
+        .runs
+        .get(&run_id)
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "unknown run_id"))?;
 
     let json =
         std::str::from_utf8(&body).map_err(|_| api_err(StatusCode::BAD_REQUEST, "invalid utf8"))?;
@@ -141,24 +164,23 @@ async fn receive_results(
     let results = metrics::parse_results(json)
         .map_err(|e| api_err(StatusCode::BAD_REQUEST, format!("invalid results: {}", e)))?;
 
-    tracing::info!(run_id = %run_id, sha = %sha, total_txs = results.summary.total_txs, "received benchmark results");
+    tracing::info!(run_id = %run_id, sha = %info.sha, total_txs = results.summary.total_txs, "received benchmark results");
 
-    state.metrics.record_results(&sha, &results).await;
-    state.metrics.set_status(&sha, RunStatus::Success).await;
+    state.metrics.record_results(&info.sha, &results).await;
+    state
+        .metrics
+        .set_status(&info.sha, RunStatus::Success)
+        .await;
 
-    if let Some(start) = started_at {
-        state
-            .metrics
-            .set_duration(&sha, start.elapsed().as_secs_f64())
-            .await;
+    if let Some(elapsed) = RunStore::elapsed_secs(&info) {
+        state.metrics.set_duration(&info.sha, elapsed).await;
     }
 
-    {
-        let mut runs = state.runs.write().await;
-        if let Some(info) = runs.get_mut(&run_id) {
-            info.status = "success".to_string();
-        }
-    }
+    state
+        .runs
+        .update_success(&run_id)
+        .await
+        .map_err(|e| api_err(StatusCode::INTERNAL_SERVER_ERROR, format!("redis: {}", e)))?;
 
     Ok(StatusCode::OK)
 }
@@ -176,29 +198,27 @@ async fn receive_failure(
     Path(run_id): Path<String>,
     Json(report): Json<FailureReport>,
 ) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
-    let sha = {
-        let runs = state.runs.read().await;
-        let info = runs
-            .get(&run_id)
-            .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "unknown run_id"))?;
-        info.sha.clone()
-    };
+    let info = state
+        .runs
+        .get(&run_id)
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "unknown run_id"))?;
 
-    tracing::error!(run_id = %run_id, sha = %sha, error = %report.error, "benchmark failed");
+    tracing::error!(run_id = %run_id, sha = %info.sha, error = %report.error, "benchmark failed");
 
     if let Some(ref logs) = report.logs {
         tracing::error!(run_id = %run_id, "sim logs:\n{}", logs);
     }
 
-    state.metrics.set_status(&sha, RunStatus::Failed).await;
+    state.metrics.set_status(&info.sha, RunStatus::Failed).await;
 
-    {
-        let mut runs = state.runs.write().await;
-        if let Some(info) = runs.get_mut(&run_id) {
-            info.status = "failed".to_string();
-            info.error = Some(report.error);
-        }
-    }
+    state
+        .runs
+        .update_failed(&run_id, report.error)
+        .await
+        .map_err(|e| api_err(StatusCode::INTERNAL_SERVER_ERROR, format!("redis: {}", e)))?;
 
     Ok(StatusCode::OK)
 }
@@ -217,20 +237,6 @@ fn make_job(sha: String) -> (String, Job) {
         sha,
     };
     (run_id, job)
-}
-
-async fn register_run(runs: &RunStore, run_id: &str, sha: &str) {
-    let mut store = runs.write().await;
-    store.insert(
-        run_id.to_string(),
-        RunInfo {
-            run_id: run_id.to_string(),
-            sha: sha.to_string(),
-            status: "queued".to_string(),
-            error: None,
-            started_at: None,
-        },
-    );
 }
 
 // -- Auth Middleware --

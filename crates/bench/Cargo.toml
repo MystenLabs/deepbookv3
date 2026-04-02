@@ -21,6 +21,7 @@ subtle = "2.5"
 tracing-subscriber = "0.3"
 kube = { version = "0.98", features = ["runtime", "client", "derive"] }
 k8s-openapi = { version = "0.24", features = ["latest"] }
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 
 [[bin]]
 name = "predict-bench"
