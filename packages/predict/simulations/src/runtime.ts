@@ -102,7 +102,6 @@ export function createOracleTx(params: {
   underlyingAsset: string;
   expiry: bigint;
   minStrike: bigint;
-  maxStrike: bigint;
   tickSize: bigint;
 }): Transaction {
   const tx = new Transaction();
@@ -115,7 +114,6 @@ export function createOracleTx(params: {
       tx.pure.string(params.underlyingAsset),
       tx.pure.u64(params.expiry),
       tx.pure.u64(params.minStrike),
-      tx.pure.u64(params.maxStrike),
       tx.pure.u64(params.tickSize),
     ],
   });

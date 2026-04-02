@@ -13,6 +13,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  SUI_VERSION_FALLBACK: mainnet-v1.68.1
+
 jobs:
   test-linux:
     runs-on: ubuntu-latest
@@ -26,7 +29,11 @@ jobs:
         id: sui-version
         run: |
           SUI_VERSION=$(curl -sf https://api.github.com/repos/MystenLabs/sui/releases \
-            | jq -r '[.[] | select(.tag_name | startswith("mainnet-v"))][0].tag_name')
+            | jq -r '[.[] | select(.tag_name | startswith("mainnet-v"))][0].tag_name // empty')
+          if [ -z "$SUI_VERSION" ]; then
+            echo "Failed to fetch latest version, falling back to ${SUI_VERSION_FALLBACK}"
+            SUI_VERSION="${SUI_VERSION_FALLBACK}"
+          fi
           echo "version=$SUI_VERSION" >> "$GITHUB_OUTPUT"
           echo "Using Sui $SUI_VERSION"
 
@@ -34,6 +41,7 @@ jobs:
         run: |
           curl -fsSL "https://github.com/MystenLabs/sui/releases/download/${{ steps.sui-version.outputs.version }}/sui-${{ steps.sui-version.outputs.version }}-ubuntu-x86_64.tgz" \
             | sudo tar -xz -C /usr/local/bin
+          sui --version
 
       - name: Run Move tests
         run: |
@@ -54,17 +62,20 @@ jobs:
         id: sui-version
         run: |
           SUI_VERSION=$(curl -sf https://api.github.com/repos/MystenLabs/sui/releases \
-            | jq -r '[.[] | select(.tag_name | startswith("mainnet-v"))][0].tag_name')
+            | jq -r '[.[] | select(.tag_name | startswith("mainnet-v"))][0].tag_name // empty')
+          if [ -z "$SUI_VERSION" ]; then
+            echo "Failed to fetch latest version, falling back to ${SUI_VERSION_FALLBACK}"
+            SUI_VERSION="${SUI_VERSION_FALLBACK}"
+          fi
           echo "version=$SUI_VERSION" >> "$GITHUB_OUTPUT"
           echo "Using Sui $SUI_VERSION"
 
       - name: Install Sui CLI
         run: |
           if [ "$(uname -m)" = "arm64" ]; then SUFFIX="macos-arm64"; else SUFFIX="macos-x86_64"; fi
-          mkdir -p "$HOME/.local/bin"
           curl -fsSL "https://github.com/MystenLabs/sui/releases/download/${{ steps.sui-version.outputs.version }}/sui-${{ steps.sui-version.outputs.version }}-${SUFFIX}.tgz" \
-            | tar -xz -C "$HOME/.local/bin"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+            | tar -xz -C /usr/local/bin
+          sui --version
 
       - name: Run Move tests
         run: |
