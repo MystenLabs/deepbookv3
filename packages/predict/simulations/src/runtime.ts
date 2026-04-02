@@ -297,13 +297,15 @@ export async function executeAndWait(tx: Transaction, label = "transaction"): Pr
 const EXECUTE_MAX_RETRIES = 5;
 const EXECUTE_RETRY_DELAY_MS = 1000;
 
-export async function execute(tx: Transaction, label = "transaction"): Promise<GasUsage> {
-  tx.setSender(address);
-  tx.setGasBudget(500_000_000n);
-
+export async function execute(buildTx: Transaction | (() => Transaction), label = "transaction"): Promise<GasUsage> {
   let lastError: unknown;
   for (let attempt = 0; attempt <= EXECUTE_MAX_RETRIES; attempt++) {
     try {
+      // Build a fresh transaction on each attempt so object versions are re-resolved.
+      const tx = typeof buildTx === "function" ? buildTx() : buildTx;
+      tx.setSender(address);
+      tx.setGasBudget(500_000_000n);
+
       const raw: any = await client.signAndExecuteTransaction({
         transaction: tx,
         signer,

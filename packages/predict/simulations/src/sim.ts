@@ -171,7 +171,7 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
 
     if (row.action === "update_prices") {
       const gas = await execute(
-        updatePricesTx(state.oracleId, state.oracleCapId, row.spot, row.forward),
+        () => updatePricesTx(state.oracleId, state.oracleCapId, row.spot, row.forward),
         "update_prices"
       );
       byAction.update_prices.push({ wallMs: performance.now() - startedAt, ...gas });
@@ -180,7 +180,7 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
 
     if (row.action === "update_svi") {
       const gas = await execute(
-        updateSviTx(
+        () => updateSviTx(
           state.oracleId,
           state.oracleCapId,
           {
@@ -203,7 +203,7 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
     mintIndex++;
     const alignedStrike = alignStrikeToGrid(row.strike);
     const gas = await execute(
-      mintTx({
+      () => mintTx({
         predictId: state.predictId,
         managerId: state.managerId,
         oracleId: state.oracleId,
