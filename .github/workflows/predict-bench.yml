@@ -35,13 +35,20 @@ jobs:
           SHA="${{ inputs.sha || github.sha }}"
           echo "Triggering benchmark for SHA: $SHA"
 
-          RESPONSE=$(curl -sf -X POST \
+          HTTP_CODE=$(curl -s -o /tmp/bench_response.json -w "%{http_code}" -X POST \
             -H "Authorization: Bearer ${{ secrets.PREDICT_BENCH_API_TOKEN }}" \
             -H "Content-Type: application/json" \
             -d "{\"sha\": \"$SHA\"}" \
             "${BENCH_API_URL}/api/v1/benchmark")
 
-          echo "$RESPONSE"
+          RESPONSE=$(cat /tmp/bench_response.json)
+          echo "HTTP $HTTP_CODE: $RESPONSE"
+
+          if [ "$HTTP_CODE" -ge 400 ]; then
+            echo "::error::Benchmark API returned HTTP $HTTP_CODE: $RESPONSE"
+            exit 1
+          fi
+
           RUN_ID=$(echo "$RESPONSE" | jq -r '.run_id')
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
           echo "Benchmark queued: $RUN_ID"
