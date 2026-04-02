@@ -60,13 +60,24 @@ jobs:
 
       - name: Install Sui CLI
         run: |
+          ARCH=$(uname -m)
+          echo "Architecture: $ARCH"
+          if [ "$ARCH" = "arm64" ]; then
+            SUFFIX="macos-arm64"
+          else
+            SUFFIX="macos-x86_64"
+          fi
+          URL="https://github.com/MystenLabs/sui/releases/download/${{ steps.sui-version.outputs.version }}/sui-${{ steps.sui-version.outputs.version }}-${SUFFIX}.tgz"
+          echo "Downloading $URL"
           mkdir -p "$HOME/.local/bin"
-          curl -fsSL "https://github.com/MystenLabs/sui/releases/download/${{ steps.sui-version.outputs.version }}/sui-${{ steps.sui-version.outputs.version }}-macos-arm64.tgz" \
-            | tar -xz -C "$HOME/.local/bin"
+          curl -fsSL "$URL" | tar -xz -C "$HOME/.local/bin"
+          chmod +x "$HOME/.local/bin/sui"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          ls -la "$HOME/.local/bin/sui"
 
       - name: Run Move tests
         run: |
+          which sui
           for dir in packages/*; do
             echo "Running sui move test in $dir"
             sui move test --gas-limit 100000000000 --path "$dir"
