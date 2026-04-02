@@ -104,15 +104,18 @@ async fn create_benchmark(
 async fn get_benchmark(
     State(state): State<Arc<AppState>>,
     Path(run_id): Path<String>,
-) -> Result<Json<RunInfo>, StatusCode> {
-    state
-        .runs
-        .get(&run_id)
-        .await
-        .ok()
-        .flatten()
-        .map(Json)
-        .ok_or(StatusCode::NOT_FOUND)
+) -> Result<Json<RunInfo>, (StatusCode, Json<ErrorResponse>)> {
+    match state.runs.get(&run_id).await {
+        Ok(Some(info)) => Ok(Json(info)),
+        Ok(None) => Err(api_err(StatusCode::NOT_FOUND, "run not found")),
+        Err(e) => {
+            tracing::error!(run_id = %run_id, error = %e, "redis error on GET");
+            Err(api_err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("redis error: {}", e),
+            ))
+        }
+    }
 }
 
 // -- Started Callback (called when sim job begins running) --
