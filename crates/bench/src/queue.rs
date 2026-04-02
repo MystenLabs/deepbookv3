@@ -20,6 +20,8 @@ pub struct RunInfo {
     pub run_id: String,
     pub sha: String,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
     #[serde(skip)]
     pub started_at: Option<std::time::Instant>,
 }

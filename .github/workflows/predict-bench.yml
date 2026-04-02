@@ -75,7 +75,8 @@ jobs:
                 exit 0
                 ;;
               failed)
-                echo "::error::Benchmark failed"
+                ERROR=$(echo "$RESPONSE" | jq -r '.error // "unknown error"')
+                echo "::error::Benchmark failed: $ERROR"
                 exit 1
                 ;;
               *)

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+LOG_FILE="/tmp/sim.log"
+
 echo "=== predict-sim (localnet) ==="
 echo "SHA: ${SIM_SHA:-HEAD}"
 echo "Callback: ${CALLBACK_BASE:-none}"
@@ -17,15 +19,24 @@ callback() {
     fi
 }
 
-# Report failure on exit.
+# JSON-escape a string for safe embedding.
+json_escape() {
+    python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'
+}
+
+# Report failure with logs on exit.
 report_failure() {
     local exit_code=$?
     if [ "$exit_code" -eq 0 ]; then return; fi
-    callback "failure" -d "{\"error\": \"sim exited with code ${exit_code}\"}"
+    LOGS=$(tail -100 "$LOG_FILE" 2>/dev/null | json_escape)
+    callback "failure" -d "{\"error\": \"sim exited with code ${exit_code}\", \"logs\": ${LOGS}}"
 }
 trap report_failure EXIT
 
 set -euo pipefail
+
+# Tee all output to log file.
+exec > >(tee -a "$LOG_FILE") 2>&1
 
 callback "started"
 

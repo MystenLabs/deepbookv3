@@ -168,6 +168,7 @@ async fn receive_results(
 #[derive(Deserialize)]
 struct FailureReport {
     error: String,
+    logs: Option<String>,
 }
 
 async fn receive_failure(
@@ -185,12 +186,17 @@ async fn receive_failure(
 
     tracing::error!(run_id = %run_id, sha = %sha, error = %report.error, "benchmark failed");
 
+    if let Some(ref logs) = report.logs {
+        tracing::error!(run_id = %run_id, "sim logs:\n{}", logs);
+    }
+
     state.metrics.set_status(&sha, RunStatus::Failed).await;
 
     {
         let mut runs = state.runs.write().await;
         if let Some(info) = runs.get_mut(&run_id) {
             info.status = "failed".to_string();
+            info.error = Some(report.error);
         }
     }
 
@@ -221,6 +227,7 @@ async fn register_run(runs: &RunStore, run_id: &str, sha: &str) {
             run_id: run_id.to_string(),
             sha: sha.to_string(),
             status: "queued".to_string(),
+            error: None,
             started_at: None,
         },
     );
