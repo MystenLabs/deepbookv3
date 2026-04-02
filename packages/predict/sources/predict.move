@@ -14,9 +14,8 @@ use deepbook::math;
 use deepbook_predict::{
     constants,
     market_key::MarketKey,
-    math as predict_math,
+    math::{Self as predict_math, mul_div_round_down},
     oracle::{Self, OracleSVI},
-    math::mul_div_round_down,
     plp::PLP,
     predict_manager::{Self, PredictManager},
     pricing_config::{Self, PricingConfig},
