@@ -71,11 +71,6 @@ async fn create_benchmark(
     State(state): State<Arc<AppState>>,
     Json(req): Json<BenchmarkRequest>,
 ) -> ApiResult<BenchmarkResponse> {
-    if let Err(msg) = validate_sha(&state.config, &req.sha).await {
-        warn!(sha = %req.sha, "SHA rejected: {}", msg);
-        return Err(api_err(StatusCode::FORBIDDEN, msg));
-    }
-
     let (run_id, job) = make_job(req.sha);
     register_run(&state.runs, &run_id, &job.sha).await;
 
@@ -171,80 +166,6 @@ async fn register_run(runs: &RunStore, run_id: &str, sha: &str) {
             started_at: None,
         },
     );
-}
-
-// -- SHA Validation --
-
-/// Check that the SHA was merged into an allowed branch (main or release/*).
-/// Uses the GitHub commits/{sha}/pulls API to find which branch the commit
-/// was merged into via a PR.
-const ALLOWED_BRANCHES: &[&str] = &["main"];
-const ALLOWED_BRANCH_PREFIXES: &[&str] = &["release/"];
-
-async fn validate_sha(config: &Config, sha: &str) -> Result<(), String> {
-    let url = format!(
-        "https://api.github.com/repos/{}/commits/{}/pulls",
-        config.github_repo, sha
-    );
-
-    let client = reqwest::Client::new();
-    let mut req = client
-        .get(&url)
-        .header("User-Agent", "predict-bench")
-        .header("Accept", "application/vnd.github+json");
-
-    if let Some(ref token) = config.github_token {
-        req = req.header("Authorization", format!("Bearer {}", token));
-    }
-
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| format!("GitHub API error: {}", e))?;
-
-    if !resp.status().is_success() {
-        return Err(format!("GitHub API returned {}", resp.status()));
-    }
-
-    #[derive(Deserialize)]
-    struct PullBase {
-        #[serde(rename = "ref")]
-        branch: String,
-    }
-
-    #[derive(Deserialize)]
-    struct Pull {
-        base: PullBase,
-        merge_commit_sha: Option<String>,
-    }
-
-    let pulls: Vec<Pull> = resp
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse GitHub response: {}", e))?;
-
-    let allowed = pulls.iter().any(|pr| {
-        // Only count PRs that were actually merged as this commit.
-        let is_merge = pr.merge_commit_sha.as_deref().map_or(false, |s| s == sha);
-        if !is_merge {
-            return false;
-        }
-        let branch = pr.base.branch.as_str();
-        ALLOWED_BRANCHES.contains(&branch)
-            || ALLOWED_BRANCH_PREFIXES
-                .iter()
-                .any(|prefix| branch.starts_with(prefix))
-    });
-
-    if !allowed {
-        let branches: Vec<&str> = pulls.iter().map(|pr| pr.base.branch.as_str()).collect();
-        return Err(format!(
-            "SHA {} was merged into {:?}, but only main and release/* are allowed",
-            sha, branches
-        ));
-    }
-
-    Ok(())
 }
 
 // -- Auth Middleware --
