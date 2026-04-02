@@ -111,7 +111,6 @@ async function setupSimulation(): Promise<SimState> {
       underlyingAsset: "BTC",
       expiry: EXPIRY_MS,
       minStrike: ORACLE_MIN_STRIKE,
-      maxStrike: ORACLE_MAX_STRIKE,
       tickSize: ORACLE_TICK_SIZE,
     }),
     "create_oracle"
