@@ -68,6 +68,10 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 
 - Timestamp fields should have clear semantics. If `timestamp` means "last price update", don't bump it on unrelated updates (e.g., SVI param changes). Muddled semantics break staleness checks.
 
+- Validate before mutate: when consuming irreversible resources (burning coins, destroying objects), check all preconditions before the destructive call. Even though Sui transactions are atomic, this makes intent clearer and follows the convention used throughout the codebase.
+
+- Avoid deprecated Sui framework functions. Use the current recommended API (e.g., `coin_registry::new_currency_with_otw` instead of `coin::create_currency`). If a deprecated function must be used, add a comment explaining why the replacement doesn't work for this case.
+
 ## Tool Calling Instructions
 
 - `sui move build` to build the package, must be run in a directory with Move.toml in it
