@@ -3389,7 +3389,7 @@ fun mint_referral_max_multiplier_e() {
     test.next_tx(ALICE);
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
-        pool.mint_referral(2_100_000_000, test.ctx());
+        pool.mint_referral(10_100_000_000, test.ctx());
     };
 
     abort (0)
@@ -3424,7 +3424,7 @@ fun test_update_deepbook_referral_multiplier_e() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
-        pool.update_pool_referral_multiplier(&referral, 2_100_000_000, test.ctx());
+        pool.update_pool_referral_multiplier(&referral, 10_100_000_000, test.ctx());
     };
 
     abort (0)
@@ -3543,12 +3543,12 @@ fun test_process_order_referral_ok() {
         return_shared(pool);
     };
 
-    // increase multiplier from 0.1x to 2x
+    // increase multiplier from 0.1x to 10x
     test.next_tx(ALICE);
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
-        pool.update_pool_referral_multiplier(&referral, 2_000_000_000, test.ctx());
+        pool.update_pool_referral_multiplier(&referral, 10_000_000_000, test.ctx());
         return_shared(pool);
         return_shared(referral);
     };
@@ -3577,9 +3577,9 @@ fun test_process_order_referral_ok() {
         let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
         assert_eq!(base, 0);
         assert_eq!(quote, 0);
-        // 10bps fee, 2x multiplier = 300_000_000
+        // 10bps fee, 10x multiplier = 1_500_000_000
         // + 10bps fee, 0.1x multiplier = 15_000_000
-        assert_eq!(deep, 315_000_000);
+        assert_eq!(deep, 1_515_000_000);
         return_shared(referral);
         return_shared(pool);
     };
@@ -3610,9 +3610,9 @@ fun test_process_order_referral_ok() {
         let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
         let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
         assert_eq!(base, 0);
-        // fees paid in USDC = 3_750_000 with 2x multiple = 7_500_000
-        assert_eq!(quote, 7_500_000);
-        assert_eq!(deep, 315_000_000);
+        // fees paid in USDC = 3_750_000 with 10x multiple = 37_500_000
+        assert_eq!(quote, 37_500_000);
+        assert_eq!(deep, 1_515_000_000);
         return_shared(referral);
         return_shared(pool);
     };
@@ -3642,10 +3642,10 @@ fun test_process_order_referral_ok() {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
         let (base, quote, deep) = pool.get_pool_referral_balances(&referral);
-        // fees paid in SUI = 1_875_000 with 2x multiple = 3_750_000
-        assert_eq!(base, 3_750_000);
-        assert_eq!(quote, 7_500_000);
-        assert_eq!(deep, 315_000_000);
+        // fees paid in SUI = 1_875_000 with 10x multiple = 18_750_000
+        assert_eq!(base, 18_750_000);
+        assert_eq!(quote, 37_500_000);
+        assert_eq!(deep, 1_515_000_000);
         return_shared(referral);
         return_shared(pool);
     };
@@ -9559,7 +9559,7 @@ fun pool_referral_multiplier_after_update() {
     {
         let mut pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
-        pool.update_pool_referral_multiplier(&referral, 2_000_000_000, test.ctx());
+        pool.update_pool_referral_multiplier(&referral, 10_000_000_000, test.ctx());
         return_shared(referral);
         return_shared(pool);
     };
@@ -9569,7 +9569,7 @@ fun pool_referral_multiplier_after_update() {
         let pool = test.take_shared_by_id<Pool<SUI, USDC>>(pool_id);
         let referral = test.take_shared_by_id<DeepBookPoolReferral>(referral_id);
         let multiplier = pool.pool_referral_multiplier(&referral);
-        assert_eq!(multiplier, 2_000_000_000);
+        assert_eq!(multiplier, 10_000_000_000);
         return_shared(referral);
         return_shared(pool);
     };
