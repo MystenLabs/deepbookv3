@@ -37,6 +37,10 @@ pub struct Config {
     /// Redis URL for persistent run state.
     #[clap(env = "REDIS_URL", long, default_value = "redis://redis:6379")]
     pub redis_url: String,
+
+    /// Max scenario rows for the simulation (default: all rows).
+    #[clap(env = "SIM_MAX_ROWS", long)]
+    pub sim_max_rows: Option<u32>,
 }
 
 impl Config {

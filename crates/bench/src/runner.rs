@@ -109,6 +109,16 @@ git checkout {sha}"#,
                 ..Default::default()
             },
             EnvVar {
+                name: "SIM_MAX_ROWS".to_string(),
+                value: Some(
+                    config
+                        .sim_max_rows
+                        .map(|n| n.to_string())
+                        .unwrap_or_default(),
+                ),
+                ..Default::default()
+            },
+            EnvVar {
                 name: "BENCH_API_TOKEN".to_string(),
                 value_from: Some(EnvVarSource {
                     secret_key_ref: Some(SecretKeySelector {
