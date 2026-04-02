@@ -67,7 +67,6 @@ jobs:
 
       - name: Run Move tests
         run: |
-          sui --version
           for dir in packages/*; do
             echo "Running sui move test in $dir"
             sui move test --gas-limit 100000000000 --path "$dir"
