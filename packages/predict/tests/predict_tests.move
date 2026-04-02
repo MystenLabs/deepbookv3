@@ -5,16 +5,16 @@
 module deepbook_predict::predict_tests;
 
 use deepbook_predict::{
-    constants::{Self, oracle_tick_size_unit, oracle_strike_grid_ticks},
+    constants::{Self, oracle_tick_size_unit},
     generated_oracle as go,
     generated_predict as gp,
     market_key,
     oracle::{Self, new_price_data, new_svi_params},
     oracle_helper,
+    plp::PLP,
     precision,
     predict::{Self, Predict},
     predict_manager::{Self as predict_manager, PredictManager},
-    supply_manager,
     vault
 };
 use std::unit_test::{assert_eq, destroy};
@@ -33,6 +33,23 @@ fun quote_grid_tick_size(): u64 { oracle_tick_size_unit!() }
 
 fun create_predict(ctx: &mut TxContext): Predict<SUI> {
     predict::create_test_predict<SUI>(ctx)
+}
+
+fun supply_coin(
+    predict: &mut Predict<SUI>,
+    coin: coin::Coin<SUI>,
+    ctx: &mut TxContext,
+): coin::Coin<PLP> {
+    predict.supply(coin, ctx)
+}
+
+fun supply_amount(predict: &mut Predict<SUI>, amount: u64, ctx: &mut TxContext): coin::Coin<PLP> {
+    supply_coin(predict, coin::mint_for_testing<SUI>(amount, ctx), ctx)
+}
+
+fun seed_liquidity(predict: &mut Predict<SUI>, coin: coin::Coin<SUI>, ctx: &mut TxContext) {
+    let lp = supply_coin(predict, coin, ctx);
+    transfer::public_transfer(lp, ctx.sender());
 }
 
 fun create_live_oracle(ctx: &mut TxContext): oracle::OracleSVI {
@@ -88,12 +105,12 @@ fun supply_first_deposit_one_to_one_shares() {
     let ctx = &mut tx_context::dummy();
     let mut predict = create_predict(ctx);
 
-    let coin = coin::mint_for_testing<SUI>(1_000_000, ctx);
-    let shares = predict.supply(coin, ctx);
+    let shares = supply_amount(&mut predict, 1_000_000, ctx);
 
-    assert_eq!(shares, 1_000_000);
+    assert_eq!(shares.value(), 1_000_000);
     assert_eq!(predict::vault_balance(&predict), 1_000_000);
 
+    destroy(shares);
     destroy(predict);
 }
 
@@ -103,14 +120,14 @@ fun supply_second_deposit_proportional_shares() {
     let ctx = &mut tx_context::dummy();
     let mut predict = create_predict(ctx);
 
-    let coin1 = coin::mint_for_testing<SUI>(1_000_000, ctx);
-    predict.supply(coin1, ctx);
+    let shares1 = supply_amount(&mut predict, 1_000_000, ctx);
 
-    let coin2 = coin::mint_for_testing<SUI>(500_000, ctx);
-    let shares2 = predict.supply(coin2, ctx);
-    assert_eq!(shares2, 500_000);
+    let shares2 = supply_amount(&mut predict, 500_000, ctx);
+    assert_eq!(shares2.value(), 500_000);
     assert_eq!(predict::vault_balance(&predict), 1_500_000);
 
+    destroy(shares1);
+    destroy(shares2);
     destroy(predict);
 }
 
@@ -121,7 +138,7 @@ fun supply_aborts_when_vault_is_underwater() {
     let mut predict = create_predict(ctx);
 
     let initial_liq = coin::mint_for_testing<SUI>(10 * constants::float_scaling!(), ctx);
-    predict.supply(initial_liq, ctx);
+    let lp = supply_coin(&mut predict, initial_liq, ctx);
 
     let oracle = oracle_helper::create_settled_oracle(200 * constants::float_scaling!(), ctx);
     let clock = clock::create_for_testing(ctx);
@@ -139,6 +156,7 @@ fun supply_aborts_when_vault_is_underwater() {
 
     let recapitalization = coin::mint_for_testing<SUI>(5 * constants::float_scaling!(), ctx);
     let _shares = predict.supply(recapitalization, ctx);
+    destroy(lp);
 
     abort
 }
@@ -150,13 +168,16 @@ fun withdraw_returns_correct_amount() {
     let mut predict = create_predict(scenario.ctx());
 
     let coin = coin::mint_for_testing<SUI>(1_000_000, scenario.ctx());
-    predict.supply(coin, scenario.ctx());
+    seed_liquidity(&mut predict, coin, scenario.ctx());
 
     scenario.next_tx(ALICE);
-    let withdrawn = predict.withdraw(500_000, scenario.ctx());
+    let mut lp = scenario.take_from_sender<coin::Coin<PLP>>();
+    let withdraw_lp = lp.split(500_000, scenario.ctx());
+    let withdrawn = predict.withdraw(withdraw_lp, scenario.ctx());
     assert_eq!(withdrawn.value(), 500_000);
     assert_eq!(predict::vault_balance(&predict), 500_000);
 
+    transfer::public_transfer(lp, ALICE);
     destroy(withdrawn);
     destroy(predict);
     scenario.end();
@@ -169,10 +190,11 @@ fun withdraw_all_returns_full_amount() {
     let mut predict = create_predict(scenario.ctx());
 
     let coin = coin::mint_for_testing<SUI>(1_000_000, scenario.ctx());
-    predict.supply(coin, scenario.ctx());
+    seed_liquidity(&mut predict, coin, scenario.ctx());
 
     scenario.next_tx(ALICE);
-    let withdrawn = predict.withdraw_all(scenario.ctx());
+    let lp = scenario.take_from_sender<coin::Coin<PLP>>();
+    let withdrawn = predict.withdraw(lp, scenario.ctx());
     assert_eq!(withdrawn.value(), 1_000_000);
     assert_eq!(predict::vault_balance(&predict), 0);
 
@@ -181,14 +203,14 @@ fun withdraw_all_returns_full_amount() {
     scenario.end();
 }
 
-#[test, expected_failure(abort_code = predict::EWithdrawExceedsAvailable)]
-/// Settled winning exposure reserves max payout, blocking withdrawals above free capital.
-fun withdraw_blocked_by_max_payout() {
+#[test]
+/// Settled winning exposure reduces LP redemption value to the remaining free capital.
+fun withdraw_partial_with_settled_winning_exposure_returns_pro_rata_free_capital() {
     let mut scenario = test_scenario::begin(ALICE);
     let mut predict = create_predict(scenario.ctx());
 
     let coin = coin::mint_for_testing<SUI>(100 * constants::float_scaling!(), scenario.ctx());
-    predict.supply(coin, scenario.ctx());
+    seed_liquidity(&mut predict, coin, scenario.ctx());
 
     let oracle = oracle_helper::create_settled_oracle(
         200 * constants::float_scaling!(),
@@ -207,19 +229,27 @@ fun withdraw_blocked_by_max_payout() {
         );
 
     scenario.next_tx(ALICE);
-    let _coin = predict.withdraw(30 * constants::float_scaling!(), scenario.ctx());
+    let mut lp = scenario.take_from_sender<coin::Coin<PLP>>();
+    let withdraw_lp = lp.split(30 * constants::float_scaling!(), scenario.ctx());
+    let withdrawn = predict.withdraw(withdraw_lp, scenario.ctx());
+    assert_eq!(withdrawn.value(), 6 * constants::float_scaling!());
 
-    abort
+    transfer::public_transfer(lp, ALICE);
+    destroy(withdrawn);
+    destroy(predict);
+    destroy(oracle);
+    destroy(clock);
+    scenario.end();
 }
 
 #[test]
-/// Withdrawing exactly the unencumbered balance should succeed even with reserved payout.
+/// Redeeming all LP after settlement should return only the unencumbered vault value.
 fun withdraw_up_to_available_succeeds() {
     let mut scenario = test_scenario::begin(ALICE);
     let mut predict = create_predict(scenario.ctx());
 
     let coin = coin::mint_for_testing<SUI>(100 * constants::float_scaling!(), scenario.ctx());
-    predict.supply(coin, scenario.ctx());
+    seed_liquidity(&mut predict, coin, scenario.ctx());
 
     let oracle = oracle_helper::create_settled_oracle(
         200 * constants::float_scaling!(),
@@ -238,7 +268,8 @@ fun withdraw_up_to_available_succeeds() {
         );
 
     scenario.next_tx(ALICE);
-    let withdrawn = predict.withdraw(20 * constants::float_scaling!(), scenario.ctx());
+    let lp = scenario.take_from_sender<coin::Coin<PLP>>();
+    let withdrawn = predict.withdraw(lp, scenario.ctx());
     assert_eq!(withdrawn.value(), 20 * constants::float_scaling!());
 
     destroy(withdrawn);
@@ -255,7 +286,7 @@ fun withdraw_all_blocked_by_live_max_payout() {
     let mut predict = create_predict(scenario.ctx());
 
     let coin = coin::mint_for_testing<SUI>(100 * constants::float_scaling!(), scenario.ctx());
-    predict.supply(coin, scenario.ctx());
+    seed_liquidity(&mut predict, coin, scenario.ctx());
 
     let oracle = create_live_oracle(scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
@@ -271,7 +302,8 @@ fun withdraw_all_blocked_by_live_max_payout() {
         );
 
     scenario.next_tx(ALICE);
-    let _coin = predict.withdraw_all(scenario.ctx());
+    let lp = scenario.take_from_sender<coin::Coin<PLP>>();
+    let _coin = predict.withdraw(lp, scenario.ctx());
 
     abort
 }
@@ -283,7 +315,7 @@ fun mint_live_oracle_updates_manager_and_vault_state() {
     let mut predict = create_predict(scenario.ctx());
 
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
-    predict.supply(liq, scenario.ctx());
+    seed_liquidity(&mut predict, liq, scenario.ctx());
 
     let oracle = create_live_oracle(scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
@@ -335,7 +367,7 @@ fun mint_aborts_on_wrong_oracle_id() {
     let mut predict = create_predict(scenario.ctx());
 
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
-    predict.supply(liq, scenario.ctx());
+    seed_liquidity(&mut predict, liq, scenario.ctx());
 
     let oracle = create_live_oracle(scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
@@ -368,7 +400,7 @@ fun mint_aborts_on_wrong_expiry() {
     let mut predict = create_predict(scenario.ctx());
 
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
-    predict.supply(liq, scenario.ctx());
+    seed_liquidity(&mut predict, liq, scenario.ctx());
 
     let oracle = create_live_oracle(scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
@@ -401,7 +433,7 @@ fun repeated_mint_same_market_increases_ask_and_doubles_max_payout() {
     let mut predict = create_predict(scenario.ctx());
 
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
-    predict.supply(liq, scenario.ctx());
+    seed_liquidity(&mut predict, liq, scenario.ctx());
 
     let oracle = create_live_oracle(scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
@@ -461,7 +493,7 @@ fun partial_redeem_reduces_liability_and_improves_payout() {
     let mut predict = create_predict(scenario.ctx());
 
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
-    predict.supply(liq, scenario.ctx());
+    seed_liquidity(&mut predict, liq, scenario.ctx());
 
     let oracle = create_live_oracle(scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
@@ -527,7 +559,7 @@ fun redeem_aborts_on_wrong_expiry() {
     let mut predict = create_predict(scenario.ctx());
 
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
-    predict.supply(liq, scenario.ctx());
+    seed_liquidity(&mut predict, liq, scenario.ctx());
 
     let oracle = create_live_oracle(scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
@@ -573,7 +605,7 @@ fun mint_aborts_when_total_exposure_limit_exceeded() {
     let mut predict = create_predict(scenario.ctx());
 
     let liq = coin::mint_for_testing<SUI>(10 * constants::float_scaling!(), scenario.ctx());
-    predict.supply(liq, scenario.ctx());
+    seed_liquidity(&mut predict, liq, scenario.ctx());
     predict.set_max_total_exposure_pct(1);
 
     let oracle = create_live_oracle(scenario.ctx());
@@ -605,7 +637,7 @@ fun round_trip_trade_loses_spread() {
 
     let lp_deposit = 1_000 * constants::float_scaling!();
     let liq = coin::mint_for_testing<SUI>(lp_deposit, scenario.ctx());
-    predict.supply(liq, scenario.ctx());
+    seed_liquidity(&mut predict, liq, scenario.ctx());
 
     let oracle = create_live_oracle(scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
@@ -653,7 +685,7 @@ fun get_trade_amounts_settled_has_no_spread() {
     let mut predict = create_predict(ctx);
 
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), ctx);
-    predict.supply(liq, ctx);
+    let lp = supply_coin(&mut predict, liq, ctx);
 
     let mut oracle = create_live_oracle(ctx);
     let clock = clock::create_for_testing(ctx);
@@ -670,6 +702,7 @@ fun get_trade_amounts_settled_has_no_spread() {
     assert_eq!(mint_cost, qty);
     assert_eq!(redeem_payout, qty);
 
+    destroy(lp);
     destroy(predict);
     destroy(oracle);
     destroy(clock);
@@ -682,7 +715,7 @@ fun removing_one_leg_keeps_other_leg_exposure_active() {
     let mut predict = create_predict(scenario.ctx());
 
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
-    predict.supply(liq, scenario.ctx());
+    seed_liquidity(&mut predict, liq, scenario.ctx());
 
     let oracle = create_live_oracle(scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
@@ -756,7 +789,7 @@ fun redeem_settled_up_wins_full_payout() {
     let mut predict = create_predict(scenario.ctx());
 
     let liq = coin::mint_for_testing<SUI>(1000 * constants::float_scaling!(), scenario.ctx());
-    predict.supply(liq, scenario.ctx());
+    seed_liquidity(&mut predict, liq, scenario.ctx());
 
     let mut oracle = create_live_oracle(scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
@@ -813,7 +846,7 @@ fun redeem_settled_up_loses_zero_payout() {
     let mut predict = create_predict(scenario.ctx());
 
     let liq = coin::mint_for_testing<SUI>(1000 * constants::float_scaling!(), scenario.ctx());
-    predict.supply(liq, scenario.ctx());
+    seed_liquidity(&mut predict, liq, scenario.ctx());
 
     let mut oracle = create_live_oracle(scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
@@ -867,7 +900,7 @@ fun redeem_settled_oracle_ignores_staleness() {
     let mut predict = create_predict(scenario.ctx());
 
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
-    predict.supply(liq, scenario.ctx());
+    seed_liquidity(&mut predict, liq, scenario.ctx());
 
     let mut oracle = create_live_oracle(scenario.ctx());
     let mut clock = clock::create_for_testing(scenario.ctx());
@@ -913,7 +946,7 @@ fun mint_when_paused_aborts() {
     let mut predict = create_predict(scenario.ctx());
 
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
-    predict.supply(liq, scenario.ctx());
+    seed_liquidity(&mut predict, liq, scenario.ctx());
     predict.set_trading_paused(true);
 
     let oracle = create_live_oracle(scenario.ctx());
@@ -944,7 +977,7 @@ fun mint_against_stale_oracle_aborts() {
     let mut predict = create_predict(scenario.ctx());
 
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
-    predict.supply(liq, scenario.ctx());
+    seed_liquidity(&mut predict, liq, scenario.ctx());
 
     let (oracle, mut clock) = oracle_helper::create_simple_oracle(
         100 * constants::float_scaling!(),
@@ -980,7 +1013,7 @@ fun mint_aborts_if_not_owner() {
     let mut predict = create_predict(scenario.ctx());
 
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
-    predict.supply(liq, scenario.ctx());
+    seed_liquidity(&mut predict, liq, scenario.ctx());
 
     let oracle = create_live_oracle(scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
@@ -1010,7 +1043,7 @@ fun redeem_against_stale_live_oracle_aborts() {
     let mut predict = create_predict(scenario.ctx());
 
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
-    predict.supply(liq, scenario.ctx());
+    seed_liquidity(&mut predict, liq, scenario.ctx());
 
     let oracle = create_live_oracle(scenario.ctx());
     let mut clock = clock::create_for_testing(scenario.ctx());
@@ -1055,7 +1088,7 @@ fun redeem_aborts_if_not_owner() {
     let mut predict = create_predict(scenario.ctx());
 
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
-    predict.supply(liq, scenario.ctx());
+    seed_liquidity(&mut predict, liq, scenario.ctx());
 
     let oracle = create_live_oracle(scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
@@ -1313,32 +1346,34 @@ fun collateralized_mint_not_owner_aborts() {
     }
 }
 
-#[test, expected_failure(abort_code = supply_manager::EZeroAmount)]
-/// Public withdraw should propagate zero-amount rejection from the supply manager.
+#[test, expected_failure(abort_code = predict::EZeroAmount)]
+/// Public withdraw should reject a zero-value LP coin.
 fun withdraw_zero_amount_aborts_via_predict() {
     let mut scenario = test_scenario::begin(ALICE);
     let mut predict = create_predict(scenario.ctx());
 
     let coin = coin::mint_for_testing<SUI>(1_000_000, scenario.ctx());
-    predict.supply(coin, scenario.ctx());
+    seed_liquidity(&mut predict, coin, scenario.ctx());
 
     scenario.next_tx(ALICE);
-    let _withdrawn = predict.withdraw(0, scenario.ctx());
+    let zero_coin = coin::zero<PLP>(scenario.ctx());
+    let _withdrawn = predict.withdraw(zero_coin, scenario.ctx());
 
     abort
 }
 
-#[test, expected_failure(abort_code = supply_manager::EZeroAmount)]
-/// Public withdraw_all should abort when the caller owns no shares.
-fun withdraw_all_without_shares_aborts_via_predict() {
+#[test, expected_failure(abort_code = predict::EZeroAmount)]
+/// A recipient with no LP shares should still be rejected when trying to withdraw a zero LP coin.
+fun withdraw_without_shares_aborts_via_predict() {
     let mut scenario = test_scenario::begin(ALICE);
     let mut predict = create_predict(scenario.ctx());
 
     let coin = coin::mint_for_testing<SUI>(1_000_000, scenario.ctx());
-    predict.supply(coin, scenario.ctx());
+    seed_liquidity(&mut predict, coin, scenario.ctx());
 
     scenario.next_tx(BOB);
-    let _withdrawn = predict.withdraw_all(scenario.ctx());
+    let zero_coin = coin::zero<PLP>(scenario.ctx());
+    let _withdrawn = predict.withdraw(zero_coin, scenario.ctx());
 
     abort
 }
@@ -1591,7 +1626,7 @@ fun mint_against_settled_oracle_aborts() {
     let mut predict = create_predict(scenario.ctx());
 
     let liq = coin::mint_for_testing<SUI>(1000 * constants::float_scaling!(), scenario.ctx());
-    predict.supply(liq, scenario.ctx());
+    seed_liquidity(&mut predict, liq, scenario.ctx());
 
     let mut oracle = create_live_oracle(scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
@@ -1623,7 +1658,7 @@ fun mint_expired_but_unsettled_oracle_aborts() {
     let mut predict = create_predict(scenario.ctx());
 
     let liq = coin::mint_for_testing<SUI>(1000 * constants::float_scaling!(), scenario.ctx());
-    predict.supply(liq, scenario.ctx());
+    seed_liquidity(&mut predict, liq, scenario.ctx());
 
     let oracle = create_live_oracle(scenario.ctx());
     let mut clock = clock::create_for_testing(scenario.ctx());
@@ -1746,7 +1781,7 @@ fun redeem_zero_quantity_aborts() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
     let liq = coin::mint_for_testing<SUI>(1_000_000 * constants::float_scaling!(), scenario.ctx());
-    predict.supply(liq, scenario.ctx());
+    seed_liquidity(&mut predict, liq, scenario.ctx());
 
     let oracle = create_live_oracle(scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
@@ -1860,7 +1895,7 @@ fun run_predict_scenario(idx: u64) {
     let (oracle, clock) = oracle_helper::create_from_scenario(oracle_scenario, ctx);
     let mut predict = predict::create_test_predict<SUI>(ctx);
     let liq = coin::mint_for_testing<SUI>(1_000_000 * constants::float_scaling!(), ctx);
-    predict.supply(liq, ctx);
+    let lp = supply_coin(&mut predict, liq, ctx);
 
     // Generated predict fixtures model fresh-state previews with zero utilization.
     scenario.trade_cases().do_ref!(|tc| {
@@ -1882,6 +1917,7 @@ fun run_predict_scenario(idx: u64) {
         precision::assert_approx(redeem_payout, tc.expected_redeem_payout());
     });
 
+    destroy(lp);
     destroy(predict);
     destroy(oracle);
     destroy(clock);
