@@ -51,6 +51,7 @@ async fn health() -> &'static str {
 #[derive(Deserialize)]
 struct BenchmarkRequest {
     sha: String,
+    max_rows: Option<u32>,
 }
 
 #[derive(Serialize)]
@@ -74,7 +75,7 @@ async fn create_benchmark(
     State(state): State<Arc<AppState>>,
     Json(req): Json<BenchmarkRequest>,
 ) -> ApiResult<BenchmarkResponse> {
-    let (run_id, job) = make_job(req.sha.clone());
+    let (run_id, job) = make_job(req.sha.clone(), req.max_rows);
 
     let info = RunInfo {
         run_id: run_id.clone(),
@@ -225,7 +226,7 @@ async fn receive_failure(
 
 // -- Helpers --
 
-fn make_job(sha: String) -> (String, Job) {
+fn make_job(sha: String, max_rows: Option<u32>) -> (String, Job) {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -235,6 +236,7 @@ fn make_job(sha: String) -> (String, Job) {
     let job = Job {
         run_id: run_id.clone(),
         sha,
+        max_rows,
     };
     (run_id, job)
 }

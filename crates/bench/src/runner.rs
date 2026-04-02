@@ -16,14 +16,19 @@ use tracing::info;
 
 /// Create a k8s Job to run the simulation. Fire-and-forget — the job calls
 /// back to `POST /api/v1/benchmark/:run_id/results` when done.
-pub async fn create_sim_job(config: &Config, run_id: &str, sha: &str) -> Result<String> {
+pub async fn create_sim_job(
+    config: &Config,
+    run_id: &str,
+    sha: &str,
+    max_rows: Option<u32>,
+) -> Result<String> {
     let client = Client::try_default()
         .await
         .context("connect to k8s cluster")?;
     let jobs: Api<Job> = Api::namespaced(client, &config.k8s_namespace);
 
     let job_name = format!("predict-sim-{}", run_id);
-    let job = build_job_spec(&job_name, config, run_id, sha);
+    let job = build_job_spec(&job_name, config, run_id, sha, max_rows);
 
     info!(job = %job_name, sha, run_id, "creating k8s benchmark job");
     jobs.create(&PostParams::default(), &job)
@@ -33,7 +38,13 @@ pub async fn create_sim_job(config: &Config, run_id: &str, sha: &str) -> Result<
     Ok(job_name)
 }
 
-fn build_job_spec(job_name: &str, config: &Config, run_id: &str, sha: &str) -> Job {
+fn build_job_spec(
+    job_name: &str,
+    config: &Config,
+    run_id: &str,
+    sha: &str,
+    max_rows: Option<u32>,
+) -> Job {
     let mut labels = BTreeMap::new();
     labels.insert("app".to_string(), "predict-sim".to_string());
     labels.insert("sha".to_string(), sha[..8.min(sha.len())].to_string());
@@ -94,43 +105,43 @@ git checkout {sha}"#,
 
     // Main container: uses the image's entrypoint which runs the sim
     // and POSTs results to the callback URL.
-    let main_container = Container {
-        name: "predict-sim".to_string(),
-        image: Some(config.sim_image.clone()),
-        env: Some(vec![
-            EnvVar {
-                name: "SIM_SHA".to_string(),
-                value: Some(sha.to_string()),
-                ..Default::default()
-            },
-            EnvVar {
-                name: "CALLBACK_BASE".to_string(),
-                value: Some(callback_base),
-                ..Default::default()
-            },
-            EnvVar {
-                name: "SIM_MAX_ROWS".to_string(),
-                value: Some(
-                    config
-                        .sim_max_rows
-                        .map(|n| n.to_string())
-                        .unwrap_or_default(),
-                ),
-                ..Default::default()
-            },
-            EnvVar {
-                name: "BENCH_API_TOKEN".to_string(),
-                value_from: Some(EnvVarSource {
-                    secret_key_ref: Some(SecretKeySelector {
-                        name: "bench-secrets".to_string(),
-                        key: "api-tokens".to_string(),
-                        ..Default::default()
-                    }),
+    let mut env_vars = vec![
+        EnvVar {
+            name: "SIM_SHA".to_string(),
+            value: Some(sha.to_string()),
+            ..Default::default()
+        },
+        EnvVar {
+            name: "CALLBACK_BASE".to_string(),
+            value: Some(callback_base),
+            ..Default::default()
+        },
+        EnvVar {
+            name: "BENCH_API_TOKEN".to_string(),
+            value_from: Some(EnvVarSource {
+                secret_key_ref: Some(SecretKeySelector {
+                    name: "bench-secrets".to_string(),
+                    key: "api-tokens".to_string(),
                     ..Default::default()
                 }),
                 ..Default::default()
-            },
-        ]),
+            }),
+            ..Default::default()
+        },
+    ];
+
+    if let Some(n) = max_rows {
+        env_vars.push(EnvVar {
+            name: "SIM_MAX_ROWS".to_string(),
+            value: Some(n.to_string()),
+            ..Default::default()
+        });
+    }
+
+    let main_container = Container {
+        name: "predict-sim".to_string(),
+        image: Some(config.sim_image.clone()),
+        env: Some(env_vars),
         volume_mounts: Some(vec![VolumeMount {
             name: "workspace".to_string(),
             mount_path: "/workspace".to_string(),

@@ -13,6 +13,7 @@ use tracing::{error, info};
 pub struct Job {
     pub run_id: String,
     pub sha: String,
+    pub max_rows: Option<u32>,
 }
 
 pub fn spawn_worker(
@@ -29,7 +30,7 @@ pub fn spawn_worker(
             info!(run_id = %job.run_id, sha = %job.sha, "creating benchmark job");
             let _ = runs.update_status(&job.run_id, "creating").await;
 
-            match create_sim_job(&config, &job.run_id, &job.sha).await {
+            match create_sim_job(&config, &job.run_id, &job.sha, job.max_rows).await {
                 Ok(job_name) => {
                     info!(
                         run_id = %job.run_id,
