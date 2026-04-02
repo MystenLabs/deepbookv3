@@ -14,6 +14,7 @@ use deepbook_indexer::handlers::pool_created_handler::PoolCreatedHandler;
 use deepbook_indexer::handlers::pool_price_handler::PoolPriceHandler;
 use deepbook_indexer::handlers::proposals_handler::ProposalsHandler;
 use deepbook_indexer::handlers::rebates_handler::RebatesHandler;
+use deepbook_indexer::handlers::rebates_v2_handler::RebatesV2Handler;
 use deepbook_indexer::handlers::referral_claimed_handler::ReferralClaimedHandler;
 use deepbook_indexer::handlers::referral_fee_event_handler::ReferralFeeEventHandler;
 use deepbook_indexer::handlers::stakes_handler::StakesHandler;
@@ -286,6 +287,9 @@ async fn main() -> Result<(), anyhow::Error> {
                     .await?;
                 indexer
                     .concurrent_pipeline(RebatesHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(RebatesV2Handler::new(env), Default::default())
                     .await?;
                 indexer
                     .concurrent_pipeline(ReferralFeeEventHandler::new(env), Default::default())
