@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - 'release/**'
+  pull_request:
   workflow_dispatch:
     inputs:
       sha:
@@ -22,6 +23,11 @@ env:
 jobs:
   trigger-benchmark:
     runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'push' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event.pull_request.author_association == 'MEMBER' ||
+      github.event.pull_request.author_association == 'COLLABORATOR'
 
     steps:
       - name: Trigger benchmark
