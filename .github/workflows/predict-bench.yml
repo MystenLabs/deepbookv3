@@ -62,11 +62,18 @@ jobs:
           echo "Waiting for benchmark $RUN_ID to complete..."
 
           while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
-            RESPONSE=$(curl -s \
+            HTTP_CODE=$(curl -s -o /tmp/poll_response.json -w "%{http_code}" \
               -H "Authorization: Bearer ${{ secrets.PREDICT_BENCH_API_TOKEN }}" \
               "${BENCH_API_URL}/api/v1/benchmark/${RUN_ID}")
 
-            STATUS=$(echo "$RESPONSE" | jq -r '.status')
+            RESPONSE=$(cat /tmp/poll_response.json)
+
+            if [ "$HTTP_CODE" = "404" ]; then
+              echo "::error::Run $RUN_ID not found (pod may have restarted)"
+              exit 1
+            fi
+
+            STATUS=$(echo "$RESPONSE" | jq -r '.status // empty')
             echo "[${ELAPSED}s] Status: $STATUS"
 
             case "$STATUS" in
@@ -79,9 +86,13 @@ jobs:
                 echo "::error::Benchmark failed: $ERROR"
                 exit 1
                 ;;
-              *)
+              queued|running)
                 sleep "$POLL_INTERVAL"
                 ELAPSED=$((ELAPSED + POLL_INTERVAL))
+                ;;
+              *)
+                echo "::error::Unexpected status: $STATUS (HTTP $HTTP_CODE)"
+                exit 1
                 ;;
             esac
           done
