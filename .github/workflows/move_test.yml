@@ -34,6 +34,7 @@ jobs:
         run: |
           curl -fsSL "https://github.com/MystenLabs/sui/releases/download/${{ steps.sui-version.outputs.version }}/sui-${{ steps.sui-version.outputs.version }}-ubuntu-x86_64.tgz" \
             | sudo tar -xz -C /usr/local/bin
+          sui --version
 
       - name: Run Move tests
         run: |
