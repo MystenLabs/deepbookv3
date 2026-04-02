@@ -1,0 +1,42 @@
+---
+source: crates/indexer/tests/snapshot_tests.rs
+expression: rows
+---
+[
+  {
+    "event_digest": "CybcyE2y7KDyakrBNY2FaPd74KCtPjyDYJhGv9tpSLSS0",
+    "digest": "CybcyE2y7KDyakrBNY2FaPd74KCtPjyDYJhGv9tpSLSS",
+    "sender": "0x0368c18f11deabfd1a5e0807d25069d435639a767e73c9125737aceec996b509",
+    "checkpoint": "243618560",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1770742095217",
+    "package": "0xcb4fc91921494ebe6979e201fdb2d67388ffdf6a1b1eb4952526259074de8d0b",
+    "pool_id": "0xe05dafb5133bcffb8d59f4e12465dc0e9faeaa05e3e342a08fe135800e3e4407",
+    "price": "932337",
+    "onchain_timestamp": "1770742095139"
+  },
+  {
+    "event_digest": "CybcyE2y7KDyakrBNY2FaPd74KCtPjyDYJhGv9tpSLSS1",
+    "digest": "CybcyE2y7KDyakrBNY2FaPd74KCtPjyDYJhGv9tpSLSS",
+    "sender": "0x0368c18f11deabfd1a5e0807d25069d435639a767e73c9125737aceec996b509",
+    "checkpoint": "243618560",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1770742095217",
+    "package": "0xcb4fc91921494ebe6979e201fdb2d67388ffdf6a1b1eb4952526259074de8d0b",
+    "pool_id": "0xf948981b806057580f91622417534f491da5f61aeaf33d0ed8e69fd5691c95ce",
+    "price": "23627479",
+    "onchain_timestamp": "1770742095139"
+  },
+  {
+    "event_digest": "CybcyE2y7KDyakrBNY2FaPd74KCtPjyDYJhGv9tpSLSS2",
+    "digest": "CybcyE2y7KDyakrBNY2FaPd74KCtPjyDYJhGv9tpSLSS",
+    "sender": "0x0368c18f11deabfd1a5e0807d25069d435639a767e73c9125737aceec996b509",
+    "checkpoint": "243618560",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1770742095217",
+    "package": "0xcb4fc91921494ebe6979e201fdb2d67388ffdf6a1b1eb4952526259074de8d0b",
+    "pool_id": "0x56a1c985c1f1123181d6b881714793689321ba24301b3585eec427436eb1c76d",
+    "price": "80230",
+    "onchain_timestamp": "1770742095139"
+  }
+]
