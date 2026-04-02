@@ -7,6 +7,7 @@
 /// - Coordinates between Vault (state), Oracle (data), and config
 /// - Exposes public functions for trading
 /// - Handles pricing (spread calculation)
+/// - Manages LP token (PLP) minting and burning for vault supply/withdraw
 module deepbook_predict::predict;
 
 use deepbook::math;
@@ -15,14 +16,14 @@ use deepbook_predict::{
     market_key::MarketKey,
     math as predict_math,
     oracle::{Self, OracleSVI},
+    math::mul_div_round_down,
     plp::PLP,
     predict_manager::{Self, PredictManager},
     pricing_config::{Self, PricingConfig},
     risk_config::{Self, RiskConfig},
-    supply_manager::{Self, SupplyManager},
     vault::{Self, Vault}
 };
-use sui::{clock::Clock, coin::{Coin, TreasuryCap}, event};
+use sui::{clock::Clock, coin::{Self, Coin, TreasuryCap}, event};
 
 // === Errors ===
 const ETradingPaused: u64 = 0;
@@ -33,6 +34,9 @@ const EWithdrawExceedsAvailable: u64 = 4;
 const EOracleExpired: u64 = 5;
 const EZeroQuantity: u64 = 6;
 const EOracleInactive: u64 = 7;
+const EZeroAmount: u64 = 8;
+const EZeroVaultValue: u64 = 9;
+const EZeroSharesMinted: u64 = 10;
 
 // === Events ===
 
@@ -135,8 +139,8 @@ public struct Predict<phantom Quote> has key {
     id: UID,
     /// Vault holding USDC and tracking exposure
     vault: Vault<Quote>,
-    /// Per-user supply share accounting
-    supply_manager: SupplyManager,
+    /// Treasury cap for minting/burning PLP tokens
+    treasury_cap: TreasuryCap<PLP>,
     /// Pricing configuration (admin-controlled)
     pricing_config: PricingConfig,
     /// Risk limits (admin-controlled)
@@ -350,22 +354,35 @@ public fun redeem_collateralized<Quote>(
 }
 
 /// Supply USDC into the vault. Returns LP tokens representing shares.
+/// First depositor gets shares 1:1. Subsequent depositors get shares
+/// proportional to their deposit relative to current vault value.
 public fun supply<Quote>(
     predict: &mut Predict<Quote>,
     coin: Coin<Quote>,
     ctx: &mut TxContext,
 ): Coin<PLP> {
     let amount = coin.value();
+    assert!(amount > 0, EZeroAmount);
+
     let vault_value = predict.vault.vault_value();
     predict.vault.accept_payment(coin.into_balance());
-    let lp_coin = predict.supply_manager.supply(amount, vault_value, ctx);
+
+    let total = predict.treasury_cap.total_supply();
+    let shares = if (total == 0) {
+        amount
+    } else {
+        assert!(vault_value > 0, EZeroVaultValue);
+        mul_div_round_down(amount, total, vault_value)
+    };
+    assert!(shares > 0, EZeroSharesMinted);
+
     event::emit(Supplied {
         predict_id: object::id(predict),
         supplier: ctx.sender(),
         amount,
-        shares_minted: lp_coin.value(),
+        shares_minted: shares,
     });
-    lp_coin
+    coin::mint(&mut predict.treasury_cap, shares, ctx)
 }
 
 /// Withdraw USDC from the vault by providing LP tokens.
@@ -377,12 +394,13 @@ public fun withdraw<Quote>(
 ): Coin<Quote> {
     let vault_value = predict.vault.vault_value();
     let shares_burned = lp_coin.value();
-    let amount = predict.supply_manager.shares_to_amount(shares_burned, vault_value);
+    assert!(shares_burned > 0, EZeroAmount);
+    let amount = predict.shares_to_amount(shares_burned, vault_value);
     let balance = predict.vault.balance();
     let max_payout = predict.vault.total_max_payout();
     let available = if (balance > max_payout) { balance - max_payout } else { 0 };
     assert!(amount <= available, EWithdrawExceedsAvailable);
-    let amount = predict.supply_manager.withdraw(lp_coin, vault_value);
+    predict.treasury_cap.burn(lp_coin);
     event::emit(Withdrawn {
         predict_id: object::id(predict),
         withdrawer: ctx.sender(),
@@ -399,7 +417,7 @@ public(package) fun create<Quote>(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxCo
     let predict = Predict<Quote> {
         id: object::new(ctx),
         vault: vault::new<Quote>(ctx),
-        supply_manager: supply_manager::new(treasury_cap),
+        treasury_cap,
         pricing_config: pricing_config::new(),
         risk_config: risk_config::new(),
         trading_paused: false,
@@ -477,11 +495,11 @@ public(package) fun set_max_total_exposure_pct<Quote>(predict: &mut Predict<Quot
 #[test_only]
 /// Create a Predict object for testing without sharing it.
 public(package) fun create_test_predict<Quote>(ctx: &mut TxContext): Predict<Quote> {
-    let treasury_cap = sui::coin::create_treasury_cap_for_testing<PLP>(ctx);
+    let treasury_cap = coin::create_treasury_cap_for_testing<PLP>(ctx);
     Predict<Quote> {
         id: object::new(ctx),
         vault: vault::new<Quote>(ctx),
-        supply_manager: supply_manager::new(treasury_cap),
+        treasury_cap,
         pricing_config: pricing_config::new(),
         risk_config: risk_config::new(),
         trading_paused: false,
@@ -499,6 +517,14 @@ public(package) fun vault_balance<Quote>(predict: &Predict<Quote>): u64 {
 }
 
 // === Private Functions ===
+
+/// Returns the USDC value of `shares` at the given vault value.
+fun shares_to_amount<Quote>(predict: &Predict<Quote>, shares: u64, vault_value: u64): u64 {
+    let total = predict.treasury_cap.total_supply();
+    if (shares == 0 || total == 0) return 0;
+    if (total == shares) return vault_value;
+    mul_div_round_down(shares, vault_value, total)
+}
 
 fun emit_pricing_config_updated<Quote>(predict: &Predict<Quote>) {
     event::emit(PricingConfigUpdated {
