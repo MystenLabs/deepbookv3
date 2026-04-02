@@ -39,6 +39,7 @@ const env = loadEnv();
 export const PACKAGE_ID = requireEnv("PACKAGE_ID");
 export const REGISTRY_ID = requireEnv("REGISTRY_ID");
 export const ADMIN_CAP_ID = requireEnv("ADMIN_CAP_ID");
+export const PLP_TREASURY_CAP_ID = requireEnv("PLP_TREASURY_CAP_ID");
 export const DUSDC_PACKAGE_ID = requireEnv("DUSDC_PACKAGE_ID");
 export const TREASURY_CAP_ID = requireEnv("TREASURY_CAP_ID");
 export const ACTIVE_ADDRESS = requireEnv("ACTIVE_ADDRESS");

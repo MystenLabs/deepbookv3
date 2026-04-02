@@ -5,6 +5,7 @@ import {
   ADMIN_CAP_ID,
   DUSDC_PACKAGE_ID,
   PACKAGE_ID,
+  PLP_TREASURY_CAP_ID,
   REGISTRY_ID,
   RPC_URL,
   TREASURY_CAP_ID,
@@ -82,7 +83,7 @@ export function createPredictTx(): Transaction {
   tx.moveCall({
     target: target("registry", "create_predict"),
     typeArguments: [DUSDC_TYPE],
-    arguments: [tx.object(REGISTRY_ID), tx.object(ADMIN_CAP_ID)],
+    arguments: [tx.object(REGISTRY_ID), tx.object(ADMIN_CAP_ID), tx.object(PLP_TREASURY_CAP_ID)],
   });
   return tx;
 }
@@ -193,16 +194,17 @@ export function updateSviTx(
 
 export function supplyTx(predictId: string, amount: bigint): Transaction {
   const tx = new Transaction();
-  const [coin] = tx.moveCall({
+  const [dusdc] = tx.moveCall({
     target: "0x2::coin::mint",
     typeArguments: [DUSDC_TYPE],
     arguments: [tx.object(TREASURY_CAP_ID), tx.pure.u64(amount)],
   });
-  tx.moveCall({
+  const [plpCoin] = tx.moveCall({
     target: target("predict", "supply"),
     typeArguments: [DUSDC_TYPE],
-    arguments: [tx.object(predictId), coin],
+    arguments: [tx.object(predictId), dusdc],
   });
+  tx.transferObjects([plpCoin], tx.pure.address(address));
   return tx;
 }
 
