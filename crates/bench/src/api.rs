@@ -34,13 +34,9 @@ pub fn router(state: Arc<AppState>) -> Router {
             auth_middleware,
         ));
 
-    let public = Router::new()
-        .route("/api/v1/health", get(health));
+    let public = Router::new().route("/api/v1/health", get(health));
 
-    Router::new()
-        .merge(authed)
-        .merge(public)
-        .with_state(state)
+    Router::new().merge(authed).merge(public).with_state(state)
 }
 
 // -- Handlers --
@@ -120,8 +116,8 @@ async fn receive_results(
         (info.sha.clone(), info.started_at)
     };
 
-    let json = std::str::from_utf8(&body)
-        .map_err(|_| api_err(StatusCode::BAD_REQUEST, "invalid utf8"))?;
+    let json =
+        std::str::from_utf8(&body).map_err(|_| api_err(StatusCode::BAD_REQUEST, "invalid utf8"))?;
 
     let results = metrics::parse_results(json)
         .map_err(|e| api_err(StatusCode::BAD_REQUEST, format!("invalid results: {}", e)))?;
@@ -132,7 +128,10 @@ async fn receive_results(
     state.metrics.set_status(&sha, RunStatus::Success).await;
 
     if let Some(start) = started_at {
-        state.metrics.set_duration(&sha, start.elapsed().as_secs_f64()).await;
+        state
+            .metrics
+            .set_duration(&sha, start.elapsed().as_secs_f64())
+            .await;
     }
 
     {
@@ -195,12 +194,18 @@ async fn validate_sha(config: &Config, sha: &str) -> Result<(), String> {
         req = req.header("Authorization", format!("Bearer {}", token));
     }
 
-    let resp = req.send().await.map_err(|e| format!("GitHub API error: {}", e))?;
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("GitHub API error: {}", e))?;
 
     if resp.status() == reqwest::StatusCode::UNPROCESSABLE_ENTITY
         || resp.status() == reqwest::StatusCode::NOT_FOUND
     {
-        return Err(format!("SHA {} not found in repo {}", sha, config.github_repo));
+        return Err(format!(
+            "SHA {} not found in repo {}",
+            sha, config.github_repo
+        ));
     }
 
     if !resp.status().is_success() {

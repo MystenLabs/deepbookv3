@@ -52,9 +52,7 @@ async fn main() -> anyhow::Result<()> {
             let reg = metrics_registry.clone();
             async move {
                 let encoder = TextEncoder::new();
-                encoder
-                    .encode_to_string(&reg.gather())
-                    .unwrap_or_default()
+                encoder.encode_to_string(&reg.gather()).unwrap_or_default()
             }
         }),
     );

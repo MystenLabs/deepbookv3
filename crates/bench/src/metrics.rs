@@ -164,32 +164,52 @@ impl BenchMetrics {
         let labels = &[sha];
 
         if let Some(mint) = results.summary.by_action.get("mint") {
-            self.mint_gas_total.with_label_values(labels).set(mint.gas.avg);
-            self.mint_gas_min.with_label_values(labels).set(mint.gas.min);
-            self.mint_gas_max.with_label_values(labels).set(mint.gas.max);
-            self.mint_latency_ms.with_label_values(labels).set(mint.wall_ms.avg);
+            self.mint_gas_total
+                .with_label_values(labels)
+                .set(mint.gas.avg);
+            self.mint_gas_min
+                .with_label_values(labels)
+                .set(mint.gas.min);
+            self.mint_gas_max
+                .with_label_values(labels)
+                .set(mint.gas.max);
+            self.mint_latency_ms
+                .with_label_values(labels)
+                .set(mint.wall_ms.avg);
         }
 
         if !results.mints.is_empty() {
             let n = results.mints.len() as f64;
-            let avg_computation: f64 =
-                results.mints.iter().map(|m| m.computation_cost).sum::<f64>() / n;
+            let avg_computation: f64 = results
+                .mints
+                .iter()
+                .map(|m| m.computation_cost)
+                .sum::<f64>()
+                / n;
             let avg_storage: f64 = results
                 .mints
                 .iter()
                 .map(|m| m.storage_cost - m.storage_rebate)
                 .sum::<f64>()
                 / n;
-            self.mint_gas_computation.with_label_values(labels).set(avg_computation);
-            self.mint_gas_storage.with_label_values(labels).set(avg_storage);
+            self.mint_gas_computation
+                .with_label_values(labels)
+                .set(avg_computation);
+            self.mint_gas_storage
+                .with_label_values(labels)
+                .set(avg_storage);
         }
 
         if let Some(prices) = results.summary.by_action.get("update_prices") {
-            self.update_prices_gas.with_label_values(labels).set(prices.gas.avg);
+            self.update_prices_gas
+                .with_label_values(labels)
+                .set(prices.gas.avg);
         }
 
         if let Some(svi) = results.summary.by_action.get("update_svi") {
-            self.update_svi_gas.with_label_values(labels).set(svi.gas.avg);
+            self.update_svi_gas
+                .with_label_values(labels)
+                .set(svi.gas.avg);
         }
     }
 
@@ -201,9 +221,7 @@ impl BenchMetrics {
     }
 
     pub async fn set_duration(&self, sha: &str, seconds: f64) {
-        self.run_duration_s
-            .with_label_values(&[sha])
-            .set(seconds);
+        self.run_duration_s.with_label_values(&[sha]).set(seconds);
     }
 }
 
