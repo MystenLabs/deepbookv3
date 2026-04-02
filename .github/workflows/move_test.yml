@@ -60,8 +60,11 @@ jobs:
 
       - name: Install Sui CLI
         run: |
-          curl -fsSL "https://github.com/MystenLabs/sui/releases/download/${{ steps.sui-version.outputs.version }}/sui-${{ steps.sui-version.outputs.version }}-macos-arm64.tgz" \
-            | tar -xz -C /usr/local/bin
+          if [ "$(uname -m)" = "arm64" ]; then SUFFIX="macos-arm64"; else SUFFIX="macos-x86_64"; fi
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL "https://github.com/MystenLabs/sui/releases/download/${{ steps.sui-version.outputs.version }}/sui-${{ steps.sui-version.outputs.version }}-${SUFFIX}.tgz" \
+            | tar -xz -C "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run Move tests
         run: |
