@@ -2,33 +2,32 @@
 
 echo "=== predict-sim (localnet) ==="
 echo "SHA: ${SIM_SHA:-HEAD}"
-echo "Callback: ${CALLBACK_URL:-none}"
+echo "Callback: ${CALLBACK_BASE:-none}"
 
-# Report failure to the callback URL on exit.
-report_failure() {
-    local exit_code=$?
-    if [ "$exit_code" -eq 0 ]; then return; fi
-    if [ -n "${CALLBACK_URL:-}" ] && [ -n "${BENCH_API_TOKEN:-}" ]; then
-        # Replace /results with /failure on the callback URL.
-        FAILURE_URL="${CALLBACK_URL%/results}/failure"
+# Helper to POST to a callback endpoint.
+callback() {
+    local endpoint="$1"
+    shift
+    if [ -n "${CALLBACK_BASE:-}" ] && [ -n "${BENCH_API_TOKEN:-}" ]; then
         curl -s -X POST \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${BENCH_API_TOKEN}" \
-            -d "{\"error\": \"sim exited with code ${exit_code}\"}" \
-            "${FAILURE_URL}" || true
+            "$@" \
+            "${CALLBACK_BASE}/${endpoint}" || true
     fi
+}
+
+# Report failure on exit.
+report_failure() {
+    local exit_code=$?
+    if [ "$exit_code" -eq 0 ]; then return; fi
+    callback "failure" -d "{\"error\": \"sim exited with code ${exit_code}\"}"
 }
 trap report_failure EXIT
 
 set -euo pipefail
 
-# Report started to the callback URL.
-if [ -n "${CALLBACK_URL:-}" ] && [ -n "${BENCH_API_TOKEN:-}" ]; then
-    STARTED_URL="${CALLBACK_URL%/results}/started"
-    curl -s -X POST \
-        -H "Authorization: Bearer ${BENCH_API_TOKEN}" \
-        "${STARTED_URL}" || true
-fi
+callback "started"
 
 SIM_DIR="/workspace/repo/packages/predict/simulations"
 
@@ -51,15 +50,10 @@ RESULTS="${LATEST_RUN}/artifacts/results.json"
 echo "Results at ${RESULTS}"
 
 # Post results to callback URL if provided.
-if [ -n "${CALLBACK_URL:-}" ]; then
-    curl -sf -X POST \
-        -H "Content-Type: application/json" \
-        -H "Authorization: Bearer ${BENCH_API_TOKEN}" \
-        -d @"${RESULTS}" \
-        "${CALLBACK_URL}"
-    echo "Results posted to ${CALLBACK_URL}"
+if [ -n "${CALLBACK_BASE:-}" ]; then
+    callback "results" -d @"${RESULTS}"
+    echo "Results posted"
 else
-    # Fallback: copy to /output volume (for local docker run).
     if [ -d /output ]; then
         cp "${RESULTS}" /output/results.json
         echo "Results written to /output/results.json"

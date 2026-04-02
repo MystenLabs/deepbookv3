@@ -39,8 +39,8 @@ fn build_job_spec(job_name: &str, config: &Config, run_id: &str, sha: &str) -> J
     labels.insert("sha".to_string(), sha[..8.min(sha.len())].to_string());
     labels.insert("run-id".to_string(), run_id.to_string());
 
-    let callback_url = format!(
-        "http://predict-bench.{}.svc.cluster.local:{}/api/v1/benchmark/{}/results",
+    let callback_base = format!(
+        "http://predict-bench.{}.svc.cluster.local:{}/api/v1/benchmark/{}",
         config.k8s_namespace, config.api_port, run_id
     );
     let github_repo_url = format!("https://github.com/{}.git", config.github_repo);
@@ -104,8 +104,8 @@ git checkout {sha}"#,
                 ..Default::default()
             },
             EnvVar {
-                name: "CALLBACK_URL".to_string(),
-                value: Some(callback_url),
+                name: "CALLBACK_BASE".to_string(),
+                value: Some(callback_base),
                 ..Default::default()
             },
             EnvVar {
