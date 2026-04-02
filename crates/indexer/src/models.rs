@@ -259,7 +259,7 @@ pub mod deepbook {
         }
 
         #[derive(Debug, Clone, Serialize, Deserialize)]
-        pub struct Balances {
+        pub struct RebateBalances {
             pub base: u64,
             pub quote: u64,
             pub deep: u64,
@@ -270,7 +270,7 @@ pub mod deepbook {
             pub pool_id: ObjectID,
             pub balance_manager_id: ObjectID,
             pub epoch: u64,
-            pub claim_amount: Balances,
+            pub claim_amount: RebateBalances,
         }
 
         impl MoveStruct for RebateEventV2 {

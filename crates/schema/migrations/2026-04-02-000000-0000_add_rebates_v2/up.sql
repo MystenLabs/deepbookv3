@@ -1,5 +1,5 @@
 -- RebateEventV2 - tracks rebate claims with base/quote/deep breakdown
-CREATE TABLE rebates_v2 (
+CREATE TABLE IF NOT EXISTS rebates_v2 (
     event_digest                TEXT        PRIMARY KEY,
     digest                      TEXT        NOT NULL,
     sender                      TEXT        NOT NULL,
@@ -15,6 +15,6 @@ CREATE TABLE rebates_v2 (
     claim_deep                  BIGINT      NOT NULL
 );
 
-CREATE INDEX idx_rebates_v2_pool ON rebates_v2(pool_id);
-CREATE INDEX idx_rebates_v2_balance_manager ON rebates_v2(balance_manager_id);
-CREATE INDEX idx_rebates_v2_checkpoint ON rebates_v2(checkpoint);
+CREATE INDEX IF NOT EXISTS idx_rebates_v2_pool ON rebates_v2(pool_id);
+CREATE INDEX IF NOT EXISTS idx_rebates_v2_balance_manager ON rebates_v2(balance_manager_id);
+CREATE INDEX IF NOT EXISTS idx_rebates_v2_checkpoint ON rebates_v2(checkpoint);
