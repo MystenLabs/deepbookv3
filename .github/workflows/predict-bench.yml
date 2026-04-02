@@ -1,0 +1,41 @@
+name: Predict Gas Benchmark
+
+on:
+  push:
+    branches:
+      - main
+      - 'release/**'
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: 'Git SHA to benchmark (defaults to HEAD of triggering branch)'
+        required: false
+        type: string
+
+concurrency:
+  group: predict-bench-${{ github.sha }}
+  cancel-in-progress: true
+
+env:
+  BENCH_API_URL: https://deepbook-predict-bench.api.mystenlabs.com
+
+jobs:
+  trigger-benchmark:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Trigger benchmark
+        run: |
+          SHA="${{ inputs.sha || github.sha }}"
+          echo "Triggering benchmark for SHA: $SHA"
+
+          RESPONSE=$(curl -sf -X POST \
+            -H "Authorization: Bearer ${{ secrets.PREDICT_BENCH_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d "{\"sha\": \"$SHA\"}" \
+            "${BENCH_API_URL}/api/v1/benchmark")
+
+          echo "$RESPONSE"
+          RUN_ID=$(echo "$RESPONSE" | jq -r '.run_id')
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "Benchmark queued: $RUN_ID"
