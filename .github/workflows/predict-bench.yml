@@ -29,6 +29,7 @@ jobs:
 
     steps:
       - name: Trigger benchmark
+        id: trigger
         run: |
           SHA="${{ inputs.sha || github.sha }}"
           echo "Triggering benchmark for SHA: $SHA"
@@ -50,3 +51,39 @@ jobs:
           RUN_ID=$(echo "$RESPONSE" | jq -r '.run_id')
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
           echo "Benchmark queued: $RUN_ID"
+
+      - name: Wait for benchmark to complete
+        run: |
+          RUN_ID="${{ steps.trigger.outputs.run_id }}"
+          TIMEOUT=1800  # 30 minutes
+          POLL_INTERVAL=30
+          ELAPSED=0
+
+          echo "Waiting for benchmark $RUN_ID to complete..."
+
+          while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
+            RESPONSE=$(curl -s \
+              -H "Authorization: Bearer ${{ secrets.PREDICT_BENCH_API_TOKEN }}" \
+              "${BENCH_API_URL}/api/v1/benchmark/${RUN_ID}")
+
+            STATUS=$(echo "$RESPONSE" | jq -r '.status')
+            echo "[${ELAPSED}s] Status: $STATUS"
+
+            case "$STATUS" in
+              success)
+                echo "Benchmark completed successfully"
+                exit 0
+                ;;
+              failed)
+                echo "::error::Benchmark failed"
+                exit 1
+                ;;
+              *)
+                sleep "$POLL_INTERVAL"
+                ELAPSED=$((ELAPSED + POLL_INTERVAL))
+                ;;
+            esac
+          done
+
+          echo "::error::Benchmark timed out after ${TIMEOUT}s"
+          exit 1

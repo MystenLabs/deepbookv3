@@ -28,7 +28,9 @@ pub fn router(state: Arc<AppState>) -> Router {
     let authed = Router::new()
         .route("/api/v1/benchmark", post(create_benchmark))
         .route("/api/v1/benchmark/{run_id}", get(get_benchmark))
+        .route("/api/v1/benchmark/{run_id}/started", post(receive_started))
         .route("/api/v1/benchmark/{run_id}/results", post(receive_results))
+        .route("/api/v1/benchmark/{run_id}/failure", post(receive_failure))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
@@ -96,6 +98,28 @@ async fn get_benchmark(
         .ok_or(StatusCode::NOT_FOUND)
 }
 
+// -- Started Callback (called when sim job begins running) --
+
+async fn receive_started(
+    State(state): State<Arc<AppState>>,
+    Path(run_id): Path<String>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    let sha = {
+        let mut runs = state.runs.write().await;
+        let info = runs
+            .get_mut(&run_id)
+            .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "unknown run_id"))?;
+        info.status = "running".to_string();
+        info.started_at = Some(std::time::Instant::now());
+        info.sha.clone()
+    };
+
+    tracing::info!(run_id = %run_id, sha = %sha, "benchmark started");
+    state.metrics.set_status(&sha, RunStatus::Running).await;
+
+    Ok(StatusCode::OK)
+}
+
 // -- Results Callback (called by k8s sim jobs) --
 
 async fn receive_results(
@@ -133,6 +157,40 @@ async fn receive_results(
         let mut runs = state.runs.write().await;
         if let Some(info) = runs.get_mut(&run_id) {
             info.status = "success".to_string();
+        }
+    }
+
+    Ok(StatusCode::OK)
+}
+
+// -- Failure Callback (called by k8s sim jobs on error) --
+
+#[derive(Deserialize)]
+struct FailureReport {
+    error: String,
+}
+
+async fn receive_failure(
+    State(state): State<Arc<AppState>>,
+    Path(run_id): Path<String>,
+    Json(report): Json<FailureReport>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    let sha = {
+        let runs = state.runs.read().await;
+        let info = runs
+            .get(&run_id)
+            .ok_or_else(|| api_err(StatusCode::NOT_FOUND, "unknown run_id"))?;
+        info.sha.clone()
+    };
+
+    tracing::error!(run_id = %run_id, sha = %sha, error = %report.error, "benchmark failed");
+
+    state.metrics.set_status(&sha, RunStatus::Failed).await;
+
+    {
+        let mut runs = state.runs.write().await;
+        if let Some(info) = runs.get_mut(&run_id) {
+            info.status = "failed".to_string();
         }
     }
 
