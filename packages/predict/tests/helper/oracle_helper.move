@@ -6,10 +6,19 @@
 module deepbook_predict::oracle_helper;
 
 use deepbook_predict::{
+    constants::{float_scaling as float, oracle_tick_size_unit},
     generated_oracle::OracleScenario,
     oracle::{Self, OracleSVI, OracleCapSVI, new_price_data, new_svi_params}
 };
 use sui::clock::{Self, Clock};
+
+fun simple_grid_min_strike(): u64 { 2_000_000 }
+
+fun simple_grid_tick_size(): u64 { 2_000_000 }
+
+fun std_grid_min_strike(): u64 { 50 * float!() }
+
+fun std_grid_tick_size(): u64 { oracle_tick_size_unit!() * 100 }
 
 /// Create oracle + clock from an OracleScenario struct.
 public fun create_from_scenario(s: &OracleScenario, ctx: &mut TxContext): (OracleSVI, Clock) {
@@ -22,6 +31,8 @@ public fun create_from_scenario(s: &OracleScenario, ctx: &mut TxContext): (Oracl
         s.rate(),
         s.expiry_ms(),
         s.now_ms(),
+        s.min_strike(),
+        s.tick_size(),
         ctx,
     );
     let mut clock = clock::create_for_testing(ctx);
@@ -47,6 +58,8 @@ public fun create_simple_oracle(
         0,
         expiry_ms,
         now_ms,
+        simple_grid_min_strike(),
+        simple_grid_tick_size(),
         ctx,
     );
     let mut clock = clock::create_for_testing(ctx);
@@ -66,6 +79,8 @@ public fun create_std_oracle(ctx: &mut TxContext): (OracleSVI, Clock) {
         0,
         1_000_000,
         0,
+        std_grid_min_strike(),
+        std_grid_tick_size(),
         ctx,
     );
     let clock = clock::create_for_testing(ctx);
@@ -90,6 +105,59 @@ public fun create_oracle_with_unregistered_cap(
     (oracle, cap, clock)
 }
 
+/// Flat 25%-vol oracle with custom market params. Covers the majority of
+/// oracle_tests that only vary rate, expiry, prices, or grid.
+public fun create_flat_vol_oracle(
+    spot: u64,
+    forward: u64,
+    rate: u64,
+    expiry: u64,
+    min_strike: u64,
+    tick_size: u64,
+    ctx: &mut TxContext,
+): (OracleSVI, Clock) {
+    let svi = new_svi_params(0, 1_000_000_000, 0, false, 0, false, 250_000_000);
+    let prices = new_price_data(spot, forward);
+    let oracle = oracle::create_test_oracle(
+        b"BTC".to_string(),
+        svi,
+        prices,
+        rate,
+        expiry,
+        0,
+        min_strike,
+        tick_size,
+        ctx,
+    );
+    let clock = clock::create_for_testing(ctx);
+    (oracle, clock)
+}
+
+/// Flat 25%-vol oracle with a registered cap. For tests that call
+/// activate, update_prices, or update_svi.
+public fun create_flat_vol_oracle_with_cap(
+    spot: u64,
+    forward: u64,
+    rate: u64,
+    expiry: u64,
+    min_strike: u64,
+    tick_size: u64,
+    ctx: &mut TxContext,
+): (OracleSVI, OracleCapSVI, Clock) {
+    let (mut oracle, clock) = create_flat_vol_oracle(
+        spot,
+        forward,
+        rate,
+        expiry,
+        min_strike,
+        tick_size,
+        ctx,
+    );
+    let cap = oracle::create_oracle_cap(ctx);
+    oracle::register_cap(&mut oracle, &cap);
+    (oracle, cap, clock)
+}
+
 /// Settled oracle for deterministic unit tests.
 public fun create_settled_oracle(settlement_price: u64, ctx: &mut TxContext): OracleSVI {
     let svi = new_svi_params(0, 0, 0, false, 0, false, 0);
@@ -101,6 +169,8 @@ public fun create_settled_oracle(settlement_price: u64, ctx: &mut TxContext): Or
         0,
         100_000,
         0,
+        simple_grid_min_strike(),
+        simple_grid_tick_size(),
         ctx,
     );
     oracle::settle_test_oracle(&mut oracle, settlement_price);

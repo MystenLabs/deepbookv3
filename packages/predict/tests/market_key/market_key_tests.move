@@ -4,7 +4,7 @@
 #[test_only]
 module deepbook_predict::market_key_tests;
 
-use deepbook_predict::{market_key, oracle};
+use deepbook_predict::{constants::float_scaling as float, market_key, oracle};
 use std::unit_test::{assert_eq, destroy};
 
 const STRIKE_50K: u64 = 50_000_000_000;
@@ -17,6 +17,10 @@ const EXPIRY_2: u64 = 2000;
 const EXPIRY_3: u64 = 3000;
 const EXPIRY_4: u64 = 4000;
 const EXPIRY_5: u64 = 5000;
+
+fun grid_min_strike(): u64 { 50 * float!() }
+
+fun grid_tick_size(): u64 { 1_000_000 }
 
 // === Helpers ===
 
@@ -36,6 +40,8 @@ fun create_oracle(expiry: u64, ctx: &mut TxContext): oracle::OracleSVI {
         0,
         expiry,
         0,
+        grid_min_strike(),
+        grid_tick_size(),
         ctx,
     )
 }

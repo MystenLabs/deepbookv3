@@ -32,6 +32,21 @@ import {
 
 const DUSDC_DECIMALS = 1_000_000n;
 const EXPIRY_MS = BigInt(Date.now()) + 7n * 24n * 60n * 60n * 1000n;
+const FLOAT_SCALING = 1_000_000_000n;
+// Must satisfy the on-chain invariant:
+// max_strike - min_strike == tick_size * 100_000
+const ORACLE_MIN_STRIKE = 50_000n * FLOAT_SCALING;
+const ORACLE_MAX_STRIKE = 150_000n * FLOAT_SCALING;
+const ORACLE_TICK_SIZE = 1n * FLOAT_SCALING;
+
+function alignStrikeToGrid(strike: bigint): bigint {
+  const relative = strike - ORACLE_MIN_STRIKE;
+  const tickIndex = relative / ORACLE_TICK_SIZE;
+  const snapped = ORACLE_MIN_STRIKE + tickIndex * ORACLE_TICK_SIZE;
+  if (snapped < ORACLE_MIN_STRIKE) return ORACLE_MIN_STRIKE;
+  if (snapped > ORACLE_MAX_STRIKE) return ORACLE_MAX_STRIKE;
+  return snapped;
+}
 
 function parseArgs() {
   return {
@@ -95,6 +110,9 @@ async function setupSimulation(): Promise<SimState> {
       oracleCapId,
       underlyingAsset: "BTC",
       expiry: EXPIRY_MS,
+      minStrike: ORACLE_MIN_STRIKE,
+      maxStrike: ORACLE_MAX_STRIKE,
+      tickSize: ORACLE_TICK_SIZE,
     }),
     "create_oracle"
   );
@@ -184,13 +202,14 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
     }
 
     mintIndex++;
+    const alignedStrike = alignStrikeToGrid(row.strike);
     const gas = await execute(
       mintTx({
         predictId: state.predictId,
         managerId: state.managerId,
         oracleId: state.oracleId,
         expiry,
-        strike: row.strike,
+        strike: alignedStrike,
         isUp: row.isUp,
         quantity: row.quantity,
       }),
@@ -201,7 +220,7 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
     byAction.mint.push({ wallMs, ...gas });
 
     const direction = row.isUp ? "UP" : "DN";
-    const strikeUsd = (Number(row.strike) / 1e9).toFixed(0);
+    const strikeUsd = (Number(alignedStrike) / 1e9).toFixed(0);
     process.stdout.write(`[${ts()}]   [${mintIndex}/${mintRows.length}] ${direction} $${strikeUsd} ${wallMs.toFixed(0)}ms\n`);
   }
 

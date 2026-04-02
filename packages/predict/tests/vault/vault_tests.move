@@ -4,16 +4,13 @@
 #[test_only]
 module deepbook_predict::vault_tests;
 
-use deepbook_predict::{constants, generated_oracle as go, oracle, oracle_helper, vault};
+use deepbook_predict::{constants, generated_oracle as go, oracle, oracle_helper, precision, vault};
 use std::unit_test::{assert_eq, destroy};
 use sui::{balance, clock, sui::SUI};
 
 const QTY: u64 = 10_000_000; // 10 units at 1e6 quote precision.
 const MAX_EXPOSURE_PCT_80: u64 = 800_000_000; // 80%
 const MAX_EXPOSURE_PCT_50: u64 = 500_000_000; // 50%
-const ORACLE_SCENARIO_S0: u64 = 7;
-const ORACLE_SCENARIO_S4: u64 = 11;
-const ORACLE_SCENARIO_S5: u64 = 12;
 
 fun create_test_vault(
     settlement_price: u64,
@@ -45,19 +42,19 @@ fun create_generated_oracle(
 fun create_live_oracle_s0(
     ctx: &mut TxContext,
 ): (go::OracleScenario, oracle::OracleSVI, clock::Clock) {
-    create_generated_oracle(ORACLE_SCENARIO_S0, ctx)
+    create_generated_oracle(7, ctx)
 }
 
 fun create_live_oracle_s4(
     ctx: &mut TxContext,
 ): (go::OracleScenario, oracle::OracleSVI, clock::Clock) {
-    create_generated_oracle(ORACLE_SCENARIO_S4, ctx)
+    create_generated_oracle(11, ctx)
 }
 
 fun create_live_oracle_s5(
     ctx: &mut TxContext,
 ): (go::OracleScenario, oracle::OracleSVI, clock::Clock) {
-    create_generated_oracle(ORACLE_SCENARIO_S5, ctx)
+    create_generated_oracle(12, ctx)
 }
 
 #[test]
@@ -956,11 +953,11 @@ fun mtm_live_oracle_s0_atm() {
     let atm = &s.strike_points()[0];
 
     vault::insert_position(&mut v, &oracle, true, atm.strike(), QTY, &clock, ctx);
-    assert_eq!(vault::total_mtm(&v), expected_mtm(atm, true));
+    precision::assert_approx(vault::total_mtm(&v), expected_mtm(atm, true));
 
     vault::insert_position(&mut v, &oracle, false, atm.strike(), QTY, &clock, ctx);
     let exp_total = expected_mtm(atm, true) + expected_mtm(atm, false);
-    assert_eq!(vault::total_mtm(&v), exp_total);
+    precision::assert_approx(vault::total_mtm(&v), exp_total);
 
     destroy(v);
     destroy(oracle);
@@ -977,7 +974,7 @@ fun mtm_live_oracle_s0_otm() {
     let otm10 = &s.strike_points()[2];
 
     vault::insert_position(&mut v, &oracle, true, otm10.strike(), QTY, &clock, ctx);
-    assert_eq!(vault::total_mtm(&v), expected_mtm(otm10, true));
+    precision::assert_approx(vault::total_mtm(&v), expected_mtm(otm10, true));
 
     destroy(v);
     destroy(oracle);
@@ -994,7 +991,7 @@ fun mtm_live_oracle_s4_near_expiry() {
     let atm = &s.strike_points()[0];
 
     vault::insert_position(&mut v, &oracle, true, atm.strike(), QTY, &clock, ctx);
-    assert_eq!(vault::total_mtm(&v), expected_mtm(atm, true));
+    precision::assert_approx(vault::total_mtm(&v), expected_mtm(atm, true));
 
     destroy(v);
     destroy(oracle);
@@ -1012,11 +1009,11 @@ fun mtm_live_oracle_s5_extreme_near_expiry() {
     let itm10 = &s.strike_points()[4];
 
     vault::insert_position(&mut v, &oracle, true, atm.strike(), QTY, &clock, ctx);
-    assert_eq!(vault::total_mtm(&v), expected_mtm(atm, true));
+    precision::assert_approx(vault::total_mtm(&v), expected_mtm(atm, true));
 
     vault::remove_position(&mut v, &oracle, true, atm.strike(), QTY, &clock);
     vault::insert_position(&mut v, &oracle, true, itm10.strike(), QTY, &clock, ctx);
-    assert_eq!(vault::total_mtm(&v), expected_mtm(itm10, true));
+    precision::assert_approx(vault::total_mtm(&v), expected_mtm(itm10, true));
 
     destroy(v);
     destroy(oracle);
@@ -1033,7 +1030,7 @@ fun mtm_live_oracle_s0_dn_otm10() {
     let otm10 = &s.strike_points()[2];
 
     vault::insert_position(&mut v, &oracle, false, otm10.strike(), QTY, &clock, ctx);
-    assert_eq!(vault::total_mtm(&v), expected_mtm(otm10, false));
+    precision::assert_approx(vault::total_mtm(&v), expected_mtm(otm10, false));
 
     destroy(v);
     destroy(oracle);
@@ -1050,7 +1047,7 @@ fun mtm_live_oracle_s5_dn_atm() {
     let atm = &s.strike_points()[0];
 
     vault::insert_position(&mut v, &oracle, false, atm.strike(), QTY, &clock, ctx);
-    assert_eq!(vault::total_mtm(&v), expected_mtm(atm, false));
+    precision::assert_approx(vault::total_mtm(&v), expected_mtm(atm, false));
 
     destroy(v);
     destroy(oracle);

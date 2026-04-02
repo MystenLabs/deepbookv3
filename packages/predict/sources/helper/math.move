@@ -6,6 +6,7 @@
 /// Provides:
 /// - ln(x): natural logarithm
 /// - exp(x): exponential function
+/// - sqrt(x, precision): fixed-point square root
 /// - normal_cdf(x): standard normal CDF (Cody rational Chebyshev approximation)
 /// - Signed arithmetic helpers (add, sub, mul for (magnitude, is_negative) pairs)
 ///
@@ -16,6 +17,7 @@ use deepbook_predict::constants;
 
 const EInputZero: u64 = 0;
 const EExpOverflow: u64 = 1;
+const EInvalidPrecision: u64 = 2;
 
 // u128 constants for internal math
 const F: u128 = 1_000_000_000;
@@ -61,6 +63,14 @@ const D5: u128 = 34_900_952_721_146;
 const D6: u128 = 38_912_003_286_093;
 const D7: u128 = 19_685_429_676_860;
 
+// Reciprocal constants for ln Horner evaluation.
+const INV_3_U128: u128 = 333_333_333;
+const INV_5_U128: u128 = 200_000_000;
+const INV_7_U128: u128 = 142_857_143;
+const INV_9_U128: u128 = 111_111_111;
+const INV_11_U128: u128 = 90_909_091;
+const INV_13_U128: u128 = 76_923_077;
+
 // ============================================================
 // Public API (u64 in, u64 out)
 // ============================================================
@@ -72,15 +82,13 @@ public fun ln(x: u64): (u64, bool) {
     if (x == constants::float_scaling!()) return (0, false);
 
     if (x < constants::float_scaling!()) {
-        // ln(x) = -ln(1/x). Compute inv in u128 to avoid truncation.
         let inv = ((F * F / (x as u128)) as u64);
         let (result, _) = ln(inv);
         return (result, true)
     };
 
-    // normalize needs u64 bit shifts
     let (y, n) = normalize(x);
-    let result = ln_u128((y as u128), (n as u128));
+    let result = ln_u128(y as u128, n as u128);
     ((result as u64), false)
 }
 
@@ -103,6 +111,15 @@ public fun normal_cdf(x: u64, x_negative: bool): u64 {
     (normal_cdf_u128((x as u128), x_negative) as u64)
 }
 
+/// Fixed-point square root using a bit-length initial guess and
+/// unrolled Newton iterations.
+public fun sqrt(x: u64, precision: u64): u64 {
+    assert!(precision > 0 && precision <= constants::float_scaling!(), EInvalidPrecision);
+    let multiplier = (constants::float_scaling!() / precision) as u128;
+    let scaled = (x as u128) * multiplier * F;
+    (sqrt_u128(scaled) / multiplier) as u64
+}
+
 // ============================================================
 // u128 internal functions
 // ============================================================
@@ -111,21 +128,15 @@ public fun normal_cdf(x: u64, x_negative: bool): u64 {
 /// Computes: n * ln(2) + 2 * (z + z³/3 + z⁵/5 + ... + z¹³/13)
 /// where z = (y - F) / (y + F).
 fun ln_u128(y: u128, n: u128): u128 {
-    // log_ratio: z = (y - F) * F / (y + F)
     let z = (y - F) * F / (y + F);
-
-    // ln_series: 2 * (z + z³/3 + z⁵/5 + ... + z¹³/13)
-    let z2 = z * z / F;
-    let mut term = z;
-    let mut sum: u128 = 0;
-    let mut k: u128 = 1;
-    while (k <= 13) {
-        sum = sum + term / k;
-        term = term * z2 / F;
-        k = k + 2;
-    };
-    let ln_y = 2 * sum;
-
+    let w = mul_scaled_u128(z, z);
+    let mut h = mul_scaled_u128(w, INV_13_U128);
+    h = mul_scaled_u128((INV_11_U128 + h), w);
+    h = mul_scaled_u128((INV_9_U128 + h), w);
+    h = mul_scaled_u128((INV_7_U128 + h), w);
+    h = mul_scaled_u128((INV_5_U128 + h), w);
+    h = mul_scaled_u128((INV_3_U128 + h), w);
+    let ln_y = mul_scaled_u128(mul_scaled_u128(2 * F, z), F + h);
     n * LN2_U128 + ln_y
 }
 
@@ -242,6 +253,38 @@ fun normalize(x: u64): (u64, u64) {
     if (y >> 1 >= scale) { y = y >> 1; n = n + 1; };
 
     (y, n)
+}
+
+fun mul_scaled_u128(x: u128, y: u128): u128 {
+    x * y / F
+}
+
+fun sqrt_u128(x: u128): u128 {
+    if (x == 0) return 0;
+    if (x < 4) return 1;
+    let mut g = sqrt_initial_guess_u128(x);
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    g = (g + x / g) / 2;
+    if (g * g > x) { g = g - 1; };
+    g
+}
+
+fun sqrt_initial_guess_u128(x: u128): u128 {
+    let mut bits: u8 = 0;
+    let mut val = x;
+    if (val >= 1u128 << 64) { val = val >> 64; bits = bits + 64; };
+    if (val >= 1u128 << 32) { val = val >> 32; bits = bits + 32; };
+    if (val >= 1u128 << 16) { val = val >> 16; bits = bits + 16; };
+    if (val >= 1u128 << 8) { val = val >> 8; bits = bits + 8; };
+    if (val >= 1u128 << 4) { val = val >> 4; bits = bits + 4; };
+    if (val >= 1u128 << 2) { val = val >> 2; bits = bits + 2; };
+    if (val >= 1u128 << 1) { bits = bits + 1; };
+    1u128 << (((bits + 1) / 2) as u8)
 }
 
 // ============================================================

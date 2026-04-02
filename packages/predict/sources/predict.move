@@ -13,7 +13,8 @@ use deepbook::math;
 use deepbook_predict::{
     constants,
     market_key::MarketKey,
-    oracle::OracleSVI,
+    math as predict_math,
+    oracle::{Self, OracleSVI},
     predict_manager::{Self, PredictManager},
     pricing_config::{Self, PricingConfig},
     risk_config::{Self, RiskConfig},
@@ -30,6 +31,7 @@ const EOracleSettled: u64 = 3;
 const EWithdrawExceedsAvailable: u64 = 4;
 const EOracleExpired: u64 = 5;
 const EZeroQuantity: u64 = 6;
+const EOracleInactive: u64 = 7;
 
 // === Events ===
 
@@ -163,6 +165,10 @@ public fun get_trade_amounts<Quote>(
     quantity: u64,
     clock: &Clock,
 ): (u64, u64) {
+    if (!oracle.is_settled()) {
+        assert!(oracle.is_active(), EOracleInactive);
+        oracle.assert_not_stale(clock);
+    };
     let (bid, ask) = predict.get_quote(oracle, key, clock);
     (math::mul(ask, quantity), math::mul(bid, quantity))
 }
@@ -184,6 +190,7 @@ public fun mint<Quote>(
     key.assert_matches_oracle(oracle);
     assert!(!oracle.is_settled(), EOracleSettled);
     assert!(clock.timestamp_ms() < oracle.expiry(), EOracleExpired);
+    assert!(oracle.is_active(), EOracleInactive);
     oracle.assert_not_stale(clock);
 
     let strike = key.strike();
@@ -227,7 +234,10 @@ public fun redeem<Quote>(
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(quantity > 0, EZeroQuantity);
     key.assert_matches_oracle(oracle);
-    if (!oracle.is_settled()) oracle.assert_not_stale(clock);
+    if (!oracle.is_settled()) {
+        assert!(oracle.is_active(), EOracleInactive);
+        oracle.assert_not_stale(clock);
+    };
     manager.decrease_position(key, quantity);
 
     let strike = key.strike();
@@ -277,7 +287,10 @@ public fun mint_collateralized<Quote>(
     minted_key.assert_matches_oracle(oracle);
     assert!(!oracle.is_settled(), EOracleSettled);
     assert!(clock.timestamp_ms() < oracle.expiry(), EOracleExpired);
+    assert!(oracle.is_active(), EOracleInactive);
     oracle.assert_not_stale(clock);
+    oracle::assert_valid_strike(oracle, locked_key.strike());
+    oracle::assert_valid_strike(oracle, minted_key.strike());
 
     let valid_pair = if (locked_key.is_up() && minted_key.is_up()) {
         locked_key.strike() < minted_key.strike()
@@ -520,7 +533,7 @@ fun get_quote<Quote>(
 
     let complement = constants::float_scaling!() - price;
     let variance = math::mul(price, complement);
-    let bernoulli_factor = math::sqrt(variance, constants::float_scaling!());
+    let bernoulli_factor = predict_math::sqrt(variance, constants::float_scaling!());
     let bernoulli_spread = math::mul(predict.pricing_config.base_spread(), bernoulli_factor);
     let spread =
         bernoulli_spread.max(predict.pricing_config.min_spread())

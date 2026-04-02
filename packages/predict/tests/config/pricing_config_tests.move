@@ -4,7 +4,7 @@
 #[test_only]
 module deepbook_predict::pricing_config_tests;
 
-use deepbook_predict::{pricing_config, constants};
+use deepbook_predict::{constants, pricing_config};
 use std::unit_test::{assert_eq, destroy};
 
 const MAX_U64: u64 = 18_446_744_073_709_551_615;

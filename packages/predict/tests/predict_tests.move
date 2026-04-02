@@ -5,7 +5,7 @@
 module deepbook_predict::predict_tests;
 
 use deepbook_predict::{
-    constants,
+    constants::{Self, oracle_tick_size_unit, oracle_strike_grid_ticks},
     generated_oracle as go,
     generated_predict as gp,
     market_key,
@@ -22,6 +22,14 @@ use sui::{clock, coin, sui::SUI, test_scenario::{Self, Scenario}};
 
 const ALICE: address = @0xA;
 const BOB: address = @0xB;
+
+fun live_grid_min_strike(): u64 { 50 * constants::float_scaling!() }
+
+fun live_grid_tick_size(): u64 { 1_000_000 }
+
+fun quote_grid_min_strike(): u64 { oracle_tick_size_unit!() }
+
+fun quote_grid_tick_size(): u64 { oracle_tick_size_unit!() }
 
 fun create_predict(ctx: &mut TxContext): Predict<SUI> {
     predict::create_test_predict<SUI>(ctx)
@@ -42,6 +50,8 @@ fun create_live_oracle(ctx: &mut TxContext): oracle::OracleSVI {
         // Arbitrary far-future expiry for synthetic live-oracle tests.
         1_000_000_000,
         0,
+        live_grid_min_strike(),
+        live_grid_tick_size(),
         ctx,
     )
 }
@@ -1896,3 +1906,60 @@ fun predict_scenario_s4() { run_predict_scenario(3); }
 #[test]
 /// Real-world snapshot S5: fresh-state quote previews should match generated expectations.
 fun predict_scenario_s5() { run_predict_scenario(4); }
+
+#[test, expected_failure(abort_code = oracle::EStrikeNotOnTick)]
+fun get_trade_amounts_invalid_strike_aborts() {
+    let ctx = &mut tx_context::dummy();
+
+    let predict = predict::create_test_predict<SUI>(ctx);
+    let svi = new_svi_params(0, constants::float_scaling!(), 0, false, 0, false, 250_000_000);
+    let prices = new_price_data(500_000_000, 500_000_000);
+    let oracle = oracle::create_test_oracle(
+        b"BTC".to_string(),
+        svi,
+        prices,
+        0,
+        1_000_000,
+        0,
+        quote_grid_min_strike(),
+        quote_grid_tick_size(),
+        ctx,
+    );
+    let key = market_key::up(oracle::id(&oracle), oracle::expiry(&oracle), 500_000_001);
+    let clock = clock::create_for_testing(ctx);
+
+    predict::get_trade_amounts(&predict, &oracle, key, 1, &clock);
+
+    abort
+}
+
+#[test, expected_failure(abort_code = predict::EOracleInactive)]
+fun get_trade_amounts_inactive_oracle_aborts() {
+    let ctx = &mut tx_context::dummy();
+
+    let predict = predict::create_test_predict<SUI>(ctx);
+    let svi = new_svi_params(0, constants::float_scaling!(), 0, false, 0, false, 250_000_000);
+    let prices = new_price_data(500_000_000, 500_000_000);
+    let mut oracle = oracle::create_test_oracle(
+        b"BTC".to_string(),
+        svi,
+        prices,
+        0,
+        1_000_000,
+        0,
+        quote_grid_min_strike(),
+        quote_grid_tick_size(),
+        ctx,
+    );
+    oracle::set_active_for_testing(&mut oracle, false);
+    let key = market_key::up(
+        oracle::id(&oracle),
+        oracle::expiry(&oracle),
+        quote_grid_min_strike(),
+    );
+    let clock = clock::create_for_testing(ctx);
+
+    predict::get_trade_amounts(&predict, &oracle, key, 1, &clock);
+
+    abort
+}
