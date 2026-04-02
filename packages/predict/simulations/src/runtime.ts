@@ -294,21 +294,43 @@ export async function executeAndWait(tx: Transaction, label = "transaction"): Pr
   return getTransactionBlockWithRetry(execution.digest);
 }
 
+const EXECUTE_MAX_RETRIES = 3;
+const EXECUTE_RETRY_DELAY_MS = 500;
+
 export async function execute(tx: Transaction, label = "transaction"): Promise<GasUsage> {
   tx.setSender(address);
   tx.setGasBudget(500_000_000n);
 
-  const raw: any = await client.signAndExecuteTransaction({
-    transaction: tx,
-    signer,
-    options: EXECUTION_RESPONSE_OPTIONS,
-  });
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= EXECUTE_MAX_RETRIES; attempt++) {
+    try {
+      const raw: any = await client.signAndExecuteTransaction({
+        transaction: tx,
+        signer,
+        options: EXECUTION_RESPONSE_OPTIONS,
+      });
 
-  const status = raw.effects?.status;
-  if (!isSuccessStatus(status)) {
-    throw new Error(`${label} failed: ${formatStatusError(status, JSON.stringify(raw).slice(0, 300))}`);
+      const status = raw.effects?.status;
+      if (!isSuccessStatus(status)) {
+        throw new Error(`${label} failed: ${formatStatusError(status, JSON.stringify(raw).slice(0, 300))}`);
+      }
+
+      const settled = await getTransactionBlockWithRetry(raw.digest);
+      return gasSummaryFromEffects(settled.effects ?? raw.effects);
+    } catch (error) {
+      lastError = error;
+      const msg = String(error);
+      // Retry on transient object version / input errors.
+      if (msg.includes("Object ID") || msg.includes("TransactionExecutionClientError")) {
+        if (attempt < EXECUTE_MAX_RETRIES) {
+          const delay = EXECUTE_RETRY_DELAY_MS * (attempt + 1);
+          process.stdout.write(`[retry] ${label} attempt ${attempt + 1} failed, retrying in ${delay}ms...\n`);
+          await new Promise((r) => setTimeout(r, delay));
+          continue;
+        }
+      }
+      throw error;
+    }
   }
-
-  const settled = await getTransactionBlockWithRetry(raw.digest);
-  return gasSummaryFromEffects(settled.effects ?? raw.effects);
+  throw lastError;
 }
