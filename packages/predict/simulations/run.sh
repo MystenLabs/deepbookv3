@@ -206,16 +206,16 @@ print(published[-1]["packageId"])
 }
 
 extract_created_object_id() {
-  local object_type_substring="$1"
   python3 -c '
 import json, sys
-needle = sys.argv[1]
+needles = sys.argv[1:]
 data = json.load(sys.stdin)
 for change in data.get("objectChanges", []):
-    if change.get("type") == "created" and needle in change.get("objectType", ""):
+    ot = change.get("objectType", "")
+    if change.get("type") == "created" and all(n in ot for n in needles):
         print(change["objectId"])
         break
-' "$object_type_substring"
+' "$@"
 }
 
 publish_package() {
@@ -328,10 +328,12 @@ if [ "$RUN_SETUP" -eq 1 ]; then
   PACKAGE_ID=$(echo "$PREDICT_OUTPUT" | extract_published_package_id)
   REGISTRY_ID=$(echo "$PREDICT_OUTPUT" | extract_created_object_id "registry::Registry")
   ADMIN_CAP_ID=$(echo "$PREDICT_OUTPUT" | extract_created_object_id "registry::AdminCap")
+  PLP_TREASURY_CAP_ID=$(echo "$PREDICT_OUTPUT" | extract_created_object_id "TreasuryCap" "plp::PLP")
 
   echo "    Predict: $PACKAGE_ID"
   echo "    Registry: $REGISTRY_ID"
   echo "    AdminCap: $ADMIN_CAP_ID"
+  echo "    PLP TreasuryCap: $PLP_TREASURY_CAP_ID"
 
   mv "$PREDICT_DIR/Move.toml.bak" "$PREDICT_DIR/Move.toml"
 
@@ -340,6 +342,7 @@ if [ "$RUN_SETUP" -eq 1 ]; then
 PACKAGE_ID=$PACKAGE_ID
 REGISTRY_ID=$REGISTRY_ID
 ADMIN_CAP_ID=$ADMIN_CAP_ID
+PLP_TREASURY_CAP_ID=$PLP_TREASURY_CAP_ID
 DUSDC_PACKAGE_ID=$DUSDC_PACKAGE_ID
 TREASURY_CAP_ID=$TREASURY_CAP_ID
 ACTIVE_ADDRESS=$ACTIVE_ADDR
