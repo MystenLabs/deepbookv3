@@ -176,11 +176,12 @@ trap cleanup EXIT
 inject_env() {
   local file="$1" chain_id="$2"
   cp "$file" "$file.bak"
-  sed -i '' '/^sim = /d' "$file"
+  # Use temp file for sed compatibility across macOS and Linux.
+  sed '/^sim = /d' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
   if grep -q '^\[environments\]' "$file"; then
-    sed -i '' "/^\[environments\]/a\\
-sim = \"$chain_id\"
-" "$file"
+    sed '/^\[environments\]/a\
+sim = "'"$chain_id"'"
+' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
   else
     printf '\n[environments]\nsim = "%s"\n' "$chain_id" >> "$file"
   fi
