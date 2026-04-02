@@ -175,69 +175,89 @@ async fn register_run(runs: &RunStore, run_id: &str, sha: &str) {
 
 // -- SHA Validation --
 
+/// Check that the SHA is reachable from an allowed branch (main or release/*).
+/// Uses the GitHub compare API: status "behind" or "identical" means the SHA
+/// is an ancestor of (or equal to) the branch HEAD.
 const ALLOWED_BRANCHES: &[&str] = &["main"];
 const ALLOWED_BRANCH_PREFIXES: &[&str] = &["release/"];
 
 async fn validate_sha(config: &Config, sha: &str) -> Result<(), String> {
-    let url = format!(
-        "https://api.github.com/repos/{}/commits/{}/branches-where-head",
-        config.github_repo, sha
-    );
-
     let client = reqwest::Client::new();
+
+    // Collect all branches to check: fixed names + release/* branches from API.
+    let mut branches_to_check: Vec<String> =
+        ALLOWED_BRANCHES.iter().map(|b| b.to_string()).collect();
+
+    // Fetch release/* branches.
+    let branches_url = format!(
+        "https://api.github.com/repos/{}/branches?per_page=100",
+        config.github_repo
+    );
     let mut req = client
-        .get(&url)
+        .get(&branches_url)
         .header("User-Agent", "predict-bench")
         .header("Accept", "application/vnd.github+json");
-
     if let Some(ref token) = config.github_token {
         req = req.header("Authorization", format!("Bearer {}", token));
     }
-
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| format!("GitHub API error: {}", e))?;
-
-    if resp.status() == reqwest::StatusCode::UNPROCESSABLE_ENTITY
-        || resp.status() == reqwest::StatusCode::NOT_FOUND
-    {
-        return Err(format!(
-            "SHA {} not found in repo {}",
-            sha, config.github_repo
-        ));
+    if let Ok(resp) = req.send().await {
+        if resp.status().is_success() {
+            #[derive(Deserialize)]
+            struct Branch {
+                name: String,
+            }
+            if let Ok(branches) = resp.json::<Vec<Branch>>().await {
+                for b in branches {
+                    if ALLOWED_BRANCH_PREFIXES
+                        .iter()
+                        .any(|prefix| b.name.starts_with(prefix))
+                    {
+                        branches_to_check.push(b.name);
+                    }
+                }
+            }
+        }
     }
 
-    if !resp.status().is_success() {
-        return Err(format!("GitHub API returned {}", resp.status()));
+    // Check if SHA is reachable from any allowed branch.
+    for branch in &branches_to_check {
+        let compare_url = format!(
+            "https://api.github.com/repos/{}/compare/{}...{}",
+            config.github_repo, branch, sha
+        );
+        let mut req = client
+            .get(&compare_url)
+            .header("User-Agent", "predict-bench")
+            .header("Accept", "application/vnd.github+json");
+        if let Some(ref token) = config.github_token {
+            req = req.header("Authorization", format!("Bearer {}", token));
+        }
+
+        let resp = match req.send().await {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        if !resp.status().is_success() {
+            continue;
+        }
+
+        #[derive(Deserialize)]
+        struct CompareResult {
+            status: String,
+        }
+        if let Ok(result) = resp.json::<CompareResult>().await {
+            // "behind" = SHA is an ancestor of branch HEAD
+            // "identical" = SHA is the branch HEAD
+            if result.status == "behind" || result.status == "identical" {
+                return Ok(());
+            }
+        }
     }
 
-    #[derive(Deserialize)]
-    struct BranchRef {
-        name: String,
-    }
-
-    let branches: Vec<BranchRef> = resp
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse GitHub response: {}", e))?;
-
-    let allowed = branches.iter().any(|b| {
-        ALLOWED_BRANCHES.contains(&b.name.as_str())
-            || ALLOWED_BRANCH_PREFIXES
-                .iter()
-                .any(|prefix| b.name.starts_with(prefix))
-    });
-
-    if !allowed {
-        let branch_names: Vec<&str> = branches.iter().map(|b| b.name.as_str()).collect();
-        return Err(format!(
-            "SHA {} is on branches {:?}, but only main and release/* are allowed",
-            sha, branch_names
-        ));
-    }
-
-    Ok(())
+    Err(format!(
+        "SHA {} is not reachable from any allowed branch ({:?})",
+        sha, branches_to_check
+    ))
 }
 
 // -- Auth Middleware --
