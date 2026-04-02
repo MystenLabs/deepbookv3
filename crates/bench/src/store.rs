@@ -32,11 +32,21 @@ pub struct RunStore {
 impl RunStore {
     pub async fn new(redis_url: &str) -> Result<Arc<Self>> {
         let client = redis::Client::open(redis_url).context("parse redis URL")?;
-        let conn = client
-            .get_connection_manager()
-            .await
-            .context("connect to redis")?;
-        Ok(Arc::new(Self { conn }))
+        let mut last_err = None;
+        for attempt in 1..=30 {
+            match client.get_connection_manager().await {
+                Ok(conn) => {
+                    tracing::info!("connected to redis");
+                    return Ok(Arc::new(Self { conn }));
+                }
+                Err(e) => {
+                    tracing::warn!(attempt, "redis not ready, retrying in 2s: {}", e);
+                    last_err = Some(e);
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+            }
+        }
+        Err(last_err.unwrap()).context("connect to redis after 30 attempts")
     }
 
     fn key(run_id: &str) -> String {
