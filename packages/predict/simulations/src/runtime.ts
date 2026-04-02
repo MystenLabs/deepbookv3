@@ -294,8 +294,8 @@ export async function executeAndWait(tx: Transaction, label = "transaction"): Pr
   return getTransactionBlockWithRetry(execution.digest);
 }
 
-const EXECUTE_MAX_RETRIES = 3;
-const EXECUTE_RETRY_DELAY_MS = 500;
+const EXECUTE_MAX_RETRIES = 5;
+const EXECUTE_RETRY_DELAY_MS = 1000;
 
 export async function execute(tx: Transaction, label = "transaction"): Promise<GasUsage> {
   tx.setSender(address);
