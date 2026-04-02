@@ -60,11 +60,14 @@ jobs:
 
       - name: Install Sui CLI
         run: |
+          mkdir -p "$HOME/.local/bin"
           curl -fsSL "https://github.com/MystenLabs/sui/releases/download/${{ steps.sui-version.outputs.version }}/sui-${{ steps.sui-version.outputs.version }}-macos-arm64.tgz" \
-            | sudo tar -xz -C /usr/local/bin
+            | tar -xz -C "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run Move tests
         run: |
+          sui --version
           for dir in packages/*; do
             echo "Running sui move test in $dir"
             sui move test --gas-limit 100000000000 --path "$dir"
