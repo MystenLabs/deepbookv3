@@ -14,7 +14,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  test-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Get latest Sui mainnet release
+        id: sui-version
+        run: |
+          SUI_VERSION=$(curl -sf https://api.github.com/repos/MystenLabs/sui/releases \
+            | jq -r '[.[] | select(.tag_name | startswith("mainnet-v"))][0].tag_name')
+          echo "version=$SUI_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Using Sui $SUI_VERSION"
+
+      - name: Install Sui CLI
+        run: |
+          curl -fsSL "https://github.com/MystenLabs/sui/releases/download/${{ steps.sui-version.outputs.version }}/sui-${{ steps.sui-version.outputs.version }}-ubuntu-x86_64.tgz" \
+            | sudo tar -xz -C /usr/local/bin
+
+      - name: Run Move tests
+        run: |
+          for dir in packages/*; do
+            echo "Running sui move test in $dir"
+            sui move test --gas-limit 100000000000 --path "$dir"
+          done
+
+  test-macos:
     runs-on: macos-latest
 
     steps:
@@ -22,18 +50,22 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Install Homebrew
+      - name: Get latest Sui mainnet release
+        id: sui-version
         run: |
-          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-          echo "/home/linuxbrew/.linuxbrew/bin" >> $GITHUB_PATH
+          SUI_VERSION=$(curl -sf https://api.github.com/repos/MystenLabs/sui/releases \
+            | jq -r '[.[] | select(.tag_name | startswith("mainnet-v"))][0].tag_name')
+          echo "version=$SUI_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Using Sui $SUI_VERSION"
 
-      - name: Install Sui using Homebrew
-        run: brew install sui
+      - name: Install Sui CLI
+        run: |
+          curl -fsSL "https://github.com/MystenLabs/sui/releases/download/${{ steps.sui-version.outputs.version }}/sui-${{ steps.sui-version.outputs.version }}-macos-arm64.tgz" \
+            | tar -xz -C /usr/local/bin
 
-      - name: Run Move tests in all package subdirectories, with exclusions
+      - name: Run Move tests
         run: |
           for dir in packages/*; do
-            dir_name=$(basename "$dir")
             echo "Running sui move test in $dir"
             sui move test --gas-limit 100000000000 --path "$dir"
           done
