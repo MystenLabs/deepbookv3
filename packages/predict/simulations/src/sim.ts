@@ -49,9 +49,15 @@ function alignStrikeToGrid(strike: bigint): bigint {
 }
 
 function parseArgs() {
+  let maxRows: number | undefined;
+  const maxRowsIdx = process.argv.indexOf("--max-rows");
+  if (maxRowsIdx !== -1 && process.argv[maxRowsIdx + 1]) {
+    maxRows = parseInt(process.argv[maxRowsIdx + 1], 10);
+  }
   return {
     setupOnly: process.argv.includes("--setup-only"),
     executeOnly: process.argv.includes("--execute-only"),
+    maxRows,
   };
 }
 
@@ -171,7 +177,7 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
 
     if (row.action === "update_prices") {
       const gas = await execute(
-        updatePricesTx(state.oracleId, state.oracleCapId, row.spot, row.forward),
+        () => updatePricesTx(state.oracleId, state.oracleCapId, row.spot, row.forward),
         "update_prices"
       );
       byAction.update_prices.push({ wallMs: performance.now() - startedAt, ...gas });
@@ -180,7 +186,7 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
 
     if (row.action === "update_svi") {
       const gas = await execute(
-        updateSviTx(
+        () => updateSviTx(
           state.oracleId,
           state.oracleCapId,
           {
@@ -203,7 +209,7 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
     mintIndex++;
     const alignedStrike = alignStrikeToGrid(row.strike);
     const gas = await execute(
-      mintTx({
+      () => mintTx({
         predictId: state.predictId,
         managerId: state.managerId,
         oracleId: state.oracleId,
@@ -239,7 +245,11 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
 
 async function main() {
   const args = parseArgs();
-  const rows = loadScenario();
+  let rows = loadScenario();
+  if (args.maxRows !== undefined) {
+    console.log(`[${ts()}] Limiting to ${args.maxRows} rows`);
+    rows = rows.slice(0, args.maxRows);
+  }
 
   if (args.executeOnly) {
     const state = readJson<SimState>(STATE_PATH);

@@ -355,15 +355,20 @@ fi
 # --- 4. Run simulation ---
 cd "$SCRIPT_DIR"
 
+MAX_ROWS_ARG=""
+if [ -n "${SIM_MAX_ROWS:-}" ]; then
+  MAX_ROWS_ARG="--max-rows $SIM_MAX_ROWS"
+fi
+
 if [ "$RUN_SETUP" -eq 1 ] && [ "$RUN_SIM" -eq 0 ]; then
   echo "==> Running setup only..."
   npx tsx src/sim.ts --setup-only
 elif [ "$RUN_SETUP" -eq 1 ] && [ "$RUN_SIM" -eq 1 ]; then
   echo "==> Running simulation (setup + execute)..."
-  npx tsx src/sim.ts
+  npx tsx src/sim.ts $MAX_ROWS_ARG
 elif [ "$RUN_SIM" -eq 1 ]; then
   echo "==> Running simulation (execute only)..."
-  npx tsx src/sim.ts --execute-only
+  npx tsx src/sim.ts --execute-only $MAX_ROWS_ARG
 fi
 
 if [ "$RUN_SIM" -eq 1 ] && [ "$SKIP_ANALYSIS" -eq 0 ] && [ -f "$INSTANCE_DIR/artifacts/results.json" ]; then

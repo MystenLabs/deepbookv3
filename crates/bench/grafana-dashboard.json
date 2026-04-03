@@ -1,0 +1,378 @@
+{
+  "annotations": [
+    {
+      "kind": "AnnotationQuery",
+      "spec": {
+        "builtIn": true,
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "query": {
+          "datasource": {
+            "name": "-- Grafana --"
+          },
+          "group": "grafana",
+          "kind": "DataQuery",
+          "spec": {},
+          "version": "v0"
+        }
+      }
+    }
+  ],
+  "cursorSync": "Off",
+  "editable": true,
+  "elements": {},
+  "graphTooltip": 1,
+  "layout": {
+    "kind": "GridLayout",
+    "spec": {
+      "items": []
+    }
+  },
+  "links": [],
+  "liveNow": false,
+  "preload": false,
+  "templating": {
+    "list": [
+      {
+        "name": "max_rows",
+        "type": "custom",
+        "current": { "text": "all", "value": "all" },
+        "options": [
+          { "text": "all", "value": "all", "selected": true },
+          { "text": "200", "value": "200", "selected": false }
+        ],
+        "query": "all,200",
+        "label": "Max Rows"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "title": "Runs Total",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "predict_bench_runs_total",
+          "legendFormat": "total runs"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [{ "color": "blue", "value": null }]
+          }
+        }
+      }
+    },
+    {
+      "title": "Latest Run Status",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "targets": [
+        {
+          "expr": "max by (sha, run_id) (predict_bench_run_status{max_rows=\"$max_rows\"})",
+          "legendFormat": "{{sha}} / {{run_id}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "1": { "text": "Running", "color": "yellow" } } },
+            { "type": "value", "options": { "2": { "text": "Success", "color": "green" } } },
+            { "type": "value", "options": { "3": { "text": "Failed", "color": "red" } } }
+          ]
+        }
+      }
+    },
+    {
+      "title": "Latest Run Duration",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "targets": [
+        {
+          "expr": "max by (sha) (predict_bench_run_duration_s{max_rows=\"$max_rows\"})",
+          "legendFormat": "{{sha}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "s" }
+      }
+    },
+    {
+      "title": "Total Txs per Run",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "max by (sha, run_id) (predict_bench_total_txs{max_rows=\"$max_rows\"})",
+          "legendFormat": "{{sha}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [{ "color": "purple", "value": null }]
+          }
+        }
+      }
+    },
+    {
+      "title": "Avg Mint Gas (Total) by SHA",
+      "description": "Average total gas per mint across runs. Use max_rows filter to compare PR (200) vs post-merge (all).",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        {
+          "expr": "max by (sha) (predict_bench_mint_gas_total{max_rows=\"$max_rows\"})",
+          "legendFormat": "{{sha}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "displayName": "Gas (MIST)",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "always"
+          }
+        }
+      },
+      "options": { "tooltip": { "mode": "multi" } }
+    },
+    {
+      "title": "Mint Gas Range (Min / Max)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        {
+          "expr": "max by (sha) (predict_bench_mint_gas_min{max_rows=\"$max_rows\"})",
+          "legendFormat": "min ({{sha}})"
+        },
+        {
+          "expr": "max by (sha) (predict_bench_mint_gas_max{max_rows=\"$max_rows\"})",
+          "legendFormat": "max ({{sha}})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "always"
+          }
+        }
+      }
+    },
+    {
+      "title": "Gas Breakdown: Computation vs Storage",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [
+        {
+          "expr": "max by (sha) (predict_bench_mint_gas_computation{max_rows=\"$max_rows\"})",
+          "legendFormat": "computation ({{sha}})"
+        },
+        {
+          "expr": "max by (sha) (predict_bench_mint_gas_storage{max_rows=\"$max_rows\"})",
+          "legendFormat": "net storage ({{sha}})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "bars",
+            "stacking": { "mode": "normal" },
+            "lineWidth": 1
+          }
+        }
+      }
+    },
+    {
+      "title": "Update Prices / SVI Gas",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [
+        {
+          "expr": "max by (sha) (predict_bench_update_prices_gas{max_rows=\"$max_rows\"})",
+          "legendFormat": "update_prices ({{sha}})"
+        },
+        {
+          "expr": "max by (sha) (predict_bench_update_svi_gas{max_rows=\"$max_rows\"})",
+          "legendFormat": "update_svi ({{sha}})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "always"
+          }
+        }
+      }
+    },
+    {
+      "title": "Avg Mint Latency",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "targets": [
+        {
+          "expr": "max by (sha) (predict_bench_mint_latency_ms{max_rows=\"$max_rows\"})",
+          "legendFormat": "{{sha}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "always"
+          }
+        }
+      }
+    },
+    {
+      "title": "Run Comparison Table",
+      "description": "All runs with gas, latency, and metadata. Click column headers to sort.",
+      "type": "table",
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 28 },
+      "targets": [
+        {
+          "expr": "predict_bench_mint_gas_total{max_rows=\"$max_rows\"}",
+          "legendFormat": "",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        },
+        {
+          "expr": "predict_bench_mint_gas_min{max_rows=\"$max_rows\"}",
+          "legendFormat": "",
+          "format": "table",
+          "instant": true,
+          "refId": "B"
+        },
+        {
+          "expr": "predict_bench_mint_gas_max{max_rows=\"$max_rows\"}",
+          "legendFormat": "",
+          "format": "table",
+          "instant": true,
+          "refId": "C"
+        },
+        {
+          "expr": "predict_bench_mint_gas_computation{max_rows=\"$max_rows\"}",
+          "legendFormat": "",
+          "format": "table",
+          "instant": true,
+          "refId": "D"
+        },
+        {
+          "expr": "predict_bench_mint_gas_storage{max_rows=\"$max_rows\"}",
+          "legendFormat": "",
+          "format": "table",
+          "instant": true,
+          "refId": "E"
+        },
+        {
+          "expr": "predict_bench_mint_latency_ms{max_rows=\"$max_rows\"}",
+          "legendFormat": "",
+          "format": "table",
+          "instant": true,
+          "refId": "F"
+        },
+        {
+          "expr": "predict_bench_total_txs{max_rows=\"$max_rows\"}",
+          "legendFormat": "",
+          "format": "table",
+          "instant": true,
+          "refId": "G"
+        },
+        {
+          "expr": "predict_bench_run_duration_s{max_rows=\"$max_rows\"}",
+          "legendFormat": "",
+          "format": "table",
+          "instant": true,
+          "refId": "H"
+        }
+      ],
+      "transformations": [
+        { "id": "merge" },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "__name__": true,
+              "instance": true,
+              "job": true,
+              "max_rows": false
+            },
+            "renameByName": {
+              "sha": "SHA",
+              "run_id": "Run ID",
+              "max_rows": "Max Rows",
+              "Value #A": "Avg Gas",
+              "Value #B": "Min Gas",
+              "Value #C": "Max Gas",
+              "Value #D": "Computation",
+              "Value #E": "Net Storage",
+              "Value #F": "Latency (ms)",
+              "Value #G": "Total Txs",
+              "Value #H": "Duration (s)"
+            },
+            "indexByName": {
+              "SHA": 0,
+              "Run ID": 1,
+              "Max Rows": 2,
+              "Total Txs": 3,
+              "Avg Gas": 4,
+              "Min Gas": 5,
+              "Max Gas": 6,
+              "Computation": 7,
+              "Net Storage": 8,
+              "Latency (ms)": 9,
+              "Duration (s)": 10
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["predict", "benchmark", "gas"],
+  "timeSettings": {
+    "autoRefresh": "",
+    "autoRefreshIntervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "30m",
+      "1h",
+      "2h",
+      "1d"
+    ],
+    "fiscalYearStartMonth": 0,
+    "from": "now-7d",
+    "hideTimepicker": false,
+    "timezone": "browser",
+    "to": "now"
+  },
+  "title": "Deepbook Predict Simulations",
+  "uid": "predict-bench",
+  "variables": [],
+  "version": 3
+}
