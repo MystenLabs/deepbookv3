@@ -19,7 +19,7 @@ pub struct Config {
     pub sim_image: String,
 
     /// Docker image for the init container that clones the repo.
-    #[clap(env = "BENCH_INIT_IMAGE", long, default_value = "alpine/git:latest")]
+    #[clap(env = "BENCH_INIT_IMAGE", long, default_value = "alpine/git:2.47.2")]
     pub init_image: String,
 
     /// Kubernetes namespace to create benchmark jobs in.

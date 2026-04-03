@@ -82,10 +82,11 @@ fn build_job_spec(
         r#"if [ -n "${{GIT_TOKEN:-}}" ]; then
   REPO_URL=$(echo "$REPO_URL" | sed "s|https://|https://${{GIT_TOKEN}}@|")
 fi
-git clone --depth=1 "$REPO_URL" /workspace/repo
+git init /workspace/repo
 cd /workspace/repo
-git fetch origin {sha} --depth=1
-git checkout {sha}"#,
+git remote add origin "$REPO_URL"
+git fetch --depth=1 origin {sha}
+git checkout FETCH_HEAD"#,
         sha = sha
     );
 

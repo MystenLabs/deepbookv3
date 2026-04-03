@@ -12,6 +12,8 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 const LABELS: &[&str] = &["sha", "run_id", "max_rows"];
+/// Ring buffer cap. max_rows is constrained to "200" or "all" by the CI workflow,
+/// so cardinality is bounded by MAX_ENTRIES * 2 label combinations at most.
 const MAX_ENTRIES: usize = 50;
 
 #[derive(Clone)]
