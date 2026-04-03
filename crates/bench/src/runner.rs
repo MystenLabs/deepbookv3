@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use k8s_openapi::api::batch::v1::{Job, JobSpec};
 use k8s_openapi::api::core::v1::{
     Container, EmptyDirVolumeSource, EnvVar, EnvVarSource, PodSpec, PodTemplateSpec,
-    SecretKeySelector, Volume, VolumeMount,
+    ResourceRequirements, SecretKeySelector, Volume, VolumeMount,
 };
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use kube::api::{Api, PostParams};
@@ -89,12 +89,73 @@ git checkout {sha}"#,
         sha = sha
     );
 
+    let init_resources = ResourceRequirements {
+        limits: Some(
+            [
+                (
+                    "cpu".to_string(),
+                    k8s_openapi::apimachinery::pkg::api::resource::Quantity("500m".to_string()),
+                ),
+                (
+                    "memory".to_string(),
+                    k8s_openapi::apimachinery::pkg::api::resource::Quantity("512Mi".to_string()),
+                ),
+            ]
+            .into(),
+        ),
+        requests: Some(
+            [
+                (
+                    "cpu".to_string(),
+                    k8s_openapi::apimachinery::pkg::api::resource::Quantity("100m".to_string()),
+                ),
+                (
+                    "memory".to_string(),
+                    k8s_openapi::apimachinery::pkg::api::resource::Quantity("128Mi".to_string()),
+                ),
+            ]
+            .into(),
+        ),
+        ..Default::default()
+    };
+
+    let sim_resources = ResourceRequirements {
+        limits: Some(
+            [
+                (
+                    "cpu".to_string(),
+                    k8s_openapi::apimachinery::pkg::api::resource::Quantity("2".to_string()),
+                ),
+                (
+                    "memory".to_string(),
+                    k8s_openapi::apimachinery::pkg::api::resource::Quantity("4Gi".to_string()),
+                ),
+            ]
+            .into(),
+        ),
+        requests: Some(
+            [
+                (
+                    "cpu".to_string(),
+                    k8s_openapi::apimachinery::pkg::api::resource::Quantity("1".to_string()),
+                ),
+                (
+                    "memory".to_string(),
+                    k8s_openapi::apimachinery::pkg::api::resource::Quantity("2Gi".to_string()),
+                ),
+            ]
+            .into(),
+        ),
+        ..Default::default()
+    };
+
     let init_container = Container {
         name: "git-cloner".to_string(),
         image: Some(config.init_image.clone()),
         command: Some(vec!["/bin/sh".to_string(), "-ec".to_string()]),
         args: Some(vec![clone_script]),
         env: Some(init_env),
+        resources: Some(init_resources),
         volume_mounts: Some(vec![VolumeMount {
             name: "workspace".to_string(),
             mount_path: "/workspace".to_string(),
@@ -142,6 +203,7 @@ git checkout {sha}"#,
         name: "predict-sim".to_string(),
         image: Some(config.sim_image.clone()),
         env: Some(env_vars),
+        resources: Some(sim_resources),
         volume_mounts: Some(vec![VolumeMount {
             name: "workspace".to_string(),
             mount_path: "/workspace".to_string(),

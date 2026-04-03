@@ -294,12 +294,12 @@ export async function executeAndWait(tx: Transaction, label = "transaction"): Pr
   return getTransactionBlockWithRetry(execution.digest);
 }
 
-const EXECUTE_MAX_RETRIES = 5;
+const EXECUTE_MAX_ATTEMPTS = 5;
 const EXECUTE_RETRY_DELAY_MS = 1000;
 
 export async function execute(buildTx: Transaction | (() => Transaction), label = "transaction"): Promise<GasUsage> {
   let lastError: unknown;
-  for (let attempt = 0; attempt <= EXECUTE_MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt < EXECUTE_MAX_ATTEMPTS; attempt++) {
     try {
       // Build a fresh transaction on each attempt so object versions are re-resolved.
       const tx = typeof buildTx === "function" ? buildTx() : buildTx;
@@ -324,7 +324,7 @@ export async function execute(buildTx: Transaction | (() => Transaction), label 
       const msg = String(error);
       // Retry on transient object version / input errors.
       if (msg.includes("Object ID") || msg.includes("TransactionExecutionClientError")) {
-        if (attempt < EXECUTE_MAX_RETRIES) {
+        if (attempt < EXECUTE_MAX_ATTEMPTS - 1) {
           const delay = EXECUTE_RETRY_DELAY_MS * (attempt + 1);
           process.stdout.write(`[retry] ${label} attempt ${attempt + 1} failed, retrying in ${delay}ms...\n`);
           await new Promise((r) => setTimeout(r, delay));

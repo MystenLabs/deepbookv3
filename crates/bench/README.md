@@ -87,8 +87,10 @@ Gas benchmarking service for the Predict protocol. Runs simulations against diff
 | Endpoint | Auth | Description |
 |----------|------|-------------|
 | `POST /api/v1/benchmark` | Bearer token | Trigger benchmark run |
-| `GET /api/v1/benchmark/:run_id` | None | Check run status |
-| `POST /api/v1/webhook/github` | HMAC signature | GitHub push webhook |
+| `GET /api/v1/benchmark/:run_id` | Bearer token | Check run status |
+| `POST /api/v1/benchmark/:run_id/started` | Bearer token | Sim job reports start |
+| `POST /api/v1/benchmark/:run_id/results` | Bearer token | Sim job posts results |
+| `POST /api/v1/benchmark/:run_id/failure` | Bearer token | Sim job reports failure |
 | `GET /api/v1/health` | None | Health check |
 | `GET :9184/metrics` | None | Prometheus metrics (separate port) |
 

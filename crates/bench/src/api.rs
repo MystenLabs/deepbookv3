@@ -3,7 +3,7 @@
 
 use crate::config::Config;
 use crate::metrics::{self, BenchMetrics, RunStatus};
-use crate::queue::Job;
+use crate::queue::{max_rows_label, Job};
 use crate::store::{RunInfo, RunStore};
 use axum::body::Body;
 use axum::extract::{Path, State};
@@ -14,7 +14,6 @@ use axum::routing::{get, post};
 use axum::Router;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use tracing::warn;
 
@@ -71,14 +70,21 @@ fn api_err(status: StatusCode, msg: impl Into<String>) -> (StatusCode, Json<Erro
     (status, Json(ErrorResponse { error: msg.into() }))
 }
 
-fn max_rows_label(max_rows: Option<u32>) -> String {
-    max_rows.map(|n| n.to_string()).unwrap_or("all".to_string())
+fn is_valid_sha(sha: &str) -> bool {
+    sha.len() == 40 && sha.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 async fn create_benchmark(
     State(state): State<Arc<AppState>>,
     Json(req): Json<BenchmarkRequest>,
 ) -> ApiResult<BenchmarkResponse> {
+    if !is_valid_sha(&req.sha) {
+        return Err(api_err(
+            StatusCode::BAD_REQUEST,
+            "sha must be a 40-character hex string",
+        ));
+    }
+
     let (run_id, job) = make_job(req.sha.clone(), req.max_rows);
 
     let info = RunInfo {
@@ -250,12 +256,9 @@ async fn receive_failure(
 // -- Helpers --
 
 fn make_job(sha: String, max_rows: Option<u32>) -> (String, Job) {
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    let short_sha = &sha[..8.min(sha.len())];
-    let run_id = format!("{}-{}", short_sha, timestamp);
+    let short_sha = &sha[..8];
+    let id = uuid::Uuid::new_v4().simple().to_string();
+    let run_id = format!("{}-{}", short_sha, &id[..12]);
     let job = Job {
         run_id: run_id.clone(),
         sha,

@@ -21,7 +21,7 @@ callback() {
 
 # JSON-escape a string for safe embedding.
 json_escape() {
-    python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))'
+    node -e 'let d="";process.stdin.on("data",c=>d+=c);process.stdin.on("end",()=>process.stdout.write(JSON.stringify(d)))'
 }
 
 # Report failure with logs on exit.

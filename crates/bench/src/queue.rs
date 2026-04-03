@@ -16,7 +16,7 @@ pub struct Job {
     pub max_rows: Option<u32>,
 }
 
-fn max_rows_label(max_rows: Option<u32>) -> String {
+pub fn max_rows_label(max_rows: Option<u32>) -> String {
     max_rows.map(|n| n.to_string()).unwrap_or("all".to_string())
 }
 

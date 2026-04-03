@@ -77,6 +77,8 @@ impl RunStore {
         if let Some(mut info) = self.get(run_id).await? {
             info.status = status.to_string();
             self.insert(&info).await?;
+        } else {
+            tracing::warn!(run_id, "update_status: run not found");
         }
         Ok(())
     }
@@ -91,6 +93,8 @@ impl RunStore {
                     .as_secs(),
             );
             self.insert(&info).await?;
+        } else {
+            tracing::warn!(run_id, "update_started: run not found");
         }
         Ok(())
     }
@@ -100,6 +104,8 @@ impl RunStore {
             info.status = "failed".to_string();
             info.error = Some(error);
             self.insert(&info).await?;
+        } else {
+            tracing::warn!(run_id, "update_failed: run not found");
         }
         Ok(())
     }
@@ -108,6 +114,8 @@ impl RunStore {
         if let Some(mut info) = self.get(run_id).await? {
             info.status = "success".to_string();
             self.insert(&info).await?;
+        } else {
+            tracing::warn!(run_id, "update_success: run not found");
         }
         Ok(())
     }
