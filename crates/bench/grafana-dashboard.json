@@ -1,11 +1,38 @@
 {
-  "annotations": {
-    "list": []
-  },
+  "annotations": [
+    {
+      "kind": "AnnotationQuery",
+      "spec": {
+        "builtIn": true,
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "query": {
+          "datasource": {
+            "name": "-- Grafana --"
+          },
+          "group": "grafana",
+          "kind": "DataQuery",
+          "spec": {},
+          "version": "v0"
+        }
+      }
+    }
+  ],
+  "cursorSync": "Off",
   "editable": true,
-  "fiscalYearStartMonth": 0,
+  "elements": {},
   "graphTooltip": 1,
+  "layout": {
+    "kind": "GridLayout",
+    "spec": {
+      "items": []
+    }
+  },
   "links": [],
+  "liveNow": false,
+  "preload": false,
   "templating": {
     "list": [
       {
@@ -322,18 +349,30 @@
       ]
     }
   ],
-  "cursorSync": 0,
-  "elements": {},
-  "layout": {},
-  "preload": false,
-  "timeSettings": {},
-  "variables": [],
   "schemaVersion": 39,
   "tags": ["predict", "benchmark", "gas"],
-  "time": { "from": "now-7d", "to": "now" },
-  "timepicker": {},
-  "timezone": "browser",
-  "title": "Predict Gas Benchmark",
+  "timeSettings": {
+    "autoRefresh": "",
+    "autoRefreshIntervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "30m",
+      "1h",
+      "2h",
+      "1d"
+    ],
+    "fiscalYearStartMonth": 0,
+    "from": "now-7d",
+    "hideTimepicker": false,
+    "timezone": "browser",
+    "to": "now"
+  },
+  "title": "Deepbook Predict Simulations",
   "uid": "predict-bench",
-  "version": 2
+  "variables": [],
+  "version": 3
 }
