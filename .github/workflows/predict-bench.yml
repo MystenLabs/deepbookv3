@@ -94,7 +94,7 @@ jobs:
                 echo "::error::Benchmark failed: $ERROR"
                 exit 1
                 ;;
-              queued|running)
+              queued|creating|running)
                 sleep "$POLL_INTERVAL"
                 ELAPSED=$((ELAPSED + POLL_INTERVAL))
                 ;;
