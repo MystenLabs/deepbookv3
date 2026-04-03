@@ -322,6 +322,12 @@
       ]
     }
   ],
+  "cursorSync": 0,
+  "elements": {},
+  "layout": {},
+  "preload": false,
+  "timeSettings": {},
+  "variables": [],
   "schemaVersion": 39,
   "tags": ["predict", "benchmark", "gas"],
   "time": { "from": "now-7d", "to": "now" },
