@@ -66,6 +66,11 @@ use deepbook_indexer::handlers::conditional_order_cancelled_handler::Conditional
 use deepbook_indexer::handlers::conditional_order_executed_handler::ConditionalOrderExecutedHandler;
 use deepbook_indexer::handlers::conditional_order_insufficient_funds_handler::ConditionalOrderInsufficientFundsHandler;
 
+// Maker Incentive Events
+use deepbook_indexer::handlers::maker_incentive_epoch_results_submitted_handler::MakerIncentiveEpochResultsSubmittedHandler;
+use deepbook_indexer::handlers::maker_incentive_fund_created_handler::MakerIncentiveFundCreatedHandler;
+use deepbook_indexer::handlers::maker_incentive_reward_claimed_handler::MakerIncentiveRewardClaimedHandler;
+
 use deepbook_indexer::{DeepbookEnv, TESTNET_REMOTE_STORE_URL};
 use deepbook_schema::MIGRATIONS;
 use prometheus::Registry;
@@ -87,6 +92,8 @@ pub enum Package {
     Deepbook,
     /// Index DeepBook margin events (lending, borrowing, liquidations, etc.)
     DeepbookMargin,
+    /// Index maker incentive events (fund creation, epoch results, reward claims)
+    MakerIncentives,
 }
 
 #[derive(Parser)]
@@ -110,7 +117,7 @@ struct Args {
     #[clap(env, long)]
     env: Option<DeepbookEnv>,
     /// Packages to index events for (can specify multiple)
-    #[clap(long, value_enum, default_values = ["deepbook", "deepbook-margin"])]
+    #[clap(long, value_enum, default_values = ["deepbook", "deepbook-margin", "maker-incentives"])]
     packages: Vec<Package>,
     #[command(subcommand)]
     sandbox: Option<Command>,
@@ -134,6 +141,9 @@ struct SandboxArgs {
     /// Margin package ID(s) — optional, skip margin indexing if omitted
     #[clap(long)]
     margin_packages: Vec<String>,
+    /// Maker incentives package ID(s) — optional
+    #[clap(long)]
+    maker_incentives_packages: Vec<String>,
     /// Path to local checkpoint directory (required for localnet)
     #[clap(long)]
     local_ingestion_path: Option<PathBuf>,
@@ -177,9 +187,11 @@ async fn main() -> Result<(), anyhow::Error> {
             // Sandbox mode — override package addresses (even on testnet, because
             // sandbox deploys its own DeepBook instance), then pick ingestion source
             let has_margin = !sb.margin_packages.is_empty();
+            let has_maker_incentives = !sb.maker_incentives_packages.is_empty();
             deepbook_indexer::sandbox::init_package_override(
                 sb.deepbook_package_id,
                 sb.margin_packages,
+                sb.maker_incentives_packages,
             );
 
             let ingestion = match sb.env {
@@ -199,10 +211,13 @@ async fn main() -> Result<(), anyhow::Error> {
                 },
             };
 
-            // Skip margin handlers if no margin packages provided
+            // Skip margin/maker_incentives handlers if no packages provided
             let mut packages = packages;
             if !has_margin {
-                packages.retain(|p| matches!(p, Package::Deepbook));
+                packages.retain(|p| !matches!(p, Package::DeepbookMargin));
+            }
+            if !has_maker_incentives {
+                packages.retain(|p| !matches!(p, Package::MakerIncentives));
             }
 
             // In sandbox mode the OnceLock override handles all package resolution,
@@ -438,6 +453,26 @@ async fn main() -> Result<(), anyhow::Error> {
                 indexer
                     .concurrent_pipeline(
                         ConditionalOrderInsufficientFundsHandler::new(env),
+                        Default::default(),
+                    )
+                    .await?;
+            }
+            Package::MakerIncentives => {
+                indexer
+                    .concurrent_pipeline(
+                        MakerIncentiveFundCreatedHandler::new(env),
+                        Default::default(),
+                    )
+                    .await?;
+                indexer
+                    .concurrent_pipeline(
+                        MakerIncentiveEpochResultsSubmittedHandler::new(env),
+                        Default::default(),
+                    )
+                    .await?;
+                indexer
+                    .concurrent_pipeline(
+                        MakerIncentiveRewardClaimedHandler::new(env),
                         Default::default(),
                     )
                     .await?;

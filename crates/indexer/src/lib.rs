@@ -10,6 +10,9 @@ pub const NOT_MAINNET_PACKAGE: &str = "<not on mainnet>";
 pub const MAINNET_REMOTE_STORE_URL: &str = "https://checkpoints.mainnet.sui.io";
 pub const TESTNET_REMOTE_STORE_URL: &str = "https://checkpoints.testnet.sui.io";
 
+pub const MAINNET_RPC_URL: &str = "https://fullnode.mainnet.sui.io:443";
+pub const TESTNET_RPC_URL: &str = "https://fullnode.testnet.sui.io:443";
+
 // Package addresses for different environments
 const MAINNET_PACKAGES: &[&str] = &[
     "0xb29d83c26cdd2a64959263abbcfc4a6937f0c9fccaf98580ca56faded65be244",
@@ -61,6 +64,11 @@ const TESTNET_MARGIN_PACKAGES: &[&str] = &[
     "0xd6a42f4df4db73d68cbeb52be66698d2fe6a9464f45ad113ca52b0c6ebd918b6",
 ];
 
+// Maker Incentives package addresses (populated once deployed)
+const MAINNET_MAKER_INCENTIVES_PACKAGES: &[&str] = &[];
+const TESTNET_MAKER_INCENTIVES_PACKAGES: &[&str] =
+    &["0xcd661bfa0c158d195b2f906e32695712f63f0668950656016ba5feffc6ccc564"];
+
 // Module definitions
 /// Core DeepBook modules that handle trading, orders, and pool management
 pub const CORE_MODULES: &[&str] = &[
@@ -84,6 +92,9 @@ pub const MARGIN_MODULES: &[&str] = &[
     "tpsl",
 ];
 
+/// Maker incentives modules
+pub const MAKER_INCENTIVES_MODULES: &[&str] = &["maker_incentives"];
+
 /// SUI system modules
 pub const SUI_MODULES: &[&str] = &["sui"];
 
@@ -92,6 +103,7 @@ pub const SUI_MODULES: &[&str] = &["sui"];
 pub enum ModuleType {
     Core,
     Margin,
+    MakerIncentives,
     Sui,
     Unknown,
 }
@@ -106,17 +118,24 @@ pub fn is_margin_module(module: &str) -> bool {
     MARGIN_MODULES.contains(&module)
 }
 
+/// Check if a module is a maker incentives module
+pub fn is_maker_incentives_module(module: &str) -> bool {
+    MAKER_INCENTIVES_MODULES.contains(&module)
+}
+
 /// Check if a module is a SUI system module
 pub fn is_sui_module(module: &str) -> bool {
     SUI_MODULES.contains(&module)
 }
 
-/// Get the module type (core, margin, sui, or unknown)
+/// Get the module type (core, margin, maker_incentives, sui, or unknown)
 pub fn get_module_type(module: &str) -> ModuleType {
     if is_core_module(module) {
         ModuleType::Core
     } else if is_margin_module(module) {
         ModuleType::Margin
+    } else if is_maker_incentives_module(module) {
+        ModuleType::MakerIncentives
     } else if is_sui_module(module) {
         ModuleType::Sui
     } else {
@@ -129,6 +148,7 @@ pub fn get_all_known_modules() -> Vec<&'static str> {
     let mut modules = Vec::new();
     modules.extend_from_slice(CORE_MODULES);
     modules.extend_from_slice(MARGIN_MODULES);
+    modules.extend_from_slice(MAKER_INCENTIVES_MODULES);
     modules.extend_from_slice(SUI_MODULES);
     modules
 }
@@ -177,6 +197,17 @@ pub fn get_margin_package_addresses(env: DeepbookEnv) -> &'static [&'static str]
     match env {
         DeepbookEnv::Mainnet => MAINNET_MARGIN_PACKAGES,
         DeepbookEnv::Testnet => TESTNET_MARGIN_PACKAGES,
+    }
+}
+
+/// Get the maker incentives package addresses for the given environment
+pub fn get_maker_incentives_package_addresses(env: DeepbookEnv) -> &'static [&'static str] {
+    if let Some(mi) = sandbox::maker_incentives_packages() {
+        return mi;
+    }
+    match env {
+        DeepbookEnv::Mainnet => MAINNET_MAKER_INCENTIVES_PACKAGES,
+        DeepbookEnv::Testnet => TESTNET_MAKER_INCENTIVES_PACKAGES,
     }
 }
 
@@ -231,19 +262,38 @@ impl DeepbookEnv {
         Url::parse(url).unwrap()
     }
 
-    /// Get all package addresses (DeepBook + Margin) for this environment
+    pub fn rpc_url(&self) -> Url {
+        let url = match self {
+            DeepbookEnv::Mainnet => MAINNET_RPC_URL,
+            DeepbookEnv::Testnet => TESTNET_RPC_URL,
+        };
+        Url::parse(url).unwrap()
+    }
+
+    /// Get all package addresses (DeepBook + Margin + MakerIncentives) for this environment
     fn get_all_package_strings(&self) -> Vec<&str> {
         // If sandbox mode is active, both overrides are set together by init_package_override
         // (margin may be an empty slice). Use them instead of the hardcoded constants.
         if let (Some(core), Some(margin)) = (sandbox::core_packages(), sandbox::margin_packages()) {
             let mut all = core.to_vec();
             all.extend_from_slice(margin);
+            if let Some(mi) = sandbox::maker_incentives_packages() {
+                all.extend_from_slice(mi);
+            }
             return all;
         }
 
-        let (packages, margin_packages) = match self {
-            DeepbookEnv::Mainnet => (MAINNET_PACKAGES, MAINNET_MARGIN_PACKAGES),
-            DeepbookEnv::Testnet => (TESTNET_PACKAGES, TESTNET_MARGIN_PACKAGES),
+        let (packages, margin_packages, mi_packages) = match self {
+            DeepbookEnv::Mainnet => (
+                MAINNET_PACKAGES,
+                MAINNET_MARGIN_PACKAGES,
+                MAINNET_MAKER_INCENTIVES_PACKAGES,
+            ),
+            DeepbookEnv::Testnet => (
+                TESTNET_PACKAGES,
+                TESTNET_MARGIN_PACKAGES,
+                TESTNET_MAKER_INCENTIVES_PACKAGES,
+            ),
         };
 
         let mut all_packages = packages.to_vec();
@@ -254,6 +304,8 @@ impl DeepbookEnv {
                 all_packages.push(margin_package);
             }
         }
+
+        all_packages.extend_from_slice(mi_packages);
 
         all_packages
     }

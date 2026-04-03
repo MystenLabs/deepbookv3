@@ -4,7 +4,8 @@ use deepbook_schema::models::{
     AssetSupplied, AssetWithdrawn, BookParamsUpdated, CollateralEvent, DeepbookPoolConfigUpdated,
     DeepbookPoolRegistered, DeepbookPoolUpdated, DeepbookPoolUpdatedRegistry,
     InterestParamsUpdated, Liquidation, LoanBorrowed, LoanRepaid, MaintainerCapUpdated,
-    MaintainerFeesWithdrawn, MarginManagerCreated, MarginManagerState, MarginPoolConfigUpdated,
+    MaintainerFeesWithdrawn, MakerIncentiveEpochResultsSubmitted, MakerIncentiveFundCreated,
+    MakerIncentiveRewardClaimed, MarginManagerCreated, MarginManagerState, MarginPoolConfigUpdated,
     MarginPoolCreated, OrderFillSummary, OrderStatus, PauseCapUpdated, PoolCreated, Pools,
     ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn, ReferralFeeEvent, ReferralFeesClaimedEvent,
     SupplierCapMinted, SupplyReferralMinted,
@@ -429,6 +430,101 @@ impl Reader {
             self.metrics.db_requests_failed.inc();
         }
         res
+    }
+
+    /// Returns all order events and fill events for a pool within a time range.
+    /// Used by the maker incentive scoring engine.
+    pub async fn get_incentive_pool_data(
+        &self,
+        pool_id: String,
+        start_time: i64,
+        end_time: i64,
+    ) -> Result<
+        (
+            Vec<(String, String, i64, i64, i64, i64, bool, String)>,
+            Vec<(String, i64, i64, i64)>,
+            Vec<(String, i64, bool)>,
+            i64, // stake_required
+            Option<(i16, String, i16, String)>, // pool metadata: (base_decimals, base_symbol, quote_decimals, quote_symbol)
+        ),
+        DeepBookError,
+    > {
+        let mut connection = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        // Lookup pool metadata (decimals + symbols) from the pools table.
+        let pool_meta: Option<(i16, String, i16, String)> = schema::pools::table
+            .filter(schema::pools::pool_id.eq(&pool_id))
+            .select((
+                schema::pools::base_asset_decimals,
+                schema::pools::base_asset_symbol,
+                schema::pools::quote_asset_decimals,
+                schema::pools::quote_asset_symbol,
+            ))
+            .first::<(i16, String, i16, String)>(&mut connection)
+            .await
+            .ok();
+
+        let orders = schema::order_updates::table
+            .filter(schema::order_updates::pool_id.eq(&pool_id))
+            .filter(schema::order_updates::checkpoint_timestamp_ms.between(start_time, end_time))
+            .order_by(schema::order_updates::checkpoint_timestamp_ms.asc())
+            .select((
+                schema::order_updates::order_id,
+                schema::order_updates::status,
+                schema::order_updates::price,
+                schema::order_updates::original_quantity,
+                schema::order_updates::quantity,
+                schema::order_updates::checkpoint_timestamp_ms,
+                schema::order_updates::is_bid,
+                schema::order_updates::balance_manager_id,
+            ))
+            .load::<(String, String, i64, i64, i64, i64, bool, String)>(&mut connection)
+            .await
+            .map_err(|_| DeepBookError::database("Error fetching incentive order events"))?;
+
+        let fills = schema::order_fills::table
+            .filter(schema::order_fills::pool_id.eq(&pool_id))
+            .filter(schema::order_fills::checkpoint_timestamp_ms.between(start_time, end_time))
+            .order_by(schema::order_fills::checkpoint_timestamp_ms.asc())
+            .select((
+                schema::order_fills::maker_order_id,
+                schema::order_fills::base_quantity,
+                schema::order_fills::quote_quantity,
+                schema::order_fills::checkpoint_timestamp_ms,
+            ))
+            .load::<(String, i64, i64, i64)>(&mut connection)
+            .await
+            .map_err(|_| DeepBookError::database("Error fetching incentive fill events"))?;
+
+        // All stake/unstake events for this pool up to the epoch end.
+        // Net positive stake = eligible for maker incentives.
+        // Gracefully return empty if the stakes table doesn't exist in this DB.
+        let stakes = schema::stakes::table
+            .filter(schema::stakes::pool_id.eq(&pool_id))
+            .filter(schema::stakes::checkpoint_timestamp_ms.le(end_time))
+            .order_by(schema::stakes::checkpoint_timestamp_ms.asc())
+            .select((
+                schema::stakes::balance_manager_id,
+                schema::stakes::amount,
+                schema::stakes::stake,
+            ))
+            .load::<(String, i64, bool)>(&mut connection)
+            .await
+            .unwrap_or_default();
+
+        // Most recent stake_required for this pool from governance trade_params.
+        // Returns 0 if the table doesn't exist in this DB.
+        let stake_required: i64 = schema::trade_params_update::table
+            .filter(schema::trade_params_update::pool_id.eq(&pool_id))
+            .order_by(schema::trade_params_update::checkpoint_timestamp_ms.desc())
+            .select(schema::trade_params_update::stake_required)
+            .first::<i64>(&mut connection)
+            .await
+            .unwrap_or(0);
+
+        self.metrics.db_requests_succeeded.inc();
+        Ok((orders, fills, stakes, stake_required, pool_meta))
     }
 
     pub async fn get_orders_status(
@@ -1777,6 +1873,95 @@ impl Reader {
             .order_by(schema::book_params_updated::checkpoint_timestamp_ms.desc())
             .limit(1);
         Ok(self.results(query).await?.into_iter().next())
+    }
+
+    // === Maker Incentive Events ===
+
+    pub async fn get_maker_incentive_fund_created(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        pool_id_filter: String,
+        fund_id_filter: String,
+    ) -> Result<Vec<MakerIncentiveFundCreated>, DeepBookError> {
+        let query = schema::maker_incentive_fund_created::table
+            .select(MakerIncentiveFundCreated::as_select())
+            .filter(
+                schema::maker_incentive_fund_created::checkpoint_timestamp_ms
+                    .between(start_time, end_time),
+            )
+            .filter(schema::maker_incentive_fund_created::pool_id.like(to_pattern(&pool_id_filter)))
+            .filter(
+                schema::maker_incentive_fund_created::fund_id.like(to_pattern(&fund_id_filter)),
+            )
+            .order_by(schema::maker_incentive_fund_created::checkpoint_timestamp_ms.desc())
+            .limit(limit);
+
+        Ok(self.results(query).await?)
+    }
+
+    pub async fn get_maker_incentive_epoch_results_submitted(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        pool_id_filter: String,
+        fund_id_filter: String,
+    ) -> Result<Vec<MakerIncentiveEpochResultsSubmitted>, DeepBookError> {
+        let query = schema::maker_incentive_epoch_results_submitted::table
+            .select(MakerIncentiveEpochResultsSubmitted::as_select())
+            .filter(
+                schema::maker_incentive_epoch_results_submitted::checkpoint_timestamp_ms
+                    .between(start_time, end_time),
+            )
+            .filter(
+                schema::maker_incentive_epoch_results_submitted::pool_id
+                    .like(to_pattern(&pool_id_filter)),
+            )
+            .filter(
+                schema::maker_incentive_epoch_results_submitted::fund_id
+                    .like(to_pattern(&fund_id_filter)),
+            )
+            .order_by(
+                schema::maker_incentive_epoch_results_submitted::checkpoint_timestamp_ms.desc(),
+            )
+            .limit(limit);
+
+        Ok(self.results(query).await?)
+    }
+
+    pub async fn get_maker_incentive_reward_claimed(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        pool_id_filter: String,
+        fund_id_filter: String,
+        balance_manager_id_filter: String,
+    ) -> Result<Vec<MakerIncentiveRewardClaimed>, DeepBookError> {
+        let query = schema::maker_incentive_reward_claimed::table
+            .select(MakerIncentiveRewardClaimed::as_select())
+            .filter(
+                schema::maker_incentive_reward_claimed::checkpoint_timestamp_ms
+                    .between(start_time, end_time),
+            )
+            .filter(
+                schema::maker_incentive_reward_claimed::pool_id
+                    .like(to_pattern(&pool_id_filter)),
+            )
+            .filter(
+                schema::maker_incentive_reward_claimed::fund_id
+                    .like(to_pattern(&fund_id_filter)),
+            )
+            .filter(
+                schema::maker_incentive_reward_claimed::balance_manager_id
+                    .like(to_pattern(&balance_manager_id_filter)),
+            )
+            .order_by(schema::maker_incentive_reward_claimed::checkpoint_timestamp_ms.desc())
+            .limit(limit);
+
+        Ok(self.results(query).await?)
     }
 }
 

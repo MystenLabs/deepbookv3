@@ -1,0 +1,11 @@
+[Unit]
+Description=DeepBook Maker Incentives — daily epoch submission timer
+
+[Timer]
+# Fire at 00:15 UTC daily (15 min after epoch boundary to allow data to settle)
+OnCalendar=*-*-* 00:15:00 UTC
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

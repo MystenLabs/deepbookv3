@@ -13,7 +13,8 @@ use deepbook_schema::models::{
     AssetSupplied, AssetWithdrawn, BookParamsUpdated, CollateralEvent, DeepbookPoolConfigUpdated,
     DeepbookPoolRegistered, DeepbookPoolUpdated, DeepbookPoolUpdatedRegistry,
     InterestParamsUpdated, Liquidation, LoanBorrowed, LoanRepaid, MaintainerCapUpdated,
-    MaintainerFeesWithdrawn, MarginManagerCreated, MarginManagerState, MarginPoolConfigUpdated,
+    MaintainerFeesWithdrawn, MakerIncentiveEpochResultsSubmitted, MakerIncentiveFundCreated,
+    MakerIncentiveRewardClaimed, MarginManagerCreated, MarginManagerState, MarginPoolConfigUpdated,
     MarginPoolCreated, PauseCapUpdated, PoolCreated, Pools, ProtocolFeesIncreasedEvent,
     ProtocolFeesWithdrawn, ReferralFeeEvent, ReferralFeesClaimedEvent, SupplierCapMinted,
     SupplyReferralMinted,
@@ -123,6 +124,13 @@ pub const GET_POINTS_PATH: &str = "/get_points";
 pub const PORTFOLIO_PATH: &str = "/portfolio/:wallet_address";
 pub const POOL_CREATED_PATH: &str = "/pool_created";
 pub const BOOK_PARAMS_UPDATED_PATH: &str = "/book_params_updated";
+pub const INCENTIVE_POOL_DATA_PATH: &str = "/incentives/pool_data/:pool_id";
+
+// Maker Incentive Events
+pub const MAKER_INCENTIVE_FUND_CREATED_PATH: &str = "/maker_incentive_fund_created";
+pub const MAKER_INCENTIVE_EPOCH_RESULTS_SUBMITTED_PATH: &str =
+    "/maker_incentive_epoch_results_submitted";
+pub const MAKER_INCENTIVE_REWARD_CLAIMED_PATH: &str = "/maker_incentive_reward_claimed";
 
 type AdminRateLimiter = RateLimiter<
     governor::state::NotKeyed,
@@ -413,6 +421,20 @@ pub(crate) fn make_router(state: Arc<AppState>) -> Router {
         .route(PORTFOLIO_PATH, get(portfolio))
         .route(POOL_CREATED_PATH, get(pool_created))
         .route(BOOK_PARAMS_UPDATED_PATH, get(book_params_updated))
+        .route(INCENTIVE_POOL_DATA_PATH, get(incentive_pool_data))
+        // Maker Incentive Events
+        .route(
+            MAKER_INCENTIVE_FUND_CREATED_PATH,
+            get(maker_incentive_fund_created),
+        )
+        .route(
+            MAKER_INCENTIVE_EPOCH_RESULTS_SUBMITTED_PATH,
+            get(maker_incentive_epoch_results_submitted),
+        )
+        .route(
+            MAKER_INCENTIVE_REWARD_CLAIMED_PATH,
+            get(maker_incentive_reward_claimed),
+        )
         .with_state(state.clone());
 
     let rpc_routes = Router::new()
@@ -2854,4 +2876,169 @@ async fn portfolio(
 ) -> Result<Json<PortfolioQueryResult>, DeepBookError> {
     let result = state.reader.get_portfolio(&wallet_address).await?;
     Ok(Json(result))
+}
+
+/// Returns raw order events and fill events for a pool within a time range,
+/// formatted for consumption by the maker incentive scoring engine.
+async fn incentive_pool_data(
+    Path(pool_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Value>, DeepBookError> {
+    let start_ms: i64 = params
+        .get("start_ms")
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| DeepBookError::bad_request("start_ms query parameter required"))?;
+    let end_ms: i64 = params
+        .get("end_ms")
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| DeepBookError::bad_request("end_ms query parameter required"))?;
+
+    let (orders, fills, stakes, stake_required, pool_meta) = state
+        .reader
+        .get_incentive_pool_data(pool_id.clone(), start_ms, end_ms)
+        .await?;
+
+    let order_events: Vec<Value> = orders
+        .into_iter()
+        .map(
+            |(order_id, status, price, original_quantity, quantity, ts, is_bid, bm_id)| {
+                serde_json::json!({
+                    "order_id": order_id,
+                    "status": status,
+                    "pool_id": pool_id,
+                    "price": price,
+                    "is_bid": is_bid,
+                    "original_quantity": original_quantity,
+                    "quantity": quantity,
+                    "balance_manager_id": bm_id,
+                    "checkpoint_timestamp_ms": ts,
+                })
+            },
+        )
+        .collect();
+
+    let fill_events: Vec<Value> = fills
+        .into_iter()
+        .map(|(maker_order_id, base_qty, quote_qty, ts)| {
+            serde_json::json!({
+                "pool_id": pool_id,
+                "maker_order_id": maker_order_id,
+                "base_quantity": base_qty,
+                "quote_quantity": quote_qty,
+                "checkpoint_timestamp_ms": ts,
+            })
+        })
+        .collect();
+
+    let stake_events: Vec<Value> = stakes
+        .into_iter()
+        .map(|(bm_id, amount, is_stake)| {
+            serde_json::json!({
+                "balance_manager_id": bm_id,
+                "amount": amount,
+                "stake": is_stake,
+            })
+        })
+        .collect();
+
+    let mut response = serde_json::json!({
+        "order_events": order_events,
+        "fill_events": fill_events,
+        "stake_events": stake_events,
+        "stake_required": stake_required,
+    });
+
+    if let Some((base_dec, base_sym, quote_dec, quote_sym)) = pool_meta {
+        response["pool_metadata"] = serde_json::json!({
+            "base_decimals": base_dec,
+            "base_symbol": base_sym,
+            "quote_decimals": quote_dec,
+            "quote_symbol": quote_sym,
+        });
+    }
+
+    Ok(Json(response))
+}
+
+// === Maker Incentive Event Handlers ===
+
+async fn maker_incentive_fund_created(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<MakerIncentiveFundCreated>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let pool_id_filter = params.get("pool_id").cloned().unwrap_or_default();
+    let fund_id_filter = params.get("fund_id").cloned().unwrap_or_default();
+
+    let results = state
+        .reader
+        .get_maker_incentive_fund_created(
+            start_time,
+            end_time,
+            limit,
+            pool_id_filter,
+            fund_id_filter,
+        )
+        .await?;
+
+    Ok(Json(results))
+}
+
+async fn maker_incentive_epoch_results_submitted(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<MakerIncentiveEpochResultsSubmitted>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let pool_id_filter = params.get("pool_id").cloned().unwrap_or_default();
+    let fund_id_filter = params.get("fund_id").cloned().unwrap_or_default();
+
+    let results = state
+        .reader
+        .get_maker_incentive_epoch_results_submitted(
+            start_time,
+            end_time,
+            limit,
+            pool_id_filter,
+            fund_id_filter,
+        )
+        .await?;
+
+    Ok(Json(results))
+}
+
+async fn maker_incentive_reward_claimed(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<MakerIncentiveRewardClaimed>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let pool_id_filter = params.get("pool_id").cloned().unwrap_or_default();
+    let fund_id_filter = params.get("fund_id").cloned().unwrap_or_default();
+    let balance_manager_id_filter = params.get("balance_manager_id").cloned().unwrap_or_default();
+
+    let results = state
+        .reader
+        .get_maker_incentive_reward_claimed(
+            start_time,
+            end_time,
+            limit,
+            pool_id_filter,
+            fund_id_filter,
+            balance_manager_id_filter,
+        )
+        .await?;
+
+    Ok(Json(results))
 }

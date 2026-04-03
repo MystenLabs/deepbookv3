@@ -1,0 +1,1046 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Maker Incentives — Architecture Diagrams</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a0e14;
+  --surface: #131920;
+  --surface2: #1a222c;
+  --border: #252d38;
+  --text: #d4dce8;
+  --text-muted: #6b7a8d;
+  --blue: #58a6ff;
+  --green: #3fb950;
+  --orange: #f0883e;
+  --purple: #bc8cff;
+  --pink: #f778ba;
+  --cyan: #56d4dd;
+  --yellow: #e3b341;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  min-height: 100vh;
+}
+header { padding: 36px 48px 0; }
+h1 {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: -1px;
+  background: linear-gradient(135deg, var(--blue), var(--green));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.subtitle {
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  margin-top: 4px;
+}
+.tabs {
+  display: flex;
+  gap: 2px;
+  padding: 24px 48px 0;
+  border-bottom: 1px solid var(--border);
+}
+.tab {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.78rem;
+  font-weight: 500;
+  padding: 10px 20px;
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.tab:hover { color: var(--text); background: var(--surface); }
+.tab.active { color: var(--blue); border-bottom-color: var(--blue); background: var(--surface); }
+.tab .dot {
+  display: inline-block; width: 8px; height: 8px;
+  border-radius: 2px; margin-right: 6px; vertical-align: middle;
+}
+main { padding: 32px 48px 48px; }
+.panel { display: none; }
+.panel.active { display: block; }
+.diagram-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 32px;
+  margin-bottom: 24px;
+  overflow-x: auto;
+}
+.panel-desc {
+  font-size: 0.88rem;
+  color: var(--text-muted);
+  margin-bottom: 20px;
+  line-height: 1.6;
+  max-width: 900px;
+}
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px 20px;
+}
+.card h3 {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.82rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.card p {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin-bottom: 6px;
+}
+.card ul {
+  list-style: none;
+  font-size: 0.79rem;
+  color: var(--text-muted);
+  line-height: 1.75;
+}
+.card ul li::before { content: '\2192\00a0'; opacity: 0.5; }
+.card code {
+  background: var(--surface2);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.74rem;
+}
+.section-label {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.9rem;
+  font-weight: 600;
+  margin: 28px 0 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Maker Incentives System</h1>
+  <p class="subtitle">DeepBook V3 -- Permissionless Incentive Platform</p>
+</header>
+
+<div class="tabs">
+  <button class="tab active" onclick="showTab('arch')">
+    <span class="dot" style="background:var(--blue)"></span>Architecture
+  </button>
+  <button class="tab" onclick="showTab('ops')">
+    <span class="dot" style="background:var(--green)"></span>Operational Flow
+  </button>
+  <button class="tab" onclick="showTab('provision')">
+    <span class="dot" style="background:var(--cyan)"></span>Provisioning
+  </button>
+  <button class="tab" onclick="showTab('upgrade')">
+    <span class="dot" style="background:var(--orange)"></span>Upgrade
+  </button>
+  <button class="tab" onclick="showTab('dev')">
+    <span class="dot" style="background:var(--purple)"></span>Dev and Debug
+  </button>
+</div>
+
+<main>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     TAB 1: ARCHITECTURE
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="panel active" id="arch">
+  <p class="panel-desc">
+    Static layout showing what exists and where it lives.
+    The scoring enclave runs on a Nitro-capable EC2 instance. The deepbook-server can run on the
+    same instance (co-located) or on a separate EC2 — controlled by the <code>--server-host</code> flag.
+    On-chain state lives on Sui. Scripts run from an operator machine.
+  </p>
+  <div class="diagram-box" id="diagram-arch"></div>
+
+  <!-- ── EC2 Detail ── -->
+  <div class="section-label" style="color:var(--blue)">EC2 Instance Detail</div>
+  <div class="cards">
+    <div class="card">
+      <h3 style="color:var(--blue)">PostgreSQL Database</h3>
+      <p>The central data store on the host. The <b>deepbook-indexer</b> continuously watches Sui chain events and writes order_updates, order_fills, and stake data into PostgreSQL tables. The <b>deepbook-server</b> reads from this same database to serve REST API queries.</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--blue)">deepbook-server (:9008)</h3>
+      <p>Axum HTTP server that serves pool trading data over REST. The scoring enclave calls its <code>/incentive_pool_data</code> endpoint to get orders, fills, stakes, and pool coin metadata (decimals, symbols) for a given pool and time window.</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--blue)">deepbook-indexer</h3>
+      <p>Long-running process that subscribes to Sui chain events and writes them into PostgreSQL. It populates the tables that deepbook-server reads from. Without the indexer, the database would have no data.</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--blue)">Networking: socat and vsock-proxy</h3>
+      <p>Nitro Enclaves have <b>no network access</b> by default -- they can only communicate via VSOCK, a virtual socket protocol between the enclave and its host. We need two bridges:</p>
+      <ul>
+        <li><b>socat</b> (inbound): Operator scripts hit TCP port 3000 on the host. socat forwards that TCP traffic into the enclave over VSOCK CID:3000. This is how external callers reach the enclave.</li>
+        <li><b>vsock-proxy</b> (outbound): The enclave needs to call deepbook-server. vsock-proxy listens on VSOCK port 9008 inside the enclave and forwards to <code>DEEPBOOK_SERVER_HOST:DEEPBOOK_SERVER_PORT</code> — wherever deepbook-server is running. Default: <code>127.0.0.1:9008</code> (co-located). For a separate instance, pass <code>--server-host &lt;private-ip&gt;</code> to the provisioning scripts.</li>
+      </ul>
+      <p><b>Separate EC2 topology:</b> The deepbook-server does <b>not</b> need to run on the same machine as the enclave. Since vsock-proxy runs on the host and makes the real TCP connection, it can reach any IP on the network. Just change the <code>--server-host</code> flag — no enclave rebuild needed, no PCR change, no re-registration. This means you don't need to Nitro-enable your existing deepbook-server instance.</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--blue)">deepbook-incentives (Enclave :3000)</h3>
+      <p>Axum server running <b>inside the Nitro Enclave TEE</b>. It receives scoring requests, fetches pool data from deepbook-server (via VSOCK), runs <code>compute_scores()</code>, then BCS-encodes the results and signs them with an Ed25519 key that only exists inside the enclave. Four endpoints:</p>
+      <ul>
+        <li><b>/process_data</b> -- production: scores an epoch, returns signed BCS payload</li>
+        <li><b>/test_process_data</b> -- dev only: same scoring, but the on-chain contract skips signature verification</li>
+        <li><b>/get_attestation</b> -- returns the Nitro attestation document containing the enclave public key and PCR measurements</li>
+        <li><b>/health_check</b> -- simple liveness probe</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ── On-Chain Detail ── -->
+  <div class="section-label" style="color:var(--green)">On-Chain Objects (Sui Move)</div>
+  <div class="cards">
+    <div class="card">
+      <h3 style="color:var(--green)">EnclaveConfig</h3>
+      <p>A shared object that stores <b>PCR values</b> (Platform Configuration Registers). PCRs are SHA-384 hashes that uniquely identify the exact code running inside a Nitro Enclave -- PCR0 is the enclave image hash, PCR1 is the kernel hash, PCR2 is the application hash. When someone submits epoch results, the contract checks that the signing enclave's PCRs match the ones stored here.</p>
+      <ul>
+        <li>Updated via <code>update-pcrs.ts</code> whenever the enclave image is rebuilt</li>
+        <li>In dev, set to all zeros with <code>--debug</code> to skip PCR verification</li>
+        <li>In production, must match the exact EIF that was built</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--green)">Enclave MAKER_INCENTIVES</h3>
+      <p>A shared object that stores the <b>enclave's Ed25519 public key</b>. This is the key the contract uses to verify that epoch results were actually signed by a legitimate enclave.</p>
+      <p>The public key is obtained by calling <code>/get_attestation</code> on the running enclave -- this returns a Nitro Attestation Document (a cryptographic proof from AWS) that contains the public key and proves it came from an enclave matching the PCRs in EnclaveConfig. The <code>register-enclave.ts</code> script fetches this attestation and submits it on-chain, where the contract extracts and stores the public key.</p>
+      <p><b>MAKER_INCENTIVES</b> is a Move one-time-witness type that scopes this Enclave object to this specific package -- it prevents other packages from reusing or impersonating it.</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--green)">IncentiveFund</h3>
+      <p><b>Permissionless</b> -- anyone can create one by calling <code>create-fund.ts</code>. The creator deposits DEEP tokens as the reward treasury and sets parameters for how rewards are distributed. One trading pool can have <b>many funds</b> targeting it (one-to-many), each with different params and funders. Rewards are <b>always in DEEP</b> -- the contract only accepts DEEP tokens for funding.</p>
+      <ul>
+        <li><b>pool_id</b> -- which DeepBook trading pool this fund incentivizes</li>
+        <li><b>reward_per_epoch</b> -- DEEP distributed each epoch</li>
+        <li><b>alpha</b> -- weight between size and spread in scoring</li>
+        <li><b>epoch_duration_ms</b>, <b>window_duration_ms</b> -- timing params</li>
+        <li><b>min_spread</b>, <b>flow_floor</b> -- scoring thresholds</li>
+        <li><b>treasury: Balance DEEP</b> -- the pool of funds to distribute</li>
+        <li><b>submitted_epochs: Table</b> -- tracks which epochs have been submitted, prevents the same epoch from being submitted twice for this fund</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--green)">FundOwnerCap</h3>
+      <p>A capability object returned to whoever calls <code>create_fund()</code>. Only the holder of this cap can:</p>
+      <ul>
+        <li>Update reward_per_epoch via <code>update_reward_per_epoch()</code></li>
+        <li>Update alpha via <code>update_alpha()</code></li>
+        <li>Toggle the fund active/inactive via <code>set_fund_active()</code></li>
+      </ul>
+      <p>The cap is a Move <code>key</code> object owned by the creator's address. It can be transferred to a different address if ownership needs to change.</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--green)">EpochRecord</h3>
+      <p>Created by <code>submit_epoch_results()</code> -- one per fund per epoch. It is the <b>output</b> of the scoring process and stores:</p>
+      <ul>
+        <li>The epoch time range (start_ms, end_ms)</li>
+        <li>Per-maker scores and DEEP reward allocations</li>
+        <li><b>claimed: Table</b> -- tracks which makers have already claimed, preventing double-claims</li>
+      </ul>
+      <p>EpochRecords are shared objects so any maker can read their allocation and call <code>claim_reward()</code> against it. Records are permanent -- unclaimed rewards never expire.</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--green)">submitted_epochs (Table on IncentiveFund)</h3>
+      <p>Not a separate object -- it is a <b>field on IncentiveFund</b>. It is a Move <code>Table</code> mapping epoch timestamps to booleans. When <code>submit_epoch_results()</code> is called, it checks this table first. If the epoch already exists, the transaction aborts. This prevents the same epoch from being scored and paid out twice (the "multiple submission exploit").</p>
+    </div>
+  </div>
+
+  <!-- ── Operator Scripts Detail ── -->
+  <div class="section-label" style="color:var(--blue)">Operator Scripts</div>
+  <div class="cards">
+    <div class="card">
+      <h3 style="color:var(--blue)">deploy.ts</h3>
+      <p><b>What:</b> Publishes the maker_incentives Move package to Sui.<br/>
+      <b>When:</b> Once, at initial setup. Again only if the contract itself needs upgrading.<br/>
+      <b>Output:</b> Creates <code>deployed.&lt;network&gt;.json</code> with packageId and enclaveConfigId.</p>
+      <ul>
+        <li><code>--network testnet|mainnet</code> -- target network</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--blue)">create-fund.ts</h3>
+      <p><b>What:</b> Creates a new IncentiveFund targeting a DeepBook pool and optionally deposits DEEP into it.<br/>
+      <b>When:</b> Whenever someone wants to start a new incentive program for a pool. Can be run multiple times for different pools or different params on the same pool.</p>
+      <ul>
+        <li><code>--network</code> -- target network</li>
+        <li><code>--pool-id 0x...</code> -- the DeepBook pool to incentivize</li>
+        <li><code>--reward N</code> -- DEEP per epoch</li>
+        <li><code>--fund N</code> -- initial DEEP deposit into treasury</li>
+        <li><code>--alpha-bps N</code> -- alpha in basis points (5000 = 0.5)</li>
+        <li><code>--epoch-duration-hours</code>, <code>--window-duration-hours</code></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--blue)">update-pcrs.ts</h3>
+      <p><b>What:</b> Sets the PCR values on the on-chain EnclaveConfig object.<br/>
+      <b>When:</b> After building/rebuilding the enclave EIF. The PCRs change every time the enclave image is rebuilt because the code hash changes.</p>
+      <ul>
+        <li><code>--debug</code> -- sets all PCRs to zeros (dev only, bypasses verification)</li>
+        <li><code>--pcr0 &lt;hex&gt; --pcr1 &lt;hex&gt; --pcr2 &lt;hex&gt;</code> -- production PCR values from <code>out/nitro.pcrs</code></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--blue)">register-enclave.ts</h3>
+      <p><b>What:</b> Fetches the attestation document from the running enclave and registers the enclave's public key on-chain.<br/>
+      <b>When:</b> After starting the enclave and after updating PCRs. Must be re-run whenever the enclave is restarted (new key pair).</p>
+      <ul>
+        <li><code>--enclave-url http://host:3000</code> -- URL to reach the enclave (via socat)</li>
+        <li><code>--network</code> -- target network</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--blue)">submit-epoch.ts</h3>
+      <p><b>What:</b> Submits scoring results for a single fund's epoch. POSTs to the enclave, gets back signed scores, builds a PTB to call <code>submit_epoch_results</code> on-chain.<br/>
+      <b>When:</b> Manual one-off submission. For automated daily runs, use submit-all-epochs.ts instead.</p>
+      <ul>
+        <li><code>--fund-id 0x...</code> -- which fund to score</li>
+        <li><code>--enclave-url</code> -- enclave endpoint</li>
+        <li><code>--test</code> -- use /test_process_data endpoint (dev)</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--blue)">submit-all-epochs.ts</h3>
+      <p><b>What:</b> Loops through ALL funds in <code>deployed.&lt;net&gt;.json</code> and submits the previous epoch for each. Idempotent -- checks <code>is_epoch_submitted</code> on-chain and skips already-done funds.<br/>
+      <b>When:</b> Daily, triggered by the systemd timer. This is the primary production script.</p>
+      <ul>
+        <li><code>--network</code>, <code>--enclave-url</code></li>
+        <li><code>--dry-run</code> -- hit the enclave, print scores, but skip the on-chain tx</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--blue)">backfill-epochs.ts</h3>
+      <p><b>What:</b> Replays missed epochs for a date range. For each day in the range, calls the enclave and submits on-chain. Skips epochs that were already submitted.<br/>
+      <b>When:</b> If the daily cron missed runs (server downtime, enclave crash, etc.).</p>
+      <ul>
+        <li><code>--start-date YYYY-MM-DD</code></li>
+        <li><code>--end-date YYYY-MM-DD</code></li>
+        <li><code>--network</code>, <code>--enclave-url</code></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--blue)">upgrade-enclave.sh</h3>
+      <p><b>What:</b> Full enclave upgrade pipeline in one command: syncs code to EC2, terminates old enclave, rebuilds EIF, starts new enclave, restarts networking, updates PCRs on-chain, re-registers enclave.<br/>
+      <b>When:</b> Whenever scoring logic (scoring.rs, types.rs) changes.</p>
+      <ul>
+        <li><code>--host</code> -- EC2 IP</li>
+        <li><code>--key</code> -- SSH key path</li>
+        <li><code>--network</code>, <code>--debug</code></li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════
+     TAB 2: OPERATIONAL FLOW
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="panel" id="ops">
+  <p class="panel-desc">
+    The daily scoring and reward cycle. The submit-all-epochs.ts script is the orchestrator --
+    it reads the local config, calls the enclave for each fund, gets back signed scores, and
+    submits the transaction on-chain. Makers claim rewards separately at their own pace.
+  </p>
+  <div class="diagram-box" id="diagram-ops"></div>
+
+  <div class="cards">
+    <div class="card">
+      <h3 style="color:var(--pink)">Step 1: Trigger</h3>
+      <p>The systemd timer fires daily at 00:15 UTC (15 minutes after the epoch boundary to ensure data is finalized). It launches <code>submit-all-epochs.ts</code> which reads <code>deployed.&lt;net&gt;.json</code> to get the list of all registered funds and their pool/param configs.</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--blue)">Step 2: For Each Fund</h3>
+      <p>The script checks on-chain if this fund's epoch was already submitted (<code>is_epoch_submitted</code>). If not, it POSTs to the enclave's <code>/process_data</code> endpoint with pool_id, fund_id, and the fund's params (alpha, reward, epoch times).</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--blue)">Step 3: Enclave Scores</h3>
+      <p>Inside the enclave, the server calls <b>deepbook-server</b> on port 9008 (via VSOCK proxy) to fetch order_updates, order_fills, stakes, and pool coin metadata for the epoch window. It runs <code>compute_scores()</code>, BCS-encodes the results, and Ed25519-signs them with the enclave's private key.</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--yellow)">Step 4: Submit On-Chain</h3>
+      <p>The script receives the signed BCS payload back from the enclave. It builds a Sui PTB calling <code>submit_epoch_results()</code> on the Move contract. The contract verifies the Ed25519 signature against the registered Enclave public key, debits the fund's treasury, and creates an EpochRecord with per-maker allocations.</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--green)">Step 5: Results On-Chain</h3>
+      <p>The <b>EpochRecord</b> is now a shared object on Sui containing each maker's score and DEEP allocation for this epoch. The <b>IncentiveFund</b> treasury has been debited by reward_per_epoch. The <b>submitted_epochs</b> table on the fund now marks this epoch as done.</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--purple)">Step 6: Makers Claim</h3>
+      <p>At any time, a maker can call <code>claim_reward()</code> with their BalanceManager and the EpochRecord. The contract checks they haven't already claimed, looks up their allocation, and transfers DEEP to them. If multiple funds target the same pool, the maker can batch multiple <code>claim_reward()</code> calls into a single PTB.</p>
+    </div>
+  </div>
+
+  <div class="section-label" style="color:var(--orange)">Recovery</div>
+  <div class="cards">
+    <div class="card">
+      <h3 style="color:var(--orange)">Missed Epoch: backfill-epochs.ts</h3>
+      <p>If the daily cron missed runs (server was down, enclave crashed, etc.), this script replays epochs for a date range. It follows the same flow -- calls the enclave, submits on-chain -- but for historical epoch windows. Skips any that were already submitted.</p>
+      <ul>
+        <li><code>--start-date YYYY-MM-DD --end-date YYYY-MM-DD</code></li>
+        <li>The systemd timer also has <code>Persistent=true</code> which catches missed runs on reboot</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════
+     TAB 3: PROVISIONING
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="panel" id="provision">
+  <p class="panel-desc">
+    One-time setup to go from zero to a live system. Four phases: deploy the contract on Sui,
+    build and start the enclave on EC2, register the enclave on-chain so the contract trusts it,
+    then create an incentive fund and install automation. Each phase depends on the previous one.
+  </p>
+  <div class="diagram-box" id="diagram-provision"></div>
+
+  <div class="section-label" style="color:var(--text-muted)">Prerequisites (manual, before any scripts)</div>
+  <div class="cards">
+    <div class="card">
+      <h3 style="color:var(--text-muted)">EC2 Instance</h3>
+      <p>You need a <b>Nitro-capable</b> EC2 instance (e.g. m5.xlarge in us-east-2). Nitro Enclaves are an AWS feature — not all instance types support them. If starting from a fresh Amazon Linux instance, run <code>setup-ec2.sh</code> to install Docker, nitro-cli, vsock-proxy, socat, and configure the allocator. This is a separate EC2 from your deepbook-server — the enclave talks to deepbook-server over the network via <code>--server-host</code>.</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--text-muted)">deepbook-server Endpoints</h3>
+      <p>The deepbook-server must expose the endpoints the enclave and indexer rely on. The enclave calls <code>/incentive_pool_data/{pool_id}?start_ms=...&amp;end_ms=...</code> to fetch raw order, fill, and stake data for scoring. Additionally, the following <b>3 event query endpoints</b> must be available (these were added to deepbook-server by a separate agent):</p>
+      <ul>
+        <li><code>GET /maker_incentive_fund_created</code> — query FundCreated events</li>
+        <li><code>GET /maker_incentive_epoch_results_submitted</code> — query EpochResultsSubmitted events</li>
+        <li><code>GET /maker_incentive_reward_claimed</code> — query RewardClaimed events</li>
+      </ul>
+      <p>Verify these endpoints are working before proceeding. Without <code>/incentive_pool_data</code>, the enclave cannot score. Without the event endpoints, clients cannot query historical incentive activity.</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--text-muted)">Local Nautilus Repo</h3>
+      <p>The <a href="https://github.com/MystenLabs/nautilus" style="color:var(--cyan)">Nautilus framework</a> repo must be cloned locally at <code>~/projects/nautilus</code>. Our scoring code (<code>scoring.rs</code>, <code>types.rs</code>, <code>mod.rs</code>) lives inside this repo at <code>src/nautilus-server/src/apps/deepbook-incentives/</code>. The provisioning script rsyncs this entire repo to EC2 at <code>~/nautilus</code> — you do <b>not</b> need to manually clone it on EC2.</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--text-muted)">Sui CLI + Wallet</h3>
+      <p>Sui CLI must be installed and configured with an active address that has <b>SUI</b> (for gas) and <b>DEEP</b> (for funding the incentive treasury). All on-chain transactions (deploy, PCR update, register, create fund) are signed by this wallet.</p>
+    </div>
+  </div>
+
+  <div class="section-label" style="color:var(--orange)">Phase 0: Testnet Data (DEV ONLY)</div>
+  <div class="cards">
+    <div class="card" style="border-color:var(--orange)">
+      <h3 style="color:var(--orange)">setup-testnet-data.sh</h3>
+      <p><b>Dev/testing only — skip this in production.</b> This script provisions a local deepbook-indexer and deepbook-server with real testnet data so you have something for the enclave to score against. Run from your machine:</p>
+      <pre style="background:var(--bg);padding:8px;border-radius:4px;overflow-x:auto;font-size:0.85em">./setup-testnet-data.sh              # last 24h
+./setup-testnet-data.sh --hours 48   # last 48h
+./setup-testnet-data.sh --skip-build # reuse binaries</pre>
+      <p>What it does:</p>
+      <ul>
+        <li>Builds <code>deepbook-indexer</code> and <code>deepbook-server</code> in release mode</li>
+        <li>Creates a <code>deepbook_testnet</code> PostgreSQL database (runs migrations automatically)</li>
+        <li>Queries testnet RPC for the latest checkpoint, calculates ~24h lookback</li>
+        <li>Starts the indexer with <code>--first-checkpoint</code> to pull from Sui's testnet remote store</li>
+        <li>Starts the server on <code>:9008</code> with testnet package IDs</li>
+      </ul>
+      <p>Once running, the enclave can reach <code>http://localhost:9008/incentives/pool_data/...</code> to get real order/fill/stake data for scoring. In production, you'd use an existing deepbook-server instance instead.</p>
+    </div>
+  </div>
+
+  <div class="section-label" style="color:var(--cyan)">Phase 1: Deploy Contract</div>
+  <div class="cards">
+    <div class="card">
+      <h3 style="color:var(--cyan)">deploy.ts</h3>
+      <p><b>Run from your machine.</b> Compiles the <code>maker_incentives</code> Move package and publishes it to Sui. This creates two on-chain objects:</p>
+      <ul>
+        <li><b>Package ID</b> — the published smart contract address</li>
+        <li><b>EnclaveConfig</b> — a shared object that will hold PCR values (currently empty)</li>
+      </ul>
+      <p>Both IDs are saved to <code>deployed.&lt;network&gt;.json</code>, which every subsequent script reads.</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--cyan)">Configure deepbook-indexer</h3>
+      <p><b>After deploy.</b> Once you have the Package ID, you must add it to the <b>deepbook-indexer</b> configuration so the indexer starts watching for events emitted by the maker_incentives contract. The indexer writes these events into PostgreSQL, which deepbook-server then exposes via the 3 event query endpoints:</p>
+      <ul>
+        <li><code>FundCreated</code> → <code>maker_incentive_fund_created</code> table</li>
+        <li><code>EpochResultsSubmitted</code> → <code>maker_incentive_epoch_results_submitted</code> table</li>
+        <li><code>RewardClaimed</code> → <code>maker_incentive_reward_claimed</code> table</li>
+      </ul>
+      <p>Without this step, the indexer won't know about the new contract, the event tables will stay empty, and the event query endpoints will return no data.</p>
+    </div>
+  </div>
+
+  <div class="section-label" style="color:var(--cyan)">Phase 2: Provision Enclave</div>
+  <div class="cards">
+    <div class="card">
+      <h3 style="color:var(--cyan)">setup-ec2.sh (one-time, fresh instance only)</h3>
+      <p><b>Run from your machine.</b> If the EC2 instance is brand new, run this first to install all dependencies:</p>
+      <pre style="background:var(--bg);padding:8px;border-radius:4px;overflow-x:auto;font-size:0.85em">./setup-ec2.sh --host 18.191.170.1 --key ~/.ssh/enclave.pem</pre>
+      <p>Installs Docker, nitro-cli, vsock-proxy, socat, jq, make, git. Configures the Nitro allocator with 3 GiB for enclave VMs. Adds ec2-user to the docker group. Only needed once per EC2 instance — after this, disconnect and reconnect SSH for group changes to take effect.</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--cyan)">provision-enclave.sh</h3>
+      <p><b>Run from your machine.</b> This single script handles the entire EC2-side setup via SSH. Usage:</p>
+      <pre style="background:var(--bg);padding:8px;border-radius:4px;overflow-x:auto;font-size:0.85em">./provision-enclave.sh --host 18.191.170.1 --key ~/.ssh/enclave.pem [--debug]</pre>
+      <p>What it does, step by step:</p>
+      <ol>
+        <li><b>Rsync the Nautilus repo</b> -- copies your local <code>~/projects/nautilus</code> to <code>ec2-user@HOST:~/nautilus/</code>. This includes the Makefile, Containerfile, run.sh, and your app code. One command, no manual cloning needed.</li>
+        <li><b>Build the EIF</b> -- runs <code>make ENCLAVE_APP=deepbook-incentives</code> on EC2 inside Docker. This compiles the Rust scoring code into an <b>EIF</b> (Enclave Image File), a bootable VM image. The build also produces <code>out/nitro.pcrs</code> with three SHA-384 hashes that uniquely identify this exact build.</li>
+        <li><b>Start the enclave</b> -- runs <code>nitro-cli run-enclave</code> which boots the EIF as an isolated Nitro Enclave VM with no network access.</li>
+        <li><b>Set up networking</b> -- since the enclave has no network, the script creates two bridges:
+          <ul>
+            <li><code>socat TCP4-LISTEN:3000 → VSOCK-CONNECT:CID:3000</code> — <b>inbound</b>: lets external callers (like submit-epoch.ts) reach the enclave's HTTP server through the host's port 3000</li>
+            <li><code>vsock-proxy 9008 127.0.0.1 9008</code> — <b>outbound</b>: lets the enclave call <code>deepbook-server</code> on the host's port 9008. The enclave sees this as VSOCK port 9008, which vsock-proxy forwards to localhost:9008</li>
+          </ul>
+          It also sends an empty <code>{}</code> secrets payload via VSOCK port 7777 — Nautilus's run.sh blocks until it receives this, so the enclave server doesn't start until secrets are delivered.
+        </li>
+        <li><b>Health check</b> -- retries <code>curl http://HOST:3000/health_check</code> up to 5 times. On success, prints the enclave's Ed25519 public key and the PCR hashes. These are needed for the next phase.</li>
+      </ol>
+    </div>
+  </div>
+
+  <div class="section-label" style="color:var(--cyan)">Phase 3: Register Enclave On-Chain</div>
+  <div class="cards">
+    <div class="card">
+      <h3 style="color:var(--cyan)">update-pcrs.ts</h3>
+      <p><b>Run from your machine.</b> Takes the three PCR hashes from <code>out/nitro.pcrs</code> and writes them into the on-chain <b>EnclaveConfig</b>. From this point forward, the contract will only accept signatures from an enclave whose attestation matches these exact hashes. In dev, use <code>--debug</code> to set all zeros (bypasses verification).</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--cyan)">register-enclave.ts</h3>
+      <p><b>Run from your machine.</b> Calls <code>/get_attestation</code> on the running enclave. This returns a <b>Nitro Attestation Document</b> -- a cryptographic certificate from AWS that says "this enclave is running code with these PCR values, and here is its Ed25519 public key." The script submits this document on-chain, where the contract verifies the PCRs match EnclaveConfig, extracts the public key, and stores it in the <b>Enclave</b> object. All future <code>submit_epoch_results</code> calls must be signed by this key.</p>
+    </div>
+  </div>
+
+  <div class="section-label" style="color:var(--cyan)">Phase 4: Create Fund + Automation</div>
+  <div class="cards">
+    <div class="card">
+      <h3 style="color:var(--cyan)">create-fund.ts</h3>
+      <p><b>Run from your machine.</b> Creates an <b>IncentiveFund</b> on Sui targeting a specific DeepBook trading pool. You specify the scoring parameters (alpha, reward per epoch, timing) and deposit DEEP tokens as the reward treasury. The script returns a <b>FundOwnerCap</b> to your wallet and appends the fund ID to <code>deployed.&lt;network&gt;.json</code> so the automation scripts know about it.</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--cyan)">setup-systemd.sh</h3>
+      <p><b>Run on the EC2 host.</b> Installs a systemd timer + oneshot service. The timer fires daily at 00:15 UTC, which launches <code>submit-all-epochs.ts</code>. That script reads <code>deployed.&lt;network&gt;.json</code>, loops through every fund, calls the enclave for scores, and submits on-chain. After this step, the system is fully autonomous.</p>
+    </div>
+  </div>
+
+  <div class="section-label" style="color:var(--green)">Output</div>
+  <div class="cards">
+    <div class="card">
+      <h3 style="color:var(--green)">deployed.&lt;network&gt;.json</h3>
+      <p>The local config file that accumulates all important object IDs as you run each provisioning step:</p>
+      <ul>
+        <li><b>packageId</b> -- the published Move package address</li>
+        <li><b>enclaveConfigId</b> -- the EnclaveConfig shared object</li>
+        <li><b>enclave.objectId</b> -- the registered Enclave object</li>
+        <li><b>enclave.publicKey</b> -- the enclave's Ed25519 public key</li>
+        <li><b>funds</b> -- map of fund_id to { poolId, ownerCapId }</li>
+      </ul>
+      <p>This file is what <code>submit-all-epochs.ts</code> reads to know which funds to process. If you create additional funds later, they get appended here automatically.</p>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════
+     TAB 4: UPGRADE
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="panel" id="upgrade">
+  <p class="panel-desc">
+    When you change the scoring logic, you need to get that new code into the enclave and update the
+    on-chain identity. The <code>upgrade-enclave.sh</code> script does this entire pipeline in one command.
+    Every code change produces new PCR hashes, so the on-chain config must be updated too.
+  </p>
+  <div class="diagram-box" id="diagram-upgrade"></div>
+
+  <div class="section-label" style="color:var(--yellow)">Why is the upgrade process needed?</div>
+  <div class="cards">
+    <div class="card">
+      <h3 style="color:var(--yellow)">Code Lives in the Nautilus Repo</h3>
+      <p>The canonical scoring code (<code>scoring.rs</code>, <code>types.rs</code>) lives in the local Nautilus repo clone at <code>/home/ubuntu/projects/nautilus/src/nautilus-server/src/apps/deepbook-incentives/</code>. The standalone crate at <code>crates/incentives/</code> symlinks to these files, so both the local dry-run binary and the Nautilus enclave build share the same source. No import path fixups needed.</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--yellow)">Rsync, Not SCP</h3>
+      <p>Following the official Nautilus workflow, the upgrade script rsyncs the <b>entire Nautilus directory</b> to EC2 in one command. This ensures the app code, Makefile, run.sh, and all framework files stay in sync. No per-file copying, no <code>sed</code> hacks.</p>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--yellow)">Why Update PCRs After Rebuild?</h3>
+      <p>Every time you rebuild the EIF, the code inside it changes, which means the SHA-384 hashes (PCRs) change. The on-chain EnclaveConfig stores the expected PCRs. If you start a new enclave but don't update the PCRs on-chain, the contract will reject its attestation because the hashes won't match. Same reason you also need to re-register -- the new enclave generates a new Ed25519 key pair on boot.</p>
+    </div>
+  </div>
+
+  <div class="section-label" style="color:var(--orange)">upgrade-enclave.sh</div>
+  <div class="cards">
+    <div class="card">
+      <h3 style="color:var(--orange)">Usage</h3>
+      <p>One command does everything:</p>
+      <ul>
+        <li><code>./upgrade-enclave.sh --host 18.191.170.1 --key ~/.ssh/key.pem --network mainnet</code></li>
+        <li>Add <code>--debug</code> for dev (zero PCRs, console output enabled)</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--orange)">What It Does (in order)</h3>
+      <ul>
+        <li><b>Rsync code</b> -- rsync entire Nautilus repo to EC2</li>
+        <li><b>Stop old enclave</b> -- nitro-cli terminate-enclave</li>
+        <li><b>Rebuild EIF</b> -- make ENCLAVE_APP=deepbook-incentives (compiles new code)</li>
+        <li><b>Start new enclave</b> -- nitro-cli run-enclave with the fresh EIF</li>
+        <li><b>Restart networking</b> -- kill old socat/vsock-proxy, start new ones</li>
+        <li><b>Health check</b> -- curl /health_check to verify enclave is alive</li>
+        <li><b>Update PCRs</b> -- write new hashes to on-chain EnclaveConfig</li>
+        <li><b>Re-register</b> -- fetch new attestation, register new public key on-chain</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--orange)">After Upgrade</h3>
+      <p>No changes needed to funds, automation, or config files. The next time <code>submit-all-epochs.ts</code> runs, it will call the enclave which now runs the updated scoring logic. The contract will verify the new signature against the newly registered public key. Everything else stays the same.</p>
+    </div>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════════════
+     TAB 5: DEV & DEBUG
+     ═══════════════════════════════════════════════════════════════ -->
+<div class="panel" id="dev">
+  <p class="panel-desc">
+    Development tools for testing scoring logic, running full pipeline tests, and debugging the enclave.
+  </p>
+  <div class="diagram-box" id="diagram-dev"></div>
+  <div class="cards">
+    <div class="card">
+      <h3 style="color:var(--purple)">incentives-dry-run</h3>
+      <ul>
+        <li>Standalone Rust binary -- no enclave, no chain</li>
+        <li>Directly queries deepbook-server for pool data</li>
+        <li>Runs compute_scores() and prints per-maker breakdown</li>
+        <li>Use to validate scoring logic before any on-chain action</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--purple)">submit-all-epochs.ts --dry-run</h3>
+      <ul>
+        <li>Full pipeline through enclave but skips on-chain tx</li>
+        <li>Validates enclave connectivity + data availability</li>
+        <li>Prints scores that would be submitted</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--orange)">e2e-test.sh</h3>
+      <ul>
+        <li>Reproducible full pipeline: deploy, fund, submit, verify</li>
+        <li>Flags: --skip-deploy, --skip-enclave, --skip-swap</li>
+        <li>Uses --test endpoint (skips sig verification)</li>
+        <li>Verifies treasury balance after submission</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3 style="color:var(--yellow)">Enclave Debug Tools</h3>
+      <ul>
+        <li><code>--debug-mode</code> flag enables console output from enclave</li>
+        <li><code>/test_process_data</code> endpoint skips signature verification</li>
+        <li><code>update-pcrs.ts --debug</code> sets all-zero PCRs to bypass attestation</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'dark',
+  themeVariables: {
+    fontSize: '13px',
+    primaryColor: '#1a222c',
+    primaryBorderColor: '#58a6ff',
+    primaryTextColor: '#d4dce8',
+    lineColor: '#58a6ff',
+    secondaryColor: '#1a222c',
+    tertiaryColor: '#131920',
+    edgeLabelBackground: '#131920',
+    clusterBkg: '#131920',
+    clusterBorder: '#252d38'
+  },
+  flowchart: {
+    useMaxWidth: true,
+    htmlLabels: true,
+    curve: 'basis',
+    nodeSpacing: 50,
+    rankSpacing: 60
+  }
+});
+
+const diagrams = {
+
+// ── ARCHITECTURE ──
+arch: `flowchart TB
+  subgraph EC2["EC2 Instance -- Nitro Capable, Single Machine"]
+    direction TB
+
+    subgraph HOST["Host Machine"]
+      direction LR
+      IDX["deepbook-indexer"]
+      PG[("PostgreSQL")]
+      DBS["deepbook-server :9008"]
+      IDX -->|writes| PG
+      DBS -->|reads| PG
+    end
+
+    subgraph NET["Networking Layer -- required because enclaves have no network"]
+      direction LR
+      SOCAT["socat: TCP :3000 to VSOCK CID:3000<br/>Inbound -- lets scripts reach the enclave"]
+      VPROX["vsock-proxy: VSOCK :9008 to host :9008<br/>Outbound -- lets enclave reach deepbook-server"]
+    end
+
+    subgraph TEE["Nitro Enclave -- TEE Boundary, isolated VM"]
+      direction LR
+      ENC["deepbook-incentives :3000"]
+      PROD_EP["/process_data"]
+      DEV_EP["/test_process_data"]
+      ATT_EP["/get_attestation"]
+      HC_EP["/health_check"]
+    end
+
+    SOCAT -.->|"forwards to enclave"| ENC
+    ENC -.->|"fetches pool data"| VPROX
+    VPROX -.->|"reaches"| DBS
+  end
+
+  subgraph SUI["On-Chain -- Sui Move"]
+    direction TB
+    subgraph ENCLAVE_REG["Enclave Registration"]
+      direction LR
+      ECONF["EnclaveConfig<br/>PCR0, PCR1, PCR2"]
+      EOBJ["Enclave MAKER_INCENTIVES<br/>public_key"]
+    end
+
+    subgraph FUND_OBJS["Incentive Funds -- one-to-many per pool"]
+      direction LR
+      FUND["IncentiveFund<br/>pool_id, params, treasury<br/>submitted_epochs: Table"]
+      CAP["FundOwnerCap"]
+    end
+
+    subgraph EPOCH_OBJS["Epoch Output"]
+      EREC["EpochRecord<br/>scores, allocations<br/>claimed: Table"]
+    end
+  end
+
+  subgraph TOOLS["Operator Scripts -- run from dev machine"]
+    direction LR
+    D1["deploy.ts"]
+    D2["create-fund.ts"]
+    D3["update-pcrs.ts"]
+    D4["register-enclave.ts"]
+    D5["submit-epoch.ts"]
+    D6["submit-all-epochs.ts"]
+    D7["backfill-epochs.ts"]
+    D8["upgrade-enclave.sh"]
+  end
+
+  classDef host fill:#0d1a2a,stroke:#58a6ff,stroke-width:2px,color:#d4dce8
+  classDef db fill:#0d1a2a,stroke:#58a6ff,stroke-width:2px,color:#d4dce8
+  classDef net fill:#131920,stroke:#6b7a8d,stroke-width:1px,color:#d4dce8
+  classDef tee fill:#0d1a2a,stroke:#58a6ff,stroke-width:2px,color:#d4dce8
+  classDef devep fill:#2d1a00,stroke:#f0883e,stroke-width:2px,color:#d4dce8
+  classDef chain fill:#0a2e14,stroke:#3fb950,stroke-width:2px,color:#d4dce8
+  classDef tool fill:#1a222c,stroke:#58a6ff,stroke-width:1px,color:#d4dce8
+
+  class IDX,DBS host
+  class PG db
+  class SOCAT,VPROX net
+  class ENC,PROD_EP,ATT_EP,HC_EP tee
+  class DEV_EP devep
+  class ECONF,EOBJ,FUND,CAP,EREC chain
+  class D1,D2,D3,D4,D5,D6,D7,D8 tool
+
+  style EC2 fill:#0a0e14,stroke:#58a6ff,stroke-width:2px,color:#58a6ff
+  style HOST fill:#131920,stroke:#252d38,stroke-width:1px,color:#6b7a8d
+  style NET fill:#0a0e14,stroke:#6b7a8d,stroke-width:1px,stroke-dasharray:3 3,color:#6b7a8d
+  style TEE fill:#131920,stroke:#58a6ff,stroke-width:2px,stroke-dasharray:5 5,color:#58a6ff
+  style SUI fill:#0a1e0a,stroke:#3fb950,stroke-width:2px,color:#3fb950
+  style ENCLAVE_REG fill:#0a1e0a,stroke:#3fb950,stroke-width:1px,color:#3fb950
+  style FUND_OBJS fill:#0a1e0a,stroke:#3fb950,stroke-width:1px,color:#3fb950
+  style EPOCH_OBJS fill:#0a1e0a,stroke:#3fb950,stroke-width:1px,color:#3fb950
+  style TOOLS fill:#131920,stroke:#252d38,stroke-width:1px,color:#6b7a8d`,
+
+// ── OPERATIONAL FLOW ──
+ops: `flowchart TD
+  subgraph ORCHESTRATOR["submit-all-epochs.ts -- the orchestrator"]
+    direction TB
+    READ_CFG["1. Read deployed.net.json<br/>Get list of all funds + params"]
+    LOOP["2. For each fund..."]
+    CHECK["3. Check on-chain:<br/>is_epoch_submitted?"]
+    SKIP["Already done -- skip"]
+    POST["4. POST to enclave<br/>/process_data with<br/>pool_id, fund_id, params"]
+    READ_CFG --> LOOP
+    LOOP --> CHECK
+    CHECK -->|"yes"| SKIP
+    CHECK -->|"no"| POST
+  end
+
+  subgraph ENCLAVE_WORK["Inside the Enclave"]
+    direction TB
+    FETCH["5. Enclave calls deepbook-server<br/>GET /incentive_pool_data<br/>orders, fills, stakes, metadata"]
+    SCORE["6. compute_scores<br/>using pool metadata for units"]
+    SIGN["7. BCS encode EpochResults<br/>Ed25519 sign with enclave key"]
+    FETCH --> SCORE --> SIGN
+  end
+
+  subgraph ONCHAIN["On-Chain Submission"]
+    direction TB
+    BUILD["8. Script receives signed payload<br/>Builds PTB: submit_epoch_results"]
+    VERIFY["9. Contract verifies signature<br/>against registered Enclave pubkey"]
+    CREATE["10. Creates EpochRecord<br/>Debits fund treasury"]
+    BUILD --> VERIFY --> CREATE
+  end
+
+  subgraph CLAIM_FLOW["Maker Claims -- separate, async"]
+    direction LR
+    MAKER["Maker calls claim_reward<br/>with BalanceManager + EpochRecord"]
+    DEEP["Receives DEEP tokens"]
+    MAKER --> DEEP
+  end
+
+  POST -->|"HTTP POST"| FETCH
+  SIGN -->|"signed BCS back"| BUILD
+  CREATE -.->|"EpochRecord available"| MAKER
+
+  TIMER["systemd timer<br/>00:15 UTC daily"] -->|fires| READ_CFG
+
+  classDef orch fill:#2d0a1e,stroke:#f778ba,stroke-width:2px,color:#d4dce8
+  classDef enc fill:#0d1a2a,stroke:#58a6ff,stroke-width:2px,color:#d4dce8
+  classDef chain fill:#1a1a0a,stroke:#e3b341,stroke-width:2px,color:#d4dce8
+  classDef result fill:#0a2e14,stroke:#3fb950,stroke-width:2px,color:#d4dce8
+  classDef claim fill:#1c0d33,stroke:#bc8cff,stroke-width:2px,color:#d4dce8
+  classDef trigger fill:#2d0a1e,stroke:#f778ba,stroke-width:2px,color:#d4dce8
+
+  class READ_CFG,LOOP,CHECK,SKIP,POST orch
+  class FETCH,SCORE,SIGN enc
+  class BUILD,VERIFY chain
+  class CREATE result
+  class MAKER,DEEP claim
+  class TIMER trigger
+
+  style ORCHESTRATOR fill:#1a0a14,stroke:#f778ba,stroke-width:2px,color:#f778ba
+  style ENCLAVE_WORK fill:#0d1117,stroke:#58a6ff,stroke-width:2px,stroke-dasharray:5 5,color:#58a6ff
+  style ONCHAIN fill:#0a1e0a,stroke:#3fb950,stroke-width:2px,color:#3fb950
+  style CLAIM_FLOW fill:#120a22,stroke:#bc8cff,stroke-width:2px,color:#bc8cff`,
+
+// ── PROVISIONING ──
+provision: `flowchart TD
+  subgraph PREREQS["Prerequisites -- manual, one-time"]
+    direction LR
+    P1["Nitro-capable EC2<br/>e.g. m5.xlarge us-east-2<br/>Run setup-ec2.sh to install deps"]
+    P2["deepbook-server running<br/>Must have /incentive_pool_data endpoint<br/>+ 3 event query endpoints"]
+    P3["Sui CLI configured<br/>with funded wallet<br/>needs SUI + DEEP"]
+    P4["Local Nautilus repo clone<br/>at ~/projects/nautilus<br/>with deepbook-incentives app"]
+  end
+
+  subgraph PHASE0["Phase 0: Testnet Data -- DEV ONLY"]
+    direction TB
+    TD0["setup-testnet-data.sh"]
+    TD1["Creates fresh PostgreSQL DB<br/>Queries testnet for latest checkpoint<br/>Starts indexer from ~24h ago"]
+    TD2["Starts deepbook-server on :9008<br/>Serves /incentive_pool_data<br/>+ event query endpoints"]
+    TD0 --> TD1 --> TD2
+  end
+
+  subgraph PHASE1["Phase 1: Deploy Contract -- from your machine"]
+    direction TB
+    S1["deploy.ts --network mainnet"]
+    S1_OUT["Creates EnclaveConfig + Package ID<br/>Saves to deployed.net.json"]
+    S1 --> S1_OUT
+    S1_IDX["Configure deepbook-indexer<br/>with the new package ID so it starts<br/>indexing contract events"]
+    S1_OUT --> S1_IDX
+  end
+
+  subgraph PHASE2["Phase 2: Provision Enclave -- setup-ec2.sh then provision-enclave.sh"]
+    direction TB
+    SETUP["setup-ec2.sh -- one-time<br/>Installs Docker, nitro-cli,<br/>vsock-proxy, socat, jq, make"]
+    PROV["provision-enclave.sh<br/>--host EC2_IP --key KEY"]
+    PROV_1["Step 1: rsync Nautilus repo to EC2 ~/nautilus"]
+    PROV_2["Step 2: make ENCLAVE_APP=deepbook-incentives<br/>Builds EIF inside Docker on EC2<br/>Outputs PCR hashes in out/nitro.pcrs"]
+    PROV_3["Step 3: nitro-cli run-enclave<br/>Boots the EIF as a Nitro Enclave VM"]
+    PROV_4["Step 4: Send empty secrets via VSOCK :7777<br/>Then start socat TCP:3000 to VSOCK:3000<br/>and vsock-proxy VSOCK:SERVER_PORT to SERVER_HOST:SERVER_PORT"]
+    PROV_5["Step 5: curl :3000/health_check<br/>Prints enclave public key + PCRs"]
+    SETUP --> PROV --> PROV_1 --> PROV_2 --> PROV_3 --> PROV_4 --> PROV_5
+  end
+
+  subgraph PHASE3["Phase 3: Register On-Chain -- from your machine"]
+    direction TB
+    S4["update-pcrs.ts<br/>--pcr0 HASH --pcr1 HASH --pcr2 HASH"]
+    S5["register-enclave.ts<br/>--enclave-url http://EC2_IP:3000"]
+    S4 --> S5
+  end
+
+  subgraph PHASE4["Phase 4: Create Fund + Automation"]
+    direction TB
+    S6["create-fund.ts<br/>--pool-id 0x... --reward 1000<br/>--fund 30000 --alpha-bps 5000"]
+    S7["automation/setup-systemd.sh<br/>Daily timer at 00:15 UTC<br/>runs submit-all-epochs.ts"]
+    S6 --> S7
+  end
+
+  PREREQS --> PHASE0
+  PHASE0 -->|"indexer + server running locally"| PHASE1
+  PHASE1 -->|"deployed.net.json exists<br/>indexer configured"| PHASE2
+  PHASE2 -->|"enclave running, PCRs known"| PHASE3
+  PHASE3 -->|"enclave trusted on-chain"| PHASE4
+
+  S7 --> DONE["System is live.<br/>Epochs scored and submitted daily."]
+
+  classDef prereq fill:#1a1a0a,stroke:#6b7a8d,stroke-width:1px,color:#d4dce8
+  classDef step fill:#0d1a2a,stroke:#56d4dd,stroke-width:2px,color:#d4dce8
+  classDef detail fill:#131920,stroke:#252d38,stroke-width:1px,color:#6b7a8d
+  classDef done fill:#0a2e14,stroke:#3fb950,stroke-width:2px,color:#d4dce8
+  classDef devstep fill:#2d1a00,stroke:#f0883e,stroke-width:2px,color:#d4dce8
+  classDef devdetail fill:#1a1200,stroke:#f0883e,stroke-width:1px,color:#6b7a8d
+
+  class P1,P2,P3,P4 prereq
+  class S1,S4,S5,S6,S7,PROV,SETUP step
+  class S1_OUT,S1_IDX,PROV_1,PROV_2,PROV_3,PROV_4,PROV_5 detail
+  class DONE done
+  class TD0 devstep
+  class TD1,TD2 devdetail
+
+  style PREREQS fill:#131920,stroke:#6b7a8d,stroke-width:1px,stroke-dasharray:3 3,color:#6b7a8d
+  style PHASE0 fill:#1a1200,stroke:#f0883e,stroke-width:2px,stroke-dasharray:5 5,color:#f0883e
+  style PHASE1 fill:#0a0e14,stroke:#56d4dd,stroke-width:2px,color:#56d4dd
+  style PHASE2 fill:#0a0e14,stroke:#56d4dd,stroke-width:2px,color:#56d4dd
+  style PHASE3 fill:#0a0e14,stroke:#56d4dd,stroke-width:2px,color:#56d4dd
+  style PHASE4 fill:#0a0e14,stroke:#56d4dd,stroke-width:2px,color:#56d4dd`,
+
+// ── UPGRADE ──
+upgrade: `flowchart TD
+  subgraph LOCAL_WORK["Your Machine -- edit code"]
+    LOCAL["Edit scoring.rs or types.rs<br/>in the local Nautilus repo at<br/>apps/deepbook-incentives/"]
+    RUN["Run: upgrade-enclave.sh<br/>--host EC2_IP --key KEY --network mainnet"]
+    LOCAL --> RUN
+  end
+
+  subgraph EC2_WORK["EC2 -- automated by the script via SSH"]
+    direction TB
+    SYNC["rsync entire Nautilus repo to EC2<br/>One command, no import path fixups"]
+    KILL["Stop the running enclave<br/>nitro-cli terminate-enclave"]
+    BUILD["Rebuild the EIF with new code<br/>make ENCLAVE_APP=deepbook-incentives<br/>Produces new PCR hashes"]
+    START["Start fresh enclave from new EIF<br/>nitro-cli run-enclave"]
+    NET["Restart networking bridges<br/>socat for inbound, vsock-proxy for outbound"]
+    HEALTH["Verify enclave is alive<br/>curl :3000/health_check"]
+    SYNC --> KILL --> BUILD --> START --> NET --> HEALTH
+  end
+
+  subgraph CHAIN_WORK["On-Chain -- new code means new identity"]
+    direction TB
+    PCR["update-pcrs.ts<br/>Write new PCR hashes to EnclaveConfig<br/>Contract now expects the new code"]
+    REG["register-enclave.ts<br/>Fetch new attestation from enclave<br/>Register new public key on-chain"]
+    PCR --> REG
+  end
+
+  RUN -->|"SSH"| SYNC
+  HEALTH -->|"PCR hashes from<br/>out/nitro.pcrs"| PCR
+  REG --> DONE["Done. Next epoch submission<br/>will use the new scoring logic."]
+
+  classDef local fill:#1a1a0a,stroke:#e3b341,stroke-width:2px,color:#d4dce8
+  classDef ec2 fill:#0d1a2a,stroke:#f0883e,stroke-width:2px,color:#d4dce8
+  classDef chain fill:#0a2e14,stroke:#3fb950,stroke-width:2px,color:#d4dce8
+  classDef done fill:#0a2e14,stroke:#3fb950,stroke-width:2px,color:#d4dce8
+
+  class LOCAL,RUN local
+  class SYNC,KILL,BUILD,START,NET,HEALTH ec2
+  class PCR,REG chain
+  class DONE done
+
+  style LOCAL_WORK fill:#131920,stroke:#e3b341,stroke-width:2px,color:#e3b341
+  style EC2_WORK fill:#0a0e14,stroke:#f0883e,stroke-width:2px,color:#f0883e
+  style CHAIN_WORK fill:#0a1e0a,stroke:#3fb950,stroke-width:2px,color:#3fb950`,
+
+// ── DEV & DEBUG ──
+dev: `flowchart TD
+  subgraph DRY["Dry Run -- no enclave, no chain"]
+    DR["incentives-dry-run<br/>cargo run --bin incentives-dry-run --<br/>--server-url http://localhost:9008<br/>--pool-id 0xe05d...<br/>--alpha 0.5 --reward-per-epoch 1000"] -->|"GET pool data"| DBS["deepbook-server :9008"]
+    DR --> DROUT["Prints score breakdown<br/>per maker, no submission"]
+  end
+
+  subgraph DRYSUB["Dry Run -- with enclave"]
+    DRS["submit-all-epochs.ts --dry-run"] -->|"POST"| DRENC["Enclave /process_data"]
+    DRENC -->|"scores back"| DRS
+    DRS --> DRSOUT["Prints scores, skips on-chain tx"]
+  end
+
+  subgraph E2E["e2e-test.sh -- full pipeline"]
+    T1["swap-sui-for-deep.ts"] --> T2["deploy.ts"]
+    T2 --> T3["update-pcrs.ts --debug"]
+    T3 --> T4["register-enclave.ts"]
+    T4 --> T5["create-fund.ts"]
+    T5 --> T6["submit-epoch.ts --test"]
+    T6 --> T7["Verify on-chain"]
+  end
+
+  subgraph DBG["Enclave Debug Tools"]
+    D1["--debug-mode flag<br/>Enables console output"]
+    D2["/test_process_data endpoint<br/>Skips signature verification"]
+    D3["update-pcrs.ts --debug<br/>All-zero PCRs bypass attestation"]
+  end
+
+  classDef dry fill:#1c0d33,stroke:#bc8cff,stroke-width:2px,color:#d4dce8
+  classDef e2e fill:#2d1a00,stroke:#f0883e,stroke-width:2px,color:#d4dce8
+  classDef dbg fill:#1a1a0a,stroke:#e3b341,stroke-width:2px,color:#d4dce8
+
+  class DR,DBS,DROUT dry
+  class DRS,DRENC,DRSOUT dry
+  class T1,T2,T3,T4,T5,T6,T7 e2e
+  class D1,D2,D3 dbg
+
+  style DRY fill:#120a22,stroke:#bc8cff,stroke-width:2px,color:#bc8cff
+  style DRYSUB fill:#120a22,stroke:#bc8cff,stroke-width:2px,color:#bc8cff
+  style E2E fill:#1a1200,stroke:#f0883e,stroke-width:2px,stroke-dasharray:5 5,color:#f0883e
+  style DBG fill:#1a1a0a,stroke:#e3b341,stroke-width:2px,stroke-dasharray:5 5,color:#e3b341`
+
+};
+
+function showTab(id) {
+  document.querySelectorAll('.tab').forEach(function(t) { t.classList.remove('active'); });
+  document.querySelectorAll('.panel').forEach(function(p) { p.classList.remove('active'); });
+  var tabs = document.querySelectorAll('.tab');
+  for (var i = 0; i < tabs.length; i++) {
+    if (tabs[i].getAttribute('onclick').indexOf(id) !== -1) {
+      tabs[i].classList.add('active');
+    }
+  }
+  document.getElementById(id).classList.add('active');
+}
+
+async function renderAll() {
+  for (const [key, def] of Object.entries(diagrams)) {
+    const container = document.getElementById('diagram-' + key);
+    if (!container) continue;
+    const id = 'mermaid-' + key;
+    try {
+      const result = await mermaid.render(id, def);
+      container.innerHTML = result.svg;
+    } catch (e) {
+      container.innerHTML = '<pre style="color:#f85149;font-size:0.8rem;white-space:pre-wrap">Render error: ' + e.message + '</pre>';
+    }
+  }
+}
+
+renderAll();
+</script>
+</body>
+</html>

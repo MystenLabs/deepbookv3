@@ -6,7 +6,16 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "create-pool": "pnpm tsx transactions/createPool.ts"
+    "create-pool": "pnpm tsx transactions/createPool.ts",
+    "incentives:deploy": "tsx transactions/maker-incentives/deploy.ts",
+    "incentives:create-fund": "tsx transactions/maker-incentives/create-fund.ts",
+    "incentives:submit-epoch": "tsx transactions/maker-incentives/submit-epoch.ts",
+    "incentives:submit-all": "tsx transactions/maker-incentives/submit-all-epochs.ts",
+    "incentives:backfill": "tsx transactions/maker-incentives/backfill-epochs.ts",
+    "incentives:register-enclave": "tsx transactions/maker-incentives/register-enclave.ts",
+    "incentives:update-pcrs": "tsx transactions/maker-incentives/update-pcrs.ts",
+    "incentives:upgrade-enclave": "bash transactions/maker-incentives/upgrade-enclave.sh",
+    "incentives:e2e-test": "bash transactions/maker-incentives/e2e-test.sh"
   },
   "keywords": [],
   "author": "",
