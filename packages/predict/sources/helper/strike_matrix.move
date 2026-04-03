@@ -13,6 +13,8 @@ public struct StrikeMatrix has store {
     max_strike: u64,
     minted_min_strike: u64,
     minted_max_strike: u64,
+    total_q_up: u64,
+    total_q_dn: u64,
     mtm: u64,
 }
 
@@ -25,8 +27,6 @@ public struct Node has copy, drop, store {
     agg_qk_up: u64,
     agg_q_dn: u64,
     agg_qk_dn: u64,
-    payout: u64,
-    max_payout: u64,
 }
 
 // === Public-Package API ===
@@ -44,6 +44,8 @@ public(package) fun new(
         max_strike,
         minted_min_strike: max_u64(),
         minted_max_strike: 0,
+        total_q_up: 0,
+        total_q_dn: 0,
         mtm: 0,
     }
 }
@@ -52,6 +54,11 @@ public(package) fun insert(self: &mut StrikeMatrix, strike: u64, qty: u64, is_up
     let qk = math::mul(qty, strike);
     self.minted_min_strike = self.minted_min_strike.min(strike);
     self.minted_max_strike = self.minted_max_strike.max(strike);
+    if (is_up) {
+        self.total_q_up = self.total_q_up + qty;
+    } else {
+        self.total_q_dn = self.total_q_dn + qty;
+    };
 
     let (page_key, slot) = self.strike_to_coords(strike);
 
@@ -84,6 +91,11 @@ public(package) fun insert(self: &mut StrikeMatrix, strike: u64, qty: u64, is_up
 
 public(package) fun remove(self: &mut StrikeMatrix, strike: u64, qty: u64, is_up: bool) {
     let qk = math::mul(qty, strike);
+    if (is_up) {
+        self.total_q_up = self.total_q_up - qty;
+    } else {
+        self.total_q_dn = self.total_q_dn - qty;
+    };
     let (page_key, slot) = self.strike_to_coords(strike);
     let page = &mut self.pages[page_key];
     page[slot].qk_up = page[slot].qk_up - if (is_up) { qk } else { 0 };
@@ -304,6 +316,10 @@ public(package) fun set_mtm(self: &mut StrikeMatrix, value: u64) {
     self.mtm = value;
 }
 
+public(package) fun max_payout(self: &StrikeMatrix): u64 {
+    self.total_q_up + self.total_q_dn
+}
+
 public(package) fun has_minted_strikes(self: &StrikeMatrix): bool {
     self.minted_max_strike >= self.minted_min_strike
 }
@@ -331,8 +347,6 @@ fun empty_page(): vector<Node> {
         agg_qk_up: 0,
         agg_q_dn: 0,
         agg_qk_dn: 0,
-        payout: 0,
-        max_payout: 0,
     };
     vector::tabulate!(PAGE_SLOTS, |_| empty)
 }
