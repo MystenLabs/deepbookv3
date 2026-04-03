@@ -200,7 +200,7 @@ public fun mint<Quote>(
     let strike = key.strike();
     let is_up = key.is_up();
 
-    predict.vault.insert_position(oracle, is_up, strike, quantity, clock, ctx);
+    predict.vault.insert_position(oracle, is_up, strike, quantity, clock);
 
     let (_bid, ask) = predict.get_quote(oracle, key, clock);
     let cost = math::mul(ask, quantity);
@@ -489,6 +489,65 @@ public(package) fun set_max_total_exposure_pct<Quote>(predict: &mut Predict<Quot
         predict_id: object::id(predict),
         max_total_exposure_pct: predict.risk_config.max_total_exposure_pct(),
     });
+}
+
+public(package) fun init_oracle_matrix<Quote>(
+    predict: &mut Predict<Quote>,
+    oracle_id: ID,
+    min_strike: u64,
+    max_strike: u64,
+    tick_size: u64,
+    ctx: &mut TxContext,
+) {
+    predict
+        .vault
+        .init_oracle_matrix(
+            oracle_id,
+            min_strike,
+            max_strike,
+            tick_size,
+            ctx,
+        );
+}
+
+#[test_only]
+public(package) fun mint_test<Quote>(
+    predict: &mut Predict<Quote>,
+    manager: &mut PredictManager,
+    oracle: &OracleSVI,
+    key: MarketKey,
+    quantity: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    predict.init_oracle_matrix(
+        oracle.id(),
+        oracle.min_strike(),
+        oracle.max_strike(),
+        oracle.tick_size(),
+        ctx,
+    );
+    predict.mint(manager, oracle, key, quantity, clock, ctx);
+}
+
+#[test_only]
+public(package) fun insert_test_position<Quote>(
+    predict: &mut Predict<Quote>,
+    oracle: &OracleSVI,
+    is_up: bool,
+    strike: u64,
+    quantity: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    predict.init_oracle_matrix(
+        oracle.id(),
+        oracle.min_strike(),
+        oracle.max_strike(),
+        oracle.tick_size(),
+        ctx,
+    );
+    predict.vault.insert_position(oracle, is_up, strike, quantity, clock);
 }
 
 #[test_only]

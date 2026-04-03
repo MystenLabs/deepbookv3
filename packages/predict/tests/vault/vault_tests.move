@@ -120,12 +120,12 @@ fun dispense_payout_exceeds_balance_aborts() {
 }
 
 #[test]
-/// A single winning position should set max payout equal to its contract quantity.
+/// Max payout starts exact for a single position, then becomes a conservative sum across both sides.
 fun insert_single_position_max_payout() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -136,7 +136,7 @@ fun insert_single_position_max_payout() {
     );
     assert_eq!(vault::total_max_payout(&v), 10 * constants::float_scaling!());
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         false,
@@ -145,7 +145,7 @@ fun insert_single_position_max_payout() {
         &clock,
         ctx,
     );
-    assert_eq!(vault::total_max_payout(&v), 10 * constants::float_scaling!());
+    assert_eq!(vault::total_max_payout(&v), 18 * constants::float_scaling!());
 
     destroy(v);
     destroy(oracle);
@@ -153,12 +153,12 @@ fun insert_single_position_max_payout() {
 }
 
 #[test]
-/// Opposite-direction exposure at the same strike should use the larger directional payout.
+/// Opposite-direction exposure at the same strike now uses the conservative sum across both sides.
 fun insert_same_strike_dn_exceeds_up_max_payout() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -167,7 +167,7 @@ fun insert_same_strike_dn_exceeds_up_max_payout() {
         &clock,
         ctx,
     );
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         false,
@@ -177,7 +177,7 @@ fun insert_same_strike_dn_exceeds_up_max_payout() {
         ctx,
     );
 
-    assert_eq!(vault::total_max_payout(&v), 12 * constants::float_scaling!());
+    assert_eq!(vault::total_max_payout(&v), 17 * constants::float_scaling!());
 
     destroy(v);
     destroy(oracle);
@@ -190,7 +190,7 @@ fun insert_different_strikes_max_payout() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -199,7 +199,7 @@ fun insert_different_strikes_max_payout() {
         &clock,
         ctx,
     );
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -222,7 +222,7 @@ fun insert_different_strikes_mixed_directions_max_payout() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -231,7 +231,7 @@ fun insert_different_strikes_mixed_directions_max_payout() {
         &clock,
         ctx,
     );
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         false,
@@ -254,7 +254,7 @@ fun remove_position_decreases_max_payout_and_mtm() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -288,7 +288,7 @@ fun remove_all_positions_returns_max_payout_to_zero() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -340,7 +340,7 @@ fun assert_total_exposure_passes_when_within_limit() {
     let payment = balance::create_for_testing<SUI>(100 * constants::float_scaling!());
     vault::accept_payment(&mut v, payment);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -366,7 +366,7 @@ fun assert_total_exposure_fails_when_exceeds_limit() {
     let payment = balance::create_for_testing<SUI>(10 * constants::float_scaling!());
     vault::accept_payment(&mut v, payment);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -390,7 +390,7 @@ fun assert_total_exposure_passes_at_exact_boundary() {
     let payment = balance::create_for_testing<SUI>(10 * constants::float_scaling!());
     vault::accept_payment(&mut v, payment);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -416,7 +416,7 @@ fun vault_value_equals_balance_minus_mtm() {
     let payment = balance::create_for_testing<SUI>(100 * constants::float_scaling!());
     vault::accept_payment(&mut v, payment);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -442,7 +442,7 @@ fun vault_value_zero_at_exact_mtm_boundary() {
     let payment = balance::create_for_testing<SUI>(10 * constants::float_scaling!());
     vault::accept_payment(&mut v, payment);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -468,7 +468,7 @@ fun vault_value_zero_mtm() {
     let payment = balance::create_for_testing<SUI>(100 * constants::float_scaling!());
     vault::accept_payment(&mut v, payment);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -495,7 +495,7 @@ fun vault_value_aborts_when_mtm_exceeds_balance() {
     let payment = balance::create_for_testing<SUI>(5 * constants::float_scaling!());
     vault::accept_payment(&mut v, payment);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -516,7 +516,7 @@ fun assert_total_exposure_zero_balance_with_liability_fails() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -537,7 +537,7 @@ fun mtm_dn_wins_settled_below_strike() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(30 * constants::float_scaling!(), ctx);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         false,
@@ -560,7 +560,7 @@ fun mtm_dn_loses_settled_above_strike() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         false,
@@ -583,7 +583,7 @@ fun mtm_multiple_positions_both_win() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -592,7 +592,7 @@ fun mtm_multiple_positions_both_win() {
         &clock,
         ctx,
     );
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -615,7 +615,7 @@ fun mtm_mixed_directions_settled() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(60 * constants::float_scaling!(), ctx);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -624,7 +624,7 @@ fun mtm_mixed_directions_settled() {
         &clock,
         ctx,
     );
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         false,
@@ -653,7 +653,7 @@ fun insert_and_remove_lifecycle() {
 
     let oracle = oracle_helper::create_settled_oracle(200 * constants::float_scaling!(), ctx);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -662,7 +662,7 @@ fun insert_and_remove_lifecycle() {
         &clock,
         ctx,
     );
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -671,7 +671,7 @@ fun insert_and_remove_lifecycle() {
         &clock,
         ctx,
     );
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -713,7 +713,7 @@ fun mtm_at_settlement_boundary() {
     let settlement = 50 * constants::float_scaling!();
     let oracle = oracle_helper::create_settled_oracle(settlement, ctx);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -739,7 +739,7 @@ fun mtm_dn_wins_at_settlement_boundary() {
     let settlement = 50 * constants::float_scaling!();
     let oracle = oracle_helper::create_settled_oracle(settlement, ctx);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         false,
@@ -776,7 +776,7 @@ fun remove_from_one_oracle_does_not_affect_other() {
     let oracle1 = oracle_helper::create_settled_oracle(200 * constants::float_scaling!(), ctx);
     let oracle2 = oracle_helper::create_settled_oracle(10 * constants::float_scaling!(), ctx);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle1,
         true,
@@ -785,7 +785,7 @@ fun remove_from_one_oracle_does_not_affect_other() {
         &clock,
         ctx,
     );
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle2,
         false,
@@ -825,7 +825,7 @@ fun dispense_payout_reduces_balance_below_max_payout() {
     let payment = balance::create_for_testing<SUI>(100 * constants::float_scaling!());
     vault::accept_payment(&mut v, payment);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -852,7 +852,7 @@ fun reinsert_after_full_removal() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -873,7 +873,7 @@ fun reinsert_after_full_removal() {
     assert_eq!(vault::total_mtm(&v), 0);
     assert_eq!(vault::total_max_payout(&v), 0);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -885,7 +885,7 @@ fun reinsert_after_full_removal() {
     assert_eq!(vault::total_mtm(&v), 7 * constants::float_scaling!());
     assert_eq!(vault::total_max_payout(&v), 7 * constants::float_scaling!());
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -908,7 +908,7 @@ fun reinsert_different_direction_after_full_removal() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         true,
@@ -926,7 +926,7 @@ fun reinsert_different_direction_after_full_removal() {
         &clock,
     );
 
-    vault::insert_position(
+    vault::insert_test_position(
         &mut v,
         &oracle,
         false,
@@ -952,10 +952,10 @@ fun mtm_live_oracle_s0_atm() {
     let s = &scenario;
     let atm = &s.strike_points()[0];
 
-    vault::insert_position(&mut v, &oracle, true, atm.strike(), QTY, &clock, ctx);
+    vault::insert_test_position(&mut v, &oracle, true, atm.strike(), QTY, &clock, ctx);
     precision::assert_approx(vault::total_mtm(&v), expected_mtm(atm, true));
 
-    vault::insert_position(&mut v, &oracle, false, atm.strike(), QTY, &clock, ctx);
+    vault::insert_test_position(&mut v, &oracle, false, atm.strike(), QTY, &clock, ctx);
     let exp_total = expected_mtm(atm, true) + expected_mtm(atm, false);
     precision::assert_approx(vault::total_mtm(&v), exp_total);
 
@@ -973,7 +973,7 @@ fun mtm_live_oracle_s0_otm() {
     let s = &scenario;
     let otm10 = &s.strike_points()[2];
 
-    vault::insert_position(&mut v, &oracle, true, otm10.strike(), QTY, &clock, ctx);
+    vault::insert_test_position(&mut v, &oracle, true, otm10.strike(), QTY, &clock, ctx);
     precision::assert_approx(vault::total_mtm(&v), expected_mtm(otm10, true));
 
     destroy(v);
@@ -990,7 +990,7 @@ fun mtm_live_oracle_s4_near_expiry() {
     let s = &scenario;
     let atm = &s.strike_points()[0];
 
-    vault::insert_position(&mut v, &oracle, true, atm.strike(), QTY, &clock, ctx);
+    vault::insert_test_position(&mut v, &oracle, true, atm.strike(), QTY, &clock, ctx);
     precision::assert_approx(vault::total_mtm(&v), expected_mtm(atm, true));
 
     destroy(v);
@@ -1008,11 +1008,11 @@ fun mtm_live_oracle_s5_extreme_near_expiry() {
     let atm = &s.strike_points()[0];
     let itm10 = &s.strike_points()[4];
 
-    vault::insert_position(&mut v, &oracle, true, atm.strike(), QTY, &clock, ctx);
+    vault::insert_test_position(&mut v, &oracle, true, atm.strike(), QTY, &clock, ctx);
     precision::assert_approx(vault::total_mtm(&v), expected_mtm(atm, true));
 
     vault::remove_position(&mut v, &oracle, true, atm.strike(), QTY, &clock);
-    vault::insert_position(&mut v, &oracle, true, itm10.strike(), QTY, &clock, ctx);
+    vault::insert_test_position(&mut v, &oracle, true, itm10.strike(), QTY, &clock, ctx);
     precision::assert_approx(vault::total_mtm(&v), expected_mtm(itm10, true));
 
     destroy(v);
@@ -1029,7 +1029,7 @@ fun mtm_live_oracle_s0_dn_otm10() {
     let s = &scenario;
     let otm10 = &s.strike_points()[2];
 
-    vault::insert_position(&mut v, &oracle, false, otm10.strike(), QTY, &clock, ctx);
+    vault::insert_test_position(&mut v, &oracle, false, otm10.strike(), QTY, &clock, ctx);
     precision::assert_approx(vault::total_mtm(&v), expected_mtm(otm10, false));
 
     destroy(v);
@@ -1046,7 +1046,7 @@ fun mtm_live_oracle_s5_dn_atm() {
     let s = &scenario;
     let atm = &s.strike_points()[0];
 
-    vault::insert_position(&mut v, &oracle, false, atm.strike(), QTY, &clock, ctx);
+    vault::insert_test_position(&mut v, &oracle, false, atm.strike(), QTY, &clock, ctx);
     precision::assert_approx(vault::total_mtm(&v), expected_mtm(atm, false));
 
     destroy(v);

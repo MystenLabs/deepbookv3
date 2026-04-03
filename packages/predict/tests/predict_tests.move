@@ -143,16 +143,14 @@ fun supply_aborts_when_vault_is_underwater() {
     let oracle = oracle_helper::create_settled_oracle(200 * constants::float_scaling!(), ctx);
     let clock = clock::create_for_testing(ctx);
 
-    predict
-        .vault_mut()
-        .insert_position(
-            &oracle,
-            true,
-            50 * constants::float_scaling!(),
-            11 * constants::float_scaling!(),
-            &clock,
-            ctx,
-        );
+    predict.insert_test_position(
+        &oracle,
+        true,
+        50 * constants::float_scaling!(),
+        11 * constants::float_scaling!(),
+        &clock,
+        ctx,
+    );
 
     let recapitalization = coin::mint_for_testing<SUI>(5 * constants::float_scaling!(), ctx);
     let _shares = predict.supply(recapitalization, ctx);
@@ -217,16 +215,14 @@ fun withdraw_partial_with_settled_winning_exposure_returns_pro_rata_free_capital
         scenario.ctx(),
     );
     let clock = clock::create_for_testing(scenario.ctx());
-    predict
-        .vault_mut()
-        .insert_position(
-            &oracle,
-            true,
-            50 * constants::float_scaling!(),
-            80 * constants::float_scaling!(),
-            &clock,
-            scenario.ctx(),
-        );
+    predict.insert_test_position(
+        &oracle,
+        true,
+        50 * constants::float_scaling!(),
+        80 * constants::float_scaling!(),
+        &clock,
+        scenario.ctx(),
+    );
 
     scenario.next_tx(ALICE);
     let mut lp = scenario.take_from_sender<coin::Coin<PLP>>();
@@ -256,16 +252,14 @@ fun withdraw_up_to_available_succeeds() {
         scenario.ctx(),
     );
     let clock = clock::create_for_testing(scenario.ctx());
-    predict
-        .vault_mut()
-        .insert_position(
-            &oracle,
-            true,
-            50 * constants::float_scaling!(),
-            80 * constants::float_scaling!(),
-            &clock,
-            scenario.ctx(),
-        );
+    predict.insert_test_position(
+        &oracle,
+        true,
+        50 * constants::float_scaling!(),
+        80 * constants::float_scaling!(),
+        &clock,
+        scenario.ctx(),
+    );
 
     scenario.next_tx(ALICE);
     let lp = scenario.take_from_sender<coin::Coin<PLP>>();
@@ -290,16 +284,14 @@ fun withdraw_all_blocked_by_live_max_payout() {
 
     let oracle = create_live_oracle(scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
-    predict
-        .vault_mut()
-        .insert_position(
-            &oracle,
-            true,
-            150 * constants::float_scaling!(),
-            80 * constants::float_scaling!(),
-            &clock,
-            scenario.ctx(),
-        );
+    predict.insert_test_position(
+        &oracle,
+        true,
+        150 * constants::float_scaling!(),
+        80 * constants::float_scaling!(),
+        &clock,
+        scenario.ctx(),
+    );
 
     scenario.next_tx(ALICE);
     let lp = scenario.take_from_sender<coin::Coin<PLP>>();
@@ -328,7 +320,7 @@ fun mint_live_oracle_updates_manager_and_vault_state() {
         let balance_before = manager.balance<SUI>();
         let vault_balance_before = predict::vault_balance(&predict);
 
-        predict.mint(
+        predict.mint_test(
             &mut manager,
             &oracle,
             key,
@@ -380,7 +372,7 @@ fun mint_aborts_on_wrong_oracle_id() {
     scenario.next_tx(ALICE);
     {
         let mut manager = scenario.take_shared<PredictManager>();
-        predict.mint(
+        predict.mint_test(
             &mut manager,
             &oracle,
             wrong_key,
@@ -413,7 +405,7 @@ fun mint_aborts_on_wrong_expiry() {
     scenario.next_tx(ALICE);
     {
         let mut manager = scenario.take_shared<PredictManager>();
-        predict.mint(
+        predict.mint_test(
             &mut manager,
             &oracle,
             wrong_key,
@@ -455,7 +447,7 @@ fun repeated_mint_same_market_increases_ask_and_doubles_max_payout() {
     {
         let mut manager = scenario.take_shared<PredictManager>();
 
-        predict.mint(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
+        predict.mint_test(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
         let mtm_after_first = vault_mtm(&mut predict);
         let max_payout_after_first = vault_max_payout(&mut predict);
         let (cost_after_first, _payout_after_first) = predict.get_trade_amounts(
@@ -465,7 +457,7 @@ fun repeated_mint_same_market_increases_ask_and_doubles_max_payout() {
             &clock,
         );
 
-        predict.mint(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
+        predict.mint_test(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
         let mtm_after_second = vault_mtm(&mut predict);
         let max_payout_after_second = vault_max_payout(&mut predict);
         let (free, locked) = manager.position(key);
@@ -509,7 +501,7 @@ fun partial_redeem_reduces_liability_and_improves_payout() {
     scenario.next_tx(ALICE);
     {
         let mut manager = scenario.take_shared<PredictManager>();
-        predict.mint(&mut manager, &oracle, key, total_qty, &clock, scenario.ctx());
+        predict.mint_test(&mut manager, &oracle, key, total_qty, &clock, scenario.ctx());
 
         let mtm_before = vault_mtm(&mut predict);
         let max_payout_before = vault_max_payout(&mut predict);
@@ -577,7 +569,7 @@ fun redeem_aborts_on_wrong_expiry() {
     scenario.next_tx(ALICE);
     {
         let mut manager = scenario.take_shared<PredictManager>();
-        predict.mint(
+        predict.mint_test(
             &mut manager,
             &oracle,
             key,
@@ -616,7 +608,7 @@ fun mint_aborts_when_total_exposure_limit_exceeded() {
     scenario.next_tx(ALICE);
     {
         let mut manager = scenario.take_shared<PredictManager>();
-        predict.mint(
+        predict.mint_test(
             &mut manager,
             &oracle,
             key,
@@ -655,7 +647,7 @@ fun round_trip_trade_loses_spread() {
         let manager_balance_before = manager.balance<SUI>();
         let vault_balance_before = predict::vault_balance(&predict);
 
-        predict.mint(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
+        predict.mint_test(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
         predict.redeem(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
 
         let manager_balance_after = manager.balance<SUI>();
@@ -742,8 +734,8 @@ fun removing_one_leg_keeps_other_leg_exposure_active() {
     scenario.next_tx(ALICE);
     {
         let mut manager = scenario.take_shared<PredictManager>();
-        predict.mint(&mut manager, &oracle, atm_key, atm_qty, &clock, scenario.ctx());
-        predict.mint(&mut manager, &oracle, otm_key, otm_qty, &clock, scenario.ctx());
+        predict.mint_test(&mut manager, &oracle, atm_key, atm_qty, &clock, scenario.ctx());
+        predict.mint_test(&mut manager, &oracle, otm_key, otm_qty, &clock, scenario.ctx());
 
         let mtm_with_both = vault_mtm(&mut predict);
         let max_payout_with_both = vault_max_payout(&mut predict);
@@ -801,16 +793,14 @@ fun redeem_settled_up_wins_full_payout() {
         let mut manager = scenario.take_shared<PredictManager>();
         manager.increase_position(key, 10 * constants::float_scaling!());
 
-        predict
-            .vault_mut()
-            .insert_position(
-                &oracle,
-                true,
-                50 * constants::float_scaling!(),
-                10 * constants::float_scaling!(),
-                &clock,
-                scenario.ctx(),
-            );
+        predict.insert_test_position(
+            &oracle,
+            true,
+            50 * constants::float_scaling!(),
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
 
         oracle::settle_test_oracle(&mut oracle, 200 * constants::float_scaling!());
 
@@ -858,16 +848,14 @@ fun redeem_settled_up_loses_zero_payout() {
         let mut manager = scenario.take_shared<PredictManager>();
         manager.increase_position(key, 10 * constants::float_scaling!());
 
-        predict
-            .vault_mut()
-            .insert_position(
-                &oracle,
-                true,
-                150 * constants::float_scaling!(),
-                10 * constants::float_scaling!(),
-                &clock,
-                scenario.ctx(),
-            );
+        predict.insert_test_position(
+            &oracle,
+            true,
+            150 * constants::float_scaling!(),
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
 
         oracle::settle_test_oracle(&mut oracle, 50 * constants::float_scaling!());
 
@@ -911,7 +899,7 @@ fun redeem_settled_oracle_ignores_staleness() {
     scenario.next_tx(ALICE);
     {
         let mut manager = scenario.take_shared<PredictManager>();
-        predict.mint(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
+        predict.mint_test(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
         test_scenario::return_shared(manager);
     };
 
@@ -957,7 +945,7 @@ fun mint_when_paused_aborts() {
     scenario.next_tx(ALICE);
     {
         let mut manager = scenario.take_shared<PredictManager>();
-        predict.mint(
+        predict.mint_test(
             &mut manager,
             &oracle,
             key,
@@ -993,7 +981,7 @@ fun mint_against_stale_oracle_aborts() {
     scenario.next_tx(ALICE);
     {
         let mut manager = scenario.take_shared<PredictManager>();
-        predict.mint(
+        predict.mint_test(
             &mut manager,
             &oracle,
             key,
@@ -1023,7 +1011,7 @@ fun mint_aborts_if_not_owner() {
     scenario.next_tx(BOB);
     {
         let mut manager = scenario.take_shared<PredictManager>();
-        predict.mint(
+        predict.mint_test(
             &mut manager,
             &oracle,
             key,
@@ -1053,7 +1041,7 @@ fun redeem_against_stale_live_oracle_aborts() {
     scenario.next_tx(ALICE);
     {
         let mut manager = scenario.take_shared<PredictManager>();
-        predict.mint(
+        predict.mint_test(
             &mut manager,
             &oracle,
             key,
@@ -1098,7 +1086,7 @@ fun redeem_aborts_if_not_owner() {
     scenario.next_tx(ALICE);
     {
         let mut manager = scenario.take_shared<PredictManager>();
-        predict.mint(
+        predict.mint_test(
             &mut manager,
             &oracle,
             key,
@@ -1638,7 +1626,7 @@ fun mint_against_settled_oracle_aborts() {
     scenario.next_tx(ALICE);
     {
         let mut manager = scenario.take_shared<PredictManager>();
-        predict.mint(
+        predict.mint_test(
             &mut manager,
             &oracle,
             key,
@@ -1670,7 +1658,7 @@ fun mint_expired_but_unsettled_oracle_aborts() {
     scenario.next_tx(ALICE);
     {
         let mut manager = scenario.take_shared<PredictManager>();
-        predict.mint(
+        predict.mint_test(
             &mut manager,
             &oracle,
             key,
@@ -1762,7 +1750,7 @@ fun mint_zero_quantity_aborts() {
     scenario.next_tx(ALICE);
     {
         let mut manager = scenario.take_shared<PredictManager>();
-        predict.mint(
+        predict.mint_test(
             &mut manager,
             &oracle,
             key,
@@ -1791,7 +1779,7 @@ fun redeem_zero_quantity_aborts() {
     scenario.next_tx(ALICE);
     {
         let mut manager = scenario.take_shared<PredictManager>();
-        predict.mint(
+        predict.mint_test(
             &mut manager,
             &oracle,
             key,

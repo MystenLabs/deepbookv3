@@ -4,7 +4,7 @@ use deepbook::{constants::max_u64, math};
 use deepbook_predict::oracle::CurvePoint;
 use sui::table::{Self, Table};
 
-const PAGE_SLOTS: u64 = 256;
+const PAGE_SLOTS: u64 = 512;
 
 public struct StrikeMatrix has store {
     pages: Table<u64, vector<Node>>,
@@ -318,6 +318,10 @@ public(package) fun set_mtm(self: &mut StrikeMatrix, value: u64) {
 
 public(package) fun max_payout(self: &StrikeMatrix): u64 {
     self.total_q_up + self.total_q_dn
+}
+
+public(package) fun has_live_positions(self: &StrikeMatrix): bool {
+    self.total_q_up > 0 || self.total_q_dn > 0
 }
 
 public(package) fun has_minted_strikes(self: &StrikeMatrix): bool {

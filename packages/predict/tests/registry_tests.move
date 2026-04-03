@@ -8,7 +8,7 @@ use deepbook_predict::{
     constants::oracle_strike_grid_ticks,
     oracle::{Self, OracleSVI},
     plp::PLP,
-    predict::Predict,
+    predict::{Predict},
     registry::{Self, AdminCap, Registry}
 };
 use std::unit_test::{assert_eq, destroy};
@@ -24,6 +24,20 @@ fun setup(): Scenario {
     {
         registry::init_for_testing(scenario.ctx());
     };
+    scenario.next_tx(ADMIN);
+    scenario
+}
+
+fun setup_with_predict(): Scenario {
+    let mut scenario = setup();
+    let admin_cap = scenario.take_from_sender<AdminCap>();
+    let mut registry = scenario.take_shared<Registry>();
+
+    let treasury_cap = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
+    registry.create_predict<SUI>(&admin_cap, treasury_cap, scenario.ctx());
+
+    test_scenario::return_shared(registry);
+    scenario.return_to_sender(admin_cap);
     scenario.next_tx(ADMIN);
     scenario
 }
@@ -132,15 +146,17 @@ fun create_oracle_cap_succeeds() {
 
 #[test]
 fun create_oracle_and_tracks_in_registry() {
-    let mut scenario = setup();
+    let mut scenario = setup_with_predict();
 
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut registry = scenario.take_shared<Registry>();
+    let mut predict = scenario.take_shared<Predict<SUI>>();
 
     let cap = registry::create_oracle_cap(&admin_cap, scenario.ctx());
     let cap_id = object::id(&cap);
 
     let oracle_id = registry.create_oracle(
+        &mut predict,
         &admin_cap,
         &cap,
         b"BTC".to_string(),
@@ -156,6 +172,7 @@ fun create_oracle_and_tracks_in_registry() {
     assert_eq!(ids[0], oracle_id);
 
     destroy(cap);
+    test_scenario::return_shared(predict);
     test_scenario::return_shared(registry);
     scenario.return_to_sender(admin_cap);
     scenario.end();
@@ -163,13 +180,15 @@ fun create_oracle_and_tracks_in_registry() {
 
 #[test]
 fun create_oracle_persists_grid_on_oracle() {
-    let mut scenario = setup();
+    let mut scenario = setup_with_predict();
 
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut registry = scenario.take_shared<Registry>();
+    let mut predict = scenario.take_shared<Predict<SUI>>();
 
     let cap = registry::create_oracle_cap(&admin_cap, scenario.ctx());
     registry.create_oracle(
+        &mut predict,
         &admin_cap,
         &cap,
         b"BTC".to_string(),
@@ -179,6 +198,8 @@ fun create_oracle_persists_grid_on_oracle() {
         scenario.ctx(),
     );
 
+    test_scenario::return_shared(predict);
+    test_scenario::return_shared(registry);
     scenario.next_tx(ADMIN);
     {
         let oracle = scenario.take_shared<OracleSVI>();
@@ -192,20 +213,21 @@ fun create_oracle_persists_grid_on_oracle() {
     };
 
     destroy(cap);
-    test_scenario::return_shared(registry);
     scenario.return_to_sender(admin_cap);
     scenario.end();
 }
 
 #[test, expected_failure(abort_code = oracle::EInvalidTickSize)]
 fun create_oracle_invalid_tick_size_aborts() {
-    let mut scenario = setup();
+    let mut scenario = setup_with_predict();
 
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut registry = scenario.take_shared<Registry>();
+    let mut predict = scenario.take_shared<Predict<SUI>>();
     let cap = registry::create_oracle_cap(&admin_cap, scenario.ctx());
 
     registry.create_oracle(
+        &mut predict,
         &admin_cap,
         &cap,
         b"BTC".to_string(),
@@ -220,13 +242,15 @@ fun create_oracle_invalid_tick_size_aborts() {
 
 #[test, expected_failure(abort_code = oracle::EInvalidStrikeGrid)]
 fun create_oracle_zero_min_strike_aborts() {
-    let mut scenario = setup();
+    let mut scenario = setup_with_predict();
 
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut registry = scenario.take_shared<Registry>();
+    let mut predict = scenario.take_shared<Predict<SUI>>();
     let cap = registry::create_oracle_cap(&admin_cap, scenario.ctx());
 
     registry.create_oracle(
+        &mut predict,
         &admin_cap,
         &cap,
         b"BTC".to_string(),
@@ -241,15 +265,17 @@ fun create_oracle_zero_min_strike_aborts() {
 
 #[test]
 fun create_multiple_oracles_same_cap() {
-    let mut scenario = setup();
+    let mut scenario = setup_with_predict();
 
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut registry = scenario.take_shared<Registry>();
+    let mut predict = scenario.take_shared<Predict<SUI>>();
 
     let cap = registry::create_oracle_cap(&admin_cap, scenario.ctx());
     let cap_id = object::id(&cap);
 
     let id1 = registry.create_oracle(
+        &mut predict,
         &admin_cap,
         &cap,
         b"BTC".to_string(),
@@ -259,6 +285,7 @@ fun create_multiple_oracles_same_cap() {
         scenario.ctx(),
     );
     let id2 = registry.create_oracle(
+        &mut predict,
         &admin_cap,
         &cap,
         b"ETH".to_string(),
@@ -274,6 +301,7 @@ fun create_multiple_oracles_same_cap() {
     assert_eq!(ids[1], id2);
 
     destroy(cap);
+    test_scenario::return_shared(predict);
     test_scenario::return_shared(registry);
     scenario.return_to_sender(admin_cap);
     scenario.end();
@@ -281,10 +309,11 @@ fun create_multiple_oracles_same_cap() {
 
 #[test]
 fun create_oracles_different_caps_tracked_separately() {
-    let mut scenario = setup();
+    let mut scenario = setup_with_predict();
 
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut registry = scenario.take_shared<Registry>();
+    let mut predict = scenario.take_shared<Predict<SUI>>();
 
     let cap1 = registry::create_oracle_cap(&admin_cap, scenario.ctx());
     let cap2 = registry::create_oracle_cap(&admin_cap, scenario.ctx());
@@ -292,6 +321,7 @@ fun create_oracles_different_caps_tracked_separately() {
     let cap2_id = object::id(&cap2);
 
     let id1 = registry.create_oracle(
+        &mut predict,
         &admin_cap,
         &cap1,
         b"BTC".to_string(),
@@ -301,6 +331,7 @@ fun create_oracles_different_caps_tracked_separately() {
         scenario.ctx(),
     );
     let id2 = registry.create_oracle(
+        &mut predict,
         &admin_cap,
         &cap2,
         b"ETH".to_string(),
@@ -320,6 +351,7 @@ fun create_oracles_different_caps_tracked_separately() {
 
     destroy(cap1);
     destroy(cap2);
+    test_scenario::return_shared(predict);
     test_scenario::return_shared(registry);
     scenario.return_to_sender(admin_cap);
     scenario.end();
@@ -331,13 +363,15 @@ fun create_oracles_different_caps_tracked_separately() {
 
 #[test]
 fun register_oracle_cap_on_oracle() {
-    let mut scenario = setup();
+    let mut scenario = setup_with_predict();
 
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut registry = scenario.take_shared<Registry>();
+    let mut predict = scenario.take_shared<Predict<SUI>>();
 
     let cap1 = registry::create_oracle_cap(&admin_cap, scenario.ctx());
     registry.create_oracle(
+        &mut predict,
         &admin_cap,
         &cap1,
         b"BTC".to_string(),
@@ -350,6 +384,8 @@ fun register_oracle_cap_on_oracle() {
     // Create a second cap and register it on the oracle
     let cap2 = registry::create_oracle_cap(&admin_cap, scenario.ctx());
 
+    test_scenario::return_shared(predict);
+    test_scenario::return_shared(registry);
     scenario.next_tx(ADMIN);
     {
         let mut oracle = scenario.take_shared<OracleSVI>();
@@ -359,7 +395,6 @@ fun register_oracle_cap_on_oracle() {
 
     destroy(cap1);
     destroy(cap2);
-    test_scenario::return_shared(registry);
     scenario.return_to_sender(admin_cap);
     scenario.end();
 }
