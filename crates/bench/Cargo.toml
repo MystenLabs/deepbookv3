@@ -14,7 +14,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 prometheus.workspace = true
 tracing.workspace = true
-axum = { version = "0.7", features = ["json"] }
+axum = { version = "0.8", features = ["json"] }
 tower-http = { version = "0.5", features = ["cors"] }
 uuid = { version = "1", features = ["v4"] }
 subtle = "2.5"
