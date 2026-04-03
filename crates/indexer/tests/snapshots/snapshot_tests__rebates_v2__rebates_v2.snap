@@ -1,0 +1,96 @@
+---
+source: crates/indexer/tests/snapshot_tests.rs
+expression: rows
+---
+[
+  {
+    "event_digest": "EBUU1Jbw1HwYcs3Bx7zusCit2zPFjrbpMGD9ofqQXLSq0",
+    "digest": "EBUU1Jbw1HwYcs3Bx7zusCit2zPFjrbpMGD9ofqQXLSq",
+    "sender": "0xcde6dbe01902be1f200ff03dbbd149e586847be8cee15235f82750d9b06c0e04",
+    "checkpoint": "136638306",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1745302536150",
+    "package": "0xcaf6ba059d539a97646d47f0b9ddf843e138d215e2a12ca1f4585d386f7aec3a",
+    "pool_id": "0x81f5339934c83ea19dd6bcc75c52e83509629a5f71d3257428c2ce47cc94d08b",
+    "balance_manager_id": "0x344c2734b1d211bd15212bfb7847c66a3b18803f3f5ab00f5ff6f87b6fe6d27d",
+    "epoch": "740",
+    "claim_base": "0",
+    "claim_quote": "0",
+    "claim_deep": "497519278190"
+  },
+  {
+    "event_digest": "EBUU1Jbw1HwYcs3Bx7zusCit2zPFjrbpMGD9ofqQXLSq4",
+    "digest": "EBUU1Jbw1HwYcs3Bx7zusCit2zPFjrbpMGD9ofqQXLSq",
+    "sender": "0xcde6dbe01902be1f200ff03dbbd149e586847be8cee15235f82750d9b06c0e04",
+    "checkpoint": "136638306",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1745302536150",
+    "package": "0xcaf6ba059d539a97646d47f0b9ddf843e138d215e2a12ca1f4585d386f7aec3a",
+    "pool_id": "0x183df694ebc852a5f90a959f0f563b82ac9691e42357e9a9fe961d71a1b809c8",
+    "balance_manager_id": "0x344c2734b1d211bd15212bfb7847c66a3b18803f3f5ab00f5ff6f87b6fe6d27d",
+    "epoch": "740",
+    "claim_base": "0",
+    "claim_quote": "0",
+    "claim_deep": "27425214085"
+  },
+  {
+    "event_digest": "EBUU1Jbw1HwYcs3Bx7zusCit2zPFjrbpMGD9ofqQXLSq8",
+    "digest": "EBUU1Jbw1HwYcs3Bx7zusCit2zPFjrbpMGD9ofqQXLSq",
+    "sender": "0xcde6dbe01902be1f200ff03dbbd149e586847be8cee15235f82750d9b06c0e04",
+    "checkpoint": "136638306",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1745302536150",
+    "package": "0xcaf6ba059d539a97646d47f0b9ddf843e138d215e2a12ca1f4585d386f7aec3a",
+    "pool_id": "0x56a1c985c1f1123181d6b881714793689321ba24301b3585eec427436eb1c76d",
+    "balance_manager_id": "0x344c2734b1d211bd15212bfb7847c66a3b18803f3f5ab00f5ff6f87b6fe6d27d",
+    "epoch": "740",
+    "claim_base": "0",
+    "claim_quote": "0",
+    "claim_deep": "512079444675"
+  },
+  {
+    "event_digest": "EBUU1Jbw1HwYcs3Bx7zusCit2zPFjrbpMGD9ofqQXLSq12",
+    "digest": "EBUU1Jbw1HwYcs3Bx7zusCit2zPFjrbpMGD9ofqQXLSq",
+    "sender": "0xcde6dbe01902be1f200ff03dbbd149e586847be8cee15235f82750d9b06c0e04",
+    "checkpoint": "136638306",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1745302536150",
+    "package": "0xcaf6ba059d539a97646d47f0b9ddf843e138d215e2a12ca1f4585d386f7aec3a",
+    "pool_id": "0x0c0fdd4008740d81a8a7d4281322aee71a1b62c449eb5b142656753d89ebc060",
+    "balance_manager_id": "0x344c2734b1d211bd15212bfb7847c66a3b18803f3f5ab00f5ff6f87b6fe6d27d",
+    "epoch": "740",
+    "claim_base": "10433",
+    "claim_quote": "1314",
+    "claim_deep": "4169700429"
+  },
+  {
+    "event_digest": "EBUU1Jbw1HwYcs3Bx7zusCit2zPFjrbpMGD9ofqQXLSq16",
+    "digest": "EBUU1Jbw1HwYcs3Bx7zusCit2zPFjrbpMGD9ofqQXLSq",
+    "sender": "0xcde6dbe01902be1f200ff03dbbd149e586847be8cee15235f82750d9b06c0e04",
+    "checkpoint": "136638306",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1745302536150",
+    "package": "0xcaf6ba059d539a97646d47f0b9ddf843e138d215e2a12ca1f4585d386f7aec3a",
+    "pool_id": "0x27c4fdb3b846aa3ae4a65ef5127a309aa3c1f466671471a806d8912a18b253e8",
+    "balance_manager_id": "0x344c2734b1d211bd15212bfb7847c66a3b18803f3f5ab00f5ff6f87b6fe6d27d",
+    "epoch": "740",
+    "claim_base": "0",
+    "claim_quote": "0",
+    "claim_deep": "5170013208"
+  },
+  {
+    "event_digest": "EBUU1Jbw1HwYcs3Bx7zusCit2zPFjrbpMGD9ofqQXLSq20",
+    "digest": "EBUU1Jbw1HwYcs3Bx7zusCit2zPFjrbpMGD9ofqQXLSq",
+    "sender": "0xcde6dbe01902be1f200ff03dbbd149e586847be8cee15235f82750d9b06c0e04",
+    "checkpoint": "136638306",
+    "timestamp": "1970-01-01 00:00:00.000000",
+    "checkpoint_timestamp_ms": "1745302536150",
+    "package": "0xcaf6ba059d539a97646d47f0b9ddf843e138d215e2a12ca1f4585d386f7aec3a",
+    "pool_id": "0xe05dafb5133bcffb8d59f4e12465dc0e9faeaa05e3e342a08fe135800e3e4407",
+    "balance_manager_id": "0x344c2734b1d211bd15212bfb7847c66a3b18803f3f5ab00f5ff6f87b6fe6d27d",
+    "epoch": "740",
+    "claim_base": "0",
+    "claim_quote": "0",
+    "claim_deep": "219429618450"
+  }
+]

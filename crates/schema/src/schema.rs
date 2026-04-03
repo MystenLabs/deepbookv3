@@ -883,6 +883,24 @@ diesel::table! {
 }
 
 diesel::table! {
+    rebates_v2 (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pool_id -> Text,
+        balance_manager_id -> Text,
+        epoch -> Int8,
+        claim_base -> Int8,
+        claim_quote -> Int8,
+        claim_deep -> Int8,
+    }
+}
+
+diesel::table! {
     referral_claimed (event_digest) {
         event_digest -> Text,
         digest -> Text,
@@ -992,6 +1010,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     protocol_fees_increased,
     protocol_fees_withdrawn,
     rebates,
+    rebates_v2,
     referral_claimed,
     referral_fee_events,
     referral_fees_claimed,

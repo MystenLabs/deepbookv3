@@ -33,6 +33,7 @@ use deepbook_indexer::handlers::pool_price_handler::PoolPriceHandler;
 use deepbook_indexer::handlers::price_tolerance_updated_handler::PriceToleranceUpdatedHandler;
 use deepbook_indexer::handlers::protocol_fees_increased_handler::ProtocolFeesIncreasedHandler;
 use deepbook_indexer::handlers::protocol_fees_withdrawn_handler::ProtocolFeesWithdrawnHandler;
+use deepbook_indexer::handlers::rebates_v2_handler::RebatesV2Handler;
 use deepbook_indexer::handlers::referral_claimed_handler::ReferralClaimedHandler;
 use deepbook_indexer::handlers::referral_fee_event_handler::ReferralFeeEventHandler;
 use deepbook_indexer::handlers::referral_fees_claimed_handler::ReferralFeesClaimedHandler;
@@ -503,6 +504,13 @@ async fn conditional_order_insufficient_funds_test() -> Result<(), anyhow::Error
 async fn taker_fee_penalty_test() -> Result<(), anyhow::Error> {
     let handler = TakerFeePenaltyHandler::new(DeepbookEnv::Mainnet);
     data_test("taker_fee_penalty", handler, ["taker_fee_penalty_applied"]).await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn rebates_v2_test() -> Result<(), anyhow::Error> {
+    let handler = RebatesV2Handler::new(DeepbookEnv::Mainnet);
+    data_test("rebates_v2", handler, ["rebates_v2"]).await?;
     Ok(())
 }
 

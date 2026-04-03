@@ -195,6 +195,7 @@ pub mod proposals_handler;
 pub mod protocol_fees_increased_handler;
 pub mod protocol_fees_withdrawn_handler;
 pub mod rebates_handler;
+pub mod rebates_v2_handler;
 pub mod referral_claimed_handler;
 pub mod referral_fee_event_handler;
 pub mod referral_fees_claimed_handler;

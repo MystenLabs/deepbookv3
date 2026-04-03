@@ -258,6 +258,26 @@ pub mod deepbook {
             const NAME: &'static str = "RebateEvent";
         }
 
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct RebateBalances {
+            pub base: u64,
+            pub quote: u64,
+            pub deep: u64,
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct RebateEventV2 {
+            pub pool_id: ObjectID,
+            pub balance_manager_id: ObjectID,
+            pub epoch: u64,
+            pub claim_amount: RebateBalances,
+        }
+
+        impl MoveStruct for RebateEventV2 {
+            const MODULE: &'static str = "state";
+            const NAME: &'static str = "RebateEventV2";
+        }
+
         impl MoveStruct for ProposalEvent {
             const MODULE: &'static str = "state";
             const NAME: &'static str = "ProposalEvent";
