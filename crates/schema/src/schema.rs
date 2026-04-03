@@ -890,6 +890,58 @@ diesel::table! {
 }
 
 diesel::table! {
+    maker_incentive_fund_created (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pool_id -> Text,
+        fund_id -> Text,
+        reward_per_epoch -> Int8,
+        creator -> Text,
+        created_at_ms -> Int8,
+    }
+}
+
+diesel::table! {
+    maker_incentive_epoch_results_submitted (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pool_id -> Text,
+        fund_id -> Text,
+        epoch_start_ms -> Int8,
+        epoch_end_ms -> Int8,
+        total_allocation -> Int8,
+        num_makers -> Int8,
+    }
+}
+
+diesel::table! {
+    maker_incentive_reward_claimed (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pool_id -> Text,
+        fund_id -> Text,
+        epoch_start_ms -> Int8,
+        balance_manager_id -> Text,
+        amount -> Int8,
+    }
+}
+
+diesel::table! {
     watermarks (pipeline) {
         pipeline -> Text,
         epoch_hi_inclusive -> Int8,
@@ -926,6 +978,9 @@ diesel::allow_tables_to_appear_in_same_query!(
     loan_repaid,
     maintainer_cap_updated,
     maintainer_fees_withdrawn,
+    maker_incentive_epoch_results_submitted,
+    maker_incentive_fund_created,
+    maker_incentive_reward_claimed,
     margin_manager_created,
     margin_manager_state,
     margin_pool_config_updated,

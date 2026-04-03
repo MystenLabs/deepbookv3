@@ -914,3 +914,55 @@ pub mod sui {
         }
     }
 }
+
+// Maker Incentives module
+pub mod maker_incentives {
+    use super::*;
+
+    pub mod maker_incentives {
+        use super::*;
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct FundCreated {
+            pub pool_id: Address,
+            pub fund_id: ObjectID,
+            pub reward_per_epoch: u64,
+            pub creator: Address,
+            pub created_at_ms: u64,
+        }
+
+        impl MoveStruct for FundCreated {
+            const MODULE: &'static str = "maker_incentives";
+            const NAME: &'static str = "FundCreated";
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct EpochResultsSubmitted {
+            pub pool_id: Address,
+            pub fund_id: Address,
+            pub epoch_start_ms: u64,
+            pub epoch_end_ms: u64,
+            pub total_allocation: u64,
+            pub num_makers: u64,
+        }
+
+        impl MoveStruct for EpochResultsSubmitted {
+            const MODULE: &'static str = "maker_incentives";
+            const NAME: &'static str = "EpochResultsSubmitted";
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct RewardClaimed {
+            pub pool_id: Address,
+            pub fund_id: Address,
+            pub epoch_start_ms: u64,
+            pub balance_manager_id: Address,
+            pub amount: u64,
+        }
+
+        impl MoveStruct for RewardClaimed {
+            const MODULE: &'static str = "maker_incentives";
+            const NAME: &'static str = "RewardClaimed";
+        }
+    }
+}

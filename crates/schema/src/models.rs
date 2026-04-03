@@ -25,6 +25,10 @@ use crate::schema::{
     // Margin Registry Events
     maintainer_cap_updated,
     maintainer_fees_withdrawn,
+    // Maker Incentive Events
+    maker_incentive_epoch_results_submitted,
+    maker_incentive_fund_created,
+    maker_incentive_reward_claimed,
     // Margin Manager Events
     margin_manager_created,
     margin_manager_state,
@@ -984,4 +988,54 @@ pub struct Points {
     pub week: i32,
     #[serde(serialize_with = "serialize_datetime")]
     pub timestamp: chrono::NaiveDateTime,
+}
+
+// === Maker Incentive Events ===
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = maker_incentive_fund_created, primary_key(event_digest))]
+pub struct MakerIncentiveFundCreated {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub fund_id: String,
+    pub reward_per_epoch: i64,
+    pub creator: String,
+    pub created_at_ms: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = maker_incentive_epoch_results_submitted, primary_key(event_digest))]
+pub struct MakerIncentiveEpochResultsSubmitted {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub fund_id: String,
+    pub epoch_start_ms: i64,
+    pub epoch_end_ms: i64,
+    pub total_allocation: i64,
+    pub num_makers: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = maker_incentive_reward_claimed, primary_key(event_digest))]
+pub struct MakerIncentiveRewardClaimed {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub fund_id: String,
+    pub epoch_start_ms: i64,
+    pub balance_manager_id: String,
+    pub amount: i64,
 }
