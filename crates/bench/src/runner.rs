@@ -51,7 +51,7 @@ fn build_job_spec(
     labels.insert("run-id".to_string(), run_id.to_string());
 
     let callback_base = format!(
-        "http://predict-bench.{}.svc.cluster.local:{}/api/v1/benchmark/{}",
+        "http://predict-bench-svc.{}.svc.cluster.local:{}/api/v1/benchmark/{}",
         config.k8s_namespace, config.api_port, run_id
     );
     let github_repo_url = format!("https://github.com/{}.git", config.github_repo);
