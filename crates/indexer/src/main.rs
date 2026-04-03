@@ -14,6 +14,7 @@ use deepbook_indexer::handlers::pool_created_handler::PoolCreatedHandler;
 use deepbook_indexer::handlers::pool_price_handler::PoolPriceHandler;
 use deepbook_indexer::handlers::proposals_handler::ProposalsHandler;
 use deepbook_indexer::handlers::rebates_handler::RebatesHandler;
+use deepbook_indexer::handlers::rebates_v2_handler::RebatesV2Handler;
 use deepbook_indexer::handlers::referral_claimed_handler::ReferralClaimedHandler;
 use deepbook_indexer::handlers::referral_fee_event_handler::ReferralFeeEventHandler;
 use deepbook_indexer::handlers::stakes_handler::StakesHandler;
@@ -42,11 +43,14 @@ use deepbook_indexer::handlers::margin_pool_config_updated_handler::MarginPoolCo
 use deepbook_indexer::handlers::margin_pool_created_handler::MarginPoolCreatedHandler;
 
 // Margin Registry Events
+use deepbook_indexer::handlers::current_price_updated_handler::CurrentPriceUpdatedHandler;
 use deepbook_indexer::handlers::deepbook_pool_config_updated_handler::DeepbookPoolConfigUpdatedHandler;
 use deepbook_indexer::handlers::deepbook_pool_registered_handler::DeepbookPoolRegisteredHandler;
 use deepbook_indexer::handlers::deepbook_pool_updated_registry_handler::DeepbookPoolUpdatedRegistryHandler;
 use deepbook_indexer::handlers::maintainer_cap_updated_handler::MaintainerCapUpdatedHandler;
+use deepbook_indexer::handlers::max_price_age_updated_handler::MaxPriceAgeUpdatedHandler;
 use deepbook_indexer::handlers::pause_cap_updated_handler::PauseCapUpdatedHandler;
+use deepbook_indexer::handlers::price_tolerance_updated_handler::PriceToleranceUpdatedHandler;
 
 // Protocol Fees Events
 use deepbook_indexer::handlers::protocol_fees_increased_handler::ProtocolFeesIncreasedHandler;
@@ -303,6 +307,9 @@ async fn main() -> Result<(), anyhow::Error> {
                     .concurrent_pipeline(RebatesHandler::new(env), Default::default())
                     .await?;
                 indexer
+                    .concurrent_pipeline(RebatesV2Handler::new(env), Default::default())
+                    .await?;
+                indexer
                     .concurrent_pipeline(ReferralFeeEventHandler::new(env), Default::default())
                     .await?;
                 indexer
@@ -402,6 +409,15 @@ async fn main() -> Result<(), anyhow::Error> {
                     .await?;
                 indexer
                     .concurrent_pipeline(PauseCapUpdatedHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(CurrentPriceUpdatedHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(PriceToleranceUpdatedHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(MaxPriceAgeUpdatedHandler::new(env), Default::default())
                     .await?;
                 indexer
                     .concurrent_pipeline(ProtocolFeesIncreasedHandler::new(env), Default::default())

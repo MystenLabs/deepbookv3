@@ -7,20 +7,22 @@
 /// - Coordinates between Vault (state), Oracle (data), and config
 /// - Exposes public functions for trading
 /// - Handles pricing (spread calculation)
+/// - Manages LP token (PLP) minting and burning for vault supply/withdraw
 module deepbook_predict::predict;
 
 use deepbook::math;
 use deepbook_predict::{
     constants,
     market_key::MarketKey,
-    oracle::OracleSVI,
+    math::{Self as predict_math, mul_div_round_down},
+    oracle::{Self, OracleSVI},
+    plp::PLP,
     predict_manager::{Self, PredictManager},
     pricing_config::{Self, PricingConfig},
     risk_config::{Self, RiskConfig},
-    supply_manager::{Self, SupplyManager},
     vault::{Self, Vault}
 };
-use sui::{clock::Clock, coin::Coin, event};
+use sui::{clock::Clock, coin::{Self, Coin, TreasuryCap}, event};
 
 // === Errors ===
 const ETradingPaused: u64 = 0;
@@ -28,6 +30,12 @@ const EInvalidCollateralPair: u64 = 1;
 const ENotOwner: u64 = 2;
 const EOracleSettled: u64 = 3;
 const EWithdrawExceedsAvailable: u64 = 4;
+const EOracleExpired: u64 = 5;
+const EZeroQuantity: u64 = 6;
+const EOracleInactive: u64 = 7;
+const EZeroAmount: u64 = 8;
+const EZeroVaultValue: u64 = 9;
+const EZeroSharesMinted: u64 = 10;
 
 // === Events ===
 
@@ -117,7 +125,7 @@ public struct Supplied has copy, drop, store {
 
 public struct Withdrawn has copy, drop, store {
     predict_id: ID,
-    supplier: address,
+    withdrawer: address,
     amount: u64,
     shares_burned: u64,
 }
@@ -130,8 +138,8 @@ public struct Predict<phantom Quote> has key {
     id: UID,
     /// Vault holding USDC and tracking exposure
     vault: Vault<Quote>,
-    /// Per-user supply share accounting
-    supply_manager: SupplyManager,
+    /// Treasury cap for minting/burning PLP tokens
+    treasury_cap: TreasuryCap<PLP>,
     /// Pricing configuration (admin-controlled)
     pricing_config: PricingConfig,
     /// Risk limits (admin-controlled)
@@ -161,6 +169,10 @@ public fun get_trade_amounts<Quote>(
     quantity: u64,
     clock: &Clock,
 ): (u64, u64) {
+    if (!oracle.is_settled()) {
+        assert!(oracle.is_active(), EOracleInactive);
+        oracle.assert_not_stale(clock);
+    };
     let (bid, ask) = predict.get_quote(oracle, key, clock);
     (math::mul(ask, quantity), math::mul(bid, quantity))
 }
@@ -178,8 +190,11 @@ public fun mint<Quote>(
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(!predict.trading_paused, ETradingPaused);
+    assert!(quantity > 0, EZeroQuantity);
     key.assert_matches_oracle(oracle);
     assert!(!oracle.is_settled(), EOracleSettled);
+    assert!(clock.timestamp_ms() < oracle.expiry(), EOracleExpired);
+    assert!(oracle.is_active(), EOracleInactive);
     oracle.assert_not_stale(clock);
 
     let strike = key.strike();
@@ -221,8 +236,12 @@ public fun redeem<Quote>(
     ctx: &mut TxContext,
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
+    assert!(quantity > 0, EZeroQuantity);
     key.assert_matches_oracle(oracle);
-    if (!oracle.is_settled()) oracle.assert_not_stale(clock);
+    if (!oracle.is_settled()) {
+        assert!(oracle.is_active(), EOracleInactive);
+        oracle.assert_not_stale(clock);
+    };
     manager.decrease_position(key, quantity);
 
     let strike = key.strike();
@@ -267,9 +286,15 @@ public fun mint_collateralized<Quote>(
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(!predict.trading_paused, ETradingPaused);
+    assert!(quantity > 0, EZeroQuantity);
     locked_key.assert_matches_oracle(oracle);
     minted_key.assert_matches_oracle(oracle);
+    assert!(!oracle.is_settled(), EOracleSettled);
+    assert!(clock.timestamp_ms() < oracle.expiry(), EOracleExpired);
+    assert!(oracle.is_active(), EOracleInactive);
     oracle.assert_not_stale(clock);
+    oracle::assert_valid_strike(oracle, locked_key.strike());
+    oracle::assert_valid_strike(oracle, minted_key.strike());
 
     let valid_pair = if (locked_key.is_up() && minted_key.is_up()) {
         locked_key.strike() < minted_key.strike()
@@ -308,6 +333,7 @@ public fun redeem_collateralized<Quote>(
     ctx: &TxContext,
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
+    assert!(quantity > 0, EZeroQuantity);
     manager.decrease_position(minted_key, quantity);
     manager.release_collateral(locked_key, minted_key, quantity);
 
@@ -326,53 +352,57 @@ public fun redeem_collateralized<Quote>(
     });
 }
 
-/// Supply USDC into the vault. Returns shares minted.
-public fun supply<Quote>(predict: &mut Predict<Quote>, coin: Coin<Quote>, ctx: &TxContext): u64 {
+/// Supply USDC into the vault. Returns LP tokens representing shares.
+/// First depositor gets shares 1:1. Subsequent depositors get shares
+/// proportional to their deposit relative to current vault value.
+public fun supply<Quote>(
+    predict: &mut Predict<Quote>,
+    coin: Coin<Quote>,
+    ctx: &mut TxContext,
+): Coin<PLP> {
     let amount = coin.value();
+    assert!(amount > 0, EZeroAmount);
+
     let vault_value = predict.vault.vault_value();
     predict.vault.accept_payment(coin.into_balance());
-    let shares_minted = predict.supply_manager.supply(amount, vault_value, ctx.sender());
+
+    let total = predict.treasury_cap.total_supply();
+    let shares = if (total == 0) {
+        amount
+    } else {
+        assert!(vault_value > 0, EZeroVaultValue);
+        mul_div_round_down(amount, total, vault_value)
+    };
+    assert!(shares > 0, EZeroSharesMinted);
+
     event::emit(Supplied {
         predict_id: object::id(predict),
         supplier: ctx.sender(),
         amount,
-        shares_minted,
+        shares_minted: shares,
     });
-    shares_minted
+    coin::mint(&mut predict.treasury_cap, shares, ctx)
 }
 
-/// Withdraw USDC from the vault by specifying amount.
+/// Withdraw USDC from the vault by providing LP tokens.
+/// Burns the LP tokens and returns the corresponding USDC.
 public fun withdraw<Quote>(
     predict: &mut Predict<Quote>,
-    amount: u64,
+    lp_coin: Coin<PLP>,
     ctx: &mut TxContext,
 ): Coin<Quote> {
+    let vault_value = predict.vault.vault_value();
+    let shares_burned = lp_coin.value();
+    assert!(shares_burned > 0, EZeroAmount);
+    let amount = predict.shares_to_amount(shares_burned, vault_value);
     let balance = predict.vault.balance();
     let max_payout = predict.vault.total_max_payout();
     let available = if (balance > max_payout) { balance - max_payout } else { 0 };
     assert!(amount <= available, EWithdrawExceedsAvailable);
-    let vault_value = predict.vault.vault_value();
-    let shares_burned = predict.supply_manager.withdraw(amount, vault_value, ctx.sender());
+    predict.treasury_cap.burn(lp_coin);
     event::emit(Withdrawn {
         predict_id: object::id(predict),
-        supplier: ctx.sender(),
-        amount,
-        shares_burned,
-    });
-    predict.vault.dispense_payout(amount).into_coin(ctx)
-}
-
-/// Withdraw all of sender's supplied USDC from the vault.
-public fun withdraw_all<Quote>(predict: &mut Predict<Quote>, ctx: &mut TxContext): Coin<Quote> {
-    let vault_value = predict.vault.vault_value();
-    let (amount, shares_burned) = predict.supply_manager.withdraw_all(vault_value, ctx.sender());
-    let balance = predict.vault.balance();
-    let max_payout = predict.vault.total_max_payout();
-    let available = if (balance > max_payout) { balance - max_payout } else { 0 };
-    assert!(amount <= available, EWithdrawExceedsAvailable);
-    event::emit(Withdrawn {
-        predict_id: object::id(predict),
-        supplier: ctx.sender(),
+        withdrawer: ctx.sender(),
         amount,
         shares_burned,
     });
@@ -382,11 +412,11 @@ public fun withdraw_all<Quote>(predict: &mut Predict<Quote>, ctx: &mut TxContext
 // === Public-Package Functions ===
 
 /// Create and share the Predict object. Returns its ID.
-public(package) fun create<Quote>(ctx: &mut TxContext): ID {
+public(package) fun create<Quote>(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): ID {
     let predict = Predict<Quote> {
         id: object::new(ctx),
         vault: vault::new<Quote>(ctx),
-        supply_manager: supply_manager::new(ctx),
+        treasury_cap,
         pricing_config: pricing_config::new(),
         risk_config: risk_config::new(),
         trading_paused: false,
@@ -464,10 +494,11 @@ public(package) fun set_max_total_exposure_pct<Quote>(predict: &mut Predict<Quot
 #[test_only]
 /// Create a Predict object for testing without sharing it.
 public(package) fun create_test_predict<Quote>(ctx: &mut TxContext): Predict<Quote> {
+    let treasury_cap = coin::create_treasury_cap_for_testing<PLP>(ctx);
     Predict<Quote> {
         id: object::new(ctx),
         vault: vault::new<Quote>(ctx),
-        supply_manager: supply_manager::new(ctx),
+        treasury_cap,
         pricing_config: pricing_config::new(),
         risk_config: risk_config::new(),
         trading_paused: false,
@@ -485,6 +516,14 @@ public(package) fun vault_balance<Quote>(predict: &Predict<Quote>): u64 {
 }
 
 // === Private Functions ===
+
+/// Returns the USDC value of `shares` at the given vault value.
+fun shares_to_amount<Quote>(predict: &Predict<Quote>, shares: u64, vault_value: u64): u64 {
+    let total = predict.treasury_cap.total_supply();
+    if (shares == 0 || total == 0) return 0;
+    if (total == shares) return vault_value;
+    mul_div_round_down(shares, vault_value, total)
+}
 
 fun emit_pricing_config_updated<Quote>(predict: &Predict<Quote>) {
     event::emit(PricingConfigUpdated {
@@ -511,7 +550,7 @@ fun get_quote<Quote>(
 
     let complement = constants::float_scaling!() - price;
     let variance = math::mul(price, complement);
-    let bernoulli_factor = math::sqrt(variance, constants::float_scaling!());
+    let bernoulli_factor = predict_math::sqrt(variance, constants::float_scaling!());
     let bernoulli_spread = math::mul(predict.pricing_config.base_spread(), bernoulli_factor);
     let spread =
         bernoulli_spread.max(predict.pricing_config.min_spread())

@@ -12,9 +12,9 @@
 /// AdminCap is transferred to the deployer (expected to be a multisig).
 module deepbook_predict::registry;
 
-use deepbook_predict::{oracle::{Self, OracleCapSVI, OracleSVI}, predict};
+use deepbook_predict::{constants, oracle::{Self, OracleCapSVI, OracleSVI}, plp::PLP, predict};
 use std::string::String;
-use sui::{event, table::{Self, Table}};
+use sui::{coin::TreasuryCap, event, table::{Self, Table}};
 
 // === Errors ===
 const EPredictAlreadyCreated: u64 = 0;
@@ -30,6 +30,9 @@ public struct OracleCreated has copy, drop, store {
     oracle_cap_id: ID,
     underlying_asset: String,
     expiry: u64,
+    min_strike: u64,
+    max_strike: u64,
+    tick_size: u64,
 }
 
 // === Structs ===
@@ -51,6 +54,11 @@ public struct Registry has key {
 
 // === Public Functions ===
 
+/// Get the Predict ID (None if not yet created).
+public fun predict_id(registry: &Registry): Option<ID> {
+    registry.predict_id
+}
+
 /// Get oracle IDs created by a given OracleCap.
 public fun oracle_ids(registry: &Registry, cap_id: ID): vector<ID> {
     if (registry.oracle_ids.contains(cap_id)) {
@@ -65,11 +73,12 @@ public fun oracle_ids(registry: &Registry, cap_id: ID): vector<ID> {
 public fun create_predict<Quote>(
     registry: &mut Registry,
     _admin_cap: &AdminCap,
+    treasury_cap: TreasuryCap<PLP>,
     ctx: &mut TxContext,
 ): ID {
     assert!(registry.predict_id.is_none(), EPredictAlreadyCreated);
 
-    let predict_id = predict::create<Quote>(ctx);
+    let predict_id = predict::create<Quote>(treasury_cap, ctx);
     registry.predict_id = option::some(predict_id);
 
     event::emit(PredictCreated { predict_id });
@@ -94,9 +103,17 @@ public fun create_oracle(
     cap: &OracleCapSVI,
     underlying_asset: String,
     expiry: u64,
+    min_strike: u64,
+    tick_size: u64,
     ctx: &mut TxContext,
 ): ID {
-    let oracle_id = oracle::create_oracle(underlying_asset, expiry, ctx);
+    let oracle_id = oracle::create_oracle(
+        underlying_asset,
+        expiry,
+        min_strike,
+        tick_size,
+        ctx,
+    );
     let cap_id = object::id(cap);
 
     if (!registry.oracle_ids.contains(cap_id)) {
@@ -104,11 +121,15 @@ public fun create_oracle(
     };
     registry.oracle_ids[cap_id].push_back(oracle_id);
 
+    let max_strike = min_strike + tick_size * constants::oracle_strike_grid_ticks!();
     event::emit(OracleCreated {
         oracle_id,
         oracle_cap_id: cap_id,
         underlying_asset,
         expiry,
+        min_strike,
+        max_strike,
+        tick_size,
     });
 
     oracle_id

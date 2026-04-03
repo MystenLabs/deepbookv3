@@ -2,6 +2,7 @@
 resolver = "2"
 
 members = [
+    "crates/bench",
     "crates/indexer",
     "crates/schema",
     "crates/server",
@@ -21,11 +22,12 @@ clap = "4.5.31"
 async-trait = "0.1.83"
 bcs = "0.1.6"
 url = "2.5.4"
-prometheus = "0.13.4"
+prometheus = "0.14.0"
 
 sui-futures = { git = "https://github.com/MystenLabs/sui.git", branch = "testnet" }
 sui-indexer-alt-metrics = { git = "https://github.com/MystenLabs/sui.git", branch = "testnet" }
 telemetry-subscribers = { git = "https://github.com/MystenLabs/sui.git", branch = "testnet" }
+
 sui-pg-db = { git = "https://github.com/MystenLabs/sui.git", branch = "testnet" }
 move-core-types = { git = "https://github.com/MystenLabs/sui.git", branch = "testnet" }
 sui-types = { git = "https://github.com/MystenLabs/sui.git", branch = "testnet" }

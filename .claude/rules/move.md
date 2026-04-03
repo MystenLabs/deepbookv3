@@ -62,6 +62,16 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 
   Exception: `init` function typically comes early (after struct definitions).
 
+- Utility and math modules should only guard against mathematical preconditions (division by zero, overflow, insufficient balance in a data structure). They should not encode application-level policy decisions like "this state shouldn't happen" or "this user type gets different treatment." Application-level guards belong in the calling module.
+
+- Never let VM arithmetic errors (division by zero, overflow) leak to callers. Add named abort guards (`EZeroForward`, `EZeroDivisor`) before any operation that can produce a raw VM error. Every `expected_failure` test should reference a named abort code.
+
+- Timestamp fields should have clear semantics. If `timestamp` means "last price update", don't bump it on unrelated updates (e.g., SVI param changes). Muddled semantics break staleness checks.
+
+- Validate before mutate: when consuming irreversible resources (burning coins, destroying objects), check all preconditions before the destructive call. Even though Sui transactions are atomic, this makes intent clearer and follows the convention used throughout the codebase.
+
+- Avoid deprecated Sui framework functions. Use the current recommended API (e.g., `coin_registry::new_currency_with_otw` instead of `coin::create_currency`). If a deprecated function must be used, add a comment explaining why the replacement doesn't work for this case.
+
 ## Tool Calling Instructions
 
 - `sui move build` to build the package, must be run in a directory with Move.toml in it

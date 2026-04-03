@@ -16,7 +16,7 @@ const HALF: u64 = 500_000_000;
 const DEEP_UNIT: u64 = 1_000_000;
 const FEE_PENALTY_MULTIPLIER: u64 = 1_250_000_000; // 25% more than normal
 const EWMA_DF_KEY: vector<u8> = b"ewma";
-const REFERRAL_MAX_MULTIPLIER: u64 = 2_000_000_000; // 2x multiplier
+const REFERRAL_MAX_MULTIPLIER: u64 = 10_000_000_000; // 10x multiplier
 const REFERRAL_MULTIPLIER: u64 = 100_000_000; // 0.1x multiplier
 const MAX_BALANCE_MANAGERS: u64 = 100;
 

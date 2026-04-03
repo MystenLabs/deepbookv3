@@ -25,7 +25,12 @@ const EOracleAlreadyActive: u64 = 2;
 const EOracleExpired: u64 = 3;
 const ECannotBeNegative: u64 = 4;
 const EZeroVariance: u64 = 5;
-
+const EZeroForward: u64 = 6;
+const EInvalidStrikeGrid: u64 = 7;
+const EStrikeOutOfRange: u64 = 8;
+const EStrikeNotOnTick: u64 = 9;
+const EInvalidTickSize: u64 = 10;
+const EPriceOutOfRange: u64 = 11;
 // === Events ===
 
 public struct OracleActivated has copy, drop, store {
@@ -101,6 +106,12 @@ public struct OracleSVI has key {
     underlying_asset: String,
     /// Expiration timestamp in milliseconds
     expiry: u64,
+    /// Minimum allowed strike for the lifetime of this oracle
+    min_strike: u64,
+    /// Maximum allowed strike for the lifetime of this oracle
+    max_strike: u64,
+    /// Tick size for valid strikes on this oracle
+    tick_size: u64,
     /// Whether the oracle is active
     active: bool,
     /// Spot and forward prices (high frequency updates)
@@ -148,6 +159,7 @@ public fun activate(oracle: &mut OracleSVI, cap: &OracleCapSVI, clock: &Clock) {
 
 /// Push spot and forward prices (high frequency ~1s).
 /// If past expiry and not settled, freezes settlement price and deactivates.
+/// Live updates must stay within the configured strike grid.
 public fun update_prices(
     oracle: &mut OracleSVI,
     cap: &OracleCapSVI,
@@ -172,6 +184,11 @@ public fun update_prices(
         });
         return
     };
+
+    assert!(
+        price_in_range(oracle, prices.spot) && price_in_range(oracle, prices.forward),
+        EPriceOutOfRange,
+    );
 
     oracle.prices = prices;
     oracle.timestamp = now;
@@ -199,7 +216,6 @@ public fun update_svi(
 
     oracle.svi = svi;
     oracle.risk_free_rate = risk_free_rate;
-    oracle.timestamp = now;
 
     event::emit(OracleSVIUpdated {
         oracle_id: oracle.id.to_inner(),
@@ -248,6 +264,21 @@ public fun svi(oracle: &OracleSVI): SVIParams {
 /// Get the expiry timestamp.
 public fun expiry(oracle: &OracleSVI): u64 {
     oracle.expiry
+}
+
+/// Get the minimum allowed strike.
+public fun min_strike(oracle: &OracleSVI): u64 {
+    oracle.min_strike
+}
+
+/// Get the maximum allowed strike.
+public fun max_strike(oracle: &OracleSVI): u64 {
+    oracle.max_strike
+}
+
+/// Get the oracle tick size.
+public fun tick_size(oracle: &OracleSVI): u64 {
+    oracle.tick_size
 }
 
 /// Get the risk-free rate.
@@ -322,7 +353,16 @@ public(package) fun create_oracle_cap(ctx: &mut TxContext): OracleCapSVI {
 }
 
 /// Create a new SVI Oracle for an underlying + expiry. Returns the oracle ID.
-public(package) fun create_oracle(underlying_asset: String, expiry: u64, ctx: &mut TxContext): ID {
+public(package) fun create_oracle(
+    underlying_asset: String,
+    expiry: u64,
+    min_strike: u64,
+    tick_size: u64,
+    ctx: &mut TxContext,
+): ID {
+    assert_valid_strike_grid(min_strike, tick_size);
+    let max_strike = min_strike + tick_size * constants::oracle_strike_grid_ticks!();
+
     let oracle_uid = object::new(ctx);
     let oracle_id = oracle_uid.to_inner();
 
@@ -331,6 +371,9 @@ public(package) fun create_oracle(underlying_asset: String, expiry: u64, ctx: &m
         authorized_caps: vec_set::empty(),
         underlying_asset,
         expiry,
+        min_strike,
+        max_strike,
+        tick_size,
         active: false,
         prices: PriceData { spot: 0, forward: 0 },
         svi: SVIParams {
@@ -361,6 +404,7 @@ public(package) fun get_binary_price(
     is_up: bool,
     clock: &Clock,
 ): u64 {
+    assert_valid_strike(oracle, strike);
     if (oracle.settlement_price.is_some()) {
         let settlement_price = oracle.settlement_price.destroy_some();
         let up_wins = settlement_price > strike;
@@ -376,6 +420,12 @@ public(package) fun get_binary_price(
 /// Assert that the oracle is not stale. Aborts if stale.
 public(package) fun assert_not_stale(oracle: &OracleSVI, clock: &Clock) {
     assert!(!is_stale(oracle, clock), EOracleStale);
+}
+
+/// Assert that a strike is inside this oracle's strike grid and aligned to tick size.
+public(package) fun assert_valid_strike(oracle: &OracleSVI, strike: u64) {
+    assert!(strike >= oracle.min_strike && strike <= oracle.max_strike, EStrikeOutOfRange);
+    assert!(strike % oracle.tick_size == 0, EStrikeNotOnTick);
 }
 
 /// Build an adaptive piecewise-linear approximation of the pricing curve.
@@ -475,6 +525,7 @@ public(package) fun build_curve(
 ///   d2 = (ln(F/K) - total_var/2) / sqrt(total_var)
 fun compute_nd2(oracle: &OracleSVI, strike: u64, is_up: bool): u64 {
     let forward = oracle.prices.forward;
+    assert!(forward > 0, EZeroForward);
 
     // SVI: compute total variance from log-moneyness
     let (k, k_neg) = predict_math::ln(math::div(strike, forward));
@@ -484,7 +535,7 @@ fun compute_nd2(oracle: &OracleSVI, strike: u64, is_up: bool): u64 {
         oracle.svi.m,
         oracle.svi.m_negative,
     );
-    let sq = math::sqrt(
+    let sq = predict_math::sqrt(
         math::mul(k_minus_m, k_minus_m) + math::mul(oracle.svi.sigma, oracle.svi.sigma),
         constants::float_scaling!(),
     );
@@ -500,7 +551,7 @@ fun compute_nd2(oracle: &OracleSVI, strike: u64, is_up: bool): u64 {
     assert!(total_var > 0, EZeroVariance);
 
     // d2 = (-k - total_var/2) / sqrt(total_var), then N(±d2)
-    let sqrt_var = math::sqrt(total_var, constants::float_scaling!());
+    let sqrt_var = predict_math::sqrt(total_var, constants::float_scaling!());
     let (d2, d2_neg) = predict_math::sub_signed_u64(k, !k_neg, total_var / 2, false);
     let d2 = math::div(d2, sqrt_var);
     let cdf_neg = if (is_up) { d2_neg } else { !d2_neg };
@@ -533,8 +584,19 @@ fun assert_authorized_cap(oracle: &OracleSVI, cap: &OracleCapSVI) {
     assert!(oracle.authorized_caps.contains(&cap.id.to_inner()), EInvalidOracleCap);
 }
 
+fun assert_valid_strike_grid(min_strike: u64, tick_size: u64) {
+    assert!(tick_size > 0, EInvalidTickSize);
+    assert!(tick_size % constants::oracle_tick_size_unit!() == 0, EInvalidTickSize);
+    assert!(min_strike > 0, EInvalidStrikeGrid);
+    assert!(min_strike % tick_size == 0, EInvalidStrikeGrid);
+}
+
+fun price_in_range(oracle: &OracleSVI, price: u64): bool {
+    price >= oracle.min_strike && price <= oracle.max_strike
+}
+
 #[test_only]
-/// Create a test oracle with given params. Bypasses cap/share requirements.
+/// Create a test oracle with an explicit strike grid. Mirrors production grid validation.
 public(package) fun create_test_oracle(
     underlying_asset: String,
     svi: SVIParams,
@@ -542,13 +604,20 @@ public(package) fun create_test_oracle(
     risk_free_rate: u64,
     expiry: u64,
     timestamp: u64,
+    min_strike: u64,
+    tick_size: u64,
     ctx: &mut TxContext,
 ): OracleSVI {
+    assert_valid_strike_grid(min_strike, tick_size);
+    let max_strike = min_strike + tick_size * constants::oracle_strike_grid_ticks!();
     OracleSVI {
         id: object::new(ctx),
         authorized_caps: vec_set::empty(),
         underlying_asset,
         expiry,
+        min_strike,
+        max_strike,
+        tick_size,
         active: true,
         prices,
         svi,

@@ -26,6 +26,9 @@ Claude automatically loads contextual knowledge based on files being edited:
 - **Indexer files** (`crates/server/**`, `crates/schema/**`, `crates/indexer/**`) → `.claude/rules/indexer.md`
 - **Scripts** (`scripts/**`) → `.claude/rules/scripts.md`
 - **Unit tests** (`packages/**/tests/**`) → `.claude/rules/unit-tests.md`
+- **Code review** (`packages/**/*.move`) → `.claude/rules/code-review.md`
+
+When reviewing code in this repo, always read `.claude/rules/code-review.md` and check against its patterns.
 
 **Important:** Update rule files when discovering new insights during sessions, including:
 - Bug fixes and their root causes
@@ -45,6 +48,9 @@ When creating a PR with `gh pr create`, always ask the user for a branch name be
 ```
 ## Summary
 - <bullet points>
+
+## Key decisions
+- <decisions that teammates should know about: trade-offs, design choices, why something was done a certain way>
 
 ## Test plan
 - [ ] <checklist items>

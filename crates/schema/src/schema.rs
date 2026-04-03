@@ -135,6 +135,21 @@ diesel::table! {
 }
 
 diesel::table! {
+    current_price_updated (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pool_id -> Text,
+        price -> Int8,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
     deep_burned (event_digest) {
         event_digest -> Text,
         digest -> Text,
@@ -466,6 +481,21 @@ diesel::table! {
 }
 
 diesel::table! {
+    max_price_age_updated (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pool_id -> Text,
+        max_age_ms -> Int8,
+        onchain_timestamp -> Int8,
+    }
+}
+
+diesel::table! {
     ohclv_1d (pool_id, bucket_time) {
         pool_id -> Text,
         bucket_time -> Date,
@@ -631,6 +661,21 @@ diesel::table! {
         min_size -> Int8,
         lot_size -> Int8,
         tick_size -> Int8,
+    }
+}
+
+diesel::table! {
+    price_tolerance_updated (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pool_id -> Text,
+        tolerance -> Int8,
+        onchain_timestamp -> Int8,
     }
 }
 
@@ -838,6 +883,24 @@ diesel::table! {
 }
 
 diesel::table! {
+    rebates_v2 (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pool_id -> Text,
+        balance_manager_id -> Text,
+        epoch -> Int8,
+        claim_base -> Int8,
+        claim_quote -> Int8,
+        claim_deep -> Int8,
+    }
+}
+
+diesel::table! {
     referral_claimed (event_digest) {
         event_digest -> Text,
         digest -> Text,
@@ -963,6 +1026,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     book_params_updated,
     collateral_events,
     conditional_order_events,
+    current_price_updated,
     deep_burned,
     deepbook_pool_config_updated,
     deepbook_pool_registered,
@@ -986,6 +1050,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     margin_pool_config_updated,
     margin_pool_created,
     margin_pool_snapshots,
+    max_price_age_updated,
     ohclv_1d,
     ohclv_1m,
     order_fills,
@@ -995,10 +1060,12 @@ diesel::allow_tables_to_appear_in_same_query!(
     pool_created,
     pool_prices,
     pools,
+    price_tolerance_updated,
     proposals,
     protocol_fees_increased,
     protocol_fees_withdrawn,
     rebates,
+    rebates_v2,
     referral_claimed,
     referral_fee_events,
     referral_fees_claimed,

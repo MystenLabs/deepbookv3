@@ -7,7 +7,7 @@ module deepbook_predict::pricing_config;
 use deepbook_predict::constants;
 
 // === Errors ===
-const EExceedsMaxSpread: u64 = 1;
+const EInvalidSpread: u64 = 1;
 
 // === Structs ===
 
@@ -47,12 +47,12 @@ public(package) fun new(): PricingConfig {
 }
 
 public(package) fun set_base_spread(config: &mut PricingConfig, spread: u64) {
-    assert!(spread > 0 && spread <= constants::float_scaling!(), EExceedsMaxSpread);
+    assert!(spread > 0 && spread <= constants::float_scaling!(), EInvalidSpread);
     config.base_spread = spread;
 }
 
 public(package) fun set_min_spread(config: &mut PricingConfig, spread: u64) {
-    assert!(spread <= constants::float_scaling!(), EExceedsMaxSpread);
+    assert!(spread <= constants::float_scaling!(), EInvalidSpread);
     config.min_spread = spread;
 }
 
