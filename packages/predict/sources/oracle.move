@@ -456,7 +456,8 @@ public(package) fun build_curve(
     };
 
     // Seed with min, forward (if in range), max — deduplicating
-    let forward = oracle.prices.forward;
+    let tick = oracle.tick_size;
+    let forward = snap_to_tick(oracle.prices.forward, min_strike, tick);
     let mut points = vector[oracle.eval_strike(min_strike, discount)];
     let mut used = 1u64;
 
@@ -500,7 +501,11 @@ public(package) fun build_curve(
         // No refineable interval found
         if (best_score == 0) break;
 
-        let mid_strike = (points[best_idx].strike() + points[best_idx + 1].strike()) / 2;
+        let mid_strike = snap_to_tick(
+            (points[best_idx].strike() + points[best_idx + 1].strike()) / 2,
+            min_strike,
+            tick,
+        );
         let new_point = oracle.eval_strike(mid_strike, discount);
 
         // Insert at sorted position (best_idx + 1)
@@ -582,6 +587,11 @@ fun eval_strike(oracle: &OracleSVI, strike: u64, discount: u64): CurvePoint {
 
 fun assert_authorized_cap(oracle: &OracleSVI, cap: &OracleCapSVI) {
     assert!(oracle.authorized_caps.contains(&cap.id.to_inner()), EInvalidOracleCap);
+}
+
+/// Round a strike down to the nearest tick boundary.
+fun snap_to_tick(strike: u64, min_strike: u64, tick_size: u64): u64 {
+    min_strike + (strike - min_strike) / tick_size * tick_size
 }
 
 fun assert_valid_strike_grid(min_strike: u64, tick_size: u64) {
