@@ -71,6 +71,10 @@ fn api_err(status: StatusCode, msg: impl Into<String>) -> (StatusCode, Json<Erro
     (status, Json(ErrorResponse { error: msg.into() }))
 }
 
+fn max_rows_label(max_rows: Option<u32>) -> String {
+    max_rows.map(|n| n.to_string()).unwrap_or("all".to_string())
+}
+
 async fn create_benchmark(
     State(state): State<Arc<AppState>>,
     Json(req): Json<BenchmarkRequest>,
@@ -81,6 +85,7 @@ async fn create_benchmark(
         run_id: run_id.clone(),
         sha: req.sha,
         status: "queued".to_string(),
+        max_rows: max_rows_label(req.max_rows),
         error: None,
         started_at_ts: None,
     };
@@ -141,7 +146,7 @@ async fn receive_started(
         .map_err(|e| api_err(StatusCode::INTERNAL_SERVER_ERROR, format!("redis: {}", e)))?;
     state
         .metrics
-        .set_status(&info.sha, RunStatus::Running)
+        .set_status(&info.sha, &run_id, &info.max_rows, RunStatus::Running)
         .await;
 
     Ok(StatusCode::OK)
@@ -168,16 +173,28 @@ async fn receive_results(
     let results = metrics::parse_results(json)
         .map_err(|e| api_err(StatusCode::BAD_REQUEST, format!("invalid results: {}", e)))?;
 
-    tracing::info!(run_id = %run_id, sha = %info.sha, total_txs = results.summary.total_txs, "received benchmark results");
+    tracing::info!(
+        run_id = %run_id,
+        sha = %info.sha,
+        total_txs = results.summary.total_txs,
+        max_rows = %info.max_rows,
+        "received benchmark results"
+    );
 
-    state.metrics.record_results(&info.sha, &results).await;
     state
         .metrics
-        .set_status(&info.sha, RunStatus::Success)
+        .record_results(&info.sha, &run_id, &info.max_rows, &results)
+        .await;
+    state
+        .metrics
+        .set_status(&info.sha, &run_id, &info.max_rows, RunStatus::Success)
         .await;
 
     if let Some(elapsed) = RunStore::elapsed_secs(&info) {
-        state.metrics.set_duration(&info.sha, elapsed).await;
+        state
+            .metrics
+            .set_duration(&info.sha, &run_id, &info.max_rows, elapsed)
+            .await;
     }
 
     state
@@ -216,7 +233,10 @@ async fn receive_failure(
         tracing::error!(run_id = %run_id, "sim logs:\n{}", logs);
     }
 
-    state.metrics.set_status(&info.sha, RunStatus::Failed).await;
+    state
+        .metrics
+        .set_status(&info.sha, &run_id, &info.max_rows, RunStatus::Failed)
+        .await;
 
     state
         .runs

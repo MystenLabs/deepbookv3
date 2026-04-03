@@ -16,6 +16,10 @@ pub struct Job {
     pub max_rows: Option<u32>,
 }
 
+fn max_rows_label(max_rows: Option<u32>) -> String {
+    max_rows.map(|n| n.to_string()).unwrap_or("all".to_string())
+}
+
 pub fn spawn_worker(
     mut rx: mpsc::Receiver<Job>,
     config: Config,
@@ -24,8 +28,8 @@ pub fn spawn_worker(
 ) {
     tokio::spawn(async move {
         while let Some(job) = rx.recv().await {
+            let mr = max_rows_label(job.max_rows);
             metrics.runs_total.inc();
-            metrics.set_status(&job.sha, RunStatus::Running).await;
 
             info!(run_id = %job.run_id, sha = %job.sha, "creating benchmark job");
             let _ = runs.update_status(&job.run_id, "creating").await;
@@ -40,7 +44,9 @@ pub fn spawn_worker(
                     );
                 }
                 Err(e) => {
-                    metrics.set_status(&job.sha, RunStatus::Failed).await;
+                    metrics
+                        .set_status(&job.sha, &job.run_id, &mr, RunStatus::Failed)
+                        .await;
                     let _ = runs
                         .update_failed(&job.run_id, format!("job creation failed: {}", e))
                         .await;

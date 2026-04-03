@@ -14,6 +14,8 @@ pub struct RunInfo {
     pub run_id: String,
     pub sha: String,
     pub status: String,
+    /// "all" or a number like "200".
+    pub max_rows: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     /// Unix timestamp (seconds) when the run started executing.

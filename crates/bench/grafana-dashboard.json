@@ -1,0 +1,261 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "title": "Runs Total",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "predict_bench_runs_total",
+          "legendFormat": "total runs"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              { "color": "blue", "value": null }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Latest Run Status",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "targets": [
+        {
+          "expr": "max(predict_bench_run_status) by (sha)",
+          "legendFormat": "{{sha}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "1": { "text": "Running", "color": "yellow" } } },
+            { "type": "value", "options": { "2": { "text": "Success", "color": "green" } } },
+            { "type": "value", "options": { "3": { "text": "Failed", "color": "red" } } }
+          ]
+        }
+      }
+    },
+    {
+      "title": "Latest Run Duration",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "targets": [
+        {
+          "expr": "max(predict_bench_run_duration_s) by (sha)",
+          "legendFormat": "{{sha}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "title": "Avg Mint Gas (Total) by SHA",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        {
+          "expr": "predict_bench_mint_gas_total",
+          "legendFormat": "{{sha}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "always"
+          }
+        }
+      },
+      "options": {
+        "tooltip": { "mode": "multi" }
+      }
+    },
+    {
+      "title": "Mint Gas Range (Min / Max) by SHA",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        {
+          "expr": "predict_bench_mint_gas_min",
+          "legendFormat": "min ({{sha}})"
+        },
+        {
+          "expr": "predict_bench_mint_gas_max",
+          "legendFormat": "max ({{sha}})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "always"
+          }
+        }
+      }
+    },
+    {
+      "title": "Gas Breakdown: Computation vs Storage",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [
+        {
+          "expr": "predict_bench_mint_gas_computation",
+          "legendFormat": "computation ({{sha}})"
+        },
+        {
+          "expr": "predict_bench_mint_gas_storage",
+          "legendFormat": "net storage ({{sha}})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "bars",
+            "stacking": { "mode": "normal" },
+            "lineWidth": 1
+          }
+        }
+      }
+    },
+    {
+      "title": "Update Prices Gas by SHA",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [
+        {
+          "expr": "predict_bench_update_prices_gas",
+          "legendFormat": "update_prices ({{sha}})"
+        },
+        {
+          "expr": "predict_bench_update_svi_gas",
+          "legendFormat": "update_svi ({{sha}})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "always"
+          }
+        }
+      }
+    },
+    {
+      "title": "Avg Mint Latency by SHA",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "targets": [
+        {
+          "expr": "predict_bench_mint_latency_ms",
+          "legendFormat": "{{sha}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "always"
+          }
+        }
+      }
+    },
+    {
+      "title": "All SHAs - Gas Comparison Table",
+      "type": "table",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "targets": [
+        {
+          "expr": "predict_bench_mint_gas_total",
+          "legendFormat": "{{sha}}",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "predict_bench_mint_gas_min",
+          "legendFormat": "{{sha}}",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "predict_bench_mint_gas_max",
+          "legendFormat": "{{sha}}",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "predict_bench_mint_gas_computation",
+          "legendFormat": "{{sha}}",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "predict_bench_mint_gas_storage",
+          "legendFormat": "{{sha}}",
+          "format": "table",
+          "instant": true
+        },
+        {
+          "expr": "predict_bench_mint_latency_ms",
+          "legendFormat": "{{sha}}",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge"
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "Value #A": "Avg Gas",
+              "Value #B": "Min Gas",
+              "Value #C": "Max Gas",
+              "Value #D": "Computation",
+              "Value #E": "Net Storage",
+              "Value #F": "Latency (ms)"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["predict", "benchmark", "gas"],
+  "templating": { "list": [] },
+  "time": { "from": "now-7d", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Predict Gas Benchmark",
+  "uid": "predict-bench",
+  "version": 1
+}

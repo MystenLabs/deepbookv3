@@ -11,8 +11,15 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-const LABELS: &[&str] = &["sha"];
+const LABELS: &[&str] = &["sha", "run_id", "max_rows"];
 const MAX_ENTRIES: usize = 50;
+
+#[derive(Clone)]
+struct RunLabels {
+    sha: String,
+    run_id: String,
+    max_rows: String,
+}
 
 #[derive(Clone)]
 pub struct BenchMetrics {
@@ -24,11 +31,11 @@ pub struct BenchMetrics {
     pub update_prices_gas: GaugeVec,
     pub update_svi_gas: GaugeVec,
     pub mint_latency_ms: GaugeVec,
+    pub total_txs: GaugeVec,
     pub run_status: GaugeVec,
     pub run_duration_s: GaugeVec,
     pub runs_total: IntCounter,
-    /// Ring buffer tracking SHA insertion order for eviction.
-    ring: Arc<Mutex<VecDeque<String>>>,
+    ring: Arc<Mutex<VecDeque<RunLabels>>>,
 }
 
 impl BenchMetrics {
@@ -41,7 +48,6 @@ impl BenchMetrics {
                 registry
             )
             .unwrap(),
-
             mint_gas_computation: register_gauge_vec_with_registry!(
                 "predict_bench_mint_gas_computation",
                 "Average computation cost per mint",
@@ -49,7 +55,6 @@ impl BenchMetrics {
                 registry
             )
             .unwrap(),
-
             mint_gas_storage: register_gauge_vec_with_registry!(
                 "predict_bench_mint_gas_storage",
                 "Average net storage cost per mint",
@@ -57,7 +62,6 @@ impl BenchMetrics {
                 registry
             )
             .unwrap(),
-
             mint_gas_min: register_gauge_vec_with_registry!(
                 "predict_bench_mint_gas_min",
                 "Minimum gas across all mints",
@@ -65,7 +69,6 @@ impl BenchMetrics {
                 registry
             )
             .unwrap(),
-
             mint_gas_max: register_gauge_vec_with_registry!(
                 "predict_bench_mint_gas_max",
                 "Maximum gas across all mints",
@@ -73,7 +76,6 @@ impl BenchMetrics {
                 registry
             )
             .unwrap(),
-
             update_prices_gas: register_gauge_vec_with_registry!(
                 "predict_bench_update_prices_gas",
                 "Average gas for update_prices",
@@ -81,7 +83,6 @@ impl BenchMetrics {
                 registry
             )
             .unwrap(),
-
             update_svi_gas: register_gauge_vec_with_registry!(
                 "predict_bench_update_svi_gas",
                 "Average gas for update_svi",
@@ -89,7 +90,6 @@ impl BenchMetrics {
                 registry
             )
             .unwrap(),
-
             mint_latency_ms: register_gauge_vec_with_registry!(
                 "predict_bench_mint_latency_ms",
                 "Average wall-clock latency per mint (ms)",
@@ -97,7 +97,13 @@ impl BenchMetrics {
                 registry
             )
             .unwrap(),
-
+            total_txs: register_gauge_vec_with_registry!(
+                "predict_bench_total_txs",
+                "Total transactions executed in the benchmark",
+                LABELS,
+                registry
+            )
+            .unwrap(),
             run_status: register_gauge_vec_with_registry!(
                 "predict_bench_run_status",
                 "Run status: 1=running, 2=success, 3=failed",
@@ -105,7 +111,6 @@ impl BenchMetrics {
                 registry
             )
             .unwrap(),
-
             run_duration_s: register_gauge_vec_with_registry!(
                 "predict_bench_run_duration_s",
                 "Total run duration in seconds",
@@ -113,68 +118,79 @@ impl BenchMetrics {
                 registry
             )
             .unwrap(),
-
             runs_total: register_int_counter_with_registry!(
                 "predict_bench_runs_total",
                 "Total benchmark runs triggered",
                 registry
             )
             .unwrap(),
-
             ring: Arc::new(Mutex::new(VecDeque::with_capacity(MAX_ENTRIES))),
         })
     }
 
-    /// Track a SHA in the ring buffer, evicting the oldest if at capacity.
-    async fn track_sha(&self, sha: &str) {
+    async fn track_run(&self, sha: &str, run_id: &str, max_rows: &str) {
         let mut ring = self.ring.lock().await;
 
-        // If this SHA is already tracked, don't double-add.
-        if ring.iter().any(|s| s == sha) {
+        if ring.iter().any(|r| r.run_id == run_id) {
             return;
         }
 
-        // Evict oldest if at capacity.
         if ring.len() >= MAX_ENTRIES {
-            if let Some(old_sha) = ring.pop_front() {
-                self.evict_sha(&old_sha);
+            if let Some(old) = ring.pop_front() {
+                self.evict(&old);
             }
         }
 
-        ring.push_back(sha.to_string());
+        ring.push_back(RunLabels {
+            sha: sha.to_string(),
+            run_id: run_id.to_string(),
+            max_rows: max_rows.to_string(),
+        });
     }
 
-    /// Remove all metric label values for a SHA.
-    fn evict_sha(&self, sha: &str) {
-        let labels = &[sha];
-        let _ = self.mint_gas_total.remove_label_values(labels);
-        let _ = self.mint_gas_computation.remove_label_values(labels);
-        let _ = self.mint_gas_storage.remove_label_values(labels);
-        let _ = self.mint_gas_min.remove_label_values(labels);
-        let _ = self.mint_gas_max.remove_label_values(labels);
-        let _ = self.update_prices_gas.remove_label_values(labels);
-        let _ = self.update_svi_gas.remove_label_values(labels);
-        let _ = self.mint_latency_ms.remove_label_values(labels);
-        let _ = self.run_status.remove_label_values(labels);
-        let _ = self.run_duration_s.remove_label_values(labels);
+    fn evict(&self, labels: &RunLabels) {
+        let l = &[
+            labels.sha.as_str(),
+            labels.run_id.as_str(),
+            labels.max_rows.as_str(),
+        ];
+        let _ = self.mint_gas_total.remove_label_values(l);
+        let _ = self.mint_gas_computation.remove_label_values(l);
+        let _ = self.mint_gas_storage.remove_label_values(l);
+        let _ = self.mint_gas_min.remove_label_values(l);
+        let _ = self.mint_gas_max.remove_label_values(l);
+        let _ = self.update_prices_gas.remove_label_values(l);
+        let _ = self.update_svi_gas.remove_label_values(l);
+        let _ = self.mint_latency_ms.remove_label_values(l);
+        let _ = self.total_txs.remove_label_values(l);
+        let _ = self.run_status.remove_label_values(l);
+        let _ = self.run_duration_s.remove_label_values(l);
     }
 
-    pub async fn record_results(&self, sha: &str, results: &ResultsFile) {
-        self.track_sha(sha).await;
-        let labels = &[sha];
+    fn labels<'a>(sha: &'a str, run_id: &'a str, max_rows: &'a str) -> [&'a str; 3] {
+        [sha, run_id, max_rows]
+    }
+
+    pub async fn record_results(
+        &self,
+        sha: &str,
+        run_id: &str,
+        max_rows: &str,
+        results: &ResultsFile,
+    ) {
+        self.track_run(sha, run_id, max_rows).await;
+        let l = Self::labels(sha, run_id, max_rows);
+
+        self.total_txs
+            .with_label_values(&l)
+            .set(results.summary.total_txs as f64);
 
         if let Some(mint) = results.summary.by_action.get("mint") {
-            self.mint_gas_total
-                .with_label_values(labels)
-                .set(mint.gas.avg);
-            self.mint_gas_min
-                .with_label_values(labels)
-                .set(mint.gas.min);
-            self.mint_gas_max
-                .with_label_values(labels)
-                .set(mint.gas.max);
+            self.mint_gas_total.with_label_values(&l).set(mint.gas.avg);
+            self.mint_gas_min.with_label_values(&l).set(mint.gas.min);
+            self.mint_gas_max.with_label_values(&l).set(mint.gas.max);
             self.mint_latency_ms
-                .with_label_values(labels)
+                .with_label_values(&l)
                 .set(mint.wall_ms.avg);
         }
 
@@ -193,35 +209,33 @@ impl BenchMetrics {
                 .sum::<f64>()
                 / n;
             self.mint_gas_computation
-                .with_label_values(labels)
+                .with_label_values(&l)
                 .set(avg_computation);
-            self.mint_gas_storage
-                .with_label_values(labels)
-                .set(avg_storage);
+            self.mint_gas_storage.with_label_values(&l).set(avg_storage);
         }
 
         if let Some(prices) = results.summary.by_action.get("update_prices") {
             self.update_prices_gas
-                .with_label_values(labels)
+                .with_label_values(&l)
                 .set(prices.gas.avg);
         }
 
         if let Some(svi) = results.summary.by_action.get("update_svi") {
-            self.update_svi_gas
-                .with_label_values(labels)
-                .set(svi.gas.avg);
+            self.update_svi_gas.with_label_values(&l).set(svi.gas.avg);
         }
     }
 
-    pub async fn set_status(&self, sha: &str, status: RunStatus) {
-        self.track_sha(sha).await;
+    pub async fn set_status(&self, sha: &str, run_id: &str, max_rows: &str, status: RunStatus) {
+        self.track_run(sha, run_id, max_rows).await;
         self.run_status
-            .with_label_values(&[sha])
+            .with_label_values(&Self::labels(sha, run_id, max_rows))
             .set(status as i64 as f64);
     }
 
-    pub async fn set_duration(&self, sha: &str, seconds: f64) {
-        self.run_duration_s.with_label_values(&[sha]).set(seconds);
+    pub async fn set_duration(&self, sha: &str, run_id: &str, max_rows: &str, seconds: f64) {
+        self.run_duration_s
+            .with_label_values(&Self::labels(sha, run_id, max_rows))
+            .set(seconds);
     }
 }
 
