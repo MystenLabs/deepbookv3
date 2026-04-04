@@ -27,6 +27,7 @@ public struct Node has copy, drop, store {
 
 // === Public-Package API ===
 
+/// Allocates the full page table for the oracle's strike grid and zeros all cached state.
 public(package) fun new(
     ctx: &mut TxContext,
     tick_size: u64,
@@ -54,6 +55,8 @@ public(package) fun new(
     }
 }
 
+/// Adds one position by updating the owning page's directional aggregates.
+/// UP positions propagate to the right; DN positions propagate to the left.
 public(package) fun insert(self: &mut StrikeMatrix, strike: u64, qty: u64, is_up: bool) {
     let qk = math::mul(qty, strike);
     self.minted_min_strike = self.minted_min_strike.min(strike);
@@ -84,6 +87,7 @@ public(package) fun insert(self: &mut StrikeMatrix, strike: u64, qty: u64, is_up
     };
 }
 
+/// Removes one position by reversing the directional aggregate updates from `insert`.
 public(package) fun remove(self: &mut StrikeMatrix, strike: u64, qty: u64, is_up: bool) {
     let qk = math::mul(qty, strike);
     if (is_up) {
@@ -110,6 +114,8 @@ public(package) fun remove(self: &mut StrikeMatrix, strike: u64, qty: u64, is_up
     };
 }
 
+/// Marks the live book against a sampled oracle curve by valuing quantities between
+/// adjacent curve points at their strike-weighted average price.
 public(package) fun evaluate(self: &StrikeMatrix, curve: &vector<CurvePoint>): u64 {
     let len = curve.length();
     if (len == 0) return 0;
@@ -202,6 +208,8 @@ public(package) fun evaluate(self: &StrikeMatrix, curve: &vector<CurvePoint>): u
     value
 }
 
+/// Computes final settled payout by summing winning UP strikes below settlement and
+/// winning DN strikes at or above settlement.
 public(package) fun evaluate_settled(self: &StrikeMatrix, settlement: u64): u64 {
     if (!self.has_minted_strikes()) return 0;
 
@@ -237,10 +245,12 @@ public(package) fun evaluate_settled(self: &StrikeMatrix, settlement: u64): u64 
     value
 }
 
+/// Returns the cached mark-to-market value last written by vault risk refresh.
 public(package) fun mtm(self: &StrikeMatrix): u64 {
     self.mtm
 }
 
+/// Stores the latest mark-to-market value for this oracle's book.
 public(package) fun set_mtm(self: &mut StrikeMatrix, value: u64) {
     self.mtm = value;
 }
@@ -252,20 +262,24 @@ public(package) fun max_payout(self: &StrikeMatrix): u64 {
     self.total_q_up + self.total_q_dn
 }
 
+/// Reports whether any live UP or DN quantity remains in the matrix.
 public(package) fun has_live_positions(self: &StrikeMatrix): bool {
     self.total_q_up > 0 || self.total_q_dn > 0
 }
 
+/// Reports whether the matrix has ever recorded a minted strike range.
 public(package) fun has_minted_strikes(self: &StrikeMatrix): bool {
     self.minted_max_strike >= self.minted_min_strike
 }
 
+/// Returns the historical min/max strikes touched by the book.
 public(package) fun minted_strike_range(self: &StrikeMatrix): (u64, u64) {
     (self.minted_min_strike, self.minted_max_strike)
 }
 
 // === Private Helpers ===
 
+/// Maps an aligned strike into its page key and slot within that page.
 fun strike_to_coords(self: &StrikeMatrix, strike: u64): (u64, u64) {
     let tick_index = (strike - self.min_strike) / self.tick_size;
     let page_key = tick_index / PAGE_SLOTS;
@@ -273,10 +287,12 @@ fun strike_to_coords(self: &StrikeMatrix, strike: u64): (u64, u64) {
     (page_key, slot)
 }
 
+/// Converts a page key and slot back into the aligned strike value.
 fun strike_from_coords(self: &StrikeMatrix, page_key: u64, slot: u64): u64 {
     self.min_strike + (page_key * PAGE_SLOTS + slot) * self.tick_size
 }
 
+/// Recovers the exact UP quantity at one slot from the page's prefix-style UP aggregates.
 fun node_q_up(_self: &StrikeMatrix, page: &vector<Node>, slot: u64): u64 {
     if (slot == 0) {
         page[slot].agg_q_up
@@ -285,6 +301,7 @@ fun node_q_up(_self: &StrikeMatrix, page: &vector<Node>, slot: u64): u64 {
     }
 }
 
+/// Recovers the exact DN quantity at one slot from the page's suffix-style DN aggregates.
 fun node_q_dn(_self: &StrikeMatrix, page: &vector<Node>, slot: u64): u64 {
     if (slot == PAGE_SLOTS - 1) {
         page[slot].agg_q_dn
@@ -293,6 +310,7 @@ fun node_q_dn(_self: &StrikeMatrix, page: &vector<Node>, slot: u64): u64 {
     }
 }
 
+/// Builds one zeroed page with `PAGE_SLOTS` empty nodes.
 fun empty_page(): vector<Node> {
     let empty = Node {
         agg_q_up: 0,
