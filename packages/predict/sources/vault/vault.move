@@ -114,10 +114,8 @@ public(package) fun insert_position<Quote>(
     clock: &Clock,
 ) {
     let oracle_id = oracle.id();
-    let old_max_payout = vault.oracle_matrices[oracle_id].max_payout();
     vault.oracle_matrices[oracle_id].insert(strike, quantity, is_up);
-    let new_max_payout = vault.oracle_matrices[oracle_id].max_payout();
-    vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
+    vault.total_max_payout = vault.total_max_payout + quantity;
     vault.refresh_oracle_risk(oracle, clock);
 }
 
@@ -137,10 +135,8 @@ public(package) fun remove_position<Quote>(
 ) {
     let oracle_id = oracle.id();
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
-    let old_max_payout = vault.oracle_matrices[oracle_id].max_payout();
     vault.oracle_matrices[oracle_id].remove(strike, quantity, is_up);
-    let new_max_payout = vault.oracle_matrices[oracle_id].max_payout();
-    vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
+    vault.total_max_payout = vault.total_max_payout - quantity;
     vault.refresh_oracle_risk(oracle, clock);
 }
 

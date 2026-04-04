@@ -346,9 +346,13 @@ export function refreshOracleAndMintTx(params: {
   return tx;
 }
 
-export async function executeAndWait(tx: Transaction, label = "transaction"): Promise<any> {
+export async function executeAndWait(
+  tx: Transaction,
+  label = "transaction",
+  gasBudget = 500_000_000n
+): Promise<any> {
   tx.setSender(address);
-  tx.setGasBudget(500_000_000n);
+  tx.setGasBudget(gasBudget);
 
   let execution: any;
   try {

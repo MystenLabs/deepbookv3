@@ -115,7 +115,8 @@ async function setupSimulation(): Promise<SimState> {
       minStrike: ORACLE_MIN_STRIKE,
       tickSize: ORACLE_TICK_SIZE,
     }),
-    "create_oracle"
+    "create_oracle",
+    50_000_000_000n
   );
   const oracleChange = result.objectChanges.find(
     (change: any) => change.type === "created" && change.objectType.includes("OracleSVI") && !change.objectType.includes("Cap")
