@@ -916,8 +916,8 @@ fun update_prices_with_unauthorized_cap_aborts() {
     abort
 }
 
-#[test, expected_failure(abort_code = oracle::EPriceOutOfRange)]
-fun update_prices_out_of_range_aborts() {
+#[test]
+fun update_prices_out_of_range_spot_is_allowed() {
     let ctx = &mut tx_context::dummy();
     let (mut oracle, cap, clock) = oracle_helper::create_flat_vol_oracle_with_cap(
         500_000_000,
@@ -931,12 +931,16 @@ fun update_prices_out_of_range_aborts() {
 
     let out_of_range_prices = new_price_data(grid_max_strike() + 1, 500_000_000);
     oracle.update_prices(&cap, out_of_range_prices, &clock);
+    assert_eq!(oracle.spot_price(), grid_max_strike() + 1);
+    assert_eq!(oracle.forward_price(), 500_000_000);
 
-    abort
+    destroy(oracle);
+    destroy(cap);
+    destroy(clock);
 }
 
-#[test, expected_failure(abort_code = oracle::EPriceOutOfRange)]
-fun update_prices_forward_out_of_range_aborts() {
+#[test]
+fun update_prices_out_of_range_forward_is_allowed() {
     let ctx = &mut tx_context::dummy();
     let (mut oracle, cap, clock) = oracle_helper::create_flat_vol_oracle_with_cap(
         500_000_000,
@@ -950,8 +954,12 @@ fun update_prices_forward_out_of_range_aborts() {
 
     let out_of_range_prices = new_price_data(500_000_000, grid_max_strike() + 1);
     oracle.update_prices(&cap, out_of_range_prices, &clock);
+    assert_eq!(oracle.spot_price(), 500_000_000);
+    assert_eq!(oracle.forward_price(), grid_max_strike() + 1);
 
-    abort
+    destroy(oracle);
+    destroy(cap);
+    destroy(clock);
 }
 
 #[test]

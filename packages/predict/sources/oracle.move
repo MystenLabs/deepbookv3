@@ -30,7 +30,6 @@ const EInvalidStrikeGrid: u64 = 7;
 const EStrikeOutOfRange: u64 = 8;
 const EStrikeNotOnTick: u64 = 9;
 const EInvalidTickSize: u64 = 10;
-const EPriceOutOfRange: u64 = 11;
 // === Events ===
 
 public struct OracleActivated has copy, drop, store {
@@ -184,11 +183,6 @@ public fun update_prices(
         });
         return
     };
-
-    assert!(
-        price_in_range(oracle, prices.spot) && price_in_range(oracle, prices.forward),
-        EPriceOutOfRange,
-    );
 
     oracle.prices = prices;
     oracle.timestamp = now;
@@ -599,10 +593,6 @@ fun assert_valid_strike_grid(min_strike: u64, tick_size: u64) {
     assert!(tick_size % constants::oracle_tick_size_unit!() == 0, EInvalidTickSize);
     assert!(min_strike > 0, EInvalidStrikeGrid);
     assert!(min_strike % tick_size == 0, EInvalidStrikeGrid);
-}
-
-fun price_in_range(oracle: &OracleSVI, price: u64): bool {
-    price >= oracle.min_strike && price <= oracle.max_strike
 }
 
 #[test_only]
