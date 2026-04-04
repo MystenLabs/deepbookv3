@@ -116,6 +116,9 @@ async function setupSimulation(): Promise<SimState> {
       tickSize: ORACLE_TICK_SIZE,
     }),
     "create_oracle",
+    // Simulation setup preallocates the full strike matrix at oracle creation,
+    // so this admin-only setup transaction needs a much larger gas budget than
+    // the measured mint path.
     50_000_000_000n
   );
   const oracleChange = result.objectChanges.find(

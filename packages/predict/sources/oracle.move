@@ -431,7 +431,7 @@ public(package) fun assert_valid_strike(oracle: &OracleSVI, strike: u64) {
 /// Build an adaptive piecewise-linear approximation of the pricing curve.
 /// Concentrates sample points near ATM where the sigmoid is steepest.
 /// For settled oracles, returns a step-function curve at the settlement price.
-/// Returns a sorted vector of CurvePoints for use with treap.evaluate().
+/// Returns a sorted vector of CurvePoints for use with strike_matrix.evaluate().
 public(package) fun build_curve(
     oracle: &OracleSVI,
     min_strike: u64,

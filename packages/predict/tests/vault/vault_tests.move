@@ -314,7 +314,7 @@ fun remove_all_positions_returns_max_payout_to_zero() {
 }
 
 #[test, expected_failure(abort_code = vault::EOracleExposureNotFound)]
-/// Removing exposure for an oracle with no tracked treap should abort.
+/// Removing exposure for an oracle with no tracked matrix should abort.
 fun remove_from_nonexistent_oracle_aborts() {
     let ctx = &mut tx_context::dummy();
     let (mut v, oracle, clock) = create_test_vault(200 * constants::float_scaling!(), ctx);
