@@ -206,101 +206,34 @@ public(package) fun evaluate_settled(self: &StrikeMatrix, settlement: u64): u64 
 
     let (min_page, min_slot) = self.strike_to_coords(self.minted_min_strike);
     let (max_page, max_slot) = self.strike_to_coords(self.minted_max_strike);
-
-    if (settlement <= self.minted_min_strike) {
-        let mut dn_above = 0u64;
-        let mut page_key = min_page;
-        while (true) {
-            if (self.pages.contains(page_key)) {
-                let page = &self.pages[page_key];
-                let start_slot = if (page_key == min_page) { min_slot } else { 0 };
-                dn_above = dn_above + page[start_slot].agg_q_dn;
-            };
-
-            if (page_key == max_page) break;
-            page_key = page_key + 1;
-        };
-        return dn_above;
-    };
-
-    if (settlement > self.minted_max_strike) {
-        let mut up_below = 0u64;
-        let mut page_key = min_page;
-        while (true) {
-            if (self.pages.contains(page_key)) {
-                let page = &self.pages[page_key];
-                let start_slot = if (page_key == min_page) { min_slot } else { 0 };
-                let end_slot = if (page_key == max_page) {
-                    max_slot
-                } else {
-                    PAGE_SLOTS - 1
-                };
-                let end_node = &page[end_slot];
-                up_below =
-                    up_below + if (start_slot == 0) {
-                    end_node.agg_q_up
-                } else {
-                    end_node.agg_q_up - page[start_slot].agg_q_up + self.node_q_up(page, start_slot)
-                };
-            };
-
-            if (page_key == max_page) break;
-            page_key = page_key + 1;
-        };
-        return up_below;
-    };
-
-    let mut up_below = 0u64;
-    let (cutoff_page, cutoff_slot) = self.strike_to_coords(settlement - 1);
+    let mut value = 0u64;
     let mut page_key = min_page;
     while (true) {
-        if (self.pages.contains(page_key)) {
-            let page = &self.pages[page_key];
-            let start_slot = if (page_key == min_page) { min_slot } else { 0 };
-            let end_slot = if (page_key == cutoff_page) {
-                cutoff_slot
-            } else {
-                PAGE_SLOTS - 1
-            };
-            let end_node = &page[end_slot];
-            up_below =
-                up_below + if (start_slot == 0) {
-                end_node.agg_q_up
-            } else {
-                end_node.agg_q_up - page[start_slot].agg_q_up + self.node_q_up(page, start_slot)
-            };
+        let page = &self.pages[page_key];
+        let start_slot = if (page_key == min_page) { min_slot } else { 0 };
+        let end_slot = if (page_key == max_page) {
+            max_slot
+        } else {
+            PAGE_SLOTS - 1
         };
-
-        if (page_key == cutoff_page) break;
-        page_key = page_key + 1;
-    };
-
-    let mut dn_above = 0u64;
-    let floor_strike =
-        self.min_strike + ((settlement - self.min_strike) / self.tick_size) * self.tick_size;
-    let first_winning_strike = if (floor_strike == settlement) {
-        settlement
-    } else {
-        floor_strike + self.tick_size
-    };
-    let (dn_start_page, dn_start_slot) = self.strike_to_coords(first_winning_strike);
-    page_key = dn_start_page;
-    while (true) {
-        if (self.pages.contains(page_key)) {
-            let page = &self.pages[page_key];
-            let start_slot = if (page_key == dn_start_page) {
-                dn_start_slot
+        let mut slot = start_slot;
+        while (true) {
+            let strike = self.strike_from_coords(page_key, slot);
+            if (strike < settlement) {
+                value = value + self.node_q_up(page, slot);
             } else {
-                0
+                value = value + self.node_q_dn(page, slot);
             };
-            dn_above = dn_above + page[start_slot].agg_q_dn;
+
+            if (slot == end_slot) break;
+            slot = slot + 1;
         };
 
         if (page_key == max_page) break;
         page_key = page_key + 1;
     };
 
-    up_below + dn_above
+    value
 }
 
 public(package) fun mtm(self: &StrikeMatrix): u64 {
