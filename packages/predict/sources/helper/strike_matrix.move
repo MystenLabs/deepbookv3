@@ -5,6 +5,7 @@ use deepbook_predict::oracle::CurvePoint;
 use sui::table::{Self, Table};
 
 const PAGE_SLOTS: u64 = 512;
+const ENonMonotoneCurve: u64 = 0;
 
 public struct StrikeMatrix has store {
     pages: Table<u64, vector<Node>>,
@@ -171,6 +172,7 @@ public(package) fun evaluate(self: &StrikeMatrix, curve: &vector<CurvePoint>): u
         qk_dn_delta = qk_dn_delta + start_node.agg_qk_dn - end_node.agg_qk_dn;
 
         if (q_up_delta > 0) {
+            assert!(ci_up_price_prev >= ci_up_price, ENonMonotoneCurve);
             let k_avg = math::div(qk_up_delta, q_up_delta);
             let ratio = math::div(
                 (k_avg - ci_strike_prev),
@@ -182,6 +184,7 @@ public(package) fun evaluate(self: &StrikeMatrix, curve: &vector<CurvePoint>): u
         };
 
         if (q_dn_delta > 0) {
+            assert!(ci_dn_price >= ci_dn_price_prev, ENonMonotoneCurve);
             let k_dn_avg = math::div(qk_dn_delta, q_dn_delta);
             let ratio_dn = math::div(
                 (k_dn_avg - ci_strike_prev),
@@ -242,6 +245,9 @@ public(package) fun set_mtm(self: &mut StrikeMatrix, value: u64) {
     self.mtm = value;
 }
 
+/// Conservative upper bound on worst-case settlement payout.
+/// This intentionally overestimates mutually exclusive books until exact
+/// max-payout tracking is reinstated.
 public(package) fun max_payout(self: &StrikeMatrix): u64 {
     self.total_q_up + self.total_q_dn
 }

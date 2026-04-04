@@ -306,6 +306,13 @@ public fun mint_collateralized<Quote>(
     assert!(valid_pair, EInvalidCollateralPair);
 
     manager.lock_collateral(locked_key, minted_key, quantity);
+    // TODO: Collateralized minted positions currently bypass the vault strike
+    // matrix. That means a later call to the normal redeem() path on
+    // minted_key can underflow in strike_matrix.remove() because no matching
+    // live exposure was ever inserted into the matrix. Fix by either tracking
+    // collateralized minted exposure in the matrix or preventing generic
+    // redeem() from removing positions that originated purely from
+    // collateralized minting.
     manager.increase_position(minted_key, quantity);
 
     event::emit(CollateralizedPositionMinted {
@@ -396,6 +403,9 @@ public fun withdraw<Quote>(
     assert!(shares_burned > 0, EZeroAmount);
     let amount = predict.shares_to_amount(shares_burned, vault_value);
     let balance = predict.vault.balance();
+    // total_max_payout is currently a conservative reserve, not an exact
+    // worst-case payout. This keeps withdrawals solvent but can over-block
+    // LP exits until tighter max-payout tracking is restored.
     let max_payout = predict.vault.total_max_payout();
     let available = if (balance > max_payout) { balance - max_payout } else { 0 };
     assert!(amount <= available, EWithdrawExceedsAvailable);

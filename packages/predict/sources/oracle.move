@@ -451,13 +451,16 @@ public(package) fun build_curve(
 
     // Seed with min, forward (if in range), max — deduplicating
     let tick = oracle.tick_size;
-    let forward = snap_to_tick(oracle.prices.forward, min_strike, tick);
     let mut points = vector[oracle.eval_strike(min_strike, discount)];
     let mut used = 1u64;
 
-    if (forward > min_strike && forward < max_strike) {
-        points.push_back(oracle.eval_strike(forward, discount));
-        used = used + 1;
+    let raw_forward = oracle.prices.forward;
+    if (raw_forward > min_strike && raw_forward < max_strike) {
+        let forward = snap_to_tick(raw_forward, min_strike, tick);
+        if (forward > min_strike && forward < max_strike) {
+            points.push_back(oracle.eval_strike(forward, discount));
+            used = used + 1;
+        };
     };
     points.push_back(oracle.eval_strike(max_strike, discount));
     used = used + 1;

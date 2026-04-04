@@ -149,6 +149,30 @@ fun evaluate_live_same_page_manual_curve() {
     destroy(matrix);
 }
 
+#[test, expected_failure(abort_code = strike_matrix::ENonMonotoneCurve)]
+fun evaluate_live_non_monotone_curve_aborts() {
+    let scale = float!();
+    let min_strike = 100 * scale;
+    let tick_size = 10 * scale;
+    let strike0 = 100 * scale;
+    let strike1 = 110 * scale;
+    let strike2 = 120 * scale;
+    let qty_up_at_mid = 8 * scale;
+    let bad_curve = vector[
+        oracle::new_curve_point(strike0, 400_000_000, 600_000_000),
+        oracle::new_curve_point(strike1, 500_000_000, 500_000_000),
+        oracle::new_curve_point(strike2, 0, float!()),
+    ];
+
+    let ctx = &mut tx_context::dummy();
+    let mut matrix = strike_matrix::new(ctx, tick_size, min_strike, strike2);
+    matrix.insert(strike1, qty_up_at_mid, true);
+
+    matrix.evaluate(&bad_curve);
+
+    abort
+}
+
 #[test]
 fun evaluate_live_multi_page_manual_curve_and_remove_to_zero() {
     let scale = float!();

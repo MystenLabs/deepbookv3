@@ -32,7 +32,9 @@ public struct Vault<phantom Quote> has store {
     oracle_matrices: Table<ID, StrikeMatrix>,
     /// Sum of all oracle strike matrix MTM values
     total_mtm: u64,
-    /// Sum of all oracle strike matrix max payout values
+    /// Sum of per-oracle conservative max-payout upper bounds.
+    /// This is used as a temporary withdrawal reserve and can over-block LP
+    /// withdrawals until exact max-payout tracking is restored.
     total_max_payout: u64,
 }
 

@@ -710,6 +710,36 @@ fun build_curve_forward_outside_range() {
 }
 
 #[test]
+fun build_curve_forward_below_range() {
+    let ctx = &mut tx_context::dummy();
+    let forward = 25 * float!(); // outside [50,150]
+    let (oracle, clock) = oracle_helper::create_flat_vol_oracle(
+        forward,
+        forward,
+        0,
+        1_000_000,
+        std_grid_min_strike(),
+        std_grid_tick_size(),
+        ctx,
+    );
+    let curve = oracle.build_curve(50 * float!(), 150 * float!(), &clock);
+
+    assert!(curve.length() >= 2);
+    assert_eq!(curve[0].strike(), 50 * float!());
+    assert_eq!(curve[curve.length() - 1].strike(), 150 * float!());
+
+    let len = curve.length();
+    let mut i = 0;
+    while (i < len - 1) {
+        assert!(curve[i].strike() < curve[i + 1].strike());
+        i = i + 1;
+    };
+
+    destroy(oracle);
+    destroy(clock);
+}
+
+#[test]
 fun build_curve_with_positive_rate_complement() {
     // With positive rate, UP + DN = discount < float!()
     let ctx = &mut tx_context::dummy();
