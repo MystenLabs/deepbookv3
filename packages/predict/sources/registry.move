@@ -12,7 +12,12 @@
 /// AdminCap is transferred to the deployer (expected to be a multisig).
 module deepbook_predict::registry;
 
-use deepbook_predict::{constants, oracle::{Self, OracleCapSVI, OracleSVI}, plp::PLP, predict::{Self, Predict}};
+use deepbook_predict::{
+    constants,
+    oracle::{Self, OracleCapSVI, OracleSVI},
+    plp::PLP,
+    predict::{Self, Predict}
+};
 use std::string::String;
 use sui::{coin::TreasuryCap, event, table::{Self, Table}};
 

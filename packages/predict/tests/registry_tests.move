@@ -8,7 +8,7 @@ use deepbook_predict::{
     constants::oracle_strike_grid_ticks,
     oracle::{Self, OracleSVI},
     plp::PLP,
-    predict::{Predict},
+    predict::Predict,
     registry::{Self, AdminCap, Registry}
 };
 use std::unit_test::{assert_eq, destroy};
