@@ -177,8 +177,7 @@ public(package) fun evaluate(self: &StrikeMatrix, curve: &vector<CurvePoint>): u
                 (ci_strike - ci_strike_prev),
             );
             // UP price goes down as strikes increase
-            let p_avg =
-                ci_up_price_prev - math::mul(ci_up_price_prev - ci_up_price, ratio);
+            let p_avg = ci_up_price_prev - math::mul(ci_up_price_prev - ci_up_price, ratio);
             value = value + math::mul(q_up_delta, p_avg)
         };
 
@@ -188,8 +187,7 @@ public(package) fun evaluate(self: &StrikeMatrix, curve: &vector<CurvePoint>): u
                 (k_dn_avg - ci_strike_prev),
                 (ci_strike - ci_strike_prev),
             );
-            let p_dn_avg =
-                ci_dn_price_prev + math::mul(ci_dn_price - ci_dn_price_prev, ratio_dn);
+            let p_dn_avg = ci_dn_price_prev + math::mul(ci_dn_price - ci_dn_price_prev, ratio_dn);
             value = value + math::mul(q_dn_delta, p_dn_avg);
         };
 

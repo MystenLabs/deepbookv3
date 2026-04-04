@@ -84,26 +84,6 @@ public(package) fun init_oracle_matrix<Quote>(
     };
 }
 
-#[test_only]
-public(package) fun insert_test_position<Quote>(
-    vault: &mut Vault<Quote>,
-    oracle: &OracleSVI,
-    is_up: bool,
-    strike: u64,
-    quantity: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    vault.init_oracle_matrix(
-        oracle.id(),
-        oracle.min_strike(),
-        oracle.max_strike(),
-        oracle.tick_size(),
-        ctx,
-    );
-    vault.insert_position(oracle, is_up, strike, quantity, clock);
-}
-
 /// Insert a position into the matrix and refresh risk metrics.
 public(package) fun insert_position<Quote>(
     vault: &mut Vault<Quote>,
