@@ -12,9 +12,8 @@ module deepbook_predict::predict;
 
 use deepbook::math;
 use deepbook_predict::{
-    constants,
     market_key::MarketKey,
-    math::{Self as predict_math, mul_div_round_down},
+    math::mul_div_round_down,
     oracle::OracleSVI,
     oracle_config::{Self, OracleConfig},
     plp::PLP,
@@ -173,7 +172,9 @@ public fun get_trade_amounts<Quote>(
         predict.oracle_config.assert_operational_oracle(oracle, clock);
     };
 
-    let (bid, ask) = predict.get_quote(oracle, key, clock);
+    let strike = key.strike();
+    let is_up = key.is_up();
+    let (bid, ask) = predict.get_quote(oracle, strike, is_up, clock);
     (math::mul(ask, quantity), math::mul(bid, quantity))
 }
 
@@ -201,7 +202,7 @@ public fun mint<Quote>(
     predict.vault.insert_position(oracle.id(), is_up, strike, quantity, ctx);
     predict.refresh_oracle_risk(oracle, clock);
 
-    let (_bid, ask) = predict.get_quote(oracle, key, clock);
+    let (_bid, ask) = predict.get_quote(oracle, strike, is_up, clock);
     let cost = math::mul(ask, quantity);
 
     let payment = manager.withdraw<Quote>(cost, ctx).into_balance();
@@ -249,7 +250,7 @@ public fun redeem<Quote>(
     predict.vault.remove_position(oracle.id(), is_up, strike, quantity);
     predict.refresh_oracle_risk(oracle, clock);
 
-    let (bid, _ask) = predict.get_quote(oracle, key, clock);
+    let (bid, _ask) = predict.get_quote(oracle, strike, is_up, clock);
     let payout = math::mul(bid, quantity);
 
     let payout_balance = predict.vault.dispense_payout(payout);
@@ -538,45 +539,17 @@ fun emit_pricing_config_updated<Quote>(predict: &Predict<Quote>) {
 fun get_quote<Quote>(
     predict: &Predict<Quote>,
     oracle: &OracleSVI,
-    key: MarketKey,
+    strike: u64,
+    is_up: bool,
     clock: &Clock,
 ): (u64, u64) {
-    let strike = key.strike();
-    let is_up = key.is_up();
-    let price = predict.oracle_config.binary_price(oracle, strike, is_up, clock);
+    let fair_price = predict.oracle_config.binary_price(oracle, strike, is_up, clock);
 
-    if (oracle.is_settled()) return (price, price);
-
-    let complement = constants::float_scaling!() - price;
-    let variance = math::mul(price, complement);
-    let bernoulli_factor = predict_math::sqrt(variance, constants::float_scaling!());
-    let bernoulli_spread = math::mul(predict.pricing_config.base_spread(), bernoulli_factor);
-    let spread =
-        bernoulli_spread.max(predict.pricing_config.min_spread())
-        + predict.utilization_spread();
-
-    let bid = if (price > spread) { price - spread } else { 0 };
-    let ask = (price + spread).min(constants::float_scaling!());
-
-    (bid, ask)
-}
-
-/// Utilization spread: penalizes both sides as vault approaches capacity.
-/// Uses util^2 for a gentle-then-aggressive curve.
-fun utilization_spread<Quote>(predict: &Predict<Quote>): u64 {
-    let liability = predict.vault.total_mtm();
-    let balance = predict.vault.balance();
-    if (balance == 0 || liability == 0) return 0;
-
-    let util = if (liability >= balance) {
-        constants::float_scaling!()
-    } else {
-        math::div(liability, balance)
-    };
-    let util_sq = math::mul(util, util);
-    math::mul(
-        predict.pricing_config.base_spread(),
-        math::mul(predict.pricing_config.utilization_multiplier(), util_sq),
+    predict.pricing_config.quote_from_fair_price(
+        fair_price,
+        oracle.is_settled(),
+        predict.vault.total_mtm(),
+        predict.vault.balance(),
     )
 }
 

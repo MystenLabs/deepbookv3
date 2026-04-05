@@ -16,6 +16,7 @@ const EInvalidCurveRange: u64 = 9;
 
 public struct Config has copy, drop, store {
     min_strike: u64,
+    max_strike: u64,
     tick_size: u64,
 }
 
@@ -54,8 +55,10 @@ public(package) fun add_oracle_config(
     min_strike: u64,
     tick_size: u64,
 ) {
+    let max_strike = min_strike + tick_size * constants::oracle_strike_grid_ticks!();
     let config = Config {
         min_strike,
+        max_strike,
         tick_size,
     };
     periphery.oracle_configs.add(oracle_id, config);
@@ -135,7 +138,8 @@ public(package) fun build_curve(
     max_strike: u64,
     clock: &Clock,
 ): vector<CurvePoint> {
-    oracle_config.assert_build_curve(oracle, min_strike, max_strike);
+    let oracle_id = oracle.id();
+    oracle_config.assert_build_curve(oracle_id, min_strike, max_strike);
     if (oracle.is_settled()) {
         let settlement = oracle.settlement_price().destroy_some();
         let full_price = constants::float_scaling!();
@@ -169,7 +173,6 @@ public(package) fun build_curve(
 
     let curve_samples = constants::default_curve_samples!();
     let mut cur_samples = 2;
-    let oracle_id = oracle.id();
     let (grid_min, grid_tick, _grid_max) = oracle_config.grid_params(oracle_id);
     while (cur_samples < curve_samples) {
         let (found, idx) = find_gap(&points, grid_min, grid_tick);
@@ -188,11 +191,10 @@ public(package) fun build_curve(
 
 fun assert_build_curve(
     oracle_config: &OracleConfig,
-    oracle: &OracleSVI,
+    oracle_id: ID,
     min_strike: u64,
     max_strike: u64,
 ) {
-    let oracle_id = oracle.id();
     let (grid_min, tick_size, grid_max) = oracle_config.grid_params(oracle_id);
 
     assert!(min_strike <= max_strike, EInvalidCurveRange);
@@ -206,8 +208,8 @@ fun grid_params(oracle_config: &OracleConfig, oracle_id: ID): (u64, u64, u64) {
     assert!(oracle_config.oracle_configs.contains(oracle_id), EOracleConfigNotFound);
     let config = oracle_config.oracle_configs.borrow(oracle_id);
     let grid_min = config.min_strike;
+    let grid_max = config.max_strike;
     let tick_size = config.tick_size;
-    let grid_max = grid_min + tick_size * constants::oracle_strike_grid_ticks!();
     (grid_min, tick_size, grid_max)
 }
 
