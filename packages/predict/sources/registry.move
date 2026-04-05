@@ -12,12 +12,19 @@
 /// AdminCap is transferred to the deployer (expected to be a multisig).
 module deepbook_predict::registry;
 
-use deepbook_predict::{constants, oracle::{Self, OracleCapSVI, OracleSVI}, plp::PLP, predict};
+use deepbook_predict::{
+    constants,
+    oracle::{Self, OracleCapSVI, OracleSVI},
+    plp::PLP,
+    predict::{Self, Predict}
+};
 use std::string::String;
 use sui::{coin::TreasuryCap, event, table::{Self, Table}};
 
 // === Errors ===
 const EPredictAlreadyCreated: u64 = 0;
+const EInvalidTickSize: u64 = 1;
+const EInvalidStrikeGrid: u64 = 2;
 
 // === Events ===
 
@@ -31,7 +38,6 @@ public struct OracleCreated has copy, drop, store {
     underlying_asset: String,
     expiry: u64,
     min_strike: u64,
-    max_strike: u64,
     tick_size: u64,
 }
 
@@ -97,8 +103,9 @@ public fun create_oracle_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): Oracle
 }
 
 /// Create a new Oracle. Returns the oracle ID.
-public fun create_oracle(
+public fun create_oracle<Quote>(
     registry: &mut Registry,
+    predict: &mut Predict<Quote>,
     _admin_cap: &AdminCap,
     cap: &OracleCapSVI,
     underlying_asset: String,
@@ -107,28 +114,21 @@ public fun create_oracle(
     tick_size: u64,
     ctx: &mut TxContext,
 ): ID {
-    let oracle_id = oracle::create_oracle(
-        underlying_asset,
-        expiry,
-        min_strike,
-        tick_size,
-        ctx,
-    );
+    assert_valid_strike_grid(min_strike, tick_size);
+    let oracle_id = oracle::create_oracle(underlying_asset, expiry, ctx);
     let cap_id = object::id(cap);
 
     if (!registry.oracle_ids.contains(cap_id)) {
         registry.oracle_ids.add(cap_id, vector[]);
     };
     registry.oracle_ids[cap_id].push_back(oracle_id);
-
-    let max_strike = min_strike + tick_size * constants::oracle_strike_grid_ticks!();
+    predict.add_oracle_config(oracle_id, min_strike, tick_size);
     event::emit(OracleCreated {
         oracle_id,
         oracle_cap_id: cap_id,
         underlying_asset,
         expiry,
         min_strike,
-        max_strike,
         tick_size,
     });
 
@@ -195,6 +195,13 @@ fun init(ctx: &mut TxContext) {
         id: object::new(ctx),
     };
     transfer::transfer(admin_cap, ctx.sender());
+}
+
+fun assert_valid_strike_grid(min_strike: u64, tick_size: u64) {
+    assert!(tick_size > 0, EInvalidTickSize);
+    assert!(tick_size % constants::oracle_tick_size_unit!() == 0, EInvalidTickSize);
+    assert!(min_strike > 0, EInvalidStrikeGrid);
+    assert!(min_strike % tick_size == 0, EInvalidStrikeGrid);
 }
 
 // === Test Functions ===

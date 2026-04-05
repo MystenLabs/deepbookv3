@@ -18,7 +18,7 @@
 module deepbook_predict::treap;
 
 use deepbook::math;
-use deepbook_predict::oracle::CurvePoint;
+use deepbook_predict::oracle_config::CurvePoint;
 use sui::{bcs, hash::blake2b256, table::{Self, Table}};
 
 // === Errors ===
