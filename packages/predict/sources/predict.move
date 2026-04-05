@@ -15,7 +15,7 @@ use deepbook_predict::{
     market_key::MarketKey,
     math::mul_div_round_down,
     oracle::OracleSVI,
-    oracle_config::{Self, OracleConfig},
+    oracle_runtime::{Self, OracleRuntime},
     plp::PLP,
     predict_manager::{Self, PredictManager},
     pricing_config::{Self, PricingConfig},
@@ -141,7 +141,7 @@ public struct Predict<phantom Quote> has key {
     pricing_config: PricingConfig,
     /// Risk limits (admin-controlled)
     risk_config: RiskConfig,
-    oracle_config: OracleConfig,
+    oracle_runtime: OracleRuntime,
     /// Whether trading (mint) is globally paused
     trading_paused: bool,
 }
@@ -167,9 +167,9 @@ public fun get_trade_amounts<Quote>(
     quantity: u64,
     clock: &Clock,
 ): (u64, u64) {
-    predict.oracle_config.assert_key_matches(oracle, &key);
+    predict.oracle_runtime.assert_key_matches(oracle, &key);
     if (!oracle.is_settled()) {
-        predict.oracle_config.assert_operational_oracle(oracle, clock);
+        predict.oracle_runtime.assert_operational_oracle(oracle, clock);
     };
 
     let strike = key.strike();
@@ -193,8 +193,8 @@ public fun mint<Quote>(
     assert!(!predict.trading_paused, ETradingPaused);
     assert!(quantity > 0, EZeroQuantity);
 
-    predict.oracle_config.assert_key_matches(oracle, &key);
-    predict.oracle_config.assert_mintable_oracle(oracle, clock);
+    predict.oracle_runtime.assert_key_matches(oracle, &key);
+    predict.oracle_runtime.assert_mintable_oracle(oracle, clock);
 
     let strike = key.strike();
     let is_up = key.is_up();
@@ -237,9 +237,9 @@ public fun redeem<Quote>(
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(quantity > 0, EZeroQuantity);
-    predict.oracle_config.assert_key_matches(oracle, &key);
+    predict.oracle_runtime.assert_key_matches(oracle, &key);
     if (!oracle.is_settled()) {
-        predict.oracle_config.assert_operational_oracle(oracle, clock);
+        predict.oracle_runtime.assert_operational_oracle(oracle, clock);
     };
 
     manager.decrease_position(key, quantity);
@@ -290,9 +290,9 @@ public fun mint_collateralized<Quote>(
     assert!(quantity > 0, EZeroQuantity);
     assert_collateral_valid(&locked_key, &minted_key);
 
-    predict.oracle_config.assert_key_matches(oracle, &locked_key);
-    predict.oracle_config.assert_key_matches(oracle, &minted_key);
-    predict.oracle_config.assert_mintable_oracle(oracle, clock);
+    predict.oracle_runtime.assert_key_matches(oracle, &locked_key);
+    predict.oracle_runtime.assert_key_matches(oracle, &minted_key);
+    predict.oracle_runtime.assert_mintable_oracle(oracle, clock);
 
     manager.lock_collateral(locked_key, minted_key, quantity);
     manager.increase_position(minted_key, quantity);
@@ -408,7 +408,7 @@ public(package) fun create<Quote>(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxCo
         treasury_cap,
         pricing_config: pricing_config::new(),
         risk_config: risk_config::new(),
-        oracle_config: oracle_config::new(ctx),
+        oracle_runtime: oracle_runtime::new(ctx),
         trading_paused: false,
     };
     let predict_id = object::id(&predict);
@@ -417,13 +417,13 @@ public(package) fun create<Quote>(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxCo
     predict_id
 }
 
-public(package) fun add_oracle_config<Quote>(
+public(package) fun add_oracle_grid<Quote>(
     predict: &mut Predict<Quote>,
     oracle_id: ID,
     min_strike: u64,
     tick_size: u64,
 ) {
-    predict.oracle_config.add_oracle_config(oracle_id, min_strike, tick_size);
+    predict.oracle_runtime.add_oracle_grid(oracle_id, min_strike, tick_size);
 }
 
 /// Whether trading is currently paused.
@@ -500,7 +500,7 @@ public(package) fun create_test_predict<Quote>(ctx: &mut TxContext): Predict<Quo
         treasury_cap,
         pricing_config: pricing_config::new(),
         risk_config: risk_config::new(),
-        oracle_config: oracle_config::new(ctx),
+        oracle_runtime: oracle_runtime::new(ctx),
         trading_paused: false,
     }
 }
@@ -543,7 +543,7 @@ fun get_quote<Quote>(
     is_up: bool,
     clock: &Clock,
 ): (u64, u64) {
-    let fair_price = predict.oracle_config.binary_price(oracle, strike, is_up, clock);
+    let fair_price = predict.oracle_runtime.binary_price(oracle, strike, is_up, clock);
 
     predict.pricing_config.quote_from_fair_price(
         fair_price,
@@ -565,7 +565,7 @@ fun refresh_oracle_risk<Quote>(
         predict.vault.set_mtm(oracle_id, 0);
         return
     };
-    let curve = predict.oracle_config.build_curve(oracle, min_strike, max_strike, clock);
+    let curve = predict.oracle_runtime.build_curve(oracle, min_strike, max_strike, clock);
     predict.vault.set_mtm_with_curve(oracle_id, &curve);
 }
 

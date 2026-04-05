@@ -14,7 +14,7 @@
 module deepbook_predict::vault;
 
 use deepbook::math;
-use deepbook_predict::{oracle_config::CurvePoint, treap::{Self, Treap}};
+use deepbook_predict::{oracle_runtime::CurvePoint, treap::{Self, Treap}};
 use sui::{balance::{Self, Balance}, table::{Self, Table}};
 
 // === Errors ===
