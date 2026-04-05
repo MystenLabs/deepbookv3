@@ -99,6 +99,7 @@ export function createOracleCapTx(recipient: string): Transaction {
 }
 
 export function createOracleTx(params: {
+  predictId: string;
   oracleCapId: string;
   underlyingAsset: string;
   expiry: bigint;
@@ -108,8 +109,10 @@ export function createOracleTx(params: {
   const tx = new Transaction();
   tx.moveCall({
     target: target("registry", "create_oracle"),
+    typeArguments: [DUSDC_TYPE],
     arguments: [
       tx.object(REGISTRY_ID),
+      tx.object(params.predictId),
       tx.object(ADMIN_CAP_ID),
       tx.object(params.oracleCapId),
       tx.pure.string(params.underlyingAsset),
@@ -263,9 +266,93 @@ export function mintTx(params: {
   return tx;
 }
 
-export async function executeAndWait(tx: Transaction, label = "transaction"): Promise<any> {
+export function refreshOracleAndMintTx(params: {
+  predictId: string;
+  managerId: string;
+  oracleId: string;
+  oracleCapId: string;
+  expiry: bigint;
+  strike: bigint;
+  isUp: boolean;
+  quantity: bigint;
+  spot: bigint;
+  forward: bigint;
+  svi: {
+    a: bigint;
+    b: bigint;
+    rho: bigint;
+    rhoNegative: boolean;
+    m: bigint;
+    mNegative: boolean;
+    sigma: bigint;
+  };
+  riskFreeRate: bigint;
+}): Transaction {
+  const tx = new Transaction();
+  const priceData = tx.moveCall({
+    target: target("oracle", "new_price_data"),
+    arguments: [tx.pure.u64(params.spot), tx.pure.u64(params.forward)],
+  });
+  tx.moveCall({
+    target: target("oracle", "update_prices"),
+    arguments: [tx.object(params.oracleId), tx.object(params.oracleCapId), priceData, tx.object(CLOCK_ID)],
+  });
+
+  const sviParams = tx.moveCall({
+    target: target("oracle", "new_svi_params"),
+    arguments: [
+      tx.pure.u64(params.svi.a),
+      tx.pure.u64(params.svi.b),
+      tx.pure.u64(params.svi.rho),
+      tx.pure.bool(params.svi.rhoNegative),
+      tx.pure.u64(params.svi.m),
+      tx.pure.bool(params.svi.mNegative),
+      tx.pure.u64(params.svi.sigma),
+    ],
+  });
+  tx.moveCall({
+    target: target("oracle", "update_svi"),
+    arguments: [
+      tx.object(params.oracleId),
+      tx.object(params.oracleCapId),
+      sviParams,
+      tx.pure.u64(params.riskFreeRate),
+      tx.object(CLOCK_ID),
+    ],
+  });
+
+  const key = tx.moveCall({
+    target: target("market_key", "new"),
+    arguments: [
+      tx.pure.id(params.oracleId),
+      tx.pure.u64(params.expiry),
+      tx.pure.u64(params.strike),
+      tx.pure.bool(params.isUp),
+    ],
+  });
+  tx.moveCall({
+    target: target("predict", "mint"),
+    typeArguments: [DUSDC_TYPE],
+    arguments: [
+      tx.object(params.predictId),
+      tx.object(params.managerId),
+      tx.object(params.oracleId),
+      key,
+      tx.pure.u64(params.quantity),
+      tx.object(CLOCK_ID),
+    ],
+  });
+
+  return tx;
+}
+
+export async function executeAndWait(
+  tx: Transaction,
+  label = "transaction",
+  gasBudget = 500_000_000n
+): Promise<any> {
   tx.setSender(address);
-  tx.setGasBudget(500_000_000n);
+  tx.setGasBudget(gasBudget);
 
   let execution: any;
   try {

@@ -52,7 +52,22 @@ fun seed_liquidity(predict: &mut Predict<SUI>, coin: coin::Coin<SUI>, ctx: &mut 
     transfer::public_transfer(lp, ctx.sender());
 }
 
-fun create_live_oracle(ctx: &mut TxContext): oracle::OracleSVI {
+fun init_predict_oracle_matrix(
+    predict: &mut Predict<SUI>,
+    oracle: &oracle::OracleSVI,
+    ctx: &mut TxContext,
+) {
+    predict::init_oracle_matrix(
+        predict,
+        oracle.id(),
+        oracle.min_strike(),
+        oracle.max_strike(),
+        oracle.tick_size(),
+        ctx,
+    );
+}
+
+fun create_uninitialized_live_oracle(ctx: &mut TxContext): oracle::OracleSVI {
     // Flat 25% vol SVI around a 100 strike / 100 forward market.
     let svi = new_svi_params(0, constants::float_scaling!(), 0, false, 0, false, 250_000_000);
     let prices = new_price_data(
@@ -71,6 +86,24 @@ fun create_live_oracle(ctx: &mut TxContext): oracle::OracleSVI {
         live_grid_tick_size(),
         ctx,
     )
+}
+
+fun create_live_oracle(predict: &mut Predict<SUI>, ctx: &mut TxContext): oracle::OracleSVI {
+    let oracle = create_uninitialized_live_oracle(ctx);
+    init_predict_oracle_matrix(predict, &oracle, ctx);
+    oracle
+}
+
+fun insert_test_position(
+    predict: &mut Predict<SUI>,
+    oracle: &oracle::OracleSVI,
+    is_up: bool,
+    strike: u64,
+    quantity: u64,
+    clock: &clock::Clock,
+    _ctx: &mut TxContext,
+) {
+    vault::insert_position(predict.vault_mut(), oracle, is_up, strike, quantity, clock);
 }
 
 fun setup_with_manager(funds: u64): Scenario {
@@ -141,18 +174,18 @@ fun supply_aborts_when_vault_is_underwater() {
     let lp = supply_coin(&mut predict, initial_liq, ctx);
 
     let oracle = oracle_helper::create_settled_oracle(200 * constants::float_scaling!(), ctx);
+    init_predict_oracle_matrix(&mut predict, &oracle, ctx);
     let clock = clock::create_for_testing(ctx);
 
-    predict
-        .vault_mut()
-        .insert_position(
-            &oracle,
-            true,
-            50 * constants::float_scaling!(),
-            11 * constants::float_scaling!(),
-            &clock,
-            ctx,
-        );
+    insert_test_position(
+        &mut predict,
+        &oracle,
+        true,
+        50 * constants::float_scaling!(),
+        11 * constants::float_scaling!(),
+        &clock,
+        ctx,
+    );
 
     let recapitalization = coin::mint_for_testing<SUI>(5 * constants::float_scaling!(), ctx);
     let _shares = predict.supply(recapitalization, ctx);
@@ -216,17 +249,17 @@ fun withdraw_partial_with_settled_winning_exposure_returns_pro_rata_free_capital
         200 * constants::float_scaling!(),
         scenario.ctx(),
     );
+    init_predict_oracle_matrix(&mut predict, &oracle, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
-    predict
-        .vault_mut()
-        .insert_position(
-            &oracle,
-            true,
-            50 * constants::float_scaling!(),
-            80 * constants::float_scaling!(),
-            &clock,
-            scenario.ctx(),
-        );
+    insert_test_position(
+        &mut predict,
+        &oracle,
+        true,
+        50 * constants::float_scaling!(),
+        80 * constants::float_scaling!(),
+        &clock,
+        scenario.ctx(),
+    );
 
     scenario.next_tx(ALICE);
     let mut lp = scenario.take_from_sender<coin::Coin<PLP>>();
@@ -255,17 +288,17 @@ fun withdraw_up_to_available_succeeds() {
         200 * constants::float_scaling!(),
         scenario.ctx(),
     );
+    init_predict_oracle_matrix(&mut predict, &oracle, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
-    predict
-        .vault_mut()
-        .insert_position(
-            &oracle,
-            true,
-            50 * constants::float_scaling!(),
-            80 * constants::float_scaling!(),
-            &clock,
-            scenario.ctx(),
-        );
+    insert_test_position(
+        &mut predict,
+        &oracle,
+        true,
+        50 * constants::float_scaling!(),
+        80 * constants::float_scaling!(),
+        &clock,
+        scenario.ctx(),
+    );
 
     scenario.next_tx(ALICE);
     let lp = scenario.take_from_sender<coin::Coin<PLP>>();
@@ -288,18 +321,17 @@ fun withdraw_all_blocked_by_live_max_payout() {
     let coin = coin::mint_for_testing<SUI>(100 * constants::float_scaling!(), scenario.ctx());
     seed_liquidity(&mut predict, coin, scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
-    predict
-        .vault_mut()
-        .insert_position(
-            &oracle,
-            true,
-            150 * constants::float_scaling!(),
-            80 * constants::float_scaling!(),
-            &clock,
-            scenario.ctx(),
-        );
+    insert_test_position(
+        &mut predict,
+        &oracle,
+        true,
+        150 * constants::float_scaling!(),
+        80 * constants::float_scaling!(),
+        &clock,
+        scenario.ctx(),
+    );
 
     scenario.next_tx(ALICE);
     let lp = scenario.take_from_sender<coin::Coin<PLP>>();
@@ -317,7 +349,7 @@ fun mint_live_oracle_updates_manager_and_vault_state() {
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
     seed_liquidity(&mut predict, liq, scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
     let key = market_key::up(oracle_id, oracle.expiry(), 100 * constants::float_scaling!());
@@ -369,7 +401,7 @@ fun mint_aborts_on_wrong_oracle_id() {
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
     seed_liquidity(&mut predict, liq, scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let wrong_key = market_key::up(
         object::id_from_address(@0x1),
@@ -402,7 +434,7 @@ fun mint_aborts_on_wrong_expiry() {
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
     seed_liquidity(&mut predict, liq, scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let wrong_key = market_key::up(
         oracle::id(&oracle),
@@ -435,7 +467,7 @@ fun repeated_mint_same_market_increases_ask_and_doubles_max_payout() {
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
     seed_liquidity(&mut predict, liq, scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
     let key = market_key::up(
@@ -495,7 +527,7 @@ fun partial_redeem_reduces_liability_and_improves_payout() {
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
     seed_liquidity(&mut predict, liq, scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
     let key = market_key::up(
@@ -561,7 +593,7 @@ fun redeem_aborts_on_wrong_expiry() {
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
     seed_liquidity(&mut predict, liq, scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let key = market_key::up(
         oracle::id(&oracle),
@@ -608,7 +640,7 @@ fun mint_aborts_when_total_exposure_limit_exceeded() {
     seed_liquidity(&mut predict, liq, scenario.ctx());
     predict.set_max_total_exposure_pct(1);
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
     let key = market_key::up(oracle_id, oracle.expiry(), 100 * constants::float_scaling!());
@@ -639,7 +671,7 @@ fun round_trip_trade_loses_spread() {
     let liq = coin::mint_for_testing<SUI>(lp_deposit, scenario.ctx());
     seed_liquidity(&mut predict, liq, scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
     let key = market_key::up(
@@ -687,7 +719,7 @@ fun get_trade_amounts_settled_has_no_spread() {
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), ctx);
     let lp = supply_coin(&mut predict, liq, ctx);
 
-    let mut oracle = create_live_oracle(ctx);
+    let mut oracle = create_live_oracle(&mut predict, ctx);
     let clock = clock::create_for_testing(ctx);
     let key = market_key::up(
         oracle::id(&oracle),
@@ -717,7 +749,7 @@ fun removing_one_leg_keeps_other_leg_exposure_active() {
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
     seed_liquidity(&mut predict, liq, scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
     let atm_key = market_key::up(
@@ -791,7 +823,7 @@ fun redeem_settled_up_wins_full_payout() {
     let liq = coin::mint_for_testing<SUI>(1000 * constants::float_scaling!(), scenario.ctx());
     seed_liquidity(&mut predict, liq, scenario.ctx());
 
-    let mut oracle = create_live_oracle(scenario.ctx());
+    let mut oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
     let key = market_key::up(oracle_id, oracle.expiry(), 50 * constants::float_scaling!());
@@ -801,16 +833,15 @@ fun redeem_settled_up_wins_full_payout() {
         let mut manager = scenario.take_shared<PredictManager>();
         manager.increase_position(key, 10 * constants::float_scaling!());
 
-        predict
-            .vault_mut()
-            .insert_position(
-                &oracle,
-                true,
-                50 * constants::float_scaling!(),
-                10 * constants::float_scaling!(),
-                &clock,
-                scenario.ctx(),
-            );
+        insert_test_position(
+            &mut predict,
+            &oracle,
+            true,
+            50 * constants::float_scaling!(),
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
 
         oracle::settle_test_oracle(&mut oracle, 200 * constants::float_scaling!());
 
@@ -848,7 +879,7 @@ fun redeem_settled_up_loses_zero_payout() {
     let liq = coin::mint_for_testing<SUI>(1000 * constants::float_scaling!(), scenario.ctx());
     seed_liquidity(&mut predict, liq, scenario.ctx());
 
-    let mut oracle = create_live_oracle(scenario.ctx());
+    let mut oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
     let key = market_key::up(oracle_id, oracle.expiry(), 150 * constants::float_scaling!());
@@ -858,16 +889,15 @@ fun redeem_settled_up_loses_zero_payout() {
         let mut manager = scenario.take_shared<PredictManager>();
         manager.increase_position(key, 10 * constants::float_scaling!());
 
-        predict
-            .vault_mut()
-            .insert_position(
-                &oracle,
-                true,
-                150 * constants::float_scaling!(),
-                10 * constants::float_scaling!(),
-                &clock,
-                scenario.ctx(),
-            );
+        insert_test_position(
+            &mut predict,
+            &oracle,
+            true,
+            150 * constants::float_scaling!(),
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
 
         oracle::settle_test_oracle(&mut oracle, 50 * constants::float_scaling!());
 
@@ -902,7 +932,7 @@ fun redeem_settled_oracle_ignores_staleness() {
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
     seed_liquidity(&mut predict, liq, scenario.ctx());
 
-    let mut oracle = create_live_oracle(scenario.ctx());
+    let mut oracle = create_live_oracle(&mut predict, scenario.ctx());
     let mut clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
     let key = market_key::up(oracle_id, oracle.expiry(), 50 * constants::float_scaling!());
@@ -949,7 +979,7 @@ fun mint_when_paused_aborts() {
     seed_liquidity(&mut predict, liq, scenario.ctx());
     predict.set_trading_paused(true);
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
     let key = market_key::up(oracle_id, oracle.expiry(), 100 * constants::float_scaling!());
@@ -986,6 +1016,7 @@ fun mint_against_stale_oracle_aborts() {
         0,
         scenario.ctx(),
     );
+    init_predict_oracle_matrix(&mut predict, &oracle, scenario.ctx());
     clock.set_for_testing(constants::staleness_threshold_ms!() + 1);
     let oracle_id = oracle::id(&oracle);
     let key = market_key::up(oracle_id, oracle.expiry(), 100 * constants::float_scaling!());
@@ -1015,7 +1046,7 @@ fun mint_aborts_if_not_owner() {
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
     seed_liquidity(&mut predict, liq, scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
     let key = market_key::up(oracle_id, oracle.expiry(), 100 * constants::float_scaling!());
@@ -1045,7 +1076,7 @@ fun redeem_against_stale_live_oracle_aborts() {
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
     seed_liquidity(&mut predict, liq, scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let mut clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
     let key = market_key::up(oracle_id, oracle.expiry(), 100 * constants::float_scaling!());
@@ -1090,7 +1121,7 @@ fun redeem_aborts_if_not_owner() {
     let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
     seed_liquidity(&mut predict, liq, scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
     let key = market_key::up(oracle_id, oracle.expiry(), 100 * constants::float_scaling!());
@@ -1131,7 +1162,7 @@ fun collateralized_mint_up_lower_to_higher_strike() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
 
@@ -1176,7 +1207,7 @@ fun collateralized_mint_dn_higher_to_lower_strike() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
 
@@ -1225,7 +1256,7 @@ fun collateralized_redeem_releases_collateral() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
 
@@ -1277,7 +1308,7 @@ fun collateralized_mint_wrong_oracle_id_aborts() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let minted_key = market_key::up(
         oracle::id(&oracle),
@@ -1315,7 +1346,7 @@ fun collateralized_mint_not_owner_aborts() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
 
@@ -1384,7 +1415,7 @@ fun collateralized_mint_stale_oracle_aborts() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(constants::staleness_threshold_ms!() + 1);
     let oracle_id = oracle::id(&oracle);
@@ -1417,7 +1448,7 @@ fun collateralized_mint_settled_oracle_aborts() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
 
-    let mut oracle = create_live_oracle(scenario.ctx());
+    let mut oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
 
@@ -1451,7 +1482,7 @@ fun collateralized_redeem_not_owner_aborts() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
 
@@ -1495,7 +1526,7 @@ fun collateralized_redeem_without_collateral_relation_aborts() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let oracle_id = oracle::id(&oracle);
     let locked_key = market_key::up(oracle_id, oracle.expiry(), 80 * constants::float_scaling!());
     let minted_key = market_key::up(oracle_id, oracle.expiry(), 120 * constants::float_scaling!());
@@ -1523,7 +1554,7 @@ fun collateralized_mint_up_wrong_direction_aborts() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
 
@@ -1555,7 +1586,7 @@ fun collateralized_mint_mixed_directions_aborts() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
 
@@ -1593,7 +1624,7 @@ fun mint_collateralized_when_paused_aborts() {
 
     predict.set_trading_paused(true);
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
 
@@ -1628,7 +1659,7 @@ fun mint_against_settled_oracle_aborts() {
     let liq = coin::mint_for_testing<SUI>(1000 * constants::float_scaling!(), scenario.ctx());
     seed_liquidity(&mut predict, liq, scenario.ctx());
 
-    let mut oracle = create_live_oracle(scenario.ctx());
+    let mut oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
     let key = market_key::up(oracle_id, oracle.expiry(), 50 * constants::float_scaling!());
@@ -1660,7 +1691,7 @@ fun mint_expired_but_unsettled_oracle_aborts() {
     let liq = coin::mint_for_testing<SUI>(1000 * constants::float_scaling!(), scenario.ctx());
     seed_liquidity(&mut predict, liq, scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let mut clock = clock::create_for_testing(scenario.ctx());
     // Advance clock to expiry — oracle is NOT settled yet
     clock.set_for_testing(oracle.expiry());
@@ -1689,7 +1720,7 @@ fun collateralized_mint_expired_but_unsettled_oracle_aborts() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(oracle.expiry());
     let oracle_id = oracle::id(&oracle);
@@ -1722,7 +1753,7 @@ fun collateralized_mint_equal_strikes_aborts() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
 
@@ -1754,7 +1785,7 @@ fun mint_zero_quantity_aborts() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
     let key = market_key::up(oracle_id, oracle.expiry(), 100 * constants::float_scaling!());
@@ -1783,7 +1814,7 @@ fun redeem_zero_quantity_aborts() {
     let liq = coin::mint_for_testing<SUI>(1_000_000 * constants::float_scaling!(), scenario.ctx());
     seed_liquidity(&mut predict, liq, scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
     let key = market_key::up(oracle_id, oracle.expiry(), 100 * constants::float_scaling!());
@@ -1819,7 +1850,7 @@ fun collateralized_mint_zero_quantity_aborts() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
 
@@ -1851,7 +1882,7 @@ fun collateralized_redeem_zero_quantity_aborts() {
     let mut scenario = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
 
-    let oracle = create_live_oracle(scenario.ctx());
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let oracle_id = oracle::id(&oracle);
 
@@ -1967,6 +1998,35 @@ fun get_trade_amounts_invalid_strike_aborts() {
     predict::get_trade_amounts(&predict, &oracle, key, 1, &clock);
 
     abort
+}
+
+#[test, expected_failure(abort_code = oracle::EStrikeOutOfRange)]
+fun mint_out_of_range_strike_aborts_with_oracle_error() {
+    let mut scenario = setup_with_manager(100 * constants::float_scaling!());
+    let mut predict = create_predict(scenario.ctx());
+
+    let liq = coin::mint_for_testing<SUI>(1_000 * constants::float_scaling!(), scenario.ctx());
+    seed_liquidity(&mut predict, liq, scenario.ctx());
+
+    let oracle = create_live_oracle(&mut predict, scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let strike = oracle.max_strike() + oracle.tick_size();
+    let key = market_key::up(oracle::id(&oracle), oracle.expiry(), strike);
+
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared<PredictManager>();
+        predict.mint(
+            &mut manager,
+            &oracle,
+            key,
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        abort
+    }
 }
 
 #[test, expected_failure(abort_code = predict::EOracleInactive)]

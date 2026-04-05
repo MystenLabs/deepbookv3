@@ -30,7 +30,6 @@ const EInvalidStrikeGrid: u64 = 7;
 const EStrikeOutOfRange: u64 = 8;
 const EStrikeNotOnTick: u64 = 9;
 const EInvalidTickSize: u64 = 10;
-const EPriceOutOfRange: u64 = 11;
 // === Events ===
 
 public struct OracleActivated has copy, drop, store {
@@ -184,11 +183,6 @@ public fun update_prices(
         });
         return
     };
-
-    assert!(
-        price_in_range(oracle, prices.spot) && price_in_range(oracle, prices.forward),
-        EPriceOutOfRange,
-    );
 
     oracle.prices = prices;
     oracle.timestamp = now;
@@ -431,7 +425,7 @@ public(package) fun assert_valid_strike(oracle: &OracleSVI, strike: u64) {
 /// Build an adaptive piecewise-linear approximation of the pricing curve.
 /// Concentrates sample points near ATM where the sigmoid is steepest.
 /// For settled oracles, returns a step-function curve at the settlement price.
-/// Returns a sorted vector of CurvePoints for use with treap.evaluate().
+/// Returns a sorted vector of CurvePoints for use with strike_matrix.evaluate().
 public(package) fun build_curve(
     oracle: &OracleSVI,
     min_strike: u64,
@@ -456,13 +450,17 @@ public(package) fun build_curve(
     };
 
     // Seed with min, forward (if in range), max — deduplicating
-    let forward = oracle.prices.forward;
+    let tick = oracle.tick_size;
     let mut points = vector[oracle.eval_strike(min_strike, discount)];
     let mut used = 1u64;
 
-    if (forward > min_strike && forward < max_strike) {
-        points.push_back(oracle.eval_strike(forward, discount));
-        used = used + 1;
+    let raw_forward = oracle.prices.forward;
+    if (raw_forward > min_strike && raw_forward < max_strike) {
+        let forward = snap_to_tick(raw_forward, min_strike, tick);
+        if (forward > min_strike && forward < max_strike) {
+            points.push_back(oracle.eval_strike(forward, discount));
+            used = used + 1;
+        };
     };
     points.push_back(oracle.eval_strike(max_strike, discount));
     used = used + 1;
@@ -500,7 +498,11 @@ public(package) fun build_curve(
         // No refineable interval found
         if (best_score == 0) break;
 
-        let mid_strike = (points[best_idx].strike() + points[best_idx + 1].strike()) / 2;
+        let mid_strike = snap_to_tick(
+            (points[best_idx].strike() + points[best_idx + 1].strike()) / 2,
+            min_strike,
+            tick,
+        );
         let new_point = oracle.eval_strike(mid_strike, discount);
 
         // Insert at sorted position (best_idx + 1)
@@ -584,15 +586,16 @@ fun assert_authorized_cap(oracle: &OracleSVI, cap: &OracleCapSVI) {
     assert!(oracle.authorized_caps.contains(&cap.id.to_inner()), EInvalidOracleCap);
 }
 
+/// Round a strike down to the nearest tick boundary.
+fun snap_to_tick(strike: u64, min_strike: u64, tick_size: u64): u64 {
+    min_strike + (strike - min_strike) / tick_size * tick_size
+}
+
 fun assert_valid_strike_grid(min_strike: u64, tick_size: u64) {
     assert!(tick_size > 0, EInvalidTickSize);
     assert!(tick_size % constants::oracle_tick_size_unit!() == 0, EInvalidTickSize);
     assert!(min_strike > 0, EInvalidStrikeGrid);
     assert!(min_strike % tick_size == 0, EInvalidStrikeGrid);
-}
-
-fun price_in_range(oracle: &OracleSVI, price: u64): bool {
-    price >= oracle.min_strike && price <= oracle.max_strike
 }
 
 #[test_only]
