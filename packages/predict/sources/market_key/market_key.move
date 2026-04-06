@@ -10,12 +10,6 @@
 /// - direction: UP (0) or DOWN (1)
 module deepbook_predict::market_key;
 
-use deepbook_predict::oracle::OracleSVI;
-
-// === Errors ===
-const EOracleMismatch: u64 = 0;
-const EExpiryMismatch: u64 = 1;
-
 // === Constants ===
 const DIRECTION_UP: u8 = 0;
 const DIRECTION_DOWN: u8 = 1;
@@ -46,12 +40,6 @@ public fun down(oracle_id: ID, expiry: u64, strike: u64): MarketKey {
 public fun new(oracle_id: ID, expiry: u64, strike: u64, is_up: bool): MarketKey {
     let direction = if (is_up) { DIRECTION_UP } else { DIRECTION_DOWN };
     MarketKey { oracle_id, expiry, strike, direction }
-}
-
-/// Assert that this key's oracle_id and expiry match the given oracle.
-public fun assert_matches_oracle(key: &MarketKey, oracle: &OracleSVI) {
-    assert!(key.oracle_id == oracle.id(), EOracleMismatch);
-    assert!(key.expiry == oracle.expiry(), EExpiryMismatch);
 }
 
 /// Get the oracle_id from a MarketKey.

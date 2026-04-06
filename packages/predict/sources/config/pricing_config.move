@@ -4,10 +4,11 @@
 /// Pricing configuration - spread parameters for binary option pricing.
 module deepbook_predict::pricing_config;
 
-use deepbook_predict::constants;
+use deepbook::math;
+use deepbook_predict::{constants, math as predict_math};
 
 // === Errors ===
-const EInvalidSpread: u64 = 1;
+const EInvalidSpread: u64 = 0;
 
 // === Structs ===
 
@@ -58,4 +59,47 @@ public(package) fun set_min_spread(config: &mut PricingConfig, spread: u64) {
 
 public(package) fun set_utilization_multiplier(config: &mut PricingConfig, multiplier: u64) {
     config.utilization_multiplier = multiplier;
+}
+
+// TODO: Add admin-configurable tail guards so minting can reject fair prices
+// in unreliable extremes (for example <= 0.02 or >= 0.98).
+public(package) fun quote_from_fair_price(
+    config: &PricingConfig,
+    fair_price: u64,
+    is_settled: bool,
+    liability: u64,
+    balance: u64,
+): (u64, u64) {
+    // Once settled, the market trades at its realized payoff with no spread.
+    if (is_settled) return (fair_price, fair_price);
+
+    let complement = constants::float_scaling!() - fair_price;
+    let variance = math::mul(fair_price, complement);
+    let bernoulli_factor = predict_math::sqrt(variance, constants::float_scaling!());
+    let bernoulli_spread = math::mul(config.base_spread, bernoulli_factor);
+    let spread =
+        bernoulli_spread.max(config.min_spread)
+        + utilization_spread(config, liability, balance);
+
+    let bid = if (fair_price > spread) { fair_price - spread } else { 0 };
+    let ask = (fair_price + spread).min(constants::float_scaling!());
+
+    (bid, ask)
+}
+
+fun utilization_spread(config: &PricingConfig, liability: u64, balance: u64): u64 {
+    if (balance == 0 || liability == 0) return 0;
+
+    // Cap utilization at 1.0 and square it so spread stays mild at low usage
+    // and widens sharply only as the vault approaches full utilization.
+    let util = if (liability >= balance) {
+        constants::float_scaling!()
+    } else {
+        math::div(liability, balance)
+    };
+    let util_sq = math::mul(util, util);
+    math::mul(
+        config.base_spread,
+        math::mul(config.utilization_multiplier, util_sq),
+    )
 }

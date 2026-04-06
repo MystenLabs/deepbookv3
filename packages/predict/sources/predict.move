@@ -3,19 +3,17 @@
 
 /// Main entry point for the DeepBook Predict protocol.
 ///
-/// This module orchestrates all operations:
-/// - Coordinates between Vault (state), Oracle (data), and config
-/// - Exposes public functions for trading
-/// - Handles pricing (spread calculation)
-/// - Manages LP token (PLP) minting and burning for vault supply/withdraw
+/// This module orchestrates user actions across the vault, oracle config,
+/// manager, and pricing layers. It owns public trading and LP flows, while the
+/// lower modules provide isolated state machines and pricing primitives.
 module deepbook_predict::predict;
 
 use deepbook::math;
 use deepbook_predict::{
-    constants,
     market_key::MarketKey,
-    math::{Self as predict_math, mul_div_round_down},
-    oracle::{Self, OracleSVI},
+    math::mul_div_round_down,
+    oracle::OracleSVI,
+    oracle_config::{Self, OracleConfig},
     plp::PLP,
     predict_manager::{Self, PredictManager},
     pricing_config::{Self, PricingConfig},
@@ -28,14 +26,11 @@ use sui::{clock::Clock, coin::{Self, Coin, TreasuryCap}, event};
 const ETradingPaused: u64 = 0;
 const EInvalidCollateralPair: u64 = 1;
 const ENotOwner: u64 = 2;
-const EOracleSettled: u64 = 3;
-const EWithdrawExceedsAvailable: u64 = 4;
-const EOracleExpired: u64 = 5;
-const EZeroQuantity: u64 = 6;
-const EOracleInactive: u64 = 7;
-const EZeroAmount: u64 = 8;
-const EZeroVaultValue: u64 = 9;
-const EZeroSharesMinted: u64 = 10;
+const EWithdrawExceedsAvailable: u64 = 3;
+const EZeroQuantity: u64 = 4;
+const EZeroAmount: u64 = 5;
+const EZeroVaultValue: u64 = 6;
+const EZeroSharesMinted: u64 = 7;
 
 // === Events ===
 
@@ -144,6 +139,7 @@ public struct Predict<phantom Quote> has key {
     pricing_config: PricingConfig,
     /// Risk limits (admin-controlled)
     risk_config: RiskConfig,
+    oracle_config: OracleConfig,
     /// Whether trading (mint) is globally paused
     trading_paused: bool,
 }
@@ -169,11 +165,14 @@ public fun get_trade_amounts<Quote>(
     quantity: u64,
     clock: &Clock,
 ): (u64, u64) {
+    predict.oracle_config.assert_key_matches(oracle, &key);
     if (!oracle.is_settled()) {
-        assert!(oracle.is_active(), EOracleInactive);
-        oracle.assert_not_stale(clock);
+        oracle_config::assert_operational_oracle(oracle, clock);
     };
-    let (bid, ask) = predict.get_quote(oracle, key, clock);
+
+    let strike = key.strike();
+    let is_up = key.is_up();
+    let (bid, ask) = predict.get_quote(oracle, strike, is_up, clock);
     (math::mul(ask, quantity), math::mul(bid, quantity))
 }
 
@@ -191,18 +190,19 @@ public fun mint<Quote>(
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(!predict.trading_paused, ETradingPaused);
     assert!(quantity > 0, EZeroQuantity);
-    key.assert_matches_oracle(oracle);
-    assert!(!oracle.is_settled(), EOracleSettled);
-    assert!(clock.timestamp_ms() < oracle.expiry(), EOracleExpired);
-    assert!(oracle.is_active(), EOracleInactive);
-    oracle.assert_not_stale(clock);
+
+    predict.oracle_config.assert_key_matches(oracle, &key);
+    oracle_config::assert_mintable_oracle(oracle, clock);
 
     let strike = key.strike();
     let is_up = key.is_up();
 
-    predict.vault.insert_position(oracle, is_up, strike, quantity, clock, ctx);
+    predict.vault.insert_position(oracle.id(), is_up, strike, quantity, ctx);
+    predict.refresh_oracle_risk(oracle, clock);
 
-    let (_bid, ask) = predict.get_quote(oracle, key, clock);
+    // Quote against the post-trade state so the trader pays for the liability
+    // their own mint just added to the vault.
+    let (_bid, ask) = predict.get_quote(oracle, strike, is_up, clock);
     let cost = math::mul(ask, quantity);
 
     let payment = manager.withdraw<Quote>(cost, ctx).into_balance();
@@ -237,19 +237,22 @@ public fun redeem<Quote>(
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(quantity > 0, EZeroQuantity);
-    key.assert_matches_oracle(oracle);
+    predict.oracle_config.assert_key_matches(oracle, &key);
     if (!oracle.is_settled()) {
-        assert!(oracle.is_active(), EOracleInactive);
-        oracle.assert_not_stale(clock);
+        oracle_config::assert_operational_oracle(oracle, clock);
     };
+
     manager.decrease_position(key, quantity);
 
     let strike = key.strike();
     let is_up = key.is_up();
 
-    predict.vault.remove_position(oracle, is_up, strike, quantity, clock);
+    predict.vault.remove_position(oracle.id(), is_up, strike, quantity);
+    predict.refresh_oracle_risk(oracle, clock);
 
-    let (bid, _ask) = predict.get_quote(oracle, key, clock);
+    // Quote against the post-trade state so the seller is paid from the
+    // liability after their position has been removed from the vault.
+    let (bid, _ask) = predict.get_quote(oracle, strike, is_up, clock);
     let payout = math::mul(bid, quantity);
 
     let payout_balance = predict.vault.dispense_payout(payout);
@@ -271,6 +274,8 @@ public fun redeem<Quote>(
     });
 }
 
+// TODO: Update collateralized minting to share the same pricing and risk
+// admission checks as standard mint flows.
 /// Mint a position using another position as collateral (no USDC cost).
 /// - UP collateral (lower strike) -> UP minted (higher strike)
 /// - DOWN collateral (higher strike) -> DOWN minted (lower strike)
@@ -287,23 +292,11 @@ public fun mint_collateralized<Quote>(
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(!predict.trading_paused, ETradingPaused);
     assert!(quantity > 0, EZeroQuantity);
-    locked_key.assert_matches_oracle(oracle);
-    minted_key.assert_matches_oracle(oracle);
-    assert!(!oracle.is_settled(), EOracleSettled);
-    assert!(clock.timestamp_ms() < oracle.expiry(), EOracleExpired);
-    assert!(oracle.is_active(), EOracleInactive);
-    oracle.assert_not_stale(clock);
-    oracle::assert_valid_strike(oracle, locked_key.strike());
-    oracle::assert_valid_strike(oracle, minted_key.strike());
+    assert_collateral_valid(&locked_key, &minted_key);
 
-    let valid_pair = if (locked_key.is_up() && minted_key.is_up()) {
-        locked_key.strike() < minted_key.strike()
-    } else if (locked_key.is_down() && minted_key.is_down()) {
-        locked_key.strike() > minted_key.strike()
-    } else {
-        false
-    };
-    assert!(valid_pair, EInvalidCollateralPair);
+    predict.oracle_config.assert_key_matches(oracle, &locked_key);
+    predict.oracle_config.assert_key_matches(oracle, &minted_key);
+    oracle_config::assert_mintable_oracle(oracle, clock);
 
     manager.lock_collateral(locked_key, minted_key, quantity);
     manager.increase_position(minted_key, quantity);
@@ -419,12 +412,22 @@ public(package) fun create<Quote>(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxCo
         treasury_cap,
         pricing_config: pricing_config::new(),
         risk_config: risk_config::new(),
+        oracle_config: oracle_config::new(ctx),
         trading_paused: false,
     };
     let predict_id = object::id(&predict);
     transfer::share_object(predict);
 
     predict_id
+}
+
+public(package) fun add_oracle_grid<Quote>(
+    predict: &mut Predict<Quote>,
+    oracle_id: ID,
+    min_strike: u64,
+    tick_size: u64,
+) {
+    predict.oracle_config.add_oracle_grid(oracle_id, min_strike, tick_size);
 }
 
 /// Whether trading is currently paused.
@@ -501,6 +504,7 @@ public(package) fun create_test_predict<Quote>(ctx: &mut TxContext): Predict<Quo
         treasury_cap,
         pricing_config: pricing_config::new(),
         risk_config: risk_config::new(),
+        oracle_config: oracle_config::new(ctx),
         trading_paused: false,
     }
 }
@@ -508,6 +512,11 @@ public(package) fun create_test_predict<Quote>(ctx: &mut TxContext): Predict<Quo
 #[test_only]
 public(package) fun vault_mut<Quote>(predict: &mut Predict<Quote>): &mut Vault<Quote> {
     &mut predict.vault
+}
+
+#[test_only]
+public(package) fun oracle_config<Quote>(predict: &Predict<Quote>): &OracleConfig {
+    &predict.oracle_config
 }
 
 #[test_only]
@@ -539,44 +548,41 @@ fun emit_pricing_config_updated<Quote>(predict: &Predict<Quote>) {
 fun get_quote<Quote>(
     predict: &Predict<Quote>,
     oracle: &OracleSVI,
-    key: MarketKey,
+    strike: u64,
+    is_up: bool,
     clock: &Clock,
 ): (u64, u64) {
-    let strike = key.strike();
-    let is_up = key.is_up();
-    let price = oracle.get_binary_price(strike, is_up, clock);
+    let fair_price = predict.oracle_config.binary_price(oracle, strike, is_up, clock);
 
-    if (oracle.is_settled()) return (price, price);
-
-    let complement = constants::float_scaling!() - price;
-    let variance = math::mul(price, complement);
-    let bernoulli_factor = predict_math::sqrt(variance, constants::float_scaling!());
-    let bernoulli_spread = math::mul(predict.pricing_config.base_spread(), bernoulli_factor);
-    let spread =
-        bernoulli_spread.max(predict.pricing_config.min_spread())
-        + predict.utilization_spread();
-
-    let bid = if (price > spread) { price - spread } else { 0 };
-    let ask = (price + spread).min(constants::float_scaling!());
-
-    (bid, ask)
+    predict
+        .pricing_config
+        .quote_from_fair_price(
+            fair_price,
+            oracle.is_settled(),
+            predict.vault.total_mtm(),
+            predict.vault.balance(),
+        )
 }
 
-/// Utilization spread: penalizes both sides as vault approaches capacity.
-/// Uses util^2 for a gentle-then-aggressive curve.
-fun utilization_spread<Quote>(predict: &Predict<Quote>): u64 {
-    let liability = predict.vault.total_mtm();
-    let balance = predict.vault.balance();
-    if (balance == 0 || liability == 0) return 0;
-
-    let util = if (liability >= balance) {
-        constants::float_scaling!()
-    } else {
-        math::div(liability, balance)
+fun refresh_oracle_risk<Quote>(predict: &mut Predict<Quote>, oracle: &OracleSVI, clock: &Clock) {
+    let oracle_id = oracle.id();
+    let (min_strike, max_strike) = predict.vault.oracle_strike_range(oracle_id);
+    if (min_strike == 0 && max_strike == 0) {
+        // `strike_range` uses (0, 0) as the empty-oracle sentinel.
+        predict.vault.set_mtm(oracle_id, 0);
+        return
     };
-    let util_sq = math::mul(util, util);
-    math::mul(
-        predict.pricing_config.base_spread(),
-        math::mul(predict.pricing_config.utilization_multiplier(), util_sq),
-    )
+    let curve = predict.oracle_config.build_curve(oracle, min_strike, max_strike, clock);
+    predict.vault.set_mtm_with_curve(oracle_id, &curve);
+}
+
+fun assert_collateral_valid(locked_key: &MarketKey, minted_key: &MarketKey) {
+    let valid_pair = if (locked_key.is_up() && minted_key.is_up()) {
+        locked_key.strike() < minted_key.strike()
+    } else if (locked_key.is_down() && minted_key.is_down()) {
+        locked_key.strike() > minted_key.strike()
+    } else {
+        false
+    };
+    assert!(valid_pair, EInvalidCollateralPair);
 }

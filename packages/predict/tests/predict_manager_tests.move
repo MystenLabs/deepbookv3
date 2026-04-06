@@ -122,7 +122,7 @@ fun decrease_position_aborts_unknown_key() {
 
         manager.decrease_position(key, 10);
 
-        abort
+        abort 999
     }
 }
 
@@ -137,7 +137,7 @@ fun decrease_position_aborts_insufficient_free() {
         manager.increase_position(key, 50);
         manager.decrease_position(key, 51);
 
-        abort
+        abort 999
     }
 }
 
@@ -182,7 +182,7 @@ fun lock_collateral_aborts_unknown_key() {
 
         manager.lock_collateral(up_key, down_key, 10);
 
-        abort
+        abort 999
     }
 }
 
@@ -198,7 +198,7 @@ fun lock_collateral_aborts_insufficient_free() {
         manager.increase_position(up_key, 50);
         manager.lock_collateral(up_key, down_key, 51);
 
-        abort
+        abort 999
     }
 }
 
@@ -255,7 +255,7 @@ fun release_collateral_aborts_unknown_pair() {
 
         manager.release_collateral(up_key, down_key, 10);
 
-        abort
+        abort 999
     }
 }
 
@@ -272,7 +272,7 @@ fun release_collateral_aborts_insufficient_locked() {
         manager.lock_collateral(up_key, down_key, 50);
         manager.release_collateral(up_key, down_key, 51);
 
-        abort
+        abort 999
     }
 }
 
@@ -404,7 +404,7 @@ fun deposit_aborts_if_not_owner() {
         let coin = coin::mint_for_testing<SUI>(1000, scenario.ctx());
         manager.deposit(coin, scenario.ctx());
 
-        abort
+        abort 999
     }
 }
 
@@ -424,7 +424,7 @@ fun withdraw_aborts_if_not_owner() {
         let mut manager = scenario.take_shared<PredictManager>();
         let _withdrawn = manager.withdraw<SUI>(100, scenario.ctx());
 
-        abort
+        abort 999
     }
 }
 
@@ -447,7 +447,7 @@ fun decrease_fails_when_all_free_is_locked() {
         // free is now 0, should fail
         manager.decrease_position(up_key, 1);
 
-        abort
+        abort 999
     }
 }
 

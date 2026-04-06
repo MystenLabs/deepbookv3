@@ -7,7 +7,7 @@ module deepbook_predict::risk_config;
 use deepbook_predict::constants;
 
 // === Errors ===
-const EExceedsMaxPct: u64 = 1;
+const EExceedsMaxPct: u64 = 0;
 
 // === Structs ===
 

@@ -1,10 +1,11 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// Unit tests for treap insertion, removal, aggregation, and curve evaluation.
 #[test_only]
 module deepbook_predict::treap_tests;
 
-use deepbook_predict::{constants, oracle::new_curve_point, treap};
+use deepbook_predict::{constants, oracle_config::new_curve_point, treap};
 use std::unit_test::{destroy, assert_eq};
 
 // === Insert & Size ===
@@ -185,7 +186,7 @@ fun remove_excess_up_aborts() {
     t.insert(50 * constants::float_scaling!(), 10 * constants::float_scaling!(), true);
     t.remove(50 * constants::float_scaling!(), 11 * constants::float_scaling!(), true);
 
-    abort
+    abort 999
 }
 
 #[test, expected_failure(abort_code = treap::EInsufficientQuantity)]
@@ -196,7 +197,7 @@ fun remove_excess_dn_aborts() {
     t.insert(50 * constants::float_scaling!(), 10 * constants::float_scaling!(), false);
     t.remove(50 * constants::float_scaling!(), 11 * constants::float_scaling!(), false);
 
-    abort
+    abort 999
 }
 
 #[test, expected_failure(abort_code = treap::ENodeNotFound)]
@@ -207,7 +208,7 @@ fun remove_nonexistent_strike_aborts() {
     t.insert(50 * constants::float_scaling!(), 10 * constants::float_scaling!(), true);
     t.remove(60 * constants::float_scaling!(), 5 * constants::float_scaling!(), true);
 
-    abort
+    abort 999
 }
 
 // === Remove with rotations (stress the remove_node path) ===

@@ -1,14 +1,16 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// Unit tests for Predict registry setup, oracle creation, and admin controls.
 #[test_only]
 module deepbook_predict::registry_tests;
 
 use deepbook_predict::{
     constants::oracle_strike_grid_ticks,
-    oracle::{Self, OracleSVI},
+    oracle::OracleSVI,
+    oracle_config,
     plp::PLP,
-    predict::Predict,
+    predict::{Self as predict, Predict},
     registry::{Self, AdminCap, Registry}
 };
 use std::unit_test::{assert_eq, destroy};
@@ -19,13 +21,32 @@ const TEST_MIN_STRIKE: u64 = 1_000_000_000;
 const TEST_TICK_SIZE: u64 = 1_000_000_000;
 
 // Setup: init registry, return scenario with AdminCap transferred to ADMIN.
-fun setup(): Scenario {
+fun setup(): (Scenario, ID) {
     let mut scenario = test_scenario::begin(ADMIN);
+    let registry_id;
     {
-        registry::init_for_testing(scenario.ctx());
+        registry_id = registry::init_for_testing(scenario.ctx());
     };
     scenario.next_tx(ADMIN);
-    scenario
+    (scenario, registry_id)
+}
+
+fun create_shared_predict(
+    scenario: &mut Scenario,
+    registry: &mut Registry,
+    admin_cap: &AdminCap,
+): ID {
+    let treasury_cap = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
+    registry.create_predict<SUI>(admin_cap, treasury_cap, scenario.ctx())
+}
+
+fun setup_with_predict(): (Scenario, ID, ID, AdminCap) {
+    let (mut scenario, registry_id) = setup();
+    let admin_cap = scenario.take_from_sender<AdminCap>();
+    let mut registry = scenario.take_shared_by_id<Registry>(registry_id);
+    let predict_id = create_shared_predict(&mut scenario, &mut registry, &admin_cap);
+    test_scenario::return_shared(registry);
+    (scenario, registry_id, predict_id, admin_cap)
 }
 
 // ============================================================
@@ -34,13 +55,13 @@ fun setup(): Scenario {
 
 #[test]
 fun init_creates_registry_and_admin_cap() {
-    let scenario = setup();
+    let (scenario, registry_id) = setup();
 
     // AdminCap transferred to ADMIN
     let admin_cap = scenario.take_from_sender<AdminCap>();
 
     // Registry is shared and has no oracle IDs for any cap
-    let registry = scenario.take_shared<Registry>();
+    let registry = scenario.take_shared_by_id<Registry>(registry_id);
     let cap_id = object::id(&admin_cap);
     assert_eq!(registry.oracle_ids(cap_id).length(), 0);
 
@@ -52,9 +73,9 @@ fun init_creates_registry_and_admin_cap() {
 
 #[test]
 fun init_registry_has_no_predict_id() {
-    let scenario = setup();
+    let (scenario, registry_id) = setup();
 
-    let registry = scenario.take_shared<Registry>();
+    let registry = scenario.take_shared_by_id<Registry>(registry_id);
     assert!(registry.predict_id().is_none());
     test_scenario::return_shared(registry);
 
@@ -63,9 +84,9 @@ fun init_registry_has_no_predict_id() {
 
 #[test]
 fun init_registry_has_no_oracle_ids() {
-    let scenario = setup();
+    let (scenario, registry_id) = setup();
 
-    let registry = scenario.take_shared<Registry>();
+    let registry = scenario.take_shared_by_id<Registry>(registry_id);
     let fake_id = object::id_from_address(@0x1);
     assert_eq!(registry.oracle_ids(fake_id).length(), 0);
     test_scenario::return_shared(registry);
@@ -79,10 +100,10 @@ fun init_registry_has_no_oracle_ids() {
 
 #[test]
 fun create_predict_succeeds() {
-    let mut scenario = setup();
+    let (mut scenario, registry_id) = setup();
 
     let admin_cap = scenario.take_from_sender<AdminCap>();
-    let mut registry = scenario.take_shared<Registry>();
+    let mut registry = scenario.take_shared_by_id<Registry>(registry_id);
 
     let treasury_cap = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
     let predict_id = registry.create_predict<SUI>(&admin_cap, treasury_cap, scenario.ctx());
@@ -96,17 +117,17 @@ fun create_predict_succeeds() {
 
 #[test, expected_failure(abort_code = registry::EPredictAlreadyCreated)]
 fun create_predict_twice_aborts() {
-    let mut scenario = setup();
+    let (mut scenario, registry_id) = setup();
 
     let admin_cap = scenario.take_from_sender<AdminCap>();
-    let mut registry = scenario.take_shared<Registry>();
+    let mut registry = scenario.take_shared_by_id<Registry>(registry_id);
     let tc1 = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
     registry.create_predict<SUI>(&admin_cap, tc1, scenario.ctx());
     // Second call should abort
     let tc2 = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
     registry.create_predict<SUI>(&admin_cap, tc2, scenario.ctx());
 
-    abort
+    abort 999
 }
 
 // ============================================================
@@ -115,7 +136,7 @@ fun create_predict_twice_aborts() {
 
 #[test]
 fun create_oracle_cap_succeeds() {
-    let mut scenario = setup();
+    let (mut scenario, _registry_id) = setup();
 
     let admin_cap = scenario.take_from_sender<AdminCap>();
 
@@ -132,15 +153,16 @@ fun create_oracle_cap_succeeds() {
 
 #[test]
 fun create_oracle_and_tracks_in_registry() {
-    let mut scenario = setup();
-
-    let admin_cap = scenario.take_from_sender<AdminCap>();
-    let mut registry = scenario.take_shared<Registry>();
+    let (mut scenario, registry_id, predict_id, admin_cap) = setup_with_predict();
+    scenario.next_tx(ADMIN);
+    let mut registry = scenario.take_shared_by_id<Registry>(registry_id);
+    let mut predict = scenario.take_shared_by_id<Predict<SUI>>(predict_id);
 
     let cap = registry::create_oracle_cap(&admin_cap, scenario.ctx());
     let cap_id = object::id(&cap);
 
     let oracle_id = registry.create_oracle(
+        &mut predict,
         &admin_cap,
         &cap,
         b"BTC".to_string(),
@@ -156,20 +178,22 @@ fun create_oracle_and_tracks_in_registry() {
     assert_eq!(ids[0], oracle_id);
 
     destroy(cap);
+    test_scenario::return_shared(predict);
     test_scenario::return_shared(registry);
     scenario.return_to_sender(admin_cap);
     scenario.end();
 }
 
 #[test]
-fun create_oracle_persists_grid_on_oracle() {
-    let mut scenario = setup();
-
-    let admin_cap = scenario.take_from_sender<AdminCap>();
-    let mut registry = scenario.take_shared<Registry>();
+fun create_oracle_persists_grid_on_predict_runtime() {
+    let (mut scenario, registry_id, predict_id, admin_cap) = setup_with_predict();
+    scenario.next_tx(ADMIN);
+    let mut registry = scenario.take_shared_by_id<Registry>(registry_id);
+    let mut predict = scenario.take_shared_by_id<Predict<SUI>>(predict_id);
 
     let cap = registry::create_oracle_cap(&admin_cap, scenario.ctx());
-    registry.create_oracle(
+    let oracle_id = registry.create_oracle(
+        &mut predict,
         &admin_cap,
         &cap,
         b"BTC".to_string(),
@@ -179,33 +203,46 @@ fun create_oracle_persists_grid_on_oracle() {
         scenario.ctx(),
     );
 
+    test_scenario::return_shared(predict);
+    test_scenario::return_shared(registry);
     scenario.next_tx(ADMIN);
+
     {
-        let oracle = scenario.take_shared<OracleSVI>();
-        assert_eq!(oracle::min_strike(&oracle), TEST_MIN_STRIKE);
-        assert_eq!(
-            oracle::max_strike(&oracle),
-            TEST_MIN_STRIKE + oracle_strike_grid_ticks!() * TEST_TICK_SIZE,
+        let predict = scenario.take_shared_by_id<Predict<SUI>>(predict_id);
+        let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
+        let oracle_config_ref = predict::oracle_config(&predict);
+        let max_strike = TEST_MIN_STRIKE + oracle_strike_grid_ticks!() * TEST_TICK_SIZE;
+
+        oracle_config::assert_valid_strike(
+            oracle_config_ref,
+            &oracle,
+            TEST_MIN_STRIKE,
         );
-        assert_eq!(oracle::tick_size(&oracle), TEST_TICK_SIZE);
+        oracle_config::assert_valid_strike(
+            oracle_config_ref,
+            &oracle,
+            max_strike,
+        );
+
+        test_scenario::return_shared(predict);
         test_scenario::return_shared(oracle);
     };
 
     destroy(cap);
-    test_scenario::return_shared(registry);
     scenario.return_to_sender(admin_cap);
     scenario.end();
 }
 
-#[test, expected_failure(abort_code = oracle::EInvalidTickSize)]
+#[test, expected_failure(abort_code = registry::EInvalidTickSize)]
 fun create_oracle_invalid_tick_size_aborts() {
-    let mut scenario = setup();
-
-    let admin_cap = scenario.take_from_sender<AdminCap>();
-    let mut registry = scenario.take_shared<Registry>();
+    let (mut scenario, registry_id, predict_id, admin_cap) = setup_with_predict();
+    scenario.next_tx(ADMIN);
+    let mut registry = scenario.take_shared_by_id<Registry>(registry_id);
+    let mut predict = scenario.take_shared_by_id<Predict<SUI>>(predict_id);
     let cap = registry::create_oracle_cap(&admin_cap, scenario.ctx());
 
     registry.create_oracle(
+        &mut predict,
         &admin_cap,
         &cap,
         b"BTC".to_string(),
@@ -215,18 +252,19 @@ fun create_oracle_invalid_tick_size_aborts() {
         scenario.ctx(),
     );
 
-    abort
+    abort 999
 }
 
-#[test, expected_failure(abort_code = oracle::EInvalidStrikeGrid)]
+#[test, expected_failure(abort_code = registry::EInvalidStrikeGrid)]
 fun create_oracle_zero_min_strike_aborts() {
-    let mut scenario = setup();
-
-    let admin_cap = scenario.take_from_sender<AdminCap>();
-    let mut registry = scenario.take_shared<Registry>();
+    let (mut scenario, registry_id, predict_id, admin_cap) = setup_with_predict();
+    scenario.next_tx(ADMIN);
+    let mut registry = scenario.take_shared_by_id<Registry>(registry_id);
+    let mut predict = scenario.take_shared_by_id<Predict<SUI>>(predict_id);
     let cap = registry::create_oracle_cap(&admin_cap, scenario.ctx());
 
     registry.create_oracle(
+        &mut predict,
         &admin_cap,
         &cap,
         b"BTC".to_string(),
@@ -236,20 +274,21 @@ fun create_oracle_zero_min_strike_aborts() {
         scenario.ctx(),
     );
 
-    abort
+    abort 999
 }
 
 #[test]
 fun create_multiple_oracles_same_cap() {
-    let mut scenario = setup();
-
-    let admin_cap = scenario.take_from_sender<AdminCap>();
-    let mut registry = scenario.take_shared<Registry>();
+    let (mut scenario, registry_id, predict_id, admin_cap) = setup_with_predict();
+    scenario.next_tx(ADMIN);
+    let mut registry = scenario.take_shared_by_id<Registry>(registry_id);
+    let mut predict = scenario.take_shared_by_id<Predict<SUI>>(predict_id);
 
     let cap = registry::create_oracle_cap(&admin_cap, scenario.ctx());
     let cap_id = object::id(&cap);
 
     let id1 = registry.create_oracle(
+        &mut predict,
         &admin_cap,
         &cap,
         b"BTC".to_string(),
@@ -259,6 +298,7 @@ fun create_multiple_oracles_same_cap() {
         scenario.ctx(),
     );
     let id2 = registry.create_oracle(
+        &mut predict,
         &admin_cap,
         &cap,
         b"ETH".to_string(),
@@ -274,6 +314,7 @@ fun create_multiple_oracles_same_cap() {
     assert_eq!(ids[1], id2);
 
     destroy(cap);
+    test_scenario::return_shared(predict);
     test_scenario::return_shared(registry);
     scenario.return_to_sender(admin_cap);
     scenario.end();
@@ -281,10 +322,10 @@ fun create_multiple_oracles_same_cap() {
 
 #[test]
 fun create_oracles_different_caps_tracked_separately() {
-    let mut scenario = setup();
-
-    let admin_cap = scenario.take_from_sender<AdminCap>();
-    let mut registry = scenario.take_shared<Registry>();
+    let (mut scenario, registry_id, predict_id, admin_cap) = setup_with_predict();
+    scenario.next_tx(ADMIN);
+    let mut registry = scenario.take_shared_by_id<Registry>(registry_id);
+    let mut predict = scenario.take_shared_by_id<Predict<SUI>>(predict_id);
 
     let cap1 = registry::create_oracle_cap(&admin_cap, scenario.ctx());
     let cap2 = registry::create_oracle_cap(&admin_cap, scenario.ctx());
@@ -292,6 +333,7 @@ fun create_oracles_different_caps_tracked_separately() {
     let cap2_id = object::id(&cap2);
 
     let id1 = registry.create_oracle(
+        &mut predict,
         &admin_cap,
         &cap1,
         b"BTC".to_string(),
@@ -301,6 +343,7 @@ fun create_oracles_different_caps_tracked_separately() {
         scenario.ctx(),
     );
     let id2 = registry.create_oracle(
+        &mut predict,
         &admin_cap,
         &cap2,
         b"ETH".to_string(),
@@ -320,6 +363,7 @@ fun create_oracles_different_caps_tracked_separately() {
 
     destroy(cap1);
     destroy(cap2);
+    test_scenario::return_shared(predict);
     test_scenario::return_shared(registry);
     scenario.return_to_sender(admin_cap);
     scenario.end();
@@ -331,13 +375,14 @@ fun create_oracles_different_caps_tracked_separately() {
 
 #[test]
 fun register_oracle_cap_on_oracle() {
-    let mut scenario = setup();
-
-    let admin_cap = scenario.take_from_sender<AdminCap>();
-    let mut registry = scenario.take_shared<Registry>();
+    let (mut scenario, registry_id, predict_id, admin_cap) = setup_with_predict();
+    scenario.next_tx(ADMIN);
+    let mut registry = scenario.take_shared_by_id<Registry>(registry_id);
+    let mut predict = scenario.take_shared_by_id<Predict<SUI>>(predict_id);
 
     let cap1 = registry::create_oracle_cap(&admin_cap, scenario.ctx());
-    registry.create_oracle(
+    let oracle_id = registry.create_oracle(
+        &mut predict,
         &admin_cap,
         &cap1,
         b"BTC".to_string(),
@@ -350,16 +395,17 @@ fun register_oracle_cap_on_oracle() {
     // Create a second cap and register it on the oracle
     let cap2 = registry::create_oracle_cap(&admin_cap, scenario.ctx());
 
+    test_scenario::return_shared(predict);
+    test_scenario::return_shared(registry);
     scenario.next_tx(ADMIN);
     {
-        let mut oracle = scenario.take_shared<OracleSVI>();
+        let mut oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
         registry::register_oracle_cap(&mut oracle, &admin_cap, &cap2);
         test_scenario::return_shared(oracle);
     };
 
     destroy(cap1);
     destroy(cap2);
-    test_scenario::return_shared(registry);
     scenario.return_to_sender(admin_cap);
     scenario.end();
 }
@@ -370,17 +416,10 @@ fun register_oracle_cap_on_oracle() {
 
 #[test]
 fun set_trading_paused_via_registry() {
-    let mut scenario = setup();
-
-    let admin_cap = scenario.take_from_sender<AdminCap>();
-    let mut registry = scenario.take_shared<Registry>();
-
-    let tc = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
-    registry.create_predict<SUI>(&admin_cap, tc, scenario.ctx());
-
+    let (mut scenario, _registry_id, predict_id, admin_cap) = setup_with_predict();
     scenario.next_tx(ADMIN);
     {
-        let mut predict = scenario.take_shared<Predict<SUI>>();
+        let mut predict = scenario.take_shared_by_id<Predict<SUI>>(predict_id);
         registry::set_trading_paused(&mut predict, &admin_cap, true);
         assert_eq!(predict.trading_paused(), true);
         registry::set_trading_paused(&mut predict, &admin_cap, false);
@@ -388,99 +427,66 @@ fun set_trading_paused_via_registry() {
         test_scenario::return_shared(predict);
     };
 
-    test_scenario::return_shared(registry);
     scenario.return_to_sender(admin_cap);
     scenario.end();
 }
 
 #[test]
 fun set_base_spread_via_registry() {
-    let mut scenario = setup();
-
-    let admin_cap = scenario.take_from_sender<AdminCap>();
-    let mut registry = scenario.take_shared<Registry>();
-
-    let tc = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
-    registry.create_predict<SUI>(&admin_cap, tc, scenario.ctx());
-
+    let (mut scenario, _registry_id, predict_id, admin_cap) = setup_with_predict();
     scenario.next_tx(ADMIN);
     {
-        let mut predict = scenario.take_shared<Predict<SUI>>();
+        let mut predict = scenario.take_shared_by_id<Predict<SUI>>(predict_id);
         registry::set_base_spread(&mut predict, &admin_cap, 100_000_000);
         assert_eq!(predict.base_spread(), 100_000_000);
         test_scenario::return_shared(predict);
     };
 
-    test_scenario::return_shared(registry);
     scenario.return_to_sender(admin_cap);
     scenario.end();
 }
 
 #[test]
 fun set_min_spread_via_registry() {
-    let mut scenario = setup();
-
-    let admin_cap = scenario.take_from_sender<AdminCap>();
-    let mut registry = scenario.take_shared<Registry>();
-
-    let tc = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
-    registry.create_predict<SUI>(&admin_cap, tc, scenario.ctx());
-
+    let (mut scenario, _registry_id, predict_id, admin_cap) = setup_with_predict();
     scenario.next_tx(ADMIN);
     {
-        let mut predict = scenario.take_shared<Predict<SUI>>();
+        let mut predict = scenario.take_shared_by_id<Predict<SUI>>(predict_id);
         registry::set_min_spread(&mut predict, &admin_cap, 10_000_000);
         assert_eq!(predict.min_spread(), 10_000_000);
         test_scenario::return_shared(predict);
     };
 
-    test_scenario::return_shared(registry);
     scenario.return_to_sender(admin_cap);
     scenario.end();
 }
 
 #[test]
 fun set_utilization_multiplier_via_registry() {
-    let mut scenario = setup();
-
-    let admin_cap = scenario.take_from_sender<AdminCap>();
-    let mut registry = scenario.take_shared<Registry>();
-
-    let tc = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
-    registry.create_predict<SUI>(&admin_cap, tc, scenario.ctx());
-
+    let (mut scenario, _registry_id, predict_id, admin_cap) = setup_with_predict();
     scenario.next_tx(ADMIN);
     {
-        let mut predict = scenario.take_shared<Predict<SUI>>();
+        let mut predict = scenario.take_shared_by_id<Predict<SUI>>(predict_id);
         registry::set_utilization_multiplier(&mut predict, &admin_cap, 3_000_000_000);
         assert_eq!(predict.utilization_multiplier(), 3_000_000_000);
         test_scenario::return_shared(predict);
     };
 
-    test_scenario::return_shared(registry);
     scenario.return_to_sender(admin_cap);
     scenario.end();
 }
 
 #[test]
 fun set_max_total_exposure_pct_via_registry() {
-    let mut scenario = setup();
-
-    let admin_cap = scenario.take_from_sender<AdminCap>();
-    let mut registry = scenario.take_shared<Registry>();
-
-    let tc = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
-    registry.create_predict<SUI>(&admin_cap, tc, scenario.ctx());
-
+    let (mut scenario, _registry_id, predict_id, admin_cap) = setup_with_predict();
     scenario.next_tx(ADMIN);
     {
-        let mut predict = scenario.take_shared<Predict<SUI>>();
+        let mut predict = scenario.take_shared_by_id<Predict<SUI>>(predict_id);
         registry::set_max_total_exposure_pct(&mut predict, &admin_cap, 500_000_000);
         assert_eq!(predict.max_total_exposure_pct(), 500_000_000);
         test_scenario::return_shared(predict);
     };
 
-    test_scenario::return_shared(registry);
     scenario.return_to_sender(admin_cap);
     scenario.end();
 }

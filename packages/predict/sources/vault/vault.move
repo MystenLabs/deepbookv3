@@ -14,14 +14,14 @@
 module deepbook_predict::vault;
 
 use deepbook::math;
-use deepbook_predict::{oracle::OracleSVI, treap::{Self, Treap}};
-use sui::{balance::{Self, Balance}, clock::Clock, table::{Self, Table}};
+use deepbook_predict::{oracle_config::CurvePoint, treap::{Self, Treap}};
+use sui::{balance::{Self, Balance}, table::{Self, Table}};
 
 // === Errors ===
-const EInsufficientBalance: u64 = 1;
-const EExceedsMaxTotalExposure: u64 = 2;
-const EOracleExposureNotFound: u64 = 3;
-const EMtmExceedsBalance: u64 = 4;
+const EInsufficientBalance: u64 = 0;
+const EExceedsMaxTotalExposure: u64 = 1;
+const EOracleExposureNotFound: u64 = 2;
+const EMtmExceedsBalance: u64 = 3;
 
 // === Structs ===
 
@@ -66,17 +66,15 @@ public(package) fun new<Quote>(ctx: &mut TxContext): Vault<Quote> {
     }
 }
 
-/// Insert a position into the treap and refresh risk metrics.
+/// Insert a position into the per-oracle exposure structure and update cached max payout.
 public(package) fun insert_position<Quote>(
     vault: &mut Vault<Quote>,
-    oracle: &OracleSVI,
+    oracle_id: ID,
     is_up: bool,
     strike: u64,
     quantity: u64,
-    clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let oracle_id = oracle.id();
     if (!vault.oracle_treaps.contains(oracle_id)) {
         vault.oracle_treaps.add(oracle_id, treap::new(ctx));
     };
@@ -84,7 +82,6 @@ public(package) fun insert_position<Quote>(
     vault.oracle_treaps[oracle_id].insert(strike, quantity, is_up);
     let new_max_payout = vault.oracle_treaps[oracle_id].max_payout();
     vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
-    vault.refresh_oracle_risk(oracle, clock);
 }
 
 /// Accept payment into vault balance.
@@ -92,22 +89,19 @@ public(package) fun accept_payment<Quote>(vault: &mut Vault<Quote>, payment: Bal
     vault.balance.join(payment);
 }
 
-/// Remove a position from the treap and refresh risk metrics.
+/// Remove a position from the treap.
 public(package) fun remove_position<Quote>(
     vault: &mut Vault<Quote>,
-    oracle: &OracleSVI,
+    oracle_id: ID,
     is_up: bool,
     strike: u64,
     quantity: u64,
-    clock: &Clock,
 ) {
-    let oracle_id = oracle.id();
     assert!(vault.oracle_treaps.contains(oracle_id), EOracleExposureNotFound);
     let old_max_payout = vault.oracle_treaps[oracle_id].max_payout();
     vault.oracle_treaps[oracle_id].remove(strike, quantity, is_up);
     let new_max_payout = vault.oracle_treaps[oracle_id].max_payout();
     vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
-    vault.refresh_oracle_risk(oracle, clock);
 }
 
 /// Dispense payout from vault balance.
@@ -122,22 +116,30 @@ public(package) fun assert_total_exposure<Quote>(vault: &Vault<Quote>, max_total
     assert!(vault.total_mtm <= math::mul(balance, max_total_pct), EExceedsMaxTotalExposure);
 }
 
-/// Refresh cached MTM for one oracle.
-fun refresh_oracle_risk<Quote>(vault: &mut Vault<Quote>, oracle: &OracleSVI, clock: &Clock) {
-    let oracle_id = oracle.id();
-    let treap = &vault.oracle_treaps[oracle_id];
-    if (treap.is_empty()) {
-        let old_mtm = treap.mtm();
-        let treap = &mut vault.oracle_treaps[oracle_id];
-        treap.set_mtm(0);
-        vault.total_mtm = vault.total_mtm - old_mtm;
-        return
-    };
-    let (min_strike, max_strike) = treap.strike_range();
-    let curve = oracle.build_curve(min_strike, max_strike, clock);
-    let old_mtm = treap.mtm();
-    let new_mtm = treap.evaluate(&curve);
+public(package) fun oracle_strike_range<Quote>(vault: &Vault<Quote>, oracle_id: ID): (u64, u64) {
+    assert!(vault.oracle_treaps.contains(oracle_id), EOracleExposureNotFound);
+    vault.oracle_treaps[oracle_id].strike_range()
+}
+
+public(package) fun set_mtm_with_curve<Quote>(
+    vault: &mut Vault<Quote>,
+    oracle_id: ID,
+    curve: &vector<CurvePoint>,
+) {
+    assert!(vault.oracle_treaps.contains(oracle_id), EOracleExposureNotFound);
+
+    let old_mtm = vault.oracle_treaps[oracle_id].mtm();
+    let new_mtm = vault.oracle_treaps[oracle_id].evaluate(curve);
+
     let treap = &mut vault.oracle_treaps[oracle_id];
     treap.set_mtm(new_mtm);
     vault.total_mtm = vault.total_mtm + new_mtm - old_mtm;
+}
+
+public(package) fun set_mtm<Quote>(vault: &mut Vault<Quote>, oracle_id: ID, mtm: u64) {
+    assert!(vault.oracle_treaps.contains(oracle_id), EOracleExposureNotFound);
+
+    let old_mtm = vault.oracle_treaps[oracle_id].mtm();
+    vault.oracle_treaps[oracle_id].set_mtm(mtm);
+    vault.total_mtm = vault.total_mtm + mtm - old_mtm;
 }
