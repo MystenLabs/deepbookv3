@@ -19,12 +19,17 @@ public struct PredictScenario has copy, drop {
 }
 
 public fun oracle_scenario_idx(s: &PredictScenario): u64 { s.oracle_scenario_idx }
+
 public fun trade_cases(s: &PredictScenario): &vector<TradeCase> { &s.trade_cases }
 
 public fun strike(tc: &TradeCase): u64 { tc.strike }
+
 public fun quantity(tc: &TradeCase): u64 { tc.quantity }
+
 public fun is_up(tc: &TradeCase): bool { tc.is_up }
+
 public fun expected_cost(tc: &TradeCase): u64 { tc.expected_cost }
+
 public fun expected_redeem_payout(tc: &TradeCase): u64 { tc.expected_redeem_payout }
 
 public fun scenarios(): vector<PredictScenario> {
@@ -33,65 +38,275 @@ public fun scenarios(): vector<PredictScenario> {
         PredictScenario {
             oracle_scenario_idx: 7,
             trade_cases: vector[
-                TradeCase { strike: 70_782_876_450_000, quantity: 10_000_000, is_up: true, expected_cost: 4_937_085, expected_redeem_payout: 4_737_192 },
-                TradeCase { strike: 70_782_876_450_000, quantity: 10_000_000, is_up: false, expected_cost: 5_256_136, expected_redeem_payout: 5_056_234 },
-                TradeCase { strike: 77_861_234_880_000, quantity: 10_000_000, is_up: true, expected_cost: 1_167_430, expected_redeem_payout: 1_042_038 },
-                TradeCase { strike: 63_704_659_590_000, quantity: 10_000_000, is_up: true, expected_cost: 8_567_912, expected_redeem_payout: 8_424_944 },
-                TradeCase { strike: 63_704_659_590_000, quantity: 10_000_000, is_up: false, expected_cost: 1_568_249, expected_redeem_payout: 1_425_542 },
-                TradeCase { strike: 70_782_876_450_000, quantity: 1_000, is_up: true, expected_cost: 493, expected_redeem_payout: 473 },
-                TradeCase { strike: 70_782_876_450_000, quantity: 500_000_000, is_up: true, expected_cost: 246_854_295, expected_redeem_payout: 236_859_602 },
+                TradeCase {
+                    strike: 70_782_876_450_000,
+                    quantity: 10_000_000,
+                    is_up: true,
+                    expected_cost: 4_937_085,
+                    expected_redeem_payout: 4_737_192,
+                },
+                TradeCase {
+                    strike: 70_782_876_450_000,
+                    quantity: 10_000_000,
+                    is_up: false,
+                    expected_cost: 5_256_136,
+                    expected_redeem_payout: 5_056_234,
+                },
+                TradeCase {
+                    strike: 77_861_234_880_000,
+                    quantity: 10_000_000,
+                    is_up: true,
+                    expected_cost: 1_167_430,
+                    expected_redeem_payout: 1_042_038,
+                },
+                TradeCase {
+                    strike: 63_704_659_590_000,
+                    quantity: 10_000_000,
+                    is_up: true,
+                    expected_cost: 8_567_912,
+                    expected_redeem_payout: 8_424_944,
+                },
+                TradeCase {
+                    strike: 63_704_659_590_000,
+                    quantity: 10_000_000,
+                    is_up: false,
+                    expected_cost: 1_568_249,
+                    expected_redeem_payout: 1_425_542,
+                },
+                TradeCase {
+                    strike: 70_782_876_450_000,
+                    quantity: 1_000,
+                    is_up: true,
+                    expected_cost: 493,
+                    expected_redeem_payout: 473,
+                },
+                TradeCase {
+                    strike: 70_782_876_450_000,
+                    quantity: 500_000_000,
+                    is_up: true,
+                    expected_cost: 246_854_295,
+                    expected_redeem_payout: 236_859_602,
+                },
             ],
         },
         // Index 1: S1
         PredictScenario {
             oracle_scenario_idx: 8,
             trade_cases: vector[
-                TradeCase { strike: 74_241_436_240_000, quantity: 10_000_000, is_up: true, expected_cost: 4_998_966, expected_redeem_payout: 4_799_007 },
-                TradeCase { strike: 74_241_436_240_000, quantity: 10_000_000, is_up: false, expected_cost: 5_199_804, expected_redeem_payout: 4_999_843 },
-                TradeCase { strike: 81_665_639_260_000, quantity: 10_000_000, is_up: true, expected_cost: 421_170, expected_redeem_payout: 321_170 },
-                TradeCase { strike: 66_817_381_710_000, quantity: 10_000_000, is_up: true, expected_cost: 9_338_001, expected_redeem_payout: 9_235_039 },
-                TradeCase { strike: 66_817_381_710_000, quantity: 10_000_000, is_up: false, expected_cost: 763_731, expected_redeem_payout: 660_848 },
-                TradeCase { strike: 74_241_436_240_000, quantity: 1_000, is_up: true, expected_cost: 499, expected_redeem_payout: 479 },
-                TradeCase { strike: 74_241_436_240_000, quantity: 500_000_000, is_up: true, expected_cost: 249_948_322, expected_redeem_payout: 239_950_363 },
+                TradeCase {
+                    strike: 74_241_436_240_000,
+                    quantity: 10_000_000,
+                    is_up: true,
+                    expected_cost: 4_998_966,
+                    expected_redeem_payout: 4_799_007,
+                },
+                TradeCase {
+                    strike: 74_241_436_240_000,
+                    quantity: 10_000_000,
+                    is_up: false,
+                    expected_cost: 5_199_804,
+                    expected_redeem_payout: 4_999_843,
+                },
+                TradeCase {
+                    strike: 81_665_639_260_000,
+                    quantity: 10_000_000,
+                    is_up: true,
+                    expected_cost: 421_170,
+                    expected_redeem_payout: 321_170,
+                },
+                TradeCase {
+                    strike: 66_817_381_710_000,
+                    quantity: 10_000_000,
+                    is_up: true,
+                    expected_cost: 9_338_001,
+                    expected_redeem_payout: 9_235_039,
+                },
+                TradeCase {
+                    strike: 66_817_381_710_000,
+                    quantity: 10_000_000,
+                    is_up: false,
+                    expected_cost: 763_731,
+                    expected_redeem_payout: 660_848,
+                },
+                TradeCase {
+                    strike: 74_241_436_240_000,
+                    quantity: 1_000,
+                    is_up: true,
+                    expected_cost: 499,
+                    expected_redeem_payout: 479,
+                },
+                TradeCase {
+                    strike: 74_241_436_240_000,
+                    quantity: 500_000_000,
+                    is_up: true,
+                    expected_cost: 249_948_322,
+                    expected_redeem_payout: 239_950_363,
+                },
             ],
         },
         // Index 2: S3
         PredictScenario {
             oracle_scenario_idx: 10,
             trade_cases: vector[
-                TradeCase { strike: 72_523_259_400_000, quantity: 10_000_000, is_up: true, expected_cost: 5_018_910, expected_redeem_payout: 4_818_936 },
-                TradeCase { strike: 72_523_259_400_000, quantity: 10_000_000, is_up: false, expected_cost: 5_181_017, expected_redeem_payout: 4_981_044 },
-                TradeCase { strike: 79_775_614_350_000, quantity: 10_000_000, is_up: true, expected_cost: 162_659, expected_redeem_payout: 62_659 },
-                TradeCase { strike: 65_270_904_450_000, quantity: 10_000_000, is_up: true, expected_cost: 9_735_670, expected_redeem_payout: 9_635_670 },
-                TradeCase { strike: 65_270_904_450_000, quantity: 10_000_000, is_up: false, expected_cost: 364_284, expected_redeem_payout: 264_284 },
-                TradeCase { strike: 72_523_259_400_000, quantity: 1_000, is_up: true, expected_cost: 501, expected_redeem_payout: 481 },
-                TradeCase { strike: 72_523_259_400_000, quantity: 500_000_000, is_up: true, expected_cost: 250_945_528, expected_redeem_payout: 240_946_843 },
+                TradeCase {
+                    strike: 72_523_259_400_000,
+                    quantity: 10_000_000,
+                    is_up: true,
+                    expected_cost: 5_018_910,
+                    expected_redeem_payout: 4_818_936,
+                },
+                TradeCase {
+                    strike: 72_523_259_400_000,
+                    quantity: 10_000_000,
+                    is_up: false,
+                    expected_cost: 5_181_017,
+                    expected_redeem_payout: 4_981_044,
+                },
+                TradeCase {
+                    strike: 79_775_614_350_000,
+                    quantity: 10_000_000,
+                    is_up: true,
+                    expected_cost: 162_659,
+                    expected_redeem_payout: 62_659,
+                },
+                TradeCase {
+                    strike: 65_270_904_450_000,
+                    quantity: 10_000_000,
+                    is_up: true,
+                    expected_cost: 9_735_670,
+                    expected_redeem_payout: 9_635_670,
+                },
+                TradeCase {
+                    strike: 65_270_904_450_000,
+                    quantity: 10_000_000,
+                    is_up: false,
+                    expected_cost: 364_284,
+                    expected_redeem_payout: 264_284,
+                },
+                TradeCase {
+                    strike: 72_523_259_400_000,
+                    quantity: 1_000,
+                    is_up: true,
+                    expected_cost: 501,
+                    expected_redeem_payout: 481,
+                },
+                TradeCase {
+                    strike: 72_523_259_400_000,
+                    quantity: 500_000_000,
+                    is_up: true,
+                    expected_cost: 250_945_528,
+                    expected_redeem_payout: 240_946_843,
+                },
             ],
         },
         // Index 3: S4
         PredictScenario {
             oracle_scenario_idx: 11,
             trade_cases: vector[
-                TradeCase { strike: 72_167_979_240_000, quantity: 10_000_000, is_up: true, expected_cost: 5_019_109, expected_redeem_payout: 4_819_135 },
-                TradeCase { strike: 72_167_979_240_000, quantity: 10_000_000, is_up: false, expected_cost: 5_180_862, expected_redeem_payout: 4_980_889 },
-                TradeCase { strike: 79_384_690_560_000, quantity: 10_000_000, is_up: true, expected_cost: 175_872, expected_redeem_payout: 75_872 },
-                TradeCase { strike: 64_951_123_580_000, quantity: 10_000_000, is_up: true, expected_cost: 9_684_186, expected_redeem_payout: 9_584_186 },
-                TradeCase { strike: 64_951_123_580_000, quantity: 10_000_000, is_up: false, expected_cost: 415_812, expected_redeem_payout: 315_812 },
-                TradeCase { strike: 72_167_979_240_000, quantity: 1_000, is_up: true, expected_cost: 501, expected_redeem_payout: 481 },
-                TradeCase { strike: 72_167_979_240_000, quantity: 500_000_000, is_up: true, expected_cost: 250_955_475, expected_redeem_payout: 240_956_783 },
+                TradeCase {
+                    strike: 72_167_979_240_000,
+                    quantity: 10_000_000,
+                    is_up: true,
+                    expected_cost: 5_019_109,
+                    expected_redeem_payout: 4_819_135,
+                },
+                TradeCase {
+                    strike: 72_167_979_240_000,
+                    quantity: 10_000_000,
+                    is_up: false,
+                    expected_cost: 5_180_862,
+                    expected_redeem_payout: 4_980_889,
+                },
+                TradeCase {
+                    strike: 79_384_690_560_000,
+                    quantity: 10_000_000,
+                    is_up: true,
+                    expected_cost: 175_872,
+                    expected_redeem_payout: 75_872,
+                },
+                TradeCase {
+                    strike: 64_951_123_580_000,
+                    quantity: 10_000_000,
+                    is_up: true,
+                    expected_cost: 9_684_186,
+                    expected_redeem_payout: 9_584_186,
+                },
+                TradeCase {
+                    strike: 64_951_123_580_000,
+                    quantity: 10_000_000,
+                    is_up: false,
+                    expected_cost: 415_812,
+                    expected_redeem_payout: 315_812,
+                },
+                TradeCase {
+                    strike: 72_167_979_240_000,
+                    quantity: 1_000,
+                    is_up: true,
+                    expected_cost: 501,
+                    expected_redeem_payout: 481,
+                },
+                TradeCase {
+                    strike: 72_167_979_240_000,
+                    quantity: 500_000_000,
+                    is_up: true,
+                    expected_cost: 250_955_475,
+                    expected_redeem_payout: 240_956_783,
+                },
             ],
         },
         // Index 4: S5
         PredictScenario {
             oracle_scenario_idx: 12,
             trade_cases: vector[
-                TradeCase { strike: 72_167_979_240_000, quantity: 10_000_000, is_up: true, expected_cost: 5_019_110, expected_redeem_payout: 4_819_136 },
-                TradeCase { strike: 72_167_979_240_000, quantity: 10_000_000, is_up: false, expected_cost: 5_180_863, expected_redeem_payout: 4_980_889 },
-                TradeCase { strike: 79_384_690_560_000, quantity: 10_000_000, is_up: true, expected_cost: 175_872, expected_redeem_payout: 75_872 },
-                TradeCase { strike: 64_951_123_580_000, quantity: 10_000_000, is_up: true, expected_cost: 9_684_187, expected_redeem_payout: 9_584_187 },
-                TradeCase { strike: 64_951_123_580_000, quantity: 10_000_000, is_up: false, expected_cost: 415_812, expected_redeem_payout: 315_812 },
-                TradeCase { strike: 72_167_979_240_000, quantity: 1_000, is_up: true, expected_cost: 501, expected_redeem_payout: 481 },
-                TradeCase { strike: 72_167_979_240_000, quantity: 500_000_000, is_up: true, expected_cost: 250_955_501, expected_redeem_payout: 240_956_809 },
+                TradeCase {
+                    strike: 72_167_979_240_000,
+                    quantity: 10_000_000,
+                    is_up: true,
+                    expected_cost: 5_019_110,
+                    expected_redeem_payout: 4_819_136,
+                },
+                TradeCase {
+                    strike: 72_167_979_240_000,
+                    quantity: 10_000_000,
+                    is_up: false,
+                    expected_cost: 5_180_863,
+                    expected_redeem_payout: 4_980_889,
+                },
+                TradeCase {
+                    strike: 79_384_690_560_000,
+                    quantity: 10_000_000,
+                    is_up: true,
+                    expected_cost: 175_872,
+                    expected_redeem_payout: 75_872,
+                },
+                TradeCase {
+                    strike: 64_951_123_580_000,
+                    quantity: 10_000_000,
+                    is_up: true,
+                    expected_cost: 9_684_187,
+                    expected_redeem_payout: 9_584_187,
+                },
+                TradeCase {
+                    strike: 64_951_123_580_000,
+                    quantity: 10_000_000,
+                    is_up: false,
+                    expected_cost: 415_812,
+                    expected_redeem_payout: 315_812,
+                },
+                TradeCase {
+                    strike: 72_167_979_240_000,
+                    quantity: 1_000,
+                    is_up: true,
+                    expected_cost: 501,
+                    expected_redeem_payout: 481,
+                },
+                TradeCase {
+                    strike: 72_167_979_240_000,
+                    quantity: 500_000_000,
+                    is_up: true,
+                    expected_cost: 250_955_501,
+                    expected_redeem_payout: 240_956_809,
+                },
             ],
         },
     ]
