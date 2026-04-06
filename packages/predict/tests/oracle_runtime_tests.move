@@ -19,7 +19,8 @@ use sui::{clock, sui::SUI, test_scenario::{Scenario, begin, end, return_shared}}
 
 const ALICE: address = @0xA;
 const RATE_5_PCT: u64 = 50_000_000;
-const DISCOUNT_5PCT_1YR: u64 = 951_229_424; // e^(-0.05*1.0)
+// floor(e^(-0.05 * 1.0) * FLOAT_SCALING)
+const DISCOUNT_5PCT_1YR: u64 = 951_229_424;
 
 fun new_test_clock(now_ms: u64, test: &mut Scenario): clock::Clock {
     let mut test_clock = clock::create_for_testing(test.ctx());
@@ -292,6 +293,46 @@ fun assert_key_matches_succeeds() {
     end(test);
 }
 
+#[test, expected_failure(abort_code = oracle_runtime::EMarketKeyOracleMismatch)]
+fun assert_key_matches_oracle_id_mismatch_aborts() {
+    let mut test = begin(ALICE);
+    let oracle_id_1 = oracle_helper::setup_flat_vol_shared_oracle(
+        ALICE,
+        100 * float!(),
+        100 * float!(),
+        0,
+        1_000_000,
+        10_000,
+        true,
+        &mut test,
+    );
+    let oracle_id_2 = oracle_helper::setup_flat_vol_shared_oracle(
+        ALICE,
+        100 * float!(),
+        100 * float!(),
+        0,
+        1_000_000,
+        10_000,
+        true,
+        &mut test,
+    );
+
+    test.next_tx(ALICE);
+    {
+        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id_2);
+        let test_predict = new_std_predict(&mut test, &oracle_state);
+        let key = market_key::up(oracle_id_1, oracle::expiry(&oracle_state), 100 * float!());
+
+        oracle_runtime::assert_key_matches(
+            predict::oracle_runtime(&test_predict),
+            &oracle_state,
+            &key,
+        );
+    };
+
+    abort
+}
+
 #[test, expected_failure(abort_code = oracle_runtime::EMarketKeyExpiryMismatch)]
 fun assert_key_matches_expiry_mismatch_aborts() {
     let mut test = begin(ALICE);
@@ -347,6 +388,46 @@ fun assert_operational_oracle_fresh() {
     };
 
     end(test);
+}
+
+#[test, expected_failure(abort_code = oracle_runtime::EOracleSettled)]
+fun assert_operational_oracle_settled_aborts() {
+    let mut test = begin(ALICE);
+    let oracle_id = oracle_helper::setup_settled_shared_oracle(ALICE, 75 * float!(), &mut test);
+
+    test.next_tx(ALICE);
+    {
+        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let test_clock = new_test_clock(100_001, &mut test);
+
+        oracle_runtime::assert_operational_oracle(&oracle_state, &test_clock);
+    };
+
+    abort
+}
+
+#[test, expected_failure(abort_code = oracle_runtime::EOracleInactive)]
+fun assert_operational_oracle_inactive_aborts() {
+    let mut test = begin(ALICE);
+    let oracle_id = oracle_helper::setup_simple_shared_oracle(
+        ALICE,
+        50 * float!(),
+        50 * float!(),
+        1_000_000,
+        10_000,
+        false,
+        &mut test,
+    );
+
+    test.next_tx(ALICE);
+    {
+        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let test_clock = new_test_clock(15_000, &mut test);
+
+        oracle_runtime::assert_operational_oracle(&oracle_state, &test_clock);
+    };
+
+    abort
 }
 
 #[test, expected_failure(abort_code = oracle_runtime::EOracleStale)]
