@@ -159,6 +159,8 @@ public(package) fun build_curve(
             return vector[new_curve_point(min_strike, full_price, 0)]
         };
 
+        // This synthetic off-grid point makes the settled payoff a sharp step for
+        // interpolation; it is an evaluation artifact, not a tradeable strike.
         return vector[
             new_curve_point(settlement - 1, full_price, 0),
             new_curve_point(settlement, 0, full_price),

@@ -318,7 +318,7 @@ public fun new_svi_params(
     SVIParams { a, b, rho, rho_negative, m, m_negative, sigma }
 }
 
-public fun binary_price_pair(oracle: &OracleSVI, strike: u64, clock: &Clock): (u64, u64) {
+public(package) fun binary_price_pair(oracle: &OracleSVI, strike: u64, clock: &Clock): (u64, u64) {
     if (oracle.settlement_price.is_some()) {
         let settlement_price = oracle.settlement_price.destroy_some();
         if (settlement_price > strike) {
@@ -336,7 +336,7 @@ public fun binary_price_pair(oracle: &OracleSVI, strike: u64, clock: &Clock): (u
 /// Compute discount factor e^(-r * t).
 /// Past expiry returns 1.0 (no discounting) to handle the window between
 /// expiry and settlement.
-public fun compute_discount(oracle: &OracleSVI, clock: &Clock): u64 {
+fun compute_discount(oracle: &OracleSVI, clock: &Clock): u64 {
     let now = clock.timestamp_ms();
     let expiry = oracle.expiry;
     if (now >= expiry) return constants::float_scaling!();

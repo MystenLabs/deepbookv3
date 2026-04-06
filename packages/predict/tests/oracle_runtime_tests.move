@@ -55,6 +55,35 @@ fun curve_point_getters() {
     assert_eq!(oracle_runtime::dn_price(&pt), 400_000_000);
 }
 
+#[test, expected_failure(abort_code = oracle_runtime::EOracleRuntimeNotFound)]
+fun assert_valid_strike_without_registered_grid_aborts() {
+    let mut test = begin(ALICE);
+    let oracle_id = oracle_helper::setup_flat_vol_shared_oracle(
+        ALICE,
+        500_000_000,
+        500_000_000,
+        0,
+        100_000,
+        0,
+        true,
+        &mut test,
+    );
+
+    test.next_tx(ALICE);
+    {
+        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let test_predict = predict::create_test_predict<SUI>(test.ctx());
+
+        oracle_runtime::assert_valid_strike(
+            predict::oracle_runtime(&test_predict),
+            &oracle_state,
+            50 * float!(),
+        );
+    };
+
+    abort
+}
+
 #[test]
 fun binary_price_at_min_and_max_strike_succeeds() {
     let mut test = begin(ALICE);
@@ -417,6 +446,29 @@ fun build_curve_settled_oracle() {
     };
 
     end(test);
+}
+
+#[test, expected_failure(abort_code = oracle_runtime::EInvalidCurveRange)]
+fun build_curve_invalid_range_aborts() {
+    let mut test = begin(ALICE);
+    let oracle_id = oracle_helper::setup_std_shared_oracle(ALICE, true, &mut test);
+
+    test.next_tx(ALICE);
+    {
+        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let test_clock = new_test_clock(0, &mut test);
+        let test_predict = new_std_predict(&mut test, &oracle_state);
+
+        oracle_runtime::build_curve(
+            predict::oracle_runtime(&test_predict),
+            &oracle_state,
+            150 * float!(),
+            50 * float!(),
+            &test_clock,
+        );
+    };
+
+    abort
 }
 
 #[test]
