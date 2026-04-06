@@ -31,6 +31,7 @@ public struct CurvePoint has copy, drop, store {
     dn_price: u64,
 }
 
+/// Create a curve sample point from exact strike and side prices.
 public fun new_curve_point(strike: u64, up_price: u64, dn_price: u64): CurvePoint {
     CurvePoint {
         strike,
@@ -39,18 +40,23 @@ public fun new_curve_point(strike: u64, up_price: u64, dn_price: u64): CurvePoin
     }
 }
 
+/// Return the strike stored in a curve point.
 public fun strike(point: &CurvePoint): u64 { point.strike }
 
+/// Return the UP price stored in a curve point.
 public fun up_price(point: &CurvePoint): u64 { point.up_price }
 
+/// Return the DN price stored in a curve point.
 public fun dn_price(point: &CurvePoint): u64 { point.dn_price }
 
+/// Create an empty runtime strike-grid registry for Predict.
 public(package) fun new(ctx: &mut TxContext): OracleRuntime {
     OracleRuntime {
         oracle_grids: table::new(ctx),
     }
 }
 
+/// Register the configured strike grid for a newly created oracle.
 public(package) fun add_oracle_grid(
     oracle_runtime: &mut OracleRuntime,
     oracle_id: ID,
@@ -66,6 +72,7 @@ public(package) fun add_oracle_grid(
     oracle_runtime.oracle_grids.add(oracle_id, grid);
 }
 
+/// Assert that a strike lies on the configured grid for this oracle.
 public(package) fun assert_valid_strike(
     oracle_runtime: &OracleRuntime,
     oracle: &OracleSVI,
@@ -78,6 +85,7 @@ public(package) fun assert_valid_strike(
     assert!((strike - min_strike) % tick_size == 0, EInvalidStrike);
 }
 
+/// Assert that a market key matches the oracle identity, expiry, and strike grid.
 public(package) fun assert_key_matches(
     oracle_runtime: &OracleRuntime,
     oracle: &OracleSVI,
@@ -90,6 +98,7 @@ public(package) fun assert_key_matches(
     oracle_runtime.assert_valid_strike(oracle, market_key.strike());
 }
 
+/// Assert that an oracle can still be used for reads and redemptions.
 public(package) fun assert_operational_oracle(oracle: &OracleSVI, clock: &Clock) {
     assert!(!oracle.is_settled(), EOracleSettled);
     assert!(oracle.is_active(), EOracleInactive);
@@ -99,11 +108,13 @@ public(package) fun assert_operational_oracle(oracle: &OracleSVI, clock: &Clock)
     );
 }
 
+/// Assert that an oracle can still be used for minting new exposure.
 public(package) fun assert_mintable_oracle(oracle: &OracleSVI, clock: &Clock) {
     assert_operational_oracle(oracle, clock);
     assert!(clock.timestamp_ms() < oracle.expiry(), EOracleExpired);
 }
 
+/// Return the exact fair price for one side of a binary market.
 public(package) fun binary_price(
     oracle_runtime: &OracleRuntime,
     oracle: &OracleSVI,
@@ -115,6 +126,7 @@ public(package) fun binary_price(
     if (is_up) { up_price } else { dn_price }
 }
 
+/// Return the exact fair prices for both sides of a binary market.
 public(package) fun binary_price_pair(
     oracle_runtime: &OracleRuntime,
     oracle: &OracleSVI,
@@ -125,6 +137,7 @@ public(package) fun binary_price_pair(
     oracle.binary_price_pair(strike, clock)
 }
 
+/// Build an adaptive piecewise-linear curve over the configured strike range.
 public(package) fun build_curve(
     oracle_runtime: &OracleRuntime,
     oracle: &OracleSVI,
@@ -169,7 +182,7 @@ public(package) fun build_curve(
     let mut cur_samples = 2;
     let (grid_min, grid_tick, _grid_max) = oracle_runtime.grid_params(oracle_id);
     while (cur_samples < curve_samples) {
-        let (found, idx) = find_gap(&points, grid_min, grid_tick);
+        let (found, idx) = find_gap(&points, grid_tick);
         if (!found) break;
 
         let strike_lo = points[idx].strike;
@@ -183,6 +196,7 @@ public(package) fun build_curve(
     points
 }
 
+/// Assert that a requested curve range is valid on the oracle's configured grid.
 fun assert_build_curve(
     oracle_runtime: &OracleRuntime,
     oracle_id: ID,
@@ -198,6 +212,7 @@ fun assert_build_curve(
     assert!((max_strike - grid_min) % tick_size == 0, EInvalidStrike);
 }
 
+/// Load the configured strike-grid parameters for an oracle.
 fun grid_params(oracle_runtime: &OracleRuntime, oracle_id: ID): (u64, u64, u64) {
     assert!(oracle_runtime.oracle_grids.contains(oracle_id), EOracleRuntimeNotFound);
     let grid = oracle_runtime.oracle_grids.borrow(oracle_id);
@@ -207,6 +222,7 @@ fun grid_params(oracle_runtime: &OracleRuntime, oracle_id: ID): (u64, u64, u64) 
     (grid_min, tick_size, grid_max)
 }
 
+/// Insert a new curve point while preserving ascending strike order.
 fun insert_asc(points: &mut vector<CurvePoint>, new_point: CurvePoint) {
     points.push_back(new_point);
     let mut i = points.length() - 1;
@@ -217,49 +233,33 @@ fun insert_asc(points: &mut vector<CurvePoint>, new_point: CurvePoint) {
     };
 }
 
-fun find_gap(points: &vector<CurvePoint>, grid_min: u64, grid_tick: u64): (bool, u64) {
+/// Pick the next adjacent gap to bisect based on endpoint UP-price difference.
+fun find_gap(points: &vector<CurvePoint>, grid_tick: u64): (bool, u64) {
     let len = points.length();
-    let mut found = false;
-    let mut best_idx = 0;
+    let mut best_idx = len;
     let mut best_price_diff = 0;
-    let mut best_width = 0;
 
     let mut i = 0;
     while (i + 1 < len) {
         let lo = &points[i];
         let hi = &points[i + 1];
 
-        let lo_strike = lo.strike;
-        let hi_strike = hi.strike;
-        let mid_strike = snap_to_tick((lo_strike + hi_strike) / 2, grid_min, grid_tick);
-
-        // This gap can't be refined any further on the configured grid.
-        if (mid_strike <= lo_strike || mid_strike >= hi_strike) {
+        if (hi.strike - lo.strike <= grid_tick) {
             i = i + 1;
             continue
         };
 
-        let width = hi_strike - lo_strike;
-        let price_diff = if (hi.up_price >= lo.up_price) {
-            hi.up_price - lo.up_price
-        } else {
-            lo.up_price - hi.up_price
-        };
-
-        if (
-            !found ||
-            price_diff > best_price_diff || (price_diff == best_price_diff && width > best_width)
-        ) {
-            found = true;
+        // `points` is strike-sorted, and UP price is monotone non-increasing in strike.
+        let price_diff = lo.up_price - hi.up_price;
+        if (price_diff > best_price_diff) {
             best_idx = i;
             best_price_diff = price_diff;
-            best_width = width;
         };
 
         i = i + 1;
     };
 
-    (found, best_idx)
+    (best_idx != len, best_idx)
 }
 
 /// Round a strike down to the nearest tick boundary.

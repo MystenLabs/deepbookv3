@@ -68,6 +68,7 @@ public(package) fun quote_from_fair_price(
     liability: u64,
     balance: u64,
 ): (u64, u64) {
+    // Once settled, the market trades at its realized payoff with no spread.
     if (is_settled) return (fair_price, fair_price);
 
     let complement = constants::float_scaling!() - fair_price;
@@ -87,6 +88,8 @@ public(package) fun quote_from_fair_price(
 fun utilization_spread(config: &PricingConfig, liability: u64, balance: u64): u64 {
     if (balance == 0 || liability == 0) return 0;
 
+    // Cap utilization at 1.0 and square it so spread stays mild at low usage
+    // and widens sharply only as the vault approaches full utilization.
     let util = if (liability >= balance) {
         constants::float_scaling!()
     } else {

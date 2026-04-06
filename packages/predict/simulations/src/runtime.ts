@@ -99,6 +99,7 @@ export function createOracleCapTx(recipient: string): Transaction {
 }
 
 export function createOracleTx(params: {
+  predictId: string;
   oracleCapId: string;
   underlyingAsset: string;
   expiry: bigint;
@@ -108,8 +109,10 @@ export function createOracleTx(params: {
   const tx = new Transaction();
   tx.moveCall({
     target: target("registry", "create_oracle"),
+    typeArguments: [DUSDC_TYPE],
     arguments: [
       tx.object(REGISTRY_ID),
+      tx.object(params.predictId),
       tx.object(ADMIN_CAP_ID),
       tx.object(params.oracleCapId),
       tx.pure.string(params.underlyingAsset),

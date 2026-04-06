@@ -113,6 +113,7 @@ async function setupSimulation(): Promise<SimState> {
 
   result = await executeAndWait(
     createOracleTx({
+      predictId,
       oracleCapId,
       underlyingAsset: "BTC",
       expiry: EXPIRY_MS,

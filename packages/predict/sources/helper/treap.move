@@ -326,6 +326,9 @@ fun recompute_agg(nodes: &mut Table<u64, Node>, strike: u64) {
         add_aggs(&mut nodes[strike], &right);
     };
 
+    // A worst-case settlement either lands inside the left subtree, which
+    // makes this node and the entire right subtree pay as DN, or inside the
+    // right subtree, which makes the entire left subtree and this node pay as UP.
     nodes[strike].max_payout =
         (left_max_payout + node.q_dn + right_agg_q_dn).max(
             left_agg_q_up + node.q_up + right_max_payout,

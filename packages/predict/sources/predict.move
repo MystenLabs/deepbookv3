@@ -202,6 +202,8 @@ public fun mint<Quote>(
     predict.vault.insert_position(oracle.id(), is_up, strike, quantity, ctx);
     predict.refresh_oracle_risk(oracle, clock);
 
+    // Quote against the post-trade state so the trader pays for the liability
+    // their own mint just added to the vault.
     let (_bid, ask) = predict.get_quote(oracle, strike, is_up, clock);
     let cost = math::mul(ask, quantity);
 
@@ -250,6 +252,8 @@ public fun redeem<Quote>(
     predict.vault.remove_position(oracle.id(), is_up, strike, quantity);
     predict.refresh_oracle_risk(oracle, clock);
 
+    // Quote against the post-trade state so the seller is paid from the
+    // liability after their position has been removed from the vault.
     let (bid, _ask) = predict.get_quote(oracle, strike, is_up, clock);
     let payout = math::mul(bid, quantity);
 
@@ -564,7 +568,7 @@ fun refresh_oracle_risk<Quote>(predict: &mut Predict<Quote>, oracle: &OracleSVI,
     let oracle_id = oracle.id();
     let (min_strike, max_strike) = predict.vault.oracle_strike_range(oracle_id);
     if (min_strike == 0 && max_strike == 0) {
-        // No positions for this oracle, so no risk.
+        // `strike_range` uses (0, 0) as the empty-oracle sentinel.
         predict.vault.set_mtm(oracle_id, 0);
         return
     };
