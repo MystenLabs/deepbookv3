@@ -10,10 +10,9 @@
 module deepbook_predict::oracle;
 
 use deepbook::math;
-use deepbook_predict::{constants, math as predict_math};
+use deepbook_predict::{constants::{Self, float_scaling}, math as predict_math};
 use std::string::String;
 use sui::{clock::Clock, event, vec_set::{Self, VecSet}};
-use deepbook_predict::constants::float_scaling;
 
 // === Errors ===
 
@@ -433,42 +432,4 @@ fun compute_nd2_pair(oracle: &OracleSVI, strike: u64): (u64, u64) {
     let nd2_down = float_scaling!() - nd2_up;
 
     (nd2_up, nd2_down)
-}
-
-#[test_only]
-/// Create a test oracle with explicit core state and no Predict-specific strike grid.
-public(package) fun create_test_oracle(
-    underlying_asset: String,
-    svi: SVIParams,
-    prices: PriceData,
-    risk_free_rate: u64,
-    expiry: u64,
-    timestamp: u64,
-    ctx: &mut TxContext,
-): OracleSVI {
-    OracleSVI {
-        id: object::new(ctx),
-        authorized_caps: vec_set::empty(),
-        underlying_asset,
-        expiry,
-        active: true,
-        prices,
-        svi,
-        risk_free_rate,
-        timestamp,
-        settlement_price: option::none(),
-    }
-}
-
-#[test_only]
-/// Set oracle active state for testing.
-public(package) fun set_active_for_testing(oracle: &mut OracleSVI, active: bool) {
-    oracle.active = active;
-}
-
-#[test_only]
-/// Force-settle the oracle at a given price for testing.
-public(package) fun settle_test_oracle(oracle: &mut OracleSVI, price: u64) {
-    oracle.settlement_price = option::some(price);
-    oracle.active = false;
 }
