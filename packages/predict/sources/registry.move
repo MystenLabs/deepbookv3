@@ -22,9 +22,9 @@ use std::string::String;
 use sui::{coin::TreasuryCap, event, table::{Self, Table}};
 
 // === Errors ===
-const EPredictAlreadyCreated: u64 = 0;
-const EInvalidTickSize: u64 = 1;
-const EInvalidStrikeGrid: u64 = 2;
+const EPredictAlreadyCreated: u64 = 1;
+const EInvalidTickSize: u64 = 2;
+const EInvalidStrikeGrid: u64 = 3;
 
 // === Events ===
 

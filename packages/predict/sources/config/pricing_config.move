@@ -8,7 +8,7 @@ use deepbook::math;
 use deepbook_predict::{constants, math as predict_math};
 
 // === Errors ===
-const EInvalidSpread: u64 = 0;
+const EInvalidSpread: u64 = 1;
 
 // === Structs ===
 

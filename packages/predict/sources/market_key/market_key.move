@@ -13,8 +13,8 @@ module deepbook_predict::market_key;
 use deepbook_predict::oracle::OracleSVI;
 
 // === Errors ===
-const EOracleMismatch: u64 = 0;
-const EExpiryMismatch: u64 = 1;
+const EOracleMismatch: u64 = 1;
+const EExpiryMismatch: u64 = 2;
 
 // === Constants ===
 const DIRECTION_UP: u8 = 0;

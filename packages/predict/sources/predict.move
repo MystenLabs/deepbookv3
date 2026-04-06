@@ -25,14 +25,14 @@ use deepbook_predict::{
 use sui::{clock::Clock, coin::{Self, Coin, TreasuryCap}, event};
 
 // === Errors ===
-const ETradingPaused: u64 = 0;
-const EInvalidCollateralPair: u64 = 1;
-const ENotOwner: u64 = 2;
-const EWithdrawExceedsAvailable: u64 = 3;
-const EZeroQuantity: u64 = 4;
-const EZeroAmount: u64 = 5;
-const EZeroVaultValue: u64 = 6;
-const EZeroSharesMinted: u64 = 7;
+const ETradingPaused: u64 = 1;
+const EInvalidCollateralPair: u64 = 2;
+const ENotOwner: u64 = 3;
+const EWithdrawExceedsAvailable: u64 = 4;
+const EZeroQuantity: u64 = 5;
+const EZeroAmount: u64 = 6;
+const EZeroVaultValue: u64 = 7;
+const EZeroSharesMinted: u64 = 8;
 
 // === Events ===
 

@@ -15,9 +15,9 @@ module deepbook_predict::math;
 
 use deepbook_predict::constants;
 
-const EInputZero: u64 = 0;
-const EExpOverflow: u64 = 1;
-const EInvalidPrecision: u64 = 2;
+const EInputZero: u64 = 1;
+const EExpOverflow: u64 = 2;
+const EInvalidPrecision: u64 = 3;
 
 // u128 constants for internal math
 const F: u128 = 1_000_000_000;

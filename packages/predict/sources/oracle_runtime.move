@@ -4,15 +4,15 @@ use deepbook_predict::{constants, market_key::MarketKey, oracle::OracleSVI};
 use sui::{clock::Clock, table::{Self, Table}};
 
 // === Errors ===
-const EMarketKeyOracleMismatch: u64 = 0;
-const EMarketKeyExpiryMismatch: u64 = 1;
-const EInvalidStrike: u64 = 2;
-const EOracleSettled: u64 = 3;
-const EOracleExpired: u64 = 4;
-const EOracleInactive: u64 = 5;
-const EOracleStale: u64 = 6;
-const EOracleRuntimeNotFound: u64 = 7;
-const EInvalidCurveRange: u64 = 8;
+const EMarketKeyOracleMismatch: u64 = 1;
+const EMarketKeyExpiryMismatch: u64 = 2;
+const EInvalidStrike: u64 = 3;
+const EOracleSettled: u64 = 4;
+const EOracleExpired: u64 = 5;
+const EOracleInactive: u64 = 6;
+const EOracleStale: u64 = 7;
+const EOracleRuntimeNotFound: u64 = 8;
+const EInvalidCurveRange: u64 = 9;
 
 public struct OracleGrid has copy, drop, store {
     min_strike: u64,

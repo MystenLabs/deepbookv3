@@ -18,10 +18,10 @@ use deepbook_predict::{oracle_runtime::CurvePoint, treap::{Self, Treap}};
 use sui::{balance::{Self, Balance}, table::{Self, Table}};
 
 // === Errors ===
-const EInsufficientBalance: u64 = 0;
-const EExceedsMaxTotalExposure: u64 = 1;
-const EOracleExposureNotFound: u64 = 2;
-const EMtmExceedsBalance: u64 = 3;
+const EInsufficientBalance: u64 = 1;
+const EExceedsMaxTotalExposure: u64 = 2;
+const EOracleExposureNotFound: u64 = 3;
+const EMtmExceedsBalance: u64 = 4;
 
 // === Structs ===
 
