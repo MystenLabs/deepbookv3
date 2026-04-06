@@ -204,6 +204,36 @@ let oracle = oracle::create_test_oracle_with_grid(
 predict::mint(&mut predict, &mut manager, &oracle, key, quantity, &clock, ctx);
 ```
 
+### 13. Shared-object tests should capture IDs and use `take_shared_by_id`
+
+When a test creates a shared object in `test_scenario`, capture its ID immediately and use that ID in later transactions. Do not rely on ambient `take_shared<T>()` when the object identity is already known.
+
+- Good:
+  - setup helper returns `predict_id`, `registry_id`, `manager_id`, `oracle_id`
+  - later transactions use `take_shared_by_id<T>(id)`
+  - shared objects are returned with `return_shared(...)` before `next_tx(...)`
+- Bad:
+  - tests repeatedly call `take_shared<T>()` and depend on there being only one shared object of that type in scope
+
+This matches the established DeepBook core pattern and avoids brittle inventory/order assumptions in `test_scenario`.
+
+### 14. Keep shared protocol setup scenario-driven; keep pure units local
+
+Use `test_scenario` plus real entrypoints to build shared protocol state, and use local values only for genuinely pure/internal units.
+
+- Shared protocol tests should:
+  - create and wire shared objects through production-like flows
+  - use helper modules to compose those flows
+  - assert over real multi-tx state transitions
+- Pure unit tests may stay local:
+  - math helpers
+  - small value types
+  - internal data structures like trees or caches
+
+Do not create standalone non-droppable protocol owners in tests and let them fall out of scope. If a type does not have `drop`, either:
+- own it through another object that the test already consumes or destroys, or
+- explicitly destroy it through a real destroy path.
+
 ## Move Test Syntax
 
 ### Merge `#[test]` and `#[expected_failure(...)]`

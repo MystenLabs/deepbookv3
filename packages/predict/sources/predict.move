@@ -28,11 +28,11 @@ use sui::{clock::Clock, coin::{Self, Coin, TreasuryCap}, event};
 const ETradingPaused: u64 = 0;
 const EInvalidCollateralPair: u64 = 1;
 const ENotOwner: u64 = 2;
-const EWithdrawExceedsAvailable: u64 = 4;
-const EZeroQuantity: u64 = 6;
-const EZeroAmount: u64 = 8;
-const EZeroVaultValue: u64 = 9;
-const EZeroSharesMinted: u64 = 10;
+const EWithdrawExceedsAvailable: u64 = 3;
+const EZeroQuantity: u64 = 4;
+const EZeroAmount: u64 = 5;
+const EZeroVaultValue: u64 = 6;
+const EZeroSharesMinted: u64 = 7;
 
 // === Events ===
 

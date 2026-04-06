@@ -11,7 +11,8 @@ use deepbook_predict::{
     oracle_helper,
     oracle_runtime::{Self as oracle_runtime, new_curve_point},
     precision,
-    predict
+    predict,
+    treap
 };
 use std::unit_test::{assert_eq, destroy};
 use sui::{clock, sui::SUI, test_scenario::{Scenario, begin, end, return_shared}};
@@ -454,6 +455,104 @@ fun build_curve_settled_at_75() {
         assert_eq!(oracle_runtime::up_price(&curve[1]), 0);
         assert_eq!(oracle_runtime::dn_price(&curve[1]), float!());
 
+        destroy(test_clock);
+        destroy(test_predict);
+        return_shared(oracle_state);
+    };
+
+    end(test);
+}
+
+#[test]
+fun build_curve_settled_below_live_range_single_point() {
+    let mut test = begin(ALICE);
+    let oracle_id = oracle_helper::setup_flat_vol_shared_oracle(
+        ALICE,
+        100 * float!(),
+        100 * float!(),
+        0,
+        100_000,
+        0,
+        true,
+        &mut test,
+    );
+    oracle_helper::settle_shared_oracle(ALICE, oracle_id, 25 * float!(), 100_001, &mut test);
+
+    test.next_tx(ALICE);
+    {
+        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let test_clock = new_test_clock(0, &mut test);
+        let test_predict = new_std_predict(&mut test, &oracle_state);
+        let curve = oracle_runtime::build_curve(
+            predict::oracle_runtime(&test_predict),
+            &oracle_state,
+            50 * float!(),
+            150 * float!(),
+            &test_clock,
+        );
+
+        assert_eq!(curve.length(), 1);
+        assert_eq!(oracle_runtime::strike(&curve[0]), 50 * float!());
+        assert_eq!(oracle_runtime::up_price(&curve[0]), 0);
+        assert_eq!(oracle_runtime::dn_price(&curve[0]), float!());
+
+        let mut exposure = treap::new(test.ctx());
+        exposure.insert(75 * float!(), 3 * float!(), false);
+        exposure.insert(125 * float!(), 2 * float!(), true);
+        let value = exposure.evaluate(&curve);
+        // DN wins everywhere; UP loses everywhere.
+        assert_eq!(value, 3 * float!());
+
+        destroy(exposure);
+        destroy(test_clock);
+        destroy(test_predict);
+        return_shared(oracle_state);
+    };
+
+    end(test);
+}
+
+#[test]
+fun build_curve_settled_above_live_range_single_point() {
+    let mut test = begin(ALICE);
+    let oracle_id = oracle_helper::setup_flat_vol_shared_oracle(
+        ALICE,
+        100 * float!(),
+        100 * float!(),
+        0,
+        100_000,
+        0,
+        true,
+        &mut test,
+    );
+    oracle_helper::settle_shared_oracle(ALICE, oracle_id, 175 * float!(), 100_001, &mut test);
+
+    test.next_tx(ALICE);
+    {
+        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let test_clock = new_test_clock(0, &mut test);
+        let test_predict = new_std_predict(&mut test, &oracle_state);
+        let curve = oracle_runtime::build_curve(
+            predict::oracle_runtime(&test_predict),
+            &oracle_state,
+            50 * float!(),
+            150 * float!(),
+            &test_clock,
+        );
+
+        assert_eq!(curve.length(), 1);
+        assert_eq!(oracle_runtime::strike(&curve[0]), 50 * float!());
+        assert_eq!(oracle_runtime::up_price(&curve[0]), float!());
+        assert_eq!(oracle_runtime::dn_price(&curve[0]), 0);
+
+        let mut exposure = treap::new(test.ctx());
+        exposure.insert(75 * float!(), 3 * float!(), false);
+        exposure.insert(125 * float!(), 2 * float!(), true);
+        let value = exposure.evaluate(&curve);
+        // UP wins everywhere; DN loses everywhere.
+        assert_eq!(value, 2 * float!());
+
+        destroy(exposure);
         destroy(test_clock);
         destroy(test_predict);
         return_shared(oracle_state);

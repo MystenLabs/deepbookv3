@@ -747,7 +747,7 @@ fun activate_expired_oracle_aborts() {
     abort
 }
 
-#[test, expected_failure(abort_code = oracle::EOracleExpired)]
+#[test, expected_failure(abort_code = oracle::EOracleSettled)]
 fun update_svi_on_settled_oracle_aborts() {
     let mut test = begin(ALICE);
     let oracle_id = oracle_helper::setup_settled_shared_oracle(ALICE, 100 * float!(), &mut test);
