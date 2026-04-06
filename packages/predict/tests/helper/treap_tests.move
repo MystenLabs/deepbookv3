@@ -4,7 +4,7 @@
 #[test_only]
 module deepbook_predict::treap_tests;
 
-use deepbook_predict::{constants, oracle::new_curve_point, treap};
+use deepbook_predict::{constants, oracle_runtime::new_curve_point, treap};
 use std::unit_test::{destroy, assert_eq};
 
 // === Insert & Size ===

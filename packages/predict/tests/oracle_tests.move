@@ -5,44 +5,18 @@
 module deepbook_predict::oracle_tests;
 
 use deepbook_predict::{
-    constants::{Self, float_scaling as float, oracle_tick_size_unit, oracle_strike_grid_ticks},
+    constants::float_scaling as float,
     generated_oracle as go,
-    oracle::{Self, new_price_data, new_svi_params, new_curve_point},
+    oracle::{Self as oracle, OracleCapSVI, OracleSVI, new_price_data, new_svi_params},
     oracle_helper,
     precision
 };
 use std::unit_test::{assert_eq, destroy};
-use sui::clock;
+use sui::{clock, test_scenario::{Scenario, begin, end, return_shared}};
 
+const ALICE: address = @0xA;
+const BOB: address = @0xB;
 const HALF_YEAR_MS: u64 = 15_768_000_000;
-
-fun grid_min_strike(): u64 { oracle_tick_size_unit!() }
-
-fun grid_tick_size(): u64 { oracle_tick_size_unit!() }
-
-fun grid_max_strike(): u64 { grid_min_strike() + grid_tick_size() * oracle_strike_grid_ticks!() }
-
-fun bounded_grid_min_strike(): u64 { oracle_tick_size_unit!() }
-
-fun bounded_grid_max_strike(): u64 {
-    bounded_grid_min_strike() + grid_tick_size() * oracle_strike_grid_ticks!()
-}
-
-fun wide_grid_min_strike(): u64 { 1_000_000 }
-
-fun wide_grid_tick_size(): u64 { 1_000_000 }
-
-fun std_grid_min_strike(): u64 { 50 * float!() }
-
-fun std_grid_tick_size(): u64 { 1_000_000 }
-
-fun upper_grid_min_strike(): u64 { 150 * float!() }
-
-fun upper_grid_tick_size(): u64 { 1_000_000 }
-
-fun far_grid_min_strike(): u64 { 10_000_000 }
-
-fun far_grid_tick_size(): u64 { 10_000_000 }
 
 // === Common test SVI params ===
 const SVI_SIGMA_0_25: u64 = 250_000_000;
@@ -52,732 +26,449 @@ const RATE_5_PCT: u64 = 50_000_000;
 const RATE_10_PCT: u64 = 100_000_000;
 
 // === Expected values from scipy (generate.py) ===
-const DISCOUNT_5PCT_1YR: u64 = 951_229_424; // e^(-0.05*1.0)
 const DISCOUNT_10PCT_HALF_YR: u64 = 951_229_424; // e^(-0.10*0.5)
 const PARTIAL_10PCT_UP_ATM: u64 = 388_768_372; // UP price at rate=10%, partial year
 const PARTIAL_10PCT_DN_ATM: u64 = 580_019_318; // DN price at rate=10%, partial year
 
-fun run_oracle_scenario(idx: u64) {
-    let scenarios = go::scenarios();
-    let s = &scenarios[idx];
-    let ctx = &mut tx_context::dummy();
-    let (oracle, clock) = oracle_helper::create_from_scenario(s, ctx);
-
-    s.strike_points().do_ref!(|sp| {
-        precision::assert_approx(
-            oracle.get_binary_price(sp.strike(), true, &clock),
-            sp.expected_up(),
-        );
-        precision::assert_approx(
-            oracle.get_binary_price(sp.strike(), false, &clock),
-            sp.expected_dn(),
-        );
-    });
-
-    destroy(oracle);
-    destroy(clock);
+fun new_test_clock(now_ms: u64, test: &mut Scenario): clock::Clock {
+    let mut test_clock = clock::create_for_testing(test.ctx());
+    test_clock.set_for_testing(now_ms);
+    test_clock
 }
 
-// ============================================================
-// Construction and Getters
-// ============================================================
+fun assert_pair_exact(
+    oracle_state: &OracleSVI,
+    strike: u64,
+    test_clock: &clock::Clock,
+    expected_up: u64,
+    expected_dn: u64,
+) {
+    let (up, dn) = oracle::binary_price_pair(oracle_state, strike, test_clock);
+    assert_eq!(up, expected_up);
+    assert_eq!(dn, expected_dn);
+}
 
-#[test]
-fun create_test_oracle_initial_state() {
-    let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, 0, 0, false, 0, false, 0);
-    let prices = new_price_data(0, 0);
-    let oracle = oracle::create_test_oracle(
+fun assert_pair_approx(
+    oracle_state: &OracleSVI,
+    strike: u64,
+    test_clock: &clock::Clock,
+    expected_up: u64,
+    expected_dn: u64,
+) {
+    let (up, dn) = oracle::binary_price_pair(oracle_state, strike, test_clock);
+    precision::assert_approx(up, expected_up);
+    precision::assert_approx(dn, expected_dn);
+}
+
+fun setup_configured_oracle(
+    svi: oracle::SVIParams,
+    prices: oracle::PriceData,
+    risk_free_rate: u64,
+    expiry_ms: u64,
+    now_ms: u64,
+    active: bool,
+    test: &mut Scenario,
+): ID {
+    oracle_helper::setup_configured_shared_oracle(
+        ALICE,
         b"BTC".to_string(),
         svi,
         prices,
-        0,
+        risk_free_rate,
+        expiry_ms,
+        now_ms,
+        active,
+        test,
+    )
+}
+
+fun run_oracle_scenario(idx: u64) {
+    let mut test = begin(ALICE);
+    let scenarios = go::scenarios();
+    let scenario = &scenarios[idx];
+    let oracle_id = oracle_helper::setup_oracle_from_scenario(ALICE, scenario, true, &mut test);
+
+    test.next_tx(ALICE);
+    {
+        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let test_clock = new_test_clock(scenario.now_ms(), &mut test);
+
+        scenario.strike_points().do_ref!(|sp| {
+            assert_pair_approx(
+                &oracle_state,
+                sp.strike(),
+                &test_clock,
+                sp.expected_up(),
+                sp.expected_dn(),
+            );
+        });
+
+        destroy(test_clock);
+        return_shared(oracle_state);
+    };
+
+    end(test);
+}
+
+// ============================================================
+// Construction and getters
+// ============================================================
+
+#[test]
+fun create_oracle_initial_state() {
+    let mut test = begin(ALICE);
+    let (oracle_id, _cap_id) = oracle_helper::setup_shared_oracle(
+        ALICE,
+        b"BTC".to_string(),
         100_000,
-        0,
-        grid_min_strike(),
-        grid_tick_size(),
-        ctx,
+        &mut test,
     );
 
-    assert_eq!(oracle.underlying_asset(), b"BTC".to_string());
-    assert_eq!(oracle.spot_price(), 0);
-    assert_eq!(oracle.forward_price(), 0);
-    assert_eq!(oracle.expiry(), 100_000);
-    assert_eq!(oracle.risk_free_rate(), 0);
-    assert_eq!(oracle.timestamp(), 0);
-    assert!(oracle.settlement_price().is_none());
-    // create_test_oracle sets active=true
-    assert_eq!(oracle.is_active(), true);
-    assert_eq!(oracle.is_settled(), false);
+    test.next_tx(ALICE);
+    {
+        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
 
-    destroy(oracle);
+        assert_eq!(oracle::underlying_asset(&oracle_state), b"BTC".to_string());
+        assert_eq!(oracle::spot_price(&oracle_state), 0);
+        assert_eq!(oracle::forward_price(&oracle_state), 0);
+        assert_eq!(oracle::expiry(&oracle_state), 100_000);
+        assert_eq!(oracle::risk_free_rate(&oracle_state), 0);
+        assert_eq!(oracle::timestamp(&oracle_state), 0);
+        assert!(oracle::settlement_price(&oracle_state).is_none());
+        assert_eq!(oracle::is_active(&oracle_state), false);
+        assert_eq!(oracle::is_settled(&oracle_state), false);
+
+        return_shared(oracle_state);
+    };
+
+    end(test);
 }
 
 #[test]
-fun create_test_oracle_with_nonzero_params() {
-    let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(100, 200, 300, true, 400, false, 500);
-    let prices = new_price_data(50 * float!(), 51 * float!());
-    let oracle = oracle::create_test_oracle(
-        b"ETH".to_string(),
-        svi,
-        prices,
+fun configured_oracle_with_nonzero_params() {
+    let mut test = begin(ALICE);
+    let oracle_id = setup_configured_oracle(
+        new_svi_params(100, 200, 300, true, 400, false, 500),
+        new_price_data(50 * float!(), 51 * float!()),
         42,
         999_999,
-        12345,
-        wide_grid_min_strike(),
-        wide_grid_tick_size(),
-        ctx,
+        12_345,
+        true,
+        &mut test,
     );
 
-    assert_eq!(oracle.underlying_asset(), b"ETH".to_string());
-    assert_eq!(oracle.spot_price(), 50 * float!());
-    assert_eq!(oracle.forward_price(), 51 * float!());
-    assert_eq!(oracle.expiry(), 999_999);
-    assert_eq!(oracle.risk_free_rate(), 42);
-    assert_eq!(oracle.timestamp(), 12345);
+    test.next_tx(ALICE);
+    {
+        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
 
-    destroy(oracle);
-}
+        assert_eq!(oracle::spot_price(&oracle_state), 50 * float!());
+        assert_eq!(oracle::forward_price(&oracle_state), 51 * float!());
+        assert_eq!(oracle::expiry(&oracle_state), 999_999);
+        assert_eq!(oracle::risk_free_rate(&oracle_state), 42);
+        assert_eq!(oracle::timestamp(&oracle_state), 12_345);
+        assert_eq!(oracle::is_active(&oracle_state), true);
 
-#[test]
-fun create_test_oracle_stores_grid_params() {
-    let ctx = &mut tx_context::dummy();
-    let (oracle, clock) = oracle_helper::create_flat_vol_oracle(
-        500_000_000,
-        500_000_000,
-        0,
-        100_000,
-        grid_min_strike(),
-        grid_tick_size(),
-        ctx,
-    );
+        return_shared(oracle_state);
+    };
 
-    assert_eq!(oracle.min_strike(), grid_min_strike());
-    assert_eq!(oracle.max_strike(), grid_max_strike());
-    assert_eq!(oracle.tick_size(), grid_tick_size());
-
-    destroy(oracle);
-    destroy(clock);
-}
-
-#[test, expected_failure(abort_code = oracle::EInvalidStrikeGrid)]
-fun create_test_oracle_zero_min_strike_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
-    let prices = new_price_data(500_000_000, 500_000_000);
-    let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
-        0,
-        100_000,
-        0,
-        0,
-        grid_tick_size(),
-        ctx,
-    );
-    destroy(oracle);
-
-    abort
-}
-
-#[test]
-fun get_binary_price_at_min_and_max_strike_succeeds() {
-    let ctx = &mut tx_context::dummy();
-    let (oracle, clock) = oracle_helper::create_flat_vol_oracle(
-        500_000_000,
-        500_000_000,
-        0,
-        100_000,
-        bounded_grid_min_strike(),
-        grid_tick_size(),
-        ctx,
-    );
-    let min_up = oracle.get_binary_price(bounded_grid_min_strike(), true, &clock);
-    let max_up = oracle.get_binary_price(bounded_grid_max_strike(), true, &clock);
-
-    assert!(min_up <= float!());
-    assert!(max_up <= float!());
-
-    destroy(oracle);
-    destroy(clock);
-}
-
-#[test]
-fun curve_point_getters() {
-    let pt = new_curve_point(50 * float!(), 600_000_000, 400_000_000);
-    assert_eq!(pt.strike(), 50 * float!());
-    assert_eq!(pt.up_price(), 600_000_000);
-    assert_eq!(pt.dn_price(), 400_000_000);
+    end(test);
 }
 
 // ============================================================
-// Staleness
-// ============================================================
-
-#[test]
-fun is_stale_returns_false_when_fresh() {
-    let ctx = &mut tx_context::dummy();
-    let (oracle, mut clock) = oracle_helper::create_simple_oracle(
-        50 * float!(),
-        50 * float!(),
-        1_000_000,
-        10_000,
-        ctx,
-    );
-
-    // now=15_000 <= 10_000 + staleness_threshold_ms = 40_000
-    clock.set_for_testing(15_000);
-    assert_eq!(oracle.is_stale(&clock), false);
-
-    destroy(oracle);
-    destroy(clock);
-}
-
-#[test]
-fun is_stale_returns_true_when_stale() {
-    let ctx = &mut tx_context::dummy();
-    let (oracle, mut clock) = oracle_helper::create_simple_oracle(
-        50 * float!(),
-        50 * float!(),
-        1_000_000,
-        10_000,
-        ctx,
-    );
-
-    // now=40_001 > 10_000 + staleness_threshold_ms = 40_000
-    clock.set_for_testing(10_000 + constants::staleness_threshold_ms!() + 1);
-    assert_eq!(oracle.is_stale(&clock), true);
-
-    destroy(oracle);
-    destroy(clock);
-}
-
-#[test]
-fun is_stale_boundary_exactly_at_threshold() {
-    let ctx = &mut tx_context::dummy();
-    let (oracle, mut clock) = oracle_helper::create_simple_oracle(
-        50 * float!(),
-        50 * float!(),
-        1_000_000,
-        10_000,
-        ctx,
-    );
-
-    // now = 10_000 + staleness_threshold_ms; not strictly greater, NOT stale
-    clock.set_for_testing(10_000 + constants::staleness_threshold_ms!());
-    assert_eq!(oracle.is_stale(&clock), false);
-
-    destroy(oracle);
-    destroy(clock);
-}
-
-#[test, expected_failure(abort_code = oracle::EOracleStale)]
-fun assert_not_stale_aborts_when_stale() {
-    let ctx = &mut tx_context::dummy();
-    let (oracle, mut clock) = oracle_helper::create_simple_oracle(
-        50 * float!(),
-        50 * float!(),
-        1_000_000,
-        10_000,
-        ctx,
-    );
-
-    clock.set_for_testing(10_000 + constants::staleness_threshold_ms!() + 1);
-    oracle.assert_not_stale(&clock);
-
-    abort
-}
-
-// ============================================================
-// Settlement (get_binary_price -- settled path)
+// Settlement
 // ============================================================
 
 #[test]
 fun settled_above_strike_up_wins() {
-    let ctx = &mut tx_context::dummy();
-    let (mut oracle, clock) = oracle_helper::create_simple_oracle(0, 0, 100_000, 0, ctx);
+    let mut test = begin(ALICE);
+    let oracle_id = oracle_helper::setup_settled_shared_oracle(ALICE, 60 * float!(), &mut test);
 
-    // Settle at 60, strike at 50: settlement > strike, UP wins
-    oracle.settle_test_oracle(60 * float!());
+    test.next_tx(ALICE);
+    {
+        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let test_clock = new_test_clock(0, &mut test);
 
-    let up_price = oracle.get_binary_price(50 * float!(), true, &clock);
-    let dn_price = oracle.get_binary_price(50 * float!(), false, &clock);
+        assert_pair_exact(&oracle_state, 50 * float!(), &test_clock, float!(), 0);
 
-    assert_eq!(up_price, float!());
-    assert_eq!(dn_price, 0);
+        destroy(test_clock);
+        return_shared(oracle_state);
+    };
 
-    destroy(oracle);
-    destroy(clock);
+    end(test);
 }
 
 #[test]
 fun settled_below_strike_dn_wins() {
-    let ctx = &mut tx_context::dummy();
-    let (mut oracle, clock) = oracle_helper::create_simple_oracle(0, 0, 100_000, 0, ctx);
+    let mut test = begin(ALICE);
+    let oracle_id = oracle_helper::setup_settled_shared_oracle(ALICE, 40 * float!(), &mut test);
 
-    // Settle at 40, strike at 50: settlement < strike, DN wins
-    oracle.settle_test_oracle(40 * float!());
+    test.next_tx(ALICE);
+    {
+        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let test_clock = new_test_clock(0, &mut test);
 
-    let up_price = oracle.get_binary_price(50 * float!(), true, &clock);
-    let dn_price = oracle.get_binary_price(50 * float!(), false, &clock);
+        assert_pair_exact(&oracle_state, 50 * float!(), &test_clock, 0, float!());
 
-    assert_eq!(up_price, 0);
-    assert_eq!(dn_price, float!());
+        destroy(test_clock);
+        return_shared(oracle_state);
+    };
 
-    destroy(oracle);
-    destroy(clock);
+    end(test);
 }
 
 #[test]
 fun settled_at_strike_dn_wins() {
-    // ATM settles as DOWN win: settlement_price > strike is false when equal
-    let ctx = &mut tx_context::dummy();
-    let (mut oracle, clock) = oracle_helper::create_simple_oracle(0, 0, 100_000, 0, ctx);
+    let mut test = begin(ALICE);
+    let oracle_id = oracle_helper::setup_settled_shared_oracle(ALICE, 50 * float!(), &mut test);
 
-    oracle.settle_test_oracle(50 * float!());
+    test.next_tx(ALICE);
+    {
+        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let test_clock = new_test_clock(0, &mut test);
 
-    let up_price = oracle.get_binary_price(50 * float!(), true, &clock);
-    let dn_price = oracle.get_binary_price(50 * float!(), false, &clock);
+        assert_pair_exact(&oracle_state, 50 * float!(), &test_clock, 0, float!());
 
-    assert_eq!(up_price, 0);
-    assert_eq!(dn_price, float!());
+        destroy(test_clock);
+        return_shared(oracle_state);
+    };
 
-    destroy(oracle);
-    destroy(clock);
+    end(test);
 }
 
 #[test]
 fun settled_various_strikes() {
-    let ctx = &mut tx_context::dummy();
-    let (mut oracle, clock) = oracle_helper::create_simple_oracle(0, 0, 100_000, 0, ctx);
+    let mut test = begin(ALICE);
+    let oracle_id = oracle_helper::setup_settled_shared_oracle(ALICE, 100 * float!(), &mut test);
 
-    oracle.settle_test_oracle(100 * float!());
+    test.next_tx(ALICE);
+    {
+        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let test_clock = new_test_clock(0, &mut test);
 
-    // Strike 99: settlement > strike, UP wins
-    assert_eq!(oracle.get_binary_price(99 * float!(), true, &clock), float!());
-    assert_eq!(oracle.get_binary_price(99 * float!(), false, &clock), 0);
+        assert_pair_exact(&oracle_state, 99 * float!(), &test_clock, float!(), 0);
+        assert_pair_exact(&oracle_state, 100 * float!(), &test_clock, 0, float!());
+        assert_pair_exact(&oracle_state, 101 * float!(), &test_clock, 0, float!());
+        assert_pair_exact(&oracle_state, 1 * float!(), &test_clock, float!(), 0);
 
-    // Strike 100: settlement == strike, DN wins
-    assert_eq!(oracle.get_binary_price(100 * float!(), true, &clock), 0);
-    assert_eq!(oracle.get_binary_price(100 * float!(), false, &clock), float!());
+        destroy(test_clock);
+        return_shared(oracle_state);
+    };
 
-    // Strike 101: settlement < strike, DN wins
-    assert_eq!(oracle.get_binary_price(101 * float!(), true, &clock), 0);
-    assert_eq!(oracle.get_binary_price(101 * float!(), false, &clock), float!());
-
-    // Strike 1: settlement >> strike, UP wins
-    assert_eq!(oracle.get_binary_price(1 * float!(), true, &clock), float!());
-    assert_eq!(oracle.get_binary_price(1 * float!(), false, &clock), 0);
-
-    destroy(oracle);
-    destroy(clock);
+    end(test);
 }
 
 #[test]
 fun settled_up_plus_dn_always_one() {
-    // For settled oracle, exactly one side wins: UP + DN = float!() always
-    let ctx = &mut tx_context::dummy();
-    let (mut oracle, clock) = oracle_helper::create_simple_oracle(0, 0, 100_000, 0, ctx);
+    let mut test = begin(ALICE);
+    let oracle_id = oracle_helper::setup_settled_shared_oracle(ALICE, 75 * float!(), &mut test);
 
-    oracle.settle_test_oracle(75 * float!());
+    test.next_tx(ALICE);
+    {
+        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let test_clock = new_test_clock(0, &mut test);
+        let strikes = vector[1, 50, 74, 75, 76, 100, 200];
 
-    let strikes = vector[1, 50, 74, 75, 76, 100, 200];
-    strikes.do!(|s| {
-        let strike = s * float!();
-        let up = oracle.get_binary_price(strike, true, &clock);
-        let dn = oracle.get_binary_price(strike, false, &clock);
-        assert_eq!(up + dn, float!());
-    });
+        strikes.do!(|s| {
+            let strike = s * float!();
+            let (up, dn) = oracle::binary_price_pair(&oracle_state, strike, &test_clock);
+            assert_eq!(up + dn, float!());
+        });
 
-    destroy(oracle);
-    destroy(clock);
+        destroy(test_clock);
+        return_shared(oracle_state);
+    };
+
+    end(test);
 }
-
-// ============================================================
-// is_settled and is_active
-// ============================================================
 
 #[test]
 fun is_settled_true_after_settle() {
-    let ctx = &mut tx_context::dummy();
-    let (mut oracle, clock) = oracle_helper::create_simple_oracle(0, 0, 100_000, 0, ctx);
+    let mut test = begin(ALICE);
+    let oracle_id = oracle_helper::setup_settled_shared_oracle(ALICE, 50 * float!(), &mut test);
 
-    oracle.settle_test_oracle(50 * float!());
+    test.next_tx(ALICE);
+    {
+        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
 
-    assert_eq!(oracle.is_settled(), true);
-    assert_eq!(oracle.is_active(), false);
-    assert_eq!(oracle.settlement_price().destroy_some(), 50 * float!());
+        assert_eq!(oracle::is_settled(&oracle_state), true);
+        assert_eq!(oracle::is_active(&oracle_state), false);
+        assert_eq!(oracle::settlement_price(&oracle_state).destroy_some(), 50 * float!());
 
-    destroy(oracle);
-    destroy(clock);
+        return_shared(oracle_state);
+    };
+
+    end(test);
 }
 
 // ============================================================
-// Live pricing properties
+// Live pricing and discount
 // ============================================================
 
 #[test]
 fun live_discount_is_one_past_expiry() {
-    // Past expiry but not settled: compute_discount returns 1.0
-    // Even though rate=5%, discount clamps to 1.0 when time_to_expiry <= 0.
-    // So prices should match the same oracle with zero rate at the same strike.
-    let ctx = &mut tx_context::dummy();
+    let mut test = begin(ALICE);
     let forward = 100 * float!();
-    let (oracle_with_rate, mut clock) = oracle_helper::create_flat_vol_oracle(
+    let oracle_with_rate_id = oracle_helper::setup_flat_vol_shared_oracle(
+        ALICE,
         forward,
         forward,
         RATE_5_PCT,
         100_000,
-        std_grid_min_strike(),
-        std_grid_tick_size(),
-        ctx,
+        0,
+        true,
+        &mut test,
     );
-    let (oracle_zero_rate, clock2) = oracle_helper::create_flat_vol_oracle(
+    let oracle_zero_rate_id = oracle_helper::setup_flat_vol_shared_oracle(
+        ALICE,
         forward,
         forward,
         0,
         100_000,
-        std_grid_min_strike(),
-        std_grid_tick_size(),
-        ctx,
+        0,
+        true,
+        &mut test,
     );
-    clock.set_for_testing(200_000); // past expiry
 
-    let strike = forward;
+    test.next_tx(ALICE);
+    {
+        let oracle_with_rate = test.take_shared_by_id<OracleSVI>(oracle_with_rate_id);
+        let oracle_zero_rate = test.take_shared_by_id<OracleSVI>(oracle_zero_rate_id);
+        let test_clock = new_test_clock(200_000, &mut test);
 
-    let up = oracle_with_rate.get_binary_price(strike, true, &clock);
-    let dn = oracle_with_rate.get_binary_price(strike, false, &clock);
-    let up_zero_rate = oracle_zero_rate.get_binary_price(strike, true, &clock);
-    let dn_zero_rate = oracle_zero_rate.get_binary_price(strike, false, &clock);
+        let (up, dn) = oracle::binary_price_pair(&oracle_with_rate, forward, &test_clock);
+        let (up_zero_rate, dn_zero_rate) = oracle::binary_price_pair(
+            &oracle_zero_rate,
+            forward,
+            &test_clock,
+        );
 
-    precision::assert_approx(up, up_zero_rate);
-    precision::assert_approx(dn, dn_zero_rate);
+        precision::assert_approx(up, up_zero_rate);
+        precision::assert_approx(dn, dn_zero_rate);
 
-    destroy(oracle_with_rate);
-    destroy(oracle_zero_rate);
-    destroy(clock);
-    destroy(clock2);
+        destroy(test_clock);
+        return_shared(oracle_with_rate);
+        return_shared(oracle_zero_rate);
+    };
+
+    end(test);
 }
-
-// ============================================================
-// Discount computation
-// ============================================================
 
 #[test]
 fun discount_positive_rate_half_year() {
-    // rate=10%, half year: UP + DN = e^(-0.10*0.5) = DISCOUNT_10PCT_HALF_YR
-    let ctx = &mut tx_context::dummy();
+    let mut test = begin(ALICE);
     let forward = 100 * float!();
-    let (oracle, clock) = oracle_helper::create_flat_vol_oracle(
+    let oracle_id = oracle_helper::setup_flat_vol_shared_oracle(
+        ALICE,
         forward,
         forward,
         RATE_10_PCT,
         HALF_YEAR_MS,
-        std_grid_min_strike(),
-        std_grid_tick_size(),
-        ctx,
+        0,
+        true,
+        &mut test,
     );
-    let up = oracle.get_binary_price(forward, true, &clock);
-    let dn = oracle.get_binary_price(forward, false, &clock);
 
-    assert_eq!(up + dn, DISCOUNT_10PCT_HALF_YR);
+    test.next_tx(ALICE);
+    {
+        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let test_clock = new_test_clock(0, &mut test);
+        let (up, dn) = oracle::binary_price_pair(&oracle_state, forward, &test_clock);
 
-    destroy(oracle);
-    destroy(clock);
+        assert_eq!(up + dn, DISCOUNT_10PCT_HALF_YR);
+
+        destroy(test_clock);
+        return_shared(oracle_state);
+    };
+
+    end(test);
 }
 
 #[test]
 fun exact_discount_with_partial_year() {
-    // rate=10%, expiry=20B ms, clock=10B ms → t ≈ 0.317 years
-    let ctx = &mut tx_context::dummy();
+    let mut test = begin(ALICE);
     let forward = 100 * float!();
-    let (oracle, mut clock) = oracle_helper::create_flat_vol_oracle(
+    let oracle_id = oracle_helper::setup_flat_vol_shared_oracle(
+        ALICE,
         forward,
         forward,
         RATE_10_PCT,
         20_000_000_000,
-        std_grid_min_strike(),
-        std_grid_tick_size(),
-        ctx,
-    );
-    clock.set_for_testing(10_000_000_000);
-
-    precision::assert_approx(
-        oracle.get_binary_price(forward, true, &clock),
-        PARTIAL_10PCT_UP_ATM,
-    );
-    precision::assert_approx(
-        oracle.get_binary_price(forward, false, &clock),
-        PARTIAL_10PCT_DN_ATM,
-    );
-
-    destroy(oracle);
-    destroy(clock);
-}
-
-// ============================================================
-// build_curve
-// ============================================================
-
-#[test]
-fun build_curve_settled_oracle() {
-    let ctx = &mut tx_context::dummy();
-    let forward = 100 * float!();
-    let (mut oracle, clock) = oracle_helper::create_flat_vol_oracle(
-        forward,
-        forward,
         0,
-        100_000,
-        std_grid_min_strike(),
-        std_grid_tick_size(),
-        ctx,
+        true,
+        &mut test,
     );
 
-    oracle.settle_test_oracle(100 * float!());
+    test.next_tx(ALICE);
+    {
+        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let test_clock = new_test_clock(10_000_000_000, &mut test);
 
-    let curve = oracle.build_curve(50 * float!(), 150 * float!(), &clock);
+        assert_pair_approx(
+            &oracle_state,
+            forward,
+            &test_clock,
+            PARTIAL_10PCT_UP_ATM,
+            PARTIAL_10PCT_DN_ATM,
+        );
 
-    // Settled oracle returns 2-point step function
-    assert_eq!(curve.length(), 2);
-
-    let p0 = &curve[0];
-    assert_eq!(p0.strike(), 100 * float!() - 1);
-    assert_eq!(p0.up_price(), float!());
-    assert_eq!(p0.dn_price(), 0);
-
-    let p1 = &curve[1];
-    assert_eq!(p1.strike(), 100 * float!());
-    assert_eq!(p1.up_price(), 0);
-    assert_eq!(p1.dn_price(), float!());
-
-    destroy(oracle);
-    destroy(clock);
-}
-
-#[test]
-fun build_curve_settled_at_75() {
-    let ctx = &mut tx_context::dummy();
-    let forward = 100 * float!();
-    let (mut oracle, clock) = oracle_helper::create_flat_vol_oracle(
-        forward,
-        forward,
-        0,
-        100_000,
-        std_grid_min_strike(),
-        std_grid_tick_size(),
-        ctx,
-    );
-    oracle.settle_test_oracle(75 * float!());
-    let curve = oracle.build_curve(50 * float!(), 150 * float!(), &clock);
-
-    assert_eq!(curve.length(), 2);
-    assert_eq!(curve[0].strike(), 75 * float!() - 1);
-    assert_eq!(curve[0].up_price(), float!());
-    assert_eq!(curve[0].dn_price(), 0);
-    assert_eq!(curve[1].strike(), 75 * float!());
-    assert_eq!(curve[1].up_price(), 0);
-    assert_eq!(curve[1].dn_price(), float!());
-
-    destroy(oracle);
-    destroy(clock);
-}
-
-#[test]
-fun build_curve_single_strike() {
-    let ctx = &mut tx_context::dummy();
-    let (oracle, clock) = oracle_helper::create_std_oracle(ctx);
-    let curve = oracle.build_curve(100 * float!(), 100 * float!(), &clock);
-
-    assert_eq!(curve.length(), 1);
-    let pt = &curve[0];
-    assert_eq!(pt.strike(), 100 * float!());
-    assert_eq!(pt.up_price() + pt.dn_price(), float!());
-
-    destroy(oracle);
-    destroy(clock);
-}
-
-#[test]
-fun build_curve_live_sorted_and_complement() {
-    let ctx = &mut tx_context::dummy();
-    let (oracle, clock) = oracle_helper::create_std_oracle(ctx);
-    let curve = oracle.build_curve(50 * float!(), 150 * float!(), &clock);
-
-    let len = curve.length();
-    assert!(len >= 3); // at least min, forward, max
-
-    let mut i = 0;
-    while (i < len - 1) {
-        // Sorted by strike
-        assert!(curve[i].strike() < curve[i + 1].strike());
-        // UP prices monotonically non-increasing
-        assert!(curve[i].up_price() >= curve[i + 1].up_price());
-        i = i + 1;
+        destroy(test_clock);
+        return_shared(oracle_state);
     };
 
-    // Complement: UP + DN = float!() (rate=0 → discount=1.0)
-    i = 0;
-    while (i < len) {
-        assert_eq!(curve[i].up_price() + curve[i].dn_price(), float!());
-        i = i + 1;
-    };
-
-    destroy(oracle);
-    destroy(clock);
+    end(test);
 }
-
-#[test]
-fun build_curve_includes_forward_when_in_range() {
-    let ctx = &mut tx_context::dummy();
-    let (oracle, clock) = oracle_helper::create_std_oracle(ctx);
-    let forward = 100 * float!();
-    let curve = oracle.build_curve(50 * float!(), 150 * float!(), &clock);
-
-    let mut found = false;
-    curve.do_ref!(|pt| {
-        if (pt.strike() == forward) found = true;
-    });
-    assert!(found);
-
-    destroy(oracle);
-    destroy(clock);
-}
-
-#[test]
-fun build_curve_no_duplicate_when_forward_at_boundary() {
-    let ctx = &mut tx_context::dummy();
-    let (oracle, clock) = oracle_helper::create_std_oracle(ctx);
-    let forward = 100 * float!();
-    let curve = oracle.build_curve(forward, 150 * float!(), &clock);
-
-    // All strikes must be strictly increasing (no duplicates)
-    let len = curve.length();
-    let mut i = 0;
-    while (i < len - 1) {
-        assert!(curve[i].strike() < curve[i + 1].strike());
-        i = i + 1;
-    };
-
-    destroy(oracle);
-    destroy(clock);
-}
-
-#[test]
-fun build_curve_endpoints_match_min_max() {
-    let ctx = &mut tx_context::dummy();
-    let (oracle, clock) = oracle_helper::create_std_oracle(ctx);
-    let min_strike = 50 * float!();
-    let max_strike = 150 * float!();
-    let curve = oracle.build_curve(min_strike, max_strike, &clock);
-
-    assert_eq!(curve[0].strike(), min_strike);
-    assert_eq!(curve[curve.length() - 1].strike(), max_strike);
-
-    destroy(oracle);
-    destroy(clock);
-}
-
-#[test]
-fun build_curve_forward_outside_range() {
-    let ctx = &mut tx_context::dummy();
-    let forward = 200 * float!(); // outside [50,150]
-    let (oracle, clock) = oracle_helper::create_flat_vol_oracle(
-        forward,
-        forward,
-        0,
-        1_000_000,
-        upper_grid_min_strike(),
-        upper_grid_tick_size(),
-        ctx,
-    );
-    let curve = oracle.build_curve(50 * float!(), 150 * float!(), &clock);
-
-    assert!(curve.length() >= 2);
-    assert_eq!(curve[0].strike(), 50 * float!());
-    assert_eq!(curve[curve.length() - 1].strike(), 150 * float!());
-
-    let len = curve.length();
-    let mut i = 0;
-    while (i < len - 1) {
-        assert!(curve[i].strike() < curve[i + 1].strike());
-        i = i + 1;
-    };
-
-    destroy(oracle);
-    destroy(clock);
-}
-
-#[test]
-fun build_curve_with_positive_rate_complement() {
-    // With positive rate, UP + DN = discount < float!()
-    let ctx = &mut tx_context::dummy();
-    let forward = 100 * float!();
-    let (oracle, clock) = oracle_helper::create_flat_vol_oracle(
-        forward,
-        forward,
-        RATE_5_PCT,
-        constants::ms_per_year!(),
-        std_grid_min_strike(),
-        std_grid_tick_size(),
-        ctx,
-    );
-    let curve = oracle.build_curve(50 * float!(), 150 * float!(), &clock);
-
-    let len = curve.length();
-    let mut i = 0;
-    while (i < len) {
-        let sum = curve[i].up_price() + curve[i].dn_price();
-        precision::assert_approx(sum, DISCOUNT_5PCT_1YR);
-        i = i + 1;
-    };
-
-    destroy(oracle);
-    destroy(clock);
-}
-
-// ============================================================
-// Edge cases
-// ============================================================
 
 #[test]
 fun live_forward_one_unit_above_strike() {
-    let ctx = &mut tx_context::dummy();
+    let mut test = begin(ALICE);
     let forward = 100 * float!();
-    let (oracle, clock) = oracle_helper::create_flat_vol_oracle(
+    let oracle_id = oracle_helper::setup_flat_vol_shared_oracle(
+        ALICE,
         forward,
         forward,
         0,
         1_000_000,
-        std_grid_min_strike(),
-        std_grid_tick_size(),
-        ctx,
+        0,
+        true,
+        &mut test,
     );
-    let strike = forward - std_grid_tick_size();
 
-    let up = oracle.get_binary_price(strike, true, &clock);
-    let dn = oracle.get_binary_price(strike, false, &clock);
+    test.next_tx(ALICE);
+    {
+        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let test_clock = new_test_clock(0, &mut test);
+        let strike = forward - 1_000_000;
+        let (up, dn) = oracle::binary_price_pair(&oracle_state, strike, &test_clock);
 
-    assert_eq!(up + dn, float!());
+        assert_eq!(up + dn, float!());
 
-    destroy(oracle);
-    destroy(clock);
+        destroy(test_clock);
+        return_shared(oracle_state);
+    };
+
+    end(test);
 }
 
 #[test, expected_failure(abort_code = oracle::EZeroForward)]
 fun live_price_with_zero_forward_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let (oracle, clock) = oracle_helper::create_flat_vol_oracle(
+    let mut test = begin(ALICE);
+    let oracle_id = oracle_helper::setup_flat_vol_shared_oracle(
+        ALICE,
         0,
         0,
         0,
         1_000_000,
-        wide_grid_min_strike(),
-        wide_grid_tick_size(),
-        ctx,
+        0,
+        true,
+        &mut test,
     );
-    oracle.get_binary_price(50 * float!(), true, &clock);
+
+    test.next_tx(ALICE);
+    {
+        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let test_clock = new_test_clock(0, &mut test);
+        oracle::binary_price_pair(&oracle_state, 50 * float!(), &test_clock);
+    };
 
     abort
 }
@@ -788,106 +479,142 @@ fun live_price_with_zero_forward_aborts() {
 
 #[test]
 fun activate_succeeds_with_registered_cap() {
-    let ctx = &mut tx_context::dummy();
-    let (mut oracle, cap, clock) = oracle_helper::create_oracle_with_cap(ctx);
-    oracle.set_active_for_testing(false);
-    assert_eq!(oracle.is_active(), false);
+    let mut test = begin(ALICE);
+    let oracle_id = setup_configured_oracle(
+        new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25),
+        new_price_data(100 * float!(), 100 * float!()),
+        0,
+        1_000_000,
+        0,
+        false,
+        &mut test,
+    );
 
-    oracle.activate(&cap, &clock);
-    assert_eq!(oracle.is_active(), true);
+    test.next_tx(ALICE);
+    {
+        let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let cap = test.take_from_sender<OracleCapSVI>();
+        let test_clock = new_test_clock(5_000, &mut test);
 
-    destroy(oracle);
-    destroy(cap);
-    destroy(clock);
+        assert_eq!(oracle::is_active(&oracle_state), false);
+        oracle::activate(&mut oracle_state, &cap, &test_clock);
+        assert_eq!(oracle::is_active(&oracle_state), true);
+
+        destroy(test_clock);
+        return_shared(oracle_state);
+        test.return_to_sender(cap);
+    };
+
+    end(test);
 }
 
 #[test]
 fun update_prices_updates_spot_and_forward() {
-    let ctx = &mut tx_context::dummy();
-    let (mut oracle, cap, mut clock) = oracle_helper::create_oracle_with_cap(ctx);
-    clock.set_for_testing(5_000);
-
-    let new_prices = new_price_data(105 * float!(), 106 * float!());
-    oracle.update_prices(&cap, new_prices, &clock);
-
-    assert_eq!(oracle.spot_price(), 105 * float!());
-    assert_eq!(oracle.forward_price(), 106 * float!());
-    assert_eq!(oracle.timestamp(), 5_000);
-
-    destroy(oracle);
-    destroy(cap);
-    destroy(clock);
-}
-
-#[test]
-fun update_prices_accepts_boundary_values() {
-    let ctx = &mut tx_context::dummy();
-    let (mut oracle, cap, clock) = oracle_helper::create_flat_vol_oracle_with_cap(
-        500_000_000,
-        500_000_000,
-        0,
+    let mut test = begin(ALICE);
+    let (oracle_id, _cap_id) = oracle_helper::setup_shared_oracle(
+        ALICE,
+        b"BTC".to_string(),
         1_000_000,
-        bounded_grid_min_strike(),
-        grid_tick_size(),
-        ctx,
+        &mut test,
     );
 
-    let boundary_prices = new_price_data(bounded_grid_min_strike(), bounded_grid_max_strike());
-    oracle.update_prices(&cap, boundary_prices, &clock);
+    test.next_tx(ALICE);
+    {
+        let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let cap = test.take_from_sender<OracleCapSVI>();
+        let test_clock = new_test_clock(5_000, &mut test);
 
-    assert_eq!(oracle.spot_price(), bounded_grid_min_strike());
-    assert_eq!(oracle.forward_price(), bounded_grid_max_strike());
+        oracle::update_prices(
+            &mut oracle_state,
+            &cap,
+            new_price_data(105 * float!(), 106 * float!()),
+            &test_clock,
+        );
 
-    destroy(oracle);
-    destroy(cap);
-    destroy(clock);
+        assert_eq!(oracle::spot_price(&oracle_state), 105 * float!());
+        assert_eq!(oracle::forward_price(&oracle_state), 106 * float!());
+        assert_eq!(oracle::timestamp(&oracle_state), 5_000);
+
+        destroy(test_clock);
+        return_shared(oracle_state);
+        test.return_to_sender(cap);
+    };
+
+    end(test);
 }
 
 #[test]
 fun update_prices_past_expiry_settles_oracle() {
-    // update_prices past expiry freezes settlement price from spot
-    let ctx = &mut tx_context::dummy();
-    let forward = 100 * float!();
-    let (mut oracle, cap, mut clock) = oracle_helper::create_flat_vol_oracle_with_cap(
-        forward,
-        forward,
+    let mut test = begin(ALICE);
+    let oracle_id = oracle_helper::setup_flat_vol_shared_oracle(
+        ALICE,
+        100 * float!(),
+        100 * float!(),
         0,
         100_000,
-        std_grid_min_strike(),
-        std_grid_tick_size(),
-        ctx,
+        0,
+        true,
+        &mut test,
     );
-    clock.set_for_testing(200_000); // past expiry
 
-    let new_prices = new_price_data(105 * float!(), 106 * float!());
-    oracle.update_prices(&cap, new_prices, &clock);
+    test.next_tx(ALICE);
+    {
+        let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let cap = test.take_from_sender<OracleCapSVI>();
+        let test_clock = new_test_clock(200_000, &mut test);
 
-    assert_eq!(oracle.is_settled(), true);
-    assert_eq!(oracle.is_active(), false);
-    // Settlement price comes from the new spot
-    assert_eq!(oracle.settlement_price().destroy_some(), 105 * float!());
+        oracle::update_prices(
+            &mut oracle_state,
+            &cap,
+            new_price_data(105 * float!(), 106 * float!()),
+            &test_clock,
+        );
 
-    destroy(oracle);
-    destroy(cap);
-    destroy(clock);
+        assert_eq!(oracle::is_settled(&oracle_state), true);
+        assert_eq!(oracle::is_active(&oracle_state), false);
+        assert_eq!(oracle::settlement_price(&oracle_state).destroy_some(), 105 * float!());
+
+        destroy(test_clock);
+        return_shared(oracle_state);
+        test.return_to_sender(cap);
+    };
+
+    end(test);
 }
 
 #[test]
 fun update_svi_updates_rate_but_not_timestamp() {
-    let ctx = &mut tx_context::dummy();
-    let (mut oracle, cap, mut clock) = oracle_helper::create_oracle_with_cap(ctx);
-    clock.set_for_testing(5_000);
+    let mut test = begin(ALICE);
+    let (oracle_id, _cap_id) = oracle_helper::setup_shared_oracle(
+        ALICE,
+        b"BTC".to_string(),
+        1_000_000,
+        &mut test,
+    );
 
-    let new_svi = new_svi_params(100, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
-    oracle.update_svi(&cap, new_svi, RATE_5_PCT, &clock);
+    test.next_tx(ALICE);
+    {
+        let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let cap = test.take_from_sender<OracleCapSVI>();
+        let test_clock = new_test_clock(5_000, &mut test);
 
-    assert_eq!(oracle.risk_free_rate(), RATE_5_PCT);
-    // timestamp tracks price freshness only, not SVI updates
-    assert_eq!(oracle.timestamp(), 0);
+        oracle::update_svi(
+            &mut oracle_state,
+            &cap,
+            new_svi_params(100, float!(), 0, false, 0, false, SVI_SIGMA_0_25),
+            RATE_5_PCT,
+            &test_clock,
+        );
 
-    destroy(oracle);
-    destroy(cap);
-    destroy(clock);
+        assert_eq!(oracle::risk_free_rate(&oracle_state), RATE_5_PCT);
+        assert_eq!(oracle::timestamp(&oracle_state), 0);
+
+        destroy(test_clock);
+        return_shared(oracle_state);
+        test.return_to_sender(cap);
+    };
+
+    end(test);
 }
 
 // ============================================================
@@ -896,231 +623,194 @@ fun update_svi_updates_rate_but_not_timestamp() {
 
 #[test, expected_failure(abort_code = oracle::EInvalidOracleCap)]
 fun activate_with_unauthorized_cap_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let (mut oracle, cap, clock) = oracle_helper::create_oracle_with_unregistered_cap(ctx);
-    oracle.set_active_for_testing(false);
+    let mut test = begin(ALICE);
+    let (oracle_id, _cap_id) = oracle_helper::setup_shared_oracle(
+        ALICE,
+        b"BTC".to_string(),
+        1_000_000,
+        &mut test,
+    );
+    let _unauthorized_cap = oracle_helper::create_unregistered_cap(BOB, &mut test);
 
-    oracle.activate(&cap, &clock);
+    test.next_tx(BOB);
+    {
+        let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let cap = test.take_from_sender<OracleCapSVI>();
+        let test_clock = new_test_clock(0, &mut test);
+        oracle::activate(&mut oracle_state, &cap, &test_clock);
+    };
 
     abort
 }
 
 #[test, expected_failure(abort_code = oracle::EInvalidOracleCap)]
 fun update_prices_with_unauthorized_cap_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let (mut oracle, cap, clock) = oracle_helper::create_oracle_with_unregistered_cap(ctx);
-
-    let new_prices = new_price_data(105 * float!(), 106 * float!());
-    oracle.update_prices(&cap, new_prices, &clock);
-
-    abort
-}
-
-#[test, expected_failure(abort_code = oracle::EPriceOutOfRange)]
-fun update_prices_out_of_range_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let (mut oracle, cap, clock) = oracle_helper::create_flat_vol_oracle_with_cap(
-        500_000_000,
-        500_000_000,
-        0,
+    let mut test = begin(ALICE);
+    let (oracle_id, _cap_id) = oracle_helper::setup_shared_oracle(
+        ALICE,
+        b"BTC".to_string(),
         1_000_000,
-        grid_min_strike(),
-        grid_tick_size(),
-        ctx,
+        &mut test,
     );
+    let _unauthorized_cap = oracle_helper::create_unregistered_cap(BOB, &mut test);
 
-    let out_of_range_prices = new_price_data(grid_max_strike() + 1, 500_000_000);
-    oracle.update_prices(&cap, out_of_range_prices, &clock);
+    test.next_tx(BOB);
+    {
+        let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let cap = test.take_from_sender<OracleCapSVI>();
+        let test_clock = new_test_clock(0, &mut test);
+        oracle::update_prices(
+            &mut oracle_state,
+            &cap,
+            new_price_data(105 * float!(), 106 * float!()),
+            &test_clock,
+        );
+    };
 
     abort
-}
-
-#[test, expected_failure(abort_code = oracle::EPriceOutOfRange)]
-fun update_prices_forward_out_of_range_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let (mut oracle, cap, clock) = oracle_helper::create_flat_vol_oracle_with_cap(
-        500_000_000,
-        500_000_000,
-        0,
-        1_000_000,
-        grid_min_strike(),
-        grid_tick_size(),
-        ctx,
-    );
-
-    let out_of_range_prices = new_price_data(500_000_000, grid_max_strike() + 1);
-    oracle.update_prices(&cap, out_of_range_prices, &clock);
-
-    abort
-}
-
-#[test]
-fun update_prices_past_expiry_settles_even_when_out_of_range() {
-    let ctx = &mut tx_context::dummy();
-    let (mut oracle, cap, mut clock) = oracle_helper::create_flat_vol_oracle_with_cap(
-        500_000_000,
-        500_000_000,
-        0,
-        100_000,
-        grid_min_strike(),
-        grid_tick_size(),
-        ctx,
-    );
-    clock.set_for_testing(200_000);
-
-    let out_of_range_prices = new_price_data(grid_max_strike() + 1, grid_max_strike() + 2);
-    oracle.update_prices(&cap, out_of_range_prices, &clock);
-
-    assert_eq!(oracle.is_settled(), true);
-    assert_eq!(oracle.is_active(), false);
-    assert_eq!(oracle.settlement_price().destroy_some(), grid_max_strike() + 1);
-
-    destroy(oracle);
-    destroy(cap);
-    destroy(clock);
 }
 
 #[test, expected_failure(abort_code = oracle::EInvalidOracleCap)]
 fun update_svi_with_unauthorized_cap_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let (mut oracle, cap, clock) = oracle_helper::create_oracle_with_unregistered_cap(ctx);
+    let mut test = begin(ALICE);
+    let (oracle_id, _cap_id) = oracle_helper::setup_shared_oracle(
+        ALICE,
+        b"BTC".to_string(),
+        1_000_000,
+        &mut test,
+    );
+    let _unauthorized_cap = oracle_helper::create_unregistered_cap(BOB, &mut test);
 
-    let new_svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
-    oracle.update_svi(&cap, new_svi, 0, &clock);
+    test.next_tx(BOB);
+    {
+        let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let cap = test.take_from_sender<OracleCapSVI>();
+        let test_clock = new_test_clock(0, &mut test);
+        oracle::update_svi(
+            &mut oracle_state,
+            &cap,
+            new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25),
+            0,
+            &test_clock,
+        );
+    };
 
     abort
 }
 
 #[test, expected_failure(abort_code = oracle::EOracleAlreadyActive)]
 fun activate_already_active_oracle_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let (mut oracle, cap, clock) = oracle_helper::create_oracle_with_cap(ctx);
+    let mut test = begin(ALICE);
+    let oracle_id = oracle_helper::setup_flat_vol_shared_oracle(
+        ALICE,
+        100 * float!(),
+        100 * float!(),
+        0,
+        1_000_000,
+        0,
+        true,
+        &mut test,
+    );
 
-    // Oracle is already active (create_test_oracle sets active=true)
-    oracle.activate(&cap, &clock);
+    test.next_tx(ALICE);
+    {
+        let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let cap = test.take_from_sender<OracleCapSVI>();
+        let test_clock = new_test_clock(0, &mut test);
+        oracle::activate(&mut oracle_state, &cap, &test_clock);
+    };
 
     abort
 }
 
 #[test, expected_failure(abort_code = oracle::EOracleExpired)]
 fun activate_expired_oracle_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let (mut oracle, cap, mut clock) = oracle_helper::create_oracle_with_cap(ctx);
-    oracle.set_active_for_testing(false);
-    clock.set_for_testing(2_000_000); // past expiry (1_000_000)
+    let mut test = begin(ALICE);
+    let oracle_id = setup_configured_oracle(
+        new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25),
+        new_price_data(100 * float!(), 100 * float!()),
+        0,
+        1_000_000,
+        0,
+        false,
+        &mut test,
+    );
 
-    oracle.activate(&cap, &clock);
+    test.next_tx(ALICE);
+    {
+        let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let cap = test.take_from_sender<OracleCapSVI>();
+        let test_clock = new_test_clock(2_000_000, &mut test);
+        oracle::activate(&mut oracle_state, &cap, &test_clock);
+    };
 
     abort
 }
 
 #[test, expected_failure(abort_code = oracle::EOracleExpired)]
 fun update_svi_on_settled_oracle_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let (mut oracle, cap, clock) = oracle_helper::create_oracle_with_cap(ctx);
-    oracle.settle_test_oracle(100 * float!());
+    let mut test = begin(ALICE);
+    let oracle_id = oracle_helper::setup_settled_shared_oracle(ALICE, 100 * float!(), &mut test);
 
-    let new_svi = new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25);
-    oracle.update_svi(&cap, new_svi, 0, &clock);
+    test.next_tx(ALICE);
+    {
+        let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let cap = test.take_from_sender<OracleCapSVI>();
+        let test_clock = new_test_clock(0, &mut test);
+        oracle::update_svi(
+            &mut oracle_state,
+            &cap,
+            new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25),
+            0,
+            &test_clock,
+        );
+    };
 
     abort
 }
 
 #[test, expected_failure(abort_code = oracle::ECannotBeNegative)]
 fun compute_nd2_negative_inner_aborts() {
-    let ctx = &mut tx_context::dummy();
-    // Adversarial SVI: rho=-1.0, sigma~0 makes inner term negative for large k
-    let svi = new_svi_params(0, float!(), float!(), true, 0, false, 1);
-    let prices = new_price_data(100 * float!(), 100 * float!());
-    let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
+    let mut test = begin(ALICE);
+    let oracle_id = setup_configured_oracle(
+        new_svi_params(0, float!(), float!(), true, 0, false, 1),
+        new_price_data(100 * float!(), 100 * float!()),
         0,
         1_000_000,
         0,
-        far_grid_min_strike(),
-        far_grid_tick_size(),
-        ctx,
+        true,
+        &mut test,
     );
 
-    let clock = clock::create_for_testing(ctx);
-    oracle.get_binary_price(1000 * float!(), true, &clock);
-
-    abort
-}
-
-#[test, expected_failure(abort_code = oracle::EStrikeNotOnTick)]
-fun get_binary_price_strike_not_on_tick_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let (oracle, clock) = oracle_helper::create_flat_vol_oracle(
-        500_000_000,
-        500_000_000,
-        0,
-        1_000_000,
-        grid_min_strike(),
-        grid_tick_size(),
-        ctx,
-    );
-    oracle.get_binary_price(500_000_001, true, &clock);
-
-    abort
-}
-
-#[test, expected_failure(abort_code = oracle::EStrikeOutOfRange)]
-fun get_binary_price_below_min_strike_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let (oracle, clock) = oracle_helper::create_flat_vol_oracle(
-        500_000_000,
-        500_000_000,
-        0,
-        1_000_000,
-        bounded_grid_min_strike(),
-        grid_tick_size(),
-        ctx,
-    );
-    oracle.get_binary_price(bounded_grid_min_strike() - grid_tick_size(), true, &clock);
-
-    abort
-}
-
-#[test, expected_failure(abort_code = oracle::EStrikeOutOfRange)]
-fun get_binary_price_above_max_strike_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let (oracle, clock) = oracle_helper::create_flat_vol_oracle(
-        500_000_000,
-        500_000_000,
-        0,
-        1_000_000,
-        bounded_grid_min_strike(),
-        grid_tick_size(),
-        ctx,
-    );
-    oracle.get_binary_price(bounded_grid_max_strike() + grid_tick_size(), true, &clock);
+    test.next_tx(ALICE);
+    {
+        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let test_clock = new_test_clock(0, &mut test);
+        oracle::binary_price_pair(&oracle_state, 1000 * float!(), &test_clock);
+    };
 
     abort
 }
 
 #[test, expected_failure(abort_code = oracle::EZeroVariance)]
 fun zero_svi_params_on_live_oracle_aborts() {
-    let ctx = &mut tx_context::dummy();
-    // a=0, b=0 → total_var = 0 → EZeroVariance in compute_nd2
-    let svi = new_svi_params(0, 0, 0, false, 0, false, 0);
-    let prices = new_price_data(100 * float!(), 100 * float!());
-    let oracle = oracle::create_test_oracle(
-        b"BTC".to_string(),
-        svi,
-        prices,
+    let mut test = begin(ALICE);
+    let oracle_id = setup_configured_oracle(
+        new_svi_params(0, 0, 0, false, 0, false, 0),
+        new_price_data(100 * float!(), 100 * float!()),
         0,
         1_000_000,
         0,
-        std_grid_min_strike(),
-        std_grid_tick_size(),
-        ctx,
+        true,
+        &mut test,
     );
 
-    let clock = clock::create_for_testing(ctx);
-    oracle.get_binary_price(100 * float!(), true, &clock);
+    test.next_tx(ALICE);
+    {
+        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let test_clock = new_test_clock(0, &mut test);
+        oracle::binary_price_pair(&oracle_state, 100 * float!(), &test_clock);
+    };
 
     abort
 }
@@ -1131,56 +821,110 @@ fun zero_svi_params_on_live_oracle_aborts() {
 
 #[test, expected_failure(abort_code = oracle::EOracleExpired)]
 fun activate_at_exact_expiry_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let (mut oracle, cap, mut clock) = oracle_helper::create_oracle_with_cap(ctx);
-    oracle.set_active_for_testing(false);
-    clock.set_for_testing(1_000_000); // exactly at expiry; guard is now < expiry
+    let mut test = begin(ALICE);
+    let oracle_id = setup_configured_oracle(
+        new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25),
+        new_price_data(100 * float!(), 100 * float!()),
+        0,
+        1_000_000,
+        0,
+        false,
+        &mut test,
+    );
 
-    oracle.activate(&cap, &clock);
+    test.next_tx(ALICE);
+    {
+        let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let cap = test.take_from_sender<OracleCapSVI>();
+        let test_clock = new_test_clock(1_000_000, &mut test);
+        oracle::activate(&mut oracle_state, &cap, &test_clock);
+    };
 
     abort
 }
 
 #[test]
 fun update_prices_at_exact_expiry_does_not_settle() {
-    let ctx = &mut tx_context::dummy();
-    let (mut oracle, cap, mut clock) = oracle_helper::create_oracle_with_cap(ctx);
-    clock.set_for_testing(1_000_000); // exactly at expiry; guard is now > expiry
+    let mut test = begin(ALICE);
+    let oracle_id = oracle_helper::setup_flat_vol_shared_oracle(
+        ALICE,
+        100 * float!(),
+        100 * float!(),
+        0,
+        1_000_000,
+        0,
+        true,
+        &mut test,
+    );
 
-    let new_prices = new_price_data(105 * float!(), 106 * float!());
-    oracle.update_prices(&cap, new_prices, &clock);
+    test.next_tx(ALICE);
+    {
+        let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let cap = test.take_from_sender<OracleCapSVI>();
+        let test_clock = new_test_clock(1_000_000, &mut test);
 
-    // Should NOT have settled — just updated prices
-    assert!(oracle.settlement_price().is_none());
-    assert_eq!(oracle.spot_price(), 105 * float!());
+        oracle::update_prices(
+            &mut oracle_state,
+            &cap,
+            new_price_data(105 * float!(), 106 * float!()),
+            &test_clock,
+        );
 
-    destroy(oracle);
-    destroy(cap);
-    destroy(clock);
+        assert!(oracle::settlement_price(&oracle_state).is_none());
+        assert_eq!(oracle::spot_price(&oracle_state), 105 * float!());
+
+        destroy(test_clock);
+        return_shared(oracle_state);
+        test.return_to_sender(cap);
+    };
+
+    end(test);
 }
 
 #[test]
 fun update_prices_on_settled_oracle_preserves_settlement() {
-    let ctx = &mut tx_context::dummy();
-    let (mut oracle, cap, mut clock) = oracle_helper::create_oracle_with_cap(ctx);
+    let mut test = begin(ALICE);
+    let oracle_id = oracle_helper::setup_flat_vol_shared_oracle(
+        ALICE,
+        100 * float!(),
+        100 * float!(),
+        0,
+        1_000_000,
+        0,
+        true,
+        &mut test,
+    );
 
-    // First, settle the oracle by calling update_prices past expiry
-    clock.set_for_testing(2_000_000);
-    let prices1 = new_price_data(105 * float!(), 106 * float!());
-    oracle.update_prices(&cap, prices1, &clock);
-    assert_eq!(oracle.settlement_price().destroy_some(), 105 * float!());
+    test.next_tx(ALICE);
+    {
+        let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
+        let cap = test.take_from_sender<OracleCapSVI>();
+        let test_clock = new_test_clock(2_000_000, &mut test);
 
-    // Call update_prices again — settlement_price.is_some(), so settlement branch is skipped
-    let prices2 = new_price_data(110 * float!(), 111 * float!());
-    oracle.update_prices(&cap, prices2, &clock);
+        oracle::update_prices(
+            &mut oracle_state,
+            &cap,
+            new_price_data(105 * float!(), 106 * float!()),
+            &test_clock,
+        );
+        assert_eq!(oracle::settlement_price(&oracle_state).destroy_some(), 105 * float!());
 
-    // Settlement price unchanged, but prices updated
-    assert_eq!(oracle.settlement_price().destroy_some(), 105 * float!());
-    assert_eq!(oracle.spot_price(), 110 * float!());
+        oracle::update_prices(
+            &mut oracle_state,
+            &cap,
+            new_price_data(110 * float!(), 111 * float!()),
+            &test_clock,
+        );
 
-    destroy(oracle);
-    destroy(cap);
-    destroy(clock);
+        assert_eq!(oracle::settlement_price(&oracle_state).destroy_some(), 105 * float!());
+        assert_eq!(oracle::spot_price(&oracle_state), 110 * float!());
+
+        destroy(test_clock);
+        return_shared(oracle_state);
+        test.return_to_sender(cap);
+    };
+
+    end(test);
 }
 
 // ============================================================

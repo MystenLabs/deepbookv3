@@ -18,19 +18,10 @@ use deepbook_predict::{
         new_price_data,
         new_svi_params
     },
-    oracle_runtime::{Self as oracle_runtime, OracleRuntime},
     predict::{Self as predict, Predict}
 };
 use std::{string::String, unit_test::destroy};
-use sui::{clock, object, test_scenario::{Self as test_scenario, Scenario}};
-
-fun simple_grid_min_strike(): u64 { 2_000_000 }
-
-fun simple_grid_tick_size(): u64 { 2_000_000 }
-
-fun std_grid_min_strike(): u64 { 50 * float!() }
-
-fun std_grid_tick_size(): u64 { oracle_tick_size_unit!() * 100 }
+use sui::{clock, test_scenario::{Self as test_scenario, Scenario}};
 
 fun flat_vol_svi(): SVIParams {
     new_svi_params(0, 1_000_000_000, 0, false, 0, false, 250_000_000)
@@ -38,30 +29,6 @@ fun flat_vol_svi(): SVIParams {
 
 fun zero_svi(): SVIParams {
     new_svi_params(0, 0, 0, false, 0, false, 0)
-}
-
-/// Attach a Predict strike grid to an oracle ID inside an OracleRuntime.
-public fun add_grid_to_runtime(
-    runtime: &mut OracleRuntime,
-    oracle: &OracleSVI,
-    min_strike: u64,
-    tick_size: u64,
-) {
-    oracle_runtime::add_oracle_grid(runtime, oracle.id(), min_strike, tick_size);
-}
-
-/// Attach a scenario-defined strike grid to an oracle ID inside an OracleRuntime.
-public fun add_scenario_grid_to_runtime(
-    runtime: &mut OracleRuntime,
-    oracle: &OracleSVI,
-    scenario: &OracleScenario,
-) {
-    add_grid_to_runtime(
-        runtime,
-        oracle,
-        scenario.min_strike(),
-        scenario.tick_size(),
-    );
 }
 
 /// Attach a Predict strike grid to an oracle ID inside a test Predict object.
@@ -88,14 +55,9 @@ public fun add_scenario_grid_to_predict<Quote>(
     );
 }
 
-/// Default grid for small-strike runtime tests.
-public fun default_simple_grid(): (u64, u64) {
-    (simple_grid_min_strike(), simple_grid_tick_size())
-}
-
 /// Default grid for standard runtime tests around spot ~= 100.
 public fun default_std_grid(): (u64, u64) {
-    (std_grid_min_strike(), std_grid_tick_size())
+    (50 * float!(), oracle_tick_size_unit!() * 100)
 }
 
 /// Create an extra cap and transfer it to `sender` without registering it.
@@ -123,6 +85,7 @@ public fun setup_shared_oracle(
     transfer::public_transfer(cap, sender);
 
     let oracle_id = oracle::create_oracle(underlying_asset, expiry_ms, test.ctx());
+    test.next_tx(sender);
     {
         let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
         let cap = test.take_from_sender<OracleCapSVI>();

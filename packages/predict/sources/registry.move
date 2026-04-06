@@ -184,16 +184,8 @@ public fun set_max_total_exposure_pct<Quote>(
 
 /// Package initializer - creates Registry and AdminCap.
 fun init(ctx: &mut TxContext) {
-    let registry = Registry {
-        id: object::new(ctx),
-        predict_id: option::none(),
-        oracle_ids: table::new(ctx),
-    };
+    let (registry, admin_cap) = new_registry_and_admin_cap(ctx);
     transfer::share_object(registry);
-
-    let admin_cap = AdminCap {
-        id: object::new(ctx),
-    };
     transfer::transfer(admin_cap, ctx.sender());
 }
 
@@ -206,11 +198,29 @@ fun assert_valid_strike_grid(min_strike: u64, tick_size: u64) {
 
 // === Test Functions ===
 #[test_only]
-public fun init_for_testing(ctx: &mut TxContext) {
-    init(ctx);
+public fun init_for_testing(ctx: &mut TxContext): ID {
+    let (registry, admin_cap) = new_registry_and_admin_cap(ctx);
+    let registry_id = object::id(&registry);
+    transfer::share_object(registry);
+    transfer::transfer(admin_cap, ctx.sender());
+
+    registry_id
 }
 
 #[test_only]
 public fun create_admin_cap_for_testing(ctx: &mut TxContext): AdminCap {
     AdminCap { id: object::new(ctx) }
+}
+
+fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
+    (
+        Registry {
+            id: object::new(ctx),
+            predict_id: option::none(),
+            oracle_ids: table::new(ctx),
+        },
+        AdminCap {
+            id: object::new(ctx),
+        },
+    )
 }

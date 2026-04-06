@@ -40,7 +40,9 @@ public fun new_curve_point(strike: u64, up_price: u64, dn_price: u64): CurvePoin
 }
 
 public fun strike(point: &CurvePoint): u64 { point.strike }
+
 public fun up_price(point: &CurvePoint): u64 { point.up_price }
+
 public fun dn_price(point: &CurvePoint): u64 { point.dn_price }
 
 public(package) fun new(ctx: &mut TxContext): OracleRuntime {
@@ -88,11 +90,7 @@ public(package) fun assert_key_matches(
     oracle_runtime.assert_valid_strike(oracle, market_key.strike());
 }
 
-public(package) fun assert_operational_oracle(
-    _oracle_runtime: &OracleRuntime,
-    oracle: &OracleSVI,
-    clock: &Clock,
-) {
+public(package) fun assert_operational_oracle(oracle: &OracleSVI, clock: &Clock) {
     assert!(!oracle.is_settled(), EOracleSettled);
     assert!(oracle.is_active(), EOracleInactive);
     assert!(
@@ -101,12 +99,8 @@ public(package) fun assert_operational_oracle(
     );
 }
 
-public(package) fun assert_mintable_oracle(
-    oracle_runtime: &OracleRuntime,
-    oracle: &OracleSVI,
-    clock: &Clock,
-) {
-    oracle_runtime.assert_operational_oracle(oracle, clock);
+public(package) fun assert_mintable_oracle(oracle: &OracleSVI, clock: &Clock) {
+    assert_operational_oracle(oracle, clock);
     assert!(clock.timestamp_ms() < oracle.expiry(), EOracleExpired);
 }
 
