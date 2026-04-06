@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// Unit tests for MarketKey construction, field access, and equality semantics.
 #[test_only]
 module deepbook_predict::market_key_tests;
 

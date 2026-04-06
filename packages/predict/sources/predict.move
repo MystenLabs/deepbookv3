@@ -3,11 +3,9 @@
 
 /// Main entry point for the DeepBook Predict protocol.
 ///
-/// This module orchestrates all operations:
-/// - Coordinates between Vault (state), Oracle (data), and config
-/// - Exposes public functions for trading
-/// - Handles pricing (spread calculation)
-/// - Manages LP token (PLP) minting and burning for vault supply/withdraw
+/// This module orchestrates user actions across the vault, oracle runtime,
+/// manager, and pricing layers. It owns public trading and LP flows, while the
+/// lower modules provide isolated state machines and pricing primitives.
 module deepbook_predict::predict;
 
 use deepbook::math;
@@ -25,14 +23,14 @@ use deepbook_predict::{
 use sui::{clock::Clock, coin::{Self, Coin, TreasuryCap}, event};
 
 // === Errors ===
-const ETradingPaused: u64 = 1;
-const EInvalidCollateralPair: u64 = 2;
-const ENotOwner: u64 = 3;
-const EWithdrawExceedsAvailable: u64 = 4;
-const EZeroQuantity: u64 = 5;
-const EZeroAmount: u64 = 6;
-const EZeroVaultValue: u64 = 7;
-const EZeroSharesMinted: u64 = 8;
+const ETradingPaused: u64 = 0;
+const EInvalidCollateralPair: u64 = 1;
+const ENotOwner: u64 = 2;
+const EWithdrawExceedsAvailable: u64 = 3;
+const EZeroQuantity: u64 = 4;
+const EZeroAmount: u64 = 5;
+const EZeroVaultValue: u64 = 6;
+const EZeroSharesMinted: u64 = 7;
 
 // === Events ===
 

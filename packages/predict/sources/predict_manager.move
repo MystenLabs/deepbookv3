@@ -12,10 +12,10 @@ use deepbook_predict::market_key::MarketKey;
 use sui::{coin::Coin, event, table::{Self, Table}};
 
 // === Errors ===
-const EInvalidOwner: u64 = 1;
-const EInsufficientPosition: u64 = 2;
-const EInsufficientFreePosition: u64 = 3;
-const EInsufficientCollateral: u64 = 4;
+const EInvalidOwner: u64 = 0;
+const EInsufficientPosition: u64 = 1;
+const EInsufficientFreePosition: u64 = 2;
+const EInsufficientCollateral: u64 = 3;
 
 // === Events ===
 

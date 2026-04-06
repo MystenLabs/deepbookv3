@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// Unit tests for vault balance accounting, exposure tracking, and cached MTM.
 #[test_only]
 module deepbook_predict::vault_tests;
 

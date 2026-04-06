@@ -23,8 +23,8 @@ use sui::{bcs, hash::blake2b256, table::{Self, Table}};
 
 // === Errors ===
 
-const ENodeNotFound: u64 = 1;
-const EInsufficientQuantity: u64 = 2;
+const ENodeNotFound: u64 = 0;
+const EInsufficientQuantity: u64 = 1;
 
 // === Structs ===
 

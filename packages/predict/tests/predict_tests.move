@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// End-to-end protocol tests for mint, redeem, collateral, and LP flows.
 #[test_only]
 module deepbook_predict::predict_tests;
 

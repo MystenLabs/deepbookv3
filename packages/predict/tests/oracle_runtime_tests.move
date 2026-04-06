@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// Unit tests for Predict runtime grid validation, liveness checks, and curves.
 #[test_only]
 module deepbook_predict::oracle_runtime_tests;
 

@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// Unit tests for Predict registry setup, oracle creation, and admin controls.
 #[test_only]
 module deepbook_predict::registry_tests;
 

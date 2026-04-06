@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// Unit tests for core oracle lifecycle, settlement, discounting, and pricing.
 #[test_only]
 module deepbook_predict::oracle_tests;
 

@@ -1,15 +1,11 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Registry module for the Predict protocol.
+/// Registry and admin entrypoints for the Predict protocol.
 ///
-/// Manages:
-/// - `Registry` shared object that tracks oracles and the Predict ID
-/// - `AdminCap` capability for admin operations
-/// - Global pause flags for trading
-///
-/// The Registry is created once during package initialization.
-/// AdminCap is transferred to the deployer (expected to be a multisig).
+/// This module creates the shared `Registry`, tracks oracle and Predict IDs,
+/// and exposes the admin-only wiring/configuration functions used during setup
+/// and protocol governance.
 module deepbook_predict::registry;
 
 use deepbook_predict::{
@@ -22,9 +18,9 @@ use std::string::String;
 use sui::{coin::TreasuryCap, event, table::{Self, Table}};
 
 // === Errors ===
-const EPredictAlreadyCreated: u64 = 1;
-const EInvalidTickSize: u64 = 2;
-const EInvalidStrikeGrid: u64 = 3;
+const EPredictAlreadyCreated: u64 = 0;
+const EInvalidTickSize: u64 = 1;
+const EInvalidStrikeGrid: u64 = 2;
 
 // === Events ===
 

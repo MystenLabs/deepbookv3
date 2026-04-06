@@ -1,6 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// Unit tests for treap insertion, removal, aggregation, and curve evaluation.
 #[test_only]
 module deepbook_predict::treap_tests;
 

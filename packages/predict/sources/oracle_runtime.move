@@ -1,18 +1,26 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+/// Predict-owned runtime layer on top of the core oracle.
+///
+/// This module stores per-oracle strike grids, validates market keys against
+/// that grid, applies Predict liveness policy, and builds sampled pricing
+/// curves for vault MTM evaluation.
 module deepbook_predict::oracle_runtime;
 
 use deepbook_predict::{constants, market_key::MarketKey, oracle::OracleSVI};
 use sui::{clock::Clock, table::{Self, Table}};
 
 // === Errors ===
-const EMarketKeyOracleMismatch: u64 = 1;
-const EMarketKeyExpiryMismatch: u64 = 2;
-const EInvalidStrike: u64 = 3;
-const EOracleSettled: u64 = 4;
-const EOracleExpired: u64 = 5;
-const EOracleInactive: u64 = 6;
-const EOracleStale: u64 = 7;
-const EOracleRuntimeNotFound: u64 = 8;
-const EInvalidCurveRange: u64 = 9;
+const EMarketKeyOracleMismatch: u64 = 0;
+const EMarketKeyExpiryMismatch: u64 = 1;
+const EInvalidStrike: u64 = 2;
+const EOracleSettled: u64 = 3;
+const EOracleExpired: u64 = 4;
+const EOracleInactive: u64 = 5;
+const EOracleStale: u64 = 6;
+const EOracleRuntimeNotFound: u64 = 7;
+const EInvalidCurveRange: u64 = 8;
 
 public struct OracleGrid has copy, drop, store {
     min_strike: u64,

@@ -16,13 +16,13 @@ use sui::{clock::Clock, event, vec_set::{Self, VecSet}};
 
 // === Errors ===
 
-const EInvalidOracleCap: u64 = 1;
-const EOracleAlreadyActive: u64 = 2;
-const EOracleExpired: u64 = 3;
-const EZeroForward: u64 = 4;
-const ECannotBeNegative: u64 = 5;
-const EZeroVariance: u64 = 6;
-const EOracleSettled: u64 = 7;
+const EInvalidOracleCap: u64 = 0;
+const EOracleAlreadyActive: u64 = 1;
+const EOracleExpired: u64 = 2;
+const EZeroForward: u64 = 3;
+const ECannotBeNegative: u64 = 4;
+const EZeroVariance: u64 = 5;
+const EOracleSettled: u64 = 6;
 
 // === Events ===
 
