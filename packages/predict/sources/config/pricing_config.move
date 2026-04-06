@@ -61,6 +61,8 @@ public(package) fun set_utilization_multiplier(config: &mut PricingConfig, multi
     config.utilization_multiplier = multiplier;
 }
 
+// TODO: Add admin-configurable tail guards so minting can reject fair prices
+// in unreliable extremes (for example <= 0.02 or >= 0.98).
 public(package) fun quote_from_fair_price(
     config: &PricingConfig,
     fair_price: u64,

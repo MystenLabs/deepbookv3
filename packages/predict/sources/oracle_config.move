@@ -1,12 +1,12 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Predict-owned runtime layer on top of the core oracle.
+/// Predict-owned configuration layer on top of the core oracle.
 ///
 /// This module stores per-oracle strike grids, validates market keys against
 /// that grid, applies Predict liveness policy, and builds sampled pricing
 /// curves for vault MTM evaluation.
-module deepbook_predict::oracle_runtime;
+module deepbook_predict::oracle_config;
 
 use deepbook_predict::{constants, market_key::MarketKey, oracle::OracleSVI};
 use sui::{clock::Clock, table::{Self, Table}};
@@ -19,7 +19,7 @@ const EOracleSettled: u64 = 3;
 const EOracleExpired: u64 = 4;
 const EOracleInactive: u64 = 5;
 const EOracleStale: u64 = 6;
-const EOracleRuntimeNotFound: u64 = 7;
+const EOracleConfigNotFound: u64 = 7;
 const EInvalidCurveRange: u64 = 8;
 
 public struct OracleGrid has copy, drop, store {
@@ -28,7 +28,7 @@ public struct OracleGrid has copy, drop, store {
     tick_size: u64,
 }
 
-public struct OracleRuntime has store {
+public struct OracleConfig has store {
     oracle_grids: Table<ID, OracleGrid>,
 }
 
@@ -57,16 +57,16 @@ public fun up_price(point: &CurvePoint): u64 { point.up_price }
 /// Return the DN price stored in a curve point.
 public fun dn_price(point: &CurvePoint): u64 { point.dn_price }
 
-/// Create an empty runtime strike-grid registry for Predict.
-public(package) fun new(ctx: &mut TxContext): OracleRuntime {
-    OracleRuntime {
+/// Create an empty oracle config registry for Predict.
+public(package) fun new(ctx: &mut TxContext): OracleConfig {
+    OracleConfig {
         oracle_grids: table::new(ctx),
     }
 }
 
 /// Register the configured strike grid for a newly created oracle.
 public(package) fun add_oracle_grid(
-    oracle_runtime: &mut OracleRuntime,
+    oracle_config: &mut OracleConfig,
     oracle_id: ID,
     min_strike: u64,
     tick_size: u64,
@@ -77,17 +77,17 @@ public(package) fun add_oracle_grid(
         max_strike,
         tick_size,
     };
-    oracle_runtime.oracle_grids.add(oracle_id, grid);
+    oracle_config.oracle_grids.add(oracle_id, grid);
 }
 
 /// Assert that a strike lies on the configured grid for this oracle.
 public(package) fun assert_valid_strike(
-    oracle_runtime: &OracleRuntime,
+    oracle_config: &OracleConfig,
     oracle: &OracleSVI,
     strike: u64,
 ) {
     let oracle_id = oracle.id();
-    let (min_strike, tick_size, max_strike) = oracle_runtime.grid_params(oracle_id);
+    let (min_strike, tick_size, max_strike) = oracle_config.grid_params(oracle_id);
 
     assert!(strike >= min_strike && strike <= max_strike, EInvalidStrike);
     assert!((strike - min_strike) % tick_size == 0, EInvalidStrike);
@@ -95,7 +95,7 @@ public(package) fun assert_valid_strike(
 
 /// Assert that a market key matches the oracle identity, expiry, and strike grid.
 public(package) fun assert_key_matches(
-    oracle_runtime: &OracleRuntime,
+    oracle_config: &OracleConfig,
     oracle: &OracleSVI,
     market_key: &MarketKey,
 ) {
@@ -103,7 +103,7 @@ public(package) fun assert_key_matches(
 
     assert!(market_key.oracle_id() == oracle_id, EMarketKeyOracleMismatch);
     assert!(market_key.expiry() == oracle.expiry(), EMarketKeyExpiryMismatch);
-    oracle_runtime.assert_valid_strike(oracle, market_key.strike());
+    oracle_config.assert_valid_strike(oracle, market_key.strike());
 }
 
 /// Assert that an oracle can still be used for reads and redemptions.
@@ -124,37 +124,37 @@ public(package) fun assert_mintable_oracle(oracle: &OracleSVI, clock: &Clock) {
 
 /// Return the exact fair price for one side of a binary market.
 public(package) fun binary_price(
-    oracle_runtime: &OracleRuntime,
+    oracle_config: &OracleConfig,
     oracle: &OracleSVI,
     strike: u64,
     is_up: bool,
     clock: &Clock,
 ): u64 {
-    let (up_price, dn_price) = oracle_runtime.binary_price_pair(oracle, strike, clock);
+    let (up_price, dn_price) = oracle_config.binary_price_pair(oracle, strike, clock);
     if (is_up) { up_price } else { dn_price }
 }
 
 /// Return the exact fair prices for both sides of a binary market.
 public(package) fun binary_price_pair(
-    oracle_runtime: &OracleRuntime,
+    oracle_config: &OracleConfig,
     oracle: &OracleSVI,
     strike: u64,
     clock: &Clock,
 ): (u64, u64) {
-    oracle_runtime.assert_valid_strike(oracle, strike);
+    oracle_config.assert_valid_strike(oracle, strike);
     oracle.binary_price_pair(strike, clock)
 }
 
 /// Build an adaptive piecewise-linear curve over the configured strike range.
 public(package) fun build_curve(
-    oracle_runtime: &OracleRuntime,
+    oracle_config: &OracleConfig,
     oracle: &OracleSVI,
     min_strike: u64,
     max_strike: u64,
     clock: &Clock,
 ): vector<CurvePoint> {
     let oracle_id = oracle.id();
-    oracle_runtime.assert_build_curve(oracle_id, min_strike, max_strike);
+    oracle_config.assert_build_curve(oracle_id, min_strike, max_strike);
     if (oracle.is_settled()) {
         let settlement = oracle.settlement_price().destroy_some();
         let full_price = constants::float_scaling!();
@@ -190,7 +190,7 @@ public(package) fun build_curve(
 
     let curve_samples = constants::default_curve_samples!();
     let mut cur_samples = 2;
-    let (grid_min, grid_tick, _grid_max) = oracle_runtime.grid_params(oracle_id);
+    let (grid_min, grid_tick, _grid_max) = oracle_config.grid_params(oracle_id);
     while (cur_samples < curve_samples) {
         let (found, idx) = find_gap(&points, grid_tick);
         if (!found) break;
@@ -208,12 +208,12 @@ public(package) fun build_curve(
 
 /// Assert that a requested curve range is valid on the oracle's configured grid.
 fun assert_build_curve(
-    oracle_runtime: &OracleRuntime,
+    oracle_config: &OracleConfig,
     oracle_id: ID,
     min_strike: u64,
     max_strike: u64,
 ) {
-    let (grid_min, tick_size, grid_max) = oracle_runtime.grid_params(oracle_id);
+    let (grid_min, tick_size, grid_max) = oracle_config.grid_params(oracle_id);
 
     assert!(min_strike <= max_strike, EInvalidCurveRange);
     assert!(min_strike >= grid_min && min_strike <= grid_max, EInvalidStrike);
@@ -223,9 +223,9 @@ fun assert_build_curve(
 }
 
 /// Load the configured strike-grid parameters for an oracle.
-fun grid_params(oracle_runtime: &OracleRuntime, oracle_id: ID): (u64, u64, u64) {
-    assert!(oracle_runtime.oracle_grids.contains(oracle_id), EOracleRuntimeNotFound);
-    let grid = oracle_runtime.oracle_grids.borrow(oracle_id);
+fun grid_params(oracle_config: &OracleConfig, oracle_id: ID): (u64, u64, u64) {
+    assert!(oracle_config.oracle_grids.contains(oracle_id), EOracleConfigNotFound);
+    let grid = oracle_config.oracle_grids.borrow(oracle_id);
     let grid_min = grid.min_strike;
     let grid_max = grid.max_strike;
     let tick_size = grid.tick_size;

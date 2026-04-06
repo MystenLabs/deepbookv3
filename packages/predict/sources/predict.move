@@ -3,7 +3,7 @@
 
 /// Main entry point for the DeepBook Predict protocol.
 ///
-/// This module orchestrates user actions across the vault, oracle runtime,
+/// This module orchestrates user actions across the vault, oracle config,
 /// manager, and pricing layers. It owns public trading and LP flows, while the
 /// lower modules provide isolated state machines and pricing primitives.
 module deepbook_predict::predict;
@@ -13,7 +13,7 @@ use deepbook_predict::{
     market_key::MarketKey,
     math::mul_div_round_down,
     oracle::OracleSVI,
-    oracle_runtime::{Self, OracleRuntime},
+    oracle_config::{Self, OracleConfig},
     plp::PLP,
     predict_manager::{Self, PredictManager},
     pricing_config::{Self, PricingConfig},
@@ -139,7 +139,7 @@ public struct Predict<phantom Quote> has key {
     pricing_config: PricingConfig,
     /// Risk limits (admin-controlled)
     risk_config: RiskConfig,
-    oracle_runtime: OracleRuntime,
+    oracle_config: OracleConfig,
     /// Whether trading (mint) is globally paused
     trading_paused: bool,
 }
@@ -165,9 +165,9 @@ public fun get_trade_amounts<Quote>(
     quantity: u64,
     clock: &Clock,
 ): (u64, u64) {
-    predict.oracle_runtime.assert_key_matches(oracle, &key);
+    predict.oracle_config.assert_key_matches(oracle, &key);
     if (!oracle.is_settled()) {
-        oracle_runtime::assert_operational_oracle(oracle, clock);
+        oracle_config::assert_operational_oracle(oracle, clock);
     };
 
     let strike = key.strike();
@@ -191,8 +191,8 @@ public fun mint<Quote>(
     assert!(!predict.trading_paused, ETradingPaused);
     assert!(quantity > 0, EZeroQuantity);
 
-    predict.oracle_runtime.assert_key_matches(oracle, &key);
-    oracle_runtime::assert_mintable_oracle(oracle, clock);
+    predict.oracle_config.assert_key_matches(oracle, &key);
+    oracle_config::assert_mintable_oracle(oracle, clock);
 
     let strike = key.strike();
     let is_up = key.is_up();
@@ -237,9 +237,9 @@ public fun redeem<Quote>(
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(quantity > 0, EZeroQuantity);
-    predict.oracle_runtime.assert_key_matches(oracle, &key);
+    predict.oracle_config.assert_key_matches(oracle, &key);
     if (!oracle.is_settled()) {
-        oracle_runtime::assert_operational_oracle(oracle, clock);
+        oracle_config::assert_operational_oracle(oracle, clock);
     };
 
     manager.decrease_position(key, quantity);
@@ -274,6 +274,8 @@ public fun redeem<Quote>(
     });
 }
 
+// TODO: Update collateralized minting to share the same pricing and risk
+// admission checks as standard mint flows.
 /// Mint a position using another position as collateral (no USDC cost).
 /// - UP collateral (lower strike) -> UP minted (higher strike)
 /// - DOWN collateral (higher strike) -> DOWN minted (lower strike)
@@ -292,9 +294,9 @@ public fun mint_collateralized<Quote>(
     assert!(quantity > 0, EZeroQuantity);
     assert_collateral_valid(&locked_key, &minted_key);
 
-    predict.oracle_runtime.assert_key_matches(oracle, &locked_key);
-    predict.oracle_runtime.assert_key_matches(oracle, &minted_key);
-    oracle_runtime::assert_mintable_oracle(oracle, clock);
+    predict.oracle_config.assert_key_matches(oracle, &locked_key);
+    predict.oracle_config.assert_key_matches(oracle, &minted_key);
+    oracle_config::assert_mintable_oracle(oracle, clock);
 
     manager.lock_collateral(locked_key, minted_key, quantity);
     manager.increase_position(minted_key, quantity);
@@ -410,7 +412,7 @@ public(package) fun create<Quote>(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxCo
         treasury_cap,
         pricing_config: pricing_config::new(),
         risk_config: risk_config::new(),
-        oracle_runtime: oracle_runtime::new(ctx),
+        oracle_config: oracle_config::new(ctx),
         trading_paused: false,
     };
     let predict_id = object::id(&predict);
@@ -425,7 +427,7 @@ public(package) fun add_oracle_grid<Quote>(
     min_strike: u64,
     tick_size: u64,
 ) {
-    predict.oracle_runtime.add_oracle_grid(oracle_id, min_strike, tick_size);
+    predict.oracle_config.add_oracle_grid(oracle_id, min_strike, tick_size);
 }
 
 /// Whether trading is currently paused.
@@ -502,7 +504,7 @@ public(package) fun create_test_predict<Quote>(ctx: &mut TxContext): Predict<Quo
         treasury_cap,
         pricing_config: pricing_config::new(),
         risk_config: risk_config::new(),
-        oracle_runtime: oracle_runtime::new(ctx),
+        oracle_config: oracle_config::new(ctx),
         trading_paused: false,
     }
 }
@@ -513,8 +515,8 @@ public(package) fun vault_mut<Quote>(predict: &mut Predict<Quote>): &mut Vault<Q
 }
 
 #[test_only]
-public(package) fun oracle_runtime<Quote>(predict: &Predict<Quote>): &OracleRuntime {
-    &predict.oracle_runtime
+public(package) fun oracle_config<Quote>(predict: &Predict<Quote>): &OracleConfig {
+    &predict.oracle_config
 }
 
 #[test_only]
@@ -550,7 +552,7 @@ fun get_quote<Quote>(
     is_up: bool,
     clock: &Clock,
 ): (u64, u64) {
-    let fair_price = predict.oracle_runtime.binary_price(oracle, strike, is_up, clock);
+    let fair_price = predict.oracle_config.binary_price(oracle, strike, is_up, clock);
 
     predict
         .pricing_config
@@ -570,7 +572,7 @@ fun refresh_oracle_risk<Quote>(predict: &mut Predict<Quote>, oracle: &OracleSVI,
         predict.vault.set_mtm(oracle_id, 0);
         return
     };
-    let curve = predict.oracle_runtime.build_curve(oracle, min_strike, max_strike, clock);
+    let curve = predict.oracle_config.build_curve(oracle, min_strike, max_strike, clock);
     predict.vault.set_mtm_with_curve(oracle_id, &curve);
 }
 

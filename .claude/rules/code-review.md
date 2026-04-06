@@ -25,7 +25,7 @@ Accumulated from real PR review feedback. Update this file when reviewers catch 
 
 ## Tests
 
-- Every `expected_failure` test should trigger the abort on a specific line. The trailing `abort` is a guard — if execution passes the expected abort point, the bare `abort` produces a different code and fails the test.
+- Every `expected_failure` test should trigger the abort on a specific line. The trailing guard abort must use a code distinct from the expected one (for example `abort 999`) so the test still fails if execution reaches the guard.
 - When a test checks a return value against a stored value, use a getter to read the stored value directly. Don't use indirect checks like "ID is non-zero" when you can assert the exact value matches.
 
 ## Generated Test Data

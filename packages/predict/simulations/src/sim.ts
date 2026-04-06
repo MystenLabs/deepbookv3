@@ -106,7 +106,7 @@ async function setupSimulation(): Promise<SimState> {
 
   result = await executeAndWait(createOracleCapTx(address), "create_oracle_cap");
   const oracleCapChange = result.objectChanges.find(
-    (change: any) => change.type === "created" && change.objectType.includes("OracleCapSVI")
+    (change: any) => change.type === "created" && change.objectType.includes("OracleSVICap")
   );
   const oracleCapId: string = oracleCapChange.objectId;
   console.log(`[${ts()}]   OracleCap: ${oracleCapId}`);

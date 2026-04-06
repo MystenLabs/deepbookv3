@@ -8,7 +8,7 @@ module deepbook_predict::registry_tests;
 use deepbook_predict::{
     constants::oracle_strike_grid_ticks,
     oracle::OracleSVI,
-    oracle_runtime,
+    oracle_config,
     plp::PLP,
     predict::{Self as predict, Predict},
     registry::{Self, AdminCap, Registry}
@@ -127,7 +127,7 @@ fun create_predict_twice_aborts() {
     let tc2 = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
     registry.create_predict<SUI>(&admin_cap, tc2, scenario.ctx());
 
-    abort
+    abort 999
 }
 
 // ============================================================
@@ -210,16 +210,16 @@ fun create_oracle_persists_grid_on_predict_runtime() {
     {
         let predict = scenario.take_shared_by_id<Predict<SUI>>(predict_id);
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
-        let runtime = predict::oracle_runtime(&predict);
+        let oracle_config_ref = predict::oracle_config(&predict);
         let max_strike = TEST_MIN_STRIKE + oracle_strike_grid_ticks!() * TEST_TICK_SIZE;
 
-        oracle_runtime::assert_valid_strike(
-            runtime,
+        oracle_config::assert_valid_strike(
+            oracle_config_ref,
             &oracle,
             TEST_MIN_STRIKE,
         );
-        oracle_runtime::assert_valid_strike(
-            runtime,
+        oracle_config::assert_valid_strike(
+            oracle_config_ref,
             &oracle,
             max_strike,
         );
@@ -252,7 +252,7 @@ fun create_oracle_invalid_tick_size_aborts() {
         scenario.ctx(),
     );
 
-    abort
+    abort 999
 }
 
 #[test, expected_failure(abort_code = registry::EInvalidStrikeGrid)]
@@ -274,7 +274,7 @@ fun create_oracle_zero_min_strike_aborts() {
         scenario.ctx(),
     );
 
-    abort
+    abort 999
 }
 
 #[test]

@@ -5,7 +5,7 @@
 #[test_only]
 module deepbook_predict::vault_tests;
 
-use deepbook_predict::{constants::float_scaling as float, oracle_runtime::new_curve_point, vault};
+use deepbook_predict::{constants::float_scaling as float, oracle_config::new_curve_point, vault};
 use std::unit_test::{assert_eq, destroy};
 use sui::{balance, sui::SUI};
 
@@ -65,7 +65,7 @@ fun dispense_payout_exceeds_balance_aborts() {
 
     let _payout = vault::dispense_payout(&mut vault, 1_000_001);
 
-    abort
+    abort 999
 }
 
 #[test]
@@ -104,7 +104,7 @@ fun remove_from_missing_oracle_aborts() {
 
     vault::remove_position(&mut vault, oracle_id(ORACLE_1), true, 50 * float!(), 5 * float!());
 
-    abort
+    abort 999
 }
 
 #[test]
@@ -193,7 +193,7 @@ fun assert_total_exposure_fails_when_exceeds_limit() {
 
     vault::assert_total_exposure(&vault, 500_000_000);
 
-    abort
+    abort 999
 }
 
 #[test]
@@ -223,5 +223,5 @@ fun vault_value_aborts_when_underwater() {
 
     let _value = vault::vault_value(&vault);
 
-    abort
+    abort 999
 }

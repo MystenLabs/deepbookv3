@@ -78,7 +78,7 @@ For every `const E*` error constant in a source module, there must be at least o
 fun mint_against_settled_oracle_aborts() {
     // ... setup settled oracle ...
     predict.mint(settled_oracle, strike, amount, ctx);
-    abort // will differ from EOracleSettled if we reach here
+    abort 999 // guard must use a code distinct from the expected abort
 }
 ```
 

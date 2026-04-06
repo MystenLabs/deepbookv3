@@ -93,7 +93,7 @@ public struct PriceData has copy, drop, store {
 /// One oracle per underlying + expiry combination.
 public struct OracleSVI has key {
     id: UID,
-    /// IDs of OracleCaps authorized to update this oracle
+    /// IDs of oracle caps authorized to update this oracle
     authorized_caps: VecSet<ID>,
     /// The underlying asset this oracle tracks (e.g., "BTC", "ETH")
     underlying_asset: String,
@@ -113,15 +113,15 @@ public struct OracleSVI has key {
     settlement_price: Option<u64>,
 }
 
-/// Capability for Block Scholes operator to create and update oracles.
-public struct OracleCapSVI has key, store {
+/// Capability for Block Scholes operator to create and update SVI oracles.
+public struct OracleSVICap has key, store {
     id: UID,
 }
 
 // === Public Functions ===
 
 /// Activate the oracle. Must be called before oracle can be used for pricing.
-public fun activate(oracle: &mut OracleSVI, cap: &OracleCapSVI, clock: &Clock) {
+public fun activate(oracle: &mut OracleSVI, cap: &OracleSVICap, clock: &Clock) {
     assert_authorized_cap(oracle, cap);
     assert!(!oracle.active, EOracleAlreadyActive);
 
@@ -137,11 +137,13 @@ public fun activate(oracle: &mut OracleSVI, cap: &OracleCapSVI, clock: &Clock) {
     });
 }
 
+// TODO: Add validation on pushed spot/forward data so obviously bad oracle
+// updates are rejected before they mutate state.
 /// Push spot and forward prices (high frequency ~1s).
 /// If past expiry and not yet settled, freezes settlement price and deactivates.
 public fun update_prices(
     oracle: &mut OracleSVI,
-    cap: &OracleCapSVI,
+    cap: &OracleSVICap,
     prices: PriceData,
     clock: &Clock,
 ) {
@@ -175,10 +177,12 @@ public fun update_prices(
     });
 }
 
+// TODO: Add validation on pushed SVI params and risk-free rate so obviously
+// bad updates are rejected before they mutate state.
 /// Push SVI parameters and risk-free rate (low frequency ~10-20s).
 public fun update_svi(
     oracle: &mut OracleSVI,
-    cap: &OracleCapSVI,
+    cap: &OracleSVICap,
     svi: SVIParams,
     risk_free_rate: u64,
     clock: &Clock,
@@ -349,13 +353,13 @@ fun compute_discount(oracle: &OracleSVI, clock: &Clock): u64 {
 // === Public-Package Functions ===
 
 /// Register an additional cap as authorized to update an oracle.
-public(package) fun register_cap(oracle: &mut OracleSVI, cap: &OracleCapSVI) {
+public(package) fun register_cap(oracle: &mut OracleSVI, cap: &OracleSVICap) {
     oracle.authorized_caps.insert(cap.id.to_inner());
 }
 
 /// Create a new OracleCap. Called by registry during setup.
-public(package) fun create_oracle_cap(ctx: &mut TxContext): OracleCapSVI {
-    OracleCapSVI { id: object::new(ctx) }
+public(package) fun create_oracle_cap(ctx: &mut TxContext): OracleSVICap {
+    OracleSVICap { id: object::new(ctx) }
 }
 
 /// Create a new SVI Oracle for an underlying + expiry. Returns the oracle ID.
@@ -390,7 +394,7 @@ public(package) fun create_oracle(underlying_asset: String, expiry: u64, ctx: &m
 
 // === Private Functions ===
 
-fun assert_authorized_cap(oracle: &OracleSVI, cap: &OracleCapSVI) {
+fun assert_authorized_cap(oracle: &OracleSVI, cap: &OracleSVICap) {
     assert!(oracle.authorized_caps.contains(&cap.id.to_inner()), EInvalidOracleCap);
 }
 

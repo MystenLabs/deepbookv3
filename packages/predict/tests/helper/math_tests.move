@@ -286,7 +286,7 @@ fun mul_div_round_down_zero_numerator() {
 fun mul_div_round_down_zero_denominator_aborts() {
     math::mul_div_round_down(10, 20, 0);
 
-    abort
+    abort 999
 }
 
 // ============================================================
@@ -314,7 +314,7 @@ fun mul_div_round_up_zero_numerator() {
 fun mul_div_round_up_zero_denominator_aborts() {
     math::mul_div_round_up(10, 20, 0);
 
-    abort
+    abort 999
 }
 
 // ============================================================
@@ -332,7 +332,7 @@ fun ln_one_is_zero() {
 fun ln_zero_aborts() {
     math::ln(0);
 
-    abort
+    abort 999
 }
 
 // ============================================================
@@ -353,7 +353,7 @@ fun exp_large_negative_underflows_to_zero() {
 fun exp_overflow_aborts() {
     math::exp(23_638_153_700, false);
 
-    abort
+    abort 999
 }
 
 #[test]
@@ -395,7 +395,7 @@ fun sqrt_matches_deepbook_math() {
 #[test, expected_failure(abort_code = math::EInvalidPrecision)]
 fun sqrt_zero_precision_aborts() {
     math::sqrt(1, 0);
-    abort
+    abort 999
 }
 
 // ============================================================

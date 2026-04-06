@@ -10,7 +10,7 @@ module deepbook_predict::registry;
 
 use deepbook_predict::{
     constants,
-    oracle::{Self, OracleCapSVI, OracleSVI},
+    oracle::{Self, OracleSVICap, OracleSVI},
     plp::PLP,
     predict::{Self, Predict}
 };
@@ -50,7 +50,7 @@ public struct Registry has key {
     id: UID,
     /// ID of the Predict object (None if not yet created)
     predict_id: Option<ID>,
-    /// OracleCap ID -> vector of oracle IDs created by that cap
+    /// OracleSVICap ID -> vector of oracle IDs created by that cap
     oracle_ids: Table<ID, vector<ID>>,
 }
 
@@ -61,7 +61,7 @@ public fun predict_id(registry: &Registry): Option<ID> {
     registry.predict_id
 }
 
-/// Get oracle IDs created by a given OracleCap.
+/// Get oracle IDs created by a given OracleSVICap.
 public fun oracle_ids(registry: &Registry, cap_id: ID): vector<ID> {
     if (registry.oracle_ids.contains(cap_id)) {
         registry.oracle_ids[cap_id]
@@ -88,13 +88,13 @@ public fun create_predict<Quote>(
     predict_id
 }
 
-/// Register an additional OracleCapSVI as authorized to update an oracle.
-public fun register_oracle_cap(oracle: &mut OracleSVI, _admin_cap: &AdminCap, cap: &OracleCapSVI) {
+/// Register an additional OracleSVICap as authorized to update an oracle.
+public fun register_oracle_cap(oracle: &mut OracleSVI, _admin_cap: &AdminCap, cap: &OracleSVICap) {
     oracle::register_cap(oracle, cap);
 }
 
-/// Create a new OracleCap. Transferred to Block Scholes operator.
-public fun create_oracle_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): OracleCapSVI {
+/// Create a new OracleSVICap. Transferred to Block Scholes operator.
+public fun create_oracle_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): OracleSVICap {
     oracle::create_oracle_cap(ctx)
 }
 
@@ -103,7 +103,7 @@ public fun create_oracle<Quote>(
     registry: &mut Registry,
     predict: &mut Predict<Quote>,
     _admin_cap: &AdminCap,
-    cap: &OracleCapSVI,
+    cap: &OracleSVICap,
     underlying_asset: String,
     expiry: u64,
     min_strike: u64,

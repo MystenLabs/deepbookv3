@@ -8,7 +8,7 @@ module deepbook_predict::oracle_tests;
 use deepbook_predict::{
     constants::float_scaling as float,
     generated_oracle as go,
-    oracle::{Self as oracle, OracleCapSVI, OracleSVI, new_price_data, new_svi_params},
+    oracle::{Self as oracle, OracleSVICap, OracleSVI, new_price_data, new_svi_params},
     oracle_helper,
     precision
 };
@@ -471,7 +471,7 @@ fun live_price_with_zero_forward_aborts() {
         oracle::binary_price_pair(&oracle_state, 50 * float!(), &test_clock);
     };
 
-    abort
+    abort 999
 }
 
 // ============================================================
@@ -494,7 +494,7 @@ fun activate_succeeds_with_registered_cap() {
     test.next_tx(ALICE);
     {
         let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let cap = test.take_from_sender<OracleCapSVI>();
+        let cap = test.take_from_sender<OracleSVICap>();
         let test_clock = new_test_clock(5_000, &mut test);
 
         assert_eq!(oracle::is_active(&oracle_state), false);
@@ -522,7 +522,7 @@ fun update_prices_updates_spot_and_forward() {
     test.next_tx(ALICE);
     {
         let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let cap = test.take_from_sender<OracleCapSVI>();
+        let cap = test.take_from_sender<OracleSVICap>();
         let test_clock = new_test_clock(5_000, &mut test);
 
         oracle::update_prices(
@@ -561,7 +561,7 @@ fun update_prices_past_expiry_settles_oracle() {
     test.next_tx(ALICE);
     {
         let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let cap = test.take_from_sender<OracleCapSVI>();
+        let cap = test.take_from_sender<OracleSVICap>();
         let test_clock = new_test_clock(200_000, &mut test);
 
         oracle::update_prices(
@@ -596,7 +596,7 @@ fun update_svi_updates_rate_but_not_timestamp() {
     test.next_tx(ALICE);
     {
         let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let cap = test.take_from_sender<OracleCapSVI>();
+        let cap = test.take_from_sender<OracleSVICap>();
         let test_clock = new_test_clock(5_000, &mut test);
 
         oracle::update_svi(
@@ -636,12 +636,12 @@ fun activate_with_unauthorized_cap_aborts() {
     test.next_tx(BOB);
     {
         let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let cap = test.take_from_sender<OracleCapSVI>();
+        let cap = test.take_from_sender<OracleSVICap>();
         let test_clock = new_test_clock(0, &mut test);
         oracle::activate(&mut oracle_state, &cap, &test_clock);
     };
 
-    abort
+    abort 999
 }
 
 #[test, expected_failure(abort_code = oracle::EInvalidOracleCap)]
@@ -658,7 +658,7 @@ fun update_prices_with_unauthorized_cap_aborts() {
     test.next_tx(BOB);
     {
         let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let cap = test.take_from_sender<OracleCapSVI>();
+        let cap = test.take_from_sender<OracleSVICap>();
         let test_clock = new_test_clock(0, &mut test);
         oracle::update_prices(
             &mut oracle_state,
@@ -668,7 +668,7 @@ fun update_prices_with_unauthorized_cap_aborts() {
         );
     };
 
-    abort
+    abort 999
 }
 
 #[test, expected_failure(abort_code = oracle::EInvalidOracleCap)]
@@ -685,7 +685,7 @@ fun update_svi_with_unauthorized_cap_aborts() {
     test.next_tx(BOB);
     {
         let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let cap = test.take_from_sender<OracleCapSVI>();
+        let cap = test.take_from_sender<OracleSVICap>();
         let test_clock = new_test_clock(0, &mut test);
         oracle::update_svi(
             &mut oracle_state,
@@ -696,7 +696,7 @@ fun update_svi_with_unauthorized_cap_aborts() {
         );
     };
 
-    abort
+    abort 999
 }
 
 #[test, expected_failure(abort_code = oracle::EOracleAlreadyActive)]
@@ -716,12 +716,12 @@ fun activate_already_active_oracle_aborts() {
     test.next_tx(ALICE);
     {
         let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let cap = test.take_from_sender<OracleCapSVI>();
+        let cap = test.take_from_sender<OracleSVICap>();
         let test_clock = new_test_clock(0, &mut test);
         oracle::activate(&mut oracle_state, &cap, &test_clock);
     };
 
-    abort
+    abort 999
 }
 
 #[test, expected_failure(abort_code = oracle::EOracleExpired)]
@@ -740,12 +740,12 @@ fun activate_expired_oracle_aborts() {
     test.next_tx(ALICE);
     {
         let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let cap = test.take_from_sender<OracleCapSVI>();
+        let cap = test.take_from_sender<OracleSVICap>();
         let test_clock = new_test_clock(2_000_000, &mut test);
         oracle::activate(&mut oracle_state, &cap, &test_clock);
     };
 
-    abort
+    abort 999
 }
 
 #[test, expected_failure(abort_code = oracle::EOracleSettled)]
@@ -756,7 +756,7 @@ fun update_svi_on_settled_oracle_aborts() {
     test.next_tx(ALICE);
     {
         let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let cap = test.take_from_sender<OracleCapSVI>();
+        let cap = test.take_from_sender<OracleSVICap>();
         let test_clock = new_test_clock(0, &mut test);
         oracle::update_svi(
             &mut oracle_state,
@@ -767,7 +767,7 @@ fun update_svi_on_settled_oracle_aborts() {
         );
     };
 
-    abort
+    abort 999
 }
 
 #[test, expected_failure(abort_code = oracle::ECannotBeNegative)]
@@ -790,7 +790,7 @@ fun compute_nd2_negative_inner_aborts() {
         oracle::binary_price_pair(&oracle_state, 1000 * float!(), &test_clock);
     };
 
-    abort
+    abort 999
 }
 
 #[test, expected_failure(abort_code = oracle::EZeroVariance)]
@@ -813,7 +813,7 @@ fun zero_svi_params_on_live_oracle_aborts() {
         oracle::binary_price_pair(&oracle_state, 100 * float!(), &test_clock);
     };
 
-    abort
+    abort 999
 }
 
 // ============================================================
@@ -836,12 +836,12 @@ fun activate_at_exact_expiry_aborts() {
     test.next_tx(ALICE);
     {
         let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let cap = test.take_from_sender<OracleCapSVI>();
+        let cap = test.take_from_sender<OracleSVICap>();
         let test_clock = new_test_clock(1_000_000, &mut test);
         oracle::activate(&mut oracle_state, &cap, &test_clock);
     };
 
-    abort
+    abort 999
 }
 
 #[test]
@@ -861,7 +861,7 @@ fun update_prices_at_exact_expiry_does_not_settle() {
     test.next_tx(ALICE);
     {
         let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let cap = test.take_from_sender<OracleCapSVI>();
+        let cap = test.take_from_sender<OracleSVICap>();
         let test_clock = new_test_clock(1_000_000, &mut test);
 
         oracle::update_prices(
@@ -899,7 +899,7 @@ fun update_prices_on_settled_oracle_preserves_settlement() {
     test.next_tx(ALICE);
     {
         let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let cap = test.take_from_sender<OracleCapSVI>();
+        let cap = test.take_from_sender<OracleSVICap>();
         let test_clock = new_test_clock(2_000_000, &mut test);
 
         oracle::update_prices(

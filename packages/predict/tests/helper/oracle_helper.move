@@ -11,7 +11,7 @@ use deepbook_predict::{
     generated_oracle::OracleScenario,
     oracle::{
         Self as oracle,
-        OracleCapSVI,
+        OracleSVICap,
         OracleSVI,
         PriceData,
         SVIParams,
@@ -88,7 +88,7 @@ public fun setup_shared_oracle(
     test.next_tx(sender);
     {
         let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let cap = test.take_from_sender<OracleCapSVI>();
+        let cap = test.take_from_sender<OracleSVICap>();
         oracle::register_cap(&mut oracle_state, &cap);
         test_scenario::return_shared(oracle_state);
         test.return_to_sender(cap);
@@ -112,7 +112,7 @@ public fun configure_shared_oracle(
     test.next_tx(sender);
     {
         let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let cap = test.take_from_sender<OracleCapSVI>();
+        let cap = test.take_from_sender<OracleSVICap>();
         let mut test_clock = clock::create_for_testing(test.ctx());
         test_clock.set_for_testing(now_ms);
 
@@ -151,7 +151,7 @@ public fun settle_shared_oracle(
     test.next_tx(sender);
     {
         let mut oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let cap = test.take_from_sender<OracleCapSVI>();
+        let cap = test.take_from_sender<OracleSVICap>();
         let mut test_clock = clock::create_for_testing(test.ctx());
         test_clock.set_for_testing(now_ms);
 

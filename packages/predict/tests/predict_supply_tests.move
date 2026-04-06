@@ -80,7 +80,7 @@ fun supply_zero_amount_aborts() {
     let mut predict = setup(ctx);
     let _lp = do_supply(&mut predict, 0, ctx);
 
-    abort
+    abort 999
 }
 
 #[test, expected_failure(abort_code = predict::EZeroSharesMinted)]
@@ -95,7 +95,7 @@ fun supply_rejects_zero_share_mint() {
     // 1 unit into a 1B vault: 1 * 1_000_000 / 1_000_000_000 = 0 shares
     let _lp2 = do_supply(&mut predict, 1, ctx);
 
-    abort
+    abort 999
 }
 
 #[test, expected_failure(abort_code = predict::EZeroSharesMinted)]
@@ -110,7 +110,7 @@ fun inflation_attack_blocked() {
     // 1_000_000 * 1 / 1_000_001 = 0 shares
     let _lp2 = do_supply(&mut predict, 1_000_000, ctx);
 
-    abort
+    abort 999
 }
 
 #[test]
@@ -194,7 +194,7 @@ fun withdraw_zero_shares_aborts() {
     let zero_coin = coin::zero<PLP>(ctx);
     let _usdc = predict.withdraw(zero_coin, ctx);
 
-    abort
+    abort 999
 }
 
 #[test]

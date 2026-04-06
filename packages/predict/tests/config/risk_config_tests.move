@@ -47,7 +47,7 @@ fun set_max_total_exposure_pct_zero_aborts() {
     let mut config = risk_config::new();
     config.set_max_total_exposure_pct(0);
 
-    abort
+    abort 999
 }
 
 #[test, expected_failure(abort_code = risk_config::EExceedsMaxPct)]
@@ -55,5 +55,5 @@ fun set_max_total_exposure_pct_exceeds_max_aborts() {
     let mut config = risk_config::new();
     config.set_max_total_exposure_pct(constants::float_scaling!() + 1);
 
-    abort
+    abort 999
 }

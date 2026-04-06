@@ -12,7 +12,7 @@ use deepbook_predict::{
     market_key,
     oracle::OracleSVI,
     oracle_helper,
-    oracle_runtime,
+    oracle_config,
     plp::PLP,
     precision,
     predict::{Self, Predict},
@@ -201,7 +201,7 @@ fun supply_aborts_when_vault_is_underwater() {
     let _shares = predict.supply(recapitalization, ctx);
     destroy(lp);
 
-    abort
+    abort 999
 }
 
 #[test]
@@ -328,7 +328,7 @@ fun withdraw_all_blocked_by_live_max_payout() {
     let lp = scenario.take_from_sender<coin::Coin<PLP>>();
     let _coin = predict.withdraw(lp, scenario.ctx());
 
-    abort
+    abort 999
 }
 
 #[test]
@@ -380,7 +380,7 @@ fun mint_live_oracle_updates_manager_and_vault_state() {
     scenario.end();
 }
 
-#[test, expected_failure(abort_code = oracle_runtime::EMarketKeyOracleMismatch)]
+#[test, expected_failure(abort_code = oracle_config::EMarketKeyOracleMismatch)]
 /// Public mint should reject a key whose oracle id does not match the provided oracle.
 fun mint_aborts_on_wrong_oracle_id() {
     let (mut scenario, manager_id, mut predict, oracle_id) = setup_live_trade_state(
@@ -407,11 +407,11 @@ fun mint_aborts_on_wrong_oracle_id() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
-#[test, expected_failure(abort_code = oracle_runtime::EMarketKeyExpiryMismatch)]
+#[test, expected_failure(abort_code = oracle_config::EMarketKeyExpiryMismatch)]
 /// Public mint should reject a key whose expiry does not match the provided oracle.
 fun mint_aborts_on_wrong_expiry() {
     let (mut scenario, manager_id, mut predict, oracle_id) = setup_live_trade_state(
@@ -438,7 +438,7 @@ fun mint_aborts_on_wrong_expiry() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
@@ -562,7 +562,7 @@ fun partial_redeem_reduces_liability_and_improves_payout() {
     scenario.end();
 }
 
-#[test, expected_failure(abort_code = oracle_runtime::EMarketKeyExpiryMismatch)]
+#[test, expected_failure(abort_code = oracle_config::EMarketKeyExpiryMismatch)]
 /// Public redeem should reject a key whose expiry no longer matches the provided oracle.
 fun redeem_aborts_on_wrong_expiry() {
     let (mut scenario, manager_id, mut predict, oracle_id) = setup_live_trade_state(
@@ -598,7 +598,7 @@ fun redeem_aborts_on_wrong_expiry() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
@@ -629,7 +629,7 @@ fun mint_aborts_when_total_exposure_limit_exceeded() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
@@ -998,11 +998,11 @@ fun mint_when_paused_aborts() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
-#[test, expected_failure(abort_code = oracle_runtime::EOracleStale)]
+#[test, expected_failure(abort_code = oracle_config::EOracleStale)]
 /// Mint should reject live quotes once the oracle timestamp is beyond staleness threshold.
 fun mint_against_stale_oracle_aborts() {
     let (mut scenario, manager_id, mut predict, oracle_id) = setup_live_trade_state(
@@ -1026,7 +1026,7 @@ fun mint_against_stale_oracle_aborts() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
@@ -1053,11 +1053,11 @@ fun mint_aborts_if_not_owner() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
-#[test, expected_failure(abort_code = oracle_runtime::EOracleStale)]
+#[test, expected_failure(abort_code = oracle_config::EOracleStale)]
 /// Redeem should enforce staleness checks for live oracles until settlement occurs.
 fun redeem_against_stale_live_oracle_aborts() {
     let (mut scenario, manager_id, mut predict, oracle_id) = setup_live_trade_state(
@@ -1097,7 +1097,7 @@ fun redeem_against_stale_live_oracle_aborts() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
@@ -1140,7 +1140,7 @@ fun redeem_aborts_if_not_owner() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
@@ -1307,7 +1307,7 @@ fun collateralized_redeem_releases_collateral() {
     scenario.end();
 }
 
-#[test, expected_failure(abort_code = oracle_runtime::EMarketKeyOracleMismatch)]
+#[test, expected_failure(abort_code = oracle_config::EMarketKeyOracleMismatch)]
 /// Collateralized mint should reject a locked key whose oracle id does not match the oracle.
 fun collateralized_mint_wrong_oracle_id_aborts() {
     let (mut scenario, manager_id) = setup_with_manager(100 * constants::float_scaling!());
@@ -1342,7 +1342,7 @@ fun collateralized_mint_wrong_oracle_id_aborts() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
@@ -1386,7 +1386,7 @@ fun collateralized_mint_not_owner_aborts() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
@@ -1403,7 +1403,7 @@ fun withdraw_zero_amount_aborts_via_predict() {
     let zero_coin = coin::zero<PLP>(scenario.ctx());
     let _withdrawn = predict.withdraw(zero_coin, scenario.ctx());
 
-    abort
+    abort 999
 }
 
 #[test, expected_failure(abort_code = predict::EZeroAmount)]
@@ -1419,10 +1419,10 @@ fun withdraw_without_shares_aborts_via_predict() {
     let zero_coin = coin::zero<PLP>(scenario.ctx());
     let _withdrawn = predict.withdraw(zero_coin, scenario.ctx());
 
-    abort
+    abort 999
 }
 
-#[test, expected_failure(abort_code = oracle_runtime::EOracleStale)]
+#[test, expected_failure(abort_code = oracle_config::EOracleStale)]
 /// Collateralized mint should reject stale live oracles just like regular mint.
 fun collateralized_mint_stale_oracle_aborts() {
     let (mut scenario, manager_id) = setup_with_manager(100 * constants::float_scaling!());
@@ -1458,11 +1458,11 @@ fun collateralized_mint_stale_oracle_aborts() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
-#[test, expected_failure(abort_code = oracle_runtime::EOracleSettled)]
+#[test, expected_failure(abort_code = oracle_config::EOracleSettled)]
 /// Collateralized mint should reject already settled markets just like regular mint.
 fun collateralized_mint_settled_oracle_aborts() {
     let (mut scenario, manager_id) = setup_with_manager(100 * constants::float_scaling!());
@@ -1504,7 +1504,7 @@ fun collateralized_mint_settled_oracle_aborts() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
@@ -1556,7 +1556,7 @@ fun collateralized_redeem_not_owner_aborts() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
@@ -1591,7 +1591,7 @@ fun collateralized_redeem_without_collateral_relation_aborts() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
@@ -1630,7 +1630,7 @@ fun collateralized_mint_up_wrong_direction_aborts() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
@@ -1669,7 +1669,7 @@ fun collateralized_mint_mixed_directions_aborts() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
@@ -1710,11 +1710,11 @@ fun mint_collateralized_when_paused_aborts() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
-#[test, expected_failure(abort_code = oracle_runtime::EOracleSettled)]
+#[test, expected_failure(abort_code = oracle_config::EOracleSettled)]
 /// Minting should reject an oracle that has already been force-settled.
 fun mint_against_settled_oracle_aborts() {
     let (mut scenario, manager_id) = setup_with_manager(100 * constants::float_scaling!());
@@ -1747,11 +1747,11 @@ fun mint_against_settled_oracle_aborts() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
-#[test, expected_failure(abort_code = oracle_runtime::EOracleExpired)]
+#[test, expected_failure(abort_code = oracle_config::EOracleExpired)]
 /// Mint must abort when clock >= oracle expiry even if oracle is not yet settled.
 fun mint_expired_but_unsettled_oracle_aborts() {
     let (mut scenario, manager_id) = setup_with_manager(100 * constants::float_scaling!());
@@ -1799,11 +1799,11 @@ fun mint_expired_but_unsettled_oracle_aborts() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
-#[test, expected_failure(abort_code = oracle_runtime::EOracleExpired)]
+#[test, expected_failure(abort_code = oracle_config::EOracleExpired)]
 /// Collateralized mint must also abort when clock >= oracle expiry before settlement.
 fun collateralized_mint_expired_but_unsettled_oracle_aborts() {
     let (mut scenario, manager_id) = setup_with_manager(100 * constants::float_scaling!());
@@ -1860,7 +1860,7 @@ fun collateralized_mint_expired_but_unsettled_oracle_aborts() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
@@ -1899,7 +1899,7 @@ fun collateralized_mint_equal_strikes_aborts() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
@@ -1926,7 +1926,7 @@ fun mint_zero_quantity_aborts() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
@@ -1964,7 +1964,7 @@ fun redeem_zero_quantity_aborts() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
@@ -2003,7 +2003,7 @@ fun collateralized_mint_zero_quantity_aborts() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
@@ -2049,7 +2049,7 @@ fun collateralized_redeem_zero_quantity_aborts() {
             scenario.ctx(),
         );
 
-        abort
+        abort 999
     }
 }
 
@@ -2132,7 +2132,7 @@ fun predict_scenario_s4() { run_predict_scenario(3); }
 /// Real-world snapshot S5: fresh-state quote previews should match generated expectations.
 fun predict_scenario_s5() { run_predict_scenario(4); }
 
-#[test, expected_failure(abort_code = oracle_runtime::EInvalidStrike)]
+#[test, expected_failure(abort_code = oracle_config::EInvalidStrike)]
 fun get_trade_amounts_invalid_strike_aborts() {
     let mut scenario = test_scenario::begin(ALICE);
     let mut predict = create_predict(scenario.ctx());
@@ -2146,10 +2146,10 @@ fun get_trade_amounts_invalid_strike_aborts() {
         predict::get_trade_amounts(&predict, &oracle, key, 1, &clock);
     };
 
-    abort
+    abort 999
 }
 
-#[test, expected_failure(abort_code = oracle_runtime::EOracleInactive)]
+#[test, expected_failure(abort_code = oracle_config::EOracleInactive)]
 fun get_trade_amounts_inactive_oracle_aborts() {
     let mut scenario = test_scenario::begin(ALICE);
     let mut predict = create_predict(scenario.ctx());
@@ -2163,5 +2163,5 @@ fun get_trade_amounts_inactive_oracle_aborts() {
         predict::get_trade_amounts(&predict, &oracle, key, 1, &clock);
     };
 
-    abort
+    abort 999
 }
