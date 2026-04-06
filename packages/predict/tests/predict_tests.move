@@ -74,6 +74,7 @@ fun setup_live_oracle(predict: &mut Predict<SUI>, scenario: &mut Scenario): ID {
             &oracle,
             min_strike,
             tick_size,
+            scenario.ctx(),
         );
         test_scenario::return_shared(oracle);
     };
@@ -99,6 +100,7 @@ fun setup_quote_oracle(predict: &mut Predict<SUI>, active: bool, scenario: &mut 
             &oracle,
             oracle_tick_size_unit!(),
             oracle_tick_size_unit!(),
+            scenario.ctx(),
         );
         test_scenario::return_shared(oracle);
     };
@@ -144,6 +146,17 @@ fun vault_max_payout(predict: &mut Predict<SUI>): u64 {
     vault::total_max_payout(predict.vault_mut())
 }
 
+fun init_test_matrix(predict: &mut Predict<SUI>, oracle_id: ID, ctx: &mut TxContext) {
+    vault::init_oracle_matrix(
+        predict.vault_mut(),
+        oracle_id,
+        50 * constants::float_scaling!(),
+        150 * constants::float_scaling!(),
+        constants::float_scaling!(),
+        ctx,
+    );
+}
+
 #[test]
 /// First LP deposit sees an empty vault, so shares mint 1:1 with assets.
 fun supply_first_deposit_one_to_one_shares() {
@@ -185,6 +198,7 @@ fun supply_aborts_when_vault_is_underwater() {
     let initial_liq = coin::mint_for_testing<SUI>(10 * constants::float_scaling!(), ctx);
     let lp = supply_coin(&mut predict, initial_liq, ctx);
     let oracle_id = object::id_from_address(@0x1);
+    init_test_matrix(&mut predict, oracle_id, ctx);
 
     predict
         .vault_mut()
@@ -193,7 +207,6 @@ fun supply_aborts_when_vault_is_underwater() {
             true,
             50 * constants::float_scaling!(),
             11 * constants::float_scaling!(),
-            ctx,
         );
     predict.vault_mut().set_mtm(oracle_id, 11 * constants::float_scaling!());
 
@@ -250,6 +263,7 @@ fun withdraw_partial_with_settled_winning_exposure_returns_pro_rata_free_capital
     );
 
     let oracle_id = object::id_from_address(@0x1);
+    init_test_matrix(&mut predict, oracle_id, scenario.ctx());
     predict
         .vault_mut()
         .insert_position(
@@ -257,7 +271,6 @@ fun withdraw_partial_with_settled_winning_exposure_returns_pro_rata_free_capital
             true,
             50 * constants::float_scaling!(),
             80 * constants::float_scaling!(),
-            scenario.ctx(),
         );
     predict.vault_mut().set_mtm(oracle_id, 80 * constants::float_scaling!());
 
@@ -283,6 +296,7 @@ fun withdraw_up_to_available_succeeds() {
     );
 
     let oracle_id = object::id_from_address(@0x1);
+    init_test_matrix(&mut predict, oracle_id, scenario.ctx());
     predict
         .vault_mut()
         .insert_position(
@@ -290,7 +304,6 @@ fun withdraw_up_to_available_succeeds() {
             true,
             50 * constants::float_scaling!(),
             80 * constants::float_scaling!(),
-            scenario.ctx(),
         );
     predict.vault_mut().set_mtm(oracle_id, 80 * constants::float_scaling!());
 
@@ -314,6 +327,7 @@ fun withdraw_all_blocked_by_live_max_payout() {
     );
 
     let oracle_id = object::id_from_address(@0x1);
+    init_test_matrix(&mut predict, oracle_id, scenario.ctx());
     predict
         .vault_mut()
         .insert_position(
@@ -321,7 +335,6 @@ fun withdraw_all_blocked_by_live_max_payout() {
             true,
             150 * constants::float_scaling!(),
             80 * constants::float_scaling!(),
-            scenario.ctx(),
         );
 
     scenario.next_tx(ALICE);
@@ -1779,6 +1792,7 @@ fun mint_expired_but_unsettled_oracle_aborts() {
             &oracle,
             min_strike,
             tick_size,
+            scenario.ctx(),
         );
         test_scenario::return_shared(oracle);
     };
@@ -1828,6 +1842,7 @@ fun collateralized_mint_expired_but_unsettled_oracle_aborts() {
             &oracle,
             min_strike,
             tick_size,
+            scenario.ctx(),
         );
         test_scenario::return_shared(oracle);
     };
@@ -2071,7 +2086,12 @@ fun run_predict_scenario(idx: u64) {
     scenario.next_tx(ALICE);
     {
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
-        oracle_helper::add_scenario_grid_to_predict(&mut predict, &oracle, oracle_scenario);
+        oracle_helper::add_scenario_grid_to_predict(
+            &mut predict,
+            &oracle,
+            oracle_scenario,
+            scenario.ctx(),
+        );
         test_scenario::return_shared(oracle);
     };
 

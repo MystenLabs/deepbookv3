@@ -16,6 +16,17 @@ fun oracle_id(addr: address): ID {
     object::id_from_address(addr)
 }
 
+fun init_matrix(vault: &mut vault::Vault<SUI>, oracle_id: ID, ctx: &mut TxContext) {
+    vault::init_oracle_matrix(
+        vault,
+        oracle_id,
+        50 * float!(),
+        150 * float!(),
+        1 * float!(),
+        ctx,
+    );
+}
+
 #[test]
 fun new_vault_initializes_to_zero() {
     let ctx = &mut tx_context::dummy();
@@ -74,11 +85,12 @@ fun insert_position_tracks_max_payout() {
     let mut vault = vault::new<SUI>(ctx);
     let oracle_id = oracle_id(ORACLE_1);
 
-    vault::insert_position(&mut vault, oracle_id, true, 50 * float!(), 10 * float!(), ctx);
+    init_matrix(&mut vault, oracle_id, ctx);
+    vault::insert_position(&mut vault, oracle_id, true, 50 * float!(), 10 * float!());
     assert_eq!(vault::total_max_payout(&vault), 10 * float!());
 
-    vault::insert_position(&mut vault, oracle_id, false, 50 * float!(), 8 * float!(), ctx);
-    assert_eq!(vault::total_max_payout(&vault), 10 * float!());
+    vault::insert_position(&mut vault, oracle_id, false, 50 * float!(), 8 * float!());
+    assert_eq!(vault::total_max_payout(&vault), 18 * float!());
 
     destroy(vault);
 }
@@ -89,7 +101,8 @@ fun remove_position_updates_max_payout() {
     let mut vault = vault::new<SUI>(ctx);
     let oracle_id = oracle_id(ORACLE_1);
 
-    vault::insert_position(&mut vault, oracle_id, true, 50 * float!(), 10 * float!(), ctx);
+    init_matrix(&mut vault, oracle_id, ctx);
+    vault::insert_position(&mut vault, oracle_id, true, 50 * float!(), 10 * float!());
     vault::remove_position(&mut vault, oracle_id, true, 50 * float!(), 4 * float!());
 
     assert_eq!(vault::total_max_payout(&vault), 6 * float!());
@@ -113,7 +126,8 @@ fun set_mtm_updates_cached_liability() {
     let mut vault = vault::new<SUI>(ctx);
     let oracle_id = oracle_id(ORACLE_1);
 
-    vault::insert_position(&mut vault, oracle_id, true, 50 * float!(), 10 * float!(), ctx);
+    init_matrix(&mut vault, oracle_id, ctx);
+    vault::insert_position(&mut vault, oracle_id, true, 50 * float!(), 10 * float!());
     vault::set_mtm(&mut vault, oracle_id, 7 * float!());
 
     assert_eq!(vault::total_mtm(&vault), 7 * float!());
@@ -128,9 +142,10 @@ fun set_mtm_with_curve_evaluates_current_tree() {
     let mut vault = vault::new<SUI>(ctx);
     let oracle_id = oracle_id(ORACLE_1);
 
-    vault::insert_position(&mut vault, oracle_id, true, 50 * float!(), 10 * float!(), ctx);
+    init_matrix(&mut vault, oracle_id, ctx);
+    vault::insert_position(&mut vault, oracle_id, true, 50 * float!(), 10 * float!());
     let curve = vector[
-        new_curve_point(59 * float!(), float!(), 0),
+        new_curve_point(50 * float!(), float!(), 0),
         new_curve_point(60 * float!(), 0, float!()),
     ];
 
@@ -149,8 +164,10 @@ fun multiple_oracles_aggregate_independently() {
     let oracle_1 = oracle_id(ORACLE_1);
     let oracle_2 = oracle_id(ORACLE_2);
 
-    vault::insert_position(&mut vault, oracle_1, true, 50 * float!(), 5 * float!(), ctx);
-    vault::insert_position(&mut vault, oracle_2, false, 70 * float!(), 3 * float!(), ctx);
+    init_matrix(&mut vault, oracle_1, ctx);
+    init_matrix(&mut vault, oracle_2, ctx);
+    vault::insert_position(&mut vault, oracle_1, true, 50 * float!(), 5 * float!());
+    vault::insert_position(&mut vault, oracle_2, false, 70 * float!(), 3 * float!());
     vault::set_mtm(&mut vault, oracle_1, 5 * float!());
     vault::set_mtm(&mut vault, oracle_2, 3 * float!());
 
@@ -173,7 +190,8 @@ fun assert_total_exposure_passes_within_limit() {
     let oracle_id = oracle_id(ORACLE_1);
 
     vault::accept_payment(&mut vault, balance::create_for_testing<SUI>(100 * float!()));
-    vault::insert_position(&mut vault, oracle_id, true, 50 * float!(), 10 * float!(), ctx);
+    init_matrix(&mut vault, oracle_id, ctx);
+    vault::insert_position(&mut vault, oracle_id, true, 50 * float!(), 10 * float!());
     vault::set_mtm(&mut vault, oracle_id, 10 * float!());
 
     vault::assert_total_exposure(&vault, 800_000_000);
@@ -188,7 +206,8 @@ fun assert_total_exposure_fails_when_exceeds_limit() {
     let oracle_id = oracle_id(ORACLE_1);
 
     vault::accept_payment(&mut vault, balance::create_for_testing<SUI>(10 * float!()));
-    vault::insert_position(&mut vault, oracle_id, true, 50 * float!(), 10 * float!(), ctx);
+    init_matrix(&mut vault, oracle_id, ctx);
+    vault::insert_position(&mut vault, oracle_id, true, 50 * float!(), 10 * float!());
     vault::set_mtm(&mut vault, oracle_id, 10 * float!());
 
     vault::assert_total_exposure(&vault, 500_000_000);
@@ -203,7 +222,8 @@ fun vault_value_equals_balance_minus_mtm() {
     let oracle_id = oracle_id(ORACLE_1);
 
     vault::accept_payment(&mut vault, balance::create_for_testing<SUI>(100 * float!()));
-    vault::insert_position(&mut vault, oracle_id, true, 50 * float!(), 10 * float!(), ctx);
+    init_matrix(&mut vault, oracle_id, ctx);
+    vault::insert_position(&mut vault, oracle_id, true, 50 * float!(), 10 * float!());
     vault::set_mtm(&mut vault, oracle_id, 10 * float!());
 
     assert_eq!(vault::vault_value(&vault), 90 * float!());
@@ -218,7 +238,8 @@ fun vault_value_aborts_when_underwater() {
     let oracle_id = oracle_id(ORACLE_1);
 
     vault::accept_payment(&mut vault, balance::create_for_testing<SUI>(5 * float!()));
-    vault::insert_position(&mut vault, oracle_id, true, 50 * float!(), 10 * float!(), ctx);
+    init_matrix(&mut vault, oracle_id, ctx);
+    vault::insert_position(&mut vault, oracle_id, true, 50 * float!(), 10 * float!());
     vault::set_mtm(&mut vault, oracle_id, 10 * float!());
 
     let _value = vault::vault_value(&vault);
