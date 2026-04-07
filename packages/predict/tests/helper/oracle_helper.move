@@ -9,6 +9,7 @@ module deepbook_predict::oracle_helper;
 use deepbook_predict::{
     constants::{float_scaling as float, oracle_tick_size_unit},
     generated_oracle::OracleScenario,
+    i64,
     oracle::{
         Self as oracle,
         OracleSVICap,
@@ -23,12 +24,16 @@ use deepbook_predict::{
 use std::{string::String, unit_test::destroy};
 use sui::{clock, test_scenario::{Self as test_scenario, Scenario}};
 
+fun signed(magnitude: u64, is_negative: bool): i64::I64 {
+    i64::from_parts(magnitude, is_negative)
+}
+
 fun flat_vol_svi(): SVIParams {
-    new_svi_params(0, 1_000_000_000, 0, false, 0, false, 250_000_000)
+    new_svi_params(0, 1_000_000_000, signed(0, false), signed(0, false), 250_000_000)
 }
 
 fun zero_svi(): SVIParams {
-    new_svi_params(0, 0, 0, false, 0, false, 0)
+    new_svi_params(0, 0, signed(0, false), signed(0, false), 0)
 }
 
 /// Attach a Predict strike grid to an oracle ID inside a test Predict object.
@@ -213,10 +218,8 @@ public fun setup_oracle_from_scenario(
     let svi = new_svi_params(
         scenario.a(),
         scenario.b(),
-        scenario.rho(),
-        scenario.rho_neg(),
-        scenario.m(),
-        scenario.m_neg(),
+        signed(scenario.rho(), scenario.rho_neg()),
+        signed(scenario.m(), scenario.m_neg()),
         scenario.sigma(),
     );
     let prices = new_price_data(scenario.spot(), scenario.forward());
