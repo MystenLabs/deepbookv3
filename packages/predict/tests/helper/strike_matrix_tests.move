@@ -174,6 +174,31 @@ fun evaluate_live_non_monotone_curve_aborts() {
     abort 999
 }
 
+#[test, expected_failure(abort_code = strike_matrix::EInvalidCurveRange)]
+fun evaluate_live_curve_must_cover_minted_range() {
+    let scale = float!();
+    let min_strike = 100 * scale;
+    let tick_size = 10 * scale;
+    let strike0 = 100 * scale;
+    let strike1 = 110 * scale;
+    let strike2 = 120 * scale;
+    let qty_up_at_first = 10 * scale;
+    let qty_dn_at_last = 4 * scale;
+    let narrow_curve = vector[
+        oracle_config::new_curve_point(strike1, 500_000_000, 500_000_000),
+        oracle_config::new_curve_point(strike2, 0, float!()),
+    ];
+
+    let ctx = &mut tx_context::dummy();
+    let mut matrix = strike_matrix::new(ctx, tick_size, min_strike, strike2);
+    matrix.insert(strike0, qty_up_at_first, true);
+    matrix.insert(strike2, qty_dn_at_last, false);
+
+    matrix.evaluate(&narrow_curve);
+
+    abort 999
+}
+
 #[test]
 fun evaluate_live_multi_page_manual_curve_and_remove_to_zero() {
     let scale = float!();
