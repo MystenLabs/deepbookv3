@@ -10,6 +10,7 @@ module deepbook_predict::predict;
 
 use deepbook::math;
 use deepbook_predict::{
+    constants,
     market_key::MarketKey,
     math::mul_div_round_down,
     oracle::OracleSVI,
@@ -197,7 +198,7 @@ public fun mint<Quote>(
     let strike = key.strike();
     let is_up = key.is_up();
 
-    predict.vault.insert_position(oracle.id(), is_up, strike, quantity, ctx);
+    predict.vault.insert_position(oracle.id(), is_up, strike, quantity);
     predict.refresh_oracle_risk(oracle, clock);
 
     // Quote against the post-trade state so the trader pays for the liability
@@ -426,8 +427,11 @@ public(package) fun add_oracle_grid<Quote>(
     oracle_id: ID,
     min_strike: u64,
     tick_size: u64,
+    ctx: &mut TxContext,
 ) {
     predict.oracle_config.add_oracle_grid(oracle_id, min_strike, tick_size);
+    let max_strike = min_strike + tick_size * constants::oracle_strike_grid_ticks!();
+    predict.vault.init_oracle_matrix(oracle_id, min_strike, max_strike, tick_size, ctx);
 }
 
 /// Whether trading is currently paused.
@@ -570,6 +574,10 @@ fun refresh_oracle_risk<Quote>(predict: &mut Predict<Quote>, oracle: &OracleSVI,
     if (min_strike == 0 && max_strike == 0) {
         // `strike_range` uses (0, 0) as the empty-oracle sentinel.
         predict.vault.set_mtm(oracle_id, 0);
+        return
+    };
+    if (oracle.is_settled()) {
+        predict.vault.set_mtm_with_settlement(oracle_id, oracle.settlement_price().destroy_some());
         return
     };
     let curve = predict.oracle_config.build_curve(oracle, min_strike, max_strike, clock);

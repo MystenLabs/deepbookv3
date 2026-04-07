@@ -6,7 +6,7 @@
 /// The vault holds USDC and takes the opposite side of every trade.
 /// All pricing logic is handled by the orchestrator (predict.move).
 ///
-/// Tracks mark-to-market liability via per-oracle treaps and a cached
+/// Tracks mark-to-market liability via per-oracle strike matrices and a cached
 /// global total_mtm, refreshed on every trade.
 ///
 /// Scaling conventions (aligned with DeepBook):
@@ -14,7 +14,7 @@
 module deepbook_predict::vault;
 
 use deepbook::math;
-use deepbook_predict::{oracle_config::CurvePoint, treap::{Self, Treap}};
+use deepbook_predict::{oracle_config::CurvePoint, strike_matrix::{Self, StrikeMatrix}};
 use sui::{balance::{Self, Balance}, table::{Self, Table}};
 
 // === Errors ===
@@ -28,11 +28,11 @@ const EMtmExceedsBalance: u64 = 3;
 public struct Vault<phantom Quote> has store {
     /// USDC balance held by the vault
     balance: Balance<Quote>,
-    /// Per-oracle treap for strike-level position tracking
-    oracle_treaps: Table<ID, Treap>,
-    /// Sum of all oracle treap MTM values
+    /// Per-oracle matrix for strike-level position tracking
+    oracle_matrices: Table<ID, StrikeMatrix>,
+    /// Sum of all oracle matrix MTM values
     total_mtm: u64,
-    /// Sum of all oracle treap max payout values
+    /// Sum of all oracle matrix max payout values
     total_max_payout: u64,
 }
 
@@ -60,10 +60,29 @@ public fun total_max_payout<Quote>(vault: &Vault<Quote>): u64 {
 public(package) fun new<Quote>(ctx: &mut TxContext): Vault<Quote> {
     Vault {
         balance: balance::zero(),
-        oracle_treaps: table::new(ctx),
+        oracle_matrices: table::new(ctx),
         total_mtm: 0,
         total_max_payout: 0,
     }
+}
+
+/// Allocate one zeroed strike matrix for an oracle's configured strike grid.
+public(package) fun init_oracle_matrix<Quote>(
+    vault: &mut Vault<Quote>,
+    oracle_id: ID,
+    min_strike: u64,
+    max_strike: u64,
+    tick_size: u64,
+    ctx: &mut TxContext,
+) {
+    if (!vault.oracle_matrices.contains(oracle_id)) {
+        vault
+            .oracle_matrices
+            .add(
+                oracle_id,
+                strike_matrix::new(ctx, tick_size, min_strike, max_strike),
+            );
+    };
 }
 
 /// Insert a position into the per-oracle exposure structure and update cached max payout.
@@ -73,14 +92,11 @@ public(package) fun insert_position<Quote>(
     is_up: bool,
     strike: u64,
     quantity: u64,
-    ctx: &mut TxContext,
 ) {
-    if (!vault.oracle_treaps.contains(oracle_id)) {
-        vault.oracle_treaps.add(oracle_id, treap::new(ctx));
-    };
-    let old_max_payout = vault.oracle_treaps[oracle_id].max_payout();
-    vault.oracle_treaps[oracle_id].insert(strike, quantity, is_up);
-    let new_max_payout = vault.oracle_treaps[oracle_id].max_payout();
+    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+    let old_max_payout = vault.oracle_matrices[oracle_id].max_payout();
+    vault.oracle_matrices[oracle_id].insert(strike, quantity, is_up);
+    let new_max_payout = vault.oracle_matrices[oracle_id].max_payout();
     vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
 }
 
@@ -89,7 +105,7 @@ public(package) fun accept_payment<Quote>(vault: &mut Vault<Quote>, payment: Bal
     vault.balance.join(payment);
 }
 
-/// Remove a position from the treap.
+/// Remove a position from the strike matrix.
 public(package) fun remove_position<Quote>(
     vault: &mut Vault<Quote>,
     oracle_id: ID,
@@ -97,10 +113,10 @@ public(package) fun remove_position<Quote>(
     strike: u64,
     quantity: u64,
 ) {
-    assert!(vault.oracle_treaps.contains(oracle_id), EOracleExposureNotFound);
-    let old_max_payout = vault.oracle_treaps[oracle_id].max_payout();
-    vault.oracle_treaps[oracle_id].remove(strike, quantity, is_up);
-    let new_max_payout = vault.oracle_treaps[oracle_id].max_payout();
+    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+    let old_max_payout = vault.oracle_matrices[oracle_id].max_payout();
+    vault.oracle_matrices[oracle_id].remove(strike, quantity, is_up);
+    let new_max_payout = vault.oracle_matrices[oracle_id].max_payout();
     vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
 }
 
@@ -117,8 +133,10 @@ public(package) fun assert_total_exposure<Quote>(vault: &Vault<Quote>, max_total
 }
 
 public(package) fun oracle_strike_range<Quote>(vault: &Vault<Quote>, oracle_id: ID): (u64, u64) {
-    assert!(vault.oracle_treaps.contains(oracle_id), EOracleExposureNotFound);
-    vault.oracle_treaps[oracle_id].strike_range()
+    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+    let matrix = &vault.oracle_matrices[oracle_id];
+    if (!matrix.has_live_positions()) return (0, 0);
+    matrix.minted_strike_range()
 }
 
 public(package) fun set_mtm_with_curve<Quote>(
@@ -126,20 +144,35 @@ public(package) fun set_mtm_with_curve<Quote>(
     oracle_id: ID,
     curve: &vector<CurvePoint>,
 ) {
-    assert!(vault.oracle_treaps.contains(oracle_id), EOracleExposureNotFound);
+    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
 
-    let old_mtm = vault.oracle_treaps[oracle_id].mtm();
-    let new_mtm = vault.oracle_treaps[oracle_id].evaluate(curve);
+    let old_mtm = vault.oracle_matrices[oracle_id].mtm();
+    let new_mtm = vault.oracle_matrices[oracle_id].evaluate(curve);
 
-    let treap = &mut vault.oracle_treaps[oracle_id];
-    treap.set_mtm(new_mtm);
+    let matrix = &mut vault.oracle_matrices[oracle_id];
+    matrix.set_mtm(new_mtm);
+    vault.total_mtm = vault.total_mtm + new_mtm - old_mtm;
+}
+
+public(package) fun set_mtm_with_settlement<Quote>(
+    vault: &mut Vault<Quote>,
+    oracle_id: ID,
+    settlement: u64,
+) {
+    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+
+    let old_mtm = vault.oracle_matrices[oracle_id].mtm();
+    let new_mtm = vault.oracle_matrices[oracle_id].evaluate_settled(settlement);
+
+    let matrix = &mut vault.oracle_matrices[oracle_id];
+    matrix.set_mtm(new_mtm);
     vault.total_mtm = vault.total_mtm + new_mtm - old_mtm;
 }
 
 public(package) fun set_mtm<Quote>(vault: &mut Vault<Quote>, oracle_id: ID, mtm: u64) {
-    assert!(vault.oracle_treaps.contains(oracle_id), EOracleExposureNotFound);
+    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
 
-    let old_mtm = vault.oracle_treaps[oracle_id].mtm();
-    vault.oracle_treaps[oracle_id].set_mtm(mtm);
+    let old_mtm = vault.oracle_matrices[oracle_id].mtm();
+    vault.oracle_matrices[oracle_id].set_mtm(mtm);
     vault.total_mtm = vault.total_mtm + mtm - old_mtm;
 }

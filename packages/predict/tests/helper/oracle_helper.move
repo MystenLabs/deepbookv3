@@ -37,8 +37,9 @@ public fun add_grid_to_predict<Quote>(
     oracle: &OracleSVI,
     min_strike: u64,
     tick_size: u64,
+    ctx: &mut TxContext,
 ) {
-    predict::add_oracle_grid(test_predict, oracle.id(), min_strike, tick_size);
+    predict::add_oracle_grid(test_predict, oracle.id(), min_strike, tick_size, ctx);
 }
 
 /// Attach a scenario-defined strike grid to an oracle ID inside a test Predict object.
@@ -46,12 +47,14 @@ public fun add_scenario_grid_to_predict<Quote>(
     test_predict: &mut Predict<Quote>,
     oracle: &OracleSVI,
     scenario: &OracleScenario,
+    ctx: &mut TxContext,
 ) {
     add_grid_to_predict(
         test_predict,
         oracle,
         scenario.min_strike(),
         scenario.tick_size(),
+        ctx,
     );
 }
 

@@ -13,7 +13,7 @@ use deepbook_predict::{
     oracle_helper,
     precision,
     predict,
-    treap
+    strike_matrix
 };
 use std::unit_test::{assert_eq, destroy};
 use sui::{clock, sui::SUI, test_scenario::{Scenario, begin, end, return_shared}};
@@ -36,7 +36,13 @@ fun new_predict_with_grid(
     tick_size: u64,
 ): predict::Predict<SUI> {
     let mut test_predict = predict::create_test_predict<SUI>(test.ctx());
-    oracle_helper::add_grid_to_predict(&mut test_predict, oracle_state, min_strike, tick_size);
+    oracle_helper::add_grid_to_predict(
+        &mut test_predict,
+        oracle_state,
+        min_strike,
+        tick_size,
+        test.ctx(),
+    );
     test_predict
 }
 
@@ -630,11 +636,16 @@ fun build_curve_settled_below_live_range_single_point() {
         assert_eq!(oracle_config::up_price(&curve[0]), 0);
         assert_eq!(oracle_config::dn_price(&curve[0]), float!());
 
-        let mut exposure = treap::new(test.ctx());
+        let mut exposure = strike_matrix::new(
+            test.ctx(),
+            float!(),
+            50 * float!(),
+            150 * float!(),
+        );
         exposure.insert(75 * float!(), 3 * float!(), false);
         exposure.insert(125 * float!(), 2 * float!(), true);
-        let value = exposure.evaluate(&curve);
-        // DN wins everywhere; UP loses everywhere.
+        let value = exposure.evaluate_settled(25 * float!());
+        // DN wins everywhere below the live range; UP loses everywhere.
         assert_eq!(value, 3 * float!());
 
         destroy(exposure);
@@ -679,11 +690,16 @@ fun build_curve_settled_above_live_range_single_point() {
         assert_eq!(oracle_config::up_price(&curve[0]), float!());
         assert_eq!(oracle_config::dn_price(&curve[0]), 0);
 
-        let mut exposure = treap::new(test.ctx());
+        let mut exposure = strike_matrix::new(
+            test.ctx(),
+            float!(),
+            50 * float!(),
+            150 * float!(),
+        );
         exposure.insert(75 * float!(), 3 * float!(), false);
         exposure.insert(125 * float!(), 2 * float!(), true);
-        let value = exposure.evaluate(&curve);
-        // UP wins everywhere; DN loses everywhere.
+        let value = exposure.evaluate_settled(175 * float!());
+        // UP wins everywhere above the live range; DN loses everywhere.
         assert_eq!(value, 2 * float!());
 
         destroy(exposure);

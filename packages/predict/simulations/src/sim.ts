@@ -24,6 +24,7 @@ import {
   execute,
   executeAndWait,
   mintTx,
+  refreshOracleAndMintTx,
   registerOracleCapTx,
   supplyTx,
   updatePricesTx,
@@ -120,7 +121,9 @@ async function setupSimulation(): Promise<SimState> {
       minStrike: ORACLE_MIN_STRIKE,
       tickSize: ORACLE_TICK_SIZE,
     }),
-    "create_oracle"
+    "create_oracle",
+    // Matrix setup allocates the full strike grid at oracle creation time.
+    50_000_000_000n
   );
   const oracleChange = result.objectChanges.find(
     (change: any) => change.type === "created" && change.objectType.includes("OracleSVI") && !change.objectType.includes("Cap")
@@ -172,9 +175,55 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
     mint: [],
   };
   let mintIndex = 0;
-
-  for (const row of rows) {
+  let i = 0;
+  while (i < rows.length) {
+    const row = rows[i];
     const startedAt = performance.now();
+
+    const nextRow = i + 1 < rows.length ? rows[i + 1] : null;
+    const nextNextRow = i + 2 < rows.length ? rows[i + 2] : null;
+    if (
+      row.action === "update_prices" &&
+      nextRow?.action === "update_svi" &&
+      nextNextRow?.action === "mint"
+    ) {
+      mintIndex++;
+      const alignedStrike = alignStrikeToGrid(nextNextRow.strike);
+      const gas = await execute(
+        () => refreshOracleAndMintTx({
+          predictId: state.predictId,
+          managerId: state.managerId,
+          oracleId: state.oracleId,
+          oracleCapId: state.oracleCapId,
+          expiry,
+          strike: alignedStrike,
+          isUp: nextNextRow.isUp,
+          quantity: nextNextRow.quantity,
+          spot: row.spot,
+          forward: row.forward,
+          svi: {
+            a: nextRow.a,
+            b: nextRow.b,
+            rho: nextRow.rho,
+            rhoNegative: nextRow.rhoNegative,
+            m: nextRow.m,
+            mNegative: nextRow.mNegative,
+            sigma: nextRow.sigma,
+          },
+          riskFreeRate: nextRow.riskFreeRate,
+        }),
+        "refresh_oracle_and_mint"
+      );
+
+      const wallMs = performance.now() - startedAt;
+      byAction.mint.push({ wallMs, ...gas });
+
+      const direction = nextNextRow.isUp ? "UP" : "DN";
+      const strikeUsd = (Number(alignedStrike) / 1e9).toFixed(0);
+      process.stdout.write(`[${ts()}]   [${mintIndex}/${mintRows.length}] ${direction} $${strikeUsd} ${wallMs.toFixed(0)}ms\n`);
+      i += 3;
+      continue;
+    }
 
     if (row.action === "update_prices") {
       const gas = await execute(
@@ -182,6 +231,7 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
         "update_prices"
       );
       byAction.update_prices.push({ wallMs: performance.now() - startedAt, ...gas });
+      i++;
       continue;
     }
 
@@ -204,6 +254,7 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
         "update_svi"
       );
       byAction.update_svi.push({ wallMs: performance.now() - startedAt, ...gas });
+      i++;
       continue;
     }
 
@@ -228,6 +279,7 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
     const direction = row.isUp ? "UP" : "DN";
     const strikeUsd = (Number(alignedStrike) / 1e9).toFixed(0);
     process.stdout.write(`[${ts()}]   [${mintIndex}/${mintRows.length}] ${direction} $${strikeUsd} ${wallMs.toFixed(0)}ms\n`);
+    i++;
   }
 
   const results = buildResultsFile(byAction);
