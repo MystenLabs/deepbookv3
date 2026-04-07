@@ -292,13 +292,7 @@ public fun new_price_data(spot: u64, forward: u64): PriceData {
 }
 
 /// Create a new SVIParams struct.
-public fun new_svi_params(
-    a: u64,
-    b: u64,
-    rho: i64::I64,
-    m: i64::I64,
-    sigma: u64,
-): SVIParams {
+public fun new_svi_params(a: u64, b: u64, rho: i64::I64, m: i64::I64, sigma: u64): SVIParams {
     SVIParams { a, b, rho, m, sigma }
 }
 

@@ -170,15 +170,21 @@ export function updateSviTx(
   riskFreeRate: bigint
 ): Transaction {
   const tx = new Transaction();
+  const rho = tx.moveCall({
+    target: target("i64", "from_parts"),
+    arguments: [tx.pure.u64(svi.rho), tx.pure.bool(svi.rhoNegative)],
+  });
+  const m = tx.moveCall({
+    target: target("i64", "from_parts"),
+    arguments: [tx.pure.u64(svi.m), tx.pure.bool(svi.mNegative)],
+  });
   const sviParams = tx.moveCall({
     target: target("oracle", "new_svi_params"),
     arguments: [
       tx.pure.u64(svi.a),
       tx.pure.u64(svi.b),
-      tx.pure.u64(svi.rho),
-      tx.pure.bool(svi.rhoNegative),
-      tx.pure.u64(svi.m),
-      tx.pure.bool(svi.mNegative),
+      rho,
+      m,
       tx.pure.u64(svi.sigma),
     ],
   });
@@ -298,15 +304,21 @@ export function refreshOracleAndMintTx(params: {
     arguments: [tx.object(params.oracleId), tx.object(params.oracleCapId), priceData, tx.object(CLOCK_ID)],
   });
 
+  const rho = tx.moveCall({
+    target: target("i64", "from_parts"),
+    arguments: [tx.pure.u64(params.svi.rho), tx.pure.bool(params.svi.rhoNegative)],
+  });
+  const m = tx.moveCall({
+    target: target("i64", "from_parts"),
+    arguments: [tx.pure.u64(params.svi.m), tx.pure.bool(params.svi.mNegative)],
+  });
   const sviParams = tx.moveCall({
     target: target("oracle", "new_svi_params"),
     arguments: [
       tx.pure.u64(params.svi.a),
       tx.pure.u64(params.svi.b),
-      tx.pure.u64(params.svi.rho),
-      tx.pure.bool(params.svi.rhoNegative),
-      tx.pure.u64(params.svi.m),
-      tx.pure.bool(params.svi.mNegative),
+      rho,
+      m,
       tx.pure.u64(params.svi.sigma),
     ],
   });
