@@ -99,9 +99,9 @@ public fun create_oracle_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): Oracle
 }
 
 /// Create a new Oracle. Returns the oracle ID.
-public fun create_oracle<Quote>(
+public fun create_oracle(
     registry: &mut Registry,
-    predict: &mut Predict<Quote>,
+    predict: &mut Predict,
     _admin_cap: &AdminCap,
     cap: &OracleSVICap,
     underlying_asset: String,
@@ -131,9 +131,17 @@ public fun create_oracle<Quote>(
     oracle_id
 }
 
+public fun add_quote_asset<Quote>(predict: &mut Predict, _admin_cap: &AdminCap) {
+    predict.add_quote_asset<Quote>();
+}
+
+public fun remove_quote_asset<Quote>(predict: &mut Predict, _admin_cap: &AdminCap) {
+    predict.remove_quote_asset<Quote>();
+}
+
 /// Set trading pause state.
-public fun set_trading_paused<Quote>(
-    predict: &mut predict::Predict<Quote>,
+public fun set_trading_paused(
+    predict: &mut Predict,
     _admin_cap: &AdminCap,
     paused: bool,
 ) {
@@ -141,8 +149,8 @@ public fun set_trading_paused<Quote>(
 }
 
 /// Set base spread.
-public fun set_base_spread<Quote>(
-    predict: &mut predict::Predict<Quote>,
+public fun set_base_spread(
+    predict: &mut Predict,
     _admin_cap: &AdminCap,
     spread: u64,
 ) {
@@ -150,8 +158,8 @@ public fun set_base_spread<Quote>(
 }
 
 /// Set min spread.
-public fun set_min_spread<Quote>(
-    predict: &mut predict::Predict<Quote>,
+public fun set_min_spread(
+    predict: &mut Predict,
     _admin_cap: &AdminCap,
     spread: u64,
 ) {
@@ -159,8 +167,8 @@ public fun set_min_spread<Quote>(
 }
 
 /// Set utilization multiplier.
-public fun set_utilization_multiplier<Quote>(
-    predict: &mut predict::Predict<Quote>,
+public fun set_utilization_multiplier(
+    predict: &mut Predict,
     _admin_cap: &AdminCap,
     multiplier: u64,
 ) {
@@ -168,8 +176,8 @@ public fun set_utilization_multiplier<Quote>(
 }
 
 /// Set max total exposure percentage.
-public fun set_max_total_exposure_pct<Quote>(
-    predict: &mut predict::Predict<Quote>,
+public fun set_max_total_exposure_pct(
+    predict: &mut Predict,
     _admin_cap: &AdminCap,
     pct: u64,
 ) {

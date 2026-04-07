@@ -5,20 +5,32 @@
 #[test_only]
 module deepbook_predict::predict_supply_tests;
 
-use deepbook_predict::{plp::PLP, predict::{Self, Predict}};
+use deepbook_predict::{plp::PLP, predict::{Self, Predict}, treasury_config, vault};
 use std::unit_test::{assert_eq, destroy};
 use sui::{coin, sui::SUI, test_scenario};
 
 const ALICE: address = @0xA;
 const BOB: address = @0xB;
 
-fun setup(ctx: &mut TxContext): Predict<SUI> {
+public struct ALTUSD has drop {}
+
+fun setup(ctx: &mut TxContext): Predict {
     predict::create_test_predict<SUI>(ctx)
 }
 
-/// Supply USDC and return LP coin. Helper to reduce boilerplate.
-fun do_supply(predict: &mut Predict<SUI>, amount: u64, ctx: &mut TxContext): coin::Coin<PLP> {
+/// Supply SUI and return LP coin. Helper to reduce boilerplate.
+fun do_supply(predict: &mut Predict, amount: u64, ctx: &mut TxContext): coin::Coin<PLP> {
     let coin = coin::mint_for_testing<SUI>(amount, ctx);
+    predict.supply(coin, ctx)
+}
+
+/// Supply ALTUSD and return LP coin. Helper to reduce boilerplate.
+fun do_supply_alt(
+    predict: &mut Predict,
+    amount: u64,
+    ctx: &mut TxContext,
+): coin::Coin<PLP> {
+    let coin = coin::mint_for_testing<ALTUSD>(amount, ctx);
     predict.supply(coin, ctx)
 }
 
@@ -131,6 +143,63 @@ fun supply_accepts_minimum_for_one_share() {
     destroy(predict);
 }
 
+#[test]
+fun supply_accepts_second_whitelisted_quote_asset() {
+    let ctx = &mut tx_context::dummy();
+    let mut predict = setup(ctx);
+    predict.add_quote_asset<ALTUSD>();
+
+    let lp_sui = do_supply(&mut predict, 1_000_000, ctx);
+    let lp_alt = do_supply_alt(&mut predict, 500_000, ctx);
+
+    assert_eq!(lp_alt.value(), 500_000);
+    assert_eq!(predict.vault_balance(), 1_500_000);
+    assert_eq!(vault::asset_balance<SUI>(predict.vault_mut()), 1_000_000);
+    assert_eq!(vault::asset_balance<ALTUSD>(predict.vault_mut()), 500_000);
+
+    destroy(lp_sui);
+    destroy(lp_alt);
+    destroy(predict);
+}
+
+#[test]
+fun supply_values_vault_across_both_quote_assets() {
+    let ctx = &mut tx_context::dummy();
+    let mut predict = setup(ctx);
+    predict.add_quote_asset<ALTUSD>();
+
+    let lp_sui = do_supply(&mut predict, 1_000_000, ctx);
+    let lp_alt = do_supply_alt(&mut predict, 500_000, ctx);
+
+    // Simulate additional vault value arriving in the secondary quote asset.
+    let extra_alt = coin::mint_for_testing<ALTUSD>(1_500_000, ctx);
+    predict.vault_mut().accept_payment(extra_alt.into_balance());
+
+    // vault_value = 3_000_000, total_shares = 1_500_000
+    // shares = 600_000 * 1_500_000 / 3_000_000 = 300_000
+    let lp3 = do_supply(&mut predict, 600_000, ctx);
+    assert_eq!(lp3.value(), 300_000);
+    assert_eq!(predict.vault_balance(), 3_600_000);
+    assert_eq!(vault::asset_balance<SUI>(predict.vault_mut()), 1_600_000);
+    assert_eq!(vault::asset_balance<ALTUSD>(predict.vault_mut()), 2_000_000);
+
+    destroy(lp_sui);
+    destroy(lp_alt);
+    destroy(lp3);
+    destroy(predict);
+}
+
+#[test, expected_failure(abort_code = treasury_config::EQuoteAssetNotAccepted)]
+fun supply_rejects_unapproved_quote_asset() {
+    let ctx = &mut tx_context::dummy();
+    let mut predict = setup(ctx);
+    let coin = coin::mint_for_testing<ALTUSD>(1_000_000, ctx);
+
+    let _lp = predict.supply(coin, ctx);
+
+    abort
+}
+
 // ============================================================
 // withdraw() Tests
 // ============================================================
@@ -142,7 +211,7 @@ fun withdraw_partial() {
 
     let mut lp = do_supply(&mut predict, 1_000_000, ctx);
     let withdraw_lp = lp.split(500_000, ctx);
-    let usdc = predict.withdraw(withdraw_lp, ctx);
+    let usdc = predict.withdraw<SUI>(withdraw_lp, ctx);
     assert_eq!(usdc.value(), 500_000);
     assert_eq!(predict.vault_balance(), 500_000);
 
@@ -158,7 +227,7 @@ fun withdraw_all_shares() {
 
     let lp = do_supply(&mut predict, 1_000_000, ctx);
     // sole LP → amount = vault_value
-    let usdc = predict.withdraw(lp, ctx);
+    let usdc = predict.withdraw<SUI>(lp, ctx);
     assert_eq!(usdc.value(), 1_000_000);
     assert_eq!(predict.vault_balance(), 0);
 
@@ -177,7 +246,7 @@ fun withdraw_when_vault_gained() {
     predict.vault_mut().accept_payment(extra.into_balance());
     // Withdraw 500_000 shares: amount = 500_000 * 2_000_000 / 1_000_000 = 1_000_000
     let withdraw_lp = lp.split(500_000, ctx);
-    let usdc = predict.withdraw(withdraw_lp, ctx);
+    let usdc = predict.withdraw<SUI>(withdraw_lp, ctx);
     assert_eq!(usdc.value(), 1_000_000);
 
     destroy(lp);
@@ -192,7 +261,7 @@ fun withdraw_zero_shares_aborts() {
 
     let _lp = do_supply(&mut predict, 1_000_000, ctx);
     let zero_coin = coin::zero<PLP>(ctx);
-    let _usdc = predict.withdraw(zero_coin, ctx);
+    let _usdc = predict.withdraw<SUI>(zero_coin, ctx);
 
     abort 999
 }
@@ -207,11 +276,44 @@ fun withdraw_sole_lp_gets_full_vault_value() {
     let extra = coin::mint_for_testing<SUI>(500_000, ctx);
     predict.vault_mut().accept_payment(extra.into_balance());
     // sole LP → amount = full vault_value = 1_500_000
-    let usdc = predict.withdraw(lp, ctx);
+    let usdc = predict.withdraw<SUI>(lp, ctx);
     assert_eq!(usdc.value(), 1_500_000);
 
     destroy(usdc);
     destroy(predict);
+}
+
+#[test]
+fun withdraw_secondary_quote_uses_matching_concrete_balance() {
+    let ctx = &mut tx_context::dummy();
+    let mut predict = setup(ctx);
+    predict.add_quote_asset<ALTUSD>();
+
+    let lp_sui = do_supply(&mut predict, 1_000_000, ctx);
+    let lp_alt = do_supply_alt(&mut predict, 500_000, ctx);
+    let alt = predict.withdraw<ALTUSD>(lp_alt, ctx);
+
+    assert_eq!(alt.value(), 500_000);
+    assert_eq!(predict.vault_balance(), 1_000_000);
+    assert_eq!(vault::asset_balance<SUI>(predict.vault_mut()), 1_000_000);
+    assert_eq!(vault::asset_balance<ALTUSD>(predict.vault_mut()), 0);
+
+    destroy(lp_sui);
+    destroy(alt);
+    destroy(predict);
+}
+
+#[test, expected_failure(abort_code = vault::EAssetNotInVault)]
+fun withdraw_whitelisted_asset_without_concrete_balance_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let mut predict = setup(ctx);
+    predict.add_quote_asset<ALTUSD>();
+
+    // Supply SUI and withdraw ALTUSD but no ALTUSD in vault
+    let lp = do_supply(&mut predict, 1_000_000, ctx);
+    let _alt = predict.withdraw<ALTUSD>(lp, ctx);
+
+    abort 999
 }
 
 // ============================================================
@@ -250,7 +352,7 @@ fun rounding_asymmetry_supply_vs_withdraw() {
     assert_eq!(lp2.value(), 333_333);
     // vault_value = 4_000_000, total_shares = 1_333_333
     // Withdraw lp2: amount = 333_333 * 4_000_000 / 1_333_333 = 999_999 (truncated)
-    let usdc = predict.withdraw(lp2, ctx);
+    let usdc = predict.withdraw<SUI>(lp2, ctx);
     assert_eq!(usdc.value(), 999_999);
 
     destroy(lp1);
@@ -273,7 +375,7 @@ fun coin_merge_then_withdraw() {
     assert_eq!(lp1.value(), 1_500_000);
 
     // sole LP → full vault_value = 1_500_000
-    let usdc = predict.withdraw(lp1, ctx);
+    let usdc = predict.withdraw<SUI>(lp1, ctx);
     assert_eq!(usdc.value(), 1_500_000);
 
     destroy(usdc);
@@ -288,15 +390,15 @@ fun multiple_partial_withdrawals_via_split() {
     let mut lp = do_supply(&mut predict, 1_000_000, ctx);
 
     let w1 = lp.split(300_000, ctx);
-    let usdc1 = predict.withdraw(w1, ctx);
+    let usdc1 = predict.withdraw<SUI>(w1, ctx);
     assert_eq!(usdc1.value(), 300_000);
 
     let w2 = lp.split(200_000, ctx);
-    let usdc2 = predict.withdraw(w2, ctx);
+    let usdc2 = predict.withdraw<SUI>(w2, ctx);
     assert_eq!(usdc2.value(), 200_000);
 
     // Remaining 500_000 shares — sole LP
-    let usdc3 = predict.withdraw(lp, ctx);
+    let usdc3 = predict.withdraw<SUI>(lp, ctx);
     assert_eq!(usdc3.value(), 500_000);
 
     destroy(usdc1);
@@ -315,7 +417,7 @@ fun lp_transfer_then_withdraw_by_recipient() {
 
     scenario.next_tx(ALICE);
     {
-        let mut predict = scenario.take_shared<Predict<SUI>>();
+        let mut predict = scenario.take_shared<Predict>();
         let payment = coin::mint_for_testing<SUI>(1_000_000, scenario.ctx());
         let lp = predict.supply(payment, scenario.ctx());
 
@@ -325,9 +427,9 @@ fun lp_transfer_then_withdraw_by_recipient() {
 
     scenario.next_tx(BOB);
     {
-        let mut predict = scenario.take_shared<Predict<SUI>>();
+        let mut predict = scenario.take_shared<Predict>();
         let lp = scenario.take_from_sender<coin::Coin<PLP>>();
-        let usdc = predict.withdraw(lp, scenario.ctx());
+        let usdc = predict.withdraw<SUI>(lp, scenario.ctx());
         assert_eq!(usdc.value(), 1_000_000);
         assert_eq!(predict.vault_balance(), 0);
 
@@ -346,7 +448,7 @@ fun single_unit_supply_and_withdraw() {
     let lp = do_supply(&mut predict, 1, ctx);
     assert_eq!(lp.value(), 1);
 
-    let usdc = predict.withdraw(lp, ctx);
+    let usdc = predict.withdraw<SUI>(lp, ctx);
     assert_eq!(usdc.value(), 1);
 
     destroy(usdc);
@@ -359,7 +461,7 @@ fun supply_withdraw_then_resupply() {
     let mut predict = setup(ctx);
 
     let lp1 = do_supply(&mut predict, 1_000_000, ctx);
-    let usdc1 = predict.withdraw(lp1, ctx);
+    let usdc1 = predict.withdraw<SUI>(lp1, ctx);
     assert_eq!(usdc1.value(), 1_000_000);
     assert_eq!(predict.vault_balance(), 0);
 
@@ -396,7 +498,7 @@ fun vault_value_changes_with_splits_and_merges() {
 
     // Alice redeems split portion
     // amount = 800_000 * 4_500_000 / 3_000_000 = 1_200_000
-    let usdc1 = predict.withdraw(lp_alice_split, ctx);
+    let usdc1 = predict.withdraw<SUI>(lp_alice_split, ctx);
     assert_eq!(usdc1.value(), 1_200_000);
     // vault_value = 3_300_000, total_shares = 2_200_000
 
@@ -419,18 +521,18 @@ fun vault_value_changes_with_splits_and_merges() {
     // Carol redeems 720_000 shares from merged coin
     let w2 = lp_merged.split(720_000, ctx);
     // amount = 720_000 * 7_480_000 / 2_493_333 = 2_160_000
-    let usdc2 = predict.withdraw(w2, ctx);
+    let usdc2 = predict.withdraw<SUI>(w2, ctx);
     assert_eq!(usdc2.value(), 2_160_000);
     // vault_value = 5_320_000, total_shares = 1_773_333
 
     // Alice redeems remaining 1_200_000 shares
     // amount = 1_200_000 * 5_320_000 / 1_773_333 = 3_600_000
-    let usdc3 = predict.withdraw(lp_alice, ctx);
+    let usdc3 = predict.withdraw<SUI>(lp_alice, ctx);
     assert_eq!(usdc3.value(), 3_600_000);
     // vault_value = 1_720_000, total_shares = 573_333
 
     // Carol redeems last — sole LP
-    let usdc4 = predict.withdraw(lp_merged, ctx);
+    let usdc4 = predict.withdraw<SUI>(lp_merged, ctx);
     assert_eq!(usdc4.value(), 1_720_000);
 
     destroy(usdc1);
@@ -458,11 +560,11 @@ fun sequential_full_withdrawals() {
     predict.vault_mut().accept_payment(extra.into_balance());
 
     // lp2 (1M shares): amount = 1_000_000 * 4_000_000 / 2_000_000 = 2_000_000
-    let usdc1 = predict.withdraw(lp2, ctx);
+    let usdc1 = predict.withdraw<SUI>(lp2, ctx);
     assert_eq!(usdc1.value(), 2_000_000);
 
     // lp1 sole LP: amount = vault_value = 2_000_000
-    let usdc2 = predict.withdraw(lp1, ctx);
+    let usdc2 = predict.withdraw<SUI>(lp1, ctx);
     assert_eq!(usdc2.value(), 2_000_000);
 
     destroy(usdc1);

@@ -19,6 +19,7 @@ use deepbook_predict::{
     predict_manager::{Self, PredictManager},
     pricing_config::{Self, PricingConfig},
     risk_config::{Self, RiskConfig},
+    treasury_config::{Self, TreasuryConfig},
     vault::{Self, Vault}
 };
 use sui::{clock::Clock, coin::{Self, Coin, TreasuryCap}, event};
@@ -129,17 +130,17 @@ public struct Withdrawn has copy, drop, store {
 // === Structs ===
 
 /// Main shared object for the DeepBook Predict protocol.
-/// Quote is the collateral asset (e.g., USDC).
-public struct Predict<phantom Quote> has key {
+public struct Predict has key {
     id: UID,
-    /// Vault holding USDC and tracking exposure
-    vault: Vault<Quote>,
+    /// Vault holding treasury balances and tracking exposure
+    vault: Vault,
     /// Treasury cap for minting/burning PLP tokens
     treasury_cap: TreasuryCap<PLP>,
     /// Pricing configuration (admin-controlled)
     pricing_config: PricingConfig,
     /// Risk limits (admin-controlled)
     risk_config: RiskConfig,
+    treasury_config: TreasuryConfig,
     oracle_config: OracleConfig,
     /// Whether trading (mint) is globally paused
     trading_paused: bool,
@@ -159,8 +160,8 @@ public fun create_manager(ctx: &mut TxContext): ID {
 
 /// Get the amounts for mint/redeem (for UI/preview).
 /// Returns (mint_cost, redeem_payout).
-public fun get_trade_amounts<Quote>(
-    predict: &Predict<Quote>,
+public fun get_trade_amounts(
+    predict: &Predict,
     oracle: &OracleSVI,
     key: MarketKey,
     quantity: u64,
@@ -180,7 +181,7 @@ public fun get_trade_amounts<Quote>(
 /// Buy a position. Cost is withdrawn from the PredictManager's balance.
 /// Position quantity is added to the PredictManager's positions.
 public fun mint<Quote>(
-    predict: &mut Predict<Quote>,
+    predict: &mut Predict,
     manager: &mut PredictManager,
     oracle: &OracleSVI,
     key: MarketKey,
@@ -191,6 +192,7 @@ public fun mint<Quote>(
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(!predict.trading_paused, ETradingPaused);
     assert!(quantity > 0, EZeroQuantity);
+    predict.treasury_config.assert_quote_asset<Quote>();
 
     predict.oracle_config.assert_key_matches(oracle, &key);
     oracle_config::assert_mintable_oracle(oracle, clock);
@@ -228,7 +230,7 @@ public fun mint<Quote>(
 /// Sell a position. Payout is deposited into the PredictManager's balance.
 /// Position quantity is removed from the PredictManager's positions.
 public fun redeem<Quote>(
-    predict: &mut Predict<Quote>,
+    predict: &mut Predict,
     manager: &mut PredictManager,
     oracle: &OracleSVI,
     key: MarketKey,
@@ -238,6 +240,7 @@ public fun redeem<Quote>(
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(quantity > 0, EZeroQuantity);
+    predict.treasury_config.assert_quote_asset<Quote>();
     predict.oracle_config.assert_key_matches(oracle, &key);
     if (!oracle.is_settled()) {
         oracle_config::assert_operational_oracle(oracle, clock);
@@ -256,7 +259,7 @@ public fun redeem<Quote>(
     let (bid, _ask) = predict.get_quote(oracle, strike, is_up, clock);
     let payout = math::mul(bid, quantity);
 
-    let payout_balance = predict.vault.dispense_payout(payout);
+    let payout_balance = predict.vault.dispense_payout<Quote>(payout);
     let payout_coin = payout_balance.into_coin(ctx);
     manager.deposit(payout_coin, ctx);
 
@@ -277,11 +280,11 @@ public fun redeem<Quote>(
 
 // TODO: Update collateralized minting to share the same pricing and risk
 // admission checks as standard mint flows.
-/// Mint a position using another position as collateral (no USDC cost).
+/// Mint a position using another position as collateral (no quote-asset cost).
 /// - UP collateral (lower strike) -> UP minted (higher strike)
 /// - DOWN collateral (higher strike) -> DOWN minted (lower strike)
-public fun mint_collateralized<Quote>(
-    predict: &mut Predict<Quote>,
+public fun mint_collateralized(
+    predict: &mut Predict,
     manager: &mut PredictManager,
     oracle: &OracleSVI,
     locked_key: MarketKey,
@@ -318,8 +321,8 @@ public fun mint_collateralized<Quote>(
 }
 
 /// Redeem a collateralized position, releasing the locked collateral.
-public fun redeem_collateralized<Quote>(
-    predict: &mut Predict<Quote>,
+public fun redeem_collateralized(
+    predict: &mut Predict,
     manager: &mut PredictManager,
     locked_key: MarketKey,
     minted_key: MarketKey,
@@ -346,16 +349,17 @@ public fun redeem_collateralized<Quote>(
     });
 }
 
-/// Supply USDC into the vault. Returns LP tokens representing shares.
+/// Supply an accepted quote asset into the vault. Returns LP tokens representing shares.
 /// First depositor gets shares 1:1. Subsequent depositors get shares
 /// proportional to their deposit relative to current vault value.
 public fun supply<Quote>(
-    predict: &mut Predict<Quote>,
+    predict: &mut Predict,
     coin: Coin<Quote>,
     ctx: &mut TxContext,
 ): Coin<PLP> {
     let amount = coin.value();
     assert!(amount > 0, EZeroAmount);
+    predict.treasury_config.assert_quote_asset<Quote>();
 
     let vault_value = predict.vault.vault_value();
     predict.vault.accept_payment(coin.into_balance());
@@ -378,13 +382,14 @@ public fun supply<Quote>(
     coin::mint(&mut predict.treasury_cap, shares, ctx)
 }
 
-/// Withdraw USDC from the vault by providing LP tokens.
-/// Burns the LP tokens and returns the corresponding USDC.
+/// Withdraw a selected accepted quote asset from the vault by providing LP tokens.
+/// Burns the LP tokens and returns the corresponding quote asset.
 public fun withdraw<Quote>(
-    predict: &mut Predict<Quote>,
+    predict: &mut Predict,
     lp_coin: Coin<PLP>,
     ctx: &mut TxContext,
 ): Coin<Quote> {
+    predict.treasury_config.assert_quote_asset<Quote>();
     let vault_value = predict.vault.vault_value();
     let shares_burned = lp_coin.value();
     assert!(shares_burned > 0, EZeroAmount);
@@ -400,30 +405,40 @@ public fun withdraw<Quote>(
         amount,
         shares_burned,
     });
-    predict.vault.dispense_payout(amount).into_coin(ctx)
+    predict.vault.dispense_payout<Quote>(amount).into_coin(ctx)
 }
 
 // === Public-Package Functions ===
 
 /// Create and share the Predict object. Returns its ID.
 public(package) fun create<Quote>(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): ID {
-    let predict = Predict<Quote> {
+    let mut predict = Predict {
         id: object::new(ctx),
-        vault: vault::new<Quote>(ctx),
+        vault: vault::new(ctx),
         treasury_cap,
         pricing_config: pricing_config::new(),
         risk_config: risk_config::new(),
+        treasury_config: treasury_config::new(),
         oracle_config: oracle_config::new(ctx),
         trading_paused: false,
     };
+    predict.add_quote_asset<Quote>();
     let predict_id = object::id(&predict);
     transfer::share_object(predict);
 
     predict_id
 }
 
-public(package) fun add_oracle_grid<Quote>(
-    predict: &mut Predict<Quote>,
+public(package) fun add_quote_asset<Quote>(predict: &mut Predict) {
+    predict.treasury_config.add_quote_asset<Quote>();
+}
+
+public(package) fun remove_quote_asset<Quote>(predict: &mut Predict) {
+    predict.treasury_config.remove_quote_asset<Quote>();
+}
+
+public(package) fun add_oracle_grid(
+    predict: &mut Predict,
     oracle_id: ID,
     min_strike: u64,
     tick_size: u64,
@@ -435,32 +450,32 @@ public(package) fun add_oracle_grid<Quote>(
 }
 
 /// Whether trading is currently paused.
-public fun trading_paused<Quote>(predict: &Predict<Quote>): bool {
+public fun trading_paused(predict: &Predict): bool {
     predict.trading_paused
 }
 
 /// Get the base spread.
-public fun base_spread<Quote>(predict: &Predict<Quote>): u64 {
+public fun base_spread(predict: &Predict): u64 {
     predict.pricing_config.base_spread()
 }
 
 /// Get the min spread.
-public fun min_spread<Quote>(predict: &Predict<Quote>): u64 {
+public fun min_spread(predict: &Predict): u64 {
     predict.pricing_config.min_spread()
 }
 
 /// Get the utilization multiplier.
-public fun utilization_multiplier<Quote>(predict: &Predict<Quote>): u64 {
+public fun utilization_multiplier(predict: &Predict): u64 {
     predict.pricing_config.utilization_multiplier()
 }
 
 /// Get the max total exposure percentage.
-public fun max_total_exposure_pct<Quote>(predict: &Predict<Quote>): u64 {
+public fun max_total_exposure_pct(predict: &Predict): u64 {
     predict.risk_config.max_total_exposure_pct()
 }
 
 /// Set trading pause state.
-public(package) fun set_trading_paused<Quote>(predict: &mut Predict<Quote>, paused: bool) {
+public(package) fun set_trading_paused(predict: &mut Predict, paused: bool) {
     predict.trading_paused = paused;
     event::emit(TradingPauseUpdated {
         predict_id: object::id(predict),
@@ -469,20 +484,20 @@ public(package) fun set_trading_paused<Quote>(predict: &mut Predict<Quote>, paus
 }
 
 /// Set base spread.
-public(package) fun set_base_spread<Quote>(predict: &mut Predict<Quote>, spread: u64) {
+public(package) fun set_base_spread(predict: &mut Predict, spread: u64) {
     predict.pricing_config.set_base_spread(spread);
     predict.emit_pricing_config_updated();
 }
 
 /// Set min spread.
-public(package) fun set_min_spread<Quote>(predict: &mut Predict<Quote>, spread: u64) {
+public(package) fun set_min_spread(predict: &mut Predict, spread: u64) {
     predict.pricing_config.set_min_spread(spread);
     predict.emit_pricing_config_updated();
 }
 
 /// Set utilization multiplier.
-public(package) fun set_utilization_multiplier<Quote>(
-    predict: &mut Predict<Quote>,
+public(package) fun set_utilization_multiplier(
+    predict: &mut Predict,
     multiplier: u64,
 ) {
     predict.pricing_config.set_utilization_multiplier(multiplier);
@@ -490,7 +505,7 @@ public(package) fun set_utilization_multiplier<Quote>(
 }
 
 /// Set max total exposure percentage.
-public(package) fun set_max_total_exposure_pct<Quote>(predict: &mut Predict<Quote>, pct: u64) {
+public(package) fun set_max_total_exposure_pct(predict: &mut Predict, pct: u64) {
     predict.risk_config.set_max_total_exposure_pct(pct);
     event::emit(RiskConfigUpdated {
         predict_id: object::id(predict),
@@ -500,45 +515,53 @@ public(package) fun set_max_total_exposure_pct<Quote>(predict: &mut Predict<Quot
 
 #[test_only]
 /// Create a Predict object for testing without sharing it.
-public(package) fun create_test_predict<Quote>(ctx: &mut TxContext): Predict<Quote> {
+public(package) fun create_test_predict<Quote>(ctx: &mut TxContext): Predict {
     let treasury_cap = coin::create_treasury_cap_for_testing<PLP>(ctx);
-    Predict<Quote> {
+    let mut predict = Predict {
         id: object::new(ctx),
-        vault: vault::new<Quote>(ctx),
+        vault: vault::new(ctx),
         treasury_cap,
         pricing_config: pricing_config::new(),
         risk_config: risk_config::new(),
+        treasury_config: treasury_config::new(),
         oracle_config: oracle_config::new(ctx),
         trading_paused: false,
-    }
+    };
+    predict.add_quote_asset<Quote>();
+    predict
 }
 
 #[test_only]
-public(package) fun vault_mut<Quote>(predict: &mut Predict<Quote>): &mut Vault<Quote> {
+public(package) fun vault_mut(predict: &mut Predict): &mut Vault {
     &mut predict.vault
 }
 
 #[test_only]
-public(package) fun oracle_config<Quote>(predict: &Predict<Quote>): &OracleConfig {
+public(package) fun oracle_config(predict: &Predict): &OracleConfig {
     &predict.oracle_config
 }
 
 #[test_only]
-public(package) fun vault_balance<Quote>(predict: &Predict<Quote>): u64 {
+public(package) fun treasury_config(predict: &Predict): &TreasuryConfig {
+    &predict.treasury_config
+}
+
+#[test_only]
+public(package) fun vault_balance(predict: &Predict): u64 {
     predict.vault.balance()
 }
 
 // === Private Functions ===
 
 /// Returns the USDC value of `shares` at the given vault value.
-fun shares_to_amount<Quote>(predict: &Predict<Quote>, shares: u64, vault_value: u64): u64 {
+fun shares_to_amount(predict: &Predict, shares: u64, vault_value: u64): u64 {
     let total = predict.treasury_cap.total_supply();
     if (shares == 0 || total == 0) return 0;
     if (total == shares) return vault_value;
     mul_div_round_down(shares, vault_value, total)
 }
 
-fun emit_pricing_config_updated<Quote>(predict: &Predict<Quote>) {
+fun emit_pricing_config_updated(predict: &Predict) {
     event::emit(PricingConfigUpdated {
         predict_id: object::id(predict),
         base_spread: predict.pricing_config.base_spread(),
@@ -549,8 +572,8 @@ fun emit_pricing_config_updated<Quote>(predict: &Predict<Quote>) {
 
 /// Get bid and ask prices for a market.
 /// Returns (bid, ask) in FLOAT_SCALING (1e9).
-fun get_quote<Quote>(
-    predict: &Predict<Quote>,
+fun get_quote(
+    predict: &Predict,
     oracle: &OracleSVI,
     strike: u64,
     is_up: bool,
@@ -568,7 +591,7 @@ fun get_quote<Quote>(
         )
 }
 
-fun refresh_oracle_risk<Quote>(predict: &mut Predict<Quote>, oracle: &OracleSVI, clock: &Clock) {
+fun refresh_oracle_risk(predict: &mut Predict, oracle: &OracleSVI, clock: &Clock) {
     let oracle_id = oracle.id();
     let (min_strike, max_strike) = predict.vault.oracle_strike_range(oracle_id);
     if (min_strike == 0 && max_strike == 0) {

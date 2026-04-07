@@ -26,35 +26,37 @@ const ALICE: address = @0xA;
 const BOB: address = @0xB;
 const LIVE_ORACLE_EXPIRY: u64 = 1_000_000_000;
 
-fun create_predict(ctx: &mut TxContext): Predict<SUI> {
+public struct ALTUSD has drop {}
+
+fun create_predict(ctx: &mut TxContext): Predict {
     predict::create_test_predict<SUI>(ctx)
 }
 
 fun supply_coin(
-    predict: &mut Predict<SUI>,
+    predict: &mut Predict,
     coin: coin::Coin<SUI>,
     ctx: &mut TxContext,
 ): coin::Coin<PLP> {
     predict.supply(coin, ctx)
 }
 
-fun supply_amount(predict: &mut Predict<SUI>, amount: u64, ctx: &mut TxContext): coin::Coin<PLP> {
+fun supply_amount(predict: &mut Predict, amount: u64, ctx: &mut TxContext): coin::Coin<PLP> {
     supply_coin(predict, coin::mint_for_testing<SUI>(amount, ctx), ctx)
 }
 
-fun seed_liquidity(predict: &mut Predict<SUI>, coin: coin::Coin<SUI>, ctx: &mut TxContext) {
+fun seed_liquidity(predict: &mut Predict, coin: coin::Coin<SUI>, ctx: &mut TxContext) {
     let lp = supply_coin(predict, coin, ctx);
     transfer::public_transfer(lp, ctx.sender());
 }
 
-fun setup_predict_with_liquidity(scenario: &mut Scenario, liquidity: u64): Predict<SUI> {
+fun setup_predict_with_liquidity(scenario: &mut Scenario, liquidity: u64): Predict {
     let mut predict = create_predict(scenario.ctx());
     let coin = coin::mint_for_testing<SUI>(liquidity, scenario.ctx());
     seed_liquidity(&mut predict, coin, scenario.ctx());
     predict
 }
 
-fun setup_live_oracle(predict: &mut Predict<SUI>, scenario: &mut Scenario): ID {
+fun setup_live_oracle(predict: &mut Predict, scenario: &mut Scenario): ID {
     let oracle_id = oracle_helper::setup_flat_vol_shared_oracle(
         ALICE,
         100 * constants::float_scaling!(),
@@ -81,7 +83,7 @@ fun setup_live_oracle(predict: &mut Predict<SUI>, scenario: &mut Scenario): ID {
     oracle_id
 }
 
-fun setup_quote_oracle(predict: &mut Predict<SUI>, active: bool, scenario: &mut Scenario): ID {
+fun setup_quote_oracle(predict: &mut Predict, active: bool, scenario: &mut Scenario): ID {
     let oracle_id = oracle_helper::setup_flat_vol_shared_oracle(
         ALICE,
         500_000_000,
@@ -124,29 +126,29 @@ fun setup_with_manager(funds: u64): (Scenario, ID) {
     (scenario, manager_id)
 }
 
-fun setup_trade_state(manager_funds: u64, liquidity: u64): (Scenario, ID, Predict<SUI>) {
+fun setup_trade_state(manager_funds: u64, liquidity: u64): (Scenario, ID, Predict) {
     let (mut scenario, manager_id) = setup_with_manager(manager_funds);
     let predict = setup_predict_with_liquidity(&mut scenario, liquidity);
     (scenario, manager_id, predict)
 }
 
-fun setup_live_trade_state(manager_funds: u64, liquidity: u64): (Scenario, ID, Predict<SUI>, ID) {
+fun setup_live_trade_state(manager_funds: u64, liquidity: u64): (Scenario, ID, Predict, ID) {
     let (mut scenario, manager_id, mut predict) = setup_trade_state(manager_funds, liquidity);
     let oracle_id = setup_live_oracle(&mut predict, &mut scenario);
     (scenario, manager_id, predict, oracle_id)
 }
 
 /// Read cached vault MTM from the test predict object.
-fun vault_mtm(predict: &mut Predict<SUI>): u64 {
+fun vault_mtm(predict: &mut Predict): u64 {
     vault::total_mtm(predict.vault_mut())
 }
 
 /// Read cached max payout from the test predict object.
-fun vault_max_payout(predict: &mut Predict<SUI>): u64 {
+fun vault_max_payout(predict: &mut Predict): u64 {
     vault::total_max_payout(predict.vault_mut())
 }
 
-fun init_test_matrix(predict: &mut Predict<SUI>, oracle_id: ID, ctx: &mut TxContext) {
+fun init_test_matrix(predict: &mut Predict, oracle_id: ID, ctx: &mut TxContext) {
     vault::init_oracle_matrix(
         predict.vault_mut(),
         oracle_id,
@@ -226,7 +228,7 @@ fun withdraw_returns_correct_amount() {
     scenario.next_tx(ALICE);
     let mut lp = scenario.take_from_sender<coin::Coin<PLP>>();
     let withdraw_lp = lp.split(500_000, scenario.ctx());
-    let withdrawn = predict.withdraw(withdraw_lp, scenario.ctx());
+    let withdrawn = predict.withdraw<SUI>(withdraw_lp, scenario.ctx());
     assert_eq!(withdrawn.value(), 500_000);
     assert_eq!(predict::vault_balance(&predict), 500_000);
 
@@ -244,7 +246,7 @@ fun withdraw_all_returns_full_amount() {
 
     scenario.next_tx(ALICE);
     let lp = scenario.take_from_sender<coin::Coin<PLP>>();
-    let withdrawn = predict.withdraw(lp, scenario.ctx());
+    let withdrawn = predict.withdraw<SUI>(lp, scenario.ctx());
     assert_eq!(withdrawn.value(), 1_000_000);
     assert_eq!(predict::vault_balance(&predict), 0);
 
@@ -277,7 +279,7 @@ fun withdraw_partial_with_settled_winning_exposure_returns_pro_rata_free_capital
     scenario.next_tx(ALICE);
     let mut lp = scenario.take_from_sender<coin::Coin<PLP>>();
     let withdraw_lp = lp.split(30 * constants::float_scaling!(), scenario.ctx());
-    let withdrawn = predict.withdraw(withdraw_lp, scenario.ctx());
+    let withdrawn = predict.withdraw<SUI>(withdraw_lp, scenario.ctx());
     assert_eq!(withdrawn.value(), 6 * constants::float_scaling!());
 
     transfer::public_transfer(lp, ALICE);
@@ -309,7 +311,7 @@ fun withdraw_up_to_available_succeeds() {
 
     scenario.next_tx(ALICE);
     let lp = scenario.take_from_sender<coin::Coin<PLP>>();
-    let withdrawn = predict.withdraw(lp, scenario.ctx());
+    let withdrawn = predict.withdraw<SUI>(lp, scenario.ctx());
     assert_eq!(withdrawn.value(), 20 * constants::float_scaling!());
 
     destroy(withdrawn);
@@ -339,7 +341,7 @@ fun withdraw_all_blocked_by_live_max_payout() {
 
     scenario.next_tx(ALICE);
     let lp = scenario.take_from_sender<coin::Coin<PLP>>();
-    let _coin = predict.withdraw(lp, scenario.ctx());
+    let _coin = predict.withdraw<SUI>(lp, scenario.ctx());
 
     abort 999
 }
@@ -361,7 +363,7 @@ fun mint_live_oracle_updates_manager_and_vault_state() {
         let balance_before = manager.balance<SUI>();
         let vault_balance_before = predict::vault_balance(&predict);
 
-        predict.mint(
+        predict.mint<SUI>(
             &mut manager,
             &oracle,
             key,
@@ -411,7 +413,7 @@ fun mint_aborts_on_wrong_oracle_id() {
     {
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
         let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
-        predict.mint(
+        predict.mint<SUI>(
             &mut manager,
             &oracle,
             wrong_key,
@@ -442,7 +444,7 @@ fun mint_aborts_on_wrong_expiry() {
     {
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
         let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
-        predict.mint(
+        predict.mint<SUI>(
             &mut manager,
             &oracle,
             wrong_key,
@@ -481,7 +483,7 @@ fun repeated_mint_same_market_increases_ask_and_doubles_max_payout() {
             &clock,
         );
 
-        predict.mint(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
+        predict.mint<SUI>(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
         let mtm_after_first = vault_mtm(&mut predict);
         let max_payout_after_first = vault_max_payout(&mut predict);
         let (cost_after_first, _payout_after_first) = predict.get_trade_amounts(
@@ -491,7 +493,7 @@ fun repeated_mint_same_market_increases_ask_and_doubles_max_payout() {
             &clock,
         );
 
-        predict.mint(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
+        predict.mint<SUI>(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
         let mtm_after_second = vault_mtm(&mut predict);
         let max_payout_after_second = vault_max_payout(&mut predict);
         let (free, locked) = manager.position(key);
@@ -532,7 +534,7 @@ fun partial_redeem_reduces_liability_and_improves_payout() {
     {
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
         let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
-        predict.mint(&mut manager, &oracle, key, total_qty, &clock, scenario.ctx());
+        predict.mint<SUI>(&mut manager, &oracle, key, total_qty, &clock, scenario.ctx());
 
         let mtm_before = vault_mtm(&mut predict);
         let max_payout_before = vault_max_payout(&mut predict);
@@ -544,7 +546,7 @@ fun partial_redeem_reduces_liability_and_improves_payout() {
         );
         let balance_before = manager.balance<SUI>();
 
-        predict.redeem(&mut manager, &oracle, key, redeem_qty, &clock, scenario.ctx());
+        predict.redeem<SUI>(&mut manager, &oracle, key, redeem_qty, &clock, scenario.ctx());
 
         let balance_after = manager.balance<SUI>();
         let actual_payout = balance_after - balance_before;
@@ -594,7 +596,7 @@ fun redeem_aborts_on_wrong_expiry() {
     {
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
         let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
-        predict.mint(
+        predict.mint<SUI>(
             &mut manager,
             &oracle,
             key,
@@ -602,7 +604,7 @@ fun redeem_aborts_on_wrong_expiry() {
             &clock,
             scenario.ctx(),
         );
-        predict.redeem(
+        predict.redeem<SUI>(
             &mut manager,
             &oracle,
             wrong_key,
@@ -633,7 +635,7 @@ fun mint_aborts_when_total_exposure_limit_exceeded() {
     {
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
         let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
-        predict.mint(
+        predict.mint<SUI>(
             &mut manager,
             &oracle,
             key,
@@ -672,8 +674,8 @@ fun round_trip_trade_loses_spread() {
         let manager_balance_before = manager.balance<SUI>();
         let vault_balance_before = predict::vault_balance(&predict);
 
-        predict.mint(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
-        predict.redeem(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
+        predict.mint<SUI>(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
+        predict.redeem<SUI>(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
 
         let manager_balance_after = manager.balance<SUI>();
         let vault_balance_after = predict::vault_balance(&predict);
@@ -734,6 +736,125 @@ fun get_trade_amounts_settled_has_no_spread() {
 }
 
 #[test]
+/// Minting with another approved quote asset should debit that asset from the manager and credit the shared vault.
+fun mint_live_oracle_with_secondary_quote_asset_updates_that_asset_balance() {
+    let (mut scenario, manager_id) = setup_with_manager(0);
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
+        let coin = coin::mint_for_testing<ALTUSD>(
+            100 * constants::float_scaling!(),
+            scenario.ctx(),
+        );
+        manager.deposit(coin, scenario.ctx());
+        test_scenario::return_shared(manager);
+    };
+
+    scenario.next_tx(ALICE);
+    let mut predict = setup_predict_with_liquidity(
+        &mut scenario,
+        1_000 * constants::float_scaling!(),
+    );
+    predict.add_quote_asset<ALTUSD>();
+    let oracle_id = setup_live_oracle(&mut predict, &mut scenario);
+    let clock = clock::create_for_testing(scenario.ctx());
+    let key = market_key::up(oracle_id, LIVE_ORACLE_EXPIRY, 100 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
+        let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
+        let balance_before = manager.balance<ALTUSD>();
+        let vault_alt_before = vault::asset_balance<ALTUSD>(predict.vault_mut());
+        let vault_balance_before = predict::vault_balance(&predict);
+
+        predict.mint<ALTUSD>(
+            &mut manager,
+            &oracle,
+            key,
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        let balance_after = manager.balance<ALTUSD>();
+        let vault_alt_after = vault::asset_balance<ALTUSD>(predict.vault_mut());
+        let vault_balance_after = predict::vault_balance(&predict);
+        let actual_cost = balance_before - balance_after;
+        let (free, locked) = manager.position(key);
+
+        assert_eq!(vault_alt_after - vault_alt_before, actual_cost);
+        assert_eq!(vault_balance_after - vault_balance_before, actual_cost);
+        assert!(actual_cost > 0);
+        assert_eq!(free, 10 * constants::float_scaling!());
+        assert_eq!(locked, 0);
+
+        test_scenario::return_shared(oracle);
+        test_scenario::return_shared(manager);
+    };
+
+    destroy(clock);
+    destroy(predict);
+    scenario.end();
+}
+
+#[test]
+/// Redeeming into another approved quote asset should pay that asset back into the manager and reduce the shared vault's concrete balance.
+fun redeem_live_oracle_with_secondary_quote_asset_updates_that_asset_balance() {
+    let (mut scenario, manager_id) = setup_with_manager(0);
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
+        let coin = coin::mint_for_testing<ALTUSD>(
+            100 * constants::float_scaling!(),
+            scenario.ctx(),
+        );
+        manager.deposit(coin, scenario.ctx());
+        test_scenario::return_shared(manager);
+    };
+
+    scenario.next_tx(ALICE);
+    let mut predict = setup_predict_with_liquidity(
+        &mut scenario,
+        1_000 * constants::float_scaling!(),
+    );
+    predict.add_quote_asset<ALTUSD>();
+    let oracle_id = setup_live_oracle(&mut predict, &mut scenario);
+    let clock = clock::create_for_testing(scenario.ctx());
+    let key = market_key::up(oracle_id, LIVE_ORACLE_EXPIRY, 100 * constants::float_scaling!());
+    let qty = 10 * constants::float_scaling!();
+
+    scenario.next_tx(ALICE);
+    {
+        let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
+        let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
+        predict.mint<ALTUSD>(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
+
+        let balance_before = manager.balance<ALTUSD>();
+        let vault_alt_before = vault::asset_balance<ALTUSD>(predict.vault_mut());
+
+        predict.redeem<ALTUSD>(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
+
+        let balance_after = manager.balance<ALTUSD>();
+        let vault_alt_after = vault::asset_balance<ALTUSD>(predict.vault_mut());
+        let actual_payout = balance_after - balance_before;
+        let (free, locked) = manager.position(key);
+
+        assert_eq!(vault_alt_before - vault_alt_after, actual_payout);
+        assert!(actual_payout > 0);
+        assert_eq!(free, 0);
+        assert_eq!(locked, 0);
+
+        test_scenario::return_shared(oracle);
+        test_scenario::return_shared(manager);
+    };
+
+    destroy(clock);
+    destroy(predict);
+    scenario.end();
+}
+
+#[test]
 /// Removing one leg should leave the other leg active and still impacted by remaining liability.
 fun removing_one_leg_keeps_other_leg_exposure_active() {
     let (mut scenario, manager_id, mut predict, oracle_id) = setup_live_trade_state(
@@ -764,8 +885,8 @@ fun removing_one_leg_keeps_other_leg_exposure_active() {
             otm_qty,
             &clock,
         );
-        predict.mint(&mut manager, &oracle, atm_key, atm_qty, &clock, scenario.ctx());
-        predict.mint(&mut manager, &oracle, otm_key, otm_qty, &clock, scenario.ctx());
+        predict.mint<SUI>(&mut manager, &oracle, atm_key, atm_qty, &clock, scenario.ctx());
+        predict.mint<SUI>(&mut manager, &oracle, otm_key, otm_qty, &clock, scenario.ctx());
 
         let mtm_with_both = vault_mtm(&mut predict);
         let max_payout_with_both = vault_max_payout(&mut predict);
@@ -775,7 +896,7 @@ fun removing_one_leg_keeps_other_leg_exposure_active() {
             otm_qty,
             &clock,
         );
-        predict.redeem(&mut manager, &oracle, atm_key, atm_qty, &clock, scenario.ctx());
+        predict.redeem<SUI>(&mut manager, &oracle, atm_key, atm_qty, &clock, scenario.ctx());
         let mtm_after_remove_atm = vault_mtm(&mut predict);
         let (cost_after_remove_atm, _payout_after_remove_atm) = predict.get_trade_amounts(
             &oracle,
@@ -821,7 +942,7 @@ fun redeem_settled_up_wins_full_payout() {
     {
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
         let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
-        predict.mint(
+        predict.mint<SUI>(
             &mut manager,
             &oracle,
             key,
@@ -846,7 +967,7 @@ fun redeem_settled_up_wins_full_payout() {
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
         let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
         let balance_before = predict::vault_balance(&predict);
-        predict.redeem(
+        predict.redeem<SUI>(
             &mut manager,
             &oracle,
             key,
@@ -887,7 +1008,7 @@ fun redeem_settled_up_loses_zero_payout() {
     {
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
         let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
-        predict.mint(
+        predict.mint<SUI>(
             &mut manager,
             &oracle,
             key,
@@ -912,7 +1033,7 @@ fun redeem_settled_up_loses_zero_payout() {
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
         let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
         let balance_before = predict::vault_balance(&predict);
-        predict.redeem(
+        predict.redeem<SUI>(
             &mut manager,
             &oracle,
             key,
@@ -948,7 +1069,7 @@ fun redeem_settled_oracle_ignores_staleness() {
     {
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
         let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
-        predict.mint(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
+        predict.mint<SUI>(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
         test_scenario::return_shared(manager);
         test_scenario::return_shared(oracle);
     };
@@ -967,7 +1088,7 @@ fun redeem_settled_oracle_ignores_staleness() {
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
         let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
         let balance_before = manager.balance<SUI>();
-        predict.redeem(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
+        predict.redeem<SUI>(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
         let balance_after = manager.balance<SUI>();
 
         assert_eq!(balance_after - balance_before, qty);
@@ -1002,7 +1123,7 @@ fun mint_when_paused_aborts() {
     {
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
         let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
-        predict.mint(
+        predict.mint<SUI>(
             &mut manager,
             &oracle,
             key,
@@ -1030,7 +1151,7 @@ fun mint_against_stale_oracle_aborts() {
     {
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
         let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
-        predict.mint(
+        predict.mint<SUI>(
             &mut manager,
             &oracle,
             key,
@@ -1057,7 +1178,7 @@ fun mint_aborts_if_not_owner() {
     {
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
         let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
-        predict.mint(
+        predict.mint<SUI>(
             &mut manager,
             &oracle,
             key,
@@ -1084,7 +1205,7 @@ fun redeem_against_stale_live_oracle_aborts() {
     {
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
         let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
-        predict.mint(
+        predict.mint<SUI>(
             &mut manager,
             &oracle,
             key,
@@ -1101,7 +1222,7 @@ fun redeem_against_stale_live_oracle_aborts() {
     {
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
         let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
-        predict.redeem(
+        predict.redeem<SUI>(
             &mut manager,
             &oracle,
             key,
@@ -1128,7 +1249,7 @@ fun redeem_aborts_if_not_owner() {
     {
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
         let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
-        predict.mint(
+        predict.mint<SUI>(
             &mut manager,
             &oracle,
             key,
@@ -1144,7 +1265,7 @@ fun redeem_aborts_if_not_owner() {
     {
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
         let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
-        predict.redeem(
+        predict.redeem<SUI>(
             &mut manager,
             &oracle,
             key,
@@ -1414,7 +1535,7 @@ fun withdraw_zero_amount_aborts_via_predict() {
 
     scenario.next_tx(ALICE);
     let zero_coin = coin::zero<PLP>(scenario.ctx());
-    let _withdrawn = predict.withdraw(zero_coin, scenario.ctx());
+    let _withdrawn = predict.withdraw<SUI>(zero_coin, scenario.ctx());
 
     abort 999
 }
@@ -1430,7 +1551,7 @@ fun withdraw_without_shares_aborts_via_predict() {
 
     scenario.next_tx(BOB);
     let zero_coin = coin::zero<PLP>(scenario.ctx());
-    let _withdrawn = predict.withdraw(zero_coin, scenario.ctx());
+    let _withdrawn = predict.withdraw<SUI>(zero_coin, scenario.ctx());
 
     abort 999
 }
@@ -1751,7 +1872,7 @@ fun mint_against_settled_oracle_aborts() {
     {
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
         let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
-        predict.mint(
+        predict.mint<SUI>(
             &mut manager,
             &oracle,
             key,
@@ -1804,7 +1925,7 @@ fun mint_expired_but_unsettled_oracle_aborts() {
     {
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
         let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
-        predict.mint(
+        predict.mint<SUI>(
             &mut manager,
             &oracle,
             key,
@@ -1932,7 +2053,7 @@ fun mint_zero_quantity_aborts() {
     {
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
         let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
-        predict.mint(
+        predict.mint<SUI>(
             &mut manager,
             &oracle,
             key,
@@ -1961,7 +2082,7 @@ fun redeem_zero_quantity_aborts() {
     {
         let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
         let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
-        predict.mint(
+        predict.mint<SUI>(
             &mut manager,
             &oracle,
             key,
@@ -1970,7 +2091,7 @@ fun redeem_zero_quantity_aborts() {
             scenario.ctx(),
         );
 
-        predict.redeem(
+        predict.redeem<SUI>(
             &mut manager,
             &oracle,
             key,

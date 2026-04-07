@@ -12,11 +12,13 @@ use sui::{balance, sui::SUI};
 const ORACLE_1: address = @0x1;
 const ORACLE_2: address = @0x2;
 
+public struct ALTUSD has drop {}
+
 fun oracle_id(addr: address): ID {
     object::id_from_address(addr)
 }
 
-fun init_matrix(vault: &mut vault::Vault<SUI>, oracle_id: ID, ctx: &mut TxContext) {
+fun init_matrix(vault: &mut vault::Vault, oracle_id: ID, ctx: &mut TxContext) {
     vault::init_oracle_matrix(
         vault,
         oracle_id,
@@ -28,9 +30,24 @@ fun init_matrix(vault: &mut vault::Vault<SUI>, oracle_id: ID, ctx: &mut TxContex
 }
 
 #[test]
+fun accept_payment_tracks_multiple_quote_assets() {
+    let ctx = &mut tx_context::dummy();
+    let mut vault = vault::new(ctx);
+
+    vault::accept_payment(&mut vault, balance::create_for_testing<SUI>(1_000_000));
+    vault::accept_payment(&mut vault, balance::create_for_testing<ALTUSD>(500_000));
+
+    assert_eq!(vault::balance(&vault), 1_500_000);
+    assert_eq!(vault::asset_balance<SUI>(&vault), 1_000_000);
+    assert_eq!(vault::asset_balance<ALTUSD>(&vault), 500_000);
+
+    destroy(vault);
+}
+
+#[test]
 fun new_vault_initializes_to_zero() {
     let ctx = &mut tx_context::dummy();
-    let vault = vault::new<SUI>(ctx);
+    let vault = vault::new(ctx);
 
     assert_eq!(vault::balance(&vault), 0);
     assert_eq!(vault::total_mtm(&vault), 0);
@@ -43,7 +60,7 @@ fun new_vault_initializes_to_zero() {
 #[test]
 fun accept_payment_increases_balance() {
     let ctx = &mut tx_context::dummy();
-    let mut vault = vault::new<SUI>(ctx);
+    let mut vault = vault::new(ctx);
 
     vault::accept_payment(&mut vault, balance::create_for_testing<SUI>(1_000_000));
     vault::accept_payment(&mut vault, balance::create_for_testing<SUI>(500_000));
@@ -56,10 +73,10 @@ fun accept_payment_increases_balance() {
 #[test]
 fun dispense_payout_decreases_balance() {
     let ctx = &mut tx_context::dummy();
-    let mut vault = vault::new<SUI>(ctx);
+    let mut vault = vault::new(ctx);
     vault::accept_payment(&mut vault, balance::create_for_testing<SUI>(1_000_000));
 
-    let payout = vault::dispense_payout(&mut vault, 400_000);
+    let payout = vault::dispense_payout<SUI>(&mut vault, 400_000);
 
     assert_eq!(vault::balance(&vault), 600_000);
     assert_eq!(payout.value(), 400_000);
@@ -71,10 +88,10 @@ fun dispense_payout_decreases_balance() {
 #[test, expected_failure(abort_code = vault::EInsufficientBalance)]
 fun dispense_payout_exceeds_balance_aborts() {
     let ctx = &mut tx_context::dummy();
-    let mut vault = vault::new<SUI>(ctx);
+    let mut vault = vault::new(ctx);
     vault::accept_payment(&mut vault, balance::create_for_testing<SUI>(1_000_000));
 
-    let _payout = vault::dispense_payout(&mut vault, 1_000_001);
+    let _payout = vault::dispense_payout<SUI>(&mut vault, 1_000_001);
 
     abort 999
 }
@@ -82,7 +99,7 @@ fun dispense_payout_exceeds_balance_aborts() {
 #[test]
 fun insert_position_tracks_max_payout() {
     let ctx = &mut tx_context::dummy();
-    let mut vault = vault::new<SUI>(ctx);
+    let mut vault = vault::new(ctx);
     let oracle_id = oracle_id(ORACLE_1);
 
     init_matrix(&mut vault, oracle_id, ctx);
@@ -98,7 +115,7 @@ fun insert_position_tracks_max_payout() {
 #[test]
 fun remove_position_updates_max_payout() {
     let ctx = &mut tx_context::dummy();
-    let mut vault = vault::new<SUI>(ctx);
+    let mut vault = vault::new(ctx);
     let oracle_id = oracle_id(ORACLE_1);
 
     init_matrix(&mut vault, oracle_id, ctx);
@@ -113,7 +130,7 @@ fun remove_position_updates_max_payout() {
 #[test, expected_failure(abort_code = vault::EOracleExposureNotFound)]
 fun remove_from_missing_oracle_aborts() {
     let ctx = &mut tx_context::dummy();
-    let mut vault = vault::new<SUI>(ctx);
+    let mut vault = vault::new(ctx);
 
     vault::remove_position(&mut vault, oracle_id(ORACLE_1), true, 50 * float!(), 5 * float!());
 
@@ -123,7 +140,7 @@ fun remove_from_missing_oracle_aborts() {
 #[test]
 fun set_mtm_updates_cached_liability() {
     let ctx = &mut tx_context::dummy();
-    let mut vault = vault::new<SUI>(ctx);
+    let mut vault = vault::new(ctx);
     let oracle_id = oracle_id(ORACLE_1);
 
     init_matrix(&mut vault, oracle_id, ctx);
@@ -139,7 +156,7 @@ fun set_mtm_updates_cached_liability() {
 #[test]
 fun set_mtm_with_curve_evaluates_current_tree() {
     let ctx = &mut tx_context::dummy();
-    let mut vault = vault::new<SUI>(ctx);
+    let mut vault = vault::new(ctx);
     let oracle_id = oracle_id(ORACLE_1);
 
     init_matrix(&mut vault, oracle_id, ctx);
@@ -160,7 +177,7 @@ fun set_mtm_with_curve_evaluates_current_tree() {
 #[test]
 fun multiple_oracles_aggregate_independently() {
     let ctx = &mut tx_context::dummy();
-    let mut vault = vault::new<SUI>(ctx);
+    let mut vault = vault::new(ctx);
     let oracle_1 = oracle_id(ORACLE_1);
     let oracle_2 = oracle_id(ORACLE_2);
 
@@ -186,7 +203,7 @@ fun multiple_oracles_aggregate_independently() {
 #[test]
 fun assert_total_exposure_passes_within_limit() {
     let ctx = &mut tx_context::dummy();
-    let mut vault = vault::new<SUI>(ctx);
+    let mut vault = vault::new(ctx);
     let oracle_id = oracle_id(ORACLE_1);
 
     vault::accept_payment(&mut vault, balance::create_for_testing<SUI>(100 * float!()));
@@ -202,7 +219,7 @@ fun assert_total_exposure_passes_within_limit() {
 #[test, expected_failure(abort_code = vault::EExceedsMaxTotalExposure)]
 fun assert_total_exposure_fails_when_exceeds_limit() {
     let ctx = &mut tx_context::dummy();
-    let mut vault = vault::new<SUI>(ctx);
+    let mut vault = vault::new(ctx);
     let oracle_id = oracle_id(ORACLE_1);
 
     vault::accept_payment(&mut vault, balance::create_for_testing<SUI>(10 * float!()));
@@ -218,7 +235,7 @@ fun assert_total_exposure_fails_when_exceeds_limit() {
 #[test]
 fun vault_value_equals_balance_minus_mtm() {
     let ctx = &mut tx_context::dummy();
-    let mut vault = vault::new<SUI>(ctx);
+    let mut vault = vault::new(ctx);
     let oracle_id = oracle_id(ORACLE_1);
 
     vault::accept_payment(&mut vault, balance::create_for_testing<SUI>(100 * float!()));
@@ -234,7 +251,7 @@ fun vault_value_equals_balance_minus_mtm() {
 #[test, expected_failure(abort_code = vault::EMtmExceedsBalance)]
 fun vault_value_aborts_when_underwater() {
     let ctx = &mut tx_context::dummy();
-    let mut vault = vault::new<SUI>(ctx);
+    let mut vault = vault::new(ctx);
     let oracle_id = oracle_id(ORACLE_1);
 
     vault::accept_payment(&mut vault, balance::create_for_testing<SUI>(5 * float!()));

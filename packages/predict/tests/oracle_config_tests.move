@@ -34,7 +34,7 @@ fun new_predict_with_grid(
     oracle_state: &OracleSVI,
     min_strike: u64,
     tick_size: u64,
-): predict::Predict<SUI> {
+): predict::Predict {
     let mut test_predict = predict::create_test_predict<SUI>(test.ctx());
     oracle_helper::add_grid_to_predict(
         &mut test_predict,
@@ -46,7 +46,7 @@ fun new_predict_with_grid(
     test_predict
 }
 
-fun new_std_predict(test: &mut Scenario, oracle_state: &OracleSVI): predict::Predict<SUI> {
+fun new_std_predict(test: &mut Scenario, oracle_state: &OracleSVI): predict::Predict {
     let (min_strike, tick_size) = oracle_helper::default_std_grid();
     new_predict_with_grid(test, oracle_state, min_strike, tick_size)
 }
