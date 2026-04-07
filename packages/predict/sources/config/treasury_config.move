@@ -10,6 +10,7 @@ const ECoinAlreadyAccepted: u64 = 0;
 const EQuoteAssetNotAccepted: u64 = 1;
 
 public struct TreasuryConfig has copy, drop, store {
+    /// Whitelisted quote asset types accepted for treasury flows
     accepted_quotes: VecSet<TypeName>,
 }
 

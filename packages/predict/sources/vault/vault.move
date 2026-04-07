@@ -26,9 +26,11 @@ const EAssetNotInVault: u64 = 4;
 
 // === Structs ===
 
+/// Dynamic bag key for storing a concrete asset balance by type.
 public struct BalanceKey<phantom T> has copy, drop, store {}
 
 public struct Vault has store {
+    /// Concrete balances stored per accepted quote asset type.
     balances: Bag,
     /// Shared treasury balance tracked in quote units.
     balance: u64,

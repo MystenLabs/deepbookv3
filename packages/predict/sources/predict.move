@@ -140,6 +140,7 @@ public struct Predict has key {
     pricing_config: PricingConfig,
     /// Risk limits (admin-controlled)
     risk_config: RiskConfig,
+    /// Treasury asset whitelist and related treasury policy state
     treasury_config: TreasuryConfig,
     oracle_config: OracleConfig,
     /// Whether trading (mint) is globally paused

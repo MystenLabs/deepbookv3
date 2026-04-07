@@ -96,6 +96,17 @@ fun dispense_payout_exceeds_balance_aborts() {
     abort 999
 }
 
+#[test, expected_failure(abort_code = vault::EAssetNotInVault)]
+fun dispense_zero_payout_for_missing_asset_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let mut vault = vault::new(ctx);
+    vault::accept_payment(&mut vault, balance::create_for_testing<SUI>(1_000_000));
+
+    let _payout = vault::dispense_payout<ALTUSD>(&mut vault, 0);
+
+    abort 999
+}
+
 #[test]
 fun insert_position_tracks_max_payout() {
     let ctx = &mut tx_context::dummy();

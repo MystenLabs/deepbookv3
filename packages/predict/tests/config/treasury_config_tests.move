@@ -38,7 +38,7 @@ fun add_quote_asset_twice_aborts() {
     treasury_config::add_quote_asset<SUI>(&mut config);
     treasury_config::add_quote_asset<SUI>(&mut config);
 
-    abort
+    abort 999
 }
 
 #[test]
@@ -61,7 +61,7 @@ fun remove_missing_quote_asset_aborts() {
 
     treasury_config::remove_quote_asset<SUI>(&mut config);
 
-    abort
+    abort 999
 }
 
 #[test, expected_failure(abort_code = treasury_config::EQuoteAssetNotAccepted)]
@@ -70,5 +70,5 @@ fun assert_quote_asset_rejects_unapproved_asset() {
 
     treasury_config::assert_quote_asset<SUI>(&config);
 
-    abort
+    abort 999
 }
