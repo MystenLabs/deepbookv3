@@ -74,9 +74,17 @@ public fun add(a: &I64, b: &I64): I64 {
     }
 }
 
+public fun add_u64(a: &I64, b: u64): I64 {
+    add(a, &from_u64(b))
+}
+
 public fun sub(a: &I64, b: &I64): I64 {
     let neg_b = neg(b);
     add(a, &neg_b)
+}
+
+public fun sub_u64(a: &I64, b: u64): I64 {
+    sub(a, &from_u64(b))
 }
 
 /// Multiplies two FLOAT_SCALING fixed-point signed values.

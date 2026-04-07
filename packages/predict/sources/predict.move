@@ -171,10 +171,22 @@ public fun get_trade_amounts<Quote>(
         oracle_config::assert_operational_oracle(oracle, clock);
     };
 
-    let strike = key.strike();
-    let is_up = key.is_up();
-    let (bid, ask) = predict.get_quote(oracle, strike, is_up, clock);
-    (math::mul(ask, quantity), math::mul(bid, quantity))
+    let up_price = oracle.compute_price(key.strike());
+    let spread = predict
+        .pricing_config
+        .quote_spread_from_fair_price(
+            up_price,
+            predict.vault.total_mtm(),
+            predict.vault.balance(),
+        );
+    let bid = if (up_price > spread) { up_price - spread } else { 0 };
+    let ask = (up_price + spread).min(constants::float_scaling!());
+
+    if (key.is_up()) {
+        (math::mul(ask, quantity), math::mul(bid, quantity))
+    } else {
+        (math::mul(bid, quantity), math::mul(ask, quantity))
+    }
 }
 
 /// Buy a position. Cost is withdrawn from the PredictManager's balance.
@@ -199,12 +211,11 @@ public fun mint<Quote>(
     let is_up = key.is_up();
 
     predict.vault.insert_position(oracle.id(), is_up, strike, quantity);
-    predict.refresh_oracle_risk(oracle, clock);
+    predict.refresh_oracle_risk(oracle);
 
     // Quote against the post-trade state so the trader pays for the liability
     // their own mint just added to the vault.
-    let (_bid, ask) = predict.get_quote(oracle, strike, is_up, clock);
-    let cost = math::mul(ask, quantity);
+    let (_, cost) = predict.get_trade_amounts(oracle, key, quantity, clock);
 
     let payment = manager.withdraw<Quote>(cost, ctx).into_balance();
     predict.vault.accept_payment(payment);
@@ -221,7 +232,7 @@ public fun mint<Quote>(
         is_up,
         quantity,
         cost,
-        ask_price: ask,
+        ask_price: math::div(cost, quantity),
     });
 }
 
@@ -249,12 +260,11 @@ public fun redeem<Quote>(
     let is_up = key.is_up();
 
     predict.vault.remove_position(oracle.id(), is_up, strike, quantity);
-    predict.refresh_oracle_risk(oracle, clock);
+    predict.refresh_oracle_risk(oracle);
 
     // Quote against the post-trade state so the seller is paid from the
     // liability after their position has been removed from the vault.
-    let (bid, _ask) = predict.get_quote(oracle, strike, is_up, clock);
-    let payout = math::mul(bid, quantity);
+    let (payout, _) = predict.get_trade_amounts(oracle, key, quantity, clock);
 
     let payout_balance = predict.vault.dispense_payout(payout);
     let payout_coin = payout_balance.into_coin(ctx);
@@ -270,7 +280,7 @@ public fun redeem<Quote>(
         is_up,
         quantity,
         payout,
-        bid_price: bid,
+        bid_price: math::div(payout, quantity),
         is_settled: oracle.is_settled(),
     });
 }
@@ -547,28 +557,7 @@ fun emit_pricing_config_updated<Quote>(predict: &Predict<Quote>) {
     });
 }
 
-/// Get bid and ask prices for a market.
-/// Returns (bid, ask) in FLOAT_SCALING (1e9).
-fun get_quote<Quote>(
-    predict: &Predict<Quote>,
-    oracle: &OracleSVI,
-    strike: u64,
-    is_up: bool,
-    clock: &Clock,
-): (u64, u64) {
-    let fair_price = predict.oracle_config.binary_price(oracle, strike, is_up, clock);
-
-    predict
-        .pricing_config
-        .quote_from_fair_price(
-            fair_price,
-            oracle.is_settled(),
-            predict.vault.total_mtm(),
-            predict.vault.balance(),
-        )
-}
-
-fun refresh_oracle_risk<Quote>(predict: &mut Predict<Quote>, oracle: &OracleSVI, clock: &Clock) {
+fun refresh_oracle_risk<Quote>(predict: &mut Predict<Quote>, oracle: &OracleSVI) {
     let oracle_id = oracle.id();
     let (min_strike, max_strike) = predict.vault.oracle_strike_range(oracle_id);
     if (min_strike == 0 && max_strike == 0) {
@@ -580,7 +569,7 @@ fun refresh_oracle_risk<Quote>(predict: &mut Predict<Quote>, oracle: &OracleSVI,
         predict.vault.set_mtm_with_settlement(oracle_id, oracle.settlement_price().destroy_some());
         return
     };
-    let curve = predict.oracle_config.build_curve(oracle, min_strike, max_strike, clock);
+    let curve = predict.oracle_config.build_curve(oracle, min_strike, max_strike);
     predict.vault.set_mtm_with_curve(oracle_id, &curve);
 }
 

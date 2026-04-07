@@ -63,16 +63,12 @@ public(package) fun set_utilization_multiplier(config: &mut PricingConfig, multi
 
 // TODO: Add admin-configurable tail guards so minting can reject fair prices
 // in unreliable extremes (for example <= 0.02 or >= 0.98).
-public(package) fun quote_from_fair_price(
+public(package) fun quote_spread_from_fair_price(
     config: &PricingConfig,
     fair_price: u64,
-    is_settled: bool,
     liability: u64,
     balance: u64,
-): (u64, u64) {
-    // Once settled, the market trades at its realized payoff with no spread.
-    if (is_settled) return (fair_price, fair_price);
-
+): u64 {
     let complement = constants::float_scaling!() - fair_price;
     let variance = math::mul(fair_price, complement);
     let bernoulli_factor = predict_math::sqrt(variance, constants::float_scaling!());
@@ -81,10 +77,7 @@ public(package) fun quote_from_fair_price(
         bernoulli_spread.max(config.min_spread)
         + utilization_spread(config, liability, balance);
 
-    let bid = if (fair_price > spread) { fair_price - spread } else { 0 };
-    let ask = (fair_price + spread).min(constants::float_scaling!());
-
-    (bid, ask)
+    spread
 }
 
 fun utilization_spread(config: &PricingConfig, liability: u64, balance: u64): u64 {

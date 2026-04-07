@@ -10,7 +10,7 @@
 module deepbook_predict::oracle;
 
 use deepbook::math;
-use deepbook_predict::{constants::{Self, float_scaling}, i64, math as predict_math};
+use deepbook_predict::{constants::Self, i64, math as predict_math};
 use std::string::String;
 use sui::{clock::Clock, event, vec_set::{Self, VecSet}};
 
@@ -296,36 +296,23 @@ public fun new_svi_params(a: u64, b: u64, rho: i64::I64, m: i64::I64, sigma: u64
     SVIParams { a, b, rho, m, sigma }
 }
 
-public(package) fun binary_price_pair(oracle: &OracleSVI, strike: u64, clock: &Clock): (u64, u64) {
+// === Public-Package Functions ===
+
+/// Compute the conditional UP share within one binary pair.
+/// Settled oracles return exactly `1.0` if UP wins and `0` otherwise. Live
+/// oracles return `N(d2)` from the SVI surface.
+public(package) fun compute_price(oracle: &OracleSVI, strike: u64): u64 {
     if (oracle.settlement_price.is_some()) {
         let settlement_price = oracle.settlement_price.destroy_some();
         if (settlement_price > strike) {
-            (constants::float_scaling!(), 0)
+            constants::float_scaling!()
         } else {
-            (0, constants::float_scaling!())
+            0
         }
     } else {
-        let (nd2_up, nd2_down) = compute_nd2_pair(oracle, strike);
-        let discount = compute_discount(oracle, clock);
-        (math::mul(nd2_up, discount), math::mul(nd2_down, discount))
+        compute_nd2(oracle, strike)
     }
 }
-
-/// Compute discount factor e^(-r * t).
-/// Past expiry returns 1.0 (no discounting) to handle the window between
-/// expiry and settlement.
-fun compute_discount(oracle: &OracleSVI, clock: &Clock): u64 {
-    let now = clock.timestamp_ms();
-    let expiry = oracle.expiry;
-    if (now >= expiry) return constants::float_scaling!();
-    let tte_ms = expiry - now;
-    let t = math::div(tte_ms, constants::ms_per_year!());
-    let rt = math::mul(oracle.risk_free_rate, t);
-    let exponent = i64::neg(&i64::from_u64(rt));
-    predict_math::exp(&exponent)
-}
-
-// === Public-Package Functions ===
 
 /// Register an additional cap as authorized to update an oracle.
 public(package) fun register_cap(oracle: &mut OracleSVI, cap: &OracleSVICap) {
@@ -375,8 +362,7 @@ fun assert_authorized_cap(oracle: &OracleSVI, cap: &OracleSVICap) {
 /// - k = ln(strike / forward)
 /// - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
 /// - d2 = -((k + w(k) / 2) / sqrt(w(k)))
-/// - UP = N(d2), DN = 1 - N(d2)
-fun compute_nd2_pair(oracle: &OracleSVI, strike: u64): (u64, u64) {
+fun compute_nd2(oracle: &OracleSVI, strike: u64): u64 {
     let forward = oracle.forward_price();
     assert!(forward > 0, EZeroForward);
 
@@ -404,8 +390,5 @@ fun compute_nd2_pair(oracle: &OracleSVI, strike: u64): (u64, u64) {
     let d2 = i64::div_scaled(&d2_numerator, &sqrt_var_i64);
     let d2 = i64::neg(&d2);
 
-    let nd2_up = predict_math::normal_cdf(&d2);
-    let nd2_down = float_scaling!() - nd2_up;
-
-    (nd2_up, nd2_down)
+    predict_math::normal_cdf(&d2)
 }

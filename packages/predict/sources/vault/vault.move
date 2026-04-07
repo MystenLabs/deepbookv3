@@ -38,7 +38,7 @@ public struct Vault<phantom Quote> has store {
 
 // === Public Functions ===
 
-public fun balance<Quote>(vault: &Vault<Quote>): u64 {
+public fun balance<Quote>(vault: &Vault<Quote>): u64 { 
     vault.balance.value()
 }
 
