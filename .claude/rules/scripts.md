@@ -1,6 +1,7 @@
 ---
 paths:
   - "scripts/**"
+  - "packages/predict/simulations/**"
 ---
 
 # Scripts Development Rules
@@ -18,6 +19,8 @@ paths:
 
 - Run script: `pnpm tsx transactions/<script>.ts`
 - With gas object: `GAS_OBJECT=0x... pnpm tsx transactions/<script>.ts`
+- Predict simulation setup smoke test: `cd packages/predict/simulations && bash run.sh --setup --skip-analysis`
+- Predict simulation end-to-end smoke test: `cd packages/predict/simulations && SIM_MAX_ROWS=1 bash run.sh --skip-analysis`
 
 ## User Preferences
 
@@ -50,6 +53,17 @@ const res = await signAndExecute(tx, "testnet");
 ```
 
 ## Common Issues
+
+### Verify Predict Simulation Changes End to End
+If you change files under `packages/predict/simulations/**` or change Move entrypoints used by the
+predict benchmark harness, do not stop at Move unit tests. Run at least the local setup smoke test,
+and if execution paths may be affected, also run a small end-to-end sim like
+`SIM_MAX_ROWS=1 bash run.sh --skip-analysis`.
+
+### Keep Predict Simulation Calls in Sync with Move Entrypoints
+When a Move entrypoint used by the predict simulation changes its generic parameters or signature,
+audit `packages/predict/simulations/src/runtime.ts` for stale `typeArguments` or argument lists.
+Otherwise benchmark CI may fail only as an external `sim exited with code 1` error.
 
 ### TransactionExpiration Enum Error
 SDK v2.1.0+ uses `ValidDuring` (enum value 2) by default. Older multisig tools may not recognize it.

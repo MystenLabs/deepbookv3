@@ -140,29 +140,17 @@ public fun remove_quote_asset<Quote>(predict: &mut Predict, _admin_cap: &AdminCa
 }
 
 /// Set trading pause state.
-public fun set_trading_paused(
-    predict: &mut Predict,
-    _admin_cap: &AdminCap,
-    paused: bool,
-) {
+public fun set_trading_paused(predict: &mut Predict, _admin_cap: &AdminCap, paused: bool) {
     predict.set_trading_paused(paused);
 }
 
 /// Set base spread.
-public fun set_base_spread(
-    predict: &mut Predict,
-    _admin_cap: &AdminCap,
-    spread: u64,
-) {
+public fun set_base_spread(predict: &mut Predict, _admin_cap: &AdminCap, spread: u64) {
     predict.set_base_spread(spread);
 }
 
 /// Set min spread.
-public fun set_min_spread(
-    predict: &mut Predict,
-    _admin_cap: &AdminCap,
-    spread: u64,
-) {
+public fun set_min_spread(predict: &mut Predict, _admin_cap: &AdminCap, spread: u64) {
     predict.set_min_spread(spread);
 }
 
@@ -176,11 +164,7 @@ public fun set_utilization_multiplier(
 }
 
 /// Set max total exposure percentage.
-public fun set_max_total_exposure_pct(
-    predict: &mut Predict,
-    _admin_cap: &AdminCap,
-    pct: u64,
-) {
+public fun set_max_total_exposure_pct(predict: &mut Predict, _admin_cap: &AdminCap, pct: u64) {
     predict.set_max_total_exposure_pct(pct);
 }
 

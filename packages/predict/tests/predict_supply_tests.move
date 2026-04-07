@@ -25,11 +25,7 @@ fun do_supply(predict: &mut Predict, amount: u64, ctx: &mut TxContext): coin::Co
 }
 
 /// Supply ALTUSD and return LP coin. Helper to reduce boilerplate.
-fun do_supply_alt(
-    predict: &mut Predict,
-    amount: u64,
-    ctx: &mut TxContext,
-): coin::Coin<PLP> {
+fun do_supply_alt(predict: &mut Predict, amount: u64, ctx: &mut TxContext): coin::Coin<PLP> {
     let coin = coin::mint_for_testing<ALTUSD>(amount, ctx);
     predict.supply(coin, ctx)
 }

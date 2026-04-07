@@ -109,7 +109,6 @@ export function createOracleTx(params: {
   const tx = new Transaction();
   tx.moveCall({
     target: target("registry", "create_oracle"),
-    typeArguments: [DUSDC_TYPE],
     arguments: [
       tx.object(REGISTRY_ID),
       tx.object(params.predictId),

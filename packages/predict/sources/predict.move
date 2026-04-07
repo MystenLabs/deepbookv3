@@ -352,11 +352,7 @@ public fun redeem_collateralized(
 /// Supply an accepted quote asset into the vault. Returns LP tokens representing shares.
 /// First depositor gets shares 1:1. Subsequent depositors get shares
 /// proportional to their deposit relative to current vault value.
-public fun supply<Quote>(
-    predict: &mut Predict,
-    coin: Coin<Quote>,
-    ctx: &mut TxContext,
-): Coin<PLP> {
+public fun supply<Quote>(predict: &mut Predict, coin: Coin<Quote>, ctx: &mut TxContext): Coin<PLP> {
     let amount = coin.value();
     assert!(amount > 0, EZeroAmount);
     predict.treasury_config.assert_quote_asset<Quote>();
@@ -496,10 +492,7 @@ public(package) fun set_min_spread(predict: &mut Predict, spread: u64) {
 }
 
 /// Set utilization multiplier.
-public(package) fun set_utilization_multiplier(
-    predict: &mut Predict,
-    multiplier: u64,
-) {
+public(package) fun set_utilization_multiplier(predict: &mut Predict, multiplier: u64) {
     predict.pricing_config.set_utilization_multiplier(multiplier);
     predict.emit_pricing_config_updated();
 }
