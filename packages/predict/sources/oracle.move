@@ -10,7 +10,7 @@
 module deepbook_predict::oracle;
 
 use deepbook::math;
-use deepbook_predict::{constants::{Self, float_scaling}, math as predict_math};
+use deepbook_predict::{constants::{Self, float_scaling}, i64, math as predict_math};
 use std::string::String;
 use sui::{clock::Clock, event, vec_set::{Self, VecSet}};
 
@@ -50,10 +50,8 @@ public struct OracleSVIUpdated has copy, drop, store {
     oracle_id: ID,
     a: u64,
     b: u64,
-    rho: u64,
-    rho_negative: bool,
-    m: u64,
-    m_negative: bool,
+    rho: i64::I64,
+    m: i64::I64,
     sigma: u64,
     risk_free_rate: u64,
     timestamp: u64,
@@ -68,14 +66,10 @@ public struct SVIParams has copy, drop, store {
     a: u64,
     /// Slope of the smile wings (always >= 0)
     b: u64,
-    /// Skew parameter magnitude
-    rho: u64,
-    /// Whether rho is negative (typically true - puts more expensive)
-    rho_negative: bool,
-    /// Horizontal shift magnitude
-    m: u64,
-    /// Whether m is negative
-    m_negative: bool,
+    /// Signed skew parameter (typically negative - puts more expensive)
+    rho: i64::I64,
+    /// Signed horizontal shift parameter
+    m: i64::I64,
     /// ATM curvature / smoothness (always >= 0)
     sigma: u64,
 }
@@ -200,9 +194,7 @@ public fun update_svi(
         a: svi.a,
         b: svi.b,
         rho: svi.rho,
-        rho_negative: svi.rho_negative,
         m: svi.m,
-        m_negative: svi.m_negative,
         sigma: svi.sigma,
         risk_free_rate,
         timestamp: now,
@@ -249,24 +241,14 @@ public fun svi_b(svi: &SVIParams): u64 {
     svi.b
 }
 
-/// Get the SVI `rho` parameter magnitude.
-public fun svi_rho(svi: &SVIParams): u64 {
+/// Get the signed SVI `rho` parameter.
+public fun svi_rho(svi: &SVIParams): i64::I64 {
     svi.rho
 }
 
-/// Get whether SVI `rho` is negative.
-public fun svi_rho_negative(svi: &SVIParams): bool {
-    svi.rho_negative
-}
-
-/// Get the SVI `m` parameter magnitude.
-public fun svi_m(svi: &SVIParams): u64 {
+/// Get the signed SVI `m` parameter.
+public fun svi_m(svi: &SVIParams): i64::I64 {
     svi.m
-}
-
-/// Get whether SVI `m` is negative.
-public fun svi_m_negative(svi: &SVIParams): bool {
-    svi.m_negative
 }
 
 /// Get the SVI `sigma` parameter.
@@ -313,13 +295,11 @@ public fun new_price_data(spot: u64, forward: u64): PriceData {
 public fun new_svi_params(
     a: u64,
     b: u64,
-    rho: u64,
-    rho_negative: bool,
-    m: u64,
-    m_negative: bool,
+    rho: i64::I64,
+    m: i64::I64,
     sigma: u64,
 ): SVIParams {
-    SVIParams { a, b, rho, rho_negative, m, m_negative, sigma }
+    SVIParams { a, b, rho, m, sigma }
 }
 
 public(package) fun binary_price_pair(oracle: &OracleSVI, strike: u64, clock: &Clock): (u64, u64) {
@@ -347,7 +327,8 @@ fun compute_discount(oracle: &OracleSVI, clock: &Clock): u64 {
     let tte_ms = expiry - now;
     let t = math::div(tte_ms, constants::ms_per_year!());
     let rt = math::mul(oracle.risk_free_rate, t);
-    predict_math::exp(rt, true)
+    let exponent = i64::neg(&i64::from_u64(rt));
+    predict_math::exp(&exponent)
 }
 
 // === Public-Package Functions ===
@@ -377,10 +358,8 @@ public(package) fun create_oracle(underlying_asset: String, expiry: u64, ctx: &m
         svi: SVIParams {
             a: 0,
             b: 0,
-            rho: 0,
-            rho_negative: false,
-            m: 0,
-            m_negative: false,
+            rho: i64::zero(),
+            m: i64::zero(),
             sigma: 0,
         },
         risk_free_rate: 0,
@@ -398,6 +377,11 @@ fun assert_authorized_cap(oracle: &OracleSVI, cap: &OracleSVICap) {
     assert!(oracle.authorized_caps.contains(&cap.id.to_inner()), EInvalidOracleCap);
 }
 
+/// Binary pricing from SVI total variance:
+/// - k = ln(strike / forward)
+/// - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
+/// - d2 = -((k + w(k) / 2) / sqrt(w(k)))
+/// - UP = N(d2), DN = 1 - N(d2)
 fun compute_nd2_pair(oracle: &OracleSVI, strike: u64): (u64, u64) {
     let forward = oracle.forward_price();
     assert!(forward > 0, EZeroForward);
@@ -405,35 +389,28 @@ fun compute_nd2_pair(oracle: &OracleSVI, strike: u64): (u64, u64) {
     let svi = oracle.svi;
 
     // SVI: compute total variance from log-moneyness.
-    let (k, k_neg) = predict_math::ln(math::div(strike, forward));
-    let (k_minus_m, km_neg) = predict_math::sub_signed_u64(
-        k,
-        k_neg,
-        svi.m,
-        svi.m_negative,
-    );
-    let sq = predict_math::sqrt(
-        math::mul(k_minus_m, k_minus_m)
-            + math::mul(svi.sigma, svi.sigma),
-        constants::float_scaling!(),
-    );
-    let (rho_km, rho_km_neg) = predict_math::mul_signed_u64(
-        svi.rho,
-        svi.rho_negative,
-        k_minus_m,
-        km_neg,
-    );
-    let (inner, inner_neg) = predict_math::add_signed_u64(rho_km, rho_km_neg, sq, false);
-    assert!(!inner_neg, ECannotBeNegative);
-    let total_var = svi.a + math::mul(svi.b, inner);
+    let k = predict_math::ln(math::div(strike, forward));
+    let k_minus_m = i64::sub(&k, &svi.m);
+    let k_minus_m_squared = i64::square_scaled(&k_minus_m);
+    let sigma_squared = math::mul(svi.sigma, svi.sigma);
+    let sq = predict_math::sqrt(k_minus_m_squared + sigma_squared, constants::float_scaling!());
+    let sq_i64 = i64::from_u64(sq);
+
+    let rho_km = i64::mul_scaled(&svi.rho, &k_minus_m);
+    let inner = i64::add(&rho_km, &sq_i64);
+    assert!(!i64::is_negative(&inner), ECannotBeNegative);
+    let total_var = svi.a + math::mul(svi.b, i64::magnitude(&inner));
     assert!(total_var > 0, EZeroVariance);
 
-    // d2 = (-k - total_var/2) / sqrt(total_var), then N(±d2).
+    // d2 = -((k + total_var/2) / sqrt(total_var)), then N(±d2).
     let sqrt_var = predict_math::sqrt(total_var, constants::float_scaling!());
-    let (d2, d2_neg) = predict_math::sub_signed_u64(k, !k_neg, total_var / 2, false);
-    let d2 = math::div(d2, sqrt_var);
+    let sqrt_var_i64 = i64::from_u64(sqrt_var);
+    let half_var_i64 = i64::from_u64(total_var / 2);
+    let d2_numerator = i64::add(&k, &half_var_i64);
+    let d2 = i64::div_scaled(&d2_numerator, &sqrt_var_i64);
+    let d2 = i64::neg(&d2);
 
-    let nd2_up = predict_math::normal_cdf(d2, d2_neg);
+    let nd2_up = predict_math::normal_cdf(&d2);
     let nd2_down = float_scaling!() - nd2_up;
 
     (nd2_up, nd2_down)
