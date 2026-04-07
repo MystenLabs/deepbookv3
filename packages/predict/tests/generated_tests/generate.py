@@ -211,7 +211,8 @@ CDF_EDGE_CASES = [
 def compute_ln(input_scaled: int) -> tuple[int, bool]:
     x = input_scaled / FLOAT_SCALING
     val = math.log(x)
-    return to_float_scaled(abs(val)), val < 0
+    mag = to_float_scaled(abs(val))
+    return mag, val < 0 and mag > 0
 
 
 def compute_exp(input_scaled: int, is_negative: bool) -> int:

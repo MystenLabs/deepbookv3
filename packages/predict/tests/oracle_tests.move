@@ -8,6 +8,7 @@ module deepbook_predict::oracle_tests;
 use deepbook_predict::{
     constants::float_scaling as float,
     generated_oracle as go,
+    i64,
     oracle::{Self as oracle, OracleSVICap, OracleSVI, new_price_data, new_svi_params},
     oracle_helper,
     precision
@@ -30,6 +31,22 @@ const RATE_10_PCT: u64 = 100_000_000;
 const DISCOUNT_10PCT_HALF_YR: u64 = 951_229_424; // e^(-0.10*0.5)
 const PARTIAL_10PCT_UP_ATM: u64 = 388_768_372; // UP price at rate=10%, partial year
 const PARTIAL_10PCT_DN_ATM: u64 = 580_019_318; // DN price at rate=10%, partial year
+
+fun signed(magnitude: u64, is_negative: bool): i64::I64 {
+    i64::from_parts(magnitude, is_negative)
+}
+
+fun svi(
+    a: u64,
+    b: u64,
+    rho: u64,
+    rho_negative: bool,
+    m: u64,
+    m_negative: bool,
+    sigma: u64,
+): oracle::SVIParams {
+    new_svi_params(a, b, signed(rho, rho_negative), signed(m, m_negative), sigma)
+}
 
 fun new_test_clock(now_ms: u64, test: &mut Scenario): clock::Clock {
     let mut test_clock = clock::create_for_testing(test.ctx());
@@ -149,7 +166,7 @@ fun create_oracle_initial_state() {
 fun configured_oracle_with_nonzero_params() {
     let mut test = begin(ALICE);
     let oracle_id = setup_configured_oracle(
-        new_svi_params(100, 200, 300, true, 400, false, 500),
+        svi(100, 200, 300, true, 400, false, 500),
         new_price_data(50 * float!(), 51 * float!()),
         42,
         999_999,
@@ -482,7 +499,7 @@ fun live_price_with_zero_forward_aborts() {
 fun activate_succeeds_with_registered_cap() {
     let mut test = begin(ALICE);
     let oracle_id = setup_configured_oracle(
-        new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25),
+        svi(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25),
         new_price_data(100 * float!(), 100 * float!()),
         0,
         1_000_000,
@@ -602,7 +619,7 @@ fun update_svi_updates_rate_but_not_timestamp() {
         oracle::update_svi(
             &mut oracle_state,
             &cap,
-            new_svi_params(100, float!(), 0, false, 0, false, SVI_SIGMA_0_25),
+            svi(100, float!(), 0, false, 0, false, SVI_SIGMA_0_25),
             RATE_5_PCT,
             &test_clock,
         );
@@ -690,7 +707,7 @@ fun update_svi_with_unauthorized_cap_aborts() {
         oracle::update_svi(
             &mut oracle_state,
             &cap,
-            new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25),
+            svi(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25),
             0,
             &test_clock,
         );
@@ -728,7 +745,7 @@ fun activate_already_active_oracle_aborts() {
 fun activate_expired_oracle_aborts() {
     let mut test = begin(ALICE);
     let oracle_id = setup_configured_oracle(
-        new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25),
+        svi(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25),
         new_price_data(100 * float!(), 100 * float!()),
         0,
         1_000_000,
@@ -761,7 +778,7 @@ fun update_svi_on_settled_oracle_aborts() {
         oracle::update_svi(
             &mut oracle_state,
             &cap,
-            new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25),
+            svi(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25),
             0,
             &test_clock,
         );
@@ -774,7 +791,7 @@ fun update_svi_on_settled_oracle_aborts() {
 fun compute_nd2_negative_inner_aborts() {
     let mut test = begin(ALICE);
     let oracle_id = setup_configured_oracle(
-        new_svi_params(0, float!(), float!(), true, 0, false, 1),
+        svi(0, float!(), float!(), true, 0, false, 1),
         new_price_data(100 * float!(), 100 * float!()),
         0,
         1_000_000,
@@ -797,7 +814,7 @@ fun compute_nd2_negative_inner_aborts() {
 fun zero_svi_params_on_live_oracle_aborts() {
     let mut test = begin(ALICE);
     let oracle_id = setup_configured_oracle(
-        new_svi_params(0, 0, 0, false, 0, false, 0),
+        svi(0, 0, 0, false, 0, false, 0),
         new_price_data(100 * float!(), 100 * float!()),
         0,
         1_000_000,
@@ -824,7 +841,7 @@ fun zero_svi_params_on_live_oracle_aborts() {
 fun activate_at_exact_expiry_aborts() {
     let mut test = begin(ALICE);
     let oracle_id = setup_configured_oracle(
-        new_svi_params(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25),
+        svi(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25),
         new_price_data(100 * float!(), 100 * float!()),
         0,
         1_000_000,

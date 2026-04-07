@@ -5,15 +5,15 @@
 ///
 /// Provides:
 /// - ln(x): natural logarithm
-/// - exp(x): exponential function
+/// - exp(x): exponential function for signed fixed-point inputs
 /// - sqrt(x, precision): fixed-point square root
-/// - normal_cdf(x): standard normal CDF (Cody rational Chebyshev approximation)
-/// - Signed arithmetic helpers (add, sub, mul for (magnitude, is_negative) pairs)
+/// - normal_cdf(x): standard normal CDF for signed fixed-point inputs
 ///
-/// Public functions take u64; internal math uses u128 to minimize truncation.
+/// Public functions use `u64` for nonnegative values and `i64::I64` for signed
+/// fixed-point values. Internal math uses u128 to minimize truncation.
 module deepbook_predict::math;
 
-use deepbook_predict::constants;
+use deepbook_predict::{constants, i64};
 
 const EInputZero: u64 = 0;
 const EExpOverflow: u64 = 1;
@@ -72,43 +72,47 @@ const INV_11_U128: u128 = 90_909_091;
 const INV_13_U128: u128 = 76_923_077;
 
 // ============================================================
-// Public API (u64 in, u64 out)
+// Public API
 // ============================================================
 
 /// Natural logarithm of x (in FLOAT_SCALING 1e9).
-/// Returns (|result|, is_negative) in FLOAT_SCALING.
-public fun ln(x: u64): (u64, bool) {
+/// Returns a signed fixed-point result.
+public fun ln(x: u64): i64::I64 {
     assert!(x > 0, EInputZero);
-    if (x == constants::float_scaling!()) return (0, false);
+    if (x == constants::float_scaling!()) return i64::zero();
 
     if (x < constants::float_scaling!()) {
         let inv = ((F * F / (x as u128)) as u64);
-        let (result, _) = ln(inv);
-        return (result, true)
+        let result = ln(inv);
+        return i64::neg(&result)
     };
 
     let (y, n) = normalize(x);
     let result = ln_u128(y as u128, n as u128);
-    ((result as u64), false)
+    i64::from_u64((result as u64))
 }
 
-/// Exponential function. Returns e^(±x) in FLOAT_SCALING.
-public fun exp(x: u64, x_negative: bool): u64 {
-    if (x == 0) return constants::float_scaling!();
-    if (!x_negative) assert!(x <= MAX_EXP_INPUT, EExpOverflow);
+/// Exponential function. Returns e^x in FLOAT_SCALING.
+public fun exp(x: &i64::I64): u64 {
+    let x_mag = i64::magnitude(x);
+    let x_negative = i64::is_negative(x);
+    if (x_mag == 0) return constants::float_scaling!();
+    if (!x_negative) assert!(x_mag <= MAX_EXP_INPUT, EExpOverflow);
 
-    let n = x / (LN2_U128 as u64);
-    let r = x - n * (LN2_U128 as u64);
+    let n = x_mag / (LN2_U128 as u64);
+    let r = x_mag - n * (LN2_U128 as u64);
     (exp_u128((r as u128), (n as u128), x_negative) as u64)
 }
 
-/// Standard normal CDF Φ(±x) using Cody's rational Chebyshev approximation.
+/// Standard normal CDF Φ(x) using Cody's rational Chebyshev approximation.
 /// Three piecewise ranges for high accuracy (~1e-15 in float, <5 units at 1e9).
-public fun normal_cdf(x: u64, x_negative: bool): u64 {
-    if (x > 8 * constants::float_scaling!()) {
+public fun normal_cdf(x: &i64::I64): u64 {
+    let x_mag = i64::magnitude(x);
+    let x_negative = i64::is_negative(x);
+    if (x_mag > 8 * constants::float_scaling!()) {
         return if (x_negative) { 0 } else { constants::float_scaling!() }
     };
-    (normal_cdf_u128((x as u128), x_negative) as u64)
+    (normal_cdf_u128((x_mag as u128), x_negative) as u64)
 }
 
 /// Fixed-point square root using a bit-length initial guess and
@@ -287,38 +291,6 @@ fun sqrt_initial_guess_u128(x: u128): u128 {
     1u128 << (((bits + 1) / 2) as u8)
 }
 
-// ============================================================
-// Signed arithmetic (u64)
-// ============================================================
-
-/// Represents a signed integer as (magnitude, is_negative).
-/// Computes: (a, a_neg) - (b, b_neg) and returns (magnitude, is_negative).
-public fun sub_signed_u64(a: u64, a_neg: bool, b: u64, b_neg: bool): (u64, bool) {
-    // a - b  ==  a + (-b)
-    let b_neg2 = !b_neg;
-    add_signed_u64(a, a_neg, b, b_neg2)
-}
-
-/// Computes: (a, a_neg) + (b, b_neg) using only + and - on u64.
-public fun add_signed_u64(a: u64, a_neg: bool, b: u64, b_neg: bool): (u64, bool) {
-    // Same sign: magnitudes add, sign preserved.
-    if (a_neg == b_neg) {
-        let sum = a + b;
-        // Normalize -0 to +0
-        if (sum == 0) (0, false) else (sum, a_neg)
-    } else {
-        // Different signs: subtract smaller magnitude from larger.
-        // Result sign is the sign of the larger magnitude term.
-        if (a >= b) {
-            let diff = a - b; // safe because a >= b
-            if (diff == 0) (0, false) else (diff, a_neg)
-        } else {
-            let diff = b - a; // safe because b > a
-            if (diff == 0) (0, false) else (diff, b_neg)
-        }
-    }
-}
-
 /// (a * b) / c using u128 intermediate for full precision. Rounds down.
 public fun mul_div_round_down(a: u64, b: u64, c: u64): u64 {
     ((a as u128) * (b as u128) / (c as u128)) as u64
@@ -331,11 +303,4 @@ public fun mul_div_round_up(a: u64, b: u64, c: u64): u64 {
     let result = numerator / denominator;
     let round = if (numerator % denominator == 0) 0 else 1;
     (result + round) as u64
-}
-
-public fun mul_signed_u64(a: u64, a_neg: bool, b: u64, b_neg: bool): (u64, bool) {
-    let product = (((a as u128) * (b as u128) / F) as u64);
-    if (product == 0) return (0, false);
-    let is_negative = a_neg != b_neg;
-    (product, is_negative)
 }
