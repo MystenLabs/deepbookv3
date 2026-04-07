@@ -198,11 +198,33 @@ fun add_overflow_aborts() {
 }
 
 #[test]
+fun square_scaled_positive_input() {
+    assert_eq!(
+        i64::square_scaled(&signed(2 * constants::float_scaling!(), false)),
+        4 * constants::float_scaling!(),
+    );
+}
+
+#[test]
 fun square_scaled_negates_sign_information() {
     assert_eq!(
         i64::square_scaled(&signed(2 * constants::float_scaling!(), true)),
         4 * constants::float_scaling!(),
     );
+}
+
+#[test]
+fun square_scaled_zero_input() {
+    assert_eq!(i64::square_scaled(&signed(0, true)), 0);
+}
+
+#[test, expected_failure(abort_code = i64::EOverflow)]
+fun mul_scaled_overflow_aborts() {
+    i64::mul_scaled(
+        &signed(18_446_744_073_709_551_615, false),
+        &signed(2 * constants::float_scaling!(), false),
+    );
+    abort 999
 }
 
 #[test]
@@ -212,6 +234,12 @@ fun div_scaled_preserves_sign() {
         &signed(2 * constants::float_scaling!(), false),
     );
     assert_parts(&result, 3 * constants::float_scaling!(), true);
+}
+
+#[test, expected_failure(abort_code = i64::EOverflow)]
+fun div_scaled_overflow_aborts() {
+    i64::div_scaled(&signed(18_446_744_073_709_551_615, false), &signed(1, false));
+    abort 999
 }
 
 #[test, expected_failure(abort_code = i64::EZeroDivisor)]

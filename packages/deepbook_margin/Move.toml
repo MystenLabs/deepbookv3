@@ -12,3 +12,6 @@ pyth = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "
 
 [dep-replacements.testnet]
 pyth = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "target_chains/sui/contracts", rev = "sui-contract-testnet" }
+
+[addresses]
+deepbook_margin = "0x0"
