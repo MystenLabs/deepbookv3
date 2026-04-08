@@ -6,8 +6,7 @@
 module deepbook_predict::registry_tests;
 
 use deepbook_predict::{
-    constants,
-    constants::oracle_strike_grid_ticks,
+    constants::{Self, oracle_strike_grid_ticks},
     currency_helper,
     oracle::OracleSVI,
     oracle_config,
@@ -103,8 +102,10 @@ fun create_shared_predict(
     admin_cap: &AdminCap,
 ): ID {
     let currency_ctx = &mut tx_context::dummy();
-    let (currency, quote_treasury_cap, metadata_cap) =
-        new_quoteusd_currency(constants::required_quote_decimals!(), currency_ctx);
+    let (currency, quote_treasury_cap, metadata_cap) = new_quoteusd_currency(
+        constants::required_quote_decimals!(),
+        currency_ctx,
+    );
     let plp_treasury_cap = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
     let predict_id = registry.create_predict<QUOTEUSD>(
         admin_cap,
@@ -182,8 +183,10 @@ fun create_predict_succeeds() {
     let mut registry = scenario.take_shared_by_id<Registry>(registry_id);
 
     let currency_ctx = &mut tx_context::dummy();
-    let (currency, quote_treasury_cap, metadata_cap) =
-        new_quoteusd_currency(constants::required_quote_decimals!(), currency_ctx);
+    let (currency, quote_treasury_cap, metadata_cap) = new_quoteusd_currency(
+        constants::required_quote_decimals!(),
+        currency_ctx,
+    );
     let plp_treasury_cap = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
     let predict_id = registry.create_predict<QUOTEUSD>(
         &admin_cap,
@@ -207,8 +210,10 @@ fun create_predict_twice_aborts() {
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut registry = scenario.take_shared_by_id<Registry>(registry_id);
     let currency_ctx = &mut tx_context::dummy();
-    let (currency, quote_treasury_cap, metadata_cap) =
-        new_quoteusd_currency(constants::required_quote_decimals!(), currency_ctx);
+    let (currency, quote_treasury_cap, metadata_cap) = new_quoteusd_currency(
+        constants::required_quote_decimals!(),
+        currency_ctx,
+    );
     let tc1 = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
     registry.create_predict<QUOTEUSD>(&admin_cap, &currency, tc1, scenario.ctx());
     // Second call should abort
@@ -525,8 +530,10 @@ fun set_trading_paused_via_registry() {
 fun add_quote_asset_via_registry_updates_predict_whitelist() {
     let (mut scenario, _registry_id, predict_id, admin_cap) = setup_with_predict();
     let currency_ctx = &mut tx_context::dummy();
-    let (alt_currency, alt_treasury_cap, alt_metadata_cap) =
-        new_altusd_currency(constants::required_quote_decimals!(), currency_ctx);
+    let (alt_currency, alt_treasury_cap, alt_metadata_cap) = new_altusd_currency(
+        constants::required_quote_decimals!(),
+        currency_ctx,
+    );
     scenario.next_tx(ADMIN);
     {
         let mut predict = scenario.take_shared_by_id<Predict>(predict_id);
@@ -554,8 +561,10 @@ fun add_quote_asset_via_registry_updates_predict_whitelist() {
 fun remove_quote_asset_via_registry_updates_predict_whitelist() {
     let (mut scenario, _registry_id, predict_id, admin_cap) = setup_with_predict();
     let currency_ctx = &mut tx_context::dummy();
-    let (alt_currency, alt_treasury_cap, alt_metadata_cap) =
-        new_altusd_currency(constants::required_quote_decimals!(), currency_ctx);
+    let (alt_currency, alt_treasury_cap, alt_metadata_cap) = new_altusd_currency(
+        constants::required_quote_decimals!(),
+        currency_ctx,
+    );
     scenario.next_tx(ADMIN);
     {
         let mut predict = scenario.take_shared_by_id<Predict>(predict_id);
@@ -578,8 +587,10 @@ fun remove_quote_asset_via_registry_updates_predict_whitelist() {
 fun remove_quote_asset_with_vault_balance_aborts() {
     let (mut scenario, _registry_id, predict_id, admin_cap) = setup_with_predict();
     let currency_ctx = &mut tx_context::dummy();
-    let (alt_currency, alt_treasury_cap, alt_metadata_cap) =
-        new_altusd_currency(constants::required_quote_decimals!(), currency_ctx);
+    let (alt_currency, alt_treasury_cap, alt_metadata_cap) = new_altusd_currency(
+        constants::required_quote_decimals!(),
+        currency_ctx,
+    );
     scenario.next_tx(ADMIN);
     {
         let mut predict = scenario.take_shared_by_id<Predict>(predict_id);
@@ -603,8 +614,10 @@ fun remove_quote_asset_with_vault_balance_aborts() {
 fun add_quote_asset_with_wrong_decimals_aborts() {
     let (mut scenario, _registry_id, predict_id, admin_cap) = setup_with_predict();
     let currency_ctx = &mut tx_context::dummy();
-    let (bad_currency, bad_treasury_cap, bad_metadata_cap) =
-        new_baddec_currency(BAD_DECIMALS, currency_ctx);
+    let (bad_currency, bad_treasury_cap, bad_metadata_cap) = new_baddec_currency(
+        BAD_DECIMALS,
+        currency_ctx,
+    );
     scenario.next_tx(ADMIN);
     {
         let mut predict = scenario.take_shared_by_id<Predict>(predict_id);

@@ -19,9 +19,9 @@ use deepbook_predict::{
 use std::unit_test::{assert_eq, destroy};
 use sui::{
     clock,
-    coin::{TreasuryCap},
+    coin::TreasuryCap,
     coin_registry::{Self as coin_registry, Currency, MetadataCap},
-    test_scenario::{Scenario, begin, end, return_shared},
+    test_scenario::{Scenario, begin, end, return_shared}
 };
 
 const ALICE: address = @0xA;
@@ -61,8 +61,9 @@ fun new_predict_with_grid(
     tick_size: u64,
 ): predict::Predict {
     let currency_ctx = &mut tx_context::dummy();
-    let (quote_currency, quote_treasury_cap, quote_metadata_cap) =
-        new_quoteusd_currency(currency_ctx);
+    let (quote_currency, quote_treasury_cap, quote_metadata_cap) = new_quoteusd_currency(
+        currency_ctx,
+    );
     let mut test_predict = predict::create_test_predict<QUOTEUSD>(&quote_currency, test.ctx());
     currency_helper::destroy_currency_bundle(
         quote_currency,
@@ -114,8 +115,9 @@ fun assert_valid_strike_without_registered_grid_aborts() {
     {
         let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
         let currency_ctx = &mut tx_context::dummy();
-        let (quote_currency, quote_treasury_cap, quote_metadata_cap) =
-            new_quoteusd_currency(currency_ctx);
+        let (quote_currency, quote_treasury_cap, quote_metadata_cap) = new_quoteusd_currency(
+            currency_ctx,
+        );
         let test_predict = predict::create_test_predict<QUOTEUSD>(&quote_currency, test.ctx());
         currency_helper::destroy_currency_bundle(
             quote_currency,

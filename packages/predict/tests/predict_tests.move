@@ -25,7 +25,7 @@ use sui::{
     clock,
     coin::{Self, TreasuryCap},
     coin_registry::{Self as coin_registry, Currency, MetadataCap},
-    test_scenario::{Self, Scenario},
+    test_scenario::{Self, Scenario}
 };
 
 const ALICE: address = @0xA;
@@ -54,8 +54,9 @@ fun new_quoteusd_currency(
 
 fun create_predict(ctx: &mut TxContext): Predict {
     let currency_ctx = &mut tx_context::dummy();
-    let (quote_currency, quote_treasury_cap, quote_metadata_cap) =
-        new_quoteusd_currency(currency_ctx);
+    let (quote_currency, quote_treasury_cap, quote_metadata_cap) = new_quoteusd_currency(
+        currency_ctx,
+    );
     let predict = predict::create_test_predict<QUOTEUSD>(&quote_currency, ctx);
     currency_helper::destroy_currency_bundle(
         quote_currency,
@@ -2125,7 +2126,10 @@ fun mint_zero_quantity_aborts() {
 fun redeem_zero_quantity_aborts() {
     let (mut scenario, manager_id) = setup_with_manager(100 * constants::float_scaling!());
     let mut predict = create_predict(scenario.ctx());
-    let liq = coin::mint_for_testing<QUOTEUSD>(1_000_000 * constants::float_scaling!(), scenario.ctx());
+    let liq = coin::mint_for_testing<QUOTEUSD>(
+        1_000_000 * constants::float_scaling!(),
+        scenario.ctx(),
+    );
     seed_liquidity(&mut predict, liq, scenario.ctx());
 
     let oracle_id = setup_live_oracle(&mut predict, &mut scenario);
@@ -2270,7 +2274,10 @@ fun run_predict_scenario(idx: u64) {
         test_scenario::return_shared(oracle);
     };
 
-    let liq = coin::mint_for_testing<QUOTEUSD>(1_000_000 * constants::float_scaling!(), scenario.ctx());
+    let liq = coin::mint_for_testing<QUOTEUSD>(
+        1_000_000 * constants::float_scaling!(),
+        scenario.ctx(),
+    );
     let lp = supply_coin(&mut predict, liq, scenario.ctx());
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(oracle_scenario.now_ms());

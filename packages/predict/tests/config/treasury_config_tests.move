@@ -6,10 +6,7 @@ module deepbook_predict::treasury_config_tests;
 
 use deepbook_predict::{constants, currency_helper, treasury_config};
 use std::{type_name, unit_test::{assert_eq, destroy}};
-use sui::{
-    coin::TreasuryCap,
-    coin_registry::{Self as coin_registry, Currency, MetadataCap},
-};
+use sui::{coin::TreasuryCap, coin_registry::{Self as coin_registry, Currency, MetadataCap}};
 
 const BAD_DECIMALS: u8 = 9;
 
@@ -85,8 +82,10 @@ fun new_config_starts_empty() {
 fun add_quote_asset_marks_asset_as_supported() {
     let ctx = &mut tx_context::dummy();
     let mut config = treasury_config::new();
-    let (currency, treasury_cap, metadata_cap) =
-        new_altusd_currency(constants::required_quote_decimals!(), ctx);
+    let (currency, treasury_cap, metadata_cap) = new_altusd_currency(
+        constants::required_quote_decimals!(),
+        ctx,
+    );
 
     treasury_config::add_quote_asset<ALTUSD>(&mut config, &currency);
     assert!(treasury_config::is_quote_asset<ALTUSD>(&config));
@@ -100,10 +99,14 @@ fun add_quote_asset_marks_asset_as_supported() {
 fun accepted_quotes_getter_returns_current_whitelist() {
     let ctx = &mut tx_context::dummy();
     let mut config = treasury_config::new();
-    let (quote_currency, quote_treasury_cap, quote_metadata_cap) =
-        new_quoteusd_currency(constants::required_quote_decimals!(), ctx);
-    let (alt_currency, alt_treasury_cap, alt_metadata_cap) =
-        new_altusd_currency(constants::required_quote_decimals!(), ctx);
+    let (quote_currency, quote_treasury_cap, quote_metadata_cap) = new_quoteusd_currency(
+        constants::required_quote_decimals!(),
+        ctx,
+    );
+    let (alt_currency, alt_treasury_cap, alt_metadata_cap) = new_altusd_currency(
+        constants::required_quote_decimals!(),
+        ctx,
+    );
 
     treasury_config::add_quote_asset<QUOTEUSD>(&mut config, &quote_currency);
     treasury_config::add_quote_asset<ALTUSD>(&mut config, &alt_currency);
@@ -126,8 +129,10 @@ fun accepted_quotes_getter_returns_current_whitelist() {
 fun add_quote_asset_twice_aborts() {
     let ctx = &mut tx_context::dummy();
     let mut config = treasury_config::new();
-    let (currency, treasury_cap, metadata_cap) =
-        new_altusd_currency(constants::required_quote_decimals!(), ctx);
+    let (currency, treasury_cap, metadata_cap) = new_altusd_currency(
+        constants::required_quote_decimals!(),
+        ctx,
+    );
 
     treasury_config::add_quote_asset<ALTUSD>(&mut config, &currency);
     treasury_config::add_quote_asset<ALTUSD>(&mut config, &currency);
@@ -141,10 +146,14 @@ fun add_quote_asset_twice_aborts() {
 fun remove_quote_asset_updates_membership() {
     let ctx = &mut tx_context::dummy();
     let mut config = treasury_config::new();
-    let (quote_currency, quote_treasury_cap, quote_metadata_cap) =
-        new_quoteusd_currency(constants::required_quote_decimals!(), ctx);
-    let (alt_currency, alt_treasury_cap, alt_metadata_cap) =
-        new_altusd_currency(constants::required_quote_decimals!(), ctx);
+    let (quote_currency, quote_treasury_cap, quote_metadata_cap) = new_quoteusd_currency(
+        constants::required_quote_decimals!(),
+        ctx,
+    );
+    let (alt_currency, alt_treasury_cap, alt_metadata_cap) = new_altusd_currency(
+        constants::required_quote_decimals!(),
+        ctx,
+    );
 
     treasury_config::add_quote_asset<QUOTEUSD>(&mut config, &quote_currency);
     treasury_config::add_quote_asset<ALTUSD>(&mut config, &alt_currency);

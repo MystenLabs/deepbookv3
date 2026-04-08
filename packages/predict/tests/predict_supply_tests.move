@@ -5,12 +5,19 @@
 #[test_only]
 module deepbook_predict::predict_supply_tests;
 
-use deepbook_predict::{constants, currency_helper, plp::PLP, predict::{Self, Predict}, treasury_config, vault};
+use deepbook_predict::{
+    constants,
+    currency_helper,
+    plp::PLP,
+    predict::{Self, Predict},
+    treasury_config,
+    vault
+};
 use std::unit_test::{assert_eq, destroy};
 use sui::{
     coin::{Self, TreasuryCap},
     coin_registry::{Self as coin_registry, Currency, MetadataCap},
-    test_scenario,
+    test_scenario
 };
 
 const ALICE: address = @0xA;
@@ -38,8 +45,9 @@ fun new_quoteusd_currency(
 
 fun setup(ctx: &mut TxContext): Predict {
     let currency_ctx = &mut tx_context::dummy();
-    let (quote_currency, quote_treasury_cap, quote_metadata_cap) =
-        new_quoteusd_currency(currency_ctx);
+    let (quote_currency, quote_treasury_cap, quote_metadata_cap) = new_quoteusd_currency(
+        currency_ctx,
+    );
     let predict = predict::create_test_predict<QUOTEUSD>(&quote_currency, ctx);
     currency_helper::destroy_currency_bundle(
         quote_currency,
@@ -465,8 +473,9 @@ fun lp_transfer_then_withdraw_by_recipient() {
     let mut scenario = test_scenario::begin(ALICE);
     {
         let currency_ctx = &mut tx_context::dummy();
-        let (quote_currency, quote_treasury_cap, quote_metadata_cap) =
-            new_quoteusd_currency(currency_ctx);
+        let (quote_currency, quote_treasury_cap, quote_metadata_cap) = new_quoteusd_currency(
+            currency_ctx,
+        );
         let treasury_cap = coin::create_treasury_cap_for_testing<PLP>(scenario.ctx());
         let _predict_id = predict::create<QUOTEUSD>(&quote_currency, treasury_cap, scenario.ctx());
         currency_helper::destroy_currency_bundle(

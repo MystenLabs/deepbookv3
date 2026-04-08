@@ -5,10 +5,7 @@
 module deepbook_predict::currency_helper;
 
 use std::unit_test::destroy;
-use sui::{
-    coin::TreasuryCap,
-    coin_registry::{Currency, MetadataCap},
-};
+use sui::{coin::TreasuryCap, coin_registry::{Currency, MetadataCap}};
 
 public(package) fun destroy_currency_bundle<T>(
     currency: Currency<T>,

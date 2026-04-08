@@ -173,11 +173,7 @@ public(package) fun set_mtm_with_curve(
     vault.total_mtm = vault.total_mtm + new_mtm - old_mtm;
 }
 
-public(package) fun set_mtm_with_settlement(
-    vault: &mut Vault,
-    oracle_id: ID,
-    settlement: u64,
-) {
+public(package) fun set_mtm_with_settlement(vault: &mut Vault, oracle_id: ID, settlement: u64) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
 
     let old_mtm = vault.oracle_matrices[oracle_id].mtm();

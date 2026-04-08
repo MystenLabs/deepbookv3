@@ -9,7 +9,6 @@
 module deepbook_predict::predict;
 
 use deepbook::math;
-use std::type_name::{Self, TypeName};
 use deepbook_predict::{
     constants,
     market_key::MarketKey,
@@ -23,12 +22,13 @@ use deepbook_predict::{
     treasury_config::{Self, TreasuryConfig},
     vault::{Self, Vault}
 };
+use std::type_name::{Self, TypeName};
 use sui::{
     clock::Clock,
     coin::{Self, Coin, TreasuryCap},
     coin_registry::Currency,
     event,
-    vec_set::VecSet,
+    vec_set::VecSet
 };
 
 // === Errors ===

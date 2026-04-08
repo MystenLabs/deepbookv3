@@ -3,8 +3,8 @@
 
 module deepbook_predict::treasury_config;
 
-use std::type_name::{Self, TypeName};
 use deepbook_predict::constants;
+use std::type_name::{Self, TypeName};
 use sui::{coin_registry::Currency, vec_set::{Self, VecSet}};
 
 const ECoinAlreadyAccepted: u64 = 0;
