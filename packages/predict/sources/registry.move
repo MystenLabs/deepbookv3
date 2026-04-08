@@ -132,16 +132,18 @@ public fun create_oracle(
     oracle_id
 }
 
-public fun add_quote_asset<Quote>(
+/// Enable a quote asset for new supply and mint inflows.
+public fun enable_quote_asset<Quote>(
     predict: &mut Predict,
     _admin_cap: &AdminCap,
     currency: &Currency<Quote>,
 ) {
-    predict.add_quote_asset<Quote>(currency);
+    predict.enable_quote_asset<Quote>(currency);
 }
 
-public fun remove_quote_asset<Quote>(predict: &mut Predict, _admin_cap: &AdminCap) {
-    predict.remove_quote_asset<Quote>();
+/// Disable a quote asset for new supply and mint inflows.
+public fun disable_quote_asset<Quote>(predict: &mut Predict, _admin_cap: &AdminCap) {
+    predict.disable_quote_asset<Quote>();
 }
 
 /// Set trading pause state.

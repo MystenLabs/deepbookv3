@@ -12,7 +12,7 @@ const EQuoteAssetNotAccepted: u64 = 1;
 const EInvalidQuoteDecimals: u64 = 2;
 
 public struct TreasuryConfig has copy, drop, store {
-    /// Whitelisted quote asset types accepted for treasury flows
+    /// Quote asset types currently enabled for new treasury inflows
     accepted_quotes: VecSet<TypeName>,
 }
 

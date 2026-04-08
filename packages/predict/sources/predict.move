@@ -40,7 +40,6 @@ const EZeroQuantity: u64 = 4;
 const EZeroAmount: u64 = 5;
 const EZeroVaultValue: u64 = 6;
 const EZeroSharesMinted: u64 = 7;
-const EQuoteAssetHasVaultBalance: u64 = 8;
 
 // === Events ===
 
@@ -123,12 +122,12 @@ public struct RiskConfigUpdated has copy, drop, store {
     max_total_exposure_pct: u64,
 }
 
-public struct QuoteAssetAdded has copy, drop, store {
+public struct QuoteAssetEnabled has copy, drop, store {
     predict_id: ID,
     quote_asset: TypeName,
 }
 
-public struct QuoteAssetRemoved has copy, drop, store {
+public struct QuoteAssetDisabled has copy, drop, store {
     predict_id: ID,
     quote_asset: TypeName,
 }
@@ -201,7 +200,8 @@ public fun get_trade_amounts(
     (math::mul(ask, quantity), math::mul(bid, quantity))
 }
 
-/// Buy a position. Cost is withdrawn from the PredictManager's balance.
+/// Buy a position using an enabled quote asset.
+/// Cost is withdrawn from the PredictManager's balance.
 /// Position quantity is added to the PredictManager's positions.
 public fun mint<Quote>(
     predict: &mut Predict,
@@ -252,6 +252,8 @@ public fun mint<Quote>(
 }
 
 /// Sell a position. Payout is deposited into the PredictManager's balance.
+/// Outflows can use any quote asset with concrete vault balance, even if it is
+/// disabled for new inflows.
 /// Position quantity is removed from the PredictManager's positions.
 public fun redeem<Quote>(
     predict: &mut Predict,
@@ -264,7 +266,6 @@ public fun redeem<Quote>(
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(quantity > 0, EZeroQuantity);
-    predict.treasury_config.assert_quote_asset<Quote>();
     predict.oracle_config.assert_key_matches(oracle, &key);
     if (!oracle.is_settled()) {
         oracle_config::assert_operational_oracle(oracle, clock);
@@ -377,6 +378,7 @@ public fun redeem_collateralized(
 /// Supply an accepted quote asset into the vault. Returns LP tokens representing shares.
 /// First depositor gets shares 1:1. Subsequent depositors get shares
 /// proportional to their deposit relative to current vault value.
+/// Supply an enabled quote asset into the shared LP pool.
 public fun supply<Quote>(predict: &mut Predict, coin: Coin<Quote>, ctx: &mut TxContext): Coin<PLP> {
     let amount = coin.value();
     assert!(amount > 0, EZeroAmount);
@@ -404,14 +406,15 @@ public fun supply<Quote>(predict: &mut Predict, coin: Coin<Quote>, ctx: &mut TxC
     coin::mint(&mut predict.treasury_cap, shares, ctx)
 }
 
-/// Withdraw a selected accepted quote asset from the vault by providing LP tokens.
+/// Withdraw a selected quote asset from the vault by providing LP tokens.
+/// Outflows can use any quote asset with concrete vault balance, even if it is
+/// disabled for new inflows.
 /// Burns the LP tokens and returns the corresponding quote asset.
 public fun withdraw<Quote>(
     predict: &mut Predict,
     lp_coin: Coin<PLP>,
     ctx: &mut TxContext,
 ): Coin<Quote> {
-    predict.treasury_config.assert_quote_asset<Quote>();
     let vault_value = predict.vault.vault_value();
     let shares_burned = lp_coin.value();
     assert!(shares_burned > 0, EZeroAmount);
@@ -449,25 +452,24 @@ public(package) fun create<Quote>(
         oracle_config: oracle_config::new(ctx),
         trading_paused: false,
     };
-    predict.add_quote_asset<Quote>(currency);
+    predict.enable_quote_asset<Quote>(currency);
     let predict_id = object::id(&predict);
     transfer::share_object(predict);
 
     predict_id
 }
 
-public(package) fun add_quote_asset<Quote>(predict: &mut Predict, currency: &Currency<Quote>) {
+public(package) fun enable_quote_asset<Quote>(predict: &mut Predict, currency: &Currency<Quote>) {
     predict.treasury_config.add_quote_asset<Quote>(currency);
-    event::emit(QuoteAssetAdded {
+    event::emit(QuoteAssetEnabled {
         predict_id: object::id(predict),
         quote_asset: type_name::with_defining_ids<Quote>(),
     });
 }
 
-public(package) fun remove_quote_asset<Quote>(predict: &mut Predict) {
-    assert!(predict.vault.asset_balance<Quote>() == 0, EQuoteAssetHasVaultBalance);
+public(package) fun disable_quote_asset<Quote>(predict: &mut Predict) {
     predict.treasury_config.remove_quote_asset<Quote>();
-    event::emit(QuoteAssetRemoved {
+    event::emit(QuoteAssetDisabled {
         predict_id: object::id(predict),
         quote_asset: type_name::with_defining_ids<Quote>(),
     });
@@ -568,7 +570,7 @@ public(package) fun create_test_predict<Quote>(
         oracle_config: oracle_config::new(ctx),
         trading_paused: false,
     };
-    predict.add_quote_asset<Quote>(currency);
+    predict.enable_quote_asset<Quote>(currency);
     predict
 }
 

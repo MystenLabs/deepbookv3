@@ -18,6 +18,7 @@ use deepbook_predict::{
     precision,
     predict::{Self, Predict},
     predict_manager::{Self as predict_manager, PredictManager},
+    treasury_config,
     vault
 };
 use std::unit_test::{assert_eq, destroy};
@@ -806,7 +807,7 @@ fun mint_live_oracle_with_secondary_quote_asset_updates_that_asset_balance() {
         &mut scenario,
         1_000 * constants::float_scaling!(),
     );
-    predict.add_quote_asset<ALTUSD>(&alt_currency);
+    predict.enable_quote_asset<ALTUSD>(&alt_currency);
     let oracle_id = setup_live_oracle(&mut predict, &mut scenario);
     let clock = clock::create_for_testing(scenario.ctx());
     let key = market_key::up(oracle_id, LIVE_ORACLE_EXPIRY, 100 * constants::float_scaling!());
@@ -850,6 +851,58 @@ fun mint_live_oracle_with_secondary_quote_asset_updates_that_asset_balance() {
     scenario.end();
 }
 
+#[test, expected_failure(abort_code = treasury_config::EQuoteAssetNotAccepted)]
+/// Disabling a quote asset should block new mint inflow for that asset.
+fun mint_live_oracle_with_disabled_quote_asset_aborts() {
+    let (mut scenario, manager_id) = setup_with_manager(0);
+    let currency_ctx = &mut tx_context::dummy();
+    let (alt_currency, alt_treasury_cap, alt_metadata_cap) = new_altusd_currency(currency_ctx);
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
+        let coin = coin::mint_for_testing<ALTUSD>(
+            100 * constants::float_scaling!(),
+            scenario.ctx(),
+        );
+        manager.deposit(coin, scenario.ctx());
+        test_scenario::return_shared(manager);
+    };
+
+    scenario.next_tx(ALICE);
+    let mut predict = setup_predict_with_liquidity(
+        &mut scenario,
+        1_000 * constants::float_scaling!(),
+    );
+    predict.enable_quote_asset<ALTUSD>(&alt_currency);
+    predict.disable_quote_asset<ALTUSD>();
+    let oracle_id = setup_live_oracle(&mut predict, &mut scenario);
+    let clock = clock::create_for_testing(scenario.ctx());
+    let key = market_key::up(oracle_id, LIVE_ORACLE_EXPIRY, 100 * constants::float_scaling!());
+
+    scenario.next_tx(ALICE);
+    {
+        let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
+        let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
+        predict.mint<ALTUSD>(
+            &mut manager,
+            &oracle,
+            key,
+            10 * constants::float_scaling!(),
+            &clock,
+            scenario.ctx(),
+        );
+
+        test_scenario::return_shared(oracle);
+        test_scenario::return_shared(manager);
+    };
+
+    destroy(clock);
+    currency_helper::destroy_currency_bundle(alt_currency, alt_treasury_cap, alt_metadata_cap);
+    destroy(predict);
+    scenario.end();
+    abort 999
+}
+
 #[test]
 /// Redeeming into another approved quote asset should pay that asset back into the manager and reduce the shared vault's concrete balance.
 fun redeem_live_oracle_with_secondary_quote_asset_updates_that_asset_balance() {
@@ -872,7 +925,7 @@ fun redeem_live_oracle_with_secondary_quote_asset_updates_that_asset_balance() {
         &mut scenario,
         1_000 * constants::float_scaling!(),
     );
-    predict.add_quote_asset<ALTUSD>(&alt_currency);
+    predict.enable_quote_asset<ALTUSD>(&alt_currency);
     let oracle_id = setup_live_oracle(&mut predict, &mut scenario);
     let clock = clock::create_for_testing(scenario.ctx());
     let key = market_key::up(oracle_id, LIVE_ORACLE_EXPIRY, 100 * constants::float_scaling!());
@@ -898,6 +951,57 @@ fun redeem_live_oracle_with_secondary_quote_asset_updates_that_asset_balance() {
         assert!(actual_payout > 0);
         assert_eq!(free, 0);
         assert_eq!(locked, 0);
+
+        test_scenario::return_shared(oracle);
+        test_scenario::return_shared(manager);
+    };
+
+    destroy(clock);
+    currency_helper::destroy_currency_bundle(alt_currency, alt_treasury_cap, alt_metadata_cap);
+    destroy(predict);
+    scenario.end();
+}
+
+#[test]
+/// Disabling a quote asset should still allow redeem outflow into that asset.
+fun redeem_live_oracle_with_disabled_quote_asset_still_succeeds() {
+    let (mut scenario, manager_id) = setup_with_manager(0);
+    let currency_ctx = &mut tx_context::dummy();
+    let (alt_currency, alt_treasury_cap, alt_metadata_cap) = new_altusd_currency(currency_ctx);
+    scenario.next_tx(ALICE);
+    {
+        let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
+        let coin = coin::mint_for_testing<ALTUSD>(
+            100 * constants::float_scaling!(),
+            scenario.ctx(),
+        );
+        manager.deposit(coin, scenario.ctx());
+        test_scenario::return_shared(manager);
+    };
+
+    scenario.next_tx(ALICE);
+    let mut predict = setup_predict_with_liquidity(
+        &mut scenario,
+        1_000 * constants::float_scaling!(),
+    );
+    predict.enable_quote_asset<ALTUSD>(&alt_currency);
+    let oracle_id = setup_live_oracle(&mut predict, &mut scenario);
+    let clock = clock::create_for_testing(scenario.ctx());
+    let key = market_key::up(oracle_id, LIVE_ORACLE_EXPIRY, 100 * constants::float_scaling!());
+    let qty = 10 * constants::float_scaling!();
+
+    scenario.next_tx(ALICE);
+    {
+        let oracle = scenario.take_shared_by_id<OracleSVI>(oracle_id);
+        let mut manager = scenario.take_shared_by_id<PredictManager>(manager_id);
+        predict.mint<ALTUSD>(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
+        predict.disable_quote_asset<ALTUSD>();
+
+        let balance_before = manager.balance<ALTUSD>();
+        predict.redeem<ALTUSD>(&mut manager, &oracle, key, qty, &clock, scenario.ctx());
+        let balance_after = manager.balance<ALTUSD>();
+
+        assert!(balance_after > balance_before);
 
         test_scenario::return_shared(oracle);
         test_scenario::return_shared(manager);

@@ -200,7 +200,7 @@ fun supply_accepts_second_whitelisted_quote_asset() {
     let ctx = &mut tx_context::dummy();
     let mut predict = setup(ctx);
     let (alt_currency, alt_treasury_cap, alt_metadata_cap) = new_altusd_currency(ctx);
-    predict.add_quote_asset<ALTUSD>(&alt_currency);
+    predict.enable_quote_asset<ALTUSD>(&alt_currency);
 
     let lp_sui = do_supply(&mut predict, 1_000_000, ctx);
     let lp_alt = do_supply_alt(&mut predict, 500_000, ctx);
@@ -221,7 +221,7 @@ fun supply_values_vault_across_both_quote_assets() {
     let ctx = &mut tx_context::dummy();
     let mut predict = setup(ctx);
     let (alt_currency, alt_treasury_cap, alt_metadata_cap) = new_altusd_currency(ctx);
-    predict.add_quote_asset<ALTUSD>(&alt_currency);
+    predict.enable_quote_asset<ALTUSD>(&alt_currency);
 
     let lp_sui = do_supply(&mut predict, 1_000_000, ctx);
     let lp_alt = do_supply_alt(&mut predict, 500_000, ctx);
@@ -344,7 +344,7 @@ fun withdraw_secondary_quote_uses_matching_concrete_balance() {
     let ctx = &mut tx_context::dummy();
     let mut predict = setup(ctx);
     let (alt_currency, alt_treasury_cap, alt_metadata_cap) = new_altusd_currency(ctx);
-    predict.add_quote_asset<ALTUSD>(&alt_currency);
+    predict.enable_quote_asset<ALTUSD>(&alt_currency);
 
     let lp_sui = do_supply(&mut predict, 1_000_000, ctx);
     let lp_alt = do_supply_alt(&mut predict, 500_000, ctx);
@@ -366,7 +366,7 @@ fun withdraw_whitelisted_asset_without_concrete_balance_aborts() {
     let ctx = &mut tx_context::dummy();
     let mut predict = setup(ctx);
     let (alt_currency, alt_treasury_cap, alt_metadata_cap) = new_altusd_currency(ctx);
-    predict.add_quote_asset<ALTUSD>(&alt_currency);
+    predict.enable_quote_asset<ALTUSD>(&alt_currency);
 
     // Supply QUOTEUSD and withdraw ALTUSD but no ALTUSD in vault
     let lp = do_supply(&mut predict, 1_000_000, ctx);

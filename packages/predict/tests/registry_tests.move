@@ -527,7 +527,7 @@ fun set_trading_paused_via_registry() {
 }
 
 #[test]
-fun add_quote_asset_via_registry_updates_predict_whitelist() {
+fun enable_quote_asset_via_registry_updates_predict_whitelist() {
     let (mut scenario, _registry_id, predict_id, admin_cap) = setup_with_predict();
     let currency_ctx = &mut tx_context::dummy();
     let (alt_currency, alt_treasury_cap, alt_metadata_cap) = new_altusd_currency(
@@ -540,7 +540,7 @@ fun add_quote_asset_via_registry_updates_predict_whitelist() {
         assert!(treasury_config::is_quote_asset<QUOTEUSD>(predict::treasury_config(&predict)));
         assert!(!treasury_config::is_quote_asset<ALTUSD>(predict::treasury_config(&predict)));
 
-        registry::add_quote_asset<ALTUSD>(&mut predict, &admin_cap, &alt_currency);
+        registry::enable_quote_asset<ALTUSD>(&mut predict, &admin_cap, &alt_currency);
 
         assert!(treasury_config::is_quote_asset<ALTUSD>(predict::treasury_config(&predict)));
         let accepted_quotes = predict::accepted_quotes(&predict);
@@ -558,7 +558,7 @@ fun add_quote_asset_via_registry_updates_predict_whitelist() {
 }
 
 #[test]
-fun remove_quote_asset_via_registry_updates_predict_whitelist() {
+fun disable_quote_asset_via_registry_updates_predict_whitelist() {
     let (mut scenario, _registry_id, predict_id, admin_cap) = setup_with_predict();
     let currency_ctx = &mut tx_context::dummy();
     let (alt_currency, alt_treasury_cap, alt_metadata_cap) = new_altusd_currency(
@@ -568,8 +568,8 @@ fun remove_quote_asset_via_registry_updates_predict_whitelist() {
     scenario.next_tx(ADMIN);
     {
         let mut predict = scenario.take_shared_by_id<Predict>(predict_id);
-        registry::add_quote_asset<ALTUSD>(&mut predict, &admin_cap, &alt_currency);
-        registry::remove_quote_asset<ALTUSD>(&mut predict, &admin_cap);
+        registry::enable_quote_asset<ALTUSD>(&mut predict, &admin_cap, &alt_currency);
+        registry::disable_quote_asset<ALTUSD>(&mut predict, &admin_cap);
 
         assert!(!treasury_config::is_quote_asset<ALTUSD>(predict::treasury_config(&predict)));
         assert!(treasury_config::is_quote_asset<QUOTEUSD>(predict::treasury_config(&predict)));
@@ -583,8 +583,8 @@ fun remove_quote_asset_via_registry_updates_predict_whitelist() {
     scenario.end();
 }
 
-#[test, expected_failure(abort_code = predict::EQuoteAssetHasVaultBalance)]
-fun remove_quote_asset_with_vault_balance_aborts() {
+#[test]
+fun disable_quote_asset_with_vault_balance_still_allows_outflow() {
     let (mut scenario, _registry_id, predict_id, admin_cap) = setup_with_predict();
     let currency_ctx = &mut tx_context::dummy();
     let (alt_currency, alt_treasury_cap, alt_metadata_cap) = new_altusd_currency(
@@ -594,24 +594,26 @@ fun remove_quote_asset_with_vault_balance_aborts() {
     scenario.next_tx(ADMIN);
     {
         let mut predict = scenario.take_shared_by_id<Predict>(predict_id);
-        registry::add_quote_asset<ALTUSD>(&mut predict, &admin_cap, &alt_currency);
+        registry::enable_quote_asset<ALTUSD>(&mut predict, &admin_cap, &alt_currency);
 
         let payment = coin::mint_for_testing<ALTUSD>(1_000_000, scenario.ctx());
         let lp = predict::supply<ALTUSD>(&mut predict, payment, scenario.ctx());
-        destroy(lp);
+        registry::disable_quote_asset<ALTUSD>(&mut predict, &admin_cap);
+        assert!(!treasury_config::is_quote_asset<ALTUSD>(predict::treasury_config(&predict)));
 
-        registry::remove_quote_asset<ALTUSD>(&mut predict, &admin_cap);
+        let redeemed = predict::withdraw<ALTUSD>(&mut predict, lp, scenario.ctx());
+        assert_eq!(redeemed.value(), 1_000_000);
+        destroy(redeemed);
         test_scenario::return_shared(predict);
     };
 
     scenario.return_to_sender(admin_cap);
     scenario.end();
     currency_helper::destroy_currency_bundle(alt_currency, alt_treasury_cap, alt_metadata_cap);
-    abort 999
 }
 
 #[test, expected_failure(abort_code = treasury_config::EInvalidQuoteDecimals)]
-fun add_quote_asset_with_wrong_decimals_aborts() {
+fun enable_quote_asset_with_wrong_decimals_aborts() {
     let (mut scenario, _registry_id, predict_id, admin_cap) = setup_with_predict();
     let currency_ctx = &mut tx_context::dummy();
     let (bad_currency, bad_treasury_cap, bad_metadata_cap) = new_baddec_currency(
@@ -621,7 +623,7 @@ fun add_quote_asset_with_wrong_decimals_aborts() {
     scenario.next_tx(ADMIN);
     {
         let mut predict = scenario.take_shared_by_id<Predict>(predict_id);
-        registry::add_quote_asset<BADDEC>(&mut predict, &admin_cap, &bad_currency);
+        registry::enable_quote_asset<BADDEC>(&mut predict, &admin_cap, &bad_currency);
         test_scenario::return_shared(predict);
     };
 
@@ -630,6 +632,31 @@ fun add_quote_asset_with_wrong_decimals_aborts() {
     destroy(bad_currency);
     destroy(bad_treasury_cap);
     destroy(bad_metadata_cap);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = treasury_config::EQuoteAssetNotAccepted)]
+fun disable_quote_asset_blocks_new_supply() {
+    let (mut scenario, _registry_id, predict_id, admin_cap) = setup_with_predict();
+    let currency_ctx = &mut tx_context::dummy();
+    let (alt_currency, alt_treasury_cap, alt_metadata_cap) = new_altusd_currency(
+        constants::required_quote_decimals!(),
+        currency_ctx,
+    );
+    scenario.next_tx(ADMIN);
+    {
+        let mut predict = scenario.take_shared_by_id<Predict>(predict_id);
+        registry::enable_quote_asset<ALTUSD>(&mut predict, &admin_cap, &alt_currency);
+        registry::disable_quote_asset<ALTUSD>(&mut predict, &admin_cap);
+
+        let payment = coin::mint_for_testing<ALTUSD>(1_000_000, scenario.ctx());
+        let _lp = predict::supply<ALTUSD>(&mut predict, payment, scenario.ctx());
+        test_scenario::return_shared(predict);
+    };
+
+    scenario.return_to_sender(admin_cap);
+    scenario.end();
+    currency_helper::destroy_currency_bundle(alt_currency, alt_treasury_cap, alt_metadata_cap);
     abort 999
 }
 
