@@ -311,9 +311,11 @@ if [ "$RUN_SETUP" -eq 1 ]; then
   check_publish "$DUSDC_OUTPUT" "DUSDC"
 
   DUSDC_PACKAGE_ID=$(echo "$DUSDC_OUTPUT" | extract_published_package_id)
+  DUSDC_CURRENCY_ID=$(echo "$DUSDC_OUTPUT" | extract_created_object_id "coin_registry::Currency" "dusdc::DUSDC")
   TREASURY_CAP_ID=$(echo "$DUSDC_OUTPUT" | extract_created_object_id "TreasuryCap")
 
   echo "    DUSDC: $DUSDC_PACKAGE_ID"
+  echo "    DUSDC Currency: $DUSDC_CURRENCY_ID"
   echo "    TreasuryCap: $TREASURY_CAP_ID"
 
   mv "$DUSDC_DIR/Move.toml.bak" "$DUSDC_DIR/Move.toml"
@@ -344,6 +346,7 @@ REGISTRY_ID=$REGISTRY_ID
 ADMIN_CAP_ID=$ADMIN_CAP_ID
 PLP_TREASURY_CAP_ID=$PLP_TREASURY_CAP_ID
 DUSDC_PACKAGE_ID=$DUSDC_PACKAGE_ID
+DUSDC_CURRENCY_ID=$DUSDC_CURRENCY_ID
 TREASURY_CAP_ID=$TREASURY_CAP_ID
 ACTIVE_ADDRESS=$ACTIVE_ADDR
 RPC_URL=http://127.0.0.1:9000

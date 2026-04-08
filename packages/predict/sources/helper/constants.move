@@ -54,3 +54,6 @@ public macro fun oracle_strike_grid_ticks(): u64 { 100_000 }
 
 /// Granularity unit for oracle tick sizes; every tick_size must be a multiple of this value.
 public macro fun oracle_tick_size_unit(): u64 { 10_000 }
+
+/// Required decimals for all accepted quote assets in phase 1.
+public macro fun required_quote_decimals(): u8 { 6 }

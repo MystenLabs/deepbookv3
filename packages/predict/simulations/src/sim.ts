@@ -23,6 +23,7 @@ import {
   depositToManagerTx,
   execute,
   executeAndWait,
+  finalizeDusdcCurrencyRegistrationTx,
   mintTx,
   refreshOracleAndMintTx,
   registerOracleCapTx,
@@ -100,7 +101,20 @@ function buildResultsFile(byAction: Record<ActionName, ExecutionResult[]>): Resu
 async function setupSimulation(): Promise<SimState> {
   console.log(`[${ts()}] --- Setup ---`);
 
-  let result = await executeAndWait(createPredictTx(), "create_predict");
+  let result = await executeAndWait(
+    finalizeDusdcCurrencyRegistrationTx(),
+    "finalize_dusdc_currency_registration"
+  );
+  const dusdcCurrencyChange = result.objectChanges.find(
+    (change: any) =>
+      change.type === "created" &&
+      change.objectType.includes("coin_registry::Currency") &&
+      change.objectType.includes("dusdc::DUSDC")
+  );
+  const dusdcCurrencyId: string = dusdcCurrencyChange.objectId;
+  console.log(`[${ts()}]   DUSDC Currency: ${dusdcCurrencyId}`);
+
+  result = await executeAndWait(createPredictTx(dusdcCurrencyId), "create_predict");
   const predictEvent = result.events.find((event: any) => event.type.includes("PredictCreated"));
   const predictId: string = predictEvent.parsedJson.predict_id;
   console.log(`[${ts()}]   Predict: ${predictId}`);

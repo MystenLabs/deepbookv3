@@ -9,6 +9,7 @@
 module deepbook_predict::predict;
 
 use deepbook::math;
+use std::type_name::{Self, TypeName};
 use deepbook_predict::{
     constants,
     market_key::MarketKey,
@@ -22,7 +23,13 @@ use deepbook_predict::{
     treasury_config::{Self, TreasuryConfig},
     vault::{Self, Vault}
 };
-use sui::{clock::Clock, coin::{Self, Coin, TreasuryCap}, event};
+use sui::{
+    clock::Clock,
+    coin::{Self, Coin, TreasuryCap},
+    coin_registry::Currency,
+    event,
+    vec_set::VecSet,
+};
 
 // === Errors ===
 const ETradingPaused: u64 = 0;
@@ -33,6 +40,7 @@ const EZeroQuantity: u64 = 4;
 const EZeroAmount: u64 = 5;
 const EZeroVaultValue: u64 = 6;
 const EZeroSharesMinted: u64 = 7;
+const EQuoteAssetHasVaultBalance: u64 = 8;
 
 // === Events ===
 
@@ -45,6 +53,7 @@ public struct PositionMinted has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
     trader: address,
+    quote_asset: TypeName,
     oracle_id: ID,
     expiry: u64,
     strike: u64,
@@ -58,6 +67,7 @@ public struct PositionRedeemed has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
     trader: address,
+    quote_asset: TypeName,
     oracle_id: ID,
     expiry: u64,
     strike: u64,
@@ -113,9 +123,20 @@ public struct RiskConfigUpdated has copy, drop, store {
     max_total_exposure_pct: u64,
 }
 
+public struct QuoteAssetAdded has copy, drop, store {
+    predict_id: ID,
+    quote_asset: TypeName,
+}
+
+public struct QuoteAssetRemoved has copy, drop, store {
+    predict_id: ID,
+    quote_asset: TypeName,
+}
+
 public struct Supplied has copy, drop, store {
     predict_id: ID,
     supplier: address,
+    quote_asset: TypeName,
     amount: u64,
     shares_minted: u64,
 }
@@ -123,6 +144,7 @@ public struct Supplied has copy, drop, store {
 public struct Withdrawn has copy, drop, store {
     predict_id: ID,
     withdrawer: address,
+    quote_asset: TypeName,
     amount: u64,
     shares_burned: u64,
 }
@@ -218,6 +240,7 @@ public fun mint<Quote>(
         predict_id: object::id(predict),
         manager_id: object::id(manager),
         trader: manager.owner(),
+        quote_asset: type_name::with_defining_ids<Quote>(),
         oracle_id: key.oracle_id(),
         expiry: key.expiry(),
         strike,
@@ -268,6 +291,7 @@ public fun redeem<Quote>(
         predict_id: object::id(predict),
         manager_id: object::id(manager),
         trader: manager.owner(),
+        quote_asset: type_name::with_defining_ids<Quote>(),
         oracle_id: key.oracle_id(),
         expiry: key.expiry(),
         strike,
@@ -373,6 +397,7 @@ public fun supply<Quote>(predict: &mut Predict, coin: Coin<Quote>, ctx: &mut TxC
     event::emit(Supplied {
         predict_id: object::id(predict),
         supplier: ctx.sender(),
+        quote_asset: type_name::with_defining_ids<Quote>(),
         amount,
         shares_minted: shares,
     });
@@ -399,6 +424,7 @@ public fun withdraw<Quote>(
     event::emit(Withdrawn {
         predict_id: object::id(predict),
         withdrawer: ctx.sender(),
+        quote_asset: type_name::with_defining_ids<Quote>(),
         amount,
         shares_burned,
     });
@@ -408,7 +434,11 @@ public fun withdraw<Quote>(
 // === Public-Package Functions ===
 
 /// Create and share the Predict object. Returns its ID.
-public(package) fun create<Quote>(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): ID {
+public(package) fun create<Quote>(
+    currency: &Currency<Quote>,
+    treasury_cap: TreasuryCap<PLP>,
+    ctx: &mut TxContext,
+): ID {
     let mut predict = Predict {
         id: object::new(ctx),
         vault: vault::new(ctx),
@@ -419,19 +449,28 @@ public(package) fun create<Quote>(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxCo
         oracle_config: oracle_config::new(ctx),
         trading_paused: false,
     };
-    predict.add_quote_asset<Quote>();
+    predict.add_quote_asset<Quote>(currency);
     let predict_id = object::id(&predict);
     transfer::share_object(predict);
 
     predict_id
 }
 
-public(package) fun add_quote_asset<Quote>(predict: &mut Predict) {
-    predict.treasury_config.add_quote_asset<Quote>();
+public(package) fun add_quote_asset<Quote>(predict: &mut Predict, currency: &Currency<Quote>) {
+    predict.treasury_config.add_quote_asset<Quote>(currency);
+    event::emit(QuoteAssetAdded {
+        predict_id: object::id(predict),
+        quote_asset: type_name::with_defining_ids<Quote>(),
+    });
 }
 
 public(package) fun remove_quote_asset<Quote>(predict: &mut Predict) {
+    assert!(predict.vault.asset_balance<Quote>() == 0, EQuoteAssetHasVaultBalance);
     predict.treasury_config.remove_quote_asset<Quote>();
+    event::emit(QuoteAssetRemoved {
+        predict_id: object::id(predict),
+        quote_asset: type_name::with_defining_ids<Quote>(),
+    });
 }
 
 public(package) fun add_oracle_grid(
@@ -454,6 +493,11 @@ public fun trading_paused(predict: &Predict): bool {
 /// Get the base spread.
 public fun base_spread(predict: &Predict): u64 {
     predict.pricing_config.base_spread()
+}
+
+/// Get the accepted quote asset whitelist.
+public fun accepted_quotes(predict: &Predict): &VecSet<TypeName> {
+    predict.treasury_config.accepted_quotes()
 }
 
 /// Get the min spread.
@@ -509,7 +553,10 @@ public(package) fun set_max_total_exposure_pct(predict: &mut Predict, pct: u64) 
 
 #[test_only]
 /// Create a Predict object for testing without sharing it.
-public(package) fun create_test_predict<Quote>(ctx: &mut TxContext): Predict {
+public(package) fun create_test_predict<Quote>(
+    currency: &Currency<Quote>,
+    ctx: &mut TxContext,
+): Predict {
     let treasury_cap = coin::create_treasury_cap_for_testing<PLP>(ctx);
     let mut predict = Predict {
         id: object::new(ctx),
@@ -521,7 +568,7 @@ public(package) fun create_test_predict<Quote>(ctx: &mut TxContext): Predict {
         oracle_config: oracle_config::new(ctx),
         trading_paused: false,
     };
-    predict.add_quote_asset<Quote>();
+    predict.add_quote_asset<Quote>(currency);
     predict
 }
 

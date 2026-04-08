@@ -15,7 +15,7 @@ use deepbook_predict::{
     predict::{Self, Predict}
 };
 use std::string::String;
-use sui::{coin::TreasuryCap, event, table::{Self, Table}};
+use sui::{coin::TreasuryCap, coin_registry::Currency, event, table::{Self, Table}};
 
 // === Errors ===
 const EPredictAlreadyCreated: u64 = 0;
@@ -75,12 +75,13 @@ public fun oracle_ids(registry: &Registry, cap_id: ID): vector<ID> {
 public fun create_predict<Quote>(
     registry: &mut Registry,
     _admin_cap: &AdminCap,
+    currency: &Currency<Quote>,
     treasury_cap: TreasuryCap<PLP>,
     ctx: &mut TxContext,
 ): ID {
     assert!(registry.predict_id.is_none(), EPredictAlreadyCreated);
 
-    let predict_id = predict::create<Quote>(treasury_cap, ctx);
+    let predict_id = predict::create<Quote>(currency, treasury_cap, ctx);
     registry.predict_id = option::some(predict_id);
 
     event::emit(PredictCreated { predict_id });
@@ -131,8 +132,12 @@ public fun create_oracle(
     oracle_id
 }
 
-public fun add_quote_asset<Quote>(predict: &mut Predict, _admin_cap: &AdminCap) {
-    predict.add_quote_asset<Quote>();
+public fun add_quote_asset<Quote>(
+    predict: &mut Predict,
+    _admin_cap: &AdminCap,
+    currency: &Currency<Quote>,
+) {
+    predict.add_quote_asset<Quote>(currency);
 }
 
 public fun remove_quote_asset<Quote>(predict: &mut Predict, _admin_cap: &AdminCap) {
