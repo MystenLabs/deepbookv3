@@ -144,10 +144,7 @@ fun set_mtm_with_curve_evaluates_current_tree() {
 
     init_matrix(&mut vault, oracle_id, ctx);
     vault::insert_position(&mut vault, oracle_id, true, 50 * float!(), 10 * float!());
-    let curve = vector[
-        new_curve_point(50 * float!(), float!(), 0),
-        new_curve_point(60 * float!(), 0, float!()),
-    ];
+    let curve = vector[new_curve_point(50 * float!(), float!()), new_curve_point(60 * float!(), 0)];
 
     vault::set_mtm_with_curve(&mut vault, oracle_id, &curve);
 

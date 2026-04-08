@@ -11,7 +11,6 @@ use deepbook_predict::{
     oracle::{Self as oracle, OracleSVI},
     oracle_config::{Self as oracle_config, new_curve_point},
     oracle_helper,
-    precision,
     predict,
     strike_matrix
 };
@@ -19,14 +18,30 @@ use std::unit_test::{assert_eq, destroy};
 use sui::{clock, sui::SUI, test_scenario::{Scenario, begin, end, return_shared}};
 
 const ALICE: address = @0xA;
-const RATE_5_PCT: u64 = 50_000_000;
-// floor(e^(-0.05 * 1.0) * FLOAT_SCALING) = 951_229_424
-const DISCOUNT_5PCT_1YR: u64 = 951_229_424;
 
 fun new_test_clock(now_ms: u64, test: &mut Scenario): clock::Clock {
     let mut test_clock = clock::create_for_testing(test.ctx());
     test_clock.set_for_testing(now_ms);
     test_clock
+}
+
+fun up_price(point: &oracle_config::CurvePoint): u64 {
+    oracle_config::price(point)
+}
+
+fun dn_price(point: &oracle_config::CurvePoint): u64 {
+    float!() - oracle_config::price(point)
+}
+
+fun binary_price(
+    oracle_config_ref: &oracle_config::OracleConfig,
+    oracle_state: &OracleSVI,
+    strike: u64,
+    is_up: bool,
+): u64 {
+    oracle_config::assert_valid_strike(oracle_config_ref, oracle_state, strike);
+    let up = oracle::compute_price(oracle_state, strike);
+    if (is_up) up else float!() - up
 }
 
 fun new_predict_with_grid(
@@ -57,10 +72,10 @@ fun new_std_predict(test: &mut Scenario, oracle_state: &OracleSVI): predict::Pre
 
 #[test]
 fun curve_point_getters() {
-    let pt = new_curve_point(50 * float!(), 600_000_000, 400_000_000);
+    let pt = new_curve_point(50 * float!(), 600_000_000);
     assert_eq!(oracle_config::strike(&pt), 50 * float!());
-    assert_eq!(oracle_config::up_price(&pt), 600_000_000);
-    assert_eq!(oracle_config::dn_price(&pt), 400_000_000);
+    assert_eq!(up_price(&pt), 600_000_000);
+    assert_eq!(dn_price(&pt), 400_000_000);
 }
 
 #[test, expected_failure(abort_code = oracle_config::EOracleConfigNotFound)]
@@ -109,7 +124,6 @@ fun binary_price_at_min_and_max_strike_succeeds() {
     test.next_tx(ALICE);
     {
         let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let test_clock = new_test_clock(0, &mut test);
         let min_strike = oracle_tick_size_unit!();
         let tick_size = oracle_tick_size_unit!();
         let max_strike = min_strike + tick_size * oracle_strike_grid_ticks!();
@@ -122,25 +136,22 @@ fun binary_price_at_min_and_max_strike_succeeds() {
 
         let oracle_config_ref = predict::oracle_config(&test_predict);
 
-        let min_up = oracle_config::binary_price(
+        let min_up = binary_price(
             oracle_config_ref,
             &oracle_state,
             min_strike,
             true,
-            &test_clock,
         );
-        let max_up = oracle_config::binary_price(
+        let max_up = binary_price(
             oracle_config_ref,
             &oracle_state,
             max_strike,
             true,
-            &test_clock,
         );
 
         assert!(min_up <= float!());
         assert!(max_up <= float!());
 
-        destroy(test_clock);
         destroy(test_predict);
         return_shared(oracle_state);
     };
@@ -165,7 +176,6 @@ fun binary_price_strike_not_on_tick_aborts() {
     test.next_tx(ALICE);
     {
         let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let test_clock = new_test_clock(0, &mut test);
         let min_strike = oracle_tick_size_unit!();
         let tick_size = oracle_tick_size_unit!();
         let test_predict = new_predict_with_grid(
@@ -174,12 +184,11 @@ fun binary_price_strike_not_on_tick_aborts() {
             min_strike,
             tick_size,
         );
-        oracle_config::binary_price(
+        binary_price(
             predict::oracle_config(&test_predict),
             &oracle_state,
             500_000_001,
             true,
-            &test_clock,
         );
     };
 
@@ -203,7 +212,6 @@ fun binary_price_below_min_strike_aborts() {
     test.next_tx(ALICE);
     {
         let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let test_clock = new_test_clock(0, &mut test);
         let min_strike = oracle_tick_size_unit!();
         let tick_size = oracle_tick_size_unit!();
         let test_predict = new_predict_with_grid(
@@ -212,12 +220,11 @@ fun binary_price_below_min_strike_aborts() {
             min_strike,
             tick_size,
         );
-        oracle_config::binary_price(
+        binary_price(
             predict::oracle_config(&test_predict),
             &oracle_state,
             min_strike - tick_size,
             true,
-            &test_clock,
         );
     };
 
@@ -241,7 +248,6 @@ fun binary_price_above_max_strike_aborts() {
     test.next_tx(ALICE);
     {
         let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let test_clock = new_test_clock(0, &mut test);
         let min_strike = oracle_tick_size_unit!();
         let tick_size = oracle_tick_size_unit!();
         let max_strike = min_strike + tick_size * oracle_strike_grid_ticks!();
@@ -251,12 +257,11 @@ fun binary_price_above_max_strike_aborts() {
             min_strike,
             tick_size,
         );
-        oracle_config::binary_price(
+        binary_price(
             predict::oracle_config(&test_predict),
             &oracle_state,
             max_strike + tick_size,
             true,
-            &test_clock,
         );
     };
 
@@ -510,25 +515,19 @@ fun build_curve_settled_oracle() {
     test.next_tx(ALICE);
     {
         let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let test_clock = new_test_clock(0, &mut test);
         let test_predict = new_std_predict(&mut test, &oracle_state);
         let curve = oracle_config::build_curve(
             predict::oracle_config(&test_predict),
             &oracle_state,
             50 * float!(),
             150 * float!(),
-            &test_clock,
         );
 
-        assert_eq!(curve.length(), 2);
-        assert_eq!(oracle_config::strike(&curve[0]), 100 * float!() - 1);
-        assert_eq!(oracle_config::up_price(&curve[0]), float!());
-        assert_eq!(oracle_config::dn_price(&curve[0]), 0);
-        assert_eq!(oracle_config::strike(&curve[1]), 100 * float!());
-        assert_eq!(oracle_config::up_price(&curve[1]), 0);
-        assert_eq!(oracle_config::dn_price(&curve[1]), float!());
+        assert_eq!(curve.length(), 1);
+        assert_eq!(oracle_config::strike(&curve[0]), 100 * float!());
+        assert_eq!(up_price(&curve[0]), float!());
+        assert_eq!(dn_price(&curve[0]), 0);
 
-        destroy(test_clock);
         destroy(test_predict);
         return_shared(oracle_state);
     };
@@ -544,7 +543,6 @@ fun build_curve_invalid_range_aborts() {
     test.next_tx(ALICE);
     {
         let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let test_clock = new_test_clock(0, &mut test);
         let test_predict = new_std_predict(&mut test, &oracle_state);
 
         oracle_config::build_curve(
@@ -552,7 +550,6 @@ fun build_curve_invalid_range_aborts() {
             &oracle_state,
             150 * float!(),
             50 * float!(),
-            &test_clock,
         );
     };
 
@@ -577,25 +574,19 @@ fun build_curve_settled_at_75() {
     test.next_tx(ALICE);
     {
         let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let test_clock = new_test_clock(0, &mut test);
         let test_predict = new_std_predict(&mut test, &oracle_state);
         let curve = oracle_config::build_curve(
             predict::oracle_config(&test_predict),
             &oracle_state,
             50 * float!(),
             150 * float!(),
-            &test_clock,
         );
 
-        assert_eq!(curve.length(), 2);
-        assert_eq!(oracle_config::strike(&curve[0]), 75 * float!() - 1);
-        assert_eq!(oracle_config::up_price(&curve[0]), float!());
-        assert_eq!(oracle_config::dn_price(&curve[0]), 0);
-        assert_eq!(oracle_config::strike(&curve[1]), 75 * float!());
-        assert_eq!(oracle_config::up_price(&curve[1]), 0);
-        assert_eq!(oracle_config::dn_price(&curve[1]), float!());
+        assert_eq!(curve.length(), 1);
+        assert_eq!(oracle_config::strike(&curve[0]), 75 * float!());
+        assert_eq!(up_price(&curve[0]), float!());
+        assert_eq!(dn_price(&curve[0]), 0);
 
-        destroy(test_clock);
         destroy(test_predict);
         return_shared(oracle_state);
     };
@@ -621,20 +612,18 @@ fun build_curve_settled_below_live_range_single_point() {
     test.next_tx(ALICE);
     {
         let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let test_clock = new_test_clock(0, &mut test);
         let test_predict = new_std_predict(&mut test, &oracle_state);
         let curve = oracle_config::build_curve(
             predict::oracle_config(&test_predict),
             &oracle_state,
             50 * float!(),
             150 * float!(),
-            &test_clock,
         );
 
         assert_eq!(curve.length(), 1);
-        assert_eq!(oracle_config::strike(&curve[0]), 50 * float!());
-        assert_eq!(oracle_config::up_price(&curve[0]), 0);
-        assert_eq!(oracle_config::dn_price(&curve[0]), float!());
+        assert_eq!(oracle_config::strike(&curve[0]), 25 * float!());
+        assert_eq!(up_price(&curve[0]), float!());
+        assert_eq!(dn_price(&curve[0]), 0);
 
         let mut exposure = strike_matrix::new(
             test.ctx(),
@@ -649,7 +638,6 @@ fun build_curve_settled_below_live_range_single_point() {
         assert_eq!(value, 3 * float!());
 
         destroy(exposure);
-        destroy(test_clock);
         destroy(test_predict);
         return_shared(oracle_state);
     };
@@ -675,20 +663,18 @@ fun build_curve_settled_above_live_range_single_point() {
     test.next_tx(ALICE);
     {
         let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let test_clock = new_test_clock(0, &mut test);
         let test_predict = new_std_predict(&mut test, &oracle_state);
         let curve = oracle_config::build_curve(
             predict::oracle_config(&test_predict),
             &oracle_state,
             50 * float!(),
             150 * float!(),
-            &test_clock,
         );
 
         assert_eq!(curve.length(), 1);
-        assert_eq!(oracle_config::strike(&curve[0]), 50 * float!());
-        assert_eq!(oracle_config::up_price(&curve[0]), float!());
-        assert_eq!(oracle_config::dn_price(&curve[0]), 0);
+        assert_eq!(oracle_config::strike(&curve[0]), 175 * float!());
+        assert_eq!(up_price(&curve[0]), float!());
+        assert_eq!(dn_price(&curve[0]), 0);
 
         let mut exposure = strike_matrix::new(
             test.ctx(),
@@ -703,7 +689,6 @@ fun build_curve_settled_above_live_range_single_point() {
         assert_eq!(value, 2 * float!());
 
         destroy(exposure);
-        destroy(test_clock);
         destroy(test_predict);
         return_shared(oracle_state);
     };
@@ -719,24 +704,18 @@ fun build_curve_single_strike() {
     test.next_tx(ALICE);
     {
         let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let test_clock = new_test_clock(0, &mut test);
         let test_predict = new_std_predict(&mut test, &oracle_state);
         let curve = oracle_config::build_curve(
             predict::oracle_config(&test_predict),
             &oracle_state,
             100 * float!(),
             100 * float!(),
-            &test_clock,
         );
 
         assert_eq!(curve.length(), 1);
         assert_eq!(oracle_config::strike(&curve[0]), 100 * float!());
-        assert_eq!(
-            oracle_config::up_price(&curve[0]) + oracle_config::dn_price(&curve[0]),
-            float!(),
-        );
+        assert_eq!(up_price(&curve[0]) + dn_price(&curve[0]), float!());
 
-        destroy(test_clock);
         destroy(test_predict);
         return_shared(oracle_state);
     };
@@ -752,14 +731,12 @@ fun build_curve_live_sorted_and_complement() {
     test.next_tx(ALICE);
     {
         let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let test_clock = new_test_clock(0, &mut test);
         let test_predict = new_std_predict(&mut test, &oracle_state);
         let curve = oracle_config::build_curve(
             predict::oracle_config(&test_predict),
             &oracle_state,
             50 * float!(),
             150 * float!(),
-            &test_clock,
         );
 
         let len = curve.length();
@@ -768,20 +745,16 @@ fun build_curve_live_sorted_and_complement() {
         let mut i = 0;
         while (i < len - 1) {
             assert!(oracle_config::strike(&curve[i]) < oracle_config::strike(&curve[i + 1]));
-            assert!(oracle_config::up_price(&curve[i]) >= oracle_config::up_price(&curve[i + 1]));
+            assert!(up_price(&curve[i]) >= up_price(&curve[i + 1]));
             i = i + 1;
         };
 
         i = 0;
         while (i < len) {
-            assert_eq!(
-                oracle_config::up_price(&curve[i]) + oracle_config::dn_price(&curve[i]),
-                float!(),
-            );
+            assert_eq!(up_price(&curve[i]) + dn_price(&curve[i]), float!());
             i = i + 1;
         };
 
-        destroy(test_clock);
         destroy(test_predict);
         return_shared(oracle_state);
     };
@@ -797,14 +770,12 @@ fun build_curve_includes_forward_when_in_range() {
     test.next_tx(ALICE);
     {
         let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let test_clock = new_test_clock(0, &mut test);
         let test_predict = new_std_predict(&mut test, &oracle_state);
         let curve = oracle_config::build_curve(
             predict::oracle_config(&test_predict),
             &oracle_state,
             50 * float!(),
             150 * float!(),
-            &test_clock,
         );
 
         let mut found = false;
@@ -813,7 +784,6 @@ fun build_curve_includes_forward_when_in_range() {
         });
         assert!(found);
 
-        destroy(test_clock);
         destroy(test_predict);
         return_shared(oracle_state);
     };
@@ -829,14 +799,12 @@ fun build_curve_no_duplicate_when_forward_at_boundary() {
     test.next_tx(ALICE);
     {
         let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let test_clock = new_test_clock(0, &mut test);
         let test_predict = new_std_predict(&mut test, &oracle_state);
         let curve = oracle_config::build_curve(
             predict::oracle_config(&test_predict),
             &oracle_state,
             100 * float!(),
             150 * float!(),
-            &test_clock,
         );
 
         let len = curve.length();
@@ -846,7 +814,6 @@ fun build_curve_no_duplicate_when_forward_at_boundary() {
             i = i + 1;
         };
 
-        destroy(test_clock);
         destroy(test_predict);
         return_shared(oracle_state);
     };
@@ -862,7 +829,6 @@ fun build_curve_endpoints_match_min_max() {
     test.next_tx(ALICE);
     {
         let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let test_clock = new_test_clock(0, &mut test);
         let test_predict = new_std_predict(&mut test, &oracle_state);
         let min_strike = 50 * float!();
         let max_strike = 150 * float!();
@@ -871,13 +837,11 @@ fun build_curve_endpoints_match_min_max() {
             &oracle_state,
             min_strike,
             max_strike,
-            &test_clock,
         );
 
         assert_eq!(oracle_config::strike(&curve[0]), min_strike);
         assert_eq!(oracle_config::strike(&curve[curve.length() - 1]), max_strike);
 
-        destroy(test_clock);
         destroy(test_predict);
         return_shared(oracle_state);
     };
@@ -902,7 +866,6 @@ fun build_curve_forward_outside_range() {
     test.next_tx(ALICE);
     {
         let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let test_clock = new_test_clock(0, &mut test);
         let test_predict = new_predict_with_grid(
             &mut test,
             &oracle_state,
@@ -914,7 +877,6 @@ fun build_curve_forward_outside_range() {
             &oracle_state,
             50 * float!(),
             150 * float!(),
-            &test_clock,
         );
 
         assert!(curve.length() >= 2);
@@ -928,7 +890,6 @@ fun build_curve_forward_outside_range() {
             i = i + 1;
         };
 
-        destroy(test_clock);
         destroy(test_predict);
         return_shared(oracle_state);
     };
@@ -937,13 +898,13 @@ fun build_curve_forward_outside_range() {
 }
 
 #[test]
-fun build_curve_with_positive_rate_complement() {
+fun build_curve_with_positive_rate_still_sums_to_one() {
     let mut test = begin(ALICE);
     let oracle_id = oracle_helper::setup_flat_vol_shared_oracle(
         ALICE,
         100 * float!(),
         100 * float!(),
-        RATE_5_PCT,
+        50_000_000,
         constants::ms_per_year!(),
         0,
         true,
@@ -953,24 +914,20 @@ fun build_curve_with_positive_rate_complement() {
     test.next_tx(ALICE);
     {
         let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let test_clock = new_test_clock(0, &mut test);
         let test_predict = new_std_predict(&mut test, &oracle_state);
         let curve = oracle_config::build_curve(
             predict::oracle_config(&test_predict),
             &oracle_state,
             50 * float!(),
             150 * float!(),
-            &test_clock,
         );
 
         let mut i = 0;
         while (i < curve.length()) {
-            let sum = oracle_config::up_price(&curve[i]) + oracle_config::dn_price(&curve[i]);
-            precision::assert_approx(sum, DISCOUNT_5PCT_1YR);
+            assert_eq!(up_price(&curve[i]) + dn_price(&curve[i]), float!());
             i = i + 1;
         };
 
-        destroy(test_clock);
         destroy(test_predict);
         return_shared(oracle_state);
     };

@@ -12,7 +12,7 @@
 ///   ln (1-3 units off at 1e9)
 ///   → exp (0-2 units off at 1e9)
 ///   → normal_cdf (0-5 units off at 1e9, via Cody rational approx)
-///   → oracle pricing pipeline: SVI → d2 → cdf → discount (up to ~30 units at 1e9)
+///   → oracle pricing pipeline: SVI → d2 → cdf (up to ~30 units at 1e9)
 ///
 /// The oracle pipeline chains ~6 truncating operations through compute_nd2,
 /// so errors compound beyond individual function tolerances.

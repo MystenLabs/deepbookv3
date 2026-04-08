@@ -112,7 +112,7 @@ public fun configure_shared_oracle(
     oracle_id: ID,
     svi: SVIParams,
     prices: PriceData,
-    risk_free_rate: u64,
+    _risk_free_rate: u64,
     now_ms: u64,
     active: bool,
     test: &mut Scenario,
@@ -128,7 +128,6 @@ public fun configure_shared_oracle(
             &mut oracle_state,
             &cap,
             svi,
-            risk_free_rate,
             &test_clock,
         );
         oracle::update_prices(

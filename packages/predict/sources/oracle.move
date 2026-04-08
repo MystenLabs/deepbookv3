@@ -10,7 +10,7 @@
 module deepbook_predict::oracle;
 
 use deepbook::math;
-use deepbook_predict::{constants::Self, i64, math as predict_math};
+use deepbook_predict::{constants, i64, math as predict_math};
 use std::string::String;
 use sui::{clock::Clock, event, vec_set::{Self, VecSet}};
 
@@ -168,15 +168,10 @@ public fun update_prices(
     });
 }
 
-// TODO: Add validation on pushed SVI params and risk-free rate so obviously
-// bad updates are rejected before they mutate state.
-/// Push SVI parameters and risk-free rate (low frequency ~10-20s).
-public fun update_svi(
-    oracle: &mut OracleSVI,
-    cap: &OracleSVICap,
-    svi: SVIParams,
-    clock: &Clock,
-) {
+// TODO: Add validation on pushed SVI params so obviously bad updates are
+// rejected before they mutate state.
+/// Push SVI parameters (low frequency ~10-20s).
+public fun update_svi(oracle: &mut OracleSVI, cap: &OracleSVICap, svi: SVIParams, clock: &Clock) {
     assert_authorized_cap(oracle, cap);
     assert!(!is_settled(oracle), EOracleSettled);
 

@@ -172,6 +172,16 @@ public fun get_trade_amounts<Quote>(
     };
 
     let up_price = oracle.compute_price(key.strike());
+    if (oracle.is_settled()) {
+        let fair_price = if (key.is_up()) {
+            up_price
+        } else {
+            constants::float_scaling!() - up_price
+        };
+        let amount = math::mul(fair_price, quantity);
+        return (amount, amount)
+    };
+
     let spread = predict
         .pricing_config
         .quote_spread_from_fair_price(

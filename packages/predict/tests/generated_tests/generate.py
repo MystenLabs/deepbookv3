@@ -432,10 +432,10 @@ def binary_price(
     t: float,
     is_call: bool,
 ) -> float:
-    """Binary option price via SVI + Black-Scholes.
+    """Binary option price via SVI with live complement parity.
 
-    Binary call (UP) = discount * N(d2)
-    Binary put (DN)  = discount * N(-d2)
+    Binary call (UP) = N(d2)
+    Binary put (DN)  = N(-d2) = 1 - N(d2)
     d2 = (-k - total_var/2) / sqrt(total_var), k = ln(strike/forward)
     """
     k = math.log(strike / forward)
@@ -444,8 +444,7 @@ def binary_price(
         raise ValueError(f"Non-positive total variance: {tv}")
     sqrt_tv = math.sqrt(tv)
     d2 = (-k - tv / 2) / sqrt_tv
-    discount = math.exp(-rate * t)
-    return discount * norm.cdf(d2 if is_call else -d2)
+    return norm.cdf(d2 if is_call else -d2)
 
 def price_legal_strikes(
     forward: float, svi: dict, rate: float, t: float, strikes: list[int],

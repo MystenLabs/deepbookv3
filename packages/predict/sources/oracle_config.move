@@ -32,7 +32,7 @@ public struct OracleConfig has store {
     oracle_grids: Table<ID, OracleGrid>,
 }
 
-/// Curve sample point with strike and both UP/DOWN prices.
+/// Curve sample point with strike and one-sided UP price.
 public struct CurvePoint has copy, drop, store {
     strike: u64,
     price: u64,
@@ -141,8 +141,10 @@ public(package) fun build_curve(
 
     let price_lo = oracle.compute_price(min_strike);
     let price_hi = oracle.compute_price(max_strike);
-    let mut points = vector[new_curve_point(min_strike, price_lo), new_curve_point(max_strike, price_hi)];
-
+    let mut points = vector[
+        new_curve_point(min_strike, price_lo),
+        new_curve_point(max_strike, price_hi),
+    ];
 
     let curve_samples = constants::default_curve_samples!();
     let mut cur_samples = 2;

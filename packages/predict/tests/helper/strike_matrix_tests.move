@@ -14,9 +14,9 @@ use std::unit_test::{assert_eq, destroy};
 
 fun test_curve(k0: u64, k1: u64, k2: u64): vector<CurvePoint> {
     vector[
-        oracle_config::new_curve_point(k0, float!(), 0),
-        oracle_config::new_curve_point(k1, 500_000_000, 500_000_000),
-        oracle_config::new_curve_point(k2, 0, float!()),
+        oracle_config::new_curve_point(k0, float!()),
+        oracle_config::new_curve_point(k1, 500_000_000),
+        oracle_config::new_curve_point(k2, 0),
     ]
 }
 
@@ -160,9 +160,9 @@ fun evaluate_live_non_monotone_curve_aborts() {
     let strike2 = 120 * scale;
     let qty_up_at_mid = 8 * scale;
     let bad_curve = vector[
-        oracle_config::new_curve_point(strike0, 400_000_000, 600_000_000),
-        oracle_config::new_curve_point(strike1, 500_000_000, 500_000_000),
-        oracle_config::new_curve_point(strike2, 0, float!()),
+        oracle_config::new_curve_point(strike0, 400_000_000),
+        oracle_config::new_curve_point(strike1, 500_000_000),
+        oracle_config::new_curve_point(strike2, 0),
     ];
 
     let ctx = &mut tx_context::dummy();
@@ -185,8 +185,8 @@ fun evaluate_live_curve_must_cover_minted_range() {
     let qty_up_at_first = 10 * scale;
     let qty_dn_at_last = 4 * scale;
     let narrow_curve = vector[
-        oracle_config::new_curve_point(strike1, 500_000_000, 500_000_000),
-        oracle_config::new_curve_point(strike2, 0, float!()),
+        oracle_config::new_curve_point(strike1, 500_000_000),
+        oracle_config::new_curve_point(strike2, 0),
     ];
 
     let ctx = &mut tx_context::dummy();

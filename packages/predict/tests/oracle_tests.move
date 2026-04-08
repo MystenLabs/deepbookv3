@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Unit tests for core oracle lifecycle, settlement, discounting, and pricing.
+/// Unit tests for core oracle lifecycle, settlement, and one-sided pricing.
 #[test_only]
 module deepbook_predict::oracle_tests;
 
@@ -18,19 +18,9 @@ use sui::{clock, test_scenario::{Scenario, begin, end, return_shared}};
 
 const ALICE: address = @0xA;
 const BOB: address = @0xB;
-const HALF_YEAR_MS: u64 = 15_768_000_000;
 
 // === Common test SVI params ===
 const SVI_SIGMA_0_25: u64 = 250_000_000;
-
-// === Interest rates ===
-const RATE_5_PCT: u64 = 50_000_000;
-const RATE_10_PCT: u64 = 100_000_000;
-
-// === Expected values from scipy (generate.py) ===
-const DISCOUNT_10PCT_HALF_YR: u64 = 951_229_424; // e^(-0.10*0.5)
-const PARTIAL_10PCT_UP_ATM: u64 = 388_768_372; // UP price at rate=10%, partial year
-const PARTIAL_10PCT_DN_ATM: u64 = 580_019_318; // DN price at rate=10%, partial year
 
 fun signed(magnitude: u64, is_negative: bool): i64::I64 {
     i64::from_parts(magnitude, is_negative)
@@ -54,6 +44,15 @@ fun new_test_clock(now_ms: u64, test: &mut Scenario): clock::Clock {
     test_clock
 }
 
+fun binary_price_pair(
+    oracle_state: &OracleSVI,
+    strike: u64,
+    _test_clock: &clock::Clock,
+): (u64, u64) {
+    let up = oracle::compute_price(oracle_state, strike);
+    (up, float!() - up)
+}
+
 fun assert_pair_exact(
     oracle_state: &OracleSVI,
     strike: u64,
@@ -61,7 +60,7 @@ fun assert_pair_exact(
     expected_up: u64,
     expected_dn: u64,
 ) {
-    let (up, dn) = oracle::binary_price_pair(oracle_state, strike, test_clock);
+    let (up, dn) = binary_price_pair(oracle_state, strike, test_clock);
     assert_eq!(up, expected_up);
     assert_eq!(dn, expected_dn);
 }
@@ -73,7 +72,7 @@ fun assert_pair_approx(
     expected_up: u64,
     expected_dn: u64,
 ) {
-    let (up, dn) = oracle::binary_price_pair(oracle_state, strike, test_clock);
+    let (up, dn) = binary_price_pair(oracle_state, strike, test_clock);
     precision::assert_approx(up, expected_up);
     precision::assert_approx(dn, expected_dn);
 }
@@ -150,7 +149,6 @@ fun create_oracle_initial_state() {
         assert_eq!(oracle::spot_price(&oracle_state), 0);
         assert_eq!(oracle::forward_price(&oracle_state), 0);
         assert_eq!(oracle::expiry(&oracle_state), 100_000);
-        assert_eq!(oracle::risk_free_rate(&oracle_state), 0);
         assert_eq!(oracle::timestamp(&oracle_state), 0);
         assert!(oracle::settlement_price(&oracle_state).is_none());
         assert_eq!(oracle::is_active(&oracle_state), false);
@@ -182,7 +180,6 @@ fun configured_oracle_with_nonzero_params() {
         assert_eq!(oracle::spot_price(&oracle_state), 50 * float!());
         assert_eq!(oracle::forward_price(&oracle_state), 51 * float!());
         assert_eq!(oracle::expiry(&oracle_state), 999_999);
-        assert_eq!(oracle::risk_free_rate(&oracle_state), 42);
         assert_eq!(oracle::timestamp(&oracle_state), 12_345);
         assert_eq!(oracle::is_active(&oracle_state), true);
 
@@ -288,7 +285,7 @@ fun settled_up_plus_dn_always_one() {
 
         strikes.do!(|s| {
             let strike = s * float!();
-            let (up, dn) = oracle::binary_price_pair(&oracle_state, strike, &test_clock);
+            let (up, dn) = binary_price_pair(&oracle_state, strike, &test_clock);
             assert_eq!(up + dn, float!());
         });
 
@@ -319,18 +316,18 @@ fun is_settled_true_after_settle() {
 }
 
 // ============================================================
-// Live pricing and discount
+// Live pricing
 // ============================================================
 
 #[test]
-fun live_discount_is_one_past_expiry() {
+fun live_price_ignores_rate() {
     let mut test = begin(ALICE);
     let forward = 100 * float!();
     let oracle_with_rate_id = oracle_helper::setup_flat_vol_shared_oracle(
         ALICE,
         forward,
         forward,
-        RATE_5_PCT,
+        50_000_000,
         100_000,
         0,
         true,
@@ -351,10 +348,10 @@ fun live_discount_is_one_past_expiry() {
     {
         let oracle_with_rate = test.take_shared_by_id<OracleSVI>(oracle_with_rate_id);
         let oracle_zero_rate = test.take_shared_by_id<OracleSVI>(oracle_zero_rate_id);
-        let test_clock = new_test_clock(200_000, &mut test);
+        let test_clock = new_test_clock(0, &mut test);
 
-        let (up, dn) = oracle::binary_price_pair(&oracle_with_rate, forward, &test_clock);
-        let (up_zero_rate, dn_zero_rate) = oracle::binary_price_pair(
+        let (up, dn) = binary_price_pair(&oracle_with_rate, forward, &test_clock);
+        let (up_zero_rate, dn_zero_rate) = binary_price_pair(
             &oracle_zero_rate,
             forward,
             &test_clock,
@@ -366,71 +363,6 @@ fun live_discount_is_one_past_expiry() {
         destroy(test_clock);
         return_shared(oracle_with_rate);
         return_shared(oracle_zero_rate);
-    };
-
-    end(test);
-}
-
-#[test]
-fun discount_positive_rate_half_year() {
-    let mut test = begin(ALICE);
-    let forward = 100 * float!();
-    let oracle_id = oracle_helper::setup_flat_vol_shared_oracle(
-        ALICE,
-        forward,
-        forward,
-        RATE_10_PCT,
-        HALF_YEAR_MS,
-        0,
-        true,
-        &mut test,
-    );
-
-    test.next_tx(ALICE);
-    {
-        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let test_clock = new_test_clock(0, &mut test);
-        let (up, dn) = oracle::binary_price_pair(&oracle_state, forward, &test_clock);
-
-        assert_eq!(up + dn, DISCOUNT_10PCT_HALF_YR);
-
-        destroy(test_clock);
-        return_shared(oracle_state);
-    };
-
-    end(test);
-}
-
-#[test]
-fun exact_discount_with_partial_year() {
-    let mut test = begin(ALICE);
-    let forward = 100 * float!();
-    let oracle_id = oracle_helper::setup_flat_vol_shared_oracle(
-        ALICE,
-        forward,
-        forward,
-        RATE_10_PCT,
-        20_000_000_000,
-        0,
-        true,
-        &mut test,
-    );
-
-    test.next_tx(ALICE);
-    {
-        let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let test_clock = new_test_clock(10_000_000_000, &mut test);
-
-        assert_pair_approx(
-            &oracle_state,
-            forward,
-            &test_clock,
-            PARTIAL_10PCT_UP_ATM,
-            PARTIAL_10PCT_DN_ATM,
-        );
-
-        destroy(test_clock);
-        return_shared(oracle_state);
     };
 
     end(test);
@@ -456,7 +388,7 @@ fun live_forward_one_unit_above_strike() {
         let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
         let test_clock = new_test_clock(0, &mut test);
         let strike = forward - 1_000_000;
-        let (up, dn) = oracle::binary_price_pair(&oracle_state, strike, &test_clock);
+        let (up, dn) = binary_price_pair(&oracle_state, strike, &test_clock);
 
         assert_eq!(up + dn, float!());
 
@@ -485,7 +417,7 @@ fun live_price_with_zero_forward_aborts() {
     {
         let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
         let test_clock = new_test_clock(0, &mut test);
-        oracle::binary_price_pair(&oracle_state, 50 * float!(), &test_clock);
+        binary_price_pair(&oracle_state, 50 * float!(), &test_clock);
     };
 
     abort 999
@@ -601,7 +533,7 @@ fun update_prices_past_expiry_settles_oracle() {
 }
 
 #[test]
-fun update_svi_updates_rate_but_not_timestamp() {
+fun update_svi_updates_params_but_not_timestamp() {
     let mut test = begin(ALICE);
     let (oracle_id, _cap_id) = oracle_helper::setup_shared_oracle(
         ALICE,
@@ -620,11 +552,13 @@ fun update_svi_updates_rate_but_not_timestamp() {
             &mut oracle_state,
             &cap,
             svi(100, float!(), 0, false, 0, false, SVI_SIGMA_0_25),
-            RATE_5_PCT,
             &test_clock,
         );
 
-        assert_eq!(oracle::risk_free_rate(&oracle_state), RATE_5_PCT);
+        let svi = oracle::svi(&oracle_state);
+        assert_eq!(oracle::svi_a(&svi), 100);
+        assert_eq!(oracle::svi_b(&svi), float!());
+        assert_eq!(oracle::svi_sigma(&svi), SVI_SIGMA_0_25);
         assert_eq!(oracle::timestamp(&oracle_state), 0);
 
         destroy(test_clock);
@@ -708,7 +642,6 @@ fun update_svi_with_unauthorized_cap_aborts() {
             &mut oracle_state,
             &cap,
             svi(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25),
-            0,
             &test_clock,
         );
     };
@@ -779,7 +712,6 @@ fun update_svi_on_settled_oracle_aborts() {
             &mut oracle_state,
             &cap,
             svi(0, float!(), 0, false, 0, false, SVI_SIGMA_0_25),
-            0,
             &test_clock,
         );
     };
@@ -804,7 +736,7 @@ fun compute_nd2_negative_inner_aborts() {
     {
         let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
         let test_clock = new_test_clock(0, &mut test);
-        oracle::binary_price_pair(&oracle_state, 1000 * float!(), &test_clock);
+        binary_price_pair(&oracle_state, 1000 * float!(), &test_clock);
     };
 
     abort 999
@@ -827,7 +759,7 @@ fun zero_svi_params_on_live_oracle_aborts() {
     {
         let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
         let test_clock = new_test_clock(0, &mut test);
-        oracle::binary_price_pair(&oracle_state, 100 * float!(), &test_clock);
+        binary_price_pair(&oracle_state, 100 * float!(), &test_clock);
     };
 
     abort 999
