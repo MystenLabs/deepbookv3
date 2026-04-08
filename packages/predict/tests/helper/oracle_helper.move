@@ -37,8 +37,8 @@ fun zero_svi(): SVIParams {
 }
 
 /// Attach a Predict strike grid to an oracle ID inside a test Predict object.
-public fun add_grid_to_predict<Quote>(
-    test_predict: &mut Predict<Quote>,
+public fun add_grid_to_predict(
+    test_predict: &mut Predict,
     oracle: &OracleSVI,
     min_strike: u64,
     tick_size: u64,
@@ -48,8 +48,8 @@ public fun add_grid_to_predict<Quote>(
 }
 
 /// Attach a scenario-defined strike grid to an oracle ID inside a test Predict object.
-public fun add_scenario_grid_to_predict<Quote>(
-    test_predict: &mut Predict<Quote>,
+public fun add_scenario_grid_to_predict(
+    test_predict: &mut Predict,
     oracle: &OracleSVI,
     scenario: &OracleScenario,
     ctx: &mut TxContext,

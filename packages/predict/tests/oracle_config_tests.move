@@ -7,6 +7,7 @@ module deepbook_predict::oracle_config_tests;
 
 use deepbook_predict::{
     constants::{Self, float_scaling as float, oracle_tick_size_unit, oracle_strike_grid_ticks},
+    currency_helper,
     market_key,
     oracle::{Self as oracle, OracleSVI},
     oracle_config::{Self as oracle_config, new_curve_point},
@@ -16,12 +17,36 @@ use deepbook_predict::{
     strike_matrix
 };
 use std::unit_test::{assert_eq, destroy};
-use sui::{clock, sui::SUI, test_scenario::{Scenario, begin, end, return_shared}};
+use sui::{
+    clock,
+    coin::TreasuryCap,
+    coin_registry::{Self as coin_registry, Currency, MetadataCap},
+    test_scenario::{Scenario, begin, end, return_shared}
+};
 
 const ALICE: address = @0xA;
 const RATE_5_PCT: u64 = 50_000_000;
 // floor(e^(-0.05 * 1.0) * FLOAT_SCALING) = 951_229_424
 const DISCOUNT_5PCT_1YR: u64 = 951_229_424;
+
+public struct QUOTEUSD has key { id: UID }
+
+fun new_quoteusd_currency(
+    ctx: &mut TxContext,
+): (Currency<QUOTEUSD>, TreasuryCap<QUOTEUSD>, MetadataCap<QUOTEUSD>) {
+    let mut registry = coin_registry::create_coin_data_registry_for_testing(ctx);
+    let (builder, treasury_cap) = registry.new_currency<QUOTEUSD>(
+        constants::required_quote_decimals!(),
+        b"QUSD".to_string(),
+        b"Quote USD".to_string(),
+        b"Quote USD".to_string(),
+        b"".to_string(),
+        ctx,
+    );
+    let (currency, metadata_cap) = builder.finalize_unwrap_for_testing(ctx);
+    destroy(registry);
+    (currency, treasury_cap, metadata_cap)
+}
 
 fun new_test_clock(now_ms: u64, test: &mut Scenario): clock::Clock {
     let mut test_clock = clock::create_for_testing(test.ctx());
@@ -34,8 +59,17 @@ fun new_predict_with_grid(
     oracle_state: &OracleSVI,
     min_strike: u64,
     tick_size: u64,
-): predict::Predict<SUI> {
-    let mut test_predict = predict::create_test_predict<SUI>(test.ctx());
+): predict::Predict {
+    let currency_ctx = &mut tx_context::dummy();
+    let (quote_currency, quote_treasury_cap, quote_metadata_cap) = new_quoteusd_currency(
+        currency_ctx,
+    );
+    let mut test_predict = predict::create_test_predict<QUOTEUSD>(&quote_currency, test.ctx());
+    currency_helper::destroy_currency_bundle(
+        quote_currency,
+        quote_treasury_cap,
+        quote_metadata_cap,
+    );
     oracle_helper::add_grid_to_predict(
         &mut test_predict,
         oracle_state,
@@ -46,7 +80,7 @@ fun new_predict_with_grid(
     test_predict
 }
 
-fun new_std_predict(test: &mut Scenario, oracle_state: &OracleSVI): predict::Predict<SUI> {
+fun new_std_predict(test: &mut Scenario, oracle_state: &OracleSVI): predict::Predict {
     let (min_strike, tick_size) = oracle_helper::default_std_grid();
     new_predict_with_grid(test, oracle_state, min_strike, tick_size)
 }
@@ -80,7 +114,16 @@ fun assert_valid_strike_without_registered_grid_aborts() {
     test.next_tx(ALICE);
     {
         let oracle_state = test.take_shared_by_id<OracleSVI>(oracle_id);
-        let test_predict = predict::create_test_predict<SUI>(test.ctx());
+        let currency_ctx = &mut tx_context::dummy();
+        let (quote_currency, quote_treasury_cap, quote_metadata_cap) = new_quoteusd_currency(
+            currency_ctx,
+        );
+        let test_predict = predict::create_test_predict<QUOTEUSD>(&quote_currency, test.ctx());
+        currency_helper::destroy_currency_bundle(
+            quote_currency,
+            quote_treasury_cap,
+            quote_metadata_cap,
+        );
 
         oracle_config::assert_valid_strike(
             predict::oracle_config(&test_predict),

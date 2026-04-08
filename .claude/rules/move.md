@@ -77,6 +77,7 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 - `sui move build` to build the package, must be run in a directory with Move.toml in it
 - `sui move test --gas-limit 100000000000` to run tests, must be run in a directory with Move.toml in it. The high gas limit is needed because sui 1.66+ lowered the default test gas budget, causing complex tests to time out.
 - When `sui move test` shows warnings (e.g., unused `mut` modifiers, unused variables), fix them immediately before proceeding
+- Before claiming Move or protocol work is complete, run the relevant package test suite(s) and confirm they pass with zero failures. If the change affects multiple packages or local package manifests, run each impacted package's tests.
 - can pass `--skip-fetch-latest-git-deps` if the dependencies haven't changed after an initial successful build
 - when you have completed making changes, run `bunx prettier-move -c *.move --write` on any files that are modified to format them correctly.
 
@@ -133,6 +134,14 @@ math = "0x0"
 [addresses]
 my_protocol_math = "0x0"
 ```
+
+### Keep Local Package Style Consistent
+
+If an old-style package depends on another local package, do not migrate only one side of that
+dependency edge. In this repo, `packages/margin_liquidation` still depends on old-style
+`packages/deepbook_margin`, so removing `[addresses] deepbook_margin = "0x0"` from
+`packages/deepbook_margin/Move.toml` breaks dependents with
+`Packages with old-style Move.toml files cannot depend on new-style packages`.
 
 ## Imports, Module and Constants
 

@@ -15,7 +15,7 @@ use deepbook_predict::{
     predict::{Self, Predict}
 };
 use std::string::String;
-use sui::{coin::TreasuryCap, event, table::{Self, Table}};
+use sui::{coin::TreasuryCap, coin_registry::Currency, event, table::{Self, Table}};
 
 // === Errors ===
 const EPredictAlreadyCreated: u64 = 0;
@@ -75,12 +75,13 @@ public fun oracle_ids(registry: &Registry, cap_id: ID): vector<ID> {
 public fun create_predict<Quote>(
     registry: &mut Registry,
     _admin_cap: &AdminCap,
+    currency: &Currency<Quote>,
     treasury_cap: TreasuryCap<PLP>,
     ctx: &mut TxContext,
 ): ID {
     assert!(registry.predict_id.is_none(), EPredictAlreadyCreated);
 
-    let predict_id = predict::create<Quote>(treasury_cap, ctx);
+    let predict_id = predict::create<Quote>(currency, treasury_cap, ctx);
     registry.predict_id = option::some(predict_id);
 
     event::emit(PredictCreated { predict_id });
@@ -99,9 +100,9 @@ public fun create_oracle_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): Oracle
 }
 
 /// Create a new Oracle. Returns the oracle ID.
-public fun create_oracle<Quote>(
+public fun create_oracle(
     registry: &mut Registry,
-    predict: &mut Predict<Quote>,
+    predict: &mut Predict,
     _admin_cap: &AdminCap,
     cap: &OracleSVICap,
     underlying_asset: String,
@@ -131,36 +132,38 @@ public fun create_oracle<Quote>(
     oracle_id
 }
 
-/// Set trading pause state.
-public fun set_trading_paused<Quote>(
-    predict: &mut predict::Predict<Quote>,
+/// Enable a quote asset for new supply and mint inflows.
+public fun enable_quote_asset<Quote>(
+    predict: &mut Predict,
     _admin_cap: &AdminCap,
-    paused: bool,
+    currency: &Currency<Quote>,
 ) {
+    predict.enable_quote_asset<Quote>(currency);
+}
+
+/// Disable a quote asset for new supply and mint inflows.
+public fun disable_quote_asset<Quote>(predict: &mut Predict, _admin_cap: &AdminCap) {
+    predict.disable_quote_asset<Quote>();
+}
+
+/// Set trading pause state.
+public fun set_trading_paused(predict: &mut Predict, _admin_cap: &AdminCap, paused: bool) {
     predict.set_trading_paused(paused);
 }
 
 /// Set base spread.
-public fun set_base_spread<Quote>(
-    predict: &mut predict::Predict<Quote>,
-    _admin_cap: &AdminCap,
-    spread: u64,
-) {
+public fun set_base_spread(predict: &mut Predict, _admin_cap: &AdminCap, spread: u64) {
     predict.set_base_spread(spread);
 }
 
 /// Set min spread.
-public fun set_min_spread<Quote>(
-    predict: &mut predict::Predict<Quote>,
-    _admin_cap: &AdminCap,
-    spread: u64,
-) {
+public fun set_min_spread(predict: &mut Predict, _admin_cap: &AdminCap, spread: u64) {
     predict.set_min_spread(spread);
 }
 
 /// Set utilization multiplier.
-public fun set_utilization_multiplier<Quote>(
-    predict: &mut predict::Predict<Quote>,
+public fun set_utilization_multiplier(
+    predict: &mut Predict,
     _admin_cap: &AdminCap,
     multiplier: u64,
 ) {
@@ -168,11 +171,7 @@ public fun set_utilization_multiplier<Quote>(
 }
 
 /// Set max total exposure percentage.
-public fun set_max_total_exposure_pct<Quote>(
-    predict: &mut predict::Predict<Quote>,
-    _admin_cap: &AdminCap,
-    pct: u64,
-) {
+public fun set_max_total_exposure_pct(predict: &mut Predict, _admin_cap: &AdminCap, pct: u64) {
     predict.set_max_total_exposure_pct(pct);
 }
 

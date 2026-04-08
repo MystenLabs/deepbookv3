@@ -3,6 +3,7 @@ import { Transaction } from "@mysten/sui/transactions";
 
 import {
   ADMIN_CAP_ID,
+  DUSDC_CURRENCY_ID,
   DUSDC_PACKAGE_ID,
   PACKAGE_ID,
   PLP_TREASURY_CAP_ID,
@@ -21,6 +22,7 @@ export interface GasUsage {
 
 const DUSDC_TYPE = `${DUSDC_PACKAGE_ID}::dusdc::DUSDC`;
 const CLOCK_ID = "0x6";
+const COIN_REGISTRY_ID = "0xc";
 const SETUP_RESPONSE_OPTIONS = {
   showEffects: true,
   showEvents: true,
@@ -78,12 +80,27 @@ export function target(module: string, fn: string): `${string}::${string}::${str
   return `${PACKAGE_ID}::${module}::${fn}`;
 }
 
-export function createPredictTx(): Transaction {
+export function finalizeDusdcCurrencyRegistrationTx(): Transaction {
+  const tx = new Transaction();
+  tx.moveCall({
+    target: "0x2::coin_registry::finalize_registration",
+    typeArguments: [DUSDC_TYPE],
+    arguments: [tx.object(COIN_REGISTRY_ID), tx.object(DUSDC_CURRENCY_ID)],
+  });
+  return tx;
+}
+
+export function createPredictTx(currencyId: string): Transaction {
   const tx = new Transaction();
   tx.moveCall({
     target: target("registry", "create_predict"),
     typeArguments: [DUSDC_TYPE],
-    arguments: [tx.object(REGISTRY_ID), tx.object(ADMIN_CAP_ID), tx.object(PLP_TREASURY_CAP_ID)],
+    arguments: [
+      tx.object(REGISTRY_ID),
+      tx.object(ADMIN_CAP_ID),
+      tx.object(currencyId),
+      tx.object(PLP_TREASURY_CAP_ID),
+    ],
   });
   return tx;
 }
@@ -109,7 +126,6 @@ export function createOracleTx(params: {
   const tx = new Transaction();
   tx.moveCall({
     target: target("registry", "create_oracle"),
-    typeArguments: [DUSDC_TYPE],
     arguments: [
       tx.object(REGISTRY_ID),
       tx.object(params.predictId),
