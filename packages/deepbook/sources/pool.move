@@ -580,6 +580,52 @@ public fun cancel_orders<BaseAsset, QuoteAsset>(
     }
 }
 
+/// Cancel a single order, no-op if the order_id is not currently in the
+/// balance_manager's open orders (e.g. already filled, cancelled, or not
+/// owned by this balance_manager). If the order is present, it must be
+/// owned by the balance_manager.
+/// On a successful cancel the order is removed from the book and the
+/// balance_manager's open orders, and an order canceled event is emitted.
+public fun cancel_live_order<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    balance_manager: &mut BalanceManager,
+    trade_proof: &TradeProof,
+    order_id: u128,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    if (self.account_open_orders(balance_manager).contains(&order_id)) {
+        self.cancel_order(balance_manager, trade_proof, order_id, clock, ctx);
+    }
+}
+
+/// Cancel multiple orders within a vector, skipping any order_id that is not
+/// currently in the balance_manager's open orders (e.g. already filled,
+/// cancelled, or not owned by this balance_manager). Orders that are present
+/// must be owned by the balance_manager.
+/// The live orders are removed from the book and the balance_manager's open
+/// orders. Order canceled events are emitted for each cancelled order.
+public fun cancel_live_orders<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    balance_manager: &mut BalanceManager,
+    trade_proof: &TradeProof,
+    order_ids: vector<u128>,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    let mut open_orders = self.account_open_orders(balance_manager);
+    let mut i = 0;
+    let num_orders = order_ids.length();
+    while (i < num_orders) {
+        let order_id = order_ids[i];
+        if (open_orders.contains(&order_id)) {
+            open_orders.remove(&order_id);
+            self.cancel_order(balance_manager, trade_proof, order_id, clock, ctx);
+        };
+        i = i + 1;
+    }
+}
+
 /// Cancel all open orders placed by the balance manager in the pool.
 public fun cancel_all_orders<BaseAsset, QuoteAsset>(
     self: &mut Pool<BaseAsset, QuoteAsset>,
