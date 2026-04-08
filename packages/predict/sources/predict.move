@@ -179,13 +179,15 @@ public fun get_trade_amounts<Quote>(
             predict.vault.total_mtm(),
             predict.vault.balance(),
         );
-    let bid = if (up_price > spread) { up_price - spread } else { 0 };
-    let ask = (up_price + spread).min(constants::float_scaling!());
+    let up_bid = if (up_price > spread) { up_price - spread } else { 0 };
+    let up_ask = (up_price + spread).min(constants::float_scaling!());
+    let dn_bid = constants::float_scaling!() - up_ask;
+    let dn_ask = constants::float_scaling!() - up_bid;
 
     if (key.is_up()) {
-        (math::mul(ask, quantity), math::mul(bid, quantity))
+        (math::mul(up_ask, quantity), math::mul(up_bid, quantity))
     } else {
-        (math::mul(bid, quantity), math::mul(ask, quantity))
+        (math::mul(dn_ask, quantity), math::mul(dn_bid, quantity))
     }
 }
 
@@ -215,7 +217,7 @@ public fun mint<Quote>(
 
     // Quote against the post-trade state so the trader pays for the liability
     // their own mint just added to the vault.
-    let (_, cost) = predict.get_trade_amounts(oracle, key, quantity, clock);
+    let (cost, _) = predict.get_trade_amounts(oracle, key, quantity, clock);
 
     let payment = manager.withdraw<Quote>(cost, ctx).into_balance();
     predict.vault.accept_payment(payment);
@@ -264,7 +266,7 @@ public fun redeem<Quote>(
 
     // Quote against the post-trade state so the seller is paid from the
     // liability after their position has been removed from the vault.
-    let (payout, _) = predict.get_trade_amounts(oracle, key, quantity, clock);
+    let (_, payout) = predict.get_trade_amounts(oracle, key, quantity, clock);
 
     let payout_balance = predict.vault.dispense_payout(payout);
     let payout_coin = payout_balance.into_coin(ctx);

@@ -53,7 +53,6 @@ public struct OracleSVIUpdated has copy, drop, store {
     rho: i64::I64,
     m: i64::I64,
     sigma: u64,
-    risk_free_rate: u64,
     timestamp: u64,
 }
 
@@ -99,8 +98,6 @@ public struct OracleSVI has key {
     prices: PriceData,
     /// SVI volatility surface parameters (low frequency updates)
     svi: SVIParams,
-    /// Risk-free rate for discounting (scaled by FLOAT_SCALING)
-    risk_free_rate: u64,
     /// Timestamp of last update in milliseconds
     timestamp: u64,
     /// Settlement price, frozen on first update after expiry
@@ -178,16 +175,13 @@ public fun update_svi(
     oracle: &mut OracleSVI,
     cap: &OracleSVICap,
     svi: SVIParams,
-    risk_free_rate: u64,
     clock: &Clock,
 ) {
     assert_authorized_cap(oracle, cap);
     assert!(!is_settled(oracle), EOracleSettled);
 
     let now = clock.timestamp_ms();
-
     oracle.svi = svi;
-    oracle.risk_free_rate = risk_free_rate;
 
     event::emit(OracleSVIUpdated {
         oracle_id: oracle.id.to_inner(),
@@ -196,7 +190,6 @@ public fun update_svi(
         rho: svi.rho,
         m: svi.m,
         sigma: svi.sigma,
-        risk_free_rate,
         timestamp: now,
     });
 }
@@ -259,11 +252,6 @@ public fun svi_sigma(svi: &SVIParams): u64 {
 /// Get the expiry timestamp.
 public fun expiry(oracle: &OracleSVI): u64 {
     oracle.expiry
-}
-
-/// Get the risk-free rate.
-public fun risk_free_rate(oracle: &OracleSVI): u64 {
-    oracle.risk_free_rate
 }
 
 /// Get the last update timestamp.
@@ -343,7 +331,6 @@ public(package) fun create_oracle(underlying_asset: String, expiry: u64, ctx: &m
             m: i64::zero(),
             sigma: 0,
         },
-        risk_free_rate: 0,
         timestamp: 0,
         settlement_price: option::none(),
     };
