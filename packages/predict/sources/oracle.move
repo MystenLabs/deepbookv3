@@ -370,25 +370,25 @@ fun compute_nd2(oracle: &OracleSVI, strike: u64): u64 {
 
     // SVI: compute total variance from log-moneyness.
     let k = predict_math::ln(math::div(strike, forward));
-    let k_minus_m = i64::sub(&k, &svi.m);
-    let k_minus_m_squared = i64::square_scaled(&k_minus_m);
+    let k_minus_m = i64::sub(k, svi.m);
+    let k_minus_m_squared = i64::square_scaled(k_minus_m);
     let sigma_squared = math::mul(svi.sigma, svi.sigma);
     let sq = predict_math::sqrt(k_minus_m_squared + sigma_squared, constants::float_scaling!());
     let sq_i64 = i64::from_u64(sq);
 
-    let rho_km = i64::mul_scaled(&svi.rho, &k_minus_m);
-    let inner = i64::add(&rho_km, &sq_i64);
-    assert!(!i64::is_negative(&inner), ECannotBeNegative);
-    let total_var = svi.a + math::mul(svi.b, i64::magnitude(&inner));
+    let rho_km = i64::mul_scaled(svi.rho, k_minus_m);
+    let inner = i64::add(rho_km, sq_i64);
+    assert!(!i64::is_negative(inner), ECannotBeNegative);
+    let total_var = svi.a + math::mul(svi.b, i64::magnitude(inner));
     assert!(total_var > 0, EZeroVariance);
 
     // d2 = -((k + total_var/2) / sqrt(total_var)), then N(±d2).
     let sqrt_var = predict_math::sqrt(total_var, constants::float_scaling!());
     let sqrt_var_i64 = i64::from_u64(sqrt_var);
     let half_var_i64 = i64::from_u64(total_var / 2);
-    let d2_numerator = i64::add(&k, &half_var_i64);
-    let d2 = i64::div_scaled(&d2_numerator, &sqrt_var_i64);
-    let d2 = i64::neg(&d2);
+    let d2_numerator = i64::add(k, half_var_i64);
+    let d2 = i64::div_scaled(d2_numerator, sqrt_var_i64);
+    let d2 = i64::neg(d2);
 
-    predict_math::normal_cdf(&d2)
+    predict_math::normal_cdf(d2)
 }

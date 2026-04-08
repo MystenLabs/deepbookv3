@@ -15,15 +15,15 @@ public struct I64 has copy, drop, store {
     is_negative: bool,
 }
 
-public fun magnitude(value: &I64): u64 {
+public fun magnitude(value: I64): u64 {
     value.magnitude
 }
 
-public fun is_negative(value: &I64): bool {
+public fun is_negative(value: I64): bool {
     value.is_negative
 }
 
-public fun is_zero(value: &I64): bool {
+public fun is_zero(value: I64): bool {
     value.magnitude == 0
 }
 
@@ -52,7 +52,7 @@ public fun from_parts(magnitude: u64, is_negative: bool): I64 {
     }
 }
 
-public fun neg(value: &I64): I64 {
+public fun neg(value: I64): I64 {
     if (value.magnitude == 0) {
         zero()
     } else {
@@ -63,7 +63,7 @@ public fun neg(value: &I64): I64 {
     }
 }
 
-public fun add(a: &I64, b: &I64): I64 {
+public fun add(a: I64, b: I64): I64 {
     if (a.is_negative == b.is_negative) {
         assert!(a.magnitude <= max_u64() - b.magnitude, EOverflow);
         from_parts(a.magnitude + b.magnitude, a.is_negative)
@@ -74,28 +74,28 @@ public fun add(a: &I64, b: &I64): I64 {
     }
 }
 
-public fun add_u64(a: &I64, b: u64): I64 {
-    add(a, &from_u64(b))
+public fun add_u64(a: I64, b: u64): I64 {
+    add(a, from_u64(b))
 }
 
-public fun sub(a: &I64, b: &I64): I64 {
+public fun sub(a: I64, b: I64): I64 {
     let neg_b = neg(b);
-    add(a, &neg_b)
+    add(a, neg_b)
 }
 
-public fun sub_u64(a: &I64, b: u64): I64 {
-    sub(a, &from_u64(b))
+public fun sub_u64(a: I64, b: u64): I64 {
+    sub(a, from_u64(b))
 }
 
 /// Multiplies two FLOAT_SCALING fixed-point signed values.
-public fun mul_scaled(a: &I64, b: &I64): I64 {
+public fun mul_scaled(a: I64, b: I64): I64 {
     let product =
         ((a.magnitude as u128) * (b.magnitude as u128)) / (constants::float_scaling!() as u128);
     assert!(product <= (max_u64() as u128), EOverflow);
     from_parts((product as u64), a.is_negative != b.is_negative)
 }
 
-public fun div_scaled(a: &I64, b: &I64): I64 {
+public fun div_scaled(a: I64, b: I64): I64 {
     assert!(b.magnitude > 0, EZeroDivisor);
     let quotient =
         ((a.magnitude as u128) * (constants::float_scaling!() as u128)) / (b.magnitude as u128);
@@ -103,6 +103,6 @@ public fun div_scaled(a: &I64, b: &I64): I64 {
     from_parts((quotient as u64), a.is_negative != b.is_negative)
 }
 
-public fun square_scaled(value: &I64): u64 {
+public fun square_scaled(value: I64): u64 {
     mul_scaled(value, value).magnitude
 }

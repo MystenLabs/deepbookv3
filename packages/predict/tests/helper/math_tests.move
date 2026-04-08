@@ -18,12 +18,12 @@ fun signed(magnitude: u64, is_negative: bool): i64::I64 {
 
 fun exp(input: u64, is_negative: bool): u64 {
     let x = signed(input, is_negative);
-    math::exp(&x)
+    math::exp(x)
 }
 
 fun cdf(input: u64, is_negative: bool): u64 {
     let x = signed(input, is_negative);
-    math::normal_cdf(&x)
+    math::normal_cdf(x)
 }
 
 // ============================================================
@@ -89,8 +89,8 @@ fun mul_div_round_up_zero_denominator_aborts() {
 #[test]
 fun ln_one_is_zero() {
     let result = math::ln(constants::float_scaling!());
-    assert_eq!(i64::magnitude(&result), 0);
-    assert_eq!(i64::is_negative(&result), false);
+    assert_eq!(i64::magnitude(result), 0);
+    assert_eq!(i64::is_negative(result), false);
 }
 
 #[test, expected_failure(abort_code = math::EInputZero)]
@@ -230,8 +230,8 @@ fun cdf_negative_less_than_half() {
 fun ln_matches_scipy() {
     gs::ln_cases().do_ref!(|c| {
         let result = math::ln(gs::ln_input(c));
-        precision::assert_approx(i64::magnitude(&result), gs::ln_expected_mag(c));
-        assert_eq!(i64::is_negative(&result), gs::ln_expected_neg(c));
+        precision::assert_approx(i64::magnitude(result), gs::ln_expected_mag(c));
+        assert_eq!(i64::is_negative(result), gs::ln_expected_neg(c));
     });
 }
 
