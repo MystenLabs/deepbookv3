@@ -4,6 +4,7 @@
 module deepbook_predict::strike_matrix2;
 
 use deepbook::{constants::max_u64, math};
+use deepbook_predict::{constants, oracle_config::CurvePoint};
 use sui::table::{Self, Table};
 
 const PAGE_SLOTS: u64 = 512;
@@ -11,6 +12,8 @@ const PAGE_SLOTS: u64 = 512;
 const EInvalidTickSize: u64 = 0;
 const EInvalidStrikeRange: u64 = 1;
 const EInsufficientQuantity: u64 = 2;
+const ENonMonotoneCurve: u64 = 3;
+const EInvalidCurveRange: u64 = 4;
 
 /// Dense strike-indexed book with page-level summaries stored in an inline tree.
 public struct StrikeMatrix2 has store {
@@ -101,9 +104,87 @@ public(package) fun remove(matrix: &mut StrikeMatrix2, strike: u64, qty: u64, is
     recompute_page_tree_path(matrix, page_index);
 }
 
+public(package) fun evaluate(matrix: &StrikeMatrix2, curve: &vector<CurvePoint>): u64 {
+    let len = curve.length();
+    if (len == 0) return 0;
+    assert!(
+        curve[0].strike() <= matrix.minted_min_strike
+        && curve[len - 1].strike() >= matrix.minted_max_strike,
+        EInvalidCurveRange,
+    );
+
+    let mut value = 0;
+    let (mut page_lo, mut slot_lo) = matrix.strike_to_coords(curve[0].strike());
+    let (mut page_hi, mut slot_hi) = matrix.strike_to_coords(curve[len - 1].strike());
+
+    let page = &matrix.pages[page_lo];
+    value = value + math::mul(node_q_up(page, slot_lo), curve[0].up_price());
+    let page = &matrix.pages[page_hi];
+    value =
+        value +
+        math::mul(node_q_dn(page, slot_hi), constants::float_scaling!() - curve[len - 1].up_price());
+
+    let mut ci = 1;
+    while (ci < len) {
+        let ci_strike = curve[ci].strike();
+        let ci_strike_prev = curve[ci - 1].strike();
+        let ci_up_price = curve[ci].up_price();
+        let ci_dn_price = constants::float_scaling!() - curve[ci].up_price();
+        let ci_up_price_prev = curve[ci - 1].up_price();
+        let ci_dn_price_prev = constants::float_scaling!() - curve[ci - 1].up_price();
+        (page_hi, slot_hi) = matrix.strike_to_coords(ci_strike);
+        let (q_up_delta, qk_up_delta, q_dn_delta, qk_dn_delta) = matrix.accumulate_segment_qty_qk(
+            page_lo,
+            slot_lo,
+            page_hi,
+            slot_hi,
+        );
+
+        if (q_up_delta > 0) {
+            assert!(ci_up_price_prev >= ci_up_price, ENonMonotoneCurve);
+            let p_avg = interpolate_price_at_avg_strike(
+                q_up_delta,
+                qk_up_delta,
+                ci_strike_prev,
+                ci_strike,
+                ci_up_price_prev,
+                ci_up_price,
+            );
+            value = value + math::mul(q_up_delta, p_avg);
+        };
+
+        if (q_dn_delta > 0) {
+            assert!(ci_dn_price >= ci_dn_price_prev, ENonMonotoneCurve);
+            let p_dn_avg = interpolate_price_at_avg_strike(
+                q_dn_delta,
+                qk_dn_delta,
+                ci_strike_prev,
+                ci_strike,
+                ci_dn_price_prev,
+                ci_dn_price,
+            );
+            value = value + math::mul(q_dn_delta, p_dn_avg);
+        };
+
+        page_lo = page_hi;
+        slot_lo = slot_hi;
+        ci = ci + 1;
+    };
+
+    value
+}
+
 public(package) fun max_payout(matrix: &StrikeMatrix2): u64 {
     let root = matrix.page_tree[0];
     root.total_q_dn + root.best_prefix_up - root.best_prefix_dn
+}
+
+public(package) fun mtm(matrix: &StrikeMatrix2): u64 {
+    matrix.mtm
+}
+
+public(package) fun set_mtm(matrix: &mut StrikeMatrix2, value: u64) {
+    matrix.mtm = value;
 }
 
 fun validate_strike_coords(matrix: &StrikeMatrix2, strike: u64): (u64, u64) {
@@ -205,6 +286,54 @@ fun apply_delta_and_recompute_page(
     *(&mut matrix.page_tree[tree_index]) = summary;
 }
 
+fun accumulate_segment_qty_qk(
+    matrix: &StrikeMatrix2,
+    start_page: u64,
+    start_slot: u64,
+    end_page: u64,
+    end_slot: u64,
+): (u64, u64, u64, u64) {
+    let mut page_lo = start_page;
+    let mut slot_lo = start_slot;
+    let mut q_up_delta = 0;
+    let mut qk_up_delta = 0;
+    let mut q_up_chk = 0;
+    let mut qk_up_chk = 0;
+    let mut q_dn_delta = 0;
+    let mut qk_dn_delta = 0;
+    while (page_lo < end_page) {
+        let page = &matrix.pages[page_lo];
+        let start_node = &page[slot_lo];
+        let end_node = &page[PAGE_SLOTS - 1];
+
+        q_up_delta = q_up_delta + end_node.agg_q_up - start_node.agg_q_up + q_up_chk;
+        qk_up_delta = qk_up_delta + end_node.agg_qk_up - start_node.agg_qk_up + qk_up_chk;
+
+        let end_q_dn = node_q_dn(page, PAGE_SLOTS - 1);
+        q_dn_delta = q_dn_delta + start_node.agg_q_dn - end_node.agg_q_dn + end_q_dn;
+        qk_dn_delta =
+            qk_dn_delta + start_node.agg_qk_dn - end_node.agg_qk_dn +
+            math::mul(end_q_dn, matrix.strike_from_coords(page_lo, PAGE_SLOTS - 1));
+
+        page_lo = page_lo + 1;
+        slot_lo = 0;
+        let next_page = &matrix.pages[page_lo];
+        q_up_chk = node_q_up(next_page, slot_lo);
+        qk_up_chk = math::mul(q_up_chk, matrix.strike_from_coords(page_lo, slot_lo));
+    };
+
+    let page = &matrix.pages[end_page];
+    let start_node = &page[slot_lo];
+    let end_node = &page[end_slot];
+
+    q_up_delta = q_up_delta + end_node.agg_q_up - start_node.agg_q_up + q_up_chk;
+    qk_up_delta = qk_up_delta + end_node.agg_qk_up - start_node.agg_qk_up + qk_up_chk;
+    q_dn_delta = q_dn_delta + start_node.agg_q_dn - end_node.agg_q_dn;
+    qk_dn_delta = qk_dn_delta + start_node.agg_qk_dn - end_node.agg_qk_dn;
+
+    (q_up_delta, qk_up_delta, q_dn_delta, qk_dn_delta)
+}
+
 fun recompute_page_tree_path(matrix: &mut StrikeMatrix2, page_index: u64) {
     let mut tree_index = matrix.page_tree_leaf_count - 1 + page_index;
     while (tree_index > 0) {
@@ -250,6 +379,23 @@ fun next_pow_2(n: u64): u64 {
     p
 }
 
+fun interpolate_price_at_avg_strike(
+    qty: u64,
+    qty_strike: u64,
+    strike_lo: u64,
+    strike_hi: u64,
+    price_lo: u64,
+    price_hi: u64,
+): u64 {
+    let strike_avg = math::div(qty_strike, qty);
+    let ratio = math::div((strike_avg - strike_lo), (strike_hi - strike_lo));
+    if (price_hi >= price_lo) {
+        price_lo + math::mul(price_hi - price_lo, ratio)
+    } else {
+        price_lo - math::mul(price_lo - price_hi, ratio)
+    }
+}
+
 fun prefix_is_better(candidate_up: u64, candidate_dn: u64, best_up: u64, best_dn: u64): bool {
     candidate_up + best_dn >= candidate_dn + best_up
 }
@@ -283,4 +429,23 @@ fun merge_page_summaries(left: &PageSummary, right: &PageSummary): PageSummary {
         best_prefix_up,
         best_prefix_dn,
     }
+}
+
+fun strike_to_coords(self: &StrikeMatrix2, strike: u64): (u64, u64) {
+    let tick_index = (strike - self.min_strike) / self.tick_size;
+    let page_key = tick_index / PAGE_SLOTS;
+    let slot = tick_index % PAGE_SLOTS;
+    (page_key, slot)
+}
+
+fun strike_from_coords(self: &StrikeMatrix2, page_key: u64, slot: u64): u64 {
+    self.min_strike + (page_key * PAGE_SLOTS + slot) * self.tick_size
+}
+
+fun node_q_up(page: &vector<StrikeNode>, slot: u64): u64 {
+    page[slot].q_up
+}
+
+fun node_q_dn(page: &vector<StrikeNode>, slot: u64): u64 {
+    page[slot].q_dn
 }
