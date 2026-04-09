@@ -32,30 +32,25 @@ public struct OracleConfig has store {
     oracle_grids: Table<ID, OracleGrid>,
 }
 
-/// Curve sample point with strike and both UP/DOWN prices.
+/// Curve sample point with strike and one-sided UP price.
 public struct CurvePoint has copy, drop, store {
     strike: u64,
-    up_price: u64,
-    dn_price: u64,
+    price: u64,
 }
 
-/// Create a curve sample point from exact strike and side prices.
-public fun new_curve_point(strike: u64, up_price: u64, dn_price: u64): CurvePoint {
+/// Create a curve sample point from exact strike and UP price.
+public fun new_curve_point(strike: u64, price: u64): CurvePoint {
     CurvePoint {
         strike,
-        up_price,
-        dn_price,
+        price,
     }
 }
 
 /// Return the strike stored in a curve point.
 public fun strike(point: &CurvePoint): u64 { point.strike }
 
-/// Return the UP price stored in a curve point.
-public fun up_price(point: &CurvePoint): u64 { point.up_price }
-
-/// Return the DN price stored in a curve point.
-public fun dn_price(point: &CurvePoint): u64 { point.dn_price }
+/// Return the price stored in a curve point.
+public fun price(point: &CurvePoint): u64 { point.price }
 
 /// Create an empty oracle config registry for Predict.
 public(package) fun new(ctx: &mut TxContext): OracleConfig {
@@ -122,36 +117,12 @@ public(package) fun assert_mintable_oracle(oracle: &OracleSVI, clock: &Clock) {
     assert!(clock.timestamp_ms() < oracle.expiry(), EOracleExpired);
 }
 
-/// Return the exact fair price for one side of a binary market.
-public(package) fun binary_price(
-    oracle_config: &OracleConfig,
-    oracle: &OracleSVI,
-    strike: u64,
-    is_up: bool,
-    clock: &Clock,
-): u64 {
-    let (up_price, dn_price) = oracle_config.binary_price_pair(oracle, strike, clock);
-    if (is_up) { up_price } else { dn_price }
-}
-
-/// Return the exact fair prices for both sides of a binary market.
-public(package) fun binary_price_pair(
-    oracle_config: &OracleConfig,
-    oracle: &OracleSVI,
-    strike: u64,
-    clock: &Clock,
-): (u64, u64) {
-    oracle_config.assert_valid_strike(oracle, strike);
-    oracle.binary_price_pair(strike, clock)
-}
-
 /// Build an adaptive piecewise-linear curve over the configured strike range.
 public(package) fun build_curve(
     oracle_config: &OracleConfig,
     oracle: &OracleSVI,
     min_strike: u64,
     max_strike: u64,
-    clock: &Clock,
 ): vector<CurvePoint> {
     let oracle_id = oracle.id();
     oracle_config.assert_build_curve(oracle_id, min_strike, max_strike);
@@ -159,33 +130,20 @@ public(package) fun build_curve(
         let settlement = oracle.settlement_price().destroy_some();
         let full_price = constants::float_scaling!();
 
-        if (settlement <= min_strike) {
-            return vector[new_curve_point(min_strike, 0, full_price)]
-        };
-
-        if (settlement > max_strike) {
-            return vector[new_curve_point(min_strike, full_price, 0)]
-        };
-
-        // This synthetic off-grid point makes the settled payoff a sharp step for
-        // interpolation; it is an evaluation artifact, not a tradeable strike.
-        return vector[
-            new_curve_point(settlement - 1, full_price, 0),
-            new_curve_point(settlement, 0, full_price),
-        ]
+        return vector[new_curve_point(settlement, full_price)]
     };
 
     // Single-strike edge case.
     if (min_strike == max_strike) {
-        let (up_price, dn_price) = oracle.binary_price_pair(min_strike, clock);
-        return vector[new_curve_point(min_strike, up_price, dn_price)]
+        let price = oracle.compute_price(min_strike);
+        return vector[new_curve_point(min_strike, price)]
     };
 
-    let (up_price_lo, dn_price_lo) = oracle.binary_price_pair(min_strike, clock);
-    let (up_price_hi, dn_price_hi) = oracle.binary_price_pair(max_strike, clock);
+    let price_lo = oracle.compute_price(min_strike);
+    let price_hi = oracle.compute_price(max_strike);
     let mut points = vector[
-        new_curve_point(min_strike, up_price_lo, dn_price_lo),
-        new_curve_point(max_strike, up_price_hi, dn_price_hi),
+        new_curve_point(min_strike, price_lo),
+        new_curve_point(max_strike, price_hi),
     ];
 
     let curve_samples = constants::default_curve_samples!();
@@ -198,8 +156,8 @@ public(package) fun build_curve(
         let strike_lo = points[idx].strike;
         let strike_hi = points[idx + 1].strike;
         let mid_strike = snap_to_tick((strike_lo + strike_hi) / 2, grid_min, grid_tick);
-        let (up_price_mid, dn_price_mid) = oracle.binary_price_pair(mid_strike, clock);
-        insert_asc(&mut points, new_curve_point(mid_strike, up_price_mid, dn_price_mid));
+        let price = oracle.compute_price(mid_strike);
+        insert_asc(&mut points, new_curve_point(mid_strike, price));
         cur_samples = cur_samples + 1;
     };
 
@@ -260,7 +218,7 @@ fun find_gap(points: &vector<CurvePoint>, grid_tick: u64): (bool, u64) {
         };
 
         // `points` is strike-sorted, and UP price is monotone non-increasing in strike.
-        let price_diff = lo.up_price - hi.up_price;
+        let price_diff = lo.price - hi.price;
         if (price_diff > best_price_diff) {
             best_idx = i;
             best_price_diff = price_diff;
