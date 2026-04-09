@@ -3,8 +3,8 @@
  * Update EnclaveConfig PCRs on-chain.
  *
  * Usage:
- *   npx tsx transactions/maker-incentives/enclave/update-pcrs.ts --network testnet --debug
- *   npx tsx transactions/maker-incentives/enclave/update-pcrs.ts --network testnet \
+ *   npx tsx transactions/maker-incentives/contract/update-pcrs.ts --network testnet --debug
+ *   npx tsx transactions/maker-incentives/contract/update-pcrs.ts --network testnet \
  *     --pcr0 abc123... --pcr1 abc123... --pcr2 def456...
  */
 

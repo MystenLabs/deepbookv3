@@ -23,10 +23,12 @@ use tracing::info;
 use deepbook_incentives::data_validation::{
     indexer_validation_for_epoch, validate_indexer_readiness, validate_pool_data,
 };
+use deepbook_incentives::pool_info::fetch_pool_metadata_from_node;
 use deepbook_incentives::scoring::compute_scores;
 use deepbook_incentives::types::{
     PoolDataResponse, ScoringConfig, INCENTIVE_EPOCH_DURATION_MS, INCENTIVE_WINDOW_DURATION_MS,
 };
+use deepbook_incentives::{compute_fund_loyalty_streak, fund_streak_to_loyalty_map};
 use deepbook_incentives::ServerDataValidationConfig;
 
 const DEEP_DECIMALS: f64 = 1_000_000.0;
@@ -80,6 +82,16 @@ struct Args {
 
     #[arg(long, default_value = "false")]
     skip_indexer_check: bool,
+
+    /// SUI full-node RPC URL for fetching pool metadata directly (bypasses
+    /// indexer `pools` table). Example: `https://fullnode.mainnet.sui.io:443`.
+    #[arg(long, env = "SUI_RPC_URL")]
+    sui_rpc_url: Option<String>,
+
+    /// Fund ID (for loyalty streak computation from on-chain events).
+    /// If not provided, loyalty streaks are not computed.
+    #[arg(long)]
+    fund_id: Option<String>,
 }
 
 fn now_ms() -> u64 {
@@ -160,7 +172,7 @@ async fn main() -> Result<()> {
     );
 
     info!("fetching {}", url);
-    let pool_data: PoolDataResponse = client
+    let mut pool_data: PoolDataResponse = client
         .get(&url)
         .send()
         .await?
@@ -176,7 +188,22 @@ async fn main() -> Result<()> {
     )
     .map_err(|e| anyhow::anyhow!(e))?;
 
-    // Pool metadata comes from the deepbook-server's pools table.
+    // Pool metadata comes from the deepbook-server's pools table, or from the
+    // SUI full node if --sui-rpc-url is provided and the indexer hasn't backfilled.
+    if pool_data.pool_metadata.is_none() {
+        if let Some(ref rpc_url) = args.sui_rpc_url {
+            match fetch_pool_metadata_from_node(&client, rpc_url, &args.pool_id).await {
+                Ok(meta) => {
+                    println!("  (pool metadata fetched from SUI full node)");
+                    pool_data.pool_metadata = Some(meta);
+                }
+                Err(e) => {
+                    eprintln!("WARNING: could not fetch pool metadata from full node: {e}");
+                }
+            }
+        }
+    }
+
     let (base_decimals, base_symbol, quote_decimals, quote_symbol) =
         if let Some(ref meta) = pool_data.pool_metadata {
             (meta.base_decimals, meta.base_symbol.clone(), meta.quote_decimals, meta.quote_symbol.clone())
@@ -254,13 +281,46 @@ async fn main() -> Result<()> {
         pool_data.stake_required
     };
 
+    // Loyalty streaks from on-chain events (only when --fund-id is provided).
+    let loyalty_map = if let Some(ref fund_id) = args.fund_id {
+        let fund_streak = compute_fund_loyalty_streak(
+            &client,
+            &args.server_url,
+            fund_id,
+            epoch_start,
+            INCENTIVE_EPOCH_DURATION_MS,
+        )
+        .await
+        .unwrap_or_else(|e| {
+            eprintln!("WARNING: loyalty streak query failed: {e}");
+            0
+        });
+
+        println!("── Loyalty (from on-chain events) ─────────────────────────────");
+        println!("  Fund:             {}", fund_id);
+        println!("  Fund-level streak: {} consecutive prior epochs", fund_streak);
+        println!("  Loyalty mult:      {:.1}x (cap 3)", ((fund_streak as f64) + 1.0).min(3.0));
+        println!();
+
+        let candidates: Vec<String> = pool_data
+            .order_events
+            .iter()
+            .map(|o| o.balance_manager_id.clone())
+            .collect::<std::collections::HashSet<_>>()
+            .into_iter()
+            .collect();
+        fund_streak_to_loyalty_map(&candidates, fund_streak)
+    } else {
+        std::collections::HashMap::new()
+    };
+
     let scores = compute_scores(
         &pool_data.order_events,
         &pool_data.fill_events,
         &config,
         stake_events,
         stake_required,
-        &std::collections::HashMap::new(),
+        &loyalty_map,
     );
 
     // 3. Print results.

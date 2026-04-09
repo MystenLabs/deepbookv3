@@ -290,11 +290,11 @@ echo "  Next steps (run from the scripts/ directory):"
 echo ""
 if $DEBUG_MODE; then
   echo "  1. Update on-chain PCRs (debug mode = all zeros):"
-  echo "     npx tsx enclave/update-pcrs.ts \\"
+  echo "     npx tsx contract/update-pcrs.ts \\"
   echo "       --network testnet --debug"
 else
   echo "  1. Update on-chain PCRs:"
-  echo "     npx tsx enclave/update-pcrs.ts \\"
+  echo "     npx tsx contract/update-pcrs.ts \\"
   echo "       --network mainnet \\"
   echo "       --pcr0 $PCR0 \\"
   echo "       --pcr1 $PCR1 \\"
@@ -302,7 +302,7 @@ else
 fi
 echo ""
 echo "  2. Register enclave on-chain:"
-echo "     npx tsx enclave/register-enclave.ts \\"
+echo "     npx tsx contract/register-enclave.ts \\"
 echo "       --network mainnet --enclave-url http://$EC2_HOST:3000"
 echo ""
 echo "  3. Create a fund:"

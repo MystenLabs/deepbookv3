@@ -161,7 +161,7 @@ step "Package: $PACKAGE_ID"
 # ══════════════════════════════════════════════════════════════
 log "STEP 3/8: Setting on-chain PCRs to debug (all zeros)"
 
-npx tsx transactions/maker-incentives/enclave/update-pcrs.ts \
+npx tsx transactions/maker-incentives/contract/update-pcrs.ts \
   --network "$NETWORK" --debug \
   || fail "PCR update failed"
 ok "PCRs set to debug mode"
@@ -252,7 +252,7 @@ fi
 # ══════════════════════════════════════════════════════════════
 log "STEP 5/8: Registering enclave on-chain"
 
-npx tsx transactions/maker-incentives/enclave/register-enclave.ts \
+npx tsx transactions/maker-incentives/contract/register-enclave.ts \
   --network "$NETWORK" \
   --enclave-url "$ENCLAVE_URL" \
   || fail "Enclave registration failed"
@@ -287,7 +287,7 @@ step "Fund: $FUND_ID"
 # ══════════════════════════════════════════════════════════════
 log "STEP 7/8: Submitting test epoch via enclave"
 
-npx tsx transactions/maker-incentives/epochs/submit-epoch.ts \
+npx tsx transactions/maker-incentives/contract/submit-epoch.ts \
   --network "$NETWORK" \
   --fund-id "$FUND_ID" \
   --enclave-url "$ENCLAVE_URL" \
@@ -344,7 +344,7 @@ echo "    $0 --host $EC2_HOST --key $SSH_KEY \\"
 echo "      --skip-deploy --skip-enclave --skip-swap"
 echo ""
 echo "  Submit another epoch manually:"
-echo "    npx tsx transactions/maker-incentives/epochs/submit-epoch.ts \\"
+echo "    npx tsx transactions/maker-incentives/contract/submit-epoch.ts \\"
 echo "      --network $NETWORK --fund-id $FUND_ID \\"
 echo "      --enclave-url $ENCLAVE_URL --test"
 echo ""

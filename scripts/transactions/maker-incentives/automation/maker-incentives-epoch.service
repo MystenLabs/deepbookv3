@@ -8,7 +8,7 @@ Type=oneshot
 User=ubuntu
 WorkingDirectory=/home/ubuntu/projects/leva/deepbookv3/scripts
 EnvironmentFile=/home/ubuntu/projects/leva/deepbookv3/scripts/transactions/maker-incentives/automation/epoch-submitter.env
-ExecStart=/usr/bin/npx tsx transactions/maker-incentives/epochs/submit-all-epochs.ts \
+ExecStart=/usr/bin/npx tsx transactions/maker-incentives/contract/submit-all-epochs.ts \
   --network ${NETWORK} \
   --enclave-url ${ENCLAVE_URL}
 TimeoutStartSec=300

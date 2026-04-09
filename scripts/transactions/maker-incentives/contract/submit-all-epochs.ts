@@ -9,10 +9,10 @@
  * daily cron AND as a one-off to recover missed days.
  *
  * Usage:
- *   npx tsx transactions/maker-incentives/epochs/submit-all-epochs.ts \
+ *   npx tsx transactions/maker-incentives/contract/submit-all-epochs.ts \
  *     --network testnet --indexer-url http://localhost:3000
  *
- *   npx tsx transactions/maker-incentives/epochs/submit-all-epochs.ts \
+ *   npx tsx transactions/maker-incentives/contract/submit-all-epochs.ts \
  *     --network testnet --indexer-url http://localhost:3000 --lookback-days 14
  *
  * Options:
@@ -171,7 +171,7 @@ async function main() {
   if (!INDEXER_URL) {
     console.error("Error: --indexer-url is required.");
     console.error(
-      "  npx tsx transactions/maker-incentives/epochs/submit-all-epochs.ts --network testnet --indexer-url http://localhost:3000",
+      "  npx tsx transactions/maker-incentives/contract/submit-all-epochs.ts --network testnet --indexer-url http://localhost:3000",
     );
     process.exit(1);
   }

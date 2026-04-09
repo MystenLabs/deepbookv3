@@ -8,7 +8,6 @@
 //! measurements. For local development, use the default (non-`nautilus`)
 //! build which generates a random keypair without NSM attestation.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -27,6 +26,7 @@ use tracing::info;
 use deepbook_incentives::data_validation::{
     indexer_validation_for_epoch, validate_indexer_readiness, validate_pool_data,
 };
+use deepbook_incentives::pool_info::fetch_pool_metadata_from_node;
 use deepbook_incentives::ServerDataValidationConfig;
 use deepbook_incentives::scoring::{compute_scores, loyalty_candidate_balance_managers};
 use deepbook_incentives::types::{
@@ -34,7 +34,9 @@ use deepbook_incentives::types::{
     MakerRewardEntry, PoolDataResponse, ScoringConfig, INCENTIVE_EPOCH_DURATION_MS,
     INCENTIVE_WINDOW_DURATION_MS,
 };
-use deepbook_incentives::{AppState, IncentiveError};
+use deepbook_incentives::{
+    compute_fund_loyalty_streak, fund_streak_to_loyalty_map, AppState, IncentiveError,
+};
 
 const INCENTIVE_INTENT: u8 = 1;
 const SCORE_SCALE: f64 = 1_000_000_000.0;
@@ -74,6 +76,11 @@ struct Args {
     /// Skip `GET /status` before scoring (local testing only).
     #[arg(long, env = "DEEPBOOK_INCENTIVE_SKIP_INDEXER_CHECK", default_value = "false")]
     skip_indexer_check: bool,
+
+    /// SUI full-node RPC URL for fetching pool metadata directly (bypasses
+    /// indexer `pools` table). Example: `https://fullnode.mainnet.sui.io:443`.
+    #[arg(long, env = "SUI_RPC_URL")]
+    sui_rpc_url: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -187,7 +194,7 @@ async fn process_data(
         state.server_url, req.pool_id, req.epoch_start_ms, req.epoch_end_ms,
     );
 
-    let pool_data: PoolDataResponse = client
+    let mut pool_data: PoolDataResponse = client
         .get(&url)
         .send()
         .await
@@ -204,6 +211,25 @@ async fn process_data(
     )
     .map_err(|e| IncentiveError::Internal(e.to_string()))?;
 
+    // If a SUI RPC URL is configured, fetch pool metadata directly from the
+    // full node so we don't depend on the indexer's `pools` table.
+    if let Some(ref rpc_url) = state.sui_rpc_url {
+        if pool_data.pool_metadata.is_none() {
+            match fetch_pool_metadata_from_node(&client, rpc_url, &req.pool_id).await {
+                Ok(meta) => {
+                    info!(
+                        base = %meta.base_symbol, quote = %meta.quote_symbol,
+                        "fetched pool metadata from SUI full node"
+                    );
+                    pool_data.pool_metadata = Some(meta);
+                }
+                Err(e) => {
+                    info!("could not fetch pool metadata from full node: {e}");
+                }
+            }
+        }
+    }
+
     info!(
         orders = pool_data.order_events.len(),
         fills = pool_data.fill_events.len(),
@@ -215,43 +241,40 @@ async fn process_data(
         "fetched pool data"
     );
 
-    // 1b. Prior-epoch loyalty streaks (consecutive scored epochs before this one).
+    // 1b. Loyalty streak from on-chain EpochResultsSubmitted events.
+    //
+    // Count consecutive prior epochs where the indexer has an on-chain
+    // submission event for this fund. This is non-gameable because the
+    // data comes from indexed Move events, not a writable DB table.
     let candidates = loyalty_candidate_balance_managers(
         &pool_data.order_events,
         &pool_data.stake_events,
         pool_data.stake_required,
     );
-    let loyalty_url = format!("{}/incentives/maker_loyalty_streaks", state.server_url);
-    let loyalty_prior: HashMap<String, u32> = if !candidates.is_empty() {
-        let body = serde_json::json!({
-            "fund_id": req.fund_id,
-            "epoch_start_ms": req.epoch_start_ms as i64,
-            "balance_manager_ids": candidates,
-        });
-        match client.post(&loyalty_url).json(&body).send().await {
-            Ok(resp) if resp.status().is_success() => resp
-                .json::<serde_json::Value>()
-                .await
-                .ok()
-                .and_then(|v| v.get("streaks").cloned())
-                .and_then(|s| serde_json::from_value::<HashMap<String, u32>>(s).ok())
-                .unwrap_or_default(),
-            Ok(resp) => {
-                let status = resp.status();
-                let text = resp.text().await.unwrap_or_default();
-                return Err(IncentiveError::Internal(format!(
-                    "loyalty streaks request failed: {status} {text}"
-                )));
-            }
-            Err(e) => {
-                return Err(IncentiveError::Internal(format!(
-                    "loyalty streaks request error: {e}"
-                )));
-            }
-        }
+
+    let epoch_duration_ms = if req.epoch_duration_ms > 0 {
+        req.epoch_duration_ms
     } else {
-        HashMap::new()
+        INCENTIVE_EPOCH_DURATION_MS
     };
+
+    let fund_streak = compute_fund_loyalty_streak(
+        &client,
+        &state.server_url,
+        &req.fund_id,
+        req.epoch_start_ms,
+        epoch_duration_ms,
+    )
+    .await
+    .map_err(|e| IncentiveError::Internal(e))?;
+
+    let loyalty_prior = fund_streak_to_loyalty_map(&candidates, fund_streak);
+
+    info!(
+        fund_streak,
+        num_candidates = candidates.len(),
+        "loyalty streak computed from on-chain events"
+    );
 
     // 2. Run scoring.
     let alpha = req.alpha_bps as f64 / 10_000.0;
@@ -325,6 +348,7 @@ async fn process_data(
     Ok(Json(IncentiveResponse {
         response: intent_msg,
         signature: sig_hex,
+        pool_health: None,
     }))
 }
 
@@ -396,6 +420,7 @@ async fn test_process_data(
     Ok(Json(IncentiveResponse {
         response: intent_msg,
         signature: sig_hex,
+        pool_health: None,
     }))
 }
 
@@ -433,6 +458,7 @@ async fn main() -> Result<()> {
         server_url: args.server_url,
         indexer_validation,
         skip_indexer_check: args.skip_indexer_check,
+        sui_rpc_url: args.sui_rpc_url,
     });
 
     let cors = CorsLayer::new()

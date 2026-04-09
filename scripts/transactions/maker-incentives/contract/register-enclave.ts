@@ -3,7 +3,7 @@
  * Register the Nautilus enclave on-chain.
  *
  * Usage:
- *   npx tsx transactions/maker-incentives/enclave/register-enclave.ts --network testnet --enclave-url http://<ip>:3000
+ *   npx tsx transactions/maker-incentives/contract/register-enclave.ts --network testnet --enclave-url http://<ip>:3000
  */
 
 import { readFileSync, writeFileSync } from "fs";

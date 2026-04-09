@@ -1005,16 +1005,16 @@ deepbookv3/
     │   ├── deploy.ts                     # Deploy Move package → deployed.<network>.json
     │   ├── create-fund.ts                # Create IncentiveFund (permissionless) + fund
     │   └── swap-sui-for-deep.ts          # Swap SUI for DEEP tokens
-    ├── enclave/
+    ├── contract/
+    │   ├── submit-epoch.ts               # Score + submit one epoch
+    │   ├── submit-all-epochs.ts          # Submit all funds, auto-backfills gaps
     │   ├── register-enclave.ts           # Register enclave on-chain
-    │   ├── update-pcrs.ts                # Update EnclaveConfig PCRs
+    │   └── update-pcrs.ts                # Update EnclaveConfig PCRs
+    ├── enclave/
     │   ├── create-enclave-ec2.sh         # Spin up EC2 instance
     │   ├── setup-ec2.sh                  # Configure EC2 deps
     │   ├── provision-enclave.sh          # Build & start enclave
     │   └── upgrade-enclave.sh            # Full enclave upgrade orchestrator
-    ├── epochs/
-    │   ├── submit-epoch.ts               # Score + submit one epoch
-    │   └── submit-all-epochs.ts          # Submit all funds, auto-backfills gaps
     ├── test/
     │   ├── e2e-test.sh                   # End-to-end test
     │   └── setup-testnet-data.sh         # Bootstrap testnet data

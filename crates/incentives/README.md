@@ -205,6 +205,62 @@ SUI/USDC pool on mainnet requires 100,000 DEEP staked.
 Note: regardless of `alpha`, `spread_factor` is capped at `MAX_SPREAD_FACTOR`
 (10×) so no single maker can dominate purely via an extremely tight spread.
 
+## Data Validation
+
+Before scoring begins, two layers of validation run to ensure the input data
+is complete and trustworthy. Both are implemented in `data_validation.rs`.
+
+### 1. Indexer Readiness (`validate_indexer_readiness`)
+
+Queries the deepbook-server `GET /status` endpoint (sui-indexer-alt style) and
+enforces that the indexer has fully ingested the epoch being scored.
+
+| Check | Fails when |
+| --- | --- |
+| **HTTP health** | `/status` returns a non-2xx response or unparseable JSON |
+| **Top-level status** | `/status` reports anything other than `"OK"` (checkpoint or time lag exceeded) |
+| **Required pipelines exist** | A pipeline listed in `required_pipelines` is missing or is a backfill pipeline |
+| **Per-pipeline checkpoint lag** | A required pipeline's `checkpoint_lag` exceeds `max_checkpoint_lag` (default 100) |
+| **Per-pipeline time lag** | A required pipeline's `time_lag_seconds` exceeds `max_time_lag_seconds` (default 60) |
+| **Timestamp coverage** | A required pipeline's `indexed_timestamp_ms` is below the epoch end time, meaning the indexer hasn't ingested all events in the epoch |
+| **Configuration consistency** | `min_indexed_timestamp_ms` is set but `required_pipelines` is empty (ambiguous config) |
+
+When `required_pipelines` is configured and no explicit
+`min_indexed_timestamp_ms` is provided, `indexer_validation_for_epoch`
+automatically sets the minimum to the epoch end timestamp so all required
+pipelines must have indexed up to or past the epoch boundary.
+
+### 2. Pool Data Structural Checks (`validate_pool_data`)
+
+Validates the decoded `PoolDataResponse` JSON payload before it enters the
+scoring pipeline. Every event row is checked individually.
+
+**Epoch range**
+- `epoch_start_ms` must be strictly less than `epoch_end_ms`.
+
+**Pool metadata** (when present)
+- `base_symbol` and `quote_symbol` must be non-empty.
+
+**Order events** — each row must satisfy:
+- `pool_id` matches the expected pool.
+- `order_id` is non-empty.
+- `balance_manager_id` is non-empty.
+- `checkpoint_timestamp_ms` falls within `[epoch_start_ms, epoch_end_ms]`.
+- `original_quantity` and `quantity` are non-negative.
+
+**Fill events** — each row must satisfy:
+- `pool_id` matches the expected pool.
+- `maker_order_id` is non-empty.
+- `checkpoint_timestamp_ms` falls within `[epoch_start_ms, epoch_end_ms]`.
+- `base_quantity` and `quote_quantity` are strictly positive.
+
+**Stake events** — each row must satisfy:
+- `balance_manager_id` is non-empty.
+- `amount` is strictly positive.
+
+**Global**
+- `stake_required` must be non-negative.
+
 ## Testing
 
 ```bash
