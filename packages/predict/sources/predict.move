@@ -194,7 +194,7 @@ public fun get_trade_amounts(
     if (!oracle.is_settled()) {
         oracle_config::assert_operational_oracle(oracle, clock);
     };
-    
+
     let up_price = oracle.compute_price(key.strike());
     if (oracle.is_settled()) {
         let fair_price = if (key.is_up()) {
