@@ -29,6 +29,10 @@ public struct StrikeMatrix2 has store {
 public struct StrikeNode has copy, drop, store {
     q_up: u64,
     q_dn: u64,
+    agg_q_up: u64,
+    agg_qk_up: u64,
+    agg_q_dn: u64,
+    agg_qk_dn: u64,
 }
 
 /// Aggregate summary for one page or one internal page-range node.
@@ -85,16 +89,21 @@ public(package) fun new(
 
 public(package) fun insert(matrix: &mut StrikeMatrix2, strike: u64, qty: u64, is_up: bool) {
     let (page_index, slot) = validate_strike_coords(matrix, strike);
-    insert_qty(matrix, page_index, slot, strike, qty, is_up);
-    recompute_page_summary(matrix, page_index);
+    apply_delta_and_recompute_page(matrix, page_index, slot, strike, qty, is_up, true);
+    matrix.minted_min_strike = matrix.minted_min_strike.min(strike);
+    matrix.minted_max_strike = matrix.minted_max_strike.max(strike);
     recompute_page_tree_path(matrix, page_index);
 }
 
 public(package) fun remove(matrix: &mut StrikeMatrix2, strike: u64, qty: u64, is_up: bool) {
     let (page_index, slot) = validate_strike_coords(matrix, strike);
-    remove_qty(matrix, page_index, slot, qty, is_up);
-    recompute_page_summary(matrix, page_index);
+    apply_delta_and_recompute_page(matrix, page_index, slot, strike, qty, is_up, false);
     recompute_page_tree_path(matrix, page_index);
+}
+
+public(package) fun max_payout(matrix: &StrikeMatrix2): u64 {
+    let root = matrix.page_tree[0];
+    root.total_q_dn + root.best_prefix_up - root.best_prefix_dn
 }
 
 fun validate_strike_coords(matrix: &StrikeMatrix2, strike: u64): (u64, u64) {
@@ -109,81 +118,91 @@ fun validate_strike_coords(matrix: &StrikeMatrix2, strike: u64): (u64, u64) {
     (page_index, slot)
 }
 
-fun recompute_page_summary(matrix: &mut StrikeMatrix2, page_index: u64) {
-    let page = matrix.pages.borrow(page_index);
-    let mut summary = empty_summary();
-    let mut prefix_up = 0;
-    let mut prefix_dn = 0;
-
-    let mut slot_index = 0;
-    while (slot_index < PAGE_SLOTS) {
-        let node = &page[slot_index];
-        let strike = matrix.min_strike + (page_index * PAGE_SLOTS + slot_index) * matrix.tick_size;
-
-        summary.total_q_up = summary.total_q_up + node.q_up;
-        summary.total_qk_up = summary.total_qk_up + math::mul(node.q_up, strike);
-        summary.total_q_dn = summary.total_q_dn + node.q_dn;
-        summary.total_qk_dn = summary.total_qk_dn + math::mul(node.q_dn, strike);
-
-        prefix_up = prefix_up + node.q_up;
-        prefix_dn = prefix_dn + node.q_dn;
-        if (
-            prefix_is_better(
-                prefix_up,
-                prefix_dn,
-                summary.best_prefix_up,
-                summary.best_prefix_dn,
-            )
-        ) {
-            summary.best_prefix_up = prefix_up;
-            summary.best_prefix_dn = prefix_dn;
-        };
-
-        slot_index = slot_index + 1;
-    };
-
-    let tree_index = matrix.page_tree_leaf_count - 1 + page_index;
-    *(&mut matrix.page_tree[tree_index]) = summary;
-}
-
-fun insert_qty(
+fun apply_delta_and_recompute_page(
     matrix: &mut StrikeMatrix2,
     page_index: u64,
     slot_index: u64,
     strike: u64,
     qty: u64,
     is_up: bool,
+    add: bool,
 ) {
-    let page = matrix.pages.borrow_mut(page_index);
-    let node = &mut page[slot_index];
+    let min_strike = matrix.min_strike;
+    let tick_size = matrix.tick_size;
+    let tree_index = matrix.page_tree_leaf_count - 1 + page_index;
+    let delta_qk = math::mul(qty, strike);
+    let mut summary = empty_summary();
+    let mut prefix_up = 0;
+    let mut prefix_dn = 0;
 
-    if (is_up) {
-        node.q_up = node.q_up + qty;
-    } else {
-        node.q_dn = node.q_dn + qty;
+    {
+        let page = matrix.pages.borrow_mut(page_index);
+        let mut i = 0;
+        while (i < PAGE_SLOTS) {
+            let node = &mut page[i];
+            if (i == slot_index) {
+                if (is_up) {
+                    if (add) {
+                        node.q_up = node.q_up + qty;
+                    } else {
+                        assert!(node.q_up >= qty, EInsufficientQuantity);
+                        node.q_up = node.q_up - qty;
+                    };
+                } else {
+                    if (add) {
+                        node.q_dn = node.q_dn + qty;
+                    } else {
+                        assert!(node.q_dn >= qty, EInsufficientQuantity);
+                        node.q_dn = node.q_dn - qty;
+                    };
+                };
+            };
+
+            if (is_up && i >= slot_index) {
+                if (add) {
+                    node.agg_q_up = node.agg_q_up + qty;
+                    node.agg_qk_up = node.agg_qk_up + delta_qk;
+                } else {
+                    node.agg_q_up = node.agg_q_up - qty;
+                    node.agg_qk_up = node.agg_qk_up - delta_qk;
+                };
+            };
+
+            if (!is_up && i <= slot_index) {
+                if (add) {
+                    node.agg_q_dn = node.agg_q_dn + qty;
+                    node.agg_qk_dn = node.agg_qk_dn + delta_qk;
+                } else {
+                    node.agg_q_dn = node.agg_q_dn - qty;
+                    node.agg_qk_dn = node.agg_qk_dn - delta_qk;
+                };
+            };
+
+            let slot_strike = min_strike + (page_index * PAGE_SLOTS + i) * tick_size;
+            summary.total_q_up = summary.total_q_up + node.q_up;
+            summary.total_qk_up = summary.total_qk_up + math::mul(node.q_up, slot_strike);
+            summary.total_q_dn = summary.total_q_dn + node.q_dn;
+            summary.total_qk_dn = summary.total_qk_dn + math::mul(node.q_dn, slot_strike);
+
+            prefix_up = prefix_up + node.q_up;
+            prefix_dn = prefix_dn + node.q_dn;
+            if (
+                prefix_is_better(
+                    prefix_up,
+                    prefix_dn,
+                    summary.best_prefix_up,
+                    summary.best_prefix_dn,
+                )
+            ) {
+                summary.best_prefix_up = prefix_up;
+                summary.best_prefix_dn = prefix_dn;
+            };
+
+            i = i + 1;
+        };
     };
 
-    matrix.minted_min_strike = matrix.minted_min_strike.min(strike);
-    matrix.minted_max_strike = matrix.minted_max_strike.max(strike);
-}
-
-fun remove_qty(
-    matrix: &mut StrikeMatrix2,
-    page_index: u64,
-    slot_index: u64,
-    qty: u64,
-    is_up: bool,
-) {
-    let page = matrix.pages.borrow_mut(page_index);
-    let node = &mut page[slot_index];
-
-    if (is_up) {
-        assert!(node.q_up >= qty, EInsufficientQuantity);
-        node.q_up = node.q_up - qty;
-    } else {
-        assert!(node.q_dn >= qty, EInsufficientQuantity);
-        node.q_dn = node.q_dn - qty;
-    };
+    *(&mut matrix.page_tree[tree_index]) = summary;
 }
 
 fun recompute_page_tree_path(matrix: &mut StrikeMatrix2, page_index: u64) {
@@ -204,6 +223,10 @@ fun empty_page(): vector<StrikeNode> {
     let empty = StrikeNode {
         q_up: 0,
         q_dn: 0,
+        agg_q_up: 0,
+        agg_qk_up: 0,
+        agg_q_dn: 0,
+        agg_qk_dn: 0,
     };
     vector::tabulate!(PAGE_SLOTS, |_| empty)
 }
