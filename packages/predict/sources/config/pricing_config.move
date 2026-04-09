@@ -9,6 +9,7 @@ use deepbook_predict::{constants, math as predict_math};
 
 // === Errors ===
 const EInvalidSpread: u64 = 0;
+const EFairPriceAlreadySettled: u64 = 1;
 
 // === Structs ===
 
@@ -69,6 +70,7 @@ public(package) fun quote_spread_from_fair_price(
     liability: u64,
     balance: u64,
 ): u64 {
+    assert!(fair_price > 0 && fair_price < constants::float_scaling!(), EFairPriceAlreadySettled);
     let complement = constants::float_scaling!() - fair_price;
     let variance = math::mul(fair_price, complement);
     let bernoulli_factor = predict_math::sqrt(variance, constants::float_scaling!());
