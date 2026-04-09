@@ -3,7 +3,7 @@
  * Register the Nautilus enclave on-chain.
  *
  * Usage:
- *   npx tsx transactions/maker-incentives/register-enclave.ts --network testnet --enclave-url http://<ip>:3000
+ *   npx tsx transactions/maker-incentives/enclave/register-enclave.ts --network testnet --enclave-url http://<ip>:3000
  */
 
 import { readFileSync, writeFileSync } from "fs";
@@ -11,7 +11,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { Transaction } from "@mysten/sui/transactions";
-import { getClient, getSigner, getActiveAddress } from "./sui-helpers.js";
+import { getClient, getSigner, getActiveAddress } from "../lib/sui-helpers.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -26,7 +26,7 @@ const { values: args } = parseArgs({
 });
 
 const NETWORK = args.network as "mainnet" | "testnet";
-const CONFIG_FILE = path.resolve(__dirname, `deployed.${NETWORK}.json`);
+const CONFIG_FILE = path.resolve(__dirname, '..', `deployed.${NETWORK}.json`);
 const ENCLAVE_URL = args["enclave-url"]!;
 
 const CLOCK_ID = "0x6";

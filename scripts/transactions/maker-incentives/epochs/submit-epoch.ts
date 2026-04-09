@@ -16,9 +16,8 @@
  *   --network, -n       testnet | mainnet                          (default: testnet)
  *   --fund-id, -f       IncentiveFund object address                (required)
  *   --enclave-url       URL of the incentives server                (default: http://localhost:3000)
+ *   --server-url        DeepBook indexer HTTP API (loyalty + participation) (default: env DEEPBOOK_SERVER_URL or http://localhost:8080)
  *   --test              Use /test_process_data endpoint (dummy)     (default: false)
- *   --alpha             spread exponent as float                    (default: 0.5)
- *   --window-duration   scoring window size in ms                   (default: 3600000 = 1h)
  *   --epoch-start       explicit start timestamp in ms              (default: yesterday midnight UTC)
  *   --epoch-end         explicit end timestamp in ms                (default: today midnight UTC)
  *
@@ -31,7 +30,29 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { Transaction } from "@mysten/sui/transactions";
-import { getClient, getSigner, getActiveAddress } from "./sui-helpers.js";
+import { getClient, getSigner } from "../lib/sui-helpers.js";
+
+/** Must match on-chain `maker_incentives::EPOCH_DURATION_MS` (24h). */
+const EPOCH_DURATION_MS = 86_400_000;
+
+async function readIncentiveFundOnChain(
+  client: ReturnType<typeof getClient>,
+  fundId: string
+) {
+  const res = await client.getObject({
+    id: fundId,
+    options: { showContent: true },
+  });
+  const c = res.data?.content;
+  if (!c || !("fields" in c)) {
+    throw new Error(`Could not load IncentiveFund object ${fundId}`);
+  }
+  const fields = c.fields as Record<string, unknown>;
+  return {
+    alpha_bps: BigInt(String(fields.alpha_bps ?? 0)),
+    quality_p: BigInt(String(fields.quality_p ?? 3)),
+  };
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -56,9 +77,8 @@ const { values: args } = parseArgs({
     network: { type: "string", short: "n", default: "testnet" },
     "fund-id": { type: "string", short: "f" },
     "enclave-url": { type: "string", default: "http://localhost:3000" },
+    "server-url": { type: "string" },
     test: { type: "boolean", default: false },
-    alpha: { type: "string", default: "0.5" },
-    "window-duration": { type: "string", default: "3600000" },
     "epoch-start": { type: "string", default: String(defaults.start) },
     "epoch-end": { type: "string", default: String(defaults.end) },
   },
@@ -67,8 +87,12 @@ const { values: args } = parseArgs({
 });
 
 const NETWORK = args.network as "mainnet" | "testnet";
-const CONFIG_FILE = path.resolve(__dirname, `deployed.${NETWORK}.json`);
+const CONFIG_FILE = path.resolve(__dirname, '..', `deployed.${NETWORK}.json`);
 const ENCLAVE_URL = args["enclave-url"]!;
+const SERVER_URL =
+  args["server-url"] ??
+  process.env.DEEPBOOK_SERVER_URL ??
+  "http://localhost:8080";
 
 function log(step: string, msg: string) {
   const ts = new Date().toISOString().split("T")[1].split(".")[0];
@@ -87,8 +111,12 @@ async function main() {
 
   const epochStartMs = Number(args["epoch-start"]);
   const epochEndMs = Number(args["epoch-end"]);
-  const alpha = Number(args.alpha);
-  const windowDurationMs = Number(args["window-duration"]);
+  if (epochEndMs - epochStartMs !== EPOCH_DURATION_MS) {
+    console.error(
+      `Error: epoch must span exactly ${EPOCH_DURATION_MS} ms (24h). Got ${epochEndMs - epochStartMs} ms.`
+    );
+    process.exit(1);
+  }
 
   console.log("\n" + "=".repeat(60));
   console.log("  MAKER INCENTIVES — SUBMIT EPOCH");
@@ -108,15 +136,21 @@ async function main() {
 
   const poolId = fundConfig.poolId;
 
+  const onChainFund = await readIncentiveFundOnChain(client, fundId);
+  const alphaBps = onChainFund.alpha_bps;
+  const qualityP = onChainFund.quality_p;
+
   console.log(`  Network:        ${NETWORK}`);
   console.log(`  Enclave:        ${ENCLAVE_URL}`);
+  console.log(`  Indexer API:    ${SERVER_URL}`);
   console.log(`  Fund:           ${fundId}`);
   console.log(`  Pool:           ${poolId}`);
   console.log(
     `  Epoch:          ${new Date(epochStartMs).toISOString()} -> ${new Date(epochEndMs).toISOString()}`
   );
-  console.log(`  Alpha:          ${alpha}`);
-  console.log(`  Window:         ${windowDurationMs / 60_000}min`);
+  console.log(`  Alpha (bps):    ${alphaBps}`);
+  console.log(`  Quality p:      ${qualityP}`);
+  console.log(`  Epoch / window: 24h / 1h (fixed)`);
   console.log();
 
   // Step 1: Call enclave to compute scores.
@@ -128,8 +162,8 @@ async function main() {
       fund_id: fundId,
       epoch_start_ms: epochStartMs,
       epoch_end_ms: epochEndMs,
-      alpha,
-      window_duration_ms: windowDurationMs,
+      alpha_bps: Number(alphaBps),
+      quality_p: Number(qualityP),
     },
   };
 
@@ -156,6 +190,8 @@ async function main() {
         epoch_start_ms: number;
         epoch_end_ms: number;
         total_score: number;
+        alpha_bps?: number;
+        quality_p?: number;
         maker_rewards: Array<{
           balance_manager_id: number[];
           score: number;
@@ -167,6 +203,8 @@ async function main() {
         epoch_start_ms: number;
         epoch_end_ms: number;
         total_score: number;
+        alpha_bps?: number;
+        quality_p?: number;
         maker_rewards: Array<{
           balance_manager_id: number[];
           score: number;
@@ -215,11 +253,16 @@ async function main() {
     sigHex.match(/.{1,2}/g)!.map((byte) => parseInt(byte, 16))
   );
 
+  // Sui shared Clock (0x6) — required so the contract can apply delayed param updates.
+  const SUI_CLOCK_ID =
+    "0x0000000000000000000000000000000000000000000000000000000000000006";
+
   tx.moveCall({
     target: `${config.packageId}::maker_incentives::submit_epoch_results`,
     arguments: [
       tx.object(fundId),
       tx.object(config.enclaveObjectId),
+      tx.object(SUI_CLOCK_ID),
       tx.pure.u64(payload.epoch_start_ms),
       tx.pure.u64(payload.epoch_end_ms),
       tx.pure.u64(payload.total_score),
@@ -248,6 +291,40 @@ async function main() {
 
   log("SUBMIT", `Tx: ${result.digest}`);
   await client.waitForTransaction({ digest: result.digest });
+
+  // Record makers for loyalty streaks on the next epoch (best-effort).
+  const makerAddresses = payload.maker_rewards.map((entry) => {
+    const hex =
+      "0x" +
+      Array.from(entry.balance_manager_id)
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+    return hex;
+  });
+  try {
+    const rec = await fetch(
+      `${SERVER_URL.replace(/\/$/, "")}/incentives/record_maker_participation`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fund_id: fundId,
+          epoch_start_ms: payload.epoch_start_ms,
+          balance_manager_ids: makerAddresses,
+        }),
+      }
+    );
+    if (rec.ok) {
+      log("INDEXER", "Recorded maker participation for loyalty streaks.");
+    } else {
+      log(
+        "INDEXER",
+        `record_maker_participation returned ${rec.status} (loyalty may be stale until fixed).`
+      );
+    }
+  } catch (e) {
+    log("INDEXER", `record_maker_participation failed: ${e}`);
+  }
 
   const epochRecordId =
     (

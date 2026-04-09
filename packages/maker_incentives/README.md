@@ -7,7 +7,6 @@ on-chain via cryptographic attestation. Payouts are in DEEP tokens.
 ## Table of Contents
 
 - [How the Formula Works](#how-the-formula-works)
-- [Eligibility (Stake Requirement)](#eligibility-stake-requirement)
 - [Architecture](#architecture)
 - [Infrastructure & Provisioning](#infrastructure--provisioning)
 - [Contract Deployment](#contract-deployment)
@@ -15,8 +14,10 @@ on-chain via cryptographic attestation. Payouts are in DEEP tokens.
 - [Development Workflow](#development-workflow)
 - [Scoring & Epoch Submission](#scoring--epoch-submission)
 - [Reviewing Results](#reviewing-results)
+- [Pool Health Metrics (Fund Creator ROI)](#pool-health-metrics-fund-creator-roi)
 - [Claiming Rewards](#claiming-rewards)
-- [Backfilling Missed Epochs](#backfilling-missed-epochs)
+- [Treasury withdrawal (fund owner)](#treasury-withdrawal-fund-owner)
+- [Scoring parameter timelock (fund owner)](#scoring-parameter-timelock-fund-owner)
 - [Operations](#operations)
 - [View Functions & Payout Estimation](#view-functions--payout-estimation)
 - [Configuration Reference](#configuration-reference)
@@ -65,7 +66,7 @@ simple — one token to track, one token to claim across all funds.
 |------|-----|-------------|
 | **Protocol operator** | Deployer | Manages enclave infrastructure (PCRs, registration) |
 | **Fund creator** | Anyone | Creates + funds an `IncentiveFund`, sets params |
-| **Fund owner** | Holds `FundOwnerCap` | Updates fund params, toggles active/inactive |
+| **Fund owner** | Holds `FundOwnerCap` | Schedules scoring-param changes (timelocked), toggles active/inactive, withdraws excess treasury |
 | **Relayer** | Anyone | Calls `submit_epoch_results` with enclave-signed scores |
 | **Maker** | Anyone | Provides liquidity on DeepBook, claims rewards |
 
@@ -73,133 +74,17 @@ simple — one token to track, one token to claim across all funds.
 
 ## How the Formula Works
 
-The incentive formula rewards makers who provide the most concentrated,
-two-sided liquidity during the busiest trading periods. There are four properties
-being measured:
+See [`crates/incentives/README.md`](../../crates/incentives/README.md) for the
+full scoring algorithm documentation, including:
 
-| Property     | What it measures                                            |
-| ------------ | ----------------------------------------------------------- |
-| **Quantity** | How much two-sided depth is being quoted                    |
-| **Position** | How tight the spread is relative to the pool's typical spread |
-| **Duration** | How long the orders have been resting                       |
-| **Activity** | How much trade demand existed while the maker was present   |
-
-### Per-Maker, Per-Window Score
-
-Each epoch (default 24h) is divided into hourly windows. Within each window,
-every maker's resting book state is reconstructed from the `order_updates` and
-`order_fills` database tables.
-
-**Effective size** — geometric mean of bid and ask depth. Penalises one-sided
-quoting (e.g. $1 asks with $10k bids score near zero):
-
-```
-effective_size = sqrt( avg_bid_quantity × avg_ask_quantity )
-```
-
-**Spread factor** — rewards makers who quote tighter than the pool median. The
-pool-wide median is weighted by each maker's effective size so dust placements
-can't distort it. `alpha` (default 0.5) controls how aggressively tight spreads
-are rewarded:
-
-```
-maker_spread       = size-weighted average spread across all the maker's resting orders
-pool_median_spread = effective-size-weighted median of all makers' spreads in this window
-
-spread_factor = (pool_median_spread / maker_spread) ^ alpha
-```
-
-**Time fraction** — rewards continuous presence. Active duration is the union
-of all intervals where the maker had at least one resting order (no double-
-counting for multiple simultaneous orders):
-
-```
-time_fraction = active_duration / window_duration
-```
-
-The per-maker per-window score combines all three:
-
-```
-maker_window_score = effective_size × spread_factor × time_fraction
-```
-
-### Window Weighting
-
-Windows with more trading activity are worth more, incentivising makers to stay
-present during busy times. A floor ensures credit even in quiet hours:
-
-```
-floor = 1 / (2 × num_windows)
-window_weight = max( window_volume / total_epoch_volume, floor )
-```
-
-### Epoch Aggregation
-
-```
-maker_epoch_score = Σ (maker_window_score × window_weight)   across all windows
-maker_share       = maker_epoch_score / Σ all_maker_epoch_scores
-payout            = pool_allocation × maker_share
-```
-
-### Multi-Layer Quoting
-
-Makers who quote at multiple price levels are handled correctly:
-
-- Quantities across all bid (or ask) orders **sum** into total bid/ask depth
-- Spread is a **size-weighted average** across all price levels
-- Active duration uses **interval merging** — overlapping orders don't inflate
-  the time fraction
-- Fills are joined by `maker_order_id`, so a fill on one layer only reduces that
-  order's quantity
-
-### Order Lifecycle Reconstruction
-
-Each order's full lifecycle is reconstructed by merging two database tables:
-
-1. **`order_updates`** — `Placed`, `Modified`, `Canceled`, `Expired` events with
-   the remaining quantity after each event
-2. **`order_fills`** — fill events joined to the maker's order via
-   `maker_order_id`, each reducing the resting quantity
-
-The merged timeline gives the exact resting quantity at every point in time. No
-sampling or approximation — the time-weighted metrics are computed directly from
-the event stream.
-
----
-
-## Eligibility (Stake Requirement)
-
-Not every maker with resting orders gets scored. To be eligible for maker
-incentives in a pool, a maker must meet the **same stake requirement** that
-DeepBook uses for its volume-based maker rebate system. For example, the
-SUI/USDC pool on mainnet requires 100,000 DEEP staked.
-
-### How it works
-
-1. A maker calls `pool::stake()` on a DeepBook pool, locking DEEP against their
-   `BalanceManager`. This is the same action used for volume-based rebate
-   eligibility — no separate registration needed.
-2. The DeepBook indexer records `StakeEvent`s in the `stakes` database table
-   with `balance_manager_id`, `amount`, `pool_id`, and whether it was a stake
-   or unstake.
-3. The pool's `stake_required` threshold is fetched from the `trade_params_update`
-   table (set by pool governance).
-4. When the enclave computes scores, it fetches all stake events for the pool
-   up to the epoch end time and computes the net stake per maker
-   (`Σ stakes - Σ unstakes`).
-5. Only makers with **net stake >= stake_required** have their orders scored.
-   Makers below the threshold are excluded entirely — their orders are filtered
-   out before lifecycle reconstruction.
-
-### Edge cases
-
-- A maker who stakes then fully unstakes before the epoch ends gets excluded.
-- A maker who stakes mid-epoch is still eligible — the stake check is
-  cumulative up to epoch end, not per-window.
-- If no stake data exists (e.g. the `stakes` table is empty for the pool),
-  all makers are scored (backwards-compatible fallback).
-- If `stake_required` is 0 in the governance params, any positive net stake
-  qualifies.
+- Per-maker, per-window score computation (effective size, spread factor, time
+  fraction, loyalty multiplier)
+- Window weighting by fill volume
+- Epoch aggregation and payout calculation
+- Multi-layer quoting handling
+- Order lifecycle reconstruction from event streams
+- Eligibility and stake requirements
+- Scoring constants and tuning guide
 
 ---
 
@@ -391,7 +276,7 @@ The new `IncentiveFund` object ID and `FundOwnerCap` ID are saved to
 | Object | Type | Ownership | Purpose |
 |--------|------|-----------|---------|
 | **IncentiveFund** | `IncentiveFund` | Shared | Per-fund config (reward amount, alpha, durations) + DEEP treasury + submitted epoch tracking |
-| **FundOwnerCap** | `FundOwnerCap` | Owned by fund creator | Management rights: update params, toggle active/inactive. Transferable. |
+| **FundOwnerCap** | `FundOwnerCap` | Owned by fund creator | Management rights: schedule/cancel timelocked scoring params, toggle active/inactive, withdraw uncommitted treasury. Transferable. |
 
 ### Created per epoch submission
 
@@ -653,6 +538,147 @@ Use `devInspectTransactionBlock` or the Sui CLI to call read-only functions:
 
 ---
 
+## Pool Health Metrics (Fund Creator ROI)
+
+After submitting epochs, a fund creator wants to know: "I spent X DEEP and
+median spread went from 50 bps to 12 bps." The deepbook-server exposes
+per-epoch pool health metrics so sponsors can track the concrete impact of
+their incentive spend over time.
+
+### Architecture
+
+A **materialized view** `pool_epoch_maker_metrics` stores per-maker, per-epoch
+statistics. This is the base unit — pool-level aggregates are derived at query
+time. The view is keyed on `(pool_id, epoch_start_ms, balance_manager_id)` and
+refreshed via an admin endpoint after each epoch finalizes.
+
+```
+pool_epoch_maker_metrics (materialized view)
+├── pool_id, epoch_start_ms, balance_manager_id   ← composite key
+├── order_count, fill_count
+├── base_volume, quote_volume
+├── net_base_flow, net_quote_flow                  ← signed inventory direction
+├── vwap_spread_bps                                ← maker's median VWAP spread
+├── quoting_window_mask                            ← 24-bit bitmask (1h windows)
+├── avg_bid_depth, avg_ask_depth
+└── depth_profile                                  ← JSONB: [{bps, bid, ask}, ...]
+```
+
+**Why per-maker as the base?** A fund creator wants "which makers showed up and
+how did each perform." Makers want their own stats. Pool-level aggregates are
+just `SUM`/`PERCENTILE_CONT` over the per-maker rows — strictly less
+flexible if stored pre-aggregated.
+
+**Why JSONB for depth profiles?** Avoids 10+ flat columns (bid/ask × 5 bps
+levels). New buckets can be added without a schema migration. The current
+profile stores depth at 5, 10, 25, 50, and 100 bps bands.
+
+### Endpoints
+
+#### Pool-level aggregate
+
+```
+GET /v1/pool/{pool_id}/epochs/{epoch_start_ms}/metrics
+```
+
+Returns aggregate stats for one epoch. `epoch_start_ms` must be aligned to
+midnight UTC (divisible by 86400000).
+
+```json
+{
+  "pool_id": "0x48c9...",
+  "epoch_start_ms": 1711929600000,
+  "epoch_end_ms": 1712016000000,
+  "fill_count": 4821,
+  "total_base_volume": 15200000000,
+  "total_quote_volume": 3040000000000,
+  "unique_maker_count": 7,
+  "net_base_flow": -2300000000,
+  "net_quote_flow": 460000000000,
+  "median_vwap_spread_bps": 8.4,
+  "median_bbo_spread_bps": 3.2,
+  "quoting_uptime_pct": 0.875,
+  "avg_bid_depth": 50000.0,
+  "avg_ask_depth": 48000.0,
+  "depth_profile": [
+    {"bps": 5,   "bid": 12000.0, "ask": 11500.0},
+    {"bps": 10,  "bid": 28000.0, "ask": 27000.0},
+    {"bps": 25,  "bid": 45000.0, "ask": 43000.0},
+    {"bps": 50,  "bid": 48000.0, "ask": 46500.0},
+    {"bps": 100, "bid": 50000.0, "ask": 48000.0}
+  ]
+}
+```
+
+#### Pool-level time series
+
+```
+GET /v1/pool/{pool_id}/epochs?from={start_ms}&to={end_ms}
+```
+
+Returns an array of pool-level metrics across a range. Max 90 days. This is
+what a fund creator uses to see the trend across their fund's lifetime without
+making 30 individual calls.
+
+#### Per-maker breakdown
+
+```
+GET /v1/pool/{pool_id}/epochs/{epoch_start_ms}/makers
+```
+
+Returns an array of per-maker rows for one epoch. Each row includes that
+maker's individual metrics:
+
+```json
+[
+  {
+    "pool_id": "0x48c9...",
+    "epoch_start_ms": 1711929600000,
+    "epoch_end_ms": 1712016000000,
+    "balance_manager_id": "0xabc1...",
+    "order_count": 342,
+    "fill_count": 1205,
+    "base_volume": 8100000000,
+    "quote_volume": 1620000000000,
+    "net_base_flow": -1500000000,
+    "net_quote_flow": 300000000000,
+    "vwap_spread_bps": 6.2,
+    "quoting_window_mask": 16777215,
+    "avg_bid_depth": 25000.0,
+    "avg_ask_depth": 24000.0,
+    "depth_profile": [
+      {"bps": 5, "bid": 6000.0, "ask": 5800.0},
+      {"bps": 10, "bid": 14000.0, "ask": 13500.0},
+      {"bps": 25, "bid": 22000.0, "ask": 21500.0},
+      {"bps": 50, "bid": 24000.0, "ask": 23200.0},
+      {"bps": 100, "bid": 25000.0, "ask": 24000.0}
+    ]
+  }
+]
+```
+
+#### Refresh (admin)
+
+```
+POST /admin/refresh_epoch_metrics
+```
+
+Triggers `REFRESH MATERIALIZED VIEW CONCURRENTLY`. Call this after each epoch
+finalizes. Requires admin authentication.
+
+### Key metrics explained
+
+| Metric | Description |
+| --- | --- |
+| `median_vwap_spread_bps` | Median of per-maker VWAP spreads. Each maker's VWAP spread is the volume-weighted average distance between their bid and ask prices. This is a **maker-weighted** metric — a maker posting huge size at wide spreads pulls the median wider. |
+| `median_bbo_spread_bps` | Median of per-window best-bid/best-ask spreads across all makers. This is the "how good was this market" metric — the tightest spread available at any given hour, regardless of who posted it. Only computed at pool level. |
+| `quoting_uptime_pct` | Fraction of 1-hour windows where **any** maker had two-sided quotes. Per-maker: stored as a 24-bit `quoting_window_mask` bitmask. Pool-level: `popcount(bit_or(all_maker_masks)) / 24`. |
+| `net_base_flow` / `net_quote_flow` | Signed inventory direction. Positive `net_base_flow` = makers net bought the base asset this epoch. Relevant for the seed capital feature — a capital provider wants to know if their inventory is being depleted in one direction. |
+| `depth_profile` | JSONB array of `{bps, bid, ask}` objects. Depth within each basis-point band of the maker's VWAP mid, averaged across two-sided windows. Summed across makers for pool-level. |
+| `quoting_window_mask` | Per-maker only. 24-bit integer where bit `i` is set if the maker had two-sided quotes in hour `i` (0 = 00:00–01:00 UTC, 23 = 23:00–00:00 UTC). `16777215` (all bits set) = 24/24 uptime. |
+
+---
+
 ## Claiming Rewards
 
 Makers claim their DEEP rewards by calling `claim_reward` with their
@@ -692,35 +718,50 @@ tx.transferObjects([payout], myAddress);
 
 ---
 
-## Backfilling Missed Epochs
+## Treasury withdrawal (fund owner)
 
-If the submission cron misses one or more days (e.g. server downtime), the
-backfill script catches up automatically:
+The fund owner (`FundOwnerCap`) can pull **DEEP that is not earmarked for the
+next two full epochs** at the current `reward_per_epoch`. The contract keeps
 
-```bash
-# Backfill last 7 days (default range)
-pnpm incentives:backfill --network testnet \
-  --fund-id 0xd942... --enclave-url http://<ec2-ip>:3000
+`locked = min(treasury_balance, 2 × reward_per_epoch)`
 
-# Backfill a specific date range
-pnpm incentives:backfill --network testnet \
-  --fund-id 0xd942... --enclave-url http://<ec2-ip>:3000 \
-  --start-date 2026-03-20 --end-date 2026-03-26
+in the shared `IncentiveFund` treasury; everything above that is **withdrawable**.
+That gives makers a predictable floor (roughly “current + upcoming” epoch
+budgets at the configured rate) while still letting sponsors reclaim deep runway
+beyond that.
 
-# Dry run — see what would be submitted without actually doing it
-pnpm incentives:backfill --network testnet \
-  --fund-id 0xd942... --dry-run
-```
+- **Entry point:** `withdraw_treasury(cap, fund, clock, amount, ctx) → Coin<DEEP>` —
+  sends to `ctx.sender()`. Aborts if `amount` is zero or larger than the
+  withdrawable balance. `clock` is the Sui shared `0x6` clock (also used to
+  apply any due delayed param updates before computing the lock).
+- **Views:** `fund_locked_treasury`, `fund_withdrawable_treasury` (and
+  `fund_funded_epochs` for full-epoch runway).
+- **Event:** `TreasuryWithdrawn` (amount, post-withdrawal treasury, locked and
+  withdrawable snapshots, `reward_per_epoch`) — indexed into
+  `maker_incentive_treasury_withdrawn` and exposed by deepbook-server as
+  `GET /maker_incentive_treasury_withdrawn`.
 
-The script:
-1. Generates a list of 24h epochs in `[start-date, end-date)`
-2. For each epoch, queries the on-chain `IncentiveFund` to check if
-   `epoch_start_ms` was already submitted
-3. Skips any epoch that's already on-chain
-4. Submits missing epochs sequentially via `submit-epoch.ts`
+If `reward_per_epoch` is zero, nothing is locked and the owner may withdraw the
+entire treasury. The rule is **runway-based** (treasury vs `reward_per_epoch`),
+not tied to wall-clock epoch boundaries on-chain.
 
-**How far back can you backfill?** As far back as the deepbook-server's
-PostgreSQL database retains order event data. The default range is 7 days.
+---
+
+## Scoring parameter timelock (fund owner)
+
+`reward_per_epoch`, `alpha_bps`, and `quality_p` cannot be changed instantly.
+The owner calls **`schedule_params_change(cap, fund, clock, reward_per_epoch, alpha_bps, quality_p)`** with the **full** desired future snapshot. It takes effect after **`param_change_delay_epochs()` × 24h** from `clock` at scheduling time (currently **2 epochs**, i.e. ~48h notice). That gives makers time to react, reduces mid-epoch gaming (e.g. tilting weights after observing scores), and lines up with enclave / scoring upgrades that need a published target configuration.
+
+- **`cancel_scheduled_params_change(cap, fund)`** — drops a pending schedule before it activates (no-op if none).
+- **`finalize_pending_params(fund, clock)`** — permissionless; applies the pending snapshot once `clock.timestamp_ms()` ≥ the stored effective time. Pending params are also applied automatically at the start of **`submit_epoch_results`** and **`withdraw_treasury`**, so relayers and withdrawals advance state without a separate crank.
+- **Emergency:** **`set_fund_active`** is still **immediate** (pause / unpause submissions).
+- **Views:** `fund_has_pending_params`, `fund_params_effective_at_ms`, `fund_pending_params_info`, and `fund_effective_*` (read-only “what applies at this clock time” without mutating storage).
+- **Events:** `FundParamsChangeScheduled`, `FundParamsChangeApplied`, `FundParamsChangeCancelled`
+  — indexed to `maker_incentive_params_{scheduled,applied,cancelled}` and exposed as
+  `GET /maker_incentive_params_scheduled`, `GET /maker_incentive_params_applied`,
+  `GET /maker_incentive_params_cancelled`.
+
+**Relayers:** `submit_epoch_results` now takes the shared **Clock** (`0x6`) as an argument after the enclave object; `submit-epoch.ts` passes it automatically.
 
 ---
 
@@ -729,7 +770,24 @@ PostgreSQL database retains order event data. The default range is 7 days.
 ### Automated daily submission (systemd)
 
 The `automation/` folder contains systemd units for running epoch submissions
-on a daily schedule.
+on a daily schedule. The `submit-all-epochs.ts` script automatically checks
+the last 7 days for each fund and fills any gaps, so missed days are recovered
+without manual intervention.
+
+**Backfilling:** If the cron was down for several days, just run:
+
+```bash
+# Check last 14 days for all funds (dry-run first to see gaps)
+pnpm incentives:submit-all --network testnet \
+  --indexer-url http://localhost:3000 --lookback-days 14 --dry-run
+
+# Then submit for real
+pnpm incentives:submit-all --network testnet \
+  --indexer-url http://localhost:3000 --lookback-days 14
+```
+
+**How far back can you backfill?** As far as the deepbook-server's PostgreSQL
+database retains order event data. The default lookback is 7 days.
 
 **Setup:**
 
@@ -774,11 +832,11 @@ cycle is automated by a single script:
 
 ```bash
 # Debug mode (development)
-./transactions/maker-incentives/upgrade-enclave.sh \
+./transactions/maker-incentives/enclave/upgrade-enclave.sh \
   --network testnet --host 3.12.241.119 --key ~/.ssh/enclave.pem --debug
 
 # Production mode (real PCRs)
-./transactions/maker-incentives/upgrade-enclave.sh \
+./transactions/maker-incentives/enclave/upgrade-enclave.sh \
   --network mainnet --host <ec2-ip> --key ~/.ssh/enclave.pem
 ```
 
@@ -797,10 +855,10 @@ This script:
 - **Fund the pool**: anyone can call `fund_pool` to deposit more DEEP
 - **Check funding runway**: `pool_funded_epochs` returns how many full epochs
   the treasury can cover
-- **Adjust parameters**: admin can call `update_reward_per_epoch`,
-  `update_alpha`, `set_pool_active`
+- **Adjust parameters**: fund owner schedules timelocked `schedule_params_change`
+  (or `set_fund_active` for immediate pause)
 - **Monitor**: check `journalctl -u maker-incentives-epoch` for submission
-  failures, run `--dry-run` backfill to spot gaps
+  failures, run `incentives:submit-all --dry-run` to spot gaps
 
 ---
 
@@ -855,19 +913,20 @@ total score as a proxy to show makers what their current position would earn.
 Each `IncentiveFund` has its own configuration. These are set at creation and
 can be updated by the fund owner (holder of `FundOwnerCap`).
 
-| Parameter           | Stored as     | Default | Description |
-| ------------------- | ------------- | ------- | ----------- |
-| `reward_per_epoch`  | u64 (raw)     | 1000 DEEP | DEEP allocated per epoch from the treasury |
-| `alpha_bps`         | u64 (× 10000) | 5000 (= 0.5) | Spread factor exponent. Higher = more reward for tight spreads |
-| `epoch_duration_ms` | u64           | 86400000 (24h) | Length of one epoch |
-| `window_duration_ms`| u64           | 3600000 (1h) | Length of one scoring window within an epoch |
+| Parameter           | Stored as      | Default        | Description |
+| ------------------- | -------------- | -------------- | ----------- |
+| `reward_per_epoch`  | u64 (raw)      | 1000 DEEP      | DEEP allocated per epoch from the treasury |
+| `alpha_bps`         | u64 (× 10 000) | 5000 (= 0.5)  | Spread factor exponent. Higher = more reward for tight spreads |
+| `quality_p`         | u64            | 3              | Quality compression root. `quality^(1/p)` — higher values make depth the dominant factor |
+| `epoch_duration_ms` | u64            | 86 400 000 (24h) | Length of one epoch (fixed on-chain) |
+| `window_duration_ms`| u64            | 3 600 000 (1h)   | Length of one scoring window within an epoch (fixed on-chain) |
 
 ### Error Codes
 
 | Code | Name | Description |
 |------|------|-------------|
 | 0 | `EInvalidSignature` | Enclave signature failed verification |
-| 1 | `EPoolNotActive` | Pool is deactivated |
+| 1 | `EFundNotActive` | Fund is deactivated |
 | 2 | `EInvalidEpochRange` | `epoch_end_ms <= epoch_start_ms` |
 | 3 | `ENoRewardToClaim` | Maker not found in epoch's scores |
 | 4 | `ERewardAlreadyClaimed` | Maker already claimed this epoch |
@@ -875,23 +934,21 @@ can be updated by the fund owner (holder of `FundOwnerCap`).
 | 6 | `EZeroTotalScore` | Epoch has no scores to claim against |
 | 7 | `EEpochAlreadySubmitted` | This `epoch_start_ms` was already submitted for this fund |
 | 8 | `ENotFundOwner` | `FundOwnerCap.fund_id` does not match the target fund |
+| 9 | `EEpochBeforeFundCreation` | Epoch predates the fund's creation timestamp |
+| 10 | `EInvalidEpochDuration` | Epoch duration doesn't match `epoch_duration_ms` |
+| 11 | `EInvalidQualityP` | `quality_p` must be ≥ 1 |
+| 12 | `EWithdrawAmountTooLarge` | Withdrawal exceeds uncommitted treasury balance |
+| 13 | `EWithdrawZero` | Withdrawal amount is zero |
 
-### Scoring Constants
+### Scoring Constants & Tuning
 
-| Constant       | Value           | Description |
-| -------------- | --------------- | ----------- |
-| `SCORE_SCALE`  | 1,000,000,000   | Scores are multiplied by this before converting to u64 for BCS |
-| `floor`        | 1/(2 × windows) | Minimum window weight (ensures quiet hours still count) |
+See the [Scoring Constants](../../crates/incentives/README.md#scoring-constants)
+and [Tuning Guide](../../crates/incentives/README.md#tuning-guide) in the
+incentives crate README.
 
-### Tuning Guide
-
-- **`alpha` = 0** — spread doesn't matter, only size and duration count
-- **`alpha` = 0.5** (default) — moderate spread advantage, balanced competition
-- **`alpha` = 1.5** — aggressive spread competition, strongly rewards tight quotes
-- **`reward_per_epoch`** — higher rewards attract more makers; can be adjusted
-  without redeploying
-- **`window_duration`** — shorter windows (e.g. 15min) give more granular
-  activity weighting but increase computation cost
+| Constant                    | Value | Description |
+| --------------------------- | ----- | ----------- |
+| `PARAM_CHANGE_DELAY_EPOCHS` | 2     | On-chain delay (in epochs) before a `schedule_params_change` takes effect |
 
 ---
 
@@ -906,7 +963,7 @@ All scripts run from the `scripts/` directory. Arguments are passed as CLI flags
 | `incentives:register-enclave` | `register-enclave.ts` | Fetch attestation and register enclave on-chain |
 | `incentives:update-pcrs` | `update-pcrs.ts` | Update EnclaveConfig PCRs (debug zeros or real hashes) |
 | `incentives:submit-epoch` | `submit-epoch.ts` | Score one epoch via enclave and submit on-chain |
-| `incentives:backfill` | `backfill-epochs.ts` | Backfill missed epochs over a date range |
+| `incentives:submit-all` | `submit-all-epochs.ts` | Submit all funds' epochs, auto-backfilling gaps |
 | `incentives:upgrade-enclave` | `upgrade-enclave.sh` | Full enclave rebuild + restart + re-register |
 
 ### Project Structure
@@ -930,24 +987,43 @@ deepbookv3/
 │       └── types.rs                    # Shared types (BCS-compatible, API, scoring)
 │
 ├── crates/server/src/
-│   ├── reader.rs                       # get_incentive_pool_data() — raw DB queries
-│   └── server.rs                       # /incentives/pool_data/:pool_id endpoint
+│   ├── reader.rs                       # get_incentive_pool_data(), epoch metrics from materialized view
+│   ├── server.rs                       # /incentives/pool_data, /v1/pool/.../epochs/... endpoints
+│   └── admin/
+│       ├── handlers.rs                 # refresh_epoch_metrics admin handler
+│       └── routes.rs                   # POST /admin/refresh_epoch_metrics
+│
+├── crates/schema/migrations/
+│   └── ..._pool_epoch_maker_metrics/
+│       ├── up.sql                      # CREATE MATERIALIZED VIEW pool_epoch_maker_metrics
+│       └── down.sql                    # DROP MATERIALIZED VIEW
 │
 └── scripts/transactions/maker-incentives/
-    ├── sui-helpers.ts                  # Self-contained Sui client utilities
-    ├── deploy.ts                       # Deploy Move package → deployed.<network>.json
-    ├── create-fund.ts                  # Create IncentiveFund (permissionless) + fund
-    ├── register-enclave.ts             # Register enclave on-chain
-    ├── update-pcrs.ts                  # Update EnclaveConfig PCRs
-    ├── submit-epoch.ts                 # Score + submit one epoch
-    ├── backfill-epochs.ts              # Backfill missed epochs
-    ├── upgrade-enclave.sh              # Full enclave upgrade orchestrator
-    ├── deployed.testnet.json           # Auto-managed object IDs for testnet
-    └── automation/
-        ├── maker-incentives-epoch.service  # systemd oneshot
-        ├── maker-incentives-epoch.timer    # systemd daily timer (00:15 UTC)
-        ├── epoch-submitter.env.example     # Template env file
-        └── setup-systemd.sh                # Install/uninstall the timer
+    ├── lib/
+    │   └── sui-helpers.ts                # Self-contained Sui client utilities
+    ├── setup/
+    │   ├── deploy.ts                     # Deploy Move package → deployed.<network>.json
+    │   ├── create-fund.ts                # Create IncentiveFund (permissionless) + fund
+    │   └── swap-sui-for-deep.ts          # Swap SUI for DEEP tokens
+    ├── enclave/
+    │   ├── register-enclave.ts           # Register enclave on-chain
+    │   ├── update-pcrs.ts                # Update EnclaveConfig PCRs
+    │   ├── create-enclave-ec2.sh         # Spin up EC2 instance
+    │   ├── setup-ec2.sh                  # Configure EC2 deps
+    │   ├── provision-enclave.sh          # Build & start enclave
+    │   └── upgrade-enclave.sh            # Full enclave upgrade orchestrator
+    ├── epochs/
+    │   ├── submit-epoch.ts               # Score + submit one epoch
+    │   └── submit-all-epochs.ts          # Submit all funds, auto-backfills gaps
+    ├── test/
+    │   ├── e2e-test.sh                   # End-to-end test
+    │   └── setup-testnet-data.sh         # Bootstrap testnet data
+    ├── automation/
+    │   ├── maker-incentives-epoch.service  # systemd oneshot
+    │   ├── maker-incentives-epoch.timer    # systemd daily timer (00:15 UTC)
+    │   ├── epoch-submitter.env.example     # Template env file
+    │   └── setup-systemd.sh                # Install/uninstall the timer
+    └── deployed.testnet.json             # Auto-managed object IDs for testnet
 ```
 
 ### Testing

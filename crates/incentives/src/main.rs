@@ -8,6 +8,7 @@
 //! measurements. For local development, use the default (non-`nautilus`)
 //! build which generates a random keypair without NSM attestation.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -23,8 +24,16 @@ use serde::{Deserialize, Serialize};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::info;
 
-use deepbook_incentives::scoring::compute_scores;
-use deepbook_incentives::types::*;
+use deepbook_incentives::data_validation::{
+    indexer_validation_for_epoch, validate_indexer_readiness, validate_pool_data,
+};
+use deepbook_incentives::ServerDataValidationConfig;
+use deepbook_incentives::scoring::{compute_scores, loyalty_candidate_balance_managers};
+use deepbook_incentives::types::{
+    hex_to_address, EpochResults, IncentiveRequest, IncentiveResponse, IntentMessage,
+    MakerRewardEntry, PoolDataResponse, ScoringConfig, INCENTIVE_EPOCH_DURATION_MS,
+    INCENTIVE_WINDOW_DURATION_MS,
+};
 use deepbook_incentives::{AppState, IncentiveError};
 
 const INCENTIVE_INTENT: u8 = 1;
@@ -43,6 +52,28 @@ struct Args {
     /// Port to bind the incentive server to.
     #[arg(long, env = "PORT", default_value = "3000")]
     port: u16,
+
+    /// Passed to `GET /status` — max checkpoint lag for a healthy indexer (sui-indexer-alt watermarks).
+    #[arg(long, env = "DEEPBOOK_STATUS_MAX_CHECKPOINT_LAG", default_value = "100")]
+    max_checkpoint_lag: i64,
+
+    /// Passed to `GET /status` — max indexed-vs-wall-clock lag in seconds.
+    #[arg(long, env = "DEEPBOOK_STATUS_MAX_TIME_LAG_SECONDS", default_value = "60")]
+    max_time_lag_seconds: i64,
+
+    /// Comma-separated pipeline names that must appear in `/status` and pass lag + watermark checks.
+    /// Example: `deepbook_indexer`. When non-empty, indexed_timestamp_ms must cover each epoch end.
+    #[arg(long, env = "DEEPBOOK_INCENTIVE_REQUIRED_PIPELINES", value_delimiter = ',', default_value = "")]
+    required_pipelines: Vec<String>,
+
+    /// Override min indexed_timestamp_ms (ms). When unset and `required_pipelines` is non-empty,
+    /// each `/process_data` call uses the request's `epoch_end_ms` as the minimum watermark time.
+    #[arg(long, env = "DEEPBOOK_INCENTIVE_MIN_INDEXED_TIMESTAMP_MS")]
+    min_indexed_timestamp_ms: Option<i64>,
+
+    /// Skip `GET /status` before scoring (local testing only).
+    #[arg(long, env = "DEEPBOOK_INCENTIVE_SKIP_INDEXER_CHECK", default_value = "false")]
+    skip_indexer_check: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -127,13 +158,35 @@ async fn process_data(
         "processing incentive epoch"
     );
 
+    if req.quality_p < 1 {
+        return Err(IncentiveError::BadRequest(
+            "quality_p must be >= 1".into(),
+        ));
+    }
+
+    let span = req.epoch_end_ms.saturating_sub(req.epoch_start_ms);
+    if span != INCENTIVE_EPOCH_DURATION_MS {
+        return Err(IncentiveError::BadRequest(format!(
+            "incentive epoch must span exactly {} ms (24h); got {} ms",
+            INCENTIVE_EPOCH_DURATION_MS, span
+        )));
+    }
+
+    let client = reqwest::Client::new();
+
+    if !state.skip_indexer_check {
+        let val_cfg = indexer_validation_for_epoch(&state.indexer_validation, req.epoch_end_ms);
+        validate_indexer_readiness(&client, &state.server_url, &val_cfg)
+            .await
+            .map_err(|e| IncentiveError::Internal(e.to_string()))?;
+    }
+
     // 1. Fetch raw data from the deepbook-server.
     let url = format!(
         "{}/incentives/pool_data/{}?start_ms={}&end_ms={}",
         state.server_url, req.pool_id, req.epoch_start_ms, req.epoch_end_ms,
     );
 
-    let client = reqwest::Client::new();
     let pool_data: PoolDataResponse = client
         .get(&url)
         .send()
@@ -142,6 +195,14 @@ async fn process_data(
         .json()
         .await
         .map_err(|e| IncentiveError::Internal(format!("failed to parse pool data: {e}")))?;
+
+    validate_pool_data(
+        &pool_data,
+        &req.pool_id,
+        req.epoch_start_ms as i64,
+        req.epoch_end_ms as i64,
+    )
+    .map_err(|e| IncentiveError::Internal(e.to_string()))?;
 
     info!(
         orders = pool_data.order_events.len(),
@@ -154,13 +215,53 @@ async fn process_data(
         "fetched pool data"
     );
 
+    // 1b. Prior-epoch loyalty streaks (consecutive scored epochs before this one).
+    let candidates = loyalty_candidate_balance_managers(
+        &pool_data.order_events,
+        &pool_data.stake_events,
+        pool_data.stake_required,
+    );
+    let loyalty_url = format!("{}/incentives/maker_loyalty_streaks", state.server_url);
+    let loyalty_prior: HashMap<String, u32> = if !candidates.is_empty() {
+        let body = serde_json::json!({
+            "fund_id": req.fund_id,
+            "epoch_start_ms": req.epoch_start_ms as i64,
+            "balance_manager_ids": candidates,
+        });
+        match client.post(&loyalty_url).json(&body).send().await {
+            Ok(resp) if resp.status().is_success() => resp
+                .json::<serde_json::Value>()
+                .await
+                .ok()
+                .and_then(|v| v.get("streaks").cloned())
+                .and_then(|s| serde_json::from_value::<HashMap<String, u32>>(s).ok())
+                .unwrap_or_default(),
+            Ok(resp) => {
+                let status = resp.status();
+                let text = resp.text().await.unwrap_or_default();
+                return Err(IncentiveError::Internal(format!(
+                    "loyalty streaks request failed: {status} {text}"
+                )));
+            }
+            Err(e) => {
+                return Err(IncentiveError::Internal(format!(
+                    "loyalty streaks request error: {e}"
+                )));
+            }
+        }
+    } else {
+        HashMap::new()
+    };
+
     // 2. Run scoring.
+    let alpha = req.alpha_bps as f64 / 10_000.0;
     let config = ScoringConfig {
         pool_id: req.pool_id.clone(),
         epoch_start_ms: req.epoch_start_ms as i64,
         epoch_end_ms: req.epoch_end_ms as i64,
-        window_duration_ms: req.window_duration_ms as i64,
-        alpha: req.alpha,
+        window_duration_ms: INCENTIVE_WINDOW_DURATION_MS as i64,
+        alpha,
+        quality_p: req.quality_p,
     };
 
     let scores = compute_scores(
@@ -169,6 +270,7 @@ async fn process_data(
         &config,
         &pool_data.stake_events,
         pool_data.stake_required,
+        &loyalty_prior,
     );
 
     // 3. Convert to BCS-compatible types.
@@ -194,6 +296,8 @@ async fn process_data(
         epoch_end_ms: req.epoch_end_ms,
         total_score,
         maker_rewards,
+        alpha_bps: req.alpha_bps,
+        quality_p: req.quality_p,
     };
 
     // 4. Sign.
@@ -237,6 +341,14 @@ async fn test_process_data(
         "test_process_data: returning dummy scores"
     );
 
+    let span = req.epoch_end_ms.saturating_sub(req.epoch_start_ms);
+    if span != INCENTIVE_EPOCH_DURATION_MS {
+        return Err(IncentiveError::BadRequest(format!(
+            "incentive epoch must span exactly {} ms (24h); got {} ms",
+            INCENTIVE_EPOCH_DURATION_MS, span
+        )));
+    }
+
     let pool_addr = hex_to_address(&req.pool_id);
     let fund_addr = hex_to_address(&req.fund_id);
 
@@ -260,6 +372,8 @@ async fn test_process_data(
         epoch_end_ms: req.epoch_end_ms,
         total_score: 1_000_000_000,
         maker_rewards: vec![maker_a, maker_b],
+        alpha_bps: req.alpha_bps,
+        quality_p: req.quality_p.max(1),
     };
 
     let timestamp_ms = SystemTime::now()
@@ -300,9 +414,25 @@ async fn main() -> Result<()> {
         "incentive enclave started"
     );
 
+    let required_pipelines: Vec<String> = args
+        .required_pipelines
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let indexer_validation = ServerDataValidationConfig {
+        max_checkpoint_lag: args.max_checkpoint_lag,
+        max_time_lag_seconds: args.max_time_lag_seconds,
+        required_pipelines,
+        min_indexed_timestamp_ms: args.min_indexed_timestamp_ms,
+    };
+
     let state = Arc::new(AppState {
         eph_kp,
         server_url: args.server_url,
+        indexer_validation,
+        skip_indexer_check: args.skip_indexer_check,
     });
 
     let cors = CorsLayer::new()

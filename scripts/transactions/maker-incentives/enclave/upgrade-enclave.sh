@@ -164,17 +164,17 @@ log "Updating on-chain PCRs..."
 cd "$SCRIPT_DIR/../../.."
 
 if $DEBUG_MODE; then
-  npx tsx transactions/maker-incentives/update-pcrs.ts \
+  npx tsx transactions/maker-incentives/enclave/update-pcrs.ts \
     --network "$NETWORK" --debug
 else
-  npx tsx transactions/maker-incentives/update-pcrs.ts \
+  npx tsx transactions/maker-incentives/enclave/update-pcrs.ts \
     --network "$NETWORK" \
     --pcr0 "$PCR0" --pcr1 "$PCR1" --pcr2 "$PCR2"
 fi
 
 # ── Step 8: Register new enclave ──────────────────────────────
 log "Registering enclave on-chain..."
-npx tsx transactions/maker-incentives/register-enclave.ts \
+npx tsx transactions/maker-incentives/enclave/register-enclave.ts \
   --network "$NETWORK" \
   --enclave-url "http://$EC2_HOST:3000"
 

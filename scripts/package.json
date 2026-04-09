@@ -7,15 +7,14 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "create-pool": "pnpm tsx transactions/createPool.ts",
-    "incentives:deploy": "tsx transactions/maker-incentives/deploy.ts",
-    "incentives:create-fund": "tsx transactions/maker-incentives/create-fund.ts",
-    "incentives:submit-epoch": "tsx transactions/maker-incentives/submit-epoch.ts",
-    "incentives:submit-all": "tsx transactions/maker-incentives/submit-all-epochs.ts",
-    "incentives:backfill": "tsx transactions/maker-incentives/backfill-epochs.ts",
-    "incentives:register-enclave": "tsx transactions/maker-incentives/register-enclave.ts",
-    "incentives:update-pcrs": "tsx transactions/maker-incentives/update-pcrs.ts",
-    "incentives:upgrade-enclave": "bash transactions/maker-incentives/upgrade-enclave.sh",
-    "incentives:e2e-test": "bash transactions/maker-incentives/e2e-test.sh"
+    "incentives:deploy": "tsx transactions/maker-incentives/setup/deploy.ts",
+    "incentives:create-fund": "tsx transactions/maker-incentives/setup/create-fund.ts",
+    "incentives:submit-epoch": "tsx transactions/maker-incentives/epochs/submit-epoch.ts",
+    "incentives:submit-all": "tsx transactions/maker-incentives/epochs/submit-all-epochs.ts",
+    "incentives:register-enclave": "tsx transactions/maker-incentives/enclave/register-enclave.ts",
+    "incentives:update-pcrs": "tsx transactions/maker-incentives/enclave/update-pcrs.ts",
+    "incentives:upgrade-enclave": "bash transactions/maker-incentives/enclave/upgrade-enclave.sh",
+    "incentives:e2e-test": "bash transactions/maker-incentives/test/e2e-test.sh"
   },
   "keywords": [],
   "author": "",

@@ -14,14 +14,20 @@
 //!     --alpha 0.5 \
 //!     --reward-per-epoch 1000
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use clap::Parser;
 use tracing::info;
 
+use deepbook_incentives::data_validation::{
+    indexer_validation_for_epoch, validate_indexer_readiness, validate_pool_data,
+};
 use deepbook_incentives::scoring::compute_scores;
-use deepbook_incentives::types::*;
+use deepbook_incentives::types::{
+    PoolDataResponse, ScoringConfig, INCENTIVE_EPOCH_DURATION_MS, INCENTIVE_WINDOW_DURATION_MS,
+};
+use deepbook_incentives::ServerDataValidationConfig;
 
 const DEEP_DECIMALS: f64 = 1_000_000.0;
 
@@ -40,9 +46,9 @@ struct Args {
     #[arg(long, default_value = "0.5")]
     alpha: f64,
 
-    /// Window duration in ms.
-    #[arg(long, default_value = "3600000")]
-    window_duration_ms: u64,
+    /// Quality compression root `p` in score = depth × loyalty × (quality)^(1/p).
+    #[arg(long, default_value = "3")]
+    quality_p: u64,
 
     /// Epoch start (ms since epoch). Default: yesterday midnight UTC.
     #[arg(long)]
@@ -59,6 +65,21 @@ struct Args {
     /// Skip stake filtering entirely (useful to see all makers regardless of stake).
     #[arg(long, default_value = "false")]
     ignore_stakes: bool,
+
+    #[arg(long, env = "DEEPBOOK_STATUS_MAX_CHECKPOINT_LAG", default_value = "100")]
+    max_checkpoint_lag: i64,
+
+    #[arg(long, env = "DEEPBOOK_STATUS_MAX_TIME_LAG_SECONDS", default_value = "60")]
+    max_time_lag_seconds: i64,
+
+    #[arg(long, env = "DEEPBOOK_INCENTIVE_REQUIRED_PIPELINES", value_delimiter = ',', default_value = "")]
+    required_pipelines: Vec<String>,
+
+    #[arg(long, env = "DEEPBOOK_INCENTIVE_MIN_INDEXED_TIMESTAMP_MS")]
+    min_indexed_timestamp_ms: Option<i64>,
+
+    #[arg(long, default_value = "false")]
+    skip_indexer_check: bool,
 }
 
 fn now_ms() -> u64 {
@@ -81,6 +102,15 @@ async fn main() -> Result<()> {
     let epoch_end = args.epoch_end_ms.unwrap_or_else(today_midnight_utc);
     let epoch_start = args.epoch_start_ms.unwrap_or(epoch_end - 86_400_000);
 
+    let span = epoch_end.saturating_sub(epoch_start);
+    if span != INCENTIVE_EPOCH_DURATION_MS {
+        anyhow::bail!(
+            "epoch span must be exactly {} ms (24h); got {} ms",
+            INCENTIVE_EPOCH_DURATION_MS,
+            span
+        );
+    }
+
     println!();
     println!("╔══════════════════════════════════════════════════════════════╗");
     println!("║           MAKER INCENTIVES — DRY RUN SIMULATION            ║");
@@ -88,12 +118,40 @@ async fn main() -> Result<()> {
     println!();
     println!("  Pool:           {}", args.pool_id);
     println!("  Alpha:          {}", args.alpha);
-    println!("  Window:         {}h", args.window_duration_ms / 3_600_000);
+    println!("  Quality p:      {}", args.quality_p);
+    println!(
+        "  Window:         {}h (fixed)",
+        INCENTIVE_WINDOW_DURATION_MS / 3_600_000
+    );
     println!("  Reward/epoch:   {} DEEP", args.reward_per_epoch);
     println!("  Epoch start:    {} ({})", epoch_start, format_ts(epoch_start));
     println!("  Epoch end:      {} ({})", epoch_end, format_ts(epoch_end));
     println!("  Ignore stakes:  {}", args.ignore_stakes);
     println!();
+
+    let required_pipelines: Vec<String> = args
+        .required_pipelines
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let base_validation = ServerDataValidationConfig {
+        max_checkpoint_lag: args.max_checkpoint_lag,
+        max_time_lag_seconds: args.max_time_lag_seconds,
+        required_pipelines,
+        min_indexed_timestamp_ms: args.min_indexed_timestamp_ms,
+    };
+
+    let client = reqwest::Client::new();
+
+    if !args.skip_indexer_check {
+        let val_cfg = indexer_validation_for_epoch(&base_validation, epoch_end);
+        info!("validating indexer /status {:?}", val_cfg);
+        validate_indexer_readiness(&client, &args.server_url, &val_cfg)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?;
+    }
 
     // 1. Fetch data from deepbook-server.
     let url = format!(
@@ -102,7 +160,6 @@ async fn main() -> Result<()> {
     );
 
     info!("fetching {}", url);
-    let client = reqwest::Client::new();
     let pool_data: PoolDataResponse = client
         .get(&url)
         .send()
@@ -110,6 +167,14 @@ async fn main() -> Result<()> {
         .error_for_status()?
         .json()
         .await?;
+
+    validate_pool_data(
+        &pool_data,
+        &args.pool_id,
+        epoch_start as i64,
+        epoch_end as i64,
+    )
+    .map_err(|e| anyhow::anyhow!(e))?;
 
     // Pool metadata comes from the deepbook-server's pools table.
     let (base_decimals, base_symbol, quote_decimals, quote_symbol) =
@@ -173,8 +238,9 @@ async fn main() -> Result<()> {
         pool_id: args.pool_id.clone(),
         epoch_start_ms: epoch_start as i64,
         epoch_end_ms: epoch_end as i64,
-        window_duration_ms: args.window_duration_ms as i64,
+        window_duration_ms: INCENTIVE_WINDOW_DURATION_MS as i64,
         alpha: args.alpha,
+        quality_p: args.quality_p.max(1),
     };
 
     let stake_events = if args.ignore_stakes {
@@ -194,6 +260,7 @@ async fn main() -> Result<()> {
         &config,
         stake_events,
         stake_required,
+        &std::collections::HashMap::new(),
     );
 
     // 3. Print results.
@@ -247,9 +314,13 @@ async fn main() -> Result<()> {
                 d.avg_time_frac * 100.0,
             );
             println!(
+                "       Loyalty mult:         {:.1}x  (from consecutive prior scored epochs, cap 3)",
+                d.loyalty_mult,
+            );
+            println!(
                 "       Active Windows:       {} / {}",
                 d.windows_active,
-                ((epoch_end - epoch_start) / args.window_duration_ms).max(1),
+                ((epoch_end - epoch_start) / INCENTIVE_WINDOW_DURATION_MS).max(1),
             );
             println!(
                 "       Unique Orders:        {}",
@@ -268,10 +339,11 @@ async fn main() -> Result<()> {
     println!();
 
     // 4. Window-level detail.
-    let num_windows = ((epoch_end - epoch_start) / args.window_duration_ms).max(1) as usize;
+    let num_windows = ((epoch_end - epoch_start) / INCENTIVE_WINDOW_DURATION_MS).max(1) as usize;
     let mut window_volumes: Vec<f64> = vec![0.0; num_windows];
     for f in &pool_data.fill_events {
-        let w = ((f.checkpoint_timestamp_ms as u64 - epoch_start) / args.window_duration_ms) as usize;
+        let w = ((f.checkpoint_timestamp_ms as u64 - epoch_start) / INCENTIVE_WINDOW_DURATION_MS)
+            as usize;
         if w < num_windows {
             window_volumes[w] += f.base_quantity as f64;
         }
@@ -290,7 +362,7 @@ async fn main() -> Result<()> {
         } else {
             floor
         };
-        let w_start = epoch_start + (w as u64) * args.window_duration_ms;
+        let w_start = epoch_start + (w as u64) * INCENTIVE_WINDOW_DURATION_MS;
         println!(
             "  {:>6}    {:>12.0}  {:>7.4}  {}",
             w + 1,
@@ -354,4 +426,3 @@ fn abbreviate(addr: &str) -> String {
     }
 }
 
-use std::collections::HashSet;

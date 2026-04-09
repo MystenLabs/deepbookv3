@@ -29,7 +29,12 @@ use crate::schema::{
     // Maker Incentive Events
     maker_incentive_epoch_results_submitted,
     maker_incentive_fund_created,
+    maker_incentive_maker_participation,
+    maker_incentive_params_applied,
+    maker_incentive_params_cancelled,
+    maker_incentive_params_scheduled,
     maker_incentive_reward_claimed,
+    maker_incentive_treasury_withdrawn,
     // Margin Manager Events
     margin_manager_created,
     margin_manager_state,
@@ -1069,6 +1074,21 @@ pub struct MakerIncentiveFundCreated {
     pub reward_per_epoch: i64,
     pub creator: String,
     pub created_at_ms: i64,
+    pub alpha_bps: Option<i64>,
+    pub quality_p: Option<i64>,
+    pub epoch_duration_ms: Option<i64>,
+    pub window_duration_ms: Option<i64>,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(
+    table_name = maker_incentive_maker_participation,
+    primary_key(fund_id, epoch_start_ms, balance_manager_id)
+)]
+pub struct MakerIncentiveMakerParticipation {
+    pub fund_id: String,
+    pub epoch_start_ms: i64,
+    pub balance_manager_id: String,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
@@ -1102,4 +1122,70 @@ pub struct MakerIncentiveRewardClaimed {
     pub epoch_start_ms: i64,
     pub balance_manager_id: String,
     pub amount: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = maker_incentive_treasury_withdrawn, primary_key(event_digest))]
+pub struct MakerIncentiveTreasuryWithdrawn {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub fund_id: String,
+    pub owner: String,
+    pub amount: i64,
+    pub treasury_after: i64,
+    pub locked_after: i64,
+    pub withdrawable_after: i64,
+    pub reward_per_epoch: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = maker_incentive_params_scheduled, primary_key(event_digest))]
+pub struct MakerIncentiveParamsScheduled {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub fund_id: String,
+    pub reward_per_epoch: i64,
+    pub alpha_bps: i64,
+    pub quality_p: i64,
+    pub effective_at_ms: i64,
+    pub scheduled_at_ms: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = maker_incentive_params_applied, primary_key(event_digest))]
+pub struct MakerIncentiveParamsApplied {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub fund_id: String,
+    pub reward_per_epoch: i64,
+    pub alpha_bps: i64,
+    pub quality_p: i64,
+}
+
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
+#[diesel(table_name = maker_incentive_params_cancelled, primary_key(event_digest))]
+pub struct MakerIncentiveParamsCancelled {
+    pub event_digest: String,
+    pub digest: String,
+    pub sender: String,
+    pub checkpoint: i64,
+    pub checkpoint_timestamp_ms: i64,
+    pub package: String,
+    pub pool_id: String,
+    pub fund_id: String,
 }

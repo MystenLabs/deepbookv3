@@ -985,6 +985,8 @@ pub mod maker_incentives {
             pub reward_per_epoch: u64,
             pub creator: Address,
             pub created_at_ms: u64,
+            pub alpha_bps: u64,
+            pub quality_p: u64,
         }
 
         impl MoveStruct for FundCreated {
@@ -1019,6 +1021,64 @@ pub mod maker_incentives {
         impl MoveStruct for RewardClaimed {
             const MODULE: &'static str = "maker_incentives";
             const NAME: &'static str = "RewardClaimed";
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct TreasuryWithdrawn {
+            pub pool_id: Address,
+            pub fund_id: Address,
+            pub owner: Address,
+            pub amount: u64,
+            pub treasury_after: u64,
+            pub locked_after: u64,
+            pub withdrawable_after: u64,
+            pub reward_per_epoch: u64,
+        }
+
+        impl MoveStruct for TreasuryWithdrawn {
+            const MODULE: &'static str = "maker_incentives";
+            const NAME: &'static str = "TreasuryWithdrawn";
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct FundParamsChangeScheduled {
+            pub pool_id: Address,
+            pub fund_id: Address,
+            pub reward_per_epoch: u64,
+            pub alpha_bps: u64,
+            pub quality_p: u64,
+            pub effective_at_ms: u64,
+            pub scheduled_at_ms: u64,
+        }
+
+        impl MoveStruct for FundParamsChangeScheduled {
+            const MODULE: &'static str = "maker_incentives";
+            const NAME: &'static str = "FundParamsChangeScheduled";
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct FundParamsChangeApplied {
+            pub pool_id: Address,
+            pub fund_id: Address,
+            pub reward_per_epoch: u64,
+            pub alpha_bps: u64,
+            pub quality_p: u64,
+        }
+
+        impl MoveStruct for FundParamsChangeApplied {
+            const MODULE: &'static str = "maker_incentives";
+            const NAME: &'static str = "FundParamsChangeApplied";
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct FundParamsChangeCancelled {
+            pub pool_id: Address,
+            pub fund_id: Address,
+        }
+
+        impl MoveStruct for FundParamsChangeCancelled {
+            const MODULE: &'static str = "maker_incentives";
+            const NAME: &'static str = "FundParamsChangeCancelled";
         }
     }
 }

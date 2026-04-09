@@ -10,7 +10,7 @@
 
 import { parseArgs } from "util";
 import { Transaction } from "@mysten/sui/transactions";
-import { getClient, getSigner, getActiveAddress } from "./sui-helpers.js";
+import { getClient, getSigner, getActiveAddress } from "../lib/sui-helpers.js";
 
 const { values: args } = parseArgs({
   options: {

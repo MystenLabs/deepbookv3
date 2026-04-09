@@ -16,7 +16,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { Transaction } from "@mysten/sui/transactions";
-import { getClient, getSigner, getActiveAddress } from "./sui-helpers.js";
+import { getClient, getSigner, getActiveAddress } from "../lib/sui-helpers.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,8 +30,8 @@ const { values: args } = parseArgs({
 });
 
 const NETWORK = args.network as "mainnet" | "testnet";
-const MOVE_DIR = path.resolve(__dirname, "../../../packages/maker_incentives");
-const CONFIG_FILE = path.resolve(__dirname, `deployed.${NETWORK}.json`);
+const MOVE_DIR = path.resolve(__dirname, "../../../../packages/maker_incentives");
+const CONFIG_FILE = path.resolve(__dirname, '..', `deployed.${NETWORK}.json`);
 
 function log(step: string, msg: string) {
   const ts = new Date().toISOString().split("T")[1].split(".")[0];

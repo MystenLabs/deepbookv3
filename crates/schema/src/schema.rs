@@ -966,6 +966,18 @@ diesel::table! {
         reward_per_epoch -> Int8,
         creator -> Text,
         created_at_ms -> Int8,
+        alpha_bps -> Nullable<Int8>,
+        quality_p -> Nullable<Int8>,
+        epoch_duration_ms -> Nullable<Int8>,
+        window_duration_ms -> Nullable<Int8>,
+    }
+}
+
+diesel::table! {
+    maker_incentive_maker_participation (fund_id, epoch_start_ms, balance_manager_id) {
+        fund_id -> Text,
+        epoch_start_ms -> Int8,
+        balance_manager_id -> Text,
     }
 }
 
@@ -1001,6 +1013,76 @@ diesel::table! {
         epoch_start_ms -> Int8,
         balance_manager_id -> Text,
         amount -> Int8,
+    }
+}
+
+diesel::table! {
+    maker_incentive_treasury_withdrawn (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pool_id -> Text,
+        fund_id -> Text,
+        owner -> Text,
+        amount -> Int8,
+        treasury_after -> Int8,
+        locked_after -> Int8,
+        withdrawable_after -> Int8,
+        reward_per_epoch -> Int8,
+    }
+}
+
+diesel::table! {
+    maker_incentive_params_applied (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pool_id -> Text,
+        fund_id -> Text,
+        reward_per_epoch -> Int8,
+        alpha_bps -> Int8,
+        quality_p -> Int8,
+    }
+}
+
+diesel::table! {
+    maker_incentive_params_cancelled (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pool_id -> Text,
+        fund_id -> Text,
+    }
+}
+
+diesel::table! {
+    maker_incentive_params_scheduled (event_digest) {
+        event_digest -> Text,
+        digest -> Text,
+        sender -> Text,
+        checkpoint -> Int8,
+        timestamp -> Timestamp,
+        checkpoint_timestamp_ms -> Int8,
+        package -> Text,
+        pool_id -> Text,
+        fund_id -> Text,
+        reward_per_epoch -> Int8,
+        alpha_bps -> Int8,
+        quality_p -> Int8,
+        effective_at_ms -> Int8,
+        scheduled_at_ms -> Int8,
     }
 }
 
@@ -1044,7 +1126,12 @@ diesel::allow_tables_to_appear_in_same_query!(
     maintainer_fees_withdrawn,
     maker_incentive_epoch_results_submitted,
     maker_incentive_fund_created,
+    maker_incentive_maker_participation,
+    maker_incentive_params_applied,
+    maker_incentive_params_cancelled,
+    maker_incentive_params_scheduled,
     maker_incentive_reward_claimed,
+    maker_incentive_treasury_withdrawn,
     margin_manager_created,
     margin_manager_state,
     margin_pool_config_updated,

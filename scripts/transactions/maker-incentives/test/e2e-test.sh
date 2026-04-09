@@ -130,7 +130,7 @@ cd "$SCRIPTS_DIR"
 if ! $SKIP_SWAP; then
   log "STEP 1/8: Swapping $SWAP_AMOUNT SUI for DEEP"
 
-  npx tsx transactions/maker-incentives/swap-sui-for-deep.ts \
+  npx tsx transactions/maker-incentives/setup/swap-sui-for-deep.ts \
     --network "$NETWORK" --amount "$SWAP_AMOUNT" \
     || fail "SUI→DEEP swap failed"
   ok "Swap complete"
@@ -144,7 +144,7 @@ fi
 if ! $SKIP_DEPLOY; then
   log "STEP 2/8: Deploying maker_incentives package"
 
-  npx tsx transactions/maker-incentives/deploy.ts \
+  npx tsx transactions/maker-incentives/setup/deploy.ts \
     --network "$NETWORK" \
     || fail "Deploy failed"
   ok "Contract deployed"
@@ -161,7 +161,7 @@ step "Package: $PACKAGE_ID"
 # ══════════════════════════════════════════════════════════════
 log "STEP 3/8: Setting on-chain PCRs to debug (all zeros)"
 
-npx tsx transactions/maker-incentives/update-pcrs.ts \
+npx tsx transactions/maker-incentives/enclave/update-pcrs.ts \
   --network "$NETWORK" --debug \
   || fail "PCR update failed"
 ok "PCRs set to debug mode"
@@ -252,7 +252,7 @@ fi
 # ══════════════════════════════════════════════════════════════
 log "STEP 5/8: Registering enclave on-chain"
 
-npx tsx transactions/maker-incentives/register-enclave.ts \
+npx tsx transactions/maker-incentives/enclave/register-enclave.ts \
   --network "$NETWORK" \
   --enclave-url "$ENCLAVE_URL" \
   || fail "Enclave registration failed"
@@ -266,7 +266,7 @@ step "Enclave object: $ENCLAVE_OBJ_ID"
 # ══════════════════════════════════════════════════════════════
 log "STEP 6/8: Creating IncentiveFund"
 
-CREATE_OUTPUT=$(npx tsx transactions/maker-incentives/create-fund.ts \
+CREATE_OUTPUT=$(npx tsx transactions/maker-incentives/setup/create-fund.ts \
   --network "$NETWORK" \
   --pool-id "$POOL_ID" \
   --reward "$REWARD" \
@@ -287,7 +287,7 @@ step "Fund: $FUND_ID"
 # ══════════════════════════════════════════════════════════════
 log "STEP 7/8: Submitting test epoch via enclave"
 
-npx tsx transactions/maker-incentives/submit-epoch.ts \
+npx tsx transactions/maker-incentives/epochs/submit-epoch.ts \
   --network "$NETWORK" \
   --fund-id "$FUND_ID" \
   --enclave-url "$ENCLAVE_URL" \
@@ -344,7 +344,7 @@ echo "    $0 --host $EC2_HOST --key $SSH_KEY \\"
 echo "      --skip-deploy --skip-enclave --skip-swap"
 echo ""
 echo "  Submit another epoch manually:"
-echo "    npx tsx transactions/maker-incentives/submit-epoch.ts \\"
+echo "    npx tsx transactions/maker-incentives/epochs/submit-epoch.ts \\"
 echo "      --network $NETWORK --fund-id $FUND_ID \\"
 echo "      --enclave-url $ENCLAVE_URL --test"
 echo ""

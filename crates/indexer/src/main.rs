@@ -69,7 +69,11 @@ use deepbook_indexer::handlers::conditional_order_insufficient_funds_handler::Co
 // Maker Incentive Events
 use deepbook_indexer::handlers::maker_incentive_epoch_results_submitted_handler::MakerIncentiveEpochResultsSubmittedHandler;
 use deepbook_indexer::handlers::maker_incentive_fund_created_handler::MakerIncentiveFundCreatedHandler;
+use deepbook_indexer::handlers::maker_incentive_params_applied_handler::MakerIncentiveParamsAppliedHandler;
+use deepbook_indexer::handlers::maker_incentive_params_cancelled_handler::MakerIncentiveParamsCancelledHandler;
+use deepbook_indexer::handlers::maker_incentive_params_scheduled_handler::MakerIncentiveParamsScheduledHandler;
 use deepbook_indexer::handlers::maker_incentive_reward_claimed_handler::MakerIncentiveRewardClaimedHandler;
+use deepbook_indexer::handlers::maker_incentive_treasury_withdrawn_handler::MakerIncentiveTreasuryWithdrawnHandler;
 
 use deepbook_indexer::{DeepbookEnv, TESTNET_REMOTE_STORE_URL};
 use deepbook_schema::MIGRATIONS;
@@ -473,6 +477,30 @@ async fn main() -> Result<(), anyhow::Error> {
                 indexer
                     .concurrent_pipeline(
                         MakerIncentiveRewardClaimedHandler::new(env),
+                        Default::default(),
+                    )
+                    .await?;
+                indexer
+                    .concurrent_pipeline(
+                        MakerIncentiveTreasuryWithdrawnHandler::new(env),
+                        Default::default(),
+                    )
+                    .await?;
+                indexer
+                    .concurrent_pipeline(
+                        MakerIncentiveParamsScheduledHandler::new(env),
+                        Default::default(),
+                    )
+                    .await?;
+                indexer
+                    .concurrent_pipeline(
+                        MakerIncentiveParamsAppliedHandler::new(env),
+                        Default::default(),
+                    )
+                    .await?;
+                indexer
+                    .concurrent_pipeline(
+                        MakerIncentiveParamsCancelledHandler::new(env),
                         Default::default(),
                     )
                     .await?;

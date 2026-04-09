@@ -1,20 +1,21 @@
 #!/usr/bin/env tsx
 /**
- * Create an IncentivePool for a DeepBook pool and optionally fund it.
+ * Create an IncentiveFund for a DeepBook pool and optionally fund it with DEEP.
+ * Permissionless — anyone can create a fund.
  *
  * Usage:
- *   pnpm incentives:add-pool --network testnet --pool-id 0xabc...
- *   pnpm incentives:add-pool --network mainnet --pool-id 0xabc... --fund 10000
- *   pnpm incentives:add-pool --network testnet --pool-id 0xabc... --alpha-bps 7500 --reward 5000
+ *   pnpm incentives:create-fund --network testnet --pool-id 0xabc...
+ *   pnpm incentives:create-fund --network testnet --pool-id 0xabc... \
+ *     --alpha-bps 7500 --reward 5000 --fund 50000
  *
  * Options:
  *   --network, -n       testnet | mainnet                     (default: testnet)
  *   --pool-id, -p       DeepBook pool address                 (required)
  *   --alpha-bps         spread exponent × 10000               (default: 5000 = 0.5)
- *   --reward            DEEP tokens per epoch (human units)   (default: 1000)
- *   --epoch-duration    epoch length in ms                    (default: 86400000 = 24h)
- *   --window-duration   window length in ms                   (default: 3600000 = 1h)
- *   --fund              initial DEEP to deposit (human units) (default: 0)
+ *   --reward            DEEP per epoch (human units)          (default: 1000)
+ *   --quality-p         quality compression root (>= 1)       (default: 3)
+ *   (Epoch length is fixed at 24h and windows at 1h on-chain.)
+ *   --fund              initial DEEP deposit (human units)    (default: 0)
  *
  * Requires:
  *   deployed.<network>.json from deploy.ts
@@ -25,10 +26,17 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { Transaction } from "@mysten/sui/transactions";
-import { getClient, getSigner, getActiveAddress } from "./sui-helpers.js";
+import { getClient, getSigner, getActiveAddress } from "../lib/sui-helpers.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const DEEP_COIN_TYPES: Record<string, string> = {
+  testnet:
+    "0x36dbef866a1d62bf7328989a10fb2f07d769f4ee587c0de4a0a256e57e0a58a8::deep::DEEP",
+  mainnet:
+    "0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::deep::DEEP",
+};
 
 const { values: args } = parseArgs({
   options: {
@@ -36,8 +44,7 @@ const { values: args } = parseArgs({
     "pool-id": { type: "string", short: "p" },
     "alpha-bps": { type: "string", default: "5000" },
     reward: { type: "string", default: "1000" },
-    "epoch-duration": { type: "string", default: "86400000" },
-    "window-duration": { type: "string", default: "3600000" },
+    "quality-p": { type: "string", default: "3" },
     fund: { type: "string", default: "0" },
   },
   strict: false,
@@ -45,13 +52,10 @@ const { values: args } = parseArgs({
 });
 
 const NETWORK = args.network as "mainnet" | "testnet";
-const CONFIG_FILE = path.resolve(__dirname, `deployed.${NETWORK}.json`);
+const CONFIG_FILE = path.resolve(__dirname, '..', `deployed.${NETWORK}.json`);
 
 const DEEP_DECIMALS = 6;
 const DEEP_SCALAR = 10 ** DEEP_DECIMALS;
-
-const DEEP_COIN_TYPE =
-  "0xdeeb7a4662eec9f2f3def03fb937a663dddaa2e215b8078a284d026b7946c270::deep::DEEP";
 
 function log(step: string, msg: string) {
   const ts = new Date().toISOString().split("T")[1].split(".")[0];
@@ -67,7 +71,7 @@ async function main() {
   if (!poolId) {
     console.error("Error: --pool-id is required.");
     console.error(
-      "  pnpm incentives:add-pool --network testnet --pool-id 0x..."
+      "  pnpm incentives:create-fund --network testnet --pool-id 0x..."
     );
     process.exit(1);
   }
@@ -75,12 +79,11 @@ async function main() {
   const alphaBps = Number(args["alpha-bps"]);
   const rewardPerEpochHuman = Number(args.reward);
   const rewardPerEpoch = BigInt(rewardPerEpochHuman) * BigInt(DEEP_SCALAR);
-  const epochDurationMs = Number(args["epoch-duration"]);
-  const windowDurationMs = Number(args["window-duration"]);
+  const qualityP = BigInt(args["quality-p"]!);
   const fundAmountHuman = Number(args.fund);
 
   console.log("\n" + "=".repeat(60));
-  console.log("  MAKER INCENTIVES — ADD POOL");
+  console.log("  MAKER INCENTIVES — CREATE FUND");
   console.log("=".repeat(60));
 
   const config = JSON.parse(readFileSync(CONFIG_FILE, "utf8"));
@@ -93,8 +96,8 @@ async function main() {
   console.log(`  Pool ID:          ${poolId}`);
   console.log(`  Alpha (bps):      ${alphaBps} (= ${alphaBps / 10_000})`);
   console.log(`  Reward/epoch:     ${rewardPerEpochHuman} DEEP`);
-  console.log(`  Epoch duration:   ${epochDurationMs / 3_600_000}h`);
-  console.log(`  Window duration:  ${windowDurationMs / 60_000}min`);
+  console.log(`  Epoch / window:   24h / 1h (fixed on-chain)`);
+  console.log(`  Quality p:        ${qualityP}`);
   if (fundAmountHuman > 0) {
     console.log(`  Initial funding:  ${fundAmountHuman} DEEP`);
   }
@@ -102,21 +105,21 @@ async function main() {
 
   const tx = new Transaction();
 
-  tx.moveCall({
-    target: `${config.packageId}::maker_incentives::create_incentive_pool`,
+  const [ownerCap] = tx.moveCall({
+    target: `${config.packageId}::maker_incentives::create_fund`,
     arguments: [
-      tx.object(config.adminCapId),
       tx.pure.address(poolId),
       tx.pure.u64(rewardPerEpoch.toString()),
       tx.pure.u64(alphaBps),
-      tx.pure.u64(epochDurationMs),
-      tx.pure.u64(windowDurationMs),
+      tx.pure.u64(qualityP.toString()),
+      tx.object("0x6"),
     ],
   });
 
+  tx.transferObjects([ownerCap], address);
   tx.setGasBudget(50_000_000);
 
-  log("CREATE", "Creating IncentivePool...");
+  log("CREATE", "Creating IncentiveFund...");
 
   const result = await client.signAndExecuteTransaction({
     transaction: tx,
@@ -134,36 +137,48 @@ async function main() {
   await client.waitForTransaction({ digest: result.digest });
   await sleep(2000);
 
-  const incentivePoolId =
+  const changes = result.objectChanges ?? [];
+
+  const fundObjId =
     (
-      result.objectChanges?.find(
+      changes.find(
         (c: any) =>
           c.type === "created" &&
-          (c as any).objectType?.includes("IncentivePool")
+          (c as any).objectType?.includes("IncentiveFund")
       ) as any
     )?.objectId ?? "";
 
-  log("CREATE", `IncentivePool: ${incentivePoolId}`);
+  const ownerCapId =
+    (
+      changes.find(
+        (c: any) =>
+          c.type === "created" &&
+          (c as any).objectType?.includes("FundOwnerCap")
+      ) as any
+    )?.objectId ?? "";
+
+  log("CREATE", `IncentiveFund: ${fundObjId}`);
+  log("CREATE", `FundOwnerCap:  ${ownerCapId}`);
 
   if (fundAmountHuman > 0) {
     log("FUND", `Depositing ${fundAmountHuman} DEEP...`);
 
-    const deepCoins = await client.getCoins({
+    const coins = await client.getCoins({
       owner: address,
-      coinType: DEEP_COIN_TYPE,
+      coinType: DEEP_COIN_TYPES[NETWORK],
     });
 
-    if (!deepCoins.data.length) {
+    if (!coins.data.length) {
       log("FUND", "No DEEP coins found in wallet. Skipping funding.");
     } else {
       const fundTx = new Transaction();
       const fundAmount = BigInt(fundAmountHuman) * BigInt(DEEP_SCALAR);
 
-      const primaryCoin = fundTx.object(deepCoins.data[0].coinObjectId);
-      if (deepCoins.data.length > 1) {
+      const primaryCoin = fundTx.object(coins.data[0].coinObjectId);
+      if (coins.data.length > 1) {
         fundTx.mergeCoins(
           primaryCoin,
-          deepCoins.data.slice(1).map((c) => fundTx.object(c.coinObjectId))
+          coins.data.slice(1).map((c) => fundTx.object(c.coinObjectId))
         );
       }
 
@@ -172,8 +187,8 @@ async function main() {
       ]);
 
       fundTx.moveCall({
-        target: `${config.packageId}::maker_incentives::fund_pool`,
-        arguments: [fundTx.object(incentivePoolId), payment],
+        target: `${config.packageId}::maker_incentives::fund`,
+        arguments: [fundTx.object(fundObjId), payment],
       });
 
       fundTx.setGasBudget(50_000_000);
@@ -192,22 +207,22 @@ async function main() {
     }
   }
 
-  config.incentivePools = config.incentivePools ?? {};
-  config.incentivePools[poolId] = incentivePoolId;
+  config.funds = config.funds ?? {};
+  config.funds[fundObjId] = {
+    poolId,
+    ownerCapId,
+  };
   writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2));
   log("CONFIG", "Updated deployed config.");
 
   console.log("\n" + "=".repeat(60));
-  console.log("  POOL ADDED");
+  console.log("  FUND CREATED");
   console.log("=".repeat(60));
-  console.log(`  IncentivePool: ${incentivePoolId}`);
+  console.log(`  IncentiveFund: ${fundObjId}`);
+  console.log(`  FundOwnerCap:  ${ownerCapId}`);
   console.log(`  DeepBook Pool: ${poolId}`);
   if (fundAmountHuman > 0) {
     console.log(`  Funded:        ${fundAmountHuman} DEEP`);
-  } else {
-    console.log(
-      `  Fund it later: pnpm incentives:add-pool --network ${NETWORK} --pool-id ${poolId} --fund 10000`
-    );
   }
   console.log();
 }

@@ -7,8 +7,12 @@
 //! and signs them inside a Nautilus secure enclave. The signed results are
 //! verified on-chain by the `maker_incentives` Move contract.
 
+pub mod data_validation;
 pub mod scoring;
 pub mod types;
+
+pub use data_validation::ServerDataValidationConfig;
+pub use types::{INCENTIVE_EPOCH_DURATION_MS, INCENTIVE_WINDOW_DURATION_MS};
 
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -19,6 +23,10 @@ use serde_json::json;
 pub struct AppState {
     pub eph_kp: Ed25519KeyPair,
     pub server_url: String,
+    /// Base indexer `/status` thresholds and optional required pipeline names (see `data_validation`).
+    pub indexer_validation: ServerDataValidationConfig,
+    /// When true, skip `GET /status` (local development only).
+    pub skip_indexer_check: bool,
 }
 
 #[derive(Debug)]

@@ -10,7 +10,7 @@ use sui::clock;
 use token::deep::DEEP;
 use deepbook::balance_manager::{Self, BalanceManager};
 use maker_incentives::maker_incentives::{
-    Self, IncentiveFund, EpochRecord, FundOwnerCap,
+    Self, IncentiveFund, EpochRecord, FundOwnerCap, MakerRewardEntry,
 };
 
 const CREATOR: address = @0xC0;
@@ -21,8 +21,10 @@ const POOL_ADDR: address = @0xBEEF;
 
 const REWARD_PER_EPOCH: u64 = 1_000_000_000;
 const ALPHA_BPS: u64 = 5_000;
+const QUALITY_P: u64 = 3;
 const EPOCH_DURATION: u64 = 86_400_000;
 const WINDOW_DURATION: u64 = 3_600_000;
+const PARAM_DELAY_MS: u64 = 2 * EPOCH_DURATION;
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -34,8 +36,7 @@ fun setup_fund(test: &mut Scenario): ID {
             POOL_ADDR,
             REWARD_PER_EPOCH,
             ALPHA_BPS,
-            EPOCH_DURATION,
-            WINDOW_DURATION,
+            QUALITY_P,
             &clock,
             ts::ctx(test),
         );
@@ -66,6 +67,27 @@ fun create_balance_manager(test: &mut Scenario, owner: address): ID {
     bm_id
 }
 
+fun submit_epoch_for_test(
+    test: &mut Scenario,
+    fund: &mut IncentiveFund,
+    epoch_start_ms: u64,
+    epoch_end_ms: u64,
+    total_score: u64,
+    maker_rewards: vector<MakerRewardEntry>,
+) {
+    let clock = clock::create_for_testing(ts::ctx(test));
+    maker_incentives::submit_epoch_results_test(
+        fund,
+        &clock,
+        epoch_start_ms,
+        epoch_end_ms,
+        total_score,
+        maker_rewards,
+        ts::ctx(test),
+    );
+    clock.destroy_for_testing();
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────
 
 #[test]
@@ -79,6 +101,7 @@ fun test_create_fund_and_view_functions() {
     assert!(maker_incentives::fund_reward_per_epoch(&fund) == REWARD_PER_EPOCH);
     assert!(maker_incentives::fund_is_active(&fund));
     assert!(maker_incentives::fund_alpha_bps(&fund) == ALPHA_BPS);
+    assert!(maker_incentives::fund_quality_p(&fund) == QUALITY_P);
     assert!(maker_incentives::fund_epoch_duration_ms(&fund) == EPOCH_DURATION);
     assert!(maker_incentives::fund_window_duration_ms(&fund) == WINDOW_DURATION);
     assert!(maker_incentives::fund_treasury_balance(&fund) == 0);
@@ -127,8 +150,7 @@ fun test_anyone_can_create_fund() {
             POOL_ADDR,
             500_000,
             10_000,
-            43_200_000,
-            1_800_000,
+            3,
             &clock,
             ts::ctx(&mut test),
         );
@@ -140,41 +162,106 @@ fun test_anyone_can_create_fund() {
     let fund = ts::take_shared<IncentiveFund>(&test);
     assert!(maker_incentives::fund_reward_per_epoch(&fund) == 500_000);
     assert!(maker_incentives::fund_alpha_bps(&fund) == 10_000);
+    assert!(maker_incentives::fund_epoch_duration_ms(&fund) == EPOCH_DURATION);
+    assert!(maker_incentives::fund_window_duration_ms(&fund) == WINDOW_DURATION);
     ts::return_shared(fund);
     ts::end(test);
 }
 
 #[test]
-fun test_owner_update_reward() {
+fun test_schedule_params_stores_pending() {
     let mut test = ts::begin(CREATOR);
     setup_fund(&mut test);
 
     ts::next_tx(&mut test, CREATOR);
-    let cap = ts::take_from_sender<FundOwnerCap>(&test);
-    let mut fund = ts::take_shared<IncentiveFund>(&test);
+    {
+        let cap = ts::take_from_sender<FundOwnerCap>(&test);
+        let mut fund = ts::take_shared<IncentiveFund>(&test);
+        let mut clock = clock::create_for_testing(ts::ctx(&mut test));
+        clock.set_for_testing(1_000);
 
-    maker_incentives::update_reward_per_epoch(&cap, &mut fund, 999);
-    assert!(maker_incentives::fund_reward_per_epoch(&fund) == 999);
-
-    ts::return_shared(fund);
-    ts::return_to_sender(&test, cap);
+        maker_incentives::schedule_params_change(
+            &cap,
+            &mut fund,
+            &clock,
+            999,
+            10_000,
+            5,
+        );
+        assert!(maker_incentives::fund_reward_per_epoch(&fund) == REWARD_PER_EPOCH);
+        assert!(maker_incentives::fund_alpha_bps(&fund) == ALPHA_BPS);
+        assert!(maker_incentives::fund_quality_p(&fund) == QUALITY_P);
+        assert!(maker_incentives::fund_has_pending_params(&fund));
+        assert!(
+            maker_incentives::fund_params_effective_at_ms(&fund) == 1_000 + PARAM_DELAY_MS,
+        );
+        assert!(maker_incentives::fund_effective_reward_per_epoch(&fund, &clock) == REWARD_PER_EPOCH);
+        clock.set_for_testing(1_000 + PARAM_DELAY_MS);
+        assert!(maker_incentives::fund_effective_reward_per_epoch(&fund, &clock) == 999);
+        clock.destroy_for_testing();
+        ts::return_shared(fund);
+        ts::return_to_sender(&test, cap);
+    };
     ts::end(test);
 }
 
 #[test]
-fun test_owner_update_alpha() {
+fun test_schedule_params_applies_after_finalize() {
     let mut test = ts::begin(CREATOR);
     setup_fund(&mut test);
 
     ts::next_tx(&mut test, CREATOR);
-    let cap = ts::take_from_sender<FundOwnerCap>(&test);
-    let mut fund = ts::take_shared<IncentiveFund>(&test);
+    {
+        let cap = ts::take_from_sender<FundOwnerCap>(&test);
+        let mut fund = ts::take_shared<IncentiveFund>(&test);
+        let mut clock = clock::create_for_testing(ts::ctx(&mut test));
+        clock.set_for_testing(0);
+        maker_incentives::schedule_params_change(
+            &cap,
+            &mut fund,
+            &clock,
+            111,
+            9_999,
+            4,
+        );
+        clock.set_for_testing(PARAM_DELAY_MS);
+        maker_incentives::finalize_pending_params(&mut fund, &clock);
+        assert!(maker_incentives::fund_reward_per_epoch(&fund) == 111);
+        assert!(maker_incentives::fund_alpha_bps(&fund) == 9_999);
+        assert!(maker_incentives::fund_quality_p(&fund) == 4);
+        assert!(!maker_incentives::fund_has_pending_params(&fund));
+        clock.destroy_for_testing();
+        ts::return_shared(fund);
+        ts::return_to_sender(&test, cap);
+    };
+    ts::end(test);
+}
 
-    maker_incentives::update_alpha(&cap, &mut fund, 10_000);
-    assert!(maker_incentives::fund_alpha_bps(&fund) == 10_000);
+#[test]
+fun test_cancel_scheduled_params_change() {
+    let mut test = ts::begin(CREATOR);
+    setup_fund(&mut test);
 
-    ts::return_shared(fund);
-    ts::return_to_sender(&test, cap);
+    ts::next_tx(&mut test, CREATOR);
+    {
+        let cap = ts::take_from_sender<FundOwnerCap>(&test);
+        let mut fund = ts::take_shared<IncentiveFund>(&test);
+        let clock = clock::create_for_testing(ts::ctx(&mut test));
+        maker_incentives::schedule_params_change(
+            &cap,
+            &mut fund,
+            &clock,
+            777,
+            8_888,
+            2,
+        );
+        maker_incentives::cancel_scheduled_params_change(&cap, &mut fund);
+        assert!(!maker_incentives::fund_has_pending_params(&fund));
+        assert!(maker_incentives::fund_reward_per_epoch(&fund) == REWARD_PER_EPOCH);
+        clock.destroy_for_testing();
+        ts::return_shared(fund);
+        ts::return_to_sender(&test, cap);
+    };
     ts::end(test);
 }
 
@@ -198,6 +285,149 @@ fun test_owner_set_fund_active() {
     ts::end(test);
 }
 
+#[test]
+fun test_locked_and_withdrawable_treasury() {
+    let mut test = ts::begin(CREATOR);
+    setup_fund(&mut test);
+    fund_with(&mut test, CREATOR, 5 * REWARD_PER_EPOCH);
+
+    ts::next_tx(&mut test, CREATOR);
+    {
+        let fund = ts::take_shared<IncentiveFund>(&test);
+        assert!(maker_incentives::fund_locked_treasury(&fund) == 2 * REWARD_PER_EPOCH);
+        assert!(
+            maker_incentives::fund_withdrawable_treasury(&fund) == 3 * REWARD_PER_EPOCH,
+        );
+        ts::return_shared(fund);
+    };
+    ts::end(test);
+}
+
+#[test]
+fun test_withdraw_treasury_happy_path() {
+    let mut test = ts::begin(CREATOR);
+    setup_fund(&mut test);
+    fund_with(&mut test, CREATOR, 5 * REWARD_PER_EPOCH);
+
+    ts::next_tx(&mut test, CREATOR);
+    {
+        let cap = ts::take_from_sender<FundOwnerCap>(&test);
+        let mut fund = ts::take_shared<IncentiveFund>(&test);
+        let clock = clock::create_for_testing(ts::ctx(&mut test));
+        let coin = maker_incentives::withdraw_treasury(
+            &cap,
+            &mut fund,
+            &clock,
+            3 * REWARD_PER_EPOCH,
+            ts::ctx(&mut test),
+        );
+        assert!(coin::value(&coin) == 3 * REWARD_PER_EPOCH);
+        assert!(maker_incentives::fund_treasury_balance(&fund) == 2 * REWARD_PER_EPOCH);
+        assert!(maker_incentives::fund_withdrawable_treasury(&fund) == 0);
+        coin::burn_for_testing(coin);
+        clock.destroy_for_testing();
+        ts::return_shared(fund);
+        ts::return_to_sender(&test, cap);
+    };
+    ts::end(test);
+}
+
+#[test, expected_failure(abort_code = maker_incentives::EWithdrawAmountTooLarge)]
+fun test_withdraw_treasury_too_much_aborts() {
+    let mut test = ts::begin(CREATOR);
+    setup_fund(&mut test);
+    fund_with(&mut test, CREATOR, 5 * REWARD_PER_EPOCH);
+
+    ts::next_tx(&mut test, CREATOR);
+    {
+        let cap = ts::take_from_sender<FundOwnerCap>(&test);
+        let mut fund = ts::take_shared<IncentiveFund>(&test);
+        let clock = clock::create_for_testing(ts::ctx(&mut test));
+        let coin = maker_incentives::withdraw_treasury(
+            &cap,
+            &mut fund,
+            &clock,
+            3 * REWARD_PER_EPOCH + 1,
+            ts::ctx(&mut test),
+        );
+        coin::burn_for_testing(coin);
+        clock.destroy_for_testing();
+        ts::return_shared(fund);
+        ts::return_to_sender(&test, cap);
+    };
+    ts::end(test);
+}
+
+#[test, expected_failure(abort_code = maker_incentives::EWithdrawZero)]
+fun test_withdraw_zero_aborts() {
+    let mut test = ts::begin(CREATOR);
+    setup_fund(&mut test);
+    fund_with(&mut test, CREATOR, REWARD_PER_EPOCH);
+
+    ts::next_tx(&mut test, CREATOR);
+    {
+        let cap = ts::take_from_sender<FundOwnerCap>(&test);
+        let mut fund = ts::take_shared<IncentiveFund>(&test);
+        let clock = clock::create_for_testing(ts::ctx(&mut test));
+        let coin = maker_incentives::withdraw_treasury(
+            &cap,
+            &mut fund,
+            &clock,
+            0,
+            ts::ctx(&mut test),
+        );
+        coin::burn_for_testing(coin);
+        clock.destroy_for_testing();
+        ts::return_shared(fund);
+        ts::return_to_sender(&test, cap);
+    };
+    ts::end(test);
+}
+
+#[test]
+fun test_withdraw_all_when_reward_per_epoch_zero() {
+    let mut test = ts::begin(CREATOR);
+    ts::next_tx(&mut test, CREATOR);
+    {
+        let clock = clock::create_for_testing(ts::ctx(&mut test));
+        let cap = maker_incentives::create_fund(
+            POOL_ADDR,
+            0,
+            ALPHA_BPS,
+            QUALITY_P,
+            &clock,
+            ts::ctx(&mut test),
+        );
+        transfer::public_transfer(cap, CREATOR);
+        clock.destroy_for_testing();
+    };
+
+    fund_with(&mut test, CREATOR, 100);
+
+    ts::next_tx(&mut test, CREATOR);
+    {
+        let cap = ts::take_from_sender<FundOwnerCap>(&test);
+        let mut fund = ts::take_shared<IncentiveFund>(&test);
+        assert!(maker_incentives::fund_locked_treasury(&fund) == 0);
+        assert!(maker_incentives::fund_withdrawable_treasury(&fund) == 100);
+        let clock = clock::create_for_testing(ts::ctx(&mut test));
+        let coin = maker_incentives::withdraw_treasury(
+            &cap,
+            &mut fund,
+            &clock,
+            100,
+            ts::ctx(&mut test),
+        );
+        assert!(coin::value(&coin) == 100);
+        assert!(maker_incentives::fund_treasury_balance(&fund) == 0);
+        coin::burn_for_testing(coin);
+        clock.destroy_for_testing();
+        ts::return_shared(fund);
+        ts::return_to_sender(&test, cap);
+    };
+    ts::end(test);
+}
+
 #[test, expected_failure(abort_code = maker_incentives::ENotFundOwner)]
 fun test_wrong_owner_update_aborts() {
     let mut test = ts::begin(CREATOR);
@@ -212,7 +442,6 @@ fun test_wrong_owner_update_aborts() {
             1,
             1,
             1,
-            1,
             &clock,
             ts::ctx(&mut test),
         );
@@ -224,9 +453,18 @@ fun test_wrong_owner_update_aborts() {
     ts::next_tx(&mut test, @0xF2);
     let other_cap = ts::take_from_sender<FundOwnerCap>(&test);
     let mut fund = ts::take_shared_by_id<IncentiveFund>(&test, fund_id);
+    let clock = clock::create_for_testing(ts::ctx(&mut test));
 
-    maker_incentives::update_reward_per_epoch(&other_cap, &mut fund, 999);
+    maker_incentives::schedule_params_change(
+        &other_cap,
+        &mut fund,
+        &clock,
+        999,
+        ALPHA_BPS,
+        QUALITY_P,
+    );
 
+    clock.destroy_for_testing();
     ts::return_shared(fund);
     ts::return_to_sender(&test, other_cap);
     ts::end(test);
@@ -255,13 +493,13 @@ fun test_submit_and_claim_happy_path() {
             30,
         ));
 
-        maker_incentives::submit_epoch_results_test(
+        submit_epoch_for_test(
+            &mut test,
             &mut fund,
             0,
             EPOCH_DURATION,
             total_score,
             rewards,
-            ts::ctx(&mut test),
         );
         ts::return_shared(fund);
     };
@@ -335,8 +573,10 @@ fun test_double_claim_aborts() {
             object::id_to_address(&bm_a_id),
             100,
         ));
-        maker_incentives::submit_epoch_results_test(
-            &mut fund, 0, EPOCH_DURATION, 100, rewards, ts::ctx(&mut test),
+        submit_epoch_for_test(
+            &mut test,
+            &mut fund,
+            0, EPOCH_DURATION, 100, rewards,
         );
         ts::return_shared(fund);
     };
@@ -381,8 +621,10 @@ fun test_claim_wrong_owner_aborts() {
             object::id_to_address(&bm_a_id),
             100,
         ));
-        maker_incentives::submit_epoch_results_test(
-            &mut fund, 0, EPOCH_DURATION, 100, rewards, ts::ctx(&mut test),
+        submit_epoch_for_test(
+            &mut test,
+            &mut fund,
+            0, EPOCH_DURATION, 100, rewards,
         );
         ts::return_shared(fund);
     };
@@ -418,8 +660,10 @@ fun test_claim_no_score_aborts() {
             object::id_to_address(&bm_a_id),
             100,
         ));
-        maker_incentives::submit_epoch_results_test(
-            &mut fund, 0, EPOCH_DURATION, 100, rewards, ts::ctx(&mut test),
+        submit_epoch_for_test(
+            &mut test,
+            &mut fund,
+            0, EPOCH_DURATION, 100, rewards,
         );
         ts::return_shared(fund);
     };
@@ -457,8 +701,10 @@ fun test_submit_inactive_fund_aborts() {
     {
         let mut fund = ts::take_shared<IncentiveFund>(&test);
         let rewards = vector::empty();
-        maker_incentives::submit_epoch_results_test(
-            &mut fund, 0, EPOCH_DURATION, 0, rewards, ts::ctx(&mut test),
+        submit_epoch_for_test(
+            &mut test,
+            &mut fund,
+            0, EPOCH_DURATION, 0, rewards,
         );
         ts::return_shared(fund);
     };
@@ -476,8 +722,10 @@ fun test_submit_bad_epoch_range_aborts() {
     {
         let mut fund = ts::take_shared<IncentiveFund>(&test);
         let rewards = vector::empty();
-        maker_incentives::submit_epoch_results_test(
-            &mut fund, 2000, 1000, 0, rewards, ts::ctx(&mut test),
+        submit_epoch_for_test(
+            &mut test,
+            &mut fund,
+            2000, 1000, 0, rewards,
         );
         ts::return_shared(fund);
     };
@@ -495,8 +743,10 @@ fun test_submit_wrong_epoch_duration_aborts() {
     {
         let mut fund = ts::take_shared<IncentiveFund>(&test);
         let rewards = vector::empty();
-        maker_incentives::submit_epoch_results_test(
-            &mut fund, 0, 3_600_000, 0, rewards, ts::ctx(&mut test),
+        submit_epoch_for_test(
+            &mut test,
+            &mut fund,
+            0, 3_600_000, 0, rewards,
         );
         ts::return_shared(fund);
     };
@@ -517,8 +767,7 @@ fun test_submit_epoch_before_fund_creation_aborts() {
             POOL_ADDR,
             REWARD_PER_EPOCH,
             ALPHA_BPS,
-            EPOCH_DURATION,
-            WINDOW_DURATION,
+            QUALITY_P,
             &clock,
             ts::ctx(&mut test),
         );
@@ -533,8 +782,10 @@ fun test_submit_epoch_before_fund_creation_aborts() {
     {
         let mut fund = ts::take_shared<IncentiveFund>(&test);
         let rewards = vector::empty();
-        maker_incentives::submit_epoch_results_test(
-            &mut fund, 0, EPOCH_DURATION, 0, rewards, ts::ctx(&mut test),
+        submit_epoch_for_test(
+            &mut test,
+            &mut fund,
+            0, EPOCH_DURATION, 0, rewards,
         );
         ts::return_shared(fund);
     };
@@ -560,8 +811,10 @@ fun test_treasury_underfunded_allocates_remaining() {
             object::id_to_address(&bm_a_id),
             100,
         ));
-        maker_incentives::submit_epoch_results_test(
-            &mut fund, 0, EPOCH_DURATION, 100, rewards, ts::ctx(&mut test),
+        submit_epoch_for_test(
+            &mut test,
+            &mut fund,
+            0, EPOCH_DURATION, 100, rewards,
         );
         assert!(maker_incentives::fund_treasury_balance(&fund) == 0);
         ts::return_shared(fund);
@@ -628,8 +881,10 @@ fun test_record_maker_info() {
             object::id_to_address(&bm_b_id),
             25,
         ));
-        maker_incentives::submit_epoch_results_test(
-            &mut fund, 0, EPOCH_DURATION, 100, rewards, ts::ctx(&mut test),
+        submit_epoch_for_test(
+            &mut test,
+            &mut fund,
+            0, EPOCH_DURATION, 100, rewards,
         );
         ts::return_shared(fund);
     };
@@ -705,8 +960,10 @@ fun test_multiple_epochs() {
             object::id_to_address(&bm_a_id),
             100,
         ));
-        maker_incentives::submit_epoch_results_test(
-            &mut fund, 0, EPOCH_DURATION, 100, rewards, ts::ctx(&mut test),
+        submit_epoch_for_test(
+            &mut test,
+            &mut fund,
+            0, EPOCH_DURATION, 100, rewards,
         );
         ts::return_shared(fund);
     };
@@ -720,8 +977,10 @@ fun test_multiple_epochs() {
             object::id_to_address(&bm_a_id),
             100,
         ));
-        maker_incentives::submit_epoch_results_test(
-            &mut fund, EPOCH_DURATION, 2 * EPOCH_DURATION, 100, rewards, ts::ctx(&mut test),
+        submit_epoch_for_test(
+            &mut test,
+            &mut fund,
+            EPOCH_DURATION, 2 * EPOCH_DURATION, 100, rewards,
         );
         ts::return_shared(fund);
     };
@@ -753,8 +1012,10 @@ fun test_duplicate_epoch_submission_aborts() {
             object::id_to_address(&bm_a_id),
             100,
         ));
-        maker_incentives::submit_epoch_results_test(
-            &mut fund, 0, EPOCH_DURATION, 100, rewards, ts::ctx(&mut test),
+        submit_epoch_for_test(
+            &mut test,
+            &mut fund,
+            0, EPOCH_DURATION, 100, rewards,
         );
         ts::return_shared(fund);
     };
@@ -768,8 +1029,10 @@ fun test_duplicate_epoch_submission_aborts() {
             object::id_to_address(&bm_a_id),
             100,
         ));
-        maker_incentives::submit_epoch_results_test(
-            &mut fund, 0, EPOCH_DURATION, 100, rewards, ts::ctx(&mut test),
+        submit_epoch_for_test(
+            &mut test,
+            &mut fund,
+            0, EPOCH_DURATION, 100, rewards,
         );
         ts::return_shared(fund);
     };
@@ -786,7 +1049,10 @@ fun test_multiple_funds_same_pool() {
     {
         let clock = clock::create_for_testing(ts::ctx(&mut test));
         let cap = maker_incentives::create_fund(
-            POOL_ADDR, REWARD_PER_EPOCH, 5_000, EPOCH_DURATION, WINDOW_DURATION,
+            POOL_ADDR,
+            REWARD_PER_EPOCH,
+            5_000,
+            3,
             &clock,
             ts::ctx(&mut test),
         );
@@ -799,7 +1065,10 @@ fun test_multiple_funds_same_pool() {
     {
         let clock = clock::create_for_testing(ts::ctx(&mut test));
         let cap = maker_incentives::create_fund(
-            POOL_ADDR, REWARD_PER_EPOCH / 2, 10_000, EPOCH_DURATION, WINDOW_DURATION,
+            POOL_ADDR,
+            REWARD_PER_EPOCH / 2,
+            10_000,
+            3,
             &clock,
             ts::ctx(&mut test),
         );
@@ -814,6 +1083,581 @@ fun test_multiple_funds_same_pool() {
     let fund = ts::take_shared<IncentiveFund>(&test);
     assert!(maker_incentives::fund_treasury_balance(&fund) == REWARD_PER_EPOCH);
     ts::return_shared(fund);
+
+    ts::end(test);
+}
+
+// ─── EInvalidQualityP ───────────────────────────────────────────────
+
+#[test, expected_failure(abort_code = maker_incentives::EInvalidQualityP)]
+fun test_create_fund_quality_p_zero_aborts() {
+    let mut test = ts::begin(CREATOR);
+    ts::next_tx(&mut test, CREATOR);
+    {
+        let clock = clock::create_for_testing(ts::ctx(&mut test));
+        let cap = maker_incentives::create_fund(
+            POOL_ADDR, REWARD_PER_EPOCH, ALPHA_BPS, 0,
+            &clock, ts::ctx(&mut test),
+        );
+        transfer::public_transfer(cap, CREATOR);
+        clock.destroy_for_testing();
+    };
+    ts::end(test);
+}
+
+#[test, expected_failure(abort_code = maker_incentives::EInvalidQualityP)]
+fun test_schedule_params_quality_p_zero_aborts() {
+    let mut test = ts::begin(CREATOR);
+    setup_fund(&mut test);
+
+    ts::next_tx(&mut test, CREATOR);
+    {
+        let cap = ts::take_from_sender<FundOwnerCap>(&test);
+        let mut fund = ts::take_shared<IncentiveFund>(&test);
+        let clock = clock::create_for_testing(ts::ctx(&mut test));
+        maker_incentives::schedule_params_change(
+            &cap, &mut fund, &clock,
+            REWARD_PER_EPOCH, ALPHA_BPS, 0,
+        );
+        clock.destroy_for_testing();
+        ts::return_shared(fund);
+        ts::return_to_sender(&test, cap);
+    };
+    ts::end(test);
+}
+
+// ─── ENotFundOwner on remaining owner-gated functions ───────────────
+
+#[test, expected_failure(abort_code = maker_incentives::ENotFundOwner)]
+fun test_cancel_params_wrong_owner_aborts() {
+    let mut test = ts::begin(CREATOR);
+    let fund_id = setup_fund(&mut test);
+
+    ts::next_tx(&mut test, @0xF2);
+    {
+        let clock = clock::create_for_testing(ts::ctx(&mut test));
+        let other_cap = maker_incentives::create_fund(
+            @0xDEAD, 1, 1, 1, &clock, ts::ctx(&mut test),
+        );
+        transfer::public_transfer(other_cap, @0xF2);
+        clock.destroy_for_testing();
+    };
+
+    ts::next_tx(&mut test, @0xF2);
+    let other_cap = ts::take_from_sender<FundOwnerCap>(&test);
+    let mut fund = ts::take_shared_by_id<IncentiveFund>(&test, fund_id);
+    maker_incentives::cancel_scheduled_params_change(&other_cap, &mut fund);
+
+    ts::return_shared(fund);
+    ts::return_to_sender(&test, other_cap);
+    ts::end(test);
+}
+
+#[test, expected_failure(abort_code = maker_incentives::ENotFundOwner)]
+fun test_set_active_wrong_owner_aborts() {
+    let mut test = ts::begin(CREATOR);
+    let fund_id = setup_fund(&mut test);
+
+    ts::next_tx(&mut test, @0xF2);
+    {
+        let clock = clock::create_for_testing(ts::ctx(&mut test));
+        let other_cap = maker_incentives::create_fund(
+            @0xDEAD, 1, 1, 1, &clock, ts::ctx(&mut test),
+        );
+        transfer::public_transfer(other_cap, @0xF2);
+        clock.destroy_for_testing();
+    };
+
+    ts::next_tx(&mut test, @0xF2);
+    let other_cap = ts::take_from_sender<FundOwnerCap>(&test);
+    let mut fund = ts::take_shared_by_id<IncentiveFund>(&test, fund_id);
+    maker_incentives::set_fund_active(&other_cap, &mut fund, false);
+
+    ts::return_shared(fund);
+    ts::return_to_sender(&test, other_cap);
+    ts::end(test);
+}
+
+#[test, expected_failure(abort_code = maker_incentives::ENotFundOwner)]
+fun test_withdraw_wrong_owner_aborts() {
+    let mut test = ts::begin(CREATOR);
+    let fund_id = setup_fund(&mut test);
+    fund_with(&mut test, CREATOR, 5 * REWARD_PER_EPOCH);
+
+    ts::next_tx(&mut test, @0xF2);
+    {
+        let clock = clock::create_for_testing(ts::ctx(&mut test));
+        let other_cap = maker_incentives::create_fund(
+            @0xDEAD, 1, 1, 1, &clock, ts::ctx(&mut test),
+        );
+        transfer::public_transfer(other_cap, @0xF2);
+        clock.destroy_for_testing();
+    };
+
+    ts::next_tx(&mut test, @0xF2);
+    let other_cap = ts::take_from_sender<FundOwnerCap>(&test);
+    let mut fund = ts::take_shared_by_id<IncentiveFund>(&test, fund_id);
+    let clock = clock::create_for_testing(ts::ctx(&mut test));
+    let coin = maker_incentives::withdraw_treasury(
+        &other_cap, &mut fund, &clock, 1, ts::ctx(&mut test),
+    );
+    coin::burn_for_testing(coin);
+    clock.destroy_for_testing();
+    ts::return_shared(fund);
+    ts::return_to_sender(&test, other_cap);
+    ts::end(test);
+}
+
+// ─── total_score == 0 ───────────────────────────────────────────────
+
+#[test]
+fun test_submit_zero_total_score_no_allocation() {
+    let mut test = ts::begin(CREATOR);
+    setup_fund(&mut test);
+    fund_with(&mut test, CREATOR, REWARD_PER_EPOCH);
+
+    ts::next_tx(&mut test, RELAYER);
+    {
+        let mut fund = ts::take_shared<IncentiveFund>(&test);
+        submit_epoch_for_test(
+            &mut test, &mut fund,
+            0, EPOCH_DURATION, 0, vector::empty(),
+        );
+        assert!(maker_incentives::fund_treasury_balance(&fund) == REWARD_PER_EPOCH);
+        ts::return_shared(fund);
+    };
+
+    ts::next_tx(&mut test, CREATOR);
+    {
+        let record = ts::take_shared<EpochRecord>(&test);
+        assert!(maker_incentives::record_total_allocation(&record) == 0);
+        assert!(maker_incentives::record_remaining_rewards(&record) == 0);
+        ts::return_shared(record);
+    };
+
+    ts::end(test);
+}
+
+#[test, expected_failure(abort_code = maker_incentives::EZeroTotalScore)]
+fun test_claim_zero_total_score_aborts() {
+    let mut test = ts::begin(CREATOR);
+    setup_fund(&mut test);
+    fund_with(&mut test, CREATOR, REWARD_PER_EPOCH);
+
+    let bm_a_id = create_balance_manager(&mut test, MAKER_A);
+
+    ts::next_tx(&mut test, RELAYER);
+    {
+        let mut fund = ts::take_shared<IncentiveFund>(&test);
+        let mut rewards = vector::empty();
+        rewards.push_back(maker_incentives::new_maker_reward_entry(
+            object::id_to_address(&bm_a_id), 0,
+        ));
+        submit_epoch_for_test(
+            &mut test, &mut fund,
+            0, EPOCH_DURATION, 0, rewards,
+        );
+        ts::return_shared(fund);
+    };
+
+    ts::next_tx(&mut test, MAKER_A);
+    {
+        let mut record = ts::take_shared<EpochRecord>(&test);
+        let bm = ts::take_shared_by_id<BalanceManager>(&test, bm_a_id);
+        let payout = maker_incentives::claim_reward(&mut record, &bm, ts::ctx(&mut test));
+        coin::burn_for_testing(payout);
+        ts::return_shared(bm);
+        ts::return_shared(record);
+    };
+
+    ts::end(test);
+}
+
+// ─── Pending params view functions ──────────────────────────────────
+
+#[test]
+fun test_pending_params_info_and_effective_views() {
+    let mut test = ts::begin(CREATOR);
+    setup_fund(&mut test);
+
+    ts::next_tx(&mut test, CREATOR);
+    {
+        let cap = ts::take_from_sender<FundOwnerCap>(&test);
+        let mut fund = ts::take_shared<IncentiveFund>(&test);
+        let mut clock = clock::create_for_testing(ts::ctx(&mut test));
+        clock.set_for_testing(1_000);
+
+        let (has, rpe, alpha, qp, eff) = maker_incentives::fund_pending_params_info(&fund);
+        assert!(!has);
+        assert!(rpe == 0 && alpha == 0 && qp == 0 && eff == 0);
+
+        maker_incentives::schedule_params_change(
+            &cap, &mut fund, &clock,
+            500, 20_000, 5,
+        );
+
+        let (has, rpe, alpha, qp, eff) = maker_incentives::fund_pending_params_info(&fund);
+        assert!(has);
+        assert!(rpe == 500);
+        assert!(alpha == 20_000);
+        assert!(qp == 5);
+        assert!(eff == 1_000 + PARAM_DELAY_MS);
+
+        assert!(maker_incentives::fund_effective_alpha_bps(&fund, &clock) == ALPHA_BPS);
+        assert!(maker_incentives::fund_effective_quality_p(&fund, &clock) == QUALITY_P);
+
+        clock.set_for_testing(1_000 + PARAM_DELAY_MS);
+        assert!(maker_incentives::fund_effective_reward_per_epoch(&fund, &clock) == 500);
+        assert!(maker_incentives::fund_effective_alpha_bps(&fund, &clock) == 20_000);
+        assert!(maker_incentives::fund_effective_quality_p(&fund, &clock) == 5);
+
+        assert!(maker_incentives::param_change_delay_epochs() == 2);
+
+        clock.destroy_for_testing();
+        ts::return_shared(fund);
+        ts::return_to_sender(&test, cap);
+    };
+    ts::end(test);
+}
+
+// ─── Pending params applied via withdraw / submit ───────────────────
+
+#[test]
+fun test_pending_params_applied_on_withdraw() {
+    let mut test = ts::begin(CREATOR);
+    setup_fund(&mut test);
+    fund_with(&mut test, CREATOR, 5 * REWARD_PER_EPOCH);
+
+    ts::next_tx(&mut test, CREATOR);
+    {
+        let cap = ts::take_from_sender<FundOwnerCap>(&test);
+        let mut fund = ts::take_shared<IncentiveFund>(&test);
+        let clock = clock::create_for_testing(ts::ctx(&mut test));
+        maker_incentives::schedule_params_change(
+            &cap, &mut fund, &clock,
+            0, ALPHA_BPS, QUALITY_P,
+        );
+        assert!(maker_incentives::fund_withdrawable_treasury(&fund) == 3 * REWARD_PER_EPOCH);
+        clock.destroy_for_testing();
+        ts::return_shared(fund);
+        ts::return_to_sender(&test, cap);
+    };
+
+    ts::next_tx(&mut test, CREATOR);
+    {
+        let cap = ts::take_from_sender<FundOwnerCap>(&test);
+        let mut fund = ts::take_shared<IncentiveFund>(&test);
+        let mut clock = clock::create_for_testing(ts::ctx(&mut test));
+        clock.set_for_testing(PARAM_DELAY_MS);
+        let coin = maker_incentives::withdraw_treasury(
+            &cap, &mut fund, &clock,
+            5 * REWARD_PER_EPOCH,
+            ts::ctx(&mut test),
+        );
+        assert!(coin::value(&coin) == 5 * REWARD_PER_EPOCH);
+        assert!(maker_incentives::fund_reward_per_epoch(&fund) == 0);
+        assert!(!maker_incentives::fund_has_pending_params(&fund));
+        coin::burn_for_testing(coin);
+        clock.destroy_for_testing();
+        ts::return_shared(fund);
+        ts::return_to_sender(&test, cap);
+    };
+
+    ts::end(test);
+}
+
+#[test]
+fun test_pending_params_applied_on_submit() {
+    let mut test = ts::begin(CREATOR);
+    setup_fund(&mut test);
+    fund_with(&mut test, CREATOR, REWARD_PER_EPOCH);
+
+    ts::next_tx(&mut test, CREATOR);
+    {
+        let cap = ts::take_from_sender<FundOwnerCap>(&test);
+        let mut fund = ts::take_shared<IncentiveFund>(&test);
+        let clock = clock::create_for_testing(ts::ctx(&mut test));
+        maker_incentives::schedule_params_change(
+            &cap, &mut fund, &clock,
+            REWARD_PER_EPOCH, 99_999, QUALITY_P,
+        );
+        clock.destroy_for_testing();
+        ts::return_shared(fund);
+        ts::return_to_sender(&test, cap);
+    };
+
+    ts::next_tx(&mut test, RELAYER);
+    {
+        let mut fund = ts::take_shared<IncentiveFund>(&test);
+        let mut clock = clock::create_for_testing(ts::ctx(&mut test));
+        clock.set_for_testing(PARAM_DELAY_MS);
+        maker_incentives::submit_epoch_results_test(
+            &mut fund,
+            &clock,
+            0, EPOCH_DURATION, 0, vector::empty(),
+            ts::ctx(&mut test),
+        );
+        assert!(maker_incentives::fund_alpha_bps(&fund) == 99_999);
+        assert!(!maker_incentives::fund_has_pending_params(&fund));
+        clock.destroy_for_testing();
+        ts::return_shared(fund);
+    };
+
+    ts::end(test);
+}
+
+// ─── Payout rounding dust ───────────────────────────────────────────
+
+#[test]
+fun test_payout_rounding_leaves_dust() {
+    let mut test = ts::begin(CREATOR);
+    setup_fund(&mut test);
+    fund_with(&mut test, CREATOR, REWARD_PER_EPOCH);
+
+    let bm_a_id = create_balance_manager(&mut test, MAKER_A);
+    let bm_b_id = create_balance_manager(&mut test, MAKER_B);
+
+    ts::next_tx(&mut test, RELAYER);
+    {
+        let mut fund = ts::take_shared<IncentiveFund>(&test);
+        let mut rewards = vector::empty();
+        rewards.push_back(maker_incentives::new_maker_reward_entry(
+            object::id_to_address(&bm_a_id), 1,
+        ));
+        rewards.push_back(maker_incentives::new_maker_reward_entry(
+            object::id_to_address(&bm_b_id), 2,
+        ));
+        submit_epoch_for_test(
+            &mut test, &mut fund,
+            0, EPOCH_DURATION, 3, rewards,
+        );
+        ts::return_shared(fund);
+    };
+
+    let expected_a = ((REWARD_PER_EPOCH as u128) * 1 / 3) as u64;
+    let expected_b = ((REWARD_PER_EPOCH as u128) * 2 / 3) as u64;
+    let dust = REWARD_PER_EPOCH - expected_a - expected_b;
+    assert!(dust > 0);
+
+    ts::next_tx(&mut test, MAKER_A);
+    {
+        let mut record = ts::take_shared<EpochRecord>(&test);
+        let bm = ts::take_shared_by_id<BalanceManager>(&test, bm_a_id);
+        let payout = maker_incentives::claim_reward(&mut record, &bm, ts::ctx(&mut test));
+        assert!(coin::value(&payout) == expected_a);
+        coin::burn_for_testing(payout);
+        ts::return_shared(bm);
+        ts::return_shared(record);
+    };
+
+    ts::next_tx(&mut test, MAKER_B);
+    {
+        let mut record = ts::take_shared<EpochRecord>(&test);
+        let bm = ts::take_shared_by_id<BalanceManager>(&test, bm_b_id);
+        let payout = maker_incentives::claim_reward(&mut record, &bm, ts::ctx(&mut test));
+        assert!(coin::value(&payout) == expected_b);
+        coin::burn_for_testing(payout);
+        ts::return_shared(bm);
+        ts::return_shared(record);
+    };
+
+    ts::next_tx(&mut test, CREATOR);
+    {
+        let record = ts::take_shared<EpochRecord>(&test);
+        assert!(maker_incentives::record_remaining_rewards(&record) == dust);
+        ts::return_shared(record);
+    };
+
+    ts::end(test);
+}
+
+// ─── Maker with score 0 in reward list ──────────────────────────────
+
+#[test, expected_failure(abort_code = maker_incentives::ENoRewardToClaim)]
+fun test_claim_zero_score_in_list_aborts() {
+    let mut test = ts::begin(CREATOR);
+    setup_fund(&mut test);
+    fund_with(&mut test, CREATOR, REWARD_PER_EPOCH);
+
+    let bm_a_id = create_balance_manager(&mut test, MAKER_A);
+
+    ts::next_tx(&mut test, RELAYER);
+    {
+        let mut fund = ts::take_shared<IncentiveFund>(&test);
+        let mut rewards = vector::empty();
+        rewards.push_back(maker_incentives::new_maker_reward_entry(
+            object::id_to_address(&bm_a_id), 0,
+        ));
+        submit_epoch_for_test(
+            &mut test, &mut fund,
+            0, EPOCH_DURATION, 100, rewards,
+        );
+        ts::return_shared(fund);
+    };
+
+    ts::next_tx(&mut test, MAKER_A);
+    {
+        let mut record = ts::take_shared<EpochRecord>(&test);
+        let bm = ts::take_shared_by_id<BalanceManager>(&test, bm_a_id);
+        let payout = maker_incentives::claim_reward(&mut record, &bm, ts::ctx(&mut test));
+        coin::burn_for_testing(payout);
+        ts::return_shared(bm);
+        ts::return_shared(record);
+    };
+
+    ts::end(test);
+}
+
+// ─── is_epoch_submitted ─────────────────────────────────────────────
+
+#[test]
+fun test_is_epoch_submitted() {
+    let mut test = ts::begin(CREATOR);
+    setup_fund(&mut test);
+    fund_with(&mut test, CREATOR, REWARD_PER_EPOCH);
+
+    ts::next_tx(&mut test, RELAYER);
+    {
+        let mut fund = ts::take_shared<IncentiveFund>(&test);
+        assert!(!maker_incentives::is_epoch_submitted(&fund, 0));
+        submit_epoch_for_test(
+            &mut test, &mut fund,
+            0, EPOCH_DURATION, 0, vector::empty(),
+        );
+        assert!(maker_incentives::is_epoch_submitted(&fund, 0));
+        assert!(!maker_incentives::is_epoch_submitted(&fund, EPOCH_DURATION));
+        ts::return_shared(fund);
+    };
+
+    ts::end(test);
+}
+
+// ─── Overflow edge cases ────────────────────────────────────────────
+
+#[test]
+fun test_lock_cap_overflow_clamps() {
+    let mut test = ts::begin(CREATOR);
+    let huge_rpe: u64 = 10_000_000_000_000_000_000;
+
+    ts::next_tx(&mut test, CREATOR);
+    {
+        let clock = clock::create_for_testing(ts::ctx(&mut test));
+        let cap = maker_incentives::create_fund(
+            POOL_ADDR, huge_rpe, ALPHA_BPS, QUALITY_P,
+            &clock, ts::ctx(&mut test),
+        );
+        transfer::public_transfer(cap, CREATOR);
+        clock.destroy_for_testing();
+    };
+
+    fund_with(&mut test, CREATOR, 100);
+
+    ts::next_tx(&mut test, CREATOR);
+    {
+        let fund = ts::take_shared<IncentiveFund>(&test);
+        assert!(maker_incentives::fund_locked_treasury(&fund) == 100);
+        assert!(maker_incentives::fund_withdrawable_treasury(&fund) == 0);
+        ts::return_shared(fund);
+    };
+    ts::end(test);
+}
+
+#[test]
+fun test_schedule_params_time_overflow_clamps() {
+    let mut test = ts::begin(CREATOR);
+    let near_max: u64 = 18_446_744_073_709_551_515;
+
+    ts::next_tx(&mut test, CREATOR);
+    {
+        let mut clock = clock::create_for_testing(ts::ctx(&mut test));
+        clock.set_for_testing(near_max);
+        let cap = maker_incentives::create_fund(
+            POOL_ADDR, REWARD_PER_EPOCH, ALPHA_BPS, QUALITY_P,
+            &clock, ts::ctx(&mut test),
+        );
+        transfer::public_transfer(cap, CREATOR);
+        clock.destroy_for_testing();
+    };
+
+    ts::next_tx(&mut test, CREATOR);
+    {
+        let cap = ts::take_from_sender<FundOwnerCap>(&test);
+        let mut fund = ts::take_shared<IncentiveFund>(&test);
+        let mut clock = clock::create_for_testing(ts::ctx(&mut test));
+        clock.set_for_testing(near_max);
+        maker_incentives::schedule_params_change(
+            &cap, &mut fund, &clock,
+            999, ALPHA_BPS, QUALITY_P,
+        );
+        assert!(
+            maker_incentives::fund_params_effective_at_ms(&fund)
+                == 18_446_744_073_709_551_615,
+        );
+        clock.destroy_for_testing();
+        ts::return_shared(fund);
+        ts::return_to_sender(&test, cap);
+    };
+    ts::end(test);
+}
+
+// ─── Additional view function coverage ──────────────────────────────
+
+#[test]
+fun test_fund_created_at_ms() {
+    let mut test = ts::begin(CREATOR);
+    ts::next_tx(&mut test, CREATOR);
+    {
+        let mut clock = clock::create_for_testing(ts::ctx(&mut test));
+        clock.set_for_testing(42_000);
+        let cap = maker_incentives::create_fund(
+            POOL_ADDR, REWARD_PER_EPOCH, ALPHA_BPS, QUALITY_P,
+            &clock, ts::ctx(&mut test),
+        );
+        transfer::public_transfer(cap, CREATOR);
+        clock.destroy_for_testing();
+    };
+
+    ts::next_tx(&mut test, CREATOR);
+    {
+        let fund = ts::take_shared<IncentiveFund>(&test);
+        assert!(maker_incentives::fund_created_at_ms(&fund) == 42_000);
+        ts::return_shared(fund);
+    };
+
+    ts::end(test);
+}
+
+#[test]
+fun test_record_view_functions() {
+    let mut test = ts::begin(CREATOR);
+    setup_fund(&mut test);
+    fund_with(&mut test, CREATOR, REWARD_PER_EPOCH);
+
+    let bm_a_id = create_balance_manager(&mut test, MAKER_A);
+
+    ts::next_tx(&mut test, RELAYER);
+    {
+        let mut fund = ts::take_shared<IncentiveFund>(&test);
+        let mut rewards = vector::empty();
+        rewards.push_back(maker_incentives::new_maker_reward_entry(
+            object::id_to_address(&bm_a_id), 100,
+        ));
+        submit_epoch_for_test(
+            &mut test, &mut fund,
+            0, EPOCH_DURATION, 100, rewards,
+        );
+        ts::return_shared(fund);
+    };
+
+    ts::next_tx(&mut test, CREATOR);
+    {
+        let fund = ts::take_shared<IncentiveFund>(&test);
+        let record = ts::take_shared<EpochRecord>(&test);
+        assert!(maker_incentives::record_total_score(&record) == 100);
+        assert!(maker_incentives::record_fund_id(&record) == object::id(&fund).to_address());
+        ts::return_shared(record);
+        ts::return_shared(fund);
+    };
 
     ts::end(test);
 }

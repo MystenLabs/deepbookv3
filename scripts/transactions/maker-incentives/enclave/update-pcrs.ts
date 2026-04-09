@@ -3,8 +3,8 @@
  * Update EnclaveConfig PCRs on-chain.
  *
  * Usage:
- *   npx tsx transactions/maker-incentives/update-pcrs.ts --network testnet --debug
- *   npx tsx transactions/maker-incentives/update-pcrs.ts --network testnet \
+ *   npx tsx transactions/maker-incentives/enclave/update-pcrs.ts --network testnet --debug
+ *   npx tsx transactions/maker-incentives/enclave/update-pcrs.ts --network testnet \
  *     --pcr0 abc123... --pcr1 abc123... --pcr2 def456...
  */
 
@@ -13,7 +13,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { parseArgs } from "util";
 import { Transaction } from "@mysten/sui/transactions";
-import { getClient, getSigner } from "./sui-helpers.js";
+import { getClient, getSigner } from "../lib/sui-helpers.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,7 +31,7 @@ const { values: args } = parseArgs({
 });
 
 const NETWORK = args.network as "mainnet" | "testnet";
-const CONFIG_FILE = path.resolve(__dirname, `deployed.${NETWORK}.json`);
+const CONFIG_FILE = path.resolve(__dirname, '..', `deployed.${NETWORK}.json`);
 
 const ENCLAVE_PKG =
   "0x8ecf22e78c90c3e32833d76d82415d7e4227ea370bec4efdad4c4830cbda9e49";
