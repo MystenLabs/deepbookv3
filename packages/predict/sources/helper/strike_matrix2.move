@@ -118,17 +118,11 @@ public(package) fun new(
 }
 
 public(package) fun insert(matrix: &mut StrikeMatrix2, strike: u64, qty: u64, is_up: bool) {
-    let (page_index, slot) = validate_strike_coords(matrix, strike);
-    apply_delta_and_recompute_page(matrix, page_index, slot, strike, qty, is_up, true);
-    matrix.minted_min_strike = matrix.minted_min_strike.min(strike);
-    matrix.minted_max_strike = matrix.minted_max_strike.max(strike);
-    recompute_page_tree_path(matrix, page_index);
+    apply_position(matrix, strike, qty, is_up, true);
 }
 
 public(package) fun remove(matrix: &mut StrikeMatrix2, strike: u64, qty: u64, is_up: bool) {
-    let (page_index, slot) = validate_strike_coords(matrix, strike);
-    apply_delta_and_recompute_page(matrix, page_index, slot, strike, qty, is_up, false);
-    recompute_page_tree_path(matrix, page_index);
+    apply_position(matrix, strike, qty, is_up, false);
 }
 
 public(package) fun evaluate(matrix: &StrikeMatrix2, curve: &vector<CurvePoint>): u64 {
@@ -250,17 +244,33 @@ public(package) fun set_mtm(matrix: &mut StrikeMatrix2, value: u64) {
 }
 
 public(package) fun minted_strike_range(matrix: &StrikeMatrix2): (u64, u64) {
-    if (matrix.minted_min_strike > matrix.minted_max_strike) {
-        (0, 0)
-    } else {
-        (matrix.minted_min_strike, matrix.minted_max_strike)
-    }
+    if (matrix.minted_min_strike > matrix.minted_max_strike) (0, 0) else (
+        matrix.minted_min_strike,
+        matrix.minted_max_strike,
+    )
 }
 
-fun validate_strike_coords(matrix: &StrikeMatrix2, strike: u64): (u64, u64) {
-    assert!(strike >= matrix.min_strike && strike <= matrix.max_strike, EInvalidStrikeRange);
-    assert!((strike - matrix.min_strike) % matrix.tick_size == 0, EInvalidStrikeRange);
-    matrix.strike_to_coords(strike)
+fun apply_position(matrix: &mut StrikeMatrix2, strike: u64, qty: u64, is_up: bool, add: bool) {
+    let (page_index, slot) = matrix.strike_to_coords(strike);
+    apply_delta_and_recompute_page(matrix, page_index, slot, strike, qty, is_up, add);
+    if (add) {
+        matrix.minted_min_strike = matrix.minted_min_strike.min(strike);
+        matrix.minted_max_strike = matrix.minted_max_strike.max(strike);
+    };
+    recompute_page_tree_path(matrix, page_index);
+}
+
+fun apply_delta(value: &mut u64, qty: u64, add: bool) {
+    if (add) {
+        *value = *value + qty;
+    } else {
+        *value = *value - qty;
+    };
+}
+
+fun apply_exact_delta(value: &mut u64, qty: u64, add: bool) {
+    if (!add) assert!(*value >= qty, EInsufficientQuantity);
+    apply_delta(value, qty, add);
 }
 
 fun apply_delta_and_recompute_page(
@@ -285,40 +295,20 @@ fun apply_delta_and_recompute_page(
             let node = &mut page[i];
             if (i == slot_index) {
                 if (is_up) {
-                    if (add) {
-                        node.q_up = node.q_up + qty;
-                    } else {
-                        assert!(node.q_up >= qty, EInsufficientQuantity);
-                        node.q_up = node.q_up - qty;
-                    };
+                    apply_exact_delta(&mut node.q_up, qty, add);
                 } else {
-                    if (add) {
-                        node.q_dn = node.q_dn + qty;
-                    } else {
-                        assert!(node.q_dn >= qty, EInsufficientQuantity);
-                        node.q_dn = node.q_dn - qty;
-                    };
+                    apply_exact_delta(&mut node.q_dn, qty, add);
                 };
             };
 
             if (is_up && i >= slot_index) {
-                if (add) {
-                    node.agg_q_up = node.agg_q_up + qty;
-                    node.agg_qk_up = node.agg_qk_up + delta_qk;
-                } else {
-                    node.agg_q_up = node.agg_q_up - qty;
-                    node.agg_qk_up = node.agg_qk_up - delta_qk;
-                };
+                apply_delta(&mut node.agg_q_up, qty, add);
+                apply_delta(&mut node.agg_qk_up, delta_qk, add);
             };
 
             if (!is_up && i <= slot_index) {
-                if (add) {
-                    node.agg_q_dn = node.agg_q_dn + qty;
-                    node.agg_qk_dn = node.agg_qk_dn + delta_qk;
-                } else {
-                    node.agg_q_dn = node.agg_q_dn - qty;
-                    node.agg_qk_dn = node.agg_qk_dn - delta_qk;
-                };
+                apply_delta(&mut node.agg_q_dn, qty, add);
+                apply_delta(&mut node.agg_qk_dn, delta_qk, add);
             };
 
             prefix_up = prefix_up + node.q_up;
@@ -408,15 +398,17 @@ fun recompute_page_tree_path(matrix: &mut StrikeMatrix2, page_index: u64) {
 }
 
 fun empty_page(): vector<StrikeNode> {
-    let empty = StrikeNode {
-        q_up: 0,
-        q_dn: 0,
-        agg_q_up: 0,
-        agg_qk_up: 0,
-        agg_q_dn: 0,
-        agg_qk_dn: 0,
-    };
-    vector::tabulate!(PAGE_SLOTS, |_| empty)
+    vector::tabulate!(
+        PAGE_SLOTS,
+        |_| StrikeNode {
+            q_up: 0,
+            q_dn: 0,
+            agg_q_up: 0,
+            agg_qk_up: 0,
+            agg_q_dn: 0,
+            agg_qk_dn: 0,
+        },
+    )
 }
 
 fun empty_summary(): PageSummary {
@@ -485,6 +477,8 @@ fun merge_page_summaries(left: &PageSummary, right: &PageSummary): PageSummary {
 }
 
 fun strike_to_coords(self: &StrikeMatrix2, strike: u64): (u64, u64) {
+    assert!(strike >= self.min_strike && strike <= self.max_strike, EInvalidStrikeRange);
+    assert!((strike - self.min_strike) % self.tick_size == 0, EInvalidStrikeRange);
     let tick_index = (strike - self.min_strike) / self.tick_size;
     let page_key = tick_index / PAGE_SLOTS;
     let slot = tick_index % PAGE_SLOTS;
