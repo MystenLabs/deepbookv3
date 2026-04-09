@@ -10,6 +10,7 @@ const PAGE_SLOTS: u64 = 512;
 
 const EInvalidTickSize: u64 = 0;
 const EInvalidStrikeRange: u64 = 1;
+const EInsufficientQuantity: u64 = 2;
 
 /// Dense strike-indexed book with page-level summaries stored in an inline tree.
 public struct StrikeMatrix2 has store {
@@ -83,13 +84,20 @@ public(package) fun new(
 }
 
 public(package) fun insert(matrix: &mut StrikeMatrix2, strike: u64, qty: u64, is_up: bool) {
-    let (page_index, slot) = validate_insert(matrix, strike);
+    let (page_index, slot) = validate_strike_coords(matrix, strike);
     insert_qty(matrix, page_index, slot, strike, qty, is_up);
     recompute_page_summary(matrix, page_index);
     recompute_page_tree_path(matrix, page_index);
 }
 
-fun validate_insert(matrix: &StrikeMatrix2, strike: u64): (u64, u64) {
+public(package) fun remove(matrix: &mut StrikeMatrix2, strike: u64, qty: u64, is_up: bool) {
+    let (page_index, slot) = validate_strike_coords(matrix, strike);
+    remove_qty(matrix, page_index, slot, qty, is_up);
+    recompute_page_summary(matrix, page_index);
+    recompute_page_tree_path(matrix, page_index);
+}
+
+fun validate_strike_coords(matrix: &StrikeMatrix2, strike: u64): (u64, u64) {
     assert!(strike >= matrix.min_strike && strike <= matrix.max_strike, EInvalidStrikeRange);
     assert!((strike - matrix.min_strike) % matrix.tick_size == 0, EInvalidStrikeRange);
 
@@ -157,6 +165,25 @@ fun insert_qty(
 
     matrix.minted_min_strike = matrix.minted_min_strike.min(strike);
     matrix.minted_max_strike = matrix.minted_max_strike.max(strike);
+}
+
+fun remove_qty(
+    matrix: &mut StrikeMatrix2,
+    page_index: u64,
+    slot_index: u64,
+    qty: u64,
+    is_up: bool,
+) {
+    let page = matrix.pages.borrow_mut(page_index);
+    let node = &mut page[slot_index];
+
+    if (is_up) {
+        assert!(node.q_up >= qty, EInsufficientQuantity);
+        node.q_up = node.q_up - qty;
+    } else {
+        assert!(node.q_dn >= qty, EInsufficientQuantity);
+        node.q_dn = node.q_dn - qty;
+    };
 }
 
 fun recompute_page_tree_path(matrix: &mut StrikeMatrix2, page_index: u64) {
