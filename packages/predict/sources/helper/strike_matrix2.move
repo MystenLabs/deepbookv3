@@ -174,6 +174,41 @@ public(package) fun evaluate(matrix: &StrikeMatrix2, curve: &vector<CurvePoint>)
     value
 }
 
+public(package) fun evaluate_settled(matrix: &StrikeMatrix2, settlement: u64): u64 {
+    if (matrix.minted_max_strike < matrix.minted_min_strike) return 0;
+
+    let (min_page, min_slot) = matrix.strike_to_coords(matrix.minted_min_strike);
+    let (max_page, max_slot) = matrix.strike_to_coords(matrix.minted_max_strike);
+    let mut value = 0u64;
+    let mut page_key = min_page;
+    while (true) {
+        let page = &matrix.pages[page_key];
+        let start_slot = if (page_key == min_page) { min_slot } else { 0 };
+        let end_slot = if (page_key == max_page) {
+            max_slot
+        } else {
+            PAGE_SLOTS - 1
+        };
+        let mut slot = start_slot;
+        while (true) {
+            let strike = matrix.strike_from_coords(page_key, slot);
+            if (strike < settlement) {
+                value = value + node_q_up(page, slot);
+            } else {
+                value = value + node_q_dn(page, slot);
+            };
+
+            if (slot == end_slot) break;
+            slot = slot + 1;
+        };
+
+        if (page_key == max_page) break;
+        page_key = page_key + 1;
+    };
+
+    value
+}
+
 public(package) fun max_payout(matrix: &StrikeMatrix2): u64 {
     let root = matrix.page_tree[0];
     root.total_q_dn + root.best_prefix_up - root.best_prefix_dn
@@ -185,6 +220,14 @@ public(package) fun mtm(matrix: &StrikeMatrix2): u64 {
 
 public(package) fun set_mtm(matrix: &mut StrikeMatrix2, value: u64) {
     matrix.mtm = value;
+}
+
+public(package) fun minted_strike_range(matrix: &StrikeMatrix2): (u64, u64) {
+    if (matrix.minted_min_strike > matrix.minted_max_strike) {
+        (0, 0)
+    } else {
+        (matrix.minted_min_strike, matrix.minted_max_strike)
+    }
 }
 
 fun validate_strike_coords(matrix: &StrikeMatrix2, strike: u64): (u64, u64) {
