@@ -182,8 +182,7 @@ export function updateSviTx(
     m: bigint;
     mNegative: boolean;
     sigma: bigint;
-  },
-  riskFreeRate: bigint
+  }
 ): Transaction {
   const tx = new Transaction();
   const rho = tx.moveCall({
@@ -210,7 +209,6 @@ export function updateSviTx(
       tx.object(oracleId),
       tx.object(oracleCapId),
       sviParams,
-      tx.pure.u64(riskFreeRate),
       tx.object(CLOCK_ID),
     ],
   });
@@ -308,7 +306,6 @@ export function refreshOracleAndMintTx(params: {
     mNegative: boolean;
     sigma: bigint;
   };
-  riskFreeRate: bigint;
 }): Transaction {
   const tx = new Transaction();
   const priceData = tx.moveCall({
@@ -344,7 +341,6 @@ export function refreshOracleAndMintTx(params: {
       tx.object(params.oracleId),
       tx.object(params.oracleCapId),
       sviParams,
-      tx.pure.u64(params.riskFreeRate),
       tx.object(CLOCK_ID),
     ],
   });

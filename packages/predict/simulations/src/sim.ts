@@ -224,7 +224,6 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
             mNegative: nextRow.mNegative,
             sigma: nextRow.sigma,
           },
-          riskFreeRate: nextRow.riskFreeRate,
         }),
         "refresh_oracle_and_mint"
       );
@@ -262,8 +261,7 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
             m: row.m,
             mNegative: row.mNegative,
             sigma: row.sigma,
-          },
-          row.riskFreeRate
+          }
         ),
         "update_svi"
       );

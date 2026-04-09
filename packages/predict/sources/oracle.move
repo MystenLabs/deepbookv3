@@ -53,7 +53,6 @@ public struct OracleSVIUpdated has copy, drop, store {
     rho: i64::I64,
     m: i64::I64,
     sigma: u64,
-    risk_free_rate: u64,
     timestamp: u64,
 }
 
@@ -99,8 +98,6 @@ public struct OracleSVI has key {
     prices: PriceData,
     /// SVI volatility surface parameters (low frequency updates)
     svi: SVIParams,
-    /// Risk-free rate for discounting (scaled by FLOAT_SCALING)
-    risk_free_rate: u64,
     /// Timestamp of last update in milliseconds
     timestamp: u64,
     /// Settlement price, frozen on first update after expiry
@@ -171,23 +168,16 @@ public fun update_prices(
     });
 }
 
-// TODO: Add validation on pushed SVI params and risk-free rate so obviously
-// bad updates are rejected before they mutate state.
-/// Push SVI parameters and risk-free rate (low frequency ~10-20s).
-public fun update_svi(
-    oracle: &mut OracleSVI,
-    cap: &OracleSVICap,
-    svi: SVIParams,
-    risk_free_rate: u64,
-    clock: &Clock,
-) {
+// TODO: Add validation on pushed SVI params so obviously bad updates are
+// rejected before they mutate state.
+/// Push SVI parameters (low frequency ~10-20s).
+public fun update_svi(oracle: &mut OracleSVI, cap: &OracleSVICap, svi: SVIParams, clock: &Clock) {
     assert_authorized_cap(oracle, cap);
     assert!(!is_settled(oracle), EOracleSettled);
 
     let now = clock.timestamp_ms();
 
     oracle.svi = svi;
-    oracle.risk_free_rate = risk_free_rate;
 
     event::emit(OracleSVIUpdated {
         oracle_id: oracle.id.to_inner(),
@@ -196,7 +186,6 @@ public fun update_svi(
         rho: svi.rho,
         m: svi.m,
         sigma: svi.sigma,
-        risk_free_rate,
         timestamp: now,
     });
 }
@@ -261,11 +250,6 @@ public fun expiry(oracle: &OracleSVI): u64 {
     oracle.expiry
 }
 
-/// Get the risk-free rate.
-public fun risk_free_rate(oracle: &OracleSVI): u64 {
-    oracle.risk_free_rate
-}
-
 /// Get the last update timestamp.
 public fun timestamp(oracle: &OracleSVI): u64 {
     oracle.timestamp
@@ -296,33 +280,27 @@ public fun new_svi_params(a: u64, b: u64, rho: i64::I64, m: i64::I64, sigma: u64
     SVIParams { a, b, rho, m, sigma }
 }
 
-public(package) fun binary_price_pair(oracle: &OracleSVI, strike: u64, clock: &Clock): (u64, u64) {
+/// Compute the conditional UP price within one binary pair.
+/// Settled oracles return exactly `1.0` if UP wins and `0` otherwise. Live
+/// oracles return `N(d2)` from the SVI surface.
+public(package) fun compute_price(oracle: &OracleSVI, strike: u64): u64 {
     if (oracle.settlement_price.is_some()) {
         let settlement_price = oracle.settlement_price.destroy_some();
         if (settlement_price > strike) {
-            (constants::float_scaling!(), 0)
+            constants::float_scaling!()
         } else {
-            (0, constants::float_scaling!())
+            0
         }
     } else {
-        let (nd2_up, nd2_down) = compute_nd2_pair(oracle, strike);
-        let discount = compute_discount(oracle, clock);
-        (math::mul(nd2_up, discount), math::mul(nd2_down, discount))
+        compute_nd2(oracle, strike)
     }
 }
 
-/// Compute discount factor e^(-r * t).
-/// Past expiry returns 1.0 (no discounting) to handle the window between
-/// expiry and settlement.
-fun compute_discount(oracle: &OracleSVI, clock: &Clock): u64 {
-    let now = clock.timestamp_ms();
-    let expiry = oracle.expiry;
-    if (now >= expiry) return constants::float_scaling!();
-    let tte_ms = expiry - now;
-    let t = math::div(tte_ms, constants::ms_per_year!());
-    let rt = math::mul(oracle.risk_free_rate, t);
-    let exponent = i64::neg(&i64::from_u64(rt));
-    predict_math::exp(&exponent)
+/// Return the exact fair prices for both sides of a binary market.
+/// The live parity invariant is `UP + DN = 1`.
+public(package) fun binary_price_pair(oracle: &OracleSVI, strike: u64, _clock: &Clock): (u64, u64) {
+    let up_price = compute_price(oracle, strike);
+    (up_price, float_scaling!() - up_price)
 }
 
 // === Public-Package Functions ===
@@ -356,7 +334,6 @@ public(package) fun create_oracle(underlying_asset: String, expiry: u64, ctx: &m
             m: i64::zero(),
             sigma: 0,
         },
-        risk_free_rate: 0,
         timestamp: 0,
         settlement_price: option::none(),
     };
@@ -375,8 +352,7 @@ fun assert_authorized_cap(oracle: &OracleSVI, cap: &OracleSVICap) {
 /// - k = ln(strike / forward)
 /// - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
 /// - d2 = -((k + w(k) / 2) / sqrt(w(k)))
-/// - UP = N(d2), DN = 1 - N(d2)
-fun compute_nd2_pair(oracle: &OracleSVI, strike: u64): (u64, u64) {
+fun compute_nd2(oracle: &OracleSVI, strike: u64): u64 {
     let forward = oracle.forward_price();
     assert!(forward > 0, EZeroForward);
 
@@ -404,8 +380,5 @@ fun compute_nd2_pair(oracle: &OracleSVI, strike: u64): (u64, u64) {
     let d2 = i64::div_scaled(&d2_numerator, &sqrt_var_i64);
     let d2 = i64::neg(&d2);
 
-    let nd2_up = predict_math::normal_cdf(&d2);
-    let nd2_down = float_scaling!() - nd2_up;
-
-    (nd2_up, nd2_down)
+    predict_math::normal_cdf(&d2)
 }
