@@ -35,22 +35,22 @@ public struct OracleConfig has store {
 /// Curve sample point with strike and one-sided UP price.
 public struct CurvePoint has copy, drop, store {
     strike: u64,
-    price: u64,
+    up_price: u64,
 }
 
 /// Create a curve sample point from exact strike and UP price.
-public fun new_curve_point(strike: u64, price: u64): CurvePoint {
+public fun new_curve_point(strike: u64, up_price: u64): CurvePoint {
     CurvePoint {
         strike,
-        price,
+        up_price,
     }
 }
 
 /// Return the strike stored in a curve point.
 public fun strike(point: &CurvePoint): u64 { point.strike }
 
-/// Return the price stored in a curve point.
-public fun price(point: &CurvePoint): u64 { point.price }
+/// Return the UP price stored in a curve point.
+public fun up_price(point: &CurvePoint): u64 { point.up_price }
 
 /// Create an empty oracle config registry for Predict.
 public(package) fun new(ctx: &mut TxContext): OracleConfig {
@@ -218,7 +218,7 @@ fun find_gap(points: &vector<CurvePoint>, grid_tick: u64): (bool, u64) {
         };
 
         // `points` is strike-sorted, and UP price is monotone non-increasing in strike.
-        let price_diff = lo.price - hi.price;
+        let price_diff = lo.up_price - hi.up_price;
         if (price_diff > best_price_diff) {
             best_idx = i;
             best_price_diff = price_diff;

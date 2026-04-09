@@ -106,20 +106,19 @@ public(package) fun evaluate(self: &StrikeMatrix, curve: &vector<CurvePoint>): u
     let (mut page_hi, mut slot_hi) = self.strike_to_coords(curve[len - 1].strike());
 
     let page = &self.pages[page_lo];
-    value = value + math::mul(node_q_up(page, slot_lo), curve[0].price());
+    value = value + math::mul(node_q_up(page, slot_lo), curve[0].up_price());
     let page = &self.pages[page_hi];
     value =
         value +
-        math::mul(node_q_dn(page, slot_hi), constants::float_scaling!() - curve[len - 1].price());
-
+        math::mul(node_q_dn(page, slot_hi), constants::float_scaling!() - curve[len - 1].up_price());
     let mut ci = 1;
     while (ci < len) {
         let ci_strike = curve[ci].strike();
         let ci_strike_prev = curve[ci - 1].strike();
-        let ci_up_price = curve[ci].price();
-        let ci_dn_price = constants::float_scaling!() - curve[ci].price();
-        let ci_up_price_prev = curve[ci - 1].price();
-        let ci_dn_price_prev = constants::float_scaling!() - curve[ci - 1].price();
+        let ci_up_price = curve[ci].up_price();
+        let ci_dn_price = constants::float_scaling!() - curve[ci].up_price();
+        let ci_up_price_prev = curve[ci - 1].up_price();
+        let ci_dn_price_prev = constants::float_scaling!() - curve[ci - 1].up_price();
         (page_hi, slot_hi) = self.strike_to_coords(ci_strike);
         let (q_up_delta, qk_up_delta, q_dn_delta, qk_dn_delta) = self.accumulate_segment_qty_qk(
             page_lo,

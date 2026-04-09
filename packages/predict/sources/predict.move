@@ -163,6 +163,7 @@ public struct Predict has key {
     risk_config: RiskConfig,
     /// Treasury asset whitelist and related treasury policy state
     treasury_config: TreasuryConfig,
+    /// Oracle strike grid registry, operational checks, and curve builder
     oracle_config: OracleConfig,
     /// Whether trading (mint) is globally paused
     trading_paused: bool,
