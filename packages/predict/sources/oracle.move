@@ -24,9 +24,13 @@ const ECannotBeNegative: u64 = 4;
 const EZeroVariance: u64 = 5;
 const EOracleSettled: u64 = 6;
 
+// Pre-expiry oracle that has not been activated yet.
 const STATUS_INACTIVE: u8 = 0;
+// Pre-expiry oracle that is active and can accept live updates.
 const STATUS_ACTIVE: u8 = 1;
+// Expired oracle that has not yet been settled by a price push.
 const STATUS_PENDING_SETTLEMENT: u8 = 2;
+// Oracle with a frozen settlement price.
 const STATUS_SETTLED: u8 = 3;
 
 // === Events ===

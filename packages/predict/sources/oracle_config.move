@@ -101,7 +101,9 @@ public(package) fun assert_key_matches(
     oracle_config.assert_valid_strike(oracle, market_key.strike());
 }
 
-/// Assert that an oracle can still be used for live trading and live pricing.
+/// Assert that an oracle can still be used for actions that require live
+/// pricing. The oracle must be `ACTIVE` and fresh; `INACTIVE`,
+/// `PENDING_SETTLEMENT`, `SETTLED`, and stale oracles are rejected.
 public(package) fun assert_live_oracle(oracle: &OracleSVI, clock: &Clock) {
     let oracle_status = oracle.status(clock);
     assert!(oracle_status != oracle::status_settled(), EOracleSettled);
@@ -116,9 +118,11 @@ public(package) fun assert_live_oracle(oracle: &OracleSVI, clock: &Clock) {
     );
 }
 
-/// Assert that an oracle can still be used for actions that accept either
-/// settled or live pricing. Settled oracles are allowed; otherwise the oracle
-/// must still be live.
+/// Assert that an oracle can still be used for actions that accept either live
+/// pricing or a finalized settlement price. `SETTLED` oracles are allowed
+/// immediately; otherwise the oracle must still be `ACTIVE` and fresh.
+/// `PENDING_SETTLEMENT` is intentionally rejected to freeze the
+/// expired-but-unsettled gap.
 public(package) fun assert_quoteable_oracle(oracle: &OracleSVI, clock: &Clock) {
     let oracle_status = oracle.status(clock);
     if (oracle_status == oracle::status_settled()) return;
