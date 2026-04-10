@@ -18,8 +18,8 @@ import { prepareMultisigTx } from "../utils/utils.js";
   const data = {
     repository: "https://github.com/MystenLabs/deepbookv3",
     packageInfo: deepbookPackageInfo,
-    sha: "v6.0.0",
-    version: "6",
+    sha: "v7.0.0",
+    version: "7",
     path: "packages/deepbook",
   };
 
