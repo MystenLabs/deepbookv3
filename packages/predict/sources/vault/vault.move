@@ -14,7 +14,7 @@
 module deepbook_predict::vault;
 
 use deepbook::math;
-use deepbook_predict::{oracle_config::CurvePoint, strike_matrix2::{Self, StrikeMatrix2}};
+use deepbook_predict::{oracle_config::CurvePoint, strike_matrix::{Self, StrikeMatrix}};
 use sui::{bag::{Self, Bag}, balance::Balance, table::{Self, Table}};
 
 // === Errors ===
@@ -35,7 +35,7 @@ public struct Vault has store {
     /// Shared treasury balance tracked in quote units.
     balance: u64,
     /// Per-oracle matrix for strike-level position tracking.
-    oracle_matrices: Table<ID, StrikeMatrix2>,
+    oracle_matrices: Table<ID, StrikeMatrix>,
     /// Sum of all oracle matrix MTM values.
     total_mtm: u64,
     /// Sum of all oracle matrix max payout values.
@@ -97,7 +97,7 @@ public(package) fun init_oracle_matrix(
             .oracle_matrices
             .add(
                 oracle_id,
-                strike_matrix2::new(ctx, tick_size, min_strike, max_strike),
+                strike_matrix::new(ctx, tick_size, min_strike, max_strike),
             );
     };
 }
