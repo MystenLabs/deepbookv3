@@ -17,6 +17,8 @@ use deepbook::math;
 use deepbook_predict::{oracle_config::CurvePoint, strike_matrix::{Self, StrikeMatrix}};
 use sui::{bag::{Self, Bag}, balance::Balance, table::{Self, Table}};
 
+use fun net_max_payout as StrikeMatrix.net_max_payout;
+
 // === Errors ===
 const EInsufficientBalance: u64 = 0;
 const EExceedsMaxTotalExposure: u64 = 1;
@@ -129,9 +131,9 @@ public(package) fun insert_spread(
     quantity: u64,
 ) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
-    let old_net_max_payout = net_max_payout(&vault.oracle_matrices[oracle_id]);
+    let old_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
     vault.oracle_matrices[oracle_id].insert_spread(lower, higher, quantity);
-    let new_net_max_payout = net_max_payout(&vault.oracle_matrices[oracle_id]);
+    let new_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
     vault.total_max_payout = vault.total_max_payout + new_net_max_payout - old_net_max_payout;
 }
 
@@ -167,9 +169,9 @@ public(package) fun remove_spread(
     quantity: u64,
 ) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
-    let old_net_max_payout = net_max_payout(&vault.oracle_matrices[oracle_id]);
+    let old_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
     vault.oracle_matrices[oracle_id].remove_spread(lower, higher, quantity);
-    let new_net_max_payout = net_max_payout(&vault.oracle_matrices[oracle_id]);
+    let new_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
     vault.total_max_payout = vault.total_max_payout + new_net_max_payout - old_net_max_payout;
 }
 
