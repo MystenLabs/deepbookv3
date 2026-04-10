@@ -19,6 +19,7 @@ use deepbook_predict::{
     predict_manager::{Self, PredictManager},
     pricing_config::{Self, PricingConfig},
     risk_config::{Self, RiskConfig},
+    spread_key::SpreadKey,
     treasury_config::{Self, TreasuryConfig},
     vault::{Self, Vault}
 };
@@ -33,13 +34,12 @@ use sui::{
 
 // === Errors ===
 const ETradingPaused: u64 = 0;
-const EInvalidCollateralPair: u64 = 1;
-const ENotOwner: u64 = 2;
-const EWithdrawExceedsAvailable: u64 = 3;
-const EZeroQuantity: u64 = 4;
-const EZeroAmount: u64 = 5;
-const EZeroVaultValue: u64 = 6;
-const EZeroSharesMinted: u64 = 7;
+const ENotOwner: u64 = 1;
+const EWithdrawExceedsAvailable: u64 = 2;
+const EZeroQuantity: u64 = 3;
+const EZeroAmount: u64 = 4;
+const EZeroVaultValue: u64 = 5;
+const EZeroSharesMinted: u64 = 6;
 
 // === Events ===
 
@@ -77,32 +77,33 @@ public struct PositionRedeemed has copy, drop, store {
     is_settled: bool,
 }
 
-public struct CollateralizedPositionMinted has copy, drop, store {
+public struct SpreadMinted has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
     trader: address,
+    quote_asset: TypeName,
     oracle_id: ID,
-    locked_expiry: u64,
-    locked_strike: u64,
-    locked_is_up: bool,
-    minted_expiry: u64,
-    minted_strike: u64,
-    minted_is_up: bool,
+    expiry: u64,
+    lower_strike: u64,
+    higher_strike: u64,
     quantity: u64,
+    cost: u64,
+    ask_price: u64,
 }
 
-public struct CollateralizedPositionRedeemed has copy, drop, store {
+public struct SpreadRedeemed has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
     trader: address,
+    quote_asset: TypeName,
     oracle_id: ID,
-    locked_expiry: u64,
-    locked_strike: u64,
-    locked_is_up: bool,
-    minted_expiry: u64,
-    minted_strike: u64,
-    minted_is_up: bool,
+    expiry: u64,
+    lower_strike: u64,
+    higher_strike: u64,
     quantity: u64,
+    payout: u64,
+    bid_price: u64,
+    is_settled: bool,
 }
 
 public struct TradingPauseUpdated has copy, drop, store {
@@ -213,7 +214,11 @@ public fun get_trade_amounts(
             predict.vault.total_mtm(),
             predict.vault.balance(),
         );
-    let up_bid = if (up_price > spread) { up_price - spread } else { 0 };
+    let up_bid = if (up_price > spread) {
+        up_price - spread
+    } else {
+        0
+    };
     let up_ask = (up_price + spread).min(constants::float_scaling!());
     let dn_bid = constants::float_scaling!() - up_ask;
     let dn_ask = constants::float_scaling!() - up_bid;
@@ -327,74 +332,148 @@ public fun redeem<Quote>(
     });
 }
 
-// TODO: Update collateralized minting to share the same pricing and risk
-// admission checks as standard mint flows.
-/// Mint a position using another position as collateral (no quote-asset cost).
-/// - UP collateral (lower strike) -> UP minted (higher strike)
-/// - DOWN collateral (higher strike) -> DOWN minted (lower strike)
-public fun mint_collateralized(
+/// Get the amounts for spread mint/redeem (for UI/preview).
+/// Returns (mint_cost, redeem_payout). Bull-call and bear-put spreads with the
+/// same strikes price identically — direction is not part of `SpreadKey`.
+public fun get_spread_trade_amounts(
+    predict: &Predict,
+    oracle: &OracleSVI,
+    key: SpreadKey,
+    quantity: u64,
+    clock: &Clock,
+): (u64, u64) {
+    predict.oracle_config.assert_spread_key_matches(oracle, &key);
+    if (!oracle.is_settled()) {
+        oracle_config::assert_operational_oracle(oracle, clock);
+    };
+
+    // Fair spread = up(lower) − up(higher). UP price is monotone non-increasing
+    // in strike, so this is always non-negative for a well-formed key
+    // (`lower < higher`). Settled compute_price returns 1.0 if settlement >
+    // strike, 0 otherwise, so the spread evaluates to 1.0 iff settlement is in
+    // the half-open band (lower, higher].
+    let lower_up_price = oracle.compute_price(key.lower_strike());
+    let higher_up_price = oracle.compute_price(key.higher_strike());
+    let fair_spread = lower_up_price - higher_up_price;
+
+    if (oracle.is_settled()) {
+        let amount = math::mul(fair_spread, quantity);
+        return (amount, amount)
+    };
+
+    let spread = predict
+        .pricing_config
+        .quote_spread_from_fair_price(
+            fair_spread,
+            predict.vault.total_mtm(),
+            predict.vault.balance(),
+        );
+    let ask = (fair_spread + spread).min(constants::float_scaling!());
+    let bid = if (fair_spread > spread) {
+        fair_spread - spread
+    } else {
+        0
+    };
+
+    (math::mul(ask, quantity), math::mul(bid, quantity))
+}
+
+/// Mint a vertical spread `(lower, higher)` priced as a single instrument.
+/// The user pays only the spread premium up front; the vault tracks the bounded
+/// liability natively via the strike-matrix cashback offset.
+public fun mint_spread<Quote>(
     predict: &mut Predict,
     manager: &mut PredictManager,
     oracle: &OracleSVI,
-    locked_key: MarketKey,
-    minted_key: MarketKey,
+    key: SpreadKey,
     quantity: u64,
     clock: &Clock,
-    ctx: &TxContext,
+    ctx: &mut TxContext,
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(!predict.trading_paused, ETradingPaused);
     assert!(quantity > 0, EZeroQuantity);
-    assert_collateral_valid(&locked_key, &minted_key);
-
-    predict.oracle_config.assert_key_matches(oracle, &locked_key);
-    predict.oracle_config.assert_key_matches(oracle, &minted_key);
+    predict.treasury_config.assert_quote_asset<Quote>();
+    predict.oracle_config.assert_spread_key_matches(oracle, &key);
     oracle_config::assert_mintable_oracle(oracle, clock);
 
-    manager.lock_collateral(locked_key, minted_key, quantity);
-    manager.increase_position(minted_key, quantity);
+    let lower = key.lower_strike();
+    let higher = key.higher_strike();
 
-    event::emit(CollateralizedPositionMinted {
+    predict.vault.insert_spread(oracle.id(), lower, higher, quantity);
+    predict.refresh_oracle_risk(oracle);
+
+    // Quote against the post-trade state so the trader pays for the liability
+    // their own mint just added to the vault.
+    let (cost, _) = predict.get_spread_trade_amounts(oracle, key, quantity, clock);
+
+    let payment = manager.withdraw<Quote>(cost, ctx).into_balance();
+    predict.vault.accept_payment(payment);
+    predict.vault.assert_total_exposure(predict.risk_config.max_total_exposure_pct());
+    manager.increase_spread(key, quantity);
+
+    event::emit(SpreadMinted {
         predict_id: object::id(predict),
         manager_id: object::id(manager),
         trader: manager.owner(),
-        oracle_id: locked_key.oracle_id(),
-        locked_expiry: locked_key.expiry(),
-        locked_strike: locked_key.strike(),
-        locked_is_up: locked_key.is_up(),
-        minted_expiry: minted_key.expiry(),
-        minted_strike: minted_key.strike(),
-        minted_is_up: minted_key.is_up(),
+        quote_asset: type_name::with_defining_ids<Quote>(),
+        oracle_id: key.oracle_id(),
+        expiry: key.expiry(),
+        lower_strike: lower,
+        higher_strike: higher,
         quantity,
+        cost,
+        ask_price: math::div(cost, quantity),
     });
 }
 
-/// Redeem a collateralized position, releasing the locked collateral.
-public fun redeem_collateralized(
+/// Redeem a vertical spread. Payout is the post-trade bid value pre-settlement,
+/// or `$1·qty` if the settlement landed in the band (lower, higher].
+public fun redeem_spread<Quote>(
     predict: &mut Predict,
     manager: &mut PredictManager,
-    locked_key: MarketKey,
-    minted_key: MarketKey,
+    oracle: &OracleSVI,
+    key: SpreadKey,
     quantity: u64,
-    ctx: &TxContext,
+    clock: &Clock,
+    ctx: &mut TxContext,
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(quantity > 0, EZeroQuantity);
-    manager.decrease_position(minted_key, quantity);
-    manager.release_collateral(locked_key, minted_key, quantity);
+    predict.oracle_config.assert_spread_key_matches(oracle, &key);
+    if (!oracle.is_settled()) {
+        oracle_config::assert_operational_oracle(oracle, clock);
+    };
 
-    event::emit(CollateralizedPositionRedeemed {
+    manager.decrease_spread(key, quantity);
+
+    let lower = key.lower_strike();
+    let higher = key.higher_strike();
+
+    predict.vault.remove_spread(oracle.id(), lower, higher, quantity);
+    predict.refresh_oracle_risk(oracle);
+
+    // Quote against the post-trade state so the seller is paid from the
+    // liability after their spread has been removed from the vault.
+    let (_, payout) = predict.get_spread_trade_amounts(oracle, key, quantity, clock);
+
+    let payout_balance = predict.vault.dispense_payout<Quote>(payout);
+    let payout_coin = payout_balance.into_coin(ctx);
+    manager.deposit(payout_coin, ctx);
+
+    event::emit(SpreadRedeemed {
         predict_id: object::id(predict),
         manager_id: object::id(manager),
         trader: manager.owner(),
-        oracle_id: locked_key.oracle_id(),
-        locked_expiry: locked_key.expiry(),
-        locked_strike: locked_key.strike(),
-        locked_is_up: locked_key.is_up(),
-        minted_expiry: minted_key.expiry(),
-        minted_strike: minted_key.strike(),
-        minted_is_up: minted_key.is_up(),
+        quote_asset: type_name::with_defining_ids<Quote>(),
+        oracle_id: key.oracle_id(),
+        expiry: key.expiry(),
+        lower_strike: lower,
+        higher_strike: higher,
         quantity,
+        payout,
+        bid_price: math::div(payout, quantity),
+        is_settled: oracle.is_settled(),
     });
 }
 
@@ -444,7 +523,11 @@ public fun withdraw<Quote>(
     let amount = predict.shares_to_amount(shares_burned, vault_value);
     let balance = predict.vault.balance();
     let max_payout = predict.vault.total_max_payout();
-    let available = if (balance > max_payout) { balance - max_payout } else { 0 };
+    let available = if (balance > max_payout) {
+        balance - max_payout
+    } else {
+        0
+    };
     assert!(amount <= available, EWithdrawExceedsAvailable);
     predict.treasury_cap.burn(lp_coin);
     event::emit(Withdrawn {
@@ -653,15 +736,4 @@ fun refresh_oracle_risk(predict: &mut Predict, oracle: &OracleSVI) {
     };
     let curve = predict.oracle_config.build_curve(oracle, min_strike, max_strike);
     predict.vault.set_mtm_with_curve(oracle_id, &curve);
-}
-
-fun assert_collateral_valid(locked_key: &MarketKey, minted_key: &MarketKey) {
-    let valid_pair = if (locked_key.is_up() && minted_key.is_up()) {
-        locked_key.strike() < minted_key.strike()
-    } else if (locked_key.is_down() && minted_key.is_down()) {
-        locked_key.strike() > minted_key.strike()
-    } else {
-        false
-    };
-    assert!(valid_pair, EInvalidCollateralPair);
 }
