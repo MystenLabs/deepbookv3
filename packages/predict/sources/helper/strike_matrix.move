@@ -84,6 +84,12 @@ public struct StrikeMatrix has store {
     minted_min_strike: u64,
     minted_max_strike: u64,
     mtm: u64,
+    /// Aggregate `$1`-per-unit cash obligation accumulated by combo mints.
+    /// Each combo mint of a `(lower, higher)` band records `q_up[lower] += qty`,
+    /// `q_dn[higher] += qty`, and `cashback += qty`. Callers subtract `cashback`
+    /// from `evaluate(curve)`, `evaluate_settled(s)`, and `max_payout()` to
+    /// recover the actual vault liability for combos.
+    cashback: u64,
 }
 
 /// Exact per-strike inventory stored in dense page slots.
@@ -140,6 +146,7 @@ public(package) fun new(
         minted_min_strike: max_u64(),
         minted_max_strike: 0,
         mtm: 0,
+        cashback: 0,
     }
 }
 
@@ -149,6 +156,17 @@ public(package) fun insert(matrix: &mut StrikeMatrix, strike: u64, qty: u64, is_
 
 public(package) fun remove(matrix: &mut StrikeMatrix, strike: u64, qty: u64, is_up: bool) {
     apply_position(matrix, strike, qty, is_up, false);
+}
+
+/// Insert a vertical combo `(lower, higher)`. Equivalent to a long UP@lower,
+/// a long DN@higher, and a `qty` increment to `cashback`.
+public(package) fun insert_combo(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64) {
+    matrix.apply_combo(lower, higher, qty, true);
+}
+
+/// Remove a vertical combo `(lower, higher)`. Symmetric to `insert_combo`.
+public(package) fun remove_combo(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64) {
+    matrix.apply_combo(lower, higher, qty, false);
 }
 
 /// Evaluate the current book against a sampled live curve.
@@ -267,6 +285,11 @@ public(package) fun max_payout(matrix: &StrikeMatrix): u64 {
     root.total_q_dn + root.best_prefix_up - root.best_prefix_dn
 }
 
+/// Aggregate `$1`-per-unit cashback contributed by combo mints.
+public(package) fun cashback(matrix: &StrikeMatrix): u64 {
+    matrix.cashback
+}
+
 /// Cached mark-to-market value stored by the vault after oracle refresh.
 public(package) fun mtm(matrix: &StrikeMatrix): u64 {
     matrix.mtm
@@ -287,6 +310,17 @@ public(package) fun minted_strike_range(matrix: &StrikeMatrix): (u64, u64) {
 }
 
 // === Private Functions ===
+/// Apply a vertical combo `(lower, higher)` as `long UP@lower + long DN@higher`
+/// plus a `qty` cashback delta. The matrix writes are byte-identical to two
+/// separate longs; the cashback is the algebraic constant from the dominance
+/// identity (`short X@k ≡ long ~X@k − $1`) that callers subtract from
+/// `evaluate`/`evaluate_settled`/`max_payout` to recover the combo payoff.
+fun apply_combo(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64, add: bool) {
+    matrix.apply_position(lower, qty, true, add);
+    matrix.apply_position(higher, qty, false, add);
+    apply_exact_delta(&mut matrix.cashback, qty, add);
+}
+
 /// Apply one position delta, refresh the touched page summary, then rebuild the
 /// ancestor path in the inline page tree.
 fun apply_position(matrix: &mut StrikeMatrix, strike: u64, qty: u64, is_up: bool, add: bool) {

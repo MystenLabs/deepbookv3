@@ -8,7 +8,12 @@
 /// curves for vault MTM evaluation.
 module deepbook_predict::oracle_config;
 
-use deepbook_predict::{constants, market_key::MarketKey, oracle::{Self, OracleSVI}};
+use deepbook_predict::{
+    combo_key::ComboKey,
+    constants,
+    market_key::MarketKey,
+    oracle::{Self, OracleSVI}
+};
 use sui::{clock::Clock, table::{Self, Table}};
 
 // === Errors ===
@@ -21,6 +26,8 @@ const EOracleInactive: u64 = 5;
 const EOracleStale: u64 = 6;
 const EOracleConfigNotFound: u64 = 7;
 const EInvalidCurveRange: u64 = 8;
+const EComboKeyOracleMismatch: u64 = 9;
+const EComboKeyExpiryMismatch: u64 = 10;
 
 public struct OracleGrid has copy, drop, store {
     min_strike: u64,
@@ -99,6 +106,21 @@ public(package) fun assert_key_matches(
     assert!(market_key.oracle_id() == oracle_id, EMarketKeyOracleMismatch);
     assert!(market_key.expiry() == oracle.expiry(), EMarketKeyExpiryMismatch);
     oracle_config.assert_valid_strike(oracle, market_key.strike());
+}
+
+/// Assert that a combo key matches the oracle identity, expiry, and that both
+/// strikes lie on the configured grid.
+public(package) fun assert_combo_key_matches(
+    oracle_config: &OracleConfig,
+    oracle: &OracleSVI,
+    combo_key: &ComboKey,
+) {
+    let oracle_id = oracle.id();
+
+    assert!(combo_key.oracle_id() == oracle_id, EComboKeyOracleMismatch);
+    assert!(combo_key.expiry() == oracle.expiry(), EComboKeyExpiryMismatch);
+    oracle_config.assert_valid_strike(oracle, combo_key.lower_strike());
+    oracle_config.assert_valid_strike(oracle, combo_key.higher_strike());
 }
 
 /// Assert that an oracle can still be used for actions that require live
