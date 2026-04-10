@@ -15,7 +15,7 @@ use deepbook_predict::{
     predict::{Self, Predict}
 };
 use std::string::String;
-use sui::{coin::TreasuryCap, coin_registry::Currency, event, table::{Self, Table}};
+use sui::{clock::Clock, coin::TreasuryCap, coin_registry::Currency, event, table::{Self, Table}};
 
 // === Errors ===
 const EPredictAlreadyCreated: u64 = 0;
@@ -77,11 +77,12 @@ public fun create_predict<Quote>(
     _admin_cap: &AdminCap,
     currency: &Currency<Quote>,
     treasury_cap: TreasuryCap<PLP>,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
     assert!(registry.predict_id.is_none(), EPredictAlreadyCreated);
 
-    let predict_id = predict::create<Quote>(currency, treasury_cap, ctx);
+    let predict_id = predict::create<Quote>(currency, treasury_cap, clock, ctx);
     registry.predict_id = option::some(predict_id);
 
     event::emit(PredictCreated { predict_id });
@@ -173,6 +174,18 @@ public fun set_utilization_multiplier(
 /// Set max total exposure percentage.
 public fun set_max_total_exposure_pct(predict: &mut Predict, _admin_cap: &AdminCap, pct: u64) {
     predict.set_max_total_exposure_pct(pct);
+}
+
+/// Update withdrawal rate limiter configuration.
+public fun update_withdrawal_limiter(
+    predict: &mut Predict,
+    _admin_cap: &AdminCap,
+    capacity: u64,
+    refill_rate_per_ms: u64,
+    enabled: bool,
+    clock: &Clock,
+) {
+    predict.update_withdrawal_limiter(capacity, refill_rate_per_ms, enabled, clock);
 }
 
 // === Private Functions ===

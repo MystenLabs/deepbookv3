@@ -18,6 +18,7 @@ use deepbook_predict::{
     plp::PLP,
     predict_manager::{Self, PredictManager},
     pricing_config::{Self, PricingConfig},
+    rate_limiter::{Self, RateLimiter},
     risk_config::{Self, RiskConfig},
     treasury_config::{Self, TreasuryConfig},
     vault::{Self, Vault}
@@ -165,6 +166,8 @@ public struct Predict has key {
     treasury_config: TreasuryConfig,
     /// Oracle strike grid registry, operational checks, and curve builder
     oracle_config: OracleConfig,
+    /// Rate limiter for LP withdrawals
+    withdrawal_limiter: RateLimiter,
     /// Whether trading (mint) is globally paused
     trading_paused: bool,
 }
@@ -403,13 +406,19 @@ public fun redeem_collateralized(
 /// First depositor gets shares 1:1. Subsequent depositors get shares
 /// proportional to their deposit relative to current vault value.
 /// Supply an enabled quote asset into the shared LP pool.
-public fun supply<Quote>(predict: &mut Predict, coin: Coin<Quote>, ctx: &mut TxContext): Coin<PLP> {
+public fun supply<Quote>(
+    predict: &mut Predict,
+    coin: Coin<Quote>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Coin<PLP> {
     let amount = coin.value();
     assert!(amount > 0, EZeroAmount);
     predict.treasury_config.assert_quote_asset<Quote>();
 
     let vault_value = predict.vault.vault_value();
     predict.vault.accept_payment(coin.into_balance());
+    predict.withdrawal_limiter.record_deposit(amount, clock);
 
     let total = predict.treasury_cap.total_supply();
     let shares = if (total == 0) {
@@ -437,6 +446,7 @@ public fun supply<Quote>(predict: &mut Predict, coin: Coin<Quote>, ctx: &mut TxC
 public fun withdraw<Quote>(
     predict: &mut Predict,
     lp_coin: Coin<PLP>,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Quote> {
     let vault_value = predict.vault.vault_value();
@@ -447,6 +457,7 @@ public fun withdraw<Quote>(
     let max_payout = predict.vault.total_max_payout();
     let available = if (balance > max_payout) { balance - max_payout } else { 0 };
     assert!(amount <= available, EWithdrawExceedsAvailable);
+    predict.withdrawal_limiter.consume(amount, clock);
     predict.treasury_cap.burn(lp_coin);
     event::emit(Withdrawn {
         predict_id: object::id(predict),
@@ -464,6 +475,7 @@ public fun withdraw<Quote>(
 public(package) fun create<Quote>(
     currency: &Currency<Quote>,
     treasury_cap: TreasuryCap<PLP>,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
     let mut predict = Predict {
@@ -474,6 +486,10 @@ public(package) fun create<Quote>(
         risk_config: risk_config::new(),
         treasury_config: treasury_config::new(),
         oracle_config: oracle_config::new(ctx),
+        // Withdrawal rate limiter starts disabled. Admin must configure
+        // capacity and refill rate based on the actual quote asset value
+        // before enabling via registry::update_withdrawal_limiter().
+        withdrawal_limiter: rate_limiter::new(0, 0, false, clock),
         trading_paused: false,
     };
     predict.enable_quote_asset<Quote>(currency);
@@ -577,6 +593,22 @@ public(package) fun set_max_total_exposure_pct(predict: &mut Predict, pct: u64) 
     });
 }
 
+/// Update withdrawal rate limiter configuration.
+public(package) fun update_withdrawal_limiter(
+    predict: &mut Predict,
+    capacity: u64,
+    refill_rate_per_ms: u64,
+    enabled: bool,
+    clock: &Clock,
+) {
+    predict.withdrawal_limiter.update_config(capacity, refill_rate_per_ms, enabled, clock);
+}
+
+/// Returns the currently available withdrawal amount.
+public fun available_withdrawal(predict: &Predict, clock: &Clock): u64 {
+    predict.withdrawal_limiter.available_withdrawal(clock)
+}
+
 #[test_only]
 /// Create a Predict object for testing without sharing it.
 public(package) fun create_test_predict<Quote>(
@@ -584,6 +616,7 @@ public(package) fun create_test_predict<Quote>(
     ctx: &mut TxContext,
 ): Predict {
     let treasury_cap = coin::create_treasury_cap_for_testing<PLP>(ctx);
+    let clock = sui::clock::create_for_testing(ctx);
     let mut predict = Predict {
         id: object::new(ctx),
         vault: vault::new(ctx),
@@ -592,9 +625,11 @@ public(package) fun create_test_predict<Quote>(
         risk_config: risk_config::new(),
         treasury_config: treasury_config::new(),
         oracle_config: oracle_config::new(ctx),
+        withdrawal_limiter: rate_limiter::new(0, 0, false, &clock),
         trading_paused: false,
     };
     predict.enable_quote_asset<Quote>(currency);
+    clock.destroy_for_testing();
     predict
 }
 
