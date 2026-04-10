@@ -236,7 +236,7 @@ public(package) fun evaluate_settled(matrix: &StrikeMatrix, settlement: u64): u6
     let (max_page, max_slot) = matrix.strike_to_coords(matrix.minted_max_strike);
     let mut value = 0u64;
     let mut page_key = min_page;
-    while (true) {
+    while (page_key <= max_page) {
         let page = &matrix.pages[page_key];
         let start_slot = if (page_key == min_page) { min_slot } else { 0 };
         let end_slot = if (page_key == max_page) {
@@ -245,7 +245,7 @@ public(package) fun evaluate_settled(matrix: &StrikeMatrix, settlement: u64): u6
             PAGE_SLOTS - 1
         };
         let mut slot = start_slot;
-        while (true) {
+        while (slot <= end_slot) {
             let strike = matrix.strike_from_coords(page_key, slot);
             if (strike < settlement) {
                 value = value + page[slot].q_up;
@@ -253,11 +253,9 @@ public(package) fun evaluate_settled(matrix: &StrikeMatrix, settlement: u64): u6
                 value = value + page[slot].q_dn;
             };
 
-            if (slot == end_slot) break;
             slot = slot + 1;
         };
 
-        if (page_key == max_page) break;
         page_key = page_key + 1;
     };
 

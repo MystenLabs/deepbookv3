@@ -70,6 +70,8 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 
 - Validate before mutate: when consuming irreversible resources (burning coins, destroying objects), check all preconditions before the destructive call. Even though Sui transactions are atomic, this makes intent clearer and follows the convention used throughout the codebase.
 
+- Prefer explicit loop bounds over `while (true)` when the iteration range is easy to express. If a loop naturally means "from `min_page` to `max_page` inclusive" or "while `slot <= end_slot`", write that directly instead of using `while (true)` plus interior `break`s.
+
 - Avoid deprecated Sui framework functions. Use the current recommended API (e.g., `coin_registry::new_currency_with_otw` instead of `coin::create_currency`). If a deprecated function must be used, add a comment explaining why the replacement doesn't work for this case.
 
 ## Tool Calling Instructions
