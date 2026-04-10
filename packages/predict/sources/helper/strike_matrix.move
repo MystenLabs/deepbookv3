@@ -161,12 +161,12 @@ public(package) fun remove(matrix: &mut StrikeMatrix, strike: u64, qty: u64, is_
 /// Insert a vertical spread `(lower, higher)`. Equivalent to a long UP@lower,
 /// a long DN@higher, and a `qty` increment to `cashback`.
 public(package) fun insert_spread(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64) {
-    apply_spread(matrix, lower, higher, qty, true);
+    matrix.apply_spread(lower, higher, qty, true);
 }
 
 /// Remove a vertical spread `(lower, higher)`. Symmetric to `insert_spread`.
 public(package) fun remove_spread(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64) {
-    apply_spread(matrix, lower, higher, qty, false);
+    matrix.apply_spread(lower, higher, qty, false);
 }
 
 /// Evaluate the current book against a sampled live curve.
@@ -316,8 +316,8 @@ public(package) fun minted_strike_range(matrix: &StrikeMatrix): (u64, u64) {
 /// identity (`short X@k ≡ long ~X@k − $1`) that callers subtract from
 /// `evaluate`/`evaluate_settled`/`max_payout` to recover the spread payoff.
 fun apply_spread(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64, add: bool) {
-    apply_position(matrix, lower, qty, true, add);
-    apply_position(matrix, higher, qty, false, add);
+    matrix.apply_position(lower, qty, true, add);
+    matrix.apply_position(higher, qty, false, add);
     apply_exact_delta(&mut matrix.cashback, qty, add);
 }
 
