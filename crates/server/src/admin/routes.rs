@@ -21,6 +21,10 @@ pub fn admin_routes(state: Arc<AppState>) -> Router<Arc<AppState>> {
         .route("/pools/{pool_id}", delete(handlers::delete_pool))
         .route("/assets", post(handlers::create_asset))
         .route("/assets/{asset_type}", delete(handlers::delete_asset))
+        .route(
+            "/refresh_epoch_metrics",
+            post(handlers::refresh_epoch_metrics),
+        )
         .layer(from_fn_with_state(state, require_admin_auth));
 
     // Health check is unauthenticated for load balancer probes

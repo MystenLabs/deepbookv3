@@ -1,0 +1,17 @@
+{
+  "network": "testnet",
+  "packageId": "0xcd661bfa0c158d195b2f906e32695712f63f0668950656016ba5feffc6ccc564",
+  "enclaveCapId": "0xfa679e33de060e54604ffda917c1ce1c43a1f305a446a15ccf68d38719734822",
+  "enclaveConfigId": "0x1931bed2c8c8a669b2e6125b8c8e8d1866394e83316ae34303b9cbd15087f746",
+  "upgradeCapId": "0xb435ce43049595408f9d981dfb2f2fc46635dbd2f0b8debc978f52b6b62e3c2f",
+  "deployTx": "AW8y8ivcYMhGFPUirkn2nRwXYiNQoVeG41XuF29xewCN",
+  "deployedAt": "2026-04-01T23:24:28.958Z",
+  "deployedBy": "0x0f97e5774fa2d0ad786ee0a562c4f65762e141397e469a736703351df85383cc",
+  "funds": {
+    "0x6520168c9a1a8f55e7f193e41fad2dd51f94e816c1fed37ec0ee4dfb87921625": {
+      "poolId": "0x48c95963e9eac37a316b7ae04a0deb761bcdcc2b67912374d6036e7f0e9bae9f",
+      "ownerCapId": "0xe767b7f058e954359d11498bd9caaba3d3cf15cfda06b43578160f7419239116"
+    }
+  },
+  "enclaveObjectId": "0x792b38eab8cd6a3580f665baefb28bfeda11ba9e1d6a7461212a4ca6624c76c0"
+}

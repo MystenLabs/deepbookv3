@@ -1,0 +1,23 @@
+[Unit]
+Description=DeepBook Maker Incentives — submit previous epoch rewards for all funds
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+WorkingDirectory=/home/ubuntu/projects/leva/deepbookv3/scripts
+EnvironmentFile=/home/ubuntu/projects/leva/deepbookv3/scripts/transactions/maker-incentives/automation/epoch-submitter.env
+ExecStart=/usr/bin/npx tsx transactions/maker-incentives/contract/submit-all-epochs.ts \
+  --network ${NETWORK} \
+  --enclave-url ${ENCLAVE_URL}
+TimeoutStartSec=300
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=maker-incentives
+
+# Retry up to 3 times on failure, with 60s delay
+Restart=on-failure
+RestartSec=60
+StartLimitIntervalSec=600
+StartLimitBurst=3

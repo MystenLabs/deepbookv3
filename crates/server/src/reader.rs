@@ -4,10 +4,12 @@ use deepbook_schema::models::{
     AssetSupplied, AssetWithdrawn, BookParamsUpdated, CollateralEvent, DeepbookPoolConfigUpdated,
     DeepbookPoolRegistered, DeepbookPoolUpdated, DeepbookPoolUpdatedRegistry,
     InterestParamsUpdated, Liquidation, LoanBorrowed, LoanRepaid, MaintainerCapUpdated,
-    MaintainerFeesWithdrawn, MarginManagerCreated, MarginManagerState, MarginPoolConfigUpdated,
-    MarginPoolCreated, OrderFillSummary, OrderStatus, PauseCapUpdated, PoolCreated, Pools,
-    ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn, ReferralFeeEvent, ReferralFeesClaimedEvent,
-    SupplierCapMinted, SupplyReferralMinted,
+    MaintainerFeesWithdrawn, MakerIncentiveEpochResultsSubmitted, MakerIncentiveFundCreated,
+    MakerIncentiveParamsApplied, MakerIncentiveParamsCancelled, MakerIncentiveParamsScheduled,
+    MakerIncentiveRewardClaimed, MakerIncentiveTreasuryWithdrawn, MarginManagerCreated,
+    MarginManagerState, MarginPoolConfigUpdated, MarginPoolCreated, OrderFillSummary, OrderStatus,
+    PauseCapUpdated, PoolCreated, Pools, ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn,
+    ReferralFeeEvent, ReferralFeesClaimedEvent, SupplierCapMinted, SupplyReferralMinted,
 };
 use deepbook_schema::schema;
 use diesel::deserialize::FromSqlRow;
@@ -16,11 +18,15 @@ use diesel::expression::QueryMetadata;
 use diesel::pg::Pg;
 use diesel::query_builder::{Query, QueryFragment, QueryId};
 use diesel::query_dsl::CompatibleType;
-use diesel::sql_types::{Array, BigInt, Double, Integer, Nullable, Text};
+use diesel::sql_types::{Array, BigInt, Double, Integer, Jsonb, Nullable, Text};
 use diesel::{
-    BoolExpressionMethods, ExpressionMethods, QueryDsl, QueryableByName, SelectableHelper,
-    TextExpressionMethods,
+    dsl::count_star, BoolExpressionMethods, ExpressionMethods, QueryDsl, QueryableByName,
+    SelectableHelper, TextExpressionMethods,
 };
+use std::collections::HashMap;
+
+/// Fixed maker-incentive epoch length (matches on-chain `EPOCH_DURATION_MS`).
+const MAKER_INCENTIVE_EPOCH_DURATION_MS: i64 = 86_400_000;
 
 /// Converts an empty string to "%" for SQL LIKE pattern matching.
 /// This allows using required parameters instead of Option<String>,
@@ -109,6 +115,74 @@ struct LpPositionRow {
     net_shares: i64,
     #[diesel(sql_type = Double)]
     supplied_usd: f64,
+}
+
+#[derive(QueryableByName, Debug, serde::Serialize)]
+pub(crate) struct MakerEpochMetricsRow {
+    #[diesel(sql_type = Text)]
+    pub pool_id: String,
+    #[diesel(sql_type = BigInt)]
+    pub epoch_start_ms: i64,
+    #[diesel(sql_type = BigInt)]
+    pub epoch_end_ms: i64,
+    #[diesel(sql_type = Text)]
+    pub balance_manager_id: String,
+    #[diesel(sql_type = BigInt)]
+    pub order_count: i64,
+    #[diesel(sql_type = BigInt)]
+    pub fill_count: i64,
+    #[diesel(sql_type = BigInt)]
+    pub base_volume: i64,
+    #[diesel(sql_type = BigInt)]
+    pub quote_volume: i64,
+    #[diesel(sql_type = BigInt)]
+    pub net_base_flow: i64,
+    #[diesel(sql_type = BigInt)]
+    pub net_quote_flow: i64,
+    #[diesel(sql_type = Double)]
+    pub vwap_spread_bps: f64,
+    #[diesel(sql_type = Integer)]
+    pub quoting_window_mask: i32,
+    #[diesel(sql_type = Double)]
+    pub avg_bid_depth: f64,
+    #[diesel(sql_type = Double)]
+    pub avg_ask_depth: f64,
+    #[diesel(sql_type = Jsonb)]
+    pub depth_profile: serde_json::Value,
+}
+
+#[derive(QueryableByName, Debug, serde::Serialize)]
+pub(crate) struct PoolEpochMetricsRow {
+    #[diesel(sql_type = Text)]
+    pub pool_id: String,
+    #[diesel(sql_type = BigInt)]
+    pub epoch_start_ms: i64,
+    #[diesel(sql_type = BigInt)]
+    pub epoch_end_ms: i64,
+    #[diesel(sql_type = BigInt)]
+    pub fill_count: i64,
+    #[diesel(sql_type = BigInt)]
+    pub total_base_volume: i64,
+    #[diesel(sql_type = BigInt)]
+    pub total_quote_volume: i64,
+    #[diesel(sql_type = BigInt)]
+    pub unique_maker_count: i64,
+    #[diesel(sql_type = BigInt)]
+    pub net_base_flow: i64,
+    #[diesel(sql_type = BigInt)]
+    pub net_quote_flow: i64,
+    #[diesel(sql_type = Double)]
+    pub median_vwap_spread_bps: f64,
+    #[diesel(sql_type = Double)]
+    pub median_bbo_spread_bps: f64,
+    #[diesel(sql_type = Double)]
+    pub quoting_uptime_pct: f64,
+    #[diesel(sql_type = Double)]
+    pub avg_bid_depth: f64,
+    #[diesel(sql_type = Double)]
+    pub avg_ask_depth: f64,
+    #[diesel(sql_type = Jsonb)]
+    pub depth_profile: serde_json::Value,
 }
 
 #[derive(Clone)]
@@ -429,6 +503,101 @@ impl Reader {
             self.metrics.db_requests_failed.inc();
         }
         res
+    }
+
+    /// Returns all order events and fill events for a pool within a time range.
+    /// Used by the maker incentive scoring engine.
+    pub async fn get_incentive_pool_data(
+        &self,
+        pool_id: String,
+        start_time: i64,
+        end_time: i64,
+    ) -> Result<
+        (
+            Vec<(String, String, i64, i64, i64, i64, bool, String)>,
+            Vec<(String, i64, i64, i64)>,
+            Vec<(String, i64, bool)>,
+            i64, // stake_required
+            Option<(i16, String, i16, String)>, // pool metadata: (base_decimals, base_symbol, quote_decimals, quote_symbol)
+        ),
+        DeepBookError,
+    > {
+        let mut connection = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        // Lookup pool metadata (decimals + symbols) from the pools table.
+        let pool_meta: Option<(i16, String, i16, String)> = schema::pools::table
+            .filter(schema::pools::pool_id.eq(&pool_id))
+            .select((
+                schema::pools::base_asset_decimals,
+                schema::pools::base_asset_symbol,
+                schema::pools::quote_asset_decimals,
+                schema::pools::quote_asset_symbol,
+            ))
+            .first::<(i16, String, i16, String)>(&mut connection)
+            .await
+            .ok();
+
+        let orders = schema::order_updates::table
+            .filter(schema::order_updates::pool_id.eq(&pool_id))
+            .filter(schema::order_updates::checkpoint_timestamp_ms.between(start_time, end_time))
+            .order_by(schema::order_updates::checkpoint_timestamp_ms.asc())
+            .select((
+                schema::order_updates::order_id,
+                schema::order_updates::status,
+                schema::order_updates::price,
+                schema::order_updates::original_quantity,
+                schema::order_updates::quantity,
+                schema::order_updates::checkpoint_timestamp_ms,
+                schema::order_updates::is_bid,
+                schema::order_updates::balance_manager_id,
+            ))
+            .load::<(String, String, i64, i64, i64, i64, bool, String)>(&mut connection)
+            .await
+            .map_err(|_| DeepBookError::database("Error fetching incentive order events"))?;
+
+        let fills = schema::order_fills::table
+            .filter(schema::order_fills::pool_id.eq(&pool_id))
+            .filter(schema::order_fills::checkpoint_timestamp_ms.between(start_time, end_time))
+            .order_by(schema::order_fills::checkpoint_timestamp_ms.asc())
+            .select((
+                schema::order_fills::maker_order_id,
+                schema::order_fills::base_quantity,
+                schema::order_fills::quote_quantity,
+                schema::order_fills::checkpoint_timestamp_ms,
+            ))
+            .load::<(String, i64, i64, i64)>(&mut connection)
+            .await
+            .map_err(|_| DeepBookError::database("Error fetching incentive fill events"))?;
+
+        // All stake/unstake events for this pool up to the epoch end.
+        // Net positive stake = eligible for maker incentives.
+        // Gracefully return empty if the stakes table doesn't exist in this DB.
+        let stakes = schema::stakes::table
+            .filter(schema::stakes::pool_id.eq(&pool_id))
+            .filter(schema::stakes::checkpoint_timestamp_ms.le(end_time))
+            .order_by(schema::stakes::checkpoint_timestamp_ms.asc())
+            .select((
+                schema::stakes::balance_manager_id,
+                schema::stakes::amount,
+                schema::stakes::stake,
+            ))
+            .load::<(String, i64, bool)>(&mut connection)
+            .await
+            .unwrap_or_default();
+
+        // Most recent stake_required for this pool from governance trade_params.
+        // Returns 0 if the table doesn't exist in this DB.
+        let stake_required: i64 = schema::trade_params_update::table
+            .filter(schema::trade_params_update::pool_id.eq(&pool_id))
+            .order_by(schema::trade_params_update::checkpoint_timestamp_ms.desc())
+            .select(schema::trade_params_update::stake_required)
+            .first::<i64>(&mut connection)
+            .await
+            .unwrap_or(0);
+
+        self.metrics.db_requests_succeeded.inc();
+        Ok((orders, fills, stakes, stake_required, pool_meta))
     }
 
     pub async fn get_orders_status(
@@ -1777,6 +1946,465 @@ impl Reader {
             .order_by(schema::book_params_updated::checkpoint_timestamp_ms.desc())
             .limit(1);
         Ok(self.results(query).await?.into_iter().next())
+    }
+
+    // === Maker Incentive Events ===
+
+    pub async fn get_maker_incentive_fund_created(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        pool_id_filter: String,
+        fund_id_filter: String,
+    ) -> Result<Vec<MakerIncentiveFundCreated>, DeepBookError> {
+        let query = schema::maker_incentive_fund_created::table
+            .select(MakerIncentiveFundCreated::as_select())
+            .filter(
+                schema::maker_incentive_fund_created::checkpoint_timestamp_ms
+                    .between(start_time, end_time),
+            )
+            .filter(schema::maker_incentive_fund_created::pool_id.like(to_pattern(&pool_id_filter)))
+            .filter(
+                schema::maker_incentive_fund_created::fund_id.like(to_pattern(&fund_id_filter)),
+            )
+            .order_by(schema::maker_incentive_fund_created::checkpoint_timestamp_ms.desc())
+            .limit(limit);
+
+        Ok(self.results(query).await?)
+    }
+
+    /// Count consecutive prior epochs (immediately before `epoch_start_ms`, each
+    /// [`MAKER_INCENTIVE_EPOCH_DURATION_MS`] apart) where the maker has a row in
+    /// `maker_incentive_maker_participation`.
+    pub async fn get_maker_loyalty_prior_streaks(
+        &self,
+        fund_id: &str,
+        epoch_start_ms: i64,
+        balance_manager_ids: &[String],
+    ) -> Result<HashMap<String, u32>, DeepBookError> {
+        if balance_manager_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let mut connection = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        let mut out = HashMap::new();
+        for bm in balance_manager_ids {
+            let mut streak: u32 = 0;
+            let mut k: i64 = 1;
+            loop {
+                let Some(delta) = k.checked_mul(MAKER_INCENTIVE_EPOCH_DURATION_MS) else {
+                    break;
+                };
+                let Some(prior_start) = epoch_start_ms.checked_sub(delta) else {
+                    break;
+                };
+
+                let cnt: i64 = schema::maker_incentive_maker_participation::table
+                    .filter(schema::maker_incentive_maker_participation::fund_id.eq(fund_id))
+                    .filter(
+                        schema::maker_incentive_maker_participation::epoch_start_ms.eq(prior_start),
+                    )
+                    .filter(
+                        schema::maker_incentive_maker_participation::balance_manager_id.eq(bm),
+                    )
+                    .select(count_star())
+                    .first(&mut connection)
+                    .await
+                    .map_err(|_| {
+                        DeepBookError::database("Error querying maker incentive participation")
+                    })?;
+
+                if cnt > 0 {
+                    streak += 1;
+                    k += 1;
+                } else {
+                    break;
+                }
+            }
+            out.insert(bm.clone(), streak);
+        }
+
+        self.metrics.db_requests_succeeded.inc();
+        Ok(out)
+    }
+
+    pub async fn get_maker_incentive_epoch_results_submitted(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        pool_id_filter: String,
+        fund_id_filter: String,
+    ) -> Result<Vec<MakerIncentiveEpochResultsSubmitted>, DeepBookError> {
+        let query = schema::maker_incentive_epoch_results_submitted::table
+            .select(MakerIncentiveEpochResultsSubmitted::as_select())
+            .filter(
+                schema::maker_incentive_epoch_results_submitted::checkpoint_timestamp_ms
+                    .between(start_time, end_time),
+            )
+            .filter(
+                schema::maker_incentive_epoch_results_submitted::pool_id
+                    .like(to_pattern(&pool_id_filter)),
+            )
+            .filter(
+                schema::maker_incentive_epoch_results_submitted::fund_id
+                    .like(to_pattern(&fund_id_filter)),
+            )
+            .order_by(
+                schema::maker_incentive_epoch_results_submitted::checkpoint_timestamp_ms.desc(),
+            )
+            .limit(limit);
+
+        Ok(self.results(query).await?)
+    }
+
+    pub async fn get_maker_incentive_reward_claimed(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        pool_id_filter: String,
+        fund_id_filter: String,
+        balance_manager_id_filter: String,
+    ) -> Result<Vec<MakerIncentiveRewardClaimed>, DeepBookError> {
+        let query = schema::maker_incentive_reward_claimed::table
+            .select(MakerIncentiveRewardClaimed::as_select())
+            .filter(
+                schema::maker_incentive_reward_claimed::checkpoint_timestamp_ms
+                    .between(start_time, end_time),
+            )
+            .filter(
+                schema::maker_incentive_reward_claimed::pool_id
+                    .like(to_pattern(&pool_id_filter)),
+            )
+            .filter(
+                schema::maker_incentive_reward_claimed::fund_id
+                    .like(to_pattern(&fund_id_filter)),
+            )
+            .filter(
+                schema::maker_incentive_reward_claimed::balance_manager_id
+                    .like(to_pattern(&balance_manager_id_filter)),
+            )
+            .order_by(schema::maker_incentive_reward_claimed::checkpoint_timestamp_ms.desc())
+            .limit(limit);
+
+        Ok(self.results(query).await?)
+    }
+
+    pub async fn get_maker_incentive_treasury_withdrawn(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        pool_id_filter: String,
+        fund_id_filter: String,
+    ) -> Result<Vec<MakerIncentiveTreasuryWithdrawn>, DeepBookError> {
+        let query = schema::maker_incentive_treasury_withdrawn::table
+            .select(MakerIncentiveTreasuryWithdrawn::as_select())
+            .filter(
+                schema::maker_incentive_treasury_withdrawn::checkpoint_timestamp_ms
+                    .between(start_time, end_time),
+            )
+            .filter(
+                schema::maker_incentive_treasury_withdrawn::pool_id.like(to_pattern(&pool_id_filter)),
+            )
+            .filter(
+                schema::maker_incentive_treasury_withdrawn::fund_id.like(to_pattern(&fund_id_filter)),
+            )
+            .order_by(
+                schema::maker_incentive_treasury_withdrawn::checkpoint_timestamp_ms.desc(),
+            )
+            .limit(limit);
+
+        Ok(self.results(query).await?)
+    }
+
+    pub async fn get_maker_incentive_params_scheduled(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        pool_id_filter: String,
+        fund_id_filter: String,
+    ) -> Result<Vec<MakerIncentiveParamsScheduled>, DeepBookError> {
+        let query = schema::maker_incentive_params_scheduled::table
+            .select(MakerIncentiveParamsScheduled::as_select())
+            .filter(
+                schema::maker_incentive_params_scheduled::checkpoint_timestamp_ms
+                    .between(start_time, end_time),
+            )
+            .filter(
+                schema::maker_incentive_params_scheduled::pool_id.like(to_pattern(&pool_id_filter)),
+            )
+            .filter(
+                schema::maker_incentive_params_scheduled::fund_id.like(to_pattern(&fund_id_filter)),
+            )
+            .order_by(
+                schema::maker_incentive_params_scheduled::checkpoint_timestamp_ms.desc(),
+            )
+            .limit(limit);
+
+        Ok(self.results(query).await?)
+    }
+
+    pub async fn get_maker_incentive_params_applied(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        pool_id_filter: String,
+        fund_id_filter: String,
+    ) -> Result<Vec<MakerIncentiveParamsApplied>, DeepBookError> {
+        let query = schema::maker_incentive_params_applied::table
+            .select(MakerIncentiveParamsApplied::as_select())
+            .filter(
+                schema::maker_incentive_params_applied::checkpoint_timestamp_ms
+                    .between(start_time, end_time),
+            )
+            .filter(
+                schema::maker_incentive_params_applied::pool_id.like(to_pattern(&pool_id_filter)),
+            )
+            .filter(
+                schema::maker_incentive_params_applied::fund_id.like(to_pattern(&fund_id_filter)),
+            )
+            .order_by(
+                schema::maker_incentive_params_applied::checkpoint_timestamp_ms.desc(),
+            )
+            .limit(limit);
+
+        Ok(self.results(query).await?)
+    }
+
+    pub async fn get_maker_incentive_params_cancelled(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        pool_id_filter: String,
+        fund_id_filter: String,
+    ) -> Result<Vec<MakerIncentiveParamsCancelled>, DeepBookError> {
+        let query = schema::maker_incentive_params_cancelled::table
+            .select(MakerIncentiveParamsCancelled::as_select())
+            .filter(
+                schema::maker_incentive_params_cancelled::checkpoint_timestamp_ms
+                    .between(start_time, end_time),
+            )
+            .filter(
+                schema::maker_incentive_params_cancelled::pool_id.like(to_pattern(&pool_id_filter)),
+            )
+            .filter(
+                schema::maker_incentive_params_cancelled::fund_id.like(to_pattern(&fund_id_filter)),
+            )
+            .order_by(
+                schema::maker_incentive_params_cancelled::checkpoint_timestamp_ms.desc(),
+            )
+            .limit(limit);
+
+        Ok(self.results(query).await?)
+    }
+
+    /// Read per-maker metrics from the materialized view for one or more epochs.
+    pub async fn get_maker_epoch_metrics(
+        &self,
+        pool_id: &str,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<Vec<MakerEpochMetricsRow>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        let res = diesel::sql_query(
+            r#"
+            SELECT
+                pool_id::TEXT,
+                epoch_start_ms::BIGINT,
+                epoch_end_ms::BIGINT,
+                balance_manager_id::TEXT,
+                order_count::BIGINT,
+                fill_count::BIGINT,
+                base_volume::BIGINT,
+                quote_volume::BIGINT,
+                net_base_flow::BIGINT,
+                net_quote_flow::BIGINT,
+                vwap_spread_bps::FLOAT8,
+                quoting_window_mask::INT,
+                avg_bid_depth::FLOAT8,
+                avg_ask_depth::FLOAT8,
+                depth_profile::JSONB
+            FROM pool_epoch_maker_metrics
+            WHERE pool_id = $1
+              AND epoch_start_ms >= $2
+              AND epoch_start_ms < $3
+            ORDER BY epoch_start_ms, balance_manager_id
+            "#,
+        )
+        .bind::<Text, _>(pool_id)
+        .bind::<BigInt, _>(from_ms)
+        .bind::<BigInt, _>(to_ms)
+        .load::<MakerEpochMetricsRow>(&mut connection)
+        .await
+        .map_err(|e| {
+            DeepBookError::database(format!("Error fetching maker epoch metrics: {e}"))
+        });
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    /// Aggregate per-maker view into pool-level metrics, including BBO spread
+    /// from the raw order_updates table.
+    pub async fn get_pool_epoch_metrics(
+        &self,
+        pool_id: &str,
+        from_ms: i64,
+        to_ms: i64,
+    ) -> Result<Vec<PoolEpochMetricsRow>, DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        let res = diesel::sql_query(
+            r#"
+            WITH
+            -- Aggregate the per-maker view to pool level
+            pool_agg AS (
+                SELECT
+                    pool_id,
+                    epoch_start_ms,
+                    epoch_start_ms + 86400000 AS epoch_end_ms,
+                    SUM(fill_count)::BIGINT AS fill_count,
+                    SUM(base_volume)::BIGINT AS total_base_volume,
+                    SUM(quote_volume)::BIGINT AS total_quote_volume,
+                    COUNT(*)::BIGINT AS unique_maker_count,
+                    SUM(net_base_flow)::BIGINT AS net_base_flow,
+                    SUM(net_quote_flow)::BIGINT AS net_quote_flow,
+                    COALESCE(
+                        PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY vwap_spread_bps)
+                            FILTER (WHERE vwap_spread_bps > 0),
+                        0
+                    )::FLOAT8 AS median_vwap_spread_bps,
+                    -- Quoting uptime: count distinct windows with ANY maker quoting
+                    length(replace(
+                        (bit_or(quoting_window_mask)::bit(24))::text,
+                        '0', ''
+                    ))::FLOAT8 / 24.0 AS quoting_uptime_pct,
+                    COALESCE(AVG(avg_bid_depth), 0)::FLOAT8 AS avg_bid_depth,
+                    COALESCE(AVG(avg_ask_depth), 0)::FLOAT8 AS avg_ask_depth
+                FROM pool_epoch_maker_metrics
+                WHERE pool_id = $1
+                  AND epoch_start_ms >= $2
+                  AND epoch_start_ms < $3
+                GROUP BY pool_id, epoch_start_ms
+            ),
+            -- BBO spread per 1-hour window from raw order_updates (best bid/ask across all makers)
+            bbo_windows AS (
+                SELECT
+                    (checkpoint_timestamp_ms / 86400000) * 86400000 AS epoch_start_ms,
+                    MAX(CASE WHEN is_bid THEN price::FLOAT8 END)       AS best_bid,
+                    MIN(CASE WHEN NOT is_bid THEN price::FLOAT8 END)   AS best_ask
+                FROM order_updates
+                WHERE pool_id = $1
+                  AND checkpoint_timestamp_ms >= $2
+                  AND checkpoint_timestamp_ms < $3
+                  AND status = 'Placed'
+                GROUP BY
+                    (checkpoint_timestamp_ms / 86400000) * 86400000,
+                    ((checkpoint_timestamp_ms % 86400000) / 3600000)
+                HAVING BOOL_OR(is_bid) AND BOOL_OR(NOT is_bid)
+            ),
+            bbo_agg AS (
+                SELECT
+                    epoch_start_ms,
+                    COALESCE(
+                        PERCENTILE_CONT(0.5) WITHIN GROUP (
+                            ORDER BY (best_ask - best_bid) / ((best_ask + best_bid) / 2.0) * 10000.0
+                        ) FILTER (WHERE best_bid > 0 AND best_ask > best_bid),
+                        0
+                    )::FLOAT8 AS median_bbo_spread_bps
+                FROM bbo_windows
+                GROUP BY epoch_start_ms
+            ),
+            -- Aggregate depth profiles across makers: sum each bps band
+            depth_agg AS (
+                SELECT
+                    epoch_start_ms,
+                    jsonb_build_array(
+                        jsonb_build_object('bps', 5,
+                            'bid', COALESCE(SUM(CASE WHEN (elem->>'bps')::INT = 5 THEN (elem->>'bid')::FLOAT8 END), 0),
+                            'ask', COALESCE(SUM(CASE WHEN (elem->>'bps')::INT = 5 THEN (elem->>'ask')::FLOAT8 END), 0)),
+                        jsonb_build_object('bps', 10,
+                            'bid', COALESCE(SUM(CASE WHEN (elem->>'bps')::INT = 10 THEN (elem->>'bid')::FLOAT8 END), 0),
+                            'ask', COALESCE(SUM(CASE WHEN (elem->>'bps')::INT = 10 THEN (elem->>'ask')::FLOAT8 END), 0)),
+                        jsonb_build_object('bps', 25,
+                            'bid', COALESCE(SUM(CASE WHEN (elem->>'bps')::INT = 25 THEN (elem->>'bid')::FLOAT8 END), 0),
+                            'ask', COALESCE(SUM(CASE WHEN (elem->>'bps')::INT = 25 THEN (elem->>'ask')::FLOAT8 END), 0)),
+                        jsonb_build_object('bps', 50,
+                            'bid', COALESCE(SUM(CASE WHEN (elem->>'bps')::INT = 50 THEN (elem->>'bid')::FLOAT8 END), 0),
+                            'ask', COALESCE(SUM(CASE WHEN (elem->>'bps')::INT = 50 THEN (elem->>'ask')::FLOAT8 END), 0)),
+                        jsonb_build_object('bps', 100,
+                            'bid', COALESCE(SUM(CASE WHEN (elem->>'bps')::INT = 100 THEN (elem->>'bid')::FLOAT8 END), 0),
+                            'ask', COALESCE(SUM(CASE WHEN (elem->>'bps')::INT = 100 THEN (elem->>'ask')::FLOAT8 END), 0))
+                    ) AS depth_profile
+                FROM pool_epoch_maker_metrics,
+                     jsonb_array_elements(depth_profile) AS elem
+                WHERE pool_id = $1
+                  AND epoch_start_ms >= $2
+                  AND epoch_start_ms < $3
+                GROUP BY epoch_start_ms
+            )
+            SELECT
+                pa.pool_id::TEXT,
+                pa.epoch_start_ms::BIGINT,
+                pa.epoch_end_ms::BIGINT,
+                pa.fill_count::BIGINT,
+                pa.total_base_volume::BIGINT,
+                pa.total_quote_volume::BIGINT,
+                pa.unique_maker_count::BIGINT,
+                pa.net_base_flow::BIGINT,
+                pa.net_quote_flow::BIGINT,
+                pa.median_vwap_spread_bps::FLOAT8,
+                COALESCE(b.median_bbo_spread_bps, 0.0)::FLOAT8 AS median_bbo_spread_bps,
+                pa.quoting_uptime_pct::FLOAT8,
+                pa.avg_bid_depth::FLOAT8,
+                pa.avg_ask_depth::FLOAT8,
+                COALESCE(d.depth_profile, '[]'::JSONB) AS depth_profile
+            FROM pool_agg pa
+            LEFT JOIN bbo_agg b ON pa.epoch_start_ms = b.epoch_start_ms
+            LEFT JOIN depth_agg d ON pa.epoch_start_ms = d.epoch_start_ms
+            ORDER BY pa.epoch_start_ms
+            "#,
+        )
+        .bind::<Text, _>(pool_id)
+        .bind::<BigInt, _>(from_ms)
+        .bind::<BigInt, _>(to_ms)
+        .load::<PoolEpochMetricsRow>(&mut connection)
+        .await
+        .map_err(|e| DeepBookError::database(format!("Error fetching pool epoch metrics: {e}")));
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+        res
+    }
+
+    /// Refresh the pool_epoch_maker_metrics materialized view concurrently.
+    pub async fn refresh_epoch_metrics(&self) -> Result<(), DeepBookError> {
+        let mut connection = self.db.connect().await?;
+        diesel::sql_query("REFRESH MATERIALIZED VIEW CONCURRENTLY pool_epoch_maker_metrics")
+            .execute(&mut connection)
+            .await
+            .map_err(|e| {
+                DeepBookError::database(format!("Error refreshing epoch metrics view: {e}"))
+            })?;
+        Ok(())
     }
 }
 
