@@ -67,6 +67,7 @@ const PAGE_SLOTS: u64 = 512;
 
 const EInvalidTickSize: u64 = 0;
 const EInvalidStrikeRange: u64 = 1;
+const EUnalignedStrike: u64 = 5;
 const EInsufficientQuantity: u64 = 2;
 const ENonMonotoneCurve: u64 = 3;
 const EInvalidCurveRange: u64 = 4;
@@ -112,12 +113,8 @@ public(package) fun new(
     max_strike: u64,
 ): StrikeMatrix {
     assert!(tick_size > 0, EInvalidTickSize);
-    assert!(
-        min_strike <= max_strike
-        && min_strike % tick_size == 0
-        && max_strike % tick_size == 0,
-        EInvalidStrikeRange,
-    );
+    assert!(min_strike <= max_strike, EInvalidStrikeRange);
+    assert!(min_strike % tick_size == 0 && max_strike % tick_size == 0, EUnalignedStrike);
 
     let total_strikes = (max_strike - min_strike) / tick_size + 1;
     let page_count = (total_strikes - 1) / PAGE_SLOTS + 1;
@@ -282,7 +279,8 @@ public(package) fun set_mtm(matrix: &mut StrikeMatrix, value: u64) {
     matrix.mtm = value;
 }
 
-/// Return the historical minted strike bounds, or `(0, 0)` for an untouched book.
+/// Return the historical minted strike bounds, or `(0, 0)` for an untouched
+/// book. These bounds only expand on insert and never contract on remove.
 public(package) fun minted_strike_range(matrix: &StrikeMatrix): (u64, u64) {
     if (matrix.minted_min_strike > matrix.minted_max_strike) (0, 0) else (
         matrix.minted_min_strike,
@@ -591,7 +589,7 @@ fun merge_page_summaries(left: &PageSummary, right: &PageSummary): PageSummary {
 /// Map an aligned strike into its backing page and in-page slot.
 fun strike_to_coords(self: &StrikeMatrix, strike: u64): (u64, u64) {
     assert!(strike >= self.min_strike && strike <= self.max_strike, EInvalidStrikeRange);
-    assert!((strike - self.min_strike) % self.tick_size == 0, EInvalidStrikeRange);
+    assert!((strike - self.min_strike) % self.tick_size == 0, EUnalignedStrike);
     let tick_index = (strike - self.min_strike) / self.tick_size;
     let page_key = tick_index / PAGE_SLOTS;
     let slot = tick_index % PAGE_SLOTS;

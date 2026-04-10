@@ -151,6 +151,8 @@ public(package) fun assert_total_exposure(vault: &Vault, max_total_pct: u64) {
     assert!(vault.total_mtm <= math::mul(vault.balance, max_total_pct), EExceedsMaxTotalExposure);
 }
 
+/// Return the historical minted strike bounds for this oracle's matrix.
+/// These bounds expand on insert and do not shrink after positions are removed.
 public(package) fun oracle_strike_range(vault: &Vault, oracle_id: ID): (u64, u64) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
     let matrix = &vault.oracle_matrices[oracle_id];
