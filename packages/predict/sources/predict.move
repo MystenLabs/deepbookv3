@@ -640,10 +640,13 @@ fun refresh_oracle_risk(predict: &mut Predict, oracle: &OracleSVI) {
     let oracle_id = oracle.id();
     let (min_strike, max_strike) = predict.vault.oracle_strike_range(oracle_id);
     if (min_strike == 0 && max_strike == 0) {
-        // `strike_range` uses (0, 0) as the empty-oracle sentinel.
+        // `(0, 0)` means this oracle has never had any minted exposure.
         predict.vault.set_mtm(oracle_id, 0);
         return
     };
+    // Historical minted bounds do not shrink after a full unwind, so an empty
+    // but previously touched book still rebuilds over the old range and
+    // evaluates to 0 from zero `q_up` / `q_dn`.
     if (oracle.is_settled()) {
         predict.vault.set_mtm_with_settlement(oracle_id, oracle.settlement_price().destroy_some());
         return
