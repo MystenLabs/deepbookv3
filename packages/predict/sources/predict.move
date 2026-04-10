@@ -191,9 +191,7 @@ public fun get_trade_amounts(
     clock: &Clock,
 ): (u64, u64) {
     predict.oracle_config.assert_key_matches(oracle, &key);
-    if (!oracle.is_settled()) {
-        oracle_config::assert_operational_oracle(oracle, clock);
-    };
+    oracle_config::assert_quoteable_oracle(oracle, clock);
 
     let up_price = oracle.compute_price(key.strike());
     if (oracle.is_settled()) {
@@ -243,7 +241,7 @@ public fun mint<Quote>(
     predict.treasury_config.assert_quote_asset<Quote>();
 
     predict.oracle_config.assert_key_matches(oracle, &key);
-    oracle_config::assert_mintable_oracle(oracle, clock);
+    oracle_config::assert_live_oracle(oracle, clock);
 
     let strike = key.strike();
     let is_up = key.is_up();
@@ -291,9 +289,7 @@ public fun redeem<Quote>(
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(quantity > 0, EZeroQuantity);
     predict.oracle_config.assert_key_matches(oracle, &key);
-    if (!oracle.is_settled()) {
-        oracle_config::assert_operational_oracle(oracle, clock);
-    };
+    oracle_config::assert_quoteable_oracle(oracle, clock);
 
     manager.decrease_position(key, quantity);
 
@@ -349,7 +345,7 @@ public fun mint_collateralized(
 
     predict.oracle_config.assert_key_matches(oracle, &locked_key);
     predict.oracle_config.assert_key_matches(oracle, &minted_key);
-    oracle_config::assert_mintable_oracle(oracle, clock);
+    oracle_config::assert_live_oracle(oracle, clock);
 
     manager.lock_collateral(locked_key, minted_key, quantity);
     manager.increase_position(minted_key, quantity);
@@ -373,13 +369,18 @@ public fun mint_collateralized(
 public fun redeem_collateralized(
     predict: &mut Predict,
     manager: &mut PredictManager,
+    oracle: &OracleSVI,
     locked_key: MarketKey,
     minted_key: MarketKey,
     quantity: u64,
+    clock: &Clock,
     ctx: &TxContext,
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(quantity > 0, EZeroQuantity);
+    predict.oracle_config.assert_key_matches(oracle, &locked_key);
+    predict.oracle_config.assert_key_matches(oracle, &minted_key);
+    oracle_config::assert_quoteable_oracle(oracle, clock);
     manager.decrease_position(minted_key, quantity);
     manager.release_collateral(locked_key, minted_key, quantity);
 
