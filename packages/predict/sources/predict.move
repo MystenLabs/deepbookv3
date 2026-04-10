@@ -192,9 +192,7 @@ public fun get_trade_amounts(
     clock: &Clock,
 ): (u64, u64) {
     predict.oracle_config.assert_key_matches(oracle, &key);
-    if (!oracle.is_settled()) {
-        oracle_config::assert_operational_oracle(oracle, clock);
-    };
+    oracle_config::assert_quoteable_oracle(oracle, clock);
 
     let up_price = oracle.compute_price(key.strike());
     if (oracle.is_settled()) {
@@ -248,7 +246,7 @@ public fun mint<Quote>(
     predict.treasury_config.assert_quote_asset<Quote>();
 
     predict.oracle_config.assert_key_matches(oracle, &key);
-    oracle_config::assert_mintable_oracle(oracle, clock);
+    oracle_config::assert_live_oracle(oracle, clock);
 
     let strike = key.strike();
     let is_up = key.is_up();
@@ -296,9 +294,7 @@ public fun redeem<Quote>(
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(quantity > 0, EZeroQuantity);
     predict.oracle_config.assert_key_matches(oracle, &key);
-    if (!oracle.is_settled()) {
-        oracle_config::assert_operational_oracle(oracle, clock);
-    };
+    oracle_config::assert_quoteable_oracle(oracle, clock);
 
     manager.decrease_position(key, quantity);
 
@@ -343,9 +339,7 @@ public fun get_spread_trade_amounts(
     clock: &Clock,
 ): (u64, u64) {
     predict.oracle_config.assert_spread_key_matches(oracle, &key);
-    if (!oracle.is_settled()) {
-        oracle_config::assert_operational_oracle(oracle, clock);
-    };
+    oracle_config::assert_quoteable_oracle(oracle, clock);
 
     // Fair spread = up(lower) − up(higher). UP price is monotone non-increasing
     // in strike, so this is always non-negative for a well-formed key
@@ -395,7 +389,7 @@ public fun mint_spread<Quote>(
     assert!(quantity > 0, EZeroQuantity);
     predict.treasury_config.assert_quote_asset<Quote>();
     predict.oracle_config.assert_spread_key_matches(oracle, &key);
-    oracle_config::assert_mintable_oracle(oracle, clock);
+    oracle_config::assert_live_oracle(oracle, clock);
 
     let lower = key.lower_strike();
     let higher = key.higher_strike();
@@ -441,9 +435,7 @@ public fun redeem_spread<Quote>(
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(quantity > 0, EZeroQuantity);
     predict.oracle_config.assert_spread_key_matches(oracle, &key);
-    if (!oracle.is_settled()) {
-        oracle_config::assert_operational_oracle(oracle, clock);
-    };
+    oracle_config::assert_quoteable_oracle(oracle, clock);
 
     manager.decrease_spread(key, quantity);
 

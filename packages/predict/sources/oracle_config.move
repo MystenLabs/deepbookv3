@@ -8,7 +8,12 @@
 /// curves for vault MTM evaluation.
 module deepbook_predict::oracle_config;
 
-use deepbook_predict::{constants, market_key::MarketKey, oracle::OracleSVI, spread_key::SpreadKey};
+use deepbook_predict::{
+    constants,
+    market_key::MarketKey,
+    oracle::{Self, OracleSVI},
+    spread_key::SpreadKey
+};
 use sui::{clock::Clock, table::{Self, Table}};
 
 // === Errors ===
@@ -118,20 +123,34 @@ public(package) fun assert_spread_key_matches(
     oracle_config.assert_valid_strike(oracle, spread_key.higher_strike());
 }
 
-/// Assert that an oracle can still be used for reads and redemptions.
-public(package) fun assert_operational_oracle(oracle: &OracleSVI, clock: &Clock) {
-    assert!(!oracle.is_settled(), EOracleSettled);
-    assert!(oracle.is_active(), EOracleInactive);
+/// Assert that an oracle can still be used for actions that require live
+/// pricing. The oracle must be `ACTIVE` and fresh; `INACTIVE`,
+/// `PENDING_SETTLEMENT`, `SETTLED`, and stale oracles are rejected.
+public(package) fun assert_live_oracle(oracle: &OracleSVI, clock: &Clock) {
+    let oracle_status = oracle.status(clock);
+    assert!(oracle_status != oracle::status_settled(), EOracleSettled);
+    assert!(oracle_status != oracle::status_pending_settlement(), EOracleExpired);
+    assert!(oracle_status != oracle::status_inactive(), EOracleInactive);
     assert!(
         clock.timestamp_ms() <= oracle.timestamp() + constants::staleness_threshold_ms!(),
         EOracleStale,
     );
 }
 
-/// Assert that an oracle can still be used for minting new exposure.
-public(package) fun assert_mintable_oracle(oracle: &OracleSVI, clock: &Clock) {
-    assert_operational_oracle(oracle, clock);
-    assert!(clock.timestamp_ms() < oracle.expiry(), EOracleExpired);
+/// Assert that an oracle can still be used for actions that accept either live
+/// pricing or a finalized settlement price. `SETTLED` oracles are allowed
+/// immediately; otherwise the oracle must still be `ACTIVE` and fresh.
+/// `PENDING_SETTLEMENT` is intentionally rejected to freeze the
+/// expired-but-unsettled gap.
+public(package) fun assert_quoteable_oracle(oracle: &OracleSVI, clock: &Clock) {
+    let oracle_status = oracle.status(clock);
+    if (oracle_status == oracle::status_settled()) return;
+    assert!(oracle_status != oracle::status_pending_settlement(), EOracleExpired);
+    assert!(oracle_status != oracle::status_inactive(), EOracleInactive);
+    assert!(
+        clock.timestamp_ms() <= oracle.timestamp() + constants::staleness_threshold_ms!(),
+        EOracleStale,
+    );
 }
 
 /// Build an adaptive piecewise-linear curve over the configured strike range.
