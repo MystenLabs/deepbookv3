@@ -63,3 +63,4 @@ public macro fun oracle_tick_size_unit(): u64 { 10_000 }
 
 /// Required decimals for all accepted quote assets in phase 1.
 public macro fun required_quote_decimals(): u8 { 6 }
+
