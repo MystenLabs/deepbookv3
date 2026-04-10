@@ -63,8 +63,6 @@ use deepbook::{constants::max_u64, math};
 use deepbook_predict::{constants, oracle_config::CurvePoint};
 use sui::table::{Self, Table};
 
-use fun apply_delta as u64.apply_delta;
-
 const PAGE_SLOTS: u64 = 512;
 
 const EInvalidTickSize: u64 = 0;
@@ -320,7 +318,7 @@ public(package) fun minted_strike_range(matrix: &StrikeMatrix): (u64, u64) {
 fun apply_spread(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64, add: bool) {
     matrix.apply_position(lower, qty, true, add);
     matrix.apply_position(higher, qty, false, add);
-    matrix.cashback.apply_delta(qty, add);
+    apply_exact_delta(&mut matrix.cashback, qty, add);
 }
 
 /// Apply one position delta, refresh the touched page summary, then rebuild the
