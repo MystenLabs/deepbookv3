@@ -5,18 +5,18 @@
 ///
 /// Users deposit USDC into the PredictManager, which is stored in the inner
 /// BalanceManager. Long positions are tracked in `positions` keyed by
-/// MarketKey, and vertical-spread positions in `spread_positions` keyed by
-/// SpreadKey.
+/// MarketKey, and vertical-combo positions in `combo_positions` keyed by
+/// ComboKey.
 module deepbook_predict::predict_manager;
 
 use deepbook::balance_manager::{Self, BalanceManager, DepositCap, WithdrawCap};
-use deepbook_predict::{market_key::MarketKey, spread_key::SpreadKey};
+use deepbook_predict::{combo_key::ComboKey, market_key::MarketKey};
 use sui::{coin::Coin, event, table::{Self, Table}};
 
 // === Errors ===
 const EInvalidOwner: u64 = 0;
 const EInsufficientPosition: u64 = 1;
-const EInsufficientSpreadPosition: u64 = 2;
+const EInsufficientComboPosition: u64 = 2;
 
 // === Events ===
 
@@ -36,8 +36,8 @@ public struct PredictManager has key {
     withdraw_cap: WithdrawCap,
     /// MarketKey -> long position quantity
     positions: Table<MarketKey, u64>,
-    /// SpreadKey -> spread position quantity
-    spread_positions: Table<SpreadKey, u64>,
+    /// ComboKey -> combo position quantity
+    combo_positions: Table<ComboKey, u64>,
 }
 
 // === Public Functions ===
@@ -56,10 +56,10 @@ public fun position(self: &PredictManager, key: MarketKey): u64 {
     }
 }
 
-/// Get the spread position quantity for a given SpreadKey.
-public fun spread_position(self: &PredictManager, key: SpreadKey): u64 {
-    if (self.spread_positions.contains(key)) {
-        self.spread_positions[key]
+/// Get the combo position quantity for a given ComboKey.
+public fun combo_position(self: &PredictManager, key: ComboKey): u64 {
+    if (self.combo_positions.contains(key)) {
+        self.combo_positions[key]
     } else {
         0
     }
@@ -100,7 +100,7 @@ public(package) fun new(ctx: &mut TxContext): ID {
         deposit_cap,
         withdraw_cap,
         positions: table::new(ctx),
-        spread_positions: table::new(ctx),
+        combo_positions: table::new(ctx),
     };
     let manager_id = object::id(&manager);
     transfer::share_object(manager);
@@ -130,19 +130,19 @@ public(package) fun decrease_position(self: &mut PredictManager, key: MarketKey,
     *qty = *qty - quantity;
 }
 
-/// Increase spread position quantity. Called when user mints a spread.
-public(package) fun increase_spread(self: &mut PredictManager, key: SpreadKey, quantity: u64) {
-    if (!self.spread_positions.contains(key)) {
-        self.spread_positions.add(key, 0);
+/// Increase combo position quantity. Called when user mints a combo.
+public(package) fun increase_combo(self: &mut PredictManager, key: ComboKey, quantity: u64) {
+    if (!self.combo_positions.contains(key)) {
+        self.combo_positions.add(key, 0);
     };
-    let qty = &mut self.spread_positions[key];
+    let qty = &mut self.combo_positions[key];
     *qty = *qty + quantity;
 }
 
-/// Decrease spread position quantity. Called when user redeems a spread.
-public(package) fun decrease_spread(self: &mut PredictManager, key: SpreadKey, quantity: u64) {
-    assert!(self.spread_positions.contains(key), EInsufficientSpreadPosition);
-    let qty = &mut self.spread_positions[key];
-    assert!(*qty >= quantity, EInsufficientSpreadPosition);
+/// Decrease combo position quantity. Called when user redeems a combo.
+public(package) fun decrease_combo(self: &mut PredictManager, key: ComboKey, quantity: u64) {
+    assert!(self.combo_positions.contains(key), EInsufficientComboPosition);
+    let qty = &mut self.combo_positions[key];
+    assert!(*qty >= quantity, EInsufficientComboPosition);
     *qty = *qty - quantity;
 }

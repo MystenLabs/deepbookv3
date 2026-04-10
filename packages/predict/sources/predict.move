@@ -10,6 +10,7 @@ module deepbook_predict::predict;
 
 use deepbook::math;
 use deepbook_predict::{
+    combo_key::ComboKey,
     constants,
     market_key::MarketKey,
     math::mul_div_round_down,
@@ -19,7 +20,6 @@ use deepbook_predict::{
     predict_manager::{Self, PredictManager},
     pricing_config::{Self, PricingConfig},
     risk_config::{Self, RiskConfig},
-    spread_key::SpreadKey,
     treasury_config::{Self, TreasuryConfig},
     vault::{Self, Vault}
 };
@@ -77,7 +77,7 @@ public struct PositionRedeemed has copy, drop, store {
     is_settled: bool,
 }
 
-public struct SpreadMinted has copy, drop, store {
+public struct ComboMinted has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
     trader: address,
@@ -91,7 +91,7 @@ public struct SpreadMinted has copy, drop, store {
     ask_price: u64,
 }
 
-public struct SpreadRedeemed has copy, drop, store {
+public struct ComboRedeemed has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
     trader: address,
@@ -328,43 +328,43 @@ public fun redeem<Quote>(
     });
 }
 
-/// Get the amounts for spread mint/redeem (for UI/preview).
-/// Returns (mint_cost, redeem_payout). Bull-call and bear-put spreads with the
-/// same strikes price identically — direction is not part of `SpreadKey`.
-public fun get_spread_trade_amounts(
+/// Get the amounts for combo mint/redeem (for UI/preview).
+/// Returns (mint_cost, redeem_payout). Bull-call and bear-put combos with the
+/// same strikes price identically — direction is not part of `ComboKey`.
+public fun get_combo_trade_amounts(
     predict: &Predict,
     oracle: &OracleSVI,
-    key: SpreadKey,
+    key: ComboKey,
     quantity: u64,
     clock: &Clock,
 ): (u64, u64) {
-    predict.oracle_config.assert_spread_key_matches(oracle, &key);
+    predict.oracle_config.assert_combo_key_matches(oracle, &key);
     oracle_config::assert_quoteable_oracle(oracle, clock);
 
-    // Fair spread = up(lower) − up(higher). UP price is monotone non-increasing
-    // in strike, so this is always non-negative for a well-formed key
-    // (`lower < higher`). Settled compute_price returns 1.0 if settlement >
-    // strike, 0 otherwise, so the spread evaluates to 1.0 iff settlement is in
+    // Fair combo price = up(lower) − up(higher). UP price is monotone
+    // non-increasing in strike, so this is always non-negative for a well-formed
+    // key (`lower < higher`). Settled compute_price returns 1.0 if settlement >
+    // strike, 0 otherwise, so the combo evaluates to 1.0 iff settlement is in
     // the half-open band (lower, higher].
     let lower_up_price = oracle.compute_price(key.lower_strike());
     let higher_up_price = oracle.compute_price(key.higher_strike());
-    let fair_spread = lower_up_price - higher_up_price;
+    let fair_price = lower_up_price - higher_up_price;
 
     if (oracle.is_settled()) {
-        let amount = math::mul(fair_spread, quantity);
+        let amount = math::mul(fair_price, quantity);
         return (amount, amount)
     };
 
     let spread = predict
         .pricing_config
         .quote_spread_from_fair_price(
-            fair_spread,
+            fair_price,
             predict.vault.total_mtm(),
             predict.vault.balance(),
         );
-    let ask = (fair_spread + spread).min(constants::float_scaling!());
-    let bid = if (fair_spread > spread) {
-        fair_spread - spread
+    let ask = (fair_price + spread).min(constants::float_scaling!());
+    let bid = if (fair_price > spread) {
+        fair_price - spread
     } else {
         0
     };
@@ -372,14 +372,14 @@ public fun get_spread_trade_amounts(
     (math::mul(ask, quantity), math::mul(bid, quantity))
 }
 
-/// Mint a vertical spread `(lower, higher)` priced as a single instrument.
-/// The user pays only the spread premium up front; the vault tracks the bounded
+/// Mint a vertical combo `(lower, higher)` priced as a single instrument.
+/// The user pays only the combo premium up front; the vault tracks the bounded
 /// liability natively via the strike-matrix cashback offset.
-public fun mint_spread<Quote>(
+public fun mint_combo<Quote>(
     predict: &mut Predict,
     manager: &mut PredictManager,
     oracle: &OracleSVI,
-    key: SpreadKey,
+    key: ComboKey,
     quantity: u64,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -388,25 +388,25 @@ public fun mint_spread<Quote>(
     assert!(!predict.trading_paused, ETradingPaused);
     assert!(quantity > 0, EZeroQuantity);
     predict.treasury_config.assert_quote_asset<Quote>();
-    predict.oracle_config.assert_spread_key_matches(oracle, &key);
+    predict.oracle_config.assert_combo_key_matches(oracle, &key);
     oracle_config::assert_live_oracle(oracle, clock);
 
     let lower = key.lower_strike();
     let higher = key.higher_strike();
 
-    predict.vault.insert_spread(oracle.id(), lower, higher, quantity);
+    predict.vault.insert_combo(oracle.id(), lower, higher, quantity);
     predict.refresh_oracle_risk(oracle);
 
     // Quote against the post-trade state so the trader pays for the liability
     // their own mint just added to the vault.
-    let (cost, _) = predict.get_spread_trade_amounts(oracle, key, quantity, clock);
+    let (cost, _) = predict.get_combo_trade_amounts(oracle, key, quantity, clock);
 
     let payment = manager.withdraw<Quote>(cost, ctx).into_balance();
     predict.vault.accept_payment(payment);
     predict.vault.assert_total_exposure(predict.risk_config.max_total_exposure_pct());
-    manager.increase_spread(key, quantity);
+    manager.increase_combo(key, quantity);
 
-    event::emit(SpreadMinted {
+    event::emit(ComboMinted {
         predict_id: object::id(predict),
         manager_id: object::id(manager),
         trader: manager.owner(),
@@ -421,39 +421,39 @@ public fun mint_spread<Quote>(
     });
 }
 
-/// Redeem a vertical spread. Payout is the post-trade bid value pre-settlement,
+/// Redeem a vertical combo. Payout is the post-trade bid value pre-settlement,
 /// or `$1·qty` if the settlement landed in the band (lower, higher].
-public fun redeem_spread<Quote>(
+public fun redeem_combo<Quote>(
     predict: &mut Predict,
     manager: &mut PredictManager,
     oracle: &OracleSVI,
-    key: SpreadKey,
+    key: ComboKey,
     quantity: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(quantity > 0, EZeroQuantity);
-    predict.oracle_config.assert_spread_key_matches(oracle, &key);
+    predict.oracle_config.assert_combo_key_matches(oracle, &key);
     oracle_config::assert_quoteable_oracle(oracle, clock);
 
-    manager.decrease_spread(key, quantity);
+    manager.decrease_combo(key, quantity);
 
     let lower = key.lower_strike();
     let higher = key.higher_strike();
 
-    predict.vault.remove_spread(oracle.id(), lower, higher, quantity);
+    predict.vault.remove_combo(oracle.id(), lower, higher, quantity);
     predict.refresh_oracle_risk(oracle);
 
     // Quote against the post-trade state so the seller is paid from the
-    // liability after their spread has been removed from the vault.
-    let (_, payout) = predict.get_spread_trade_amounts(oracle, key, quantity, clock);
+    // liability after their combo has been removed from the vault.
+    let (_, payout) = predict.get_combo_trade_amounts(oracle, key, quantity, clock);
 
     let payout_balance = predict.vault.dispense_payout<Quote>(payout);
     let payout_coin = payout_balance.into_coin(ctx);
     manager.deposit(payout_coin, ctx);
 
-    event::emit(SpreadRedeemed {
+    event::emit(ComboRedeemed {
         predict_id: object::id(predict),
         manager_id: object::id(manager),
         trader: manager.owner(),

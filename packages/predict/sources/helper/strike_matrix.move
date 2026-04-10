@@ -84,11 +84,11 @@ public struct StrikeMatrix has store {
     minted_min_strike: u64,
     minted_max_strike: u64,
     mtm: u64,
-    /// Aggregate `$1`-per-unit cash obligation accumulated by spread mints.
-    /// Each spread mint of a `(lower, higher)` band records `q_up[lower] += qty`,
+    /// Aggregate `$1`-per-unit cash obligation accumulated by combo mints.
+    /// Each combo mint of a `(lower, higher)` band records `q_up[lower] += qty`,
     /// `q_dn[higher] += qty`, and `cashback += qty`. Callers subtract `cashback`
     /// from `evaluate(curve)`, `evaluate_settled(s)`, and `max_payout()` to
-    /// recover the actual vault liability for spreads.
+    /// recover the actual vault liability for combos.
     cashback: u64,
 }
 
@@ -158,15 +158,15 @@ public(package) fun remove(matrix: &mut StrikeMatrix, strike: u64, qty: u64, is_
     apply_position(matrix, strike, qty, is_up, false);
 }
 
-/// Insert a vertical spread `(lower, higher)`. Equivalent to a long UP@lower,
+/// Insert a vertical combo `(lower, higher)`. Equivalent to a long UP@lower,
 /// a long DN@higher, and a `qty` increment to `cashback`.
-public(package) fun insert_spread(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64) {
-    matrix.apply_spread(lower, higher, qty, true);
+public(package) fun insert_combo(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64) {
+    matrix.apply_combo(lower, higher, qty, true);
 }
 
-/// Remove a vertical spread `(lower, higher)`. Symmetric to `insert_spread`.
-public(package) fun remove_spread(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64) {
-    matrix.apply_spread(lower, higher, qty, false);
+/// Remove a vertical combo `(lower, higher)`. Symmetric to `insert_combo`.
+public(package) fun remove_combo(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64) {
+    matrix.apply_combo(lower, higher, qty, false);
 }
 
 /// Evaluate the current book against a sampled live curve.
@@ -285,7 +285,7 @@ public(package) fun max_payout(matrix: &StrikeMatrix): u64 {
     root.total_q_dn + root.best_prefix_up - root.best_prefix_dn
 }
 
-/// Aggregate `$1`-per-unit cashback contributed by spread mints.
+/// Aggregate `$1`-per-unit cashback contributed by combo mints.
 public(package) fun cashback(matrix: &StrikeMatrix): u64 {
     matrix.cashback
 }
@@ -310,12 +310,12 @@ public(package) fun minted_strike_range(matrix: &StrikeMatrix): (u64, u64) {
 }
 
 // === Private Functions ===
-/// Apply a vertical spread `(lower, higher)` as `long UP@lower + long DN@higher`
+/// Apply a vertical combo `(lower, higher)` as `long UP@lower + long DN@higher`
 /// plus a `qty` cashback delta. The matrix writes are byte-identical to two
 /// separate longs; the cashback is the algebraic constant from the dominance
 /// identity (`short X@k ≡ long ~X@k − $1`) that callers subtract from
-/// `evaluate`/`evaluate_settled`/`max_payout` to recover the spread payoff.
-fun apply_spread(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64, add: bool) {
+/// `evaluate`/`evaluate_settled`/`max_payout` to recover the combo payoff.
+fun apply_combo(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64, add: bool) {
     matrix.apply_position(lower, qty, true, add);
     matrix.apply_position(higher, qty, false, add);
     apply_exact_delta(&mut matrix.cashback, qty, add);
