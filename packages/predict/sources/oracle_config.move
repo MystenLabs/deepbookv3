@@ -107,10 +107,7 @@ public(package) fun assert_key_matches(
 public(package) fun assert_live_oracle(oracle: &OracleSVI, clock: &Clock) {
     let oracle_status = oracle.status(clock);
     assert!(oracle_status != oracle::status_settled(), EOracleSettled);
-    assert!(
-        oracle_status != oracle::status_pending_settlement(),
-        EOracleExpired,
-    );
+    assert!(oracle_status != oracle::status_pending_settlement(), EOracleExpired);
     assert!(oracle_status != oracle::status_inactive(), EOracleInactive);
     assert!(
         clock.timestamp_ms() <= oracle.timestamp() + constants::staleness_threshold_ms!(),
@@ -126,10 +123,7 @@ public(package) fun assert_live_oracle(oracle: &OracleSVI, clock: &Clock) {
 public(package) fun assert_quoteable_oracle(oracle: &OracleSVI, clock: &Clock) {
     let oracle_status = oracle.status(clock);
     if (oracle_status == oracle::status_settled()) return;
-    assert!(
-        oracle_status != oracle::status_pending_settlement(),
-        EOracleExpired,
-    );
+    assert!(oracle_status != oracle::status_pending_settlement(), EOracleExpired);
     assert!(oracle_status != oracle::status_inactive(), EOracleInactive);
     assert!(
         clock.timestamp_ms() <= oracle.timestamp() + constants::staleness_threshold_ms!(),
