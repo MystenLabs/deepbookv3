@@ -8,7 +8,7 @@
 /// curves for vault MTM evaluation.
 module deepbook_predict::oracle_config;
 
-use deepbook_predict::{constants, market_key::MarketKey, oracle::OracleSVI};
+use deepbook_predict::{constants, market_key::MarketKey, oracle::{Self, OracleSVI}};
 use sui::{clock::Clock, table::{Self, Table}};
 
 // === Errors ===
@@ -101,20 +101,36 @@ public(package) fun assert_key_matches(
     oracle_config.assert_valid_strike(oracle, market_key.strike());
 }
 
-/// Assert that an oracle can still be used for reads and redemptions.
-public(package) fun assert_operational_oracle(oracle: &OracleSVI, clock: &Clock) {
-    assert!(!oracle.is_settled(), EOracleSettled);
-    assert!(oracle.is_active(), EOracleInactive);
+/// Assert that an oracle can still be used for live trading and live pricing.
+public(package) fun assert_live_oracle(oracle: &OracleSVI, clock: &Clock) {
+    let oracle_status = oracle.status(clock);
+    assert!(oracle_status != oracle::status_settled(), EOracleSettled);
+    assert!(
+        oracle_status != oracle::status_pending_settlement(),
+        EOracleExpired,
+    );
+    assert!(oracle_status != oracle::status_inactive(), EOracleInactive);
     assert!(
         clock.timestamp_ms() <= oracle.timestamp() + constants::staleness_threshold_ms!(),
         EOracleStale,
     );
 }
 
-/// Assert that an oracle can still be used for minting new exposure.
-public(package) fun assert_mintable_oracle(oracle: &OracleSVI, clock: &Clock) {
-    assert_operational_oracle(oracle, clock);
-    assert!(clock.timestamp_ms() < oracle.expiry(), EOracleExpired);
+/// Assert that an oracle can still be used for actions that accept either
+/// settled or live pricing. Settled oracles are allowed; otherwise the oracle
+/// must still be live.
+public(package) fun assert_quoteable_oracle(oracle: &OracleSVI, clock: &Clock) {
+    let oracle_status = oracle.status(clock);
+    if (oracle_status == oracle::status_settled()) return;
+    assert!(
+        oracle_status != oracle::status_pending_settlement(),
+        EOracleExpired,
+    );
+    assert!(oracle_status != oracle::status_inactive(), EOracleInactive);
+    assert!(
+        clock.timestamp_ms() <= oracle.timestamp() + constants::staleness_threshold_ms!(),
+        EOracleStale,
+    );
 }
 
 /// Build an adaptive piecewise-linear curve over the configured strike range.

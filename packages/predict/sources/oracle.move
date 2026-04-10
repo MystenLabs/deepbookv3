@@ -24,6 +24,11 @@ const ECannotBeNegative: u64 = 4;
 const EZeroVariance: u64 = 5;
 const EOracleSettled: u64 = 6;
 
+const STATUS_INACTIVE: u8 = 0;
+const STATUS_ACTIVE: u8 = 1;
+const STATUS_PENDING_SETTLEMENT: u8 = 2;
+const STATUS_SETTLED: u8 = 3;
+
 // === Events ===
 
 public struct OracleActivated has copy, drop, store {
@@ -131,7 +136,8 @@ public fun activate(oracle: &mut OracleSVI, cap: &OracleSVICap, clock: &Clock) {
 // TODO: Add validation on pushed spot/forward data so obviously bad oracle
 // updates are rejected before they mutate state.
 /// Push spot and forward prices (high frequency ~1s).
-/// If past expiry and not yet settled, freezes settlement price and deactivates.
+/// If at or past expiry and not yet settled, freezes settlement price and
+/// deactivates. Settled oracles reject further price updates.
 public fun update_prices(
     oracle: &mut OracleSVI,
     cap: &OracleSVICap,
@@ -139,12 +145,15 @@ public fun update_prices(
     clock: &Clock,
 ) {
     assert_authorized_cap(oracle, cap);
+    let oracle_status = oracle.status(clock);
+    assert!(oracle_status != status_settled(), EOracleSettled);
 
     let now = clock.timestamp_ms();
     let oracle_id = oracle.id.to_inner();
 
-    // If past expiry and not yet settled, freeze settlement price and deactivate.
-    if (now > oracle.expiry && oracle.settlement_price.is_none()) {
+    // If at or past expiry, freeze settlement price and deactivate instead of
+    // recording another live price update.
+    if (oracle_status == status_pending_settlement()) {
         oracle.settlement_price = option::some(prices.spot);
         oracle.active = false;
 
@@ -170,10 +179,13 @@ public fun update_prices(
 
 // TODO: Add validation on pushed SVI params so obviously bad updates are
 // rejected before they mutate state.
-/// Push SVI parameters (low frequency ~10-20s).
+/// Push SVI parameters (low frequency ~10-20s) while the oracle is still
+/// unsettled and pre-expiry.
 public fun update_svi(oracle: &mut OracleSVI, cap: &OracleSVICap, svi: SVIParams, clock: &Clock) {
     assert_authorized_cap(oracle, cap);
-    assert!(!is_settled(oracle), EOracleSettled);
+    let oracle_status = oracle.status(clock);
+    assert!(oracle_status != status_settled(), EOracleSettled);
+    assert!(oracle_status != status_pending_settlement(), EOracleExpired);
 
     let now = clock.timestamp_ms();
 
@@ -268,6 +280,35 @@ public fun is_settled(oracle: &OracleSVI): bool {
 /// Check if the oracle is active.
 public fun is_active(oracle: &OracleSVI): bool {
     oracle.active
+}
+
+/// Return the lifecycle status implied by the oracle's state and the current clock.
+public fun status(oracle: &OracleSVI, clock: &Clock): u8 {
+    if (oracle.is_settled()) {
+        STATUS_SETTLED
+    } else if (clock.timestamp_ms() >= oracle.expiry) {
+        STATUS_PENDING_SETTLEMENT
+    } else if (!oracle.active) {
+        STATUS_INACTIVE
+    } else {
+        STATUS_ACTIVE
+    }
+}
+
+public fun status_inactive(): u8 {
+    STATUS_INACTIVE
+}
+
+public fun status_active(): u8 {
+    STATUS_ACTIVE
+}
+
+public fun status_pending_settlement(): u8 {
+    STATUS_PENDING_SETTLEMENT
+}
+
+public fun status_settled(): u8 {
+    STATUS_SETTLED
 }
 
 /// Create a new PriceData struct.
