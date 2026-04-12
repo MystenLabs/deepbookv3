@@ -42,6 +42,7 @@ const EZeroVaultValue: u64 = 5;
 const EZeroSharesMinted: u64 = 6;
 const EAskPriceOutOfBounds: u64 = 7;
 const EAskBoundLooserThanGlobal: u64 = 8;
+const EOracleNotSettled: u64 = 9;
 
 // === Events ===
 
@@ -67,7 +68,8 @@ public struct PositionMinted has copy, drop, store {
 public struct PositionRedeemed has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
-    trader: address,
+    owner: address,
+    executor: address,
     quote_asset: TypeName,
     oracle_id: ID,
     expiry: u64,
@@ -283,40 +285,23 @@ public fun redeem<Quote>(
     ctx: &mut TxContext,
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
-    assert!(quantity > 0, EZeroQuantity);
-    predict.oracle_config.assert_key_matches(oracle, &key);
-    oracle_config::assert_quoteable_oracle(oracle, clock);
-
-    manager.decrease_position(key, quantity);
-
-    let strike = key.strike();
-    let is_up = key.is_up();
-
-    predict.vault.remove_position(oracle.id(), is_up, strike, quantity);
-    predict.refresh_oracle_risk(oracle);
-
-    // Quote against the post-trade state so the seller is paid from the
-    // liability after their position has been removed from the vault.
-    let (_, payout) = predict.get_trade_amounts(oracle, key, quantity, clock);
-
-    let payout_balance = predict.vault.dispense_payout<Quote>(payout);
-    let payout_coin = payout_balance.into_coin(ctx);
+    let payout_coin = redeem_internal<Quote>(predict, manager, oracle, key, quantity, clock, ctx);
     manager.deposit(payout_coin, ctx);
+}
 
-    event::emit(PositionRedeemed {
-        predict_id: object::id(predict),
-        manager_id: object::id(manager),
-        trader: manager.owner(),
-        quote_asset: type_name::with_defining_ids<Quote>(),
-        oracle_id: key.oracle_id(),
-        expiry: key.expiry(),
-        strike,
-        is_up,
-        quantity,
-        payout,
-        bid_price: math::div(payout, quantity),
-        is_settled: oracle.is_settled(),
-    });
+/// Sell a settled position permissionlessly into the PredictManager's balance.
+public fun redeem_permissionless<Quote>(
+    predict: &mut Predict,
+    manager: &mut PredictManager,
+    oracle: &OracleSVI,
+    key: MarketKey,
+    quantity: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    assert!(oracle.is_settled(), EOracleNotSettled);
+    let payout_coin = redeem_internal<Quote>(predict, manager, oracle, key, quantity, clock, ctx);
+    manager.deposit_permissionless(payout_coin, ctx);
 }
 
 /// Get the amounts for range mint/redeem (for UI/preview).
@@ -702,6 +687,50 @@ public(package) fun vault_balance(predict: &Predict): u64 {
 }
 
 // === Private Functions ===
+
+fun redeem_internal<Quote>(
+    predict: &mut Predict,
+    manager: &mut PredictManager,
+    oracle: &OracleSVI,
+    key: MarketKey,
+    quantity: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Coin<Quote> {
+    assert!(quantity > 0, EZeroQuantity);
+    predict.oracle_config.assert_key_matches(oracle, &key);
+    oracle_config::assert_quoteable_oracle(oracle, clock);
+
+    manager.decrease_position(key, quantity);
+
+    predict.vault.remove_position(oracle.id(), key.is_up(), key.strike(), quantity);
+    predict.refresh_oracle_risk(oracle);
+
+    // Quote against the post-trade state so the seller is paid from the
+    // liability after their position has been removed from the vault.
+    let (_, payout) = predict.get_trade_amounts(oracle, key, quantity, clock);
+
+    let payout_balance = predict.vault.dispense_payout<Quote>(payout);
+    let payout_coin = payout_balance.into_coin(ctx);
+
+    event::emit(PositionRedeemed {
+        predict_id: object::id(predict),
+        manager_id: object::id(manager),
+        owner: manager.owner(),
+        executor: ctx.sender(),
+        quote_asset: type_name::with_defining_ids<Quote>(),
+        oracle_id: key.oracle_id(),
+        expiry: key.expiry(),
+        strike: key.strike(),
+        is_up: key.is_up(),
+        quantity,
+        payout,
+        bid_price: math::div(payout, quantity),
+        is_settled: oracle.is_settled(),
+    });
+
+    payout_coin
+}
 
 /// Returns the USDC value of `shares` at the given vault value.
 fun shares_to_amount(predict: &Predict, shares: u64, vault_value: u64): u64 {

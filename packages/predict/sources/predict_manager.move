@@ -113,6 +113,15 @@ public(package) fun new(ctx: &mut TxContext): ID {
     manager_id
 }
 
+/// Deposit protocol payouts without requiring the manager owner as sender.
+public(package) fun deposit_permissionless<T>(
+    self: &mut PredictManager,
+    coin: Coin<T>,
+    ctx: &TxContext,
+) {
+    self.balance_manager.deposit_with_cap(&self.deposit_cap, coin, ctx);
+}
+
 /// Increase long position quantity. Called when user mints.
 public(package) fun increase_position(self: &mut PredictManager, key: MarketKey, quantity: u64) {
     if (!self.positions.contains(key)) {
