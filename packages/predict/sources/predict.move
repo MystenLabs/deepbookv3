@@ -10,7 +10,6 @@ module deepbook_predict::predict;
 
 use deepbook::math;
 use deepbook_predict::{
-    combo_key::ComboKey,
     constants,
     market_key::MarketKey,
     math::mul_div_round_down,
@@ -19,6 +18,7 @@ use deepbook_predict::{
     plp::PLP,
     predict_manager::{Self, PredictManager},
     pricing_config::{Self, PricingConfig},
+    range_key::RangeKey,
     risk_config::{Self, RiskConfig},
     treasury_config::{Self, TreasuryConfig},
     vault::{Self, Vault}
@@ -77,7 +77,7 @@ public struct PositionRedeemed has copy, drop, store {
     is_settled: bool,
 }
 
-public struct ComboMinted has copy, drop, store {
+public struct RangeMinted has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
     trader: address,
@@ -91,7 +91,7 @@ public struct ComboMinted has copy, drop, store {
     ask_price: u64,
 }
 
-public struct ComboRedeemed has copy, drop, store {
+public struct RangeRedeemed has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
     trader: address,
@@ -328,23 +328,23 @@ public fun redeem<Quote>(
     });
 }
 
-/// Get the amounts for combo mint/redeem (for UI/preview).
-/// Returns (mint_cost, redeem_payout). Bull-call and bear-put combos with the
-/// same strikes price identically — direction is not part of `ComboKey`.
-public fun get_combo_trade_amounts(
+/// Get the amounts for range mint/redeem (for UI/preview).
+/// Returns (mint_cost, redeem_payout). Bull-call and bear-put ranges with the
+/// same strikes price identically — direction is not part of `RangeKey`.
+public fun get_range_trade_amounts(
     predict: &Predict,
     oracle: &OracleSVI,
-    key: ComboKey,
+    key: RangeKey,
     quantity: u64,
     clock: &Clock,
 ): (u64, u64) {
-    predict.oracle_config.assert_combo_key_matches(oracle, &key);
+    predict.oracle_config.assert_range_key_matches(oracle, &key);
     oracle_config::assert_quoteable_oracle(oracle, clock);
 
-    // Fair combo price = up(lower) − up(higher). UP price is monotone
+    // Fair range price = up(lower) − up(higher). UP price is monotone
     // non-increasing in strike, so this is always non-negative for a well-formed
     // key (`lower < higher`). Settled compute_price returns 1.0 if settlement >
-    // strike, 0 otherwise, so the combo evaluates to 1.0 iff settlement is in
+    // strike, 0 otherwise, so the range evaluates to 1.0 iff settlement is in
     // the half-open band (lower, higher].
     let lower_up_price = oracle.compute_price(key.lower_strike());
     let higher_up_price = oracle.compute_price(key.higher_strike());
@@ -372,14 +372,14 @@ public fun get_combo_trade_amounts(
     (math::mul(ask, quantity), math::mul(bid, quantity))
 }
 
-/// Mint a vertical combo `(lower, higher)` priced as a single instrument.
-/// The user pays only the combo premium up front; the vault tracks the bounded
-/// liability natively via the strike-matrix cashback offset.
-public fun mint_combo<Quote>(
+/// Mint a vertical range `(lower, higher)` priced as a single instrument.
+/// The user pays only the range premium up front; the vault tracks the bounded
+/// liability natively via the strike-matrix range_qty offset.
+public fun mint_range<Quote>(
     predict: &mut Predict,
     manager: &mut PredictManager,
     oracle: &OracleSVI,
-    key: ComboKey,
+    key: RangeKey,
     quantity: u64,
     clock: &Clock,
     ctx: &mut TxContext,
@@ -388,25 +388,25 @@ public fun mint_combo<Quote>(
     assert!(!predict.trading_paused, ETradingPaused);
     assert!(quantity > 0, EZeroQuantity);
     predict.treasury_config.assert_quote_asset<Quote>();
-    predict.oracle_config.assert_combo_key_matches(oracle, &key);
+    predict.oracle_config.assert_range_key_matches(oracle, &key);
     oracle_config::assert_live_oracle(oracle, clock);
 
     let lower = key.lower_strike();
     let higher = key.higher_strike();
 
-    predict.vault.insert_combo(oracle.id(), lower, higher, quantity);
+    predict.vault.insert_range(oracle.id(), lower, higher, quantity);
     predict.refresh_oracle_risk(oracle);
 
     // Quote against the post-trade state so the trader pays for the liability
     // their own mint just added to the vault.
-    let (cost, _) = predict.get_combo_trade_amounts(oracle, key, quantity, clock);
+    let (cost, _) = predict.get_range_trade_amounts(oracle, key, quantity, clock);
 
     let payment = manager.withdraw<Quote>(cost, ctx).into_balance();
     predict.vault.accept_payment(payment);
     predict.vault.assert_total_exposure(predict.risk_config.max_total_exposure_pct());
-    manager.increase_combo(key, quantity);
+    manager.increase_range(key, quantity);
 
-    event::emit(ComboMinted {
+    event::emit(RangeMinted {
         predict_id: object::id(predict),
         manager_id: object::id(manager),
         trader: manager.owner(),
@@ -421,39 +421,39 @@ public fun mint_combo<Quote>(
     });
 }
 
-/// Redeem a vertical combo. Payout is the post-trade bid value pre-settlement,
+/// Redeem a vertical range. Payout is the post-trade bid value pre-settlement,
 /// or `$1·qty` if the settlement landed in the band (lower, higher].
-public fun redeem_combo<Quote>(
+public fun redeem_range<Quote>(
     predict: &mut Predict,
     manager: &mut PredictManager,
     oracle: &OracleSVI,
-    key: ComboKey,
+    key: RangeKey,
     quantity: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(quantity > 0, EZeroQuantity);
-    predict.oracle_config.assert_combo_key_matches(oracle, &key);
+    predict.oracle_config.assert_range_key_matches(oracle, &key);
     oracle_config::assert_quoteable_oracle(oracle, clock);
 
-    manager.decrease_combo(key, quantity);
+    manager.decrease_range(key, quantity);
 
     let lower = key.lower_strike();
     let higher = key.higher_strike();
 
-    predict.vault.remove_combo(oracle.id(), lower, higher, quantity);
+    predict.vault.remove_range(oracle.id(), lower, higher, quantity);
     predict.refresh_oracle_risk(oracle);
 
     // Quote against the post-trade state so the seller is paid from the
-    // liability after their combo has been removed from the vault.
-    let (_, payout) = predict.get_combo_trade_amounts(oracle, key, quantity, clock);
+    // liability after their range has been removed from the vault.
+    let (_, payout) = predict.get_range_trade_amounts(oracle, key, quantity, clock);
 
     let payout_balance = predict.vault.dispense_payout<Quote>(payout);
     let payout_coin = payout_balance.into_coin(ctx);
     manager.deposit(payout_coin, ctx);
 
-    event::emit(ComboRedeemed {
+    event::emit(RangeRedeemed {
         predict_id: object::id(predict),
         manager_id: object::id(manager),
         trader: manager.owner(),
