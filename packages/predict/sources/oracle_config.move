@@ -11,7 +11,7 @@ module deepbook_predict::oracle_config;
 use deepbook_predict::{
     constants,
     market_key::MarketKey,
-    oracle::{Self, OracleSVI},
+    oracle::{Self, OracleSVI, OracleSVICap},
     range_key::RangeKey
 };
 use sui::{clock::Clock, table::{Self, Table}};
@@ -28,6 +28,7 @@ const EOracleConfigNotFound: u64 = 7;
 const EInvalidCurveRange: u64 = 8;
 const ERangeKeyOracleMismatch: u64 = 9;
 const ERangeKeyExpiryMismatch: u64 = 10;
+const EInvalidAskBound: u64 = 11;
 
 public struct OracleGrid has copy, drop, store {
     min_strike: u64,
@@ -35,8 +36,19 @@ public struct OracleGrid has copy, drop, store {
     tick_size: u64,
 }
 
+/// Per-oracle override on the protocol-wide ask-price bounds enforced at mint.
+/// Present in `OracleConfig.oracle_ask_bounds` only when the oracle has set an
+/// override; otherwise the global default on `PricingConfig` applies.
+public struct AskBounds has copy, drop, store {
+    min_ask_price: u64,
+    max_ask_price: u64,
+}
+
 public struct OracleConfig has store {
     oracle_grids: Table<ID, OracleGrid>,
+    /// Per-oracle ask-bound overrides; presence in this table means an override
+    /// is active for that oracle id.
+    oracle_ask_bounds: Table<ID, AskBounds>,
 }
 
 /// Curve sample point with strike and one-sided UP price.
@@ -59,10 +71,17 @@ public fun strike(point: &CurvePoint): u64 { point.strike }
 /// Return the UP price stored in a curve point.
 public fun up_price(point: &CurvePoint): u64 { point.up_price }
 
+/// Return the minimum ask price stored in an `AskBounds`.
+public fun ask_bounds_min(bounds: &AskBounds): u64 { bounds.min_ask_price }
+
+/// Return the maximum ask price stored in an `AskBounds`.
+public fun ask_bounds_max(bounds: &AskBounds): u64 { bounds.max_ask_price }
+
 /// Create an empty oracle config registry for Predict.
 public(package) fun new(ctx: &mut TxContext): OracleConfig {
     OracleConfig {
         oracle_grids: table::new(ctx),
+        oracle_ask_bounds: table::new(ctx),
     }
 }
 
@@ -80,6 +99,58 @@ public(package) fun add_oracle_grid(
         tick_size,
     };
     oracle_config.oracle_grids.add(oracle_id, grid);
+}
+
+/// Set or update a per-oracle ask-bound override. The caller must hold an
+/// `OracleSVICap` authorized for `oracle`. Validates the math invariant
+/// `min < max <= float_scaling`; the "no looser than the global default"
+/// constraint is enforced by the caller (see `predict::set_oracle_ask_bounds`).
+public(package) fun set_oracle_ask_bounds(
+    oracle_config: &mut OracleConfig,
+    oracle: &OracleSVI,
+    cap: &OracleSVICap,
+    min: u64,
+    max: u64,
+) {
+    oracle.assert_authorized_cap(cap);
+    assert!(min < max, EInvalidAskBound);
+    assert!(max <= constants::float_scaling!(), EInvalidAskBound);
+
+    let oracle_id = oracle.id();
+    let bounds = AskBounds { min_ask_price: min, max_ask_price: max };
+    if (oracle_config.oracle_ask_bounds.contains(oracle_id)) {
+        let row = &mut oracle_config.oracle_ask_bounds[oracle_id];
+        *row = bounds;
+    } else {
+        oracle_config.oracle_ask_bounds.add(oracle_id, bounds);
+    }
+}
+
+/// Remove the per-oracle ask-bound override so the oracle inherits the global
+/// default again. No-op if no override is currently set.
+public(package) fun clear_oracle_ask_bounds(
+    oracle_config: &mut OracleConfig,
+    oracle: &OracleSVI,
+    cap: &OracleSVICap,
+) {
+    oracle.assert_authorized_cap(cap);
+    let oracle_id = oracle.id();
+    if (oracle_config.oracle_ask_bounds.contains(oracle_id)) {
+        oracle_config.oracle_ask_bounds.remove(oracle_id);
+    };
+}
+
+/// Return the per-oracle ask-bound override, or `None` if the oracle inherits
+/// the global default.
+public(package) fun ask_bounds_override(
+    oracle_config: &OracleConfig,
+    oracle_id: ID,
+): Option<AskBounds> {
+    if (oracle_config.oracle_ask_bounds.contains(oracle_id)) {
+        option::some(oracle_config.oracle_ask_bounds[oracle_id])
+    } else {
+        option::none()
+    }
 }
 
 /// Assert that a strike lies on the configured grid for this oracle.

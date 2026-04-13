@@ -32,6 +32,12 @@ public macro fun default_min_spread(): u64 { 5_000_000 }
 /// Controls how aggressively spread widens as vault approaches capacity
 public macro fun default_utilization_multiplier(): u64 { 2_000_000_000 }
 
+/// Minimum ask price the protocol will allow at mint (1% in FLOAT_SCALING)
+public macro fun default_min_ask_price(): u64 { 10_000_000 }
+
+/// Maximum ask price the protocol will allow at mint (99% in FLOAT_SCALING)
+public macro fun default_max_ask_price(): u64 { 990_000_000 }
+
 // === Time Constants ===
 
 public macro fun ms_per_year(): u64 { 31_536_000_000 }
