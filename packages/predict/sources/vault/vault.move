@@ -17,6 +17,8 @@ use deepbook::math;
 use deepbook_predict::{oracle_config::CurvePoint, strike_matrix::{Self, StrikeMatrix}};
 use sui::{bag::{Self, Bag}, balance::Balance, table::{Self, Table}};
 
+use fun net_max_payout as StrikeMatrix.net_max_payout;
+
 // === Errors ===
 const EInsufficientBalance: u64 = 0;
 const EExceedsMaxTotalExposure: u64 = 1;
@@ -117,6 +119,24 @@ public(package) fun insert_position(
     vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
 }
 
+/// Insert a vertical combo into the per-oracle exposure structure and update
+/// cached max payout. The combo is recorded as `long UP@lower + long DN@higher`
+/// plus a `quantity` cashback delta; the vault's `total_max_payout` reflects the
+/// cashback-adjusted (net) contribution.
+public(package) fun insert_combo(
+    vault: &mut Vault,
+    oracle_id: ID,
+    lower: u64,
+    higher: u64,
+    quantity: u64,
+) {
+    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+    let old_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
+    vault.oracle_matrices[oracle_id].insert_combo(lower, higher, quantity);
+    let new_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
+    vault.total_max_payout = vault.total_max_payout + new_net_max_payout - old_net_max_payout;
+}
+
 /// Accept payment into vault balance.
 public(package) fun accept_payment<T>(vault: &mut Vault, payment: Balance<T>) {
     let amount = payment.value();
@@ -137,6 +157,22 @@ public(package) fun remove_position(
     vault.oracle_matrices[oracle_id].remove(strike, quantity, is_up);
     let new_max_payout = vault.oracle_matrices[oracle_id].max_payout();
     vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
+}
+
+/// Remove a vertical combo from the per-oracle exposure structure and update
+/// cached max payout. Symmetric to `insert_combo`.
+public(package) fun remove_combo(
+    vault: &mut Vault,
+    oracle_id: ID,
+    lower: u64,
+    higher: u64,
+    quantity: u64,
+) {
+    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+    let old_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
+    vault.oracle_matrices[oracle_id].remove_combo(lower, higher, quantity);
+    let new_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
+    vault.total_max_payout = vault.total_max_payout + new_net_max_payout - old_net_max_payout;
 }
 
 /// Dispense payout from vault balance.
@@ -166,8 +202,9 @@ public(package) fun set_mtm_with_curve(
 ) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
 
-    let old_mtm = vault.oracle_matrices[oracle_id].mtm();
-    let new_mtm = vault.oracle_matrices[oracle_id].evaluate(curve);
+    let matrix = &vault.oracle_matrices[oracle_id];
+    let old_mtm = matrix.mtm();
+    let new_mtm = matrix.evaluate(curve) - matrix.cashback();
 
     let matrix = &mut vault.oracle_matrices[oracle_id];
     matrix.set_mtm(new_mtm);
@@ -177,8 +214,9 @@ public(package) fun set_mtm_with_curve(
 public(package) fun set_mtm_with_settlement(vault: &mut Vault, oracle_id: ID, settlement: u64) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
 
-    let old_mtm = vault.oracle_matrices[oracle_id].mtm();
-    let new_mtm = vault.oracle_matrices[oracle_id].evaluate_settled(settlement);
+    let matrix = &vault.oracle_matrices[oracle_id];
+    let old_mtm = matrix.mtm();
+    let new_mtm = matrix.evaluate_settled(settlement) - matrix.cashback();
 
     let matrix = &mut vault.oracle_matrices[oracle_id];
     matrix.set_mtm(new_mtm);
@@ -191,6 +229,11 @@ public(package) fun set_mtm(vault: &mut Vault, oracle_id: ID, mtm: u64) {
     let old_mtm = vault.oracle_matrices[oracle_id].mtm();
     vault.oracle_matrices[oracle_id].set_mtm(mtm);
     vault.total_mtm = vault.total_mtm + mtm - old_mtm;
+}
+
+/// Per-matrix max payout net of the cashback contributed by combo mints.
+fun net_max_payout(matrix: &StrikeMatrix): u64 {
+    matrix.max_payout() - matrix.cashback()
 }
 
 fun deposit_balance<T>(vault: &mut Vault, payment: Balance<T>) {

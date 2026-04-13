@@ -66,6 +66,8 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 
 - Never let VM arithmetic errors (division by zero, overflow) leak to callers. Add named abort guards (`EZeroForward`, `EZeroDivisor`) before any operation that can produce a raw VM error. Every `expected_failure` test should reference a named abort code.
 
+- Don't remove a leaf-level underflow/overflow guard because "the current caller validates first." That reasoning creates a cross-module invariant — if anyone in the same package later adds a new call path that reaches the primitive without going through the validating caller, the guard's absence becomes a silent `u64::MAX` wraparound. Leaf primitives in `public(package)` data structures should be self-consistent regardless of which sibling module reaches them. Defense-in-depth at the leaf is cheap (one assert + named error) and survives refactors.
+
 - Timestamp fields should have clear semantics. If `timestamp` means "last price update", don't bump it on unrelated updates (e.g., SVI param changes). Muddled semantics break staleness checks.
 
 - Validate before mutate: when consuming irreversible resources (burning coins, destroying objects), check all preconditions before the destructive call. Even though Sui transactions are atomic, this makes intent clearer and follows the convention used throughout the codebase.
