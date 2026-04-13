@@ -9,10 +9,10 @@
 module deepbook_predict::oracle_config;
 
 use deepbook_predict::{
-    combo_key::ComboKey,
     constants,
     market_key::MarketKey,
-    oracle::{Self, OracleSVI}
+    oracle::{Self, OracleSVI},
+    range_key::RangeKey
 };
 use sui::{clock::Clock, table::{Self, Table}};
 
@@ -26,8 +26,8 @@ const EOracleInactive: u64 = 5;
 const EOracleStale: u64 = 6;
 const EOracleConfigNotFound: u64 = 7;
 const EInvalidCurveRange: u64 = 8;
-const EComboKeyOracleMismatch: u64 = 9;
-const EComboKeyExpiryMismatch: u64 = 10;
+const ERangeKeyOracleMismatch: u64 = 9;
+const ERangeKeyExpiryMismatch: u64 = 10;
 
 public struct OracleGrid has copy, drop, store {
     min_strike: u64,
@@ -108,19 +108,19 @@ public(package) fun assert_key_matches(
     oracle_config.assert_valid_strike(oracle, market_key.strike());
 }
 
-/// Assert that a combo key matches the oracle identity, expiry, and that both
+/// Assert that a range key matches the oracle identity, expiry, and that both
 /// strikes lie on the configured grid.
-public(package) fun assert_combo_key_matches(
+public(package) fun assert_range_key_matches(
     oracle_config: &OracleConfig,
     oracle: &OracleSVI,
-    combo_key: &ComboKey,
+    range_key: &RangeKey,
 ) {
     let oracle_id = oracle.id();
 
-    assert!(combo_key.oracle_id() == oracle_id, EComboKeyOracleMismatch);
-    assert!(combo_key.expiry() == oracle.expiry(), EComboKeyExpiryMismatch);
-    oracle_config.assert_valid_strike(oracle, combo_key.lower_strike());
-    oracle_config.assert_valid_strike(oracle, combo_key.higher_strike());
+    assert!(range_key.oracle_id() == oracle_id, ERangeKeyOracleMismatch);
+    assert!(range_key.expiry() == oracle.expiry(), ERangeKeyExpiryMismatch);
+    oracle_config.assert_valid_strike(oracle, range_key.lower_strike());
+    oracle_config.assert_valid_strike(oracle, range_key.higher_strike());
 }
 
 /// Assert that an oracle can still be used for actions that require live

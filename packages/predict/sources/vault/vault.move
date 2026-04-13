@@ -119,11 +119,11 @@ public(package) fun insert_position(
     vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
 }
 
-/// Insert a vertical combo into the per-oracle exposure structure and update
-/// cached max payout. The combo is recorded as `long UP@lower + long DN@higher`
-/// plus a `quantity` cashback delta; the vault's `total_max_payout` reflects the
-/// cashback-adjusted (net) contribution.
-public(package) fun insert_combo(
+/// Insert a vertical range into the per-oracle exposure structure and update
+/// cached max payout. The range is recorded as `long UP@lower + long DN@higher`
+/// plus a `quantity` range_qty delta; the vault's `total_max_payout` reflects the
+/// range_qty-adjusted (net) contribution.
+public(package) fun insert_range(
     vault: &mut Vault,
     oracle_id: ID,
     lower: u64,
@@ -132,7 +132,7 @@ public(package) fun insert_combo(
 ) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
     let old_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
-    vault.oracle_matrices[oracle_id].insert_combo(lower, higher, quantity);
+    vault.oracle_matrices[oracle_id].insert_range(lower, higher, quantity);
     let new_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
     vault.total_max_payout = vault.total_max_payout + new_net_max_payout - old_net_max_payout;
 }
@@ -159,9 +159,9 @@ public(package) fun remove_position(
     vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
 }
 
-/// Remove a vertical combo from the per-oracle exposure structure and update
-/// cached max payout. Symmetric to `insert_combo`.
-public(package) fun remove_combo(
+/// Remove a vertical range from the per-oracle exposure structure and update
+/// cached max payout. Symmetric to `insert_range`.
+public(package) fun remove_range(
     vault: &mut Vault,
     oracle_id: ID,
     lower: u64,
@@ -170,7 +170,7 @@ public(package) fun remove_combo(
 ) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
     let old_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
-    vault.oracle_matrices[oracle_id].remove_combo(lower, higher, quantity);
+    vault.oracle_matrices[oracle_id].remove_range(lower, higher, quantity);
     let new_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
     vault.total_max_payout = vault.total_max_payout + new_net_max_payout - old_net_max_payout;
 }
@@ -204,7 +204,7 @@ public(package) fun set_mtm_with_curve(
 
     let matrix = &vault.oracle_matrices[oracle_id];
     let old_mtm = matrix.mtm();
-    let new_mtm = matrix.evaluate(curve) - matrix.cashback();
+    let new_mtm = matrix.evaluate(curve) - matrix.range_qty();
 
     let matrix = &mut vault.oracle_matrices[oracle_id];
     matrix.set_mtm(new_mtm);
@@ -216,7 +216,7 @@ public(package) fun set_mtm_with_settlement(vault: &mut Vault, oracle_id: ID, se
 
     let matrix = &vault.oracle_matrices[oracle_id];
     let old_mtm = matrix.mtm();
-    let new_mtm = matrix.evaluate_settled(settlement) - matrix.cashback();
+    let new_mtm = matrix.evaluate_settled(settlement) - matrix.range_qty();
 
     let matrix = &mut vault.oracle_matrices[oracle_id];
     matrix.set_mtm(new_mtm);
@@ -231,9 +231,9 @@ public(package) fun set_mtm(vault: &mut Vault, oracle_id: ID, mtm: u64) {
     vault.total_mtm = vault.total_mtm + mtm - old_mtm;
 }
 
-/// Per-matrix max payout net of the cashback contributed by combo mints.
+/// Per-matrix max payout net of the range quantity contributed by range mints.
 fun net_max_payout(matrix: &StrikeMatrix): u64 {
-    matrix.max_payout() - matrix.cashback()
+    matrix.max_payout() - matrix.range_qty()
 }
 
 fun deposit_balance<T>(vault: &mut Vault, payment: Balance<T>) {
