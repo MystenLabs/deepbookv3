@@ -70,6 +70,8 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 
 - Timestamp fields should have clear semantics. If `timestamp` means "last price update", don't bump it on unrelated updates (e.g., SVI param changes). Muddled semantics break staleness checks.
 
+- Lazy-refresh caches have a staleness window between the external event that invalidates them (e.g. oracle settlement) and the next user action that triggers a refresh. Invariant checks (`assert_total_exposure`, exposure caps) that read the cached value can be wrong during this window even though the true state has changed. Either refresh eagerly on the triggering event, or have invariants read a separately-maintained source of truth (e.g. `total_max_payout`, which updates on every position write rather than on refresh).
+
 - Validate before mutate: when consuming irreversible resources (burning coins, destroying objects), check all preconditions before the destructive call. Even though Sui transactions are atomic, this makes intent clearer and follows the convention used throughout the codebase.
 
 - Prefer explicit loop bounds over `while (true)` when the iteration range is easy to express. If a loop naturally means "from `min_page` to `max_page` inclusive" or "while `slot <= end_slot`", write that directly instead of using `while (true)` plus interior `break`s.
