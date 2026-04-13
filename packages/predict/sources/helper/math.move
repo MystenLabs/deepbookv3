@@ -124,6 +124,17 @@ public fun sqrt(x: u64, precision: u64): u64 {
     (sqrt_u128(scaled) / multiplier) as u64
 }
 
+/// Bernoulli standard deviation `√(p · (1 − p))` in FLOAT_SCALING, with `p` also
+/// in FLOAT_SCALING. Returns 0 outside the open interval (0, 1). Maxes out at
+/// `p = 0.5` (≈ 500_000_000).
+public fun bernoulli_weight(p: u64): u64 {
+    let scaling = constants::float_scaling!();
+    if (p == 0 || p >= scaling) return 0;
+    // p · (1 − p) in FLOAT_SCALING via u128 intermediate.
+    let variance = (((p as u128) * ((scaling - p) as u128) / (scaling as u128)) as u64);
+    sqrt(variance, scaling)
+}
+
 // ============================================================
 // u128 internal functions
 // ============================================================

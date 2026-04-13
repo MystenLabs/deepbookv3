@@ -12,7 +12,7 @@ use deepbook::math;
 use deepbook_predict::{
     constants,
     market_key::MarketKey,
-    math::mul_div_round_down,
+    math::{bernoulli_weight, mul_div_round_down},
     oracle::{OracleSVI, OracleSVICap},
     oracle_config::{Self, OracleConfig},
     plp::PLP,
@@ -122,6 +122,7 @@ public struct PricingConfigUpdated has copy, drop, store {
     utilization_multiplier: u64,
     min_ask_price: u64,
     max_ask_price: u64,
+    depth_multiplier: u64,
 }
 
 public struct OracleAskBoundsSet has copy, drop, store {
@@ -242,7 +243,8 @@ public fun mint<Quote>(
     let strike = key.strike();
     let is_up = key.is_up();
 
-    predict.vault.insert_position(oracle.id(), is_up, strike, quantity);
+    let weight = bernoulli_weight(oracle.compute_price(strike));
+    predict.vault.insert_position(oracle.id(), is_up, strike, quantity, weight);
     predict.refresh_oracle_risk(oracle);
 
     // Quote against the post-trade state so the trader pays for the liability
@@ -340,7 +342,9 @@ public fun mint_range<Quote>(
     let lower = key.lower_strike();
     let higher = key.higher_strike();
 
-    predict.vault.insert_range(oracle.id(), lower, higher, quantity);
+    let lower_weight = bernoulli_weight(oracle.compute_price(lower));
+    let higher_weight = bernoulli_weight(oracle.compute_price(higher));
+    predict.vault.insert_range(oracle.id(), lower, higher, quantity, lower_weight, higher_weight);
     predict.refresh_oracle_risk(oracle);
 
     // Quote against the post-trade state so the trader pays for the liability
@@ -390,7 +394,9 @@ public fun redeem_range<Quote>(
     let lower = key.lower_strike();
     let higher = key.higher_strike();
 
-    predict.vault.remove_range(oracle.id(), lower, higher, quantity);
+    let lower_weight = bernoulli_weight(oracle.compute_price(lower));
+    let higher_weight = bernoulli_weight(oracle.compute_price(higher));
+    predict.vault.remove_range(oracle.id(), lower, higher, quantity, lower_weight, higher_weight);
     predict.refresh_oracle_risk(oracle);
 
     // Quote against the post-trade state so the seller is paid from the
@@ -558,6 +564,11 @@ public fun utilization_multiplier(predict: &Predict): u64 {
     predict.pricing_config.utilization_multiplier()
 }
 
+/// Get the depth multiplier (inventory-aware mid-shift aggressiveness knob).
+public fun depth_multiplier(predict: &Predict): u64 {
+    predict.pricing_config.depth_multiplier()
+}
+
 /// Get the max total exposure percentage.
 public fun max_total_exposure_pct(predict: &Predict): u64 {
     predict.risk_config.max_total_exposure_pct()
@@ -602,6 +613,12 @@ public(package) fun set_max_ask_price(predict: &mut Predict, value: u64) {
     predict.emit_pricing_config_updated();
 }
 
+/// Set depth multiplier for the inventory-aware mid shift.
+public(package) fun set_depth_multiplier(predict: &mut Predict, multiplier: u64) {
+    predict.pricing_config.set_depth_multiplier(multiplier);
+    predict.emit_pricing_config_updated();
+}
+
 /// Set a per-oracle ask-bound override. Authorized by the oracle's own cap.
 /// The override may only tighten the global bounds — never loosen them.
 public(package) fun set_oracle_ask_bounds(
@@ -635,6 +652,7 @@ public(package) fun clear_oracle_ask_bounds(
         oracle_id: oracle.id(),
     });
 }
+
 
 /// Set max total exposure percentage.
 public(package) fun set_max_total_exposure_pct(predict: &mut Predict, pct: u64) {
@@ -703,7 +721,11 @@ fun redeem_internal<Quote>(
 
     manager.decrease_position(key, quantity);
 
-    predict.vault.remove_position(oracle.id(), key.is_up(), key.strike(), quantity);
+    let strike = key.strike();
+    let is_up = key.is_up();
+
+    let weight = bernoulli_weight(oracle.compute_price(strike));
+    predict.vault.remove_position(oracle.id(), is_up, strike, quantity, weight);
     predict.refresh_oracle_risk(oracle);
 
     // Quote against the post-trade state so the seller is paid from the
@@ -721,8 +743,8 @@ fun redeem_internal<Quote>(
         quote_asset: type_name::with_defining_ids<Quote>(),
         oracle_id: key.oracle_id(),
         expiry: key.expiry(),
-        strike: key.strike(),
-        is_up: key.is_up(),
+        strike,
+        is_up,
         quantity,
         payout,
         bid_price: math::div(payout, quantity),
@@ -748,6 +770,7 @@ fun emit_pricing_config_updated(predict: &Predict) {
         utilization_multiplier: predict.pricing_config.utilization_multiplier(),
         min_ask_price: predict.pricing_config.min_ask_price(),
         max_ask_price: predict.pricing_config.max_ask_price(),
+        depth_multiplier: predict.pricing_config.depth_multiplier(),
     });
 }
 
@@ -767,19 +790,16 @@ fun trade_prices(predict: &Predict, oracle: &OracleSVI, key: MarketKey, clock: &
         return (fair_price, fair_price)
     };
 
-    let spread = predict
+    let aggregate = predict.vault.oracle_directional_aggregate(oracle.id());
+    let (up_ask, up_bid) = predict
         .pricing_config
-        .quote_spread_from_fair_price(
+        .compute_up_quote(
             up_price,
+            &aggregate,
             predict.vault.total_mtm(),
             predict.vault.balance(),
+            time_to_expiry(key.expiry(), clock),
         );
-    let up_bid = if (up_price > spread) {
-        up_price - spread
-    } else {
-        0
-    };
-    let up_ask = (up_price + spread).min(constants::float_scaling!());
     let dn_bid = constants::float_scaling!() - up_ask;
     let dn_ask = constants::float_scaling!() - up_bid;
 
@@ -813,21 +833,16 @@ fun range_trade_prices(
         return (fair_price, fair_price)
     };
 
-    let spread = predict
+    let aggregate = predict.vault.oracle_directional_aggregate(oracle.id());
+    predict
         .pricing_config
-        .quote_spread_from_fair_price(
+        .compute_up_quote(
             fair_price,
+            &aggregate,
             predict.vault.total_mtm(),
             predict.vault.balance(),
-        );
-    let ask = (fair_price + spread).min(constants::float_scaling!());
-    let bid = if (fair_price > spread) {
-        fair_price - spread
-    } else {
-        0
-    };
-
-    (ask, bid)
+            time_to_expiry(key.expiry(), clock),
+        )
 }
 
 /// Resolve the effective ask-price bounds for an oracle: the per-oracle
@@ -849,6 +864,11 @@ fun resolve_ask_bounds(predict: &Predict, oracle_id: ID): (u64, u64) {
 fun assert_mintable_ask(predict: &Predict, oracle_id: ID, ask_price: u64) {
     let (min_ask, max_ask) = predict.resolve_ask_bounds(oracle_id);
     assert!(ask_price >= min_ask && ask_price <= max_ask, EAskPriceOutOfBounds);
+}
+
+fun time_to_expiry(expiry_ms: u64, clock: &Clock): u64 {
+    let now = clock.timestamp_ms();
+    if (expiry_ms > now) expiry_ms - now else 0
 }
 
 fun refresh_oracle_risk(predict: &mut Predict, oracle: &OracleSVI) {

@@ -38,9 +38,25 @@ public macro fun default_min_ask_price(): u64 { 10_000_000 }
 /// Maximum ask price the protocol will allow at mint (99% in FLOAT_SCALING)
 public macro fun default_max_ask_price(): u64 { 990_000_000 }
 
+/// Depth multiplier for the inventory-aware mid shift (1x in FLOAT_SCALING).
+/// `raw_ratio = aggregate · tte_factor / (balance · depth_multiplier)`, so
+/// lower values produce larger shifts from the same inventory.
+public macro fun default_depth_multiplier(): u64 { 1_000_000_000 }
+
 // === Time Constants ===
 
 public macro fun ms_per_year(): u64 { 31_536_000_000 }
+
+/// One day in milliseconds.
+public macro fun ms_per_day(): u64 { 86_400_000 }
+
+/// Reference time-to-expiry for the inventory-aware mid shift (7 days).
+/// `tte_factor = √(reference_tte_ms / max(tte_ms, min_tte_ms))`.
+public macro fun reference_tte_ms(): u64 { 604_800_000 }
+
+/// Minimum time-to-expiry floor (1 day) used by the inventory-aware mid shift
+/// to cap the near-expiry amplification of `tte_factor`.
+public macro fun min_tte_ms(): u64 { 86_400_000 }
 
 /// Oracle staleness threshold (30 seconds)
 public macro fun staleness_threshold_ms(): u64 { 30_000 }

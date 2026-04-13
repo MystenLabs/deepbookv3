@@ -180,6 +180,11 @@ public fun set_max_ask_price(predict: &mut Predict, _admin_cap: &AdminCap, value
     predict.set_max_ask_price(value);
 }
 
+/// Set depth multiplier for the inventory-aware mid shift.
+public fun set_depth_multiplier(predict: &mut Predict, _admin_cap: &AdminCap, multiplier: u64) {
+    predict.set_depth_multiplier(multiplier);
+}
+
 /// Set a per-oracle ask-bound override. Authorized by the oracle's own cap;
 /// no `AdminCap` required. The override may only tighten the global bounds.
 public fun set_oracle_ask_bounds(
