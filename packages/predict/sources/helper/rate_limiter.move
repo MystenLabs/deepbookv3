@@ -106,8 +106,9 @@ public(package) fun record_deposit(self: &mut RateLimiter, amount: u64, clock: &
     self.available = new_available.min(self.capacity as u128) as u64;
 }
 
-/// Enable the rate limiter without changing capacity or rate.
+/// Enable the rate limiter. Requires capacity and rate to be configured first.
 public(package) fun enable(self: &mut RateLimiter, clock: &Clock) {
+    assert!(self.refill_rate_per_ms > 0 && self.refill_rate_per_ms < self.capacity, EInvalidConfig);
     self.refill(clock);
     self.enabled = true;
 }
