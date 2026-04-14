@@ -510,7 +510,9 @@ public(package) fun create<Quote>(
         oracle_config: oracle_config::new(ctx),
         // Withdrawal rate limiter starts disabled. Admin must configure
         // capacity and refill rate based on the actual quote asset value
-        // before enabling via registry::update_withdrawal_limiter().
+        // Withdrawal rate limiter starts disabled. Admin must call
+        // update_withdrawal_limiter() then enable_withdrawal_limiter()
+        // to activate, configuring capacity and rate for the quote asset.
         withdrawal_limiter: rate_limiter::new(clock),
         trading_paused: false,
     };
