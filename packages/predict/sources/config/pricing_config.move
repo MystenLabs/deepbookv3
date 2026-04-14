@@ -11,6 +11,7 @@ use deepbook_predict::{constants, i64::{Self, I64}, math as predict_math};
 const EInvalidSpread: u64 = 0;
 const EFairPriceAlreadySettled: u64 = 1;
 const EInvalidAskBound: u64 = 2;
+const EInvalidTteBound: u64 = 3;
 
 // === Structs ===
 
@@ -32,6 +33,13 @@ public struct PricingConfig has store {
     /// lower values make the shift respond more aggressively to a given
     /// directional inventory.
     depth_multiplier: u64,
+    /// Reference time-to-expiry for the inventory-aware mid shift.
+    /// `tte_factor = √(reference_tte_ms / max(tte_ms, min_tte_ms))`, so
+    /// `tte_factor == 1` when `tte_ms == reference_tte_ms`.
+    reference_tte_ms: u64,
+    /// Minimum TTE floor used to cap near-expiry amplification of `tte_factor`.
+    /// Once `tte_ms < min_tte_ms`, further time decay stops increasing the shift.
+    min_tte_ms: u64,
 }
 
 // === Public Functions ===
@@ -60,6 +68,14 @@ public fun depth_multiplier(config: &PricingConfig): u64 {
     config.depth_multiplier
 }
 
+public fun reference_tte_ms(config: &PricingConfig): u64 {
+    config.reference_tte_ms
+}
+
+public fun min_tte_ms(config: &PricingConfig): u64 {
+    config.min_tte_ms
+}
+
 // === Public-Package Functions ===
 
 public(package) fun new(): PricingConfig {
@@ -70,6 +86,8 @@ public(package) fun new(): PricingConfig {
         min_ask_price: constants::default_min_ask_price!(),
         max_ask_price: constants::default_max_ask_price!(),
         depth_multiplier: constants::default_depth_multiplier!(),
+        reference_tte_ms: constants::default_reference_tte_ms!(),
+        min_tte_ms: constants::default_min_tte_ms!(),
     }
 }
 
@@ -100,6 +118,16 @@ public(package) fun set_max_ask_price(config: &mut PricingConfig, value: u64) {
 
 public(package) fun set_depth_multiplier(config: &mut PricingConfig, multiplier: u64) {
     config.depth_multiplier = multiplier;
+}
+
+public(package) fun set_reference_tte_ms(config: &mut PricingConfig, value: u64) {
+    assert!(value >= config.min_tte_ms, EInvalidTteBound);
+    config.reference_tte_ms = value;
+}
+
+public(package) fun set_min_tte_ms(config: &mut PricingConfig, value: u64) {
+    assert!(value > 0 && value <= config.reference_tte_ms, EInvalidTteBound);
+    config.min_tte_ms = value;
 }
 
 public(package) fun quote_spread_from_fair_price(
@@ -138,6 +166,8 @@ public(package) fun compute_up_quote(
         balance,
         tte_ms,
         config.depth_multiplier,
+        config.reference_tte_ms,
+        config.min_tte_ms,
     );
 
     let up_ask = (shifted_mid + spread).max(up_price).min(constants::float_scaling!());
@@ -179,13 +209,15 @@ fun shifted_up_mid(
     balance: u64,
     tte_ms: u64,
     depth_multiplier: u64,
+    reference_tte_ms: u64,
+    min_tte_ms: u64,
 ): u64 {
     if (i64::is_zero(aggregate) || balance == 0 || depth_multiplier == 0) return up_price;
 
     let fs = constants::float_scaling!();
-    let clamped_tte = tte_ms.max(constants::min_tte_ms!());
+    let clamped_tte = tte_ms.max(min_tte_ms);
     let tte_ratio = predict_math::mul_div_round_down(
-        constants::reference_tte_ms!(),
+        reference_tte_ms,
         fs,
         clamped_tte,
     );

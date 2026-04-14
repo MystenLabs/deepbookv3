@@ -123,6 +123,8 @@ public struct PricingConfigUpdated has copy, drop, store {
     min_ask_price: u64,
     max_ask_price: u64,
     depth_multiplier: u64,
+    reference_tte_ms: u64,
+    min_tte_ms: u64,
 }
 
 public struct OracleAskBoundsSet has copy, drop, store {
@@ -619,6 +621,18 @@ public(package) fun set_depth_multiplier(predict: &mut Predict, multiplier: u64)
     predict.emit_pricing_config_updated();
 }
 
+/// Set the reference TTE for the inventory-aware mid shift.
+public(package) fun set_reference_tte_ms(predict: &mut Predict, value: u64) {
+    predict.pricing_config.set_reference_tte_ms(value);
+    predict.emit_pricing_config_updated();
+}
+
+/// Set the minimum TTE floor for the inventory-aware mid shift.
+public(package) fun set_min_tte_ms(predict: &mut Predict, value: u64) {
+    predict.pricing_config.set_min_tte_ms(value);
+    predict.emit_pricing_config_updated();
+}
+
 /// Set a per-oracle ask-bound override. Authorized by the oracle's own cap.
 /// The override may only tighten the global bounds — never loosen them.
 public(package) fun set_oracle_ask_bounds(
@@ -652,7 +666,6 @@ public(package) fun clear_oracle_ask_bounds(
         oracle_id: oracle.id(),
     });
 }
-
 
 /// Set max total exposure percentage.
 public(package) fun set_max_total_exposure_pct(predict: &mut Predict, pct: u64) {
@@ -771,6 +784,8 @@ fun emit_pricing_config_updated(predict: &Predict) {
         min_ask_price: predict.pricing_config.min_ask_price(),
         max_ask_price: predict.pricing_config.max_ask_price(),
         depth_multiplier: predict.pricing_config.depth_multiplier(),
+        reference_tte_ms: predict.pricing_config.reference_tte_ms(),
+        min_tte_ms: predict.pricing_config.min_tte_ms(),
     });
 }
 

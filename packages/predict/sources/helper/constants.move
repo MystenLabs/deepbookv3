@@ -50,13 +50,13 @@ public macro fun ms_per_year(): u64 { 31_536_000_000 }
 /// One day in milliseconds.
 public macro fun ms_per_day(): u64 { 86_400_000 }
 
-/// Reference time-to-expiry for the inventory-aware mid shift (7 days).
+/// Default reference time-to-expiry for the inventory-aware mid shift (7 days).
 /// `tte_factor = √(reference_tte_ms / max(tte_ms, min_tte_ms))`.
-public macro fun reference_tte_ms(): u64 { 604_800_000 }
+public macro fun default_reference_tte_ms(): u64 { 604_800_000 }
 
-/// Minimum time-to-expiry floor (1 day) used by the inventory-aware mid shift
-/// to cap the near-expiry amplification of `tte_factor`.
-public macro fun min_tte_ms(): u64 { 86_400_000 }
+/// Default minimum time-to-expiry floor (1 day) used by the inventory-aware
+/// mid shift to cap the near-expiry amplification of `tte_factor`.
+public macro fun default_min_tte_ms(): u64 { 86_400_000 }
 
 /// Oracle staleness threshold (30 seconds)
 public macro fun staleness_threshold_ms(): u64 { 30_000 }

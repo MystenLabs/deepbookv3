@@ -185,6 +185,16 @@ public fun set_depth_multiplier(predict: &mut Predict, _admin_cap: &AdminCap, mu
     predict.set_depth_multiplier(multiplier);
 }
 
+/// Set reference TTE for the inventory-aware mid shift.
+public fun set_reference_tte_ms(predict: &mut Predict, _admin_cap: &AdminCap, value: u64) {
+    predict.set_reference_tte_ms(value);
+}
+
+/// Set minimum TTE floor for the inventory-aware mid shift.
+public fun set_min_tte_ms(predict: &mut Predict, _admin_cap: &AdminCap, value: u64) {
+    predict.set_min_tte_ms(value);
+}
+
 /// Set a per-oracle ask-bound override. Authorized by the oracle's own cap;
 /// no `AdminCap` required. The override may only tighten the global bounds.
 public fun set_oracle_ask_bounds(
