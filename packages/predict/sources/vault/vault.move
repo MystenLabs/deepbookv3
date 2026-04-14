@@ -106,20 +106,20 @@ public(package) fun init_oracle_matrix(
 
 /// Insert a position into the per-oracle exposure structure and update cached max payout.
 ///
-/// `bernoulli_weight` is `√(p · (1 − p))` for the current fair price at `strike`,
-/// used to fold this leg into the directional aggregate consumed by the
-/// inventory-aware mid shift.
+/// `weight` is the per-strike risk weight `n(d₂)` at `strike`, used to fold
+/// this leg into the directional aggregate consumed by the inventory-aware mid
+/// shift.
 public(package) fun insert_position(
     vault: &mut Vault,
     oracle_id: ID,
     is_up: bool,
     strike: u64,
     quantity: u64,
-    bernoulli_weight: u64,
+    weight: u64,
 ) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
     let old_max_payout = vault.oracle_matrices[oracle_id].max_payout();
-    vault.oracle_matrices[oracle_id].insert(strike, quantity, is_up, bernoulli_weight);
+    vault.oracle_matrices[oracle_id].insert(strike, quantity, is_up, weight);
     let new_max_payout = vault.oracle_matrices[oracle_id].max_payout();
     vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
 }
@@ -129,8 +129,8 @@ public(package) fun insert_position(
 /// plus a `quantity` range_qty delta; the vault's `total_max_payout` reflects the
 /// range_qty-adjusted (net) contribution.
 ///
-/// `lower_weight` and `higher_weight` are `√(p · (1 − p))` at the fair UP prices
-/// of the lower and higher strikes, folded into the per-leg directional aggregate.
+/// `lower_weight` and `higher_weight` are `n(d₂)` at the lower and higher
+/// strikes, folded into the per-leg directional aggregate.
 public(package) fun insert_range(
     vault: &mut Vault,
     oracle_id: ID,
@@ -156,20 +156,20 @@ public(package) fun accept_payment<T>(vault: &mut Vault, payment: Balance<T>) {
     vault.balance = vault.balance + amount;
 }
 
-/// Remove a position from the strike matrix. `bernoulli_weight` is the Bernoulli
-/// weight at the current fair price of `strike`, used to unwind this leg's
-/// contribution to the directional aggregate.
+/// Remove a position from the strike matrix. `weight` is the per-strike risk
+/// weight `n(d₂)` at `strike`, used to unwind this leg's contribution to the
+/// directional aggregate.
 public(package) fun remove_position(
     vault: &mut Vault,
     oracle_id: ID,
     is_up: bool,
     strike: u64,
     quantity: u64,
-    bernoulli_weight: u64,
+    weight: u64,
 ) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
     let old_max_payout = vault.oracle_matrices[oracle_id].max_payout();
-    vault.oracle_matrices[oracle_id].remove(strike, quantity, is_up, bernoulli_weight);
+    vault.oracle_matrices[oracle_id].remove(strike, quantity, is_up, weight);
     let new_max_payout = vault.oracle_matrices[oracle_id].max_payout();
     vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
 }

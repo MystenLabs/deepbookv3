@@ -157,19 +157,19 @@ public(package) fun new(
 
 /// Insert a position at `strike` for `qty` units on the `is_up` side.
 ///
-/// `bernoulli_weight` is `√(p · (1 − p))` for the current fair price at the
-/// touched strike, in FLOAT_SCALING. The caller is responsible for computing
-/// and passing it; the matrix folds it into `directional_aggregate` so readers
-/// see the post-trade inventory risk.
+/// `weight` is the per-strike risk weight `n(d₂)` at the touched strike, in
+/// FLOAT_SCALING. The caller is responsible for computing and passing it; the
+/// matrix folds it into `directional_aggregate` so readers see the post-trade
+/// inventory risk.
 public(package) fun insert(
     matrix: &mut StrikeMatrix,
     strike: u64,
     qty: u64,
     is_up: bool,
-    bernoulli_weight: u64,
+    weight: u64,
 ) {
     apply_position(matrix, strike, qty, is_up, true);
-    apply_aggregate_delta(matrix, qty, bernoulli_weight, is_up, true);
+    apply_aggregate_delta(matrix, qty, weight, is_up, true);
 }
 
 public(package) fun remove(
@@ -177,18 +177,18 @@ public(package) fun remove(
     strike: u64,
     qty: u64,
     is_up: bool,
-    bernoulli_weight: u64,
+    weight: u64,
 ) {
     apply_position(matrix, strike, qty, is_up, false);
-    apply_aggregate_delta(matrix, qty, bernoulli_weight, is_up, false);
+    apply_aggregate_delta(matrix, qty, weight, is_up, false);
 }
 
 /// Insert a vertical range `(lower, higher)`. Equivalent to a long UP@lower,
 /// a long DN@higher, and a `qty` increment to `range_qty`.
 ///
-/// `lower_weight` and `higher_weight` are the Bernoulli weights at the fair
-/// UP prices of the lower and higher strikes, used to fold the range's two
-/// legs into `directional_aggregate`.
+/// `lower_weight` and `higher_weight` are the per-strike risk weights `n(d₂)`
+/// at the lower and higher strikes, used to fold the range's two legs into
+/// `directional_aggregate`.
 public(package) fun insert_range(
     matrix: &mut StrikeMatrix,
     lower: u64,
@@ -380,12 +380,12 @@ fun apply_range(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64, ad
 fun apply_aggregate_delta(
     matrix: &mut StrikeMatrix,
     qty: u64,
-    bernoulli_weight: u64,
+    weight: u64,
     is_up: bool,
     add: bool,
 ) {
-    if (qty == 0 || bernoulli_weight == 0) return;
-    let magnitude = math::mul(qty, bernoulli_weight);
+    if (qty == 0 || weight == 0) return;
+    let magnitude = math::mul(qty, weight);
     if (magnitude == 0) return;
     let is_negative = if (add) !is_up else is_up;
     let delta = i64::from_parts(magnitude, is_negative);

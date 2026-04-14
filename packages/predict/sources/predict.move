@@ -12,7 +12,7 @@ use deepbook::math;
 use deepbook_predict::{
     constants,
     market_key::MarketKey,
-    math::{bernoulli_weight, mul_div_round_down},
+    math::mul_div_round_down,
     oracle::{OracleSVI, OracleSVICap},
     oracle_config::{Self, OracleConfig},
     plp::PLP,
@@ -245,7 +245,7 @@ public fun mint<Quote>(
     let strike = key.strike();
     let is_up = key.is_up();
 
-    let weight = bernoulli_weight(oracle.compute_price(strike));
+    let weight = oracle.compute_risk_weight(strike);
     predict.vault.insert_position(oracle.id(), is_up, strike, quantity, weight);
     predict.refresh_oracle_risk(oracle);
 
@@ -344,8 +344,8 @@ public fun mint_range<Quote>(
     let lower = key.lower_strike();
     let higher = key.higher_strike();
 
-    let lower_weight = bernoulli_weight(oracle.compute_price(lower));
-    let higher_weight = bernoulli_weight(oracle.compute_price(higher));
+    let lower_weight = oracle.compute_risk_weight(lower);
+    let higher_weight = oracle.compute_risk_weight(higher);
     predict.vault.insert_range(oracle.id(), lower, higher, quantity, lower_weight, higher_weight);
     predict.refresh_oracle_risk(oracle);
 
@@ -396,8 +396,8 @@ public fun redeem_range<Quote>(
     let lower = key.lower_strike();
     let higher = key.higher_strike();
 
-    let lower_weight = bernoulli_weight(oracle.compute_price(lower));
-    let higher_weight = bernoulli_weight(oracle.compute_price(higher));
+    let lower_weight = oracle.compute_risk_weight(lower);
+    let higher_weight = oracle.compute_risk_weight(higher);
     predict.vault.remove_range(oracle.id(), lower, higher, quantity, lower_weight, higher_weight);
     predict.refresh_oracle_risk(oracle);
 
@@ -737,7 +737,7 @@ fun redeem_internal<Quote>(
     let strike = key.strike();
     let is_up = key.is_up();
 
-    let weight = bernoulli_weight(oracle.compute_price(strike));
+    let weight = oracle.compute_risk_weight(strike);
     predict.vault.remove_position(oracle.id(), is_up, strike, quantity, weight);
     predict.refresh_oracle_risk(oracle);
 

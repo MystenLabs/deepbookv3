@@ -83,9 +83,9 @@ def parse_states(path: Path) -> list[tuple[float, tuple[float, float, float, flo
     return states
 
 
-# === SVI → binary UP price (port of oracle::compute_nd2) ===
+# === SVI → binary UP price (port of oracle::compute_d2) ===
 
-def svi_up_price(strike: float, forward: float, svi) -> float | None:
+def svi_d2(strike: float, forward: float, svi) -> float | None:
     a, b, rho, m, sigma = svi
     if strike <= 0 or forward <= 0:
         return None
@@ -97,8 +97,23 @@ def svi_up_price(strike: float, forward: float, svi) -> float | None:
     w = a + b * inner
     if w <= 0:
         return None
-    d2 = -(k + w / 2) / math.sqrt(w)
+    return -(k + w / 2) / math.sqrt(w)
+
+
+def svi_up_price(strike: float, forward: float, svi) -> float | None:
+    d2 = svi_d2(strike, forward, svi)
+    if d2 is None:
+        return None
     return float(norm.cdf(d2))
+
+
+def risk_weight_at(strike: float, forward: float, svi) -> float:
+    """Per-strike risk weight n(d₂) — the true cross-sectional binary delta
+    proxy (mirrors `oracle::compute_risk_weight`)."""
+    d2 = svi_d2(strike, forward, svi)
+    if d2 is None:
+        return 0.0
+    return float(norm.pdf(d2))
 
 
 def find_strike_for_target_p(forward: float, svi, target_p: float) -> float | None:
@@ -211,7 +226,7 @@ def simulate(states, depth_multiplier: float):
         if s_ask < WIN_RATE and s_payout + s_new_contracts <= BALANCE:
             s_pnl += TRADE_SIZE * (WIN_RATE - s_ask)
             s_payout += s_new_contracts
-            aggregate += TRADE_SIZE * math.sqrt(p * (1 - p))
+            aggregate += TRADE_SIZE * risk_weight_at(strike, forward, svi)
 
         baseline_pnl[i] = b_pnl
         shifted_pnl[i] = s_pnl
@@ -399,8 +414,8 @@ def simulate_dn_buyer(states, depth_multiplier: float, start_tick: int):
             if s_payout + s_new_contracts <= BALANCE:
                 s_payout += s_new_contracts
                 # DN insert contributes negatively to the signed aggregate:
-                # `aggregate += (q_up − q_dn) · √(p·(1−p))`.
-                aggregate -= TRADE_SIZE * math.sqrt(p * (1 - p))
+                # `aggregate += (q_up − q_dn) · n(d₂)`.
+                aggregate -= TRADE_SIZE * risk_weight_at(strike, forward, svi)
 
     return {
         "ask_baseline": baseline_ask_series,
