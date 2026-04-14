@@ -84,7 +84,7 @@ public(package) fun set_min_ask_price(config: &mut PricingConfig, value: u64) {
 
 public(package) fun set_max_ask_price(config: &mut PricingConfig, value: u64) {
     assert!(value > config.min_ask_price, EInvalidAskBound);
-    assert!(value <= constants::float_scaling!(), EInvalidAskBound);
+    assert!(value < constants::float_scaling!(), EInvalidAskBound);
     config.max_ask_price = value;
 }
 

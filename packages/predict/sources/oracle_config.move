@@ -103,7 +103,7 @@ public(package) fun add_oracle_grid(
 
 /// Set or update a per-oracle ask-bound override. The caller must hold an
 /// `OracleSVICap` authorized for `oracle`. Validates the math invariant
-/// `min < max <= float_scaling`; the "no looser than the global default"
+/// `min < max < float_scaling`; the "no looser than the global default"
 /// constraint is enforced by the caller (see `predict::set_oracle_ask_bounds`).
 public(package) fun set_oracle_ask_bounds(
     oracle_config: &mut OracleConfig,
@@ -114,7 +114,7 @@ public(package) fun set_oracle_ask_bounds(
 ) {
     oracle.assert_authorized_cap(cap);
     assert!(min < max, EInvalidAskBound);
-    assert!(max <= constants::float_scaling!(), EInvalidAskBound);
+    assert!(max < constants::float_scaling!(), EInvalidAskBound);
 
     let oracle_id = oracle.id();
     let bounds = AskBounds { min_ask_price: min, max_ask_price: max };
