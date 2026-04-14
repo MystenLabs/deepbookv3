@@ -232,6 +232,20 @@ public fun disable_withdrawal_limiter(predict: &mut Predict, _admin_cap: &AdminC
     predict.disable_withdrawal_limiter();
 }
 
+/// Set the oracle staleness threshold (ms).
+public fun set_staleness_threshold_ms(predict: &mut Predict, _admin_cap: &AdminCap, value: u64) {
+    predict.set_staleness_threshold_ms(value);
+}
+
+/// Set the basis staleness threshold (ms).
+public fun set_basis_staleness_threshold_ms(
+    predict: &mut Predict,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    predict.set_basis_staleness_threshold_ms(value);
+}
+
 // === Private Functions ===
 
 /// Package initializer - creates Registry and AdminCap.

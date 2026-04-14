@@ -170,7 +170,7 @@ public struct OracleSVICap has key, store {
 
 /// Activate the oracle. Must be called before oracle can be used for pricing.
 public fun activate(oracle: &mut OracleSVI, cap: &OracleSVICap, clock: &Clock) {
-    assert_authorized_cap(oracle, cap);
+    oracle.assert_authorized_cap(cap);
     assert!(!oracle.active, EOracleAlreadyActive);
 
     let now = clock.timestamp_ms();
@@ -200,7 +200,7 @@ public fun update_basis(
     forward: u64,
     clock: &Clock,
 ) {
-    assert_authorized_cap(oracle, cap);
+    oracle.assert_authorized_cap(cap);
     assert!(spot > 0, EZeroSpot);
     assert!(forward > 0, EZeroForward);
 
@@ -242,9 +242,16 @@ public fun update_basis(
 /// Lazer `Update` and rederive `forward = spot * basis` against the cached
 /// basis. Trust root is the fact that `Update` can only be constructed
 /// inside the `pyth_lazer` package, so the Move type system enforces that
-/// this value came from Pyth's on-chain verifier. Caller builds a two-call
-/// PTB: `parse_and_verify_le_ecdsa_update` → `update_spot_from_lazer`.
-public fun update_spot_from_lazer(oracle: &mut OracleSVI, update: LazerUpdate, clock: &Clock) {
+/// this value came from Pyth's on-chain verifier. The caller (e.g.
+/// `predict::update_spot_from_lazer`) passes `basis_staleness_threshold_ms`
+/// read from the admin-controlled `OracleConfig` so the stale-basis check
+/// can't be bypassed from a PTB.
+public(package) fun update_spot_from_lazer(
+    oracle: &mut OracleSVI,
+    update: LazerUpdate,
+    basis_staleness_threshold_ms: u64,
+    clock: &Clock,
+) {
     let ts_us = lazer_update::timestamp(&update);
     let feed = find_lazer_feed(lazer_update::feeds_ref(&update), oracle.pyth_lazer_feed_id);
 
@@ -262,7 +269,7 @@ public fun update_spot_from_lazer(oracle: &mut OracleSVI, update: LazerUpdate, c
     let exponent = *exp_outer.borrow();
 
     let spot = normalize_pyth_price(price, exponent);
-    apply_lazer_spot(oracle, spot, ts_us, clock);
+    oracle.apply_lazer_spot(spot, ts_us, basis_staleness_threshold_ms, clock);
 }
 
 // TODO: Add validation on pushed SVI params so obviously bad updates are
@@ -270,7 +277,7 @@ public fun update_spot_from_lazer(oracle: &mut OracleSVI, update: LazerUpdate, c
 /// Push SVI parameters (low frequency ~10-20s) while the oracle is still
 /// unsettled and pre-expiry.
 public fun update_svi(oracle: &mut OracleSVI, cap: &OracleSVICap, svi: SVIParams, clock: &Clock) {
-    assert_authorized_cap(oracle, cap);
+    oracle.assert_authorized_cap(cap);
     let oracle_status = oracle.status(clock);
     assert!(oracle_status != status_settled(), EOracleSettled);
     assert!(oracle_status != status_pending_settlement(), EOracleExpired);
@@ -438,7 +445,7 @@ public(package) fun compute_price(oracle: &OracleSVI, strike: u64): u64 {
 /// Return the exact fair prices for both sides of a binary market.
 /// The live parity invariant is `UP + DN = 1`.
 public(package) fun binary_price_pair(oracle: &OracleSVI, strike: u64, _clock: &Clock): (u64, u64) {
-    let up_price = compute_price(oracle, strike);
+    let up_price = oracle.compute_price(strike);
     (up_price, float_scaling!() - up_price)
 }
 
@@ -498,7 +505,15 @@ public(package) fun create_oracle(
 /// Internal state transition for a verified Lazer spot. Kept separate from
 /// `update_spot_from_lazer` so it can be exercised directly by unit tests
 /// (verified `Update` values cannot be constructed outside `pyth_lazer`).
-fun apply_lazer_spot(oracle: &mut OracleSVI, spot: u64, lazer_timestamp_us: u64, clock: &Clock) {
+/// `basis_staleness_threshold_ms` is threaded from the caller's `OracleConfig`
+/// so this primitive does not depend on `oracle_config`, which imports us.
+fun apply_lazer_spot(
+    oracle: &mut OracleSVI,
+    spot: u64,
+    lazer_timestamp_us: u64,
+    basis_staleness_threshold_ms: u64,
+    clock: &Clock,
+) {
     assert!(spot > 0, EZeroSpot);
     assert!(lazer_timestamp_us > oracle.lazer_timestamp_us, ELazerStaleUpdate);
 
@@ -525,10 +540,7 @@ fun apply_lazer_spot(oracle: &mut OracleSVI, spot: u64, lazer_timestamp_us: u64,
     };
 
     assert!(oracle.prices.basis > 0, EBasisNotSeeded);
-    assert!(
-        now <= oracle.basis_timestamp + constants::basis_staleness_threshold_ms!(),
-        EBasisStale,
-    );
+    assert!(now <= oracle.basis_timestamp + basis_staleness_threshold_ms, EBasisStale);
 
     let basis = oracle.prices.basis;
     let forward = math::mul(spot, basis);

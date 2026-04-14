@@ -29,6 +29,7 @@ const EInvalidCurveRange: u64 = 8;
 const ERangeKeyOracleMismatch: u64 = 9;
 const ERangeKeyExpiryMismatch: u64 = 10;
 const EInvalidAskBound: u64 = 11;
+const EInvalidStalenessThreshold: u64 = 12;
 
 public struct OracleGrid has copy, drop, store {
     min_strike: u64,
@@ -49,6 +50,13 @@ public struct OracleConfig has store {
     /// Per-oracle ask-bound overrides; presence in this table means an override
     /// is active for that oracle id.
     oracle_ask_bounds: Table<ID, AskBounds>,
+    /// Maximum age (ms) of the last oracle price update before
+    /// `assert_live_oracle` / `assert_quoteable_oracle` reject it.
+    staleness_threshold_ms: u64,
+    /// Maximum age (ms) of the cached operator basis before
+    /// `assert_live_oracle` / `assert_quoteable_oracle` reject it and before
+    /// `oracle::update_spot_from_lazer` refuses to derive a fresh forward.
+    basis_staleness_threshold_ms: u64,
 }
 
 /// Curve sample point with strike and one-sided UP price.
@@ -77,12 +85,45 @@ public fun ask_bounds_min(bounds: &AskBounds): u64 { bounds.min_ask_price }
 /// Return the maximum ask price stored in an `AskBounds`.
 public fun ask_bounds_max(bounds: &AskBounds): u64 { bounds.max_ask_price }
 
+/// Return the current oracle staleness threshold (ms).
+public fun staleness_threshold_ms(config: &OracleConfig): u64 {
+    config.staleness_threshold_ms
+}
+
+/// Return the current basis staleness threshold (ms).
+public fun basis_staleness_threshold_ms(config: &OracleConfig): u64 {
+    config.basis_staleness_threshold_ms
+}
+
 /// Create an empty oracle config registry for Predict.
 public(package) fun new(ctx: &mut TxContext): OracleConfig {
     OracleConfig {
         oracle_grids: table::new(ctx),
         oracle_ask_bounds: table::new(ctx),
+        staleness_threshold_ms: constants::default_staleness_threshold_ms!(),
+        basis_staleness_threshold_ms: constants::default_basis_staleness_threshold_ms!(),
     }
+}
+
+/// Update the oracle staleness threshold (ms). Must be positive and
+/// no larger than `max_staleness_threshold_ms!()` (60s) — beyond that,
+/// the liveness gate stops meaningfully protecting quoting.
+public(package) fun set_staleness_threshold_ms(config: &mut OracleConfig, value: u64) {
+    assert!(
+        value > 0 && value <= constants::max_staleness_threshold_ms!(),
+        EInvalidStalenessThreshold,
+    );
+    config.staleness_threshold_ms = value;
+}
+
+/// Update the basis staleness threshold (ms). Must be positive and
+/// no larger than `max_staleness_threshold_ms!()` (60s).
+public(package) fun set_basis_staleness_threshold_ms(config: &mut OracleConfig, value: u64) {
+    assert!(
+        value > 0 && value <= constants::max_staleness_threshold_ms!(),
+        EInvalidStalenessThreshold,
+    );
+    config.basis_staleness_threshold_ms = value;
 }
 
 /// Register the configured strike grid for a newly created oracle.
@@ -197,15 +238,19 @@ public(package) fun assert_range_key_matches(
 /// Assert that an oracle can still be used for actions that require live
 /// pricing. The oracle must be `ACTIVE` and fresh; `INACTIVE`,
 /// `PENDING_SETTLEMENT`, `SETTLED`, and stale oracles are rejected.
-public(package) fun assert_live_oracle(oracle: &OracleSVI, clock: &Clock) {
+public(package) fun assert_live_oracle(
+    oracle_config: &OracleConfig,
+    oracle: &OracleSVI,
+    clock: &Clock,
+) {
     let oracle_status = oracle.status(clock);
     assert!(oracle_status != oracle::status_settled(), EOracleSettled);
     assert!(oracle_status != oracle::status_pending_settlement(), EOracleExpired);
     assert!(oracle_status != oracle::status_inactive(), EOracleInactive);
     let now = clock.timestamp_ms();
-    assert!(now <= oracle.timestamp() + constants::staleness_threshold_ms!(), EOracleStale);
+    assert!(now <= oracle.timestamp() + oracle_config.staleness_threshold_ms, EOracleStale);
     assert!(
-        now <= oracle.basis_timestamp() + constants::basis_staleness_threshold_ms!(),
+        now <= oracle.basis_timestamp() + oracle_config.basis_staleness_threshold_ms,
         EOracleStale,
     );
 }
@@ -215,15 +260,19 @@ public(package) fun assert_live_oracle(oracle: &OracleSVI, clock: &Clock) {
 /// immediately; otherwise the oracle must still be `ACTIVE` and fresh.
 /// `PENDING_SETTLEMENT` is intentionally rejected to freeze the
 /// expired-but-unsettled gap.
-public(package) fun assert_quoteable_oracle(oracle: &OracleSVI, clock: &Clock) {
+public(package) fun assert_quoteable_oracle(
+    oracle_config: &OracleConfig,
+    oracle: &OracleSVI,
+    clock: &Clock,
+) {
     let oracle_status = oracle.status(clock);
     if (oracle_status == oracle::status_settled()) return;
     assert!(oracle_status != oracle::status_pending_settlement(), EOracleExpired);
     assert!(oracle_status != oracle::status_inactive(), EOracleInactive);
     let now = clock.timestamp_ms();
-    assert!(now <= oracle.timestamp() + constants::staleness_threshold_ms!(), EOracleStale);
+    assert!(now <= oracle.timestamp() + oracle_config.staleness_threshold_ms, EOracleStale);
     assert!(
-        now <= oracle.basis_timestamp() + constants::basis_staleness_threshold_ms!(),
+        now <= oracle.basis_timestamp() + oracle_config.basis_staleness_threshold_ms,
         EOracleStale,
     );
 }

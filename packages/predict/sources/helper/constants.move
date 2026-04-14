@@ -42,15 +42,20 @@ public macro fun default_max_ask_price(): u64 { 990_000_000 }
 
 public macro fun ms_per_year(): u64 { 31_536_000_000 }
 
-/// Oracle staleness threshold (30 seconds)
-public macro fun staleness_threshold_ms(): u64 { 30_000 }
+/// Default oracle staleness threshold (30 seconds).
+public macro fun default_staleness_threshold_ms(): u64 { 30_000 }
 
-/// Maximum age of the cached operator basis (60 seconds).
+/// Default maximum age of the cached operator basis (60 seconds).
 /// Consumed by `update_spot_from_lazer` (refuses to derive a forward against
 /// a stale basis) and by `oracle_config::assert_live_oracle` /
 /// `assert_quoteable_oracle` (refuses to quote against a stale basis).
 /// Sized as ~6x the operator's ~10s `update_basis` cadence.
-public macro fun basis_staleness_threshold_ms(): u64 { 60_000 }
+public macro fun default_basis_staleness_threshold_ms(): u64 { 60_000 }
+
+/// Hard upper bound (60s) for the oracle and basis staleness thresholds.
+/// Admin setters reject anything larger — beyond this the liveness gate
+/// stops meaningfully protecting quoting and settlement.
+public macro fun max_staleness_threshold_ms(): u64 { 60_000 }
 
 // === Curve Builder ===
 
