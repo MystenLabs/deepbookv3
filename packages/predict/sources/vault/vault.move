@@ -14,7 +14,7 @@
 module deepbook_predict::vault;
 
 use deepbook::math;
-use deepbook_predict::{oracle_config::CurvePoint, strike_matrix::{Self, StrikeMatrix}};
+use deepbook_predict::{i64::I64, oracle_config::CurvePoint, strike_matrix::{Self, StrikeMatrix}};
 use sui::{bag::{Self, Bag}, balance::Balance, table::{Self, Table}};
 
 use fun net_max_payout as StrikeMatrix.net_max_payout;
@@ -105,16 +105,21 @@ public(package) fun init_oracle_matrix(
 }
 
 /// Insert a position into the per-oracle exposure structure and update cached max payout.
+///
+/// `weight` is the per-strike risk weight `n(d₂)` at `strike`, used to fold
+/// this leg into the directional aggregate consumed by the inventory-aware mid
+/// shift.
 public(package) fun insert_position(
     vault: &mut Vault,
     oracle_id: ID,
     is_up: bool,
     strike: u64,
     quantity: u64,
+    weight: u64,
 ) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
     let old_max_payout = vault.oracle_matrices[oracle_id].max_payout();
-    vault.oracle_matrices[oracle_id].insert(strike, quantity, is_up);
+    vault.oracle_matrices[oracle_id].insert(strike, quantity, is_up, weight);
     let new_max_payout = vault.oracle_matrices[oracle_id].max_payout();
     vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
 }
@@ -123,16 +128,23 @@ public(package) fun insert_position(
 /// cached max payout. The range is recorded as `long UP@lower + long DN@higher`
 /// plus a `quantity` range_qty delta; the vault's `total_max_payout` reflects the
 /// range_qty-adjusted (net) contribution.
+///
+/// `lower_weight` and `higher_weight` are `n(d₂)` at the lower and higher
+/// strikes, folded into the per-leg directional aggregate.
 public(package) fun insert_range(
     vault: &mut Vault,
     oracle_id: ID,
     lower: u64,
     higher: u64,
     quantity: u64,
+    lower_weight: u64,
+    higher_weight: u64,
 ) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
     let old_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
-    vault.oracle_matrices[oracle_id].insert_range(lower, higher, quantity);
+    vault
+        .oracle_matrices[oracle_id]
+        .insert_range(lower, higher, quantity, lower_weight, higher_weight);
     let new_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
     vault.total_max_payout = vault.total_max_payout + new_net_max_payout - old_net_max_payout;
 }
@@ -144,17 +156,20 @@ public(package) fun accept_payment<T>(vault: &mut Vault, payment: Balance<T>) {
     vault.balance = vault.balance + amount;
 }
 
-/// Remove a position from the strike matrix.
+/// Remove a position from the strike matrix. `weight` is the per-strike risk
+/// weight `n(d₂)` at `strike`, used to unwind this leg's contribution to the
+/// directional aggregate.
 public(package) fun remove_position(
     vault: &mut Vault,
     oracle_id: ID,
     is_up: bool,
     strike: u64,
     quantity: u64,
+    weight: u64,
 ) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
     let old_max_payout = vault.oracle_matrices[oracle_id].max_payout();
-    vault.oracle_matrices[oracle_id].remove(strike, quantity, is_up);
+    vault.oracle_matrices[oracle_id].remove(strike, quantity, is_up, weight);
     let new_max_payout = vault.oracle_matrices[oracle_id].max_payout();
     vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
 }
@@ -167,10 +182,14 @@ public(package) fun remove_range(
     lower: u64,
     higher: u64,
     quantity: u64,
+    lower_weight: u64,
+    higher_weight: u64,
 ) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
     let old_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
-    vault.oracle_matrices[oracle_id].remove_range(lower, higher, quantity);
+    vault
+        .oracle_matrices[oracle_id]
+        .remove_range(lower, higher, quantity, lower_weight, higher_weight);
     let new_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
     vault.total_max_payout = vault.total_max_payout + new_net_max_payout - old_net_max_payout;
 }
@@ -193,6 +212,13 @@ public(package) fun oracle_strike_range(vault: &Vault, oracle_id: ID): (u64, u64
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
     let matrix = &vault.oracle_matrices[oracle_id];
     matrix.minted_strike_range()
+}
+
+/// Bernoulli-weighted signed inventory for this oracle. Positive means the
+/// vault is net short UP across touched strikes; negative means net long.
+public(package) fun oracle_directional_aggregate(vault: &Vault, oracle_id: ID): I64 {
+    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+    vault.oracle_matrices[oracle_id].directional_aggregate()
 }
 
 public(package) fun set_mtm_with_curve(

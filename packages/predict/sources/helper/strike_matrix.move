@@ -60,7 +60,7 @@
 module deepbook_predict::strike_matrix;
 
 use deepbook::{constants::max_u64, math};
-use deepbook_predict::{constants, oracle_config::CurvePoint};
+use deepbook_predict::{constants, i64::{Self, I64}, oracle_config::CurvePoint};
 use sui::table::{Self, Table};
 
 const PAGE_SLOTS: u64 = 512;
@@ -90,6 +90,10 @@ public struct StrikeMatrix has store {
     /// from `evaluate(curve)`, `evaluate_settled(s)`, and `max_payout()` to
     /// recover the actual vault liability for ranges.
     range_qty: u64,
+    /// Bernoulli-weighted signed inventory `Σ (q_up − q_dn) · √(p · (1 − p))`,
+    /// updated on every insert/remove at the fair price of that leg. The
+    /// inventory-aware mid shift reads this field to gauge directional risk.
+    directional_aggregate: I64,
 }
 
 /// Exact per-strike inventory stored in dense page slots.
@@ -147,26 +151,69 @@ public(package) fun new(
         minted_max_strike: 0,
         mtm: 0,
         range_qty: 0,
+        directional_aggregate: i64::zero(),
     }
 }
 
-public(package) fun insert(matrix: &mut StrikeMatrix, strike: u64, qty: u64, is_up: bool) {
+/// Insert a position at `strike` for `qty` units on the `is_up` side.
+///
+/// `weight` is the per-strike risk weight `n(d₂)` at the touched strike, in
+/// FLOAT_SCALING. The caller is responsible for computing and passing it; the
+/// matrix folds it into `directional_aggregate` so readers see the post-trade
+/// inventory risk.
+public(package) fun insert(
+    matrix: &mut StrikeMatrix,
+    strike: u64,
+    qty: u64,
+    is_up: bool,
+    weight: u64,
+) {
     apply_position(matrix, strike, qty, is_up, true);
+    apply_aggregate_delta(matrix, qty, weight, is_up, true);
 }
 
-public(package) fun remove(matrix: &mut StrikeMatrix, strike: u64, qty: u64, is_up: bool) {
+public(package) fun remove(
+    matrix: &mut StrikeMatrix,
+    strike: u64,
+    qty: u64,
+    is_up: bool,
+    weight: u64,
+) {
     apply_position(matrix, strike, qty, is_up, false);
+    apply_aggregate_delta(matrix, qty, weight, is_up, false);
 }
 
 /// Insert a vertical range `(lower, higher)`. Equivalent to a long UP@lower,
 /// a long DN@higher, and a `qty` increment to `range_qty`.
-public(package) fun insert_range(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64) {
+///
+/// `lower_weight` and `higher_weight` are the per-strike risk weights `n(d₂)`
+/// at the lower and higher strikes, used to fold the range's two legs into
+/// `directional_aggregate`.
+public(package) fun insert_range(
+    matrix: &mut StrikeMatrix,
+    lower: u64,
+    higher: u64,
+    qty: u64,
+    lower_weight: u64,
+    higher_weight: u64,
+) {
     matrix.apply_range(lower, higher, qty, true);
+    apply_aggregate_delta(matrix, qty, lower_weight, true, true);
+    apply_aggregate_delta(matrix, qty, higher_weight, false, true);
 }
 
 /// Remove a vertical range `(lower, higher)`. Symmetric to `insert_range`.
-public(package) fun remove_range(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64) {
+public(package) fun remove_range(
+    matrix: &mut StrikeMatrix,
+    lower: u64,
+    higher: u64,
+    qty: u64,
+    lower_weight: u64,
+    higher_weight: u64,
+) {
     matrix.apply_range(lower, higher, qty, false);
+    apply_aggregate_delta(matrix, qty, lower_weight, true, false);
+    apply_aggregate_delta(matrix, qty, higher_weight, false, false);
 }
 
 /// Evaluate the current book against a sampled live curve.
@@ -290,6 +337,12 @@ public(package) fun range_qty(matrix: &StrikeMatrix): u64 {
     matrix.range_qty
 }
 
+/// Bernoulli-weighted signed inventory accumulated over all insert/remove
+/// operations at their trade-time fair prices.
+public(package) fun directional_aggregate(matrix: &StrikeMatrix): I64 {
+    matrix.directional_aggregate
+}
+
 /// Cached mark-to-market value stored by the vault after oracle refresh.
 public(package) fun mtm(matrix: &StrikeMatrix): u64 {
     matrix.mtm
@@ -319,6 +372,24 @@ fun apply_range(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64, ad
     matrix.apply_position(lower, qty, true, add);
     matrix.apply_position(higher, qty, false, add);
     apply_exact_delta(&mut matrix.range_qty, qty, add);
+}
+
+/// Fold one leg's risk-weighted quantity into the signed directional aggregate.
+/// UP legs contribute positively, DN legs negatively; removes flip the sign so
+/// that an insert+remove pair cancels exactly.
+fun apply_aggregate_delta(
+    matrix: &mut StrikeMatrix,
+    qty: u64,
+    weight: u64,
+    is_up: bool,
+    add: bool,
+) {
+    if (qty == 0 || weight == 0) return;
+    let magnitude = math::mul(qty, weight);
+    if (magnitude == 0) return;
+    let is_negative = if (add) !is_up else is_up;
+    let delta = i64::from_parts(magnitude, is_negative);
+    matrix.directional_aggregate = i64::add(&matrix.directional_aggregate, &delta);
 }
 
 /// Apply one position delta, refresh the touched page summary, then rebuild the

@@ -8,6 +8,7 @@
 /// - exp(x): exponential function for signed fixed-point inputs
 /// - sqrt(x, precision): fixed-point square root
 /// - normal_cdf(x): standard normal CDF for signed fixed-point inputs
+/// - normal_pdf(x): standard normal PDF for signed fixed-point inputs
 ///
 /// Public functions use `u64` for nonnegative values and `i64::I64` for signed
 /// fixed-point values. Internal math uses u128 to minimize truncation.
@@ -22,6 +23,8 @@ const EInvalidPrecision: u64 = 2;
 // u128 constants for internal math
 const F: u128 = 1_000_000_000;
 const LN2_U128: u128 = 693_147_180;
+// 1 / sqrt(2 * pi) scaled by F = 1e9.
+const INV_SQRT_2PI: u128 = 398_942_280;
 
 // Max input for exp(x, false) before u64 overflow.
 // Derived: with LN2_U128=693_147_180, at x=23_638_153_700 the bit-shift
@@ -122,6 +125,18 @@ public fun sqrt(x: u64, precision: u64): u64 {
     let multiplier = (constants::float_scaling!() / precision) as u128;
     let scaled = (x as u128) * multiplier * F;
     (sqrt_u128(scaled) / multiplier) as u64
+}
+
+/// Standard normal PDF `n(x) = exp(−x²/2) / √(2π)` in FLOAT_SCALING. Peaks at
+/// `x = 0` with value ≈ `0.3989` (≈ 398_942_280).
+public fun normal_pdf(x: &i64::I64): u64 {
+    let x_mag = i64::magnitude(x) as u128;
+    if (x_mag > 8 * F) return 0;
+    let x_sq = x_mag * x_mag / F;
+    let half_x_sq = i64::from_u64((x_sq / 2) as u64);
+    let neg_half_x_sq = i64::neg(&half_x_sq);
+    let exp_val = exp(&neg_half_x_sq) as u128;
+    (exp_val * INV_SQRT_2PI / F) as u64
 }
 
 // ============================================================
