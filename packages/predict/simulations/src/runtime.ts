@@ -100,6 +100,7 @@ export function createPredictTx(currencyId: string): Transaction {
       tx.object(ADMIN_CAP_ID),
       tx.object(currencyId),
       tx.object(PLP_TREASURY_CAP_ID),
+      tx.object(CLOCK_ID),
     ],
   });
   return tx;
@@ -225,7 +226,7 @@ export function supplyTx(predictId: string, amount: bigint): Transaction {
   const [plpCoin] = tx.moveCall({
     target: target("predict", "supply"),
     typeArguments: [DUSDC_TYPE],
-    arguments: [tx.object(predictId), dusdc],
+    arguments: [tx.object(predictId), dusdc, tx.object(CLOCK_ID)],
   });
   tx.transferObjects([plpCoin], tx.pure.address(address));
   return tx;
