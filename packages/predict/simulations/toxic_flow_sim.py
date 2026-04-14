@@ -49,6 +49,7 @@ MIN_SPREAD = 0.0025
 BALANCE = 10_000_000.0
 DEFAULT_DEPTH_MULTIPLIER = 1.0
 BALANCE_VARIANTS = [100_000_000.0, 400_000_000.0]  # runs main() once per balance
+DAY2_START_TICK = int(N_MINUTES * 2 / 7)  # ≈ 2880
 
 
 # === CSV parsing ===
@@ -125,6 +126,10 @@ def baseline_up_ask(p: float) -> float:
     return min(p + spread_at(p), 1.0)
 
 
+def baseline_dn_ask(p: float) -> float:
+    return min((1 - p) + spread_at(p), 1.0)
+
+
 def shifted_up_ask(p: float, raw_ratio: float) -> float:
     ratio = max(-1.0, min(1.0, raw_ratio))
     mid_shift = ratio * (1 - p) if ratio > 0 else ratio * p
@@ -133,6 +138,20 @@ def shifted_up_ask(p: float, raw_ratio: float) -> float:
     # zero-edge floor: never sell UP below fair
     ask = max(ask, p)
     return min(ask, 1.0)
+
+
+def shifted_dn_ask(p: float, raw_ratio: float) -> float:
+    """DN ask under the inventory-aware mid shift.
+
+    Derived from `dn_ask = 1 − up_bid`, where `up_bid` is the shifted mid
+    minus the spread, clamped at the fair UP price (zero-edge floor).
+    """
+    ratio = max(-1.0, min(1.0, raw_ratio))
+    mid_shift = ratio * (1 - p) if ratio > 0 else ratio * p
+    shifted_mid = p + mid_shift
+    up_bid_raw = shifted_mid - spread_at(p)
+    up_bid = min(max(up_bid_raw, 0.0), p)
+    return 1.0 - up_bid
 
 
 # === Simulation ===
@@ -335,6 +354,106 @@ def render_charts(states, balance: float) -> None:
     print(f"  shifted  max payout: ${result['max_payout_shifted'][-1]:,.0f}")
 
 
+def simulate_dn_buyer(states, depth_multiplier: float, start_tick: int):
+    """Symmetric inverse of the UP scenario.
+
+    A trader buys DN at the same target strike every tick from `start_tick`
+    onward, $TRADE_SIZE per trade. Win-rate gating is disabled because DN at
+    a p_up≈0.20 strike costs ~$0.80 and would never clear `WIN_RATE = 0.40`;
+    the purpose of this chart is to show the shift working in the other
+    direction, not the trader's profit.
+    """
+    n_states = len(states)
+    state_idx = np.linspace(0, n_states - 1, N_MINUTES).astype(int)
+
+    baseline_ask_series = np.zeros(N_MINUTES)
+    shifted_ask_series = np.zeros(N_MINUTES)
+    p_series = np.zeros(N_MINUTES)
+
+    aggregate = 0.0
+    s_payout = 0.0
+
+    for i, si in enumerate(state_idx):
+        forward, svi = states[int(si)]
+        strike = find_strike_for_target_p(forward, svi, TARGET_P)
+        p = svi_up_price(strike, forward, svi) if strike is not None else None
+        if p is None or p <= 0 or p >= 1:
+            if i > 0:
+                baseline_ask_series[i] = baseline_ask_series[i - 1]
+                shifted_ask_series[i] = shifted_ask_series[i - 1]
+                p_series[i] = p_series[i - 1]
+            continue
+
+        tte_ms = SEVEN_DAYS_MS * (N_MINUTES - i) / N_MINUTES
+        tte_factor = math.sqrt(SEVEN_DAYS_MS / max(tte_ms, ONE_DAY_MS))
+        raw_ratio = (aggregate * tte_factor) / (BALANCE * depth_multiplier)
+
+        b_ask = baseline_dn_ask(p)
+        s_ask = shifted_dn_ask(p, raw_ratio)
+        baseline_ask_series[i] = b_ask
+        shifted_ask_series[i] = s_ask
+        p_series[i] = p
+
+        if i >= start_tick:
+            s_new_contracts = TRADE_SIZE / s_ask
+            if s_payout + s_new_contracts <= BALANCE:
+                s_payout += s_new_contracts
+                # DN insert contributes negatively to the signed aggregate:
+                # `aggregate += (q_up − q_dn) · √(p·(1−p))`.
+                aggregate -= TRADE_SIZE * math.sqrt(p * (1 - p))
+
+    return {
+        "ask_baseline": baseline_ask_series,
+        "ask_shifted": shifted_ask_series,
+        "p": p_series,
+    }
+
+
+def render_dn_buyer_chart(states, balance: float) -> None:
+    global BALANCE
+    BALANCE = balance
+
+    sweep_multipliers = [0.25, 0.5, 1.0, 2.0]
+    sweep_colors = ["#1f77b4", "#2ca02c", "#9467bd", "#ff7f0e"]
+    sweep_results = {
+        dm: simulate_dn_buyer(states, dm, DAY2_START_TICK) for dm in sweep_multipliers
+    }
+    baseline_ask = sweep_results[DEFAULT_DEPTH_MULTIPLIER]["ask_baseline"]
+
+    label = f"${int(balance / 1e6)}M vault"
+    suffix = _suffix(balance)
+
+    fig, ax = plt.subplots(figsize=(11, 6))
+    ax.plot(DAYS, baseline_ask, label="Baseline DN ask (no shift)",
+            color="#d62728", lw=2.0)
+    for dm, color in zip(sweep_multipliers, sweep_colors):
+        ax.plot(DAYS, sweep_results[dm]["ask_shifted"],
+                label=f"Shifted DN ask (depth_multiplier={dm})",
+                color=color, lw=1.6)
+    ax.axvline(DAY2_START_TICK / (24 * 60), color="black", lw=1.0,
+               ls="--", alpha=0.55, label="DN buying starts (day 2)")
+    ax.set_xlabel("Time elapsed (days)")
+    ax.set_ylabel("DN ask (same strike, p_up≈0.20)")
+    _style_day_axis(ax)
+    ax.set_title(
+        f"DN-buyer symmetry — {label}, "
+        f"${int(TRADE_SIZE):,}/trade, every tick from day 2 (no win-rate gate)"
+    )
+    ax.legend(loc="lower right", fontsize=9)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    out = OUT_DIR / f"dn_buyer_ask{suffix}.png"
+    fig.savefig(out, dpi=150)
+    plt.close(fig)
+    print(f"  wrote {out.relative_to(SCRIPT_DIR)}")
+
+    for dm in sweep_multipliers:
+        final_shifted = sweep_results[dm]["ask_shifted"][-1]
+        delta = final_shifted - baseline_ask[-1]
+        print(f"  dn final shifted ask (dm={dm}): {final_shifted:.4f}  "
+              f"(+{delta * 100:.2f}c over baseline)")
+
+
 def main() -> None:
     states = parse_states(CSV_PATH)
     print(f"Parsed {len(states)} (forward, svi) snapshots from {CSV_PATH.name}")
@@ -343,6 +462,9 @@ def main() -> None:
 
     for balance in BALANCE_VARIANTS:
         render_charts(states, balance)
+
+    print("\n=== DN-buyer symmetry check ===")
+    render_dn_buyer_chart(states, 100_000_000.0)
 
 
 if __name__ == "__main__":
