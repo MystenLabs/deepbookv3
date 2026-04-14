@@ -34,26 +34,26 @@ public struct RateLimiter has store {
     enabled: bool,
 }
 
-// === Public Functions ===
+// === Public-Package View Functions ===
 
-public fun is_enabled(self: &RateLimiter): bool {
+public(package) fun is_enabled(self: &RateLimiter): bool {
     self.enabled
 }
 
-public fun capacity(self: &RateLimiter): u64 {
+public(package) fun capacity(self: &RateLimiter): u64 {
     self.capacity
 }
 
-public fun refill_rate_per_ms(self: &RateLimiter): u64 {
+public(package) fun refill_rate_per_ms(self: &RateLimiter): u64 {
     self.refill_rate_per_ms
 }
 
-public fun available(self: &RateLimiter): u64 {
+public(package) fun available(self: &RateLimiter): u64 {
     self.available
 }
 
 /// Returns the currently available withdrawal amount (read-only).
-public fun available_withdrawal(self: &RateLimiter, clock: &Clock): u64 {
+public(package) fun available_withdrawal(self: &RateLimiter, clock: &Clock): u64 {
     if (!self.enabled) return std::u64::max_value!();
 
     let elapsed = elapsed_ms(self.last_updated_ms, clock);
