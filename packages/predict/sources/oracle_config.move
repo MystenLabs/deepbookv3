@@ -202,8 +202,10 @@ public(package) fun assert_live_oracle(oracle: &OracleSVI, clock: &Clock) {
     assert!(oracle_status != oracle::status_settled(), EOracleSettled);
     assert!(oracle_status != oracle::status_pending_settlement(), EOracleExpired);
     assert!(oracle_status != oracle::status_inactive(), EOracleInactive);
+    let now = clock.timestamp_ms();
+    assert!(now <= oracle.timestamp() + constants::staleness_threshold_ms!(), EOracleStale);
     assert!(
-        clock.timestamp_ms() <= oracle.timestamp() + constants::staleness_threshold_ms!(),
+        now <= oracle.basis_timestamp() + constants::basis_staleness_threshold_ms!(),
         EOracleStale,
     );
 }
@@ -218,8 +220,10 @@ public(package) fun assert_quoteable_oracle(oracle: &OracleSVI, clock: &Clock) {
     if (oracle_status == oracle::status_settled()) return;
     assert!(oracle_status != oracle::status_pending_settlement(), EOracleExpired);
     assert!(oracle_status != oracle::status_inactive(), EOracleInactive);
+    let now = clock.timestamp_ms();
+    assert!(now <= oracle.timestamp() + constants::staleness_threshold_ms!(), EOracleStale);
     assert!(
-        clock.timestamp_ms() <= oracle.timestamp() + constants::staleness_threshold_ms!(),
+        now <= oracle.basis_timestamp() + constants::basis_staleness_threshold_ms!(),
         EOracleStale,
     );
 }

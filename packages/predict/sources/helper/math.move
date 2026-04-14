@@ -18,6 +18,7 @@ use deepbook_predict::{constants, i64};
 const EInputZero: u64 = 0;
 const EExpOverflow: u64 = 1;
 const EInvalidPrecision: u64 = 2;
+const EPow10ExponentTooLarge: u64 = 3;
 
 // u128 constants for internal math
 const F: u128 = 1_000_000_000;
@@ -303,4 +304,16 @@ public fun mul_div_round_up(a: u64, b: u64, c: u64): u64 {
     let result = numerator / denominator;
     let round = if (numerator % denominator == 0) 0 else 1;
     (result + round) as u64
+}
+
+/// 10^n for small non-negative n. Capped at 18 because 10^19 overflows u64.
+public fun pow10(n: u64): u64 {
+    assert!(n <= 18, EPow10ExponentTooLarge);
+    let mut result: u64 = 1;
+    let mut i = 0;
+    while (i < n) {
+        result = result * 10;
+        i = i + 1;
+    };
+    result
 }

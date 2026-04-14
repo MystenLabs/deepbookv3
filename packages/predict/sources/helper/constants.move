@@ -45,6 +45,13 @@ public macro fun ms_per_year(): u64 { 31_536_000_000 }
 /// Oracle staleness threshold (30 seconds)
 public macro fun staleness_threshold_ms(): u64 { 30_000 }
 
+/// Maximum age of the cached operator basis (60 seconds).
+/// Consumed by `update_spot_from_lazer` (refuses to derive a forward against
+/// a stale basis) and by `oracle_config::assert_live_oracle` /
+/// `assert_quoteable_oracle` (refuses to quote against a stale basis).
+/// Sized as ~6x the operator's ~10s `update_basis` cadence.
+public macro fun basis_staleness_threshold_ms(): u64 { 60_000 }
+
 // === Curve Builder ===
 
 /// Default number of sample points for adaptive curve building

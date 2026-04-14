@@ -11,6 +11,12 @@ module deepbook_predict::oracle;
 
 use deepbook::math;
 use deepbook_predict::{constants::{Self, float_scaling}, i64, math as predict_math};
+use pyth_lazer::{
+    feed::{Self, Feed as LazerFeed},
+    i16::{Self as lazer_i16, I16 as LazerI16},
+    i64::{Self as lazer_i64, I64 as LazerI64},
+    update::{Self as lazer_update, Update as LazerUpdate}
+};
 use std::string::String;
 use sui::{clock::Clock, event, vec_set::{Self, VecSet}};
 
@@ -23,6 +29,14 @@ const EZeroForward: u64 = 3;
 const ECannotBeNegative: u64 = 4;
 const EZeroVariance: u64 = 5;
 const EOracleSettled: u64 = 6;
+const EZeroSpot: u64 = 7;
+const EBasisNotSeeded: u64 = 8;
+const EBasisStale: u64 = 9;
+const ELazerStaleUpdate: u64 = 10;
+const ELazerFeedNotFound: u64 = 11;
+const ELazerPriceUnavailable: u64 = 12;
+const ELazerNegativePrice: u64 = 13;
+const ELazerExponentOutOfRange: u64 = 14;
 
 // Pre-expiry oracle that has not been activated yet.
 const STATUS_INACTIVE: u8 = 0;
@@ -65,6 +79,15 @@ public struct OracleSVIUpdated has copy, drop, store {
     timestamp: u64,
 }
 
+public struct OracleSpotUpdatedFromLazer has copy, drop, store {
+    oracle_id: ID,
+    spot: u64,
+    forward: u64,
+    basis: u64,
+    lazer_timestamp_us: u64,
+    timestamp: u64,
+}
+
 // === Structs ===
 
 /// SVI volatility surface parameters.
@@ -82,13 +105,20 @@ public struct SVIParams has copy, drop, store {
     sigma: u64,
 }
 
-/// Price data updated at high frequency (~1s).
+/// Price data updated at high frequency (~200ms via Pyth Lazer) and ~10s
+/// (basis, via operator push).
 /// All values scaled by FLOAT_SCALING (1e9).
 public struct PriceData has copy, drop, store {
     /// Current spot price of the underlying
     spot: u64,
-    /// Forward price for this expiry
+    /// Forward price for this expiry; re-derived as `spot * basis` on every
+    /// Lazer spot tick.
     forward: u64,
+    /// Cached forward/spot carry ratio from the most recent `update_basis`.
+    /// Consumed by `update_spot_from_lazer` to rederive forward when a new
+    /// spot arrives without recomputing the ratio (which would compound
+    /// integer-division rounding).
+    basis: u64,
 }
 
 /// Shared oracle object storing SVI volatility surface data.
@@ -99,16 +129,34 @@ public struct OracleSVI has key {
     authorized_caps: VecSet<ID>,
     /// The underlying asset this oracle tracks (e.g., "BTC", "ETH")
     underlying_asset: String,
+    /// Pyth Lazer feed id for high-frequency spot updates. Initial deploy
+    /// uses id `1` (BTC/USD). Linear-scanned on every `update_spot_from_lazer`
+    /// to pick the right `Feed` out of the multi-feed `Update` payload.
+    pyth_lazer_feed_id: u32,
     /// Expiration timestamp in milliseconds
     expiry: u64,
     /// Whether the oracle is active
     active: bool,
-    /// Spot and forward prices (high frequency updates)
+    /// Spot, forward, and cached basis ratio
     prices: PriceData,
     /// SVI volatility surface parameters (low frequency updates)
     svi: SVIParams,
-    /// Timestamp of last update in milliseconds
+    /// Last update timestamp in ms. Bumped by both `update_basis` and
+    /// `update_spot_from_lazer`. Consumed by
+    /// `oracle_config::assert_live_oracle` / `assert_quoteable_oracle` for
+    /// the 30s user-facing staleness window.
     timestamp: u64,
+    /// Clock ms of the most recent `update_basis`. Gates how stale the
+    /// cached basis can be before `update_spot_from_lazer` refuses to
+    /// rederive a forward against it, and before the live/quoteable asserts
+    /// permit quoting. Enforces operator liveness independent of Lazer
+    /// cadence.
+    basis_timestamp: u64,
+    /// Lazer's microsecond timestamp from the most recent
+    /// `update_spot_from_lazer`. Enforces monotonic Lazer updates
+    /// independent of operator basis cadence. Not used for the user-facing
+    /// staleness window.
+    lazer_timestamp_us: u64,
     /// Settlement price, frozen on first update after expiry
     settlement_price: Option<u64>,
 }
@@ -139,16 +187,23 @@ public fun activate(oracle: &mut OracleSVI, cap: &OracleSVICap, clock: &Clock) {
 
 // TODO: Add validation on pushed spot/forward data so obviously bad oracle
 // updates are rejected before they mutate state.
-/// Push spot and forward prices (high frequency ~1s).
-/// If at or past expiry and not yet settled, freezes settlement price and
-/// deactivates. Settled oracles reject further price updates.
-public fun update_prices(
+/// Operator push (~10s): seed the cached basis from a matched (spot, forward)
+/// pair. Basis is computed as `forward / spot` in 1e9 float scaling and is
+/// preserved across subsequent Lazer spot pushes to avoid compounding
+/// integer-division rounding. If at or past expiry and not yet settled,
+/// freezes settlement price and deactivates. Settled oracles reject further
+/// updates.
+public fun update_basis(
     oracle: &mut OracleSVI,
     cap: &OracleSVICap,
-    prices: PriceData,
+    spot: u64,
+    forward: u64,
     clock: &Clock,
 ) {
     assert_authorized_cap(oracle, cap);
+    assert!(spot > 0, EZeroSpot);
+    assert!(forward > 0, EZeroForward);
+
     let oracle_status = oracle.status(clock);
     assert!(oracle_status != status_settled(), EOracleSettled);
 
@@ -158,27 +213,56 @@ public fun update_prices(
     // If at or past expiry, freeze settlement price and deactivate instead of
     // recording another live price update.
     if (oracle_status == status_pending_settlement()) {
-        oracle.settlement_price = option::some(prices.spot);
+        oracle.settlement_price = option::some(spot);
         oracle.active = false;
 
         event::emit(OracleSettled {
             oracle_id,
             expiry: oracle.expiry,
-            settlement_price: prices.spot,
+            settlement_price: spot,
             timestamp: now,
         });
         return
     };
 
-    oracle.prices = prices;
+    let basis = math::div(forward, spot);
+    oracle.prices = PriceData { spot, forward, basis };
     oracle.timestamp = now;
+    oracle.basis_timestamp = now;
 
     event::emit(OraclePricesUpdated {
         oracle_id,
-        spot: prices.spot,
-        forward: prices.forward,
+        spot,
+        forward,
         timestamp: now,
     });
+}
+
+/// Permissionless high-frequency push (~200ms): consume a verified Pyth
+/// Lazer `Update` and rederive `forward = spot * basis` against the cached
+/// basis. Trust root is the fact that `Update` can only be constructed
+/// inside the `pyth_lazer` package, so the Move type system enforces that
+/// this value came from Pyth's on-chain verifier. Caller builds a two-call
+/// PTB: `parse_and_verify_le_ecdsa_update` → `update_spot_from_lazer`.
+public fun update_spot_from_lazer(oracle: &mut OracleSVI, update: LazerUpdate, clock: &Clock) {
+    let ts_us = lazer_update::timestamp(&update);
+    let feed = find_lazer_feed(lazer_update::feeds_ref(&update), oracle.pyth_lazer_feed_id);
+
+    // Both Option layers must be Some: the field must exist in the update,
+    // and the value must be present (Lazer returns None if there are not
+    // enough publishers).
+    let price_outer = feed::price(feed);
+    assert!(price_outer.is_some(), ELazerPriceUnavailable);
+    let price_inner = price_outer.borrow();
+    assert!(price_inner.is_some(), ELazerPriceUnavailable);
+    let price = *price_inner.borrow();
+
+    let exp_outer = feed::exponent(feed);
+    assert!(exp_outer.is_some(), ELazerPriceUnavailable);
+    let exponent = *exp_outer.borrow();
+
+    let spot = normalize_pyth_price(price, exponent);
+    apply_lazer_spot(oracle, spot, ts_us, clock);
 }
 
 // TODO: Add validation on pushed SVI params so obviously bad updates are
@@ -271,6 +355,21 @@ public fun timestamp(oracle: &OracleSVI): u64 {
     oracle.timestamp
 }
 
+/// Get the timestamp of the most recent `update_basis` call.
+public fun basis_timestamp(oracle: &OracleSVI): u64 {
+    oracle.basis_timestamp
+}
+
+/// Get the most recent Lazer microsecond timestamp applied to this oracle.
+public fun lazer_timestamp_us(oracle: &OracleSVI): u64 {
+    oracle.lazer_timestamp_us
+}
+
+/// Get the Pyth Lazer feed id that this oracle tracks.
+public fun pyth_lazer_feed_id(oracle: &OracleSVI): u32 {
+    oracle.pyth_lazer_feed_id
+}
+
 /// Get the settlement price (only valid after settlement).
 public fun settlement_price(oracle: &OracleSVI): Option<u64> {
     oracle.settlement_price
@@ -313,11 +412,6 @@ public fun status_pending_settlement(): u8 {
 
 public fun status_settled(): u8 {
     STATUS_SETTLED
-}
-
-/// Create a new PriceData struct.
-public fun new_price_data(spot: u64, forward: u64): PriceData {
-    PriceData { spot, forward }
 }
 
 /// Create a new SVIParams struct.
@@ -365,7 +459,12 @@ public(package) fun assert_authorized_cap(oracle: &OracleSVI, cap: &OracleSVICap
 }
 
 /// Create a new SVI Oracle for an underlying + expiry. Returns the oracle ID.
-public(package) fun create_oracle(underlying_asset: String, expiry: u64, ctx: &mut TxContext): ID {
+public(package) fun create_oracle(
+    underlying_asset: String,
+    pyth_lazer_feed_id: u32,
+    expiry: u64,
+    ctx: &mut TxContext,
+): ID {
     let oracle_uid = object::new(ctx);
     let oracle_id = oracle_uid.to_inner();
 
@@ -373,9 +472,10 @@ public(package) fun create_oracle(underlying_asset: String, expiry: u64, ctx: &m
         id: oracle_uid,
         authorized_caps: vec_set::empty(),
         underlying_asset,
+        pyth_lazer_feed_id,
         expiry,
         active: false,
-        prices: PriceData { spot: 0, forward: 0 },
+        prices: PriceData { spot: 0, forward: 0, basis: 0 },
         svi: SVIParams {
             a: 0,
             b: 0,
@@ -384,6 +484,8 @@ public(package) fun create_oracle(underlying_asset: String, expiry: u64, ctx: &m
             sigma: 0,
         },
         timestamp: 0,
+        basis_timestamp: 0,
+        lazer_timestamp_us: 0,
         settlement_price: option::none(),
     };
 
@@ -392,6 +494,106 @@ public(package) fun create_oracle(underlying_asset: String, expiry: u64, ctx: &m
 }
 
 // === Private Functions ===
+
+/// Internal state transition for a verified Lazer spot. Kept separate from
+/// `update_spot_from_lazer` so it can be exercised directly by unit tests
+/// (verified `Update` values cannot be constructed outside `pyth_lazer`).
+fun apply_lazer_spot(oracle: &mut OracleSVI, spot: u64, lazer_timestamp_us: u64, clock: &Clock) {
+    assert!(spot > 0, EZeroSpot);
+    assert!(lazer_timestamp_us > oracle.lazer_timestamp_us, ELazerStaleUpdate);
+
+    let oracle_status = oracle.status(clock);
+    assert!(oracle_status != status_settled(), EOracleSettled);
+
+    let now = clock.timestamp_ms();
+    let oracle_id = oracle.id.to_inner();
+
+    // Lazer is the authoritative level source at expiry, so freeze the
+    // normalized Lazer spot as the settlement price.
+    if (oracle_status == status_pending_settlement()) {
+        oracle.settlement_price = option::some(spot);
+        oracle.active = false;
+        oracle.lazer_timestamp_us = lazer_timestamp_us;
+
+        event::emit(OracleSettled {
+            oracle_id,
+            expiry: oracle.expiry,
+            settlement_price: spot,
+            timestamp: now,
+        });
+        return
+    };
+
+    assert!(oracle.prices.basis > 0, EBasisNotSeeded);
+    assert!(
+        now <= oracle.basis_timestamp + constants::basis_staleness_threshold_ms!(),
+        EBasisStale,
+    );
+
+    let basis = oracle.prices.basis;
+    let forward = math::mul(spot, basis);
+    oracle.prices = PriceData { spot, forward, basis };
+    oracle.timestamp = now;
+    oracle.lazer_timestamp_us = lazer_timestamp_us;
+
+    event::emit(OracleSpotUpdatedFromLazer {
+        oracle_id,
+        spot,
+        forward,
+        basis,
+        lazer_timestamp_us,
+        timestamp: now,
+    });
+}
+
+/// Linear scan through a verified Lazer update's feeds for the one matching
+/// `target_id`. Mirrors the reference example; aborts if not found.
+fun find_lazer_feed(feeds: &vector<LazerFeed>, target_id: u32): &LazerFeed {
+    let len = feeds.length();
+    let mut i = 0;
+    while (i < len) {
+        let f = &feeds[i];
+        if (feed::feed_id(f) == target_id) {
+            return f
+        };
+        i = i + 1;
+    };
+    abort ELazerFeedNotFound
+}
+
+/// Convert a Pyth Lazer `(price, exponent)` pair to the predict package's
+/// 1e9-scaled u64. Target scaling is `price_1e9 = magnitude * 10^(exponent + 9)`.
+/// Aborts on negative price (crypto spot is always positive) or on a shift
+/// magnitude > 18 (10^19 overflows u64; real feeds use exponents in [-12, -4]).
+fun normalize_pyth_price(price: LazerI64, exponent: LazerI16): u64 {
+    assert!(!lazer_i64::get_is_negative(&price), ELazerNegativePrice);
+    let magnitude = lazer_i64::get_magnitude_if_positive(&price);
+
+    let exp_is_neg = lazer_i16::get_is_negative(&exponent);
+    let exp_mag = if (exp_is_neg) {
+        lazer_i16::get_magnitude_if_negative(&exponent) as u64
+    } else {
+        lazer_i16::get_magnitude_if_positive(&exponent) as u64
+    };
+
+    let target: u64 = 9;
+
+    if (exp_is_neg) {
+        if (exp_mag <= target) {
+            let shift = target - exp_mag;
+            assert!(shift <= 18, ELazerExponentOutOfRange);
+            magnitude * predict_math::pow10(shift)
+        } else {
+            let shift = exp_mag - target;
+            assert!(shift <= 18, ELazerExponentOutOfRange);
+            magnitude / predict_math::pow10(shift)
+        }
+    } else {
+        let shift = target + exp_mag;
+        assert!(shift <= 18, ELazerExponentOutOfRange);
+        magnitude * predict_math::pow10(shift)
+    }
+}
 
 /// Binary pricing from SVI total variance:
 /// - k = ln(strike / forward)

@@ -32,6 +32,7 @@ public struct OracleCreated has copy, drop, store {
     oracle_id: ID,
     oracle_cap_id: ID,
     underlying_asset: String,
+    pyth_lazer_feed_id: u32,
     expiry: u64,
     min_strike: u64,
     tick_size: u64,
@@ -101,19 +102,24 @@ public fun create_oracle_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): Oracle
 }
 
 /// Create a new Oracle. Returns the oracle ID.
+///
+/// `pyth_lazer_feed_id` is the Pyth Lazer feed id that the permissionless
+/// `oracle::update_spot_from_lazer` path will select out of the multi-feed
+/// verified `Update` payload (e.g. `1` for BTC/USD).
 public fun create_oracle(
     registry: &mut Registry,
     predict: &mut Predict,
     _admin_cap: &AdminCap,
     cap: &OracleSVICap,
     underlying_asset: String,
+    pyth_lazer_feed_id: u32,
     expiry: u64,
     min_strike: u64,
     tick_size: u64,
     ctx: &mut TxContext,
 ): ID {
     assert_valid_strike_grid(min_strike, tick_size);
-    let oracle_id = oracle::create_oracle(underlying_asset, expiry, ctx);
+    let oracle_id = oracle::create_oracle(underlying_asset, pyth_lazer_feed_id, expiry, ctx);
     let cap_id = object::id(cap);
 
     if (!registry.oracle_ids.contains(cap_id)) {
@@ -125,6 +131,7 @@ public fun create_oracle(
         oracle_id,
         oracle_cap_id: cap_id,
         underlying_asset,
+        pyth_lazer_feed_id,
         expiry,
         min_strike,
         tick_size,

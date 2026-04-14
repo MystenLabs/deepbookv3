@@ -28,7 +28,7 @@ import {
   refreshOracleAndMintTx,
   registerOracleCapTx,
   supplyTx,
-  updatePricesTx,
+  updateBasisTx,
   updateSviTx,
 } from "./runtime.js";
 
@@ -82,7 +82,7 @@ function summarizeRows(rows: ExecutionResult[]): ActionSummary {
 function buildResultsFile(byAction: Record<ActionName, ExecutionResult[]>): ResultsFile {
   const summaryByAction: ResultsFile["summary"]["byAction"] = {};
 
-  for (const action of ["update_prices", "update_svi", "mint"] as const) {
+  for (const action of ["update_basis", "update_svi", "mint"] as const) {
     if (byAction[action].length > 0) {
       summaryByAction[action] = summarizeRows(byAction[action]);
     }
@@ -91,7 +91,7 @@ function buildResultsFile(byAction: Record<ActionName, ExecutionResult[]>): Resu
   return {
     schema_version: RESULTS_SCHEMA_VERSION,
     summary: {
-      totalTxs: byAction.update_prices.length + byAction.update_svi.length + byAction.mint.length,
+      totalTxs: byAction.update_basis.length + byAction.update_svi.length + byAction.mint.length,
       byAction: summaryByAction,
     },
     mints: byAction.mint,
@@ -131,6 +131,7 @@ async function setupSimulation(): Promise<SimState> {
       predictId,
       oracleCapId,
       underlyingAsset: "BTC",
+      pythLazerFeedId: 1,
       expiry: EXPIRY_MS,
       minStrike: ORACLE_MIN_STRIKE,
       tickSize: ORACLE_TICK_SIZE,
@@ -184,7 +185,7 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
   console.log(`[${ts()}] --- Executing ${rows.length} actions ---\n`);
 
   const byAction: Record<ActionName, ExecutionResult[]> = {
-    update_prices: [],
+    update_basis: [],
     update_svi: [],
     mint: [],
   };
@@ -197,7 +198,7 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
     const nextRow = i + 1 < rows.length ? rows[i + 1] : null;
     const nextNextRow = i + 2 < rows.length ? rows[i + 2] : null;
     if (
-      row.action === "update_prices" &&
+      row.action === "update_basis" &&
       nextRow?.action === "update_svi" &&
       nextNextRow?.action === "mint"
     ) {
@@ -238,12 +239,12 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
       continue;
     }
 
-    if (row.action === "update_prices") {
+    if (row.action === "update_basis") {
       const gas = await execute(
-        () => updatePricesTx(state.oracleId, state.oracleCapId, row.spot, row.forward),
-        "update_prices"
+        () => updateBasisTx(state.oracleId, state.oracleCapId, row.spot, row.forward),
+        "update_basis"
       );
-      byAction.update_prices.push({ wallMs: performance.now() - startedAt, ...gas });
+      byAction.update_basis.push({ wallMs: performance.now() - startedAt, ...gas });
       i++;
       continue;
     }

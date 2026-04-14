@@ -120,6 +120,7 @@ export function createOracleTx(params: {
   predictId: string;
   oracleCapId: string;
   underlyingAsset: string;
+  pythLazerFeedId: number;
   expiry: bigint;
   minStrike: bigint;
   tickSize: bigint;
@@ -133,6 +134,7 @@ export function createOracleTx(params: {
       tx.object(ADMIN_CAP_ID),
       tx.object(params.oracleCapId),
       tx.pure.string(params.underlyingAsset),
+      tx.pure.u32(params.pythLazerFeedId),
       tx.pure.u64(params.expiry),
       tx.pure.u64(params.minStrike),
       tx.pure.u64(params.tickSize),
@@ -159,15 +161,17 @@ export function activateOracleTx(oracleId: string, oracleCapId: string): Transac
   return tx;
 }
 
-export function updatePricesTx(oracleId: string, oracleCapId: string, spot: bigint, forward: bigint): Transaction {
+export function updateBasisTx(oracleId: string, oracleCapId: string, spot: bigint, forward: bigint): Transaction {
   const tx = new Transaction();
-  const priceData = tx.moveCall({
-    target: target("oracle", "new_price_data"),
-    arguments: [tx.pure.u64(spot), tx.pure.u64(forward)],
-  });
   tx.moveCall({
-    target: target("oracle", "update_prices"),
-    arguments: [tx.object(oracleId), tx.object(oracleCapId), priceData, tx.object(CLOCK_ID)],
+    target: target("oracle", "update_basis"),
+    arguments: [
+      tx.object(oracleId),
+      tx.object(oracleCapId),
+      tx.pure.u64(spot),
+      tx.pure.u64(forward),
+      tx.object(CLOCK_ID),
+    ],
   });
   return tx;
 }
@@ -309,13 +313,15 @@ export function refreshOracleAndMintTx(params: {
   };
 }): Transaction {
   const tx = new Transaction();
-  const priceData = tx.moveCall({
-    target: target("oracle", "new_price_data"),
-    arguments: [tx.pure.u64(params.spot), tx.pure.u64(params.forward)],
-  });
   tx.moveCall({
-    target: target("oracle", "update_prices"),
-    arguments: [tx.object(params.oracleId), tx.object(params.oracleCapId), priceData, tx.object(CLOCK_ID)],
+    target: target("oracle", "update_basis"),
+    arguments: [
+      tx.object(params.oracleId),
+      tx.object(params.oracleCapId),
+      tx.pure.u64(params.spot),
+      tx.pure.u64(params.forward),
+      tx.object(CLOCK_ID),
+    ],
   });
 
   const rho = tx.moveCall({

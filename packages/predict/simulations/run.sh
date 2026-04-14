@@ -222,7 +222,7 @@ publish_package() {
   local package_path="$1"
   sui_client test-publish "$package_path" \
     --build-env sim --with-unpublished-dependencies --gas-budget 2000000000 \
-    --skip-dependency-verification --json 2>/dev/null || true
+    --skip-dependency-verification --allow-dirty --force --json 2>/tmp/sui-publish.err || true
 }
 
 # --- 1. Genesis ---
@@ -320,9 +320,62 @@ if [ "$RUN_SETUP" -eq 1 ]; then
 
   mv "$DUSDC_DIR/Move.toml.bak" "$DUSDC_DIR/Move.toml"
 
+  # predict's Move.toml depends on the real `pyth_lazer` package via git, which
+  # transitively pulls in `wormhole`. Wormhole's source is designed to be
+  # linked as pre-published bytecode via `dep-replacements.testnet/mainnet`
+  # and cannot be compiled fresh against 2024.beta (old `struct` / `friend`
+  # syntax). test-publish on localnet has no pre-published ids, so both deps
+  # are unavailable here. Point predict at a local stub pyth_lazer for sim
+  # builds — the stub exposes just the symbols `oracle::update_spot_from_lazer`
+  # references so the module typechecks without the real deps.
+  #
+  # We can't just drop it in as a `local` dep at 0x0 alongside predict: both
+  # packages would compile into the same 0x0 namespace and predict's own
+  # `deepbook_predict::i64` module collides with stub's `pyth_lazer::i64`. So
+  # publish the stub first in its own tx, capture its real address, then
+  # point predict at it via `dep-replacements.sim` with `published-at` set.
+  echo "==> Phase 2b: Publishing pyth_lazer stub..."
+  STUB_PYTH_LAZER_DIR="$SCRIPT_DIR/stubs/pyth_lazer"
+  DEPS_DIR="$INSTANCE_DIR/deps"
+  rm -rf "$DEPS_DIR"
+  mkdir -p "$DEPS_DIR"
+  cp -R "$STUB_PYTH_LAZER_DIR" "$DEPS_DIR/pyth_lazer"
+  inject_env "$DEPS_DIR/pyth_lazer/Move.toml" "$CHAIN_ID"
+
+  STUB_OUTPUT=$(publish_package "$DEPS_DIR/pyth_lazer" "pyth_lazer_stub")
+  check_publish "$STUB_OUTPUT" "pyth_lazer stub"
+  STUB_PKG_ID=$(echo "$STUB_OUTPUT" | extract_published_package_id)
+  echo "    pyth_lazer stub: $STUB_PKG_ID"
+
   # Publish predict
   echo "==> Phase 3: Publishing predict..."
+
   inject_env "$PREDICT_DIR/Move.toml" "$CHAIN_ID"
+  python3 - "$PREDICT_DIR/Move.toml" "$DEPS_DIR/pyth_lazer" "$STUB_PKG_ID" <<'PY'
+import pathlib, re, sys
+toml_path = pathlib.Path(sys.argv[1])
+pyth_lazer_path = sys.argv[2]
+stub_pkg_id = sys.argv[3]
+text = toml_path.read_text()
+# Rewrite main git dep to point at the local stub (for source-level typecheck).
+text = re.sub(
+    r"pyth_lazer = \{ git[^}]*\}",
+    f'pyth_lazer = {{ local = "{pyth_lazer_path}" }}',
+    text,
+)
+# Drop the testnet dep-replacements block (its published-at points at testnet,
+# not our sim-local stub).
+text = re.sub(r"\[dep-replacements\.testnet\][^\[]*", "", text)
+# Add a sim dep-replacements block pinning pyth_lazer to the just-published
+# stub address. Without this, sui would try to link pyth_lazer as unpublished
+# (address 0x0), colliding with deepbook_predict's own 0x0 i64 module.
+text = text.rstrip() + (
+    f'\n\n[dep-replacements.sim]\n'
+    f'pyth_lazer = {{ local = "{pyth_lazer_path}", '
+    f'published-at = "{stub_pkg_id}", original-id = "{stub_pkg_id}" }}\n'
+)
+toml_path.write_text(text)
+PY
 
   PREDICT_OUTPUT=$(publish_package "$PREDICT_DIR" "Predict")
   check_publish "$PREDICT_OUTPUT" "Predict"
