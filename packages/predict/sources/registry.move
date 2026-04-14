@@ -170,6 +170,34 @@ public fun set_utilization_multiplier(
     predict.set_utilization_multiplier(multiplier);
 }
 
+/// Set the global minimum allowed post-spread ask price at mint time.
+public fun set_min_ask_price(predict: &mut Predict, _admin_cap: &AdminCap, value: u64) {
+    predict.set_min_ask_price(value);
+}
+
+/// Set the global maximum allowed post-spread ask price at mint time.
+public fun set_max_ask_price(predict: &mut Predict, _admin_cap: &AdminCap, value: u64) {
+    predict.set_max_ask_price(value);
+}
+
+/// Set a per-oracle ask-bound override. Authorized by the oracle's own cap;
+/// no `AdminCap` required. The override may only tighten the global bounds.
+public fun set_oracle_ask_bounds(
+    predict: &mut Predict,
+    oracle: &OracleSVI,
+    cap: &OracleSVICap,
+    min: u64,
+    max: u64,
+) {
+    predict.set_oracle_ask_bounds(oracle, cap, min, max);
+}
+
+/// Clear a per-oracle ask-bound override so the oracle inherits the global
+/// default again. Authorized by the oracle's own cap.
+public fun clear_oracle_ask_bounds(predict: &mut Predict, oracle: &OracleSVI, cap: &OracleSVICap) {
+    predict.clear_oracle_ask_bounds(oracle, cap);
+}
+
 /// Set max total exposure percentage.
 public fun set_max_total_exposure_pct(predict: &mut Predict, _admin_cap: &AdminCap, pct: u64) {
     predict.set_max_total_exposure_pct(pct);

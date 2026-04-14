@@ -13,7 +13,7 @@ use deepbook_predict::{
     constants,
     market_key::MarketKey,
     math::mul_div_round_down,
-    oracle::OracleSVI,
+    oracle::{OracleSVI, OracleSVICap},
     oracle_config::{Self, OracleConfig},
     plp::PLP,
     predict_manager::{Self, PredictManager},
@@ -40,6 +40,8 @@ const EZeroQuantity: u64 = 3;
 const EZeroAmount: u64 = 4;
 const EZeroVaultValue: u64 = 5;
 const EZeroSharesMinted: u64 = 6;
+const EAskPriceOutOfBounds: u64 = 7;
+const EAskBoundLooserThanGlobal: u64 = 8;
 
 // === Events ===
 
@@ -116,6 +118,20 @@ public struct PricingConfigUpdated has copy, drop, store {
     base_spread: u64,
     min_spread: u64,
     utilization_multiplier: u64,
+    min_ask_price: u64,
+    max_ask_price: u64,
+}
+
+public struct OracleAskBoundsSet has copy, drop, store {
+    predict_id: ID,
+    oracle_id: ID,
+    min_ask_price: u64,
+    max_ask_price: u64,
+}
+
+public struct OracleAskBoundsCleared has copy, drop, store {
+    predict_id: ID,
+    oracle_id: ID,
 }
 
 public struct RiskConfigUpdated has copy, drop, store {
@@ -191,41 +207,14 @@ public fun get_trade_amounts(
     quantity: u64,
     clock: &Clock,
 ): (u64, u64) {
-    predict.oracle_config.assert_key_matches(oracle, &key);
-    oracle_config::assert_quoteable_oracle(oracle, clock);
+    let (ask, bid) = predict.trade_prices(oracle, key, clock);
+    (math::mul(ask, quantity), math::mul(bid, quantity))
+}
 
-    let up_price = oracle.compute_price(key.strike());
-    if (oracle.is_settled()) {
-        let fair_price = if (key.is_up()) {
-            up_price
-        } else {
-            constants::float_scaling!() - up_price
-        };
-        let amount = math::mul(fair_price, quantity);
-        return (amount, amount)
-    };
-
-    let spread = predict
-        .pricing_config
-        .quote_spread_from_fair_price(
-            up_price,
-            predict.vault.total_mtm(),
-            predict.vault.balance(),
-        );
-    let up_bid = if (up_price > spread) {
-        up_price - spread
-    } else {
-        0
-    };
-    let up_ask = (up_price + spread).min(constants::float_scaling!());
-    let dn_bid = constants::float_scaling!() - up_ask;
-    let dn_ask = constants::float_scaling!() - up_bid;
-
-    if (key.is_up()) {
-        (math::mul(up_ask, quantity), math::mul(up_bid, quantity))
-    } else {
-        (math::mul(dn_ask, quantity), math::mul(dn_bid, quantity))
-    }
+/// Resolved ask-price bounds for an oracle, after intersecting any per-oracle
+/// override with the global default. Exposed for UI/preview.
+public fun ask_bounds(predict: &Predict, oracle_id: ID): (u64, u64) {
+    predict.resolve_ask_bounds(oracle_id)
 }
 
 /// Buy a position using an enabled quote asset.
@@ -256,7 +245,9 @@ public fun mint<Quote>(
 
     // Quote against the post-trade state so the trader pays for the liability
     // their own mint just added to the vault.
-    let (cost, _) = predict.get_trade_amounts(oracle, key, quantity, clock);
+    let (ask, _) = predict.trade_prices(oracle, key, clock);
+    predict.assert_mintable_ask(oracle.id(), ask);
+    let cost = math::mul(ask, quantity);
 
     let payment = manager.withdraw<Quote>(cost, ctx).into_balance();
     predict.vault.accept_payment(payment);
@@ -274,7 +265,7 @@ public fun mint<Quote>(
         is_up,
         quantity,
         cost,
-        ask_price: math::div(cost, quantity),
+        ask_price: ask,
     });
 }
 
@@ -338,37 +329,7 @@ public fun get_range_trade_amounts(
     quantity: u64,
     clock: &Clock,
 ): (u64, u64) {
-    predict.oracle_config.assert_range_key_matches(oracle, &key);
-    oracle_config::assert_quoteable_oracle(oracle, clock);
-
-    // Fair range price = up(lower) − up(higher). UP price is monotone
-    // non-increasing in strike, so this is always non-negative for a well-formed
-    // key (`lower < higher`). Settled compute_price returns 1.0 if settlement >
-    // strike, 0 otherwise, so the range evaluates to 1.0 iff settlement is in
-    // the half-open band (lower, higher].
-    let lower_up_price = oracle.compute_price(key.lower_strike());
-    let higher_up_price = oracle.compute_price(key.higher_strike());
-    let fair_price = lower_up_price - higher_up_price;
-
-    if (oracle.is_settled()) {
-        let amount = math::mul(fair_price, quantity);
-        return (amount, amount)
-    };
-
-    let spread = predict
-        .pricing_config
-        .quote_spread_from_fair_price(
-            fair_price,
-            predict.vault.total_mtm(),
-            predict.vault.balance(),
-        );
-    let ask = (fair_price + spread).min(constants::float_scaling!());
-    let bid = if (fair_price > spread) {
-        fair_price - spread
-    } else {
-        0
-    };
-
+    let (ask, bid) = predict.range_trade_prices(oracle, key, clock);
     (math::mul(ask, quantity), math::mul(bid, quantity))
 }
 
@@ -399,7 +360,9 @@ public fun mint_range<Quote>(
 
     // Quote against the post-trade state so the trader pays for the liability
     // their own mint just added to the vault.
-    let (cost, _) = predict.get_range_trade_amounts(oracle, key, quantity, clock);
+    let (ask, _) = predict.range_trade_prices(oracle, key, clock);
+    predict.assert_mintable_ask(oracle.id(), ask);
+    let cost = math::mul(ask, quantity);
 
     let payment = manager.withdraw<Quote>(cost, ctx).into_balance();
     predict.vault.accept_payment(payment);
@@ -417,7 +380,7 @@ public fun mint_range<Quote>(
         higher_strike: higher,
         quantity,
         cost,
-        ask_price: math::div(cost, quantity),
+        ask_price: ask,
     });
 }
 
@@ -642,6 +605,52 @@ public(package) fun set_utilization_multiplier(predict: &mut Predict, multiplier
     predict.emit_pricing_config_updated();
 }
 
+/// Set the global minimum allowed post-spread ask price at mint time.
+public(package) fun set_min_ask_price(predict: &mut Predict, value: u64) {
+    predict.pricing_config.set_min_ask_price(value);
+    predict.emit_pricing_config_updated();
+}
+
+/// Set the global maximum allowed post-spread ask price at mint time.
+public(package) fun set_max_ask_price(predict: &mut Predict, value: u64) {
+    predict.pricing_config.set_max_ask_price(value);
+    predict.emit_pricing_config_updated();
+}
+
+/// Set a per-oracle ask-bound override. Authorized by the oracle's own cap.
+/// The override may only tighten the global bounds — never loosen them.
+public(package) fun set_oracle_ask_bounds(
+    predict: &mut Predict,
+    oracle: &OracleSVI,
+    cap: &OracleSVICap,
+    min: u64,
+    max: u64,
+) {
+    assert!(min >= predict.pricing_config.min_ask_price(), EAskBoundLooserThanGlobal);
+    assert!(max <= predict.pricing_config.max_ask_price(), EAskBoundLooserThanGlobal);
+    predict.oracle_config.set_oracle_ask_bounds(oracle, cap, min, max);
+    event::emit(OracleAskBoundsSet {
+        predict_id: object::id(predict),
+        oracle_id: oracle.id(),
+        min_ask_price: min,
+        max_ask_price: max,
+    });
+}
+
+/// Clear a per-oracle ask-bound override so the oracle inherits the global
+/// default again. Authorized by the oracle's own cap.
+public(package) fun clear_oracle_ask_bounds(
+    predict: &mut Predict,
+    oracle: &OracleSVI,
+    cap: &OracleSVICap,
+) {
+    predict.oracle_config.clear_oracle_ask_bounds(oracle, cap);
+    event::emit(OracleAskBoundsCleared {
+        predict_id: object::id(predict),
+        oracle_id: oracle.id(),
+    });
+}
+
 /// Set max total exposure percentage.
 public(package) fun set_max_total_exposure_pct(predict: &mut Predict, pct: u64) {
     predict.risk_config.set_max_total_exposure_pct(pct);
@@ -708,7 +717,109 @@ fun emit_pricing_config_updated(predict: &Predict) {
         base_spread: predict.pricing_config.base_spread(),
         min_spread: predict.pricing_config.min_spread(),
         utilization_multiplier: predict.pricing_config.utilization_multiplier(),
+        min_ask_price: predict.pricing_config.min_ask_price(),
+        max_ask_price: predict.pricing_config.max_ask_price(),
     });
+}
+
+/// Per-unit `(ask, bid)` for a single-strike position, post-spread (or settled
+/// fair price when the oracle is settled).
+fun trade_prices(predict: &Predict, oracle: &OracleSVI, key: MarketKey, clock: &Clock): (u64, u64) {
+    predict.oracle_config.assert_key_matches(oracle, &key);
+    oracle_config::assert_quoteable_oracle(oracle, clock);
+
+    let up_price = oracle.compute_price(key.strike());
+    if (oracle.is_settled()) {
+        let fair_price = if (key.is_up()) {
+            up_price
+        } else {
+            constants::float_scaling!() - up_price
+        };
+        return (fair_price, fair_price)
+    };
+
+    let spread = predict
+        .pricing_config
+        .quote_spread_from_fair_price(
+            up_price,
+            predict.vault.total_mtm(),
+            predict.vault.balance(),
+        );
+    let up_bid = if (up_price > spread) {
+        up_price - spread
+    } else {
+        0
+    };
+    let up_ask = (up_price + spread).min(constants::float_scaling!());
+    let dn_bid = constants::float_scaling!() - up_ask;
+    let dn_ask = constants::float_scaling!() - up_bid;
+
+    if (key.is_up()) {
+        (up_ask, up_bid)
+    } else {
+        (dn_ask, dn_bid)
+    }
+}
+
+/// Per-unit `(ask, bid)` for a vertical range position, post-spread.
+fun range_trade_prices(
+    predict: &Predict,
+    oracle: &OracleSVI,
+    key: RangeKey,
+    clock: &Clock,
+): (u64, u64) {
+    predict.oracle_config.assert_range_key_matches(oracle, &key);
+    oracle_config::assert_quoteable_oracle(oracle, clock);
+
+    // Fair range price = up(lower) − up(higher). UP price is monotone
+    // non-increasing in strike, so this is always non-negative for a well-formed
+    // key (`lower < higher`). Settled compute_price returns 1.0 if settlement >
+    // strike, 0 otherwise, so the range evaluates to 1.0 iff settlement is in
+    // the half-open band (lower, higher].
+    let lower_up_price = oracle.compute_price(key.lower_strike());
+    let higher_up_price = oracle.compute_price(key.higher_strike());
+    let fair_price = lower_up_price - higher_up_price;
+
+    if (oracle.is_settled()) {
+        return (fair_price, fair_price)
+    };
+
+    let spread = predict
+        .pricing_config
+        .quote_spread_from_fair_price(
+            fair_price,
+            predict.vault.total_mtm(),
+            predict.vault.balance(),
+        );
+    let ask = (fair_price + spread).min(constants::float_scaling!());
+    let bid = if (fair_price > spread) {
+        fair_price - spread
+    } else {
+        0
+    };
+
+    (ask, bid)
+}
+
+/// Resolve the effective ask-price bounds for an oracle: the per-oracle
+/// override (if any) intersected with the global default. The intersection
+/// guarantees the resolved bounds are never looser than the global, even if
+/// admin tightens the global after a per-oracle override has been set.
+fun resolve_ask_bounds(predict: &Predict, oracle_id: ID): (u64, u64) {
+    let global_min = predict.pricing_config.min_ask_price();
+    let global_max = predict.pricing_config.max_ask_price();
+    let override = predict.oracle_config.ask_bounds_override(oracle_id);
+    if (override.is_some()) {
+        let bounds = override.destroy_some();
+        (bounds.ask_bounds_min().max(global_min), bounds.ask_bounds_max().min(global_max))
+    } else {
+        (global_min, global_max)
+    }
+}
+
+fun assert_mintable_ask(predict: &Predict, oracle_id: ID, ask_price: u64) {
+    let (min_ask, max_ask) = predict.resolve_ask_bounds(oracle_id);
+    assert!(ask_price >= min_ask && ask_price <= max_ask, EAskPriceOutOfBounds);
 }
 
 fun refresh_oracle_risk(predict: &mut Predict, oracle: &OracleSVI) {

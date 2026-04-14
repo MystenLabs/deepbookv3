@@ -360,6 +360,10 @@ public(package) fun create_oracle_cap(ctx: &mut TxContext): OracleSVICap {
     OracleSVICap { id: object::new(ctx) }
 }
 
+public(package) fun assert_authorized_cap(oracle: &OracleSVI, cap: &OracleSVICap) {
+    assert!(oracle.authorized_caps.contains(&cap.id.to_inner()), EInvalidOracleCap);
+}
+
 /// Create a new SVI Oracle for an underlying + expiry. Returns the oracle ID.
 public(package) fun create_oracle(underlying_asset: String, expiry: u64, ctx: &mut TxContext): ID {
     let oracle_uid = object::new(ctx);
@@ -388,10 +392,6 @@ public(package) fun create_oracle(underlying_asset: String, expiry: u64, ctx: &m
 }
 
 // === Private Functions ===
-
-fun assert_authorized_cap(oracle: &OracleSVI, cap: &OracleSVICap) {
-    assert!(oracle.authorized_caps.contains(&cap.id.to_inner()), EInvalidOracleCap);
-}
 
 /// Binary pricing from SVI total variance:
 /// - k = ln(strike / forward)

@@ -10,6 +10,7 @@ use deepbook_predict::{constants, math as predict_math};
 // === Errors ===
 const EInvalidSpread: u64 = 0;
 const EFairPriceAlreadySettled: u64 = 1;
+const EInvalidAskBound: u64 = 2;
 
 // === Structs ===
 
@@ -22,6 +23,10 @@ public struct PricingConfig has store {
     /// Utilization multiplier in FLOAT_SCALING (e.g., 2_000_000_000 = 2x).
     /// Controls how aggressively spread widens as vault approaches capacity.
     utilization_multiplier: u64,
+    /// Global minimum allowed post-spread ask price at mint time.
+    min_ask_price: u64,
+    /// Global maximum allowed post-spread ask price at mint time.
+    max_ask_price: u64,
 }
 
 // === Public Functions ===
@@ -38,6 +43,14 @@ public fun utilization_multiplier(config: &PricingConfig): u64 {
     config.utilization_multiplier
 }
 
+public fun min_ask_price(config: &PricingConfig): u64 {
+    config.min_ask_price
+}
+
+public fun max_ask_price(config: &PricingConfig): u64 {
+    config.max_ask_price
+}
+
 // === Public-Package Functions ===
 
 public(package) fun new(): PricingConfig {
@@ -45,6 +58,8 @@ public(package) fun new(): PricingConfig {
         base_spread: constants::default_base_spread!(),
         min_spread: constants::default_min_spread!(),
         utilization_multiplier: constants::default_utilization_multiplier!(),
+        min_ask_price: constants::default_min_ask_price!(),
+        max_ask_price: constants::default_max_ask_price!(),
     }
 }
 
@@ -62,8 +77,17 @@ public(package) fun set_utilization_multiplier(config: &mut PricingConfig, multi
     config.utilization_multiplier = multiplier;
 }
 
-// TODO: Add admin-configurable tail guards so minting can reject fair prices
-// in unreliable extremes (for example <= 0.02 or >= 0.98).
+public(package) fun set_min_ask_price(config: &mut PricingConfig, value: u64) {
+    assert!(value < config.max_ask_price, EInvalidAskBound);
+    config.min_ask_price = value;
+}
+
+public(package) fun set_max_ask_price(config: &mut PricingConfig, value: u64) {
+    assert!(value > config.min_ask_price, EInvalidAskBound);
+    assert!(value < constants::float_scaling!(), EInvalidAskBound);
+    config.max_ask_price = value;
+}
+
 public(package) fun quote_spread_from_fair_price(
     config: &PricingConfig,
     fair_price: u64,
