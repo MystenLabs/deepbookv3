@@ -159,7 +159,7 @@ sui_client() {
 }
 
 cleanup() {
-  for f in "$PACKAGES_DIR"/deepbook/Move.toml "$PACKAGES_DIR"/token/Move.toml "$PREDICT_DIR/Move.toml" "$DUSDC_DIR/Move.toml"; do
+  for f in "$PACKAGES_DIR"/deepbook/Move.toml "$PACKAGES_DIR"/token/Move.toml "$PREDICT_DIR/Move.toml" "$PREDICT_DIR/Move.lock" "$DUSDC_DIR/Move.toml"; do
     [ -f "$f.bak" ] && mv "$f.bak" "$f"
   done
   find "$PACKAGES_DIR" -name "Pub.sim.toml" -delete 2>/dev/null || true
@@ -334,6 +334,10 @@ if [ "$RUN_SETUP" -eq 1 ]; then
   # `deepbook_predict::i64` module collides with stub's `pyth_lazer::i64`. So
   # publish the stub first in its own tx, capture its real address, then
   # point predict at it via `dep-replacements.sim` with `published-at` set.
+  # test-publish regenerates `[pinned.sim.*]` entries in predict/Move.lock with
+  # instance-specific local paths. Snapshot so cleanup restores it to pristine.
+  cp "$PREDICT_DIR/Move.lock" "$PREDICT_DIR/Move.lock.bak"
+
   echo "==> Phase 2b: Publishing pyth_lazer stub..."
   STUB_PYTH_LAZER_DIR="$SCRIPT_DIR/stubs/pyth_lazer"
   DEPS_DIR="$INSTANCE_DIR/deps"
