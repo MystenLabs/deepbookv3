@@ -61,8 +61,7 @@ module deepbook_predict::strike_matrix;
 
 use deepbook::{constants::max_u64, math};
 use deepbook_predict::{constants, oracle_config::CurvePoint};
-use sui::table::{Self, Table};
-use sui::clock::Clock;
+use sui::{clock::Clock, table::{Self, Table}};
 
 const PAGE_SLOTS: u64 = 512;
 

@@ -44,6 +44,7 @@ const EZeroSharesMinted: u64 = 6;
 const EAskPriceOutOfBounds: u64 = 7;
 const EAskBoundLooserThanGlobal: u64 = 8;
 const EOracleNotSettled: u64 = 9;
+const EStaleOracleMtm: u64 = 10;
 
 // === Events ===
 
@@ -216,25 +217,8 @@ public fun get_trade_amounts(
     (math::mul(ask, quantity), math::mul(bid, quantity))
 }
 
-public fun get_active_oracle_ids(predict: &Predict): vector<ID> {
-    predict.oracle_config.active_oracles()
-}
-
-public fun remove_active_oracle(
-    predict: &mut Predict,
-    oracle: &OracleSVI,
-    clock: &Clock,
-) {
-    let last_mtm_update = predict.vault.get_last_mtm_update(oracle.id());
-    predict.oracle_config.remove_settled_oracle(oracle, last_mtm_update, clock);
-}
-
-public fun update_oracle_mtm(
-    predict: &mut Predict,
-    oracle: &OracleSVI,
-    clock: &Clock,
-) {
-    predict.refresh_oracle_risk(oracle, clock);
+public fun unsettled_exposed_oracles(predict: &Predict): &vector<ID> {
+    predict.vault.unsettled_exposed_oracles()
 }
 
 /// Resolved ask-price bounds for an oracle, after intersecting any per-oracle
@@ -562,7 +546,7 @@ public(package) fun disable_quote_asset<Quote>(predict: &mut Predict) {
     });
 }
 
-public(package) fun add_active_oracle(
+public(package) fun add_oracle_grid(
     predict: &mut Predict,
     oracle_id: ID,
     min_strike: u64,
@@ -570,9 +554,22 @@ public(package) fun add_active_oracle(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    predict.oracle_config.add_active_oracle(oracle_id, min_strike, tick_size);
+    predict.oracle_config.add_oracle_grid(oracle_id, min_strike, tick_size);
     let max_strike = min_strike + tick_size * constants::oracle_strike_grid_ticks!();
     predict.vault.init_oracle_matrix(oracle_id, min_strike, max_strike, tick_size, clock, ctx);
+}
+
+public fun refresh_oracle_mtm(predict: &mut Predict, oracle: &OracleSVI, clock: &Clock) {
+    if (!oracle.is_settled()) {
+        oracle_config::assert_live_oracle(oracle, clock);
+    };
+    predict.refresh_oracle_risk(oracle, clock);
+}
+
+public fun sync_settled_oracle(predict: &mut Predict, oracle: &OracleSVI, clock: &Clock) {
+    assert!(oracle.is_settled(), EOracleNotSettled);
+    predict.refresh_oracle_risk(oracle, clock);
+    predict.vault.remove_unsettled_exposed_oracle(oracle.id());
 }
 
 /// Whether trading is currently paused.
@@ -759,13 +756,16 @@ public(package) fun vault_balance(predict: &Predict): u64 {
 // === Private Functions ===
 
 fun assert_total_mtm_fresh(predict: &Predict, clock: &Clock) {
-    let active_oracles = predict.oracle_config.active_oracles();
+    let unsettled_exposed_oracles = predict.vault.unsettled_exposed_oracles();
     let mut i = 0;
-    let len = active_oracles.length();
+    let len = unsettled_exposed_oracles.length();
+    let now = clock.timestamp_ms();
     while (i < len) {
-        let oracle_id = active_oracles[i];
+        let oracle_id = unsettled_exposed_oracles[i];
         let last_update = predict.vault.get_last_mtm_update(oracle_id);
-        assert!(clock.timestamp_ms() - last_update <= constants::mtm_freshness_ms!(), EOracleNotSettled);
+        if (now > last_update) {
+            assert!(now - last_update <= constants::mtm_freshness_ms!(), EStaleOracleMtm);
+        };
         i = i + 1;
     }
 }
@@ -945,7 +945,9 @@ fun refresh_oracle_risk(predict: &mut Predict, oracle: &OracleSVI, clock: &Clock
     // but previously touched book still rebuilds over the old range and
     // evaluates to 0 from zero `q_up` / `q_dn`.
     if (oracle.is_settled()) {
-        predict.vault.set_mtm_with_settlement(oracle_id, oracle.settlement_price().destroy_some(), clock);
+        predict
+            .vault
+            .set_mtm_with_settlement(oracle_id, oracle.settlement_price().destroy_some(), clock);
         return
     };
     let curve = predict.oracle_config.build_curve(oracle, min_strike, max_strike);

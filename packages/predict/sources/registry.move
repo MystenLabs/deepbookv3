@@ -121,7 +121,7 @@ public fun create_oracle(
         registry.oracle_ids.add(cap_id, vector[]);
     };
     registry.oracle_ids[cap_id].push_back(oracle_id);
-    predict.add_active_oracle(oracle_id, min_strike, tick_size, clock, ctx);
+    predict.add_oracle_grid(oracle_id, min_strike, tick_size, clock, ctx);
     event::emit(OracleCreated {
         oracle_id,
         oracle_cap_id: cap_id,
