@@ -15,6 +15,7 @@ use deepbook_predict::{
     oracle::{Self, OracleSVI, OracleSVICap},
     range_key::RangeKey
 };
+use std::string::String;
 use sui::{clock::Clock, table::{Self, Table}};
 
 // === Errors ===
@@ -69,9 +70,13 @@ public struct OracleConfig has store {
     /// a fallback. Independent of `staleness_threshold_ms` (the hard halt
     /// gate).
     lazer_authoritative_threshold_ms: u64,
-    /// Circuit-breaker bounds enforced by `validate_basis_push` on every
-    /// operator push.
-    basis_bounds: BasisBounds,
+    /// Per-asset circuit-breaker bounds keyed by `underlying_asset` (e.g.
+    /// "BTC", "ETH"). Consumed by `validate_basis_push` via
+    /// `asset_basis_bounds`, which falls back to the `constants`-module
+    /// defaults when an asset has no explicit entry. Admin tunes via
+    /// `set_asset_basis_bounds`; a single update propagates to every oracle
+    /// sharing the same underlying asset.
+    asset_basis_bounds: Table<String, BasisBounds>,
 }
 
 /// Circuit-breaker bounds for `update_basis`. `max_spot_deviation` and
@@ -125,9 +130,17 @@ public fun lazer_authoritative_threshold_ms(config: &OracleConfig): u64 {
     config.lazer_authoritative_threshold_ms
 }
 
-/// Return the current basis circuit-breaker bounds.
-public fun basis_bounds(config: &OracleConfig): BasisBounds {
-    config.basis_bounds
+/// Return the circuit-breaker bounds applicable to `asset`. If the admin has
+/// explicitly set bounds for this asset they are returned; otherwise this
+/// falls back to a `BasisBounds` built from the `constants`-module defaults
+/// so that `validate_basis_push` has a sane guard for freshly-created oracles
+/// on untuned assets.
+public fun asset_basis_bounds(config: &OracleConfig, asset: String): BasisBounds {
+    if (config.asset_basis_bounds.contains(asset)) {
+        config.asset_basis_bounds[asset]
+    } else {
+        default_basis_bounds()
+    }
 }
 
 /// Return the max spot deviation stored on a `BasisBounds`.
@@ -158,12 +171,7 @@ public(package) fun new(ctx: &mut TxContext): OracleConfig {
         staleness_threshold_ms: constants::default_staleness_threshold_ms!(),
         basis_staleness_threshold_ms: constants::default_basis_staleness_threshold_ms!(),
         lazer_authoritative_threshold_ms: constants::default_lazer_authoritative_threshold_ms!(),
-        basis_bounds: BasisBounds {
-            max_spot_deviation: constants::default_max_basis_spot_deviation!(),
-            max_basis_deviation: constants::default_max_basis_deviation!(),
-            min_basis: constants::default_min_basis!(),
-            max_basis: constants::default_max_basis!(),
-        },
+        asset_basis_bounds: table::new(ctx),
     }
 }
 
@@ -199,11 +207,14 @@ public(package) fun set_lazer_authoritative_threshold_ms(config: &mut OracleConf
     config.lazer_authoritative_threshold_ms = value;
 }
 
-/// Update the circuit-breaker bounds enforced by `validate_basis_push`.
-/// Invariants: `min_basis < max_basis`, both are scaled 1e9, and both
-/// deviation fractions must be ≤ `float_scaling!()` (100%).
-public(package) fun set_basis_bounds(
+/// Upsert the circuit-breaker bounds applied to a given underlying asset
+/// (e.g. "BTC"). Invariants: `min_basis < max_basis`, both scaled 1e9, and
+/// both deviation fractions must be ≤ `float_scaling!()` (100%). A single
+/// admin update propagates to every current and future oracle whose
+/// `underlying_asset` matches `asset`.
+public(package) fun set_asset_basis_bounds(
     config: &mut OracleConfig,
+    asset: String,
     max_spot_deviation: u64,
     max_basis_deviation: u64,
     min_basis: u64,
@@ -212,18 +223,25 @@ public(package) fun set_basis_bounds(
     assert!(min_basis < max_basis, EInvalidBasisBounds);
     assert!(max_spot_deviation <= constants::float_scaling!(), EInvalidBasisBounds);
     assert!(max_basis_deviation <= constants::float_scaling!(), EInvalidBasisBounds);
-    config.basis_bounds =
-        BasisBounds {
-            max_spot_deviation,
-            max_basis_deviation,
-            min_basis,
-            max_basis,
-        };
+    let bounds = BasisBounds {
+        max_spot_deviation,
+        max_basis_deviation,
+        min_basis,
+        max_basis,
+    };
+    if (config.asset_basis_bounds.contains(asset)) {
+        let row = &mut config.asset_basis_bounds[asset];
+        *row = bounds;
+    } else {
+        config.asset_basis_bounds.add(asset, bounds);
+    }
 }
 
 /// Circuit-breaker guard called by `predict::update_basis` before any state
-/// mutation in `oracle::update_basis`. Rejects obviously-bad operator pushes
-/// (decimal errors, fat-finger values, BS outages returning garbage):
+/// mutation in `oracle::update_basis`. Looks up the asset-specific bounds on
+/// `config` (falling back to `constants` defaults when no explicit entry
+/// exists) and then rejects obviously-bad operator pushes (decimal errors,
+/// fat-finger values, BS outages returning garbage):
 ///
 /// 1. Absolute basis range `[min_basis, max_basis]`. Always checked — for
 ///    short-dated expiries basis stays near 1.0 so this is a hard sanity rail.
@@ -238,7 +256,7 @@ public(package) fun validate_basis_push(
     new_spot: u64,
     new_basis: u64,
 ) {
-    let bounds = &config.basis_bounds;
+    let bounds = config.asset_basis_bounds(oracle.underlying_asset());
     assert!(new_basis >= bounds.min_basis && new_basis <= bounds.max_basis, EBasisOutOfRange);
 
     let prev_spot = oracle.spot_price();
@@ -535,4 +553,15 @@ fun within_deviation(prev: u64, next: u64, max_deviation: u64): bool {
     // prev * max_deviation / 1e9
     let max_allowed = math::mul(prev, max_deviation);
     diff <= max_allowed
+}
+
+/// Build a `BasisBounds` from the `constants`-module defaults. Used as the
+/// fallback for assets that have no explicit `asset_basis_bounds` entry.
+fun default_basis_bounds(): BasisBounds {
+    BasisBounds {
+        max_spot_deviation: constants::default_max_basis_spot_deviation!(),
+        max_basis_deviation: constants::default_max_basis_deviation!(),
+        min_basis: constants::default_min_basis!(),
+        max_basis: constants::default_max_basis!(),
+    }
 }

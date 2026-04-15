@@ -257,19 +257,28 @@ public fun set_lazer_authoritative_threshold_ms(
     predict.set_lazer_authoritative_threshold_ms(value);
 }
 
-/// Update the circuit-breaker bounds applied by `predict::update_basis` on
-/// every operator push. `max_spot_deviation` and `max_basis_deviation` are
-/// per-push percent caps (1e9-scaled); `min_basis` / `max_basis` are
-/// absolute bounds on `forward / spot`.
-public fun set_basis_bounds(
+/// Update the circuit-breaker bounds applied by `predict::update_basis` for
+/// a given underlying asset (e.g. "BTC"). `max_spot_deviation` and
+/// `max_basis_deviation` are per-push percent caps (1e9-scaled);
+/// `min_basis` / `max_basis` are absolute bounds on `forward / spot`. A
+/// single call propagates to every oracle whose `underlying_asset` matches
+/// `asset`.
+public fun set_asset_basis_bounds(
     predict: &mut Predict,
     _admin_cap: &AdminCap,
+    asset: String,
     max_spot_deviation: u64,
     max_basis_deviation: u64,
     min_basis: u64,
     max_basis: u64,
 ) {
-    predict.set_basis_bounds(max_spot_deviation, max_basis_deviation, min_basis, max_basis);
+    predict.set_asset_basis_bounds(
+        asset,
+        max_spot_deviation,
+        max_basis_deviation,
+        min_basis,
+        max_basis,
+    );
 }
 
 // === Private Functions ===

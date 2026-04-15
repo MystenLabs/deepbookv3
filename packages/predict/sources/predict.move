@@ -25,7 +25,7 @@ use deepbook_predict::{
     vault::{Self, Vault}
 };
 use pyth_lazer::update::Update as LazerUpdate;
-use std::type_name::{Self, TypeName};
+use std::{string::String, type_name::{Self, TypeName}};
 use sui::{
     clock::Clock,
     coin::{Self, Coin, TreasuryCap},
@@ -136,6 +136,7 @@ public struct OracleStalenessConfigUpdated has copy, drop, store {
 
 public struct OracleBasisBoundsUpdated has copy, drop, store {
     predict_id: ID,
+    asset: String,
     max_spot_deviation: u64,
     max_basis_deviation: u64,
     min_basis: u64,
@@ -766,9 +767,11 @@ public(package) fun set_lazer_authoritative_threshold_ms(predict: &mut Predict, 
     predict.emit_oracle_staleness_config_updated();
 }
 
-/// Update the basis circuit-breaker bounds.
-public(package) fun set_basis_bounds(
+/// Set the basis circuit-breaker bounds for a given underlying asset (e.g.
+/// "BTC"). Propagates to every oracle sharing that asset.
+public(package) fun set_asset_basis_bounds(
     predict: &mut Predict,
+    asset: String,
     max_spot_deviation: u64,
     max_basis_deviation: u64,
     min_basis: u64,
@@ -776,9 +779,16 @@ public(package) fun set_basis_bounds(
 ) {
     predict
         .oracle_config
-        .set_basis_bounds(max_spot_deviation, max_basis_deviation, min_basis, max_basis);
+        .set_asset_basis_bounds(
+            asset,
+            max_spot_deviation,
+            max_basis_deviation,
+            min_basis,
+            max_basis,
+        );
     event::emit(OracleBasisBoundsUpdated {
         predict_id: object::id(predict),
+        asset,
         max_spot_deviation,
         max_basis_deviation,
         min_basis,
