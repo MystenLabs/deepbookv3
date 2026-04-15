@@ -52,21 +52,22 @@ const STATUS_SETTLED: u8 = 3;
 public struct OracleActivated has copy, drop, store {
     oracle_id: ID,
     expiry: u64,
-    timestamp: u64,
+    spot_timestamp: u64,
 }
 
 public struct OracleSettled has copy, drop, store {
     oracle_id: ID,
     expiry: u64,
     settlement_price: u64,
-    timestamp: u64,
+    spot_timestamp: u64,
 }
 
 public struct OraclePricesUpdated has copy, drop, store {
     oracle_id: ID,
     spot: u64,
     forward: u64,
-    timestamp: u64,
+    basis: u64,
+    spot_timestamp: u64,
 }
 
 public struct OracleSVIUpdated has copy, drop, store {
@@ -85,7 +86,16 @@ public struct OracleSpotUpdatedFromLazer has copy, drop, store {
     forward: u64,
     basis: u64,
     lazer_timestamp_us: u64,
-    timestamp: u64,
+    spot_timestamp: u64,
+}
+
+/// Emitted when `update_basis` finds Lazer stale and the operator spot takes
+/// over the master spot. Indexers can track Lazer outages off this event.
+public struct OracleSpotFallbackEngaged has copy, drop, store {
+    oracle_id: ID,
+    operator_spot: u64,
+    last_lazer_spot_timestamp_ms: u64,
+    spot_timestamp: u64,
 }
 
 // === Structs ===
@@ -141,11 +151,19 @@ public struct OracleSVI has key {
     prices: PriceData,
     /// SVI volatility surface parameters (low frequency updates)
     svi: SVIParams,
-    /// Last update timestamp in ms. Bumped by both `update_basis` and
-    /// `update_spot_from_lazer`. Consumed by
-    /// `oracle_config::assert_live_oracle` / `assert_quoteable_oracle` for
-    /// the 30s user-facing staleness window.
-    timestamp: u64,
+    /// Clock ms of the most recent update to `prices.spot`. Bumped by
+    /// `apply_lazer_spot` always, and by `update_basis` only when the
+    /// operator is falling back in because Lazer has gone stale. Consumed
+    /// by `oracle_config::assert_live_oracle` / `assert_quoteable_oracle`
+    /// as the hard spot-staleness halt gate.
+    spot_timestamp: u64,
+    /// Clock ms of the most recent successful `apply_lazer_spot` call. Used
+    /// by `update_basis` to decide whether Lazer currently owns the master
+    /// spot: while `now <= lazer_spot_timestamp_ms +
+    /// lazer_authoritative_threshold_ms`, operator pushes update
+    /// basis/forward but leave `prices.spot` alone. Zero until the first
+    /// Lazer push lands.
+    lazer_spot_timestamp_ms: u64,
     /// Clock ms of the most recent `update_basis`. Gates how stale the
     /// cached basis can be before `update_spot_from_lazer` refuses to
     /// rederive a forward against it, and before the live/quoteable asserts
@@ -181,23 +199,31 @@ public fun activate(oracle: &mut OracleSVI, cap: &OracleSVICap, clock: &Clock) {
     event::emit(OracleActivated {
         oracle_id: oracle.id.to_inner(),
         expiry: oracle.expiry,
-        timestamp: now,
+        spot_timestamp: now,
     });
 }
 
-// TODO: Add validation on pushed spot/forward data so obviously bad oracle
-// updates are rejected before they mutate state.
-/// Operator push (~10s): seed the cached basis from a matched (spot, forward)
-/// pair. Basis is computed as `forward / spot` in 1e9 float scaling and is
-/// preserved across subsequent Lazer spot pushes to avoid compounding
-/// integer-division rounding. If at or past expiry and not yet settled,
-/// freezes settlement price and deactivates. Settled oracles reject further
-/// updates.
-public fun update_basis(
+/// Operator push (~1s): refresh the cached basis from a matched
+/// (spot, forward) pair. Basis is computed as `forward / spot` in 1e9 float
+/// scaling and is preserved across subsequent Lazer spot pushes to avoid
+/// compounding integer-division rounding.
+///
+/// Lazer is the authoritative master spot whenever it has pushed within
+/// `lazer_authoritative_threshold_ms`. While inside that window the operator
+/// push updates basis and re-derives `prices.forward` against the cached
+/// Lazer spot, but leaves `prices.spot` and `spot_timestamp` alone. Once
+/// Lazer has gone stale, the operator spot flows through as a fallback: it
+/// overwrites `prices.spot`, bumps `spot_timestamp`, and emits
+/// `OracleSpotFallbackEngaged` so indexers can flag Lazer outages.
+///
+/// If at or past expiry and not yet settled, freezes settlement price and
+/// deactivates. Settled oracles reject further updates.
+public(package) fun update_basis(
     oracle: &mut OracleSVI,
     cap: &OracleSVICap,
     spot: u64,
     forward: u64,
+    lazer_authoritative_threshold_ms: u64,
     clock: &Clock,
 ) {
     oracle.assert_authorized_cap(cap);
@@ -220,22 +246,59 @@ public fun update_basis(
             oracle_id,
             expiry: oracle.expiry,
             settlement_price: spot,
-            timestamp: now,
+            spot_timestamp: oracle.spot_timestamp,
         });
         return
     };
 
-    let basis = math::div(forward, spot);
-    oracle.prices = PriceData { spot, forward, basis };
-    oracle.timestamp = now;
+    let new_basis = math::div(forward, spot);
     oracle.basis_timestamp = now;
 
-    event::emit(OraclePricesUpdated {
-        oracle_id,
-        spot,
-        forward,
-        timestamp: now,
-    });
+    let lazer_fresh =
+        oracle.lazer_spot_timestamp_ms > 0 &&
+        now <= oracle.lazer_spot_timestamp_ms + lazer_authoritative_threshold_ms;
+
+    if (lazer_fresh) {
+        // Lazer owns the master spot. Keep `prices.spot` as-is, rederive
+        // forward against the cached Lazer spot and the fresh basis. Do NOT
+        // bump `spot_timestamp` — Lazer's own cadence keeps the halt gate
+        // passing while it is authoritative.
+        let cached_spot = oracle.prices.spot;
+        let rederived_forward = math::mul(cached_spot, new_basis);
+        oracle.prices =
+            PriceData {
+                spot: cached_spot,
+                forward: rederived_forward,
+                basis: new_basis,
+            };
+
+        event::emit(OraclePricesUpdated {
+            oracle_id,
+            spot: cached_spot,
+            forward: rederived_forward,
+            basis: new_basis,
+            spot_timestamp: oracle.spot_timestamp,
+        });
+    } else {
+        // Fallback: Lazer is stale or has never pushed. Operator takes over
+        // the master spot.
+        oracle.prices = PriceData { spot, forward, basis: new_basis };
+        oracle.spot_timestamp = now;
+
+        event::emit(OracleSpotFallbackEngaged {
+            oracle_id,
+            operator_spot: spot,
+            last_lazer_spot_timestamp_ms: oracle.lazer_spot_timestamp_ms,
+            spot_timestamp: now,
+        });
+        event::emit(OraclePricesUpdated {
+            oracle_id,
+            spot,
+            forward,
+            basis: new_basis,
+            spot_timestamp: now,
+        });
+    };
 }
 
 /// Permissionless high-frequency push (~200ms): consume a verified Pyth
@@ -317,6 +380,12 @@ public fun forward_price(oracle: &OracleSVI): u64 {
     oracle.prices.forward
 }
 
+/// Get the cached basis ratio (forward / spot) from the most recent
+/// `update_basis`. Zero until the first operator push lands.
+public fun basis(oracle: &OracleSVI): u64 {
+    oracle.prices.basis
+}
+
 /// Get the price data.
 public fun prices(oracle: &OracleSVI): PriceData {
     oracle.prices
@@ -357,9 +426,14 @@ public fun expiry(oracle: &OracleSVI): u64 {
     oracle.expiry
 }
 
-/// Get the last update timestamp.
-public fun timestamp(oracle: &OracleSVI): u64 {
-    oracle.timestamp
+/// Get the last master-spot update timestamp.
+public fun spot_timestamp(oracle: &OracleSVI): u64 {
+    oracle.spot_timestamp
+}
+
+/// Get the clock ms of the most recent successful Lazer spot push.
+public fun lazer_spot_timestamp_ms(oracle: &OracleSVI): u64 {
+    oracle.lazer_spot_timestamp_ms
 }
 
 /// Get the timestamp of the most recent `update_basis` call.
@@ -490,7 +564,8 @@ public(package) fun create_oracle(
             m: i64::zero(),
             sigma: 0,
         },
-        timestamp: 0,
+        spot_timestamp: 0,
+        lazer_spot_timestamp_ms: 0,
         basis_timestamp: 0,
         lazer_timestamp_us: 0,
         settlement_price: option::none(),
@@ -534,7 +609,7 @@ fun apply_lazer_spot(
             oracle_id,
             expiry: oracle.expiry,
             settlement_price: spot,
-            timestamp: now,
+            spot_timestamp: now,
         });
         return
     };
@@ -545,7 +620,8 @@ fun apply_lazer_spot(
     let basis = oracle.prices.basis;
     let forward = math::mul(spot, basis);
     oracle.prices = PriceData { spot, forward, basis };
-    oracle.timestamp = now;
+    oracle.spot_timestamp = now;
+    oracle.lazer_spot_timestamp_ms = now;
     oracle.lazer_timestamp_us = lazer_timestamp_us;
 
     event::emit(OracleSpotUpdatedFromLazer {
@@ -554,7 +630,7 @@ fun apply_lazer_spot(
         forward,
         basis,
         lazer_timestamp_us,
-        timestamp: now,
+        spot_timestamp: now,
     });
 }
 

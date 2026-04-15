@@ -241,7 +241,7 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
 
     if (row.action === "update_basis") {
       const gas = await execute(
-        () => updateBasisTx(state.oracleId, state.oracleCapId, row.spot, row.forward),
+        () => updateBasisTx(state.predictId, state.oracleId, state.oracleCapId, row.spot, row.forward),
         "update_basis"
       );
       byAction.update_basis.push({ wallMs: performance.now() - startedAt, ...gas });

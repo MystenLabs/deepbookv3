@@ -45,6 +45,7 @@ const EZeroSharesMinted: u64 = 6;
 const EAskPriceOutOfBounds: u64 = 7;
 const EAskBoundLooserThanGlobal: u64 = 8;
 const EOracleNotSettled: u64 = 9;
+const EZeroSpot: u64 = 10;
 
 // === Events ===
 
@@ -130,6 +131,15 @@ public struct OracleStalenessConfigUpdated has copy, drop, store {
     predict_id: ID,
     staleness_threshold_ms: u64,
     basis_staleness_threshold_ms: u64,
+    lazer_authoritative_threshold_ms: u64,
+}
+
+public struct OracleBasisBoundsUpdated has copy, drop, store {
+    predict_id: ID,
+    max_spot_deviation: u64,
+    max_basis_deviation: u64,
+    min_basis: u64,
+    max_basis: u64,
 }
 
 public struct OracleAskBoundsSet has copy, drop, store {
@@ -516,6 +526,31 @@ public fun update_spot_from_lazer(
     );
 }
 
+/// Operator-signed (spot, forward) push (1s cadence). Runs the admin-
+/// configured basis circuit-breaker bounds from `OracleConfig` against the
+/// derived new basis, then calls into the oracle primitive. The oracle-level
+/// `update_basis` is `public(package)` so PTB callers cannot bypass these
+/// guards or the admin-configured `lazer_authoritative_threshold_ms`.
+public fun update_basis(
+    predict: &Predict,
+    oracle: &mut OracleSVI,
+    cap: &OracleSVICap,
+    spot: u64,
+    forward: u64,
+    clock: &Clock,
+) {
+    assert!(spot > 0, EZeroSpot);
+    let new_basis = math::div(forward, spot);
+    predict.oracle_config.validate_basis_push(oracle, spot, new_basis);
+    oracle.update_basis(
+        cap,
+        spot,
+        forward,
+        predict.oracle_config.lazer_authoritative_threshold_ms(),
+        clock,
+    );
+}
+
 // === Public-Package Functions ===
 
 /// Create and share the Predict object. Returns its ID.
@@ -725,6 +760,32 @@ public(package) fun set_basis_staleness_threshold_ms(predict: &mut Predict, valu
     predict.emit_oracle_staleness_config_updated();
 }
 
+/// Set the Lazer-authoritative window (ms). Admin-only.
+public(package) fun set_lazer_authoritative_threshold_ms(predict: &mut Predict, value: u64) {
+    predict.oracle_config.set_lazer_authoritative_threshold_ms(value);
+    predict.emit_oracle_staleness_config_updated();
+}
+
+/// Update the basis circuit-breaker bounds.
+public(package) fun set_basis_bounds(
+    predict: &mut Predict,
+    max_spot_deviation: u64,
+    max_basis_deviation: u64,
+    min_basis: u64,
+    max_basis: u64,
+) {
+    predict
+        .oracle_config
+        .set_basis_bounds(max_spot_deviation, max_basis_deviation, min_basis, max_basis);
+    event::emit(OracleBasisBoundsUpdated {
+        predict_id: object::id(predict),
+        max_spot_deviation,
+        max_basis_deviation,
+        min_basis,
+        max_basis,
+    });
+}
+
 #[test_only]
 /// Create a Predict object for testing without sharing it.
 public(package) fun create_test_predict<Quote>(
@@ -839,6 +900,7 @@ fun emit_oracle_staleness_config_updated(predict: &Predict) {
         predict_id: object::id(predict),
         staleness_threshold_ms: predict.oracle_config.staleness_threshold_ms(),
         basis_staleness_threshold_ms: predict.oracle_config.basis_staleness_threshold_ms(),
+        lazer_authoritative_threshold_ms: predict.oracle_config.lazer_authoritative_threshold_ms(),
     });
 }
 

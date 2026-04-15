@@ -161,11 +161,18 @@ export function activateOracleTx(oracleId: string, oracleCapId: string): Transac
   return tx;
 }
 
-export function updateBasisTx(oracleId: string, oracleCapId: string, spot: bigint, forward: bigint): Transaction {
+export function updateBasisTx(
+  predictId: string,
+  oracleId: string,
+  oracleCapId: string,
+  spot: bigint,
+  forward: bigint
+): Transaction {
   const tx = new Transaction();
   tx.moveCall({
-    target: target("oracle", "update_basis"),
+    target: target("predict", "update_basis"),
     arguments: [
+      tx.object(predictId),
       tx.object(oracleId),
       tx.object(oracleCapId),
       tx.pure.u64(spot),
@@ -314,8 +321,9 @@ export function refreshOracleAndMintTx(params: {
 }): Transaction {
   const tx = new Transaction();
   tx.moveCall({
-    target: target("oracle", "update_basis"),
+    target: target("predict", "update_basis"),
     arguments: [
+      tx.object(params.predictId),
       tx.object(params.oracleId),
       tx.object(params.oracleCapId),
       tx.pure.u64(params.spot),
