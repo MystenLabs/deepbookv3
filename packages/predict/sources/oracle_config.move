@@ -29,6 +29,7 @@ const EInvalidCurveRange: u64 = 8;
 const ERangeKeyOracleMismatch: u64 = 9;
 const ERangeKeyExpiryMismatch: u64 = 10;
 const EInvalidAskBound: u64 = 11;
+const ESettledOracleMtmStale: u64 = 12;
 
 public struct OracleGrid has copy, drop, store {
     min_strike: u64,
@@ -45,6 +46,7 @@ public struct AskBounds has copy, drop, store {
 }
 
 public struct OracleConfig has store {
+    active_oracles: vector<ID>,
     oracle_grids: Table<ID, OracleGrid>,
     /// Per-oracle ask-bound overrides; presence in this table means an override
     /// is active for that oracle id.
@@ -80,13 +82,18 @@ public fun ask_bounds_max(bounds: &AskBounds): u64 { bounds.max_ask_price }
 /// Create an empty oracle config registry for Predict.
 public(package) fun new(ctx: &mut TxContext): OracleConfig {
     OracleConfig {
+        active_oracles: vector::empty(),
         oracle_grids: table::new(ctx),
         oracle_ask_bounds: table::new(ctx),
     }
 }
 
+public(package) fun active_oracles(oracle_config: &OracleConfig): vector<ID> {
+    oracle_config.active_oracles
+}
+
 /// Register the configured strike grid for a newly created oracle.
-public(package) fun add_oracle_grid(
+public(package) fun add_active_oracle(
     oracle_config: &mut OracleConfig,
     oracle_id: ID,
     min_strike: u64,
@@ -99,6 +106,28 @@ public(package) fun add_oracle_grid(
         tick_size,
     };
     oracle_config.oracle_grids.add(oracle_id, grid);
+    oracle_config.active_oracles.push_back(oracle_id);
+}
+
+public(package) fun remove_settled_oracle(
+    oracle_config: &mut OracleConfig,
+    oracle: &OracleSVI,
+    last_mtm_update: u64,
+    clock: &Clock,
+) {
+    let oracle_status = oracle.status(clock);
+    assert!(oracle_status == oracle::status_settled(), EOracleSettled);
+    assert!(last_mtm_update > oracle.expiry(), ESettledOracleMtmStale);
+    let oracle_id = oracle.id();
+    let mut idx = 0;
+    let len = oracle_config.active_oracles.length();
+    while (idx < len) {
+        if (oracle_config.active_oracles[idx] == oracle_id) {
+            oracle_config.active_oracles.swap_remove(idx);
+            break
+        };
+        idx = idx + 1;
+    };
 }
 
 /// Set or update a per-oracle ask-bound override. The caller must hold an

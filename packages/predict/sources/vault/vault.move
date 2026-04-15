@@ -16,6 +16,7 @@ module deepbook_predict::vault;
 use deepbook::math;
 use deepbook_predict::{oracle_config::CurvePoint, strike_matrix::{Self, StrikeMatrix}};
 use sui::{bag::{Self, Bag}, balance::Balance, table::{Self, Table}};
+use sui::clock::Clock;
 
 use fun net_max_payout as StrikeMatrix.net_max_payout;
 
@@ -92,6 +93,7 @@ public(package) fun init_oracle_matrix(
     min_strike: u64,
     max_strike: u64,
     tick_size: u64,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     if (!vault.oracle_matrices.contains(oracle_id)) {
@@ -99,7 +101,7 @@ public(package) fun init_oracle_matrix(
             .oracle_matrices
             .add(
                 oracle_id,
-                strike_matrix::new(ctx, tick_size, min_strike, max_strike),
+                strike_matrix::new(ctx, tick_size, min_strike, max_strike, clock),
             );
     };
 }
@@ -199,6 +201,7 @@ public(package) fun set_mtm_with_curve(
     vault: &mut Vault,
     oracle_id: ID,
     curve: &vector<CurvePoint>,
+    clock: &Clock,
 ) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
 
@@ -207,11 +210,11 @@ public(package) fun set_mtm_with_curve(
     let new_mtm = matrix.evaluate(curve) - matrix.range_qty();
 
     let matrix = &mut vault.oracle_matrices[oracle_id];
-    matrix.set_mtm(new_mtm);
+    matrix.set_mtm(new_mtm, clock);
     vault.total_mtm = vault.total_mtm + new_mtm - old_mtm;
 }
 
-public(package) fun set_mtm_with_settlement(vault: &mut Vault, oracle_id: ID, settlement: u64) {
+public(package) fun set_mtm_with_settlement(vault: &mut Vault, oracle_id: ID, settlement: u64, clock: &Clock) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
 
     let matrix = &vault.oracle_matrices[oracle_id];
@@ -219,16 +222,21 @@ public(package) fun set_mtm_with_settlement(vault: &mut Vault, oracle_id: ID, se
     let new_mtm = matrix.evaluate_settled(settlement) - matrix.range_qty();
 
     let matrix = &mut vault.oracle_matrices[oracle_id];
-    matrix.set_mtm(new_mtm);
+    matrix.set_mtm(new_mtm, clock);
     vault.total_mtm = vault.total_mtm + new_mtm - old_mtm;
 }
 
-public(package) fun set_mtm(vault: &mut Vault, oracle_id: ID, mtm: u64) {
+public(package) fun set_mtm(vault: &mut Vault, oracle_id: ID, mtm: u64, clock: &Clock) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
 
     let old_mtm = vault.oracle_matrices[oracle_id].mtm();
-    vault.oracle_matrices[oracle_id].set_mtm(mtm);
+    vault.oracle_matrices[oracle_id].set_mtm(mtm, clock);
     vault.total_mtm = vault.total_mtm + mtm - old_mtm;
+}
+
+public(package) fun get_last_mtm_update(vault: &Vault, oracle_id: ID): u64 {
+    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+    vault.oracle_matrices[oracle_id].last_mtm_update()
 }
 
 /// Per-matrix max payout net of the range quantity contributed by range mints.

@@ -216,6 +216,27 @@ public fun get_trade_amounts(
     (math::mul(ask, quantity), math::mul(bid, quantity))
 }
 
+public fun get_active_oracle_ids(predict: &Predict): vector<ID> {
+    predict.oracle_config.active_oracles()
+}
+
+public fun remove_active_oracle(
+    predict: &mut Predict,
+    oracle: &OracleSVI,
+    clock: &Clock,
+) {
+    let last_mtm_update = predict.vault.get_last_mtm_update(oracle.id());
+    predict.oracle_config.remove_settled_oracle(oracle, last_mtm_update, clock);
+}
+
+public fun update_oracle_mtm(
+    predict: &mut Predict,
+    oracle: &OracleSVI,
+    clock: &Clock,
+) {
+    predict.refresh_oracle_risk(oracle, clock);
+}
+
 /// Resolved ask-price bounds for an oracle, after intersecting any per-oracle
 /// override with the global default. Exposed for UI/preview.
 public fun ask_bounds(predict: &Predict, oracle_id: ID): (u64, u64) {
@@ -246,7 +267,7 @@ public fun mint<Quote>(
     let is_up = key.is_up();
 
     predict.vault.insert_position(oracle.id(), is_up, strike, quantity);
-    predict.refresh_oracle_risk(oracle);
+    predict.refresh_oracle_risk(oracle, clock);
 
     // Quote against the post-trade state so the trader pays for the liability
     // their own mint just added to the vault.
@@ -344,7 +365,7 @@ public fun mint_range<Quote>(
     let higher = key.higher_strike();
 
     predict.vault.insert_range(oracle.id(), lower, higher, quantity);
-    predict.refresh_oracle_risk(oracle);
+    predict.refresh_oracle_risk(oracle, clock);
 
     // Quote against the post-trade state so the trader pays for the liability
     // their own mint just added to the vault.
@@ -394,7 +415,7 @@ public fun redeem_range<Quote>(
     let higher = key.higher_strike();
 
     predict.vault.remove_range(oracle.id(), lower, higher, quantity);
-    predict.refresh_oracle_risk(oracle);
+    predict.refresh_oracle_risk(oracle, clock);
 
     // Quote against the post-trade state so the seller is paid from the
     // liability after their range has been removed from the vault.
@@ -430,6 +451,7 @@ public fun supply<Quote>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<PLP> {
+    predict.assert_total_mtm_fresh(clock);
     let amount = coin.value();
     assert!(amount > 0, EZeroAmount);
     predict.treasury_config.assert_quote_asset<Quote>();
@@ -467,6 +489,7 @@ public fun withdraw<Quote>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Quote> {
+    predict.assert_total_mtm_fresh(clock);
     let vault_value = predict.vault.vault_value();
     let shares_burned = lp_coin.value();
     assert!(shares_burned > 0, EZeroAmount);
@@ -539,16 +562,17 @@ public(package) fun disable_quote_asset<Quote>(predict: &mut Predict) {
     });
 }
 
-public(package) fun add_oracle_grid(
+public(package) fun add_active_oracle(
     predict: &mut Predict,
     oracle_id: ID,
     min_strike: u64,
     tick_size: u64,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    predict.oracle_config.add_oracle_grid(oracle_id, min_strike, tick_size);
+    predict.oracle_config.add_active_oracle(oracle_id, min_strike, tick_size);
     let max_strike = min_strike + tick_size * constants::oracle_strike_grid_ticks!();
-    predict.vault.init_oracle_matrix(oracle_id, min_strike, max_strike, tick_size, ctx);
+    predict.vault.init_oracle_matrix(oracle_id, min_strike, max_strike, tick_size, clock, ctx);
 }
 
 /// Whether trading is currently paused.
@@ -734,6 +758,18 @@ public(package) fun vault_balance(predict: &Predict): u64 {
 
 // === Private Functions ===
 
+fun assert_total_mtm_fresh(predict: &Predict, clock: &Clock) {
+    let active_oracles = predict.oracle_config.active_oracles();
+    let mut i = 0;
+    let len = active_oracles.length();
+    while (i < len) {
+        let oracle_id = active_oracles[i];
+        let last_update = predict.vault.get_last_mtm_update(oracle_id);
+        assert!(clock.timestamp_ms() - last_update <= constants::mtm_freshness_ms!(), EOracleNotSettled);
+        i = i + 1;
+    }
+}
+
 fun redeem_internal<Quote>(
     predict: &mut Predict,
     manager: &mut PredictManager,
@@ -750,7 +786,7 @@ fun redeem_internal<Quote>(
     manager.decrease_position(key, quantity);
 
     predict.vault.remove_position(oracle.id(), key.is_up(), key.strike(), quantity);
-    predict.refresh_oracle_risk(oracle);
+    predict.refresh_oracle_risk(oracle, clock);
 
     // Quote against the post-trade state so the seller is paid from the
     // liability after their position has been removed from the vault.
@@ -897,21 +933,21 @@ fun assert_mintable_ask(predict: &Predict, oracle_id: ID, ask_price: u64) {
     assert!(ask_price >= min_ask && ask_price <= max_ask, EAskPriceOutOfBounds);
 }
 
-fun refresh_oracle_risk(predict: &mut Predict, oracle: &OracleSVI) {
+fun refresh_oracle_risk(predict: &mut Predict, oracle: &OracleSVI, clock: &Clock) {
     let oracle_id = oracle.id();
     let (min_strike, max_strike) = predict.vault.oracle_strike_range(oracle_id);
     if (min_strike == 0 && max_strike == 0) {
         // `(0, 0)` means this oracle has never had any minted exposure.
-        predict.vault.set_mtm(oracle_id, 0);
+        predict.vault.set_mtm(oracle_id, 0, clock);
         return
     };
     // Historical minted bounds do not shrink after a full unwind, so an empty
     // but previously touched book still rebuilds over the old range and
     // evaluates to 0 from zero `q_up` / `q_dn`.
     if (oracle.is_settled()) {
-        predict.vault.set_mtm_with_settlement(oracle_id, oracle.settlement_price().destroy_some());
+        predict.vault.set_mtm_with_settlement(oracle_id, oracle.settlement_price().destroy_some(), clock);
         return
     };
     let curve = predict.oracle_config.build_curve(oracle, min_strike, max_strike);
-    predict.vault.set_mtm_with_curve(oracle_id, &curve);
+    predict.vault.set_mtm_with_curve(oracle_id, &curve, clock);
 }

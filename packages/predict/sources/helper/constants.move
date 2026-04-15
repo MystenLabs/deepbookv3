@@ -64,3 +64,7 @@ public macro fun oracle_tick_size_unit(): u64 { 10_000 }
 /// Required decimals for all accepted quote assets in phase 1.
 public macro fun required_quote_decimals(): u8 { 6 }
 
+// === MTM Tracking ===
+
+/// MTM freshness threshold: maximum age of MTM values before they're considered stale (10 seconds).
+public macro fun mtm_freshness_ms(): u64 { 10_000 }
