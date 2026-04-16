@@ -51,6 +51,8 @@ use fun df::exists_ as UID.exists_;
 ```
 Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(key)`, `self.id.borrow_mut(key)` instead of `df::exists_(&self.id, key)` etc.
 
+- Prefer receiver (method) syntax over module-qualified calls when available. Move auto-resolves `x.fn(...)` whenever `fn` is defined in the module that declares `x`'s type (including across packages — e.g. `feed.price()` resolves to `pyth_lazer::feed::price(&feed)`, `inner.magnitude()` resolves to `predict_math::i64::magnitude(&inner)`). No `use fun` alias is needed for this case; it's only required when the function lives in a *different* module from the type (as with `dynamic_field` on `UID`). Receiver syntax lets you drop the module alias entirely when it was only used for those calls — check for and remove the now-unused `Self` import (the compiler warns `unused alias`).
+
 - Don't worry about emitting additional events.
 
 - Prefer macros over constants.
