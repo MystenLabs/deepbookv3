@@ -309,6 +309,53 @@ public(package) fun minted_strike_range(matrix: &StrikeMatrix): (u64, u64) {
     )
 }
 
+/// Consume a dense matrix after settlement and return aggregate remaining
+/// instrument quantity plus exact settled liability.
+public(package) fun into_settled_totals(matrix: StrikeMatrix, settlement: u64): (u64, u64) {
+    let StrikeMatrix {
+        mut pages,
+        page_tree: _,
+        page_tree_leaf_count: _,
+        tick_size,
+        min_strike,
+        max_strike,
+        minted_min_strike: _,
+        minted_max_strike: _,
+        mtm: _,
+        range_qty,
+    } = matrix;
+
+    let total_strikes = (max_strike - min_strike) / tick_size + 1;
+    let page_count = (total_strikes - 1) / PAGE_SLOTS + 1;
+    let mut remaining_quantity = 0u64;
+    let mut remaining_liability = 0u64;
+    let mut page_key = 0;
+
+    while (page_key < page_count) {
+        let page = pages.remove(page_key);
+        let mut slot = 0;
+        while (slot < PAGE_SLOTS) {
+            let tick_index = page_key * PAGE_SLOTS + slot;
+            if (tick_index >= total_strikes) break;
+
+            let strike = min_strike + tick_index * tick_size;
+            let q_up = page[slot].q_up;
+            let q_dn = page[slot].q_dn;
+            remaining_quantity = remaining_quantity + q_up + q_dn;
+            if (strike < settlement) {
+                remaining_liability = remaining_liability + q_up;
+            } else {
+                remaining_liability = remaining_liability + q_dn;
+            };
+            slot = slot + 1;
+        };
+        page_key = page_key + 1;
+    };
+
+    pages.destroy_empty();
+    (remaining_quantity - range_qty, remaining_liability - range_qty)
+}
+
 // === Private Functions ===
 /// Apply a vertical range `(lower, higher)` as `long UP@lower + long DN@higher`
 /// plus a `qty` range_qty delta. The matrix writes are byte-identical to two
@@ -631,4 +678,71 @@ fun strike_to_coords(self: &StrikeMatrix, strike: u64): (u64, u64) {
 /// Recover the aligned strike stored at a given page/slot coordinate.
 fun strike_from_coords(self: &StrikeMatrix, page_key: u64, slot: u64): u64 {
     self.min_strike + (page_key * PAGE_SLOTS + slot) * self.tick_size
+}
+
+// === Tests ===
+
+#[test]
+fun test_into_settled_totals_single_page() {
+    let settlement = 110;
+    let expected_quantity = 48;
+    let expected_liability = 20;
+    let mut matrix = test_matrix(&mut tx_context::dummy(), 5, 100, 125);
+    insert(&mut matrix, 100, 7, true);
+    insert(&mut matrix, 105, 11, false);
+    insert(&mut matrix, 110, 13, false);
+    insert(&mut matrix, 120, 17, true);
+
+    let (remaining_quantity, remaining_liability) = into_settled_totals(matrix, settlement);
+    assert!(remaining_quantity == expected_quantity, 0);
+    assert!(remaining_liability == expected_liability, 0);
+}
+
+#[test]
+fun test_into_settled_totals_crosses_page_boundary() {
+    let tick_size = 5;
+    let min_strike = 100;
+    let max_strike = 2665;
+    let settlement = 2660;
+    let expected_quantity = 102;
+    let expected_liability = 42;
+    let mut matrix = test_matrix(&mut tx_context::dummy(), tick_size, min_strike, max_strike);
+    insert(&mut matrix, 100, 31, false);
+    insert(&mut matrix, 2655, 19, true);
+    insert(&mut matrix, 2660, 23, false);
+    insert(&mut matrix, 2665, 29, true);
+
+    let (remaining_quantity, remaining_liability) = into_settled_totals(matrix, settlement);
+    assert!(remaining_quantity == expected_quantity, 0);
+    assert!(remaining_liability == expected_liability, 0);
+}
+
+#[test]
+fun test_into_settled_totals_accounts_for_mixed_range_outcomes() {
+    let settlement = 125;
+    let losing_range_qty = 7;
+    let winning_range_qty = 5;
+    let dn_qty = 3;
+    let up_qty = 2;
+    let expected_quantity = 17;
+    let expected_liability = 7;
+    let mut matrix = test_matrix(&mut tx_context::dummy(), 10, 100, 130);
+    insert_range(&mut matrix, 100, 120, losing_range_qty);
+    insert_range(&mut matrix, 110, 130, winning_range_qty);
+    insert(&mut matrix, 120, dn_qty, false);
+    insert(&mut matrix, 100, up_qty, true);
+
+    let (remaining_quantity, remaining_liability) = into_settled_totals(matrix, settlement);
+    assert!(remaining_quantity == expected_quantity, 0);
+    assert!(remaining_liability == expected_liability, 0);
+}
+
+#[test_only]
+fun test_matrix(
+    ctx: &mut TxContext,
+    tick_size: u64,
+    min_strike: u64,
+    max_strike: u64,
+): StrikeMatrix {
+    new(ctx, tick_size, min_strike, max_strike)
 }
