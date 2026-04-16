@@ -12,10 +12,10 @@ module deepbook_predict::oracle;
 use deepbook::math;
 use deepbook_predict::{constants::{Self, float_scaling}, i64, math as predict_math};
 use pyth_lazer::{
-    feed::{Self, Feed as LazerFeed},
+    feed::Feed as LazerFeed,
     i16::{Self as lazer_i16, I16 as LazerI16},
     i64::{Self as lazer_i64, I64 as LazerI64},
-    update::{Self as lazer_update, Update as LazerUpdate}
+    update::Update as LazerUpdate
 };
 use std::string::String;
 use sui::{clock::Clock, event, vec_set::{Self, VecSet}};
@@ -312,19 +312,19 @@ public(package) fun update_spot_from_lazer(
     basis_staleness_threshold_ms: u64,
     clock: &Clock,
 ) {
-    let lazer_published_at_us = lazer_update::timestamp(&update);
-    let feed = find_lazer_feed(lazer_update::feeds_ref(&update), oracle.pyth_lazer_feed_id);
+    let lazer_published_at_us = update.timestamp();
+    let feed = find_lazer_feed(update.feeds_ref(), oracle.pyth_lazer_feed_id);
 
     // Both Option layers must be Some: the field must exist in the update,
     // and the value must be present (Lazer returns None if there are not
     // enough publishers).
-    let price_outer = feed::price(feed);
+    let price_outer = feed.price();
     assert!(price_outer.is_some(), ELazerPriceUnavailable);
     let price_inner = price_outer.borrow();
     assert!(price_inner.is_some(), ELazerPriceUnavailable);
     let price = *price_inner.borrow();
 
-    let exp_outer = feed::exponent(feed);
+    let exp_outer = feed.exponent();
     assert!(exp_outer.is_some(), ELazerPriceUnavailable);
     let exponent = *exp_outer.borrow();
 
@@ -640,7 +640,7 @@ fun find_lazer_feed(feeds: &vector<LazerFeed>, target_id: u32): &LazerFeed {
     let mut i = 0;
     while (i < len) {
         let f = &feeds[i];
-        if (feed::feed_id(f) == target_id) {
+        if (f.feed_id() == target_id) {
             return f
         };
         i = i + 1;
@@ -703,25 +703,25 @@ fun compute_nd2(oracle: &OracleSVI, strike: u64): u64 {
 
     // SVI: compute total variance from log-moneyness.
     let k = predict_math::ln(math::div(strike, forward));
-    let k_minus_m = i64::sub(&k, &svi.m);
-    let k_minus_m_squared = i64::square_scaled(&k_minus_m);
+    let k_minus_m = k.sub(&svi.m);
+    let k_minus_m_squared = k_minus_m.square_scaled();
     let sigma_squared = math::mul(svi.sigma, svi.sigma);
     let sq = predict_math::sqrt(k_minus_m_squared + sigma_squared, constants::float_scaling!());
     let sq_i64 = i64::from_u64(sq);
 
-    let rho_km = i64::mul_scaled(&svi.rho, &k_minus_m);
-    let inner = i64::add(&rho_km, &sq_i64);
-    assert!(!i64::is_negative(&inner), ECannotBeNegative);
-    let total_var = svi.a + math::mul(svi.b, i64::magnitude(&inner));
+    let rho_km = svi.rho.mul_scaled(&k_minus_m);
+    let inner = rho_km.add(&sq_i64);
+    assert!(!inner.is_negative(), ECannotBeNegative);
+    let total_var = svi.a + math::mul(svi.b, inner.magnitude());
     assert!(total_var > 0, EZeroVariance);
 
     // d2 = -((k + total_var/2) / sqrt(total_var)), then N(±d2).
     let sqrt_var = predict_math::sqrt(total_var, constants::float_scaling!());
     let sqrt_var_i64 = i64::from_u64(sqrt_var);
     let half_var_i64 = i64::from_u64(total_var / 2);
-    let d2_numerator = i64::add(&k, &half_var_i64);
-    let d2 = i64::div_scaled(&d2_numerator, &sqrt_var_i64);
-    let d2 = i64::neg(&d2);
+    let d2_numerator = k.add(&half_var_i64);
+    let d2 = d2_numerator.div_scaled(&sqrt_var_i64);
+    let d2 = d2.neg();
 
     predict_math::normal_cdf(&d2)
 }

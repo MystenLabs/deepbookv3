@@ -85,7 +85,7 @@ public fun ln(x: u64): i64::I64 {
     if (x < constants::float_scaling!()) {
         let inv = ((F * F / (x as u128)) as u64);
         let result = ln(inv);
-        return i64::neg(&result)
+        return result.neg()
     };
 
     let (y, n) = normalize(x);
@@ -95,8 +95,8 @@ public fun ln(x: u64): i64::I64 {
 
 /// Exponential function. Returns e^x in FLOAT_SCALING.
 public fun exp(x: &i64::I64): u64 {
-    let x_mag = i64::magnitude(x);
-    let x_negative = i64::is_negative(x);
+    let x_mag = x.magnitude();
+    let x_negative = x.is_negative();
     if (x_mag == 0) return constants::float_scaling!();
     if (!x_negative) assert!(x_mag <= MAX_EXP_INPUT, EExpOverflow);
 
@@ -108,8 +108,8 @@ public fun exp(x: &i64::I64): u64 {
 /// Standard normal CDF Φ(x) using Cody's rational Chebyshev approximation.
 /// Three piecewise ranges for high accuracy (~1e-15 in float, <5 units at 1e9).
 public fun normal_cdf(x: &i64::I64): u64 {
-    let x_mag = i64::magnitude(x);
-    let x_negative = i64::is_negative(x);
+    let x_mag = x.magnitude();
+    let x_negative = x.is_negative();
     if (x_mag > 8 * constants::float_scaling!()) {
         return if (x_negative) { 0 } else { constants::float_scaling!() }
     };
