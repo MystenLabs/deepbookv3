@@ -304,19 +304,6 @@ CREATE TABLE IF NOT EXISTS quote_asset_disabled (
 );
 
 -- User tables
--- manager_created: emitted by predict::create_manager (module = "predict").
-CREATE TABLE IF NOT EXISTS manager_created (
-    event_digest            TEXT        PRIMARY KEY,
-    digest                  TEXT        NOT NULL,
-    sender                  TEXT        NOT NULL,
-    checkpoint              BIGINT      NOT NULL,
-    timestamp               TIMESTAMP   DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    checkpoint_timestamp_ms BIGINT      NOT NULL,
-    package                 TEXT        NOT NULL,
-    manager_id              TEXT        NOT NULL,
-    owner                   TEXT        NOT NULL
-);
-
 -- predict_manager_created: emitted by predict_manager::new (module = "predict_manager").
 CREATE TABLE IF NOT EXISTS predict_manager_created (
     event_digest            TEXT        PRIMARY KEY,

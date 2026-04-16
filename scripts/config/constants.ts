@@ -77,10 +77,10 @@ export const supplierCapID = {
 };
 
 // --- Predict protocol ---
-export const predictPackageID = { mainnet: "", testnet: "" };
-export const predictRegistryID = { mainnet: "", testnet: "" };
-export const predictAdminCapID = { mainnet: "", testnet: "" };
-export const predictUpgradeCapID = { mainnet: "", testnet: "" };
+export const predictPackageID = { mainnet: "", testnet: "0xff60b95aaaba6edae568ab65406e56f61336dcd274e9c51034f2849d9f5bbfa6" };
+export const predictRegistryID = { mainnet: "", testnet: "0x2cdcf037e643b8e1b09cd076048d652c5ecbbda004ef831fccb8cd7824bc1cca" };
+export const predictAdminCapID = { mainnet: "", testnet: "0xde5bccbc6267b6ce143eda855942417e1cf8d3d17a293a4cbfbdb943a56d67b6" };
+export const predictUpgradeCapID = { mainnet: "", testnet: "0x4ed820727111e11f99ca94961ce6dc2b50699589ce1ff3ccbd9d1e421eaaf073" };
 export const predictObjectID = { mainnet: "", testnet: "" };
 export const predictOracleCapID = { mainnet: "", testnet: "" };
 export const predictOracleCapIDs: Record<string, string[]> = { mainnet: [], testnet: [] };
@@ -92,4 +92,4 @@ export const dusdcTreasuryCapID = { mainnet: "", testnet: "" };
 export const dusdcCurrencyID = { mainnet: "", testnet: "" };
 
 // PLP treasury cap (minted at publish time by plp::init, captured by redeploy)
-export const plpTreasuryCapID = { mainnet: "", testnet: "" };
+export const plpTreasuryCapID = { mainnet: "", testnet: "0xbe5b69bf4c1e49e8f3f02dd285bca63a3d0327acfdbc54447bfdff2a158b49e9" };

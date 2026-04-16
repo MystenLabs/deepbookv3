@@ -107,16 +107,6 @@ impl MoveStruct for OracleCreated {
 // === predict module ===
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ManagerCreated {
-    pub manager_id: ObjectID,
-    pub owner: Address,
-}
-impl MoveStruct for ManagerCreated {
-    const MODULE: &'static str = "predict";
-    const NAME: &'static str = "ManagerCreated";
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PositionMinted {
     pub predict_id: ObjectID,
     pub manager_id: ObjectID,

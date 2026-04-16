@@ -8,7 +8,9 @@ use axum::middleware::from_fn_with_state;
 use axum::routing::get;
 use axum::{Json, Router};
 use predict_schema::models::{
-    PositionMintedRow, PositionRedeemedRow, RangeMintedRow, RangeRedeemedRow,
+    OracleAskBoundsSetRow, OraclePricesUpdatedRow, OracleSviUpdatedRow,
+    PositionMintedRow, PositionRedeemedRow, PredictManagerCreatedRow, RangeMintedRow,
+    RangeRedeemedRow, SuppliedRow, WithdrawnRow,
 };
 use prometheus::Registry;
 use serde::{Deserialize, Serialize};
@@ -303,7 +305,7 @@ async fn get_oracle_prices(
     Path(oracle_id): Path<String>,
     Query(params): Query<PaginationParams>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, PredictError> {
+) -> Result<Json<Vec<OraclePricesUpdatedRow>>, PredictError> {
     let prices = state
         .reader
         .get_oracle_prices(
@@ -314,47 +316,47 @@ async fn get_oracle_prices(
         )
         .await?;
 
-    Ok(Json(serde_json::to_value(prices).unwrap()))
+    Ok(Json(prices))
 }
 
 async fn get_oracle_latest_price(
     Path(oracle_id): Path<String>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, PredictError> {
+) -> Result<Json<OraclePricesUpdatedRow>, PredictError> {
     let price = state.reader.get_oracle_latest_price(&oracle_id).await?;
-    Ok(Json(serde_json::to_value(price).unwrap()))
+    Ok(Json(price))
 }
 
 async fn get_oracle_svi(
     Path(oracle_id): Path<String>,
     Query(params): Query<LimitParams>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, PredictError> {
+) -> Result<Json<Vec<OracleSviUpdatedRow>>, PredictError> {
     let svi = state
         .reader
         .get_oracle_svi(&oracle_id, default_limit(params.limit))
         .await?;
 
-    Ok(Json(serde_json::to_value(svi).unwrap()))
+    Ok(Json(svi))
 }
 
 async fn get_oracle_latest_svi(
     Path(oracle_id): Path<String>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, PredictError> {
+) -> Result<Json<OracleSviUpdatedRow>, PredictError> {
     let svi = state.reader.get_oracle_latest_svi(&oracle_id).await?;
-    Ok(Json(serde_json::to_value(svi).unwrap()))
+    Ok(Json(svi))
 }
 
 async fn get_oracle_ask_bounds(
     Path(oracle_id): Path<String>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, PredictError> {
+) -> Result<Json<Option<OracleAskBoundsSetRow>>, PredictError> {
     let row_opt = state
         .reader
         .get_latest_oracle_ask_bounds(&oracle_id)
         .await?;
-    Ok(Json(serde_json::to_value(row_opt).unwrap()))
+    Ok(Json(row_opt))
 }
 
 // -- Trading endpoints --
@@ -362,7 +364,7 @@ async fn get_oracle_ask_bounds(
 async fn get_positions_minted(
     Query(params): Query<PositionFilterParams>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, PredictError> {
+) -> Result<Json<Vec<PositionMintedRow>>, PredictError> {
     let positions = state
         .reader
         .get_positions_minted(
@@ -373,15 +375,13 @@ async fn get_positions_minted(
         )
         .await?;
 
-    Ok(Json(serde_json::to_value(positions).unwrap()))
+    Ok(Json(positions))
 }
 
 async fn get_positions_redeemed(
     Query(params): Query<PositionFilterParams>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, PredictError> {
-    // HTTP `trader` param is kept for backwards-compat; it maps to the
-    // `owner` filter on the new position_redeemed schema.
+) -> Result<Json<Vec<PositionRedeemedRow>>, PredictError> {
     let positions = state
         .reader
         .get_positions_redeemed(
@@ -392,13 +392,13 @@ async fn get_positions_redeemed(
         )
         .await?;
 
-    Ok(Json(serde_json::to_value(positions).unwrap()))
+    Ok(Json(positions))
 }
 
 async fn get_ranges_minted(
     Query(params): Query<PositionFilterParams>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, PredictError> {
+) -> Result<Json<Vec<RangeMintedRow>>, PredictError> {
     let v = state
         .reader
         .get_ranges_minted(
@@ -408,13 +408,13 @@ async fn get_ranges_minted(
             default_limit(params.limit),
         )
         .await?;
-    Ok(Json(serde_json::to_value(v).unwrap()))
+    Ok(Json(v))
 }
 
 async fn get_ranges_redeemed(
     Query(params): Query<PositionFilterParams>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, PredictError> {
+) -> Result<Json<Vec<RangeRedeemedRow>>, PredictError> {
     let v = state
         .reader
         .get_ranges_redeemed(
@@ -424,7 +424,7 @@ async fn get_ranges_redeemed(
             default_limit(params.limit),
         )
         .await?;
-    Ok(Json(serde_json::to_value(v).unwrap()))
+    Ok(Json(v))
 }
 
 async fn get_trades(
@@ -470,23 +470,23 @@ async fn get_trades(
 async fn get_lp_supplies(
     Query(p): Query<LpFilterParams>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, PredictError> {
+) -> Result<Json<Vec<SuppliedRow>>, PredictError> {
     let v = state
         .reader
         .get_lp_supplies(p.supplier.as_deref(), default_limit(p.limit))
         .await?;
-    Ok(Json(serde_json::to_value(v).unwrap()))
+    Ok(Json(v))
 }
 
 async fn get_lp_withdrawals(
     Query(p): Query<LpFilterParams>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, PredictError> {
+) -> Result<Json<Vec<WithdrawnRow>>, PredictError> {
     let v = state
         .reader
         .get_lp_withdrawals(p.withdrawer.as_deref(), default_limit(p.limit))
         .await?;
-    Ok(Json(serde_json::to_value(v).unwrap()))
+    Ok(Json(v))
 }
 
 // -- User endpoints --
@@ -494,13 +494,13 @@ async fn get_lp_withdrawals(
 async fn get_managers(
     Query(params): Query<ManagerFilterParams>,
     State(state): State<Arc<AppState>>,
-) -> Result<Json<serde_json::Value>, PredictError> {
+) -> Result<Json<Vec<PredictManagerCreatedRow>>, PredictError> {
     let managers = state
         .reader
         .get_managers(params.owner.as_deref())
         .await?;
 
-    Ok(Json(serde_json::to_value(managers).unwrap()))
+    Ok(Json(managers))
 }
 
 async fn get_manager_positions(

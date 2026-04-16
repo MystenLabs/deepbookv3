@@ -1,5 +1,4 @@
 DROP TABLE IF EXISTS predict_manager_created;
-DROP TABLE IF EXISTS manager_created;
 DROP TABLE IF EXISTS quote_asset_disabled;
 DROP TABLE IF EXISTS quote_asset_enabled;
 DROP TABLE IF EXISTS oracle_ask_bounds_cleared;

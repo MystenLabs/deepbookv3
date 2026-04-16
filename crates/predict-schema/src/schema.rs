@@ -331,20 +331,6 @@ diesel::table! {
 }
 
 diesel::table! {
-    manager_created (event_digest) {
-        event_digest -> Text,
-        digest -> Text,
-        sender -> Text,
-        checkpoint -> Int8,
-        timestamp -> Timestamp,
-        checkpoint_timestamp_ms -> Int8,
-        package -> Text,
-        manager_id -> Text,
-        owner -> Text,
-    }
-}
-
-diesel::table! {
     predict_manager_created (event_digest) {
         event_digest -> Text,
         digest -> Text,
@@ -388,7 +374,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     oracle_ask_bounds_cleared,
     quote_asset_enabled,
     quote_asset_disabled,
-    manager_created,
     predict_manager_created,
     watermarks,
 );

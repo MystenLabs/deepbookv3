@@ -5,7 +5,7 @@
 /// Usage: EXPIRY=1742515200000 UNDERLYING=SUI MIN_STRIKE=100000000 TICK_SIZE=10000000 pnpm predict-create-oracle
 
 import { Transaction } from '@mysten/sui/transactions';
-import { getClient, getSigner } from '../../utils/utils.js';
+import { getClient, getSigner, updateConstant } from '../../utils/utils.js';
 import {
     predictPackageID,
     predictRegistryID,
@@ -27,17 +27,6 @@ const TICK_SIZE = BigInt(process.env.TICK_SIZE ?? 10_000_000n);
 const EXPIRY_MS = process.env.EXPIRY
     ? BigInt(process.env.EXPIRY)
     : BigInt(Date.now()) + 30n * 24n * 60n * 60n * 1000n;
-
-function updateConstant(content: string, name: string, net: string, value: string): string {
-    const regex = new RegExp(`(export const ${name} = \\{[^}]*${net}:\\s*)"[^"]*"`);
-    const result = content.replace(regex, `$1"${value}"`);
-    if (result === content) {
-        throw new Error(
-            `updateConstant: no match for ${name}[${net}] in constants.ts — check that the constant exists and the file format hasn't drifted`,
-        );
-    }
-    return result;
-}
 
 (async () => {
     const client = getClient(network);

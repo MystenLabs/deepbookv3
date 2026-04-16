@@ -47,11 +47,6 @@ const EOracleNotSettled: u64 = 9;
 
 // === Events ===
 
-public struct ManagerCreated has copy, drop, store {
-    manager_id: ID,
-    owner: address,
-}
-
 public struct PositionMinted has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
@@ -196,10 +191,6 @@ public struct Predict has key {
 /// Create a new PredictManager for the caller.
 public fun create_manager(ctx: &mut TxContext): ID {
     let manager_id = predict_manager::new(ctx);
-    event::emit(ManagerCreated {
-        manager_id,
-        owner: ctx.sender(),
-    });
     manager_id
 }
 

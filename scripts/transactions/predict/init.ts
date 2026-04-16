@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Transaction } from '@mysten/sui/transactions';
-import { getClient, getSigner } from '../../utils/utils.js';
+import { getClient, getSigner, updateConstant } from '../../utils/utils.js';
 import {
     predictPackageID,
     predictRegistryID,
@@ -20,17 +20,6 @@ const CONSTANTS_PATH = path.resolve(__dirname, '../../config/constants.ts');
 const network = 'testnet' as const;
 const DUSDC_TYPE = `${dusdcPackageID[network]}::dusdc::DUSDC`;
 const CLOCK = '0x6';
-
-function updateConstant(content: string, name: string, net: string, value: string): string {
-    const regex = new RegExp(`(export const ${name} = \\{[^}]*${net}:\\s*)"[^"]*"`);
-    const result = content.replace(regex, `$1"${value}"`);
-    if (result === content) {
-        throw new Error(
-            `updateConstant: no match for ${name}[${net}] in constants.ts — check that the constant exists and the file format hasn't drifted`,
-        );
-    }
-    return result;
-}
 
 (async () => {
     const client = getClient(network);

@@ -20,6 +20,26 @@ export const getActiveAddress = () => {
 	return execSync(`${SUI} client active-address`, { encoding: 'utf8' }).trim();
 };
 
+/// Replace the value of `export const <name> = { ..., <network>: "..." }` in
+/// a constants.ts-shaped source string. Throws if the constant's network entry
+/// is missing — surfacing format drift loudly rather than silently writing an
+/// empty-string ID.
+export const updateConstant = (
+	content: string,
+	name: string,
+	network: string,
+	value: string,
+): string => {
+	const regex = new RegExp(`(export const ${name} = \\{[^}]*${network}:\\s*)"[^"]*"`);
+	const result = content.replace(regex, `$1"${value}"`);
+	if (result === content) {
+		throw new Error(
+			`updateConstant: no match for ${name}[${network}] in constants — check that the constant exists and the file format hasn't drifted`,
+		);
+	}
+	return result;
+};
+
 export const publishPackage = (txb: Transaction, path: string, configPath?: string) => {
 	const command = [
 		'move',

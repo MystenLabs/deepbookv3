@@ -4,7 +4,7 @@
 /// Creates an OracleCap and transfers it to the deployer.
 
 import { Transaction } from '@mysten/sui/transactions';
-import { getActiveAddress, getClient, getSigner } from '../../utils/utils.js';
+import { getActiveAddress, getClient, getSigner, updateConstant } from '../../utils/utils.js';
 import { predictPackageID, predictAdminCapID } from '../../config/constants.js';
 import fs from 'fs';
 import path from 'path';
@@ -14,17 +14,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONSTANTS_PATH = path.resolve(__dirname, '../../config/constants.ts');
 
 const network = 'testnet' as const;
-
-function updateConstant(content: string, name: string, net: string, value: string): string {
-	const regex = new RegExp(`(export const ${name} = \\{[^}]*${net}:\\s*)"[^"]*"`);
-	const result = content.replace(regex, `$1"${value}"`);
-	if (result === content) {
-		throw new Error(
-			`updateConstant: no match for ${name}[${net}] in constants.ts — check that the constant exists and the file format hasn't drifted`,
-		);
-	}
-	return result;
-}
 
 (async () => {
 	const client = getClient(network);

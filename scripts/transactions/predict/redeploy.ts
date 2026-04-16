@@ -35,6 +35,7 @@ import {
     getClient,
     getSigner,
     publishPackage,
+    updateConstant,
 } from '../../utils/utils.js';
 import {
     dusdcPackageID,
@@ -60,17 +61,6 @@ const NUM_EXPIRIES = Number(process.env.NUM_EXPIRIES ?? 5);
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function updateConstant(content: string, name: string, net: string, value: string): string {
-    const regex = new RegExp(`(export const ${name} = \\{[^}]*${net}:\\s*)"[^"]*"`);
-    const result = content.replace(regex, `$1"${value}"`);
-    if (result === content) {
-        throw new Error(
-            `updateConstant: no match for ${name}[${net}] in constants.ts — check that the constant exists and the file format hasn't drifted`,
-        );
-    }
-    return result;
-}
 
 function resolveExpiries(): string[] {
     const raw = process.env.EXPIRIES;

@@ -1,6 +1,6 @@
 use crate::schema::{
-    manager_created, oracle_activated, oracle_ask_bounds_cleared, oracle_ask_bounds_set,
-    oracle_created, oracle_prices_updated, oracle_settled, oracle_svi_updated, position_minted,
+    oracle_activated, oracle_ask_bounds_cleared, oracle_ask_bounds_set, oracle_created,
+    oracle_prices_updated, oracle_settled, oracle_svi_updated, position_minted,
     position_redeemed, predict_created, predict_manager_created, pricing_config_updated,
     quote_asset_disabled, quote_asset_enabled, range_minted, range_redeemed, risk_config_updated,
     supplied, trading_pause_updated, withdrawn,
@@ -333,19 +333,6 @@ pub struct QuoteAssetDisabledRow {
 }
 
 // === User tables ===
-
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = manager_created, primary_key(event_digest))]
-pub struct ManagerCreatedRow {
-    pub event_digest: String,
-    pub digest: String,
-    pub sender: String,
-    pub checkpoint: i64,
-    pub checkpoint_timestamp_ms: i64,
-    pub package: String,
-    pub manager_id: String,
-    pub owner: String,
-}
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
 #[diesel(table_name = predict_manager_created, primary_key(event_digest))]

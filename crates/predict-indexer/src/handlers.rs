@@ -160,12 +160,10 @@ pub(crate) fn is_predict_tx(
 
     // Check events
     if let Some(events) = &tx.events {
-        let has_predict_event = events.data.iter().any(|event| {
-            config
-                .account_addresses
-                .iter()
-                .any(|addr| event.type_.address == *addr)
-        });
+        let has_predict_event = events
+            .data
+            .iter()
+            .any(|event| config.account_addresses.contains(&event.type_.address));
         if has_predict_event {
             return true;
         }
@@ -175,10 +173,7 @@ pub(crate) fn is_predict_tx(
     let txn_kind = tx.transaction.kind();
     txn_kind.iter_commands().any(|cmd| {
         if let Command::MoveCall(move_call) = cmd {
-            config
-                .object_ids
-                .iter()
-                .any(|pkg| *pkg == move_call.package)
+            config.object_ids.contains(&move_call.package)
         } else {
             false
         }
@@ -198,14 +193,14 @@ pub(crate) fn try_extract_move_call_package(tx: &ExecutedTransaction) -> Option<
 // === Handler definitions ===
 
 use crate::models::{
-    ManagerCreated, OracleActivated, OracleAskBoundsCleared, OracleAskBoundsSet, OracleCreated,
+    OracleActivated, OracleAskBoundsCleared, OracleAskBoundsSet, OracleCreated,
     OraclePricesUpdated, OracleSVIUpdated, OracleSettled, PositionMinted, PositionRedeemed,
     PredictCreated, PredictManagerCreated, PricingConfigUpdated, QuoteAssetDisabled,
     QuoteAssetEnabled, RangeMinted, RangeRedeemed, RiskConfigUpdated, Supplied,
     TradingPauseUpdated, Withdrawn,
 };
 use predict_schema::models::{
-    ManagerCreatedRow, OracleActivatedRow, OracleAskBoundsClearedRow, OracleAskBoundsSetRow,
+    OracleActivatedRow, OracleAskBoundsClearedRow, OracleAskBoundsSetRow,
     OracleCreatedRow, OraclePricesUpdatedRow, OracleSettledRow, OracleSviUpdatedRow,
     PositionMintedRow, PositionRedeemedRow, PredictCreatedRow, PredictManagerCreatedRow,
     PricingConfigUpdatedRow, QuoteAssetDisabledRow, QuoteAssetEnabledRow, RangeMintedRow,
@@ -340,24 +335,6 @@ define_handler! {
 }
 
 // === predict module handlers ===
-
-define_handler! {
-    name: ManagerCreatedHandler,
-    processor_name: "manager_created",
-    event_type: ManagerCreated,
-    db_model: ManagerCreatedRow,
-    table: manager_created,
-    map_event: |event, meta| ManagerCreatedRow {
-        event_digest: meta.event_digest(),
-        digest: meta.digest(),
-        sender: meta.sender(),
-        checkpoint: meta.checkpoint(),
-        checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
-        package: meta.package(),
-        manager_id: event.manager_id.to_string(),
-        owner: event.owner.to_string(),
-    }
-}
 
 define_handler! {
     name: PositionMintedHandler,

@@ -2,7 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Transaction } from '@mysten/sui/transactions';
-import { getActiveAddress, getClient, getSigner, publishPackage } from '../../utils/utils.js';
+import {
+	getActiveAddress,
+	getClient,
+	getSigner,
+	publishPackage,
+	updateConstant,
+} from '../../utils/utils.js';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -10,19 +16,7 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PREDICT_PATH = path.resolve(__dirname, '../../../packages/predict');
 const CONSTANTS_PATH = path.resolve(__dirname, '../../config/constants.ts');
-
-function updateConstant(content: string, name: string, network: string, value: string): string {
-	const regex = new RegExp(
-		`(export const ${name} = \\{[^}]*${network}:\\s*)"[^"]*"`,
-	);
-	const result = content.replace(regex, `$1"${value}"`);
-	if (result === content) {
-		throw new Error(
-			`updateConstant: no match for ${name}[${network}] in constants.ts — check that the constant exists and the file format hasn't drifted`,
-		);
-	}
-	return result;
-}
+const INDEXER_LIB_PATH = path.resolve(__dirname, '../../../crates/predict-indexer/src/lib.rs');
 
 (async () => {
 	const network = 'testnet' as const;
@@ -100,6 +94,20 @@ function updateConstant(content: string, name: string, network: string, value: s
 	constants = updateConstant(constants, 'plpTreasuryCapID', network, plpTreasuryCapId);
 	fs.writeFileSync(CONSTANTS_PATH, constants);
 
+	// Mirror the package ID into the indexer's hardcoded TESTNET_PREDICT_PACKAGES
+	// so `cargo run -p predict-indexer` picks it up without a CLI flag.
+	let indexerLib = fs.readFileSync(INDEXER_LIB_PATH, 'utf-8');
+	const indexerLibUpdated = indexerLib.replace(
+		/const TESTNET_PREDICT_PACKAGES: &\[&str\] = &\[\s*"0x[0-9a-f]+",?\s*\];/,
+		`const TESTNET_PREDICT_PACKAGES: &[&str] = &[\n    "${predictPackageId}",\n];`,
+	);
+	if (indexerLibUpdated === indexerLib) {
+		throw new Error(
+			'publish: failed to update TESTNET_PREDICT_PACKAGES in crates/predict-indexer/src/lib.rs — regex did not match',
+		);
+	}
+	fs.writeFileSync(INDEXER_LIB_PATH, indexerLibUpdated);
+
 	console.log('\n========== PUBLISH SUMMARY ==========');
 	console.log(`Package ID:        ${predictPackageId}`);
 	console.log(`Registry:          ${registryId}`);
@@ -110,4 +118,5 @@ function updateConstant(content: string, name: string, network: string, value: s
 	console.log(`Tx Digest:         ${result.digest}`);
 	console.log('======================================');
 	console.log('\nConstants written to config/constants.ts');
+	console.log('Indexer TESTNET_PREDICT_PACKAGES updated in crates/predict-indexer/src/lib.rs');
 })();

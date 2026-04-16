@@ -1,12 +1,12 @@
 use anyhow::Context;
 use clap::Parser;
 use predict_indexer::handlers::{
-    ManagerCreatedHandler, OracleActivatedHandler, OracleAskBoundsClearedHandler,
-    OracleAskBoundsSetHandler, OracleCreatedHandler, OraclePricesUpdatedHandler,
-    OracleSettledHandler, OracleSviUpdatedHandler, PositionMintedHandler,
-    PositionRedeemedHandler, PredictCreatedHandler, PredictManagerCreatedHandler,
-    PricingConfigUpdatedHandler, QuoteAssetDisabledHandler, QuoteAssetEnabledHandler,
-    RangeMintedHandler, RangeRedeemedHandler, RiskConfigUpdatedHandler, SuppliedHandler,
+    OracleActivatedHandler, OracleAskBoundsClearedHandler, OracleAskBoundsSetHandler,
+    OracleCreatedHandler, OraclePricesUpdatedHandler, OracleSettledHandler,
+    OracleSviUpdatedHandler, PositionMintedHandler, PositionRedeemedHandler,
+    PredictCreatedHandler, PredictManagerCreatedHandler, PricingConfigUpdatedHandler,
+    QuoteAssetDisabledHandler, QuoteAssetEnabledHandler, RangeMintedHandler,
+    RangeRedeemedHandler, RiskConfigUpdatedHandler, SuppliedHandler,
     TradingPauseUpdatedHandler, WithdrawnHandler,
 };
 use predict_indexer::{PredictConfig, TESTNET_REMOTE_STORE_URL};
@@ -37,7 +37,7 @@ struct Args {
     #[clap(
         env,
         long,
-        default_value = "postgres://localhost/predict_v2"
+        default_value = "postgres://localhost:5432/predict_v2"
     )]
     database_url: Url,
     /// Override predict package ID (for new deployments)
@@ -62,9 +62,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // Build config from CLI override or default testnet packages
     let config = match predict_package_id {
-        Some(ref pkg) => Arc::new(PredictConfig::new(&[Box::leak(
-            pkg.clone().into_boxed_str(),
-        )])),
+        Some(pkg) => Arc::new(PredictConfig::new([pkg])),
         None => PredictConfig::testnet(),
     };
 
@@ -129,9 +127,6 @@ async fn main() -> Result<(), anyhow::Error> {
         .await?;
 
     // Trading handlers
-    indexer
-        .concurrent_pipeline(ManagerCreatedHandler::new(config.clone()), Default::default())
-        .await?;
     indexer
         .concurrent_pipeline(PositionMintedHandler::new(config.clone()), Default::default())
         .await?;

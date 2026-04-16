@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Transaction } from '@mysten/sui/transactions';
-import { getClient, getSigner, publishPackage } from '../../utils/utils.js';
+import { getClient, getSigner, publishPackage, updateConstant } from '../../utils/utils.js';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -14,17 +14,6 @@ const CONSTANTS_PATH = path.resolve(__dirname, '../../config/constants.ts');
 // On-chain shared CoinRegistry system object. Matches COIN_REGISTRY_ID used in
 // packages/predict/simulations/src/runtime.ts.
 const COIN_REGISTRY_ID = '0xc';
-
-function updateConstant(content: string, name: string, network: string, value: string): string {
-	const regex = new RegExp(`(export const ${name} = \\{[^}]*${network}:\\s*)"[^"]*"`);
-	const result = content.replace(regex, `$1"${value}"`);
-	if (result === content) {
-		throw new Error(
-			`updateConstant: no match for ${name}[${network}] in constants.ts — check that the constant exists and the file format hasn't drifted`,
-		);
-	}
-	return result;
-}
 
 (async () => {
 	const network = 'testnet' as const;

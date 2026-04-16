@@ -10,11 +10,8 @@ pub mod traits;
 pub const TESTNET_REMOTE_STORE_URL: &str = "https://checkpoints.testnet.sui.io";
 
 const TESTNET_PREDICT_PACKAGES: &[&str] = &[
-    "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "0xff60b95aaaba6edae568ab65406e56f61336dcd274e9c51034f2849d9f5bbfa6",
 ];
-
-pub const PREDICT_MODULES: &[&str] =
-    &["oracle", "registry", "predict", "predict_manager"];
 
 #[derive(Debug, Clone)]
 pub struct PredictConfig {
@@ -23,15 +20,21 @@ pub struct PredictConfig {
 }
 
 impl PredictConfig {
-    pub fn new(package_strs: &[&str]) -> Self {
-        let account_addresses: Vec<AccountAddress> = package_strs
-            .iter()
-            .map(|s| AccountAddress::from_str(s).expect("invalid package address"))
-            .collect();
-        let object_ids: Vec<ObjectID> = package_strs
-            .iter()
-            .map(|s| ObjectID::from_str(s).expect("invalid package address"))
-            .collect();
+    pub fn new<I, S>(packages: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let (account_addresses, object_ids) = packages
+            .into_iter()
+            .map(|s| {
+                let s = s.as_ref();
+                (
+                    AccountAddress::from_str(s).expect("invalid package address"),
+                    ObjectID::from_str(s).expect("invalid package address"),
+                )
+            })
+            .unzip();
         Self {
             account_addresses,
             object_ids,
@@ -39,6 +42,6 @@ impl PredictConfig {
     }
 
     pub fn testnet() -> Arc<Self> {
-        Arc::new(Self::new(TESTNET_PREDICT_PACKAGES))
+        Arc::new(Self::new(TESTNET_PREDICT_PACKAGES.iter().copied()))
     }
 }
