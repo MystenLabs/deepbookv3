@@ -1,5 +1,5 @@
 import { Transaction, type TransactionArgument } from "@mysten/sui/transactions";
-import type { OracleId, CapId, SVIParams, Tier } from "./types";
+import type { OracleId, CapId, SVIParams } from "./types";
 
 export const CLOCK_ID = "0x6";
 export const FLOAT_SCALING = 1_000_000_000;
