@@ -40,7 +40,9 @@ public struct Vault has store {
     total_mtm: u64,
     /// Sum of all oracle matrix max payout values.
     total_max_payout: u64,
-    /// Oracle IDs whose unsettled exposure must have fresh MTM before LP actions.
+    /// Oracle IDs whose unsettled exposure must have fresh MTM before LP
+    /// supply/withdraw. Trade quoting still uses the cached aggregate MTM and
+    /// refreshes only the touched oracle inline.
     unsettled_exposed_oracles: vector<ID>,
 }
 

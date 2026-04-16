@@ -562,6 +562,9 @@ public(package) fun add_oracle_grid(
     predict.vault.init_oracle_matrix(oracle_id, min_strike, max_strike, tick_size, clock, ctx);
 }
 
+/// Keeper/ops hook for syncing one oracle's cached MTM into the vault. This is
+/// used to keep LP supply/withdraw accounting fresh across unsettled exposed
+/// oracles; trade paths still refresh only the touched oracle inline.
 public fun refresh_oracle_mtm(predict: &mut Predict, oracle: &OracleSVI, clock: &Clock) {
     if (!oracle.is_settled()) {
         oracle_config::assert_live_oracle(oracle, clock);
@@ -756,6 +759,9 @@ public(package) fun vault_balance(predict: &Predict): u64 {
 // === Private Functions ===
 
 fun assert_total_mtm_fresh(predict: &Predict, clock: &Clock) {
+    // MTM freshness is enforced only for LP supply/withdraw. Trade quoting
+    // still relies on cached aggregate `vault.total_mtm()` and refreshes the
+    // touched oracle inline.
     let unsettled_exposed_oracles = predict.vault.unsettled_exposed_oracles();
     let mut i = 0;
     let len = unsettled_exposed_oracles.length();
@@ -850,6 +856,9 @@ fun trade_prices(predict: &Predict, oracle: &OracleSVI, key: MarketKey, clock: &
         return (fair_price, fair_price)
     };
 
+    // Spread uses the cached aggregate MTM. This path does not require every
+    // exposed oracle to be freshly synced; only the traded oracle is refreshed
+    // inline before calling into pricing.
     let spread = predict
         .pricing_config
         .quote_spread_from_fair_price(
@@ -896,6 +905,9 @@ fun range_trade_prices(
         return (fair_price, fair_price)
     };
 
+    // Spread uses the cached aggregate MTM. This path does not require every
+    // exposed oracle to be freshly synced; only the traded oracle is refreshed
+    // inline before calling into pricing.
     let spread = predict
         .pricing_config
         .quote_spread_from_fair_price(
