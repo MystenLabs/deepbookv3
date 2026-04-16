@@ -37,6 +37,7 @@ const ELazerFeedNotFound: u64 = 11;
 const ELazerPriceUnavailable: u64 = 12;
 const ELazerNegativePrice: u64 = 13;
 const ELazerExponentOutOfRange: u64 = 14;
+const ELazerPriceOverflow: u64 = 15;
 
 // Pre-expiry oracle that has not been activated yet.
 const STATUS_INACTIVE: u8 = 0;
@@ -670,7 +671,7 @@ fun normalize_pyth_price(price: LazerI64, exponent: LazerI16): u64 {
         if (exp_mag <= target) {
             let shift = target - exp_mag;
             assert!(shift <= 18, ELazerExponentOutOfRange);
-            magnitude * predict_math::pow10(shift)
+            checked_scale_up(magnitude, shift)
         } else {
             let shift = exp_mag - target;
             assert!(shift <= 18, ELazerExponentOutOfRange);
@@ -679,8 +680,17 @@ fun normalize_pyth_price(price: LazerI64, exponent: LazerI16): u64 {
     } else {
         let shift = target + exp_mag;
         assert!(shift <= 18, ELazerExponentOutOfRange);
-        magnitude * predict_math::pow10(shift)
+        checked_scale_up(magnitude, shift)
     }
+}
+
+/// Multiply `magnitude * 10^shift`, aborting with `ELazerPriceOverflow` if
+/// the result would exceed `u64::MAX` instead of letting the VM raise an
+/// unnamed arithmetic abort.
+fun checked_scale_up(magnitude: u64, shift: u64): u64 {
+    let factor = predict_math::pow10(shift);
+    assert!(magnitude == 0 || magnitude <= std::u64::max_value!() / factor, ELazerPriceOverflow);
+    magnitude * factor
 }
 
 /// Binary pricing from SVI total variance:
