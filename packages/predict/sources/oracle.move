@@ -314,8 +314,9 @@ public(package) fun update_spot_from_lazer(
     let lazer_published_at_us = update.timestamp();
     let feeds = update.feeds_ref();
     let feed_id = oracle.pyth_lazer_feed_id;
-    let idx = feeds.find_index!(|f| f.feed_id() == feed_id).destroy_or!(abort ELazerFeedNotFound);
-    let feed = &feeds[idx];
+    let idx_opt = feeds.find_index!(|f| f.feed_id() == feed_id);
+    assert!(idx_opt.is_some(), ELazerFeedNotFound);
+    let feed = &feeds[idx_opt.destroy_some()];
 
     // Both Option layers must be Some: the field must exist in the update,
     // and the value must be present (Lazer returns None if there are not
