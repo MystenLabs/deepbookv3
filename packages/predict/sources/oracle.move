@@ -407,7 +407,7 @@ public fun forward_price(oracle: &OracleSVI): u64 {
 
 /// Get the cached basis ratio (forward / spot) from the most recent
 /// `update_basis`. Zero until the first operator push lands.
-public fun basis(oracle: &OracleSVI): u64 {
+public(package) fun basis(oracle: &OracleSVI): u64 {
     oracle.prices.basis
 }
 
@@ -452,61 +452,61 @@ public fun expiry(oracle: &OracleSVI): u64 {
 }
 
 /// Get the on-chain clock ms of the most recent master-spot update.
-public fun spot_timestamp_ms(oracle: &OracleSVI): u64 {
+public(package) fun spot_timestamp_ms(oracle: &OracleSVI): u64 {
     oracle.spot_timestamp_ms
 }
 
 /// Get the on-chain clock ms of the most recent successful Lazer spot push.
-public fun lazer_spot_timestamp_ms(oracle: &OracleSVI): u64 {
+public(package) fun lazer_spot_timestamp_ms(oracle: &OracleSVI): u64 {
     oracle.lazer_spot_timestamp_ms
 }
 
 /// Get the on-chain clock ms of the most recent `update_basis` call.
-public fun basis_timestamp_ms(oracle: &OracleSVI): u64 {
+public(package) fun basis_timestamp_ms(oracle: &OracleSVI): u64 {
     oracle.basis_timestamp_ms
 }
 
 /// Get the Pyth Lazer publisher's microsecond timestamp from the most
 /// recent Lazer push (source-data time, not on-chain landing time).
-public fun lazer_published_at_us(oracle: &OracleSVI): u64 {
+public(package) fun lazer_published_at_us(oracle: &OracleSVI): u64 {
     oracle.lazer_published_at_us
 }
 
 /// Get the Pyth Lazer feed id that this oracle tracks.
-public fun pyth_lazer_feed_id(oracle: &OracleSVI): u32 {
+public(package) fun pyth_lazer_feed_id(oracle: &OracleSVI): u32 {
     oracle.pyth_lazer_feed_id
 }
 
 /// Get the per-oracle staleness thresholds and basis circuit-breaker bounds.
-public fun bounds(oracle: &OracleSVI): OracleBounds {
+public(package) fun bounds(oracle: &OracleSVI): OracleBounds {
     oracle.bounds
 }
 
-public fun bounds_spot_staleness_threshold_ms(bounds: &OracleBounds): u64 {
+public(package) fun bounds_spot_staleness_threshold_ms(bounds: &OracleBounds): u64 {
     bounds.spot_staleness_threshold_ms
 }
 
-public fun bounds_basis_staleness_threshold_ms(bounds: &OracleBounds): u64 {
+public(package) fun bounds_basis_staleness_threshold_ms(bounds: &OracleBounds): u64 {
     bounds.basis_staleness_threshold_ms
 }
 
-public fun bounds_lazer_authoritative_threshold_ms(bounds: &OracleBounds): u64 {
+public(package) fun bounds_lazer_authoritative_threshold_ms(bounds: &OracleBounds): u64 {
     bounds.lazer_authoritative_threshold_ms
 }
 
-public fun bounds_max_spot_deviation(bounds: &OracleBounds): u64 {
+public(package) fun bounds_max_spot_deviation(bounds: &OracleBounds): u64 {
     bounds.max_spot_deviation
 }
 
-public fun bounds_max_basis_deviation(bounds: &OracleBounds): u64 {
+public(package) fun bounds_max_basis_deviation(bounds: &OracleBounds): u64 {
     bounds.max_basis_deviation
 }
 
-public fun bounds_min_basis(bounds: &OracleBounds): u64 {
+public(package) fun bounds_min_basis(bounds: &OracleBounds): u64 {
     bounds.min_basis
 }
 
-public fun bounds_max_basis(bounds: &OracleBounds): u64 {
+public(package) fun bounds_max_basis(bounds: &OracleBounds): u64 {
     bounds.max_basis
 }
 

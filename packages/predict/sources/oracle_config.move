@@ -104,24 +104,27 @@ public fun ask_bounds_min(bounds: &AskBounds): u64 { bounds.min_ask_price }
 public fun ask_bounds_max(bounds: &AskBounds): u64 { bounds.max_ask_price }
 
 /// Admin-tuned spot staleness threshold (ms) used to seed new oracles.
-public fun spot_staleness_threshold_ms(oracle_config: &OracleConfig): u64 {
+public(package) fun spot_staleness_threshold_ms(oracle_config: &OracleConfig): u64 {
     oracle_config.spot_staleness_threshold_ms
 }
 
 /// Admin-tuned basis staleness threshold (ms) used to seed new oracles.
-public fun basis_staleness_threshold_ms(oracle_config: &OracleConfig): u64 {
+public(package) fun basis_staleness_threshold_ms(oracle_config: &OracleConfig): u64 {
     oracle_config.basis_staleness_threshold_ms
 }
 
 /// Admin-tuned Lazer-authoritative window (ms) used to seed new oracles.
-public fun lazer_authoritative_threshold_ms(oracle_config: &OracleConfig): u64 {
+public(package) fun lazer_authoritative_threshold_ms(oracle_config: &OracleConfig): u64 {
     oracle_config.lazer_authoritative_threshold_ms
 }
 
 /// Per-asset basis bounds currently registered for `asset`, or `None` if the
 /// asset would fall back to the `constants::default_*!()` basis-bound macros
 /// at `create_oracle`.
-public fun asset_basis_bounds(oracle_config: &OracleConfig, asset: String): Option<BasisBounds> {
+public(package) fun asset_basis_bounds(
+    oracle_config: &OracleConfig,
+    asset: String,
+): Option<BasisBounds> {
     if (oracle_config.asset_basis_bounds.contains(asset)) {
         option::some(oracle_config.asset_basis_bounds[asset])
     } else {
@@ -129,19 +132,19 @@ public fun asset_basis_bounds(oracle_config: &OracleConfig, asset: String): Opti
     }
 }
 
-public fun basis_bounds_max_spot_deviation(bounds: &BasisBounds): u64 {
+public(package) fun basis_bounds_max_spot_deviation(bounds: &BasisBounds): u64 {
     bounds.max_spot_deviation
 }
 
-public fun basis_bounds_max_basis_deviation(bounds: &BasisBounds): u64 {
+public(package) fun basis_bounds_max_basis_deviation(bounds: &BasisBounds): u64 {
     bounds.max_basis_deviation
 }
 
-public fun basis_bounds_min_basis(bounds: &BasisBounds): u64 {
+public(package) fun basis_bounds_min_basis(bounds: &BasisBounds): u64 {
     bounds.min_basis
 }
 
-public fun basis_bounds_max_basis(bounds: &BasisBounds): u64 {
+public(package) fun basis_bounds_max_basis(bounds: &BasisBounds): u64 {
     bounds.max_basis
 }
 
