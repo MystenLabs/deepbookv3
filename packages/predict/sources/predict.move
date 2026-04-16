@@ -252,6 +252,7 @@ public fun mint<Quote>(
 
     predict.vault.insert_position(oracle.id(), is_up, strike, quantity);
     predict.refresh_oracle_risk(oracle, clock);
+    predict.vault.add_unsettled_exposed_oracle(oracle.id());
 
     // Quote against the post-trade state so the trader pays for the liability
     // their own mint just added to the vault.
@@ -350,6 +351,7 @@ public fun mint_range<Quote>(
 
     predict.vault.insert_range(oracle.id(), lower, higher, quantity);
     predict.refresh_oracle_risk(oracle, clock);
+    predict.vault.add_unsettled_exposed_oracle(oracle.id());
 
     // Quote against the post-trade state so the trader pays for the liability
     // their own mint just added to the vault.
@@ -400,6 +402,7 @@ public fun redeem_range<Quote>(
 
     predict.vault.remove_range(oracle.id(), lower, higher, quantity);
     predict.refresh_oracle_risk(oracle, clock);
+    predict.vault.remove_unsettled_exposed_oracle_if_inactive(oracle.id());
 
     // Quote against the post-trade state so the seller is paid from the
     // liability after their range has been removed from the vault.
@@ -787,6 +790,7 @@ fun redeem_internal<Quote>(
 
     predict.vault.remove_position(oracle.id(), key.is_up(), key.strike(), quantity);
     predict.refresh_oracle_risk(oracle, clock);
+    predict.vault.remove_unsettled_exposed_oracle_if_inactive(oracle.id());
 
     // Quote against the post-trade state so the seller is paid from the
     // liability after their position has been removed from the vault.

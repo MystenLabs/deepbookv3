@@ -17,8 +17,6 @@ use deepbook::math;
 use deepbook_predict::{oracle_config::CurvePoint, strike_matrix::{Self, StrikeMatrix}};
 use sui::{bag::{Self, Bag}, balance::Balance, clock::Clock, table::{Self, Table}};
 
-use fun net_max_payout as StrikeMatrix.net_max_payout;
-
 // === Errors ===
 const EInsufficientBalance: u64 = 0;
 const EExceedsMaxTotalExposure: u64 = 1;
@@ -122,18 +120,15 @@ public(package) fun insert_position(
 ) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
     let old_max_payout = vault.oracle_matrices[oracle_id].max_payout();
-    let old_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
     vault.oracle_matrices[oracle_id].insert(strike, quantity, is_up);
     let new_max_payout = vault.oracle_matrices[oracle_id].max_payout();
-    let new_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
     vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
-    vault.sync_unsettled_exposed_oracle(oracle_id, old_net_max_payout, new_net_max_payout);
 }
 
 /// Insert a vertical range into the per-oracle exposure structure and update
 /// cached max payout. The range is recorded as `long UP@lower + long DN@higher`
-/// plus a `quantity` range_qty delta; the vault's `total_max_payout` reflects the
-/// range_qty-adjusted (net) contribution.
+/// plus a `quantity` range_qty delta; `StrikeMatrix.max_payout()` already
+/// includes that adjustment.
 public(package) fun insert_range(
     vault: &mut Vault,
     oracle_id: ID,
@@ -142,11 +137,10 @@ public(package) fun insert_range(
     quantity: u64,
 ) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
-    let old_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
+    let old_max_payout = vault.oracle_matrices[oracle_id].max_payout();
     vault.oracle_matrices[oracle_id].insert_range(lower, higher, quantity);
-    let new_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
-    vault.total_max_payout = vault.total_max_payout + new_net_max_payout - old_net_max_payout;
-    vault.sync_unsettled_exposed_oracle(oracle_id, old_net_max_payout, new_net_max_payout);
+    let new_max_payout = vault.oracle_matrices[oracle_id].max_payout();
+    vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
 }
 
 /// Accept payment into vault balance.
@@ -166,12 +160,9 @@ public(package) fun remove_position(
 ) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
     let old_max_payout = vault.oracle_matrices[oracle_id].max_payout();
-    let old_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
     vault.oracle_matrices[oracle_id].remove(strike, quantity, is_up);
     let new_max_payout = vault.oracle_matrices[oracle_id].max_payout();
-    let new_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
     vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
-    vault.sync_unsettled_exposed_oracle(oracle_id, old_net_max_payout, new_net_max_payout);
 }
 
 /// Remove a vertical range from the per-oracle exposure structure and update
@@ -184,11 +175,10 @@ public(package) fun remove_range(
     quantity: u64,
 ) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
-    let old_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
+    let old_max_payout = vault.oracle_matrices[oracle_id].max_payout();
     vault.oracle_matrices[oracle_id].remove_range(lower, higher, quantity);
-    let new_net_max_payout = vault.oracle_matrices[oracle_id].net_max_payout();
-    vault.total_max_payout = vault.total_max_payout + new_net_max_payout - old_net_max_payout;
-    vault.sync_unsettled_exposed_oracle(oracle_id, old_net_max_payout, new_net_max_payout);
+    let new_max_payout = vault.oracle_matrices[oracle_id].max_payout();
+    vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
 }
 
 /// Dispense payout from vault balance.
@@ -269,25 +259,15 @@ public(package) fun remove_unsettled_exposed_oracle(vault: &mut Vault, oracle_id
     };
 }
 
-/// Per-matrix max payout net of the range quantity contributed by range mints.
-fun net_max_payout(matrix: &StrikeMatrix): u64 {
-    matrix.max_payout() - matrix.range_qty()
-}
-
-fun sync_unsettled_exposed_oracle(
-    vault: &mut Vault,
-    oracle_id: ID,
-    old_net_max_payout: u64,
-    new_net_max_payout: u64,
-) {
-    if (old_net_max_payout == 0 && new_net_max_payout > 0) {
-        vault.add_unsettled_exposed_oracle(oracle_id);
-    } else if (old_net_max_payout > 0 && new_net_max_payout == 0) {
+public(package) fun remove_unsettled_exposed_oracle_if_inactive(vault: &mut Vault, oracle_id: ID) {
+    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+    let matrix = &vault.oracle_matrices[oracle_id];
+    if (matrix.mtm() == 0 && matrix.max_payout() == 0) {
         vault.remove_unsettled_exposed_oracle(oracle_id);
     };
 }
 
-fun add_unsettled_exposed_oracle(vault: &mut Vault, oracle_id: ID) {
+public(package) fun add_unsettled_exposed_oracle(vault: &mut Vault, oracle_id: ID) {
     let mut i = 0;
     while (i < vault.unsettled_exposed_oracles.length()) {
         if (vault.unsettled_exposed_oracles[i] == oracle_id) return;

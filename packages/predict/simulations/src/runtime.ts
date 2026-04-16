@@ -136,6 +136,7 @@ export function createOracleTx(params: {
       tx.pure.u64(params.expiry),
       tx.pure.u64(params.minStrike),
       tx.pure.u64(params.tickSize),
+      tx.object(CLOCK_ID),
     ],
   });
   return tx;

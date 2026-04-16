@@ -49,8 +49,11 @@
 //     * the best prefix entirely inside `left`, or
 //     * all of `left` plus the best prefix of `right`
 //
-// After that path is rebuilt, the root summary is enough to answer:
-//     max_payout = root.total_q_dn + root.best_prefix_up - root.best_prefix_dn
+// After that path is rebuilt, the root summary is enough to answer the raw
+// binary-combination peak:
+//     root.total_q_dn + root.best_prefix_up - root.best_prefix_dn
+// `max_payout()` then applies the stored range cash offset to recover the
+// actual vault liability peak.
 //
 // So the design is intentionally asymmetric:
 // - page-local aggregates optimize MTM
@@ -88,8 +91,8 @@ public struct StrikeMatrix has store {
     /// Aggregate `$1`-per-unit cash obligation accumulated by range mints.
     /// Each range mint of a `(lower, higher)` band records `q_up[lower] += qty`,
     /// `q_dn[higher] += qty`, and `range_qty += qty`. Callers subtract `range_qty`
-    /// from `evaluate(curve)`, `evaluate_settled(s)`, and `max_payout()` to
-    /// recover the actual vault liability for ranges.
+    /// from `evaluate(curve)` and `evaluate_settled(s)`; `max_payout()` applies
+    /// the same adjustment internally.
     range_qty: u64,
 }
 
@@ -285,7 +288,7 @@ public(package) fun evaluate_settled(matrix: &StrikeMatrix, settlement: u64): u6
 
 public(package) fun max_payout(matrix: &StrikeMatrix): u64 {
     let root = matrix.page_tree[0];
-    root.total_q_dn + root.best_prefix_up - root.best_prefix_dn
+    root.total_q_dn + root.best_prefix_up - root.best_prefix_dn - matrix.range_qty
 }
 
 /// Aggregate `$1`-per-unit range quantity contributed by range mints.
@@ -323,7 +326,7 @@ public(package) fun minted_strike_range(matrix: &StrikeMatrix): (u64, u64) {
 /// plus a `qty` range_qty delta. The matrix writes are byte-identical to two
 /// separate longs; `range_qty` is the algebraic constant from the dominance
 /// identity (`short X@k ≡ long ~X@k − $1`) that callers subtract from
-/// `evaluate`/`evaluate_settled`/`max_payout` to recover the range payoff.
+/// `evaluate`/`evaluate_settled`; `max_payout()` applies it internally.
 fun apply_range(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64, add: bool) {
     matrix.apply_position(lower, qty, true, add);
     matrix.apply_position(higher, qty, false, add);
