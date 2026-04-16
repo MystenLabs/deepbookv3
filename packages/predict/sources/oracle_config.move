@@ -31,6 +31,7 @@ const ERangeKeyExpiryMismatch: u64 = 6;
 const EInvalidAskBound: u64 = 7;
 const EInvalidStalenessThreshold: u64 = 8;
 const EInvalidBasisBounds: u64 = 9;
+const EFeedIdNotConfigured: u64 = 10;
 
 public struct OracleGrid has copy, drop, store {
     min_strike: u64,
@@ -75,6 +76,14 @@ public struct OracleConfig has store {
     /// oracle's `underlying_asset` at `create_oracle`; assets with no entry
     /// fall back to the `constants::default_*!()` basis-bound macros.
     asset_basis_bounds: Table<String, BasisBounds>,
+    /// Per-underlying-asset Pyth Lazer feed ids. Admin must register an entry
+    /// before `create_oracle` can be called for that asset; the feed id is
+    /// snapshotted onto the new oracle and drives permissionless
+    /// `oracle::update_spot_from_lazer`. Stored as `u64` for type consistency
+    /// with the other scalars on `OracleConfig`; narrowed to `u32` (Lazer's
+    /// canonical feed-id width) at `registry::create_oracle`. Updating an
+    /// entry here does NOT retroactively change existing oracles.
+    asset_feed_ids: Table<String, u64>,
 }
 
 /// Curve sample point with strike and one-sided UP price.
@@ -132,6 +141,26 @@ public(package) fun asset_basis_bounds(
     }
 }
 
+/// Per-asset Pyth Lazer feed id currently registered for `asset`, or `None`
+/// if no entry exists. `create_oracle` requires a registered entry and aborts
+/// with `EFeedIdNotConfigured` otherwise; this getter is for introspection.
+public(package) fun asset_feed_id(oracle_config: &OracleConfig, asset: String): Option<u64> {
+    if (oracle_config.asset_feed_ids.contains(asset)) {
+        option::some(oracle_config.asset_feed_ids[asset])
+    } else {
+        option::none()
+    }
+}
+
+/// Resolve the Pyth Lazer feed id registered for `asset`, or abort if none
+/// has been set. Called by `registry::create_oracle` so operators can't pass
+/// an arbitrary feed id — admin must bind `asset → feed_id` once per
+/// underlying before the first oracle of that asset can be created.
+public(package) fun resolve_feed_id(oracle_config: &OracleConfig, asset: String): u64 {
+    assert!(oracle_config.asset_feed_ids.contains(asset), EFeedIdNotConfigured);
+    oracle_config.asset_feed_ids[asset]
+}
+
 public(package) fun basis_bounds_max_spot_deviation(bounds: &BasisBounds): u64 {
     bounds.max_spot_deviation
 }
@@ -159,6 +188,7 @@ public(package) fun new(ctx: &mut TxContext): OracleConfig {
         oracle_grids: table::new(ctx),
         oracle_ask_bounds: table::new(ctx),
         asset_basis_bounds: table::new(ctx),
+        asset_feed_ids: table::new(ctx),
     }
 }
 
@@ -232,6 +262,23 @@ public(package) fun set_asset_basis_bounds(
         *row = bounds;
     } else {
         oracle_config.asset_basis_bounds.add(asset, bounds);
+    }
+}
+
+/// Admin setter: bind `asset → feed_id` so subsequent `create_oracle` calls
+/// for that underlying resolve the Pyth Lazer feed id from config instead of
+/// taking it as a PTB arg. Does NOT retroactively update existing oracles —
+/// they keep the feed id snapshotted at their own creation time.
+public(package) fun set_asset_feed_id(
+    oracle_config: &mut OracleConfig,
+    asset: String,
+    feed_id: u64,
+) {
+    if (oracle_config.asset_feed_ids.contains(asset)) {
+        let row = &mut oracle_config.asset_feed_ids[asset];
+        *row = feed_id;
+    } else {
+        oracle_config.asset_feed_ids.add(asset, feed_id);
     }
 }
 

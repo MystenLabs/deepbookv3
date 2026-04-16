@@ -120,7 +120,6 @@ export function createOracleTx(params: {
   predictId: string;
   oracleCapId: string;
   underlyingAsset: string;
-  pythLazerFeedId: number;
   expiry: bigint;
   minStrike: bigint;
   tickSize: bigint;
@@ -133,10 +132,27 @@ export function createOracleTx(params: {
       tx.object(params.predictId),
       tx.object(params.oracleCapId),
       tx.pure.string(params.underlyingAsset),
-      tx.pure.u32(params.pythLazerFeedId),
       tx.pure.u64(params.expiry),
       tx.pure.u64(params.minStrike),
       tx.pure.u64(params.tickSize),
+    ],
+  });
+  return tx;
+}
+
+export function setAssetFeedIdTx(
+  predictId: string,
+  asset: string,
+  feedId: bigint
+): Transaction {
+  const tx = new Transaction();
+  tx.moveCall({
+    target: target("registry", "set_asset_feed_id"),
+    arguments: [
+      tx.object(predictId),
+      tx.object(ADMIN_CAP_ID),
+      tx.pure.string(asset),
+      tx.pure.u64(feedId),
     ],
   });
   return tx;

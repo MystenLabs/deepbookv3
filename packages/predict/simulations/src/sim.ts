@@ -26,6 +26,7 @@ import {
   finalizeDusdcCurrencyRegistrationTx,
   mintTx,
   refreshOracleAndMintTx,
+  setAssetFeedIdTx,
   supplyTx,
   updateBasisTx,
   updateSviTx,
@@ -125,12 +126,14 @@ async function setupSimulation(): Promise<SimState> {
   const oracleCapId: string = oracleCapChange.objectId;
   console.log(`[${ts()}]   OracleCap: ${oracleCapId}`);
 
+  await executeAndWait(setAssetFeedIdTx(predictId, "BTC", 1n), "set_asset_feed_id");
+  console.log(`[${ts()}]   Feed id registered: BTC -> 1`);
+
   result = await executeAndWait(
     createOracleTx({
       predictId,
       oracleCapId,
       underlyingAsset: "BTC",
-      pythLazerFeedId: 1,
       expiry: EXPIRY_MS,
       minStrike: ORACLE_MIN_STRIKE,
       tickSize: ORACLE_TICK_SIZE,

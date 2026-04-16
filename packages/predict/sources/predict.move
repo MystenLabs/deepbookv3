@@ -184,6 +184,12 @@ public struct OracleBasisBoundsUpdated has copy, drop, store {
     max_basis: u64,
 }
 
+public struct OracleFeedIdSet has copy, drop, store {
+    predict_id: ID,
+    asset: String,
+    pyth_lazer_feed_id: u64,
+}
+
 // === Structs ===
 
 /// Main shared object for the DeepBook Predict protocol.
@@ -573,6 +579,15 @@ public(package) fun build_oracle_bounds(predict: &Predict, asset: String): oracl
     predict.oracle_config.build_oracle_bounds(asset)
 }
 
+/// Resolve the admin-registered Pyth Lazer feed id for `asset`. Aborts with
+/// `oracle_config::EFeedIdNotConfigured` if no entry exists — admin must call
+/// `set_asset_feed_id` at least once per underlying before its first oracle
+/// can be created. Returned as `u64` for type consistency with the rest of
+/// the admin-config surface; narrowed to `u32` at `registry::create_oracle`.
+public(package) fun resolve_feed_id(predict: &Predict, asset: String): u64 {
+    predict.oracle_config.resolve_feed_id(asset)
+}
+
 /// Whether trading is currently paused.
 public fun trading_paused(predict: &Predict): bool {
     predict.trading_paused
@@ -732,6 +747,23 @@ public(package) fun set_asset_basis_bounds(
         max_basis_deviation,
         min_basis,
         max_basis,
+    });
+}
+
+/// Bind `asset → pyth_lazer_feed_id` so `create_oracle` can infer the feed
+/// id from the underlying asset instead of taking it as a PTB arg. Does NOT
+/// retroactively update existing oracles — they keep the feed id snapshotted
+/// at their own creation time.
+public(package) fun set_asset_feed_id(
+    predict: &mut Predict,
+    asset: String,
+    pyth_lazer_feed_id: u64,
+) {
+    predict.oracle_config.set_asset_feed_id(asset, pyth_lazer_feed_id);
+    event::emit(OracleFeedIdSet {
+        predict_id: object::id(predict),
+        asset,
+        pyth_lazer_feed_id,
     });
 }
 
