@@ -1,4 +1,4 @@
-import { SuiClient } from "@mysten/sui/client";
+import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { decodeSuiPrivateKey } from "@mysten/sui/cryptography";
 import { loadConfig } from "./config";
@@ -18,7 +18,7 @@ async function main(): Promise<void> {
   const log = makeLogger("service");
   log.info({ event: "service_started", network: config.network });
 
-  const client = new SuiClient({ url: config.suiRpcUrl });
+  const client = new SuiJsonRpcClient({ url: config.suiRpcUrl, network: config.network });
 
   const { secretKey } = decodeSuiPrivateKey(config.suiSignerKey);
   const signer = Ed25519Keypair.fromSecretKey(secretKey);

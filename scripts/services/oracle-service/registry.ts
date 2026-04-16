@@ -1,4 +1,4 @@
-import type { SuiClient } from "@mysten/sui/client";
+import type { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { Transaction } from "@mysten/sui/transactions";
 import type { Config } from "./config";
 import type { CapId, OracleId, OracleRegistry, OracleState, OracleStatus, Tier } from "./types";
@@ -43,7 +43,7 @@ function inferTier(expiryMs: number, nowMs: number, enabledTiers: Tier[]): Tier 
 }
 
 export async function discoverOracles(
-  client: SuiClient,
+  client: SuiJsonRpcClient,
   config: Config,
   capIds: CapId[],
   nowMs: number,
@@ -106,7 +106,7 @@ export async function discoverOracles(
 }
 
 async function oracleIdsForCap(
-  client: SuiClient,
+  client: SuiJsonRpcClient,
   config: Config,
   capId: CapId,
 ): Promise<OracleId[]> {

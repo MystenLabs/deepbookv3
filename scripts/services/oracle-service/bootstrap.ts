@@ -1,4 +1,4 @@
-import type { SuiClient, CoinStruct } from "@mysten/sui/client";
+import type { SuiJsonRpcClient, CoinStruct } from "@mysten/sui/jsonRpc";
 import type { Keypair } from "@mysten/sui/cryptography";
 import { Transaction } from "@mysten/sui/transactions";
 import type { Config } from "./config";
@@ -8,7 +8,7 @@ import type { Logger } from "./logger";
 const SUI_TO_MIST = 1_000_000_000n;
 
 export async function ensureCapsAndCoins(
-  client: SuiClient,
+  client: SuiJsonRpcClient,
   signer: Keypair,
   config: Config,
   log: Logger,
@@ -63,7 +63,7 @@ export async function ensureCapsAndCoins(
 }
 
 async function getOwnedCaps(
-  client: SuiClient,
+  client: SuiJsonRpcClient,
   address: string,
   packageId: string,
 ): Promise<CapId[]> {
@@ -85,7 +85,7 @@ async function getOwnedCaps(
   return out;
 }
 
-async function getAllSuiCoins(client: SuiClient, address: string): Promise<CoinStruct[]> {
+async function getAllSuiCoins(client: SuiJsonRpcClient, address: string): Promise<CoinStruct[]> {
   const out: CoinStruct[] = [];
   let cursor: string | null | undefined = null;
   do {
@@ -97,7 +97,7 @@ async function getAllSuiCoins(client: SuiClient, address: string): Promise<CoinS
 }
 
 async function createCaps(
-  client: SuiClient,
+  client: SuiJsonRpcClient,
   signer: Keypair,
   config: Config,
   count: number,
@@ -124,7 +124,7 @@ async function createCaps(
 }
 
 async function splitCoin(
-  client: SuiClient,
+  client: SuiJsonRpcClient,
   signer: Keypair,
   sourceCoin: CoinStruct,
   splits: number,

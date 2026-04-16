@@ -1,4 +1,4 @@
-import type { SuiClient, SuiTransactionBlockResponse } from "@mysten/sui/client";
+import type { SuiJsonRpcClient, SuiTransactionBlockResponse } from "@mysten/sui/jsonRpc";
 import type { Keypair } from "@mysten/sui/cryptography";
 import { Transaction } from "@mysten/sui/transactions";
 import type { Config } from "./config";
@@ -33,7 +33,7 @@ export type Executor = {
 
 export function makeExecutor(
   state: ServiceState,
-  client: SuiClient,
+  client: SuiJsonRpcClient,
   signer: Keypair,
   config: Config,
   subscriber: Subscriber,

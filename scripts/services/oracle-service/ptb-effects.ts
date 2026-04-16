@@ -1,4 +1,4 @@
-import type { SuiEvent, SuiTransactionBlockResponse } from "@mysten/sui/client";
+import type { SuiEvent, SuiTransactionBlockResponse } from "@mysten/sui/jsonRpc";
 
 export type CreatedOracleEffect = {
   oracleId: string;
