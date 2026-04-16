@@ -69,6 +69,8 @@ export type IntentQueue = {
 export type Lane = {
   id: number;
   gasCoinId: GasCoinId;
+  gasCoinVersion: string;
+  gasCoinDigest: string;
   gasCoinBalanceApproxMist: number;
   capId: CapId;
   available: boolean;

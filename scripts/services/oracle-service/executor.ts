@@ -56,9 +56,9 @@ export function makeExecutor(
     tx.setSender(signer.toSuiAddress());
     tx.setGasPayment([{
       objectId: lane.gasCoinId,
-      version: "",
-      digest: "",
-    } as any]);
+      version: lane.gasCoinVersion,
+      digest: lane.gasCoinDigest,
+    }]);
 
     const includedIntents: Intent[] = [];
     let txUsesAdminCap = false;
@@ -334,6 +334,8 @@ function applyTxEffects(
 
   const newRef = newGasCoinVersionFromEffects(resp, lane.gasCoinId);
   if (newRef) {
+    lane.gasCoinVersion = newRef.version;
+    lane.gasCoinDigest = newRef.digest;
     const net = gasNetFromEffects(resp.effects as any);
     lane.gasCoinBalanceApproxMist += net;
   }

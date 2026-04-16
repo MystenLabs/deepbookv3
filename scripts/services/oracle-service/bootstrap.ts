@@ -44,6 +44,8 @@ export async function ensureCapsAndCoins(
   const lanes: Lane[] = chosenCoins.map((coin, i) => ({
     id: i,
     gasCoinId: coin.coinObjectId,
+    gasCoinVersion: coin.version,
+    gasCoinDigest: coin.digest,
     gasCoinBalanceApproxMist: Number(coin.balance),
     capId: caps[i],
     available: true,

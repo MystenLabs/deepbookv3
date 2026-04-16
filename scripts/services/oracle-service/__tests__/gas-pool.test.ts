@@ -15,6 +15,8 @@ function makeLane(i: number, balanceSui: number, available = true): Lane {
   return {
     id: i,
     gasCoinId: `0xg${i}`,
+    gasCoinVersion: "",
+    gasCoinDigest: "",
     gasCoinBalanceApproxMist: balanceSui * SUI,
     capId: `0xc${i}`,
     available,
