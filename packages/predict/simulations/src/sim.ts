@@ -26,7 +26,6 @@ import {
   finalizeDusdcCurrencyRegistrationTx,
   mintTx,
   refreshOracleAndMintTx,
-  registerOracleCapTx,
   supplyTx,
   updateBasisTx,
   updateSviTx,
@@ -146,7 +145,6 @@ async function setupSimulation(): Promise<SimState> {
   const oracleId: string = oracleChange.objectId;
   console.log(`[${ts()}]   Oracle: ${oracleId}`);
 
-  await executeAndWait(registerOracleCapTx(oracleId, oracleCapId), "register_oracle_cap");
   await executeAndWait(activateOracleTx(oracleId, oracleCapId), "activate_oracle");
   console.log(`[${ts()}]   Oracle activated`);
 
@@ -241,7 +239,7 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
 
     if (row.action === "update_basis") {
       const gas = await execute(
-        () => updateBasisTx(state.predictId, state.oracleId, state.oracleCapId, row.spot, row.forward),
+        () => updateBasisTx(state.oracleId, state.oracleCapId, row.spot, row.forward),
         "update_basis"
       );
       byAction.update_basis.push({ wallMs: performance.now() - startedAt, ...gas });

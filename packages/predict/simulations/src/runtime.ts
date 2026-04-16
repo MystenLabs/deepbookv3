@@ -131,7 +131,6 @@ export function createOracleTx(params: {
     arguments: [
       tx.object(REGISTRY_ID),
       tx.object(params.predictId),
-      tx.object(ADMIN_CAP_ID),
       tx.object(params.oracleCapId),
       tx.pure.string(params.underlyingAsset),
       tx.pure.u32(params.pythLazerFeedId),
@@ -139,15 +138,6 @@ export function createOracleTx(params: {
       tx.pure.u64(params.minStrike),
       tx.pure.u64(params.tickSize),
     ],
-  });
-  return tx;
-}
-
-export function registerOracleCapTx(oracleId: string, oracleCapId: string): Transaction {
-  const tx = new Transaction();
-  tx.moveCall({
-    target: target("registry", "register_oracle_cap"),
-    arguments: [tx.object(oracleId), tx.object(ADMIN_CAP_ID), tx.object(oracleCapId)],
   });
   return tx;
 }
@@ -162,7 +152,6 @@ export function activateOracleTx(oracleId: string, oracleCapId: string): Transac
 }
 
 export function updateBasisTx(
-  predictId: string,
   oracleId: string,
   oracleCapId: string,
   spot: bigint,
@@ -170,9 +159,8 @@ export function updateBasisTx(
 ): Transaction {
   const tx = new Transaction();
   tx.moveCall({
-    target: target("predict", "update_basis"),
+    target: target("oracle", "update_basis"),
     arguments: [
-      tx.object(predictId),
       tx.object(oracleId),
       tx.object(oracleCapId),
       tx.pure.u64(spot),
@@ -321,9 +309,8 @@ export function refreshOracleAndMintTx(params: {
 }): Transaction {
   const tx = new Transaction();
   tx.moveCall({
-    target: target("predict", "update_basis"),
+    target: target("oracle", "update_basis"),
     arguments: [
-      tx.object(params.predictId),
       tx.object(params.oracleId),
       tx.object(params.oracleCapId),
       tx.pure.u64(params.spot),
