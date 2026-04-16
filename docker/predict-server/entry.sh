@@ -1,0 +1,8 @@
+#!/bin/bash
+
+export RUST_BACKTRACE=1
+export RUST_LOG=debug
+
+/opt/mysten/bin/predict-server \
+  --database-url "$DATABASE_URL" \
+  --db-statement-timeout-ms 60000
