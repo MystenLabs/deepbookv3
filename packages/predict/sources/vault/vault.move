@@ -250,6 +250,15 @@ public(package) fun get_last_mtm_update(vault: &Vault, oracle_id: ID): u64 {
     vault.oracle_matrices[oracle_id].last_mtm_update()
 }
 
+public(package) fun add_unsettled_exposed_oracle(vault: &mut Vault, oracle_id: ID) {
+    let mut i = 0;
+    while (i < vault.unsettled_exposed_oracles.length()) {
+        if (vault.unsettled_exposed_oracles[i] == oracle_id) return;
+        i = i + 1;
+    };
+    vault.unsettled_exposed_oracles.push_back(oracle_id);
+}
+
 public(package) fun remove_unsettled_exposed_oracle(
     vault: &mut Vault,
     oracle_id: ID,
@@ -270,15 +279,6 @@ public(package) fun remove_unsettled_exposed_oracle(
         };
         i = i + 1;
     };
-}
-
-public(package) fun add_unsettled_exposed_oracle(vault: &mut Vault, oracle_id: ID) {
-    let mut i = 0;
-    while (i < vault.unsettled_exposed_oracles.length()) {
-        if (vault.unsettled_exposed_oracles[i] == oracle_id) return;
-        i = i + 1;
-    };
-    vault.unsettled_exposed_oracles.push_back(oracle_id);
 }
 
 fun deposit_balance<T>(vault: &mut Vault, payment: Balance<T>) {
