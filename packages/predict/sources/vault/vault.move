@@ -248,7 +248,18 @@ public(package) fun get_last_mtm_update(vault: &Vault, oracle_id: ID): u64 {
     vault.oracle_matrices[oracle_id].last_mtm_update()
 }
 
-public(package) fun remove_unsettled_exposed_oracle(vault: &mut Vault, oracle_id: ID) {
+public(package) fun remove_unsettled_exposed_oracle(
+    vault: &mut Vault,
+    oracle_id: ID,
+    is_settled: bool,
+) {
+    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+
+    if (!is_settled) {
+        let matrix = &vault.oracle_matrices[oracle_id];
+        if (matrix.mtm() != 0 || matrix.max_payout() != 0) return;
+    };
+
     let mut i = 0;
     while (i < vault.unsettled_exposed_oracles.length()) {
         if (vault.unsettled_exposed_oracles[i] == oracle_id) {
@@ -256,14 +267,6 @@ public(package) fun remove_unsettled_exposed_oracle(vault: &mut Vault, oracle_id
             return
         };
         i = i + 1;
-    };
-}
-
-public(package) fun remove_unsettled_exposed_oracle_if_inactive(vault: &mut Vault, oracle_id: ID) {
-    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
-    let matrix = &vault.oracle_matrices[oracle_id];
-    if (matrix.mtm() == 0 && matrix.max_payout() == 0) {
-        vault.remove_unsettled_exposed_oracle(oracle_id);
     };
 }
 

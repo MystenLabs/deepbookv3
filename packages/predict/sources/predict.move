@@ -402,7 +402,7 @@ public fun redeem_range<Quote>(
 
     predict.vault.remove_range(oracle.id(), lower, higher, quantity);
     predict.refresh_oracle_risk(oracle, clock);
-    predict.vault.remove_unsettled_exposed_oracle_if_inactive(oracle.id());
+    predict.vault.remove_unsettled_exposed_oracle(oracle.id(), oracle.is_settled());
 
     // Quote against the post-trade state so the seller is paid from the
     // liability after their range has been removed from the vault.
@@ -572,7 +572,7 @@ public fun refresh_oracle_mtm(predict: &mut Predict, oracle: &OracleSVI, clock: 
 public fun sync_settled_oracle(predict: &mut Predict, oracle: &OracleSVI, clock: &Clock) {
     assert!(oracle.is_settled(), EOracleNotSettled);
     predict.refresh_oracle_risk(oracle, clock);
-    predict.vault.remove_unsettled_exposed_oracle(oracle.id());
+    predict.vault.remove_unsettled_exposed_oracle(oracle.id(), true);
 }
 
 /// Whether trading is currently paused.
@@ -790,7 +790,7 @@ fun redeem_internal<Quote>(
 
     predict.vault.remove_position(oracle.id(), key.is_up(), key.strike(), quantity);
     predict.refresh_oracle_risk(oracle, clock);
-    predict.vault.remove_unsettled_exposed_oracle_if_inactive(oracle.id());
+    predict.vault.remove_unsettled_exposed_oracle(oracle.id(), oracle.is_settled());
 
     // Quote against the post-trade state so the seller is paid from the
     // liability after their position has been removed from the vault.
