@@ -468,8 +468,11 @@ let value = if (opt.is_some()) {
 // good! there's a macro!
 let value = opt.destroy_or!(default_value);
 
-// you can even do abort on `none`
-let value = opt.destroy_or!(abort ECannotBeEmpty);
+// for the "assert-then-extract" case, prefer assert! + destroy_some over
+// destroy_or!(abort E) — keeps named error codes consistent with the rest
+// of the function and avoids mixing assert and abort styles.
+assert!(opt.is_some(), ECannotBeEmpty);
+let value = opt.destroy_some();
 ```
 
 ## Loops -> Macros
