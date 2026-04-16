@@ -35,6 +35,7 @@ const EBasisDeviationTooLarge: u64 = 19;
 const EBasisOutOfRange: u64 = 20;
 const EOracleStale: u64 = 21;
 const EOracleInactive: u64 = 22;
+const ELazerAuthoritativeAtExpiry: u64 = 23;
 
 // Pre-expiry oracle that has not been activated yet.
 const STATUS_INACTIVE: u8 = 0;
@@ -104,6 +105,7 @@ public struct OracleBoundsUpdated has copy, drop, store {
     spot_staleness_threshold_ms: u64,
     basis_staleness_threshold_ms: u64,
     lazer_authoritative_threshold_ms: u64,
+    lazer_settlement_authoritative_threshold_ms: u64,
     max_spot_deviation: u64,
     max_basis_deviation: u64,
     min_basis: u64,
@@ -164,6 +166,14 @@ public struct OracleBounds has copy, drop, store {
     /// fallback. Independent of `spot_staleness_threshold_ms` (the hard halt
     /// gate, always checked on top).
     lazer_authoritative_threshold_ms: u64,
+    /// Window (ms) within which Lazer's last push freezes settlement
+    /// authoritatively. Longer than `lazer_authoritative_threshold_ms` because
+    /// settlement is irreversible — while Lazer is within this window,
+    /// `update_basis`'s terminal-settlement branch aborts with
+    /// `ELazerAuthoritativeAtExpiry` so Lazer can land the settlement price.
+    /// Beyond the window (or when Lazer has never pushed) the operator's spot
+    /// is accepted as the settlement fallback.
+    lazer_settlement_authoritative_threshold_ms: u64,
     /// Per-push spot deviation cap enforced in `validate_basis_push`.
     /// 1e9-scaled fraction; skipped on first push (no prior baseline).
     max_spot_deviation: u64,
@@ -284,8 +294,18 @@ public fun update_basis(
     let oracle_id = oracle.id.to_inner();
 
     // If at or past expiry, freeze settlement price and deactivate instead of
-    // recording another live price update.
+    // recording another live price update. Gate on the settlement-specific
+    // Lazer-authoritative window: while Lazer has pushed within the window
+    // it is the settlement oracle and the operator's terminal push is
+    // rejected. Once Lazer goes stale (or has never pushed) the operator is
+    // the settlement fallback so the oracle cannot get permanently stuck.
     if (oracle_status == status_pending_settlement()) {
+        let lazer_settlement_fresh =
+            oracle.lazer_spot_timestamp_ms > 0 &&
+            now <= oracle.lazer_spot_timestamp_ms
+                + oracle.bounds.lazer_settlement_authoritative_threshold_ms;
+        assert!(!lazer_settlement_fresh, ELazerAuthoritativeAtExpiry);
+
         oracle.settlement_price = option::some(spot);
         oracle.active = false;
 
@@ -596,6 +616,21 @@ public fun set_lazer_authoritative_threshold_ms(
     oracle.emit_bounds_updated();
 }
 
+/// Tune the window within which Lazer's last spot push freezes settlement
+/// authoritatively (gates the terminal `update_basis` settlement branch).
+/// Authorized by `OracleSVICap`. Bounded by
+/// `constants::max_staleness_threshold_ms!()` (60s).
+public fun set_lazer_settlement_authoritative_threshold_ms(
+    oracle: &mut OracleSVI,
+    cap: &OracleSVICap,
+    value: u64,
+) {
+    oracle.assert_authorized_cap(cap);
+    validate_staleness_ms(value);
+    oracle.bounds.lazer_settlement_authoritative_threshold_ms = value;
+    oracle.emit_bounds_updated();
+}
+
 /// Tune the four circuit-breaker values applied on every `update_basis`.
 /// Authorized by `OracleSVICap`. Validates `min_basis < max_basis` and that
 /// both deviation fractions fit within 1.0 (1e9 scale).
@@ -737,6 +772,7 @@ public(package) fun new_oracle_bounds(
     spot_staleness_threshold_ms: u64,
     basis_staleness_threshold_ms: u64,
     lazer_authoritative_threshold_ms: u64,
+    lazer_settlement_authoritative_threshold_ms: u64,
     max_spot_deviation: u64,
     max_basis_deviation: u64,
     min_basis: u64,
@@ -745,12 +781,14 @@ public(package) fun new_oracle_bounds(
     validate_staleness_ms(spot_staleness_threshold_ms);
     validate_staleness_ms(basis_staleness_threshold_ms);
     validate_staleness_ms(lazer_authoritative_threshold_ms);
+    validate_staleness_ms(lazer_settlement_authoritative_threshold_ms);
     validate_basis_bounds_inputs(max_spot_deviation, max_basis_deviation, min_basis, max_basis);
 
     OracleBounds {
         spot_staleness_threshold_ms,
         basis_staleness_threshold_ms,
         lazer_authoritative_threshold_ms,
+        lazer_settlement_authoritative_threshold_ms,
         max_spot_deviation,
         max_basis_deviation,
         min_basis,
@@ -873,8 +911,16 @@ fun validate_basis_bounds_inputs(
     max_basis: u64,
 ) {
     assert!(min_basis < max_basis, EInvalidBasisBounds);
-    assert!(max_spot_deviation <= constants::float_scaling!(), EInvalidBasisBounds);
-    assert!(max_basis_deviation <= constants::float_scaling!(), EInvalidBasisBounds);
+    assert!(min_basis >= constants::min_basis_floor!(), EInvalidBasisBounds);
+    assert!(max_basis <= constants::max_basis_ceiling!(), EInvalidBasisBounds);
+    assert!(
+        max_spot_deviation > 0 && max_spot_deviation <= constants::max_basis_deviation_ceiling!(),
+        EInvalidBasisBounds,
+    );
+    assert!(
+        max_basis_deviation > 0 && max_basis_deviation <= constants::max_basis_deviation_ceiling!(),
+        EInvalidBasisBounds,
+    );
 }
 
 /// Return true iff `|next - prev| <= prev * max_deviation`, where
@@ -892,6 +938,7 @@ fun emit_bounds_updated(oracle: &OracleSVI) {
         spot_staleness_threshold_ms: b.spot_staleness_threshold_ms,
         basis_staleness_threshold_ms: b.basis_staleness_threshold_ms,
         lazer_authoritative_threshold_ms: b.lazer_authoritative_threshold_ms,
+        lazer_settlement_authoritative_threshold_ms: b.lazer_settlement_authoritative_threshold_ms,
         max_spot_deviation: b.max_spot_deviation,
         max_basis_deviation: b.max_basis_deviation,
         min_basis: b.min_basis,

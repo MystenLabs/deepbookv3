@@ -272,6 +272,19 @@ public fun set_lazer_authoritative_threshold_ms(
     predict.set_lazer_authoritative_threshold_ms(value);
 }
 
+/// Set the Lazer-settlement-authoritative window (ms). While Lazer has
+/// pushed within this window, operator `update_basis` cannot race-freeze
+/// the terminal settlement price — it aborts and defers to Lazer. Beyond
+/// the window (or when Lazer has never pushed), operator settlement is the
+/// fallback.
+public fun set_lazer_settlement_authoritative_threshold_ms(
+    predict: &mut Predict,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    predict.set_lazer_settlement_authoritative_threshold_ms(value);
+}
+
 /// Update the circuit-breaker bounds seed used by
 /// `oracle_config::build_oracle_bounds` at the next matching `create_oracle`
 /// for `asset` (e.g. "BTC"). `max_spot_deviation` and `max_basis_deviation`

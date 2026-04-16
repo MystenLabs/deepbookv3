@@ -173,6 +173,7 @@ public struct OracleStalenessConfigUpdated has copy, drop, store {
     spot_staleness_threshold_ms: u64,
     basis_staleness_threshold_ms: u64,
     lazer_authoritative_threshold_ms: u64,
+    lazer_settlement_authoritative_threshold_ms: u64,
 }
 
 public struct OracleBasisBoundsUpdated has copy, drop, store {
@@ -720,6 +721,18 @@ public(package) fun set_lazer_authoritative_threshold_ms(predict: &mut Predict, 
     predict.emit_oracle_staleness_config_updated();
 }
 
+/// Update the admin-tuned Lazer-settlement-authoritative window used to seed
+/// new oracles. Does NOT retroactively update existing oracles — the operator
+/// retunes per-oracle via
+/// `oracle::set_lazer_settlement_authoritative_threshold_ms`.
+public(package) fun set_lazer_settlement_authoritative_threshold_ms(
+    predict: &mut Predict,
+    value: u64,
+) {
+    predict.oracle_config.set_lazer_settlement_authoritative_threshold_ms(value);
+    predict.emit_oracle_staleness_config_updated();
+}
+
 /// Update the per-asset basis circuit-breaker bounds seed used by
 /// `oracle_config::build_oracle_bounds` at `create_oracle`. Does NOT
 /// retroactively update existing oracles.
@@ -907,6 +920,9 @@ fun emit_oracle_staleness_config_updated(predict: &Predict) {
         spot_staleness_threshold_ms: predict.oracle_config.spot_staleness_threshold_ms(),
         basis_staleness_threshold_ms: predict.oracle_config.basis_staleness_threshold_ms(),
         lazer_authoritative_threshold_ms: predict.oracle_config.lazer_authoritative_threshold_ms(),
+        lazer_settlement_authoritative_threshold_ms: predict
+            .oracle_config
+            .lazer_settlement_authoritative_threshold_ms(),
     });
 }
 

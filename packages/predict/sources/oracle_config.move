@@ -84,6 +84,11 @@ public struct OracleConfig has store {
     /// Admin-tuned window within which Lazer's last spot push is treated as
     /// the authoritative master spot. Seeds the per-oracle field at creation.
     lazer_authoritative_threshold_ms: u64,
+    /// Admin-tuned window within which Lazer's last spot push freezes
+    /// settlement authoritatively. Seeds the per-oracle field at creation;
+    /// longer than `lazer_authoritative_threshold_ms` because settlement is
+    /// irreversible.
+    lazer_settlement_authoritative_threshold_ms: u64,
 }
 
 /// Curve sample point with strike and one-sided UP price.
@@ -125,6 +130,12 @@ public(package) fun basis_staleness_threshold_ms(oracle_config: &OracleConfig): 
 /// Admin-tuned Lazer-authoritative window (ms) used to seed new oracles.
 public(package) fun lazer_authoritative_threshold_ms(oracle_config: &OracleConfig): u64 {
     oracle_config.lazer_authoritative_threshold_ms
+}
+
+/// Admin-tuned Lazer-settlement-authoritative window (ms) used to seed new
+/// oracles.
+public(package) fun lazer_settlement_authoritative_threshold_ms(oracle_config: &OracleConfig): u64 {
+    oracle_config.lazer_settlement_authoritative_threshold_ms
 }
 
 /// Per-asset basis bounds currently registered for `asset`, or `None` if the
@@ -189,6 +200,7 @@ public(package) fun new(ctx: &mut TxContext): OracleConfig {
         spot_staleness_threshold_ms: constants::default_spot_staleness_threshold_ms!(),
         basis_staleness_threshold_ms: constants::default_basis_staleness_threshold_ms!(),
         lazer_authoritative_threshold_ms: constants::default_lazer_authoritative_threshold_ms!(),
+        lazer_settlement_authoritative_threshold_ms: constants::default_lazer_settlement_authoritative_threshold_ms!(),
     }
 }
 
@@ -210,6 +222,7 @@ public(package) fun build_oracle_bounds(
         oracle_config.spot_staleness_threshold_ms,
         oracle_config.basis_staleness_threshold_ms,
         oracle_config.lazer_authoritative_threshold_ms,
+        oracle_config.lazer_settlement_authoritative_threshold_ms,
         max_spot_deviation,
         max_basis_deviation,
         min_basis,
@@ -241,6 +254,16 @@ public(package) fun set_lazer_authoritative_threshold_ms(
 ) {
     validate_staleness_ms(value);
     oracle_config.lazer_authoritative_threshold_ms = value;
+}
+
+/// Admin setter: update the global Lazer-settlement-authoritative window
+/// seed. Does NOT retroactively update existing oracles.
+public(package) fun set_lazer_settlement_authoritative_threshold_ms(
+    oracle_config: &mut OracleConfig,
+    value: u64,
+) {
+    validate_staleness_ms(value);
+    oracle_config.lazer_settlement_authoritative_threshold_ms = value;
 }
 
 /// Admin setter: set or update the per-asset basis bounds seed for `asset`.
@@ -498,8 +521,16 @@ fun validate_basis_bounds_inputs(
     max_basis: u64,
 ) {
     assert!(min_basis < max_basis, EInvalidBasisBounds);
-    assert!(max_spot_deviation <= constants::float_scaling!(), EInvalidBasisBounds);
-    assert!(max_basis_deviation <= constants::float_scaling!(), EInvalidBasisBounds);
+    assert!(min_basis >= constants::min_basis_floor!(), EInvalidBasisBounds);
+    assert!(max_basis <= constants::max_basis_ceiling!(), EInvalidBasisBounds);
+    assert!(
+        max_spot_deviation > 0 && max_spot_deviation <= constants::max_basis_deviation_ceiling!(),
+        EInvalidBasisBounds,
+    );
+    assert!(
+        max_basis_deviation > 0 && max_basis_deviation <= constants::max_basis_deviation_ceiling!(),
+        EInvalidBasisBounds,
+    );
 }
 
 /// Insert a new curve point while preserving ascending strike order.
