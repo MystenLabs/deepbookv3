@@ -15,7 +15,13 @@ function updateConstant(content: string, name: string, network: string, value: s
 	const regex = new RegExp(
 		`(export const ${name} = \\{[^}]*${network}:\\s*)"[^"]*"`,
 	);
-	return content.replace(regex, `$1"${value}"`);
+	const result = content.replace(regex, `$1"${value}"`);
+	if (result === content) {
+		throw new Error(
+			`updateConstant: no match for ${name}[${network}] in constants.ts — check that the constant exists and the file format hasn't drifted`,
+		);
+	}
+	return result;
 }
 
 (async () => {
@@ -67,21 +73,41 @@ function updateConstant(content: string, name: string, network: string, value: s
 		}
 	}
 
+	// PLP TreasuryCap is minted during plp::init and transferred to the
+	// publisher. `registry::create_predict<DUSDC>` takes this cap as an input,
+	// so the standalone `pnpm predict-publish && pnpm predict-init` flow
+	// requires it to be captured here.
+	const plpCapObjectType = `0x2::coin::TreasuryCap<${predictPackageId}::plp::PLP>`;
+	let plpTreasuryCapId = '';
+	for (const obj of created) {
+		if (obj.type !== 'created') continue;
+		if (obj.objectType === plpCapObjectType) {
+			plpTreasuryCapId = obj.objectId;
+			break;
+		}
+	}
+	if (!plpTreasuryCapId) {
+		console.error(`Could not find TreasuryCap<PLP> (${plpCapObjectType}) in objectChanges.`);
+		process.exit(1);
+	}
+
 	// Write IDs into constants.ts
 	let constants = fs.readFileSync(CONSTANTS_PATH, 'utf-8');
 	constants = updateConstant(constants, 'predictPackageID', network, predictPackageId);
 	constants = updateConstant(constants, 'predictRegistryID', network, registryId);
 	constants = updateConstant(constants, 'predictAdminCapID', network, adminCapId);
 	constants = updateConstant(constants, 'predictUpgradeCapID', network, upgradeCapId);
+	constants = updateConstant(constants, 'plpTreasuryCapID', network, plpTreasuryCapId);
 	fs.writeFileSync(CONSTANTS_PATH, constants);
 
 	console.log('\n========== PUBLISH SUMMARY ==========');
-	console.log(`Package ID:   ${predictPackageId}`);
-	console.log(`Registry:     ${registryId}`);
-	console.log(`AdminCap:     ${adminCapId}`);
-	console.log(`UpgradeCap:   ${upgradeCapId}`);
-	console.log(`Deployer:     ${address}`);
-	console.log(`Tx Digest:    ${result.digest}`);
+	console.log(`Package ID:        ${predictPackageId}`);
+	console.log(`Registry:          ${registryId}`);
+	console.log(`AdminCap:          ${adminCapId}`);
+	console.log(`UpgradeCap:        ${upgradeCapId}`);
+	console.log(`plpTreasuryCapID:  ${plpTreasuryCapId}`);
+	console.log(`Deployer:          ${address}`);
+	console.log(`Tx Digest:         ${result.digest}`);
 	console.log('======================================');
 	console.log('\nConstants written to config/constants.ts');
 })();
