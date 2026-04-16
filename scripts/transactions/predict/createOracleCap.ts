@@ -56,7 +56,7 @@ function updateConstant(content: string, name: string, net: string, value: strin
 	const created = allChanges.filter((c: (typeof allChanges)[number]) => c.type === 'created');
 	for (const obj of created) {
 		if (obj.type !== 'created') continue;
-		if (obj.objectType.includes('::oracle::OracleCapSVI')) oracleCapId = obj.objectId;
+		if (obj.objectType.includes('::oracle::OracleSVICap')) oracleCapId = obj.objectId;
 	}
 
 	let constants = fs.readFileSync(CONSTANTS_PATH, 'utf-8');

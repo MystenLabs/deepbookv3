@@ -48,6 +48,7 @@ function updateConstant(content: string, name: string, network: string, value: s
 
 	let dusdcPackageId = '';
 	let treasuryCapId = '';
+	let currencyId = '';
 
 	for (const p of published) {
 		if (p.type !== 'published') continue;
@@ -59,19 +60,28 @@ function updateConstant(content: string, name: string, network: string, value: s
 	for (const obj of created) {
 		if (obj.type !== 'created') continue;
 		if (obj.objectType.includes('TreasuryCap')) treasuryCapId = obj.objectId;
+		// coin_registry::Currency<PKG::dusdc::DUSDC>
+		if (
+			obj.objectType.includes('::coin_registry::Currency<') &&
+			obj.objectType.includes('::dusdc::DUSDC')
+		) {
+			currencyId = obj.objectId;
+		}
 	}
 
 	// Write IDs into constants.ts
 	let constants = fs.readFileSync(CONSTANTS_PATH, 'utf-8');
 	constants = updateConstant(constants, 'dusdcPackageID', network, dusdcPackageId);
 	constants = updateConstant(constants, 'dusdcTreasuryCapID', network, treasuryCapId);
+	constants = updateConstant(constants, 'dusdcCurrencyID', network, currencyId);
 	fs.writeFileSync(CONSTANTS_PATH, constants);
 
 	console.log('\n========== DUSDC PUBLISH SUMMARY ==========');
-	console.log(`Package ID:    ${dusdcPackageId}`);
-	console.log(`TreasuryCap:   ${treasuryCapId}`);
-	console.log(`Deployer:      ${address}`);
-	console.log(`Tx Digest:     ${result.digest}`);
+	console.log(`Package ID:       ${dusdcPackageId}`);
+	console.log(`TreasuryCap:      ${treasuryCapId}`);
+	console.log(`Currency<DUSDC>:  ${currencyId}`);
+	console.log(`Deployer:         ${address}`);
+	console.log(`Tx Digest:        ${result.digest}`);
 	console.log('============================================');
 	console.log('\nConstants written to config/constants.ts');
 })();
