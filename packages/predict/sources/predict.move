@@ -13,7 +13,7 @@ use deepbook_predict::{
     constants,
     market_key::MarketKey,
     math::mul_div_round_down,
-    oracle::{OracleSVI, OracleSVICap},
+    oracle::{Self, OracleSVI, OracleSVICap},
     oracle_config::{Self, OracleConfig},
     plp::PLP,
     predict_manager::{Self, PredictManager},
@@ -274,6 +274,19 @@ public fun mint<Quote>(
     });
 }
 
+/// Compact a settled oracle's dense strike matrix into constant-size state.
+/// Only an authorized oracle operator can trigger compaction.
+public fun compact_settled_oracle(
+    predict: &mut Predict,
+    oracle: &OracleSVI,
+    oracle_cap: &OracleSVICap,
+) {
+    oracle::assert_authorized_cap(oracle, oracle_cap);
+    assert!(oracle.is_settled(), EOracleNotSettled);
+    let settlement = oracle.settlement_price().destroy_some();
+    predict.vault.compact_settled_oracle_if_needed(oracle.id(), settlement);
+}
+
 /// Sell a position. Payout is deposited into the PredictManager's balance.
 /// Outflows can use any quote asset with concrete vault balance, even if it is
 /// disabled for new inflows.
@@ -342,7 +355,6 @@ public fun mint_range<Quote>(
 
     let lower = key.lower_strike();
     let higher = key.higher_strike();
-
     predict.vault.insert_range(oracle.id(), lower, higher, quantity);
     predict.refresh_oracle_risk(oracle);
 
@@ -392,13 +404,20 @@ public fun redeem_range<Quote>(
 
     let lower = key.lower_strike();
     let higher = key.higher_strike();
+    let payout;
+    if (oracle.is_settled() && predict.vault.has_settled_oracle(oracle.id())) {
+        let (_, settled_payout) = predict.get_range_trade_amounts(oracle, key, quantity, clock);
+        predict.vault.redeem_settled_position(oracle.id(), quantity, settled_payout);
+        payout = settled_payout;
+    } else {
+        predict.vault.remove_range(oracle.id(), lower, higher, quantity);
+        predict.refresh_oracle_risk(oracle);
 
-    predict.vault.remove_range(oracle.id(), lower, higher, quantity);
-    predict.refresh_oracle_risk(oracle);
-
-    // Quote against the post-trade state so the seller is paid from the
-    // liability after their range has been removed from the vault.
-    let (_, payout) = predict.get_range_trade_amounts(oracle, key, quantity, clock);
+        // Quote against the post-trade state so the seller is paid from the
+        // liability after their range has been removed from the vault.
+        let (_, live_payout) = predict.get_range_trade_amounts(oracle, key, quantity, clock);
+        payout = live_payout;
+    };
 
     let payout_balance = predict.vault.dispense_payout<Quote>(payout);
     let payout_coin = payout_balance.into_coin(ctx);
@@ -748,13 +767,20 @@ fun redeem_internal<Quote>(
     oracle_config::assert_quoteable_oracle(oracle, clock);
 
     manager.decrease_position(key, quantity);
+    let payout;
+    if (oracle.is_settled() && predict.vault.has_settled_oracle(oracle.id())) {
+        let (_, settled_payout) = predict.get_trade_amounts(oracle, key, quantity, clock);
+        predict.vault.redeem_settled_position(oracle.id(), quantity, settled_payout);
+        payout = settled_payout;
+    } else {
+        predict.vault.remove_position(oracle.id(), key.is_up(), key.strike(), quantity);
+        predict.refresh_oracle_risk(oracle);
 
-    predict.vault.remove_position(oracle.id(), key.is_up(), key.strike(), quantity);
-    predict.refresh_oracle_risk(oracle);
-
-    // Quote against the post-trade state so the seller is paid from the
-    // liability after their position has been removed from the vault.
-    let (_, payout) = predict.get_trade_amounts(oracle, key, quantity, clock);
+        // Quote against the post-trade state so the seller is paid from the
+        // liability after their position has been removed from the vault.
+        let (_, live_payout) = predict.get_trade_amounts(oracle, key, quantity, clock);
+        payout = live_payout;
+    };
 
     let payout_balance = predict.vault.dispense_payout<Quote>(payout);
     let payout_coin = payout_balance.into_coin(ctx);
