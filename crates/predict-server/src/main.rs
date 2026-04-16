@@ -16,7 +16,7 @@ struct Args {
     #[clap(
         env,
         long,
-        default_value = "postgres://localhost:5432/predict"
+        default_value = "postgres://localhost:5432/predict_v2"
     )]
     database_url: Url,
 }

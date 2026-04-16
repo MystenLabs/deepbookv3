@@ -37,7 +37,7 @@ struct Args {
     #[clap(
         env,
         long,
-        default_value = "postgres://localhost/predict"
+        default_value = "postgres://localhost/predict_v2"
     )]
     database_url: Url,
     /// Override predict package ID (for new deployments)

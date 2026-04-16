@@ -75,3 +75,21 @@ export const supplierCapID = {
   mainnet: "0xe0e64f2b0037304e29647fd5ef2c5ea758828a8e5aea73bb0bd5f227c1c20204",
   testnet: "",
 };
+
+// --- Predict protocol ---
+export const predictPackageID = { mainnet: "", testnet: "" };
+export const predictRegistryID = { mainnet: "", testnet: "" };
+export const predictAdminCapID = { mainnet: "", testnet: "" };
+export const predictUpgradeCapID = { mainnet: "", testnet: "" };
+export const predictObjectID = { mainnet: "", testnet: "" };
+export const predictOracleCapID = { mainnet: "", testnet: "" };
+export const predictOracleCapIDs: Record<string, string[]> = { mainnet: [], testnet: [] };
+export const predictOracleID = { mainnet: "", testnet: "" };
+
+// DUSDC test token
+export const dusdcPackageID = { mainnet: "", testnet: "" };
+export const dusdcTreasuryCapID = { mainnet: "", testnet: "" };
+export const dusdcCurrencyID = { mainnet: "", testnet: "" };
+
+// PLP treasury cap (minted at publish time by plp::init, captured by redeploy)
+export const plpTreasuryCapID = { mainnet: "", testnet: "" };
