@@ -1,6 +1,8 @@
 use move_core_types::account_address::AccountAddress;
 use serde::Serialize;
 
+/// Simplified MoveStruct trait for the predict indexer.
+/// Matches Move event types against a flat list of package addresses.
 pub trait MoveStruct: Serialize {
     const MODULE: &'static str;
     const NAME: &'static str;
