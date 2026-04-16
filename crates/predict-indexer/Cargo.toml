@@ -1,0 +1,35 @@
+[package]
+name = "predict-indexer"
+version = "0.1.0"
+authors = ["Mysten Labs <build@mystenlabs.com>"]
+license = "Apache-2.0"
+publish = false
+edition = "2021"
+
+[dependencies]
+tokio.workspace = true
+sui-indexer-alt-framework = { git = "https://github.com/MystenLabs/sui.git", branch = "testnet" }
+sui-sdk-types = { git = "https://github.com/mystenlabs/sui-rust-sdk", features = ["serde"], rev = "048124e484f14b9bf2a402227c9bc255c7621bc1" }
+clap = { workspace = true, features = ["env"] }
+diesel = { workspace = true, features = ["postgres"] }
+diesel-async = { workspace = true, features = ["bb8", "postgres"] }
+hex = "0.4"
+tracing.workspace = true
+async-trait.workspace = true
+bcs.workspace = true
+serde.workspace = true
+anyhow.workspace = true
+url.workspace = true
+
+sui-pg-db.workspace = true
+prometheus.workspace = true
+sui-indexer-alt-metrics.workspace = true
+sui-types.workspace = true
+move-core-types.workspace = true
+telemetry-subscribers.workspace = true
+
+predict-schema = { path = "../predict-schema" }
+
+[[bin]]
+name = "predict-indexer"
+path = "src/main.rs"
