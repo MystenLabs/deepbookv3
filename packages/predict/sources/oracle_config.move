@@ -59,15 +59,6 @@ public struct BasisBounds has copy, drop, store {
 }
 
 public struct OracleConfig has store {
-    /// Admin-tuned maximum age of `spot_timestamp_ms` used to seed the
-    /// per-oracle `spot_staleness_threshold_ms` at `create_oracle`.
-    spot_staleness_threshold_ms: u64,
-    /// Admin-tuned maximum age of the cached basis used to seed the
-    /// per-oracle `basis_staleness_threshold_ms` at `create_oracle`.
-    basis_staleness_threshold_ms: u64,
-    /// Admin-tuned window within which Lazer's last spot push is treated as
-    /// the authoritative master spot. Seeds the per-oracle field at creation.
-    lazer_authoritative_threshold_ms: u64,
     oracle_grids: Table<ID, OracleGrid>,
     /// Per-oracle ask-bound overrides; presence in this table means an override
     /// is active for that oracle id.
@@ -84,6 +75,15 @@ public struct OracleConfig has store {
     /// canonical feed-id width) at `registry::create_oracle`. Updating an
     /// entry here does NOT retroactively change existing oracles.
     asset_feed_ids: Table<String, u64>,
+    /// Admin-tuned maximum age of `spot_timestamp_ms` used to seed the
+    /// per-oracle `spot_staleness_threshold_ms` at `create_oracle`.
+    spot_staleness_threshold_ms: u64,
+    /// Admin-tuned maximum age of the cached basis used to seed the
+    /// per-oracle `basis_staleness_threshold_ms` at `create_oracle`.
+    basis_staleness_threshold_ms: u64,
+    /// Admin-tuned window within which Lazer's last spot push is treated as
+    /// the authoritative master spot. Seeds the per-oracle field at creation.
+    lazer_authoritative_threshold_ms: u64,
 }
 
 /// Curve sample point with strike and one-sided UP price.
@@ -182,13 +182,13 @@ public(package) fun basis_bounds_max_basis(bounds: &BasisBounds): u64 {
 /// an explicit entry falls back to `default_basis_bounds()` at creation.
 public(package) fun new(ctx: &mut TxContext): OracleConfig {
     OracleConfig {
-        spot_staleness_threshold_ms: constants::default_spot_staleness_threshold_ms!(),
-        basis_staleness_threshold_ms: constants::default_basis_staleness_threshold_ms!(),
-        lazer_authoritative_threshold_ms: constants::default_lazer_authoritative_threshold_ms!(),
         oracle_grids: table::new(ctx),
         oracle_ask_bounds: table::new(ctx),
         asset_basis_bounds: table::new(ctx),
         asset_feed_ids: table::new(ctx),
+        spot_staleness_threshold_ms: constants::default_spot_staleness_threshold_ms!(),
+        basis_staleness_threshold_ms: constants::default_basis_staleness_threshold_ms!(),
+        lazer_authoritative_threshold_ms: constants::default_lazer_authoritative_threshold_ms!(),
     }
 }
 
