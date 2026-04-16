@@ -168,7 +168,7 @@ public(package) fun new(ctx: &mut TxContext): OracleConfig {
     OracleConfig {
         oracle_grids: table::new(ctx),
         oracle_ask_bounds: table::new(ctx),
-        staleness_threshold_ms: constants::default_staleness_threshold_ms!(),
+        staleness_threshold_ms: constants::default_spot_staleness_threshold_ms!(),
         basis_staleness_threshold_ms: constants::default_basis_staleness_threshold_ms!(),
         lazer_authoritative_threshold_ms: constants::default_lazer_authoritative_threshold_ms!(),
         asset_basis_bounds: table::new(ctx),
@@ -559,7 +559,7 @@ fun within_deviation(prev: u64, next: u64, max_deviation: u64): bool {
 /// fallback for assets that have no explicit `asset_basis_bounds` entry.
 fun default_basis_bounds(): BasisBounds {
     BasisBounds {
-        max_spot_deviation: constants::default_max_basis_spot_deviation!(),
+        max_spot_deviation: constants::default_max_spot_deviation!(),
         max_basis_deviation: constants::default_max_basis_deviation!(),
         min_basis: constants::default_min_basis!(),
         max_basis: constants::default_max_basis!(),

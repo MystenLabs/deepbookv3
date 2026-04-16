@@ -46,7 +46,7 @@ public macro fun ms_per_year(): u64 { 31_536_000_000 }
 /// With the operator's 1s `update_basis` cadence, a 3s gate lets the fallback
 /// path carry the oracle through arbitrary-length Lazer outages while still
 /// halting within 3s when both feeds go silent.
-public macro fun default_staleness_threshold_ms(): u64 { 3_000 }
+public macro fun default_spot_staleness_threshold_ms(): u64 { 3_000 }
 
 /// Default maximum age of the cached operator basis (60 seconds).
 /// Consumed by `update_spot_from_lazer` (refuses to derive a forward against
@@ -64,7 +64,7 @@ public macro fun max_staleness_threshold_ms(): u64 { 60_000 }
 /// the authoritative master spot (2 seconds). While Lazer is within this
 /// window, `update_basis` refreshes basis/forward but does NOT overwrite
 /// `oracle.prices.spot`. Beyond it, the operator's spot flows through as a
-/// fallback. Independent of `default_staleness_threshold_ms!()` (the hard
+/// fallback. Independent of `default_spot_staleness_threshold_ms!()` (the hard
 /// halt gate) which is always checked on top.
 public macro fun default_lazer_authoritative_threshold_ms(): u64 { 2_000 }
 
@@ -73,7 +73,7 @@ public macro fun default_lazer_authoritative_threshold_ms(): u64 { 2_000 }
 /// Default maximum per-push spot deviation accepted by `update_basis`
 /// (10% in FLOAT_SCALING). Catches decimal errors, fat-finger pushes, and
 /// BS outages that return garbage values.
-public macro fun default_max_basis_spot_deviation(): u64 { 100_000_000 }
+public macro fun default_max_spot_deviation(): u64 { 100_000_000 }
 
 /// Default maximum per-push basis deviation accepted by `update_basis`
 /// (5% in FLOAT_SCALING). Basis moves slowly; a large per-push move is
