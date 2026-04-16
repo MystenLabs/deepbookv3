@@ -497,34 +497,107 @@ impl Reader {
         &self,
         oracle_id: &str,
     ) -> Result<Option<OracleAskBoundsSetRow>, PredictError> {
-        let set_query = schema::oracle_ask_bounds_set::table
-            .filter(schema::oracle_ask_bounds_set::oracle_id.eq(oracle_id.to_string()))
-            .order_by(schema::oracle_ask_bounds_set::checkpoint.desc())
-            .select(OracleAskBoundsSetRow::as_select());
+        #[derive(QueryableByName)]
+        struct LatestBoundsRow {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            event_digest: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            digest: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            sender: String,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            checkpoint: i64,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            checkpoint_timestamp_ms: i64,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            package: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            predict_id: String,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            oracle_id: String,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            min_ask_price: i64,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            max_ask_price: i64,
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            kind: String,
+        }
 
-        let latest_set = self
-            .first(set_query)
-            .await
-            .map_err(|_| PredictError::not_found(format!("oracle ask bounds set for {}", oracle_id)))
-            .ok();
+        // Single query returning the most recent set-or-cleared row for this
+        // oracle. If the winning row is a `set`, its bounds are active; if it
+        // is a `cleared`, the latest set has been cancelled and there are no
+        // active bounds. Collapsing this into one query avoids having to
+        // distinguish "no rows" from real DB errors across two separate calls.
+        let sql = r#"
+            SELECT
+                event_digest,
+                digest,
+                sender,
+                checkpoint,
+                checkpoint_timestamp_ms,
+                package,
+                predict_id,
+                oracle_id,
+                min_ask_price,
+                max_ask_price,
+                'set' AS kind
+            FROM oracle_ask_bounds_set
+            WHERE oracle_id = $1
+            UNION ALL
+            SELECT
+                event_digest,
+                digest,
+                sender,
+                checkpoint,
+                checkpoint_timestamp_ms,
+                package,
+                predict_id,
+                oracle_id,
+                0 AS min_ask_price,
+                0 AS max_ask_price,
+                'cleared' AS kind
+            FROM oracle_ask_bounds_cleared
+            WHERE oracle_id = $1
+            ORDER BY checkpoint DESC
+            LIMIT 1
+        "#;
 
-        let Some(set_row) = latest_set else {
-            return Ok(None);
-        };
+        let mut conn = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
 
-        let cleared_query = schema::oracle_ask_bounds_cleared::table
-            .filter(
-                schema::oracle_ask_bounds_cleared::oracle_id.eq(oracle_id.to_string()),
-            )
-            .order_by(schema::oracle_ask_bounds_cleared::checkpoint.desc())
-            .select(schema::oracle_ask_bounds_cleared::checkpoint);
+        let res = diesel::sql_query(sql)
+            .bind::<diesel::sql_types::Text, _>(oracle_id)
+            .get_result::<LatestBoundsRow>(&mut conn)
+            .await;
 
-        let latest_cleared_checkpoint = self.first::<_, _, i64>(cleared_query).await.ok();
-
-        match latest_cleared_checkpoint {
-            None => Ok(Some(set_row)),
-            Some(cleared_cp) if set_row.checkpoint > cleared_cp => Ok(Some(set_row)),
-            _ => Ok(None),
+        match res {
+            Ok(row) => {
+                self.metrics.db_requests_succeeded.inc();
+                if row.kind == "set" {
+                    Ok(Some(OracleAskBoundsSetRow {
+                        event_digest: row.event_digest,
+                        digest: row.digest,
+                        sender: row.sender,
+                        checkpoint: row.checkpoint,
+                        checkpoint_timestamp_ms: row.checkpoint_timestamp_ms,
+                        package: row.package,
+                        predict_id: row.predict_id,
+                        oracle_id: row.oracle_id,
+                        min_ask_price: row.min_ask_price,
+                        max_ask_price: row.max_ask_price,
+                    }))
+                } else {
+                    Ok(None)
+                }
+            }
+            Err(diesel::result::Error::NotFound) => {
+                self.metrics.db_requests_succeeded.inc();
+                Ok(None)
+            }
+            Err(e) => {
+                self.metrics.db_requests_failed.inc();
+                Err(PredictError::database(e.to_string()))
+            }
         }
     }
 
