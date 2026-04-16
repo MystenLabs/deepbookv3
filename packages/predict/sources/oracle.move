@@ -10,12 +10,8 @@
 module deepbook_predict::oracle;
 
 use deepbook::math;
-use deepbook_predict::{constants::{Self, float_scaling}, i64, math as predict_math};
-use pyth_lazer::{
-    i16::{Self as lazer_i16, I16 as LazerI16},
-    i64::{Self as lazer_i64, I64 as LazerI64},
-    update::Update as LazerUpdate
-};
+use deepbook_predict::{constants::{Self, float_scaling}, i64, lazer_helper, math as predict_math};
+use pyth_lazer::update::Update as LazerUpdate;
 use std::string::String;
 use sui::{clock::Clock, event, vec_set::{Self, VecSet}};
 
@@ -32,11 +28,6 @@ const EZeroSpot: u64 = 7;
 const EBasisNotSeeded: u64 = 8;
 const EBasisStale: u64 = 9;
 const ELazerStaleUpdate: u64 = 10;
-const ELazerFeedNotFound: u64 = 11;
-const ELazerPriceUnavailable: u64 = 12;
-const ELazerNegativePrice: u64 = 13;
-const ELazerExponentOutOfRange: u64 = 14;
-const ELazerPriceOverflow: u64 = 15;
 const EInvalidStalenessThreshold: u64 = 16;
 const EInvalidBasisBounds: u64 = 17;
 const EBasisSpotDeviationTooLarge: u64 = 18;
@@ -361,27 +352,10 @@ public fun update_basis(
 /// `oracle.bounds.basis_staleness_threshold_ms`, so permissionless callers
 /// cannot bypass it from a PTB.
 public fun update_spot_from_lazer(oracle: &mut OracleSVI, update: LazerUpdate, clock: &Clock) {
-    let lazer_published_at_us = update.timestamp();
-    let feeds = update.feeds_ref();
-    let feed_id = oracle.pyth_lazer_feed_id;
-    let idx_opt = feeds.find_index!(|f| f.feed_id() == feed_id);
-    assert!(idx_opt.is_some(), ELazerFeedNotFound);
-    let feed = &feeds[idx_opt.destroy_some()];
-
-    // Both Option layers must be Some: the field must exist in the update,
-    // and the value must be present (Lazer returns None if there are not
-    // enough publishers).
-    let price_outer = feed.price();
-    assert!(price_outer.is_some(), ELazerPriceUnavailable);
-    let price_inner = price_outer.borrow();
-    assert!(price_inner.is_some(), ELazerPriceUnavailable);
-    let price = *price_inner.borrow();
-
-    let exp_outer = feed.exponent();
-    assert!(exp_outer.is_some(), ELazerPriceUnavailable);
-    let exponent = *exp_outer.borrow();
-
-    let spot = normalize_pyth_price(price, exponent);
+    let (spot, lazer_published_at_us) = lazer_helper::extract_spot(
+        &update,
+        oracle.pyth_lazer_feed_id,
+    );
     oracle.apply_lazer_spot(spot, lazer_published_at_us, clock);
 }
 
@@ -837,49 +811,6 @@ fun apply_lazer_spot(oracle: &mut OracleSVI, spot: u64, lazer_published_at_us: u
         lazer_published_at_us,
         spot_timestamp_ms: now,
     });
-}
-
-/// Convert a Pyth Lazer `(price, exponent)` pair to the predict package's
-/// 1e9-scaled u64. Target scaling is `price_1e9 = magnitude * 10^(exponent + 9)`.
-/// Aborts on negative price (crypto spot is always positive) or on a shift
-/// magnitude > 18 (10^19 overflows u64; real feeds use exponents in [-12, -4]).
-fun normalize_pyth_price(price: LazerI64, exponent: LazerI16): u64 {
-    assert!(!lazer_i64::get_is_negative(&price), ELazerNegativePrice);
-    let magnitude = lazer_i64::get_magnitude_if_positive(&price);
-
-    let exp_is_neg = lazer_i16::get_is_negative(&exponent);
-    let exp_mag = if (exp_is_neg) {
-        lazer_i16::get_magnitude_if_negative(&exponent) as u64
-    } else {
-        lazer_i16::get_magnitude_if_positive(&exponent) as u64
-    };
-
-    let target: u64 = 9;
-
-    if (exp_is_neg) {
-        if (exp_mag <= target) {
-            let shift = target - exp_mag;
-            assert!(shift <= 18, ELazerExponentOutOfRange);
-            checked_scale_up(magnitude, shift)
-        } else {
-            let shift = exp_mag - target;
-            assert!(shift <= 18, ELazerExponentOutOfRange);
-            magnitude / predict_math::pow10(shift)
-        }
-    } else {
-        let shift = target + exp_mag;
-        assert!(shift <= 18, ELazerExponentOutOfRange);
-        checked_scale_up(magnitude, shift)
-    }
-}
-
-/// Multiply `magnitude * 10^shift`, aborting with `ELazerPriceOverflow` if
-/// the result would exceed `u64::MAX` instead of letting the VM raise an
-/// unnamed arithmetic abort.
-fun checked_scale_up(magnitude: u64, shift: u64): u64 {
-    let factor = predict_math::pow10(shift);
-    assert!(magnitude == 0 || magnitude <= std::u64::max_value!() / factor, ELazerPriceOverflow);
-    magnitude * factor
 }
 
 /// Shared freshness gate for `assert_live_oracle` / `assert_quoteable_oracle`.
