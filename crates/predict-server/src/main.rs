@@ -9,9 +9,9 @@ use url::Url;
 struct Args {
     #[command(flatten)]
     db_args: DbArgs,
-    #[clap(env, long, default_value_t = 9009)]
+    #[clap(env, long, default_value_t = 9008)]
     server_port: u16,
-    #[clap(env, long, default_value = "0.0.0.0:9186")]
+    #[clap(env, long, default_value = "0.0.0.0:9184")]
     metrics_address: SocketAddr,
     #[clap(
         env,
