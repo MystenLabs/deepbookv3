@@ -567,12 +567,9 @@ public fun refresh_oracle_mtm(predict: &mut Predict, oracle: &OracleSVI, clock: 
         oracle_config::assert_live_oracle(oracle, clock);
     };
     predict.refresh_oracle_risk(oracle, clock);
-}
-
-public fun sync_settled_oracle(predict: &mut Predict, oracle: &OracleSVI, clock: &Clock) {
-    assert!(oracle.is_settled(), EOracleNotSettled);
-    predict.refresh_oracle_risk(oracle, clock);
-    predict.vault.remove_unsettled_exposed_oracle(oracle.id(), true);
+    if (oracle.is_settled()) {
+        predict.vault.remove_unsettled_exposed_oracle(oracle.id(), true);
+    };
 }
 
 /// Whether trading is currently paused.
