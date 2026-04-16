@@ -101,6 +101,12 @@ function updateConstant(content: string, name: string, network: string, value: s
 		process.exit(1);
 	}
 
+	// Wait for the publish tx to finalize before referencing its TTO-owned
+	// Currency object in the next tx. Without this, the fullnode may not yet
+	// see the Currency at `sui_coin_registry_address()` and finalize_registration
+	// races on object availability.
+	await client.waitForTransaction({ digest: publishResult.digest });
+
 	// -------------------------------------------------------------------------
 	// Tx 2: finalize the Currency<DUSDC> registration.
 	//
