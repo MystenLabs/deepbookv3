@@ -6789,6 +6789,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "predict-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum 0.7.9",
+ "clap",
+ "diesel",
+ "diesel-async",
+ "predict-schema",
+ "prometheus",
+ "serde",
+ "serde_json",
+ "sui-futures",
+ "sui-indexer-alt-metrics",
+ "sui-pg-db",
+ "telemetry-subscribers",
+ "thiserror 1.0.69",
+ "tokio",
+ "tower-http 0.5.2",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "prettyplease"
 version = "0.2.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"

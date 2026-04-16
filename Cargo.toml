@@ -6,6 +6,7 @@ members = [
     "crates/indexer",
     "crates/predict-indexer",
     "crates/predict-schema",
+    "crates/predict-server",
     "crates/schema",
     "crates/server",
 ]

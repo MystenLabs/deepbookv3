@@ -1,0 +1,31 @@
+[package]
+name = "predict-server"
+version = "0.1.0"
+authors = ["Mysten Labs <build@mystenlabs.com>"]
+license = "Apache-2.0"
+publish = false
+edition = "2021"
+
+[dependencies]
+predict-schema = { path = "../predict-schema" }
+tokio.workspace = true
+clap = { workspace = true, features = ["env"] }
+diesel = { workspace = true, features = ["postgres", "chrono"] }
+diesel-async = { workspace = true, features = ["bb8", "postgres"] }
+anyhow.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+url.workspace = true
+prometheus.workspace = true
+sui-futures.workspace = true
+sui-indexer-alt-metrics.workspace = true
+telemetry-subscribers.workspace = true
+sui-pg-db.workspace = true
+axum = { version = "0.7", features = ["json"] }
+tower-http = { version = "0.5", features = ["cors"] }
+thiserror = "1.0"
+tracing.workspace = true
+
+[[bin]]
+name = "predict-server"
+path = "src/main.rs"
