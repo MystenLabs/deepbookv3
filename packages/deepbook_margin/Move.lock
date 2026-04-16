@@ -5,7 +5,7 @@
 version = 4
 
 [pinned.mainnet.MoveStdlib]
-source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "85400e2bd37b490fcd057776e700d3fdca643396" }
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "655576caa3d7faaed39ebbc15d1bcc91d0761aee" }
 use_environment = "mainnet"
 manifest_digest = "C4FE4C91DE74CBF223B2E380AE40F592177D21870DC2D7EB6227D2D694E05363"
 deps = {}
@@ -23,7 +23,7 @@ manifest_digest = "F2C5AF85C4B72C8F6A8132D05DE4F787F4EB80DBFF812331ED65AE599E7DF
 deps = { Sui = "Sui_1", Wormhole = "Wormhole" }
 
 [pinned.mainnet.Sui]
-source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "85400e2bd37b490fcd057776e700d3fdca643396" }
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "655576caa3d7faaed39ebbc15d1bcc91d0761aee" }
 use_environment = "mainnet"
 manifest_digest = "CD547CB1ACCE0880C835DAED2D8FFCB91D56C833AE5240D3AA5B918398263195"
 deps = { MoveStdlib = "MoveStdlib" }
@@ -49,11 +49,11 @@ deps = { std = "MoveStdlib", sui = "Sui", token = "token" }
 [pinned.mainnet.deepbook_margin]
 source = { root = true }
 use_environment = "mainnet"
-manifest_digest = "CB667B820C1B23DAA461D4276F8B16B13DE45132636E1E65E65D553C4DF5D716"
-deps = { deepbook = "deepbook", pyth = "Pyth", std = "MoveStdlib", sui = "Sui", token = "token" }
+manifest_digest = "8EEB68B2BFCFE40D54C0A445414D1789D77E8CC373F7AF15A97B01ADE4B29199"
+deps = { Pyth = "Pyth", deepbook = "deepbook", std = "MoveStdlib", sui = "Sui", token = "token" }
 
 [pinned.mainnet.token]
-source = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "19f86ebad9c6371c4f5c07229faabb2020dc691c" }
+source = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "0ddf39c6e7f20568762aed18baa4a34b92c2cfa7" }
 use_environment = "mainnet"
 manifest_digest = "E41BBD67BE8940D26C79D78B028477EF5B33BA217A1282C78ACB344CF8A5ECF6"
 deps = { std = "MoveStdlib", sui = "Sui" }
