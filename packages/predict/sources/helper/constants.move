@@ -71,14 +71,18 @@ public macro fun default_lazer_authoritative_threshold_ms(): u64 { 2_000 }
 // === Basis Circuit Breaker ===
 
 /// Default maximum per-push spot deviation accepted by `update_basis`
-/// (10% in FLOAT_SCALING). Catches decimal errors, fat-finger pushes, and
-/// BS outages that return garbage values.
-public macro fun default_max_spot_deviation(): u64 { 100_000_000 }
+/// (2% in FLOAT_SCALING). Catches decimal errors, fat-finger pushes, and
+/// BS outages that return garbage values. Admin can override per asset
+/// via `registry::set_asset_basis_bounds` for assets with different
+/// volatility profiles.
+public macro fun default_max_spot_deviation(): u64 { 20_000_000 }
 
 /// Default maximum per-push basis deviation accepted by `update_basis`
-/// (5% in FLOAT_SCALING). Basis moves slowly; a large per-push move is
-/// always suspicious.
-public macro fun default_max_basis_deviation(): u64 { 50_000_000 }
+/// (2% in FLOAT_SCALING). Basis = forward / spot moves slowly relative
+/// to spot; a large per-push move is always suspicious. Tighter than
+/// the absolute `[min_basis, max_basis]` bounds so a single push can't
+/// sweep the entire allowed range.
+public macro fun default_max_basis_deviation(): u64 { 20_000_000 }
 
 /// Default minimum allowed absolute basis value (0.9 in FLOAT_SCALING).
 /// Basis = forward / spot; short-dated expiries should stay near 1.0.
