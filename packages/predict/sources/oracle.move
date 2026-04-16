@@ -53,14 +53,14 @@ const STATUS_SETTLED: u8 = 3;
 public struct OracleActivated has copy, drop, store {
     oracle_id: ID,
     expiry: u64,
-    spot_timestamp: u64,
+    spot_timestamp_ms: u64,
 }
 
 public struct OracleSettled has copy, drop, store {
     oracle_id: ID,
     expiry: u64,
     settlement_price: u64,
-    spot_timestamp: u64,
+    spot_timestamp_ms: u64,
 }
 
 public struct OraclePricesUpdated has copy, drop, store {
@@ -68,7 +68,7 @@ public struct OraclePricesUpdated has copy, drop, store {
     spot: u64,
     forward: u64,
     basis: u64,
-    spot_timestamp: u64,
+    spot_timestamp_ms: u64,
 }
 
 public struct OracleSVIUpdated has copy, drop, store {
@@ -86,8 +86,8 @@ public struct OracleSpotUpdatedFromLazer has copy, drop, store {
     spot: u64,
     forward: u64,
     basis: u64,
-    lazer_timestamp_us: u64,
-    spot_timestamp: u64,
+    lazer_published_at_us: u64,
+    spot_timestamp_ms: u64,
 }
 
 /// Emitted when `update_basis` finds Lazer stale and the operator spot takes
@@ -96,7 +96,7 @@ public struct OracleSpotFallbackEngaged has copy, drop, store {
     oracle_id: ID,
     operator_spot: u64,
     last_lazer_spot_timestamp_ms: u64,
-    spot_timestamp: u64,
+    spot_timestamp_ms: u64,
 }
 
 // === Structs ===
@@ -157,7 +157,7 @@ public struct OracleSVI has key {
     /// operator is falling back in because Lazer has gone stale. Consumed
     /// by `oracle_config::assert_live_oracle` / `assert_quoteable_oracle`
     /// as the hard spot-staleness halt gate.
-    spot_timestamp: u64,
+    spot_timestamp_ms: u64,
     /// Clock ms of the most recent successful `apply_lazer_spot` call. Used
     /// by `update_basis` to decide whether Lazer currently owns the master
     /// spot: while `now <= lazer_spot_timestamp_ms +
@@ -170,12 +170,13 @@ public struct OracleSVI has key {
     /// rederive a forward against it, and before the live/quoteable asserts
     /// permit quoting. Enforces operator liveness independent of Lazer
     /// cadence.
-    basis_timestamp: u64,
-    /// Lazer's microsecond timestamp from the most recent
+    basis_timestamp_ms: u64,
+    /// Pyth Lazer publisher's own microsecond timestamp (source-data time,
+    /// not on-chain landing time) from the most recent
     /// `update_spot_from_lazer`. Enforces monotonic Lazer updates
     /// independent of operator basis cadence. Not used for the user-facing
     /// staleness window.
-    lazer_timestamp_us: u64,
+    lazer_published_at_us: u64,
     /// Settlement price, frozen on first update after expiry
     settlement_price: Option<u64>,
 }
@@ -200,7 +201,7 @@ public fun activate(oracle: &mut OracleSVI, cap: &OracleSVICap, clock: &Clock) {
     event::emit(OracleActivated {
         oracle_id: oracle.id.to_inner(),
         expiry: oracle.expiry,
-        spot_timestamp: now,
+        spot_timestamp_ms: now,
     });
 }
 
@@ -212,9 +213,9 @@ public fun activate(oracle: &mut OracleSVI, cap: &OracleSVICap, clock: &Clock) {
 /// Lazer is the authoritative master spot whenever it has pushed within
 /// `lazer_authoritative_threshold_ms`. While inside that window the operator
 /// push updates basis and re-derives `prices.forward` against the cached
-/// Lazer spot, but leaves `prices.spot` and `spot_timestamp` alone. Once
+/// Lazer spot, but leaves `prices.spot` and `spot_timestamp_ms` alone. Once
 /// Lazer has gone stale, the operator spot flows through as a fallback: it
-/// overwrites `prices.spot`, bumps `spot_timestamp`, and emits
+/// overwrites `prices.spot`, bumps `spot_timestamp_ms`, and emits
 /// `OracleSpotFallbackEngaged` so indexers can flag Lazer outages.
 ///
 /// If at or past expiry and not yet settled, freezes settlement price and
@@ -247,13 +248,13 @@ public(package) fun update_basis(
             oracle_id,
             expiry: oracle.expiry,
             settlement_price: spot,
-            spot_timestamp: oracle.spot_timestamp,
+            spot_timestamp_ms: oracle.spot_timestamp_ms,
         });
         return
     };
 
     let new_basis = math::div(forward, spot);
-    oracle.basis_timestamp = now;
+    oracle.basis_timestamp_ms = now;
 
     let lazer_fresh =
         oracle.lazer_spot_timestamp_ms > 0 &&
@@ -262,7 +263,7 @@ public(package) fun update_basis(
     if (lazer_fresh) {
         // Lazer owns the master spot. Keep `prices.spot` as-is, rederive
         // forward against the cached Lazer spot and the fresh basis. Do NOT
-        // bump `spot_timestamp` — Lazer's own cadence keeps the halt gate
+        // bump `spot_timestamp_ms` — Lazer's own cadence keeps the halt gate
         // passing while it is authoritative.
         let cached_spot = oracle.prices.spot;
         let rederived_forward = math::mul(cached_spot, new_basis);
@@ -278,26 +279,26 @@ public(package) fun update_basis(
             spot: cached_spot,
             forward: rederived_forward,
             basis: new_basis,
-            spot_timestamp: oracle.spot_timestamp,
+            spot_timestamp_ms: oracle.spot_timestamp_ms,
         });
     } else {
         // Fallback: Lazer is stale or has never pushed. Operator takes over
         // the master spot.
         oracle.prices = PriceData { spot, forward, basis: new_basis };
-        oracle.spot_timestamp = now;
+        oracle.spot_timestamp_ms = now;
 
         event::emit(OracleSpotFallbackEngaged {
             oracle_id,
             operator_spot: spot,
             last_lazer_spot_timestamp_ms: oracle.lazer_spot_timestamp_ms,
-            spot_timestamp: now,
+            spot_timestamp_ms: now,
         });
         event::emit(OraclePricesUpdated {
             oracle_id,
             spot,
             forward,
             basis: new_basis,
-            spot_timestamp: now,
+            spot_timestamp_ms: now,
         });
     };
 }
@@ -316,7 +317,7 @@ public(package) fun update_spot_from_lazer(
     basis_staleness_threshold_ms: u64,
     clock: &Clock,
 ) {
-    let ts_us = lazer_update::timestamp(&update);
+    let lazer_published_at_us = lazer_update::timestamp(&update);
     let feed = find_lazer_feed(lazer_update::feeds_ref(&update), oracle.pyth_lazer_feed_id);
 
     // Both Option layers must be Some: the field must exist in the update,
@@ -333,7 +334,7 @@ public(package) fun update_spot_from_lazer(
     let exponent = *exp_outer.borrow();
 
     let spot = normalize_pyth_price(price, exponent);
-    oracle.apply_lazer_spot(spot, ts_us, basis_staleness_threshold_ms, clock);
+    oracle.apply_lazer_spot(spot, lazer_published_at_us, basis_staleness_threshold_ms, clock);
 }
 
 // TODO: Add validation on pushed SVI params so obviously bad updates are
@@ -427,24 +428,25 @@ public fun expiry(oracle: &OracleSVI): u64 {
     oracle.expiry
 }
 
-/// Get the last master-spot update timestamp.
-public fun spot_timestamp(oracle: &OracleSVI): u64 {
-    oracle.spot_timestamp
+/// Get the on-chain clock ms of the most recent master-spot update.
+public fun spot_timestamp_ms(oracle: &OracleSVI): u64 {
+    oracle.spot_timestamp_ms
 }
 
-/// Get the clock ms of the most recent successful Lazer spot push.
+/// Get the on-chain clock ms of the most recent successful Lazer spot push.
 public fun lazer_spot_timestamp_ms(oracle: &OracleSVI): u64 {
     oracle.lazer_spot_timestamp_ms
 }
 
-/// Get the timestamp of the most recent `update_basis` call.
-public fun basis_timestamp(oracle: &OracleSVI): u64 {
-    oracle.basis_timestamp
+/// Get the on-chain clock ms of the most recent `update_basis` call.
+public fun basis_timestamp_ms(oracle: &OracleSVI): u64 {
+    oracle.basis_timestamp_ms
 }
 
-/// Get the most recent Lazer microsecond timestamp applied to this oracle.
-public fun lazer_timestamp_us(oracle: &OracleSVI): u64 {
-    oracle.lazer_timestamp_us
+/// Get the Pyth Lazer publisher's microsecond timestamp from the most
+/// recent Lazer push (source-data time, not on-chain landing time).
+public fun lazer_published_at_us(oracle: &OracleSVI): u64 {
+    oracle.lazer_published_at_us
 }
 
 /// Get the Pyth Lazer feed id that this oracle tracks.
@@ -565,10 +567,10 @@ public(package) fun create_oracle(
             m: i64::zero(),
             sigma: 0,
         },
-        spot_timestamp: 0,
+        spot_timestamp_ms: 0,
         lazer_spot_timestamp_ms: 0,
-        basis_timestamp: 0,
-        lazer_timestamp_us: 0,
+        basis_timestamp_ms: 0,
+        lazer_published_at_us: 0,
         settlement_price: option::none(),
     };
 
@@ -586,12 +588,12 @@ public(package) fun create_oracle(
 fun apply_lazer_spot(
     oracle: &mut OracleSVI,
     spot: u64,
-    lazer_timestamp_us: u64,
+    lazer_published_at_us: u64,
     basis_staleness_threshold_ms: u64,
     clock: &Clock,
 ) {
     assert!(spot > 0, EZeroSpot);
-    assert!(lazer_timestamp_us > oracle.lazer_timestamp_us, ELazerStaleUpdate);
+    assert!(lazer_published_at_us > oracle.lazer_published_at_us, ELazerStaleUpdate);
 
     let oracle_status = oracle.status(clock);
     assert!(oracle_status != status_settled(), EOracleSettled);
@@ -604,34 +606,34 @@ fun apply_lazer_spot(
     if (oracle_status == status_pending_settlement()) {
         oracle.settlement_price = option::some(spot);
         oracle.active = false;
-        oracle.lazer_timestamp_us = lazer_timestamp_us;
+        oracle.lazer_published_at_us = lazer_published_at_us;
 
         event::emit(OracleSettled {
             oracle_id,
             expiry: oracle.expiry,
             settlement_price: spot,
-            spot_timestamp: now,
+            spot_timestamp_ms: now,
         });
         return
     };
 
     assert!(oracle.prices.basis > 0, EBasisNotSeeded);
-    assert!(now <= oracle.basis_timestamp + basis_staleness_threshold_ms, EBasisStale);
+    assert!(now <= oracle.basis_timestamp_ms + basis_staleness_threshold_ms, EBasisStale);
 
     let basis = oracle.prices.basis;
     let forward = math::mul(spot, basis);
     oracle.prices = PriceData { spot, forward, basis };
-    oracle.spot_timestamp = now;
+    oracle.spot_timestamp_ms = now;
     oracle.lazer_spot_timestamp_ms = now;
-    oracle.lazer_timestamp_us = lazer_timestamp_us;
+    oracle.lazer_published_at_us = lazer_published_at_us;
 
     event::emit(OracleSpotUpdatedFromLazer {
         oracle_id,
         spot,
         forward,
         basis,
-        lazer_timestamp_us,
-        spot_timestamp: now,
+        lazer_published_at_us,
+        spot_timestamp_ms: now,
     });
 }
 
