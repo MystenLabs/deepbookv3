@@ -12,7 +12,6 @@ module deepbook_predict::oracle;
 use deepbook::math;
 use deepbook_predict::{constants::{Self, float_scaling}, i64, math as predict_math};
 use pyth_lazer::{
-    feed::Feed as LazerFeed,
     i16::{Self as lazer_i16, I16 as LazerI16},
     i64::{Self as lazer_i64, I64 as LazerI64},
     update::Update as LazerUpdate
@@ -313,7 +312,10 @@ public(package) fun update_spot_from_lazer(
     clock: &Clock,
 ) {
     let lazer_published_at_us = update.timestamp();
-    let feed = find_lazer_feed(update.feeds_ref(), oracle.pyth_lazer_feed_id);
+    let feeds = update.feeds_ref();
+    let feed_id = oracle.pyth_lazer_feed_id;
+    let idx = feeds.find_index!(|f| f.feed_id() == feed_id).destroy_or!(abort ELazerFeedNotFound);
+    let feed = &feeds[idx];
 
     // Both Option layers must be Some: the field must exist in the update,
     // and the value must be present (Lazer returns None if there are not
@@ -631,21 +633,6 @@ fun apply_lazer_spot(
         lazer_published_at_us,
         spot_timestamp_ms: now,
     });
-}
-
-/// Linear scan through a verified Lazer update's feeds for the one matching
-/// `target_id`. Mirrors the reference example; aborts if not found.
-fun find_lazer_feed(feeds: &vector<LazerFeed>, target_id: u32): &LazerFeed {
-    let len = feeds.length();
-    let mut i = 0;
-    while (i < len) {
-        let f = &feeds[i];
-        if (f.feed_id() == target_id) {
-            return f
-        };
-        i = i + 1;
-    };
-    abort ELazerFeedNotFound
 }
 
 /// Convert a Pyth Lazer `(price, exponent)` pair to the predict package's
