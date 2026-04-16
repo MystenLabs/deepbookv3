@@ -26,9 +26,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ORACLES_CONFIG_PATH = path.resolve(__dirname, '../../config/predict-oracles.ts');
 
 const network = 'testnet' as const;
-const UNDERLYING_ASSET = process.env.UNDERLYING ?? 'SUI';
-const MIN_STRIKE = BigInt(process.env.MIN_STRIKE ?? 100_000_000n);
-const TICK_SIZE = BigInt(process.env.TICK_SIZE ?? 10_000_000n);
+const UNDERLYING_ASSET = process.env.UNDERLYING ?? 'BTC';
+const MIN_STRIKE = BigInt(process.env.MIN_STRIKE ?? 50_000_000_000_000n);
+const TICK_SIZE = BigInt(process.env.TICK_SIZE ?? 1_000_000_000n);
 const NUM_EXPIRIES = Number(process.env.NUM_EXPIRIES ?? 5);
 
 function resolveExpiries(): string[] {

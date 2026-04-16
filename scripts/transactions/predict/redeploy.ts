@@ -20,9 +20,9 @@
 /// Usage: pnpm predict-redeploy
 ///   EXPIRIES="2026-05-29T08:00:00.000Z,..."  # optional, comma-separated ISO 8601
 ///   NUM_EXPIRIES=5                            # default when EXPIRIES unset
-///   UNDERLYING=SUI                            # default
-///   MIN_STRIKE=100000000                      # default
-///   TICK_SIZE=10000000                        # default
+///   UNDERLYING=BTC                            # default
+///   MIN_STRIKE=50000000000000                 # default — 50,000 * 1e9 scale
+///   TICK_SIZE=1000000000                      # default — 1 * 1e9 scale
 ///   AMOUNT=1000000                            # DUSDC whole units to supply
 ///   PGPORT=5433                               # local postgres port
 
@@ -51,9 +51,9 @@ const ORACLES_CONFIG_PATH = path.resolve(__dirname, '../../config/predict-oracle
 const INDEXER_LIB_PATH = path.resolve(__dirname, '../../../crates/predict-indexer/src/lib.rs');
 
 const network = 'testnet' as const;
-const UNDERLYING_ASSET = process.env.UNDERLYING ?? 'SUI';
-const MIN_STRIKE = BigInt(process.env.MIN_STRIKE ?? 100_000_000n);
-const TICK_SIZE = BigInt(process.env.TICK_SIZE ?? 10_000_000n);
+const UNDERLYING_ASSET = process.env.UNDERLYING ?? 'BTC';
+const MIN_STRIKE = BigInt(process.env.MIN_STRIKE ?? 50_000_000_000_000n);
+const TICK_SIZE = BigInt(process.env.TICK_SIZE ?? 1_000_000_000n);
 const CLOCK = '0x6';
 const SUPPLY_AMOUNT = BigInt(process.env.AMOUNT ?? 1_000_000) * 1_000_000n;
 const NUM_EXPIRIES = Number(process.env.NUM_EXPIRIES ?? 5);

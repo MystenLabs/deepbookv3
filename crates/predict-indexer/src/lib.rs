@@ -10,7 +10,7 @@ pub mod traits;
 pub const TESTNET_REMOTE_STORE_URL: &str = "https://checkpoints.testnet.sui.io";
 
 const TESTNET_PREDICT_PACKAGES: &[&str] = &[
-    "0xff60b95aaaba6edae568ab65406e56f61336dcd274e9c51034f2849d9f5bbfa6",
+    "0x557ad48f98e33db0b0ea54cfb79c5edbfaf19a3e568342dc5ba1dae37a4aa749",
 ];
 
 #[derive(Debug, Clone)]

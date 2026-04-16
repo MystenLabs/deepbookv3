@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Creates an OracleSVI shared object for the given underlying + expiry.
-/// Usage: EXPIRY=1742515200000 UNDERLYING=SUI MIN_STRIKE=100000000 TICK_SIZE=10000000 pnpm predict-create-oracle
+/// Usage: EXPIRY=1742515200000 UNDERLYING=BTC MIN_STRIKE=50000000000000 TICK_SIZE=1000000000 pnpm predict-create-oracle
 
 import { Transaction } from '@mysten/sui/transactions';
 import { getClient, getSigner, updateConstant } from '../../utils/utils.js';
@@ -21,9 +21,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONSTANTS_PATH = path.resolve(__dirname, '../../config/constants.ts');
 
 const network = 'testnet' as const;
-const UNDERLYING_ASSET = process.env.UNDERLYING ?? 'SUI';
-const MIN_STRIKE = BigInt(process.env.MIN_STRIKE ?? 100_000_000n);
-const TICK_SIZE = BigInt(process.env.TICK_SIZE ?? 10_000_000n);
+const UNDERLYING_ASSET = process.env.UNDERLYING ?? 'BTC';
+const MIN_STRIKE = BigInt(process.env.MIN_STRIKE ?? 50_000_000_000_000n);
+const TICK_SIZE = BigInt(process.env.TICK_SIZE ?? 1_000_000_000n);
 const EXPIRY_MS = process.env.EXPIRY
     ? BigInt(process.env.EXPIRY)
     : BigInt(Date.now()) + 30n * 24n * 60n * 60n * 1000n;

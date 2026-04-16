@@ -77,19 +77,19 @@ export const supplierCapID = {
 };
 
 // --- Predict protocol ---
-export const predictPackageID = { mainnet: "", testnet: "0xff60b95aaaba6edae568ab65406e56f61336dcd274e9c51034f2849d9f5bbfa6" };
-export const predictRegistryID = { mainnet: "", testnet: "0x2cdcf037e643b8e1b09cd076048d652c5ecbbda004ef831fccb8cd7824bc1cca" };
-export const predictAdminCapID = { mainnet: "", testnet: "0xde5bccbc6267b6ce143eda855942417e1cf8d3d17a293a4cbfbdb943a56d67b6" };
-export const predictUpgradeCapID = { mainnet: "", testnet: "0x4ed820727111e11f99ca94961ce6dc2b50699589ce1ff3ccbd9d1e421eaaf073" };
-export const predictObjectID = { mainnet: "", testnet: "" };
-export const predictOracleCapID = { mainnet: "", testnet: "" };
+export const predictPackageID = { mainnet: "", testnet: "0x557ad48f98e33db0b0ea54cfb79c5edbfaf19a3e568342dc5ba1dae37a4aa749" };
+export const predictRegistryID = { mainnet: "", testnet: "0x48a08b2d4b5f940ac3b8af2a13d39a86f58658fc2fe2ffc1606fe6b15dae4751" };
+export const predictAdminCapID = { mainnet: "", testnet: "0xf715b17a1c61489c1094fa6934aeef133e6dbf11b63c46e1cb21f058d6292b8d" };
+export const predictUpgradeCapID = { mainnet: "", testnet: "0xabc4b58d6083720ef3b24a8b5215c33ab55f3a6248363a538d958f7f832879d8" };
+export const predictObjectID = { mainnet: "", testnet: "0x9f11242d6ad61679577b9d3a9df6ea68cc5eaf1c486e81199a304ad32570fa82" };
+export const predictOracleCapID = { mainnet: "", testnet: "0x7efa929d2665d47f3dd6b4290d0b28a73a3337354e971e981dd70ae357599db2" };
 export const predictOracleCapIDs: Record<string, string[]> = { mainnet: [], testnet: [] };
 export const predictOracleID = { mainnet: "", testnet: "" };
 
 // DUSDC test token
-export const dusdcPackageID = { mainnet: "", testnet: "" };
-export const dusdcTreasuryCapID = { mainnet: "", testnet: "" };
-export const dusdcCurrencyID = { mainnet: "", testnet: "" };
+export const dusdcPackageID = { mainnet: "", testnet: "0xc70d8cb9a38025dc8d8810814f20707d3ef83ce0e41bbfad86e551bbf072f995" };
+export const dusdcTreasuryCapID = { mainnet: "", testnet: "0x1713b3d987b9f3ce0beaa6caa7b9af2f6be3ee936ff69afde5ee91657130fce6" };
+export const dusdcCurrencyID = { mainnet: "", testnet: "0x787d2eb16975543255e30fb97d2eb2d48186526ef35eda985613db9ab03956d9" };
 
 // PLP treasury cap (minted at publish time by plp::init, captured by redeploy)
-export const plpTreasuryCapID = { mainnet: "", testnet: "0xbe5b69bf4c1e49e8f3f02dd285bca63a3d0327acfdbc54447bfdff2a158b49e9" };
+export const plpTreasuryCapID = { mainnet: "", testnet: "0xff4ae3f4ccd19e9604c957d59a3d4a1373a87a512f01a9df9c9c2027e1b20379" };
