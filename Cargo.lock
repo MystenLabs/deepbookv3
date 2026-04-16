@@ -6753,6 +6753,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "predict-schema"
+version = "0.1.0"
+dependencies = [
+ "diesel",
+ "diesel_migrations",
+ "serde",
+ "sui-field-count",
+]
+
+[[package]]
 name = "prettyplease"
 version = "0.2.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"

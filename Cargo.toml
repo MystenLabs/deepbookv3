@@ -4,6 +4,7 @@ resolver = "2"
 members = [
     "crates/bench",
     "crates/indexer",
+    "crates/predict-schema",
     "crates/schema",
     "crates/server",
 ]
