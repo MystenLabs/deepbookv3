@@ -103,13 +103,16 @@ public fun create_oracle_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): Oracle
 
 /// Create a new Oracle. Returns the oracle ID.
 ///
+/// Authorized by the operator's `OracleSVICap` alone — no `AdminCap` needed.
+/// The cap is minted by admin via `create_oracle_cap`, so admin still gates
+/// who can create oracles. The cap is authorized on the new oracle
+/// automatically so the creator can immediately activate and push updates.
 /// `pyth_lazer_feed_id` is the Pyth Lazer feed id that the permissionless
 /// `oracle::update_spot_from_lazer` path will select out of the multi-feed
 /// verified `Update` payload (e.g. `1` for BTC/USD).
 public fun create_oracle(
     registry: &mut Registry,
     predict: &mut Predict,
-    _admin_cap: &AdminCap,
     cap: &OracleSVICap,
     underlying_asset: String,
     pyth_lazer_feed_id: u32,
@@ -119,7 +122,15 @@ public fun create_oracle(
     ctx: &mut TxContext,
 ): ID {
     assert_valid_strike_grid(min_strike, tick_size);
-    let oracle_id = oracle::create_oracle(underlying_asset, pyth_lazer_feed_id, expiry, ctx);
+    let bounds = predict.build_oracle_bounds(underlying_asset);
+    let oracle_id = oracle::create_oracle(
+        underlying_asset,
+        pyth_lazer_feed_id,
+        expiry,
+        bounds,
+        cap,
+        ctx,
+    );
     let cap_id = object::id(cap);
 
     if (!registry.oracle_ids.contains(cap_id)) {
@@ -257,12 +268,13 @@ public fun set_lazer_authoritative_threshold_ms(
     predict.set_lazer_authoritative_threshold_ms(value);
 }
 
-/// Update the circuit-breaker bounds applied by `predict::update_basis` for
-/// a given underlying asset (e.g. "BTC"). `max_spot_deviation` and
-/// `max_basis_deviation` are per-push percent caps (1e9-scaled);
-/// `min_basis` / `max_basis` are absolute bounds on `forward / spot`. A
-/// single call propagates to every oracle whose `underlying_asset` matches
-/// `asset`.
+/// Update the circuit-breaker bounds seed used by
+/// `oracle_config::build_oracle_bounds` at the next matching `create_oracle`
+/// for `asset` (e.g. "BTC"). `max_spot_deviation` and `max_basis_deviation`
+/// are per-push percent caps (1e9-scaled); `min_basis` / `max_basis` are
+/// absolute bounds on `forward / spot`. Does NOT retroactively update
+/// existing oracles — operators retune per-oracle via
+/// `oracle::set_basis_bounds`.
 public fun set_asset_basis_bounds(
     predict: &mut Predict,
     _admin_cap: &AdminCap,

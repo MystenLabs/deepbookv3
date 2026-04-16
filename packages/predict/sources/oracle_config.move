@@ -3,39 +3,34 @@
 
 /// Predict-owned configuration layer on top of the core oracle.
 ///
-/// This module stores per-oracle strike grids, validates market keys against
-/// that grid, applies Predict liveness policy, and builds sampled pricing
-/// curves for vault MTM evaluation.
+/// This module stores the admin-tuned staleness thresholds, per-asset basis
+/// circuit-breaker bounds, per-oracle strike grids, and per-oracle ask-bound
+/// overrides. At oracle creation the thresholds + per-asset bounds are
+/// snapshotted into an `OracleBounds` on the oracle itself
+/// (`build_oracle_bounds`), so post-creation `oracle::update_basis` and
+/// `oracle::update_spot_from_lazer` never need to read from Predict.
 module deepbook_predict::oracle_config;
 
-use deepbook::math;
 use deepbook_predict::{
     constants,
     market_key::MarketKey,
-    oracle::{Self, OracleSVI, OracleSVICap},
+    oracle::{Self, OracleBounds, OracleSVI, OracleSVICap},
     range_key::RangeKey
 };
 use std::string::String;
-use sui::{clock::Clock, table::{Self, Table}};
+use sui::table::{Self, Table};
 
 // === Errors ===
 const EMarketKeyOracleMismatch: u64 = 0;
 const EMarketKeyExpiryMismatch: u64 = 1;
 const EInvalidStrike: u64 = 2;
-const EOracleSettled: u64 = 3;
-const EOracleExpired: u64 = 4;
-const EOracleInactive: u64 = 5;
-const EOracleStale: u64 = 6;
-const EOracleConfigNotFound: u64 = 7;
-const EInvalidCurveRange: u64 = 8;
-const ERangeKeyOracleMismatch: u64 = 9;
-const ERangeKeyExpiryMismatch: u64 = 10;
-const EInvalidAskBound: u64 = 11;
-const EInvalidStalenessThreshold: u64 = 12;
-const EInvalidBasisBounds: u64 = 13;
-const EBasisSpotDeviationTooLarge: u64 = 14;
-const EBasisDeviationTooLarge: u64 = 15;
-const EBasisOutOfRange: u64 = 16;
+const EOracleConfigNotFound: u64 = 3;
+const EInvalidCurveRange: u64 = 4;
+const ERangeKeyOracleMismatch: u64 = 5;
+const ERangeKeyExpiryMismatch: u64 = 6;
+const EInvalidAskBound: u64 = 7;
+const EInvalidStalenessThreshold: u64 = 8;
+const EInvalidBasisBounds: u64 = 9;
 
 public struct OracleGrid has copy, drop, store {
     min_strike: u64,
@@ -51,42 +46,35 @@ public struct AskBounds has copy, drop, store {
     max_ask_price: u64,
 }
 
-public struct OracleConfig has store {
-    oracle_grids: Table<ID, OracleGrid>,
-    /// Per-oracle ask-bound overrides; presence in this table means an override
-    /// is active for that oracle id.
-    oracle_ask_bounds: Table<ID, AskBounds>,
-    /// Maximum age (ms) of the last oracle price update before
-    /// `assert_live_oracle` / `assert_quoteable_oracle` reject it.
-    staleness_threshold_ms: u64,
-    /// Maximum age (ms) of the cached operator basis before
-    /// `assert_live_oracle` / `assert_quoteable_oracle` reject it and before
-    /// `oracle::update_spot_from_lazer` refuses to derive a fresh forward.
-    basis_staleness_threshold_ms: u64,
-    /// Window (ms) within which Pyth Lazer's last spot push is treated as the
-    /// authoritative master spot. While Lazer is within this window,
-    /// `update_basis` refreshes basis/forward but does NOT overwrite
-    /// `oracle.prices.spot`. Beyond it, the operator's spot flows through as
-    /// a fallback. Independent of `staleness_threshold_ms` (the hard halt
-    /// gate).
-    lazer_authoritative_threshold_ms: u64,
-    /// Per-asset circuit-breaker bounds keyed by `underlying_asset` (e.g.
-    /// "BTC", "ETH"). Consumed by `validate_basis_push` via
-    /// `asset_basis_bounds`, which falls back to the `constants`-module
-    /// defaults when an asset has no explicit entry. Admin tunes via
-    /// `set_asset_basis_bounds`; a single update propagates to every oracle
-    /// sharing the same underlying asset.
-    asset_basis_bounds: Table<String, BasisBounds>,
-}
-
-/// Circuit-breaker bounds for `update_basis`. `max_spot_deviation` and
-/// `max_basis_deviation` are 1e9-scaled fractions; `min_basis` / `max_basis`
-/// are absolute 1e9-scaled values.
+/// Per-asset basis circuit-breaker bounds. Snapshotted onto each new oracle
+/// (by underlying asset) at `create_oracle`. Updating an entry here does NOT
+/// retroactively change existing oracles — operators tune their own oracle
+/// via `oracle::set_basis_bounds` if they need to diverge from the default.
 public struct BasisBounds has copy, drop, store {
     max_spot_deviation: u64,
     max_basis_deviation: u64,
     min_basis: u64,
     max_basis: u64,
+}
+
+public struct OracleConfig has store {
+    /// Admin-tuned maximum age of `spot_timestamp_ms` used to seed the
+    /// per-oracle `spot_staleness_threshold_ms` at `create_oracle`.
+    spot_staleness_threshold_ms: u64,
+    /// Admin-tuned maximum age of the cached basis used to seed the
+    /// per-oracle `basis_staleness_threshold_ms` at `create_oracle`.
+    basis_staleness_threshold_ms: u64,
+    /// Admin-tuned window within which Lazer's last spot push is treated as
+    /// the authoritative master spot. Seeds the per-oracle field at creation.
+    lazer_authoritative_threshold_ms: u64,
+    oracle_grids: Table<ID, OracleGrid>,
+    /// Per-oracle ask-bound overrides; presence in this table means an override
+    /// is active for that oracle id.
+    oracle_ask_bounds: Table<ID, AskBounds>,
+    /// Per-underlying-asset basis circuit-breaker bounds. Looked up by the
+    /// oracle's `underlying_asset` at `create_oracle`; assets with no entry
+    /// fall back to the `constants::default_*!()` basis-bound macros.
+    asset_basis_bounds: Table<String, BasisBounds>,
 }
 
 /// Curve sample point with strike and one-sided UP price.
@@ -115,165 +103,133 @@ public fun ask_bounds_min(bounds: &AskBounds): u64 { bounds.min_ask_price }
 /// Return the maximum ask price stored in an `AskBounds`.
 public fun ask_bounds_max(bounds: &AskBounds): u64 { bounds.max_ask_price }
 
-/// Return the current oracle staleness threshold (ms).
-public fun staleness_threshold_ms(config: &OracleConfig): u64 {
-    config.staleness_threshold_ms
+/// Admin-tuned spot staleness threshold (ms) used to seed new oracles.
+public fun spot_staleness_threshold_ms(oracle_config: &OracleConfig): u64 {
+    oracle_config.spot_staleness_threshold_ms
 }
 
-/// Return the current basis staleness threshold (ms).
-public fun basis_staleness_threshold_ms(config: &OracleConfig): u64 {
-    config.basis_staleness_threshold_ms
+/// Admin-tuned basis staleness threshold (ms) used to seed new oracles.
+public fun basis_staleness_threshold_ms(oracle_config: &OracleConfig): u64 {
+    oracle_config.basis_staleness_threshold_ms
 }
 
-/// Return the current Lazer-authoritative window (ms).
-public fun lazer_authoritative_threshold_ms(config: &OracleConfig): u64 {
-    config.lazer_authoritative_threshold_ms
+/// Admin-tuned Lazer-authoritative window (ms) used to seed new oracles.
+public fun lazer_authoritative_threshold_ms(oracle_config: &OracleConfig): u64 {
+    oracle_config.lazer_authoritative_threshold_ms
 }
 
-/// Return the circuit-breaker bounds applicable to `asset`. If the admin has
-/// explicitly set bounds for this asset they are returned; otherwise this
-/// falls back to a `BasisBounds` built from the `constants`-module defaults
-/// so that `validate_basis_push` has a sane guard for freshly-created oracles
-/// on untuned assets.
-public fun asset_basis_bounds(config: &OracleConfig, asset: String): BasisBounds {
-    if (config.asset_basis_bounds.contains(asset)) {
-        config.asset_basis_bounds[asset]
+/// Per-asset basis bounds currently registered for `asset`, or `None` if the
+/// asset would fall back to the `constants::default_*!()` basis-bound macros
+/// at `create_oracle`.
+public fun asset_basis_bounds(oracle_config: &OracleConfig, asset: String): Option<BasisBounds> {
+    if (oracle_config.asset_basis_bounds.contains(asset)) {
+        option::some(oracle_config.asset_basis_bounds[asset])
     } else {
-        default_basis_bounds()
+        option::none()
     }
 }
 
-/// Return the max spot deviation stored on a `BasisBounds`.
 public fun basis_bounds_max_spot_deviation(bounds: &BasisBounds): u64 {
     bounds.max_spot_deviation
 }
 
-/// Return the max basis deviation stored on a `BasisBounds`.
 public fun basis_bounds_max_basis_deviation(bounds: &BasisBounds): u64 {
     bounds.max_basis_deviation
 }
 
-/// Return the min absolute basis stored on a `BasisBounds`.
 public fun basis_bounds_min_basis(bounds: &BasisBounds): u64 {
     bounds.min_basis
 }
 
-/// Return the max absolute basis stored on a `BasisBounds`.
 public fun basis_bounds_max_basis(bounds: &BasisBounds): u64 {
     bounds.max_basis
 }
 
-/// Create an empty oracle config registry for Predict.
+/// Create a new oracle-config registry seeded with the `constants::default_*!()`
+/// staleness thresholds. `asset_basis_bounds` starts empty; any asset without
+/// an explicit entry falls back to `default_basis_bounds()` at creation.
 public(package) fun new(ctx: &mut TxContext): OracleConfig {
     OracleConfig {
-        oracle_grids: table::new(ctx),
-        oracle_ask_bounds: table::new(ctx),
-        staleness_threshold_ms: constants::default_spot_staleness_threshold_ms!(),
+        spot_staleness_threshold_ms: constants::default_spot_staleness_threshold_ms!(),
         basis_staleness_threshold_ms: constants::default_basis_staleness_threshold_ms!(),
         lazer_authoritative_threshold_ms: constants::default_lazer_authoritative_threshold_ms!(),
+        oracle_grids: table::new(ctx),
+        oracle_ask_bounds: table::new(ctx),
         asset_basis_bounds: table::new(ctx),
     }
 }
 
-/// Update the oracle staleness threshold (ms). Must be positive and
-/// no larger than `max_staleness_threshold_ms!()` (60s) — beyond that,
-/// the liveness gate stops meaningfully protecting quoting.
-public(package) fun set_staleness_threshold_ms(config: &mut OracleConfig, value: u64) {
-    assert!(
-        value > 0 && value <= constants::max_staleness_threshold_ms!(),
-        EInvalidStalenessThreshold,
-    );
-    config.staleness_threshold_ms = value;
+/// Build an `OracleBounds` snapshot for a new oracle with `underlying_asset`.
+/// Staleness fields come from the admin-tuned global config; basis bounds
+/// come from the per-asset entry if present, else the `constants::default_*!()`
+/// basis-bound macros.
+public(package) fun build_oracle_bounds(
+    oracle_config: &OracleConfig,
+    underlying_asset: String,
+): OracleBounds {
+    let (
+        max_spot_deviation,
+        max_basis_deviation,
+        min_basis,
+        max_basis,
+    ) = oracle_config.resolve_basis_bounds(underlying_asset);
+    oracle::new_oracle_bounds(
+        oracle_config.spot_staleness_threshold_ms,
+        oracle_config.basis_staleness_threshold_ms,
+        oracle_config.lazer_authoritative_threshold_ms,
+        max_spot_deviation,
+        max_basis_deviation,
+        min_basis,
+        max_basis,
+    )
 }
 
-/// Update the basis staleness threshold (ms). Must be positive and
-/// no larger than `max_staleness_threshold_ms!()` (60s).
-public(package) fun set_basis_staleness_threshold_ms(config: &mut OracleConfig, value: u64) {
-    assert!(
-        value > 0 && value <= constants::max_staleness_threshold_ms!(),
-        EInvalidStalenessThreshold,
-    );
-    config.basis_staleness_threshold_ms = value;
+/// Admin setter: update the global spot staleness threshold seed used by
+/// subsequent `create_oracle` calls. Does NOT retroactively update existing
+/// oracles — operators retune their own oracle via
+/// `oracle::set_spot_staleness_threshold_ms` if needed.
+public(package) fun set_spot_staleness_threshold_ms(oracle_config: &mut OracleConfig, value: u64) {
+    validate_staleness_ms(value);
+    oracle_config.spot_staleness_threshold_ms = value;
 }
 
-/// Update the Lazer-authoritative window (ms). Must be positive and no larger
-/// than `max_staleness_threshold_ms!()` (60s). Admin-only; wired from
-/// `registry::set_lazer_authoritative_threshold_ms` via `predict`.
-public(package) fun set_lazer_authoritative_threshold_ms(config: &mut OracleConfig, value: u64) {
-    assert!(
-        value > 0 && value <= constants::max_staleness_threshold_ms!(),
-        EInvalidStalenessThreshold,
-    );
-    config.lazer_authoritative_threshold_ms = value;
+/// Admin setter: update the global basis staleness threshold seed. Does NOT
+/// retroactively update existing oracles.
+public(package) fun set_basis_staleness_threshold_ms(oracle_config: &mut OracleConfig, value: u64) {
+    validate_staleness_ms(value);
+    oracle_config.basis_staleness_threshold_ms = value;
 }
 
-/// Upsert the circuit-breaker bounds applied to a given underlying asset
-/// (e.g. "BTC"). Invariants: `min_basis < max_basis`, both scaled 1e9, and
-/// both deviation fractions must be ≤ `float_scaling!()` (100%). A single
-/// admin update propagates to every current and future oracle whose
-/// `underlying_asset` matches `asset`.
+/// Admin setter: update the global Lazer-authoritative window seed. Does NOT
+/// retroactively update existing oracles.
+public(package) fun set_lazer_authoritative_threshold_ms(
+    oracle_config: &mut OracleConfig,
+    value: u64,
+) {
+    validate_staleness_ms(value);
+    oracle_config.lazer_authoritative_threshold_ms = value;
+}
+
+/// Admin setter: set or update the per-asset basis bounds seed for `asset`.
+/// Consumed by `build_oracle_bounds` at the next matching `create_oracle`.
+/// Validates `min_basis < max_basis` and that both deviation fractions fit
+/// within 1.0 (1e9 scale).
 public(package) fun set_asset_basis_bounds(
-    config: &mut OracleConfig,
+    oracle_config: &mut OracleConfig,
     asset: String,
     max_spot_deviation: u64,
     max_basis_deviation: u64,
     min_basis: u64,
     max_basis: u64,
 ) {
-    assert!(min_basis < max_basis, EInvalidBasisBounds);
-    assert!(max_spot_deviation <= constants::float_scaling!(), EInvalidBasisBounds);
-    assert!(max_basis_deviation <= constants::float_scaling!(), EInvalidBasisBounds);
-    let bounds = BasisBounds {
-        max_spot_deviation,
-        max_basis_deviation,
-        min_basis,
-        max_basis,
-    };
-    if (config.asset_basis_bounds.contains(asset)) {
-        let row = &mut config.asset_basis_bounds[asset];
+    validate_basis_bounds_inputs(max_spot_deviation, max_basis_deviation, min_basis, max_basis);
+    let bounds = BasisBounds { max_spot_deviation, max_basis_deviation, min_basis, max_basis };
+    if (oracle_config.asset_basis_bounds.contains(asset)) {
+        let row = &mut oracle_config.asset_basis_bounds[asset];
         *row = bounds;
     } else {
-        config.asset_basis_bounds.add(asset, bounds);
+        oracle_config.asset_basis_bounds.add(asset, bounds);
     }
-}
-
-/// Circuit-breaker guard called by `predict::update_basis` before any state
-/// mutation in `oracle::update_basis`. Looks up the asset-specific bounds on
-/// `config` (falling back to `constants` defaults when no explicit entry
-/// exists) and then rejects obviously-bad operator pushes (decimal errors,
-/// fat-finger values, BS outages returning garbage):
-///
-/// 1. Absolute basis range `[min_basis, max_basis]`. Always checked — for
-///    short-dated expiries basis stays near 1.0 so this is a hard sanity rail.
-/// 2. Per-push spot deviation vs the previously stored `prices.spot`. Skipped
-///    on the first push after activation (no baseline).
-/// 3. Per-push basis deviation vs the previously stored `prices.basis`.
-///    Basis moves slowly; a large per-push move is always suspicious. Also
-///    skipped on the first push.
-public(package) fun validate_basis_push(
-    config: &OracleConfig,
-    oracle: &OracleSVI,
-    new_spot: u64,
-    new_basis: u64,
-) {
-    let bounds = config.asset_basis_bounds(oracle.underlying_asset());
-    assert!(new_basis >= bounds.min_basis && new_basis <= bounds.max_basis, EBasisOutOfRange);
-
-    let prev_spot = oracle.spot_price();
-    if (prev_spot > 0) {
-        assert!(
-            within_deviation(prev_spot, new_spot, bounds.max_spot_deviation),
-            EBasisSpotDeviationTooLarge,
-        );
-    };
-
-    let prev_basis = oracle.basis();
-    if (prev_basis > 0) {
-        assert!(
-            within_deviation(prev_basis, new_basis, bounds.max_basis_deviation),
-            EBasisDeviationTooLarge,
-        );
-    };
 }
 
 /// Register the configured strike grid for a newly created oracle.
@@ -385,48 +341,6 @@ public(package) fun assert_range_key_matches(
     oracle_config.assert_valid_strike(oracle, range_key.higher_strike());
 }
 
-/// Assert that an oracle can still be used for actions that require live
-/// pricing. The oracle must be `ACTIVE` and fresh; `INACTIVE`,
-/// `PENDING_SETTLEMENT`, `SETTLED`, and stale oracles are rejected.
-public(package) fun assert_live_oracle(
-    oracle_config: &OracleConfig,
-    oracle: &OracleSVI,
-    clock: &Clock,
-) {
-    let oracle_status = oracle.status(clock);
-    assert!(oracle_status != oracle::status_settled(), EOracleSettled);
-    assert!(oracle_status != oracle::status_pending_settlement(), EOracleExpired);
-    assert!(oracle_status != oracle::status_inactive(), EOracleInactive);
-    let now = clock.timestamp_ms();
-    assert!(now <= oracle.spot_timestamp_ms() + oracle_config.staleness_threshold_ms, EOracleStale);
-    assert!(
-        now <= oracle.basis_timestamp_ms() + oracle_config.basis_staleness_threshold_ms,
-        EOracleStale,
-    );
-}
-
-/// Assert that an oracle can still be used for actions that accept either live
-/// pricing or a finalized settlement price. `SETTLED` oracles are allowed
-/// immediately; otherwise the oracle must still be `ACTIVE` and fresh.
-/// `PENDING_SETTLEMENT` is intentionally rejected to freeze the
-/// expired-but-unsettled gap.
-public(package) fun assert_quoteable_oracle(
-    oracle_config: &OracleConfig,
-    oracle: &OracleSVI,
-    clock: &Clock,
-) {
-    let oracle_status = oracle.status(clock);
-    if (oracle_status == oracle::status_settled()) return;
-    assert!(oracle_status != oracle::status_pending_settlement(), EOracleExpired);
-    assert!(oracle_status != oracle::status_inactive(), EOracleInactive);
-    let now = clock.timestamp_ms();
-    assert!(now <= oracle.spot_timestamp_ms() + oracle_config.staleness_threshold_ms, EOracleStale);
-    assert!(
-        now <= oracle.basis_timestamp_ms() + oracle_config.basis_staleness_threshold_ms,
-        EOracleStale,
-    );
-}
-
 /// Build an adaptive piecewise-linear curve over the configured strike range.
 public(package) fun build_curve(
     oracle_config: &OracleConfig,
@@ -500,6 +414,44 @@ fun grid_params(oracle_config: &OracleConfig, oracle_id: ID): (u64, u64, u64) {
     (grid_min, tick_size, grid_max)
 }
 
+/// Resolve `(max_spot_deviation, max_basis_deviation, min_basis, max_basis)`
+/// for a given underlying asset, falling back to the constants defaults when
+/// no per-asset entry is registered.
+fun resolve_basis_bounds(
+    oracle_config: &OracleConfig,
+    underlying_asset: String,
+): (u64, u64, u64, u64) {
+    if (oracle_config.asset_basis_bounds.contains(underlying_asset)) {
+        let b = oracle_config.asset_basis_bounds[underlying_asset];
+        (b.max_spot_deviation, b.max_basis_deviation, b.min_basis, b.max_basis)
+    } else {
+        (
+            constants::default_max_spot_deviation!(),
+            constants::default_max_basis_deviation!(),
+            constants::default_min_basis!(),
+            constants::default_max_basis!(),
+        )
+    }
+}
+
+fun validate_staleness_ms(value: u64) {
+    assert!(
+        value > 0 && value <= constants::max_staleness_threshold_ms!(),
+        EInvalidStalenessThreshold,
+    );
+}
+
+fun validate_basis_bounds_inputs(
+    max_spot_deviation: u64,
+    max_basis_deviation: u64,
+    min_basis: u64,
+    max_basis: u64,
+) {
+    assert!(min_basis < max_basis, EInvalidBasisBounds);
+    assert!(max_spot_deviation <= constants::float_scaling!(), EInvalidBasisBounds);
+    assert!(max_basis_deviation <= constants::float_scaling!(), EInvalidBasisBounds);
+}
+
 /// Insert a new curve point while preserving ascending strike order.
 fun insert_asc(points: &mut vector<CurvePoint>, new_point: CurvePoint) {
     points.push_back(new_point);
@@ -543,25 +495,4 @@ fun find_gap(points: &vector<CurvePoint>, grid_tick: u64): (bool, u64) {
 /// Round a strike down to the nearest tick boundary.
 fun snap_to_tick(strike: u64, grid_min: u64, grid_tick: u64): u64 {
     grid_min + (strike - grid_min) / grid_tick * grid_tick
-}
-
-/// Return true iff `|next - prev| <= prev * max_deviation`, where
-/// `max_deviation` is scaled by `float_scaling!()` (1e9 = 100%). Caller must
-/// ensure `prev > 0`.
-fun within_deviation(prev: u64, next: u64, max_deviation: u64): bool {
-    let diff = if (next >= prev) { next - prev } else { prev - next };
-    // prev * max_deviation / 1e9
-    let max_allowed = math::mul(prev, max_deviation);
-    diff <= max_allowed
-}
-
-/// Build a `BasisBounds` from the `constants`-module defaults. Used as the
-/// fallback for assets that have no explicit `asset_basis_bounds` entry.
-fun default_basis_bounds(): BasisBounds {
-    BasisBounds {
-        max_spot_deviation: constants::default_max_spot_deviation!(),
-        max_basis_deviation: constants::default_max_basis_deviation!(),
-        min_basis: constants::default_min_basis!(),
-        max_basis: constants::default_max_basis!(),
-    }
 }

@@ -13,7 +13,7 @@ use deepbook_predict::{
     constants,
     market_key::MarketKey,
     math::mul_div_round_down,
-    oracle::{OracleSVI, OracleSVICap},
+    oracle::{Self, OracleSVI, OracleSVICap},
     oracle_config::{Self, OracleConfig},
     plp::PLP,
     predict_manager::{Self, PredictManager},
@@ -24,7 +24,6 @@ use deepbook_predict::{
     treasury_config::{Self, TreasuryConfig},
     vault::{Self, Vault}
 };
-use pyth_lazer::update::Update as LazerUpdate;
 use std::{string::String, type_name::{Self, TypeName}};
 use sui::{
     clock::Clock,
@@ -45,7 +44,6 @@ const EZeroSharesMinted: u64 = 6;
 const EAskPriceOutOfBounds: u64 = 7;
 const EAskBoundLooserThanGlobal: u64 = 8;
 const EOracleNotSettled: u64 = 9;
-const EZeroSpot: u64 = 10;
 
 // === Events ===
 
@@ -127,22 +125,6 @@ public struct PricingConfigUpdated has copy, drop, store {
     max_ask_price: u64,
 }
 
-public struct OracleStalenessConfigUpdated has copy, drop, store {
-    predict_id: ID,
-    staleness_threshold_ms: u64,
-    basis_staleness_threshold_ms: u64,
-    lazer_authoritative_threshold_ms: u64,
-}
-
-public struct OracleBasisBoundsUpdated has copy, drop, store {
-    predict_id: ID,
-    asset: String,
-    max_spot_deviation: u64,
-    max_basis_deviation: u64,
-    min_basis: u64,
-    max_basis: u64,
-}
-
 public struct OracleAskBoundsSet has copy, drop, store {
     predict_id: ID,
     oracle_id: ID,
@@ -184,6 +166,22 @@ public struct Withdrawn has copy, drop, store {
     quote_asset: TypeName,
     amount: u64,
     shares_burned: u64,
+}
+
+public struct OracleStalenessConfigUpdated has copy, drop, store {
+    predict_id: ID,
+    spot_staleness_threshold_ms: u64,
+    basis_staleness_threshold_ms: u64,
+    lazer_authoritative_threshold_ms: u64,
+}
+
+public struct OracleBasisBoundsUpdated has copy, drop, store {
+    predict_id: ID,
+    asset: String,
+    max_spot_deviation: u64,
+    max_basis_deviation: u64,
+    min_basis: u64,
+    max_basis: u64,
 }
 
 // === Structs ===
@@ -258,7 +256,7 @@ public fun mint<Quote>(
     predict.treasury_config.assert_quote_asset<Quote>();
 
     predict.oracle_config.assert_key_matches(oracle, &key);
-    predict.oracle_config.assert_live_oracle(oracle, clock);
+    oracle.assert_live_oracle(clock);
 
     let strike = key.strike();
     let is_up = key.is_up();
@@ -356,7 +354,7 @@ public fun mint_range<Quote>(
     assert!(quantity > 0, EZeroQuantity);
     predict.treasury_config.assert_quote_asset<Quote>();
     predict.oracle_config.assert_range_key_matches(oracle, &key);
-    predict.oracle_config.assert_live_oracle(oracle, clock);
+    oracle.assert_live_oracle(clock);
 
     let lower = key.lower_strike();
     let higher = key.higher_strike();
@@ -404,7 +402,7 @@ public fun redeem_range<Quote>(
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     assert!(quantity > 0, EZeroQuantity);
     predict.oracle_config.assert_range_key_matches(oracle, &key);
-    predict.oracle_config.assert_quoteable_oracle(oracle, clock);
+    oracle.assert_quoteable_oracle(clock);
 
     manager.decrease_range(key, quantity);
 
@@ -509,49 +507,6 @@ public fun withdraw<Quote>(
     predict.vault.dispense_payout<Quote>(amount).into_coin(ctx)
 }
 
-/// Permissionless high-frequency spot push. Consume a verified Pyth Lazer
-/// `Update` and rederive `forward = spot * basis` against the cached operator
-/// basis. Threads the admin-configured `basis_staleness_threshold_ms` from
-/// `OracleConfig` into the oracle-level primitive so the stale-basis check
-/// can't be bypassed from a PTB.
-public fun update_spot_from_lazer(
-    predict: &Predict,
-    oracle: &mut OracleSVI,
-    update: LazerUpdate,
-    clock: &Clock,
-) {
-    oracle.update_spot_from_lazer(
-        update,
-        predict.oracle_config.basis_staleness_threshold_ms(),
-        clock,
-    );
-}
-
-/// Operator-signed (spot, forward) push (1s cadence). Runs the admin-
-/// configured basis circuit-breaker bounds from `OracleConfig` against the
-/// derived new basis, then calls into the oracle primitive. The oracle-level
-/// `update_basis` is `public(package)` so PTB callers cannot bypass these
-/// guards or the admin-configured `lazer_authoritative_threshold_ms`.
-public fun update_basis(
-    predict: &Predict,
-    oracle: &mut OracleSVI,
-    cap: &OracleSVICap,
-    spot: u64,
-    forward: u64,
-    clock: &Clock,
-) {
-    assert!(spot > 0, EZeroSpot);
-    let new_basis = math::div(forward, spot);
-    predict.oracle_config.validate_basis_push(oracle, spot, new_basis);
-    oracle.update_basis(
-        cap,
-        spot,
-        forward,
-        predict.oracle_config.lazer_authoritative_threshold_ms(),
-        clock,
-    );
-}
-
 // === Public-Package Functions ===
 
 /// Create and share the Predict object. Returns its ID.
@@ -610,6 +565,12 @@ public(package) fun add_oracle_grid(
     predict.oracle_config.add_oracle_grid(oracle_id, min_strike, tick_size);
     let max_strike = min_strike + tick_size * constants::oracle_strike_grid_ticks!();
     predict.vault.init_oracle_matrix(oracle_id, min_strike, max_strike, tick_size, ctx);
+}
+
+/// Snapshot the admin-tuned oracle bounds (staleness thresholds + per-asset
+/// basis bounds) for `asset` at `create_oracle` time.
+public(package) fun build_oracle_bounds(predict: &Predict, asset: String): oracle::OracleBounds {
+    predict.oracle_config.build_oracle_bounds(asset)
 }
 
 /// Whether trading is currently paused.
@@ -724,51 +685,29 @@ public(package) fun set_max_total_exposure_pct(predict: &mut Predict, pct: u64) 
     });
 }
 
-/// Update withdrawal rate limiter capacity and refill rate.
-public(package) fun update_withdrawal_limiter(
-    predict: &mut Predict,
-    capacity: u64,
-    refill_rate_per_ms: u64,
-    clock: &Clock,
-) {
-    predict.withdrawal_limiter.update_config(capacity, refill_rate_per_ms, clock);
-}
-
-/// Enable the withdrawal rate limiter.
-public(package) fun enable_withdrawal_limiter(predict: &mut Predict, clock: &Clock) {
-    predict.withdrawal_limiter.enable(clock);
-}
-
-/// Disable the withdrawal rate limiter.
-public(package) fun disable_withdrawal_limiter(predict: &mut Predict) {
-    predict.withdrawal_limiter.disable();
-}
-
-/// Returns the currently available withdrawal amount.
-public fun available_withdrawal(predict: &Predict, clock: &Clock): u64 {
-    predict.withdrawal_limiter.available_withdrawal(clock)
-}
-
-/// Set the oracle staleness threshold (ms).
+/// Update the admin-tuned spot staleness threshold used to seed new oracles
+/// at `create_oracle`. Does NOT retroactively update existing oracles — the
+/// operator retunes per-oracle via `oracle::set_spot_staleness_threshold_ms`.
 public(package) fun set_staleness_threshold_ms(predict: &mut Predict, value: u64) {
-    predict.oracle_config.set_staleness_threshold_ms(value);
+    predict.oracle_config.set_spot_staleness_threshold_ms(value);
     predict.emit_oracle_staleness_config_updated();
 }
 
-/// Set the basis staleness threshold (ms).
+/// Update the admin-tuned basis staleness threshold used to seed new oracles.
 public(package) fun set_basis_staleness_threshold_ms(predict: &mut Predict, value: u64) {
     predict.oracle_config.set_basis_staleness_threshold_ms(value);
     predict.emit_oracle_staleness_config_updated();
 }
 
-/// Set the Lazer-authoritative window (ms). Admin-only.
+/// Update the admin-tuned Lazer-authoritative window used to seed new oracles.
 public(package) fun set_lazer_authoritative_threshold_ms(predict: &mut Predict, value: u64) {
     predict.oracle_config.set_lazer_authoritative_threshold_ms(value);
     predict.emit_oracle_staleness_config_updated();
 }
 
-/// Set the basis circuit-breaker bounds for a given underlying asset (e.g.
-/// "BTC"). Propagates to every oracle sharing that asset.
+/// Update the per-asset basis circuit-breaker bounds seed used by
+/// `oracle_config::build_oracle_bounds` at `create_oracle`. Does NOT
+/// retroactively update existing oracles.
 public(package) fun set_asset_basis_bounds(
     predict: &mut Predict,
     asset: String,
@@ -794,6 +733,31 @@ public(package) fun set_asset_basis_bounds(
         min_basis,
         max_basis,
     });
+}
+
+/// Update withdrawal rate limiter capacity and refill rate.
+public(package) fun update_withdrawal_limiter(
+    predict: &mut Predict,
+    capacity: u64,
+    refill_rate_per_ms: u64,
+    clock: &Clock,
+) {
+    predict.withdrawal_limiter.update_config(capacity, refill_rate_per_ms, clock);
+}
+
+/// Enable the withdrawal rate limiter.
+public(package) fun enable_withdrawal_limiter(predict: &mut Predict, clock: &Clock) {
+    predict.withdrawal_limiter.enable(clock);
+}
+
+/// Disable the withdrawal rate limiter.
+public(package) fun disable_withdrawal_limiter(predict: &mut Predict) {
+    predict.withdrawal_limiter.disable();
+}
+
+/// Returns the currently available withdrawal amount.
+public fun available_withdrawal(predict: &Predict, clock: &Clock): u64 {
+    predict.withdrawal_limiter.available_withdrawal(clock)
 }
 
 #[test_only]
@@ -853,7 +817,7 @@ fun redeem_internal<Quote>(
 ): Coin<Quote> {
     assert!(quantity > 0, EZeroQuantity);
     predict.oracle_config.assert_key_matches(oracle, &key);
-    predict.oracle_config.assert_quoteable_oracle(oracle, clock);
+    oracle.assert_quoteable_oracle(clock);
 
     manager.decrease_position(key, quantity);
 
@@ -908,7 +872,7 @@ fun emit_pricing_config_updated(predict: &Predict) {
 fun emit_oracle_staleness_config_updated(predict: &Predict) {
     event::emit(OracleStalenessConfigUpdated {
         predict_id: object::id(predict),
-        staleness_threshold_ms: predict.oracle_config.staleness_threshold_ms(),
+        spot_staleness_threshold_ms: predict.oracle_config.spot_staleness_threshold_ms(),
         basis_staleness_threshold_ms: predict.oracle_config.basis_staleness_threshold_ms(),
         lazer_authoritative_threshold_ms: predict.oracle_config.lazer_authoritative_threshold_ms(),
     });
@@ -918,7 +882,7 @@ fun emit_oracle_staleness_config_updated(predict: &Predict) {
 /// fair price when the oracle is settled).
 fun trade_prices(predict: &Predict, oracle: &OracleSVI, key: MarketKey, clock: &Clock): (u64, u64) {
     predict.oracle_config.assert_key_matches(oracle, &key);
-    predict.oracle_config.assert_quoteable_oracle(oracle, clock);
+    oracle.assert_quoteable_oracle(clock);
 
     let up_price = oracle.compute_price(key.strike());
     if (oracle.is_settled()) {
@@ -961,7 +925,7 @@ fun range_trade_prices(
     clock: &Clock,
 ): (u64, u64) {
     predict.oracle_config.assert_range_key_matches(oracle, &key);
-    predict.oracle_config.assert_quoteable_oracle(oracle, clock);
+    oracle.assert_quoteable_oracle(clock);
 
     // Fair range price = up(lower) − up(higher). UP price is monotone
     // non-increasing in strike, so this is always non-negative for a well-formed

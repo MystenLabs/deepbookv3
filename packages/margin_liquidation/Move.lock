@@ -5,7 +5,7 @@
 version = 4
 
 [pinned.mainnet.MoveStdlib]
-source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "868c226359ef914f1f3b080518f27eb13d8967f5" }
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "85400e2bd37b490fcd057776e700d3fdca643396" }
 use_environment = "mainnet"
 manifest_digest = "C4FE4C91DE74CBF223B2E380AE40F592177D21870DC2D7EB6227D2D694E05363"
 deps = {}
@@ -23,7 +23,7 @@ manifest_digest = "F2C5AF85C4B72C8F6A8132D05DE4F787F4EB80DBFF812331ED65AE599E7DF
 deps = { Sui = "Sui_1", Wormhole = "Wormhole" }
 
 [pinned.mainnet.Sui]
-source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "868c226359ef914f1f3b080518f27eb13d8967f5" }
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "85400e2bd37b490fcd057776e700d3fdca643396" }
 use_environment = "mainnet"
 manifest_digest = "CD547CB1ACCE0880C835DAED2D8FFCB91D56C833AE5240D3AA5B918398263195"
 deps = { MoveStdlib = "MoveStdlib" }
@@ -49,8 +49,8 @@ deps = { std = "MoveStdlib", sui = "Sui", token = "token" }
 [pinned.mainnet.deepbook_margin]
 source = { local = "../deepbook_margin" }
 use_environment = "mainnet"
-manifest_digest = "8EEB68B2BFCFE40D54C0A445414D1789D77E8CC373F7AF15A97B01ADE4B29199"
-deps = { Pyth = "Pyth", deepbook = "deepbook", std = "MoveStdlib", sui = "Sui", token = "token" }
+manifest_digest = "CB667B820C1B23DAA461D4276F8B16B13DE45132636E1E65E65D553C4DF5D716"
+deps = { deepbook = "deepbook", pyth = "Pyth", std = "MoveStdlib", sui = "Sui", token = "token" }
 
 [pinned.mainnet.margin_liquidation]
 source = { root = true }
@@ -59,13 +59,13 @@ manifest_digest = "5CC277B067409F5523A5A79F4FB51C732BA239CE7C95D5B713BA137AAD727
 deps = { deepbook = "deepbook", deepbook_margin = "deepbook_margin", std = "MoveStdlib", sui = "Sui" }
 
 [pinned.mainnet.token]
-source = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "b2d32b449c41f883ad901905bb27d0fbfed47c5b" }
+source = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "19f86ebad9c6371c4f5c07229faabb2020dc691c" }
 use_environment = "mainnet"
 manifest_digest = "E41BBD67BE8940D26C79D78B028477EF5B33BA217A1282C78ACB344CF8A5ECF6"
 deps = { std = "MoveStdlib", sui = "Sui" }
 
 [pinned.testnet.MoveStdlib]
-source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "868c226359ef914f1f3b080518f27eb13d8967f5" }
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/move-stdlib", rev = "85400e2bd37b490fcd057776e700d3fdca643396" }
 use_environment = "testnet"
 manifest_digest = "C4FE4C91DE74CBF223B2E380AE40F592177D21870DC2D7EB6227D2D694E05363"
 deps = {}
@@ -83,7 +83,7 @@ manifest_digest = "9942AAB3725BC51DADB046B4440A3D008E554C9286ECC72B3DE5CC0309C0D
 deps = { Sui = "Sui_1", Wormhole = "Wormhole" }
 
 [pinned.testnet.Sui]
-source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "868c226359ef914f1f3b080518f27eb13d8967f5" }
+source = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "85400e2bd37b490fcd057776e700d3fdca643396" }
 use_environment = "testnet"
 manifest_digest = "7AFB66695545775FBFBB2D3078ADFD084244D5002392E837FDE21D9EA1C6D01C"
 deps = { MoveStdlib = "MoveStdlib" }
@@ -109,8 +109,8 @@ deps = { std = "MoveStdlib", sui = "Sui", token = "token" }
 [pinned.testnet.deepbook_margin]
 source = { local = "../deepbook_margin" }
 use_environment = "testnet"
-manifest_digest = "E6B112DF6F98D4596806AD90F385DD4D9DA82C556A2DF58997D5FEB00F983244"
-deps = { Pyth = "Pyth", deepbook = "deepbook", std = "MoveStdlib", sui = "Sui", token = "token" }
+manifest_digest = "0399AA4FC0023475DA450CD4E893FAA707F2D974710687B551D39BD9679B288E"
+deps = { deepbook = "deepbook", pyth = "Pyth", std = "MoveStdlib", sui = "Sui", token = "token" }
 
 [pinned.testnet.margin_liquidation]
 source = { root = true }
@@ -119,7 +119,7 @@ manifest_digest = "16A636F6775B8A491DBDA7196CE56B690C31E02802533981158A49510686B
 deps = { deepbook = "deepbook", deepbook_margin = "deepbook_margin", std = "MoveStdlib", sui = "Sui" }
 
 [pinned.testnet.token]
-source = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "b2d32b449c41f883ad901905bb27d0fbfed47c5b" }
+source = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "19f86ebad9c6371c4f5c07229faabb2020dc691c" }
 use_environment = "testnet"
 manifest_digest = "5745706258F61D6CE210904B3E6AE87A73CE9D31A6F93BE4718C442529332A87"
 deps = { std = "MoveStdlib", sui = "Sui" }
