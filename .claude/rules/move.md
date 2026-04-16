@@ -76,6 +76,8 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 
 - Timestamp fields should have clear semantics. If `timestamp` means "last price update", don't bump it on unrelated updates (e.g., SVI param changes). Muddled semantics break staleness checks.
 
+- Distinguish on-chain landing time from source-data time in the field name itself. A bare `lazer_timestamp` is ambiguous — does it mean the publisher's timestamp embedded in the verified payload, or `clock.timestamp_ms()` captured when the payload landed on chain? Use a unit suffix that encodes both the unit and the source: `*_timestamp_ms` for `clock.timestamp_ms()` values (on-chain landing time, always milliseconds in Sui), and `*_published_at_us` (or similar explicit phrase) for timestamps that come from the data being pushed. Same convention for event payload fields and getter names. Bulk renames across an entire package are safe with `perl -i -pe 's/\bX\b/Y/g'` since `\b` correctly skips compound identifiers like `lazer_X_ms`.
+
 - Validate before mutate: when consuming irreversible resources (burning coins, destroying objects), check all preconditions before the destructive call. Even though Sui transactions are atomic, this makes intent clearer and follows the convention used throughout the codebase.
 
 - Prefer explicit loop bounds over `while (true)` when the iteration range is easy to express. If a loop naturally means "from `min_page` to `max_page` inclusive" or "while `slot <= end_slot`", write that directly instead of using `while (true)` plus interior `break`s.
