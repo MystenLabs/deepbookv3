@@ -21,10 +21,6 @@ const rootLogger = pino({
 export type Component =
   | "executor"
   | "subscriber"
-  | "rotation"
-  | "gas_pool"
-  | "registry"
-  | "bootstrap"
   | "healthz"
   | "service";
 

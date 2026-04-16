@@ -17,4 +17,4 @@ ARG GIT_REVISION
 LABEL build-date=$BUILD_DATE
 LABEL git-revision=$GIT_REVISION
 
-CMD ["pnpm", "tsx", "services/oracle-feed.ts"]
+CMD ["pnpm", "tsx", "services/oracle-feed/index.ts"]

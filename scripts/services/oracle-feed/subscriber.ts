@@ -1,16 +1,26 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
 import type { Config } from "./config";
 import type { Logger } from "./logger";
 import type { OracleId, PriceCache, SVICache } from "./types";
 
-type SubId = number;
+const WS_RECONNECT_LADDER_MS = [500, 1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 60_000];
 
 export type Subscriber = {
   start: () => void;
   stop: () => void;
-  addOracle: (oracleId: OracleId, expiryMs: number) => void;
+  addOracle: (oracleId: OracleId, underlying: string, expiryMs: number) => void;
   removeOracle: (oracleId: OracleId) => void;
   isConnected: () => boolean;
   lastFrameReceivedMs: () => number;
+};
+
+type OracleSub = {
+  underlying: string;
+  expiryMs: number;
+  fwdSid: string;
+  sviSid: string;
 };
 
 export function makeSubscriber(
@@ -21,19 +31,15 @@ export function makeSubscriber(
 ): Subscriber {
   let ws: WebSocket | null = null;
   let nextRpcId = 100;
-  let pingTimer: ReturnType<typeof setInterval> | null = null;
-  let pongTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let reconnectAttempt = 0;
   let stopped = false;
   let lastFrame = 0;
-  const oracles = new Map<OracleId, { expiryMs: number; fwdSid: string; sviSid: string }>();
-  const authResolvers: Array<() => void> = [];
+  const oracles = new Map<OracleId, OracleSub>();
   let authed = false;
 
   function backoffMs(): number {
-    const ladder = [500, 1000, 2000, 4000, 8000, 16_000, 30_000, 60_000];
-    return ladder[Math.min(reconnectAttempt, ladder.length - 1)];
+    return WS_RECONNECT_LADDER_MS[Math.min(reconnectAttempt, WS_RECONNECT_LADDER_MS.length - 1)];
   }
 
   function send(payload: Record<string, unknown>): void {
@@ -41,27 +47,29 @@ export function makeSubscriber(
     ws.send(JSON.stringify(payload));
   }
 
-  function subscribeSpot(): void {
-    send({
-      jsonrpc: "2.0",
-      id: nextRpcId++,
-      method: "subscribe",
-      params: [{
-        frequency: "1000ms",
-        client_id: "spot",
-        batch: [{ sid: "spot", feed: "index.px", asset: "spot", base_asset: "BTC", quote_asset: "USD" }],
-        options: { format: { timestamp: "ms", hexify: false, decimals: 5 } },
-      }],
-    });
+  function subscribeSpot(underlyings: Set<string>): void {
+    for (const asset of underlyings) {
+      send({
+        jsonrpc: "2.0",
+        id: nextRpcId++,
+        method: "subscribe",
+        params: [{
+          frequency: "1000ms",
+          client_id: `spot_${asset}`,
+          batch: [{ sid: `spot_${asset}`, feed: "index.px", asset: "spot", base_asset: asset, quote_asset: "USD" }],
+          options: { format: { timestamp: "ms", hexify: false, decimals: 5 } },
+        }],
+      });
+    }
   }
 
   function subscribeForwards(): void {
-    const items = [...oracles.entries()].map(([oid, o]) => ({
+    const items = [...oracles.entries()].map(([_oid, o]) => ({
       sid: o.fwdSid,
       feed: "mark.px",
       asset: "future",
-      base_asset: "BTC",
-      expiry: new Date(o.expiryMs).toISOString().replace(/\.\d{3}Z$/, "Z"),
+      base_asset: o.underlying,
+      expiry: isoSeconds(o.expiryMs),
     }));
     for (let i = 0; i < items.length; i += 10) {
       const batch = items.slice(i, i + 10);
@@ -95,9 +103,9 @@ export function makeSubscriber(
           feed: "model.params",
           exchange: "composite",
           asset: "option",
-          base_asset: "BTC",
+          base_asset: entry.underlying,
           model: "SVI",
-          expiry: new Date(entry.expiryMs).toISOString().replace(/\.\d{3}Z$/, "Z"),
+          expiry: isoSeconds(entry.expiryMs),
         }],
         options: { format: { timestamp: "ms", hexify: false, decimals: 5 } },
       }],
@@ -105,30 +113,12 @@ export function makeSubscriber(
   }
 
   function resubscribeAll(): void {
-    subscribeSpot();
+    const underlyings = new Set<string>();
+    for (const o of oracles.values()) underlyings.add(o.underlying);
+    subscribeSpot(underlyings);
     subscribeForwards();
     for (const oid of oracles.keys()) subscribeSvi(oid);
-    log.info({ event: "ws_subscribed", count: oracles.size * 2 + 1 });
-  }
-
-  function startPing(): void {
-    pingTimer = setInterval(() => {
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      try {
-        (ws as any).ping?.();
-      } catch {}
-      pongTimer = setTimeout(() => {
-        log.warn({ event: "ws_frame_dropped", reason: "no_pong" });
-        ws?.close();
-      }, config.wsPongTimeoutMs);
-    }, config.wsPingIntervalMs);
-  }
-
-  function stopPing(): void {
-    if (pingTimer) clearInterval(pingTimer);
-    if (pongTimer) clearTimeout(pongTimer);
-    pingTimer = null;
-    pongTimer = null;
+    log.info({ event: "ws_subscribed", underlyings: [...underlyings], oracleCount: oracles.size });
   }
 
   function connect(): void {
@@ -172,13 +162,7 @@ export function makeSubscriber(
       }
     });
 
-    ws.addEventListener("pong" as any, () => {
-      if (pongTimer) clearTimeout(pongTimer);
-      pongTimer = null;
-    });
-
     ws.addEventListener("close", () => {
-      stopPing();
       if (stopped) return;
       log.warn({ event: "ws_reconnect", attempt: reconnectAttempt + 1, backoffMs: backoffMs() });
       reconnectTimer = setTimeout(() => {
@@ -190,14 +174,15 @@ export function makeSubscriber(
     ws.addEventListener("error", (e: Event) => {
       log.warn({ event: "ws_frame_dropped", reason: "socket_error", err: String(e) });
     });
-
-    startPing();
   }
 
   function applyFrame(v: any): void {
     const sid = v.sid as string;
     const now = Date.now();
-    if (sid === "spot" && typeof v.v === "number") {
+    if (sid.startsWith("spot_") && typeof v.v === "number") {
+      // Single-underlying setup: any spot frame is "the" spot. If multiple
+      // underlyings are ever active simultaneously, priceCache.spot would
+      // need to become a Map keyed by underlying.
       priceCache.spot = { value: v.v, receivedAtMs: now };
       return;
     }
@@ -222,14 +207,16 @@ export function makeSubscriber(
     start: () => { connect(); },
     stop: () => {
       stopped = true;
-      stopPing();
       if (reconnectTimer) clearTimeout(reconnectTimer);
       ws?.close();
     },
-    addOracle: (oracleId, expiryMs) => {
-      const fwdSid = `fwd_${oracleId}`;
-      const sviSid = `svi_${oracleId}`;
-      oracles.set(oracleId, { expiryMs, fwdSid, sviSid });
+    addOracle: (oracleId, underlying, expiryMs) => {
+      oracles.set(oracleId, {
+        underlying,
+        expiryMs,
+        fwdSid: `fwd_${oracleId}`,
+        sviSid: `svi_${oracleId}`,
+      });
       if (authed) {
         subscribeForwards();
         subscribeSvi(oracleId);
@@ -237,12 +224,13 @@ export function makeSubscriber(
     },
     removeOracle: (oracleId) => {
       oracles.delete(oracleId);
-      // Note: we don't send unsubscribe; docs don't specify the RPC shape.
-      // Frames for dropped oracles will arrive and be ignored by applyFrame
-      // since priceCache.forwards and sviCache no longer have those keys
-      // (the executor only pushes for oracles in the registry).
     },
     isConnected: () => ws?.readyState === WebSocket.OPEN,
     lastFrameReceivedMs: () => lastFrame,
   };
+}
+
+function isoSeconds(expiryMs: number): string {
+  // BlockScholes wants "YYYY-MM-DDTHH:MM:SSZ" (no milliseconds).
+  return new Date(expiryMs).toISOString().replace(/\.\d{3}Z$/, "Z");
 }

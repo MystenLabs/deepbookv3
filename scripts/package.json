@@ -17,7 +17,7 @@
     "predict-create-oracle": "pnpm tsx transactions/predict/createOracle.ts",
     "predict-deploy-oracles": "pnpm tsx transactions/predict/deployOracles.ts",
     "predict-redeploy": "pnpm tsx transactions/predict/redeploy.ts",
-    "oracle-service": "pnpm tsx services/oracle-service/index.ts"
+    "oracle-feed": "pnpm tsx services/oracle-feed/index.ts"
   },
   "keywords": [],
   "author": "",
