@@ -36,6 +36,7 @@ predict_research/
 /app/
 .env
 .envrc
+.claude/scheduled_tasks.lock
 **/benchmark_data/
 tx-data.txt
 example.ts
