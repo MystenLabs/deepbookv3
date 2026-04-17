@@ -19,6 +19,7 @@ url.workspace = true
 prometheus.workspace = true
 sui-futures.workspace = true
 sui-sdk = { git = "https://github.com/MystenLabs/sui.git", branch = "testnet" }
+sui-json-rpc-types = { git = "https://github.com/MystenLabs/sui.git", branch = "testnet" }
 sui-indexer-alt-metrics.workspace = true
 telemetry-subscribers.workspace = true
 sui-pg-db.workspace = true
@@ -26,6 +27,8 @@ axum = { version = "0.7", features = ["json"] }
 tower-http = { version = "0.5", features = ["cors"] }
 thiserror = "1.0"
 tracing.workspace = true
+sui-types.workspace = true
+bcs.workspace = true
 
 [[bin]]
 name = "predict-server"

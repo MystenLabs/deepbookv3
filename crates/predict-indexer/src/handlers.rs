@@ -3,6 +3,7 @@ use std::sync::Arc;
 use sui_indexer_alt_framework::types::full_checkpoint_content::{
     Checkpoint, ExecutedTransaction, ObjectSet,
 };
+use sui_types::base_types::ObjectID;
 use sui_types::effects::TransactionEffectsAPI;
 use sui_types::transaction::{Command, TransactionDataAPI};
 
@@ -202,12 +203,47 @@ pub(crate) fn event_package(event_type: &move_core_types::language_storage::Stru
     event_type.address.to_string()
 }
 
+pub(crate) fn find_predict_object_id_from_candidates<I>(
+    candidates: I,
+    config: &PredictConfig,
+) -> Option<String>
+where
+    I: IntoIterator<Item = (move_core_types::language_storage::StructTag, ObjectID)>,
+{
+    candidates.into_iter().find_map(|(struct_tag, object_id)| {
+        let is_predict_object = struct_tag.name.as_str() == "Predict"
+            && config
+                .account_addresses
+                .iter()
+                .any(|addr| struct_tag.address == *addr);
+        if is_predict_object {
+            Some(object_id.to_hex_uncompressed())
+        } else {
+            None
+        }
+    })
+}
+
+fn predict_object_id_from_tx(
+    tx: &ExecutedTransaction,
+    checkpoint_objects: &ObjectSet,
+    config: &PredictConfig,
+) -> Option<String> {
+    find_predict_object_id_from_candidates(
+        tx.input_objects(checkpoint_objects)
+            .filter_map(|obj| obj.data.struct_tag().map(|tag| (tag, obj.id()))),
+        config,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use move_core_types::account_address::AccountAddress;
     use move_core_types::identifier::Identifier;
     use move_core_types::language_storage::StructTag;
+    use std::str::FromStr;
+    use sui_types::base_types::ObjectID;
 
     #[test]
     fn event_package_uses_event_type_address() {
@@ -239,6 +275,45 @@ mod tests {
         assert_eq!(updated.tx_index(), 3);
         assert_eq!(updated.event_index(), 5);
         assert_eq!(updated.event_digest(), "txdigest5");
+    }
+
+    #[test]
+    fn find_predict_object_id_from_candidates_prefers_predict_inputs() {
+        let config = PredictConfig::new(["0x42"]);
+        let candidates = vec![
+            (
+                StructTag {
+                    address: AccountAddress::from_hex_literal("0x42").unwrap(),
+                    module: Identifier::new("oracle").unwrap(),
+                    name: Identifier::new("OracleSVI").unwrap(),
+                    type_params: vec![],
+                },
+                ObjectID::from_str(
+                    "0x1111111111111111111111111111111111111111111111111111111111111111",
+                )
+                .unwrap(),
+            ),
+            (
+                StructTag {
+                    address: AccountAddress::from_hex_literal("0x42").unwrap(),
+                    module: Identifier::new("predict").unwrap(),
+                    name: Identifier::new("Predict").unwrap(),
+                    type_params: vec![],
+                },
+                ObjectID::from_str(
+                    "0x2222222222222222222222222222222222222222222222222222222222222222",
+                )
+                .unwrap(),
+            ),
+        ];
+
+        let predict_id =
+            find_predict_object_id_from_candidates(candidates.iter().cloned(), &config);
+
+        assert_eq!(
+            predict_id,
+            Some("0x2222222222222222222222222222222222222222222222222222222222222222".to_string())
+        );
     }
 }
 
@@ -374,27 +449,81 @@ define_handler! {
     }
 }
 
-define_handler! {
-    name: OracleCreatedHandler,
-    processor_name: "oracle_created",
-    event_type: OracleCreated,
-    db_model: OracleCreatedRow,
-    table: oracle_created,
-    map_event: |event, meta| OracleCreatedRow {
-        event_digest: meta.event_digest(),
-        digest: meta.digest(),
-        sender: meta.sender(),
-        checkpoint: meta.checkpoint(),
-        checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
-        tx_index: meta.tx_index(),
-        event_index: meta.event_index(),
-        package: meta.package(),
-        oracle_id: event.oracle_id.to_string(),
-        oracle_cap_id: event.oracle_cap_id.to_string(),
-        underlying_asset: event.underlying_asset.clone(),
-        expiry: event.expiry as i64,
-        min_strike: event.min_strike as i64,
-        tick_size: event.tick_size as i64,
+pub struct OracleCreatedHandler {
+    config: Arc<PredictConfig>,
+}
+
+impl OracleCreatedHandler {
+    pub fn new(config: Arc<PredictConfig>) -> Self {
+        Self { config }
+    }
+}
+
+#[async_trait::async_trait]
+impl sui_indexer_alt_framework::pipeline::Processor for OracleCreatedHandler {
+    const NAME: &'static str = "oracle_created";
+    type Value = OracleCreatedRow;
+
+    async fn process(&self, checkpoint: &Arc<Checkpoint>) -> anyhow::Result<Vec<Self::Value>> {
+        use crate::traits::MoveStruct;
+
+        let mut results = vec![];
+        for (tx_index, tx) in checkpoint.transactions.iter().enumerate() {
+            if !is_predict_tx(tx, &checkpoint.object_set, &self.config) {
+                continue;
+            }
+            let Some(events) = &tx.events else { continue };
+
+            let base_meta = EventMeta::from_checkpoint_tx(checkpoint, tx, tx_index);
+            let predict_id = predict_object_id_from_tx(tx, &checkpoint.object_set, &self.config)
+                .unwrap_or_else(|| "0x0".to_string());
+
+            for (index, ev) in events.data.iter().enumerate() {
+                if !OracleCreated::matches_event_type(&ev.type_, &self.config.account_addresses) {
+                    continue;
+                }
+                let event: OracleCreated = bcs::from_bytes(&ev.contents)?;
+                let meta = base_meta.with_event(index, event_package(&ev.type_).into());
+                results.push(OracleCreatedRow {
+                    event_digest: meta.event_digest(),
+                    digest: meta.digest(),
+                    sender: meta.sender(),
+                    checkpoint: meta.checkpoint(),
+                    checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
+                    tx_index: meta.tx_index(),
+                    event_index: meta.event_index(),
+                    package: meta.package(),
+                    predict_id: predict_id.clone(),
+                    oracle_id: event.oracle_id.to_string(),
+                    oracle_cap_id: event.oracle_cap_id.to_string(),
+                    underlying_asset: event.underlying_asset.clone(),
+                    expiry: event.expiry as i64,
+                    min_strike: event.min_strike as i64,
+                    tick_size: event.tick_size as i64,
+                });
+                tracing::debug!("Observed oracle_created event");
+            }
+        }
+
+        Ok(results)
+    }
+}
+
+#[async_trait::async_trait]
+impl sui_indexer_alt_framework::postgres::handler::Handler for OracleCreatedHandler {
+    async fn commit<'a>(
+        values: &[Self::Value],
+        conn: &mut sui_indexer_alt_framework::postgres::Connection<'a>,
+    ) -> anyhow::Result<usize> {
+        use diesel_async::RunQueryDsl;
+
+        Ok(
+            diesel::insert_into(predict_schema::schema::oracle_created::table)
+                .values(values)
+                .on_conflict_do_nothing()
+                .execute(conn)
+                .await?,
+        )
     }
 }
 

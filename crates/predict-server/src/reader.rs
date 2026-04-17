@@ -23,6 +23,36 @@ use sui_indexer_alt_metrics::db::DbConnectionStatsCollector;
 use sui_pg_db::{Db, DbArgs};
 use url::Url;
 
+#[derive(QueryableByName, Debug, Clone)]
+pub struct PositionAggregateRow {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub predict_id: String,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub manager_id: String,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub quote_asset: String,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub oracle_id: String,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub expiry: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub strike: i64,
+    #[diesel(sql_type = diesel::sql_types::Bool)]
+    pub is_up: bool,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub minted_quantity: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub redeemed_quantity: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub total_cost: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub total_payout: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub first_minted_at: i64,
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    pub last_activity_at: i64,
+}
+
 #[derive(Clone)]
 pub struct Reader {
     db: Db,
@@ -116,6 +146,25 @@ impl Reader {
         Ok(self
             .results(
                 schema::oracle_created::table
+                    .select(OracleCreatedRow::as_select())
+                    .order_by((
+                        schema::oracle_created::checkpoint.desc(),
+                        schema::oracle_created::tx_index.desc(),
+                        schema::oracle_created::event_index.desc(),
+                    )),
+            )
+            .await?)
+    }
+
+    pub async fn get_oracles_created_for_predict(
+        &self,
+        predict_id: &str,
+    ) -> Result<Vec<OracleCreatedRow>, PredictError> {
+        let predict_id = predict_id.to_string();
+        Ok(self
+            .results(
+                schema::oracle_created::table
+                    .filter(schema::oracle_created::predict_id.eq(predict_id))
                     .select(OracleCreatedRow::as_select())
                     .order_by((
                         schema::oracle_created::checkpoint.desc(),
@@ -613,6 +662,142 @@ impl Reader {
         Ok((minted, redeemed))
     }
 
+    pub async fn get_all_positions_minted_for_manager(
+        &self,
+        manager_id: &str,
+    ) -> Result<Vec<PositionMintedRow>, PredictError> {
+        let manager_id = manager_id.to_string();
+        let query = schema::position_minted::table
+            .filter(schema::position_minted::manager_id.eq(manager_id))
+            .order_by((
+                schema::position_minted::checkpoint.asc(),
+                schema::position_minted::tx_index.asc(),
+                schema::position_minted::event_index.asc(),
+            ))
+            .select(PositionMintedRow::as_select());
+
+        Ok(self.results(query).await?)
+    }
+
+    pub async fn get_all_positions_redeemed_for_manager(
+        &self,
+        manager_id: &str,
+    ) -> Result<Vec<PositionRedeemedRow>, PredictError> {
+        let manager_id = manager_id.to_string();
+        let query = schema::position_redeemed::table
+            .filter(schema::position_redeemed::manager_id.eq(manager_id))
+            .order_by((
+                schema::position_redeemed::checkpoint.asc(),
+                schema::position_redeemed::tx_index.asc(),
+                schema::position_redeemed::event_index.asc(),
+            ))
+            .select(PositionRedeemedRow::as_select());
+
+        Ok(self.results(query).await?)
+    }
+
+    pub async fn get_manager(
+        &self,
+        manager_id: &str,
+    ) -> Result<PredictManagerCreatedRow, PredictError> {
+        let query = schema::predict_manager_created::table
+            .filter(schema::predict_manager_created::manager_id.eq(manager_id))
+            .order_by((
+                schema::predict_manager_created::checkpoint.desc(),
+                schema::predict_manager_created::tx_index.desc(),
+                schema::predict_manager_created::event_index.desc(),
+            ))
+            .select(PredictManagerCreatedRow::as_select());
+
+        self.first(query)
+            .await
+            .map_err(|_| PredictError::not_found(format!("manager {}", manager_id)))
+    }
+
+    pub async fn get_position_aggregates_for_manager(
+        &self,
+        manager_id: &str,
+    ) -> Result<Vec<PositionAggregateRow>, PredictError> {
+        let sql = r#"
+            WITH minted AS (
+                SELECT
+                    predict_id,
+                    manager_id,
+                    quote_asset,
+                    oracle_id,
+                    expiry,
+                    strike,
+                    is_up,
+                    SUM(quantity) AS minted_quantity,
+                    SUM(cost) AS total_cost,
+                    MIN(checkpoint_timestamp_ms) AS first_minted_at,
+                    MAX(checkpoint_timestamp_ms) AS last_minted_at
+                FROM position_minted
+                WHERE manager_id = $1
+                GROUP BY predict_id, manager_id, quote_asset, oracle_id, expiry, strike, is_up
+            ),
+            redeemed AS (
+                SELECT
+                    predict_id,
+                    manager_id,
+                    quote_asset,
+                    oracle_id,
+                    expiry,
+                    strike,
+                    is_up,
+                    SUM(quantity) AS redeemed_quantity,
+                    SUM(payout) AS total_payout,
+                    MAX(checkpoint_timestamp_ms) AS last_redeemed_at
+                FROM position_redeemed
+                WHERE manager_id = $1
+                GROUP BY predict_id, manager_id, quote_asset, oracle_id, expiry, strike, is_up
+            )
+            SELECT
+                COALESCE(minted.predict_id, redeemed.predict_id) AS predict_id,
+                COALESCE(minted.manager_id, redeemed.manager_id) AS manager_id,
+                COALESCE(minted.quote_asset, redeemed.quote_asset) AS quote_asset,
+                COALESCE(minted.oracle_id, redeemed.oracle_id) AS oracle_id,
+                COALESCE(minted.expiry, redeemed.expiry) AS expiry,
+                COALESCE(minted.strike, redeemed.strike) AS strike,
+                COALESCE(minted.is_up, redeemed.is_up) AS is_up,
+                COALESCE(minted.minted_quantity, 0) AS minted_quantity,
+                COALESCE(redeemed.redeemed_quantity, 0) AS redeemed_quantity,
+                COALESCE(minted.total_cost, 0) AS total_cost,
+                COALESCE(redeemed.total_payout, 0) AS total_payout,
+                COALESCE(minted.first_minted_at, redeemed.last_redeemed_at, 0) AS first_minted_at,
+                GREATEST(
+                    COALESCE(minted.last_minted_at, 0),
+                    COALESCE(redeemed.last_redeemed_at, 0)
+                ) AS last_activity_at
+            FROM minted
+            FULL OUTER JOIN redeemed
+                ON minted.predict_id = redeemed.predict_id
+                AND minted.manager_id = redeemed.manager_id
+                AND minted.quote_asset = redeemed.quote_asset
+                AND minted.oracle_id = redeemed.oracle_id
+                AND minted.expiry = redeemed.expiry
+                AND minted.strike = redeemed.strike
+                AND minted.is_up = redeemed.is_up
+            ORDER BY last_activity_at DESC, expiry DESC, strike ASC
+        "#;
+
+        let mut conn = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        let res = diesel::sql_query(sql)
+            .bind::<diesel::sql_types::Text, _>(manager_id)
+            .get_results::<PositionAggregateRow>(&mut conn)
+            .await;
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+
+        Ok(res?)
+    }
+
     // === Config queries ===
 
     pub async fn get_latest_predict_created(&self) -> Result<PredictCreatedRow, PredictError> {
@@ -840,6 +1025,86 @@ impl Reader {
         }
 
         Ok(res?.into_iter().map(|r| r.quote_asset).collect())
+    }
+
+    pub async fn get_all_enabled_quote_assets(&self) -> Result<Vec<String>, PredictError> {
+        #[derive(QueryableByName)]
+        struct QuoteAssetRow {
+            #[diesel(sql_type = diesel::sql_types::Text)]
+            quote_asset: String,
+        }
+
+        let mut conn = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        let sql = r#"
+            SELECT DISTINCT quote_asset
+            FROM (
+                SELECT predict_id, quote_asset
+                FROM (
+                    SELECT DISTINCT ON (predict_id, quote_asset)
+                        predict_id,
+                        quote_asset,
+                        enabled
+                    FROM (
+                        SELECT predict_id, quote_asset, checkpoint, tx_index, event_index, TRUE AS enabled
+                        FROM quote_asset_enabled
+                        UNION ALL
+                        SELECT predict_id, quote_asset, checkpoint, tx_index, event_index, FALSE AS enabled
+                        FROM quote_asset_disabled
+                    ) all_events
+                    ORDER BY predict_id, quote_asset, checkpoint DESC, tx_index DESC, event_index DESC
+                ) latest_per_predict
+                WHERE enabled = TRUE
+            ) enabled_quotes
+            ORDER BY quote_asset
+        "#;
+
+        let res = diesel::sql_query(sql)
+            .get_results::<QuoteAssetRow>(&mut conn)
+            .await;
+
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+
+        Ok(res?.into_iter().map(|row| row.quote_asset).collect())
+    }
+
+    pub async fn get_lp_supplies_for_predict(
+        &self,
+        predict_id: &str,
+    ) -> Result<Vec<SuppliedRow>, PredictError> {
+        let predict_id = predict_id.to_string();
+        let query = schema::supplied::table
+            .filter(schema::supplied::predict_id.eq(predict_id))
+            .order_by((
+                schema::supplied::checkpoint_timestamp_ms.asc(),
+                schema::supplied::tx_index.asc(),
+                schema::supplied::event_index.asc(),
+            ))
+            .select(SuppliedRow::as_select());
+
+        Ok(self.results(query).await?)
+    }
+
+    pub async fn get_lp_withdrawals_for_predict(
+        &self,
+        predict_id: &str,
+    ) -> Result<Vec<WithdrawnRow>, PredictError> {
+        let predict_id = predict_id.to_string();
+        let query = schema::withdrawn::table
+            .filter(schema::withdrawn::predict_id.eq(predict_id))
+            .order_by((
+                schema::withdrawn::checkpoint_timestamp_ms.asc(),
+                schema::withdrawn::tx_index.asc(),
+                schema::withdrawn::event_index.asc(),
+            ))
+            .select(WithdrawnRow::as_select());
+
+        Ok(self.results(query).await?)
     }
 
     // === System queries ===

@@ -6794,6 +6794,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum 0.7.9",
+ "bcs",
  "clap",
  "diesel",
  "diesel-async",
@@ -6803,8 +6804,10 @@ dependencies = [
  "serde_json",
  "sui-futures",
  "sui-indexer-alt-metrics",
+ "sui-json-rpc-types",
  "sui-pg-db",
  "sui-sdk",
+ "sui-types",
  "telemetry-subscribers",
  "thiserror 1.0.69",
  "tokio",

@@ -100,6 +100,7 @@ diesel::table! {
         tx_index -> Int8,
         event_index -> Int8,
         package -> Text,
+        predict_id -> Text,
         oracle_id -> Text,
         oracle_cap_id -> Text,
         underlying_asset -> Text,

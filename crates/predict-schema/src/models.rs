@@ -110,6 +110,7 @@ pub struct OracleCreatedRow {
     pub tx_index: i64,
     pub event_index: i64,
     pub package: String,
+    pub predict_id: String,
     pub oracle_id: String,
     pub oracle_cap_id: String,
     pub underlying_asset: String,

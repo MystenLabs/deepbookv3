@@ -230,28 +230,65 @@ Centered card, 420px max-width:
 
 ## 8. Data architecture
 
-### 8.1 Live oracle prices (critical path)
+### 8.1 Canonical read contract
 
-- **Primary:** subscribe to on-chain `OraclePricesUpdated` + `OracleSVIUpdated` events via `suix_subscribeEvent` (WebSocket to full node). Event payload carries `oracle_id, spot, forward, timestamp` (and SVI a/b/rho/m/sigma). Filter by `oracle_id` for the currently-selected expiry.
-- **Fallback:** if WS disconnects, poll `GET /oracle/{id}/latest` at 3s from `predict-server`. Retry WS reconnection with exponential backoff.
-- **Client-side pricing:** from SVI params + spot + time-to-expiry + strike, compute UP price using the normal CDF formula already implemented in `charts_btc.html`. Same for DOWN (= 1 − UP ignoring discount, minus spread). Spread comes from on-chain pricing config (loaded on market entry).
-- **Refresh ring:** ticks down on a fixed cadence (~3s) independent of the event stream — the ring shows quote freshness staleness, not event arrival.
+The frontend uses a **three-lane read model**:
 
-### 8.2 User/system data (non-critical)
+1. **Public predict-server** for all indexed or summarized UI data.
+2. **Browser-side Sui gRPC checkpoint streaming** for live oracle updates.
+3. **Direct on-chain reads** only for wallet-local or confirmation-critical data.
 
-All via REST to `predict-server.testnet.mystenlabs.com` (port 9008), wrapped in SWR. The endpoint names below are the conceptual surface the frontend needs — during implementation, map each to the actual `crates/predict-server/src/server.rs` routes (or add server-side routes if missing).
+This is the lock:
 
-| Endpoint | Purpose | Revalidate |
-|---|---|---|
-| `/oracles` | list active oracles + metadata (for expiry chips) | focus + 10s |
-| `/user/{addr}/positions` | open positions for positions table | focus + 5s |
-| `/user/{addr}/history` | closed trades for history tab | focus |
-| `/user/{addr}/balance` | trading balance | focus + 5s |
-| `/vault/metrics` | TVL, utilization, liquidity, fees, composition | focus + 10s |
-| `/vault/performance?range=1M` | PLP price over time for the chart | focus |
-| `/user/{addr}/pnl?range=3M` | portfolio PnL time series | focus |
+- The public server is the canonical source for rendered protocol state.
+- The live stream is the canonical source for sub-second oracle freshness.
+- Direct chain reads are a narrow escape hatch, not the default render path.
 
-### 8.3 Transaction flow
+### 8.2 Public server responsibilities
+
+Everything that feels like a page-level summary should come from the public server, even if the server itself uses chain reads internally.
+
+Required server routes for the MVP:
+
+| Endpoint | Purpose |
+|---|---|
+| `/predicts/:predict_id/state` | pricing config, risk config, pause state, enabled quote assets |
+| `/predicts/:predict_id/oracles` | predict-scoped oracle list for expiry chips and trade boot |
+| `/oracles/:oracle_id/state` | initial snapshot of selected oracle + latest price + latest SVI + ask bounds |
+| `/managers?owner=0x...` | resolve owner -> manager |
+| `/managers/:manager_id/summary` | trading balance, open exposure, redeemable, realized/unrealized PnL, account value |
+| `/managers/:manager_id/positions/summary` | aggregated positions table rows |
+| `/predicts/:predict_id/vault/summary` | TVL, PLP price, utilization, liquidity, exposure, fees, composition |
+| `/predicts/:predict_id/vault/performance?range=...` | vault performance chart series |
+| `/managers/:manager_id/pnl?range=...` | portfolio PnL series |
+
+Important correction: the old global `/oracles` route is not a good long-term UI contract if multiple predicts exist. The frontend should consume a predict-scoped oracle route.
+
+### 8.3 Live oracle prices (critical path)
+
+- **Primary:** subscribe to the Sui fullnode checkpoint stream over gRPC using `@mysten/sui/grpc` and `SubscriptionService.SubscribeCheckpoints`.
+- **Mechanism:** read checkpoint data, inspect transaction events, filter down to:
+  - `OraclePricesUpdated`
+  - `OracleSVIUpdated`
+  - the selected `oracle_id`
+- **Reconnect model:** persist the last processed checkpoint cursor and reconnect from it if the stream terminates.
+- **Seed model:** before starting the stream, fetch `/oracles/:oracle_id/state` from the public server and render immediately.
+- **Recovery model:** if the stream goes stale, refetch `/oracles/:oracle_id/state` and then resume streaming.
+- **Client-side pricing:** from SVI params + spot + time-to-expiry + strike, compute UP price using the normal CDF formula already implemented in `charts_btc.html`. Same for DOWN (= 1 − UP ignoring discount, minus spread). Spread comes from predict config and vault utilization loaded through the server.
+- **Refresh ring:** ticks down on a fixed cadence (~3s) independent of the event stream. It represents quote freshness, not raw stream liveness.
+
+### 8.4 Direct on-chain reads
+
+Direct chain reads are still allowed, but they should be narrowly scoped:
+
+- current epoch for zkLogin session expiry math
+- wallet USDsui balance
+- wallet PLP balance
+- transaction confirmation / post-submit polling
+
+The browser should **not** rebuild vault metrics, portfolio PnL, or positions history from raw chain objects.
+
+### 8.5 Transaction flow
 
 - **Buy UP/DOWN:** client builds PTB with `predict::mint_position`, signs with ephemeral key + zkLogin sig, POSTs to sponsor route, sponsor wraps with gas + executes. UI shows pending state → success toast with tx link.
 - **Sell (close early):** `predict::redeem_position` (before settlement, vault bids back).
@@ -268,13 +305,13 @@ All via REST to `predict-server.testnet.mystenlabs.com` (port 9008), wrapped in 
 |---|---|
 | Framework | Next.js 15 (App Router) + TypeScript |
 | Styling | Tailwind CSS (with a `colors.ts` for the Lighthouse palette) |
-| SDKs | `@mysten/sui`, `@mysten/dapp-kit`, `@mysten/zklogin` |
+| SDKs | `@mysten/sui`, `@mysten/zklogin` |
 | Server state | SWR |
 | Client state | Zustand (1 store: selected expiry, strike, side, size) |
 | Charts | `lightweight-charts` (TradingView OSS) for spot + PnL chart |
 | Strike wheel | Canvas component ported from `charts_btc.html` |
 | Hosting | Vercel (instant previews + one-click deploys) |
-| Env boundary | `NEXT_PUBLIC_*` for RPC URL, package ID, registry ID, predict-server URL; server-only for sponsor wallet key |
+| Env boundary | `NEXT_PUBLIC_*` for gRPC URL, package ID, registry ID, predict-server URL; server-only for sponsor wallet key |
 | Repo | Monorepo — new app at `apps/lighthouse/` (pnpm workspace) alongside `scripts/`, `packages/`, `crates/` |
 
 ### 9.1 Palette (dark-first)
@@ -300,7 +337,7 @@ apps/lighthouse/
 ├── tailwind.config.ts
 ├── tsconfig.json
 ├── app/
-│   ├── layout.tsx              # Nav shell, wallet provider, zkLogin boundary
+│   ├── layout.tsx              # Nav shell, session providers, zkLogin boundary
 │   ├── page.tsx                # → redirect /trade
 │   ├── trade/page.tsx          # Trade view + positions table below
 │   ├── vault/page.tsx          # Vault / PLP
@@ -329,8 +366,9 @@ apps/lighthouse/
 ├── lib/
 │   ├── pricing/svi.ts          # normal CDF + UP/DOWN price from SVI params
 │   ├── pricing/spread.ts
-│   ├── sui/client.ts           # SuiClient singleton
-│   ├── sui/events.ts           # subscribe to OraclePricesUpdated/SVIUpdated
+│   ├── sui/client.ts           # SuiGrpcClient singleton
+│   ├── sui/checkpoints.ts      # checkpoint subscription + cursor resume
+│   ├── sui/read.ts             # direct chain reads allowed in-browser
 │   ├── sui/ptb.ts              # PTB builders for mint/redeem/supply/withdraw/deposit/withdraw-balance
 │   ├── zklogin/session.ts      # ephemeral key lifecycle
 │   ├── api/predict-server.ts   # typed REST client
@@ -385,8 +423,9 @@ Two weeks post-launch:
 1. **APR display on testnet:** show "~32% APR" derived from 7d spread revenue / TVL, or hide until real data exists? (Emma / Aslan call.)
 2. **Vault composition exact categories:** the "USDsui / Locked / PnL buffer" split is a placeholder — needs reconciliation with vault contract's actual accounting (Emma).
 3. **Sponsor wallet funding & rate limit:** sponsor wallet needs auto-top-up + per-user tx rate limit to prevent drainage. Implementation detail for the plan phase.
-4. **Settlement price marker on chart:** is the chart zoomed to the market's full life (listing → expiry), or just 24h? Designer brief implies the former; requires more time-series data than `GET /oracle/{id}/latest`.
-5. **Settled markets still visible?** When a user selects a settled expiry chip, do they see the settled-state view with chart history, or do we hide settled chips entirely? This spec assumes they stay visible and render the Settled state.
-6. **Multiple oracle IDs per expiry date?** If the registry rotates (creates new oracles as old ones settle), are there moments where two expiries of the same underlying overlap in the chip bar? Probably yes; handle gracefully.
+4. **gRPC provider behavior:** some fullnode gRPC streams can terminate and require reconnect/resume handling. This does not change the architecture, but it must shape the implementation.
+5. **Settlement price marker on chart:** is the chart zoomed to the market's full life (listing → expiry), or just 24h? Designer brief implies the former; requires more time-series data than a single latest-state endpoint.
+6. **Settled markets still visible?** When a user selects a settled expiry chip, do they see the settled-state view with chart history, or do we hide settled chips entirely? This spec assumes they stay visible and render the Settled state.
+7. **Multiple oracle IDs per expiry date?** If the registry rotates (creates new oracles as old ones settle), are there moments where two expiries of the same underlying overlap in the chip bar? Probably yes; handle gracefully.
 
 These don't block spec approval — they surface during implementation.
