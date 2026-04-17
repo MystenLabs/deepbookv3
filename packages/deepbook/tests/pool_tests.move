@@ -553,6 +553,98 @@ fun test_post_only_ask_ok() {
 }
 
 #[test]
+fun post_only_wrapper_places_into_empty_book_bid() {
+    run_post_only_wrapper_scenario(
+        true,
+        option::none(),
+        option::none(),
+        2 * constants::float_scaling(),
+        true,
+    );
+}
+
+#[test]
+fun post_only_wrapper_places_into_empty_book_ask() {
+    run_post_only_wrapper_scenario(
+        false,
+        option::none(),
+        option::none(),
+        2 * constants::float_scaling(),
+        true,
+    );
+}
+
+#[test]
+fun post_only_wrapper_bid_below_best_ask_places() {
+    run_post_only_wrapper_scenario(
+        true,
+        option::none(),
+        option::some(2 * constants::float_scaling()),
+        1_900_000_000, // 1.9, below best ask 2.0
+        true,
+    );
+}
+
+#[test]
+fun post_only_wrapper_ask_above_best_bid_places() {
+    run_post_only_wrapper_scenario(
+        false,
+        option::none(),
+        option::some(1 * constants::float_scaling()),
+        1_100_000_000, // 1.1, above best bid 1.0
+        true,
+    );
+}
+
+#[test]
+fun post_only_wrapper_bid_at_best_ask_skipped() {
+    let px = 2 * constants::float_scaling();
+    run_post_only_wrapper_scenario(true, option::none(), option::some(px), px, false);
+}
+
+#[test]
+fun post_only_wrapper_bid_above_best_ask_skipped() {
+    run_post_only_wrapper_scenario(
+        true,
+        option::none(),
+        option::some(2 * constants::float_scaling()),
+        3 * constants::float_scaling(),
+        false,
+    );
+}
+
+#[test]
+fun post_only_wrapper_ask_at_best_bid_skipped() {
+    let px = 1 * constants::float_scaling();
+    run_post_only_wrapper_scenario(false, option::none(), option::some(px), px, false);
+}
+
+#[test]
+fun post_only_wrapper_ask_below_best_bid_skipped() {
+    run_post_only_wrapper_scenario(
+        false,
+        option::none(),
+        option::some(2 * constants::float_scaling()),
+        1 * constants::float_scaling(),
+        false,
+    );
+}
+
+#[test]
+fun post_only_wrapper_places_when_only_same_side_has_orders() {
+    // Bid side populated, ask side empty. Single-side read: opposite side
+    // empty, so placement is always allowed regardless of existing same-side
+    // liquidity.
+    run_post_only_wrapper_scenario(
+        true,
+        option::some(1 * constants::float_scaling()),
+        option::none(),
+        5 * constants::float_scaling(),
+        true,
+    );
+}
+
+#[test]
 fun test_crossing_multiple_orders_bid_ok() {
     test_crossing_multiple(true, 3)
 }
@@ -595,6 +687,212 @@ fun test_market_order_ask_then_bid_ok() {
 #[test]
 fun test_mid_price_ok() {
     test_mid_price();
+}
+
+#[test]
+fun best_bid_ask_empty_book_returns_none() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+
+    assert!(get_best_bid_price<SUI, USDC>(pool_id, &mut test).is_none());
+    assert!(get_best_ask_price<SUI, USDC>(pool_id, &mut test).is_none());
+
+    end(test);
+}
+
+#[test]
+fun best_bid_ask_returns_top_of_book() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+
+    let quantity = 1 * constants::float_scaling();
+    let expire_timestamp = constants::max_u64();
+    let pay_with_deep = true;
+    let bid_best = 2 * constants::float_scaling();
+    let bid_lower = 1 * constants::float_scaling();
+    let ask_best = 5 * constants::float_scaling();
+    let ask_higher = 6 * constants::float_scaling();
+
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        bid_lower,
+        quantity,
+        true,
+        pay_with_deep,
+        expire_timestamp,
+        &mut test,
+    );
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        2,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        bid_best,
+        quantity,
+        true,
+        pay_with_deep,
+        expire_timestamp,
+        &mut test,
+    );
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        3,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        ask_higher,
+        quantity,
+        false,
+        pay_with_deep,
+        expire_timestamp,
+        &mut test,
+    );
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        4,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        ask_best,
+        quantity,
+        false,
+        pay_with_deep,
+        expire_timestamp,
+        &mut test,
+    );
+
+    assert_eq!(get_best_bid_price<SUI, USDC>(pool_id, &mut test).destroy_some(), bid_best);
+    assert_eq!(get_best_ask_price<SUI, USDC>(pool_id, &mut test).destroy_some(), ask_best);
+
+    end(test);
+}
+
+#[test]
+fun best_bid_ask_skips_expired_orders() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+
+    let quantity = 1 * constants::float_scaling();
+    let pay_with_deep = true;
+    // Best bid (2.2) expires earlier than the deeper bid (1.0).
+    let bid_expiring = 2_200_000_000;
+    let bid_surviving = 1 * constants::float_scaling();
+    // Best ask (3.2) expires earlier than the deeper ask (6.0).
+    let ask_expiring = 3_200_000_000;
+    let ask_surviving = 6 * constants::float_scaling();
+    let expire_now = get_time(&mut test) + 100;
+    let expire_far = constants::max_u64();
+
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        bid_surviving,
+        quantity,
+        true,
+        pay_with_deep,
+        expire_far,
+        &mut test,
+    );
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        2,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        bid_expiring,
+        quantity,
+        true,
+        pay_with_deep,
+        expire_now,
+        &mut test,
+    );
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        3,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        ask_surviving,
+        quantity,
+        false,
+        pay_with_deep,
+        expire_far,
+        &mut test,
+    );
+    place_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        4,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        ask_expiring,
+        quantity,
+        false,
+        pay_with_deep,
+        expire_now,
+        &mut test,
+    );
+
+    // Before expiry: getters return the about-to-expire orders at top of book.
+    assert_eq!(get_best_bid_price<SUI, USDC>(pool_id, &mut test).destroy_some(), bid_expiring);
+    assert_eq!(get_best_ask_price<SUI, USDC>(pool_id, &mut test).destroy_some(), ask_expiring);
+
+    set_time(expire_now + 1, &mut test);
+
+    // After expiry: getters skip the expired top-of-book and return the deeper orders.
+    assert_eq!(get_best_bid_price<SUI, USDC>(pool_id, &mut test).destroy_some(), bid_surviving);
+    assert_eq!(get_best_ask_price<SUI, USDC>(pool_id, &mut test).destroy_some(), ask_surviving);
+
+    end(test);
 }
 
 #[test]
@@ -1534,6 +1832,53 @@ public(package) fun place_limit_order<BaseAsset, QuoteAsset>(
             &trade_proof,
             client_order_id,
             order_type,
+            self_matching_option,
+            price,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &clock,
+            test.ctx(),
+        );
+        return_shared(pool);
+        return_shared(clock);
+        return_shared(balance_manager);
+
+        order_info
+    }
+}
+
+#[test_only]
+/// Place a post-only limit order through the graceful wrapper.
+public(package) fun place_post_only_limit_order<BaseAsset, QuoteAsset>(
+    trader: address,
+    pool_id: ID,
+    balance_manager_id: ID,
+    client_order_id: u64,
+    self_matching_option: u8,
+    price: u64,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    expire_timestamp: u64,
+    test: &mut Scenario,
+): Option<OrderInfo> {
+    test.next_tx(trader);
+    {
+        let mut pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(
+            pool_id,
+        );
+        let clock = test.take_shared<Clock>();
+        let mut balance_manager = test.take_shared_by_id<BalanceManager>(
+            balance_manager_id,
+        );
+        let trade_proof = balance_manager.generate_proof_as_owner(test.ctx());
+
+        let order_info = pool.place_post_only_limit_order<BaseAsset, QuoteAsset>(
+            &mut balance_manager,
+            &trade_proof,
+            client_order_id,
             self_matching_option,
             price,
             quantity,
@@ -3243,6 +3588,94 @@ fun test_post_only(is_bid: bool, crosses_order: bool) {
         expire_timestamp,
         &mut test,
     );
+
+    end(test);
+}
+
+/// Exercise `place_post_only_limit_order`. Optionally seed the same side
+/// and/or the opposite side with standing orders, then attempt to place a
+/// post-only order on the `is_bid` side at `new_order_price`. Asserts that
+/// `expected_placed` matches the returned `Option<OrderInfo>` and, when
+/// placed, that the order was actually inserted into the book.
+fun run_post_only_wrapper_scenario(
+    is_bid: bool,
+    seed_same_side_price: Option<u64>,
+    seed_opposite_side_price: Option<u64>,
+    new_order_price: u64,
+    expected_placed: bool,
+) {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id_alice = create_acct_and_share_with_funds(
+        ALICE,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+    let pool_id = setup_pool_with_default_fees_and_reference_pool<SUI, USDC, SUI, DEEP>(
+        ALICE,
+        registry_id,
+        balance_manager_id_alice,
+        &mut test,
+    );
+
+    let quantity = 1 * constants::float_scaling();
+    let expire_timestamp = constants::max_u64();
+    let pay_with_deep = true;
+
+    seed_same_side_price.do!(|p| {
+        place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            1,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            p,
+            quantity,
+            is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+    });
+    seed_opposite_side_price.do!(|p| {
+        place_limit_order<SUI, USDC>(
+            ALICE,
+            pool_id,
+            balance_manager_id_alice,
+            2,
+            constants::no_restriction(),
+            constants::self_matching_allowed(),
+            p,
+            quantity,
+            !is_bid,
+            pay_with_deep,
+            expire_timestamp,
+            &mut test,
+        );
+    });
+
+    let result = place_post_only_limit_order<SUI, USDC>(
+        ALICE,
+        pool_id,
+        balance_manager_id_alice,
+        3,
+        constants::self_matching_allowed(),
+        new_order_price,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp,
+        &mut test,
+    );
+
+    assert_eq!(result.is_some(), expected_placed);
+    if (result.is_some()) {
+        let order_info = result.destroy_some();
+        assert!(order_info.order_inserted());
+        assert_eq!(order_info.price(), new_order_price);
+        assert_eq!(order_info.order_type(), constants::post_only());
+    };
 
     end(test);
 }
@@ -6226,6 +6659,34 @@ fun get_mid_price<BaseAsset, QuoteAsset>(pool_id: ID, test: &mut Scenario): u64 
         return_shared(clock);
 
         mid_price
+    }
+}
+
+fun get_best_bid_price<BaseAsset, QuoteAsset>(pool_id: ID, test: &mut Scenario): Option<u64> {
+    test.next_tx(OWNER);
+    {
+        let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+        let clock = test.take_shared<Clock>();
+
+        let best = pool.best_bid_price<BaseAsset, QuoteAsset>(&clock);
+        return_shared(pool);
+        return_shared(clock);
+
+        best
+    }
+}
+
+fun get_best_ask_price<BaseAsset, QuoteAsset>(pool_id: ID, test: &mut Scenario): Option<u64> {
+    test.next_tx(OWNER);
+    {
+        let pool = test.take_shared_by_id<Pool<BaseAsset, QuoteAsset>>(pool_id);
+        let clock = test.take_shared<Clock>();
+
+        let best = pool.best_ask_price<BaseAsset, QuoteAsset>(&clock);
+        return_shared(pool);
+        return_shared(clock);
+
+        best
     }
 }
 
