@@ -30,6 +30,7 @@ packages/predict/simulation/*.png
 
 # Research
 predict_research/
+/scripts/config/predict-oracles.ts
 
 # misc
 /app/
