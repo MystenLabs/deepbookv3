@@ -32,6 +32,7 @@ packages/predict/simulation/*.png
 predict_research/
 
 # misc
+/app/
 .env
 .envrc
 **/benchmark_data/
@@ -39,4 +40,5 @@ tx-data.txt
 example.ts
 /data
 /handoff
+/docs/
 .superpowers/
