@@ -65,28 +65,6 @@ It holds:
 
 Important: positions and ranges are internal balances, not NFTs. If you are looking for "the position object", there is none. Read them from the manager object or from the indexed server surface.
 
-### OracleSVI
-
-Each oracle represents one underlying and one expiry. In the current setup that is BTC with rolling expiries.
-
-An oracle carries:
-
-- `spot`
-- `forward`
-- SVI parameters `a`, `b`, `rho`, `m`, `sigma`
-- `expiry`
-- lifecycle state
-
-Lifecycle:
-
-1. created
-2. activated
-3. updated with live prices and SVI
-4. settled at expiry
-5. compacted in the vault after settlement
-
-Settlement freezes the settlement spot on-chain. Compaction does not delete history; it shrinks the vault-side exposure state for that oracle into constant-size settled state.
-
 ### Positions and Ranges
 
 Predict supports:
