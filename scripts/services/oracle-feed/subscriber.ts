@@ -3,7 +3,7 @@
 
 import type { Config } from "./config";
 import type { Logger } from "./logger";
-import type { OracleId, PriceCache, SVICache, SVIParams } from "./types";
+import type { OracleId, OracleState, PriceCache, SVICache, SVIParams } from "./types";
 
 const WS_RECONNECT_LADDER_MS = [500, 1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 60_000];
 
@@ -16,8 +16,7 @@ const MAX_SUBS_PER_BATCH = 20;
 export type Subscriber = {
   start: () => void;
   stop: () => void;
-  addOracle: (oracleId: OracleId, underlying: string, expiryMs: number) => void;
-  removeOracle: (oracleId: OracleId) => void;
+  syncOracles: (oracles: Iterable<Pick<OracleState, "id" | "underlying" | "expiryMs">>) => void;
   isConnected: () => boolean;
   lastFrameReceivedMs: () => number;
 };
@@ -28,6 +27,33 @@ type OracleSub = {
   fwdSid: string;
   sviSid: string;
 };
+
+function toOracleSub(oracle: Pick<OracleState, "id" | "underlying" | "expiryMs">): OracleSub {
+  return {
+    underlying: oracle.underlying,
+    expiryMs: oracle.expiryMs,
+    fwdSid: `fwd_${oracle.id}`,
+    sviSid: `svi_${oracle.id}`,
+  };
+}
+
+function oracleTargetsEqual(
+  current: Map<OracleId, OracleSub>,
+  next: Map<OracleId, OracleSub>,
+): boolean {
+  if (current.size !== next.size) return false;
+  for (const [oracleId, currentSub] of current) {
+    const nextSub = next.get(oracleId);
+    if (!nextSub) return false;
+    if (
+      currentSub.underlying !== nextSub.underlying ||
+      currentSub.expiryMs !== nextSub.expiryMs
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
 
 export type ExtractedWsValue =
   | { kind: "spot"; sid: string; value: number; timestampMs: number }
@@ -342,23 +368,16 @@ export function makeSubscriber(
       if (reconnectTimer) clearTimeout(reconnectTimer);
       ws?.close();
     },
-    addOracle: (oracleId, underlying, expiryMs) => {
-      const existing = oracles.get(oracleId);
-      const unchanged =
-        existing &&
-        existing.underlying === underlying &&
-        existing.expiryMs === expiryMs;
-      if (unchanged) return;
-      oracles.set(oracleId, {
-        underlying,
-        expiryMs,
-        fwdSid: `fwd_${oracleId}`,
-        sviSid: `svi_${oracleId}`,
-      });
-      scheduleResubscribe();
-    },
-    removeOracle: (oracleId) => {
-      if (!oracles.delete(oracleId)) return;
+    syncOracles: (nextOracles) => {
+      const next = new Map<OracleId, OracleSub>();
+      for (const oracle of nextOracles) {
+        next.set(oracle.id, toOracleSub(oracle));
+      }
+      if (oracleTargetsEqual(oracles, next)) return;
+      oracles.clear();
+      for (const [oracleId, sub] of next) {
+        oracles.set(oracleId, sub);
+      }
       scheduleResubscribe();
     },
     isConnected: () => ws?.readyState === WebSocket.OPEN,

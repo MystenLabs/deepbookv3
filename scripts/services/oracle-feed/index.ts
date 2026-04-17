@@ -54,9 +54,7 @@ async function main(): Promise<void> {
     state.sviCache,
     makeLogger("subscriber"),
   );
-  for (const oracle of state.oracles.values()) {
-    subscriber.addOracle(oracle.id, oracle.underlying, oracle.expiryMs);
-  }
+  subscriber.syncOracles(state.oracles.values());
   subscriber.start();
 
   const executorLog = makeLogger("executor");

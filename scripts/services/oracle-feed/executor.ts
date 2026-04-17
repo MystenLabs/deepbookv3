@@ -182,7 +182,7 @@ export async function runManagerWindow(
 
     const now = Date.now();
     const discovered = await discoverOracles(client, config, state.capIds, now, log);
-    reconcileLocalOracles(state, subscriber, discovered);
+    reconcileLocalOracles(state, discovered);
 
     const lane0 = state.lanes[0];
 
@@ -198,7 +198,7 @@ export async function runManagerWindow(
           (o) => o.tier === tier && o.expiryMs === expiryMs,
         );
         if (have) continue;
-        await createOracleStep(state, client, signer, config, subscriber, lane0, tier, expiryMs, log);
+        await createOracleStep(state, client, signer, config, lane0, tier, expiryMs, log);
       }
     }
 
@@ -214,9 +214,11 @@ export async function runManagerWindow(
     }
     for (const oracle of [...state.oracles.values()]) {
       if (oracle.status === "settled") {
-        await compactOracleStep(state, client, signer, config, subscriber, lane0, oracle, log);
+        await compactOracleStep(state, client, signer, config, lane0, oracle, log);
       }
     }
+
+    subscriber.syncOracles(state.oracles.values());
   } finally {
     state.managerInFlight = false;
     log.info({ event: "manager_finished" });
@@ -225,7 +227,6 @@ export async function runManagerWindow(
 
 function reconcileLocalOracles(
   state: ServiceState,
-  subscriber: Subscriber,
   discovered: Map<string, OracleState>,
 ): void {
   for (const [id, oracle] of discovered) {
@@ -235,13 +236,11 @@ function reconcileLocalOracles(
       existing.registeredCapIds = oracle.registeredCapIds;
     } else {
       state.oracles.set(id, oracle);
-      subscriber.addOracle(oracle.id, oracle.underlying, oracle.expiryMs);
     }
   }
   for (const id of [...state.oracles.keys()]) {
     if (!discovered.has(id)) {
       state.oracles.delete(id);
-      subscriber.removeOracle(id);
     }
   }
 }
@@ -251,7 +250,6 @@ async function createOracleStep(
   client: SuiJsonRpcClient,
   signer: Keypair,
   config: Config,
-  subscriber: Subscriber,
   lane: Lane,
   tier: Tier,
   expiryMs: number,
@@ -285,7 +283,6 @@ async function createOracleStep(
       registeredCapIds: new Set(),
     };
     state.oracles.set(oracle.id, oracle);
-    subscriber.addOracle(oracle.id, oracle.underlying, oracle.expiryMs);
     log.info({ event: "oracle_created", oracleId: oracle.id, tier, expiryMs, txDigest: resp.digest });
   }
 }
@@ -395,7 +392,6 @@ async function compactOracleStep(
   client: SuiJsonRpcClient,
   signer: Keypair,
   config: Config,
-  subscriber: Subscriber,
   lane: Lane,
   oracle: OracleState,
   log: Logger,
@@ -419,7 +415,6 @@ async function compactOracleStep(
   if (!resp) return;
   log.info({ event: "oracle_compacted", oracleId: oracle.id, txDigest: resp.digest });
   state.oracles.delete(oracle.id);
-  subscriber.removeOracle(oracle.id);
 }
 
 function newLaneTx(signer: Keypair, lane: Lane): Transaction {
@@ -461,6 +456,7 @@ async function executeLaneTx(
       });
       return undefined;
     }
+    await client.waitForTransaction({ digest: resp.digest });
     const mutated = resp.effects?.mutated ?? [];
     for (const ref of mutated) {
       if (ref.reference.objectId === lane.gasCoinId) {

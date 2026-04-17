@@ -1,21 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { hasFreshPriceSample, shouldRunManagerWindowNow, waitForAllLanesIdle } from "../executor";
+import {
+  hasFreshPriceSample,
+  pushTick,
+  shouldRunManagerWindowNow,
+  waitForAllLanesIdle,
+} from "../executor";
 import type { Lane, OracleState, PriceSample, ServiceState } from "../types";
 
 function lane(available: boolean): Lane {
   return {
     id: 0,
-    gasCoinId: "0xgas",
+    gasCoinId: "0x00000000000000000000000000000000000000000000000000000000000000a1",
     gasCoinVersion: "1",
-    gasCoinDigest: "digest",
-    capId: "0xcap",
+    gasCoinDigest: "11111111111111111111111111111111",
+    capId: "0x00000000000000000000000000000000000000000000000000000000000000c1",
     available,
   };
 }
 
 function oracle(overrides: Partial<OracleState> = {}): OracleState {
   return {
-    id: "0xoracle",
+    id: "0x00000000000000000000000000000000000000000000000000000000000000b1",
     underlying: "BTC",
     expiryMs: 10_000,
     tier: "15m",
@@ -29,7 +34,7 @@ function state(oracles: OracleState[]): ServiceState {
   return {
     oracles: new Map(oracles.map((item) => [item.id, item])),
     lanes: [lane(true)],
-    capIds: ["0xcap"],
+    capIds: ["0x00000000000000000000000000000000000000000000000000000000000000c1"],
     priceCache: { spot: null, forwards: new Map() },
     sviCache: new Map(),
     managerInFlight: false,
@@ -65,7 +70,7 @@ describe("waitForAllLanesIdle", () => {
 describe("shouldRunManagerWindowNow", () => {
   it("returns true when an inactive oracle already has svi cached", () => {
     const service = state([oracle({ status: "inactive" })]);
-    service.sviCache.set("0xoracle", {
+    service.sviCache.set("0x00000000000000000000000000000000000000000000000000000000000000b1", {
       params: { a: 1, b: 2, rho: 3, m: 4, sigma: 5 },
       receivedAtMs: 9_000,
       lastPushedAtMs: null,
@@ -84,5 +89,65 @@ describe("shouldRunManagerWindowNow", () => {
     const service = state([oracle({ status: "active", expiryMs: 10_000 })]);
 
     expect(shouldRunManagerWindowNow(service, 9_000, 3_000)).toBe(false);
+  });
+});
+
+describe("pushTick", () => {
+  it("keeps the lane busy until waitForTransaction resolves", async () => {
+    const service = state([oracle({ expiryMs: Date.now() + 60_000 })]);
+    service.priceCache.spot = { value: 100_000, receivedAtMs: Date.now() };
+    service.priceCache.forwards.set(
+      "0x00000000000000000000000000000000000000000000000000000000000000b1",
+      { value: 100_100, receivedAtMs: Date.now() },
+    );
+
+    let releaseWait: (() => void) | null = null;
+    const client = {
+      signAndExecuteTransaction: async () => ({
+        digest: "0xdigest",
+        effects: {
+          status: { status: "success" },
+          mutated: [{
+            reference: {
+              objectId: "0x00000000000000000000000000000000000000000000000000000000000000a1",
+              version: "2",
+              digest: "11111111111111111111111111111111",
+            },
+          }],
+        },
+      }),
+      waitForTransaction: async () => {
+        await new Promise<void>((resolve) => {
+          releaseWait = resolve;
+        });
+      },
+    } as any;
+
+    const pending = pushTick(
+      service,
+      client,
+      { toSuiAddress: () => "0x00000000000000000000000000000000000000000000000000000000000000d1" } as any,
+      {
+        predictPackageId: "0x00000000000000000000000000000000000000000000000000000000000000e1",
+        priceCacheStaleMs: 3_000,
+        safetyWindowMs: 5_000,
+      } as any,
+      {
+        info() {},
+        warn() {},
+        error() {},
+        fatal() {},
+      } as any,
+    );
+
+    await Promise.resolve();
+
+    expect(service.lanes[0].available).toBe(false);
+
+    releaseWait?.();
+    await pending;
+
+    expect(service.lanes[0].available).toBe(true);
+    expect(service.lanes[0].gasCoinVersion).toBe("2");
   });
 });
