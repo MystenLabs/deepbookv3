@@ -23,6 +23,8 @@ export async function ensureCapsAndCoins(
 ): Promise<{ capIds: CapId[]; lanes: Lane[] }> {
   const address = signer.toSuiAddress();
 
+  await assertSignerOwnsAdminCap(client, address, config.adminCapId);
+
   let caps = await getOwnedCaps(client, address, config.predictPackageId);
   if (caps.length < config.laneCount) {
     const missing = config.laneCount - caps.length;
@@ -61,6 +63,28 @@ export async function ensureCapsAndCoins(
 
   log.info({ event: "lanes_ready", laneCount: lanes.length, totalSui });
   return { capIds: caps, lanes };
+}
+
+export async function assertSignerOwnsAdminCap(
+  client: SuiJsonRpcClient,
+  signerAddress: string,
+  adminCapId: string,
+): Promise<void> {
+  const resp = await client.getObject({
+    id: adminCapId,
+    options: { showOwner: true },
+  });
+  const owner = resp.data?.owner;
+  const addressOwner =
+    owner && typeof owner === "object" && "AddressOwner" in owner
+      ? owner.AddressOwner
+      : null;
+
+  if (addressOwner !== signerAddress) {
+    throw new Error(
+      `oracle-feed signer ${signerAddress} must own AdminCap ${adminCapId}, but current owner is ${addressOwner ?? "non-address owner"}`,
+    );
+  }
 }
 
 async function getOwnedCaps(

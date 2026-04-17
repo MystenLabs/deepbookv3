@@ -97,6 +97,7 @@ CREATE INDEX idx_margin_manager_state_deepbook_pool_id
 
 - **Cannot use `CREATE INDEX CONCURRENTLY`** - Diesel migrations run inside a transaction
 - Use `IF NOT EXISTS` for idempotent migrations
+- Diesel runs migrations in lexicographic directory order. If a migration references new columns or tables, those schema changes must live in an earlier-named migration directory.
 - For zero-downtime index creation on production:
   1. Run `CREATE INDEX CONCURRENTLY` manually via psql (outside transaction)
   2. Then run migration with `IF NOT EXISTS` which will be a no-op
