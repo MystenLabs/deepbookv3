@@ -970,3 +970,115 @@ pub mod sui {
         }
     }
 }
+
+// Maker Incentives module
+pub mod maker_incentives {
+    use super::*;
+
+    pub mod maker_incentives {
+        use super::*;
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct FundCreated {
+            pub pool_id: Address,
+            pub fund_id: ObjectID,
+            pub reward_per_epoch: u64,
+            pub creator: Address,
+            pub created_at_ms: u64,
+            pub alpha_bps: u64,
+            pub quality_p: u64,
+        }
+
+        impl MoveStruct for FundCreated {
+            const MODULE: &'static str = "maker_incentives";
+            const NAME: &'static str = "FundCreated";
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct EpochResultsSubmitted {
+            pub pool_id: Address,
+            pub fund_id: Address,
+            pub epoch_start_ms: u64,
+            pub epoch_end_ms: u64,
+            pub total_allocation: u64,
+            pub num_makers: u64,
+        }
+
+        impl MoveStruct for EpochResultsSubmitted {
+            const MODULE: &'static str = "maker_incentives";
+            const NAME: &'static str = "EpochResultsSubmitted";
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct RewardClaimed {
+            pub pool_id: Address,
+            pub fund_id: Address,
+            pub epoch_start_ms: u64,
+            pub balance_manager_id: Address,
+            pub amount: u64,
+        }
+
+        impl MoveStruct for RewardClaimed {
+            const MODULE: &'static str = "maker_incentives";
+            const NAME: &'static str = "RewardClaimed";
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct TreasuryWithdrawn {
+            pub pool_id: Address,
+            pub fund_id: Address,
+            pub owner: Address,
+            pub amount: u64,
+            pub treasury_after: u64,
+            pub locked_after: u64,
+            pub withdrawable_after: u64,
+            pub reward_per_epoch: u64,
+        }
+
+        impl MoveStruct for TreasuryWithdrawn {
+            const MODULE: &'static str = "maker_incentives";
+            const NAME: &'static str = "TreasuryWithdrawn";
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct FundParamsChangeScheduled {
+            pub pool_id: Address,
+            pub fund_id: Address,
+            pub reward_per_epoch: u64,
+            pub alpha_bps: u64,
+            pub quality_p: u64,
+            pub effective_at_ms: u64,
+            pub scheduled_at_ms: u64,
+        }
+
+        impl MoveStruct for FundParamsChangeScheduled {
+            const MODULE: &'static str = "maker_incentives";
+            const NAME: &'static str = "FundParamsChangeScheduled";
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct FundParamsChangeApplied {
+            pub pool_id: Address,
+            pub fund_id: Address,
+            pub reward_per_epoch: u64,
+            pub alpha_bps: u64,
+            pub quality_p: u64,
+        }
+
+        impl MoveStruct for FundParamsChangeApplied {
+            const MODULE: &'static str = "maker_incentives";
+            const NAME: &'static str = "FundParamsChangeApplied";
+        }
+
+        #[derive(Debug, Clone, Serialize, Deserialize)]
+        pub struct FundParamsChangeCancelled {
+            pub pool_id: Address,
+            pub fund_id: Address,
+        }
+
+        impl MoveStruct for FundParamsChangeCancelled {
+            const MODULE: &'static str = "maker_incentives";
+            const NAME: &'static str = "FundParamsChangeCancelled";
+        }
+    }
+}

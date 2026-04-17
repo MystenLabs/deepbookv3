@@ -8,8 +8,9 @@ use std::sync::OnceLock;
 
 #[derive(Debug)]
 struct PackageOverride {
-    core: &'static [&'static str],   // DeepBook package IDs
-    margin: &'static [&'static str], // lending / liquidation
+    core: &'static [&'static str],               // DeepBook package IDs
+    margin: &'static [&'static str],             // lending / liquidation
+    maker_incentives: &'static [&'static str],   // maker incentive rewards
 }
 
 static PACKAGE_OVERRIDE: OnceLock<PackageOverride> = OnceLock::new();
@@ -19,7 +20,11 @@ static PACKAGE_OVERRIDE: OnceLock<PackageOverride> = OnceLock::new();
 ///
 /// Uses `Box::leak` to promote dynamic strings to `'static` lifetime —
 /// acceptable because the indexer process needs them for its entire lifetime.
-pub fn init_package_override(core: Vec<String>, margin: Vec<String>) {
+pub fn init_package_override(
+    core: Vec<String>,
+    margin: Vec<String>,
+    maker_incentives: Vec<String>,
+) {
     let core: Vec<&'static str> = core
         .into_iter()
         .map(|s| &*Box::leak(s.into_boxed_str()))
@@ -28,10 +33,15 @@ pub fn init_package_override(core: Vec<String>, margin: Vec<String>) {
         .into_iter()
         .map(|s| &*Box::leak(s.into_boxed_str()))
         .collect();
+    let maker_incentives: Vec<&'static str> = maker_incentives
+        .into_iter()
+        .map(|s| &*Box::leak(s.into_boxed_str()))
+        .collect();
     PACKAGE_OVERRIDE
         .set(PackageOverride {
             core: Box::leak(core.into_boxed_slice()),
             margin: Box::leak(margin.into_boxed_slice()),
+            maker_incentives: Box::leak(maker_incentives.into_boxed_slice()),
         })
         .expect("init_package_override must only be called once");
 }
@@ -44,4 +54,9 @@ pub(crate) fn core_packages() -> Option<&'static [&'static str]> {
 /// Returns sandbox margin package addresses if override is active.
 pub(crate) fn margin_packages() -> Option<&'static [&'static str]> {
     PACKAGE_OVERRIDE.get().map(|o| o.margin)
+}
+
+/// Returns sandbox maker incentives package addresses if override is active.
+pub(crate) fn maker_incentives_packages() -> Option<&'static [&'static str]> {
+    PACKAGE_OVERRIDE.get().map(|o| o.maker_incentives)
 }

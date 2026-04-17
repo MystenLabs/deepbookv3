@@ -118,6 +118,27 @@ pub fn get_package_addresses_for_module(
                 Ok(addresses)
             }
         }
+        ModuleType::MakerIncentives => {
+            let mi_packages = crate::get_maker_incentives_package_addresses(env);
+            let mut addresses = Vec::new();
+
+            for addr_str in mi_packages {
+                if let Ok(addr) = parse_address_from_hex(addr_str) {
+                    addresses.push(addr);
+                }
+            }
+
+            if addresses.is_empty() {
+                Err(format!(
+                    "Maker incentives is not supported on {:?}. \
+                    The maker_incentives package has not been deployed on this network. \
+                    Requested module: '{}'",
+                    env, module
+                ))
+            } else {
+                Ok(addresses)
+            }
+        }
         ModuleType::Sui => {
             const SUI_SYSTEM_ADDRESS: &str =
                 "0000000000000000000000000000000000000000000000000000000000000002";
