@@ -6804,6 +6804,7 @@ dependencies = [
  "sui-futures",
  "sui-indexer-alt-metrics",
  "sui-pg-db",
+ "sui-sdk",
  "telemetry-subscribers",
  "thiserror 1.0.69",
  "tokio",

@@ -3,7 +3,6 @@ import type { LogEvent } from "./types";
 
 export type LogFields = {
   event: LogEvent;
-  tickId?: number;
   laneId?: number;
   oracleId?: string;
   txDigest?: string;
@@ -12,17 +11,18 @@ export type LogFields = {
 
 const rootLogger = pino({
   level: process.env.LOG_LEVEL ?? "info",
-  formatters: {
-    level: (label) => ({ level: label }),
-  },
+  formatters: { level: (label) => ({ level: label }) },
   timestamp: () => `,"time":${Date.now()}`,
 });
 
 export type Component =
+  | "service"
   | "executor"
+  | "manager"
   | "subscriber"
-  | "healthz"
-  | "service";
+  | "registry"
+  | "bootstrap"
+  | "healthz";
 
 export function makeLogger(component: Component) {
   const child = rootLogger.child({ component });

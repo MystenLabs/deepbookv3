@@ -13,12 +13,10 @@ struct Args {
     server_port: u16,
     #[clap(env, long, default_value = "0.0.0.0:9184")]
     metrics_address: SocketAddr,
-    #[clap(
-        env,
-        long,
-        default_value = "postgres://localhost:5432/predict_v2"
-    )]
+    #[clap(env, long, default_value = "postgres://localhost:5432/predict_v2")]
     database_url: Url,
+    #[clap(env, long, default_value = "https://fullnode.testnet.sui.io:443")]
+    rpc_url: Url,
 }
 
 #[tokio::main]
@@ -32,9 +30,10 @@ async fn main() -> Result<(), anyhow::Error> {
         server_port,
         metrics_address,
         database_url,
+        rpc_url,
     } = Args::parse();
 
-    run_server(server_port, database_url, db_args, metrics_address).await?;
+    run_server(server_port, database_url, db_args, metrics_address, rpc_url).await?;
 
     Ok(())
 }

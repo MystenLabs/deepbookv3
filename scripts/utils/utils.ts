@@ -1,6 +1,6 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
-import { execFileSync, execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import fs, { readFileSync } from 'fs';
 import { homedir } from 'os';
 import path from 'path';
@@ -14,10 +14,59 @@ import { fromBase64, toBase64 } from '@mysten/sui/utils';
 
 export type Network = 'mainnet' | 'testnet' | 'devnet' | 'localnet';
 
-const SUI = process.env.SUI_BINARY ?? `sui`;
+type ResolveSuiBinaryOptions = {
+	envBinary?: string;
+	candidates?: string[];
+	getVersion?: (binary: string) => string | null;
+};
+
+const parseSuiVersion = (raw: string): [number, number, number] | null => {
+	const match = raw.match(/sui\s+(\d+)\.(\d+)\.(\d+)/i);
+	if (!match) return null;
+	return [Number(match[1]), Number(match[2]), Number(match[3])];
+};
+
+const compareSuiVersions = (
+	left: [number, number, number],
+	right: [number, number, number],
+): number => {
+	for (let i = 0; i < left.length; i += 1) {
+		if (left[i] !== right[i]) return left[i] - right[i];
+	}
+	return 0;
+};
+
+export const resolveSuiBinary = ({
+	envBinary = process.env.SUI_BINARY,
+	candidates = [path.join(homedir(), '.local', 'bin', 'sui'), path.join(homedir(), '.cargo', 'bin', 'sui'), 'sui'],
+	getVersion = (binary) => {
+		try {
+			return execFileSync(binary, ['--version'], { encoding: 'utf8' }).trim();
+		} catch {
+			return null;
+		}
+	},
+}: ResolveSuiBinaryOptions = {}): string => {
+	if (envBinary) return envBinary;
+
+	let best: { binary: string; version: [number, number, number] } | null = null;
+	for (const binary of [...new Set(candidates)]) {
+		const version = getVersion(binary);
+		if (!version) continue;
+		const parsed = parseSuiVersion(version);
+		if (!parsed) continue;
+		if (!best || compareSuiVersions(parsed, best.version) > 0) {
+			best = { binary, version: parsed };
+		}
+	}
+
+	return best?.binary ?? 'sui';
+};
+
+const SUI = resolveSuiBinary();
 
 export const getActiveAddress = () => {
-	return execSync(`${SUI} client active-address`, { encoding: 'utf8' }).trim();
+	return execFileSync(SUI, ['client', 'active-address'], { encoding: 'utf8' }).trim();
 };
 
 /// Replace the value of `export const <name> = { ..., <network>: "..." }` in
@@ -31,13 +80,12 @@ export const updateConstant = (
 	value: string,
 ): string => {
 	const regex = new RegExp(`(export const ${name} = \\{[^}]*${network}:\\s*)"[^"]*"`);
-	const result = content.replace(regex, `$1"${value}"`);
-	if (result === content) {
+	if (!regex.test(content)) {
 		throw new Error(
 			`updateConstant: no match for ${name}[${network}] in constants — check that the constant exists and the file format hasn't drifted`,
 		);
 	}
-	return result;
+	return content.replace(regex, `$1"${value}"`);
 };
 
 export const publishPackage = (txb: Transaction, path: string, configPath?: string) => {
@@ -75,11 +123,13 @@ export const getSigner = () => {
 		console.log('Using supplied private key.');
 		const { schema, secretKey } = decodeSuiPrivateKey(process.env.PRIVATE_KEY);
 
-		if (schema === 'ED25519') return Ed25519Keypair.fromSecretKey(secretKey);
+		// @mysten/sui >= 2.x stopped populating `schema` on decoded
+		// `suiprivkey…` strings — default to Ed25519 when omitted.
+		if (schema === undefined || schema === 'ED25519') return Ed25519Keypair.fromSecretKey(secretKey);
 		if (schema === 'Secp256k1') return Secp256k1Keypair.fromSecretKey(secretKey);
 		if (schema === 'Secp256r1') return Secp256r1Keypair.fromSecretKey(secretKey);
 
-		throw new Error('Keypair not supported.');
+		throw new Error(`Keypair scheme not supported: ${schema}`);
 	}
 
 	const sender = getActiveAddress();

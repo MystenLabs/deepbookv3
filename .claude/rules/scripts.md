@@ -98,6 +98,13 @@ To decode:
 - `SUI_BINARY` - Path to sui binary (default: `sui`)
 - `NODE_ENV=development` - Outputs to `tx-data-local.txt`
 
+### Local Sui CLI Version Matters
+If `sui move build` starts failing with missing `sui`/`std` address aliases or
+unsupported Move syntax, check which `sui` binary is actually being used.
+This repo's current Move packages require a newer CLI than some Homebrew
+installs provide. Prefer setting `SUI_BINARY` explicitly or using the newer
+user-local binary if `PATH` resolves to an older `sui`.
+
 ## DeepBook Client Usage
 ```typescript
 import { DeepBookClient } from "@mysten/deepbook-v3";

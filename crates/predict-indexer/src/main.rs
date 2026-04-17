@@ -3,11 +3,10 @@ use clap::Parser;
 use predict_indexer::handlers::{
     OracleActivatedHandler, OracleAskBoundsClearedHandler, OracleAskBoundsSetHandler,
     OracleCreatedHandler, OraclePricesUpdatedHandler, OracleSettledHandler,
-    OracleSviUpdatedHandler, PositionMintedHandler, PositionRedeemedHandler,
-    PredictCreatedHandler, PredictManagerCreatedHandler, PricingConfigUpdatedHandler,
-    QuoteAssetDisabledHandler, QuoteAssetEnabledHandler, RangeMintedHandler,
-    RangeRedeemedHandler, RiskConfigUpdatedHandler, SuppliedHandler,
-    TradingPauseUpdatedHandler, WithdrawnHandler,
+    OracleSviUpdatedHandler, PositionMintedHandler, PositionRedeemedHandler, PredictCreatedHandler,
+    PredictManagerCreatedHandler, PricingConfigUpdatedHandler, QuoteAssetDisabledHandler,
+    QuoteAssetEnabledHandler, RangeMintedHandler, RangeRedeemedHandler, RiskConfigUpdatedHandler,
+    SuppliedHandler, TradingPauseUpdatedHandler, WithdrawnHandler,
 };
 use predict_indexer::{PredictConfig, TESTNET_REMOTE_STORE_URL};
 use predict_schema::MIGRATIONS;
@@ -34,11 +33,7 @@ struct Args {
     streaming_args: StreamingClientArgs,
     #[clap(env, long, default_value = "0.0.0.0:9185")]
     metrics_address: SocketAddr,
-    #[clap(
-        env,
-        long,
-        default_value = "postgres://localhost:5432/predict_v2"
-    )]
+    #[clap(env, long, default_value = "postgres://localhost:5432/predict_v2")]
     database_url: Url,
     /// Override predict package ID (for new deployments)
     #[clap(env, long)]
@@ -106,38 +101,65 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // Oracle handlers
     indexer
-        .concurrent_pipeline(OracleActivatedHandler::new(config.clone()), Default::default())
+        .concurrent_pipeline(
+            OracleActivatedHandler::new(config.clone()),
+            Default::default(),
+        )
         .await?;
     indexer
-        .concurrent_pipeline(OracleSettledHandler::new(config.clone()), Default::default())
+        .concurrent_pipeline(
+            OracleSettledHandler::new(config.clone()),
+            Default::default(),
+        )
         .await?;
     indexer
-        .concurrent_pipeline(OraclePricesUpdatedHandler::new(config.clone()), Default::default())
+        .concurrent_pipeline(
+            OraclePricesUpdatedHandler::new(config.clone()),
+            Default::default(),
+        )
         .await?;
     indexer
-        .concurrent_pipeline(OracleSviUpdatedHandler::new(config.clone()), Default::default())
+        .concurrent_pipeline(
+            OracleSviUpdatedHandler::new(config.clone()),
+            Default::default(),
+        )
         .await?;
 
     // Registry handlers
     indexer
-        .concurrent_pipeline(PredictCreatedHandler::new(config.clone()), Default::default())
+        .concurrent_pipeline(
+            PredictCreatedHandler::new(config.clone()),
+            Default::default(),
+        )
         .await?;
     indexer
-        .concurrent_pipeline(OracleCreatedHandler::new(config.clone()), Default::default())
+        .concurrent_pipeline(
+            OracleCreatedHandler::new(config.clone()),
+            Default::default(),
+        )
         .await?;
 
     // Trading handlers
     indexer
-        .concurrent_pipeline(PositionMintedHandler::new(config.clone()), Default::default())
+        .concurrent_pipeline(
+            PositionMintedHandler::new(config.clone()),
+            Default::default(),
+        )
         .await?;
     indexer
-        .concurrent_pipeline(PositionRedeemedHandler::new(config.clone()), Default::default())
+        .concurrent_pipeline(
+            PositionRedeemedHandler::new(config.clone()),
+            Default::default(),
+        )
         .await?;
     indexer
         .concurrent_pipeline(RangeMintedHandler::new(config.clone()), Default::default())
         .await?;
     indexer
-        .concurrent_pipeline(RangeRedeemedHandler::new(config.clone()), Default::default())
+        .concurrent_pipeline(
+            RangeRedeemedHandler::new(config.clone()),
+            Default::default(),
+        )
         .await?;
 
     // Admin handlers
@@ -154,7 +176,10 @@ async fn main() -> Result<(), anyhow::Error> {
         )
         .await?;
     indexer
-        .concurrent_pipeline(RiskConfigUpdatedHandler::new(config.clone()), Default::default())
+        .concurrent_pipeline(
+            RiskConfigUpdatedHandler::new(config.clone()),
+            Default::default(),
+        )
         .await?;
     indexer
         .concurrent_pipeline(
@@ -191,7 +216,10 @@ async fn main() -> Result<(), anyhow::Error> {
 
     // User handlers
     indexer
-        .concurrent_pipeline(PredictManagerCreatedHandler::new(config), Default::default())
+        .concurrent_pipeline(
+            PredictManagerCreatedHandler::new(config),
+            Default::default(),
+        )
         .await?;
 
     let s_indexer = indexer.run().await?;

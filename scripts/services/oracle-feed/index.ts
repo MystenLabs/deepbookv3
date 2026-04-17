@@ -1,92 +1,132 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { SuiJsonRpcClient, type CoinStruct } from "@mysten/sui/jsonRpc";
+import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { decodeSuiPrivateKey } from "@mysten/sui/cryptography";
 import { loadConfig } from "./config";
 import { makeLogger } from "./logger";
-import type { Lane, OracleState, ServiceState } from "./types";
-import { newLaneState } from "./gas-pool";
+import type { ServiceState } from "./types";
+import { ensureCapsAndCoins } from "./bootstrap";
+import { discoverOracles } from "./registry";
 import { makeSubscriber } from "./subscriber";
-import { makeExecutor } from "./executor";
+import { pushTick, runManagerWindow, shouldRunManagerWindowNow } from "./executor";
 import { makeHealthServer } from "./healthz";
-
-// Number of gas lanes to use. One tx can be in-flight per lane. Pulumi only
-// ever runs a single replica, so 3 lanes is a comfortable head room for
-// parallel price + SVI txs without burning excess gas coins.
-const LANE_COUNT = 3;
 
 async function main(): Promise<void> {
   const config = loadConfig();
   const log = makeLogger("service");
-  log.info({
-    event: "service_started",
-    network: config.network,
-    oracleCount: config.oracles.length,
-  });
+  log.info({ event: "service_started", network: config.network });
 
   const client = new SuiJsonRpcClient({ url: config.suiRpcUrl, network: config.network });
-
   const { secretKey } = decodeSuiPrivateKey(config.suiSignerKey);
   const signer = Ed25519Keypair.fromSecretKey(secretKey);
-  const address = signer.toSuiAddress();
 
-  const coins = await getTopSuiCoins(client, address, LANE_COUNT);
-  if (coins.length < LANE_COUNT) {
-    throw new Error(
-      `Signer ${address} has ${coins.length} SUI coin(s) but ${LANE_COUNT} lanes are needed. ` +
-      `Split a coin via the Sui CLI or fund more gas.`,
-    );
-  }
-  const lanes: Lane[] = coins.map((coin, i) => ({
-    id: i,
-    gasCoinId: coin.coinObjectId,
-    gasCoinVersion: coin.version,
-    gasCoinDigest: coin.digest,
-    gasCoinBalanceApproxMist: Number(coin.balance),
-    available: true,
-    lastTxDigest: null,
-  }));
+  const { capIds, lanes } = await ensureCapsAndCoins(
+    client,
+    signer,
+    config,
+    makeLogger("bootstrap"),
+  );
 
-  const oracles = new Map<string, OracleState>();
-  for (const entry of config.oracles) {
-    oracles.set(entry.oracleId, {
-      id: entry.oracleId,
-      underlying: entry.underlying,
-      expiryMs: entry.expiryMs,
-    });
-    log.info({
-      event: "oracle_loaded",
-      oracleId: entry.oracleId,
-      underlying: entry.underlying,
-      expiry: entry.expiry,
-    });
-  }
+  const oracles = await discoverOracles(
+    client,
+    config,
+    capIds,
+    Date.now(),
+    makeLogger("registry"),
+  );
 
   const state: ServiceState = {
     oracles,
+    lanes,
+    capIds,
     priceCache: { spot: null, forwards: new Map() },
     sviCache: new Map(),
-    lanes: newLaneState(lanes),
-    clock: { tickId: 0 },
+    managerInFlight: false,
+    laneHint: 0,
+    lastPushMs: 0,
   };
 
-  const subscriber = makeSubscriber(config, state.priceCache, state.sviCache, makeLogger("subscriber"));
+  const subscriber = makeSubscriber(
+    config,
+    state.priceCache,
+    state.sviCache,
+    makeLogger("subscriber"),
+  );
   for (const oracle of state.oracles.values()) {
     subscriber.addOracle(oracle.id, oracle.underlying, oracle.expiryMs);
   }
   subscriber.start();
 
-  const executor = makeExecutor(state, client, signer, config, makeLogger("executor"));
-  executor.start();
+  const executorLog = makeLogger("executor");
+  const managerLog = makeLogger("manager");
 
-  const health = makeHealthServer(config.healthzPort, subscriber, executor, makeLogger("healthz"));
+  // Run the manager once synchronously on boot so any orphan / pending /
+  // settled oracles from prior runs get reconciled before the push loop
+  // starts. SVI won't be cached yet, so inactive oracles wait for the next
+  // manager window after SVI frames arrive.
+  await runManagerWindow(state, client, signer, config, subscriber, managerLog);
+
+  const pushTimer = setInterval(() => {
+    if (shouldRunManagerWindowNow(state, Date.now(), config.priceCacheStaleMs)) {
+      runManagerWindow(state, client, signer, config, subscriber, managerLog).catch((err) =>
+        managerLog.error({ event: "tx_failed", err: String(err) }),
+      );
+      return;
+    }
+
+    pushTick(state, client, signer, config, executorLog).catch((err) =>
+      executorLog.error({ event: "tx_failed", err: String(err) }),
+    );
+  }, config.pushTickMs);
+
+  const managerTimer = setInterval(() => {
+    runManagerWindow(state, client, signer, config, subscriber, managerLog).catch((err) =>
+      managerLog.error({ event: "tx_failed", err: String(err) }),
+    );
+  }, config.managerIntervalMs);
+
+  const summaryLog = makeLogger("service");
+  const summaryTimer = setInterval(() => {
+    const now = Date.now();
+    const byStatus: Record<string, number> = {};
+    for (const o of state.oracles.values()) {
+      byStatus[o.status] = (byStatus[o.status] ?? 0) + 1;
+    }
+    summaryLog.info({
+      event: "cache_summary",
+      totalOracles: state.oracles.size,
+      byStatus,
+      spotCached: state.priceCache.spot !== null,
+      spotAgeMs: state.priceCache.spot ? now - state.priceCache.spot.receivedAtMs : null,
+      forwardsCached: state.priceCache.forwards.size,
+      sviCached: state.sviCache.size,
+      wsConnected: subscriber.isConnected(),
+      lastWsFrameAgeMs: subscriber.lastFrameReceivedMs() ? now - subscriber.lastFrameReceivedMs() : null,
+      lastPushAgeMs: state.lastPushMs ? now - state.lastPushMs : null,
+      managerInFlight: state.managerInFlight,
+    });
+    summaryLog.info({
+      event: "lane_summary",
+      lanes: state.lanes.map((l) => ({ id: l.id, available: l.available })),
+      laneHint: state.laneHint,
+    });
+  }, 10_000);
+
+  const health = makeHealthServer(
+    config.healthzPort,
+    subscriber,
+    state,
+    makeLogger("healthz"),
+  );
   health.start();
 
   const shutdown = (sig: string) => {
     log.info({ event: "service_shutdown", signal: sig });
-    executor.stop();
+    clearInterval(pushTimer);
+    clearInterval(managerTimer);
+    clearInterval(summaryTimer);
     subscriber.stop();
     health.stop();
     setTimeout(() => process.exit(0), 2000);
@@ -98,22 +138,6 @@ async function main(): Promise<void> {
     log.fatal({ event: "service_fatal", err: String(err), stack: err.stack });
     process.exit(1);
   });
-}
-
-async function getTopSuiCoins(
-  client: SuiJsonRpcClient,
-  address: string,
-  count: number,
-): Promise<CoinStruct[]> {
-  const out: CoinStruct[] = [];
-  let cursor: string | null | undefined = null;
-  do {
-    const resp = await client.getCoins({ owner: address, coinType: "0x2::sui::SUI", cursor });
-    out.push(...resp.data);
-    cursor = resp.hasNextPage ? resp.nextCursor : null;
-  } while (cursor);
-  out.sort((a, b) => Number(BigInt(b.balance) - BigInt(a.balance)));
-  return out.slice(0, count);
 }
 
 main().catch((err) => {

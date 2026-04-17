@@ -3,8 +3,8 @@ use crate::metrics::RpcMetrics;
 use predict_schema::models::{
     OracleActivatedRow, OracleAskBoundsSetRow, OracleCreatedRow, OraclePricesUpdatedRow,
     OracleSettledRow, OracleSviUpdatedRow, PositionMintedRow, PositionRedeemedRow,
-    PredictManagerCreatedRow, PricingConfigUpdatedRow, RangeMintedRow, RangeRedeemedRow,
-    RiskConfigUpdatedRow, SuppliedRow, TradingPauseUpdatedRow, WithdrawnRow,
+    PredictCreatedRow, PredictManagerCreatedRow, PricingConfigUpdatedRow, RangeMintedRow,
+    RangeRedeemedRow, RiskConfigUpdatedRow, SuppliedRow, TradingPauseUpdatedRow, WithdrawnRow,
 };
 use predict_schema::schema;
 
@@ -13,7 +13,7 @@ use diesel::expression::QueryMetadata;
 use diesel::pg::Pg;
 use diesel::query_builder::{Query, QueryFragment, QueryId};
 use diesel::query_dsl::CompatibleType;
-use diesel::{ExpressionMethods, QueryDsl, QueryableByName, SelectableHelper};
+use diesel::{ExpressionMethods, OptionalExtension, QueryDsl, QueryableByName, SelectableHelper};
 
 use diesel_async::methods::LoadQuery;
 use diesel_async::{AsyncPgConnection, RunQueryDsl};
@@ -88,6 +88,28 @@ impl Reader {
         Ok(res?)
     }
 
+    pub async fn first_optional<'q, Q, ST, U>(&self, query: Q) -> Result<Option<U>, anyhow::Error>
+    where
+        Q: diesel::query_dsl::limit_dsl::LimitDsl,
+        Q::Output: Query + QueryFragment<Pg> + QueryId + Send + 'q,
+        <Q::Output as Query>::SqlType: CompatibleType<U, Pg, SqlType = ST>,
+        U: Send + FromSqlRow<ST, Pg> + 'static,
+        Pg: QueryMetadata<<Q::Output as Query>::SqlType>,
+        ST: 'static,
+    {
+        let mut conn = self.db.connect().await?;
+        let _guard = self.metrics.db_latency.start_timer();
+
+        let res = query.first(&mut conn).await.optional();
+        if res.is_ok() {
+            self.metrics.db_requests_succeeded.inc();
+        } else {
+            self.metrics.db_requests_failed.inc();
+        }
+
+        Ok(res?)
+    }
+
     // === Oracle queries ===
 
     pub async fn get_oracles_created(&self) -> Result<Vec<OracleCreatedRow>, PredictError> {
@@ -95,7 +117,11 @@ impl Reader {
             .results(
                 schema::oracle_created::table
                     .select(OracleCreatedRow::as_select())
-                    .order_by(schema::oracle_created::checkpoint.desc()),
+                    .order_by((
+                        schema::oracle_created::checkpoint.desc(),
+                        schema::oracle_created::tx_index.desc(),
+                        schema::oracle_created::event_index.desc(),
+                    )),
             )
             .await?)
     }
@@ -105,7 +131,11 @@ impl Reader {
             .results(
                 schema::oracle_activated::table
                     .select(OracleActivatedRow::as_select())
-                    .order_by(schema::oracle_activated::checkpoint.desc()),
+                    .order_by((
+                        schema::oracle_activated::checkpoint.desc(),
+                        schema::oracle_activated::tx_index.desc(),
+                        schema::oracle_activated::event_index.desc(),
+                    )),
             )
             .await?)
     }
@@ -115,9 +145,63 @@ impl Reader {
             .results(
                 schema::oracle_settled::table
                     .select(OracleSettledRow::as_select())
-                    .order_by(schema::oracle_settled::checkpoint.desc()),
+                    .order_by((
+                        schema::oracle_settled::checkpoint.desc(),
+                        schema::oracle_settled::tx_index.desc(),
+                        schema::oracle_settled::event_index.desc(),
+                    )),
             )
             .await?)
+    }
+
+    pub async fn get_oracle_created(
+        &self,
+        oracle_id: &str,
+    ) -> Result<OracleCreatedRow, PredictError> {
+        let query = schema::oracle_created::table
+            .filter(schema::oracle_created::oracle_id.eq(oracle_id))
+            .order_by((
+                schema::oracle_created::checkpoint.desc(),
+                schema::oracle_created::tx_index.desc(),
+                schema::oracle_created::event_index.desc(),
+            ))
+            .select(OracleCreatedRow::as_select());
+
+        self.first(query)
+            .await
+            .map_err(|_| PredictError::not_found(format!("oracle {}", oracle_id)))
+    }
+
+    pub async fn get_latest_oracle_activated(
+        &self,
+        oracle_id: &str,
+    ) -> Result<Option<OracleActivatedRow>, PredictError> {
+        let query = schema::oracle_activated::table
+            .filter(schema::oracle_activated::oracle_id.eq(oracle_id))
+            .order_by((
+                schema::oracle_activated::checkpoint.desc(),
+                schema::oracle_activated::tx_index.desc(),
+                schema::oracle_activated::event_index.desc(),
+            ))
+            .select(OracleActivatedRow::as_select());
+
+        Ok(self.first_optional(query).await?)
+    }
+
+    pub async fn get_latest_oracle_settled(
+        &self,
+        oracle_id: &str,
+    ) -> Result<Option<OracleSettledRow>, PredictError> {
+        let query = schema::oracle_settled::table
+            .filter(schema::oracle_settled::oracle_id.eq(oracle_id))
+            .order_by((
+                schema::oracle_settled::checkpoint.desc(),
+                schema::oracle_settled::tx_index.desc(),
+                schema::oracle_settled::event_index.desc(),
+            ))
+            .select(OracleSettledRow::as_select());
+
+        Ok(self.first_optional(query).await?)
     }
 
     pub async fn get_oracle_prices(
@@ -132,17 +216,19 @@ impl Reader {
 
         let mut query = schema::oracle_prices_updated::table
             .filter(schema::oracle_prices_updated::oracle_id.eq(oracle_id))
-            .order_by(schema::oracle_prices_updated::checkpoint_timestamp_ms.desc())
+            .order_by((
+                schema::oracle_prices_updated::checkpoint_timestamp_ms.desc(),
+                schema::oracle_prices_updated::tx_index.desc(),
+                schema::oracle_prices_updated::event_index.desc(),
+            ))
             .select(OraclePricesUpdatedRow::as_select())
             .into_boxed();
 
         if let Some(start) = start_time {
-            query = query
-                .filter(schema::oracle_prices_updated::checkpoint_timestamp_ms.ge(start));
+            query = query.filter(schema::oracle_prices_updated::checkpoint_timestamp_ms.ge(start));
         }
         if let Some(end) = end_time {
-            query =
-                query.filter(schema::oracle_prices_updated::checkpoint_timestamp_ms.le(end));
+            query = query.filter(schema::oracle_prices_updated::checkpoint_timestamp_ms.le(end));
         }
 
         query = query.limit(limit);
@@ -162,12 +248,32 @@ impl Reader {
     ) -> Result<OraclePricesUpdatedRow, PredictError> {
         let query = schema::oracle_prices_updated::table
             .filter(schema::oracle_prices_updated::oracle_id.eq(oracle_id.to_string()))
-            .order_by(schema::oracle_prices_updated::checkpoint_timestamp_ms.desc())
+            .order_by((
+                schema::oracle_prices_updated::checkpoint_timestamp_ms.desc(),
+                schema::oracle_prices_updated::tx_index.desc(),
+                schema::oracle_prices_updated::event_index.desc(),
+            ))
             .select(OraclePricesUpdatedRow::as_select());
 
         self.first(query)
             .await
             .map_err(|_| PredictError::not_found(format!("oracle prices for {}", oracle_id)))
+    }
+
+    pub async fn maybe_get_oracle_latest_price(
+        &self,
+        oracle_id: &str,
+    ) -> Result<Option<OraclePricesUpdatedRow>, PredictError> {
+        let query = schema::oracle_prices_updated::table
+            .filter(schema::oracle_prices_updated::oracle_id.eq(oracle_id.to_string()))
+            .order_by((
+                schema::oracle_prices_updated::checkpoint_timestamp_ms.desc(),
+                schema::oracle_prices_updated::tx_index.desc(),
+                schema::oracle_prices_updated::event_index.desc(),
+            ))
+            .select(OraclePricesUpdatedRow::as_select());
+
+        Ok(self.first_optional(query).await?)
     }
 
     pub async fn get_oracle_svi(
@@ -177,7 +283,11 @@ impl Reader {
     ) -> Result<Vec<OracleSviUpdatedRow>, PredictError> {
         let query = schema::oracle_svi_updated::table
             .filter(schema::oracle_svi_updated::oracle_id.eq(oracle_id.to_string()))
-            .order_by(schema::oracle_svi_updated::checkpoint_timestamp_ms.desc())
+            .order_by((
+                schema::oracle_svi_updated::checkpoint_timestamp_ms.desc(),
+                schema::oracle_svi_updated::tx_index.desc(),
+                schema::oracle_svi_updated::event_index.desc(),
+            ))
             .select(OracleSviUpdatedRow::as_select())
             .limit(limit);
         Ok(self.results(query).await?)
@@ -189,12 +299,32 @@ impl Reader {
     ) -> Result<OracleSviUpdatedRow, PredictError> {
         let query = schema::oracle_svi_updated::table
             .filter(schema::oracle_svi_updated::oracle_id.eq(oracle_id.to_string()))
-            .order_by(schema::oracle_svi_updated::checkpoint_timestamp_ms.desc())
+            .order_by((
+                schema::oracle_svi_updated::checkpoint_timestamp_ms.desc(),
+                schema::oracle_svi_updated::tx_index.desc(),
+                schema::oracle_svi_updated::event_index.desc(),
+            ))
             .select(OracleSviUpdatedRow::as_select());
 
         self.first(query)
             .await
             .map_err(|_| PredictError::not_found(format!("oracle SVI for {}", oracle_id)))
+    }
+
+    pub async fn maybe_get_oracle_latest_svi(
+        &self,
+        oracle_id: &str,
+    ) -> Result<Option<OracleSviUpdatedRow>, PredictError> {
+        let query = schema::oracle_svi_updated::table
+            .filter(schema::oracle_svi_updated::oracle_id.eq(oracle_id.to_string()))
+            .order_by((
+                schema::oracle_svi_updated::checkpoint_timestamp_ms.desc(),
+                schema::oracle_svi_updated::tx_index.desc(),
+                schema::oracle_svi_updated::event_index.desc(),
+            ))
+            .select(OracleSviUpdatedRow::as_select());
+
+        Ok(self.first_optional(query).await?)
     }
 
     // === Trading queries ===
@@ -210,7 +340,11 @@ impl Reader {
         let _guard = self.metrics.db_latency.start_timer();
 
         let mut query = schema::position_minted::table
-            .order_by(schema::position_minted::checkpoint.desc())
+            .order_by((
+                schema::position_minted::checkpoint.desc(),
+                schema::position_minted::tx_index.desc(),
+                schema::position_minted::event_index.desc(),
+            ))
             .select(PositionMintedRow::as_select())
             .into_boxed();
 
@@ -246,7 +380,11 @@ impl Reader {
         let _guard = self.metrics.db_latency.start_timer();
 
         let mut query = schema::position_redeemed::table
-            .order_by(schema::position_redeemed::checkpoint.desc())
+            .order_by((
+                schema::position_redeemed::checkpoint.desc(),
+                schema::position_redeemed::tx_index.desc(),
+                schema::position_redeemed::event_index.desc(),
+            ))
             .select(PositionRedeemedRow::as_select())
             .into_boxed();
 
@@ -282,7 +420,11 @@ impl Reader {
         let _guard = self.metrics.db_latency.start_timer();
 
         let mut query = schema::range_minted::table
-            .order_by(schema::range_minted::checkpoint.desc())
+            .order_by((
+                schema::range_minted::checkpoint.desc(),
+                schema::range_minted::tx_index.desc(),
+                schema::range_minted::event_index.desc(),
+            ))
             .select(RangeMintedRow::as_select())
             .into_boxed();
 
@@ -318,7 +460,11 @@ impl Reader {
         let _guard = self.metrics.db_latency.start_timer();
 
         let mut query = schema::range_redeemed::table
-            .order_by(schema::range_redeemed::checkpoint.desc())
+            .order_by((
+                schema::range_redeemed::checkpoint.desc(),
+                schema::range_redeemed::tx_index.desc(),
+                schema::range_redeemed::event_index.desc(),
+            ))
             .select(RangeRedeemedRow::as_select())
             .into_boxed();
 
@@ -367,7 +513,11 @@ impl Reader {
         let _guard = self.metrics.db_latency.start_timer();
 
         let mut query = schema::supplied::table
-            .order_by(schema::supplied::checkpoint.desc())
+            .order_by((
+                schema::supplied::checkpoint.desc(),
+                schema::supplied::tx_index.desc(),
+                schema::supplied::event_index.desc(),
+            ))
             .select(SuppliedRow::as_select())
             .into_boxed();
 
@@ -395,7 +545,11 @@ impl Reader {
         let _guard = self.metrics.db_latency.start_timer();
 
         let mut query = schema::withdrawn::table
-            .order_by(schema::withdrawn::checkpoint.desc())
+            .order_by((
+                schema::withdrawn::checkpoint.desc(),
+                schema::withdrawn::tx_index.desc(),
+                schema::withdrawn::event_index.desc(),
+            ))
             .select(WithdrawnRow::as_select())
             .into_boxed();
 
@@ -424,7 +578,11 @@ impl Reader {
         let _guard = self.metrics.db_latency.start_timer();
 
         let mut query = schema::predict_manager_created::table
-            .order_by(schema::predict_manager_created::checkpoint.desc())
+            .order_by((
+                schema::predict_manager_created::checkpoint.desc(),
+                schema::predict_manager_created::tx_index.desc(),
+                schema::predict_manager_created::event_index.desc(),
+            ))
             .select(PredictManagerCreatedRow::as_select())
             .into_boxed();
 
@@ -457,38 +615,66 @@ impl Reader {
 
     // === Config queries ===
 
-    pub async fn get_latest_pricing_config(
+    pub async fn get_latest_predict_created(&self) -> Result<PredictCreatedRow, PredictError> {
+        let query = schema::predict_created::table
+            .order_by((
+                schema::predict_created::checkpoint.desc(),
+                schema::predict_created::tx_index.desc(),
+                schema::predict_created::event_index.desc(),
+            ))
+            .select(PredictCreatedRow::as_select());
+
+        self.first(query)
+            .await
+            .map_err(|_| PredictError::not_found("predict"))
+    }
+
+    pub async fn get_latest_pricing_config_for_predict(
         &self,
-    ) -> Result<PricingConfigUpdatedRow, PredictError> {
+        predict_id: &str,
+    ) -> Result<Option<PricingConfigUpdatedRow>, PredictError> {
         let query = schema::pricing_config_updated::table
-            .order_by(schema::pricing_config_updated::checkpoint.desc())
+            .filter(schema::pricing_config_updated::predict_id.eq(predict_id))
+            .order_by((
+                schema::pricing_config_updated::checkpoint.desc(),
+                schema::pricing_config_updated::tx_index.desc(),
+                schema::pricing_config_updated::event_index.desc(),
+            ))
             .select(PricingConfigUpdatedRow::as_select());
 
-        self.first(query)
-            .await
-            .map_err(|_| PredictError::not_found("pricing config"))
+        Ok(self.first_optional(query).await?)
     }
 
-    pub async fn get_latest_risk_config(&self) -> Result<RiskConfigUpdatedRow, PredictError> {
+    pub async fn get_latest_risk_config_for_predict(
+        &self,
+        predict_id: &str,
+    ) -> Result<Option<RiskConfigUpdatedRow>, PredictError> {
         let query = schema::risk_config_updated::table
-            .order_by(schema::risk_config_updated::checkpoint.desc())
+            .filter(schema::risk_config_updated::predict_id.eq(predict_id))
+            .order_by((
+                schema::risk_config_updated::checkpoint.desc(),
+                schema::risk_config_updated::tx_index.desc(),
+                schema::risk_config_updated::event_index.desc(),
+            ))
             .select(RiskConfigUpdatedRow::as_select());
 
-        self.first(query)
-            .await
-            .map_err(|_| PredictError::not_found("risk config"))
+        Ok(self.first_optional(query).await?)
     }
 
-    pub async fn get_trading_pause_status(
+    pub async fn get_trading_pause_status_for_predict(
         &self,
-    ) -> Result<TradingPauseUpdatedRow, PredictError> {
+        predict_id: &str,
+    ) -> Result<Option<TradingPauseUpdatedRow>, PredictError> {
         let query = schema::trading_pause_updated::table
-            .order_by(schema::trading_pause_updated::checkpoint.desc())
+            .filter(schema::trading_pause_updated::predict_id.eq(predict_id))
+            .order_by((
+                schema::trading_pause_updated::checkpoint.desc(),
+                schema::trading_pause_updated::tx_index.desc(),
+                schema::trading_pause_updated::event_index.desc(),
+            ))
             .select(TradingPauseUpdatedRow::as_select());
 
-        self.first(query)
-            .await
-            .map_err(|_| PredictError::not_found("trading pause status"))
+        Ok(self.first_optional(query).await?)
     }
 
     // === Oracle ask bounds ===
@@ -509,6 +695,10 @@ impl Reader {
             checkpoint: i64,
             #[diesel(sql_type = diesel::sql_types::BigInt)]
             checkpoint_timestamp_ms: i64,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            tx_index: i64,
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            event_index: i64,
             #[diesel(sql_type = diesel::sql_types::Text)]
             package: String,
             #[diesel(sql_type = diesel::sql_types::Text)]
@@ -535,6 +725,8 @@ impl Reader {
                 sender,
                 checkpoint,
                 checkpoint_timestamp_ms,
+                tx_index,
+                event_index,
                 package,
                 predict_id,
                 oracle_id,
@@ -550,6 +742,8 @@ impl Reader {
                 sender,
                 checkpoint,
                 checkpoint_timestamp_ms,
+                tx_index,
+                event_index,
                 package,
                 predict_id,
                 oracle_id,
@@ -558,7 +752,7 @@ impl Reader {
                 'cleared' AS kind
             FROM oracle_ask_bounds_cleared
             WHERE oracle_id = $1
-            ORDER BY checkpoint DESC
+            ORDER BY checkpoint DESC, tx_index DESC, event_index DESC
             LIMIT 1
         "#;
 
@@ -580,6 +774,8 @@ impl Reader {
                         sender: row.sender,
                         checkpoint: row.checkpoint,
                         checkpoint_timestamp_ms: row.checkpoint_timestamp_ms,
+                        tx_index: row.tx_index,
+                        event_index: row.event_index,
                         package: row.package,
                         predict_id: row.predict_id,
                         oracle_id: row.oracle_id,
@@ -621,13 +817,13 @@ impl Reader {
             FROM (
                 SELECT DISTINCT ON (quote_asset) quote_asset, enabled
                 FROM (
-                    SELECT quote_asset, checkpoint, TRUE AS enabled
+                    SELECT quote_asset, checkpoint, tx_index, event_index, TRUE AS enabled
                       FROM quote_asset_enabled  WHERE predict_id = $1
                     UNION ALL
-                    SELECT quote_asset, checkpoint, FALSE AS enabled
+                    SELECT quote_asset, checkpoint, tx_index, event_index, FALSE AS enabled
                       FROM quote_asset_disabled WHERE predict_id = $1
                 ) all_events
-                ORDER BY quote_asset, checkpoint DESC
+                ORDER BY quote_asset, checkpoint DESC, tx_index DESC, event_index DESC
             ) latest
             WHERE enabled = TRUE
         "#;
@@ -648,9 +844,7 @@ impl Reader {
 
     // === System queries ===
 
-    pub async fn get_watermarks(
-        &self,
-    ) -> Result<Vec<(String, i64, i64, i64)>, PredictError> {
+    pub async fn get_watermarks(&self) -> Result<Vec<(String, i64, i64, i64)>, PredictError> {
         let mut connection = self.db.connect().await?;
         let _guard = self.metrics.db_latency.start_timer();
 

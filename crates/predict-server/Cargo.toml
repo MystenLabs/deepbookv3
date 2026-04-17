@@ -18,6 +18,7 @@ serde_json.workspace = true
 url.workspace = true
 prometheus.workspace = true
 sui-futures.workspace = true
+sui-sdk = { git = "https://github.com/MystenLabs/sui.git", branch = "testnet" }
 sui-indexer-alt-metrics.workspace = true
 telemetry-subscribers.workspace = true
 sui-pg-db.workspace = true

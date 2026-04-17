@@ -3,9 +3,15 @@
 
 import type { Config } from "./config";
 import type { Logger } from "./logger";
-import type { OracleId, PriceCache, SVICache } from "./types";
+import type { OracleId, PriceCache, SVICache, SVIParams } from "./types";
 
 const WS_RECONNECT_LADDER_MS = [500, 1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 60_000];
+
+// BlockScholes per-batch sub limit. Each batch uses one stable client_id; sids
+// within a batch must be unique. Resending the same client_id with a new batch
+// replaces the server-side sub list — not additive — so we always send the
+// full current set under each stable id.
+const MAX_SUBS_PER_BATCH = 20;
 
 export type Subscriber = {
   start: () => void;
@@ -23,6 +29,58 @@ type OracleSub = {
   sviSid: string;
 };
 
+export type ExtractedWsValue =
+  | { kind: "spot"; sid: string; value: number; timestampMs: number }
+  | { kind: "forward"; oracleId: OracleId; value: number; timestampMs: number }
+  | { kind: "svi"; oracleId: OracleId; params: SVIParams; timestampMs: number };
+
+export function extractWsValues(payload: any): ExtractedWsValue[] {
+  if (payload?.method !== "subscription" || !Array.isArray(payload.params)) {
+    return [];
+  }
+
+  const out: ExtractedWsValue[] = [];
+  for (const entry of payload.params) {
+    const timestampMs = Number(entry?.data?.timestamp);
+    const values = Array.isArray(entry?.data?.values) ? entry.data.values : [];
+    for (const value of values) {
+      const sid = String(value?.sid ?? "");
+      if (sid.startsWith("spot_") && typeof value.v === "number") {
+        out.push({ kind: "spot", sid, value: value.v, timestampMs });
+        continue;
+      }
+      if (sid.startsWith("fwd_") && typeof value.v === "number") {
+        out.push({
+          kind: "forward",
+          oracleId: sid.slice(4),
+          value: Number(value.v),
+          timestampMs,
+        });
+        continue;
+      }
+      if (sid.startsWith("svi_")) {
+        out.push({
+          kind: "svi",
+          oracleId: sid.slice(4),
+          params: {
+            a: Number(value.alpha),
+            b: Number(value.beta),
+            rho: Number(value.rho),
+            m: Number(value.m),
+            sigma: Number(value.sigma),
+          },
+          timestampMs,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+export function isWsSubscriptionAck(payload: any): boolean {
+  return payload?.jsonrpc === "2.0" && typeof payload?.id === "number" && Array.isArray(payload?.result);
+}
+
 export function makeSubscriber(
   config: Config,
   priceCache: PriceCache,
@@ -37,6 +95,18 @@ export function makeSubscriber(
   let lastFrame = 0;
   const oracles = new Map<OracleId, OracleSub>();
   let authed = false;
+  let resubscribeScheduled = false;
+
+  /// Coalesce rapid addOracle/removeOracle calls (e.g., during a manager
+  /// window rediscovery) into a single WS resubscribe on the next microtask.
+  function scheduleResubscribe(): void {
+    if (!authed || resubscribeScheduled) return;
+    resubscribeScheduled = true;
+    queueMicrotask(() => {
+      resubscribeScheduled = false;
+      resubscribeAll();
+    });
+  }
 
   function backoffMs(): number {
     return WS_RECONNECT_LADDER_MS[Math.min(reconnectAttempt, WS_RECONNECT_LADDER_MS.length - 1)];
@@ -47,78 +117,110 @@ export function makeSubscriber(
     ws.send(JSON.stringify(payload));
   }
 
-  function subscribeSpot(underlyings: Set<string>): void {
-    for (const asset of underlyings) {
-      send({
-        jsonrpc: "2.0",
-        id: nextRpcId++,
-        method: "subscribe",
-        params: [{
-          frequency: "1000ms",
-          client_id: `spot_${asset}`,
-          batch: [{ sid: `spot_${asset}`, feed: "index.px", asset: "spot", base_asset: asset, quote_asset: "USD" }],
-          options: { format: { timestamp: "ms", hexify: false, decimals: 5 } },
-        }],
-      });
-    }
+  function sendBatch(
+    clientId: string,
+    frequency: string,
+    batch: Record<string, unknown>[],
+    extraParams: Record<string, unknown> = {},
+  ): void {
+    if (batch.length === 0) return;
+    const rpcId = nextRpcId++;
+    const payload = {
+      jsonrpc: "2.0",
+      id: rpcId,
+      method: "subscribe",
+      params: [{
+        frequency,
+        client_id: clientId,
+        batch,
+        options: { format: { timestamp: "ms", hexify: false, decimals: 5 } },
+        ...extraParams,
+      }],
+    };
+    log.info({
+      event: "ws_connecting",
+      phase: "subscribe_out",
+      rpcId,
+      clientId,
+      frequency,
+      sidCount: batch.length,
+      sampleSid: batch[0]?.sid,
+      payload: JSON.stringify(payload).slice(0, 800),
+    });
+    send(payload);
   }
 
-  function subscribeForwards(): void {
-    const items = [...oracles.entries()].map(([_oid, o]) => ({
+  /// Re-send all three batch categories (spot, forwards, SVI) under stable
+  /// client_ids. Each client_id owns one batch server-side; re-sending the
+  /// same client_id replaces its sub list wholesale (not additive), so we
+  /// always send the full current set. Past-expiry oracles are filtered —
+  /// BlockScholes rejects mark.px for expiries in the past and a single bad
+  /// entry poisons the whole batch.
+  function resubscribeAll(): void {
+    const now = Date.now();
+    const active = [...oracles.values()].filter((o) => o.expiryMs > now);
+    const underlyings = [...new Set(active.map((o) => o.underlying))];
+
+    const spotBatch = underlyings.map((asset) => ({
+      sid: `spot_${asset}`,
+      feed: "index.px",
+      asset: "spot",
+      base_asset: asset,
+      quote_asset: "USD",
+    }));
+    sendBatchedWithChunks("spot", "1000ms", spotBatch);
+
+    const fwdBatch = active.map((o) => ({
       sid: o.fwdSid,
       feed: "mark.px",
       asset: "future",
       base_asset: o.underlying,
       expiry: isoSeconds(o.expiryMs),
     }));
-    for (let i = 0; i < items.length; i += 10) {
-      const batch = items.slice(i, i + 10);
-      send({
-        jsonrpc: "2.0",
-        id: nextRpcId++,
-        method: "subscribe",
-        params: [{
-          frequency: "1000ms",
-          client_id: `fwd_batch_${i}`,
-          batch,
-          options: { format: { timestamp: "ms", hexify: false, decimals: 5 } },
-        }],
-      });
-    }
-  }
+    sendBatchedWithChunks("forwards", "1000ms", fwdBatch);
 
-  function subscribeSvi(oracleId: OracleId): void {
-    const entry = oracles.get(oracleId);
-    if (!entry) return;
-    send({
-      jsonrpc: "2.0",
-      id: nextRpcId++,
-      method: "subscribe",
-      params: [{
-        frequency: "20000ms",
-        retransmit_frequency: "20000ms",
-        client_id: entry.sviSid,
-        batch: [{
-          sid: entry.sviSid,
-          feed: "model.params",
-          exchange: "composite",
-          asset: "option",
-          base_asset: entry.underlying,
-          model: "SVI",
-          expiry: isoSeconds(entry.expiryMs),
-        }],
-        options: { format: { timestamp: "ms", hexify: false, decimals: 5 } },
-      }],
+    const sviBatch = active.map((o) => ({
+      sid: o.sviSid,
+      feed: "model.params",
+      exchange: "composite",
+      asset: "option",
+      base_asset: o.underlying,
+      model: "SVI",
+      expiry: isoSeconds(o.expiryMs),
+    }));
+    sendBatchedWithChunks("svi", "20000ms", sviBatch, {
+      retransmit_frequency: "20000ms",
+    });
+
+    log.info({
+      event: "ws_subscribed",
+      underlyings,
+      oracleCount: active.length,
+      spotSids: spotBatch.length,
+      fwdSids: fwdBatch.length,
+      sviSids: sviBatch.length,
     });
   }
 
-  function resubscribeAll(): void {
-    const underlyings = new Set<string>();
-    for (const o of oracles.values()) underlyings.add(o.underlying);
-    subscribeSpot(underlyings);
-    subscribeForwards();
-    for (const oid of oracles.keys()) subscribeSvi(oid);
-    log.info({ event: "ws_subscribed", underlyings: [...underlyings], oracleCount: oracles.size });
+  /// Chunk into N batches if the batch exceeds MAX_SUBS_PER_BATCH. Uses
+  /// deterministic chunk-index in the client_id suffix so resends produce
+  /// the same ids (stable).
+  function sendBatchedWithChunks(
+    prefix: string,
+    frequency: string,
+    items: Record<string, unknown>[],
+    extraParams: Record<string, unknown> = {},
+  ): void {
+    if (items.length === 0) return;
+    if (items.length <= MAX_SUBS_PER_BATCH) {
+      sendBatch(prefix, frequency, items, extraParams);
+      return;
+    }
+    for (let i = 0; i < items.length; i += MAX_SUBS_PER_BATCH) {
+      const chunk = items.slice(i, i + MAX_SUBS_PER_BATCH);
+      const chunkIdx = Math.floor(i / MAX_SUBS_PER_BATCH);
+      sendBatch(`${prefix}_${chunkIdx}`, frequency, chunk, extraParams);
+    }
   }
 
   function connect(): void {
@@ -133,10 +235,12 @@ export function makeSubscriber(
 
     ws.addEventListener("message", (event: MessageEvent) => {
       lastFrame = Date.now();
+      const raw = event.data.toString();
       let parsed: any;
       try {
-        parsed = JSON.parse(event.data.toString());
+        parsed = JSON.parse(raw);
       } catch {
+        log.warn({ event: "ws_frame_dropped", reason: "parse_error", raw: raw.slice(0, 500) });
         return;
       }
 
@@ -153,13 +257,28 @@ export function makeSubscriber(
         return;
       }
 
-      if (parsed.method === "subscription") {
-        const entry = parsed.params?.[0];
-        const values = entry?.data?.values ?? [];
-        for (const v of values) {
-          applyFrame(v);
-        }
+      if (isWsSubscriptionAck(parsed)) {
+        return;
       }
+
+      const extracted = extractWsValues(parsed);
+      if (extracted.length > 0) {
+        for (const value of extracted) {
+          applyValue(value);
+        }
+        return;
+      }
+
+      // Unhandled message — log once so we can see what the server is sending
+      // back for our subscribe RPCs. Truncate raw so a huge frame doesn't
+      // flood logs.
+      log.info({
+        event: "ws_frame_dropped",
+        reason: "unhandled_shape",
+        rpcId: parsed.id,
+        keys: Object.keys(parsed),
+        raw: raw.slice(0, 500),
+      });
     });
 
     ws.addEventListener("close", () => {
@@ -176,30 +295,43 @@ export function makeSubscriber(
     });
   }
 
-  function applyFrame(v: any): void {
-    const sid = v.sid as string;
-    const now = Date.now();
-    if (sid.startsWith("spot_") && typeof v.v === "number") {
-      // Single-underlying setup: any spot frame is "the" spot. If multiple
-      // underlyings are ever active simultaneously, priceCache.spot would
-      // need to become a Map keyed by underlying.
-      priceCache.spot = { value: v.v, receivedAtMs: now };
+  function applyValue(value: ExtractedWsValue): void {
+    if (value.kind === "spot") {
+      const first = priceCache.spot === null;
+      priceCache.spot = { value: value.value, receivedAtMs: value.timestampMs };
+      if (first) log.info({ event: "ws_connected", sid: value.sid, value: value.value });
       return;
     }
-    if (sid.startsWith("fwd_")) {
-      const oid = sid.slice(4);
-      priceCache.forwards.set(oid, { value: Number(v.v), receivedAtMs: now });
-      return;
-    }
-    if (sid.startsWith("svi_")) {
-      const oid = sid.slice(4);
-      const prev = sviCache.get(oid);
-      sviCache.set(oid, {
-        params: { a: Number(v.alpha), b: Number(v.beta), rho: Number(v.rho), m: Number(v.m), sigma: Number(v.sigma) },
-        receivedAtMs: now,
-        lastPushedAtMs: prev?.lastPushedAtMs ?? null,
+
+    if (value.kind === "forward") {
+      const first = !priceCache.forwards.has(value.oracleId);
+      priceCache.forwards.set(value.oracleId, {
+        value: value.value,
+        receivedAtMs: value.timestampMs,
       });
+      if (first) {
+        log.info({
+          event: "ws_connected",
+          sid: `fwd_${value.oracleId}`,
+          oracleId: value.oracleId,
+          value: value.value,
+        });
+      }
       return;
+    }
+
+    const prev = sviCache.get(value.oracleId);
+    sviCache.set(value.oracleId, {
+      params: value.params,
+      receivedAtMs: value.timestampMs,
+      lastPushedAtMs: prev?.lastPushedAtMs ?? null,
+    });
+    if (!prev) {
+      log.info({
+        event: "ws_connected",
+        sid: `svi_${value.oracleId}`,
+        oracleId: value.oracleId,
+      });
     }
   }
 
@@ -211,19 +343,23 @@ export function makeSubscriber(
       ws?.close();
     },
     addOracle: (oracleId, underlying, expiryMs) => {
+      const existing = oracles.get(oracleId);
+      const unchanged =
+        existing &&
+        existing.underlying === underlying &&
+        existing.expiryMs === expiryMs;
+      if (unchanged) return;
       oracles.set(oracleId, {
         underlying,
         expiryMs,
         fwdSid: `fwd_${oracleId}`,
         sviSid: `svi_${oracleId}`,
       });
-      if (authed) {
-        subscribeForwards();
-        subscribeSvi(oracleId);
-      }
+      scheduleResubscribe();
     },
     removeOracle: (oracleId) => {
-      oracles.delete(oracleId);
+      if (!oracles.delete(oracleId)) return;
+      scheduleResubscribe();
     },
     isConnected: () => ws?.readyState === WebSocket.OPEN,
     lastFrameReceivedMs: () => lastFrame,

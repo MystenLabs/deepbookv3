@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Transaction } from "@mysten/sui/transactions";
+import { Transaction, type TransactionArgument } from "@mysten/sui/transactions";
 import type { OracleId, CapId, SVIParams } from "./types";
 
 export const CLOCK_ID = "0x6";
@@ -62,5 +62,82 @@ export function addUpdateSvi(
   tx.moveCall({
     target: `${packageId}::oracle::update_svi`,
     arguments: [tx.object(args.oracleId), tx.object(args.capId), svi, tx.object(CLOCK_ID)],
+  });
+}
+
+export function addActivate(
+  tx: Transaction,
+  packageId: string,
+  args: { oracleId: OracleId; capId: CapId },
+): void {
+  tx.moveCall({
+    target: `${packageId}::oracle::activate`,
+    arguments: [tx.object(args.oracleId), tx.object(args.capId), tx.object(CLOCK_ID)],
+  });
+}
+
+export function addCompact(
+  tx: Transaction,
+  packageId: string,
+  args: { predictId: string; oracleId: OracleId; capId: CapId },
+): void {
+  tx.moveCall({
+    target: `${packageId}::predict::compact_settled_oracle`,
+    arguments: [tx.object(args.predictId), tx.object(args.oracleId), tx.object(args.capId)],
+  });
+}
+
+/// Uses the normal update_prices call but on a pending_settlement oracle,
+/// which triggers the on-chain settlement-freeze branch. Isolated to a solo
+/// PTB so an already-settled race doesn't take down batched price pushes.
+export function addSettleNudge(
+  tx: Transaction,
+  packageId: string,
+  args: { oracleId: OracleId; capId: CapId; spot: number; forward: number },
+): void {
+  addUpdatePrices(tx, packageId, args);
+}
+
+export function addRegisterCap(
+  tx: Transaction,
+  packageId: string,
+  args: { oracleId: OracleId; adminCapId: string; capIdToRegister: CapId },
+): void {
+  tx.moveCall({
+    target: `${packageId}::registry::register_oracle_cap`,
+    arguments: [
+      tx.object(args.oracleId),
+      tx.object(args.adminCapId),
+      tx.object(args.capIdToRegister),
+    ],
+  });
+}
+
+export function addCreateOracle(
+  tx: Transaction,
+  packageId: string,
+  args: {
+    registryId: string;
+    predictId: string;
+    adminCapId: string;
+    capId: CapId;
+    underlying: string;
+    expiryMs: number;
+    minStrike: number;
+    tickSize: number;
+  },
+): TransactionArgument {
+  return tx.moveCall({
+    target: `${packageId}::registry::create_oracle`,
+    arguments: [
+      tx.object(args.registryId),
+      tx.object(args.predictId),
+      tx.object(args.adminCapId),
+      tx.object(args.capId),
+      tx.pure.string(args.underlying),
+      tx.pure.u64(args.expiryMs),
+      tx.pure.u64(args.minStrike),
+      tx.pure.u64(args.tickSize),
+    ],
   });
 }

@@ -1,9 +1,20 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+export type Tier = "15m" | "1h" | "1d" | "1w";
 export type OracleId = string;
 export type CapId = string;
 export type GasCoinId = string;
+export type OracleStatus = "inactive" | "active" | "pending_settlement" | "settled";
+
+export type OracleState = {
+  id: OracleId;
+  underlying: string;
+  expiryMs: number;
+  tier: Tier;
+  status: OracleStatus;
+  registeredCapIds: Set<CapId>;
+};
 
 export type PriceSample = { value: number; receivedAtMs: number };
 
@@ -12,13 +23,7 @@ export type PriceCache = {
   forwards: Map<OracleId, PriceSample>;
 };
 
-export type SVIParams = {
-  a: number;
-  b: number;
-  rho: number;
-  m: number;
-  sigma: number;
-};
+export type SVIParams = { a: number; b: number; rho: number; m: number; sigma: number };
 
 export type SVISample = {
   params: SVIParams;
@@ -28,58 +33,36 @@ export type SVISample = {
 
 export type SVICache = Map<OracleId, SVISample>;
 
-/// Minimal per-oracle state used by the executor: the oracle object ID we
-/// push updates to, the underlying asset (used only for log context), and
-/// the expiry so the executor can stop pushing after settlement.
-export type OracleState = {
-  id: OracleId;
-  underlying: string;
-  expiryMs: number;
-};
-
 export type Lane = {
   id: number;
   gasCoinId: GasCoinId;
   gasCoinVersion: string;
   gasCoinDigest: string;
-  gasCoinBalanceApproxMist: number;
+  capId: CapId;
   available: boolean;
-  lastTxDigest: string | null;
-};
-
-export type LaneState = {
-  lanes: Lane[];
-  nextHint: number;
 };
 
 export type ServiceState = {
   oracles: Map<OracleId, OracleState>;
+  lanes: Lane[];
+  capIds: CapId[];
   priceCache: PriceCache;
   sviCache: SVICache;
-  lanes: LaneState;
-  clock: { tickId: number };
+  managerInFlight: boolean;
+  laneHint: number;
+  lastPushMs: number;
 };
 
 export type LogEvent =
-  | "tick_fired"
-  | "tick_skipped_no_lane"
-  | "tick_skipped_empty"
-  | "tick_skipped_stale_prices"
-  | "tx_submitted"
-  | "tx_finalized"
-  | "tx_failed"
-  | "oracle_loaded"
-  | "oracle_expired"
-  | "ws_connecting"
-  | "ws_connected"
-  | "ws_auth_ok"
-  | "ws_subscribed"
-  | "ws_subscribe_error"
-  | "ws_reconnect"
-  | "ws_frame_dropped"
-  | "lane_low"
-  | "health_ok"
-  | "health_degraded"
-  | "service_started"
-  | "service_shutdown"
-  | "service_fatal";
+  | "service_started" | "service_shutdown" | "service_fatal"
+  | "lanes_ready" | "caps_created"
+  | "oracle_discovered" | "oracle_created" | "oracle_activated"
+  | "oracle_settled" | "oracle_compacted"
+  | "tx_submitting" | "tx_submitted" | "tx_failed"
+  | "tick_skipped_manager" | "tick_skipped_no_lane"
+  | "tick_skipped_stale_prices" | "tick_skipped_empty"
+  | "cache_summary" | "lane_summary"
+  | "manager_started" | "manager_finished"
+  | "ws_connecting" | "ws_connected" | "ws_auth_ok" | "ws_subscribed"
+  | "ws_subscribe_error" | "ws_reconnect" | "ws_frame_dropped"
+  | "health_ok" | "health_degraded";

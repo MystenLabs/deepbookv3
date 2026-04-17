@@ -8,9 +8,9 @@ use axum::middleware::from_fn_with_state;
 use axum::routing::get;
 use axum::{Json, Router};
 use predict_schema::models::{
-    OracleAskBoundsSetRow, OraclePricesUpdatedRow, OracleSviUpdatedRow,
-    PositionMintedRow, PositionRedeemedRow, PredictManagerCreatedRow, RangeMintedRow,
-    RangeRedeemedRow, SuppliedRow, WithdrawnRow,
+    OracleAskBoundsSetRow, OraclePricesUpdatedRow, OracleSviUpdatedRow, PositionMintedRow,
+    PositionRedeemedRow, PredictManagerCreatedRow, RangeMintedRow, RangeRedeemedRow, SuppliedRow,
+    WithdrawnRow,
 };
 use prometheus::Registry;
 use serde::{Deserialize, Serialize};
@@ -21,8 +21,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use sui_futures::service::Service;
 use sui_indexer_alt_metrics::{MetricsArgs, MetricsService};
 use sui_pg_db::DbArgs;
+use sui_sdk::SuiClientBuilder;
 use tokio::net::TcpListener;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, OnceCell};
 use tower_http::cors::{AllowMethods, Any, CorsLayer};
 use url::Url;
 
@@ -34,6 +35,7 @@ pub const ORACLE_PRICES_PATH: &str = "/oracles/:oracle_id/prices";
 pub const ORACLE_LATEST_PRICE_PATH: &str = "/oracles/:oracle_id/prices/latest";
 pub const ORACLE_SVI_PATH: &str = "/oracles/:oracle_id/svi";
 pub const ORACLE_LATEST_SVI_PATH: &str = "/oracles/:oracle_id/svi/latest";
+pub const ORACLE_STATE_PATH: &str = "/oracles/:oracle_id/state";
 pub const POSITIONS_MINTED_PATH: &str = "/positions/minted";
 pub const POSITIONS_REDEEMED_PATH: &str = "/positions/redeemed";
 pub const TRADES_PATH: &str = "/trades/:oracle_id";
@@ -49,6 +51,7 @@ pub const LP_SUPPLIES_PATH: &str = "/lp/supplies";
 pub const LP_WITHDRAWALS_PATH: &str = "/lp/withdrawals";
 pub const ORACLE_ASK_BOUNDS_PATH: &str = "/oracles/:oracle_id/ask-bounds";
 pub const PREDICT_QUOTE_ASSETS_PATH: &str = "/predicts/:predict_id/quote-assets";
+pub const PREDICT_STATE_PATH: &str = "/predicts/:predict_id/state";
 
 // === AppState ===
 
@@ -56,21 +59,40 @@ pub const PREDICT_QUOTE_ASSETS_PATH: &str = "/predicts/:predict_id/quote-assets"
 pub struct AppState {
     reader: Reader,
     metrics: Arc<RpcMetrics>,
+    rpc_url: Url,
+    sui_client: Arc<OnceCell<sui_sdk::SuiClient>>,
 }
 
 impl AppState {
     pub async fn new(
         database_url: Url,
         args: DbArgs,
+        rpc_url: Url,
         registry: &Registry,
     ) -> Result<Self, anyhow::Error> {
         let metrics = RpcMetrics::new(registry);
         let reader = Reader::new(database_url, args, metrics.clone(), registry).await?;
-        Ok(Self { reader, metrics })
+        Ok(Self {
+            reader,
+            metrics,
+            rpc_url,
+            sui_client: Arc::new(OnceCell::new()),
+        })
     }
 
     pub(crate) fn metrics(&self) -> &RpcMetrics {
         &self.metrics
+    }
+
+    pub async fn sui_client(&self) -> Result<&sui_sdk::SuiClient, PredictError> {
+        self.sui_client
+            .get_or_try_init(|| async {
+                SuiClientBuilder::default()
+                    .build(self.rpc_url.as_str())
+                    .await
+            })
+            .await
+            .map_err(|e| PredictError::internal(format!("failed to build Sui client: {}", e)))
     }
 }
 
@@ -81,16 +103,20 @@ pub async fn run_server(
     database_url: Url,
     db_arg: DbArgs,
     metrics_address: SocketAddr,
+    rpc_url: Url,
 ) -> Result<(), anyhow::Error> {
     let registry = Registry::new_custom(Some("predict_api".into()), None)
         .expect("Failed to create Prometheus registry.");
 
     let metrics = MetricsService::new(MetricsArgs { metrics_address }, registry);
 
-    let state = AppState::new(database_url, db_arg, metrics.registry()).await?;
+    let state = AppState::new(database_url, db_arg, rpc_url, metrics.registry()).await?;
     let socket_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), server_port);
 
-    println!("Predict server started successfully on port {}", server_port);
+    println!(
+        "Predict server started successfully on port {}",
+        server_port
+    );
 
     let s_metrics = metrics.run().await?;
 
@@ -132,6 +158,7 @@ pub(crate) fn make_router(state: Arc<AppState>) -> Router {
         .route(ORACLE_LATEST_PRICE_PATH, get(get_oracle_latest_price))
         .route(ORACLE_SVI_PATH, get(get_oracle_svi))
         .route(ORACLE_LATEST_SVI_PATH, get(get_oracle_latest_svi))
+        .route(ORACLE_STATE_PATH, get(get_oracle_state))
         .route(ORACLE_ASK_BOUNDS_PATH, get(get_oracle_ask_bounds))
         // Trading endpoints
         .route(POSITIONS_MINTED_PATH, get(get_positions_minted))
@@ -148,6 +175,7 @@ pub(crate) fn make_router(state: Arc<AppState>) -> Router {
         .route(MANAGER_RANGES_PATH, get(get_manager_ranges))
         // Predict endpoints
         .route(PREDICT_QUOTE_ASSETS_PATH, get(get_predict_quote_assets))
+        .route(PREDICT_STATE_PATH, get(get_predict_state))
         // System endpoints
         .route(STATUS_PATH, get(get_status))
         .route(CONFIG_PATH, get(get_config))
@@ -192,6 +220,14 @@ pub struct LpFilterParams {
     pub limit: Option<i64>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct StatusQueryParams {
+    #[serde(default = "default_max_checkpoint_lag")]
+    pub max_checkpoint_lag: i64,
+    #[serde(default = "default_max_time_lag_seconds")]
+    pub max_time_lag_seconds: i64,
+}
+
 // === Response types ===
 
 #[derive(Serialize)]
@@ -229,15 +265,183 @@ pub struct ManagerRanges {
 
 #[derive(Serialize)]
 pub struct ConfigResponse {
+    pub predict_id: String,
     pub pricing: Option<serde_json::Value>,
     pub risk: Option<serde_json::Value>,
     pub trading_paused: Option<bool>,
+    pub quote_assets: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct OracleStateResponse {
+    pub oracle: OracleInfo,
+    pub latest_price: Option<OraclePricesUpdatedRow>,
+    pub latest_svi: Option<OracleSviUpdatedRow>,
+    pub ask_bounds: Option<OracleAskBoundsSetRow>,
 }
 
 // === Default helpers ===
 
 fn default_limit(limit: Option<i64>) -> i64 {
     limit.unwrap_or(100)
+}
+
+fn default_max_checkpoint_lag() -> i64 {
+    100
+}
+
+fn default_max_time_lag_seconds() -> i64 {
+    60
+}
+
+fn build_oracle_info(
+    created: predict_schema::models::OracleCreatedRow,
+    activated: Option<&predict_schema::models::OracleActivatedRow>,
+    settled: Option<&predict_schema::models::OracleSettledRow>,
+) -> OracleInfo {
+    let status = if settled.is_some() {
+        "settled"
+    } else if activated.is_some() {
+        "active"
+    } else {
+        "created"
+    }
+    .to_string();
+
+    OracleInfo {
+        oracle_id: created.oracle_id,
+        oracle_cap_id: created.oracle_cap_id,
+        expiry: created.expiry,
+        status,
+        activated_at: activated.as_ref().map(|row| row.onchain_timestamp),
+        settlement_price: settled.as_ref().map(|row| row.settlement_price),
+        settled_at: settled.as_ref().map(|row| row.onchain_timestamp),
+        created_checkpoint: created.checkpoint,
+    }
+}
+
+fn assemble_oracle_infos(
+    created: Vec<predict_schema::models::OracleCreatedRow>,
+    activated: Vec<predict_schema::models::OracleActivatedRow>,
+    settled: Vec<predict_schema::models::OracleSettledRow>,
+) -> Vec<OracleInfo> {
+    let activated_map: HashMap<String, predict_schema::models::OracleActivatedRow> = activated
+        .into_iter()
+        .map(|row| (row.oracle_id.clone(), row))
+        .collect();
+
+    let settled_map: HashMap<String, predict_schema::models::OracleSettledRow> = settled
+        .into_iter()
+        .map(|row| (row.oracle_id.clone(), row))
+        .collect();
+
+    created
+        .into_iter()
+        .map(|created_row| {
+            let oracle_id = created_row.oracle_id.clone();
+            build_oracle_info(
+                created_row,
+                activated_map.get(&oracle_id),
+                settled_map.get(&oracle_id),
+            )
+        })
+        .collect()
+}
+
+fn build_predict_state_response(
+    predict_id: String,
+    pricing: Option<serde_json::Value>,
+    risk: Option<serde_json::Value>,
+    trading_paused: Option<bool>,
+    quote_assets: Vec<String>,
+) -> ConfigResponse {
+    ConfigResponse {
+        predict_id,
+        pricing,
+        risk,
+        trading_paused,
+        quote_assets,
+    }
+}
+
+fn build_status_payload(
+    current_time_ms: i64,
+    latest_onchain_checkpoint: i64,
+    watermarks: Vec<(String, i64, i64, i64)>,
+    params: &StatusQueryParams,
+) -> serde_json::Value {
+    let mut pipelines = Vec::new();
+    let mut min_checkpoint = i64::MAX;
+    let mut max_lag_pipeline_name = String::new();
+    let mut max_checkpoint_lag = 0i64;
+
+    for (pipeline, checkpoint_hi, timestamp_ms_hi, epoch_hi) in watermarks {
+        let checkpoint_lag = latest_onchain_checkpoint - checkpoint_hi;
+        let time_lag_ms = current_time_ms - timestamp_ms_hi;
+        let time_lag_seconds = time_lag_ms / 1000;
+        let is_backfill = pipeline.contains("@backfill");
+
+        if !is_backfill {
+            if checkpoint_hi < min_checkpoint {
+                min_checkpoint = checkpoint_hi;
+            }
+            if checkpoint_lag > max_checkpoint_lag {
+                max_checkpoint_lag = checkpoint_lag;
+                max_lag_pipeline_name = pipeline.clone();
+            }
+        }
+
+        pipelines.push(serde_json::json!({
+            "pipeline": pipeline,
+            "checkpoint_hi_inclusive": checkpoint_hi,
+            "timestamp_ms_hi_inclusive": timestamp_ms_hi,
+            "epoch_hi_inclusive": epoch_hi,
+            "checkpoint_lag": checkpoint_lag,
+            "time_lag_ms": time_lag_ms,
+            "time_lag_seconds": time_lag_seconds,
+            "latest_onchain_checkpoint": latest_onchain_checkpoint,
+            "is_backfill": is_backfill,
+        }));
+    }
+
+    let max_time_lag_seconds = pipelines
+        .iter()
+        .filter_map(|pipeline| {
+            if pipeline["is_backfill"].as_bool() == Some(true) {
+                None
+            } else {
+                pipeline["time_lag_seconds"].as_i64()
+            }
+        })
+        .max()
+        .unwrap_or(0);
+
+    let earliest_checkpoint = if min_checkpoint == i64::MAX {
+        0
+    } else {
+        min_checkpoint
+    };
+
+    let is_healthy = max_checkpoint_lag < params.max_checkpoint_lag
+        && max_time_lag_seconds < params.max_time_lag_seconds;
+
+    serde_json::json!({
+        "status": if is_healthy { "OK" } else { "UNHEALTHY" },
+        "latest_onchain_checkpoint": latest_onchain_checkpoint,
+        "current_time_ms": current_time_ms,
+        "earliest_checkpoint": earliest_checkpoint,
+        "max_lag_pipeline": max_lag_pipeline_name,
+        "max_checkpoint_lag": max_checkpoint_lag,
+        "max_time_lag_seconds": max_time_lag_seconds,
+        "pipelines": pipelines,
+    })
+}
+
+fn trade_sort_key(event: &TradeEvent) -> (i64, i64, i64) {
+    match event {
+        TradeEvent::Mint(row) => (row.checkpoint, row.tx_index, row.event_index),
+        TradeEvent::Redeem(row) => (row.checkpoint, row.tx_index, row.event_index),
+    }
 }
 
 // === Handlers ===
@@ -255,50 +459,7 @@ async fn get_oracles(
     let activated = state.reader.get_oracles_activated().await?;
     let settled = state.reader.get_oracles_settled().await?;
 
-    let activated_map: HashMap<String, i64> = activated
-        .into_iter()
-        .map(|a| (a.oracle_id.clone(), a.onchain_timestamp))
-        .collect();
-
-    let settled_map: HashMap<String, (i64, i64)> = settled
-        .into_iter()
-        .map(|s| {
-            (
-                s.oracle_id.clone(),
-                (s.settlement_price, s.onchain_timestamp),
-            )
-        })
-        .collect();
-
-    let oracles: Vec<OracleInfo> = created
-        .into_iter()
-        .map(|c| {
-            let is_settled = settled_map.contains_key(&c.oracle_id);
-            let is_activated = activated_map.contains_key(&c.oracle_id);
-
-            let status = if is_settled {
-                "settled"
-            } else if is_activated {
-                "active"
-            } else {
-                "created"
-            }
-            .to_string();
-
-            OracleInfo {
-                oracle_id: c.oracle_id.clone(),
-                oracle_cap_id: c.oracle_cap_id,
-                expiry: c.expiry,
-                status,
-                activated_at: activated_map.get(&c.oracle_id).copied(),
-                settlement_price: settled_map.get(&c.oracle_id).map(|(p, _)| *p),
-                settled_at: settled_map.get(&c.oracle_id).map(|(_, t)| *t),
-                created_checkpoint: c.checkpoint,
-            }
-        })
-        .collect();
-
-    Ok(Json(oracles))
+    Ok(Json(assemble_oracle_infos(created, activated, settled)))
 }
 
 async fn get_oracle_prices(
@@ -357,6 +518,29 @@ async fn get_oracle_ask_bounds(
         .get_latest_oracle_ask_bounds(&oracle_id)
         .await?;
     Ok(Json(row_opt))
+}
+
+async fn get_oracle_state(
+    Path(oracle_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<OracleStateResponse>, PredictError> {
+    let created = state.reader.get_oracle_created(&oracle_id).await?;
+    let (activated, settled, latest_price, latest_svi, ask_bounds) = tokio::join!(
+        state.reader.get_latest_oracle_activated(&oracle_id),
+        state.reader.get_latest_oracle_settled(&oracle_id),
+        state.reader.maybe_get_oracle_latest_price(&oracle_id),
+        state.reader.maybe_get_oracle_latest_svi(&oracle_id),
+        state.reader.get_latest_oracle_ask_bounds(&oracle_id),
+    );
+
+    let activated = activated?;
+    let settled = settled?;
+    Ok(Json(OracleStateResponse {
+        oracle: build_oracle_info(created, activated.as_ref(), settled.as_ref()),
+        latest_price: latest_price?,
+        latest_svi: latest_svi?,
+        ask_bounds: ask_bounds?,
+    }))
 }
 
 // -- Trading endpoints --
@@ -444,22 +628,12 @@ async fn get_trades(
         .get_positions_redeemed(Some(&oracle_id), None, None, limit)
         .await?;
 
-    // Interleave mints and redeems by checkpoint descending
+    // Interleave mints and redeems by event order descending.
     let mut events: Vec<TradeEvent> = Vec::with_capacity(mints.len() + redeems.len());
     events.extend(mints.into_iter().map(TradeEvent::Mint));
     events.extend(redeems.into_iter().map(TradeEvent::Redeem));
 
-    events.sort_by(|a, b| {
-        let cp_a = match a {
-            TradeEvent::Mint(m) => m.checkpoint,
-            TradeEvent::Redeem(r) => r.checkpoint,
-        };
-        let cp_b = match b {
-            TradeEvent::Mint(m) => m.checkpoint,
-            TradeEvent::Redeem(r) => r.checkpoint,
-        };
-        cp_b.cmp(&cp_a)
-    });
+    events.sort_by_key(|event| std::cmp::Reverse(trade_sort_key(event)));
 
     events.truncate(limit as usize);
     Ok(Json(events))
@@ -495,10 +669,7 @@ async fn get_managers(
     Query(params): Query<ManagerFilterParams>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<PredictManagerCreatedRow>>, PredictError> {
-    let managers = state
-        .reader
-        .get_managers(params.owner.as_deref())
-        .await?;
+    let managers = state.reader.get_managers(params.owner.as_deref()).await?;
 
     Ok(Json(managers))
 }
@@ -507,10 +678,7 @@ async fn get_manager_positions(
     Path(manager_id): Path<String>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<ManagerPositions>, PredictError> {
-    let (minted, redeemed) = state
-        .reader
-        .get_positions_for_manager(&manager_id)
-        .await?;
+    let (minted, redeemed) = state.reader.get_positions_for_manager(&manager_id).await?;
 
     Ok(Json(ManagerPositions { minted, redeemed }))
 }
@@ -533,67 +701,195 @@ async fn get_predict_quote_assets(
     Ok(Json(v))
 }
 
+async fn get_predict_state(
+    Path(predict_id): Path<String>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<ConfigResponse>, PredictError> {
+    let (pricing, risk, trading_pause, quote_assets) = tokio::join!(
+        state
+            .reader
+            .get_latest_pricing_config_for_predict(&predict_id),
+        state.reader.get_latest_risk_config_for_predict(&predict_id),
+        state
+            .reader
+            .get_trading_pause_status_for_predict(&predict_id),
+        state.reader.get_enabled_quote_assets(&predict_id),
+    );
+
+    Ok(Json(build_predict_state_response(
+        predict_id,
+        pricing?
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|e| PredictError::internal(e.to_string()))?,
+        risk?
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|e| PredictError::internal(e.to_string()))?,
+        trading_pause?.map(|row| row.paused),
+        quote_assets?,
+    )))
+}
+
 // -- System endpoints --
 
 async fn get_status(
+    Query(params): Query<StatusQueryParams>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<serde_json::Value>, PredictError> {
     let watermarks = state.reader.get_watermarks().await?;
+    let latest_checkpoint = state
+        .sui_client()
+        .await?
+        .read_api()
+        .get_latest_checkpoint_sequence_number()
+        .await
+        .map_err(|e| PredictError::internal(format!("failed to get latest checkpoint: {}", e)))?
+        as i64;
 
     let current_time_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|_| PredictError::internal("System time error"))?
         .as_millis() as i64;
 
-    let pipelines: Vec<serde_json::Value> = watermarks
-        .iter()
-        .map(|(pipeline, checkpoint, timestamp_ms, epoch)| {
-            let time_lag_ms = current_time_ms - timestamp_ms;
-            serde_json::json!({
-                "pipeline": pipeline,
-                "checkpoint_hi_inclusive": checkpoint,
-                "timestamp_ms_hi_inclusive": timestamp_ms,
-                "epoch_hi_inclusive": epoch,
-                "time_lag_ms": time_lag_ms,
-                "time_lag_seconds": time_lag_ms / 1000,
-            })
-        })
-        .collect();
-
-    Ok(Json(serde_json::json!({
-        "status": "ok",
-        "current_time_ms": current_time_ms,
-        "pipelines": pipelines,
-    })))
+    Ok(Json(build_status_payload(
+        current_time_ms,
+        latest_checkpoint,
+        watermarks,
+        &params,
+    )))
 }
 
 async fn get_config(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<ConfigResponse>, PredictError> {
-    let pricing = state
-        .reader
-        .get_latest_pricing_config()
-        .await
-        .ok()
-        .and_then(|p| serde_json::to_value(p).ok());
+    let predict = state.reader.get_latest_predict_created().await?;
+    let predict_id = predict.predict_id;
 
-    let risk = state
-        .reader
-        .get_latest_risk_config()
-        .await
-        .ok()
-        .and_then(|r| serde_json::to_value(r).ok());
+    let (pricing, risk, trading_pause, quote_assets) = tokio::join!(
+        state
+            .reader
+            .get_latest_pricing_config_for_predict(&predict_id),
+        state.reader.get_latest_risk_config_for_predict(&predict_id),
+        state
+            .reader
+            .get_trading_pause_status_for_predict(&predict_id),
+        state.reader.get_enabled_quote_assets(&predict_id),
+    );
 
-    let trading_paused = state
-        .reader
-        .get_trading_pause_status()
-        .await
-        .ok()
-        .map(|t| t.paused);
+    Ok(Json(build_predict_state_response(
+        predict_id,
+        pricing?
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|e| PredictError::internal(e.to_string()))?,
+        risk?
+            .map(serde_json::to_value)
+            .transpose()
+            .map_err(|e| PredictError::internal(e.to_string()))?,
+        trading_pause?.map(|row| row.paused),
+        quote_assets?,
+    )))
+}
 
-    Ok(Json(ConfigResponse {
-        pricing,
-        risk,
-        trading_paused,
-    }))
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use predict_schema::models::{OracleActivatedRow, OracleCreatedRow, OracleSettledRow};
+
+    fn created_row() -> OracleCreatedRow {
+        OracleCreatedRow {
+            event_digest: "created-0".into(),
+            digest: "digest-created".into(),
+            sender: "0xsender".into(),
+            checkpoint: 10,
+            checkpoint_timestamp_ms: 1_000,
+            tx_index: 0,
+            event_index: 0,
+            package: "0xpackage".into(),
+            oracle_id: "0xoracle".into(),
+            oracle_cap_id: "0xcap".into(),
+            underlying_asset: "BTC".into(),
+            expiry: 1_700_000_000_000,
+            min_strike: 50,
+            tick_size: 1,
+        }
+    }
+
+    #[test]
+    fn build_status_payload_ignores_backfill_pipelines() {
+        let payload = build_status_payload(
+            10_000,
+            120,
+            vec![
+                ("oracle_prices_updated@backfill".into(), 5, 1_000, 1),
+                ("oracle_prices_updated".into(), 115, 9_000, 1),
+            ],
+            &StatusQueryParams {
+                max_checkpoint_lag: 10,
+                max_time_lag_seconds: 5,
+            },
+        );
+
+        assert_eq!(payload["status"], "OK");
+        assert_eq!(payload["latest_onchain_checkpoint"], 120);
+        assert_eq!(payload["max_lag_pipeline"], "oracle_prices_updated");
+        assert_eq!(payload["max_checkpoint_lag"], 5);
+    }
+
+    #[test]
+    fn assemble_oracle_infos_prefers_settled_status() {
+        let infos = assemble_oracle_infos(
+            vec![created_row()],
+            vec![OracleActivatedRow {
+                event_digest: "activated-0".into(),
+                digest: "digest-activated".into(),
+                sender: "0xsender".into(),
+                checkpoint: 11,
+                checkpoint_timestamp_ms: 2_000,
+                tx_index: 0,
+                event_index: 0,
+                package: "0xpackage".into(),
+                oracle_id: "0xoracle".into(),
+                expiry: 1_700_000_000_000,
+                onchain_timestamp: 2_500,
+            }],
+            vec![OracleSettledRow {
+                event_digest: "settled-0".into(),
+                digest: "digest-settled".into(),
+                sender: "0xsender".into(),
+                checkpoint: 12,
+                checkpoint_timestamp_ms: 3_000,
+                tx_index: 0,
+                event_index: 0,
+                package: "0xpackage".into(),
+                oracle_id: "0xoracle".into(),
+                expiry: 1_700_000_000_000,
+                settlement_price: 123,
+                onchain_timestamp: 3_500,
+            }],
+        );
+
+        assert_eq!(infos.len(), 1);
+        assert_eq!(infos[0].status, "settled");
+        assert_eq!(infos[0].activated_at, Some(2_500));
+        assert_eq!(infos[0].settlement_price, Some(123));
+        assert_eq!(infos[0].settled_at, Some(3_500));
+    }
+
+    #[test]
+    fn build_predict_state_response_keeps_predict_scope() {
+        let response = build_predict_state_response(
+            "0xpredict".into(),
+            Some(serde_json::json!({ "predict_id": "0xpredict", "base_spread": 10 })),
+            Some(serde_json::json!({ "predict_id": "0xpredict", "max_total_exposure_pct": 25 })),
+            Some(true),
+            vec!["0x2::sui::SUI".into()],
+        );
+
+        assert_eq!(response.predict_id, "0xpredict");
+        assert_eq!(response.trading_paused, Some(true));
+        assert_eq!(response.quote_assets, vec!["0x2::sui::SUI"]);
+        assert_eq!(response.pricing.unwrap()["predict_id"], "0xpredict");
+    }
 }

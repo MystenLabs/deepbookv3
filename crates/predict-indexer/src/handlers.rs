@@ -3,8 +3,8 @@ use std::sync::Arc;
 use sui_indexer_alt_framework::types::full_checkpoint_content::{
     Checkpoint, ExecutedTransaction, ObjectSet,
 };
-use sui_types::transaction::{Command, TransactionDataAPI};
 use sui_types::effects::TransactionEffectsAPI;
+use sui_types::transaction::{Command, TransactionDataAPI};
 
 /// Captures common transaction metadata for event processing.
 pub struct EventMeta {
@@ -13,29 +13,36 @@ pub struct EventMeta {
     checkpoint: i64,
     checkpoint_timestamp_ms: i64,
     package: Arc<str>,
-    event_index: usize,
+    tx_index: i64,
+    event_index: i64,
 }
 
 impl EventMeta {
-    pub fn from_checkpoint_tx(checkpoint: &Checkpoint, tx: &ExecutedTransaction) -> Self {
+    pub fn from_checkpoint_tx(
+        checkpoint: &Checkpoint,
+        tx: &ExecutedTransaction,
+        tx_index: usize,
+    ) -> Self {
         Self {
             digest: tx.effects.transaction_digest().to_string().into(),
             sender: tx.transaction.sender().to_string().into(),
             checkpoint: checkpoint.summary.sequence_number as i64,
             checkpoint_timestamp_ms: checkpoint.summary.timestamp_ms as i64,
-            package: try_extract_move_call_package(tx).unwrap_or_default().into(),
+            package: Arc::from(""),
+            tx_index: tx_index as i64,
             event_index: 0,
         }
     }
 
-    pub fn with_index(&self, index: usize) -> Self {
+    pub fn with_event(&self, index: usize, package: Arc<str>) -> Self {
         Self {
             digest: Arc::clone(&self.digest),
             sender: Arc::clone(&self.sender),
             checkpoint: self.checkpoint,
             checkpoint_timestamp_ms: self.checkpoint_timestamp_ms,
-            package: Arc::clone(&self.package),
-            event_index: index,
+            package,
+            tx_index: self.tx_index,
+            event_index: index as i64,
         }
     }
 
@@ -61,6 +68,14 @@ impl EventMeta {
 
     pub fn package(&self) -> String {
         self.package.to_string()
+    }
+
+    pub fn tx_index(&self) -> i64 {
+        self.tx_index
+    }
+
+    pub fn event_index(&self) -> i64 {
+        self.event_index
     }
 }
 
@@ -98,18 +113,21 @@ macro_rules! define_handler {
                 use $crate::traits::MoveStruct;
 
                 let mut results = vec![];
-                for tx in &checkpoint.transactions {
+                for (tx_index, tx) in checkpoint.transactions.iter().enumerate() {
                     if !is_predict_tx(tx, &checkpoint.object_set, &self.config) {
                         continue;
                     }
                     let Some(events) = &tx.events else { continue };
 
-                    let base_meta = EventMeta::from_checkpoint_tx(checkpoint, tx);
+                    let base_meta = EventMeta::from_checkpoint_tx(checkpoint, tx, tx_index);
 
                     for (index, ev) in events.data.iter().enumerate() {
                         if <$event>::matches_event_type(&ev.type_, &self.config.account_addresses) {
                             let $ev: $event = bcs::from_bytes(&ev.contents)?;
-                            let $meta = base_meta.with_index(index);
+                            let $meta = base_meta.with_event(
+                                index,
+                                event_package(&ev.type_).into(),
+                            );
                             results.push($body);
                             tracing::debug!("Observed {} event", $proc_name);
                         }
@@ -180,13 +198,47 @@ pub(crate) fn is_predict_tx(
     })
 }
 
-pub(crate) fn try_extract_move_call_package(tx: &ExecutedTransaction) -> Option<String> {
-    let txn_kind = tx.transaction.kind();
-    let first_command = txn_kind.iter_commands().next()?;
-    if let Command::MoveCall(move_call) = first_command {
-        Some(move_call.package.to_string())
-    } else {
-        None
+pub(crate) fn event_package(event_type: &move_core_types::language_storage::StructTag) -> String {
+    event_type.address.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use move_core_types::account_address::AccountAddress;
+    use move_core_types::identifier::Identifier;
+    use move_core_types::language_storage::StructTag;
+
+    #[test]
+    fn event_package_uses_event_type_address() {
+        let tag = StructTag {
+            address: AccountAddress::from_hex_literal("0x42").unwrap(),
+            module: Identifier::new("oracle").unwrap(),
+            name: Identifier::new("OracleActivated").unwrap(),
+            type_params: vec![],
+        };
+
+        assert_eq!(event_package(&tag), tag.address.to_string());
+    }
+
+    #[test]
+    fn with_event_updates_package_and_indices() {
+        let meta = EventMeta {
+            digest: Arc::from("txdigest"),
+            sender: Arc::from("0xsender"),
+            checkpoint: 9,
+            checkpoint_timestamp_ms: 1234,
+            package: Arc::from(""),
+            tx_index: 3,
+            event_index: 0,
+        };
+
+        let updated = meta.with_event(5, Arc::from("0xeventpackage"));
+
+        assert_eq!(updated.package(), "0xeventpackage");
+        assert_eq!(updated.tx_index(), 3);
+        assert_eq!(updated.event_index(), 5);
+        assert_eq!(updated.event_digest(), "txdigest5");
     }
 }
 
@@ -200,11 +252,11 @@ use crate::models::{
     TradingPauseUpdated, Withdrawn,
 };
 use predict_schema::models::{
-    OracleActivatedRow, OracleAskBoundsClearedRow, OracleAskBoundsSetRow,
-    OracleCreatedRow, OraclePricesUpdatedRow, OracleSettledRow, OracleSviUpdatedRow,
-    PositionMintedRow, PositionRedeemedRow, PredictCreatedRow, PredictManagerCreatedRow,
-    PricingConfigUpdatedRow, QuoteAssetDisabledRow, QuoteAssetEnabledRow, RangeMintedRow,
-    RangeRedeemedRow, RiskConfigUpdatedRow, SuppliedRow, TradingPauseUpdatedRow, WithdrawnRow,
+    OracleActivatedRow, OracleAskBoundsClearedRow, OracleAskBoundsSetRow, OracleCreatedRow,
+    OraclePricesUpdatedRow, OracleSettledRow, OracleSviUpdatedRow, PositionMintedRow,
+    PositionRedeemedRow, PredictCreatedRow, PredictManagerCreatedRow, PricingConfigUpdatedRow,
+    QuoteAssetDisabledRow, QuoteAssetEnabledRow, RangeMintedRow, RangeRedeemedRow,
+    RiskConfigUpdatedRow, SuppliedRow, TradingPauseUpdatedRow, WithdrawnRow,
 };
 
 // === oracle module handlers ===
@@ -221,6 +273,8 @@ define_handler! {
         sender: meta.sender(),
         checkpoint: meta.checkpoint(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
+        tx_index: meta.tx_index(),
+        event_index: meta.event_index(),
         package: meta.package(),
         oracle_id: event.oracle_id.to_string(),
         expiry: event.expiry as i64,
@@ -240,6 +294,8 @@ define_handler! {
         sender: meta.sender(),
         checkpoint: meta.checkpoint(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
+        tx_index: meta.tx_index(),
+        event_index: meta.event_index(),
         package: meta.package(),
         oracle_id: event.oracle_id.to_string(),
         expiry: event.expiry as i64,
@@ -260,6 +316,8 @@ define_handler! {
         sender: meta.sender(),
         checkpoint: meta.checkpoint(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
+        tx_index: meta.tx_index(),
+        event_index: meta.event_index(),
         package: meta.package(),
         oracle_id: event.oracle_id.to_string(),
         spot: event.spot as i64,
@@ -280,6 +338,8 @@ define_handler! {
         sender: meta.sender(),
         checkpoint: meta.checkpoint(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
+        tx_index: meta.tx_index(),
+        event_index: meta.event_index(),
         package: meta.package(),
         oracle_id: event.oracle_id.to_string(),
         a: event.a as i64,
@@ -307,6 +367,8 @@ define_handler! {
         sender: meta.sender(),
         checkpoint: meta.checkpoint(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
+        tx_index: meta.tx_index(),
+        event_index: meta.event_index(),
         package: meta.package(),
         predict_id: event.predict_id.to_string(),
     }
@@ -324,6 +386,8 @@ define_handler! {
         sender: meta.sender(),
         checkpoint: meta.checkpoint(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
+        tx_index: meta.tx_index(),
+        event_index: meta.event_index(),
         package: meta.package(),
         oracle_id: event.oracle_id.to_string(),
         oracle_cap_id: event.oracle_cap_id.to_string(),
@@ -348,6 +412,8 @@ define_handler! {
         sender: meta.sender(),
         checkpoint: meta.checkpoint(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
+        tx_index: meta.tx_index(),
+        event_index: meta.event_index(),
         package: meta.package(),
         predict_id: event.predict_id.to_string(),
         manager_id: event.manager_id.to_string(),
@@ -375,6 +441,8 @@ define_handler! {
         sender: meta.sender(),
         checkpoint: meta.checkpoint(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
+        tx_index: meta.tx_index(),
+        event_index: meta.event_index(),
         package: meta.package(),
         predict_id: event.predict_id.to_string(),
         manager_id: event.manager_id.to_string(),
@@ -404,6 +472,8 @@ define_handler! {
         sender: meta.sender(),
         checkpoint: meta.checkpoint(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
+        tx_index: meta.tx_index(),
+        event_index: meta.event_index(),
         package: meta.package(),
         predict_id: event.predict_id.to_string(),
         manager_id: event.manager_id.to_string(),
@@ -431,6 +501,8 @@ define_handler! {
         sender: meta.sender(),
         checkpoint: meta.checkpoint(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
+        tx_index: meta.tx_index(),
+        event_index: meta.event_index(),
         package: meta.package(),
         predict_id: event.predict_id.to_string(),
         manager_id: event.manager_id.to_string(),
@@ -459,6 +531,8 @@ define_handler! {
         sender: meta.sender(),
         checkpoint: meta.checkpoint(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
+        tx_index: meta.tx_index(),
+        event_index: meta.event_index(),
         package: meta.package(),
         predict_id: event.predict_id.to_string(),
         paused: event.paused,
@@ -477,6 +551,8 @@ define_handler! {
         sender: meta.sender(),
         checkpoint: meta.checkpoint(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
+        tx_index: meta.tx_index(),
+        event_index: meta.event_index(),
         package: meta.package(),
         predict_id: event.predict_id.to_string(),
         base_spread: event.base_spread as i64,
@@ -499,6 +575,8 @@ define_handler! {
         sender: meta.sender(),
         checkpoint: meta.checkpoint(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
+        tx_index: meta.tx_index(),
+        event_index: meta.event_index(),
         package: meta.package(),
         predict_id: event.predict_id.to_string(),
         max_total_exposure_pct: event.max_total_exposure_pct as i64,
@@ -517,6 +595,8 @@ define_handler! {
         sender: meta.sender(),
         checkpoint: meta.checkpoint(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
+        tx_index: meta.tx_index(),
+        event_index: meta.event_index(),
         package: meta.package(),
         predict_id: event.predict_id.to_string(),
         oracle_id: event.oracle_id.to_string(),
@@ -537,6 +617,8 @@ define_handler! {
         sender: meta.sender(),
         checkpoint: meta.checkpoint(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
+        tx_index: meta.tx_index(),
+        event_index: meta.event_index(),
         package: meta.package(),
         predict_id: event.predict_id.to_string(),
         oracle_id: event.oracle_id.to_string(),
@@ -555,6 +637,8 @@ define_handler! {
         sender: meta.sender(),
         checkpoint: meta.checkpoint(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
+        tx_index: meta.tx_index(),
+        event_index: meta.event_index(),
         package: meta.package(),
         predict_id: event.predict_id.to_string(),
         quote_asset: event.quote_asset.as_string(),
@@ -573,6 +657,8 @@ define_handler! {
         sender: meta.sender(),
         checkpoint: meta.checkpoint(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
+        tx_index: meta.tx_index(),
+        event_index: meta.event_index(),
         package: meta.package(),
         predict_id: event.predict_id.to_string(),
         quote_asset: event.quote_asset.as_string(),
@@ -591,6 +677,8 @@ define_handler! {
         sender: meta.sender(),
         checkpoint: meta.checkpoint(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
+        tx_index: meta.tx_index(),
+        event_index: meta.event_index(),
         package: meta.package(),
         predict_id: event.predict_id.to_string(),
         supplier: event.supplier.to_string(),
@@ -612,6 +700,8 @@ define_handler! {
         sender: meta.sender(),
         checkpoint: meta.checkpoint(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
+        tx_index: meta.tx_index(),
+        event_index: meta.event_index(),
         package: meta.package(),
         predict_id: event.predict_id.to_string(),
         withdrawer: event.withdrawer.to_string(),
@@ -635,6 +725,8 @@ define_handler! {
         sender: meta.sender(),
         checkpoint: meta.checkpoint(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
+        tx_index: meta.tx_index(),
+        event_index: meta.event_index(),
         package: meta.package(),
         manager_id: event.manager_id.to_string(),
         owner: event.owner.to_string(),

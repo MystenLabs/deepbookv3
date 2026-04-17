@@ -9,9 +9,8 @@ pub mod traits;
 
 pub const TESTNET_REMOTE_STORE_URL: &str = "https://checkpoints.testnet.sui.io";
 
-const TESTNET_PREDICT_PACKAGES: &[&str] = &[
-    "0x557ad48f98e33db0b0ea54cfb79c5edbfaf19a3e568342dc5ba1dae37a4aa749",
-];
+const TESTNET_PREDICT_PACKAGES: &[&str] =
+    &["0xf5ea2b3749c65d6e56507cc35388719aadb28f9cab873696a2f8687f5c785138"];
 
 #[derive(Debug, Clone)]
 pub struct PredictConfig {
