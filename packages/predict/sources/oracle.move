@@ -319,7 +319,7 @@ public fun update_prices(
             oracle_id,
             expiry: oracle.expiry,
             settlement_price: spot,
-            spot_timestamp_ms: oracle.spot_timestamp_ms,
+            spot_timestamp_ms: now,
         });
         return
     };
@@ -805,8 +805,8 @@ public(package) fun new_oracle_bounds(
 // === Private Functions ===
 
 /// Internal state transition for a verified Lazer spot. Kept separate from
-/// `update_spot_from_lazer` so it can be exercised directly by unit tests
-/// (verified `Update` values cannot be constructed outside `pyth_lazer`).
+/// `update_spot_from_lazer` so the verified-`Update` decode stays isolated at
+/// the entrypoint (`Update` values cannot be constructed outside `pyth_lazer`).
 /// Reads `bounds.basis_staleness_threshold_ms` directly from the oracle.
 fun apply_lazer_spot(oracle: &mut OracleSVI, spot: u64, lazer_published_at_us: u64, clock: &Clock) {
     assert!(spot > 0, EZeroSpot);
