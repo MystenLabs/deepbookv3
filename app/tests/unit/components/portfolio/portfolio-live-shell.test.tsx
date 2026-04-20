@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PortfolioLiveShell } from "@/components/portfolio/portfolio-live-shell";
@@ -40,6 +40,17 @@ function jsonResponse(body: unknown) {
       "content-type": "application/json",
     },
   });
+}
+
+function deferredResponse() {
+  let resolve!: (value: Response) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<Response>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+
+  return { promise, resolve, reject };
 }
 
 describe("PortfolioLiveShell", () => {
@@ -316,6 +327,68 @@ describe("PortfolioLiveShell", () => {
     expect(screen.getByText("$3,100.00")).toBeInTheDocument();
   });
 
+  it("swaps the live wallet and manager balances in withdraw mode", async () => {
+    mockAccount = {
+      address:
+        "0x2222222222222222222222222222222222222222222222222222222222222222",
+    };
+    mockClient = {
+      waitForTransaction: vi.fn(),
+      getObjects: vi.fn(),
+    };
+    vi.mocked(readWalletQuoteBalance).mockResolvedValue(4250n);
+    vi.mocked(readManagerQuoteBalance).mockResolvedValue(3100n);
+
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({
+        runtime: {
+          networkLabel: "Testnet",
+          sourceLabel: "Predict server",
+          sourceTone: "positive",
+        },
+        source: {
+          mode: "remote",
+          predictServerUrl: "https://predict.example.test",
+        },
+        snapshot: {
+          ...portfolioShellMock,
+          meta: {
+            ...portfolioShellMock.meta,
+            managerState: "ready",
+          },
+        },
+      }),
+    );
+
+    render(
+      <PortfolioLiveShell
+        initialData={{
+          runtime: {
+            networkLabel: "Testnet",
+            sourceLabel: "Predict server",
+            sourceTone: "positive",
+          },
+          source: {
+            mode: "remote",
+            predictServerUrl: "https://predict.example.test",
+          },
+          snapshot: portfolioShellMock,
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(readManagerQuoteBalance).toHaveBeenCalled();
+    });
+
+    fireEvent.click(screen.getByRole("tab", { name: /withdraw/i }));
+
+    expect(screen.getByText("From trading")).toBeInTheDocument();
+    expect(screen.getByText("To wallet")).toBeInTheDocument();
+    expect(screen.getByText("$3100")).toBeInTheDocument();
+    expect(screen.getByText("$4250")).toBeInTheDocument();
+  });
+
   it("shows unknown live balances as em dashes and skips manager reads until the manager is ready", async () => {
     mockAccount = {
       address:
@@ -469,5 +542,272 @@ describe("PortfolioLiveShell", () => {
 
     expect(mockDAppKit.signAndExecuteTransaction).not.toHaveBeenCalled();
     expect(screen.getByText("Multiple PredictManagers were found for this wallet.")).toBeInTheDocument();
+  });
+
+  it("ignores stale owner refresh responses after an account switch", async () => {
+    const ownerA =
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const ownerB =
+      "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    mockAccount = { address: ownerA };
+    mockClient = {
+      waitForTransaction: vi.fn(),
+      getObjects: vi.fn(),
+    };
+
+    const ownerAResponse = deferredResponse();
+    const ownerBResponse = deferredResponse();
+
+    fetchMock
+      .mockReturnValueOnce(ownerAResponse.promise)
+      .mockReturnValueOnce(ownerBResponse.promise);
+
+    const view = render(
+      <PortfolioLiveShell
+        initialData={{
+          runtime: {
+            networkLabel: "Testnet",
+            sourceLabel: "Predict server",
+            sourceTone: "positive",
+          },
+          source: {
+            mode: "remote",
+            predictServerUrl: "https://predict.example.test",
+          },
+          snapshot: {
+            ...portfolioShellMock,
+            metrics: [
+              { label: "Account value", value: "$100.00", change: "1 open position" },
+              { label: "Trading balance", value: "$50.00", change: "$10.00 committed" },
+              { label: "Settled PnL", value: "+$5.00", change: "Redeemable $1.00" },
+            ],
+          },
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/api/portfolio?owner=${ownerA}`,
+        expect.objectContaining({ cache: "no-store" }),
+      );
+    });
+
+    mockAccount = { address: ownerB };
+    view.rerender(
+      <PortfolioLiveShell
+        initialData={{
+          runtime: {
+            networkLabel: "Testnet",
+            sourceLabel: "Predict server",
+            sourceTone: "positive",
+          },
+          source: {
+            mode: "remote",
+            predictServerUrl: "https://predict.example.test",
+          },
+          snapshot: {
+            ...portfolioShellMock,
+            metrics: [
+              { label: "Account value", value: "$100.00", change: "1 open position" },
+              { label: "Trading balance", value: "$50.00", change: "$10.00 committed" },
+              { label: "Settled PnL", value: "+$5.00", change: "Redeemable $1.00" },
+            ],
+          },
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/api/portfolio?owner=${ownerB}`,
+        expect.objectContaining({ cache: "no-store" }),
+      );
+    });
+
+    await act(async () => {
+      ownerBResponse.resolve(
+        jsonResponse({
+          runtime: {
+            networkLabel: "Testnet",
+            sourceLabel: "Predict server",
+            sourceTone: "positive",
+          },
+          source: {
+            mode: "remote",
+            predictServerUrl: "https://predict.example.test",
+          },
+          snapshot: {
+            ...portfolioShellMock,
+            metrics: [
+              { label: "Account value", value: "$222.00", change: "2 open positions" },
+              { label: "Trading balance", value: "$120.00", change: "$20.00 committed" },
+              { label: "Settled PnL", value: "+$12.00", change: "Redeemable $2.00" },
+            ],
+          },
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("$222.00")).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      ownerAResponse.resolve(
+        jsonResponse({
+          runtime: {
+            networkLabel: "Testnet",
+            sourceLabel: "Predict server",
+            sourceTone: "positive",
+          },
+          source: {
+            mode: "remote",
+            predictServerUrl: "https://predict.example.test",
+          },
+          snapshot: {
+            ...portfolioShellMock,
+            metrics: [
+              { label: "Account value", value: "$111.00", change: "stale owner" },
+              { label: "Trading balance", value: "$80.00", change: "$10.00 committed" },
+              { label: "Settled PnL", value: "+$8.00", change: "Redeemable $1.00" },
+            ],
+          },
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("$222.00")).toBeInTheDocument();
+    expect(screen.queryByText("$111.00")).not.toBeInTheDocument();
+  });
+
+  it("resets owner-specific status messages when the wallet context changes", async () => {
+    const ownerA =
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const ownerB =
+      "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+    mockAccount = { address: ownerA };
+    mockClient = {
+      waitForTransaction: vi.fn(),
+      getObjects: vi.fn(),
+    };
+    mockDAppKit = {
+      signAndExecuteTransaction: vi.fn(),
+    };
+
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({
+          runtime: {
+            networkLabel: "Testnet",
+            sourceLabel: "Predict server",
+            sourceTone: "positive",
+          },
+          source: {
+            mode: "remote",
+            predictServerUrl: "https://predict.example.test",
+          },
+          snapshot: {
+            ...portfolioShellMock,
+            meta: {
+              ...portfolioShellMock.meta,
+              managerId: "0xmanager-a",
+              managerState: "ready",
+              managerCount: 1,
+            },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          runtime: {
+            networkLabel: "Testnet",
+            sourceLabel: "Predict server",
+            sourceTone: "positive",
+          },
+          source: {
+            mode: "remote",
+            predictServerUrl: "https://predict.example.test",
+          },
+          snapshot: {
+            ...portfolioShellMock,
+            meta: {
+              ...portfolioShellMock.meta,
+              managerId: "0xmanager-b",
+              managerState: "ready",
+              managerCount: 1,
+            },
+          },
+        }),
+      );
+
+    const view = render(
+      <PortfolioLiveShell
+        initialData={{
+          runtime: {
+            networkLabel: "Testnet",
+            sourceLabel: "Predict server",
+            sourceTone: "positive",
+          },
+          source: {
+            mode: "remote",
+            predictServerUrl: "https://predict.example.test",
+          },
+          snapshot: {
+            ...portfolioShellMock,
+            meta: {
+              ...portfolioShellMock.meta,
+              managerId: "0xmanager-a",
+              managerState: "ready",
+              managerCount: 1,
+            },
+          },
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /deposit/i }));
+    expect(screen.getByText("Enter an amount to deposit.")).toBeInTheDocument();
+
+    mockAccount = { address: ownerB };
+    view.rerender(
+      <PortfolioLiveShell
+        initialData={{
+          runtime: {
+            networkLabel: "Testnet",
+            sourceLabel: "Predict server",
+            sourceTone: "positive",
+          },
+          source: {
+            mode: "remote",
+            predictServerUrl: "https://predict.example.test",
+          },
+          snapshot: {
+            ...portfolioShellMock,
+            meta: {
+              ...portfolioShellMock.meta,
+              managerId: "0xmanager-a",
+              managerState: "ready",
+              managerCount: 1,
+            },
+          },
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/api/portfolio?owner=${ownerB}`,
+        expect.objectContaining({ cache: "no-store" }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("Enter an amount to deposit.")).not.toBeInTheDocument();
+    });
   });
 });

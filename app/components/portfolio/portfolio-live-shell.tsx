@@ -45,11 +45,14 @@ export function PortfolioLiveShell({ initialData }: PortfolioLiveShellProps) {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [walletBalanceValue, setWalletBalanceValue] = useState<string | null>(null);
   const [managerBalanceValue, setManagerBalanceValue] = useState<string | null>(null);
-  const syncedOwnerRef = useRef<string | null>(null);
+  const latestRefreshRequestRef = useRef(0);
+  const latestOwnerRef = useRef<string | null>(ownerAddress);
 
   const refreshPortfolioSnapshot = useCallback(
     async (overrideOwner?: string | null) => {
       const nextOwner = overrideOwner ?? ownerAddress;
+      const requestId = latestRefreshRequestRef.current + 1;
+      latestRefreshRequestRef.current = requestId;
       const search = nextOwner ? `?owner=${encodeURIComponent(nextOwner)}` : "";
       const response = await fetch(`/api/portfolio${search}`, {
         cache: "no-store",
@@ -60,25 +63,38 @@ export function PortfolioLiveShell({ initialData }: PortfolioLiveShellProps) {
       }
 
       const nextData = (await response.json()) as PortfolioPageData;
+      if (
+        requestId !== latestRefreshRequestRef.current ||
+        nextOwner !== latestOwnerRef.current
+      ) {
+        return false;
+      }
+
       setData(nextData);
+      return true;
     },
     [ownerAddress],
   );
+
+  useEffect(() => {
+    latestOwnerRef.current = ownerAddress;
+  }, [ownerAddress]);
 
   useEffect(() => {
     if (data.source.mode !== "remote") {
       return;
     }
 
-    if (syncedOwnerRef.current === ownerAddress) {
-      return;
-    }
-
-    syncedOwnerRef.current = ownerAddress;
     void refreshPortfolioSnapshot(ownerAddress).catch((error: unknown) => {
       console.error(error);
     });
   }, [data.source.mode, ownerAddress, refreshPortfolioSnapshot]);
+
+  useEffect(() => {
+    setAmountValue("");
+    setIsPending(false);
+    setStatusMessage(null);
+  }, [ownerAddress]);
 
   useEffect(() => {
     const meta = data.snapshot.meta;
@@ -90,6 +106,8 @@ export function PortfolioLiveShell({ initialData }: PortfolioLiveShellProps) {
     }
 
     let cancelled = false;
+    setWalletBalanceValue(null);
+    setManagerBalanceValue(null);
 
     const refreshLiveBalances = async () => {
       try {
