@@ -107,8 +107,9 @@ export function PortfolioLiveShell({ initialData }: PortfolioLiveShellProps) {
 
   useEffect(() => {
     const meta = data.snapshot.meta;
+    const quoteAsset = meta?.quoteAsset;
 
-    if (!client || !ownerAddress || !meta?.quoteAsset) {
+    if (!client || !ownerAddress || !quoteAsset) {
       setWalletBalanceValue(null);
       setManagerBalanceValue(null);
       return;
@@ -120,7 +121,7 @@ export function PortfolioLiveShell({ initialData }: PortfolioLiveShellProps) {
 
     const refreshLiveBalances = async () => {
       try {
-        const metadata = await readQuoteAssetMetadata(client, meta.quoteAsset);
+        const metadata = await readQuoteAssetMetadata(client, quoteAsset);
 
         let nextWalletBalanceValue: string | null = null;
         let nextManagerBalanceValue: string | null = null;
@@ -128,7 +129,7 @@ export function PortfolioLiveShell({ initialData }: PortfolioLiveShellProps) {
         try {
           const walletBalance = await readWalletQuoteBalance(client, {
             owner: ownerAddress,
-            coinType: meta.quoteAsset,
+            coinType: quoteAsset,
           });
           nextWalletBalanceValue = formatQuoteBalance(walletBalance, metadata);
         } catch {
@@ -139,7 +140,7 @@ export function PortfolioLiveShell({ initialData }: PortfolioLiveShellProps) {
           try {
             const managerBalance = await readManagerQuoteBalance(client, {
               managerId: meta.managerId,
-              coinType: meta.quoteAsset,
+              coinType: quoteAsset,
             });
             nextManagerBalanceValue = formatQuoteBalance(managerBalance, metadata);
           } catch {

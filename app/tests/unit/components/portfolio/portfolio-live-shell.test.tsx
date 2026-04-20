@@ -42,10 +42,10 @@ function jsonResponse(body: unknown) {
   });
 }
 
-function deferredResponse() {
-  let resolve!: (value: Response) => void;
+function deferredValue<T>() {
+  let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
-  const promise = new Promise<Response>((nextResolve, nextReject) => {
+  const promise = new Promise<T>((nextResolve, nextReject) => {
     resolve = nextResolve;
     reject = nextReject;
   });
@@ -263,8 +263,16 @@ describe("PortfolioLiveShell", () => {
       "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     const ownerB =
       "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-    const pendingConfirmation = deferredResponse();
-    const ownerBResponse = deferredResponse();
+    const pendingConfirmation = deferredValue<{
+      $kind: "Transaction";
+      Transaction: {
+        digest: string;
+        effects: {
+          changedObjects: [];
+        };
+      };
+    }>();
+    const ownerBResponse = deferredValue<Response>();
 
     mockAccount = { address: ownerA };
     mockDAppKit = {
@@ -731,8 +739,8 @@ describe("PortfolioLiveShell", () => {
       getObjects: vi.fn(),
     };
 
-    const ownerAResponse = deferredResponse();
-    const ownerBResponse = deferredResponse();
+    const ownerAResponse = deferredValue<Response>();
+    const ownerBResponse = deferredValue<Response>();
 
     fetchMock
       .mockReturnValueOnce(ownerAResponse.promise)
