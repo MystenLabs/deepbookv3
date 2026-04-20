@@ -60,6 +60,11 @@ public struct OracleActivated has copy, drop, store {
     spot_timestamp_ms: u64,
 }
 
+/// Most-accurate timestamp available for the settlement spot source:
+/// - Lazer settlement path: Pyth publisher's timestamp (`lazer_published_at_us / 1000`).
+/// - Operator settlement path: on-chain `clock.timestamp_ms()` (the operator
+///   signed this spot for this push, so the on-chain landing time is also the
+///   source-data time).
 public struct OracleSettled has copy, drop, store {
     oracle_id: ID,
     expiry: u64,
@@ -829,7 +834,7 @@ fun apply_lazer_spot(oracle: &mut OracleSVI, spot: u64, lazer_published_at_us: u
             oracle_id,
             expiry: oracle.expiry,
             settlement_price: spot,
-            spot_timestamp_ms: now,
+            spot_timestamp_ms: lazer_published_at_us / 1000,
         });
         return
     };
