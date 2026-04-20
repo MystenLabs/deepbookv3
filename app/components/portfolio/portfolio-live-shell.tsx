@@ -48,6 +48,11 @@ export function PortfolioLiveShell({ initialData }: PortfolioLiveShellProps) {
   const latestRefreshRequestRef = useRef(0);
   const latestOwnerRef = useRef<string | null>(ownerAddress);
 
+  const isCurrentOwner = useCallback(
+    (expectedOwner: string | null) => latestOwnerRef.current === expectedOwner,
+    [],
+  );
+
   const refreshPortfolioSnapshot = useCallback(
     async (overrideOwner?: string | null) => {
       const nextOwner = overrideOwner ?? ownerAddress;
@@ -169,6 +174,7 @@ export function PortfolioLiveShell({ initialData }: PortfolioLiveShellProps) {
       return;
     }
 
+    const actionOwner = account.address;
     const meta = data.snapshot.meta;
     const amount = parseUsdAmountInput(amountValue);
 
@@ -210,12 +216,24 @@ export function PortfolioLiveShell({ initialData }: PortfolioLiveShellProps) {
         }),
       );
 
+      await refreshPortfolioSnapshot(account.address);
+      if (!isCurrentOwner(actionOwner)) {
+        return;
+      }
+
       setStatusMessage("Funds deposited.");
       setAmountValue("");
-      await refreshPortfolioSnapshot(account.address);
     } catch (error) {
+      if (!isCurrentOwner(actionOwner)) {
+        return;
+      }
+
       setStatusMessage(formatActionError(error));
     } finally {
+      if (!isCurrentOwner(actionOwner)) {
+        return;
+      }
+
       setIsPending(false);
     }
   };
@@ -226,6 +244,7 @@ export function PortfolioLiveShell({ initialData }: PortfolioLiveShellProps) {
       return;
     }
 
+    const actionOwner = account.address;
     const meta = data.snapshot.meta;
     const amount = parseUsdAmountInput(amountValue);
 
@@ -255,12 +274,24 @@ export function PortfolioLiveShell({ initialData }: PortfolioLiveShellProps) {
         }),
       );
 
+      await refreshPortfolioSnapshot(account.address);
+      if (!isCurrentOwner(actionOwner)) {
+        return;
+      }
+
       setStatusMessage("Funds withdrawn.");
       setAmountValue("");
-      await refreshPortfolioSnapshot(account.address);
     } catch (error) {
+      if (!isCurrentOwner(actionOwner)) {
+        return;
+      }
+
       setStatusMessage(formatActionError(error));
     } finally {
+      if (!isCurrentOwner(actionOwner)) {
+        return;
+      }
+
       setIsPending(false);
     }
   };

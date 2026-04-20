@@ -258,6 +258,164 @@ describe("PortfolioLiveShell", () => {
     });
   });
 
+  it("ignores stale action completion UI updates after switching owners mid-withdraw", async () => {
+    const ownerA =
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const ownerB =
+      "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const pendingConfirmation = deferredResponse();
+
+    mockAccount = { address: ownerA };
+    mockDAppKit = {
+      signAndExecuteTransaction: vi.fn().mockResolvedValue({
+        $kind: "Transaction",
+        Transaction: {
+          digest: "0xwithdraw",
+        },
+      }),
+    };
+    mockClient = {
+      waitForTransaction: vi.fn().mockReturnValue(pendingConfirmation.promise),
+      getObjects: vi.fn(),
+    };
+
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({
+          runtime: {
+            networkLabel: "Testnet",
+            sourceLabel: "Predict server",
+            sourceTone: "positive",
+          },
+          source: {
+            mode: "remote",
+            predictServerUrl: "https://predict.example.test",
+          },
+          snapshot: {
+            ...portfolioShellMock,
+            meta: {
+              ...portfolioShellMock.meta,
+              managerId: "0xmanager-a",
+              managerState: "ready",
+            },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          runtime: {
+            networkLabel: "Testnet",
+            sourceLabel: "Predict server",
+            sourceTone: "positive",
+          },
+          source: {
+            mode: "remote",
+            predictServerUrl: "https://predict.example.test",
+          },
+          snapshot: {
+            ...portfolioShellMock,
+            meta: {
+              ...portfolioShellMock.meta,
+              managerId: "0xmanager-b",
+              managerState: "ready",
+            },
+          },
+        }),
+      );
+
+    const view = render(
+      <PortfolioLiveShell
+        initialData={{
+          runtime: {
+            networkLabel: "Testnet",
+            sourceLabel: "Predict server",
+            sourceTone: "positive",
+          },
+          source: {
+            mode: "remote",
+            predictServerUrl: "https://predict.example.test",
+          },
+          snapshot: {
+            ...portfolioShellMock,
+            meta: {
+              ...portfolioShellMock.meta,
+              managerId: "0xmanager-a",
+              managerState: "ready",
+            },
+          },
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(readManagerQuoteBalance).toHaveBeenCalled();
+    });
+
+    fireEvent.click(screen.getByRole("tab", { name: /withdraw/i }));
+    fireEvent.change(screen.getByLabelText(/transfer amount/i), {
+      target: { value: "250" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /withdraw/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Withdrawing funds...")).toBeInTheDocument();
+    });
+
+    mockAccount = { address: ownerB };
+    view.rerender(
+      <PortfolioLiveShell
+        initialData={{
+          runtime: {
+            networkLabel: "Testnet",
+            sourceLabel: "Predict server",
+            sourceTone: "positive",
+          },
+          source: {
+            mode: "remote",
+            predictServerUrl: "https://predict.example.test",
+          },
+          snapshot: {
+            ...portfolioShellMock,
+            meta: {
+              ...portfolioShellMock.meta,
+              managerId: "0xmanager-a",
+              managerState: "ready",
+            },
+          },
+        }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        `/api/portfolio?owner=${ownerB}`,
+        expect.objectContaining({ cache: "no-store" }),
+      );
+    });
+
+    fireEvent.click(screen.getByRole("tab", { name: /withdraw/i }));
+    fireEvent.change(screen.getByLabelText(/transfer amount/i), {
+      target: { value: "777" },
+    });
+
+    await act(async () => {
+      pendingConfirmation.resolve({
+        $kind: "Transaction",
+        Transaction: {
+          digest: "0xwithdraw",
+          effects: {
+            changedObjects: [],
+          },
+        },
+      });
+      await Promise.resolve();
+    });
+
+    expect(screen.queryByText("Funds withdrawn.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Withdrawing funds...")).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/transfer amount/i)).toHaveValue("777");
+  });
+
   it("shows live wallet and manager balances on the transfer rail in deposit mode", async () => {
     mockAccount = {
       address:
