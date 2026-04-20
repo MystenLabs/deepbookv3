@@ -9,7 +9,7 @@
 /// microsecond timestamp embedded in the payload.
 module deepbook_predict::lazer_helper;
 
-use deepbook_predict::math as predict_math;
+use deepbook_predict::{constants, math as predict_math};
 use pyth_lazer::{
     i16::{Self as lazer_i16, I16 as LazerI16},
     i64::{Self as lazer_i64, I64 as LazerI64},
@@ -70,7 +70,7 @@ fun normalize_pyth_price(price: LazerI64, exponent: LazerI16): u64 {
         lazer_i16::get_magnitude_if_positive(&exponent) as u64
     };
 
-    let target: u64 = 9;
+    let target = constants::float_scaling_decimals!();
 
     if (exp_is_neg) {
         if (exp_mag <= target) {
