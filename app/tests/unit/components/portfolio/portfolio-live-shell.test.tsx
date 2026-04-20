@@ -264,6 +264,7 @@ describe("PortfolioLiveShell", () => {
     const ownerB =
       "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
     const pendingConfirmation = deferredResponse();
+    const ownerBResponse = deferredResponse();
 
     mockAccount = { address: ownerA };
     mockDAppKit = {
@@ -301,27 +302,7 @@ describe("PortfolioLiveShell", () => {
           },
         }),
       )
-      .mockResolvedValueOnce(
-        jsonResponse({
-          runtime: {
-            networkLabel: "Testnet",
-            sourceLabel: "Predict server",
-            sourceTone: "positive",
-          },
-          source: {
-            mode: "remote",
-            predictServerUrl: "https://predict.example.test",
-          },
-          snapshot: {
-            ...portfolioShellMock,
-            meta: {
-              ...portfolioShellMock.meta,
-              managerId: "0xmanager-b",
-              managerState: "ready",
-            },
-          },
-        }),
-      );
+      .mockReturnValueOnce(ownerBResponse.promise);
 
     const view = render(
       <PortfolioLiveShell
@@ -409,6 +390,42 @@ describe("PortfolioLiveShell", () => {
         },
       });
       await Promise.resolve();
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      ownerBResponse.resolve(
+        jsonResponse({
+          runtime: {
+            networkLabel: "Testnet",
+            sourceLabel: "Predict server",
+            sourceTone: "positive",
+          },
+          source: {
+            mode: "remote",
+            predictServerUrl: "https://predict.example.test",
+          },
+          snapshot: {
+            ...portfolioShellMock,
+            meta: {
+              ...portfolioShellMock.meta,
+              managerId: "0xmanager-b",
+              managerState: "ready",
+            },
+            metrics: [
+              { label: "Account value", value: "$2,222.00", change: "3 open positions" },
+              { label: "Trading balance", value: "$1,000.00", change: "$300.00 committed" },
+              { label: "Settled PnL", value: "+$150.00", change: "Redeemable $40.00" },
+            ],
+          },
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("$2,222.00")).toBeInTheDocument();
     });
 
     expect(screen.queryByText("Funds withdrawn.")).not.toBeInTheDocument();

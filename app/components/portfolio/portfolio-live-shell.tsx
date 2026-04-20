@@ -56,6 +56,10 @@ export function PortfolioLiveShell({ initialData }: PortfolioLiveShellProps) {
   const refreshPortfolioSnapshot = useCallback(
     async (overrideOwner?: string | null) => {
       const nextOwner = overrideOwner ?? ownerAddress;
+      if (nextOwner !== latestOwnerRef.current) {
+        return false;
+      }
+
       const requestId = latestRefreshRequestRef.current + 1;
       latestRefreshRequestRef.current = requestId;
       const search = nextOwner ? `?owner=${encodeURIComponent(nextOwner)}` : "";
@@ -216,7 +220,11 @@ export function PortfolioLiveShell({ initialData }: PortfolioLiveShellProps) {
         }),
       );
 
-      await refreshPortfolioSnapshot(account.address);
+      if (!isCurrentOwner(actionOwner)) {
+        return;
+      }
+
+      await refreshPortfolioSnapshot(actionOwner);
       if (!isCurrentOwner(actionOwner)) {
         return;
       }
@@ -274,7 +282,11 @@ export function PortfolioLiveShell({ initialData }: PortfolioLiveShellProps) {
         }),
       );
 
-      await refreshPortfolioSnapshot(account.address);
+      if (!isCurrentOwner(actionOwner)) {
+        return;
+      }
+
+      await refreshPortfolioSnapshot(actionOwner);
       if (!isCurrentOwner(actionOwner)) {
         return;
       }
