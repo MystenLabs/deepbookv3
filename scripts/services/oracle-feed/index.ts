@@ -116,6 +116,7 @@ async function main(): Promise<void> {
     config.healthzPort,
     subscriber,
     state,
+    config,
     makeLogger("healthz"),
   );
   health.start();

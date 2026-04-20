@@ -90,6 +90,18 @@ describe("shouldRunManagerWindowNow", () => {
 
     expect(shouldRunManagerWindowNow(service, 9_000, 3_000)).toBe(false);
   });
+
+  it("returns true when an oracle is settled but not yet compacted", () => {
+    const service = state([oracle({ status: "settled" })]);
+
+    expect(shouldRunManagerWindowNow(service, 9_000, 3_000)).toBe(true);
+  });
+
+  it("returns false for an already-compacted oracle (no further manager work)", () => {
+    const service = state([oracle({ status: "compacted" })]);
+
+    expect(shouldRunManagerWindowNow(service, 9_000, 3_000)).toBe(false);
+  });
 });
 
 describe("pushTick", () => {

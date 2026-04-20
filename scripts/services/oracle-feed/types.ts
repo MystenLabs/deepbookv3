@@ -5,7 +5,12 @@ export type Tier = "15m" | "1h" | "1d" | "1w";
 export type OracleId = string;
 export type CapId = string;
 export type GasCoinId = string;
-export type OracleStatus = "inactive" | "active" | "pending_settlement" | "settled";
+export type OracleStatus =
+  | "inactive"
+  | "active"
+  | "pending_settlement"
+  | "settled"
+  | "compacted";
 
 export type OracleState = {
   id: OracleId;
@@ -57,7 +62,7 @@ export type LogEvent =
   | "service_started" | "service_shutdown" | "service_fatal"
   | "lanes_ready" | "caps_created"
   | "oracle_discovered" | "oracle_created" | "oracle_activated"
-  | "oracle_settled" | "oracle_compacted"
+  | "oracle_settled" | "oracle_compacted" | "oracle_skipped_compacted"
   | "tx_submitting" | "tx_submitted" | "tx_failed"
   | "tick_skipped_manager" | "tick_skipped_no_lane"
   | "tick_skipped_stale_prices" | "tick_skipped_empty"
@@ -65,4 +70,5 @@ export type LogEvent =
   | "manager_started" | "manager_finished"
   | "ws_connecting" | "ws_connected" | "ws_auth_ok" | "ws_subscribed"
   | "ws_subscribe_error" | "ws_reconnect" | "ws_frame_dropped"
+  | "vault_settled_fetch_failed"
   | "health_ok" | "health_degraded";

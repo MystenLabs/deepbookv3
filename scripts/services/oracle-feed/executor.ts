@@ -133,6 +133,12 @@ export async function pushTick(
   });
 }
 
+/// The `"settled"` branch intentionally only fires for oracles that still need
+/// compaction — once compacted they classify as `"compacted"` during discovery
+/// (see registry.ts:classifyStatus), which has no branch here and therefore no
+/// longer forces the manager window. If you ever add a `"compacted"` branch
+/// that returns true, the push path will starve again — that was the bug this
+/// code path was introduced to fix.
 export function shouldRunManagerWindowNow(
   state: ServiceState,
   now: number,
@@ -182,7 +188,7 @@ export async function runManagerWindow(
 
     const now = Date.now();
     const discovered = await discoverOracles(client, config, state.capIds, now, log);
-    reconcileLocalOracles(state, discovered);
+    reconcileLocalOracles(state, discovered, log);
 
     const lane0 = state.lanes[0];
 
@@ -228,6 +234,7 @@ export async function runManagerWindow(
 function reconcileLocalOracles(
   state: ServiceState,
   discovered: Map<string, OracleState>,
+  log: Logger,
 ): void {
   for (const [id, oracle] of discovered) {
     const existing = state.oracles.get(id);
@@ -241,6 +248,15 @@ function reconcileLocalOracles(
   for (const id of [...state.oracles.keys()]) {
     if (!discovered.has(id)) {
       state.oracles.delete(id);
+    }
+  }
+  // Already-compacted oracles have no further manager work and must not count
+  // toward `shouldRunManagerWindowNow`. Drop them from local state so the push
+  // path is free to run on the next tick.
+  for (const [id, oracle] of state.oracles) {
+    if (oracle.status === "compacted") {
+      state.oracles.delete(id);
+      log.info({ event: "oracle_skipped_compacted", oracleId: id });
     }
   }
 }

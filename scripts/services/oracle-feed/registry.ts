@@ -8,16 +8,79 @@ import type { CapId, OracleId, OracleState, OracleStatus } from "./types";
 import type { Logger } from "./logger";
 import { inferTier } from "./expiry";
 
-function classifyStatus(
+export function classifyStatus(
   active: boolean,
   expiryMs: number,
   settlementPriceOpt: number | null,
+  isCompacted: boolean,
   nowMs: number,
 ): OracleStatus {
+  // `compacted` must win over `settled`: once the vault has moved this oracle
+  // into `settled_oracles`, there is no further manager work to do — and
+  // classifying it as `settled` would make `shouldRunManagerWindowNow` keep
+  // the manager hot, starving the push path. See /Users/aslantashtanov/
+  // .claude/plans/let-s-plan-out-all-cheeky-acorn.md for the full history.
+  if (isCompacted) return "compacted";
   if (settlementPriceOpt !== null) return "settled";
   if (nowMs >= expiryMs) return "pending_settlement";
   if (!active) return "inactive";
   return "active";
+}
+
+/// Read the Vault's `settled_oracles` table to find every oracle that has
+/// already been compacted. Returns an empty set on RPC failure (caller falls
+/// back to the pre-fix classification) so the fix cannot make things worse
+/// than the current stall state when the network blips.
+export async function fetchCompactedOracleIds(
+  client: SuiJsonRpcClient,
+  predictId: string,
+  log: Logger,
+): Promise<Set<OracleId>> {
+  try {
+    const predict = await client.getObject({
+      id: predictId,
+      options: { showContent: true },
+    });
+    const content = predict.data?.content;
+    if (!content || content.dataType !== "moveObject") {
+      log.warn({ event: "vault_settled_fetch_failed", reason: "no_content" });
+      return new Set();
+    }
+    const fields = content.fields as Record<string, any>;
+    const settledTableId =
+      fields?.vault?.fields?.settled_oracles?.fields?.id?.id ?? null;
+    if (typeof settledTableId !== "string") {
+      log.warn({ event: "vault_settled_fetch_failed", reason: "no_table_id" });
+      return new Set();
+    }
+
+    const ids = new Set<OracleId>();
+    let cursor: string | null = null;
+    do {
+      const page = await client.getDynamicFields({
+        parentId: settledTableId,
+        cursor,
+      });
+      for (const field of page.data ?? []) {
+        // Table<ID, _> dynamic fields store the key under `name.value` as the
+        // oracle's object id string.
+        const name = field.name as { value?: unknown } | undefined;
+        const value = name?.value;
+        if (typeof value === "string") {
+          ids.add(value);
+        }
+      }
+      cursor = page.hasNextPage ? page.nextCursor ?? null : null;
+    } while (cursor);
+    return ids;
+  } catch (err) {
+    log.warn({
+      event: "vault_settled_fetch_failed",
+      reason: "rpc_error",
+      err: String(err),
+    });
+    return new Set();
+  }
 }
 
 /// Discover all oracles that any of the signer's caps can authorize. Reads
@@ -35,6 +98,11 @@ export async function discoverOracles(
     const idsForCap = await oracleIdsForCap(client, config, capId);
     for (const id of idsForCap) oracleIdSet.add(id);
   }
+
+  // Read Vault.settled_oracles up-front so classification can distinguish
+  // settled-not-yet-compacted from settled-and-already-compacted. On RPC
+  // failure we get an empty set and fall back to pre-fix behavior.
+  const compactedIds = await fetchCompactedOracleIds(client, config.predictId, log);
 
   const out = new Map<OracleId, OracleState>();
   const batchSize = 50;
@@ -59,6 +127,7 @@ export async function discoverOracles(
         parsed.active,
         parsed.expiryMs,
         parsed.settlementPriceOpt,
+        compactedIds.has(parsed.oracleId),
         nowMs,
       );
       out.set(parsed.oracleId, {

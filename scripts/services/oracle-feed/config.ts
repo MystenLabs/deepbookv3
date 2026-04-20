@@ -34,6 +34,10 @@ export type Config = {
   logLevel: string;
   pushTickMs: number;
   managerIntervalMs: number;
+  // Upper bound on how long `managerInFlight=true` is allowed to suppress the
+  // "stale push" signal in /healthz. If the manager is stuck looping, this
+  // still goes 503 once `now - lastPushMs` exceeds the grace.
+  managerGraceMs: number;
   priceCacheStaleMs: number;
   safetyWindowMs: number;
   healthzPort: number;
@@ -95,6 +99,16 @@ export function loadConfig(): Config {
     );
   }
 
+  const managerIntervalMs = process.env.MANAGER_INTERVAL_MS
+    ? Math.max(1_000, parseInt(process.env.MANAGER_INTERVAL_MS, 10))
+    : MANAGER_INTERVAL_MS;
+
+  // Default: two manager intervals, floor of 60s. Env override lets ops widen
+  // the grace if the deployment runs unusually long manager windows.
+  const managerGraceMs = process.env.MANAGER_GRACE_MS
+    ? Math.max(10_000, parseInt(process.env.MANAGER_GRACE_MS, 10))
+    : Math.max(60_000, 2 * managerIntervalMs);
+
   return {
     network,
     suiRpcUrl: process.env.RPC_URL ?? getJsonRpcFullnodeUrl(network),
@@ -122,7 +136,8 @@ export function loadConfig(): Config {
     gasPoolFloorSui: GAS_POOL_FLOOR_SUI,
     logLevel: process.env.LOG_LEVEL ?? "info",
     pushTickMs: PUSH_TICK_MS,
-    managerIntervalMs: MANAGER_INTERVAL_MS,
+    managerIntervalMs,
+    managerGraceMs,
     priceCacheStaleMs: PRICE_CACHE_STALE_MS,
     safetyWindowMs: SAFETY_WINDOW_MS,
     healthzPort: HEALTHZ_PORT,
