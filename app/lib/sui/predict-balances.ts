@@ -24,13 +24,27 @@ type ManagerObjectJson = {
 
 const USD_LIKE_SYMBOL_PATTERN = /usd/i;
 
+function unwrapFields<T>(value: T): T {
+  let current: unknown = value;
+
+  while (current && typeof current === "object" && "fields" in current) {
+    current = (current as { fields?: unknown }).fields;
+  }
+
+  return current as T;
+}
+
 function balanceTypeTag(coinType: string) {
   return `0x2::balance::Balance<${coinType}>`;
 }
 
 function readManagerBalanceBagId(json: unknown) {
-  const managerJson = json as ManagerObjectJson | null | undefined;
-  return managerJson?.balance_manager?.balances?.id?.id ?? null;
+  const managerJson = unwrapFields(json) as ManagerObjectJson | null | undefined;
+  const balanceManager = unwrapFields(managerJson?.balance_manager);
+  const balances = unwrapFields(balanceManager?.balances);
+  const id = unwrapFields(balances?.id);
+
+  return typeof id?.id === "string" ? id.id : null;
 }
 
 function readLittleEndianU64(bytes: Uint8Array) {
@@ -68,7 +82,7 @@ function formatCents(cents: bigint) {
   const whole = absolute / 100n;
   const fraction = (absolute % 100n).toString().padStart(2, "0");
 
-  return `${negative ? "-" : ""}$${formatWholeNumber(whole)}.${fraction}`;
+  return `${negative ? "-" : ""}${formatWholeNumber(whole)}.${fraction}`;
 }
 
 export async function readWalletQuoteBalance(
@@ -111,7 +125,7 @@ export function formatQuoteBalance(
   const formatted = formatCents(roundedCents);
 
   if (USD_LIKE_SYMBOL_PATTERN.test(metadata.symbol)) {
-    return formatted;
+    return `$${formatted}`;
   }
 
   return `${formatted} ${metadata.symbol}`;

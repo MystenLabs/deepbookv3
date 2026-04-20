@@ -64,6 +64,50 @@ describe("predict-balances", () => {
     ).resolves.toBe(1000000n);
   });
 
+  it("reads a manager quote balance when the manager JSON uses fields wrappers", async () => {
+    const client = {
+      getObject: vi.fn().mockResolvedValue({
+        object: {
+          json: {
+            fields: {
+              balance_manager: {
+                fields: {
+                  balances: {
+                    fields: {
+                      id: {
+                        fields: {
+                          id: "0xbag",
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      }),
+      listDynamicFields: vi.fn().mockResolvedValue({
+        dynamicFields: [
+          {
+            valueType: "0x2::balance::Balance<0x2::usd::USD>",
+            value: {
+              type: "0x2::balance::Balance<0x2::usd::USD>",
+              bcs: new Uint8Array([64, 66, 15, 0, 0, 0, 0, 0]),
+            },
+          },
+        ],
+      }),
+    };
+
+    await expect(
+      readManagerQuoteBalance(client as never, {
+        managerId: "0xmanager",
+        coinType: "0x2::usd::USD",
+      }),
+    ).resolves.toBe(1000000n);
+  });
+
   it("returns zero when the manager bag has no matching quote balance", async () => {
     const client = {
       getObject: vi.fn().mockResolvedValue({
@@ -92,28 +136,27 @@ describe("predict-balances", () => {
     ).resolves.toBe(0n);
   });
 
-  it("formats quote balances with metadata and falls back to the type symbol", async () => {
+  it("falls back to the type symbol when coin metadata is missing", async () => {
     const client = {
       getCoinMetadata: vi.fn().mockResolvedValue({
-        coinMetadata: {
-          id: "0xmeta",
-          decimals: 6,
-          name: "Dollar",
-          symbol: "USDs",
-          description: "",
-          iconUrl: null,
-        },
+        coinMetadata: null,
       }),
     };
 
     await expect(
       readQuoteAssetMetadata(client as never, "0x2::usd::USD"),
     ).resolves.toEqual({
-      decimals: 6,
-      symbol: "USDs",
+      decimals: 0,
+      symbol: "USD",
     });
+  });
 
+  it("formats non-USD balances without a dollar prefix", () => {
+    expect(formatQuoteBalance(123450000n, { decimals: 6, symbol: "SUI" })).toBe("123.45 SUI");
+    expect(formatQuoteBalance(null, { decimals: 6, symbol: "SUI" })).toBe("—");
+  });
+
+  it("formats USD-like balances with a dollar prefix", () => {
     expect(formatQuoteBalance(123450000n, { decimals: 6, symbol: "USDs" })).toBe("$123.45");
-    expect(formatQuoteBalance(null, { decimals: 6, symbol: "USDs" })).toBe("—");
   });
 });
