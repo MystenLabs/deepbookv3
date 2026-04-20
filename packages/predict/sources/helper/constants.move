@@ -43,7 +43,7 @@ public macro fun default_max_ask_price(): u64 { 990_000_000 }
 public macro fun ms_per_year(): u64 { 31_536_000_000 }
 
 /// Default spot halt-gate threshold (3 seconds).
-/// With the operator's 1s `update_basis` cadence, a 3s gate lets the fallback
+/// With the operator's 1s `update_prices` cadence, a 3s gate lets the fallback
 /// path carry the oracle through arbitrary-length Lazer outages while still
 /// halting within 3s when both feeds go silent.
 public macro fun default_spot_staleness_threshold_ms(): u64 { 3_000 }
@@ -52,7 +52,7 @@ public macro fun default_spot_staleness_threshold_ms(): u64 { 3_000 }
 /// Consumed by `update_spot_from_lazer` (refuses to derive a forward against
 /// a stale basis) and by `oracle_config::assert_live_oracle` /
 /// `assert_quoteable_oracle` (refuses to quote against a stale basis).
-/// Generous vs. the operator's 1s `update_basis` cadence.
+/// Generous vs. the operator's 1s `update_prices` cadence.
 public macro fun default_basis_staleness_threshold_ms(): u64 { 60_000 }
 
 /// Hard upper bound (60s) for the oracle and basis staleness thresholds.
@@ -62,7 +62,7 @@ public macro fun max_staleness_threshold_ms(): u64 { 60_000 }
 
 /// Default window within which the last Pyth Lazer spot push is treated as
 /// the authoritative master spot (2 seconds). While Lazer is within this
-/// window, `update_basis` refreshes basis/forward but does NOT overwrite
+/// window, `update_prices` refreshes basis/forward but does NOT overwrite
 /// `oracle.prices.spot`. Beyond it, the operator's spot flows through as a
 /// fallback. Independent of `default_spot_staleness_threshold_ms!()` (the hard
 /// halt gate) which is always checked on top.
@@ -71,7 +71,7 @@ public macro fun default_lazer_authoritative_threshold_ms(): u64 { 2_000 }
 /// Default window within which Lazer's last spot push is treated as the
 /// authoritative settlement source (60 seconds). Longer than the live-update
 /// window because settlement is irreversible — gate the terminal
-/// `update_basis` settlement branch so the operator can't race-freeze while
+/// `update_prices` settlement branch so the operator can't race-freeze while
 /// Lazer is still credibly the settlement oracle. Matches
 /// `max_staleness_threshold_ms!()` so settlement patience maxes at the same
 /// ceiling admin can choose for other staleness windows.
@@ -79,14 +79,14 @@ public macro fun default_lazer_settlement_authoritative_threshold_ms(): u64 { 60
 
 // === Basis Circuit Breaker ===
 
-/// Default maximum per-push spot deviation accepted by `update_basis`
+/// Default maximum per-push spot deviation accepted by `update_prices`
 /// (2% in FLOAT_SCALING). Catches decimal errors, fat-finger pushes, and
 /// BS outages that return garbage values. Admin can override per asset
 /// via `registry::set_asset_basis_bounds` for assets with different
 /// volatility profiles.
 public macro fun default_max_spot_deviation(): u64 { 20_000_000 }
 
-/// Default maximum per-push basis deviation accepted by `update_basis`
+/// Default maximum per-push basis deviation accepted by `update_prices`
 /// (2% in FLOAT_SCALING). Basis = forward / spot moves slowly relative
 /// to spot; a large per-push move is always suspicious. Tighter than
 /// the absolute `[min_basis, max_basis]` bounds so a single push can't

@@ -7,7 +7,7 @@
 /// circuit-breaker bounds, per-oracle strike grids, and per-oracle ask-bound
 /// overrides. At oracle creation the thresholds + per-asset bounds are
 /// snapshotted into an `OracleBounds` on the oracle itself
-/// (`build_oracle_bounds`), so post-creation `oracle::update_basis` and
+/// (`build_oracle_bounds`), so post-creation `oracle::update_prices` and
 /// `oracle::update_spot_from_lazer` never need to read from Predict.
 module deepbook_predict::oracle_config;
 

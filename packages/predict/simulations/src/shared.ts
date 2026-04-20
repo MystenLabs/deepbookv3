@@ -2,10 +2,10 @@ import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
-export type ActionName = "update_basis" | "update_svi" | "mint";
+export type ActionName = "update_prices" | "update_svi" | "mint";
 
 export type ScenarioRow =
-  | { action: "update_basis"; spot: bigint; forward: bigint }
+  | { action: "update_prices"; spot: bigint; forward: bigint }
   | {
       action: "update_svi";
       a: bigint;
@@ -78,7 +78,7 @@ function resolveInstanceDir(): string {
 }
 
 function isActionName(value: string): value is ActionName {
-  return value === "update_basis" || value === "update_svi" || value === "mint";
+  return value === "update_prices" || value === "update_svi" || value === "mint";
 }
 
 function requireField(row: RawScenarioRow, field: string, lineNumber: number): string {
@@ -119,7 +119,7 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
     throw new Error(`Scenario line ${lineNumber}: unsupported action "${action}"`);
   }
 
-  if (action === "update_basis") {
+  if (action === "update_prices") {
     return {
       action,
       spot: parseUnsignedInteger(row, "spot", lineNumber),

@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 MIST_PER_SUI = 1_000_000_000
-REQUIRED_ACTIONS = ("update_basis", "update_svi", "mint")
+REQUIRED_ACTIONS = ("update_prices", "update_svi", "mint")
 
 
 def load_results(path: str) -> dict:

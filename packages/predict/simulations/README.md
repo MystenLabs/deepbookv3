@@ -39,7 +39,7 @@ npm run analyze -- runs/<run-id>/artifacts/results.json
 `results.json` uses schema `results_v2`:
 
 - `summary.totalTxs`
-- `summary.byAction.{update_basis,update_svi,mint}`
+- `summary.byAction.{update_prices,update_svi,mint}`
 - `mints[]`
 
 Each action summary has `count`, `gas.{avg,min,max}`, and `wallMs.{avg,min,max}`.

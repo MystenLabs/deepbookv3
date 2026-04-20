@@ -262,7 +262,7 @@ public fun set_basis_staleness_threshold_ms(
 }
 
 /// Set the Lazer-authoritative window (ms). While the last Pyth Lazer spot
-/// push is within this window, operator `update_basis` calls refresh basis
+/// push is within this window, operator `update_prices` calls refresh basis
 /// and forward but leave `oracle.prices.spot` alone.
 public fun set_lazer_authoritative_threshold_ms(
     predict: &mut Predict,
@@ -273,7 +273,7 @@ public fun set_lazer_authoritative_threshold_ms(
 }
 
 /// Set the Lazer-settlement-authoritative window (ms). While Lazer has
-/// pushed within this window, operator `update_basis` cannot race-freeze
+/// pushed within this window, operator `update_prices` cannot race-freeze
 /// the terminal settlement price — it aborts and defers to Lazer. Beyond
 /// the window (or when Lazer has never pushed), operator settlement is the
 /// fallback.

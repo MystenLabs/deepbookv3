@@ -82,7 +82,7 @@ function summarizeRows(rows: ExecutionResult[]): ActionSummary {
 function buildResultsFile(byAction: Record<ActionName, ExecutionResult[]>): ResultsFile {
   const summaryByAction: ResultsFile["summary"]["byAction"] = {};
 
-  for (const action of ["update_basis", "update_svi", "mint"] as const) {
+  for (const action of ["update_prices", "update_svi", "mint"] as const) {
     if (byAction[action].length > 0) {
       summaryByAction[action] = summarizeRows(byAction[action]);
     }
@@ -91,7 +91,7 @@ function buildResultsFile(byAction: Record<ActionName, ExecutionResult[]>): Resu
   return {
     schema_version: RESULTS_SCHEMA_VERSION,
     summary: {
-      totalTxs: byAction.update_basis.length + byAction.update_svi.length + byAction.mint.length,
+      totalTxs: byAction.update_prices.length + byAction.update_svi.length + byAction.mint.length,
       byAction: summaryByAction,
     },
     mints: byAction.mint,
@@ -186,7 +186,7 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
   console.log(`[${ts()}] --- Executing ${rows.length} actions ---\n`);
 
   const byAction: Record<ActionName, ExecutionResult[]> = {
-    update_basis: [],
+    update_prices: [],
     update_svi: [],
     mint: [],
   };
@@ -199,7 +199,7 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
     const nextRow = i + 1 < rows.length ? rows[i + 1] : null;
     const nextNextRow = i + 2 < rows.length ? rows[i + 2] : null;
     if (
-      row.action === "update_basis" &&
+      row.action === "update_prices" &&
       nextRow?.action === "update_svi" &&
       nextNextRow?.action === "mint"
     ) {
@@ -240,12 +240,12 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
       continue;
     }
 
-    if (row.action === "update_basis") {
+    if (row.action === "update_prices") {
       const gas = await execute(
         () => updateBasisTx(state.oracleId, state.oracleCapId, row.spot, row.forward),
-        "update_basis"
+        "update_prices"
       );
-      byAction.update_basis.push({ wallMs: performance.now() - startedAt, ...gas });
+      byAction.update_prices.push({ wallMs: performance.now() - startedAt, ...gas });
       i++;
       continue;
     }

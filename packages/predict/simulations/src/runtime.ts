@@ -175,7 +175,7 @@ export function updateBasisTx(
 ): Transaction {
   const tx = new Transaction();
   tx.moveCall({
-    target: target("oracle", "update_basis"),
+    target: target("oracle", "update_prices"),
     arguments: [
       tx.object(oracleId),
       tx.object(oracleCapId),
@@ -325,7 +325,7 @@ export function refreshOracleAndMintTx(params: {
 }): Transaction {
   const tx = new Transaction();
   tx.moveCall({
-    target: target("oracle", "update_basis"),
+    target: target("oracle", "update_prices"),
     arguments: [
       tx.object(params.oracleId),
       tx.object(params.oracleCapId),

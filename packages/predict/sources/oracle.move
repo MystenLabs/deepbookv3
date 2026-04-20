@@ -88,7 +88,7 @@ public struct OracleSpotUpdatedFromLazer has copy, drop, store {
     spot_timestamp_ms: u64,
 }
 
-/// Emitted when `update_basis` finds Lazer stale and the operator spot takes
+/// Emitted when `update_prices` finds Lazer stale and the operator spot takes
 /// over the master spot. Indexers can track Lazer outages off this event.
 public struct OracleSpotFallbackEngaged has copy, drop, store {
     oracle_id: ID,
@@ -138,7 +138,7 @@ public struct SVIParams has copy, drop, store {
 public struct PriceData has copy, drop, store {
     /// Current spot price of the underlying
     spot: u64,
-    /// Cached forward/spot carry ratio from the most recent `update_basis`.
+    /// Cached forward/spot carry ratio from the most recent `update_prices`.
     /// Consumed by `update_spot_from_lazer` to rederive forward when a new
     /// spot arrives without recomputing the ratio (which would compound
     /// integer-division rounding).
@@ -148,7 +148,7 @@ public struct PriceData has copy, drop, store {
 /// Per-oracle staleness thresholds and basis circuit-breaker bounds. Snapshot
 /// at `create_oracle` from the admin-tuned configuration on
 /// `Predict.oracle_config`; tuned post-creation by the oracle's operator via
-/// `OracleSVICap`-authorized setters. Consumed by `update_basis`,
+/// `OracleSVICap`-authorized setters. Consumed by `update_prices`,
 /// `update_spot_from_lazer`, `assert_live_oracle`, and
 /// `assert_quoteable_oracle`.
 public struct OracleBounds has copy, drop, store {
@@ -161,7 +161,7 @@ public struct OracleBounds has copy, drop, store {
     basis_staleness_threshold_ms: u64,
     /// Window (ms) within which Pyth Lazer's last spot push is treated as the
     /// authoritative master spot. While Lazer is within this window,
-    /// `update_basis` refreshes basis/forward but does NOT overwrite
+    /// `update_prices` refreshes basis/forward but does NOT overwrite
     /// `prices.spot`. Beyond it, the operator's spot flows through as a
     /// fallback. Independent of `spot_staleness_threshold_ms` (the hard halt
     /// gate, always checked on top).
@@ -169,7 +169,7 @@ public struct OracleBounds has copy, drop, store {
     /// Window (ms) within which Lazer's last push freezes settlement
     /// authoritatively. Longer than `lazer_authoritative_threshold_ms` because
     /// settlement is irreversible — while Lazer is within this window,
-    /// `update_basis`'s terminal-settlement branch aborts with
+    /// `update_prices`'s terminal-settlement branch aborts with
     /// `ELazerAuthoritativeAtExpiry` so Lazer can land the settlement price.
     /// Beyond the window (or when Lazer has never pushed) the operator's spot
     /// is accepted as the settlement fallback.
@@ -207,19 +207,19 @@ public struct OracleSVI has key {
     /// SVI volatility surface parameters (low frequency updates)
     svi: SVIParams,
     /// Clock ms of the most recent update to `prices.spot`. Bumped by
-    /// `apply_lazer_spot` always, and by `update_basis` only when the
+    /// `apply_lazer_spot` always, and by `update_prices` only when the
     /// operator is falling back in because Lazer has gone stale. Consumed
     /// by `assert_live_oracle` / `assert_quoteable_oracle` as the hard
     /// spot-staleness halt gate.
     spot_timestamp_ms: u64,
     /// Clock ms of the most recent successful `apply_lazer_spot` call. Used
-    /// by `update_basis` to decide whether Lazer currently owns the master
+    /// by `update_prices` to decide whether Lazer currently owns the master
     /// spot: while `now <= lazer_spot_timestamp_ms +
     /// lazer_authoritative_threshold_ms`, operator pushes update
     /// basis/forward but leave `prices.spot` alone. Zero until the first
     /// Lazer push lands.
     lazer_spot_timestamp_ms: u64,
-    /// Clock ms of the most recent `update_basis`. Gates how stale the
+    /// Clock ms of the most recent `update_prices`. Gates how stale the
     /// cached basis can be before `update_spot_from_lazer` refuses to
     /// rederive a forward against it, and before the live/quoteable asserts
     /// permit quoting. Enforces operator liveness independent of Lazer
@@ -276,7 +276,7 @@ public fun activate(oracle: &mut OracleSVI, cap: &OracleSVICap, clock: &Clock) {
 ///
 /// If at or past expiry and not yet settled, freezes settlement price and
 /// deactivates. Settled oracles reject further updates.
-public fun update_basis(
+public fun update_prices(
     oracle: &mut OracleSVI,
     cap: &OracleSVICap,
     spot: u64,
@@ -426,7 +426,7 @@ public fun forward_price(oracle: &OracleSVI): u64 {
 }
 
 /// Get the cached basis ratio (forward / spot) from the most recent
-/// `update_basis`. Zero until the first operator push lands.
+/// `update_prices`. Zero until the first operator push lands.
 public(package) fun basis(oracle: &OracleSVI): u64 {
     oracle.prices.basis
 }
@@ -481,7 +481,7 @@ public(package) fun lazer_spot_timestamp_ms(oracle: &OracleSVI): u64 {
     oracle.lazer_spot_timestamp_ms
 }
 
-/// Get the on-chain clock ms of the most recent `update_basis` call.
+/// Get the on-chain clock ms of the most recent `update_prices` call.
 public(package) fun basis_timestamp_ms(oracle: &OracleSVI): u64 {
     oracle.basis_timestamp_ms
 }
@@ -617,7 +617,7 @@ public fun set_lazer_authoritative_threshold_ms(
 }
 
 /// Tune the window within which Lazer's last spot push freezes settlement
-/// authoritatively (gates the terminal `update_basis` settlement branch).
+/// authoritatively (gates the terminal `update_prices` settlement branch).
 /// Authorized by `OracleSVICap`. Bounded by
 /// `constants::max_staleness_threshold_ms!()` (60s).
 public fun set_lazer_settlement_authoritative_threshold_ms(
@@ -631,7 +631,7 @@ public fun set_lazer_settlement_authoritative_threshold_ms(
     oracle.emit_bounds_updated();
 }
 
-/// Tune the four circuit-breaker values applied on every `update_basis`.
+/// Tune the four circuit-breaker values applied on every `update_prices`.
 /// Authorized by `OracleSVICap`. Validates `min_basis < max_basis` and that
 /// both deviation fractions fit within 1.0 (1e9 scale).
 public fun set_basis_bounds(
@@ -865,7 +865,7 @@ fun assert_fresh(oracle: &OracleSVI, clock: &Clock) {
     );
 }
 
-/// Circuit-breaker guard called at the head of `update_basis` before any
+/// Circuit-breaker guard called at the head of `update_prices` before any
 /// state mutation. Rejects obviously-bad operator pushes (decimal errors,
 /// fat-finger values, BS outages returning garbage):
 ///

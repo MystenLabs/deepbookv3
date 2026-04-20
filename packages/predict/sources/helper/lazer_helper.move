@@ -21,8 +21,7 @@ use pyth_lazer::{
 const ELazerFeedNotFound: u64 = 0;
 const ELazerPriceUnavailable: u64 = 1;
 const ELazerNegativePrice: u64 = 2;
-const ELazerExponentOutOfRange: u64 = 3;
-const ELazerPriceOverflow: u64 = 4;
+const ELazerPriceOverflow: u64 = 3;
 
 // === Public Functions ===
 
@@ -57,8 +56,9 @@ public fun extract_spot(update: &LazerUpdate, feed_id: u32): (u64, u64) {
 
 /// Convert a Pyth Lazer `(price, exponent)` pair to the predict package's
 /// 1e9-scaled u64. Target scaling is `price_1e9 = magnitude * 10^(exponent + 9)`.
-/// Aborts on negative price (crypto spot is always positive) or on a shift
-/// magnitude > 18 (10^19 overflows u64; real feeds use exponents in [-12, -4]).
+/// Aborts on negative price (crypto spot is always positive). Shift bounds
+/// are enforced inside `predict_math::pow10` (real feeds use exponents in
+/// [-12, -4], so shifts stay well within u64).
 fun normalize_pyth_price(price: LazerI64, exponent: LazerI16): u64 {
     assert!(!lazer_i64::get_is_negative(&price), ELazerNegativePrice);
     let magnitude = lazer_i64::get_magnitude_if_positive(&price);
@@ -74,18 +74,12 @@ fun normalize_pyth_price(price: LazerI64, exponent: LazerI16): u64 {
 
     if (exp_is_neg) {
         if (exp_mag <= target) {
-            let shift = target - exp_mag;
-            assert!(shift <= 18, ELazerExponentOutOfRange);
-            checked_scale_up(magnitude, shift)
+            checked_scale_up(magnitude, target - exp_mag)
         } else {
-            let shift = exp_mag - target;
-            assert!(shift <= 18, ELazerExponentOutOfRange);
-            magnitude / predict_math::pow10(shift)
+            magnitude / predict_math::pow10(exp_mag - target)
         }
     } else {
-        let shift = target + exp_mag;
-        assert!(shift <= 18, ELazerExponentOutOfRange);
-        checked_scale_up(magnitude, shift)
+        checked_scale_up(magnitude, target + exp_mag)
     }
 }
 
