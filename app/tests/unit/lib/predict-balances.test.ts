@@ -146,7 +146,7 @@ describe("predict-balances", () => {
     await expect(
       readQuoteAssetMetadata(client as never, "0x2::usd::USD"),
     ).resolves.toEqual({
-      decimals: 0,
+      decimals: 6,
       symbol: "USD",
     });
   });

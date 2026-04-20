@@ -108,7 +108,7 @@ export async function readQuoteAssetMetadata(
   const metadata = response.coinMetadata;
 
   return {
-    decimals: metadata?.decimals ?? 0,
+    decimals: metadata?.decimals ?? 6,
     symbol: metadata?.symbol || typeTagSymbol(coinType),
   };
 }
