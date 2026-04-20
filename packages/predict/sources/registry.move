@@ -21,6 +21,7 @@ use sui::{clock::Clock, coin::TreasuryCap, coin_registry::Currency, event, table
 const EPredictAlreadyCreated: u64 = 0;
 const EInvalidTickSize: u64 = 1;
 const EInvalidStrikeGrid: u64 = 2;
+const EFeedIdOverflow: u64 = 3;
 
 // === Events ===
 
@@ -32,6 +33,7 @@ public struct OracleCreated has copy, drop, store {
     oracle_id: ID,
     oracle_cap_id: ID,
     underlying_asset: String,
+    pyth_lazer_feed_id: u64,
     expiry: u64,
     min_strike: u64,
     tick_size: u64,
@@ -101,10 +103,17 @@ public fun create_oracle_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): Oracle
 }
 
 /// Create a new Oracle. Returns the oracle ID.
+///
+/// Authorized by the operator's `OracleSVICap` alone — no `AdminCap` needed.
+/// The cap is minted by admin via `create_oracle_cap`, so admin still gates
+/// who can create oracles. The cap is authorized on the new oracle
+/// automatically so the creator can immediately activate and push updates.
+/// The Pyth Lazer feed id is inferred from `underlying_asset` via the admin-
+/// registered `asset → feed_id` mapping; admin must call `set_asset_feed_id`
+/// at least once per underlying before its first oracle can be created.
 public fun create_oracle(
     registry: &mut Registry,
     predict: &mut Predict,
-    _admin_cap: &AdminCap,
     cap: &OracleSVICap,
     underlying_asset: String,
     expiry: u64,
@@ -113,7 +122,19 @@ public fun create_oracle(
     ctx: &mut TxContext,
 ): ID {
     assert_valid_strike_grid(min_strike, tick_size);
-    let oracle_id = oracle::create_oracle(underlying_asset, expiry, ctx);
+    let pyth_lazer_feed_id = predict.resolve_feed_id(underlying_asset);
+    // Narrow to `u32` for the Lazer-binding leaf. Config stores `u64` for
+    // cross-field consistency, but the Pyth Lazer feed-id width is `u32`.
+    assert!(pyth_lazer_feed_id <= 0xFFFF_FFFF, EFeedIdOverflow);
+    let bounds = predict.build_oracle_bounds(underlying_asset);
+    let oracle_id = oracle::create_oracle(
+        underlying_asset,
+        pyth_lazer_feed_id as u32,
+        expiry,
+        bounds,
+        cap,
+        ctx,
+    );
     let cap_id = object::id(cap);
 
     if (!registry.oracle_ids.contains(cap_id)) {
@@ -125,6 +146,7 @@ public fun create_oracle(
         oracle_id,
         oracle_cap_id: cap_id,
         underlying_asset,
+        pyth_lazer_feed_id,
         expiry,
         min_strike,
         tick_size,
@@ -223,6 +245,84 @@ public fun enable_withdrawal_limiter(predict: &mut Predict, _admin_cap: &AdminCa
 /// Disable the withdrawal rate limiter.
 public fun disable_withdrawal_limiter(predict: &mut Predict, _admin_cap: &AdminCap) {
     predict.disable_withdrawal_limiter();
+}
+
+/// Set the oracle staleness threshold (ms).
+public fun set_staleness_threshold_ms(predict: &mut Predict, _admin_cap: &AdminCap, value: u64) {
+    predict.set_staleness_threshold_ms(value);
+}
+
+/// Set the basis staleness threshold (ms).
+public fun set_basis_staleness_threshold_ms(
+    predict: &mut Predict,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    predict.set_basis_staleness_threshold_ms(value);
+}
+
+/// Set the Lazer-authoritative window (ms). While the last Pyth Lazer spot
+/// push is within this window, operator `update_prices` calls refresh basis
+/// and forward but leave `oracle.prices.spot` alone.
+public fun set_lazer_authoritative_threshold_ms(
+    predict: &mut Predict,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    predict.set_lazer_authoritative_threshold_ms(value);
+}
+
+/// Set the Lazer-settlement-authoritative window (ms). While Lazer has
+/// pushed within this window, operator `update_prices` cannot race-freeze
+/// the terminal settlement price — it aborts and defers to Lazer. Beyond
+/// the window (or when Lazer has never pushed), operator settlement is the
+/// fallback.
+public fun set_lazer_settlement_authoritative_threshold_ms(
+    predict: &mut Predict,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    predict.set_lazer_settlement_authoritative_threshold_ms(value);
+}
+
+/// Update the circuit-breaker bounds seed used by
+/// `oracle_config::build_oracle_bounds` at the next matching `create_oracle`
+/// for `asset` (e.g. "BTC"). `max_spot_deviation` and `max_basis_deviation`
+/// are per-push percent caps (1e9-scaled); `min_basis` / `max_basis` are
+/// absolute bounds on `forward / spot`. Does NOT retroactively update
+/// existing oracles — operators retune per-oracle via
+/// `oracle::set_basis_bounds`.
+public fun set_asset_basis_bounds(
+    predict: &mut Predict,
+    _admin_cap: &AdminCap,
+    asset: String,
+    max_spot_deviation: u64,
+    max_basis_deviation: u64,
+    min_basis: u64,
+    max_basis: u64,
+) {
+    predict.set_asset_basis_bounds(
+        asset,
+        max_spot_deviation,
+        max_basis_deviation,
+        min_basis,
+        max_basis,
+    );
+}
+
+/// Bind `asset → pyth_lazer_feed_id` so subsequent `create_oracle` calls for
+/// that underlying resolve the feed id from config instead of taking it as a
+/// PTB arg. Admin must register an entry before the first oracle for a new
+/// asset can be created; re-registering updates the mapping but does NOT
+/// retroactively change existing oracles — they keep the feed id snapshotted
+/// at their own creation time.
+public fun set_asset_feed_id(
+    predict: &mut Predict,
+    _admin_cap: &AdminCap,
+    asset: String,
+    pyth_lazer_feed_id: u64,
+) {
+    predict.set_asset_feed_id(asset, pyth_lazer_feed_id);
 }
 
 // === Private Functions ===
