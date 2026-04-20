@@ -15,7 +15,8 @@ use deepbook_predict::{
     constants,
     market_key::MarketKey,
     oracle::{Self, OracleBounds, OracleSVI, OracleSVICap},
-    range_key::RangeKey
+    range_key::RangeKey,
+    tuning_constants
 };
 use std::string::String;
 use sui::table::{Self, Table};
@@ -65,7 +66,7 @@ public struct OracleConfig has store {
     oracle_ask_bounds: Table<ID, AskBounds>,
     /// Per-underlying-asset basis circuit-breaker bounds. Looked up by the
     /// oracle's `underlying_asset` at `create_oracle`; assets with no entry
-    /// fall back to the `constants::default_*!()` basis-bound macros.
+    /// fall back to the `tuning_constants::default_*!()` basis-bound macros.
     asset_basis_bounds: Table<String, BasisBounds>,
     /// Per-underlying-asset Pyth Lazer feed ids. Admin must register an entry
     /// before `create_oracle` can be called for that asset; the feed id is
@@ -139,7 +140,7 @@ public(package) fun lazer_settlement_authoritative_threshold_ms(oracle_config: &
 }
 
 /// Per-asset basis bounds currently registered for `asset`, or `None` if the
-/// asset would fall back to the `constants::default_*!()` basis-bound macros
+/// asset would fall back to the `tuning_constants::default_*!()` basis-bound macros
 /// at `create_oracle`.
 public(package) fun asset_basis_bounds(
     oracle_config: &OracleConfig,
@@ -188,7 +189,7 @@ public(package) fun basis_bounds_max_basis(bounds: &BasisBounds): u64 {
     bounds.max_basis
 }
 
-/// Create a new oracle-config registry seeded with the `constants::default_*!()`
+/// Create a new oracle-config registry seeded with the `tuning_constants::default_*!()`
 /// staleness thresholds. `asset_basis_bounds` starts empty; any asset without
 /// an explicit entry falls back to `default_basis_bounds()` at creation.
 public(package) fun new(ctx: &mut TxContext): OracleConfig {
@@ -197,16 +198,16 @@ public(package) fun new(ctx: &mut TxContext): OracleConfig {
         oracle_ask_bounds: table::new(ctx),
         asset_basis_bounds: table::new(ctx),
         asset_feed_ids: table::new(ctx),
-        spot_staleness_threshold_ms: constants::default_spot_staleness_threshold_ms!(),
-        basis_staleness_threshold_ms: constants::default_basis_staleness_threshold_ms!(),
-        lazer_authoritative_threshold_ms: constants::default_lazer_authoritative_threshold_ms!(),
-        lazer_settlement_authoritative_threshold_ms: constants::default_lazer_settlement_authoritative_threshold_ms!(),
+        spot_staleness_threshold_ms: tuning_constants::default_spot_staleness_threshold_ms!(),
+        basis_staleness_threshold_ms: tuning_constants::default_basis_staleness_threshold_ms!(),
+        lazer_authoritative_threshold_ms: tuning_constants::default_lazer_authoritative_threshold_ms!(),
+        lazer_settlement_authoritative_threshold_ms: tuning_constants::default_lazer_settlement_authoritative_threshold_ms!(),
     }
 }
 
 /// Build an `OracleBounds` snapshot for a new oracle with `underlying_asset`.
 /// Staleness fields come from the admin-tuned global config; basis bounds
-/// come from the per-asset entry if present, else the `constants::default_*!()`
+/// come from the per-asset entry if present, else the `tuning_constants::default_*!()`
 /// basis-bound macros.
 public(package) fun build_oracle_bounds(
     oracle_config: &OracleConfig,
@@ -499,17 +500,17 @@ fun resolve_basis_bounds(
         (b.max_spot_deviation, b.max_basis_deviation, b.min_basis, b.max_basis)
     } else {
         (
-            constants::default_max_spot_deviation!(),
-            constants::default_max_basis_deviation!(),
-            constants::default_min_basis!(),
-            constants::default_max_basis!(),
+            tuning_constants::default_max_spot_deviation!(),
+            tuning_constants::default_max_basis_deviation!(),
+            tuning_constants::default_min_basis!(),
+            tuning_constants::default_max_basis!(),
         )
     }
 }
 
 fun validate_staleness_ms(value: u64) {
     assert!(
-        value > 0 && value <= constants::max_staleness_threshold_ms!(),
+        value > 0 && value <= tuning_constants::max_staleness_threshold_ms!(),
         EInvalidStalenessThreshold,
     );
 }
@@ -521,14 +522,14 @@ fun validate_basis_bounds_inputs(
     max_basis: u64,
 ) {
     assert!(min_basis < max_basis, EInvalidBasisBounds);
-    assert!(min_basis >= constants::min_basis_floor!(), EInvalidBasisBounds);
-    assert!(max_basis <= constants::max_basis_ceiling!(), EInvalidBasisBounds);
+    assert!(min_basis >= tuning_constants::min_basis_floor!(), EInvalidBasisBounds);
+    assert!(max_basis <= tuning_constants::max_basis_ceiling!(), EInvalidBasisBounds);
     assert!(
-        max_spot_deviation > 0 && max_spot_deviation <= constants::max_basis_deviation_ceiling!(),
+        max_spot_deviation > 0 && max_spot_deviation <= tuning_constants::max_basis_deviation_ceiling!(),
         EInvalidBasisBounds,
     );
     assert!(
-        max_basis_deviation > 0 && max_basis_deviation <= constants::max_basis_deviation_ceiling!(),
+        max_basis_deviation > 0 && max_basis_deviation <= tuning_constants::max_basis_deviation_ceiling!(),
         EInvalidBasisBounds,
     );
 }

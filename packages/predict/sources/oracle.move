@@ -10,7 +10,13 @@
 module deepbook_predict::oracle;
 
 use deepbook::math;
-use deepbook_predict::{constants::{Self, float_scaling}, i64, lazer_helper, math as predict_math};
+use deepbook_predict::{
+    constants::{Self, float_scaling},
+    i64,
+    lazer_helper,
+    math as predict_math,
+    tuning_constants
+};
 use pyth_lazer::update::Update as LazerUpdate;
 use std::string::String;
 use sui::{clock::Clock, event, vec_set::{Self, VecSet}};
@@ -580,7 +586,7 @@ public fun new_svi_params(a: u64, b: u64, rho: i64::I64, m: i64::I64, sigma: u64
 }
 
 /// Tune the spot-staleness halt-gate threshold. Authorized by `OracleSVICap`.
-/// Bounded by `constants::max_staleness_threshold_ms!()` (60s) — beyond that
+/// Bounded by `tuning_constants::max_staleness_threshold_ms!()` (60s) — beyond that
 /// the liveness gate stops meaningfully protecting quoting.
 public fun set_spot_staleness_threshold_ms(oracle: &mut OracleSVI, cap: &OracleSVICap, value: u64) {
     oracle.assert_authorized_cap(cap);
@@ -590,7 +596,7 @@ public fun set_spot_staleness_threshold_ms(oracle: &mut OracleSVI, cap: &OracleS
 }
 
 /// Tune the basis-staleness halt-gate threshold. Authorized by `OracleSVICap`.
-/// Bounded by `constants::max_staleness_threshold_ms!()` (60s).
+/// Bounded by `tuning_constants::max_staleness_threshold_ms!()` (60s).
 public fun set_basis_staleness_threshold_ms(
     oracle: &mut OracleSVI,
     cap: &OracleSVICap,
@@ -604,7 +610,7 @@ public fun set_basis_staleness_threshold_ms(
 
 /// Tune the window within which Lazer's last spot push is treated as the
 /// authoritative master spot. Authorized by `OracleSVICap`. Bounded by
-/// `constants::max_staleness_threshold_ms!()` (60s).
+/// `tuning_constants::max_staleness_threshold_ms!()` (60s).
 public fun set_lazer_authoritative_threshold_ms(
     oracle: &mut OracleSVI,
     cap: &OracleSVICap,
@@ -619,7 +625,7 @@ public fun set_lazer_authoritative_threshold_ms(
 /// Tune the window within which Lazer's last spot push freezes settlement
 /// authoritatively (gates the terminal `update_prices` settlement branch).
 /// Authorized by `OracleSVICap`. Bounded by
-/// `constants::max_staleness_threshold_ms!()` (60s).
+/// `tuning_constants::max_staleness_threshold_ms!()` (60s).
 public fun set_lazer_settlement_authoritative_threshold_ms(
     oracle: &mut OracleSVI,
     cap: &OracleSVICap,
@@ -765,7 +771,7 @@ public(package) fun create_oracle(
 /// Construct and validate an `OracleBounds` from explicit field values. Used
 /// by `oracle_config::build_oracle_bounds` to snapshot admin-tuned Predict
 /// config onto a new oracle at creation. Staleness fields are bounded by
-/// `constants::max_staleness_threshold_ms!()`; basis bounds must satisfy
+/// `tuning_constants::max_staleness_threshold_ms!()`; basis bounds must satisfy
 /// `min_basis < max_basis` and both deviation fractions must fit within 1.0
 /// (1e9 scale).
 public(package) fun new_oracle_bounds(
@@ -899,7 +905,7 @@ fun validate_basis_push(oracle: &OracleSVI, new_spot: u64, new_basis: u64) {
 
 fun validate_staleness_ms(value: u64) {
     assert!(
-        value > 0 && value <= constants::max_staleness_threshold_ms!(),
+        value > 0 && value <= tuning_constants::max_staleness_threshold_ms!(),
         EInvalidStalenessThreshold,
     );
 }
@@ -911,14 +917,14 @@ fun validate_basis_bounds_inputs(
     max_basis: u64,
 ) {
     assert!(min_basis < max_basis, EInvalidBasisBounds);
-    assert!(min_basis >= constants::min_basis_floor!(), EInvalidBasisBounds);
-    assert!(max_basis <= constants::max_basis_ceiling!(), EInvalidBasisBounds);
+    assert!(min_basis >= tuning_constants::min_basis_floor!(), EInvalidBasisBounds);
+    assert!(max_basis <= tuning_constants::max_basis_ceiling!(), EInvalidBasisBounds);
     assert!(
-        max_spot_deviation > 0 && max_spot_deviation <= constants::max_basis_deviation_ceiling!(),
+        max_spot_deviation > 0 && max_spot_deviation <= tuning_constants::max_basis_deviation_ceiling!(),
         EInvalidBasisBounds,
     );
     assert!(
-        max_basis_deviation > 0 && max_basis_deviation <= constants::max_basis_deviation_ceiling!(),
+        max_basis_deviation > 0 && max_basis_deviation <= tuning_constants::max_basis_deviation_ceiling!(),
         EInvalidBasisBounds,
     );
 }
