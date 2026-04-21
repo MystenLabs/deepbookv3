@@ -99,7 +99,8 @@ public struct RangeMinted has copy, drop, store {
 public struct RangeRedeemed has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
-    trader: address,
+    owner: address,
+    executor: address,
     quote_asset: TypeName,
     oracle_id: ID,
     expiry: u64,
@@ -419,47 +420,39 @@ public fun redeem_range<Quote>(
     ctx: &mut TxContext,
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
-    assert!(quantity > 0, EZeroQuantity);
-    predict.oracle_config.assert_range_key_matches(oracle, &key);
-    oracle.assert_quoteable_oracle(clock);
-
-    manager.decrease_range(key, quantity);
-
-    let lower = key.lower_strike();
-    let higher = key.higher_strike();
-    let payout;
-    if (oracle.is_settled() && predict.vault.has_settled_oracle(oracle.id())) {
-        let (_, settled_payout) = predict.get_range_trade_amounts(oracle, key, quantity, clock);
-        predict.vault.redeem_settled_position(oracle.id(), quantity, settled_payout);
-        payout = settled_payout;
-    } else {
-        predict.vault.remove_range(oracle.id(), lower, higher, quantity);
-        predict.refresh_oracle_risk(oracle);
-
-        // Quote against the post-trade state so the seller is paid from the
-        // liability after their range has been removed from the vault.
-        let (_, live_payout) = predict.get_range_trade_amounts(oracle, key, quantity, clock);
-        payout = live_payout;
-    };
-
-    let payout_balance = predict.vault.dispense_payout<Quote>(payout);
-    let payout_coin = payout_balance.into_coin(ctx);
-    manager.deposit(payout_coin, ctx);
-
-    event::emit(RangeRedeemed {
-        predict_id: object::id(predict),
-        manager_id: object::id(manager),
-        trader: manager.owner(),
-        quote_asset: type_name::with_defining_ids<Quote>(),
-        oracle_id: key.oracle_id(),
-        expiry: key.expiry(),
-        lower_strike: lower,
-        higher_strike: higher,
+    let payout_coin = redeem_range_internal<Quote>(
+        predict,
+        manager,
+        oracle,
+        key,
         quantity,
-        payout,
-        bid_price: math::div(payout, quantity),
-        is_settled: oracle.is_settled(),
-    });
+        clock,
+        ctx,
+    );
+    manager.deposit(payout_coin, ctx);
+}
+
+/// Sell a settled range permissionlessly into the PredictManager's balance.
+public fun redeem_range_permissionless<Quote>(
+    predict: &mut Predict,
+    manager: &mut PredictManager,
+    oracle: &OracleSVI,
+    key: RangeKey,
+    quantity: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    assert!(oracle.is_settled(), EOracleNotSettled);
+    let payout_coin = redeem_range_internal<Quote>(
+        predict,
+        manager,
+        oracle,
+        key,
+        quantity,
+        clock,
+        ctx,
+    );
+    manager.deposit_permissionless(payout_coin, ctx);
 }
 
 /// Supply an accepted quote asset into the vault. Returns LP tokens representing shares.
@@ -912,6 +905,60 @@ fun redeem_internal<Quote>(
         expiry: key.expiry(),
         strike: key.strike(),
         is_up: key.is_up(),
+        quantity,
+        payout,
+        bid_price: math::div(payout, quantity),
+        is_settled: oracle.is_settled(),
+    });
+
+    payout_coin
+}
+
+fun redeem_range_internal<Quote>(
+    predict: &mut Predict,
+    manager: &mut PredictManager,
+    oracle: &OracleSVI,
+    key: RangeKey,
+    quantity: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Coin<Quote> {
+    assert!(quantity > 0, EZeroQuantity);
+    predict.oracle_config.assert_range_key_matches(oracle, &key);
+    oracle.assert_quoteable_oracle(clock);
+
+    manager.decrease_range(key, quantity);
+
+    let lower = key.lower_strike();
+    let higher = key.higher_strike();
+    let payout;
+    if (oracle.is_settled() && predict.vault.has_settled_oracle(oracle.id())) {
+        let (_, settled_payout) = predict.get_range_trade_amounts(oracle, key, quantity, clock);
+        predict.vault.redeem_settled_position(oracle.id(), quantity, settled_payout);
+        payout = settled_payout;
+    } else {
+        predict.vault.remove_range(oracle.id(), lower, higher, quantity);
+        predict.refresh_oracle_risk(oracle);
+
+        // Quote against the post-trade state so the seller is paid from the
+        // liability after their range has been removed from the vault.
+        let (_, live_payout) = predict.get_range_trade_amounts(oracle, key, quantity, clock);
+        payout = live_payout;
+    };
+
+    let payout_balance = predict.vault.dispense_payout<Quote>(payout);
+    let payout_coin = payout_balance.into_coin(ctx);
+
+    event::emit(RangeRedeemed {
+        predict_id: object::id(predict),
+        manager_id: object::id(manager),
+        owner: manager.owner(),
+        executor: ctx.sender(),
+        quote_asset: type_name::with_defining_ids<Quote>(),
+        oracle_id: key.oracle_id(),
+        expiry: key.expiry(),
+        lower_strike: lower,
+        higher_strike: higher,
         quantity,
         payout,
         bid_price: math::div(payout, quantity),
