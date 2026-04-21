@@ -70,6 +70,7 @@ pub const PREDICT_VAULT_PERFORMANCE_PATH: &str = "/predicts/:predict_id/vault/pe
 
 const SUI_CLOCK_OBJECT_ID: &str =
     "0x0000000000000000000000000000000000000000000000000000000000000006";
+const PREDICT_PRICE_SCALE: i64 = 1_000_000_000;
 
 // === AppState ===
 
@@ -719,6 +720,18 @@ fn position_status_rank(status: &str) -> i32 {
     }
 }
 
+fn scale_position_price(amount: i64, quantity: i64) -> Option<i64> {
+    if quantity <= 0 {
+        return None;
+    }
+
+    let scaled = i128::from(amount)
+        .checked_mul(i128::from(PREDICT_PRICE_SCALE))?
+        .checked_div(i128::from(quantity))?;
+
+    i64::try_from(scaled).ok()
+}
+
 fn build_position_summary_rows(
     aggregates: Vec<PositionAggregateRow>,
     oracle_infos: &HashMap<String, OracleInfo>,
@@ -738,16 +751,9 @@ fn build_position_summary_rows(
             };
             let open_cost_basis = aggregate.total_cost - closed_cost_basis;
             let realized_pnl = aggregate.total_payout - closed_cost_basis;
-            let average_entry_price = if minted_quantity > 0 {
-                Some(aggregate.total_cost / minted_quantity)
-            } else {
-                None
-            };
-            let average_exit_price = if redeemed_quantity > 0 {
-                Some(aggregate.total_payout / redeemed_quantity)
-            } else {
-                None
-            };
+            let average_entry_price = scale_position_price(aggregate.total_cost, minted_quantity);
+            let average_exit_price =
+                scale_position_price(aggregate.total_payout, redeemed_quantity);
 
             let position_key = PositionKey::new(
                 aggregate.oracle_id.clone(),
@@ -1398,11 +1404,7 @@ async fn quote_position_marks(
                 key,
                 PositionMark {
                     mark_value,
-                    mark_price: if quantity > 0 {
-                        mark_value / quantity
-                    } else {
-                        0
-                    },
+                    mark_price: scale_position_price(mark_value, quantity).unwrap_or(0),
                 },
             );
         }
@@ -2078,10 +2080,10 @@ mod tests {
                 expiry: 1_700_000_100_000,
                 strike: 65_000,
                 is_up: true,
-                minted_quantity: 10,
-                redeemed_quantity: 4,
-                total_cost: 700,
-                total_payout: 280,
+                minted_quantity: 10_000_000,
+                redeemed_quantity: 4_000_000,
+                total_cost: 7_000_000,
+                total_payout: 2_800_000,
                 first_minted_at: 1_000,
                 last_activity_at: 2_000,
             },
@@ -2093,9 +2095,9 @@ mod tests {
                 expiry: 1_700_000_200_000,
                 strike: 66_000,
                 is_up: false,
-                minted_quantity: 5,
+                minted_quantity: 5_000_000,
                 redeemed_quantity: 0,
-                total_cost: 200,
+                total_cost: 200_000,
                 total_payout: 0,
                 first_minted_at: 3_000,
                 last_activity_at: 3_000,
@@ -2141,15 +2143,15 @@ mod tests {
             (
                 PositionKey::new("0xoracle-live", 1_700_000_100_000, 65_000, true),
                 PositionMark {
-                    mark_value: 420,
-                    mark_price: 70,
+                    mark_value: 4_200_000,
+                    mark_price: 700_000_000,
                 },
             ),
             (
                 PositionKey::new("0xoracle-settled", 1_700_000_200_000, 66_000, false),
                 PositionMark {
-                    mark_value: 500,
-                    mark_price: 100,
+                    mark_value: 500_000,
+                    mark_price: 100_000_000,
                 },
             ),
         ]);
@@ -2159,15 +2161,33 @@ mod tests {
 
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].status, "awaiting_settlement");
-        assert_eq!(rows[0].open_quantity, 6);
+        assert_eq!(rows[0].open_quantity, 6_000_000);
         assert_eq!(rows[0].realized_pnl, 0);
         assert_eq!(rows[0].unrealized_pnl, 0);
-        assert_eq!(rows[0].mark_value, Some(420));
+        assert_eq!(rows[0].average_entry_price, Some(700_000_000));
+        assert_eq!(rows[0].average_exit_price, Some(700_000_000));
+        assert_eq!(rows[0].mark_price, Some(700_000_000));
+        assert_eq!(rows[0].mark_value, Some(4_200_000));
         assert_eq!(rows[1].status, "redeemable");
-        assert_eq!(rows[1].open_quantity, 5);
+        assert_eq!(rows[1].open_quantity, 5_000_000);
         assert_eq!(rows[1].realized_pnl, 0);
-        assert_eq!(rows[1].unrealized_pnl, 300);
-        assert_eq!(rows[1].mark_price, Some(100));
+        assert_eq!(rows[1].unrealized_pnl, 300_000);
+        assert_eq!(rows[1].average_entry_price, Some(40_000_000));
+        assert_eq!(rows[1].mark_price, Some(100_000_000));
+    }
+
+    #[test]
+    fn scale_position_price_restores_fixed_point_units() {
+        assert_eq!(
+            scale_position_price(47_833_202, 100_000_000),
+            Some(478_332_020)
+        );
+        assert_eq!(
+            scale_position_price(43_089_546, 100_000_000),
+            Some(430_895_460)
+        );
+        assert_eq!(scale_position_price(0, 100_000_000), Some(0));
+        assert_eq!(scale_position_price(1, 0), None);
     }
 
     #[test]
