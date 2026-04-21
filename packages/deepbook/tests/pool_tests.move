@@ -912,6 +912,74 @@ fun test_using_unregistered_as_reference() {
     end(test);
 }
 
+#[test, expected_failure(abort_code = ::deepbook::pool::EInvalidDeepPrice)]
+fun add_deep_price_point_aborts_on_zero_rate() {
+    let mut test = begin(OWNER);
+    let registry_id = setup_test(OWNER, &mut test);
+    let balance_manager_id = create_acct_and_share_with_funds(
+        ALICE,
+        1_000_000 * constants::float_scaling(),
+        &mut test,
+    );
+
+    let target_pool_id = setup_pool_with_default_fees<SUI, USDC>(
+        OWNER,
+        registry_id,
+        false,
+        false,
+        &mut test,
+    );
+    let reference_pool_id = setup_pool_with_default_fees<DEEP, SUI>(
+        OWNER,
+        registry_id,
+        true,
+        false,
+        &mut test,
+    );
+
+    // mid_price = 2e18 → math::div(1e9, 2e18) = 1e18 / 2e18 = 0 (floors).
+    let huge_price: u64 = 2_000_000_000_000_000_000;
+    let tick = constants::tick_size();
+    place_limit_order<DEEP, SUI>(
+        ALICE,
+        reference_pool_id,
+        balance_manager_id,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        huge_price - tick,
+        constants::min_size(),
+        true,
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+    place_limit_order<DEEP, SUI>(
+        ALICE,
+        reference_pool_id,
+        balance_manager_id,
+        2,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        huge_price + tick,
+        constants::min_size(),
+        false,
+        true,
+        constants::max_u64(),
+        &mut test,
+    );
+
+    set_time(0, &mut test);
+    add_deep_price_point<SUI, USDC, DEEP, SUI>(
+        ALICE,
+        target_pool_id,
+        reference_pool_id,
+        &mut test,
+    );
+
+    abort
+}
+
 #[test, expected_failure(abort_code = ::deepbook::pool::EPoolCannotBeBothWhitelistedAndStable)]
 fun test_create_pool_e() {
     test_create_pool(true, true);
