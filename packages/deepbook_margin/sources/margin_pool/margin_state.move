@@ -76,9 +76,12 @@ public(package) fun increase_supply_absolute(self: &mut State, amount: u64) {
 }
 
 /// Decrease the supply given an absolute amount. Used when the supply needs to be
-/// decreased without decreasing shares.
+/// decreased without decreasing shares. Clamped to `total_supply`: any excess
+/// represents bad debt that exceeds the supplier pool's absorptive capacity and
+/// is uncollectible by design (was never backed by vault cash).
 public(package) fun decrease_supply_absolute(self: &mut State, amount: u64) {
-    self.total_supply = self.total_supply - amount;
+    let decrease = amount.min(self.total_supply);
+    self.total_supply = self.total_supply - decrease;
 }
 
 /// Increase the borrow given an amount. Return the individual borrow shares
