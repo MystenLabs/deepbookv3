@@ -34,7 +34,6 @@ predict_research/
 /scripts/config/predict-oracles.ts
 
 # misc
-/app/
 .env
 .envrc
 .claude/scheduled_tasks.lock

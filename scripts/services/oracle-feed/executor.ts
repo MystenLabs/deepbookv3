@@ -200,9 +200,10 @@ export async function runManagerWindow(
         config.minLookaheadMs,
       );
       for (const expiryMs of wanted) {
-        const have = [...state.oracles.values()].some(
-          (o) => o.tier === tier && o.expiryMs === expiryMs,
-        );
+        // Expiry is the true oracle identity across overlapping cadence tiers.
+        // A discovered oracle may be classified into any one matching tier,
+        // so deduping on (tier, expiry) can recreate the same expiry.
+        const have = [...state.oracles.values()].some((o) => o.expiryMs === expiryMs);
         if (have) continue;
         await createOracleStep(state, client, signer, config, lane0, tier, expiryMs, log);
       }
@@ -444,6 +445,26 @@ function newLaneTx(signer: Keypair, lane: Lane): Transaction {
   return tx;
 }
 
+function isStaleLaneGasRefError(err: unknown, lane: Lane): boolean {
+  const message = String(err);
+  return message.includes("Transaction needs to be rebuilt because object")
+    && message.includes(lane.gasCoinId)
+    && message.includes("current version:");
+}
+
+async function refreshLaneGasRef(
+  client: SuiJsonRpcClient,
+  lane: Lane,
+): Promise<void> {
+  const resp = await client.getObject({ id: lane.gasCoinId });
+  const data = resp.data;
+  if (!data?.version || !data.digest) {
+    throw new Error(`failed to refresh gas coin ref for lane ${lane.id}`);
+  }
+  lane.gasCoinVersion = String(data.version);
+  lane.gasCoinDigest = data.digest;
+}
+
 /// Sign, submit, check status, update lane gas coin ref. Returns undefined on
 /// any failure (RPC error or non-success effects) — the caller logs nothing
 /// extra and skips its post-success logic.
@@ -483,6 +504,18 @@ async function executeLaneTx(
     }
     return resp;
   } catch (err) {
+    if (isStaleLaneGasRefError(err, lane)) {
+      try {
+        await refreshLaneGasRef(client, lane);
+      } catch (refreshErr) {
+        log.error({
+          event: "tx_failed",
+          laneId: lane.id,
+          oracleId: ctx.oracleId,
+          err: String(refreshErr),
+        });
+      }
+    }
     log.error({
       event: "tx_failed",
       laneId: lane.id,

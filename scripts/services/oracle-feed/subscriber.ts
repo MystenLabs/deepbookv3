@@ -3,9 +3,18 @@
 
 import type { Config } from "./config";
 import type { Logger } from "./logger";
-import type { OracleId, OracleState, PriceCache, SVICache, SVIParams } from "./types";
+import type {
+  OracleId,
+  OracleState,
+  PriceCache,
+  SVICache,
+  SVIParams,
+} from "./types";
 
-const WS_RECONNECT_LADDER_MS = [500, 1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 60_000];
+const WS_RECONNECT_LADDER_MS = [
+  500, 1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 60_000,
+];
+const WS_SUBSCRIPTION_DECIMALS = 9;
 
 // BlockScholes per-batch sub limit. Each batch uses one stable client_id; sids
 // within a batch must be unique. Resending the same client_id with a new batch
@@ -16,7 +25,9 @@ const MAX_SUBS_PER_BATCH = 20;
 export type Subscriber = {
   start: () => void;
   stop: () => void;
-  syncOracles: (oracles: Iterable<Pick<OracleState, "id" | "underlying" | "expiryMs">>) => void;
+  syncOracles: (
+    oracles: Iterable<Pick<OracleState, "id" | "underlying" | "expiryMs">>,
+  ) => void;
   isConnected: () => boolean;
   lastFrameReceivedMs: () => number;
 };
@@ -28,7 +39,9 @@ type OracleSub = {
   sviSid: string;
 };
 
-function toOracleSub(oracle: Pick<OracleState, "id" | "underlying" | "expiryMs">): OracleSub {
+function toOracleSub(
+  oracle: Pick<OracleState, "id" | "underlying" | "expiryMs">,
+): OracleSub {
   return {
     underlying: oracle.underlying,
     expiryMs: oracle.expiryMs,
@@ -104,7 +117,11 @@ export function extractWsValues(payload: any): ExtractedWsValue[] {
 }
 
 export function isWsSubscriptionAck(payload: any): boolean {
-  return payload?.jsonrpc === "2.0" && typeof payload?.id === "number" && Array.isArray(payload?.result);
+  return (
+    payload?.jsonrpc === "2.0" &&
+    typeof payload?.id === "number" &&
+    Array.isArray(payload?.result)
+  );
 }
 
 export function makeSubscriber(
@@ -135,7 +152,9 @@ export function makeSubscriber(
   }
 
   function backoffMs(): number {
-    return WS_RECONNECT_LADDER_MS[Math.min(reconnectAttempt, WS_RECONNECT_LADDER_MS.length - 1)];
+    return WS_RECONNECT_LADDER_MS[
+      Math.min(reconnectAttempt, WS_RECONNECT_LADDER_MS.length - 1)
+    ];
   }
 
   function send(payload: Record<string, unknown>): void {
@@ -155,13 +174,23 @@ export function makeSubscriber(
       jsonrpc: "2.0",
       id: rpcId,
       method: "subscribe",
-      params: [{
-        frequency,
-        client_id: clientId,
-        batch,
-        options: { format: { timestamp: "ms", hexify: false, decimals: 5 } },
-        ...extraParams,
-      }],
+      params: [
+        {
+          frequency,
+          client_id: clientId,
+          batch,
+          // SVI params are pushed on-chain at 1e9 scale; lower WS precision
+          // quantizes short-dated variance inputs and can zero out `a`.
+          options: {
+            format: {
+              timestamp: "ms",
+              hexify: false,
+              decimals: WS_SUBSCRIPTION_DECIMALS,
+            },
+          },
+          ...extraParams,
+        },
+      ],
     };
     log.info({
       event: "ws_connecting",
@@ -256,7 +285,12 @@ export function makeSubscriber(
     authed = false;
 
     ws.addEventListener("open", () => {
-      send({ jsonrpc: "2.0", id: 1, method: "authenticate", params: { api_key: config.blockscholesApiKey } });
+      send({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "authenticate",
+        params: { api_key: config.blockscholesApiKey },
+      });
     });
 
     ws.addEventListener("message", (event: MessageEvent) => {
@@ -266,7 +300,11 @@ export function makeSubscriber(
       try {
         parsed = JSON.parse(raw);
       } catch {
-        log.warn({ event: "ws_frame_dropped", reason: "parse_error", raw: raw.slice(0, 500) });
+        log.warn({
+          event: "ws_frame_dropped",
+          reason: "parse_error",
+          raw: raw.slice(0, 500),
+        });
         return;
       }
 
@@ -279,7 +317,11 @@ export function makeSubscriber(
       }
 
       if (parsed.error) {
-        log.warn({ event: "ws_subscribe_error", rpcId: parsed.id, error: parsed.error });
+        log.warn({
+          event: "ws_subscribe_error",
+          rpcId: parsed.id,
+          error: parsed.error,
+        });
         return;
       }
 
@@ -309,7 +351,11 @@ export function makeSubscriber(
 
     ws.addEventListener("close", () => {
       if (stopped) return;
-      log.warn({ event: "ws_reconnect", attempt: reconnectAttempt + 1, backoffMs: backoffMs() });
+      log.warn({
+        event: "ws_reconnect",
+        attempt: reconnectAttempt + 1,
+        backoffMs: backoffMs(),
+      });
       reconnectTimer = setTimeout(() => {
         reconnectAttempt++;
         connect();
@@ -317,7 +363,11 @@ export function makeSubscriber(
     });
 
     ws.addEventListener("error", (e: Event) => {
-      log.warn({ event: "ws_frame_dropped", reason: "socket_error", err: String(e) });
+      log.warn({
+        event: "ws_frame_dropped",
+        reason: "socket_error",
+        err: String(e),
+      });
     });
   }
 
@@ -325,7 +375,8 @@ export function makeSubscriber(
     if (value.kind === "spot") {
       const first = priceCache.spot === null;
       priceCache.spot = { value: value.value, receivedAtMs: value.timestampMs };
-      if (first) log.info({ event: "ws_connected", sid: value.sid, value: value.value });
+      if (first)
+        log.info({ event: "ws_connected", sid: value.sid, value: value.value });
       return;
     }
 
@@ -362,7 +413,9 @@ export function makeSubscriber(
   }
 
   return {
-    start: () => { connect(); },
+    start: () => {
+      connect();
+    },
     stop: () => {
       stopped = true;
       if (reconnectTimer) clearTimeout(reconnectTimer);

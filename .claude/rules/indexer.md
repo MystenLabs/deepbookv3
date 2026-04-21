@@ -130,6 +130,9 @@ to_timestamp($3)
 to_timestamp($3)::timestamp
 ```
 
+### PostgreSQL Aggregate Decode Mismatch
+`SUM(BIGINT)` returns `NUMERIC` in PostgreSQL. When a raw SQL query is decoded into Rust `i64` / Diesel `BigInt`, cast the aggregate or final selected expression back to `::bigint` explicitly before decoding.
+
 ### Default Limit of 1
 The `ParameterUtil` trait (`server.rs:1893-1897`) defaults to `limit=1` when not provided. This affects 24 endpoints:
 - `order_updates`, `trades`, `margin_manager_created`, `loan_borrowed`, `loan_repaid`, `liquidation`, `asset_supplied`, `asset_withdrawn`, `deepbook_pool_updated`, `interest_params_updated`, `margin_pool_config_updated`, `maintainer_cap_updated`, `maintainer_fees_withdrawn`, `protocol_fees_withdrawn`, `supplier_cap_minted`, `supply_referral_minted`, `pause_cap_updated`, `protocol_fees_increased`, `referral_fees_claimed`, `referral_fee_events`, `deepbook_pool_registered`, `deepbook_pool_updated_registry`, `deepbook_pool_config_updated`, `collateral_events`

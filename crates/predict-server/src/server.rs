@@ -1129,30 +1129,25 @@ async fn fetch_predict_snapshot(
     let context = fetch_shared_move_object(state, predict_id).await?;
     let fields = context.parsed.fields.clone().to_json_value();
 
-    let quote_assets = match json_at_path(
-        &fields,
-        &["treasury_config", "accepted_quotes", "contents"],
-    ) {
-        Ok(value) => value
-            .as_array()
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|item| {
-                        item.get("name")
-                            .and_then(|name| name.as_str())
-                            .map(ToString::to_string)
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default(),
-        Err(_) => fallback_quote_assets,
-    };
+    let quote_assets =
+        match json_at_path(&fields, &["treasury_config", "accepted_quotes", "contents"]) {
+            Ok(value) => value
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| {
+                            item.get("name")
+                                .and_then(|name| name.as_str())
+                                .map(ToString::to_string)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
+            Err(_) => fallback_quote_assets,
+        };
 
-    let vault_balance = u64_to_i64(
-        json_u64(&fields, &["vault", "balance"])?,
-        "vault.balance",
-    )?;
+    let vault_balance = u64_to_i64(json_u64(&fields, &["vault", "balance"])?, "vault.balance")?;
     let total_mtm = u64_to_i64(
         json_u64(&fields, &["vault", "total_mtm"])?,
         "vault.total_mtm",

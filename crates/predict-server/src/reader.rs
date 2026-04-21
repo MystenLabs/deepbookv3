@@ -728,8 +728,8 @@ impl Reader {
                     expiry,
                     strike,
                     is_up,
-                    SUM(quantity) AS minted_quantity,
-                    SUM(cost) AS total_cost,
+                    SUM(quantity)::bigint AS minted_quantity,
+                    SUM(cost)::bigint AS total_cost,
                     MIN(checkpoint_timestamp_ms) AS first_minted_at,
                     MAX(checkpoint_timestamp_ms) AS last_minted_at
                 FROM position_minted
@@ -745,8 +745,8 @@ impl Reader {
                     expiry,
                     strike,
                     is_up,
-                    SUM(quantity) AS redeemed_quantity,
-                    SUM(payout) AS total_payout,
+                    SUM(quantity)::bigint AS redeemed_quantity,
+                    SUM(payout)::bigint AS total_payout,
                     MAX(checkpoint_timestamp_ms) AS last_redeemed_at
                 FROM position_redeemed
                 WHERE manager_id = $1
@@ -760,10 +760,10 @@ impl Reader {
                 COALESCE(minted.expiry, redeemed.expiry) AS expiry,
                 COALESCE(minted.strike, redeemed.strike) AS strike,
                 COALESCE(minted.is_up, redeemed.is_up) AS is_up,
-                COALESCE(minted.minted_quantity, 0) AS minted_quantity,
-                COALESCE(redeemed.redeemed_quantity, 0) AS redeemed_quantity,
-                COALESCE(minted.total_cost, 0) AS total_cost,
-                COALESCE(redeemed.total_payout, 0) AS total_payout,
+                COALESCE(minted.minted_quantity, 0::bigint) AS minted_quantity,
+                COALESCE(redeemed.redeemed_quantity, 0::bigint) AS redeemed_quantity,
+                COALESCE(minted.total_cost, 0::bigint) AS total_cost,
+                COALESCE(redeemed.total_payout, 0::bigint) AS total_payout,
                 COALESCE(minted.first_minted_at, redeemed.last_redeemed_at, 0) AS first_minted_at,
                 GREATEST(
                     COALESCE(minted.last_minted_at, 0),

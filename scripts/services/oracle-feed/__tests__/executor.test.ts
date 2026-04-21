@@ -1,11 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { discoverOracles } from "../registry";
 import {
   hasFreshPriceSample,
   pushTick,
+  runManagerWindow,
   shouldRunManagerWindowNow,
   waitForAllLanesIdle,
 } from "../executor";
 import type { Lane, OracleState, PriceSample, ServiceState } from "../types";
+
+vi.mock("../registry", () => ({
+  discoverOracles: vi.fn(),
+}));
 
 function lane(available: boolean): Lane {
   return {
@@ -42,6 +48,11 @@ function state(oracles: OracleState[]): ServiceState {
     lastPushMs: 0,
   };
 }
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.mocked(discoverOracles).mockReset();
+});
 
 describe("hasFreshPriceSample", () => {
   it("returns false for stale spot data", () => {
@@ -104,7 +115,167 @@ describe("shouldRunManagerWindowNow", () => {
   });
 });
 
+describe("runManagerWindow", () => {
+  it("does not create a duplicate oracle when another tier already owns the same expiry", async () => {
+    const sharedExpiryMs = Date.parse("2026-04-17T16:00:00.000Z");
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-04-17T14:21:00.000Z"));
+    vi.mocked(discoverOracles).mockResolvedValue(
+      new Map([
+        [
+          "0xexisting",
+          oracle({
+            id: "0xexisting",
+            expiryMs: sharedExpiryMs,
+            tier: "1h",
+            status: "active",
+          }),
+        ],
+      ]),
+    );
+
+    const service = state([]);
+    const client = {
+      signAndExecuteTransaction: vi.fn(async () => ({
+        digest: "0xdigest",
+        effects: {
+          status: { status: "success" },
+          mutated: [{
+            reference: {
+              objectId: service.lanes[0]!.gasCoinId,
+              version: "2",
+              digest: "11111111111111111111111111111111",
+            },
+          }],
+        },
+        events: [],
+      })),
+      waitForTransaction: vi.fn(async () => undefined),
+    } as any;
+    const subscriber = {
+      syncOracles: vi.fn(),
+    } as any;
+
+    await runManagerWindow(
+      service,
+      client,
+      {
+        toSuiAddress: () =>
+          "0x00000000000000000000000000000000000000000000000000000000000000d1",
+      } as any,
+      {
+        predictPackageId:
+          "0x00000000000000000000000000000000000000000000000000000000000000e1",
+        registryId:
+          "0x00000000000000000000000000000000000000000000000000000000000000f1",
+        predictId:
+          "0x00000000000000000000000000000000000000000000000000000000000000f2",
+        adminCapId:
+          "0x00000000000000000000000000000000000000000000000000000000000000f3",
+        tiersEnabled: ["15m", "1h"],
+        expiriesPerTier: 1,
+        minLookaheadMs: 90 * 60_000,
+        underlying: "BTC",
+        strikeMin: 50_000_000_000_000,
+        tickSize: 1_000_000_000,
+      } as any,
+      subscriber,
+      {
+        info() {},
+        warn() {},
+        error() {},
+        fatal() {},
+      } as any,
+    );
+
+    expect(client.signAndExecuteTransaction).not.toHaveBeenCalled();
+    expect(subscriber.syncOracles).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("pushTick", () => {
+  it("refreshes a stale lane gas coin ref after a preflight version error", async () => {
+    const service = state([oracle({ expiryMs: Date.now() + 60_000 })]);
+    service.priceCache.spot = { value: 100_000, receivedAtMs: Date.now() };
+    service.priceCache.forwards.set(
+      "0x00000000000000000000000000000000000000000000000000000000000000b1",
+      { value: 100_100, receivedAtMs: Date.now() },
+    );
+
+    const staleError =
+      "Error: Error checking transaction input objects: Transaction needs to be rebuilt " +
+      "because object 0x00000000000000000000000000000000000000000000000000000000000000a1 " +
+      "version 1 is unavailable for consumption, current version: 2";
+
+    const client = {
+      signAndExecuteTransaction: vi
+        .fn()
+        .mockRejectedValueOnce(new Error(staleError))
+        .mockResolvedValueOnce({
+          digest: "0xdigest",
+          effects: {
+            status: { status: "success" },
+            mutated: [{
+              reference: {
+                objectId: "0x00000000000000000000000000000000000000000000000000000000000000a1",
+                version: "3",
+                digest: "33333333333333333333333333333333",
+              },
+            }],
+          },
+        }),
+      getObject: vi.fn(async () => ({
+        data: {
+          objectId: "0x00000000000000000000000000000000000000000000000000000000000000a1",
+          version: "2",
+          digest: "22222222222222222222222222222222",
+        },
+      })),
+      waitForTransaction: vi.fn(async () => undefined),
+    } as any;
+
+    await pushTick(
+      service,
+      client,
+      { toSuiAddress: () => "0x00000000000000000000000000000000000000000000000000000000000000d1" } as any,
+      {
+        predictPackageId: "0x00000000000000000000000000000000000000000000000000000000000000e1",
+        priceCacheStaleMs: 3_000,
+        safetyWindowMs: 5_000,
+      } as any,
+      {
+        info() {},
+        warn() {},
+        error() {},
+        fatal() {},
+      } as any,
+    );
+
+    expect(client.getObject).toHaveBeenCalledTimes(1);
+    expect(service.lanes[0].gasCoinVersion).toBe("2");
+    expect(service.lanes[0].gasCoinDigest).toBe("22222222222222222222222222222222");
+    expect(service.lanes[0].available).toBe(true);
+
+    await pushTick(
+      service,
+      client,
+      { toSuiAddress: () => "0x00000000000000000000000000000000000000000000000000000000000000d1" } as any,
+      {
+        predictPackageId: "0x00000000000000000000000000000000000000000000000000000000000000e1",
+        priceCacheStaleMs: 3_000,
+        safetyWindowMs: 5_000,
+      } as any,
+      {
+        info() {},
+        warn() {},
+        error() {},
+        fatal() {},
+      } as any,
+    );
+
+    expect(client.signAndExecuteTransaction).toHaveBeenCalledTimes(2);
+    expect(service.lanes[0].gasCoinVersion).toBe("3");
+  });
+
   it("keeps the lane busy until waitForTransaction resolves", async () => {
     const service = state([oracle({ expiryMs: Date.now() + 60_000 })]);
     service.priceCache.spot = { value: 100_000, receivedAtMs: Date.now() };
