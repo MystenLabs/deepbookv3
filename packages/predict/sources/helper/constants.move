@@ -16,6 +16,11 @@ module deepbook_predict::constants;
 /// 500_000_000 = 50%, 1_000_000_000 = 100%
 public macro fun float_scaling(): u64 { 1_000_000_000 }
 
+/// Decimal exponent of `float_scaling!()` (i.e. `float_scaling!() == 10^9`).
+/// Used when normalizing oracle prices from their native `(magnitude, exponent)`
+/// form into the package's 1e9-scaled `u64`.
+public macro fun float_scaling_decimals(): u64 { 9 }
+
 // === Default Config ===
 
 /// Max total exposure as % of vault capital (80% in FLOAT_SCALING)
@@ -41,9 +46,6 @@ public macro fun default_max_ask_price(): u64 { 990_000_000 }
 // === Time Constants ===
 
 public macro fun ms_per_year(): u64 { 31_536_000_000 }
-
-/// Oracle staleness threshold (30 seconds)
-public macro fun staleness_threshold_ms(): u64 { 30_000 }
 
 // === Curve Builder ===
 

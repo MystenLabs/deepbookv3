@@ -29,6 +29,11 @@ const EAssetNotInVault: u64 = 4;
 /// Dynamic bag key for storing a concrete asset balance by type.
 public struct BalanceKey<phantom T> has copy, drop, store {}
 
+public struct SettledOracleState has copy, drop, store {
+    remaining_quantity: u64,
+    remaining_liability: u64,
+}
+
 public struct Vault has store {
     /// Concrete balances stored per accepted quote asset type.
     balances: Bag,
@@ -36,6 +41,8 @@ public struct Vault has store {
     balance: u64,
     /// Per-oracle matrix for strike-level position tracking.
     oracle_matrices: Table<ID, StrikeMatrix>,
+    /// Per-oracle compact state used after settlement compaction.
+    settled_oracles: Table<ID, SettledOracleState>,
     /// Sum of all oracle matrix MTM values.
     total_mtm: u64,
     /// Sum of all oracle matrix max payout values.
@@ -86,6 +93,7 @@ public(package) fun new(ctx: &mut TxContext): Vault {
         balances: bag::new(ctx),
         balance: 0,
         oracle_matrices: table::new(ctx),
+        settled_oracles: table::new(ctx),
         total_mtm: 0,
         total_max_payout: 0,
         unsettled_exposed_oracles: vector[],
@@ -203,6 +211,10 @@ public(package) fun oracle_strike_range(vault: &Vault, oracle_id: ID): (u64, u64
     matrix.minted_strike_range()
 }
 
+public(package) fun has_settled_oracle(vault: &Vault, oracle_id: ID): bool {
+    vault.settled_oracles.contains(oracle_id)
+}
+
 public(package) fun set_mtm_with_curve(
     vault: &mut Vault,
     oracle_id: ID,
@@ -264,9 +276,8 @@ public(package) fun remove_unsettled_exposed_oracle(
     oracle_id: ID,
     is_settled: bool,
 ) {
-    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
-
     if (!is_settled) {
+        assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
         let matrix = &vault.oracle_matrices[oracle_id];
         if (matrix.mtm() != 0 || matrix.max_payout() != 0) return;
     };
@@ -279,6 +290,61 @@ public(package) fun remove_unsettled_exposed_oracle(
         };
         i = i + 1;
     };
+}
+
+public(package) fun compact_settled_oracle_if_needed(
+    vault: &mut Vault,
+    oracle_id: ID,
+    settlement: u64,
+) {
+    if (vault.settled_oracles.contains(oracle_id)) {
+        vault.remove_unsettled_exposed_oracle(oracle_id, true);
+        return
+    };
+
+    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+    let matrix = vault.oracle_matrices.remove(oracle_id);
+    vault.remove_unsettled_exposed_oracle(oracle_id, true);
+    let old_mtm = matrix.mtm();
+    let old_max_payout = net_max_payout(&matrix);
+    let (remaining_quantity, remaining_liability) = strike_matrix::into_settled_totals(
+        matrix,
+        settlement,
+    );
+
+    vault.total_mtm = vault.total_mtm + remaining_liability - old_mtm;
+    vault.total_max_payout = vault.total_max_payout + remaining_liability - old_max_payout;
+
+    vault
+        .settled_oracles
+        .add(
+            oracle_id,
+            SettledOracleState {
+                remaining_quantity,
+                remaining_liability,
+            },
+        );
+}
+
+public(package) fun redeem_settled_position(
+    vault: &mut Vault,
+    oracle_id: ID,
+    quantity: u64,
+    payout: u64,
+) {
+    assert!(vault.settled_oracles.contains(oracle_id), EOracleExposureNotFound);
+    let state = &mut vault.settled_oracles[oracle_id];
+    state.remaining_quantity = state.remaining_quantity - quantity;
+    state.remaining_liability = state.remaining_liability - payout;
+    vault.total_mtm = vault.total_mtm - payout;
+    vault.total_max_payout = vault.total_max_payout - payout;
+    // TODO: Decide whether fully redeemed settled oracles should be removed
+    // entirely or retained as zeroed records.
+}
+
+/// Per-matrix max payout net of the range quantity contributed by range mints.
+fun net_max_payout(matrix: &StrikeMatrix): u64 {
+    matrix.max_payout() - matrix.range_qty()
 }
 
 fun deposit_balance<T>(vault: &mut Vault, payment: Balance<T>) {

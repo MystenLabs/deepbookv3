@@ -66,6 +66,7 @@ const EInvalidEWMAAlpha: u64 = 17;
 const EInvalidZScoreThreshold: u64 = 18;
 const EInvalidAdditionalTakerFee: u64 = 19;
 const EWrongPoolReferral: u64 = 20;
+const EInvalidDeepPrice: u64 = 21;
 
 // === Structs ===
 public struct Pool<phantom BaseAsset, phantom QuoteAsset> has key {
@@ -865,6 +866,7 @@ public fun add_deep_price_point<BaseAsset, QuoteAsset, ReferenceBaseAsset, Refer
     } else {
         reference_pool_price
     };
+    assert!(deep_per_reference_other_price > 0, EInvalidDeepPrice);
 
     // For USDC/SUI pool, reference_other_is_target_base is true, add price
     // point to deep per base
