@@ -142,6 +142,7 @@ public struct OracleAskBoundsCleared has copy, drop, store {
 public struct RiskConfigUpdated has copy, drop, store {
     predict_id: ID,
     max_total_exposure_pct: u64,
+    mtm_freshness_ms: u64,
 }
 
 public struct QuoteAssetEnabled has copy, drop, store {
@@ -655,6 +656,11 @@ public fun max_total_exposure_pct(predict: &Predict): u64 {
     predict.risk_config.max_total_exposure_pct()
 }
 
+/// Get the MTM freshness threshold used for LP supply/withdraw gating.
+public fun mtm_freshness_ms(predict: &Predict): u64 {
+    predict.risk_config.mtm_freshness_ms()
+}
+
 /// Set trading pause state.
 public(package) fun set_trading_paused(predict: &mut Predict, paused: bool) {
     predict.trading_paused = paused;
@@ -731,10 +737,13 @@ public(package) fun clear_oracle_ask_bounds(
 /// Set max total exposure percentage.
 public(package) fun set_max_total_exposure_pct(predict: &mut Predict, pct: u64) {
     predict.risk_config.set_max_total_exposure_pct(pct);
-    event::emit(RiskConfigUpdated {
-        predict_id: object::id(predict),
-        max_total_exposure_pct: predict.risk_config.max_total_exposure_pct(),
-    });
+    predict.emit_risk_config_updated();
+}
+
+/// Update the MTM freshness threshold used for LP supply/withdraw gating.
+public(package) fun set_mtm_freshness_ms(predict: &mut Predict, value: u64) {
+    predict.risk_config.set_mtm_freshness_ms(value);
+    predict.emit_risk_config_updated();
 }
 
 /// Update the admin-tuned spot staleness threshold used to seed new oracles
@@ -899,7 +908,7 @@ fun assert_total_mtm_fresh(predict: &Predict, clock: &Clock) {
         let oracle_id = unsettled_exposed_oracles[i];
         let last_update = predict.vault.get_last_mtm_update(oracle_id);
         if (now > last_update) {
-            assert!(now - last_update <= constants::mtm_freshness_ms!(), EStaleOracleMtm);
+            assert!(now - last_update <= predict.risk_config.mtm_freshness_ms(), EStaleOracleMtm);
         };
         i = i + 1;
     }
@@ -1028,6 +1037,14 @@ fun emit_pricing_config_updated(predict: &Predict) {
         utilization_multiplier: predict.pricing_config.utilization_multiplier(),
         min_ask_price: predict.pricing_config.min_ask_price(),
         max_ask_price: predict.pricing_config.max_ask_price(),
+    });
+}
+
+fun emit_risk_config_updated(predict: &Predict) {
+    event::emit(RiskConfigUpdated {
+        predict_id: object::id(predict),
+        max_total_exposure_pct: predict.risk_config.max_total_exposure_pct(),
+        mtm_freshness_ms: predict.risk_config.mtm_freshness_ms(),
     });
 }
 

@@ -227,6 +227,11 @@ public fun set_max_total_exposure_pct(predict: &mut Predict, _admin_cap: &AdminC
     predict.set_max_total_exposure_pct(pct);
 }
 
+/// Set the MTM freshness threshold (ms) used for LP supply/withdraw gating.
+public fun set_mtm_freshness_ms(predict: &mut Predict, _admin_cap: &AdminCap, value: u64) {
+    predict.set_mtm_freshness_ms(value);
+}
+
 /// Update withdrawal rate limiter capacity and refill rate.
 public fun update_withdrawal_limiter(
     predict: &mut Predict,

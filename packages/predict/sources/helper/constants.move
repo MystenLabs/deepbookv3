@@ -68,5 +68,6 @@ public macro fun required_quote_decimals(): u8 { 6 }
 
 // === MTM Tracking ===
 
-/// MTM freshness threshold: maximum age of MTM values before they're considered stale (10 seconds).
-public macro fun mtm_freshness_ms(): u64 { 10_000 }
+/// Default MTM freshness threshold: maximum age of MTM values before they're
+/// considered stale for LP supply/withdraw gating (10 seconds).
+public macro fun default_mtm_freshness_ms(): u64 { 10_000 }
