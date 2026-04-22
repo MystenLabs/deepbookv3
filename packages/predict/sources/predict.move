@@ -44,6 +44,7 @@ const EZeroSharesMinted: u64 = 6;
 const EAskPriceOutOfBounds: u64 = 7;
 const EAskBoundLooserThanGlobal: u64 = 8;
 const EOracleNotSettled: u64 = 9;
+const EStaleOracleMtm: u64 = 10;
 
 // === Events ===
 
@@ -141,6 +142,7 @@ public struct OracleAskBoundsCleared has copy, drop, store {
 public struct RiskConfigUpdated has copy, drop, store {
     predict_id: ID,
     max_total_exposure_pct: u64,
+    mtm_freshness_ms: u64,
 }
 
 public struct QuoteAssetEnabled has copy, drop, store {
@@ -240,6 +242,10 @@ public fun get_trade_amounts(
     (math::mul(ask, quantity), math::mul(bid, quantity))
 }
 
+public fun unsettled_exposed_oracles(predict: &Predict): &vector<ID> {
+    predict.vault.unsettled_exposed_oracles()
+}
+
 /// Resolved ask-price bounds for an oracle, after intersecting any per-oracle
 /// override with the global default. Exposed for UI/preview.
 public fun ask_bounds(predict: &Predict, oracle_id: ID): (u64, u64) {
@@ -270,7 +276,8 @@ public fun mint<Quote>(
     let is_up = key.is_up();
 
     predict.vault.insert_position(oracle.id(), is_up, strike, quantity);
-    predict.refresh_oracle_risk(oracle);
+    predict.refresh_oracle_risk(oracle, clock);
+    predict.vault.add_unsettled_exposed_oracle(oracle.id());
 
     // Quote against the post-trade state so the trader pays for the liability
     // their own mint just added to the vault.
@@ -380,7 +387,8 @@ public fun mint_range<Quote>(
     let lower = key.lower_strike();
     let higher = key.higher_strike();
     predict.vault.insert_range(oracle.id(), lower, higher, quantity);
-    predict.refresh_oracle_risk(oracle);
+    predict.refresh_oracle_risk(oracle, clock);
+    predict.vault.add_unsettled_exposed_oracle(oracle.id());
 
     // Quote against the post-trade state so the trader pays for the liability
     // their own mint just added to the vault.
@@ -465,6 +473,7 @@ public fun supply<Quote>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<PLP> {
+    predict.assert_total_mtm_fresh(clock);
     let amount = coin.value();
     assert!(amount > 0, EZeroAmount);
     predict.treasury_config.assert_quote_asset<Quote>();
@@ -502,6 +511,7 @@ public fun withdraw<Quote>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Quote> {
+    predict.assert_total_mtm_fresh(clock);
     let vault_value = predict.vault.vault_value();
     let shares_burned = lp_coin.value();
     assert!(shares_burned > 0, EZeroAmount);
@@ -579,11 +589,26 @@ public(package) fun add_oracle_grid(
     oracle_id: ID,
     min_strike: u64,
     tick_size: u64,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     predict.oracle_config.add_oracle_grid(oracle_id, min_strike, tick_size);
     let max_strike = min_strike + tick_size * constants::oracle_strike_grid_ticks!();
-    predict.vault.init_oracle_matrix(oracle_id, min_strike, max_strike, tick_size, ctx);
+    predict.vault.init_oracle_matrix(oracle_id, min_strike, max_strike, tick_size, clock, ctx);
+}
+
+/// Keeper/ops hook for syncing one oracle's cached MTM into the vault. This is
+/// used to keep LP supply/withdraw accounting fresh across unsettled exposed
+/// oracles; trade paths still refresh only the touched oracle inline.
+public fun refresh_oracle_mtm(predict: &mut Predict, oracle: &OracleSVI, clock: &Clock) {
+    if (oracle.is_settled() && predict.vault.has_settled_oracle(oracle.id())) return;
+    if (!oracle.is_settled()) {
+        oracle.assert_live_oracle(clock);
+    };
+    predict.refresh_oracle_risk(oracle, clock);
+    if (oracle.is_settled()) {
+        predict.vault.remove_unsettled_exposed_oracle(oracle.id(), true);
+    };
 }
 
 /// Snapshot the admin-tuned oracle bounds (staleness thresholds + per-asset
@@ -629,6 +654,11 @@ public fun utilization_multiplier(predict: &Predict): u64 {
 /// Get the max total exposure percentage.
 public fun max_total_exposure_pct(predict: &Predict): u64 {
     predict.risk_config.max_total_exposure_pct()
+}
+
+/// Get the MTM freshness threshold used for LP supply/withdraw gating.
+public fun mtm_freshness_ms(predict: &Predict): u64 {
+    predict.risk_config.mtm_freshness_ms()
 }
 
 /// Set trading pause state.
@@ -707,10 +737,13 @@ public(package) fun clear_oracle_ask_bounds(
 /// Set max total exposure percentage.
 public(package) fun set_max_total_exposure_pct(predict: &mut Predict, pct: u64) {
     predict.risk_config.set_max_total_exposure_pct(pct);
-    event::emit(RiskConfigUpdated {
-        predict_id: object::id(predict),
-        max_total_exposure_pct: predict.risk_config.max_total_exposure_pct(),
-    });
+    predict.emit_risk_config_updated();
+}
+
+/// Update the MTM freshness threshold used for LP supply/withdraw gating.
+public(package) fun set_mtm_freshness_ms(predict: &mut Predict, value: u64) {
+    predict.risk_config.set_mtm_freshness_ms(value);
+    predict.emit_risk_config_updated();
 }
 
 /// Update the admin-tuned spot staleness threshold used to seed new oracles
@@ -863,6 +896,24 @@ public(package) fun vault_balance(predict: &Predict): u64 {
 
 // === Private Functions ===
 
+fun assert_total_mtm_fresh(predict: &Predict, clock: &Clock) {
+    // MTM freshness is enforced only for LP supply/withdraw. Trade quoting
+    // still relies on cached aggregate `vault.total_mtm()` and refreshes the
+    // touched oracle inline.
+    let unsettled_exposed_oracles = predict.vault.unsettled_exposed_oracles();
+    let mut i = 0;
+    let len = unsettled_exposed_oracles.length();
+    let now = clock.timestamp_ms();
+    while (i < len) {
+        let oracle_id = unsettled_exposed_oracles[i];
+        let last_update = predict.vault.get_last_mtm_update(oracle_id);
+        if (now > last_update) {
+            assert!(now - last_update <= predict.risk_config.mtm_freshness_ms(), EStaleOracleMtm);
+        };
+        i = i + 1;
+    }
+}
+
 fun redeem_internal<Quote>(
     predict: &mut Predict,
     manager: &mut PredictManager,
@@ -884,7 +935,8 @@ fun redeem_internal<Quote>(
         payout = settled_payout;
     } else {
         predict.vault.remove_position(oracle.id(), key.is_up(), key.strike(), quantity);
-        predict.refresh_oracle_risk(oracle);
+        predict.refresh_oracle_risk(oracle, clock);
+        predict.vault.remove_unsettled_exposed_oracle(oracle.id(), oracle.is_settled());
 
         // Quote against the post-trade state so the seller is paid from the
         // liability after their position has been removed from the vault.
@@ -938,7 +990,8 @@ fun redeem_range_internal<Quote>(
         payout = settled_payout;
     } else {
         predict.vault.remove_range(oracle.id(), lower, higher, quantity);
-        predict.refresh_oracle_risk(oracle);
+        predict.refresh_oracle_risk(oracle, clock);
+        predict.vault.remove_unsettled_exposed_oracle(oracle.id(), oracle.is_settled());
 
         // Quote against the post-trade state so the seller is paid from the
         // liability after their range has been removed from the vault.
@@ -987,6 +1040,14 @@ fun emit_pricing_config_updated(predict: &Predict) {
     });
 }
 
+fun emit_risk_config_updated(predict: &Predict) {
+    event::emit(RiskConfigUpdated {
+        predict_id: object::id(predict),
+        max_total_exposure_pct: predict.risk_config.max_total_exposure_pct(),
+        mtm_freshness_ms: predict.risk_config.mtm_freshness_ms(),
+    });
+}
+
 fun emit_oracle_staleness_config_updated(predict: &Predict) {
     event::emit(OracleStalenessConfigUpdated {
         predict_id: object::id(predict),
@@ -1015,6 +1076,9 @@ fun trade_prices(predict: &Predict, oracle: &OracleSVI, key: MarketKey, clock: &
         return (fair_price, fair_price)
     };
 
+    // Spread uses the cached aggregate MTM. This path does not require every
+    // exposed oracle to be freshly synced; only the traded oracle is refreshed
+    // inline before calling into pricing.
     let spread = predict
         .pricing_config
         .quote_spread_from_fair_price(
@@ -1061,6 +1125,9 @@ fun range_trade_prices(
         return (fair_price, fair_price)
     };
 
+    // Spread uses the cached aggregate MTM. This path does not require every
+    // exposed oracle to be freshly synced; only the traded oracle is refreshed
+    // inline before calling into pricing.
     let spread = predict
         .pricing_config
         .quote_spread_from_fair_price(
@@ -1099,21 +1166,23 @@ fun assert_mintable_ask(predict: &Predict, oracle_id: ID, ask_price: u64) {
     assert!(ask_price >= min_ask && ask_price <= max_ask, EAskPriceOutOfBounds);
 }
 
-fun refresh_oracle_risk(predict: &mut Predict, oracle: &OracleSVI) {
+fun refresh_oracle_risk(predict: &mut Predict, oracle: &OracleSVI, clock: &Clock) {
     let oracle_id = oracle.id();
     let (min_strike, max_strike) = predict.vault.oracle_strike_range(oracle_id);
     if (min_strike == 0 && max_strike == 0) {
         // `(0, 0)` means this oracle has never had any minted exposure.
-        predict.vault.set_mtm(oracle_id, 0);
+        predict.vault.set_mtm(oracle_id, 0, clock);
         return
     };
     // Historical minted bounds do not shrink after a full unwind, so an empty
     // but previously touched book still rebuilds over the old range and
     // evaluates to 0 from zero `q_up` / `q_dn`.
     if (oracle.is_settled()) {
-        predict.vault.set_mtm_with_settlement(oracle_id, oracle.settlement_price().destroy_some());
+        predict
+            .vault
+            .set_mtm_with_settlement(oracle_id, oracle.settlement_price().destroy_some(), clock);
         return
     };
     let curve = predict.oracle_config.build_curve(oracle, min_strike, max_strike);
-    predict.vault.set_mtm_with_curve(oracle_id, &curve);
+    predict.vault.set_mtm_with_curve(oracle_id, &curve, clock);
 }

@@ -119,6 +119,7 @@ public fun create_oracle(
     expiry: u64,
     min_strike: u64,
     tick_size: u64,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
     assert_valid_strike_grid(min_strike, tick_size);
@@ -141,7 +142,7 @@ public fun create_oracle(
         registry.oracle_ids.add(cap_id, vector[]);
     };
     registry.oracle_ids[cap_id].push_back(oracle_id);
-    predict.add_oracle_grid(oracle_id, min_strike, tick_size, ctx);
+    predict.add_oracle_grid(oracle_id, min_strike, tick_size, clock, ctx);
     event::emit(OracleCreated {
         oracle_id,
         oracle_cap_id: cap_id,
@@ -224,6 +225,11 @@ public fun clear_oracle_ask_bounds(predict: &mut Predict, oracle: &OracleSVI, ca
 /// Set max total exposure percentage.
 public fun set_max_total_exposure_pct(predict: &mut Predict, _admin_cap: &AdminCap, pct: u64) {
     predict.set_max_total_exposure_pct(pct);
+}
+
+/// Set the MTM freshness threshold (ms) used for LP supply/withdraw gating.
+public fun set_mtm_freshness_ms(predict: &mut Predict, _admin_cap: &AdminCap, value: u64) {
+    predict.set_mtm_freshness_ms(value);
 }
 
 /// Update withdrawal rate limiter capacity and refill rate.

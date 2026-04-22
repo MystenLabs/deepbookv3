@@ -49,8 +49,11 @@
 //     * the best prefix entirely inside `left`, or
 //     * all of `left` plus the best prefix of `right`
 //
-// After that path is rebuilt, the root summary is enough to answer:
-//     max_payout = root.total_q_dn + root.best_prefix_up - root.best_prefix_dn
+// After that path is rebuilt, the root summary is enough to answer the raw
+// binary-combination peak:
+//     root.total_q_dn + root.best_prefix_up - root.best_prefix_dn
+// `max_payout()` then applies the stored range cash offset to recover the
+// actual vault liability peak.
 //
 // So the design is intentionally asymmetric:
 // - page-local aggregates optimize MTM
@@ -61,7 +64,7 @@ module deepbook_predict::strike_matrix;
 
 use deepbook::{constants::max_u64, math};
 use deepbook_predict::{constants, oracle_config::CurvePoint};
-use sui::table::{Self, Table};
+use sui::{clock::Clock, table::{Self, Table}};
 
 const PAGE_SLOTS: u64 = 512;
 
@@ -84,11 +87,12 @@ public struct StrikeMatrix has store {
     minted_min_strike: u64,
     minted_max_strike: u64,
     mtm: u64,
+    last_mtm_update: u64,
     /// Aggregate `$1`-per-unit cash obligation accumulated by range mints.
     /// Each range mint of a `(lower, higher)` band records `q_up[lower] += qty`,
     /// `q_dn[higher] += qty`, and `range_qty += qty`. Callers subtract `range_qty`
-    /// from `evaluate(curve)`, `evaluate_settled(s)`, and `max_payout()` to
-    /// recover the actual vault liability for ranges.
+    /// from `evaluate(curve)` and `evaluate_settled(s)`; `max_payout()` applies
+    /// the same adjustment internally.
     range_qty: u64,
 }
 
@@ -117,6 +121,7 @@ public(package) fun new(
     tick_size: u64,
     min_strike: u64,
     max_strike: u64,
+    clock: &Clock,
 ): StrikeMatrix {
     assert!(tick_size > 0, EInvalidTickSize);
     assert!(min_strike <= max_strike, EInvalidStrikeRange);
@@ -146,6 +151,7 @@ public(package) fun new(
         minted_min_strike: max_u64(),
         minted_max_strike: 0,
         mtm: 0,
+        last_mtm_update: clock.timestamp_ms(),
         range_qty: 0,
     }
 }
@@ -282,7 +288,7 @@ public(package) fun evaluate_settled(matrix: &StrikeMatrix, settlement: u64): u6
 
 public(package) fun max_payout(matrix: &StrikeMatrix): u64 {
     let root = matrix.page_tree[0];
-    root.total_q_dn + root.best_prefix_up - root.best_prefix_dn
+    root.total_q_dn + root.best_prefix_up - root.best_prefix_dn - matrix.range_qty
 }
 
 /// Aggregate `$1`-per-unit range quantity contributed by range mints.
@@ -295,9 +301,15 @@ public(package) fun mtm(matrix: &StrikeMatrix): u64 {
     matrix.mtm
 }
 
+/// Timestamp of the last MTM update, used by the vault to decide when to refresh.
+public(package) fun last_mtm_update(matrix: &StrikeMatrix): u64 {
+    matrix.last_mtm_update
+}
+
 /// Overwrite the cached mark-to-market value after recomputing it from a curve.
-public(package) fun set_mtm(matrix: &mut StrikeMatrix, value: u64) {
+public(package) fun set_mtm(matrix: &mut StrikeMatrix, value: u64, clock: &Clock) {
     matrix.mtm = value;
+    matrix.last_mtm_update = clock.timestamp_ms();
 }
 
 /// Return the historical minted strike bounds, or `(0, 0)` for an untouched
@@ -322,6 +334,7 @@ public(package) fun into_settled_totals(matrix: StrikeMatrix, settlement: u64): 
         minted_min_strike: _,
         minted_max_strike: _,
         mtm: _,
+        last_mtm_update: _,
         range_qty,
     } = matrix;
 
@@ -361,7 +374,7 @@ public(package) fun into_settled_totals(matrix: StrikeMatrix, settlement: u64): 
 /// plus a `qty` range_qty delta. The matrix writes are byte-identical to two
 /// separate longs; `range_qty` is the algebraic constant from the dominance
 /// identity (`short X@k ≡ long ~X@k − $1`) that callers subtract from
-/// `evaluate`/`evaluate_settled`/`max_payout` to recover the range payoff.
+/// `evaluate`/`evaluate_settled`; `max_payout()` applies it internally.
 fun apply_range(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64, add: bool) {
     matrix.apply_position(lower, qty, true, add);
     matrix.apply_position(higher, qty, false, add);
