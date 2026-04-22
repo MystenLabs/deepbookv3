@@ -365,7 +365,6 @@ public struct SVIParams has copy, drop, store {
 
 public struct BinaryMarketData has key {
     id: UID,
-    market_id: ID,
     spot: u64,
     basis: u64,
     svi: SVIParams,
@@ -375,7 +374,6 @@ public struct BinaryMarketData has key {
 }
 
 public fun create(
-    market_id: ID,
     ctx: &mut TxContext,
 ): (BinaryMarketData, DataHandle<Binary>);
 
@@ -572,9 +570,10 @@ public fun settle_permissionless<Quote>(
    - binary engine/router
 2. Create `BinaryMarketData`, getting `DataHandle<Binary>`.
 3. Call `market_data::market::create<Binary>(...)` to create `Market<Binary>`.
-4. Create `BinaryState`.
-5. Create `Vault<Binary>` and `Portfolio<Binary>`.
-6. Use `UpdateCap<Binary>` to authorize binary-specific market-data updates.
+4. Receive `UpdateCap<Binary>` from market creation.
+5. Create `BinaryState`.
+6. Create `Vault<Binary>` and `Portfolio<Binary>`.
+7. Use `UpdateCap<Binary>` to authorize binary-specific market-data updates.
 
 ## Key Consequence
 
