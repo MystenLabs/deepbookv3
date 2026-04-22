@@ -6,7 +6,7 @@ Core rule:
 
 - `market_data` defines the generic market shell, settlement, and typed update authorization
 - `vault` defines the generic portfolio, vault, and normalized risk shell
-- `orchestration` defines product-specific market-data structs, instruments, engine state, pricing, and routers
+- `orchestration` defines product-specific market-data structs, instruments, engine state, and the adapter functions that turn them into vault-relevant outputs
 
 `<T>` is the family/data-shape witness. For binaries, `T = Binary`. For a later vanilla options launch, `T = Vanilla`.
 
@@ -49,6 +49,16 @@ orchestration -> product meaning
 ```
 
 `orchestration` defines a new data struct, creates an instance of it, wraps it in a typed `DataHandle<T>`, and asks `market_data` to create `Market<T>` bound to that data shape.
+
+For each family `T`, `orchestration` owns the effective adapter contract:
+
+- `quote`
+- `open_effects`
+- `close_effects`
+- `refresh_risk`
+- `settled_payout`
+
+Core `vault` code consumes only normalized outputs from that adapter.
 
 ## Package: `market_data`
 
@@ -243,6 +253,13 @@ public struct RiskLimits has copy, drop, store {
     max_margin_pct: u64,
 }
 
+public struct TradeEffects has copy, drop, store {
+    premium_in: u64,
+    premium_out: u64,
+    position_delta: i64,
+    risk: RiskSnapshot,
+}
+
 public fun new_snapshot(
     mtm: u64,
     max_payout: u64,
@@ -253,6 +270,13 @@ public fun new_limits(
     max_mtm_pct: u64,
     max_margin_pct: u64,
 ): RiskLimits;
+
+public fun new_trade_effects(
+    premium_in: u64,
+    premium_out: u64,
+    position_delta: i64,
+    risk: RiskSnapshot,
+): TradeEffects;
 ```
 
 ### `vault.move`
@@ -299,6 +323,11 @@ public fun dispense_payout<T, CoinType>(
 public fun set_risk_snapshot<T>(
     vault: &mut Vault<T>,
     risk: RiskSnapshot,
+);
+
+public fun apply_trade_effects<T>(
+    vault: &mut Vault<T>,
+    effects: TradeEffects,
 );
 
 public fun assert_solvent<T>(vault: &Vault<T>);
@@ -462,7 +491,7 @@ public fun id(state: &BinaryState): ID;
 
 ### `binary_engine.move`
 
-Binary semantics: pricing, exposure updates, settlement payout, and risk projection into `RiskSnapshot`.
+Binary adapter: consumes `BinaryMarketData` + `BinaryState` and emits normalized outputs for core vault code.
 
 ```move
 module orchestration::binary_engine;
@@ -482,17 +511,25 @@ public fun quote(
     clock: &Clock,
 ): BinaryQuote;
 
-public fun apply_open(
+public fun open_effects(
+    market: &Market<Binary>,
+    data: &BinaryMarketData,
     state: &mut BinaryState,
     instrument: InstrumentId<Binary>,
     quantity: u64,
-);
+    vault: &Vault<Binary>,
+    clock: &Clock,
+): TradeEffects;
 
-public fun apply_close(
+public fun close_effects(
+    market: &Market<Binary>,
+    data: &BinaryMarketData,
     state: &mut BinaryState,
     instrument: InstrumentId<Binary>,
     quantity: u64,
-);
+    vault: &Vault<Binary>,
+    clock: &Clock,
+): TradeEffects;
 
 public fun refresh_risk(
     market: &Market<Binary>,
@@ -582,4 +619,4 @@ If new product families are added by upgrading only `orchestration`, then:
 - `market_data` cannot hardcode product-specific fields like SVI or option-specific curves
 - `vault` cannot hardcode product-specific payoff logic
 - product-specific data shapes and update entrypoints must live in `orchestration`
-- core packages only understand typed handles, shared shells, and normalized risk
+- core packages only understand typed handles, shared shells, normalized risk, and normalized trade effects
