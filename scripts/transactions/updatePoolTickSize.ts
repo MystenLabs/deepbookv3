@@ -22,7 +22,7 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
 
   const tx = new Transaction();
 
-  client.deepbook.deepBookAdmin.adjustTickSize("SUI_USDC", 0.0001)(tx);
+  client.deepbook.deepBookAdmin.adjustTickSize("SUI_USDC", 0.00001)(tx);
 
   let res = await prepareMultisigTx(tx, env, adminCapOwner[env]);
 
