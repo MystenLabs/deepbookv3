@@ -1,12 +1,14 @@
 # General Expiry Derivatives Protocol Design
 
-Goal: deploy stable core packages for expiry-based derivatives, then add product families like binaries by upgrading only `orchestration`.
+Goal: keep `market_data` and `vault` stable, then add product families by upgrading only `orchestration`.
 
 Core rule:
 
-- `market_data` is product-agnostic market truth
-- `vault` is product-agnostic balance-sheet state
-- `orchestration` defines product meaning, engine state, and public flows
+- `market_data` defines the generic market shell, settlement, and typed update authorization
+- `vault` defines the generic portfolio, vault, and normalized risk shell
+- `orchestration` defines product-specific market-data structs, instruments, engine state, pricing, and routers
+
+`<T>` is the family/data-shape witness. For binaries, `T = Binary`. For a later vanilla options launch, `T = Vanilla`.
 
 Function signatures below are design-level Move signatures. They are for boundaries, not final code.
 
@@ -17,7 +19,7 @@ packages/
   market_data/
     sources/
       market.move
-      market_state.move
+      update.move
       settlement.move
 
   vault/
@@ -31,124 +33,52 @@ packages/
     sources/
       registry.move
       binary_family.move
+      binary_data.move
       binary_instrument.move
       binary_state.move
       binary_engine.move
       binary_router.move
 ```
 
-Future families like vanilla options would be added to `orchestration` with the same shape as the binary modules.
-
 ## Dependency Direction
 
 ```text
-market_data -> canonical market + settlement state
-vault       -> canonical portfolio + vault state
-orchestration -> product semantics and entrypoints
+market_data -> generic market shell
+vault       -> generic balance-sheet shell
+orchestration -> product meaning
 ```
 
-`orchestration` reads `market_data`, mutates `vault`, owns product-specific engine state, and writes normalized `RiskSnapshot` back into core vault state.
+`orchestration` defines a new data struct, creates an instance of it, wraps it in a typed `DataHandle<T>`, and asks `market_data` to create `Market<T>` bound to that data shape.
 
 ## Package: `market_data`
 
-### `market.move`
+### `update.move`
 
-Static market definition shared by all product families.
-
-```move
-module market_data::market;
-
-public struct Market has key {
-    id: UID,
-    underlying_asset: String,
-    quote_asset: TypeName,
-    expiry_ms: u64,
-    market_state_id: ID,
-    settlement_rule: SettlementRule,
-}
-
-public fun create(
-    underlying_asset: String,
-    quote_asset: TypeName,
-    expiry_ms: u64,
-    market_state_id: ID,
-    settlement_rule: SettlementRule,
-    ctx: &mut TxContext,
-): Market;
-
-public fun id(market: &Market): ID;
-public fun expiry_ms(market: &Market): u64;
-public fun market_state_id(market: &Market): ID;
-public fun settlement_rule(market: &Market): &SettlementRule;
-```
-
-### `market_state.move`
-
-Hot mutable state for a market. This is what gets updated by price publishers.
+Typed handle + cap for product-defined market-data state.
 
 ```move
-module market_data::market_state;
+module market_data::update;
 
-public struct MarketUpdateCap has key, store {
+public struct DataHandle<phantom T> has copy, drop, store {
+    id: ID,
+}
+
+public struct UpdateCap<phantom T> has key, store {
     id: UID,
     market_id: ID,
+    data_id: ID,
 }
 
-public struct VolPoint has copy, drop, store {
-    strike: u64,
-    implied_vol: u64,
-}
+public fun new_handle<T>(id: ID): DataHandle<T>;
+public fun id<T>(handle: &DataHandle<T>): ID;
 
-public struct MarketState has key {
-    id: UID,
-    market_id: ID,
-    spot: u64,
-    forward: u64,
-    vol_surface: vector<VolPoint>,
-    spot_updated_at_ms: u64,
-    forward_updated_at_ms: u64,
-    vol_updated_at_ms: u64,
-    settlement_state: SettlementState,
-}
-
-public fun create(
-    market_id: ID,
-    settlement_state: SettlementState,
-    ctx: &mut TxContext,
-): (MarketState, MarketUpdateCap);
-
-public fun id(state: &MarketState): ID;
-public fun market_id(state: &MarketState): ID;
-public fun settlement_state(state: &MarketState): &SettlementState;
-
-public fun update_spot(
-    state: &mut MarketState,
-    cap: &MarketUpdateCap,
-    spot: u64,
-    observed_at_ms: u64,
-    clock: &Clock,
-);
-
-public fun update_forward(
-    state: &mut MarketState,
-    cap: &MarketUpdateCap,
-    forward: u64,
-    observed_at_ms: u64,
-    clock: &Clock,
-);
-
-public fun update_vol_surface(
-    state: &mut MarketState,
-    cap: &MarketUpdateCap,
-    vol_surface: vector<VolPoint>,
-    observed_at_ms: u64,
-    clock: &Clock,
-);
+public fun market_id<T>(cap: &UpdateCap<T>): ID;
+public fun data_id<T>(cap: &UpdateCap<T>): ID;
 ```
 
 ### `settlement.move`
 
-Settlement rule and finalization state machine. This package does not price products.
+Settlement is the only truly generic market-state shape in core.
 
 ```move
 module market_data::settlement;
@@ -178,7 +108,6 @@ public fun new_rule(
 ): SettlementRule;
 
 public fun new_state(): SettlementState;
-public fun create_cap(market_id: ID, ctx: &mut TxContext): SettlementCap;
 public fun is_finalized(state: &SettlementState): bool;
 public fun final_value(state: &SettlementState): u64;
 
@@ -192,68 +121,105 @@ public fun finalize(
 );
 ```
 
+### `market.move`
+
+Core market object. It knows only market identity, settlement, and which typed external data object powers it.
+
+```move
+module market_data::market;
+
+public struct Market<phantom T> has key {
+    id: UID,
+    underlying_asset: String,
+    quote_asset: TypeName,
+    expiry_ms: u64,
+    data: DataHandle<T>,
+    settlement_rule: SettlementRule,
+    settlement_state: SettlementState,
+}
+
+public fun create<T>(
+    underlying_asset: String,
+    quote_asset: TypeName,
+    expiry_ms: u64,
+    data: DataHandle<T>,
+    settlement_rule: SettlementRule,
+    ctx: &mut TxContext,
+): (Market<T>, UpdateCap<T>, SettlementCap);
+
+public fun id<T>(market: &Market<T>): ID;
+public fun expiry_ms<T>(market: &Market<T>): u64;
+public fun data<T>(market: &Market<T>): DataHandle<T>;
+public fun settlement_state<T>(market: &Market<T>): &SettlementState;
+
+public fun assert_update_access<T>(
+    market: &Market<T>,
+    cap: &UpdateCap<T>,
+);
+```
+
 ## Package: `vault`
 
 ### `instrument.move`
 
-Core instrument handle. Core vault code should know only opaque instrument ids, not strikes or payoff semantics.
+Core vault code should only see opaque instrument ids.
 
 ```move
 module vault::instrument;
 
-public struct InstrumentId<phantom Family> has copy, drop, store {
+public struct InstrumentId<phantom T> has copy, drop, store {
     id: ID,
 }
 
-public fun new<Family>(id: ID): InstrumentId<Family>;
-public fun id<Family>(instrument: &InstrumentId<Family>): ID;
+public fun new<T>(id: ID): InstrumentId<T>;
+public fun id<T>(instrument: &InstrumentId<T>): ID;
 ```
 
 ### `portfolio.move`
 
-Generic user portfolio: cash plus quantities of opaque instruments.
+Generic user holdings object. Cash plus positions in opaque instruments.
 
 ```move
 module vault::portfolio;
 
-public struct Portfolio<phantom Family> has key {
+public struct Portfolio<phantom T> has key {
     id: UID,
     owner: address,
     balance_manager: BalanceManager,
     deposit_cap: DepositCap,
     withdraw_cap: WithdrawCap,
-    positions: Table<InstrumentId<Family>, i64>,
+    positions: Table<InstrumentId<T>, i64>,
 }
 
-public fun create<Family>(ctx: &mut TxContext): Portfolio<Family>;
+public fun create<T>(ctx: &mut TxContext): Portfolio<T>;
 
-public fun owner<Family>(portfolio: &Portfolio<Family>): address;
-public fun balance<Family, CoinType>(portfolio: &Portfolio<Family>): u64;
-public fun position<Family>(
-    portfolio: &Portfolio<Family>,
-    instrument: InstrumentId<Family>,
+public fun owner<T>(portfolio: &Portfolio<T>): address;
+public fun balance<T, CoinType>(portfolio: &Portfolio<T>): u64;
+public fun position<T>(
+    portfolio: &Portfolio<T>,
+    instrument: InstrumentId<T>,
 ): i64;
 
-public fun deposit<Family, CoinType>(
-    portfolio: &mut Portfolio<Family>,
+public fun deposit<T, CoinType>(
+    portfolio: &mut Portfolio<T>,
     coin: Coin<CoinType>,
     ctx: &TxContext,
 );
 
-public fun withdraw<Family, CoinType>(
-    portfolio: &mut Portfolio<Family>,
+public fun withdraw<T, CoinType>(
+    portfolio: &mut Portfolio<T>,
     amount: u64,
     ctx: &mut TxContext,
 ): Coin<CoinType>;
 
-public fun add_position<Family>(
-    portfolio: &mut Portfolio<Family>,
-    instrument: InstrumentId<Family>,
+public fun add_position<T>(
+    portfolio: &mut Portfolio<T>,
+    instrument: InstrumentId<T>,
     delta: i64,
 );
 
-public fun deposit_permissionless<Family, CoinType>(
-    portfolio: &mut Portfolio<Family>,
+public fun deposit_permissionless<T, CoinType>(
+    portfolio: &mut Portfolio<T>,
     coin: Coin<CoinType>,
     ctx: &TxContext,
 );
@@ -261,7 +227,7 @@ public fun deposit_permissionless<Family, CoinType>(
 
 ### `risk.move`
 
-Normalized risk language understood by core vault code.
+Normalized outputs that core vault code understands.
 
 ```move
 module vault::risk;
@@ -291,12 +257,12 @@ public fun new_limits(
 
 ### `vault.move`
 
-Generic counterparty shell. It holds collateral and cached normalized risk. It does not know product payoff logic.
+Generic counterparty shell. It caches normalized risk but does not know product pricing logic.
 
 ```move
 module vault::vault;
 
-public struct Vault<phantom Family> has key {
+public struct Vault<phantom T> has key {
     id: UID,
     market_id: ID,
     engine_state_id: ID,
@@ -308,48 +274,44 @@ public struct Vault<phantom Family> has key {
     trading_paused: bool,
 }
 
-public fun create<Family>(
+public fun create<T>(
     market_id: ID,
     engine_state_id: ID,
     limits: RiskLimits,
     ctx: &mut TxContext,
-): Vault<Family>;
+): Vault<T>;
 
-public fun id<Family>(vault: &Vault<Family>): ID;
-public fun market_id<Family>(vault: &Vault<Family>): ID;
-public fun engine_state_id<Family>(vault: &Vault<Family>): ID;
-public fun risk<Family>(vault: &Vault<Family>): RiskSnapshot;
+public fun id<T>(vault: &Vault<T>): ID;
+public fun market_id<T>(vault: &Vault<T>): ID;
+public fun engine_state_id<T>(vault: &Vault<T>): ID;
+public fun risk<T>(vault: &Vault<T>): RiskSnapshot;
 
-public fun accept_payment<Family, CoinType>(
-    vault: &mut Vault<Family>,
+public fun accept_payment<T, CoinType>(
+    vault: &mut Vault<T>,
     payment: Balance<CoinType>,
 );
 
-public fun dispense_payout<Family, CoinType>(
-    vault: &mut Vault<Family>,
+public fun dispense_payout<T, CoinType>(
+    vault: &mut Vault<T>,
     amount: u64,
 ): Balance<CoinType>;
 
-public fun set_risk_snapshot<Family>(
-    vault: &mut Vault<Family>,
+public fun set_risk_snapshot<T>(
+    vault: &mut Vault<T>,
     risk: RiskSnapshot,
 );
 
-public fun assert_solvent<Family>(vault: &Vault<Family>);
-
-public fun set_trading_paused<Family>(
-    vault: &mut Vault<Family>,
-    paused: bool,
-);
+public fun assert_solvent<T>(vault: &Vault<T>);
+public fun set_trading_paused<T>(vault: &mut Vault<T>, paused: bool);
 ```
 
 ## Package: `orchestration`
 
-This package owns product families. Launching binaries means adding modules here and reusing `market_data` + `vault` unchanged.
+`orchestration` is where a new family is added.
 
 ### `registry.move`
 
-Links markets, vaults, and product engine state.
+Links markets, vaults, and engine state.
 
 ```move
 module orchestration::registry;
@@ -367,16 +329,10 @@ public struct Registry has key {
 
 public fun init(ctx: &mut TxContext): (Registry, AdminCap);
 
-public fun register_market(
+public fun register_binary(
     registry: &mut Registry,
     admin: &AdminCap,
-    market: &Market,
-    market_state: &MarketState,
-);
-
-public fun register_binary_vault(
-    registry: &mut Registry,
-    admin: &AdminCap,
+    market: &Market<Binary>,
     vault: &Vault<Binary>,
     engine_state: &BinaryState,
 );
@@ -390,6 +346,63 @@ Binary witness type.
 module orchestration::binary_family;
 
 public struct Binary has drop, store {}
+```
+
+### `binary_data.move`
+
+Binary-specific market data shape. This is where the current `OracleSVI`-style update surface belongs.
+
+```move
+module orchestration::binary_data;
+
+public struct SVIParams has copy, drop, store {
+    a: u64,
+    b: u64,
+    rho: i64::I64,
+    m: i64::I64,
+    sigma: u64,
+}
+
+public struct BinaryMarketData has key {
+    id: UID,
+    market_id: ID,
+    spot: u64,
+    basis: u64,
+    svi: SVIParams,
+    spot_timestamp_ms: u64,
+    basis_timestamp_ms: u64,
+    lazer_published_at_us: u64,
+}
+
+public fun create(
+    market_id: ID,
+    ctx: &mut TxContext,
+): (BinaryMarketData, DataHandle<Binary>);
+
+public fun update_prices(
+    market: &Market<Binary>,
+    data: &mut BinaryMarketData,
+    cap: &UpdateCap<Binary>,
+    spot: u64,
+    forward: u64,
+    clock: &Clock,
+);
+
+public fun update_spot_from_lazer(
+    market: &Market<Binary>,
+    data: &mut BinaryMarketData,
+    cap: &UpdateCap<Binary>,
+    update: LazerUpdate,
+    clock: &Clock,
+);
+
+public fun update_svi(
+    market: &Market<Binary>,
+    data: &mut BinaryMarketData,
+    cap: &UpdateCap<Binary>,
+    svi: SVIParams,
+    clock: &Clock,
+);
 ```
 
 ### `binary_instrument.move`
@@ -443,7 +456,6 @@ module orchestration::binary_state;
 public struct BinaryState has key {
     id: UID,
     market_id: ID,
-    // strike-matrix style aggregate exposure lives here
 }
 
 public fun create(market_id: ID, ctx: &mut TxContext): BinaryState;
@@ -452,7 +464,7 @@ public fun id(state: &BinaryState): ID;
 
 ### `binary_engine.move`
 
-Binary product semantics: pricing, state updates, settlement payout, and risk projection into `RiskSnapshot`.
+Binary semantics: pricing, exposure updates, settlement payout, and risk projection into `RiskSnapshot`.
 
 ```move
 module orchestration::binary_engine;
@@ -463,9 +475,9 @@ public struct BinaryQuote has copy, drop, store {
 }
 
 public fun quote(
-    market: &Market,
-    market_state: &MarketState,
-    engine_state: &BinaryState,
+    market: &Market<Binary>,
+    data: &BinaryMarketData,
+    state: &BinaryState,
     instrument: InstrumentId<Binary>,
     quantity: u64,
     vault: &Vault<Binary>,
@@ -473,27 +485,27 @@ public fun quote(
 ): BinaryQuote;
 
 public fun apply_open(
-    engine_state: &mut BinaryState,
+    state: &mut BinaryState,
     instrument: InstrumentId<Binary>,
     quantity: u64,
 );
 
 public fun apply_close(
-    engine_state: &mut BinaryState,
+    state: &mut BinaryState,
     instrument: InstrumentId<Binary>,
     quantity: u64,
 );
 
 public fun refresh_risk(
-    market: &Market,
-    market_state: &MarketState,
-    engine_state: &mut BinaryState,
+    market: &Market<Binary>,
+    data: &BinaryMarketData,
+    state: &mut BinaryState,
     vault: &Vault<Binary>,
     clock: &Clock,
 ): RiskSnapshot;
 
 public fun settled_payout(
-    market_state: &MarketState,
+    market: &Market<Binary>,
     instrument: InstrumentId<Binary>,
     quantity: u64,
 ): u64;
@@ -501,27 +513,27 @@ public fun settled_payout(
 
 ### `binary_router.move`
 
-Public binary flows. This is where user actions are orchestrated against core packages.
+Public binary flows.
 
 ```move
 module orchestration::binary_router;
 
 public fun preview(
+    market: &Market<Binary>,
+    data: &BinaryMarketData,
     vault: &Vault<Binary>,
-    market: &Market,
-    market_state: &MarketState,
-    engine_state: &BinaryState,
+    state: &BinaryState,
     instrument: InstrumentId<Binary>,
     quantity: u64,
     clock: &Clock,
 ): BinaryQuote;
 
 public fun mint<Quote>(
+    market: &Market<Binary>,
+    data: &BinaryMarketData,
     vault: &mut Vault<Binary>,
+    state: &mut BinaryState,
     portfolio: &mut Portfolio<Binary>,
-    market: &Market,
-    market_state: &MarketState,
-    engine_state: &mut BinaryState,
     instrument: InstrumentId<Binary>,
     quantity: u64,
     clock: &Clock,
@@ -529,11 +541,11 @@ public fun mint<Quote>(
 );
 
 public fun redeem<Quote>(
+    market: &Market<Binary>,
+    data: &BinaryMarketData,
     vault: &mut Vault<Binary>,
+    state: &mut BinaryState,
     portfolio: &mut Portfolio<Binary>,
-    market: &Market,
-    market_state: &MarketState,
-    engine_state: &mut BinaryState,
     instrument: InstrumentId<Binary>,
     quantity: u64,
     clock: &Clock,
@@ -541,9 +553,9 @@ public fun redeem<Quote>(
 );
 
 public fun settle_permissionless<Quote>(
+    market: &Market<Binary>,
     vault: &mut Vault<Binary>,
     portfolio: &mut Portfolio<Binary>,
-    market_state: &MarketState,
     instrument: InstrumentId<Binary>,
     quantity: u64,
     ctx: &mut TxContext,
@@ -552,27 +564,23 @@ public fun settle_permissionless<Quote>(
 
 ## Binary Launch Flow
 
-1. Deploy stable `market_data`.
-2. Deploy stable `vault`.
-3. Upgrade `orchestration` to add:
+1. In `orchestration`, define:
    - `Binary`
-   - binary instrument structs
+   - `BinaryMarketData`
+   - binary instruments
    - `BinaryState`
-   - binary engine
-   - binary router
-4. Create:
-   - `Market`
-   - `MarketState`
-   - `Vault<Binary>`
-   - `Portfolio<Binary>`
-   - binary instrument objects
-   - `BinaryState`
+   - binary engine/router
+2. Create `BinaryMarketData`, getting `DataHandle<Binary>`.
+3. Call `market_data::market::create<Binary>(...)` to create `Market<Binary>`.
+4. Create `BinaryState`.
+5. Create `Vault<Binary>` and `Portfolio<Binary>`.
+6. Use `UpdateCap<Binary>` to authorize binary-specific market-data updates.
 
 ## Key Consequence
 
-If a new product family can be added by upgrading only `orchestration`, then:
+If new product families are added by upgrading only `orchestration`, then:
 
-- `market_data` cannot encode product semantics
-- `vault` cannot encode product semantics
-- product semantics must live entirely in `orchestration`
-- core vault state can only consume normalized outputs like `RiskSnapshot`
+- `market_data` cannot hardcode product-specific fields like SVI or option-specific curves
+- `vault` cannot hardcode product-specific payoff logic
+- product-specific data shapes and update entrypoints must live in `orchestration`
+- core packages only understand typed handles, shared shells, and normalized risk
