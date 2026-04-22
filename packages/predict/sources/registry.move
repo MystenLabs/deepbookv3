@@ -44,6 +44,16 @@ public struct OracleCreated has copy, drop, store {
     tick_size: u64,
 }
 
+public struct CapRegistered has copy, drop, store {
+    oracle_id: ID,
+    cap_id: ID,
+}
+
+public struct CapUnregistered has copy, drop, store {
+    oracle_id: ID,
+    cap_id: ID,
+}
+
 /// Capability for admin operations.
 /// Created during package init, transferred to deployer (multisig).
 public struct AdminCap has key, store {
@@ -77,6 +87,28 @@ entry fun create_predict<Quote>(
     assert!(!registry.id.exists_(PredictCreated()), EPredictAlreadyCreated);
     registry.id.add(PredictCreated(), type_name::with_defining_ids<Quote>());
     predict::create<Quote>(&mut registry.id, currency, treasury_cap, clock, ctx);
+}
+
+/// Revoke an OracleSVICap's authorization on an oracle. Takes `cap_id` so the
+/// admin can revoke caps that are no longer held (e.g. lost or compromised).
+public fun unregister_oracle_cap(oracle: &mut OracleSVI, _admin_cap: &AdminCap, cap_id: ID) {
+    oracle::unregister_cap(oracle, cap_id);
+    event::emit(CapUnregistered { oracle_id: object::id(oracle), cap_id });
+}
+
+/// Cap holder voluntarily removes its own cap from an oracle's authorized
+/// set. No AdminCap needed — possession of the cap is the authorization.
+public fun self_unregister_oracle_cap(oracle: &mut OracleSVI, cap: &OracleSVICap) {
+    let cap_id = object::id(cap);
+    oracle::self_unregister_cap(oracle, cap);
+    event::emit(CapUnregistered { oracle_id: object::id(oracle), cap_id });
+}
+
+/// Destroy an OracleSVICap the holder no longer needs. Does not touch any
+/// oracle's authorized set — self_unregister_oracle_cap first if cleanup is
+/// wanted.
+public fun destroy_oracle_cap(cap: OracleSVICap) {
+    oracle::destroy_oracle_cap(cap);
 }
 
 /// Create a new OracleSVICap. Transferred to Block Scholes operator.
@@ -141,6 +173,7 @@ public fun create_oracle(
 /// Register an additional OracleSVICap as authorized to update an oracle.
 public fun register_oracle_cap(oracle: &mut OracleSVI, _admin_cap: &AdminCap, cap: &OracleSVICap) {
     oracle::register_cap(oracle, cap);
+    event::emit(CapRegistered { oracle_id: object::id(oracle), cap_id: object::id(cap) });
 }
 
 /// Enable a quote asset for new supply and mint inflows.
