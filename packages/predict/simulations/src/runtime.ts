@@ -161,6 +161,30 @@ export function setAssetFeedIdTx(
   return tx;
 }
 
+export function setAssetBasisBoundsTx(
+  predictId: string,
+  asset: string,
+  maxSpotDeviation: bigint,
+  maxBasisDeviation: bigint,
+  minBasis: bigint,
+  maxBasis: bigint
+): Transaction {
+  const tx = new Transaction();
+  tx.moveCall({
+    target: target("registry", "set_asset_basis_bounds"),
+    arguments: [
+      tx.object(predictId),
+      tx.object(ADMIN_CAP_ID),
+      tx.pure.string(asset),
+      tx.pure.u64(maxSpotDeviation),
+      tx.pure.u64(maxBasisDeviation),
+      tx.pure.u64(minBasis),
+      tx.pure.u64(maxBasis),
+    ],
+  });
+  return tx;
+}
+
 export function activateOracleTx(oracleId: string, oracleCapId: string): Transaction {
   const tx = new Transaction();
   tx.moveCall({
