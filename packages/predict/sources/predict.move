@@ -16,7 +16,7 @@ use deepbook_predict::{
     oracle::{Self, OracleSVI, OracleSVICap},
     oracle_config::{Self, OracleConfig},
     plp::PLP,
-    predict_manager::{Self, PredictManager},
+    predict_manager::PredictManager,
     pricing_config::{Self, PricingConfig},
     range_key::RangeKey,
     rate_limiter::{Self, RateLimiter},
@@ -29,6 +29,7 @@ use sui::{
     clock::Clock,
     coin::{Self, Coin, TreasuryCap},
     coin_registry::Currency,
+    derived_object,
     event,
     vec_set::VecSet
 };
@@ -45,13 +46,9 @@ const EAskPriceOutOfBounds: u64 = 7;
 const EAskBoundLooserThanGlobal: u64 = 8;
 const EOracleNotSettled: u64 = 9;
 const EStaleOracleMtm: u64 = 10;
+const EPredictAlreadyCreated: u64 = 11;
 
 // === Events ===
-
-public struct ManagerCreated has copy, drop, store {
-    manager_id: ID,
-    owner: address,
-}
 
 public struct PositionMinted has copy, drop, store {
     predict_id: ID,
@@ -217,17 +214,9 @@ public struct Predict has key {
     trading_paused: bool,
 }
 
-// === Public Functions ===
+public struct PredictKey<phantom T>() has copy, drop, store;
 
-/// Create a new PredictManager for the caller.
-public fun create_manager(ctx: &mut TxContext): ID {
-    let manager_id = predict_manager::new(ctx);
-    event::emit(ManagerCreated {
-        manager_id,
-        owner: ctx.sender(),
-    });
-    manager_id
-}
+// === Public Functions ===
 
 /// Get the amounts for mint/redeem (for UI/preview).
 /// Returns (mint_cost, redeem_payout).
@@ -540,13 +529,15 @@ public fun withdraw<Quote>(
 
 /// Create and share the Predict object. Returns its ID.
 public(package) fun create<Quote>(
+    registry_uid: &mut UID,
     currency: &Currency<Quote>,
     treasury_cap: TreasuryCap<PLP>,
     clock: &Clock,
     ctx: &mut TxContext,
-): ID {
+) {
+    assert!(!derived_object::exists(registry_uid, PredictKey<Quote>()), EPredictAlreadyCreated);
     let mut predict = Predict {
-        id: object::new(ctx),
+        id: derived_object::claim(registry_uid, PredictKey<Quote>()),
         vault: vault::new(ctx),
         treasury_cap,
         pricing_config: pricing_config::new(),
@@ -562,10 +553,7 @@ public(package) fun create<Quote>(
         trading_paused: false,
     };
     predict.enable_quote_asset<Quote>(currency);
-    let predict_id = object::id(&predict);
     transfer::share_object(predict);
-
-    predict_id
 }
 
 public(package) fun enable_quote_asset<Quote>(predict: &mut Predict, currency: &Currency<Quote>) {

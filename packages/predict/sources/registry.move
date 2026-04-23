@@ -12,10 +12,21 @@ use deepbook_predict::{
     constants,
     oracle::{Self, OracleSVICap, OracleSVI},
     plp::PLP,
-    predict::{Self, Predict}
+    predict::{Self, Predict},
+    predict_manager::{Self, PredictManager}
 };
-use std::string::String;
-use sui::{clock::Clock, coin::TreasuryCap, coin_registry::Currency, event, table::{Self, Table}};
+use std::{string::String, type_name};
+use sui::{
+    clock::Clock,
+    coin::TreasuryCap,
+    coin_registry::Currency,
+    dynamic_field as df,
+    event,
+    table::{Self, Table}
+};
+
+use fun df::exists_ as UID.exists_;
+use fun df::add as UID.add;
 
 // === Errors ===
 const EPredictAlreadyCreated: u64 = 0;
@@ -24,10 +35,6 @@ const EInvalidStrikeGrid: u64 = 2;
 const EFeedIdOverflow: u64 = 3;
 
 // === Events ===
-
-public struct PredictCreated has copy, drop, store {
-    predict_id: ID,
-}
 
 public struct OracleCreated has copy, drop, store {
     oracle_id: ID,
@@ -50,18 +57,15 @@ public struct AdminCap has key, store {
 /// Shared object tracking global state.
 public struct Registry has key {
     id: UID,
-    /// ID of the Predict object (None if not yet created)
-    predict_id: Option<ID>,
     /// OracleSVICap ID -> vector of oracle IDs created by that cap
     oracle_ids: Table<ID, vector<ID>>,
 }
 
-// === Public Functions ===
+/// DF marker on `Registry.id` enforcing the V1 single-Predict invariant.
+/// Stored value is the chosen `Quote` `TypeName`.
+public struct PredictCreated() has copy, drop, store;
 
-/// Get the Predict ID (None if not yet created).
-public fun predict_id(registry: &Registry): Option<ID> {
-    registry.predict_id
-}
+// === Public Functions ===
 
 /// Get oracle IDs created by a given OracleSVICap.
 public fun oracle_ids(registry: &Registry, cap_id: ID): vector<ID> {
@@ -72,24 +76,20 @@ public fun oracle_ids(registry: &Registry, cap_id: ID): vector<ID> {
     }
 }
 
-/// Create the Predict shared object. Can only be called once.
-/// Quote is the collateral asset (e.g., USDC).
-public fun create_predict<Quote>(
+/// Create the Predict shared object for `Quote`. V1 allows exactly one
+/// Predict total via the `PredictCreated` marker; the per-`Quote` lock in
+/// `predict::create` would take over if that guard is ever dropped.
+entry fun create_predict<Quote>(
     registry: &mut Registry,
     _admin_cap: &AdminCap,
     currency: &Currency<Quote>,
     treasury_cap: TreasuryCap<PLP>,
     clock: &Clock,
     ctx: &mut TxContext,
-): ID {
-    assert!(registry.predict_id.is_none(), EPredictAlreadyCreated);
-
-    let predict_id = predict::create<Quote>(currency, treasury_cap, clock, ctx);
-    registry.predict_id = option::some(predict_id);
-
-    event::emit(PredictCreated { predict_id });
-
-    predict_id
+) {
+    assert!(!registry.id.exists_(PredictCreated()), EPredictAlreadyCreated);
+    registry.id.add(PredictCreated(), type_name::with_defining_ids<Quote>());
+    predict::create<Quote>(&mut registry.id, currency, treasury_cap, clock, ctx);
 }
 
 /// Register an additional OracleSVICap as authorized to update an oracle.
@@ -331,6 +331,15 @@ public fun set_asset_feed_id(
     predict.set_asset_feed_id(asset, pyth_lazer_feed_id);
 }
 
+/// Create a new PredictManager for the caller, allowing composability.
+public fun create_manager(registry: &mut Registry, ctx: &mut TxContext): PredictManager {
+    predict_manager::new(&mut registry.id, ctx)
+}
+
+entry fun create_and_share_manager(registry: &mut Registry, ctx: &mut TxContext) {
+    create_manager(registry, ctx).share();
+}
+
 // === Private Functions ===
 
 /// Package initializer - creates Registry and AdminCap.
@@ -367,7 +376,6 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
     (
         Registry {
             id: object::new(ctx),
-            predict_id: option::none(),
             oracle_ids: table::new(ctx),
         },
         AdminCap {

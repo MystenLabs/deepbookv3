@@ -11,19 +11,16 @@ module deepbook_predict::predict_manager;
 
 use deepbook::balance_manager::{Self, BalanceManager, DepositCap, WithdrawCap};
 use deepbook_predict::{market_key::MarketKey, range_key::RangeKey};
-use sui::{coin::Coin, event, table::{Self, Table}};
+use sui::{coin::Coin, derived_object, table::{Self, Table}};
 
 // === Errors ===
 const EInvalidOwner: u64 = 0;
 const EInsufficientPosition: u64 = 1;
 const EInsufficientRangePosition: u64 = 2;
 
-// === Events ===
-
-public struct PredictManagerCreated has copy, drop, store {
-    manager_id: ID,
-    owner: address,
-}
+/// The key for deriving predict manager. u64 is optional for
+/// supporting multiple managers per address. Defaults to 0 in v1.
+public struct PredictManagerKey(address, u64) has copy, drop, store;
 
 // === Structs ===
 
@@ -41,6 +38,9 @@ public struct PredictManager has key {
 }
 
 // === Public Functions ===
+public fun share(self: PredictManager) {
+    transfer::share_object(self);
+}
 
 /// Get the owner of the PredictManager.
 public fun owner(self: &PredictManager): address {
@@ -85,15 +85,15 @@ public fun withdraw<T>(self: &mut PredictManager, amount: u64, ctx: &mut TxConte
 // === Public-Package Functions ===
 
 /// Create a new PredictManager and share it.
-public(package) fun new(ctx: &mut TxContext): ID {
-    let id = object::new(ctx);
+public(package) fun new(registry_uid: &mut UID, ctx: &mut TxContext): PredictManager {
+    let id = derived_object::claim(registry_uid, PredictManagerKey(ctx.sender(), 0));
     let owner = ctx.sender();
 
     let mut balance_manager = balance_manager::new(ctx);
     let deposit_cap = balance_manager.mint_deposit_cap(ctx);
     let withdraw_cap = balance_manager.mint_withdraw_cap(ctx);
 
-    let manager = PredictManager {
+    PredictManager {
         id,
         owner,
         balance_manager,
@@ -101,16 +101,7 @@ public(package) fun new(ctx: &mut TxContext): ID {
         withdraw_cap,
         positions: table::new(ctx),
         range_positions: table::new(ctx),
-    };
-    let manager_id = object::id(&manager);
-    transfer::share_object(manager);
-
-    event::emit(PredictManagerCreated {
-        manager_id,
-        owner,
-    });
-
-    manager_id
+    }
 }
 
 /// Deposit protocol payouts without requiring the manager owner as sender.
