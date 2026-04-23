@@ -42,6 +42,7 @@ const EBasisOutOfRange: u64 = 20;
 const EOracleStale: u64 = 21;
 const EOracleInactive: u64 = 22;
 const ELazerAuthoritativeAtExpiry: u64 = 23;
+const ECapNotRegistered: u64 = 24;
 
 // Pre-expiry oracle that has not been activated yet.
 const STATUS_INACTIVE: u8 = 0;
@@ -692,6 +693,30 @@ public(package) fun register_cap(oracle: &mut OracleSVI, cap: &OracleSVICap) {
     oracle.authorized_caps.insert(cap.id.to_inner());
 }
 
+/// Admin-side revocation. Takes `cap_id` by value so lost or compromised
+/// caps can still be revoked without the cap object.
+public(package) fun unregister_cap(oracle: &mut OracleSVI, cap_id: ID) {
+    assert!(oracle.authorized_caps.contains(&cap_id), ECapNotRegistered);
+    oracle.authorized_caps.remove(&cap_id);
+}
+
+/// Cap-holder self-revocation. Requires possession of the cap object so
+/// pushers can deregister during graceful shutdown without going through
+/// admin.
+public(package) fun self_unregister_cap(oracle: &mut OracleSVI, cap: &OracleSVICap) {
+    let cap_id = cap.id.to_inner();
+    assert!(oracle.authorized_caps.contains(&cap_id), ECapNotRegistered);
+    oracle.authorized_caps.remove(&cap_id);
+}
+
+/// Destroy a cap the holder no longer needs (key rotation, pod retirement).
+/// Does not touch `authorized_caps` on any oracle — `self_unregister_cap`
+/// first if on-chain cleanup is wanted.
+public(package) fun destroy_oracle_cap(cap: OracleSVICap) {
+    let OracleSVICap { id } = cap;
+    id.delete();
+}
+
 /// Create a new OracleCap. Called by registry during setup.
 public(package) fun create_oracle_cap(ctx: &mut TxContext): OracleSVICap {
     OracleSVICap { id: object::new(ctx) }
@@ -990,4 +1015,42 @@ fun compute_nd2(oracle: &OracleSVI, strike: u64): u64 {
     let d2 = d2.neg();
 
     predict_math::normal_cdf(&d2)
+}
+
+// === Test Functions ===
+
+#[test_only]
+public fun create_unshared_oracle_for_testing(ctx: &mut TxContext): OracleSVI {
+    let bounds = new_oracle_bounds(
+        tuning_constants::default_spot_staleness_threshold_ms!(),
+        tuning_constants::default_basis_staleness_threshold_ms!(),
+        tuning_constants::default_lazer_authoritative_threshold_ms!(),
+        tuning_constants::default_lazer_settlement_authoritative_threshold_ms!(),
+        tuning_constants::default_max_spot_deviation!(),
+        tuning_constants::default_max_basis_deviation!(),
+        tuning_constants::default_min_basis!(),
+        tuning_constants::default_max_basis!(),
+    );
+    OracleSVI {
+        id: object::new(ctx),
+        authorized_caps: vec_set::empty(),
+        underlying_asset: b"BTC".to_string(),
+        pyth_lazer_feed_id: 1,
+        expiry: 0,
+        active: false,
+        prices: PriceData { spot: 0, basis: 0 },
+        svi: SVIParams {
+            a: 0,
+            b: 0,
+            rho: i64::zero(),
+            m: i64::zero(),
+            sigma: 0,
+        },
+        spot_timestamp_ms: 0,
+        lazer_spot_timestamp_ms: 0,
+        basis_timestamp_ms: 0,
+        lazer_published_at_us: 0,
+        bounds,
+        settlement_price: option::none(),
+    }
 }
