@@ -20,10 +20,13 @@ use sui::{
     clock::Clock,
     coin::TreasuryCap,
     coin_registry::Currency,
-    dynamic_field,
+    dynamic_field as df,
     event,
     table::{Self, Table}
 };
+
+use fun df::exists_ as UID.exists_;
+use fun df::add as UID.add;
 
 // === Errors ===
 const EPredictAlreadyCreated: u64 = 0;
@@ -84,8 +87,8 @@ entry fun create_predict<Quote>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    assert!(!dynamic_field::exists_(&registry.id, PredictCreated()), EPredictAlreadyCreated);
-    dynamic_field::add(&mut registry.id, PredictCreated(), type_name::with_defining_ids<Quote>());
+    assert!(!registry.id.exists_(PredictCreated()), EPredictAlreadyCreated);
+    registry.id.add(PredictCreated(), type_name::with_defining_ids<Quote>());
     predict::create<Quote>(&mut registry.id, currency, treasury_cap, clock, ctx);
 }
 
