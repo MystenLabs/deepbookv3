@@ -28,6 +28,7 @@ import {
   finalizeDusdcCurrencyRegistrationTx,
   mintTx,
   refreshOracleAndMintTx,
+  setAssetBasisBoundsTx,
   setAssetFeedIdTx,
   supplyTx,
   updateBasisTx,
@@ -129,6 +130,22 @@ async function setupSimulation(): Promise<SimState> {
 
   await executeAndWait(setAssetFeedIdTx(predictId, "BTC", 1n), "set_asset_feed_id");
   console.log(`[${ts()}]   Feed id registered: BTC -> 1`);
+
+  // Scenario CSV has historical spot moves up to ~8% between consecutive
+  // update_prices rows. Default per-push bounds (2%) would trip the circuit
+  // breaker; widen to the admin ceiling (10%) so the sim replays the trace.
+  await executeAndWait(
+    setAssetBasisBoundsTx(
+      predictId,
+      "BTC",
+      100_000_000n,
+      100_000_000n,
+      900_000_000n,
+      1_100_000_000n
+    ),
+    "set_asset_basis_bounds"
+  );
+  console.log(`[${ts()}]   Basis bounds widened for BTC`);
 
   result = await executeAndWait(
     createOracleTx({
