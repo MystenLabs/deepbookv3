@@ -1,5 +1,7 @@
+import { bcs } from "@mysten/sui/bcs";
 import { SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { Transaction } from "@mysten/sui/transactions";
+import { deriveObjectID } from "@mysten/sui/utils";
 
 import {
   ADMIN_CAP_ID,
@@ -250,8 +252,38 @@ export function supplyTx(predictId: string, amount: bigint): Transaction {
 
 export function createManagerTx(): Transaction {
   const tx = new Transaction();
-  tx.moveCall({ target: target("predict", "create_manager") });
+  tx.moveCall({
+    target: target("registry", "create_and_share_manager"),
+    arguments: [tx.object(REGISTRY_ID)],
+  });
   return tx;
+}
+
+// === Derived object IDs ===
+
+// Fieldless struct → compiler-injected `dummy_field: bool = false` (one 0-byte).
+const PREDICT_KEY_BCS = new Uint8Array([0]);
+
+export function derivePredictId(quoteType: string = DUSDC_TYPE): string {
+  return deriveObjectID(
+    REGISTRY_ID,
+    `${PACKAGE_ID}::predict::PredictKey<${quoteType}>`,
+    PREDICT_KEY_BCS
+  );
+}
+
+const PredictManagerKeyBcs = bcs.struct("PredictManagerKey", {
+  pos0: bcs.Address,
+  pos1: bcs.u64(),
+});
+
+export function deriveManagerId(owner: string, index: bigint = 0n): string {
+  const key = PredictManagerKeyBcs.serialize({ pos0: owner, pos1: index }).toBytes();
+  return deriveObjectID(
+    REGISTRY_ID,
+    `${PACKAGE_ID}::predict_manager::PredictManagerKey`,
+    key
+  );
 }
 
 export function depositToManagerTx(managerId: string, amount: bigint): Transaction {

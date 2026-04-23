@@ -21,6 +21,8 @@ import {
   createOracleTx,
   createPredictTx,
   depositToManagerTx,
+  derivePredictId,
+  deriveManagerId,
   execute,
   executeAndWait,
   finalizeDusdcCurrencyRegistrationTx,
@@ -114,9 +116,8 @@ async function setupSimulation(): Promise<SimState> {
   const dusdcCurrencyId: string = dusdcCurrencyChange.objectId;
   console.log(`[${ts()}]   DUSDC Currency: ${dusdcCurrencyId}`);
 
-  result = await executeAndWait(createPredictTx(dusdcCurrencyId), "create_predict");
-  const predictEvent = result.events.find((event: any) => event.type.includes("PredictCreated"));
-  const predictId: string = predictEvent.parsedJson.predict_id;
+  const predictId = derivePredictId();
+  await executeAndWait(createPredictTx(dusdcCurrencyId), "create_predict");
   console.log(`[${ts()}]   Predict: ${predictId}`);
 
   result = await executeAndWait(createOracleCapTx(address), "create_oracle_cap");
@@ -155,9 +156,8 @@ async function setupSimulation(): Promise<SimState> {
   await executeAndWait(supplyTx(predictId, vaultSeed), "supply");
   console.log(`[${ts()}]   Vault funded: ${vaultSeed / DUSDC_DECIMALS} DUSDC`);
 
-  result = await executeAndWait(createManagerTx(), "create_manager");
-  const managerEvent = result.events.find((event: any) => event.type.includes("ManagerCreated"));
-  const managerId: string = managerEvent.parsedJson.manager_id;
+  const managerId = deriveManagerId(address);
+  await executeAndWait(createManagerTx(), "create_manager");
   console.log(`[${ts()}]   Manager: ${managerId}`);
 
   const userFunds = 500_000n * DUSDC_DECIMALS;
