@@ -142,3 +142,13 @@ pub async fn delete_asset(
         status: "deleted".to_string(),
     }))
 }
+
+pub async fn refresh_epoch_metrics(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<AdminResponse>, DeepBookError> {
+    tracing::info!(action = "refresh_epoch_metrics", "Refreshing pool_epoch_maker_metrics materialized view");
+    state.reader().refresh_epoch_metrics().await?;
+    Ok(Json(AdminResponse {
+        status: "refreshed".to_string(),
+    }))
+}

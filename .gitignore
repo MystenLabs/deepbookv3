@@ -27,6 +27,7 @@ __pycache__/
 # Simulation data and output
 packages/predict/simulation/*.csv
 packages/predict/simulation/*.png
+packages/deepbook_margin/package_summaries/
 
 # Research
 predict_research/
@@ -39,3 +40,4 @@ tx-data.txt
 example.ts
 /data
 /handoff
+local-test-commands.sh

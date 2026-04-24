@@ -6,14 +6,17 @@ use axum::http::Method;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use deepbook_schema::models::{
     AssetSupplied, AssetWithdrawn, BookParamsUpdated, CollateralEvent, DeepbookPoolConfigUpdated,
     DeepbookPoolRegistered, DeepbookPoolUpdated, DeepbookPoolUpdatedRegistry,
     InterestParamsUpdated, Liquidation, LoanBorrowed, LoanRepaid, MaintainerCapUpdated,
-    MaintainerFeesWithdrawn, MarginManagerCreated, MarginManagerState, MarginPoolConfigUpdated,
+    MaintainerFeesWithdrawn, MakerIncentiveEpochResultsSubmitted, MakerIncentiveFundCreated,
+    MakerIncentiveParamsApplied, MakerIncentiveParamsCancelled, MakerIncentiveParamsScheduled,
+    MakerIncentiveRewardClaimed, MakerIncentiveTreasuryWithdrawn, MarginManagerCreated,
+    MarginManagerState, MarginPoolConfigUpdated,
     MarginPoolCreated, PauseCapUpdated, PoolCreated, Pools, ProtocolFeesIncreasedEvent,
     ProtocolFeesWithdrawn, ReferralFeeEvent, ReferralFeesClaimedEvent, SupplierCapMinted,
     SupplyReferralMinted,
@@ -24,7 +27,7 @@ use diesel::dsl::{max, min};
 use diesel::{ExpressionMethods, QueryDsl};
 use governor::{Quota, RateLimiter};
 use secrecy::{ExposeSecret, Secret};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::net::{IpAddr, Ipv4Addr};
 use std::num::NonZeroU32;
@@ -123,6 +126,24 @@ pub const GET_POINTS_PATH: &str = "/get_points";
 pub const PORTFOLIO_PATH: &str = "/portfolio/:wallet_address";
 pub const POOL_CREATED_PATH: &str = "/pool_created";
 pub const BOOK_PARAMS_UPDATED_PATH: &str = "/book_params_updated";
+pub const INCENTIVE_POOL_DATA_PATH: &str = "/incentives/pool_data/:pool_id";
+pub const INCENTIVE_MAKER_LOYALTY_STREAKS_PATH: &str = "/incentives/maker_loyalty_streaks";
+pub const INCENTIVE_RECORD_PARTICIPATION_PATH: &str = "/incentives/record_maker_participation";
+
+// Maker Incentive Events
+pub const MAKER_INCENTIVE_FUND_CREATED_PATH: &str = "/maker_incentive_fund_created";
+pub const MAKER_INCENTIVE_EPOCH_RESULTS_SUBMITTED_PATH: &str =
+    "/maker_incentive_epoch_results_submitted";
+pub const MAKER_INCENTIVE_REWARD_CLAIMED_PATH: &str = "/maker_incentive_reward_claimed";
+pub const MAKER_INCENTIVE_TREASURY_WITHDRAWN_PATH: &str = "/maker_incentive_treasury_withdrawn";
+pub const MAKER_INCENTIVE_PARAMS_SCHEDULED_PATH: &str = "/maker_incentive_params_scheduled";
+pub const MAKER_INCENTIVE_PARAMS_APPLIED_PATH: &str = "/maker_incentive_params_applied";
+pub const MAKER_INCENTIVE_PARAMS_CANCELLED_PATH: &str = "/maker_incentive_params_cancelled";
+
+// Pool Epoch Health Metrics
+pub const POOL_EPOCH_METRICS_PATH: &str = "/v1/pool/:pool_id/epochs/:epoch_start_ms/metrics";
+pub const POOL_EPOCH_METRICS_RANGE_PATH: &str = "/v1/pool/:pool_id/epochs";
+pub const POOL_EPOCH_MAKER_METRICS_PATH: &str = "/v1/pool/:pool_id/epochs/:epoch_start_ms/makers";
 
 type AdminRateLimiter = RateLimiter<
     governor::state::NotKeyed,
@@ -221,6 +242,10 @@ impl AppState {
 
     pub fn writer(&self) -> &Writer {
         &self.writer
+    }
+
+    pub fn reader(&self) -> &Reader {
+        &self.reader
     }
 
     pub fn is_valid_admin_token(&self, token: &str) -> bool {
@@ -413,6 +438,53 @@ pub(crate) fn make_router(state: Arc<AppState>) -> Router {
         .route(PORTFOLIO_PATH, get(portfolio))
         .route(POOL_CREATED_PATH, get(pool_created))
         .route(BOOK_PARAMS_UPDATED_PATH, get(book_params_updated))
+        .route(INCENTIVE_POOL_DATA_PATH, get(incentive_pool_data))
+        .route(
+            INCENTIVE_MAKER_LOYALTY_STREAKS_PATH,
+            post(incentive_maker_loyalty_streaks),
+        )
+        .route(
+            INCENTIVE_RECORD_PARTICIPATION_PATH,
+            post(incentive_record_maker_participation),
+        )
+        // Maker Incentive Events
+        .route(
+            MAKER_INCENTIVE_FUND_CREATED_PATH,
+            get(maker_incentive_fund_created),
+        )
+        .route(
+            MAKER_INCENTIVE_EPOCH_RESULTS_SUBMITTED_PATH,
+            get(maker_incentive_epoch_results_submitted),
+        )
+        .route(
+            MAKER_INCENTIVE_REWARD_CLAIMED_PATH,
+            get(maker_incentive_reward_claimed),
+        )
+        .route(
+            MAKER_INCENTIVE_TREASURY_WITHDRAWN_PATH,
+            get(maker_incentive_treasury_withdrawn),
+        )
+        .route(
+            MAKER_INCENTIVE_PARAMS_SCHEDULED_PATH,
+            get(maker_incentive_params_scheduled),
+        )
+        .route(
+            MAKER_INCENTIVE_PARAMS_APPLIED_PATH,
+            get(maker_incentive_params_applied),
+        )
+        .route(
+            MAKER_INCENTIVE_PARAMS_CANCELLED_PATH,
+            get(maker_incentive_params_cancelled),
+        )
+        .route(POOL_EPOCH_METRICS_PATH, get(pool_epoch_metrics))
+        .route(
+            POOL_EPOCH_METRICS_RANGE_PATH,
+            get(pool_epoch_metrics_range),
+        )
+        .route(
+            POOL_EPOCH_MAKER_METRICS_PATH,
+            get(pool_epoch_maker_metrics),
+        )
         .with_state(state.clone());
 
     let rpc_routes = Router::new()
@@ -2854,4 +2926,416 @@ async fn portfolio(
 ) -> Result<Json<PortfolioQueryResult>, DeepBookError> {
     let result = state.reader.get_portfolio(&wallet_address).await?;
     Ok(Json(result))
+}
+
+/// Returns raw order events and fill events for a pool within a time range,
+/// formatted for consumption by the maker incentive scoring engine.
+async fn incentive_pool_data(
+    Path(pool_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Value>, DeepBookError> {
+    let start_ms: i64 = params
+        .get("start_ms")
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| DeepBookError::bad_request("start_ms query parameter required"))?;
+    let end_ms: i64 = params
+        .get("end_ms")
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| DeepBookError::bad_request("end_ms query parameter required"))?;
+
+    let (orders, fills, stakes, stake_required, pool_meta) = state
+        .reader
+        .get_incentive_pool_data(pool_id.clone(), start_ms, end_ms)
+        .await?;
+
+    let order_events: Vec<Value> = orders
+        .into_iter()
+        .map(
+            |(order_id, status, price, original_quantity, quantity, ts, is_bid, bm_id)| {
+                serde_json::json!({
+                    "order_id": order_id,
+                    "status": status,
+                    "pool_id": pool_id,
+                    "price": price,
+                    "is_bid": is_bid,
+                    "original_quantity": original_quantity,
+                    "quantity": quantity,
+                    "balance_manager_id": bm_id,
+                    "checkpoint_timestamp_ms": ts,
+                })
+            },
+        )
+        .collect();
+
+    let fill_events: Vec<Value> = fills
+        .into_iter()
+        .map(|(maker_order_id, base_qty, quote_qty, ts)| {
+            serde_json::json!({
+                "pool_id": pool_id,
+                "maker_order_id": maker_order_id,
+                "base_quantity": base_qty,
+                "quote_quantity": quote_qty,
+                "checkpoint_timestamp_ms": ts,
+            })
+        })
+        .collect();
+
+    let stake_events: Vec<Value> = stakes
+        .into_iter()
+        .map(|(bm_id, amount, is_stake)| {
+            serde_json::json!({
+                "balance_manager_id": bm_id,
+                "amount": amount,
+                "stake": is_stake,
+            })
+        })
+        .collect();
+
+    let mut response = serde_json::json!({
+        "order_events": order_events,
+        "fill_events": fill_events,
+        "stake_events": stake_events,
+        "stake_required": stake_required,
+    });
+
+    if let Some((base_dec, base_sym, quote_dec, quote_sym)) = pool_meta {
+        response["pool_metadata"] = serde_json::json!({
+            "base_decimals": base_dec,
+            "base_symbol": base_sym,
+            "quote_decimals": quote_dec,
+            "quote_symbol": quote_sym,
+        });
+    }
+
+    Ok(Json(response))
+}
+
+#[derive(Debug, Deserialize)]
+struct MakerLoyaltyStreaksRequest {
+    fund_id: String,
+    epoch_start_ms: i64,
+    balance_manager_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct MakerLoyaltyStreaksResponse {
+    streaks: HashMap<String, u32>,
+}
+
+/// Prior consecutive epochs with recorded participation per maker (for incentive loyalty).
+async fn incentive_maker_loyalty_streaks(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<MakerLoyaltyStreaksRequest>,
+) -> Result<Json<MakerLoyaltyStreaksResponse>, DeepBookError> {
+    let streaks = state
+        .reader
+        .get_maker_loyalty_prior_streaks(
+            &body.fund_id,
+            body.epoch_start_ms,
+            &body.balance_manager_ids,
+        )
+        .await?;
+    Ok(Json(MakerLoyaltyStreaksResponse { streaks }))
+}
+
+#[derive(Debug, Deserialize)]
+struct RecordMakerParticipationRequest {
+    fund_id: String,
+    epoch_start_ms: i64,
+    balance_manager_ids: Vec<String>,
+}
+
+/// Called after an epoch is submitted so the next scoring run can compute loyalty streaks.
+async fn incentive_record_maker_participation(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<RecordMakerParticipationRequest>,
+) -> Result<StatusCode, DeepBookError> {
+    state
+        .writer()
+        .record_maker_incentive_participation(
+            &body.fund_id,
+            body.epoch_start_ms,
+            &body.balance_manager_ids,
+        )
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// === Maker Incentive Event Handlers ===
+
+async fn maker_incentive_fund_created(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<MakerIncentiveFundCreated>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let pool_id_filter = params.get("pool_id").cloned().unwrap_or_default();
+    let fund_id_filter = params.get("fund_id").cloned().unwrap_or_default();
+
+    let results = state
+        .reader
+        .get_maker_incentive_fund_created(
+            start_time,
+            end_time,
+            limit,
+            pool_id_filter,
+            fund_id_filter,
+        )
+        .await?;
+
+    Ok(Json(results))
+}
+
+async fn maker_incentive_epoch_results_submitted(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<MakerIncentiveEpochResultsSubmitted>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let pool_id_filter = params.get("pool_id").cloned().unwrap_or_default();
+    let fund_id_filter = params.get("fund_id").cloned().unwrap_or_default();
+
+    let results = state
+        .reader
+        .get_maker_incentive_epoch_results_submitted(
+            start_time,
+            end_time,
+            limit,
+            pool_id_filter,
+            fund_id_filter,
+        )
+        .await?;
+
+    Ok(Json(results))
+}
+
+async fn maker_incentive_reward_claimed(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<MakerIncentiveRewardClaimed>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let pool_id_filter = params.get("pool_id").cloned().unwrap_or_default();
+    let fund_id_filter = params.get("fund_id").cloned().unwrap_or_default();
+    let balance_manager_id_filter = params.get("balance_manager_id").cloned().unwrap_or_default();
+
+    let results = state
+        .reader
+        .get_maker_incentive_reward_claimed(
+            start_time,
+            end_time,
+            limit,
+            pool_id_filter,
+            fund_id_filter,
+            balance_manager_id_filter,
+        )
+        .await?;
+
+    Ok(Json(results))
+}
+
+async fn maker_incentive_treasury_withdrawn(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<MakerIncentiveTreasuryWithdrawn>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let pool_id_filter = params.get("pool_id").cloned().unwrap_or_default();
+    let fund_id_filter = params.get("fund_id").cloned().unwrap_or_default();
+
+    let results = state
+        .reader
+        .get_maker_incentive_treasury_withdrawn(
+            start_time,
+            end_time,
+            limit,
+            pool_id_filter,
+            fund_id_filter,
+        )
+        .await?;
+
+    Ok(Json(results))
+}
+
+async fn maker_incentive_params_scheduled(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<MakerIncentiveParamsScheduled>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let pool_id_filter = params.get("pool_id").cloned().unwrap_or_default();
+    let fund_id_filter = params.get("fund_id").cloned().unwrap_or_default();
+
+    let results = state
+        .reader
+        .get_maker_incentive_params_scheduled(
+            start_time,
+            end_time,
+            limit,
+            pool_id_filter,
+            fund_id_filter,
+        )
+        .await?;
+
+    Ok(Json(results))
+}
+
+async fn maker_incentive_params_applied(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<MakerIncentiveParamsApplied>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let pool_id_filter = params.get("pool_id").cloned().unwrap_or_default();
+    let fund_id_filter = params.get("fund_id").cloned().unwrap_or_default();
+
+    let results = state
+        .reader
+        .get_maker_incentive_params_applied(
+            start_time,
+            end_time,
+            limit,
+            pool_id_filter,
+            fund_id_filter,
+        )
+        .await?;
+
+    Ok(Json(results))
+}
+
+async fn maker_incentive_params_cancelled(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<MakerIncentiveParamsCancelled>>, DeepBookError> {
+    let end_time = params.end_time();
+    let start_time = params
+        .start_time()
+        .unwrap_or_else(|| end_time - 24 * 60 * 60 * 1000);
+    let limit = params.limit();
+    let pool_id_filter = params.get("pool_id").cloned().unwrap_or_default();
+    let fund_id_filter = params.get("fund_id").cloned().unwrap_or_default();
+
+    let results = state
+        .reader
+        .get_maker_incentive_params_cancelled(
+            start_time,
+            end_time,
+            limit,
+            pool_id_filter,
+            fund_id_filter,
+        )
+        .await?;
+
+    Ok(Json(results))
+}
+
+async fn pool_epoch_metrics(
+    Path((pool_id, epoch_start_ms)): Path<(String, i64)>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Value>, DeepBookError> {
+    if epoch_start_ms % 86_400_000 != 0 {
+        return Err(DeepBookError::bad_request(
+            "epoch_start_ms must be aligned to midnight UTC (divisible by 86400000)",
+        ));
+    }
+    let epoch_end_ms = epoch_start_ms + 86_400_000;
+
+    let rows = state
+        .reader
+        .get_pool_epoch_metrics(&pool_id, epoch_start_ms, epoch_end_ms)
+        .await?;
+
+    match rows.into_iter().next() {
+        Some(row) => Ok(Json(serde_json::to_value(row).unwrap())),
+        None => Ok(Json(serde_json::json!({
+            "pool_id": pool_id,
+            "epoch_start_ms": epoch_start_ms,
+            "epoch_end_ms": epoch_end_ms,
+            "fill_count": 0,
+            "total_base_volume": 0,
+            "total_quote_volume": 0,
+            "unique_maker_count": 0,
+            "net_base_flow": 0,
+            "net_quote_flow": 0,
+            "median_vwap_spread_bps": 0.0,
+            "median_bbo_spread_bps": 0.0,
+            "quoting_uptime_pct": 0.0,
+            "avg_bid_depth": 0.0,
+            "avg_ask_depth": 0.0,
+            "depth_profile": []
+        }))),
+    }
+}
+
+async fn pool_epoch_metrics_range(
+    Path(pool_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Value>, DeepBookError> {
+    let from_ms: i64 = params
+        .get("from")
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| DeepBookError::bad_request("'from' query parameter required (epoch ms)"))?;
+    let to_ms: i64 = params
+        .get("to")
+        .and_then(|s| s.parse().ok())
+        .ok_or_else(|| DeepBookError::bad_request("'to' query parameter required (epoch ms)"))?;
+
+    if to_ms <= from_ms {
+        return Err(DeepBookError::bad_request(
+            "'to' must be greater than 'from'",
+        ));
+    }
+
+    let max_range_ms: i64 = 90 * 86_400_000;
+    if to_ms - from_ms > max_range_ms {
+        return Err(DeepBookError::bad_request(
+            "range cannot exceed 90 days (7776000000 ms)",
+        ));
+    }
+
+    let rows = state
+        .reader
+        .get_pool_epoch_metrics(&pool_id, from_ms, to_ms)
+        .await?;
+
+    Ok(Json(serde_json::to_value(rows).unwrap()))
+}
+
+async fn pool_epoch_maker_metrics(
+    Path((pool_id, epoch_start_ms)): Path<(String, i64)>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Value>, DeepBookError> {
+    if epoch_start_ms % 86_400_000 != 0 {
+        return Err(DeepBookError::bad_request(
+            "epoch_start_ms must be aligned to midnight UTC (divisible by 86400000)",
+        ));
+    }
+    let epoch_end_ms = epoch_start_ms + 86_400_000;
+
+    let rows = state
+        .reader
+        .get_maker_epoch_metrics(&pool_id, epoch_start_ms, epoch_end_ms)
+        .await?;
+
+    Ok(Json(serde_json::to_value(rows).unwrap()))
 }

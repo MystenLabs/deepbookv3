@@ -3,6 +3,7 @@
 
 use crate::admin::handlers::{CreateAssetRequest, CreatePoolRequest, UpdatePoolRequest};
 use crate::error::DeepBookError;
+use deepbook_schema::models::MakerIncentiveMakerParticipation;
 use deepbook_schema::schema;
 use diesel::{AsChangeset, ExpressionMethods, QueryDsl};
 use diesel_async::RunQueryDsl;
@@ -140,6 +141,48 @@ impl Writer {
         if rows_affected == 0 {
             return Err(DeepBookError::not_found(format!("asset {id}")));
         }
+        Ok(())
+    }
+
+    /// Record makers who received a positive score for an epoch (for loyalty streaks).
+    /// Idempotent: duplicate keys are ignored.
+    pub async fn record_maker_incentive_participation(
+        &self,
+        fund_id: &str,
+        epoch_start_ms: i64,
+        balance_manager_ids: &[String],
+    ) -> Result<(), DeepBookError> {
+        if balance_manager_ids.is_empty() {
+            return Ok(());
+        }
+
+        let rows: Vec<MakerIncentiveMakerParticipation> = balance_manager_ids
+            .iter()
+            .map(|id| MakerIncentiveMakerParticipation {
+                fund_id: fund_id.to_string(),
+                epoch_start_ms,
+                balance_manager_id: id.clone(),
+            })
+            .collect();
+
+        let mut conn = self
+            .db
+            .connect()
+            .await
+            .map_err(|e| DeepBookError::database(e.to_string()))?;
+
+        diesel::insert_into(schema::maker_incentive_maker_participation::table)
+            .values(&rows)
+            .on_conflict((
+                schema::maker_incentive_maker_participation::fund_id,
+                schema::maker_incentive_maker_participation::epoch_start_ms,
+                schema::maker_incentive_maker_participation::balance_manager_id,
+            ))
+            .do_nothing()
+            .execute(&mut conn)
+            .await
+            .map_err(|e| DeepBookError::database(e.to_string()))?;
+
         Ok(())
     }
 }
