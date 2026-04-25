@@ -83,6 +83,25 @@ fun margin_state_operations_work() {
 }
 
 #[test]
+fun decrease_supply_absolute_clamps_at_zero() {
+    let mut test = begin(test_constants::admin());
+    let clock = clock::create_for_testing(test.ctx());
+    let mut state = margin_state::default(&clock);
+
+    state.increase_supply_absolute(500);
+    assert_eq!(state.total_supply(), 500);
+
+    state.decrease_supply_absolute(600);
+    assert_eq!(state.total_supply(), 0);
+
+    state.decrease_supply_absolute(100);
+    assert_eq!(state.total_supply(), 0);
+
+    destroy(clock);
+    test.end();
+}
+
+#[test]
 fun margin_state_with_supply_and_borrow_accrues_interest() {
     let mut test = begin(test_constants::admin());
     let mut clock = clock::create_for_testing(test.ctx());
