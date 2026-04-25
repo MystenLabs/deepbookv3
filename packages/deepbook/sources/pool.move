@@ -209,6 +209,48 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
     )
 }
 
+/// Graceful post-only limit order. Reads the relevant side of the book first
+/// and only forwards to `place_limit_order` with `POST_ONLY` when the order is
+/// guaranteed not to cross. If it would cross, returns `none` without placing
+/// — avoiding the `EPOSTOrderCrossesOrderbook` abort that tears down a PTB.
+/// An empty opposite side always allows placement.
+public fun place_post_only_limit_order<BaseAsset, QuoteAsset>(
+    self: &mut Pool<BaseAsset, QuoteAsset>,
+    balance_manager: &mut BalanceManager,
+    trade_proof: &TradeProof,
+    client_order_id: u64,
+    self_matching_option: u8,
+    price: u64,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    expire_timestamp: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+): Option<OrderInfo> {
+    let would_cross = if (is_bid) {
+        self.best_ask_price(clock).destroy_or!(constants::max_u64()) <= price
+    } else {
+        self.best_bid_price(clock).destroy_or!(0) >= price
+    };
+    if (would_cross) return option::none();
+
+    option::some(self.place_limit_order(
+        balance_manager,
+        trade_proof,
+        client_order_id,
+        constants::post_only(),
+        self_matching_option,
+        price,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp,
+        clock,
+        ctx,
+    ))
+}
+
 /// Place a market order. Quantity is in base asset terms. Calls
 /// place_limit_order with
 /// a price of MAX_PRICE for bids and MIN_PRICE for asks. Any quantity not
@@ -1342,6 +1384,24 @@ public fun mid_price<BaseAsset, QuoteAsset>(
     clock: &Clock,
 ): u64 {
     self.load_inner().book.mid_price(clock.timestamp_ms())
+}
+
+/// Returns the best (lowest) ask price, skipping expired orders.
+/// Returns `none` if the ask side has no live orders.
+public fun best_ask_price<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    clock: &Clock,
+): Option<u64> {
+    self.load_inner().book.best_ask_price(clock.timestamp_ms())
+}
+
+/// Returns the best (highest) bid price, skipping expired orders.
+/// Returns `none` if the bid side has no live orders.
+public fun best_bid_price<BaseAsset, QuoteAsset>(
+    self: &Pool<BaseAsset, QuoteAsset>,
+    clock: &Clock,
+): Option<u64> {
+    self.load_inner().book.best_bid_price(clock.timestamp_ms())
 }
 
 /// Returns the order_id for all open order for the balance_manager in the pool.
