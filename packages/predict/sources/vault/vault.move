@@ -17,14 +17,11 @@ use deepbook::math;
 use deepbook_predict::{oracle_config::CurvePoint, strike_matrix::{Self, StrikeMatrix}};
 use sui::{bag::{Self, Bag}, balance::Balance, clock::Clock, table::{Self, Table}};
 
-// === Errors ===
 const EInsufficientBalance: u64 = 0;
 const EExceedsMaxTotalExposure: u64 = 1;
 const EOracleExposureNotFound: u64 = 2;
 const EMtmExceedsBalance: u64 = 3;
 const EAssetNotInVault: u64 = 4;
-
-// === Structs ===
 
 /// Dynamic bag key for storing a concrete asset balance by type.
 public struct BalanceKey<phantom T> has copy, drop, store {}
@@ -80,10 +77,6 @@ public fun vault_value(vault: &Vault): u64 {
 
 public fun total_max_payout(vault: &Vault): u64 {
     vault.total_max_payout
-}
-
-public(package) fun unsettled_exposed_oracles(vault: &Vault): &vector<ID> {
-    &vault.unsettled_exposed_oracles
 }
 
 // === Public-Package Functions ===
@@ -203,18 +196,6 @@ public(package) fun assert_total_exposure(vault: &Vault, max_total_pct: u64) {
     assert!(vault.total_mtm <= math::mul(vault.balance, max_total_pct), EExceedsMaxTotalExposure);
 }
 
-/// Return the historical minted strike bounds for this oracle's matrix.
-/// These bounds expand on insert and do not shrink after positions are removed.
-public(package) fun oracle_strike_range(vault: &Vault, oracle_id: ID): (u64, u64) {
-    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
-    let matrix = &vault.oracle_matrices[oracle_id];
-    matrix.minted_strike_range()
-}
-
-public(package) fun has_settled_oracle(vault: &Vault, oracle_id: ID): bool {
-    vault.settled_oracles.contains(oracle_id)
-}
-
 public(package) fun set_mtm_with_curve(
     vault: &mut Vault,
     oracle_id: ID,
@@ -255,11 +236,6 @@ public(package) fun set_mtm(vault: &mut Vault, oracle_id: ID, mtm: u64, clock: &
     let old_mtm = vault.oracle_matrices[oracle_id].mtm();
     vault.oracle_matrices[oracle_id].set_mtm(mtm, clock);
     vault.total_mtm = vault.total_mtm + mtm - old_mtm;
-}
-
-public(package) fun get_last_mtm_update(vault: &Vault, oracle_id: ID): u64 {
-    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
-    vault.oracle_matrices[oracle_id].last_mtm_update()
 }
 
 public(package) fun add_unsettled_exposed_oracle(vault: &mut Vault, oracle_id: ID) {
@@ -341,6 +317,29 @@ public(package) fun redeem_settled_position(
     // TODO: Decide whether fully redeemed settled oracles should be removed
     // entirely or retained as zeroed records.
 }
+
+public(package) fun unsettled_exposed_oracles(vault: &Vault): &vector<ID> {
+    &vault.unsettled_exposed_oracles
+}
+
+/// Return the historical minted strike bounds for this oracle's matrix.
+/// These bounds expand on insert and do not shrink after positions are removed.
+public(package) fun oracle_strike_range(vault: &Vault, oracle_id: ID): (u64, u64) {
+    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+    let matrix = &vault.oracle_matrices[oracle_id];
+    matrix.minted_strike_range()
+}
+
+public(package) fun has_settled_oracle(vault: &Vault, oracle_id: ID): bool {
+    vault.settled_oracles.contains(oracle_id)
+}
+
+public(package) fun get_last_mtm_update(vault: &Vault, oracle_id: ID): u64 {
+    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+    vault.oracle_matrices[oracle_id].last_mtm_update()
+}
+
+// === Private Functions ===
 
 /// Per-matrix max payout net of the range quantity contributed by range mints.
 fun net_max_payout(matrix: &StrikeMatrix): u64 {

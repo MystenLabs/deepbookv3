@@ -1,6 +1,11 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// Treasury configuration for accepted quote assets.
+///
+/// This module owns the whitelist of quote asset types that can be used for
+/// new Predict treasury inflows and validates each asset's decimal precision
+/// before it is enabled.
 module deepbook_predict::treasury_config;
 
 use deepbook_predict::constants;
@@ -16,6 +21,8 @@ public struct TreasuryConfig has copy, drop, store {
     accepted_quotes: VecSet<TypeName>,
 }
 
+// === Public Functions ===
+
 public fun accepted_quotes(config: &TreasuryConfig): &VecSet<TypeName> {
     &config.accepted_quotes
 }
@@ -24,6 +31,8 @@ public fun is_quote_asset<Quote>(config: &TreasuryConfig): bool {
     let quote_type = type_name::with_defining_ids<Quote>();
     config.accepted_quotes.contains(&quote_type)
 }
+
+// === Public-Package Functions ===
 
 public(package) fun new(): TreasuryConfig {
     TreasuryConfig {

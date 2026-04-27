@@ -15,6 +15,8 @@ public struct I64 has copy, drop, store {
     is_negative: bool,
 }
 
+// === Public Functions ===
+
 public fun magnitude(value: &I64): u64 {
     value.magnitude
 }

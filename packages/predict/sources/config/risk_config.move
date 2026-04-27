@@ -6,11 +6,8 @@ module deepbook_predict::risk_config;
 
 use deepbook_predict::constants;
 
-// === Errors ===
 const EExceedsMaxPct: u64 = 0;
 const EInvalidMtmFreshnessMs: u64 = 1;
-
-// === Structs ===
 
 public struct RiskConfig has store {
     /// Max total liability as % of balance (e.g., 800_000_000 = 80%)

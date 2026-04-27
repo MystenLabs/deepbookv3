@@ -21,7 +21,6 @@ use deepbook_predict::{
 use std::string::String;
 use sui::table::{Self, Table};
 
-// === Errors ===
 const EMarketKeyOracleMismatch: u64 = 0;
 const EMarketKeyExpiryMismatch: u64 = 1;
 const EInvalidStrike: u64 = 2;
@@ -98,6 +97,8 @@ public struct CurvePoint has copy, drop, store {
     up_price: u64,
 }
 
+// === Public Functions ===
+
 /// Create a curve sample point from exact strike and UP price.
 public fun new_curve_point(strike: u64, up_price: u64): CurvePoint {
     CurvePoint {
@@ -117,6 +118,8 @@ public fun ask_bounds_min(bounds: &AskBounds): u64 { bounds.min_ask_price }
 
 /// Return the maximum ask price stored in an `AskBounds`.
 public fun ask_bounds_max(bounds: &AskBounds): u64 { bounds.max_ask_price }
+
+// === Public-Package Functions ===
 
 /// Admin-tuned spot staleness threshold (ms) used to seed new oracles.
 public(package) fun spot_staleness_threshold_ms(oracle_config: &OracleConfig): u64 {
@@ -461,6 +464,8 @@ public(package) fun build_curve(
 
     points
 }
+
+// === Private Functions ===
 
 /// Assert that a requested curve range is valid on the oracle's configured grid.
 fun assert_build_curve(

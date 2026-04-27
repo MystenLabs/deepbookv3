@@ -9,6 +9,8 @@ use sui::coin_registry;
 
 public struct PLP has drop {}
 
+// === Private Functions ===
+
 fun init(witness: PLP, ctx: &mut TxContext) {
     let (initializer, treasury_cap) = coin_registry::new_currency_with_otw(
         witness,
@@ -23,6 +25,8 @@ fun init(witness: PLP, ctx: &mut TxContext) {
     transfer::public_transfer(metadata_cap, ctx.sender());
     transfer::public_transfer(treasury_cap, ctx.sender());
 }
+
+// === Test-Only Functions ===
 
 #[test_only]
 public fun init_for_testing(ctx: &mut TxContext) {

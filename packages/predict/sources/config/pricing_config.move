@@ -7,12 +7,9 @@ module deepbook_predict::pricing_config;
 use deepbook::math;
 use deepbook_predict::{constants, math as predict_math};
 
-// === Errors ===
 const EInvalidSpread: u64 = 0;
 const EFairPriceAlreadySettled: u64 = 1;
 const EInvalidAskBound: u64 = 2;
-
-// === Structs ===
 
 public struct PricingConfig has store {
     /// Base spread multiplier for Bernoulli scaling.
@@ -105,6 +102,8 @@ public(package) fun quote_spread_from_fair_price(
 
     spread
 }
+
+// === Private Functions ===
 
 fun utilization_spread(config: &PricingConfig, liability: u64, balance: u64): u64 {
     if (balance == 0 || liability == 0) return 0;

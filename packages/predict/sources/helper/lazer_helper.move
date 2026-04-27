@@ -16,8 +16,6 @@ use pyth_lazer::{
     update::Update as LazerUpdate
 };
 
-// === Errors ===
-
 const ELazerFeedNotFound: u64 = 0;
 const ELazerPriceUnavailable: u64 = 1;
 const ELazerNegativePrice: u64 = 2;
