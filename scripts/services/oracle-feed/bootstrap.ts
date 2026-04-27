@@ -42,14 +42,10 @@ export async function ensureCapsAndCoins(
     );
   }
 
-  if (coins.length < config.laneCount) {
-    const splitsNeeded = config.laneCount - coins.length;
-    const amountPerSplit = Math.floor(totalSui / config.laneCount);
-    await splitCoin(client, signer, splitsNeeded, amountPerSplit);
-    coins = await getAllSuiCoins(client, address);
-  }
+  await refreshGasLanesIfNeeded(client, signer, config, undefined, log);
+  coins = await getAllSuiCoins(client, address);
 
-  coins.sort((a, b) => Number(BigInt(b.balance) - BigInt(a.balance)));
+  coins = sortCoinsByBalanceDesc(coins);
   const chosen = coins.slice(0, config.laneCount);
 
   const lanes: Lane[] = chosen.map((coin, i) => ({
@@ -63,6 +59,122 @@ export async function ensureCapsAndCoins(
 
   log.info({ event: "lanes_ready", laneCount: lanes.length, totalSui });
   return { capIds: caps, lanes };
+}
+
+export async function refreshGasLanesIfNeeded(
+  client: SuiJsonRpcClient,
+  signer: Keypair,
+  config: Config,
+  lanes: Lane[] | undefined,
+  log: Logger,
+): Promise<boolean> {
+  if (lanes && lanes.length !== config.laneCount) {
+    throw new Error(`expected ${config.laneCount} gas lanes, found ${lanes.length}`);
+  }
+  if (lanes?.some((lane) => !lane.available)) {
+    throw new Error("cannot refresh gas lanes while any lane is active");
+  }
+
+  const address = signer.toSuiAddress();
+  const coins = await getAllSuiCoins(client, address);
+  const sortedCoins = sortCoinsByBalanceDesc(coins);
+  const totalMist = sumCoinBalances(coins);
+  const effectiveMinMist = minBigInt(suiToMist(config.gasLaneMinSui), totalMist / BigInt(config.laneCount));
+  const selectedCoins = lanes
+    ? lanes.map((lane) => coins.find((coin) => coin.coinObjectId === lane.gasCoinId))
+    : sortedCoins.slice(0, config.laneCount);
+  const selectedBalances = selectedCoins.map((coin) => coin ? BigInt(coin.balance) : null);
+  const needsRefresh =
+    coins.length < config.laneCount ||
+    selectedCoins.length < config.laneCount ||
+    selectedBalances.some((balance) => balance === null || balance < effectiveMinMist);
+
+  if (!needsRefresh) {
+    log.info({
+      event: "gas_refresh_noop",
+      coinCount: coins.length,
+      laneCount: config.laneCount,
+      totalSui: mistToSui(totalMist),
+      minSui: config.gasLaneMinSui,
+      effectiveMinSui: mistToSui(effectiveMinMist),
+    });
+    return false;
+  }
+
+  const primary = sortedCoins[0];
+  if (!primary) {
+    throw new Error("cannot refresh gas lanes without a SUI gas coin");
+  }
+
+  log.info({
+    event: "gas_refresh_started",
+    coinCount: coins.length,
+    laneCount: config.laneCount,
+    totalSui: mistToSui(totalMist),
+    minSui: config.gasLaneMinSui,
+    effectiveMinSui: mistToSui(effectiveMinMist),
+    primaryGasCoinId: primary.coinObjectId,
+  });
+
+  const tx = new Transaction();
+  tx.setSender(address);
+  tx.setGasPayment([coinRef(primary)]);
+
+  const mergeSources = sortedCoins.slice(1).map((coin) => tx.objectRef(coinRef(coin)));
+  if (mergeSources.length > 0) {
+    tx.mergeCoins(tx.gas, mergeSources);
+  }
+
+  const splitCount = config.laneCount - 1;
+  if (splitCount > 0) {
+    const amountPerLane = totalMist / BigInt(config.laneCount);
+    if (amountPerLane <= 0n) {
+      throw new Error("cannot refresh gas lanes with zero split amount");
+    }
+    const splitCoins = tx.splitCoins(
+      tx.gas,
+      Array.from({ length: splitCount }, () => tx.pure.u64(amountPerLane)),
+    );
+    tx.transferObjects(
+      Array.from({ length: splitCount }, (_, i) => splitCoins[i]),
+      tx.pure.address(address),
+    );
+  }
+
+  const resp = await client.signAndExecuteTransaction({
+    transaction: tx,
+    signer,
+    options: { showEffects: true },
+  });
+  if (resp.effects?.status.status !== "success") {
+    throw new Error(`gas lane refresh failed: ${JSON.stringify(resp.effects?.status)}`);
+  }
+  await client.waitForTransaction({ digest: resp.digest });
+
+  const refreshedCoins = sortCoinsByBalanceDesc(await getAllSuiCoins(client, address));
+  const refreshedLaneCoins = refreshedCoins.slice(0, config.laneCount);
+  if (refreshedLaneCoins.length < config.laneCount) {
+    throw new Error(
+      `gas lane refresh produced ${refreshedLaneCoins.length} SUI coins, need ${config.laneCount}`,
+    );
+  }
+
+  if (lanes) {
+    for (let i = 0; i < lanes.length; i++) {
+      const coin = refreshedLaneCoins[i]!;
+      lanes[i]!.gasCoinId = coin.coinObjectId;
+      lanes[i]!.gasCoinVersion = coin.version;
+      lanes[i]!.gasCoinDigest = coin.digest;
+    }
+  }
+
+  log.info({
+    event: "gas_refresh_completed",
+    txDigest: resp.digest,
+    laneCount: config.laneCount,
+    refreshedCoinIds: refreshedLaneCoins.map((coin) => coin.coinObjectId),
+  });
+  return true;
 }
 
 export async function assertSignerOwnsAdminCap(
@@ -121,6 +233,40 @@ async function getAllSuiCoins(client: SuiJsonRpcClient, address: string): Promis
   return out;
 }
 
+function coinRef(coin: CoinStruct) {
+  return {
+    objectId: coin.coinObjectId,
+    version: coin.version,
+    digest: coin.digest,
+  };
+}
+
+function sortCoinsByBalanceDesc(coins: CoinStruct[]): CoinStruct[] {
+  return [...coins].sort((a, b) => {
+    const aBalance = BigInt(a.balance);
+    const bBalance = BigInt(b.balance);
+    if (aBalance === bBalance) return a.coinObjectId.localeCompare(b.coinObjectId);
+    return aBalance > bBalance ? -1 : 1;
+  });
+}
+
+function sumCoinBalances(coins: CoinStruct[]): bigint {
+  return coins.reduce((sum, coin) => sum + BigInt(coin.balance), 0n);
+}
+
+function suiToMist(sui: number): bigint {
+  if (!Number.isFinite(sui) || sui <= 0) return 0n;
+  return BigInt(Math.floor(sui * Number(SUI_TO_MIST)));
+}
+
+function mistToSui(mist: bigint): number {
+  return Number(mist) / Number(SUI_TO_MIST);
+}
+
+function minBigInt(a: bigint, b: bigint): bigint {
+  return a < b ? a : b;
+}
+
 async function createCaps(
   client: SuiJsonRpcClient,
   signer: Keypair,
@@ -146,30 +292,4 @@ async function createCaps(
   return (resp.objectChanges ?? [])
     .filter((c: any) => c.type === "created" && c.objectType === capType)
     .map((c: any) => c.objectId);
-}
-
-async function splitCoin(
-  client: SuiJsonRpcClient,
-  signer: Keypair,
-  splits: number,
-  amountSuiEach: number,
-): Promise<void> {
-  // Split from `tx.gas` (the auto-selected gas coin) rather than referencing
-  // a specific coin. This way the source and gas payment are the same coin,
-  // which works even when the signer has only one SUI coin — the tx takes
-  // gas from the remainder after the split.
-  const tx = new Transaction();
-  const amount = BigInt(amountSuiEach) * SUI_TO_MIST;
-  const amounts = Array(splits).fill(amount);
-  const coins = tx.splitCoins(tx.gas, amounts.map((a) => tx.pure.u64(a)));
-  tx.transferObjects(
-    Array.from({ length: splits }, (_, i) => coins[i]),
-    tx.pure.address(signer.toSuiAddress()),
-  );
-  const resp = await client.signAndExecuteTransaction({
-    transaction: tx,
-    signer,
-    options: { showEffects: true },
-  });
-  await client.waitForTransaction({ digest: resp.digest });
 }

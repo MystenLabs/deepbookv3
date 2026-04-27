@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { refreshGasLanesIfNeeded } from "../bootstrap";
 import { discoverOracles } from "../registry";
 import {
   hasFreshPriceSample,
@@ -11,6 +12,10 @@ import type { Lane, OracleState, PriceSample, ServiceState } from "../types";
 
 vi.mock("../registry", () => ({
   discoverOracles: vi.fn(),
+}));
+
+vi.mock("../bootstrap", () => ({
+  refreshGasLanesIfNeeded: vi.fn(),
 }));
 
 function lane(available: boolean): Lane {
@@ -52,6 +57,7 @@ function state(oracles: OracleState[]): ServiceState {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.mocked(discoverOracles).mockReset();
+  vi.mocked(refreshGasLanesIfNeeded).mockReset();
 });
 
 describe("hasFreshPriceSample", () => {
@@ -63,6 +69,10 @@ describe("hasFreshPriceSample", () => {
   it("returns true for fresh spot data", () => {
     const spot: PriceSample = { value: 1, receivedAtMs: 3_000 };
     expect(hasFreshPriceSample(spot, 5_500, 3_000)).toBe(true);
+  });
+
+  it("returns false when no sample is cached", () => {
+    expect(hasFreshPriceSample(null, 5_500, 3_000)).toBe(false);
   });
 });
 
@@ -116,6 +126,57 @@ describe("shouldRunManagerWindowNow", () => {
 });
 
 describe("runManagerWindow", () => {
+  it("refreshes gas lanes only after manager mode is active and lanes are idle", async () => {
+    const service = state([]);
+    service.lanes[0]!.available = false;
+    const order: string[] = [];
+
+    vi.mocked(refreshGasLanesIfNeeded).mockImplementation(async (_client, _signer, _config, lanes) => {
+      order.push(`refresh:${service.managerInFlight}:${lanes?.every((item) => item.available)}`);
+      return false;
+    });
+    vi.mocked(discoverOracles).mockImplementation(async () => {
+      order.push("discover");
+      return new Map();
+    });
+
+    const subscriber = {
+      syncOracles: vi.fn(),
+    } as any;
+
+    const pending = runManagerWindow(
+      service,
+      {} as any,
+      {
+        toSuiAddress: () =>
+          "0x00000000000000000000000000000000000000000000000000000000000000d1",
+      } as any,
+      {
+        predictPackageId:
+          "0x00000000000000000000000000000000000000000000000000000000000000e1",
+        tiersEnabled: [],
+        expiriesPerTier: 1,
+        minLookaheadMs: 90 * 60_000,
+      } as any,
+      subscriber,
+      {
+        info() {},
+        warn() {},
+        error() {},
+        fatal() {},
+      } as any,
+    );
+
+    await Promise.resolve();
+    expect(refreshGasLanesIfNeeded).not.toHaveBeenCalled();
+
+    service.lanes[0]!.available = true;
+    await pending;
+
+    expect(order).toEqual(["refresh:true:true", "discover"]);
+    expect(subscriber.syncOracles).toHaveBeenCalledTimes(1);
+  });
+
   it("does not create a duplicate oracle when another tier already owns the same expiry", async () => {
     const sharedExpiryMs = Date.parse("2026-04-17T16:00:00.000Z");
     vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-04-17T14:21:00.000Z"));

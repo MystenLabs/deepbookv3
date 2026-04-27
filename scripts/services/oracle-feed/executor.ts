@@ -12,6 +12,7 @@ import type { Config } from "./config";
 import type { Logger } from "./logger";
 import type { Lane, OracleState, PriceSample, ServiceState, Tier } from "./types";
 import type { Subscriber } from "./subscriber";
+import { refreshGasLanesIfNeeded } from "./bootstrap";
 import { expectedExpiriesForTier } from "./expiry";
 import { discoverOracles } from "./registry";
 import {
@@ -185,6 +186,7 @@ export async function runManagerWindow(
   log.info({ event: "manager_started" });
   try {
     await waitForAllLanesIdle(state.lanes);
+    await refreshGasLanesIfNeeded(client, signer, config, state.lanes, log);
 
     const now = Date.now();
     const discovered = await discoverOracles(client, config, state.capIds, now, log);
@@ -542,10 +544,11 @@ function nextAvailableLane(state: ServiceState): Lane | undefined {
 }
 
 export function hasFreshPriceSample(
-  sample: PriceSample,
+  sample: PriceSample | null,
   now: number,
   staleAfterMs: number,
 ): boolean {
+  if (!sample) return false;
   return now - sample.receivedAtMs <= staleAfterMs;
 }
 

@@ -31,6 +31,7 @@ export type Config = {
   tickSize: number;
   laneCount: number;
   gasPoolFloorSui: number;
+  gasLaneMinSui: number;
   logLevel: string;
   pushTickMs: number;
   managerIntervalMs: number;
@@ -59,6 +60,7 @@ const TICK_SIZE_SCALED = 1 * 1_000_000_000;
 // OracleSVICap is an owned object; parallel txs need distinct caps per lane.
 const LANE_COUNT = 10;
 const GAS_POOL_FLOOR_SUI = 20;
+const GAS_LANE_MIN_SUI = 100;
 const PUSH_TICK_MS = 1_000;
 const MANAGER_INTERVAL_MS = 5 * 60_000;
 const PRICE_CACHE_STALE_MS = 3_000;
@@ -80,6 +82,14 @@ function parseTiers(raw: string): Tier[] {
     if (!allowed.includes(p as Tier)) throw new Error(`Invalid tier in ORACLE_TIERS: ${p}`);
   }
   return parts as Tier[];
+}
+
+function parseNumberEnv(key: string, defaultValue: number): number {
+  const raw = process.env[key];
+  if (!raw) return defaultValue;
+  const value = Number(raw);
+  if (!Number.isFinite(value)) throw new Error(`Invalid ${key}: ${raw}`);
+  return value;
 }
 
 export function loadConfig(): Config {
@@ -134,6 +144,7 @@ export function loadConfig(): Config {
       ? Math.max(1, parseInt(process.env.LANE_COUNT, 10))
       : LANE_COUNT,
     gasPoolFloorSui: GAS_POOL_FLOOR_SUI,
+    gasLaneMinSui: Math.max(0, parseNumberEnv("GAS_LANE_MIN_SUI", GAS_LANE_MIN_SUI)),
     logLevel: process.env.LOG_LEVEL ?? "info",
     pushTickMs: PUSH_TICK_MS,
     managerIntervalMs,

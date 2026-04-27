@@ -61,6 +61,7 @@ export type ServiceState = {
 export type LogEvent =
   | "service_started" | "service_shutdown" | "service_fatal"
   | "lanes_ready" | "caps_created"
+  | "gas_refresh_noop" | "gas_refresh_started" | "gas_refresh_completed"
   | "oracle_discovered" | "oracle_created" | "oracle_activated"
   | "oracle_settled" | "oracle_compacted" | "oracle_skipped_compacted"
   | "tx_submitting" | "tx_submitted" | "tx_failed"
