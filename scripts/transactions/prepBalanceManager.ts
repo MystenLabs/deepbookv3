@@ -38,7 +38,7 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
     deepbook({
       address: adminCapOwner[env],
       adminCap: adminCapID[env],
-      // balanceManagers,
+      balanceManagers,
     }),
   );
 
