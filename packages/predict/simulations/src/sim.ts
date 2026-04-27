@@ -21,11 +21,14 @@ import {
   createOracleTx,
   createPredictTx,
   depositToManagerTx,
+  derivePredictId,
+  deriveManagerId,
   execute,
   executeAndWait,
   finalizeDusdcCurrencyRegistrationTx,
   mintTx,
   refreshOracleAndMintTx,
+  setAssetBasisBoundsTx,
   setAssetFeedIdTx,
   supplyTx,
   updateBasisTx,
@@ -114,9 +117,8 @@ async function setupSimulation(): Promise<SimState> {
   const dusdcCurrencyId: string = dusdcCurrencyChange.objectId;
   console.log(`[${ts()}]   DUSDC Currency: ${dusdcCurrencyId}`);
 
-  result = await executeAndWait(createPredictTx(dusdcCurrencyId), "create_predict");
-  const predictEvent = result.events.find((event: any) => event.type.includes("PredictCreated"));
-  const predictId: string = predictEvent.parsedJson.predict_id;
+  const predictId = derivePredictId();
+  await executeAndWait(createPredictTx(dusdcCurrencyId), "create_predict");
   console.log(`[${ts()}]   Predict: ${predictId}`);
 
   result = await executeAndWait(createOracleCapTx(address), "create_oracle_cap");
@@ -128,6 +130,22 @@ async function setupSimulation(): Promise<SimState> {
 
   await executeAndWait(setAssetFeedIdTx(predictId, "BTC", 1n), "set_asset_feed_id");
   console.log(`[${ts()}]   Feed id registered: BTC -> 1`);
+
+  // Scenario CSV has historical spot moves up to ~8% between consecutive
+  // update_prices rows. Default per-push bounds (2%) would trip the circuit
+  // breaker; widen to the admin ceiling (10%) so the sim replays the trace.
+  await executeAndWait(
+    setAssetBasisBoundsTx(
+      predictId,
+      "BTC",
+      100_000_000n,
+      100_000_000n,
+      900_000_000n,
+      1_100_000_000n
+    ),
+    "set_asset_basis_bounds"
+  );
+  console.log(`[${ts()}]   Basis bounds widened for BTC`);
 
   result = await executeAndWait(
     createOracleTx({
@@ -155,9 +173,8 @@ async function setupSimulation(): Promise<SimState> {
   await executeAndWait(supplyTx(predictId, vaultSeed), "supply");
   console.log(`[${ts()}]   Vault funded: ${vaultSeed / DUSDC_DECIMALS} DUSDC`);
 
-  result = await executeAndWait(createManagerTx(), "create_manager");
-  const managerEvent = result.events.find((event: any) => event.type.includes("ManagerCreated"));
-  const managerId: string = managerEvent.parsedJson.manager_id;
+  const managerId = deriveManagerId(address);
+  await executeAndWait(createManagerTx(), "create_manager");
   console.log(`[${ts()}]   Manager: ${managerId}`);
 
   const userFunds = 500_000n * DUSDC_DECIMALS;

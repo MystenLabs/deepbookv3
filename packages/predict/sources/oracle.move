@@ -42,6 +42,7 @@ const EBasisOutOfRange: u64 = 20;
 const EOracleStale: u64 = 21;
 const EOracleInactive: u64 = 22;
 const ELazerAuthoritativeAtExpiry: u64 = 23;
+const ELazerStaleAtExpiry: u64 = 24;
 
 // Pre-expiry oracle that has not been activated yet.
 const STATUS_INACTIVE: u8 = 0;
@@ -824,8 +825,21 @@ fun apply_lazer_spot(oracle: &mut OracleSVI, spot: u64, lazer_published_at_us: u
     let oracle_id = oracle.id.to_inner();
 
     // Lazer is the authoritative level source at expiry, so freeze the
-    // normalized Lazer spot as the settlement price.
+    // normalized Lazer spot as the settlement price — but only if this
+    // update's publish time falls inside the settlement-authoritative
+    // window. Otherwise the last stale-but-still-signed Lazer update could
+    // be submitted by anyone after Lazer stalls to lock in an outdated
+    // settlement price before the operator fallback engages. Once Lazer
+    // is stale beyond the window, `update_prices` is the settlement
+    // fallback (gated by the mirror-image `ELazerAuthoritativeAtExpiry`
+    // check on that path).
     if (oracle_status == status_pending_settlement()) {
+        let lazer_published_at_ms = lazer_published_at_us / 1000;
+        assert!(
+            now <= lazer_published_at_ms
+                + oracle.bounds.lazer_settlement_authoritative_threshold_ms,
+            ELazerStaleAtExpiry,
+        );
         oracle.settlement_price = option::some(spot);
         oracle.active = false;
         oracle.lazer_published_at_us = lazer_published_at_us;
@@ -834,7 +848,7 @@ fun apply_lazer_spot(oracle: &mut OracleSVI, spot: u64, lazer_published_at_us: u
             oracle_id,
             expiry: oracle.expiry,
             settlement_price: spot,
-            spot_timestamp_ms: lazer_published_at_us / 1000,
+            spot_timestamp_ms: lazer_published_at_ms,
         });
         return
     };
