@@ -33,6 +33,7 @@ const EInvalidStalenessThreshold: u64 = 8;
 const EInvalidBasisBounds: u64 = 9;
 const EFeedIdNotConfigured: u64 = 10;
 
+/// Strike grid metadata attached to one oracle.
 public struct OracleGrid has copy, drop, store {
     min_strike: u64,
     max_strike: u64,
@@ -58,6 +59,7 @@ public struct BasisBounds has copy, drop, store {
     max_basis: u64,
 }
 
+/// Predict-owned oracle configuration and per-oracle metadata.
 public struct OracleConfig has store {
     oracle_grids: Table<ID, OracleGrid>,
     /// Per-oracle ask-bound overrides; presence in this table means an override
@@ -176,18 +178,22 @@ public(package) fun resolve_feed_id(oracle_config: &OracleConfig, asset: String)
     oracle_config.asset_feed_ids[asset]
 }
 
+/// Return the maximum allowed operator spot deviation.
 public(package) fun basis_bounds_max_spot_deviation(bounds: &BasisBounds): u64 {
     bounds.max_spot_deviation
 }
 
+/// Return the maximum allowed basis deviation.
 public(package) fun basis_bounds_max_basis_deviation(bounds: &BasisBounds): u64 {
     bounds.max_basis_deviation
 }
 
+/// Return the minimum allowed basis ratio.
 public(package) fun basis_bounds_min_basis(bounds: &BasisBounds): u64 {
     bounds.min_basis
 }
 
+/// Return the maximum allowed basis ratio.
 public(package) fun basis_bounds_max_basis(bounds: &BasisBounds): u64 {
     bounds.max_basis
 }
@@ -513,6 +519,7 @@ fun resolve_basis_bounds(
     }
 }
 
+/// Validate an admin-tuned staleness threshold.
 fun validate_staleness_ms(value: u64) {
     assert!(
         value > 0 && value <= tuning_constants::max_staleness_threshold_ms!(),
@@ -520,6 +527,7 @@ fun validate_staleness_ms(value: u64) {
     );
 }
 
+/// Validate per-asset basis circuit-breaker inputs before storing them.
 fun validate_basis_bounds_inputs(
     max_spot_deviation: u64,
     max_basis_deviation: u64,

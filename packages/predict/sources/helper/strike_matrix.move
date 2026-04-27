@@ -155,10 +155,12 @@ public(package) fun new(
     }
 }
 
+/// Insert one UP or DOWN position quantity at `strike`.
 public(package) fun insert(matrix: &mut StrikeMatrix, strike: u64, qty: u64, is_up: bool) {
     apply_position(matrix, strike, qty, is_up, true);
 }
 
+/// Remove one UP or DOWN position quantity at `strike`.
 public(package) fun remove(matrix: &mut StrikeMatrix, strike: u64, qty: u64, is_up: bool) {
     apply_position(matrix, strike, qty, is_up, false);
 }
@@ -252,6 +254,7 @@ public(package) fun evaluate(matrix: &StrikeMatrix, curve: &vector<CurvePoint>):
     value
 }
 
+/// Evaluate exact settled liability for a concrete settlement price.
 public(package) fun evaluate_settled(matrix: &StrikeMatrix, settlement: u64): u64 {
     if (matrix.minted_max_strike < matrix.minted_min_strike) return 0;
 
@@ -285,6 +288,7 @@ public(package) fun evaluate_settled(matrix: &StrikeMatrix, settlement: u64): u6
     value
 }
 
+/// Return the exact worst-case settled payout across all settlement prices.
 public(package) fun max_payout(matrix: &StrikeMatrix): u64 {
     let root = matrix.page_tree[0];
     root.total_q_dn + root.best_prefix_up - root.best_prefix_dn - matrix.range_qty
@@ -397,6 +401,7 @@ fun apply_position(matrix: &mut StrikeMatrix, strike: u64, qty: u64, is_up: bool
     recompute_page_tree_path(matrix, page_index);
 }
 
+/// Apply an unchecked add/remove quantity delta.
 fun apply_delta(value: &mut u64, qty: u64, add: bool) {
     if (add) {
         *value = *value + qty;
@@ -405,6 +410,7 @@ fun apply_delta(value: &mut u64, qty: u64, add: bool) {
     };
 }
 
+/// Apply a quantity delta, aborting before underflow on removal.
 fun apply_exact_delta(value: &mut u64, qty: u64, add: bool) {
     if (!add) assert!(*value >= qty, EInsufficientQuantity);
     apply_delta(value, qty, add);
@@ -591,6 +597,7 @@ fun recompute_page_tree_path(matrix: &mut StrikeMatrix, page_index: u64) {
     };
 }
 
+/// Return a zeroed dense page.
 fun empty_page(): vector<StrikeNode> {
     vector::tabulate!(
         PAGE_SLOTS,
@@ -605,6 +612,7 @@ fun empty_page(): vector<StrikeNode> {
     )
 }
 
+/// Return a zeroed page summary.
 fun empty_summary(): PageSummary {
     PageSummary {
         total_q_up: 0,

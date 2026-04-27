@@ -36,6 +36,7 @@ public struct PredictManager has key {
 
 // === Public Functions ===
 
+/// Share a newly created PredictManager object.
 public fun share(self: PredictManager) {
     transfer::share_object(self);
 }

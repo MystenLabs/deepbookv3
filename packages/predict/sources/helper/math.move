@@ -278,10 +278,12 @@ fun normalize(x: u64): (u64, u64) {
     (y, n)
 }
 
+/// Multiply two 1e9-scaled values using a u128 intermediate.
 fun mul_scaled_u128(x: u128, y: u128): u128 {
     x * y / F
 }
 
+/// Integer square root for u128 values.
 fun sqrt_u128(x: u128): u128 {
     if (x == 0) return 0;
     if (x < 4) return 1;
@@ -297,6 +299,7 @@ fun sqrt_u128(x: u128): u128 {
     g
 }
 
+/// Initial power-of-two guess for Newton square root.
 fun sqrt_initial_guess_u128(x: u128): u128 {
     let mut bits: u8 = 0;
     let mut val = x;

@@ -17,6 +17,7 @@ const EExceedsCapacity: u64 = 0;
 const EInsufficientWithdrawalBudget: u64 = 1;
 const EInvalidConfig: u64 = 2;
 
+/// Token bucket state used to limit withdrawals over time.
 public struct RateLimiter has store {
     /// Current available tokens in the bucket.
     available: u64,
@@ -99,18 +100,22 @@ public(package) fun update_config(
     };
 }
 
+/// Return whether the limiter is currently enabled.
 public(package) fun is_enabled(self: &RateLimiter): bool {
     self.enabled
 }
 
+/// Return the maximum burst capacity.
 public(package) fun capacity(self: &RateLimiter): u64 {
     self.capacity
 }
 
+/// Return the number of tokens refilled per millisecond.
 public(package) fun refill_rate_per_ms(self: &RateLimiter): u64 {
     self.refill_rate_per_ms
 }
 
+/// Return the currently stored bucket balance without applying time refill.
 public(package) fun available(self: &RateLimiter): u64 {
     self.available
 }
@@ -157,11 +162,13 @@ fun elapsed_ms(last_updated_ms: u64, clock: &Clock): u64 {
 // === Test-Only Functions ===
 
 #[test_only]
+/// Destroy a test-only limiter value.
 public fun destroy_for_testing(self: RateLimiter) {
     let RateLimiter { available: _, last_updated_ms: _, capacity: _, refill_rate_per_ms: _, enabled: _ } = self;
 }
 
 #[test_only]
+/// Create a test-only limiter with explicit state.
 public fun new_for_testing(
     capacity: u64,
     refill_rate_per_ms: u64,

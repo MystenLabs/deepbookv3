@@ -33,6 +33,7 @@ const EInvalidTickSize: u64 = 1;
 const EInvalidStrikeGrid: u64 = 2;
 const EFeedIdOverflow: u64 = 3;
 
+/// Emitted when an oracle and its strike grid are registered.
 public struct OracleCreated has copy, drop, store {
     oracle_id: ID,
     oracle_cap_id: ID,
@@ -322,6 +323,7 @@ public fun create_manager(registry: &mut Registry, ctx: &mut TxContext): Predict
     predict_manager::new(&mut registry.id, ctx)
 }
 
+/// Create and share a new PredictManager for the caller.
 entry fun create_and_share_manager(registry: &mut Registry, ctx: &mut TxContext) {
     create_manager(registry, ctx).share();
 }
@@ -344,6 +346,7 @@ fun init(ctx: &mut TxContext) {
     transfer::transfer(admin_cap, ctx.sender());
 }
 
+/// Validate the initial oracle strike grid supplied by the operator.
 fun assert_valid_strike_grid(min_strike: u64, tick_size: u64) {
     assert!(tick_size > 0, EInvalidTickSize);
     assert!(tick_size % constants::oracle_tick_size_unit!() == 0, EInvalidTickSize);
@@ -351,6 +354,7 @@ fun assert_valid_strike_grid(min_strike: u64, tick_size: u64) {
     assert!(min_strike % tick_size == 0, EInvalidStrikeGrid);
 }
 
+/// Construct registry and admin cap during package init or tests.
 fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
     (
         Registry {
@@ -366,6 +370,7 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
 // === Test-Only Functions ===
 
 #[test_only]
+/// Initialize registry and admin cap for tests, returning the registry ID.
 public fun init_for_testing(ctx: &mut TxContext): ID {
     let (registry, admin_cap) = new_registry_and_admin_cap(ctx);
     let registry_id = object::id(&registry);
@@ -376,6 +381,7 @@ public fun init_for_testing(ctx: &mut TxContext): ID {
 }
 
 #[test_only]
+/// Create an admin cap for tests.
 public fun create_admin_cap_for_testing(ctx: &mut TxContext): AdminCap {
     AdminCap { id: object::new(ctx) }
 }

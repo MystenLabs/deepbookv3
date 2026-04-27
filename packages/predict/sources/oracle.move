@@ -51,6 +51,7 @@ const STATUS_PENDING_SETTLEMENT: u8 = 2;
 // Oracle with a frozen settlement price.
 const STATUS_SETTLED: u8 = 3;
 
+/// Emitted when an oracle is activated for live pricing.
 public struct OracleActivated has copy, drop, store {
     oracle_id: ID,
     expiry: u64,
@@ -69,6 +70,7 @@ public struct OracleSettled has copy, drop, store {
     spot_timestamp_ms: u64,
 }
 
+/// Emitted when the operator refreshes spot and basis with `update_prices`.
 public struct OraclePricesUpdated has copy, drop, store {
     oracle_id: ID,
     spot: u64,
@@ -77,6 +79,7 @@ public struct OraclePricesUpdated has copy, drop, store {
     spot_timestamp_ms: u64,
 }
 
+/// Emitted when SVI parameters are updated.
 public struct OracleSVIUpdated has copy, drop, store {
     oracle_id: ID,
     a: u64,
@@ -87,6 +90,7 @@ public struct OracleSVIUpdated has copy, drop, store {
     timestamp: u64,
 }
 
+/// Emitted when a Pyth Lazer push refreshes the oracle spot.
 public struct OracleSpotUpdatedFromLazer has copy, drop, store {
     oracle_id: ID,
     spot: u64,
@@ -576,18 +580,22 @@ public fun status(oracle: &OracleSVI, clock: &Clock): u8 {
     }
 }
 
+/// Return the inactive status code.
 public fun status_inactive(): u8 {
     STATUS_INACTIVE
 }
 
+/// Return the active status code.
 public fun status_active(): u8 {
     STATUS_ACTIVE
 }
 
+/// Return the expired-but-unsettled status code.
 public fun status_pending_settlement(): u8 {
     STATUS_PENDING_SETTLEMENT
 }
 
+/// Return the settled status code.
 public fun status_settled(): u8 {
     STATUS_SETTLED
 }
@@ -686,6 +694,7 @@ public(package) fun register_cap(oracle: &mut OracleSVI, cap: &OracleSVICap) {
     oracle.authorized_caps.insert(cap.id.to_inner());
 }
 
+/// Abort unless `cap` is authorized to operate on this oracle.
 public(package) fun assert_authorized_cap(oracle: &OracleSVI, cap: &OracleSVICap) {
     assert!(oracle.authorized_caps.contains(&cap.id.to_inner()), EInvalidOracleCap);
 }
@@ -774,30 +783,37 @@ public(package) fun bounds(oracle: &OracleSVI): OracleBounds {
     oracle.bounds
 }
 
+/// Return the spot-staleness threshold from an `OracleBounds` snapshot.
 public(package) fun bounds_spot_staleness_threshold_ms(bounds: &OracleBounds): u64 {
     bounds.spot_staleness_threshold_ms
 }
 
+/// Return the basis-staleness threshold from an `OracleBounds` snapshot.
 public(package) fun bounds_basis_staleness_threshold_ms(bounds: &OracleBounds): u64 {
     bounds.basis_staleness_threshold_ms
 }
 
+/// Return the Lazer-authoritative threshold from an `OracleBounds` snapshot.
 public(package) fun bounds_lazer_authoritative_threshold_ms(bounds: &OracleBounds): u64 {
     bounds.lazer_authoritative_threshold_ms
 }
 
+/// Return the maximum allowed spot deviation from an `OracleBounds` snapshot.
 public(package) fun bounds_max_spot_deviation(bounds: &OracleBounds): u64 {
     bounds.max_spot_deviation
 }
 
+/// Return the maximum allowed basis deviation from an `OracleBounds` snapshot.
 public(package) fun bounds_max_basis_deviation(bounds: &OracleBounds): u64 {
     bounds.max_basis_deviation
 }
 
+/// Return the minimum allowed basis from an `OracleBounds` snapshot.
 public(package) fun bounds_min_basis(bounds: &OracleBounds): u64 {
     bounds.min_basis
 }
 
+/// Return the maximum allowed basis from an `OracleBounds` snapshot.
 public(package) fun bounds_max_basis(bounds: &OracleBounds): u64 {
     bounds.max_basis
 }
@@ -916,6 +932,7 @@ fun validate_basis_push(oracle: &OracleSVI, new_spot: u64, new_basis: u64) {
     };
 }
 
+/// Validate a per-oracle staleness threshold.
 fun validate_staleness_ms(value: u64) {
     assert!(
         value > 0 && value <= tuning_constants::max_staleness_threshold_ms!(),
@@ -923,6 +940,7 @@ fun validate_staleness_ms(value: u64) {
     );
 }
 
+/// Validate basis circuit-breaker inputs before storing them.
 fun validate_basis_bounds_inputs(
     max_spot_deviation: u64,
     max_basis_deviation: u64,
@@ -950,6 +968,7 @@ fun within_deviation(prev: u64, next: u64, max_deviation: u64): bool {
     diff <= max_allowed
 }
 
+/// Emit the full current bounds snapshot for indexers.
 fun emit_bounds_updated(oracle: &OracleSVI) {
     let b = &oracle.bounds;
     event::emit(OracleBoundsUpdated {
