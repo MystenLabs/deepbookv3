@@ -10,13 +10,7 @@
 module deepbook_predict::oracle;
 
 use deepbook::math;
-use deepbook_predict::{
-    constants,
-    i64,
-    lazer_helper,
-    math as predict_math,
-    tuning_constants
-};
+use deepbook_predict::{constants, i64, lazer_helper, math as predict_math, tuning_constants};
 use pyth_lazer::update::Update as LazerUpdate;
 use std::string::String;
 use sui::{clock::Clock, event, vec_set::{Self, VecSet}};
