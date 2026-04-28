@@ -26,15 +26,15 @@ public macro fun float_scaling_decimals(): u64 { 9 }
 /// Max total exposure as % of vault capital (80% in FLOAT_SCALING)
 public macro fun default_max_total_exposure_pct(): u64 { 800_000_000 }
 
-/// Base spread multiplier for Bernoulli scaling (2% in FLOAT_SCALING).
-/// Effective spread at 50c = base_spread * √(0.5 * 0.5) = base_spread * 0.5 = 1%
-public macro fun default_base_spread(): u64 { 20_000_000 }
+/// Base fee multiplier for Bernoulli scaling (2% in FLOAT_SCALING).
+/// Effective fee at 50c = base_fee * sqrt(0.5 * 0.5) = base_fee * 0.5 = 1%.
+public macro fun default_base_fee(): u64 { 20_000_000 }
 
-/// Minimum spread floor (0.5% in FLOAT_SCALING)
-public macro fun default_min_spread(): u64 { 5_000_000 }
+/// Minimum fee floor (0.5% in FLOAT_SCALING).
+public macro fun default_min_fee(): u64 { 5_000_000 }
 
-/// Utilization multiplier applied to base spread (2x in FLOAT_SCALING)
-/// Controls how aggressively spread widens as vault approaches capacity
+/// Utilization multiplier applied to base fee (2x in FLOAT_SCALING).
+/// Controls how aggressively fees increase as vault approaches capacity.
 public macro fun default_utilization_multiplier(): u64 { 2_000_000_000 }
 
 /// Minimum ask price the protocol will allow at mint (1% in FLOAT_SCALING)

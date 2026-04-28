@@ -162,14 +162,14 @@ public fun set_trading_paused(predict: &mut Predict, _admin_cap: &AdminCap, paus
     predict.set_trading_paused(paused);
 }
 
-/// Set base spread.
-public fun set_base_spread(predict: &mut Predict, _admin_cap: &AdminCap, spread: u64) {
-    predict.set_base_spread(spread);
+/// Set base fee.
+public fun set_base_fee(predict: &mut Predict, _admin_cap: &AdminCap, fee: u64) {
+    predict.set_base_fee(fee);
 }
 
-/// Set min spread.
-public fun set_min_spread(predict: &mut Predict, _admin_cap: &AdminCap, spread: u64) {
-    predict.set_min_spread(spread);
+/// Set min fee.
+public fun set_min_fee(predict: &mut Predict, _admin_cap: &AdminCap, fee: u64) {
+    predict.set_min_fee(fee);
 }
 
 /// Set utilization multiplier.
@@ -181,12 +181,12 @@ public fun set_utilization_multiplier(
     predict.set_utilization_multiplier(multiplier);
 }
 
-/// Set the global minimum allowed post-spread ask price at mint time.
+/// Set the global minimum allowed all-in mint price.
 public fun set_min_ask_price(predict: &mut Predict, _admin_cap: &AdminCap, value: u64) {
     predict.set_min_ask_price(value);
 }
 
-/// Set the global maximum allowed post-spread ask price at mint time.
+/// Set the global maximum allowed all-in mint price.
 public fun set_max_ask_price(predict: &mut Predict, _admin_cap: &AdminCap, value: u64) {
     predict.set_max_ask_price(value);
 }
