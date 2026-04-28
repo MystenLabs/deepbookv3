@@ -11,6 +11,7 @@ module deepbook_predict::predict;
 use deepbook::math;
 use deepbook_predict::{
     constants,
+    fee_reserve::{Self, FeeReserve},
     market_key::MarketKey,
     math::mul_div_round_down,
     oracle::{Self, OracleSVI, OracleSVICap},
@@ -26,6 +27,7 @@ use deepbook_predict::{
 };
 use std::{string::String, type_name::{Self, TypeName}};
 use sui::{
+    balance::Balance,
     clock::Clock,
     coin::{Self, Coin, TreasuryCap},
     coin_registry::Currency,
@@ -135,6 +137,14 @@ public struct PricingConfigUpdated has copy, drop, store {
     max_ask_price: u64,
 }
 
+/// Emitted when fee reserve distribution shares change.
+public struct FeeReserveConfigUpdated has copy, drop, store {
+    predict_id: ID,
+    lp_fee_share: u64,
+    protocol_fee_share: u64,
+    insurance_fee_share: u64,
+}
+
 /// Emitted when a per-oracle ask-bound override is set.
 public struct OracleAskBoundsSet has copy, drop, store {
     predict_id: ID,
@@ -217,6 +227,8 @@ public struct Predict has key {
     id: UID,
     /// Vault holding treasury balances and tracking exposure
     vault: Vault,
+    /// Protocol and insurance fee reserves excluded from LP vault value
+    fee_reserve: FeeReserve,
     /// Treasury cap for minting/burning PLP tokens
     treasury_cap: TreasuryCap<PLP>,
     /// Pricing configuration (admin-controlled)
@@ -274,7 +286,10 @@ public fun mint<Quote>(
     let fee_amount = cost - math::mul(fair_price, quantity);
     let fee_rate = math::div(fee_amount, quantity);
 
-    let payment = manager.withdraw<Quote>(cost, ctx).into_balance();
+    let mut payment = manager.withdraw<Quote>(cost, ctx).into_balance();
+    let fee_payment = payment.split(fee_amount);
+    let lp_fee_payment = predict.apply_fee(fee_payment);
+    payment.join(lp_fee_payment);
     predict.vault.accept_payment(payment);
     predict.vault.assert_total_exposure(predict.risk_config.max_total_exposure_pct());
     manager.increase_position(key, quantity);
@@ -376,7 +391,10 @@ public fun mint_range<Quote>(
     let fee_amount = cost - math::mul(fair_price, quantity);
     let fee_rate = math::div(fee_amount, quantity);
 
-    let payment = manager.withdraw<Quote>(cost, ctx).into_balance();
+    let mut payment = manager.withdraw<Quote>(cost, ctx).into_balance();
+    let fee_payment = payment.split(fee_amount);
+    let lp_fee_payment = predict.apply_fee(fee_payment);
+    payment.join(lp_fee_payment);
     predict.vault.accept_payment(payment);
     predict.vault.assert_total_exposure(predict.risk_config.max_total_exposure_pct());
     manager.increase_range(key, quantity);
@@ -650,6 +668,51 @@ public fun available_withdrawal(predict: &Predict, clock: &Clock): u64 {
     predict.withdrawal_limiter.available_withdrawal(clock)
 }
 
+/// Return total fees accrued across all charged Predict trades.
+public fun total_fees_accrued(predict: &Predict): u64 {
+    predict.fee_reserve.total_fees_accrued()
+}
+
+/// Return total LP fee share accrued across all charged Predict trades.
+public fun lp_fees_accrued(predict: &Predict): u64 {
+    predict.fee_reserve.lp_fees_accrued()
+}
+
+/// Return total protocol fee share accrued across all charged Predict trades.
+public fun protocol_fees_accrued(predict: &Predict): u64 {
+    predict.fee_reserve.protocol_fees_accrued()
+}
+
+/// Return total insurance fee share accrued across all charged Predict trades.
+public fun insurance_fees_accrued(predict: &Predict): u64 {
+    predict.fee_reserve.insurance_fees_accrued()
+}
+
+/// Return concrete protocol fee reserve balance for asset type `Quote`.
+public fun protocol_fee_asset_balance<Quote>(predict: &Predict): u64 {
+    predict.fee_reserve.protocol_asset_balance<Quote>()
+}
+
+/// Return concrete insurance fee reserve balance for asset type `Quote`.
+public fun insurance_fee_asset_balance<Quote>(predict: &Predict): u64 {
+    predict.fee_reserve.insurance_asset_balance<Quote>()
+}
+
+/// Return the current LP fee share.
+public fun lp_fee_share(predict: &Predict): u64 {
+    predict.fee_reserve.lp_fee_share()
+}
+
+/// Return the current protocol fee share.
+public fun protocol_fee_share(predict: &Predict): u64 {
+    predict.fee_reserve.protocol_fee_share()
+}
+
+/// Return the current insurance fee share.
+public fun insurance_fee_share(predict: &Predict): u64 {
+    predict.fee_reserve.insurance_fee_share()
+}
+
 // === Public-Package Functions ===
 
 /// Create and share the Predict object. Returns its ID.
@@ -664,6 +727,7 @@ public(package) fun create<Quote>(
     let mut predict = Predict {
         id: derived_object::claim(registry_uid, PredictKey<Quote>()),
         vault: vault::new(ctx),
+        fee_reserve: fee_reserve::new(ctx),
         treasury_cap,
         pricing_config: pricing_config::new(),
         risk_config: risk_config::new(),
@@ -736,6 +800,22 @@ public(package) fun set_min_fee(predict: &mut Predict, fee: u64) {
 public(package) fun set_utilization_multiplier(predict: &mut Predict, multiplier: u64) {
     predict.pricing_config.set_utilization_multiplier(multiplier);
     predict.emit_pricing_config_updated();
+}
+
+/// Set fee distribution shares.
+public(package) fun set_fee_shares(
+    predict: &mut Predict,
+    lp_fee_share: u64,
+    protocol_fee_share: u64,
+    insurance_fee_share: u64,
+) {
+    predict.fee_reserve.set_fee_shares(lp_fee_share, protocol_fee_share, insurance_fee_share);
+    event::emit(FeeReserveConfigUpdated {
+        predict_id: object::id(predict),
+        lp_fee_share,
+        protocol_fee_share,
+        insurance_fee_share,
+    });
 }
 
 /// Set the global minimum allowed all-in mint price.
@@ -979,6 +1059,11 @@ fun redeem_internal<Quote>(
         fee_rate = math::div(fee_amount, quantity);
     };
 
+    if (fee_amount > 0) {
+        let fee_balance = predict.vault.dispense_payout<Quote>(fee_amount);
+        let lp_fee_balance = predict.apply_fee(fee_balance);
+        predict.vault.accept_payment(lp_fee_balance);
+    };
     let payout_balance = predict.vault.dispense_payout<Quote>(payout);
     let payout_coin = payout_balance.into_coin(ctx);
 
@@ -1058,6 +1143,11 @@ fun redeem_range_internal<Quote>(
         fee_rate = math::div(fee_amount, quantity);
     };
 
+    if (fee_amount > 0) {
+        let fee_balance = predict.vault.dispense_payout<Quote>(fee_amount);
+        let lp_fee_balance = predict.apply_fee(fee_balance);
+        predict.vault.accept_payment(lp_fee_balance);
+    };
     let payout_balance = predict.vault.dispense_payout<Quote>(payout);
     let payout_coin = payout_balance.into_coin(ctx);
 
@@ -1088,6 +1178,12 @@ fun shares_to_amount(predict: &Predict, shares: u64, vault_value: u64): u64 {
     if (shares == 0 || total == 0) return 0;
     if (total == shares) return vault_value;
     mul_div_round_down(shares, vault_value, total)
+}
+
+/// Route a full fee balance through the fee reserve and return the LP portion.
+fun apply_fee<Quote>(predict: &mut Predict, fee_balance: Balance<Quote>): Balance<Quote> {
+    let predict_id = object::id(predict);
+    predict.fee_reserve.accrue_fee(fee_balance, predict_id)
 }
 
 /// Emit the full current pricing-config snapshot.
@@ -1207,6 +1303,7 @@ public(package) fun create_test_predict<Quote>(
     let mut predict = Predict {
         id: object::new(ctx),
         vault: vault::new(ctx),
+        fee_reserve: fee_reserve::new(ctx),
         treasury_cap,
         pricing_config: pricing_config::new(),
         risk_config: risk_config::new(),

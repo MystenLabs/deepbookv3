@@ -181,6 +181,17 @@ public fun set_utilization_multiplier(
     predict.set_utilization_multiplier(multiplier);
 }
 
+/// Set fee distribution shares.
+public fun set_fee_shares(
+    predict: &mut Predict,
+    _admin_cap: &AdminCap,
+    lp_fee_share: u64,
+    protocol_fee_share: u64,
+    insurance_fee_share: u64,
+) {
+    predict.set_fee_shares(lp_fee_share, protocol_fee_share, insurance_fee_share);
+}
+
 /// Set the global minimum allowed all-in mint price.
 public fun set_min_ask_price(predict: &mut Predict, _admin_cap: &AdminCap, value: u64) {
     predict.set_min_ask_price(value);
