@@ -27,10 +27,10 @@ public macro fun float_scaling_decimals(): u64 { 9 }
 public macro fun default_max_total_exposure_pct(): u64 { 800_000_000 }
 
 /// Base fee multiplier for Bernoulli scaling (2% in FLOAT_SCALING).
-/// Effective fee at 50c = base_fee * sqrt(0.5 * 0.5) = base_fee * 0.5 = 1%.
+/// Effective fee rate at 50c = base_fee * sqrt(0.5 * 0.5) = 1%.
 public macro fun default_base_fee(): u64 { 20_000_000 }
 
-/// Minimum fee floor (0.5% in FLOAT_SCALING).
+/// Minimum per-unit fee floor (0.5% in FLOAT_SCALING).
 public macro fun default_min_fee(): u64 { 5_000_000 }
 
 /// Utilization multiplier applied to base fee (2x in FLOAT_SCALING).
@@ -46,10 +46,10 @@ public macro fun default_protocol_fee_share(): u64 { 200_000_000 }
 /// Share of generated fees retained in the insurance reserve (20% in FLOAT_SCALING).
 public macro fun default_insurance_fee_share(): u64 { 200_000_000 }
 
-/// Minimum ask price the protocol will allow at mint (1% in FLOAT_SCALING)
+/// Minimum all-in unit price the protocol will allow at mint (1% in FLOAT_SCALING)
 public macro fun default_min_ask_price(): u64 { 10_000_000 }
 
-/// Maximum ask price the protocol will allow at mint (99% in FLOAT_SCALING)
+/// Maximum all-in unit price the protocol will allow at mint (99% in FLOAT_SCALING)
 public macro fun default_max_ask_price(): u64 { 990_000_000 }
 
 // === Time Constants ===

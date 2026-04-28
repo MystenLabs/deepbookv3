@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Pricing configuration - dynamic fee parameters for binary option pricing.
+/// Pricing configuration - dynamic fee parameters for Predict pricing.
 module deepbook_predict::pricing_config;
 
 use deepbook::math;
@@ -12,18 +12,19 @@ const EFairPriceAlreadySettled: u64 = 1;
 const EInvalidAskBound: u64 = 2;
 
 /// Fee and ask-bound parameters used when quoting Predict markets.
+/// The quoted fee is a per-unit absolute price increment, not a bps rate.
 public struct PricingConfig has store {
     /// Base fee multiplier for Bernoulli scaling.
-    /// Effective fee = base_fee * √(price * (1 - price)).
+    /// Effective fee rate = base_fee * sqrt(price * (1 - price)).
     base_fee: u64,
-    /// Minimum fee floor — fee never goes below this value.
+    /// Minimum per-unit fee floor; live quotes never go below this value.
     min_fee: u64,
     /// Utilization multiplier in FLOAT_SCALING (e.g., 2_000_000_000 = 2x).
     /// Controls how aggressively fees increase as vault approaches capacity.
     utilization_multiplier: u64,
-    /// Global minimum allowed all-in mint price.
+    /// Global minimum allowed all-in mint price after adding the fee.
     min_ask_price: u64,
-    /// Global maximum allowed all-in mint price.
+    /// Global maximum allowed all-in mint price after adding the fee.
     max_ask_price: u64,
 }
 
@@ -34,7 +35,7 @@ public fun base_fee(config: &PricingConfig): u64 {
     config.base_fee
 }
 
-/// Return the minimum fee floor.
+/// Return the minimum per-unit fee floor.
 public fun min_fee(config: &PricingConfig): u64 {
     config.min_fee
 }
@@ -97,7 +98,7 @@ public(package) fun set_max_ask_price(config: &mut PricingConfig, value: u64) {
     config.max_ask_price = value;
 }
 
-/// Quote the dynamic fee rate for a live fair price.
+/// Quote the dynamic per-unit fee rate for a live fair price.
 ///
 /// Uses Bernoulli variance scaling plus utilization pressure. Settled prices
 /// at exactly 0 or 1 are rejected because no live fee should be applied.

@@ -6,6 +6,10 @@
 /// This module orchestrates user actions across the vault, oracle config,
 /// manager, and pricing layers. It owns public trading and LP flows, while the
 /// lower modules provide isolated state machines and pricing primitives.
+///
+/// Trading uses one fair oracle price plus an explicit fee. The fee is charged
+/// on mint and pre-settlement redeem, routed through `FeeReserve`, and reported
+/// as `fee_amount` in trade events. Settlement redemption is zero-fee.
 module deepbook_predict::predict;
 
 use deepbook::math;
@@ -51,6 +55,7 @@ const EPredictAlreadyCreated: u64 = 11;
 const EFeeExceedsRedeemValue: u64 = 12;
 
 /// Emitted when a binary UP/DOWN position is minted.
+/// `cost` is fair value plus `fee_amount`; `fee_rate` is per-unit.
 public struct PositionMinted has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
@@ -68,6 +73,7 @@ public struct PositionMinted has copy, drop, store {
 }
 
 /// Emitted when a binary UP/DOWN position is redeemed.
+/// `payout` is net of fee for live redemptions and settlement value when settled.
 public struct PositionRedeemed has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
@@ -87,6 +93,7 @@ public struct PositionRedeemed has copy, drop, store {
 }
 
 /// Emitted when a vertical range position is minted.
+/// `cost` is fair value plus `fee_amount`; `fee_rate` is per-unit.
 public struct RangeMinted has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
@@ -104,6 +111,7 @@ public struct RangeMinted has copy, drop, store {
 }
 
 /// Emitted when a vertical range position is redeemed.
+/// `payout` is net of fee for live redemptions and settlement value when settled.
 public struct RangeRedeemed has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
@@ -228,7 +236,7 @@ public struct Predict has key {
     id: UID,
     /// Vault holding treasury balances and tracking exposure
     vault: Vault,
-    /// Protocol and insurance fee reserves excluded from LP vault value
+    /// Protocol and insurance fee reserves excluded from LP vault value.
     fee_reserve: FeeReserve,
     /// Treasury cap for minting/burning PLP tokens
     treasury_cap: TreasuryCap<PLP>,
@@ -252,6 +260,7 @@ public struct PredictKey<phantom T>() has copy, drop, store;
 // === Public Functions ===
 
 /// Buy a position using an enabled quote asset.
+/// The all-in mint price is the quoted fair price plus per-unit fee.
 /// Cost is withdrawn from the PredictManager's balance.
 /// Position quantity is added to the PredictManager's positions.
 public fun mint<Quote>(
@@ -324,6 +333,7 @@ public fun compact_settled_oracle(
 }
 
 /// Sell a position. Payout is deposited into the PredictManager's balance.
+/// Live redemption charges a fee; settlement redemption is zero-fee.
 /// Outflows can use any quote asset with concrete vault balance, even if it is
 /// disabled for new inflows.
 /// Position quantity is removed from the PredictManager's positions.
@@ -359,6 +369,7 @@ public fun redeem_permissionless<Quote>(
 /// Mint a vertical range `(lower, higher)` priced as a single instrument.
 /// The user pays only the range premium up front; the vault tracks the bounded
 /// liability natively via the strike-matrix range_qty offset.
+/// The all-in mint price is the quoted fair price plus per-unit fee.
 public fun mint_range<Quote>(
     predict: &mut Predict,
     manager: &mut PredictManager,
@@ -413,8 +424,9 @@ public fun mint_range<Quote>(
     });
 }
 
-/// Redeem a vertical range. Payout is the post-trade fair value less fee pre-settlement,
-/// or `$1·qty` if the settlement landed in the band (lower, higher].
+/// Redeem a vertical range.
+/// Live payout is post-trade fair value less fee. Settlement redemption is
+/// zero-fee and pays `quantity` if settlement landed in `(lower, higher]`.
 public fun redeem_range<Quote>(
     predict: &mut Predict,
     manager: &mut PredictManager,
@@ -547,9 +559,10 @@ public fun refresh_oracle_mtm(predict: &mut Predict, oracle: &OracleSVI, clock: 
     };
 }
 
-/// Per-unit `(fair_price, fee_rate)` for a single-strike position. Live quotes
-/// charge the fee on mint and pre-settlement redeem; settled quotes use fair
-/// settlement value with zero fee.
+/// Per-unit `(fair_price, fee_rate)` for a single-strike position.
+/// `fee_rate` is an absolute price increment in FLOAT_SCALING, not bps.
+/// Live quotes charge the fee on mint and pre-settlement redeem; settled quotes
+/// use fair settlement value with zero fee.
 public fun trade_quote(
     predict: &Predict,
     oracle: &OracleSVI,
@@ -581,6 +594,7 @@ public fun trade_quote(
 }
 
 /// Per-unit `(fair_price, fee_rate)` for a vertical range position.
+/// `fee_rate` is an absolute price increment in FLOAT_SCALING, not bps.
 public fun range_trade_quote(
     predict: &Predict,
     oracle: &OracleSVI,
@@ -665,7 +679,7 @@ public fun available_withdrawal(predict: &Predict, clock: &Clock): u64 {
     predict.withdrawal_limiter.available_withdrawal(clock)
 }
 
-/// Return total fees accrued across all charged Predict trades.
+/// Return the official total fee amount accrued across all charged Predict trades.
 public fun total_fees_accrued(predict: &Predict): u64 {
     predict.fee_reserve.total_fees_accrued()
 }
@@ -1031,10 +1045,10 @@ fun redeem_internal<Quote>(
     };
 
     let (fair_price, quoted_fee_rate) = predict.trade_quote(
-            oracle,
-            key,
-            clock,
-        );
+        oracle,
+        key,
+        clock,
+    );
     assert!(fair_price >= quoted_fee_rate, EFeeExceedsRedeemValue);
 
     let payout = math::mul(fair_price, quantity);
@@ -1135,6 +1149,7 @@ fun shares_to_amount(predict: &Predict, shares: u64, vault_value: u64): u64 {
 }
 
 /// Route a full fee balance through the fee reserve and deposit the LP share into the vault.
+/// Zero fees are ignored so settlement redemption does not emit fee accruals.
 fun apply_fee<Quote>(predict: &mut Predict, fee_balance: Balance<Quote>) {
     if (fee_balance.value() == 0) {
         fee_balance.destroy_zero();

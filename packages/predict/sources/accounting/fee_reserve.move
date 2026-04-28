@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Fee reserve accounting for non-LP Predict fee portions.
+/// Fee reserve accounting for Predict trade fees.
 ///
 /// LP fees stay in the vault as LP-owned NAV. Protocol and insurance fee
 /// balances are stored here so they are real reserved assets, not just counters.
@@ -17,7 +17,7 @@ const EInvalidFeeSplit: u64 = 0;
 /// Dynamic bag key for storing a concrete asset balance by type.
 public struct BalanceKey<phantom T> has copy, drop, store {}
 
-/// Emitted whenever a charged trade accrues a fee split.
+/// Emitted whenever a charged trade accrues an official fee split.
 public struct FeeAccrued has copy, drop, store {
     predict_id: ID,
     quote_asset: TypeName,
@@ -28,6 +28,9 @@ public struct FeeAccrued has copy, drop, store {
 }
 
 /// Reserve state for protocol and insurance fee portions.
+///
+/// The LP share is counted here but returned to the caller so it can be
+/// deposited into the vault and remain LP-owned NAV.
 public struct FeeReserve has store {
     protocol_balances: Bag,
     insurance_balances: Bag,
@@ -42,7 +45,7 @@ public struct FeeReserve has store {
 
 // === Public Functions ===
 
-/// Return total fees accrued across all charged trades.
+/// Return the official total fee amount accrued across all charged trades.
 public fun total_fees_accrued(reserve: &FeeReserve): u64 {
     reserve.total_fees_accrued
 }
@@ -131,6 +134,7 @@ public(package) fun set_fee_shares(
 }
 
 /// Accrue a full fee balance, returning the LP-owned portion to the caller.
+/// Protocol and insurance shares are retained as concrete reserve balances.
 public(package) fun accrue_fee<T>(
     reserve: &mut FeeReserve,
     fee: Balance<T>,
