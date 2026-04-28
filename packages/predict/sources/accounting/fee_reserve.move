@@ -37,10 +37,10 @@ public struct FeeReserve has store {
     lp_fee_share: u64,
     protocol_fee_share: u64,
     insurance_fee_share: u64,
-    total_fees_accrued: u64,
     lp_fees_accrued: u64,
     protocol_fees_accrued: u64,
     insurance_fees_accrued: u64,
+    total_fees_accrued: u64,
 }
 
 // === Public Functions ===
@@ -100,10 +100,10 @@ public(package) fun new(ctx: &mut TxContext): FeeReserve {
         lp_fee_share: constants::default_lp_fee_share!(),
         protocol_fee_share: constants::default_protocol_fee_share!(),
         insurance_fee_share: constants::default_insurance_fee_share!(),
-        total_fees_accrued: 0,
         lp_fees_accrued: 0,
         protocol_fees_accrued: 0,
         insurance_fees_accrued: 0,
+        total_fees_accrued: 0,
     }
 }
 
