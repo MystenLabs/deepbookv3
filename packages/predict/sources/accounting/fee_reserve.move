@@ -90,18 +90,6 @@ public fun insurance_asset_balance<T>(reserve: &FeeReserve): u64 {
     asset_balance<T>(&reserve.insurance_balances)
 }
 
-/// Split a total fee amount into `(lp_fee, protocol_fee, insurance_fee)`.
-/// Protocol and insurance shares round down; dust remains in the LP share.
-public fun split_fee_amount(reserve: &FeeReserve, total_fee: u64): (u64, u64, u64) {
-    let mut lp_fee = math::mul(total_fee, reserve.lp_fee_share);
-    let protocol_fee = math::mul(total_fee, reserve.protocol_fee_share);
-    let insurance_fee = math::mul(total_fee, reserve.insurance_fee_share);
-    let rounded_total = lp_fee + protocol_fee + insurance_fee;
-    assert!(rounded_total <= total_fee, EInvalidFeeSplit);
-    lp_fee = lp_fee + total_fee - rounded_total;
-    (lp_fee, protocol_fee, insurance_fee)
-}
-
 // === Public-Package Functions ===
 
 /// Create an empty fee reserve.
@@ -133,6 +121,21 @@ public(package) fun set_fee_shares(
     reserve.insurance_fee_share = insurance_fee_share;
 }
 
+/// Split a full fee balance into `(lp_fee, protocol_fee, insurance_fee)`.
+/// Protocol and insurance shares round down; dust remains in the LP balance.
+public(package) fun split_fee<T>(
+    reserve: &FeeReserve,
+    fee: Balance<T>,
+): (Balance<T>, Balance<T>, Balance<T>) {
+    let mut lp_balance = fee;
+    let protocol_fee = math::mul(lp_balance.value(), reserve.protocol_fee_share);
+    let insurance_fee = math::mul(lp_balance.value(), reserve.insurance_fee_share);
+    let protocol_balance = lp_balance.split(protocol_fee);
+    let insurance_balance = lp_balance.split(insurance_fee);
+
+    (lp_balance, protocol_balance, insurance_balance)
+}
+
 /// Accrue a full fee balance, returning the LP-owned portion to the caller.
 /// Protocol and insurance shares are retained as concrete reserve balances.
 public(package) fun accrue_fee<T>(
@@ -143,11 +146,11 @@ public(package) fun accrue_fee<T>(
     let total_fee = fee.value();
     if (total_fee == 0) return fee;
 
-    let (lp_fee, protocol_fee, insurance_fee) = reserve.split_fee_amount(total_fee);
-    let mut fee = fee;
-    let protocol_balance = fee.split(protocol_fee);
-    let insurance_balance = fee.split(insurance_fee);
-    assert!(fee.value() == lp_fee, EInvalidFeeSplit);
+    let (lp_balance, protocol_balance, insurance_balance) = reserve.split_fee(fee);
+    let lp_fee = lp_balance.value();
+    let protocol_fee = protocol_balance.value();
+    let insurance_fee = insurance_balance.value();
+    assert!(lp_fee + protocol_fee + insurance_fee == total_fee, EInvalidFeeSplit);
 
     reserve.record_fee_accrual(
         protocol_balance,
@@ -159,7 +162,7 @@ public(package) fun accrue_fee<T>(
         predict_id,
     );
 
-    fee
+    lp_balance
 }
 
 // === Private Functions ===

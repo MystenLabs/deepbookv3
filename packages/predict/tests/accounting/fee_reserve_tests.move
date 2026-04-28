@@ -96,6 +96,24 @@ fun set_fee_shares_rejects_sum_above_one() {
 }
 
 #[test]
+fun split_fee_returns_balance_shares() {
+    let ctx = &mut tx_context::dummy();
+    let reserve = fee_reserve::new(ctx);
+    let fee = coin::mint_for_testing<SUI>(EVEN_FEE, ctx).into_balance();
+
+    let (lp_fee, protocol_fee, insurance_fee) = reserve.split_fee(fee);
+
+    assert_eq!(lp_fee.value(), 60);
+    assert_eq!(protocol_fee.value(), 20);
+    assert_eq!(insurance_fee.value(), 20);
+
+    lp_fee.into_coin(ctx).burn_for_testing();
+    protocol_fee.into_coin(ctx).burn_for_testing();
+    insurance_fee.into_coin(ctx).burn_for_testing();
+    reserve.destroy_empty_for_testing();
+}
+
+#[test]
 fun accrue_fee_assigns_rounding_dust_to_lp() {
     let ctx = &mut tx_context::dummy();
     let mut reserve = fee_reserve::new(ctx);
