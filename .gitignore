@@ -31,6 +31,9 @@ packages/predict/simulation/*.png
 # Research
 predict_research/
 
+# Local agent artifacts
+/docs/
+
 # misc
 .env
 .envrc
