@@ -141,16 +141,8 @@ public(package) fun accrue_fee<T>(
 
     let (lp_fee, protocol_fee, insurance_fee) = reserve.split_fee_amount(total_fee);
     let mut fee = fee;
-    let protocol_balance = if (protocol_fee == 0) {
-        balance::zero<T>()
-    } else {
-        fee.split(protocol_fee)
-    };
-    let insurance_balance = if (insurance_fee == 0) {
-        balance::zero<T>()
-    } else {
-        fee.split(insurance_fee)
-    };
+    let protocol_balance = fee.split(protocol_fee);
+    let insurance_balance = fee.split(insurance_fee);
     assert!(fee.value() == lp_fee, EInvalidFeeSplit);
 
     reserve.record_fee_accrual(
@@ -162,6 +154,7 @@ public(package) fun accrue_fee<T>(
         insurance_fee,
         predict_id,
     );
+
     fee
 }
 

@@ -48,6 +48,7 @@ const EAskBoundLooserThanGlobal: u64 = 8;
 const EOracleNotSettled: u64 = 9;
 const EStaleOracleMtm: u64 = 10;
 const EPredictAlreadyCreated: u64 = 11;
+const EFeeExceedsRedeemValue: u64 = 12;
 
 /// Emitted when a binary UP/DOWN position is minted.
 public struct PositionMinted has copy, drop, store {
@@ -280,16 +281,14 @@ public fun mint<Quote>(
     // Quote against the post-trade state so the trader pays the fee for the
     // liability their own mint just added to the vault.
     let (fair_price, quoted_fee_rate) = predict.trade_quote(oracle, key, clock);
-    let mint_price = mint_price_from_quote(fair_price, quoted_fee_rate);
+    let mint_price = fair_price + quoted_fee_rate;
     predict.assert_mintable_price(oracle.id(), mint_price);
     let cost = math::mul(mint_price, quantity);
-    let fee_amount = cost - math::mul(fair_price, quantity);
-    let fee_rate = math::div(fee_amount, quantity);
+    let fee_amount = math::mul(quoted_fee_rate, quantity);
 
     let mut payment = manager.withdraw<Quote>(cost, ctx).into_balance();
     let fee_payment = payment.split(fee_amount);
-    let lp_fee_payment = predict.apply_fee(fee_payment);
-    payment.join(lp_fee_payment);
+    predict.apply_fee(fee_payment);
     predict.vault.accept_payment(payment);
     predict.vault.assert_total_exposure(predict.risk_config.max_total_exposure_pct());
     manager.increase_position(key, quantity);
@@ -306,7 +305,7 @@ public fun mint<Quote>(
         quantity,
         cost,
         fair_price,
-        fee_rate,
+        fee_rate: quoted_fee_rate,
         fee_amount,
     });
 }
@@ -385,16 +384,14 @@ public fun mint_range<Quote>(
     // Quote against the post-trade state so the trader pays the fee for the
     // liability their own mint just added to the vault.
     let (fair_price, quoted_fee_rate) = predict.range_trade_quote(oracle, key, clock);
-    let mint_price = mint_price_from_quote(fair_price, quoted_fee_rate);
+    let mint_price = fair_price + quoted_fee_rate;
     predict.assert_mintable_price(oracle.id(), mint_price);
     let cost = math::mul(mint_price, quantity);
-    let fee_amount = cost - math::mul(fair_price, quantity);
-    let fee_rate = math::div(fee_amount, quantity);
+    let fee_amount = math::mul(quoted_fee_rate, quantity);
 
     let mut payment = manager.withdraw<Quote>(cost, ctx).into_balance();
     let fee_payment = payment.split(fee_amount);
-    let lp_fee_payment = predict.apply_fee(fee_payment);
-    payment.join(lp_fee_payment);
+    predict.apply_fee(fee_payment);
     predict.vault.accept_payment(payment);
     predict.vault.assert_total_exposure(predict.risk_config.max_total_exposure_pct());
     manager.increase_range(key, quantity);
@@ -411,7 +408,7 @@ public fun mint_range<Quote>(
         quantity,
         cost,
         fair_price,
-        fee_rate,
+        fee_rate: quoted_fee_rate,
         fee_amount,
     });
 }
@@ -1026,45 +1023,29 @@ fun redeem_internal<Quote>(
     oracle.assert_quoteable_oracle(clock);
 
     manager.decrease_position(key, quantity);
-    let payout;
-    let fair_price;
-    let fee_rate;
-    let fee_amount;
-    if (oracle.is_settled() && predict.vault.has_settled_oracle(oracle.id())) {
-        let (settled_fair_price, settled_fee_rate) = predict.trade_quote(oracle, key, clock);
-        let redeem_price = redeem_price_from_quote(settled_fair_price, settled_fee_rate);
-        let settled_payout = math::mul(redeem_price, quantity);
-        predict.vault.redeem_settled_position(oracle.id(), quantity, settled_payout);
-        payout = settled_payout;
-        fair_price = settled_fair_price;
-        fee_rate = settled_fee_rate;
-        fee_amount = 0;
-    } else {
+    let settled = oracle.is_settled() && predict.vault.has_settled_oracle(oracle.id());
+    if (!settled) {
         predict.vault.remove_position(oracle.id(), key.is_up(), key.strike(), quantity);
         predict.refresh_oracle_risk(oracle, clock);
-        predict.vault.remove_unsettled_exposed_oracle(oracle.id(), oracle.is_settled());
+        predict.vault.remove_unsettled_exposed_oracle(oracle.id(), oracle.is_settled())
+    };
 
-        // Quote against the post-trade state so the seller pays fees against the
-        // liability after their position has been removed from the vault.
-        let (live_fair_price, quoted_fee_rate) = predict.trade_quote(
+    let (fair_price, quoted_fee_rate) = predict.trade_quote(
             oracle,
             key,
             clock,
         );
-        let redeem_price = redeem_price_from_quote(live_fair_price, quoted_fee_rate);
-        let live_payout = math::mul(redeem_price, quantity);
-        payout = live_payout;
-        fair_price = live_fair_price;
-        fee_amount = math::mul(fair_price, quantity) - payout;
-        fee_rate = math::div(fee_amount, quantity);
-    };
+    assert!(fair_price >= quoted_fee_rate, EFeeExceedsRedeemValue);
 
-    if (fee_amount > 0) {
-        let fee_balance = predict.vault.dispense_payout<Quote>(fee_amount);
-        let lp_fee_balance = predict.apply_fee(fee_balance);
-        predict.vault.accept_payment(lp_fee_balance);
+    let payout = math::mul(fair_price, quantity);
+    if (settled) {
+        predict.vault.redeem_settled_position(oracle.id(), quantity, payout);
     };
-    let payout_balance = predict.vault.dispense_payout<Quote>(payout);
+    let fee = math::mul(quoted_fee_rate, quantity);
+    let mut payout_balance = predict.vault.dispense_payout<Quote>(payout);
+    let fee_balance = payout_balance.split(fee);
+    predict.apply_fee(fee_balance);
+
     let payout_coin = payout_balance.into_coin(ctx);
 
     event::emit(PositionRedeemed {
@@ -1078,10 +1059,10 @@ fun redeem_internal<Quote>(
         strike: key.strike(),
         is_up: key.is_up(),
         quantity,
-        payout,
+        payout: payout_coin.value(),
         fair_price,
-        fee_rate,
-        fee_amount,
+        fee_rate: quoted_fee_rate,
+        fee_amount: fee,
         is_settled: oracle.is_settled(),
     });
 
@@ -1103,52 +1084,25 @@ fun redeem_range_internal<Quote>(
     oracle.assert_quoteable_oracle(clock);
 
     manager.decrease_range(key, quantity);
-
-    let lower = key.lower_strike();
-    let higher = key.higher_strike();
-    let payout;
-    let fair_price;
-    let fee_rate;
-    let fee_amount;
-    if (oracle.is_settled() && predict.vault.has_settled_oracle(oracle.id())) {
-        let (settled_fair_price, settled_fee_rate) = predict.range_trade_quote(
-            oracle,
-            key,
-            clock,
-        );
-        let redeem_price = redeem_price_from_quote(settled_fair_price, settled_fee_rate);
-        let settled_payout = math::mul(redeem_price, quantity);
-        predict.vault.redeem_settled_position(oracle.id(), quantity, settled_payout);
-        payout = settled_payout;
-        fair_price = settled_fair_price;
-        fee_rate = settled_fee_rate;
-        fee_amount = 0;
-    } else {
-        predict.vault.remove_range(oracle.id(), lower, higher, quantity);
+    let settled = oracle.is_settled() && predict.vault.has_settled_oracle(oracle.id());
+    if (!settled) {
+        predict.vault.remove_range(oracle.id(), key.lower_strike(), key.higher_strike(), quantity);
         predict.refresh_oracle_risk(oracle, clock);
         predict.vault.remove_unsettled_exposed_oracle(oracle.id(), oracle.is_settled());
-
-        // Quote against the post-trade state so the seller pays fees against the
-        // liability after their range has been removed from the vault.
-        let (live_fair_price, quoted_fee_rate) = predict.range_trade_quote(
-            oracle,
-            key,
-            clock,
-        );
-        let redeem_price = redeem_price_from_quote(live_fair_price, quoted_fee_rate);
-        let live_payout = math::mul(redeem_price, quantity);
-        payout = live_payout;
-        fair_price = live_fair_price;
-        fee_amount = math::mul(fair_price, quantity) - payout;
-        fee_rate = math::div(fee_amount, quantity);
     };
 
-    if (fee_amount > 0) {
-        let fee_balance = predict.vault.dispense_payout<Quote>(fee_amount);
-        let lp_fee_balance = predict.apply_fee(fee_balance);
-        predict.vault.accept_payment(lp_fee_balance);
+    let (fair_price, quoted_fee_rate) = predict.range_trade_quote(oracle, key, clock);
+    assert!(fair_price >= quoted_fee_rate, EFeeExceedsRedeemValue);
+
+    let payout = math::mul(fair_price, quantity);
+    if (settled) {
+        predict.vault.redeem_settled_position(oracle.id(), quantity, payout);
     };
-    let payout_balance = predict.vault.dispense_payout<Quote>(payout);
+    let fee = math::mul(quoted_fee_rate, quantity);
+    let mut payout_balance = predict.vault.dispense_payout<Quote>(payout);
+    let fee_balance = payout_balance.split(fee);
+    predict.apply_fee(fee_balance);
+
     let payout_coin = payout_balance.into_coin(ctx);
 
     event::emit(RangeRedeemed {
@@ -1159,13 +1113,13 @@ fun redeem_range_internal<Quote>(
         quote_asset: type_name::with_defining_ids<Quote>(),
         oracle_id: key.oracle_id(),
         expiry: key.expiry(),
-        lower_strike: lower,
-        higher_strike: higher,
+        lower_strike: key.lower_strike(),
+        higher_strike: key.higher_strike(),
         quantity,
-        payout,
+        payout: payout_coin.value(),
         fair_price,
-        fee_rate,
-        fee_amount,
+        fee_rate: quoted_fee_rate,
+        fee_amount: fee,
         is_settled: oracle.is_settled(),
     });
 
@@ -1180,10 +1134,15 @@ fun shares_to_amount(predict: &Predict, shares: u64, vault_value: u64): u64 {
     mul_div_round_down(shares, vault_value, total)
 }
 
-/// Route a full fee balance through the fee reserve and return the LP portion.
-fun apply_fee<Quote>(predict: &mut Predict, fee_balance: Balance<Quote>): Balance<Quote> {
+/// Route a full fee balance through the fee reserve and deposit the LP share into the vault.
+fun apply_fee<Quote>(predict: &mut Predict, fee_balance: Balance<Quote>) {
+    if (fee_balance.value() == 0) {
+        fee_balance.destroy_zero();
+        return
+    };
     let predict_id = object::id(predict);
-    predict.fee_reserve.accrue_fee(fee_balance, predict_id)
+    let lp_fee = predict.fee_reserve.accrue_fee(fee_balance, predict_id);
+    predict.vault.accept_payment(lp_fee);
 }
 
 /// Emit the full current pricing-config snapshot.
@@ -1218,32 +1177,6 @@ fun emit_oracle_staleness_config_updated(predict: &Predict) {
             .oracle_config
             .lazer_settlement_authoritative_threshold_ms(),
     });
-}
-
-fun mint_price_from_quote(fair_price: u64, fee_rate: u64): u64 {
-    if (fee_rate >= constants::float_scaling!() - fair_price) {
-        constants::float_scaling!()
-    } else {
-        fair_price + fee_rate
-    }
-}
-
-fun redeem_price_from_quote(fair_price: u64, fee_rate: u64): u64 {
-    if (fair_price > fee_rate) {
-        fair_price - fee_rate
-    } else {
-        0
-    }
-}
-
-#[test]
-fun mint_price_from_quote_clamps_at_one() {
-    assert!(mint_price_from_quote(900_000_000, 200_000_000) == constants::float_scaling!(), 0);
-}
-
-#[test]
-fun redeem_price_from_quote_clamps_at_zero() {
-    assert!(redeem_price_from_quote(100_000_000, 200_000_000) == 0, 0);
 }
 
 /// Resolve the effective ask-price bounds for an oracle: the per-oracle
