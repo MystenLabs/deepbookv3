@@ -72,9 +72,7 @@ const INV_9_U128: u128 = 111_111_111;
 const INV_11_U128: u128 = 90_909_091;
 const INV_13_U128: u128 = 76_923_077;
 
-// ============================================================
-// Public API
-// ============================================================
+// === Public Functions ===
 
 /// Natural logarithm of x (in FLOAT_SCALING 1e9).
 /// Returns a signed fixed-point result.
@@ -125,9 +123,33 @@ public fun sqrt(x: u64, precision: u64): u64 {
     (sqrt_u128(scaled) / multiplier) as u64
 }
 
-// ============================================================
-// u128 internal functions
-// ============================================================
+/// (a * b) / c using u128 intermediate for full precision. Rounds down.
+public fun mul_div_round_down(a: u64, b: u64, c: u64): u64 {
+    ((a as u128) * (b as u128) / (c as u128)) as u64
+}
+
+/// (a * b) / c using u128 intermediate for full precision. Rounds up.
+public fun mul_div_round_up(a: u64, b: u64, c: u64): u64 {
+    let numerator = (a as u128) * (b as u128);
+    let denominator = c as u128;
+    let result = numerator / denominator;
+    let round = if (numerator % denominator == 0) 0 else 1;
+    (result + round) as u64
+}
+
+/// 10^n for small non-negative n. Capped at 18 because 10^19 overflows u64.
+public fun pow10(n: u64): u64 {
+    assert!(n <= 18, EPow10ExponentTooLarge);
+    let mut result: u64 = 1;
+    let mut i = 0;
+    while (i < n) {
+        result = result * 10;
+        i = i + 1;
+    };
+    result
+}
+
+// === Private Functions ===
 
 /// ln(y) where y is normalized to [F, 2F) and n is the shift count.
 /// Computes: n * ln(2) + 2 * (z + z³/3 + z⁵/5 + ... + z¹³/13)
@@ -239,10 +261,6 @@ fun normal_cdf_u128(x: u128, x_negative: bool): u128 {
     }
 }
 
-// ============================================================
-// u64 helpers
-// ============================================================
-
 /// Normalize x into [FLOAT_SCALING, 2*FLOAT_SCALING) via binary search.
 /// Returns (y, n) where x = y * 2^n.
 fun normalize(x: u64): (u64, u64) {
@@ -260,10 +278,12 @@ fun normalize(x: u64): (u64, u64) {
     (y, n)
 }
 
+/// Multiply two 1e9-scaled values using a u128 intermediate.
 fun mul_scaled_u128(x: u128, y: u128): u128 {
     x * y / F
 }
 
+/// Integer square root for u128 values.
 fun sqrt_u128(x: u128): u128 {
     if (x == 0) return 0;
     if (x < 4) return 1;
@@ -279,6 +299,7 @@ fun sqrt_u128(x: u128): u128 {
     g
 }
 
+/// Initial power-of-two guess for Newton square root.
 fun sqrt_initial_guess_u128(x: u128): u128 {
     let mut bits: u8 = 0;
     let mut val = x;
@@ -290,30 +311,4 @@ fun sqrt_initial_guess_u128(x: u128): u128 {
     if (val >= 1u128 << 2) { val = val >> 2; bits = bits + 2; };
     if (val >= 1u128 << 1) { bits = bits + 1; };
     1u128 << (((bits + 1) / 2) as u8)
-}
-
-/// (a * b) / c using u128 intermediate for full precision. Rounds down.
-public fun mul_div_round_down(a: u64, b: u64, c: u64): u64 {
-    ((a as u128) * (b as u128) / (c as u128)) as u64
-}
-
-/// (a * b) / c using u128 intermediate for full precision. Rounds up.
-public fun mul_div_round_up(a: u64, b: u64, c: u64): u64 {
-    let numerator = (a as u128) * (b as u128);
-    let denominator = c as u128;
-    let result = numerator / denominator;
-    let round = if (numerator % denominator == 0) 0 else 1;
-    (result + round) as u64
-}
-
-/// 10^n for small non-negative n. Capped at 18 because 10^19 overflows u64.
-public fun pow10(n: u64): u64 {
-    assert!(n <= 18, EPow10ExponentTooLarge);
-    let mut result: u64 = 1;
-    let mut i = 0;
-    while (i < n) {
-        result = result * 10;
-        i = i + 1;
-    };
-    result
 }

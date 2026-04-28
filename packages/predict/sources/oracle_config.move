@@ -21,7 +21,6 @@ use deepbook_predict::{
 use std::string::String;
 use sui::table::{Self, Table};
 
-// === Errors ===
 const EMarketKeyOracleMismatch: u64 = 0;
 const EMarketKeyExpiryMismatch: u64 = 1;
 const EInvalidStrike: u64 = 2;
@@ -34,6 +33,7 @@ const EInvalidStalenessThreshold: u64 = 8;
 const EInvalidBasisBounds: u64 = 9;
 const EFeedIdNotConfigured: u64 = 10;
 
+/// Strike grid metadata attached to one oracle.
 public struct OracleGrid has copy, drop, store {
     min_strike: u64,
     max_strike: u64,
@@ -59,6 +59,7 @@ public struct BasisBounds has copy, drop, store {
     max_basis: u64,
 }
 
+/// Predict-owned oracle configuration and per-oracle metadata.
 public struct OracleConfig has store {
     oracle_grids: Table<ID, OracleGrid>,
     /// Per-oracle ask-bound overrides; presence in this table means an override
@@ -98,6 +99,8 @@ public struct CurvePoint has copy, drop, store {
     up_price: u64,
 }
 
+// === Public Functions ===
+
 /// Create a curve sample point from exact strike and UP price.
 public fun new_curve_point(strike: u64, up_price: u64): CurvePoint {
     CurvePoint {
@@ -117,6 +120,8 @@ public fun ask_bounds_min(bounds: &AskBounds): u64 { bounds.min_ask_price }
 
 /// Return the maximum ask price stored in an `AskBounds`.
 public fun ask_bounds_max(bounds: &AskBounds): u64 { bounds.max_ask_price }
+
+// === Public-Package Functions ===
 
 /// Admin-tuned spot staleness threshold (ms) used to seed new oracles.
 public(package) fun spot_staleness_threshold_ms(oracle_config: &OracleConfig): u64 {
@@ -173,18 +178,22 @@ public(package) fun resolve_feed_id(oracle_config: &OracleConfig, asset: String)
     oracle_config.asset_feed_ids[asset]
 }
 
+/// Return the maximum allowed operator spot deviation.
 public(package) fun basis_bounds_max_spot_deviation(bounds: &BasisBounds): u64 {
     bounds.max_spot_deviation
 }
 
+/// Return the maximum allowed basis deviation.
 public(package) fun basis_bounds_max_basis_deviation(bounds: &BasisBounds): u64 {
     bounds.max_basis_deviation
 }
 
+/// Return the minimum allowed basis ratio.
 public(package) fun basis_bounds_min_basis(bounds: &BasisBounds): u64 {
     bounds.min_basis
 }
 
+/// Return the maximum allowed basis ratio.
 public(package) fun basis_bounds_max_basis(bounds: &BasisBounds): u64 {
     bounds.max_basis
 }
@@ -462,6 +471,8 @@ public(package) fun build_curve(
     points
 }
 
+// === Private Functions ===
+
 /// Assert that a requested curve range is valid on the oracle's configured grid.
 fun assert_build_curve(
     oracle_config: &OracleConfig,
@@ -508,6 +519,7 @@ fun resolve_basis_bounds(
     }
 }
 
+/// Validate an admin-tuned staleness threshold.
 fun validate_staleness_ms(value: u64) {
     assert!(
         value > 0 && value <= tuning_constants::max_staleness_threshold_ms!(),
@@ -515,6 +527,7 @@ fun validate_staleness_ms(value: u64) {
     );
 }
 
+/// Validate per-asset basis circuit-breaker inputs before storing them.
 fun validate_basis_bounds_inputs(
     max_spot_deviation: u64,
     max_basis_deviation: u64,

@@ -13,14 +13,11 @@ module deepbook_predict::rate_limiter;
 
 use sui::clock::Clock;
 
-// === Errors ===
-
 const EExceedsCapacity: u64 = 0;
 const EInsufficientWithdrawalBudget: u64 = 1;
 const EInvalidConfig: u64 = 2;
 
-// === Structs ===
-
+/// Token bucket state used to limit withdrawals over time.
 public struct RateLimiter has store {
     /// Current available tokens in the bucket.
     available: u64,
@@ -32,38 +29,6 @@ public struct RateLimiter has store {
     refill_rate_per_ms: u64,
     /// Whether the rate limiter is active.
     enabled: bool,
-}
-
-// === Public-Package View Functions ===
-
-public(package) fun is_enabled(self: &RateLimiter): bool {
-    self.enabled
-}
-
-public(package) fun capacity(self: &RateLimiter): u64 {
-    self.capacity
-}
-
-public(package) fun refill_rate_per_ms(self: &RateLimiter): u64 {
-    self.refill_rate_per_ms
-}
-
-public(package) fun available(self: &RateLimiter): u64 {
-    self.available
-}
-
-/// Returns the currently available withdrawal amount (read-only).
-public(package) fun available_withdrawal(self: &RateLimiter, clock: &Clock): u64 {
-    if (!self.enabled) return std::u64::max_value!();
-
-    let elapsed = elapsed_ms(self.last_updated_ms, clock);
-    // u128 needed: elapsed (u64) * refill_rate_per_ms (u64) can overflow u64
-    // when large time gaps accumulate (e.g. 1M seconds × 16667 rate = 1.6e13,
-    // plus available up to 5e12, sum can approach u64::MAX).
-    let refill_amount = (elapsed as u128) * (self.refill_rate_per_ms as u128);
-    let new_available = (self.available as u128) + refill_amount;
-
-    new_available.min(self.capacity as u128) as u64
 }
 
 // === Public-Package Functions ===
@@ -135,7 +100,41 @@ public(package) fun update_config(
     };
 }
 
-// === Internal Functions ===
+/// Return whether the limiter is currently enabled.
+public(package) fun is_enabled(self: &RateLimiter): bool {
+    self.enabled
+}
+
+/// Return the maximum burst capacity.
+public(package) fun capacity(self: &RateLimiter): u64 {
+    self.capacity
+}
+
+/// Return the number of tokens refilled per millisecond.
+public(package) fun refill_rate_per_ms(self: &RateLimiter): u64 {
+    self.refill_rate_per_ms
+}
+
+/// Return the currently stored bucket balance without applying time refill.
+public(package) fun available(self: &RateLimiter): u64 {
+    self.available
+}
+
+/// Returns the currently available withdrawal amount (read-only).
+public(package) fun available_withdrawal(self: &RateLimiter, clock: &Clock): u64 {
+    if (!self.enabled) return std::u64::max_value!();
+
+    let elapsed = elapsed_ms(self.last_updated_ms, clock);
+    // u128 needed: elapsed (u64) * refill_rate_per_ms (u64) can overflow u64
+    // when large time gaps accumulate (e.g. 1M seconds × 16667 rate = 1.6e13,
+    // plus available up to 5e12, sum can approach u64::MAX).
+    let refill_amount = (elapsed as u128) * (self.refill_rate_per_ms as u128);
+    let new_available = (self.available as u128) + refill_amount;
+
+    new_available.min(self.capacity as u128) as u64
+}
+
+// === Private Functions ===
 
 /// Refill the bucket based on time elapsed since last update.
 fun refill(self: &mut RateLimiter, clock: &Clock) {
@@ -160,14 +159,16 @@ fun elapsed_ms(last_updated_ms: u64, clock: &Clock): u64 {
     }
 }
 
-// === Test-only Functions ===
+// === Test-Only Functions ===
 
 #[test_only]
+/// Destroy a test-only limiter value.
 public fun destroy_for_testing(self: RateLimiter) {
     let RateLimiter { available: _, last_updated_ms: _, capacity: _, refill_rate_per_ms: _, enabled: _ } = self;
 }
 
 #[test_only]
+/// Create a test-only limiter with explicit state.
 public fun new_for_testing(
     capacity: u64,
     refill_rate_per_ms: u64,

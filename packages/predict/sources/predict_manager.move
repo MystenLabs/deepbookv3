@@ -13,7 +13,6 @@ use deepbook::balance_manager::{Self, BalanceManager, DepositCap, WithdrawCap};
 use deepbook_predict::{market_key::MarketKey, range_key::RangeKey};
 use sui::{coin::Coin, derived_object, table::{Self, Table}};
 
-// === Errors ===
 const EInvalidOwner: u64 = 0;
 const EInsufficientPosition: u64 = 1;
 const EInsufficientRangePosition: u64 = 2;
@@ -21,8 +20,6 @@ const EInsufficientRangePosition: u64 = 2;
 /// The key for deriving predict manager. u64 is optional for
 /// supporting multiple managers per address. Defaults to 0 in v1.
 public struct PredictManagerKey(address, u64) has copy, drop, store;
-
-// === Structs ===
 
 /// PredictManager wraps a BalanceManager and tracks positions.
 public struct PredictManager has key {
@@ -38,8 +35,22 @@ public struct PredictManager has key {
 }
 
 // === Public Functions ===
+
+/// Share a newly created PredictManager object.
 public fun share(self: PredictManager) {
     transfer::share_object(self);
+}
+
+/// Deposit coins into the PredictManager.
+public fun deposit<T>(self: &mut PredictManager, coin: Coin<T>, ctx: &TxContext) {
+    assert!(ctx.sender() == self.owner, EInvalidOwner);
+    self.balance_manager.deposit_with_cap(&self.deposit_cap, coin, ctx);
+}
+
+/// Withdraw coins from the PredictManager.
+public fun withdraw<T>(self: &mut PredictManager, amount: u64, ctx: &mut TxContext): Coin<T> {
+    assert!(ctx.sender() == self.owner, EInvalidOwner);
+    self.balance_manager.withdraw_with_cap(&self.withdraw_cap, amount, ctx)
 }
 
 /// Get the owner of the PredictManager.
@@ -68,18 +79,6 @@ public fun range_position(self: &PredictManager, key: RangeKey): u64 {
 /// Get the balance of a specific coin type in the PredictManager.
 public fun balance<T>(self: &PredictManager): u64 {
     self.balance_manager.balance<T>()
-}
-
-/// Deposit coins into the PredictManager.
-public fun deposit<T>(self: &mut PredictManager, coin: Coin<T>, ctx: &TxContext) {
-    assert!(ctx.sender() == self.owner, EInvalidOwner);
-    self.balance_manager.deposit_with_cap(&self.deposit_cap, coin, ctx);
-}
-
-/// Withdraw coins from the PredictManager.
-public fun withdraw<T>(self: &mut PredictManager, amount: u64, ctx: &mut TxContext): Coin<T> {
-    assert!(ctx.sender() == self.owner, EInvalidOwner);
-    self.balance_manager.withdraw_with_cap(&self.withdraw_cap, amount, ctx)
 }
 
 // === Public-Package Functions ===

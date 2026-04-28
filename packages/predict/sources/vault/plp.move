@@ -7,8 +7,12 @@ module deepbook_predict::plp;
 
 use sui::coin_registry;
 
+/// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
 
+// === Private Functions ===
+
+/// Register PLP metadata and treasury cap on package publish.
 fun init(witness: PLP, ctx: &mut TxContext) {
     let (initializer, treasury_cap) = coin_registry::new_currency_with_otw(
         witness,
@@ -24,7 +28,10 @@ fun init(witness: PLP, ctx: &mut TxContext) {
     transfer::public_transfer(treasury_cap, ctx.sender());
 }
 
+// === Test-Only Functions ===
+
 #[test_only]
+/// Register PLP in tests.
 public fun init_for_testing(ctx: &mut TxContext) {
     init(PLP {}, ctx);
 }

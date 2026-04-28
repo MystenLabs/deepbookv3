@@ -10,11 +10,8 @@
 /// - direction: UP (0) or DOWN (1)
 module deepbook_predict::market_key;
 
-// === Constants ===
 const DIRECTION_UP: u8 = 0;
 const DIRECTION_DOWN: u8 = 1;
-
-// === Structs ===
 
 /// Key for a market position used to identify positions in PredictManager and Vault.
 public struct MarketKey has copy, drop, store {

@@ -10,18 +10,10 @@
 module deepbook_predict::oracle;
 
 use deepbook::math;
-use deepbook_predict::{
-    constants::{Self, float_scaling},
-    i64,
-    lazer_helper,
-    math as predict_math,
-    tuning_constants
-};
+use deepbook_predict::{constants, i64, lazer_helper, math as predict_math, tuning_constants};
 use pyth_lazer::update::Update as LazerUpdate;
 use std::string::String;
 use sui::{clock::Clock, event, vec_set::{Self, VecSet}};
-
-// === Errors ===
 
 const EInvalidOracleCap: u64 = 0;
 const EOracleAlreadyActive: u64 = 1;
@@ -53,8 +45,7 @@ const STATUS_PENDING_SETTLEMENT: u8 = 2;
 // Oracle with a frozen settlement price.
 const STATUS_SETTLED: u8 = 3;
 
-// === Events ===
-
+/// Emitted when an oracle is activated for live pricing.
 public struct OracleActivated has copy, drop, store {
     oracle_id: ID,
     expiry: u64,
@@ -73,6 +64,7 @@ public struct OracleSettled has copy, drop, store {
     spot_timestamp_ms: u64,
 }
 
+/// Emitted when the operator refreshes spot and basis with `update_prices`.
 public struct OraclePricesUpdated has copy, drop, store {
     oracle_id: ID,
     spot: u64,
@@ -81,6 +73,7 @@ public struct OraclePricesUpdated has copy, drop, store {
     spot_timestamp_ms: u64,
 }
 
+/// Emitted when SVI parameters are updated.
 public struct OracleSVIUpdated has copy, drop, store {
     oracle_id: ID,
     a: u64,
@@ -91,6 +84,7 @@ public struct OracleSVIUpdated has copy, drop, store {
     timestamp: u64,
 }
 
+/// Emitted when a Pyth Lazer push refreshes the oracle spot.
 public struct OracleSpotUpdatedFromLazer has copy, drop, store {
     oracle_id: ID,
     spot: u64,
@@ -123,8 +117,6 @@ public struct OracleBoundsUpdated has copy, drop, store {
     min_basis: u64,
     max_basis: u64,
 }
-
-// === Structs ===
 
 /// SVI volatility surface parameters.
 /// All values scaled by FLOAT_SCALING (1e9).
@@ -255,6 +247,11 @@ public struct OracleSVICap has key, store {
 }
 
 // === Public Functions ===
+
+/// Create a new SVIParams struct.
+public fun new_svi_params(a: u64, b: u64, rho: i64::I64, m: i64::I64, sigma: u64): SVIParams {
+    SVIParams { a, b, rho, m, sigma }
+}
 
 /// Activate the oracle. Must be called before oracle can be used for pricing.
 public fun activate(oracle: &mut OracleSVI, cap: &OracleSVICap, clock: &Clock) {
@@ -416,181 +413,6 @@ public fun update_svi(oracle: &mut OracleSVI, cap: &OracleSVICap, svi: SVIParams
     });
 }
 
-/// Get the oracle ID.
-public fun id(oracle: &OracleSVI): ID {
-    oracle.id.to_inner()
-}
-
-/// Get the underlying asset name.
-public fun underlying_asset(oracle: &OracleSVI): String {
-    oracle.underlying_asset
-}
-
-/// Get the current spot price.
-public fun spot_price(oracle: &OracleSVI): u64 {
-    oracle.prices.spot
-}
-
-/// Get the forward price for this expiry. Derived as `spot * basis` from the
-/// cached `PriceData`; not a stored field.
-public fun forward_price(oracle: &OracleSVI): u64 {
-    math::mul(oracle.prices.spot, oracle.prices.basis)
-}
-
-/// Get the cached basis ratio (forward / spot) from the most recent
-/// `update_prices`. Zero until the first operator push lands.
-public(package) fun basis(oracle: &OracleSVI): u64 {
-    oracle.prices.basis
-}
-
-/// Get the price data.
-public fun prices(oracle: &OracleSVI): PriceData {
-    oracle.prices
-}
-
-/// Get the SVI parameters.
-public fun svi(oracle: &OracleSVI): SVIParams {
-    oracle.svi
-}
-
-/// Get the SVI `a` parameter.
-public fun svi_a(svi: &SVIParams): u64 {
-    svi.a
-}
-
-/// Get the SVI `b` parameter.
-public fun svi_b(svi: &SVIParams): u64 {
-    svi.b
-}
-
-/// Get the signed SVI `rho` parameter.
-public fun svi_rho(svi: &SVIParams): i64::I64 {
-    svi.rho
-}
-
-/// Get the signed SVI `m` parameter.
-public fun svi_m(svi: &SVIParams): i64::I64 {
-    svi.m
-}
-
-/// Get the SVI `sigma` parameter.
-public fun svi_sigma(svi: &SVIParams): u64 {
-    svi.sigma
-}
-
-/// Get the expiry timestamp.
-public fun expiry(oracle: &OracleSVI): u64 {
-    oracle.expiry
-}
-
-/// Get the on-chain clock ms of the most recent master-spot update.
-public(package) fun spot_timestamp_ms(oracle: &OracleSVI): u64 {
-    oracle.spot_timestamp_ms
-}
-
-/// Get the on-chain clock ms of the most recent successful Lazer spot push.
-public(package) fun lazer_spot_timestamp_ms(oracle: &OracleSVI): u64 {
-    oracle.lazer_spot_timestamp_ms
-}
-
-/// Get the on-chain clock ms of the most recent `update_prices` call.
-public(package) fun basis_timestamp_ms(oracle: &OracleSVI): u64 {
-    oracle.basis_timestamp_ms
-}
-
-/// Get the Pyth Lazer publisher's microsecond timestamp from the most
-/// recent Lazer push (source-data time, not on-chain landing time).
-public(package) fun lazer_published_at_us(oracle: &OracleSVI): u64 {
-    oracle.lazer_published_at_us
-}
-
-/// Get the Pyth Lazer feed id that this oracle tracks.
-public(package) fun pyth_lazer_feed_id(oracle: &OracleSVI): u32 {
-    oracle.pyth_lazer_feed_id
-}
-
-/// Get the per-oracle staleness thresholds and basis circuit-breaker bounds.
-public(package) fun bounds(oracle: &OracleSVI): OracleBounds {
-    oracle.bounds
-}
-
-public(package) fun bounds_spot_staleness_threshold_ms(bounds: &OracleBounds): u64 {
-    bounds.spot_staleness_threshold_ms
-}
-
-public(package) fun bounds_basis_staleness_threshold_ms(bounds: &OracleBounds): u64 {
-    bounds.basis_staleness_threshold_ms
-}
-
-public(package) fun bounds_lazer_authoritative_threshold_ms(bounds: &OracleBounds): u64 {
-    bounds.lazer_authoritative_threshold_ms
-}
-
-public(package) fun bounds_max_spot_deviation(bounds: &OracleBounds): u64 {
-    bounds.max_spot_deviation
-}
-
-public(package) fun bounds_max_basis_deviation(bounds: &OracleBounds): u64 {
-    bounds.max_basis_deviation
-}
-
-public(package) fun bounds_min_basis(bounds: &OracleBounds): u64 {
-    bounds.min_basis
-}
-
-public(package) fun bounds_max_basis(bounds: &OracleBounds): u64 {
-    bounds.max_basis
-}
-
-/// Get the settlement price (only valid after settlement).
-public fun settlement_price(oracle: &OracleSVI): Option<u64> {
-    oracle.settlement_price
-}
-
-/// Check if the oracle has been settled.
-public fun is_settled(oracle: &OracleSVI): bool {
-    oracle.settlement_price.is_some()
-}
-
-/// Check if the oracle is active.
-public fun is_active(oracle: &OracleSVI): bool {
-    oracle.active
-}
-
-/// Return the lifecycle status implied by the oracle's state and the current clock.
-public fun status(oracle: &OracleSVI, clock: &Clock): u8 {
-    if (oracle.is_settled()) {
-        STATUS_SETTLED
-    } else if (clock.timestamp_ms() >= oracle.expiry) {
-        STATUS_PENDING_SETTLEMENT
-    } else if (!oracle.active) {
-        STATUS_INACTIVE
-    } else {
-        STATUS_ACTIVE
-    }
-}
-
-public fun status_inactive(): u8 {
-    STATUS_INACTIVE
-}
-
-public fun status_active(): u8 {
-    STATUS_ACTIVE
-}
-
-public fun status_pending_settlement(): u8 {
-    STATUS_PENDING_SETTLEMENT
-}
-
-public fun status_settled(): u8 {
-    STATUS_SETTLED
-}
-
-/// Create a new SVIParams struct.
-public fun new_svi_params(a: u64, b: u64, rho: i64::I64, m: i64::I64, sigma: u64): SVIParams {
-    SVIParams { a, b, rho, m, sigma }
-}
-
 /// Tune the spot-staleness halt-gate threshold. Authorized by `OracleSVICap`.
 /// Bounded by `tuning_constants::max_staleness_threshold_ms!()` (60s) — beyond that
 /// the liveness gate stops meaningfully protecting quoting.
@@ -663,67 +485,120 @@ public fun set_basis_bounds(
     oracle.emit_bounds_updated();
 }
 
-/// Compute the conditional UP price within one binary pair.
-/// Settled oracles return exactly `1.0` if UP wins and `0` otherwise. Live
-/// oracles return `N(d2)` from the SVI surface.
-public(package) fun compute_price(oracle: &OracleSVI, strike: u64): u64 {
-    if (oracle.settlement_price.is_some()) {
-        let settlement_price = oracle.settlement_price.destroy_some();
-        if (settlement_price > strike) {
-            constants::float_scaling!()
-        } else {
-            0
-        }
+/// Get the oracle ID.
+public fun id(oracle: &OracleSVI): ID {
+    oracle.id.to_inner()
+}
+
+/// Get the underlying asset name.
+public fun underlying_asset(oracle: &OracleSVI): String {
+    oracle.underlying_asset
+}
+
+/// Get the current spot price.
+public fun spot_price(oracle: &OracleSVI): u64 {
+    oracle.prices.spot
+}
+
+/// Get the forward price for this expiry. Derived as `spot * basis` from the
+/// cached `PriceData`; not a stored field.
+public fun forward_price(oracle: &OracleSVI): u64 {
+    math::mul(oracle.prices.spot, oracle.prices.basis)
+}
+
+/// Get the price data.
+public fun prices(oracle: &OracleSVI): PriceData {
+    oracle.prices
+}
+
+/// Get the SVI parameters.
+public fun svi(oracle: &OracleSVI): SVIParams {
+    oracle.svi
+}
+
+/// Get the SVI `a` parameter.
+public fun svi_a(svi: &SVIParams): u64 {
+    svi.a
+}
+
+/// Get the SVI `b` parameter.
+public fun svi_b(svi: &SVIParams): u64 {
+    svi.b
+}
+
+/// Get the signed SVI `rho` parameter.
+public fun svi_rho(svi: &SVIParams): i64::I64 {
+    svi.rho
+}
+
+/// Get the signed SVI `m` parameter.
+public fun svi_m(svi: &SVIParams): i64::I64 {
+    svi.m
+}
+
+/// Get the SVI `sigma` parameter.
+public fun svi_sigma(svi: &SVIParams): u64 {
+    svi.sigma
+}
+
+/// Get the expiry timestamp.
+public fun expiry(oracle: &OracleSVI): u64 {
+    oracle.expiry
+}
+
+/// Get the settlement price (only valid after settlement).
+public fun settlement_price(oracle: &OracleSVI): Option<u64> {
+    oracle.settlement_price
+}
+
+/// Check if the oracle has been settled.
+public fun is_settled(oracle: &OracleSVI): bool {
+    oracle.settlement_price.is_some()
+}
+
+/// Check if the oracle is active.
+public fun is_active(oracle: &OracleSVI): bool {
+    oracle.active
+}
+
+/// Return the lifecycle status implied by the oracle's state and the current clock.
+public fun status(oracle: &OracleSVI, clock: &Clock): u8 {
+    if (oracle.is_settled()) {
+        STATUS_SETTLED
+    } else if (clock.timestamp_ms() >= oracle.expiry) {
+        STATUS_PENDING_SETTLEMENT
+    } else if (!oracle.active) {
+        STATUS_INACTIVE
     } else {
-        compute_nd2(oracle, strike)
+        STATUS_ACTIVE
     }
 }
 
-/// Return the exact fair prices for both sides of a binary market.
-/// The live parity invariant is `UP + DN = 1`.
-public(package) fun binary_price_pair(oracle: &OracleSVI, strike: u64, _clock: &Clock): (u64, u64) {
-    let up_price = oracle.compute_price(strike);
-    (up_price, float_scaling!() - up_price)
+/// Return the inactive status code.
+public fun status_inactive(): u8 {
+    STATUS_INACTIVE
+}
+
+/// Return the active status code.
+public fun status_active(): u8 {
+    STATUS_ACTIVE
+}
+
+/// Return the expired-but-unsettled status code.
+public fun status_pending_settlement(): u8 {
+    STATUS_PENDING_SETTLEMENT
+}
+
+/// Return the settled status code.
+public fun status_settled(): u8 {
+    STATUS_SETTLED
 }
 
 // === Public-Package Functions ===
 
-/// Register an additional cap as authorized to update an oracle.
-public(package) fun register_cap(oracle: &mut OracleSVI, cap: &OracleSVICap) {
-    oracle.authorized_caps.insert(cap.id.to_inner());
-}
-
 /// Create a new OracleCap. Called by registry during setup.
 public(package) fun create_oracle_cap(ctx: &mut TxContext): OracleSVICap {
     OracleSVICap { id: object::new(ctx) }
-}
-
-public(package) fun assert_authorized_cap(oracle: &OracleSVI, cap: &OracleSVICap) {
-    assert!(oracle.authorized_caps.contains(&cap.id.to_inner()), EInvalidOracleCap);
-}
-
-/// Assert that an oracle can still be used for actions that require live
-/// pricing. The oracle must be `ACTIVE` and fresh; `INACTIVE`,
-/// `PENDING_SETTLEMENT`, `SETTLED`, and stale oracles are rejected.
-public(package) fun assert_live_oracle(oracle: &OracleSVI, clock: &Clock) {
-    let oracle_status = oracle.status(clock);
-    assert!(oracle_status != STATUS_SETTLED, EOracleSettled);
-    assert!(oracle_status != STATUS_PENDING_SETTLEMENT, EOracleExpired);
-    assert!(oracle_status != STATUS_INACTIVE, EOracleInactive);
-    oracle.assert_fresh(clock);
-}
-
-/// Assert that an oracle can still be used for actions that accept either live
-/// pricing or a finalized settlement price. `SETTLED` oracles are allowed
-/// immediately; otherwise the oracle must still be `ACTIVE` and fresh.
-/// `PENDING_SETTLEMENT` is intentionally rejected to freeze the
-/// expired-but-unsettled gap.
-public(package) fun assert_quoteable_oracle(oracle: &OracleSVI, clock: &Clock) {
-    let oracle_status = oracle.status(clock);
-    if (oracle_status == STATUS_SETTLED) return;
-    assert!(oracle_status != STATUS_PENDING_SETTLEMENT, EOracleExpired);
-    assert!(oracle_status != STATUS_INACTIVE, EOracleInactive);
-    oracle.assert_fresh(clock);
 }
 
 /// Create a new SVI Oracle for an underlying + expiry. Returns the oracle ID.
@@ -806,6 +681,135 @@ public(package) fun new_oracle_bounds(
         min_basis,
         max_basis,
     }
+}
+
+/// Register an additional cap as authorized to update an oracle.
+public(package) fun register_cap(oracle: &mut OracleSVI, cap: &OracleSVICap) {
+    oracle.authorized_caps.insert(cap.id.to_inner());
+}
+
+/// Abort unless `cap` is authorized to operate on this oracle.
+public(package) fun assert_authorized_cap(oracle: &OracleSVI, cap: &OracleSVICap) {
+    assert!(oracle.authorized_caps.contains(&cap.id.to_inner()), EInvalidOracleCap);
+}
+
+/// Assert that an oracle can still be used for actions that require live
+/// pricing. The oracle must be `ACTIVE` and fresh; `INACTIVE`,
+/// `PENDING_SETTLEMENT`, `SETTLED`, and stale oracles are rejected.
+public(package) fun assert_live_oracle(oracle: &OracleSVI, clock: &Clock) {
+    let oracle_status = oracle.status(clock);
+    assert!(oracle_status != STATUS_SETTLED, EOracleSettled);
+    assert!(oracle_status != STATUS_PENDING_SETTLEMENT, EOracleExpired);
+    assert!(oracle_status != STATUS_INACTIVE, EOracleInactive);
+    oracle.assert_fresh(clock);
+}
+
+/// Assert that an oracle can still be used for actions that accept either live
+/// pricing or a finalized settlement price. `SETTLED` oracles are allowed
+/// immediately; otherwise the oracle must still be `ACTIVE` and fresh.
+/// `PENDING_SETTLEMENT` is intentionally rejected to freeze the
+/// expired-but-unsettled gap.
+public(package) fun assert_quoteable_oracle(oracle: &OracleSVI, clock: &Clock) {
+    let oracle_status = oracle.status(clock);
+    if (oracle_status == STATUS_SETTLED) return;
+    assert!(oracle_status != STATUS_PENDING_SETTLEMENT, EOracleExpired);
+    assert!(oracle_status != STATUS_INACTIVE, EOracleInactive);
+    oracle.assert_fresh(clock);
+}
+
+/// Compute the conditional UP price within one binary pair.
+/// Settled oracles return exactly `1.0` if UP wins and `0` otherwise. Live
+/// oracles return `N(d2)` from the SVI surface.
+public(package) fun compute_price(oracle: &OracleSVI, strike: u64): u64 {
+    if (oracle.settlement_price.is_some()) {
+        let settlement_price = oracle.settlement_price.destroy_some();
+        if (settlement_price > strike) {
+            constants::float_scaling!()
+        } else {
+            0
+        }
+    } else {
+        compute_nd2(oracle, strike)
+    }
+}
+
+/// Return the exact fair prices for both sides of a binary market.
+/// The live parity invariant is `UP + DN = 1`.
+public(package) fun binary_price_pair(oracle: &OracleSVI, strike: u64, _clock: &Clock): (u64, u64) {
+    let up_price = oracle.compute_price(strike);
+    (up_price, constants::float_scaling!() - up_price)
+}
+
+/// Get the cached basis ratio (forward / spot) from the most recent
+/// `update_prices`. Zero until the first operator push lands.
+public(package) fun basis(oracle: &OracleSVI): u64 {
+    oracle.prices.basis
+}
+
+/// Get the on-chain clock ms of the most recent master-spot update.
+public(package) fun spot_timestamp_ms(oracle: &OracleSVI): u64 {
+    oracle.spot_timestamp_ms
+}
+
+/// Get the on-chain clock ms of the most recent successful Lazer spot push.
+public(package) fun lazer_spot_timestamp_ms(oracle: &OracleSVI): u64 {
+    oracle.lazer_spot_timestamp_ms
+}
+
+/// Get the on-chain clock ms of the most recent `update_prices` call.
+public(package) fun basis_timestamp_ms(oracle: &OracleSVI): u64 {
+    oracle.basis_timestamp_ms
+}
+
+/// Get the Pyth Lazer publisher's microsecond timestamp from the most
+/// recent Lazer push (source-data time, not on-chain landing time).
+public(package) fun lazer_published_at_us(oracle: &OracleSVI): u64 {
+    oracle.lazer_published_at_us
+}
+
+/// Get the Pyth Lazer feed id that this oracle tracks.
+public(package) fun pyth_lazer_feed_id(oracle: &OracleSVI): u32 {
+    oracle.pyth_lazer_feed_id
+}
+
+/// Get the per-oracle staleness thresholds and basis circuit-breaker bounds.
+public(package) fun bounds(oracle: &OracleSVI): OracleBounds {
+    oracle.bounds
+}
+
+/// Return the spot-staleness threshold from an `OracleBounds` snapshot.
+public(package) fun bounds_spot_staleness_threshold_ms(bounds: &OracleBounds): u64 {
+    bounds.spot_staleness_threshold_ms
+}
+
+/// Return the basis-staleness threshold from an `OracleBounds` snapshot.
+public(package) fun bounds_basis_staleness_threshold_ms(bounds: &OracleBounds): u64 {
+    bounds.basis_staleness_threshold_ms
+}
+
+/// Return the Lazer-authoritative threshold from an `OracleBounds` snapshot.
+public(package) fun bounds_lazer_authoritative_threshold_ms(bounds: &OracleBounds): u64 {
+    bounds.lazer_authoritative_threshold_ms
+}
+
+/// Return the maximum allowed spot deviation from an `OracleBounds` snapshot.
+public(package) fun bounds_max_spot_deviation(bounds: &OracleBounds): u64 {
+    bounds.max_spot_deviation
+}
+
+/// Return the maximum allowed basis deviation from an `OracleBounds` snapshot.
+public(package) fun bounds_max_basis_deviation(bounds: &OracleBounds): u64 {
+    bounds.max_basis_deviation
+}
+
+/// Return the minimum allowed basis from an `OracleBounds` snapshot.
+public(package) fun bounds_min_basis(bounds: &OracleBounds): u64 {
+    bounds.min_basis
+}
+
+/// Return the maximum allowed basis from an `OracleBounds` snapshot.
+public(package) fun bounds_max_basis(bounds: &OracleBounds): u64 {
+    bounds.max_basis
 }
 
 // === Private Functions ===
@@ -922,6 +926,7 @@ fun validate_basis_push(oracle: &OracleSVI, new_spot: u64, new_basis: u64) {
     };
 }
 
+/// Validate a per-oracle staleness threshold.
 fun validate_staleness_ms(value: u64) {
     assert!(
         value > 0 && value <= tuning_constants::max_staleness_threshold_ms!(),
@@ -929,6 +934,7 @@ fun validate_staleness_ms(value: u64) {
     );
 }
 
+/// Validate basis circuit-breaker inputs before storing them.
 fun validate_basis_bounds_inputs(
     max_spot_deviation: u64,
     max_basis_deviation: u64,
@@ -956,6 +962,7 @@ fun within_deviation(prev: u64, next: u64, max_deviation: u64): bool {
     diff <= max_allowed
 }
 
+/// Emit the full current bounds snapshot for indexers.
 fun emit_bounds_updated(oracle: &OracleSVI) {
     let b = &oracle.bounds;
     event::emit(OracleBoundsUpdated {

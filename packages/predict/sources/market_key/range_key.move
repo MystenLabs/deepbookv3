@@ -9,10 +9,7 @@
 /// share the same RangeKey row.
 module deepbook_predict::range_key;
 
-// === Errors ===
 const EInvalidStrikes: u64 = 0;
-
-// === Structs ===
 
 /// Key for a vertical range position used in PredictManager and Vault.
 public struct RangeKey has copy, drop, store {

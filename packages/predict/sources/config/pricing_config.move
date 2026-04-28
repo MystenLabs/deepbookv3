@@ -7,13 +7,11 @@ module deepbook_predict::pricing_config;
 use deepbook::math;
 use deepbook_predict::{constants, math as predict_math};
 
-// === Errors ===
 const EInvalidSpread: u64 = 0;
 const EFairPriceAlreadySettled: u64 = 1;
 const EInvalidAskBound: u64 = 2;
 
-// === Structs ===
-
+/// Spread and ask-bound parameters used when quoting Predict markets.
 public struct PricingConfig has store {
     /// Base spread multiplier for Bernoulli scaling.
     /// Effective spread = base_spread * √(price * (1 - price))
@@ -31,28 +29,34 @@ public struct PricingConfig has store {
 
 // === Public Functions ===
 
+/// Return the base spread multiplier.
 public fun base_spread(config: &PricingConfig): u64 {
     config.base_spread
 }
 
+/// Return the minimum spread floor.
 public fun min_spread(config: &PricingConfig): u64 {
     config.min_spread
 }
 
+/// Return the utilization multiplier.
 public fun utilization_multiplier(config: &PricingConfig): u64 {
     config.utilization_multiplier
 }
 
+/// Return the global minimum allowed post-spread ask price.
 public fun min_ask_price(config: &PricingConfig): u64 {
     config.min_ask_price
 }
 
+/// Return the global maximum allowed post-spread ask price.
 public fun max_ask_price(config: &PricingConfig): u64 {
     config.max_ask_price
 }
 
 // === Public-Package Functions ===
 
+/// Create pricing config seeded from protocol defaults.
 public(package) fun new(): PricingConfig {
     PricingConfig {
         base_spread: constants::default_base_spread!(),
@@ -63,31 +67,40 @@ public(package) fun new(): PricingConfig {
     }
 }
 
+/// Set the base spread multiplier.
 public(package) fun set_base_spread(config: &mut PricingConfig, spread: u64) {
     assert!(spread > 0 && spread <= constants::float_scaling!(), EInvalidSpread);
     config.base_spread = spread;
 }
 
+/// Set the minimum spread floor.
 public(package) fun set_min_spread(config: &mut PricingConfig, spread: u64) {
     assert!(spread <= constants::float_scaling!(), EInvalidSpread);
     config.min_spread = spread;
 }
 
+/// Set the utilization multiplier.
 public(package) fun set_utilization_multiplier(config: &mut PricingConfig, multiplier: u64) {
     config.utilization_multiplier = multiplier;
 }
 
+/// Set the global minimum allowed post-spread ask price.
 public(package) fun set_min_ask_price(config: &mut PricingConfig, value: u64) {
     assert!(value < config.max_ask_price, EInvalidAskBound);
     config.min_ask_price = value;
 }
 
+/// Set the global maximum allowed post-spread ask price.
 public(package) fun set_max_ask_price(config: &mut PricingConfig, value: u64) {
     assert!(value > config.min_ask_price, EInvalidAskBound);
     assert!(value < constants::float_scaling!(), EInvalidAskBound);
     config.max_ask_price = value;
 }
 
+/// Quote the spread to add around a live fair price.
+///
+/// Uses Bernoulli variance scaling plus utilization pressure. Settled prices
+/// at exactly 0 or 1 are rejected because no live spread should be applied.
 public(package) fun quote_spread_from_fair_price(
     config: &PricingConfig,
     fair_price: u64,
@@ -106,6 +119,9 @@ public(package) fun quote_spread_from_fair_price(
     spread
 }
 
+// === Private Functions ===
+
+/// Compute spread pressure from current liability utilization.
 fun utilization_spread(config: &PricingConfig, liability: u64, balance: u64): u64 {
     if (balance == 0 || liability == 0) return 0;
 

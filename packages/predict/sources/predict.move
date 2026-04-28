@@ -34,7 +34,6 @@ use sui::{
     vec_set::VecSet
 };
 
-// === Errors ===
 const ETradingPaused: u64 = 0;
 const ENotOwner: u64 = 1;
 const EWithdrawExceedsAvailable: u64 = 2;
@@ -48,8 +47,7 @@ const EOracleNotSettled: u64 = 9;
 const EStaleOracleMtm: u64 = 10;
 const EPredictAlreadyCreated: u64 = 11;
 
-// === Events ===
-
+/// Emitted when a binary UP/DOWN position is minted.
 public struct PositionMinted has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
@@ -64,6 +62,7 @@ public struct PositionMinted has copy, drop, store {
     ask_price: u64,
 }
 
+/// Emitted when a binary UP/DOWN position is redeemed.
 public struct PositionRedeemed has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
@@ -80,6 +79,7 @@ public struct PositionRedeemed has copy, drop, store {
     is_settled: bool,
 }
 
+/// Emitted when a vertical range position is minted.
 public struct RangeMinted has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
@@ -94,6 +94,7 @@ public struct RangeMinted has copy, drop, store {
     ask_price: u64,
 }
 
+/// Emitted when a vertical range position is redeemed.
 public struct RangeRedeemed has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
@@ -110,11 +111,13 @@ public struct RangeRedeemed has copy, drop, store {
     is_settled: bool,
 }
 
+/// Emitted when global trading pause state changes.
 public struct TradingPauseUpdated has copy, drop, store {
     predict_id: ID,
     paused: bool,
 }
 
+/// Emitted when pricing configuration changes.
 public struct PricingConfigUpdated has copy, drop, store {
     predict_id: ID,
     base_spread: u64,
@@ -124,6 +127,7 @@ public struct PricingConfigUpdated has copy, drop, store {
     max_ask_price: u64,
 }
 
+/// Emitted when a per-oracle ask-bound override is set.
 public struct OracleAskBoundsSet has copy, drop, store {
     predict_id: ID,
     oracle_id: ID,
@@ -131,27 +135,32 @@ public struct OracleAskBoundsSet has copy, drop, store {
     max_ask_price: u64,
 }
 
+/// Emitted when a per-oracle ask-bound override is cleared.
 public struct OracleAskBoundsCleared has copy, drop, store {
     predict_id: ID,
     oracle_id: ID,
 }
 
+/// Emitted when risk configuration changes.
 public struct RiskConfigUpdated has copy, drop, store {
     predict_id: ID,
     max_total_exposure_pct: u64,
     mtm_freshness_ms: u64,
 }
 
+/// Emitted when a quote asset is enabled for new inflows.
 public struct QuoteAssetEnabled has copy, drop, store {
     predict_id: ID,
     quote_asset: TypeName,
 }
 
+/// Emitted when a quote asset is disabled for new inflows.
 public struct QuoteAssetDisabled has copy, drop, store {
     predict_id: ID,
     quote_asset: TypeName,
 }
 
+/// Emitted when LP capital is supplied to the vault.
 public struct Supplied has copy, drop, store {
     predict_id: ID,
     supplier: address,
@@ -160,6 +169,7 @@ public struct Supplied has copy, drop, store {
     shares_minted: u64,
 }
 
+/// Emitted when LP capital is withdrawn from the vault.
 public struct Withdrawn has copy, drop, store {
     predict_id: ID,
     withdrawer: address,
@@ -168,6 +178,7 @@ public struct Withdrawn has copy, drop, store {
     shares_burned: u64,
 }
 
+/// Emitted when admin-tuned oracle staleness thresholds change.
 public struct OracleStalenessConfigUpdated has copy, drop, store {
     predict_id: ID,
     spot_staleness_threshold_ms: u64,
@@ -176,6 +187,7 @@ public struct OracleStalenessConfigUpdated has copy, drop, store {
     lazer_settlement_authoritative_threshold_ms: u64,
 }
 
+/// Emitted when per-asset oracle basis bounds change.
 public struct OracleBasisBoundsUpdated has copy, drop, store {
     predict_id: ID,
     asset: String,
@@ -185,13 +197,12 @@ public struct OracleBasisBoundsUpdated has copy, drop, store {
     max_basis: u64,
 }
 
+/// Emitted when an asset is bound to a Pyth Lazer feed id.
 public struct OracleFeedIdSet has copy, drop, store {
     predict_id: ID,
     asset: String,
     pyth_lazer_feed_id: u64,
 }
-
-// === Structs ===
 
 /// Main shared object for the DeepBook Predict protocol.
 public struct Predict has key {
@@ -214,32 +225,10 @@ public struct Predict has key {
     trading_paused: bool,
 }
 
+/// Derived-object key for the singleton Predict shared object per quote type.
 public struct PredictKey<phantom T>() has copy, drop, store;
 
 // === Public Functions ===
-
-/// Get the amounts for mint/redeem (for UI/preview).
-/// Returns (mint_cost, redeem_payout).
-public fun get_trade_amounts(
-    predict: &Predict,
-    oracle: &OracleSVI,
-    key: MarketKey,
-    quantity: u64,
-    clock: &Clock,
-): (u64, u64) {
-    let (ask, bid) = predict.trade_prices(oracle, key, clock);
-    (math::mul(ask, quantity), math::mul(bid, quantity))
-}
-
-public fun unsettled_exposed_oracles(predict: &Predict): &vector<ID> {
-    predict.vault.unsettled_exposed_oracles()
-}
-
-/// Resolved ask-price bounds for an oracle, after intersecting any per-oracle
-/// override with the global default. Exposed for UI/preview.
-public fun ask_bounds(predict: &Predict, oracle_id: ID): (u64, u64) {
-    predict.resolve_ask_bounds(oracle_id)
-}
 
 /// Buy a position using an enabled quote asset.
 /// Cost is withdrawn from the PredictManager's balance.
@@ -338,20 +327,6 @@ public fun redeem_permissionless<Quote>(
     assert!(oracle.is_settled(), EOracleNotSettled);
     let payout_coin = redeem_internal<Quote>(predict, manager, oracle, key, quantity, clock, ctx);
     manager.deposit_permissionless(payout_coin, ctx);
-}
-
-/// Get the amounts for range mint/redeem (for UI/preview).
-/// Returns (mint_cost, redeem_payout). Bull-call and bear-put ranges with the
-/// same strikes price identically — direction is not part of `RangeKey`.
-public fun get_range_trade_amounts(
-    predict: &Predict,
-    oracle: &OracleSVI,
-    key: RangeKey,
-    quantity: u64,
-    clock: &Clock,
-): (u64, u64) {
-    let (ask, bid) = predict.range_trade_prices(oracle, key, clock);
-    (math::mul(ask, quantity), math::mul(bid, quantity))
 }
 
 /// Mint a vertical range `(lower, higher)` priced as a single instrument.
@@ -525,66 +500,6 @@ public fun withdraw<Quote>(
     predict.vault.dispense_payout<Quote>(amount).into_coin(ctx)
 }
 
-// === Public-Package Functions ===
-
-/// Create and share the Predict object. Returns its ID.
-public(package) fun create<Quote>(
-    registry_uid: &mut UID,
-    currency: &Currency<Quote>,
-    treasury_cap: TreasuryCap<PLP>,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    assert!(!derived_object::exists(registry_uid, PredictKey<Quote>()), EPredictAlreadyCreated);
-    let mut predict = Predict {
-        id: derived_object::claim(registry_uid, PredictKey<Quote>()),
-        vault: vault::new(ctx),
-        treasury_cap,
-        pricing_config: pricing_config::new(),
-        risk_config: risk_config::new(),
-        treasury_config: treasury_config::new(),
-        oracle_config: oracle_config::new(ctx),
-        // Withdrawal rate limiter starts disabled. Admin must configure
-        // capacity and refill rate based on the actual quote asset value
-        // Withdrawal rate limiter starts disabled. Admin must call
-        // update_withdrawal_limiter() then enable_withdrawal_limiter()
-        // to activate, configuring capacity and rate for the quote asset.
-        withdrawal_limiter: rate_limiter::new(clock),
-        trading_paused: false,
-    };
-    predict.enable_quote_asset<Quote>(currency);
-    transfer::share_object(predict);
-}
-
-public(package) fun enable_quote_asset<Quote>(predict: &mut Predict, currency: &Currency<Quote>) {
-    predict.treasury_config.add_quote_asset<Quote>(currency);
-    event::emit(QuoteAssetEnabled {
-        predict_id: object::id(predict),
-        quote_asset: type_name::with_defining_ids<Quote>(),
-    });
-}
-
-public(package) fun disable_quote_asset<Quote>(predict: &mut Predict) {
-    predict.treasury_config.remove_quote_asset<Quote>();
-    event::emit(QuoteAssetDisabled {
-        predict_id: object::id(predict),
-        quote_asset: type_name::with_defining_ids<Quote>(),
-    });
-}
-
-public(package) fun add_oracle_grid(
-    predict: &mut Predict,
-    oracle_id: ID,
-    min_strike: u64,
-    tick_size: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    predict.oracle_config.add_oracle_grid(oracle_id, min_strike, tick_size);
-    let max_strike = min_strike + tick_size * constants::oracle_strike_grid_ticks!();
-    predict.vault.init_oracle_matrix(oracle_id, min_strike, max_strike, tick_size, clock, ctx);
-}
-
 /// Keeper/ops hook for syncing one oracle's cached MTM into the vault. This is
 /// used to keep LP supply/withdraw accounting fresh across unsettled exposed
 /// oracles; trade paths still refresh only the touched oracle inline.
@@ -599,19 +514,42 @@ public fun refresh_oracle_mtm(predict: &mut Predict, oracle: &OracleSVI, clock: 
     };
 }
 
-/// Snapshot the admin-tuned oracle bounds (staleness thresholds + per-asset
-/// basis bounds) for `asset` at `create_oracle` time.
-public(package) fun build_oracle_bounds(predict: &Predict, asset: String): oracle::OracleBounds {
-    predict.oracle_config.build_oracle_bounds(asset)
+/// Get the amounts for mint/redeem (for UI/preview).
+/// Returns (mint_cost, redeem_payout).
+public fun get_trade_amounts(
+    predict: &Predict,
+    oracle: &OracleSVI,
+    key: MarketKey,
+    quantity: u64,
+    clock: &Clock,
+): (u64, u64) {
+    let (ask, bid) = predict.trade_prices(oracle, key, clock);
+    (math::mul(ask, quantity), math::mul(bid, quantity))
 }
 
-/// Resolve the admin-registered Pyth Lazer feed id for `asset`. Aborts with
-/// `oracle_config::EFeedIdNotConfigured` if no entry exists — admin must call
-/// `set_asset_feed_id` at least once per underlying before its first oracle
-/// can be created. Returned as `u64` for type consistency with the rest of
-/// the admin-config surface; narrowed to `u32` at `registry::create_oracle`.
-public(package) fun resolve_feed_id(predict: &Predict, asset: String): u64 {
-    predict.oracle_config.resolve_feed_id(asset)
+/// Get the amounts for range mint/redeem (for UI/preview).
+/// Returns (mint_cost, redeem_payout). Bull-call and bear-put ranges with the
+/// same strikes price identically — direction is not part of `RangeKey`.
+public fun get_range_trade_amounts(
+    predict: &Predict,
+    oracle: &OracleSVI,
+    key: RangeKey,
+    quantity: u64,
+    clock: &Clock,
+): (u64, u64) {
+    let (ask, bid) = predict.range_trade_prices(oracle, key, clock);
+    (math::mul(ask, quantity), math::mul(bid, quantity))
+}
+
+/// Return oracle IDs whose unsettled exposure must be refreshed before LP flows.
+public fun unsettled_exposed_oracles(predict: &Predict): &vector<ID> {
+    predict.vault.unsettled_exposed_oracles()
+}
+
+/// Resolved ask-price bounds for an oracle, after intersecting any per-oracle
+/// override with the global default. Exposed for UI/preview.
+public fun ask_bounds(predict: &Predict, oracle_id: ID): (u64, u64) {
+    predict.resolve_ask_bounds(oracle_id)
 }
 
 /// Whether trading is currently paused.
@@ -647,6 +585,72 @@ public fun max_total_exposure_pct(predict: &Predict): u64 {
 /// Get the MTM freshness threshold used for LP supply/withdraw gating.
 public fun mtm_freshness_ms(predict: &Predict): u64 {
     predict.risk_config.mtm_freshness_ms()
+}
+
+/// Returns the currently available withdrawal amount.
+public fun available_withdrawal(predict: &Predict, clock: &Clock): u64 {
+    predict.withdrawal_limiter.available_withdrawal(clock)
+}
+
+// === Public-Package Functions ===
+
+/// Create and share the Predict object. Returns its ID.
+public(package) fun create<Quote>(
+    registry_uid: &mut UID,
+    currency: &Currency<Quote>,
+    treasury_cap: TreasuryCap<PLP>,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    assert!(!derived_object::exists(registry_uid, PredictKey<Quote>()), EPredictAlreadyCreated);
+    let mut predict = Predict {
+        id: derived_object::claim(registry_uid, PredictKey<Quote>()),
+        vault: vault::new(ctx),
+        treasury_cap,
+        pricing_config: pricing_config::new(),
+        risk_config: risk_config::new(),
+        treasury_config: treasury_config::new(),
+        oracle_config: oracle_config::new(ctx),
+        // Withdrawal rate limiter starts disabled. Admin must call
+        // update_withdrawal_limiter() then enable_withdrawal_limiter()
+        // to activate, configuring capacity and rate for the quote asset.
+        withdrawal_limiter: rate_limiter::new(clock),
+        trading_paused: false,
+    };
+    predict.enable_quote_asset<Quote>(currency);
+    transfer::share_object(predict);
+}
+
+/// Enable a quote asset for new Predict inflows.
+public(package) fun enable_quote_asset<Quote>(predict: &mut Predict, currency: &Currency<Quote>) {
+    predict.treasury_config.add_quote_asset<Quote>(currency);
+    event::emit(QuoteAssetEnabled {
+        predict_id: object::id(predict),
+        quote_asset: type_name::with_defining_ids<Quote>(),
+    });
+}
+
+/// Disable a quote asset for new Predict inflows.
+public(package) fun disable_quote_asset<Quote>(predict: &mut Predict) {
+    predict.treasury_config.remove_quote_asset<Quote>();
+    event::emit(QuoteAssetDisabled {
+        predict_id: object::id(predict),
+        quote_asset: type_name::with_defining_ids<Quote>(),
+    });
+}
+
+/// Register an oracle strike grid and initialize its vault matrix.
+public(package) fun add_oracle_grid(
+    predict: &mut Predict,
+    oracle_id: ID,
+    min_strike: u64,
+    tick_size: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    predict.oracle_config.add_oracle_grid(oracle_id, min_strike, tick_size);
+    let max_strike = min_strike + tick_size * constants::oracle_strike_grid_ticks!();
+    predict.vault.init_oracle_matrix(oracle_id, min_strike, max_strike, tick_size, clock, ctx);
 }
 
 /// Set trading pause state.
@@ -833,57 +837,24 @@ public(package) fun disable_withdrawal_limiter(predict: &mut Predict) {
     predict.withdrawal_limiter.disable();
 }
 
-/// Returns the currently available withdrawal amount.
-public fun available_withdrawal(predict: &Predict, clock: &Clock): u64 {
-    predict.withdrawal_limiter.available_withdrawal(clock)
+/// Snapshot the admin-tuned oracle bounds (staleness thresholds + per-asset
+/// basis bounds) for `asset` at `create_oracle` time.
+public(package) fun build_oracle_bounds(predict: &Predict, asset: String): oracle::OracleBounds {
+    predict.oracle_config.build_oracle_bounds(asset)
 }
 
-#[test_only]
-/// Create a Predict object for testing without sharing it.
-public(package) fun create_test_predict<Quote>(
-    currency: &Currency<Quote>,
-    ctx: &mut TxContext,
-): Predict {
-    let treasury_cap = coin::create_treasury_cap_for_testing<PLP>(ctx);
-    let clock = sui::clock::create_for_testing(ctx);
-    let mut predict = Predict {
-        id: object::new(ctx),
-        vault: vault::new(ctx),
-        treasury_cap,
-        pricing_config: pricing_config::new(),
-        risk_config: risk_config::new(),
-        treasury_config: treasury_config::new(),
-        oracle_config: oracle_config::new(ctx),
-        withdrawal_limiter: rate_limiter::new(&clock),
-        trading_paused: false,
-    };
-    predict.enable_quote_asset<Quote>(currency);
-    clock.destroy_for_testing();
-    predict
-}
-
-#[test_only]
-public(package) fun vault_mut(predict: &mut Predict): &mut Vault {
-    &mut predict.vault
-}
-
-#[test_only]
-public(package) fun oracle_config(predict: &Predict): &OracleConfig {
-    &predict.oracle_config
-}
-
-#[test_only]
-public(package) fun treasury_config(predict: &Predict): &TreasuryConfig {
-    &predict.treasury_config
-}
-
-#[test_only]
-public(package) fun vault_balance(predict: &Predict): u64 {
-    predict.vault.balance()
+/// Resolve the admin-registered Pyth Lazer feed id for `asset`. Aborts with
+/// `oracle_config::EFeedIdNotConfigured` if no entry exists — admin must call
+/// `set_asset_feed_id` at least once per underlying before its first oracle
+/// can be created. Returned as `u64` for type consistency with the rest of
+/// the admin-config surface; narrowed to `u32` at `registry::create_oracle`.
+public(package) fun resolve_feed_id(predict: &Predict, asset: String): u64 {
+    predict.oracle_config.resolve_feed_id(asset)
 }
 
 // === Private Functions ===
 
+/// Assert every unsettled exposed oracle has a fresh cached MTM for LP flows.
 fun assert_total_mtm_fresh(predict: &Predict, clock: &Clock) {
     // MTM freshness is enforced only for LP supply/withdraw. Trade quoting
     // still relies on cached aggregate `vault.total_mtm()` and refreshes the
@@ -902,6 +873,7 @@ fun assert_total_mtm_fresh(predict: &Predict, clock: &Clock) {
     }
 }
 
+/// Shared binary-position redemption path.
 fun redeem_internal<Quote>(
     predict: &mut Predict,
     manager: &mut PredictManager,
@@ -954,6 +926,7 @@ fun redeem_internal<Quote>(
     payout_coin
 }
 
+/// Shared vertical-range redemption path.
 fun redeem_range_internal<Quote>(
     predict: &mut Predict,
     manager: &mut PredictManager,
@@ -1017,6 +990,7 @@ fun shares_to_amount(predict: &Predict, shares: u64, vault_value: u64): u64 {
     mul_div_round_down(shares, vault_value, total)
 }
 
+/// Emit the full current pricing-config snapshot.
 fun emit_pricing_config_updated(predict: &Predict) {
     event::emit(PricingConfigUpdated {
         predict_id: object::id(predict),
@@ -1028,6 +1002,7 @@ fun emit_pricing_config_updated(predict: &Predict) {
     });
 }
 
+/// Emit the full current risk-config snapshot.
 fun emit_risk_config_updated(predict: &Predict) {
     event::emit(RiskConfigUpdated {
         predict_id: object::id(predict),
@@ -1036,6 +1011,7 @@ fun emit_risk_config_updated(predict: &Predict) {
     });
 }
 
+/// Emit the full current oracle-staleness config snapshot.
 fun emit_oracle_staleness_config_updated(predict: &Predict) {
     event::emit(OracleStalenessConfigUpdated {
         predict_id: object::id(predict),
@@ -1149,11 +1125,13 @@ fun resolve_ask_bounds(predict: &Predict, oracle_id: ID): (u64, u64) {
     }
 }
 
+/// Assert a mint ask price fits the resolved global/per-oracle bounds.
 fun assert_mintable_ask(predict: &Predict, oracle_id: ID, ask_price: u64) {
     let (min_ask, max_ask) = predict.resolve_ask_bounds(oracle_id);
     assert!(ask_price >= min_ask && ask_price <= max_ask, EAskPriceOutOfBounds);
 }
 
+/// Refresh one oracle's cached risk metrics in the vault.
 fun refresh_oracle_risk(predict: &mut Predict, oracle: &OracleSVI, clock: &Clock) {
     let oracle_id = oracle.id();
     let (min_strike, max_strike) = predict.vault.oracle_strike_range(oracle_id);
@@ -1173,4 +1151,54 @@ fun refresh_oracle_risk(predict: &mut Predict, oracle: &OracleSVI, clock: &Clock
     };
     let curve = predict.oracle_config.build_curve(oracle, min_strike, max_strike);
     predict.vault.set_mtm_with_curve(oracle_id, &curve, clock);
+}
+
+// === Test-Only Functions ===
+
+#[test_only]
+/// Create a Predict object for testing without sharing it.
+public(package) fun create_test_predict<Quote>(
+    currency: &Currency<Quote>,
+    ctx: &mut TxContext,
+): Predict {
+    let treasury_cap = coin::create_treasury_cap_for_testing<PLP>(ctx);
+    let clock = sui::clock::create_for_testing(ctx);
+    let mut predict = Predict {
+        id: object::new(ctx),
+        vault: vault::new(ctx),
+        treasury_cap,
+        pricing_config: pricing_config::new(),
+        risk_config: risk_config::new(),
+        treasury_config: treasury_config::new(),
+        oracle_config: oracle_config::new(ctx),
+        withdrawal_limiter: rate_limiter::new(&clock),
+        trading_paused: false,
+    };
+    predict.enable_quote_asset<Quote>(currency);
+    clock.destroy_for_testing();
+    predict
+}
+
+#[test_only]
+/// Return mutable vault access for tests.
+public(package) fun vault_mut(predict: &mut Predict): &mut Vault {
+    &mut predict.vault
+}
+
+#[test_only]
+/// Return oracle config access for tests.
+public(package) fun oracle_config(predict: &Predict): &OracleConfig {
+    &predict.oracle_config
+}
+
+#[test_only]
+/// Return treasury config access for tests.
+public(package) fun treasury_config(predict: &Predict): &TreasuryConfig {
+    &predict.treasury_config
+}
+
+#[test_only]
+/// Return aggregate vault balance for tests.
+public(package) fun vault_balance(predict: &Predict): u64 {
+    predict.vault.balance()
 }

@@ -1,65 +1,64 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-// This module stores one oracle's exposure on a fixed strike grid.
-//
-// It serves two different queries:
-// 1. MTM against a sampled live-price curve
-// 2. exact worst-case settled payout (`max_payout`)
-//
-// MTM needs fast strike-range reads. For that, each page stores directional
-// aggregates so a segment can recover exact `qty` and `qty * strike` without
-// scanning every strike in the range.
-//
-// Exact `max_payout` is a different problem. For a settlement boundary `s`:
-// - UP wins for strikes `< s`
-// - DN wins for strikes `>= s`
-//
-// So:
-//     payout(s) = sum_up_below(s) + sum_dn_at_or_above(s)
-//               = total_q_dn + prefix_sum(q_up - q_dn)
-//
-// That means exact `max_payout` is the maximum prefix score over strikes in
-// sorted order. A single total is not enough; after each update we need enough
-// structure to recover the best prefix over the whole book.
-//
-// The layout is therefore hybrid:
-// - `pages` is a `Table<u64, vector<StrikeNode>>`, with one dynamic-field lookup
-//   per 512-strike page instead of one lookup per strike.
-// - Each `StrikeNode` stores exact `q_up` / `q_dn` plus page-local aggregates
-//   used by MTM range reads.
-// - `page_tree` is an inline vector-backed tree of page summaries. Each summary
-//   keeps:
-//     * `total_q_up`
-//     * `total_q_dn`
-//     * the best prefix in that page/range, encoded as
-//       `(best_prefix_up, best_prefix_dn)`
-//
-// The best prefix is stored as an unsigned pair instead of a signed scalar
-// because Move has no native signed integers.
-//
-// Update algorithm:
-// - rewrite the touched 512-slot page
-// - recompute that page's summary
-// - merge summaries up the inline tree
-//
-// Merge rule:
-// - totals add componentwise
-// - the best prefix of `left + right` is either:
-//     * the best prefix entirely inside `left`, or
-//     * all of `left` plus the best prefix of `right`
-//
-// After that path is rebuilt, the root summary is enough to answer the raw
-// binary-combination peak:
-//     root.total_q_dn + root.best_prefix_up - root.best_prefix_dn
-// `max_payout()` then applies the stored range cash offset to recover the
-// actual vault liability peak.
-//
-// So the design is intentionally asymmetric:
-// - page-local aggregates optimize MTM
-// - the inline summary tree optimizes exact `max_payout`
-// - dynamic-field pressure stays bounded because only leaf pages live in `Table`
-
+/// Fixed strike-grid exposure store for one oracle.
+///
+/// This module serves two different queries:
+/// 1. MTM against a sampled live-price curve
+/// 2. exact worst-case settled payout (`max_payout`)
+///
+/// MTM needs fast strike-range reads. For that, each page stores directional
+/// aggregates so a segment can recover exact `qty` and `qty * strike` without
+/// scanning every strike in the range.
+///
+/// Exact `max_payout` is a different problem. For a settlement boundary `s`:
+/// - UP wins for strikes `< s`
+/// - DN wins for strikes `>= s`
+///
+/// So:
+///     payout(s) = sum_up_below(s) + sum_dn_at_or_above(s)
+///               = total_q_dn + prefix_sum(q_up - q_dn)
+///
+/// That means exact `max_payout` is the maximum prefix score over strikes in
+/// sorted order. A single total is not enough; after each update we need enough
+/// structure to recover the best prefix over the whole book.
+///
+/// The layout is therefore hybrid:
+/// - `pages` is a `Table<u64, vector<StrikeNode>>`, with one dynamic-field lookup
+///   per 512-strike page instead of one lookup per strike.
+/// - Each `StrikeNode` stores exact `q_up` / `q_dn` plus page-local aggregates
+///   used by MTM range reads.
+/// - `page_tree` is an inline vector-backed tree of page summaries. Each summary
+///   keeps:
+///     * `total_q_up`
+///     * `total_q_dn`
+///     * the best prefix in that page/range, encoded as
+///       `(best_prefix_up, best_prefix_dn)`
+///
+/// The best prefix is stored as an unsigned pair instead of a signed scalar
+/// because Move has no native signed integers.
+///
+/// Update algorithm:
+/// - rewrite the touched 512-slot page
+/// - recompute that page's summary
+/// - merge summaries up the inline tree
+///
+/// Merge rule:
+/// - totals add componentwise
+/// - the best prefix of `left + right` is either:
+///     * the best prefix entirely inside `left`, or
+///     * all of `left` plus the best prefix of `right`
+///
+/// After that path is rebuilt, the root summary is enough to answer the raw
+/// binary-combination peak:
+///     root.total_q_dn + root.best_prefix_up - root.best_prefix_dn
+/// `max_payout()` then applies the stored range cash offset to recover the
+/// actual vault liability peak.
+///
+/// So the design is intentionally asymmetric:
+/// - page-local aggregates optimize MTM
+/// - the inline summary tree optimizes exact `max_payout`
+/// - dynamic-field pressure stays bounded because only leaf pages live in `Table`
 module deepbook_predict::strike_matrix;
 
 use deepbook::{constants::max_u64, math};
@@ -75,7 +74,6 @@ const EInsufficientQuantity: u64 = 2;
 const ENonMonotoneCurve: u64 = 3;
 const EInvalidCurveRange: u64 = 4;
 
-// === Structs ===
 /// Dense strike-indexed book with page-level summaries stored in an inline tree.
 public struct StrikeMatrix has store {
     pages: Table<u64, vector<StrikeNode>>,
@@ -115,6 +113,7 @@ public struct PageSummary has copy, drop, store {
 }
 
 // === Public-Package Functions ===
+
 /// Allocate all strike pages for the oracle grid and a zeroed page-summary tree.
 public(package) fun new(
     ctx: &mut TxContext,
@@ -156,10 +155,12 @@ public(package) fun new(
     }
 }
 
+/// Insert one UP or DOWN position quantity at `strike`.
 public(package) fun insert(matrix: &mut StrikeMatrix, strike: u64, qty: u64, is_up: bool) {
     apply_position(matrix, strike, qty, is_up, true);
 }
 
+/// Remove one UP or DOWN position quantity at `strike`.
 public(package) fun remove(matrix: &mut StrikeMatrix, strike: u64, qty: u64, is_up: bool) {
     apply_position(matrix, strike, qty, is_up, false);
 }
@@ -253,6 +254,7 @@ public(package) fun evaluate(matrix: &StrikeMatrix, curve: &vector<CurvePoint>):
     value
 }
 
+/// Evaluate exact settled liability for a concrete settlement price.
 public(package) fun evaluate_settled(matrix: &StrikeMatrix, settlement: u64): u64 {
     if (matrix.minted_max_strike < matrix.minted_min_strike) return 0;
 
@@ -286,6 +288,7 @@ public(package) fun evaluate_settled(matrix: &StrikeMatrix, settlement: u64): u6
     value
 }
 
+/// Return the exact worst-case settled payout across all settlement prices.
 public(package) fun max_payout(matrix: &StrikeMatrix): u64 {
     let root = matrix.page_tree[0];
     root.total_q_dn + root.best_prefix_up - root.best_prefix_dn - matrix.range_qty
@@ -370,6 +373,7 @@ public(package) fun into_settled_totals(matrix: StrikeMatrix, settlement: u64): 
 }
 
 // === Private Functions ===
+
 /// Apply a vertical range `(lower, higher)` as `long UP@lower + long DN@higher`
 /// plus a `qty` range_qty delta. The matrix writes are byte-identical to two
 /// separate longs; `range_qty` is the algebraic constant from the dominance
@@ -397,6 +401,7 @@ fun apply_position(matrix: &mut StrikeMatrix, strike: u64, qty: u64, is_up: bool
     recompute_page_tree_path(matrix, page_index);
 }
 
+/// Apply an unchecked add/remove quantity delta.
 fun apply_delta(value: &mut u64, qty: u64, add: bool) {
     if (add) {
         *value = *value + qty;
@@ -405,6 +410,7 @@ fun apply_delta(value: &mut u64, qty: u64, add: bool) {
     };
 }
 
+/// Apply a quantity delta, aborting before underflow on removal.
 fun apply_exact_delta(value: &mut u64, qty: u64, add: bool) {
     if (!add) assert!(*value >= qty, EInsufficientQuantity);
     apply_delta(value, qty, add);
@@ -591,6 +597,7 @@ fun recompute_page_tree_path(matrix: &mut StrikeMatrix, page_index: u64) {
     };
 }
 
+/// Return a zeroed dense page.
 fun empty_page(): vector<StrikeNode> {
     vector::tabulate!(
         PAGE_SLOTS,
@@ -605,6 +612,7 @@ fun empty_page(): vector<StrikeNode> {
     )
 }
 
+/// Return a zeroed page summary.
 fun empty_summary(): PageSummary {
     PageSummary {
         total_q_up: 0,

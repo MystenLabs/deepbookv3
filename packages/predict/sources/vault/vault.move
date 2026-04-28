@@ -17,23 +17,22 @@ use deepbook::math;
 use deepbook_predict::{oracle_config::CurvePoint, strike_matrix::{Self, StrikeMatrix}};
 use sui::{bag::{Self, Bag}, balance::Balance, clock::Clock, table::{Self, Table}};
 
-// === Errors ===
 const EInsufficientBalance: u64 = 0;
 const EExceedsMaxTotalExposure: u64 = 1;
 const EOracleExposureNotFound: u64 = 2;
 const EMtmExceedsBalance: u64 = 3;
 const EAssetNotInVault: u64 = 4;
 
-// === Structs ===
-
 /// Dynamic bag key for storing a concrete asset balance by type.
 public struct BalanceKey<phantom T> has copy, drop, store {}
 
+/// Compact settled-oracle liability state after a dense matrix is removed.
 public struct SettledOracleState has copy, drop, store {
     remaining_quantity: u64,
     remaining_liability: u64,
 }
 
+/// Vault state for balances, exposure matrices, and aggregate liability.
 public struct Vault has store {
     /// Concrete balances stored per accepted quote asset type.
     balances: Bag,
@@ -55,10 +54,12 @@ public struct Vault has store {
 
 // === Public Functions ===
 
+/// Return the aggregate vault balance across accepted quote assets.
 public fun balance(vault: &Vault): u64 {
     vault.balance
 }
 
+/// Return the concrete balance for asset type `T`, or zero if absent.
 public fun asset_balance<T>(vault: &Vault): u64 {
     let key = BalanceKey<T> {};
     if (vault.balances.contains(key)) {
@@ -69,25 +70,25 @@ public fun asset_balance<T>(vault: &Vault): u64 {
     }
 }
 
+/// Return cached total mark-to-market liability.
 public fun total_mtm(vault: &Vault): u64 {
     vault.total_mtm
 }
 
+/// Return balance net of cached mark-to-market liability.
 public fun vault_value(vault: &Vault): u64 {
     assert!(vault.balance >= vault.total_mtm, EMtmExceedsBalance);
     vault.balance - vault.total_mtm
 }
 
+/// Return cached total worst-case payout liability.
 public fun total_max_payout(vault: &Vault): u64 {
     vault.total_max_payout
 }
 
-public(package) fun unsettled_exposed_oracles(vault: &Vault): &vector<ID> {
-    &vault.unsettled_exposed_oracles
-}
-
 // === Public-Package Functions ===
 
+/// Create an empty vault.
 public(package) fun new(ctx: &mut TxContext): Vault {
     Vault {
         balances: bag::new(ctx),
@@ -203,18 +204,7 @@ public(package) fun assert_total_exposure(vault: &Vault, max_total_pct: u64) {
     assert!(vault.total_mtm <= math::mul(vault.balance, max_total_pct), EExceedsMaxTotalExposure);
 }
 
-/// Return the historical minted strike bounds for this oracle's matrix.
-/// These bounds expand on insert and do not shrink after positions are removed.
-public(package) fun oracle_strike_range(vault: &Vault, oracle_id: ID): (u64, u64) {
-    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
-    let matrix = &vault.oracle_matrices[oracle_id];
-    matrix.minted_strike_range()
-}
-
-public(package) fun has_settled_oracle(vault: &Vault, oracle_id: ID): bool {
-    vault.settled_oracles.contains(oracle_id)
-}
-
+/// Recompute and cache live MTM for one oracle using a sampled curve.
 public(package) fun set_mtm_with_curve(
     vault: &mut Vault,
     oracle_id: ID,
@@ -232,6 +222,7 @@ public(package) fun set_mtm_with_curve(
     vault.total_mtm = vault.total_mtm + new_mtm - old_mtm;
 }
 
+/// Recompute and cache settled MTM for one oracle.
 public(package) fun set_mtm_with_settlement(
     vault: &mut Vault,
     oracle_id: ID,
@@ -249,6 +240,7 @@ public(package) fun set_mtm_with_settlement(
     vault.total_mtm = vault.total_mtm + new_mtm - old_mtm;
 }
 
+/// Overwrite cached MTM for one oracle and update the aggregate total.
 public(package) fun set_mtm(vault: &mut Vault, oracle_id: ID, mtm: u64, clock: &Clock) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
 
@@ -257,11 +249,7 @@ public(package) fun set_mtm(vault: &mut Vault, oracle_id: ID, mtm: u64, clock: &
     vault.total_mtm = vault.total_mtm + mtm - old_mtm;
 }
 
-public(package) fun get_last_mtm_update(vault: &Vault, oracle_id: ID): u64 {
-    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
-    vault.oracle_matrices[oracle_id].last_mtm_update()
-}
-
+/// Track an oracle whose unsettled exposure must be fresh before LP flows.
 public(package) fun add_unsettled_exposed_oracle(vault: &mut Vault, oracle_id: ID) {
     let mut i = 0;
     while (i < vault.unsettled_exposed_oracles.length()) {
@@ -271,6 +259,7 @@ public(package) fun add_unsettled_exposed_oracle(vault: &mut Vault, oracle_id: I
     vault.unsettled_exposed_oracles.push_back(oracle_id);
 }
 
+/// Remove an oracle from the unsettled-exposure refresh set when safe.
 public(package) fun remove_unsettled_exposed_oracle(
     vault: &mut Vault,
     oracle_id: ID,
@@ -292,6 +281,7 @@ public(package) fun remove_unsettled_exposed_oracle(
     };
 }
 
+/// Compact a settled oracle's dense matrix into fixed-size liability state.
 public(package) fun compact_settled_oracle_if_needed(
     vault: &mut Vault,
     oracle_id: ID,
@@ -326,6 +316,7 @@ public(package) fun compact_settled_oracle_if_needed(
         );
 }
 
+/// Apply a settled redemption against compact settled-oracle liability.
 public(package) fun redeem_settled_position(
     vault: &mut Vault,
     oracle_id: ID,
@@ -342,11 +333,38 @@ public(package) fun redeem_settled_position(
     // entirely or retained as zeroed records.
 }
 
+/// Return oracle IDs requiring fresh MTM before LP supply/withdraw.
+public(package) fun unsettled_exposed_oracles(vault: &Vault): &vector<ID> {
+    &vault.unsettled_exposed_oracles
+}
+
+/// Return the historical minted strike bounds for this oracle's matrix.
+/// These bounds expand on insert and do not shrink after positions are removed.
+public(package) fun oracle_strike_range(vault: &Vault, oracle_id: ID): (u64, u64) {
+    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+    let matrix = &vault.oracle_matrices[oracle_id];
+    matrix.minted_strike_range()
+}
+
+/// Return whether compact settled state exists for an oracle.
+public(package) fun has_settled_oracle(vault: &Vault, oracle_id: ID): bool {
+    vault.settled_oracles.contains(oracle_id)
+}
+
+/// Return the cached MTM update timestamp for an oracle.
+public(package) fun get_last_mtm_update(vault: &Vault, oracle_id: ID): u64 {
+    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+    vault.oracle_matrices[oracle_id].last_mtm_update()
+}
+
+// === Private Functions ===
+
 /// Per-matrix max payout net of the range quantity contributed by range mints.
 fun net_max_payout(matrix: &StrikeMatrix): u64 {
     matrix.max_payout() - matrix.range_qty()
 }
 
+/// Join a concrete asset balance into its bag entry, creating it if needed.
 fun deposit_balance<T>(vault: &mut Vault, payment: Balance<T>) {
     let key = BalanceKey<T> {};
     if (vault.balances.contains(key)) {
@@ -357,6 +375,7 @@ fun deposit_balance<T>(vault: &mut Vault, payment: Balance<T>) {
     }
 }
 
+/// Split a concrete asset balance from its bag entry.
 fun withdraw_balance<T>(vault: &mut Vault, amount: u64): Balance<T> {
     let key = BalanceKey<T> {};
     assert!(vault.balances.contains(key), EAssetNotInVault);
