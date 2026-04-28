@@ -1,8 +1,7 @@
 // See note in i64.move — this module is a localnet-sim stub.
 module pyth_lazer::feed;
 
-use pyth_lazer::i16::I16;
-use pyth_lazer::i64::I64;
+use pyth_lazer::{i16::I16, i64::I64};
 
 public struct Feed has copy, drop, store {
     feed_id: u32,
