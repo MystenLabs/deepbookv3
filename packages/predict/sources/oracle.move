@@ -11,7 +11,7 @@ module deepbook_predict::oracle;
 
 use deepbook::math;
 use deepbook_predict::{
-    constants::{Self, float_scaling},
+    constants,
     i64,
     lazer_helper,
     math as predict_math,
@@ -743,7 +743,7 @@ public(package) fun compute_price(oracle: &OracleSVI, strike: u64): u64 {
 /// The live parity invariant is `UP + DN = 1`.
 public(package) fun binary_price_pair(oracle: &OracleSVI, strike: u64, _clock: &Clock): (u64, u64) {
     let up_price = oracle.compute_price(strike);
-    (up_price, float_scaling!() - up_price)
+    (up_price, constants::float_scaling!() - up_price)
 }
 
 /// Get the cached basis ratio (forward / spot) from the most recent
