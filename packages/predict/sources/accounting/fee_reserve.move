@@ -81,13 +81,13 @@ public fun insurance_fee_share(reserve: &FeeReserve): u64 {
 }
 
 /// Return concrete protocol reserve balance for asset type `T`, or zero if absent.
-public fun protocol_asset_balance<T>(reserve: &FeeReserve): u64 {
-    asset_balance<T>(&reserve.protocol_balances)
+public fun protocol_asset_balance<Quote>(reserve: &FeeReserve): u64 {
+    asset_balance<Quote>(&reserve.protocol_balances)
 }
 
 /// Return concrete insurance reserve balance for asset type `T`, or zero if absent.
-public fun insurance_asset_balance<T>(reserve: &FeeReserve): u64 {
-    asset_balance<T>(&reserve.insurance_balances)
+public fun insurance_asset_balance<Quote>(reserve: &FeeReserve): u64 {
+    asset_balance<Quote>(&reserve.insurance_balances)
 }
 
 // === Public-Package Functions ===
@@ -123,10 +123,10 @@ public(package) fun set_fee_shares(
 
 /// Split a full fee balance into `(lp_fee, protocol_fee, insurance_fee)`.
 /// Protocol and insurance shares round down; dust remains in the LP balance.
-public(package) fun split_fee<T>(
+public(package) fun split_fee<Quote>(
     reserve: &FeeReserve,
-    fee: Balance<T>,
-): (Balance<T>, Balance<T>, Balance<T>) {
+    fee: Balance<Quote>,
+): (Balance<Quote>, Balance<Quote>, Balance<Quote>) {
     let mut lp_balance = fee;
     let protocol_fee = math::mul(lp_balance.value(), reserve.protocol_fee_share);
     let insurance_fee = math::mul(lp_balance.value(), reserve.insurance_fee_share);
@@ -138,11 +138,11 @@ public(package) fun split_fee<T>(
 
 /// Accrue a full fee balance, returning the LP-owned portion to the caller.
 /// Protocol and insurance shares are retained as concrete reserve balances.
-public(package) fun accrue_fee<T>(
+public(package) fun accrue_fee<Quote>(
     reserve: &mut FeeReserve,
-    fee: Balance<T>,
+    fee: Balance<Quote>,
     predict_id: ID,
-): Balance<T> {
+): Balance<Quote> {
     let total_fee = fee.value();
     if (total_fee == 0) return fee;
 
@@ -160,10 +160,10 @@ public(package) fun accrue_fee<T>(
 
 // === Private Functions ===
 
-fun record_fee_accrual<T>(
+fun record_fee_accrual<Quote>(
     reserve: &mut FeeReserve,
-    protocol_balance: Balance<T>,
-    insurance_balance: Balance<T>,
+    protocol_balance: Balance<Quote>,
+    insurance_balance: Balance<Quote>,
     lp_fee: u64,
     total_fee: u64,
     predict_id: ID,
@@ -180,7 +180,7 @@ fun record_fee_accrual<T>(
 
     event::emit(FeeAccrued {
         predict_id,
-        quote_asset: type_name::with_defining_ids<T>(),
+        quote_asset: type_name::with_defining_ids<Quote>(),
         total_fee,
         lp_fee,
         protocol_fee,
@@ -188,33 +188,33 @@ fun record_fee_accrual<T>(
     });
 }
 
-fun deposit_protocol_balance<T>(reserve: &mut FeeReserve, payment: Balance<T>) {
+fun deposit_protocol_balance<Quote>(reserve: &mut FeeReserve, payment: Balance<Quote>) {
     deposit_balance(&mut reserve.protocol_balances, payment);
 }
 
-fun deposit_insurance_balance<T>(reserve: &mut FeeReserve, payment: Balance<T>) {
+fun deposit_insurance_balance<Quote>(reserve: &mut FeeReserve, payment: Balance<Quote>) {
     deposit_balance(&mut reserve.insurance_balances, payment);
 }
 
-fun asset_balance<T>(balances: &Bag): u64 {
-    let key = BalanceKey<T> {};
+fun asset_balance<Quote>(balances: &Bag): u64 {
+    let key = BalanceKey<Quote> {};
     if (balances.contains(key)) {
-        let balance: &Balance<T> = &balances[key];
+        let balance: &Balance<Quote> = &balances[key];
         balance.value()
     } else {
         0
     }
 }
 
-fun deposit_balance<T>(balances: &mut Bag, payment: Balance<T>) {
+fun deposit_balance<Quote>(balances: &mut Bag, payment: Balance<Quote>) {
     if (payment.value() == 0) {
         payment.destroy_zero();
         return
     };
 
-    let key = BalanceKey<T> {};
+    let key = BalanceKey<Quote> {};
     if (balances.contains(key)) {
-        let balance: &mut Balance<T> = &mut balances[key];
+        let balance: &mut Balance<Quote> = &mut balances[key];
         balance.join(payment);
     } else {
         balances.add(key, payment);
@@ -224,12 +224,12 @@ fun deposit_balance<T>(balances: &mut Bag, payment: Balance<T>) {
 // === Test-Only Functions ===
 
 #[test_only]
-public fun drain_protocol_for_testing<T>(reserve: &mut FeeReserve): Balance<T> {
+public fun drain_protocol_for_testing<Quote>(reserve: &mut FeeReserve): Balance<Quote> {
     drain_balance_for_testing(&mut reserve.protocol_balances)
 }
 
 #[test_only]
-public fun drain_insurance_for_testing<T>(reserve: &mut FeeReserve): Balance<T> {
+public fun drain_insurance_for_testing<Quote>(reserve: &mut FeeReserve): Balance<Quote> {
     drain_balance_for_testing(&mut reserve.insurance_balances)
 }
 
@@ -251,11 +251,11 @@ public fun destroy_empty_for_testing(reserve: FeeReserve) {
 }
 
 #[test_only]
-fun drain_balance_for_testing<T>(balances: &mut Bag): Balance<T> {
-    let key = BalanceKey<T> {};
+fun drain_balance_for_testing<Quote>(balances: &mut Bag): Balance<Quote> {
+    let key = BalanceKey<Quote> {};
     if (balances.contains(key)) {
         balances.remove(key)
     } else {
-        balance::zero<T>()
+        balance::zero<Quote>()
     }
 }
