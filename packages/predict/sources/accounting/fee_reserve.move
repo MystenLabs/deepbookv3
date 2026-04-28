@@ -147,18 +147,11 @@ public(package) fun accrue_fee<T>(
     if (total_fee == 0) return fee;
 
     let (lp_balance, protocol_balance, insurance_balance) = reserve.split_fee(fee);
-    let lp_fee = lp_balance.value();
-    let protocol_fee = protocol_balance.value();
-    let insurance_fee = insurance_balance.value();
-    assert!(lp_fee + protocol_fee + insurance_fee == total_fee, EInvalidFeeSplit);
-
     reserve.record_fee_accrual(
         protocol_balance,
         insurance_balance,
+        lp_balance.value(),
         total_fee,
-        lp_fee,
-        protocol_fee,
-        insurance_fee,
         predict_id,
     );
 
@@ -171,19 +164,19 @@ fun record_fee_accrual<T>(
     reserve: &mut FeeReserve,
     protocol_balance: Balance<T>,
     insurance_balance: Balance<T>,
-    total_fee: u64,
     lp_fee: u64,
-    protocol_fee: u64,
-    insurance_fee: u64,
+    total_fee: u64,
     predict_id: ID,
 ) {
-    reserve.deposit_protocol_balance(protocol_balance);
-    reserve.deposit_insurance_balance(insurance_balance);
-
+    let protocol_fee = protocol_balance.value();
+    let insurance_fee = insurance_balance.value();
     reserve.total_fees_accrued = reserve.total_fees_accrued + total_fee;
     reserve.lp_fees_accrued = reserve.lp_fees_accrued + lp_fee;
     reserve.protocol_fees_accrued = reserve.protocol_fees_accrued + protocol_fee;
     reserve.insurance_fees_accrued = reserve.insurance_fees_accrued + insurance_fee;
+
+    reserve.deposit_protocol_balance(protocol_balance);
+    reserve.deposit_insurance_balance(insurance_balance);
 
     event::emit(FeeAccrued {
         predict_id,
