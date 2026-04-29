@@ -364,9 +364,9 @@ public fun refresh_oracle_mtm(predict: &mut Predict, oracle: &OracleSVI, clock: 
     };
 }
 
-/// Per-unit `(fair_price, fee_rate)` for a position interval.
+/// Per-unit `(fair_price, fee_rate)` quote for a position interval.
 /// `fee_rate` is an absolute price increment in FLOAT_SCALING, not bps.
-public fun trade_quote(
+public fun quote_unit_price(
     predict: &Predict,
     oracle: &OracleSVI,
     key: RangeKey,
@@ -375,7 +375,7 @@ public fun trade_quote(
     predict.oracle_config.assert_range_key_matches(oracle, &key);
     oracle.assert_quoteable_oracle(clock);
 
-    let fair_price = range_fair_price(oracle, key);
+    let fair_price = oracle.compute_range_price(key.lower_strike(), key.higher_strike());
 
     if (oracle.is_settled()) return (fair_price, 0);
 
@@ -798,7 +798,7 @@ fun mint_internal<Quote>(
 ) {
     predict.apply_trade_delta<Quote>(manager, oracle, key, quantity, true, clock);
 
-    let (principal_amount, fee_amount) = predict.get_principal_and_fee_amount(
+    let (principal_amount, fee_amount) = predict.quote_trade_amounts(
         oracle,
         key,
         quantity,
@@ -840,7 +840,7 @@ fun redeem_internal<Quote>(
 ): Coin<Quote> {
     predict.apply_trade_delta<Quote>(manager, oracle, key, quantity, false, clock);
 
-    let (principal_amount, fee_amount) = predict.get_principal_and_fee_amount(
+    let (principal_amount, fee_amount) = predict.quote_trade_amounts(
         oracle,
         key,
         quantity,
@@ -918,7 +918,7 @@ fun apply_trade_delta<Quote>(
     }
 }
 
-fun get_principal_and_fee_amount(
+fun quote_trade_amounts(
     predict: &Predict,
     oracle: &OracleSVI,
     key: RangeKey,
@@ -926,22 +926,13 @@ fun get_principal_and_fee_amount(
     is_mint: bool,
     clock: &Clock,
 ): (u64, u64) {
-    let (fair_price, quoted_fee_rate) = predict.trade_quote(oracle, key, clock);
-    predict.assert_tradeable_price(oracle.id(), fair_price, quoted_fee_rate, is_mint);
+    let (fair_price, fee_rate) = predict.quote_unit_price(oracle, key, clock);
+    predict.assert_quote_allowed(oracle.id(), fair_price, fee_rate, is_mint);
 
     let principal_amount = math::mul(fair_price, quantity);
-    let fee_amount = math::mul(quoted_fee_rate, quantity);
+    let fee_amount = math::mul(fee_rate, quantity);
 
     (principal_amount, fee_amount)
-}
-
-/// Fair range price = up(lower) - up(higher). UP price is monotone
-/// non-increasing in strike, so this is non-negative for a well-formed key.
-/// Settled compute_price makes this 1.0 iff settlement is in `(lower, higher]`.
-fun range_fair_price(oracle: &OracleSVI, key: RangeKey): u64 {
-    let lower_up_price = oracle.compute_price(key.lower_strike());
-    let higher_up_price = oracle.compute_price(key.higher_strike());
-    lower_up_price - higher_up_price
 }
 
 /// Returns the USDC value of `shares` at the given vault value.
@@ -1014,8 +1005,8 @@ fun resolve_ask_bounds(predict: &Predict, oracle_id: ID): (u64, u64) {
     }
 }
 
-/// Assert a mint price fits the resolved global/per-oracle bounds.
-fun assert_tradeable_price(
+/// Assert a side-specific quote can be traded.
+fun assert_quote_allowed(
     predict: &Predict,
     oracle_id: ID,
     fair_price: u64,

@@ -739,6 +739,13 @@ public(package) fun compute_price(oracle: &OracleSVI, strike: u64): u64 {
     }
 }
 
+/// Compute the fair price for the range `(lower, higher]`.
+public(package) fun compute_range_price(oracle: &OracleSVI, lower: u64, higher: u64): u64 {
+    let lower_up_price = oracle.compute_price(lower);
+    let higher_up_price = oracle.compute_price(higher);
+    lower_up_price - higher_up_price
+}
+
 /// Return the exact fair prices for both sides of a binary market.
 /// The live parity invariant is `UP + DN = 1`.
 public(package) fun binary_price_pair(oracle: &OracleSVI, strike: u64, _clock: &Clock): (u64, u64) {
