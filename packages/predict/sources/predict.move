@@ -368,7 +368,7 @@ public fun redeem_permissionless<Quote>(
 
 /// Mint a vertical range `(lower, higher)` priced as a single instrument.
 /// The user pays only the range premium up front; the vault tracks the bounded
-/// liability natively via the strike-matrix range_qty offset.
+/// liability natively via strike-matrix interval accounting.
 /// The all-in mint price is the quoted fair price plus per-unit fee.
 public fun mint_range<Quote>(
     predict: &mut Predict,
@@ -1227,7 +1227,7 @@ fun refresh_oracle_risk(predict: &mut Predict, oracle: &OracleSVI, clock: &Clock
     };
     // Historical minted bounds do not shrink after a full unwind, so an empty
     // but previously touched book still rebuilds over the old range and
-    // evaluates to 0 from zero `q_up` / `q_dn`.
+    // evaluates to 0 from zero start/end boundary quantity.
     if (oracle.is_settled()) {
         predict
             .vault

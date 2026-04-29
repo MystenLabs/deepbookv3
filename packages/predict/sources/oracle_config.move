@@ -420,8 +420,13 @@ public(package) fun assert_range_key_matches(
 
     assert!(range_key.oracle_id() == oracle_id, ERangeKeyOracleMismatch);
     assert!(range_key.expiry() == oracle.expiry(), ERangeKeyExpiryMismatch);
-    oracle_config.assert_valid_strike(oracle, range_key.lower_strike());
-    oracle_config.assert_valid_strike(oracle, range_key.higher_strike());
+    assert!(!(range_key.lower_strike() == constants::neg_inf!() && range_key.higher_strike() == constants::pos_inf!()));
+    if (range_key.lower_strike() != constants::neg_inf!()) {
+        oracle_config.assert_valid_strike(oracle, range_key.lower_strike());
+    };
+    if (range_key.higher_strike() != constants::pos_inf!()) {
+        oracle_config.assert_valid_strike(oracle, range_key.higher_strike());
+    };
 }
 
 /// Build an adaptive piecewise-linear curve over the configured strike range.

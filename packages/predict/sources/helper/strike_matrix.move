@@ -7,17 +7,16 @@
 /// 1. MTM against a sampled live-price curve
 /// 2. exact worst-case settled payout (`max_payout`)
 ///
-/// MTM needs fast strike-range reads. For that, each page stores directional
-/// aggregates so a segment can recover exact `qty` and `qty * strike` without
-/// scanning every strike in the range.
+/// MTM needs fast strike-range reads. For that, each page stores interval
+/// boundary aggregates so a segment can recover exact `qty` and `qty * strike`
+/// without scanning every strike in the range.
 ///
 /// Exact `max_payout` is a different problem. For a settlement boundary `s`:
-/// - UP wins for strikes `< s`
-/// - DN wins for strikes `>= s`
+/// - interval starts at lower bounds `< s`
+/// - interval ends at upper bounds `< s`
 ///
 /// So:
-///     payout(s) = sum_up_below(s) + sum_dn_at_or_above(s)
-///               = total_q_dn + prefix_sum(q_up - q_dn)
+///     payout(s) = base_qty + prefix_sum(q_start - q_end)
 ///
 /// That means exact `max_payout` is the maximum prefix score over strikes in
 /// sorted order. A single total is not enough; after each update we need enough
@@ -26,14 +25,14 @@
 /// The layout is therefore hybrid:
 /// - `pages` is a `Table<u64, vector<StrikeNode>>`, with one dynamic-field lookup
 ///   per 512-strike page instead of one lookup per strike.
-/// - Each `StrikeNode` stores exact `q_up` / `q_dn` plus page-local aggregates
-///   used by MTM range reads.
+/// - Each `StrikeNode` stores exact `q_start` / `q_end` plus page-local
+///   aggregates used by MTM range reads.
 /// - `page_tree` is an inline vector-backed tree of page summaries. Each summary
 ///   keeps:
-///     * `total_q_up`
-///     * `total_q_dn`
+///     * `total_q_start`
+///     * `total_q_end`
 ///     * the best prefix in that page/range, encoded as
-///       `(best_prefix_up, best_prefix_dn)`
+///       `(best_prefix_start, best_prefix_end)`
 ///
 /// The best prefix is stored as an unsigned pair instead of a signed scalar
 /// because Move has no native signed integers.
@@ -50,10 +49,8 @@
 ///     * all of `left` plus the best prefix of `right`
 ///
 /// After that path is rebuilt, the root summary is enough to answer the raw
-/// binary-combination peak:
-///     root.total_q_dn + root.best_prefix_up - root.best_prefix_dn
-/// `max_payout()` then applies the stored range cash offset to recover the
-/// actual vault liability peak.
+/// interval peak:
+///     base_qty + root.best_prefix_start - root.best_prefix_end
 ///
 /// So the design is intentionally asymmetric:
 /// - page-local aggregates optimize MTM
@@ -86,30 +83,28 @@ public struct StrikeMatrix has store {
     minted_max_strike: u64,
     mtm: u64,
     last_mtm_update: u64,
-    /// Aggregate `$1`-per-unit cash obligation accumulated by range mints.
-    /// Each range mint of a `(lower, higher)` band records `q_up[lower] += qty`,
-    /// `q_dn[higher] += qty`, and `range_qty += qty`. Callers subtract `range_qty`
-    /// from `evaluate(curve)` and `evaluate_settled(s)`; `max_payout()` applies
-    /// the same adjustment internally.
-    range_qty: u64,
+    /// Quantity active before the first finite strike, from `(-inf, higher]`
+    /// intervals. Live MTM values it at 1.0 until a finite end boundary turns
+    /// it off.
+    base_qty: u64,
 }
 
 /// Exact per-strike inventory stored in dense page slots.
 public struct StrikeNode has copy, drop, store {
-    q_up: u64,
-    q_dn: u64,
-    agg_q_up: u64,
-    agg_qk_up: u64,
-    agg_q_dn: u64,
-    agg_qk_dn: u64,
+    q_start: u64,
+    q_end: u64,
+    agg_q_start: u64,
+    agg_qk_start: u64,
+    agg_q_end: u64,
+    agg_qk_end: u64,
 }
 
 /// Aggregate summary for one page or one internal page-range node.
 public struct PageSummary has copy, drop, store {
-    total_q_up: u64,
-    total_q_dn: u64,
-    best_prefix_up: u64,
-    best_prefix_dn: u64,
+    total_q_start: u64,
+    total_q_end: u64,
+    best_prefix_start: u64,
+    best_prefix_end: u64,
 }
 
 // === Public-Package Functions ===
@@ -151,39 +146,39 @@ public(package) fun new(
         minted_max_strike: 0,
         mtm: 0,
         last_mtm_update: clock.timestamp_ms(),
-        range_qty: 0,
+        base_qty: 0,
     }
 }
 
 /// Insert one UP or DOWN position quantity at `strike`.
 public(package) fun insert(matrix: &mut StrikeMatrix, strike: u64, qty: u64, is_up: bool) {
-    apply_position(matrix, strike, qty, is_up, true);
+    if (is_up) {
+        matrix.apply_range(strike, constants::pos_inf!(), qty, true);
+    } else {
+        matrix.apply_range(constants::neg_inf!(), strike, qty, true);
+    };
 }
 
 /// Remove one UP or DOWN position quantity at `strike`.
 public(package) fun remove(matrix: &mut StrikeMatrix, strike: u64, qty: u64, is_up: bool) {
-    apply_position(matrix, strike, qty, is_up, false);
+    if (is_up) {
+        matrix.apply_range(strike, constants::pos_inf!(), qty, false);
+    } else {
+        matrix.apply_range(constants::neg_inf!(), strike, qty, false);
+    };
 }
 
-/// Insert a vertical range `(lower, higher)`. Equivalent to a long UP@lower,
-/// a long DN@higher, and a `qty` increment to `range_qty`.
+/// Insert interval quantity for `(lower, higher]`.
 public(package) fun insert_range(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64) {
     matrix.apply_range(lower, higher, qty, true);
 }
 
-/// Remove a vertical range `(lower, higher)`. Symmetric to `insert_range`.
+/// Remove interval quantity for `(lower, higher]`.
 public(package) fun remove_range(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64) {
     matrix.apply_range(lower, higher, qty, false);
 }
 
-/// Evaluate the current book against a sampled live curve.
-///
-/// Each segment uses the page-local aggregates to recover:
-/// - UP quantity in `(strike_i, strike_{i+1}]`
-/// - DN quantity in `[strike_i, strike_{i+1})`
-///
-/// The first strike contributes its exact UP quantity, and the last strike
-/// contributes its exact DN quantity, so the full minted range is covered once.
+/// Evaluate the current interval book against a sampled live curve.
 public(package) fun evaluate(matrix: &StrikeMatrix, curve: &vector<CurvePoint>): u64 {
     let len = curve.length();
     if (len == 0) return 0;
@@ -193,57 +188,51 @@ public(package) fun evaluate(matrix: &StrikeMatrix, curve: &vector<CurvePoint>):
         EInvalidCurveRange,
     );
 
-    let mut value = 0;
+    let mut value = math::mul(matrix.base_qty, constants::float_scaling!());
     let (mut page_lo, mut slot_lo) = matrix.strike_to_coords(curve[0].strike());
-    let (mut page_hi, mut slot_hi) = matrix.strike_to_coords(curve[len - 1].strike());
 
     let page = &matrix.pages[page_lo];
-    value = value + math::mul(page[slot_lo].q_up, curve[0].up_price());
-    let page = &matrix.pages[page_hi];
-    value =
-        value +
-        math::mul(page[slot_hi].q_dn, constants::float_scaling!() - curve[len - 1].up_price());
+    value = value + math::mul(page[slot_lo].q_start, curve[0].up_price());
+    value = value - math::mul(page[slot_lo].q_end, curve[0].up_price());
 
     let mut ci = 1;
     while (ci < len) {
         let ci_strike = curve[ci].strike();
         let ci_strike_prev = curve[ci - 1].strike();
         let ci_up_price = curve[ci].up_price();
-        let ci_dn_price = constants::float_scaling!() - curve[ci].up_price();
         let ci_up_price_prev = curve[ci - 1].up_price();
-        let ci_dn_price_prev = constants::float_scaling!() - curve[ci - 1].up_price();
-        (page_hi, slot_hi) = matrix.strike_to_coords(ci_strike);
-        let (q_up_delta, qk_up_delta, q_dn_delta, qk_dn_delta) = matrix.accumulate_segment_qty_qk(
-            page_lo,
-            slot_lo,
-            page_hi,
-            slot_hi,
-        );
+        let (page_hi, slot_hi) = matrix.strike_to_coords(ci_strike);
+        let (
+            q_start_delta,
+            qk_start_delta,
+            q_end_delta,
+            qk_end_delta,
+        ) = matrix.accumulate_segment_qty_qk(page_lo, slot_lo, page_hi, slot_hi);
 
-        if (q_up_delta > 0) {
+        if (q_start_delta > 0) {
             assert!(ci_up_price_prev >= ci_up_price, ENonMonotoneCurve);
             let p_avg = interpolate_price_at_avg_strike(
-                q_up_delta,
-                qk_up_delta,
+                q_start_delta,
+                qk_start_delta,
                 ci_strike_prev,
                 ci_strike,
                 ci_up_price_prev,
                 ci_up_price,
             );
-            value = value + math::mul(q_up_delta, p_avg);
+            value = value + math::mul(q_start_delta, p_avg);
         };
 
-        if (q_dn_delta > 0) {
-            assert!(ci_dn_price >= ci_dn_price_prev, ENonMonotoneCurve);
-            let p_dn_avg = interpolate_price_at_avg_strike(
-                q_dn_delta,
-                qk_dn_delta,
+        if (q_end_delta > 0) {
+            assert!(ci_up_price_prev >= ci_up_price, ENonMonotoneCurve);
+            let p_end_avg = interpolate_price_at_avg_strike(
+                q_end_delta,
+                qk_end_delta,
                 ci_strike_prev,
                 ci_strike,
-                ci_dn_price_prev,
-                ci_dn_price,
+                ci_up_price_prev,
+                ci_up_price,
             );
-            value = value + math::mul(q_dn_delta, p_dn_avg);
+            value = value - math::mul(q_end_delta, p_end_avg);
         };
 
         page_lo = page_hi;
@@ -260,7 +249,7 @@ public(package) fun evaluate_settled(matrix: &StrikeMatrix, settlement: u64): u6
 
     let (min_page, min_slot) = matrix.strike_to_coords(matrix.minted_min_strike);
     let (max_page, max_slot) = matrix.strike_to_coords(matrix.minted_max_strike);
-    let mut value = 0u64;
+    let mut value = matrix.base_qty;
     let mut page_key = min_page;
     while (page_key <= max_page) {
         let page = &matrix.pages[page_key];
@@ -274,9 +263,7 @@ public(package) fun evaluate_settled(matrix: &StrikeMatrix, settlement: u64): u6
         while (slot <= end_slot) {
             let strike = matrix.strike_from_coords(page_key, slot);
             if (strike < settlement) {
-                value = value + page[slot].q_up;
-            } else {
-                value = value + page[slot].q_dn;
+                value = value + page[slot].q_start - page[slot].q_end;
             };
 
             slot = slot + 1;
@@ -291,12 +278,7 @@ public(package) fun evaluate_settled(matrix: &StrikeMatrix, settlement: u64): u6
 /// Return the exact worst-case settled payout across all settlement prices.
 public(package) fun max_payout(matrix: &StrikeMatrix): u64 {
     let root = matrix.page_tree[0];
-    root.total_q_dn + root.best_prefix_up - root.best_prefix_dn - matrix.range_qty
-}
-
-/// Aggregate `$1`-per-unit range quantity contributed by range mints.
-public(package) fun range_qty(matrix: &StrikeMatrix): u64 {
-    matrix.range_qty
+    matrix.base_qty + root.best_prefix_start - root.best_prefix_end
 }
 
 /// Cached mark-to-market value stored by the vault after oracle refresh.
@@ -338,13 +320,13 @@ public(package) fun into_settled_totals(matrix: StrikeMatrix, settlement: u64): 
         minted_max_strike: _,
         mtm: _,
         last_mtm_update: _,
-        range_qty,
+        base_qty,
     } = matrix;
 
     let total_strikes = (max_strike - min_strike) / tick_size + 1;
     let page_count = (total_strikes - 1) / PAGE_SLOTS + 1;
-    let mut remaining_quantity = 0u64;
-    let mut remaining_liability = 0u64;
+    let mut remaining_quantity = base_qty;
+    let mut remaining_liability = base_qty;
     let mut page_key = 0;
 
     while (page_key < page_count) {
@@ -355,13 +337,11 @@ public(package) fun into_settled_totals(matrix: StrikeMatrix, settlement: u64): 
             if (tick_index >= total_strikes) break;
 
             let strike = min_strike + tick_index * tick_size;
-            let q_up = page[slot].q_up;
-            let q_dn = page[slot].q_dn;
-            remaining_quantity = remaining_quantity + q_up + q_dn;
+            let q_start = page[slot].q_start;
+            let q_end = page[slot].q_end;
+            remaining_quantity = remaining_quantity + q_start;
             if (strike < settlement) {
-                remaining_liability = remaining_liability + q_up;
-            } else {
-                remaining_liability = remaining_liability + q_dn;
+                remaining_liability = remaining_liability + q_start - q_end;
             };
             slot = slot + 1;
         };
@@ -369,31 +349,43 @@ public(package) fun into_settled_totals(matrix: StrikeMatrix, settlement: u64): 
     };
 
     pages.destroy_empty();
-    (remaining_quantity - range_qty, remaining_liability - range_qty)
+    (remaining_quantity, remaining_liability)
 }
 
 // === Private Functions ===
 
-/// Apply a vertical range `(lower, higher)` as `long UP@lower + long DN@higher`
-/// plus a `qty` range_qty delta. The matrix writes are byte-identical to two
-/// separate longs; `range_qty` is the algebraic constant from the dominance
-/// identity (`short X@k ≡ long ~X@k − $1`) that callers subtract from
-/// `evaluate`/`evaluate_settled`; `max_payout()` applies it internally.
+/// Apply interval quantity as start/end boundary deltas. The lower endpoint is
+/// exclusive and the upper endpoint is inclusive, so both finite boundaries use
+/// `UP@strike` prices in live MTM: starts add value and ends subtract it.
 fun apply_range(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64, add: bool) {
-    matrix.apply_position(lower, qty, true, add);
-    matrix.apply_position(higher, qty, false, add);
-    apply_exact_delta(&mut matrix.range_qty, qty, add);
+    assert!(lower < higher, EInvalidStrikeRange);
+    assert!(
+        !(lower == constants::neg_inf!() && higher == constants::pos_inf!()),
+        EInvalidStrikeRange,
+    );
+
+    if (lower == constants::neg_inf!()) {
+        apply_exact_delta(&mut matrix.base_qty, qty, add);
+    } else {
+        matrix.apply_boundary_delta(lower, qty, true, add);
+    };
+
+    if (higher != constants::pos_inf!()) {
+        matrix.apply_boundary_delta(higher, qty, false, add);
+    };
 }
 
-/// Apply one position delta, refresh the touched page summary, then rebuild the
-/// ancestor path in the inline page tree.
-fun apply_position(matrix: &mut StrikeMatrix, strike: u64, qty: u64, is_up: bool, add: bool) {
+/// Apply one finite boundary delta, refresh the touched page summary, then
+/// rebuild the ancestor path in the inline page tree.
+fun apply_boundary_delta(
+    matrix: &mut StrikeMatrix,
+    strike: u64,
+    qty: u64,
+    is_start: bool,
+    add: bool,
+) {
     let (page_index, slot) = matrix.strike_to_coords(strike);
-    if (is_up) {
-        apply_up_delta_and_recompute_page(matrix, page_index, slot, strike, qty, add);
-    } else {
-        apply_dn_delta_and_recompute_page(matrix, page_index, slot, strike, qty, add);
-    };
+    apply_delta_and_recompute_page(matrix, page_index, slot, qty, is_start, add);
     if (add) {
         matrix.minted_min_strike = matrix.minted_min_strike.min(strike);
         matrix.minted_max_strike = matrix.minted_max_strike.max(strike);
@@ -416,124 +408,70 @@ fun apply_exact_delta(value: &mut u64, qty: u64, add: bool) {
     apply_delta(value, qty, add);
 }
 
-/// Update one UP strike and rebuild the touched page in a single left-to-right pass.
-///
-/// The UP cached aggregates are prefix-style, so every slot at or to the right
-/// of `slot_index` must be updated. The same pass also recomputes the page's
-/// best prefix for exact `max_payout`.
-fun apply_up_delta_and_recompute_page(
+/// Update one start/end boundary and rebuild the touched page in a single
+/// left-to-right pass.
+fun apply_delta_and_recompute_page(
     matrix: &mut StrikeMatrix,
     page_index: u64,
     slot_index: u64,
-    strike: u64,
     qty: u64,
+    is_start: bool,
     add: bool,
 ) {
     let tree_index = matrix.page_tree_leaf_count - 1 + page_index;
-    let delta_qk = math::mul(qty, strike);
+    let min_strike = matrix.min_strike;
+    let tick_size = matrix.tick_size;
     let mut summary = empty_summary();
-    let mut prefix_up = 0;
-    let mut prefix_dn = 0;
+    let mut prefix_start = 0;
+    let mut prefix_end = 0;
+    let mut prefix_qk_start = 0;
+    let mut prefix_qk_end = 0;
 
     {
         let page = matrix.pages.borrow_mut(page_index);
-        apply_exact_delta(&mut page[slot_index].q_up, qty, add);
+        if (is_start) {
+            apply_exact_delta(&mut page[slot_index].q_start, qty, add);
+        } else {
+            apply_exact_delta(&mut page[slot_index].q_end, qty, add);
+        };
         let mut i = 0;
         while (i < PAGE_SLOTS) {
             let node = &mut page[i];
-            // `agg_q_up` / `agg_qk_up` are prefix aggregates, so the delta
-            // affects every slot on or after the edited strike.
-            if (i >= slot_index) {
-                apply_delta(&mut node.agg_q_up, qty, add);
-                apply_delta(&mut node.agg_qk_up, delta_qk, add);
-            };
+            let strike = min_strike + (page_index * PAGE_SLOTS + i) * tick_size;
+            prefix_start = prefix_start + node.q_start;
+            prefix_end = prefix_end + node.q_end;
+            prefix_qk_start = prefix_qk_start + math::mul(node.q_start, strike);
+            prefix_qk_end = prefix_qk_end + math::mul(node.q_end, strike);
 
-            // Exact `max_payout` is a maximum prefix problem, so each page leaf
-            // stores the best prefix seen during this left-to-right sweep.
-            prefix_up = prefix_up + node.q_up;
-            prefix_dn = prefix_dn + node.q_dn;
+            node.agg_q_start = prefix_start;
+            node.agg_qk_start = prefix_qk_start;
+            node.agg_q_end = prefix_end;
+            node.agg_qk_end = prefix_qk_end;
+
             if (
                 prefix_is_better(
-                    prefix_up,
-                    prefix_dn,
-                    summary.best_prefix_up,
-                    summary.best_prefix_dn,
+                    prefix_start,
+                    prefix_end,
+                    summary.best_prefix_start,
+                    summary.best_prefix_end,
                 )
             ) {
-                summary.best_prefix_up = prefix_up;
-                summary.best_prefix_dn = prefix_dn;
+                summary.best_prefix_start = prefix_start;
+                summary.best_prefix_end = prefix_end;
             };
 
             i = i + 1;
         };
 
-        summary.total_q_up = page[PAGE_SLOTS - 1].agg_q_up;
-        summary.total_q_dn = page[0].agg_q_dn;
+        summary.total_q_start = page[PAGE_SLOTS - 1].agg_q_start;
+        summary.total_q_end = page[PAGE_SLOTS - 1].agg_q_end;
     };
 
     *(&mut matrix.page_tree[tree_index]) = summary;
 }
 
-/// Update one DN strike and rebuild the touched page in a single left-to-right pass.
-///
-/// The DN cached aggregates are suffix-style, so every slot at or to the left
-/// of `slot_index` must be updated. The page summary is rebuilt in the same pass.
-fun apply_dn_delta_and_recompute_page(
-    matrix: &mut StrikeMatrix,
-    page_index: u64,
-    slot_index: u64,
-    strike: u64,
-    qty: u64,
-    add: bool,
-) {
-    let tree_index = matrix.page_tree_leaf_count - 1 + page_index;
-    let delta_qk = math::mul(qty, strike);
-    let mut summary = empty_summary();
-    let mut prefix_up = 0;
-    let mut prefix_dn = 0;
-
-    {
-        let page = matrix.pages.borrow_mut(page_index);
-        apply_exact_delta(&mut page[slot_index].q_dn, qty, add);
-        let mut i = 0;
-        while (i < PAGE_SLOTS) {
-            let node = &mut page[i];
-            // `agg_q_dn` / `agg_qk_dn` are suffix aggregates, so the delta
-            // affects every slot on or before the edited strike.
-            if (i <= slot_index) {
-                apply_delta(&mut node.agg_q_dn, qty, add);
-                apply_delta(&mut node.agg_qk_dn, delta_qk, add);
-            };
-
-            prefix_up = prefix_up + node.q_up;
-            prefix_dn = prefix_dn + node.q_dn;
-            if (
-                prefix_is_better(
-                    prefix_up,
-                    prefix_dn,
-                    summary.best_prefix_up,
-                    summary.best_prefix_dn,
-                )
-            ) {
-                summary.best_prefix_up = prefix_up;
-                summary.best_prefix_dn = prefix_dn;
-            };
-
-            i = i + 1;
-        };
-
-        summary.total_q_up = page[PAGE_SLOTS - 1].agg_q_up;
-        summary.total_q_dn = page[0].agg_q_dn;
-    };
-
-    *(&mut matrix.page_tree[tree_index]) = summary;
-}
-
-/// Recover exact `(qty, qty * strike)` totals for one live-curve segment.
-///
-/// The returned range semantics match `evaluate()`:
-/// - UP covers `(start, end]`
-/// - DN covers `[start, end)`
+/// Recover exact `(qty, qty * strike)` start/end boundary totals for one
+/// live-curve segment `(start, end]`.
 fun accumulate_segment_qty_qk(
     matrix: &StrikeMatrix,
     start_page: u64,
@@ -541,45 +479,43 @@ fun accumulate_segment_qty_qk(
     end_page: u64,
     end_slot: u64,
 ): (u64, u64, u64, u64) {
-    let mut page_lo = start_page;
-    let mut slot_lo = start_slot;
-    let mut q_up_delta = 0;
-    let mut qk_up_delta = 0;
-    let mut q_up_chk = 0;
-    let mut qk_up_chk = 0;
-    let mut q_dn_delta = 0;
-    let mut qk_dn_delta = 0;
-    while (page_lo < end_page) {
-        let page = &matrix.pages[page_lo];
-        let start_node = &page[slot_lo];
-        let end_node = &page[PAGE_SLOTS - 1];
+    let mut page_key = start_page;
+    let mut q_start_delta = 0;
+    let mut qk_start_delta = 0;
+    let mut q_end_delta = 0;
+    let mut qk_end_delta = 0;
+    while (page_key <= end_page) {
+        let page = &matrix.pages[page_key];
+        let start_exclusive = if (page_key == start_page) {
+            start_slot
+        } else {
+            max_u64()
+        };
+        let end_inclusive = if (page_key == end_page) {
+            end_slot
+        } else {
+            PAGE_SLOTS - 1
+        };
+        let end_node = &page[end_inclusive];
 
-        q_up_delta = q_up_delta + end_node.agg_q_up - start_node.agg_q_up + q_up_chk;
-        qk_up_delta = qk_up_delta + end_node.agg_qk_up - start_node.agg_qk_up + qk_up_chk;
+        q_start_delta = q_start_delta + end_node.agg_q_start;
+        qk_start_delta = qk_start_delta + end_node.agg_qk_start;
+        q_end_delta = q_end_delta + end_node.agg_q_end;
+        qk_end_delta = qk_end_delta + end_node.agg_qk_end;
 
-        let end_q_dn = page[PAGE_SLOTS - 1].q_dn;
-        q_dn_delta = q_dn_delta + start_node.agg_q_dn - end_node.agg_q_dn + end_q_dn;
-        qk_dn_delta =
-            qk_dn_delta + start_node.agg_qk_dn - end_node.agg_qk_dn +
-            math::mul(end_q_dn, matrix.strike_from_coords(page_lo, PAGE_SLOTS - 1));
+        if (start_exclusive != max_u64()) {
+            let start_node = &page[start_exclusive];
+            q_start_delta = q_start_delta - start_node.agg_q_start;
+            qk_start_delta = qk_start_delta - start_node.agg_qk_start;
+            q_end_delta = q_end_delta - start_node.agg_q_end;
+            qk_end_delta = qk_end_delta - start_node.agg_qk_end;
+        };
 
-        page_lo = page_lo + 1;
-        slot_lo = 0;
-        let next_page = &matrix.pages[page_lo];
-        q_up_chk = next_page[slot_lo].q_up;
-        qk_up_chk = math::mul(q_up_chk, matrix.strike_from_coords(page_lo, slot_lo));
+        if (page_key == end_page) break;
+        page_key = page_key + 1;
     };
 
-    let page = &matrix.pages[end_page];
-    let start_node = &page[slot_lo];
-    let end_node = &page[end_slot];
-
-    q_up_delta = q_up_delta + end_node.agg_q_up - start_node.agg_q_up + q_up_chk;
-    qk_up_delta = qk_up_delta + end_node.agg_qk_up - start_node.agg_qk_up + qk_up_chk;
-    q_dn_delta = q_dn_delta + start_node.agg_q_dn - end_node.agg_q_dn;
-    qk_dn_delta = qk_dn_delta + start_node.agg_qk_dn - end_node.agg_qk_dn;
-
-    (q_up_delta, qk_up_delta, q_dn_delta, qk_dn_delta)
+    (q_start_delta, qk_start_delta, q_end_delta, qk_end_delta)
 }
 
 /// Rebuild all ancestors of one page-summary leaf up to the root.
@@ -602,12 +538,12 @@ fun empty_page(): vector<StrikeNode> {
     vector::tabulate!(
         PAGE_SLOTS,
         |_| StrikeNode {
-            q_up: 0,
-            q_dn: 0,
-            agg_q_up: 0,
-            agg_qk_up: 0,
-            agg_q_dn: 0,
-            agg_qk_dn: 0,
+            q_start: 0,
+            q_end: 0,
+            agg_q_start: 0,
+            agg_qk_start: 0,
+            agg_q_end: 0,
+            agg_qk_end: 0,
         },
     )
 }
@@ -615,10 +551,10 @@ fun empty_page(): vector<StrikeNode> {
 /// Return a zeroed page summary.
 fun empty_summary(): PageSummary {
     PageSummary {
-        total_q_up: 0,
-        total_q_dn: 0,
-        best_prefix_up: 0,
-        best_prefix_dn: 0,
+        total_q_start: 0,
+        total_q_end: 0,
+        best_prefix_start: 0,
+        best_prefix_end: 0,
     }
 }
 
@@ -654,35 +590,40 @@ fun interpolate_price_at_avg_strike(
 }
 
 /// Compare two unsigned prefix pairs without materializing a signed difference.
-fun prefix_is_better(candidate_up: u64, candidate_dn: u64, best_up: u64, best_dn: u64): bool {
-    candidate_up + best_dn >= candidate_dn + best_up
+fun prefix_is_better(
+    candidate_start: u64,
+    candidate_end: u64,
+    best_start: u64,
+    best_end: u64,
+): bool {
+    candidate_start + best_end >= candidate_end + best_start
 }
 
 /// Merge two page summaries into the summary for their concatenated strike range.
 fun merge_page_summaries(left: &PageSummary, right: &PageSummary): PageSummary {
-    let total_q_up = left.total_q_up + right.total_q_up;
-    let total_q_dn = left.total_q_dn + right.total_q_dn;
+    let total_q_start = left.total_q_start + right.total_q_start;
+    let total_q_end = left.total_q_end + right.total_q_end;
 
-    let right_prefix_up = left.total_q_up + right.best_prefix_up;
-    let right_prefix_dn = left.total_q_dn + right.best_prefix_dn;
-    let (best_prefix_up, best_prefix_dn) = if (
+    let right_prefix_start = left.total_q_start + right.best_prefix_start;
+    let right_prefix_end = left.total_q_end + right.best_prefix_end;
+    let (best_prefix_start, best_prefix_end) = if (
         prefix_is_better(
-            left.best_prefix_up,
-            left.best_prefix_dn,
-            right_prefix_up,
-            right_prefix_dn,
+            left.best_prefix_start,
+            left.best_prefix_end,
+            right_prefix_start,
+            right_prefix_end,
         )
     ) {
-        (left.best_prefix_up, left.best_prefix_dn)
+        (left.best_prefix_start, left.best_prefix_end)
     } else {
-        (right_prefix_up, right_prefix_dn)
+        (right_prefix_start, right_prefix_end)
     };
 
     PageSummary {
-        total_q_up,
-        total_q_dn,
-        best_prefix_up,
-        best_prefix_dn,
+        total_q_start,
+        total_q_end,
+        best_prefix_start,
+        best_prefix_end,
     }
 }
 

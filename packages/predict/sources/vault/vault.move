@@ -137,9 +137,8 @@ public(package) fun insert_position(
 }
 
 /// Insert a vertical range into the per-oracle exposure structure and update
-/// cached max payout. The range is recorded as `long UP@lower + long DN@higher`
-/// plus a `quantity` range_qty delta; `StrikeMatrix.max_payout()` already
-/// includes that adjustment.
+/// cached max payout. The strike matrix records range-native interval
+/// start/end boundaries.
 public(package) fun insert_range(
     vault: &mut Vault,
     oracle_id: ID,
@@ -215,7 +214,7 @@ public(package) fun set_mtm_with_curve(
 
     let matrix = &vault.oracle_matrices[oracle_id];
     let old_mtm = matrix.mtm();
-    let new_mtm = matrix.evaluate(curve) - matrix.range_qty();
+    let new_mtm = matrix.evaluate(curve);
 
     let matrix = &mut vault.oracle_matrices[oracle_id];
     matrix.set_mtm(new_mtm, clock);
@@ -233,7 +232,7 @@ public(package) fun set_mtm_with_settlement(
 
     let matrix = &vault.oracle_matrices[oracle_id];
     let old_mtm = matrix.mtm();
-    let new_mtm = matrix.evaluate_settled(settlement) - matrix.range_qty();
+    let new_mtm = matrix.evaluate_settled(settlement);
 
     let matrix = &mut vault.oracle_matrices[oracle_id];
     matrix.set_mtm(new_mtm, clock);
@@ -359,9 +358,9 @@ public(package) fun get_last_mtm_update(vault: &Vault, oracle_id: ID): u64 {
 
 // === Private Functions ===
 
-/// Per-matrix max payout net of the range quantity contributed by range mints.
+/// Per-matrix max payout.
 fun net_max_payout(matrix: &StrikeMatrix): u64 {
-    matrix.max_payout() - matrix.range_qty()
+    matrix.max_payout()
 }
 
 /// Join a concrete asset balance into its bag entry, creating it if needed.

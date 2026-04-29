@@ -721,6 +721,12 @@ public(package) fun assert_quoteable_oracle(oracle: &OracleSVI, clock: &Clock) {
 /// Settled oracles return exactly `1.0` if UP wins and `0` otherwise. Live
 /// oracles return `N(d2)` from the SVI surface.
 public(package) fun compute_price(oracle: &OracleSVI, strike: u64): u64 {
+    if (strike == constants::neg_inf!()) {
+        return constants::float_scaling!()
+    };
+    if (strike == constants::pos_inf!()) {
+        return 0
+    };
     if (oracle.settlement_price.is_some()) {
         let settlement_price = oracle.settlement_price.destroy_some();
         if (settlement_price > strike) {
