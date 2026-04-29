@@ -34,9 +34,8 @@ public struct Vault has store {
     balance: u64,
     /// Per-oracle matrix for strike-level position tracking.
     oracle_matrices: Table<ID, StrikeMatrix>,
-    /// Settlement prices for oracles whose dense matrices were compacted into
-    /// aggregate liability.
-    settled_oracles: Table<ID, u64>,
+    /// Settlement prices for compacted oracles.
+    compacted_oracle_settlements: Table<ID, u64>,
     /// Sum of all oracle matrix MTM values.
     total_mtm: u64,
     /// Sum of all oracle matrix max payout values.
@@ -89,7 +88,7 @@ public(package) fun new(ctx: &mut TxContext): Vault {
         balances: bag::new(ctx),
         balance: 0,
         oracle_matrices: table::new(ctx),
-        settled_oracles: table::new(ctx),
+        compacted_oracle_settlements: table::new(ctx),
         total_mtm: 0,
         total_max_payout: 0,
         unsettled_exposed_oracles: vector[],
@@ -149,8 +148,8 @@ public(package) fun remove_range(
     higher: u64,
     quantity: u64,
 ) {
-    if (vault.settled_oracles.contains(oracle_id)) {
-        let settlement = *vault.settled_oracles.borrow(oracle_id);
+    if (vault.compacted_oracle_settlements.contains(oracle_id)) {
+        let settlement = *vault.compacted_oracle_settlements.borrow(oracle_id);
         let payout = settled_range_payout(settlement, lower, higher, quantity);
         vault.total_mtm = vault.total_mtm - payout;
         vault.total_max_payout = vault.total_max_payout - payout;
@@ -258,7 +257,7 @@ public(package) fun compact_settled_oracle_if_needed(
     oracle_id: ID,
     settlement: u64,
 ) {
-    if (vault.settled_oracles.contains(oracle_id)) {
+    if (vault.compacted_oracle_settlements.contains(oracle_id)) {
         vault.remove_unsettled_exposed_oracle(oracle_id, true);
         return
     };
@@ -273,7 +272,7 @@ public(package) fun compact_settled_oracle_if_needed(
     vault.total_mtm = vault.total_mtm + remaining_liability - old_mtm;
     vault.total_max_payout = vault.total_max_payout + remaining_liability - old_max_payout;
 
-    vault.settled_oracles.add(oracle_id, settlement);
+    vault.compacted_oracle_settlements.add(oracle_id, settlement);
 }
 
 /// Return oracle IDs requiring fresh MTM before LP supply/withdraw.
@@ -290,8 +289,8 @@ public(package) fun oracle_strike_range(vault: &Vault, oracle_id: ID): (u64, u64
 }
 
 /// Return whether compact settled state exists for an oracle.
-public(package) fun has_settled_oracle(vault: &Vault, oracle_id: ID): bool {
-    vault.settled_oracles.contains(oracle_id)
+public(package) fun has_compacted_oracle(vault: &Vault, oracle_id: ID): bool {
+    vault.compacted_oracle_settlements.contains(oracle_id)
 }
 
 /// Return the cached MTM update timestamp for an oracle.

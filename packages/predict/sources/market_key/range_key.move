@@ -9,6 +9,8 @@
 /// share the same RangeKey row.
 module deepbook_predict::range_key;
 
+use deepbook_predict::constants;
+
 const EInvalidStrikes: u64 = 0;
 
 /// Key for a vertical range position used in PredictManager and Vault.
@@ -21,9 +23,14 @@ public struct RangeKey has copy, drop, store {
 
 // === Public Functions ===
 
-/// Create a new RangeKey. Aborts if `lower_strike >= higher_strike`.
+/// Create a new RangeKey. Aborts if `lower_strike >= higher_strike` or the
+/// range spans both sentinel endpoints.
 public fun new(oracle_id: ID, expiry: u64, lower_strike: u64, higher_strike: u64): RangeKey {
     assert!(lower_strike < higher_strike, EInvalidStrikes);
+    assert!(
+        !(lower_strike == constants::neg_inf!() && higher_strike == constants::pos_inf!()),
+        EInvalidStrikes,
+    );
     RangeKey { oracle_id, expiry, lower_strike, higher_strike }
 }
 

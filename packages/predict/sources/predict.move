@@ -232,19 +232,6 @@ public fun mint<Quote>(
     mint_internal<Quote>(predict, manager, oracle, key, quantity, clock, ctx);
 }
 
-/// Compact a settled oracle's dense strike matrix into constant-size state.
-/// Only an authorized oracle operator can trigger compaction.
-public fun compact_settled_oracle(
-    predict: &mut Predict,
-    oracle: &OracleSVI,
-    oracle_cap: &OracleSVICap,
-) {
-    oracle::assert_authorized_cap(oracle, oracle_cap);
-    assert!(oracle.is_settled(), EOracleNotSettled);
-    let settlement = oracle.settlement_price().destroy_some();
-    predict.vault.compact_settled_oracle_if_needed(oracle.id(), settlement);
-}
-
 /// Redeem a position interval.
 /// Live payout is post-trade fair value less fee. Settlement redemption is
 /// zero-fee and pays `quantity` if settlement landed in `(lower, higher]`.
@@ -361,6 +348,19 @@ public fun refresh_oracle_mtm(predict: &mut Predict, oracle: &OracleSVI, clock: 
     if (oracle.is_settled()) {
         predict.vault.remove_unsettled_exposed_oracle(oracle.id(), true);
     };
+}
+
+/// Compact a settled oracle's dense strike matrix into constant-size state.
+/// Only an authorized oracle operator can trigger compaction.
+public fun compact_settled_oracle(
+    predict: &mut Predict,
+    oracle: &OracleSVI,
+    oracle_cap: &OracleSVICap,
+) {
+    oracle::assert_authorized_cap(oracle, oracle_cap);
+    assert!(oracle.is_settled(), EOracleNotSettled);
+    let settlement = oracle.settlement_price().destroy_some();
+    predict.vault.compact_settled_oracle_if_needed(oracle.id(), settlement);
 }
 
 /// Per-unit `(fair_price, fee_rate)` quote for a position interval.
@@ -1024,7 +1024,7 @@ fun assert_quote_allowed(
 /// Refresh one oracle's cached risk metrics in the vault.
 fun refresh_oracle_risk(predict: &mut Predict, oracle: &OracleSVI, clock: &Clock) {
     let oracle_id = oracle.id();
-    if (oracle.is_settled() && predict.vault.has_settled_oracle(oracle_id)) {
+    if (oracle.is_settled() && predict.vault.has_compacted_oracle(oracle_id)) {
         // Compacted settled liability is already updated by vault mutations.
         return
     };
