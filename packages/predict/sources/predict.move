@@ -356,8 +356,7 @@ public fun refresh_oracle_mtm(predict: &mut Predict, oracle: &OracleSVI, clock: 
     let oracle_id = oracle.id();
     if (oracle.is_settled()) {
         let settlement = oracle.settlement_price().destroy_some();
-        predict.vault.apply_settled_valuation(oracle_id, settlement, clock);
-        predict.vault.remove_unsettled_exposed_oracle(oracle_id, true);
+        predict.vault.apply_settled_oracle_valuation(oracle_id, settlement, clock);
     } else {
         oracle.assert_live_oracle(clock);
         let (min_strike, max_strike) = predict.vault.valuation_strike_range(oracle_id);
@@ -932,7 +931,6 @@ fun apply_mint_delta<Quote>(
     let curve = predict.oracle_config.build_curve(oracle, min_strike, max_strike);
     manager.increase_position(key, quantity);
     predict.vault.insert_live_range(key, quantity, curve, clock);
-    predict.vault.add_unsettled_exposed_oracle(oracle.id());
 }
 
 /// Apply the position, vault, and risk-state delta for a live redeem before
@@ -954,7 +952,6 @@ fun apply_live_redeem_delta(
     let curve = predict.oracle_config.build_curve(oracle, min_strike, max_strike);
     manager.decrease_position(key, quantity);
     predict.vault.remove_live_range(key, quantity, curve, clock);
-    predict.vault.remove_unsettled_exposed_oracle(oracle.id(), false);
 }
 
 /// Apply the position, vault, and risk-state delta for a settled redeem before
@@ -974,7 +971,6 @@ fun apply_settled_redeem_delta(
 
     manager.decrease_position(key, quantity);
     predict.vault.remove_settled_range(key, quantity, settlement, clock);
-    predict.vault.remove_unsettled_exposed_oracle(oracle.id(), true);
 }
 
 fun quote_mint_amounts(
