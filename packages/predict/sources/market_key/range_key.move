@@ -63,20 +63,10 @@ public(package) fun extend_strike_range(
     let mut min_strike = min_strike;
     let mut max_strike = max_strike;
     if (key.lower_strike != constants::neg_inf!()) {
-        (min_strike, max_strike) =
-            include_strike_bound(
-                min_strike,
-                max_strike,
-                key.lower_strike,
-            );
+        min_strike = min_strike.min(key.lower_strike);
     };
     if (key.higher_strike != constants::pos_inf!()) {
-        (min_strike, max_strike) =
-            include_strike_bound(
-                min_strike,
-                max_strike,
-                key.higher_strike,
-            );
+        max_strike = max_strike.max(key.higher_strike);
     };
 
     (min_strike, max_strike)
@@ -95,13 +85,5 @@ fun settled_range_payout(settlement: u64, lower: u64, higher: u64, quantity: u64
         quantity
     } else {
         0
-    }
-}
-
-fun include_strike_bound(min_strike: u64, max_strike: u64, strike: u64): (u64, u64) {
-    if (min_strike == 0 && max_strike == 0) {
-        (strike, strike)
-    } else {
-        (min_strike.min(strike), max_strike.max(strike))
     }
 }
