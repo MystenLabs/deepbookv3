@@ -16,14 +16,13 @@ use deepbook::math;
 use deepbook_predict::{
     constants,
     fee_reserve::{Self, FeeReserve},
-    market_key::MarketKey,
     math::mul_div_round_down,
     oracle::{Self, OracleSVI, OracleSVICap},
     oracle_config::{Self, OracleConfig},
     plp::PLP,
     predict_manager::PredictManager,
     pricing_config::{Self, PricingConfig},
-    range_key::{Self, RangeKey},
+    range_key::RangeKey,
     rate_limiter::{Self, RateLimiter},
     risk_config::{Self, RiskConfig},
     treasury_config::{Self, TreasuryConfig},
@@ -54,9 +53,9 @@ const EStaleOracleMtm: u64 = 10;
 const EPredictAlreadyCreated: u64 = 11;
 const EFeeExceedsRedeemValue: u64 = 12;
 
-/// Emitted when a vertical range position is minted.
+/// Emitted when a position interval is minted.
 /// `cost` is fair value plus `fee_amount`; `fee_rate` is per-unit.
-public struct RangeMinted has copy, drop, store {
+public struct PositionMinted has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
     trader: address,
@@ -72,9 +71,9 @@ public struct RangeMinted has copy, drop, store {
     fee_amount: u64,
 }
 
-/// Emitted when a vertical range position is redeemed.
+/// Emitted when a position interval is redeemed.
 /// `payout` is net of fee for live redemptions and settlement value when settled.
-public struct RangeRedeemed has copy, drop, store {
+public struct PositionRedeemed has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
     owner: address,
@@ -221,70 +220,10 @@ public struct PredictKey<phantom T>() has copy, drop, store;
 
 // === Public Functions ===
 
-/// Buy a position using an enabled quote asset.
-/// Compatibility wrapper for binary UP/DOWN callers. The position is converted
-/// into its canonical sentinel range and minted through the range flow.
+/// Mint a position interval `(lower, higher]` using an enabled quote asset.
+/// The user pays the fair price plus per-unit fee up front; the vault tracks
+/// bounded liability natively via strike-matrix interval accounting.
 public fun mint<Quote>(
-    predict: &mut Predict,
-    manager: &mut PredictManager,
-    oracle: &OracleSVI,
-    key: MarketKey,
-    quantity: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    let range_key = market_key_to_range_key(key);
-    mint_range<Quote>(predict, manager, oracle, range_key, quantity, clock, ctx);
-}
-
-/// Compact a settled oracle's dense strike matrix into constant-size state.
-/// Only an authorized oracle operator can trigger compaction.
-public fun compact_settled_oracle(
-    predict: &mut Predict,
-    oracle: &OracleSVI,
-    oracle_cap: &OracleSVICap,
-) {
-    oracle::assert_authorized_cap(oracle, oracle_cap);
-    assert!(oracle.is_settled(), EOracleNotSettled);
-    let settlement = oracle.settlement_price().destroy_some();
-    predict.vault.compact_settled_oracle_if_needed(oracle.id(), settlement);
-}
-
-/// Sell a binary UP/DOWN position by converting it to the canonical sentinel
-/// range and redeeming through the range flow.
-public fun redeem<Quote>(
-    predict: &mut Predict,
-    manager: &mut PredictManager,
-    oracle: &OracleSVI,
-    key: MarketKey,
-    quantity: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    let range_key = market_key_to_range_key(key);
-    redeem_range<Quote>(predict, manager, oracle, range_key, quantity, clock, ctx);
-}
-
-/// Sell a settled binary UP/DOWN position permissionlessly through its
-/// canonical sentinel range.
-public fun redeem_permissionless<Quote>(
-    predict: &mut Predict,
-    manager: &mut PredictManager,
-    oracle: &OracleSVI,
-    key: MarketKey,
-    quantity: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    let range_key = market_key_to_range_key(key);
-    redeem_range_permissionless<Quote>(predict, manager, oracle, range_key, quantity, clock, ctx);
-}
-
-/// Mint a vertical range `(lower, higher)` priced as a single instrument.
-/// The user pays only the range premium up front; the vault tracks the bounded
-/// liability natively via strike-matrix interval accounting.
-/// The all-in mint price is the quoted fair price plus per-unit fee.
-public fun mint_range<Quote>(
     predict: &mut Predict,
     manager: &mut PredictManager,
     oracle: &OracleSVI,
@@ -308,7 +247,7 @@ public fun mint_range<Quote>(
 
     // Quote against the post-trade state so the trader pays the fee for the
     // liability their own mint just added to the vault.
-    let (fair_price, quoted_fee_rate) = predict.range_trade_quote(oracle, key, clock);
+    let (fair_price, quoted_fee_rate) = predict.trade_quote(oracle, key, clock);
     let mint_price = fair_price + quoted_fee_rate;
     predict.assert_mintable_price(oracle.id(), mint_price);
     let cost = math::mul(mint_price, quantity);
@@ -321,7 +260,7 @@ public fun mint_range<Quote>(
     predict.vault.assert_total_exposure(predict.risk_config.max_total_exposure_pct());
     manager.increase_range(key, quantity);
 
-    event::emit(RangeMinted {
+    event::emit(PositionMinted {
         predict_id: object::id(predict),
         manager_id: object::id(manager),
         trader: manager.owner(),
@@ -338,10 +277,23 @@ public fun mint_range<Quote>(
     });
 }
 
-/// Redeem a vertical range.
+/// Compact a settled oracle's dense strike matrix into constant-size state.
+/// Only an authorized oracle operator can trigger compaction.
+public fun compact_settled_oracle(
+    predict: &mut Predict,
+    oracle: &OracleSVI,
+    oracle_cap: &OracleSVICap,
+) {
+    oracle::assert_authorized_cap(oracle, oracle_cap);
+    assert!(oracle.is_settled(), EOracleNotSettled);
+    let settlement = oracle.settlement_price().destroy_some();
+    predict.vault.compact_settled_oracle_if_needed(oracle.id(), settlement);
+}
+
+/// Redeem a position interval.
 /// Live payout is post-trade fair value less fee. Settlement redemption is
 /// zero-fee and pays `quantity` if settlement landed in `(lower, higher]`.
-public fun redeem_range<Quote>(
+public fun redeem<Quote>(
     predict: &mut Predict,
     manager: &mut PredictManager,
     oracle: &OracleSVI,
@@ -351,20 +303,12 @@ public fun redeem_range<Quote>(
     ctx: &mut TxContext,
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
-    let payout_coin = redeem_range_internal<Quote>(
-        predict,
-        manager,
-        oracle,
-        key,
-        quantity,
-        clock,
-        ctx,
-    );
+    let payout_coin = redeem_internal<Quote>(predict, manager, oracle, key, quantity, clock, ctx);
     manager.deposit(payout_coin, ctx);
 }
 
-/// Sell a settled range permissionlessly into the PredictManager's balance.
-public fun redeem_range_permissionless<Quote>(
+/// Sell a settled position interval permissionlessly into the PredictManager's balance.
+public fun redeem_permissionless<Quote>(
     predict: &mut Predict,
     manager: &mut PredictManager,
     oracle: &OracleSVI,
@@ -374,15 +318,7 @@ public fun redeem_range_permissionless<Quote>(
     ctx: &mut TxContext,
 ) {
     assert!(oracle.is_settled(), EOracleNotSettled);
-    let payout_coin = redeem_range_internal<Quote>(
-        predict,
-        manager,
-        oracle,
-        key,
-        quantity,
-        clock,
-        ctx,
-    );
+    let payout_coin = redeem_internal<Quote>(predict, manager, oracle, key, quantity, clock, ctx);
     manager.deposit_permissionless(payout_coin, ctx);
 }
 
@@ -473,22 +409,9 @@ public fun refresh_oracle_mtm(predict: &mut Predict, oracle: &OracleSVI, clock: 
     };
 }
 
-/// Per-unit `(fair_price, fee_rate)` for a single-strike position.
+/// Per-unit `(fair_price, fee_rate)` for a position interval.
 /// `fee_rate` is an absolute price increment in FLOAT_SCALING, not bps.
-/// Binary UP/DOWN quotes are derived from the canonical sentinel range.
 public fun trade_quote(
-    predict: &Predict,
-    oracle: &OracleSVI,
-    key: MarketKey,
-    clock: &Clock,
-): (u64, u64) {
-    let range_key = market_key_to_range_key(key);
-    predict.range_trade_quote(oracle, range_key, clock)
-}
-
-/// Per-unit `(fair_price, fee_rate)` for a vertical range position.
-/// `fee_rate` is an absolute price increment in FLOAT_SCALING, not bps.
-public fun range_trade_quote(
     predict: &Predict,
     oracle: &OracleSVI,
     key: RangeKey,
@@ -915,16 +838,8 @@ fun assert_total_mtm_fresh(predict: &Predict, clock: &Clock) {
     }
 }
 
-fun market_key_to_range_key(key: MarketKey): RangeKey {
-    if (key.is_up()) {
-        range_key::new(key.oracle_id(), key.expiry(), key.strike(), constants::pos_inf!())
-    } else {
-        range_key::new(key.oracle_id(), key.expiry(), constants::neg_inf!(), key.strike())
-    }
-}
-
-/// Shared vertical-range redemption path.
-fun redeem_range_internal<Quote>(
+/// Shared redemption path.
+fun redeem_internal<Quote>(
     predict: &mut Predict,
     manager: &mut PredictManager,
     oracle: &OracleSVI,
@@ -945,7 +860,7 @@ fun redeem_range_internal<Quote>(
         predict.vault.remove_unsettled_exposed_oracle(oracle.id(), oracle.is_settled());
     };
 
-    let (fair_price, quoted_fee_rate) = predict.range_trade_quote(oracle, key, clock);
+    let (fair_price, quoted_fee_rate) = predict.trade_quote(oracle, key, clock);
     assert!(fair_price >= quoted_fee_rate, EFeeExceedsRedeemValue);
 
     let payout = math::mul(fair_price, quantity);
@@ -959,7 +874,7 @@ fun redeem_range_internal<Quote>(
 
     let payout_coin = payout_balance.into_coin(ctx);
 
-    event::emit(RangeRedeemed {
+    event::emit(PositionRedeemed {
         predict_id: object::id(predict),
         manager_id: object::id(manager),
         owner: manager.owner(),
