@@ -14,7 +14,12 @@
 module deepbook_predict::vault;
 
 use deepbook::math;
-use deepbook_predict::{constants, oracle_config::CurvePoint, strike_matrix::{Self, StrikeMatrix}};
+use deepbook_predict::{
+    constants,
+    oracle_config::CurvePoint,
+    range_key::RangeKey,
+    strike_matrix::{Self, StrikeMatrix}
+};
 use sui::{bag::{Self, Bag}, balance::Balance, clock::Clock, table::{Self, Table}};
 
 const EInsufficientBalance: u64 = 0;
@@ -118,13 +123,10 @@ public(package) fun init_oracle_matrix(
 /// Insert a vertical range into the per-oracle exposure structure and update
 /// cached max payout. The strike matrix records range-native interval
 /// start/end boundaries.
-public(package) fun insert_range(
-    vault: &mut Vault,
-    oracle_id: ID,
-    lower: u64,
-    higher: u64,
-    quantity: u64,
-) {
+public(package) fun insert_range(vault: &mut Vault, key: RangeKey, quantity: u64) {
+    let oracle_id = key.oracle_id();
+    let lower = key.lower_strike();
+    let higher = key.higher_strike();
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
     let old_max_payout = vault.oracle_matrices[oracle_id].max_payout();
     vault.oracle_matrices[oracle_id].insert_range(lower, higher, quantity);
@@ -141,13 +143,10 @@ public(package) fun accept_payment<T>(vault: &mut Vault, payment: Balance<T>) {
 
 /// Remove a vertical range from dense matrix exposure or compact settled
 /// liability.
-public(package) fun remove_range(
-    vault: &mut Vault,
-    oracle_id: ID,
-    lower: u64,
-    higher: u64,
-    quantity: u64,
-) {
+public(package) fun remove_range(vault: &mut Vault, key: RangeKey, quantity: u64) {
+    let oracle_id = key.oracle_id();
+    let lower = key.lower_strike();
+    let higher = key.higher_strike();
     if (vault.compacted_oracle_settlements.contains(oracle_id)) {
         let settlement = *vault.compacted_oracle_settlements.borrow(oracle_id);
         let payout = settled_range_payout(settlement, lower, higher, quantity);

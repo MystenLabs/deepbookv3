@@ -337,12 +337,6 @@ public(package) fun into_settled_liability(matrix: StrikeMatrix, settlement: u64
 /// exclusive and the upper endpoint is inclusive, so both finite boundaries use
 /// `UP@strike` prices in live MTM: starts add value and ends subtract it.
 fun apply_range(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64, add: bool) {
-    assert!(lower < higher, EInvalidStrikeRange);
-    assert!(
-        !(lower == constants::neg_inf!() && higher == constants::pos_inf!()),
-        EInvalidStrikeRange,
-    );
-
     if (lower == constants::neg_inf!()) {
         apply_exact_delta(&mut matrix.base_qty, qty, add);
     } else {
