@@ -267,8 +267,8 @@ public(package) fun compact_settled_oracle_if_needed(
     let matrix = vault.oracle_matrices.remove(oracle_id);
     vault.remove_unsettled_exposed_oracle(oracle_id, true);
     let old_mtm = matrix.mtm();
-    let old_max_payout = net_max_payout(&matrix);
-    let (_, remaining_liability) = strike_matrix::into_settled_totals(matrix, settlement);
+    let old_max_payout = matrix.max_payout();
+    let remaining_liability = strike_matrix::into_settled_liability(matrix, settlement);
 
     vault.total_mtm = vault.total_mtm + remaining_liability - old_mtm;
     vault.total_max_payout = vault.total_max_payout + remaining_liability - old_max_payout;
@@ -301,11 +301,6 @@ public(package) fun get_last_mtm_update(vault: &Vault, oracle_id: ID): u64 {
 }
 
 // === Private Functions ===
-
-/// Per-matrix max payout.
-fun net_max_payout(matrix: &StrikeMatrix): u64 {
-    matrix.max_payout()
-}
 
 /// Return settled payout for `(lower, higher]` with sentinel endpoints.
 fun settled_range_payout(settlement: u64, lower: u64, higher: u64, quantity: u64): u64 {

@@ -45,8 +45,7 @@ fun lower_sentinel_range_is_active_until_upper_boundary() {
     let curve = vector[oracle_config::new_curve_point(MID_STRIKE, UP_30C)];
     assert_eq!(matrix.evaluate(&curve), LOWER_SENTINEL_MTM);
 
-    let (remaining_quantity, remaining_liability) = matrix.into_settled_totals(IN_RANGE_SETTLEMENT);
-    assert_eq!(remaining_quantity, QTY);
+    let remaining_liability = matrix.into_settled_liability(IN_RANGE_SETTLEMENT);
     assert_eq!(remaining_liability, QTY);
     clock.destroy_for_testing();
 }
@@ -63,10 +62,7 @@ fun upper_sentinel_range_is_active_above_lower_boundary() {
     let curve = vector[oracle_config::new_curve_point(MIN_STRIKE, UP_40C)];
     assert_eq!(matrix.evaluate(&curve), UPPER_SENTINEL_MTM);
 
-    let (remaining_quantity, remaining_liability) = matrix.into_settled_totals(
-        BETWEEN_STRIKES_SETTLEMENT,
-    );
-    assert_eq!(remaining_quantity, QTY);
+    let remaining_liability = matrix.into_settled_liability(BETWEEN_STRIKES_SETTLEMENT);
     assert_eq!(remaining_liability, QTY);
     clock.destroy_for_testing();
 }
@@ -87,8 +83,7 @@ fun finite_range_uses_start_and_end_boundaries() {
     ];
     assert_eq!(matrix.evaluate(&curve), FINITE_RANGE_MTM);
 
-    let (remaining_quantity, remaining_liability) = matrix.into_settled_totals(IN_RANGE_SETTLEMENT);
-    assert_eq!(remaining_quantity, QTY);
+    let remaining_liability = matrix.into_settled_liability(IN_RANGE_SETTLEMENT);
     assert_eq!(remaining_liability, QTY);
     clock.destroy_for_testing();
 }
@@ -99,11 +94,7 @@ fun mixed_sentinel_ranges_compact_to_interval_quantity() {
     matrix.insert_range(constants::neg_inf!(), MID_STRIKE, QTY);
     matrix.insert_range(MIN_STRIKE, constants::pos_inf!(), DOUBLE_QTY);
 
-    let (remaining_quantity, remaining_liability) = matrix.into_settled_totals(
-        BETWEEN_STRIKES_SETTLEMENT,
-    );
-
-    assert_eq!(remaining_quantity, QTY + DOUBLE_QTY);
+    let remaining_liability = matrix.into_settled_liability(BETWEEN_STRIKES_SETTLEMENT);
     assert_eq!(remaining_liability, QTY + DOUBLE_QTY);
     clock.destroy_for_testing();
 }

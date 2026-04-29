@@ -62,11 +62,6 @@ public fun position(self: &PredictManager, key: RangeKey): u64 {
     }
 }
 
-/// Get the range position quantity for a given RangeKey.
-public fun range_position(self: &PredictManager, key: RangeKey): u64 {
-    self.position(key)
-}
-
 /// Get the balance of a specific coin type in the PredictManager.
 public fun balance<T>(self: &PredictManager): u64 {
     self.balance_manager.balance<T>()
@@ -102,8 +97,8 @@ public(package) fun deposit_permissionless<T>(
     self.balance_manager.deposit_with_cap(&self.deposit_cap, coin, ctx);
 }
 
-/// Increase range position quantity. Called when user mints a range.
-public(package) fun increase_range(self: &mut PredictManager, key: RangeKey, quantity: u64) {
+/// Increase position quantity.
+public(package) fun increase_position(self: &mut PredictManager, key: RangeKey, quantity: u64) {
     if (!self.positions.contains(key)) {
         self.positions.add(key, 0);
     };
@@ -111,8 +106,8 @@ public(package) fun increase_range(self: &mut PredictManager, key: RangeKey, qua
     *qty = *qty + quantity;
 }
 
-/// Decrease range position quantity. Called when user redeems a range.
-public(package) fun decrease_range(self: &mut PredictManager, key: RangeKey, quantity: u64) {
+/// Decrease position quantity.
+public(package) fun decrease_position(self: &mut PredictManager, key: RangeKey, quantity: u64) {
     assert!(self.positions.contains(key), EInsufficientPosition);
     let qty = &mut self.positions[key];
     assert!(*qty >= quantity, EInsufficientPosition);

@@ -288,9 +288,8 @@ public(package) fun minted_strike_range(matrix: &StrikeMatrix): (u64, u64) {
     )
 }
 
-/// Consume a dense matrix after settlement and return aggregate remaining
-/// instrument quantity plus exact settled liability.
-public(package) fun into_settled_totals(matrix: StrikeMatrix, settlement: u64): (u64, u64) {
+/// Consume a dense matrix after settlement and return exact settled liability.
+public(package) fun into_settled_liability(matrix: StrikeMatrix, settlement: u64): u64 {
     let StrikeMatrix {
         mut pages,
         page_tree: _,
@@ -307,7 +306,6 @@ public(package) fun into_settled_totals(matrix: StrikeMatrix, settlement: u64): 
 
     let total_strikes = (max_strike - min_strike) / tick_size + 1;
     let page_count = (total_strikes - 1) / PAGE_SLOTS + 1;
-    let mut remaining_quantity = base_qty;
     let mut remaining_liability = base_qty;
     let mut page_key = 0;
 
@@ -321,7 +319,6 @@ public(package) fun into_settled_totals(matrix: StrikeMatrix, settlement: u64): 
             let strike = min_strike + tick_index * tick_size;
             let q_start = page[slot].q_start;
             let q_end = page[slot].q_end;
-            remaining_quantity = remaining_quantity + q_start;
             if (strike < settlement) {
                 remaining_liability = remaining_liability + q_start - q_end;
             };
@@ -331,7 +328,7 @@ public(package) fun into_settled_totals(matrix: StrikeMatrix, settlement: u64): 
     };
 
     pages.destroy_empty();
-    (remaining_quantity, remaining_liability)
+    remaining_liability
 }
 
 // === Private Functions ===

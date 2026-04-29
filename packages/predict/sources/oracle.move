@@ -717,7 +717,7 @@ public(package) fun assert_quoteable_oracle(oracle: &OracleSVI, clock: &Clock) {
     oracle.assert_fresh(clock);
 }
 
-/// Compute the conditional UP price within one binary pair.
+/// Compute the UP tail price for a strike.
 /// Settled oracles return exactly `1.0` if UP wins and `0` otherwise. Live
 /// oracles return `N(d2)` from the SVI surface.
 public(package) fun compute_price(oracle: &OracleSVI, strike: u64): u64 {
@@ -744,13 +744,6 @@ public(package) fun compute_range_price(oracle: &OracleSVI, lower: u64, higher: 
     let lower_up_price = oracle.compute_price(lower);
     let higher_up_price = oracle.compute_price(higher);
     lower_up_price - higher_up_price
-}
-
-/// Return the exact fair prices for both sides of a binary market.
-/// The live parity invariant is `UP + DN = 1`.
-public(package) fun binary_price_pair(oracle: &OracleSVI, strike: u64, _clock: &Clock): (u64, u64) {
-    let up_price = oracle.compute_price(strike);
-    (up_price, constants::float_scaling!() - up_price)
 }
 
 /// Get the cached basis ratio (forward / spot) from the most recent

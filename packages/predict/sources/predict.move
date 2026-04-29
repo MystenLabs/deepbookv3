@@ -354,7 +354,6 @@ public fun withdraw<Quote>(
 /// used to keep LP supply/withdraw accounting fresh across unsettled exposed
 /// oracles; trade paths still refresh only the touched oracle inline.
 public fun refresh_oracle_mtm(predict: &mut Predict, oracle: &OracleSVI, clock: &Clock) {
-    if (oracle.is_settled() && predict.vault.has_settled_oracle(oracle.id())) return;
     if (!oracle.is_settled()) {
         oracle.assert_live_oracle(clock);
     };
@@ -890,7 +889,7 @@ fun apply_trade_delta<Quote>(
         predict.treasury_config.assert_quote_asset<Quote>();
         oracle.assert_live_oracle(clock);
 
-        manager.increase_range(key, quantity);
+        manager.increase_position(key, quantity);
         predict
             .vault
             .insert_range(
@@ -904,7 +903,7 @@ fun apply_trade_delta<Quote>(
     } else {
         oracle.assert_quoteable_oracle(clock);
 
-        manager.decrease_range(key, quantity);
+        manager.decrease_position(key, quantity);
         predict
             .vault
             .remove_range(
