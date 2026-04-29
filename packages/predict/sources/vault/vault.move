@@ -28,7 +28,6 @@ const EExceedsMaxTotalExposure: u64 = 1;
 const EOracleExposureNotFound: u64 = 2;
 const EMtmExceedsBalance: u64 = 3;
 const EAssetNotInVault: u64 = 4;
-const EInvalidExposureValuation: u64 = 5;
 
 /// Dynamic bag key for storing a concrete asset balance by type.
 public struct BalanceKey<phantom T> has copy, drop, store {}
@@ -136,10 +135,8 @@ public(package) fun insert_range(
     let lower = key.lower_strike();
     let higher = key.higher_strike();
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
-    let old_max_payout = vault.oracle_matrices[oracle_id].max_payout();
-    vault.oracle_matrices[oracle_id].insert_range(lower, higher, quantity);
-    let new_max_payout = vault.oracle_matrices[oracle_id].max_payout();
-    vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
+    let matrix = &mut vault.oracle_matrices[oracle_id];
+    matrix.insert_range(lower, higher, quantity);
     vault.apply_valuation(oracle_id, settlement, curve, clock);
 }
 
@@ -157,22 +154,16 @@ public(package) fun remove_range(
     let lower = key.lower_strike();
     let higher = key.higher_strike();
     if (vault.compacted_oracle_settlements.contains(oracle_id)) {
-        let stored_settlement = *vault.compacted_oracle_settlements.borrow(oracle_id);
-        assert!(settlement.is_some(), EInvalidExposureValuation);
-        let settlement_price = settlement.destroy_some();
-        assert!(curve.is_none(), EInvalidExposureValuation);
-        assert!(settlement_price == stored_settlement, EInvalidExposureValuation);
+        let settlement_price = *vault.compacted_oracle_settlements.borrow(oracle_id);
         let payout = settled_range_payout(settlement_price, lower, higher, quantity);
         vault.total_mtm = vault.total_mtm - payout;
         vault.total_max_payout = vault.total_max_payout - payout;
     } else {
         assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
-        let old_max_payout = vault.oracle_matrices[oracle_id].max_payout();
-        vault.oracle_matrices[oracle_id].remove_range(lower, higher, quantity);
-        let new_max_payout = vault.oracle_matrices[oracle_id].max_payout();
-        vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
+        let matrix = &mut vault.oracle_matrices[oracle_id];
+        matrix.remove_range(lower, higher, quantity);
         vault.apply_valuation(oracle_id, settlement, curve, clock);
-    }
+    };
 }
 
 /// Accept payment into vault balance.
@@ -282,7 +273,7 @@ public(package) fun valuation_strike_range(
     (min_strike, max_strike)
 }
 
-/// Apply a prepared valuation to one oracle's cached MTM.
+/// Apply a prepared valuation to one oracle's cached MTM and max payout.
 public(package) fun apply_valuation(
     vault: &mut Vault,
     oracle_id: ID,
@@ -294,19 +285,13 @@ public(package) fun apply_valuation(
         return
     };
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+    let matrix = &mut vault.oracle_matrices[oracle_id];
 
-    let new_mtm = if (settlement.is_some()) {
-        assert!(curve.is_none(), EInvalidExposureValuation);
-        vault.oracle_matrices[oracle_id].evaluate_settled(settlement.destroy_some())
-    } else if (curve.is_some()) {
-        vault.oracle_matrices[oracle_id].evaluate(curve.borrow())
-    } else {
-        0
-    };
+    let (old_mtm, old_max_payout, new_mtm, new_max_payout) =
+        matrix.refresh_risk(settlement, &curve, clock);
 
-    let old_mtm = vault.oracle_matrices[oracle_id].mtm();
-    vault.oracle_matrices[oracle_id].set_mtm(new_mtm, clock);
     vault.total_mtm = vault.total_mtm + new_mtm - old_mtm;
+    vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
 }
 
 /// Return the cached MTM update timestamp for an oracle.

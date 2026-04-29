@@ -886,16 +886,16 @@ fun apply_trade_delta<Quote>(
 ) {
     assert!(quantity > 0, EZeroQuantity);
     predict.oracle_config.assert_range_key_matches(oracle, &key);
-    let (settlement, curve) = predict.exposure_valuation(
-        oracle,
-        option::some(key.lower_strike()),
-        option::some(key.higher_strike()),
-    );
     if (is_buy) {
         assert!(!predict.trading_paused, ETradingPaused);
         predict.treasury_config.assert_quote_asset<Quote>();
         oracle.assert_live_oracle(clock);
 
+        let (settlement, curve) = predict.exposure_valuation(
+            oracle,
+            option::some(key.lower_strike()),
+            option::some(key.higher_strike()),
+        );
         manager.increase_position(key, quantity);
         predict.vault.insert_range(key, quantity, settlement, curve, clock);
         predict.vault.add_unsettled_exposed_oracle(oracle.id());
@@ -903,6 +903,11 @@ fun apply_trade_delta<Quote>(
         oracle.assert_quoteable_oracle(clock);
 
         manager.decrease_position(key, quantity);
+        let (settlement, curve) = predict.exposure_valuation(
+            oracle,
+            option::some(key.lower_strike()),
+            option::some(key.higher_strike()),
+        );
         predict.vault.remove_range(key, quantity, settlement, curve, clock);
         predict.vault.remove_unsettled_exposed_oracle(oracle.id(), oracle.is_settled());
     }

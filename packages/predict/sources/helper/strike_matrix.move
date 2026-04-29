@@ -70,6 +70,7 @@ const EUnalignedStrike: u64 = 5;
 const EInsufficientQuantity: u64 = 2;
 const ENonMonotoneCurve: u64 = 3;
 const EInvalidCurveRange: u64 = 4;
+const EInvalidRiskValuation: u64 = 6;
 
 /// Dense strike-indexed book with page-level summaries stored in an inline tree.
 public struct StrikeMatrix has store {
@@ -82,6 +83,7 @@ public struct StrikeMatrix has store {
     minted_min_strike: u64,
     minted_max_strike: u64,
     mtm: u64,
+    max_payout: u64,
     last_mtm_update: u64,
     /// Quantity active before the first finite strike, from `(-inf, higher]`
     /// intervals. Live MTM values it at 1.0 until a finite end boundary turns
@@ -145,6 +147,7 @@ public(package) fun new(
         minted_min_strike: max_u64(),
         minted_max_strike: 0,
         mtm: 0,
+        max_payout: 0,
         last_mtm_update: clock.timestamp_ms(),
         base_qty: 0,
     }
@@ -160,8 +163,112 @@ public(package) fun remove_range(matrix: &mut StrikeMatrix, lower: u64, higher: 
     matrix.apply_range(lower, higher, qty, false);
 }
 
+/// Return the exact worst-case settled payout across all settlement prices.
+public(package) fun max_payout(matrix: &StrikeMatrix): u64 {
+    matrix.max_payout
+}
+
+/// Cached mark-to-market value stored by the vault after oracle refresh.
+public(package) fun mtm(matrix: &StrikeMatrix): u64 {
+    matrix.mtm
+}
+
+/// Timestamp of the last MTM update, used by the vault to decide when to refresh.
+public(package) fun last_mtm_update(matrix: &StrikeMatrix): u64 {
+    matrix.last_mtm_update
+}
+
+/// Refresh cached risk values and return `(old_mtm, old_max_payout, new_mtm, new_max_payout)`.
+public(package) fun refresh_risk(
+    matrix: &mut StrikeMatrix,
+    settlement: Option<u64>,
+    curve: &Option<vector<CurvePoint>>,
+    clock: &Clock,
+): (u64, u64, u64, u64) {
+    let old_mtm = matrix.mtm;
+    let old_max_payout = matrix.max_payout;
+    let new_mtm = matrix.compute_mtm(settlement, curve);
+    let new_max_payout = matrix.compute_max_payout();
+
+    matrix.mtm = new_mtm;
+    matrix.max_payout = new_max_payout;
+    matrix.last_mtm_update = clock.timestamp_ms();
+
+    (old_mtm, old_max_payout, new_mtm, new_max_payout)
+}
+
+/// Return the historical minted strike bounds, or `(0, 0)` for an untouched
+/// book. These bounds only expand on insert and never contract on remove.
+public(package) fun minted_strike_range(matrix: &StrikeMatrix): (u64, u64) {
+    if (matrix.minted_min_strike > matrix.minted_max_strike) (0, 0) else (
+        matrix.minted_min_strike,
+        matrix.minted_max_strike,
+    )
+}
+
+/// Consume a dense matrix after settlement and return exact settled liability.
+public(package) fun into_settled_liability(matrix: StrikeMatrix, settlement: u64): u64 {
+    let StrikeMatrix {
+        mut pages,
+        page_tree: _,
+        page_tree_leaf_count: _,
+        tick_size,
+        min_strike,
+        max_strike,
+        minted_min_strike: _,
+        minted_max_strike: _,
+        mtm: _,
+        max_payout: _,
+        last_mtm_update: _,
+        base_qty,
+    } = matrix;
+
+    let total_strikes = (max_strike - min_strike) / tick_size + 1;
+    let page_count = (total_strikes - 1) / PAGE_SLOTS + 1;
+    let mut remaining_liability = base_qty;
+    let mut page_key = 0;
+
+    while (page_key < page_count) {
+        let page = pages.remove(page_key);
+        let mut slot = 0;
+        while (slot < PAGE_SLOTS) {
+            let tick_index = page_key * PAGE_SLOTS + slot;
+            if (tick_index >= total_strikes) break;
+
+            let strike = min_strike + tick_index * tick_size;
+            let q_start = page[slot].q_start;
+            let q_end = page[slot].q_end;
+            if (strike < settlement) {
+                remaining_liability = remaining_liability + q_start - q_end;
+            };
+            slot = slot + 1;
+        };
+        page_key = page_key + 1;
+    };
+
+    pages.destroy_empty();
+    remaining_liability
+}
+
+// === Private Functions ===
+
+fun compute_mtm(
+    matrix: &StrikeMatrix,
+    settlement: Option<u64>,
+    curve: &Option<vector<CurvePoint>>,
+): u64 {
+    if (settlement.is_some()) {
+        assert!(curve.is_none(), EInvalidRiskValuation);
+        matrix.evaluate_settled(settlement.destroy_some())
+    } else if (curve.is_some()) {
+        matrix.evaluate(curve.borrow())
+    } else {
+        0
+    }
+}
+
 /// Evaluate the current interval book against a sampled live curve.
-public(package) fun evaluate(matrix: &StrikeMatrix, curve: &vector<CurvePoint>): u64 {
+fun evaluate(matrix: &StrikeMatrix, curve: &vector<CurvePoint>): u64 {
     let len = curve.length();
     if (len == 0) return 0;
     assert!(
@@ -226,7 +333,7 @@ public(package) fun evaluate(matrix: &StrikeMatrix, curve: &vector<CurvePoint>):
 }
 
 /// Evaluate exact settled liability for a concrete settlement price.
-public(package) fun evaluate_settled(matrix: &StrikeMatrix, settlement: u64): u64 {
+fun evaluate_settled(matrix: &StrikeMatrix, settlement: u64): u64 {
     if (matrix.minted_max_strike < matrix.minted_min_strike) return 0;
 
     let (min_page, min_slot) = matrix.strike_to_coords(matrix.minted_min_strike);
@@ -257,81 +364,10 @@ public(package) fun evaluate_settled(matrix: &StrikeMatrix, settlement: u64): u6
     value
 }
 
-/// Return the exact worst-case settled payout across all settlement prices.
-public(package) fun max_payout(matrix: &StrikeMatrix): u64 {
+fun compute_max_payout(matrix: &StrikeMatrix): u64 {
     let root = matrix.page_tree[0];
     matrix.base_qty + root.best_prefix_start - root.best_prefix_end
 }
-
-/// Cached mark-to-market value stored by the vault after oracle refresh.
-public(package) fun mtm(matrix: &StrikeMatrix): u64 {
-    matrix.mtm
-}
-
-/// Timestamp of the last MTM update, used by the vault to decide when to refresh.
-public(package) fun last_mtm_update(matrix: &StrikeMatrix): u64 {
-    matrix.last_mtm_update
-}
-
-/// Overwrite the cached mark-to-market value after recomputing it from a curve.
-public(package) fun set_mtm(matrix: &mut StrikeMatrix, value: u64, clock: &Clock) {
-    matrix.mtm = value;
-    matrix.last_mtm_update = clock.timestamp_ms();
-}
-
-/// Return the historical minted strike bounds, or `(0, 0)` for an untouched
-/// book. These bounds only expand on insert and never contract on remove.
-public(package) fun minted_strike_range(matrix: &StrikeMatrix): (u64, u64) {
-    if (matrix.minted_min_strike > matrix.minted_max_strike) (0, 0) else (
-        matrix.minted_min_strike,
-        matrix.minted_max_strike,
-    )
-}
-
-/// Consume a dense matrix after settlement and return exact settled liability.
-public(package) fun into_settled_liability(matrix: StrikeMatrix, settlement: u64): u64 {
-    let StrikeMatrix {
-        mut pages,
-        page_tree: _,
-        page_tree_leaf_count: _,
-        tick_size,
-        min_strike,
-        max_strike,
-        minted_min_strike: _,
-        minted_max_strike: _,
-        mtm: _,
-        last_mtm_update: _,
-        base_qty,
-    } = matrix;
-
-    let total_strikes = (max_strike - min_strike) / tick_size + 1;
-    let page_count = (total_strikes - 1) / PAGE_SLOTS + 1;
-    let mut remaining_liability = base_qty;
-    let mut page_key = 0;
-
-    while (page_key < page_count) {
-        let page = pages.remove(page_key);
-        let mut slot = 0;
-        while (slot < PAGE_SLOTS) {
-            let tick_index = page_key * PAGE_SLOTS + slot;
-            if (tick_index >= total_strikes) break;
-
-            let strike = min_strike + tick_index * tick_size;
-            let q_start = page[slot].q_start;
-            let q_end = page[slot].q_end;
-            if (strike < settlement) {
-                remaining_liability = remaining_liability + q_start - q_end;
-            };
-            slot = slot + 1;
-        };
-        page_key = page_key + 1;
-    };
-
-    pages.destroy_empty();
-    remaining_liability
-}
-
-// === Private Functions ===
 
 /// Apply interval quantity as start/end boundary deltas. The lower endpoint is
 /// exclusive and the upper endpoint is inclusive, so both finite boundaries use
