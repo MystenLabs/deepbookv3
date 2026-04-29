@@ -905,7 +905,7 @@ fun apply_trade_delta<Quote>(
         oracle.assert_quoteable_oracle(clock);
 
         manager.decrease_range(key, quantity);
-        let should_refresh = predict
+        predict
             .vault
             .remove_range(
                 oracle.id(),
@@ -913,10 +913,8 @@ fun apply_trade_delta<Quote>(
                 key.higher_strike(),
                 quantity,
             );
-        if (should_refresh) {
-            predict.refresh_oracle_risk(oracle, clock);
-            predict.vault.remove_unsettled_exposed_oracle(oracle.id(), oracle.is_settled());
-        };
+        predict.refresh_oracle_risk(oracle, clock);
+        predict.vault.remove_unsettled_exposed_oracle(oracle.id(), oracle.is_settled());
     }
 }
 
@@ -1036,6 +1034,10 @@ fun assert_tradeable_price(
 /// Refresh one oracle's cached risk metrics in the vault.
 fun refresh_oracle_risk(predict: &mut Predict, oracle: &OracleSVI, clock: &Clock) {
     let oracle_id = oracle.id();
+    if (oracle.is_settled() && predict.vault.has_settled_oracle(oracle_id)) {
+        // Compacted settled liability is already updated by vault mutations.
+        return
+    };
     let (min_strike, max_strike) = predict.vault.oracle_strike_range(oracle_id);
     if (min_strike == 0 && max_strike == 0) {
         // `(0, 0)` means this oracle has never had any minted exposure.

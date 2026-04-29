@@ -141,28 +141,25 @@ public(package) fun accept_payment<T>(vault: &mut Vault, payment: Balance<T>) {
 }
 
 /// Remove a vertical range from dense matrix exposure or compact settled
-/// liability. Returns true when the dense matrix was updated and caller should
-/// refresh oracle risk from the oracle object.
+/// liability.
 public(package) fun remove_range(
     vault: &mut Vault,
     oracle_id: ID,
     lower: u64,
     higher: u64,
     quantity: u64,
-): bool {
+) {
     if (vault.settled_oracles.contains(oracle_id)) {
         let settlement = *vault.settled_oracles.borrow(oracle_id);
         let payout = settled_range_payout(settlement, lower, higher, quantity);
         vault.total_mtm = vault.total_mtm - payout;
         vault.total_max_payout = vault.total_max_payout - payout;
-        false
     } else {
         assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
         let old_max_payout = vault.oracle_matrices[oracle_id].max_payout();
         vault.oracle_matrices[oracle_id].remove_range(lower, higher, quantity);
         let new_max_payout = vault.oracle_matrices[oracle_id].max_payout();
         vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
-        true
     }
 }
 
