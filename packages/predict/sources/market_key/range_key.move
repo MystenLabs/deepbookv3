@@ -74,8 +74,10 @@ public(package) fun extend_strike_range(
 
     if (key.lower_strike != constants::neg_inf!()) {
         min_strike = min_strike.min(key.lower_strike);
+        max_strike = max_strike.max(key.lower_strike);
     };
     if (key.higher_strike != constants::pos_inf!()) {
+        min_strike = min_strike.min(key.higher_strike);
         max_strike = max_strike.max(key.higher_strike);
     };
 
