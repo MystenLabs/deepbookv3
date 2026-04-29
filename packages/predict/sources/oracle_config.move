@@ -13,7 +13,6 @@ module deepbook_predict::oracle_config;
 
 use deepbook_predict::{
     constants,
-    market_key::MarketKey,
     oracle::{Self, OracleBounds, OracleSVI, OracleSVICap},
     range_key::RangeKey,
     tuning_constants
@@ -21,8 +20,6 @@ use deepbook_predict::{
 use std::string::String;
 use sui::table::{Self, Table};
 
-const EMarketKeyOracleMismatch: u64 = 0;
-const EMarketKeyExpiryMismatch: u64 = 1;
 const EInvalidStrike: u64 = 2;
 const EOracleConfigNotFound: u64 = 3;
 const EInvalidCurveRange: u64 = 4;
@@ -396,19 +393,6 @@ public(package) fun assert_valid_strike(
     assert!((strike - min_strike) % tick_size == 0, EInvalidStrike);
 }
 
-/// Assert that a market key matches the oracle identity, expiry, and strike grid.
-public(package) fun assert_key_matches(
-    oracle_config: &OracleConfig,
-    oracle: &OracleSVI,
-    market_key: &MarketKey,
-) {
-    let oracle_id = oracle.id();
-
-    assert!(market_key.oracle_id() == oracle_id, EMarketKeyOracleMismatch);
-    assert!(market_key.expiry() == oracle.expiry(), EMarketKeyExpiryMismatch);
-    oracle_config.assert_valid_strike(oracle, market_key.strike());
-}
-
 /// Assert that a range key matches the oracle identity, expiry, and that both
 /// strikes lie on the configured grid.
 public(package) fun assert_range_key_matches(
@@ -420,7 +404,11 @@ public(package) fun assert_range_key_matches(
 
     assert!(range_key.oracle_id() == oracle_id, ERangeKeyOracleMismatch);
     assert!(range_key.expiry() == oracle.expiry(), ERangeKeyExpiryMismatch);
-    assert!(!(range_key.lower_strike() == constants::neg_inf!() && range_key.higher_strike() == constants::pos_inf!()));
+    assert!(
+        !(
+            range_key.lower_strike() == constants::neg_inf!() && range_key.higher_strike() == constants::pos_inf!(),
+        ),
+    );
     if (range_key.lower_strike() != constants::neg_inf!()) {
         oracle_config.assert_valid_strike(oracle, range_key.lower_strike());
     };

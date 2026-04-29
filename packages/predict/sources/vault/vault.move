@@ -121,21 +121,6 @@ public(package) fun init_oracle_matrix(
     };
 }
 
-/// Insert a position into the per-oracle exposure structure and update cached max payout.
-public(package) fun insert_position(
-    vault: &mut Vault,
-    oracle_id: ID,
-    is_up: bool,
-    strike: u64,
-    quantity: u64,
-) {
-    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
-    let old_max_payout = vault.oracle_matrices[oracle_id].max_payout();
-    vault.oracle_matrices[oracle_id].insert(strike, quantity, is_up);
-    let new_max_payout = vault.oracle_matrices[oracle_id].max_payout();
-    vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
-}
-
 /// Insert a vertical range into the per-oracle exposure structure and update
 /// cached max payout. The strike matrix records range-native interval
 /// start/end boundaries.
@@ -158,21 +143,6 @@ public(package) fun accept_payment<T>(vault: &mut Vault, payment: Balance<T>) {
     let amount = payment.value();
     vault.deposit_balance(payment);
     vault.balance = vault.balance + amount;
-}
-
-/// Remove a position from the strike matrix.
-public(package) fun remove_position(
-    vault: &mut Vault,
-    oracle_id: ID,
-    is_up: bool,
-    strike: u64,
-    quantity: u64,
-) {
-    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
-    let old_max_payout = vault.oracle_matrices[oracle_id].max_payout();
-    vault.oracle_matrices[oracle_id].remove(strike, quantity, is_up);
-    let new_max_payout = vault.oracle_matrices[oracle_id].max_payout();
-    vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
 }
 
 /// Remove a vertical range from the per-oracle exposure structure and update

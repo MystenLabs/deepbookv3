@@ -1,21 +1,18 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// PredictManager wraps a BalanceManager for binary options trading.
+/// PredictManager wraps a BalanceManager for Predict trading.
 ///
 /// Users deposit USDC into the PredictManager, which is stored in the inner
-/// BalanceManager. Long positions are tracked in `positions` keyed by
-/// MarketKey, and vertical-range positions in `range_positions` keyed by
-/// RangeKey.
+/// BalanceManager. Positions are tracked as canonical ranges keyed by RangeKey.
 module deepbook_predict::predict_manager;
 
 use deepbook::balance_manager::{Self, BalanceManager, DepositCap, WithdrawCap};
-use deepbook_predict::{market_key::MarketKey, range_key::RangeKey};
+use deepbook_predict::range_key::RangeKey;
 use sui::{coin::Coin, derived_object, table::{Self, Table}};
 
 const EInvalidOwner: u64 = 0;
 const EInsufficientPosition: u64 = 1;
-const EInsufficientRangePosition: u64 = 2;
 
 /// The key for deriving predict manager. u64 is optional for
 /// supporting multiple managers per address. Defaults to 0 in v1.
@@ -28,10 +25,8 @@ public struct PredictManager has key {
     balance_manager: BalanceManager,
     deposit_cap: DepositCap,
     withdraw_cap: WithdrawCap,
-    /// MarketKey -> long position quantity
-    positions: Table<MarketKey, u64>,
-    /// RangeKey -> range position quantity
-    range_positions: Table<RangeKey, u64>,
+    /// RangeKey -> position quantity
+    positions: Table<RangeKey, u64>,
 }
 
 // === Public Functions ===
@@ -58,8 +53,8 @@ public fun owner(self: &PredictManager): address {
     self.owner
 }
 
-/// Get the long position quantity for a given MarketKey.
-public fun position(self: &PredictManager, key: MarketKey): u64 {
+/// Get the position quantity for a given RangeKey.
+public fun position(self: &PredictManager, key: RangeKey): u64 {
     if (self.positions.contains(key)) {
         self.positions[key]
     } else {
@@ -69,11 +64,7 @@ public fun position(self: &PredictManager, key: MarketKey): u64 {
 
 /// Get the range position quantity for a given RangeKey.
 public fun range_position(self: &PredictManager, key: RangeKey): u64 {
-    if (self.range_positions.contains(key)) {
-        self.range_positions[key]
-    } else {
-        0
-    }
+    self.position(key)
 }
 
 /// Get the balance of a specific coin type in the PredictManager.
@@ -99,7 +90,6 @@ public(package) fun new(registry_uid: &mut UID, ctx: &mut TxContext): PredictMan
         deposit_cap,
         withdraw_cap,
         positions: table::new(ctx),
-        range_positions: table::new(ctx),
     }
 }
 
@@ -112,8 +102,8 @@ public(package) fun deposit_permissionless<T>(
     self.balance_manager.deposit_with_cap(&self.deposit_cap, coin, ctx);
 }
 
-/// Increase long position quantity. Called when user mints.
-public(package) fun increase_position(self: &mut PredictManager, key: MarketKey, quantity: u64) {
+/// Increase range position quantity. Called when user mints a range.
+public(package) fun increase_range(self: &mut PredictManager, key: RangeKey, quantity: u64) {
     if (!self.positions.contains(key)) {
         self.positions.add(key, 0);
     };
@@ -121,27 +111,10 @@ public(package) fun increase_position(self: &mut PredictManager, key: MarketKey,
     *qty = *qty + quantity;
 }
 
-/// Decrease long position quantity. Called when user redeems.
-public(package) fun decrease_position(self: &mut PredictManager, key: MarketKey, quantity: u64) {
+/// Decrease range position quantity. Called when user redeems a range.
+public(package) fun decrease_range(self: &mut PredictManager, key: RangeKey, quantity: u64) {
     assert!(self.positions.contains(key), EInsufficientPosition);
     let qty = &mut self.positions[key];
     assert!(*qty >= quantity, EInsufficientPosition);
-    *qty = *qty - quantity;
-}
-
-/// Increase range position quantity. Called when user mints a range.
-public(package) fun increase_range(self: &mut PredictManager, key: RangeKey, quantity: u64) {
-    if (!self.range_positions.contains(key)) {
-        self.range_positions.add(key, 0);
-    };
-    let qty = &mut self.range_positions[key];
-    *qty = *qty + quantity;
-}
-
-/// Decrease range position quantity. Called when user redeems a range.
-public(package) fun decrease_range(self: &mut PredictManager, key: RangeKey, quantity: u64) {
-    assert!(self.range_positions.contains(key), EInsufficientRangePosition);
-    let qty = &mut self.range_positions[key];
-    assert!(*qty >= quantity, EInsufficientRangePosition);
     *qty = *qty - quantity;
 }

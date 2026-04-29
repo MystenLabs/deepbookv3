@@ -150,24 +150,6 @@ public(package) fun new(
     }
 }
 
-/// Insert one UP or DOWN position quantity at `strike`.
-public(package) fun insert(matrix: &mut StrikeMatrix, strike: u64, qty: u64, is_up: bool) {
-    if (is_up) {
-        matrix.apply_range(strike, constants::pos_inf!(), qty, true);
-    } else {
-        matrix.apply_range(constants::neg_inf!(), strike, qty, true);
-    };
-}
-
-/// Remove one UP or DOWN position quantity at `strike`.
-public(package) fun remove(matrix: &mut StrikeMatrix, strike: u64, qty: u64, is_up: bool) {
-    if (is_up) {
-        matrix.apply_range(strike, constants::pos_inf!(), qty, false);
-    } else {
-        matrix.apply_range(constants::neg_inf!(), strike, qty, false);
-    };
-}
-
 /// Insert interval quantity for `(lower, higher]`.
 public(package) fun insert_range(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64) {
     matrix.apply_range(lower, higher, qty, true);
