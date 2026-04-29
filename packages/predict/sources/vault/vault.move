@@ -16,7 +16,6 @@ module deepbook_predict::vault;
 
 use deepbook::math;
 use deepbook_predict::{
-    constants,
     oracle_config::CurvePoint,
     range_key::RangeKey,
     strike_matrix::{Self, StrikeMatrix}
@@ -120,15 +119,12 @@ public(package) fun init_oracle_matrix(
     };
 }
 
-/// Insert a vertical range into the per-oracle exposure structure and update
-/// cached risk accounting. The strike matrix records range-native interval
-/// start/end boundaries.
-public(package) fun insert_range(
+/// Insert a live vertical range and refresh live risk accounting.
+public(package) fun insert_live_range(
     vault: &mut Vault,
     key: RangeKey,
     quantity: u64,
-    settlement: Option<u64>,
-    curve: Option<vector<CurvePoint>>,
+    curve: vector<CurvePoint>,
     clock: &Clock,
 ) {
     let oracle_id = key.oracle_id();
@@ -137,17 +133,32 @@ public(package) fun insert_range(
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
     let matrix = &mut vault.oracle_matrices[oracle_id];
     matrix.insert_range(lower, higher, quantity);
-    vault.apply_valuation(oracle_id, settlement, curve, clock);
+    vault.apply_live_valuation(oracle_id, curve, clock);
 }
 
-/// Remove a vertical range from dense matrix exposure or compact settled
-/// liability.
-public(package) fun remove_range(
+/// Remove a live vertical range from dense matrix exposure and refresh live risk accounting.
+public(package) fun remove_live_range(
     vault: &mut Vault,
     key: RangeKey,
     quantity: u64,
-    settlement: Option<u64>,
-    curve: Option<vector<CurvePoint>>,
+    curve: vector<CurvePoint>,
+    clock: &Clock,
+) {
+    let oracle_id = key.oracle_id();
+    let lower = key.lower_strike();
+    let higher = key.higher_strike();
+    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+    let matrix = &mut vault.oracle_matrices[oracle_id];
+    matrix.remove_range(lower, higher, quantity);
+    vault.apply_live_valuation(oracle_id, curve, clock);
+}
+
+/// Remove a settled vertical range from dense matrix exposure or compacted liability.
+public(package) fun remove_settled_range(
+    vault: &mut Vault,
+    key: RangeKey,
+    quantity: u64,
+    settlement: u64,
     clock: &Clock,
 ) {
     let oracle_id = key.oracle_id();
@@ -155,14 +166,14 @@ public(package) fun remove_range(
     let higher = key.higher_strike();
     if (vault.compacted_oracle_settlements.contains(oracle_id)) {
         let settlement_price = *vault.compacted_oracle_settlements.borrow(oracle_id);
-        let payout = settled_range_payout(settlement_price, lower, higher, quantity);
+        let payout = key.settled_payout(settlement_price, quantity);
         vault.total_mtm = vault.total_mtm - payout;
         vault.total_max_payout = vault.total_max_payout - payout;
     } else {
         assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
         let matrix = &mut vault.oracle_matrices[oracle_id];
         matrix.remove_range(lower, higher, quantity);
-        vault.apply_valuation(oracle_id, settlement, curve, clock);
+        vault.apply_settled_valuation(oracle_id, settlement, clock);
     };
 }
 
@@ -246,39 +257,18 @@ public(package) fun unsettled_exposed_oracles(vault: &Vault): &vector<ID> {
     &vault.unsettled_exposed_oracles
 }
 
-/// Return the strike bounds needed to value an oracle, optionally including
-/// finite endpoints from a trade key.
-public(package) fun valuation_strike_range(
-    vault: &Vault,
-    oracle_id: ID,
-    new_low: Option<u64>,
-    new_high: Option<u64>,
-): (u64, u64) {
+/// Return the historical minted strike bounds needed to value an oracle.
+public(package) fun valuation_strike_range(vault: &Vault, oracle_id: ID): (u64, u64) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
     let matrix = &vault.oracle_matrices[oracle_id];
-    let (mut min_strike, mut max_strike) = matrix.minted_strike_range();
-    if (new_low.is_some()) {
-        let low = new_low.destroy_some();
-        if (low != constants::neg_inf!()) {
-            (min_strike, max_strike) = include_strike_bound(min_strike, max_strike, low);
-        };
-    };
-    if (new_high.is_some()) {
-        let high = new_high.destroy_some();
-        if (high != constants::pos_inf!()) {
-            (min_strike, max_strike) = include_strike_bound(min_strike, max_strike, high);
-        };
-    };
-
-    (min_strike, max_strike)
+    matrix.minted_strike_range()
 }
 
-/// Apply a prepared valuation to one oracle's cached MTM and max payout.
-public(package) fun apply_valuation(
+/// Apply a live curve valuation to one oracle's cached MTM and max payout.
+public(package) fun apply_live_valuation(
     vault: &mut Vault,
     oracle_id: ID,
-    settlement: Option<u64>,
-    curve: Option<vector<CurvePoint>>,
+    curve: vector<CurvePoint>,
     clock: &Clock,
 ) {
     if (vault.compacted_oracle_settlements.contains(oracle_id)) {
@@ -286,12 +276,30 @@ public(package) fun apply_valuation(
     };
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
     let matrix = &mut vault.oracle_matrices[oracle_id];
+    let (old_mtm, old_max_payout, new_mtm, new_max_payout) = matrix.refresh_live_risk(
+        &curve,
+        clock,
+    );
+    vault.update_cached_risk(old_mtm, old_max_payout, new_mtm, new_max_payout);
+}
 
-    let (old_mtm, old_max_payout, new_mtm, new_max_payout) =
-        matrix.refresh_risk(settlement, &curve, clock);
-
-    vault.total_mtm = vault.total_mtm + new_mtm - old_mtm;
-    vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
+/// Apply a settled valuation to one oracle's cached MTM and max payout.
+public(package) fun apply_settled_valuation(
+    vault: &mut Vault,
+    oracle_id: ID,
+    settlement: u64,
+    clock: &Clock,
+) {
+    if (vault.compacted_oracle_settlements.contains(oracle_id)) {
+        return
+    };
+    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+    let matrix = &mut vault.oracle_matrices[oracle_id];
+    let (old_mtm, old_max_payout, new_mtm, new_max_payout) = matrix.refresh_settled_risk(
+        settlement,
+        clock,
+    );
+    vault.update_cached_risk(old_mtm, old_max_payout, new_mtm, new_max_payout);
 }
 
 /// Return the cached MTM update timestamp for an oracle.
@@ -302,23 +310,15 @@ public(package) fun get_last_mtm_update(vault: &Vault, oracle_id: ID): u64 {
 
 // === Private Functions ===
 
-fun include_strike_bound(min_strike: u64, max_strike: u64, strike: u64): (u64, u64) {
-    if (min_strike == 0 && max_strike == 0) {
-        (strike, strike)
-    } else {
-        (min_strike.min(strike), max_strike.max(strike))
-    }
-}
-
-/// Return settled payout for `(lower, higher]` with sentinel endpoints.
-fun settled_range_payout(settlement: u64, lower: u64, higher: u64, quantity: u64): u64 {
-    let above_lower = lower == constants::neg_inf!() || settlement > lower;
-    let at_or_below_higher = higher == constants::pos_inf!() || settlement <= higher;
-    if (above_lower && at_or_below_higher) {
-        quantity
-    } else {
-        0
-    }
+fun update_cached_risk(
+    vault: &mut Vault,
+    old_mtm: u64,
+    old_max_payout: u64,
+    new_mtm: u64,
+    new_max_payout: u64,
+) {
+    vault.total_mtm = vault.total_mtm + new_mtm - old_mtm;
+    vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
 }
 
 /// Join a concrete asset balance into its bag entry, creating it if needed.

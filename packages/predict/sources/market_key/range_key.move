@@ -53,3 +53,55 @@ public fun lower_strike(key: &RangeKey): u64 {
 public fun higher_strike(key: &RangeKey): u64 {
     key.higher_strike
 }
+
+/// Return `(min, max)` expanded to include this key's finite strike boundaries.
+public(package) fun extend_strike_range(
+    key: &RangeKey,
+    min_strike: u64,
+    max_strike: u64,
+): (u64, u64) {
+    let mut min_strike = min_strike;
+    let mut max_strike = max_strike;
+    if (key.lower_strike != constants::neg_inf!()) {
+        (min_strike, max_strike) =
+            include_strike_bound(
+                min_strike,
+                max_strike,
+                key.lower_strike,
+            );
+    };
+    if (key.higher_strike != constants::pos_inf!()) {
+        (min_strike, max_strike) =
+            include_strike_bound(
+                min_strike,
+                max_strike,
+                key.higher_strike,
+            );
+    };
+
+    (min_strike, max_strike)
+}
+
+/// Return this key's settled payout at a concrete settlement price.
+public(package) fun settled_payout(key: &RangeKey, settlement: u64, quantity: u64): u64 {
+    settled_range_payout(settlement, key.lower_strike, key.higher_strike, quantity)
+}
+
+/// Return settled payout for `(lower, higher]` with sentinel endpoints.
+fun settled_range_payout(settlement: u64, lower: u64, higher: u64, quantity: u64): u64 {
+    let above_lower = lower == constants::neg_inf!() || settlement > lower;
+    let at_or_below_higher = higher == constants::pos_inf!() || settlement <= higher;
+    if (above_lower && at_or_below_higher) {
+        quantity
+    } else {
+        0
+    }
+}
+
+fun include_strike_bound(min_strike: u64, max_strike: u64, strike: u64): (u64, u64) {
+    if (min_strike == 0 && max_strike == 0) {
+        (strike, strike)
+    } else {
+        (min_strike.min(strike), max_strike.max(strike))
+    }
+}

@@ -70,7 +70,6 @@ const EUnalignedStrike: u64 = 5;
 const EInsufficientQuantity: u64 = 2;
 const ENonMonotoneCurve: u64 = 3;
 const EInvalidCurveRange: u64 = 4;
-const EInvalidRiskValuation: u64 = 6;
 
 /// Dense strike-indexed book with page-level summaries stored in an inline tree.
 public struct StrikeMatrix has store {
@@ -178,23 +177,24 @@ public(package) fun last_mtm_update(matrix: &StrikeMatrix): u64 {
     matrix.last_mtm_update
 }
 
-/// Refresh cached risk values and return `(old_mtm, old_max_payout, new_mtm, new_max_payout)`.
-public(package) fun refresh_risk(
+/// Refresh cached live risk values from a sampled curve.
+public(package) fun refresh_live_risk(
     matrix: &mut StrikeMatrix,
-    settlement: Option<u64>,
-    curve: &Option<vector<CurvePoint>>,
+    curve: &vector<CurvePoint>,
     clock: &Clock,
 ): (u64, u64, u64, u64) {
-    let old_mtm = matrix.mtm;
-    let old_max_payout = matrix.max_payout;
-    let new_mtm = matrix.compute_mtm(settlement, curve);
-    let new_max_payout = matrix.compute_max_payout();
+    let new_mtm = matrix.evaluate(curve);
+    matrix.set_risk(new_mtm, clock)
+}
 
-    matrix.mtm = new_mtm;
-    matrix.max_payout = new_max_payout;
-    matrix.last_mtm_update = clock.timestamp_ms();
-
-    (old_mtm, old_max_payout, new_mtm, new_max_payout)
+/// Refresh cached settled risk values from a concrete settlement price.
+public(package) fun refresh_settled_risk(
+    matrix: &mut StrikeMatrix,
+    settlement: u64,
+    clock: &Clock,
+): (u64, u64, u64, u64) {
+    let new_mtm = matrix.evaluate_settled(settlement);
+    matrix.set_risk(new_mtm, clock)
 }
 
 /// Return the historical minted strike bounds, or `(0, 0)` for an untouched
@@ -252,19 +252,16 @@ public(package) fun into_settled_liability(matrix: StrikeMatrix, settlement: u64
 
 // === Private Functions ===
 
-fun compute_mtm(
-    matrix: &StrikeMatrix,
-    settlement: Option<u64>,
-    curve: &Option<vector<CurvePoint>>,
-): u64 {
-    if (settlement.is_some()) {
-        assert!(curve.is_none(), EInvalidRiskValuation);
-        matrix.evaluate_settled(settlement.destroy_some())
-    } else if (curve.is_some()) {
-        matrix.evaluate(curve.borrow())
-    } else {
-        0
-    }
+fun set_risk(matrix: &mut StrikeMatrix, new_mtm: u64, clock: &Clock): (u64, u64, u64, u64) {
+    let old_mtm = matrix.mtm;
+    let old_max_payout = matrix.max_payout;
+    let new_max_payout = matrix.compute_max_payout();
+
+    matrix.mtm = new_mtm;
+    matrix.max_payout = new_max_payout;
+    matrix.last_mtm_update = clock.timestamp_ms();
+
+    (old_mtm, old_max_payout, new_mtm, new_max_payout)
 }
 
 /// Evaluate the current interval book against a sampled live curve.
