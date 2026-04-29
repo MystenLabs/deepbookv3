@@ -62,6 +62,16 @@ public(package) fun extend_strike_range(
 ): (u64, u64) {
     let mut min_strike = min_strike;
     let mut max_strike = max_strike;
+    if (min_strike == 0 && max_strike == 0) {
+        if (key.lower_strike == constants::neg_inf!()) {
+            return (key.higher_strike, key.higher_strike)
+        };
+        if (key.higher_strike == constants::pos_inf!()) {
+            return (key.lower_strike, key.lower_strike)
+        };
+        return (key.lower_strike, key.higher_strike)
+    };
+
     if (key.lower_strike != constants::neg_inf!()) {
         min_strike = min_strike.min(key.lower_strike);
     };

@@ -10,7 +10,7 @@ module deepbook_predict::fee_reserve;
 use deepbook::math;
 use deepbook_predict::constants;
 use std::type_name::{Self, TypeName};
-use sui::{bag::{Self, Bag}, balance::Balance, event};
+use sui::{bag::{Self, Bag}, balance::{Self, Balance}, event};
 
 const EInvalidFeeSplit: u64 = 0;
 
