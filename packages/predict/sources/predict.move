@@ -905,15 +905,13 @@ fun apply_trade_delta<Quote>(
         oracle.assert_quoteable_oracle(clock);
 
         manager.decrease_range(key, quantity);
-        let payout = math::mul(range_fair_price(oracle, key), quantity);
         let should_refresh = predict
             .vault
-            .redeem_range(
+            .remove_range(
                 oracle.id(),
                 key.lower_strike(),
                 key.higher_strike(),
                 quantity,
-                payout,
             );
         if (should_refresh) {
             predict.refresh_oracle_risk(oracle, clock);

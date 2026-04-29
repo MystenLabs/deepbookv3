@@ -14,7 +14,7 @@
 module deepbook_predict::vault;
 
 use deepbook::math;
-use deepbook_predict::{oracle_config::CurvePoint, strike_matrix::{Self, StrikeMatrix}};
+use deepbook_predict::{constants, oracle_config::CurvePoint, strike_matrix::{Self, StrikeMatrix}};
 use sui::{bag::{Self, Bag}, balance::Balance, clock::Clock, table::{Self, Table}};
 
 const EInsufficientBalance: u64 = 0;
@@ -34,8 +34,9 @@ public struct Vault has store {
     balance: u64,
     /// Per-oracle matrix for strike-level position tracking.
     oracle_matrices: Table<ID, StrikeMatrix>,
-    /// Oracle IDs whose dense matrices were compacted into aggregate liability.
-    settled_oracles: Table<ID, bool>,
+    /// Settlement prices for oracles whose dense matrices were compacted into
+    /// aggregate liability.
+    settled_oracles: Table<ID, u64>,
     /// Sum of all oracle matrix MTM values.
     total_mtm: u64,
     /// Sum of all oracle matrix max payout values.
@@ -139,38 +140,28 @@ public(package) fun accept_payment<T>(vault: &mut Vault, payment: Balance<T>) {
     vault.balance = vault.balance + amount;
 }
 
-/// Remove a vertical range from the per-oracle exposure structure and update
-/// cached max payout. Symmetric to `insert_range`.
+/// Remove a vertical range from dense matrix exposure or compact settled
+/// liability. Returns true when the dense matrix was updated and caller should
+/// refresh oracle risk from the oracle object.
 public(package) fun remove_range(
     vault: &mut Vault,
     oracle_id: ID,
     lower: u64,
     higher: u64,
     quantity: u64,
-) {
-    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
-    let old_max_payout = vault.oracle_matrices[oracle_id].max_payout();
-    vault.oracle_matrices[oracle_id].remove_range(lower, higher, quantity);
-    let new_max_payout = vault.oracle_matrices[oracle_id].max_payout();
-    vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
-}
-
-/// Redeem a range from either dense matrix exposure or compact settled
-/// liability. Returns true when the dense matrix was updated and caller should
-/// refresh oracle risk from the oracle object.
-public(package) fun redeem_range(
-    vault: &mut Vault,
-    oracle_id: ID,
-    lower: u64,
-    higher: u64,
-    quantity: u64,
-    payout: u64,
 ): bool {
     if (vault.settled_oracles.contains(oracle_id)) {
-        vault.redeem_settled_liability(oracle_id, payout);
+        let settlement = *vault.settled_oracles.borrow(oracle_id);
+        let payout = settled_range_payout(settlement, lower, higher, quantity);
+        vault.total_mtm = vault.total_mtm - payout;
+        vault.total_max_payout = vault.total_max_payout - payout;
         false
     } else {
-        vault.remove_range(oracle_id, lower, higher, quantity);
+        assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+        let old_max_payout = vault.oracle_matrices[oracle_id].max_payout();
+        vault.oracle_matrices[oracle_id].remove_range(lower, higher, quantity);
+        let new_max_payout = vault.oracle_matrices[oracle_id].max_payout();
+        vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
         true
     }
 }
@@ -285,14 +276,7 @@ public(package) fun compact_settled_oracle_if_needed(
     vault.total_mtm = vault.total_mtm + remaining_liability - old_mtm;
     vault.total_max_payout = vault.total_max_payout + remaining_liability - old_max_payout;
 
-    vault.settled_oracles.add(oracle_id, true);
-}
-
-/// Apply a redemption against compact settled-oracle liability.
-fun redeem_settled_liability(vault: &mut Vault, oracle_id: ID, payout: u64) {
-    assert!(vault.settled_oracles.contains(oracle_id), EOracleExposureNotFound);
-    vault.total_mtm = vault.total_mtm - payout;
-    vault.total_max_payout = vault.total_max_payout - payout;
+    vault.settled_oracles.add(oracle_id, settlement);
 }
 
 /// Return oracle IDs requiring fresh MTM before LP supply/withdraw.
@@ -324,6 +308,17 @@ public(package) fun get_last_mtm_update(vault: &Vault, oracle_id: ID): u64 {
 /// Per-matrix max payout.
 fun net_max_payout(matrix: &StrikeMatrix): u64 {
     matrix.max_payout()
+}
+
+/// Return settled payout for `(lower, higher]` with sentinel endpoints.
+fun settled_range_payout(settlement: u64, lower: u64, higher: u64, quantity: u64): u64 {
+    let above_lower = lower == constants::neg_inf!() || settlement > lower;
+    let at_or_below_higher = higher == constants::pos_inf!() || settlement <= higher;
+    if (above_lower && at_or_below_higher) {
+        quantity
+    } else {
+        0
+    }
 }
 
 /// Join a concrete asset balance into its bag entry, creating it if needed.
