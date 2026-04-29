@@ -26,12 +26,6 @@ const EAssetNotInVault: u64 = 4;
 /// Dynamic bag key for storing a concrete asset balance by type.
 public struct BalanceKey<phantom T> has copy, drop, store {}
 
-/// Compact settled-oracle liability state after a dense matrix is removed.
-public struct SettledOracleState has copy, drop, store {
-    remaining_quantity: u64,
-    remaining_liability: u64,
-}
-
 /// Vault state for balances, exposure matrices, and aggregate liability.
 public struct Vault has store {
     /// Concrete balances stored per accepted quote asset type.
@@ -40,8 +34,8 @@ public struct Vault has store {
     balance: u64,
     /// Per-oracle matrix for strike-level position tracking.
     oracle_matrices: Table<ID, StrikeMatrix>,
-    /// Per-oracle compact state used after settlement compaction.
-    settled_oracles: Table<ID, SettledOracleState>,
+    /// Oracle IDs whose dense matrices were compacted into aggregate liability.
+    settled_oracles: Table<ID, bool>,
     /// Sum of all oracle matrix MTM values.
     total_mtm: u64,
     /// Sum of all oracle matrix max payout values.
@@ -161,6 +155,26 @@ public(package) fun remove_range(
     vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
 }
 
+/// Redeem a range from either dense matrix exposure or compact settled
+/// liability. Returns true when the dense matrix was updated and caller should
+/// refresh oracle risk from the oracle object.
+public(package) fun redeem_range(
+    vault: &mut Vault,
+    oracle_id: ID,
+    lower: u64,
+    higher: u64,
+    quantity: u64,
+    payout: u64,
+): bool {
+    if (vault.settled_oracles.contains(oracle_id)) {
+        vault.redeem_settled_liability(oracle_id, payout);
+        false
+    } else {
+        vault.remove_range(oracle_id, lower, higher, quantity);
+        true
+    }
+}
+
 /// Dispense payout from vault balance.
 public(package) fun dispense_payout<T>(vault: &mut Vault, amount: u64): Balance<T> {
     let payout = vault.withdraw_balance<T>(amount);
@@ -266,40 +280,19 @@ public(package) fun compact_settled_oracle_if_needed(
     vault.remove_unsettled_exposed_oracle(oracle_id, true);
     let old_mtm = matrix.mtm();
     let old_max_payout = net_max_payout(&matrix);
-    let (remaining_quantity, remaining_liability) = strike_matrix::into_settled_totals(
-        matrix,
-        settlement,
-    );
+    let (_, remaining_liability) = strike_matrix::into_settled_totals(matrix, settlement);
 
     vault.total_mtm = vault.total_mtm + remaining_liability - old_mtm;
     vault.total_max_payout = vault.total_max_payout + remaining_liability - old_max_payout;
 
-    vault
-        .settled_oracles
-        .add(
-            oracle_id,
-            SettledOracleState {
-                remaining_quantity,
-                remaining_liability,
-            },
-        );
+    vault.settled_oracles.add(oracle_id, true);
 }
 
-/// Apply a settled redemption against compact settled-oracle liability.
-public(package) fun redeem_settled_position(
-    vault: &mut Vault,
-    oracle_id: ID,
-    quantity: u64,
-    payout: u64,
-) {
+/// Apply a redemption against compact settled-oracle liability.
+fun redeem_settled_liability(vault: &mut Vault, oracle_id: ID, payout: u64) {
     assert!(vault.settled_oracles.contains(oracle_id), EOracleExposureNotFound);
-    let state = &mut vault.settled_oracles[oracle_id];
-    state.remaining_quantity = state.remaining_quantity - quantity;
-    state.remaining_liability = state.remaining_liability - payout;
     vault.total_mtm = vault.total_mtm - payout;
     vault.total_max_payout = vault.total_max_payout - payout;
-    // TODO: Decide whether fully redeemed settled oracles should be removed
-    // entirely or retained as zeroed records.
 }
 
 /// Return oracle IDs requiring fresh MTM before LP supply/withdraw.
