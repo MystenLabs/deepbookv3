@@ -10,7 +10,7 @@ module deepbook_predict::fee_reserve;
 use deepbook::math;
 use deepbook_predict::constants;
 use std::type_name::{Self, TypeName};
-use sui::{bag::{Self, Bag}, balance::{Self, Balance}, event};
+use sui::{bag::{Self, Bag}, balance::Balance, event};
 
 const EInvalidFeeSplit: u64 = 0;
 
@@ -256,6 +256,6 @@ fun drain_balance_for_testing<Quote>(balances: &mut Bag): Balance<Quote> {
     if (balances.contains(key)) {
         balances.remove(key)
     } else {
-        balance::zero<Quote>()
+        sui::balance::zero<Quote>()
     }
 }

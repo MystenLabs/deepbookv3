@@ -80,3 +80,6 @@ public macro fun required_quote_decimals(): u8 { 6 }
 /// Default MTM freshness threshold: maximum age of MTM values before they're
 /// considered stale for LP supply/withdraw gating (10 seconds).
 public macro fun default_mtm_freshness_ms(): u64 { 10_000 }
+
+public macro fun neg_inf(): u64 { 0 }
+public macro fun pos_inf(): u64 { std::u64::max_value!() }
