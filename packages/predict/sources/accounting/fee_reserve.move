@@ -121,21 +121,6 @@ public(package) fun set_fee_shares(
     reserve.insurance_fee_share = insurance_fee_share;
 }
 
-/// Split a full fee balance into `(lp_fee, protocol_fee, insurance_fee)`.
-/// Protocol and insurance shares round down; dust remains in the LP balance.
-public(package) fun split_fee<Quote>(
-    reserve: &FeeReserve,
-    fee: Balance<Quote>,
-): (Balance<Quote>, Balance<Quote>, Balance<Quote>) {
-    let mut lp_balance = fee;
-    let protocol_fee = math::mul(lp_balance.value(), reserve.protocol_fee_share);
-    let insurance_fee = math::mul(lp_balance.value(), reserve.insurance_fee_share);
-    let protocol_balance = lp_balance.split(protocol_fee);
-    let insurance_balance = lp_balance.split(insurance_fee);
-
-    (lp_balance, protocol_balance, insurance_balance)
-}
-
 /// Accrue a full fee balance, returning the LP-owned portion to the caller.
 /// Protocol and insurance shares are retained as concrete reserve balances.
 public(package) fun accrue_fee<Quote>(
@@ -159,6 +144,21 @@ public(package) fun accrue_fee<Quote>(
 }
 
 // === Private Functions ===
+
+/// Split a full fee balance into `(lp_fee, protocol_fee, insurance_fee)`.
+/// Protocol and insurance shares round down; dust remains in the LP balance.
+fun split_fee<Quote>(
+    reserve: &FeeReserve,
+    fee: Balance<Quote>,
+): (Balance<Quote>, Balance<Quote>, Balance<Quote>) {
+    let mut lp_balance = fee;
+    let protocol_fee = math::mul(lp_balance.value(), reserve.protocol_fee_share);
+    let insurance_fee = math::mul(lp_balance.value(), reserve.insurance_fee_share);
+    let protocol_balance = lp_balance.split(protocol_fee);
+    let insurance_balance = lp_balance.split(insurance_fee);
+
+    (lp_balance, protocol_balance, insurance_balance)
+}
 
 fun record_fee_accrual<Quote>(
     reserve: &mut FeeReserve,

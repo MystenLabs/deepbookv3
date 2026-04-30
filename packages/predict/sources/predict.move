@@ -51,7 +51,6 @@ const EAskBoundLooserThanGlobal: u64 = 8;
 const EOracleNotSettled: u64 = 9;
 const EStaleOracleMtm: u64 = 10;
 const EPredictAlreadyCreated: u64 = 11;
-const EFeeExceedsRedeemValue: u64 = 12;
 
 /// Emitted when a position interval is minted.
 /// `cost` is fair value plus `fee_amount`; `fee_rate` is per-unit.
@@ -997,10 +996,10 @@ fun quote_live_redeem_amounts(
     clock: &Clock,
 ): (u64, u64) {
     let (fair_price, fee_rate) = predict.quote_unit_price(oracle, key, clock);
-    assert!(fair_price >= fee_rate, EFeeExceedsRedeemValue);
 
     let principal_amount = math::mul(fair_price, quantity);
     let fee_amount = math::mul(fee_rate, quantity);
+    let fee_amount = fee_amount.min(principal_amount);
 
     (principal_amount, fee_amount)
 }

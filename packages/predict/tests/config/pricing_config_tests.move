@@ -4,7 +4,7 @@
 #[test_only]
 module deepbook_predict::pricing_config_tests;
 
-use deepbook_predict::pricing_config;
+use deepbook_predict::{constants, pricing_config};
 use std::unit_test::assert_eq;
 
 const HALF_PRICE: u64 = 500_000_000;
@@ -13,8 +13,6 @@ const NO_LIABILITY: u64 = 0;
 const FULL_UTILIZATION_LIABILITY: u64 = 1_000_000;
 const FULL_UTILIZATION_BALANCE: u64 = 1_000_000;
 
-const DEFAULT_BASE_FEE: u64 = 20_000_000;
-const DEFAULT_MIN_FEE: u64 = 5_000_000;
 const HALF_PRICE_BASE_FEE: u64 = 10_000_000; // 2% * sqrt(50% * 50%) = 1%.
 const HALF_PRICE_FULL_UTILIZATION_FEE: u64 = 50_000_000;
 
@@ -22,8 +20,8 @@ const HALF_PRICE_FULL_UTILIZATION_FEE: u64 = 50_000_000;
 fun defaults_expose_fee_terms() {
     let config = pricing_config::new();
 
-    assert_eq!(config.base_fee(), DEFAULT_BASE_FEE);
-    assert_eq!(config.min_fee(), DEFAULT_MIN_FEE);
+    assert_eq!(config.base_fee(), constants::default_base_fee!());
+    assert_eq!(config.min_fee(), constants::default_min_fee!());
     config.destroy_for_testing();
 }
 
@@ -51,7 +49,7 @@ fun quote_fee_rate_applies_minimum_fee_floor() {
         FULL_UTILIZATION_BALANCE,
     );
 
-    assert_eq!(fee_rate, DEFAULT_MIN_FEE);
+    assert_eq!(fee_rate, constants::default_min_fee!());
     config.destroy_for_testing();
 }
 

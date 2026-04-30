@@ -4,16 +4,13 @@
 #[test_only]
 module deepbook_predict::fee_reserve_tests;
 
-use deepbook_predict::fee_reserve;
+use deepbook_predict::{constants, fee_reserve};
 use std::unit_test::assert_eq;
 use sui::{balance, coin, sui::SUI};
 
 const PREDICT_ID: address = @0x42;
 const EVEN_FEE: u64 = 100;
 const ROUNDED_FEE: u64 = 101;
-const DEFAULT_LP_SHARE: u64 = 600_000_000;
-const DEFAULT_PROTOCOL_SHARE: u64 = 200_000_000;
-const DEFAULT_INSURANCE_SHARE: u64 = 200_000_000;
 const CUSTOM_LP_SHARE: u64 = 700_000_000;
 const CUSTOM_PROTOCOL_SHARE: u64 = 100_000_000;
 const CUSTOM_INSURANCE_SHARE: u64 = 200_000_000;
@@ -24,9 +21,9 @@ fun new_starts_with_default_fee_shares() {
     let ctx = &mut tx_context::dummy();
     let reserve = fee_reserve::new(ctx);
 
-    assert_eq!(reserve.lp_fee_share(), DEFAULT_LP_SHARE);
-    assert_eq!(reserve.protocol_fee_share(), DEFAULT_PROTOCOL_SHARE);
-    assert_eq!(reserve.insurance_fee_share(), DEFAULT_INSURANCE_SHARE);
+    assert_eq!(reserve.lp_fee_share(), constants::default_lp_fee_share!());
+    assert_eq!(reserve.protocol_fee_share(), constants::default_protocol_fee_share!());
+    assert_eq!(reserve.insurance_fee_share(), constants::default_insurance_fee_share!());
 
     reserve.destroy_empty_for_testing();
 }
@@ -93,24 +90,6 @@ fun set_fee_shares_rejects_sum_above_one() {
         CUSTOM_INSURANCE_SHARE,
     );
     abort 999
-}
-
-#[test]
-fun split_fee_returns_balance_shares() {
-    let ctx = &mut tx_context::dummy();
-    let reserve = fee_reserve::new(ctx);
-    let fee = coin::mint_for_testing<SUI>(EVEN_FEE, ctx).into_balance();
-
-    let (lp_fee, protocol_fee, insurance_fee) = reserve.split_fee(fee);
-
-    assert_eq!(lp_fee.value(), 60);
-    assert_eq!(protocol_fee.value(), 20);
-    assert_eq!(insurance_fee.value(), 20);
-
-    lp_fee.into_coin(ctx).burn_for_testing();
-    protocol_fee.into_coin(ctx).burn_for_testing();
-    insurance_fee.into_coin(ctx).burn_for_testing();
-    reserve.destroy_empty_for_testing();
 }
 
 #[test]
