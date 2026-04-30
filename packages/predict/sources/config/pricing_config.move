@@ -5,11 +5,13 @@
 module deepbook_predict::pricing_config;
 
 use deepbook::math;
-use deepbook_predict::{constants, math as predict_math};
+use deepbook_predict::{constants, i64::{Self, I64}, math as predict_math};
 
 const EInvalidFee: u64 = 0;
 const EFairPriceAlreadySettled: u64 = 1;
 const EInvalidAskBound: u64 = 2;
+const EInvalidTteBound: u64 = 3;
+const EInvalidDepthMultiplier: u64 = 4;
 
 /// Fee and ask-bound parameters used when quoting Predict markets.
 /// The quoted fee is a per-unit absolute price increment, not a bps rate.
@@ -26,6 +28,18 @@ public struct PricingConfig has store {
     min_ask_price: u64,
     /// Global maximum allowed all-in mint price after adding the fee.
     max_ask_price: u64,
+    /// Depth multiplier for the inventory-aware mid shift, in FLOAT_SCALING.
+    /// `raw_ratio = aggregate · tte_factor / (balance · depth_multiplier)`,
+    /// so lower values produce larger shifts from the same directional inventory.
+    depth_multiplier: u64,
+    /// Reference time-to-expiry for the inventory-aware mid shift.
+    /// `tte_factor = √(reference_tte_ms / max(tte_ms, min_tte_ms))`, so
+    /// `tte_factor == 1` exactly when `tte_ms == reference_tte_ms`.
+    reference_tte_ms: u64,
+    /// Minimum TTE floor used to cap near-expiry amplification of `tte_factor`.
+    /// Once `tte_ms < min_tte_ms`, further time decay no longer amplifies the
+    /// inventory shift.
+    min_tte_ms: u64,
 }
 
 // === Public Functions ===
@@ -55,6 +69,21 @@ public fun max_ask_price(config: &PricingConfig): u64 {
     config.max_ask_price
 }
 
+/// Return the depth multiplier for the inventory-aware mid shift.
+public fun depth_multiplier(config: &PricingConfig): u64 {
+    config.depth_multiplier
+}
+
+/// Return the reference time-to-expiry for the inventory-aware mid shift.
+public fun reference_tte_ms(config: &PricingConfig): u64 {
+    config.reference_tte_ms
+}
+
+/// Return the minimum TTE floor for the inventory-aware mid shift.
+public fun min_tte_ms(config: &PricingConfig): u64 {
+    config.min_tte_ms
+}
+
 // === Public-Package Functions ===
 
 /// Create pricing config seeded from protocol defaults.
@@ -65,6 +94,9 @@ public(package) fun new(): PricingConfig {
         utilization_multiplier: constants::default_utilization_multiplier!(),
         min_ask_price: constants::default_min_ask_price!(),
         max_ask_price: constants::default_max_ask_price!(),
+        depth_multiplier: constants::default_depth_multiplier!(),
+        reference_tte_ms: constants::default_reference_tte_ms!(),
+        min_tte_ms: constants::default_min_tte_ms!(),
     }
 }
 
@@ -98,6 +130,28 @@ public(package) fun set_max_ask_price(config: &mut PricingConfig, value: u64) {
     config.max_ask_price = value;
 }
 
+/// Set the depth multiplier. Zero is rejected: silently disabling the
+/// inventory shift via admin error is a defense-in-depth gap.
+public(package) fun set_depth_multiplier(config: &mut PricingConfig, multiplier: u64) {
+    assert!(multiplier > 0, EInvalidDepthMultiplier);
+    config.depth_multiplier = multiplier;
+}
+
+/// Set the reference TTE. Must be at least the current `min_tte_ms` so the
+/// invariant `min_tte_ms <= reference_tte_ms` is preserved.
+public(package) fun set_reference_tte_ms(config: &mut PricingConfig, value: u64) {
+    assert!(value >= config.min_tte_ms, EInvalidTteBound);
+    config.reference_tte_ms = value;
+}
+
+/// Set the minimum TTE floor. Must be positive (zero would let `tte_factor`
+/// amplification grow without bound) and not exceed the current
+/// `reference_tte_ms`.
+public(package) fun set_min_tte_ms(config: &mut PricingConfig, value: u64) {
+    assert!(value > 0 && value <= config.reference_tte_ms, EInvalidTteBound);
+    config.min_tte_ms = value;
+}
+
 /// Quote the dynamic per-unit fee rate for a live fair price.
 ///
 /// Uses Bernoulli variance scaling plus utilization pressure. Settled prices
@@ -120,6 +174,40 @@ public(package) fun quote_fee_rate_from_fair_price(
     fee
 }
 
+/// Post-shift `(mint_price, redeem_price)` for a fair UP price (or any
+/// `[0, 1]`-bounded fair price like a vertical-range premium). Applies a
+/// symmetric `fee` around the inventory-shifted mid, then clamps:
+/// `mint_price >= fair_price` and `redeem_price <= fair_price`. The
+/// zero-edge floor guarantees the LP never sells below or buys above fair.
+public(package) fun compute_up_quote(
+    config: &PricingConfig,
+    fair_price: u64,
+    aggregate: &I64,
+    liability: u64,
+    balance: u64,
+    tte_ms: u64,
+): (u64, u64) {
+    let fee = config.quote_fee_rate_from_fair_price(fair_price, liability, balance);
+    let shifted_mid = shifted_up_mid(
+        fair_price,
+        aggregate,
+        balance,
+        tte_ms,
+        config.depth_multiplier,
+        config.reference_tte_ms,
+        config.min_tte_ms,
+    );
+
+    let mint_price = (shifted_mid + fee).max(fair_price).min(constants::float_scaling!());
+    let redeem_price = if (shifted_mid > fee) {
+        (shifted_mid - fee).min(fair_price)
+    } else {
+        0
+    };
+
+    (mint_price, redeem_price)
+}
+
 // === Private Functions ===
 
 /// Compute fee pressure from current liability utilization.
@@ -140,6 +228,48 @@ fun utilization_fee(config: &PricingConfig, liability: u64, balance: u64): u64 {
     )
 }
 
+/// Inventory-shifted UP mid in FLOAT_SCALING. The shift is
+/// `clamp(aggregate · tte_factor / (balance · depth_multiplier), −1, +1)`
+/// scaled by the per-strike "room" to the binary boundary: `(1 − p)` for a
+/// positive ratio (vault net short UP — push the mid up) or `p` for a
+/// negative ratio (vault net long UP — push the mid down). Result is always
+/// in `[0, FLOAT_SCALING]` because the room scaling caps each direction at
+/// the binary bound.
+fun shifted_up_mid(
+    fair_price: u64,
+    aggregate: &I64,
+    balance: u64,
+    tte_ms: u64,
+    depth_multiplier: u64,
+    reference_tte_ms: u64,
+    min_tte_ms: u64,
+): u64 {
+    if (aggregate.is_zero() || balance == 0 || depth_multiplier == 0) return fair_price;
+
+    let fs = constants::float_scaling!();
+    let clamped_tte = tte_ms.max(min_tte_ms);
+    let tte_ratio = predict_math::mul_div_round_down(reference_tte_ms, fs, clamped_tte);
+    let tte_factor = predict_math::sqrt(tte_ratio, fs);
+
+    let denominator = math::mul(balance, depth_multiplier);
+    if (denominator == 0) return fair_price;
+
+    let num = aggregate.mul_scaled(&i64::from_u64(tte_factor));
+    let ratio = num.div_scaled(&i64::from_u64(denominator));
+    let ratio_mag = ratio.magnitude().min(fs);
+    if (ratio_mag == 0) return fair_price;
+
+    let ratio_negative = ratio.is_negative();
+    let room = if (ratio_negative) fair_price else fs - fair_price;
+    let shift = math::mul(ratio_mag, room);
+
+    if (ratio_negative) {
+        fair_price - shift
+    } else {
+        fair_price + shift
+    }
+}
+
 #[test_only]
 public fun destroy_for_testing(config: PricingConfig) {
     let PricingConfig {
@@ -148,5 +278,8 @@ public fun destroy_for_testing(config: PricingConfig) {
         utilization_multiplier: _,
         min_ask_price: _,
         max_ask_price: _,
+        depth_multiplier: _,
+        reference_tte_ms: _,
+        min_tte_ms: _,
     } = config;
 }
