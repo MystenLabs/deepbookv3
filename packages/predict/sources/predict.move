@@ -6,12 +6,16 @@
 /// This module orchestrates user actions across the vault, oracle config,
 /// manager, and pricing layers. It owns public trading and LP flows, while the
 /// lower modules provide isolated state machines and pricing primitives.
+///
+/// Trading uses one fair oracle price plus an explicit fee. The fee is charged
+/// on mint and pre-settlement redeem, routed through `FeeReserve`, and reported
+/// as `fee_amount` in trade events. Settlement redemption is zero-fee.
 module deepbook_predict::predict;
 
 use deepbook::math;
 use deepbook_predict::{
     constants,
-    market_key::MarketKey,
+    fee_reserve::{Self, FeeReserve},
     math::mul_div_round_down,
     oracle::{Self, OracleSVI, OracleSVICap},
     oracle_config::{Self, OracleConfig},
@@ -26,6 +30,7 @@ use deepbook_predict::{
 };
 use std::{string::String, type_name::{Self, TypeName}};
 use sui::{
+    balance::Balance,
     clock::Clock,
     coin::{Self, Coin, TreasuryCap},
     coin_registry::Currency,
@@ -47,7 +52,8 @@ const EOracleNotSettled: u64 = 9;
 const EStaleOracleMtm: u64 = 10;
 const EPredictAlreadyCreated: u64 = 11;
 
-/// Emitted when a binary UP/DOWN position is minted.
+/// Emitted when a position interval is minted.
+/// `cost` is fair value plus `fee_amount`; `fee_rate` is per-unit.
 public struct PositionMinted has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
@@ -55,14 +61,15 @@ public struct PositionMinted has copy, drop, store {
     quote_asset: TypeName,
     oracle_id: ID,
     expiry: u64,
-    strike: u64,
-    is_up: bool,
+    lower_strike: u64,
+    higher_strike: u64,
     quantity: u64,
     cost: u64,
-    ask_price: u64,
+    fee_amount: u64,
 }
 
-/// Emitted when a binary UP/DOWN position is redeemed.
+/// Emitted when a position interval is redeemed.
+/// `payout` is net of fee for live redemptions and settlement value when settled.
 public struct PositionRedeemed has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
@@ -71,43 +78,11 @@ public struct PositionRedeemed has copy, drop, store {
     quote_asset: TypeName,
     oracle_id: ID,
     expiry: u64,
-    strike: u64,
-    is_up: bool,
-    quantity: u64,
-    payout: u64,
-    bid_price: u64,
-    is_settled: bool,
-}
-
-/// Emitted when a vertical range position is minted.
-public struct RangeMinted has copy, drop, store {
-    predict_id: ID,
-    manager_id: ID,
-    trader: address,
-    quote_asset: TypeName,
-    oracle_id: ID,
-    expiry: u64,
-    lower_strike: u64,
-    higher_strike: u64,
-    quantity: u64,
-    cost: u64,
-    ask_price: u64,
-}
-
-/// Emitted when a vertical range position is redeemed.
-public struct RangeRedeemed has copy, drop, store {
-    predict_id: ID,
-    manager_id: ID,
-    owner: address,
-    executor: address,
-    quote_asset: TypeName,
-    oracle_id: ID,
-    expiry: u64,
     lower_strike: u64,
     higher_strike: u64,
     quantity: u64,
     payout: u64,
-    bid_price: u64,
+    fee_amount: u64,
     is_settled: bool,
 }
 
@@ -120,11 +95,19 @@ public struct TradingPauseUpdated has copy, drop, store {
 /// Emitted when pricing configuration changes.
 public struct PricingConfigUpdated has copy, drop, store {
     predict_id: ID,
-    base_spread: u64,
-    min_spread: u64,
+    base_fee: u64,
+    min_fee: u64,
     utilization_multiplier: u64,
     min_ask_price: u64,
     max_ask_price: u64,
+}
+
+/// Emitted when fee reserve distribution shares change.
+public struct FeeReserveConfigUpdated has copy, drop, store {
+    predict_id: ID,
+    lp_fee_share: u64,
+    protocol_fee_share: u64,
+    insurance_fee_share: u64,
 }
 
 /// Emitted when a per-oracle ask-bound override is set.
@@ -209,6 +192,8 @@ public struct Predict has key {
     id: UID,
     /// Vault holding treasury balances and tracking exposure
     vault: Vault,
+    /// Protocol and insurance fee reserves excluded from LP vault value.
+    fee_reserve: FeeReserve,
     /// Treasury cap for minting/burning PLP tokens
     treasury_cap: TreasuryCap<PLP>,
     /// Pricing configuration (admin-controlled)
@@ -230,192 +215,55 @@ public struct PredictKey<phantom T>() has copy, drop, store;
 
 // === Public Functions ===
 
-/// Buy a position using an enabled quote asset.
-/// Cost is withdrawn from the PredictManager's balance.
-/// Position quantity is added to the PredictManager's positions.
+/// Mint a position interval `(lower, higher]` using an enabled quote asset.
+/// The user pays the fair price plus per-unit fee up front; the vault tracks
+/// bounded liability natively via strike-matrix interval accounting.
 public fun mint<Quote>(
     predict: &mut Predict,
     manager: &mut PredictManager,
     oracle: &OracleSVI,
-    key: MarketKey,
+    key: RangeKey,
     quantity: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
-    assert!(!predict.trading_paused, ETradingPaused);
-    assert!(quantity > 0, EZeroQuantity);
-    predict.treasury_config.assert_quote_asset<Quote>();
-
-    predict.oracle_config.assert_key_matches(oracle, &key);
-    oracle.assert_live_oracle(clock);
-
-    let strike = key.strike();
-    let is_up = key.is_up();
-
-    predict.vault.insert_position(oracle.id(), is_up, strike, quantity);
-    predict.refresh_oracle_risk(oracle, clock);
-    predict.vault.add_unsettled_exposed_oracle(oracle.id());
-
-    // Quote against the post-trade state so the trader pays for the liability
-    // their own mint just added to the vault.
-    let (ask, _) = predict.trade_prices(oracle, key, clock);
-    predict.assert_mintable_ask(oracle.id(), ask);
-    let cost = math::mul(ask, quantity);
-
-    let payment = manager.withdraw<Quote>(cost, ctx).into_balance();
-    predict.vault.accept_payment(payment);
-    predict.vault.assert_total_exposure(predict.risk_config.max_total_exposure_pct());
-    manager.increase_position(key, quantity);
-
-    event::emit(PositionMinted {
-        predict_id: object::id(predict),
-        manager_id: object::id(manager),
-        trader: manager.owner(),
-        quote_asset: type_name::with_defining_ids<Quote>(),
-        oracle_id: key.oracle_id(),
-        expiry: key.expiry(),
-        strike,
-        is_up,
-        quantity,
-        cost,
-        ask_price: ask,
-    });
+    mint_internal<Quote>(predict, manager, oracle, key, quantity, clock, ctx);
 }
 
-/// Compact a settled oracle's dense strike matrix into constant-size state.
-/// Only an authorized oracle operator can trigger compaction.
-public fun compact_settled_oracle(
-    predict: &mut Predict,
-    oracle: &OracleSVI,
-    oracle_cap: &OracleSVICap,
-) {
-    oracle::assert_authorized_cap(oracle, oracle_cap);
-    assert!(oracle.is_settled(), EOracleNotSettled);
-    let settlement = oracle.settlement_price().destroy_some();
-    predict.vault.compact_settled_oracle_if_needed(oracle.id(), settlement);
-}
-
-/// Sell a position. Payout is deposited into the PredictManager's balance.
-/// Outflows can use any quote asset with concrete vault balance, even if it is
-/// disabled for new inflows.
-/// Position quantity is removed from the PredictManager's positions.
+/// Redeem a position interval.
+/// Live payout is post-trade fair value less fee. Settlement redemption is
+/// zero-fee and pays `quantity` if settlement landed in `(lower, higher]`.
 public fun redeem<Quote>(
     predict: &mut Predict,
     manager: &mut PredictManager,
     oracle: &OracleSVI,
-    key: MarketKey,
+    key: RangeKey,
     quantity: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
-    let payout_coin = redeem_internal<Quote>(predict, manager, oracle, key, quantity, clock, ctx);
+    let payout_coin = if (oracle.is_settled()) {
+        redeem_settled_internal<Quote>(predict, manager, oracle, key, quantity, clock, ctx)
+    } else {
+        redeem_live_internal<Quote>(predict, manager, oracle, key, quantity, clock, ctx)
+    };
     manager.deposit(payout_coin, ctx);
 }
 
-/// Sell a settled position permissionlessly into the PredictManager's balance.
+/// Sell a settled position interval permissionlessly into the PredictManager's balance.
 public fun redeem_permissionless<Quote>(
     predict: &mut Predict,
     manager: &mut PredictManager,
     oracle: &OracleSVI,
-    key: MarketKey,
-    quantity: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    assert!(oracle.is_settled(), EOracleNotSettled);
-    let payout_coin = redeem_internal<Quote>(predict, manager, oracle, key, quantity, clock, ctx);
-    manager.deposit_permissionless(payout_coin, ctx);
-}
-
-/// Mint a vertical range `(lower, higher)` priced as a single instrument.
-/// The user pays only the range premium up front; the vault tracks the bounded
-/// liability natively via the strike-matrix range_qty offset.
-public fun mint_range<Quote>(
-    predict: &mut Predict,
-    manager: &mut PredictManager,
-    oracle: &OracleSVI,
-    key: RangeKey,
-    quantity: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    assert!(ctx.sender() == manager.owner(), ENotOwner);
-    assert!(!predict.trading_paused, ETradingPaused);
-    assert!(quantity > 0, EZeroQuantity);
-    predict.treasury_config.assert_quote_asset<Quote>();
-    predict.oracle_config.assert_range_key_matches(oracle, &key);
-    oracle.assert_live_oracle(clock);
-
-    let lower = key.lower_strike();
-    let higher = key.higher_strike();
-    predict.vault.insert_range(oracle.id(), lower, higher, quantity);
-    predict.refresh_oracle_risk(oracle, clock);
-    predict.vault.add_unsettled_exposed_oracle(oracle.id());
-
-    // Quote against the post-trade state so the trader pays for the liability
-    // their own mint just added to the vault.
-    let (ask, _) = predict.range_trade_prices(oracle, key, clock);
-    predict.assert_mintable_ask(oracle.id(), ask);
-    let cost = math::mul(ask, quantity);
-
-    let payment = manager.withdraw<Quote>(cost, ctx).into_balance();
-    predict.vault.accept_payment(payment);
-    predict.vault.assert_total_exposure(predict.risk_config.max_total_exposure_pct());
-    manager.increase_range(key, quantity);
-
-    event::emit(RangeMinted {
-        predict_id: object::id(predict),
-        manager_id: object::id(manager),
-        trader: manager.owner(),
-        quote_asset: type_name::with_defining_ids<Quote>(),
-        oracle_id: key.oracle_id(),
-        expiry: key.expiry(),
-        lower_strike: lower,
-        higher_strike: higher,
-        quantity,
-        cost,
-        ask_price: ask,
-    });
-}
-
-/// Redeem a vertical range. Payout is the post-trade bid value pre-settlement,
-/// or `$1·qty` if the settlement landed in the band (lower, higher].
-public fun redeem_range<Quote>(
-    predict: &mut Predict,
-    manager: &mut PredictManager,
-    oracle: &OracleSVI,
-    key: RangeKey,
-    quantity: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    assert!(ctx.sender() == manager.owner(), ENotOwner);
-    let payout_coin = redeem_range_internal<Quote>(
-        predict,
-        manager,
-        oracle,
-        key,
-        quantity,
-        clock,
-        ctx,
-    );
-    manager.deposit(payout_coin, ctx);
-}
-
-/// Sell a settled range permissionlessly into the PredictManager's balance.
-public fun redeem_range_permissionless<Quote>(
-    predict: &mut Predict,
-    manager: &mut PredictManager,
-    oracle: &OracleSVI,
     key: RangeKey,
     quantity: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
     assert!(oracle.is_settled(), EOracleNotSettled);
-    let payout_coin = redeem_range_internal<Quote>(
+    let payout_coin = redeem_settled_internal<Quote>(
         predict,
         manager,
         oracle,
@@ -502,43 +350,63 @@ public fun withdraw<Quote>(
 
 /// Keeper/ops hook for syncing one oracle's cached MTM into the vault. This is
 /// used to keep LP supply/withdraw accounting fresh across unsettled exposed
-/// oracles; trade paths still refresh only the touched oracle inline.
+/// oracles; trade mutations refresh the touched oracle inline.
 public fun refresh_oracle_mtm(predict: &mut Predict, oracle: &OracleSVI, clock: &Clock) {
-    if (oracle.is_settled() && predict.vault.has_settled_oracle(oracle.id())) return;
-    if (!oracle.is_settled()) {
-        oracle.assert_live_oracle(clock);
-    };
-    predict.refresh_oracle_risk(oracle, clock);
+    let oracle_id = oracle.id();
     if (oracle.is_settled()) {
-        predict.vault.remove_unsettled_exposed_oracle(oracle.id(), true);
+        let settlement = oracle.settlement_price().destroy_some();
+        predict.vault.apply_settled_oracle_valuation(oracle_id, settlement, clock);
+    } else {
+        oracle.assert_live_oracle(clock);
+        let (min_strike, max_strike) = predict.vault.valuation_strike_range(oracle_id);
+        if (min_strike == 0 && max_strike == 0) {
+            return
+        } else {
+            let curve = predict.oracle_config.build_curve(oracle, min_strike, max_strike);
+            predict.vault.apply_live_valuation(oracle_id, curve, clock);
+        };
     };
 }
 
-/// Get the amounts for mint/redeem (for UI/preview).
-/// Returns (mint_cost, redeem_payout).
-public fun get_trade_amounts(
-    predict: &Predict,
+/// Compact a settled oracle's dense strike matrix into constant-size state.
+/// Only an authorized oracle operator can trigger compaction.
+public fun compact_settled_oracle(
+    predict: &mut Predict,
     oracle: &OracleSVI,
-    key: MarketKey,
-    quantity: u64,
-    clock: &Clock,
-): (u64, u64) {
-    let (ask, bid) = predict.trade_prices(oracle, key, clock);
-    (math::mul(ask, quantity), math::mul(bid, quantity))
+    oracle_cap: &OracleSVICap,
+) {
+    oracle::assert_authorized_cap(oracle, oracle_cap);
+    assert!(oracle.is_settled(), EOracleNotSettled);
+    let settlement = oracle.settlement_price().destroy_some();
+    predict.vault.compact_settled_oracle_if_needed(oracle.id(), settlement);
 }
 
-/// Get the amounts for range mint/redeem (for UI/preview).
-/// Returns (mint_cost, redeem_payout). Bull-call and bear-put ranges with the
-/// same strikes price identically — direction is not part of `RangeKey`.
-public fun get_range_trade_amounts(
+/// Per-unit `(fair_price, fee_rate)` quote for a position interval.
+/// `fee_rate` is an absolute price increment in FLOAT_SCALING, not bps.
+public fun quote_unit_price(
     predict: &Predict,
     oracle: &OracleSVI,
     key: RangeKey,
-    quantity: u64,
     clock: &Clock,
 ): (u64, u64) {
-    let (ask, bid) = predict.range_trade_prices(oracle, key, clock);
-    (math::mul(ask, quantity), math::mul(bid, quantity))
+    predict.oracle_config.assert_range_key_matches(oracle, &key);
+    oracle.assert_quoteable_oracle(clock);
+
+    let fair_price = oracle.compute_range_price(key.lower_strike(), key.higher_strike());
+
+    if (oracle.is_settled()) return (fair_price, 0);
+
+    // Fee uses the cached aggregate MTM. This path does not require every
+    // exposed oracle to be freshly synced; trade mutations refresh the traded
+    // oracle inline before calling into pricing.
+    let fee_rate = predict
+        .pricing_config
+        .quote_fee_rate_from_fair_price(
+            fair_price,
+            predict.vault.total_mtm(),
+            predict.vault.balance(),
+        );
+    (fair_price, fee_rate)
 }
 
 /// Return oracle IDs whose unsettled exposure must be refreshed before LP flows.
@@ -557,9 +425,9 @@ public fun trading_paused(predict: &Predict): bool {
     predict.trading_paused
 }
 
-/// Get the base spread.
-public fun base_spread(predict: &Predict): u64 {
-    predict.pricing_config.base_spread()
+/// Get the base fee.
+public fun base_fee(predict: &Predict): u64 {
+    predict.pricing_config.base_fee()
 }
 
 /// Get the accepted quote asset whitelist.
@@ -567,9 +435,9 @@ public fun accepted_quotes(predict: &Predict): &VecSet<TypeName> {
     predict.treasury_config.accepted_quotes()
 }
 
-/// Get the min spread.
-public fun min_spread(predict: &Predict): u64 {
-    predict.pricing_config.min_spread()
+/// Get the min fee.
+public fun min_fee(predict: &Predict): u64 {
+    predict.pricing_config.min_fee()
 }
 
 /// Get the utilization multiplier.
@@ -592,6 +460,51 @@ public fun available_withdrawal(predict: &Predict, clock: &Clock): u64 {
     predict.withdrawal_limiter.available_withdrawal(clock)
 }
 
+/// Return the official total fee amount accrued across all charged Predict trades.
+public fun total_fees_accrued(predict: &Predict): u64 {
+    predict.fee_reserve.total_fees_accrued()
+}
+
+/// Return total LP fee share accrued across all charged Predict trades.
+public fun lp_fees_accrued(predict: &Predict): u64 {
+    predict.fee_reserve.lp_fees_accrued()
+}
+
+/// Return total protocol fee share accrued across all charged Predict trades.
+public fun protocol_fees_accrued(predict: &Predict): u64 {
+    predict.fee_reserve.protocol_fees_accrued()
+}
+
+/// Return total insurance fee share accrued across all charged Predict trades.
+public fun insurance_fees_accrued(predict: &Predict): u64 {
+    predict.fee_reserve.insurance_fees_accrued()
+}
+
+/// Return concrete protocol fee reserve balance for asset type `Quote`.
+public fun protocol_fee_asset_balance<Quote>(predict: &Predict): u64 {
+    predict.fee_reserve.protocol_asset_balance<Quote>()
+}
+
+/// Return concrete insurance fee reserve balance for asset type `Quote`.
+public fun insurance_fee_asset_balance<Quote>(predict: &Predict): u64 {
+    predict.fee_reserve.insurance_asset_balance<Quote>()
+}
+
+/// Return the current LP fee share.
+public fun lp_fee_share(predict: &Predict): u64 {
+    predict.fee_reserve.lp_fee_share()
+}
+
+/// Return the current protocol fee share.
+public fun protocol_fee_share(predict: &Predict): u64 {
+    predict.fee_reserve.protocol_fee_share()
+}
+
+/// Return the current insurance fee share.
+public fun insurance_fee_share(predict: &Predict): u64 {
+    predict.fee_reserve.insurance_fee_share()
+}
+
 // === Public-Package Functions ===
 
 /// Create and share the Predict object. Returns its ID.
@@ -606,6 +519,7 @@ public(package) fun create<Quote>(
     let mut predict = Predict {
         id: derived_object::claim(registry_uid, PredictKey<Quote>()),
         vault: vault::new(ctx),
+        fee_reserve: fee_reserve::new(ctx),
         treasury_cap,
         pricing_config: pricing_config::new(),
         risk_config: risk_config::new(),
@@ -662,15 +576,15 @@ public(package) fun set_trading_paused(predict: &mut Predict, paused: bool) {
     });
 }
 
-/// Set base spread.
-public(package) fun set_base_spread(predict: &mut Predict, spread: u64) {
-    predict.pricing_config.set_base_spread(spread);
+/// Set base fee.
+public(package) fun set_base_fee(predict: &mut Predict, fee: u64) {
+    predict.pricing_config.set_base_fee(fee);
     predict.emit_pricing_config_updated();
 }
 
-/// Set min spread.
-public(package) fun set_min_spread(predict: &mut Predict, spread: u64) {
-    predict.pricing_config.set_min_spread(spread);
+/// Set min fee.
+public(package) fun set_min_fee(predict: &mut Predict, fee: u64) {
+    predict.pricing_config.set_min_fee(fee);
     predict.emit_pricing_config_updated();
 }
 
@@ -680,13 +594,29 @@ public(package) fun set_utilization_multiplier(predict: &mut Predict, multiplier
     predict.emit_pricing_config_updated();
 }
 
-/// Set the global minimum allowed post-spread ask price at mint time.
+/// Set fee distribution shares.
+public(package) fun set_fee_shares(
+    predict: &mut Predict,
+    lp_fee_share: u64,
+    protocol_fee_share: u64,
+    insurance_fee_share: u64,
+) {
+    predict.fee_reserve.set_fee_shares(lp_fee_share, protocol_fee_share, insurance_fee_share);
+    event::emit(FeeReserveConfigUpdated {
+        predict_id: object::id(predict),
+        lp_fee_share,
+        protocol_fee_share,
+        insurance_fee_share,
+    });
+}
+
+/// Set the global minimum allowed all-in mint price.
 public(package) fun set_min_ask_price(predict: &mut Predict, value: u64) {
     predict.pricing_config.set_min_ask_price(value);
     predict.emit_pricing_config_updated();
 }
 
-/// Set the global maximum allowed post-spread ask price at mint time.
+/// Set the global maximum allowed all-in mint price.
 public(package) fun set_max_ask_price(predict: &mut Predict, value: u64) {
     predict.pricing_config.set_max_ask_price(value);
     predict.emit_pricing_config_updated();
@@ -857,8 +787,8 @@ public(package) fun resolve_feed_id(predict: &Predict, asset: String): u64 {
 /// Assert every unsettled exposed oracle has a fresh cached MTM for LP flows.
 fun assert_total_mtm_fresh(predict: &Predict, clock: &Clock) {
     // MTM freshness is enforced only for LP supply/withdraw. Trade quoting
-    // still relies on cached aggregate `vault.total_mtm()` and refreshes the
-    // touched oracle inline.
+    // still relies on cached aggregate `vault.total_mtm()` after the trade
+    // mutation refreshes the touched oracle inline.
     let unsettled_exposed_oracles = predict.vault.unsettled_exposed_oracles();
     let mut i = 0;
     let len = unsettled_exposed_oracles.length();
@@ -873,61 +803,49 @@ fun assert_total_mtm_fresh(predict: &Predict, clock: &Clock) {
     }
 }
 
-/// Shared binary-position redemption path.
-fun redeem_internal<Quote>(
+/// Shared mint path after caller authorization.
+fun mint_internal<Quote>(
     predict: &mut Predict,
     manager: &mut PredictManager,
     oracle: &OracleSVI,
-    key: MarketKey,
+    key: RangeKey,
     quantity: u64,
     clock: &Clock,
     ctx: &mut TxContext,
-): Coin<Quote> {
-    assert!(quantity > 0, EZeroQuantity);
-    predict.oracle_config.assert_key_matches(oracle, &key);
-    oracle.assert_quoteable_oracle(clock);
+) {
+    predict.apply_mint_delta<Quote>(manager, oracle, key, quantity, clock);
 
-    manager.decrease_position(key, quantity);
-    let payout;
-    if (oracle.is_settled() && predict.vault.has_settled_oracle(oracle.id())) {
-        let (_, settled_payout) = predict.get_trade_amounts(oracle, key, quantity, clock);
-        predict.vault.redeem_settled_position(oracle.id(), quantity, settled_payout);
-        payout = settled_payout;
-    } else {
-        predict.vault.remove_position(oracle.id(), key.is_up(), key.strike(), quantity);
-        predict.refresh_oracle_risk(oracle, clock);
-        predict.vault.remove_unsettled_exposed_oracle(oracle.id(), oracle.is_settled());
+    let (principal_amount, fee_amount) = predict.quote_mint_amounts(
+        oracle,
+        key,
+        quantity,
+        clock,
+    );
+    let cost = principal_amount + fee_amount;
 
-        // Quote against the post-trade state so the seller is paid from the
-        // liability after their position has been removed from the vault.
-        let (_, live_payout) = predict.get_trade_amounts(oracle, key, quantity, clock);
-        payout = live_payout;
-    };
+    let mut payment = manager.withdraw<Quote>(cost, ctx).into_balance();
+    let fee_payment = payment.split(fee_amount);
+    predict.apply_fee(fee_payment);
+    predict.vault.accept_payment(payment);
+    predict.vault.assert_total_exposure(predict.risk_config.max_total_exposure_pct());
 
-    let payout_balance = predict.vault.dispense_payout<Quote>(payout);
-    let payout_coin = payout_balance.into_coin(ctx);
-
-    event::emit(PositionRedeemed {
+    event::emit(PositionMinted {
         predict_id: object::id(predict),
         manager_id: object::id(manager),
-        owner: manager.owner(),
-        executor: ctx.sender(),
+        trader: manager.owner(),
         quote_asset: type_name::with_defining_ids<Quote>(),
         oracle_id: key.oracle_id(),
         expiry: key.expiry(),
-        strike: key.strike(),
-        is_up: key.is_up(),
+        lower_strike: key.lower_strike(),
+        higher_strike: key.higher_strike(),
         quantity,
-        payout,
-        bid_price: math::div(payout, quantity),
-        is_settled: oracle.is_settled(),
+        cost,
+        fee_amount,
     });
-
-    payout_coin
 }
 
-/// Shared vertical-range redemption path.
-fun redeem_range_internal<Quote>(
+/// Shared live redemption path.
+fun redeem_live_internal<Quote>(
     predict: &mut Predict,
     manager: &mut PredictManager,
     oracle: &OracleSVI,
@@ -936,50 +854,154 @@ fun redeem_range_internal<Quote>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Quote> {
+    predict.apply_live_redeem_delta(manager, oracle, key, quantity, clock);
+
+    let (principal_amount, fee_amount) = predict.quote_live_redeem_amounts(
+        oracle,
+        key,
+        quantity,
+        clock,
+    );
+    let mut payout_balance = predict.vault.dispense_payout<Quote>(principal_amount);
+    let fee_balance = payout_balance.split(fee_amount);
+    predict.apply_fee(fee_balance);
+
+    let payout_coin = payout_balance.into_coin(ctx);
+
+    predict.emit_position_redeemed<Quote>(
+        manager,
+        key,
+        quantity,
+        payout_coin.value(),
+        fee_amount,
+        false,
+        ctx,
+    );
+
+    payout_coin
+}
+
+/// Shared settled redemption path.
+fun redeem_settled_internal<Quote>(
+    predict: &mut Predict,
+    manager: &mut PredictManager,
+    oracle: &OracleSVI,
+    key: RangeKey,
+    quantity: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Coin<Quote> {
+    let settlement = oracle.settlement_price().destroy_some();
+    predict.apply_settled_redeem_delta(manager, oracle, key, quantity, settlement, clock);
+
+    let payout_amount = key.settled_payout(settlement, quantity);
+    let payout_coin = predict.vault.dispense_payout<Quote>(payout_amount).into_coin(ctx);
+    predict.emit_position_redeemed<Quote>(
+        manager,
+        key,
+        quantity,
+        payout_coin.value(),
+        0,
+        true,
+        ctx,
+    );
+
+    payout_coin
+}
+
+/// Apply the position, vault, and risk-state delta for a mint before pricing
+/// against the post-trade vault state.
+fun apply_mint_delta<Quote>(
+    predict: &mut Predict,
+    manager: &mut PredictManager,
+    oracle: &OracleSVI,
+    key: RangeKey,
+    quantity: u64,
+    clock: &Clock,
+) {
+    assert!(quantity > 0, EZeroQuantity);
+    predict.oracle_config.assert_range_key_matches(oracle, &key);
+    assert!(!predict.trading_paused, ETradingPaused);
+    oracle.assert_live_oracle(clock);
+    predict.treasury_config.assert_quote_asset<Quote>();
+
+    let (min_strike, max_strike) = predict.vault.valuation_strike_range(oracle.id());
+    let (min_strike, max_strike) = key.extend_strike_range(min_strike, max_strike);
+    let curve = predict.oracle_config.build_curve(oracle, min_strike, max_strike);
+    manager.increase_position(key, quantity);
+    predict.vault.insert_live_range(key, quantity, curve, clock);
+}
+
+/// Apply the position, vault, and risk-state delta for a live redeem before
+/// pricing against the post-trade vault state.
+fun apply_live_redeem_delta(
+    predict: &mut Predict,
+    manager: &mut PredictManager,
+    oracle: &OracleSVI,
+    key: RangeKey,
+    quantity: u64,
+    clock: &Clock,
+) {
+    assert!(quantity > 0, EZeroQuantity);
+    predict.oracle_config.assert_range_key_matches(oracle, &key);
+    oracle.assert_live_oracle(clock);
+
+    let (min_strike, max_strike) = predict.vault.valuation_strike_range(oracle.id());
+    let (min_strike, max_strike) = key.extend_strike_range(min_strike, max_strike);
+    let curve = predict.oracle_config.build_curve(oracle, min_strike, max_strike);
+    manager.decrease_position(key, quantity);
+    predict.vault.remove_live_range(key, quantity, curve, clock);
+}
+
+/// Apply the position, vault, and risk-state delta for a settled redeem before
+/// pricing against the post-trade vault state.
+fun apply_settled_redeem_delta(
+    predict: &mut Predict,
+    manager: &mut PredictManager,
+    oracle: &OracleSVI,
+    key: RangeKey,
+    quantity: u64,
+    settlement: u64,
+    clock: &Clock,
+) {
     assert!(quantity > 0, EZeroQuantity);
     predict.oracle_config.assert_range_key_matches(oracle, &key);
     oracle.assert_quoteable_oracle(clock);
 
-    manager.decrease_range(key, quantity);
+    manager.decrease_position(key, quantity);
+    predict.vault.remove_settled_range(key, quantity, settlement, clock);
+}
 
-    let lower = key.lower_strike();
-    let higher = key.higher_strike();
-    let payout;
-    if (oracle.is_settled() && predict.vault.has_settled_oracle(oracle.id())) {
-        let (_, settled_payout) = predict.get_range_trade_amounts(oracle, key, quantity, clock);
-        predict.vault.redeem_settled_position(oracle.id(), quantity, settled_payout);
-        payout = settled_payout;
-    } else {
-        predict.vault.remove_range(oracle.id(), lower, higher, quantity);
-        predict.refresh_oracle_risk(oracle, clock);
-        predict.vault.remove_unsettled_exposed_oracle(oracle.id(), oracle.is_settled());
+fun quote_mint_amounts(
+    predict: &Predict,
+    oracle: &OracleSVI,
+    key: RangeKey,
+    quantity: u64,
+    clock: &Clock,
+): (u64, u64) {
+    let (fair_price, fee_rate) = predict.quote_unit_price(oracle, key, clock);
+    predict.assert_mint_quote_allowed(oracle.id(), fair_price, fee_rate);
 
-        // Quote against the post-trade state so the seller is paid from the
-        // liability after their range has been removed from the vault.
-        let (_, live_payout) = predict.get_range_trade_amounts(oracle, key, quantity, clock);
-        payout = live_payout;
-    };
+    let principal_amount = math::mul(fair_price, quantity);
+    let fee_amount = math::mul(fee_rate, quantity);
 
-    let payout_balance = predict.vault.dispense_payout<Quote>(payout);
-    let payout_coin = payout_balance.into_coin(ctx);
+    (principal_amount, fee_amount)
+}
 
-    event::emit(RangeRedeemed {
-        predict_id: object::id(predict),
-        manager_id: object::id(manager),
-        owner: manager.owner(),
-        executor: ctx.sender(),
-        quote_asset: type_name::with_defining_ids<Quote>(),
-        oracle_id: key.oracle_id(),
-        expiry: key.expiry(),
-        lower_strike: lower,
-        higher_strike: higher,
-        quantity,
-        payout,
-        bid_price: math::div(payout, quantity),
-        is_settled: oracle.is_settled(),
-    });
+fun quote_live_redeem_amounts(
+    predict: &Predict,
+    oracle: &OracleSVI,
+    key: RangeKey,
+    quantity: u64,
+    clock: &Clock,
+): (u64, u64) {
+    let (fair_price, fee_rate) = predict.quote_unit_price(oracle, key, clock);
 
-    payout_coin
+    let principal_amount = math::mul(fair_price, quantity);
+    let fee_amount = math::mul(fee_rate, quantity);
+    let fee_amount = fee_amount.min(principal_amount);
+
+    (principal_amount, fee_amount)
 }
 
 /// Returns the USDC value of `shares` at the given vault value.
@@ -990,12 +1012,51 @@ fun shares_to_amount(predict: &Predict, shares: u64, vault_value: u64): u64 {
     mul_div_round_down(shares, vault_value, total)
 }
 
+/// Route a full fee balance through the fee reserve and deposit the LP share into the vault.
+/// Zero fees are ignored so settlement redemption does not emit fee accruals.
+fun apply_fee<Quote>(predict: &mut Predict, fee_balance: Balance<Quote>) {
+    if (fee_balance.value() == 0) {
+        fee_balance.destroy_zero();
+        return
+    };
+    let predict_id = object::id(predict);
+    let lp_fee = predict.fee_reserve.accrue_fee(fee_balance, predict_id);
+    predict.vault.accept_payment(lp_fee);
+}
+
+fun emit_position_redeemed<Quote>(
+    predict: &Predict,
+    manager: &PredictManager,
+    key: RangeKey,
+    quantity: u64,
+    payout: u64,
+    fee_amount: u64,
+    is_settled: bool,
+    ctx: &TxContext,
+) {
+    event::emit(PositionRedeemed {
+        predict_id: object::id(predict),
+        manager_id: object::id(manager),
+        owner: manager.owner(),
+        executor: ctx.sender(),
+        quote_asset: type_name::with_defining_ids<Quote>(),
+        oracle_id: key.oracle_id(),
+        expiry: key.expiry(),
+        lower_strike: key.lower_strike(),
+        higher_strike: key.higher_strike(),
+        quantity,
+        payout,
+        fee_amount,
+        is_settled,
+    });
+}
+
 /// Emit the full current pricing-config snapshot.
 fun emit_pricing_config_updated(predict: &Predict) {
     event::emit(PricingConfigUpdated {
         predict_id: object::id(predict),
-        base_spread: predict.pricing_config.base_spread(),
-        min_spread: predict.pricing_config.min_spread(),
+        base_fee: predict.pricing_config.base_fee(),
+        min_fee: predict.pricing_config.min_fee(),
         utilization_multiplier: predict.pricing_config.utilization_multiplier(),
         min_ask_price: predict.pricing_config.min_ask_price(),
         max_ask_price: predict.pricing_config.max_ask_price(),
@@ -1024,91 +1085,6 @@ fun emit_oracle_staleness_config_updated(predict: &Predict) {
     });
 }
 
-/// Per-unit `(ask, bid)` for a single-strike position, post-spread (or settled
-/// fair price when the oracle is settled).
-fun trade_prices(predict: &Predict, oracle: &OracleSVI, key: MarketKey, clock: &Clock): (u64, u64) {
-    predict.oracle_config.assert_key_matches(oracle, &key);
-    oracle.assert_quoteable_oracle(clock);
-
-    let up_price = oracle.compute_price(key.strike());
-    if (oracle.is_settled()) {
-        let fair_price = if (key.is_up()) {
-            up_price
-        } else {
-            constants::float_scaling!() - up_price
-        };
-        return (fair_price, fair_price)
-    };
-
-    // Spread uses the cached aggregate MTM. This path does not require every
-    // exposed oracle to be freshly synced; only the traded oracle is refreshed
-    // inline before calling into pricing.
-    let spread = predict
-        .pricing_config
-        .quote_spread_from_fair_price(
-            up_price,
-            predict.vault.total_mtm(),
-            predict.vault.balance(),
-        );
-    let up_bid = if (up_price > spread) {
-        up_price - spread
-    } else {
-        0
-    };
-    let up_ask = (up_price + spread).min(constants::float_scaling!());
-    let dn_bid = constants::float_scaling!() - up_ask;
-    let dn_ask = constants::float_scaling!() - up_bid;
-
-    if (key.is_up()) {
-        (up_ask, up_bid)
-    } else {
-        (dn_ask, dn_bid)
-    }
-}
-
-/// Per-unit `(ask, bid)` for a vertical range position, post-spread.
-fun range_trade_prices(
-    predict: &Predict,
-    oracle: &OracleSVI,
-    key: RangeKey,
-    clock: &Clock,
-): (u64, u64) {
-    predict.oracle_config.assert_range_key_matches(oracle, &key);
-    oracle.assert_quoteable_oracle(clock);
-
-    // Fair range price = up(lower) − up(higher). UP price is monotone
-    // non-increasing in strike, so this is always non-negative for a well-formed
-    // key (`lower < higher`). Settled compute_price returns 1.0 if settlement >
-    // strike, 0 otherwise, so the range evaluates to 1.0 iff settlement is in
-    // the half-open band (lower, higher].
-    let lower_up_price = oracle.compute_price(key.lower_strike());
-    let higher_up_price = oracle.compute_price(key.higher_strike());
-    let fair_price = lower_up_price - higher_up_price;
-
-    if (oracle.is_settled()) {
-        return (fair_price, fair_price)
-    };
-
-    // Spread uses the cached aggregate MTM. This path does not require every
-    // exposed oracle to be freshly synced; only the traded oracle is refreshed
-    // inline before calling into pricing.
-    let spread = predict
-        .pricing_config
-        .quote_spread_from_fair_price(
-            fair_price,
-            predict.vault.total_mtm(),
-            predict.vault.balance(),
-        );
-    let ask = (fair_price + spread).min(constants::float_scaling!());
-    let bid = if (fair_price > spread) {
-        fair_price - spread
-    } else {
-        0
-    };
-
-    (ask, bid)
-}
-
 /// Resolve the effective ask-price bounds for an oracle: the per-oracle
 /// override (if any) intersected with the global default. The intersection
 /// guarantees the resolved bounds are never looser than the global, even if
@@ -1125,32 +1101,16 @@ fun resolve_ask_bounds(predict: &Predict, oracle_id: ID): (u64, u64) {
     }
 }
 
-/// Assert a mint ask price fits the resolved global/per-oracle bounds.
-fun assert_mintable_ask(predict: &Predict, oracle_id: ID, ask_price: u64) {
+/// Assert a mint quote can be traded under the effective ask bounds.
+fun assert_mint_quote_allowed(
+    predict: &Predict,
+    oracle_id: ID,
+    fair_price: u64,
+    quoted_fee_rate: u64,
+) {
+    let mint_price = fair_price + quoted_fee_rate;
     let (min_ask, max_ask) = predict.resolve_ask_bounds(oracle_id);
-    assert!(ask_price >= min_ask && ask_price <= max_ask, EAskPriceOutOfBounds);
-}
-
-/// Refresh one oracle's cached risk metrics in the vault.
-fun refresh_oracle_risk(predict: &mut Predict, oracle: &OracleSVI, clock: &Clock) {
-    let oracle_id = oracle.id();
-    let (min_strike, max_strike) = predict.vault.oracle_strike_range(oracle_id);
-    if (min_strike == 0 && max_strike == 0) {
-        // `(0, 0)` means this oracle has never had any minted exposure.
-        predict.vault.set_mtm(oracle_id, 0, clock);
-        return
-    };
-    // Historical minted bounds do not shrink after a full unwind, so an empty
-    // but previously touched book still rebuilds over the old range and
-    // evaluates to 0 from zero `q_up` / `q_dn`.
-    if (oracle.is_settled()) {
-        predict
-            .vault
-            .set_mtm_with_settlement(oracle_id, oracle.settlement_price().destroy_some(), clock);
-        return
-    };
-    let curve = predict.oracle_config.build_curve(oracle, min_strike, max_strike);
-    predict.vault.set_mtm_with_curve(oracle_id, &curve, clock);
+    assert!(mint_price >= min_ask && mint_price <= max_ask, EAskPriceOutOfBounds);
 }
 
 // === Test-Only Functions ===
@@ -1166,6 +1126,7 @@ public(package) fun create_test_predict<Quote>(
     let mut predict = Predict {
         id: object::new(ctx),
         vault: vault::new(ctx),
+        fee_reserve: fee_reserve::new(ctx),
         treasury_cap,
         pricing_config: pricing_config::new(),
         risk_config: risk_config::new(),

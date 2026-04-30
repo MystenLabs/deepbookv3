@@ -25,6 +25,8 @@ export interface GasUsage {
 const DUSDC_TYPE = `${DUSDC_PACKAGE_ID}::dusdc::DUSDC`;
 const CLOCK_ID = "0x6";
 const COIN_REGISTRY_ID = "0xc";
+const NEG_INF_STRIKE = 0n;
+const POS_INF_STRIKE = (1n << 64n) - 1n;
 const SETUP_RESPONSE_OPTIONS = {
   showEffects: true,
   showEvents: true,
@@ -80,6 +82,12 @@ async function getTransactionBlockWithRetry(digest: string): Promise<any> {
 
 export function target(module: string, fn: string): `${string}::${string}::${string}` {
   return `${PACKAGE_ID}::${module}::${fn}`;
+}
+
+function binaryRangeBounds(strike: bigint, isUp: boolean): { lower: bigint; higher: bigint } {
+  return isUp
+    ? { lower: strike, higher: POS_INF_STRIKE }
+    : { lower: NEG_INF_STRIKE, higher: strike };
 }
 
 export function finalizeDusdcCurrencyRegistrationTx(): Transaction {
@@ -335,13 +343,14 @@ export function mintTx(params: {
   quantity: bigint;
 }): Transaction {
   const tx = new Transaction();
+  const { lower, higher } = binaryRangeBounds(params.strike, params.isUp);
   const key = tx.moveCall({
-    target: target("market_key", "new"),
+    target: target("range_key", "new"),
     arguments: [
       tx.pure.id(params.oracleId),
       tx.pure.u64(params.expiry),
-      tx.pure.u64(params.strike),
-      tx.pure.bool(params.isUp),
+      tx.pure.u64(lower),
+      tx.pure.u64(higher),
     ],
   });
   tx.moveCall({
@@ -420,13 +429,14 @@ export function refreshOracleAndMintTx(params: {
     ],
   });
 
+  const { lower, higher } = binaryRangeBounds(params.strike, params.isUp);
   const key = tx.moveCall({
-    target: target("market_key", "new"),
+    target: target("range_key", "new"),
     arguments: [
       tx.pure.id(params.oracleId),
       tx.pure.u64(params.expiry),
-      tx.pure.u64(params.strike),
-      tx.pure.bool(params.isUp),
+      tx.pure.u64(lower),
+      tx.pure.u64(higher),
     ],
   });
   tx.moveCall({

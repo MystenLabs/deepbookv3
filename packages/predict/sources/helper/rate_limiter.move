@@ -164,7 +164,13 @@ fun elapsed_ms(last_updated_ms: u64, clock: &Clock): u64 {
 #[test_only]
 /// Destroy a test-only limiter value.
 public fun destroy_for_testing(self: RateLimiter) {
-    let RateLimiter { available: _, last_updated_ms: _, capacity: _, refill_rate_per_ms: _, enabled: _ } = self;
+    let RateLimiter {
+        available: _,
+        last_updated_ms: _,
+        capacity: _,
+        refill_rate_per_ms: _,
+        enabled: _,
+    } = self;
 }
 
 #[test_only]
