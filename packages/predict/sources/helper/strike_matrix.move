@@ -59,7 +59,7 @@
 module deepbook_predict::strike_matrix;
 
 use deepbook::{constants::max_u64, math};
-use deepbook_predict::{constants, oracle_config::CurvePoint};
+use deepbook_predict::{constants, i64::{Self, I64}, oracle_config::CurvePoint};
 use sui::{clock::Clock, table::{Self, Table}};
 
 const PAGE_SLOTS: u64 = 512;
@@ -88,6 +88,11 @@ public struct StrikeMatrix has store {
     /// intervals. Live MTM values it at 1.0 until a finite end boundary turns
     /// it off.
     base_qty: u64,
+    /// Risk-weighted signed inventory `Σ (q_long_leg − q_short_leg) · n(d₂)`,
+    /// updated on every range insert/remove at the trade-time fair price of
+    /// each boundary. Read by `pricing_config::compute_up_quote` to gauge
+    /// directional inventory risk and shift the UP mid accordingly.
+    directional_aggregate: I64,
 }
 
 /// Exact per-strike inventory stored in dense page slots.
@@ -149,17 +154,41 @@ public(package) fun new(
         max_payout: 0,
         last_mtm_update: clock.timestamp_ms(),
         base_qty: 0,
+        directional_aggregate: i64::zero(),
     }
 }
 
 /// Insert interval quantity for `(lower, higher]`.
-public(package) fun insert_range(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64) {
+///
+/// `lower_weight` and `higher_weight` are `n(d₂)` at the lower and higher
+/// strikes (in FLOAT_SCALING). The lower boundary is the long-UP leg
+/// (`+qty · lower_weight`) and the higher boundary is the short-UP leg
+/// (`−qty · higher_weight`); both are folded into `directional_aggregate`.
+public(package) fun insert_range(
+    matrix: &mut StrikeMatrix,
+    lower: u64,
+    higher: u64,
+    qty: u64,
+    lower_weight: u64,
+    higher_weight: u64,
+) {
     matrix.apply_range(lower, higher, qty, true);
+    apply_aggregate_delta(matrix, qty, lower_weight, true, true);
+    apply_aggregate_delta(matrix, qty, higher_weight, false, true);
 }
 
-/// Remove interval quantity for `(lower, higher]`.
-public(package) fun remove_range(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64) {
+/// Remove interval quantity for `(lower, higher]`. Symmetric to `insert_range`.
+public(package) fun remove_range(
+    matrix: &mut StrikeMatrix,
+    lower: u64,
+    higher: u64,
+    qty: u64,
+    lower_weight: u64,
+    higher_weight: u64,
+) {
     matrix.apply_range(lower, higher, qty, false);
+    apply_aggregate_delta(matrix, qty, lower_weight, true, false);
+    apply_aggregate_delta(matrix, qty, higher_weight, false, false);
 }
 
 /// Return the exact worst-case settled payout across all settlement prices.
@@ -175,6 +204,13 @@ public(package) fun mtm(matrix: &StrikeMatrix): u64 {
 /// Timestamp of the last MTM update, used by the vault to decide when to refresh.
 public(package) fun last_mtm_update(matrix: &StrikeMatrix): u64 {
     matrix.last_mtm_update
+}
+
+/// Risk-weighted signed inventory accumulated over all live insert/remove
+/// operations at their trade-time fair prices. Read by the pricing layer to
+/// shift the UP mid in the direction the book is bleeding.
+public(package) fun directional_aggregate(matrix: &StrikeMatrix): I64 {
+    matrix.directional_aggregate
 }
 
 /// Refresh cached live risk values from a sampled curve.
@@ -221,6 +257,7 @@ public(package) fun into_settled_liability(matrix: StrikeMatrix, settlement: u64
         max_payout: _,
         last_mtm_update: _,
         base_qty,
+        directional_aggregate: _,
     } = matrix;
 
     let total_strikes = (max_strike - min_strike) / tick_size + 1;
@@ -379,6 +416,26 @@ fun apply_range(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64, ad
     if (higher != constants::pos_inf!()) {
         matrix.apply_boundary_delta(higher, qty, false, add);
     };
+}
+
+/// Fold one boundary's risk-weighted quantity into the signed directional
+/// aggregate. Long-UP legs (the lower boundary of `(lower, higher]`) contribute
+/// positively; short-UP legs (the higher boundary) contribute negatively.
+/// `add = false` flips the contribution so an insert+remove pair cancels
+/// exactly when the per-leg weight is unchanged between the two operations.
+fun apply_aggregate_delta(
+    matrix: &mut StrikeMatrix,
+    qty: u64,
+    weight: u64,
+    is_long_leg: bool,
+    add: bool,
+) {
+    if (qty == 0 || weight == 0) return;
+    let magnitude = math::mul(qty, weight);
+    if (magnitude == 0) return;
+    let is_negative = if (add) !is_long_leg else is_long_leg;
+    let delta = i64::from_parts(magnitude, is_negative);
+    matrix.directional_aggregate = matrix.directional_aggregate.add(&delta);
 }
 
 /// Apply one finite boundary delta, refresh the touched page summary, then

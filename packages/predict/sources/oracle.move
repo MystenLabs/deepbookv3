@@ -760,7 +760,7 @@ public(package) fun compute_price(oracle: &OracleSVI, strike: u64): u64 {
             0
         }
     } else {
-        compute_nd2(oracle, strike)
+        predict_math::normal_cdf(&compute_d2(oracle, strike))
     }
 }
 
@@ -769,6 +769,26 @@ public(package) fun compute_range_price(oracle: &OracleSVI, lower: u64, higher: 
     let lower_up_price = oracle.compute_price(lower);
     let higher_up_price = oracle.compute_price(higher);
     lower_up_price - higher_up_price
+}
+
+/// Per-strike risk weight `n(d₂)` for the inventory-aware mid shift. This is
+/// the strike-dependent part of the textbook binary delta
+/// `Δ = e^(−rτ) · n(d₂) / (S · σ · √τ)`; the constant factors are absorbed
+/// into the depth multiplier and the TTE factor in `pricing_config`.
+///
+/// Returns `0` for settled oracles, sentinel strikes, and strikes outside the
+/// SVI surface's well-defined region (e.g., zero forward) — at those points
+/// the directional risk has either been realized or is undefined, and either
+/// way contributes nothing to the live inventory aggregate.
+///
+/// Note: the weight is computed at trade time. If the SVI surface drifts
+/// between mint and redeem of the same position, the open and close legs
+/// won't fully cancel in the directional aggregate — a known approximation
+/// that avoids storing per-position weights.
+public(package) fun compute_risk_weight(oracle: &OracleSVI, strike: u64): u64 {
+    if (oracle.settlement_price.is_some()) return 0;
+    if (strike == constants::neg_inf!() || strike == constants::pos_inf!()) return 0;
+    predict_math::normal_pdf(&compute_d2(oracle, strike))
 }
 
 /// Get the cached basis ratio (forward / spot) from the most recent
@@ -1009,11 +1029,15 @@ fun emit_bounds_updated(oracle: &OracleSVI) {
     });
 }
 
-/// Binary pricing from SVI total variance:
+/// Compute `d₂` for a strike under the current SVI surface. Signed.
 /// - k = ln(strike / forward)
 /// - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
 /// - d2 = -((k + w(k) / 2) / sqrt(w(k)))
-fun compute_nd2(oracle: &OracleSVI, strike: u64): u64 {
+///
+/// `compute_price` applies `normal_cdf(d₂)` for the binary UP price;
+/// `compute_risk_weight` applies `normal_pdf(d₂)` for the per-strike
+/// inventory weight. Both share the same SVI walk.
+fun compute_d2(oracle: &OracleSVI, strike: u64): i64::I64 {
     let forward = oracle.forward_price();
     assert!(forward > 0, EZeroForward);
 
@@ -1033,15 +1057,13 @@ fun compute_nd2(oracle: &OracleSVI, strike: u64): u64 {
     let total_var = svi.a + math::mul(svi.b, inner.magnitude());
     assert!(total_var > 0, EZeroVariance);
 
-    // d2 = -((k + total_var/2) / sqrt(total_var)), then N(±d2).
+    // d2 = -((k + total_var/2) / sqrt(total_var)).
     let sqrt_var = predict_math::sqrt(total_var, constants::float_scaling!());
     let sqrt_var_i64 = i64::from_u64(sqrt_var);
     let half_var_i64 = i64::from_u64(total_var / 2);
     let d2_numerator = k.add(&half_var_i64);
     let d2 = d2_numerator.div_scaled(&sqrt_var_i64);
-    let d2 = d2.neg();
-
-    predict_math::normal_cdf(&d2)
+    d2.neg()
 }
 
 // === Test Functions ===

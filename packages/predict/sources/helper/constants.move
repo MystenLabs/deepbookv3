@@ -52,6 +52,21 @@ public macro fun default_min_ask_price(): u64 { 10_000_000 }
 /// Maximum all-in unit price the protocol will allow at mint (99% in FLOAT_SCALING)
 public macro fun default_max_ask_price(): u64 { 990_000_000 }
 
+/// Depth multiplier for the inventory-aware mid shift (1× in FLOAT_SCALING).
+/// `raw_ratio = aggregate · tte_factor / (balance · depth_multiplier)`, so
+/// lower values produce larger shifts from the same directional inventory.
+public macro fun default_depth_multiplier(): u64 { 1_000_000_000 }
+
+/// Reference time-to-expiry for the inventory-aware mid shift (7 days).
+/// `tte_factor = √(reference_tte_ms / max(tte_ms, min_tte_ms))`, so
+/// `tte_factor == 1` exactly when `tte_ms == reference_tte_ms`.
+public macro fun default_reference_tte_ms(): u64 { 604_800_000 }
+
+/// Minimum time-to-expiry floor used to cap near-expiry amplification of
+/// `tte_factor` (1 day). Once `tte_ms < min_tte_ms`, further time decay no
+/// longer increases the inventory shift.
+public macro fun default_min_tte_ms(): u64 { 86_400_000 }
+
 // === Time Constants ===
 
 public macro fun ms_per_year(): u64 { 31_536_000_000 }
