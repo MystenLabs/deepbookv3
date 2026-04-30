@@ -28,8 +28,8 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
     },
   };
 
-  const MANAGER_3_TRADER =
-    "0x3bb9c84c818748cccdd8d68e3069bd688ee97006ca1695e54419aa42e335d594";
+  // const MANAGER_3_TRADER =
+  //   "0x3bb9c84c818748cccdd8d68e3069bd688ee97006ca1695e54419aa42e335d594";
 
   const client = new SuiGrpcClient({
     baseUrl: "https://sui-mainnet.mystenlabs.com",
@@ -37,16 +37,16 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   }).$extend(
     deepbook({
       address: adminCapOwner[env],
-      adminCap: adminCapID[env],
+      // adminCap: adminCapID[env],
       balanceManagers,
     }),
   );
 
   const tx = new Transaction();
 
-  const tradeCap3 =
-    client.deepbook.balanceManager.mintTradeCap("BALANCE_MANAGER_3")(tx);
-  tx.transferObjects([tradeCap3], MANAGER_3_TRADER);
+  // const tradeCap3 =
+  //   client.deepbook.balanceManager.mintTradeCap("BALANCE_MANAGER_3")(tx);
+  // tx.transferObjects([tradeCap3], MANAGER_3_TRADER);
 
   // client.deepbook.balanceManager.depositIntoManager(
   //   "BALANCE_MANAGER_1",
@@ -57,7 +57,7 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   client.deepbook.balanceManager.depositIntoManager(
     "BALANCE_MANAGER_3",
     "USDC",
-    2000,
+    8000,
   )(tx);
 
   // client.deepbook.balanceManager.createAndShareBalanceManager()(tx);
