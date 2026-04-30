@@ -57,7 +57,7 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   client.deepbook.balanceManager.depositIntoManager(
     "BALANCE_MANAGER_3",
     "USDC",
-    8000,
+    6000,
   )(tx);
 
   // client.deepbook.balanceManager.createAndShareBalanceManager()(tx);
