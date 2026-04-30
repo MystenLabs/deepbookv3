@@ -32,12 +32,11 @@ public struct BlockScholesSourceCap has key, store {
     id: UID,
 }
 
-/// Latest Block Scholes source state.
+/// Latest raw Block Scholes source state.
 public struct BlockScholesSource has copy, drop, store {
     authorized_cap_id: ID,
     spot: u64,
     forward: u64,
-    basis: u64,
     price_source_timestamp_ms: u64,
     price_update_timestamp_ms: u64,
     svi: SVIParams,
@@ -58,7 +57,6 @@ public fun new(cap: &BlockScholesSourceCap): BlockScholesSource {
         authorized_cap_id: cap.id.to_inner(),
         spot: 0,
         forward: 0,
-        basis: 0,
         price_source_timestamp_ms: 0,
         price_update_timestamp_ms: 0,
         svi: SVIParams {
@@ -92,7 +90,6 @@ public fun update_prices(
 
     source.spot = spot;
     source.forward = forward;
-    source.basis = math::div(forward, spot);
     source.price_source_timestamp_ms = source_timestamp_ms;
     source.price_update_timestamp_ms = clock.timestamp_ms();
 }
@@ -132,9 +129,11 @@ public fun forward(source: &BlockScholesSource): u64 {
     source.forward
 }
 
-/// Return the latest Block Scholes basis (`forward / spot`).
+/// Return the latest Block Scholes basis (`forward / spot`), derived on read.
 public fun basis(source: &BlockScholesSource): u64 {
-    source.basis
+    assert!(source.spot > 0, EZeroSpot);
+    assert!(source.forward > 0, EZeroForward);
+    math::div(source.forward, source.spot)
 }
 
 /// Return the source-data timestamp for the latest price update.
