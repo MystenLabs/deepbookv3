@@ -56,6 +56,13 @@ When creating a PR with `gh pr create`, always ask the user for a branch name be
 - [ ] <checklist items>
 ```
 
+## Linear
+
+The Linear API key is in `.env` as `LINEAR_API_KEY` — use it (via `source .env`) for issue creation/lookup against `https://api.linear.app/graphql`.
+
+- Repo's project: **Deepbook Maintenance** (id `1fa68715-f85f-4e4c-bdfe-38b9fbf7be40`) under team **DeFi** / key `DBU` (id `fa06ddc0-54b9-4a24-b1ed-06dee49e0c1b`).
+- To auto-link a PR to a Linear issue, include the issue identifier (e.g. `DBU-402`) in the branch name or PR title.
+
 ## Wrap Up
 
 When I say "wrap up", follow the instructions in `.claude/rules/wrap-up.md`.

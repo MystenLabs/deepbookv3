@@ -328,7 +328,7 @@ pub struct Rebates {
     pub claim_amount: i64,
 }
 
-#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount)]
+#[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
 #[diesel(table_name = rebates_v2, primary_key(event_digest))]
 pub struct RebatesV2 {
     pub event_digest: String,

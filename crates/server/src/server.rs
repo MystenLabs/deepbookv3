@@ -15,8 +15,8 @@ use deepbook_schema::models::{
     InterestParamsUpdated, Liquidation, LoanBorrowed, LoanRepaid, MaintainerCapUpdated,
     MaintainerFeesWithdrawn, MarginManagerCreated, MarginManagerState, MarginPoolConfigUpdated,
     MarginPoolCreated, PauseCapUpdated, PoolCreated, Pools, ProtocolFeesIncreasedEvent,
-    ProtocolFeesWithdrawn, ReferralFeeEvent, ReferralFeesClaimedEvent, SupplierCapMinted,
-    SupplyReferralMinted,
+    ProtocolFeesWithdrawn, RebatesV2, ReferralFeeEvent, ReferralFeesClaimedEvent,
+    SupplierCapMinted, SupplyReferralMinted,
 };
 use deepbook_schema::*;
 use diesel::dsl::count_star;
@@ -111,6 +111,7 @@ pub const PAUSE_CAP_UPDATED_PATH: &str = "/pause_cap_updated";
 pub const PROTOCOL_FEES_INCREASED_PATH: &str = "/protocol_fees_increased";
 pub const REFERRAL_FEES_CLAIMED_PATH: &str = "/referral_fees_claimed";
 pub const REFERRAL_FEE_EVENTS_PATH: &str = "/referral_fee_events";
+pub const REBATES_V2_PATH: &str = "/rebates_v2";
 pub const DEEPBOOK_POOL_REGISTERED_PATH: &str = "/deepbook_pool_registered";
 pub const DEEPBOOK_POOL_UPDATED_REGISTRY_PATH: &str = "/deepbook_pool_updated_registry";
 pub const DEEPBOOK_POOL_CONFIG_UPDATED_PATH: &str = "/deepbook_pool_config_updated";
@@ -396,6 +397,7 @@ pub(crate) fn make_router(state: Arc<AppState>) -> Router {
         .route(PROTOCOL_FEES_INCREASED_PATH, get(protocol_fees_increased))
         .route(REFERRAL_FEES_CLAIMED_PATH, get(referral_fees_claimed))
         .route(REFERRAL_FEE_EVENTS_PATH, get(referral_fee_events))
+        .route(REBATES_V2_PATH, get(rebates_v2))
         .route(DEEPBOOK_POOL_REGISTERED_PATH, get(deepbook_pool_registered))
         .route(
             DEEPBOOK_POOL_UPDATED_REGISTRY_PATH,
@@ -2575,6 +2577,33 @@ async fn referral_fee_events(
             pool_id_filter,
             referral_id_filter,
         )
+        .await?;
+
+    Ok(Json(results))
+}
+
+async fn rebates_v2(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<RebatesV2>>, DeepBookError> {
+    let start_time = params.start_time().unwrap_or(0);
+    let end_time = params
+        .get("end_time")
+        .and_then(|v| v.parse::<i64>().ok())
+        .map(|t| t * 1000)
+        .unwrap_or(i64::MAX);
+    let limit = params
+        .get("limit")
+        .and_then(|v| v.parse::<i64>().ok())
+        .unwrap_or(10_000_000);
+    let balance_manager_id_filter = params
+        .get("balance_manager_id")
+        .cloned()
+        .unwrap_or_default();
+
+    let results = state
+        .reader
+        .get_rebates_v2(start_time, end_time, limit, balance_manager_id_filter)
         .await?;
 
     Ok(Json(results))

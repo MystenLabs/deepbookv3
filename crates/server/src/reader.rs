@@ -6,8 +6,8 @@ use deepbook_schema::models::{
     InterestParamsUpdated, Liquidation, LoanBorrowed, LoanRepaid, MaintainerCapUpdated,
     MaintainerFeesWithdrawn, MarginManagerCreated, MarginManagerState, MarginPoolConfigUpdated,
     MarginPoolCreated, OrderFillSummary, OrderStatus, PauseCapUpdated, PoolCreated, Pools,
-    ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn, ReferralFeeEvent, ReferralFeesClaimedEvent,
-    SupplierCapMinted, SupplyReferralMinted,
+    ProtocolFeesIncreasedEvent, ProtocolFeesWithdrawn, RebatesV2, ReferralFeeEvent,
+    ReferralFeesClaimedEvent, SupplierCapMinted, SupplyReferralMinted,
 };
 use deepbook_schema::schema;
 use diesel::deserialize::FromSqlRow;
@@ -1005,6 +1005,25 @@ impl Reader {
             .filter(schema::referral_fee_events::pool_id.like(to_pattern(&pool_id_filter)))
             .filter(schema::referral_fee_events::referral_id.like(to_pattern(&referral_id_filter)))
             .order_by(schema::referral_fee_events::checkpoint_timestamp_ms.desc())
+            .limit(limit);
+
+        Ok(self.results(query).await?)
+    }
+
+    pub async fn get_rebates_v2(
+        &self,
+        start_time: i64,
+        end_time: i64,
+        limit: i64,
+        balance_manager_id_filter: String,
+    ) -> Result<Vec<RebatesV2>, DeepBookError> {
+        let query = schema::rebates_v2::table
+            .select(RebatesV2::as_select())
+            .filter(schema::rebates_v2::checkpoint_timestamp_ms.between(start_time, end_time))
+            .filter(
+                schema::rebates_v2::balance_manager_id.like(to_pattern(&balance_manager_id_filter)),
+            )
+            .order_by(schema::rebates_v2::checkpoint_timestamp_ms.desc())
             .limit(limit);
 
         Ok(self.results(query).await?)
