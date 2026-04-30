@@ -512,6 +512,236 @@ fun higher_per_strike_weight_pushes_mint_further_for_same_qty() {
     config.destroy_for_testing();
 }
 
+// ── tte_factor at known ratios ──────────────────────────────────────────────
+
+#[test]
+fun tte_factor_equals_one_when_tte_matches_reference() {
+    // At τ = ref_tte the time-amplification factor is exactly 1, so the
+    // shift is purely the raw aggregate ratio scaled by room.
+    let config = pricing_config::new();
+    let depth = constants::default_depth_multiplier!();
+    let agg = i64::from_parts(aggregate_for_ratio(100_000_000, BALANCE, depth), false);
+
+    let (mint, _) = config.compute_up_quote(HALF, &agg, 0, BALANCE, seven_days_ms());
+
+    // ratio = 0.10 → shift = 0.10 · 0.5 = 0.05 → mint = 0.5 + 0.05 + 1% = 0.56.
+    assert_eq!(mint, 560_000_000);
+
+    config.destroy_for_testing();
+}
+
+#[test]
+fun tte_factor_doubles_at_quarter_reference_tte() {
+    // tte_factor = √(ref_tte / τ). At τ = ref_tte/4 the factor is exactly 2.
+    let config = pricing_config::new();
+    let depth = constants::default_depth_multiplier!();
+    let agg = i64::from_parts(aggregate_for_ratio(100_000_000, BALANCE, depth), false);
+    let quarter_tte = constants::default_reference_tte_ms!() / 4;
+
+    let (mint, _) = config.compute_up_quote(HALF, &agg, 0, BALANCE, quarter_tte);
+
+    // ratio = 0.10 · 2 = 0.20 → shift = 0.20 · 0.5 = 0.10 → mint = 0.61.
+    assert_eq!(mint, 610_000_000);
+
+    config.destroy_for_testing();
+}
+
+#[test]
+fun tte_factor_halves_at_four_times_reference_tte() {
+    // tte_factor = √(ref_tte / (4·ref_tte)) = 0.5. Skew dampens for far-dated
+    // expiries because the binary delta is correspondingly smaller.
+    let config = pricing_config::new();
+    let depth = constants::default_depth_multiplier!();
+    let agg = i64::from_parts(aggregate_for_ratio(100_000_000, BALANCE, depth), false);
+    let four_x_tte = 4 * constants::default_reference_tte_ms!();
+
+    let (mint, _) = config.compute_up_quote(HALF, &agg, 0, BALANCE, four_x_tte);
+
+    // ratio = 0.10 · 0.5 = 0.05 → shift = 0.05 · 0.5 = 0.025 → mint = 0.535.
+    assert_eq!(mint, 535_000_000);
+
+    config.destroy_for_testing();
+}
+
+// ── Ratio clamp behavior at the saturation boundary ─────────────────────────
+
+#[test]
+fun ratio_at_exactly_one_saturates_to_full_room() {
+    // At raw ratio == 1.0 exactly the clamp is a no-op: shift = 1 · room.
+    let config = pricing_config::new();
+    let depth = constants::default_depth_multiplier!();
+    let agg = i64::from_parts(aggregate_for_ratio(FS, BALANCE, depth), false);
+
+    let (mint, redeem) = config.compute_up_quote(HALF, &agg, 0, BALANCE, seven_days_ms());
+
+    // shifted_mid = 0.5 + 1.0 · 0.5 = 1.0 → mint = FS, redeem clamps at fair.
+    assert_eq!(mint, FS);
+    assert_eq!(redeem, HALF);
+
+    config.destroy_for_testing();
+}
+
+#[test]
+fun ratio_just_below_one_does_not_quite_saturate() {
+    // ratio = 0.999 → shift = 0.999 · 0.5 = 0.4995, mid = 0.9995, mint = FS
+    // (clamped by .min(FS) at the end), but the mid is still strictly < FS.
+    // This isolates the difference between the ratio_mag.min(FS) clamp and
+    // the final mint_price.min(FS) clamp.
+    let config = pricing_config::new();
+    let depth = constants::default_depth_multiplier!();
+    let agg = i64::from_parts(aggregate_for_ratio(999_000_000, BALANCE, depth), false);
+
+    let (mint, redeem) = config.compute_up_quote(HALF, &agg, 0, BALANCE, seven_days_ms());
+
+    // shifted_mid = 0.5 + 0.999 · 0.5 = 0.9995, mint = (0.9995 + 0.01).min(FS) = FS.
+    assert_eq!(mint, FS);
+    // redeem = (0.9995 - 0.01).min(0.5) = 0.5 (still clamped at fair).
+    assert_eq!(redeem, HALF);
+
+    config.destroy_for_testing();
+}
+
+// ── Sub-spread shift: zero-edge floor doesn't engage ────────────────────────
+
+#[test]
+fun negative_aggregate_with_shift_below_spread_keeps_mint_above_fair_only() {
+    // Small negative aggregate: shift < spread, so `shifted_mid + spread`
+    // still exceeds fair on its own — the .max(fair) clamp is a no-op and
+    // mint sits between fair and (fair + spread).
+    let config = pricing_config::new();
+    let depth = constants::default_depth_multiplier!();
+    // ratio = -0.005 → shift = 0.005 · 0.5 = 0.0025; spread (1%) > shift.
+    let agg = i64::from_parts(aggregate_for_ratio(5_000_000, BALANCE, depth), true);
+
+    let (mint, _) = config.compute_up_quote(HALF, &agg, 0, BALANCE, seven_days_ms());
+
+    // shifted_mid = 0.5 - 0.0025 = 0.4975 → mint = 0.4975 + 0.01 = 0.5075.
+    // Above fair (= 0.5) but strictly below the unshifted mint (= 0.51).
+    assert_eq!(mint, 507_500_000);
+
+    config.destroy_for_testing();
+}
+
+#[test]
+fun positive_aggregate_with_shift_below_spread_keeps_redeem_below_fair_only() {
+    let config = pricing_config::new();
+    let depth = constants::default_depth_multiplier!();
+    let agg = i64::from_parts(aggregate_for_ratio(5_000_000, BALANCE, depth), false);
+
+    let (_, redeem) = config.compute_up_quote(HALF, &agg, 0, BALANCE, seven_days_ms());
+
+    // shifted_mid = 0.5025 → redeem = 0.5025 - 0.01 = 0.4925 (below fair, above 0).
+    assert_eq!(redeem, 492_500_000);
+
+    config.destroy_for_testing();
+}
+
+// ── Rejected fair prices (settled boundaries) ───────────────────────────────
+
+#[test, expected_failure(abort_code = pricing_config::EFairPriceAlreadySettled)]
+fun compute_up_quote_aborts_when_fair_price_is_one() {
+    // FS == 1.0 means the binary settled "yes". No live fee applies.
+    let config = pricing_config::new();
+    let agg = i64::zero();
+    let (_, _) = config.compute_up_quote(FS, &agg, 0, BALANCE, seven_days_ms());
+    abort 999
+}
+
+#[test, expected_failure(abort_code = pricing_config::EFairPriceAlreadySettled)]
+fun compute_up_quote_aborts_when_fair_price_is_zero() {
+    let config = pricing_config::new();
+    let agg = i64::zero();
+    let (_, _) = config.compute_up_quote(0, &agg, 0, BALANCE, seven_days_ms());
+    abort 999
+}
+
+// ── Round-trip cost without skew equals two spreads ─────────────────────────
+
+#[test]
+fun round_trip_cost_with_zero_aggregate_equals_two_spreads() {
+    // Round-trip cost = mint − redeem. With a flat book this is purely
+    // bid-ask, no inventory penalty.
+    let config = pricing_config::new();
+    let agg = i64::zero();
+
+    let (mint, redeem) = config.compute_up_quote(HALF, &agg, 0, BALANCE, seven_days_ms());
+
+    assert_eq!(mint - redeem, 2 * FEE_AT_HALF);
+
+    config.destroy_for_testing();
+}
+
+#[test]
+fun round_trip_cost_with_positive_aggregate_widens_by_shift() {
+    // After a one-sided buy, the round trip costs more by exactly `shift` —
+    // the buyer's own order pushed the mid against them, and the redeem
+    // side pinned at fair while mint widened.
+    let config = pricing_config::new();
+    let depth = constants::default_depth_multiplier!();
+    let agg = i64::from_parts(aggregate_for_ratio(100_000_000, BALANCE, depth), false);
+
+    let (mint, redeem) = config.compute_up_quote(HALF, &agg, 0, BALANCE, seven_days_ms());
+
+    // mint = 0.56, redeem clamps at 0.5 → cost = 0.06 = 6¢.
+    assert_eq!(mint, 560_000_000);
+    assert_eq!(redeem, HALF);
+    assert_eq!(mint - redeem, 60_000_000);
+
+    config.destroy_for_testing();
+}
+
+// ── Very small balance: aggregate saturates the clamp instantly ─────────────
+
+#[test]
+fun tiny_balance_relative_to_aggregate_saturates_immediately() {
+    // With balance ≪ aggregate, the raw ratio explodes past 1 and clamps.
+    // Models the worst-case behavior right after a high-leverage trade.
+    let config = pricing_config::new();
+    let agg = i64::from_parts(1_000_000_000_000, false); // 1e12, large
+    let tiny_balance = 1_000_000u64; // 1 USDC vault
+
+    let (mint, redeem) = config.compute_up_quote(
+        HALF,
+        &agg,
+        0,
+        tiny_balance,
+        seven_days_ms(),
+    );
+
+    assert_eq!(mint, FS);
+    assert_eq!(redeem, HALF);
+
+    config.destroy_for_testing();
+}
+
+// ── Asymmetric room exact boundaries ────────────────────────────────────────
+
+#[test]
+fun positive_skew_at_one_cent_fair_uses_full_room_to_one() {
+    // Far OTM (fair = 1¢): room for positive skew is 99¢, so the shift can
+    // dominate. spread at p=0.01: 2% · √(0.01·0.99) ≈ 2% · 0.0995 = 0.199%
+    // — but min_fee floor (0.5%) kicks in.
+    let config = pricing_config::new();
+    let depth = constants::default_depth_multiplier!();
+    let agg = i64::from_parts(aggregate_for_ratio(100_000_000, BALANCE, depth), false);
+
+    let (mint, redeem) = config.compute_up_quote(
+        10_000_000,
+        &agg,
+        0,
+        BALANCE,
+        seven_days_ms(),
+    );
+
+    // ratio = 0.10 → shift = 0.10 · (1 - 0.01) = 0.099 → mid = 0.109.
+    // spread floor = 0.5% (min_fee) → mint = 0.109 + 0.005 = 0.114.
+    assert_eq!(mint, 114_000_000);
+    // redeem = 0.109 - 0.005 = 0.104, but clamped at fair (0.01).
+    assert_eq!(redeem, 10_000_000);
+
+    config.destroy_for_testing();
+}
+
 // ── Defaults and getters ────────────────────────────────────────────────────
 
 #[test]
