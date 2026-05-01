@@ -18,7 +18,6 @@ use deepbook_predict::{
     fee_reserve::{Self, FeeReserve},
     market_oracle::{Self, MarketOracle, MarketOracleCap},
     math::mul_div_round_down,
-    meta_oracle::{Self, CanonicalSnapshot},
     oracle_config::{Self, OracleConfig},
     plp::PLP,
     predict_manager::PredictManager,
@@ -52,7 +51,6 @@ const EAskBoundLooserThanGlobal: u64 = 8;
 const EOracleNotSettled: u64 = 9;
 const EStaleOracleMtm: u64 = 10;
 const EPredictAlreadyCreated: u64 = 11;
-const EOraclePendingSettlement: u64 = 12;
 
 /// Emitted when a position interval is minted.
 /// `cost` is fair value plus `fee_amount`; `fee_rate` is per-unit.
@@ -231,10 +229,6 @@ public fun mint<Quote>(
     ctx: &mut TxContext,
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
-    assert!(
-        market_oracle.status(clock) != market_oracle::status_pending_settlement(),
-        EOraclePendingSettlement,
-    );
     mint_internal<Quote>(predict, manager, market_oracle, pyth, key, quantity, clock, ctx);
 }
 
@@ -255,10 +249,6 @@ public fun redeem<Quote>(
     let payout_coin = if (market_oracle.is_settled()) {
         redeem_settled_internal<Quote>(predict, manager, market_oracle, key, quantity, clock, ctx)
     } else {
-        assert!(
-            market_oracle.status(clock) != market_oracle::status_pending_settlement(),
-            EOraclePendingSettlement,
-        );
         redeem_live_internal<Quote>(
             predict,
             manager,
@@ -383,16 +373,17 @@ public fun refresh_oracle_mtm(
         let settlement = market_oracle.settlement_price().destroy_some();
         predict.vault.apply_settled_oracle_valuation(oracle_id, settlement, clock);
     } else {
-        assert!(
-            market_oracle.status(clock) != market_oracle::status_pending_settlement(),
-            EOraclePendingSettlement,
-        );
-        let snapshot = meta_oracle::build_live_snapshot(market_oracle, pyth, clock);
         let (min_strike, max_strike) = predict.vault.valuation_strike_range(oracle_id);
         if (min_strike == 0 && max_strike == 0) {
             return
         } else {
-            let curve = predict.build_live_curve(oracle_id, &snapshot, min_strike, max_strike);
+            let curve = predict.build_live_curve(
+                market_oracle,
+                pyth,
+                clock,
+                min_strike,
+                max_strike,
+            );
             predict.vault.apply_live_valuation(oracle_id, curve, clock);
         };
     };
@@ -825,11 +816,10 @@ fun mint_internal<Quote>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let snapshot = meta_oracle::build_live_snapshot(market_oracle, pyth, clock);
     predict.apply_mint_delta<Quote>(
         manager,
         market_oracle,
-        &snapshot,
+        pyth,
         key,
         quantity,
         clock,
@@ -837,9 +827,10 @@ fun mint_internal<Quote>(
 
     let (principal_amount, fee_amount) = predict.quote_mint_amounts(
         market_oracle,
-        &snapshot,
+        pyth,
         key,
         quantity,
+        clock,
     );
     let cost = principal_amount + fee_amount;
 
@@ -875,13 +866,14 @@ fun redeem_live_internal<Quote>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Quote> {
-    let snapshot = meta_oracle::build_live_snapshot(market_oracle, pyth, clock);
-    predict.apply_live_redeem_delta(manager, market_oracle, &snapshot, key, quantity, clock);
+    predict.apply_live_redeem_delta(manager, market_oracle, pyth, key, quantity, clock);
 
     let (principal_amount, fee_amount) = predict.quote_live_redeem_amounts(
-        &snapshot,
+        market_oracle,
+        pyth,
         key,
         quantity,
+        clock,
     );
     let mut payout_balance = predict.vault.dispense_payout<Quote>(principal_amount);
     let fee_balance = payout_balance.split(fee_amount);
@@ -936,7 +928,7 @@ fun apply_mint_delta<Quote>(
     predict: &mut Predict,
     manager: &mut PredictManager,
     market_oracle: &MarketOracle,
-    snapshot: &CanonicalSnapshot,
+    pyth: &PythSource,
     key: RangeKey,
     quantity: u64,
     clock: &Clock,
@@ -948,7 +940,7 @@ fun apply_mint_delta<Quote>(
 
     let (min_strike, max_strike) = predict.vault.valuation_strike_range(market_oracle.id());
     let (min_strike, max_strike) = key.extend_strike_range(min_strike, max_strike);
-    let curve = predict.build_live_curve(market_oracle.id(), snapshot, min_strike, max_strike);
+    let curve = predict.build_live_curve(market_oracle, pyth, clock, min_strike, max_strike);
     manager.increase_position(key, quantity);
     predict.vault.insert_live_range(key, quantity, curve, clock);
 }
@@ -959,7 +951,7 @@ fun apply_live_redeem_delta(
     predict: &mut Predict,
     manager: &mut PredictManager,
     market_oracle: &MarketOracle,
-    snapshot: &CanonicalSnapshot,
+    pyth: &PythSource,
     key: RangeKey,
     quantity: u64,
     clock: &Clock,
@@ -969,7 +961,7 @@ fun apply_live_redeem_delta(
 
     let (min_strike, max_strike) = predict.vault.valuation_strike_range(market_oracle.id());
     let (min_strike, max_strike) = key.extend_strike_range(min_strike, max_strike);
-    let curve = predict.build_live_curve(market_oracle.id(), snapshot, min_strike, max_strike);
+    let curve = predict.build_live_curve(market_oracle, pyth, clock, min_strike, max_strike);
     manager.decrease_position(key, quantity);
     predict.vault.remove_live_range(key, quantity, curve, clock);
 }
@@ -996,11 +988,12 @@ fun apply_settled_redeem_delta(
 fun quote_mint_amounts(
     predict: &Predict,
     market_oracle: &MarketOracle,
-    snapshot: &CanonicalSnapshot,
+    pyth: &PythSource,
     key: RangeKey,
     quantity: u64,
+    clock: &Clock,
 ): (u64, u64) {
-    let quote = predict.quote_live_unit(snapshot, &key);
+    let quote = predict.quote_live_unit(market_oracle, pyth, &key, clock);
     predict.assert_mint_quote_allowed(market_oracle.id(), &quote);
 
     let principal_amount = math::mul(quote.fair_price(), quantity);
@@ -1011,11 +1004,13 @@ fun quote_mint_amounts(
 
 fun quote_live_redeem_amounts(
     predict: &Predict,
-    snapshot: &CanonicalSnapshot,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
     key: RangeKey,
     quantity: u64,
+    clock: &Clock,
 ): (u64, u64) {
-    let quote = predict.quote_live_unit(snapshot, &key);
+    let quote = predict.quote_live_unit(market_oracle, pyth, &key, clock);
 
     let principal_amount = math::mul(quote.fair_price(), quantity);
     let fee_amount = math::mul(quote.fee_rate(), quantity);
@@ -1040,23 +1035,22 @@ fun quote_unit(
         );
         pricing::quote_zero_fee(fair_price)
     } else {
-        assert!(
-            market_oracle.status(clock) != market_oracle::status_pending_settlement(),
-            EOraclePendingSettlement,
-        );
-        let snapshot = meta_oracle::build_live_snapshot(market_oracle, pyth, clock);
-        predict.quote_live_unit(&snapshot, key)
+        predict.quote_live_unit(market_oracle, pyth, key, clock)
     }
 }
 
 fun quote_live_unit(
     predict: &Predict,
-    snapshot: &CanonicalSnapshot,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
     key: &RangeKey,
+    clock: &Clock,
 ): UnitQuote {
     pricing::quote_live_range(
         &predict.pricing_config,
-        snapshot,
+        market_oracle,
+        pyth,
+        clock,
         key,
         predict.vault.total_mtm(),
         predict.vault.balance(),
@@ -1065,13 +1059,24 @@ fun quote_live_unit(
 
 fun build_live_curve(
     predict: &Predict,
-    oracle_id: ID,
-    snapshot: &CanonicalSnapshot,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    clock: &Clock,
     min_strike: u64,
     max_strike: u64,
 ): vector<CurvePoint> {
+    let oracle_id = market_oracle.id();
     let (grid_min, grid_tick, grid_max) = predict.oracle_config.grid_params(oracle_id);
-    pricing::build_curve(snapshot, grid_min, grid_tick, grid_max, min_strike, max_strike)
+    pricing::build_live_curve(
+        market_oracle,
+        pyth,
+        clock,
+        grid_min,
+        grid_tick,
+        grid_max,
+        min_strike,
+        max_strike,
+    )
 }
 
 /// Returns the USDC value of `shares` at the given vault value.

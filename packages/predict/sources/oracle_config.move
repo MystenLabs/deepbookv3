@@ -65,8 +65,8 @@ public struct OracleConfig has store {
     asset_feed_ids: Table<String, u64>,
     /// Admin-tuned maximum age for Pyth spot to be considered canonical.
     pyth_spot_freshness_ms: u64,
-    /// Admin-tuned maximum age of the Block Scholes price update used for basis
-    /// and forward data in live snapshots.
+    /// Admin-tuned maximum age of the Block Scholes price update used for live
+    /// pricing when Pyth spot is fresh.
     block_scholes_price_freshness_ms: u64,
     /// Admin-tuned maximum age of Block Scholes spot when Pyth is stale.
     block_scholes_fallback_freshness_ms: u64,
@@ -201,7 +201,10 @@ public(package) fun set_pyth_spot_freshness_ms(oracle_config: &mut OracleConfig,
 }
 
 /// Admin setter: update the global Block Scholes price freshness seed.
-public(package) fun set_block_scholes_price_freshness_ms(oracle_config: &mut OracleConfig, value: u64) {
+public(package) fun set_block_scholes_price_freshness_ms(
+    oracle_config: &mut OracleConfig,
+    value: u64,
+) {
     validate_freshness_ms(value);
     oracle_config.block_scholes_price_freshness_ms = value;
 }

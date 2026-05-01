@@ -3,20 +3,21 @@
 
 /// Pricing, fees, quotes, and valuation curves for Predict markets.
 ///
-/// This module consumes canonical oracle snapshots and protocol pricing config.
-/// It does not select oracle sources, own market state, route funds, or mutate
-/// positions.
+/// This module resolves live oracle inputs for pricing, computes SVI prices,
+/// applies fees, and builds valuation curves. It does not own market state,
+/// route funds, or mutate positions.
 module deepbook_predict::pricing;
 
 use deepbook::{constants::max_u64, math};
 use deepbook_predict::{
     constants,
     i64,
-    market_oracle,
+    market_oracle::{Self, MarketOracle, SVIParams},
     math as predict_math,
-    meta_oracle::CanonicalSnapshot,
+    pyth_source::PythSource,
     range_key::RangeKey
 };
+use sui::clock::Clock;
 
 const EInvalidFee: u64 = 0;
 const EInvalidAskBound: u64 = 1;
@@ -33,6 +34,9 @@ const ETotalVarianceOverflow: u64 = 11;
 const EInvalidLiveFairPrice: u64 = 12;
 const EFeeOverflow: u64 = 13;
 const EInvalidCurveRange: u64 = 14;
+const EBlockScholesBasisStale: u64 = 15;
+const EBlockScholesSVIStale: u64 = 16;
+const EMarketNotActive: u64 = 17;
 
 /// Fee and ask-bound parameters used when quoting Predict markets.
 /// The quoted fee is a per-unit absolute price increment, not a bps rate.
@@ -182,33 +186,6 @@ public(package) fun set_max_ask_price(config: &mut PricingConfig, value: u64) {
     config.max_ask_price = value;
 }
 
-/// Compute the fair UP tail price for `strike`.
-fun compute_up_price(snapshot: &CanonicalSnapshot, strike: u64): u64 {
-    if (strike == constants::neg_inf!()) {
-        return constants::float_scaling!()
-    };
-    if (strike == constants::pos_inf!()) {
-        return 0
-    };
-
-    compute_nd2(snapshot, strike)
-}
-
-/// Compute the fair price for the range `(lower, higher]`.
-fun compute_range_price(
-    snapshot: &CanonicalSnapshot,
-    lower: u64,
-    higher: u64,
-): u64 {
-    assert!(lower < higher, EInvalidRange);
-
-    let lower_up_price = compute_up_price(snapshot, lower);
-    let higher_up_price = compute_up_price(snapshot, higher);
-    assert!(lower_up_price >= higher_up_price, ERangePriceUnderflow);
-
-    lower_up_price - higher_up_price
-}
-
 /// Compute the settled UP tail price for `strike`.
 fun compute_settled_up_price(settlement: u64, strike: u64): u64 {
     if (strike == constants::neg_inf!()) return constants::float_scaling!();
@@ -228,70 +205,38 @@ public(package) fun compute_settled_range_price(settlement: u64, lower: u64, hig
 }
 
 /// Build an adaptive piecewise-linear UP-price curve over a configured grid range.
-public(package) fun build_curve(
-    snapshot: &CanonicalSnapshot,
+public(package) fun build_live_curve(
+    market: &MarketOracle,
+    pyth: &PythSource,
+    clock: &Clock,
     grid_min: u64,
     grid_tick: u64,
     grid_max: u64,
     min_strike: u64,
     max_strike: u64,
 ): vector<CurvePoint> {
-    assert_curve_range(grid_min, grid_tick, grid_max, min_strike, max_strike);
-
-    if (min_strike == max_strike) {
-        let price = compute_up_price(snapshot, min_strike);
-        return vector[new_curve_point(min_strike, price)]
-    };
-
-    let price_lo = compute_up_price(snapshot, min_strike);
-    let price_hi = compute_up_price(snapshot, max_strike);
-    let mut points = vector[
-        new_curve_point(min_strike, price_lo),
-        new_curve_point(max_strike, price_hi),
-    ];
-
-    let curve_samples = constants::default_curve_samples!();
-    let mut cur_samples = 2;
-    while (cur_samples < curve_samples) {
-        let (found, idx) = find_gap(&points, grid_tick);
-        if (!found) break;
-
-        let strike_lo = points[idx].strike;
-        let strike_hi = points[idx + 1].strike;
-        let mid_strike = snap_to_tick((strike_lo + strike_hi) / 2, grid_min, grid_tick);
-        let price = compute_up_price(snapshot, mid_strike);
-        insert_asc(&mut points, new_curve_point(mid_strike, price));
-        cur_samples = cur_samples + 1;
-    };
-
-    points
+    let (forward, svi) = resolve_live_inputs(market, pyth, clock);
+    build_curve(forward, &svi, grid_min, grid_tick, grid_max, min_strike, max_strike)
 }
 
-/// Quote a live range from canonical oracle state and current vault utilization.
+/// Quote a live range from current oracle state and vault utilization.
 public(package) fun quote_live_range(
     config: &PricingConfig,
-    snapshot: &CanonicalSnapshot,
+    market: &MarketOracle,
+    pyth: &PythSource,
+    clock: &Clock,
     key: &RangeKey,
     liability: u64,
     balance: u64,
 ): UnitQuote {
+    let (forward, svi) = resolve_live_inputs(market, pyth, clock);
     let fair_price = compute_range_price(
-        snapshot,
+        forward,
+        &svi,
         key.lower_strike(),
         key.higher_strike(),
     );
     quote_live_fair_price(config, fair_price, liability, balance)
-}
-
-/// Quote a live fair price from current fee config and vault utilization.
-fun quote_live_fair_price(
-    config: &PricingConfig,
-    fair_price: u64,
-    liability: u64,
-    balance: u64,
-): UnitQuote {
-    let fee_rate = quote_fee_rate(config, fair_price, liability, balance);
-    new_unit_quote(fair_price, fee_rate)
 }
 
 /// Quote an already-finalized fair price with no live fee.
@@ -321,6 +266,112 @@ public fun destroy_for_testing(config: PricingConfig) {
 
 // === Private Functions ===
 
+fun resolve_live_inputs(market: &MarketOracle, pyth: &PythSource, clock: &Clock): (u64, SVIParams) {
+    assert!(market.status(clock) == market_oracle::status_active(), EMarketNotActive);
+    let bounds = market.bounds();
+
+    let pyth_spot_is_fresh = market_oracle::pyth_spot_is_live_fresh(market, pyth, clock);
+    let price_freshness_ms = if (pyth_spot_is_fresh) {
+        market_oracle::bounds_block_scholes_price_freshness_ms(&bounds)
+    } else {
+        market_oracle::bounds_block_scholes_fallback_freshness_ms(&bounds)
+    };
+    assert!(
+        market_oracle::block_scholes_price_is_fresh(market, clock, price_freshness_ms),
+        EBlockScholesBasisStale,
+    );
+    assert!(
+        market_oracle::block_scholes_svi_is_fresh(
+            market,
+            clock,
+            market_oracle::bounds_block_scholes_svi_freshness_ms(&bounds),
+        ),
+        EBlockScholesSVIStale,
+    );
+
+    let forward = if (pyth_spot_is_fresh) {
+        math::mul(pyth.spot(), market.block_scholes_basis())
+    } else {
+        market.block_scholes_forward()
+    };
+
+    (forward, market.block_scholes_svi())
+}
+
+fun build_curve(
+    forward: u64,
+    svi: &SVIParams,
+    grid_min: u64,
+    grid_tick: u64,
+    grid_max: u64,
+    min_strike: u64,
+    max_strike: u64,
+): vector<CurvePoint> {
+    assert_curve_range(grid_min, grid_tick, grid_max, min_strike, max_strike);
+
+    if (min_strike == max_strike) {
+        let price = compute_up_price(forward, svi, min_strike);
+        return vector[new_curve_point(min_strike, price)]
+    };
+
+    let price_lo = compute_up_price(forward, svi, min_strike);
+    let price_hi = compute_up_price(forward, svi, max_strike);
+    let mut points = vector[
+        new_curve_point(min_strike, price_lo),
+        new_curve_point(max_strike, price_hi),
+    ];
+
+    let curve_samples = constants::default_curve_samples!();
+    let mut cur_samples = 2;
+    while (cur_samples < curve_samples) {
+        let (found, idx) = find_gap(&points, grid_tick);
+        if (!found) break;
+
+        let strike_lo = points[idx].strike;
+        let strike_hi = points[idx + 1].strike;
+        let mid_strike = snap_to_tick((strike_lo + strike_hi) / 2, grid_min, grid_tick);
+        let price = compute_up_price(forward, svi, mid_strike);
+        insert_asc(&mut points, new_curve_point(mid_strike, price));
+        cur_samples = cur_samples + 1;
+    };
+
+    points
+}
+
+/// Compute the fair UP tail price for `strike`.
+fun compute_up_price(forward: u64, svi: &SVIParams, strike: u64): u64 {
+    if (strike == constants::neg_inf!()) {
+        return constants::float_scaling!()
+    };
+    if (strike == constants::pos_inf!()) {
+        return 0
+    };
+
+    compute_nd2(forward, svi, strike)
+}
+
+/// Compute the fair price for the range `(lower, higher]`.
+fun compute_range_price(forward: u64, svi: &SVIParams, lower: u64, higher: u64): u64 {
+    assert!(lower < higher, EInvalidRange);
+
+    let lower_up_price = compute_up_price(forward, svi, lower);
+    let higher_up_price = compute_up_price(forward, svi, higher);
+    assert!(lower_up_price >= higher_up_price, ERangePriceUnderflow);
+
+    lower_up_price - higher_up_price
+}
+
+/// Quote a live fair price from current fee config and vault utilization.
+fun quote_live_fair_price(
+    config: &PricingConfig,
+    fair_price: u64,
+    liability: u64,
+    balance: u64,
+): UnitQuote {
+    let fee_rate = quote_fee_rate(config, fair_price, liability, balance);
+    new_unit_quote(fair_price, fee_rate)
+}
+
 fun new_curve_point(strike: u64, up_price: u64): CurvePoint {
     CurvePoint { strike, up_price }
 }
@@ -334,12 +385,7 @@ fun new_unit_quote(fair_price: u64, fee_rate: u64): UnitQuote {
     }
 }
 
-fun quote_fee_rate(
-    config: &PricingConfig,
-    fair_price: u64,
-    liability: u64,
-    balance: u64,
-): u64 {
+fun quote_fee_rate(config: &PricingConfig, fair_price: u64, liability: u64, balance: u64): u64 {
     let price_fee = price_fee_rate(config, fair_price);
     let utilization_fee = utilization_fee_rate(config, liability, balance);
     assert!(price_fee <= max_u64() - utilization_fee, EFeeOverflow);
@@ -381,30 +427,27 @@ fun utilization_fee_rate(config: &PricingConfig, liability: u64, balance: u64): 
 /// - k = ln(strike / forward)
 /// - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
 /// - d2 = -((k + w(k) / 2) / sqrt(w(k)))
-fun compute_nd2(snapshot: &CanonicalSnapshot, strike: u64): u64 {
-    let forward = snapshot.forward();
+fun compute_nd2(forward: u64, svi: &SVIParams, strike: u64): u64 {
     assert!(forward > 0, EZeroForward);
 
-    let svi = snapshot.svi();
-
     let k = predict_math::ln(math::div(strike, forward));
-    let m = market_oracle::svi_m(&svi);
+    let m = market_oracle::svi_m(svi);
     let k_minus_m = k.sub(&m);
     let k_minus_m_squared = k_minus_m.square_scaled();
-    let sigma = market_oracle::svi_sigma(&svi);
+    let sigma = market_oracle::svi_sigma(svi);
     let sigma_squared = math::mul(sigma, sigma);
     assert!(k_minus_m_squared <= max_u64() - sigma_squared, ESVISqrtInputOverflow);
     let sqrt_input = k_minus_m_squared + sigma_squared;
     let sq = predict_math::sqrt(sqrt_input, constants::float_scaling!());
     let sq_i64 = i64::from_u64(sq);
 
-    let rho = market_oracle::svi_rho(&svi);
+    let rho = market_oracle::svi_rho(svi);
     let rho_km = rho.mul_scaled(&k_minus_m);
     let inner = rho_km.add(&sq_i64);
     assert!(!inner.is_negative(), ECannotBeNegative);
 
-    let a = market_oracle::svi_a(&svi);
-    let b = market_oracle::svi_b(&svi);
+    let a = market_oracle::svi_a(svi);
+    let b = market_oracle::svi_b(svi);
     let wing_var = math::mul(b, inner.magnitude());
     assert!(a <= max_u64() - wing_var, ETotalVarianceOverflow);
     let total_var = a + wing_var;
