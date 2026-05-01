@@ -10,7 +10,7 @@ module deepbook_predict::registry;
 
 use deepbook_predict::{
     constants,
-    market_oracle::{Self, MarketOracleCap, MarketOracle},
+    market_oracle::{Self, MarketOracleCap},
     plp::PLP,
     predict::{Self, Predict},
     predict_manager::{Self, PredictManager},
@@ -136,7 +136,7 @@ public fun create_market_oracle(
     // cross-field consistency, but the Pyth Lazer feed-id width is `u32`.
     assert!(pyth_lazer_feed_id <= 0xFFFF_FFFF, EFeedIdOverflow);
     assert!(pyth.feed_id() == pyth_lazer_feed_id as u32, EFeedIdMismatch);
-    let bounds = predict.build_market_oracle_bounds(underlying_asset);
+    let bounds = predict.build_market_oracle_bounds();
     let market_oracle_id = market_oracle::create(
         underlying_asset,
         pyth.id(),
@@ -151,7 +151,14 @@ public fun create_market_oracle(
         registry.market_oracle_ids.add(cap_id, vector[]);
     };
     registry.market_oracle_ids[cap_id].push_back(market_oracle_id);
-    predict.add_market_grid(market_oracle_id, expiry, min_strike, tick_size, clock, ctx);
+    predict.init_market_oracle_exposure(
+        market_oracle_id,
+        expiry,
+        min_strike,
+        tick_size,
+        clock,
+        ctx,
+    );
     event::emit(MarketOracleCreated {
         market_oracle_id,
         market_oracle_cap_id: cap_id,
@@ -225,28 +232,6 @@ public fun set_max_ask_price(predict: &mut Predict, _admin_cap: &AdminCap, value
     predict.set_max_ask_price(value);
 }
 
-/// Set a per-market_oracle ask-bound override. Authorized by the market_oracle's own cap;
-/// no `AdminCap` required. The override may only tighten the global bounds.
-public fun set_market_ask_bounds(
-    predict: &mut Predict,
-    market_oracle: &MarketOracle,
-    cap: &MarketOracleCap,
-    min: u64,
-    max: u64,
-) {
-    predict.set_market_ask_bounds(market_oracle, cap, min, max);
-}
-
-/// Clear a per-market_oracle ask-bound override so the market_oracle inherits the global
-/// default again. Authorized by the market_oracle's own cap.
-public fun clear_market_ask_bounds(
-    predict: &mut Predict,
-    market_oracle: &MarketOracle,
-    cap: &MarketOracleCap,
-) {
-    predict.clear_market_ask_bounds(market_oracle, cap);
-}
-
 /// Set max total exposure percentage.
 public fun set_max_total_exposure_pct(predict: &mut Predict, _admin_cap: &AdminCap, pct: u64) {
     predict.set_max_total_exposure_pct(pct);
@@ -299,31 +284,6 @@ public fun set_block_scholes_svi_freshness_ms(
     value: u64,
 ) {
     predict.set_block_scholes_svi_freshness_ms(value);
-}
-
-/// Update the circuit-breaker bounds seed used by
-/// `market_config::build_market_oracle_bounds` at the next matching `create_market_oracle`
-/// for `asset` (e.g. "BTC"). `max_spot_deviation` and `max_basis_deviation`
-/// are per-push percent caps (1e9-scaled); `min_basis` / `max_basis` are
-/// absolute bounds on `forward / spot`. Does NOT retroactively update
-/// existing oracles — operators retune per-market_oracle via
-/// `market_oracle::set_basis_bounds`.
-public fun set_asset_basis_bounds(
-    predict: &mut Predict,
-    _admin_cap: &AdminCap,
-    asset: String,
-    max_spot_deviation: u64,
-    max_basis_deviation: u64,
-    min_basis: u64,
-    max_basis: u64,
-) {
-    predict.set_asset_basis_bounds(
-        asset,
-        max_spot_deviation,
-        max_basis_deviation,
-        min_basis,
-        max_basis,
-    );
 }
 
 /// Bind `asset → pyth_lazer_feed_id` so subsequent `create_market_oracle` calls for

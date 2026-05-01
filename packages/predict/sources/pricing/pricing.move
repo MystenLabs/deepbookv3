@@ -21,7 +21,6 @@ use sui::clock::Clock;
 
 const EInvalidFee: u64 = 0;
 const EInvalidAskBound: u64 = 1;
-const EInvalidAskBounds: u64 = 2;
 const EAskPriceOverflow: u64 = 3;
 const EAskPriceOutOfBounds: u64 = 4;
 const EZeroForward: u64 = 5;
@@ -52,12 +51,6 @@ public struct PricingConfig has store {
     /// Global minimum allowed all-in mint price after adding the fee.
     min_ask_price: u64,
     /// Global maximum allowed all-in mint price after adding the fee.
-    max_ask_price: u64,
-}
-
-/// Mint ask bounds for a quote.
-public struct AskBounds has copy, drop, store {
-    min_ask_price: u64,
     max_ask_price: u64,
 }
 
@@ -99,23 +92,6 @@ public fun min_ask_price(config: &PricingConfig): u64 {
 /// Return the global maximum allowed all-in mint price.
 public fun max_ask_price(config: &PricingConfig): u64 {
     config.max_ask_price
-}
-
-/// Create ask bounds from already-resolved minimum and maximum prices.
-/// Empty intersections are representable; applying them rejects every ask.
-public fun new_ask_bounds(min_ask_price: u64, max_ask_price: u64): AskBounds {
-    assert!(max_ask_price < constants::float_scaling!(), EInvalidAskBounds);
-    AskBounds { min_ask_price, max_ask_price }
-}
-
-/// Return the minimum allowed ask price.
-public fun ask_bounds_min(bounds: &AskBounds): u64 {
-    bounds.min_ask_price
-}
-
-/// Return the maximum allowed ask price.
-public fun ask_bounds_max(bounds: &AskBounds): u64 {
-    bounds.max_ask_price
 }
 
 /// Return the fair price component.
@@ -244,11 +220,11 @@ public(package) fun quote_zero_fee(fair_price: u64): UnitQuote {
     new_unit_quote(fair_price, 0)
 }
 
-/// Abort unless the quote's all-in ask price is inside `bounds`.
-public(package) fun assert_ask_price_allowed(quote: &UnitQuote, bounds: &AskBounds) {
+/// Abort unless the quote's all-in ask price is inside the global mint bounds.
+public(package) fun assert_mint_quote_allowed(config: &PricingConfig, quote: &UnitQuote) {
     let ask_price = quote.ask_price;
     assert!(
-        ask_price >= bounds.min_ask_price && ask_price <= bounds.max_ask_price,
+        ask_price >= config.min_ask_price && ask_price <= config.max_ask_price,
         EAskPriceOutOfBounds,
     );
 }

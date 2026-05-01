@@ -16,6 +16,7 @@ module deepbook_predict::vault;
 
 use deepbook::math;
 use deepbook_predict::{
+    constants,
     pricing::CurvePoint,
     range_key::RangeKey,
     strike_matrix::{Self, StrikeMatrix}
@@ -27,9 +28,20 @@ const EExceedsMaxTotalExposure: u64 = 1;
 const EOracleExposureNotFound: u64 = 2;
 const EMtmExceedsBalance: u64 = 3;
 const EAssetNotInVault: u64 = 4;
+const EStaleOracleMtm: u64 = 5;
+const EExpiredOracleMtm: u64 = 6;
+const EInvalidStrike: u64 = 7;
 
 /// Dynamic bag key for storing a concrete asset balance by type.
 public struct BalanceKey<phantom T> has copy, drop, store {}
+
+/// Oracle metadata needed for vault-side exposure validation.
+public struct OracleMetadata has copy, drop, store {
+    expiry: u64,
+    min_strike: u64,
+    max_strike: u64,
+    tick_size: u64,
+}
 
 /// Vault state for balances, exposure matrices, and aggregate liability.
 public struct Vault has store {
@@ -39,8 +51,8 @@ public struct Vault has store {
     balance: u64,
     /// Per-oracle matrix for strike-level position tracking.
     oracle_matrices: Table<ID, StrikeMatrix>,
-    /// Per-oracle expiry used to block LP flows while exposed expired oracles wait for settlement.
-    oracle_expiries: Table<ID, u64>,
+    /// Per-oracle grid and expiry metadata.
+    oracle_metadata: Table<ID, OracleMetadata>,
     /// Settlement prices for compacted oracles.
     compacted_oracle_settlements: Table<ID, u64>,
     /// Sum of all oracle matrix MTM values.
@@ -94,7 +106,7 @@ public(package) fun new(ctx: &mut TxContext): Vault {
         balances: bag::new(ctx),
         balance: 0,
         oracle_matrices: table::new(ctx),
-        oracle_expiries: table::new(ctx),
+        oracle_metadata: table::new(ctx),
         compacted_oracle_settlements: table::new(ctx),
         total_mtm: 0,
         total_max_payout: 0,
@@ -121,8 +133,18 @@ public(package) fun init_oracle_matrix(
                 strike_matrix::new(ctx, tick_size, min_strike, max_strike, clock),
             );
     };
-    if (!vault.oracle_expiries.contains(oracle_id)) {
-        vault.oracle_expiries.add(oracle_id, expiry);
+    if (!vault.oracle_metadata.contains(oracle_id)) {
+        vault
+            .oracle_metadata
+            .add(
+                oracle_id,
+                OracleMetadata {
+                    expiry,
+                    min_strike,
+                    max_strike,
+                    tick_size,
+                },
+            );
     };
 }
 
@@ -235,6 +257,26 @@ public(package) fun unsettled_exposed_oracles(vault: &Vault): &vector<ID> {
     &vault.unsettled_exposed_oracles
 }
 
+/// Assert every unsettled exposed oracle has a fresh cached MTM for LP flows.
+public(package) fun assert_unsettled_mtm_fresh(
+    vault: &Vault,
+    mtm_freshness_ms: u64,
+    clock: &Clock,
+) {
+    let mut i = 0;
+    let len = vault.unsettled_exposed_oracles.length();
+    let now = clock.timestamp_ms();
+    while (i < len) {
+        let oracle_id = vault.unsettled_exposed_oracles[i];
+        assert!(now < vault.oracle_expiry(oracle_id), EExpiredOracleMtm);
+        let last_update = vault.oracle_matrices[oracle_id].last_mtm_update();
+        if (now > last_update) {
+            assert!(now - last_update <= mtm_freshness_ms, EStaleOracleMtm);
+        };
+        i = i + 1;
+    }
+}
+
 /// Return the historical minted strike bounds needed to value an oracle.
 public(package) fun valuation_strike_range(vault: &Vault, oracle_id: ID): (u64, u64) {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
@@ -282,19 +324,37 @@ public(package) fun apply_settled_oracle_valuation(
     vault.remove_unsettled_exposed_oracle(oracle_id);
 }
 
-/// Return the cached MTM update timestamp for an oracle.
-public(package) fun get_last_mtm_update(vault: &Vault, oracle_id: ID): u64 {
-    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
-    vault.oracle_matrices[oracle_id].last_mtm_update()
+/// Load the configured strike-grid parameters for an oracle.
+public(package) fun grid_params(vault: &Vault, oracle_id: ID): (u64, u64, u64) {
+    assert!(vault.oracle_metadata.contains(oracle_id), EOracleExposureNotFound);
+    let metadata = vault.oracle_metadata[oracle_id];
+    (metadata.min_strike, metadata.tick_size, metadata.max_strike)
 }
 
 /// Return the registered expiry for an oracle.
 public(package) fun oracle_expiry(vault: &Vault, oracle_id: ID): u64 {
-    assert!(vault.oracle_expiries.contains(oracle_id), EOracleExposureNotFound);
-    vault.oracle_expiries[oracle_id]
+    assert!(vault.oracle_metadata.contains(oracle_id), EOracleExposureNotFound);
+    vault.oracle_metadata[oracle_id].expiry
+}
+
+/// Assert that both finite strikes in a range key sit on the oracle's configured grid.
+public(package) fun assert_range_key_matches(vault: &Vault, key: &RangeKey) {
+    let oracle_id = key.oracle_id();
+    if (key.lower_strike() != constants::neg_inf!()) {
+        vault.assert_valid_strike(oracle_id, key.lower_strike());
+    };
+    if (key.higher_strike() != constants::pos_inf!()) {
+        vault.assert_valid_strike(oracle_id, key.higher_strike());
+    };
 }
 
 // === Private Functions ===
+
+fun assert_valid_strike(vault: &Vault, oracle_id: ID, strike: u64) {
+    let (min_strike, tick_size, max_strike) = vault.grid_params(oracle_id);
+    assert!(strike >= min_strike && strike <= max_strike, EInvalidStrike);
+    assert!((strike - min_strike) % tick_size == 0, EInvalidStrike);
+}
 
 fun add_unsettled_exposed_oracle(vault: &mut Vault, oracle_id: ID) {
     let mut i = 0;

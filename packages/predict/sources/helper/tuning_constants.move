@@ -37,9 +37,8 @@ public macro fun default_pyth_spot_freshness_ms(): u64 { 2_000 }
 
 /// Default maximum per-push spot deviation accepted by `update_prices`
 /// (2% in FLOAT_SCALING). Catches decimal errors, fat-finger pushes, and
-/// BS outages that return garbage values. Admin can override per asset
-/// via `registry::set_asset_basis_bounds` for assets with different
-/// volatility profiles.
+/// BS outages that return garbage values. Operators can retune per market
+/// via `market_oracle::set_basis_bounds` when needed.
 public macro fun default_max_spot_deviation(): u64 { 20_000_000 }
 
 /// Default maximum per-push basis deviation accepted by `update_prices`

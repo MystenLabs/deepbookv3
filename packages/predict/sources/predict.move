@@ -47,11 +47,10 @@ const EZeroQuantity: u64 = 3;
 const EZeroAmount: u64 = 4;
 const EZeroVaultValue: u64 = 5;
 const EZeroSharesMinted: u64 = 6;
-const EAskBoundLooserThanGlobal: u64 = 8;
+const ERangeKeyOracleMismatch: u64 = 8;
 const EOracleNotSettled: u64 = 9;
-const EStaleOracleMtm: u64 = 10;
+const ERangeKeyExpiryMismatch: u64 = 10;
 const EPredictAlreadyCreated: u64 = 11;
-const EExpiredOracleMtm: u64 = 12;
 
 /// Emitted when a position interval is minted.
 /// `cost` is fair value plus `fee_amount`; `fee_rate` is per-unit.
@@ -111,20 +110,6 @@ public struct FeeReserveConfigUpdated has copy, drop, store {
     insurance_fee_share: u64,
 }
 
-/// Emitted when a per-market_oracle ask-bound override is set.
-public struct OracleAskBoundsSet has copy, drop, store {
-    predict_id: ID,
-    oracle_id: ID,
-    min_ask_price: u64,
-    max_ask_price: u64,
-}
-
-/// Emitted when a per-market_oracle ask-bound override is cleared.
-public struct OracleAskBoundsCleared has copy, drop, store {
-    predict_id: ID,
-    oracle_id: ID,
-}
-
 /// Emitted when risk configuration changes.
 public struct RiskConfigUpdated has copy, drop, store {
     predict_id: ID,
@@ -170,16 +155,6 @@ public struct MarketFreshnessConfigUpdated has copy, drop, store {
     block_scholes_svi_freshness_ms: u64,
 }
 
-/// Emitted when per-asset market_oracle basis bounds change.
-public struct OracleBasisBoundsUpdated has copy, drop, store {
-    predict_id: ID,
-    asset: String,
-    max_spot_deviation: u64,
-    max_basis_deviation: u64,
-    min_basis: u64,
-    max_basis: u64,
-}
-
 /// Emitted when an asset is bound to a Pyth Lazer feed id.
 public struct OracleFeedIdSet has copy, drop, store {
     predict_id: ID,
@@ -202,7 +177,7 @@ public struct Predict has key {
     risk_config: RiskConfig,
     /// Treasury asset whitelist and related treasury policy state
     treasury_config: TreasuryConfig,
-    /// Market strike grids, source bindings, and per-market risk policy.
+    /// Market source bindings and oracle freshness policy.
     market_config: MarketConfig,
     /// Rate limiter for LP withdrawals
     withdrawal_limiter: RateLimiter,
@@ -296,7 +271,7 @@ public fun supply<Quote>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<PLP> {
-    predict.assert_total_mtm_fresh(clock);
+    predict.vault.assert_unsettled_mtm_fresh(predict.risk_config.mtm_freshness_ms(), clock);
     let amount = coin.value();
     assert!(amount > 0, EZeroAmount);
     predict.treasury_config.assert_quote_asset<Quote>();
@@ -334,7 +309,7 @@ public fun withdraw<Quote>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Quote> {
-    predict.assert_total_mtm_fresh(clock);
+    predict.vault.assert_unsettled_mtm_fresh(predict.risk_config.mtm_freshness_ms(), clock);
     let vault_value = predict.vault.vault_value();
     let shares_burned = lp_coin.value();
     assert!(shares_burned > 0, EZeroAmount);
@@ -411,7 +386,7 @@ public fun quote_unit_price(
     key: RangeKey,
     clock: &Clock,
 ): (u64, u64) {
-    predict.market_config.assert_range_key_matches(market_oracle, &key);
+    predict.assert_range_key_matches(market_oracle, &key);
     let quote = predict.quote_unit(market_oracle, pyth, &key, clock);
     (quote.fair_price(), quote.fee_rate())
 }
@@ -421,10 +396,9 @@ public fun unsettled_exposed_oracles(predict: &Predict): &vector<ID> {
     predict.vault.unsettled_exposed_oracles()
 }
 
-/// Resolved ask-price bounds for an market_oracle, after intersecting any per-market_oracle
-/// override with the global default. Exposed for UI/preview.
-public fun ask_bounds(predict: &Predict, oracle_id: ID): (u64, u64) {
-    predict.resolve_ask_bounds(oracle_id)
+/// Global all-in mint price bounds.
+public fun ask_bounds(predict: &Predict): (u64, u64) {
+    (predict.pricing_config.min_ask_price(), predict.pricing_config.max_ask_price())
 }
 
 /// Whether trading is currently paused.
@@ -560,8 +534,8 @@ public(package) fun disable_quote_asset<Quote>(predict: &mut Predict) {
     });
 }
 
-/// Register an market_oracle strike grid and initialize its vault matrix.
-public(package) fun add_market_grid(
+/// Initialize vault exposure state for a newly created market oracle.
+public(package) fun init_market_oracle_exposure(
     predict: &mut Predict,
     oracle_id: ID,
     expiry: u64,
@@ -570,7 +544,6 @@ public(package) fun add_market_grid(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    predict.market_config.add_market_grid(oracle_id, min_strike, tick_size);
     let max_strike = min_strike + tick_size * constants::oracle_strike_grid_ticks!();
     predict
         .vault
@@ -632,40 +605,6 @@ public(package) fun set_max_ask_price(predict: &mut Predict, value: u64) {
     predict.emit_pricing_config_updated();
 }
 
-/// Set a per-market_oracle ask-bound override. Authorized by the market_oracle's own cap.
-/// The override may only tighten the global bounds — never loosen them.
-public(package) fun set_market_ask_bounds(
-    predict: &mut Predict,
-    market_oracle: &MarketOracle,
-    cap: &MarketOracleCap,
-    min: u64,
-    max: u64,
-) {
-    assert!(min >= predict.pricing_config.min_ask_price(), EAskBoundLooserThanGlobal);
-    assert!(max <= predict.pricing_config.max_ask_price(), EAskBoundLooserThanGlobal);
-    predict.market_config.set_market_ask_bounds(market_oracle, cap, min, max);
-    event::emit(OracleAskBoundsSet {
-        predict_id: object::id(predict),
-        oracle_id: market_oracle.id(),
-        min_ask_price: min,
-        max_ask_price: max,
-    });
-}
-
-/// Clear a per-market_oracle ask-bound override so the market_oracle inherits the global
-/// default again. Authorized by the market_oracle's own cap.
-public(package) fun clear_market_ask_bounds(
-    predict: &mut Predict,
-    market_oracle: &MarketOracle,
-    cap: &MarketOracleCap,
-) {
-    predict.market_config.clear_market_ask_bounds(market_oracle, cap);
-    event::emit(OracleAskBoundsCleared {
-        predict_id: object::id(predict),
-        oracle_id: market_oracle.id(),
-    });
-}
-
 /// Set max total exposure percentage.
 public(package) fun set_max_total_exposure_pct(predict: &mut Predict, pct: u64) {
     predict.risk_config.set_max_total_exposure_pct(pct);
@@ -695,35 +634,6 @@ public(package) fun set_block_scholes_prices_freshness_ms(predict: &mut Predict,
 public(package) fun set_block_scholes_svi_freshness_ms(predict: &mut Predict, value: u64) {
     predict.market_config.set_block_scholes_svi_freshness_ms(value);
     predict.emit_market_freshness_config_updated();
-}
-
-/// Update the per-asset basis circuit-breaker bounds seed used when creating
-/// matching market oracles. Does NOT retroactively update existing oracles.
-public(package) fun set_asset_basis_bounds(
-    predict: &mut Predict,
-    asset: String,
-    max_spot_deviation: u64,
-    max_basis_deviation: u64,
-    min_basis: u64,
-    max_basis: u64,
-) {
-    predict
-        .market_config
-        .set_asset_basis_bounds(
-            asset,
-            max_spot_deviation,
-            max_basis_deviation,
-            min_basis,
-            max_basis,
-        );
-    event::emit(OracleBasisBoundsUpdated {
-        predict_id: object::id(predict),
-        asset,
-        max_spot_deviation,
-        max_basis_deviation,
-        min_basis,
-        max_basis,
-    });
 }
 
 /// Bind `asset → pyth_lazer_feed_id` so `create_market_oracle` can infer the feed
@@ -763,13 +673,11 @@ public(package) fun disable_withdrawal_limiter(predict: &mut Predict) {
     predict.withdrawal_limiter.disable();
 }
 
-/// Snapshot the admin-tuned market_oracle bounds (freshness thresholds + per-asset
-/// basis bounds) for `asset` at `create_market_oracle` time.
+/// Snapshot the admin-tuned market_oracle bounds at `create_market_oracle` time.
 public(package) fun build_market_oracle_bounds(
     predict: &Predict,
-    asset: String,
 ): market_oracle::MarketOracleBounds {
-    predict.market_config.build_market_oracle_bounds(asset)
+    predict.market_config.build_market_oracle_bounds()
 }
 
 /// Resolve the admin-registered Pyth Lazer feed id for `asset`. Aborts with
@@ -783,24 +691,11 @@ public(package) fun resolve_feed_id(predict: &Predict, asset: String): u64 {
 
 // === Private Functions ===
 
-/// Assert every unsettled exposed market_oracle has a fresh cached MTM for LP flows.
-fun assert_total_mtm_fresh(predict: &Predict, clock: &Clock) {
-    // MTM freshness is enforced only for LP supply/withdraw. Trade quoting
-    // still relies on cached aggregate `vault.total_mtm()` after the trade
-    // mutation refreshes the touched market_oracle inline.
-    let unsettled_exposed_oracles = predict.vault.unsettled_exposed_oracles();
-    let mut i = 0;
-    let len = unsettled_exposed_oracles.length();
-    let now = clock.timestamp_ms();
-    while (i < len) {
-        let oracle_id = unsettled_exposed_oracles[i];
-        assert!(now < predict.vault.oracle_expiry(oracle_id), EExpiredOracleMtm);
-        let last_update = predict.vault.get_last_mtm_update(oracle_id);
-        if (now > last_update) {
-            assert!(now - last_update <= predict.risk_config.mtm_freshness_ms(), EStaleOracleMtm);
-        };
-        i = i + 1;
-    }
+/// Assert a range key matches the market oracle identity, expiry, and configured grid.
+fun assert_range_key_matches(predict: &Predict, market_oracle: &MarketOracle, key: &RangeKey) {
+    assert!(key.oracle_id() == market_oracle.id(), ERangeKeyOracleMismatch);
+    assert!(key.expiry() == market_oracle.expiry(), ERangeKeyExpiryMismatch);
+    predict.vault.assert_range_key_matches(key);
 }
 
 /// Shared mint path after caller authorization.
@@ -932,7 +827,7 @@ fun apply_mint_delta<Quote>(
     clock: &Clock,
 ) {
     assert!(quantity > 0, EZeroQuantity);
-    predict.market_config.assert_range_key_matches(market_oracle, &key);
+    predict.assert_range_key_matches(market_oracle, &key);
     assert!(!predict.trading_paused, ETradingPaused);
     predict.treasury_config.assert_quote_asset<Quote>();
 
@@ -955,7 +850,7 @@ fun apply_live_redeem_delta(
     clock: &Clock,
 ) {
     assert!(quantity > 0, EZeroQuantity);
-    predict.market_config.assert_range_key_matches(market_oracle, &key);
+    predict.assert_range_key_matches(market_oracle, &key);
 
     let (min_strike, max_strike) = predict.vault.valuation_strike_range(market_oracle.id());
     let (min_strike, max_strike) = key.extend_strike_range(min_strike, max_strike);
@@ -976,7 +871,7 @@ fun apply_settled_redeem_delta(
     clock: &Clock,
 ) {
     assert!(quantity > 0, EZeroQuantity);
-    predict.market_config.assert_range_key_matches(market_oracle, &key);
+    predict.assert_range_key_matches(market_oracle, &key);
     assert!(market_oracle.is_settled(), EOracleNotSettled);
 
     manager.decrease_position(key, quantity);
@@ -992,7 +887,7 @@ fun quote_mint_amounts(
     clock: &Clock,
 ): (u64, u64) {
     let quote = predict.quote_live_unit(market_oracle, pyth, &key, clock);
-    predict.assert_mint_quote_allowed(market_oracle.id(), &quote);
+    predict.assert_mint_quote_allowed(&quote);
 
     let principal_amount = math::mul(quote.fair_price(), quantity);
     let fee_amount = math::mul(quote.fee_rate(), quantity);
@@ -1064,7 +959,7 @@ fun build_live_curve(
     max_strike: u64,
 ): vector<CurvePoint> {
     let oracle_id = market_oracle.id();
-    let (grid_min, grid_tick, grid_max) = predict.market_config.grid_params(oracle_id);
+    let (grid_min, grid_tick, grid_max) = predict.vault.grid_params(oracle_id);
     pricing::build_live_curve(
         market_oracle,
         pyth,
@@ -1157,30 +1052,9 @@ fun emit_market_freshness_config_updated(predict: &Predict) {
     });
 }
 
-/// Resolve the effective ask-price bounds for an market_oracle: the per-market_oracle
-/// override (if any) intersected with the global default. The intersection
-/// guarantees the resolved bounds are never looser than the global, even if
-/// admin tightens the global after a per-market_oracle override has been set.
-fun resolve_ask_bounds(predict: &Predict, oracle_id: ID): (u64, u64) {
-    let global_min = predict.pricing_config.min_ask_price();
-    let global_max = predict.pricing_config.max_ask_price();
-    let override = predict.market_config.ask_bounds_override(oracle_id);
-    if (override.is_some()) {
-        let bounds = override.destroy_some();
-        (
-            pricing::ask_bounds_min(&bounds).max(global_min),
-            pricing::ask_bounds_max(&bounds).min(global_max),
-        )
-    } else {
-        (global_min, global_max)
-    }
-}
-
-/// Assert a mint quote can be traded under the effective ask bounds.
-fun assert_mint_quote_allowed(predict: &Predict, oracle_id: ID, quote: &UnitQuote) {
-    let (min_ask, max_ask) = predict.resolve_ask_bounds(oracle_id);
-    let bounds = pricing::new_ask_bounds(min_ask, max_ask);
-    pricing::assert_ask_price_allowed(quote, &bounds);
+/// Assert a mint quote can be traded under global ask bounds.
+fun assert_mint_quote_allowed(predict: &Predict, quote: &UnitQuote) {
+    pricing::assert_mint_quote_allowed(&predict.pricing_config, quote);
 }
 
 // === Test-Only Functions ===
