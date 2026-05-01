@@ -15,17 +15,9 @@ module deepbook_predict::tuning_constants;
 
 // === Freshness Thresholds ===
 
-/// Default Block Scholes fallback spot freshness threshold (3 seconds).
-/// With the operator's 1s `update_prices` cadence, a 3s gate lets the fallback
-/// path carry the oracle through arbitrary-length Pyth outages while still
-/// halting within 3s when both feeds go silent.
-public macro fun default_block_scholes_fallback_freshness_ms(): u64 { 3_000 }
-
-/// Default maximum age of the Block Scholes price update (60 seconds).
-/// Consumed by canonical live reads before deriving forward from Pyth spot
-/// plus Block Scholes basis. Generous vs. the operator's 1s `update_prices`
-/// cadence.
-public macro fun default_block_scholes_price_freshness_ms(): u64 { 60_000 }
+/// Default maximum age of the Block Scholes spot/forward update (3 seconds).
+/// This single gate covers both live basis reads and Block Scholes fallback settlement.
+public macro fun default_block_scholes_prices_freshness_ms(): u64 { 3_000 }
 
 /// Default maximum age of the Block Scholes SVI update (60 seconds).
 public macro fun default_block_scholes_svi_freshness_ms(): u64 { 60_000 }

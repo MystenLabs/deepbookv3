@@ -271,13 +271,12 @@ fun resolve_live_inputs(market: &MarketOracle, pyth: &PythSource, clock: &Clock)
     let bounds = market.bounds();
 
     let pyth_spot_is_fresh = market_oracle::pyth_spot_is_live_fresh(market, pyth, clock);
-    let price_freshness_ms = if (pyth_spot_is_fresh) {
-        market_oracle::bounds_block_scholes_price_freshness_ms(&bounds)
-    } else {
-        market_oracle::bounds_block_scholes_fallback_freshness_ms(&bounds)
-    };
     assert!(
-        market_oracle::block_scholes_price_is_fresh(market, clock, price_freshness_ms),
+        market_oracle::block_scholes_price_is_fresh(
+            market,
+            clock,
+            market_oracle::bounds_block_scholes_prices_freshness_ms(&bounds),
+        ),
         EBlockScholesBasisStale,
     );
     assert!(

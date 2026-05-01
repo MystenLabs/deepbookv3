@@ -39,6 +39,8 @@ public struct Vault has store {
     balance: u64,
     /// Per-oracle matrix for strike-level position tracking.
     oracle_matrices: Table<ID, StrikeMatrix>,
+    /// Per-oracle expiry used to block LP flows while exposed expired oracles wait for settlement.
+    oracle_expiries: Table<ID, u64>,
     /// Settlement prices for compacted oracles.
     compacted_oracle_settlements: Table<ID, u64>,
     /// Sum of all oracle matrix MTM values.
@@ -92,6 +94,7 @@ public(package) fun new(ctx: &mut TxContext): Vault {
         balances: bag::new(ctx),
         balance: 0,
         oracle_matrices: table::new(ctx),
+        oracle_expiries: table::new(ctx),
         compacted_oracle_settlements: table::new(ctx),
         total_mtm: 0,
         total_max_payout: 0,
@@ -103,6 +106,7 @@ public(package) fun new(ctx: &mut TxContext): Vault {
 public(package) fun init_oracle_matrix(
     vault: &mut Vault,
     oracle_id: ID,
+    expiry: u64,
     min_strike: u64,
     max_strike: u64,
     tick_size: u64,
@@ -116,6 +120,9 @@ public(package) fun init_oracle_matrix(
                 oracle_id,
                 strike_matrix::new(ctx, tick_size, min_strike, max_strike, clock),
             );
+    };
+    if (!vault.oracle_expiries.contains(oracle_id)) {
+        vault.oracle_expiries.add(oracle_id, expiry);
     };
 }
 
@@ -279,6 +286,12 @@ public(package) fun apply_settled_oracle_valuation(
 public(package) fun get_last_mtm_update(vault: &Vault, oracle_id: ID): u64 {
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
     vault.oracle_matrices[oracle_id].last_mtm_update()
+}
+
+/// Return the registered expiry for an oracle.
+public(package) fun oracle_expiry(vault: &Vault, oracle_id: ID): u64 {
+    assert!(vault.oracle_expiries.contains(oracle_id), EOracleExposureNotFound);
+    vault.oracle_expiries[oracle_id]
 }
 
 // === Private Functions ===

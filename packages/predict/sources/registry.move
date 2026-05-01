@@ -105,11 +105,6 @@ public fun create_pyth_source(
     pyth_source_id
 }
 
-/// Destroy a MarketOracleCap the holder no longer needs.
-public fun destroy_market_oracle_cap(cap: MarketOracleCap) {
-    market_oracle::destroy_cap(cap);
-}
-
 /// Create a new MarketOracleCap.
 public fun create_market_oracle_cap(ctx: &mut TxContext): MarketOracleCap {
     market_oracle::create_cap(ctx)
@@ -156,7 +151,7 @@ public fun create_market_oracle(
         registry.market_oracle_ids.add(cap_id, vector[]);
     };
     registry.market_oracle_ids[cap_id].push_back(market_oracle_id);
-    predict.add_oracle_grid(market_oracle_id, min_strike, tick_size, clock, ctx);
+    predict.add_market_grid(market_oracle_id, expiry, min_strike, tick_size, clock, ctx);
     event::emit(MarketOracleCreated {
         market_oracle_id,
         market_oracle_cap_id: cap_id,
@@ -232,24 +227,24 @@ public fun set_max_ask_price(predict: &mut Predict, _admin_cap: &AdminCap, value
 
 /// Set a per-market_oracle ask-bound override. Authorized by the market_oracle's own cap;
 /// no `AdminCap` required. The override may only tighten the global bounds.
-public fun set_oracle_ask_bounds(
+public fun set_market_ask_bounds(
     predict: &mut Predict,
     market_oracle: &MarketOracle,
     cap: &MarketOracleCap,
     min: u64,
     max: u64,
 ) {
-    predict.set_oracle_ask_bounds(market_oracle, cap, min, max);
+    predict.set_market_ask_bounds(market_oracle, cap, min, max);
 }
 
 /// Clear a per-market_oracle ask-bound override so the market_oracle inherits the global
 /// default again. Authorized by the market_oracle's own cap.
-public fun clear_oracle_ask_bounds(
+public fun clear_market_ask_bounds(
     predict: &mut Predict,
     market_oracle: &MarketOracle,
     cap: &MarketOracleCap,
 ) {
-    predict.clear_oracle_ask_bounds(market_oracle, cap);
+    predict.clear_market_ask_bounds(market_oracle, cap);
 }
 
 /// Set max total exposure percentage.
@@ -288,22 +283,13 @@ public fun set_pyth_spot_freshness_ms(predict: &mut Predict, _admin_cap: &AdminC
     predict.set_pyth_spot_freshness_ms(value);
 }
 
-/// Set the Block Scholes price freshness threshold (ms).
-public fun set_block_scholes_price_freshness_ms(
+/// Set the Block Scholes spot/forward freshness threshold (ms).
+public fun set_block_scholes_prices_freshness_ms(
     predict: &mut Predict,
     _admin_cap: &AdminCap,
     value: u64,
 ) {
-    predict.set_block_scholes_price_freshness_ms(value);
-}
-
-/// Set the Block Scholes fallback freshness threshold (ms).
-public fun set_block_scholes_fallback_freshness_ms(
-    predict: &mut Predict,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    predict.set_block_scholes_fallback_freshness_ms(value);
+    predict.set_block_scholes_prices_freshness_ms(value);
 }
 
 /// Set the Block Scholes SVI freshness threshold (ms).
@@ -316,7 +302,7 @@ public fun set_block_scholes_svi_freshness_ms(
 }
 
 /// Update the circuit-breaker bounds seed used by
-/// `oracle_config::build_market_oracle_bounds` at the next matching `create_market_oracle`
+/// `market_config::build_market_oracle_bounds` at the next matching `create_market_oracle`
 /// for `asset` (e.g. "BTC"). `max_spot_deviation` and `max_basis_deviation`
 /// are per-push percent caps (1e9-scaled); `min_basis` / `max_basis` are
 /// absolute bounds on `forward / spot`. Does NOT retroactively update

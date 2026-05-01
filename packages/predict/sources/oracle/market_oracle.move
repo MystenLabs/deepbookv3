@@ -76,8 +76,7 @@ public struct BlockScholesSVIUpdated has copy, drop, store {
 public struct MarketOracleBoundsUpdated has copy, drop, store {
     market_oracle_id: ID,
     pyth_spot_freshness_ms: u64,
-    block_scholes_price_freshness_ms: u64,
-    block_scholes_fallback_freshness_ms: u64,
+    block_scholes_prices_freshness_ms: u64,
     block_scholes_svi_freshness_ms: u64,
     max_spot_deviation: u64,
     max_basis_deviation: u64,
@@ -96,8 +95,7 @@ public struct MarketOracleSettled has copy, drop, store {
 
 public struct MarketOracleBounds has copy, drop, store {
     pyth_spot_freshness_ms: u64,
-    block_scholes_price_freshness_ms: u64,
-    block_scholes_fallback_freshness_ms: u64,
+    block_scholes_prices_freshness_ms: u64,
     block_scholes_svi_freshness_ms: u64,
     max_spot_deviation: u64,
     max_basis_deviation: u64,
@@ -256,12 +254,8 @@ public fun bounds_pyth_spot_freshness_ms(bounds: &MarketOracleBounds): u64 {
     bounds.pyth_spot_freshness_ms
 }
 
-public fun bounds_block_scholes_price_freshness_ms(bounds: &MarketOracleBounds): u64 {
-    bounds.block_scholes_price_freshness_ms
-}
-
-public fun bounds_block_scholes_fallback_freshness_ms(bounds: &MarketOracleBounds): u64 {
-    bounds.block_scholes_fallback_freshness_ms
+public fun bounds_block_scholes_prices_freshness_ms(bounds: &MarketOracleBounds): u64 {
+    bounds.block_scholes_prices_freshness_ms
 }
 
 public fun bounds_block_scholes_svi_freshness_ms(bounds: &MarketOracleBounds): u64 {
@@ -315,7 +309,7 @@ public fun update_prices(
             timestamp_is_fresh(
                 clock.timestamp_ms(),
                 source_timestamp_ms,
-                market.bounds.block_scholes_fallback_freshness_ms,
+                market.bounds.block_scholes_prices_freshness_ms,
             ),
             EBlockScholesSettlementStale,
         );
@@ -370,25 +364,14 @@ public fun set_pyth_spot_freshness_ms(
     market.emit_bounds_updated();
 }
 
-public fun set_block_scholes_price_freshness_ms(
+public fun set_block_scholes_prices_freshness_ms(
     market: &mut MarketOracle,
     cap: &MarketOracleCap,
     value: u64,
 ) {
     market.assert_authorized_cap(cap);
     validate_freshness_ms(value);
-    market.bounds.block_scholes_price_freshness_ms = value;
-    market.emit_bounds_updated();
-}
-
-public fun set_block_scholes_fallback_freshness_ms(
-    market: &mut MarketOracle,
-    cap: &MarketOracleCap,
-    value: u64,
-) {
-    market.assert_authorized_cap(cap);
-    validate_freshness_ms(value);
-    market.bounds.block_scholes_fallback_freshness_ms = value;
+    market.bounds.block_scholes_prices_freshness_ms = value;
     market.emit_bounds_updated();
 }
 
@@ -424,11 +407,6 @@ public fun set_basis_bounds(
 
 public(package) fun create_cap(ctx: &mut TxContext): MarketOracleCap {
     MarketOracleCap { id: object::new(ctx) }
-}
-
-public(package) fun destroy_cap(cap: MarketOracleCap) {
-    let MarketOracleCap { id } = cap;
-    id.delete();
 }
 
 public(package) fun create(
@@ -478,8 +456,7 @@ public(package) fun create(
 
 public(package) fun new_bounds(
     pyth_spot_freshness_ms: u64,
-    block_scholes_price_freshness_ms: u64,
-    block_scholes_fallback_freshness_ms: u64,
+    block_scholes_prices_freshness_ms: u64,
     block_scholes_svi_freshness_ms: u64,
     max_spot_deviation: u64,
     max_basis_deviation: u64,
@@ -487,15 +464,13 @@ public(package) fun new_bounds(
     max_basis: u64,
 ): MarketOracleBounds {
     validate_freshness_ms(pyth_spot_freshness_ms);
-    validate_freshness_ms(block_scholes_price_freshness_ms);
-    validate_freshness_ms(block_scholes_fallback_freshness_ms);
+    validate_freshness_ms(block_scholes_prices_freshness_ms);
     validate_freshness_ms(block_scholes_svi_freshness_ms);
     validate_basis_bounds_inputs(max_spot_deviation, max_basis_deviation, min_basis, max_basis);
 
     MarketOracleBounds {
         pyth_spot_freshness_ms,
-        block_scholes_price_freshness_ms,
-        block_scholes_fallback_freshness_ms,
+        block_scholes_prices_freshness_ms,
         block_scholes_svi_freshness_ms,
         max_spot_deviation,
         max_basis_deviation,
@@ -686,8 +661,11 @@ fun timestamps_are_fresh(
     update_timestamp_ms: u64,
     freshness_ms: u64,
 ): bool {
-    timestamp_is_fresh(now_ms, source_timestamp_ms, freshness_ms)
-        && timestamp_is_fresh(now_ms, update_timestamp_ms, freshness_ms)
+    timestamp_is_fresh(
+        now_ms,
+        effective_timestamp_ms(source_timestamp_ms, update_timestamp_ms),
+        freshness_ms,
+    )
 }
 
 fun timestamp_is_fresh(now_ms: u64, timestamp_ms: u64, freshness_ms: u64): bool {
@@ -695,13 +673,20 @@ fun timestamp_is_fresh(now_ms: u64, timestamp_ms: u64, freshness_ms: u64): bool 
     now_ms <= timestamp_ms || now_ms - timestamp_ms <= freshness_ms
 }
 
+fun effective_timestamp_ms(source_timestamp_ms: u64, update_timestamp_ms: u64): u64 {
+    if (source_timestamp_ms < update_timestamp_ms) {
+        source_timestamp_ms
+    } else {
+        update_timestamp_ms
+    }
+}
+
 fun emit_bounds_updated(market: &MarketOracle) {
     let b = &market.bounds;
     event::emit(MarketOracleBoundsUpdated {
         market_oracle_id: market.id.to_inner(),
         pyth_spot_freshness_ms: b.pyth_spot_freshness_ms,
-        block_scholes_price_freshness_ms: b.block_scholes_price_freshness_ms,
-        block_scholes_fallback_freshness_ms: b.block_scholes_fallback_freshness_ms,
+        block_scholes_prices_freshness_ms: b.block_scholes_prices_freshness_ms,
         block_scholes_svi_freshness_ms: b.block_scholes_svi_freshness_ms,
         max_spot_deviation: b.max_spot_deviation,
         max_basis_deviation: b.max_basis_deviation,
