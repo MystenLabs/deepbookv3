@@ -10,33 +10,53 @@ module deepbook_predict::pyth_source;
 
 use deepbook_predict::lazer_helper;
 use pyth_lazer::update::Update as LazerUpdate;
-use sui::clock::Clock;
+use sui::{clock::Clock, event};
 
 const EStaleSourceUpdate: u64 = 0;
 const EZeroSpot: u64 = 1;
 
-/// Latest normalized spot observed from one Pyth Lazer feed.
-public struct PythSource has copy, drop, store {
+public struct PythSourceUpdated has copy, drop, store {
+    pyth_source_id: ID,
     feed_id: u32,
     spot: u64,
     source_timestamp_us: u64,
     update_timestamp_ms: u64,
 }
 
-/// Create an empty Pyth source bound to a Lazer feed id.
-public fun new(feed_id: u32): PythSource {
-    PythSource {
-        feed_id,
-        spot: 0,
-        source_timestamp_us: 0,
-        update_timestamp_ms: 0,
-    }
+/// Latest normalized spot observed from one Pyth Lazer feed.
+public struct PythSource has key {
+    id: UID,
+    feed_id: u32,
+    spot: u64,
+    source_timestamp_us: u64,
+    update_timestamp_ms: u64,
 }
 
 /// Decode and store a verified Pyth Lazer spot update.
 public fun update_from_lazer(source: &mut PythSource, update: LazerUpdate, clock: &Clock) {
     let (spot, source_timestamp_us) = lazer_helper::extract_spot(&update, source.feed_id);
     source.update_from_values(spot, source_timestamp_us, clock);
+}
+
+/// Return the Pyth source object ID.
+public fun id(source: &PythSource): ID {
+    source.id.to_inner()
+}
+
+// === Public-Package Functions ===
+
+/// Create and share a Pyth source bound to a Lazer feed id.
+public(package) fun create(feed_id: u32, ctx: &mut TxContext): ID {
+    let source = PythSource {
+        id: object::new(ctx),
+        feed_id,
+        spot: 0,
+        source_timestamp_us: 0,
+        update_timestamp_ms: 0,
+    };
+    let id = source.id.to_inner();
+    transfer::share_object(source);
+    id
 }
 
 /// Store a normalized spot with its source timestamp.
@@ -51,6 +71,13 @@ fun update_from_values(
     source.spot = spot;
     source.source_timestamp_us = source_timestamp_us;
     source.update_timestamp_ms = clock.timestamp_ms();
+    event::emit(PythSourceUpdated {
+        pyth_source_id: source.id.to_inner(),
+        feed_id: source.feed_id,
+        spot,
+        source_timestamp_us,
+        update_timestamp_ms: source.update_timestamp_ms,
+    });
 }
 
 /// Return the configured Pyth Lazer feed id.

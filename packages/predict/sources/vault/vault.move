@@ -16,7 +16,7 @@ module deepbook_predict::vault;
 
 use deepbook::math;
 use deepbook_predict::{
-    oracle_config::CurvePoint,
+    pricing::CurvePoint,
     range_key::RangeKey,
     strike_matrix::{Self, StrikeMatrix}
 };

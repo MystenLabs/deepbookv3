@@ -13,42 +13,33 @@
 /// constants.
 module deepbook_predict::tuning_constants;
 
-// === Staleness Thresholds ===
+// === Freshness Thresholds ===
 
-/// Default spot halt-gate threshold (3 seconds).
+/// Default Block Scholes fallback spot freshness threshold (3 seconds).
 /// With the operator's 1s `update_prices` cadence, a 3s gate lets the fallback
-/// path carry the oracle through arbitrary-length Lazer outages while still
+/// path carry the oracle through arbitrary-length Pyth outages while still
 /// halting within 3s when both feeds go silent.
-public macro fun default_spot_staleness_threshold_ms(): u64 { 3_000 }
+public macro fun default_block_scholes_fallback_freshness_ms(): u64 { 3_000 }
 
-/// Default maximum age of the cached operator basis (60 seconds).
-/// Consumed by `update_spot_from_lazer` (refuses to derive a forward against
-/// a stale basis) and by `oracle_config::assert_live_oracle` /
-/// `assert_quoteable_oracle` (refuses to quote against a stale basis).
-/// Generous vs. the operator's 1s `update_prices` cadence.
-public macro fun default_basis_staleness_threshold_ms(): u64 { 60_000 }
+/// Default maximum age of the Block Scholes price update (60 seconds).
+/// Consumed by canonical live reads before deriving forward from Pyth spot
+/// plus Block Scholes basis. Generous vs. the operator's 1s `update_prices`
+/// cadence.
+public macro fun default_block_scholes_price_freshness_ms(): u64 { 60_000 }
 
-/// Hard upper bound (60s) for the oracle and basis staleness thresholds.
+/// Default maximum age of the Block Scholes SVI update (60 seconds).
+public macro fun default_block_scholes_svi_freshness_ms(): u64 { 60_000 }
+
+/// Hard upper bound (60s) for oracle freshness thresholds.
 /// Admin setters reject anything larger — beyond this the liveness gate
-/// stops meaningfully protecting quoting and settlement.
-public macro fun max_staleness_threshold_ms(): u64 { 60_000 }
+/// stops meaningfully protecting quoting.
+public macro fun max_freshness_threshold_ms(): u64 { 60_000 }
 
-/// Default window within which the last Pyth Lazer spot push is treated as
-/// the authoritative master spot (2 seconds). While Lazer is within this
-/// window, `update_prices` refreshes basis/forward but does NOT overwrite
-/// `oracle.prices.spot`. Beyond it, the operator's spot flows through as a
-/// fallback. Independent of `default_spot_staleness_threshold_ms!()` (the hard
-/// halt gate) which is always checked on top.
-public macro fun default_lazer_authoritative_threshold_ms(): u64 { 2_000 }
-
-/// Default window within which Lazer's last spot push is treated as the
-/// authoritative settlement source (60 seconds). Longer than the live-update
-/// window because settlement is irreversible — gate the terminal
-/// `update_prices` settlement branch so the operator can't race-freeze while
-/// Lazer is still credibly the settlement oracle. Matches
-/// `max_staleness_threshold_ms!()` so settlement patience maxes at the same
-/// ceiling admin can choose for other staleness windows.
-public macro fun default_lazer_settlement_authoritative_threshold_ms(): u64 { 60_000 }
+/// Default window within which the latest Pyth spot update is treated as
+/// canonical (2 seconds). While Pyth is fresh, live reads use Pyth spot and
+/// derive forward from the latest Block Scholes basis. Beyond it, Block
+/// Scholes spot/forward can be used as the fallback if fresh.
+public macro fun default_pyth_spot_freshness_ms(): u64 { 2_000 }
 
 // === Basis Circuit Breaker ===
 
