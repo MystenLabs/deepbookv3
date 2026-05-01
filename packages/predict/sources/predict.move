@@ -100,9 +100,6 @@ public struct PricingConfigUpdated has copy, drop, store {
     utilization_multiplier: u64,
     min_ask_price: u64,
     max_ask_price: u64,
-    depth_multiplier: u64,
-    reference_tte_ms: u64,
-    min_tte_ms: u64,
 }
 
 /// Emitted when fee reserve distribution shares change.
@@ -384,24 +381,32 @@ public fun compact_settled_oracle(
     predict.vault.compact_settled_oracle_if_needed(oracle.id(), settlement);
 }
 
-/// Per-unit `(mint_price, redeem_price)` quote for a position interval.
-///
-/// Both prices are all-in unit prices in FLOAT_SCALING — `mint_price` is what
-/// a buyer pays per contract; `redeem_price` is what a redeemer receives.
-/// Under inventory skew the two are still symmetric around an inventory-shifted
-/// per-strike mid (gap = `2 · spread`), but the mid itself walks away from the
-/// SVI fair so paired UP+DN minting still costs `FS + 2 · spread`. There is no
-/// zero-edge floor: under heavy imbalance `mint_price` can sit below fair on the
-/// side the vault wants to grow, and `redeem_price` can sit above fair on the
-/// side the vault wants to shrink.
+/// Per-unit `(fair_price, fee_rate)` quote for a position interval.
+/// `fee_rate` is an absolute price increment in FLOAT_SCALING, not bps.
 public fun quote_unit_price(
     predict: &Predict,
     oracle: &OracleSVI,
     key: RangeKey,
     clock: &Clock,
 ): (u64, u64) {
-    let (_, mint_price, redeem_price) = predict.quote_unit_pricing(oracle, key, clock);
-    (mint_price, redeem_price)
+    predict.oracle_config.assert_range_key_matches(oracle, &key);
+    oracle.assert_quoteable_oracle(clock);
+
+    let fair_price = oracle.compute_range_price(key.lower_strike(), key.higher_strike());
+
+    if (oracle.is_settled()) return (fair_price, 0);
+
+    // Fee uses the cached aggregate MTM. This path does not require every
+    // exposed oracle to be freshly synced; trade mutations refresh the traded
+    // oracle inline before calling into pricing.
+    let fee_rate = predict
+        .pricing_config
+        .quote_fee_rate_from_fair_price(
+            fair_price,
+            predict.vault.total_mtm(),
+            predict.vault.balance(),
+        );
+    (fair_price, fee_rate)
 }
 
 /// Return oracle IDs whose unsettled exposure must be refreshed before LP flows.
@@ -614,24 +619,6 @@ public(package) fun set_min_ask_price(predict: &mut Predict, value: u64) {
 /// Set the global maximum allowed all-in mint price.
 public(package) fun set_max_ask_price(predict: &mut Predict, value: u64) {
     predict.pricing_config.set_max_ask_price(value);
-    predict.emit_pricing_config_updated();
-}
-
-/// Set the depth multiplier for the inventory-aware mid shift.
-public(package) fun set_depth_multiplier(predict: &mut Predict, multiplier: u64) {
-    predict.pricing_config.set_depth_multiplier(multiplier);
-    predict.emit_pricing_config_updated();
-}
-
-/// Set the reference time-to-expiry for the inventory-aware mid shift.
-public(package) fun set_reference_tte_ms(predict: &mut Predict, value: u64) {
-    predict.pricing_config.set_reference_tte_ms(value);
-    predict.emit_pricing_config_updated();
-}
-
-/// Set the minimum time-to-expiry floor for the inventory-aware mid shift.
-public(package) fun set_min_tte_ms(predict: &mut Predict, value: u64) {
-    predict.pricing_config.set_min_tte_ms(value);
     predict.emit_pricing_config_updated();
 }
 
@@ -941,10 +928,8 @@ fun apply_mint_delta<Quote>(
     let (min_strike, max_strike) = predict.vault.valuation_strike_range(oracle.id());
     let (min_strike, max_strike) = key.extend_strike_range(min_strike, max_strike);
     let curve = predict.oracle_config.build_curve(oracle, min_strike, max_strike);
-    let lower_weight = oracle.compute_risk_weight(key.lower_strike());
-    let higher_weight = oracle.compute_risk_weight(key.higher_strike());
     manager.increase_position(key, quantity);
-    predict.vault.insert_live_range(key, quantity, lower_weight, higher_weight, curve, clock);
+    predict.vault.insert_live_range(key, quantity, curve, clock);
 }
 
 /// Apply the position, vault, and risk-state delta for a live redeem before
@@ -964,10 +949,8 @@ fun apply_live_redeem_delta(
     let (min_strike, max_strike) = predict.vault.valuation_strike_range(oracle.id());
     let (min_strike, max_strike) = key.extend_strike_range(min_strike, max_strike);
     let curve = predict.oracle_config.build_curve(oracle, min_strike, max_strike);
-    let lower_weight = oracle.compute_risk_weight(key.lower_strike());
-    let higher_weight = oracle.compute_risk_weight(key.higher_strike());
     manager.decrease_position(key, quantity);
-    predict.vault.remove_live_range(key, quantity, lower_weight, higher_weight, curve, clock);
+    predict.vault.remove_live_range(key, quantity, curve, clock);
 }
 
 /// Apply the position, vault, and risk-state delta for a settled redeem before
@@ -985,48 +968,8 @@ fun apply_settled_redeem_delta(
     predict.oracle_config.assert_range_key_matches(oracle, &key);
     oracle.assert_quoteable_oracle(clock);
 
-    let lower_weight = oracle.compute_risk_weight(key.lower_strike());
-    let higher_weight = oracle.compute_risk_weight(key.higher_strike());
     manager.decrease_position(key, quantity);
-    predict
-        .vault
-        .remove_settled_range(key, quantity, lower_weight, higher_weight, settlement, clock);
-}
-
-/// Per-unit `(fair_price, mint_price, redeem_price)` for a position interval.
-/// Internal helper feeding both the public `quote_unit_price` and the trade-
-/// path accounting in `quote_mint_amounts` / `quote_live_redeem_amounts`.
-/// Settled oracles have no skew: mint and redeem both sit at the settled fair.
-fun quote_unit_pricing(
-    predict: &Predict,
-    oracle: &OracleSVI,
-    key: RangeKey,
-    clock: &Clock,
-): (u64, u64, u64) {
-    predict.oracle_config.assert_range_key_matches(oracle, &key);
-    oracle.assert_quoteable_oracle(clock);
-
-    let p_up_lower = oracle.compute_price(key.lower_strike());
-    let p_up_higher = oracle.compute_price(key.higher_strike());
-    let fair_price = p_up_lower - p_up_higher;
-    if (oracle.is_settled()) return (fair_price, fair_price, fair_price);
-
-    // Fee + skew use the cached aggregate MTM. This path does not require
-    // every exposed oracle to be freshly synced; trade mutations refresh the
-    // traded oracle inline before calling into pricing.
-    let aggregate = predict.vault.oracle_directional_aggregate(oracle.id());
-    let (mint_price, redeem_price) = predict
-        .pricing_config
-        .compute_range_quote(
-            fair_price,
-            p_up_lower,
-            p_up_higher,
-            &aggregate,
-            predict.vault.total_mtm(),
-            predict.vault.balance(),
-            time_to_expiry(key.expiry(), clock),
-        );
-    (fair_price, mint_price, redeem_price)
+    predict.vault.remove_settled_range(key, quantity, settlement, clock);
 }
 
 fun quote_mint_amounts(
@@ -1036,12 +979,11 @@ fun quote_mint_amounts(
     quantity: u64,
     clock: &Clock,
 ): (u64, u64) {
-    let (fair_price, mint_price, _) = predict.quote_unit_pricing(oracle, key, clock);
-    predict.assert_mint_quote_allowed(oracle.id(), mint_price);
+    let (fair_price, fee_rate) = predict.quote_unit_price(oracle, key, clock);
+    predict.assert_mint_quote_allowed(oracle.id(), fair_price, fee_rate);
 
     let principal_amount = math::mul(fair_price, quantity);
-    let cost = math::mul(mint_price, quantity);
-    let fee_amount = cost - principal_amount;
+    let fee_amount = math::mul(fee_rate, quantity);
 
     (principal_amount, fee_amount)
 }
@@ -1053,18 +995,13 @@ fun quote_live_redeem_amounts(
     quantity: u64,
     clock: &Clock,
 ): (u64, u64) {
-    let (fair_price, _, redeem_price) = predict.quote_unit_pricing(oracle, key, clock);
+    let (fair_price, fee_rate) = predict.quote_unit_price(oracle, key, clock);
 
     let principal_amount = math::mul(fair_price, quantity);
-    let payout = math::mul(redeem_price, quantity);
-    let fee_amount = (principal_amount - payout).min(principal_amount);
+    let fee_amount = math::mul(fee_rate, quantity);
+    let fee_amount = fee_amount.min(principal_amount);
 
     (principal_amount, fee_amount)
-}
-
-fun time_to_expiry(expiry_ms: u64, clock: &Clock): u64 {
-    let now = clock.timestamp_ms();
-    if (expiry_ms > now) expiry_ms - now else 0
 }
 
 /// Returns the USDC value of `shares` at the given vault value.
@@ -1123,9 +1060,6 @@ fun emit_pricing_config_updated(predict: &Predict) {
         utilization_multiplier: predict.pricing_config.utilization_multiplier(),
         min_ask_price: predict.pricing_config.min_ask_price(),
         max_ask_price: predict.pricing_config.max_ask_price(),
-        depth_multiplier: predict.pricing_config.depth_multiplier(),
-        reference_tte_ms: predict.pricing_config.reference_tte_ms(),
-        min_tte_ms: predict.pricing_config.min_tte_ms(),
     });
 }
 
@@ -1168,7 +1102,13 @@ fun resolve_ask_bounds(predict: &Predict, oracle_id: ID): (u64, u64) {
 }
 
 /// Assert a mint quote can be traded under the effective ask bounds.
-fun assert_mint_quote_allowed(predict: &Predict, oracle_id: ID, mint_price: u64) {
+fun assert_mint_quote_allowed(
+    predict: &Predict,
+    oracle_id: ID,
+    fair_price: u64,
+    quoted_fee_rate: u64,
+) {
+    let mint_price = fair_price + quoted_fee_rate;
     let (min_ask, max_ask) = predict.resolve_ask_bounds(oracle_id);
     assert!(mint_price >= min_ask && mint_price <= max_ask, EAskPriceOutOfBounds);
 }

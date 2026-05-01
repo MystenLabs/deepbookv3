@@ -16,7 +16,6 @@ module deepbook_predict::vault;
 
 use deepbook::math;
 use deepbook_predict::{
-    i64::I64,
     oracle_config::CurvePoint,
     range_key::RangeKey,
     strike_matrix::{Self, StrikeMatrix}
@@ -121,16 +120,10 @@ public(package) fun init_oracle_matrix(
 }
 
 /// Insert a live vertical range and refresh live risk accounting.
-///
-/// `lower_weight` and `higher_weight` are `n(d₂)` at the lower and higher
-/// strikes (in FLOAT_SCALING). They feed the matrix's directional aggregate
-/// used by the inventory-aware mid shift.
 public(package) fun insert_live_range(
     vault: &mut Vault,
     key: RangeKey,
     quantity: u64,
-    lower_weight: u64,
-    higher_weight: u64,
     curve: vector<CurvePoint>,
     clock: &Clock,
 ) {
@@ -139,7 +132,7 @@ public(package) fun insert_live_range(
     let higher = key.higher_strike();
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
     let matrix = &mut vault.oracle_matrices[oracle_id];
-    matrix.insert_range(lower, higher, quantity, lower_weight, higher_weight);
+    matrix.insert_range(lower, higher, quantity);
     vault.apply_live_valuation(oracle_id, curve, clock);
     vault.add_unsettled_exposed_oracle(oracle_id);
 }
@@ -149,8 +142,6 @@ public(package) fun remove_live_range(
     vault: &mut Vault,
     key: RangeKey,
     quantity: u64,
-    lower_weight: u64,
-    higher_weight: u64,
     curve: vector<CurvePoint>,
     clock: &Clock,
 ) {
@@ -159,21 +150,16 @@ public(package) fun remove_live_range(
     let higher = key.higher_strike();
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
     let matrix = &mut vault.oracle_matrices[oracle_id];
-    matrix.remove_range(lower, higher, quantity, lower_weight, higher_weight);
+    matrix.remove_range(lower, higher, quantity);
     vault.apply_live_valuation(oracle_id, curve, clock);
     vault.remove_unsettled_exposed_oracle_if_empty(oracle_id);
 }
 
-/// Remove a settled vertical range from dense matrix exposure or compacted
-/// liability. Weights pass through to the matrix unchanged from the live
-/// removal API; the directional aggregate is meaningless after settlement
-/// but the matrix accounts for the legs symmetrically.
+/// Remove a settled vertical range from dense matrix exposure or compacted liability.
 public(package) fun remove_settled_range(
     vault: &mut Vault,
     key: RangeKey,
     quantity: u64,
-    lower_weight: u64,
-    higher_weight: u64,
     settlement: u64,
     clock: &Clock,
 ) {
@@ -189,16 +175,9 @@ public(package) fun remove_settled_range(
     } else {
         assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
         let matrix = &mut vault.oracle_matrices[oracle_id];
-        matrix.remove_range(lower, higher, quantity, lower_weight, higher_weight);
+        matrix.remove_range(lower, higher, quantity);
         vault.apply_settled_oracle_valuation(oracle_id, settlement, clock);
     };
-}
-
-/// Return the per-oracle directional aggregate consumed by the pricing layer
-/// when computing the inventory-aware mid shift.
-public(package) fun oracle_directional_aggregate(vault: &Vault, oracle_id: ID): I64 {
-    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
-    vault.oracle_matrices[oracle_id].directional_aggregate()
 }
 
 /// Accept payment into vault balance.
