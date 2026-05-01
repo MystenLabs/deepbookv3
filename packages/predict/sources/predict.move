@@ -388,10 +388,12 @@ public fun compact_settled_oracle(
 ///
 /// Both prices are all-in unit prices in FLOAT_SCALING — `mint_price` is what
 /// a buyer pays per contract; `redeem_price` is what a redeemer receives.
-/// Under inventory skew the two are not symmetric around the SVI fair price
-/// and the gap need not equal `2 · fee` — the LP enforces a zero-edge floor
-/// (`mint_price >= fair`, `redeem_price <= fair`) so a heavily skewed book
-/// can pin one side at fair while the other widens.
+/// Under inventory skew the two are still symmetric around an inventory-shifted
+/// per-strike mid (gap = `2 · spread`), but the mid itself walks away from the
+/// SVI fair so paired UP+DN minting still costs `FS + 2 · spread`. There is no
+/// zero-edge floor: under heavy imbalance `mint_price` can sit below fair on the
+/// side the vault wants to grow, and `redeem_price` can sit above fair on the
+/// side the vault wants to shrink.
 public fun quote_unit_price(
     predict: &Predict,
     oracle: &OracleSVI,
@@ -1004,7 +1006,9 @@ fun quote_unit_pricing(
     predict.oracle_config.assert_range_key_matches(oracle, &key);
     oracle.assert_quoteable_oracle(clock);
 
-    let fair_price = oracle.compute_range_price(key.lower_strike(), key.higher_strike());
+    let p_up_lower = oracle.compute_price(key.lower_strike());
+    let p_up_higher = oracle.compute_price(key.higher_strike());
+    let fair_price = p_up_lower - p_up_higher;
     if (oracle.is_settled()) return (fair_price, fair_price, fair_price);
 
     // Fee + skew use the cached aggregate MTM. This path does not require
@@ -1013,8 +1017,10 @@ fun quote_unit_pricing(
     let aggregate = predict.vault.oracle_directional_aggregate(oracle.id());
     let (mint_price, redeem_price) = predict
         .pricing_config
-        .compute_up_quote(
+        .compute_range_quote(
             fair_price,
+            p_up_lower,
+            p_up_higher,
             &aggregate,
             predict.vault.total_mtm(),
             predict.vault.balance(),

@@ -90,8 +90,8 @@ public struct StrikeMatrix has store {
     base_qty: u64,
     /// Risk-weighted signed inventory `Σ (q_long_leg − q_short_leg) · n(d₂)`,
     /// updated on every range insert/remove at the trade-time fair price of
-    /// each boundary. Read by `pricing_config::compute_up_quote` to gauge
-    /// directional inventory risk and shift the UP mid accordingly.
+    /// each boundary. Read by `pricing_config::compute_range_quote` to gauge
+    /// directional inventory risk and shift the per-strike UP mid accordingly.
     directional_aggregate: I64,
 }
 
