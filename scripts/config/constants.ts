@@ -75,3 +75,8 @@ export const supplierCapID = {
   mainnet: "0xe0e64f2b0037304e29647fd5ef2c5ea758828a8e5aea73bb0bd5f227c1c20204",
   testnet: "",
 };
+
+export const marketMakerID = {
+  mainnet: "0x30be3610c00673c0c5a60d0f3606eb58f8da7828692d0a06ae1d4f7af952c2b4",
+  testnet: "",
+};
