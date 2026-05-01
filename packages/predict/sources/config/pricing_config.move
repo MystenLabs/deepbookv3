@@ -174,22 +174,37 @@ public(package) fun quote_fee_rate_from_fair_price(
     fee
 }
 
-/// Post-shift `(mint_price, redeem_price)` for a fair UP price (or any
-/// `[0, 1]`-bounded fair price like a vertical-range premium). Applies a
-/// symmetric `fee` around the inventory-shifted mid, then clamps:
-/// `mint_price >= fair_price` and `redeem_price <= fair_price`. The
-/// zero-edge floor guarantees the LP never sells below or buys above fair.
-public(package) fun compute_up_quote(
+/// Post-shift `(mint_price, redeem_price)` for the range `(L, H]` whose
+/// per-strike UP probabilities are `p_up_lower = p_up(L)` and
+/// `p_up_higher = p_up(H)`, and whose unshifted fair is
+/// `fair_range = p_up_lower - p_up_higher`.
+///
+/// Both boundaries are shifted independently by `shifted_up_strike_mid`
+/// using the same oracle-level `aggregate`. The range mid is then
+/// `m(L) - m(H)`, preserving the binary invariant
+/// `mint_up + mint_dn == FS + 2·spread` and
+/// `redeem_up + redeem_dn == FS - 2·spread` for any aggregate sign:
+/// shifting UP up by Δ shifts DN down by Δ, since DN's mid is
+/// `m(neg_inf) - m(K) = FS - m(K)`.
+///
+/// No zero-edge floor: under heavy imbalance the LP intentionally takes a
+/// worse-than-fair fill on rebalancing trades — `mint < fair_range` on the
+/// side the vault wants to grow, `redeem > fair_range` on the side the
+/// vault wants to shrink. The only clamps are `[0, FS]` on the resulting
+/// prices.
+public(package) fun compute_range_quote(
     config: &PricingConfig,
-    fair_price: u64,
+    fair_range: u64,
+    p_up_lower: u64,
+    p_up_higher: u64,
     aggregate: &I64,
     liability: u64,
     balance: u64,
     tte_ms: u64,
 ): (u64, u64) {
-    let fee = config.quote_fee_rate_from_fair_price(fair_price, liability, balance);
-    let shifted_mid = shifted_up_mid(
-        fair_price,
+    let fee = config.quote_fee_rate_from_fair_price(fair_range, liability, balance);
+    let m_lower = shifted_up_strike_mid(
+        p_up_lower,
         aggregate,
         balance,
         tte_ms,
@@ -197,10 +212,26 @@ public(package) fun compute_up_quote(
         config.reference_tte_ms,
         config.min_tte_ms,
     );
+    let m_higher = shifted_up_strike_mid(
+        p_up_higher,
+        aggregate,
+        balance,
+        tte_ms,
+        config.depth_multiplier,
+        config.reference_tte_ms,
+        config.min_tte_ms,
+    );
+    // Both boundaries use the same oracle-level ratio, and `shifted_up_strike_mid`
+    // is monotonically non-decreasing in `p_up`, so `m_lower >= m_higher`
+    // whenever `p_up_lower >= p_up_higher`. Caller-side invariant; no abort
+    // because the strike-matrix range invariant `lower < higher` and SVI
+    // monotonicity guarantee it.
+    let shifted_mid = m_lower - m_higher;
 
-    let mint_price = (shifted_mid + fee).max(fair_price).min(constants::float_scaling!());
+    let fs = constants::float_scaling!();
+    let mint_price = (shifted_mid + fee).min(fs);
     let redeem_price = if (shifted_mid > fee) {
-        (shifted_mid - fee).min(fair_price)
+        shifted_mid - fee
     } else {
         0
     };
@@ -228,15 +259,23 @@ fun utilization_fee(config: &PricingConfig, liability: u64, balance: u64): u64 {
     )
 }
 
-/// Inventory-shifted UP mid in FLOAT_SCALING. The shift is
+/// Inventory-shifted UP probability at a single strike, in FLOAT_SCALING.
+/// Operates on a per-strike `p_up`, not on a range fair: `compute_range_quote`
+/// shifts each boundary independently and takes the difference.
+///
+/// Sentinel boundaries (`p_up == 0` for `+∞` or `p_up == FS` for `−∞`) are
+/// inert: the range never has positions at infinity, so the directional
+/// aggregate's accounting at sentinel weight `0` must be matched by leaving
+/// the boundary mid at the sentinel value. Without this short-circuit, a
+/// positive `ratio` at `p_up = 0` would produce `m = ratio · FS` (room is the
+/// full `[0,1]`), breaking the symmetry and the `UP+DN=$1` invariant.
+///
+/// Otherwise the shift is
 /// `clamp(aggregate · tte_factor / (balance · depth_multiplier), −1, +1)`
-/// scaled by the per-strike "room" to the binary boundary: `(1 − p)` for a
-/// positive ratio (vault net short UP — push the mid up) or `p` for a
-/// negative ratio (vault net long UP — push the mid down). Result is always
-/// in `[0, FLOAT_SCALING]` because the room scaling caps each direction at
-/// the binary bound.
-fun shifted_up_mid(
-    fair_price: u64,
+/// scaled by `room(p_up)`: `(1 − p_up)` for a positive ratio (push mid up)
+/// or `p_up` for a negative ratio (push mid down). Result is in `[0, FS]`.
+fun shifted_up_strike_mid(
+    p_up: u64,
     aggregate: &I64,
     balance: u64,
     tte_ms: u64,
@@ -244,29 +283,30 @@ fun shifted_up_mid(
     reference_tte_ms: u64,
     min_tte_ms: u64,
 ): u64 {
-    if (aggregate.is_zero() || balance == 0 || depth_multiplier == 0) return fair_price;
-
     let fs = constants::float_scaling!();
+    if (p_up == 0 || p_up == fs) return p_up;
+    if (aggregate.is_zero() || balance == 0 || depth_multiplier == 0) return p_up;
+
     let clamped_tte = tte_ms.max(min_tte_ms);
     let tte_ratio = predict_math::mul_div_round_down(reference_tte_ms, fs, clamped_tte);
     let tte_factor = predict_math::sqrt(tte_ratio, fs);
 
     let denominator = math::mul(balance, depth_multiplier);
-    if (denominator == 0) return fair_price;
+    if (denominator == 0) return p_up;
 
     let num = aggregate.mul_scaled(&i64::from_u64(tte_factor));
     let ratio = num.div_scaled(&i64::from_u64(denominator));
     let ratio_mag = ratio.magnitude().min(fs);
-    if (ratio_mag == 0) return fair_price;
+    if (ratio_mag == 0) return p_up;
 
     let ratio_negative = ratio.is_negative();
-    let room = if (ratio_negative) fair_price else fs - fair_price;
+    let room = if (ratio_negative) p_up else fs - p_up;
     let shift = math::mul(ratio_mag, room);
 
     if (ratio_negative) {
-        fair_price - shift
+        p_up - shift
     } else {
-        fair_price + shift
+        p_up + shift
     }
 }
 
