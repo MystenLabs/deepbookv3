@@ -11,8 +11,8 @@ Phases are ordered by impact and dependency: database foundations first, server 
 |---|-------|------|-------------|-------|
 | 1 | DB Performance | Eliminate database bottlenecks at the query layer | PERF-01, PERF-02, PERF-03, PERF-04 | 4 plans |
 | 2 | Server Ergonomics | Restructure server code and fix in-process inefficiencies | SCALE-01, SCALE-02, SCALE-03, PERF-05, DX-03 | TBD |
-| 3 | OpenAPI Docs | Generate and serve a complete OpenAPI 3.0 specification | DX-01 | TBD |
-| 4 | TypeScript Client | Publish a typed HTTP client for the indexer REST API | DX-02 | TBD |
+| 3 | OpenAPI Docs | Generate and serve a complete OpenAPI 3.0 specification | DX-01 | 3 plans |
+| 4 | TypeScript Client | Publish a typed HTTP client for the indexer REST API | DX-02 | 1 plan |
 | 5 | DX & Testing | Add test coverage, indexer PoC macro, and update project docs | SCALE-04, DX-04, DX-05, DX-06 | TBD |
 
 ## Phase Details
@@ -46,9 +46,15 @@ Plans:
 2. `get_orders` returns an `OrderFill` named struct — the 17-tuple is gone from all call sites and the Diesel query.
 3. Pool metadata and ticker responses are served from the `moka` in-process cache on repeat requests; TTLs are 60s and 10s respectively.
 4. Invalid wallet addresses, out-of-range timestamps, and over-limit pagination values are rejected at the Axum extractor layer before reaching `reader.rs`.
-**Plans:** TBD
+**Plans:** 5 plans
+Plans:
+- [ ] 02-01-PLAN.md — Server split: extract all handlers into routes/{pools,orders,portfolio,margin,points,health}.rs (Wave 1)
+- [ ] 02-02-PLAN.md — OrderFill struct: replace 17-tuple return from get_orders with named struct (Wave 2, depends on 02-01)
+- [ ] 02-03-PLAN.md — Asset normalization: add normalize_asset_id() utility, replace 3 inline call sites (Wave 2, depends on 02-01)
+- [ ] 02-04-PLAN.md — moka cache: add pools_cache (60s TTL) and ticker_cache (10s TTL) to AppState (Wave 2, depends on 02-01)
+- [ ] 02-05-PLAN.md — Input validation: ValidatedWalletAddress extractor + PaginationParams, remove validation from reader.rs (Wave 2, depends on 02-01)
 **UI hint:** no
-**Parallelizable plans:** yes
+**Parallelizable plans:** yes (Wave 2 plans 02–05 run in parallel after Wave 1 plan 01)
 
 ---
 
@@ -60,9 +66,13 @@ Plans:
 1. `GET /swagger-ui/` returns a rendered Swagger UI page listing all public endpoints.
 2. Each endpoint entry includes request parameter types, example values, and response schema — no undocumented fields.
 3. The OpenAPI JSON can be fetched at `/api-docs/openapi.json` and validates against the OpenAPI 3.0 schema without errors.
-**Plans:** TBD
+**Plans:** 3 plans
+Plans:
+- [ ] 03-01-PLAN.md — Utoipa scaffold: add deps, ApiDoc stub, SwaggerUi mount in make_router
+- [ ] 03-02-PLAN.md — Schema types: add #[derive(ToSchema)] to all ~27 schema and ~7 server-local response types
+- [ ] 03-03-PLAN.md — Handler annotations: add #[utoipa::path] to all ~48 handlers, populate ApiDoc paths/components
 **UI hint:** no
-**Parallelizable plans:** no
+**Parallelizable plans:** no (sequential: 03-01 → 03-02 → 03-03)
 
 ---
 
@@ -74,7 +84,9 @@ Plans:
 1. A typed TypeScript client (in `scripts/` or as a package) covers all 15 specified endpoints with correct parameter and response types.
 2. Each client method has a usage example in inline JSDoc — a developer can call any endpoint correctly from IDE type hints alone.
 3. The client compiles with `tsc --strict` with zero errors.
-**Plans:** TBD
+**Plans:** 1 plan
+Plans:
+- [ ] 04-01-PLAN.md — TypeScript HTTP client: types.ts + DeepBookIndexerClient class covering 15 endpoints, strict-mode tsc clean
 **UI hint:** no
 **Parallelizable plans:** no
 
@@ -100,9 +112,9 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. DB Performance | 0/4 | Planned | - |
-| 2. Server Ergonomics | 0/? | Not started | - |
-| 3. OpenAPI Docs | 0/? | Not started | - |
-| 4. TypeScript Client | 0/? | Not started | - |
+| 2. Server Ergonomics | 0/5 | Planned | - |
+| 3. OpenAPI Docs | 0/3 | Planned | - |
+| 4. TypeScript Client | 0/1 | Planned | - |
 | 5. DX & Testing | 0/? | Not started | - |
 
 ## Coverage

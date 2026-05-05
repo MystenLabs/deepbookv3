@@ -94,3 +94,12 @@ Update `CLAUDE.md` or `.claude/rules/*.md` when you learn something that should 
 - test-writing rules
 - package-specific gotchas
 - build or tooling pitfalls
+
+
+<claude-mem-context>
+# Memory Context
+
+# [deepbookv3] recent context, 2026-04-30 3:32pm GMT+7
+
+No previous sessions found.
+</claude-mem-context>
