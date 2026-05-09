@@ -4857,6 +4857,105 @@ fun place_reduce_only_market_order_v1_aborts() {
 
     abort 999
 }
+
+// === Post-trade solvency regression test ===
+//
+// Borrow USDC against USDT collateral right at `min_borrow_risk_ratio` (1.25,
+// the borrow floor in test config), then sell the borrowed USDC against the
+// standard orderbook bid (0.99). The 1% adverse fill drops `risk_ratio` from
+// 1.25 to ~1.24, breaching the floor; the v2 invariant aborts.
+#[test, expected_failure(abort_code = pool_proxy::EInsufficientRiskRatioAfterTrade)]
+fun place_limit_order_v2_borrow_at_floor_then_adverse_fill_aborts() {
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        base_pool_id,
+        quote_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_pool_proxy_test_env<USDC, USDT>();
+    setup_orderbook_liquidity_stablecoin<USDC, USDT>(&mut scenario, pool_id, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+
+    // Deposit 100 USDT collateral + DEEP for fees, borrow 400 USDC.
+    // Post-borrow: 100 USDT + 400 USDC = 500 USDC-equiv, debt 400 USDC,
+    // risk_ratio = 500/400 = 1.25 (exactly at borrow floor). DEEP isn't summed
+    // by `calculate_assets`, so it doesn't affect risk_ratio.
+    mm.deposit<USDC, USDT, USDT>(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        mint_coin<USDT>(100 * test_constants::usdt_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.deposit<USDC, USDT, DEEP>(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        mint_coin<DEEP>(100 * test_constants::deep_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.borrow_base<USDC, USDT>(
+        &registry,
+        &mut base_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        400 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+    destroy_2!(usdc_price, usdt_price);
+
+    // Sell 100 USDC at 0.99 — fills against resting bid at 0.99 (pay_with_deep
+    // covers fees from the DEEP balance, not the trade output).
+    // Pre-trade asset: 400 USDC + 100 USDT = 500 USDC-equiv, debt 400.
+    // Post-trade: 300 USDC + 199 USDT = 499 USDC-equiv, debt 400,
+    // risk_ratio = 499/400 = 1.2475 < 1.25. Aborts.
+    let _ = test_helpers::place_limit_order_v2_for_test<USDC, USDT>(
+        &mut scenario,
+        &registry,
+        &base_pool,
+        &quote_pool,
+        &mut mm,
+        &mut pool,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        990_000_000,
+        100 * test_constants::usdc_multiplier(),
+        false, // is_bid = false (sell)
+        true, // pay_with_deep
+        2_000_000,
+        &clock,
+    );
+
+    abort 999
+}
+
 #[test]
 fun place_limit_order_v2_no_debt_at_oracle_price_ok() {
     // Sanity: with no debt the post-trade invariant short-circuits, so

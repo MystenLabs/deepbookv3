@@ -29,6 +29,7 @@ use deepbook_margin::{
         setup_btc_usd_deepbook_margin,
         setup_usdc_usdt_deepbook_margin,
         setup_pool_proxy_test_env,
+        setup_orderbook_liquidity_stablecoin,
         destroy_2,
         destroy_3,
         return_shared_2,
@@ -37,7 +38,8 @@ use deepbook_margin::{
         advance_time,
         get_margin_pool_caps,
         return_to_sender_2
-    }
+    },
+    tpsl
 };
 use std::unit_test::destroy;
 use sui::test_scenario::return_shared;
@@ -3661,4 +3663,184 @@ fun locked_balance_reflects_open_orders() {
 
     return_shared_2!(mm, pool);
     cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
+}
+
+// === V1 deprecation regression test ===
+//
+// `execute_conditional_orders` (v1) preserves its on-chain ABI for upgrade
+// compatibility but the body is replaced with `abort EDeprecatedUseV2`. This
+// test asserts the abort fires, so a future refactor can't silently restore
+// the v1 path that lacks the post-fill `risk_ratio` invariant.
+#[test, expected_failure(abort_code = margin_manager::EDeprecatedUseV2)]
+fun execute_conditional_orders_v1_aborts() {
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        _b,
+        _q,
+        pool_id,
+        registry_id,
+    ) = setup_pool_proxy_test_env<USDC, USDT>();
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+
+    let _ = mm.execute_conditional_orders<USDC, USDT>(
+        &mut pool,
+        &usdc_price,
+        &usdt_price,
+        &registry,
+        10,
+        &clock,
+        scenario.ctx(),
+    );
+
+    abort 999
+}
+
+// === Conditional-orders post-loop solvency regression test ===
+//
+// Borrow against collateral right at the borrow floor (1.25), pre-register a
+// conditional order whose trigger fires when the oracle drops, with a pending
+// limit order whose fill matches the standard orderbook bid at $0.99. The
+// fill drops `risk_ratio` below 1.25; `process_collected_orders_v2`'s
+// post-loop check aborts the txn, no partial fill lands.
+#[test, expected_failure(abort_code = margin_manager::EInsufficientRiskRatioAfterTrade)]
+fun execute_conditional_orders_v2_post_loop_check_aborts() {
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        base_pool_id,
+        quote_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_pool_proxy_test_env<USDC, USDT>();
+    setup_orderbook_liquidity_stablecoin<USDC, USDT>(&mut scenario, pool_id, &clock);
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+
+    // 100 USDT collateral + 100 DEEP (for fees) + borrow 400 USDC
+    // Post-borrow: 100 USDT + 400 USDC = 500 USDC-equiv, debt 400 USDC,
+    // risk_ratio = 1.25 (exactly at borrow floor).
+    mm.deposit<USDC, USDT, USDT>(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        mint_coin<USDT>(100 * test_constants::usdt_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.deposit<USDC, USDT, DEEP>(
+        &registry,
+        &usdc_price,
+        &usdt_price,
+        mint_coin<DEEP>(100 * test_constants::deep_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.borrow_base<USDC, USDT>(
+        &registry,
+        &mut base_pool,
+        &usdc_price,
+        &usdt_price,
+        &pool,
+        400 * test_constants::usdc_multiplier(),
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Add conditional order while oracles are USDC=$1.0, USDT=$1.0 (ratio =
+    // 1.0). trigger_below = false (a "trigger above" order) requires
+    // trigger >= current at add time; we use trigger = $1.0 (equal). The
+    // pending order sells 100 USDC at 0.99 (matches resting bid).
+    let condition = tpsl::new_condition(false, 1_000_000_000);
+    let pending_order = tpsl::new_pending_limit_order(
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        990_000_000,
+        100 * test_constants::usdc_multiplier(),
+        false, // ask (sell USDC for USDT)
+        true, // pay_with_deep (fees from DEEP balance, not the trade)
+        constants::max_u64(),
+    );
+    mm.add_conditional_order<USDC, USDT>(
+        &pool,
+        &usdc_price,
+        &usdt_price,
+        &registry,
+        1,
+        condition,
+        pending_order,
+        &clock,
+        scenario.ctx(),
+    );
+    destroy_2!(usdc_price, usdt_price);
+
+    // Bump USDC Pyth price slightly above $1.00 so the live ratio
+    // (USDC/USDT = 1.01/1.00) exceeds the trigger ($1.00) and the
+    // trigger_above order fires. Critical: USDC rises (the asset we're
+    // selling becomes more valuable), so the trade loss isn't compensated by
+    // a cross-asset reval. Post-fill assets_in_debt_unit drops below the
+    // pre-trade value, dragging risk_ratio under 1.25.
+    let usdc_price_high = test_helpers::build_demo_usdc_price_info_object_with_price(
+        &mut scenario,
+        101 * test_constants::pyth_multiplier() / 100, // $1.01
+        &clock,
+    );
+    let usdt_price = build_demo_usdt_price_info_object(&mut scenario, &clock);
+
+    let order_infos = test_helpers::execute_conditional_orders_v2_for_test<USDC, USDT>(
+        &mut scenario,
+        &base_pool,
+        &quote_pool,
+        &mut mm,
+        &mut pool,
+        &usdc_price_high,
+        &usdt_price,
+        &registry,
+        10,
+        &clock,
+    );
+
+    destroy(order_infos);
+    destroy_2!(usdc_price_high, usdt_price);
+    abort 999
 }
