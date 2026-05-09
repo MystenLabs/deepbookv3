@@ -29,15 +29,9 @@ const EInsufficientRiskRatioAfterTrade: u64 = 6;
 /// risk_ratio after the trade is lower than before. Reduce-only orders must
 /// monotonically improve (or hold) solvency.
 const EReduceOnlyMustImproveRiskRatio: u64 = 7;
-/// Reduce-only entry called on a manager with no outstanding debt. Reduce-only
-/// is only meaningful when there is debt to reduce; without it the post-fill
-/// monotonic invariant has no `before` value to compare against. Raised
-/// explicitly so this no-op case is distinguishable from a malformed
-/// quantity / wrong-side reduce-only attempt (`ENotReduceOnlyOrder`).
-const ENoDebtToReduce: u64 = 8;
 /// Deprecated v1 entry was called. Use the `_v2` variant which enforces a
 /// post-trade risk_ratio invariant.
-const EDeprecatedUseV2: u64 = 9;
+const EDeprecatedUseV2: u64 = 8;
 
 // === Public Functions - Price Protection ===
 /// Updates the current price for a pool using safe oracle price calculation.
@@ -313,18 +307,18 @@ public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset, DebtAsset>(
         ENotReduceOnlyOrder,
     );
 
-    let risk_ratio_before_opt = read_risk_ratio_if_indebted(
-        margin_manager,
+    // The reduce-only quantity predicate above already guarantees the manager
+    // has debt on the relevant side, so `risk_ratio` is safe to compute (no
+    // divide-by-zero in `risk_ratio_int`).
+    let risk_ratio_before = margin_manager.risk_ratio(
         registry,
+        base_oracle,
+        quote_oracle,
         pool,
         base_margin_pool,
         quote_margin_pool,
-        base_oracle,
-        quote_oracle,
         clock,
     );
-    assert!(risk_ratio_before_opt.is_some(), ENoDebtToReduce);
-    let risk_ratio_before = risk_ratio_before_opt.destroy_some();
 
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
@@ -406,18 +400,18 @@ public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset, DebtAsset>(
 
     registry.assert_price(pool.id(), effective_price, is_bid, clock);
 
-    let risk_ratio_before_opt = read_risk_ratio_if_indebted(
-        margin_manager,
+    // The reduce-only quantity predicate above already guarantees the manager
+    // has debt on the relevant side, so `risk_ratio` is safe to compute (no
+    // divide-by-zero in `risk_ratio_int`).
+    let risk_ratio_before = margin_manager.risk_ratio(
         registry,
+        base_oracle,
+        quote_oracle,
         pool,
         base_margin_pool,
         quote_margin_pool,
-        base_oracle,
-        quote_oracle,
         clock,
     );
-    assert!(risk_ratio_before_opt.is_some(), ENoDebtToReduce);
-    let risk_ratio_before = risk_ratio_before_opt.destroy_some();
 
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
@@ -737,43 +731,11 @@ fun assert_post_trade_solvent<BaseAsset, QuoteAsset>(
     );
 }
 
-/// Reads the manager's `risk_ratio` only when there is outstanding debt.
-/// Returns `option::none()` when the manager has no debt — using `Option`
-/// (not a `0` sentinel) so callers can't confuse "no debt" with a real
-/// `risk_ratio` of zero.
-fun read_risk_ratio_if_indebted<BaseAsset, QuoteAsset>(
-    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
-    registry: &MarginRegistry,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    base_margin_pool: &MarginPool<BaseAsset>,
-    quote_margin_pool: &MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
-    clock: &Clock,
-): Option<u64> {
-    if (
-        margin_manager.borrowed_base_shares() == 0
-        && margin_manager.borrowed_quote_shares() == 0
-    ) {
-        return option::none()
-    };
-
-    option::some(margin_manager.risk_ratio(
-        registry,
-        base_oracle,
-        quote_oracle,
-        pool,
-        base_margin_pool,
-        quote_margin_pool,
-        clock,
-    ))
-}
-
 /// Asserts a reduce-only fill did not worsen the manager's risk ratio.
-/// Caller is responsible for ensuring the manager had debt at the entry
-/// (`ENoDebtToReduce` is asserted in the public reduce-only entries before
-/// this helper is invoked), so `risk_ratio_before` is a real ratio rather
-/// than a sentinel.
+/// Caller is responsible for ensuring the manager had debt at the entry —
+/// the reduce-only quantity predicate (`base_debt > base_asset` or
+/// `quote_debt > quote_asset`) already aborts the txn for no-debt managers,
+/// so `risk_ratio_before` is always a real ratio by the time this fires.
 fun assert_reduce_only_monotonic<BaseAsset, QuoteAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
