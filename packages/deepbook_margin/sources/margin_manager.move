@@ -1823,24 +1823,6 @@ fun process_collected_orders_v2<BaseAsset, QuoteAsset>(
                 ctx,
             );
 
-            // Post-fill solvency check. Skip when manager has no debt.
-            if (self.borrowed_base_shares > 0
-                || self.borrowed_quote_shares > 0) {
-                let risk_ratio_after = self.risk_ratio(
-                    registry,
-                    base_oracle,
-                    quote_oracle,
-                    pool,
-                    base_margin_pool,
-                    quote_margin_pool,
-                    clock,
-                );
-                assert!(
-                    risk_ratio_after >= registry.min_borrow_risk_ratio(pool.id()),
-                    EInsufficientRiskRatioAfterTrade,
-                );
-            };
-
             order_infos.push_back(order_info);
             executed_ids.push_back(conditional_order_id);
         } else {
@@ -1857,7 +1839,32 @@ fun process_collected_orders_v2<BaseAsset, QuoteAsset>(
         };
 
         i = i + 1;
-    }
+    };
+
+    // Post-loop solvency check. Move PTBs are atomic, so checking once after
+    // all fills is functionally equivalent to checking after each fill — a
+    // breach of the invariant aborts the whole txn either way. Skipped when
+    // no fills landed (executed_ids empty) and skipped when manager has no
+    // debt (nothing to be insolvent against). Saves up to N-1 Pyth reads on
+    // the happy path versus per-fill checking.
+    if (
+        !executed_ids.is_empty()
+        && (self.borrowed_base_shares > 0 || self.borrowed_quote_shares > 0)
+    ) {
+        let risk_ratio_after = self.risk_ratio(
+            registry,
+            base_oracle,
+            quote_oracle,
+            pool,
+            base_margin_pool,
+            quote_margin_pool,
+            clock,
+        );
+        assert!(
+            risk_ratio_after >= registry.min_borrow_risk_ratio(pool.id()),
+            EInsufficientRiskRatioAfterTrade,
+        );
+    };
 }
 
 fun balance_manager_unsafe_mut<BaseAsset, QuoteAsset>(
