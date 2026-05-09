@@ -158,7 +158,7 @@ fun test_btc_usd_deepbook_margin() {
         clock,
         admin_cap,
         maintainer_cap,
-        _btc_pool_id,
+        btc_pool_id,
         usdc_pool_id,
         _pool_id,
         registry_id,
@@ -1100,7 +1100,7 @@ fun test_liquidation_reward_calculations() {
         clock,
         admin_cap,
         maintainer_cap,
-        _btc_pool_id,
+        btc_pool_id,
         usdc_pool_id,
         _pool_id,
         registry_id,
@@ -1356,7 +1356,7 @@ fun test_risk_ratio_with_oracle_price_changes() {
         mut clock,
         admin_cap,
         maintainer_cap,
-        _btc_pool_id,
+        btc_pool_id,
         usdc_pool_id,
         _pool_id,
         registry_id,
@@ -1377,7 +1377,7 @@ fun test_risk_ratio_with_oracle_price_changes() {
 
     scenario.next_tx(test_constants::user1());
     let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
-    let btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(_btc_pool_id);
+    let btc_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
     let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
     let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
     let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
@@ -2342,7 +2342,7 @@ fun test_liquidate_fails_with_too_low_repay_amount() {
         mut clock,
         _admin_cap,
         _maintainer_cap,
-        _btc_pool_id,
+        btc_pool_id,
         usdc_pool_id,
         _pool_id,
         registry_id,
@@ -2614,7 +2614,7 @@ fun test_borrow_quote_fails_when_pool_disabled() {
         clock,
         admin_cap,
         _maintainer_cap,
-        _btc_pool_id,
+        btc_pool_id,
         usdc_pool_id,
         _pool_id,
         registry_id,
@@ -2808,7 +2808,7 @@ fun test_unregister_margin_manager_fails_with_outstanding_quote_debt() {
         clock,
         _admin_cap,
         _maintainer_cap,
-        _btc_pool_id,
+        btc_pool_id,
         usdc_pool_id,
         _pool_id,
         registry_id,
@@ -2912,7 +2912,7 @@ fun liquidation_with_unsettled_maker_fills() {
         clock,
         admin_cap,
         maintainer_cap,
-        _btc_pool_id,
+        btc_pool_id,
         usdc_pool_id,
         _pool_id,
         registry_id,
@@ -2977,8 +2977,13 @@ fun liquidation_with_unsettled_maker_fills() {
     let bid_price = 500_000_000_000u64; // price in pool units (within 5% of oracle)
     let bid_quantity = btc_multiplier() / 10; // 0.1 BTC
 
-    deepbook_margin::pool_proxy::place_limit_order<BTC, USDC>(
+    let base_pool = scenario.take_shared_by_id<MarginPool<BTC>>(btc_pool_id);
+    let quote_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    deepbook_margin::test_helpers::place_limit_order_v2_for_test<BTC, USDC>(
+        &mut scenario,
         &registry,
+        &base_pool,
+        &quote_pool,
         &mut mm,
         &mut pool,
         1,
@@ -2986,12 +2991,15 @@ fun liquidation_with_unsettled_maker_fills() {
         constants::self_matching_allowed(),
         bid_price,
         bid_quantity,
-        true, // is_bid
-        false, // pay_with_deep
+        true,
+        // is_bid
+        false,
+        // pay_with_deep
         18446744073709551615,
         &clock,
-        scenario.ctx(),
     );
+    return_shared(base_pool);
+    return_shared(quote_pool);
 
     destroy_2!(btc_price, usdc_price);
     return_shared_3!(mm, pool, registry);
@@ -3417,8 +3425,8 @@ fun get_account_order_details_returns_open_orders() {
         clock,
         _admin_cap,
         _maintainer_cap,
-        _base_pool_id,
-        _quote_pool_id,
+        base_pool_id,
+        quote_pool_id,
         pool_id,
         registry_id,
     ) = setup_pool_proxy_test_env<USDC, USDT>();
@@ -3450,8 +3458,13 @@ fun get_account_order_details_returns_open_orders() {
     );
     destroy_2!(usdc_price, usdt_price);
 
-    let order_info = pool_proxy::place_limit_order<USDC, USDT>(
+    let base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    let order_info = test_helpers::place_limit_order_v2_for_test<USDC, USDT>(
+        &mut scenario,
         &registry,
+        &base_pool,
+        &quote_pool,
         &mut mm,
         &mut pool,
         1,
@@ -3463,8 +3476,9 @@ fun get_account_order_details_returns_open_orders() {
         false,
         2000000,
         &clock,
-        scenario.ctx(),
     );
+    return_shared(base_pool);
+    return_shared(quote_pool);
     let expected_order_id = order_info.order_id();
     destroy(order_info);
 
@@ -3485,8 +3499,8 @@ fun account_open_orders_returns_order_ids() {
         clock,
         _admin_cap,
         _maintainer_cap,
-        _base_pool_id,
-        _quote_pool_id,
+        base_pool_id,
+        quote_pool_id,
         pool_id,
         registry_id,
     ) = setup_pool_proxy_test_env<USDC, USDT>();
@@ -3523,8 +3537,13 @@ fun account_open_orders_returns_order_ids() {
     assert!(open_orders.length() == 0);
 
     // Place two orders
-    let order1 = pool_proxy::place_limit_order<USDC, USDT>(
+    let base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    let order1 = test_helpers::place_limit_order_v2_for_test<USDC, USDT>(
+        &mut scenario,
         &registry,
+        &base_pool,
+        &quote_pool,
         &mut mm,
         &mut pool,
         1,
@@ -3536,10 +3555,12 @@ fun account_open_orders_returns_order_ids() {
         false,
         2000000,
         &clock,
-        scenario.ctx(),
     );
-    let order2 = pool_proxy::place_limit_order<USDC, USDT>(
+    let order2 = test_helpers::place_limit_order_v2_for_test<USDC, USDT>(
+        &mut scenario,
         &registry,
+        &base_pool,
+        &quote_pool,
         &mut mm,
         &mut pool,
         2,
@@ -3551,8 +3572,9 @@ fun account_open_orders_returns_order_ids() {
         false,
         2000000,
         &clock,
-        scenario.ctx(),
     );
+    return_shared(base_pool);
+    return_shared(quote_pool);
 
     let open_orders = mm.account_open_orders(&pool);
     assert!(open_orders.length() == 2);
@@ -3571,8 +3593,8 @@ fun locked_balance_reflects_open_orders() {
         clock,
         _admin_cap,
         _maintainer_cap,
-        _base_pool_id,
-        _quote_pool_id,
+        base_pool_id,
+        quote_pool_id,
         pool_id,
         registry_id,
     ) = setup_pool_proxy_test_env<USDC, USDT>();
@@ -3611,8 +3633,13 @@ fun locked_balance_reflects_open_orders() {
     assert!(locked_deep == 0);
 
     // Place an ask order (sell USDC for USDT) — locks base (USDC)
-    let order_info = pool_proxy::place_limit_order<USDC, USDT>(
+    let base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    let order_info = test_helpers::place_limit_order_v2_for_test<USDC, USDT>(
+        &mut scenario,
         &registry,
+        &base_pool,
+        &quote_pool,
         &mut mm,
         &mut pool,
         1,
@@ -3624,8 +3651,9 @@ fun locked_balance_reflects_open_orders() {
         false,
         2000000,
         &clock,
-        scenario.ctx(),
     );
+    return_shared(base_pool);
+    return_shared(quote_pool);
     destroy(order_info);
 
     let (locked_base, _locked_quote, _locked_deep) = mm.locked_balance(&pool);
