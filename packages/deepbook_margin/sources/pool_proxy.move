@@ -60,7 +60,8 @@ public fun update_current_price<BaseAsset, QuoteAsset>(
 // package upgrade type-checks against existing dependents, but every body is
 // replaced with `abort EDeprecatedUseV2`. Callers must migrate to the `_v2`
 // variants further down, which add a post-trade `risk_ratio` invariant that
-// closes the wash-trade drain vector exploited in the v3/v4 incident.
+// prevents an order placement from leaving the manager in a state borrowing
+// would already be forbidden from.
 
 /// DEPRECATED. Use `place_limit_order_v2`.
 public fun place_limit_order<BaseAsset, QuoteAsset>(
