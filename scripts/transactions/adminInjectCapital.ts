@@ -3,6 +3,8 @@
 import { coinWithBalance, Transaction } from "@mysten/sui/transactions";
 import { prepareMultisigTx } from "../utils/utils.js";
 import { adminCapOwner, marginAdminCapID } from "../config/constants.js";
+import { deepbook } from "@mysten/deepbook-v3";
+import { SuiGrpcClient } from "@mysten/sui/grpc";
 
 declare const process: {
   exitCode?: number;
@@ -27,9 +29,36 @@ const USDC_INJECTION_AMOUNT = 283_604_871_465n;
 
 const ADMIN_INJECT_CAPITAL_TARGET = `${MARGIN_PACKAGE}::margin_pool::admin_inject_capital`;
 
-const buildInjectionTransaction = (): Transaction => {
+const POOL_KEYS_TO_DISABLE = [
+  "SUI_USDC",
+  "WAL_USDC",
+  "DEEP_USDC",
+  "SUIUSDE_USDC",
+  "SUI_SUIUSDE",
+  "XBTC_USDC",
+];
+
+(async () => {
+  const client = new SuiGrpcClient({
+    baseUrl: "https://sui-mainnet.mystenlabs.com",
+    network: MAINNET,
+  }).$extend(
+    deepbook({
+      address: adminCapOwner[MAINNET],
+      marginAdminCap: marginAdminCapID[MAINNET],
+    }),
+  );
+
   const tx = new Transaction();
 
+  // 1. Disable all DeepBook pools first so no liquidation activity can race the
+  //    capital injection inside the same multisig PTB.
+  for (const poolKey of POOL_KEYS_TO_DISABLE) {
+    client.deepbook.marginAdmin.disableDeepbookPool(poolKey)(tx);
+  }
+
+  // 2. Inject the aggregate pool_default amount (283,604.871465 USDC) into the
+  //    USDC margin pool without minting supplier shares.
   const usdcCoin = coinWithBalance({
     type: USDC_TYPE,
     balance: USDC_INJECTION_AMOUNT,
@@ -46,13 +75,8 @@ const buildInjectionTransaction = (): Transaction => {
     typeArguments: [USDC_TYPE],
   });
 
-  return tx;
-};
-
-const main = async () => {
-  const tx = buildInjectionTransaction();
-
   console.log({
+    poolKeysDisabled: POOL_KEYS_TO_DISABLE,
     usdcInjectionAmount: USDC_INJECTION_AMOUNT.toString(),
     usdcMarginPool: USDC_MARGIN_POOL_ID,
     marginAdminCap: marginAdminCapID[MAINNET],
@@ -60,9 +84,7 @@ const main = async () => {
 
   const res = await prepareMultisigTx(tx, MAINNET, adminCapOwner[MAINNET]);
   console.dir(res, { depth: null });
-};
-
-main().catch((error) => {
+})().catch((error) => {
   console.error(error);
   process.exitCode = 1;
 });
