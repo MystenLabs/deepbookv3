@@ -19,7 +19,8 @@ declare const process: {
 
 const MAINNET = "mainnet";
 
-// Placeholder — replace with the real margin package id before signing.
+// Upgraded margin package (v4). Canonical v3 lives at
+// 0xfbd322126f1452fd4c89aedbaeb9fd0c44df9b5cedbe70d76bf80dc086031377.
 const MARGIN_PACKAGE =
   "0x7767428727629a08dfd196bd4fc00d8a060e30da33aa63f4087fb3271e615a98";
 
@@ -34,9 +35,10 @@ const DEEP_MARGIN_POOL_ID =
   "0x1d723c5cd113296868b55208f2ab5a905184950dd59c48eb7345607d6b5e6af7";
 const WAL_MARGIN_POOL_ID =
   "0x38decd3dbb62bd4723144349bf57bc403b393aee86a51596846a824a1e0c2c01";
-// TODO: fill these in before signing — not in the bundled SDK constants.
-const SUIUSDE_MARGIN_POOL_ID = "TODO_FILL_SUIUSDE_MARGIN_POOL_ID";
-const XBTC_MARGIN_POOL_ID = "TODO_FILL_XBTC_MARGIN_POOL_ID";
+const SUIUSDE_MARGIN_POOL_ID =
+  "0xbb990ca04a7743e6c0a25a7fb16f60fc6f6d8bf213624ff03a63f1bb04c3a12f";
+const XBTC_MARGIN_POOL_ID =
+  "0x14dfbf54400e0b97e892349310d392bef6d187c2b6709d9b246b8f41c9a13de4";
 
 const SUI_TYPE =
   "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI";
@@ -57,7 +59,13 @@ const XBTC_TYPE =
 // + 33,577,714,688 +  26,877,577,806 = 283,604,871,465 (≈ 283,604.871465 USDC).
 const USDC_INJECTION_AMOUNT = 283_604_871_465n;
 
-const MARGIN_VERSION_TO_ENABLE = 4;
+// Both v3 and v4 must be enabled in the registry: v3 so users with existing
+// margin managers can still call reduce-only / withdraw paths; v4 so the
+// admin disable + inject calls in this PTB resolve through the upgraded
+// package. enable_version aborts with EVersionAlreadyEnabled
+// (margin_registry.move:374) on a no-op — comment out the matching line if
+// either version is already enabled at sign time.
+const MARGIN_VERSIONS_TO_ENABLE = [3, 4];
 
 const ADMIN_INJECT_CAPITAL_TARGET = `${MARGIN_PACKAGE}::margin_pool::admin_inject_capital`;
 const DISABLE_DEEPBOOK_POOL_TARGET = `${MARGIN_PACKAGE}::margin_registry::disable_deepbook_pool`;
@@ -227,32 +235,22 @@ const LOAN_PAIRS_TO_DISABLE: {
   },
 ];
 
-const assertNoPlaceholders = (): void => {
-  const todos = LOAN_PAIRS_TO_DISABLE.filter((p) =>
-    p.marginPoolId.startsWith("TODO"),
-  ).map((p) => p.label);
-  if (todos.length > 0) {
-    throw new Error(
-      `Refusing to build PTB — fill in TODO margin pool IDs first: ${todos.join(", ")}`,
-    );
-  }
-};
-
 (async () => {
-  assertNoPlaceholders();
-
   const tx = new Transaction();
 
-  // 1. Enable margin version 4 in the registry so the upgraded margin package
-  //    is callable for the disable + inject steps below.
-  tx.moveCall({
-    target: ENABLE_VERSION_TARGET,
-    arguments: [
-      tx.object(MARGIN_REGISTRY_ID),
-      tx.pure.u64(MARGIN_VERSION_TO_ENABLE),
-      tx.object(marginAdminCapID[MAINNET]),
-    ],
-  });
+  // 1. Enable both v3 (so existing margin managers stay callable for
+  //    reduce-only and withdraw paths) and v4 (so the disable + inject calls
+  //    below resolve through the upgraded margin package).
+  for (const version of MARGIN_VERSIONS_TO_ENABLE) {
+    tx.moveCall({
+      target: ENABLE_VERSION_TARGET,
+      arguments: [
+        tx.object(MARGIN_REGISTRY_ID),
+        tx.pure.u64(version),
+        tx.object(marginAdminCapID[MAINNET]),
+      ],
+    });
+  }
 
   // 2. Disable all DeepBook pools so no liquidation activity can race the
   //    capital injection inside the same multisig PTB. Built manually against
@@ -307,7 +305,7 @@ const assertNoPlaceholders = (): void => {
   });
 
   console.log({
-    marginVersionEnabled: MARGIN_VERSION_TO_ENABLE,
+    marginVersionsEnabled: MARGIN_VERSIONS_TO_ENABLE,
     poolKeysDisabled: POOLS_TO_DISABLE.map((p) => p.key),
     loanPairsDisabled: LOAN_PAIRS_TO_DISABLE.map((p) => p.label),
     usdcInjectionAmount: USDC_INJECTION_AMOUNT.toString(),
