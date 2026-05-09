@@ -21,6 +21,17 @@ const EPoolNotEnabledForMarginTrading: u64 = 2;
 const ENotReduceOnlyOrder: u64 = 3;
 const EIncorrectDeepBookPool: u64 = 4;
 const ENoLiquidityInOrderbook: u64 = 5;
+/// Post-trade risk ratio dropped below `min_borrow_risk_ratio`.
+/// Raised by the v2 order placement entries when the manager would be left
+/// in a state borrowing would be forbidden from.
+const EInsufficientRiskRatioAfterTrade: u64 = 6;
+/// Reduce-only fill leaked value to the counterparty: the manager's
+/// risk_ratio after the trade is lower than before. Reduce-only orders must
+/// monotonically improve (or hold) solvency.
+const EReduceOnlyMustImproveRiskRatio: u64 = 7;
+/// Deprecated v1 entry was called. Use the `_v2` variant which enforces a
+/// post-trade risk_ratio invariant.
+const EDeprecatedUseV2: u64 = 8;
 
 // === Public Functions - Price Protection ===
 /// Updates the current price for a pool using safe oracle price calculation.
@@ -43,12 +54,108 @@ public fun update_current_price<BaseAsset, QuoteAsset>(
     registry.update_current_price(pool.id(), price, clock);
 }
 
-// === Public Proxy Functions - Trading ===
-/// Places a limit order in the pool.
+// === Public Proxy Functions - Trading (v1 — DEPRECATED) ===
+//
+// The v1 trading entries below preserve their on-chain signatures so the v5
+// package upgrade type-checks against existing dependents, but every body is
+// replaced with `abort EDeprecatedUseV2`. Callers must migrate to the `_v2`
+// variants further down, which add a post-trade `risk_ratio` invariant that
+// closes the wash-trade drain vector exploited in the v3/v4 incident.
+
+/// DEPRECATED. Use `place_limit_order_v2`.
 public fun place_limit_order<BaseAsset, QuoteAsset>(
+    _registry: &MarginRegistry,
+    _margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    _pool: &mut Pool<BaseAsset, QuoteAsset>,
+    _client_order_id: u64,
+    _order_type: u8,
+    _self_matching_option: u8,
+    _price: u64,
+    _quantity: u64,
+    _is_bid: bool,
+    _pay_with_deep: bool,
+    _expire_timestamp: u64,
+    _clock: &Clock,
+    _ctx: &TxContext,
+): OrderInfo {
+    abort EDeprecatedUseV2
+}
+
+/// DEPRECATED. Use `place_market_order_v2`.
+public fun place_market_order<BaseAsset, QuoteAsset>(
+    _registry: &MarginRegistry,
+    _margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    _pool: &mut Pool<BaseAsset, QuoteAsset>,
+    _client_order_id: u64,
+    _self_matching_option: u8,
+    _quantity: u64,
+    _is_bid: bool,
+    _pay_with_deep: bool,
+    _clock: &Clock,
+    _ctx: &TxContext,
+): OrderInfo {
+    abort EDeprecatedUseV2
+}
+
+/// DEPRECATED. Use `place_reduce_only_limit_order_v2`.
+public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset, DebtAsset>(
+    _registry: &MarginRegistry,
+    _margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    _pool: &mut Pool<BaseAsset, QuoteAsset>,
+    _margin_pool: &MarginPool<DebtAsset>,
+    _client_order_id: u64,
+    _order_type: u8,
+    _self_matching_option: u8,
+    _price: u64,
+    _quantity: u64,
+    _is_bid: bool,
+    _pay_with_deep: bool,
+    _expire_timestamp: u64,
+    _clock: &Clock,
+    _ctx: &TxContext,
+): OrderInfo {
+    abort EDeprecatedUseV2
+}
+
+/// DEPRECATED. Use `place_reduce_only_market_order_v2`.
+public fun place_reduce_only_market_order<BaseAsset, QuoteAsset, DebtAsset>(
+    _registry: &MarginRegistry,
+    _margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    _pool: &mut Pool<BaseAsset, QuoteAsset>,
+    _margin_pool: &MarginPool<DebtAsset>,
+    _client_order_id: u64,
+    _self_matching_option: u8,
+    _quantity: u64,
+    _is_bid: bool,
+    _pay_with_deep: bool,
+    _clock: &Clock,
+    _ctx: &TxContext,
+): OrderInfo {
+    abort EDeprecatedUseV2
+}
+
+// === Public Proxy Functions - Trading (v2) ===
+//
+// Each v2 entry mirrors its v1 counterpart and additionally recomputes
+// `risk_ratio` after the order settles (using Pyth via the public
+// `MarginManager::risk_ratio` helper). For non-reduce-only entries the
+// post-trade ratio must be at least `min_borrow_risk_ratio` — same threshold
+// the borrow path enforces, so trading cannot push a manager below where
+// borrowing was already forbidden. Skipped when the manager has no debt
+// (nothing to be insolvent against). For reduce-only entries the post-trade
+// ratio must be `>= risk_ratio_before` (monotonic improvement); also skipped
+// when the manager has no debt because the reduce-only quantity predicate
+// already rejects every order in that case.
+
+/// Places a limit order in the pool.
+public fun place_limit_order_v2<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
     client_order_id: u64,
     order_type: u8,
     self_matching_option: u8,
@@ -68,7 +175,7 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
-    pool.place_limit_order(
+    let order_info = pool.place_limit_order(
         balance_manager,
         &trade_proof,
         client_order_id,
@@ -81,14 +188,31 @@ public fun place_limit_order<BaseAsset, QuoteAsset>(
         expire_timestamp,
         clock,
         ctx,
-    )
+    );
+
+    assert_post_trade_solvent(
+        margin_manager,
+        registry,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        base_oracle,
+        quote_oracle,
+        clock,
+    );
+
+    order_info
 }
 
 /// Places a market order in the pool.
-public fun place_market_order<BaseAsset, QuoteAsset>(
+public fun place_market_order_v2<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
     client_order_id: u64,
     self_matching_option: u8,
     quantity: u64,
@@ -112,7 +236,7 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
-    pool.place_market_order(
+    let order_info = pool.place_market_order(
         balance_manager,
         &trade_proof,
         client_order_id,
@@ -122,15 +246,32 @@ public fun place_market_order<BaseAsset, QuoteAsset>(
         pay_with_deep,
         clock,
         ctx,
-    )
+    );
+
+    assert_post_trade_solvent(
+        margin_manager,
+        registry,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        base_oracle,
+        quote_oracle,
+        clock,
+    );
+
+    order_info
 }
 
 /// Places a reduce-only order in the pool. Used when margin trading is disabled.
-public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset, DebtAsset>(
+public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset, DebtAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     margin_pool: &MarginPool<DebtAsset>,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
     client_order_id: u64,
     order_type: u8,
     self_matching_option: u8,
@@ -161,10 +302,21 @@ public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset, DebtAsset>(
         ENotReduceOnlyOrder,
     );
 
+    let risk_ratio_before = read_risk_ratio_if_indebted(
+        margin_manager,
+        registry,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        base_oracle,
+        quote_oracle,
+        clock,
+    );
+
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
-    pool.place_limit_order(
+    let order_info = pool.place_limit_order(
         balance_manager,
         &trade_proof,
         client_order_id,
@@ -177,15 +329,33 @@ public fun place_reduce_only_limit_order<BaseAsset, QuoteAsset, DebtAsset>(
         expire_timestamp,
         clock,
         ctx,
-    )
+    );
+
+    assert_reduce_only_monotonic(
+        margin_manager,
+        registry,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        base_oracle,
+        quote_oracle,
+        clock,
+        risk_ratio_before,
+    );
+
+    order_info
 }
 
 /// Places a reduce-only market order in the pool. Used when margin trading is disabled.
-public fun place_reduce_only_market_order<BaseAsset, QuoteAsset, DebtAsset>(
+public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset, DebtAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     margin_pool: &MarginPool<DebtAsset>,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
     client_order_id: u64,
     self_matching_option: u8,
     quantity: u64,
@@ -223,10 +393,21 @@ public fun place_reduce_only_market_order<BaseAsset, QuoteAsset, DebtAsset>(
 
     registry.assert_price(pool.id(), effective_price, is_bid, clock);
 
+    let risk_ratio_before = read_risk_ratio_if_indebted(
+        margin_manager,
+        registry,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        base_oracle,
+        quote_oracle,
+        clock,
+    );
+
     let trade_proof = margin_manager.trade_proof(ctx);
     let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
 
-    pool.place_market_order(
+    let order_info = pool.place_market_order(
         balance_manager,
         &trade_proof,
         client_order_id,
@@ -236,7 +417,21 @@ public fun place_reduce_only_market_order<BaseAsset, QuoteAsset, DebtAsset>(
         pay_with_deep,
         clock,
         ctx,
-    )
+    );
+
+    assert_reduce_only_monotonic(
+        margin_manager,
+        registry,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        base_oracle,
+        quote_oracle,
+        clock,
+        risk_ratio_before,
+    );
+
+    order_info
 }
 
 /// Modifies an order
@@ -489,4 +684,101 @@ fun calculate_effective_price<BaseAsset, QuoteAsset>(
         assert!(base_used > 0, ENoLiquidityInOrderbook);
         (math::div(quote_out, base_used), quote_out)
     }
+}
+
+/// Reads the manager's `risk_ratio` only when there is outstanding debt.
+/// Returns `0` when the manager has no debt — callers must treat the sentinel
+/// as "no constraint to check" rather than as a real ratio.
+fun read_risk_ratio_if_indebted<BaseAsset, QuoteAsset>(
+    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    clock: &Clock,
+): u64 {
+    if (
+        margin_manager.borrowed_base_shares() > 0
+        || margin_manager.borrowed_quote_shares() > 0
+    ) {
+        margin_manager.risk_ratio(
+            registry,
+            base_oracle,
+            quote_oracle,
+            pool,
+            base_margin_pool,
+            quote_margin_pool,
+            clock,
+        )
+    } else {
+        0
+    }
+}
+
+/// Asserts the manager remains above the borrow-floor risk ratio after a
+/// trade. Skipped when the manager has no debt (nothing to be insolvent
+/// against). Threshold reuses `min_borrow_risk_ratio` so trading cannot push
+/// a manager below the level borrowing is already gated at.
+fun assert_post_trade_solvent<BaseAsset, QuoteAsset>(
+    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    clock: &Clock,
+) {
+    if (
+        margin_manager.borrowed_base_shares() == 0
+        && margin_manager.borrowed_quote_shares() == 0
+    ) {
+        return
+    };
+
+    let risk_ratio_after = margin_manager.risk_ratio(
+        registry,
+        base_oracle,
+        quote_oracle,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        clock,
+    );
+    assert!(
+        risk_ratio_after >= registry.min_borrow_risk_ratio(pool.id()),
+        EInsufficientRiskRatioAfterTrade,
+    );
+}
+
+/// Asserts a reduce-only fill did not worsen the manager's risk ratio.
+/// `risk_ratio_before` is the sentinel returned by `read_risk_ratio_if_indebted`
+/// — a value of `0` means the manager had no debt at the entry, in which case
+/// the reduce-only quantity predicate would have already aborted any nonzero
+/// order, so there is nothing to compare.
+fun assert_reduce_only_monotonic<BaseAsset, QuoteAsset>(
+    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    clock: &Clock,
+    risk_ratio_before: u64,
+) {
+    if (risk_ratio_before == 0) return;
+
+    let risk_ratio_after = margin_manager.risk_ratio(
+        registry,
+        base_oracle,
+        quote_oracle,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        clock,
+    );
+    assert!(risk_ratio_after >= risk_ratio_before, EReduceOnlyMustImproveRiskRatio);
 }
