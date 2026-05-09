@@ -31,6 +31,8 @@ const EDeepbookPoolNotAllowed: u64 = 5;
 const EInvalidMarginPoolCap: u64 = 6;
 const EBorrowAmountTooLow: u64 = 7;
 const ERateLimitExceeded: u64 = 8;
+const EZeroCapitalInjection: u64 = 9;
+const ENoSupplyShares: u64 = 10;
 
 // === Structs ===
 public struct MarginPool<phantom Asset> has key, store {
@@ -266,6 +268,26 @@ public fun update_margin_pool_config<Asset>(
         margin_pool_config,
         timestamp: clock.timestamp_ms(),
     });
+}
+
+/// Inject capital into the margin pool without minting supplier shares.
+public fun admin_inject_capital<Asset>(
+    self: &mut MarginPool<Asset>,
+    _admin_cap: &MarginAdminCap,
+    coin: Coin<Asset>,
+    clock: &Clock,
+) {
+    let amount = coin.value();
+    assert!(amount > 0, EZeroCapitalInjection);
+
+    let margin_pool_id = self.id();
+    let protocol_fees = self.state.update(&self.config, clock);
+    self.protocol_fees.increase_fees_accrued(margin_pool_id, protocol_fees);
+    assert!(self.state.supply_shares() > 0, ENoSupplyShares);
+
+    self.state.increase_supply_absolute(amount);
+    self.vault.join(coin.into_balance());
+    self.rate_limiter.record_deposit(amount, clock);
 }
 
 // === Public Functions * LENDING * ===
