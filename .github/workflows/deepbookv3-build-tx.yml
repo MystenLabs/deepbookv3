@@ -32,6 +32,7 @@ on:
           - Margin Prep
           - Prep Balance Manager
           - Revoke Pausecap
+          - Admin Inject Capital
       sui_tools_image:
         description: "image reference of sui_tools"
         default: "mysten/sui-tools:mainnet"
@@ -469,6 +470,17 @@ jobs:
           RPC_URL: ${{ inputs.rpc }}
         run: |
           cd scripts && pnpm install && pnpm tsx transactions/revokePausecap.ts
+
+      - name: Admin Inject Capital
+        if: ${{ inputs.transaction_type == 'Admin Inject Capital' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/adminInjectCapital.ts
 
       - name: Prep Deepbook MVR
         if: ${{ inputs.transaction_type == 'Prep Deepbook MVR' }}
