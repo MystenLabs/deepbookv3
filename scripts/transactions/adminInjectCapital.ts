@@ -2,7 +2,16 @@
 // SPDX-License-Identifier: Apache-2.0
 import { coinWithBalance, Transaction } from "@mysten/sui/transactions";
 import { prepareMultisigTx } from "../utils/utils.js";
-import { adminCapOwner, marginAdminCapID } from "../config/constants.js";
+import {
+  adminCapOwner,
+  deepMarginPoolCapID,
+  marginAdminCapID,
+  suiMarginPoolCapID,
+  suiUsdeMarginPoolCapID,
+  usdcMarginPoolCapID,
+  walMarginPoolCapID,
+  xbtcMarginPoolCapID,
+} from "../config/constants.js";
 
 declare const process: {
   exitCode?: number;
@@ -11,13 +20,23 @@ declare const process: {
 const MAINNET = "mainnet";
 
 // Placeholder — replace with the real margin package id before signing.
-const MARGIN_PACKAGE = "0x1234";
+const MARGIN_PACKAGE =
+  "0x7767428727629a08dfd196bd4fc00d8a060e30da33aa63f4087fb3271e615a98";
 
 const MARGIN_REGISTRY_ID =
   "0x0e40998b359a9ccbab22a98ed21bd4346abf19158bc7980c8291908086b3a742";
 
+const SUI_MARGIN_POOL_ID =
+  "0x53041c6f86c4782aabbfc1d4fe234a6d37160310c7ee740c915f0a01b7127344";
 const USDC_MARGIN_POOL_ID =
   "0xba473d9ae278f10af75c50a8fa341e9c6a1c087dc91a3f23e8048baf67d0754f";
+const DEEP_MARGIN_POOL_ID =
+  "0x1d723c5cd113296868b55208f2ab5a905184950dd59c48eb7345607d6b5e6af7";
+const WAL_MARGIN_POOL_ID =
+  "0x38decd3dbb62bd4723144349bf57bc403b393aee86a51596846a824a1e0c2c01";
+// TODO: fill these in before signing — not in the bundled SDK constants.
+const SUIUSDE_MARGIN_POOL_ID = "TODO_FILL_SUIUSDE_MARGIN_POOL_ID";
+const XBTC_MARGIN_POOL_ID = "TODO_FILL_XBTC_MARGIN_POOL_ID";
 
 const SUI_TYPE =
   "0x0000000000000000000000000000000000000000000000000000000000000002::sui::SUI";
@@ -42,6 +61,7 @@ const MARGIN_VERSION_TO_ENABLE = 4;
 
 const ADMIN_INJECT_CAPITAL_TARGET = `${MARGIN_PACKAGE}::margin_pool::admin_inject_capital`;
 const DISABLE_DEEPBOOK_POOL_TARGET = `${MARGIN_PACKAGE}::margin_registry::disable_deepbook_pool`;
+const DISABLE_DEEPBOOK_POOL_FOR_LOAN_TARGET = `${MARGIN_PACKAGE}::margin_pool::disable_deepbook_pool_for_loan`;
 const ENABLE_VERSION_TARGET = `${MARGIN_PACKAGE}::margin_registry::enable_version`;
 
 const POOLS_TO_DISABLE: {
@@ -94,7 +114,133 @@ const POOLS_TO_DISABLE: {
   },
 ];
 
+// Mirrors the (deepbookPool, marginPool) pairs enabled in marginSetup.ts via
+// enableDeepbookPoolForLoan (USDSUI pairs intentionally excluded). For each,
+// we call disable_deepbook_pool_for_loan to flip MarginPool.allowed_deepbook_pools
+// off — defense in depth on top of the registry-side disable above.
+//
+// Aborts with EDeepbookPoolNotAllowed (margin_pool.move:207) if the pair was
+// already disabled on chain. If PR #22 already executed, comment out the
+// matching entries before signing.
+const LOAN_PAIRS_TO_DISABLE: {
+  label: string;
+  marginPoolId: string;
+  marginPoolCapId: string;
+  deepbookPoolId: string;
+  assetType: string;
+}[] = [
+  {
+    label: "SUI_USDC + USDC margin pool",
+    marginPoolId: USDC_MARGIN_POOL_ID,
+    marginPoolCapId: usdcMarginPoolCapID[MAINNET],
+    deepbookPoolId:
+      "0xe05dafb5133bcffb8d59f4e12465dc0e9faeaa05e3e342a08fe135800e3e4407",
+    assetType: USDC_TYPE,
+  },
+  {
+    label: "SUI_USDC + SUI margin pool",
+    marginPoolId: SUI_MARGIN_POOL_ID,
+    marginPoolCapId: suiMarginPoolCapID[MAINNET],
+    deepbookPoolId:
+      "0xe05dafb5133bcffb8d59f4e12465dc0e9faeaa05e3e342a08fe135800e3e4407",
+    assetType: SUI_TYPE,
+  },
+  {
+    label: "DEEP_USDC + USDC margin pool",
+    marginPoolId: USDC_MARGIN_POOL_ID,
+    marginPoolCapId: usdcMarginPoolCapID[MAINNET],
+    deepbookPoolId:
+      "0xf948981b806057580f91622417534f491da5f61aeaf33d0ed8e69fd5691c95ce",
+    assetType: USDC_TYPE,
+  },
+  {
+    label: "DEEP_USDC + DEEP margin pool",
+    marginPoolId: DEEP_MARGIN_POOL_ID,
+    marginPoolCapId: deepMarginPoolCapID[MAINNET],
+    deepbookPoolId:
+      "0xf948981b806057580f91622417534f491da5f61aeaf33d0ed8e69fd5691c95ce",
+    assetType: DEEP_TYPE,
+  },
+  {
+    label: "WAL_USDC + USDC margin pool",
+    marginPoolId: USDC_MARGIN_POOL_ID,
+    marginPoolCapId: usdcMarginPoolCapID[MAINNET],
+    deepbookPoolId:
+      "0x56a1c985c1f1123181d6b881714793689321ba24301b3585eec427436eb1c76d",
+    assetType: USDC_TYPE,
+  },
+  {
+    label: "WAL_USDC + WAL margin pool",
+    marginPoolId: WAL_MARGIN_POOL_ID,
+    marginPoolCapId: walMarginPoolCapID[MAINNET],
+    deepbookPoolId:
+      "0x56a1c985c1f1123181d6b881714793689321ba24301b3585eec427436eb1c76d",
+    assetType: WAL_TYPE,
+  },
+  {
+    label: "SUIUSDE_USDC + USDC margin pool",
+    marginPoolId: USDC_MARGIN_POOL_ID,
+    marginPoolCapId: usdcMarginPoolCapID[MAINNET],
+    deepbookPoolId:
+      "0x0fac1cebf35bde899cd9ecdd4371e0e33f44ba83b8a2902d69186646afa3a94b",
+    assetType: USDC_TYPE,
+  },
+  {
+    label: "SUIUSDE_USDC + SUIUSDE margin pool",
+    marginPoolId: SUIUSDE_MARGIN_POOL_ID,
+    marginPoolCapId: suiUsdeMarginPoolCapID[MAINNET],
+    deepbookPoolId:
+      "0x0fac1cebf35bde899cd9ecdd4371e0e33f44ba83b8a2902d69186646afa3a94b",
+    assetType: SUIUSDE_TYPE,
+  },
+  {
+    label: "SUI_SUIUSDE + SUI margin pool",
+    marginPoolId: SUI_MARGIN_POOL_ID,
+    marginPoolCapId: suiMarginPoolCapID[MAINNET],
+    deepbookPoolId:
+      "0x034f3a42e7348de2084406db7a725f9d9d132a56c68324713e6e623601fb4fd7",
+    assetType: SUI_TYPE,
+  },
+  {
+    label: "SUI_SUIUSDE + SUIUSDE margin pool",
+    marginPoolId: SUIUSDE_MARGIN_POOL_ID,
+    marginPoolCapId: suiUsdeMarginPoolCapID[MAINNET],
+    deepbookPoolId:
+      "0x034f3a42e7348de2084406db7a725f9d9d132a56c68324713e6e623601fb4fd7",
+    assetType: SUIUSDE_TYPE,
+  },
+  {
+    label: "XBTC_USDC + USDC margin pool",
+    marginPoolId: USDC_MARGIN_POOL_ID,
+    marginPoolCapId: usdcMarginPoolCapID[MAINNET],
+    deepbookPoolId:
+      "0x20b9a3ec7a02d4f344aa1ebc5774b7b0ccafa9a5d76230662fdc0300bb215307",
+    assetType: USDC_TYPE,
+  },
+  {
+    label: "XBTC_USDC + XBTC margin pool",
+    marginPoolId: XBTC_MARGIN_POOL_ID,
+    marginPoolCapId: xbtcMarginPoolCapID[MAINNET],
+    deepbookPoolId:
+      "0x20b9a3ec7a02d4f344aa1ebc5774b7b0ccafa9a5d76230662fdc0300bb215307",
+    assetType: XBTC_TYPE,
+  },
+];
+
+const assertNoPlaceholders = (): void => {
+  const todos = LOAN_PAIRS_TO_DISABLE.filter((p) =>
+    p.marginPoolId.startsWith("TODO"),
+  ).map((p) => p.label);
+  if (todos.length > 0) {
+    throw new Error(
+      `Refusing to build PTB — fill in TODO margin pool IDs first: ${todos.join(", ")}`,
+    );
+  }
+};
+
 (async () => {
+  assertNoPlaceholders();
+
   const tx = new Transaction();
 
   // 1. Enable margin version 4 in the registry so the upgraded margin package
@@ -124,7 +270,25 @@ const POOLS_TO_DISABLE: {
     });
   }
 
-  // 3. Inject the aggregate pool_default amount (283,604.871465 USDC) into the
+  // 3. Disable each (deepbook_pool, margin_pool) loan allowlist entry that was
+  //    enabled in marginSetup.ts (USDSUI pairs excluded). Belt-and-suspenders
+  //    on top of step 2: step 2 blocks pool_proxy::* trades, step 3 blocks
+  //    margin_manager::borrow_* at the margin-pool level.
+  for (const pair of LOAN_PAIRS_TO_DISABLE) {
+    tx.moveCall({
+      target: DISABLE_DEEPBOOK_POOL_FOR_LOAN_TARGET,
+      arguments: [
+        tx.object(pair.marginPoolId),
+        tx.object(MARGIN_REGISTRY_ID),
+        tx.pure.id(pair.deepbookPoolId),
+        tx.object(pair.marginPoolCapId),
+        tx.object.clock(),
+      ],
+      typeArguments: [pair.assetType],
+    });
+  }
+
+  // 4. Inject the aggregate pool_default amount (283,604.871465 USDC) into the
   //    USDC margin pool without minting supplier shares.
   const usdcCoin = coinWithBalance({
     type: USDC_TYPE,
@@ -145,6 +309,7 @@ const POOLS_TO_DISABLE: {
   console.log({
     marginVersionEnabled: MARGIN_VERSION_TO_ENABLE,
     poolKeysDisabled: POOLS_TO_DISABLE.map((p) => p.key),
+    loanPairsDisabled: LOAN_PAIRS_TO_DISABLE.map((p) => p.label),
     usdcInjectionAmount: USDC_INJECTION_AMOUNT.toString(),
     usdcMarginPool: USDC_MARGIN_POOL_ID,
     marginAdminCap: marginAdminCapID[MAINNET],
