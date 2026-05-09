@@ -143,10 +143,14 @@ public fun place_reduce_only_market_order<BaseAsset, QuoteAsset, DebtAsset>(
 // post-trade ratio must be at least `min_borrow_risk_ratio` — same threshold
 // the borrow path enforces, so trading cannot push a manager below where
 // borrowing was already forbidden. Skipped when the manager has no debt
-// (nothing to be insolvent against). For reduce-only entries the post-trade
-// ratio must be `>= risk_ratio_before` (monotonic improvement); also skipped
-// when the manager has no debt because the reduce-only quantity predicate
-// already rejects every order in that case.
+// (nothing to be insolvent against).
+//
+// For reduce-only entries the post-trade ratio must be `>= risk_ratio_before`
+// (monotonic improvement). The borrow-floor check would trap users in the
+// 1.1–1.25 danger zone (between liquidation and borrow thresholds), who are
+// exactly the people who most need to wind down via reduce-only. Monotonic
+// avoids that trap and additionally catches within-band value leak that the
+// borrow-floor check allows.
 
 /// Places a limit order in the pool.
 public fun place_limit_order_v2<BaseAsset, QuoteAsset>(
@@ -687,37 +691,6 @@ fun calculate_effective_price<BaseAsset, QuoteAsset>(
     }
 }
 
-/// Reads the manager's `risk_ratio` only when there is outstanding debt.
-/// Returns `0` when the manager has no debt — callers must treat the sentinel
-/// as "no constraint to check" rather than as a real ratio.
-fun read_risk_ratio_if_indebted<BaseAsset, QuoteAsset>(
-    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
-    registry: &MarginRegistry,
-    pool: &Pool<BaseAsset, QuoteAsset>,
-    base_margin_pool: &MarginPool<BaseAsset>,
-    quote_margin_pool: &MarginPool<QuoteAsset>,
-    base_oracle: &PriceInfoObject,
-    quote_oracle: &PriceInfoObject,
-    clock: &Clock,
-): u64 {
-    if (
-        margin_manager.borrowed_base_shares() > 0
-        || margin_manager.borrowed_quote_shares() > 0
-    ) {
-        margin_manager.risk_ratio(
-            registry,
-            base_oracle,
-            quote_oracle,
-            pool,
-            base_margin_pool,
-            quote_margin_pool,
-            clock,
-        )
-    } else {
-        0
-    }
-}
-
 /// Asserts the manager remains above the borrow-floor risk ratio after a
 /// trade. Skipped when the manager has no debt (nothing to be insolvent
 /// against). Threshold reuses `min_borrow_risk_ratio` so trading cannot push
@@ -754,11 +727,42 @@ fun assert_post_trade_solvent<BaseAsset, QuoteAsset>(
     );
 }
 
+/// Reads the manager's `risk_ratio` only when there is outstanding debt.
+/// Returns `option::none()` when the manager has no debt — using `Option`
+/// (not a `0` sentinel) so callers can't confuse "no debt" with a real
+/// `risk_ratio` of zero.
+fun read_risk_ratio_if_indebted<BaseAsset, QuoteAsset>(
+    margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
+    registry: &MarginRegistry,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    clock: &Clock,
+): Option<u64> {
+    if (
+        margin_manager.borrowed_base_shares() == 0
+        && margin_manager.borrowed_quote_shares() == 0
+    ) {
+        return option::none()
+    };
+
+    option::some(margin_manager.risk_ratio(
+        registry,
+        base_oracle,
+        quote_oracle,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        clock,
+    ))
+}
+
 /// Asserts a reduce-only fill did not worsen the manager's risk ratio.
-/// `risk_ratio_before` is the sentinel returned by `read_risk_ratio_if_indebted`
-/// — a value of `0` means the manager had no debt at the entry, in which case
-/// the reduce-only quantity predicate would have already aborted any nonzero
-/// order, so there is nothing to compare.
+/// `risk_ratio_before` is `option::none()` when the manager had no debt at
+/// the entry — in that case the reduce-only quantity predicate would have
+/// already aborted any nonzero order, so there is nothing to compare.
 fun assert_reduce_only_monotonic<BaseAsset, QuoteAsset>(
     margin_manager: &MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
@@ -768,10 +772,14 @@ fun assert_reduce_only_monotonic<BaseAsset, QuoteAsset>(
     base_oracle: &PriceInfoObject,
     quote_oracle: &PriceInfoObject,
     clock: &Clock,
-    risk_ratio_before: u64,
+    risk_ratio_before: Option<u64>,
 ) {
-    if (risk_ratio_before == 0) return;
+    if (risk_ratio_before.is_none()) {
+        risk_ratio_before.destroy_none();
+        return
+    };
 
+    let before = risk_ratio_before.destroy_some();
     let risk_ratio_after = margin_manager.risk_ratio(
         registry,
         base_oracle,
@@ -781,5 +789,5 @@ fun assert_reduce_only_monotonic<BaseAsset, QuoteAsset>(
         quote_margin_pool,
         clock,
     );
-    assert!(risk_ratio_after >= risk_ratio_before, EReduceOnlyMustImproveRiskRatio);
+    assert!(risk_ratio_after >= before, EReduceOnlyMustImproveRiskRatio);
 }

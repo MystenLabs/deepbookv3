@@ -1046,13 +1046,12 @@ fun test_place_reduce_only_limit_order_not_reduce_only_quantity_ask() {
 
 // === Place Reduce Only Market Order Tests ===
 
-// Reduce-only market BID against the standard orderbook (asks at $1.01) fills 1%
-// above oracle, which leaves the manager's `risk_ratio` slightly worse than
-// before the trade. The v2 monotonic-improvement invariant catches that and
-// aborts with `EReduceOnlyMustImproveRiskRatio`. This is the intended behavior
-// — a reduce-only fill at adverse band-edge prices is exactly the residual
-// value-leak path the v2 fix is designed to close. The matching limit-order
-// path (placed at exact oracle price) still passes its `_ok` test above.
+// Reduce-only market BID against the standard orderbook (asks at $1.01) fills
+// 1% above oracle, leaving the manager's `risk_ratio` slightly worse than
+// before. The v2 monotonic-improvement invariant catches that and aborts —
+// reduce-only fills must monotonically improve (or hold) solvency. The
+// matching limit-order path (placed at exact oracle price) still passes its
+// `_ok` test above.
 #[test, expected_failure(abort_code = pool_proxy::EReduceOnlyMustImproveRiskRatio)]
 fun test_place_reduce_only_market_order_ok() {
     let (
@@ -1156,8 +1155,8 @@ fun test_place_reduce_only_market_order_ok() {
 }
 
 // Symmetric to `test_place_reduce_only_market_order_ok` — sell-side reduce-only
-// market hits bids at $0.99 (1% below oracle), degrading risk_ratio. v2 aborts
-// with `EReduceOnlyMustImproveRiskRatio`.
+// market hits bids at $0.99 (1% below oracle), degrading risk_ratio. Aborts on
+// the monotonic invariant.
 #[test, expected_failure(abort_code = pool_proxy::EReduceOnlyMustImproveRiskRatio)]
 fun test_place_reduce_only_market_order_ok_ask() {
     let (
