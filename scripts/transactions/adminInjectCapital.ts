@@ -38,8 +38,11 @@ const XBTC_TYPE =
 // + 33,577,714,688 +  26,877,577,806 = 283,604,871,465 (≈ 283,604.871465 USDC).
 const USDC_INJECTION_AMOUNT = 283_604_871_465n;
 
+const MARGIN_VERSION_TO_ENABLE = 4;
+
 const ADMIN_INJECT_CAPITAL_TARGET = `${MARGIN_PACKAGE}::margin_pool::admin_inject_capital`;
 const DISABLE_DEEPBOOK_POOL_TARGET = `${MARGIN_PACKAGE}::margin_registry::disable_deepbook_pool`;
+const ENABLE_VERSION_TARGET = `${MARGIN_PACKAGE}::margin_registry::enable_version`;
 
 const POOLS_TO_DISABLE: {
   key: string;
@@ -94,7 +97,18 @@ const POOLS_TO_DISABLE: {
 (async () => {
   const tx = new Transaction();
 
-  // 1. Disable all DeepBook pools first so no liquidation activity can race the
+  // 1. Enable margin version 4 in the registry so the upgraded margin package
+  //    is callable for the disable + inject steps below.
+  tx.moveCall({
+    target: ENABLE_VERSION_TARGET,
+    arguments: [
+      tx.object(MARGIN_REGISTRY_ID),
+      tx.pure.u64(MARGIN_VERSION_TO_ENABLE),
+      tx.object(marginAdminCapID[MAINNET]),
+    ],
+  });
+
+  // 2. Disable all DeepBook pools so no liquidation activity can race the
   //    capital injection inside the same multisig PTB. Built manually against
   //    MARGIN_PACKAGE rather than the SDK so the package id can be pinned.
   for (const pool of POOLS_TO_DISABLE) {
@@ -110,7 +124,7 @@ const POOLS_TO_DISABLE: {
     });
   }
 
-  // 2. Inject the aggregate pool_default amount (283,604.871465 USDC) into the
+  // 3. Inject the aggregate pool_default amount (283,604.871465 USDC) into the
   //    USDC margin pool without minting supplier shares.
   const usdcCoin = coinWithBalance({
     type: USDC_TYPE,
@@ -129,6 +143,7 @@ const POOLS_TO_DISABLE: {
   });
 
   console.log({
+    marginVersionEnabled: MARGIN_VERSION_TO_ENABLE,
     poolKeysDisabled: POOLS_TO_DISABLE.map((p) => p.key),
     usdcInjectionAmount: USDC_INJECTION_AMOUNT.toString(),
     usdcMarginPool: USDC_MARGIN_POOL_ID,
