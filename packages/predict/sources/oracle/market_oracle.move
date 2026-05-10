@@ -128,10 +128,6 @@ public fun cap_id(cap: &MarketOracleCap): ID {
     cap.id.to_inner()
 }
 
-public fun authorized_cap_id(market: &MarketOracle): ID {
-    market.cap_id
-}
-
 public fun pyth_source_id(market: &MarketOracle): ID {
     market.pyth_source_id
 }
@@ -168,14 +164,6 @@ public fun status_pending_settlement(): u8 {
 
 public fun status_settled(): u8 {
     STATUS_SETTLED
-}
-
-public fun source_pyth(): u8 {
-    SOURCE_PYTH
-}
-
-public fun source_block_scholes(): u8 {
-    SOURCE_BLOCK_SCHOLES
 }
 
 public fun block_scholes_spot(market: &MarketOracle): u64 {
@@ -230,38 +218,6 @@ public fun block_scholes_svi_source_timestamp_ms(market: &MarketOracle): u64 {
 
 public fun block_scholes_svi_update_timestamp_ms(market: &MarketOracle): u64 {
     market.block_scholes_svi_update_timestamp_ms
-}
-
-public fun bounds(market: &MarketOracle): MarketOracleBounds {
-    market.bounds
-}
-
-public fun bounds_pyth_spot_freshness_ms(bounds: &MarketOracleBounds): u64 {
-    bounds.pyth_spot_freshness_ms
-}
-
-public fun bounds_block_scholes_prices_freshness_ms(bounds: &MarketOracleBounds): u64 {
-    bounds.block_scholes_prices_freshness_ms
-}
-
-public fun bounds_block_scholes_svi_freshness_ms(bounds: &MarketOracleBounds): u64 {
-    bounds.block_scholes_svi_freshness_ms
-}
-
-public fun bounds_max_spot_deviation(bounds: &MarketOracleBounds): u64 {
-    bounds.max_spot_deviation
-}
-
-public fun bounds_max_basis_deviation(bounds: &MarketOracleBounds): u64 {
-    bounds.max_basis_deviation
-}
-
-public fun bounds_min_basis(bounds: &MarketOracleBounds): u64 {
-    bounds.min_basis
-}
-
-public fun bounds_max_basis(bounds: &MarketOracleBounds): u64 {
-    bounds.max_basis
 }
 
 public fun update_prices(
