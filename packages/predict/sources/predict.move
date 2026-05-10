@@ -22,7 +22,7 @@ use deepbook_predict::{
     oracle_config::{Self, OracleConfig},
     plp::PLP,
     predict_manager::PredictManager,
-    pricing::{Self, CurvePoint, PricingConfig, UnitQuote},
+    pricing::{Self, CurvePoint, PricingConfig},
     pyth_source::PythSource,
     range_key::RangeKey,
     rate_limiter::{Self, RateLimiter},
@@ -220,7 +220,7 @@ public fun redeem<Quote>(
     ctx: &mut TxContext,
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
-    let payout_coin = if (pricing::is_settled(market_oracle)) {
+    let payout_coin = if (market_oracle.is_settled()) {
         redeem_settled_internal<Quote>(predict, manager, market_oracle, key, quantity, clock, ctx)
     } else {
         redeem_live_internal<Quote>(
@@ -356,10 +356,10 @@ public fun refresh_oracle_mtm(
     pyth: &PythSource,
     clock: &Clock,
 ) {
-    let oracle_id = pricing::oracle_id(market_oracle);
+    let oracle_id = market_oracle.id();
     if (predict.vault.is_compacted_oracle(oracle_id)) return;
 
-    if (pricing::is_settled(market_oracle)) {
+    if (market_oracle.is_settled()) {
         let settlement = pricing::settlement_price(market_oracle);
         predict.vault.apply_settled_oracle_valuation(oracle_id, settlement, clock);
     } else {
@@ -382,7 +382,7 @@ public fun refresh_oracle_mtm(
 /// Compact a settled market oracle's dense strike matrix into constant-size state.
 public fun compact_settled_oracle(predict: &mut Predict, market_oracle: &MarketOracle) {
     let settlement = pricing::settlement_price(market_oracle);
-    predict.vault.compact_settled_oracle(pricing::oracle_id(market_oracle), settlement);
+    predict.vault.compact_settled_oracle(market_oracle.id(), settlement);
 }
 
 /// Current read-only per-unit `(fair_price, fee_rate)` quote for a position interval.
@@ -399,8 +399,7 @@ public fun current_unit_quote(
     clock: &Clock,
 ): (u64, u64) {
     predict.assert_range_key_matches(market_oracle, &key);
-    let quote = predict.quote_unit(market_oracle, pyth, &key, clock);
-    (quote.fair_price(), quote.fee_rate())
+    predict.quote_unit(market_oracle, pyth, &key, clock)
 }
 
 /// Return market_oracle IDs whose unsettled exposure must be refreshed before LP flows.
@@ -716,7 +715,7 @@ public(package) fun resolve_feed_id(predict: &Predict, asset: String): u64 {
 
 /// Assert a range key matches the market oracle identity and configured grid.
 fun assert_range_key_matches(predict: &Predict, market_oracle: &MarketOracle, key: &RangeKey) {
-    assert!(key.oracle_id() == pricing::oracle_id(market_oracle), ERangeKeyOracleMismatch);
+    assert!(key.oracle_id() == market_oracle.id(), ERangeKeyOracleMismatch);
     predict.vault.assert_range_key_matches(key);
 }
 
@@ -754,7 +753,7 @@ fun mint_internal<Quote>(
         trader: manager.owner(),
         quote_asset: type_name::with_defining_ids<Quote>(),
         oracle_id: key.oracle_id(),
-        expiry: pricing::expiry(market_oracle),
+        expiry: market_oracle.expiry(),
         lower_strike: key.lower_strike(),
         higher_strike: key.higher_strike(),
         quantity,
@@ -791,7 +790,7 @@ fun redeem_live_internal<Quote>(
 
     predict.emit_position_redeemed<Quote>(
         manager,
-        pricing::expiry(market_oracle),
+        market_oracle.expiry(),
         key,
         quantity,
         payout_coin.value(),
@@ -830,7 +829,7 @@ fun redeem_settled_internal<Quote>(
                 settlement,
                 clock,
             ),
-            pricing::expiry(market_oracle),
+            market_oracle.expiry(),
         )
     };
 
@@ -890,7 +889,7 @@ fun apply_mint_delta<Quote>(
     assert!(!predict.trading_paused, ETradingPaused);
     predict.treasury_config.assert_quote_asset<Quote>();
 
-    let oracle_id = pricing::oracle_id(market_oracle);
+    let oracle_id = market_oracle.id();
     let (min_strike, max_strike) = predict.vault.valuation_strike_range(oracle_id);
     let (min_strike, max_strike) = key.extend_strike_range(min_strike, max_strike);
     let curve = predict.build_live_curve(market_oracle, pyth, clock, min_strike, max_strike);
@@ -912,7 +911,7 @@ fun apply_live_redeem_delta(
     assert!(quantity > 0, EZeroQuantity);
     predict.assert_range_key_matches(market_oracle, &key);
 
-    let oracle_id = pricing::oracle_id(market_oracle);
+    let oracle_id = market_oracle.id();
     let (min_strike, max_strike) = predict.vault.valuation_strike_range(oracle_id);
     let (min_strike, max_strike) = key.extend_strike_range(min_strike, max_strike);
     let curve = predict.build_live_curve(market_oracle, pyth, clock, min_strike, max_strike);
@@ -959,11 +958,11 @@ fun quote_mint_amounts(
     quantity: u64,
     clock: &Clock,
 ): (u64, u64) {
-    let quote = predict.quote_live_unit(market_oracle, pyth, &key, clock);
-    predict.pricing_config.assert_mint_quote_allowed(&quote);
+    let (fair_price, fee_rate) = predict.quote_live_unit(market_oracle, pyth, &key, clock);
+    predict.pricing_config.assert_mint_quote_allowed(fair_price, fee_rate);
 
-    let principal_amount = math::mul(quote.fair_price(), quantity);
-    let fee_amount = math::mul(quote.fee_rate(), quantity);
+    let principal_amount = math::mul(fair_price, quantity);
+    let fee_amount = math::mul(fee_rate, quantity);
 
     (principal_amount, fee_amount)
 }
@@ -976,10 +975,10 @@ fun quote_live_redeem_amounts(
     quantity: u64,
     clock: &Clock,
 ): (u64, u64) {
-    let quote = predict.quote_live_unit(market_oracle, pyth, &key, clock);
+    let (fair_price, fee_rate) = predict.quote_live_unit(market_oracle, pyth, &key, clock);
 
-    let principal_amount = math::mul(quote.fair_price(), quantity);
-    let fee_amount = math::mul(quote.fee_rate(), quantity);
+    let principal_amount = math::mul(fair_price, quantity);
+    let fee_amount = math::mul(fee_rate, quantity);
     let fee_amount = fee_amount.min(principal_amount);
 
     (principal_amount, fee_amount)
@@ -991,7 +990,7 @@ fun quote_unit(
     pyth: &PythSource,
     key: &RangeKey,
     clock: &Clock,
-): UnitQuote {
+): (u64, u64) {
     pricing::quote_range(
         &predict.pricing_config,
         market_oracle,
@@ -1009,7 +1008,7 @@ fun quote_live_unit(
     pyth: &PythSource,
     key: &RangeKey,
     clock: &Clock,
-): UnitQuote {
+): (u64, u64) {
     pricing::quote_live_range(
         &predict.pricing_config,
         market_oracle,
@@ -1029,7 +1028,7 @@ fun build_live_curve(
     min_strike: u64,
     max_strike: u64,
 ): vector<CurvePoint> {
-    let oracle_id = pricing::oracle_id(market_oracle);
+    let oracle_id = market_oracle.id();
     let (grid_min, grid_tick, grid_max) = predict.vault.grid_params(oracle_id);
     pricing::build_live_curve(
         market_oracle,

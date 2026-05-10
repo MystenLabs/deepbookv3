@@ -8,7 +8,7 @@
 /// forward, apply circuit breakers, or settle a market.
 module deepbook_predict::pyth_source;
 
-use deepbook_predict::{lazer_helper, oracle_time};
+use deepbook_predict::lazer_helper;
 use pyth_lazer::update::Update as LazerUpdate;
 use sui::{clock::Clock, event};
 
@@ -36,7 +36,22 @@ public struct PythSource has key {
 /// Decode and store a verified Pyth Lazer spot update.
 public fun update_from_lazer(source: &mut PythSource, update: LazerUpdate, clock: &Clock) {
     let (spot, source_timestamp_us) = lazer_helper::extract_spot(&update, source.feed_id);
-    source.update_from_values(spot, source_timestamp_us, clock);
+    let update_timestamp_ms = clock.timestamp_ms();
+
+    assert!(spot > 0, EZeroSpot);
+    assert!(source_timestamp_us > source.source_timestamp_us, EStaleSourceUpdate);
+    assert!(source_timestamp_us <= update_timestamp_ms * 1000, EFutureSourceUpdate);
+
+    source.spot = spot;
+    source.source_timestamp_us = source_timestamp_us;
+    source.update_timestamp_ms = update_timestamp_ms;
+    event::emit(PythSourceUpdated {
+        pyth_source_id: source.id.to_inner(),
+        feed_id: source.feed_id,
+        spot,
+        source_timestamp_us,
+        update_timestamp_ms,
+    });
 }
 
 /// Return the Pyth source object ID.
@@ -78,31 +93,4 @@ public(package) fun create(feed_id: u32, ctx: &mut TxContext): ID {
     let id = source.id.to_inner();
     transfer::share_object(source);
     id
-}
-
-// === Private Functions ===
-
-/// Store a normalized spot with its source timestamp.
-fun update_from_values(
-    source: &mut PythSource,
-    spot: u64,
-    source_timestamp_us: u64,
-    clock: &Clock,
-) {
-    assert!(spot > 0, EZeroSpot);
-    assert!(source_timestamp_us > source.source_timestamp_us, EStaleSourceUpdate);
-    assert!(
-        !oracle_time::source_timestamp_us_after_ms(source_timestamp_us, clock.timestamp_ms()),
-        EFutureSourceUpdate,
-    );
-    source.spot = spot;
-    source.source_timestamp_us = source_timestamp_us;
-    source.update_timestamp_ms = clock.timestamp_ms();
-    event::emit(PythSourceUpdated {
-        pyth_source_id: source.id.to_inner(),
-        feed_id: source.feed_id,
-        spot,
-        source_timestamp_us,
-        update_timestamp_ms: source.update_timestamp_ms,
-    });
 }

@@ -15,7 +15,6 @@ use deepbook_predict::{
     i64,
     market_oracle::{Self, MarketOracle, SVIParams},
     math as predict_math,
-    oracle_time,
     pyth_source::PythSource,
     range_key::RangeKey
 };
@@ -59,13 +58,6 @@ public struct PricingConfig has store {
     max_ask_price: u64,
 }
 
-/// Per-unit quote in FLOAT_SCALING units.
-public struct UnitQuote has copy, drop, store {
-    fair_price: u64,
-    fee_rate: u64,
-    ask_price: u64,
-}
-
 /// Curve sample point with strike and one-sided UP price.
 public struct CurvePoint has copy, drop, store {
     strike: u64,
@@ -106,21 +98,6 @@ public(package) fun max_ask_price(config: &PricingConfig): u64 {
     config.max_ask_price
 }
 
-/// Return the fair price component.
-public(package) fun fair_price(quote: &UnitQuote): u64 {
-    quote.fair_price
-}
-
-/// Return the per-unit fee increment.
-public(package) fun fee_rate(quote: &UnitQuote): u64 {
-    quote.fee_rate
-}
-
-/// Return the all-in mint ask price.
-public(package) fun ask_price(quote: &UnitQuote): u64 {
-    quote.ask_price
-}
-
 /// Return the strike stored in a curve point.
 public(package) fun strike(point: &CurvePoint): u64 {
     point.strike
@@ -140,21 +117,6 @@ public(package) fun new(): PricingConfig {
         min_ask_price: constants::default_min_ask_price!(),
         max_ask_price: constants::default_max_ask_price!(),
     }
-}
-
-/// Return the market oracle id used by Predict app flows.
-public(package) fun oracle_id(market: &MarketOracle): ID {
-    market.id()
-}
-
-/// Return the market expiry.
-public(package) fun expiry(market: &MarketOracle): u64 {
-    market.expiry()
-}
-
-/// Return true if the market has terminal settlement.
-public(package) fun is_settled(market: &MarketOracle): bool {
-    market.is_settled()
 }
 
 /// Set the base fee multiplier.
@@ -212,14 +174,14 @@ public(package) fun quote_range(
     key: &RangeKey,
     liability: u64,
     balance: u64,
-): UnitQuote {
+): (u64, u64) {
     if (market.is_settled()) {
         let fair_price = compute_settled_range_price(
             resolved_settlement_price(market),
             key.lower_strike(),
             key.higher_strike(),
         );
-        quote_zero_fee(fair_price)
+        (fair_price, 0)
     } else {
         quote_live_range(config, market, pyth, clock, key, liability, balance)
     }
@@ -234,7 +196,7 @@ public(package) fun quote_live_range(
     key: &RangeKey,
     liability: u64,
     balance: u64,
-): UnitQuote {
+): (u64, u64) {
     let (forward, svi) = resolve_live_inputs(market, pyth, clock);
     let fair_price = compute_range_price(
         forward,
@@ -242,7 +204,7 @@ public(package) fun quote_live_range(
         key.lower_strike(),
         key.higher_strike(),
     );
-    quote_live_fair_price(config, fair_price, liability, balance)
+    (fair_price, quote_fee_rate(config, fair_price, liability, balance))
 }
 
 /// Return settled payout for a range position at a terminal settlement price.
@@ -260,9 +222,14 @@ public(package) fun settled_up_price(settlement: u64, strike: u64): u64 {
     if (settlement > strike) constants::float_scaling!() else 0
 }
 
-/// Abort unless the quote's all-in ask price is inside the global mint bounds.
-public(package) fun assert_mint_quote_allowed(config: &PricingConfig, quote: &UnitQuote) {
-    let ask_price = quote.ask_price;
+/// Abort unless the all-in mint price is inside the global ask bounds.
+public(package) fun assert_mint_quote_allowed(
+    config: &PricingConfig,
+    fair_price: u64,
+    fee_rate: u64,
+) {
+    assert!(fair_price <= max_u64() - fee_rate, EAskPriceOverflow);
+    let ask_price = fair_price + fee_rate;
     assert!(
         ask_price >= config.min_ask_price && ask_price <= config.max_ask_price,
         EAskPriceOutOfBounds,
@@ -278,7 +245,7 @@ public(package) fun assert_mint_quote_allowed(config: &PricingConfig, quote: &Un
 /// fresh Block Scholes forward. SVI must be fresh either way.
 fun resolve_live_inputs(market: &MarketOracle, pyth: &PythSource, clock: &Clock): (u64, SVIParams) {
     market_oracle::assert_pyth_source_id(market, pyth.id());
-    assert_live_market(market, clock);
+    assert!(!market.is_settled() && clock.timestamp_ms() < market.expiry(), EMarketNotActive);
     assert!(block_scholes_price_is_fresh(market, clock), EBlockScholesPriceStale);
     assert!(block_scholes_svi_is_fresh(market, clock), EBlockScholesSVIStale);
 
@@ -294,17 +261,10 @@ fun resolve_live_inputs(market: &MarketOracle, pyth: &PythSource, clock: &Clock)
 fun resolved_settlement_price(market: &MarketOracle): u64 {
     assert!(market.is_settled(), EOracleNotSettled);
     assert!(
-        oracle_time::source_timestamp_us_after_ms(
-            market.settlement_source_timestamp_us(),
-            market.expiry(),
-        ),
+        market.settlement_source_timestamp_us() > market.expiry() * 1000,
         EInvalidSettlementTimestamp,
     );
     market.raw_settlement_price().destroy_some()
-}
-
-fun assert_live_market(market: &MarketOracle, clock: &Clock) {
-    assert!(market.status(clock) == market_oracle::status_active(), EMarketNotActive);
 }
 
 /// Compute the settled price for the range `(lower, higher]`.
@@ -319,34 +279,25 @@ fun compute_settled_range_price(settlement: u64, lower: u64, higher: u64): u64 {
 }
 
 fun block_scholes_price_is_fresh(market: &MarketOracle, clock: &Clock): bool {
-    oracle_time::is_fresh(
-        clock.timestamp_ms(),
-        market.block_scholes_price_source_timestamp_ms(),
-        market.block_scholes_price_update_timestamp_ms(),
-        market.block_scholes_prices_freshness_ms(),
-    )
+    let now = clock.timestamp_ms();
+    let timestamp = market
+        .block_scholes_price_source_timestamp_ms()
+        .min(market.block_scholes_price_update_timestamp_ms());
+    timestamp > 0 && timestamp <= now && now - timestamp <= market.block_scholes_prices_freshness_ms()
 }
 
 fun block_scholes_svi_is_fresh(market: &MarketOracle, clock: &Clock): bool {
-    oracle_time::is_fresh(
-        clock.timestamp_ms(),
-        market.block_scholes_svi_source_timestamp_ms(),
-        market.block_scholes_svi_update_timestamp_ms(),
-        market.block_scholes_svi_freshness_ms(),
-    )
+    let now = clock.timestamp_ms();
+    let timestamp = market
+        .block_scholes_svi_source_timestamp_ms()
+        .min(market.block_scholes_svi_update_timestamp_ms());
+    timestamp > 0 && timestamp <= now && now - timestamp <= market.block_scholes_svi_freshness_ms()
 }
 
 fun pyth_spot_is_fresh(market: &MarketOracle, pyth: &PythSource, clock: &Clock): bool {
-    oracle_time::is_fresh(
-        clock.timestamp_ms(),
-        pyth_source_timestamp_ms(pyth),
-        pyth.update_timestamp_ms(),
-        market.pyth_spot_freshness_ms(),
-    )
-}
-
-fun pyth_source_timestamp_ms(pyth: &PythSource): u64 {
-    oracle_time::source_timestamp_us_to_ms(pyth.source_timestamp_us())
+    let now = clock.timestamp_ms();
+    let timestamp = (pyth.source_timestamp_us() / 1000).min(pyth.update_timestamp_ms());
+    timestamp > 0 && timestamp <= now && now - timestamp <= market.pyth_spot_freshness_ms()
 }
 
 fun build_curve(
@@ -362,14 +313,25 @@ fun build_curve(
 
     if (min_strike == max_strike) {
         let price = compute_up_price(forward, svi, min_strike);
-        return vector[new_curve_point(min_strike, price)]
+        return vector[
+            CurvePoint {
+                strike: min_strike,
+                up_price: price,
+            },
+        ]
     };
 
     let price_lo = compute_up_price(forward, svi, min_strike);
     let price_hi = compute_up_price(forward, svi, max_strike);
     let mut points = vector[
-        new_curve_point(min_strike, price_lo),
-        new_curve_point(max_strike, price_hi),
+        CurvePoint {
+            strike: min_strike,
+            up_price: price_lo,
+        },
+        CurvePoint {
+            strike: max_strike,
+            up_price: price_hi,
+        },
     ];
 
     let curve_samples = constants::default_curve_samples!();
@@ -382,7 +344,13 @@ fun build_curve(
         let strike_hi = points[idx + 1].strike;
         let mid_strike = snap_to_tick((strike_lo + strike_hi) / 2, grid_min, grid_tick);
         let price = compute_up_price(forward, svi, mid_strike);
-        insert_asc(&mut points, new_curve_point(mid_strike, price));
+        insert_asc(
+            &mut points,
+            CurvePoint {
+                strike: mid_strike,
+                up_price: price,
+            },
+        );
         cur_samples = cur_samples + 1;
     };
 
@@ -410,35 +378,6 @@ fun compute_range_price(forward: u64, svi: &SVIParams, lower: u64, higher: u64):
     assert!(lower_up_price >= higher_up_price, ERangePriceUnderflow);
 
     lower_up_price - higher_up_price
-}
-
-/// Quote a live fair price from current fee config and vault utilization.
-fun quote_live_fair_price(
-    config: &PricingConfig,
-    fair_price: u64,
-    liability: u64,
-    balance: u64,
-): UnitQuote {
-    let fee_rate = quote_fee_rate(config, fair_price, liability, balance);
-    new_unit_quote(fair_price, fee_rate)
-}
-
-/// Quote an already-finalized fair price with no live fee.
-fun quote_zero_fee(fair_price: u64): UnitQuote {
-    new_unit_quote(fair_price, 0)
-}
-
-fun new_curve_point(strike: u64, up_price: u64): CurvePoint {
-    CurvePoint { strike, up_price }
-}
-
-fun new_unit_quote(fair_price: u64, fee_rate: u64): UnitQuote {
-    assert!(fair_price <= max_u64() - fee_rate, EAskPriceOverflow);
-    UnitQuote {
-        fair_price,
-        fee_rate,
-        ask_price: fair_price + fee_rate,
-    }
 }
 
 fun quote_fee_rate(config: &PricingConfig, fair_price: u64, liability: u64, balance: u64): u64 {
