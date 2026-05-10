@@ -369,7 +369,7 @@ public fun compact_settled_oracle(
     market_oracle::assert_authorized_cap(market_oracle, oracle_cap);
     assert!(market_oracle.is_settled(), EOracleNotSettled);
     let settlement = market_oracle.settlement_price().destroy_some();
-    predict.vault.compact_settled_oracle_if_needed(market_oracle.id(), settlement);
+    predict.vault.compact_settled_oracle(market_oracle.id(), settlement);
 }
 
 /// Per-unit `(fair_price, fee_rate)` quote for a position interval.
