@@ -5,8 +5,8 @@
 ///
 /// Scaling conventions (aligned with DeepBook):
 /// - Prices/percentages use FLOAT_SCALING (1e9): 500_000_000 = 50%
-/// - Quantities are in Quote units (USDC with 6 decimals): 1_000_000 = 1 contract = $1
-/// - At settlement, winners receive `quantity` directly (already in USDC units)
+/// - Quantities are in 6-decimal quote units: 1_000_000 = 1 contract = one quote unit
+/// - At settlement, winners receive `quantity` directly
 /// - Use deepbook::math for all mul/div operations
 module deepbook_predict::constants;
 
@@ -36,6 +36,9 @@ public macro fun default_min_fee(): u64 { 5_000_000 }
 /// Utilization multiplier applied to base fee (2x in FLOAT_SCALING).
 /// Controls how aggressively fees increase as vault approaches capacity.
 public macro fun default_utilization_multiplier(): u64 { 2_000_000_000 }
+
+/// Hard ceiling (10x) for utilization fee amplification.
+public macro fun max_utilization_multiplier(): u64 { 10_000_000_000 }
 
 /// Share of generated fees retained by LPs (60% in FLOAT_SCALING).
 public macro fun default_lp_fee_share(): u64 { 600_000_000 }

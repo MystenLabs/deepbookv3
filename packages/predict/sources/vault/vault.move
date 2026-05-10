@@ -17,7 +17,7 @@ module deepbook_predict::vault;
 use deepbook::math;
 use deepbook_predict::{
     constants,
-    pricing::CurvePoint,
+    pricing::{Self, CurvePoint},
     range_key::RangeKey,
     strike_matrix::{Self, StrikeMatrix}
 };
@@ -194,32 +194,38 @@ public(package) fun remove_live_range(
     vault.remove_unsettled_exposed_oracle_if_empty(oracle_id);
 }
 
-/// Remove a settled vertical range from dense matrix exposure or compacted liability.
-///
-/// Before compaction, this mutates the oracle's dense matrix and refreshes its
-/// settled valuation. After compaction, the dense matrix no longer exists, so
-/// redemption burns liability directly against the stored settlement price.
+/// Remove a settled vertical range from dense matrix exposure.
 public(package) fun remove_settled_range(
     vault: &mut Vault,
     key: RangeKey,
     quantity: u64,
     settlement: u64,
     clock: &Clock,
-) {
+): u64 {
     let oracle_id = key.oracle_id();
     let lower = key.lower_strike();
     let higher = key.higher_strike();
-    if (vault.compacted_oracle_settlements.contains(oracle_id)) {
-        let settlement_price = *vault.compacted_oracle_settlements.borrow(oracle_id);
-        let payout = key.settled_payout(settlement_price, quantity);
-        vault.total_mtm = vault.total_mtm - payout;
-        vault.total_max_payout = vault.total_max_payout - payout;
-    } else {
-        assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
-        let matrix = &mut vault.oracle_matrices[oracle_id];
-        matrix.remove_range(lower, higher, quantity);
-        vault.apply_settled_oracle_valuation(oracle_id, settlement, clock);
-    };
+    assert!(!vault.compacted_oracle_settlements.contains(oracle_id), EOracleAlreadyCompacted);
+    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+    let matrix = &mut vault.oracle_matrices[oracle_id];
+    matrix.remove_range(lower, higher, quantity);
+    vault.apply_settled_oracle_valuation(oracle_id, settlement, clock);
+    pricing::settled_range_payout(settlement, &key, quantity)
+}
+
+/// Remove a compacted settled range using the vault-stored terminal settlement.
+public(package) fun remove_compacted_settled_range(
+    vault: &mut Vault,
+    key: RangeKey,
+    quantity: u64,
+): u64 {
+    let oracle_id = key.oracle_id();
+    assert!(vault.compacted_oracle_settlements.contains(oracle_id), EOracleExposureNotFound);
+    let settlement_price = *vault.compacted_oracle_settlements.borrow(oracle_id);
+    let payout = pricing::settled_range_payout(settlement_price, &key, quantity);
+    vault.total_mtm = vault.total_mtm - payout;
+    vault.total_max_payout = vault.total_max_payout - payout;
+    payout
 }
 
 /// Accept payment into vault balance.
@@ -260,6 +266,11 @@ public(package) fun compact_settled_oracle(vault: &mut Vault, oracle_id: ID, set
 /// Return oracle IDs requiring fresh MTM before LP supply/withdraw.
 public(package) fun unsettled_exposed_oracles(vault: &Vault): &vector<ID> {
     &vault.unsettled_exposed_oracles
+}
+
+/// Return true once an oracle's dense matrix has been compacted.
+public(package) fun is_compacted_oracle(vault: &Vault, oracle_id: ID): bool {
+    vault.compacted_oracle_settlements.contains(oracle_id)
 }
 
 /// Assert every unsettled exposed oracle has a fresh cached MTM for LP flows.
@@ -310,6 +321,10 @@ public(package) fun apply_live_valuation(
 }
 
 /// Apply settled valuation and clear the oracle from the live-refresh worklist.
+///
+/// This freezes MTM at the terminal payout while the dense matrix still tracks
+/// worst-case liability; compaction releases that remaining reserve into fixed
+/// settled liability state.
 public(package) fun apply_settled_oracle_valuation(
     vault: &mut Vault,
     oracle_id: ID,

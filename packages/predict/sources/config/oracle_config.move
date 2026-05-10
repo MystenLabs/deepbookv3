@@ -13,6 +13,7 @@ use sui::table::{Self, Table};
 
 const EInvalidFreshnessThreshold: u64 = 0;
 const EFeedIdNotConfigured: u64 = 1;
+const EFeedIdOverflow: u64 = 2;
 
 /// Predict-owned oracle setup configuration.
 public struct OracleConfig has store {
@@ -108,6 +109,7 @@ public(package) fun set_asset_feed_id(
     asset: String,
     feed_id: u64,
 ) {
+    assert!(feed_id <= 0xFFFF_FFFF, EFeedIdOverflow);
     if (oracle_config.asset_feed_ids.contains(asset)) {
         let row = &mut oracle_config.asset_feed_ids[asset];
         *row = feed_id;

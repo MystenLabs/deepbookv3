@@ -11,15 +11,16 @@ import {
   loadScenario,
   readJson,
   ts,
+  validateSimState,
   writeJson,
 } from "./shared.js";
 import {
-  activateOracleTx,
   address,
   createManagerTx,
-  createOracleCapTx,
-  createOracleTx,
+  createMarketOracleCapTx,
+  createMarketOracleTx,
   createPredictTx,
+  createPythSourceTx,
   depositToManagerTx,
   derivePredictId,
   deriveManagerId,
@@ -28,10 +29,10 @@ import {
   finalizeDusdcCurrencyRegistrationTx,
   mintTx,
   refreshOracleAndMintTx,
-  setAssetBasisBoundsTx,
   setAssetFeedIdTx,
+  setMarketOracleBasisBoundsTx,
   supplyTx,
-  updateBasisTx,
+  updateBlockScholesPricesTx,
   updateSviTx,
 } from "./runtime.js";
 
@@ -121,9 +122,9 @@ async function setupSimulation(): Promise<SimState> {
   await executeAndWait(createPredictTx(dusdcCurrencyId), "create_predict");
   console.log(`[${ts()}]   Predict: ${predictId}`);
 
-  result = await executeAndWait(createOracleCapTx(address), "create_oracle_cap");
+  result = await executeAndWait(createMarketOracleCapTx(address), "create_market_oracle_cap");
   const oracleCapChange = result.objectChanges.find(
-    (change: any) => change.type === "created" && change.objectType.includes("OracleSVICap")
+    (change: any) => change.type === "created" && change.objectType.includes("MarketOracleCap")
   );
   const oracleCapId: string = oracleCapChange.objectId;
   console.log(`[${ts()}]   OracleCap: ${oracleCapId}`);
@@ -131,43 +132,48 @@ async function setupSimulation(): Promise<SimState> {
   await executeAndWait(setAssetFeedIdTx(predictId, "BTC", 1n), "set_asset_feed_id");
   console.log(`[${ts()}]   Feed id registered: BTC -> 1`);
 
-  // Scenario CSV has historical spot moves up to ~8% between consecutive
-  // update_prices rows. Default per-push bounds (2%) would trip the circuit
-  // breaker; widen to the admin ceiling (10%) so the sim replays the trace.
-  await executeAndWait(
-    setAssetBasisBoundsTx(
-      predictId,
-      "BTC",
-      100_000_000n,
-      100_000_000n,
-      900_000_000n,
-      1_100_000_000n
-    ),
-    "set_asset_basis_bounds"
+  result = await executeAndWait(createPythSourceTx(1n), "create_pyth_source");
+  const pythSourceChange = result.objectChanges.find(
+    (change: any) => change.type === "created" && change.objectType.includes("PythSource")
   );
-  console.log(`[${ts()}]   Basis bounds widened for BTC`);
+  const pythSourceId: string = pythSourceChange.objectId;
+  console.log(`[${ts()}]   PythSource: ${pythSourceId}`);
 
   result = await executeAndWait(
-    createOracleTx({
+    createMarketOracleTx({
       predictId,
+      pythSourceId,
       oracleCapId,
       underlyingAsset: "BTC",
       expiry: EXPIRY_MS,
       minStrike: ORACLE_MIN_STRIKE,
       tickSize: ORACLE_TICK_SIZE,
     }),
-    "create_oracle",
+    "create_market_oracle",
     // Matrix setup allocates the full strike grid at oracle creation time.
     50_000_000_000n
   );
   const oracleChange = result.objectChanges.find(
-    (change: any) => change.type === "created" && change.objectType.includes("OracleSVI") && !change.objectType.includes("Cap")
+    (change: any) => change.type === "created" && change.objectType.includes("MarketOracle") && !change.objectType.includes("Cap")
   );
   const oracleId: string = oracleChange.objectId;
   console.log(`[${ts()}]   Oracle: ${oracleId}`);
 
-  await executeAndWait(activateOracleTx(oracleId, oracleCapId), "activate_oracle");
-  console.log(`[${ts()}]   Oracle activated`);
+  // Scenario CSV has historical spot moves up to ~8% between consecutive
+  // update_prices rows. Default per-push bounds (2%) would trip the circuit
+  // breaker; widen to the admin ceiling (10%) so the sim replays the trace.
+  await executeAndWait(
+    setMarketOracleBasisBoundsTx(
+      oracleId,
+      oracleCapId,
+      100_000_000n,
+      100_000_000n,
+      900_000_000n,
+      1_100_000_000n
+    ),
+    "set_basis_bounds"
+  );
+  console.log(`[${ts()}]   Basis bounds widened for oracle`);
 
   const vaultSeed = 500_000n * DUSDC_DECIMALS;
   await executeAndWait(supplyTx(predictId, vaultSeed), "supply");
@@ -183,10 +189,10 @@ async function setupSimulation(): Promise<SimState> {
 
   const state: SimState = {
     predictId,
+    pythSourceId,
     oracleId,
     oracleCapId,
     managerId,
-    expiry: String(EXPIRY_MS),
   };
 
   writeJson(STATE_PATH, state);
@@ -196,7 +202,6 @@ async function setupSimulation(): Promise<SimState> {
 }
 
 async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<void> {
-  const expiry = BigInt(state.expiry);
   const mintRows = rows.filter((row): row is Extract<ScenarioRow, { action: "mint" }> => row.action === "mint");
 
   console.log(`\n[${ts()}] Loaded ${rows.length} rows (${mintRows.length} mints)`);
@@ -228,7 +233,7 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
           managerId: state.managerId,
           oracleId: state.oracleId,
           oracleCapId: state.oracleCapId,
-          expiry,
+          pythSourceId: state.pythSourceId,
           strike: alignedStrike,
           isUp: nextNextRow.isUp,
           quantity: nextNextRow.quantity,
@@ -259,7 +264,7 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
 
     if (row.action === "update_prices") {
       const gas = await execute(
-        () => updateBasisTx(state.oracleId, state.oracleCapId, row.spot, row.forward),
+        () => updateBlockScholesPricesTx(state.oracleId, state.pythSourceId, state.oracleCapId, row.spot, row.forward),
         "update_prices"
       );
       byAction.update_prices.push({ wallMs: performance.now() - startedAt, ...gas });
@@ -296,7 +301,7 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
         predictId: state.predictId,
         managerId: state.managerId,
         oracleId: state.oracleId,
-        expiry,
+        pythSourceId: state.pythSourceId,
         strike: alignedStrike,
         isUp: row.isUp,
         quantity: row.quantity,
@@ -336,7 +341,7 @@ async function main() {
   }
 
   if (args.executeOnly) {
-    const state = readJson<SimState>(STATE_PATH);
+    const state = validateSimState(readJson<SimState>(STATE_PATH));
     await executeScenario(rows, state);
     return;
   }

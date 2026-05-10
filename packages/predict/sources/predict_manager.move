@@ -3,7 +3,7 @@
 
 /// PredictManager wraps a BalanceManager for Predict trading.
 ///
-/// Users deposit USDC into the PredictManager, which is stored in the inner
+/// Users deposit quote assets into the PredictManager, which stores them in the inner
 /// BalanceManager. Positions are tracked as canonical ranges keyed by RangeKey.
 module deepbook_predict::predict_manager;
 

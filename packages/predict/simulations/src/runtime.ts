@@ -84,6 +84,15 @@ export function target(module: string, fn: string): `${string}::${string}::${str
   return `${PACKAGE_ID}::${module}::${fn}`;
 }
 
+let lastSourceTimestampMs = 0n;
+
+function nextSourceTimestampMs(): bigint {
+  const conservativeNow = BigInt(Date.now()) - 1_000n;
+  const next = conservativeNow > lastSourceTimestampMs ? conservativeNow : lastSourceTimestampMs + 1n;
+  lastSourceTimestampMs = next;
+  return next;
+}
+
 function binaryRangeBounds(strike: bigint, isUp: boolean): { lower: bigint; higher: bigint } {
   return isUp
     ? { lower: strike, higher: POS_INF_STRIKE }
@@ -116,18 +125,28 @@ export function createPredictTx(currencyId: string): Transaction {
   return tx;
 }
 
-export function createOracleCapTx(recipient: string): Transaction {
+export function createMarketOracleCapTx(recipient: string): Transaction {
   const tx = new Transaction();
   const cap = tx.moveCall({
-    target: target("registry", "create_oracle_cap"),
+    target: target("registry", "create_market_oracle_cap"),
     arguments: [tx.object(ADMIN_CAP_ID)],
   });
   tx.transferObjects([cap], tx.pure.address(recipient));
   return tx;
 }
 
-export function createOracleTx(params: {
+export function createPythSourceTx(feedId: bigint): Transaction {
+  const tx = new Transaction();
+  tx.moveCall({
+    target: target("registry", "create_pyth_source"),
+    arguments: [tx.object(REGISTRY_ID), tx.pure.u64(feedId)],
+  });
+  return tx;
+}
+
+export function createMarketOracleTx(params: {
   predictId: string;
+  pythSourceId: string;
   oracleCapId: string;
   underlyingAsset: string;
   expiry: bigint;
@@ -136,10 +155,11 @@ export function createOracleTx(params: {
 }): Transaction {
   const tx = new Transaction();
   tx.moveCall({
-    target: target("registry", "create_oracle"),
+    target: target("registry", "create_market_oracle"),
     arguments: [
       tx.object(REGISTRY_ID),
       tx.object(params.predictId),
+      tx.object(params.pythSourceId),
       tx.object(params.oracleCapId),
       tx.pure.string(params.underlyingAsset),
       tx.pure.u64(params.expiry),
@@ -169,9 +189,9 @@ export function setAssetFeedIdTx(
   return tx;
 }
 
-export function setAssetBasisBoundsTx(
-  predictId: string,
-  asset: string,
+export function setMarketOracleBasisBoundsTx(
+  oracleId: string,
+  oracleCapId: string,
   maxSpotDeviation: bigint,
   maxBasisDeviation: bigint,
   minBasis: bigint,
@@ -179,11 +199,10 @@ export function setAssetBasisBoundsTx(
 ): Transaction {
   const tx = new Transaction();
   tx.moveCall({
-    target: target("registry", "set_asset_basis_bounds"),
+    target: target("market_oracle", "set_basis_bounds"),
     arguments: [
-      tx.object(predictId),
-      tx.object(ADMIN_CAP_ID),
-      tx.pure.string(asset),
+      tx.object(oracleId),
+      tx.object(oracleCapId),
       tx.pure.u64(maxSpotDeviation),
       tx.pure.u64(maxBasisDeviation),
       tx.pure.u64(minBasis),
@@ -193,29 +212,23 @@ export function setAssetBasisBoundsTx(
   return tx;
 }
 
-export function activateOracleTx(oracleId: string, oracleCapId: string): Transaction {
-  const tx = new Transaction();
-  tx.moveCall({
-    target: target("oracle", "activate"),
-    arguments: [tx.object(oracleId), tx.object(oracleCapId), tx.object(CLOCK_ID)],
-  });
-  return tx;
-}
-
-export function updateBasisTx(
+export function updateBlockScholesPricesTx(
   oracleId: string,
+  pythSourceId: string,
   oracleCapId: string,
   spot: bigint,
   forward: bigint
 ): Transaction {
   const tx = new Transaction();
   tx.moveCall({
-    target: target("oracle", "update_prices"),
+    target: target("market_oracle", "update_block_scholes_prices"),
     arguments: [
       tx.object(oracleId),
+      tx.object(pythSourceId),
       tx.object(oracleCapId),
       tx.pure.u64(spot),
       tx.pure.u64(forward),
+      tx.pure.u64(nextSourceTimestampMs()),
       tx.object(CLOCK_ID),
     ],
   });
@@ -245,7 +258,7 @@ export function updateSviTx(
     arguments: [tx.pure.u64(svi.m), tx.pure.bool(svi.mNegative)],
   });
   const sviParams = tx.moveCall({
-    target: target("oracle", "new_svi_params"),
+    target: target("market_oracle", "new_svi_params"),
     arguments: [
       tx.pure.u64(svi.a),
       tx.pure.u64(svi.b),
@@ -255,11 +268,12 @@ export function updateSviTx(
     ],
   });
   tx.moveCall({
-    target: target("oracle", "update_svi"),
+    target: target("market_oracle", "update_svi"),
     arguments: [
       tx.object(oracleId),
       tx.object(oracleCapId),
       sviParams,
+      tx.pure.u64(nextSourceTimestampMs()),
       tx.object(CLOCK_ID),
     ],
   });
@@ -337,7 +351,7 @@ export function mintTx(params: {
   predictId: string;
   managerId: string;
   oracleId: string;
-  expiry: bigint;
+  pythSourceId: string;
   strike: bigint;
   isUp: boolean;
   quantity: bigint;
@@ -348,7 +362,6 @@ export function mintTx(params: {
     target: target("range_key", "new"),
     arguments: [
       tx.pure.id(params.oracleId),
-      tx.pure.u64(params.expiry),
       tx.pure.u64(lower),
       tx.pure.u64(higher),
     ],
@@ -360,6 +373,7 @@ export function mintTx(params: {
       tx.object(params.predictId),
       tx.object(params.managerId),
       tx.object(params.oracleId),
+      tx.object(params.pythSourceId),
       key,
       tx.pure.u64(params.quantity),
       tx.object(CLOCK_ID),
@@ -373,7 +387,7 @@ export function refreshOracleAndMintTx(params: {
   managerId: string;
   oracleId: string;
   oracleCapId: string;
-  expiry: bigint;
+  pythSourceId: string;
   strike: bigint;
   isUp: boolean;
   quantity: bigint;
@@ -391,12 +405,14 @@ export function refreshOracleAndMintTx(params: {
 }): Transaction {
   const tx = new Transaction();
   tx.moveCall({
-    target: target("oracle", "update_prices"),
+    target: target("market_oracle", "update_block_scholes_prices"),
     arguments: [
       tx.object(params.oracleId),
+      tx.object(params.pythSourceId),
       tx.object(params.oracleCapId),
       tx.pure.u64(params.spot),
       tx.pure.u64(params.forward),
+      tx.pure.u64(nextSourceTimestampMs()),
       tx.object(CLOCK_ID),
     ],
   });
@@ -410,7 +426,7 @@ export function refreshOracleAndMintTx(params: {
     arguments: [tx.pure.u64(params.svi.m), tx.pure.bool(params.svi.mNegative)],
   });
   const sviParams = tx.moveCall({
-    target: target("oracle", "new_svi_params"),
+    target: target("market_oracle", "new_svi_params"),
     arguments: [
       tx.pure.u64(params.svi.a),
       tx.pure.u64(params.svi.b),
@@ -420,11 +436,12 @@ export function refreshOracleAndMintTx(params: {
     ],
   });
   tx.moveCall({
-    target: target("oracle", "update_svi"),
+    target: target("market_oracle", "update_svi"),
     arguments: [
       tx.object(params.oracleId),
       tx.object(params.oracleCapId),
       sviParams,
+      tx.pure.u64(nextSourceTimestampMs()),
       tx.object(CLOCK_ID),
     ],
   });
@@ -434,7 +451,6 @@ export function refreshOracleAndMintTx(params: {
     target: target("range_key", "new"),
     arguments: [
       tx.pure.id(params.oracleId),
-      tx.pure.u64(params.expiry),
       tx.pure.u64(lower),
       tx.pure.u64(higher),
     ],
@@ -446,6 +462,7 @@ export function refreshOracleAndMintTx(params: {
       tx.object(params.predictId),
       tx.object(params.managerId),
       tx.object(params.oracleId),
+      tx.object(params.pythSourceId),
       key,
       tx.pure.u64(params.quantity),
       tx.object(CLOCK_ID),

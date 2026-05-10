@@ -35,6 +35,7 @@ const EInvalidStrikeGrid: u64 = 2;
 const EFeedIdOverflow: u64 = 3;
 const EFeedIdMismatch: u64 = 4;
 const EPythSourceAlreadyCreated: u64 = 5;
+const EInvalidExpiry: u64 = 6;
 
 /// Emitted when a Pyth source is created.
 public struct PythSourceCreated has copy, drop, store {
@@ -134,11 +135,14 @@ public fun create_market_oracle(
     ctx: &mut TxContext,
 ): ID {
     assert_valid_strike_grid(min_strike, tick_size);
+    assert!(expiry > clock.timestamp_ms(), EInvalidExpiry);
     let pyth_lazer_feed_id = predict.resolve_feed_id(underlying_asset);
     // Narrow to `u32` for the Lazer-binding leaf. Config stores `u64` for
     // cross-field consistency, but the Pyth Lazer feed-id width is `u32`.
     assert!(pyth_lazer_feed_id <= 0xFFFF_FFFF, EFeedIdOverflow);
     assert!(pyth.feed_id() == pyth_lazer_feed_id as u32, EFeedIdMismatch);
+    assert!(registry.pyth_source_ids.contains(pyth_lazer_feed_id), EFeedIdMismatch);
+    assert!(registry.pyth_source_ids[pyth_lazer_feed_id] == pyth.id(), EFeedIdMismatch);
     let (
         pyth_spot_freshness_ms,
         block_scholes_prices_freshness_ms,

@@ -259,10 +259,28 @@ public fun redeem_permissionless<Quote>(
     manager.deposit_permissionless(payout_coin, ctx);
 }
 
-/// Supply an accepted quote asset into the vault. Returns LP tokens representing shares.
+/// Sell a compacted settled position without passing the terminal oracle object.
+public fun redeem_compacted_permissionless<Quote>(
+    predict: &mut Predict,
+    manager: &mut PredictManager,
+    key: RangeKey,
+    quantity: u64,
+    ctx: &mut TxContext,
+) {
+    let payout_coin = redeem_compacted_settled_internal<Quote>(
+        predict,
+        manager,
+        key,
+        quantity,
+        ctx,
+    );
+    manager.deposit_permissionless(payout_coin, ctx);
+}
+
+/// Supply an enabled quote asset into the shared LP pool.
+/// Returns LP tokens representing shares.
 /// First depositor gets shares 1:1. Subsequent depositors get shares
 /// proportional to their deposit relative to current vault value.
-/// Supply an enabled quote asset into the shared LP pool.
 public fun supply<Quote>(
     predict: &mut Predict,
     coin: Coin<Quote>,
@@ -298,9 +316,9 @@ public fun supply<Quote>(
 }
 
 /// Withdraw a selected quote asset from the vault by providing LP tokens.
+/// Burns the LP tokens and returns the corresponding quote asset.
 /// Outflows can use any quote asset with concrete vault balance, even if it is
 /// disabled for new inflows.
-/// Burns the LP tokens and returns the corresponding quote asset.
 public fun withdraw<Quote>(
     predict: &mut Predict,
     lp_coin: Coin<PLP>,
@@ -339,6 +357,8 @@ public fun refresh_oracle_mtm(
     clock: &Clock,
 ) {
     let oracle_id = pricing::oracle_id(market_oracle);
+    if (predict.vault.is_compacted_oracle(oracle_id)) return;
+
     if (pricing::is_settled(market_oracle)) {
         let settlement = pricing::settlement_price(market_oracle);
         predict.vault.apply_settled_oracle_valuation(oracle_id, settlement, clock);
@@ -793,14 +813,31 @@ fun redeem_settled_internal<Quote>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<Quote> {
-    let settlement = pricing::settlement_price(market_oracle);
-    predict.apply_settled_redeem_delta(manager, market_oracle, key, quantity, settlement, clock);
+    let oracle_id = key.oracle_id();
+    let (payout_amount, expiry) = if (predict.vault.is_compacted_oracle(oracle_id)) {
+        (
+            predict.apply_compacted_settled_redeem_delta(manager, key, quantity),
+            predict.vault.oracle_expiry(oracle_id),
+        )
+    } else {
+        let settlement = pricing::settlement_price(market_oracle);
+        (
+            predict.apply_settled_redeem_delta(
+                manager,
+                market_oracle,
+                key,
+                quantity,
+                settlement,
+                clock,
+            ),
+            pricing::expiry(market_oracle),
+        )
+    };
 
-    let payout_amount = key.settled_payout(settlement, quantity);
     let payout_coin = predict.vault.dispense_payout<Quote>(payout_amount).into_coin(ctx);
     predict.emit_position_redeemed<Quote>(
         manager,
-        pricing::expiry(market_oracle),
+        expiry,
         key,
         quantity,
         payout_coin.value(),
@@ -809,6 +846,31 @@ fun redeem_settled_internal<Quote>(
         ctx,
     );
 
+    payout_coin
+}
+
+/// Shared compacted settled redemption path.
+fun redeem_compacted_settled_internal<Quote>(
+    predict: &mut Predict,
+    manager: &mut PredictManager,
+    key: RangeKey,
+    quantity: u64,
+    ctx: &mut TxContext,
+): Coin<Quote> {
+    let oracle_id = key.oracle_id();
+    let expiry = predict.vault.oracle_expiry(oracle_id);
+    let payout_amount = predict.apply_compacted_settled_redeem_delta(manager, key, quantity);
+    let payout_coin = predict.vault.dispense_payout<Quote>(payout_amount).into_coin(ctx);
+    predict.emit_position_redeemed<Quote>(
+        manager,
+        expiry,
+        key,
+        quantity,
+        payout_coin.value(),
+        0,
+        true,
+        ctx,
+    );
     payout_coin
 }
 
@@ -858,8 +920,7 @@ fun apply_live_redeem_delta(
     predict.vault.remove_live_range(key, quantity, curve, clock);
 }
 
-/// Apply the position, vault, and risk-state delta for a settled redeem before
-/// pricing against the post-trade vault state.
+/// Burn position quantity and settled vault liability, returning the payout amount.
 fun apply_settled_redeem_delta(
     predict: &mut Predict,
     manager: &mut PredictManager,
@@ -868,12 +929,26 @@ fun apply_settled_redeem_delta(
     quantity: u64,
     settlement: u64,
     clock: &Clock,
-) {
+): u64 {
     assert!(quantity > 0, EZeroQuantity);
     predict.assert_range_key_matches(market_oracle, &key);
 
     manager.decrease_position(key, quantity);
-    predict.vault.remove_settled_range(key, quantity, settlement, clock);
+    predict.vault.remove_settled_range(key, quantity, settlement, clock)
+}
+
+/// Burn compacted settled vault liability without reading the terminal oracle.
+fun apply_compacted_settled_redeem_delta(
+    predict: &mut Predict,
+    manager: &mut PredictManager,
+    key: RangeKey,
+    quantity: u64,
+): u64 {
+    assert!(quantity > 0, EZeroQuantity);
+    predict.vault.assert_range_key_matches(&key);
+
+    manager.decrease_position(key, quantity);
+    predict.vault.remove_compacted_settled_range(key, quantity)
 }
 
 fun quote_mint_amounts(
@@ -968,7 +1043,7 @@ fun build_live_curve(
     )
 }
 
-/// Returns the USDC value of `shares` at the given vault value.
+/// Returns the quote-asset value of `shares` at the given vault value.
 fun shares_to_amount(predict: &Predict, shares: u64, vault_value: u64): u64 {
     let total = predict.treasury_cap.total_supply();
     if (shares == 0 || total == 0) return 0;

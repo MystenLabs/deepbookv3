@@ -77,19 +77,3 @@ public(package) fun extend_strike_range(
 
     (min_strike, max_strike)
 }
-
-/// Return this key's settled payout at a concrete settlement price.
-public(package) fun settled_payout(key: &RangeKey, settlement: u64, quantity: u64): u64 {
-    settled_range_payout(settlement, key.lower_strike, key.higher_strike, quantity)
-}
-
-/// Return settled payout for `(lower, higher]` with sentinel endpoints.
-fun settled_range_payout(settlement: u64, lower: u64, higher: u64, quantity: u64): u64 {
-    let above_lower = lower == constants::neg_inf!() || settlement > lower;
-    let at_or_below_higher = higher == constants::pos_inf!() || settlement <= higher;
-    if (above_lower && at_or_below_higher) {
-        quantity
-    } else {
-        0
-    }
-}

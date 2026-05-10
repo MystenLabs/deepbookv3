@@ -59,7 +59,7 @@
 module deepbook_predict::strike_matrix;
 
 use deepbook::{constants::max_u64, math};
-use deepbook_predict::{constants, pricing::CurvePoint};
+use deepbook_predict::{constants, pricing::{Self, CurvePoint}};
 use sui::{clock::Clock, table::{Self, Table}};
 
 const PAGE_SLOTS: u64 = 512;
@@ -238,7 +238,7 @@ public(package) fun into_settled_liability(matrix: StrikeMatrix, settlement: u64
             let strike = min_strike + tick_index * tick_size;
             let q_start = page[slot].q_start;
             let q_end = page[slot].q_end;
-            if (strike < settlement) {
+            if (pricing::settled_up_price(settlement, strike) > 0) {
                 remaining_liability = remaining_liability + q_start - q_end;
             };
             slot = slot + 1;
@@ -348,7 +348,7 @@ fun evaluate_settled(matrix: &StrikeMatrix, settlement: u64): u64 {
         let mut slot = start_slot;
         while (slot <= end_slot) {
             let strike = matrix.strike_from_coords(page_key, slot);
-            if (strike < settlement) {
+            if (pricing::settled_up_price(settlement, strike) > 0) {
                 value = value + page[slot].q_start - page[slot].q_end;
             };
 
