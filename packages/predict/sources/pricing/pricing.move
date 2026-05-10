@@ -16,7 +16,8 @@ use deepbook_predict::{
     market_oracle::{Self, MarketOracle, SVIParams},
     math as predict_math,
     pyth_source::PythSource,
-    range_key::RangeKey
+    range_key::RangeKey,
+    tuning_constants
 };
 use sui::clock::Clock;
 
@@ -40,6 +41,7 @@ const EMarketNotActive: u64 = 17;
 const EOracleNotSettled: u64 = 18;
 const EInvalidSettlementTimestamp: u64 = 19;
 const EInvalidUtilizationMultiplier: u64 = 20;
+const EInvalidFreshnessThreshold: u64 = 21;
 
 /// Fee and ask-bound parameters used when quoting Predict markets.
 /// The quoted fee is a per-unit absolute price increment, not a bps rate.
@@ -56,6 +58,12 @@ public struct PricingConfig has store {
     min_ask_price: u64,
     /// Global maximum allowed all-in mint price after adding the fee.
     max_ask_price: u64,
+    /// Maximum age for Pyth spot to be used as canonical live spot.
+    pyth_spot_freshness_ms: u64,
+    /// Maximum age for Block Scholes spot/forward to be used in live pricing.
+    block_scholes_prices_freshness_ms: u64,
+    /// Maximum age for Block Scholes SVI params to be used in live pricing.
+    block_scholes_svi_freshness_ms: u64,
 }
 
 /// Curve sample point with strike and one-sided UP price.
@@ -98,6 +106,21 @@ public(package) fun max_ask_price(config: &PricingConfig): u64 {
     config.max_ask_price
 }
 
+/// Return the live Pyth spot freshness threshold.
+public(package) fun pyth_spot_freshness_ms(config: &PricingConfig): u64 {
+    config.pyth_spot_freshness_ms
+}
+
+/// Return the live Block Scholes spot/forward freshness threshold.
+public(package) fun block_scholes_prices_freshness_ms(config: &PricingConfig): u64 {
+    config.block_scholes_prices_freshness_ms
+}
+
+/// Return the live Block Scholes SVI freshness threshold.
+public(package) fun block_scholes_svi_freshness_ms(config: &PricingConfig): u64 {
+    config.block_scholes_svi_freshness_ms
+}
+
 /// Return the strike stored in a curve point.
 public(package) fun strike(point: &CurvePoint): u64 {
     point.strike
@@ -116,6 +139,9 @@ public(package) fun new(): PricingConfig {
         utilization_multiplier: constants::default_utilization_multiplier!(),
         min_ask_price: constants::default_min_ask_price!(),
         max_ask_price: constants::default_max_ask_price!(),
+        pyth_spot_freshness_ms: tuning_constants::default_pyth_spot_freshness_ms!(),
+        block_scholes_prices_freshness_ms: tuning_constants::default_block_scholes_prices_freshness_ms!(),
+        block_scholes_svi_freshness_ms: tuning_constants::default_block_scholes_svi_freshness_ms!(),
     }
 }
 
@@ -150,8 +176,27 @@ public(package) fun set_max_ask_price(config: &mut PricingConfig, value: u64) {
     config.max_ask_price = value;
 }
 
+/// Set the live Pyth spot freshness threshold.
+public(package) fun set_pyth_spot_freshness_ms(config: &mut PricingConfig, value: u64) {
+    validate_freshness_ms(value);
+    config.pyth_spot_freshness_ms = value;
+}
+
+/// Set the live Block Scholes spot/forward freshness threshold.
+public(package) fun set_block_scholes_prices_freshness_ms(config: &mut PricingConfig, value: u64) {
+    validate_freshness_ms(value);
+    config.block_scholes_prices_freshness_ms = value;
+}
+
+/// Set the live Block Scholes SVI freshness threshold.
+public(package) fun set_block_scholes_svi_freshness_ms(config: &mut PricingConfig, value: u64) {
+    validate_freshness_ms(value);
+    config.block_scholes_svi_freshness_ms = value;
+}
+
 /// Build an adaptive piecewise-linear UP-price curve over a configured grid range.
 public(package) fun build_live_curve(
+    config: &PricingConfig,
     market: &MarketOracle,
     pyth: &PythSource,
     clock: &Clock,
@@ -161,7 +206,7 @@ public(package) fun build_live_curve(
     min_strike: u64,
     max_strike: u64,
 ): vector<CurvePoint> {
-    let (forward, svi) = resolve_live_inputs(market, pyth, clock);
+    let (forward, svi) = resolve_live_inputs(config, market, pyth, clock);
     build_curve(forward, &svi, grid_min, grid_tick, grid_max, min_strike, max_strike)
 }
 
@@ -197,7 +242,7 @@ public(package) fun quote_live_range(
     liability: u64,
     balance: u64,
 ): (u64, u64) {
-    let (forward, svi) = resolve_live_inputs(market, pyth, clock);
+    let (forward, svi) = resolve_live_inputs(config, market, pyth, clock);
     let fair_price = compute_range_price(
         forward,
         &svi,
@@ -243,13 +288,18 @@ public(package) fun assert_mint_quote_allowed(
 /// Fresh Pyth spot is canonical for spot; forward is then derived from the
 /// latest Block Scholes basis. If Pyth is stale, pricing falls back to the
 /// fresh Block Scholes forward. SVI must be fresh either way.
-fun resolve_live_inputs(market: &MarketOracle, pyth: &PythSource, clock: &Clock): (u64, SVIParams) {
+fun resolve_live_inputs(
+    config: &PricingConfig,
+    market: &MarketOracle,
+    pyth: &PythSource,
+    clock: &Clock,
+): (u64, SVIParams) {
     market_oracle::assert_pyth_source_id(market, pyth.id());
     assert!(!market.is_settled() && clock.timestamp_ms() < market.expiry(), EMarketNotActive);
-    assert!(block_scholes_price_is_fresh(market, clock), EBlockScholesPriceStale);
-    assert!(block_scholes_svi_is_fresh(market, clock), EBlockScholesSVIStale);
+    assert!(block_scholes_price_is_fresh(config, market, clock), EBlockScholesPriceStale);
+    assert!(block_scholes_svi_is_fresh(config, market, clock), EBlockScholesSVIStale);
 
-    let forward = if (pyth_spot_is_fresh(market, pyth, clock)) {
+    let forward = if (pyth_spot_is_fresh(config, pyth, clock)) {
         math::mul(pyth.spot(), market.block_scholes_basis())
     } else {
         market.block_scholes_forward()
@@ -278,26 +328,37 @@ fun compute_settled_range_price(settlement: u64, lower: u64, higher: u64): u64 {
     lower_up_price - higher_up_price
 }
 
-fun block_scholes_price_is_fresh(market: &MarketOracle, clock: &Clock): bool {
+fun block_scholes_price_is_fresh(
+    config: &PricingConfig,
+    market: &MarketOracle,
+    clock: &Clock,
+): bool {
     let now = clock.timestamp_ms();
     let timestamp = market
         .block_scholes_price_source_timestamp_ms()
         .min(market.block_scholes_price_update_timestamp_ms());
-    timestamp > 0 && timestamp <= now && now - timestamp <= market.block_scholes_prices_freshness_ms()
+    timestamp > 0 && timestamp <= now && now - timestamp <= config.block_scholes_prices_freshness_ms
 }
 
-fun block_scholes_svi_is_fresh(market: &MarketOracle, clock: &Clock): bool {
+fun block_scholes_svi_is_fresh(config: &PricingConfig, market: &MarketOracle, clock: &Clock): bool {
     let now = clock.timestamp_ms();
     let timestamp = market
         .block_scholes_svi_source_timestamp_ms()
         .min(market.block_scholes_svi_update_timestamp_ms());
-    timestamp > 0 && timestamp <= now && now - timestamp <= market.block_scholes_svi_freshness_ms()
+    timestamp > 0 && timestamp <= now && now - timestamp <= config.block_scholes_svi_freshness_ms
 }
 
-fun pyth_spot_is_fresh(market: &MarketOracle, pyth: &PythSource, clock: &Clock): bool {
+fun pyth_spot_is_fresh(config: &PricingConfig, pyth: &PythSource, clock: &Clock): bool {
     let now = clock.timestamp_ms();
     let timestamp = (pyth.source_timestamp_us() / 1000).min(pyth.update_timestamp_ms());
-    timestamp > 0 && timestamp <= now && now - timestamp <= market.pyth_spot_freshness_ms()
+    timestamp > 0 && timestamp <= now && now - timestamp <= config.pyth_spot_freshness_ms
+}
+
+fun validate_freshness_ms(value: u64) {
+    assert!(
+        value > 0 && value <= tuning_constants::max_freshness_threshold_ms!(),
+        EInvalidFreshnessThreshold,
+    );
 }
 
 fun build_curve(
@@ -528,5 +589,8 @@ public fun destroy_for_testing(config: PricingConfig) {
         utilization_multiplier: _,
         min_ask_price: _,
         max_ask_price: _,
+        pyth_spot_freshness_ms: _,
+        block_scholes_prices_freshness_ms: _,
+        block_scholes_svi_freshness_ms: _,
     } = config;
 }

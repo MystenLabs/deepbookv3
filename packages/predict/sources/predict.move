@@ -99,6 +99,9 @@ public struct PricingConfigUpdated has copy, drop, store {
     utilization_multiplier: u64,
     min_ask_price: u64,
     max_ask_price: u64,
+    pyth_spot_freshness_ms: u64,
+    block_scholes_prices_freshness_ms: u64,
+    block_scholes_svi_freshness_ms: u64,
 }
 
 /// Emitted when fee reserve distribution shares change.
@@ -146,14 +149,6 @@ public struct Withdrawn has copy, drop, store {
     shares_burned: u64,
 }
 
-/// Emitted when admin-tuned oracle freshness thresholds change.
-public struct OracleFreshnessConfigUpdated has copy, drop, store {
-    predict_id: ID,
-    pyth_spot_freshness_ms: u64,
-    block_scholes_prices_freshness_ms: u64,
-    block_scholes_svi_freshness_ms: u64,
-}
-
 /// Emitted when an asset is bound to a Pyth Lazer feed id.
 public struct OracleFeedIdSet has copy, drop, store {
     predict_id: ID,
@@ -176,7 +171,7 @@ public struct Predict has key {
     risk_config: RiskConfig,
     /// Treasury asset whitelist and related treasury policy state
     treasury_config: TreasuryConfig,
-    /// Oracle source bindings and freshness policy.
+    /// Oracle source feed bindings.
     oracle_config: OracleConfig,
     /// Rate limiter for LP withdrawals
     withdrawal_limiter: RateLimiter,
@@ -639,23 +634,22 @@ public(package) fun set_mtm_freshness_ms(predict: &mut Predict, value: u64) {
     predict.emit_risk_config_updated();
 }
 
-/// Update the admin-tuned Pyth spot freshness threshold used to seed new
-/// market oracles. Does NOT retroactively update existing oracles.
+/// Update the live Pyth spot freshness threshold used by pricing reads.
 public(package) fun set_pyth_spot_freshness_ms(predict: &mut Predict, value: u64) {
-    predict.oracle_config.set_pyth_spot_freshness_ms(value);
-    predict.emit_oracle_freshness_config_updated();
+    predict.pricing_config.set_pyth_spot_freshness_ms(value);
+    predict.emit_pricing_config_updated();
 }
 
-/// Update the admin-tuned Block Scholes spot/forward freshness threshold used to seed new oracles.
+/// Update the live Block Scholes spot/forward freshness threshold used by pricing reads.
 public(package) fun set_block_scholes_prices_freshness_ms(predict: &mut Predict, value: u64) {
-    predict.oracle_config.set_block_scholes_prices_freshness_ms(value);
-    predict.emit_oracle_freshness_config_updated();
+    predict.pricing_config.set_block_scholes_prices_freshness_ms(value);
+    predict.emit_pricing_config_updated();
 }
 
-/// Update the admin-tuned Block Scholes SVI freshness threshold used to seed new oracles.
+/// Update the live Block Scholes SVI freshness threshold used by pricing reads.
 public(package) fun set_block_scholes_svi_freshness_ms(predict: &mut Predict, value: u64) {
-    predict.oracle_config.set_block_scholes_svi_freshness_ms(value);
-    predict.emit_oracle_freshness_config_updated();
+    predict.pricing_config.set_block_scholes_svi_freshness_ms(value);
+    predict.emit_pricing_config_updated();
 }
 
 /// Bind `asset → pyth_lazer_feed_id` so `create_market_oracle` can infer the feed
@@ -693,13 +687,6 @@ public(package) fun enable_withdrawal_limiter(predict: &mut Predict, clock: &Clo
 /// Disable the withdrawal rate limiter.
 public(package) fun disable_withdrawal_limiter(predict: &mut Predict) {
     predict.withdrawal_limiter.disable();
-}
-
-/// Snapshot the admin-tuned market oracle bounds values at creation time.
-public(package) fun market_oracle_bounds_values(
-    predict: &Predict,
-): (u64, u64, u64, u64, u64, u64, u64) {
-    predict.oracle_config.market_oracle_bounds_values()
 }
 
 /// Resolve the admin-registered Pyth Lazer feed id for `asset`. Aborts with
@@ -1031,6 +1018,7 @@ fun build_live_curve(
     let oracle_id = market_oracle.id();
     let (grid_min, grid_tick, grid_max) = predict.vault.grid_params(oracle_id);
     pricing::build_live_curve(
+        &predict.pricing_config,
         market_oracle,
         pyth,
         clock,
@@ -1107,6 +1095,11 @@ fun emit_pricing_config_updated(predict: &Predict) {
         utilization_multiplier: predict.pricing_config.utilization_multiplier(),
         min_ask_price: predict.pricing_config.min_ask_price(),
         max_ask_price: predict.pricing_config.max_ask_price(),
+        pyth_spot_freshness_ms: predict.pricing_config.pyth_spot_freshness_ms(),
+        block_scholes_prices_freshness_ms: predict
+            .pricing_config
+            .block_scholes_prices_freshness_ms(),
+        block_scholes_svi_freshness_ms: predict.pricing_config.block_scholes_svi_freshness_ms(),
     });
 }
 
@@ -1116,18 +1109,6 @@ fun emit_risk_config_updated(predict: &Predict) {
         predict_id: object::id(predict),
         max_total_exposure_pct: predict.risk_config.max_total_exposure_pct(),
         mtm_freshness_ms: predict.risk_config.mtm_freshness_ms(),
-    });
-}
-
-/// Emit the full current oracle freshness config snapshot.
-fun emit_oracle_freshness_config_updated(predict: &Predict) {
-    event::emit(OracleFreshnessConfigUpdated {
-        predict_id: object::id(predict),
-        pyth_spot_freshness_ms: predict.oracle_config.pyth_spot_freshness_ms(),
-        block_scholes_prices_freshness_ms: predict
-            .oracle_config
-            .block_scholes_prices_freshness_ms(),
-        block_scholes_svi_freshness_ms: predict.oracle_config.block_scholes_svi_freshness_ms(),
     });
 }
 

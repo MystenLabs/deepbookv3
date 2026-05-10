@@ -14,7 +14,8 @@ use deepbook_predict::{
     plp::PLP,
     predict::{Self, Predict},
     predict_manager::{Self, PredictManager},
-    pyth_source::{Self, PythSource}
+    pyth_source::{Self, PythSource},
+    tuning_constants
 };
 use std::{string::String, type_name};
 use sui::{
@@ -143,23 +144,12 @@ public fun create_market_oracle(
     assert!(pyth.feed_id() == pyth_lazer_feed_id as u32, EFeedIdMismatch);
     assert!(registry.pyth_source_ids.contains(pyth_lazer_feed_id), EFeedIdMismatch);
     assert!(registry.pyth_source_ids[pyth_lazer_feed_id] == pyth.id(), EFeedIdMismatch);
-    let (
-        pyth_spot_freshness_ms,
-        block_scholes_prices_freshness_ms,
-        block_scholes_svi_freshness_ms,
-        max_spot_deviation,
-        max_basis_deviation,
-        min_basis,
-        max_basis,
-    ) = predict.market_oracle_bounds_values();
     let bounds = market_oracle::new_bounds(
-        pyth_spot_freshness_ms,
-        block_scholes_prices_freshness_ms,
-        block_scholes_svi_freshness_ms,
-        max_spot_deviation,
-        max_basis_deviation,
-        min_basis,
-        max_basis,
+        tuning_constants::default_settlement_freshness_ms!(),
+        tuning_constants::default_max_spot_deviation!(),
+        tuning_constants::default_max_basis_deviation!(),
+        tuning_constants::default_min_basis!(),
+        tuning_constants::default_max_basis!(),
     );
     let market_oracle_id = market_oracle::create(
         pyth.id(),
@@ -286,12 +276,12 @@ public fun disable_withdrawal_limiter(predict: &mut Predict, _admin_cap: &AdminC
     predict.disable_withdrawal_limiter();
 }
 
-/// Set the Pyth spot freshness threshold (ms).
+/// Set the live Pyth spot freshness threshold (ms).
 public fun set_pyth_spot_freshness_ms(predict: &mut Predict, _admin_cap: &AdminCap, value: u64) {
     predict.set_pyth_spot_freshness_ms(value);
 }
 
-/// Set the Block Scholes spot/forward freshness threshold (ms).
+/// Set the live Block Scholes spot/forward freshness threshold (ms).
 public fun set_block_scholes_prices_freshness_ms(
     predict: &mut Predict,
     _admin_cap: &AdminCap,
@@ -300,7 +290,7 @@ public fun set_block_scholes_prices_freshness_ms(
     predict.set_block_scholes_prices_freshness_ms(value);
 }
 
-/// Set the Block Scholes SVI freshness threshold (ms).
+/// Set the live Block Scholes SVI freshness threshold (ms).
 public fun set_block_scholes_svi_freshness_ms(
     predict: &mut Predict,
     _admin_cap: &AdminCap,
