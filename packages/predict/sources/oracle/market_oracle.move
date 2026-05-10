@@ -5,8 +5,8 @@
 ///
 /// This module owns market-specific state: expiry, settlement, operator
 /// authorization, Pyth source binding, bounds, and inline Block Scholes data.
-/// It reads Pyth only on terminal Block Scholes price updates to choose the
-/// settlement spot without making trade flows mutate the oracle.
+/// It stores oracle updates and terminal settlement state. Live oracle reads
+/// are resolved by `pricing.move`.
 module deepbook_predict::market_oracle;
 
 use deepbook::math;
@@ -26,7 +26,6 @@ const EZeroForward: u64 = 11;
 const EStalePriceSourceUpdate: u64 = 12;
 const EStaleSVISourceUpdate: u64 = 13;
 const EWrongPythSource: u64 = 14;
-const EBlockScholesSettlementStale: u64 = 15;
 
 const STATUS_ACTIVE: u8 = 1;
 const STATUS_PENDING_SETTLEMENT: u8 = 2;
@@ -111,6 +110,9 @@ public struct MarketOracle has key {
     block_scholes_svi_update_timestamp_ms: u64,
     bounds: MarketOracleBounds,
     settlement_price: Option<u64>,
+    settlement_source: u8,
+    settlement_source_timestamp_ms: u64,
+    settlement_update_timestamp_ms: u64,
 }
 
 public struct MarketOracleCap has key, store {
@@ -147,6 +149,18 @@ public fun settlement_price(market: &MarketOracle): Option<u64> {
     market.settlement_price
 }
 
+public fun settlement_source(market: &MarketOracle): u8 {
+    market.settlement_source
+}
+
+public fun settlement_source_timestamp_ms(market: &MarketOracle): u64 {
+    market.settlement_source_timestamp_ms
+}
+
+public fun settlement_update_timestamp_ms(market: &MarketOracle): u64 {
+    market.settlement_update_timestamp_ms
+}
+
 public fun status(market: &MarketOracle, clock: &Clock): u8 {
     if (market.is_settled()) {
         STATUS_SETTLED
@@ -167,6 +181,14 @@ public fun status_pending_settlement(): u8 {
 
 public fun status_settled(): u8 {
     STATUS_SETTLED
+}
+
+public fun source_pyth(): u8 {
+    SOURCE_PYTH
+}
+
+public fun source_block_scholes(): u8 {
+    SOURCE_BLOCK_SCHOLES
 }
 
 public fun block_scholes_spot(market: &MarketOracle): u64 {
@@ -223,18 +245,14 @@ public fun block_scholes_svi_update_timestamp_ms(market: &MarketOracle): u64 {
     market.block_scholes_svi_update_timestamp_ms
 }
 
-/// Update Block Scholes spot/forward data, or settle the market after expiry.
-///
-/// Once pending settlement, this function first tries to settle from a fresh
-/// post-expiry Pyth spot. If Pyth does not qualify, it falls back to the pushed
-/// Block Scholes spot only when the pushed price is fresh and post-expiry.
-public fun update_prices(
+/// Update Block Scholes spot/forward data and settle the market if possible.
+public fun update_block_scholes_prices(
     market: &mut MarketOracle,
     pyth: &PythSource,
     cap: &MarketOracleCap,
-    spot: u64,
-    forward: u64,
-    source_timestamp_ms: u64,
+    block_scholes_spot: u64,
+    block_scholes_forward: u64,
+    block_scholes_source_timestamp_ms: u64,
     clock: &Clock,
 ) {
     market.assert_authorized_cap(cap);
@@ -244,40 +262,24 @@ public fun update_prices(
     assert!(status != STATUS_SETTLED, EMarketSettled);
 
     if (status == STATUS_PENDING_SETTLEMENT) {
-        if (market.pyth_spot_qualifies_for_settlement(pyth, clock)) {
-            market.settle(
-                pyth.spot(),
-                SOURCE_PYTH,
-                pyth.source_timestamp_us() / 1000,
-                pyth.update_timestamp_ms(),
-            );
-            return
-        };
-
-        let basis = market.validate_block_scholes_price_update(spot, forward, source_timestamp_ms);
-        let update_timestamp_ms = clock.timestamp_ms();
-        assert!(
-            timestamps_are_fresh(
-                update_timestamp_ms,
-                source_timestamp_ms,
-                update_timestamp_ms,
-                market.bounds.block_scholes_prices_freshness_ms,
-            ),
-            EBlockScholesSettlementStale,
-        );
-        assert!(
-            effective_timestamp_ms(source_timestamp_ms, update_timestamp_ms) > market.expiry,
-            EBlockScholesSettlementStale,
-        );
-        market.validate_basis_push(spot, basis);
-        market.apply_block_scholes_prices(spot, forward, basis, source_timestamp_ms, clock);
-        market.settle(spot, SOURCE_BLOCK_SCHOLES, source_timestamp_ms, update_timestamp_ms);
-        return
+        market.settle_if_possible(pyth, clock);
+        if (market.is_settled()) return
     };
 
-    let basis = market.validate_block_scholes_price_update(spot, forward, source_timestamp_ms);
-    market.validate_basis_push(spot, basis);
-    market.apply_block_scholes_prices(spot, forward, basis, source_timestamp_ms, clock);
+    let basis = market.validate_block_scholes_price_update(
+        block_scholes_spot,
+        block_scholes_forward,
+        block_scholes_source_timestamp_ms,
+    );
+    market.validate_basis_push(block_scholes_spot, basis);
+    market.apply_block_scholes_prices(
+        block_scholes_spot,
+        block_scholes_forward,
+        basis,
+        block_scholes_source_timestamp_ms,
+        clock,
+    );
+    market.settle_if_possible(pyth, clock);
 }
 
 public fun update_svi(
@@ -361,6 +363,18 @@ public fun set_basis_bounds(
 
 // === Public-Package Functions ===
 
+public(package) fun pyth_spot_freshness_ms(market: &MarketOracle): u64 {
+    market.bounds.pyth_spot_freshness_ms
+}
+
+public(package) fun block_scholes_prices_freshness_ms(market: &MarketOracle): u64 {
+    market.bounds.block_scholes_prices_freshness_ms
+}
+
+public(package) fun block_scholes_svi_freshness_ms(market: &MarketOracle): u64 {
+    market.bounds.block_scholes_svi_freshness_ms
+}
+
 public(package) fun create_cap(ctx: &mut TxContext): MarketOracleCap {
     MarketOracleCap { id: object::new(ctx) }
 }
@@ -395,6 +409,9 @@ public(package) fun create(
         block_scholes_svi_update_timestamp_ms: 0,
         bounds,
         settlement_price: option::none(),
+        settlement_source: 0,
+        settlement_source_timestamp_ms: 0,
+        settlement_update_timestamp_ms: 0,
     };
 
     transfer::share_object(market);
@@ -432,33 +449,6 @@ public(package) fun assert_authorized_cap(market: &MarketOracle, cap: &MarketOra
 
 public(package) fun assert_pyth_source_id(market: &MarketOracle, pyth_source_id: ID) {
     assert!(market.pyth_source_id == pyth_source_id, EWrongPythSource);
-}
-
-public(package) fun pyth_spot_is_live_fresh(
-    market: &MarketOracle,
-    pyth: &PythSource,
-    clock: &Clock,
-): bool {
-    market.assert_pyth_source_id(pyth.id());
-    pyth_spot_is_fresh(pyth, clock, market.bounds.pyth_spot_freshness_ms)
-}
-
-public(package) fun block_scholes_price_is_fresh(market: &MarketOracle, clock: &Clock): bool {
-    timestamps_are_fresh(
-        clock.timestamp_ms(),
-        market.block_scholes_price_source_timestamp_ms,
-        market.block_scholes_price_update_timestamp_ms,
-        market.bounds.block_scholes_prices_freshness_ms,
-    )
-}
-
-public(package) fun block_scholes_svi_is_fresh(market: &MarketOracle, clock: &Clock): bool {
-    timestamps_are_fresh(
-        clock.timestamp_ms(),
-        market.block_scholes_svi_source_timestamp_ms,
-        market.block_scholes_svi_update_timestamp_ms,
-        market.bounds.block_scholes_svi_freshness_ms,
-    )
 }
 
 // === Private Functions ===
@@ -509,7 +499,46 @@ fun pyth_spot_qualifies_for_settlement(
     clock: &Clock,
 ): bool {
     pyth_spot_is_fresh(pyth, clock, market.bounds.pyth_spot_freshness_ms)
-        && pyth_effective_timestamp_ms(pyth) > market.expiry
+        && pyth_source_timestamp_ms(pyth) > market.expiry
+}
+
+fun block_scholes_spot_qualifies_for_settlement(market: &MarketOracle, clock: &Clock): bool {
+    block_scholes_price_is_fresh(market, clock)
+        && market.block_scholes_price_source_timestamp_ms > market.expiry
+}
+
+fun settle_if_possible(market: &mut MarketOracle, pyth: &PythSource, clock: &Clock) {
+    if (market.status(clock) != STATUS_PENDING_SETTLEMENT) return;
+
+    let pyth_valid = market.pyth_spot_qualifies_for_settlement(pyth, clock);
+    let block_scholes_valid = market.block_scholes_spot_qualifies_for_settlement(clock);
+    if (!pyth_valid && !block_scholes_valid) return;
+
+    if (
+        pyth_valid
+            && (
+                !block_scholes_valid
+                    || pyth_source_timestamp_ms(pyth)
+                        <= market.block_scholes_price_source_timestamp_ms
+            )
+    ) {
+        market.settle(
+            pyth.spot(),
+            SOURCE_PYTH,
+            pyth_source_timestamp_ms(pyth),
+            pyth.update_timestamp_ms(),
+        );
+    } else {
+        let block_scholes_spot = market.block_scholes_spot;
+        let block_scholes_source_timestamp_ms = market.block_scholes_price_source_timestamp_ms;
+        let block_scholes_update_timestamp_ms = market.block_scholes_price_update_timestamp_ms;
+        market.settle(
+            block_scholes_spot,
+            SOURCE_BLOCK_SCHOLES,
+            block_scholes_source_timestamp_ms,
+            block_scholes_update_timestamp_ms,
+        );
+    };
 }
 
 fun settle(
@@ -520,6 +549,9 @@ fun settle(
     update_timestamp_ms: u64,
 ) {
     market.settlement_price = option::some(settlement_price);
+    market.settlement_source = spot_source;
+    market.settlement_source_timestamp_ms = source_timestamp_ms;
+    market.settlement_update_timestamp_ms = update_timestamp_ms;
 
     event::emit(MarketOracleSettled {
         market_oracle_id: market.id.to_inner(),
@@ -531,17 +563,26 @@ fun settle(
     });
 }
 
+fun block_scholes_price_is_fresh(market: &MarketOracle, clock: &Clock): bool {
+    timestamps_are_fresh(
+        clock.timestamp_ms(),
+        market.block_scholes_price_source_timestamp_ms,
+        market.block_scholes_price_update_timestamp_ms,
+        market.bounds.block_scholes_prices_freshness_ms,
+    )
+}
+
 fun pyth_spot_is_fresh(pyth: &PythSource, clock: &Clock, freshness_ms: u64): bool {
     timestamps_are_fresh(
         clock.timestamp_ms(),
-        pyth.source_timestamp_us() / 1000,
+        pyth_source_timestamp_ms(pyth),
         pyth.update_timestamp_ms(),
         freshness_ms,
     )
 }
 
-fun pyth_effective_timestamp_ms(pyth: &PythSource): u64 {
-    effective_timestamp_ms(pyth.source_timestamp_us() / 1000, pyth.update_timestamp_ms())
+fun pyth_source_timestamp_ms(pyth: &PythSource): u64 {
+    pyth.source_timestamp_us() / 1000
 }
 
 fun validate_basis_push(market: &MarketOracle, new_spot: u64, new_basis: u64) {
@@ -620,7 +661,7 @@ fun timestamp_is_fresh(now_ms: u64, timestamp_ms: u64, freshness_ms: u64): bool 
     now_ms <= timestamp_ms || now_ms - timestamp_ms <= freshness_ms
 }
 
-/// Return the conservative timestamp used for freshness and settlement checks.
+/// Return the conservative timestamp used for freshness checks.
 fun effective_timestamp_ms(source_timestamp_ms: u64, update_timestamp_ms: u64): u64 {
     if (source_timestamp_ms < update_timestamp_ms) {
         source_timestamp_ms

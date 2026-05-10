@@ -139,7 +139,24 @@ public fun create_market_oracle(
     // cross-field consistency, but the Pyth Lazer feed-id width is `u32`.
     assert!(pyth_lazer_feed_id <= 0xFFFF_FFFF, EFeedIdOverflow);
     assert!(pyth.feed_id() == pyth_lazer_feed_id as u32, EFeedIdMismatch);
-    let bounds = predict.build_market_oracle_bounds();
+    let (
+        pyth_spot_freshness_ms,
+        block_scholes_prices_freshness_ms,
+        block_scholes_svi_freshness_ms,
+        max_spot_deviation,
+        max_basis_deviation,
+        min_basis,
+        max_basis,
+    ) = predict.market_oracle_bounds_values();
+    let bounds = market_oracle::new_bounds(
+        pyth_spot_freshness_ms,
+        block_scholes_prices_freshness_ms,
+        block_scholes_svi_freshness_ms,
+        max_spot_deviation,
+        max_basis_deviation,
+        min_basis,
+        max_basis,
+    );
     let market_oracle_id = market_oracle::create(
         pyth.id(),
         expiry,

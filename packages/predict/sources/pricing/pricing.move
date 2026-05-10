@@ -3,9 +3,10 @@
 
 /// Pricing, fees, quotes, and valuation curves for Predict markets.
 ///
-/// This module resolves live oracle inputs for pricing, computes SVI prices,
-/// applies fees, and builds valuation curves. It does not own market state,
-/// route funds, or mutate positions.
+/// This module is the app-facing read layer for oracle data. It resolves
+/// market oracle and Pyth source state on demand, computes SVI prices, applies
+/// fees, and builds valuation curves. It does not mutate oracle, vault, or
+/// position state.
 module deepbook_predict::pricing;
 
 use deepbook::{constants::max_u64, math};
@@ -33,9 +34,10 @@ const ETotalVarianceOverflow: u64 = 11;
 const EInvalidLiveFairPrice: u64 = 12;
 const EFeeOverflow: u64 = 13;
 const EInvalidCurveRange: u64 = 14;
-const EBlockScholesBasisStale: u64 = 15;
+const EBlockScholesPriceStale: u64 = 15;
 const EBlockScholesSVIStale: u64 = 16;
 const EMarketNotActive: u64 = 17;
+const EOracleNotSettled: u64 = 18;
 
 /// Fee and ask-bound parameters used when quoting Predict markets.
 /// The quoted fee is a per-unit absolute price increment, not a bps rate.
@@ -119,6 +121,26 @@ public fun up_price(point: &CurvePoint): u64 {
     point.up_price
 }
 
+/// Return the market oracle id used by Predict app flows.
+public fun oracle_id(market: &MarketOracle): ID {
+    market.id()
+}
+
+/// Return the market expiry.
+public fun expiry(market: &MarketOracle): u64 {
+    market.expiry()
+}
+
+/// Return true if the market has terminal settlement.
+public fun is_settled(market: &MarketOracle): bool {
+    market.is_settled()
+}
+
+/// Return terminal settlement price, aborting if the market is unsettled.
+public fun settlement_price(market: &MarketOracle): u64 {
+    resolved_settlement_price(market)
+}
+
 // === Public-Package Functions ===
 
 /// Create pricing config seeded from protocol defaults.
@@ -162,24 +184,6 @@ public(package) fun set_max_ask_price(config: &mut PricingConfig, value: u64) {
     config.max_ask_price = value;
 }
 
-/// Compute the settled UP tail price for `strike`.
-fun compute_settled_up_price(settlement: u64, strike: u64): u64 {
-    if (strike == constants::neg_inf!()) return constants::float_scaling!();
-    if (strike == constants::pos_inf!()) return 0;
-    if (settlement > strike) constants::float_scaling!() else 0
-}
-
-/// Compute the settled price for the range `(lower, higher]`.
-public(package) fun compute_settled_range_price(settlement: u64, lower: u64, higher: u64): u64 {
-    assert!(lower < higher, EInvalidRange);
-
-    let lower_up_price = compute_settled_up_price(settlement, lower);
-    let higher_up_price = compute_settled_up_price(settlement, higher);
-    assert!(lower_up_price >= higher_up_price, ERangePriceUnderflow);
-
-    lower_up_price - higher_up_price
-}
-
 /// Build an adaptive piecewise-linear UP-price curve over a configured grid range.
 public(package) fun build_live_curve(
     market: &MarketOracle,
@@ -193,6 +197,28 @@ public(package) fun build_live_curve(
 ): vector<CurvePoint> {
     let (forward, svi) = resolve_live_inputs(market, pyth, clock);
     build_curve(forward, &svi, grid_min, grid_tick, grid_max, min_strike, max_strike)
+}
+
+/// Quote a range from current oracle state and vault utilization.
+public(package) fun quote_range(
+    config: &PricingConfig,
+    market: &MarketOracle,
+    pyth: &PythSource,
+    clock: &Clock,
+    key: &RangeKey,
+    liability: u64,
+    balance: u64,
+): UnitQuote {
+    if (market.is_settled()) {
+        let fair_price = compute_settled_range_price(
+            resolved_settlement_price(market),
+            key.lower_strike(),
+            key.higher_strike(),
+        );
+        quote_zero_fee(fair_price)
+    } else {
+        quote_live_range(config, market, pyth, clock, key, liability, balance)
+    }
 }
 
 /// Quote a live range from current oracle state and vault utilization.
@@ -215,11 +241,6 @@ public(package) fun quote_live_range(
     quote_live_fair_price(config, fair_price, liability, balance)
 }
 
-/// Quote an already-finalized fair price with no live fee.
-public(package) fun quote_zero_fee(fair_price: u64): UnitQuote {
-    new_unit_quote(fair_price, 0)
-}
-
 /// Abort unless the quote's all-in ask price is inside the global mint bounds.
 public(package) fun assert_mint_quote_allowed(config: &PricingConfig, quote: &UnitQuote) {
     let ask_price = quote.ask_price;
@@ -229,38 +250,107 @@ public(package) fun assert_mint_quote_allowed(config: &PricingConfig, quote: &Un
     );
 }
 
-#[test_only]
-public fun destroy_for_testing(config: PricingConfig) {
-    let PricingConfig {
-        base_fee: _,
-        min_fee: _,
-        utilization_multiplier: _,
-        min_ask_price: _,
-        max_ask_price: _,
-    } = config;
-}
-
 // === Private Functions ===
 
-/// Resolve the live forward and SVI inputs used by both quotes and valuation curves.
-///
-/// Pyth spot is canonical while fresh, with forward derived from the latest
-/// Block Scholes basis. If Pyth is stale, pricing falls back to fresh Block
-/// Scholes forward. Block Scholes price and SVI data must be fresh either way.
+/// Resolve the live forward/SVI tuple used by all live pricing paths.
 fun resolve_live_inputs(market: &MarketOracle, pyth: &PythSource, clock: &Clock): (u64, SVIParams) {
-    assert!(market.status(clock) == market_oracle::status_active(), EMarketNotActive);
+    market_oracle::assert_pyth_source_id(market, pyth.id());
+    assert_live_market(market, clock);
+    assert!(block_scholes_price_is_fresh(market, clock), EBlockScholesPriceStale);
+    assert!(block_scholes_svi_is_fresh(market, clock), EBlockScholesSVIStale);
 
-    let pyth_spot_is_fresh = market_oracle::pyth_spot_is_live_fresh(market, pyth, clock);
-    assert!(market_oracle::block_scholes_price_is_fresh(market, clock), EBlockScholesBasisStale);
-    assert!(market_oracle::block_scholes_svi_is_fresh(market, clock), EBlockScholesSVIStale);
-
-    let forward = if (pyth_spot_is_fresh) {
+    let forward = if (pyth_spot_is_fresh(market, pyth, clock)) {
         math::mul(pyth.spot(), market.block_scholes_basis())
     } else {
         market.block_scholes_forward()
     };
 
     (forward, market.block_scholes_svi())
+}
+
+fun resolved_settlement_price(market: &MarketOracle): u64 {
+    assert!(market.is_settled(), EOracleNotSettled);
+    market.settlement_price().destroy_some()
+}
+
+fun assert_live_market(market: &MarketOracle, clock: &Clock) {
+    assert!(market.status(clock) == market_oracle::status_active(), EMarketNotActive);
+}
+
+/// Compute the settled price for the range `(lower, higher]`.
+fun compute_settled_range_price(settlement: u64, lower: u64, higher: u64): u64 {
+    assert!(lower < higher, EInvalidRange);
+
+    let lower_up_price = compute_settled_up_price(settlement, lower);
+    let higher_up_price = compute_settled_up_price(settlement, higher);
+    assert!(lower_up_price >= higher_up_price, ERangePriceUnderflow);
+
+    lower_up_price - higher_up_price
+}
+
+/// Compute the settled UP tail price for `strike`.
+fun compute_settled_up_price(settlement: u64, strike: u64): u64 {
+    if (strike == constants::neg_inf!()) return constants::float_scaling!();
+    if (strike == constants::pos_inf!()) return 0;
+    if (settlement > strike) constants::float_scaling!() else 0
+}
+
+fun block_scholes_price_is_fresh(market: &MarketOracle, clock: &Clock): bool {
+    timestamps_are_fresh(
+        clock.timestamp_ms(),
+        market.block_scholes_price_source_timestamp_ms(),
+        market.block_scholes_price_update_timestamp_ms(),
+        market.block_scholes_prices_freshness_ms(),
+    )
+}
+
+fun block_scholes_svi_is_fresh(market: &MarketOracle, clock: &Clock): bool {
+    timestamps_are_fresh(
+        clock.timestamp_ms(),
+        market.block_scholes_svi_source_timestamp_ms(),
+        market.block_scholes_svi_update_timestamp_ms(),
+        market.block_scholes_svi_freshness_ms(),
+    )
+}
+
+fun pyth_spot_is_fresh(market: &MarketOracle, pyth: &PythSource, clock: &Clock): bool {
+    timestamps_are_fresh(
+        clock.timestamp_ms(),
+        pyth_source_timestamp_ms(pyth),
+        pyth.update_timestamp_ms(),
+        market.pyth_spot_freshness_ms(),
+    )
+}
+
+fun pyth_source_timestamp_ms(pyth: &PythSource): u64 {
+    pyth.source_timestamp_us() / 1000
+}
+
+/// Check freshness against the older of source time and on-chain update time.
+fun timestamps_are_fresh(
+    now_ms: u64,
+    source_timestamp_ms: u64,
+    update_timestamp_ms: u64,
+    freshness_ms: u64,
+): bool {
+    timestamp_is_fresh(
+        now_ms,
+        effective_timestamp_ms(source_timestamp_ms, update_timestamp_ms),
+        freshness_ms,
+    )
+}
+
+fun timestamp_is_fresh(now_ms: u64, timestamp_ms: u64, freshness_ms: u64): bool {
+    if (timestamp_ms == 0) return false;
+    now_ms <= timestamp_ms || now_ms - timestamp_ms <= freshness_ms
+}
+
+fun effective_timestamp_ms(source_timestamp_ms: u64, update_timestamp_ms: u64): u64 {
+    if (source_timestamp_ms < update_timestamp_ms) {
+        source_timestamp_ms
+    } else {
+        update_timestamp_ms
+    }
 }
 
 fun build_curve(
@@ -335,6 +425,11 @@ fun quote_live_fair_price(
 ): UnitQuote {
     let fee_rate = quote_fee_rate(config, fair_price, liability, balance);
     new_unit_quote(fair_price, fee_rate)
+}
+
+/// Quote an already-finalized fair price with no live fee.
+fun quote_zero_fee(fair_price: u64): UnitQuote {
+    new_unit_quote(fair_price, 0)
 }
 
 fun new_curve_point(strike: u64, up_price: u64): CurvePoint {
@@ -485,4 +580,17 @@ fun find_gap(points: &vector<CurvePoint>, grid_tick: u64): (bool, u64) {
 /// Round a strike down to the nearest tick boundary.
 fun snap_to_tick(strike: u64, grid_min: u64, grid_tick: u64): u64 {
     grid_min + (strike - grid_min) / grid_tick * grid_tick
+}
+
+// === Test-Only Functions ===
+
+#[test_only]
+public fun destroy_for_testing(config: PricingConfig) {
+    let PricingConfig {
+        base_fee: _,
+        min_fee: _,
+        utilization_multiplier: _,
+        min_ask_price: _,
+        max_ask_price: _,
+    } = config;
 }

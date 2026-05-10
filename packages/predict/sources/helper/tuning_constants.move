@@ -35,13 +35,13 @@ public macro fun default_pyth_spot_freshness_ms(): u64 { 2_000 }
 
 // === Basis Circuit Breaker ===
 
-/// Default maximum per-push spot deviation accepted by `update_prices`
+/// Default maximum per-push spot deviation accepted by Block Scholes price updates
 /// (2% in FLOAT_SCALING). Catches decimal errors, fat-finger pushes, and
 /// BS outages that return garbage values. Operators can retune per market
 /// via `market_oracle::set_basis_bounds` when needed.
 public macro fun default_max_spot_deviation(): u64 { 20_000_000 }
 
-/// Default maximum per-push basis deviation accepted by `update_prices`
+/// Default maximum per-push basis deviation accepted by Block Scholes price updates
 /// (2% in FLOAT_SCALING). Basis = forward / spot moves slowly relative
 /// to spot; a large per-push move is always suspicious. Tighter than
 /// the absolute `[min_basis, max_basis]` bounds so a single push can't

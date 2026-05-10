@@ -7,7 +7,7 @@
 /// thresholds used to seed new per-expiry market oracles.
 module deepbook_predict::oracle_config;
 
-use deepbook_predict::{market_oracle::{Self, MarketOracleBounds}, tuning_constants};
+use deepbook_predict::tuning_constants;
 use std::string::String;
 use sui::table::{Self, Table};
 
@@ -61,9 +61,11 @@ public(package) fun new(ctx: &mut TxContext): OracleConfig {
     }
 }
 
-/// Build a `MarketOracleBounds` snapshot for a new market oracle.
-public(package) fun build_market_oracle_bounds(oracle_config: &OracleConfig): MarketOracleBounds {
-    market_oracle::new_bounds(
+/// Return the values used to seed a new market oracle's bounds.
+public(package) fun market_oracle_bounds_values(
+    oracle_config: &OracleConfig,
+): (u64, u64, u64, u64, u64, u64, u64) {
+    (
         oracle_config.pyth_spot_freshness_ms,
         oracle_config.block_scholes_prices_freshness_ms,
         oracle_config.block_scholes_svi_freshness_ms,
