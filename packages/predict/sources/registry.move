@@ -138,7 +138,6 @@ public fun create_market_oracle(
     assert!(pyth.feed_id() == pyth_lazer_feed_id as u32, EFeedIdMismatch);
     let bounds = predict.build_market_oracle_bounds();
     let market_oracle_id = market_oracle::create(
-        underlying_asset,
         pyth.id(),
         expiry,
         bounds,

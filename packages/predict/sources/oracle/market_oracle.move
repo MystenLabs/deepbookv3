@@ -11,7 +11,6 @@ module deepbook_predict::market_oracle;
 
 use deepbook::math;
 use deepbook_predict::{i64, pyth_source::PythSource, tuning_constants};
-use std::string::String;
 use sui::{clock::Clock, event};
 
 const EInvalidMarketOracleCap: u64 = 0;
@@ -98,7 +97,6 @@ public struct MarketOracleBounds has copy, drop, store {
 public struct MarketOracle has key {
     id: UID,
     cap_id: ID,
-    underlying_asset: String,
     pyth_source_id: ID,
     expiry: u64,
     block_scholes_spot: u64,
@@ -132,10 +130,6 @@ public fun cap_id(cap: &MarketOracleCap): ID {
 
 public fun authorized_cap_id(market: &MarketOracle): ID {
     market.cap_id
-}
-
-public fun underlying_asset(market: &MarketOracle): String {
-    market.underlying_asset
 }
 
 public fun pyth_source_id(market: &MarketOracle): ID {
@@ -408,7 +402,6 @@ public(package) fun create_cap(ctx: &mut TxContext): MarketOracleCap {
 }
 
 public(package) fun create(
-    underlying_asset: String,
     pyth_source_id: ID,
     expiry: u64,
     bounds: MarketOracleBounds,
@@ -421,7 +414,6 @@ public(package) fun create(
     let market = MarketOracle {
         id: uid,
         cap_id,
-        underlying_asset,
         pyth_source_id,
         expiry,
         block_scholes_spot: 0,
