@@ -244,25 +244,10 @@ public fun destroy_for_testing(config: PricingConfig) {
 
 fun resolve_live_inputs(market: &MarketOracle, pyth: &PythSource, clock: &Clock): (u64, SVIParams) {
     assert!(market.status(clock) == market_oracle::status_active(), EMarketNotActive);
-    let bounds = market.bounds();
 
     let pyth_spot_is_fresh = market_oracle::pyth_spot_is_live_fresh(market, pyth, clock);
-    assert!(
-        market_oracle::block_scholes_price_is_fresh(
-            market,
-            clock,
-            market_oracle::bounds_block_scholes_prices_freshness_ms(&bounds),
-        ),
-        EBlockScholesBasisStale,
-    );
-    assert!(
-        market_oracle::block_scholes_svi_is_fresh(
-            market,
-            clock,
-            market_oracle::bounds_block_scholes_svi_freshness_ms(&bounds),
-        ),
-        EBlockScholesSVIStale,
-    );
+    assert!(market_oracle::block_scholes_price_is_fresh(market, clock), EBlockScholesBasisStale);
+    assert!(market_oracle::block_scholes_svi_is_fresh(market, clock), EBlockScholesSVIStale);
 
     let forward = if (pyth_spot_is_fresh) {
         math::mul(pyth.spot(), market.block_scholes_basis())

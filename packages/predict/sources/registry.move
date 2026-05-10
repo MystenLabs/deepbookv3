@@ -105,8 +105,8 @@ public fun create_pyth_source(
     pyth_source_id
 }
 
-/// Create a new MarketOracleCap.
-public fun create_market_oracle_cap(ctx: &mut TxContext): MarketOracleCap {
+/// Admin-only creation of a new MarketOracleCap.
+public fun create_market_oracle_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): MarketOracleCap {
     market_oracle::create_cap(ctx)
 }
 

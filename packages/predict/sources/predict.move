@@ -16,9 +16,9 @@ use deepbook::math;
 use deepbook_predict::{
     constants,
     fee_reserve::{Self, FeeReserve},
-    market_config::{Self, MarketConfig},
     market_oracle::{Self, MarketOracle, MarketOracleCap},
     math::mul_div_round_down,
+    oracle_config::{Self, OracleConfig},
     plp::PLP,
     predict_manager::PredictManager,
     pricing::{Self, CurvePoint, PricingConfig, UnitQuote},
@@ -49,7 +49,6 @@ const EZeroVaultValue: u64 = 5;
 const EZeroSharesMinted: u64 = 6;
 const ERangeKeyOracleMismatch: u64 = 8;
 const EOracleNotSettled: u64 = 9;
-const ERangeKeyExpiryMismatch: u64 = 10;
 const EPredictAlreadyCreated: u64 = 11;
 
 /// Emitted when a position interval is minted.
@@ -147,8 +146,8 @@ public struct Withdrawn has copy, drop, store {
     shares_burned: u64,
 }
 
-/// Emitted when admin-tuned market_oracle freshness thresholds change.
-public struct MarketFreshnessConfigUpdated has copy, drop, store {
+/// Emitted when admin-tuned oracle freshness thresholds change.
+public struct OracleFreshnessConfigUpdated has copy, drop, store {
     predict_id: ID,
     pyth_spot_freshness_ms: u64,
     block_scholes_prices_freshness_ms: u64,
@@ -177,8 +176,8 @@ public struct Predict has key {
     risk_config: RiskConfig,
     /// Treasury asset whitelist and related treasury policy state
     treasury_config: TreasuryConfig,
-    /// Market source bindings and oracle freshness policy.
-    market_config: MarketConfig,
+    /// Oracle source bindings and freshness policy.
+    oracle_config: OracleConfig,
     /// Rate limiter for LP withdrawals
     withdrawal_limiter: RateLimiter,
     /// Whether trading (mint) is globally paused
@@ -505,7 +504,7 @@ public(package) fun create<Quote>(
         pricing_config: pricing::new(),
         risk_config: risk_config::new(),
         treasury_config: treasury_config::new(),
-        market_config: market_config::new(ctx),
+        oracle_config: oracle_config::new(ctx),
         // Withdrawal rate limiter starts disabled. Admin must call
         // update_withdrawal_limiter() then enable_withdrawal_limiter()
         // to activate, configuring capacity and rate for the quote asset.
@@ -620,20 +619,20 @@ public(package) fun set_mtm_freshness_ms(predict: &mut Predict, value: u64) {
 /// Update the admin-tuned Pyth spot freshness threshold used to seed new
 /// market oracles. Does NOT retroactively update existing oracles.
 public(package) fun set_pyth_spot_freshness_ms(predict: &mut Predict, value: u64) {
-    predict.market_config.set_pyth_spot_freshness_ms(value);
-    predict.emit_market_freshness_config_updated();
+    predict.oracle_config.set_pyth_spot_freshness_ms(value);
+    predict.emit_oracle_freshness_config_updated();
 }
 
 /// Update the admin-tuned Block Scholes spot/forward freshness threshold used to seed new oracles.
 public(package) fun set_block_scholes_prices_freshness_ms(predict: &mut Predict, value: u64) {
-    predict.market_config.set_block_scholes_prices_freshness_ms(value);
-    predict.emit_market_freshness_config_updated();
+    predict.oracle_config.set_block_scholes_prices_freshness_ms(value);
+    predict.emit_oracle_freshness_config_updated();
 }
 
 /// Update the admin-tuned Block Scholes SVI freshness threshold used to seed new oracles.
 public(package) fun set_block_scholes_svi_freshness_ms(predict: &mut Predict, value: u64) {
-    predict.market_config.set_block_scholes_svi_freshness_ms(value);
-    predict.emit_market_freshness_config_updated();
+    predict.oracle_config.set_block_scholes_svi_freshness_ms(value);
+    predict.emit_oracle_freshness_config_updated();
 }
 
 /// Bind `asset → pyth_lazer_feed_id` so `create_market_oracle` can infer the feed
@@ -645,7 +644,7 @@ public(package) fun set_asset_feed_id(
     asset: String,
     pyth_lazer_feed_id: u64,
 ) {
-    predict.market_config.set_asset_feed_id(asset, pyth_lazer_feed_id);
+    predict.oracle_config.set_asset_feed_id(asset, pyth_lazer_feed_id);
     event::emit(OracleFeedIdSet {
         predict_id: object::id(predict),
         asset,
@@ -677,16 +676,16 @@ public(package) fun disable_withdrawal_limiter(predict: &mut Predict) {
 public(package) fun build_market_oracle_bounds(
     predict: &Predict,
 ): market_oracle::MarketOracleBounds {
-    predict.market_config.build_market_oracle_bounds()
+    predict.oracle_config.build_market_oracle_bounds()
 }
 
 /// Resolve the admin-registered Pyth Lazer feed id for `asset`. Aborts with
-/// `market_config::EFeedIdNotConfigured` if no entry exists — admin must call
+/// `oracle_config::EFeedIdNotConfigured` if no entry exists — admin must call
 /// `set_asset_feed_id` at least once per underlying before its first market_oracle
 /// can be created. Returned as `u64` for type consistency with the rest of
 /// the admin-config surface; narrowed to `u32` at `registry::create_market_oracle`.
 public(package) fun resolve_feed_id(predict: &Predict, asset: String): u64 {
-    predict.market_config.resolve_feed_id(asset)
+    predict.oracle_config.resolve_feed_id(asset)
 }
 
 // === Private Functions ===
@@ -694,7 +693,6 @@ public(package) fun resolve_feed_id(predict: &Predict, asset: String): u64 {
 /// Assert a range key matches the market oracle identity, expiry, and configured grid.
 fun assert_range_key_matches(predict: &Predict, market_oracle: &MarketOracle, key: &RangeKey) {
     assert!(key.oracle_id() == market_oracle.id(), ERangeKeyOracleMismatch);
-    assert!(key.expiry() == market_oracle.expiry(), ERangeKeyExpiryMismatch);
     predict.vault.assert_range_key_matches(key);
 }
 
@@ -739,7 +737,7 @@ fun mint_internal<Quote>(
         trader: manager.owner(),
         quote_asset: type_name::with_defining_ids<Quote>(),
         oracle_id: key.oracle_id(),
-        expiry: key.expiry(),
+        expiry: market_oracle.expiry(),
         lower_strike: key.lower_strike(),
         higher_strike: key.higher_strike(),
         quantity,
@@ -776,6 +774,7 @@ fun redeem_live_internal<Quote>(
 
     predict.emit_position_redeemed<Quote>(
         manager,
+        market_oracle.expiry(),
         key,
         quantity,
         payout_coin.value(),
@@ -804,6 +803,7 @@ fun redeem_settled_internal<Quote>(
     let payout_coin = predict.vault.dispense_payout<Quote>(payout_amount).into_coin(ctx);
     predict.emit_position_redeemed<Quote>(
         manager,
+        market_oracle.expiry(),
         key,
         quantity,
         payout_coin.value(),
@@ -995,6 +995,7 @@ fun apply_fee<Quote>(predict: &mut Predict, fee_balance: Balance<Quote>) {
 fun emit_position_redeemed<Quote>(
     predict: &Predict,
     manager: &PredictManager,
+    expiry: u64,
     key: RangeKey,
     quantity: u64,
     payout: u64,
@@ -1009,7 +1010,7 @@ fun emit_position_redeemed<Quote>(
         executor: ctx.sender(),
         quote_asset: type_name::with_defining_ids<Quote>(),
         oracle_id: key.oracle_id(),
-        expiry: key.expiry(),
+        expiry,
         lower_strike: key.lower_strike(),
         higher_strike: key.higher_strike(),
         quantity,
@@ -1040,15 +1041,15 @@ fun emit_risk_config_updated(predict: &Predict) {
     });
 }
 
-/// Emit the full current market_oracle freshness config snapshot.
-fun emit_market_freshness_config_updated(predict: &Predict) {
-    event::emit(MarketFreshnessConfigUpdated {
+/// Emit the full current oracle freshness config snapshot.
+fun emit_oracle_freshness_config_updated(predict: &Predict) {
+    event::emit(OracleFreshnessConfigUpdated {
         predict_id: object::id(predict),
-        pyth_spot_freshness_ms: predict.market_config.pyth_spot_freshness_ms(),
+        pyth_spot_freshness_ms: predict.oracle_config.pyth_spot_freshness_ms(),
         block_scholes_prices_freshness_ms: predict
-            .market_config
+            .oracle_config
             .block_scholes_prices_freshness_ms(),
-        block_scholes_svi_freshness_ms: predict.market_config.block_scholes_svi_freshness_ms(),
+        block_scholes_svi_freshness_ms: predict.oracle_config.block_scholes_svi_freshness_ms(),
     });
 }
 
@@ -1075,7 +1076,7 @@ public(package) fun create_test_predict<Quote>(
         pricing_config: pricing::new(),
         risk_config: risk_config::new(),
         treasury_config: treasury_config::new(),
-        market_config: market_config::new(ctx),
+        oracle_config: oracle_config::new(ctx),
         withdrawal_limiter: rate_limiter::new(&clock),
         trading_paused: false,
     };
@@ -1092,8 +1093,8 @@ public(package) fun vault_mut(predict: &mut Predict): &mut Vault {
 
 #[test_only]
 /// Return market_oracle config access for tests.
-public(package) fun market_config(predict: &Predict): &MarketConfig {
-    &predict.market_config
+public(package) fun oracle_config(predict: &Predict): &OracleConfig {
+    &predict.oracle_config
 }
 
 #[test_only]

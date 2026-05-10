@@ -326,7 +326,7 @@ if [ "$RUN_SETUP" -eq 1 ]; then
   # and cannot be compiled fresh against 2024.beta (old `struct` / `friend`
   # syntax). test-publish on localnet has no pre-published ids, so both deps
   # are unavailable here. Point predict at a local stub pyth_lazer for sim
-  # builds — the stub exposes just the symbols `oracle::update_spot_from_lazer`
+  # builds — the stub exposes just the symbols `pyth_source::update_from_lazer`
   # references so the module typechecks without the real deps.
   #
   # We can't just drop it in as a `local` dep at 0x0 alongside predict: both
