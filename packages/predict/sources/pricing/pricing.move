@@ -242,6 +242,11 @@ public fun destroy_for_testing(config: PricingConfig) {
 
 // === Private Functions ===
 
+/// Resolve the live forward and SVI inputs used by both quotes and valuation curves.
+///
+/// Pyth spot is canonical while fresh, with forward derived from the latest
+/// Block Scholes basis. If Pyth is stale, pricing falls back to fresh Block
+/// Scholes forward. Block Scholes price and SVI data must be fresh either way.
 fun resolve_live_inputs(market: &MarketOracle, pyth: &PythSource, clock: &Clock): (u64, SVIParams) {
     assert!(market.status(clock) == market_oracle::status_active(), EMarketNotActive);
 

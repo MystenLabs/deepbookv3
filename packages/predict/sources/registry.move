@@ -92,6 +92,9 @@ entry fun create_predict<Quote>(
 }
 
 /// Create a shared Pyth source for one underlying/feed.
+///
+/// This is permissionless because the object only stores verified Pyth Lazer
+/// payloads. Market creation still requires the feed to match admin config.
 public fun create_pyth_source(
     registry: &mut Registry,
     pyth_lazer_feed_id: u64,

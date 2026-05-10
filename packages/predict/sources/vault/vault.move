@@ -195,6 +195,10 @@ public(package) fun remove_live_range(
 }
 
 /// Remove a settled vertical range from dense matrix exposure or compacted liability.
+///
+/// Before compaction, this mutates the oracle's dense matrix and refreshes its
+/// settled valuation. After compaction, the dense matrix no longer exists, so
+/// redemption burns liability directly against the stored settlement price.
 public(package) fun remove_settled_range(
     vault: &mut Vault,
     key: RangeKey,
@@ -259,6 +263,9 @@ public(package) fun unsettled_exposed_oracles(vault: &Vault): &vector<ID> {
 }
 
 /// Assert every unsettled exposed oracle has a fresh cached MTM for LP flows.
+///
+/// Once an exposed oracle expires, it must be settled/refreshed before LP supply
+/// or withdraw can continue; live MTM freshness is only valid pre-expiry.
 public(package) fun assert_unsettled_mtm_fresh(
     vault: &Vault,
     mtm_freshness_ms: u64,

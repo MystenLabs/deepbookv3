@@ -79,8 +79,11 @@ public struct MarketOracleSettled has copy, drop, store {
     market_oracle_id: ID,
     expiry: u64,
     settlement_price: u64,
+    /// `1` means Pyth supplied the settlement spot; `2` means Block Scholes fallback did.
     spot_source: u8,
+    /// Timestamp from the data source used for settlement, in milliseconds.
     source_timestamp_ms: u64,
+    /// On-chain timestamp when that data source update landed, in milliseconds.
     update_timestamp_ms: u64,
 }
 
@@ -220,6 +223,11 @@ public fun block_scholes_svi_update_timestamp_ms(market: &MarketOracle): u64 {
     market.block_scholes_svi_update_timestamp_ms
 }
 
+/// Update Block Scholes spot/forward data, or settle the market after expiry.
+///
+/// Once pending settlement, this function first tries to settle from a fresh
+/// post-expiry Pyth spot. If Pyth does not qualify, it falls back to the pushed
+/// Block Scholes spot only when the pushed price is fresh and post-expiry.
 public fun update_prices(
     market: &mut MarketOracle,
     pyth: &PythSource,
@@ -590,6 +598,10 @@ fun within_deviation(prev: u64, next: u64, max_deviation: u64): bool {
     diff <= max_allowed
 }
 
+/// Check freshness against the older of source time and on-chain update time.
+///
+/// Using the effective timestamp prevents a data source from appearing fresher
+/// than either when it was produced or when it actually landed on chain.
 fun timestamps_are_fresh(
     now_ms: u64,
     source_timestamp_ms: u64,
@@ -608,6 +620,7 @@ fun timestamp_is_fresh(now_ms: u64, timestamp_ms: u64, freshness_ms: u64): bool 
     now_ms <= timestamp_ms || now_ms - timestamp_ms <= freshness_ms
 }
 
+/// Return the conservative timestamp used for freshness and settlement checks.
 fun effective_timestamp_ms(source_timestamp_ms: u64, update_timestamp_ms: u64): u64 {
     if (source_timestamp_ms < update_timestamp_ms) {
         source_timestamp_ms

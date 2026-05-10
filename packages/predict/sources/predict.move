@@ -52,7 +52,7 @@ const EOracleNotSettled: u64 = 9;
 const EPredictAlreadyCreated: u64 = 11;
 
 /// Emitted when a position interval is minted.
-/// `cost` is fair value plus `fee_amount`; `fee_rate` is per-unit.
+/// `cost` is fair value plus `fee_amount`; `fee_amount` is total fee paid.
 public struct PositionMinted has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
@@ -329,9 +329,10 @@ public fun withdraw<Quote>(
     predict.vault.dispense_payout<Quote>(amount).into_coin(ctx)
 }
 
-/// Keeper/ops hook for syncing one market_oracle's cached MTM into the vault. This is
-/// used to keep LP supply/withdraw accounting fresh across unsettled exposed
-/// oracles; trade mutations refresh the touched market_oracle inline.
+/// Keeper/ops hook for syncing one market_oracle's cached MTM into the vault.
+/// This keeps LP supply/withdraw accounting fresh across unsettled exposed
+/// oracles. Trade mutations refresh the touched market_oracle inline, while
+/// settled oracles switch their cached valuation to settlement value here.
 public fun refresh_oracle_mtm(
     predict: &mut Predict,
     market_oracle: &MarketOracle,
@@ -372,9 +373,13 @@ public fun compact_settled_oracle(
     predict.vault.compact_settled_oracle(market_oracle.id(), settlement);
 }
 
-/// Per-unit `(fair_price, fee_rate)` quote for a position interval.
+/// Current read-only per-unit `(fair_price, fee_rate)` quote for a position interval.
+///
+/// This is not an execution quote: live mint/redeem execution prices after
+/// applying the trade delta to vault state, and execution also performs
+/// position, quote-asset, trading-pause, ask-bound, and payout checks.
 /// `fee_rate` is an absolute price increment in FLOAT_SCALING, not bps.
-public fun quote_unit_price(
+public fun current_unit_quote(
     predict: &Predict,
     market_oracle: &MarketOracle,
     pyth: &PythSource,
