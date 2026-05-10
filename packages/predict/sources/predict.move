@@ -313,14 +313,10 @@ public fun withdraw<Quote>(
     let shares_burned = lp_coin.value();
     assert!(shares_burned > 0, EZeroAmount);
     let amount = predict.shares_to_amount(shares_burned, vault_value);
-    let balance = predict.vault.balance();
-    let max_payout = predict.vault.total_max_payout();
-    let available = if (balance > max_payout) {
-        balance - max_payout
-    } else {
-        0
-    };
-    assert!(amount <= available, EWithdrawExceedsAvailable);
+    assert!(
+        amount <= predict.max_withdrawable_now_unchecked<Quote>(clock),
+        EWithdrawExceedsAvailable,
+    );
     predict.withdrawal_limiter.consume(amount, clock);
     predict.treasury_cap.burn(lp_coin);
     event::emit(Withdrawn {
@@ -435,9 +431,20 @@ public fun mtm_freshness_ms(predict: &Predict): u64 {
     predict.risk_config.mtm_freshness_ms()
 }
 
-/// Returns the currently available withdrawal amount.
-public fun available_withdrawal(predict: &Predict, clock: &Clock): u64 {
+/// Return vault capital that can leave without violating worst-case backing.
+public fun free_capital(predict: &Predict): u64 {
+    predict.vault.free_capital()
+}
+
+/// Return the withdrawal rate-limiter budget available right now.
+public fun withdrawal_budget_now(predict: &Predict, clock: &Clock): u64 {
     predict.withdrawal_limiter.available_withdrawal(clock)
+}
+
+/// Return the maximum currently withdrawable amount for `Quote`.
+public fun max_withdrawable_now<Quote>(predict: &Predict, clock: &Clock): u64 {
+    predict.vault.assert_unsettled_mtm_fresh(predict.risk_config.mtm_freshness_ms(), clock);
+    predict.max_withdrawable_now_unchecked<Quote>(clock)
 }
 
 /// Return the official total fee amount accrued across all charged Predict trades.
@@ -978,6 +985,14 @@ fun shares_to_amount(predict: &Predict, shares: u64, vault_value: u64): u64 {
     if (shares == 0 || total == 0) return 0;
     if (total == shares) return vault_value;
     mul_div_round_down(shares, vault_value, total)
+}
+
+fun max_withdrawable_now_unchecked<Quote>(predict: &Predict, clock: &Clock): u64 {
+    predict
+        .vault
+        .free_capital()
+        .min(predict.withdrawal_limiter.available_withdrawal(clock))
+        .min(predict.vault.asset_balance<Quote>())
 }
 
 /// Route a full fee balance through the fee reserve and deposit the LP share into the vault.

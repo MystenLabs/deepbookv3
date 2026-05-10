@@ -98,6 +98,15 @@ public fun total_max_payout(vault: &Vault): u64 {
     vault.total_max_payout
 }
 
+/// Return capital that can leave the vault without violating worst-case backing.
+public fun free_capital(vault: &Vault): u64 {
+    if (vault.balance > vault.total_max_payout) {
+        vault.balance - vault.total_max_payout
+    } else {
+        0
+    }
+}
+
 // === Public-Package Functions ===
 
 /// Create an empty vault.
