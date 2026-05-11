@@ -69,7 +69,7 @@ public struct MarketOracleBounds has copy, drop, store {
 public struct SettlementState has copy, drop, store {
     price: u64,
     source: u8,
-    source_timestamp_us: u64,
+    source_timestamp_ms: u64,
     update_timestamp_ms: u64,
 }
 
@@ -123,8 +123,8 @@ public struct MarketOracleSettled has copy, drop, store {
     settlement_price: u64,
     /// `1` means Pyth supplied the settlement spot; `2` means Block Scholes fallback did.
     spot_source: u8,
-    /// Timestamp from the data source used for settlement, in microseconds.
-    source_timestamp_us: u64,
+    /// Timestamp from the data source used for settlement, in milliseconds.
+    source_timestamp_ms: u64,
     /// On-chain timestamp when that data source update landed, in milliseconds.
     update_timestamp_ms: u64,
 }
@@ -375,9 +375,9 @@ public(package) fun block_scholes_svi_freshness_timestamp_ms(market: &MarketOrac
         .min(market.block_scholes_svi.update_timestamp_ms)
 }
 
-public(package) fun settlement_price_and_source_timestamp_us(market: &MarketOracle): (u64, u64) {
+public(package) fun settlement_price_and_source_timestamp_ms(market: &MarketOracle): (u64, u64) {
     let settlement = market.settlement.destroy_some();
-    (settlement.price, settlement.source_timestamp_us)
+    (settlement.price, settlement.source_timestamp_ms)
 }
 
 public(package) fun create_cap(ctx: &mut TxContext): MarketOracleCap {
@@ -500,10 +500,21 @@ fun validate_block_scholes_price_update(
 fun settle_if_possible_internal(market: &mut MarketOracle, pyth: &PythSource, clock: &Clock): bool {
     if (market.status(clock) != STATUS_PENDING_SETTLEMENT) return false;
 
+    let spot_source = market.valid_settlement_spot_source(pyth, clock);
+    if (spot_source.is_none()) return false;
+
+    market.settle_from_spot_source(pyth, spot_source.destroy_some());
+    true
+}
+
+fun valid_settlement_spot_source(
+    market: &MarketOracle,
+    pyth: &PythSource,
+    clock: &Clock,
+): Option<u8> {
     let now = clock.timestamp_ms();
-    let pyth_source_timestamp_us = pyth.source_timestamp_us();
-    let pyth_timestamp = (pyth_source_timestamp_us / 1000).min(pyth.update_timestamp_ms());
-    let block_scholes_spot = market.block_scholes_prices.spot;
+    let pyth_source_timestamp_ms = pyth.source_timestamp_ms();
+    let pyth_timestamp = pyth_source_timestamp_ms.min(pyth.update_timestamp_ms());
     let block_scholes_source_timestamp_ms = market.block_scholes_prices.source_timestamp_ms;
     let block_scholes_update_timestamp_ms = market.block_scholes_prices.update_timestamp_ms;
     let block_scholes_timestamp =
@@ -513,49 +524,60 @@ fun settle_if_possible_internal(market: &mut MarketOracle, pyth: &PythSource, cl
         pyth_timestamp > 0
         && pyth_timestamp <= now
         && now - pyth_timestamp <= market.bounds.settlement_freshness_ms
-        && pyth_source_timestamp_us > market.expiry * 1000;
+        && pyth_source_timestamp_ms > market.expiry;
     let block_scholes_valid =
         block_scholes_timestamp > 0
         && block_scholes_timestamp <= now
         && now - block_scholes_timestamp <= market.bounds.settlement_freshness_ms
         && block_scholes_source_timestamp_ms > market.expiry;
-    if (!pyth_valid && !block_scholes_valid) return false;
+    if (!pyth_valid && !block_scholes_valid) return option::none();
 
     if (
         pyth_valid
             && (
                 !block_scholes_valid
-                    || pyth_source_timestamp_us <= block_scholes_source_timestamp_ms * 1000
+                    || pyth_source_timestamp_ms <= block_scholes_source_timestamp_ms
             )
     ) {
+        option::some(SOURCE_PYTH)
+    } else {
+        option::some(SOURCE_BLOCK_SCHOLES)
+    }
+}
+
+fun settle_from_spot_source(market: &mut MarketOracle, pyth: &PythSource, spot_source: u8) {
+    if (spot_source == SOURCE_PYTH) {
+        let pyth_source_timestamp_ms = pyth.source_timestamp_ms();
         market.settle(
             pyth.spot(),
             SOURCE_PYTH,
-            pyth_source_timestamp_us,
+            pyth_source_timestamp_ms,
             pyth.update_timestamp_ms(),
         );
     } else {
+        let block_scholes_spot = market.block_scholes_prices.spot;
+        let block_scholes_source_timestamp_ms = market.block_scholes_prices.source_timestamp_ms;
+        let block_scholes_update_timestamp_ms = market.block_scholes_prices.update_timestamp_ms;
         market.settle(
             block_scholes_spot,
             SOURCE_BLOCK_SCHOLES,
-            block_scholes_source_timestamp_ms * 1000,
+            block_scholes_source_timestamp_ms,
             block_scholes_update_timestamp_ms,
         );
     };
-    true
 }
 
 fun settle(
     market: &mut MarketOracle,
     settlement_price: u64,
     spot_source: u8,
-    source_timestamp_us: u64,
+    source_timestamp_ms: u64,
     update_timestamp_ms: u64,
 ) {
     market.settlement = option::some(SettlementState {
         price: settlement_price,
         source: spot_source,
-        source_timestamp_us,
+        source_timestamp_ms,
         update_timestamp_ms,
     });
 
@@ -564,7 +586,7 @@ fun settle(
         expiry: market.expiry,
         settlement_price,
         spot_source,
-        source_timestamp_us,
+        source_timestamp_ms,
         update_timestamp_ms,
     });
 }

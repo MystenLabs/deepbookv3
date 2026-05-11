@@ -357,11 +357,8 @@ fun resolve_live_inputs(
 
 fun resolved_settlement_price(market: &MarketOracle): u64 {
     assert!(market.is_settled(), EOracleNotSettled);
-    let (settlement_price, source_timestamp_us) = market.settlement_price_and_source_timestamp_us();
-    assert!(
-        source_timestamp_us > market.expiry() * 1000,
-        EInvalidSettlementTimestamp,
-    );
+    let (settlement_price, source_timestamp_ms) = market.settlement_price_and_source_timestamp_ms();
+    assert!(source_timestamp_ms > market.expiry(), EInvalidSettlementTimestamp);
     settlement_price
 }
 
@@ -394,7 +391,7 @@ fun block_scholes_svi_is_fresh(config: &PricingConfig, market: &MarketOracle, cl
 
 fun pyth_spot_is_fresh(config: &PricingConfig, pyth: &PythSource, clock: &Clock): bool {
     let now = clock.timestamp_ms();
-    let timestamp = (pyth.source_timestamp_us() / 1000).min(pyth.update_timestamp_ms());
+    let timestamp = pyth.source_timestamp_ms().min(pyth.update_timestamp_ms());
     timestamp > 0 && timestamp <= now && now - timestamp <= config.pyth_spot_freshness_ms
 }
 
