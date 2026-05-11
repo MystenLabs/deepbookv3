@@ -208,41 +208,18 @@ The internalizer can be implemented with protocol-accounted balances rather than
 
 Rounding should bias toward leaving dust in protocol-accounted pending state rather than over-minting PLP or overpaying quote.
 
-### Mode D: Embedded PLP CLOB
+### External PLP Liquidity
 
-A more expressive version is to embed a PLP/quote order book into the pool's LP layer.
+PLP does not need a protocol-owned order book. Because PLP is fungible and transferable, limit-style supply and withdrawal can be handled by external PLP markets.
 
 Conceptually:
 
-- users supplying place limit bids for PLP with quote
-- users withdrawing place limit asks for quote with PLP
-- the book matches PLP directly between suppliers, withdrawers, and external searchers
-- searchers can buy PLP from impatient withdrawers or sell PLP to suppliers
-- users can express `limit_supply` and `limit_withdraw` instead of only market-style supply/withdraw
+- users who want to supply can bid for existing PLP on an external venue
+- users who want to withdraw can ask for quote by selling PLP externally
+- searchers can fill those orders when the price is attractive relative to NAV
+- external markets can support limit-supply and limit-withdraw UX without adding order-book logic to the pool vault
 
-The CLOB is a secondary PLP market, not the PLP accounting oracle. The pool's NAV/share-price calculation still comes from the hot-potato MTM snapshot. CLOB trades can clear at user-specified prices, but protocol mint/burn should still use fresh NAV.
-
-A useful interaction model is:
-
-- `limit_supply(max_price, quote_amount, fallback_to_mint)` places a PLP bid.
-- `limit_withdraw(min_price, plp_amount, fallback_to_pool_redeem)` places a PLP ask.
-- Matching transfers quote and PLP between escrowed protocol-accounted balances.
-- If `fallback_to_mint` is enabled and fresh NAV is at or below the user's max price, unmatched quote can mint new PLP from the pool.
-- If `fallback_to_pool_redeem` is enabled and fresh NAV is at or above the user's min price, unmatched PLP can redeem from the pool, subject to withdrawal capacity.
-
-Embedding the book directly inside the pool vault would make PLP order placement and matching contend on the pool object. That may be acceptable because it does not affect expiry trading parallelism, but a separate pool-owned `PLPBook` object may be cleaner if PLP market activity becomes high. The book should not sit inside any expiry object.
-
-Mode D has materially more design surface than Mode C:
-
-- order priority and cancellation
-- lot sizes, ticks, and rounding
-- direct transfer versus internal settled balances
-- partial fills across many accounts
-- stale NAV handling for fallback mint/redeem
-- whether searchers need a separate account object
-- whether multiple quote assets imply one PLP book per quote asset
-
-The recommended path is to design Mode C internalization first and treat the embedded CLOB as a follow-on extension.
+The protocol's responsibility is to expose fresh NAV/share-price data and preserve normal mint, redeem, and internalization flows. External PLP market prices must not define protocol NAV or the share price used for protocol mint/burn.
 
 ### Withdrawal Capacity
 
@@ -335,7 +312,7 @@ The first implementation should prefer a single-PTB snapshot if active expiry co
 - No expiry allocation decrease can violate `allocated_capital >= total_max_payout`.
 - Withdrawals cannot release capital required to preserve max-loss backing.
 - Internalized LP flow transfers existing PLP and quote between participants; it does not change pool NAV, total PLP supply, or expiry allocations.
-- The PLP CLOB, if added, is a secondary market and must not define NAV/share price for protocol mint/burn.
+- External PLP markets must not define NAV/share price for protocol mint/burn.
 - If queues are used, unfilled withdrawal shares remain exposed until a future epoch fills them.
 - A snapshot can finalize only if every active expiry is valued exactly once.
 
@@ -348,9 +325,8 @@ The first implementation should prefer a single-PTB snapshot if active expiry co
 - If inactive supply is used, should activated PLP transfer directly to users or settle into protocol-internal balances?
 - If pending withdrawals are used, should quote payouts transfer directly to users or settle into protocol-internal balances?
 - Should Mode C internalization always run before pool mint/burn, or should users be able to opt out?
-- Should Mode D be embedded in the pool vault or split into a separate pool-owned `PLPBook` object?
-- What limit-order semantics are needed for `limit_supply` and `limit_withdraw`?
-- Should external searchers interact through the same internal-balance account model as LP users?
+- What NAV/share-price feed should external PLP markets and searchers rely on?
+- Should the protocol emit events that make external PLP market making easier?
 - Should active expiry IDs live in the pool vault, registry, or a dedicated active-expiry index object?
 - Should the valuation snapshot use current oracle data directly, or use per-expiry cached oracle state?
 - How should protocol-accounted pending withdrawals represent partial fills?
@@ -372,4 +348,4 @@ The first implementation design should focus on:
 6. Treating LP queues as an optional fallback if inline valuation is too expensive.
 7. Adding simple Mode C internalization before pool mint/burn if fallback queues are used.
 
-Multi-transaction snapshots, the embedded PLP CLOB, external exit liquidity, and more complex capital rebalancing should be deferred until the simple sharded model is proven.
+Multi-transaction snapshots, protocol-owned PLP markets, external exit liquidity, and more complex capital rebalancing should be deferred until the simple sharded model is proven.
