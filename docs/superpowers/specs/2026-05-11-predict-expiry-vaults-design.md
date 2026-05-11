@@ -1,4 +1,4 @@
-# Predict Expiry-Local Vaults and Batched PLP Valuation
+# Predict Expiry-Local Vaults and Fresh PLP Valuation
 
 ## Context
 
@@ -16,11 +16,11 @@ The goal is to make individual expiries independently mutable so trading activit
 - Allow the protocol to increase or decrease capital allocated to an existing expiry.
 - Ensure allocation decreases are limited to an expiry's free capital.
 - Remove live MTM computation from individual mint and redeem paths.
-- Compute global share value only when queued LP deposits and withdrawals are flushed.
+- Compute global share value only when LP supply or withdrawal needs a fresh PLP price.
 
 ## Non-Goals
 
-- This design does not attempt immediate LP supply or withdrawal at continuously updated share prices.
+- This design does not require continuously maintained share prices in the trade path.
 - This design does not transfer an exiting LP's active risk to remaining LPs without compensation.
 - This design does not track which user funded which expiry.
 - This design does not require pausing all trading during normal protocol operation.
@@ -33,13 +33,14 @@ The pool vault is the parent capital object. It owns:
 
 - idle quote capital
 - PLP treasury cap
-- deposit queue state
-- withdrawal queue state
+- optional deposit queue state
+- optional withdrawal queue state
 - latest finalized share price
+- latest finalized share calculation timestamp
 - registry or index of active expiry vault IDs
 - aggregate snapshot state needed to finalize a valuation epoch
 
-The pool vault is cold relative to trading. It is touched by LP requests, allocation changes, and keeper valuation epochs, but not by every market trade.
+The pool vault is cold relative to trading. It is touched by LP requests, allocation changes, and share valuation epochs, but not by every market trade.
 
 ### Expiry Vault
 
@@ -91,37 +92,87 @@ On live redeem, the expiry vault:
 
 On settled redeem, the expiry vault burns the position against terminal settlement liability and pays the settled amount. Settlement and compaction can remain expiry-local.
 
-MTM is only needed by the pool vault when it prices queued PLP deposits and withdrawals.
+MTM is only needed by the pool vault when it needs a fresh PLP price for supply, withdrawal, or a keeper cache refresh.
 
-## LP Request Model
+## LP Entry and Exit Model
 
-LP supply and withdrawal are queued.
+LP supply and withdrawal require a fresh global PLP valuation. The protocol does not need to compute that value unless an LP flow needs it. A keeper cron can still compute share value periodically, but that periodic job is a cache warmer for LP UX, not an accounting requirement for expiry-local trading.
 
-### Supply Request
+There are three viable entry/exit modes. The right default depends on how cheap it is to compute full MTM across all active expiries.
 
-The user deposits quote capital and receives a deposit receipt. The request is not immediately priced into PLP. It joins a pending deposit batch.
+### Mode A: Fresh-Cache Immediate Flow
 
-At the next finalized valuation epoch, the request receives PLP at that epoch's global share price:
+The pool vault stores the latest finalized share calculation and a timestamp. Supply and withdrawal can execute immediately if that calculation is fresh enough.
+
+Example freshness policy:
+
+```text
+clock.now_ms - pool.last_share_calculation_ms <= share_price_freshness_ms
+```
+
+If the cached calculation is fresh:
+
+- supply mints PLP immediately at the cached share price
+- withdrawal burns PLP immediately at the cached share price, subject to max-loss withdrawal capacity
+- no full-expiry MTM calculation is needed in that transaction
+
+This gives immediate UX most of the time if a keeper updates the share calculation frequently enough.
+
+### Mode B: On-Demand Immediate Flow
+
+If the cached share calculation is stale, the user can include the full hot-potato valuation in the same PTB as supply or withdrawal.
+
+The transaction shape is:
+
+1. start a valuation snapshot
+2. collect valuation receipts from all active expiries
+3. finalize the pool share calculation
+4. execute the supply or withdrawal against the fresh share price
+
+If full MTM is cheap enough, this can be the only LP path. There would be no deposit or withdrawal queue; every LP action computes or refreshes the share price as part of the flow.
+
+### Mode C: Queued Fallback
+
+If full MTM is too expensive for every user-triggered supply or withdrawal, stale-price requests can be queued instead.
+
+Supply request:
+
+- user deposits quote capital
+- user receives a deposit receipt
+- request waits for the next finalized valuation epoch
+
+Withdrawal request:
+
+- user escrows PLP
+- user receives a withdrawal receipt
+- request waits for the next finalized valuation epoch
+
+At finalization, deposits receive PLP and withdrawals receive quote at the same global share price:
 
 ```text
 deposit_shares = deposit_amount / share_price
-```
-
-This means new suppliers buy into the full current protocol risk profile at the same price used for withdrawals.
-
-### Withdrawal Request
-
-The user escrows PLP and receives a withdrawal receipt. The request is not immediately paid. It joins a pending withdrawal batch.
-
-At the next finalized valuation epoch, the request receives quote value at that epoch's global share price:
-
-```text
 withdraw_amount = withdrawn_shares * share_price
 ```
 
-Withdrawals still must respect max-loss solvency. If the withdrawal batch cannot be fully paid without preserving worst-case backing, it should be filled pro-rata and the unfilled shares should remain queued and exposed for the next epoch.
+The queue is therefore not fundamental to PLP fungibility. It is a fallback for cases where full valuation is too expensive to run inline with every LP flow.
 
-FIFO withdrawal priority should be avoided unless there is a strong reason to accept queue-position games. Pro-rata fill by withdrawal epoch is the safer default.
+### Withdrawal Capacity
+
+Immediate and queued withdrawals both must respect max-loss solvency. Even if NAV supports a withdrawal by MTM value, the pool cannot release capital needed for worst-case payout.
+
+A conservative capacity formula is:
+
+```text
+withdraw_capacity =
+    pool_idle_capital
+  + pending_deposit_amount
+  + sum(expiry.allocated_capital - expiry.total_max_payout)
+  - target_buffer
+```
+
+The exact formula may need to account for queue ordering, fees, reserved settlement payouts, quote-asset balance availability, and whether pending deposits are immediately deployable in the same epoch.
+
+If a queued withdrawal batch cannot be fully paid without preserving worst-case backing, it should be filled pro-rata and the unfilled shares should remain queued and exposed for the next epoch. FIFO withdrawal priority should be avoided unless there is a strong reason to accept queue-position games.
 
 ## Global Valuation Snapshot
 
@@ -129,14 +180,15 @@ The pool vault can compute global share value through a hot-potato snapshot flow
 
 ### Snapshot Flow
 
-1. A keeper calls `PoolVault::start_snapshot`.
+1. A keeper or user flow calls `PoolVault::start_snapshot`.
 2. The pool vault creates a linear `SnapshotPotato` containing the active expiry set and snapshot epoch ID.
-3. The keeper calls a read/snapshot function on each active expiry vault.
+3. The transaction calls a read/snapshot function on each active expiry vault.
 4. Each expiry vault returns an unforgeable `ExpiryValuation` receipt.
-5. The keeper passes each receipt into `PoolVault::add_expiry_valuation`.
+5. The transaction passes each receipt into `PoolVault::add_expiry_valuation`.
 6. The pool vault accumulates allocated capital, MTM, max payout, and marks that expiry as read.
 7. `PoolVault::finalize_snapshot` consumes the potato only if every active expiry was included exactly once.
-8. Finalization writes the global share price and flushes the LP queues.
+8. Finalization writes the global share price and timestamp.
+9. The same transaction can immediately execute one LP supply or withdrawal, or a keeper can use the finalized price to flush queued LP requests.
 
 The valuation receipt should carry the valuation numbers itself. The API should not accept a separate witness plus caller-provided MTM, because that would let a caller pair a real receipt with fake valuation data.
 
@@ -166,23 +218,7 @@ nav = gross_assets - mtm_liability
 share_price = nav / total_plp_supply
 ```
 
-Deposits and withdrawals in the same epoch use the same share price.
-
-### Withdrawal Capacity
-
-Even if NAV supports a withdrawal by MTM value, the pool cannot release capital needed for worst-case payout.
-
-A conservative capacity formula is:
-
-```text
-withdraw_capacity =
-    pool_idle_capital
-  + pending_deposit_amount
-  + sum(expiry.allocated_capital - expiry.total_max_payout)
-  - target_buffer
-```
-
-The exact formula may need to account for queue ordering, fees, reserved settlement payouts, quote-asset balance availability, and whether pending deposits are immediately deployable in the same epoch.
+Deposits and withdrawals that use the same finalized valuation epoch use the same share price.
 
 ## Snapshot Consistency
 
@@ -202,17 +238,20 @@ The first implementation should prefer a single-PTB snapshot if active expiry co
 ## Invariants
 
 - PLP is fungible: one share equals the same pro-rata claim as every other share.
-- Deposits and withdrawals are priced only at finalized valuation epochs.
+- Deposits and withdrawals are priced only against a fresh finalized valuation.
 - Mint and redeem paths do not mutate global pool valuation state.
 - Expiry trading is solvency-gated by exact max payout, not live MTM.
 - No expiry allocation decrease can violate `allocated_capital >= total_max_payout`.
 - Withdrawals cannot release capital required to preserve max-loss backing.
-- Unfilled withdrawal shares remain exposed until a future epoch fills them.
+- If queues are used, unfilled withdrawal shares remain exposed until a future epoch fills them.
 - A snapshot can finalize only if every active expiry is valued exactly once.
 
 ## Open Questions
 
 - What is the expected upper bound on simultaneously active expiries?
+- Is full-expiry MTM cheap enough to run inline with every LP supply or withdrawal?
+- What freshness threshold should let users rely on cached share calculation?
+- Should stale-price LP flows require an inline hot-potato calculation, fall back to queueing, or let users choose?
 - Should active expiry IDs live in the pool vault, registry, or a dedicated active-expiry index object?
 - Should the valuation snapshot use current oracle data directly, or use per-expiry cached oracle state?
 - How should queued withdrawal receipts represent partial fills?
@@ -229,7 +268,8 @@ The first implementation design should focus on:
 1. Splitting the current vault into parent pool state and per-expiry vault state.
 2. Making mint/redeem mutate only the relevant expiry vault.
 3. Preserving exact per-expiry max-payout solvency.
-4. Adding queued LP supply/withdraw requests.
-5. Adding a single-PTB hot-potato valuation snapshot that finalizes share price and flushes queues.
+4. Adding a fresh-cache share calculation path for LP supply/withdraw.
+5. Adding a single-PTB hot-potato valuation snapshot that finalizes share price.
+6. Treating LP queues as an optional fallback if inline valuation is too expensive.
 
-Multi-transaction snapshots, instant withdrawals, external exit liquidity, and more complex capital rebalancing should be deferred until the simple sharded model is proven.
+Multi-transaction snapshots, external exit liquidity, and more complex capital rebalancing should be deferred until the simple sharded model is proven.
