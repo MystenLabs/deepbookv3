@@ -381,7 +381,15 @@ public fun current_unit_quote(
     clock: &Clock,
 ): (u64, u64) {
     predict.assert_range_key_matches(market_oracle, &key);
-    predict.quote_unit(market_oracle, pyth, &key, clock)
+    pricing::quote_range(
+        &predict.pricing_config,
+        market_oracle,
+        pyth,
+        clock,
+        &key,
+        predict.vault.total_mtm(),
+        predict.vault.balance(),
+    )
 }
 
 /// Return market_oracle IDs whose unsettled exposure must be refreshed before LP flows.
@@ -958,49 +966,21 @@ fun quote_live_redeem_amounts(
     quantity: u64,
     clock: &Clock,
 ): (u64, u64) {
-    let (fair_price, fee_rate) = predict.quote_live_unit(market_oracle, pyth, &key, clock);
+    let (fair_price, fee_rate) = pricing::quote_live_range(
+        &predict.pricing_config,
+        market_oracle,
+        pyth,
+        clock,
+        &key,
+        predict.vault.total_mtm(),
+        predict.vault.balance(),
+    );
 
     let principal_amount = math::mul(fair_price, quantity);
     let fee_amount = math::mul(fee_rate, quantity);
     let fee_amount = fee_amount.min(principal_amount);
 
     (principal_amount, fee_amount)
-}
-
-fun quote_unit(
-    predict: &Predict,
-    market_oracle: &MarketOracle,
-    pyth: &PythSource,
-    key: &RangeKey,
-    clock: &Clock,
-): (u64, u64) {
-    pricing::quote_range(
-        &predict.pricing_config,
-        market_oracle,
-        pyth,
-        clock,
-        key,
-        predict.vault.total_mtm(),
-        predict.vault.balance(),
-    )
-}
-
-fun quote_live_unit(
-    predict: &Predict,
-    market_oracle: &MarketOracle,
-    pyth: &PythSource,
-    key: &RangeKey,
-    clock: &Clock,
-): (u64, u64) {
-    pricing::quote_live_range(
-        &predict.pricing_config,
-        market_oracle,
-        pyth,
-        clock,
-        key,
-        predict.vault.total_mtm(),
-        predict.vault.balance(),
-    )
 }
 
 fun build_live_curve(
