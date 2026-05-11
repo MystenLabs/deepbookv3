@@ -16,7 +16,8 @@ module deepbook_predict::vault;
 
 use deepbook::math;
 use deepbook_predict::{
-    oracle_config::CurvePoint,
+    constants,
+    pricing::{Self, CurvePoint},
     range_key::RangeKey,
     strike_matrix::{Self, StrikeMatrix}
 };
@@ -27,9 +28,23 @@ const EExceedsMaxTotalExposure: u64 = 1;
 const EOracleExposureNotFound: u64 = 2;
 const EMtmExceedsBalance: u64 = 3;
 const EAssetNotInVault: u64 = 4;
+const EStaleOracleMtm: u64 = 5;
+const EExpiredOracleMtm: u64 = 6;
+const EInvalidStrike: u64 = 7;
+const EOracleMatrixAlreadyExists: u64 = 8;
+const EOracleMetadataAlreadyExists: u64 = 9;
+const EOracleAlreadyCompacted: u64 = 10;
 
 /// Dynamic bag key for storing a concrete asset balance by type.
 public struct BalanceKey<phantom T> has copy, drop, store {}
+
+/// Oracle metadata needed for vault-side exposure validation.
+public struct OracleMetadata has copy, drop, store {
+    expiry: u64,
+    min_strike: u64,
+    max_strike: u64,
+    tick_size: u64,
+}
 
 /// Vault state for balances, exposure matrices, and aggregate liability.
 public struct Vault has store {
@@ -39,6 +54,8 @@ public struct Vault has store {
     balance: u64,
     /// Per-oracle matrix for strike-level position tracking.
     oracle_matrices: Table<ID, StrikeMatrix>,
+    /// Per-oracle grid and expiry metadata.
+    oracle_metadata: Table<ID, OracleMetadata>,
     /// Settlement prices for compacted oracles.
     compacted_oracle_settlements: Table<ID, u64>,
     /// Sum of all oracle matrix MTM values.
@@ -84,6 +101,15 @@ public fun total_max_payout(vault: &Vault): u64 {
     vault.total_max_payout
 }
 
+/// Return capital that can leave the vault without violating worst-case backing.
+public fun free_capital(vault: &Vault): u64 {
+    if (vault.balance > vault.total_max_payout) {
+        vault.balance - vault.total_max_payout
+    } else {
+        0
+    }
+}
+
 // === Public-Package Functions ===
 
 /// Create an empty vault.
@@ -92,6 +118,7 @@ public(package) fun new(ctx: &mut TxContext): Vault {
         balances: bag::new(ctx),
         balance: 0,
         oracle_matrices: table::new(ctx),
+        oracle_metadata: table::new(ctx),
         compacted_oracle_settlements: table::new(ctx),
         total_mtm: 0,
         total_max_payout: 0,
@@ -103,20 +130,32 @@ public(package) fun new(ctx: &mut TxContext): Vault {
 public(package) fun init_oracle_matrix(
     vault: &mut Vault,
     oracle_id: ID,
+    expiry: u64,
     min_strike: u64,
     max_strike: u64,
     tick_size: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    if (!vault.oracle_matrices.contains(oracle_id)) {
-        vault
-            .oracle_matrices
-            .add(
-                oracle_id,
-                strike_matrix::new(ctx, tick_size, min_strike, max_strike, clock),
-            );
-    };
+    assert!(!vault.oracle_matrices.contains(oracle_id), EOracleMatrixAlreadyExists);
+    assert!(!vault.oracle_metadata.contains(oracle_id), EOracleMetadataAlreadyExists);
+    vault
+        .oracle_matrices
+        .add(
+            oracle_id,
+            strike_matrix::new(ctx, tick_size, min_strike, max_strike, clock),
+        );
+    vault
+        .oracle_metadata
+        .add(
+            oracle_id,
+            OracleMetadata {
+                expiry,
+                min_strike,
+                max_strike,
+                tick_size,
+            },
+        );
 }
 
 /// Insert a live vertical range and refresh live risk accounting.
@@ -155,29 +194,38 @@ public(package) fun remove_live_range(
     vault.remove_unsettled_exposed_oracle_if_empty(oracle_id);
 }
 
-/// Remove a settled vertical range from dense matrix exposure or compacted liability.
+/// Remove a settled vertical range from dense matrix exposure.
 public(package) fun remove_settled_range(
     vault: &mut Vault,
     key: RangeKey,
     quantity: u64,
     settlement: u64,
     clock: &Clock,
-) {
+): u64 {
     let oracle_id = key.oracle_id();
     let lower = key.lower_strike();
     let higher = key.higher_strike();
-    if (vault.compacted_oracle_settlements.contains(oracle_id)) {
-        let settlement_price = *vault.compacted_oracle_settlements.borrow(oracle_id);
-        let payout = key.settled_payout(settlement_price, quantity);
-        vault.total_mtm = vault.total_mtm - payout;
-        vault.total_max_payout = vault.total_max_payout - payout;
-        vault.remove_unsettled_exposed_oracle(oracle_id);
-    } else {
-        assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
-        let matrix = &mut vault.oracle_matrices[oracle_id];
-        matrix.remove_range(lower, higher, quantity);
-        vault.apply_settled_oracle_valuation(oracle_id, settlement, clock);
-    };
+    assert!(!vault.compacted_oracle_settlements.contains(oracle_id), EOracleAlreadyCompacted);
+    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+    let matrix = &mut vault.oracle_matrices[oracle_id];
+    matrix.remove_range(lower, higher, quantity);
+    vault.apply_settled_oracle_valuation(oracle_id, settlement, clock);
+    pricing::settled_range_payout(settlement, &key, quantity)
+}
+
+/// Remove a compacted settled range using the vault-stored terminal settlement.
+public(package) fun remove_compacted_settled_range(
+    vault: &mut Vault,
+    key: RangeKey,
+    quantity: u64,
+): u64 {
+    let oracle_id = key.oracle_id();
+    assert!(vault.compacted_oracle_settlements.contains(oracle_id), EOracleExposureNotFound);
+    let settlement_price = *vault.compacted_oracle_settlements.borrow(oracle_id);
+    let payout = pricing::settled_range_payout(settlement_price, &key, quantity);
+    vault.total_mtm = vault.total_mtm - payout;
+    vault.total_max_payout = vault.total_max_payout - payout;
+    payout
 }
 
 /// Accept payment into vault balance.
@@ -200,19 +248,11 @@ public(package) fun assert_total_exposure(vault: &Vault, max_total_pct: u64) {
 }
 
 /// Compact a settled oracle's dense matrix into fixed-size liability state.
-public(package) fun compact_settled_oracle_if_needed(
-    vault: &mut Vault,
-    oracle_id: ID,
-    settlement: u64,
-) {
-    if (vault.compacted_oracle_settlements.contains(oracle_id)) {
-        vault.remove_unsettled_exposed_oracle(oracle_id);
-        return
-    };
-
+public(package) fun compact_settled_oracle(vault: &mut Vault, oracle_id: ID, settlement: u64) {
+    assert!(!vault.compacted_oracle_settlements.contains(oracle_id), EOracleAlreadyCompacted);
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
     let matrix = vault.oracle_matrices.remove(oracle_id);
-    vault.remove_unsettled_exposed_oracle(oracle_id);
+    vault.remove_unsettled_exposed_oracle_if_present(oracle_id);
     let old_mtm = matrix.mtm();
     let old_max_payout = matrix.max_payout();
     let remaining_liability = strike_matrix::into_settled_liability(matrix, settlement);
@@ -226,6 +266,34 @@ public(package) fun compact_settled_oracle_if_needed(
 /// Return oracle IDs requiring fresh MTM before LP supply/withdraw.
 public(package) fun unsettled_exposed_oracles(vault: &Vault): &vector<ID> {
     &vault.unsettled_exposed_oracles
+}
+
+/// Return true once an oracle's dense matrix has been compacted.
+public(package) fun is_compacted_oracle(vault: &Vault, oracle_id: ID): bool {
+    vault.compacted_oracle_settlements.contains(oracle_id)
+}
+
+/// Assert every unsettled exposed oracle has a fresh cached MTM for LP flows.
+///
+/// Once an exposed oracle expires, it must be settled/refreshed before LP supply
+/// or withdraw can continue; live MTM freshness is only valid pre-expiry.
+public(package) fun assert_unsettled_mtm_fresh(
+    vault: &Vault,
+    mtm_freshness_ms: u64,
+    clock: &Clock,
+) {
+    let mut i = 0;
+    let len = vault.unsettled_exposed_oracles.length();
+    let now = clock.timestamp_ms();
+    while (i < len) {
+        let oracle_id = vault.unsettled_exposed_oracles[i];
+        assert!(now < vault.oracle_expiry(oracle_id), EExpiredOracleMtm);
+        let last_update = vault.oracle_matrices[oracle_id].last_mtm_update();
+        if (now > last_update) {
+            assert!(now - last_update <= mtm_freshness_ms, EStaleOracleMtm);
+        };
+        i = i + 1;
+    }
 }
 
 /// Return the historical minted strike bounds needed to value an oracle.
@@ -242,9 +310,7 @@ public(package) fun apply_live_valuation(
     curve: vector<CurvePoint>,
     clock: &Clock,
 ) {
-    if (vault.compacted_oracle_settlements.contains(oracle_id)) {
-        return
-    };
+    assert!(!vault.compacted_oracle_settlements.contains(oracle_id), EOracleAlreadyCompacted);
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
     let matrix = &mut vault.oracle_matrices[oracle_id];
     let (old_mtm, old_max_payout, new_mtm, new_max_payout) = matrix.refresh_live_risk(
@@ -255,16 +321,17 @@ public(package) fun apply_live_valuation(
 }
 
 /// Apply settled valuation and clear the oracle from the live-refresh worklist.
+///
+/// This freezes MTM at the terminal payout while the dense matrix still tracks
+/// worst-case liability; compaction releases that remaining reserve into fixed
+/// settled liability state.
 public(package) fun apply_settled_oracle_valuation(
     vault: &mut Vault,
     oracle_id: ID,
     settlement: u64,
     clock: &Clock,
 ) {
-    if (vault.compacted_oracle_settlements.contains(oracle_id)) {
-        vault.remove_unsettled_exposed_oracle(oracle_id);
-        return
-    };
+    assert!(!vault.compacted_oracle_settlements.contains(oracle_id), EOracleAlreadyCompacted);
     assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
     let matrix = &mut vault.oracle_matrices[oracle_id];
     let (old_mtm, old_max_payout, new_mtm, new_max_payout) = matrix.refresh_settled_risk(
@@ -272,16 +339,40 @@ public(package) fun apply_settled_oracle_valuation(
         clock,
     );
     vault.update_cached_risk(old_mtm, old_max_payout, new_mtm, new_max_payout);
-    vault.remove_unsettled_exposed_oracle(oracle_id);
+    vault.remove_unsettled_exposed_oracle_if_present(oracle_id);
 }
 
-/// Return the cached MTM update timestamp for an oracle.
-public(package) fun get_last_mtm_update(vault: &Vault, oracle_id: ID): u64 {
-    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
-    vault.oracle_matrices[oracle_id].last_mtm_update()
+/// Load the configured strike-grid parameters for an oracle.
+public(package) fun grid_params(vault: &Vault, oracle_id: ID): (u64, u64, u64) {
+    assert!(vault.oracle_metadata.contains(oracle_id), EOracleExposureNotFound);
+    let metadata = vault.oracle_metadata[oracle_id];
+    (metadata.min_strike, metadata.tick_size, metadata.max_strike)
+}
+
+/// Return the registered expiry for an oracle.
+public(package) fun oracle_expiry(vault: &Vault, oracle_id: ID): u64 {
+    assert!(vault.oracle_metadata.contains(oracle_id), EOracleExposureNotFound);
+    vault.oracle_metadata[oracle_id].expiry
+}
+
+/// Assert that both finite strikes in a range key sit on the oracle's configured grid.
+public(package) fun assert_range_key_matches(vault: &Vault, key: &RangeKey) {
+    let oracle_id = key.oracle_id();
+    if (key.lower_strike() != constants::neg_inf!()) {
+        vault.assert_valid_strike(oracle_id, key.lower_strike());
+    };
+    if (key.higher_strike() != constants::pos_inf!()) {
+        vault.assert_valid_strike(oracle_id, key.higher_strike());
+    };
 }
 
 // === Private Functions ===
+
+fun assert_valid_strike(vault: &Vault, oracle_id: ID, strike: u64) {
+    let (min_strike, tick_size, max_strike) = vault.grid_params(oracle_id);
+    assert!(strike >= min_strike && strike <= max_strike, EInvalidStrike);
+    assert!((strike - min_strike) % tick_size == 0, EInvalidStrike);
+}
 
 fun add_unsettled_exposed_oracle(vault: &mut Vault, oracle_id: ID) {
     let mut i = 0;
@@ -297,10 +388,10 @@ fun remove_unsettled_exposed_oracle_if_empty(vault: &mut Vault, oracle_id: ID) {
     let matrix = &vault.oracle_matrices[oracle_id];
     if (matrix.mtm() != 0 || matrix.max_payout() != 0) return;
 
-    vault.remove_unsettled_exposed_oracle(oracle_id);
+    vault.remove_unsettled_exposed_oracle_if_present(oracle_id);
 }
 
-fun remove_unsettled_exposed_oracle(vault: &mut Vault, oracle_id: ID) {
+fun remove_unsettled_exposed_oracle_if_present(vault: &mut Vault, oracle_id: ID) {
     let mut i = 0;
     while (i < vault.unsettled_exposed_oracles.length()) {
         if (vault.unsettled_exposed_oracles[i] == oracle_id) {

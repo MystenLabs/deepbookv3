@@ -1,65 +1,48 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Admin-tunable defaults paired with hard floor/ceiling bounds.
+/// Tunable defaults paired with hard floor/ceiling bounds.
 ///
 /// Every macro in this module falls into one of two roles:
 /// - `default_*` — the value an oracle or config is seeded with at creation.
-/// - `*_floor` / `*_ceiling` / `max_*` — hard admin-safety envelope enforced
-///   by setter validation; admin can retune within it, but not past it.
+/// - `*_floor` / `*_ceiling` / `max_*` — hard safety envelope enforced by
+///   setter validation; authorized callers can retune within it, but not past it.
 ///
 /// Split out of `constants.move` so the admin-safety envelope is visible at
 /// the module-structure level rather than buried alongside fixed protocol
 /// constants.
 module deepbook_predict::tuning_constants;
 
-// === Staleness Thresholds ===
+// === Freshness Thresholds ===
 
-/// Default spot halt-gate threshold (3 seconds).
-/// With the operator's 1s `update_prices` cadence, a 3s gate lets the fallback
-/// path carry the oracle through arbitrary-length Lazer outages while still
-/// halting within 3s when both feeds go silent.
-public macro fun default_spot_staleness_threshold_ms(): u64 { 3_000 }
+/// Default maximum age of the Block Scholes spot/forward update (3 seconds).
+/// Pricing uses this for live reads.
+public macro fun default_block_scholes_prices_freshness_ms(): u64 { 3_000 }
 
-/// Default maximum age of the cached operator basis (60 seconds).
-/// Consumed by `update_spot_from_lazer` (refuses to derive a forward against
-/// a stale basis) and by `oracle_config::assert_live_oracle` /
-/// `assert_quoteable_oracle` (refuses to quote against a stale basis).
-/// Generous vs. the operator's 1s `update_prices` cadence.
-public macro fun default_basis_staleness_threshold_ms(): u64 { 60_000 }
+/// Default maximum age of the Block Scholes SVI update (60 seconds).
+public macro fun default_block_scholes_svi_freshness_ms(): u64 { 60_000 }
 
-/// Hard upper bound (60s) for the oracle and basis staleness thresholds.
-/// Admin setters reject anything larger — beyond this the liveness gate
-/// stops meaningfully protecting quoting and settlement.
-public macro fun max_staleness_threshold_ms(): u64 { 60_000 }
+/// Default maximum age for the source selected as a settlement spot (3 seconds).
+public macro fun default_settlement_freshness_ms(): u64 { 3_000 }
 
-/// Default window within which the last Pyth Lazer spot push is treated as
-/// the authoritative master spot (2 seconds). While Lazer is within this
-/// window, `update_prices` refreshes basis/forward but does NOT overwrite
-/// `oracle.prices.spot`. Beyond it, the operator's spot flows through as a
-/// fallback. Independent of `default_spot_staleness_threshold_ms!()` (the hard
-/// halt gate) which is always checked on top.
-public macro fun default_lazer_authoritative_threshold_ms(): u64 { 2_000 }
+/// Hard upper bound (60s) for oracle freshness thresholds.
+/// Freshness setters reject anything larger — beyond this the liveness gate
+/// stops meaningfully protecting quoting.
+public macro fun max_freshness_threshold_ms(): u64 { 60_000 }
 
-/// Default window within which Lazer's last spot push is treated as the
-/// authoritative settlement source (60 seconds). Longer than the live-update
-/// window because settlement is irreversible — gate the terminal
-/// `update_prices` settlement branch so the operator can't race-freeze while
-/// Lazer is still credibly the settlement oracle. Matches
-/// `max_staleness_threshold_ms!()` so settlement patience maxes at the same
-/// ceiling admin can choose for other staleness windows.
-public macro fun default_lazer_settlement_authoritative_threshold_ms(): u64 { 60_000 }
+/// Default window within which the latest Pyth spot update is treated as
+/// canonical (2 seconds). Pricing uses this for live reads.
+public macro fun default_pyth_spot_freshness_ms(): u64 { 2_000 }
 
 // === Basis Circuit Breaker ===
 
-/// Default maximum per-push spot deviation accepted by `update_prices`
+/// Default maximum per-push spot deviation accepted by Block Scholes price updates
 /// (2% in FLOAT_SCALING). Catches decimal errors, fat-finger pushes, and
-/// BS outages that return garbage values. Admin can override per asset
-/// via `registry::set_asset_basis_bounds` for assets with different
-/// volatility profiles.
+/// BS outages that return garbage values. Operators can retune per market
+/// via `market_oracle::set_basis_bounds` when needed.
 public macro fun default_max_spot_deviation(): u64 { 20_000_000 }
 
-/// Default maximum per-push basis deviation accepted by `update_prices`
+/// Default maximum per-push basis deviation accepted by Block Scholes price updates
 /// (2% in FLOAT_SCALING). Basis = forward / spot moves slowly relative
 /// to spot; a large per-push move is always suspicious. Tighter than
 /// the absolute `[min_basis, max_basis]` bounds so a single push can't

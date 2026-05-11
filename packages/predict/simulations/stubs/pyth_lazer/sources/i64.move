@@ -1,7 +1,7 @@
 // Stub of pyth_lazer::i64 for localnet simulation builds only. The real
 // pyth_lazer package transitively depends on wormhole, whose source cannot be
 // compiled fresh against the 2024.beta edition. This stub exposes just the
-// symbols `deepbook_predict::oracle` references so the sim can build without
+// symbols `deepbook_predict::lazer_helper` references so the sim can build without
 // pulling pyth_lazer + wormhole.
 module pyth_lazer::i64;
 

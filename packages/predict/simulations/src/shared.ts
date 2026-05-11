@@ -44,10 +44,10 @@ export interface ResultsFile {
 
 export interface SimState {
   predictId: string;
+  pythSourceId: string;
   oracleId: string;
   oracleCapId: string;
   managerId: string;
-  expiry: string;
 }
 
 type RawScenarioRow = Record<string, string>;
@@ -187,6 +187,18 @@ export function loadScenario(path = SCENARIO_PATH): ScenarioRow[] {
 
 export function readJson<T>(filePath: string): T {
   return JSON.parse(readFileSync(filePath, "utf8")) as T;
+}
+
+export function validateSimState(value: SimState): SimState {
+  const requiredFields = ["predictId", "pythSourceId", "oracleId", "oracleCapId", "managerId"] as const;
+  for (const field of requiredFields) {
+    if (typeof value[field] !== "string" || value[field].length === 0) {
+      throw new Error(
+        `Simulation state is missing ${field}; rerun setup after the oracle rearchitecture`
+      );
+    }
+  }
+  return value;
 }
 
 export function writeJson(filePath: string, value: unknown): void {

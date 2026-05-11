@@ -1,10 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Range key module - identifies a vertical range position by oracle, expiry,
-/// and the two strikes that define the band.
+/// Range key module - identifies a vertical range position by oracle and the
+/// two strikes that define the band.
 ///
-/// The canonical instrument is the band `(oracle, expiry, lower, higher)`.
+/// The canonical instrument is the band `(oracle, lower, higher)`.
 /// Bull-call and bear-put ranges with the same strikes are vault-identical and
 /// share the same RangeKey row.
 module deepbook_predict::range_key;
@@ -16,7 +16,6 @@ const EInvalidStrikes: u64 = 0;
 /// Key for a vertical range position used in PredictManager and Vault.
 public struct RangeKey has copy, drop, store {
     oracle_id: ID,
-    expiry: u64,
     lower_strike: u64,
     higher_strike: u64,
 }
@@ -25,23 +24,18 @@ public struct RangeKey has copy, drop, store {
 
 /// Create a new RangeKey. Aborts if `lower_strike >= higher_strike` or the
 /// range spans both sentinel endpoints.
-public fun new(oracle_id: ID, expiry: u64, lower_strike: u64, higher_strike: u64): RangeKey {
+public fun new(oracle_id: ID, lower_strike: u64, higher_strike: u64): RangeKey {
     assert!(lower_strike < higher_strike, EInvalidStrikes);
     assert!(
         !(lower_strike == constants::neg_inf!() && higher_strike == constants::pos_inf!()),
         EInvalidStrikes,
     );
-    RangeKey { oracle_id, expiry, lower_strike, higher_strike }
+    RangeKey { oracle_id, lower_strike, higher_strike }
 }
 
 /// Get the oracle_id from a RangeKey.
 public fun oracle_id(key: &RangeKey): ID {
     key.oracle_id
-}
-
-/// Get the expiry from a RangeKey.
-public fun expiry(key: &RangeKey): u64 {
-    key.expiry
 }
 
 /// Get the lower strike from a RangeKey.
@@ -82,20 +76,4 @@ public(package) fun extend_strike_range(
     };
 
     (min_strike, max_strike)
-}
-
-/// Return this key's settled payout at a concrete settlement price.
-public(package) fun settled_payout(key: &RangeKey, settlement: u64, quantity: u64): u64 {
-    settled_range_payout(settlement, key.lower_strike, key.higher_strike, quantity)
-}
-
-/// Return settled payout for `(lower, higher]` with sentinel endpoints.
-fun settled_range_payout(settlement: u64, lower: u64, higher: u64, quantity: u64): u64 {
-    let above_lower = lower == constants::neg_inf!() || settlement > lower;
-    let at_or_below_higher = higher == constants::pos_inf!() || settlement <= higher;
-    if (above_lower && at_or_below_higher) {
-        quantity
-    } else {
-        0
-    }
 }
