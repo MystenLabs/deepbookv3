@@ -38,7 +38,7 @@ The pool vault is the parent capital object. It owns:
 - optional pending-withdrawal accounting
 - latest finalized share price
 - latest finalized share calculation timestamp
-- registry or index of active expiry vault IDs
+- active expiry vault IDs required for full valuation snapshots
 - aggregate snapshot state needed to finalize a valuation epoch
 
 The pool vault is cold relative to trading. It is touched by LP requests, allocation changes, and share valuation epochs, but not by every market trade.
@@ -316,7 +316,6 @@ This design assumes the keeper or user can pay enough gas to value the active ex
 - Should Mode C internalization always run before pool mint/burn, or should users be able to opt out?
 - What NAV/share-price feed should external PLP markets and searchers rely on?
 - Should the protocol emit events that make external PLP market making easier?
-- Should active expiry IDs live in the pool vault, registry, or a dedicated active-expiry index object?
 - Should the valuation snapshot use current oracle data directly, or use per-expiry cached oracle state?
 - How should protocol-accounted pending withdrawals represent partial fills?
 - Are pending deposits deployable in the same epoch that prices them, or only after withdrawal settlement completes?
