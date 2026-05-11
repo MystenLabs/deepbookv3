@@ -11,7 +11,7 @@ module deepbook_predict::market_oracle;
 
 use deepbook::math;
 use deepbook_predict::{i64, pyth_source::PythSource, tuning_constants};
-use sui::{clock::Clock, event};
+use sui::{clock::Clock, event, vec_set::{Self, VecSet}};
 
 const EInvalidMarketOracleCap: u64 = 0;
 const EMarketExpired: u64 = 1;
@@ -75,7 +75,7 @@ public struct SettlementState has copy, drop, store {
 
 public struct MarketOracle has key {
     id: UID,
-    cap_id: ID,
+    authorized_cap_ids: VecSet<ID>,
     pyth_source_id: ID,
     expiry: u64,
     block_scholes_prices: BlockScholesPriceState,
@@ -384,6 +384,11 @@ public(package) fun create_cap(ctx: &mut TxContext): MarketOracleCap {
     MarketOracleCap { id: object::new(ctx) }
 }
 
+public(package) fun destroy_cap(cap: MarketOracleCap) {
+    let MarketOracleCap { id } = cap;
+    id.delete();
+}
+
 public(package) fun create(
     pyth_source_id: ID,
     expiry: u64,
@@ -394,9 +399,11 @@ public(package) fun create(
     let uid = object::new(ctx);
     let market_oracle_id = uid.to_inner();
     let cap_id = cap.id.to_inner();
+    let mut authorized_cap_ids = vec_set::empty();
+    authorized_cap_ids.insert(cap_id);
     let market = MarketOracle {
         id: uid,
-        cap_id,
+        authorized_cap_ids,
         pyth_source_id,
         expiry,
         block_scholes_prices: BlockScholesPriceState {
@@ -424,6 +431,21 @@ public(package) fun create(
     market_oracle_id
 }
 
+public(package) fun register_cap(market: &mut MarketOracle, cap: &MarketOracleCap) {
+    let cap_id = cap.id.to_inner();
+    assert!(!market.authorized_cap_ids.contains(&cap_id), EInvalidMarketOracleCap);
+    market.authorized_cap_ids.insert(cap_id);
+}
+
+public(package) fun unregister_cap(market: &mut MarketOracle, cap_id: ID) {
+    assert!(market.authorized_cap_ids.contains(&cap_id), EInvalidMarketOracleCap);
+    market.authorized_cap_ids.remove(&cap_id);
+}
+
+public(package) fun self_unregister_cap(market: &mut MarketOracle, cap: &MarketOracleCap) {
+    market.unregister_cap(cap.id.to_inner());
+}
+
 public(package) fun new_bounds(
     settlement_freshness_ms: u64,
     max_spot_deviation: u64,
@@ -444,7 +466,10 @@ public(package) fun new_bounds(
 }
 
 public(package) fun assert_authorized_cap(market: &MarketOracle, cap: &MarketOracleCap) {
-    assert!(market.cap_id == cap.id.to_inner(), EInvalidMarketOracleCap);
+    assert!(
+        market.authorized_cap_ids.contains(&cap.id.to_inner()),
+        EInvalidMarketOracleCap,
+    );
 }
 
 public(package) fun assert_pyth_source_id(market: &MarketOracle, pyth_source_id: ID) {
@@ -661,4 +686,67 @@ fun emit_bounds_updated(market: &MarketOracle) {
         min_basis: b.min_basis,
         max_basis: b.max_basis,
     });
+}
+
+// === Test-Only Functions ===
+
+#[test_only]
+public(package) fun create_test_market_oracle(
+    expiry: u64,
+    cap: &MarketOracleCap,
+    ctx: &mut TxContext,
+): MarketOracle {
+    let pyth_uid = object::new(ctx);
+    let pyth_source_id = pyth_uid.to_inner();
+    pyth_uid.delete();
+
+    let mut authorized_cap_ids = vec_set::empty();
+    authorized_cap_ids.insert(cap.id.to_inner());
+
+    MarketOracle {
+        id: object::new(ctx),
+        authorized_cap_ids,
+        pyth_source_id,
+        expiry,
+        block_scholes_prices: BlockScholesPriceState {
+            spot: 0,
+            forward: 0,
+            source_timestamp_ms: 0,
+            update_timestamp_ms: 0,
+        },
+        block_scholes_svi: BlockScholesSVIState {
+            params: SVIParams {
+                a: 0,
+                b: 0,
+                rho: i64::zero(),
+                m: i64::zero(),
+                sigma: 0,
+            },
+            source_timestamp_ms: 0,
+            update_timestamp_ms: 0,
+        },
+        bounds: MarketOracleBounds {
+            settlement_freshness_ms: tuning_constants::default_settlement_freshness_ms!(),
+            max_spot_deviation: tuning_constants::default_max_spot_deviation!(),
+            max_basis_deviation: tuning_constants::default_max_basis_deviation!(),
+            min_basis: tuning_constants::default_min_basis!(),
+            max_basis: tuning_constants::default_max_basis!(),
+        },
+        settlement: option::none(),
+    }
+}
+
+#[test_only]
+public(package) fun destroy_for_testing(market: MarketOracle) {
+    let MarketOracle {
+        id,
+        authorized_cap_ids: _,
+        pyth_source_id: _,
+        expiry: _,
+        block_scholes_prices: _,
+        block_scholes_svi: _,
+        bounds: _,
+        settlement: _,
+    } = market;
+    id.delete();
 }

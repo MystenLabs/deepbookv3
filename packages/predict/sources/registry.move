@@ -10,7 +10,7 @@ module deepbook_predict::registry;
 
 use deepbook_predict::{
     constants,
-    market_oracle::{Self, MarketOracleCap},
+    market_oracle::{Self, MarketOracle, MarketOracleCap},
     plp::PLP,
     predict::{Self, Predict},
     predict_manager::{Self, PredictManager},
@@ -54,6 +54,16 @@ public struct MarketOracleCreated has copy, drop, store {
     expiry: u64,
     min_strike: u64,
     tick_size: u64,
+}
+
+public struct MarketOracleCapRegistered has copy, drop, store {
+    market_oracle_id: ID,
+    cap_id: ID,
+}
+
+public struct MarketOracleCapUnregistered has copy, drop, store {
+    market_oracle_id: ID,
+    cap_id: ID,
 }
 
 /// Capability for admin operations.
@@ -113,6 +123,41 @@ public fun create_pyth_source(
 /// Admin-only creation of a new MarketOracleCap.
 public fun create_market_oracle_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): MarketOracleCap {
     market_oracle::create_cap(ctx)
+}
+
+/// Register an additional MarketOracleCap as authorized to update a market oracle.
+public fun register_market_oracle_cap(
+    market: &mut MarketOracle,
+    _admin_cap: &AdminCap,
+    cap: &MarketOracleCap,
+) {
+    market_oracle::register_cap(market, cap);
+    event::emit(MarketOracleCapRegistered {
+        market_oracle_id: market.id(),
+        cap_id: object::id(cap),
+    });
+}
+
+/// Revoke a MarketOracleCap's authorization on a market oracle.
+public fun unregister_market_oracle_cap(
+    market: &mut MarketOracle,
+    _admin_cap: &AdminCap,
+    cap_id: ID,
+) {
+    market_oracle::unregister_cap(market, cap_id);
+    event::emit(MarketOracleCapUnregistered { market_oracle_id: market.id(), cap_id });
+}
+
+/// Cap holder voluntarily removes its own cap from a market oracle.
+public fun self_unregister_market_oracle_cap(market: &mut MarketOracle, cap: &MarketOracleCap) {
+    let cap_id = object::id(cap);
+    market_oracle::self_unregister_cap(market, cap);
+    event::emit(MarketOracleCapUnregistered { market_oracle_id: market.id(), cap_id });
+}
+
+/// Destroy a MarketOracleCap the holder no longer needs.
+public fun destroy_market_oracle_cap(cap: MarketOracleCap) {
+    market_oracle::destroy_cap(cap);
 }
 
 /// Create a new market oracle. Returns the market oracle ID.
