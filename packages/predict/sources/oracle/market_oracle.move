@@ -45,6 +45,49 @@ public struct SVIParams has copy, drop, store {
     sigma: u64,
 }
 
+public struct BlockScholesPriceState has copy, drop, store {
+    spot: u64,
+    forward: u64,
+    source_timestamp_ms: u64,
+    update_timestamp_ms: u64,
+}
+
+public struct BlockScholesSVIState has copy, drop, store {
+    params: SVIParams,
+    source_timestamp_ms: u64,
+    update_timestamp_ms: u64,
+}
+
+public struct MarketOracleBounds has copy, drop, store {
+    settlement_freshness_ms: u64,
+    max_spot_deviation: u64,
+    max_basis_deviation: u64,
+    min_basis: u64,
+    max_basis: u64,
+}
+
+public struct SettlementState has copy, drop, store {
+    price: u64,
+    source: u8,
+    source_timestamp_us: u64,
+    update_timestamp_ms: u64,
+}
+
+public struct MarketOracle has key {
+    id: UID,
+    cap_id: ID,
+    pyth_source_id: ID,
+    expiry: u64,
+    block_scholes_prices: BlockScholesPriceState,
+    block_scholes_svi: BlockScholesSVIState,
+    bounds: MarketOracleBounds,
+    settlement: Option<SettlementState>,
+}
+
+public struct MarketOracleCap has key, store {
+    id: UID,
+}
+
 public struct BlockScholesPricesUpdated has copy, drop, store {
     market_oracle_id: ID,
     spot: u64,
@@ -86,37 +129,6 @@ public struct MarketOracleSettled has copy, drop, store {
     update_timestamp_ms: u64,
 }
 
-public struct MarketOracleBounds has copy, drop, store {
-    settlement_freshness_ms: u64,
-    max_spot_deviation: u64,
-    max_basis_deviation: u64,
-    min_basis: u64,
-    max_basis: u64,
-}
-
-public struct MarketOracle has key {
-    id: UID,
-    cap_id: ID,
-    pyth_source_id: ID,
-    expiry: u64,
-    block_scholes_spot: u64,
-    block_scholes_forward: u64,
-    block_scholes_price_source_timestamp_ms: u64,
-    block_scholes_price_update_timestamp_ms: u64,
-    block_scholes_svi: SVIParams,
-    block_scholes_svi_source_timestamp_ms: u64,
-    block_scholes_svi_update_timestamp_ms: u64,
-    bounds: MarketOracleBounds,
-    settlement_price: Option<u64>,
-    settlement_source: u8,
-    settlement_source_timestamp_us: u64,
-    settlement_update_timestamp_ms: u64,
-}
-
-public struct MarketOracleCap has key, store {
-    id: UID,
-}
-
 // === Public Functions ===
 
 public fun new_svi_params(a: u64, b: u64, rho: i64::I64, m: i64::I64, sigma: u64): SVIParams {
@@ -136,7 +148,7 @@ public fun expiry(market: &MarketOracle): u64 {
 }
 
 public fun is_settled(market: &MarketOracle): bool {
-    market.settlement_price.is_some()
+    market.settlement.is_some()
 }
 
 /// Return the raw terminal settlement price field.
@@ -144,19 +156,12 @@ public fun is_settled(market: &MarketOracle): bool {
 /// App execution should prefer `pricing::settlement_price`, which also enforces
 /// settlement timestamp invariants before exposing the value.
 public fun raw_settlement_price(market: &MarketOracle): Option<u64> {
-    market.settlement_price
-}
-
-public fun settlement_source(market: &MarketOracle): u8 {
-    market.settlement_source
-}
-
-public fun settlement_source_timestamp_us(market: &MarketOracle): u64 {
-    market.settlement_source_timestamp_us
-}
-
-public fun settlement_update_timestamp_ms(market: &MarketOracle): u64 {
-    market.settlement_update_timestamp_ms
+    let settlement = market.settlement;
+    if (settlement.is_some()) {
+        option::some(settlement.destroy_some().price)
+    } else {
+        option::none()
+    }
 }
 
 public fun status(market: &MarketOracle, clock: &Clock): u8 {
@@ -190,23 +195,23 @@ public fun source_block_scholes(): u8 {
 }
 
 public fun block_scholes_spot(market: &MarketOracle): u64 {
-    market.block_scholes_spot
+    market.block_scholes_prices.spot
 }
 
 public fun block_scholes_forward(market: &MarketOracle): u64 {
-    market.block_scholes_forward
+    market.block_scholes_prices.forward
 }
 
 public fun block_scholes_price_source_timestamp_ms(market: &MarketOracle): u64 {
-    market.block_scholes_price_source_timestamp_ms
+    market.block_scholes_prices.source_timestamp_ms
 }
 
 public fun block_scholes_price_update_timestamp_ms(market: &MarketOracle): u64 {
-    market.block_scholes_price_update_timestamp_ms
+    market.block_scholes_prices.update_timestamp_ms
 }
 
 public fun block_scholes_svi(market: &MarketOracle): SVIParams {
-    market.block_scholes_svi
+    market.block_scholes_svi.params
 }
 
 public fun svi_a(svi: &SVIParams): u64 {
@@ -230,11 +235,11 @@ public fun svi_sigma(svi: &SVIParams): u64 {
 }
 
 public fun block_scholes_svi_source_timestamp_ms(market: &MarketOracle): u64 {
-    market.block_scholes_svi_source_timestamp_ms
+    market.block_scholes_svi.source_timestamp_ms
 }
 
 public fun block_scholes_svi_update_timestamp_ms(market: &MarketOracle): u64 {
-    market.block_scholes_svi_update_timestamp_ms
+    market.block_scholes_svi.update_timestamp_ms
 }
 
 /// Update Block Scholes spot/forward data and settle the market if possible.
@@ -296,13 +301,16 @@ public fun update_svi(
     market.assert_authorized_cap(cap);
     assert!(market.status(clock) == STATUS_ACTIVE, EMarketExpired);
     assert!(
-        source_timestamp_ms > market.block_scholes_svi_source_timestamp_ms,
+        source_timestamp_ms > market.block_scholes_svi.source_timestamp_ms,
         EStaleSVISourceUpdate,
     );
     assert!(source_timestamp_ms <= clock.timestamp_ms(), EFutureSVISourceUpdate);
-    market.block_scholes_svi = svi;
-    market.block_scholes_svi_source_timestamp_ms = source_timestamp_ms;
-    market.block_scholes_svi_update_timestamp_ms = clock.timestamp_ms();
+    let update_timestamp_ms = clock.timestamp_ms();
+    market.block_scholes_svi = BlockScholesSVIState {
+        params: svi,
+        source_timestamp_ms,
+        update_timestamp_ms,
+    };
 
     event::emit(BlockScholesSVIUpdated {
         market_oracle_id: market.id.to_inner(),
@@ -312,7 +320,7 @@ public fun update_svi(
         m: svi_m(&svi),
         sigma: svi_sigma(&svi),
         source_timestamp_ms,
-        update_timestamp_ms: clock.timestamp_ms(),
+        update_timestamp_ms,
     });
 }
 
@@ -347,9 +355,29 @@ public fun set_basis_bounds(
 // === Public-Package Functions ===
 
 public(package) fun block_scholes_basis(market: &MarketOracle): u64 {
-    assert!(market.block_scholes_spot > 0, EZeroSpot);
-    assert!(market.block_scholes_forward > 0, EZeroForward);
-    math::div(market.block_scholes_forward, market.block_scholes_spot)
+    let prices = &market.block_scholes_prices;
+    assert!(prices.spot > 0, EZeroSpot);
+    assert!(prices.forward > 0, EZeroForward);
+    math::div(prices.forward, prices.spot)
+}
+
+public(package) fun block_scholes_price_freshness_timestamp_ms(market: &MarketOracle): u64 {
+    market
+        .block_scholes_prices
+        .source_timestamp_ms
+        .min(market.block_scholes_prices.update_timestamp_ms)
+}
+
+public(package) fun block_scholes_svi_freshness_timestamp_ms(market: &MarketOracle): u64 {
+    market
+        .block_scholes_svi
+        .source_timestamp_ms
+        .min(market.block_scholes_svi.update_timestamp_ms)
+}
+
+public(package) fun settlement_price_and_source_timestamp_us(market: &MarketOracle): (u64, u64) {
+    let settlement = market.settlement.destroy_some();
+    (settlement.price, settlement.source_timestamp_us)
 }
 
 public(package) fun create_cap(ctx: &mut TxContext): MarketOracleCap {
@@ -371,24 +399,25 @@ public(package) fun create(
         cap_id,
         pyth_source_id,
         expiry,
-        block_scholes_spot: 0,
-        block_scholes_forward: 0,
-        block_scholes_price_source_timestamp_ms: 0,
-        block_scholes_price_update_timestamp_ms: 0,
-        block_scholes_svi: SVIParams {
-            a: 0,
-            b: 0,
-            rho: i64::zero(),
-            m: i64::zero(),
-            sigma: 0,
+        block_scholes_prices: BlockScholesPriceState {
+            spot: 0,
+            forward: 0,
+            source_timestamp_ms: 0,
+            update_timestamp_ms: 0,
         },
-        block_scholes_svi_source_timestamp_ms: 0,
-        block_scholes_svi_update_timestamp_ms: 0,
+        block_scholes_svi: BlockScholesSVIState {
+            params: SVIParams {
+                a: 0,
+                b: 0,
+                rho: i64::zero(),
+                m: i64::zero(),
+                sigma: 0,
+            },
+            source_timestamp_ms: 0,
+            update_timestamp_ms: 0,
+        },
         bounds,
-        settlement_price: option::none(),
-        settlement_source: 0,
-        settlement_source_timestamp_us: 0,
-        settlement_update_timestamp_ms: 0,
+        settlement: option::none(),
     };
 
     transfer::share_object(market);
@@ -433,10 +462,12 @@ fun apply_block_scholes_prices(
     clock: &Clock,
 ) {
     let update_timestamp_ms = clock.timestamp_ms();
-    market.block_scholes_spot = spot;
-    market.block_scholes_forward = forward;
-    market.block_scholes_price_source_timestamp_ms = source_timestamp_ms;
-    market.block_scholes_price_update_timestamp_ms = update_timestamp_ms;
+    market.block_scholes_prices = BlockScholesPriceState {
+        spot,
+        forward,
+        source_timestamp_ms,
+        update_timestamp_ms,
+    };
 
     event::emit(BlockScholesPricesUpdated {
         market_oracle_id: market.id.to_inner(),
@@ -458,7 +489,7 @@ fun validate_block_scholes_price_update(
     assert!(spot > 0, EZeroSpot);
     assert!(forward > 0, EZeroForward);
     assert!(
-        source_timestamp_ms > market.block_scholes_price_source_timestamp_ms,
+        source_timestamp_ms > market.block_scholes_prices.source_timestamp_ms,
         EStalePriceSourceUpdate,
     );
     assert!(source_timestamp_ms <= clock.timestamp_ms(), EFuturePriceSourceUpdate);
@@ -472,8 +503,11 @@ fun settle_if_possible_internal(market: &mut MarketOracle, pyth: &PythSource, cl
     let now = clock.timestamp_ms();
     let pyth_source_timestamp_us = pyth.source_timestamp_us();
     let pyth_timestamp = (pyth_source_timestamp_us / 1000).min(pyth.update_timestamp_ms());
-    let block_scholes_source_timestamp_ms = market.block_scholes_price_source_timestamp_ms;
-    let block_scholes_timestamp = block_scholes_source_timestamp_ms.min(market.block_scholes_price_update_timestamp_ms);
+    let block_scholes_spot = market.block_scholes_prices.spot;
+    let block_scholes_source_timestamp_ms = market.block_scholes_prices.source_timestamp_ms;
+    let block_scholes_update_timestamp_ms = market.block_scholes_prices.update_timestamp_ms;
+    let block_scholes_timestamp =
+        block_scholes_source_timestamp_ms.min(block_scholes_update_timestamp_ms);
 
     let pyth_valid =
         pyth_timestamp > 0
@@ -501,8 +535,6 @@ fun settle_if_possible_internal(market: &mut MarketOracle, pyth: &PythSource, cl
             pyth.update_timestamp_ms(),
         );
     } else {
-        let block_scholes_spot = market.block_scholes_spot;
-        let block_scholes_update_timestamp_ms = market.block_scholes_price_update_timestamp_ms;
         market.settle(
             block_scholes_spot,
             SOURCE_BLOCK_SCHOLES,
@@ -520,10 +552,12 @@ fun settle(
     source_timestamp_us: u64,
     update_timestamp_ms: u64,
 ) {
-    market.settlement_price = option::some(settlement_price);
-    market.settlement_source = spot_source;
-    market.settlement_source_timestamp_us = source_timestamp_us;
-    market.settlement_update_timestamp_ms = update_timestamp_ms;
+    market.settlement = option::some(SettlementState {
+        price: settlement_price,
+        source: spot_source,
+        source_timestamp_us,
+        update_timestamp_ms,
+    });
 
     event::emit(MarketOracleSettled {
         market_oracle_id: market.id.to_inner(),
@@ -544,7 +578,8 @@ fun compute_bounded_basis(market: &MarketOracle, spot: u64, forward: u64): u64 {
 
 fun validate_basis_push(market: &MarketOracle, new_spot: u64, new_basis: u64) {
     let bounds = &market.bounds;
-    let prev_spot = market.block_scholes_spot;
+    let prices = &market.block_scholes_prices;
+    let prev_spot = prices.spot;
     if (prev_spot > 0) {
         assert!(
             within_deviation(prev_spot, new_spot, bounds.max_spot_deviation),
@@ -552,7 +587,7 @@ fun validate_basis_push(market: &MarketOracle, new_spot: u64, new_basis: u64) {
         );
     };
 
-    let prev_forward = market.block_scholes_forward;
+    let prev_forward = prices.forward;
     if (prev_spot > 0 && prev_forward > 0) {
         let prev_basis = market.block_scholes_basis();
         assert!(

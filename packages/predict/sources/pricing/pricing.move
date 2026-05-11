@@ -310,11 +310,12 @@ fun resolve_live_inputs(
 
 fun resolved_settlement_price(market: &MarketOracle): u64 {
     assert!(market.is_settled(), EOracleNotSettled);
+    let (settlement_price, source_timestamp_us) = market.settlement_price_and_source_timestamp_us();
     assert!(
-        market.settlement_source_timestamp_us() > market.expiry() * 1000,
+        source_timestamp_us > market.expiry() * 1000,
         EInvalidSettlementTimestamp,
     );
-    market.raw_settlement_price().destroy_some()
+    settlement_price
 }
 
 /// Compute the settled price for the range `(lower, higher]`.
@@ -334,17 +335,13 @@ fun block_scholes_price_is_fresh(
     clock: &Clock,
 ): bool {
     let now = clock.timestamp_ms();
-    let timestamp = market
-        .block_scholes_price_source_timestamp_ms()
-        .min(market.block_scholes_price_update_timestamp_ms());
+    let timestamp = market.block_scholes_price_freshness_timestamp_ms();
     timestamp > 0 && timestamp <= now && now - timestamp <= config.block_scholes_prices_freshness_ms
 }
 
 fun block_scholes_svi_is_fresh(config: &PricingConfig, market: &MarketOracle, clock: &Clock): bool {
     let now = clock.timestamp_ms();
-    let timestamp = market
-        .block_scholes_svi_source_timestamp_ms()
-        .min(market.block_scholes_svi_update_timestamp_ms());
+    let timestamp = market.block_scholes_svi_freshness_timestamp_ms();
     timestamp > 0 && timestamp <= now && now - timestamp <= config.block_scholes_svi_freshness_ms
 }
 
