@@ -34,8 +34,8 @@ The pool vault is the parent capital object. It owns:
 
 - idle quote capital
 - PLP treasury cap
-- optional deposit queue state
-- optional withdrawal queue state
+- optional inactive-supply accounting
+- optional pending-withdrawal accounting
 - latest finalized share price
 - latest finalized share calculation timestamp
 - registry or index of active expiry vault IDs
@@ -131,28 +131,43 @@ The transaction shape is:
 
 If full MTM is cheap enough, this can be the only LP path. There would be no deposit or withdrawal queue; every LP action computes or refreshes the share price as part of the flow.
 
-### Mode C: Queued Fallback
+### Mode C: Inactive Supply and Pending Withdrawal Fallback
 
 If full MTM is too expensive for every user-triggered supply or withdrawal, stale-price requests can be queued instead.
 
 Supply request:
 
 - user deposits quote capital
-- user receives a deposit receipt
-- request waits for the next finalized valuation epoch
+- protocol records the amount as inactive supply keyed by the user's account or address
+- inactive supply is not PLP yet and does not participate in active risk until pushed
+- a keeper finalizes a valuation epoch and pushes inactive supply into active PLP
 
 Withdrawal request:
 
-- user escrows PLP
-- user receives a withdrawal receipt
+- user escrows or burns PLP into protocol-controlled pending withdrawal state
+- protocol records the withdrawal shares keyed by the user's account or address
 - request waits for the next finalized valuation epoch
 
-At finalization, deposits receive PLP and withdrawals receive quote at the same global share price:
+At finalization, inactive supplies receive PLP and withdrawals receive quote at the same global share price:
 
 ```text
 deposit_shares = deposit_amount / share_price
 withdraw_amount = withdrawn_shares * share_price
 ```
+
+The PLP created from inactive supply can be delivered in one of two ways:
+
+- mint and transfer PLP directly to the user's address when the keeper pushes the supply
+- keep the minted PLP in protocol-internal settled balances, similar to DeepBook core's `settled_balances`, and let the user claim it later
+
+The internal-balance approach avoids creating separate user-owned deposit objects and keeps the fallback closer to DeepBook's existing inactive-stake and settlement patterns. The direct-transfer approach gives simpler UX if the keeper transaction can safely transfer to each supplier.
+
+Withdrawal payouts should use the same protocol-accounted pattern:
+
+- pay quote directly to the user's address when the keeper pushes the withdrawal
+- or record the quote payout in protocol-internal settled balances for later claim
+
+In both cases, the user does not hold a separate withdrawal token or object. Their pending withdrawal is protocol-accounted state until it is pushed.
 
 The queue is therefore not fundamental to PLP fungibility. It is a fallback for cases where full valuation is too expensive to run inline with every LP flow.
 
@@ -255,9 +270,11 @@ The first implementation should prefer a single-PTB snapshot if active expiry co
 - Is full-expiry MTM cheap enough to run inline with every LP supply or withdrawal?
 - What freshness threshold should let users rely on cached share calculation?
 - Should stale-price LP flows require an inline hot-potato calculation, fall back to queueing, or let users choose?
+- If inactive supply is used, should activated PLP transfer directly to users or settle into protocol-internal balances?
+- If pending withdrawals are used, should quote payouts transfer directly to users or settle into protocol-internal balances?
 - Should active expiry IDs live in the pool vault, registry, or a dedicated active-expiry index object?
 - Should the valuation snapshot use current oracle data directly, or use per-expiry cached oracle state?
-- How should queued withdrawal receipts represent partial fills?
+- How should protocol-accounted pending withdrawals represent partial fills?
 - Are pending deposits deployable in the same epoch that prices them, or only after withdrawal settlement completes?
 - What target buffer should sit above exact max-payout backing?
 - Should fee reserves and insurance reserves participate in NAV or remain outside PLP value?
