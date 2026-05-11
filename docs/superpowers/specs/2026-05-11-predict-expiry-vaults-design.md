@@ -16,7 +16,7 @@ The goal is to make individual expiries independently mutable so trading activit
 - Allow the protocol to increase or decrease capital allocated to an existing expiry.
 - Ensure allocation decreases are limited to an expiry's free capital.
 - Remove live MTM computation from individual mint and redeem paths.
-- Keep MTM out of persistent expiry-vault state; compute it only through explicit valuation endpoints.
+- Eliminate MTM from persistent expiry-market state; compute it only through pure valuation endpoints.
 - Compute global share value only when LP supply or withdrawal needs a fresh PLP price.
 
 ## Non-Goals
@@ -71,7 +71,7 @@ This lets governance or keeper logic resize active expiries without underfunding
 
 ## Trade Path
 
-Mint and redeem operations should not compute or maintain MTM, either globally or inside the expiry vault. Their risk responsibility is exact max-payout solvency.
+Mint and redeem operations should not compute or maintain MTM, either globally or inside the expiry vault. Expiry markets should hold no MTM fields. Their risk responsibility is exact max-payout solvency.
 
 On mint, the expiry vault:
 
@@ -92,7 +92,7 @@ On live redeem, the expiry vault:
 
 On settled redeem, the expiry vault burns the position against terminal settlement liability and pays the settled amount. Settlement and compaction can remain expiry-local.
 
-MTM is only needed when the pool vault needs a fresh PLP price for supply, withdrawal, or a keeper cache refresh. The expiry vault should expose a valuation endpoint that computes MTM from current expiry exposure and pricing inputs, then returns a linear valuation receipt for the hot-potato snapshot flow. That endpoint is separate from mint and redeem.
+MTM is only needed when the pool vault needs a fresh PLP price for supply, withdrawal, or a keeper cache refresh. The expiry vault should expose a pure valuation endpoint that reads current expiry exposure and pricing inputs, computes MTM, then returns a linear valuation receipt for the hot-potato snapshot flow. That endpoint is separate from mint and redeem and must not write MTM into the expiry.
 
 ## LP Entry and Exit Model
 
@@ -241,7 +241,7 @@ The pool vault can compute global share value through a hot-potato snapshot flow
 1. A keeper or user flow calls `PoolVault::start_snapshot`.
 2. The pool vault creates a linear `SnapshotPotato` containing the active expiry set and snapshot epoch ID.
 3. The transaction calls a read/snapshot function on each active expiry vault.
-4. Each expiry vault computes MTM for that call and returns an unforgeable `ExpiryValuation` receipt.
+4. Each expiry vault computes MTM as a pure read for that call and returns an unforgeable `ExpiryValuation` receipt.
 5. The transaction passes each receipt into `PoolVault::add_expiry_valuation`.
 6. The pool vault accumulates allocated capital, MTM, max payout, and marks that expiry as read.
 7. `PoolVault::finalize_snapshot` consumes the potato only if every active expiry was included exactly once.
@@ -264,11 +264,11 @@ public struct ExpiryValuation {
 
 The exact fields need to be designed for Move linearity. The important property is that only the expiry vault module can create a valid valuation receipt for that expiry and snapshot, and the receipt must be consumed by the pool snapshot flow.
 
-The receipt is the MTM output. The expiry vault should not persist the MTM value after creating the receipt.
+The receipt is the MTM output. The expiry vault should not persist the MTM value before, during, or after creating the receipt.
 
 ### Valuation Inputs
 
-The snapshot valuation endpoint should compute MTM from the current pricing inputs passed into the snapshot transaction. In practice, that means reading the active expiry vault, its market oracle, and the same live pricing/oracle sources used by the trade quote path. The expiry vault should not maintain a separate cached oracle curve or cached valuation state just for snapshots.
+The snapshot valuation endpoint should compute MTM from the current pricing inputs passed into the snapshot transaction. In practice, that means reading the active expiry vault, its market oracle, and the same live pricing/oracle sources used by the trade quote path. The expiry vault should not maintain any cached MTM, cached oracle curve, or cached valuation state just for snapshots.
 
 ### Share Price
 
@@ -276,7 +276,7 @@ At finalization:
 
 ```text
 gross_assets = pool_idle_capital + sum(expiry.allocated_capital)
-mtm_liability = sum(expiry.mtm)
+mtm_liability = sum(expiry_valuation_receipt.mtm)
 nav = gross_assets - mtm_liability
 share_price = nav / total_plp_supply
 ```
@@ -297,6 +297,7 @@ Share-price calculation must fail if any active expiry is expired but unsettled.
 - Deposits and withdrawals are priced only against a fresh finalized valuation.
 - Mint and redeem paths do not mutate global pool valuation state.
 - Mint and redeem paths do not compute or store expiry MTM.
+- Expiry markets hold no MTM fields.
 - Expiry trading is solvency-gated by exact max payout, not live MTM.
 - No expiry allocation decrease can violate `allocated_capital >= total_max_payout`.
 - Withdrawals cannot release capital required to preserve max-loss backing.
