@@ -91,19 +91,6 @@ public struct TradingPauseUpdated has copy, drop, store {
     paused: bool,
 }
 
-/// Emitted when pricing configuration changes.
-public struct PricingConfigUpdated has copy, drop, store {
-    predict_id: ID,
-    base_fee: u64,
-    min_fee: u64,
-    utilization_multiplier: u64,
-    min_ask_price: u64,
-    max_ask_price: u64,
-    pyth_spot_freshness_ms: u64,
-    block_scholes_prices_freshness_ms: u64,
-    block_scholes_svi_freshness_ms: u64,
-}
-
 /// Emitted when fee reserve distribution shares change.
 public struct FeeReserveConfigUpdated has copy, drop, store {
     predict_id: ID,
@@ -578,20 +565,20 @@ public(package) fun set_trading_paused(predict: &mut Predict, paused: bool) {
 
 /// Set base fee.
 public(package) fun set_base_fee(predict: &mut Predict, fee: u64) {
-    predict.pricing_config.set_base_fee(fee);
-    predict.emit_pricing_config_updated();
+    let predict_id = predict.id.to_inner();
+    predict.pricing_config.set_base_fee(predict_id, fee);
 }
 
 /// Set min fee.
 public(package) fun set_min_fee(predict: &mut Predict, fee: u64) {
-    predict.pricing_config.set_min_fee(fee);
-    predict.emit_pricing_config_updated();
+    let predict_id = predict.id.to_inner();
+    predict.pricing_config.set_min_fee(predict_id, fee);
 }
 
 /// Set utilization multiplier.
 public(package) fun set_utilization_multiplier(predict: &mut Predict, multiplier: u64) {
-    predict.pricing_config.set_utilization_multiplier(multiplier);
-    predict.emit_pricing_config_updated();
+    let predict_id = predict.id.to_inner();
+    predict.pricing_config.set_utilization_multiplier(predict_id, multiplier);
 }
 
 /// Set fee distribution shares.
@@ -612,14 +599,14 @@ public(package) fun set_fee_shares(
 
 /// Set the global minimum allowed all-in mint price.
 public(package) fun set_min_ask_price(predict: &mut Predict, value: u64) {
-    predict.pricing_config.set_min_ask_price(value);
-    predict.emit_pricing_config_updated();
+    let predict_id = predict.id.to_inner();
+    predict.pricing_config.set_min_ask_price(predict_id, value);
 }
 
 /// Set the global maximum allowed all-in mint price.
 public(package) fun set_max_ask_price(predict: &mut Predict, value: u64) {
-    predict.pricing_config.set_max_ask_price(value);
-    predict.emit_pricing_config_updated();
+    let predict_id = predict.id.to_inner();
+    predict.pricing_config.set_max_ask_price(predict_id, value);
 }
 
 /// Set max total exposure percentage.
@@ -636,20 +623,22 @@ public(package) fun set_mtm_freshness_ms(predict: &mut Predict, value: u64) {
 
 /// Update the live Pyth spot freshness threshold used by pricing reads.
 public(package) fun set_pyth_spot_freshness_ms(predict: &mut Predict, value: u64) {
-    predict.pricing_config.set_pyth_spot_freshness_ms(value);
-    predict.emit_pricing_config_updated();
+    let predict_id = predict.id.to_inner();
+    predict.pricing_config.set_pyth_spot_freshness_ms(predict_id, value);
 }
 
 /// Update the live Block Scholes spot/forward freshness threshold used by pricing reads.
 public(package) fun set_block_scholes_prices_freshness_ms(predict: &mut Predict, value: u64) {
-    predict.pricing_config.set_block_scholes_prices_freshness_ms(value);
-    predict.emit_pricing_config_updated();
+    let predict_id = predict.id.to_inner();
+    predict
+        .pricing_config
+        .set_block_scholes_prices_freshness_ms(predict_id, value);
 }
 
 /// Update the live Block Scholes SVI freshness threshold used by pricing reads.
 public(package) fun set_block_scholes_svi_freshness_ms(predict: &mut Predict, value: u64) {
-    predict.pricing_config.set_block_scholes_svi_freshness_ms(value);
-    predict.emit_pricing_config_updated();
+    let predict_id = predict.id.to_inner();
+    predict.pricing_config.set_block_scholes_svi_freshness_ms(predict_id, value);
 }
 
 /// Bind `asset → pyth_lazer_feed_id` so `create_market_oracle` can infer the feed
@@ -945,8 +934,15 @@ fun quote_mint_amounts(
     quantity: u64,
     clock: &Clock,
 ): (u64, u64) {
-    let (fair_price, fee_rate) = predict.quote_live_unit(market_oracle, pyth, &key, clock);
-    predict.pricing_config.assert_mint_quote_allowed(fair_price, fee_rate);
+    let (fair_price, fee_rate) = pricing::quote_mint_live_range(
+        &predict.pricing_config,
+        market_oracle,
+        pyth,
+        clock,
+        &key,
+        predict.vault.total_mtm(),
+        predict.vault.balance(),
+    );
 
     let principal_amount = math::mul(fair_price, quantity);
     let fee_amount = math::mul(fee_rate, quantity);
@@ -1083,23 +1079,6 @@ fun emit_position_redeemed<Quote>(
         payout,
         fee_amount,
         is_settled,
-    });
-}
-
-/// Emit the full current pricing-config snapshot.
-fun emit_pricing_config_updated(predict: &Predict) {
-    event::emit(PricingConfigUpdated {
-        predict_id: object::id(predict),
-        base_fee: predict.pricing_config.base_fee(),
-        min_fee: predict.pricing_config.min_fee(),
-        utilization_multiplier: predict.pricing_config.utilization_multiplier(),
-        min_ask_price: predict.pricing_config.min_ask_price(),
-        max_ask_price: predict.pricing_config.max_ask_price(),
-        pyth_spot_freshness_ms: predict.pricing_config.pyth_spot_freshness_ms(),
-        block_scholes_prices_freshness_ms: predict
-            .pricing_config
-            .block_scholes_prices_freshness_ms(),
-        block_scholes_svi_freshness_ms: predict.pricing_config.block_scholes_svi_freshness_ms(),
     });
 }
 

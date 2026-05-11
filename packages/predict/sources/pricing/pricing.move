@@ -19,7 +19,7 @@ use deepbook_predict::{
     range_key::RangeKey,
     tuning_constants
 };
-use sui::clock::Clock;
+use sui::{clock::Clock, event};
 
 const EInvalidFee: u64 = 0;
 const EInvalidAskBound: u64 = 1;
@@ -66,6 +66,19 @@ public struct PricingConfig has store {
     block_scholes_svi_freshness_ms: u64,
 }
 
+/// Emitted when pricing configuration changes.
+public struct PricingConfigUpdated has copy, drop, store {
+    predict_id: ID,
+    base_fee: u64,
+    min_fee: u64,
+    utilization_multiplier: u64,
+    min_ask_price: u64,
+    max_ask_price: u64,
+    pyth_spot_freshness_ms: u64,
+    block_scholes_prices_freshness_ms: u64,
+    block_scholes_svi_freshness_ms: u64,
+}
+
 /// Curve sample point with strike and one-sided UP price.
 public struct CurvePoint has copy, drop, store {
     strike: u64,
@@ -106,21 +119,6 @@ public(package) fun max_ask_price(config: &PricingConfig): u64 {
     config.max_ask_price
 }
 
-/// Return the live Pyth spot freshness threshold.
-public(package) fun pyth_spot_freshness_ms(config: &PricingConfig): u64 {
-    config.pyth_spot_freshness_ms
-}
-
-/// Return the live Block Scholes spot/forward freshness threshold.
-public(package) fun block_scholes_prices_freshness_ms(config: &PricingConfig): u64 {
-    config.block_scholes_prices_freshness_ms
-}
-
-/// Return the live Block Scholes SVI freshness threshold.
-public(package) fun block_scholes_svi_freshness_ms(config: &PricingConfig): u64 {
-    config.block_scholes_svi_freshness_ms
-}
-
 /// Return the strike stored in a curve point.
 public(package) fun strike(point: &CurvePoint): u64 {
     point.strike
@@ -146,52 +144,72 @@ public(package) fun new(): PricingConfig {
 }
 
 /// Set the base fee multiplier.
-public(package) fun set_base_fee(config: &mut PricingConfig, fee: u64) {
+public(package) fun set_base_fee(config: &mut PricingConfig, predict_id: ID, fee: u64) {
     assert!(fee > 0 && fee <= constants::float_scaling!(), EInvalidFee);
     config.base_fee = fee;
+    emit_config_updated(config, predict_id);
 }
 
 /// Set the minimum fee floor.
-public(package) fun set_min_fee(config: &mut PricingConfig, fee: u64) {
+public(package) fun set_min_fee(config: &mut PricingConfig, predict_id: ID, fee: u64) {
     assert!(fee <= constants::float_scaling!(), EInvalidFee);
     config.min_fee = fee;
+    emit_config_updated(config, predict_id);
 }
 
 /// Set the utilization multiplier.
-public(package) fun set_utilization_multiplier(config: &mut PricingConfig, multiplier: u64) {
+public(package) fun set_utilization_multiplier(
+    config: &mut PricingConfig,
+    predict_id: ID,
+    multiplier: u64,
+) {
     assert!(multiplier <= constants::max_utilization_multiplier!(), EInvalidUtilizationMultiplier);
     config.utilization_multiplier = multiplier;
+    emit_config_updated(config, predict_id);
 }
 
 /// Set the global minimum allowed mint price.
-public(package) fun set_min_ask_price(config: &mut PricingConfig, value: u64) {
+public(package) fun set_min_ask_price(config: &mut PricingConfig, predict_id: ID, value: u64) {
     assert!(value < config.max_ask_price, EInvalidAskBound);
     config.min_ask_price = value;
+    emit_config_updated(config, predict_id);
 }
 
 /// Set the global maximum allowed mint price.
-public(package) fun set_max_ask_price(config: &mut PricingConfig, value: u64) {
+public(package) fun set_max_ask_price(config: &mut PricingConfig, predict_id: ID, value: u64) {
     assert!(value > config.min_ask_price, EInvalidAskBound);
     assert!(value < constants::float_scaling!(), EInvalidAskBound);
     config.max_ask_price = value;
+    emit_config_updated(config, predict_id);
 }
 
 /// Set the live Pyth spot freshness threshold.
-public(package) fun set_pyth_spot_freshness_ms(config: &mut PricingConfig, value: u64) {
+public(package) fun set_pyth_spot_freshness_ms(config: &mut PricingConfig, predict_id: ID, value: u64) {
     validate_freshness_ms(value);
     config.pyth_spot_freshness_ms = value;
+    emit_config_updated(config, predict_id);
 }
 
 /// Set the live Block Scholes spot/forward freshness threshold.
-public(package) fun set_block_scholes_prices_freshness_ms(config: &mut PricingConfig, value: u64) {
+public(package) fun set_block_scholes_prices_freshness_ms(
+    config: &mut PricingConfig,
+    predict_id: ID,
+    value: u64,
+) {
     validate_freshness_ms(value);
     config.block_scholes_prices_freshness_ms = value;
+    emit_config_updated(config, predict_id);
 }
 
 /// Set the live Block Scholes SVI freshness threshold.
-public(package) fun set_block_scholes_svi_freshness_ms(config: &mut PricingConfig, value: u64) {
+public(package) fun set_block_scholes_svi_freshness_ms(
+    config: &mut PricingConfig,
+    predict_id: ID,
+    value: u64,
+) {
     validate_freshness_ms(value);
     config.block_scholes_svi_freshness_ms = value;
+    emit_config_updated(config, predict_id);
 }
 
 /// Build an adaptive piecewise-linear UP-price curve over a configured grid range.
@@ -252,6 +270,21 @@ public(package) fun quote_live_range(
     (fair_price, quote_fee_rate(config, fair_price, liability, balance))
 }
 
+/// Quote a live mint range and abort unless the all-in mint price is allowed.
+public(package) fun quote_mint_live_range(
+    config: &PricingConfig,
+    market: &MarketOracle,
+    pyth: &PythSource,
+    clock: &Clock,
+    key: &RangeKey,
+    liability: u64,
+    balance: u64,
+): (u64, u64) {
+    let (fair_price, fee_rate) = quote_live_range(config, market, pyth, clock, key, liability, balance);
+    assert_mint_quote_allowed(config, fair_price, fee_rate);
+    (fair_price, fee_rate)
+}
+
 /// Return settled payout for a range position at a terminal settlement price.
 public(package) fun settled_range_payout(settlement: u64, key: &RangeKey, quantity: u64): u64 {
     math::mul(
@@ -268,7 +301,7 @@ public(package) fun settled_up_price(settlement: u64, strike: u64): u64 {
 }
 
 /// Abort unless the all-in mint price is inside the global ask bounds.
-public(package) fun assert_mint_quote_allowed(
+fun assert_mint_quote_allowed(
     config: &PricingConfig,
     fair_price: u64,
     fee_rate: u64,
@@ -282,6 +315,20 @@ public(package) fun assert_mint_quote_allowed(
 }
 
 // === Private Functions ===
+
+fun emit_config_updated(config: &PricingConfig, predict_id: ID) {
+    event::emit(PricingConfigUpdated {
+        predict_id,
+        base_fee: config.base_fee,
+        min_fee: config.min_fee,
+        utilization_multiplier: config.utilization_multiplier,
+        min_ask_price: config.min_ask_price,
+        max_ask_price: config.max_ask_price,
+        pyth_spot_freshness_ms: config.pyth_spot_freshness_ms,
+        block_scholes_prices_freshness_ms: config.block_scholes_prices_freshness_ms,
+        block_scholes_svi_freshness_ms: config.block_scholes_svi_freshness_ms,
+    });
+}
 
 /// Resolve the live forward/SVI tuple used by all live pricing paths.
 ///
