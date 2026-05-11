@@ -266,7 +266,6 @@ public struct ExpiryValuation {
     allocated_capital: u64,
     mtm: u64,
     max_payout: u64,
-    exposure_version: u64,
 }
 ```
 
@@ -289,18 +288,9 @@ Deposits and withdrawals that use the same finalized valuation epoch use the sam
 
 ## Snapshot Consistency
 
-The hot-potato model avoids a dedicated maintenance window, but consistency still needs careful handling.
+The hot-potato model avoids a dedicated maintenance window because a full share-price calculation is a single PTB. The transaction reads every active expiry vault, consumes one valuation receipt for each expiry, and finalizes only when the full active set has been included exactly once.
 
-The simple version assumes all active expiry valuations are collected and finalized in a single PTB. In that case, Sui object versioning gives a coherent transaction-level read of all touched expiry vaults.
-
-If the active expiry set grows too large for a single PTB, a multi-transaction snapshot needs additional machinery. Possible options:
-
-- temporarily lock only the expiry being snapshotted until finalization
-- store an `exposure_version` in each expiry and reject finalization if a contributed expiry changed
-- allow partial snapshot chunks but require unchanged versions at finalization
-- shard the pool into multiple pool vaults by product or expiry family
-
-The first implementation should prefer a single-PTB snapshot if active expiry count is expected to remain modest.
+This design assumes the keeper or user can pay enough gas to value the active expiry set, including 100+ expiries if necessary. The base protocol should keep one full-snapshot path and avoid additional consistency machinery unless a concrete execution limit proves it necessary.
 
 ## Invariants
 
@@ -318,7 +308,6 @@ The first implementation should prefer a single-PTB snapshot if active expiry co
 
 ## Open Questions
 
-- What is the expected upper bound on simultaneously active expiries?
 - Is full-expiry MTM cheap enough to run inline with every LP supply or withdrawal?
 - What freshness threshold should let users rely on cached share calculation?
 - Should stale-price LP flows require an inline hot-potato calculation, fall back to queueing, or let users choose?
@@ -348,4 +337,4 @@ The first implementation design should focus on:
 6. Treating LP queues as an optional fallback if inline valuation is too expensive.
 7. Adding simple Mode C internalization before pool mint/burn if fallback queues are used.
 
-Multi-transaction snapshots, protocol-owned PLP markets, external exit liquidity, and more complex capital rebalancing should be deferred until the simple sharded model is proven.
+Protocol-owned PLP markets, external exit liquidity, and more complex capital rebalancing should be deferred until the simple sharded model is proven.
