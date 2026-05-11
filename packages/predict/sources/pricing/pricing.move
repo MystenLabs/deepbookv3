@@ -293,13 +293,6 @@ public(package) fun settled_range_payout(settlement: u64, key: &RangeKey, quanti
     )
 }
 
-/// Compute the settled UP tail price for `strike`.
-public(package) fun settled_up_price(settlement: u64, strike: u64): u64 {
-    if (strike == constants::neg_inf!()) return constants::float_scaling!();
-    if (strike == constants::pos_inf!()) return 0;
-    if (settlement > strike) constants::float_scaling!() else 0
-}
-
 /// Abort unless the all-in mint price is inside the global ask bounds.
 fun assert_mint_quote_allowed(
     config: &PricingConfig,
@@ -365,12 +358,7 @@ fun resolved_settlement_price(market: &MarketOracle): u64 {
 /// Compute the settled price for the range `(lower, higher]`.
 fun compute_settled_range_price(settlement: u64, lower: u64, higher: u64): u64 {
     assert!(lower < higher, EInvalidRange);
-
-    let lower_up_price = settled_up_price(settlement, lower);
-    let higher_up_price = settled_up_price(settlement, higher);
-    assert!(lower_up_price >= higher_up_price, ERangePriceUnderflow);
-
-    lower_up_price - higher_up_price
+    if (settlement > lower && settlement <= higher) constants::float_scaling!() else 0
 }
 
 fun block_scholes_price_is_fresh(
