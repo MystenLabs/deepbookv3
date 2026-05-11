@@ -18,13 +18,15 @@ The goal is to make individual expiries independently mutable so trading activit
 - Remove live MTM computation from individual mint and redeem paths.
 - Eliminate MTM from persistent expiry-market state; compute it only through pure valuation endpoints.
 - Compute global share value only when LP supply or withdrawal needs a fresh PLP price.
+- Compensate remaining LPs for supply/withdraw adverse selection and stale-price risk with an LP flow spread.
 
 ## Non-Goals
 
 - This design does not require continuously maintained share prices in the trade path.
-- This design does not transfer an exiting LP's active risk to remaining LPs without compensation.
+- This design does not transfer active LP risk without explicit price compensation.
 - This design does not track which user funded which expiry.
 - This design does not require pausing all trading during normal protocol operation.
+- This design does not include multi-quote PLP accounting. The first version assumes one quote asset for PLP NAV, supply, withdrawal, and expiry allocation.
 
 ## Architecture
 
@@ -36,7 +38,7 @@ The pool vault is the parent capital object. It owns:
 - PLP treasury cap
 - optional inactive-supply accounting
 - optional pending-withdrawal accounting
-- latest finalized share price
+- latest finalized mid share price
 - latest finalized share calculation timestamp
 - active expiry vault IDs required for full valuation snapshots
 - aggregate snapshot state needed to finalize a valuation epoch
@@ -92,15 +94,13 @@ On live redeem, the expiry vault:
 
 On settled redeem, the expiry vault burns the position against terminal settlement liability and pays the settled amount. Settlement and compaction can remain expiry-local.
 
-MTM is only needed when the pool vault needs a fresh PLP price for supply, withdrawal, or a keeper cache refresh. The expiry vault should expose a pure valuation endpoint that reads current expiry exposure and pricing inputs, computes MTM, then returns a linear valuation receipt for the hot-potato snapshot flow. That endpoint is separate from mint and redeem and must not write MTM into the expiry.
+MTM is only needed when the pool vault needs a fresh PLP price for supply, withdrawal, or a public refresh intended to keep the price fresh for LP flows. The expiry vault should expose a pure valuation endpoint that reads current expiry exposure and pricing inputs, computes MTM, then returns a linear valuation receipt for the hot-potato snapshot flow. That endpoint is separate from mint and redeem and must not write MTM into the expiry.
 
 ## LP Entry and Exit Model
 
-LP supply and withdrawal require a fresh global PLP valuation. The protocol does not need to compute that value unless an LP flow needs it. The hot-potato share calculation should be exposed as a public function that anyone can call to set the latest pool share price and timestamp. A public cron can keep that value fresh and flush queued LP actions, or a user can include the calculation inline with supply/withdraw if the full operation is cheap enough.
+LP supply and withdrawal require a fresh global PLP valuation. The protocol does not need to compute that value unless an LP flow needs it. The hot-potato share calculation should be exposed as a public function that anyone can call to set the latest pool mid share price and timestamp. A public cron can keep that value fresh and flush queued LP actions, or a user can include the calculation inline with supply/withdraw if the full operation is cheap enough.
 
-There are three viable entry/exit modes. The right default depends on how cheap it is to compute full MTM across all active expiries.
-
-### Mode A: Fresh-Cache Immediate Flow
+### Share Price Refresh
 
 The pool vault stores the latest finalized share calculation and a timestamp. Supply and withdrawal can execute immediately if that calculation is fresh enough.
 
@@ -115,13 +115,11 @@ The 60-second default should be configurable. It can be tightened or loosened ba
 
 If the cached calculation is fresh:
 
-- supply mints PLP immediately at the cached share price
-- withdrawal burns PLP immediately at the cached share price, subject to max-loss withdrawal capacity
+- supply mints PLP immediately at the spread-adjusted supply price
+- withdrawal burns PLP immediately at the spread-adjusted withdrawal price, subject to max-loss withdrawal capacity
 - no full-expiry MTM calculation is needed in that transaction
 
 This gives immediate UX most of the time if a keeper updates the share calculation frequently enough.
-
-### Mode B: On-Demand Immediate Flow
 
 If the cached share calculation is stale, anyone can call the public hot-potato valuation path to refresh the share price. A user can include that refresh in the same PTB as supply or withdrawal when the full operation is cheap enough.
 
@@ -130,33 +128,52 @@ The transaction shape is:
 1. start a valuation snapshot
 2. collect valuation receipts from all active expiries
 3. finalize the pool share calculation
-4. execute the supply or withdrawal against the fresh share price
+4. execute the supply or withdrawal against the fresh spread-adjusted price
 
 If full MTM is cheap enough, this can be the only LP path. There would be no deposit or withdrawal queue; every LP action computes or refreshes the share price as part of the flow. If it is not cheap enough, the same public refresh function can be run by crons/searchers to flush protocol-accounted pending actions.
 
-### Mode C: Inactive Supply and Pending Withdrawal Fallback
+### LP Flow Spread
 
-If full MTM is too expensive for every user-triggered supply or withdrawal, stale-price requests can be queued instead.
+Even with fresh NAV, LP entry and exit move exposure between participants. Suppliers buy the current protocol risk profile; withdrawers sell it. If the share price is stale, model-imperfect, or expensive to refresh continuously, immediate supply/withdrawal can otherwise create adverse selection against remaining LPs.
 
-Supply request:
+The pool should therefore apply a configurable LP flow spread around NAV:
+
+```text
+mid_price = nav / total_plp_supply
+lp_flow_spread_rate = lp_flow_spread_bps / 10_000
+supply_price = mid_price * (1 + lp_flow_spread_rate)
+withdraw_price = mid_price * (1 - lp_flow_spread_rate)
+```
+
+The configured spread must be bounded below 10,000 bps so withdrawal price remains positive.
+
+Suppliers receive fewer PLP per quote than pure NAV. Withdrawers receive less quote per PLP than pure NAV. This does not make entry or exit exposure-neutral; it prices the exposure transfer that fungible PLP necessarily creates. The spread accrues to the pool and compensates remaining LPs for flow toxicity, stale-price risk, and valuation error. The spread is a protocol risk parameter, not a source of protocol-owned external price discovery.
+
+Immediate supply/withdraw formulas:
+
+```text
+supply_shares = supply_quote / supply_price
+withdraw_quote = withdrawn_shares * withdraw_price
+```
+
+Bootstrap is the only special case. If total PLP supply is zero, the pool should accept initial supply at a configured initial share price only while there is no active expiry exposure. After the first PLP mint, every supply and withdrawal uses a fresh valuation and the spread-adjusted prices.
+
+### Pending LP Flow
+
+If full MTM is too expensive for every user-triggered supply or withdrawal, stale-price requests can be recorded in protocol-accounted pending state instead.
+
+Inactive supply:
 
 - user deposits quote capital
 - protocol records the amount as inactive supply keyed by the user's account or address
 - inactive supply is not PLP yet and does not participate in active risk until pushed
-- a keeper finalizes a valuation epoch and pushes inactive supply into active PLP
+- a public share-price refresh can push inactive supply into active PLP
 
-Withdrawal request:
+Pending withdrawal:
 
-- user escrows or burns PLP into protocol-controlled pending withdrawal state
+- user escrows PLP into protocol-controlled pending withdrawal state
 - protocol records the withdrawal shares keyed by the user's account or address
-- request waits for the next finalized valuation epoch
-
-At finalization, inactive supplies receive PLP and withdrawals receive quote at the same global share price:
-
-```text
-deposit_shares = deposit_amount / share_price
-withdraw_amount = withdrawn_shares * share_price
-```
+- escrowed pending-withdrawal PLP remains in total PLP supply and exposed until the pushed portion is burned by a finalized valuation epoch
 
 The PLP created from inactive supply should stay in protocol-internal balances, similar to DeepBook core's `settled_balances`, and the user can claim it later. This avoids creating separate user-owned deposit objects and keeps the fallback closer to DeepBook's inactive-stake and settlement patterns.
 
@@ -164,33 +181,35 @@ Withdrawal payouts should use the same protocol-accounted pattern. Quote payouts
 
 The protocol-accounted pending state is therefore not fundamental to PLP fungibility. It is a fallback for cases where full valuation is too expensive to run inline with every LP flow.
 
-### Mode C Internalizer
+### LP Flow Internalizer
 
 Before minting new PLP for inactive supply or redeeming PLP against pool capital, the pool must internalize opposing LP flows.
 
-At a finalized share price:
+At a finalized mid price, after deriving supply and withdrawal prices from the configured spread:
 
 ```text
-withdraw_quote_demand = pending_withdraw_shares * share_price
-matched_quote = min(inactive_supply_quote, withdraw_quote_demand)
-matched_plp = matched_quote / share_price
+matched_plp = min(inactive_supply_quote / supply_price, pending_withdraw_shares)
+supplier_quote_used = matched_plp * supply_price
+withdrawer_quote_paid = matched_plp * withdraw_price
+spread = supplier_quote_used - withdrawer_quote_paid
 ```
 
 For the matched portion:
 
-- suppliers' quote goes to withdrawing LPs
+- suppliers' quote pays withdrawing LPs and the LP flow spread
 - withdrawing LPs' escrowed PLP goes to suppliers
+- the spread stays in the pool
 - total PLP supply does not change
-- pool idle capital does not change
+- pool idle capital increases by the spread
 - expiry allocations do not change
 - withdrawal capacity is not consumed
 
 Only the unmatched net flow reaches the pool:
 
-- unmatched inactive supply mints new PLP at the finalized share price
-- unmatched pending withdrawal burns/redeems PLP against pool capital, subject to withdrawal capacity
+- unmatched inactive supply mints new PLP at the supply price
+- unmatched pending withdrawal burns/redeems PLP against pool capital at the withdrawal price, subject to withdrawal capacity
 
-This gives suppliers active PLP without minting new shares when there are natural sellers, and it lets withdrawing LPs exit without pulling capital out of the pool when there are natural buyers. Risk is transferred only because the supplier voluntarily receives the withdrawing LP's existing PLP at the finalized share price.
+This gives suppliers active PLP without minting new shares when there are natural sellers, and it lets withdrawing LPs exit without pulling capital out of the pool when there are natural buyers. Risk transfer is explicit and compensated by the LP flow spread.
 
 The internalizer can be implemented with protocol-accounted balances rather than separate user-owned deposit or withdrawal objects:
 
@@ -200,6 +219,8 @@ The internalizer can be implemented with protocol-accounted balances rather than
 - matched withdrawers receive quote through internal settled balances
 
 Rounding should bias toward leaving dust in protocol-accounted pending state rather than over-minting PLP or overpaying quote.
+
+Partial fills should be pro-rata within the current pending batch. Unfilled inactive supply and pending withdrawal amounts remain in protocol-accounted pending state and continue to use future finalized valuations until pushed.
 
 ### External PLP Liquidity
 
@@ -212,7 +233,7 @@ Conceptually:
 - searchers can fill those orders when the price is attractive relative to NAV
 - external markets can support limit-supply and limit-withdraw UX without adding order-book logic to the pool vault
 
-The protocol's responsibility is to expose fresh NAV/share-price data and preserve normal mint, redeem, and internalization flows. External PLP market prices must not define protocol NAV or the share price used for protocol mint/burn. The pool should expose the latest share price and timestamp through public views and emit a share-price-updated event whenever the hot-potato calculation finalizes, so external markets and searchers have a canonical reference.
+The protocol's responsibility is to expose fresh NAV/share-price data and preserve normal mint, redeem, and internalization flows. External PLP market prices must not define protocol NAV or the mid price used for protocol mint/burn. The pool should expose the latest mid share price and timestamp through public views and emit a share-price-updated event whenever the hot-potato calculation finalizes, so external markets and searchers have a canonical reference.
 
 ### Withdrawal Capacity
 
@@ -228,7 +249,9 @@ withdraw_capacity =
   - target_buffer
 ```
 
-The exact formula may need to account for queue ordering, fees, reserved settlement payouts, quote-asset balance availability, and whether unmatched inactive supply is immediately deployable in the same epoch. Internalized matched quote should not count toward withdrawal capacity because it pays withdrawing LPs directly and never becomes pool capital.
+The exact formula may need to account for queue ordering, fees, reserved settlement payouts, quote-asset balance availability, and whether unmatched inactive supply is immediately deployable in the same epoch. In an internalized match, the quote paid to withdrawing LPs should not count toward withdrawal capacity because it never becomes pool capital; only the spread portion that remains in the pool increases idle capital.
+
+The `target_buffer` should be a configurable protocol risk parameter. The initial design can set it to zero because exact max-payout backing already preserves solvency; governance can raise it later if operations need a buffer above exact worst-case liabilities.
 
 If a queued withdrawal batch cannot be fully paid without preserving worst-case backing, it should be filled pro-rata and the unfilled shares should remain queued and exposed for the next epoch. FIFO withdrawal priority should be avoided unless there is a strong reason to accept queue-position games.
 
@@ -245,7 +268,7 @@ The pool vault can compute global share value through a hot-potato snapshot flow
 5. The transaction passes each receipt into `PoolVault::add_expiry_valuation`.
 6. The pool vault accumulates allocated capital, MTM, max payout, and marks that expiry as read.
 7. `PoolVault::finalize_snapshot` consumes the potato only if every active expiry was included exactly once.
-8. Finalization writes the global share price and timestamp.
+8. Finalization writes the global mid share price and timestamp.
 9. The same transaction can immediately execute one LP supply or withdrawal, or a keeper can use the finalized price to flush queued LP requests.
 
 The valuation receipt should carry the valuation numbers itself. The API should not accept a separate witness plus caller-provided MTM, because that would let a caller pair a real receipt with fake valuation data.
@@ -278,10 +301,10 @@ At finalization:
 gross_assets = pool_idle_capital + sum(expiry.allocated_capital)
 mtm_liability = sum(expiry_valuation_receipt.mtm)
 nav = gross_assets - mtm_liability
-share_price = nav / total_plp_supply
+mid_price = nav / total_plp_supply
 ```
 
-Deposits and withdrawals that use the same finalized valuation epoch use the same share price.
+Deposits and withdrawals that use the same finalized valuation epoch use the same mid price, then apply the configured LP flow spread to derive supply and withdrawal prices.
 
 ## Snapshot Consistency
 
@@ -301,18 +324,15 @@ Share-price calculation must fail if any active expiry is expired but unsettled.
 - Expiry trading is solvency-gated by exact max payout, not live MTM.
 - No expiry allocation decrease can violate `allocated_capital >= total_max_payout`.
 - Withdrawals cannot release capital required to preserve max-loss backing.
-- Internalized LP flow transfers existing PLP and quote between participants; it does not change pool NAV, total PLP supply, or expiry allocations.
-- External PLP markets must not define NAV/share price for protocol mint/burn.
+- Internalized LP flow transfers existing PLP and quote between participants; it does not change total PLP supply or expiry allocations, and the LP flow spread accrues to the pool.
+- External PLP markets must not define NAV/mid price for protocol mint/burn.
+- Escrowed pending-withdrawal PLP remains in total PLP supply until the pushed portion is burned.
 - If queues are used, unfilled withdrawal shares remain exposed until a future epoch fills them.
 - A snapshot can finalize only if every active expiry is valued exactly once.
 - Share-price calculation fails if any active expiry is expired but unsettled.
 - Protocol and insurance fee reserves are excluded from PLP NAV.
-
-## Open Questions
-
-- How should protocol-accounted pending withdrawals represent partial fills?
-- What target buffer should sit above exact max-payout backing?
-- How should quote-asset heterogeneity be handled if multiple quote assets remain enabled?
+- Pending LP flow partial fills are pro-rata by batch, with residual amounts left pending.
+- V1 PLP accounting uses a single quote asset; multi-quote support is deferred.
 
 ## Recommended First Spec Boundary
 
@@ -322,9 +342,10 @@ The first implementation design should focus on:
 2. Making mint/redeem mutate only the relevant expiry vault.
 3. Preserving exact per-expiry max-payout solvency.
 4. Adding a fresh-cache share calculation path for LP supply/withdraw.
-5. Adding a single-PTB hot-potato valuation snapshot that finalizes share price.
-6. Treating LP queues as an optional fallback if inline valuation is too expensive.
-7. Adding simple Mode C internalization before pool mint/burn if fallback queues are used.
-8. Benchmarking full-expiry MTM cost to decide whether LP supply/withdraw should refresh share price inline by default.
+5. Adding a single-PTB hot-potato valuation snapshot that finalizes the mid share price.
+6. Adding the configurable LP flow spread.
+7. Treating LP queues as an optional fallback if inline valuation is too expensive.
+8. Adding internalization before pool mint/burn if fallback queues are used.
+9. Benchmarking full-expiry MTM cost to decide whether LP supply/withdraw should refresh share price inline by default.
 
-Protocol-owned PLP markets, external exit liquidity, and more complex capital rebalancing should be deferred until the simple sharded model is proven.
+Protocol-owned PLP markets, external exit liquidity, multi-quote PLP accounting, and more complex capital rebalancing should be deferred until the simple sharded model is proven.
