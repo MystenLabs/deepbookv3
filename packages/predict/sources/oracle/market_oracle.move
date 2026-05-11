@@ -306,11 +306,12 @@ public fun update_svi(
     );
     assert!(source_timestamp_ms <= clock.timestamp_ms(), EFutureSVISourceUpdate);
     let update_timestamp_ms = clock.timestamp_ms();
-    market.block_scholes_svi = BlockScholesSVIState {
-        params: svi,
-        source_timestamp_ms,
-        update_timestamp_ms,
-    };
+    market.block_scholes_svi =
+        BlockScholesSVIState {
+            params: svi,
+            source_timestamp_ms,
+            update_timestamp_ms,
+        };
 
     event::emit(BlockScholesSVIUpdated {
         market_oracle_id: market.id.to_inner(),
@@ -369,10 +370,7 @@ public(package) fun block_scholes_price_freshness_timestamp_ms(market: &MarketOr
 }
 
 public(package) fun block_scholes_svi_freshness_timestamp_ms(market: &MarketOracle): u64 {
-    market
-        .block_scholes_svi
-        .source_timestamp_ms
-        .min(market.block_scholes_svi.update_timestamp_ms)
+    market.block_scholes_svi.source_timestamp_ms.min(market.block_scholes_svi.update_timestamp_ms)
 }
 
 public(package) fun settlement_price_and_source_timestamp_ms(market: &MarketOracle): (u64, u64) {
@@ -466,10 +464,7 @@ public(package) fun new_bounds(
 }
 
 public(package) fun assert_authorized_cap(market: &MarketOracle, cap: &MarketOracleCap) {
-    assert!(
-        market.authorized_cap_ids.contains(&cap.id.to_inner()),
-        EInvalidMarketOracleCap,
-    );
+    assert!(market.authorized_cap_ids.contains(&cap.id.to_inner()), EInvalidMarketOracleCap);
 }
 
 public(package) fun assert_pyth_source_id(market: &MarketOracle, pyth_source_id: ID) {
@@ -487,12 +482,13 @@ fun apply_block_scholes_prices(
     clock: &Clock,
 ) {
     let update_timestamp_ms = clock.timestamp_ms();
-    market.block_scholes_prices = BlockScholesPriceState {
-        spot,
-        forward,
-        source_timestamp_ms,
-        update_timestamp_ms,
-    };
+    market.block_scholes_prices =
+        BlockScholesPriceState {
+            spot,
+            forward,
+            source_timestamp_ms,
+            update_timestamp_ms,
+        };
 
     event::emit(BlockScholesPricesUpdated {
         market_oracle_id: market.id.to_inner(),
@@ -542,8 +538,9 @@ fun valid_settlement_spot_source(
     let pyth_timestamp = pyth_source_timestamp_ms.min(pyth.update_timestamp_ms());
     let block_scholes_source_timestamp_ms = market.block_scholes_prices.source_timestamp_ms;
     let block_scholes_update_timestamp_ms = market.block_scholes_prices.update_timestamp_ms;
-    let block_scholes_timestamp =
-        block_scholes_source_timestamp_ms.min(block_scholes_update_timestamp_ms);
+    let block_scholes_timestamp = block_scholes_source_timestamp_ms.min(
+        block_scholes_update_timestamp_ms,
+    );
 
     let pyth_valid =
         pyth_timestamp > 0
@@ -599,12 +596,13 @@ fun settle(
     source_timestamp_ms: u64,
     update_timestamp_ms: u64,
 ) {
-    market.settlement = option::some(SettlementState {
-        price: settlement_price,
-        source: spot_source,
-        source_timestamp_ms,
-        update_timestamp_ms,
-    });
+    market.settlement =
+        option::some(SettlementState {
+            price: settlement_price,
+            source: spot_source,
+            source_timestamp_ms,
+            update_timestamp_ms,
+        });
 
     event::emit(MarketOracleSettled {
         market_oracle_id: market.id.to_inner(),

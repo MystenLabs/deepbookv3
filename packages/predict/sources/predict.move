@@ -638,9 +638,7 @@ public(package) fun set_pyth_spot_freshness_ms(predict: &mut Predict, value: u64
 /// Update the live Block Scholes spot/forward freshness threshold used by pricing reads.
 public(package) fun set_block_scholes_prices_freshness_ms(predict: &mut Predict, value: u64) {
     let predict_id = predict.id.to_inner();
-    predict
-        .pricing_config
-        .set_block_scholes_prices_freshness_ms(predict_id, value);
+    predict.pricing_config.set_block_scholes_prices_freshness_ms(predict_id, value);
 }
 
 /// Update the live Block Scholes SVI freshness threshold used by pricing reads.

@@ -32,9 +32,7 @@ fun creator_cap_can_update_market_oracle() {
     let (mut market, cap, admin_cap, clock) = setup(ctx);
 
     write_svi(&mut market, &cap, FIRST_SVI_SOURCE_TIMESTAMP_MS, &clock);
-    assert!(
-        market.block_scholes_svi_source_timestamp_ms() == FIRST_SVI_SOURCE_TIMESTAMP_MS,
-    );
+    assert!(market.block_scholes_svi_source_timestamp_ms() == FIRST_SVI_SOURCE_TIMESTAMP_MS);
 
     cleanup(market, vector[cap], admin_cap, clock);
 }
@@ -62,9 +60,7 @@ fun registered_cap_can_update_market_oracle() {
 
     registry::register_market_oracle_cap(&mut market, &admin_cap, &cap_2);
     write_svi(&mut market, &cap_2, FIRST_SVI_SOURCE_TIMESTAMP_MS, &clock);
-    assert!(
-        market.block_scholes_svi_source_timestamp_ms() == FIRST_SVI_SOURCE_TIMESTAMP_MS,
-    );
+    assert!(market.block_scholes_svi_source_timestamp_ms() == FIRST_SVI_SOURCE_TIMESTAMP_MS);
 
     cleanup(market, vector[cap_1, cap_2], admin_cap, clock);
 }

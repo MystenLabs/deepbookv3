@@ -184,7 +184,11 @@ public(package) fun set_max_ask_price(config: &mut PricingConfig, predict_id: ID
 }
 
 /// Set the live Pyth spot freshness threshold.
-public(package) fun set_pyth_spot_freshness_ms(config: &mut PricingConfig, predict_id: ID, value: u64) {
+public(package) fun set_pyth_spot_freshness_ms(
+    config: &mut PricingConfig,
+    predict_id: ID,
+    value: u64,
+) {
     validate_freshness_ms(value);
     config.pyth_spot_freshness_ms = value;
     emit_config_updated(config, predict_id);
@@ -280,7 +284,15 @@ public(package) fun quote_mint_live_range(
     liability: u64,
     balance: u64,
 ): (u64, u64) {
-    let (fair_price, fee_rate) = quote_live_range(config, market, pyth, clock, key, liability, balance);
+    let (fair_price, fee_rate) = quote_live_range(
+        config,
+        market,
+        pyth,
+        clock,
+        key,
+        liability,
+        balance,
+    );
     assert_mint_quote_allowed(config, fair_price, fee_rate);
     (fair_price, fee_rate)
 }
@@ -294,11 +306,7 @@ public(package) fun settled_range_payout(settlement: u64, key: &RangeKey, quanti
 }
 
 /// Abort unless the all-in mint price is inside the global ask bounds.
-fun assert_mint_quote_allowed(
-    config: &PricingConfig,
-    fair_price: u64,
-    fee_rate: u64,
-) {
+fun assert_mint_quote_allowed(config: &PricingConfig, fair_price: u64, fee_rate: u64) {
     assert!(fair_price <= max_u64() - fee_rate, EAskPriceOverflow);
     let ask_price = fair_price + fee_rate;
     assert!(
