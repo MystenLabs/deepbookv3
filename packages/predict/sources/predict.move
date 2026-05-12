@@ -212,7 +212,7 @@ public fun redeem_permissionless(
         clock,
         ctx,
     );
-    manager.deposit_permissionless(payout_coin);
+    manager.deposit_permissionless(payout_coin, ctx);
 }
 
 /// Sell a compacted settled position without passing the terminal oracle object.
@@ -230,7 +230,7 @@ public fun redeem_compacted_permissionless(
         quantity,
         ctx,
     );
-    manager.deposit_permissionless(payout_coin);
+    manager.deposit_permissionless(payout_coin, ctx);
 }
 
 /// Supply DUSDC into the shared LP pool.

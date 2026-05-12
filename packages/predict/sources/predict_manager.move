@@ -1,29 +1,29 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// PredictManager stores DUSDC for Predict trading.
+/// PredictManager wraps a BalanceManager for Predict trading.
 ///
-/// Users deposit DUSDC into the PredictManager. Positions are tracked as
-/// canonical ranges keyed by RangeKey.
+/// Users deposit DUSDC into the PredictManager. DUSDC custody is delegated to
+/// BalanceManager, while positions are tracked as canonical ranges keyed by
+/// RangeKey.
 module deepbook_predict::predict_manager;
 
+use deepbook::balance_manager::{Self, BalanceManager, DepositCap};
 use deepbook_predict::range_key::RangeKey;
 use dusdc::dusdc::DUSDC;
-use sui::{balance::{Self, Balance}, coin::Coin, derived_object, table::{Self, Table}};
+use sui::{coin::Coin, derived_object, table::{Self, Table}};
 
-const EInvalidOwner: u64 = 0;
 const EInsufficientPosition: u64 = 1;
-const EInsufficientBalance: u64 = 2;
 
 /// The key for deriving predict manager. u64 is optional for
 /// supporting multiple managers per address. Defaults to 0 in v1.
 public struct PredictManagerKey(address, u64) has copy, drop, store;
 
-/// PredictManager stores DUSDC and tracks positions.
+/// PredictManager stores DUSDC in a BalanceManager and tracks positions.
 public struct PredictManager has key {
     id: UID,
-    owner: address,
-    balance: Balance<DUSDC>,
+    balance_manager: BalanceManager,
+    deposit_cap: DepositCap,
     /// RangeKey -> position quantity
     positions: Table<RangeKey, u64>,
 }
@@ -36,21 +36,18 @@ public fun share(self: PredictManager) {
 }
 
 /// Deposit coins into the PredictManager.
-public fun deposit(self: &mut PredictManager, coin: Coin<DUSDC>, ctx: &TxContext) {
-    assert!(ctx.sender() == self.owner, EInvalidOwner);
-    self.balance.join(coin.into_balance());
+public fun deposit(self: &mut PredictManager, coin: Coin<DUSDC>, ctx: &mut TxContext) {
+    self.balance_manager.deposit(coin, ctx);
 }
 
 /// Withdraw coins from the PredictManager.
 public fun withdraw(self: &mut PredictManager, amount: u64, ctx: &mut TxContext): Coin<DUSDC> {
-    assert!(ctx.sender() == self.owner, EInvalidOwner);
-    assert!(self.balance.value() >= amount, EInsufficientBalance);
-    self.balance.split(amount).into_coin(ctx)
+    self.balance_manager.withdraw(amount, ctx)
 }
 
 /// Get the owner of the PredictManager.
 public fun owner(self: &PredictManager): address {
-    self.owner
+    self.balance_manager.owner()
 }
 
 /// Get the position quantity for a given RangeKey.
@@ -64,7 +61,7 @@ public fun position(self: &PredictManager, key: RangeKey): u64 {
 
 /// Get the DUSDC balance in the PredictManager.
 public fun balance(self: &PredictManager): u64 {
-    self.balance.value()
+    self.balance_manager.balance<DUSDC>()
 }
 
 // === Public-Package Functions ===
@@ -72,19 +69,24 @@ public fun balance(self: &PredictManager): u64 {
 /// Create a new PredictManager and share it.
 public(package) fun new(registry_uid: &mut UID, ctx: &mut TxContext): PredictManager {
     let id = derived_object::claim(registry_uid, PredictManagerKey(ctx.sender(), 0));
-    let owner = ctx.sender();
+    let mut balance_manager = balance_manager::new(ctx);
+    let deposit_cap = balance_manager.mint_deposit_cap(ctx);
 
     PredictManager {
         id,
-        owner,
-        balance: balance::zero(),
+        balance_manager,
+        deposit_cap,
         positions: table::new(ctx),
     }
 }
 
 /// Deposit protocol payouts without requiring the manager owner as sender.
-public(package) fun deposit_permissionless(self: &mut PredictManager, coin: Coin<DUSDC>) {
-    self.balance.join(coin.into_balance());
+public(package) fun deposit_permissionless(
+    self: &mut PredictManager,
+    coin: Coin<DUSDC>,
+    ctx: &TxContext,
+) {
+    self.balance_manager.deposit_with_cap(&self.deposit_cap, coin, ctx);
 }
 
 /// Increase position quantity.
