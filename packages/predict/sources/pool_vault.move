@@ -10,10 +10,11 @@ module deepbook_predict::pool_vault;
 
 use deepbook_predict::plp::PLP;
 use dusdc::dusdc::DUSDC;
-use sui::{balance::{Self, Balance}, coin::TreasuryCap};
+use sui::{balance::{Self, Balance}, clock::Clock, coin::{Self, Coin, TreasuryCap}};
 
 const EExpiryMarketAlreadyActive: u64 = 0;
 const EExpiryMarketNotActive: u64 = 1;
+const ENotImplemented: u64 = 2;
 
 /// Pool-level capital and PLP accounting state.
 public struct PoolVault has key {
@@ -65,6 +66,30 @@ public fun contains_expiry_market(vault: &PoolVault, expiry_market_id: ID): bool
         i = i + 1;
     };
     false
+}
+
+/// Supply DUSDC into the pool vault and receive PLP shares.
+public fun supply(
+    vault: &mut PoolVault,
+    payment: Coin<DUSDC>,
+    _clock: &Clock,
+    ctx: &mut TxContext,
+): Coin<PLP> {
+    assert!(false, ENotImplemented);
+    vault.idle_balance.join(payment.into_balance());
+    coin::mint(&mut vault.treasury_cap, 0, ctx)
+}
+
+/// Withdraw DUSDC from the pool vault by burning PLP shares.
+public fun withdraw(
+    vault: &mut PoolVault,
+    lp_coin: Coin<PLP>,
+    _clock: &Clock,
+    ctx: &mut TxContext,
+): Coin<DUSDC> {
+    assert!(false, ENotImplemented);
+    vault.treasury_cap.burn(lp_coin);
+    balance::zero<DUSDC>().into_coin(ctx)
 }
 
 // === Public-Package Functions ===

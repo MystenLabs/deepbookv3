@@ -5,7 +5,6 @@
 module deepbook_predict::protocol_config;
 
 use deepbook_predict::{
-    oracle_config::{Self, OracleConfig},
     pricing::{Self, PricingConfig},
     rate_limiter::{Self, RateLimiter},
     risk_config::{Self, RiskConfig}
@@ -17,7 +16,6 @@ public struct ProtocolConfig has key {
     id: UID,
     pricing_config: PricingConfig,
     risk_config: RiskConfig,
-    oracle_config: OracleConfig,
     withdrawal_limiter: RateLimiter,
     trading_paused: bool,
 }
@@ -39,11 +37,6 @@ public fun risk_config(config: &ProtocolConfig): &RiskConfig {
     &config.risk_config
 }
 
-/// Return the oracle configuration.
-public fun oracle_config(config: &ProtocolConfig): &OracleConfig {
-    &config.oracle_config
-}
-
 /// Return the withdrawal limiter configuration.
 public fun withdrawal_limiter(config: &ProtocolConfig): &RateLimiter {
     &config.withdrawal_limiter
@@ -62,7 +55,6 @@ public(package) fun create_and_share(clock: &Clock, ctx: &mut TxContext): ID {
         id: object::new(ctx),
         pricing_config: pricing::new(),
         risk_config: risk_config::new(),
-        oracle_config: oracle_config::new(ctx),
         withdrawal_limiter: rate_limiter::new(clock),
         trading_paused: false,
     };
