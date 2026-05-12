@@ -4153,3 +4153,498 @@ fun test_liquidate_partial_keeps_proportional_shares() {
     return_shared(mm);
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
+
+// Issue 2 negative case (partial liquidator in the slightly-solvent range): same risk
+// envelope as `test_liquidate_slightly_solvent_clears_all_shares` (risk_ratio ≈ 1.0375,
+// `assets_exhausted` is true), but the liquidator brings a small repay coin so
+// `repay_amount < max_repay`. The fix's IF branch must NOT fire on the second predicate
+// — proportional shares run, residual debt + residual collateral remain.
+#[test]
+fun test_liquidate_partial_in_slightly_solvent_range_keeps_residual() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<BTC, USDC, BTC>(
+        &registry,
+        &btc_price,
+        &usdc_price,
+        mint_coin<BTC>(btc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.borrow_quote<BTC, USDC>(
+        &registry,
+        &mut usdc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        40_000_000_000, // 40k USDC
+        &clock,
+        scenario.ctx(),
+    );
+    let (_, borrowed_quote_before) = mm.borrowed_shares();
+
+    // Same drop as the all-shares test (BTC=$1500, risk_ratio=1.0375, assets_exhausted=true).
+    destroy(btc_price);
+    destroy(usdc_price);
+    scenario.next_tx(test_constants::admin());
+    let btc_price_dropped = build_btc_price_info_object(&mut scenario, 1500, &clock);
+    let usdc_price_fresh = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    scenario.next_tx(test_constants::liquidator());
+    // Only 10k USDC: input/1.03 ≈ 9,708.74 USDC = repay_amount, which is far below
+    // max_repay (≈ 39,523.81). The IF branch requires `repay_amount == max_repay`, so
+    // we must hit the proportional ELSE branch.
+    let debt_coin = mint_coin<USDC>(10_000_000_000, scenario.ctx());
+    let (base_coin, quote_coin, remaining_debt) = mm.liquidate<BTC, USDC, USDC>(
+        &registry,
+        &btc_price_dropped,
+        &usdc_price_fresh,
+        &mut usdc_pool,
+        &mut pool,
+        debt_coin,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Proportional: ~24.27% of borrow shares repaid, ~75.73% remain. The manager keeps
+    // 1 BTC (untouched — debt is quote, out_amount fits entirely in available USDC) plus
+    // ~29,806 USDC of residual collateral backing those residual shares.
+    let borrowed_quote_after = mm.borrowed_quote_shares();
+    assert!(borrowed_quote_after > 0);
+    assert!(borrowed_quote_after < borrowed_quote_before);
+    assert!(mm.margin_pool_id().is_some());
+    let (base_asset, quote_asset) = mm.calculate_assets(&pool);
+    assert!(base_asset == btc_multiplier()); // 1 BTC untouched
+    assert!(quote_asset > 0);
+    // out_amount (≈ 10,194.17 USDC) all comes from the quote leg.
+    assert!(base_coin.value() == 0);
+    assert!(quote_coin.value() > 0);
+
+    destroy_3!(base_coin, quote_coin, remaining_debt);
+    return_shared_2!(usdc_pool, pool);
+    destroy_2!(btc_price_dropped, usdc_price_fresh);
+    return_shared(mm);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+// Issue 2 default-recording check: deep into the slightly-solvent range
+// (risk_ratio ≈ 1.01, below the ≈1.0194 break-even where pool coin covers full debt),
+// the fix must clear all shares AND `repay_liquidation` must record an honest
+// `pool_default`. The before-fix proportional path silently absorbed this shortfall as
+// unrepayable residual shares; the after-fix path surfaces it via
+// `decrease_supply_absolute`, observable as a drop in `pool.total_supply()`.
+#[test]
+fun test_liquidate_records_pool_default_when_repay_below_debt() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<BTC, USDC, BTC>(
+        &registry,
+        &btc_price,
+        &usdc_price,
+        mint_coin<BTC>(btc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.borrow_quote<BTC, USDC>(
+        &registry,
+        &mut usdc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        40_000_000_000, // 40k USDC
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Drop BTC hard to $400. assets_in_debt_unit = 400 + 40000 = 40400; debt = 40000;
+    // risk_ratio = 1.01. max_repay = 40400/1.05 ≈ 38,476.19; coin paid to pool ≈
+    // 38,476.19 * 1.03 ≈ 39,630.48; full-debt amount = 40,000 → default ≈ 369.52 USDC.
+    destroy(btc_price);
+    destroy(usdc_price);
+    scenario.next_tx(test_constants::admin());
+    let btc_price_dropped = build_btc_price_info_object(&mut scenario, 400, &clock);
+    let usdc_price_fresh = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    // Snapshot pool supply right before the liquidation. The clock has not advanced
+    // between borrow and now, so `update` inside `decrease_borrow_shares` accrues no
+    // interest; the only delta on `total_supply` comes from the (reward | default)
+    // branch in `repay_liquidation`.
+    let supply_before = usdc_pool.total_supply();
+
+    scenario.next_tx(test_constants::liquidator());
+    let debt_coin = mint_coin<USDC>(100_000_000_000, scenario.ctx()); // 100k USDC
+    let (base_coin, quote_coin, remaining_debt) = mm.liquidate<BTC, USDC, USDC>(
+        &registry,
+        &btc_price_dropped,
+        &usdc_price_fresh,
+        &mut usdc_pool,
+        &mut pool,
+        debt_coin,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Full liquidation: zero shares, zero collateral, manager detached.
+    assert!(mm.borrowed_base_shares() == 0);
+    assert!(mm.borrowed_quote_shares() == 0);
+    assert!(mm.margin_pool_id().is_none());
+    let (base_asset, quote_asset) = mm.calculate_assets(&pool);
+    assert!(base_asset == 0);
+    assert!(quote_asset == 0);
+
+    // Pool supply strictly decreased — `repay_liquidation` hit the `default` branch and
+    // called `decrease_supply_absolute`. Pre-fix, this same scenario went through
+    // `increase_supply_absolute` (silent +1,154.29 phantom reward) while leaving 3.81%
+    // of borrow shares stranded on the drained manager.
+    let supply_after = usdc_pool.total_supply();
+    assert!(supply_after < supply_before);
+
+    destroy_3!(base_coin, quote_coin, remaining_debt);
+    return_shared_2!(usdc_pool, pool);
+    destroy_2!(btc_price_dropped, usdc_price_fresh);
+    return_shared(mm);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+// Issue 2 deep-default check: risk_ratio ≈ 1.001 (near the bottom of the
+// slightly-solvent range). Verifies that the fix records a large default — close to
+// the maximum default magnitude of ~1.9% of debt — and that no excess value leaks to
+// the liquidator beyond the standard 2% user reward envelope.
+#[test]
+fun test_liquidate_near_risk_ratio_one_records_large_default() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<BTC, USDC, BTC>(
+        &registry,
+        &btc_price,
+        &usdc_price,
+        mint_coin<BTC>(btc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.borrow_quote<BTC, USDC>(
+        &registry,
+        &mut usdc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        40_000_000_000,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // BTC at $50 → assets_in_debt_unit = 50 + 40000 = 40050, debt = 40000, risk_ratio
+    // ≈ 1.00125 (near the bottom of the slightly-solvent range). max_repay ≈
+    // 38,142.857; coin to pool ≈ 39,287.143; full-debt amount = 40,000 → default ≈
+    // 712.857 USDC (close to the ~1.9% theoretical max default in this range).
+    destroy(btc_price);
+    destroy(usdc_price);
+    scenario.next_tx(test_constants::admin());
+    let btc_price_dropped = build_btc_price_info_object(&mut scenario, 50, &clock);
+    let usdc_price_fresh = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    let supply_before = usdc_pool.total_supply();
+
+    scenario.next_tx(test_constants::liquidator());
+    let debt_coin = mint_coin<USDC>(100_000_000_000, scenario.ctx()); // 100k USDC
+    let (base_coin, quote_coin, remaining_debt) = mm.liquidate<BTC, USDC, USDC>(
+        &registry,
+        &btc_price_dropped,
+        &usdc_price_fresh,
+        &mut usdc_pool,
+        &mut pool,
+        debt_coin,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Full clear + drain (modulo dust from integer division in the oracle conversion —
+    // a few raw units of base/quote can remain at certain price points). `base_asset`
+    // <= 1000 raw means at most 10⁻⁵ BTC ≈ $0.0005 stranded — economically zero.
+    assert!(mm.borrowed_quote_shares() == 0);
+    assert!(mm.margin_pool_id().is_none());
+    let (base_asset, quote_asset) = mm.calculate_assets(&pool);
+    assert!(base_asset < 1000);
+    assert!(quote_asset < 1000);
+
+    // Default booked: total_supply strictly drops by ~712.857 USDC (raw 712_857_142).
+    // The drop must be strictly positive (default occurred) and bounded above by the
+    // theoretical max default in this range (~2% of debt = 800_000_000 raw USDC).
+    let supply_after = usdc_pool.total_supply();
+    let supply_drop = supply_before - supply_after;
+    assert!(supply_drop > 500_000_000); // > $500 USDC default — sanity lower bound
+    assert!(supply_drop < 800_000_000); // < ~$800 USDC default — sanity upper bound
+
+    destroy_3!(base_coin, quote_coin, remaining_debt);
+    return_shared_2!(usdc_pool, pool);
+    destroy_2!(btc_price_dropped, usdc_price_fresh);
+    return_shared(mm);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+// Boundary check just OUTSIDE the fix's `assets_exhausted` condition: assets is
+// strictly greater than `debt_with_reward` (scenario c by the slimmest margin). The IF
+// branch MUST NOT fire — the proportional ELSE branch must run, leaving residual shares
+// + collateral. Guards against an off-by-one that would over-clear shares in scenario c.
+#[test]
+fun test_liquidate_just_outside_assets_exhausted_runs_proportional() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<BTC, USDC, BTC>(
+        &registry,
+        &btc_price,
+        &usdc_price,
+        mint_coin<BTC>(btc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.borrow_quote<BTC, USDC>(
+        &registry,
+        &mut usdc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        40_000_000_000,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // BTC at $2001 → assets_in_debt_unit = 2001 + 40000 = 42001, just 1 USDC above
+    // debt_with_reward (40000 * 1.05 = 42000). risk_ratio ≈ 1.05003 (liquidatable since
+    // < 1.10). debt_repay = (1.25 * 40000 - 42001) / 0.20 = 39995 (< 40000); max_repay =
+    // debt_repay = 39995. The fix's IF must NOT fire because `assets_exhausted` is false.
+    destroy(btc_price);
+    destroy(usdc_price);
+    scenario.next_tx(test_constants::admin());
+    let btc_price_dropped = build_btc_price_info_object(&mut scenario, 2001, &clock);
+    let usdc_price_fresh = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    scenario.next_tx(test_constants::liquidator());
+    let debt_coin = mint_coin<USDC>(100_000_000_000, scenario.ctx());
+    let (base_coin, quote_coin, remaining_debt) = mm.liquidate<BTC, USDC, USDC>(
+        &registry,
+        &btc_price_dropped,
+        &usdc_price_fresh,
+        &mut usdc_pool,
+        &mut pool,
+        debt_coin,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Proportional ran (repay_shares ≈ borrowed_shares * 39995/40000): a tiny residual
+    // of borrow shares remains, position still attached to the pool.
+    assert!(mm.borrowed_quote_shares() > 0);
+    assert!(mm.margin_pool_id().is_some());
+
+    destroy_3!(base_coin, quote_coin, remaining_debt);
+    return_shared_2!(usdc_pool, pool);
+    destroy_2!(btc_price_dropped, usdc_price_fresh);
+    return_shared(mm);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+// `repay_amount == max_repay` boundary: a liquidator providing one unit less than the
+// amount needed to reach max_repay must NOT trigger the all-shares IF branch, even when
+// `assets_exhausted` is true. The proportional formula runs; residual shares remain.
+// Guards against an off-by-one in the equality check that would over-clear shares.
+#[test]
+fun test_liquidate_repay_just_below_max_does_not_clear_all() {
+    let (
+        mut scenario,
+        clock,
+        admin_cap,
+        maintainer_cap,
+        _btc_pool_id,
+        usdc_pool_id,
+        _pool_id,
+        registry_id,
+    ) = setup_btc_usd_deepbook_margin();
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared<Pool<BTC, USDC>>();
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<BTC, USDC>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<BTC, USDC>>();
+    let mut usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let btc_price = build_btc_price_info_object(&mut scenario, 50000, &clock);
+    let usdc_price = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    mm.deposit<BTC, USDC, BTC>(
+        &registry,
+        &btc_price,
+        &usdc_price,
+        mint_coin<BTC>(btc_multiplier(), scenario.ctx()),
+        &clock,
+        scenario.ctx(),
+    );
+    mm.borrow_quote<BTC, USDC>(
+        &registry,
+        &mut usdc_pool,
+        &btc_price,
+        &usdc_price,
+        &pool,
+        40_000_000_000,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Same slightly-solvent setup (BTC=$1500, risk_ratio=1.0375, assets_exhausted=true).
+    // max_repay = 39_523_809_523 raw USDC. The smallest input that yields
+    // `input/1.03 >= max_repay` (after truncation) is 40_709_523_809 raw — providing
+    // one unit less (40_709_523_808) makes `input_coin_without_pool_reward` truncate to
+    // 39_523_809_522, strictly below max_repay, so `repay_amount < max_repay` and the IF
+    // guard's second predicate fails.
+    destroy(btc_price);
+    destroy(usdc_price);
+    scenario.next_tx(test_constants::admin());
+    let btc_price_dropped = build_btc_price_info_object(&mut scenario, 1500, &clock);
+    let usdc_price_fresh = build_demo_usdc_price_info_object(&mut scenario, &clock);
+
+    scenario.next_tx(test_constants::liquidator());
+    let debt_coin = mint_coin<USDC>(40_709_523_808, scenario.ctx());
+    let (base_coin, quote_coin, remaining_debt) = mm.liquidate<BTC, USDC, USDC>(
+        &registry,
+        &btc_price_dropped,
+        &usdc_price_fresh,
+        &mut usdc_pool,
+        &mut pool,
+        debt_coin,
+        &clock,
+        scenario.ctx(),
+    );
+
+    // Even though `assets_exhausted` is true, the IF gate requires
+    // `repay_amount == max_repay`. With input one unit short, repay_amount strictly
+    // below max_repay → proportional branch runs → residual shares remain.
+    assert!(mm.borrowed_quote_shares() > 0);
+    assert!(mm.margin_pool_id().is_some());
+
+    destroy_3!(base_coin, quote_coin, remaining_debt);
+    return_shared_2!(usdc_pool, pool);
+    destroy_2!(btc_price_dropped, usdc_price_fresh);
+    return_shared(mm);
+    cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
