@@ -7,11 +7,12 @@ module deepbook_margin::tpsl_tests;
 use deepbook::{constants, pool::Pool, registry::Registry};
 use deepbook_margin::{
     margin_manager::{Self, MarginManager},
-    margin_pool,
+    margin_pool::{Self, MarginPool},
     margin_registry::{MarginRegistry, MarginAdminCap, MaintainerCap},
     pool_proxy,
     test_constants::{Self, SUI, USDC},
     test_helpers::{
+        Self,
         setup_margin_registry,
         create_margin_pool,
         default_protocol_config,
@@ -370,8 +371,8 @@ fun test_tpsl_trigger_below_executed() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -462,15 +463,23 @@ fun test_tpsl_trigger_below_executed() {
     let margin_registry = scenario.take_shared<MarginRegistry>();
 
     // Execute conditional orders - should trigger and place order
-    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+    let sui_pool = scenario.take_shared_by_id<MarginPool<SUI>>(sui_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let order_infos = test_helpers::execute_conditional_orders_v2_for_test<SUI, USDC>(
+        &mut scenario,
+        &sui_pool,
+        &usdc_pool,
+        &mut mm,
         &mut pool,
         &sui_price_low,
         &usdc_price,
         &margin_registry,
-        10, // max_orders_to_execute
+        10,
+        // max_orders_to_execute
         &clock,
-        scenario.ctx(),
     );
+    return_shared(sui_pool);
+    return_shared(usdc_pool);
 
     // Verify order was executed with accurate data
     assert!(order_infos.length() == 1);
@@ -517,8 +526,8 @@ fun test_tpsl_trigger_above_executed() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -618,15 +627,23 @@ fun test_tpsl_trigger_above_executed() {
     );
 
     // Execute conditional orders - should trigger and place order
-    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+    let sui_pool = scenario.take_shared_by_id<MarginPool<SUI>>(sui_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let order_infos = test_helpers::execute_conditional_orders_v2_for_test<SUI, USDC>(
+        &mut scenario,
+        &sui_pool,
+        &usdc_pool,
+        &mut mm,
         &mut pool,
         &sui_price_high,
         &usdc_price,
         &margin_registry,
-        10, // max_orders_to_execute
+        10,
+        // max_orders_to_execute
         &clock,
-        scenario.ctx(),
     );
+    return_shared(sui_pool);
+    return_shared(usdc_pool);
 
     // Verify order was executed with accurate data
     assert!(order_infos.length() == 1);
@@ -665,8 +682,8 @@ fun test_tpsl_orders_sorted_correctly() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -852,8 +869,8 @@ fun test_tpsl_orders_with_same_trigger_price_maintain_fifo_order() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -1036,8 +1053,8 @@ fun test_tpsl_trigger_price_getters() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -1203,8 +1220,8 @@ fun test_tpsl_trigger_below_market_order_executed() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -1296,15 +1313,23 @@ fun test_tpsl_trigger_below_market_order_executed() {
     );
 
     // Execute conditional orders - should trigger and place market order
-    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+    let sui_pool = scenario.take_shared_by_id<MarginPool<SUI>>(sui_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let order_infos = test_helpers::execute_conditional_orders_v2_for_test<SUI, USDC>(
+        &mut scenario,
+        &sui_pool,
+        &usdc_pool,
+        &mut mm,
         &mut pool,
         &sui_price_low,
         &usdc_price,
         &margin_registry,
-        10, // max_orders_to_execute
+        10,
+        // max_orders_to_execute
         &clock,
-        scenario.ctx(),
     );
+    return_shared(sui_pool);
+    return_shared(usdc_pool);
 
     // Verify order was executed with accurate data
     assert!(order_infos.length() == 1);
@@ -1369,8 +1394,8 @@ fun test_tpsl_trigger_above_market_order_executed() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -1462,15 +1487,23 @@ fun test_tpsl_trigger_above_market_order_executed() {
     );
 
     // Execute conditional orders - should trigger and place market order
-    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+    let sui_pool = scenario.take_shared_by_id<MarginPool<SUI>>(sui_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let order_infos = test_helpers::execute_conditional_orders_v2_for_test<SUI, USDC>(
+        &mut scenario,
+        &sui_pool,
+        &usdc_pool,
+        &mut mm,
         &mut pool,
         &sui_price_high,
         &usdc_price,
         &margin_registry,
-        10, // max_orders_to_execute
+        10,
+        // max_orders_to_execute
         &clock,
-        scenario.ctx(),
     );
+    return_shared(sui_pool);
+    return_shared(usdc_pool);
 
     // Verify order was executed with accurate data
     assert!(order_infos.length() == 1);
@@ -1525,8 +1558,8 @@ fun test_tpsl_cancel_conditional_order() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -1689,8 +1722,8 @@ fun test_tpsl_cancel_all_conditional_orders() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -1824,8 +1857,8 @@ fun test_error_invalid_condition() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -1902,8 +1935,8 @@ fun test_error_invalid_condition_trigger_above() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -1979,8 +2012,8 @@ fun test_error_conditional_order_not_found() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -2019,8 +2052,8 @@ fun test_error_max_conditional_orders_reached() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -2119,8 +2152,8 @@ fun test_error_duplicate_conditional_order_identifier() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -2221,8 +2254,8 @@ fun test_error_invalid_order_params_quantity_too_small() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -2298,8 +2331,8 @@ fun test_error_invalid_order_params_quantity_not_lot_size_multiple() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -2376,8 +2409,8 @@ fun test_error_invalid_order_params_price_not_tick_size_multiple() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -2453,8 +2486,8 @@ fun test_error_invalid_order_params_price_below_min() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -2530,8 +2563,8 @@ fun test_error_invalid_order_params_expired_timestamp() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -2607,8 +2640,8 @@ fun test_error_invalid_order_params_market_order_quantity_too_small() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -2684,8 +2717,8 @@ fun test_tpsl_insufficient_funds_second_order() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -2806,15 +2839,23 @@ fun test_tpsl_insufficient_funds_second_order() {
     );
 
     // Execute conditional orders - both are triggered, but only first succeeds
-    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+    let sui_pool = scenario.take_shared_by_id<MarginPool<SUI>>(sui_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let order_infos = test_helpers::execute_conditional_orders_v2_for_test<SUI, USDC>(
+        &mut scenario,
+        &sui_pool,
+        &usdc_pool,
+        &mut mm,
         &mut pool,
         &sui_price_low,
         &usdc_price,
         &margin_registry,
-        10, // max_orders_to_execute
+        10,
+        // max_orders_to_execute
         &clock,
-        scenario.ctx(),
     );
+    return_shared(sui_pool);
+    return_shared(usdc_pool);
 
     // Only the first order should have been executed successfully
     assert!(order_infos.length() == 1);
@@ -2849,8 +2890,8 @@ fun test_tpsl_expired_order_during_execution() {
         mut clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -2936,15 +2977,22 @@ fun test_tpsl_expired_order_during_execution() {
     let margin_registry = scenario.take_shared<MarginRegistry>();
 
     // Execute conditional orders - order is triggered but expired
-    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+    let sui_pool = scenario.take_shared_by_id<MarginPool<SUI>>(sui_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let order_infos = test_helpers::execute_conditional_orders_v2_for_test<SUI, USDC>(
+        &mut scenario,
+        &sui_pool,
+        &usdc_pool,
+        &mut mm,
         &mut pool,
         &sui_price_low,
         &usdc_price,
         &margin_registry,
         10,
         &clock,
-        scenario.ctx(),
     );
+    return_shared(sui_pool);
+    return_shared(usdc_pool);
 
     // No orders should have been executed (order was expired)
     assert!(order_infos.length() == 0);
@@ -2973,8 +3021,8 @@ fun test_tpsl_early_exit_optimization() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -3075,15 +3123,22 @@ fun test_tpsl_early_exit_optimization() {
     );
 
     // Execute conditional orders
-    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+    let sui_pool = scenario.take_shared_by_id<MarginPool<SUI>>(sui_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let order_infos = test_helpers::execute_conditional_orders_v2_for_test<SUI, USDC>(
+        &mut scenario,
+        &sui_pool,
+        &usdc_pool,
+        &mut mm,
         &mut pool,
         &sui_price_mid,
         &usdc_price,
         &margin_registry,
         10,
         &clock,
-        scenario.ctx(),
     );
+    return_shared(sui_pool);
+    return_shared(usdc_pool);
 
     // Only 2 orders should have been executed (ID 1 and ID 2)
     assert!(order_infos.length() == 2);
@@ -3128,8 +3183,8 @@ fun test_tpsl_max_orders_to_execute_limit() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -3231,15 +3286,23 @@ fun test_tpsl_max_orders_to_execute_limit() {
     );
 
     // First execution: max_orders_to_execute = 2
-    let order_infos_1 = mm.execute_conditional_orders<SUI, USDC>(
+    let sui_pool = scenario.take_shared_by_id<MarginPool<SUI>>(sui_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let order_infos_1 = test_helpers::execute_conditional_orders_v2_for_test<SUI, USDC>(
+        &mut scenario,
+        &sui_pool,
+        &usdc_pool,
+        &mut mm,
         &mut pool,
         &sui_price_low,
         &usdc_price,
         &margin_registry,
-        2, // Execute only 2 orders
+        2,
+        // Execute only 2 orders
         &clock,
-        scenario.ctx(),
     );
+    return_shared(sui_pool);
+    return_shared(usdc_pool);
 
     // First batch: 2 orders executed (ID 1, 2)
     assert!(order_infos_1.length() == 2);
@@ -3265,15 +3328,23 @@ fun test_tpsl_max_orders_to_execute_limit() {
     let margin_registry = scenario.take_shared<MarginRegistry>();
 
     // Second execution: max_orders_to_execute = 2
-    let order_infos_2 = mm.execute_conditional_orders<SUI, USDC>(
+    let sui_pool = scenario.take_shared_by_id<MarginPool<SUI>>(sui_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let order_infos_2 = test_helpers::execute_conditional_orders_v2_for_test<SUI, USDC>(
+        &mut scenario,
+        &sui_pool,
+        &usdc_pool,
+        &mut mm,
         &mut pool,
         &sui_price_low2,
         &usdc_price2,
         &margin_registry,
-        2, // Execute 2 more orders
+        2,
+        // Execute 2 more orders
         &clock,
-        scenario.ctx(),
     );
+    return_shared(sui_pool);
+    return_shared(usdc_pool);
 
     // Second batch: 2 more orders executed (ID 3, 4)
     assert!(order_infos_2.length() == 2);
@@ -3380,8 +3451,8 @@ fun test_tpsl_limit_order_price_below_lower_bound_cancelled() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -3471,15 +3542,22 @@ fun test_tpsl_limit_order_price_below_lower_bound_cancelled() {
     );
 
     // Execute - should cancel due to price out of bounds
-    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+    let sui_pool = scenario.take_shared_by_id<MarginPool<SUI>>(sui_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let order_infos = test_helpers::execute_conditional_orders_v2_for_test<SUI, USDC>(
+        &mut scenario,
+        &sui_pool,
+        &usdc_pool,
+        &mut mm,
         &mut pool,
         &sui_price_trigger,
         &usdc_price,
         &margin_registry,
         10,
         &clock,
-        scenario.ctx(),
     );
+    return_shared(sui_pool);
+    return_shared(usdc_pool);
 
     // Order should NOT have executed
     assert!(order_infos.length() == 0);
@@ -3506,8 +3584,8 @@ fun test_tpsl_limit_order_price_above_upper_bound_cancelled() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -3593,15 +3671,22 @@ fun test_tpsl_limit_order_price_above_upper_bound_cancelled() {
         &clock,
     );
 
-    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+    let sui_pool = scenario.take_shared_by_id<MarginPool<SUI>>(sui_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let order_infos = test_helpers::execute_conditional_orders_v2_for_test<SUI, USDC>(
+        &mut scenario,
+        &sui_pool,
+        &usdc_pool,
+        &mut mm,
         &mut pool,
         &sui_price_trigger,
         &usdc_price,
         &margin_registry,
         10,
         &clock,
-        scenario.ctx(),
     );
+    return_shared(sui_pool);
+    return_shared(usdc_pool);
 
     // Order should NOT have executed
     assert!(order_infos.length() == 0);
@@ -3625,8 +3710,8 @@ fun test_tpsl_market_sell_order_price_out_of_bounds_cancelled() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -3711,15 +3796,22 @@ fun test_tpsl_market_sell_order_price_out_of_bounds_cancelled() {
         &clock,
     );
 
-    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+    let sui_pool = scenario.take_shared_by_id<MarginPool<SUI>>(sui_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let order_infos = test_helpers::execute_conditional_orders_v2_for_test<SUI, USDC>(
+        &mut scenario,
+        &sui_pool,
+        &usdc_pool,
+        &mut mm,
         &mut pool,
         &sui_price_trigger,
         &usdc_price,
         &margin_registry,
         10,
         &clock,
-        scenario.ctx(),
     );
+    return_shared(sui_pool);
+    return_shared(usdc_pool);
 
     // Market sell should be cancelled due to out-of-bounds execution price
     assert!(order_infos.length() == 0);
@@ -3743,8 +3835,8 @@ fun test_tpsl_market_buy_order_price_out_of_bounds_cancelled() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -3830,15 +3922,22 @@ fun test_tpsl_market_buy_order_price_out_of_bounds_cancelled() {
         &clock,
     );
 
-    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+    let sui_pool = scenario.take_shared_by_id<MarginPool<SUI>>(sui_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let order_infos = test_helpers::execute_conditional_orders_v2_for_test<SUI, USDC>(
+        &mut scenario,
+        &sui_pool,
+        &usdc_pool,
+        &mut mm,
         &mut pool,
         &sui_price_trigger,
         &usdc_price,
         &margin_registry,
         10,
         &clock,
-        scenario.ctx(),
     );
+    return_shared(sui_pool);
+    return_shared(usdc_pool);
 
     // Market buy should be cancelled due to out-of-bounds execution price
     assert!(order_infos.length() == 0);
@@ -3862,8 +3961,8 @@ fun test_tpsl_market_buy_order_no_liquidity_cancelled() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         _pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -3947,15 +4046,22 @@ fun test_tpsl_market_buy_order_no_liquidity_cancelled() {
         &clock,
     );
 
-    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+    let sui_pool = scenario.take_shared_by_id<MarginPool<SUI>>(sui_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let order_infos = test_helpers::execute_conditional_orders_v2_for_test<SUI, USDC>(
+        &mut scenario,
+        &sui_pool,
+        &usdc_pool,
+        &mut mm,
         &mut pool,
         &sui_price_trigger,
         &usdc_price,
         &margin_registry,
         10,
         &clock,
-        scenario.ctx(),
     );
+    return_shared(sui_pool);
+    return_shared(usdc_pool);
 
     // Market buy should be cancelled due to no liquidity (base_out == 0)
     assert!(order_infos.length() == 0);
@@ -3979,8 +4085,8 @@ fun test_tpsl_mixed_orders_some_cancelled_some_executed() {
         clock,
         admin_cap,
         maintainer_cap,
-        _usdc_pool_id,
-        _sui_pool_id,
+        usdc_pool_id,
+        sui_pool_id,
         pool_id,
         registry_id,
     ) = setup_sui_usdc_deepbook_margin();
@@ -4089,15 +4195,22 @@ fun test_tpsl_mixed_orders_some_cancelled_some_executed() {
         &clock,
     );
 
-    let order_infos = mm.execute_conditional_orders<SUI, USDC>(
+    let sui_pool = scenario.take_shared_by_id<MarginPool<SUI>>(sui_pool_id);
+    let usdc_pool = scenario.take_shared_by_id<MarginPool<USDC>>(usdc_pool_id);
+    let order_infos = test_helpers::execute_conditional_orders_v2_for_test<SUI, USDC>(
+        &mut scenario,
+        &sui_pool,
+        &usdc_pool,
+        &mut mm,
         &mut pool,
         &sui_price_trigger,
         &usdc_price,
         &margin_registry,
         10,
         &clock,
-        scenario.ctx(),
     );
+    return_shared(sui_pool);
+    return_shared(usdc_pool);
 
     // Only 1 order should have executed (the one within bounds)
     assert!(order_infos.length() == 1);

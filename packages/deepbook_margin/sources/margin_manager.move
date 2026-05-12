@@ -59,6 +59,14 @@ const EPoolNotEnabledForMarginTrading: u64 = 15;
 const EConditionalOrderNotFound: u64 = 16;
 const EOutstandingDebt: u64 = 17;
 const EOutstandingAsset: u64 = 18;
+/// A conditional-order fill in `execute_conditional_orders_v2` would drop the
+/// manager's `risk_ratio` below `min_borrow_risk_ratio`. The whole txn aborts
+/// — we don't allow partial fills that leave the manager in a state borrowing
+/// would have been forbidden from.
+const EInsufficientRiskRatioAfterTrade: u64 = 19;
+/// Deprecated v1 entry was called. Use the `_v2` variant which enforces a
+/// post-trade risk_ratio invariant.
+const EDeprecatedUseV2: u64 = 20;
 
 // === Structs ===
 /// Witness type for authorizing MarginManager to call protected features of the DeepBook
@@ -216,11 +224,38 @@ public fun cancel_conditional_order<BaseAsset, QuoteAsset>(
     self.take_profit_stop_loss.cancel_conditional_order(manager_id, conditional_order_id, clock);
 }
 
+/// DEPRECATED. Use `execute_conditional_orders_v2`.
+///
+/// The v1 entry preserves its on-chain signature so the v5 package upgrade
+/// type-checks against existing dependents, but the body is replaced with
+/// `abort EDeprecatedUseV2`. The v2 variant adds margin-pool + oracle params
+/// and enforces a post-fill `risk_ratio >= min_borrow_risk_ratio` invariant
+/// inside `process_collected_orders_v2`.
+public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
+    _self: &mut MarginManager<BaseAsset, QuoteAsset>,
+    _pool: &mut Pool<BaseAsset, QuoteAsset>,
+    _base_price_info_object: &PriceInfoObject,
+    _quote_price_info_object: &PriceInfoObject,
+    _registry: &MarginRegistry,
+    _max_orders_to_execute: u64,
+    _clock: &Clock,
+    _ctx: &TxContext,
+): vector<OrderInfo> {
+    abort EDeprecatedUseV2
+}
+
 /// Execute conditional orders and return the order infos.
 /// This is a permissionless function that can be called by anyone.
-public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
+///
+/// v2 adds `base_margin_pool` + `quote_margin_pool` parameters and enforces
+/// a post-fill `risk_ratio >= min_borrow_risk_ratio` invariant inside the
+/// inner loop. If any single triggered fill would breach that floor, the
+/// entire txn aborts — no partial-state landing.
+public fun execute_conditional_orders_v2<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
     base_price_info_object: &PriceInfoObject,
     quote_price_info_object: &PriceInfoObject,
     registry: &MarginRegistry,
@@ -275,9 +310,13 @@ public fun execute_conditional_orders<BaseAsset, QuoteAsset>(
     };
 
     // Process collected orders
-    self.process_collected_orders(
+    self.process_collected_orders_v2(
         pool,
         registry,
+        base_margin_pool,
+        quote_margin_pool,
+        base_price_info_object,
+        quote_price_info_object,
         orders_to_process,
         &mut order_infos,
         &mut executed_ids,
@@ -1556,7 +1595,7 @@ fun assets_in_debt_unit_unsafe<BaseAsset, QuoteAsset>(
     (assets_in_debt_unit, base_asset, quote_asset)
 }
 
-fun place_pending_order<BaseAsset, QuoteAsset>(
+fun place_pending_order_v2<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -1565,7 +1604,7 @@ fun place_pending_order<BaseAsset, QuoteAsset>(
     ctx: &TxContext,
 ): OrderInfo {
     if (pending_order.is_limit_order()) {
-        self.place_pending_limit_order<BaseAsset, QuoteAsset>(
+        self.place_pending_limit_order_v2<BaseAsset, QuoteAsset>(
             registry,
             pool,
             pending_order.client_order_id(),
@@ -1580,7 +1619,7 @@ fun place_pending_order<BaseAsset, QuoteAsset>(
             ctx,
         )
     } else {
-        self.place_market_order_conditional<BaseAsset, QuoteAsset>(
+        self.place_market_order_conditional_v2<BaseAsset, QuoteAsset>(
             registry,
             pool,
             pending_order.client_order_id(),
@@ -1595,7 +1634,9 @@ fun place_pending_order<BaseAsset, QuoteAsset>(
 }
 
 /// Only used for tpsl pending orders.
-fun place_pending_limit_order<BaseAsset, QuoteAsset>(
+/// The post-fill solvency invariant is enforced one level up in
+/// `process_collected_orders_v2`, where we have access to the margin pools.
+fun place_pending_limit_order_v2<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -1636,7 +1677,9 @@ fun place_pending_limit_order<BaseAsset, QuoteAsset>(
 
 /// Places a market order in the pool.
 /// Only used for tpsl pending orders.
-fun place_market_order_conditional<BaseAsset, QuoteAsset>(
+/// The post-fill solvency invariant is enforced one level up in
+/// `process_collected_orders_v2`, where we have access to the margin pools.
+fun place_market_order_conditional_v2<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
@@ -1667,11 +1710,22 @@ fun place_market_order_conditional<BaseAsset, QuoteAsset>(
     )
 }
 
-/// Helper function to process collected conditional orders
-fun process_collected_orders<BaseAsset, QuoteAsset>(
+/// Helper function to process collected conditional orders.
+///
+/// After each successful `place_pending_order_v2` call, recompute `risk_ratio`
+/// against Pyth via the public `risk_ratio` helper. If the manager has debt
+/// and the post-fill ratio is below `min_borrow_risk_ratio`, abort the entire
+/// txn with `EInsufficientRiskRatioAfterTrade`. We do not allow partial-fill
+/// landing — one bad fill reverts everything so the manager is never left in
+/// a state borrowing would have been forbidden from.
+fun process_collected_orders_v2<BaseAsset, QuoteAsset>(
     self: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
     registry: &MarginRegistry,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
     orders: vector<ConditionalOrder>,
     order_infos: &mut vector<OrderInfo>,
     executed_ids: &mut vector<u64>,
@@ -1761,13 +1815,14 @@ fun process_collected_orders<BaseAsset, QuoteAsset>(
                 };
             };
 
-            let order_info = self.place_pending_order(
+            let order_info = self.place_pending_order_v2(
                 registry,
                 pool,
                 &pending_order,
                 clock,
                 ctx,
             );
+
             order_infos.push_back(order_info);
             executed_ids.push_back(conditional_order_id);
         } else {
@@ -1784,7 +1839,32 @@ fun process_collected_orders<BaseAsset, QuoteAsset>(
         };
 
         i = i + 1;
-    }
+    };
+
+    // Post-loop solvency check. Move PTBs are atomic, so checking once after
+    // all fills is functionally equivalent to checking after each fill — a
+    // breach of the invariant aborts the whole txn either way. Skipped when
+    // no fills landed (executed_ids empty) and skipped when manager has no
+    // debt (nothing to be insolvent against). Saves up to N-1 Pyth reads on
+    // the happy path versus per-fill checking.
+    if (
+        !executed_ids.is_empty()
+        && (self.borrowed_base_shares > 0 || self.borrowed_quote_shares > 0)
+    ) {
+        let risk_ratio_after = self.risk_ratio(
+            registry,
+            base_oracle,
+            quote_oracle,
+            pool,
+            base_margin_pool,
+            quote_margin_pool,
+            clock,
+        );
+        assert!(
+            risk_ratio_after >= registry.min_borrow_risk_ratio(pool.id()),
+            EInsufficientRiskRatioAfterTrade,
+        );
+    };
 }
 
 fun balance_manager_unsafe_mut<BaseAsset, QuoteAsset>(

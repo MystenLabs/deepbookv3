@@ -323,7 +323,10 @@ public fun initialize_pool_price<BaseAsset, QuoteAsset>(
 }
 
 /// Build a price info object based on the asset type
-fun build_price_info_for_type<Asset>(scenario: &mut Scenario, clock: &Clock): PriceInfoObject {
+public fun build_price_info_for_type<Asset>(
+    scenario: &mut Scenario,
+    clock: &Clock,
+): PriceInfoObject {
     let type_name = std::type_name::with_defining_ids<Asset>();
     let type_string = type_name.into_string().into_bytes();
 
@@ -1201,4 +1204,210 @@ public fun setup_deep_price<BaseAsset, QuoteAsset>(
     return_shared(reference_pool);
 
     reference_pool_id
+}
+
+// === V2 trading wrappers ===
+//
+// The v2 entries on `pool_proxy` and `margin_manager` take additional
+// margin-pool and oracle parameters so they can enforce a post-trade
+// `risk_ratio` invariant. These wrappers fold the oracle build/destroy
+// dance into one call. Callers pass already-shared margin pool refs
+// (most tests already have them taken for borrow/withdraw setup).
+//
+// Signature shape: `(&mut scenario, &registry, &base_margin_pool,
+// &quote_margin_pool, &mut mm, &mut pool, /* original v1 trade args */,
+// &clock)`. The wrapper builds Pyth oracle objects for both assets,
+// invokes the v2 entry with `scenario.ctx()`, and destroys the oracles.
+
+public fun place_limit_order_v2_for_test<BaseAsset, QuoteAsset>(
+    scenario: &mut Scenario,
+    registry: &MarginRegistry,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+    mm: &mut deepbook_margin::margin_manager::MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    client_order_id: u64,
+    order_type: u8,
+    self_matching_option: u8,
+    price: u64,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    expire_timestamp: u64,
+    clock: &Clock,
+): deepbook::order_info::OrderInfo {
+    let base_oracle = build_price_info_for_type<BaseAsset>(scenario, clock);
+    let quote_oracle = build_price_info_for_type<QuoteAsset>(scenario, clock);
+    let order_info = pool_proxy::place_limit_order_v2<BaseAsset, QuoteAsset>(
+        registry,
+        mm,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        &base_oracle,
+        &quote_oracle,
+        client_order_id,
+        order_type,
+        self_matching_option,
+        price,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp,
+        clock,
+        scenario.ctx(),
+    );
+    destroy(base_oracle);
+    destroy(quote_oracle);
+    order_info
+}
+
+public fun place_market_order_v2_for_test<BaseAsset, QuoteAsset>(
+    scenario: &mut Scenario,
+    registry: &MarginRegistry,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+    mm: &mut deepbook_margin::margin_manager::MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    client_order_id: u64,
+    self_matching_option: u8,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    clock: &Clock,
+): deepbook::order_info::OrderInfo {
+    let base_oracle = build_price_info_for_type<BaseAsset>(scenario, clock);
+    let quote_oracle = build_price_info_for_type<QuoteAsset>(scenario, clock);
+    let order_info = pool_proxy::place_market_order_v2<BaseAsset, QuoteAsset>(
+        registry,
+        mm,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        &base_oracle,
+        &quote_oracle,
+        client_order_id,
+        self_matching_option,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        clock,
+        scenario.ctx(),
+    );
+    destroy(base_oracle);
+    destroy(quote_oracle);
+    order_info
+}
+
+public fun place_reduce_only_limit_order_v2_for_test<BaseAsset, QuoteAsset, DebtAsset>(
+    scenario: &mut Scenario,
+    registry: &MarginRegistry,
+    debt_margin_pool: &MarginPool<DebtAsset>,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+    mm: &mut deepbook_margin::margin_manager::MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    client_order_id: u64,
+    order_type: u8,
+    self_matching_option: u8,
+    price: u64,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    expire_timestamp: u64,
+    clock: &Clock,
+): deepbook::order_info::OrderInfo {
+    let base_oracle = build_price_info_for_type<BaseAsset>(scenario, clock);
+    let quote_oracle = build_price_info_for_type<QuoteAsset>(scenario, clock);
+    let order_info = pool_proxy::place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset, DebtAsset>(
+        registry,
+        mm,
+        pool,
+        debt_margin_pool,
+        base_margin_pool,
+        quote_margin_pool,
+        &base_oracle,
+        &quote_oracle,
+        client_order_id,
+        order_type,
+        self_matching_option,
+        price,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        expire_timestamp,
+        clock,
+        scenario.ctx(),
+    );
+    destroy(base_oracle);
+    destroy(quote_oracle);
+    order_info
+}
+
+public fun place_reduce_only_market_order_v2_for_test<BaseAsset, QuoteAsset, DebtAsset>(
+    scenario: &mut Scenario,
+    registry: &MarginRegistry,
+    debt_margin_pool: &MarginPool<DebtAsset>,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+    mm: &mut deepbook_margin::margin_manager::MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    client_order_id: u64,
+    self_matching_option: u8,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    clock: &Clock,
+): deepbook::order_info::OrderInfo {
+    let base_oracle = build_price_info_for_type<BaseAsset>(scenario, clock);
+    let quote_oracle = build_price_info_for_type<QuoteAsset>(scenario, clock);
+    let order_info = pool_proxy::place_reduce_only_market_order_v2<
+        BaseAsset,
+        QuoteAsset,
+        DebtAsset,
+    >(
+        registry,
+        mm,
+        pool,
+        debt_margin_pool,
+        base_margin_pool,
+        quote_margin_pool,
+        &base_oracle,
+        &quote_oracle,
+        client_order_id,
+        self_matching_option,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        clock,
+        scenario.ctx(),
+    );
+    destroy(base_oracle);
+    destroy(quote_oracle);
+    order_info
+}
+
+public fun execute_conditional_orders_v2_for_test<BaseAsset, QuoteAsset>(
+    scenario: &mut Scenario,
+    base_margin_pool: &MarginPool<BaseAsset>,
+    quote_margin_pool: &MarginPool<QuoteAsset>,
+    mm: &mut deepbook_margin::margin_manager::MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_price_info_object: &PriceInfoObject,
+    quote_price_info_object: &PriceInfoObject,
+    registry: &MarginRegistry,
+    max_orders_to_execute: u64,
+    clock: &Clock,
+): vector<deepbook::order_info::OrderInfo> {
+    mm.execute_conditional_orders_v2<BaseAsset, QuoteAsset>(
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        base_price_info_object,
+        quote_price_info_object,
+        registry,
+        max_orders_to_execute,
+        clock,
+        scenario.ctx(),
+    )
 }
