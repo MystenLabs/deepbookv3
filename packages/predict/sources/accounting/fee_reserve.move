@@ -16,7 +16,7 @@ const EInvalidFeeSplit: u64 = 0;
 
 /// Emitted whenever a charged trade accrues an official fee split.
 public struct FeeAccrued has copy, drop, store {
-    predict_id: ID,
+    owner_id: ID,
     total_fee: u64,
     lp_fee: u64,
     protocol_fee: u64,
@@ -122,7 +122,7 @@ public(package) fun set_fee_shares(
 public(package) fun accrue_fee(
     reserve: &mut FeeReserve,
     fee: Balance<DUSDC>,
-    predict_id: ID,
+    owner_id: ID,
 ): Balance<DUSDC> {
     let total_fee = fee.value();
     if (total_fee == 0) return fee;
@@ -133,7 +133,7 @@ public(package) fun accrue_fee(
         insurance_balance,
         lp_balance.value(),
         total_fee,
-        predict_id,
+        owner_id,
     );
 
     lp_balance
@@ -162,7 +162,7 @@ fun record_fee_accrual(
     insurance_balance: Balance<DUSDC>,
     lp_fee: u64,
     total_fee: u64,
-    predict_id: ID,
+    owner_id: ID,
 ) {
     let protocol_fee = protocol_balance.value();
     let insurance_fee = insurance_balance.value();
@@ -175,7 +175,7 @@ fun record_fee_accrual(
     reserve.insurance_balance.join(insurance_balance);
 
     event::emit(FeeAccrued {
-        predict_id,
+        owner_id,
         total_fee,
         lp_fee,
         protocol_fee,

@@ -13,7 +13,7 @@ use deepbook_predict::constants;
 
 const EInvalidStrikes: u64 = 0;
 
-/// Key for a vertical range position used in PredictManager and Vault.
+/// Key for a vertical range position used by managers and expiry markets.
 public struct RangeKey has copy, drop, store {
     oracle_id: ID,
     lower_strike: u64,

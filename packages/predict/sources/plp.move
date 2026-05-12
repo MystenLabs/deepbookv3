@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// LP token type for the DeepBook Predict vault.
+/// LP token type for the Predict pool vault.
 /// Minted on supply, burned on withdraw.
 module deepbook_predict::plp;
 
@@ -19,7 +19,7 @@ fun init(witness: PLP, ctx: &mut TxContext) {
         6,
         b"PLP".to_string(),
         b"Predict LP".to_string(),
-        b"LP token representing shares in the DeepBook Predict vault".to_string(),
+        b"LP token representing shares in the Predict pool vault".to_string(),
         b"".to_string(),
         ctx,
     );

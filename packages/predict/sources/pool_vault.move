@@ -22,8 +22,6 @@ public struct PoolVault has key {
     idle_balance: Balance<DUSDC>,
     treasury_cap: TreasuryCap<PLP>,
     active_expiry_markets: vector<ID>,
-    latest_share_price: u64,
-    latest_share_price_timestamp_ms: u64,
 }
 
 // === Public Functions ===
@@ -41,16 +39,6 @@ public fun idle_balance(vault: &PoolVault): u64 {
 /// Return active expiry market IDs tracked by the pool.
 public fun active_expiry_markets(vault: &PoolVault): &vector<ID> {
     &vault.active_expiry_markets
-}
-
-/// Return the latest finalized PLP share price.
-public fun latest_share_price(vault: &PoolVault): u64 {
-    vault.latest_share_price
-}
-
-/// Return the timestamp for the latest finalized PLP share price.
-public fun latest_share_price_timestamp_ms(vault: &PoolVault): u64 {
-    vault.latest_share_price_timestamp_ms
 }
 
 /// Return total PLP supply.
@@ -101,8 +89,6 @@ public(package) fun new(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): Po
         idle_balance: balance::zero(),
         treasury_cap,
         active_expiry_markets: vector[],
-        latest_share_price: 0,
-        latest_share_price_timestamp_ms: 0,
     }
 }
 

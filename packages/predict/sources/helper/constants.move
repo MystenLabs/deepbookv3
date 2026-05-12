@@ -75,11 +75,5 @@ public macro fun oracle_strike_grid_ticks(): u64 { 100_000 }
 /// Granularity unit for oracle tick sizes; every tick_size must be a multiple of this value.
 public macro fun oracle_tick_size_unit(): u64 { 10_000 }
 
-// === MTM Tracking ===
-
-/// Default MTM freshness threshold: maximum age of MTM values before they're
-/// considered stale for LP supply/withdraw gating (10 seconds).
-public macro fun default_mtm_freshness_ms(): u64 { 10_000 }
-
 public macro fun neg_inf(): u64 { 0 }
 public macro fun pos_inf(): u64 { std::u64::max_value!() }

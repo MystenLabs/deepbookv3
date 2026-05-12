@@ -4,12 +4,12 @@
 /// Fixed strike-grid exposure store for one oracle.
 ///
 /// This module serves two different queries:
-/// 1. MTM against a sampled live-price curve
+/// 1. live valuation against a sampled price curve
 /// 2. exact worst-case settled payout (`max_payout`)
 ///
-/// MTM needs fast strike-range reads. For that, each page stores interval
-/// boundary aggregates so a segment can recover exact `qty` and `qty * strike`
-/// without scanning every strike in the range.
+/// Live valuation needs fast strike-range reads. For that, each page stores
+/// interval boundary aggregates so a segment can recover exact `qty` and
+/// `qty * strike` without scanning every strike in the range.
 ///
 /// Exact `max_payout` is a different problem. For a settlement boundary `s`:
 /// - interval starts at lower bounds `< s`
@@ -26,7 +26,7 @@
 /// - `pages` is a `Table<u64, vector<StrikeNode>>`, with one dynamic-field lookup
 ///   per 512-strike page instead of one lookup per strike.
 /// - Each `StrikeNode` stores exact `q_start` / `q_end` plus page-local
-///   aggregates used by MTM range reads.
+///   aggregates used by live valuation range reads.
 /// - `page_tree` is an inline vector-backed tree of page summaries. Each summary
 ///   keeps:
 ///     * `total_q_start`
@@ -53,14 +53,14 @@
 ///     base_qty + root.best_prefix_start - root.best_prefix_end
 ///
 /// So the design is intentionally asymmetric:
-/// - page-local aggregates optimize MTM
+/// - page-local aggregates optimize live valuation
 /// - the inline summary tree optimizes exact `max_payout`
 /// - dynamic-field pressure stays bounded because only leaf pages live in `Table`
 module deepbook_predict::strike_matrix;
 
 use deepbook::{constants::max_u64, math};
 use deepbook_predict::{constants, pricing::CurvePoint};
-use sui::{clock::Clock, table::{Self, Table}};
+use sui::table::{Self, Table};
 
 const PAGE_SLOTS: u64 = 512;
 
@@ -81,12 +81,9 @@ public struct StrikeMatrix has store {
     max_strike: u64,
     minted_min_strike: u64,
     minted_max_strike: u64,
-    mtm: u64,
     max_payout: u64,
-    last_mtm_update: u64,
     /// Quantity active before the first finite strike, from `(-inf, higher]`
-    /// intervals. Live MTM values it at 1.0 until a finite end boundary turns
-    /// it off.
+    /// intervals.
     base_qty: u64,
 }
 
@@ -116,7 +113,6 @@ public(package) fun new(
     tick_size: u64,
     min_strike: u64,
     max_strike: u64,
-    clock: &Clock,
 ): StrikeMatrix {
     assert!(tick_size > 0, EInvalidTickSize);
     assert!(min_strike <= max_strike, EInvalidStrikeRange);
@@ -145,9 +141,7 @@ public(package) fun new(
         max_strike,
         minted_min_strike: max_u64(),
         minted_max_strike: 0,
-        mtm: 0,
         max_payout: 0,
-        last_mtm_update: clock.timestamp_ms(),
         base_qty: 0,
     }
 }
@@ -167,34 +161,14 @@ public(package) fun max_payout(matrix: &StrikeMatrix): u64 {
     matrix.max_payout
 }
 
-/// Cached mark-to-market value stored by the vault after oracle refresh.
-public(package) fun mtm(matrix: &StrikeMatrix): u64 {
-    matrix.mtm
+/// Evaluate the current interval book against a sampled live curve.
+public(package) fun live_value(matrix: &StrikeMatrix, curve: &vector<CurvePoint>): u64 {
+    matrix.evaluate(curve)
 }
 
-/// Timestamp of the last MTM update, used by the vault to decide when to refresh.
-public(package) fun last_mtm_update(matrix: &StrikeMatrix): u64 {
-    matrix.last_mtm_update
-}
-
-/// Refresh cached live risk values from a sampled curve.
-public(package) fun refresh_live_risk(
-    matrix: &mut StrikeMatrix,
-    curve: &vector<CurvePoint>,
-    clock: &Clock,
-): (u64, u64, u64, u64) {
-    let new_mtm = matrix.evaluate(curve);
-    matrix.set_risk(new_mtm, clock)
-}
-
-/// Refresh cached settled risk values from a concrete settlement price.
-public(package) fun refresh_settled_risk(
-    matrix: &mut StrikeMatrix,
-    settlement: u64,
-    clock: &Clock,
-): (u64, u64, u64, u64) {
-    let new_mtm = matrix.evaluate_settled(settlement);
-    matrix.set_risk(new_mtm, clock)
+/// Evaluate exact settled liability for a concrete settlement price.
+public(package) fun settled_value(matrix: &StrikeMatrix, settlement: u64): u64 {
+    matrix.evaluate_settled(settlement)
 }
 
 /// Return the historical minted strike bounds, or `(0, 0)` for an untouched
@@ -217,9 +191,7 @@ public(package) fun into_settled_liability(matrix: StrikeMatrix, settlement: u64
         max_strike,
         minted_min_strike: _,
         minted_max_strike: _,
-        mtm: _,
         max_payout: _,
-        last_mtm_update: _,
         base_qty,
     } = matrix;
 
@@ -251,18 +223,6 @@ public(package) fun into_settled_liability(matrix: StrikeMatrix, settlement: u64
 }
 
 // === Private Functions ===
-
-fun set_risk(matrix: &mut StrikeMatrix, new_mtm: u64, clock: &Clock): (u64, u64, u64, u64) {
-    let old_mtm = matrix.mtm;
-    let old_max_payout = matrix.max_payout;
-    let new_max_payout = matrix.compute_max_payout();
-
-    matrix.mtm = new_mtm;
-    matrix.max_payout = new_max_payout;
-    matrix.last_mtm_update = clock.timestamp_ms();
-
-    (old_mtm, old_max_payout, new_mtm, new_max_payout)
-}
 
 /// Evaluate the current interval book against a sampled live curve.
 fun evaluate(matrix: &StrikeMatrix, curve: &vector<CurvePoint>): u64 {
@@ -367,8 +327,8 @@ fun compute_max_payout(matrix: &StrikeMatrix): u64 {
 }
 
 /// Apply interval quantity as start/end boundary deltas. The lower endpoint is
-/// exclusive and the upper endpoint is inclusive, so both finite boundaries use
-/// `UP@strike` prices in live MTM: starts add value and ends subtract it.
+/// exclusive and the upper endpoint is inclusive, so live valuation uses
+/// `UP@strike` prices: starts add value and ends subtract it.
 fun apply_range(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64, add: bool) {
     if (lower == constants::neg_inf!()) {
         apply_exact_delta(&mut matrix.base_qty, qty, add);
@@ -379,6 +339,8 @@ fun apply_range(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64, ad
     if (higher != constants::pos_inf!()) {
         matrix.apply_boundary_delta(higher, qty, false, add);
     };
+
+    matrix.max_payout = matrix.compute_max_payout();
 }
 
 /// Apply one finite boundary delta, refresh the touched page summary, then

@@ -3,9 +3,8 @@
 
 /// Registry and admin entrypoints for the Predict protocol.
 ///
-/// This module creates the shared `Registry`, tracks market_oracle and Predict IDs,
-/// and exposes the admin-only wiring/configuration functions used during setup
-/// and protocol governance.
+/// This module creates shared setup objects, tracks market oracle IDs, and
+/// exposes admin-only wiring functions used during setup and governance.
 module deepbook_predict::registry;
 
 use deepbook_predict::{
@@ -14,19 +13,16 @@ use deepbook_predict::{
     market_oracle::{Self, MarketOracle, MarketOracleCap},
     plp::PLP,
     pool_vault::{Self, PoolVault},
-    predict::{Self, Predict},
     predict_manager::{Self, PredictManager},
     protocol_config,
     pyth_source::{Self, PythSource},
     tuning_constants
 };
-use std::string::String;
 use sui::{clock::Clock, coin::TreasuryCap, dynamic_field as df, event, table::{Self, Table}};
 
 use fun df::exists_ as UID.exists_;
 use fun df::add as UID.add;
 
-const EPredictAlreadyCreated: u64 = 0;
 const EInvalidTickSize: u64 = 1;
 const EInvalidStrikeGrid: u64 = 2;
 const EFeedIdOverflow: u64 = 3;
@@ -40,18 +36,6 @@ const EPoolVaultAlreadyCreated: u64 = 8;
 public struct PythSourceCreated has copy, drop, store {
     pyth_source_id: ID,
     pyth_lazer_feed_id: u64,
-}
-
-/// Emitted when a market oracle and its strike grid are registered.
-public struct MarketOracleCreated has copy, drop, store {
-    market_oracle_id: ID,
-    market_oracle_cap_id: ID,
-    pyth_source_id: ID,
-    underlying_asset: String,
-    pyth_lazer_feed_id: u64,
-    expiry: u64,
-    min_strike: u64,
-    tick_size: u64,
 }
 
 /// Emitted when an expiry market and its paired oracle are registered.
@@ -92,9 +76,6 @@ public struct Registry has key {
     market_oracle_ids: Table<ID, vector<ID>>,
 }
 
-/// DF marker on `Registry.id` enforcing the V1 single-Predict invariant.
-public struct PredictCreated() has copy, drop, store;
-
 /// DF marker on `Registry.id` enforcing one protocol config object.
 public struct ProtocolConfigMarker() has copy, drop, store;
 
@@ -103,29 +84,14 @@ public struct PoolVaultMarker() has copy, drop, store;
 
 // === Public Functions ===
 
-/// Create the Predict shared object. V1 allows exactly one Predict total via
-/// the `PredictCreated` marker.
-entry fun create_predict(
-    registry: &mut Registry,
-    _admin_cap: &AdminCap,
-    treasury_cap: TreasuryCap<PLP>,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    assert!(!registry.id.exists_(PredictCreated()), EPredictAlreadyCreated);
-    registry.id.add(PredictCreated(), true);
-    predict::create(&mut registry.id, treasury_cap, clock, ctx);
-}
-
 /// Create the protocol config shared object.
 public fun create_protocol_config(
     registry: &mut Registry,
     _admin_cap: &AdminCap,
-    clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
     assert!(!registry.id.exists_(ProtocolConfigMarker()), EProtocolConfigAlreadyCreated);
-    let protocol_config_id = protocol_config::create_and_share(clock, ctx);
+    let protocol_config_id = protocol_config::create_and_share(ctx);
     registry.id.add(ProtocolConfigMarker(), protocol_config_id);
     protocol_config_id
 }
@@ -200,61 +166,6 @@ public fun destroy_market_oracle_cap(cap: MarketOracleCap) {
     market_oracle::destroy_cap(cap);
 }
 
-/// Create a new market oracle. Returns the market oracle ID.
-///
-/// Authorized by the operator's `MarketOracleCap` alone — no `AdminCap` needed.
-/// The cap is authorized on the new market_oracle automatically so the creator
-/// can immediately push Block Scholes updates.
-/// The Pyth Lazer feed id is inferred from `underlying_asset` via the admin-
-/// registered `asset → feed_id` mapping; admin must call `set_asset_feed_id`
-/// at least once per underlying before its first market_oracle can be created.
-public fun create_market_oracle(
-    registry: &mut Registry,
-    predict: &mut Predict,
-    pyth: &PythSource,
-    cap: &MarketOracleCap,
-    underlying_asset: String,
-    expiry: u64,
-    min_strike: u64,
-    tick_size: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): ID {
-    assert_valid_strike_grid(min_strike, tick_size);
-    assert!(expiry > clock.timestamp_ms(), EInvalidExpiry);
-    let pyth_lazer_feed_id = predict.resolve_feed_id(underlying_asset);
-    let market_oracle_id = create_market_oracle_for_source(
-        registry,
-        pyth,
-        cap,
-        pyth_lazer_feed_id,
-        expiry,
-        ctx,
-    );
-    let cap_id = object::id(cap);
-
-    predict.init_market_oracle_exposure(
-        market_oracle_id,
-        expiry,
-        min_strike,
-        tick_size,
-        clock,
-        ctx,
-    );
-    event::emit(MarketOracleCreated {
-        market_oracle_id,
-        market_oracle_cap_id: cap_id,
-        pyth_source_id: pyth.id(),
-        underlying_asset,
-        pyth_lazer_feed_id,
-        expiry,
-        min_strike,
-        tick_size,
-    });
-
-    market_oracle_id
-}
-
 /// Create a new expiry market for the parallel pool path.
 public fun create_expiry_market(
     registry: &mut Registry,
@@ -281,13 +192,11 @@ public fun create_expiry_market(
     let max_strike = default_max_strike(min_strike, tick_size);
     let expiry_market_id = expiry_market::create_and_share(
         market_oracle_id,
-        pyth.id(),
         pyth_lazer_feed_id,
         expiry,
         min_strike,
         max_strike,
         tick_size,
-        clock,
         ctx,
     );
     pool_vault.register_expiry_market(expiry_market_id);
@@ -304,120 +213,6 @@ public fun create_expiry_market(
     });
 
     (expiry_market_id, market_oracle_id)
-}
-
-/// Set trading pause state.
-public fun set_trading_paused(predict: &mut Predict, _admin_cap: &AdminCap, paused: bool) {
-    predict.set_trading_paused(paused);
-}
-
-/// Set base fee.
-public fun set_base_fee(predict: &mut Predict, _admin_cap: &AdminCap, fee: u64) {
-    predict.set_base_fee(fee);
-}
-
-/// Set min fee.
-public fun set_min_fee(predict: &mut Predict, _admin_cap: &AdminCap, fee: u64) {
-    predict.set_min_fee(fee);
-}
-
-/// Set utilization multiplier.
-public fun set_utilization_multiplier(
-    predict: &mut Predict,
-    _admin_cap: &AdminCap,
-    multiplier: u64,
-) {
-    predict.set_utilization_multiplier(multiplier);
-}
-
-/// Set fee distribution shares.
-public fun set_fee_shares(
-    predict: &mut Predict,
-    _admin_cap: &AdminCap,
-    lp_fee_share: u64,
-    protocol_fee_share: u64,
-    insurance_fee_share: u64,
-) {
-    predict.set_fee_shares(lp_fee_share, protocol_fee_share, insurance_fee_share);
-}
-
-/// Set the global minimum allowed all-in mint price.
-public fun set_min_ask_price(predict: &mut Predict, _admin_cap: &AdminCap, value: u64) {
-    predict.set_min_ask_price(value);
-}
-
-/// Set the global maximum allowed all-in mint price.
-public fun set_max_ask_price(predict: &mut Predict, _admin_cap: &AdminCap, value: u64) {
-    predict.set_max_ask_price(value);
-}
-
-/// Set max total exposure percentage.
-public fun set_max_total_exposure_pct(predict: &mut Predict, _admin_cap: &AdminCap, pct: u64) {
-    predict.set_max_total_exposure_pct(pct);
-}
-
-/// Set the MTM freshness threshold (ms) used for LP supply/withdraw gating.
-public fun set_mtm_freshness_ms(predict: &mut Predict, _admin_cap: &AdminCap, value: u64) {
-    predict.set_mtm_freshness_ms(value);
-}
-
-/// Update withdrawal rate limiter capacity and refill rate.
-public fun update_withdrawal_limiter(
-    predict: &mut Predict,
-    _admin_cap: &AdminCap,
-    capacity: u64,
-    refill_rate_per_ms: u64,
-    clock: &Clock,
-) {
-    predict.update_withdrawal_limiter(capacity, refill_rate_per_ms, clock);
-}
-
-/// Enable the withdrawal rate limiter.
-public fun enable_withdrawal_limiter(predict: &mut Predict, _admin_cap: &AdminCap, clock: &Clock) {
-    predict.enable_withdrawal_limiter(clock);
-}
-
-/// Disable the withdrawal rate limiter.
-public fun disable_withdrawal_limiter(predict: &mut Predict, _admin_cap: &AdminCap) {
-    predict.disable_withdrawal_limiter();
-}
-
-/// Set the live Pyth spot freshness threshold (ms).
-public fun set_pyth_spot_freshness_ms(predict: &mut Predict, _admin_cap: &AdminCap, value: u64) {
-    predict.set_pyth_spot_freshness_ms(value);
-}
-
-/// Set the live Block Scholes spot/forward freshness threshold (ms).
-public fun set_block_scholes_prices_freshness_ms(
-    predict: &mut Predict,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    predict.set_block_scholes_prices_freshness_ms(value);
-}
-
-/// Set the live Block Scholes SVI freshness threshold (ms).
-public fun set_block_scholes_svi_freshness_ms(
-    predict: &mut Predict,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    predict.set_block_scholes_svi_freshness_ms(value);
-}
-
-/// Bind `asset → pyth_lazer_feed_id` so subsequent `create_market_oracle` calls for
-/// that underlying resolve the feed id from config instead of taking it as a
-/// PTB arg. Admin must register an entry before the first market_oracle for a new
-/// asset can be created; re-registering updates the mapping but does NOT
-/// retroactively change existing oracles — they keep the feed id snapshotted
-/// at their own creation time.
-public fun set_asset_feed_id(
-    predict: &mut Predict,
-    _admin_cap: &AdminCap,
-    asset: String,
-    pyth_lazer_feed_id: u64,
-) {
-    predict.set_asset_feed_id(asset, pyth_lazer_feed_id);
 }
 
 /// Create a new PredictManager for the caller, allowing composability.
@@ -474,8 +269,7 @@ fun create_market_oracle_for_source(
     expiry: u64,
     ctx: &mut TxContext,
 ): ID {
-    // Narrow to `u32` for the Lazer-binding leaf. Config stores `u64` for
-    // cross-field consistency, but the Pyth Lazer feed-id width is `u32`.
+    // Narrow to `u32` for the Lazer-binding leaf.
     assert!(pyth_lazer_feed_id <= 0xFFFF_FFFF, EFeedIdOverflow);
     assert!(pyth.feed_id() == pyth_lazer_feed_id as u32, EFeedIdMismatch);
     assert!(registry.pyth_source_ids.contains(pyth_lazer_feed_id), EFeedIdMismatch);

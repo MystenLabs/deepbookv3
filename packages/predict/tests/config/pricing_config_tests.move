@@ -7,7 +7,7 @@ module deepbook_predict::pricing_config_tests;
 use deepbook_predict::{constants, pricing};
 use std::unit_test::assert_eq;
 
-const PREDICT_ID: address = @0x42;
+const CONFIG_ID: address = @0x42;
 
 #[test]
 fun defaults_expose_fee_terms() {
@@ -24,11 +24,11 @@ fun defaults_expose_fee_terms() {
 #[test]
 fun setters_update_fee_terms() {
     let mut config = pricing::new();
-    let predict_id = object::id_from_address(PREDICT_ID);
+    let config_id = object::id_from_address(CONFIG_ID);
 
-    config.set_base_fee(predict_id, 30_000_000);
-    config.set_min_fee(predict_id, 2_000_000);
-    config.set_utilization_multiplier(predict_id, 3_000_000_000);
+    config.set_base_fee(config_id, 30_000_000);
+    config.set_min_fee(config_id, 2_000_000);
+    config.set_utilization_multiplier(config_id, 3_000_000_000);
 
     assert_eq!(config.base_fee(), 30_000_000);
     assert_eq!(config.min_fee(), 2_000_000);

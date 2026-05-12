@@ -25,7 +25,6 @@ use sui::{balance::{Self, Balance}, clock::Clock};
 public struct ExpiryMarket has key {
     id: UID,
     market_oracle_id: ID,
-    pyth_source_id: ID,
     pyth_lazer_feed_id: u64,
     expiry: u64,
     allocated_capital: Balance<DUSDC>,
@@ -44,11 +43,6 @@ public fun id(market: &ExpiryMarket): ID {
 /// Return the market oracle this expiry market is paired with.
 public fun market_oracle_id(market: &ExpiryMarket): ID {
     market.market_oracle_id
-}
-
-/// Return the Pyth source this expiry market is paired with.
-public fun pyth_source_id(market: &ExpiryMarket): ID {
-    market.pyth_source_id
 }
 
 /// Return the Pyth Lazer feed id snapshotted at market creation.
@@ -140,23 +134,20 @@ public fun redeem_compacted_permissionless(
 /// Create and share an unfunded expiry market for one market oracle.
 public(package) fun create_and_share(
     market_oracle_id: ID,
-    pyth_source_id: ID,
     pyth_lazer_feed_id: u64,
     expiry: u64,
     min_strike: u64,
     max_strike: u64,
     tick_size: u64,
-    clock: &Clock,
     ctx: &mut TxContext,
 ): ID {
     let market = ExpiryMarket {
         id: object::new(ctx),
         market_oracle_id,
-        pyth_source_id,
         pyth_lazer_feed_id,
         expiry,
         allocated_capital: balance::zero(),
-        strike_matrix: strike_matrix::new(ctx, tick_size, min_strike, max_strike, clock),
+        strike_matrix: strike_matrix::new(ctx, tick_size, min_strike, max_strike),
         fee_reserve: fee_reserve::new(),
         compacted_settlement: option::none(),
     };

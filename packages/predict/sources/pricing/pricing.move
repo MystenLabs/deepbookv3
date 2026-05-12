@@ -68,7 +68,7 @@ public struct PricingConfig has store {
 
 /// Emitted when pricing configuration changes.
 public struct PricingConfigUpdated has copy, drop, store {
-    predict_id: ID,
+    config_id: ID,
     base_fee: u64,
     min_fee: u64,
     utilization_multiplier: u64,
@@ -144,76 +144,76 @@ public(package) fun new(): PricingConfig {
 }
 
 /// Set the base fee multiplier.
-public(package) fun set_base_fee(config: &mut PricingConfig, predict_id: ID, fee: u64) {
+public(package) fun set_base_fee(config: &mut PricingConfig, config_id: ID, fee: u64) {
     assert!(fee > 0 && fee <= constants::float_scaling!(), EInvalidFee);
     config.base_fee = fee;
-    emit_config_updated(config, predict_id);
+    emit_config_updated(config, config_id);
 }
 
 /// Set the minimum fee floor.
-public(package) fun set_min_fee(config: &mut PricingConfig, predict_id: ID, fee: u64) {
+public(package) fun set_min_fee(config: &mut PricingConfig, config_id: ID, fee: u64) {
     assert!(fee <= constants::float_scaling!(), EInvalidFee);
     config.min_fee = fee;
-    emit_config_updated(config, predict_id);
+    emit_config_updated(config, config_id);
 }
 
 /// Set the utilization multiplier.
 public(package) fun set_utilization_multiplier(
     config: &mut PricingConfig,
-    predict_id: ID,
+    config_id: ID,
     multiplier: u64,
 ) {
     assert!(multiplier <= constants::max_utilization_multiplier!(), EInvalidUtilizationMultiplier);
     config.utilization_multiplier = multiplier;
-    emit_config_updated(config, predict_id);
+    emit_config_updated(config, config_id);
 }
 
 /// Set the global minimum allowed mint price.
-public(package) fun set_min_ask_price(config: &mut PricingConfig, predict_id: ID, value: u64) {
+public(package) fun set_min_ask_price(config: &mut PricingConfig, config_id: ID, value: u64) {
     assert!(value < config.max_ask_price, EInvalidAskBound);
     config.min_ask_price = value;
-    emit_config_updated(config, predict_id);
+    emit_config_updated(config, config_id);
 }
 
 /// Set the global maximum allowed mint price.
-public(package) fun set_max_ask_price(config: &mut PricingConfig, predict_id: ID, value: u64) {
+public(package) fun set_max_ask_price(config: &mut PricingConfig, config_id: ID, value: u64) {
     assert!(value > config.min_ask_price, EInvalidAskBound);
     assert!(value < constants::float_scaling!(), EInvalidAskBound);
     config.max_ask_price = value;
-    emit_config_updated(config, predict_id);
+    emit_config_updated(config, config_id);
 }
 
 /// Set the live Pyth spot freshness threshold.
 public(package) fun set_pyth_spot_freshness_ms(
     config: &mut PricingConfig,
-    predict_id: ID,
+    config_id: ID,
     value: u64,
 ) {
     validate_freshness_ms(value);
     config.pyth_spot_freshness_ms = value;
-    emit_config_updated(config, predict_id);
+    emit_config_updated(config, config_id);
 }
 
 /// Set the live Block Scholes spot/forward freshness threshold.
 public(package) fun set_block_scholes_prices_freshness_ms(
     config: &mut PricingConfig,
-    predict_id: ID,
+    config_id: ID,
     value: u64,
 ) {
     validate_freshness_ms(value);
     config.block_scholes_prices_freshness_ms = value;
-    emit_config_updated(config, predict_id);
+    emit_config_updated(config, config_id);
 }
 
 /// Set the live Block Scholes SVI freshness threshold.
 public(package) fun set_block_scholes_svi_freshness_ms(
     config: &mut PricingConfig,
-    predict_id: ID,
+    config_id: ID,
     value: u64,
 ) {
     validate_freshness_ms(value);
     config.block_scholes_svi_freshness_ms = value;
-    emit_config_updated(config, predict_id);
+    emit_config_updated(config, config_id);
 }
 
 /// Build an adaptive piecewise-linear UP-price curve over a configured grid range.
@@ -317,9 +317,9 @@ fun assert_mint_quote_allowed(config: &PricingConfig, fair_price: u64, fee_rate:
 
 // === Private Functions ===
 
-fun emit_config_updated(config: &PricingConfig, predict_id: ID) {
+fun emit_config_updated(config: &PricingConfig, config_id: ID) {
     event::emit(PricingConfigUpdated {
-        predict_id,
+        config_id,
         base_fee: config.base_fee,
         min_fee: config.min_fee,
         utilization_multiplier: config.utilization_multiplier,
