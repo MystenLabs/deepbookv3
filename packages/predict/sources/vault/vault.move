@@ -28,12 +28,12 @@ const EInsufficientBalance: u64 = 0;
 const EExceedsMaxTotalExposure: u64 = 1;
 const EOracleExposureNotFound: u64 = 2;
 const EMtmExceedsBalance: u64 = 3;
-const EStaleOracleMtm: u64 = 5;
-const EExpiredOracleMtm: u64 = 6;
-const EInvalidStrike: u64 = 7;
-const EOracleMatrixAlreadyExists: u64 = 8;
-const EOracleMetadataAlreadyExists: u64 = 9;
-const EOracleAlreadyCompacted: u64 = 10;
+const EStaleOracleMtm: u64 = 4;
+const EExpiredOracleMtm: u64 = 5;
+const EInvalidStrike: u64 = 6;
+const EOracleMatrixAlreadyExists: u64 = 7;
+const EOracleMetadataAlreadyExists: u64 = 8;
+const EOracleAlreadyCompacted: u64 = 9;
 
 /// Oracle metadata needed for vault-side exposure validation.
 public struct OracleMetadata has copy, drop, store {

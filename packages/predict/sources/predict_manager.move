@@ -13,7 +13,7 @@ use deepbook_predict::range_key::RangeKey;
 use dusdc::dusdc::DUSDC;
 use sui::{coin::Coin, derived_object, table::{Self, Table}};
 
-const EInsufficientPosition: u64 = 1;
+const EInsufficientPosition: u64 = 0;
 
 /// The key for deriving predict manager. u64 is optional for
 /// supporting multiple managers per address. Defaults to 0 in v1.
