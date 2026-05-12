@@ -97,8 +97,14 @@ deps = { std = "MoveStdlib", sui = "Sui", token = "token" }
 [pinned.testnet.deepbook_predict]
 source = { root = true }
 use_environment = "testnet"
-manifest_digest = "585FCDEEF44A95F1BE9F1D0F5AEDD55D3D79AA7C3F1FB753EEE7FCF84C513FC4"
-deps = { deepbook = "deepbook", pyth_lazer = "pyth_lazer", std = "MoveStdlib", sui = "Sui", wormhole = "wormhole" }
+manifest_digest = "6A96D58FBAB949C38B213B4156F51CA096A6473EFBFF5F4C10CE731E2D77C393"
+deps = { deepbook = "deepbook", dusdc = "dusdc", pyth_lazer = "pyth_lazer", std = "MoveStdlib", sui = "Sui", wormhole = "wormhole" }
+
+[pinned.testnet.dusdc]
+source = { local = "../dusdc" }
+use_environment = "testnet"
+manifest_digest = "5745706258F61D6CE210904B3E6AE87A73CE9D31A6F93BE4718C442529332A87"
+deps = { std = "MoveStdlib", sui = "Sui" }
 
 [pinned.testnet.pyth_lazer]
 source = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "f80ff8b1aa2aa9ca17530a9b6294d254f938a5bf" }

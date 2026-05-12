@@ -3,7 +3,7 @@
 
 /// Vault module - pure state machine for trade execution.
 ///
-/// The vault holds accepted quote assets and takes the opposite side of every trade.
+/// The vault holds DUSDC and takes the opposite side of every trade.
 /// Pricing inputs are prepared by the orchestrator (predict.move).
 ///
 /// Tracks mark-to-market liability via per-oracle strike matrices and a cached
@@ -21,22 +21,19 @@ use deepbook_predict::{
     range_key::RangeKey,
     strike_matrix::{Self, StrikeMatrix}
 };
-use sui::{bag::{Self, Bag}, balance::Balance, clock::Clock, table::{Self, Table}};
+use dusdc::dusdc::DUSDC;
+use sui::{balance::{Self, Balance}, clock::Clock, table::{Self, Table}};
 
 const EInsufficientBalance: u64 = 0;
 const EExceedsMaxTotalExposure: u64 = 1;
 const EOracleExposureNotFound: u64 = 2;
 const EMtmExceedsBalance: u64 = 3;
-const EAssetNotInVault: u64 = 4;
 const EStaleOracleMtm: u64 = 5;
 const EExpiredOracleMtm: u64 = 6;
 const EInvalidStrike: u64 = 7;
 const EOracleMatrixAlreadyExists: u64 = 8;
 const EOracleMetadataAlreadyExists: u64 = 9;
 const EOracleAlreadyCompacted: u64 = 10;
-
-/// Dynamic bag key for storing a concrete asset balance by type.
-public struct BalanceKey<phantom T> has copy, drop, store {}
 
 /// Oracle metadata needed for vault-side exposure validation.
 public struct OracleMetadata has copy, drop, store {
@@ -48,10 +45,8 @@ public struct OracleMetadata has copy, drop, store {
 
 /// Vault state for balances, exposure matrices, and aggregate liability.
 public struct Vault has store {
-    /// Concrete balances stored per accepted quote asset type.
-    balances: Bag,
-    /// Shared treasury balance tracked in quote units.
-    balance: u64,
+    /// DUSDC treasury balance.
+    balance: Balance<DUSDC>,
     /// Per-oracle matrix for strike-level position tracking.
     oracle_matrices: Table<ID, StrikeMatrix>,
     /// Per-oracle grid and expiry metadata.
@@ -69,20 +64,9 @@ public struct Vault has store {
 
 // === Public Functions ===
 
-/// Return the aggregate vault balance across accepted quote assets.
+/// Return the vault's DUSDC balance.
 public fun balance(vault: &Vault): u64 {
-    vault.balance
-}
-
-/// Return the concrete balance for asset type `T`, or zero if absent.
-public fun asset_balance<T>(vault: &Vault): u64 {
-    let key = BalanceKey<T> {};
-    if (vault.balances.contains(key)) {
-        let balance: &Balance<T> = &vault.balances[key];
-        balance.value()
-    } else {
-        0
-    }
+    vault.balance.value()
 }
 
 /// Return cached total mark-to-market liability.
@@ -92,8 +76,9 @@ public fun total_mtm(vault: &Vault): u64 {
 
 /// Return balance net of cached mark-to-market liability.
 public fun vault_value(vault: &Vault): u64 {
-    assert!(vault.balance >= vault.total_mtm, EMtmExceedsBalance);
-    vault.balance - vault.total_mtm
+    let balance = vault.balance();
+    assert!(balance >= vault.total_mtm, EMtmExceedsBalance);
+    balance - vault.total_mtm
 }
 
 /// Return cached total worst-case payout liability.
@@ -103,8 +88,9 @@ public fun total_max_payout(vault: &Vault): u64 {
 
 /// Return capital that can leave the vault without violating worst-case backing.
 public fun free_capital(vault: &Vault): u64 {
-    if (vault.balance > vault.total_max_payout) {
-        vault.balance - vault.total_max_payout
+    let balance = vault.balance();
+    if (balance > vault.total_max_payout) {
+        balance - vault.total_max_payout
     } else {
         0
     }
@@ -115,8 +101,7 @@ public fun free_capital(vault: &Vault): u64 {
 /// Create an empty vault.
 public(package) fun new(ctx: &mut TxContext): Vault {
     Vault {
-        balances: bag::new(ctx),
-        balance: 0,
+        balance: balance::zero(),
         oracle_matrices: table::new(ctx),
         oracle_metadata: table::new(ctx),
         compacted_oracle_settlements: table::new(ctx),
@@ -229,22 +214,19 @@ public(package) fun remove_compacted_settled_range(
 }
 
 /// Accept payment into vault balance.
-public(package) fun accept_payment<T>(vault: &mut Vault, payment: Balance<T>) {
-    let amount = payment.value();
-    vault.deposit_balance(payment);
-    vault.balance = vault.balance + amount;
+public(package) fun accept_payment(vault: &mut Vault, payment: Balance<DUSDC>) {
+    vault.balance.join(payment);
 }
 
 /// Dispense payout from vault balance.
-public(package) fun dispense_payout<T>(vault: &mut Vault, amount: u64): Balance<T> {
-    let payout = vault.withdraw_balance<T>(amount);
-    vault.balance = vault.balance - amount;
-    payout
+public(package) fun dispense_payout(vault: &mut Vault, amount: u64): Balance<DUSDC> {
+    assert!(vault.balance.value() >= amount, EInsufficientBalance);
+    vault.balance.split(amount)
 }
 
 /// Assert that total vault exposure is within risk limits.
 public(package) fun assert_total_exposure(vault: &Vault, max_total_pct: u64) {
-    assert!(vault.total_mtm <= math::mul(vault.balance, max_total_pct), EExceedsMaxTotalExposure);
+    assert!(vault.total_mtm <= math::mul(vault.balance(), max_total_pct), EExceedsMaxTotalExposure);
 }
 
 /// Compact a settled oracle's dense matrix into fixed-size liability state.
@@ -411,24 +393,4 @@ fun update_cached_risk(
 ) {
     vault.total_mtm = vault.total_mtm + new_mtm - old_mtm;
     vault.total_max_payout = vault.total_max_payout + new_max_payout - old_max_payout;
-}
-
-/// Join a concrete asset balance into its bag entry, creating it if needed.
-fun deposit_balance<T>(vault: &mut Vault, payment: Balance<T>) {
-    let key = BalanceKey<T> {};
-    if (vault.balances.contains(key)) {
-        let balance: &mut Balance<T> = &mut vault.balances[key];
-        balance.join(payment);
-    } else {
-        vault.balances.add(key, payment);
-    }
-}
-
-/// Split a concrete asset balance from its bag entry.
-fun withdraw_balance<T>(vault: &mut Vault, amount: u64): Balance<T> {
-    let key = BalanceKey<T> {};
-    assert!(vault.balances.contains(key), EAssetNotInVault);
-    let balance: &mut Balance<T> = &mut vault.balances[key];
-    assert!(balance.value() >= amount, EInsufficientBalance);
-    balance.split(amount)
 }

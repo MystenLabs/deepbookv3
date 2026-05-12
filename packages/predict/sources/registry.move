@@ -17,15 +17,8 @@ use deepbook_predict::{
     pyth_source::{Self, PythSource},
     tuning_constants
 };
-use std::{string::String, type_name};
-use sui::{
-    clock::Clock,
-    coin::TreasuryCap,
-    coin_registry::Currency,
-    dynamic_field as df,
-    event,
-    table::{Self, Table}
-};
+use std::string::String;
+use sui::{clock::Clock, coin::TreasuryCap, dynamic_field as df, event, table::{Self, Table}};
 
 use fun df::exists_ as UID.exists_;
 use fun df::add as UID.add;
@@ -82,25 +75,22 @@ public struct Registry has key {
 }
 
 /// DF marker on `Registry.id` enforcing the V1 single-Predict invariant.
-/// Stored value is the chosen `Quote` `TypeName`.
 public struct PredictCreated() has copy, drop, store;
 
 // === Public Functions ===
 
-/// Create the Predict shared object for `Quote`. V1 allows exactly one
-/// Predict total via the `PredictCreated` marker; the per-`Quote` lock in
-/// `predict::create` would take over if that guard is ever dropped.
-entry fun create_predict<Quote>(
+/// Create the Predict shared object. V1 allows exactly one Predict total via
+/// the `PredictCreated` marker.
+entry fun create_predict(
     registry: &mut Registry,
     _admin_cap: &AdminCap,
-    currency: &Currency<Quote>,
     treasury_cap: TreasuryCap<PLP>,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
     assert!(!registry.id.exists_(PredictCreated()), EPredictAlreadyCreated);
-    registry.id.add(PredictCreated(), type_name::with_defining_ids<Quote>());
-    predict::create<Quote>(&mut registry.id, currency, treasury_cap, clock, ctx);
+    registry.id.add(PredictCreated(), true);
+    predict::create(&mut registry.id, treasury_cap, clock, ctx);
 }
 
 /// Create a shared Pyth source for one underlying/feed.
@@ -229,20 +219,6 @@ public fun create_market_oracle(
     });
 
     market_oracle_id
-}
-
-/// Enable a quote asset for new supply and mint inflows.
-public fun enable_quote_asset<Quote>(
-    predict: &mut Predict,
-    _admin_cap: &AdminCap,
-    currency: &Currency<Quote>,
-) {
-    predict.enable_quote_asset<Quote>(currency);
-}
-
-/// Disable a quote asset for new supply and mint inflows.
-public fun disable_quote_asset<Quote>(predict: &mut Predict, _admin_cap: &AdminCap) {
-    predict.disable_quote_asset<Quote>();
 }
 
 /// Set trading pause state.

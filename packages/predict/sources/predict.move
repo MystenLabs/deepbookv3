@@ -27,19 +27,11 @@ use deepbook_predict::{
     range_key::RangeKey,
     rate_limiter::{Self, RateLimiter},
     risk_config::{Self, RiskConfig},
-    treasury_config::{Self, TreasuryConfig},
     vault::{Self, Vault}
 };
-use std::{string::String, type_name::{Self, TypeName}};
-use sui::{
-    balance::Balance,
-    clock::Clock,
-    coin::{Self, Coin, TreasuryCap},
-    coin_registry::Currency,
-    derived_object,
-    event,
-    vec_set::VecSet
-};
+use dusdc::dusdc::DUSDC;
+use std::string::String;
+use sui::{balance::Balance, clock::Clock, coin::{Self, Coin, TreasuryCap}, derived_object, event};
 
 const ETradingPaused: u64 = 0;
 const ENotOwner: u64 = 1;
@@ -57,7 +49,6 @@ public struct PositionMinted has copy, drop, store {
     predict_id: ID,
     manager_id: ID,
     trader: address,
-    quote_asset: TypeName,
     oracle_id: ID,
     expiry: u64,
     lower_strike: u64,
@@ -74,7 +65,6 @@ public struct PositionRedeemed has copy, drop, store {
     manager_id: ID,
     owner: address,
     executor: address,
-    quote_asset: TypeName,
     oracle_id: ID,
     expiry: u64,
     lower_strike: u64,
@@ -106,23 +96,10 @@ public struct RiskConfigUpdated has copy, drop, store {
     mtm_freshness_ms: u64,
 }
 
-/// Emitted when a quote asset is enabled for new inflows.
-public struct QuoteAssetEnabled has copy, drop, store {
-    predict_id: ID,
-    quote_asset: TypeName,
-}
-
-/// Emitted when a quote asset is disabled for new inflows.
-public struct QuoteAssetDisabled has copy, drop, store {
-    predict_id: ID,
-    quote_asset: TypeName,
-}
-
 /// Emitted when LP capital is supplied to the vault.
 public struct Supplied has copy, drop, store {
     predict_id: ID,
     supplier: address,
-    quote_asset: TypeName,
     amount: u64,
     shares_minted: u64,
 }
@@ -131,7 +108,6 @@ public struct Supplied has copy, drop, store {
 public struct Withdrawn has copy, drop, store {
     predict_id: ID,
     withdrawer: address,
-    quote_asset: TypeName,
     amount: u64,
     shares_burned: u64,
 }
@@ -156,8 +132,6 @@ public struct Predict has key {
     pricing_config: PricingConfig,
     /// Risk limits (admin-controlled)
     risk_config: RiskConfig,
-    /// Treasury asset whitelist and related treasury policy state
-    treasury_config: TreasuryConfig,
     /// Oracle source feed bindings.
     oracle_config: OracleConfig,
     /// Rate limiter for LP withdrawals
@@ -166,15 +140,15 @@ public struct Predict has key {
     trading_paused: bool,
 }
 
-/// Derived-object key for the singleton Predict shared object per quote type.
-public struct PredictKey<phantom T>() has copy, drop, store;
+/// Derived-object key for the singleton Predict shared object.
+public struct PredictKey() has copy, drop, store;
 
 // === Public Functions ===
 
-/// Mint a position interval `(lower, higher]` using an enabled quote asset.
+/// Mint a position interval `(lower, higher]` using DUSDC.
 /// The user pays the fair price plus per-unit fee up front; the vault tracks
 /// bounded liability natively via strike-matrix interval accounting.
-public fun mint<Quote>(
+public fun mint(
     predict: &mut Predict,
     manager: &mut PredictManager,
     market_oracle: &MarketOracle,
@@ -185,13 +159,13 @@ public fun mint<Quote>(
     ctx: &mut TxContext,
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
-    mint_internal<Quote>(predict, manager, market_oracle, pyth, key, quantity, clock, ctx);
+    mint_internal(predict, manager, market_oracle, pyth, key, quantity, clock, ctx);
 }
 
 /// Redeem a position interval.
 /// Live payout is post-trade fair value less fee. Settlement redemption is
 /// zero-fee and pays `quantity` if settlement landed in `(lower, higher]`.
-public fun redeem<Quote>(
+public fun redeem(
     predict: &mut Predict,
     manager: &mut PredictManager,
     market_oracle: &MarketOracle,
@@ -203,9 +177,9 @@ public fun redeem<Quote>(
 ) {
     assert!(ctx.sender() == manager.owner(), ENotOwner);
     let payout_coin = if (market_oracle.is_settled()) {
-        redeem_settled_internal<Quote>(predict, manager, market_oracle, key, quantity, clock, ctx)
+        redeem_settled_internal(predict, manager, market_oracle, key, quantity, clock, ctx)
     } else {
-        redeem_live_internal<Quote>(
+        redeem_live_internal(
             predict,
             manager,
             market_oracle,
@@ -220,7 +194,7 @@ public fun redeem<Quote>(
 }
 
 /// Sell a settled position interval permissionlessly into the PredictManager's balance.
-public fun redeem_permissionless<Quote>(
+public fun redeem_permissionless(
     predict: &mut Predict,
     manager: &mut PredictManager,
     market_oracle: &MarketOracle,
@@ -229,7 +203,7 @@ public fun redeem_permissionless<Quote>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    let payout_coin = redeem_settled_internal<Quote>(
+    let payout_coin = redeem_settled_internal(
         predict,
         manager,
         market_oracle,
@@ -238,41 +212,40 @@ public fun redeem_permissionless<Quote>(
         clock,
         ctx,
     );
-    manager.deposit_permissionless(payout_coin, ctx);
+    manager.deposit_permissionless(payout_coin);
 }
 
 /// Sell a compacted settled position without passing the terminal oracle object.
-public fun redeem_compacted_permissionless<Quote>(
+public fun redeem_compacted_permissionless(
     predict: &mut Predict,
     manager: &mut PredictManager,
     key: RangeKey,
     quantity: u64,
     ctx: &mut TxContext,
 ) {
-    let payout_coin = redeem_compacted_settled_internal<Quote>(
+    let payout_coin = redeem_compacted_settled_internal(
         predict,
         manager,
         key,
         quantity,
         ctx,
     );
-    manager.deposit_permissionless(payout_coin, ctx);
+    manager.deposit_permissionless(payout_coin);
 }
 
-/// Supply an enabled quote asset into the shared LP pool.
+/// Supply DUSDC into the shared LP pool.
 /// Returns LP tokens representing shares.
 /// First depositor gets shares 1:1. Subsequent depositors get shares
 /// proportional to their deposit relative to current vault value.
-public fun supply<Quote>(
+public fun supply(
     predict: &mut Predict,
-    coin: Coin<Quote>,
+    coin: Coin<DUSDC>,
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<PLP> {
     predict.vault.assert_unsettled_mtm_fresh(predict.risk_config.mtm_freshness_ms(), clock);
     let amount = coin.value();
     assert!(amount > 0, EZeroAmount);
-    predict.treasury_config.assert_quote_asset<Quote>();
 
     let vault_value = predict.vault.vault_value();
     predict.vault.accept_payment(coin.into_balance());
@@ -290,42 +263,35 @@ public fun supply<Quote>(
     event::emit(Supplied {
         predict_id: object::id(predict),
         supplier: ctx.sender(),
-        quote_asset: type_name::with_defining_ids<Quote>(),
         amount,
         shares_minted: shares,
     });
     coin::mint(&mut predict.treasury_cap, shares, ctx)
 }
 
-/// Withdraw a selected quote asset from the vault by providing LP tokens.
-/// Burns the LP tokens and returns the corresponding quote asset.
-/// Outflows can use any quote asset with concrete vault balance, even if it is
-/// disabled for new inflows.
-public fun withdraw<Quote>(
+/// Withdraw DUSDC from the vault by providing LP tokens.
+/// Burns the LP tokens and returns the corresponding DUSDC.
+public fun withdraw(
     predict: &mut Predict,
     lp_coin: Coin<PLP>,
     clock: &Clock,
     ctx: &mut TxContext,
-): Coin<Quote> {
+): Coin<DUSDC> {
     predict.vault.assert_unsettled_mtm_fresh(predict.risk_config.mtm_freshness_ms(), clock);
     let vault_value = predict.vault.vault_value();
     let shares_burned = lp_coin.value();
     assert!(shares_burned > 0, EZeroAmount);
     let amount = predict.shares_to_amount(shares_burned, vault_value);
-    assert!(
-        amount <= predict.max_withdrawable_now_unchecked<Quote>(clock),
-        EWithdrawExceedsAvailable,
-    );
+    assert!(amount <= predict.max_withdrawable_now_unchecked(clock), EWithdrawExceedsAvailable);
     predict.withdrawal_limiter.consume(amount, clock);
     predict.treasury_cap.burn(lp_coin);
     event::emit(Withdrawn {
         predict_id: object::id(predict),
         withdrawer: ctx.sender(),
-        quote_asset: type_name::with_defining_ids<Quote>(),
         amount,
         shares_burned,
     });
-    predict.vault.dispense_payout<Quote>(amount).into_coin(ctx)
+    predict.vault.dispense_payout(amount).into_coin(ctx)
 }
 
 /// Keeper/ops hook for syncing one market's cached MTM into the vault.
@@ -412,11 +378,6 @@ public fun base_fee(predict: &Predict): u64 {
     predict.pricing_config.base_fee()
 }
 
-/// Get the accepted quote asset whitelist.
-public fun accepted_quotes(predict: &Predict): &VecSet<TypeName> {
-    predict.treasury_config.accepted_quotes()
-}
-
 /// Get the min fee.
 public fun min_fee(predict: &Predict): u64 {
     predict.pricing_config.min_fee()
@@ -447,10 +408,10 @@ public fun withdrawal_budget_now(predict: &Predict, clock: &Clock): u64 {
     predict.withdrawal_limiter.available_withdrawal(clock)
 }
 
-/// Return the maximum currently withdrawable amount for `Quote`.
-public fun max_withdrawable_now<Quote>(predict: &Predict, clock: &Clock): u64 {
+/// Return the maximum currently withdrawable DUSDC amount.
+public fun max_withdrawable_now(predict: &Predict, clock: &Clock): u64 {
     predict.vault.assert_unsettled_mtm_fresh(predict.risk_config.mtm_freshness_ms(), clock);
-    predict.max_withdrawable_now_unchecked<Quote>(clock)
+    predict.max_withdrawable_now_unchecked(clock)
 }
 
 /// Return the official total fee amount accrued across all charged Predict trades.
@@ -473,14 +434,14 @@ public fun insurance_fees_accrued(predict: &Predict): u64 {
     predict.fee_reserve.insurance_fees_accrued()
 }
 
-/// Return concrete protocol fee reserve balance for asset type `Quote`.
-public fun protocol_fee_asset_balance<Quote>(predict: &Predict): u64 {
-    predict.fee_reserve.protocol_asset_balance<Quote>()
+/// Return concrete protocol fee reserve balance.
+public fun protocol_fee_asset_balance(predict: &Predict): u64 {
+    predict.fee_reserve.protocol_asset_balance()
 }
 
-/// Return concrete insurance fee reserve balance for asset type `Quote`.
-public fun insurance_fee_asset_balance<Quote>(predict: &Predict): u64 {
-    predict.fee_reserve.insurance_asset_balance<Quote>()
+/// Return concrete insurance fee reserve balance.
+public fun insurance_fee_asset_balance(predict: &Predict): u64 {
+    predict.fee_reserve.insurance_asset_balance()
 }
 
 /// Return the current LP fee share.
@@ -501,49 +462,28 @@ public fun insurance_fee_share(predict: &Predict): u64 {
 // === Public-Package Functions ===
 
 /// Create and share the Predict object. Returns its ID.
-public(package) fun create<Quote>(
+public(package) fun create(
     registry_uid: &mut UID,
-    currency: &Currency<Quote>,
     treasury_cap: TreasuryCap<PLP>,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    assert!(!derived_object::exists(registry_uid, PredictKey<Quote>()), EPredictAlreadyCreated);
-    let mut predict = Predict {
-        id: derived_object::claim(registry_uid, PredictKey<Quote>()),
+    assert!(!derived_object::exists(registry_uid, PredictKey()), EPredictAlreadyCreated);
+    let predict = Predict {
+        id: derived_object::claim(registry_uid, PredictKey()),
         vault: vault::new(ctx),
-        fee_reserve: fee_reserve::new(ctx),
+        fee_reserve: fee_reserve::new(),
         treasury_cap,
         pricing_config: pricing::new(),
         risk_config: risk_config::new(),
-        treasury_config: treasury_config::new(),
         oracle_config: oracle_config::new(ctx),
         // Withdrawal rate limiter starts disabled. Admin must call
         // update_withdrawal_limiter() then enable_withdrawal_limiter()
-        // to activate, configuring capacity and rate for the quote asset.
+        // to activate, configuring capacity and rate for DUSDC.
         withdrawal_limiter: rate_limiter::new(clock),
         trading_paused: false,
     };
-    predict.enable_quote_asset<Quote>(currency);
     transfer::share_object(predict);
-}
-
-/// Enable a quote asset for new Predict inflows.
-public(package) fun enable_quote_asset<Quote>(predict: &mut Predict, currency: &Currency<Quote>) {
-    predict.treasury_config.add_quote_asset<Quote>(currency);
-    event::emit(QuoteAssetEnabled {
-        predict_id: object::id(predict),
-        quote_asset: type_name::with_defining_ids<Quote>(),
-    });
-}
-
-/// Disable a quote asset for new Predict inflows.
-public(package) fun disable_quote_asset<Quote>(predict: &mut Predict) {
-    predict.treasury_config.remove_quote_asset<Quote>();
-    event::emit(QuoteAssetDisabled {
-        predict_id: object::id(predict),
-        quote_asset: type_name::with_defining_ids<Quote>(),
-    });
 }
 
 /// Initialize vault exposure state for a newly created market oracle.
@@ -702,7 +642,7 @@ fun assert_range_key_matches(predict: &Predict, market_oracle: &MarketOracle, ke
 }
 
 /// Shared mint path after caller authorization.
-fun mint_internal<Quote>(
+fun mint_internal(
     predict: &mut Predict,
     manager: &mut PredictManager,
     market_oracle: &MarketOracle,
@@ -712,7 +652,7 @@ fun mint_internal<Quote>(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    predict.apply_mint_delta<Quote>(manager, market_oracle, pyth, key, quantity, clock);
+    predict.apply_mint_delta(manager, market_oracle, pyth, key, quantity, clock);
 
     let (principal_amount, fee_amount) = predict.quote_mint_amounts(
         market_oracle,
@@ -723,7 +663,7 @@ fun mint_internal<Quote>(
     );
     let cost = principal_amount + fee_amount;
 
-    let mut payment = manager.withdraw<Quote>(cost, ctx).into_balance();
+    let mut payment = manager.withdraw(cost, ctx).into_balance();
     let fee_payment = payment.split(fee_amount);
     predict.apply_fee(fee_payment);
     predict.vault.accept_payment(payment);
@@ -733,7 +673,6 @@ fun mint_internal<Quote>(
         predict_id: object::id(predict),
         manager_id: object::id(manager),
         trader: manager.owner(),
-        quote_asset: type_name::with_defining_ids<Quote>(),
         oracle_id: key.oracle_id(),
         expiry: market_oracle.expiry(),
         lower_strike: key.lower_strike(),
@@ -745,7 +684,7 @@ fun mint_internal<Quote>(
 }
 
 /// Shared live redemption path.
-fun redeem_live_internal<Quote>(
+fun redeem_live_internal(
     predict: &mut Predict,
     manager: &mut PredictManager,
     market_oracle: &MarketOracle,
@@ -754,7 +693,7 @@ fun redeem_live_internal<Quote>(
     quantity: u64,
     clock: &Clock,
     ctx: &mut TxContext,
-): Coin<Quote> {
+): Coin<DUSDC> {
     predict.apply_live_redeem_delta(manager, market_oracle, pyth, key, quantity, clock);
 
     let (principal_amount, fee_amount) = predict.quote_live_redeem_amounts(
@@ -764,13 +703,13 @@ fun redeem_live_internal<Quote>(
         quantity,
         clock,
     );
-    let mut payout_balance = predict.vault.dispense_payout<Quote>(principal_amount);
+    let mut payout_balance = predict.vault.dispense_payout(principal_amount);
     let fee_balance = payout_balance.split(fee_amount);
     predict.apply_fee(fee_balance);
 
     let payout_coin = payout_balance.into_coin(ctx);
 
-    predict.emit_position_redeemed<Quote>(
+    predict.emit_position_redeemed(
         manager,
         market_oracle.expiry(),
         key,
@@ -785,7 +724,7 @@ fun redeem_live_internal<Quote>(
 }
 
 /// Shared settled redemption path.
-fun redeem_settled_internal<Quote>(
+fun redeem_settled_internal(
     predict: &mut Predict,
     manager: &mut PredictManager,
     market_oracle: &MarketOracle,
@@ -793,7 +732,7 @@ fun redeem_settled_internal<Quote>(
     quantity: u64,
     clock: &Clock,
     ctx: &mut TxContext,
-): Coin<Quote> {
+): Coin<DUSDC> {
     let oracle_id = key.oracle_id();
     let (payout_amount, expiry) = if (predict.vault.is_compacted_oracle(oracle_id)) {
         (
@@ -815,8 +754,8 @@ fun redeem_settled_internal<Quote>(
         )
     };
 
-    let payout_coin = predict.vault.dispense_payout<Quote>(payout_amount).into_coin(ctx);
-    predict.emit_position_redeemed<Quote>(
+    let payout_coin = predict.vault.dispense_payout(payout_amount).into_coin(ctx);
+    predict.emit_position_redeemed(
         manager,
         expiry,
         key,
@@ -831,18 +770,18 @@ fun redeem_settled_internal<Quote>(
 }
 
 /// Shared compacted settled redemption path.
-fun redeem_compacted_settled_internal<Quote>(
+fun redeem_compacted_settled_internal(
     predict: &mut Predict,
     manager: &mut PredictManager,
     key: RangeKey,
     quantity: u64,
     ctx: &mut TxContext,
-): Coin<Quote> {
+): Coin<DUSDC> {
     let oracle_id = key.oracle_id();
     let expiry = predict.vault.oracle_expiry(oracle_id);
     let payout_amount = predict.apply_compacted_settled_redeem_delta(manager, key, quantity);
-    let payout_coin = predict.vault.dispense_payout<Quote>(payout_amount).into_coin(ctx);
-    predict.emit_position_redeemed<Quote>(
+    let payout_coin = predict.vault.dispense_payout(payout_amount).into_coin(ctx);
+    predict.emit_position_redeemed(
         manager,
         expiry,
         key,
@@ -857,7 +796,7 @@ fun redeem_compacted_settled_internal<Quote>(
 
 /// Apply the position, vault, and risk-state delta for a mint before pricing
 /// against the post-trade vault state.
-fun apply_mint_delta<Quote>(
+fun apply_mint_delta(
     predict: &mut Predict,
     manager: &mut PredictManager,
     market_oracle: &MarketOracle,
@@ -869,7 +808,6 @@ fun apply_mint_delta<Quote>(
     assert!(quantity > 0, EZeroQuantity);
     predict.assert_range_key_matches(market_oracle, &key);
     assert!(!predict.trading_paused, ETradingPaused);
-    predict.treasury_config.assert_quote_asset<Quote>();
 
     let oracle_id = market_oracle.id();
     let (min_strike, max_strike) = predict.vault.valuation_strike_range(oracle_id);
@@ -1012,17 +950,13 @@ fun shares_to_amount(predict: &Predict, shares: u64, vault_value: u64): u64 {
     mul_div_round_down(shares, vault_value, total)
 }
 
-fun max_withdrawable_now_unchecked<Quote>(predict: &Predict, clock: &Clock): u64 {
-    predict
-        .vault
-        .free_capital()
-        .min(predict.withdrawal_limiter.available_withdrawal(clock))
-        .min(predict.vault.asset_balance<Quote>())
+fun max_withdrawable_now_unchecked(predict: &Predict, clock: &Clock): u64 {
+    predict.vault.free_capital().min(predict.withdrawal_limiter.available_withdrawal(clock))
 }
 
 /// Route a full fee balance through the fee reserve and deposit the LP share into the vault.
 /// Zero fees are ignored so settlement redemption does not emit fee accruals.
-fun apply_fee<Quote>(predict: &mut Predict, fee_balance: Balance<Quote>) {
+fun apply_fee(predict: &mut Predict, fee_balance: Balance<DUSDC>) {
     if (fee_balance.value() == 0) {
         fee_balance.destroy_zero();
         return
@@ -1032,7 +966,7 @@ fun apply_fee<Quote>(predict: &mut Predict, fee_balance: Balance<Quote>) {
     predict.vault.accept_payment(lp_fee);
 }
 
-fun emit_position_redeemed<Quote>(
+fun emit_position_redeemed(
     predict: &Predict,
     manager: &PredictManager,
     expiry: u64,
@@ -1048,7 +982,6 @@ fun emit_position_redeemed<Quote>(
         manager_id: object::id(manager),
         owner: manager.owner(),
         executor: ctx.sender(),
-        quote_asset: type_name::with_defining_ids<Quote>(),
         oracle_id: key.oracle_id(),
         expiry,
         lower_strike: key.lower_strike(),
@@ -1073,25 +1006,20 @@ fun emit_risk_config_updated(predict: &Predict) {
 
 #[test_only]
 /// Create a Predict object for testing without sharing it.
-public(package) fun create_test_predict<Quote>(
-    currency: &Currency<Quote>,
-    ctx: &mut TxContext,
-): Predict {
+public(package) fun create_test_predict(ctx: &mut TxContext): Predict {
     let treasury_cap = coin::create_treasury_cap_for_testing<PLP>(ctx);
     let clock = sui::clock::create_for_testing(ctx);
-    let mut predict = Predict {
+    let predict = Predict {
         id: object::new(ctx),
         vault: vault::new(ctx),
-        fee_reserve: fee_reserve::new(ctx),
+        fee_reserve: fee_reserve::new(),
         treasury_cap,
         pricing_config: pricing::new(),
         risk_config: risk_config::new(),
-        treasury_config: treasury_config::new(),
         oracle_config: oracle_config::new(ctx),
         withdrawal_limiter: rate_limiter::new(&clock),
         trading_paused: false,
     };
-    predict.enable_quote_asset<Quote>(currency);
     clock.destroy_for_testing();
     predict
 }
@@ -1106,12 +1034,6 @@ public(package) fun vault_mut(predict: &mut Predict): &mut Vault {
 /// Return market_oracle config access for tests.
 public(package) fun oracle_config(predict: &Predict): &OracleConfig {
     &predict.oracle_config
-}
-
-#[test_only]
-/// Return treasury config access for tests.
-public(package) fun treasury_config(predict: &Predict): &TreasuryConfig {
-    &predict.treasury_config
 }
 
 #[test_only]

@@ -109,15 +109,13 @@ export function finalizeDusdcCurrencyRegistrationTx(): Transaction {
   return tx;
 }
 
-export function createPredictTx(currencyId: string): Transaction {
+export function createPredictTx(): Transaction {
   const tx = new Transaction();
   tx.moveCall({
     target: target("registry", "create_predict"),
-    typeArguments: [DUSDC_TYPE],
     arguments: [
       tx.object(REGISTRY_ID),
       tx.object(ADMIN_CAP_ID),
-      tx.object(currencyId),
       tx.object(PLP_TREASURY_CAP_ID),
       tx.object(CLOCK_ID),
     ],
@@ -289,7 +287,6 @@ export function supplyTx(predictId: string, amount: bigint): Transaction {
   });
   const [plpCoin] = tx.moveCall({
     target: target("predict", "supply"),
-    typeArguments: [DUSDC_TYPE],
     arguments: [tx.object(predictId), dusdc, tx.object(CLOCK_ID)],
   });
   tx.transferObjects([plpCoin], tx.pure.address(address));
@@ -310,10 +307,10 @@ export function createManagerTx(): Transaction {
 // Fieldless struct → compiler-injected `dummy_field: bool = false` (one 0-byte).
 const PREDICT_KEY_BCS = new Uint8Array([0]);
 
-export function derivePredictId(quoteType: string = DUSDC_TYPE): string {
+export function derivePredictId(): string {
   return deriveObjectID(
     REGISTRY_ID,
-    `${PACKAGE_ID}::predict::PredictKey<${quoteType}>`,
+    `${PACKAGE_ID}::predict::PredictKey`,
     PREDICT_KEY_BCS
   );
 }
@@ -341,7 +338,6 @@ export function depositToManagerTx(managerId: string, amount: bigint): Transacti
   });
   tx.moveCall({
     target: target("predict_manager", "deposit"),
-    typeArguments: [DUSDC_TYPE],
     arguments: [tx.object(managerId), coin],
   });
   return tx;
@@ -368,7 +364,6 @@ export function mintTx(params: {
   });
   tx.moveCall({
     target: target("predict", "mint"),
-    typeArguments: [DUSDC_TYPE],
     arguments: [
       tx.object(params.predictId),
       tx.object(params.managerId),
@@ -457,7 +452,6 @@ export function refreshOracleAndMintTx(params: {
   });
   tx.moveCall({
     target: target("predict", "mint"),
-    typeArguments: [DUSDC_TYPE],
     arguments: [
       tx.object(params.predictId),
       tx.object(params.managerId),

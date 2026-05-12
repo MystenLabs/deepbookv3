@@ -119,7 +119,7 @@ async function setupSimulation(): Promise<SimState> {
   console.log(`[${ts()}]   DUSDC Currency: ${dusdcCurrencyId}`);
 
   const predictId = derivePredictId();
-  await executeAndWait(createPredictTx(dusdcCurrencyId), "create_predict");
+  await executeAndWait(createPredictTx(), "create_predict");
   console.log(`[${ts()}]   Predict: ${predictId}`);
 
   result = await executeAndWait(createMarketOracleCapTx(address), "create_market_oracle_cap");
