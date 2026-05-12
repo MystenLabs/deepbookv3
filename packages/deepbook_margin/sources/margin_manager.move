@@ -794,9 +794,9 @@ public fun liquidate<BaseAsset, QuoteAsset, DebtAsset>(
     let repay_amount = max_repay.min(input_coin_without_pool_reward); // 97.087
     let repay_amount_with_pool_reward = math::mul(repay_amount, liquidation_reward_with_pool); // 97.087 * 1.03 = 100
 
-    // If assets are insufficient to cover full debt + reward, the liquidator drains all
-    // collateral at `max_repay`; clear every borrow share so the shortfall is recorded as
-    // `pool_default` rather than left as silent residual debt on an empty manager.
+    // If assets are insufficient to cover full debt + reward, the manager's collateral is
+    // fully withdrawn at `max_repay`. Clear every borrow share so the shortfall is recorded
+    // as `pool_default` rather than left as silent residual debt on an empty manager.
     let assets_exhausted = assets_in_debt_unit <= debt_with_reward;
     let repay_shares = if (assets_exhausted && repay_amount == max_repay) {
         borrowed_shares
