@@ -1741,3 +1741,207 @@ fun test_update_margin_pool_config_accrues_interest_with_old_params() {
     test::return_shared(pool);
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
+
+#[test]
+fun test_admin_inject_capital_increases_share_price_without_minting_shares() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+
+    scenario.next_tx(test_constants::admin());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    scenario.next_tx(test_constants::user1());
+    let supply_amount = 100 * test_constants::usdc_multiplier();
+    let injection_amount = 25 * test_constants::usdc_multiplier();
+    let supplier_cap = test_helpers::supply_to_pool(
+        &mut pool,
+        &registry,
+        supply_amount,
+        &clock,
+        scenario.ctx(),
+    );
+    let supplier_cap_id = object::id(&supplier_cap);
+
+    let supply_shares_before = pool.supply_shares();
+    let total_supply_before = pool.total_supply();
+    let vault_before = pool.vault_balance();
+    let user_supply_amount_before = pool.user_supply_amount(supplier_cap_id, &clock);
+
+    scenario.next_tx(test_constants::admin());
+    let injection_coin = mint_coin<USDC>(injection_amount, scenario.ctx());
+    pool.admin_inject_capital(&admin_cap, injection_coin, &clock);
+
+    assert_eq!(pool.supply_shares(), supply_shares_before);
+    assert_eq!(pool.total_supply(), total_supply_before + injection_amount);
+    assert_eq!(pool.vault_balance(), vault_before + injection_amount);
+    assert_eq!(
+        pool.user_supply_amount(supplier_cap_id, &clock),
+        user_supply_amount_before + injection_amount,
+    );
+
+    destroy(supplier_cap);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_admin_inject_capital_preserves_existing_share_split() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+
+    scenario.next_tx(test_constants::admin());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    scenario.next_tx(test_constants::user1());
+    let user1_supply_amount = 100 * test_constants::usdc_multiplier();
+    let supplier_cap1 = test_helpers::supply_to_pool(
+        &mut pool,
+        &registry,
+        user1_supply_amount,
+        &clock,
+        scenario.ctx(),
+    );
+    let supplier_cap1_id = object::id(&supplier_cap1);
+
+    scenario.next_tx(test_constants::user2());
+    let user2_supply_amount = 300 * test_constants::usdc_multiplier();
+    let supplier_cap2 = test_helpers::supply_to_pool(
+        &mut pool,
+        &registry,
+        user2_supply_amount,
+        &clock,
+        scenario.ctx(),
+    );
+    let supplier_cap2_id = object::id(&supplier_cap2);
+
+    let total_shares_before = pool.supply_shares();
+    let user1_amount_before = pool.user_supply_amount(supplier_cap1_id, &clock);
+    let user2_amount_before = pool.user_supply_amount(supplier_cap2_id, &clock);
+
+    scenario.next_tx(test_constants::admin());
+    let injection_amount = 40 * test_constants::usdc_multiplier();
+    let injection_coin = mint_coin<USDC>(injection_amount, scenario.ctx());
+    pool.admin_inject_capital(&admin_cap, injection_coin, &clock);
+
+    assert_eq!(pool.supply_shares(), total_shares_before);
+    assert_eq!(
+        pool.user_supply_amount(supplier_cap1_id, &clock),
+        user1_amount_before + 10 * test_constants::usdc_multiplier(),
+    );
+    assert_eq!(
+        pool.user_supply_amount(supplier_cap2_id, &clock),
+        user2_amount_before + 30 * test_constants::usdc_multiplier(),
+    );
+
+    destroy(supplier_cap1);
+    destroy(supplier_cap2);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test]
+fun test_admin_inject_capital_updates_interest_before_injection() {
+    let (mut scenario, mut clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+
+    scenario.next_tx(test_constants::admin());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let registry = scenario.take_shared<MarginRegistry>();
+
+    scenario.next_tx(test_constants::user1());
+    let supply_amount = 1000 * test_constants::usdc_multiplier();
+    let supplier_cap = test_helpers::supply_to_pool(
+        &mut pool,
+        &registry,
+        supply_amount,
+        &clock,
+        scenario.ctx(),
+    );
+
+    scenario.next_tx(test_constants::user2());
+    let borrow_amount = 500 * test_constants::usdc_multiplier();
+    let borrowed_coin = test_borrow(&mut pool, borrow_amount, &clock, scenario.ctx());
+
+    advance_time(&mut clock, margin_constants::year_ms());
+
+    let total_supply_with_interest = pool.total_supply_with_interest(&clock);
+    assert!(total_supply_with_interest > pool.total_supply());
+
+    scenario.next_tx(test_constants::admin());
+    let injection_amount = 25 * test_constants::usdc_multiplier();
+    let injection_coin = mint_coin<USDC>(injection_amount, scenario.ctx());
+    pool.admin_inject_capital(&admin_cap, injection_coin, &clock);
+
+    assert_eq!(pool.total_supply(), total_supply_with_interest + injection_amount);
+
+    destroy(borrowed_coin);
+    destroy(supplier_cap);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
+
+#[test, expected_failure(abort_code = margin_pool::EZeroCapitalInjection)]
+fun test_admin_inject_capital_zero_amount_aborts() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+
+    scenario.next_tx(test_constants::admin());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let zero_coin = mint_coin<USDC>(0, scenario.ctx());
+
+    pool.admin_inject_capital(&admin_cap, zero_coin, &clock);
+
+    test::return_shared(pool);
+    let registry = scenario.take_shared<MarginRegistry>();
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = margin_pool::ENoSupplyShares)]
+fun test_admin_inject_capital_without_supply_shares_aborts() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+
+    scenario.next_tx(test_constants::admin());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let injection_coin = mint_coin<USDC>(25 * test_constants::usdc_multiplier(), scenario.ctx());
+
+    pool.admin_inject_capital(&admin_cap, injection_coin, &clock);
+
+    test::return_shared(pool);
+    let registry = scenario.take_shared<MarginRegistry>();
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+    abort 999
+}
+
+#[test]
+fun test_admin_inject_capital_succeeds_while_margin_version_paused() {
+    let (mut scenario, clock, admin_cap, maintainer_cap, pool_id) = setup_test();
+
+    scenario.next_tx(test_constants::admin());
+    let mut pool = scenario.take_shared_by_id<MarginPool<USDC>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+
+    scenario.next_tx(test_constants::user1());
+    let supply_amount = 100 * test_constants::usdc_multiplier();
+    let injection_amount = 25 * test_constants::usdc_multiplier();
+    let supplier_cap = test_helpers::supply_to_pool(
+        &mut pool,
+        &registry,
+        supply_amount,
+        &clock,
+        scenario.ctx(),
+    );
+
+    scenario.next_tx(test_constants::admin());
+    registry.disable_version(margin_constants::margin_version(), &admin_cap);
+    let total_supply_before = pool.total_supply();
+    let supply_shares_before = pool.supply_shares();
+    let injection_coin = mint_coin<USDC>(injection_amount, scenario.ctx());
+
+    pool.admin_inject_capital(&admin_cap, injection_coin, &clock);
+
+    assert_eq!(pool.total_supply(), total_supply_before + injection_amount);
+    assert_eq!(pool.supply_shares(), supply_shares_before);
+
+    destroy(supplier_cap);
+    test::return_shared(pool);
+    cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
+}
