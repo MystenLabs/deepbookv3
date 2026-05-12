@@ -1945,4 +1945,3 @@ fun test_admin_inject_capital_succeeds_while_margin_version_paused() {
     test::return_shared(pool);
     cleanup_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
-
