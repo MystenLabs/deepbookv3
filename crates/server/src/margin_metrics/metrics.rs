@@ -14,6 +14,8 @@ pub struct MarginMetrics {
     pub vault_balance: GaugeVec,
     pub supply_cap: GaugeVec,
     pub interest_rate: GaugeVec,
+    pub supply_share_price: GaugeVec,
+    pub borrow_share_price: GaugeVec,
     pub available_withdrawal: GaugeVec,
     pub utilization_rate: GaugeVec,
     pub solvency_ratio: GaugeVec,
@@ -63,6 +65,22 @@ impl MarginMetrics {
             interest_rate: register_gauge_vec_with_registry!(
                 "margin_pool_interest_rate",
                 "Current interest rate for the margin pool (normalized, 1.0 = 100%)",
+                &["pool_id", "asset_type"],
+                registry
+            )
+            .unwrap(),
+
+            supply_share_price: register_gauge_vec_with_registry!(
+                "margin_pool_supply_share_price",
+                "Current margin pool supply share price (normalized, 1.0 = one underlying unit per share)",
+                &["pool_id", "asset_type"],
+                registry
+            )
+            .unwrap(),
+
+            borrow_share_price: register_gauge_vec_with_registry!(
+                "margin_pool_borrow_share_price",
+                "Current margin pool borrow share price (normalized, 1.0 = one underlying unit per share)",
                 &["pool_id", "asset_type"],
                 registry
             )
@@ -135,6 +153,8 @@ impl MarginMetrics {
         supply_cap: u64,
         interest_rate: u64,
         available_withdrawal: u64,
+        supply_share_price: u64,
+        borrow_share_price: u64,
         decimals: i16,
     ) {
         let divisor = 10_f64.powi(decimals as i32);
@@ -155,6 +175,12 @@ impl MarginMetrics {
         self.interest_rate
             .with_label_values(&[pool_id, asset_type])
             .set(interest_rate as f64 / 1_000_000_000.0);
+        self.supply_share_price
+            .with_label_values(&[pool_id, asset_type])
+            .set(supply_share_price as f64 / 1_000_000_000.0);
+        self.borrow_share_price
+            .with_label_values(&[pool_id, asset_type])
+            .set(borrow_share_price as f64 / 1_000_000_000.0);
         self.available_withdrawal
             .with_label_values(&[pool_id, asset_type])
             .set(available_withdrawal as f64 / divisor);

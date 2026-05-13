@@ -101,6 +101,8 @@ impl MarginPoller {
                         state.supply_cap,
                         state.interest_rate,
                         state.available_withdrawal,
+                        state.supply_share_price,
+                        state.borrow_share_price,
                         pool_info.decimals,
                     );
 
