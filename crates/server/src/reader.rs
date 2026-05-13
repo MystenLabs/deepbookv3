@@ -1289,7 +1289,7 @@ impl Reader {
     }
 
     /// Query net deposits using the materialized view for efficiency.
-    /// Triggers a concurrent refresh of the view and queries for net deposits up to timestamp.
+    /// The indexer refreshes this view with a write-capable database connection.
     pub async fn get_net_deposits_from_view(
         &self,
         asset_ids: &[String],
@@ -1297,11 +1297,6 @@ impl Reader {
     ) -> Result<std::collections::HashMap<String, i64>, DeepBookError> {
         let mut connection = self.db.connect().await?;
         let _guard = self.metrics.db_latency.start_timer();
-
-        // Trigger concurrent refresh (non-blocking, won't fail if already refreshing)
-        let _ = diesel::sql_query("REFRESH MATERIALIZED VIEW CONCURRENTLY net_deposits_hourly")
-            .execute(&mut connection)
-            .await;
 
         // Calculate the hour boundary for the timestamp
         let hour_bucket_ms = (timestamp_ms / 3600000) * 3600000;

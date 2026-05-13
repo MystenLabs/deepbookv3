@@ -2,6 +2,7 @@ use url::Url;
 
 pub mod handlers;
 pub(crate) mod models;
+pub mod net_deposits_refresh;
 pub mod sandbox;
 pub mod traits;
 
