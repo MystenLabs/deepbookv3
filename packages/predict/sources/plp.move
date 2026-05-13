@@ -8,12 +8,17 @@
 /// supply/withdrawal and pool-to-expiry capital allocation.
 module deepbook_predict::plp;
 
+use deepbook::math;
+use deepbook_predict::risk_config::RiskConfig;
 use dusdc::dusdc::DUSDC;
 use sui::{balance::{Self, Balance}, clock::Clock, coin::{Self, Coin, TreasuryCap}, coin_registry};
 
 const EExpiryMarketAlreadyActive: u64 = 0;
 const EExpiryMarketNotActive: u64 = 1;
 const ENotImplemented: u64 = 2;
+const EInsufficientIdleBalance: u64 = 3;
+const EMaxTotalExposureExceeded: u64 = 4;
+const EPoolCapitalOverflow: u64 = 5;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -24,6 +29,7 @@ public struct PoolVault has key {
     idle_balance: Balance<DUSDC>,
     treasury_cap: TreasuryCap<PLP>,
     active_expiry_markets: vector<ID>,
+    total_allocated_capital: u64,
 }
 
 // === Private Functions ===
@@ -64,6 +70,11 @@ public fun active_expiry_markets(vault: &PoolVault): &vector<ID> {
 /// Return total PLP supply.
 public fun total_supply(vault: &PoolVault): u64 {
     vault.treasury_cap.total_supply()
+}
+
+/// Return total DUSDC allocated as expiry risk budget.
+public fun total_allocated_capital(vault: &PoolVault): u64 {
+    vault.total_allocated_capital
 }
 
 /// Return whether an expiry market is currently active in the pool.
@@ -109,6 +120,7 @@ public(package) fun new(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): Po
         idle_balance: balance::zero(),
         treasury_cap,
         active_expiry_markets: vector[],
+        total_allocated_capital: 0,
     }
 }
 
@@ -118,6 +130,31 @@ public(package) fun create_and_share(treasury_cap: TreasuryCap<PLP>, ctx: &mut T
     let id = object::id(&vault);
     transfer::share_object(vault);
     id
+}
+
+/// Allocate idle DUSDC into a newly created expiry market.
+///
+/// This is intentionally unusable on a freshly published package until the LP
+/// funding path is implemented; the pool must already hold enough idle DUSDC.
+public(package) fun allocate_to_new_expiry(
+    vault: &mut PoolVault,
+    risk_config: &RiskConfig,
+): Balance<DUSDC> {
+    let amount = risk_config.expiry_allocation();
+    let idle_balance = vault.idle_balance.value();
+    assert!(idle_balance >= amount, EInsufficientIdleBalance);
+    assert!(
+        idle_balance <= std::u64::max_value!() - vault.total_allocated_capital,
+        EPoolCapitalOverflow,
+    );
+
+    let pool_capital = idle_balance + vault.total_allocated_capital;
+    let new_total_allocated = vault.total_allocated_capital + amount;
+    let max_allocated = math::mul(pool_capital, risk_config.max_total_exposure_pct());
+    assert!(new_total_allocated <= max_allocated, EMaxTotalExposureExceeded);
+
+    vault.total_allocated_capital = new_total_allocated;
+    vault.idle_balance.split(amount)
 }
 
 /// Register an expiry market as active for pool accounting.

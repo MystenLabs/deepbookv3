@@ -19,7 +19,7 @@ use deepbook_predict::{
     strike_matrix::{Self, StrikeMatrix}
 };
 use dusdc::dusdc::DUSDC;
-use sui::{balance::{Self, Balance}, clock::Clock};
+use sui::{balance::Balance, clock::Clock};
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -27,7 +27,8 @@ public struct ExpiryMarket has key {
     market_oracle_id: ID,
     pyth_lazer_feed_id: u32,
     expiry: u64,
-    allocated_capital: Balance<DUSDC>,
+    allocated_capital: u64,
+    lp_cash_balance: Balance<DUSDC>,
     strike_matrix: StrikeMatrix,
     fee_reserve: FeeReserve,
     compacted_settlement: Option<u64>,
@@ -57,7 +58,12 @@ public fun expiry(market: &ExpiryMarket): u64 {
 
 /// Return the DUSDC capital currently allocated to this expiry.
 public fun allocated_capital(market: &ExpiryMarket): u64 {
-    market.allocated_capital.value()
+    market.allocated_capital
+}
+
+/// Return LP-owned DUSDC currently held by this expiry.
+public fun lp_cash_balance(market: &ExpiryMarket): u64 {
+    market.lp_cash_balance.value()
 }
 
 /// Return the expiry-local worst-case payout.
@@ -136,23 +142,26 @@ public fun redeem_compacted_permissionless(
 
 // === Public-Package Functions ===
 
-/// Create and share an unfunded expiry market for one market oracle.
+/// Create and share a funded expiry market for one market oracle.
 public(package) fun create_and_share(
     market_oracle_id: ID,
     pyth: &PythSource,
     config: &ProtocolConfig,
+    allocation: Balance<DUSDC>,
     expiry: u64,
     min_strike: u64,
     max_strike: u64,
     tick_size: u64,
     ctx: &mut TxContext,
 ): ID {
+    let allocated_capital = allocation.value();
     let market = ExpiryMarket {
         id: object::new(ctx),
         market_oracle_id,
         pyth_lazer_feed_id: pyth.feed_id(),
         expiry,
-        allocated_capital: balance::zero(),
+        allocated_capital,
+        lp_cash_balance: allocation,
         strike_matrix: strike_matrix::new(ctx, tick_size, min_strike, max_strike),
         fee_reserve: fee_reserve::new(config.fee_config()),
         compacted_settlement: option::none(),

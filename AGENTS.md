@@ -82,6 +82,8 @@ These are the most important rule files to consult based on the code you touch:
   - Admin-tunable values live in config structs and are updated only through admin-gated entrypoints.
   - Upgrade-required values stay as constants/macros and do not get config structs, setters, bounds, or admin flows.
   - Each admin-tunable value should have a stored field plus package-only `default_*`, `min_*`, `max_*`, and `assert_*` helpers in `config_constants.move`.
+  - `config_constants.move` is only for config construction and config update validation. App-layer protocol logic must not read config defaults, min bounds, or max bounds directly; it should read the current value from the relevant config object.
+  - For admin-tunable values, constants define the allowed envelope and initialization default, while config structs hold the current protocol value. Runtime logic should treat config fields as plain numbers and should not know which constants produced or bounded them.
   - Each `assert_*` helper should use a specific error code for that config value.
   - Defaults are applied in the module that creates the config/object.
   - Global template config can be snapshotted into per-object state at creation; existing objects should only change through an explicit admin path if one is intentionally added.

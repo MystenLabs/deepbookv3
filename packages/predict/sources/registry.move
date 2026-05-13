@@ -115,6 +115,15 @@ public fun set_max_total_exposure_pct(
     config.set_max_total_exposure_pct(pct);
 }
 
+/// Set the current DUSDC allocation for new expiry markets.
+public fun set_expiry_allocation(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    allocation: u64,
+) {
+    config.set_expiry_allocation(allocation);
+}
+
 /// Set the settlement freshness threshold template used by future market oracles.
 public fun set_market_oracle_template_settlement_freshness_ms(
     config: &mut ProtocolConfig,
@@ -220,10 +229,12 @@ public fun create_expiry_market(
         ctx,
     );
     let max_strike = max_strike_for_grid(min_strike, tick_size);
+    let allocation = pool_vault.allocate_to_new_expiry(config.risk_config());
     let expiry_market_id = expiry_market::create_and_share(
         market_oracle_id,
         pyth,
         config,
+        allocation,
         expiry,
         min_strike,
         max_strike,

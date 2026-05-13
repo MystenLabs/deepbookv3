@@ -25,6 +25,7 @@ const EInvalidMaxSpotDeviation: u64 = 13;
 const EInvalidMaxBasisDeviation: u64 = 14;
 const EInvalidMinBasis: u64 = 15;
 const EInvalidMaxBasis: u64 = 16;
+const EInvalidExpiryAllocation: u64 = 17;
 
 // === Pool Risk ===
 
@@ -39,6 +40,14 @@ public(package) fun assert_max_total_exposure_pct(value: u64) {
         value >= min_max_total_exposure_pct!() && value <= max_max_total_exposure_pct!(),
         EInvalidMaxTotalExposurePct,
     );
+}
+
+public(package) macro fun default_allocation(): u64 { 50_000_000_000 }
+public(package) macro fun min_allocation(): u64 { 50_000_000_000 }
+public(package) macro fun max_allocation(): u64 { 250_000_000_000 }
+
+public(package) fun assert_expiry_allocation(value: u64) {
+    assert!(value >= min_allocation!() && value <= max_allocation!(), EInvalidExpiryAllocation);
 }
 
 // === Pricing ===

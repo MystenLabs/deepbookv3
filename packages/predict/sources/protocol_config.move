@@ -120,6 +120,11 @@ public(package) fun set_max_total_exposure_pct(config: &mut ProtocolConfig, pct:
     config.risk_config.set_max_total_exposure_pct(pct);
 }
 
+/// Set the current DUSDC allocation for new expiry markets.
+public(package) fun set_expiry_allocation(config: &mut ProtocolConfig, allocation: u64) {
+    config.risk_config.set_expiry_allocation(allocation);
+}
+
 /// Set the settlement freshness threshold template for future market oracles.
 public(package) fun set_market_oracle_template_settlement_freshness_ms(
     config: &mut ProtocolConfig,
