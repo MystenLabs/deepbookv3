@@ -85,3 +85,16 @@ fun assert_basis_bounds_inputs(
     config_constants::assert_max_basis(max_basis);
     assert!(min_basis < max_basis, EInvalidBasisBounds);
 }
+
+// === Test-Only Functions ===
+
+#[test_only]
+public fun destroy_for_testing(config: MarketOracleConfig) {
+    let MarketOracleConfig {
+        settlement_freshness_ms: _,
+        max_spot_deviation: _,
+        max_basis_deviation: _,
+        min_basis: _,
+        max_basis: _,
+    } = config;
+}

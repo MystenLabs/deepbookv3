@@ -14,6 +14,7 @@ use deepbook_predict::{
     config_constants,
     i64,
     market_oracle_config::MarketOracleConfig,
+    protocol_config::ProtocolConfig,
     pyth_source::PythSource
 };
 use sui::{clock::Clock, event, vec_set::{Self, VecSet}};
@@ -32,6 +33,7 @@ const EStaleSVISourceUpdate: u64 = 10;
 const EWrongPythSource: u64 = 11;
 const EFuturePriceSourceUpdate: u64 = 12;
 const EFutureSVISourceUpdate: u64 = 13;
+const EPendingSettlement: u64 = 14;
 
 const STATUS_ACTIVE: u8 = 1;
 const STATUS_PENDING_SETTLEMENT: u8 = 2;
@@ -228,6 +230,7 @@ public fun block_scholes_svi_update_timestamp_ms(market: &MarketOracle): u64 {
 /// Update Block Scholes spot/forward data and settle the market if possible.
 public fun update_block_scholes_prices(
     market: &mut MarketOracle,
+    config: &ProtocolConfig,
     pyth: &PythSource,
     cap: &MarketOracleCap,
     block_scholes_spot: u64,
@@ -236,6 +239,7 @@ public fun update_block_scholes_prices(
     clock: &Clock,
 ) {
     market.assert_authorized_cap(cap);
+    config.assert_not_valuation_in_progress();
     market.assert_pyth_source(pyth);
 
     let status = market.status(clock);
@@ -264,11 +268,13 @@ public fun update_block_scholes_prices(
 /// mutate oracle state.
 public fun settle_if_possible(
     market: &mut MarketOracle,
+    config: &ProtocolConfig,
     pyth: &PythSource,
     cap: &MarketOracleCap,
     clock: &Clock,
 ): bool {
     market.assert_authorized_cap(cap);
+    config.assert_not_valuation_in_progress();
     if (market.status(clock) != STATUS_PENDING_SETTLEMENT) return false;
     market.assert_pyth_source(pyth);
     market.settle_if_possible_internal(pyth, clock)
@@ -276,12 +282,14 @@ public fun settle_if_possible(
 
 public fun update_svi(
     market: &mut MarketOracle,
+    config: &ProtocolConfig,
     cap: &MarketOracleCap,
     svi: SVIParams,
     source_timestamp_ms: u64,
     clock: &Clock,
 ) {
     market.assert_authorized_cap(cap);
+    config.assert_not_valuation_in_progress();
     assert!(market.status(clock) == STATUS_ACTIVE, EMarketExpired);
     assert!(
         source_timestamp_ms > market.block_scholes_svi_source_timestamp_ms,
@@ -307,10 +315,12 @@ public fun update_svi(
 
 public fun set_settlement_freshness_ms(
     market: &mut MarketOracle,
+    config: &ProtocolConfig,
     cap: &MarketOracleCap,
     value: u64,
 ) {
     market.assert_authorized_cap(cap);
+    config.assert_not_valuation_in_progress();
     validate_freshness_ms(value);
     market.settlement_freshness_ms = value;
     market.emit_bounds_updated();
@@ -318,6 +328,7 @@ public fun set_settlement_freshness_ms(
 
 public fun set_basis_bounds(
     market: &mut MarketOracle,
+    config: &ProtocolConfig,
     cap: &MarketOracleCap,
     max_spot_deviation: u64,
     max_basis_deviation: u64,
@@ -325,6 +336,7 @@ public fun set_basis_bounds(
     max_basis: u64,
 ) {
     market.assert_authorized_cap(cap);
+    config.assert_not_valuation_in_progress();
     validate_basis_bounds_inputs(max_spot_deviation, max_basis_deviation, min_basis, max_basis);
     market.max_spot_deviation = max_spot_deviation;
     market.max_basis_deviation = max_basis_deviation;
@@ -430,6 +442,10 @@ public(package) fun assert_authorized_cap(market: &MarketOracle, cap: &MarketOra
 
 public(package) fun assert_pyth_source(market: &MarketOracle, pyth: &PythSource) {
     assert!(market.pyth_source_id == pyth.id(), EWrongPythSource);
+}
+
+public(package) fun assert_not_pending_settlement(market: &MarketOracle, clock: &Clock) {
+    assert!(market.status(clock) != STATUS_PENDING_SETTLEMENT, EPendingSettlement);
 }
 
 // === Private Functions ===

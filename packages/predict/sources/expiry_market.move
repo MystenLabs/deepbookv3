@@ -13,6 +13,7 @@ use deepbook_predict::{
     fee_reserve::{Self, FeeReserve},
     market_oracle::MarketOracle,
     predict_manager::PredictManager,
+    pricing,
     protocol_config::ProtocolConfig,
     pyth_source::PythSource,
     range_key::{Self, RangeKey},
@@ -20,6 +21,10 @@ use deepbook_predict::{
 };
 use dusdc::dusdc::DUSDC;
 use sui::{balance::Balance, clock::Clock};
+
+const EWrongMarketOracle: u64 = 0;
+const EWrongPythSource: u64 = 1;
+const EValuationExceedsCash: u64 = 2;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -32,6 +37,12 @@ public struct ExpiryMarket has key {
     strike_matrix: StrikeMatrix,
     fee_reserve: FeeReserve,
     compacted_settlement: Option<u64>,
+}
+
+/// Transaction-local valuation produced by an expiry market.
+public struct ExpiryValuation {
+    expiry_market_id: ID,
+    value: u64,
 }
 
 // === Public Functions ===
@@ -92,10 +103,28 @@ public fun range_key(market: &ExpiryMarket, lower_strike: u64, higher_strike: u6
     range_key::new(market.market_oracle_id, lower_strike, higher_strike)
 }
 
+/// Read the current LP NAV contribution for this expiry.
+public fun read_valuation(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    clock: &Clock,
+): ExpiryValuation {
+    config.assert_valuation_in_progress();
+    let option_value = market.current_option_value(config, market_oracle, pyth, clock);
+    let lp_cash_balance = market.lp_cash_balance.value();
+    assert!(lp_cash_balance >= option_value, EValuationExceedsCash);
+    ExpiryValuation {
+        expiry_market_id: object::id(market),
+        value: lp_cash_balance - option_value,
+    }
+}
+
 /// Mint a position interval against this expiry market.
 public fun mint(
     _market: &mut ExpiryMarket,
-    _config: &ProtocolConfig,
+    config: &ProtocolConfig,
     _manager: &mut PredictManager,
     _market_oracle: &MarketOracle,
     _pyth: &PythSource,
@@ -103,12 +132,14 @@ public fun mint(
     _quantity: u64,
     _clock: &Clock,
     _ctx: &mut TxContext,
-) {}
+) {
+    config.assert_trading_allowed();
+}
 
 /// Redeem a position interval against this expiry market.
 public fun redeem(
     _market: &mut ExpiryMarket,
-    _config: &ProtocolConfig,
+    config: &ProtocolConfig,
     _manager: &mut PredictManager,
     _market_oracle: &MarketOracle,
     _pyth: &PythSource,
@@ -116,29 +147,35 @@ public fun redeem(
     _quantity: u64,
     _clock: &Clock,
     _ctx: &mut TxContext,
-) {}
+) {
+    config.assert_trading_allowed();
+}
 
 /// Redeem a settled position interval permissionlessly into the manager.
 public fun redeem_permissionless(
     _market: &mut ExpiryMarket,
-    _config: &ProtocolConfig,
+    config: &ProtocolConfig,
     _manager: &mut PredictManager,
     _market_oracle: &MarketOracle,
     _key: RangeKey,
     _quantity: u64,
     _clock: &Clock,
     _ctx: &mut TxContext,
-) {}
+) {
+    config.assert_not_valuation_in_progress();
+}
 
 /// Redeem a compacted settled position without passing the terminal oracle.
 public fun redeem_compacted_permissionless(
     _market: &mut ExpiryMarket,
-    _config: &ProtocolConfig,
+    config: &ProtocolConfig,
     _manager: &mut PredictManager,
     _key: RangeKey,
     _quantity: u64,
     _ctx: &mut TxContext,
-) {}
+) {
+    config.assert_not_valuation_in_progress();
+}
 
 // === Public-Package Functions ===
 
@@ -169,4 +206,48 @@ public(package) fun create_and_share(
     let id = object::id(&market);
     transfer::share_object(market);
     id
+}
+
+/// Consume an expiry valuation and return its market ID and value.
+public(package) fun unpack_valuation(valuation: ExpiryValuation): (ID, u64) {
+    let ExpiryValuation {
+        expiry_market_id,
+        value,
+    } = valuation;
+    (expiry_market_id, value)
+}
+
+// === Private Functions ===
+
+fun current_option_value(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    clock: &Clock,
+): u64 {
+    assert!(market.market_oracle_id == market_oracle.id(), EWrongMarketOracle);
+    assert!(market.pyth_lazer_feed_id == pyth.feed_id(), EWrongPythSource);
+    market_oracle.assert_not_pending_settlement(clock);
+
+    if (market_oracle.is_settled()) {
+        market.strike_matrix.settled_value(pricing::settlement_price(market_oracle))
+    } else {
+        let (minted_min_strike, minted_max_strike) = market.strike_matrix.minted_strike_range();
+        if (minted_min_strike == 0 && minted_max_strike == 0) return 0;
+
+        let (grid_min, grid_tick, grid_max) = market.strike_matrix.strike_grid();
+        let curve = pricing::build_live_curve(
+            config.pricing_config(),
+            market_oracle,
+            pyth,
+            clock,
+            grid_min,
+            grid_tick,
+            grid_max,
+            minted_min_strike,
+            minted_max_strike,
+        );
+        market.strike_matrix.live_value(&curve)
+    }
 }

@@ -171,6 +171,11 @@ public(package) fun settled_value(matrix: &StrikeMatrix, settlement: u64): u64 {
     matrix.evaluate_settled(settlement)
 }
 
+/// Return the strike grid this matrix was created with.
+public(package) fun strike_grid(matrix: &StrikeMatrix): (u64, u64, u64) {
+    (matrix.min_strike, matrix.tick_size, matrix.max_strike)
+}
+
 /// Return the historical minted strike bounds, or `(0, 0)` for an untouched
 /// book. These bounds only expand on insert and never contract on remove.
 public(package) fun minted_strike_range(matrix: &StrikeMatrix): (u64, u64) {

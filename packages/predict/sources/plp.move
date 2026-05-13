@@ -9,7 +9,11 @@
 module deepbook_predict::plp;
 
 use deepbook::math;
-use deepbook_predict::risk_config::RiskConfig;
+use deepbook_predict::{
+    expiry_market::{Self, ExpiryValuation},
+    protocol_config::ProtocolConfig,
+    risk_config::RiskConfig
+};
 use dusdc::dusdc::DUSDC;
 use sui::{balance::{Self, Balance}, clock::Clock, coin::{Self, Coin, TreasuryCap}, coin_registry};
 
@@ -19,6 +23,11 @@ const ENotImplemented: u64 = 2;
 const EInsufficientIdleBalance: u64 = 3;
 const EMaxTotalExposureExceeded: u64 = 4;
 const EPoolCapitalOverflow: u64 = 5;
+const EWrongPoolVault: u64 = 6;
+const EExpiryMarketAlreadyValued: u64 = 7;
+const EMissingExpiryValuation: u64 = 8;
+const EActiveExpirySetChanged: u64 = 9;
+const EPoolValueOverflow: u64 = 10;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -30,6 +39,14 @@ public struct PoolVault has key {
     treasury_cap: TreasuryCap<PLP>,
     active_expiry_markets: vector<ID>,
     total_allocated_capital: u64,
+}
+
+/// Transaction-local pool valuation accumulator.
+public struct PoolValuation {
+    pool_vault_id: ID,
+    expected_expiry_markets: vector<ID>,
+    valued_expiry_markets: vector<ID>,
+    value: u64,
 }
 
 // === Private Functions ===
@@ -87,13 +104,44 @@ public fun contains_expiry_market(vault: &PoolVault, expiry_market_id: ID): bool
     false
 }
 
+/// Begin a full-pool valuation.
+public fun start_valuation(vault: &PoolVault, config: &mut ProtocolConfig): PoolValuation {
+    config.begin_valuation();
+    PoolValuation {
+        pool_vault_id: object::id(vault),
+        expected_expiry_markets: copy_ids(&vault.active_expiry_markets),
+        valued_expiry_markets: vector[],
+        value: vault.idle_balance.value(),
+    }
+}
+
+/// Add one expiry valuation to a pool valuation accumulator.
+public fun add_expiry_valuation(valuation: &mut PoolValuation, expiry_valuation: ExpiryValuation) {
+    let (expiry_market_id, expiry_value) = expiry_market::unpack_valuation(expiry_valuation);
+    assert!(
+        contains_id(&valuation.expected_expiry_markets, expiry_market_id),
+        EExpiryMarketNotActive,
+    );
+    assert!(
+        !contains_id(&valuation.valued_expiry_markets, expiry_market_id),
+        EExpiryMarketAlreadyValued,
+    );
+    assert!(valuation.value <= std::u64::max_value!() - expiry_value, EPoolValueOverflow);
+
+    valuation.valued_expiry_markets.push_back(expiry_market_id);
+    valuation.value = valuation.value + expiry_value;
+}
+
 /// Supply DUSDC into the pool vault and receive PLP shares.
 public fun supply(
     vault: &mut PoolVault,
+    config: &mut ProtocolConfig,
+    valuation: PoolValuation,
     payment: Coin<DUSDC>,
     _clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<PLP> {
+    vault.consume_valuation(config, valuation);
     assert!(false, ENotImplemented);
     vault.idle_balance.join(payment.into_balance());
     coin::mint(&mut vault.treasury_cap, 0, ctx)
@@ -102,10 +150,13 @@ public fun supply(
 /// Withdraw DUSDC from the pool vault by burning PLP shares.
 public fun withdraw(
     vault: &mut PoolVault,
+    config: &mut ProtocolConfig,
+    valuation: PoolValuation,
     lp_coin: Coin<PLP>,
     _clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<DUSDC> {
+    vault.consume_valuation(config, valuation);
     assert!(false, ENotImplemented);
     vault.treasury_cap.burn(lp_coin);
     balance::zero<DUSDC>().into_coin(ctx)
@@ -172,6 +223,76 @@ public(package) fun unregister_expiry_market(vault: &mut PoolVault, expiry_marke
     };
     assert!(i < len, EExpiryMarketNotActive);
     vault.active_expiry_markets.swap_remove(i);
+}
+
+// === Private Functions ===
+
+fun copy_ids(ids: &vector<ID>): vector<ID> {
+    let mut ids_copy = vector[];
+    let mut i = 0;
+    while (i < ids.length()) {
+        ids_copy.push_back(ids[i]);
+        i = i + 1;
+    };
+    ids_copy
+}
+
+fun contains_id(ids: &vector<ID>, id: ID): bool {
+    let mut i = 0;
+    while (i < ids.length()) {
+        if (ids[i] == id) return true;
+        i = i + 1;
+    };
+    false
+}
+
+fun assert_active_set_unchanged(vault: &PoolVault, expected_expiry_markets: &vector<ID>) {
+    assert!(
+        vault.active_expiry_markets.length() == expected_expiry_markets.length(),
+        EActiveExpirySetChanged,
+    );
+    let mut i = 0;
+    while (i < expected_expiry_markets.length()) {
+        assert!(vault.contains_expiry_market(expected_expiry_markets[i]), EActiveExpirySetChanged);
+        i = i + 1;
+    };
+}
+
+fun assert_all_expected_valued(
+    expected_expiry_markets: &vector<ID>,
+    valued_expiry_markets: &vector<ID>,
+) {
+    assert!(
+        expected_expiry_markets.length() == valued_expiry_markets.length(),
+        EMissingExpiryValuation,
+    );
+    let mut i = 0;
+    while (i < expected_expiry_markets.length()) {
+        assert!(
+            contains_id(valued_expiry_markets, expected_expiry_markets[i]),
+            EMissingExpiryValuation,
+        );
+        i = i + 1;
+    };
+}
+
+fun consume_valuation(
+    vault: &PoolVault,
+    config: &mut ProtocolConfig,
+    valuation: PoolValuation,
+): u64 {
+    config.assert_valuation_in_progress();
+    let PoolValuation {
+        pool_vault_id,
+        expected_expiry_markets,
+        valued_expiry_markets,
+        value,
+    } = valuation;
+    assert!(pool_vault_id == object::id(vault), EWrongPoolVault);
+    assert_active_set_unchanged(vault, &expected_expiry_markets);
+    assert_all_expected_valued(&expected_expiry_markets, &valued_expiry_markets);
+    config.end_valuation();
+    value
 }
 
 // === Test-Only Functions ===

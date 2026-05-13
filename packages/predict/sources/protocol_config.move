@@ -11,6 +11,10 @@ use deepbook_predict::{
     risk_config::{Self, RiskConfig}
 };
 
+const ETradingPaused: u64 = 0;
+const EValuationInProgress: u64 = 1;
+const EValuationNotInProgress: u64 = 2;
+
 /// Shared protocol policy state.
 public struct ProtocolConfig has key {
     id: UID,
@@ -19,6 +23,7 @@ public struct ProtocolConfig has key {
     risk_config: RiskConfig,
     market_oracle_config: MarketOracleConfig,
     trading_paused: bool,
+    valuation_in_progress: bool,
 }
 
 // === Public Functions ===
@@ -50,6 +55,27 @@ public(package) fun market_oracle_config(config: &ProtocolConfig): &MarketOracle
     &config.market_oracle_config
 }
 
+/// Abort unless trading mutations are currently allowed.
+public(package) fun assert_trading_allowed(config: &ProtocolConfig) {
+    config.assert_not_trading_paused();
+    config.assert_not_valuation_in_progress();
+}
+
+/// Abort unless trading is not paused.
+public(package) fun assert_not_trading_paused(config: &ProtocolConfig) {
+    assert!(!config.trading_paused, ETradingPaused);
+}
+
+/// Abort unless a valuation lock is currently active.
+public(package) fun assert_valuation_in_progress(config: &ProtocolConfig) {
+    assert!(config.valuation_in_progress, EValuationNotInProgress);
+}
+
+/// Abort unless no valuation lock is currently active.
+public(package) fun assert_not_valuation_in_progress(config: &ProtocolConfig) {
+    assert!(!config.valuation_in_progress, EValuationInProgress);
+}
+
 /// Create and share the protocol-wide configuration object.
 public(package) fun create_and_share(ctx: &mut TxContext): ID {
     let config = ProtocolConfig {
@@ -59,6 +85,7 @@ public(package) fun create_and_share(ctx: &mut TxContext): ID {
         risk_config: risk_config::new(),
         market_oracle_config: market_oracle_config::new(),
         trading_paused: false,
+        valuation_in_progress: false,
     };
     let id = object::id(&config);
     transfer::share_object(config);
@@ -67,41 +94,49 @@ public(package) fun create_and_share(ctx: &mut TxContext): ID {
 
 /// Set the base fee multiplier.
 public(package) fun set_base_fee(config: &mut ProtocolConfig, fee: u64) {
+    config.assert_not_valuation_in_progress();
     config.pricing_config.set_base_fee(fee);
 }
 
 /// Set the minimum fee floor.
 public(package) fun set_min_fee(config: &mut ProtocolConfig, fee: u64) {
+    config.assert_not_valuation_in_progress();
     config.pricing_config.set_min_fee(fee);
 }
 
 /// Set the utilization multiplier.
 public(package) fun set_utilization_multiplier(config: &mut ProtocolConfig, multiplier: u64) {
+    config.assert_not_valuation_in_progress();
     config.pricing_config.set_utilization_multiplier(multiplier);
 }
 
 /// Set the global minimum allowed mint price.
 public(package) fun set_min_ask_price(config: &mut ProtocolConfig, value: u64) {
+    config.assert_not_valuation_in_progress();
     config.pricing_config.set_min_ask_price(value);
 }
 
 /// Set the global maximum allowed mint price.
 public(package) fun set_max_ask_price(config: &mut ProtocolConfig, value: u64) {
+    config.assert_not_valuation_in_progress();
     config.pricing_config.set_max_ask_price(value);
 }
 
 /// Set the live Pyth spot freshness threshold.
 public(package) fun set_pyth_spot_freshness_ms(config: &mut ProtocolConfig, value: u64) {
+    config.assert_not_valuation_in_progress();
     config.pricing_config.set_pyth_spot_freshness_ms(value);
 }
 
 /// Set the live Block Scholes spot/forward freshness threshold.
 public(package) fun set_block_scholes_prices_freshness_ms(config: &mut ProtocolConfig, value: u64) {
+    config.assert_not_valuation_in_progress();
     config.pricing_config.set_block_scholes_prices_freshness_ms(value);
 }
 
 /// Set the live Block Scholes SVI freshness threshold.
 public(package) fun set_block_scholes_svi_freshness_ms(config: &mut ProtocolConfig, value: u64) {
+    config.assert_not_valuation_in_progress();
     config.pricing_config.set_block_scholes_svi_freshness_ms(value);
 }
 
@@ -112,16 +147,19 @@ public(package) fun set_fee_shares(
     protocol_fee_share: u64,
     insurance_fee_share: u64,
 ) {
+    config.assert_not_valuation_in_progress();
     config.fee_config.set_fee_shares(lp_fee_share, protocol_fee_share, insurance_fee_share);
 }
 
 /// Set the maximum total exposure percentage.
 public(package) fun set_max_total_exposure_pct(config: &mut ProtocolConfig, pct: u64) {
+    config.assert_not_valuation_in_progress();
     config.risk_config.set_max_total_exposure_pct(pct);
 }
 
 /// Set the current DUSDC allocation for new expiry markets.
 public(package) fun set_expiry_allocation(config: &mut ProtocolConfig, allocation: u64) {
+    config.assert_not_valuation_in_progress();
     config.risk_config.set_expiry_allocation(allocation);
 }
 
@@ -130,6 +168,7 @@ public(package) fun set_market_oracle_template_settlement_freshness_ms(
     config: &mut ProtocolConfig,
     value: u64,
 ) {
+    config.assert_not_valuation_in_progress();
     config.market_oracle_config.set_settlement_freshness_ms(value);
 }
 
@@ -141,6 +180,7 @@ public(package) fun set_market_oracle_template_basis_bounds(
     min_basis: u64,
     max_basis: u64,
 ) {
+    config.assert_not_valuation_in_progress();
     config
         .market_oracle_config
         .set_basis_bounds(
@@ -153,5 +193,51 @@ public(package) fun set_market_oracle_template_basis_bounds(
 
 /// Set whether trading is paused.
 public(package) fun set_trading_paused(config: &mut ProtocolConfig, paused: bool) {
+    config.assert_not_valuation_in_progress();
     config.trading_paused = paused;
+}
+
+/// Begin a transaction-local full-pool valuation lock.
+public(package) fun begin_valuation(config: &mut ProtocolConfig) {
+    config.assert_not_valuation_in_progress();
+    config.valuation_in_progress = true;
+}
+
+/// End a transaction-local full-pool valuation lock.
+public(package) fun end_valuation(config: &mut ProtocolConfig) {
+    config.assert_valuation_in_progress();
+    config.valuation_in_progress = false;
+}
+
+// === Test-Only Functions ===
+
+#[test_only]
+public fun new_for_testing(ctx: &mut TxContext): ProtocolConfig {
+    ProtocolConfig {
+        id: object::new(ctx),
+        pricing_config: pricing_config::new(),
+        fee_config: fee_config::new(),
+        risk_config: risk_config::new(),
+        market_oracle_config: market_oracle_config::new(),
+        trading_paused: false,
+        valuation_in_progress: false,
+    }
+}
+
+#[test_only]
+public fun destroy_for_testing(config: ProtocolConfig) {
+    let ProtocolConfig {
+        id,
+        pricing_config,
+        fee_config,
+        risk_config,
+        market_oracle_config,
+        trading_paused: _,
+        valuation_in_progress: _,
+    } = config;
+    id.delete();
+    pricing_config.destroy_for_testing();
+    fee_config.destroy_for_testing();
+    risk_config.destroy_for_testing();
+    market_oracle_config.destroy_for_testing();
 }

@@ -48,10 +48,13 @@ benchmarked.
   existing expiries cannot grow.
 - `MarketOracle` remains independent from `ExpiryMarket`. Oracle updates should
   not require mutable access to the expiry market object.
+- Full-pool valuation uses a transaction-local global lock on `ProtocolConfig`.
+  The lock prevents value-affecting mutation from being interleaved with the LP
+  valuation inside the same PTB.
 
 ## Module Responsibilities
 
-### `pool_vault.move`
+### `plp.move`
 
 Owns:
 
@@ -80,8 +83,6 @@ Owns:
 - expiry timestamp;
 - `allocated_capital: u64`, the expiry's risk budget;
 - LP-owned DUSDC cash balance, the actual assets backing LP NAV and payouts;
-- `initial_allocation: u64`;
-- `hard_cap: u64`, admin-updatable;
 - strike matrix;
 - expiry-local fee reserve;
 - settlement/compaction marker.
@@ -102,6 +103,7 @@ Owns:
 - pricing config;
 - risk config;
 - protocol pause flag.
+- transaction-local valuation lock flag.
 
 It is read by trade and pool flows. It does not own oracle mappings, rate
 limiters, withdrawal queues, or share-price cache state.
@@ -111,12 +113,17 @@ limiters, withdrawal queues, or share-price cache state.
 Owns pool and resize policy:
 
 - max total exposure/allocation percentage, default 80%;
+- `expiry_allocation`, the current DUSDC amount allocated from the pool to each
+  newly created expiry market, default 50k;
 - expiry grow utilization threshold, default 80%;
 - expiry shrink utilization threshold, default 30%;
 - grow factor, default 2x;
 - shrink factor, default 50%.
 
 These values are admin-changeable through admin-gated registry/config functions.
+Allocation constants live in `config_constants.move` as `default_allocation =
+50k`, `min_allocation = 50k`, and `max_allocation = 250k`. Runtime app logic
+reads `RiskConfig`, not `config_constants`.
 
 ### `market_oracle.move`
 
@@ -129,6 +136,11 @@ exact scheduler behavior for read-only shared oracle inputs versus mutable
 oracle writes should be verified when benchmarking, but the module boundary is
 still the desired shape.
 
+Oracle writes read `ProtocolConfig` to assert that no full-pool valuation is in
+progress. This prevents Block Scholes updates or settlement writes from changing
+valuation inputs after one expiry has already produced an `ExpiryValuation`
+witness in the same PTB.
+
 ### `registry.move`
 
 Owns setup wiring:
@@ -139,15 +151,15 @@ Owns setup wiring:
 - creates `MarketOracleCap`;
 - creates paired `MarketOracle` and `ExpiryMarket`;
 - registers the new expiry market ID in `PoolVault`;
-- deploys initial expiry allocation from pool idle capital when expiry creation
-  is wired beyond the current skeleton.
+- deploys the current `RiskConfig.expiry_allocation` from pool idle capital
+  during expiry creation.
 
 ## Public Flows
 
 ### Pool Creation
 
-`registry::create_pool_vault` creates the shared `PoolVault` from the PLP
-treasury cap.
+The PLP module registers the LP token and creates the shared `PoolVault` during
+package initialization.
 
 ### Expiry Creation
 
@@ -157,9 +169,11 @@ treasury cap.
 - one `ExpiryMarket`;
 - one active expiry registration in `PoolVault`.
 
-Expiry creation should take an initial allocation and hard cap once allocation
-is wired. Creation fails if the initial allocation would violate the global pool
-allocation cap.
+Expiry creation allocates the current `RiskConfig.expiry_allocation` from
+`PoolVault` idle balance into the new `ExpiryMarket`. Creation fails if the pool
+lacks idle DUSDC or if the allocation would violate the global pool allocation
+cap. Until LP funding is implemented, this means expiry creation is not usable
+on a freshly published package without a separate pool funding path.
 
 ### Trading
 
@@ -184,12 +198,13 @@ burning PLP. The client flow is:
 
 1. Make an off-chain read call to `PoolVault` to get the active expiry IDs.
 2. Build a PTB that passes every active expiry market object.
-3. In the PTB, create a valuation hot potato from `PoolVault`.
+3. In the PTB, create a valuation hot potato from `PoolVault`, which sets the
+   `ProtocolConfig` valuation lock.
 4. For each active expiry, call the expiry valuation function to produce an
    `ExpiryValuation` witness.
 5. Add each expiry valuation into the hot potato through `PoolVault`.
-6. Finish the hot potato through `PoolVault`.
-7. Supply or withdraw against the transaction-local finalized valuation.
+6. Supply or withdraw through `PoolVault`, consuming the valuation hot potato in
+   the same call.
 
 The hot potato must prove:
 
@@ -199,10 +214,23 @@ The hot potato must prove:
 - the active expiry set did not change between hot potato creation and
   finalization.
 
-Finishing the hot potato may write the latest pool value/share price into
-`PoolVault` for observability, but LP supply/withdraw must consume the
-transaction-local finalized valuation witness. Stored latest values are not an
-authoritative reusable price.
+`PoolVault` proves active-set consistency by copying the active expiry IDs into
+the valuation hot potato at creation. Each expiry valuation must match one of
+those expected IDs and cannot be inserted twice. Finalization compares the copied
+expected ID set against the current active expiry set and requires every expected
+expiry to have been valued.
+
+The `ProtocolConfig` valuation lock proves same-PTB freshness. `start_valuation`
+sets the lock. `ExpiryMarket::read_valuation` requires the lock to be active.
+Value-affecting mutations assert the lock is not active, including trade
+mutations, Pyth source updates, MarketOracle updates/settlement, protocol config
+updates, expiry creation, and future resize/compaction flows.
+
+LP supply/withdraw consumes the valuation hot potato directly. Internally it
+checks the copied active set, verifies every expected expiry was valued, uses the
+computed pool value, and clears the valuation lock. There is no second finalized
+valuation witness and no standalone successful finalization step. Stored latest
+values are not an authoritative reusable price.
 
 The pool value includes:
 
@@ -247,11 +275,12 @@ Solvency and capacity checks are separate from NAV:
 
 ### Dynamic Capital Allocation
 
-An expiry starts with an initial allocation, for example 50k DUSDC.
+An expiry starts with the current `RiskConfig.expiry_allocation`, currently
+50k DUSDC by default.
 
 Anyone can trigger a valid resize. Admin can update:
 
-- expiry hard cap;
+- expiry allocation used for newly created expiries;
 - global max allocation percentage;
 - grow utilization threshold;
 - shrink utilization threshold;
@@ -262,17 +291,18 @@ Public resize functions can:
 
 - increase allocation when expiry utilization reaches the high watermark;
 - decrease allocation when expiry utilization drops to the low watermark;
-- never increase above that expiry's hard cap;
+- never increase above `config_constants::max_allocation`;
 - never remove more than expiry free capacity or available LP-owned cash;
 - never violate the global pool allocation cap.
 
 V1 uses clamped vector-like resize behavior:
 
 - grow target starts as `allocated_capital * grow_factor`;
-- grow target is clamped to the expiry hard cap and the maximum allocation
+- grow target is clamped to the max allocation constant and the maximum allocation
   allowed by the pool's global allocation cap;
 - shrink target starts as `allocated_capital * shrink_factor`;
-- shrink target is clamped up to at least `initial_allocation` and `max_payout`;
+- shrink target is clamped up to at least the current
+  `RiskConfig.expiry_allocation` and `max_payout`;
 - shrink return amount is clamped by available LP-owned cash;
 - if the clamped target equals the current allocation, the resize aborts with a
   named no-op error.
@@ -318,44 +348,46 @@ Completed:
 - `PoolVault` skeleton created;
 - `ExpiryMarket` skeleton created;
 - `ProtocolConfig` created;
+- `RiskConfig.expiry_allocation` added with 50k default/min and 250k max bounds;
 - `Registry` creates protocol config, pool vault, Pyth sources, and paired
   expiry markets;
+- expiry creation allocates current `RiskConfig.expiry_allocation` from
+  `PoolVault` idle DUSDC into the new `ExpiryMarket`;
+- `PoolVault` tracks total allocated capital and enforces the global allocation
+  cap during expiry creation;
+- valuation hot potato skeleton added with transaction-local expiry valuations,
+  copied active expiry IDs, and direct pool-value consumption by LP flows;
+- `ProtocolConfig` valuation lock added to prevent same-PTB value mutations
+  during full-pool valuation;
 - `StrikeMatrix` no longer stores cached MTM;
 - `StrikeMatrix` updates `max_payout` on range changes and exposes pure live and
   settled valuation reads.
 
 Not yet implemented:
 
-- initial expiry funding from `PoolVault`;
 - dynamic capital resize APIs;
-- valuation hot potato and transaction-local finalized valuation witness;
 - `ExpiryMarket::mint`;
 - `ExpiryMarket::redeem`;
 - settled redeem and compaction wiring in `ExpiryMarket`;
 - full-pool inline valuation for LP supply/withdraw;
 - PLP mint/burn math;
-- global allocation cap enforcement;
 - settlement cleanup through compaction;
 - updated benchmark/simulation path for the new architecture.
 
 ## Implementation Sequence
 
 1. Add capital allocation skeletons.
-   - `PoolVault` public functions to allocate idle DUSDC into an expiry and
-     return expiry free capacity and available LP-owned cash to the pool.
-   - `ExpiryMarket` package helpers to receive allocation and release free
-     capacity and available cash.
+   - `PoolVault` package function to allocate idle DUSDC into a new expiry.
    - `allocated_capital` as a u64 risk budget, separate from LP-owned cash.
-   - Initial allocation and hard-cap fields on `ExpiryMarket`.
    - Total allocated capital on `PoolVault`.
-   - Admin-changeable resize parameters in `RiskConfig`.
+   - `RiskConfig.expiry_allocation` as the admin-changeable value used for new
+     expiry creation.
 
 2. Add the valuation hot-potato skeleton.
    - `PoolVault::start_valuation`.
    - `ExpiryMarket::read_valuation`.
    - `PoolVault::add_expiry_valuation`.
-   - `PoolVault::finish_valuation`.
-   - Transaction-local finalized valuation witness consumed by LP flows.
+   - `PoolVault::consume_valuation` private helper used by LP flows.
 
 3. Rewire mint/redeem into `ExpiryMarket`.
    - Move range insertion/removal, pricing, fees, manager settlement, and
@@ -389,7 +421,7 @@ Not yet implemented:
   - allocation cannot exceed idle pool capital;
   - deallocation cannot exceed expiry free capacity or available LP-owned cash;
   - mint cannot push max payout above allocated capital;
-  - resize clamps to hard cap and global allocation cap;
-  - resize clamps shrink to initial allocation and max payout;
+  - resize clamps to max allocation and global allocation cap;
+  - resize clamps shrink to current expiry allocation and max payout;
   - LP supply/withdraw requires a full active-expiry valuation;
   - compaction cleanup cannot strand remaining payout liability.

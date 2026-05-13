@@ -8,7 +8,7 @@
 /// forward, apply circuit breakers, or settle a market.
 module deepbook_predict::pyth_source;
 
-use deepbook_predict::lazer_helper;
+use deepbook_predict::{lazer_helper, protocol_config::ProtocolConfig};
 use pyth_lazer::update::Update as LazerUpdate;
 use sui::{clock::Clock, event};
 
@@ -34,7 +34,13 @@ public struct PythSource has key {
 }
 
 /// Decode and store a verified Pyth Lazer spot update.
-public fun update_from_lazer(source: &mut PythSource, update: LazerUpdate, clock: &Clock) {
+public fun update_from_lazer(
+    source: &mut PythSource,
+    config: &ProtocolConfig,
+    update: LazerUpdate,
+    clock: &Clock,
+) {
+    config.assert_not_valuation_in_progress();
     let (spot, source_timestamp_us) = lazer_helper::extract_spot(&update, source.feed_id);
     let source_timestamp_ms = us_to_ms_ceil(source_timestamp_us);
     let update_timestamp_ms = clock.timestamp_ms();

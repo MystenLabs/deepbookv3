@@ -216,6 +216,7 @@ public fun create_expiry_market(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (ID, ID) {
+    config.assert_not_valuation_in_progress();
     assert_valid_strike_grid(min_strike, tick_size);
     assert!(expiry > clock.timestamp_ms(), EInvalidExpiry);
     let pyth_lazer_feed_id = pyth.feed_id();

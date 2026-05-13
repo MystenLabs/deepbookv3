@@ -45,3 +45,13 @@ public(package) fun set_expiry_allocation(config: &mut RiskConfig, allocation: u
     config_constants::assert_expiry_allocation(allocation);
     config.expiry_allocation = allocation;
 }
+
+// === Test-Only Functions ===
+
+#[test_only]
+public fun destroy_for_testing(config: RiskConfig) {
+    let RiskConfig {
+        max_total_exposure_pct: _,
+        expiry_allocation: _,
+    } = config;
+}
