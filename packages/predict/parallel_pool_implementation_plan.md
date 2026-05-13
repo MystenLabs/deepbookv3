@@ -359,13 +359,15 @@ Completed:
   copied active expiry IDs, and direct pool-value consumption by LP flows;
 - `ProtocolConfig` valuation lock added to prevent same-PTB value mutations
   during full-pool valuation;
+- dynamic capital resize skeleton added with permissionless grow/shrink entry
+  points on `PoolVault` and package-only cash movement helpers on
+  `ExpiryMarket`;
 - `StrikeMatrix` no longer stores cached MTM;
 - `StrikeMatrix` updates `max_payout` on range changes and exposes pure live and
   settled valuation reads.
 
 Not yet implemented:
 
-- dynamic capital resize APIs;
 - `ExpiryMarket::mint`;
 - `ExpiryMarket::redeem`;
 - settled redeem and compaction wiring in `ExpiryMarket`;

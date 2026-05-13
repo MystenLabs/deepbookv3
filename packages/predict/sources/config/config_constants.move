@@ -26,6 +26,10 @@ const EInvalidMaxBasisDeviation: u64 = 14;
 const EInvalidMinBasis: u64 = 15;
 const EInvalidMaxBasis: u64 = 16;
 const EInvalidExpiryAllocation: u64 = 17;
+const EInvalidGrowUtilizationThreshold: u64 = 18;
+const EInvalidShrinkUtilizationThreshold: u64 = 19;
+const EInvalidGrowFactor: u64 = 20;
+const EInvalidShrinkFactor: u64 = 21;
 
 // === Pool Risk ===
 
@@ -48,6 +52,56 @@ public(package) macro fun max_allocation(): u64 { 250_000_000_000 }
 
 public(package) fun assert_expiry_allocation(value: u64) {
     assert!(value >= min_allocation!() && value <= max_allocation!(), EInvalidExpiryAllocation);
+}
+
+public(package) macro fun default_grow_utilization_threshold(): u64 { 800_000_000 }
+public(package) macro fun min_grow_utilization_threshold(): u64 { 0 }
+public(package) macro fun max_grow_utilization_threshold(): u64 {
+    deepbook_predict::constants::float_scaling!()
+}
+
+public(package) fun assert_grow_utilization_threshold(value: u64) {
+    assert!(
+        value >= min_grow_utilization_threshold!() && value <= max_grow_utilization_threshold!(),
+        EInvalidGrowUtilizationThreshold,
+    );
+}
+
+public(package) macro fun default_shrink_utilization_threshold(): u64 { 300_000_000 }
+public(package) macro fun min_shrink_utilization_threshold(): u64 { 0 }
+public(package) macro fun max_shrink_utilization_threshold(): u64 {
+    deepbook_predict::constants::float_scaling!()
+}
+
+public(package) fun assert_shrink_utilization_threshold(value: u64) {
+    assert!(
+        value >= min_shrink_utilization_threshold!()
+            && value <= max_shrink_utilization_threshold!(),
+        EInvalidShrinkUtilizationThreshold,
+    );
+}
+
+public(package) macro fun default_grow_factor(): u64 { 2_000_000_000 }
+public(package) macro fun min_grow_factor(): u64 {
+    deepbook_predict::constants::float_scaling!() + 1
+}
+public(package) macro fun max_grow_factor(): u64 { 10_000_000_000 }
+
+public(package) fun assert_grow_factor(value: u64) {
+    assert!(value >= min_grow_factor!() && value <= max_grow_factor!(), EInvalidGrowFactor);
+}
+
+public(package) macro fun default_shrink_factor(): u64 { 500_000_000 }
+public(package) macro fun min_shrink_factor(): u64 { 0 }
+public(package) macro fun max_shrink_factor(): u64 {
+    deepbook_predict::constants::float_scaling!() - 1
+}
+
+public(package) fun assert_shrink_factor(value: u64) {
+    assert!(
+        value >= min_shrink_factor!() && value <= max_shrink_factor!(),
+        EInvalidShrinkFactor,
+    );
 }
 
 // === Pricing ===

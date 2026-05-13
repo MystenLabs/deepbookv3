@@ -25,6 +25,7 @@ use sui::{balance::Balance, clock::Clock};
 const EWrongMarketOracle: u64 = 0;
 const EWrongPythSource: u64 = 1;
 const EValuationExceedsCash: u64 = 2;
+const EAllocationBelowMaxPayout: u64 = 3;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -91,6 +92,19 @@ public fun free_capital(market: &ExpiryMarket): u64 {
     } else {
         0
     }
+}
+
+/// Return DUSDC allocation that can leave while preserving risk and cash backing.
+public fun returnable_capital(market: &ExpiryMarket): u64 {
+    let max_payout = market.max_payout();
+    let risk_free = market.free_capital();
+    let lp_cash_balance = market.lp_cash_balance.value();
+    let cash_free = if (lp_cash_balance > max_payout) {
+        lp_cash_balance - max_payout
+    } else {
+        0
+    };
+    risk_free.min(cash_free)
 }
 
 /// Return true once the dense strike matrix has been compacted after settlement.
@@ -206,6 +220,27 @@ public(package) fun create_and_share(
     let id = object::id(&market);
     transfer::share_object(market);
     id
+}
+
+/// Add pool-provided DUSDC to this expiry's allocation.
+public(package) fun receive_allocation(market: &mut ExpiryMarket, allocation: Balance<DUSDC>) {
+    let amount = allocation.value();
+    market.allocated_capital = market.allocated_capital + amount;
+    market.lp_cash_balance.join(allocation);
+}
+
+/// Return free DUSDC allocation from this expiry to the pool.
+public(package) fun return_allocation(
+    market: &mut ExpiryMarket,
+    amount: u64,
+): Balance<DUSDC> {
+    assert!(
+        amount <= market.returnable_capital(),
+        EAllocationBelowMaxPayout,
+    );
+
+    market.allocated_capital = market.allocated_capital - amount;
+    market.lp_cash_balance.split(amount)
 }
 
 /// Consume an expiry valuation and return its market ID and value.

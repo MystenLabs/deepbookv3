@@ -10,7 +10,8 @@ module deepbook_predict::plp;
 
 use deepbook::math;
 use deepbook_predict::{
-    expiry_market::{Self, ExpiryValuation},
+    config_constants,
+    expiry_market::{Self, ExpiryMarket, ExpiryValuation},
     protocol_config::ProtocolConfig,
     risk_config::RiskConfig
 };
@@ -28,6 +29,11 @@ const EExpiryMarketAlreadyValued: u64 = 7;
 const EMissingExpiryValuation: u64 = 8;
 const EActiveExpirySetChanged: u64 = 9;
 const EPoolValueOverflow: u64 = 10;
+const EZeroAllocatedCapital: u64 = 11;
+const EGrowUtilizationBelowThreshold: u64 = 12;
+const EShrinkUtilizationAboveThreshold: u64 = 13;
+const ENoAllocationResize: u64 = 14;
+const EInsufficientTotalAllocatedCapital: u64 = 15;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -130,6 +136,45 @@ public fun add_expiry_valuation(valuation: &mut PoolValuation, expiry_valuation:
 
     valuation.valued_expiry_markets.push_back(expiry_market_id);
     valuation.value = valuation.value + expiry_value;
+}
+
+/// Grow an active expiry's allocation when utilization reaches the high watermark.
+public fun grow_expiry_allocation(
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    market: &mut ExpiryMarket,
+) {
+    config.assert_not_valuation_in_progress();
+    assert!(
+        vault.contains_expiry_market(market.id()),
+        EExpiryMarketNotActive,
+    );
+    let risk_config = config.risk_config();
+    let amount = vault.grow_amount(risk_config, market);
+    let allocation = vault.idle_balance.split(amount);
+    vault.total_allocated_capital = vault.total_allocated_capital + amount;
+    market.receive_allocation(allocation);
+}
+
+/// Shrink an active expiry's allocation when utilization reaches the low watermark.
+public fun shrink_expiry_allocation(
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    market: &mut ExpiryMarket,
+) {
+    config.assert_not_valuation_in_progress();
+    assert!(
+        vault.contains_expiry_market(market.id()),
+        EExpiryMarketNotActive,
+    );
+    let amount = shrink_amount(config.risk_config(), market);
+    assert!(
+        vault.total_allocated_capital >= amount,
+        EInsufficientTotalAllocatedCapital,
+    );
+    let allocation = market.return_allocation(amount);
+    vault.total_allocated_capital = vault.total_allocated_capital - amount;
+    vault.idle_balance.join(allocation);
 }
 
 /// Supply DUSDC into the pool vault and receive PLP shares.
@@ -274,6 +319,73 @@ fun assert_all_expected_valued(
         );
         i = i + 1;
     };
+}
+
+fun expiry_utilization(market: &ExpiryMarket): u64 {
+    let allocated_capital = market.allocated_capital();
+    assert!(allocated_capital > 0, EZeroAllocatedCapital);
+    math::div(market.max_payout(), allocated_capital)
+}
+
+fun remaining_global_allocation_capacity(vault: &PoolVault, risk_config: &RiskConfig): u64 {
+    let idle_balance = vault.idle_balance.value();
+    assert!(
+        idle_balance <= std::u64::max_value!() - vault.total_allocated_capital,
+        EPoolCapitalOverflow,
+    );
+
+    let max_total_allocation = math::mul(
+        idle_balance + vault.total_allocated_capital,
+        risk_config.max_total_exposure_pct(),
+    );
+    if (max_total_allocation > vault.total_allocated_capital) {
+        max_total_allocation - vault.total_allocated_capital
+    } else {
+        0
+    }
+}
+
+fun grow_amount(
+    vault: &PoolVault,
+    risk_config: &RiskConfig,
+    market: &ExpiryMarket,
+): u64 {
+    let utilization = expiry_utilization(market);
+    assert!(
+        utilization >= risk_config.grow_utilization_threshold(),
+        EGrowUtilizationBelowThreshold,
+    );
+
+    let current_allocation = market.allocated_capital();
+    let desired_target =
+        math::mul(current_allocation, risk_config.grow_factor()).min(config_constants::max_allocation!());
+    assert!(desired_target > current_allocation, ENoAllocationResize);
+    let desired_growth = desired_target - current_allocation;
+    let amount = desired_growth
+        .min(vault.remaining_global_allocation_capacity(risk_config))
+        .min(vault.idle_balance.value());
+    assert!(amount > 0, ENoAllocationResize);
+    amount
+}
+
+fun shrink_amount(risk_config: &RiskConfig, market: &ExpiryMarket): u64 {
+    let utilization = expiry_utilization(market);
+    assert!(
+        utilization <= risk_config.shrink_utilization_threshold(),
+        EShrinkUtilizationAboveThreshold,
+    );
+
+    let current_allocation = market.allocated_capital();
+    let target_allocation = math::mul(current_allocation, risk_config.shrink_factor())
+        .max(risk_config.expiry_allocation())
+        .max(market.max_payout());
+    let amount = if (target_allocation < current_allocation) {
+        current_allocation - target_allocation
+    } else {
+        0
+    }.min(market.returnable_capital());
+    assert!(amount > 0, ENoAllocationResize);
+    amount
 }
 
 fun consume_valuation(

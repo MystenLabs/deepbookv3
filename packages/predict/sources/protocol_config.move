@@ -163,6 +163,30 @@ public(package) fun set_expiry_allocation(config: &mut ProtocolConfig, allocatio
     config.risk_config.set_expiry_allocation(allocation);
 }
 
+/// Set the utilization threshold that enables allocation growth.
+public(package) fun set_grow_utilization_threshold(config: &mut ProtocolConfig, threshold: u64) {
+    config.assert_not_valuation_in_progress();
+    config.risk_config.set_grow_utilization_threshold(threshold);
+}
+
+/// Set the utilization threshold that enables allocation shrink.
+public(package) fun set_shrink_utilization_threshold(config: &mut ProtocolConfig, threshold: u64) {
+    config.assert_not_valuation_in_progress();
+    config.risk_config.set_shrink_utilization_threshold(threshold);
+}
+
+/// Set the growth target multiplier.
+public(package) fun set_grow_factor(config: &mut ProtocolConfig, factor: u64) {
+    config.assert_not_valuation_in_progress();
+    config.risk_config.set_grow_factor(factor);
+}
+
+/// Set the shrink target multiplier.
+public(package) fun set_shrink_factor(config: &mut ProtocolConfig, factor: u64) {
+    config.assert_not_valuation_in_progress();
+    config.risk_config.set_shrink_factor(factor);
+}
+
 /// Set the settlement freshness threshold template for future market oracles.
 public(package) fun set_market_oracle_template_settlement_freshness_ms(
     config: &mut ProtocolConfig,
