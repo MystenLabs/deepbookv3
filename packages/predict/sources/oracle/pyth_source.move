@@ -83,7 +83,7 @@ public fun update_timestamp_ms(source: &PythSource): u64 {
 // === Public-Package Functions ===
 
 /// Create and share a Pyth source bound to a Lazer feed id.
-public(package) fun create(feed_id: u32, ctx: &mut TxContext): ID {
+public(package) fun create_and_share(feed_id: u32, ctx: &mut TxContext): ID {
     let source = PythSource {
         id: object::new(ctx),
         feed_id,

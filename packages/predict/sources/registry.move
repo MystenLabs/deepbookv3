@@ -3,63 +3,26 @@
 
 /// Registry and admin entrypoints for the Predict protocol.
 ///
-/// This module creates shared setup objects, tracks market oracle IDs, and
-/// exposes admin-only wiring functions used during setup and governance.
+/// This module creates shared setup objects and exposes admin-only wiring
+/// functions used during setup and governance.
 module deepbook_predict::registry;
 
 use deepbook_predict::{
     constants,
     expiry_market,
     market_oracle::{Self, MarketOracle, MarketOracleCap},
-    plp::PLP,
-    pool_vault::{Self, PoolVault},
+    plp::PoolVault,
     predict_manager::{Self, PredictManager},
-    protocol_config,
-    pyth_source::{Self, PythSource},
-    tuning_constants
+    protocol_config::{Self, ProtocolConfig},
+    pyth_source::{Self, PythSource}
 };
-use sui::{clock::Clock, coin::TreasuryCap, dynamic_field as df, event, table::{Self, Table}};
+use sui::{clock::Clock, table::{Self, Table}};
 
-use fun df::exists_ as UID.exists_;
-use fun df::add as UID.add;
-
-const EInvalidTickSize: u64 = 1;
-const EInvalidStrikeGrid: u64 = 2;
-const EFeedIdOverflow: u64 = 3;
-const EFeedIdMismatch: u64 = 4;
-const EPythSourceAlreadyCreated: u64 = 5;
-const EInvalidExpiry: u64 = 6;
-const EProtocolConfigAlreadyCreated: u64 = 7;
-const EPoolVaultAlreadyCreated: u64 = 8;
-
-/// Emitted when a Pyth source is created.
-public struct PythSourceCreated has copy, drop, store {
-    pyth_source_id: ID,
-    pyth_lazer_feed_id: u64,
-}
-
-/// Emitted when an expiry market and its paired oracle are registered.
-public struct ExpiryMarketCreated has copy, drop, store {
-    expiry_market_id: ID,
-    market_oracle_id: ID,
-    market_oracle_cap_id: ID,
-    pyth_source_id: ID,
-    pyth_lazer_feed_id: u64,
-    expiry: u64,
-    min_strike: u64,
-    max_strike: u64,
-    tick_size: u64,
-}
-
-public struct MarketOracleCapRegistered has copy, drop, store {
-    market_oracle_id: ID,
-    cap_id: ID,
-}
-
-public struct MarketOracleCapUnregistered has copy, drop, store {
-    market_oracle_id: ID,
-    cap_id: ID,
-}
+const EInvalidTickSize: u64 = 0;
+const EInvalidStrikeGrid: u64 = 1;
+const EFeedIdMismatch: u64 = 2;
+const EPythSourceAlreadyCreated: u64 = 3;
+const EInvalidExpiry: u64 = 4;
 
 /// Capability for admin operations.
 /// Created during package init, transferred to deployer (multisig).
@@ -71,42 +34,116 @@ public struct AdminCap has key, store {
 public struct Registry has key {
     id: UID,
     /// Pyth Lazer feed ID -> shared PythSource ID.
-    pyth_source_ids: Table<u64, ID>,
-    /// MarketOracleCap ID -> vector of market oracle IDs created by that cap.
-    market_oracle_ids: Table<ID, vector<ID>>,
+    pyth_source_ids: Table<u32, ID>,
 }
-
-/// DF marker on `Registry.id` enforcing one protocol config object.
-public struct ProtocolConfigMarker() has copy, drop, store;
-
-/// DF marker on `Registry.id` enforcing one pool vault object.
-public struct PoolVaultMarker() has copy, drop, store;
 
 // === Public Functions ===
 
-/// Create the protocol config shared object.
-public fun create_protocol_config(
-    registry: &mut Registry,
-    _admin_cap: &AdminCap,
-    ctx: &mut TxContext,
-): ID {
-    assert!(!registry.id.exists_(ProtocolConfigMarker()), EProtocolConfigAlreadyCreated);
-    let protocol_config_id = protocol_config::create_and_share(ctx);
-    registry.id.add(ProtocolConfigMarker(), protocol_config_id);
-    protocol_config_id
+/// Set the base fee multiplier.
+public fun set_base_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
+    config.set_base_fee(fee);
 }
 
-/// Create the pool vault shared object.
-public fun create_pool_vault(
-    registry: &mut Registry,
+/// Set the minimum fee floor.
+public fun set_min_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
+    config.set_min_fee(fee);
+}
+
+/// Set the utilization multiplier.
+public fun set_utilization_multiplier(
+    config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
-    treasury_cap: TreasuryCap<PLP>,
-    ctx: &mut TxContext,
-): ID {
-    assert!(!registry.id.exists_(PoolVaultMarker()), EPoolVaultAlreadyCreated);
-    let pool_vault_id = pool_vault::create_and_share(treasury_cap, ctx);
-    registry.id.add(PoolVaultMarker(), pool_vault_id);
-    pool_vault_id
+    multiplier: u64,
+) {
+    config.set_utilization_multiplier(multiplier);
+}
+
+/// Set the global minimum allowed mint price.
+public fun set_min_ask_price(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
+    config.set_min_ask_price(value);
+}
+
+/// Set the global maximum allowed mint price.
+public fun set_max_ask_price(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
+    config.set_max_ask_price(value);
+}
+
+/// Set the live Pyth spot freshness threshold.
+public fun set_pyth_spot_freshness_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.set_pyth_spot_freshness_ms(value);
+}
+
+/// Set the live Block Scholes spot/forward freshness threshold.
+public fun set_block_scholes_prices_freshness_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.set_block_scholes_prices_freshness_ms(value);
+}
+
+/// Set the live Block Scholes SVI freshness threshold.
+public fun set_block_scholes_svi_freshness_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.set_block_scholes_svi_freshness_ms(value);
+}
+
+/// Set the fee distribution shares.
+public fun set_fee_shares(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    lp_fee_share: u64,
+    protocol_fee_share: u64,
+    insurance_fee_share: u64,
+) {
+    config.set_fee_shares(lp_fee_share, protocol_fee_share, insurance_fee_share);
+}
+
+/// Set the maximum total exposure percentage.
+public fun set_max_total_exposure_pct(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    pct: u64,
+) {
+    config.set_max_total_exposure_pct(pct);
+}
+
+/// Set the settlement freshness threshold template used by future market oracles.
+public fun set_market_oracle_template_settlement_freshness_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.set_market_oracle_template_settlement_freshness_ms(value);
+}
+
+/// Set basis guard bounds template used by future market oracles.
+public fun set_market_oracle_template_basis_bounds(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    max_spot_deviation: u64,
+    max_basis_deviation: u64,
+    min_basis: u64,
+    max_basis: u64,
+) {
+    config.set_market_oracle_template_basis_bounds(
+        max_spot_deviation,
+        max_basis_deviation,
+        min_basis,
+        max_basis,
+    );
+}
+
+/// Set whether trading is paused.
+public fun set_trading_paused(config: &mut ProtocolConfig, _admin_cap: &AdminCap, paused: bool) {
+    config.set_trading_paused(paused);
 }
 
 /// Create a shared Pyth source for one underlying/feed.
@@ -115,14 +152,12 @@ public fun create_pool_vault(
 /// payloads. Market creation still requires the feed to match admin config.
 public fun create_pyth_source(
     registry: &mut Registry,
-    pyth_lazer_feed_id: u64,
+    pyth_lazer_feed_id: u32,
     ctx: &mut TxContext,
 ): ID {
-    assert!(pyth_lazer_feed_id <= 0xFFFF_FFFF, EFeedIdOverflow);
     assert!(!registry.pyth_source_ids.contains(pyth_lazer_feed_id), EPythSourceAlreadyCreated);
-    let pyth_source_id = pyth_source::create(pyth_lazer_feed_id as u32, ctx);
+    let pyth_source_id = pyth_source::create_and_share(pyth_lazer_feed_id, ctx);
     registry.pyth_source_ids.add(pyth_lazer_feed_id, pyth_source_id);
-    event::emit(PythSourceCreated { pyth_source_id, pyth_lazer_feed_id });
     pyth_source_id
 }
 
@@ -137,11 +172,7 @@ public fun register_market_oracle_cap(
     _admin_cap: &AdminCap,
     cap: &MarketOracleCap,
 ) {
-    market_oracle::register_cap(market, cap);
-    event::emit(MarketOracleCapRegistered {
-        market_oracle_id: market.id(),
-        cap_id: object::id(cap),
-    });
+    market.register_cap(cap);
 }
 
 /// Revoke a MarketOracleCap's authorization on a market oracle.
@@ -150,26 +181,24 @@ public fun unregister_market_oracle_cap(
     _admin_cap: &AdminCap,
     cap_id: ID,
 ) {
-    market_oracle::unregister_cap(market, cap_id);
-    event::emit(MarketOracleCapUnregistered { market_oracle_id: market.id(), cap_id });
+    market.unregister_cap(cap_id);
 }
 
 /// Cap holder voluntarily removes its own cap from a market oracle.
 public fun self_unregister_market_oracle_cap(market: &mut MarketOracle, cap: &MarketOracleCap) {
-    let cap_id = object::id(cap);
-    market_oracle::self_unregister_cap(market, cap);
-    event::emit(MarketOracleCapUnregistered { market_oracle_id: market.id(), cap_id });
+    market.self_unregister_cap(cap);
 }
 
 /// Destroy a MarketOracleCap the holder no longer needs.
 public fun destroy_market_oracle_cap(cap: MarketOracleCap) {
-    market_oracle::destroy_cap(cap);
+    cap.destroy_cap();
 }
 
 /// Create a new expiry market for the parallel pool path.
 public fun create_expiry_market(
-    registry: &mut Registry,
+    registry: &Registry,
     pool_vault: &mut PoolVault,
+    config: &ProtocolConfig,
     pyth: &PythSource,
     cap: &MarketOracleCap,
     expiry: u64,
@@ -180,19 +209,21 @@ public fun create_expiry_market(
 ): (ID, ID) {
     assert_valid_strike_grid(min_strike, tick_size);
     assert!(expiry > clock.timestamp_ms(), EInvalidExpiry);
-    let pyth_lazer_feed_id = pyth.feed_id() as u64;
-    let market_oracle_id = create_market_oracle_for_source(
-        registry,
+    let pyth_lazer_feed_id = pyth.feed_id();
+    assert!(registry.pyth_source_ids.contains(pyth_lazer_feed_id), EFeedIdMismatch);
+    assert!(registry.pyth_source_ids[pyth_lazer_feed_id] == pyth.id(), EFeedIdMismatch);
+    let market_oracle_id = market_oracle::create_and_share(
         pyth,
+        config.market_oracle_config(),
         cap,
-        pyth_lazer_feed_id,
         expiry,
         ctx,
     );
-    let max_strike = default_max_strike(min_strike, tick_size);
+    let max_strike = max_strike_for_grid(min_strike, tick_size);
     let expiry_market_id = expiry_market::create_and_share(
         market_oracle_id,
-        pyth_lazer_feed_id,
+        pyth,
+        config,
         expiry,
         min_strike,
         max_strike,
@@ -200,17 +231,6 @@ public fun create_expiry_market(
         ctx,
     );
     pool_vault.register_expiry_market(expiry_market_id);
-    event::emit(ExpiryMarketCreated {
-        expiry_market_id,
-        market_oracle_id,
-        market_oracle_cap_id: object::id(cap),
-        pyth_source_id: pyth.id(),
-        pyth_lazer_feed_id,
-        expiry,
-        min_strike,
-        max_strike,
-        tick_size,
-    });
 
     (expiry_market_id, market_oracle_id)
 }
@@ -225,17 +245,8 @@ entry fun create_and_share_manager(registry: &mut Registry, ctx: &mut TxContext)
     create_manager(registry, ctx).share();
 }
 
-/// Get market_oracle IDs created by a given MarketOracleCap.
-public fun market_oracle_ids(registry: &Registry, cap_id: ID): vector<ID> {
-    if (registry.market_oracle_ids.contains(cap_id)) {
-        registry.market_oracle_ids[cap_id]
-    } else {
-        vector[]
-    }
-}
-
 /// Return the shared PythSource ID for a feed, if it has been created.
-public fun pyth_source_id(registry: &Registry, pyth_lazer_feed_id: u64): Option<ID> {
+public fun pyth_source_id(registry: &Registry, pyth_lazer_feed_id: u32): Option<ID> {
     if (registry.pyth_source_ids.contains(pyth_lazer_feed_id)) {
         option::some(registry.pyth_source_ids[pyth_lazer_feed_id])
     } else {
@@ -248,6 +259,7 @@ public fun pyth_source_id(registry: &Registry, pyth_lazer_feed_id: u64): Option<
 /// Package initializer - creates Registry and AdminCap.
 fun init(ctx: &mut TxContext) {
     let (registry, admin_cap) = new_registry_and_admin_cap(ctx);
+    protocol_config::create_and_share(ctx);
     transfer::share_object(registry);
     transfer::transfer(admin_cap, ctx.sender());
 }
@@ -260,46 +272,8 @@ fun assert_valid_strike_grid(min_strike: u64, tick_size: u64) {
     assert!(min_strike % tick_size == 0, EInvalidStrikeGrid);
 }
 
-/// Create a market oracle after validating its registry-bound Pyth source.
-fun create_market_oracle_for_source(
-    registry: &mut Registry,
-    pyth: &PythSource,
-    cap: &MarketOracleCap,
-    pyth_lazer_feed_id: u64,
-    expiry: u64,
-    ctx: &mut TxContext,
-): ID {
-    // Narrow to `u32` for the Lazer-binding leaf.
-    assert!(pyth_lazer_feed_id <= 0xFFFF_FFFF, EFeedIdOverflow);
-    assert!(pyth.feed_id() == pyth_lazer_feed_id as u32, EFeedIdMismatch);
-    assert!(registry.pyth_source_ids.contains(pyth_lazer_feed_id), EFeedIdMismatch);
-    assert!(registry.pyth_source_ids[pyth_lazer_feed_id] == pyth.id(), EFeedIdMismatch);
-
-    let bounds = market_oracle::new_bounds(
-        tuning_constants::default_settlement_freshness_ms!(),
-        tuning_constants::default_max_spot_deviation!(),
-        tuning_constants::default_max_basis_deviation!(),
-        tuning_constants::default_min_basis!(),
-        tuning_constants::default_max_basis!(),
-    );
-    let market_oracle_id = market_oracle::create(
-        pyth.id(),
-        expiry,
-        bounds,
-        cap,
-        ctx,
-    );
-    let cap_id = object::id(cap);
-    if (!registry.market_oracle_ids.contains(cap_id)) {
-        registry.market_oracle_ids.add(cap_id, vector[]);
-    };
-    registry.market_oracle_ids[cap_id].push_back(market_oracle_id);
-
-    market_oracle_id
-}
-
 /// Return the fixed strike-grid upper bound.
-fun default_max_strike(min_strike: u64, tick_size: u64): u64 {
+fun max_strike_for_grid(min_strike: u64, tick_size: u64): u64 {
     min_strike + tick_size * constants::oracle_strike_grid_ticks!()
 }
 
@@ -309,7 +283,6 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
         Registry {
             id: object::new(ctx),
             pyth_source_ids: table::new(ctx),
-            market_oracle_ids: table::new(ctx),
         },
         AdminCap {
             id: object::new(ctx),
@@ -324,6 +297,7 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
 public fun init_for_testing(ctx: &mut TxContext): ID {
     let (registry, admin_cap) = new_registry_and_admin_cap(ctx);
     let registry_id = object::id(&registry);
+    protocol_config::create_and_share(ctx);
     transfer::share_object(registry);
     transfer::transfer(admin_cap, ctx.sender());
 

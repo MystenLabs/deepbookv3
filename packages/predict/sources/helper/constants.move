@@ -21,48 +21,14 @@ public macro fun float_scaling(): u64 { 1_000_000_000 }
 /// form into the package's 1e9-scaled `u64`.
 public macro fun float_scaling_decimals(): u64 { 9 }
 
-// === Default Config ===
-
-/// Max total exposure as % of vault capital (80% in FLOAT_SCALING)
-public macro fun default_max_total_exposure_pct(): u64 { 800_000_000 }
-
-/// Base fee multiplier for Bernoulli scaling (2% in FLOAT_SCALING).
-/// Effective fee rate at 50c = base_fee * sqrt(0.5 * 0.5) = 1%.
-public macro fun default_base_fee(): u64 { 20_000_000 }
-
-/// Minimum per-unit fee floor (0.5% in FLOAT_SCALING).
-public macro fun default_min_fee(): u64 { 5_000_000 }
-
-/// Utilization multiplier applied to base fee (2x in FLOAT_SCALING).
-/// Controls how aggressively fees increase as vault approaches capacity.
-public macro fun default_utilization_multiplier(): u64 { 2_000_000_000 }
-
-/// Hard ceiling (10x) for utilization fee amplification.
-public macro fun max_utilization_multiplier(): u64 { 10_000_000_000 }
-
-/// Share of generated fees retained by LPs (60% in FLOAT_SCALING).
-public macro fun default_lp_fee_share(): u64 { 600_000_000 }
-
-/// Share of generated fees retained as protocol revenue (20% in FLOAT_SCALING).
-public macro fun default_protocol_fee_share(): u64 { 200_000_000 }
-
-/// Share of generated fees retained in the insurance reserve (20% in FLOAT_SCALING).
-public macro fun default_insurance_fee_share(): u64 { 200_000_000 }
-
-/// Minimum all-in unit price the protocol will allow at mint (1% in FLOAT_SCALING)
-public macro fun default_min_ask_price(): u64 { 10_000_000 }
-
-/// Maximum all-in unit price the protocol will allow at mint (99% in FLOAT_SCALING)
-public macro fun default_max_ask_price(): u64 { 990_000_000 }
-
 // === Time Constants ===
 
 public macro fun ms_per_year(): u64 { 31_536_000_000 }
 
 // === Curve Builder ===
 
-/// Default number of sample points for adaptive curve building
-public macro fun default_curve_samples(): u64 { 50 }
+/// Number of sample points for adaptive curve building.
+public macro fun curve_samples(): u64 { 50 }
 
 /// Minimum interval between curve sample points ($0.001 in FLOAT_SCALING)
 public macro fun min_curve_interval(): u64 { 1_000_000 }

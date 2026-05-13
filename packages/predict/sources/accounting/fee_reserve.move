@@ -3,16 +3,14 @@
 
 /// Fee reserve accounting for Predict trade fees.
 ///
-/// LP fees stay in the vault as LP-owned NAV. Protocol and insurance fee
+/// LP fees stay with expiry cash as LP-owned NAV. Protocol and insurance fee
 /// balances are stored here so they are real reserved assets, not just counters.
 module deepbook_predict::fee_reserve;
 
 use deepbook::math;
-use deepbook_predict::constants;
+use deepbook_predict::fee_config::FeeConfig;
 use dusdc::dusdc::DUSDC;
 use sui::{balance::{Self, Balance}, event};
-
-const EInvalidFeeSplit: u64 = 0;
 
 /// Emitted whenever a charged trade accrues an official fee split.
 public struct FeeAccrued has copy, drop, store {
@@ -26,7 +24,7 @@ public struct FeeAccrued has copy, drop, store {
 /// Reserve state for protocol and insurance fee portions.
 ///
 /// The LP share is counted here but returned to the caller so it can be
-/// deposited into the vault and remain LP-owned NAV.
+/// deposited into LP-owned expiry cash.
 public struct FeeReserve has store {
     protocol_balance: Balance<DUSDC>,
     insurance_balance: Balance<DUSDC>,
@@ -39,82 +37,66 @@ public struct FeeReserve has store {
     total_fees_accrued: u64,
 }
 
-// === Public Functions ===
+// === Public-Package Functions ===
 
 /// Return the official total fee amount accrued across all charged trades.
-public fun total_fees_accrued(reserve: &FeeReserve): u64 {
+public(package) fun total_fees_accrued(reserve: &FeeReserve): u64 {
     reserve.total_fees_accrued
 }
 
 /// Return total LP fee share accrued across all charged trades.
-public fun lp_fees_accrued(reserve: &FeeReserve): u64 {
+public(package) fun lp_fees_accrued(reserve: &FeeReserve): u64 {
     reserve.lp_fees_accrued
 }
 
 /// Return total protocol fee share accrued across all charged trades.
-public fun protocol_fees_accrued(reserve: &FeeReserve): u64 {
+public(package) fun protocol_fees_accrued(reserve: &FeeReserve): u64 {
     reserve.protocol_fees_accrued
 }
 
 /// Return total insurance fee share accrued across all charged trades.
-public fun insurance_fees_accrued(reserve: &FeeReserve): u64 {
+public(package) fun insurance_fees_accrued(reserve: &FeeReserve): u64 {
     reserve.insurance_fees_accrued
 }
 
 /// Return the LP fee share.
-public fun lp_fee_share(reserve: &FeeReserve): u64 {
+public(package) fun lp_fee_share(reserve: &FeeReserve): u64 {
     reserve.lp_fee_share
 }
 
 /// Return the protocol fee share.
-public fun protocol_fee_share(reserve: &FeeReserve): u64 {
+public(package) fun protocol_fee_share(reserve: &FeeReserve): u64 {
     reserve.protocol_fee_share
 }
 
 /// Return the insurance fee share.
-public fun insurance_fee_share(reserve: &FeeReserve): u64 {
+public(package) fun insurance_fee_share(reserve: &FeeReserve): u64 {
     reserve.insurance_fee_share
 }
 
 /// Return concrete protocol reserve balance.
-public fun protocol_asset_balance(reserve: &FeeReserve): u64 {
+public(package) fun protocol_asset_balance(reserve: &FeeReserve): u64 {
     reserve.protocol_balance.value()
 }
 
 /// Return concrete insurance reserve balance.
-public fun insurance_asset_balance(reserve: &FeeReserve): u64 {
+public(package) fun insurance_asset_balance(reserve: &FeeReserve): u64 {
     reserve.insurance_balance.value()
 }
 
-// === Public-Package Functions ===
-
-/// Create an empty fee reserve.
-public(package) fun new(): FeeReserve {
+/// Create an empty fee reserve with fee shares snapshotted from config.
+public(package) fun new(config: &FeeConfig): FeeReserve {
     FeeReserve {
         protocol_balance: balance::zero(),
         insurance_balance: balance::zero(),
-        lp_fee_share: constants::default_lp_fee_share!(),
-        protocol_fee_share: constants::default_protocol_fee_share!(),
-        insurance_fee_share: constants::default_insurance_fee_share!(),
+        lp_fee_share: config.lp_fee_share(),
+        protocol_fee_share: config.protocol_fee_share(),
+        insurance_fee_share: config.insurance_fee_share(),
         lp_fees_accrued: 0,
         protocol_fees_accrued: 0,
         insurance_fees_accrued: 0,
         total_fees_accrued: 0,
     }
-}
-
-/// Set the fee distribution shares. Shares must sum to 100%.
-public(package) fun set_fee_shares(
-    reserve: &mut FeeReserve,
-    lp_fee_share: u64,
-    protocol_fee_share: u64,
-    insurance_fee_share: u64,
-) {
-    let total_share = lp_fee_share + protocol_fee_share + insurance_fee_share;
-    assert!(total_share == constants::float_scaling!(), EInvalidFeeSplit);
-    reserve.lp_fee_share = lp_fee_share;
-    reserve.protocol_fee_share = protocol_fee_share;
-    reserve.insurance_fee_share = insurance_fee_share;
 }
 
 /// Accrue a full fee balance, returning the LP-owned portion to the caller.

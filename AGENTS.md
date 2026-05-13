@@ -77,6 +77,29 @@ These are the most important rule files to consult based on the code you touch:
   - related helper and manager test files under `packages/predict/tests/`
 - If you change predict pricing, vault accounting, or oracle math, rerun the full predict suite:
   - `sui move test --path packages/predict --gas-limit 100000000000`
+- Predict config rules:
+  - Split config into two classes: admin-tunable values and upgrade-required values.
+  - Admin-tunable values live in config structs and are updated only through admin-gated entrypoints.
+  - Upgrade-required values stay as constants/macros and do not get config structs, setters, bounds, or admin flows.
+  - Each admin-tunable value should have a stored field plus package-only `default_*`, `min_*`, `max_*`, and `assert_*` helpers in `config_constants.move`.
+  - Each `assert_*` helper should use a specific error code for that config value.
+  - Defaults are applied in the module that creates the config/object.
+  - Global template config can be snapshotted into per-object state at creation; existing objects should only change through an explicit admin path if one is intentionally added.
+  - Name global-template setters with `template` when the value affects future objects but not existing objects.
+  - External admin entrypoints live in the admin/router module, currently `registry`; config struct setters stay `public(package)`.
+  - Single-value bounds live in `config_constants::assert_*`; relational checks that depend on multiple fields live in the owning config setter.
+  - Do not store generic `config_id` fields inside config structs or events; object identity is enough when identity matters.
+  - Do not add singleton creation flags for objects created during package init.
+  - Per-market oracle bounds can be tunable by `MarketOracleCap`; this is an intentional per-oracle operator control, not a generic admin config path.
+  - Public visibility is an API commitment, not secrecy; on-chain state is still observable.
+  - Keep admin-tunable config structs readable inside the package by default.
+  - Expose public getters only for values needed by external Move composition, PTB construction, or clear user-facing protocol state.
+  - Keep config constructors, setters, bounds checks, and template/snapshot wiring `public(package)`.
+- Predict naming and API rules:
+  - Functions that create and share a shared object should be named `create_and_share`.
+  - Pyth Lazer feed IDs should use `u32` consistently across Predict.
+  - Avoid created events unless there is a concrete indexer or off-chain discovery requirement.
+  - Raw key constructors that take arbitrary object IDs should stay package-only; expose public constructors through the object that anchors the key, using immutable references when possible.
 
 ## Code Review Norms
 

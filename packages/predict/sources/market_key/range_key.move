@@ -5,7 +5,7 @@
 /// two strikes that define the band.
 ///
 /// The canonical instrument is the band `(oracle, lower, higher)`.
-/// Bull-call and bear-put ranges with the same strikes are vault-identical and
+/// Bull-call and bear-put ranges with the same strikes are payout-identical and
 /// share the same RangeKey row.
 module deepbook_predict::range_key;
 
@@ -22,17 +22,6 @@ public struct RangeKey has copy, drop, store {
 
 // === Public Functions ===
 
-/// Create a new RangeKey. Aborts if `lower_strike >= higher_strike` or the
-/// range spans both sentinel endpoints.
-public fun new(oracle_id: ID, lower_strike: u64, higher_strike: u64): RangeKey {
-    assert!(lower_strike < higher_strike, EInvalidStrikes);
-    assert!(
-        !(lower_strike == constants::neg_inf!() && higher_strike == constants::pos_inf!()),
-        EInvalidStrikes,
-    );
-    RangeKey { oracle_id, lower_strike, higher_strike }
-}
-
 /// Get the oracle_id from a RangeKey.
 public fun oracle_id(key: &RangeKey): ID {
     key.oracle_id
@@ -46,6 +35,19 @@ public fun lower_strike(key: &RangeKey): u64 {
 /// Get the higher strike from a RangeKey.
 public fun higher_strike(key: &RangeKey): u64 {
     key.higher_strike
+}
+
+// === Public-Package Functions ===
+
+/// Create a new RangeKey. Aborts if `lower_strike >= higher_strike` or the
+/// range spans both sentinel endpoints.
+public(package) fun new(oracle_id: ID, lower_strike: u64, higher_strike: u64): RangeKey {
+    assert!(lower_strike < higher_strike, EInvalidStrikes);
+    assert!(
+        !(lower_strike == constants::neg_inf!() && higher_strike == constants::pos_inf!()),
+        EInvalidStrikes,
+    );
+    RangeKey { oracle_id, lower_strike, higher_strike }
 }
 
 /// Return `(min, max)` expanded to include this key's finite strike boundaries.

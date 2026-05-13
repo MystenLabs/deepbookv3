@@ -15,7 +15,7 @@ use deepbook_predict::{
     predict_manager::PredictManager,
     protocol_config::ProtocolConfig,
     pyth_source::PythSource,
-    range_key::RangeKey,
+    range_key::{Self, RangeKey},
     strike_matrix::{Self, StrikeMatrix}
 };
 use dusdc::dusdc::DUSDC;
@@ -25,7 +25,7 @@ use sui::{balance::{Self, Balance}, clock::Clock};
 public struct ExpiryMarket has key {
     id: UID,
     market_oracle_id: ID,
-    pyth_lazer_feed_id: u64,
+    pyth_lazer_feed_id: u32,
     expiry: u64,
     allocated_capital: Balance<DUSDC>,
     strike_matrix: StrikeMatrix,
@@ -46,7 +46,7 @@ public fun market_oracle_id(market: &ExpiryMarket): ID {
 }
 
 /// Return the Pyth Lazer feed id snapshotted at market creation.
-public fun pyth_lazer_feed_id(market: &ExpiryMarket): u64 {
+public fun pyth_lazer_feed_id(market: &ExpiryMarket): u32 {
     market.pyth_lazer_feed_id
 }
 
@@ -79,6 +79,11 @@ public fun free_capital(market: &ExpiryMarket): u64 {
 /// Return true once the dense strike matrix has been compacted after settlement.
 public fun is_compacted(market: &ExpiryMarket): bool {
     market.compacted_settlement.is_some()
+}
+
+/// Construct a range key for this expiry market.
+public fun range_key(market: &ExpiryMarket, lower_strike: u64, higher_strike: u64): RangeKey {
+    range_key::new(market.market_oracle_id, lower_strike, higher_strike)
 }
 
 /// Mint a position interval against this expiry market.
@@ -134,7 +139,8 @@ public fun redeem_compacted_permissionless(
 /// Create and share an unfunded expiry market for one market oracle.
 public(package) fun create_and_share(
     market_oracle_id: ID,
-    pyth_lazer_feed_id: u64,
+    pyth: &PythSource,
+    config: &ProtocolConfig,
     expiry: u64,
     min_strike: u64,
     max_strike: u64,
@@ -144,11 +150,11 @@ public(package) fun create_and_share(
     let market = ExpiryMarket {
         id: object::new(ctx),
         market_oracle_id,
-        pyth_lazer_feed_id,
+        pyth_lazer_feed_id: pyth.feed_id(),
         expiry,
         allocated_capital: balance::zero(),
         strike_matrix: strike_matrix::new(ctx, tick_size, min_strike, max_strike),
-        fee_reserve: fee_reserve::new(),
+        fee_reserve: fee_reserve::new(config.fee_config()),
         compacted_settlement: option::none(),
     };
     let id = object::id(&market);
