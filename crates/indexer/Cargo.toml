@@ -27,6 +27,7 @@ url.workspace = true
 sui-pg-db.workspace = true
 prometheus.workspace = true
 sui-indexer-alt-metrics.workspace = true
+sui-futures.workspace = true
 sui-types.workspace = true
 move-core-types.workspace = true
 telemetry-subscribers.workspace = true

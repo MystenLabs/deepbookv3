@@ -2237,6 +2237,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sqlx",
+ "sui-futures",
  "sui-indexer-alt-framework",
  "sui-indexer-alt-metrics",
  "sui-pg-db",

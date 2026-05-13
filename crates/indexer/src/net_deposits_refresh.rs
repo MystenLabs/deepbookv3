@@ -3,6 +3,7 @@ use diesel_async::RunQueryDsl;
 use prometheus::{register_int_counter_with_registry, IntCounter, Registry};
 use std::sync::Arc;
 use std::time::Duration;
+use sui_futures::service::Service;
 use sui_pg_db::Db;
 use tokio::time::{interval, MissedTickBehavior};
 
@@ -27,7 +28,7 @@ impl NetDepositsRefreshMetrics {
     }
 }
 
-pub fn net_deposits_refresh_interval(refresh_interval_secs: u64) -> Option<Duration> {
+fn net_deposits_refresh_interval(refresh_interval_secs: u64) -> Option<Duration> {
     if refresh_interval_secs == 0 {
         None
     } else {
@@ -47,40 +48,52 @@ pub async fn refresh_net_deposits_view_once(db: &Db) -> anyhow::Result<usize> {
         .context("Failed to refresh net_deposits_hourly materialized view")
 }
 
-pub fn spawn_net_deposits_refresh_task(
+pub fn net_deposits_refresh_service(
     db: Db,
     metrics: Arc<NetDepositsRefreshMetrics>,
-    refresh_interval: Duration,
-) -> Option<tokio::task::JoinHandle<()>> {
-    if refresh_interval.is_zero() {
+    refresh_interval_secs: u64,
+) -> Option<Service> {
+    let Some(refresh_interval) = net_deposits_refresh_interval(refresh_interval_secs) else {
         tracing::info!("net_deposits_hourly refresh task disabled");
         return None;
-    }
+    };
 
     tracing::info!(
         refresh_interval_secs = refresh_interval.as_secs(),
         "Starting net_deposits_hourly refresh task"
     );
 
-    Some(tokio::spawn(async move {
-        let mut ticker = interval(refresh_interval);
-        ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    Some(
+        Service::new().spawn_aborting(refresh_net_deposits_view_loop(
+            db,
+            metrics,
+            refresh_interval,
+        )),
+    )
+}
 
-        loop {
-            ticker.tick().await;
+async fn refresh_net_deposits_view_loop(
+    db: Db,
+    metrics: Arc<NetDepositsRefreshMetrics>,
+    refresh_interval: Duration,
+) -> anyhow::Result<()> {
+    let mut ticker = interval(refresh_interval);
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
-            match refresh_net_deposits_view_once(&db).await {
-                Ok(_) => {
-                    tracing::debug!("Refreshed net_deposits_hourly materialized view");
-                }
-                Err(error) => {
-                    metrics.refresh_failures.inc();
-                    tracing::error!(
-                        ?error,
-                        "Failed to refresh net_deposits_hourly materialized view"
-                    );
-                }
+    loop {
+        ticker.tick().await;
+
+        match refresh_net_deposits_view_once(&db).await {
+            Ok(_) => {
+                tracing::debug!("Refreshed net_deposits_hourly materialized view");
+            }
+            Err(error) => {
+                metrics.refresh_failures.inc();
+                tracing::error!(
+                    ?error,
+                    "Failed to refresh net_deposits_hourly materialized view"
+                );
             }
         }
-    }))
+    }
 }

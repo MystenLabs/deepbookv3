@@ -453,23 +453,22 @@ async fn main() -> Result<(), anyhow::Error> {
         }
     }
 
-    let _net_deposits_refresh_task = if let Some(refresh_interval) =
-        deepbook_indexer::net_deposits_refresh::net_deposits_refresh_interval(
-            net_deposits_refresh_interval_secs,
-        ) {
-        deepbook_indexer::net_deposits_refresh::spawn_net_deposits_refresh_task(
+    let net_deposits_refresh_service =
+        deepbook_indexer::net_deposits_refresh::net_deposits_refresh_service(
             net_deposits_refresh_db,
             net_deposits_refresh_metrics,
-            refresh_interval,
-        )
-    } else {
-        tracing::info!("net_deposits_hourly refresh task disabled");
-        None
-    };
+            net_deposits_refresh_interval_secs,
+        );
 
     let s_indexer = indexer.run().await?;
     let s_metrics = metrics.run().await?;
+    let service = s_indexer.attach(s_metrics);
+    let service = if let Some(s_net_deposits_refresh) = net_deposits_refresh_service {
+        service.attach(s_net_deposits_refresh)
+    } else {
+        service
+    };
 
-    s_indexer.attach(s_metrics).main().await?;
+    service.main().await?;
     Ok(())
 }
