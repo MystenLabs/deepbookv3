@@ -268,11 +268,10 @@ public fun place_market_order_v2<BaseAsset, QuoteAsset>(
 }
 
 /// Places a reduce-only order in the pool. Used when margin trading is disabled.
-public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset, DebtAsset>(
+public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
-    margin_pool: &MarginPool<DebtAsset>,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
     base_oracle: &PriceInfoObject,
@@ -293,10 +292,11 @@ public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset, DebtAsset>(
 
     registry.assert_price(pool.id(), price, is_bid, clock);
 
-    let (base_debt, quote_debt) = margin_manager.calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
-        margin_pool,
-        clock,
-    );
+    let (base_debt, quote_debt) = if (margin_manager.has_base_debt()) {
+        margin_manager.calculate_debts(base_margin_pool, clock)
+    } else {
+        margin_manager.calculate_debts(quote_margin_pool, clock)
+    };
     let (base_asset, quote_asset) = margin_manager.calculate_assets<BaseAsset, QuoteAsset>(
         pool,
     );
@@ -354,11 +354,10 @@ public fun place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset, DebtAsset>(
 }
 
 /// Places a reduce-only market order in the pool. Used when margin trading is disabled.
-public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset, DebtAsset>(
+public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
     margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
-    margin_pool: &MarginPool<DebtAsset>,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
     base_oracle: &PriceInfoObject,
@@ -374,10 +373,11 @@ public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset, DebtAsset>(
     registry.load_inner();
     assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
 
-    let (base_debt, quote_debt) = margin_manager.calculate_debts<BaseAsset, QuoteAsset, DebtAsset>(
-        margin_pool,
-        clock,
-    );
+    let (base_debt, quote_debt) = if (margin_manager.has_base_debt()) {
+        margin_manager.calculate_debts(base_margin_pool, clock)
+    } else {
+        margin_manager.calculate_debts(quote_margin_pool, clock)
+    };
     let (base_asset, quote_asset) = margin_manager.calculate_assets<BaseAsset, QuoteAsset>(
         pool,
     );

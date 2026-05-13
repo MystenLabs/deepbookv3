@@ -557,10 +557,9 @@ fun test_place_reduce_only_limit_order_ok() {
 
     // Now place a reduce-only limit order to buy USDC (reducing the debt)
     // Price must be within 5% of oracle price (1_000_000_000 for USDC/USDT at $1 each)
-    let order_info = test_helpers::place_reduce_only_limit_order_v2_for_test<USDC, USDT, USDC>(
+    let order_info = test_helpers::place_reduce_only_limit_order_v2_for_test<USDC, USDT>(
         &mut scenario,
         &registry,
-        &base_pool,
         &base_pool,
         &quote_pool,
         &mut mm,
@@ -661,10 +660,9 @@ fun test_place_reduce_only_limit_order_ok_ask() {
     destroy(withdrawn_coin);
 
     // Now place a reduce-only limit order to sell USDC for USDT (reducing the quote debt)
-    let order_info = test_helpers::place_reduce_only_limit_order_v2_for_test<USDC, USDT, USDT>(
+    let order_info = test_helpers::place_reduce_only_limit_order_v2_for_test<USDC, USDT>(
         &mut scenario,
         &registry,
-        &quote_pool,
         &base_pool,
         &quote_pool,
         &mut mm,
@@ -726,10 +724,9 @@ fun test_place_reduce_only_limit_order_incorrect_pool() {
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
     let base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
 
-    test_helpers::place_reduce_only_limit_order_v2_for_test<USDC, USDT, USDT>(
+    test_helpers::place_reduce_only_limit_order_v2_for_test<USDC, USDT>(
         &mut scenario,
         &registry,
-        &quote_pool,
         &base_pool,
         &quote_pool,
         &mut mm,
@@ -742,6 +739,65 @@ fun test_place_reduce_only_limit_order_incorrect_pool() {
         false,
         false,
         0,
+        &clock,
+    );
+
+    abort
+}
+
+// Defense-in-depth: passing a margin pool whose id is not registered against
+// the manager must abort in `calculate_debts` with EIncorrectMarginPool. The
+// only constructable "wrong pool" scenario in tests is a manager with no debt
+// at all (the registry enforces one MarginPool<Asset> per asset type, so a
+// debt-side mismatch cannot be wired up). The v2 entry dispatches to
+// `calculate_debts(quote_margin_pool, ...)` when `has_base_debt` is false,
+// and the registered margin_pool_id is None, so the contains-check fails.
+#[test, expected_failure(abort_code = margin_manager::EIncorrectMarginPool)]
+fun test_place_reduce_only_limit_order_v2_unregistered_pool() {
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        base_pool_id,
+        quote_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_pool_proxy_test_env<USDC, USDT>();
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+
+    test_helpers::place_reduce_only_limit_order_v2_for_test<USDC, USDT>(
+        &mut scenario,
+        &registry,
+        &base_pool,
+        &quote_pool,
+        &mut mm,
+        &mut pool,
+        1,
+        constants::no_restriction(),
+        constants::self_matching_allowed(),
+        1_000_000_000,
+        100 * test_constants::usdc_multiplier(),
+        true,
+        false,
+        2000000,
         &clock,
     );
 
@@ -809,10 +865,9 @@ fun test_place_reduce_only_limit_order_not_reduce_only() {
     // This should fail because it's not reducing any USDC position - user is increasing exposure
     // Price must be within 5% of oracle price (1_000_000_000 for USDC/USDT at $1 each)
     let base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
-    test_helpers::place_reduce_only_limit_order_v2_for_test<USDC, USDT, USDT>(
+    test_helpers::place_reduce_only_limit_order_v2_for_test<USDC, USDT>(
         &mut scenario,
         &registry,
-        &quote_pool,
         &base_pool,
         &quote_pool,
         &mut mm,
@@ -913,10 +968,9 @@ fun test_place_reduce_only_limit_order_not_reduce_only_quantity_bid() {
 
     // User has USDC debt, tries to buy more USDC than debt
     // This should fail because user is trying to buy more USDC than debt
-    test_helpers::place_reduce_only_limit_order_v2_for_test<USDC, USDT, USDC>(
+    test_helpers::place_reduce_only_limit_order_v2_for_test<USDC, USDT>(
         &mut scenario,
         &registry,
-        &base_pool,
         &base_pool,
         &quote_pool,
         &mut mm,
@@ -1013,10 +1067,9 @@ fun test_place_reduce_only_limit_order_not_reduce_only_quantity_ask() {
 
     // User has USDC debt, tries to buy more USDC than debt
     // This should fail because user is trying to buy more USDC than debt
-    test_helpers::place_reduce_only_limit_order_v2_for_test<USDC, USDT, USDT>(
+    test_helpers::place_reduce_only_limit_order_v2_for_test<USDC, USDT>(
         &mut scenario,
         &registry,
-        &quote_pool,
         &base_pool,
         &quote_pool,
         &mut mm,
@@ -1126,10 +1179,9 @@ fun test_place_reduce_only_market_order_ok() {
     destroy(withdrawn_coin);
 
     // Now place a reduce-only market order to buy USDC (reducing the debt)
-    let order_info = test_helpers::place_reduce_only_market_order_v2_for_test<USDC, USDT, USDC>(
+    let order_info = test_helpers::place_reduce_only_market_order_v2_for_test<USDC, USDT>(
         &mut scenario,
         &registry,
-        &base_pool,
         &base_pool,
         &quote_pool,
         &mut mm,
@@ -1230,10 +1282,9 @@ fun test_place_reduce_only_market_order_ok_ask() {
     destroy(withdrawn_coin);
 
     // Now place a reduce-only market order to sell USDC for USDT (reducing the quote debt)
-    let order_info = test_helpers::place_reduce_only_market_order_v2_for_test<USDC, USDT, USDT>(
+    let order_info = test_helpers::place_reduce_only_market_order_v2_for_test<USDC, USDT>(
         &mut scenario,
         &registry,
-        &quote_pool,
         &base_pool,
         &quote_pool,
         &mut mm,
@@ -1291,10 +1342,9 @@ fun test_place_reduce_only_market_order_incorrect_pool() {
     let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
     let base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
 
-    test_helpers::place_reduce_only_market_order_v2_for_test<USDC, USDT, USDT>(
+    test_helpers::place_reduce_only_market_order_v2_for_test<USDC, USDT>(
         &mut scenario,
         &registry,
-        &quote_pool,
         &base_pool,
         &quote_pool,
         &mut mm,
@@ -1303,6 +1353,58 @@ fun test_place_reduce_only_market_order_incorrect_pool() {
         constants::self_matching_allowed(),
         500,
         false,
+        false,
+        &clock,
+    );
+
+    abort
+}
+
+// Market-order counterpart of `test_place_reduce_only_limit_order_v2_unregistered_pool`.
+// See that test for the rationale (registry uniqueness blocks a debt-side
+// mismatch; only the no-debt path is constructable).
+#[test, expected_failure(abort_code = margin_manager::EIncorrectMarginPool)]
+fun test_place_reduce_only_market_order_v2_unregistered_pool() {
+    let (
+        mut scenario,
+        clock,
+        _admin_cap,
+        _maintainer_cap,
+        base_pool_id,
+        quote_pool_id,
+        pool_id,
+        registry_id,
+    ) = setup_pool_proxy_test_env<USDC, USDT>();
+
+    scenario.next_tx(test_constants::user1());
+    let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
+    let mut registry = scenario.take_shared<MarginRegistry>();
+    let base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
+    margin_manager::new<USDC, USDT>(
+        &pool,
+        &deepbook_registry,
+        &mut registry,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(deepbook_registry);
+
+    scenario.next_tx(test_constants::user1());
+    let mut mm = scenario.take_shared<MarginManager<USDC, USDT>>();
+
+    test_helpers::place_reduce_only_market_order_v2_for_test<USDC, USDT>(
+        &mut scenario,
+        &registry,
+        &base_pool,
+        &quote_pool,
+        &mut mm,
+        &mut pool,
+        2,
+        constants::self_matching_allowed(),
+        100 * test_constants::usdc_multiplier(),
+        true,
         false,
         &clock,
     );
@@ -1373,10 +1475,9 @@ fun test_place_reduce_only_market_order_not_reduce_only() {
     // User has no USDC debt but has USDT debt, tries to buy USDC (is_bid = true)
     // This should fail because it's not reducing any USDC position - user is increasing exposure
     let base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
-    test_helpers::place_reduce_only_market_order_v2_for_test<USDC, USDT, USDT>(
+    test_helpers::place_reduce_only_market_order_v2_for_test<USDC, USDT>(
         &mut scenario,
         &registry,
-        &quote_pool,
         &base_pool,
         &quote_pool,
         &mut mm,
@@ -1468,10 +1569,9 @@ fun test_place_reduce_only_market_order_not_reduce_only_quantity_bid() {
     destroy(coin);
 
     // User has USDC debt of 100, tries to buy 101 USDC (more than debt)
-    test_helpers::place_reduce_only_market_order_v2_for_test<USDC, USDT, USDC>(
+    test_helpers::place_reduce_only_market_order_v2_for_test<USDC, USDT>(
         &mut scenario,
         &registry,
-        &base_pool,
         &base_pool,
         &quote_pool,
         &mut mm,
@@ -1558,10 +1658,9 @@ fun test_place_reduce_only_market_order_not_reduce_only_quantity_ask() {
 
     // User has USDT debt of 100, tries to sell enough to get more than 100 USDT (quote_quantity > debt)
     // Selling 150 USDC at ~1:1 should yield ~150 USDT, exceeding the 100 USDT debt
-    test_helpers::place_reduce_only_market_order_v2_for_test<USDC, USDT, USDT>(
+    test_helpers::place_reduce_only_market_order_v2_for_test<USDC, USDT>(
         &mut scenario,
         &registry,
-        &quote_pool,
         &base_pool,
         &quote_pool,
         &mut mm,

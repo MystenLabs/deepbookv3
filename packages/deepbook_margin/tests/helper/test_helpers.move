@@ -1299,10 +1299,9 @@ public fun place_market_order_v2_for_test<BaseAsset, QuoteAsset>(
     order_info
 }
 
-public fun place_reduce_only_limit_order_v2_for_test<BaseAsset, QuoteAsset, DebtAsset>(
+public fun place_reduce_only_limit_order_v2_for_test<BaseAsset, QuoteAsset>(
     scenario: &mut Scenario,
     registry: &MarginRegistry,
-    debt_margin_pool: &MarginPool<DebtAsset>,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
     mm: &mut deepbook_margin::margin_manager::MarginManager<BaseAsset, QuoteAsset>,
@@ -1319,11 +1318,10 @@ public fun place_reduce_only_limit_order_v2_for_test<BaseAsset, QuoteAsset, Debt
 ): deepbook::order_info::OrderInfo {
     let base_oracle = build_price_info_for_type<BaseAsset>(scenario, clock);
     let quote_oracle = build_price_info_for_type<QuoteAsset>(scenario, clock);
-    let order_info = pool_proxy::place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset, DebtAsset>(
+    let order_info = pool_proxy::place_reduce_only_limit_order_v2<BaseAsset, QuoteAsset>(
         registry,
         mm,
         pool,
-        debt_margin_pool,
         base_margin_pool,
         quote_margin_pool,
         &base_oracle,
@@ -1344,10 +1342,9 @@ public fun place_reduce_only_limit_order_v2_for_test<BaseAsset, QuoteAsset, Debt
     order_info
 }
 
-public fun place_reduce_only_market_order_v2_for_test<BaseAsset, QuoteAsset, DebtAsset>(
+public fun place_reduce_only_market_order_v2_for_test<BaseAsset, QuoteAsset>(
     scenario: &mut Scenario,
     registry: &MarginRegistry,
-    debt_margin_pool: &MarginPool<DebtAsset>,
     base_margin_pool: &MarginPool<BaseAsset>,
     quote_margin_pool: &MarginPool<QuoteAsset>,
     mm: &mut deepbook_margin::margin_manager::MarginManager<BaseAsset, QuoteAsset>,
@@ -1361,15 +1358,10 @@ public fun place_reduce_only_market_order_v2_for_test<BaseAsset, QuoteAsset, Deb
 ): deepbook::order_info::OrderInfo {
     let base_oracle = build_price_info_for_type<BaseAsset>(scenario, clock);
     let quote_oracle = build_price_info_for_type<QuoteAsset>(scenario, clock);
-    let order_info = pool_proxy::place_reduce_only_market_order_v2<
-        BaseAsset,
-        QuoteAsset,
-        DebtAsset,
-    >(
+    let order_info = pool_proxy::place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
         registry,
         mm,
         pool,
-        debt_margin_pool,
         base_margin_pool,
         quote_margin_pool,
         &base_oracle,
