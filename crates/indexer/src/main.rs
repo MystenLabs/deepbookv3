@@ -21,7 +21,7 @@ use deepbook_indexer::handlers::stakes_handler::StakesHandler;
 use deepbook_indexer::handlers::taker_fee_penalty_handler::TakerFeePenaltyHandler;
 use deepbook_indexer::handlers::trade_params_update_handler::TradeParamsUpdateHandler;
 use deepbook_indexer::handlers::vote_handler::VotesHandler;
-use deepbook_indexer::net_deposits_refresh::NetDepositsRefreshMetrics;
+use deepbook_indexer::materialized_view_refresh::MaterializedViewRefreshMetrics;
 
 // Margin Manager Events
 use deepbook_indexer::handlers::liquidation_handler::LiquidationHandler;
@@ -113,9 +113,12 @@ struct Args {
     /// Packages to index events for (can specify multiple)
     #[clap(long, value_enum, default_values = ["deepbook", "deepbook-margin"])]
     packages: Vec<Package>,
-    /// Refresh interval for the net_deposits_hourly materialized view. Set to 0 to disable.
+    /// Materialized view refresh interval in seconds. Set to 0 to disable.
     #[clap(env, long, default_value_t = 30)]
-    net_deposits_refresh_interval_secs: u64,
+    materialized_view_refresh_interval_secs: u64,
+    /// Comma-separated materialized views to refresh. Each view must support concurrent refreshes.
+    #[clap(env, long, default_value = "net_deposits_hourly")]
+    materialized_view_refresh_views: String,
     #[command(subcommand)]
     sandbox: Option<Command>,
 }
@@ -163,7 +166,8 @@ async fn main() -> Result<(), anyhow::Error> {
         database_url,
         env,
         packages,
-        net_deposits_refresh_interval_secs,
+        materialized_view_refresh_interval_secs,
+        materialized_view_refresh_views,
         sandbox,
     } = Args::parse();
 
@@ -238,9 +242,9 @@ async fn main() -> Result<(), anyhow::Error> {
         Some("deepbook_indexer_db"),
         store.clone(),
     )))?;
-    let net_deposits_refresh_metrics = NetDepositsRefreshMetrics::new(metrics.registry());
+    let materialized_view_refresh_metrics = MaterializedViewRefreshMetrics::new(metrics.registry());
 
-    let net_deposits_refresh_db = store.clone();
+    let materialized_view_refresh_db = store.clone();
 
     let mut indexer = Indexer::new(
         store,
@@ -453,18 +457,19 @@ async fn main() -> Result<(), anyhow::Error> {
         }
     }
 
-    let net_deposits_refresh_service =
-        deepbook_indexer::net_deposits_refresh::net_deposits_refresh_service(
-            net_deposits_refresh_db,
-            net_deposits_refresh_metrics,
-            net_deposits_refresh_interval_secs,
-        );
+    let materialized_view_refresh_service =
+        deepbook_indexer::materialized_view_refresh::materialized_view_refresh_service(
+            materialized_view_refresh_db,
+            materialized_view_refresh_metrics,
+            materialized_view_refresh_interval_secs,
+            &materialized_view_refresh_views,
+        )?;
 
     let s_indexer = indexer.run().await?;
     let s_metrics = metrics.run().await?;
     let service = s_indexer.attach(s_metrics);
-    let service = if let Some(s_net_deposits_refresh) = net_deposits_refresh_service {
-        service.attach(s_net_deposits_refresh)
+    let service = if let Some(s_materialized_view_refresh) = materialized_view_refresh_service {
+        service.attach(s_materialized_view_refresh)
     } else {
         service
     };
