@@ -12,8 +12,8 @@ use deepbook::math;
 use deepbook_predict::{
     config_constants,
     expiry_market::{Self, ExpiryMarket, ExpiryValuation},
-    math as predict_math,
     market_oracle::MarketOracle,
+    math as predict_math,
     protocol_config::ProtocolConfig,
     risk_config::RiskConfig
 };

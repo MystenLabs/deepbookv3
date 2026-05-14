@@ -98,10 +98,7 @@ public(package) macro fun max_shrink_factor(): u64 {
 }
 
 public(package) fun assert_shrink_factor(value: u64) {
-    assert!(
-        value >= min_shrink_factor!() && value <= max_shrink_factor!(),
-        EInvalidShrinkFactor,
-    );
+    assert!(value >= min_shrink_factor!() && value <= max_shrink_factor!(), EInvalidShrinkFactor);
 }
 
 // === Pricing ===

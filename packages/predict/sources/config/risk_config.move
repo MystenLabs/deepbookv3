@@ -83,20 +83,14 @@ public(package) fun set_expiry_allocation(config: &mut RiskConfig, allocation: u
 /// Set the utilization threshold that enables allocation growth.
 public(package) fun set_grow_utilization_threshold(config: &mut RiskConfig, threshold: u64) {
     config_constants::assert_grow_utilization_threshold(threshold);
-    assert!(
-        threshold >= config.shrink_utilization_threshold,
-        EInvalidResizeThresholds,
-    );
+    assert!(threshold >= config.shrink_utilization_threshold, EInvalidResizeThresholds);
     config.grow_utilization_threshold = threshold;
 }
 
 /// Set the utilization threshold that enables allocation shrink.
 public(package) fun set_shrink_utilization_threshold(config: &mut RiskConfig, threshold: u64) {
     config_constants::assert_shrink_utilization_threshold(threshold);
-    assert!(
-        threshold <= config.grow_utilization_threshold,
-        EInvalidResizeThresholds,
-    );
+    assert!(threshold <= config.grow_utilization_threshold, EInvalidResizeThresholds);
     config.shrink_utilization_threshold = threshold;
 }
 
