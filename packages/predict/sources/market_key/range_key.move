@@ -48,33 +48,3 @@ public(package) fun new(oracle_id: ID, lower_strike: u64, higher_strike: u64): R
     );
     RangeKey { oracle_id, lower_strike, higher_strike }
 }
-
-/// Return `(min, max)` expanded to include this key's finite strike boundaries.
-public(package) fun extend_strike_range(
-    key: &RangeKey,
-    min_strike: u64,
-    max_strike: u64,
-): (u64, u64) {
-    let mut min_strike = min_strike;
-    let mut max_strike = max_strike;
-    if (min_strike == 0 && max_strike == 0) {
-        if (key.lower_strike == constants::neg_inf!()) {
-            return (key.higher_strike, key.higher_strike)
-        };
-        if (key.higher_strike == constants::pos_inf!()) {
-            return (key.lower_strike, key.lower_strike)
-        };
-        return (key.lower_strike, key.higher_strike)
-    };
-
-    if (key.lower_strike != constants::neg_inf!()) {
-        min_strike = min_strike.min(key.lower_strike);
-        max_strike = max_strike.max(key.lower_strike);
-    };
-    if (key.higher_strike != constants::pos_inf!()) {
-        min_strike = min_strike.min(key.higher_strike);
-        max_strike = max_strike.max(key.higher_strike);
-    };
-
-    (min_strike, max_strike)
-}

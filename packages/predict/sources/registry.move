@@ -271,7 +271,7 @@ public fun create_expiry_market(
     );
     let expiry_market_id = expiry_market::create_and_share(
         market_oracle_id,
-        pyth,
+        pyth_lazer_feed_id,
         config,
         allocation,
         expiry,

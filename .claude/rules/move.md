@@ -92,6 +92,8 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 
 - Validate before mutate means contract-owned facts, not broad application preflighting. A function must validate the mutation-independent facts it owns before mutating state: flow gates, authorization, object binding, branch/lifecycle policy, static creation inputs, and facts that decide whether the function may start its transition. Do not duplicate another module's leaf guard just to avoid a later abort; preflight another module's fact only when the caller must know it before mutating a different state owner. If accounting or pricing intentionally depends on post-mutation state, make that dependency obvious and validate mutation-independent facts first. Always validate before consuming irreversible resources such as burning coins or destroying objects.
 
+- If a flow branches on another object's lifecycle or state, validate the object binding before using that state for branch selection, unless that branch intentionally does not require the object.
+
 - Prefer explicit loop bounds over `while (true)` when the iteration range is easy to express. If a loop naturally means "from `min_page` to `max_page` inclusive" or "while `slot <= end_slot`", write that directly instead of using `while (true)` plus interior `break`s.
 
 - Avoid deprecated Sui framework functions. Use the current recommended API (e.g., `coin_registry::new_currency_with_otw` instead of `coin::create_currency`). If a deprecated function must be used, add a comment explaining why the replacement doesn't work for this case.

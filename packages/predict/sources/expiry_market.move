@@ -37,6 +37,7 @@ const EZeroAllocatedCapital: u64 = 10;
 const EInvalidTickSize: u64 = 11;
 const EInvalidStrikeGrid: u64 = 12;
 const ESettledLiabilityUnderflow: u64 = 16;
+const ECompactedLiabilityMismatch: u64 = 17;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -214,19 +215,22 @@ public fun redeem(
     config.assert_not_valuation_in_progress();
     if (market.is_compacted()) {
         market.redeem_compacted_internal(manager, key, quantity, ctx);
-    } else if (market_oracle.is_settled()) {
-        market.redeem_settled_internal(manager, market_oracle, key, quantity, ctx);
     } else {
-        market.redeem_live_internal(
-            config,
-            manager,
-            market_oracle,
-            pyth,
-            key,
-            quantity,
-            clock,
-            ctx,
-        );
+        market.assert_market_oracle(market_oracle);
+        if (market_oracle.is_settled()) {
+            market.redeem_settled_internal(manager, market_oracle, key, quantity, ctx);
+        } else {
+            market.redeem_live_internal(
+                config,
+                manager,
+                market_oracle,
+                pyth,
+                key,
+                quantity,
+                clock,
+                ctx,
+            );
+        }
     }
 }
 
@@ -238,7 +242,7 @@ public fun redeem(
 /// takes custody of the pool-provided allocation as LP cash.
 public(package) fun create_and_share(
     market_oracle_id: ID,
-    pyth: &PythSource,
+    pyth_lazer_feed_id: u32,
     config: &ProtocolConfig,
     allocation: Balance<DUSDC>,
     expiry: u64,
@@ -252,7 +256,7 @@ public(package) fun create_and_share(
     let market = ExpiryMarket {
         id: object::new(ctx),
         market_oracle_id,
-        pyth_lazer_feed_id: pyth.feed_id(),
+        pyth_lazer_feed_id,
         expiry,
         allocated_capital,
         lp_cash_balance: allocation,
@@ -327,7 +331,8 @@ public(package) fun compact_settled(
     assert!(market.allocated_capital >= settled_liability, EAllocationBelowMaxPayout);
 
     let matrix = market.strike_matrix.extract();
-    let _settled_liability = strike_matrix::into_settled_liability(matrix, settlement);
+    let compacted_liability = strike_matrix::into_settled_liability(matrix, settlement);
+    assert!(compacted_liability == settled_liability, ECompactedLiabilityMismatch);
     let returned_cash_amount = market.lp_cash_balance.value() - settled_liability;
     let returned_cash = market.lp_cash_balance.split(returned_cash_amount);
     let (protocol_fees, insurance_fees) = market.fee_reserve.take_fee_balances();
@@ -442,7 +447,6 @@ fun redeem_live_internal(
     ctx: &mut TxContext,
 ) {
     manager.assert_owner(ctx);
-    market.assert_market_oracle(market_oracle);
     market.assert_pyth_feed(pyth);
     market_oracle.assert_pyth_source(pyth);
     market_oracle.assert_active(clock);
@@ -489,7 +493,6 @@ fun redeem_settled_internal(
     quantity: u64,
     ctx: &mut TxContext,
 ) {
-    market.assert_market_oracle(market_oracle);
     market.assert_range_key_matches(&key);
     market.assert_not_compacted();
     assert_nonzero_quantity(quantity);

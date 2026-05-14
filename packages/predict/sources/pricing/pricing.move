@@ -72,28 +72,6 @@ public(package) fun build_live_curve(
     build_curve(forward, &svi, grid_min, grid_tick, grid_max, min_strike, max_strike)
 }
 
-/// Quote a range from current oracle state and capacity utilization.
-public(package) fun quote_range(
-    config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
-    clock: &Clock,
-    key: &RangeKey,
-    liability: u64,
-    balance: u64,
-): (u64, u64) {
-    if (market.is_settled()) {
-        let fair_price = compute_settled_range_price(
-            market.settlement_price(),
-            key.lower_strike(),
-            key.higher_strike(),
-        );
-        (fair_price, 0)
-    } else {
-        quote_live_range(config, market, pyth, clock, key, liability, balance)
-    }
-}
-
 /// Quote a live range from current oracle state and capacity utilization.
 public(package) fun quote_live_range(
     config: &PricingConfig,

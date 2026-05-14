@@ -148,6 +148,23 @@ Audit the rule:
 
 Focus on every public flow and admin mutation.
 
+Agent 7 must produce a flow-gate matrix for every external public or entry flow:
+
+- Function
+- Flow category
+- Expected gate
+- Actual gate, including delegated gates through callees
+- Verdict
+
+Classification guidance:
+
+- Risk creation includes minting positions, creating active expiry markets, and growing active allocation. Expected gate: `assert_trading_allowed`.
+- Exit/cleanup includes redeem, shrinking allocation, and compaction. Expected gate: `assert_not_valuation_in_progress`.
+- Valuation includes starting, reading, or completing pool valuation. Expected gate: valuation-lock lifecycle or `assert_valuation_in_progress`.
+- Oracle update/settlement and admin config mutation are valuation-sensitive but not trading-pause-sensitive. Expected gate: `assert_not_valuation_in_progress`, plus authorization where applicable.
+- Read-only flows, pure helper APIs, setup flows, cap management, and manager deposit/withdraw/share flows do not need a `ProtocolConfig` gate unless they touch valuation-sensitive state or create protocol risk.
+- Registry/admin wrappers may delegate the actual gate to a `ProtocolConfig` setter or callee. Record the delegated gate before flagging a wrapper.
+
 ### Agent 8: Validate Before Mutate
 
 Audit the rule:
