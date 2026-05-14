@@ -29,6 +29,7 @@ use sui::{
 
 use fun df::exists_ as UID.exists_;
 use fun df::add as UID.add;
+use fun df::remove as UID.remove;
 
 const EPredictAlreadyCreated: u64 = 0;
 const EInvalidTickSize: u64 = 1;
@@ -37,6 +38,17 @@ const EFeedIdOverflow: u64 = 3;
 const EFeedIdMismatch: u64 = 4;
 const EPythSourceAlreadyCreated: u64 = 5;
 const EInvalidExpiry: u64 = 6;
+const EAppNotAuthorized: u64 = 7;
+
+// === App Auth ===
+
+/// Authorization key stored in the Registry's dynamic fields. The `App`
+/// type parameter is a witness defined in the calling protocol; admin
+/// authorizes specific App types via `authorize_app` before they can use
+/// gated entry points like `create_manager_for_custodian`.
+///
+/// Mirrors the deepbook::registry::AppKey pattern.
+public struct AppKey<phantom App: drop> has copy, drop, store {}
 
 /// Emitted when a Pyth source is created.
 public struct PythSourceCreated has copy, drop, store {
@@ -367,6 +379,51 @@ public fun create_manager(registry: &mut Registry, ctx: &mut TxContext): Predict
 /// Create and share a new PredictManager for the caller.
 entry fun create_and_share_manager(registry: &mut Registry, ctx: &mut TxContext) {
     create_manager(registry, ctx).share();
+}
+
+/// Authorize a protocol (identified by the `App` witness type) to call
+/// gated composability entry points such as `create_manager_for_custodian`.
+/// Mirrors the `deepbook::registry::authorize_app` pattern.
+public fun authorize_app<App: drop>(registry: &mut Registry, _admin_cap: &AdminCap) {
+    registry.id.add(AppKey<App> {}, true);
+}
+
+/// Revoke a previously-authorized `App`. Returns `true` if the App was
+/// authorized; `false` otherwise. Mirrors
+/// `deepbook::registry::deauthorize_app`.
+public fun deauthorize_app<App: drop>(
+    registry: &mut Registry,
+    _admin_cap: &AdminCap,
+): bool {
+    registry.id.remove(AppKey<App> {})
+}
+
+/// Assert that `App` is currently authorized. Called by gated entry
+/// points before performing privileged work. Mirrors
+/// `deepbook::registry::assert_app_is_authorized`.
+public fun assert_app_is_authorized<App: drop>(registry: &Registry) {
+    assert!(registry.id.exists_(AppKey<App> {}), EAppNotAuthorized);
+}
+
+/// Create a new PredictManager owned by `owner` (not the transaction
+/// sender). Used by external custodian protocols — e.g. a margin-loan
+/// vault whose loan object derives its own on-chain address and uses it
+/// as the owner here. The `App` type parameter is a witness from the
+/// caller's package; the admin must have previously `authorize_app<App>`
+/// on this registry.
+///
+/// Once minted, the manager can only be driven through this module's
+/// existing public APIs (`predict_manager::deposit` / `::withdraw`) by a
+/// transaction whose `ctx.sender()` matches `owner`. For contract-derived
+/// owner addresses, that means only code holding the matching object
+/// reference can drive it — the classic locked-custodian pattern.
+public fun create_manager_for_custodian<App: drop>(
+    registry: &mut Registry,
+    owner: address,
+    ctx: &mut TxContext,
+): PredictManager {
+    assert_app_is_authorized<App>(registry);
+    predict_manager::new_with_custom_owner(&mut registry.id, owner, ctx)
 }
 
 /// Get market_oracle IDs created by a given MarketOracleCap.

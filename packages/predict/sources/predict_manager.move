@@ -69,12 +69,42 @@ public fun balance<T>(self: &PredictManager): u64 {
 
 // === Public-Package Functions ===
 
-/// Create a new PredictManager and share it.
+/// Create a new PredictManager whose owner is the transaction sender.
 public(package) fun new(registry_uid: &mut UID, ctx: &mut TxContext): PredictManager {
-    let id = derived_object::claim(registry_uid, PredictManagerKey(ctx.sender(), 0));
-    let owner = ctx.sender();
+    new_internal(registry_uid, ctx.sender(), ctx)
+}
 
-    let mut balance_manager = balance_manager::new(ctx);
+/// Create a new PredictManager whose `owner` is an arbitrary address (not
+/// necessarily the transaction sender). Used by external custodian
+/// protocols that need to escrow Predict positions inside a manager they
+/// control — e.g. a margin-loan vault whose loan object derives its own
+/// on-chain address and uses it as the owner here. Mirrors
+/// `balance_manager::new_with_custom_owner`.
+///
+/// Authorization is the caller's responsibility — the public entry point
+/// `registry::create_manager_for_custodian<App>` gates this behind the
+/// App-witness pattern.
+public(package) fun new_with_custom_owner(
+    registry_uid: &mut UID,
+    owner: address,
+    ctx: &mut TxContext,
+): PredictManager {
+    new_internal(registry_uid, owner, ctx)
+}
+
+fun new_internal(
+    registry_uid: &mut UID,
+    owner: address,
+    ctx: &mut TxContext,
+): PredictManager {
+    let id = derived_object::claim(registry_uid, PredictManagerKey(owner, 0));
+
+    // The inner BalanceManager's `owner` matches PredictManager's owner.
+    // When `owner` is a contract-derived address, the BalanceManager is
+    // effectively locked to that contract — only callers that hold a
+    // mutable reference to the matching PredictManager can drive deposits
+    // or withdrawals through this module's gated APIs.
+    let mut balance_manager = balance_manager::new_with_custom_owner(owner, ctx);
     let deposit_cap = balance_manager.mint_deposit_cap(ctx);
     let withdraw_cap = balance_manager.mint_withdraw_cap(ctx);
 
