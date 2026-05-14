@@ -1,22 +1,45 @@
 use anyhow::{bail, Context};
 use diesel_async::RunQueryDsl;
-use prometheus::{register_int_counter_vec_with_registry, IntCounterVec, Registry};
+use prometheus::{
+    register_histogram_vec_with_registry, register_int_counter_vec_with_registry, HistogramVec,
+    IntCounterVec, Registry,
+};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use sui_futures::service::Service;
 use sui_pg_db::Db;
 use tokio::time::{interval, MissedTickBehavior};
 
 const MATERIALIZED_VIEWS_TO_REFRESH: &[&str] = &["net_deposits_hourly"];
+const REFRESH_DURATION_SEC_BUCKETS: &[f64] = &[
+    0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0,
+];
 
 #[derive(Clone)]
 pub struct MaterializedViewRefreshMetrics {
+    pub refresh_duration: HistogramVec,
+    pub refresh_successes: IntCounterVec,
     pub refresh_failures: IntCounterVec,
 }
 
 impl MaterializedViewRefreshMetrics {
     pub fn new(registry: &Registry) -> Arc<Self> {
         Arc::new(Self {
+            refresh_duration: register_histogram_vec_with_registry!(
+                "materialized_view_refresh_duration_seconds",
+                "Time taken to refresh materialized views by view",
+                &["view"],
+                REFRESH_DURATION_SEC_BUCKETS.to_vec(),
+                registry
+            )
+            .unwrap(),
+            refresh_successes: register_int_counter_vec_with_registry!(
+                "materialized_view_refresh_successes_total",
+                "Number of successful materialized view refresh attempts by view",
+                &["view"],
+                registry
+            )
+            .unwrap(),
             refresh_failures: register_int_counter_vec_with_registry!(
                 "materialized_view_refresh_failures_total",
                 "Number of failed materialized view refresh attempts by view",
@@ -155,9 +178,26 @@ async fn refresh_materialized_view_loop(
         ticker.tick().await;
 
         for view in &views {
-            match refresh_materialized_view_once(&db, view).await {
+            let refresh_started_at = Instant::now();
+            let timer = metrics
+                .refresh_duration
+                .with_label_values(&[view.name()])
+                .start_timer();
+            let result = refresh_materialized_view_once(&db, view).await;
+            timer.observe_duration();
+            let refresh_duration_secs = refresh_started_at.elapsed().as_secs_f64();
+
+            match result {
                 Ok(_) => {
-                    tracing::debug!(view = view.name(), "Refreshed materialized view");
+                    metrics
+                        .refresh_successes
+                        .with_label_values(&[view.name()])
+                        .inc();
+                    tracing::debug!(
+                        view = view.name(),
+                        refresh_duration_secs,
+                        "Refreshed materialized view"
+                    );
                 }
                 Err(error) => {
                     metrics
@@ -167,6 +207,7 @@ async fn refresh_materialized_view_loop(
                     tracing::error!(
                         ?error,
                         view = view.name(),
+                        refresh_duration_secs,
                         "Failed to refresh materialized view"
                     );
                 }
