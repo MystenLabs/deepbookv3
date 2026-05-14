@@ -71,6 +71,7 @@ const EUnalignedStrike: u64 = 5;
 const EInsufficientQuantity: u64 = 2;
 const ENonMonotoneCurve: u64 = 3;
 const EInvalidCurveRange: u64 = 4;
+const ETooManyStrikes: u64 = 7;
 
 /// Dense strike-indexed book with page-level summaries stored in an inline tree.
 public struct StrikeMatrix has store {
@@ -120,6 +121,7 @@ public(package) fun new(
     assert!(min_strike % tick_size == 0 && max_strike % tick_size == 0, EUnalignedStrike);
 
     let total_strikes = (max_strike - min_strike) / tick_size + 1;
+    assert!(total_strikes <= constants::oracle_strike_grid_ticks!() + 1, ETooManyStrikes);
     let page_count = (total_strikes - 1) / PAGE_SLOTS + 1;
     let page_tree_leaf_count = next_pow_2(page_count);
     let page_tree_len = 2 * page_tree_leaf_count - 1;

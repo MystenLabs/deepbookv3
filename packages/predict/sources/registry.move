@@ -254,7 +254,7 @@ public fun create_expiry_market(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (ID, ID) {
-    config.assert_not_valuation_in_progress();
+    config.assert_trading_allowed();
     assert!(expiry > clock.timestamp_ms(), EInvalidExpiry);
     let pyth_lazer_feed_id = pyth.feed_id();
     assert!(registry.pyth_source_ids.contains(pyth_lazer_feed_id), EFeedIdMismatch);

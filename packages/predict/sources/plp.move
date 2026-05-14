@@ -166,7 +166,7 @@ public fun grow_expiry_allocation(
     market_oracle: &MarketOracle,
     clock: &Clock,
 ) {
-    config.assert_not_valuation_in_progress();
+    config.assert_trading_allowed();
     assert!(vault.active_expiry_markets.contains(&market.id()), EExpiryMarketNotActive);
     market.assert_market_oracle(market_oracle);
     market_oracle.assert_active(clock);
