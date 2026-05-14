@@ -1,6 +1,7 @@
 use url::Url;
 
 pub mod handlers;
+pub mod materialized_view_refresh;
 pub(crate) mod models;
 pub mod sandbox;
 pub mod traits;

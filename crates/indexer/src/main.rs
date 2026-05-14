@@ -21,6 +21,7 @@ use deepbook_indexer::handlers::stakes_handler::StakesHandler;
 use deepbook_indexer::handlers::taker_fee_penalty_handler::TakerFeePenaltyHandler;
 use deepbook_indexer::handlers::trade_params_update_handler::TradeParamsUpdateHandler;
 use deepbook_indexer::handlers::vote_handler::VotesHandler;
+use deepbook_indexer::materialized_view_refresh::MaterializedViewRefreshMetrics;
 
 // Margin Manager Events
 use deepbook_indexer::handlers::liquidation_handler::LiquidationHandler;
@@ -112,6 +113,9 @@ struct Args {
     /// Packages to index events for (can specify multiple)
     #[clap(long, value_enum, default_values = ["deepbook", "deepbook-margin"])]
     packages: Vec<Package>,
+    /// Materialized view refresh interval in seconds. Set to 0 to disable.
+    #[clap(env, long, default_value_t = 60)]
+    materialized_view_refresh_interval_secs: u64,
     #[command(subcommand)]
     sandbox: Option<Command>,
 }
@@ -159,6 +163,7 @@ async fn main() -> Result<(), anyhow::Error> {
         database_url,
         env,
         packages,
+        materialized_view_refresh_interval_secs,
         sandbox,
     } = Args::parse();
 
@@ -233,6 +238,9 @@ async fn main() -> Result<(), anyhow::Error> {
         Some("deepbook_indexer_db"),
         store.clone(),
     )))?;
+    let materialized_view_refresh_metrics = MaterializedViewRefreshMetrics::new(metrics.registry());
+
+    let materialized_view_refresh_db = store.clone();
 
     let mut indexer = Indexer::new(
         store,
@@ -445,9 +453,22 @@ async fn main() -> Result<(), anyhow::Error> {
         }
     }
 
+    let materialized_view_refresh_service =
+        deepbook_indexer::materialized_view_refresh::materialized_view_refresh_service(
+            materialized_view_refresh_db,
+            materialized_view_refresh_metrics,
+            materialized_view_refresh_interval_secs,
+        )?;
+
     let s_indexer = indexer.run().await?;
     let s_metrics = metrics.run().await?;
+    let service = s_indexer.attach(s_metrics);
+    let service = if let Some(s_materialized_view_refresh) = materialized_view_refresh_service {
+        service.attach(s_materialized_view_refresh)
+    } else {
+        service
+    };
 
-    s_indexer.attach(s_metrics).main().await?;
+    service.main().await?;
     Ok(())
 }

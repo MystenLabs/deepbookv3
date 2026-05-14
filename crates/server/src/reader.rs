@@ -1289,7 +1289,7 @@ impl Reader {
     }
 
     /// Query net deposits using the materialized view for efficiency.
-    /// Triggers a concurrent refresh of the view and queries for net deposits up to timestamp.
+    /// The indexer refreshes this view with a write-capable database connection.
     pub async fn get_net_deposits_from_view(
         &self,
         asset_ids: &[String],
@@ -1297,11 +1297,6 @@ impl Reader {
     ) -> Result<std::collections::HashMap<String, i64>, DeepBookError> {
         let mut connection = self.db.connect().await?;
         let _guard = self.metrics.db_latency.start_timer();
-
-        // Trigger concurrent refresh (non-blocking, won't fail if already refreshing)
-        let _ = diesel::sql_query("REFRESH MATERIALIZED VIEW CONCURRENTLY net_deposits_hourly")
-            .execute(&mut connection)
-            .await;
 
         // Calculate the hour boundary for the timestamp
         let hour_bucket_ms = (timestamp_ms / 3600000) * 3600000;
@@ -1320,29 +1315,45 @@ impl Reader {
             net_amount: i64,
         }
 
-        // Query: sum all hourly deltas up to the hour boundary, then add partial hour from balances
+        // Query: use refreshed MV buckets before each asset's latest MV bucket, then scan raw
+        // balances from that bucket to the requested timestamp.
         let res = diesel::sql_query(
             r#"
-            WITH hourly_totals AS (
-                SELECT asset, SUM(net_amount_delta) AS net_amount
-                FROM net_deposits_hourly
-                WHERE hour_bucket_ms < $1
-                  AND asset = ANY($2)
-                GROUP BY asset
+            WITH requested_assets AS (
+                SELECT UNNEST($2::text[]) AS asset
             ),
-            partial_hour AS (
-                SELECT asset, SUM(CASE WHEN deposit THEN amount ELSE -amount END) AS net_amount
-                FROM balances
-                WHERE checkpoint_timestamp_ms >= $1
-                  AND checkpoint_timestamp_ms < $3
-                  AND asset = ANY($2)
-                GROUP BY asset
+            asset_cutoffs AS (
+                SELECT
+                    requested_assets.asset,
+                    COALESCE(MAX(ndh.hour_bucket_ms), 0) AS cutoff_ms
+                FROM requested_assets
+                LEFT JOIN net_deposits_hourly ndh
+                    ON ndh.asset = requested_assets.asset
+                    AND ndh.hour_bucket_ms < $1
+                GROUP BY requested_assets.asset
+            ),
+            hourly_totals AS (
+                SELECT ndh.asset, SUM(ndh.net_amount_delta) AS net_amount
+                FROM net_deposits_hourly ndh
+                JOIN asset_cutoffs ac ON ac.asset = ndh.asset
+                WHERE ndh.hour_bucket_ms < ac.cutoff_ms
+                GROUP BY ndh.asset
+            ),
+            raw_totals AS (
+                SELECT
+                    b.asset,
+                    SUM(CASE WHEN b.deposit THEN b.amount ELSE -b.amount END) AS net_amount
+                FROM balances b
+                JOIN asset_cutoffs ac ON ac.asset = b.asset
+                WHERE b.checkpoint_timestamp_ms >= ac.cutoff_ms
+                  AND b.checkpoint_timestamp_ms < $3
+                GROUP BY b.asset
             )
             SELECT
                 COALESCE(h.asset, p.asset) AS asset,
                 (COALESCE(h.net_amount, 0) + COALESCE(p.net_amount, 0))::bigint AS net_amount
             FROM hourly_totals h
-            FULL OUTER JOIN partial_hour p ON h.asset = p.asset
+            FULL OUTER JOIN raw_totals p ON h.asset = p.asset
             "#,
         )
         .bind::<BigInt, _>(hour_bucket_ms)
