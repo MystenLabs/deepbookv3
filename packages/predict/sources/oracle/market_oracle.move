@@ -600,18 +600,12 @@ fun valid_settlement_spot_source(
         && block_scholes_timestamp <= now
         && now - block_scholes_timestamp <= market.settlement_freshness_ms
         && block_scholes_source_timestamp_ms > market.expiry;
-    if (!pyth_valid && !block_scholes_valid) return option::none();
-
-    if (
-        pyth_valid
-            && (
-                !block_scholes_valid
-                    || pyth_source_timestamp_ms <= block_scholes_source_timestamp_ms
-            )
-    ) {
+    if (pyth_valid) {
         option::some(SOURCE_PYTH)
-    } else {
+    } else if (block_scholes_valid) {
         option::some(SOURCE_BLOCK_SCHOLES)
+    } else {
+        option::none()
     }
 }
 

@@ -10,18 +10,9 @@ module deepbook_predict::fee_reserve;
 use deepbook::math;
 use deepbook_predict::fee_config::FeeConfig;
 use dusdc::dusdc::DUSDC;
-use sui::{balance::{Self, Balance}, event};
+use sui::balance::{Self, Balance};
 
 const EInvalidFeeSplit: u64 = 2;
-
-/// Emitted whenever a charged trade accrues an official fee split.
-public struct FeeAccrued has copy, drop, store {
-    owner_id: ID,
-    total_fee: u64,
-    lp_fee: u64,
-    protocol_fee: u64,
-    insurance_fee: u64,
-}
 
 /// Reserve state for protocol and insurance fee portions.
 ///
@@ -97,10 +88,9 @@ public(package) fun new(config: &FeeConfig): FeeReserve {
 public(package) fun accrue_fee(
     reserve: &mut FeeReserve,
     fee: Balance<DUSDC>,
-    owner_id: ID,
-): Balance<DUSDC> {
+): (Balance<DUSDC>, u64, u64, u64, u64) {
     let total_fee = fee.value();
-    if (total_fee == 0) return fee;
+    if (total_fee == 0) return (fee, 0, 0, 0, 0);
 
     let (lp_fee, protocol_fee, insurance_fee) = reserve.split_fee_amounts(total_fee);
     let (lp_balance, protocol_balance, insurance_balance) = split_fee(
@@ -108,15 +98,9 @@ public(package) fun accrue_fee(
         protocol_fee,
         insurance_fee,
     );
-    reserve.record_fee_accrual(
-        protocol_balance,
-        insurance_balance,
-        lp_fee,
-        total_fee,
-        owner_id,
-    );
+    reserve.record_fee_accrual(protocol_balance, insurance_balance, lp_fee, total_fee);
 
-    lp_balance
+    (lp_balance, total_fee, lp_fee, protocol_fee, insurance_fee)
 }
 
 /// Extract concrete protocol and insurance fee balances for pool-level custody.
@@ -159,7 +143,6 @@ fun record_fee_accrual(
     insurance_balance: Balance<DUSDC>,
     lp_fee: u64,
     total_fee: u64,
-    owner_id: ID,
 ) {
     let protocol_fee = protocol_balance.value();
     let insurance_fee = insurance_balance.value();
@@ -170,14 +153,6 @@ fun record_fee_accrual(
 
     reserve.protocol_balance.join(protocol_balance);
     reserve.insurance_balance.join(insurance_balance);
-
-    event::emit(FeeAccrued {
-        owner_id,
-        total_fee,
-        lp_fee,
-        protocol_fee,
-        insurance_fee,
-    });
 }
 
 // === Test-Only Functions ===

@@ -22,7 +22,7 @@ use deepbook_predict::{
     strike_matrix::{Self, StrikeMatrix}
 };
 use dusdc::dusdc::DUSDC;
-use sui::{balance::Balance, clock::Clock};
+use sui::{balance::Balance, clock::Clock, event};
 
 const EWrongMarketOracle: u64 = 0;
 const EWrongPythSource: u64 = 1;
@@ -63,6 +63,15 @@ public struct ExpiryValuation {
     expiry_market_id: ID,
     /// LP NAV contribution for this expiry.
     value: u64,
+}
+
+/// Emitted whenever a trade fee is accrued for an expiry market.
+public struct FeeAccrued has copy, drop, store {
+    expiry_market_id: ID,
+    total_fee: u64,
+    lp_fee: u64,
+    protocol_fee: u64,
+    insurance_fee: u64,
 }
 
 // === Public Functions ===
@@ -414,8 +423,10 @@ fun mint_internal(
     manager.increase_position(key, quantity);
     let mut payment = manager.withdraw(payment_amount, ctx).into_balance();
     let fee_payment = payment.split(fee_amount);
-    let market_id = market.id();
-    let lp_fee = market.fee_reserve.accrue_fee(fee_payment, market_id);
+    let (lp_fee, total_fee, lp_fee_amount, protocol_fee, insurance_fee) = market
+        .fee_reserve
+        .accrue_fee(fee_payment);
+    market.emit_fee_accrued(total_fee, lp_fee_amount, protocol_fee, insurance_fee);
     market.lp_cash_balance.join(payment);
     market.lp_cash_balance.join(lp_fee);
     market.assert_cash_backing();
@@ -465,8 +476,10 @@ fun redeem_live_internal(
     manager.decrease_position(key, quantity);
     let mut payout = market.dispense_lp_cash(principal_amount);
     let fee = payout.split(fee_amount);
-    let market_id = market.id();
-    let lp_fee = market.fee_reserve.accrue_fee(fee, market_id);
+    let (lp_fee, total_fee, lp_fee_amount, protocol_fee, insurance_fee) = market
+        .fee_reserve
+        .accrue_fee(fee);
+    market.emit_fee_accrued(total_fee, lp_fee_amount, protocol_fee, insurance_fee);
     market.lp_cash_balance.join(lp_fee);
     market.assert_cash_backing();
     manager.deposit(payout.into_coin(ctx), ctx);
@@ -587,6 +600,24 @@ fun assert_range_key_matches(market: &ExpiryMarket, key: &RangeKey) {
 
 fun assert_nonzero_quantity(quantity: u64) {
     assert!(quantity > 0, EZeroQuantity);
+}
+
+fun emit_fee_accrued(
+    market: &ExpiryMarket,
+    total_fee: u64,
+    lp_fee: u64,
+    protocol_fee: u64,
+    insurance_fee: u64,
+) {
+    if (total_fee == 0) return;
+
+    event::emit(FeeAccrued {
+        expiry_market_id: market.id(),
+        total_fee,
+        lp_fee,
+        protocol_fee,
+        insurance_fee,
+    });
 }
 
 fun assert_capacity_backing(market: &ExpiryMarket) {

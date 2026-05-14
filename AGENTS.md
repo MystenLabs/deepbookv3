@@ -121,6 +121,10 @@ These are the most important rule files to consult based on the code you touch:
   - Functions that create and share a shared object should be named `create_and_share`.
   - Pyth Lazer feed IDs should use `u32` consistently across Predict.
   - Avoid created events unless there is a concrete indexer or off-chain discovery requirement.
+  - Events should be emitted by the module that owns the lifecycle/action being reported.
+  - Event fields should use semantic names from the event domain. Prefer `expiry_market_id`, `pool_vault_id`, or `market_oracle_id` over generic names like `owner_id`, `object_id`, or `config_id`.
+  - Do not thread IDs through unrelated leaf/helper modules only to provide event context.
+  - Embedded accounting/helper modules should not emit parent-scoped events unless the parent identity is part of their own domain model. If a parent-scoped event needs helper-computed amounts, have the helper return a summary and emit the event in the parent/action module.
   - Do not call `object::id(&obj)` or `object::id(obj)` at use sites when the object's module can expose an ID getter. Prefer receiver syntax such as `market.id()`, `vault.id()`, or a type-specific getter like `cap.cap_id()`.
   - Raw key constructors that take arbitrary object IDs should stay package-only; expose public constructors through the object that anchors the key, using immutable references when possible.
   - Prefer native/framework helpers with receiver syntax when available and readable, especially for standard containers such as `Option`, `Table`, and `vector`. For example, use `opt.borrow()`, `opt.borrow_mut()`, `opt.extract()`, and `table.borrow_mut(key)` instead of module-style calls when the receiver is clear.

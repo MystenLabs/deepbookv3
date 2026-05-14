@@ -280,6 +280,13 @@ public struct RegisterUser has copy, drop { user: address }
 public struct UserRegistered has copy, drop { user: address }
 ```
 
+### Emit Events From the Owning Module
+
+- Emit an event from the module that owns the lifecycle or action being reported.
+- Name event fields semantically from that event domain. Prefer `expiry_market_id`, `pool_vault_id`, or `market_oracle_id` over generic names like `owner_id`, `object_id`, or `config_id`.
+- Do not thread IDs through unrelated helper or leaf modules only to provide event context.
+- Embedded accounting/helper modules should not emit parent-scoped events unless the parent identity is part of their own domain model. If a parent-scoped event needs helper-computed values, return a summary and emit the event in the parent/action module.
+
 ### Use Positional Structs for Dynamic Field Keys + `Key` Suffix
 
 ```move

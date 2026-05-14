@@ -9,7 +9,6 @@ use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
 use sui::{balance, coin};
 
-const PREDICT_ID: address = @0x42;
 const EVEN_FEE: u64 = 100;
 const ROUNDED_FEE: u64 = 101;
 const CUSTOM_LP_SHARE: u64 = 700_000_000;
@@ -37,9 +36,13 @@ fun accrue_fee_splits_sixty_twenty_twenty() {
     let mut reserve = fee_reserve::new(&config);
     let fee = coin::mint_for_testing<DUSDC>(EVEN_FEE, ctx).into_balance();
 
-    let lp_fee = reserve.accrue_fee(fee, object::id_from_address(PREDICT_ID));
+    let (lp_fee, total_fee, lp_fee_amount, protocol_fee, insurance_fee) = reserve.accrue_fee(fee);
 
     // 100 fee units -> 60 LP, 20 protocol, 20 insurance.
+    assert_eq!(total_fee, 100);
+    assert_eq!(lp_fee_amount, 60);
+    assert_eq!(protocol_fee, 20);
+    assert_eq!(insurance_fee, 20);
     assert_eq!(lp_fee.value(), 60);
     assert_eq!(reserve.protocol_asset_balance(), 20);
     assert_eq!(reserve.insurance_asset_balance(), 20);
@@ -67,9 +70,13 @@ fun set_fee_shares_changes_future_fee_split() {
     let mut reserve = fee_reserve::new(&config);
     let fee = coin::mint_for_testing<DUSDC>(EVEN_FEE, ctx).into_balance();
 
-    let lp_fee = reserve.accrue_fee(fee, object::id_from_address(PREDICT_ID));
+    let (lp_fee, total_fee, lp_fee_amount, protocol_fee, insurance_fee) = reserve.accrue_fee(fee);
 
     // 100 fee units at 70/10/20 -> 70 LP, 10 protocol, 20 insurance.
+    assert_eq!(total_fee, 100);
+    assert_eq!(lp_fee_amount, 70);
+    assert_eq!(protocol_fee, 10);
+    assert_eq!(insurance_fee, 20);
     assert_eq!(lp_fee.value(), 70);
     assert_eq!(reserve.protocol_asset_balance(), 10);
     assert_eq!(reserve.insurance_asset_balance(), 20);
@@ -104,10 +111,14 @@ fun accrue_fee_assigns_rounding_dust_to_lp() {
     let mut reserve = fee_reserve::new(&config);
     let fee = coin::mint_for_testing<DUSDC>(ROUNDED_FEE, ctx).into_balance();
 
-    let lp_fee = reserve.accrue_fee(fee, object::id_from_address(PREDICT_ID));
+    let (lp_fee, total_fee, lp_fee_amount, protocol_fee, insurance_fee) = reserve.accrue_fee(fee);
 
     // 20% of 101 rounds down to 20 for protocol and 20 for insurance;
     // the one unit of dust remains in the LP share.
+    assert_eq!(total_fee, 101);
+    assert_eq!(lp_fee_amount, 61);
+    assert_eq!(protocol_fee, 20);
+    assert_eq!(insurance_fee, 20);
     assert_eq!(lp_fee.value(), 61);
     assert_eq!(reserve.protocol_asset_balance(), 20);
     assert_eq!(reserve.insurance_asset_balance(), 20);
@@ -130,8 +141,12 @@ fun accrue_zero_fee_does_not_update_counters() {
     let mut reserve = fee_reserve::new(&config);
     let fee = balance::zero<DUSDC>();
 
-    let lp_fee = reserve.accrue_fee(fee, object::id_from_address(PREDICT_ID));
+    let (lp_fee, total_fee, lp_fee_amount, protocol_fee, insurance_fee) = reserve.accrue_fee(fee);
 
+    assert_eq!(total_fee, 0);
+    assert_eq!(lp_fee_amount, 0);
+    assert_eq!(protocol_fee, 0);
+    assert_eq!(insurance_fee, 0);
     assert_eq!(lp_fee.value(), 0);
     assert_eq!(reserve.protocol_asset_balance(), 0);
     assert_eq!(reserve.insurance_asset_balance(), 0);
