@@ -61,6 +61,7 @@ benchmarked.
 Owns:
 
 - idle DUSDC;
+- protocol and insurance fee balances swept from compacted expiries;
 - PLP treasury cap;
 - total allocated capital;
 - active expiry market IDs;
@@ -343,6 +344,8 @@ Compaction:
 - computes the exact remaining settled payout liability;
 - removes the dense strike matrix;
 - returns every surplus LP-owned DUSDC above remaining liability to `PoolVault`;
+- sweeps accrued protocol and insurance fee balances from the expiry fee reserve
+  into `PoolVault`;
 - reduces `PoolVault.total_allocated_capital` by the expiry's full
   pre-compaction allocation;
 - unregisters the expiry from `PoolVault.active_expiry_markets`;
@@ -350,14 +353,15 @@ Compaction:
   payout escrow, not active risk allocation;
 - leaves the compacted expiry with LP cash equal to the current settled
   liability;
-- keeps protocol and insurance fee reserves inside the expiry fee reserve unless
-  a separate recipient-claim path is added;
+- leaves no concrete protocol or insurance fee balances inside the expiry fee
+  reserve;
 - keeps the compacted redeem path supported.
 
 After compaction, the expiry is payout escrow and no longer participates in full
 pool valuation. It should hold no active allocation, free LP capital, or
 LP-earned fees beyond the DUSDC required to satisfy remaining settled
-redemptions.
+redemptions. Protocol and insurance fee custody moves to `PoolVault`; any
+future fee claim path should claim from `PoolVault`, not individual expiries.
 
 Valuation behavior by state:
 
@@ -402,7 +406,8 @@ Completed:
   permissionless by default;
 - `PoolVault`-coordinated compaction reduces dense matrix state into scalar
   remaining liability, returns surplus LP cash to pool idle capital, removes the
-  full active allocation, and unregisters the expiry from active pool valuation;
+  full active allocation, sweeps protocol and insurance fees into `PoolVault`,
+  and unregisters the expiry from active pool valuation;
 - `PoolVault` supply/withdraw consumes the full-pool valuation hot potato and
   applies conservative PLP mint/burn share math;
 - `StrikeMatrix` no longer stores cached MTM;

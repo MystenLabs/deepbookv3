@@ -283,7 +283,7 @@ public(package) fun assert_market_oracle(market: &ExpiryMarket, market_oracle: &
 public(package) fun compact_settled(
     market: &mut ExpiryMarket,
     market_oracle: &MarketOracle,
-): (Balance<DUSDC>, u64) {
+): (Balance<DUSDC>, Balance<DUSDC>, Balance<DUSDC>) {
     market.assert_market_oracle(market_oracle);
     market.assert_not_compacted();
 
@@ -295,15 +295,15 @@ public(package) fun compact_settled(
     let matrix = market.strike_matrix.extract();
     let _settled_liability = strike_matrix::into_settled_liability(matrix, settlement);
     let returned_cash_amount = market.lp_cash_balance.value() - settled_liability;
-    let allocated_reduction = market.allocated_capital;
     let returned_cash = market.lp_cash_balance.split(returned_cash_amount);
+    let (protocol_fees, insurance_fees) = market.fee_reserve.take_fee_balances();
 
     market.allocated_capital = 0;
     market.compacted_liability = settled_liability;
     market.compacted_settlement = option::some(settlement);
     market.assert_cash_backing();
 
-    (returned_cash, allocated_reduction)
+    (returned_cash, protocol_fees, insurance_fees)
 }
 
 // === Private Functions ===

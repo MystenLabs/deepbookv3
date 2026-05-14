@@ -45,6 +45,8 @@ public struct PLP has drop {}
 public struct PoolVault has key {
     id: UID,
     idle_balance: Balance<DUSDC>,
+    protocol_fee_balance: Balance<DUSDC>,
+    insurance_fee_balance: Balance<DUSDC>,
     treasury_cap: TreasuryCap<PLP>,
     active_expiry_markets: vector<ID>,
     total_allocated_capital: u64,
@@ -86,6 +88,16 @@ public fun id(vault: &PoolVault): ID {
 /// Return idle DUSDC held by the pool.
 public fun idle_balance(vault: &PoolVault): u64 {
     vault.idle_balance.value()
+}
+
+/// Return protocol fees swept from compacted expiry markets.
+public fun protocol_fee_balance(vault: &PoolVault): u64 {
+    vault.protocol_fee_balance.value()
+}
+
+/// Return insurance fees swept from compacted expiry markets.
+public fun insurance_fee_balance(vault: &PoolVault): u64 {
+    vault.insurance_fee_balance.value()
 }
 
 /// Return active expiry market IDs tracked by the pool.
@@ -179,9 +191,11 @@ public fun compact_expiry_market(
         vault.total_allocated_capital >= allocated_reduction,
         EInsufficientTotalAllocatedCapital,
     );
-    let (returned_cash, _allocated_reduction) = market.compact_settled(market_oracle);
+    let (returned_cash, protocol_fees, insurance_fees) = market.compact_settled(market_oracle);
     vault.total_allocated_capital = vault.total_allocated_capital - allocated_reduction;
     vault.idle_balance.join(returned_cash);
+    vault.protocol_fee_balance.join(protocol_fees);
+    vault.insurance_fee_balance.join(insurance_fees);
     vault.unregister_expiry_market(market.id());
 }
 
@@ -248,6 +262,8 @@ public(package) fun new(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): Po
     PoolVault {
         id: object::new(ctx),
         idle_balance: balance::zero(),
+        protocol_fee_balance: balance::zero(),
+        insurance_fee_balance: balance::zero(),
         treasury_cap,
         active_expiry_markets: vector[],
         total_allocated_capital: 0,

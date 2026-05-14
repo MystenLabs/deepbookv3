@@ -128,6 +128,16 @@ public(package) fun accrue_fee(
     lp_balance
 }
 
+/// Extract concrete protocol and insurance fee balances for pool-level custody.
+public(package) fun take_fee_balances(reserve: &mut FeeReserve): (Balance<DUSDC>, Balance<DUSDC>) {
+    let protocol_amount = reserve.protocol_balance.value();
+    let insurance_amount = reserve.insurance_balance.value();
+    (
+        reserve.protocol_balance.split(protocol_amount),
+        reserve.insurance_balance.split(insurance_amount),
+    )
+}
+
 // === Private Functions ===
 
 /// Split a full fee balance into `(lp_fee, protocol_fee, insurance_fee)`.
