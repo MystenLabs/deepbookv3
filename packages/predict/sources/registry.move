@@ -3,8 +3,10 @@
 
 /// Registry and admin entrypoints for the Predict protocol.
 ///
-/// This module creates shared setup objects and exposes admin-only wiring
-/// functions used during setup and governance.
+/// This module creates shared setup objects, stores uniqueness indexes for
+/// Pyth sources and expiries, and exposes admin/governance entrypoints. Runtime
+/// pool accounting, expiry risk, oracle state, and user positions stay in their
+/// owning modules.
 module deepbook_predict::registry;
 
 use deepbook_predict::{
@@ -28,7 +30,7 @@ public struct AdminCap has key, store {
     id: UID,
 }
 
-/// Shared object tracking global state.
+/// Shared registry for source and expiry uniqueness.
 public struct Registry has key {
     id: UID,
     /// Pyth Lazer feed ID -> shared PythSource ID.
@@ -188,12 +190,12 @@ public fun set_trading_paused(config: &mut ProtocolConfig, _admin_cap: &AdminCap
     config.set_trading_paused(paused);
 }
 
-/// Create a shared Pyth source for one underlying/feed.
+/// Create a shared Pyth source for one admin-approved Lazer feed.
 ///
-/// This is permissionless because the object only stores verified Pyth Lazer
-/// payloads. Market creation still requires the feed to match admin config.
+/// The registry enforces one source object per feed ID.
 public fun create_pyth_source(
     registry: &mut Registry,
+    _admin_cap: &AdminCap,
     pyth_lazer_feed_id: u32,
     ctx: &mut TxContext,
 ): ID {
@@ -236,7 +238,10 @@ public fun destroy_market_oracle_cap(cap: MarketOracleCap) {
     cap.destroy_cap();
 }
 
-/// Create a new expiry market for the parallel pool path.
+/// Create the MarketOracle and ExpiryMarket objects for one future expiry.
+///
+/// The registry enforces one market per expiry, validates the registered Pyth
+/// source, allocates initial pool capital, and registers the expiry as active.
 public fun create_expiry_market(
     registry: &mut Registry,
     pool_vault: &mut PoolVault,
@@ -280,12 +285,12 @@ public fun create_expiry_market(
     (expiry_market_id, market_oracle_id)
 }
 
-/// Create a new PredictManager for the caller, allowing composability.
+/// Create a derived PredictManager for the caller.
 public fun create_manager(registry: &mut Registry, ctx: &mut TxContext): PredictManager {
     predict_manager::new(&mut registry.id, ctx)
 }
 
-/// Create and share a new PredictManager for the caller.
+/// Create and share a derived PredictManager for the caller.
 entry fun create_and_share_manager(registry: &mut Registry, ctx: &mut TxContext) {
     create_manager(registry, ctx).share();
 }

@@ -1,7 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Stored fee split config snapshotted into each expiry fee reserve.
+/// Stored fee split config for new expiry fee reserves.
+///
+/// ProtocolConfig owns the current template. Each FeeReserve snapshots these
+/// shares when its expiry market is created.
 module deepbook_predict::fee_config;
 
 use deepbook_predict::{config_constants, constants};
@@ -10,29 +13,28 @@ const EInvalidFeeSplit: u64 = 0;
 
 /// Fee distribution shares. Shares must sum to 100%.
 public struct FeeConfig has store {
+    /// LP fee share in FLOAT_SCALING; returned into LP-owned expiry cash.
     lp_fee_share: u64,
+    /// Protocol fee share in FLOAT_SCALING; reserved in the expiry fee reserve.
     protocol_fee_share: u64,
+    /// Insurance fee share in FLOAT_SCALING; reserved in the expiry fee reserve.
     insurance_fee_share: u64,
 }
 
 // === Public-Package Functions ===
 
-/// Return the LP fee share.
 public(package) fun lp_fee_share(config: &FeeConfig): u64 {
     config.lp_fee_share
 }
 
-/// Return the protocol fee share.
 public(package) fun protocol_fee_share(config: &FeeConfig): u64 {
     config.protocol_fee_share
 }
 
-/// Return the insurance fee share.
 public(package) fun insurance_fee_share(config: &FeeConfig): u64 {
     config.insurance_fee_share
 }
 
-/// Create fee config seeded from protocol defaults.
 public(package) fun new(): FeeConfig {
     FeeConfig {
         lp_fee_share: config_constants::default_lp_fee_share!(),
@@ -41,7 +43,6 @@ public(package) fun new(): FeeConfig {
     }
 }
 
-/// Set the fee distribution shares.
 public(package) fun set_fee_shares(
     config: &mut FeeConfig,
     lp_fee_share: u64,

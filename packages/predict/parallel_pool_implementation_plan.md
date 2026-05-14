@@ -7,7 +7,7 @@ Predict is moving to a parallel object model:
 - `PoolVault` is the global PLP pool and capital allocator.
 - `ExpiryMarket` is the hot shared object for one expiry.
 - `ProtocolConfig` holds global pricing, risk, and oracle-template configuration.
-- `Registry` creates and wires setup objects, Pyth sources, market oracles, and expiry markets.
+- `Registry` creates and wires setup objects, admin-deployed Pyth sources, market oracles, and expiry markets.
 
 There is no global `Predict` shared object in this path. Trading should touch one
 `ExpiryMarket` at a time so independent expiries can execute in parallel. LP
@@ -29,8 +29,9 @@ benchmarked.
   and compaction marker.
 - `PoolVault` owns idle DUSDC, the PLP treasury cap, total allocated capital,
   and the active expiry index.
-- Market creation is permissionless, but the registry permits only one market
-  per expiry.
+- Pyth source creation is admin-gated.
+- Expiry market creation is `MarketOracleCap`-gated, and the registry permits
+  only one market per expiry.
 - No expiry stores cached MTM. Expiry valuation is a pure read over the current
   strike matrix and oracle state.
 - LP supply/withdraw uses a direct full pool valuation in the same transaction
@@ -150,7 +151,7 @@ Owns setup wiring:
 
 - creates `ProtocolConfig`;
 - creates `PoolVault`;
-- creates `PythSource`;
+- creates admin-gated `PythSource`;
 - creates `MarketOracleCap`;
 - creates paired `MarketOracle` and `ExpiryMarket`;
 - registers the new expiry market ID in `PoolVault`;
@@ -163,6 +164,12 @@ Owns setup wiring:
 
 The PLP module registers the LP token and creates the shared `PoolVault` during
 package initialization.
+
+### Pyth Source Creation
+
+`registry::create_pyth_source` requires `AdminCap` and deploys one shared
+`PythSource` per Pyth Lazer feed. Pyth source deployment is admin-controlled,
+not permissionless.
 
 ### Expiry Creation
 
@@ -384,8 +391,8 @@ Completed:
 - `ExpiryMarket` skeleton created;
 - `ProtocolConfig` created;
 - `RiskConfig.expiry_allocation` added with 50k default/min and 250k max bounds;
-- `Registry` creates protocol config, pool vault, Pyth sources, and paired
-  expiry markets;
+- `Registry` creates protocol config, pool vault, admin-gated Pyth sources, and
+  paired expiry markets;
 - expiry creation allocates current `RiskConfig.expiry_allocation` from
   `PoolVault` idle DUSDC into the new `ExpiryMarket`;
 - `PoolVault` tracks total allocated capital and enforces the global allocation

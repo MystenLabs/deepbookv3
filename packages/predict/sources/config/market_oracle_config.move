@@ -1,7 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Global template config for newly created market oracles.
+/// Stored oracle template config for newly created market oracles.
+///
+/// ProtocolConfig owns the current template. Each MarketOracle snapshots these
+/// bounds at creation and can later be tuned through its cap-authorized path.
 module deepbook_predict::market_oracle_config;
 
 use deepbook_predict::config_constants;
@@ -10,10 +13,15 @@ const EInvalidBasisBounds: u64 = 1;
 
 /// Oracle bounds template snapshotted into each MarketOracle at creation.
 public struct MarketOracleConfig has store {
+    /// Maximum age for a source update to be usable for settlement.
     settlement_freshness_ms: u64,
+    /// Maximum spot deviation allowed between consecutive Block Scholes pushes.
     max_spot_deviation: u64,
+    /// Maximum basis deviation allowed between consecutive Block Scholes pushes.
     max_basis_deviation: u64,
+    /// Minimum allowed forward / spot basis in FLOAT_SCALING.
     min_basis: u64,
+    /// Maximum allowed forward / spot basis in FLOAT_SCALING.
     max_basis: u64,
 }
 
@@ -39,7 +47,6 @@ public(package) fun max_basis(config: &MarketOracleConfig): u64 {
     config.max_basis
 }
 
-/// Create market oracle config seeded from protocol defaults.
 public(package) fun new(): MarketOracleConfig {
     MarketOracleConfig {
         settlement_freshness_ms: config_constants::default_settlement_freshness_ms!(),

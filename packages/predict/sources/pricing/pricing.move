@@ -48,12 +48,10 @@ public fun settlement_price(market: &MarketOracle): u64 {
 
 // === Public-Package Functions ===
 
-/// Return the strike stored in a curve point.
 public(package) fun strike(point: &CurvePoint): u64 {
     point.strike
 }
 
-/// Return the UP price stored in a curve point.
 public(package) fun up_price(point: &CurvePoint): u64 {
     point.up_price
 }

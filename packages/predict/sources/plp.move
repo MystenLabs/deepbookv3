@@ -1,11 +1,12 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// PLP token and pool vault state.
+/// PLP token and pool vault accounting.
 ///
 /// PoolVault owns idle DUSDC and the PLP treasury cap. Expiry markets own
-/// active trading capital and risk state. This module coordinates PLP
-/// supply/withdrawal and pool-to-expiry capital allocation.
+/// active trading capital and risk state. This module coordinates full-pool
+/// valuation, PLP supply/withdrawal, allocation resize, and settled-expiry
+/// compaction. It does not own expiry-local strike, oracle, or position state.
 module deepbook_predict::plp;
 
 use deepbook::math;
@@ -44,19 +45,28 @@ public struct PLP has drop {}
 /// Pool-level capital and PLP accounting state.
 public struct PoolVault has key {
     id: UID,
+    /// Idle LP-owned DUSDC available for withdrawals and new allocations.
     idle_balance: Balance<DUSDC>,
+    /// Protocol fees swept from compacted expiry markets.
     protocol_fee_balance: Balance<DUSDC>,
+    /// Insurance fees swept from compacted expiry markets.
     insurance_fee_balance: Balance<DUSDC>,
     treasury_cap: TreasuryCap<PLP>,
+    /// Expiry markets that still contribute active pool valuation/risk.
     active_expiry_markets: vector<ID>,
+    /// Sum of active expiry risk budgets allocated out of the pool.
     total_allocated_capital: u64,
 }
 
 /// Transaction-local pool valuation accumulator.
 public struct PoolValuation {
+    /// PoolVault ID this valuation is bound to.
     pool_vault_id: ID,
+    /// Active expiry set snapshotted when valuation starts.
     expected_expiry_markets: vector<ID>,
+    /// Expiry IDs whose valuation witnesses have been consumed.
     valued_expiry_markets: vector<ID>,
+    /// Running pool value, starting from idle DUSDC and adding each expiry NAV.
     value: u64,
 }
 
@@ -115,7 +125,11 @@ public fun total_allocated_capital(vault: &PoolVault): u64 {
     vault.total_allocated_capital
 }
 
-/// Begin a full-pool valuation.
+/// Begin a full-pool valuation and lock protocol valuation-sensitive flows.
+///
+/// The accumulator snapshots the active expiry set and starts with idle DUSDC.
+/// Callers must add one valuation witness for each active expiry before
+/// supplying or withdrawing.
 public fun start_valuation(vault: &PoolVault, config: &mut ProtocolConfig): PoolValuation {
     config.begin_valuation();
     PoolValuation {
@@ -126,7 +140,10 @@ public fun start_valuation(vault: &PoolVault, config: &mut ProtocolConfig): Pool
     }
 }
 
-/// Add one expiry valuation to a pool valuation accumulator.
+/// Add one active expiry valuation witness to the pool accumulator.
+///
+/// Aborts if the witness is not for the snapshotted active set or if the same
+/// expiry is added twice.
 public fun add_expiry_valuation(valuation: &mut PoolValuation, expiry_valuation: ExpiryValuation) {
     let (expiry_market_id, expiry_value) = expiry_market::unpack_valuation(expiry_valuation);
     assert!(valuation.expected_expiry_markets.contains(&expiry_market_id), EExpiryMarketNotActive);
@@ -138,7 +155,10 @@ public fun add_expiry_valuation(valuation: &mut PoolValuation, expiry_valuation:
     valuation.value = valuation.value + expiry_value;
 }
 
-/// Grow an active expiry's allocation when utilization reaches the high watermark.
+/// Grow an active live expiry allocation when utilization reaches the high watermark.
+///
+/// Moves idle DUSDC from the pool into the expiry while respecting global pool
+/// allocation capacity and the upgrade-required per-expiry hard cap.
 public fun grow_expiry_allocation(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
@@ -158,7 +178,10 @@ public fun grow_expiry_allocation(
     market.receive_allocation(allocation);
 }
 
-/// Shrink an active expiry's allocation when utilization reaches the low watermark.
+/// Shrink an active live expiry allocation when utilization reaches the low watermark.
+///
+/// Moves only returnable free cash back to the pool; expiry payout backing stays
+/// inside the expiry market.
 public fun shrink_expiry_allocation(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
@@ -177,7 +200,10 @@ public fun shrink_expiry_allocation(
     vault.idle_balance.join(allocation);
 }
 
-/// Compact a settled expiry market and return all surplus LP cash to the pool.
+/// Compact a settled active expiry and remove it from pool valuation.
+///
+/// The expiry keeps exactly its remaining settled redeem liability. Surplus LP
+/// cash and accrued protocol/insurance fee reserves move into PoolVault custody.
 public fun compact_expiry_market(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
@@ -199,7 +225,10 @@ public fun compact_expiry_market(
     vault.unregister_expiry_market(market.id());
 }
 
-/// Supply DUSDC into the pool vault and receive PLP shares.
+/// Supply DUSDC into the pool vault against a complete full-pool valuation.
+///
+/// Completes the valuation after flow preconditions pass and mints PLP shares
+/// at the computed pool value.
 public fun supply(
     vault: &mut PoolVault,
     config: &mut ProtocolConfig,
@@ -207,7 +236,7 @@ public fun supply(
     payment: Coin<DUSDC>,
     ctx: &mut TxContext,
 ): Coin<PLP> {
-    let pool_value = vault.consume_valuation(config, valuation);
+    let pool_value = vault.validated_pool_value(config, &valuation);
     let payment_amount = payment.value();
     assert!(payment_amount > 0, EZeroSupply);
 
@@ -222,11 +251,15 @@ public fun supply(
         shares
     };
 
+    finish_valuation(config, valuation);
     vault.idle_balance.join(payment.into_balance());
     coin::mint(&mut vault.treasury_cap, shares, ctx)
 }
 
-/// Withdraw DUSDC from the pool vault by burning PLP shares.
+/// Withdraw DUSDC from the pool vault against a complete full-pool valuation.
+///
+/// Completes the valuation after flow preconditions pass, burns PLP, and
+/// enforces the pool-level allocated-capital limit after withdrawal.
 public fun withdraw(
     vault: &mut PoolVault,
     config: &mut ProtocolConfig,
@@ -234,7 +267,7 @@ public fun withdraw(
     lp_coin: Coin<PLP>,
     ctx: &mut TxContext,
 ): Coin<DUSDC> {
-    let pool_value = vault.consume_valuation(config, valuation);
+    let pool_value = vault.validated_pool_value(config, &valuation);
     let lp_amount = lp_coin.value();
     assert!(lp_amount > 0, EZeroWithdraw);
 
@@ -251,6 +284,7 @@ public fun withdraw(
     );
     assert!(vault.total_allocated_capital <= max_allocated, EMaxTotalExposureExceeded);
 
+    finish_valuation(config, valuation);
     vault.treasury_cap.burn(lp_coin);
     vault.idle_balance.split(withdraw_amount).into_coin(ctx)
 }
@@ -299,13 +333,13 @@ public(package) fun allocate_to_new_expiry(
     vault.idle_balance.split(amount)
 }
 
-/// Register an expiry market as active for pool accounting.
+/// Register an expiry market as active for valuation and pool allocation accounting.
 public(package) fun register_expiry_market(vault: &mut PoolVault, expiry_market_id: ID) {
     assert!(!vault.active_expiry_markets.contains(&expiry_market_id), EExpiryMarketAlreadyActive);
     vault.active_expiry_markets.push_back(expiry_market_id);
 }
 
-/// Remove an expiry market from active pool accounting.
+/// Remove an expiry market from active valuation and pool allocation accounting.
 public(package) fun unregister_expiry_market(vault: &mut PoolVault, expiry_market_id: ID) {
     let mut i = 0;
     let len = vault.active_expiry_markets.length();
@@ -404,23 +438,29 @@ fun shrink_amount(risk_config: &RiskConfig, market: &ExpiryMarket): u64 {
     amount
 }
 
-fun consume_valuation(
+fun validated_pool_value(
     vault: &PoolVault,
-    config: &mut ProtocolConfig,
-    valuation: PoolValuation,
+    config: &ProtocolConfig,
+    valuation: &PoolValuation,
 ): u64 {
     config.assert_valuation_in_progress();
+    assert!(valuation.pool_vault_id == vault.id(), EWrongPoolVault);
+    assert_active_set_unchanged(vault, &valuation.expected_expiry_markets);
+    assert_all_expected_valued(
+        &valuation.expected_expiry_markets,
+        &valuation.valued_expiry_markets,
+    );
+    valuation.value
+}
+
+fun finish_valuation(config: &mut ProtocolConfig, valuation: PoolValuation) {
     let PoolValuation {
-        pool_vault_id,
-        expected_expiry_markets,
-        valued_expiry_markets,
-        value,
+        pool_vault_id: _,
+        expected_expiry_markets: _,
+        valued_expiry_markets: _,
+        value: _,
     } = valuation;
-    assert!(pool_vault_id == vault.id(), EWrongPoolVault);
-    assert_active_set_unchanged(vault, &expected_expiry_markets);
-    assert_all_expected_valued(&expected_expiry_markets, &valued_expiry_markets);
     config.end_valuation();
-    value
 }
 
 // === Test-Only Functions ===

@@ -7,7 +7,15 @@ paths:
 
 **Update this file** when you discover new Move patterns, gotchas, or best practices during sessions.
 
-- Only put comments to document functions, struct fields, and items that need clarification. DO NOT PUT EXTRANEOUS COMMENTS THROUGHOUT.
+- Comments are opt-in, not a coverage requirement. Use comments to explain module responsibility, public API contracts, ownership boundaries, invariants, unit/scaling conventions, lifecycle state, sequencing requirements, gas/storage tradeoffs, external dependency quirks, or non-obvious math.
+
+- Do not add comments that restate a function name, narrate obvious code, explain Move syntax, describe simple assignments, or repeat names already clear from types. If deleting a comment would not make the code harder to use or safely modify, delete it.
+
+- For struct fields, comment selectively. Config structs are strong candidates for field comments because they encode policy, units, and economic meaning. Non-config structs should only comment fields with non-obvious mapping semantics, custody/ownership, timestamps, lifecycle state, sentinel values, units, or invariants.
+
+- A struct-level doc can cover a group of obvious fields that share one convention. Do not duplicate the same explanation above every field.
+
+- When changing behavior, update nearby comments in the same edit. Stale comments are worse than missing comments.
 
 - Sui is an object-oriented blockchain. Sui smart contracts are written in the Move language.
 
@@ -706,9 +714,11 @@ public fun do_something() { /* ... */ }
 public fun do_something() { /* ... */ }
 ```
 
-### Complex Logic? Leave a Comment `//`
+### Complex Logic? Leave a Focused Comment `//`
 
-Being friendly and helping reviewers understand the code!
+Use inline comments only when they explain a non-obvious invariant, sequencing
+requirement, external dependency quirk, or gas/storage tradeoff. Do not narrate
+the next line of code.
 
 ```move
 // good!

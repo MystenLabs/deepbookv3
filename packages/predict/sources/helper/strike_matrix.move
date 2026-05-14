@@ -543,7 +543,6 @@ fun recompute_page_tree_path(matrix: &mut StrikeMatrix, page_index: u64) {
     };
 }
 
-/// Return a zeroed dense page.
 fun empty_page(): vector<StrikeNode> {
     vector::tabulate!(
         PAGE_SLOTS,
@@ -558,7 +557,6 @@ fun empty_page(): vector<StrikeNode> {
     )
 }
 
-/// Return a zeroed page summary.
 fun empty_summary(): PageSummary {
     PageSummary {
         total_q_start: 0,
@@ -568,8 +566,6 @@ fun empty_summary(): PageSummary {
     }
 }
 
-/// Return the smallest power of two that is at least `n`.
-///
 /// The inline page tree uses a complete binary-tree layout, so the leaf layer
 /// is padded to a power of two and the extra leaves remain zero summaries.
 fun next_pow_2(n: u64): u64 {

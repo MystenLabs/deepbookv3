@@ -4,9 +4,9 @@
 /// Per-expiry Predict market.
 ///
 /// An ExpiryMarket is the hot shared object for one expiry. It owns the
-/// expiry-local DUSDC allocation, strike matrix, fee reserve, and settlement
-/// compaction marker. Pool-wide PLP accounting and capital allocation remain
-/// outside this module.
+/// expiry-local DUSDC allocation, strike matrix, fee reserve, trade execution,
+/// valuation witness, and settlement compaction state. Pool-wide PLP
+/// accounting and allocation coordination remain outside this module.
 module deepbook_predict::expiry_market;
 
 use deepbook::math;
@@ -44,17 +44,24 @@ public struct ExpiryMarket has key {
     market_oracle_id: ID,
     pyth_lazer_feed_id: u32,
     expiry: u64,
+    /// Active risk budget assigned by the pool.
     allocated_capital: u64,
+    /// LP-owned DUSDC backing this expiry's liability.
     lp_cash_balance: Balance<DUSDC>,
+    /// Dense exposure state before compaction; none after compaction.
     strike_matrix: Option<StrikeMatrix>,
     fee_reserve: FeeReserve,
+    /// Settlement price retained after dense strike state is compacted.
     compacted_settlement: Option<u64>,
+    /// Remaining settled redeem liability after compaction.
     compacted_liability: u64,
 }
 
 /// Transaction-local valuation produced by an expiry market.
 public struct ExpiryValuation {
+    /// Expiry market that produced this valuation.
     expiry_market_id: ID,
+    /// LP NAV contribution for this expiry.
     value: u64,
 }
 
@@ -140,7 +147,10 @@ public fun range_key(market: &ExpiryMarket, lower_strike: u64, higher_strike: u6
     range_key::new(market.market_oracle_id, lower_strike, higher_strike)
 }
 
-/// Read the current LP NAV contribution for this expiry.
+/// Produce this expiry's valuation witness for a full-pool valuation.
+///
+/// Requires the protocol valuation lock, aborts while the oracle is expired but
+/// unsettled, and does not mutate expiry or oracle state.
 public fun read_valuation(
     market: &ExpiryMarket,
     config: &ProtocolConfig,
@@ -158,7 +168,10 @@ public fun read_valuation(
     }
 }
 
-/// Mint a position interval against this expiry market.
+/// Mint a live position interval against this expiry market.
+///
+/// Requires trading to be allowed, manager ownership, a live fresh oracle, and
+/// enough expiry allocation to back the post-mint max payout.
 public fun mint(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
@@ -175,6 +188,9 @@ public fun mint(
 }
 
 /// Redeem a live, settled, or compacted position interval.
+///
+/// Live redeems require manager ownership and fresh oracle data. Settled and
+/// compacted redeems are permissionless and pay into the manager balance.
 public fun redeem(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
@@ -208,6 +224,9 @@ public fun redeem(
 // === Public-Package Functions ===
 
 /// Create and share a funded expiry market for one market oracle.
+///
+/// The market snapshots the Pyth feed ID, initializes dense strike state, and
+/// takes custody of the pool-provided allocation as LP cash.
 public(package) fun create_and_share(
     market_oracle_id: ID,
     pyth: &PythSource,
@@ -238,7 +257,7 @@ public(package) fun create_and_share(
     id
 }
 
-/// Add pool-provided DUSDC to this expiry's allocation.
+/// Add pool-provided DUSDC to this live expiry's allocation and LP cash.
 public(package) fun receive_allocation(market: &mut ExpiryMarket, allocation: Balance<DUSDC>) {
     market.assert_not_compacted();
     let amount = allocation.value();
@@ -247,6 +266,9 @@ public(package) fun receive_allocation(market: &mut ExpiryMarket, allocation: Ba
 }
 
 /// Return free DUSDC allocation from this expiry to the pool.
+///
+/// Aborts if the requested amount would reduce allocation or cash below the
+/// expiry's current worst-case payout backing.
 public(package) fun return_allocation(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
     assert!(amount <= market.returnable_capital(), EAllocationBelowMaxPayout);
 
@@ -279,7 +301,10 @@ public(package) fun assert_market_oracle(market: &ExpiryMarket, market_oracle: &
     assert!(market.market_oracle_id == market_oracle.id(), EWrongMarketOracle);
 }
 
-/// Compact a settled expiry market and return surplus LP cash to the pool.
+/// Compact settled expiry state and return surplus cash to the pool.
+///
+/// Consumes dense strike state, leaves only settled liability backing in the
+/// expiry, and returns surplus LP cash plus protocol/insurance fee balances.
 public(package) fun compact_settled(
     market: &mut ExpiryMarket,
     market_oracle: &MarketOracle,

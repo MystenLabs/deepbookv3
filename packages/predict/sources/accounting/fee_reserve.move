@@ -41,47 +41,38 @@ public struct FeeReserve has store {
 
 // === Public-Package Functions ===
 
-/// Return the official total fee amount accrued across all charged trades.
 public(package) fun total_fees_accrued(reserve: &FeeReserve): u64 {
     reserve.total_fees_accrued
 }
 
-/// Return total LP fee share accrued across all charged trades.
 public(package) fun lp_fees_accrued(reserve: &FeeReserve): u64 {
     reserve.lp_fees_accrued
 }
 
-/// Return total protocol fee share accrued across all charged trades.
 public(package) fun protocol_fees_accrued(reserve: &FeeReserve): u64 {
     reserve.protocol_fees_accrued
 }
 
-/// Return total insurance fee share accrued across all charged trades.
 public(package) fun insurance_fees_accrued(reserve: &FeeReserve): u64 {
     reserve.insurance_fees_accrued
 }
 
-/// Return the LP fee share.
 public(package) fun lp_fee_share(reserve: &FeeReserve): u64 {
     reserve.lp_fee_share
 }
 
-/// Return the protocol fee share.
 public(package) fun protocol_fee_share(reserve: &FeeReserve): u64 {
     reserve.protocol_fee_share
 }
 
-/// Return the insurance fee share.
 public(package) fun insurance_fee_share(reserve: &FeeReserve): u64 {
     reserve.insurance_fee_share
 }
 
-/// Return concrete protocol reserve balance.
 public(package) fun protocol_asset_balance(reserve: &FeeReserve): u64 {
     reserve.protocol_balance.value()
 }
 
-/// Return concrete insurance reserve balance.
 public(package) fun insurance_asset_balance(reserve: &FeeReserve): u64 {
     reserve.insurance_balance.value()
 }

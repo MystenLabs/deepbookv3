@@ -1,7 +1,10 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Stored pricing and freshness config for Predict markets.
+/// Stored pricing and freshness config for Predict quotes.
+///
+/// ProtocolConfig owns this mutable policy. Pricing reads it when quoting mint,
+/// redeem, and valuation flows.
 module deepbook_predict::pricing_config;
 
 use deepbook_predict::config_constants;
@@ -33,47 +36,38 @@ public struct PricingConfig has store {
 
 // === Public-Package Functions ===
 
-/// Return the base fee multiplier.
 public(package) fun base_fee(config: &PricingConfig): u64 {
     config.base_fee
 }
 
-/// Return the minimum per-unit fee floor.
 public(package) fun min_fee(config: &PricingConfig): u64 {
     config.min_fee
 }
 
-/// Return the utilization multiplier.
 public(package) fun utilization_multiplier(config: &PricingConfig): u64 {
     config.utilization_multiplier
 }
 
-/// Return the global minimum allowed all-in mint price.
 public(package) fun min_ask_price(config: &PricingConfig): u64 {
     config.min_ask_price
 }
 
-/// Return the global maximum allowed all-in mint price.
 public(package) fun max_ask_price(config: &PricingConfig): u64 {
     config.max_ask_price
 }
 
-/// Return the live Pyth spot freshness threshold.
 public(package) fun pyth_spot_freshness_ms(config: &PricingConfig): u64 {
     config.pyth_spot_freshness_ms
 }
 
-/// Return the live Block Scholes spot/forward freshness threshold.
 public(package) fun block_scholes_prices_freshness_ms(config: &PricingConfig): u64 {
     config.block_scholes_prices_freshness_ms
 }
 
-/// Return the live Block Scholes SVI freshness threshold.
 public(package) fun block_scholes_svi_freshness_ms(config: &PricingConfig): u64 {
     config.block_scholes_svi_freshness_ms
 }
 
-/// Create pricing config seeded from protocol defaults.
 public(package) fun new(): PricingConfig {
     PricingConfig {
         base_fee: config_constants::default_base_fee!(),
@@ -87,51 +81,43 @@ public(package) fun new(): PricingConfig {
     }
 }
 
-/// Set the base fee multiplier.
 public(package) fun set_base_fee(config: &mut PricingConfig, fee: u64) {
     config_constants::assert_base_fee(fee);
     config.base_fee = fee;
 }
 
-/// Set the minimum fee floor.
 public(package) fun set_min_fee(config: &mut PricingConfig, fee: u64) {
     config_constants::assert_min_fee(fee);
     config.min_fee = fee;
 }
 
-/// Set the utilization multiplier.
 public(package) fun set_utilization_multiplier(config: &mut PricingConfig, multiplier: u64) {
     config_constants::assert_utilization_multiplier(multiplier);
     config.utilization_multiplier = multiplier;
 }
 
-/// Set the global minimum allowed mint price.
 public(package) fun set_min_ask_price(config: &mut PricingConfig, value: u64) {
     config_constants::assert_min_ask_price(value);
     assert!(value < config.max_ask_price, EInvalidAskBound);
     config.min_ask_price = value;
 }
 
-/// Set the global maximum allowed mint price.
 public(package) fun set_max_ask_price(config: &mut PricingConfig, value: u64) {
     config_constants::assert_max_ask_price(value);
     assert!(value > config.min_ask_price, EInvalidAskBound);
     config.max_ask_price = value;
 }
 
-/// Set the live Pyth spot freshness threshold.
 public(package) fun set_pyth_spot_freshness_ms(config: &mut PricingConfig, value: u64) {
     config_constants::assert_pyth_spot_freshness_ms(value);
     config.pyth_spot_freshness_ms = value;
 }
 
-/// Set the live Block Scholes spot/forward freshness threshold.
 public(package) fun set_block_scholes_prices_freshness_ms(config: &mut PricingConfig, value: u64) {
     config_constants::assert_block_scholes_prices_freshness_ms(value);
     config.block_scholes_prices_freshness_ms = value;
 }
 
-/// Set the live Block Scholes SVI freshness threshold.
 public(package) fun set_block_scholes_svi_freshness_ms(config: &mut PricingConfig, value: u64) {
     config_constants::assert_block_scholes_svi_freshness_ms(value);
     config.block_scholes_svi_freshness_ms = value;

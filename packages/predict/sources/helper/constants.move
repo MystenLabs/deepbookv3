@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Constants module - all protocol constants.
+/// Upgrade-required protocol constants for Predict.
 ///
 /// Scaling conventions (aligned with DeepBook):
 /// - Prices/percentages use FLOAT_SCALING (1e9): 500_000_000 = 50%
@@ -23,6 +23,7 @@ public macro fun float_scaling_decimals(): u64 { 9 }
 
 // === Time Constants ===
 
+/// Milliseconds in a 365-day year.
 public macro fun ms_per_year(): u64 { 31_536_000_000 }
 
 // === Curve Builder ===
@@ -41,5 +42,8 @@ public macro fun oracle_strike_grid_ticks(): u64 { 100_000 }
 /// Granularity unit for oracle tick sizes; every tick_size must be a multiple of this value.
 public macro fun oracle_tick_size_unit(): u64 { 10_000 }
 
+/// Sentinel lower strike for ranges open to negative infinity.
 public macro fun neg_inf(): u64 { 0 }
+
+/// Sentinel upper strike for ranges open to positive infinity.
 public macro fun pos_inf(): u64 { std::u64::max_value!() }

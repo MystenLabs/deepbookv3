@@ -1,8 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Range key module - identifies a vertical range position by oracle and the
-/// two strikes that define the band.
+/// Range keys identify vertical range positions by oracle and strike band.
 ///
 /// The canonical instrument is the band `(oracle, lower, higher)`.
 /// Bull-call and bear-put ranges with the same strikes are payout-identical and
@@ -22,17 +21,17 @@ public struct RangeKey has copy, drop, store {
 
 // === Public Functions ===
 
-/// Get the oracle_id from a RangeKey.
+/// Return the oracle ID encoded in this range key.
 public fun oracle_id(key: &RangeKey): ID {
     key.oracle_id
 }
 
-/// Get the lower strike from a RangeKey.
+/// Return the lower strike boundary.
 public fun lower_strike(key: &RangeKey): u64 {
     key.lower_strike
 }
 
-/// Get the higher strike from a RangeKey.
+/// Return the higher strike boundary.
 public fun higher_strike(key: &RangeKey): u64 {
     key.higher_strike
 }

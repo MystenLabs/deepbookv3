@@ -1,7 +1,11 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Protocol-wide configuration read by expiry markets.
+/// Protocol-wide configuration and flow gates for Predict.
+///
+/// This shared object owns the admin-tunable config structs, trading pause,
+/// and full-pool valuation lock. Flow modules decide which gates apply before
+/// they mutate expiry, oracle, pool, or manager state.
 module deepbook_predict::protocol_config;
 
 use deepbook_predict::{
@@ -15,14 +19,16 @@ const ETradingPaused: u64 = 0;
 const EValuationInProgress: u64 = 1;
 const EValuationNotInProgress: u64 = 2;
 
-/// Shared protocol policy state.
+/// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
     id: UID,
     pricing_config: PricingConfig,
     fee_config: FeeConfig,
     risk_config: RiskConfig,
     market_oracle_config: MarketOracleConfig,
+    /// Blocks new risk creation while true.
     trading_paused: bool,
+    /// Transaction-local lock held while a full-pool valuation is assembled.
     valuation_in_progress: bool,
 }
 
@@ -40,22 +46,18 @@ public fun trading_paused(config: &ProtocolConfig): bool {
 
 // === Public-Package Functions ===
 
-/// Return the pricing configuration.
 public(package) fun pricing_config(config: &ProtocolConfig): &PricingConfig {
     &config.pricing_config
 }
 
-/// Return the fee split configuration.
 public(package) fun fee_config(config: &ProtocolConfig): &FeeConfig {
     &config.fee_config
 }
 
-/// Return the risk configuration.
 public(package) fun risk_config(config: &ProtocolConfig): &RiskConfig {
     &config.risk_config
 }
 
-/// Return the market oracle configuration template.
 public(package) fun market_oracle_config(config: &ProtocolConfig): &MarketOracleConfig {
     &config.market_oracle_config
 }
@@ -97,55 +99,46 @@ public(package) fun create_and_share(ctx: &mut TxContext): ID {
     id
 }
 
-/// Set the base fee multiplier.
 public(package) fun set_base_fee(config: &mut ProtocolConfig, fee: u64) {
     config.assert_not_valuation_in_progress();
     config.pricing_config.set_base_fee(fee);
 }
 
-/// Set the minimum fee floor.
 public(package) fun set_min_fee(config: &mut ProtocolConfig, fee: u64) {
     config.assert_not_valuation_in_progress();
     config.pricing_config.set_min_fee(fee);
 }
 
-/// Set the utilization multiplier.
 public(package) fun set_utilization_multiplier(config: &mut ProtocolConfig, multiplier: u64) {
     config.assert_not_valuation_in_progress();
     config.pricing_config.set_utilization_multiplier(multiplier);
 }
 
-/// Set the global minimum allowed mint price.
 public(package) fun set_min_ask_price(config: &mut ProtocolConfig, value: u64) {
     config.assert_not_valuation_in_progress();
     config.pricing_config.set_min_ask_price(value);
 }
 
-/// Set the global maximum allowed mint price.
 public(package) fun set_max_ask_price(config: &mut ProtocolConfig, value: u64) {
     config.assert_not_valuation_in_progress();
     config.pricing_config.set_max_ask_price(value);
 }
 
-/// Set the live Pyth spot freshness threshold.
 public(package) fun set_pyth_spot_freshness_ms(config: &mut ProtocolConfig, value: u64) {
     config.assert_not_valuation_in_progress();
     config.pricing_config.set_pyth_spot_freshness_ms(value);
 }
 
-/// Set the live Block Scholes spot/forward freshness threshold.
 public(package) fun set_block_scholes_prices_freshness_ms(config: &mut ProtocolConfig, value: u64) {
     config.assert_not_valuation_in_progress();
     config.pricing_config.set_block_scholes_prices_freshness_ms(value);
 }
 
-/// Set the live Block Scholes SVI freshness threshold.
 public(package) fun set_block_scholes_svi_freshness_ms(config: &mut ProtocolConfig, value: u64) {
     config.assert_not_valuation_in_progress();
     config.pricing_config.set_block_scholes_svi_freshness_ms(value);
 }
 
-/// Set the fee distribution shares.
 public(package) fun set_fee_shares(
     config: &mut ProtocolConfig,
     lp_fee_share: u64,
@@ -156,37 +149,31 @@ public(package) fun set_fee_shares(
     config.fee_config.set_fee_shares(lp_fee_share, protocol_fee_share, insurance_fee_share);
 }
 
-/// Set the maximum total exposure percentage.
 public(package) fun set_max_total_exposure_pct(config: &mut ProtocolConfig, pct: u64) {
     config.assert_not_valuation_in_progress();
     config.risk_config.set_max_total_exposure_pct(pct);
 }
 
-/// Set the current DUSDC allocation for new expiry markets.
 public(package) fun set_expiry_allocation(config: &mut ProtocolConfig, allocation: u64) {
     config.assert_not_valuation_in_progress();
     config.risk_config.set_expiry_allocation(allocation);
 }
 
-/// Set the utilization threshold that enables allocation growth.
 public(package) fun set_grow_utilization_threshold(config: &mut ProtocolConfig, threshold: u64) {
     config.assert_not_valuation_in_progress();
     config.risk_config.set_grow_utilization_threshold(threshold);
 }
 
-/// Set the utilization threshold that enables allocation shrink.
 public(package) fun set_shrink_utilization_threshold(config: &mut ProtocolConfig, threshold: u64) {
     config.assert_not_valuation_in_progress();
     config.risk_config.set_shrink_utilization_threshold(threshold);
 }
 
-/// Set the growth target multiplier.
 public(package) fun set_grow_factor(config: &mut ProtocolConfig, factor: u64) {
     config.assert_not_valuation_in_progress();
     config.risk_config.set_grow_factor(factor);
 }
 
-/// Set the shrink target multiplier.
 public(package) fun set_shrink_factor(config: &mut ProtocolConfig, factor: u64) {
     config.assert_not_valuation_in_progress();
     config.risk_config.set_shrink_factor(factor);
@@ -220,7 +207,6 @@ public(package) fun set_market_oracle_template_basis_bounds(
         );
 }
 
-/// Set whether trading is paused.
 public(package) fun set_trading_paused(config: &mut ProtocolConfig, paused: bool) {
     config.assert_not_valuation_in_progress();
     config.trading_paused = paused;

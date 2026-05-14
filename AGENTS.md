@@ -77,6 +77,24 @@ These are the most important rule files to consult based on the code you touch:
   - related helper and manager test files under `packages/predict/tests/`
 - If you change predict pricing, vault accounting, or oracle math, rerun the full predict suite:
   - `sui move test --path packages/predict --gas-limit 100000000000`
+- Predict comment rules:
+  - Comments are opt-in, not a coverage requirement. Do not add comments just because a function, branch, or field exists.
+  - Every Predict Move source file must start with the standard Mysten copyright and SPDX header.
+  - Every Predict Move module needs a module-level `///` doc immediately before `module`.
+  - Module docs should usually be 1-4 sentences and explain what state or types the module owns, what flows it is responsible for, and what it intentionally does not own when the boundary is easy to confuse.
+  - Longer module docs are appropriate for algorithmic or data-structure-heavy modules such as pricing, math, and strike matrix code.
+  - All `public fun` and `public macro fun` external APIs should have doc comments because they are protocol API surface.
+  - `#[test_only]` helpers do not need public API docs unless their setup behavior is non-obvious.
+  - `public(package) fun` comments should be used for cross-module flows, non-obvious mutations, constructors/destructors that establish ownership, witness or hot-potato functions, invariant boundaries, or sequencing-sensitive helpers.
+  - Plain package-only config getters/setters and thin constructor shims do not need doc comments when names and module docs already make the behavior clear.
+  - Private `fun` comments should be rare and limited to algorithms, formulas, invariants, gas/storage tradeoffs, or non-obvious sequencing.
+  - Public structs should have doc comments. Admin-tunable config structs should usually document every stored field because those fields encode protocol policy, units, and economic meaning.
+  - Non-config struct fields should be commented selectively: mappings, balances/custody, timestamps, lifecycle markers, sentinel/state fields, and fields with non-obvious units or invariants. Do not comment simple IDs, counters, or private bookkeeping fields when the module/struct docs and field names are enough.
+  - A struct-level doc can cover a group of obvious fields that share one convention; do not duplicate that same sentence above every field.
+  - Inline comments should explain why, not what. Good targets are compaction sequencing, valuation freshness assumptions, storage/gas tradeoffs, simulator/localnet stubs, external package quirks, and post-mutation accounting dependencies.
+  - Do not write comments that restate the function name, narrate obvious code, explain Move syntax, describe simple assignments, or repeat names already clear from types.
+  - If deleting a comment would not make the code harder to use or safely modify, delete it.
+  - When changing behavior, update nearby comments in the same edit. Stale comments are worse than missing comments.
 - Predict config rules:
   - Split config into two classes: admin-tunable values and upgrade-required values.
   - Admin-tunable values live in config structs and are updated only through admin-gated entrypoints.

@@ -53,8 +53,10 @@ public struct SVIParams has copy, drop, store {
     sigma: u64,
 }
 
+/// Shared per-expiry oracle object storing live source data and settlement state.
 public struct MarketOracle has key {
     id: UID,
+    /// MarketOracleCap IDs authorized to write Block Scholes data.
     authorized_cap_ids: VecSet<ID>,
     pyth_source_id: ID,
     expiry: u64,
@@ -70,16 +72,20 @@ public struct MarketOracle has key {
     max_basis_deviation: u64,
     min_basis: u64,
     max_basis: u64,
+    /// None until terminal settlement records a source price.
     settlement_price: Option<u64>,
+    /// Settlement source code; zero before settlement.
     settlement_source: u8,
     settlement_source_timestamp_ms: u64,
     settlement_update_timestamp_ms: u64,
 }
 
+/// Capability authorized to write Block Scholes data and tune this oracle.
 public struct MarketOracleCap has key, store {
     id: UID,
 }
 
+/// Emitted when Block Scholes spot/forward data is accepted.
 public struct BlockScholesPricesUpdated has copy, drop, store {
     market_oracle_id: ID,
     spot: u64,
@@ -89,6 +95,7 @@ public struct BlockScholesPricesUpdated has copy, drop, store {
     update_timestamp_ms: u64,
 }
 
+/// Emitted when Block Scholes SVI data is accepted.
 public struct BlockScholesSVIUpdated has copy, drop, store {
     market_oracle_id: ID,
     a: u64,
@@ -100,6 +107,7 @@ public struct BlockScholesSVIUpdated has copy, drop, store {
     update_timestamp_ms: u64,
 }
 
+/// Emitted when per-oracle bounds are updated.
 public struct MarketOracleBoundsUpdated has copy, drop, store {
     market_oracle_id: ID,
     settlement_freshness_ms: u64,
@@ -109,6 +117,7 @@ public struct MarketOracleBoundsUpdated has copy, drop, store {
     max_basis: u64,
 }
 
+/// Emitted when the oracle records terminal settlement.
 public struct MarketOracleSettled has copy, drop, store {
     market_oracle_id: ID,
     expiry: u64,
@@ -123,26 +132,32 @@ public struct MarketOracleSettled has copy, drop, store {
 
 // === Public Functions ===
 
+/// Construct a Block Scholes SVI parameter set.
 public fun new_svi_params(a: u64, b: u64, rho: i64::I64, m: i64::I64, sigma: u64): SVIParams {
     SVIParams { a, b, rho, m, sigma }
 }
 
+/// Return the market oracle object ID.
 public fun id(market: &MarketOracle): ID {
     market.id.to_inner()
 }
 
+/// Return the MarketOracleCap object ID.
 public fun cap_id(cap: &MarketOracleCap): ID {
     cap.id.to_inner()
 }
 
+/// Return the Pyth source object bound to this oracle.
 public fun pyth_source_id(market: &MarketOracle): ID {
     market.pyth_source_id
 }
 
+/// Return the expiry timestamp in milliseconds.
 public fun expiry(market: &MarketOracle): u64 {
     market.expiry
 }
 
+/// Return whether terminal settlement has been recorded.
 public fun is_settled(market: &MarketOracle): bool {
     market.settlement_price.is_some()
 }
@@ -156,6 +171,7 @@ public fun raw_settlement_price(market: &MarketOracle): Option<u64> {
     market.settlement_price
 }
 
+/// Return active, pending-settlement, or settled status for the current clock.
 public fun status(market: &MarketOracle, clock: &Clock): u8 {
     if (market.is_settled()) {
         STATUS_SETTLED
@@ -166,75 +182,96 @@ public fun status(market: &MarketOracle, clock: &Clock): u8 {
     }
 }
 
+/// Return the active status code.
 public fun status_active(): u8 {
     STATUS_ACTIVE
 }
 
+/// Return the pending-settlement status code.
 public fun status_pending_settlement(): u8 {
     STATUS_PENDING_SETTLEMENT
 }
 
+/// Return the settled status code.
 public fun status_settled(): u8 {
     STATUS_SETTLED
 }
 
+/// Return the settlement source code for Pyth.
 public fun source_pyth(): u8 {
     SOURCE_PYTH
 }
 
+/// Return the settlement source code for Block Scholes.
 public fun source_block_scholes(): u8 {
     SOURCE_BLOCK_SCHOLES
 }
 
+/// Return the latest Block Scholes spot in Predict's 1e9 scaling.
 public fun block_scholes_spot(market: &MarketOracle): u64 {
     market.block_scholes_spot
 }
 
+/// Return the latest Block Scholes forward in Predict's 1e9 scaling.
 public fun block_scholes_forward(market: &MarketOracle): u64 {
     market.block_scholes_forward
 }
 
+/// Return the source timestamp for the latest Block Scholes spot/forward update.
 public fun block_scholes_price_source_timestamp_ms(market: &MarketOracle): u64 {
     market.block_scholes_price_source_timestamp_ms
 }
 
+/// Return the on-chain timestamp for the latest Block Scholes spot/forward update.
 public fun block_scholes_price_update_timestamp_ms(market: &MarketOracle): u64 {
     market.block_scholes_price_update_timestamp_ms
 }
 
+/// Return the latest Block Scholes SVI parameters.
 public fun block_scholes_svi(market: &MarketOracle): SVIParams {
     market.block_scholes_svi
 }
 
+/// Return SVI parameter `a`.
 public fun a(params: &SVIParams): u64 {
     params.a
 }
 
+/// Return SVI parameter `b`.
 public fun b(params: &SVIParams): u64 {
     params.b
 }
 
+/// Return SVI parameter `rho`.
 public fun rho(params: &SVIParams): i64::I64 {
     params.rho
 }
 
+/// Return SVI parameter `m`.
 public fun m(params: &SVIParams): i64::I64 {
     params.m
 }
 
+/// Return SVI parameter `sigma`.
 public fun sigma(params: &SVIParams): u64 {
     params.sigma
 }
 
+/// Return the source timestamp for the latest Block Scholes SVI update.
 public fun block_scholes_svi_source_timestamp_ms(market: &MarketOracle): u64 {
     market.block_scholes_svi_source_timestamp_ms
 }
 
+/// Return the on-chain timestamp for the latest Block Scholes SVI update.
 public fun block_scholes_svi_update_timestamp_ms(market: &MarketOracle): u64 {
     market.block_scholes_svi_update_timestamp_ms
 }
 
-/// Update Block Scholes spot/forward data and settle the market if possible.
+/// Update authorized Block Scholes spot/forward data.
+///
+/// Aborts during valuation or after settlement. If the market is pending
+/// settlement and this update creates a valid settlement source, the oracle
+/// records terminal settlement in the same call.
 public fun update_block_scholes_prices(
     market: &mut MarketOracle,
     config: &ProtocolConfig,
@@ -271,8 +308,9 @@ public fun update_block_scholes_prices(
 
 /// Settle from the earliest valid stored source, if one is available.
 ///
-/// This lets oracle operators finalize settlement without making mint/redeem
-/// mutate oracle state.
+/// This lets oracle operators finalize settlement without making mint/redeem or
+/// pool valuation mutate oracle state. Returns false when the market is not
+/// pending settlement or no valid source exists yet.
 public fun settle_if_possible(
     market: &mut MarketOracle,
     config: &ProtocolConfig,
@@ -287,6 +325,9 @@ public fun settle_if_possible(
     market.settle_if_possible_internal(pyth, clock)
 }
 
+/// Update live SVI data from an authorized Block Scholes writer.
+///
+/// SVI is live-market-only and must advance the source timestamp.
 public fun update_svi(
     market: &mut MarketOracle,
     config: &ProtocolConfig,
@@ -320,6 +361,9 @@ public fun update_svi(
     });
 }
 
+/// Set the settlement freshness threshold for this oracle.
+///
+/// This is per-oracle cap-authorized config and affects this oracle directly.
 public fun set_settlement_freshness_ms(
     market: &mut MarketOracle,
     config: &ProtocolConfig,
@@ -333,6 +377,9 @@ public fun set_settlement_freshness_ms(
     market.emit_bounds_updated();
 }
 
+/// Set basis and deviation bounds for this oracle.
+///
+/// This is per-oracle cap-authorized config and affects this oracle directly.
 public fun set_basis_bounds(
     market: &mut MarketOracle,
     config: &ProtocolConfig,
@@ -354,22 +401,26 @@ public fun set_basis_bounds(
 
 // === Public-Package Functions ===
 
+/// Return forward / spot basis, aborting until both values are initialized.
 public(package) fun block_scholes_basis(market: &MarketOracle): u64 {
     assert!(market.block_scholes_spot > 0, EZeroSpot);
     assert!(market.block_scholes_forward > 0, EZeroForward);
     math::div(market.block_scholes_forward, market.block_scholes_spot)
 }
 
+/// Return the conservative timestamp used for Block Scholes price freshness.
 public(package) fun block_scholes_price_freshness_timestamp_ms(market: &MarketOracle): u64 {
     market
         .block_scholes_price_source_timestamp_ms
         .min(market.block_scholes_price_update_timestamp_ms)
 }
 
+/// Return the conservative timestamp used for Block Scholes SVI freshness.
 public(package) fun block_scholes_svi_freshness_timestamp_ms(market: &MarketOracle): u64 {
     market.block_scholes_svi_source_timestamp_ms.min(market.block_scholes_svi_update_timestamp_ms)
 }
 
+/// Return terminal settlement price after enforcing settlement timestamp invariants.
 public(package) fun settlement_price(market: &MarketOracle): u64 {
     market.assert_settled();
     assert!(market.settlement_source_timestamp_ms > market.expiry, EInvalidSettlementTimestamp);
@@ -385,6 +436,7 @@ public(package) fun destroy_cap(cap: MarketOracleCap) {
     id.delete();
 }
 
+/// Create and share a market oracle bound to a Pyth source and initial writer cap.
 public(package) fun create_and_share(
     pyth: &PythSource,
     config: &MarketOracleConfig,
@@ -429,29 +481,35 @@ public(package) fun create_and_share(
     market_oracle_id
 }
 
+/// Authorize an additional cap to write this market oracle.
 public(package) fun register_cap(market: &mut MarketOracle, cap: &MarketOracleCap) {
     let cap_id = cap.cap_id();
     assert!(!market.authorized_cap_ids.contains(&cap_id), EInvalidMarketOracleCap);
     market.authorized_cap_ids.insert(cap_id);
 }
 
+/// Remove a cap from this market oracle's writer set.
 public(package) fun unregister_cap(market: &mut MarketOracle, cap_id: ID) {
     assert!(market.authorized_cap_ids.contains(&cap_id), EInvalidMarketOracleCap);
     market.authorized_cap_ids.remove(&cap_id);
 }
 
+/// Let a cap holder remove its own cap from this market oracle.
 public(package) fun self_unregister_cap(market: &mut MarketOracle, cap: &MarketOracleCap) {
     market.unregister_cap(cap.cap_id());
 }
 
+/// Abort unless this oracle is bound to the supplied Pyth source.
 public(package) fun assert_pyth_source(market: &MarketOracle, pyth: &PythSource) {
     assert!(market.pyth_source_id == pyth.id(), EWrongPythSource);
 }
 
+/// Abort unless this oracle is live and not expired.
 public(package) fun assert_active(market: &MarketOracle, clock: &Clock) {
     assert!(market.status(clock) == STATUS_ACTIVE, EMarketNotActive);
 }
 
+/// Abort if the market is expired but no settlement has been recorded.
 public(package) fun assert_not_pending_settlement(market: &MarketOracle, clock: &Clock) {
     assert!(market.status(clock) != STATUS_PENDING_SETTLEMENT, EPendingSettlement);
 }

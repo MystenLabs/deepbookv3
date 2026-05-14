@@ -47,12 +47,12 @@ public fun withdraw(self: &mut PredictManager, amount: u64, ctx: &mut TxContext)
     self.balance_manager.withdraw(amount, ctx)
 }
 
-/// Get the owner of the PredictManager.
+/// Return the BalanceManager owner for this PredictManager.
 public fun owner(self: &PredictManager): address {
     self.balance_manager.owner()
 }
 
-/// Get the position quantity for a given RangeKey.
+/// Return the position quantity for a range key.
 public fun position(self: &PredictManager, key: RangeKey): u64 {
     if (self.positions.contains(key)) {
         self.positions[key]
@@ -61,14 +61,14 @@ public fun position(self: &PredictManager, key: RangeKey): u64 {
     }
 }
 
-/// Get the DUSDC balance in the PredictManager.
+/// Return the DUSDC balance held by this PredictManager.
 public fun balance(self: &PredictManager): u64 {
     self.balance_manager.balance<DUSDC>()
 }
 
 // === Public-Package Functions ===
 
-/// Create a new PredictManager and share it.
+/// Create a derived PredictManager for the sender.
 public(package) fun new(registry_uid: &mut UID, ctx: &mut TxContext): PredictManager {
     let id = derived_object::claim(registry_uid, PredictManagerKey(ctx.sender(), 0));
     let mut balance_manager = balance_manager::new(ctx);
@@ -91,7 +91,6 @@ public(package) fun deposit_permissionless(
     self.balance_manager.deposit_with_cap(&self.deposit_cap, coin, ctx);
 }
 
-/// Increase position quantity.
 public(package) fun increase_position(self: &mut PredictManager, key: RangeKey, quantity: u64) {
     assert_nonzero_quantity(quantity);
     if (!self.positions.contains(key)) {
@@ -101,7 +100,6 @@ public(package) fun increase_position(self: &mut PredictManager, key: RangeKey, 
     *qty = *qty + quantity;
 }
 
-/// Decrease position quantity.
 public(package) fun decrease_position(self: &mut PredictManager, key: RangeKey, quantity: u64) {
     self.assert_can_decrease_position(key, quantity);
     let qty = &mut self.positions[key];
@@ -113,6 +111,7 @@ public(package) fun assert_owner(self: &PredictManager, ctx: &TxContext) {
     assert!(ctx.sender() == self.balance_manager.owner(), ENotOwner);
 }
 
+/// Abort unless this manager can burn `quantity` from `key`.
 public(package) fun assert_can_decrease_position(
     self: &PredictManager,
     key: RangeKey,

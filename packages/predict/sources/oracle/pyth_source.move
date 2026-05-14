@@ -16,6 +16,7 @@ const EStaleSourceUpdate: u64 = 0;
 const EZeroSpot: u64 = 1;
 const EFutureSourceUpdate: u64 = 2;
 
+/// Emitted when a verified Pyth Lazer spot update is accepted.
 public struct PythSourceUpdated has copy, drop, store {
     pyth_source_id: ID,
     feed_id: u32,
@@ -29,11 +30,16 @@ public struct PythSource has key {
     id: UID,
     feed_id: u32,
     spot: u64,
+    /// Pyth publisher timestamp from the latest accepted update, in milliseconds.
     source_timestamp_ms: u64,
+    /// On-chain timestamp when the latest accepted update landed.
     update_timestamp_ms: u64,
 }
 
 /// Decode and store a verified Pyth Lazer spot update.
+///
+/// Aborts during valuation, rejects stale/future source timestamps, and stores
+/// both the publisher timestamp and on-chain landing timestamp.
 public fun update_from_lazer(
     source: &mut PythSource,
     config: &ProtocolConfig,
