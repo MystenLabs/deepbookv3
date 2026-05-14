@@ -12,6 +12,7 @@ use deepbook::math;
 use deepbook_predict::{
     config_constants,
     expiry_market::{Self, ExpiryMarket, ExpiryValuation},
+    market_oracle::MarketOracle,
     protocol_config::ProtocolConfig,
     risk_config::RiskConfig
 };
@@ -23,13 +24,10 @@ const EExpiryMarketNotActive: u64 = 1;
 const ENotImplemented: u64 = 2;
 const EInsufficientIdleBalance: u64 = 3;
 const EMaxTotalExposureExceeded: u64 = 4;
-const EPoolCapitalOverflow: u64 = 5;
 const EWrongPoolVault: u64 = 6;
 const EExpiryMarketAlreadyValued: u64 = 7;
 const EMissingExpiryValuation: u64 = 8;
 const EActiveExpirySetChanged: u64 = 9;
-const EPoolValueOverflow: u64 = 10;
-const EZeroAllocatedCapital: u64 = 11;
 const EGrowUtilizationBelowThreshold: u64 = 12;
 const EShrinkUtilizationAboveThreshold: u64 = 13;
 const ENoAllocationResize: u64 = 14;
@@ -77,7 +75,7 @@ fun init(witness: PLP, ctx: &mut TxContext) {
 
 /// Return the pool vault object ID.
 public fun id(vault: &PoolVault): ID {
-    object::id(vault)
+    vault.id.to_inner()
 }
 
 /// Return idle DUSDC held by the pool.
@@ -100,22 +98,12 @@ public fun total_allocated_capital(vault: &PoolVault): u64 {
     vault.total_allocated_capital
 }
 
-/// Return whether an expiry market is currently active in the pool.
-public fun contains_expiry_market(vault: &PoolVault, expiry_market_id: ID): bool {
-    let mut i = 0;
-    while (i < vault.active_expiry_markets.length()) {
-        if (vault.active_expiry_markets[i] == expiry_market_id) return true;
-        i = i + 1;
-    };
-    false
-}
-
 /// Begin a full-pool valuation.
 public fun start_valuation(vault: &PoolVault, config: &mut ProtocolConfig): PoolValuation {
     config.begin_valuation();
     PoolValuation {
-        pool_vault_id: object::id(vault),
-        expected_expiry_markets: copy_ids(&vault.active_expiry_markets),
+        pool_vault_id: vault.id(),
+        expected_expiry_markets: *&vault.active_expiry_markets,
         valued_expiry_markets: vector[],
         value: vault.idle_balance.value(),
     }
@@ -124,16 +112,11 @@ public fun start_valuation(vault: &PoolVault, config: &mut ProtocolConfig): Pool
 /// Add one expiry valuation to a pool valuation accumulator.
 public fun add_expiry_valuation(valuation: &mut PoolValuation, expiry_valuation: ExpiryValuation) {
     let (expiry_market_id, expiry_value) = expiry_market::unpack_valuation(expiry_valuation);
+    assert!(valuation.expected_expiry_markets.contains(&expiry_market_id), EExpiryMarketNotActive);
     assert!(
-        contains_id(&valuation.expected_expiry_markets, expiry_market_id),
-        EExpiryMarketNotActive,
-    );
-    assert!(
-        !contains_id(&valuation.valued_expiry_markets, expiry_market_id),
+        !valuation.valued_expiry_markets.contains(&expiry_market_id),
         EExpiryMarketAlreadyValued,
     );
-    assert!(valuation.value <= std::u64::max_value!() - expiry_value, EPoolValueOverflow);
-
     valuation.valued_expiry_markets.push_back(expiry_market_id);
     valuation.value = valuation.value + expiry_value;
 }
@@ -143,16 +126,18 @@ public fun grow_expiry_allocation(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
     market: &mut ExpiryMarket,
+    market_oracle: &MarketOracle,
+    clock: &Clock,
 ) {
     config.assert_not_valuation_in_progress();
-    assert!(
-        vault.contains_expiry_market(market.id()),
-        EExpiryMarketNotActive,
-    );
+    assert!(vault.active_expiry_markets.contains(&market.id()), EExpiryMarketNotActive);
+    market.assert_market_oracle(market_oracle);
+    market_oracle.assert_active(clock);
     let risk_config = config.risk_config();
     let amount = vault.grow_amount(risk_config, market);
+    let new_total_allocated = vault.total_allocated_capital + amount;
     let allocation = vault.idle_balance.split(amount);
-    vault.total_allocated_capital = vault.total_allocated_capital + amount;
+    vault.total_allocated_capital = new_total_allocated;
     market.receive_allocation(allocation);
 }
 
@@ -161,20 +146,38 @@ public fun shrink_expiry_allocation(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
     market: &mut ExpiryMarket,
+    market_oracle: &MarketOracle,
+    clock: &Clock,
 ) {
     config.assert_not_valuation_in_progress();
-    assert!(
-        vault.contains_expiry_market(market.id()),
-        EExpiryMarketNotActive,
-    );
+    assert!(vault.active_expiry_markets.contains(&market.id()), EExpiryMarketNotActive);
+    market.assert_market_oracle(market_oracle);
+    market_oracle.assert_active(clock);
     let amount = shrink_amount(config.risk_config(), market);
-    assert!(
-        vault.total_allocated_capital >= amount,
-        EInsufficientTotalAllocatedCapital,
-    );
+    assert!(vault.total_allocated_capital >= amount, EInsufficientTotalAllocatedCapital);
     let allocation = market.return_allocation(amount);
     vault.total_allocated_capital = vault.total_allocated_capital - amount;
     vault.idle_balance.join(allocation);
+}
+
+/// Compact a settled expiry market and return all surplus LP cash to the pool.
+public fun compact_expiry_market(
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    market: &mut ExpiryMarket,
+    market_oracle: &MarketOracle,
+) {
+    config.assert_not_valuation_in_progress();
+    assert!(vault.active_expiry_markets.contains(&market.id()), EExpiryMarketNotActive);
+    let allocated_reduction = market.allocated_capital();
+    assert!(
+        vault.total_allocated_capital >= allocated_reduction,
+        EInsufficientTotalAllocatedCapital,
+    );
+    let (returned_cash, _allocated_reduction) = market.compact_settled(market_oracle);
+    vault.total_allocated_capital = vault.total_allocated_capital - allocated_reduction;
+    vault.idle_balance.join(returned_cash);
+    vault.unregister_expiry_market(market.id());
 }
 
 /// Supply DUSDC into the pool vault and receive PLP shares.
@@ -186,8 +189,8 @@ public fun supply(
     _clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<PLP> {
-    vault.consume_valuation(config, valuation);
     assert!(false, ENotImplemented);
+    vault.consume_valuation(config, valuation);
     vault.idle_balance.join(payment.into_balance());
     coin::mint(&mut vault.treasury_cap, 0, ctx)
 }
@@ -201,8 +204,8 @@ public fun withdraw(
     _clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<DUSDC> {
-    vault.consume_valuation(config, valuation);
     assert!(false, ENotImplemented);
+    vault.consume_valuation(config, valuation);
     vault.treasury_cap.burn(lp_coin);
     balance::zero<DUSDC>().into_coin(ctx)
 }
@@ -223,7 +226,7 @@ public(package) fun new(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): Po
 /// Create and share an empty pool vault from the PLP treasury cap.
 public(package) fun create_and_share(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): ID {
     let vault = new(treasury_cap, ctx);
-    let id = object::id(&vault);
+    let id = vault.id();
     transfer::share_object(vault);
     id
 }
@@ -239,10 +242,6 @@ public(package) fun allocate_to_new_expiry(
     let amount = risk_config.expiry_allocation();
     let idle_balance = vault.idle_balance.value();
     assert!(idle_balance >= amount, EInsufficientIdleBalance);
-    assert!(
-        idle_balance <= std::u64::max_value!() - vault.total_allocated_capital,
-        EPoolCapitalOverflow,
-    );
 
     let pool_capital = idle_balance + vault.total_allocated_capital;
     let new_total_allocated = vault.total_allocated_capital + amount;
@@ -255,7 +254,7 @@ public(package) fun allocate_to_new_expiry(
 
 /// Register an expiry market as active for pool accounting.
 public(package) fun register_expiry_market(vault: &mut PoolVault, expiry_market_id: ID) {
-    assert!(!vault.contains_expiry_market(expiry_market_id), EExpiryMarketAlreadyActive);
+    assert!(!vault.active_expiry_markets.contains(&expiry_market_id), EExpiryMarketAlreadyActive);
     vault.active_expiry_markets.push_back(expiry_market_id);
 }
 
@@ -272,25 +271,6 @@ public(package) fun unregister_expiry_market(vault: &mut PoolVault, expiry_marke
 
 // === Private Functions ===
 
-fun copy_ids(ids: &vector<ID>): vector<ID> {
-    let mut ids_copy = vector[];
-    let mut i = 0;
-    while (i < ids.length()) {
-        ids_copy.push_back(ids[i]);
-        i = i + 1;
-    };
-    ids_copy
-}
-
-fun contains_id(ids: &vector<ID>, id: ID): bool {
-    let mut i = 0;
-    while (i < ids.length()) {
-        if (ids[i] == id) return true;
-        i = i + 1;
-    };
-    false
-}
-
 fun assert_active_set_unchanged(vault: &PoolVault, expected_expiry_markets: &vector<ID>) {
     assert!(
         vault.active_expiry_markets.length() == expected_expiry_markets.length(),
@@ -298,7 +278,10 @@ fun assert_active_set_unchanged(vault: &PoolVault, expected_expiry_markets: &vec
     );
     let mut i = 0;
     while (i < expected_expiry_markets.length()) {
-        assert!(vault.contains_expiry_market(expected_expiry_markets[i]), EActiveExpirySetChanged);
+        assert!(
+            vault.active_expiry_markets.contains(&expected_expiry_markets[i]),
+            EActiveExpirySetChanged,
+        );
         i = i + 1;
     };
 }
@@ -314,26 +297,15 @@ fun assert_all_expected_valued(
     let mut i = 0;
     while (i < expected_expiry_markets.length()) {
         assert!(
-            contains_id(valued_expiry_markets, expected_expiry_markets[i]),
+            valued_expiry_markets.contains(&expected_expiry_markets[i]),
             EMissingExpiryValuation,
         );
         i = i + 1;
     };
 }
 
-fun expiry_utilization(market: &ExpiryMarket): u64 {
-    let allocated_capital = market.allocated_capital();
-    assert!(allocated_capital > 0, EZeroAllocatedCapital);
-    math::div(market.max_payout(), allocated_capital)
-}
-
 fun remaining_global_allocation_capacity(vault: &PoolVault, risk_config: &RiskConfig): u64 {
     let idle_balance = vault.idle_balance.value();
-    assert!(
-        idle_balance <= std::u64::max_value!() - vault.total_allocated_capital,
-        EPoolCapitalOverflow,
-    );
-
     let max_total_allocation = math::mul(
         idle_balance + vault.total_allocated_capital,
         risk_config.max_total_exposure_pct(),
@@ -345,20 +317,17 @@ fun remaining_global_allocation_capacity(vault: &PoolVault, risk_config: &RiskCo
     }
 }
 
-fun grow_amount(
-    vault: &PoolVault,
-    risk_config: &RiskConfig,
-    market: &ExpiryMarket,
-): u64 {
-    let utilization = expiry_utilization(market);
+fun grow_amount(vault: &PoolVault, risk_config: &RiskConfig, market: &ExpiryMarket): u64 {
+    let utilization = market.utilization();
     assert!(
         utilization >= risk_config.grow_utilization_threshold(),
         EGrowUtilizationBelowThreshold,
     );
 
     let current_allocation = market.allocated_capital();
-    let desired_target =
-        math::mul(current_allocation, risk_config.grow_factor()).min(config_constants::max_allocation!());
+    let desired_target = math::mul(current_allocation, risk_config.grow_factor()).min(
+        config_constants::max_allocation!(),
+    );
     assert!(desired_target > current_allocation, ENoAllocationResize);
     let desired_growth = desired_target - current_allocation;
     let amount = desired_growth
@@ -369,7 +338,7 @@ fun grow_amount(
 }
 
 fun shrink_amount(risk_config: &RiskConfig, market: &ExpiryMarket): u64 {
-    let utilization = expiry_utilization(market);
+    let utilization = market.utilization();
     assert!(
         utilization <= risk_config.shrink_utilization_threshold(),
         EShrinkUtilizationAboveThreshold,
@@ -400,7 +369,7 @@ fun consume_valuation(
         valued_expiry_markets,
         value,
     } = valuation;
-    assert!(pool_vault_id == object::id(vault), EWrongPoolVault);
+    assert!(pool_vault_id == vault.id(), EWrongPoolVault);
     assert_active_set_unchanged(vault, &expected_expiry_markets);
     assert_all_expected_valued(&expected_expiry_markets, &valued_expiry_markets);
     config.end_valuation();

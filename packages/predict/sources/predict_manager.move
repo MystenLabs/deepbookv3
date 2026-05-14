@@ -14,6 +14,8 @@ use dusdc::dusdc::DUSDC;
 use sui::{coin::Coin, derived_object, table::{Self, Table}};
 
 const EInsufficientPosition: u64 = 0;
+const ENotOwner: u64 = 1;
+const EZeroQuantity: u64 = 2;
 
 /// The key for deriving predict manager. u64 is optional for
 /// supporting multiple managers per address. Defaults to 0 in v1.
@@ -91,6 +93,7 @@ public(package) fun deposit_permissionless(
 
 /// Increase position quantity.
 public(package) fun increase_position(self: &mut PredictManager, key: RangeKey, quantity: u64) {
+    assert_nonzero_quantity(quantity);
     if (!self.positions.contains(key)) {
         self.positions.add(key, 0);
     };
@@ -100,8 +103,26 @@ public(package) fun increase_position(self: &mut PredictManager, key: RangeKey, 
 
 /// Decrease position quantity.
 public(package) fun decrease_position(self: &mut PredictManager, key: RangeKey, quantity: u64) {
-    assert!(self.positions.contains(key), EInsufficientPosition);
+    self.assert_can_decrease_position(key, quantity);
     let qty = &mut self.positions[key];
-    assert!(*qty >= quantity, EInsufficientPosition);
     *qty = *qty - quantity;
+}
+
+/// Abort unless the transaction sender owns this manager.
+public(package) fun assert_owner(self: &PredictManager, ctx: &TxContext) {
+    assert!(ctx.sender() == self.balance_manager.owner(), ENotOwner);
+}
+
+public(package) fun assert_can_decrease_position(
+    self: &PredictManager,
+    key: RangeKey,
+    quantity: u64,
+) {
+    assert_nonzero_quantity(quantity);
+    assert!(self.positions.contains(key), EInsufficientPosition);
+    assert!(self.positions[key] >= quantity, EInsufficientPosition);
+}
+
+fun assert_nonzero_quantity(quantity: u64) {
+    assert!(quantity > 0, EZeroQuantity);
 }

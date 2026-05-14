@@ -9,7 +9,9 @@
 /// outside this module.
 module deepbook_predict::expiry_market;
 
+use deepbook::math;
 use deepbook_predict::{
+    constants,
     fee_reserve::{Self, FeeReserve},
     market_oracle::MarketOracle,
     predict_manager::PredictManager,
@@ -26,6 +28,15 @@ const EWrongMarketOracle: u64 = 0;
 const EWrongPythSource: u64 = 1;
 const EValuationExceedsCash: u64 = 2;
 const EAllocationBelowMaxPayout: u64 = 3;
+const EZeroQuantity: u64 = 5;
+const EMarketCompacted: u64 = 6;
+const EMarketNotCompacted: u64 = 7;
+const EInsufficientLpCash: u64 = 8;
+const ECompactedLiabilityUnderflow: u64 = 9;
+const EZeroAllocatedCapital: u64 = 10;
+const EInvalidTickSize: u64 = 11;
+const EInvalidStrikeGrid: u64 = 12;
+const ESettledLiabilityUnderflow: u64 = 16;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -35,9 +46,10 @@ public struct ExpiryMarket has key {
     expiry: u64,
     allocated_capital: u64,
     lp_cash_balance: Balance<DUSDC>,
-    strike_matrix: StrikeMatrix,
+    strike_matrix: Option<StrikeMatrix>,
     fee_reserve: FeeReserve,
     compacted_settlement: Option<u64>,
+    compacted_liability: u64,
 }
 
 /// Transaction-local valuation produced by an expiry market.
@@ -50,7 +62,7 @@ public struct ExpiryValuation {
 
 /// Return the expiry market object ID.
 public fun id(market: &ExpiryMarket): ID {
-    object::id(market)
+    market.id.to_inner()
 }
 
 /// Return the market oracle this expiry market is paired with.
@@ -80,7 +92,11 @@ public fun lp_cash_balance(market: &ExpiryMarket): u64 {
 
 /// Return the expiry-local worst-case payout.
 public fun max_payout(market: &ExpiryMarket): u64 {
-    market.strike_matrix.max_payout()
+    if (market.is_compacted()) {
+        market.compacted_liability
+    } else {
+        market.strike_matrix.borrow().max_payout()
+    }
 }
 
 /// Return allocated capital not needed for worst-case payout backing.
@@ -107,6 +123,13 @@ public fun returnable_capital(market: &ExpiryMarket): u64 {
     risk_free.min(cash_free)
 }
 
+/// Return current expiry utilization as max payout over allocated capital.
+public(package) fun utilization(market: &ExpiryMarket): u64 {
+    let allocated_capital = market.allocated_capital;
+    assert!(allocated_capital > 0, EZeroAllocatedCapital);
+    math::div(market.max_payout(), allocated_capital)
+}
+
 /// Return true once the dense strike matrix has been compacted after settlement.
 public fun is_compacted(market: &ExpiryMarket): bool {
     market.compacted_settlement.is_some()
@@ -130,65 +153,56 @@ public fun read_valuation(
     let lp_cash_balance = market.lp_cash_balance.value();
     assert!(lp_cash_balance >= option_value, EValuationExceedsCash);
     ExpiryValuation {
-        expiry_market_id: object::id(market),
+        expiry_market_id: market.id(),
         value: lp_cash_balance - option_value,
     }
 }
 
 /// Mint a position interval against this expiry market.
 public fun mint(
-    _market: &mut ExpiryMarket,
+    market: &mut ExpiryMarket,
     config: &ProtocolConfig,
-    _manager: &mut PredictManager,
-    _market_oracle: &MarketOracle,
-    _pyth: &PythSource,
-    _key: RangeKey,
-    _quantity: u64,
-    _clock: &Clock,
-    _ctx: &mut TxContext,
+    manager: &mut PredictManager,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    key: RangeKey,
+    quantity: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
 ) {
     config.assert_trading_allowed();
+    market.mint_internal(config, manager, market_oracle, pyth, key, quantity, clock, ctx);
 }
 
-/// Redeem a position interval against this expiry market.
+/// Redeem a live, settled, or compacted position interval.
 public fun redeem(
-    _market: &mut ExpiryMarket,
+    market: &mut ExpiryMarket,
     config: &ProtocolConfig,
-    _manager: &mut PredictManager,
-    _market_oracle: &MarketOracle,
-    _pyth: &PythSource,
-    _key: RangeKey,
-    _quantity: u64,
-    _clock: &Clock,
-    _ctx: &mut TxContext,
-) {
-    config.assert_trading_allowed();
-}
-
-/// Redeem a settled position interval permissionlessly into the manager.
-public fun redeem_permissionless(
-    _market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    _manager: &mut PredictManager,
-    _market_oracle: &MarketOracle,
-    _key: RangeKey,
-    _quantity: u64,
-    _clock: &Clock,
-    _ctx: &mut TxContext,
+    manager: &mut PredictManager,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    key: RangeKey,
+    quantity: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
 ) {
     config.assert_not_valuation_in_progress();
-}
-
-/// Redeem a compacted settled position without passing the terminal oracle.
-public fun redeem_compacted_permissionless(
-    _market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    _manager: &mut PredictManager,
-    _key: RangeKey,
-    _quantity: u64,
-    _ctx: &mut TxContext,
-) {
-    config.assert_not_valuation_in_progress();
+    if (market.is_compacted()) {
+        market.redeem_compacted_internal(manager, key, quantity, ctx);
+    } else if (market_oracle.is_settled()) {
+        market.redeem_settled_internal(manager, market_oracle, key, quantity, ctx);
+    } else {
+        market.redeem_live_internal(
+            config,
+            manager,
+            market_oracle,
+            pyth,
+            key,
+            quantity,
+            clock,
+            ctx,
+        );
+    }
 }
 
 // === Public-Package Functions ===
@@ -201,10 +215,11 @@ public(package) fun create_and_share(
     allocation: Balance<DUSDC>,
     expiry: u64,
     min_strike: u64,
-    max_strike: u64,
     tick_size: u64,
     ctx: &mut TxContext,
 ): ID {
+    assert_valid_strike_grid(min_strike, tick_size);
+    let max_strike = min_strike + tick_size * constants::oracle_strike_grid_ticks!();
     let allocated_capital = allocation.value();
     let market = ExpiryMarket {
         id: object::new(ctx),
@@ -213,31 +228,27 @@ public(package) fun create_and_share(
         expiry,
         allocated_capital,
         lp_cash_balance: allocation,
-        strike_matrix: strike_matrix::new(ctx, tick_size, min_strike, max_strike),
+        strike_matrix: option::some(strike_matrix::new(ctx, tick_size, min_strike, max_strike)),
         fee_reserve: fee_reserve::new(config.fee_config()),
         compacted_settlement: option::none(),
+        compacted_liability: 0,
     };
-    let id = object::id(&market);
+    let id = market.id();
     transfer::share_object(market);
     id
 }
 
 /// Add pool-provided DUSDC to this expiry's allocation.
 public(package) fun receive_allocation(market: &mut ExpiryMarket, allocation: Balance<DUSDC>) {
+    market.assert_not_compacted();
     let amount = allocation.value();
     market.allocated_capital = market.allocated_capital + amount;
     market.lp_cash_balance.join(allocation);
 }
 
 /// Return free DUSDC allocation from this expiry to the pool.
-public(package) fun return_allocation(
-    market: &mut ExpiryMarket,
-    amount: u64,
-): Balance<DUSDC> {
-    assert!(
-        amount <= market.returnable_capital(),
-        EAllocationBelowMaxPayout,
-    );
+public(package) fun return_allocation(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
+    assert!(amount <= market.returnable_capital(), EAllocationBelowMaxPayout);
 
     market.allocated_capital = market.allocated_capital - amount;
     market.lp_cash_balance.split(amount)
@@ -252,6 +263,49 @@ public(package) fun unpack_valuation(valuation: ExpiryValuation): (ID, u64) {
     (expiry_market_id, value)
 }
 
+/// Assert that strike grid creation parameters are valid.
+public(package) fun assert_valid_strike_grid(min_strike: u64, tick_size: u64) {
+    assert!(tick_size > 0, EInvalidTickSize);
+    assert!(tick_size % constants::oracle_tick_size_unit!() == 0, EInvalidTickSize);
+    assert!(min_strike > 0, EInvalidStrikeGrid);
+    assert!(min_strike % tick_size == 0, EInvalidStrikeGrid);
+    let ticks = constants::oracle_strike_grid_ticks!();
+    assert!(ticks > 0, EInvalidStrikeGrid);
+    let _max_strike = min_strike + tick_size * ticks;
+}
+
+/// Assert that a market oracle belongs to this expiry market.
+public(package) fun assert_market_oracle(market: &ExpiryMarket, market_oracle: &MarketOracle) {
+    assert!(market.market_oracle_id == market_oracle.id(), EWrongMarketOracle);
+}
+
+/// Compact a settled expiry market and return surplus LP cash to the pool.
+public(package) fun compact_settled(
+    market: &mut ExpiryMarket,
+    market_oracle: &MarketOracle,
+): (Balance<DUSDC>, u64) {
+    market.assert_market_oracle(market_oracle);
+    market.assert_not_compacted();
+
+    let settlement = pricing::settlement_price(market_oracle);
+    let settled_liability = market.strike_matrix.borrow().settled_value(settlement);
+    assert!(market.lp_cash_balance.value() >= settled_liability, EInsufficientLpCash);
+    assert!(market.allocated_capital >= settled_liability, EAllocationBelowMaxPayout);
+
+    let matrix = market.strike_matrix.extract();
+    let _settled_liability = strike_matrix::into_settled_liability(matrix, settlement);
+    let returned_cash_amount = market.lp_cash_balance.value() - settled_liability;
+    let allocated_reduction = market.allocated_capital;
+    let returned_cash = market.lp_cash_balance.split(returned_cash_amount);
+
+    market.allocated_capital = 0;
+    market.compacted_liability = settled_liability;
+    market.compacted_settlement = option::some(settlement);
+    market.assert_cash_backing();
+
+    (returned_cash, allocated_reduction)
+}
+
 // === Private Functions ===
 
 fun current_option_value(
@@ -261,17 +315,20 @@ fun current_option_value(
     pyth: &PythSource,
     clock: &Clock,
 ): u64 {
-    assert!(market.market_oracle_id == market_oracle.id(), EWrongMarketOracle);
-    assert!(market.pyth_lazer_feed_id == pyth.feed_id(), EWrongPythSource);
+    market.assert_market_oracle(market_oracle);
+    market.assert_pyth_feed(pyth);
     market_oracle.assert_not_pending_settlement(clock);
 
+    if (market.is_compacted()) return market.compacted_liability;
+
+    let strike_matrix = market.strike_matrix.borrow();
     if (market_oracle.is_settled()) {
-        market.strike_matrix.settled_value(pricing::settlement_price(market_oracle))
+        strike_matrix.settled_value(pricing::settlement_price(market_oracle))
     } else {
-        let (minted_min_strike, minted_max_strike) = market.strike_matrix.minted_strike_range();
+        let (minted_min_strike, minted_max_strike) = strike_matrix.minted_strike_range();
         if (minted_min_strike == 0 && minted_max_strike == 0) return 0;
 
-        let (grid_min, grid_tick, grid_max) = market.strike_matrix.strike_grid();
+        let (grid_min, grid_tick, grid_max) = strike_matrix.strike_grid();
         let curve = pricing::build_live_curve(
             config.pricing_config(),
             market_oracle,
@@ -283,6 +340,238 @@ fun current_option_value(
             minted_min_strike,
             minted_max_strike,
         );
-        market.strike_matrix.live_value(&curve)
+        strike_matrix.live_value(&curve)
     }
+}
+
+fun mint_internal(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    manager: &mut PredictManager,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    key: RangeKey,
+    quantity: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    manager.assert_owner(ctx);
+    market.assert_market_oracle(market_oracle);
+    market.assert_pyth_feed(pyth);
+    market_oracle.assert_pyth_source(pyth);
+    market_oracle.assert_active(clock);
+    pricing::assert_live_oracle_fresh(config.pricing_config(), market_oracle, clock);
+    market.assert_range_key_matches(&key);
+    market.assert_not_compacted();
+    assert_nonzero_quantity(quantity);
+
+    // Mint quotes intentionally use post-insert liability for utilization fees.
+    market
+        .strike_matrix
+        .borrow_mut()
+        .insert_range(
+            key.lower_strike(),
+            key.higher_strike(),
+            quantity,
+        );
+    market.assert_capacity_backing();
+
+    let (principal_amount, fee_amount) = market.quote_mint_amounts(
+        config,
+        market_oracle,
+        pyth,
+        key,
+        quantity,
+        clock,
+    );
+    let payment_amount = principal_amount + fee_amount;
+
+    manager.increase_position(key, quantity);
+    let mut payment = manager.withdraw(payment_amount, ctx).into_balance();
+    let fee_payment = payment.split(fee_amount);
+    let market_id = market.id();
+    let lp_fee = market.fee_reserve.accrue_fee(fee_payment, market_id);
+    market.lp_cash_balance.join(payment);
+    market.lp_cash_balance.join(lp_fee);
+    market.assert_cash_backing();
+}
+
+fun redeem_live_internal(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    manager: &mut PredictManager,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    key: RangeKey,
+    quantity: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    manager.assert_owner(ctx);
+    market.assert_market_oracle(market_oracle);
+    market.assert_pyth_feed(pyth);
+    market_oracle.assert_pyth_source(pyth);
+    market_oracle.assert_active(clock);
+    pricing::assert_live_oracle_fresh(config.pricing_config(), market_oracle, clock);
+    market.assert_range_key_matches(&key);
+    market.assert_not_compacted();
+    assert_nonzero_quantity(quantity);
+    manager.assert_can_decrease_position(key, quantity);
+
+    // Live redeem quotes intentionally use post-removal liability for utilization fees.
+    market
+        .strike_matrix
+        .borrow_mut()
+        .remove_range(
+            key.lower_strike(),
+            key.higher_strike(),
+            quantity,
+        );
+
+    let (principal_amount, fee_amount) = market.quote_live_redeem_amounts(
+        config,
+        market_oracle,
+        pyth,
+        key,
+        quantity,
+        clock,
+    );
+
+    manager.decrease_position(key, quantity);
+    let mut payout = market.dispense_lp_cash(principal_amount);
+    let fee = payout.split(fee_amount);
+    let market_id = market.id();
+    let lp_fee = market.fee_reserve.accrue_fee(fee, market_id);
+    market.lp_cash_balance.join(lp_fee);
+    market.assert_cash_backing();
+    manager.deposit(payout.into_coin(ctx), ctx);
+}
+
+fun redeem_settled_internal(
+    market: &mut ExpiryMarket,
+    manager: &mut PredictManager,
+    market_oracle: &MarketOracle,
+    key: RangeKey,
+    quantity: u64,
+    ctx: &mut TxContext,
+) {
+    market.assert_market_oracle(market_oracle);
+    market.assert_range_key_matches(&key);
+    market.assert_not_compacted();
+    assert_nonzero_quantity(quantity);
+
+    let settlement = pricing::settlement_price(market_oracle);
+    let payout_amount = pricing::settled_range_payout(settlement, &key, quantity);
+    manager.assert_can_decrease_position(key, quantity);
+    let current_liability = market.strike_matrix.borrow().settled_value(settlement);
+    assert!(current_liability >= payout_amount, ESettledLiabilityUnderflow);
+    assert!(market.lp_cash_balance.value() >= current_liability, EInsufficientLpCash);
+
+    manager.decrease_position(key, quantity);
+    market
+        .strike_matrix
+        .borrow_mut()
+        .remove_range(
+            key.lower_strike(),
+            key.higher_strike(),
+            quantity,
+        );
+    let payout = market.dispense_lp_cash(payout_amount).into_coin(ctx);
+    manager.deposit_permissionless(payout, ctx);
+}
+
+fun redeem_compacted_internal(
+    market: &mut ExpiryMarket,
+    manager: &mut PredictManager,
+    key: RangeKey,
+    quantity: u64,
+    ctx: &mut TxContext,
+) {
+    market.assert_range_key_matches(&key);
+    assert!(market.is_compacted(), EMarketNotCompacted);
+    assert_nonzero_quantity(quantity);
+
+    let settlement = market.compacted_settlement.borrow();
+    let payout_amount = pricing::settled_range_payout(*settlement, &key, quantity);
+    assert!(market.compacted_liability >= payout_amount, ECompactedLiabilityUnderflow);
+    manager.assert_can_decrease_position(key, quantity);
+    assert!(market.lp_cash_balance.value() >= market.compacted_liability, EInsufficientLpCash);
+
+    manager.decrease_position(key, quantity);
+    market.compacted_liability = market.compacted_liability - payout_amount;
+    let payout = market.dispense_lp_cash(payout_amount).into_coin(ctx);
+    manager.deposit_permissionless(payout, ctx);
+}
+
+fun quote_mint_amounts(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    key: RangeKey,
+    quantity: u64,
+    clock: &Clock,
+): (u64, u64) {
+    let (fair_price, fee_rate) = pricing::quote_mint_live_range(
+        config.pricing_config(),
+        market_oracle,
+        pyth,
+        clock,
+        &key,
+        market.max_payout(),
+        market.allocated_capital,
+    );
+    (math::mul(fair_price, quantity), math::mul(fee_rate, quantity))
+}
+
+fun quote_live_redeem_amounts(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    key: RangeKey,
+    quantity: u64,
+    clock: &Clock,
+): (u64, u64) {
+    let (fair_price, fee_rate) = pricing::quote_live_range(
+        config.pricing_config(),
+        market_oracle,
+        pyth,
+        clock,
+        &key,
+        market.max_payout(),
+        market.allocated_capital,
+    );
+    let principal_amount = math::mul(fair_price, quantity);
+    let fee_amount = math::mul(fee_rate, quantity).min(principal_amount);
+    (principal_amount, fee_amount)
+}
+
+fun dispense_lp_cash(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
+    assert!(market.lp_cash_balance.value() >= amount, EInsufficientLpCash);
+    market.lp_cash_balance.split(amount)
+}
+
+fun assert_pyth_feed(market: &ExpiryMarket, pyth: &PythSource) {
+    assert!(market.pyth_lazer_feed_id == pyth.feed_id(), EWrongPythSource);
+}
+
+fun assert_range_key_matches(market: &ExpiryMarket, key: &RangeKey) {
+    assert!(key.oracle_id() == market.market_oracle_id, EWrongMarketOracle);
+}
+
+fun assert_nonzero_quantity(quantity: u64) {
+    assert!(quantity > 0, EZeroQuantity);
+}
+
+fun assert_capacity_backing(market: &ExpiryMarket) {
+    assert!(market.allocated_capital >= market.max_payout(), EAllocationBelowMaxPayout);
+}
+
+fun assert_cash_backing(market: &ExpiryMarket) {
+    assert!(market.lp_cash_balance.value() >= market.max_payout(), EInsufficientLpCash);
+}
+
+fun assert_not_compacted(market: &ExpiryMarket) {
+    assert!(!market.is_compacted(), EMarketCompacted);
 }

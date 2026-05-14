@@ -8,7 +8,6 @@
 module deepbook_predict::registry;
 
 use deepbook_predict::{
-    constants,
     expiry_market,
     market_oracle::{Self, MarketOracle, MarketOracleCap},
     plp::PoolVault,
@@ -18,11 +17,10 @@ use deepbook_predict::{
 };
 use sui::{clock::Clock, table::{Self, Table}};
 
-const EInvalidTickSize: u64 = 0;
-const EInvalidStrikeGrid: u64 = 1;
 const EFeedIdMismatch: u64 = 2;
 const EPythSourceAlreadyCreated: u64 = 3;
 const EInvalidExpiry: u64 = 4;
+const EExpiryMarketAlreadyCreated: u64 = 5;
 
 /// Capability for admin operations.
 /// Created during package init, transferred to deployer (multisig).
@@ -35,9 +33,16 @@ public struct Registry has key {
     id: UID,
     /// Pyth Lazer feed ID -> shared PythSource ID.
     pyth_source_ids: Table<u32, ID>,
+    /// Created expiry markets keyed by expiry timestamp.
+    expiry_market_ids: Table<u64, ID>,
 }
 
 // === Public Functions ===
+
+/// Return the registry object ID.
+public fun id(registry: &Registry): ID {
+    registry.id.to_inner()
+}
 
 /// Set the base fee multiplier.
 public fun set_base_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
@@ -233,7 +238,7 @@ public fun destroy_market_oracle_cap(cap: MarketOracleCap) {
 
 /// Create a new expiry market for the parallel pool path.
 public fun create_expiry_market(
-    registry: &Registry,
+    registry: &mut Registry,
     pool_vault: &mut PoolVault,
     config: &ProtocolConfig,
     pyth: &PythSource,
@@ -245,11 +250,13 @@ public fun create_expiry_market(
     ctx: &mut TxContext,
 ): (ID, ID) {
     config.assert_not_valuation_in_progress();
-    assert_valid_strike_grid(min_strike, tick_size);
     assert!(expiry > clock.timestamp_ms(), EInvalidExpiry);
     let pyth_lazer_feed_id = pyth.feed_id();
     assert!(registry.pyth_source_ids.contains(pyth_lazer_feed_id), EFeedIdMismatch);
     assert!(registry.pyth_source_ids[pyth_lazer_feed_id] == pyth.id(), EFeedIdMismatch);
+    expiry_market::assert_valid_strike_grid(min_strike, tick_size);
+    assert!(!registry.expiry_market_ids.contains(expiry), EExpiryMarketAlreadyCreated);
+    let allocation = pool_vault.allocate_to_new_expiry(config.risk_config());
     let market_oracle_id = market_oracle::create_and_share(
         pyth,
         config.market_oracle_config(),
@@ -257,8 +264,6 @@ public fun create_expiry_market(
         expiry,
         ctx,
     );
-    let max_strike = max_strike_for_grid(min_strike, tick_size);
-    let allocation = pool_vault.allocate_to_new_expiry(config.risk_config());
     let expiry_market_id = expiry_market::create_and_share(
         market_oracle_id,
         pyth,
@@ -266,11 +271,11 @@ public fun create_expiry_market(
         allocation,
         expiry,
         min_strike,
-        max_strike,
         tick_size,
         ctx,
     );
     pool_vault.register_expiry_market(expiry_market_id);
+    registry.expiry_market_ids.add(expiry, expiry_market_id);
 
     (expiry_market_id, market_oracle_id)
 }
@@ -304,25 +309,13 @@ fun init(ctx: &mut TxContext) {
     transfer::transfer(admin_cap, ctx.sender());
 }
 
-/// Validate the initial market_oracle strike grid supplied by the operator.
-fun assert_valid_strike_grid(min_strike: u64, tick_size: u64) {
-    assert!(tick_size > 0, EInvalidTickSize);
-    assert!(tick_size % constants::oracle_tick_size_unit!() == 0, EInvalidTickSize);
-    assert!(min_strike > 0, EInvalidStrikeGrid);
-    assert!(min_strike % tick_size == 0, EInvalidStrikeGrid);
-}
-
-/// Return the fixed strike-grid upper bound.
-fun max_strike_for_grid(min_strike: u64, tick_size: u64): u64 {
-    min_strike + tick_size * constants::oracle_strike_grid_ticks!()
-}
-
 /// Construct registry and admin cap during package init or tests.
 fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
     (
         Registry {
             id: object::new(ctx),
             pyth_source_ids: table::new(ctx),
+            expiry_market_ids: table::new(ctx),
         },
         AdminCap {
             id: object::new(ctx),
@@ -336,7 +329,7 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
 /// Initialize registry and admin cap for tests, returning the registry ID.
 public fun init_for_testing(ctx: &mut TxContext): ID {
     let (registry, admin_cap) = new_registry_and_admin_cap(ctx);
-    let registry_id = object::id(&registry);
+    let registry_id = registry.id();
     protocol_config::create_and_share(ctx);
     transfer::share_object(registry);
     transfer::transfer(admin_cap, ctx.sender());

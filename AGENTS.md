@@ -81,10 +81,11 @@ These are the most important rule files to consult based on the code you touch:
   - Split config into two classes: admin-tunable values and upgrade-required values.
   - Admin-tunable values live in config structs and are updated only through admin-gated entrypoints.
   - Upgrade-required values stay as constants/macros and do not get config structs, setters, bounds, or admin flows.
-  - Each admin-tunable value should have a stored field plus package-only `default_*`, `min_*`, `max_*`, and `assert_*` helpers in `config_constants.move`.
-  - For admin-tunable values, `config_constants.move` is only for config construction and config update validation. App-layer protocol logic must not read admin-tunable defaults, min bounds, or max bounds directly; it should read the current value from the relevant config object.
+  - Each admin-tunable value should have a stored field plus package-only `default_*` and `assert_*` helpers in `config_constants.move`.
+  - For admin-tunable values, `config_constants.move` is only for config construction and config update validation. App-layer protocol logic must not read admin-tunable defaults directly; it should read the current value from the relevant config object.
+  - `min_*` and `max_*` bounds in `config_constants.move` are upgrade-required constants colocated with defaults for readability. They define the admin-tunable validation envelope and may also be read directly by runtime logic when intentionally serving as an upgrade-required hard cap or floor. Do not add config fields or getters for these bounds.
   - Upgrade-required values are read directly from constants/macros by the app logic that needs them. Do not hide upgrade-only constants behind config struct getters.
-  - For admin-tunable values, constants define the allowed envelope and initialization default, while config structs hold the current protocol value. Runtime logic should treat config fields as plain numbers and should not know which constants produced or bounded them.
+  - For admin-tunable values, defaults seed initial config state while config structs hold the current protocol value. Runtime logic should treat config fields as plain numbers and should not read the defaults that produced them.
   - Each `assert_*` helper should use a specific error code for that config value.
   - Defaults are applied in the module that creates the config/object.
   - Global template config can be snapshotted into per-object state at creation; existing objects should only change through an explicit admin path if one is intentionally added.
@@ -102,7 +103,42 @@ These are the most important rule files to consult based on the code you touch:
   - Functions that create and share a shared object should be named `create_and_share`.
   - Pyth Lazer feed IDs should use `u32` consistently across Predict.
   - Avoid created events unless there is a concrete indexer or off-chain discovery requirement.
+  - Do not call `object::id(&obj)` or `object::id(obj)` at use sites when the object's module can expose an ID getter. Prefer receiver syntax such as `market.id()`, `vault.id()`, or a type-specific getter like `cap.cap_id()`.
   - Raw key constructors that take arbitrary object IDs should stay package-only; expose public constructors through the object that anchors the key, using immutable references when possible.
+  - Prefer native/framework helpers with receiver syntax when available and readable, especially for standard containers such as `Option`, `Table`, and `vector`. For example, use `opt.borrow()`, `opt.borrow_mut()`, `opt.extract()`, and `table.borrow_mut(key)` instead of module-style calls when the receiver is clear.
+  - Prefer receiver syntax when a Move function's first parameter is the owning type and the caller has a named local/reference. Name accessors and helpers naturally so receiver syntax works directly, e.g. `fun sigma(params: &SVIParams)` so callers use `params.sigma()`.
+  - Do not add `public use fun ... as Type.method` aliases inside Predict just to make a prefixed function name look like a method. Rename the function or local variable instead. Reserve method aliases for framework/external functions or intentional compatibility.
+  - Do not rename an existing public API just to improve receiver syntax or local style. Keep the old public function as a compatibility wrapper, or make the API break an explicit migration decision.
+  - Keep module syntax for constructors, stateless service functions such as pricing, math/framework helpers, and complex receiver expressions where method syntax is less readable.
+- Predict validation rules:
+  - Every assertion must have one clear owner: the module/function whose contract depends on that fact. Do not assert facts only because a later callee might abort; Move transactions are atomic.
+  - Public flow functions own flow gates: protocol pause/valuation locks, admin or cap authorization, and user permission when the flow itself is permissioned.
+  - The module composing multiple objects owns cross-object binding checks. For example, `ExpiryMarket` validates that a market, oracle, Pyth source, and range key belong together because it composes those objects for trading.
+  - If a flow needs to assert a fact derived from another module's private state, the state-owning module should expose a package-level factual assertion or query. The flow module decides when the fact is required, but should not reconstruct it from public getters unless the state owner intentionally exposes only that raw value.
+  - Callees own local operation preconditions. For example, `StrikeMatrix` owns raw range/grid checks, `Pricing` owns live pricing/freshness/ask bounds, `PredictManager` owns balance and position availability, and `FeeReserve` owns fee split/accounting semantics.
+  - State-mutating functions own their postconditions and invariants immediately after the state transition that creates them. Split invariants if only part is meaningful at a point in the flow; avoid broad helpers that re-check unrelated facts.
+  - Before a function mutates state owned by one module, it must first validate the mutation-independent facts that function owns: flow gates, authorization, object binding, branch policy, lifecycle policy, static creation inputs, and other facts that decide whether this function is allowed to start the state transition.
+  - Do not preflight another module's local leaf preconditions just to avoid a later abort. Preflight another module's fact only when this function must know that fact before it mutates a different state owner; keep that preflight narrow and exposed by the state-owning module.
+  - If a quote, liability, or accounting value intentionally depends on post-mutation state, the mutation-before-calculation sequence is allowed only when the mutation-independent flow facts have already been checked and the post-state dependency is obvious from the code or a short comment.
+  - Creation flows must validate known static creation inputs before mutating pool allocation, balance, registry, or newly shared object state.
+  - Compaction or destructive state transitions must prove the liability/solvency facts they depend on before committing replacement state or moving balances. If the liability can only be computed by consuming dense state, compute it once, then validate before applying cash/accounting deltas.
+  - Keep assertion helpers private by default. Use `public(package)` only for real cross-module business preconditions, object binding checks, or package-level APIs that other modules must call directly.
+  - Do not expose `public(package)` preflight helpers just because a leaf mutation has an internal guard. Leaf primitives should keep their own guards, and callers should rely on them.
+  - `public(package) assert_can_*` helpers are only for cross-module business preconditions that the caller must know before sequencing multiple objects. Do not expose another module's internal arithmetic, counter, balance-overflow, or storage-capacity invariants as package API.
+  - Avoid defensive duplicates. If the caller and callee both check the same fact, either remove the caller check or document why failing before a different object is mutated is a real business requirement.
+  - Do not add explicit overflow asserts around primitive arithmetic. Move arithmetic and numeric casts already abort on overflow; only keep assertions for semantic domain bounds, solvency, authorization, lifecycle, or gas-bounded iteration.
+  - `ProtocolConfig` owns global gates such as trading pause and valuation lock. Flow modules decide which gates apply to each flow.
+  - `MarketOracle` owns lifecycle facts such as active, pending settlement, settled, and Pyth-source binding.
+  - `Pricing` owns price construction, live oracle freshness, live market status for pricing, and price-specific bounds.
+  - `ExpiryMarket` owns trade-flow validation and expiry-local invariants for mint, live redeem, settled redeem, compacted redeem, valuation, allocation, and compaction.
+  - `PoolVault.active_expiry_markets` tracks only expiries that still contribute active pool valuation/risk. Compaction must unregister the expiry from the active index.
+  - Pool-coordinated compaction is required when compaction returns LP cash to `PoolVault`, unregisters an active expiry, or updates `PoolVault.total_allocated_capital`; do not expose a separate public expiry-only compaction path that can strand free capital.
+  - `allocated_capital` is active risk budget only. After compaction it should be `0`, and `PoolVault.total_allocated_capital` should be reduced by the expiry's full pre-compaction allocation.
+  - After compaction, an expiry market should be payout escrow: dense strike state removed, LP-owned cash reduced to the current settled liability, and no free LP cash left inside the expiry. Protocol and insurance fee reserves remain reserved for their configured recipients unless ownership is explicitly redesigned.
+  - Dynamic allocation resize is live-market-only. Settled, pending-settlement, or compacted markets should not grow or shrink; settled cleanup should happen through compaction.
+  - Inline one-off, obvious assertions. Use private helpers for repeated local facts or nontrivial checks. Use flow validation helpers only when they remove real duplication or clarify a complex branch.
+  - Trading pause blocks new risk creation, but exits, settlement cleanup, and valuation should only be blocked by the valuation lock unless the protocol intentionally changes pause semantics.
+  - When adding or materially changing a public Predict flow, add at least one production-valid success test and focused failure tests for its main gates, state transitions, and accounting effects.
 
 ## Code Review Norms
 

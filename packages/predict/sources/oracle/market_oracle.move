@@ -20,7 +20,7 @@ use deepbook_predict::{
 use sui::{clock::Clock, event, vec_set::{Self, VecSet}};
 
 const EInvalidMarketOracleCap: u64 = 0;
-const EMarketExpired: u64 = 1;
+const EMarketNotActive: u64 = 1;
 const EMarketSettled: u64 = 2;
 const EInvalidBasisBounds: u64 = 3;
 const ESpotDeviationTooLarge: u64 = 4;
@@ -34,6 +34,8 @@ const EWrongPythSource: u64 = 11;
 const EFuturePriceSourceUpdate: u64 = 12;
 const EFutureSVISourceUpdate: u64 = 13;
 const EPendingSettlement: u64 = 14;
+const EMarketNotSettled: u64 = 15;
+const EInvalidSettlementTimestamp: u64 = 16;
 
 const STATUS_ACTIVE: u8 = 1;
 const STATUS_PENDING_SETTLEMENT: u8 = 2;
@@ -129,6 +131,10 @@ public fun id(market: &MarketOracle): ID {
     market.id.to_inner()
 }
 
+public fun cap_id(cap: &MarketOracleCap): ID {
+    cap.id.to_inner()
+}
+
 public fun pyth_source_id(market: &MarketOracle): ID {
     market.pyth_source_id
 }
@@ -143,8 +149,9 @@ public fun is_settled(market: &MarketOracle): bool {
 
 /// Return the raw terminal settlement price field.
 ///
-/// App execution should prefer `pricing::settlement_price`, which also enforces
-/// settlement timestamp invariants before exposing the value.
+/// Package execution should prefer `settlement_price`, which also enforces
+/// settlement timestamp invariants. External callers can use
+/// `pricing::settlement_price`.
 public fun raw_settlement_price(market: &MarketOracle): Option<u64> {
     market.settlement_price
 }
@@ -199,24 +206,24 @@ public fun block_scholes_svi(market: &MarketOracle): SVIParams {
     market.block_scholes_svi
 }
 
-public fun svi_a(svi: &SVIParams): u64 {
-    svi.a
+public fun a(params: &SVIParams): u64 {
+    params.a
 }
 
-public fun svi_b(svi: &SVIParams): u64 {
-    svi.b
+public fun b(params: &SVIParams): u64 {
+    params.b
 }
 
-public fun svi_rho(svi: &SVIParams): i64::I64 {
-    svi.rho
+public fun rho(params: &SVIParams): i64::I64 {
+    params.rho
 }
 
-public fun svi_m(svi: &SVIParams): i64::I64 {
-    svi.m
+public fun m(params: &SVIParams): i64::I64 {
+    params.m
 }
 
-public fun svi_sigma(svi: &SVIParams): u64 {
-    svi.sigma
+public fun sigma(params: &SVIParams): u64 {
+    params.sigma
 }
 
 public fun block_scholes_svi_source_timestamp_ms(market: &MarketOracle): u64 {
@@ -290,7 +297,7 @@ public fun update_svi(
 ) {
     market.assert_authorized_cap(cap);
     config.assert_not_valuation_in_progress();
-    assert!(market.status(clock) == STATUS_ACTIVE, EMarketExpired);
+    market.assert_active(clock);
     assert!(
         source_timestamp_ms > market.block_scholes_svi_source_timestamp_ms,
         EStaleSVISourceUpdate,
@@ -302,12 +309,12 @@ public fun update_svi(
     market.block_scholes_svi_update_timestamp_ms = update_timestamp_ms;
 
     event::emit(BlockScholesSVIUpdated {
-        market_oracle_id: market.id.to_inner(),
-        a: svi_a(&svi),
-        b: svi_b(&svi),
-        rho: svi_rho(&svi),
-        m: svi_m(&svi),
-        sigma: svi_sigma(&svi),
+        market_oracle_id: market.id(),
+        a: svi.a(),
+        b: svi.b(),
+        rho: svi.rho(),
+        m: svi.m(),
+        sigma: svi.sigma(),
         source_timestamp_ms,
         update_timestamp_ms,
     });
@@ -321,7 +328,7 @@ public fun set_settlement_freshness_ms(
 ) {
     market.assert_authorized_cap(cap);
     config.assert_not_valuation_in_progress();
-    validate_freshness_ms(value);
+    config_constants::assert_settlement_freshness_ms(value);
     market.settlement_freshness_ms = value;
     market.emit_bounds_updated();
 }
@@ -363,8 +370,10 @@ public(package) fun block_scholes_svi_freshness_timestamp_ms(market: &MarketOrac
     market.block_scholes_svi_source_timestamp_ms.min(market.block_scholes_svi_update_timestamp_ms)
 }
 
-public(package) fun settlement_price_and_source_timestamp_ms(market: &MarketOracle): (u64, u64) {
-    (market.settlement_price.destroy_some(), market.settlement_source_timestamp_ms)
+public(package) fun settlement_price(market: &MarketOracle): u64 {
+    market.assert_settled();
+    assert!(market.settlement_source_timestamp_ms > market.expiry, EInvalidSettlementTimestamp);
+    market.settlement_price.destroy_some()
 }
 
 public(package) fun create_cap(ctx: &mut TxContext): MarketOracleCap {
@@ -383,13 +392,11 @@ public(package) fun create_and_share(
     expiry: u64,
     ctx: &mut TxContext,
 ): ID {
-    let uid = object::new(ctx);
-    let market_oracle_id = uid.to_inner();
-    let cap_id = cap.id.to_inner();
+    let cap_id = cap.cap_id();
     let mut authorized_cap_ids = vec_set::empty();
     authorized_cap_ids.insert(cap_id);
     let market = MarketOracle {
-        id: uid,
+        id: object::new(ctx),
         authorized_cap_ids,
         pyth_source_id: pyth.id(),
         expiry,
@@ -417,12 +424,13 @@ public(package) fun create_and_share(
         settlement_update_timestamp_ms: 0,
     };
 
+    let market_oracle_id = market.id();
     transfer::share_object(market);
     market_oracle_id
 }
 
 public(package) fun register_cap(market: &mut MarketOracle, cap: &MarketOracleCap) {
-    let cap_id = cap.id.to_inner();
+    let cap_id = cap.cap_id();
     assert!(!market.authorized_cap_ids.contains(&cap_id), EInvalidMarketOracleCap);
     market.authorized_cap_ids.insert(cap_id);
 }
@@ -433,15 +441,15 @@ public(package) fun unregister_cap(market: &mut MarketOracle, cap_id: ID) {
 }
 
 public(package) fun self_unregister_cap(market: &mut MarketOracle, cap: &MarketOracleCap) {
-    market.unregister_cap(cap.id.to_inner());
-}
-
-public(package) fun assert_authorized_cap(market: &MarketOracle, cap: &MarketOracleCap) {
-    assert!(market.authorized_cap_ids.contains(&cap.id.to_inner()), EInvalidMarketOracleCap);
+    market.unregister_cap(cap.cap_id());
 }
 
 public(package) fun assert_pyth_source(market: &MarketOracle, pyth: &PythSource) {
     assert!(market.pyth_source_id == pyth.id(), EWrongPythSource);
+}
+
+public(package) fun assert_active(market: &MarketOracle, clock: &Clock) {
+    assert!(market.status(clock) == STATUS_ACTIVE, EMarketNotActive);
 }
 
 public(package) fun assert_not_pending_settlement(market: &MarketOracle, clock: &Clock) {
@@ -449,6 +457,14 @@ public(package) fun assert_not_pending_settlement(market: &MarketOracle, clock: 
 }
 
 // === Private Functions ===
+
+fun assert_authorized_cap(market: &MarketOracle, cap: &MarketOracleCap) {
+    assert!(market.authorized_cap_ids.contains(&cap.cap_id()), EInvalidMarketOracleCap);
+}
+
+fun assert_settled(market: &MarketOracle) {
+    assert!(market.is_settled(), EMarketNotSettled);
+}
 
 fun apply_block_scholes_prices(
     market: &mut MarketOracle,
@@ -465,7 +481,7 @@ fun apply_block_scholes_prices(
     market.block_scholes_price_update_timestamp_ms = update_timestamp_ms;
 
     event::emit(BlockScholesPricesUpdated {
-        market_oracle_id: market.id.to_inner(),
+        market_oracle_id: market.id(),
         spot,
         forward,
         basis,
@@ -509,7 +525,7 @@ fun valid_settlement_spot_source(
 ): Option<u8> {
     let now = clock.timestamp_ms();
     let pyth_source_timestamp_ms = pyth.source_timestamp_ms();
-    let pyth_timestamp = pyth_source_timestamp_ms.min(pyth.update_timestamp_ms());
+    let pyth_timestamp = pyth.freshness_timestamp_ms();
     let block_scholes_source_timestamp_ms = market.block_scholes_price_source_timestamp_ms;
     let block_scholes_update_timestamp_ms = market.block_scholes_price_update_timestamp_ms;
     let block_scholes_timestamp = block_scholes_source_timestamp_ms.min(
@@ -576,7 +592,7 @@ fun settle(
     market.settlement_update_timestamp_ms = update_timestamp_ms;
 
     event::emit(MarketOracleSettled {
-        market_oracle_id: market.id.to_inner(),
+        market_oracle_id: market.id(),
         expiry: market.expiry,
         settlement_price,
         spot_source,
@@ -611,10 +627,6 @@ fun validate_basis_push(market: &MarketOracle, new_spot: u64, new_basis: u64) {
     };
 }
 
-fun validate_freshness_ms(value: u64) {
-    config_constants::assert_settlement_freshness_ms(value);
-}
-
 fun validate_basis_bounds_inputs(
     max_spot_deviation: u64,
     max_basis_deviation: u64,
@@ -636,7 +648,7 @@ fun within_deviation(prev: u64, next: u64, max_deviation: u64): bool {
 
 fun emit_bounds_updated(market: &MarketOracle) {
     event::emit(MarketOracleBoundsUpdated {
-        market_oracle_id: market.id.to_inner(),
+        market_oracle_id: market.id(),
         settlement_freshness_ms: market.settlement_freshness_ms,
         max_spot_deviation: market.max_spot_deviation,
         max_basis_deviation: market.max_basis_deviation,
@@ -658,7 +670,7 @@ public(package) fun create_test_market_oracle(
     pyth_uid.delete();
 
     let mut authorized_cap_ids = vec_set::empty();
-    authorized_cap_ids.insert(cap.id.to_inner());
+    authorized_cap_ids.insert(cap.cap_id());
 
     MarketOracle {
         id: object::new(ctx),

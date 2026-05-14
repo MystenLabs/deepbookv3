@@ -29,6 +29,8 @@ benchmarked.
   and compaction marker.
 - `PoolVault` owns idle DUSDC, the PLP treasury cap, total allocated capital,
   and the active expiry index.
+- Market creation is permissionless, but the registry permits only one market
+  per expiry.
 - No expiry stores cached MTM. Expiry valuation is a pure read over the current
   strike matrix and oracle state.
 - LP supply/withdraw uses a direct full pool valuation in the same transaction
@@ -291,6 +293,7 @@ Public resize functions can:
 
 - increase allocation when expiry utilization reaches the high watermark;
 - decrease allocation when expiry utilization drops to the low watermark;
+- execute only while the paired market oracle is live;
 - never increase above `config_constants::max_allocation`;
 - never remove more than expiry free capacity or available LP-owned cash;
 - never violate the global pool allocation cap.
@@ -316,17 +319,31 @@ Definitions:
 
 ### Settlement Cleanup And Compaction
 
-Keep the existing compaction model for now. It remains a semantic flow, not just
-optional storage maintenance.
+Compaction is a PoolVault-coordinated semantic flow, not just optional storage
+maintenance. The public compaction entrypoint lives on `PoolVault` because it
+updates pool allocation accounting and moves surplus LP-owned cash back into
+pool idle balance.
 
-When compaction is wired into `ExpiryMarket`, it should also perform settled
-cleanup:
+Compaction:
 
-- compute or preserve remaining settled liability;
-- return free allocated capital to `PoolVault`;
-- sweep expiry-local protocol/insurance fees to the pool-level accounting path;
-- leave the compacted expiry with the capital needed for settled redemptions;
-- keep the compacted redeem path supported.
+- computes the exact remaining settled payout liability;
+- removes the dense strike matrix;
+- returns every surplus LP-owned DUSDC above remaining liability to `PoolVault`;
+- reduces `PoolVault.total_allocated_capital` by the expiry's full
+  pre-compaction allocation;
+- unregisters the expiry from `PoolVault.active_expiry_markets`;
+- sets the expiry's `allocated_capital` to zero because compacted markets are
+  payout escrow, not active risk allocation;
+- leaves the compacted expiry with LP cash equal to the current settled
+  liability;
+- keeps protocol and insurance fee reserves inside the expiry fee reserve unless
+  a separate recipient-claim path is added;
+- keeps the compacted redeem path supported.
+
+After compaction, the expiry is payout escrow and no longer participates in full
+pool valuation. It should hold no active allocation, free LP capital, or
+LP-earned fees beyond the DUSDC required to satisfy remaining settled
+redemptions.
 
 Valuation behavior by state:
 
@@ -355,6 +372,7 @@ Completed:
   `PoolVault` idle DUSDC into the new `ExpiryMarket`;
 - `PoolVault` tracks total allocated capital and enforces the global allocation
   cap during expiry creation;
+- `Registry` prevents creating multiple markets for the same expiry;
 - valuation hot potato skeleton added with transaction-local expiry valuations,
   copied active expiry IDs, and direct pool-value consumption by LP flows;
 - `ProtocolConfig` valuation lock added to prevent same-PTB value mutations
@@ -362,18 +380,23 @@ Completed:
 - dynamic capital resize skeleton added with permissionless grow/shrink entry
   points on `PoolVault` and package-only cash movement helpers on
   `ExpiryMarket`;
+- dynamic allocation resize is live-market-only;
+- `ExpiryMarket` mint/redeem trade paths added with expiry-local pricing,
+  position updates, cash movement, fee accrual, and solvency checks;
+- `ExpiryMarket` redeem routes live, settled, and compacted paths through one
+  public entry, with live redeem owner-gated and post-settlement redeems
+  permissionless by default;
+- `PoolVault`-coordinated compaction reduces dense matrix state into scalar
+  remaining liability, returns surplus LP cash to pool idle capital, removes the
+  full active allocation, and unregisters the expiry from active pool valuation;
 - `StrikeMatrix` no longer stores cached MTM;
 - `StrikeMatrix` updates `max_payout` on range changes and exposes pure live and
   settled valuation reads.
 
 Not yet implemented:
 
-- `ExpiryMarket::mint`;
-- `ExpiryMarket::redeem`;
-- settled redeem and compaction wiring in `ExpiryMarket`;
 - full-pool inline valuation for LP supply/withdraw;
 - PLP mint/burn math;
-- settlement cleanup through compaction;
 - updated benchmark/simulation path for the new architecture.
 
 ## Implementation Sequence
@@ -408,7 +431,7 @@ Not yet implemented:
 
 6. Wire settlement cleanup through compaction.
    - Return free allocated capital and available cash.
-   - Sweep expiry-local protocol/insurance fees.
+   - Leave protocol and insurance fee reserves for their configured recipients.
    - Keep compacted redemption behavior.
 
 7. Rebuild simulations/benchmarks around the parallel architecture.

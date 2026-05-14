@@ -28,6 +28,11 @@ public struct ProtocolConfig has key {
 
 // === Public Functions ===
 
+/// Return the protocol config object ID.
+public fun id(config: &ProtocolConfig): ID {
+    config.id.to_inner()
+}
+
 /// Return whether trading is currently paused.
 public fun trading_paused(config: &ProtocolConfig): bool {
     config.trading_paused
@@ -61,11 +66,6 @@ public(package) fun assert_trading_allowed(config: &ProtocolConfig) {
     config.assert_not_valuation_in_progress();
 }
 
-/// Abort unless trading is not paused.
-public(package) fun assert_not_trading_paused(config: &ProtocolConfig) {
-    assert!(!config.trading_paused, ETradingPaused);
-}
-
 /// Abort unless a valuation lock is currently active.
 public(package) fun assert_valuation_in_progress(config: &ProtocolConfig) {
     assert!(config.valuation_in_progress, EValuationNotInProgress);
@@ -74,6 +74,11 @@ public(package) fun assert_valuation_in_progress(config: &ProtocolConfig) {
 /// Abort unless no valuation lock is currently active.
 public(package) fun assert_not_valuation_in_progress(config: &ProtocolConfig) {
     assert!(!config.valuation_in_progress, EValuationInProgress);
+}
+
+/// Abort unless trading is not paused.
+fun assert_not_trading_paused(config: &ProtocolConfig) {
+    assert!(!config.trading_paused, ETradingPaused);
 }
 
 /// Create and share the protocol-wide configuration object.
@@ -87,7 +92,7 @@ public(package) fun create_and_share(ctx: &mut TxContext): ID {
         trading_paused: false,
         valuation_in_progress: false,
     };
-    let id = object::id(&config);
+    let id = config.id();
     transfer::share_object(config);
     id
 }

@@ -12,6 +12,8 @@ use deepbook_predict::fee_config::FeeConfig;
 use dusdc::dusdc::DUSDC;
 use sui::{balance::{Self, Balance}, event};
 
+const EInvalidFeeSplit: u64 = 2;
+
 /// Emitted whenever a charged trade accrues an official fee split.
 public struct FeeAccrued has copy, drop, store {
     owner_id: ID,
@@ -109,11 +111,16 @@ public(package) fun accrue_fee(
     let total_fee = fee.value();
     if (total_fee == 0) return fee;
 
-    let (lp_balance, protocol_balance, insurance_balance) = reserve.split_fee(fee);
+    let (lp_fee, protocol_fee, insurance_fee) = reserve.split_fee_amounts(total_fee);
+    let (lp_balance, protocol_balance, insurance_balance) = split_fee(
+        fee,
+        protocol_fee,
+        insurance_fee,
+    );
     reserve.record_fee_accrual(
         protocol_balance,
         insurance_balance,
-        lp_balance.value(),
+        lp_fee,
         total_fee,
         owner_id,
     );
@@ -126,16 +133,23 @@ public(package) fun accrue_fee(
 /// Split a full fee balance into `(lp_fee, protocol_fee, insurance_fee)`.
 /// Protocol and insurance shares round down; dust remains in the LP balance.
 fun split_fee(
-    reserve: &FeeReserve,
     fee: Balance<DUSDC>,
+    protocol_fee: u64,
+    insurance_fee: u64,
 ): (Balance<DUSDC>, Balance<DUSDC>, Balance<DUSDC>) {
     let mut lp_balance = fee;
-    let protocol_fee = math::mul(lp_balance.value(), reserve.protocol_fee_share);
-    let insurance_fee = math::mul(lp_balance.value(), reserve.insurance_fee_share);
     let protocol_balance = lp_balance.split(protocol_fee);
     let insurance_balance = lp_balance.split(insurance_fee);
 
     (lp_balance, protocol_balance, insurance_balance)
+}
+
+fun split_fee_amounts(reserve: &FeeReserve, total_fee: u64): (u64, u64, u64) {
+    let protocol_fee = math::mul(total_fee, reserve.protocol_fee_share);
+    let insurance_fee = math::mul(total_fee, reserve.insurance_fee_share);
+    let non_lp_fee = protocol_fee + insurance_fee;
+    assert!(non_lp_fee <= total_fee, EInvalidFeeSplit);
+    (total_fee - non_lp_fee, protocol_fee, insurance_fee)
 }
 
 fun record_fee_accrual(

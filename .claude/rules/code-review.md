@@ -17,6 +17,7 @@ Accumulated from real PR review feedback. Update this file when reviewers catch 
 
 - Test names must match what the test actually verifies. If a test checks `oracle_ids` is empty, don't name it `init_registry_has_no_predict_id`.
 - Error constant names must cover all cases they guard against. `EExceedsMaxSpread` is wrong if it also rejects zero — use a neutral name like `EInvalidSpread`.
+- Receiver-syntax cleanup is not a reason to rename existing public APIs. Keep compatibility wrappers or make the API break explicit.
 
 ## Module Boundaries
 

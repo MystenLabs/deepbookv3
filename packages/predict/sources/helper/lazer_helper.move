@@ -19,14 +19,12 @@ use pyth_lazer::{
 const ELazerFeedNotFound: u64 = 0;
 const ELazerPriceUnavailable: u64 = 1;
 const ELazerNegativePrice: u64 = 2;
-const ELazerPriceOverflow: u64 = 3;
 
 // === Public Functions ===
 
 /// Decode `feed_id`'s spot out of a verified Lazer `Update`. Returns
 /// `(spot_1e9, lazer_published_at_us)`. Aborts if the feed is missing,
-/// the price/exponent is unavailable, the price is negative, or the
-/// normalized price would overflow `u64`.
+/// the price/exponent is unavailable, or the price is negative.
 public fun extract_spot(update: &LazerUpdate, feed_id: u32): (u64, u64) {
     let lazer_published_at_us = update.timestamp();
     let feeds = update.feeds_ref();
@@ -72,20 +70,16 @@ fun normalize_pyth_price(price: LazerI64, exponent: LazerI16): u64 {
 
     if (exp_is_neg) {
         if (exp_mag <= target) {
-            checked_scale_up(magnitude, target - exp_mag)
+            scale_up(magnitude, target - exp_mag)
         } else {
             magnitude / predict_math::pow10(exp_mag - target)
         }
     } else {
-        checked_scale_up(magnitude, target + exp_mag)
+        scale_up(magnitude, target + exp_mag)
     }
 }
 
-/// Multiply `magnitude * 10^shift`, aborting with `ELazerPriceOverflow` if
-/// the result would exceed `u64::MAX` instead of letting the VM raise an
-/// unnamed arithmetic abort.
-fun checked_scale_up(magnitude: u64, shift: u64): u64 {
+fun scale_up(magnitude: u64, shift: u64): u64 {
     let factor = predict_math::pow10(shift);
-    assert!(magnitude == 0 || magnitude <= std::u64::max_value!() / factor, ELazerPriceOverflow);
     magnitude * factor
 }

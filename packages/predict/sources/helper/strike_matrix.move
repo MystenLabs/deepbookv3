@@ -66,6 +66,7 @@ const PAGE_SLOTS: u64 = 512;
 
 const EInvalidTickSize: u64 = 0;
 const EInvalidStrikeRange: u64 = 1;
+const EZeroQuantity: u64 = 6;
 const EUnalignedStrike: u64 = 5;
 const EInsufficientQuantity: u64 = 2;
 const ENonMonotoneCurve: u64 = 3;
@@ -335,6 +336,8 @@ fun compute_max_payout(matrix: &StrikeMatrix): u64 {
 /// exclusive and the upper endpoint is inclusive, so live valuation uses
 /// `UP@strike` prices: starts add value and ends subtract it.
 fun apply_range(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64, add: bool) {
+    matrix.assert_can_apply_range(lower, higher, qty, add);
+
     if (lower == constants::neg_inf!()) {
         apply_exact_delta(&mut matrix.base_qty, qty, add);
     } else {
@@ -346,6 +349,40 @@ fun apply_range(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64, ad
     };
 
     matrix.max_payout = matrix.compute_max_payout();
+}
+
+fun assert_can_apply_range(matrix: &StrikeMatrix, lower: u64, higher: u64, qty: u64, add: bool) {
+    assert!(lower < higher, EInvalidStrikeRange);
+    assert!(
+        !(lower == constants::neg_inf!() && higher == constants::pos_inf!()),
+        EInvalidStrikeRange,
+    );
+    assert!(qty > 0, EZeroQuantity);
+
+    if (lower == constants::neg_inf!()) {
+        if (!add) assert!(matrix.base_qty >= qty, EInsufficientQuantity);
+    } else {
+        matrix.assert_boundary_update_allowed(lower, qty, true, add);
+    };
+
+    if (higher != constants::pos_inf!()) {
+        matrix.assert_boundary_update_allowed(higher, qty, false, add);
+    };
+}
+
+fun assert_boundary_update_allowed(
+    matrix: &StrikeMatrix,
+    strike: u64,
+    qty: u64,
+    is_start: bool,
+    add: bool,
+) {
+    let (page_index, slot) = matrix.strike_to_coords(strike);
+    if (!add) {
+        let page = &matrix.pages[page_index];
+        let available = if (is_start) { page[slot].q_start } else { page[slot].q_end };
+        assert!(available >= qty, EInsufficientQuantity);
+    };
 }
 
 /// Apply one finite boundary delta, refresh the touched page summary, then

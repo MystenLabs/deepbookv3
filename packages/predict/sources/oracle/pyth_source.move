@@ -53,7 +53,7 @@ public fun update_from_lazer(
     source.source_timestamp_ms = source_timestamp_ms;
     source.update_timestamp_ms = update_timestamp_ms;
     event::emit(PythSourceUpdated {
-        pyth_source_id: source.id.to_inner(),
+        pyth_source_id: source.id(),
         feed_id: source.feed_id,
         spot,
         source_timestamp_ms,
@@ -88,6 +88,11 @@ public fun update_timestamp_ms(source: &PythSource): u64 {
 
 // === Public-Package Functions ===
 
+/// Return the timestamp that pricing can use for freshness checks.
+public(package) fun freshness_timestamp_ms(source: &PythSource): u64 {
+    source.source_timestamp_ms.min(source.update_timestamp_ms)
+}
+
 /// Create and share a Pyth source bound to a Lazer feed id.
 public(package) fun create_and_share(feed_id: u32, ctx: &mut TxContext): ID {
     let source = PythSource {
@@ -97,7 +102,7 @@ public(package) fun create_and_share(feed_id: u32, ctx: &mut TxContext): ID {
         source_timestamp_ms: 0,
         update_timestamp_ms: 0,
     };
-    let id = source.id.to_inner();
+    let id = source.id();
     transfer::share_object(source);
     id
 }

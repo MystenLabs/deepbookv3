@@ -25,7 +25,7 @@ fun admin_can_create_multiple_market_oracle_caps() {
     let cap_1 = registry::create_market_oracle_cap(&admin_cap, ctx);
     let cap_2 = registry::create_market_oracle_cap(&admin_cap, ctx);
 
-    assert!(object::id(&cap_1) != object::id(&cap_2));
+    assert!(cap_1.cap_id() != cap_2.cap_id());
     registry::destroy_market_oracle_cap(cap_1);
     registry::destroy_market_oracle_cap(cap_2);
     destroy(admin_cap);
@@ -79,7 +79,7 @@ fun unregistered_cap_loses_market_oracle_access() {
 
     registry::register_market_oracle_cap(&mut market, &admin_cap, &cap_2);
     write_svi(&mut market, &config, &cap_2, FIRST_SVI_SOURCE_TIMESTAMP_MS, &clock);
-    registry::unregister_market_oracle_cap(&mut market, &admin_cap, object::id(&cap_2));
+    registry::unregister_market_oracle_cap(&mut market, &admin_cap, cap_2.cap_id());
     write_svi(&mut market, &config, &cap_2, SECOND_SVI_SOURCE_TIMESTAMP_MS, &clock);
     abort 999
 }
