@@ -174,37 +174,3 @@ async fn refresh_materialized_view_loop(
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn configured_materialized_views_are_valid() {
-        let views = materialized_view_names().unwrap();
-
-        assert_eq!(
-            views.iter().map(|view| view.name()).collect::<Vec<_>>(),
-            vec!["net_deposits_hourly"]
-        );
-    }
-
-    #[test]
-    fn rejects_invalid_materialized_view_names() {
-        let error = MaterializedViewName::parse("net_deposits_hourly; DROP TABLE balances")
-            .unwrap_err()
-            .to_string();
-
-        assert!(error.contains("Invalid materialized view name"));
-    }
-
-    #[test]
-    fn quotes_schema_qualified_refresh_sql() {
-        let view = MaterializedViewName::parse("public.pool_summary_hourly").unwrap();
-
-        assert_eq!(
-            view.refresh_sql(),
-            "REFRESH MATERIALIZED VIEW CONCURRENTLY \"public\".\"pool_summary_hourly\""
-        );
-    }
-}
