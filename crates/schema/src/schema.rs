@@ -965,6 +965,14 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    materialized_view_refresh_watermarks (view_name) {
+        view_name -> Text,
+        timestamp_ms_hi_inclusive -> Int8,
+        updated_at -> Timestamp,
+    }
+}
+
 diesel::allow_tables_to_appear_in_same_query!(
     asset_supplied,
     asset_withdrawn,
@@ -990,6 +998,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     loan_repaid,
     maintainer_cap_updated,
     maintainer_fees_withdrawn,
+    materialized_view_refresh_watermarks,
     margin_manager_created,
     margin_manager_state,
     margin_pool_config_updated,

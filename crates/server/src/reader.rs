@@ -1315,29 +1315,44 @@ impl Reader {
             net_amount: i64,
         }
 
-        // Query: sum all hourly deltas up to the hour boundary, then add partial hour from balances
+        // Query: use refreshed MV buckets only before the published refresh watermark, then scan
+        // raw balances from that cutoff to the requested timestamp for exact readonly results.
         let res = diesel::sql_query(
             r#"
-            WITH hourly_totals AS (
-                SELECT asset, SUM(net_amount_delta) AS net_amount
-                FROM net_deposits_hourly
-                WHERE hour_bucket_ms < $1
-                  AND asset = ANY($2)
-                GROUP BY asset
+            WITH refresh_watermark AS (
+                SELECT LEAST(
+                    $1,
+                    COALESCE((
+                        SELECT timestamp_ms_hi_inclusive
+                        FROM materialized_view_refresh_watermarks
+                        WHERE view_name = 'net_deposits_hourly'
+                    ), 0)
+                ) AS cutoff_ms
             ),
-            partial_hour AS (
-                SELECT asset, SUM(CASE WHEN deposit THEN amount ELSE -amount END) AS net_amount
-                FROM balances
-                WHERE checkpoint_timestamp_ms >= $1
-                  AND checkpoint_timestamp_ms < $3
-                  AND asset = ANY($2)
-                GROUP BY asset
+            hourly_totals AS (
+                SELECT ndh.asset, SUM(ndh.net_amount_delta) AS net_amount
+                FROM net_deposits_hourly ndh
+                CROSS JOIN refresh_watermark rw
+                WHERE ndh.hour_bucket_ms < rw.cutoff_ms
+                  AND ndh.asset = ANY($2)
+                GROUP BY ndh.asset
+            ),
+            raw_totals AS (
+                SELECT
+                    b.asset,
+                    SUM(CASE WHEN b.deposit THEN b.amount ELSE -b.amount END) AS net_amount
+                FROM balances b
+                CROSS JOIN refresh_watermark rw
+                WHERE b.checkpoint_timestamp_ms >= rw.cutoff_ms
+                  AND b.checkpoint_timestamp_ms < $3
+                  AND b.asset = ANY($2)
+                GROUP BY b.asset
             )
             SELECT
                 COALESCE(h.asset, p.asset) AS asset,
                 (COALESCE(h.net_amount, 0) + COALESCE(p.net_amount, 0))::bigint AS net_amount
             FROM hourly_totals h
-            FULL OUTER JOIN partial_hour p ON h.asset = p.asset
+            FULL OUTER JOIN raw_totals p ON h.asset = p.asset
             "#,
         )
         .bind::<BigInt, _>(hour_bucket_ms)

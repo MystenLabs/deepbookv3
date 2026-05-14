@@ -1,4 +1,7 @@
 use anyhow::{bail, Context};
+use diesel::sql_types::{BigInt, Text};
+use diesel::OptionalExtension;
+use diesel::QueryableByName;
 use diesel_async::RunQueryDsl;
 use prometheus::{register_int_counter_vec_with_registry, IntCounterVec, Registry};
 use std::sync::Arc;
@@ -7,7 +10,19 @@ use sui_futures::service::Service;
 use sui_pg_db::Db;
 use tokio::time::{interval, MissedTickBehavior};
 
-const MATERIALIZED_VIEWS_TO_REFRESH: &[&str] = &["net_deposits_hourly"];
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct MaterializedViewRefreshConfig {
+    view_name: &'static str,
+    source_pipeline: &'static str,
+    bucket_ms: i64,
+}
+
+const MATERIALIZED_VIEWS_TO_REFRESH: &[MaterializedViewRefreshConfig] =
+    &[MaterializedViewRefreshConfig {
+        view_name: "net_deposits_hourly",
+        source_pipeline: "balances",
+        bucket_ms: 3_600_000,
+    }];
 
 #[derive(Clone)]
 pub struct MaterializedViewRefreshMetrics {
@@ -30,15 +45,20 @@ impl MaterializedViewRefreshMetrics {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct MaterializedViewName {
+    config: MaterializedViewRefreshConfig,
     name: String,
     quoted_name: String,
 }
 
 impl MaterializedViewName {
-    fn parse(raw_name: &str) -> anyhow::Result<Self> {
-        let name = raw_name.trim();
+    fn parse(config: MaterializedViewRefreshConfig) -> anyhow::Result<Self> {
+        let name = config.view_name.trim();
         if name.is_empty() {
             bail!("Invalid materialized view name: view name cannot be empty");
+        }
+
+        if config.bucket_ms <= 0 {
+            bail!("Invalid materialized view bucket for `{name}`");
         }
 
         let mut quoted_parts = Vec::new();
@@ -50,6 +70,7 @@ impl MaterializedViewName {
         }
 
         Ok(Self {
+            config,
             name: name.to_string(),
             quoted_name: quoted_parts.join("."),
         })
@@ -64,6 +85,14 @@ impl MaterializedViewName {
             "REFRESH MATERIALIZED VIEW CONCURRENTLY {}",
             self.quoted_name
         )
+    }
+
+    fn source_pipeline(&self) -> &str {
+        self.config.source_pipeline
+    }
+
+    fn refresh_watermark_ms(&self, source_watermark_ms: i64) -> i64 {
+        (source_watermark_ms / self.config.bucket_ms) * self.config.bucket_ms
     }
 }
 
@@ -91,8 +120,15 @@ fn materialized_view_refresh_interval(refresh_interval_secs: u64) -> Option<Dura
 fn materialized_view_names() -> anyhow::Result<Vec<MaterializedViewName>> {
     MATERIALIZED_VIEWS_TO_REFRESH
         .iter()
-        .map(|view| MaterializedViewName::parse(view))
+        .copied()
+        .map(MaterializedViewName::parse)
         .collect()
+}
+
+#[derive(QueryableByName)]
+struct SourceWatermark {
+    #[diesel(sql_type = BigInt)]
+    timestamp_ms_hi_inclusive: i64,
 }
 
 async fn refresh_materialized_view_once(
@@ -104,10 +140,69 @@ async fn refresh_materialized_view_once(
         .await
         .with_context(|| format!("Failed to connect to database for {} refresh", view.name()))?;
 
-    diesel::sql_query(view.refresh_sql())
+    let source_watermark = diesel::sql_query(
+        r#"
+        SELECT timestamp_ms_hi_inclusive
+        FROM watermarks
+        WHERE pipeline = $1
+        "#,
+    )
+    .bind::<Text, _>(view.source_pipeline())
+    .get_result::<SourceWatermark>(&mut conn)
+    .await
+    .optional()
+    .with_context(|| {
+        format!(
+            "Failed to fetch {} source watermark for {} refresh",
+            view.source_pipeline(),
+            view.name()
+        )
+    })?
+    .with_context(|| {
+        format!(
+            "Missing {} source watermark for {} refresh",
+            view.source_pipeline(),
+            view.name()
+        )
+    })?;
+
+    let refresh_watermark_ms =
+        view.refresh_watermark_ms(source_watermark.timestamp_ms_hi_inclusive);
+
+    let refreshed_rows = diesel::sql_query(view.refresh_sql())
         .execute(&mut conn)
         .await
-        .with_context(|| format!("Failed to refresh {} materialized view", view.name()))
+        .with_context(|| format!("Failed to refresh {} materialized view", view.name()))?;
+
+    diesel::sql_query(
+        r#"
+        INSERT INTO materialized_view_refresh_watermarks (
+            view_name,
+            timestamp_ms_hi_inclusive,
+            updated_at
+        )
+        VALUES ($1, $2, NOW())
+        ON CONFLICT (view_name) DO UPDATE SET
+            timestamp_ms_hi_inclusive = GREATEST(
+                materialized_view_refresh_watermarks.timestamp_ms_hi_inclusive,
+                EXCLUDED.timestamp_ms_hi_inclusive
+            ),
+            updated_at = NOW()
+        "#,
+    )
+    .bind::<Text, _>(view.name())
+    .bind::<BigInt, _>(refresh_watermark_ms)
+    .execute(&mut conn)
+    .await
+    .with_context(|| format!("Failed to publish {} refresh watermark", view.name()))?;
+
+    tracing::debug!(
+        view = view.name(),
+        refresh_watermark_ms,
+        "Published materialized view refresh watermark"
+    );
+
+    Ok(refreshed_rows)
 }
 
 pub fn materialized_view_refresh_service(
