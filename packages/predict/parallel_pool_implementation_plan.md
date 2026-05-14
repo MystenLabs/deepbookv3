@@ -234,6 +234,20 @@ computed pool value, and clears the valuation lock. There is no second finalized
 valuation witness and no standalone successful finalization step. Stored latest
 values are not an authoritative reusable price.
 
+Share math is conservative and rounds in favor of the pool:
+
+- first supply requires `pool_value == 0` and `total_supply == 0`, then mints
+  `payment_amount` PLP;
+- later supply mints
+  `payment_amount * total_supply / pool_value`, rounded down;
+- withdraw pays `plp_amount * pool_value / total_supply`, rounded down;
+- zero payment, zero PLP input, zero minted shares, and zero withdrawal output
+  abort;
+- non-initial supply also aborts if pool value is zero;
+- withdrawal pays only from `PoolVault` idle DUSDC. It does not pull capital
+  back from active expiry markets;
+- withdrawal must preserve the global allocation cap after idle cash leaves.
+
 The pool value includes:
 
 - pool idle DUSDC;
@@ -389,64 +403,34 @@ Completed:
 - `PoolVault`-coordinated compaction reduces dense matrix state into scalar
   remaining liability, returns surplus LP cash to pool idle capital, removes the
   full active allocation, and unregisters the expiry from active pool valuation;
+- `PoolVault` supply/withdraw consumes the full-pool valuation hot potato and
+  applies conservative PLP mint/burn share math;
 - `StrikeMatrix` no longer stores cached MTM;
 - `StrikeMatrix` updates `max_payout` on range changes and exposes pure live and
   settled valuation reads.
 
 Not yet implemented:
 
-- full-pool inline valuation for LP supply/withdraw;
-- PLP mint/burn math;
 - updated benchmark/simulation path for the new architecture.
 
-## Implementation Sequence
+## Remaining Implementation Sequence
 
-1. Add capital allocation skeletons.
-   - `PoolVault` package function to allocate idle DUSDC into a new expiry.
-   - `allocated_capital` as a u64 risk budget, separate from LP-owned cash.
-   - Total allocated capital on `PoolVault`.
-   - `RiskConfig.expiry_allocation` as the admin-changeable value used for new
-     expiry creation.
+1. Rebuild simulations/benchmarks around the parallel architecture.
 
-2. Add the valuation hot-potato skeleton.
-   - `PoolVault::start_valuation`.
-   - `ExpiryMarket::read_valuation`.
-   - `PoolVault::add_expiry_valuation`.
-   - `PoolVault::consume_valuation` private helper used by LP flows.
+2. Add focused production-valid tests for public Predict flows once the API shape
+   settles:
+   - allocation cannot exceed idle pool capital;
+   - deallocation cannot exceed expiry free capacity or available LP-owned cash;
+   - mint cannot push max payout above allocated capital;
+   - resize clamps to max allocation and global allocation cap;
+   - resize clamps shrink to current expiry allocation and max payout;
+   - LP supply/withdraw requires a full active-expiry valuation;
+   - LP withdraw cannot violate the global allocation cap;
+   - compaction cleanup cannot strand remaining payout liability.
 
-3. Rewire mint/redeem into `ExpiryMarket`.
-   - Move range insertion/removal, pricing, fees, manager settlement, and
-     max-payout solvency checks into the expiry-local trade path.
-   - Use expiry utilization for trade fee inputs.
-
-4. Add direct full-pool LP valuation.
-   - Compute pool value from idle capital plus all active expiry values.
-   - Keep valuation transaction-local.
-   - Do not let `PoolVault` stored latest value authorize LP operations.
-
-5. Implement LP supply/withdraw.
-   - Supply mints PLP against full current pool value.
-   - Withdraw burns PLP against full current pool value.
-   - Enforce global allocation cap and idle withdrawal buffer.
-
-6. Wire settlement cleanup through compaction.
-   - Return free allocated capital and available cash.
-   - Leave protocol and insurance fee reserves for their configured recipients.
-   - Keep compacted redemption behavior.
-
-7. Rebuild simulations/benchmarks around the parallel architecture.
-
-8. Revisit `StrikeMatrix` only after benchmarking the functional parallel path.
+3. Revisit `StrikeMatrix` only after benchmarking the functional parallel path.
 
 ## Verification Plan
 
 - Run `sui move build --path packages/predict`.
 - Run `sui move test --path packages/predict --gas-limit 100000000000`.
-- Add focused tests as each skeleton gains behavior:
-  - allocation cannot exceed idle pool capital;
-  - deallocation cannot exceed expiry free capacity or available LP-owned cash;
-  - mint cannot push max payout above allocated capital;
-  - resize clamps to max allocation and global allocation cap;
-  - resize clamps shrink to current expiry allocation and max payout;
-  - LP supply/withdraw requires a full active-expiry valuation;
-  - compaction cleanup cannot strand remaining payout liability.

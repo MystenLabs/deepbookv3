@@ -12,6 +12,7 @@ use deepbook::math;
 use deepbook_predict::{
     config_constants,
     expiry_market::{Self, ExpiryMarket, ExpiryValuation},
+    math as predict_math,
     market_oracle::MarketOracle,
     protocol_config::ProtocolConfig,
     risk_config::RiskConfig
@@ -21,7 +22,6 @@ use sui::{balance::{Self, Balance}, clock::Clock, coin::{Self, Coin, TreasuryCap
 
 const EExpiryMarketAlreadyActive: u64 = 0;
 const EExpiryMarketNotActive: u64 = 1;
-const ENotImplemented: u64 = 2;
 const EInsufficientIdleBalance: u64 = 3;
 const EMaxTotalExposureExceeded: u64 = 4;
 const EWrongPoolVault: u64 = 6;
@@ -32,6 +32,11 @@ const EGrowUtilizationBelowThreshold: u64 = 12;
 const EShrinkUtilizationAboveThreshold: u64 = 13;
 const ENoAllocationResize: u64 = 14;
 const EInsufficientTotalAllocatedCapital: u64 = 15;
+const EZeroSupply: u64 = 16;
+const EZeroWithdraw: u64 = 17;
+const EInvalidInitialSupply: u64 = 18;
+const EZeroShares: u64 = 19;
+const EZeroPoolValue: u64 = 20;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -186,13 +191,25 @@ public fun supply(
     config: &mut ProtocolConfig,
     valuation: PoolValuation,
     payment: Coin<DUSDC>,
-    _clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<PLP> {
-    assert!(false, ENotImplemented);
-    vault.consume_valuation(config, valuation);
+    let pool_value = vault.consume_valuation(config, valuation);
+    let payment_amount = payment.value();
+    assert!(payment_amount > 0, EZeroSupply);
+
+    let total_supply = vault.treasury_cap.total_supply();
+    let shares = if (total_supply == 0) {
+        assert!(pool_value == 0, EInvalidInitialSupply);
+        payment_amount
+    } else {
+        assert!(pool_value > 0, EZeroPoolValue);
+        let shares = predict_math::mul_div_round_down(payment_amount, total_supply, pool_value);
+        assert!(shares > 0, EZeroShares);
+        shares
+    };
+
     vault.idle_balance.join(payment.into_balance());
-    coin::mint(&mut vault.treasury_cap, 0, ctx)
+    coin::mint(&mut vault.treasury_cap, shares, ctx)
 }
 
 /// Withdraw DUSDC from the pool vault by burning PLP shares.
@@ -201,13 +218,27 @@ public fun withdraw(
     config: &mut ProtocolConfig,
     valuation: PoolValuation,
     lp_coin: Coin<PLP>,
-    _clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<DUSDC> {
-    assert!(false, ENotImplemented);
-    vault.consume_valuation(config, valuation);
+    let pool_value = vault.consume_valuation(config, valuation);
+    let lp_amount = lp_coin.value();
+    assert!(lp_amount > 0, EZeroWithdraw);
+
+    let total_supply = vault.treasury_cap.total_supply();
+    let withdraw_amount = predict_math::mul_div_round_down(lp_amount, pool_value, total_supply);
+    assert!(withdraw_amount > 0, EZeroWithdraw);
+    let idle_balance = vault.idle_balance.value();
+    assert!(idle_balance >= withdraw_amount, EInsufficientIdleBalance);
+    let pool_capital_after_withdraw =
+        idle_balance - withdraw_amount + vault.total_allocated_capital;
+    let max_allocated = math::mul(
+        pool_capital_after_withdraw,
+        config.risk_config().max_total_exposure_pct(),
+    );
+    assert!(vault.total_allocated_capital <= max_allocated, EMaxTotalExposureExceeded);
+
     vault.treasury_cap.burn(lp_coin);
-    balance::zero<DUSDC>().into_coin(ctx)
+    vault.idle_balance.split(withdraw_amount).into_coin(ctx)
 }
 
 // === Public-Package Functions ===
