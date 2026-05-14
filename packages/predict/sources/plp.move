@@ -12,7 +12,7 @@ module deepbook_predict::plp;
 use deepbook::math;
 use deepbook_predict::{
     config_constants,
-    expiry_market::{Self, ExpiryMarket, ExpiryValuation},
+    expiry_market::{ExpiryMarket, ExpiryValuation},
     market_oracle::MarketOracle,
     math as predict_math,
     protocol_config::ProtocolConfig,
@@ -145,7 +145,7 @@ public fun start_valuation(vault: &PoolVault, config: &mut ProtocolConfig): Pool
 /// Aborts if the witness is not for the snapshotted active set or if the same
 /// expiry is added twice.
 public fun add_expiry_valuation(valuation: &mut PoolValuation, expiry_valuation: ExpiryValuation) {
-    let (expiry_market_id, expiry_value) = expiry_market::unpack_valuation(expiry_valuation);
+    let (expiry_market_id, expiry_value) = expiry_valuation.unpack();
     assert!(valuation.expected_expiry_markets.contains(&expiry_market_id), EExpiryMarketNotActive);
     assert!(
         !valuation.valued_expiry_markets.contains(&expiry_market_id),

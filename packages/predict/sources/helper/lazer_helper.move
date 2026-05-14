@@ -10,11 +10,7 @@
 module deepbook_predict::lazer_helper;
 
 use deepbook_predict::{constants, math as predict_math};
-use pyth_lazer::{
-    i16::{Self as lazer_i16, I16 as LazerI16},
-    i64::{Self as lazer_i64, I64 as LazerI64},
-    update::Update as LazerUpdate
-};
+use pyth_lazer::{i16::I16 as LazerI16, i64::I64 as LazerI64, update::Update as LazerUpdate};
 
 const ELazerFeedNotFound: u64 = 0;
 const ELazerPriceUnavailable: u64 = 1;
@@ -56,14 +52,14 @@ public fun extract_spot(update: &LazerUpdate, feed_id: u32): (u64, u64) {
 /// are enforced inside `predict_math::pow10` (real feeds use exponents in
 /// [-12, -4], so shifts stay well within u64).
 fun normalize_pyth_price(price: LazerI64, exponent: LazerI16): u64 {
-    assert!(!lazer_i64::get_is_negative(&price), ELazerNegativePrice);
-    let magnitude = lazer_i64::get_magnitude_if_positive(&price);
+    assert!(!price.get_is_negative(), ELazerNegativePrice);
+    let magnitude = price.get_magnitude_if_positive();
 
-    let exp_is_neg = lazer_i16::get_is_negative(&exponent);
+    let exp_is_neg = exponent.get_is_negative();
     let exp_mag = if (exp_is_neg) {
-        lazer_i16::get_magnitude_if_negative(&exponent) as u64
+        exponent.get_magnitude_if_negative() as u64
     } else {
-        lazer_i16::get_magnitude_if_positive(&exponent) as u64
+        exponent.get_magnitude_if_positive() as u64
     };
 
     let target = constants::float_scaling_decimals!();

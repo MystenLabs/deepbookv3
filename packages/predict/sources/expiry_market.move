@@ -290,7 +290,7 @@ public(package) fun return_allocation(market: &mut ExpiryMarket, amount: u64): B
 }
 
 /// Consume an expiry valuation and return its market ID and value.
-public(package) fun unpack_valuation(valuation: ExpiryValuation): (ID, u64) {
+public(package) fun unpack(valuation: ExpiryValuation): (ID, u64) {
     let ExpiryValuation {
         expiry_market_id,
         value,
@@ -331,7 +331,7 @@ public(package) fun compact_settled(
     assert!(market.allocated_capital >= settled_liability, EAllocationBelowMaxPayout);
 
     let matrix = market.strike_matrix.extract();
-    let compacted_liability = strike_matrix::into_settled_liability(matrix, settlement);
+    let compacted_liability = matrix.into_settled_liability(settlement);
     assert!(compacted_liability == settled_liability, ECompactedLiabilityMismatch);
     let returned_cash_amount = market.lp_cash_balance.value() - settled_liability;
     let returned_cash = market.lp_cash_balance.split(returned_cash_amount);
