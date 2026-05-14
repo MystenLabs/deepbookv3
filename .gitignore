@@ -26,6 +26,7 @@ __pycache__/
 
 # Predict simulation local artifacts
 packages/predict/simulations/runs/
+packages/predict/parallel_pool_implementation_plan.md
 
 # Research
 predict_research/
