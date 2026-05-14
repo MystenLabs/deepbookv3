@@ -116,9 +116,6 @@ struct Args {
     /// Materialized view refresh interval in seconds. Set to 0 to disable.
     #[clap(env, long, default_value_t = 30)]
     materialized_view_refresh_interval_secs: u64,
-    /// Comma-separated materialized views to refresh. Each view must support concurrent refreshes.
-    #[clap(env, long, default_value = "net_deposits_hourly")]
-    materialized_view_refresh_views: String,
     #[command(subcommand)]
     sandbox: Option<Command>,
 }
@@ -167,7 +164,6 @@ async fn main() -> Result<(), anyhow::Error> {
         env,
         packages,
         materialized_view_refresh_interval_secs,
-        materialized_view_refresh_views,
         sandbox,
     } = Args::parse();
 
@@ -462,7 +458,6 @@ async fn main() -> Result<(), anyhow::Error> {
             materialized_view_refresh_db,
             materialized_view_refresh_metrics,
             materialized_view_refresh_interval_secs,
-            &materialized_view_refresh_views,
         )?;
 
     let s_indexer = indexer.run().await?;

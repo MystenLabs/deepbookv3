@@ -1,12 +1,13 @@
 use anyhow::{bail, Context};
 use diesel_async::RunQueryDsl;
 use prometheus::{register_int_counter_vec_with_registry, IntCounterVec, Registry};
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use sui_futures::service::Service;
 use sui_pg_db::Db;
 use tokio::time::{interval, MissedTickBehavior};
+
+const MATERIALIZED_VIEWS_TO_REFRESH: &[&str] = &["net_deposits_hourly"];
 
 #[derive(Clone)]
 pub struct MaterializedViewRefreshMetrics {
@@ -87,23 +88,11 @@ fn materialized_view_refresh_interval(refresh_interval_secs: u64) -> Option<Dura
     }
 }
 
-fn materialized_view_names_from_config(config: &str) -> anyhow::Result<Vec<MaterializedViewName>> {
-    let mut seen = HashSet::new();
-    let mut views = Vec::new();
-
-    for raw_view in config.split(',') {
-        let raw_view = raw_view.trim();
-        if raw_view.is_empty() {
-            continue;
-        }
-
-        let view = MaterializedViewName::parse(raw_view)?;
-        if seen.insert(view.name().to_string()) {
-            views.push(view);
-        }
-    }
-
-    Ok(views)
+fn materialized_view_names() -> anyhow::Result<Vec<MaterializedViewName>> {
+    MATERIALIZED_VIEWS_TO_REFRESH
+        .iter()
+        .map(|view| MaterializedViewName::parse(view))
+        .collect()
 }
 
 async fn refresh_materialized_view_once(
@@ -125,14 +114,13 @@ pub fn materialized_view_refresh_service(
     db: Db,
     metrics: Arc<MaterializedViewRefreshMetrics>,
     refresh_interval_secs: u64,
-    refresh_views: &str,
 ) -> anyhow::Result<Option<Service>> {
     let Some(refresh_interval) = materialized_view_refresh_interval(refresh_interval_secs) else {
         tracing::info!("materialized view refresh task disabled");
         return Ok(None);
     };
 
-    let views = materialized_view_names_from_config(refresh_views)?;
+    let views = materialized_view_names()?;
     if views.is_empty() {
         tracing::info!("materialized view refresh task disabled because no views were configured");
         return Ok(None);
@@ -192,15 +180,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_configured_materialized_views() {
-        let views = materialized_view_names_from_config(
-            "net_deposits_hourly, public.pool_summary_hourly,net_deposits_hourly",
-        )
-        .unwrap();
+    fn configured_materialized_views_are_valid() {
+        let views = materialized_view_names().unwrap();
 
         assert_eq!(
             views.iter().map(|view| view.name()).collect::<Vec<_>>(),
-            vec!["net_deposits_hourly", "public.pool_summary_hourly"]
+            vec!["net_deposits_hourly"]
         );
     }
 
