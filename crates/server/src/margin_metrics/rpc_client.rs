@@ -33,6 +33,8 @@ pub struct MarginPoolState {
     pub supply_cap: u64,
     pub interest_rate: u64,
     pub available_withdrawal: u64,
+    pub supply_share_price: u64,
+    pub borrow_share_price: u64,
 }
 
 pub struct MarginRpcClient {
@@ -96,6 +98,8 @@ impl MarginRpcClient {
             supply_cap: state.3,
             interest_rate: state.4,
             available_withdrawal: state.5,
+            supply_share_price: state.6,
+            borrow_share_price: state.7,
         })
     }
 
@@ -104,7 +108,7 @@ impl MarginRpcClient {
         pool_id: ObjectID,
         initial_shared_version: SequenceNumber,
         type_tag: &TypeTag,
-    ) -> Result<(u64, u64, u64, u64, u64, u64)> {
+    ) -> Result<(u64, u64, u64, u64, u64, u64, u64, u64)> {
         let mut ptb = ProgrammableTransactionBuilder::new();
 
         // Input 0: Pool object
@@ -177,8 +181,26 @@ impl MarginRpcClient {
             package: self.margin_package_id,
             module: MARGIN_POOL_MODULE.to_string(),
             function: "get_available_withdrawal".to_string(),
-            type_arguments: type_args,
+            type_arguments: type_args.clone(),
             arguments: vec![Argument::Input(0), Argument::Input(1)],
+        })));
+
+        // Command 6: supply_ratio<Asset>(pool)
+        ptb.command(Command::MoveCall(Box::new(ProgrammableMoveCall {
+            package: self.margin_package_id,
+            module: MARGIN_POOL_MODULE.to_string(),
+            function: "supply_ratio".to_string(),
+            type_arguments: type_args.clone(),
+            arguments: vec![Argument::Input(0)],
+        })));
+
+        // Command 7: borrow_ratio<Asset>(pool)
+        ptb.command(Command::MoveCall(Box::new(ProgrammableMoveCall {
+            package: self.margin_package_id,
+            module: MARGIN_POOL_MODULE.to_string(),
+            function: "borrow_ratio".to_string(),
+            type_arguments: type_args,
+            arguments: vec![Argument::Input(0)],
         })));
 
         let builder = ptb.finish();
@@ -201,6 +223,8 @@ impl MarginRpcClient {
         let supply_cap = self.extract_u64(&results, 3, "supply_cap")?;
         let interest_rate = self.extract_u64(&results, 4, "interest_rate")?;
         let available_withdrawal = self.extract_u64(&results, 5, "get_available_withdrawal")?;
+        let supply_share_price = self.extract_u64(&results, 6, "supply_ratio")?;
+        let borrow_share_price = self.extract_u64(&results, 7, "borrow_ratio")?;
 
         Ok((
             total_supply,
@@ -209,6 +233,8 @@ impl MarginRpcClient {
             supply_cap,
             interest_rate,
             available_withdrawal,
+            supply_share_price,
+            borrow_share_price,
         ))
     }
 
