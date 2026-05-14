@@ -1,1 +1,0 @@
-DROP TABLE IF EXISTS materialized_view_refresh_watermarks;

@@ -1315,26 +1315,28 @@ impl Reader {
             net_amount: i64,
         }
 
-        // Query: use refreshed MV buckets only before the published refresh watermark, then scan
-        // raw balances from that cutoff to the requested timestamp for exact readonly results.
+        // Query: use refreshed MV buckets before each asset's latest MV bucket, then scan raw
+        // balances from that bucket to the requested timestamp.
         let res = diesel::sql_query(
             r#"
-            WITH refresh_watermark AS (
-                SELECT LEAST(
-                    $1,
-                    COALESCE((
-                        SELECT timestamp_ms_hi_inclusive
-                        FROM materialized_view_refresh_watermarks
-                        WHERE view_name = 'net_deposits_hourly'
-                    ), 0)
-                ) AS cutoff_ms
+            WITH requested_assets AS (
+                SELECT UNNEST($2::text[]) AS asset
+            ),
+            asset_cutoffs AS (
+                SELECT
+                    requested_assets.asset,
+                    COALESCE(MAX(ndh.hour_bucket_ms), 0) AS cutoff_ms
+                FROM requested_assets
+                LEFT JOIN net_deposits_hourly ndh
+                    ON ndh.asset = requested_assets.asset
+                    AND ndh.hour_bucket_ms < $1
+                GROUP BY requested_assets.asset
             ),
             hourly_totals AS (
                 SELECT ndh.asset, SUM(ndh.net_amount_delta) AS net_amount
                 FROM net_deposits_hourly ndh
-                CROSS JOIN refresh_watermark rw
-                WHERE ndh.hour_bucket_ms < rw.cutoff_ms
-                  AND ndh.asset = ANY($2)
+                JOIN asset_cutoffs ac ON ac.asset = ndh.asset
+                WHERE ndh.hour_bucket_ms < ac.cutoff_ms
                 GROUP BY ndh.asset
             ),
             raw_totals AS (
@@ -1342,10 +1344,9 @@ impl Reader {
                     b.asset,
                     SUM(CASE WHEN b.deposit THEN b.amount ELSE -b.amount END) AS net_amount
                 FROM balances b
-                CROSS JOIN refresh_watermark rw
-                WHERE b.checkpoint_timestamp_ms >= rw.cutoff_ms
+                JOIN asset_cutoffs ac ON ac.asset = b.asset
+                WHERE b.checkpoint_timestamp_ms >= ac.cutoff_ms
                   AND b.checkpoint_timestamp_ms < $3
-                  AND b.asset = ANY($2)
                 GROUP BY b.asset
             )
             SELECT
