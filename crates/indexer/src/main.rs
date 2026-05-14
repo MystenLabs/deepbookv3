@@ -114,7 +114,7 @@ struct Args {
     #[clap(long, value_enum, default_values = ["deepbook", "deepbook-margin"])]
     packages: Vec<Package>,
     /// Materialized view refresh interval in seconds. Set to 0 to disable.
-    #[clap(env, long, default_value_t = 30)]
+    #[clap(env, long, default_value_t = 60)]
     materialized_view_refresh_interval_secs: u64,
     #[command(subcommand)]
     sandbox: Option<Command>,
