@@ -133,7 +133,11 @@ public(package) fun quote_mint_live_range(
         liability,
         balance,
     );
-    assert_mint_quote_allowed(config, fair_price, fee_rate);
+    let ask_price = fair_price + fee_rate;
+    assert!(
+        ask_price >= config.min_ask_price() && ask_price <= config.max_ask_price(),
+        EAskPriceOutOfBounds,
+    );
     (fair_price, fee_rate)
 }
 
@@ -153,15 +157,6 @@ public(package) fun settled_range_payout(settlement: u64, key: &RangeKey, quanti
         compute_settled_range_price(settlement, key.lower_strike(), key.higher_strike()),
         quantity,
     )
-}
-
-/// Abort unless the all-in mint price is inside the global ask bounds.
-fun assert_mint_quote_allowed(config: &PricingConfig, fair_price: u64, fee_rate: u64) {
-    let ask_price = fair_price + fee_rate;
-    assert!(
-        ask_price >= config.min_ask_price() && ask_price <= config.max_ask_price(),
-        EAskPriceOutOfBounds,
-    );
 }
 
 // === Private Functions ===

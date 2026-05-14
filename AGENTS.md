@@ -132,6 +132,7 @@ These are the most important rule files to consult based on the code you touch:
   - Do not add `public use fun ... as Type.method` aliases inside Predict just to make a prefixed function name look like a method. Rename the function or local variable instead. Reserve method aliases for framework/external functions or intentional compatibility.
   - Do not rename an existing public API just to improve receiver syntax or local style. Keep the old public function as a compatibility wrapper, or make the API break an explicit migration decision.
   - Keep module syntax for constructors, stateless service functions such as pricing, math/framework helpers, and complex receiver expressions where method syntax is less readable.
+  - Return tuples should be small and semantic. Across module boundaries, return only values the caller cannot already derive. Avoid wide positional tuples, especially 4+ items or repeated primitive types with domain meaning. If those values need to travel together, either reduce the return shape or use a named package-only summary struct. Private, tightly local algorithm helpers can use tuples when destructuring names make the meaning clear.
 - Predict validation rules:
   - Every assertion must have one clear owner: the module/function whose contract depends on that fact. Do not assert facts only because a later callee might abort; Move transactions are atomic.
   - Public flow functions own flow gates: protocol pause/valuation locks, admin or cap authorization, and user permission when the flow itself is permissioned.

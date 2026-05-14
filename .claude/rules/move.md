@@ -325,6 +325,13 @@ public fun mint(ctx: &mut TxContext): NFT { /* ... */ }
 entry fun mint_and_keep(ctx: &mut TxContext) { /* ... */ }
 ```
 
+### Keep Return Tuples Small and Semantic
+
+- Across module boundaries, return only values the caller cannot already derive.
+- Avoid wide positional tuples, especially 4+ items or repeated primitive types with domain meaning.
+- If several values need to travel together, either reduce the return shape or use a named package-only summary struct.
+- Private, tightly local algorithm helpers can use tuples when destructuring names make the meaning clear.
+
 ### Objects Go First (Except for Clock)
 
 ```move

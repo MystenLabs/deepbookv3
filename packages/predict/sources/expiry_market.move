@@ -408,7 +408,7 @@ fun mint_internal(
             key.higher_strike(),
             quantity,
         );
-    market.assert_capacity_backing();
+    assert!(market.allocated_capital >= market.max_payout(), EAllocationBelowMaxPayout);
 
     let (principal_amount, fee_amount) = market.quote_mint_amounts(
         config,
@@ -423,10 +423,8 @@ fun mint_internal(
     manager.increase_position(key, quantity);
     let mut payment = manager.withdraw(payment_amount, ctx).into_balance();
     let fee_payment = payment.split(fee_amount);
-    let (lp_fee, total_fee, lp_fee_amount, protocol_fee, insurance_fee) = market
-        .fee_reserve
-        .accrue_fee(fee_payment);
-    market.emit_fee_accrued(total_fee, lp_fee_amount, protocol_fee, insurance_fee);
+    let (lp_fee, protocol_fee, insurance_fee) = market.fee_reserve.accrue_fee(fee_payment);
+    market.emit_fee_accrued(fee_amount, lp_fee.value(), protocol_fee, insurance_fee);
     market.lp_cash_balance.join(payment);
     market.lp_cash_balance.join(lp_fee);
     market.assert_cash_backing();
@@ -476,10 +474,8 @@ fun redeem_live_internal(
     manager.decrease_position(key, quantity);
     let mut payout = market.dispense_lp_cash(principal_amount);
     let fee = payout.split(fee_amount);
-    let (lp_fee, total_fee, lp_fee_amount, protocol_fee, insurance_fee) = market
-        .fee_reserve
-        .accrue_fee(fee);
-    market.emit_fee_accrued(total_fee, lp_fee_amount, protocol_fee, insurance_fee);
+    let (lp_fee, protocol_fee, insurance_fee) = market.fee_reserve.accrue_fee(fee);
+    market.emit_fee_accrued(fee_amount, lp_fee.value(), protocol_fee, insurance_fee);
     market.lp_cash_balance.join(lp_fee);
     market.assert_cash_backing();
     manager.deposit(payout.into_coin(ctx), ctx);
@@ -618,10 +614,6 @@ fun emit_fee_accrued(
         protocol_fee,
         insurance_fee,
     });
-}
-
-fun assert_capacity_backing(market: &ExpiryMarket) {
-    assert!(market.allocated_capital >= market.max_payout(), EAllocationBelowMaxPayout);
 }
 
 fun assert_cash_backing(market: &ExpiryMarket) {

@@ -85,22 +85,21 @@ public(package) fun new(config: &FeeConfig): FeeReserve {
 
 /// Accrue a full fee balance, returning the LP-owned portion to the caller.
 /// Protocol and insurance shares are retained as concrete reserve balances.
+/// Returns `(lp_balance, protocol_fee, insurance_fee)`.
 public(package) fun accrue_fee(
     reserve: &mut FeeReserve,
     fee: Balance<DUSDC>,
-): (Balance<DUSDC>, u64, u64, u64, u64) {
+): (Balance<DUSDC>, u64, u64) {
     let total_fee = fee.value();
-    if (total_fee == 0) return (fee, 0, 0, 0, 0);
+    if (total_fee == 0) return (fee, 0, 0);
 
     let (lp_fee, protocol_fee, insurance_fee) = reserve.split_fee_amounts(total_fee);
-    let (lp_balance, protocol_balance, insurance_balance) = split_fee(
-        fee,
-        protocol_fee,
-        insurance_fee,
-    );
+    let mut lp_balance = fee;
+    let protocol_balance = lp_balance.split(protocol_fee);
+    let insurance_balance = lp_balance.split(insurance_fee);
     reserve.record_fee_accrual(protocol_balance, insurance_balance, lp_fee, total_fee);
 
-    (lp_balance, total_fee, lp_fee, protocol_fee, insurance_fee)
+    (lp_balance, protocol_fee, insurance_fee)
 }
 
 /// Extract concrete protocol and insurance fee balances for pool-level custody.
@@ -114,20 +113,6 @@ public(package) fun take_fee_balances(reserve: &mut FeeReserve): (Balance<DUSDC>
 }
 
 // === Private Functions ===
-
-/// Split a full fee balance into `(lp_fee, protocol_fee, insurance_fee)`.
-/// Protocol and insurance shares round down; dust remains in the LP balance.
-fun split_fee(
-    fee: Balance<DUSDC>,
-    protocol_fee: u64,
-    insurance_fee: u64,
-): (Balance<DUSDC>, Balance<DUSDC>, Balance<DUSDC>) {
-    let mut lp_balance = fee;
-    let protocol_balance = lp_balance.split(protocol_fee);
-    let insurance_balance = lp_balance.split(insurance_fee);
-
-    (lp_balance, protocol_balance, insurance_balance)
-}
 
 fun split_fee_amounts(reserve: &FeeReserve, total_fee: u64): (u64, u64, u64) {
     let protocol_fee = math::mul(total_fee, reserve.protocol_fee_share);

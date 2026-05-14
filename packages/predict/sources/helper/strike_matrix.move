@@ -405,19 +405,14 @@ fun apply_boundary_delta(
     recompute_page_tree_path(matrix, page_index);
 }
 
-/// Apply an unchecked add/remove quantity delta.
-fun apply_delta(value: &mut u64, qty: u64, add: bool) {
+/// Apply a quantity delta, aborting before underflow on removal.
+fun apply_exact_delta(value: &mut u64, qty: u64, add: bool) {
     if (add) {
         *value = *value + qty;
     } else {
+        assert!(*value >= qty, EInsufficientQuantity);
         *value = *value - qty;
     };
-}
-
-/// Apply a quantity delta, aborting before underflow on removal.
-fun apply_exact_delta(value: &mut u64, qty: u64, add: bool) {
-    if (!add) assert!(*value >= qty, EInsufficientQuantity);
-    apply_delta(value, qty, add);
 }
 
 /// Update one start/end boundary and rebuild the touched page in a single

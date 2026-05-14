@@ -422,7 +422,7 @@ public(package) fun block_scholes_svi_freshness_timestamp_ms(market: &MarketOrac
 
 /// Return terminal settlement price after enforcing settlement timestamp invariants.
 public(package) fun settlement_price(market: &MarketOracle): u64 {
-    market.assert_settled();
+    assert!(market.is_settled(), EMarketNotSettled);
     assert!(market.settlement_source_timestamp_ms > market.expiry, EInvalidSettlementTimestamp);
     market.settlement_price.destroy_some()
 }
@@ -518,10 +518,6 @@ public(package) fun assert_not_pending_settlement(market: &MarketOracle, clock: 
 
 fun assert_authorized_cap(market: &MarketOracle, cap: &MarketOracleCap) {
     assert!(market.authorized_cap_ids.contains(&cap.cap_id()), EInvalidMarketOracleCap);
-}
-
-fun assert_settled(market: &MarketOracle) {
-    assert!(market.is_settled(), EMarketNotSettled);
 }
 
 fun apply_block_scholes_prices(
