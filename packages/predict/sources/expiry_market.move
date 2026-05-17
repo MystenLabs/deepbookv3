@@ -52,6 +52,8 @@ public struct ExpiryMarket has key {
     /// Dense exposure state before compaction; none after compaction.
     strike_matrix: Option<StrikeMatrix>,
     fee_reserve: FeeReserve,
+    /// Settlement loss rebate rate snapshotted from fee config at creation.
+    settlement_loss_rebate_rate: u64,
     /// Settlement price retained after dense strike state is compacted.
     compacted_settlement: Option<u64>,
     /// Remaining settled redeem liability after compaction.
@@ -105,6 +107,11 @@ public fun allocated_capital(market: &ExpiryMarket): u64 {
 /// Return LP-owned DUSDC currently held by this expiry.
 public fun lp_cash_balance(market: &ExpiryMarket): u64 {
     market.lp_cash_balance.value()
+}
+
+/// Return the settlement loss rebate rate snapshotted for this expiry.
+public fun settlement_loss_rebate_rate(market: &ExpiryMarket): u64 {
+    market.settlement_loss_rebate_rate
 }
 
 /// Return the expiry-local worst-case payout.
@@ -262,6 +269,7 @@ public(package) fun create_and_share(
         lp_cash_balance: allocation,
         strike_matrix: option::some(strike_matrix::new(ctx, tick_size, min_strike, max_strike)),
         fee_reserve: fee_reserve::new(config.fee_config()),
+        settlement_loss_rebate_rate: config.fee_config().settlement_loss_rebate_rate(),
         compacted_settlement: option::none(),
         compacted_liability: 0,
     };

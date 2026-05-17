@@ -149,6 +149,14 @@ public(package) fun set_fee_shares(
     config.fee_config.set_fee_shares(lp_fee_share, protocol_fee_share, insurance_fee_share);
 }
 
+public(package) fun set_template_settlement_loss_rebate_rate(
+    config: &mut ProtocolConfig,
+    value: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.fee_config.set_settlement_loss_rebate_rate(value);
+}
+
 public(package) fun set_max_total_exposure_pct(config: &mut ProtocolConfig, pct: u64) {
     config.assert_not_valuation_in_progress();
     config.risk_config.set_max_total_exposure_pct(pct);
