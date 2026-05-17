@@ -3,13 +3,16 @@
 
 /// Fixed strike-grid exposure store for one oracle.
 ///
-/// This module serves two different queries:
+/// This module serves three different queries:
 /// 1. live valuation against a sampled price curve
 /// 2. exact worst-case settled payout (`max_payout`)
+/// 3. aggregate fee-basis valuation for settlement loss rebates
 ///
 /// Live valuation needs fast strike-range reads. For that, each page stores
 /// interval boundary aggregates so a segment can recover exact `qty` and
-/// `qty * strike` without scanning every strike in the range.
+/// `qty * strike` without scanning every strike in the range. Fee-basis
+/// aggregates mirror the quantity aggregates so option value and expected
+/// winning fees are computed in the same pass.
 ///
 /// Exact `max_payout` is a different problem. For a settlement boundary `s`:
 /// - interval starts at lower bounds `< s`
@@ -84,19 +87,28 @@ public struct StrikeMatrix has store {
     minted_min_strike: u64,
     minted_max_strike: u64,
     max_payout: u64,
-    /// Quantity active before the first finite strike, from `(-inf, higher]`
-    /// intervals.
+    /// Raw fees attached to active intervals before applying outcome/rebate rates.
+    total_fee_basis: u64,
+    /// Quantity and fee basis active before the first finite strike, from
+    /// `(-inf, higher]` intervals.
     base_qty: u64,
+    base_fee_basis: u64,
 }
 
-/// Exact per-strike inventory stored in dense page slots.
+/// Exact per-strike quantity and fee-basis inventory stored in dense page slots.
 public struct StrikeNode has copy, drop, store {
     q_start: u64,
     q_end: u64,
+    fee_start: u64,
+    fee_end: u64,
     agg_q_start: u64,
     agg_qk_start: u64,
     agg_q_end: u64,
     agg_qk_end: u64,
+    agg_fee_start: u64,
+    agg_feek_start: u64,
+    agg_fee_end: u64,
+    agg_feek_end: u64,
 }
 
 /// Aggregate summary for one page or one internal page-range node.
@@ -145,18 +157,32 @@ public(package) fun new(
         minted_min_strike: max_u64(),
         minted_max_strike: 0,
         max_payout: 0,
+        total_fee_basis: 0,
         base_qty: 0,
+        base_fee_basis: 0,
     }
 }
 
 /// Insert interval quantity for `(lower, higher]`.
-public(package) fun insert_range(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64) {
-    matrix.apply_range(lower, higher, qty, true);
+public(package) fun insert_range(
+    matrix: &mut StrikeMatrix,
+    lower: u64,
+    higher: u64,
+    qty: u64,
+    fee_basis: u64,
+) {
+    matrix.apply_range(lower, higher, qty, fee_basis, true);
 }
 
 /// Remove interval quantity for `(lower, higher]`.
-public(package) fun remove_range(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64) {
-    matrix.apply_range(lower, higher, qty, false);
+public(package) fun remove_range(
+    matrix: &mut StrikeMatrix,
+    lower: u64,
+    higher: u64,
+    qty: u64,
+    fee_basis: u64,
+) {
+    matrix.apply_range(lower, higher, qty, fee_basis, false);
 }
 
 /// Return the exact worst-case settled payout across all settlement prices.
@@ -164,14 +190,16 @@ public(package) fun max_payout(matrix: &StrikeMatrix): u64 {
     matrix.max_payout
 }
 
-/// Evaluate the current interval book against a sampled live curve.
-public(package) fun live_value(matrix: &StrikeMatrix, curve: &vector<CurvePoint>): u64 {
-    matrix.evaluate(curve)
+/// Evaluate live option value, expected winning fee basis, and total fee basis.
+public(package) fun live_values(matrix: &StrikeMatrix, curve: &vector<CurvePoint>): (u64, u64, u64) {
+    let (option_value, winning_fee_basis) = matrix.evaluate(curve);
+    (option_value, winning_fee_basis, matrix.total_fee_basis)
 }
 
-/// Evaluate exact settled liability for a concrete settlement price.
-public(package) fun settled_value(matrix: &StrikeMatrix, settlement: u64): u64 {
-    matrix.evaluate_settled(settlement)
+/// Evaluate settled liability, winning fee basis, and total fee basis.
+public(package) fun settled_values(matrix: &StrikeMatrix, settlement: u64): (u64, u64, u64) {
+    let (settled_liability, winning_fee_basis) = matrix.evaluate_settled(settlement);
+    (settled_liability, winning_fee_basis, matrix.total_fee_basis)
 }
 
 /// Return the strike grid this matrix was created with.
@@ -200,7 +228,9 @@ public(package) fun into_settled_liability(matrix: StrikeMatrix, settlement: u64
         minted_min_strike: _,
         minted_max_strike: _,
         max_payout: _,
+        total_fee_basis: _,
         base_qty,
+        base_fee_basis: _,
     } = matrix;
 
     let total_strikes = (max_strike - min_strike) / tick_size + 1;
@@ -233,9 +263,9 @@ public(package) fun into_settled_liability(matrix: StrikeMatrix, settlement: u64
 // === Private Functions ===
 
 /// Evaluate the current interval book against a sampled live curve.
-fun evaluate(matrix: &StrikeMatrix, curve: &vector<CurvePoint>): u64 {
+fun evaluate(matrix: &StrikeMatrix, curve: &vector<CurvePoint>): (u64, u64) {
     let len = curve.length();
-    if (len == 0) return 0;
+    if (len == 0) return (0, 0);
     assert!(
         curve[0].strike() <= matrix.minted_min_strike
         && curve[len - 1].strike() >= matrix.minted_max_strike,
@@ -243,11 +273,16 @@ fun evaluate(matrix: &StrikeMatrix, curve: &vector<CurvePoint>): u64 {
     );
 
     let mut value = math::mul(matrix.base_qty, constants::float_scaling!());
+    let mut winning_fee_basis = math::mul(matrix.base_fee_basis, constants::float_scaling!());
     let (mut page_lo, mut slot_lo) = matrix.strike_to_coords(curve[0].strike());
 
     let page = &matrix.pages[page_lo];
     value = value + math::mul(page[slot_lo].q_start, curve[0].up_price());
     value = value - math::mul(page[slot_lo].q_end, curve[0].up_price());
+    winning_fee_basis =
+        winning_fee_basis + math::mul(page[slot_lo].fee_start, curve[0].up_price());
+    winning_fee_basis =
+        winning_fee_basis - math::mul(page[slot_lo].fee_end, curve[0].up_price());
 
     let mut ci = 1;
     while (ci < len) {
@@ -261,7 +296,11 @@ fun evaluate(matrix: &StrikeMatrix, curve: &vector<CurvePoint>): u64 {
             qk_start_delta,
             q_end_delta,
             qk_end_delta,
-        ) = matrix.accumulate_segment_qty_qk(page_lo, slot_lo, page_hi, slot_hi);
+            fee_start_delta,
+            feek_start_delta,
+            fee_end_delta,
+            feek_end_delta,
+        ) = matrix.accumulate_segment_values(page_lo, slot_lo, page_hi, slot_hi);
 
         if (q_start_delta > 0) {
             assert!(ci_up_price_prev >= ci_up_price, ENonMonotoneCurve);
@@ -289,21 +328,48 @@ fun evaluate(matrix: &StrikeMatrix, curve: &vector<CurvePoint>): u64 {
             value = value - math::mul(q_end_delta, p_end_avg);
         };
 
+        if (fee_start_delta > 0) {
+            assert!(ci_up_price_prev >= ci_up_price, ENonMonotoneCurve);
+            let p_fee_avg = interpolate_price_at_avg_strike(
+                fee_start_delta,
+                feek_start_delta,
+                ci_strike_prev,
+                ci_strike,
+                ci_up_price_prev,
+                ci_up_price,
+            );
+            winning_fee_basis = winning_fee_basis + math::mul(fee_start_delta, p_fee_avg);
+        };
+
+        if (fee_end_delta > 0) {
+            assert!(ci_up_price_prev >= ci_up_price, ENonMonotoneCurve);
+            let p_fee_end_avg = interpolate_price_at_avg_strike(
+                fee_end_delta,
+                feek_end_delta,
+                ci_strike_prev,
+                ci_strike,
+                ci_up_price_prev,
+                ci_up_price,
+            );
+            winning_fee_basis = winning_fee_basis - math::mul(fee_end_delta, p_fee_end_avg);
+        };
+
         page_lo = page_hi;
         slot_lo = slot_hi;
         ci = ci + 1;
     };
 
-    value
+    (value, winning_fee_basis)
 }
 
 /// Evaluate exact settled liability for a concrete settlement price.
-fun evaluate_settled(matrix: &StrikeMatrix, settlement: u64): u64 {
-    if (matrix.minted_max_strike < matrix.minted_min_strike) return 0;
+fun evaluate_settled(matrix: &StrikeMatrix, settlement: u64): (u64, u64) {
+    if (matrix.minted_max_strike < matrix.minted_min_strike) return (0, 0);
 
     let (min_page, min_slot) = matrix.strike_to_coords(matrix.minted_min_strike);
     let (max_page, max_slot) = matrix.strike_to_coords(matrix.minted_max_strike);
     let mut value = matrix.base_qty;
+    let mut winning_fee_basis = matrix.base_fee_basis;
     let mut page_key = min_page;
     while (page_key <= max_page) {
         let page = &matrix.pages[page_key];
@@ -318,6 +384,8 @@ fun evaluate_settled(matrix: &StrikeMatrix, settlement: u64): u64 {
             let strike = matrix.strike_from_coords(page_key, slot);
             if (strike < settlement) {
                 value = value + page[slot].q_start - page[slot].q_end;
+                winning_fee_basis =
+                    winning_fee_basis + page[slot].fee_start - page[slot].fee_end;
             };
 
             slot = slot + 1;
@@ -326,7 +394,7 @@ fun evaluate_settled(matrix: &StrikeMatrix, settlement: u64): u64 {
         page_key = page_key + 1;
     };
 
-    value
+    (value, winning_fee_basis)
 }
 
 fun compute_max_payout(matrix: &StrikeMatrix): u64 {
@@ -337,38 +405,59 @@ fun compute_max_payout(matrix: &StrikeMatrix): u64 {
 /// Apply interval quantity as start/end boundary deltas. The lower endpoint is
 /// exclusive and the upper endpoint is inclusive, so live valuation uses
 /// `UP@strike` prices: starts add value and ends subtract it.
-fun apply_range(matrix: &mut StrikeMatrix, lower: u64, higher: u64, qty: u64, add: bool) {
-    matrix.assert_can_apply_range(lower, higher, qty, add);
+fun apply_range(
+    matrix: &mut StrikeMatrix,
+    lower: u64,
+    higher: u64,
+    qty: u64,
+    fee_basis: u64,
+    add: bool,
+) {
+    matrix.assert_can_apply_range(lower, higher, qty, fee_basis, add);
+
+    apply_exact_delta(&mut matrix.total_fee_basis, fee_basis, add);
 
     if (lower == constants::neg_inf!()) {
         apply_exact_delta(&mut matrix.base_qty, qty, add);
+        apply_exact_delta(&mut matrix.base_fee_basis, fee_basis, add);
     } else {
-        matrix.apply_boundary_delta(lower, qty, true, add);
+        matrix.apply_boundary_delta(lower, qty, fee_basis, true, add);
     };
 
     if (higher != constants::pos_inf!()) {
-        matrix.apply_boundary_delta(higher, qty, false, add);
+        matrix.apply_boundary_delta(higher, qty, fee_basis, false, add);
     };
 
     matrix.max_payout = matrix.compute_max_payout();
 }
 
-fun assert_can_apply_range(matrix: &StrikeMatrix, lower: u64, higher: u64, qty: u64, add: bool) {
+fun assert_can_apply_range(
+    matrix: &StrikeMatrix,
+    lower: u64,
+    higher: u64,
+    qty: u64,
+    fee_basis: u64,
+    add: bool,
+) {
     assert!(lower < higher, EInvalidStrikeRange);
     assert!(
         !(lower == constants::neg_inf!() && higher == constants::pos_inf!()),
         EInvalidStrikeRange,
     );
     assert!(qty > 0, EZeroQuantity);
+    if (!add) assert!(matrix.total_fee_basis >= fee_basis, EInsufficientQuantity);
 
     if (lower == constants::neg_inf!()) {
-        if (!add) assert!(matrix.base_qty >= qty, EInsufficientQuantity);
+        if (!add) {
+            assert!(matrix.base_qty >= qty, EInsufficientQuantity);
+            assert!(matrix.base_fee_basis >= fee_basis, EInsufficientQuantity);
+        };
     } else {
-        matrix.assert_boundary_update_allowed(lower, qty, true, add);
+        matrix.assert_boundary_update_allowed(lower, qty, fee_basis, true, add);
     };
 
     if (higher != constants::pos_inf!()) {
-        matrix.assert_boundary_update_allowed(higher, qty, false, add);
+        matrix.assert_boundary_update_allowed(higher, qty, fee_basis, false, add);
     };
 }
 
@@ -376,14 +465,21 @@ fun assert_boundary_update_allowed(
     matrix: &StrikeMatrix,
     strike: u64,
     qty: u64,
+    fee_basis: u64,
     is_start: bool,
     add: bool,
 ) {
     let (page_index, slot) = matrix.strike_to_coords(strike);
     if (!add) {
         let page = &matrix.pages[page_index];
-        let available = if (is_start) { page[slot].q_start } else { page[slot].q_end };
-        assert!(available >= qty, EInsufficientQuantity);
+        let available_qty = if (is_start) { page[slot].q_start } else { page[slot].q_end };
+        let available_fee_basis = if (is_start) {
+            page[slot].fee_start
+        } else {
+            page[slot].fee_end
+        };
+        assert!(available_qty >= qty, EInsufficientQuantity);
+        assert!(available_fee_basis >= fee_basis, EInsufficientQuantity);
     };
 }
 
@@ -393,11 +489,12 @@ fun apply_boundary_delta(
     matrix: &mut StrikeMatrix,
     strike: u64,
     qty: u64,
+    fee_basis: u64,
     is_start: bool,
     add: bool,
 ) {
     let (page_index, slot) = matrix.strike_to_coords(strike);
-    apply_delta_and_recompute_page(matrix, page_index, slot, qty, is_start, add);
+    apply_delta_and_recompute_page(matrix, page_index, slot, qty, fee_basis, is_start, add);
     if (add) {
         matrix.minted_min_strike = matrix.minted_min_strike.min(strike);
         matrix.minted_max_strike = matrix.minted_max_strike.max(strike);
@@ -405,13 +502,13 @@ fun apply_boundary_delta(
     recompute_page_tree_path(matrix, page_index);
 }
 
-/// Apply a quantity delta, aborting before underflow on removal.
-fun apply_exact_delta(value: &mut u64, qty: u64, add: bool) {
+/// Apply a delta, aborting before underflow on removal.
+fun apply_exact_delta(value: &mut u64, amount: u64, add: bool) {
     if (add) {
-        *value = *value + qty;
+        *value = *value + amount;
     } else {
-        assert!(*value >= qty, EInsufficientQuantity);
-        *value = *value - qty;
+        assert!(*value >= amount, EInsufficientQuantity);
+        *value = *value - amount;
     };
 }
 
@@ -422,6 +519,7 @@ fun apply_delta_and_recompute_page(
     page_index: u64,
     slot_index: u64,
     qty: u64,
+    fee_basis: u64,
     is_start: bool,
     add: bool,
 ) {
@@ -433,13 +531,19 @@ fun apply_delta_and_recompute_page(
     let mut prefix_end = 0;
     let mut prefix_qk_start = 0;
     let mut prefix_qk_end = 0;
+    let mut prefix_fee_start = 0;
+    let mut prefix_fee_end = 0;
+    let mut prefix_feek_start = 0;
+    let mut prefix_feek_end = 0;
 
     {
         let page = matrix.pages.borrow_mut(page_index);
         if (is_start) {
             apply_exact_delta(&mut page[slot_index].q_start, qty, add);
+            apply_exact_delta(&mut page[slot_index].fee_start, fee_basis, add);
         } else {
             apply_exact_delta(&mut page[slot_index].q_end, qty, add);
+            apply_exact_delta(&mut page[slot_index].fee_end, fee_basis, add);
         };
         let mut i = 0;
         while (i < PAGE_SLOTS) {
@@ -449,11 +553,19 @@ fun apply_delta_and_recompute_page(
             prefix_end = prefix_end + node.q_end;
             prefix_qk_start = prefix_qk_start + math::mul(node.q_start, strike);
             prefix_qk_end = prefix_qk_end + math::mul(node.q_end, strike);
+            prefix_fee_start = prefix_fee_start + node.fee_start;
+            prefix_fee_end = prefix_fee_end + node.fee_end;
+            prefix_feek_start = prefix_feek_start + math::mul(node.fee_start, strike);
+            prefix_feek_end = prefix_feek_end + math::mul(node.fee_end, strike);
 
             node.agg_q_start = prefix_start;
             node.agg_qk_start = prefix_qk_start;
             node.agg_q_end = prefix_end;
             node.agg_qk_end = prefix_qk_end;
+            node.agg_fee_start = prefix_fee_start;
+            node.agg_feek_start = prefix_feek_start;
+            node.agg_fee_end = prefix_fee_end;
+            node.agg_feek_end = prefix_feek_end;
 
             if (
                 prefix_is_better(
@@ -479,18 +591,22 @@ fun apply_delta_and_recompute_page(
 
 /// Recover exact `(qty, qty * strike)` start/end boundary totals for one
 /// live-curve segment `(start, end]`.
-fun accumulate_segment_qty_qk(
+fun accumulate_segment_values(
     matrix: &StrikeMatrix,
     start_page: u64,
     start_slot: u64,
     end_page: u64,
     end_slot: u64,
-): (u64, u64, u64, u64) {
+): (u64, u64, u64, u64, u64, u64, u64, u64) {
     let mut page_key = start_page;
     let mut q_start_delta = 0;
     let mut qk_start_delta = 0;
     let mut q_end_delta = 0;
     let mut qk_end_delta = 0;
+    let mut fee_start_delta = 0;
+    let mut feek_start_delta = 0;
+    let mut fee_end_delta = 0;
+    let mut feek_end_delta = 0;
     while (page_key <= end_page) {
         let page = &matrix.pages[page_key];
         let start_exclusive = if (page_key == start_page) {
@@ -509,6 +625,10 @@ fun accumulate_segment_qty_qk(
         qk_start_delta = qk_start_delta + end_node.agg_qk_start;
         q_end_delta = q_end_delta + end_node.agg_q_end;
         qk_end_delta = qk_end_delta + end_node.agg_qk_end;
+        fee_start_delta = fee_start_delta + end_node.agg_fee_start;
+        feek_start_delta = feek_start_delta + end_node.agg_feek_start;
+        fee_end_delta = fee_end_delta + end_node.agg_fee_end;
+        feek_end_delta = feek_end_delta + end_node.agg_feek_end;
 
         if (start_exclusive != max_u64()) {
             let start_node = &page[start_exclusive];
@@ -516,13 +636,26 @@ fun accumulate_segment_qty_qk(
             qk_start_delta = qk_start_delta - start_node.agg_qk_start;
             q_end_delta = q_end_delta - start_node.agg_q_end;
             qk_end_delta = qk_end_delta - start_node.agg_qk_end;
+            fee_start_delta = fee_start_delta - start_node.agg_fee_start;
+            feek_start_delta = feek_start_delta - start_node.agg_feek_start;
+            fee_end_delta = fee_end_delta - start_node.agg_fee_end;
+            feek_end_delta = feek_end_delta - start_node.agg_feek_end;
         };
 
         if (page_key == end_page) break;
         page_key = page_key + 1;
     };
 
-    (q_start_delta, qk_start_delta, q_end_delta, qk_end_delta)
+    (
+        q_start_delta,
+        qk_start_delta,
+        q_end_delta,
+        qk_end_delta,
+        fee_start_delta,
+        feek_start_delta,
+        fee_end_delta,
+        feek_end_delta,
+    )
 }
 
 /// Rebuild all ancestors of one page-summary leaf up to the root.
@@ -546,10 +679,16 @@ fun empty_page(): vector<StrikeNode> {
         |_| StrikeNode {
             q_start: 0,
             q_end: 0,
+            fee_start: 0,
+            fee_end: 0,
             agg_q_start: 0,
             agg_qk_start: 0,
             agg_q_end: 0,
             agg_qk_end: 0,
+            agg_fee_start: 0,
+            agg_feek_start: 0,
+            agg_fee_end: 0,
+            agg_feek_end: 0,
         },
     )
 }

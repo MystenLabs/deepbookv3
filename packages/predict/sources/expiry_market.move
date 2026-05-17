@@ -334,7 +334,7 @@ public(package) fun compact_settled(
     market.assert_not_compacted();
 
     let settlement = pricing::settlement_price(market_oracle);
-    let settled_liability = market.strike_matrix.borrow().settled_value(settlement);
+    let (settled_liability, _, _) = market.strike_matrix.borrow().settled_values(settlement);
     assert!(market.lp_cash_balance.value() >= settled_liability, EInsufficientLpCash);
     assert!(market.allocated_capital >= settled_liability, EAllocationBelowMaxPayout);
 
@@ -370,7 +370,9 @@ fun current_option_value(
 
     let strike_matrix = market.strike_matrix.borrow();
     if (market_oracle.is_settled()) {
-        strike_matrix.settled_value(pricing::settlement_price(market_oracle))
+        let settlement = pricing::settlement_price(market_oracle);
+        let (settled_value, _, _) = strike_matrix.settled_values(settlement);
+        settled_value
     } else {
         let (minted_min_strike, minted_max_strike) = strike_matrix.minted_strike_range();
         if (minted_min_strike == 0 && minted_max_strike == 0) return 0;
@@ -387,7 +389,8 @@ fun current_option_value(
             minted_min_strike,
             minted_max_strike,
         );
-        strike_matrix.live_value(&curve)
+        let (live_value, _, _) = strike_matrix.live_values(&curve);
+        live_value
     }
 }
 
@@ -420,6 +423,7 @@ fun mint_internal(
             key.lower_strike(),
             key.higher_strike(),
             quantity,
+            0,
         );
     assert!(market.allocated_capital >= market.max_payout(), EAllocationBelowMaxPayout);
 
@@ -472,6 +476,7 @@ fun redeem_live_internal(
             key.lower_strike(),
             key.higher_strike(),
             quantity,
+            0,
         );
 
     let (principal_amount, fee_amount) = market.quote_live_redeem_amounts(
@@ -508,7 +513,7 @@ fun redeem_settled_internal(
     let settlement = pricing::settlement_price(market_oracle);
     let payout_amount = pricing::settled_range_payout(settlement, &key, quantity);
     manager.assert_can_decrease_position(key, quantity);
-    let current_liability = market.strike_matrix.borrow().settled_value(settlement);
+    let (current_liability, _, _) = market.strike_matrix.borrow().settled_values(settlement);
     assert!(current_liability >= payout_amount, ESettledLiabilityUnderflow);
     assert!(market.lp_cash_balance.value() >= current_liability, EInsufficientLpCash);
 
@@ -520,6 +525,7 @@ fun redeem_settled_internal(
             key.lower_strike(),
             key.higher_strike(),
             quantity,
+            0,
         );
     let payout = market.dispense_lp_cash(payout_amount).into_coin(ctx);
     manager.deposit_permissionless(payout, ctx);
