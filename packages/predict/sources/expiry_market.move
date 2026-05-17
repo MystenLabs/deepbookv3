@@ -4,7 +4,7 @@
 /// Per-expiry Predict market.
 ///
 /// An ExpiryMarket is the hot shared object for one expiry. It owns the
-/// expiry-local DUSDC allocation, strike matrix, fee reserve, trade execution,
+/// expiry-local DUSDC allocation, strike matrix, fee balance, trade execution,
 /// valuation witness, and settlement compaction state. Pool-wide PLP
 /// accounting and allocation coordination remain outside this module.
 module deepbook_predict::expiry_market;
@@ -12,7 +12,6 @@ module deepbook_predict::expiry_market;
 use deepbook::math;
 use deepbook_predict::{
     constants,
-    fee_reserve::{Self, FeeReserve},
     market_oracle::MarketOracle,
     predict_manager::PredictManager,
     pricing,
@@ -22,7 +21,7 @@ use deepbook_predict::{
     strike_matrix::{Self, StrikeMatrix}
 };
 use dusdc::dusdc::DUSDC;
-use sui::{balance::Balance, clock::Clock, event};
+use sui::{balance::{Self, Balance}, clock::Clock, event};
 
 const EWrongMarketOracle: u64 = 0;
 const EWrongPythSource: u64 = 1;
@@ -38,6 +37,8 @@ const EInvalidTickSize: u64 = 11;
 const EInvalidStrikeGrid: u64 = 12;
 const ESettledLiabilityUnderflow: u64 = 16;
 const ECompactedLiabilityMismatch: u64 = 17;
+const EInsufficientFeeBalance: u64 = 18;
+const ECompactedRebateLiabilityUnderflow: u64 = 19;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -45,19 +46,25 @@ public struct ExpiryMarket has key {
     market_oracle_id: ID,
     pyth_lazer_feed_id: u32,
     expiry: u64,
+    /// Settlement loss rebate rate snapshotted from fee config at creation.
+    settlement_loss_rebate_rate: u64,
     /// Active risk budget assigned by the pool.
     allocated_capital: u64,
     /// LP-owned DUSDC backing this expiry's liability.
     lp_cash_balance: Balance<DUSDC>,
+    /// Unified fee cash used for settlement loss rebates until compaction.
+    fee_balance: Balance<DUSDC>,
     /// Dense exposure state before compaction; none after compaction.
     strike_matrix: Option<StrikeMatrix>,
-    fee_reserve: FeeReserve,
-    /// Settlement loss rebate rate snapshotted from fee config at creation.
-    settlement_loss_rebate_rate: u64,
-    /// Settlement price retained after dense strike state is compacted.
-    compacted_settlement: Option<u64>,
-    /// Remaining settled redeem liability after compaction.
-    compacted_liability: u64,
+    /// Post-compaction settlement facts and remaining escrow liabilities.
+    compacted_state: Option<CompactedState>,
+}
+
+/// Settlement facts retained after dense strike state is compacted.
+public struct CompactedState has copy, drop, store {
+    settlement: u64,
+    payout_liability: u64,
+    rebate_liability: u64,
 }
 
 /// Transaction-local valuation produced by an expiry market.
@@ -72,9 +79,6 @@ public struct ExpiryValuation {
 public struct FeeAccrued has copy, drop, store {
     expiry_market_id: ID,
     total_fee: u64,
-    lp_fee: u64,
-    protocol_fee: u64,
-    insurance_fee: u64,
 }
 
 // === Public Functions ===
@@ -109,6 +113,11 @@ public fun lp_cash_balance(market: &ExpiryMarket): u64 {
     market.lp_cash_balance.value()
 }
 
+/// Return DUSDC fees held by this expiry.
+public fun fee_balance(market: &ExpiryMarket): u64 {
+    market.fee_balance.value()
+}
+
 /// Return the settlement loss rebate rate snapshotted for this expiry.
 public fun settlement_loss_rebate_rate(market: &ExpiryMarket): u64 {
     market.settlement_loss_rebate_rate
@@ -117,7 +126,7 @@ public fun settlement_loss_rebate_rate(market: &ExpiryMarket): u64 {
 /// Return the expiry-local worst-case payout.
 public fun max_payout(market: &ExpiryMarket): u64 {
     if (market.is_compacted()) {
-        market.compacted_liability
+        market.compacted_state.borrow().payout_liability
     } else {
         market.strike_matrix.borrow().max_payout()
     }
@@ -156,7 +165,7 @@ public(package) fun utilization(market: &ExpiryMarket): u64 {
 
 /// Return true once the dense strike matrix has been compacted after settlement.
 public fun is_compacted(market: &ExpiryMarket): bool {
-    market.compacted_settlement.is_some()
+    market.compacted_state.is_some()
 }
 
 /// Construct a range key for this expiry market.
@@ -176,12 +185,20 @@ public fun read_valuation(
     clock: &Clock,
 ): ExpiryValuation {
     config.assert_valuation_in_progress();
-    let option_value = market.current_option_value(config, market_oracle, pyth, clock);
+    let (option_value, rebate_liability) = market.current_liabilities(
+        config,
+        market_oracle,
+        pyth,
+        clock,
+    );
     let lp_cash_balance = market.lp_cash_balance.value();
+    let fee_balance = market.fee_balance.value();
     assert!(lp_cash_balance >= option_value, EValuationExceedsCash);
+    assert!(fee_balance >= rebate_liability, EInsufficientFeeBalance);
+    let lp_fee_surplus = lp_fee_surplus_value(config, fee_balance - rebate_liability);
     ExpiryValuation {
         expiry_market_id: market.id(),
-        value: lp_cash_balance - option_value,
+        value: lp_cash_balance - option_value + lp_fee_surplus,
     }
 }
 
@@ -265,13 +282,12 @@ public(package) fun create_and_share(
         market_oracle_id,
         pyth_lazer_feed_id,
         expiry,
+        settlement_loss_rebate_rate: config.fee_config().settlement_loss_rebate_rate(),
         allocated_capital,
         lp_cash_balance: allocation,
+        fee_balance: balance::zero(),
         strike_matrix: option::some(strike_matrix::new(ctx, tick_size, min_strike, max_strike)),
-        fee_reserve: fee_reserve::new(config.fee_config()),
-        settlement_loss_rebate_rate: config.fee_config().settlement_loss_rebate_rate(),
-        compacted_settlement: option::none(),
-        compacted_liability: 0,
+        compacted_state: option::none(),
     };
     let id = market.id();
     transfer::share_object(market);
@@ -325,57 +341,77 @@ public(package) fun assert_market_oracle(market: &ExpiryMarket, market_oracle: &
 /// Compact settled expiry state and return surplus cash to the pool.
 ///
 /// Consumes dense strike state, leaves only settled liability backing in the
-/// expiry, and returns surplus LP cash plus protocol/insurance fee balances.
+/// expiry, leaves only settlement loss rebate liability in the fee balance, and
+/// returns all other cash to the pool.
 public(package) fun compact_settled(
     market: &mut ExpiryMarket,
     market_oracle: &MarketOracle,
-): (Balance<DUSDC>, Balance<DUSDC>, Balance<DUSDC>) {
+): (Balance<DUSDC>, Balance<DUSDC>) {
     market.assert_market_oracle(market_oracle);
     market.assert_not_compacted();
 
     let settlement = pricing::settlement_price(market_oracle);
-    let (settled_liability, _, _) = market.strike_matrix.borrow().settled_values(settlement);
+    let (settled_liability, winning_fee_basis, total_fee_basis) = market
+        .strike_matrix
+        .borrow()
+        .settled_values(settlement);
+    let rebate_liability = market.rebate_liability(total_fee_basis, winning_fee_basis);
     assert!(market.lp_cash_balance.value() >= settled_liability, EInsufficientLpCash);
+    assert!(market.fee_balance.value() >= rebate_liability, EInsufficientFeeBalance);
     assert!(market.allocated_capital >= settled_liability, EAllocationBelowMaxPayout);
 
     let matrix = market.strike_matrix.extract();
-    let compacted_liability = matrix.into_settled_liability(settlement);
-    assert!(compacted_liability == settled_liability, ECompactedLiabilityMismatch);
+    let compacted_payout_liability = matrix.into_settled_liability(settlement);
+    assert!(compacted_payout_liability == settled_liability, ECompactedLiabilityMismatch);
     let returned_cash_amount = market.lp_cash_balance.value() - settled_liability;
     let returned_cash = market.lp_cash_balance.split(returned_cash_amount);
-    let (protocol_fees, insurance_fees) = market.fee_reserve.take_fee_balances();
+    let returned_fee_amount = market.fee_balance.value() - rebate_liability;
+    let returned_fees = market.fee_balance.split(returned_fee_amount);
 
     market.allocated_capital = 0;
-    market.compacted_liability = settled_liability;
-    market.compacted_settlement = option::some(settlement);
+    market.compacted_state =
+        option::some(CompactedState {
+            settlement,
+            payout_liability: settled_liability,
+            rebate_liability,
+        });
     market.assert_cash_backing();
+    assert!(
+        market.fee_balance.value() >= market.compacted_state.borrow().rebate_liability,
+        EInsufficientFeeBalance,
+    );
 
-    (returned_cash, protocol_fees, insurance_fees)
+    (returned_cash, returned_fees)
 }
 
 // === Private Functions ===
 
-fun current_option_value(
+fun current_liabilities(
     market: &ExpiryMarket,
     config: &ProtocolConfig,
     market_oracle: &MarketOracle,
     pyth: &PythSource,
     clock: &Clock,
-): u64 {
+): (u64, u64) {
     market.assert_market_oracle(market_oracle);
     market.assert_pyth_feed(pyth);
     market_oracle.assert_not_pending_settlement(clock);
 
-    if (market.is_compacted()) return market.compacted_liability;
+    if (market.is_compacted()) {
+        let compacted_state = market.compacted_state.borrow();
+        return (compacted_state.payout_liability, compacted_state.rebate_liability)
+    };
 
     let strike_matrix = market.strike_matrix.borrow();
     if (market_oracle.is_settled()) {
         let settlement = pricing::settlement_price(market_oracle);
-        let (settled_value, _, _) = strike_matrix.settled_values(settlement);
-        settled_value
+        let (settled_value, winning_fee_basis, total_fee_basis) = strike_matrix.settled_values(
+            settlement,
+        );
+        (settled_value, market.rebate_liability(total_fee_basis, winning_fee_basis))
     } else {
         let (minted_min_strike, minted_max_strike) = strike_matrix.minted_strike_range();
-        if (minted_min_strike == 0 && minted_max_strike == 0) return 0;
+        if (minted_min_strike == 0 && minted_max_strike == 0) return (0, 0);
 
         let (grid_min, grid_tick, grid_max) = strike_matrix.strike_grid();
         let curve = pricing::build_live_curve(
@@ -389,8 +425,8 @@ fun current_option_value(
             minted_min_strike,
             minted_max_strike,
         );
-        let (live_value, _, _) = strike_matrix.live_values(&curve);
-        live_value
+        let (live_value, winning_fee_basis, total_fee_basis) = strike_matrix.live_values(&curve);
+        (live_value, market.rebate_liability(total_fee_basis, winning_fee_basis))
     }
 }
 
@@ -415,18 +451,6 @@ fun mint_internal(
     market.assert_not_compacted();
     assert_nonzero_quantity(quantity);
 
-    // Mint quotes intentionally use post-insert liability for utilization fees.
-    market
-        .strike_matrix
-        .borrow_mut()
-        .insert_range(
-            key.lower_strike(),
-            key.higher_strike(),
-            quantity,
-            0,
-        );
-    assert!(market.allocated_capital >= market.max_payout(), EAllocationBelowMaxPayout);
-
     let (principal_amount, fee_amount) = market.quote_mint_amounts(
         config,
         market_oracle,
@@ -437,13 +461,23 @@ fun mint_internal(
     );
     let payment_amount = principal_amount + fee_amount;
 
-    manager.increase_position(key, quantity);
+    market
+        .strike_matrix
+        .borrow_mut()
+        .insert_range(
+            key.lower_strike(),
+            key.higher_strike(),
+            quantity,
+            fee_amount,
+        );
+    assert!(market.allocated_capital >= market.max_payout(), EAllocationBelowMaxPayout);
+
+    manager.increase_position(key, quantity, fee_amount);
     let mut payment = manager.withdraw(payment_amount, ctx).into_balance();
     let fee_payment = payment.split(fee_amount);
-    let (lp_fee, protocol_fee, insurance_fee) = market.fee_reserve.accrue_fee(fee_payment);
-    market.emit_fee_accrued(fee_amount, lp_fee.value(), protocol_fee, insurance_fee);
+    market.fee_balance.join(fee_payment);
+    market.emit_fee_accrued(fee_amount);
     market.lp_cash_balance.join(payment);
-    market.lp_cash_balance.join(lp_fee);
     market.assert_cash_backing();
 }
 
@@ -466,7 +500,7 @@ fun redeem_live_internal(
     market.assert_range_key_matches(&key);
     market.assert_not_compacted();
     assert_nonzero_quantity(quantity);
-    manager.assert_can_decrease_position(key, quantity);
+    let removed_fee_basis = manager.decrease_position(key, quantity);
 
     // Live redeem quotes intentionally use post-removal liability for utilization fees.
     market
@@ -476,7 +510,7 @@ fun redeem_live_internal(
             key.lower_strike(),
             key.higher_strike(),
             quantity,
-            0,
+            removed_fee_basis,
         );
 
     let (principal_amount, fee_amount) = market.quote_live_redeem_amounts(
@@ -488,12 +522,10 @@ fun redeem_live_internal(
         clock,
     );
 
-    manager.decrease_position(key, quantity);
     let mut payout = market.dispense_lp_cash(principal_amount);
     let fee = payout.split(fee_amount);
-    let (lp_fee, protocol_fee, insurance_fee) = market.fee_reserve.accrue_fee(fee);
-    market.emit_fee_accrued(fee_amount, lp_fee.value(), protocol_fee, insurance_fee);
-    market.lp_cash_balance.join(lp_fee);
+    market.fee_balance.join(fee);
+    market.emit_fee_accrued(fee_amount);
     market.assert_cash_backing();
     manager.deposit(payout.into_coin(ctx), ctx);
 }
@@ -512,12 +544,18 @@ fun redeem_settled_internal(
 
     let settlement = pricing::settlement_price(market_oracle);
     let payout_amount = pricing::settled_range_payout(settlement, &key, quantity);
-    manager.assert_can_decrease_position(key, quantity);
     let (current_liability, _, _) = market.strike_matrix.borrow().settled_values(settlement);
     assert!(current_liability >= payout_amount, ESettledLiabilityUnderflow);
     assert!(market.lp_cash_balance.value() >= current_liability, EInsufficientLpCash);
 
-    manager.decrease_position(key, quantity);
+    let removed_fee_basis = manager.decrease_position(key, quantity);
+    let rebate = if (range_loses(settlement, &key)) {
+        market.rebate_liability(removed_fee_basis, 0)
+    } else {
+        0
+    };
+    assert!(market.fee_balance.value() >= rebate, EInsufficientFeeBalance);
+
     market
         .strike_matrix
         .borrow_mut()
@@ -525,10 +563,11 @@ fun redeem_settled_internal(
             key.lower_strike(),
             key.higher_strike(),
             quantity,
-            0,
+            removed_fee_basis,
         );
-    let payout = market.dispense_lp_cash(payout_amount).into_coin(ctx);
-    manager.deposit_permissionless(payout, ctx);
+    let mut payout = market.dispense_lp_cash(payout_amount);
+    payout.join(market.dispense_fee_cash(rebate));
+    manager.deposit_permissionless(payout.into_coin(ctx), ctx);
 }
 
 fun redeem_compacted_internal(
@@ -542,16 +581,33 @@ fun redeem_compacted_internal(
     assert!(market.is_compacted(), EMarketNotCompacted);
     assert_nonzero_quantity(quantity);
 
-    let settlement = market.compacted_settlement.borrow();
-    let payout_amount = pricing::settled_range_payout(*settlement, &key, quantity);
-    assert!(market.compacted_liability >= payout_amount, ECompactedLiabilityUnderflow);
-    manager.assert_can_decrease_position(key, quantity);
-    assert!(market.lp_cash_balance.value() >= market.compacted_liability, EInsufficientLpCash);
+    let (settlement, current_payout_liability, current_rebate_liability) = {
+        let compacted_state = market.compacted_state.borrow();
+        (
+            compacted_state.settlement,
+            compacted_state.payout_liability,
+            compacted_state.rebate_liability,
+        )
+    };
+    let payout_amount = pricing::settled_range_payout(settlement, &key, quantity);
+    assert!(current_payout_liability >= payout_amount, ECompactedLiabilityUnderflow);
+    assert!(market.lp_cash_balance.value() >= current_payout_liability, EInsufficientLpCash);
 
-    manager.decrease_position(key, quantity);
-    market.compacted_liability = market.compacted_liability - payout_amount;
-    let payout = market.dispense_lp_cash(payout_amount).into_coin(ctx);
-    manager.deposit_permissionless(payout, ctx);
+    let removed_fee_basis = manager.decrease_position(key, quantity);
+    let rebate = if (range_loses(settlement, &key)) {
+        market.rebate_liability(removed_fee_basis, 0)
+    } else {
+        0
+    };
+    assert!(current_rebate_liability >= rebate, ECompactedRebateLiabilityUnderflow);
+    assert!(market.fee_balance.value() >= current_rebate_liability, EInsufficientFeeBalance);
+
+    let compacted_state = market.compacted_state.borrow_mut();
+    compacted_state.payout_liability = current_payout_liability - payout_amount;
+    compacted_state.rebate_liability = current_rebate_liability - rebate;
+    let mut payout = market.dispense_lp_cash(payout_amount);
+    payout.join(market.dispense_fee_cash(rebate));
+    manager.deposit_permissionless(payout.into_coin(ctx), ctx);
 }
 
 fun quote_mint_amounts(
@@ -603,6 +659,11 @@ fun dispense_lp_cash(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
     market.lp_cash_balance.split(amount)
 }
 
+fun dispense_fee_cash(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
+    assert!(market.fee_balance.value() >= amount, EInsufficientFeeBalance);
+    market.fee_balance.split(amount)
+}
+
 fun assert_pyth_feed(market: &ExpiryMarket, pyth: &PythSource) {
     assert!(market.pyth_lazer_feed_id == pyth.feed_id(), EWrongPythSource);
 }
@@ -615,21 +676,12 @@ fun assert_nonzero_quantity(quantity: u64) {
     assert!(quantity > 0, EZeroQuantity);
 }
 
-fun emit_fee_accrued(
-    market: &ExpiryMarket,
-    total_fee: u64,
-    lp_fee: u64,
-    protocol_fee: u64,
-    insurance_fee: u64,
-) {
+fun emit_fee_accrued(market: &ExpiryMarket, total_fee: u64) {
     if (total_fee == 0) return;
 
     event::emit(FeeAccrued {
         expiry_market_id: market.id(),
         total_fee,
-        lp_fee,
-        protocol_fee,
-        insurance_fee,
     });
 }
 
@@ -639,4 +691,16 @@ fun assert_cash_backing(market: &ExpiryMarket) {
 
 fun assert_not_compacted(market: &ExpiryMarket) {
     assert!(!market.is_compacted(), EMarketCompacted);
+}
+
+fun rebate_liability(market: &ExpiryMarket, total_fee_basis: u64, winning_fee_basis: u64): u64 {
+    math::mul(total_fee_basis - winning_fee_basis, market.settlement_loss_rebate_rate)
+}
+
+fun lp_fee_surplus_value(config: &ProtocolConfig, fee_surplus: u64): u64 {
+    math::mul(fee_surplus, config.fee_config().lp_fee_share())
+}
+
+fun range_loses(settlement: u64, key: &RangeKey): bool {
+    !(settlement > key.lower_strike() && settlement <= key.higher_strike())
 }

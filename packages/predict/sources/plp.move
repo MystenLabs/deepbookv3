@@ -47,9 +47,9 @@ public struct PoolVault has key {
     id: UID,
     /// Idle LP-owned DUSDC available for withdrawals and new allocations.
     idle_balance: Balance<DUSDC>,
-    /// Protocol fees swept from compacted expiry markets.
+    /// Protocol revenue swept from compacted expiry fee surplus.
     protocol_fee_balance: Balance<DUSDC>,
-    /// Insurance fees swept from compacted expiry markets.
+    /// Insurance fees swept from compacted expiry fee surplus.
     insurance_fee_balance: Balance<DUSDC>,
     treasury_cap: TreasuryCap<PLP>,
     /// Expiry markets that still contribute active pool valuation/risk.
@@ -100,12 +100,12 @@ public fun idle_balance(vault: &PoolVault): u64 {
     vault.idle_balance.value()
 }
 
-/// Return protocol fees swept from compacted expiry markets.
+/// Return protocol revenue swept from compacted expiry fee surplus.
 public fun protocol_fee_balance(vault: &PoolVault): u64 {
     vault.protocol_fee_balance.value()
 }
 
-/// Return insurance fees swept from compacted expiry markets.
+/// Return insurance fees swept from compacted expiry fee surplus.
 public fun insurance_fee_balance(vault: &PoolVault): u64 {
     vault.insurance_fee_balance.value()
 }
@@ -203,7 +203,8 @@ public fun shrink_expiry_allocation(
 /// Compact a settled active expiry and remove it from pool valuation.
 ///
 /// The expiry keeps exactly its remaining settled redeem liability. Surplus LP
-/// cash and accrued protocol/insurance fee reserves move into PoolVault custody.
+/// cash returns to idle liquidity, while fee surplus is split into LP,
+/// protocol revenue, and insurance destinations.
 public fun compact_expiry_market(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
@@ -217,11 +218,10 @@ public fun compact_expiry_market(
         vault.total_allocated_capital >= allocated_reduction,
         EInsufficientTotalAllocatedCapital,
     );
-    let (returned_cash, protocol_fees, insurance_fees) = market.compact_settled(market_oracle);
+    let (returned_cash, returned_fee_surplus) = market.compact_settled(market_oracle);
     vault.total_allocated_capital = vault.total_allocated_capital - allocated_reduction;
     vault.idle_balance.join(returned_cash);
-    vault.protocol_fee_balance.join(protocol_fees);
-    vault.insurance_fee_balance.join(insurance_fees);
+    vault.distribute_fee_surplus(config, returned_fee_surplus);
     vault.unregister_expiry_market(market.id());
 }
 
@@ -436,6 +436,22 @@ fun shrink_amount(risk_config: &RiskConfig, market: &ExpiryMarket): u64 {
     }.min(market.returnable_capital());
     assert!(amount > 0, ENoAllocationResize);
     amount
+}
+
+fun distribute_fee_surplus(
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    fee_surplus: Balance<DUSDC>,
+) {
+    let total_fee = fee_surplus.value();
+    let protocol_fee = math::mul(total_fee, config.fee_config().protocol_fee_share());
+    let insurance_fee = math::mul(total_fee, config.fee_config().insurance_fee_share());
+    let mut lp_fee = fee_surplus;
+    let protocol_fee_balance = lp_fee.split(protocol_fee);
+    let insurance_fee_balance = lp_fee.split(insurance_fee);
+    vault.idle_balance.join(lp_fee);
+    vault.protocol_fee_balance.join(protocol_fee_balance);
+    vault.insurance_fee_balance.join(insurance_fee_balance);
 }
 
 fun validated_pool_value(

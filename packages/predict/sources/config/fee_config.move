@@ -1,23 +1,23 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Stored fee policy config for new expiry markets.
+/// Stored fee policy config.
 ///
-/// ProtocolConfig owns the current template. Each expiry market snapshots this
-/// policy when it is created.
+/// PoolVault reads the current fee-share policy when compacting fee surplus.
+/// Expiry markets snapshot the settlement loss rebate rate at creation.
 module deepbook_predict::fee_config;
 
 use deepbook_predict::{config_constants, constants};
 
 const EInvalidFeeSplit: u64 = 0;
 
-/// Fee distribution and rebate policy for new expiry markets.
+/// Fee surplus distribution and settlement loss rebate policy.
 public struct FeeConfig has store {
-    /// LP fee share in FLOAT_SCALING; returned into LP-owned expiry cash.
+    /// LP fee share in FLOAT_SCALING; returned into pool idle liquidity.
     lp_fee_share: u64,
-    /// Protocol fee share in FLOAT_SCALING; reserved in the expiry fee reserve.
+    /// Protocol revenue share in FLOAT_SCALING.
     protocol_fee_share: u64,
-    /// Insurance fee share in FLOAT_SCALING; reserved in the expiry fee reserve.
+    /// Insurance fund share in FLOAT_SCALING.
     insurance_fee_share: u64,
     /// Fraction of losing positions' raw fee basis rebated after settlement.
     settlement_loss_rebate_rate: u64,
