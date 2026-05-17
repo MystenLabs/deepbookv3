@@ -7,7 +7,15 @@ paths:
 
 **Update this file** when you discover new Move patterns, gotchas, or best practices during sessions.
 
-- Only put comments to document functions, struct fields, and items that need clarification. DO NOT PUT EXTRANEOUS COMMENTS THROUGHOUT.
+- Comments are opt-in, not a coverage requirement. Use comments to explain module responsibility, public API contracts, ownership boundaries, invariants, unit/scaling conventions, lifecycle state, sequencing requirements, gas/storage tradeoffs, external dependency quirks, or non-obvious math.
+
+- Do not add comments that restate a function name, narrate obvious code, explain Move syntax, describe simple assignments, or repeat names already clear from types. If deleting a comment would not make the code harder to use or safely modify, delete it.
+
+- For struct fields, comment selectively. Config structs are strong candidates for field comments because they encode policy, units, and economic meaning. Non-config structs should only comment fields with non-obvious mapping semantics, custody/ownership, timestamps, lifecycle state, sentinel values, units, or invariants.
+
+- A struct-level doc can cover a group of obvious fields that share one convention. Do not duplicate the same explanation above every field.
+
+- When changing behavior, update nearby comments in the same edit. Stale comments are worse than missing comments.
 
 - Sui is an object-oriented blockchain. Sui smart contracts are written in the Move language.
 
@@ -64,25 +72,27 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 
   Exception: `init` function typically comes early (after struct definitions).
 
-- Utility and math modules should only guard against mathematical preconditions (division by zero, overflow, insufficient balance in a data structure). They should not encode application-level policy decisions like "this state shouldn't happen" or "this user type gets different treatment." Application-level guards belong in the calling module.
+- Utility and math modules should only guard local mathematical or data-structure preconditions (division by zero, invalid precision, insufficient balance/quantity, invalid ranges). They should not encode application-level policy decisions like "this state shouldn't happen" or "this user type gets different treatment." Application-level guards belong in the calling module.
 
-- Never let VM arithmetic errors (division by zero, overflow) leak to callers. Add named abort guards (`EZeroForward`, `EZeroDivisor`) before any operation that can produce a raw VM error. Every `expected_failure` test should reference a named abort code.
+- Do not add explicit overflow, underflow, or numeric-cast asserts solely to replace Move's primitive VM aborts. Move arithmetic and numeric casts already abort atomically on overflow. Keep named assertions for semantic domain bounds, division by zero when the module has a meaningful named zero error, solvency/accounting invariants, authorization, lifecycle, and gas-bounded iteration.
 
-- Bounding the exponent does NOT bound the product. `assert!(shift <= 18)` keeps `pow10(shift)` inside u64, but `magnitude * pow10(shift)` can still overflow silently for any non-trivial `magnitude`. When scaling external values (oracle prices, decimals normalization), guard the multiplication itself: `assert!(magnitude == 0 || magnitude <= u64::MAX / factor, ENamedOverflow)` before the multiply, or compute in u128 and assert the cast back to u64 fits.
+- Bounding one input only proves the bound it names. For example, `pow10(shift)` can guard its exponent, while callers that need a semantic maximum normalized price should assert that semantic price bound explicitly. Do not add a second assert merely to give primitive multiplication overflow a custom abort code.
 
 - When two code paths can drive the same terminal state transition (e.g. an oracle settlement frozen by either a permissionless feed update or a privileged operator update), make sure both paths apply the same validation. A first-writer-wins race is a hidden authorization decision: if the privileged path can race the trustworthy path during a degraded state (stale feed, paused upstream), the privileged actor can unilaterally write the terminal value with weaker checks. Either gate the privileged path on the trustworthy path's freshness, or require the trustworthy path for terminal transitions.
 
 - Admin setters that don't bound away from "no-op" values are a defense-in-depth gap. A circuit-breaker deviation cap that accepts up to 100%, or absolute bounds with no floor/ceiling, lets a single bad admin call silently disable the protection without any error. When a setter exists primarily to tighten a safety check, give it a hard ceiling tighter than the trivially-disabling value (e.g. cap deviation at 50%, bound `min_basis`/`max_basis` within an absolute envelope) so admin error or compromise can't turn the guard into a no-op.
 
-- Don't remove a leaf-level underflow/overflow guard because "the current caller validates first." That reasoning creates a cross-module invariant — if anyone in the same package later adds a new call path that reaches the primitive without going through the validating caller, the guard's absence becomes a silent `u64::MAX` wraparound. Leaf primitives in `public(package)` data structures should be self-consistent regardless of which sibling module reaches them. Defense-in-depth at the leaf is cheap (one assert + named error) and survives refactors.
+- Don't move leaf-level semantic guards to callers because "the current caller validates first." That reasoning creates a cross-module invariant. Leaf primitives in `public(package)` data structures should remain self-consistent for the domain facts they own, such as valid ranges, sufficient quantity, or balance availability. Primitive arithmetic overflow does not need a duplicate semantic wrapper unless the wrapper enforces a real domain bound.
 
-- Converse of the leaf-guard rule: caller-side guards that merely duplicate a leaf check (same bound, same intent) are clutter, not defense-in-depth. If every branch funnels through the same leaf primitive (e.g. `pow10(shift)` with its own `assert!(n <= 18)`), repeating `assert!(shift <= 18)` in each caller branch adds nothing — the leaf aborts on the same input. Two exceptions worth keeping the duplicate for: (a) the caller can supply a semantically richer named error that meaningfully improves on-chain debuggability, and the richer error justifies the maintenance cost; (b) the caller's bound is strictly tighter than the leaf's. Otherwise delete the caller-side assert (and its now-unused error constant) and let the leaf be the single source of truth.
+- Converse of the leaf-guard rule: caller-side guards that merely duplicate a leaf semantic check (same bound, same intent) are clutter, not defense-in-depth. Two exceptions worth keeping the duplicate for: (a) the caller can supply a semantically richer error for a different business precondition; (b) the caller's bound is strictly tighter than the leaf's. Otherwise delete the caller-side assert and let the leaf be the single source of truth.
 
 - Timestamp fields should have clear semantics. If `timestamp` means "last price update", don't bump it on unrelated updates (e.g., SVI param changes). Muddled semantics break staleness checks.
 
 - Distinguish on-chain landing time from source-data time in the field name itself. A bare `lazer_timestamp` is ambiguous — does it mean the publisher's timestamp embedded in the verified payload, or `clock.timestamp_ms()` captured when the payload landed on chain? Use a unit suffix that encodes both the unit and the source: `*_timestamp_ms` for `clock.timestamp_ms()` values (on-chain landing time, always milliseconds in Sui), and `*_published_at_us` (or similar explicit phrase) for timestamps that come from the data being pushed. Same convention for event payload fields and getter names. Bulk renames across an entire package are safe with `perl -i -pe 's/\bX\b/Y/g'` since `\b` correctly skips compound identifiers like `lazer_X_ms`.
 
-- Validate before mutate: when consuming irreversible resources (burning coins, destroying objects), check all preconditions before the destructive call. Even though Sui transactions are atomic, this makes intent clearer and follows the convention used throughout the codebase.
+- Validate before mutate means contract-owned facts, not broad application preflighting. A function must validate the mutation-independent facts it owns before mutating state: flow gates, authorization, object binding, branch/lifecycle policy, static creation inputs, and facts that decide whether the function may start its transition. Do not duplicate another module's leaf guard just to avoid a later abort; preflight another module's fact only when the caller must know it before mutating a different state owner. If accounting or pricing intentionally depends on post-mutation state, make that dependency obvious and validate mutation-independent facts first. Always validate before consuming irreversible resources such as burning coins or destroying objects.
+
+- If a flow branches on another object's lifecycle or state, validate the object binding before using that state for branch selection, unless that branch intentionally does not require the object.
 
 - Prefer explicit loop bounds over `while (true)` when the iteration range is easy to express. If a loop naturally means "from `min_page` to `max_page` inclusive" or "while `slot <= end_slot`", write that directly instead of using `while (true)` plus interior `break`s.
 
@@ -272,6 +282,13 @@ public struct RegisterUser has copy, drop { user: address }
 public struct UserRegistered has copy, drop { user: address }
 ```
 
+### Emit Events From the Owning Module
+
+- Emit an event from the module that owns the lifecycle or action being reported.
+- Name event fields semantically from that event domain. Prefer `expiry_market_id`, `pool_vault_id`, or `market_oracle_id` over generic names like `owner_id`, `object_id`, or `config_id`.
+- Do not thread IDs through unrelated helper or leaf modules only to provide event context.
+- Embedded accounting/helper modules should not emit parent-scoped events unless the parent identity is part of their own domain model. If a parent-scoped event needs helper-computed values, return a summary and emit the event in the parent/action module.
+
 ### Use Positional Structs for Dynamic Field Keys + `Key` Suffix
 
 ```move
@@ -309,6 +326,13 @@ public fun mint(ctx: &mut TxContext): NFT { /* ... */ }
 // good! intentionally not composable
 entry fun mint_and_keep(ctx: &mut TxContext) { /* ... */ }
 ```
+
+### Keep Return Tuples Small and Semantic
+
+- Across module boundaries, return only values the caller cannot already derive.
+- Avoid wide positional tuples, especially 4+ items or repeated primitive types with domain meaning.
+- If several values need to travel together, either reduce the return shape or use a named package-only summary struct.
+- Private, tightly local algorithm helpers can use tuples when destructuring names make the meaning clear.
 
 ### Objects Go First (Except for Clock)
 
@@ -706,9 +730,11 @@ public fun do_something() { /* ... */ }
 public fun do_something() { /* ... */ }
 ```
 
-### Complex Logic? Leave a Comment `//`
+### Complex Logic? Leave a Focused Comment `//`
 
-Being friendly and helping reviewers understand the code!
+Use inline comments only when they explain a non-obvious invariant, sequencing
+requirement, external dependency quirk, or gas/storage tradeoff. Do not narrate
+the next line of code.
 
 ```move
 // good!

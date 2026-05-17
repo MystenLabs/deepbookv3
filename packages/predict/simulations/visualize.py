@@ -101,6 +101,23 @@ def print_latency_summary(summary_by_action: dict):
         )
 
 
+def print_rejected_mints(rejected_mints: list[dict]):
+    if not rejected_mints:
+        return
+
+    print("\n=== Rejected Mints ===\n")
+    print(f"  Count: {len(rejected_mints)}")
+    print("  First rejected attempts:")
+    for row in rejected_mints[:10]:
+        aligned = int(row["alignedStrike"]) / 1_000_000_000
+        print(
+            "  "
+            f"#{row['attemptedMintIndex']} line {row['csvLine']} "
+            f"{row['direction']} ${aligned:.0f} qty={row['quantity']} "
+            f"error={row['error'][:160]}"
+        )
+
+
 def plot_gas_over_time(mints: list[dict], out_dir: str):
     if not mints:
         print("  Skipping gas-over-time chart: no mint rows found")
@@ -229,11 +246,13 @@ def main():
     data = load_results(results_path)
     summary_by_action = data["summary"]["byAction"]
     mints = data["mints"]
+    rejected_mints = data.get("rejectedMints", [])
     out_dir = os.path.dirname(os.path.abspath(results_path))
 
     print_gas_summary(summary_by_action)
     print_mint_gas_breakdown(mints)
     print_latency_summary(summary_by_action)
+    print_rejected_mints(rejected_mints)
 
     print("\n=== Charts ===\n")
     plot_gas_over_time(mints, out_dir)

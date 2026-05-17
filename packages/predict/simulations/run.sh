@@ -5,10 +5,17 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PREDICT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PACKAGES_DIR="$(cd "$PREDICT_DIR/.." && pwd)"
 REPO_DIR="$(cd "$PACKAGES_DIR/.." && pwd)"
-SUI="${SUI_BINARY:-sui}"
+if [ -n "${SUI_BINARY:-}" ]; then
+  SUI="$SUI_BINARY"
+elif [ -x "$HOME/.local/bin/sui" ]; then
+  SUI="$HOME/.local/bin/sui"
+else
+  SUI="$(command -v sui)"
+fi
 
 DUSDC_DIR="$PACKAGES_DIR/dusdc"
 RUNS_DIR="$SCRIPT_DIR/runs"
+BUILD_ENV="sim"
 
 # --- Flag defaults ---
 RESUME=""
@@ -17,6 +24,7 @@ RUN_SIM=0
 EXPLICIT_PHASES=0
 LIST=0
 SKIP_ANALYSIS=0
+CONTINUE_ON_REJECTS=0
 
 usage() {
   cat <<EOF
@@ -27,6 +35,9 @@ Options:
   --setup          Only run setup phase (publish + create objects)
   --sim            Only run sim phase (execute mints + analyze)
   --skip-analysis  Skip the post-run visualization step
+  --continue-on-rejects
+                   Record rejected mint attempts and continue, but fail unless
+                   the run still produces the target number of successful mints
   --list           List existing instances
   -h, --help       Show this help
 
@@ -36,6 +47,7 @@ Examples:
   $0 --resume mar30-1422          # resume, auto-detect missing phases
   $0 --resume mar30-1422 --sim    # resume, only run sim + analyze
   $0 --resume mar30-1422 --sim --skip-analysis
+  $0 --continue-on-rejects
 EOF
 }
 
@@ -62,6 +74,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-analysis)
       SKIP_ANALYSIS=1
+      shift
+      ;;
+    --continue-on-rejects)
+      CONTINUE_ON_REJECTS=1
       shift
       ;;
     -h|--help)
@@ -162,7 +178,13 @@ cleanup() {
   for f in "$PACKAGES_DIR"/deepbook/Move.toml "$PACKAGES_DIR"/token/Move.toml "$PREDICT_DIR/Move.toml" "$PREDICT_DIR/Move.lock" "$DUSDC_DIR/Move.toml"; do
     [ -f "$f.bak" ] && mv "$f.bak" "$f"
   done
+  for f in "$PACKAGES_DIR"/deepbook/Published.toml "$PACKAGES_DIR"/token/Published.toml "$PREDICT_DIR/Published.toml" "$DUSDC_DIR/Published.toml"; do
+    if [ -f "$f.bak" ]; then
+      mv "$f.bak" "$f"
+    fi
+  done
   find "$PACKAGES_DIR" -name "Pub.sim.toml" -delete 2>/dev/null || true
+  find "$PACKAGES_DIR" -name "Pub.localnet.toml" -delete 2>/dev/null || true
   find "$SCRIPT_DIR" -maxdepth 1 -name "Pub.*.toml" -delete 2>/dev/null || true
   find "$REPO_DIR" -maxdepth 1 -name "Pub.*.toml" -delete 2>/dev/null || true
   if [ -n "${SUI_PID:-}" ]; then
@@ -177,13 +199,13 @@ inject_env() {
   local file="$1" chain_id="$2"
   cp "$file" "$file.bak"
   # Use temp file for sed compatibility across macOS and Linux.
-  sed '/^sim = /d' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
+  sed '/^sim = /d; /^localnet = /d' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
   if grep -q '^\[environments\]' "$file"; then
     sed '/^\[environments\]/a\
-sim = "'"$chain_id"'"
+'"${BUILD_ENV}"' = "'"$chain_id"'"
 ' "$file" > "$file.tmp" && mv "$file.tmp" "$file"
   else
-    printf '\n[environments]\nsim = "%s"\n' "$chain_id" >> "$file"
+    printf '\n[environments]\n%s = "%s"\n' "$BUILD_ENV" "$chain_id" >> "$file"
   fi
 }
 
@@ -220,9 +242,30 @@ for change in data.get("objectChanges", []):
 
 publish_package() {
   local package_path="$1"
-  sui_client test-publish "$package_path" \
-    --build-env sim --with-unpublished-dependencies --gas-budget 2000000000 \
-    --skip-dependency-verification --allow-dirty --force --json 2>/tmp/sui-publish.err || true
+  sui_client test-publish \
+    --build-env "$BUILD_ENV" --with-unpublished-dependencies --gas-budget 2000000000 \
+    --skip-dependency-verification --allow-dirty --force --json \
+    --pubfile-path "$INSTANCE_DIR/Pub.$BUILD_ENV.toml" "$package_path" \
+    2>/tmp/sui-publish.err || true
+}
+
+wait_for_object() {
+  local object_id="$1"
+  local label="$2"
+
+  echo -n "    Waiting for $label"
+  for i in $(seq 1 30); do
+    if sui_client object "$object_id" --json >/dev/null 2>&1; then
+      echo " ready!"
+      return
+    fi
+    echo -n "."
+    sleep 1
+  done
+
+  echo " TIMEOUT"
+  echo "ERROR: $label object $object_id was not readable after localnet startup"
+  exit 1
 }
 
 # --- 1. Genesis ---
@@ -230,7 +273,7 @@ if [ -z "$RESUME" ]; then
   echo "==> Generating fresh genesis..."
   rm -rf "$CONFIG_DIR"
   mkdir -p "$CONFIG_DIR"
-  $SUI genesis --force --working-dir "$CONFIG_DIR" -q
+  $SUI genesis --force --working-dir "$CONFIG_DIR"
 else
   echo "==> Resuming instance $INSTANCE_ID (using existing chain state)"
   if [ ! -d "$CONFIG_DIR" ]; then
@@ -256,6 +299,14 @@ for i in $(seq 1 30); do
   sleep 1
   [ "$i" -eq 30 ] && { echo " TIMEOUT"; exit 1; }
 done
+
+if [ -n "$RESUME" ] && [ -f "$INSTANCE_DIR/.env.localnet" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$INSTANCE_DIR/.env.localnet"
+  set +a
+  wait_for_object "$PACKAGE_ID" "predict package"
+fi
 
 # --- 3. Setup (publish packages) ---
 if [ "$RUN_SETUP" -eq 1 ]; then
@@ -288,6 +339,9 @@ if [ "$RUN_SETUP" -eq 1 ]; then
   find "$PACKAGES_DIR" -name "Pub.*.toml" -delete 2>/dev/null || true
   find "$SCRIPT_DIR" -maxdepth 1 -name "Pub.*.toml" -delete 2>/dev/null || true
   find "$REPO_DIR" -maxdepth 1 -name "Pub.*.toml" -delete 2>/dev/null || true
+  for f in "$PACKAGES_DIR"/deepbook/Published.toml "$PACKAGES_DIR"/token/Published.toml "$PREDICT_DIR/Published.toml" "$DUSDC_DIR"/Published.toml; do
+    [ -f "$f" ] && cp "$f" "$f.bak"
+  done
 
   # Publish deepbook
   echo "==> Phase 1: Publishing deepbook..."
@@ -324,7 +378,7 @@ if [ "$RUN_SETUP" -eq 1 ]; then
   # transitively pulls in `wormhole`. Wormhole's source is designed to be
   # linked as pre-published bytecode via `dep-replacements.testnet/mainnet`
   # and cannot be compiled fresh against 2024.beta (old `struct` / `friend`
-  # syntax). test-publish on localnet has no pre-published ids, so both deps
+  # syntax). Localnet has no pre-published ids, so both deps
   # are unavailable here. Point predict at a local stub pyth_lazer for sim
   # builds — the stub exposes just the symbols `pyth_source::update_from_lazer`
   # references so the module typechecks without the real deps.
@@ -387,12 +441,14 @@ PY
   PACKAGE_ID=$(echo "$PREDICT_OUTPUT" | extract_published_package_id)
   REGISTRY_ID=$(echo "$PREDICT_OUTPUT" | extract_created_object_id "registry::Registry")
   ADMIN_CAP_ID=$(echo "$PREDICT_OUTPUT" | extract_created_object_id "registry::AdminCap")
-  PLP_TREASURY_CAP_ID=$(echo "$PREDICT_OUTPUT" | extract_created_object_id "TreasuryCap" "plp::PLP")
+  PROTOCOL_CONFIG_ID=$(echo "$PREDICT_OUTPUT" | extract_created_object_id "protocol_config::ProtocolConfig")
+  POOL_VAULT_ID=$(echo "$PREDICT_OUTPUT" | extract_created_object_id "plp::PoolVault")
 
   echo "    Predict: $PACKAGE_ID"
   echo "    Registry: $REGISTRY_ID"
   echo "    AdminCap: $ADMIN_CAP_ID"
-  echo "    PLP TreasuryCap: $PLP_TREASURY_CAP_ID"
+  echo "    ProtocolConfig: $PROTOCOL_CONFIG_ID"
+  echo "    PoolVault: $POOL_VAULT_ID"
 
   mv "$PREDICT_DIR/Move.toml.bak" "$PREDICT_DIR/Move.toml"
 
@@ -401,7 +457,8 @@ PY
 PACKAGE_ID=$PACKAGE_ID
 REGISTRY_ID=$REGISTRY_ID
 ADMIN_CAP_ID=$ADMIN_CAP_ID
-PLP_TREASURY_CAP_ID=$PLP_TREASURY_CAP_ID
+PROTOCOL_CONFIG_ID=$PROTOCOL_CONFIG_ID
+POOL_VAULT_ID=$POOL_VAULT_ID
 DUSDC_PACKAGE_ID=$DUSDC_PACKAGE_ID
 DUSDC_CURRENCY_ID=$DUSDC_CURRENCY_ID
 TREASURY_CAP_ID=$TREASURY_CAP_ID
@@ -415,20 +472,25 @@ fi
 # --- 4. Run simulation ---
 cd "$SCRIPT_DIR"
 
-MAX_ROWS_ARG=""
-if [ -n "${SIM_MAX_ROWS:-}" ]; then
-  MAX_ROWS_ARG="--max-rows $SIM_MAX_ROWS"
-fi
+run_sim() {
+  if [ -n "${SIM_MAX_ROWS:-}" ]; then
+    set -- "$@" --max-rows "$SIM_MAX_ROWS"
+  fi
+  if [ "$CONTINUE_ON_REJECTS" -eq 1 ]; then
+    set -- "$@" --continue-on-rejects
+  fi
+  npx tsx src/sim.ts "$@"
+}
 
 if [ "$RUN_SETUP" -eq 1 ] && [ "$RUN_SIM" -eq 0 ]; then
   echo "==> Running setup only..."
   npx tsx src/sim.ts --setup-only
 elif [ "$RUN_SETUP" -eq 1 ] && [ "$RUN_SIM" -eq 1 ]; then
   echo "==> Running simulation (setup + execute)..."
-  npx tsx src/sim.ts $MAX_ROWS_ARG
+  run_sim
 elif [ "$RUN_SIM" -eq 1 ]; then
   echo "==> Running simulation (execute only)..."
-  npx tsx src/sim.ts --execute-only $MAX_ROWS_ARG
+  run_sim --execute-only
 fi
 
 if [ "$RUN_SIM" -eq 1 ] && [ "$SKIP_ANALYSIS" -eq 0 ] && [ -f "$INSTANCE_DIR/artifacts/results.json" ]; then

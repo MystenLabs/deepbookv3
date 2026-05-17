@@ -103,6 +103,10 @@ fun exp_overflow_aborts() {
 }
 ```
 
+### Predict public flow coverage
+
+When adding or materially changing a public Predict flow, add production-valid tests for the flow itself, not only for its helper modules. At minimum cover one successful state transition and focused failures for the main protocol gates, object binding checks, and accounting effects that the flow owns. Public trade, allocation, settlement, compaction, and admin flows should not land with only build coverage.
+
 ### 6. Don't test weaker properties already covered by exact assertions
 
 If a scenario runner asserts exact contract output at every strike point against scipy, a separate test asserting a weaker property (monotonicity, ordering, complement summing to 1) on the same data is redundant. The exact assertion subsumes the weaker one — if the contract breaks monotonicity, the exact values won't match.

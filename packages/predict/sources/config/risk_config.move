@@ -1,52 +1,111 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Risk configuration - exposure limits for the vault.
+/// Stored risk configuration for pool and expiry allocation limits.
+///
+/// ProtocolConfig owns this mutable policy. PoolVault reads it for new expiry
+/// allocations, global pool utilization, and dynamic allocation resizing.
 module deepbook_predict::risk_config;
 
-use deepbook_predict::constants;
+use deepbook_predict::config_constants;
 
-const EExceedsMaxPct: u64 = 0;
-const EInvalidMtmFreshnessMs: u64 = 1;
+const EInvalidResizeThresholds: u64 = 0;
 
-/// Vault risk limits enforced by the Predict orchestrator.
+/// Pool risk limits enforced by the parallel pool path.
 public struct RiskConfig has store {
-    /// Max total liability as % of balance (e.g., 800_000_000 = 80%)
+    /// Max total allocated exposure as % of pool value (e.g., 800_000_000 = 80%).
     max_total_exposure_pct: u64,
-    /// Max MTM age allowed for LP supply/withdraw gating.
-    mtm_freshness_ms: u64,
-}
-
-// === Public Functions ===
-
-/// Return the maximum total exposure percentage.
-public fun max_total_exposure_pct(config: &RiskConfig): u64 {
-    config.max_total_exposure_pct
-}
-
-/// Return the maximum allowed cached MTM age in milliseconds.
-public fun mtm_freshness_ms(config: &RiskConfig): u64 {
-    config.mtm_freshness_ms
+    /// Current DUSDC allocation used when creating a new expiry market.
+    expiry_allocation: u64,
+    /// Expiry utilization at or above which permissionless growth is allowed.
+    grow_utilization_threshold: u64,
+    /// Expiry utilization at or below which permissionless shrink is allowed.
+    shrink_utilization_threshold: u64,
+    /// Multiplier used to target a larger allocation during growth.
+    grow_factor: u64,
+    /// Multiplier used to target a smaller allocation during shrink.
+    shrink_factor: u64,
 }
 
 // === Public-Package Functions ===
 
-/// Create risk config seeded from protocol defaults.
+public(package) fun max_total_exposure_pct(config: &RiskConfig): u64 {
+    config.max_total_exposure_pct
+}
+
+public(package) fun expiry_allocation(config: &RiskConfig): u64 {
+    config.expiry_allocation
+}
+
+public(package) fun grow_utilization_threshold(config: &RiskConfig): u64 {
+    config.grow_utilization_threshold
+}
+
+public(package) fun shrink_utilization_threshold(config: &RiskConfig): u64 {
+    config.shrink_utilization_threshold
+}
+
+public(package) fun grow_factor(config: &RiskConfig): u64 {
+    config.grow_factor
+}
+
+public(package) fun shrink_factor(config: &RiskConfig): u64 {
+    config.shrink_factor
+}
+
 public(package) fun new(): RiskConfig {
     RiskConfig {
-        max_total_exposure_pct: constants::default_max_total_exposure_pct!(),
-        mtm_freshness_ms: constants::default_mtm_freshness_ms!(),
+        max_total_exposure_pct: config_constants::default_max_total_exposure_pct!(),
+        expiry_allocation: config_constants::default_allocation!(),
+        grow_utilization_threshold: config_constants::default_grow_utilization_threshold!(),
+        shrink_utilization_threshold: config_constants::default_shrink_utilization_threshold!(),
+        grow_factor: config_constants::default_grow_factor!(),
+        shrink_factor: config_constants::default_shrink_factor!(),
     }
 }
 
-/// Set the maximum total exposure percentage.
 public(package) fun set_max_total_exposure_pct(config: &mut RiskConfig, pct: u64) {
-    assert!(pct > 0 && pct <= constants::float_scaling!(), EExceedsMaxPct);
+    config_constants::assert_max_total_exposure_pct(pct);
     config.max_total_exposure_pct = pct;
 }
 
-/// Set the maximum allowed cached MTM age in milliseconds.
-public(package) fun set_mtm_freshness_ms(config: &mut RiskConfig, value: u64) {
-    assert!(value > 0, EInvalidMtmFreshnessMs);
-    config.mtm_freshness_ms = value;
+public(package) fun set_expiry_allocation(config: &mut RiskConfig, allocation: u64) {
+    config_constants::assert_expiry_allocation(allocation);
+    config.expiry_allocation = allocation;
+}
+
+public(package) fun set_grow_utilization_threshold(config: &mut RiskConfig, threshold: u64) {
+    config_constants::assert_grow_utilization_threshold(threshold);
+    assert!(threshold >= config.shrink_utilization_threshold, EInvalidResizeThresholds);
+    config.grow_utilization_threshold = threshold;
+}
+
+public(package) fun set_shrink_utilization_threshold(config: &mut RiskConfig, threshold: u64) {
+    config_constants::assert_shrink_utilization_threshold(threshold);
+    assert!(threshold <= config.grow_utilization_threshold, EInvalidResizeThresholds);
+    config.shrink_utilization_threshold = threshold;
+}
+
+public(package) fun set_grow_factor(config: &mut RiskConfig, factor: u64) {
+    config_constants::assert_grow_factor(factor);
+    config.grow_factor = factor;
+}
+
+public(package) fun set_shrink_factor(config: &mut RiskConfig, factor: u64) {
+    config_constants::assert_shrink_factor(factor);
+    config.shrink_factor = factor;
+}
+
+// === Test-Only Functions ===
+
+#[test_only]
+public fun destroy_for_testing(config: RiskConfig) {
+    let RiskConfig {
+        max_total_exposure_pct: _,
+        expiry_allocation: _,
+        grow_utilization_threshold: _,
+        shrink_utilization_threshold: _,
+        grow_factor: _,
+        shrink_factor: _,
+    } = config;
 }

@@ -5,79 +5,33 @@
 ///
 /// This module is the app-facing read layer for oracle data. It resolves
 /// market oracle and Pyth source state on demand, computes SVI prices, applies
-/// fees, and builds valuation curves. It does not mutate oracle, vault, or
+/// fees, and builds valuation curves. It does not mutate oracle, pool, expiry, or
 /// position state.
 module deepbook_predict::pricing;
 
-use deepbook::{constants::max_u64, math};
+use deepbook::math;
 use deepbook_predict::{
     constants,
     i64,
-    market_oracle::{Self, MarketOracle, SVIParams},
+    market_oracle::{MarketOracle, SVIParams},
     math as predict_math,
+    pricing_config::PricingConfig,
     pyth_source::PythSource,
-    range_key::RangeKey,
-    tuning_constants
+    range_key::RangeKey
 };
-use sui::{clock::Clock, event};
+use sui::clock::Clock;
 
-const EInvalidFee: u64 = 0;
-const EInvalidAskBound: u64 = 1;
-const EAskPriceOverflow: u64 = 3;
-const EAskPriceOutOfBounds: u64 = 4;
-const EZeroForward: u64 = 5;
-const ECannotBeNegative: u64 = 6;
-const EZeroVariance: u64 = 7;
-const EInvalidRange: u64 = 8;
-const ERangePriceUnderflow: u64 = 9;
-const ESVISqrtInputOverflow: u64 = 10;
-const ETotalVarianceOverflow: u64 = 11;
-const EInvalidLiveFairPrice: u64 = 12;
-const EFeeOverflow: u64 = 13;
-const EInvalidCurveRange: u64 = 14;
-const EBlockScholesPriceStale: u64 = 15;
-const EBlockScholesSVIStale: u64 = 16;
-const EMarketNotActive: u64 = 17;
-const EOracleNotSettled: u64 = 18;
-const EInvalidSettlementTimestamp: u64 = 19;
-const EInvalidUtilizationMultiplier: u64 = 20;
-const EInvalidFreshnessThreshold: u64 = 21;
-
-/// Fee and ask-bound parameters used when quoting Predict markets.
-/// The quoted fee is a per-unit absolute price increment, not a bps rate.
-public struct PricingConfig has store {
-    /// Base fee multiplier for Bernoulli scaling.
-    /// Effective fee rate = base_fee * sqrt(price * (1 - price)).
-    base_fee: u64,
-    /// Minimum per-unit fee floor; live quotes never go below this value.
-    min_fee: u64,
-    /// Utilization multiplier in FLOAT_SCALING (e.g., 2_000_000_000 = 2x).
-    /// Controls how aggressively fees increase as vault approaches capacity.
-    utilization_multiplier: u64,
-    /// Global minimum allowed all-in mint price after adding the fee.
-    min_ask_price: u64,
-    /// Global maximum allowed all-in mint price after adding the fee.
-    max_ask_price: u64,
-    /// Maximum age for Pyth spot to be used as canonical live spot.
-    pyth_spot_freshness_ms: u64,
-    /// Maximum age for Block Scholes spot/forward to be used in live pricing.
-    block_scholes_prices_freshness_ms: u64,
-    /// Maximum age for Block Scholes SVI params to be used in live pricing.
-    block_scholes_svi_freshness_ms: u64,
-}
-
-/// Emitted when pricing configuration changes.
-public struct PricingConfigUpdated has copy, drop, store {
-    predict_id: ID,
-    base_fee: u64,
-    min_fee: u64,
-    utilization_multiplier: u64,
-    min_ask_price: u64,
-    max_ask_price: u64,
-    pyth_spot_freshness_ms: u64,
-    block_scholes_prices_freshness_ms: u64,
-    block_scholes_svi_freshness_ms: u64,
-}
+const EAskPriceOutOfBounds: u64 = 1;
+const EZeroForward: u64 = 2;
+const ECannotBeNegative: u64 = 3;
+const EZeroVariance: u64 = 4;
+const EInvalidRange: u64 = 5;
+const ERangePriceUnderflow: u64 = 6;
+const EInvalidLiveFairPrice: u64 = 9;
+const EInvalidCurveRange: u64 = 11;
+const EBlockScholesPriceStale: u64 = 12;
+const EBlockScholesSVIStale: u64 = 13;
+const EInvalidStrikeRatio: u64 = 14;
 
 /// Curve sample point with strike and one-sided UP price.
 public struct CurvePoint has copy, drop, store {
@@ -89,131 +43,17 @@ public struct CurvePoint has copy, drop, store {
 
 /// Return terminal settlement price, aborting if the market is unsettled.
 public fun settlement_price(market: &MarketOracle): u64 {
-    resolved_settlement_price(market)
+    market.settlement_price()
 }
 
 // === Public-Package Functions ===
 
-/// Return the base fee multiplier.
-public(package) fun base_fee(config: &PricingConfig): u64 {
-    config.base_fee
-}
-
-/// Return the minimum per-unit fee floor.
-public(package) fun min_fee(config: &PricingConfig): u64 {
-    config.min_fee
-}
-
-/// Return the utilization multiplier.
-public(package) fun utilization_multiplier(config: &PricingConfig): u64 {
-    config.utilization_multiplier
-}
-
-/// Return the global minimum allowed all-in mint price.
-public(package) fun min_ask_price(config: &PricingConfig): u64 {
-    config.min_ask_price
-}
-
-/// Return the global maximum allowed all-in mint price.
-public(package) fun max_ask_price(config: &PricingConfig): u64 {
-    config.max_ask_price
-}
-
-/// Return the strike stored in a curve point.
 public(package) fun strike(point: &CurvePoint): u64 {
     point.strike
 }
 
-/// Return the UP price stored in a curve point.
 public(package) fun up_price(point: &CurvePoint): u64 {
     point.up_price
-}
-
-/// Create pricing config seeded from protocol defaults.
-public(package) fun new(): PricingConfig {
-    PricingConfig {
-        base_fee: constants::default_base_fee!(),
-        min_fee: constants::default_min_fee!(),
-        utilization_multiplier: constants::default_utilization_multiplier!(),
-        min_ask_price: constants::default_min_ask_price!(),
-        max_ask_price: constants::default_max_ask_price!(),
-        pyth_spot_freshness_ms: tuning_constants::default_pyth_spot_freshness_ms!(),
-        block_scholes_prices_freshness_ms: tuning_constants::default_block_scholes_prices_freshness_ms!(),
-        block_scholes_svi_freshness_ms: tuning_constants::default_block_scholes_svi_freshness_ms!(),
-    }
-}
-
-/// Set the base fee multiplier.
-public(package) fun set_base_fee(config: &mut PricingConfig, predict_id: ID, fee: u64) {
-    assert!(fee > 0 && fee <= constants::float_scaling!(), EInvalidFee);
-    config.base_fee = fee;
-    emit_config_updated(config, predict_id);
-}
-
-/// Set the minimum fee floor.
-public(package) fun set_min_fee(config: &mut PricingConfig, predict_id: ID, fee: u64) {
-    assert!(fee <= constants::float_scaling!(), EInvalidFee);
-    config.min_fee = fee;
-    emit_config_updated(config, predict_id);
-}
-
-/// Set the utilization multiplier.
-public(package) fun set_utilization_multiplier(
-    config: &mut PricingConfig,
-    predict_id: ID,
-    multiplier: u64,
-) {
-    assert!(multiplier <= constants::max_utilization_multiplier!(), EInvalidUtilizationMultiplier);
-    config.utilization_multiplier = multiplier;
-    emit_config_updated(config, predict_id);
-}
-
-/// Set the global minimum allowed mint price.
-public(package) fun set_min_ask_price(config: &mut PricingConfig, predict_id: ID, value: u64) {
-    assert!(value < config.max_ask_price, EInvalidAskBound);
-    config.min_ask_price = value;
-    emit_config_updated(config, predict_id);
-}
-
-/// Set the global maximum allowed mint price.
-public(package) fun set_max_ask_price(config: &mut PricingConfig, predict_id: ID, value: u64) {
-    assert!(value > config.min_ask_price, EInvalidAskBound);
-    assert!(value < constants::float_scaling!(), EInvalidAskBound);
-    config.max_ask_price = value;
-    emit_config_updated(config, predict_id);
-}
-
-/// Set the live Pyth spot freshness threshold.
-public(package) fun set_pyth_spot_freshness_ms(
-    config: &mut PricingConfig,
-    predict_id: ID,
-    value: u64,
-) {
-    validate_freshness_ms(value);
-    config.pyth_spot_freshness_ms = value;
-    emit_config_updated(config, predict_id);
-}
-
-/// Set the live Block Scholes spot/forward freshness threshold.
-public(package) fun set_block_scholes_prices_freshness_ms(
-    config: &mut PricingConfig,
-    predict_id: ID,
-    value: u64,
-) {
-    validate_freshness_ms(value);
-    config.block_scholes_prices_freshness_ms = value;
-    emit_config_updated(config, predict_id);
-}
-
-/// Set the live Block Scholes SVI freshness threshold.
-public(package) fun set_block_scholes_svi_freshness_ms(
-    config: &mut PricingConfig,
-    predict_id: ID,
-    value: u64,
-) {
-    validate_freshness_ms(value);
-    config.block_scholes_svi_freshness_ms = value;
-    emit_config_updated(config, predict_id);
 }
 
 /// Build an adaptive piecewise-linear UP-price curve over a configured grid range.
@@ -232,29 +72,7 @@ public(package) fun build_live_curve(
     build_curve(forward, &svi, grid_min, grid_tick, grid_max, min_strike, max_strike)
 }
 
-/// Quote a range from current oracle state and vault utilization.
-public(package) fun quote_range(
-    config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
-    clock: &Clock,
-    key: &RangeKey,
-    liability: u64,
-    balance: u64,
-): (u64, u64) {
-    if (market.is_settled()) {
-        let fair_price = compute_settled_range_price(
-            resolved_settlement_price(market),
-            key.lower_strike(),
-            key.higher_strike(),
-        );
-        (fair_price, 0)
-    } else {
-        quote_live_range(config, market, pyth, clock, key, liability, balance)
-    }
-}
-
-/// Quote a live range from current oracle state and vault utilization.
+/// Quote a live range from current oracle state and capacity utilization.
 public(package) fun quote_live_range(
     config: &PricingConfig,
     market: &MarketOracle,
@@ -293,8 +111,22 @@ public(package) fun quote_mint_live_range(
         liability,
         balance,
     );
-    assert_mint_quote_allowed(config, fair_price, fee_rate);
+    let ask_price = fair_price + fee_rate;
+    assert!(
+        ask_price >= config.min_ask_price() && ask_price <= config.max_ask_price(),
+        EAskPriceOutOfBounds,
+    );
     (fair_price, fee_rate)
+}
+
+/// Abort unless the live oracle inputs needed for a quote are currently usable.
+public(package) fun assert_live_oracle_fresh(
+    config: &PricingConfig,
+    market: &MarketOracle,
+    clock: &Clock,
+) {
+    assert!(block_scholes_price_is_fresh(config, market, clock), EBlockScholesPriceStale);
+    assert!(block_scholes_svi_is_fresh(config, market, clock), EBlockScholesSVIStale);
 }
 
 /// Return settled payout for a range position at a terminal settlement price.
@@ -305,31 +137,7 @@ public(package) fun settled_range_payout(settlement: u64, key: &RangeKey, quanti
     )
 }
 
-/// Abort unless the all-in mint price is inside the global ask bounds.
-fun assert_mint_quote_allowed(config: &PricingConfig, fair_price: u64, fee_rate: u64) {
-    assert!(fair_price <= max_u64() - fee_rate, EAskPriceOverflow);
-    let ask_price = fair_price + fee_rate;
-    assert!(
-        ask_price >= config.min_ask_price && ask_price <= config.max_ask_price,
-        EAskPriceOutOfBounds,
-    );
-}
-
 // === Private Functions ===
-
-fun emit_config_updated(config: &PricingConfig, predict_id: ID) {
-    event::emit(PricingConfigUpdated {
-        predict_id,
-        base_fee: config.base_fee,
-        min_fee: config.min_fee,
-        utilization_multiplier: config.utilization_multiplier,
-        min_ask_price: config.min_ask_price,
-        max_ask_price: config.max_ask_price,
-        pyth_spot_freshness_ms: config.pyth_spot_freshness_ms,
-        block_scholes_prices_freshness_ms: config.block_scholes_prices_freshness_ms,
-        block_scholes_svi_freshness_ms: config.block_scholes_svi_freshness_ms,
-    });
-}
 
 /// Resolve the live forward/SVI tuple used by all live pricing paths.
 ///
@@ -342,10 +150,9 @@ fun resolve_live_inputs(
     pyth: &PythSource,
     clock: &Clock,
 ): (u64, SVIParams) {
-    market_oracle::assert_pyth_source_id(market, pyth.id());
-    assert!(!market.is_settled() && clock.timestamp_ms() < market.expiry(), EMarketNotActive);
-    assert!(block_scholes_price_is_fresh(config, market, clock), EBlockScholesPriceStale);
-    assert!(block_scholes_svi_is_fresh(config, market, clock), EBlockScholesSVIStale);
+    market.assert_pyth_source(pyth);
+    market.assert_active(clock);
+    assert_live_oracle_fresh(config, market, clock);
 
     let forward = if (pyth_spot_is_fresh(config, pyth, clock)) {
         math::mul(pyth.spot(), market.block_scholes_basis())
@@ -354,13 +161,6 @@ fun resolve_live_inputs(
     };
 
     (forward, market.block_scholes_svi())
-}
-
-fun resolved_settlement_price(market: &MarketOracle): u64 {
-    assert!(market.is_settled(), EOracleNotSettled);
-    let (settlement_price, source_timestamp_ms) = market.settlement_price_and_source_timestamp_ms();
-    assert!(source_timestamp_ms > market.expiry(), EInvalidSettlementTimestamp);
-    settlement_price
 }
 
 /// Compute the settled price for the range `(lower, higher]`.
@@ -376,26 +176,21 @@ fun block_scholes_price_is_fresh(
 ): bool {
     let now = clock.timestamp_ms();
     let timestamp = market.block_scholes_price_freshness_timestamp_ms();
-    timestamp > 0 && timestamp <= now && now - timestamp <= config.block_scholes_prices_freshness_ms
+    timestamp > 0 && timestamp <= now && now - timestamp <= config
+        .block_scholes_prices_freshness_ms()
 }
 
 fun block_scholes_svi_is_fresh(config: &PricingConfig, market: &MarketOracle, clock: &Clock): bool {
     let now = clock.timestamp_ms();
     let timestamp = market.block_scholes_svi_freshness_timestamp_ms();
-    timestamp > 0 && timestamp <= now && now - timestamp <= config.block_scholes_svi_freshness_ms
+    timestamp > 0 && timestamp <= now && now - timestamp <= config
+        .block_scholes_svi_freshness_ms()
 }
 
 fun pyth_spot_is_fresh(config: &PricingConfig, pyth: &PythSource, clock: &Clock): bool {
     let now = clock.timestamp_ms();
-    let timestamp = pyth.source_timestamp_ms().min(pyth.update_timestamp_ms());
-    timestamp > 0 && timestamp <= now && now - timestamp <= config.pyth_spot_freshness_ms
-}
-
-fun validate_freshness_ms(value: u64) {
-    assert!(
-        value > 0 && value <= tuning_constants::max_freshness_threshold_ms!(),
-        EInvalidFreshnessThreshold,
-    );
+    let timestamp = pyth.freshness_timestamp_ms();
+    timestamp > 0 && timestamp <= now && now - timestamp <= config.pyth_spot_freshness_ms()
 }
 
 fun build_curve(
@@ -432,7 +227,7 @@ fun build_curve(
         },
     ];
 
-    let curve_samples = constants::default_curve_samples!();
+    let curve_samples = constants::curve_samples!();
     let mut cur_samples = 2;
     while (cur_samples < curve_samples) {
         let (found, idx) = find_gap(&points, grid_tick);
@@ -481,14 +276,12 @@ fun compute_range_price(forward: u64, svi: &SVIParams, lower: u64, higher: u64):
 fun quote_fee_rate(config: &PricingConfig, fair_price: u64, liability: u64, balance: u64): u64 {
     let price_fee = price_fee_rate(config, fair_price);
     let utilization_fee = utilization_fee_rate(config, liability, balance);
-    assert!(price_fee <= max_u64() - utilization_fee, EFeeOverflow);
-
     price_fee + utilization_fee
 }
 
 fun price_fee_rate(config: &PricingConfig, fair_price: u64): u64 {
     let raw_fee = raw_bernoulli_fee_rate(config, fair_price);
-    let min_fee = config.min_fee;
+    let min_fee = config.min_fee();
     if (raw_fee > min_fee) raw_fee else min_fee
 }
 
@@ -499,7 +292,7 @@ fun raw_bernoulli_fee_rate(config: &PricingConfig, fair_price: u64): u64 {
     let complement = constants::float_scaling!() - fair_price;
     let variance = math::mul(fair_price, complement);
     let bernoulli_factor = predict_math::sqrt(variance, constants::float_scaling!());
-    math::mul(config.base_fee, bernoulli_factor)
+    math::mul(config.base_fee(), bernoulli_factor)
 }
 
 fun utilization_fee_rate(config: &PricingConfig, liability: u64, balance: u64): u64 {
@@ -512,8 +305,8 @@ fun utilization_fee_rate(config: &PricingConfig, liability: u64, balance: u64): 
     };
     let util_sq = math::mul(util, util);
     math::mul(
-        config.base_fee,
-        math::mul(config.utilization_multiplier, util_sq),
+        config.base_fee(),
+        math::mul(config.utilization_multiplier(), util_sq),
     )
 }
 
@@ -521,29 +314,29 @@ fun utilization_fee_rate(config: &PricingConfig, liability: u64, balance: u64): 
 /// - k = ln(strike / forward)
 /// - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
 /// - d2 = -((k + w(k) / 2) / sqrt(w(k)))
-fun compute_nd2(forward: u64, svi: &SVIParams, strike: u64): u64 {
+fun compute_nd2(forward: u64, svi_params: &SVIParams, strike: u64): u64 {
     assert!(forward > 0, EZeroForward);
 
-    let k = predict_math::ln(math::div(strike, forward));
-    let m = market_oracle::svi_m(svi);
+    let strike_ratio = math::div(strike, forward);
+    assert!(strike_ratio > 0, EInvalidStrikeRatio);
+    let k = predict_math::ln(strike_ratio);
+    let m = svi_params.m();
     let k_minus_m = k.sub(&m);
     let k_minus_m_squared = k_minus_m.square_scaled();
-    let sigma = market_oracle::svi_sigma(svi);
+    let sigma = svi_params.sigma();
     let sigma_squared = math::mul(sigma, sigma);
-    assert!(k_minus_m_squared <= max_u64() - sigma_squared, ESVISqrtInputOverflow);
     let sqrt_input = k_minus_m_squared + sigma_squared;
     let sq = predict_math::sqrt(sqrt_input, constants::float_scaling!());
     let sq_i64 = i64::from_u64(sq);
 
-    let rho = market_oracle::svi_rho(svi);
+    let rho = svi_params.rho();
     let rho_km = rho.mul_scaled(&k_minus_m);
     let inner = rho_km.add(&sq_i64);
     assert!(!inner.is_negative(), ECannotBeNegative);
 
-    let a = market_oracle::svi_a(svi);
-    let b = market_oracle::svi_b(svi);
+    let a = svi_params.a();
+    let b = svi_params.b();
     let wing_var = math::mul(b, inner.magnitude());
-    assert!(a <= max_u64() - wing_var, ETotalVarianceOverflow);
     let total_var = a + wing_var;
     assert!(total_var > 0, EZeroVariance);
 
@@ -564,6 +357,7 @@ fun assert_curve_range(
     min_strike: u64,
     max_strike: u64,
 ) {
+    assert!(grid_tick > 0, EInvalidCurveRange);
     assert!(min_strike <= max_strike, EInvalidCurveRange);
     assert!(min_strike >= grid_min && min_strike <= grid_max, EInvalidCurveRange);
     assert!(max_strike >= grid_min && max_strike <= grid_max, EInvalidCurveRange);
@@ -599,6 +393,7 @@ fun find_gap(points: &vector<CurvePoint>, grid_tick: u64): (bool, u64) {
         };
 
         // `points` is strike-sorted, and UP price is monotone non-increasing in strike.
+        assert!(lo.up_price >= hi.up_price, ERangePriceUnderflow);
         let price_diff = lo.up_price - hi.up_price;
         if (price_diff > best_price_diff) {
             best_idx = i;
@@ -614,20 +409,4 @@ fun find_gap(points: &vector<CurvePoint>, grid_tick: u64): (bool, u64) {
 /// Round a strike down to the nearest tick boundary.
 fun snap_to_tick(strike: u64, grid_min: u64, grid_tick: u64): u64 {
     grid_min + (strike - grid_min) / grid_tick * grid_tick
-}
-
-// === Test-Only Functions ===
-
-#[test_only]
-public fun destroy_for_testing(config: PricingConfig) {
-    let PricingConfig {
-        base_fee: _,
-        min_fee: _,
-        utilization_multiplier: _,
-        min_ask_price: _,
-        max_ask_price: _,
-        pyth_spot_freshness_ms: _,
-        block_scholes_prices_freshness_ms: _,
-        block_scholes_svi_freshness_ms: _,
-    } = config;
 }

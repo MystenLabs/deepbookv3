@@ -5,6 +5,7 @@ version = "0.0.1"
 
 [dependencies]
 deepbook = { local = "../deepbook" }
+dusdc = { local = "../dusdc" }
 # Official Pyth Lazer Sui package. Used by `pyth_source::update_from_lazer` to
 # consume a verified `pyth_lazer::update::Update`. The `Update` constructor is
 # package-scoped, so the Move type system enforces "this value came from

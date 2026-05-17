@@ -5,6 +5,7 @@ import {
   type ActionName,
   type ActionSummary,
   type ExecutionResult,
+  type RejectedMintResult,
   type ResultsFile,
   type ScenarioRow,
   type SimState,
@@ -16,20 +17,19 @@ import {
 } from "./shared.js";
 import {
   address,
+  POOL_VAULT_ID,
+  PROTOCOL_CONFIG_ID,
   createManagerTx,
+  createExpiryMarketTx,
   createMarketOracleCapTx,
-  createMarketOracleTx,
-  createPredictTx,
   createPythSourceTx,
   depositToManagerTx,
-  derivePredictId,
   deriveManagerId,
   execute,
   executeAndWait,
   finalizeDusdcCurrencyRegistrationTx,
   mintTx,
   refreshOracleAndMintTx,
-  setAssetFeedIdTx,
   setMarketOracleBasisBoundsTx,
   supplyTx,
   updateBlockScholesPricesTx,
@@ -44,6 +44,8 @@ const FLOAT_SCALING = 1_000_000_000n;
 const ORACLE_MIN_STRIKE = 50_000n * FLOAT_SCALING;
 const ORACLE_MAX_STRIKE = 150_000n * FLOAT_SCALING;
 const ORACLE_TICK_SIZE = 1n * FLOAT_SCALING;
+
+type MintRow = Extract<ScenarioRow, { action: "mint" }>;
 
 function alignStrikeToGrid(strike: bigint): bigint {
   const relative = strike - ORACLE_MIN_STRIKE;
@@ -63,6 +65,7 @@ function parseArgs() {
   return {
     setupOnly: process.argv.includes("--setup-only"),
     executeOnly: process.argv.includes("--execute-only"),
+    continueOnRejects: process.argv.includes("--continue-on-rejects"),
     maxRows,
   };
 }
@@ -83,7 +86,12 @@ function summarizeRows(rows: ExecutionResult[]): ActionSummary {
   };
 }
 
-function buildResultsFile(byAction: Record<ActionName, ExecutionResult[]>): ResultsFile {
+function buildResultsFile(
+  byAction: Record<ActionName, ExecutionResult[]>,
+  rejectedMints: RejectedMintResult[],
+  targetMints: number,
+  attemptedMints: number
+): ResultsFile {
   const summaryByAction: ResultsFile["summary"]["byAction"] = {};
 
   for (const action of ["update_prices", "update_svi", "mint"] as const) {
@@ -96,9 +104,54 @@ function buildResultsFile(byAction: Record<ActionName, ExecutionResult[]>): Resu
     schema_version: RESULTS_SCHEMA_VERSION,
     summary: {
       totalTxs: byAction.update_prices.length + byAction.update_svi.length + byAction.mint.length,
+      attemptedMints,
+      successfulMints: byAction.mint.length,
+      rejectedMints: rejectedMints.length,
+      targetMints,
       byAction: summaryByAction,
     },
     mints: byAction.mint,
+    rejectedMints,
+  };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function direction(row: MintRow): "UP" | "DN" {
+  return row.isUp ? "UP" : "DN";
+}
+
+function scaledUsd(value: bigint): string {
+  return (Number(value) / 1e9).toFixed(0);
+}
+
+function mintContext(
+  row: MintRow,
+  alignedStrike: bigint,
+  attemptedMintIndex: number,
+  targetMints: number
+): string {
+  return `mint ${attemptedMintIndex}/${targetMints} csv_line=${row.lineNumber} ${direction(row)} strike=$${scaledUsd(alignedStrike)} quantity=${row.quantity}`;
+}
+
+function rejectedMintResult(
+  row: MintRow,
+  alignedStrike: bigint,
+  attemptedMintIndex: number,
+  wallMs: number,
+  error: unknown
+): RejectedMintResult {
+  return {
+    attemptedMintIndex,
+    csvLine: row.lineNumber,
+    direction: direction(row),
+    strike: row.strike.toString(),
+    alignedStrike: alignedStrike.toString(),
+    quantity: row.quantity.toString(),
+    wallMs,
+    error: errorMessage(error),
   };
 }
 
@@ -118,9 +171,10 @@ async function setupSimulation(): Promise<SimState> {
   const dusdcCurrencyId: string = dusdcCurrencyChange.objectId;
   console.log(`[${ts()}]   DUSDC Currency: ${dusdcCurrencyId}`);
 
-  const predictId = derivePredictId();
-  await executeAndWait(createPredictTx(dusdcCurrencyId), "create_predict");
-  console.log(`[${ts()}]   Predict: ${predictId}`);
+  const poolVaultId = POOL_VAULT_ID;
+  const protocolConfigId = PROTOCOL_CONFIG_ID;
+  console.log(`[${ts()}]   PoolVault: ${poolVaultId}`);
+  console.log(`[${ts()}]   ProtocolConfig: ${protocolConfigId}`);
 
   result = await executeAndWait(createMarketOracleCapTx(address), "create_market_oracle_cap");
   const oracleCapChange = result.objectChanges.find(
@@ -129,27 +183,28 @@ async function setupSimulation(): Promise<SimState> {
   const oracleCapId: string = oracleCapChange.objectId;
   console.log(`[${ts()}]   OracleCap: ${oracleCapId}`);
 
-  await executeAndWait(setAssetFeedIdTx(predictId, "BTC", 1n), "set_asset_feed_id");
-  console.log(`[${ts()}]   Feed id registered: BTC -> 1`);
-
-  result = await executeAndWait(createPythSourceTx(1n), "create_pyth_source");
+  result = await executeAndWait(createPythSourceTx(1), "create_pyth_source");
   const pythSourceChange = result.objectChanges.find(
     (change: any) => change.type === "created" && change.objectType.includes("PythSource")
   );
   const pythSourceId: string = pythSourceChange.objectId;
   console.log(`[${ts()}]   PythSource: ${pythSourceId}`);
 
+  const vaultSeed = 500_000n * DUSDC_DECIMALS;
+  await executeAndWait(supplyTx(poolVaultId, protocolConfigId, vaultSeed), "supply");
+  console.log(`[${ts()}]   Vault funded: ${vaultSeed / DUSDC_DECIMALS} DUSDC`);
+
   result = await executeAndWait(
-    createMarketOracleTx({
-      predictId,
+    createExpiryMarketTx({
+      poolVaultId,
+      protocolConfigId,
       pythSourceId,
       oracleCapId,
-      underlyingAsset: "BTC",
       expiry: EXPIRY_MS,
       minStrike: ORACLE_MIN_STRIKE,
       tickSize: ORACLE_TICK_SIZE,
     }),
-    "create_market_oracle",
+    "create_expiry_market",
     // Matrix setup allocates the full strike grid at oracle creation time.
     50_000_000_000n
   );
@@ -157,6 +212,11 @@ async function setupSimulation(): Promise<SimState> {
     (change: any) => change.type === "created" && change.objectType.includes("MarketOracle") && !change.objectType.includes("Cap")
   );
   const oracleId: string = oracleChange.objectId;
+  const expiryMarketChange = result.objectChanges.find(
+    (change: any) => change.type === "created" && change.objectType.includes("ExpiryMarket")
+  );
+  const expiryMarketId: string = expiryMarketChange.objectId;
+  console.log(`[${ts()}]   ExpiryMarket: ${expiryMarketId}`);
   console.log(`[${ts()}]   Oracle: ${oracleId}`);
 
   // Scenario CSV has historical spot moves up to ~8% between consecutive
@@ -165,6 +225,7 @@ async function setupSimulation(): Promise<SimState> {
   await executeAndWait(
     setMarketOracleBasisBoundsTx(
       oracleId,
+      protocolConfigId,
       oracleCapId,
       100_000_000n,
       100_000_000n,
@@ -175,10 +236,6 @@ async function setupSimulation(): Promise<SimState> {
   );
   console.log(`[${ts()}]   Basis bounds widened for oracle`);
 
-  const vaultSeed = 500_000n * DUSDC_DECIMALS;
-  await executeAndWait(supplyTx(predictId, vaultSeed), "supply");
-  console.log(`[${ts()}]   Vault funded: ${vaultSeed / DUSDC_DECIMALS} DUSDC`);
-
   const managerId = deriveManagerId(address);
   await executeAndWait(createManagerTx(), "create_manager");
   console.log(`[${ts()}]   Manager: ${managerId}`);
@@ -188,7 +245,9 @@ async function setupSimulation(): Promise<SimState> {
   console.log(`[${ts()}]   Manager funded: ${userFunds / DUSDC_DECIMALS} DUSDC`);
 
   const state: SimState = {
-    predictId,
+    poolVaultId,
+    protocolConfigId,
+    expiryMarketId,
     pythSourceId,
     oracleId,
     oracleCapId,
@@ -201,10 +260,17 @@ async function setupSimulation(): Promise<SimState> {
   return state;
 }
 
-async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<void> {
-  const mintRows = rows.filter((row): row is Extract<ScenarioRow, { action: "mint" }> => row.action === "mint");
+async function executeScenario(
+  rows: ScenarioRow[],
+  state: SimState,
+  continueOnRejects: boolean
+): Promise<void> {
+  const mintRows = rows.filter((row): row is MintRow => row.action === "mint");
 
   console.log(`\n[${ts()}] Loaded ${rows.length} rows (${mintRows.length} mints)`);
+  if (continueOnRejects) {
+    console.log(`[${ts()}] Continue-on-rejects enabled; run still requires ${mintRows.length} successful mints`);
+  }
   console.log(`[${ts()}] --- Executing ${rows.length} actions ---\n`);
 
   const byAction: Record<ActionName, ExecutionResult[]> = {
@@ -212,7 +278,8 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
     update_svi: [],
     mint: [],
   };
-  let mintIndex = 0;
+  const rejectedMints: RejectedMintResult[] = [];
+  let attemptedMintIndex = 0;
   let i = 0;
   while (i < rows.length) {
     const row = rows[i];
@@ -225,46 +292,61 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
       nextRow?.action === "update_svi" &&
       nextNextRow?.action === "mint"
     ) {
-      mintIndex++;
+      attemptedMintIndex++;
       const alignedStrike = alignStrikeToGrid(nextNextRow.strike);
-      const gas = await execute(
-        () => refreshOracleAndMintTx({
-          predictId: state.predictId,
-          managerId: state.managerId,
-          oracleId: state.oracleId,
-          oracleCapId: state.oracleCapId,
-          pythSourceId: state.pythSourceId,
-          strike: alignedStrike,
-          isUp: nextNextRow.isUp,
-          quantity: nextNextRow.quantity,
-          spot: row.spot,
-          forward: row.forward,
-          svi: {
-            a: nextRow.a,
-            b: nextRow.b,
-            rho: nextRow.rho,
-            rhoNegative: nextRow.rhoNegative,
-            m: nextRow.m,
-            mNegative: nextRow.mNegative,
-            sigma: nextRow.sigma,
-          },
-        }),
-        "refresh_oracle_and_mint"
-      );
+      try {
+        const gas = await execute(
+          () => refreshOracleAndMintTx({
+            expiryMarketId: state.expiryMarketId,
+            protocolConfigId: state.protocolConfigId,
+            managerId: state.managerId,
+            oracleId: state.oracleId,
+            oracleCapId: state.oracleCapId,
+            pythSourceId: state.pythSourceId,
+            strike: alignedStrike,
+            isUp: nextNextRow.isUp,
+            quantity: nextNextRow.quantity,
+            spot: row.spot,
+            forward: row.forward,
+            svi: {
+              a: nextRow.a,
+              b: nextRow.b,
+              rho: nextRow.rho,
+              rhoNegative: nextRow.rhoNegative,
+              m: nextRow.m,
+              mNegative: nextRow.mNegative,
+              sigma: nextRow.sigma,
+            },
+          }),
+          "refresh_oracle_and_mint"
+        );
 
-      const wallMs = performance.now() - startedAt;
-      byAction.mint.push({ wallMs, ...gas });
+        const wallMs = performance.now() - startedAt;
+        byAction.mint.push({ wallMs, ...gas });
 
-      const direction = nextNextRow.isUp ? "UP" : "DN";
-      const strikeUsd = (Number(alignedStrike) / 1e9).toFixed(0);
-      process.stdout.write(`[${ts()}]   [${mintIndex}/${mintRows.length}] ${direction} $${strikeUsd} ${wallMs.toFixed(0)}ms\n`);
+        process.stdout.write(`[${ts()}]   [${byAction.mint.length}/${mintRows.length}] ${direction(nextNextRow)} $${scaledUsd(alignedStrike)} ${wallMs.toFixed(0)}ms\n`);
+      } catch (error) {
+        const wallMs = performance.now() - startedAt;
+        if (!continueOnRejects) {
+          throw new Error(`${mintContext(nextNextRow, alignedStrike, attemptedMintIndex, mintRows.length)} failed: ${errorMessage(error)}`);
+        }
+        rejectedMints.push(rejectedMintResult(nextNextRow, alignedStrike, attemptedMintIndex, wallMs, error));
+        process.stdout.write(`[${ts()}]   [reject ${attemptedMintIndex}/${mintRows.length}] ${direction(nextNextRow)} $${scaledUsd(alignedStrike)} ${wallMs.toFixed(0)}ms ${errorMessage(error)}\n`);
+      }
       i += 3;
       continue;
     }
 
     if (row.action === "update_prices") {
       const gas = await execute(
-        () => updateBlockScholesPricesTx(state.oracleId, state.pythSourceId, state.oracleCapId, row.spot, row.forward),
+        () => updateBlockScholesPricesTx(
+          state.oracleId,
+          state.protocolConfigId,
+          state.pythSourceId,
+          state.oracleCapId,
+          row.spot,
+          row.forward
+        ),
         "update_prices"
       );
       byAction.update_prices.push({ wallMs: performance.now() - startedAt, ...gas });
@@ -276,6 +358,7 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
       const gas = await execute(
         () => updateSviTx(
           state.oracleId,
+          state.protocolConfigId,
           state.oracleCapId,
           {
             a: row.a,
@@ -294,42 +377,57 @@ async function executeScenario(rows: ScenarioRow[], state: SimState): Promise<vo
       continue;
     }
 
-    mintIndex++;
+    attemptedMintIndex++;
     const alignedStrike = alignStrikeToGrid(row.strike);
-    const gas = await execute(
-      () => mintTx({
-        predictId: state.predictId,
-        managerId: state.managerId,
-        oracleId: state.oracleId,
-        pythSourceId: state.pythSourceId,
-        strike: alignedStrike,
-        isUp: row.isUp,
-        quantity: row.quantity,
-      }),
-      "mint"
-    );
+    try {
+      const gas = await execute(
+        () => mintTx({
+          expiryMarketId: state.expiryMarketId,
+          protocolConfigId: state.protocolConfigId,
+          managerId: state.managerId,
+          oracleId: state.oracleId,
+          pythSourceId: state.pythSourceId,
+          strike: alignedStrike,
+          isUp: row.isUp,
+          quantity: row.quantity,
+        }),
+        "mint"
+      );
 
-    const wallMs = performance.now() - startedAt;
-    byAction.mint.push({ wallMs, ...gas });
+      const wallMs = performance.now() - startedAt;
+      byAction.mint.push({ wallMs, ...gas });
 
-    const direction = row.isUp ? "UP" : "DN";
-    const strikeUsd = (Number(alignedStrike) / 1e9).toFixed(0);
-    process.stdout.write(`[${ts()}]   [${mintIndex}/${mintRows.length}] ${direction} $${strikeUsd} ${wallMs.toFixed(0)}ms\n`);
+      process.stdout.write(`[${ts()}]   [${byAction.mint.length}/${mintRows.length}] ${direction(row)} $${scaledUsd(alignedStrike)} ${wallMs.toFixed(0)}ms\n`);
+    } catch (error) {
+      const wallMs = performance.now() - startedAt;
+      if (!continueOnRejects) {
+        throw new Error(`${mintContext(row, alignedStrike, attemptedMintIndex, mintRows.length)} failed: ${errorMessage(error)}`);
+      }
+      rejectedMints.push(rejectedMintResult(row, alignedStrike, attemptedMintIndex, wallMs, error));
+      process.stdout.write(`[${ts()}]   [reject ${attemptedMintIndex}/${mintRows.length}] ${direction(row)} $${scaledUsd(alignedStrike)} ${wallMs.toFixed(0)}ms ${errorMessage(error)}\n`);
+    }
     i++;
   }
 
-  const results = buildResultsFile(byAction);
+  const results = buildResultsFile(byAction, rejectedMints, mintRows.length, attemptedMintIndex);
   writeJson(RESULTS_PATH, results);
 
   const mintSummary = results.summary.byAction.mint;
   console.log(`\n[${ts()}] --- Done ---`);
-  console.log(`[${ts()}]   ${results.summary.totalTxs} txs, ${results.mints.length} mints`);
+  console.log(`[${ts()}]   ${results.summary.totalTxs} txs, ${results.mints.length}/${mintRows.length} successful mints`);
+  if (rejectedMints.length > 0) {
+    console.log(`[${ts()}]   ${rejectedMints.length} rejected mints recorded`);
+  }
   if (mintSummary) {
     console.log(
       `[${ts()}]   Avg mint: ${mintSummary.wallMs.avg.toFixed(0)}ms, avg gas: ${(mintSummary.gas.avg / 1e9).toFixed(6)} SUI`
     );
   }
   console.log(`[${ts()}]   Results saved to ${RESULTS_PATH}`);
+
+  if (byAction.mint.length !== mintRows.length) {
+    throw new Error(`Simulation produced ${byAction.mint.length}/${mintRows.length} successful mints; see rejectedMints in ${RESULTS_PATH}`);
+  }
 }
 
 async function main() {
@@ -342,7 +440,7 @@ async function main() {
 
   if (args.executeOnly) {
     const state = validateSimState(readJson<SimState>(STATE_PATH));
-    await executeScenario(rows, state);
+    await executeScenario(rows, state, args.continueOnRejects);
     return;
   }
 
@@ -353,7 +451,7 @@ async function main() {
     return;
   }
 
-  await executeScenario(rows, state);
+  await executeScenario(rows, state, args.continueOnRejects);
 }
 
 main().catch((error) => {

@@ -4,10 +4,8 @@
 /// Signed u64 magnitude with normalized zero.
 module deepbook_predict::i64;
 
-use deepbook::constants::max_u64;
 use deepbook_predict::constants;
 
-const EOverflow: u64 = 0;
 const EZeroDivisor: u64 = 1;
 
 /// Signed integer represented as magnitude plus sign.
@@ -73,10 +71,9 @@ public fun neg(value: &I64): I64 {
     }
 }
 
-/// Add two signed values, aborting on magnitude overflow.
+/// Add two signed values.
 public fun add(a: &I64, b: &I64): I64 {
     if (a.is_negative == b.is_negative) {
-        assert!(a.magnitude <= max_u64() - b.magnitude, EOverflow);
         from_parts(a.magnitude + b.magnitude, a.is_negative)
     } else if (a.magnitude >= b.magnitude) {
         from_parts(a.magnitude - b.magnitude, a.is_negative)
@@ -95,7 +92,6 @@ public fun sub(a: &I64, b: &I64): I64 {
 public fun mul_scaled(a: &I64, b: &I64): I64 {
     let product =
         ((a.magnitude as u128) * (b.magnitude as u128)) / (constants::float_scaling!() as u128);
-    assert!(product <= (max_u64() as u128), EOverflow);
     from_parts((product as u64), a.is_negative != b.is_negative)
 }
 
@@ -104,7 +100,6 @@ public fun div_scaled(a: &I64, b: &I64): I64 {
     assert!(b.magnitude > 0, EZeroDivisor);
     let quotient =
         ((a.magnitude as u128) * (constants::float_scaling!() as u128)) / (b.magnitude as u128);
-    assert!(quotient <= (max_u64() as u128), EOverflow);
     from_parts((quotient as u64), a.is_negative != b.is_negative)
 }
 

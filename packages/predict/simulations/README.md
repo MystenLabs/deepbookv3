@@ -52,6 +52,13 @@ Each mint row has `wallMs`, `computationCost`, `storageCost`, `storageRebate`, a
 - `bash packages/predict/simulations/run.sh --resume <run-id>`
 - `bash packages/predict/simulations/run.sh --resume <run-id> --sim`
 - `bash packages/predict/simulations/run.sh --skip-analysis`
+- `bash packages/predict/simulations/run.sh --continue-on-rejects`
+- `SIM_QUANTITY_SCALE=10000 bash packages/predict/simulations/run.sh`
+
+`SIM_QUANTITY_SCALE` divides the CSV mint quantity before submitting the transaction.
+The default is `10000`, which is 10x smaller than the earlier `1000` scale.
+`--continue-on-rejects` records failed mint attempts in `rejectedMints` and keeps
+processing, but the run still fails unless every CSV mint succeeds.
 
 ## Localnet Limitation
 

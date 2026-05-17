@@ -24,9 +24,9 @@ package-lock.json
 # Python
 __pycache__/
 
-# Simulation data and output
-packages/predict/simulation/*.csv
-packages/predict/simulation/*.png
+# Predict simulation local artifacts
+packages/predict/simulations/runs/
+packages/predict/parallel_pool_implementation_plan.md
 
 # Research
 predict_research/

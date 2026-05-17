@@ -8,7 +8,7 @@
 /// forward, apply circuit breakers, or settle a market.
 module deepbook_predict::pyth_source;
 
-use deepbook_predict::lazer_helper;
+use deepbook_predict::{lazer_helper, protocol_config::ProtocolConfig};
 use pyth_lazer::update::Update as LazerUpdate;
 use sui::{clock::Clock, event};
 
@@ -16,6 +16,7 @@ const EStaleSourceUpdate: u64 = 0;
 const EZeroSpot: u64 = 1;
 const EFutureSourceUpdate: u64 = 2;
 
+/// Emitted when a verified Pyth Lazer spot update is accepted.
 public struct PythSourceUpdated has copy, drop, store {
     pyth_source_id: ID,
     feed_id: u32,
@@ -29,12 +30,23 @@ public struct PythSource has key {
     id: UID,
     feed_id: u32,
     spot: u64,
+    /// Pyth publisher timestamp from the latest accepted update, in milliseconds.
     source_timestamp_ms: u64,
+    /// On-chain timestamp when the latest accepted update landed.
     update_timestamp_ms: u64,
 }
 
 /// Decode and store a verified Pyth Lazer spot update.
-public fun update_from_lazer(source: &mut PythSource, update: LazerUpdate, clock: &Clock) {
+///
+/// Aborts during valuation, rejects stale/future source timestamps, and stores
+/// both the publisher timestamp and on-chain landing timestamp.
+public fun update_from_lazer(
+    source: &mut PythSource,
+    config: &ProtocolConfig,
+    update: LazerUpdate,
+    clock: &Clock,
+) {
+    config.assert_not_valuation_in_progress();
     let (spot, source_timestamp_us) = lazer_helper::extract_spot(&update, source.feed_id);
     let source_timestamp_ms = us_to_ms_ceil(source_timestamp_us);
     let update_timestamp_ms = clock.timestamp_ms();
@@ -47,7 +59,7 @@ public fun update_from_lazer(source: &mut PythSource, update: LazerUpdate, clock
     source.source_timestamp_ms = source_timestamp_ms;
     source.update_timestamp_ms = update_timestamp_ms;
     event::emit(PythSourceUpdated {
-        pyth_source_id: source.id.to_inner(),
+        pyth_source_id: source.id(),
         feed_id: source.feed_id,
         spot,
         source_timestamp_ms,
@@ -82,8 +94,13 @@ public fun update_timestamp_ms(source: &PythSource): u64 {
 
 // === Public-Package Functions ===
 
+/// Return the timestamp that pricing can use for freshness checks.
+public(package) fun freshness_timestamp_ms(source: &PythSource): u64 {
+    source.source_timestamp_ms.min(source.update_timestamp_ms)
+}
+
 /// Create and share a Pyth source bound to a Lazer feed id.
-public(package) fun create(feed_id: u32, ctx: &mut TxContext): ID {
+public(package) fun create_and_share(feed_id: u32, ctx: &mut TxContext): ID {
     let source = PythSource {
         id: object::new(ctx),
         feed_id,
@@ -91,7 +108,7 @@ public(package) fun create(feed_id: u32, ctx: &mut TxContext): ID {
         source_timestamp_ms: 0,
         update_timestamp_ms: 0,
     };
-    let id = source.id.to_inner();
+    let id = source.id();
     transfer::share_object(source);
     id
 }

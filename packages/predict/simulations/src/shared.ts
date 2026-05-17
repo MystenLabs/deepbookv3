@@ -5,9 +5,10 @@ import { fileURLToPath } from "url";
 export type ActionName = "update_prices" | "update_svi" | "mint";
 
 export type ScenarioRow =
-  | { action: "update_prices"; spot: bigint; forward: bigint }
+  | { action: "update_prices"; lineNumber: number; spot: bigint; forward: bigint }
   | {
       action: "update_svi";
+      lineNumber: number;
       a: bigint;
       b: bigint;
       rho: bigint;
@@ -17,7 +18,7 @@ export type ScenarioRow =
       sigma: bigint;
       riskFreeRate: bigint;
     }
-  | { action: "mint"; strike: bigint; isUp: boolean; quantity: bigint };
+  | { action: "mint"; lineNumber: number; strike: bigint; isUp: boolean; quantity: bigint };
 
 export interface ExecutionResult {
   wallMs: number;
@@ -33,17 +34,35 @@ export interface ActionSummary {
   wallMs: { avg: number; min: number; max: number };
 }
 
+export interface RejectedMintResult {
+  attemptedMintIndex: number;
+  csvLine: number;
+  direction: "UP" | "DN";
+  strike: string;
+  alignedStrike: string;
+  quantity: string;
+  wallMs: number;
+  error: string;
+}
+
 export interface ResultsFile {
   schema_version: typeof RESULTS_SCHEMA_VERSION;
   summary: {
     totalTxs: number;
+    attemptedMints: number;
+    successfulMints: number;
+    rejectedMints: number;
+    targetMints: number;
     byAction: Partial<Record<ActionName, ActionSummary>>;
   };
   mints: ExecutionResult[];
+  rejectedMints: RejectedMintResult[];
 }
 
 export interface SimState {
-  predictId: string;
+  poolVaultId: string;
+  protocolConfigId: string;
+  expiryMarketId: string;
   pythSourceId: string;
   oracleId: string;
   oracleCapId: string;
@@ -69,7 +88,24 @@ const SCENARIO_COLUMNS = [
   "quantity",
 ] as const;
 
-const SCENARIO_QUANTITY_SCALE = 1000n;
+const DEFAULT_SCENARIO_QUANTITY_SCALE = 10_000n;
+const SCENARIO_QUANTITY_SCALE_ENV = "SIM_QUANTITY_SCALE";
+
+function resolveScenarioQuantityScale(): bigint {
+  const value = process.env[SCENARIO_QUANTITY_SCALE_ENV];
+  if (value === undefined || value === "") return DEFAULT_SCENARIO_QUANTITY_SCALE;
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`${SCENARIO_QUANTITY_SCALE_ENV} must be a positive integer`);
+  }
+
+  const scale = BigInt(value);
+  if (scale === 0n) {
+    throw new Error(`${SCENARIO_QUANTITY_SCALE_ENV} must be greater than zero`);
+  }
+  return scale;
+}
+
+const SCENARIO_QUANTITY_SCALE = resolveScenarioQuantityScale();
 
 function resolveInstanceDir(): string {
   const dir = process.env.INSTANCE_DIR;
@@ -122,6 +158,7 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
   if (action === "update_prices") {
     return {
       action,
+      lineNumber,
       spot: parseUnsignedInteger(row, "spot", lineNumber),
       forward: parseUnsignedInteger(row, "forward", lineNumber),
     };
@@ -130,6 +167,7 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
   if (action === "update_svi") {
     return {
       action,
+      lineNumber,
       a: parseUnsignedInteger(row, "a", lineNumber),
       b: parseUnsignedInteger(row, "b", lineNumber),
       rho: parseUnsignedInteger(row, "rho", lineNumber),
@@ -143,6 +181,7 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
 
   return {
     action,
+    lineNumber,
     strike: parseUnsignedInteger(row, "strike", lineNumber),
     isUp: parseBoolean(row, "is_up", lineNumber),
     quantity: normalizeMintQuantity(parseUnsignedInteger(row, "quantity", lineNumber), lineNumber),
@@ -190,11 +229,19 @@ export function readJson<T>(filePath: string): T {
 }
 
 export function validateSimState(value: SimState): SimState {
-  const requiredFields = ["predictId", "pythSourceId", "oracleId", "oracleCapId", "managerId"] as const;
+  const requiredFields = [
+    "poolVaultId",
+    "protocolConfigId",
+    "expiryMarketId",
+    "pythSourceId",
+    "oracleId",
+    "oracleCapId",
+    "managerId",
+  ] as const;
   for (const field of requiredFields) {
     if (typeof value[field] !== "string" || value[field].length === 0) {
       throw new Error(
-        `Simulation state is missing ${field}; rerun setup after the oracle rearchitecture`
+        `Simulation state is missing ${field}; rerun setup after the parallel pool rearchitecture`
       );
     }
   }

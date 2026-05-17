@@ -8,7 +8,8 @@ import {
   DUSDC_CURRENCY_ID,
   DUSDC_PACKAGE_ID,
   PACKAGE_ID,
-  PLP_TREASURY_CAP_ID,
+  POOL_VAULT_ID,
+  PROTOCOL_CONFIG_ID,
   REGISTRY_ID,
   RPC_URL,
   TREASURY_CAP_ID,
@@ -39,6 +40,7 @@ const EXECUTION_RESPONSE_OPTIONS = {
 export const client = new SuiJsonRpcClient({ url: RPC_URL, network: "localnet" });
 export const signer = getSigner();
 export const address = signer.getPublicKey().toSuiAddress();
+export { POOL_VAULT_ID, PROTOCOL_CONFIG_ID };
 
 function isSuccessStatus(status: any): boolean {
   return status?.status === "success" || status?.success === true;
@@ -109,22 +111,6 @@ export function finalizeDusdcCurrencyRegistrationTx(): Transaction {
   return tx;
 }
 
-export function createPredictTx(currencyId: string): Transaction {
-  const tx = new Transaction();
-  tx.moveCall({
-    target: target("registry", "create_predict"),
-    typeArguments: [DUSDC_TYPE],
-    arguments: [
-      tx.object(REGISTRY_ID),
-      tx.object(ADMIN_CAP_ID),
-      tx.object(currencyId),
-      tx.object(PLP_TREASURY_CAP_ID),
-      tx.object(CLOCK_ID),
-    ],
-  });
-  return tx;
-}
-
 export function createMarketOracleCapTx(recipient: string): Transaction {
   const tx = new Transaction();
   const cap = tx.moveCall({
@@ -135,33 +121,33 @@ export function createMarketOracleCapTx(recipient: string): Transaction {
   return tx;
 }
 
-export function createPythSourceTx(feedId: bigint): Transaction {
+export function createPythSourceTx(feedId: number): Transaction {
   const tx = new Transaction();
   tx.moveCall({
     target: target("registry", "create_pyth_source"),
-    arguments: [tx.object(REGISTRY_ID), tx.pure.u64(feedId)],
+    arguments: [tx.object(REGISTRY_ID), tx.object(ADMIN_CAP_ID), tx.pure.u32(feedId)],
   });
   return tx;
 }
 
-export function createMarketOracleTx(params: {
-  predictId: string;
+export function createExpiryMarketTx(params: {
+  poolVaultId: string;
+  protocolConfigId: string;
   pythSourceId: string;
   oracleCapId: string;
-  underlyingAsset: string;
   expiry: bigint;
   minStrike: bigint;
   tickSize: bigint;
 }): Transaction {
   const tx = new Transaction();
   tx.moveCall({
-    target: target("registry", "create_market_oracle"),
+    target: target("registry", "create_expiry_market"),
     arguments: [
       tx.object(REGISTRY_ID),
-      tx.object(params.predictId),
+      tx.object(params.poolVaultId),
+      tx.object(params.protocolConfigId),
       tx.object(params.pythSourceId),
       tx.object(params.oracleCapId),
-      tx.pure.string(params.underlyingAsset),
       tx.pure.u64(params.expiry),
       tx.pure.u64(params.minStrike),
       tx.pure.u64(params.tickSize),
@@ -171,26 +157,9 @@ export function createMarketOracleTx(params: {
   return tx;
 }
 
-export function setAssetFeedIdTx(
-  predictId: string,
-  asset: string,
-  feedId: bigint
-): Transaction {
-  const tx = new Transaction();
-  tx.moveCall({
-    target: target("registry", "set_asset_feed_id"),
-    arguments: [
-      tx.object(predictId),
-      tx.object(ADMIN_CAP_ID),
-      tx.pure.string(asset),
-      tx.pure.u64(feedId),
-    ],
-  });
-  return tx;
-}
-
 export function setMarketOracleBasisBoundsTx(
   oracleId: string,
+  protocolConfigId: string,
   oracleCapId: string,
   maxSpotDeviation: bigint,
   maxBasisDeviation: bigint,
@@ -202,6 +171,7 @@ export function setMarketOracleBasisBoundsTx(
     target: target("market_oracle", "set_basis_bounds"),
     arguments: [
       tx.object(oracleId),
+      tx.object(protocolConfigId),
       tx.object(oracleCapId),
       tx.pure.u64(maxSpotDeviation),
       tx.pure.u64(maxBasisDeviation),
@@ -214,6 +184,7 @@ export function setMarketOracleBasisBoundsTx(
 
 export function updateBlockScholesPricesTx(
   oracleId: string,
+  protocolConfigId: string,
   pythSourceId: string,
   oracleCapId: string,
   spot: bigint,
@@ -224,6 +195,7 @@ export function updateBlockScholesPricesTx(
     target: target("market_oracle", "update_block_scholes_prices"),
     arguments: [
       tx.object(oracleId),
+      tx.object(protocolConfigId),
       tx.object(pythSourceId),
       tx.object(oracleCapId),
       tx.pure.u64(spot),
@@ -237,6 +209,7 @@ export function updateBlockScholesPricesTx(
 
 export function updateSviTx(
   oracleId: string,
+  protocolConfigId: string,
   oracleCapId: string,
   svi: {
     a: bigint;
@@ -271,6 +244,7 @@ export function updateSviTx(
     target: target("market_oracle", "update_svi"),
     arguments: [
       tx.object(oracleId),
+      tx.object(protocolConfigId),
       tx.object(oracleCapId),
       sviParams,
       tx.pure.u64(nextSourceTimestampMs()),
@@ -280,17 +254,20 @@ export function updateSviTx(
   return tx;
 }
 
-export function supplyTx(predictId: string, amount: bigint): Transaction {
+export function supplyTx(poolVaultId: string, protocolConfigId: string, amount: bigint): Transaction {
   const tx = new Transaction();
   const [dusdc] = tx.moveCall({
     target: "0x2::coin::mint",
     typeArguments: [DUSDC_TYPE],
     arguments: [tx.object(TREASURY_CAP_ID), tx.pure.u64(amount)],
   });
+  const valuation = tx.moveCall({
+    target: target("plp", "start_valuation"),
+    arguments: [tx.object(poolVaultId), tx.object(protocolConfigId)],
+  });
   const [plpCoin] = tx.moveCall({
-    target: target("predict", "supply"),
-    typeArguments: [DUSDC_TYPE],
-    arguments: [tx.object(predictId), dusdc, tx.object(CLOCK_ID)],
+    target: target("plp", "supply"),
+    arguments: [tx.object(poolVaultId), tx.object(protocolConfigId), valuation, dusdc],
   });
   tx.transferObjects([plpCoin], tx.pure.address(address));
   return tx;
@@ -306,17 +283,6 @@ export function createManagerTx(): Transaction {
 }
 
 // === Derived object IDs ===
-
-// Fieldless struct → compiler-injected `dummy_field: bool = false` (one 0-byte).
-const PREDICT_KEY_BCS = new Uint8Array([0]);
-
-export function derivePredictId(quoteType: string = DUSDC_TYPE): string {
-  return deriveObjectID(
-    REGISTRY_ID,
-    `${PACKAGE_ID}::predict::PredictKey<${quoteType}>`,
-    PREDICT_KEY_BCS
-  );
-}
 
 const PredictManagerKeyBcs = bcs.struct("PredictManagerKey", {
   pos0: bcs.Address,
@@ -341,14 +307,14 @@ export function depositToManagerTx(managerId: string, amount: bigint): Transacti
   });
   tx.moveCall({
     target: target("predict_manager", "deposit"),
-    typeArguments: [DUSDC_TYPE],
     arguments: [tx.object(managerId), coin],
   });
   return tx;
 }
 
 export function mintTx(params: {
-  predictId: string;
+  expiryMarketId: string;
+  protocolConfigId: string;
   managerId: string;
   oracleId: string;
   pythSourceId: string;
@@ -359,18 +325,18 @@ export function mintTx(params: {
   const tx = new Transaction();
   const { lower, higher } = binaryRangeBounds(params.strike, params.isUp);
   const key = tx.moveCall({
-    target: target("range_key", "new"),
+    target: target("expiry_market", "range_key"),
     arguments: [
-      tx.pure.id(params.oracleId),
+      tx.object(params.expiryMarketId),
       tx.pure.u64(lower),
       tx.pure.u64(higher),
     ],
   });
   tx.moveCall({
-    target: target("predict", "mint"),
-    typeArguments: [DUSDC_TYPE],
+    target: target("expiry_market", "mint"),
     arguments: [
-      tx.object(params.predictId),
+      tx.object(params.expiryMarketId),
+      tx.object(params.protocolConfigId),
       tx.object(params.managerId),
       tx.object(params.oracleId),
       tx.object(params.pythSourceId),
@@ -383,7 +349,8 @@ export function mintTx(params: {
 }
 
 export function refreshOracleAndMintTx(params: {
-  predictId: string;
+  expiryMarketId: string;
+  protocolConfigId: string;
   managerId: string;
   oracleId: string;
   oracleCapId: string;
@@ -408,6 +375,7 @@ export function refreshOracleAndMintTx(params: {
     target: target("market_oracle", "update_block_scholes_prices"),
     arguments: [
       tx.object(params.oracleId),
+      tx.object(params.protocolConfigId),
       tx.object(params.pythSourceId),
       tx.object(params.oracleCapId),
       tx.pure.u64(params.spot),
@@ -439,6 +407,7 @@ export function refreshOracleAndMintTx(params: {
     target: target("market_oracle", "update_svi"),
     arguments: [
       tx.object(params.oracleId),
+      tx.object(params.protocolConfigId),
       tx.object(params.oracleCapId),
       sviParams,
       tx.pure.u64(nextSourceTimestampMs()),
@@ -448,18 +417,18 @@ export function refreshOracleAndMintTx(params: {
 
   const { lower, higher } = binaryRangeBounds(params.strike, params.isUp);
   const key = tx.moveCall({
-    target: target("range_key", "new"),
+    target: target("expiry_market", "range_key"),
     arguments: [
-      tx.pure.id(params.oracleId),
+      tx.object(params.expiryMarketId),
       tx.pure.u64(lower),
       tx.pure.u64(higher),
     ],
   });
   tx.moveCall({
-    target: target("predict", "mint"),
-    typeArguments: [DUSDC_TYPE],
+    target: target("expiry_market", "mint"),
     arguments: [
-      tx.object(params.predictId),
+      tx.object(params.expiryMarketId),
+      tx.object(params.protocolConfigId),
       tx.object(params.managerId),
       tx.object(params.oracleId),
       tx.object(params.pythSourceId),
