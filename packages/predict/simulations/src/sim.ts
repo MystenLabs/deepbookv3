@@ -32,6 +32,7 @@ import {
   refreshOracleAndMintTx,
   setMarketOracleBasisBoundsTx,
   supplyTx,
+  supplyWithExpiryValuationTx,
   updateBlockScholesPricesTx,
   updateSviTx,
 } from "./runtime.js";
@@ -44,6 +45,8 @@ const FLOAT_SCALING = 1_000_000_000n;
 const ORACLE_MIN_STRIKE = 25_000n * FLOAT_SCALING;
 const ORACLE_TICK_SIZE = 1n * FLOAT_SCALING;
 const ORACLE_MAX_STRIKE = ORACLE_MIN_STRIKE + 100_000n * ORACLE_TICK_SIZE;
+const NAV_SUPPLY_INTERVAL = 100;
+const NAV_SUPPLY_AMOUNT = 1n * DUSDC_DECIMALS;
 
 type MintRow = Extract<ScenarioRow, { action: "mint" }>;
 
@@ -94,7 +97,7 @@ function buildResultsFile(
 ): ResultsFile {
   const summaryByAction: ResultsFile["summary"]["byAction"] = {};
 
-  for (const action of ["update_prices", "update_svi", "mint"] as const) {
+  for (const action of ["update_prices", "update_svi", "mint", "supply"] as const) {
     if (byAction[action].length > 0) {
       summaryByAction[action] = summarizeRows(byAction[action]);
     }
@@ -103,7 +106,7 @@ function buildResultsFile(
   return {
     schema_version: RESULTS_SCHEMA_VERSION,
     summary: {
-      totalTxs: byAction.update_prices.length + byAction.update_svi.length + byAction.mint.length,
+      totalTxs: byAction.update_prices.length + byAction.update_svi.length + byAction.mint.length + byAction.supply.length,
       attemptedMints,
       successfulMints: byAction.mint.length,
       rejectedMints: rejectedMints.length,
@@ -111,8 +114,35 @@ function buildResultsFile(
       byAction: summaryByAction,
     },
     mints: byAction.mint,
+    supplies: byAction.supply,
     rejectedMints,
   };
+}
+
+async function recordNavSupplyCheckpoint(
+  byAction: Record<ActionName, ExecutionResult[]>,
+  state: SimState,
+  targetMints: number
+): Promise<void> {
+  const successfulMints = byAction.mint.length;
+  if (successfulMints === 0 || successfulMints % NAV_SUPPLY_INTERVAL !== 0) return;
+
+  const startedAt = performance.now();
+  const gas = await execute(
+    () => supplyWithExpiryValuationTx({
+      poolVaultId: state.poolVaultId,
+      protocolConfigId: state.protocolConfigId,
+      expiryMarketId: state.expiryMarketId,
+      oracleId: state.oracleId,
+      pythSourceId: state.pythSourceId,
+      amount: NAV_SUPPLY_AMOUNT,
+    }),
+    "supply"
+  );
+  const wallMs = performance.now() - startedAt;
+  byAction.supply.push({ wallMs, ...gas });
+
+  process.stdout.write(`[${ts()}]   [NAV ${successfulMints}/${targetMints}] supply ${wallMs.toFixed(0)}ms\n`);
 }
 
 function errorMessage(error: unknown): string {
@@ -277,6 +307,7 @@ async function executeScenario(
     update_prices: [],
     update_svi: [],
     mint: [],
+    supply: [],
   };
   const rejectedMints: RejectedMintResult[] = [];
   let attemptedMintIndex = 0;
@@ -294,6 +325,7 @@ async function executeScenario(
     ) {
       attemptedMintIndex++;
       const alignedStrike = alignStrikeToGrid(nextNextRow.strike);
+      let mintSucceeded = false;
       try {
         const gas = await execute(
           () => refreshOracleAndMintTx({
@@ -325,6 +357,7 @@ async function executeScenario(
         byAction.mint.push({ wallMs, ...gas });
 
         process.stdout.write(`[${ts()}]   [${byAction.mint.length}/${mintRows.length}] ${direction(nextNextRow)} $${scaledUsd(alignedStrike)} ${wallMs.toFixed(0)}ms\n`);
+        mintSucceeded = true;
       } catch (error) {
         const wallMs = performance.now() - startedAt;
         if (!continueOnRejects) {
@@ -332,6 +365,9 @@ async function executeScenario(
         }
         rejectedMints.push(rejectedMintResult(nextNextRow, alignedStrike, attemptedMintIndex, wallMs, error));
         process.stdout.write(`[${ts()}]   [reject ${attemptedMintIndex}/${mintRows.length}] ${direction(nextNextRow)} $${scaledUsd(alignedStrike)} ${wallMs.toFixed(0)}ms ${errorMessage(error)}\n`);
+      }
+      if (mintSucceeded) {
+        await recordNavSupplyCheckpoint(byAction, state, mintRows.length);
       }
       i += 3;
       continue;
@@ -379,6 +415,7 @@ async function executeScenario(
 
     attemptedMintIndex++;
     const alignedStrike = alignStrikeToGrid(row.strike);
+    let mintSucceeded = false;
     try {
       const gas = await execute(
         () => mintTx({
@@ -398,6 +435,7 @@ async function executeScenario(
       byAction.mint.push({ wallMs, ...gas });
 
       process.stdout.write(`[${ts()}]   [${byAction.mint.length}/${mintRows.length}] ${direction(row)} $${scaledUsd(alignedStrike)} ${wallMs.toFixed(0)}ms\n`);
+      mintSucceeded = true;
     } catch (error) {
       const wallMs = performance.now() - startedAt;
       if (!continueOnRejects) {
@@ -405,6 +443,9 @@ async function executeScenario(
       }
       rejectedMints.push(rejectedMintResult(row, alignedStrike, attemptedMintIndex, wallMs, error));
       process.stdout.write(`[${ts()}]   [reject ${attemptedMintIndex}/${mintRows.length}] ${direction(row)} $${scaledUsd(alignedStrike)} ${wallMs.toFixed(0)}ms ${errorMessage(error)}\n`);
+    }
+    if (mintSucceeded) {
+      await recordNavSupplyCheckpoint(byAction, state, mintRows.length);
     }
     i++;
   }
@@ -421,6 +462,12 @@ async function executeScenario(
   if (mintSummary) {
     console.log(
       `[${ts()}]   Avg mint: ${mintSummary.wallMs.avg.toFixed(0)}ms, avg gas: ${(mintSummary.gas.avg / 1e9).toFixed(6)} SUI`
+    );
+  }
+  const supplySummary = results.summary.byAction.supply;
+  if (supplySummary) {
+    console.log(
+      `[${ts()}]   Avg NAV supply: ${supplySummary.wallMs.avg.toFixed(0)}ms, avg gas: ${(supplySummary.gas.avg / 1e9).toFixed(6)} SUI`
     );
   }
   console.log(`[${ts()}]   Results saved to ${RESULTS_PATH}`);

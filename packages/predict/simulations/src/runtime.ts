@@ -273,6 +273,46 @@ export function supplyTx(poolVaultId: string, protocolConfigId: string, amount: 
   return tx;
 }
 
+export function supplyWithExpiryValuationTx(params: {
+  poolVaultId: string;
+  protocolConfigId: string;
+  expiryMarketId: string;
+  oracleId: string;
+  pythSourceId: string;
+  amount: bigint;
+}): Transaction {
+  const tx = new Transaction();
+  const [dusdc] = tx.moveCall({
+    target: "0x2::coin::mint",
+    typeArguments: [DUSDC_TYPE],
+    arguments: [tx.object(TREASURY_CAP_ID), tx.pure.u64(params.amount)],
+  });
+  const valuation = tx.moveCall({
+    target: target("plp", "start_valuation"),
+    arguments: [tx.object(params.poolVaultId), tx.object(params.protocolConfigId)],
+  });
+  const expiryValuation = tx.moveCall({
+    target: target("expiry_market", "read_valuation"),
+    arguments: [
+      tx.object(params.expiryMarketId),
+      tx.object(params.protocolConfigId),
+      tx.object(params.oracleId),
+      tx.object(params.pythSourceId),
+      tx.object(CLOCK_ID),
+    ],
+  });
+  tx.moveCall({
+    target: target("plp", "add_expiry_valuation"),
+    arguments: [valuation, expiryValuation],
+  });
+  const [plpCoin] = tx.moveCall({
+    target: target("plp", "supply"),
+    arguments: [tx.object(params.poolVaultId), tx.object(params.protocolConfigId), valuation, dusdc],
+  });
+  tx.transferObjects([plpCoin], tx.pure.address(address));
+  return tx;
+}
+
 export function createManagerTx(): Transaction {
   const tx = new Transaction();
   tx.moveCall({

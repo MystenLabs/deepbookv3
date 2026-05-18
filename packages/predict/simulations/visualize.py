@@ -14,15 +14,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 MIST_PER_SUI = 1_000_000_000
-REQUIRED_ACTIONS = ("update_prices", "update_svi", "mint")
+NAV_SUPPLY_INTERVAL = 100
+REQUIRED_ACTIONS = ("update_prices", "update_svi", "mint", "supply")
 
 
 def load_results(path: str) -> dict:
     with open(path) as f:
         data = json.load(f)
 
-    if not isinstance(data, dict) or data.get("schema_version") != "results_v2":
-        raise ValueError("results.json must use schema_version='results_v2'")
+    if not isinstance(data, dict) or data.get("schema_version") not in ("results_v2", "results_v3"):
+        raise ValueError("results.json must use schema_version='results_v2' or 'results_v3'")
     if not isinstance(data.get("summary"), dict) or not isinstance(data.get("mints"), list):
         raise ValueError("results.json must contain summary and mints")
 
@@ -73,6 +74,31 @@ def print_mint_gas_breakdown(mints: list[dict]):
         ("Total", "gasTotal"),
     ]:
         values = [mint[key] for mint in mints]
+        print(
+            fmt.format(
+                label,
+                f"{to_sui(np.mean(values)):.6f}",
+                f"{to_sui(np.min(values)):.6f}",
+                f"{to_sui(np.max(values)):.6f}",
+            )
+        )
+
+
+def print_supply_gas_breakdown(supplies: list[dict]):
+    if not supplies:
+        return
+
+    print("\n=== NAV Supply Gas Breakdown ===\n")
+    fmt = "  {:<18s} {:>12s}  {:>12s}  {:>12s}"
+    print(fmt.format("Component", "Avg (SUI)", "Min (SUI)", "Max (SUI)"))
+    print(fmt.format("---------", "---------", "---------", "---------"))
+    for label, key in [
+        ("Computation", "computationCost"),
+        ("Storage", "storageCost"),
+        ("Storage Rebate", "storageRebate"),
+        ("Total", "gasTotal"),
+    ]:
+        values = [supply[key] for supply in supplies]
         print(
             fmt.format(
                 label,
@@ -233,6 +259,35 @@ def plot_latency_over_time(mints: list[dict], out_dir: str):
     print(f"  Saved {path}")
 
 
+def plot_supply_gas_over_time(supplies: list[dict], out_dir: str):
+    if not supplies:
+        print("  Skipping NAV supply chart: no supply rows found")
+        return
+
+    checkpoints = [(index + 1) * NAV_SUPPLY_INTERVAL for index in range(len(supplies))]
+    total_gas = [to_sui(supply["gasTotal"]) for supply in supplies]
+    comp_gas = [to_sui(supply["computationCost"]) for supply in supplies]
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), sharex=True)
+
+    ax1.plot(checkpoints, total_gas, marker="o", color="#0f766e", linewidth=1.5)
+    ax1.set_ylabel("Total Gas (SUI)")
+    ax1.set_title("Total Gas per NAV Supply Checkpoint")
+    ax1.grid(True, alpha=0.3)
+
+    ax2.plot(checkpoints, comp_gas, marker="o", color="#7c3aed", linewidth=1.5)
+    ax2.set_xlabel("Successful Mint #")
+    ax2.set_ylabel("Computation Cost (SUI)")
+    ax2.set_title("Computation Cost per NAV Supply Checkpoint")
+    ax2.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    path = os.path.join(out_dir, "chart_nav_supply_gas.png")
+    plt.savefig(path, dpi=150)
+    plt.close()
+    print(f"  Saved {path}")
+
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: python visualize.py <path-to-results.json>")
@@ -246,11 +301,13 @@ def main():
     data = load_results(results_path)
     summary_by_action = data["summary"]["byAction"]
     mints = data["mints"]
+    supplies = data.get("supplies", [])
     rejected_mints = data.get("rejectedMints", [])
     out_dir = os.path.dirname(os.path.abspath(results_path))
 
     print_gas_summary(summary_by_action)
     print_mint_gas_breakdown(mints)
+    print_supply_gas_breakdown(supplies)
     print_latency_summary(summary_by_action)
     print_rejected_mints(rejected_mints)
 
@@ -259,8 +316,9 @@ def main():
     plot_gas_histogram(mints, out_dir)
     plot_gas_components_stacked(mints, out_dir)
     plot_latency_over_time(mints, out_dir)
+    plot_supply_gas_over_time(supplies, out_dir)
 
-    print(f"\nDone. {data['summary']['totalTxs']} txs ({len(mints)} mints) analyzed.")
+    print(f"\nDone. {data['summary']['totalTxs']} txs ({len(mints)} mints, {len(supplies)} NAV supplies) analyzed.")
 
 
 if __name__ == "__main__":

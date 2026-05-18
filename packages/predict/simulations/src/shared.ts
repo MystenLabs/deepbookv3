@@ -2,7 +2,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 
-export type ActionName = "update_prices" | "update_svi" | "mint";
+export type ScenarioActionName = "update_prices" | "update_svi" | "mint";
+export type ActionName = ScenarioActionName | "supply";
 
 export type ScenarioRow =
   | { action: "update_prices"; lineNumber: number; spot: bigint; forward: bigint }
@@ -56,6 +57,7 @@ export interface ResultsFile {
     byAction: Partial<Record<ActionName, ActionSummary>>;
   };
   mints: ExecutionResult[];
+  supplies: ExecutionResult[];
   rejectedMints: RejectedMintResult[];
 }
 
@@ -113,7 +115,7 @@ function resolveInstanceDir(): string {
   return fileURLToPath(new URL("..", import.meta.url));
 }
 
-function isActionName(value: string): value is ActionName {
+function isScenarioActionName(value: string): value is ScenarioActionName {
   return value === "update_prices" || value === "update_svi" || value === "mint";
 }
 
@@ -151,7 +153,7 @@ function normalizeMintQuantity(rawQuantity: bigint, lineNumber: number): bigint 
 
 function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
   const action = requireField(row, "action", lineNumber);
-  if (!isActionName(action)) {
+  if (!isScenarioActionName(action)) {
     throw new Error(`Scenario line ${lineNumber}: unsupported action "${action}"`);
   }
 
@@ -190,7 +192,7 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
 
 const instanceDir = resolveInstanceDir();
 
-export const RESULTS_SCHEMA_VERSION = "results_v2";
+export const RESULTS_SCHEMA_VERSION = "results_v3";
 export const SCENARIO_PATH = fileURLToPath(new URL("../data/scenario_mar6_1000mints.csv", import.meta.url));
 export const STATE_PATH = path.join(instanceDir, "artifacts", "state.json");
 export const RESULTS_PATH = path.join(instanceDir, "artifacts", "results.json");

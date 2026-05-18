@@ -36,14 +36,16 @@ npm run analyze -- runs/<run-id>/artifacts/results.json
 
 ## Schema
 
-`results.json` uses schema `results_v2`:
+`results.json` uses schema `results_v3`:
 
 - `summary.totalTxs`
-- `summary.byAction.{update_prices,update_svi,mint}`
+- `summary.byAction.{update_prices,update_svi,mint,supply}`
 - `mints[]`
+- `supplies[]`
 
 Each action summary has `count`, `gas.{avg,min,max}`, and `wallMs.{avg,min,max}`.
-Each mint row has `wallMs`, `computationCost`, `storageCost`, `storageRebate`, and `gasTotal`.
+Each mint and supply row has `wallMs`, `computationCost`, `storageCost`, `storageRebate`, and `gasTotal`.
+The simulation records one NAV-triggering supply after every 100 successful mints.
 
 ## Advanced
 

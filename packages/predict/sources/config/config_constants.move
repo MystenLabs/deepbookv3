@@ -222,7 +222,9 @@ public(package) fun assert_insurance_fee_share(value: u64) {
     );
 }
 
-public(package) macro fun default_settlement_loss_rebate_rate(): u64 { 0 }
+public(package) macro fun default_settlement_loss_rebate_rate(): u64 {
+    500_000_000
+}
 public(package) macro fun min_settlement_loss_rebate_rate(): u64 { 0 }
 public(package) macro fun max_settlement_loss_rebate_rate(): u64 {
     deepbook_predict::constants::float_scaling!()
