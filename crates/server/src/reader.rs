@@ -1341,13 +1341,16 @@ impl Reader {
             ),
             raw_totals AS (
                 SELECT
-                    b.asset,
-                    SUM(CASE WHEN b.deposit THEN b.amount ELSE -b.amount END) AS net_amount
-                FROM balances b
-                JOIN asset_cutoffs ac ON ac.asset = b.asset
-                WHERE b.checkpoint_timestamp_ms >= ac.cutoff_ms
-                  AND b.checkpoint_timestamp_ms < $3
-                GROUP BY b.asset
+                    ac.asset,
+                    raw.net_amount
+                FROM asset_cutoffs ac
+                LEFT JOIN LATERAL (
+                    SELECT SUM(CASE WHEN b.deposit THEN b.amount ELSE -b.amount END) AS net_amount
+                    FROM balances b
+                    WHERE b.asset = ac.asset
+                      AND b.checkpoint_timestamp_ms >= ac.cutoff_ms
+                      AND b.checkpoint_timestamp_ms < $3
+                ) raw ON TRUE
             )
             SELECT
                 COALESCE(h.asset, p.asset) AS asset,
