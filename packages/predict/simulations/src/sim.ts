@@ -235,7 +235,6 @@ async function setupSimulation(): Promise<SimState> {
       tickSize: ORACLE_TICK_SIZE,
     }),
     "create_expiry_market",
-    // Matrix setup still creates the summary tree and preallocates the center page band.
     50_000_000_000n
   );
   const oracleChange = result.objectChanges.find(

@@ -376,10 +376,6 @@ public(package) fun compact_settled(
             rebate_liability,
         });
     market.assert_cash_backing();
-    assert!(
-        market.fee_balance.value() >= market.compacted_state.borrow().rebate_liability,
-        EInsufficientFeeBalance,
-    );
 
     (returned_cash, returned_fees)
 }
@@ -449,6 +445,8 @@ fun mint_internal(
     market.assert_not_compacted();
     assert_nonzero_quantity(quantity);
 
+    // Quote before recording exposure so the fee basis stored with the position
+    // matches the exact fee charged for this mint.
     let (principal_amount, fee_amount) = market.quote_mint_amounts(
         config,
         market_oracle,
