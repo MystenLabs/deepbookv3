@@ -9,7 +9,7 @@
 /// valuation across sampled live pricing curve segments.
 module deepbook_predict::strike_nav_matrix;
 
-use deepbook::{constants::max_u64, math};
+use deepbook::math;
 use deepbook_predict::{constants, pricing::CurvePoint};
 use sui::table::{Self, Table};
 
@@ -239,11 +239,6 @@ fun accumulate_segment_values(
     let mut qk_end_delta = 0;
     while (page_key <= end_page) {
         let page = &nav.pages[page_key];
-        let start_exclusive = if (page_key == start_page) {
-            start_slot
-        } else {
-            max_u64()
-        };
         let end_inclusive = if (page_key == end_page) {
             end_slot
         } else {
@@ -256,8 +251,8 @@ fun accumulate_segment_values(
         q_end_delta = q_end_delta + end_node.agg_q_end;
         qk_end_delta = qk_end_delta + end_node.agg_qk_end;
 
-        if (start_exclusive != max_u64()) {
-            let start_node = &page[start_exclusive];
+        if (page_key == start_page) {
+            let start_node = &page[start_slot];
             q_start_delta = q_start_delta - start_node.agg_q_start;
             qk_start_delta = qk_start_delta - start_node.agg_qk_start;
             q_end_delta = q_end_delta - start_node.agg_q_end;

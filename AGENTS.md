@@ -82,7 +82,7 @@ These are the most important rule files to consult based on the code you touch:
   - Every Predict Move source file must start with the standard Mysten copyright and SPDX header.
   - Every Predict Move module needs a module-level `///` doc immediately before `module`.
   - Module docs should usually be 1-4 sentences and explain what state or types the module owns, what flows it is responsible for, and what it intentionally does not own when the boundary is easy to confuse.
-  - Longer module docs are appropriate for algorithmic or data-structure-heavy modules such as pricing, math, and strike matrix code.
+  - Longer module docs are appropriate for algorithmic or data-structure-heavy modules such as pricing, math, and strike exposure index code.
   - All `public fun` and `public macro fun` external APIs should have doc comments because they are protocol API surface.
   - `#[test_only]` helpers do not need public API docs unless their setup behavior is non-obvious.
   - `public(package) fun` comments should be used for cross-module flows, non-obvious mutations, constructors/destructors that establish ownership, witness or hot-potato functions, invariant boundaries, or sequencing-sensitive helpers.

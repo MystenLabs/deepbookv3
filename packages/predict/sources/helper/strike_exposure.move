@@ -20,7 +20,6 @@ use deepbook_predict::{
 public struct StrikeExposure has store {
     nav: StrikeNavMatrix,
     payout: StrikePayoutTree,
-    /// Historical finite boundaries touched by inserts; max < min means untouched.
     minted_min_strike: u64,
     minted_max_strike: u64,
 }

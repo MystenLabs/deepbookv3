@@ -40,18 +40,11 @@ public struct PayoutNode has copy, drop, store {
     q_end: u64,
     fee_start: u64,
     fee_end: u64,
-    total_q_start: u64,
-    total_q_end: u64,
-    total_fee_start: u64,
-    total_fee_end: u64,
-    best_prefix_start: u64,
-    best_prefix_end: u64,
-    min_fee_prefix_start: u64,
-    min_fee_prefix_end: u64,
+    summary: PayoutSummary,
 }
 
-/// Cached aggregate used while recomputing payout tree nodes.
-public struct PayoutSummary has copy, drop {
+/// Subtree aggregate stored on each payout tree node.
+public struct PayoutSummary has copy, drop, store {
     total_q_start: u64,
     total_q_end: u64,
     total_fee_start: u64,
@@ -112,14 +105,19 @@ public(package) fun max_payout(tree: &StrikePayoutTree): u64 {
 
 /// Return conservative maximum losing fee basis for live NAV accounting.
 public(package) fun conservative_losing_fee_basis(tree: &StrikePayoutTree): u64 {
-    let (min_fee_start, min_fee_end) = if (tree.root.is_some()) {
+    let (total_fee_start, min_fee_start, min_fee_end) = if (tree.root.is_some()) {
         let root = tree.nodes[*tree.root.borrow()];
-        (root.min_fee_prefix_start, root.min_fee_prefix_end)
+        (
+            root.summary.total_fee_start,
+            root.summary.min_fee_prefix_start,
+            root.summary.min_fee_prefix_end,
+        )
     } else {
-        (0, 0)
+        (0, 0, 0)
     };
+    let total_fee_basis = tree.base_fee_basis + total_fee_start;
     let min_winning_fee_basis = tree.base_fee_basis + min_fee_start - min_fee_end;
-    tree.total_fee_basis() - min_winning_fee_basis
+    total_fee_basis - min_winning_fee_basis
 }
 
 /// Evaluate settled liability and exact losing fee basis.
@@ -162,17 +160,16 @@ fun apply_range(
 ) {
     tree.assert_can_apply_range(lower, higher, qty, fee_basis, add);
 
-    let mut root_summary = empty_summary();
-
-    if (lower == constants::neg_inf!()) {
+    let root_summary = if (lower == constants::neg_inf!()) {
         apply_exact_delta(&mut tree.base_qty, qty, add);
         apply_exact_delta(&mut tree.base_fee_basis, fee_basis, add);
+        tree.apply_boundary_delta(higher, qty, fee_basis, false, add)
     } else {
-        root_summary = tree.apply_boundary_delta(lower, qty, fee_basis, true, add);
-    };
-
-    if (higher != constants::pos_inf!()) {
-        root_summary = tree.apply_boundary_delta(higher, qty, fee_basis, false, add);
+        let mut summary = tree.apply_boundary_delta(lower, qty, fee_basis, true, add);
+        if (higher != constants::pos_inf!()) {
+            summary = tree.apply_boundary_delta(higher, qty, fee_basis, false, add);
+        };
+        summary
     };
 
     tree.max_payout = tree.base_qty + root_summary.best_prefix_start - root_summary.best_prefix_end;
@@ -241,7 +238,7 @@ fun apply_boundary_delta(
         add,
     );
     tree.root = option::some(new_root);
-    node_summary(&root_node)
+    root_node.summary
 }
 
 fun apply_at(
@@ -289,7 +286,7 @@ fun apply_at(
             return rotate_right(nodes, root_strike, node, new_left, left_node)
         };
         node.left = option::some(new_left);
-        let left_summary = node_summary(&left_node);
+        let left_summary = left_node.summary;
         recompute_node_value(nodes, &mut node, true, false, left_summary);
     } else {
         let (new_right, right_node) = apply_at(
@@ -305,7 +302,7 @@ fun apply_at(
             return rotate_left(nodes, root_strike, node, new_right, right_node)
         };
         node.right = option::some(new_right);
-        let right_summary = node_summary(&right_node);
+        let right_summary = right_node.summary;
         recompute_node_value(nodes, &mut node, false, true, right_summary);
     };
 
@@ -326,14 +323,7 @@ fun new_leaf(strike: u64, qty: u64, fee_basis: u64, is_start: bool): PayoutNode 
         q_end,
         fee_start,
         fee_end,
-        total_q_start: summary.total_q_start,
-        total_q_end: summary.total_q_end,
-        total_fee_start: summary.total_fee_start,
-        total_fee_end: summary.total_fee_end,
-        best_prefix_start: summary.best_prefix_start,
-        best_prefix_end: summary.best_prefix_end,
-        min_fee_prefix_start: summary.min_fee_prefix_start,
-        min_fee_prefix_end: summary.min_fee_prefix_end,
+        summary,
     }
 }
 
@@ -349,7 +339,7 @@ fun recompute_node_value(
         let left_summary = if (changed_left) {
             changed_summary
         } else {
-            node_summary(&nodes[*node.left.borrow()])
+            nodes[*node.left.borrow()].summary
         };
         summary = merge_summary_values(left_summary, summary);
     };
@@ -357,12 +347,12 @@ fun recompute_node_value(
         let right_summary = if (changed_right) {
             changed_summary
         } else {
-            node_summary(&nodes[*node.right.borrow()])
+            nodes[*node.right.borrow()].summary
         };
         summary = merge_summary_values(summary, right_summary);
     };
 
-    write_summary(node, summary);
+    node.summary = summary;
     summary
 }
 
@@ -417,36 +407,37 @@ fun prefix_before(
     root: Option<u64>,
     settlement: u64,
 ): (u64, u64, u64, u64) {
-    if (root.is_none()) return (0, 0, 0, 0);
+    let mut q_start = 0;
+    let mut q_end = 0;
+    let mut fee_start = 0;
+    let mut fee_end = 0;
+    let mut cursor = root;
 
-    let strike = *root.borrow();
-    let node = nodes[strike];
-    if (settlement <= strike) {
-        return prefix_before(nodes, node.left, settlement)
+    while (cursor.is_some()) {
+        let strike = *cursor.borrow();
+        let node = nodes[strike];
+
+        if (settlement <= strike) {
+            cursor = node.left;
+        } else {
+            if (node.left.is_some()) {
+                let left = nodes[*node.left.borrow()];
+                q_start = q_start + left.summary.total_q_start;
+                q_end = q_end + left.summary.total_q_end;
+                fee_start = fee_start + left.summary.total_fee_start;
+                fee_end = fee_end + left.summary.total_fee_end;
+            };
+
+            q_start = q_start + node.q_start;
+            q_end = q_end + node.q_end;
+            fee_start = fee_start + node.fee_start;
+            fee_end = fee_end + node.fee_end;
+
+            cursor = node.right;
+        };
     };
 
-    let (mut q_start, mut q_end, mut fee_start, mut fee_end) = if (node.left.is_some()) {
-        let left = nodes[*node.left.borrow()];
-        (left.total_q_start, left.total_q_end, left.total_fee_start, left.total_fee_end)
-    } else {
-        (0, 0, 0, 0)
-    };
-    q_start = q_start + node.q_start;
-    q_end = q_end + node.q_end;
-    fee_start = fee_start + node.fee_start;
-    fee_end = fee_end + node.fee_end;
-
-    let (right_q_start, right_q_end, right_fee_start, right_fee_end) = prefix_before(
-        nodes,
-        node.right,
-        settlement,
-    );
-    (
-        q_start + right_q_start,
-        q_end + right_q_end,
-        fee_start + right_fee_start,
-        fee_end + right_fee_end,
-    )
+    (q_start, q_end, fee_start, fee_end)
 }
 
 fun write_node(nodes: &mut Table<u64, PayoutNode>, strike: u64, node: PayoutNode) {
@@ -455,22 +446,11 @@ fun write_node(nodes: &mut Table<u64, PayoutNode>, strike: u64, node: PayoutNode
 
 fun total_fee_basis(tree: &StrikePayoutTree): u64 {
     let finite_start_fee_basis = if (tree.root.is_some()) {
-        tree.nodes[*tree.root.borrow()].total_fee_start
+        tree.nodes[*tree.root.borrow()].summary.total_fee_start
     } else {
         0
     };
     tree.base_fee_basis + finite_start_fee_basis
-}
-
-fun write_summary(node: &mut PayoutNode, summary: PayoutSummary) {
-    node.total_q_start = summary.total_q_start;
-    node.total_q_end = summary.total_q_end;
-    node.total_fee_start = summary.total_fee_start;
-    node.total_fee_end = summary.total_fee_end;
-    node.best_prefix_start = summary.best_prefix_start;
-    node.best_prefix_end = summary.best_prefix_end;
-    node.min_fee_prefix_start = summary.min_fee_prefix_start;
-    node.min_fee_prefix_end = summary.min_fee_prefix_end;
 }
 
 fun empty_summary(): PayoutSummary {
@@ -508,19 +488,6 @@ fun local_summary(q_start: u64, q_end: u64, fee_start: u64, fee_end: u64): Payou
         best_prefix_end,
         min_fee_prefix_start,
         min_fee_prefix_end,
-    }
-}
-
-fun node_summary(node: &PayoutNode): PayoutSummary {
-    PayoutSummary {
-        total_q_start: node.total_q_start,
-        total_q_end: node.total_q_end,
-        total_fee_start: node.total_fee_start,
-        total_fee_end: node.total_fee_end,
-        best_prefix_start: node.best_prefix_start,
-        best_prefix_end: node.best_prefix_end,
-        min_fee_prefix_start: node.min_fee_prefix_start,
-        min_fee_prefix_end: node.min_fee_prefix_end,
     }
 }
 
