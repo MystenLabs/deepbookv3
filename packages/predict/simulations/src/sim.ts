@@ -41,9 +41,9 @@ const EXPIRY_MS = BigInt(Date.now()) + 7n * 24n * 60n * 60n * 1000n;
 const FLOAT_SCALING = 1_000_000_000n;
 // Must satisfy the on-chain invariant:
 // max_strike - min_strike == tick_size * 100_000
-const ORACLE_MIN_STRIKE = 50_000n * FLOAT_SCALING;
-const ORACLE_MAX_STRIKE = 150_000n * FLOAT_SCALING;
+const ORACLE_MIN_STRIKE = 25_000n * FLOAT_SCALING;
 const ORACLE_TICK_SIZE = 1n * FLOAT_SCALING;
+const ORACLE_MAX_STRIKE = ORACLE_MIN_STRIKE + 100_000n * ORACLE_TICK_SIZE;
 
 type MintRow = Extract<ScenarioRow, { action: "mint" }>;
 
@@ -205,7 +205,7 @@ async function setupSimulation(): Promise<SimState> {
       tickSize: ORACLE_TICK_SIZE,
     }),
     "create_expiry_market",
-    // Matrix setup allocates the full strike grid at oracle creation time.
+    // Matrix setup still creates the summary tree and preallocates the center page band.
     50_000_000_000n
   );
   const oracleChange = result.objectChanges.find(

@@ -351,11 +351,11 @@ public(package) fun compact_settled(
     market.assert_not_compacted();
 
     let settlement = pricing::settlement_price(market_oracle);
-    let (settled_liability, winning_fee_basis, total_fee_basis) = market
+    let (settled_liability, losing_fee_basis) = market
         .strike_matrix
         .borrow()
         .settled_values(settlement);
-    let rebate_liability = market.rebate_liability(total_fee_basis, winning_fee_basis);
+    let rebate_liability = market.rebate_liability(losing_fee_basis);
     assert!(market.lp_cash_balance.value() >= settled_liability, EInsufficientLpCash);
     assert!(market.fee_balance.value() >= rebate_liability, EInsufficientFeeBalance);
     assert!(market.allocated_capital >= settled_liability, EAllocationBelowMaxPayout);
@@ -405,10 +405,8 @@ fun current_liabilities(
     let strike_matrix = market.strike_matrix.borrow();
     if (market_oracle.is_settled()) {
         let settlement = pricing::settlement_price(market_oracle);
-        let (settled_value, winning_fee_basis, total_fee_basis) = strike_matrix.settled_values(
-            settlement,
-        );
-        (settled_value, market.rebate_liability(total_fee_basis, winning_fee_basis))
+        let (settled_value, losing_fee_basis) = strike_matrix.settled_values(settlement);
+        (settled_value, market.rebate_liability(losing_fee_basis))
     } else {
         let (minted_min_strike, minted_max_strike) = strike_matrix.minted_strike_range();
         if (minted_min_strike == 0 && minted_max_strike == 0) return (0, 0);
@@ -425,8 +423,8 @@ fun current_liabilities(
             minted_min_strike,
             minted_max_strike,
         );
-        let (live_value, winning_fee_basis, total_fee_basis) = strike_matrix.live_values(&curve);
-        (live_value, market.rebate_liability(total_fee_basis, winning_fee_basis))
+        let (live_value, max_losing_fee_basis) = strike_matrix.live_values(&curve);
+        (live_value, market.rebate_liability(max_losing_fee_basis))
     }
 }
 
@@ -544,13 +542,13 @@ fun redeem_settled_internal(
 
     let settlement = pricing::settlement_price(market_oracle);
     let payout_amount = pricing::settled_range_payout(settlement, &key, quantity);
-    let (current_liability, _, _) = market.strike_matrix.borrow().settled_values(settlement);
+    let (current_liability, _) = market.strike_matrix.borrow().settled_values(settlement);
     assert!(current_liability >= payout_amount, ESettledLiabilityUnderflow);
     assert!(market.lp_cash_balance.value() >= current_liability, EInsufficientLpCash);
 
     let removed_fee_basis = manager.decrease_position(key, quantity);
     let rebate = if (range_loses(settlement, &key)) {
-        market.rebate_liability(removed_fee_basis, 0)
+        market.rebate_liability(removed_fee_basis)
     } else {
         0
     };
@@ -595,7 +593,7 @@ fun redeem_compacted_internal(
 
     let removed_fee_basis = manager.decrease_position(key, quantity);
     let rebate = if (range_loses(settlement, &key)) {
-        market.rebate_liability(removed_fee_basis, 0)
+        market.rebate_liability(removed_fee_basis)
     } else {
         0
     };
@@ -693,8 +691,8 @@ fun assert_not_compacted(market: &ExpiryMarket) {
     assert!(!market.is_compacted(), EMarketCompacted);
 }
 
-fun rebate_liability(market: &ExpiryMarket, total_fee_basis: u64, winning_fee_basis: u64): u64 {
-    math::mul(total_fee_basis - winning_fee_basis, market.settlement_loss_rebate_rate)
+fun rebate_liability(market: &ExpiryMarket, losing_fee_basis: u64): u64 {
+    math::mul(losing_fee_basis, market.settlement_loss_rebate_rate)
 }
 
 fun lp_fee_surplus_value(config: &ProtocolConfig, fee_surplus: u64): u64 {
