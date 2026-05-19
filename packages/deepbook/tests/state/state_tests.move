@@ -1167,3 +1167,166 @@ fun process_proposal_vote_ok() {
     destroy(state);
     test.end();
 }
+
+/// Mid-epoch upgrade safety, end-to-end through `state.move`. Verifies that
+/// the production stake/propose/vote flow continues to set `next_trade_params`
+/// correctly under the recompute-on-every-call semantics, and that the value
+/// is consumed correctly at the next epoch boundary.
+///
+/// Mathematically, only one proposal can be strictly above quorum at a time
+/// in production (cast votes ≤ active_stake ≤ voting_power, and quorum is
+/// voting_power/2). This test exercises the single-above-quorum path that
+/// any in-flight epoch is in at upgrade time.
+#[test]
+fun mid_epoch_upgrade_state_flow_winner_persists_across_epoch() {
+    let mut test = begin(OWNER);
+
+    test.next_tx(ALICE);
+    let mut state = state::empty(false, false, test.ctx());
+
+    // Epoch N: three stakers join.
+    state.process_stake(
+        id_from_address(POOL_ID),
+        id_from_address(ALICE),
+        300 * constants::deep_unit(),
+        test.ctx(),
+    );
+    state.process_stake(
+        id_from_address(POOL_ID),
+        id_from_address(BOB),
+        100 * constants::deep_unit(),
+        test.ctx(),
+    );
+    state.process_stake(
+        id_from_address(POOL_ID),
+        id_from_address(CHARLIE),
+        200 * constants::deep_unit(),
+        test.ctx(),
+    );
+
+    // Epoch N+1: quorum is frozen at voting_power/2 = 300 DEEP.
+    test.next_epoch(OWNER);
+    test.next_tx(ALICE);
+
+    // Alice proposes and auto-votes her own 300 DEEP. 300 is NOT strictly
+    // greater than quorum 300, so no leader yet.
+    state.process_proposal(
+        id_from_address(POOL_ID),
+        id_from_address(ALICE),
+        500000,
+        200000,
+        100 * constants::deep_unit(),
+        test.ctx(),
+    );
+    assert!(state.governance().quorum() == 300 * constants::deep_unit(), 0);
+    assert_eq!(state.governance().trade_params(), state.governance().next_trade_params());
+
+    // Bob votes for Alice's proposal. Total votes = 400 > 300 quorum. Leader
+    // is Alice's proposal.
+    state.process_vote(
+        id_from_address(POOL_ID),
+        id_from_address(BOB),
+        id_from_address(ALICE),
+        test.ctx(),
+    );
+    assert!(state.governance().next_trade_params().taker_fee() == 500000, 0);
+    assert!(state.governance().next_trade_params().maker_fee() == 200000, 0);
+
+    // Charlie attempts to stake more mid-epoch. Voting power grows, but
+    // Charlie's `active_stake` does not increase this epoch — so this is a
+    // no-op for voting, exactly the invariant that prevents two proposals
+    // from being above quorum simultaneously in production.
+    state.process_stake(
+        id_from_address(POOL_ID),
+        id_from_address(CHARLIE),
+        500 * constants::deep_unit(),
+        test.ctx(),
+    );
+    assert!(state.governance().voting_power() == 1100 * constants::deep_unit(), 0);
+    assert!(state.governance().quorum() == 300 * constants::deep_unit(), 0);
+
+    // Leader remains Alice's proposal — Charlie's fresh stake can't vote yet.
+    assert!(state.governance().next_trade_params().taker_fee() == 500000, 0);
+
+    // Next epoch: trade_params takes the leader's values.
+    test.next_epoch(OWNER);
+    test.next_tx(ALICE);
+    state.process_stake(
+        id_from_address(POOL_ID),
+        id_from_address(ALICE),
+        0,
+        test.ctx(),
+    );
+    assert!(state.governance().trade_params().taker_fee() == 500000, 0);
+    assert!(state.governance().trade_params().maker_fee() == 200000, 0);
+
+    destroy(state);
+    test.end();
+}
+
+/// Mid-epoch upgrade safety. The winning voter unstakes mid-epoch —
+/// `process_unstake` removes both their voting power and their cast votes.
+/// `next_trade_params` should fall back to defaults if no other proposal
+/// is still above quorum.
+#[test]
+fun mid_epoch_upgrade_state_flow_winner_unstake_resets_to_defaults() {
+    let mut test = begin(OWNER);
+
+    test.next_tx(ALICE);
+    let mut state = state::empty(false, false, test.ctx());
+
+    state.process_stake(
+        id_from_address(POOL_ID),
+        id_from_address(ALICE),
+        400 * constants::deep_unit(),
+        test.ctx(),
+    );
+    state.process_stake(
+        id_from_address(POOL_ID),
+        id_from_address(BOB),
+        100 * constants::deep_unit(),
+        test.ctx(),
+    );
+
+    test.next_epoch(OWNER);
+    test.next_tx(ALICE);
+
+    // Alice proposes and auto-votes 400 DEEP. quorum = 250 → above.
+    state.process_proposal(
+        id_from_address(POOL_ID),
+        id_from_address(ALICE),
+        500000,
+        200000,
+        100 * constants::deep_unit(),
+        test.ctx(),
+    );
+    assert!(state.governance().next_trade_params().taker_fee() == 500000, 0);
+
+    // Alice unstakes. process_unstake calls adjust_vote(some(A), none, 400)
+    // which removes her vote — the recompute now finds no leader and falls
+    // back to current trade_params.
+    state.process_unstake(
+        id_from_address(POOL_ID),
+        id_from_address(ALICE),
+        test.ctx(),
+    );
+    let defaults_taker = state.governance().trade_params().taker_fee();
+    let defaults_maker = state.governance().trade_params().maker_fee();
+    assert_eq!(state.governance().next_trade_params().taker_fee(), defaults_taker);
+    assert_eq!(state.governance().next_trade_params().maker_fee(), defaults_maker);
+
+    // Next epoch — defaults carry through.
+    test.next_epoch(OWNER);
+    test.next_tx(BOB);
+    state.process_stake(
+        id_from_address(POOL_ID),
+        id_from_address(BOB),
+        0,
+        test.ctx(),
+    );
+    assert_eq!(state.governance().trade_params().taker_fee(), defaults_taker);
+    assert_eq!(state.governance().trade_params().maker_fee(), defaults_maker);
+
+    destroy(state);
+    test.end();
+}

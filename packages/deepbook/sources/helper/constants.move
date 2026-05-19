@@ -12,6 +12,7 @@ const MAX_U128: u128 = ((1u256 << 128) - 1) as u128;
 const MIN_PRICE: u64 = 1;
 const MAX_PRICE: u64 = ((1u128 << 63) - 1) as u64;
 const DEFAULT_STAKE_REQUIRED: u64 = 100_000_000; // 100 DEEP
+const MAX_STAKE_REQUIRED: u64 = 1_000_000_000_000; // 1M DEEP
 const HALF: u64 = 500_000_000;
 const DEEP_UNIT: u64 = 1_000_000;
 const FEE_PENALTY_MULTIPLIER: u64 = 1_250_000_000; // 25% more than normal
@@ -198,6 +199,10 @@ public fun phase_out_epochs(): u64 {
 
 public fun default_stake_required(): u64 {
     DEFAULT_STAKE_REQUIRED
+}
+
+public fun max_stake_required(): u64 {
+    MAX_STAKE_REQUIRED
 }
 
 public fun half(): u64 {

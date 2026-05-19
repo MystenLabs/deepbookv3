@@ -85,6 +85,14 @@ public fun new_margin_pool_config_with_rate_limit(
     rate_limit_refill_rate_per_ms: u64,
     rate_limit_enabled: bool,
 ): MarginPoolConfig {
+    assert!(max_utilization_rate <= constants::float_scaling(), EInvalidRiskParam);
+    assert!(min_borrow >= margin_constants::min_min_borrow(), EInvalidRiskParam);
+    assert!(protocol_spread <= margin_constants::max_protocol_spread(), EInvalidRiskParam);
+    if (rate_limit_enabled) {
+        assert!(rate_limit_capacity > 0, EInvalidRiskParam);
+        assert!(rate_limit_refill_rate_per_ms > 0, EInvalidRiskParam);
+    };
+
     MarginPoolConfig {
         supply_cap,
         max_utilization_rate,

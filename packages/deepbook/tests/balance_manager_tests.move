@@ -685,7 +685,8 @@ fun test_unauthorized_custom_owner_creation_e() {
             deposit_cap,
             withdraw_cap,
             trade_cap,
-        ) = balance_manager::new_with_custom_owner_caps<UnauthorizedApp>(
+        ) = balance_manager::new_with_custom_owner_caps_v2<UnauthorizedApp>(
+            UnauthorizedApp {},
             &deepbook_registry,
             victim,
             test.ctx(),

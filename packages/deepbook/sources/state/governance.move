@@ -16,6 +16,7 @@ const EInvalidTakerFee: u64 = 2;
 const EProposalDoesNotExist: u64 = 3;
 const EMaxProposalsReachedNotEnoughVotes: u64 = 4;
 const EWhitelistedPoolCannotChange: u64 = 5;
+const EInvalidStakeRequired: u64 = 6;
 
 // === Constants ===
 const FEE_MULTIPLE: u64 = 1000; // 0.01 basis points
@@ -150,6 +151,7 @@ public(package) fun add_proposal(
     assert!(!self.whitelisted, EWhitelistedPoolCannotChange);
     assert!(taker_fee % FEE_MULTIPLE == 0, EInvalidTakerFee);
     assert!(maker_fee % FEE_MULTIPLE == 0, EInvalidMakerFee);
+    assert!(stake_required <= constants::max_stake_required(), EInvalidStakeRequired);
 
     if (self.stable) {
         assert!(taker_fee >= MIN_TAKER_STABLE && taker_fee <= MAX_TAKER_STABLE, EInvalidTakerFee);
@@ -174,10 +176,16 @@ public(package) fun add_proposal(
     self.proposals.insert(balance_manager_id, new_proposal);
 }
 
-/// Vote on a proposal. Validation of the account and stake is done in `State`.
-/// If `from_proposal_id` is some, the account is removing their vote from that
-/// proposal.
-/// If `to_proposal_id` is some, the account is voting for that proposal.
+/// Move `stake_amount` of votes between proposals. If `from_proposal_id` is
+/// some, the account is removing their vote from that proposal; if
+/// `to_proposal_id` is some, the account is adding their vote to that
+/// proposal. Both may be set (a vote switch), or one may be `none` (a pure
+/// add or remove). Validation of the account and stake is done in `State`.
+///
+/// After the vote deltas are applied, `next_trade_params` is set to the
+/// trade params of the proposal with the most votes strictly above quorum,
+/// or to the current epoch's `trade_params` (defaults) if no proposal
+/// qualifies.
 public(package) fun adjust_vote(
     self: &mut Governance,
     from_proposal_id: Option<ID>,
@@ -193,20 +201,15 @@ public(package) fun adjust_vote(
     ) {
         let proposal = &mut self.proposals[from_proposal_id.borrow()];
         proposal.votes = proposal.votes - votes;
-        if (proposal.votes + votes > self.quorum && proposal.votes < self.quorum) {
-            self.next_trade_params = self.trade_params;
-        };
     };
 
     to_proposal_id.do_ref!(|proposal_id| {
         assert!(self.proposals.contains(proposal_id), EProposalDoesNotExist);
-
         let proposal = &mut self.proposals[proposal_id];
         proposal.votes = proposal.votes + votes;
-        if (proposal.votes > self.quorum) {
-            self.next_trade_params = proposal.to_trade_params();
-        };
     });
+
+    self.next_trade_params = self.leader_above_quorum_params();
 }
 
 /// Adjust the total voting power by adding and removing stake. For example, if
@@ -277,6 +280,21 @@ fun to_trade_params(proposal: &Proposal): TradeParams {
         proposal.maker_fee,
         proposal.stake_required,
     )
+}
+
+/// Returns the trade params of the proposal with the most votes strictly
+/// above quorum, or `self.trade_params` if no proposal qualifies.
+fun leader_above_quorum_params(self: &Governance): TradeParams {
+    let mut leader_votes = self.quorum;
+    let mut leader_params = option::none();
+    self.proposals.length().do!(|i| {
+        let (_, proposal) = self.proposals.get_entry_by_idx(i);
+        if (proposal.votes > leader_votes) {
+            leader_votes = proposal.votes;
+            leader_params = option::some(proposal.to_trade_params());
+        };
+    });
+    leader_params.destroy_or!(self.trade_params)
 }
 
 // === Test Functions ===

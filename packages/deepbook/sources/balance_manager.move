@@ -150,13 +150,26 @@ public fun new_with_custom_owner(owner: address, ctx: &mut TxContext): BalanceMa
     }
 }
 
-#[deprecated(note = b"This function is deprecated, use `new_with_custom_owner_caps` instead.")]
+#[deprecated(note = b"This function is deprecated, use `new_with_custom_owner_caps_v2` instead.")]
 public fun new_with_custom_owner_and_caps(
     _owner: address,
     _ctx: &mut TxContext,
 ): (BalanceManager, DepositCap, WithdrawCap, TradeCap) { abort 1337 }
 
+#[deprecated(note = b"This function is deprecated, use `new_with_custom_owner_caps_v2` instead.")]
+#[allow(unused_type_parameter)]
 public fun new_with_custom_owner_caps<App: drop>(
+    _deepbook_registry: &Registry,
+    _owner: address,
+    _ctx: &mut TxContext,
+): (BalanceManager, DepositCap, WithdrawCap, TradeCap) { abort 1337 }
+
+/// Create a `BalanceManager` with all three caps, gated on an authorized `App` witness.
+/// The witness ensures only the module defining `App` can mint caps for that app —
+/// the type tag alone is referenceable from any module, so the previous `<App>`-only
+/// signature let a rogue caller mint caps under another app's identity.
+public fun new_with_custom_owner_caps_v2<App: drop>(
+    _witness: App,
     deepbook_registry: &Registry,
     owner: address,
     ctx: &mut TxContext,

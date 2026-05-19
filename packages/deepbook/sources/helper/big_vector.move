@@ -287,17 +287,6 @@ public(package) fun remove<E: store>(self: &mut BigVector<E>, key: u128): E {
     val
 }
 
-/// Remove elements from `self` at the indices in `keys`,
-/// returning the associated values.
-///
-/// Aborts if any of the keys are not found.
-public(package) fun remove_batch<E: store>(
-    _self: &mut BigVector<E>,
-    _keys: vector<u128>,
-): vector<E> {
-    abort 0
-}
-
 // === SliceRef ===
 
 /// Find the slice that contains the key-value pair for `key`,
