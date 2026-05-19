@@ -24,17 +24,24 @@ const EPoolDoesNotExist: u64 = 2;
 const EPackageVersionNotEnabled: u64 = 3;
 const EVersionNotEnabled: u64 = 4;
 const EVersionAlreadyEnabled: u64 = 5;
-const ECannotDisableCurrentVersion: u64 = 6;
-const ECoinAlreadyWhitelisted: u64 = 7;
-const ECoinNotWhitelisted: u64 = 8;
-const EMaxBalanceManagersReached: u64 = 9;
-const EAppNotAuthorized: u64 = 10;
+const ECoinAlreadyWhitelisted: u64 = 6;
+const ECoinNotWhitelisted: u64 = 7;
+const EMaxBalanceManagersReached: u64 = 8;
+const EAppNotAuthorized: u64 = 9;
+const EPauseCapNotValid: u64 = 10;
 
 public struct REGISTRY has drop {}
 
 // === Structs ===
 /// DeepbookAdminCap is used to call admin functions.
 public struct DeepbookAdminCap has key, store {
+    id: UID,
+}
+
+/// DeepbookCorePauseCap can disable any allowed package version (including the
+/// current one) without admin involvement, enabling fast emergency response.
+/// Admin retains exclusive rights to mint, revoke, and re-enable versions.
+public struct DeepbookCorePauseCap has key, store {
     id: UID,
 }
 
@@ -56,26 +63,34 @@ public struct PoolKey has copy, drop, store {
 
 public struct StableCoinKey has copy, drop, store {}
 public struct BalanceManagerKey has copy, drop, store {}
+public struct AllowedPauseCapsKey() has copy, drop, store;
 
 // === App Auth ===
 
-/// An authorization Key kept in the Registry - allows applications access protected features of the DeepBook
-/// The `App` type parameter is a witness which should be defined in the original module
+/// Legacy authorization key. Retained only so the prior deepbook package
+/// version's `deauthorize_app` remains callable for cleanup of pre-migration
+/// entries. New code must not use this key.
 public struct AppKey<phantom App: drop> has copy, drop, store {}
+
+/// Current authorization key kept in the Registry. The `App` type parameter is
+/// a witness whose value must be supplied by callers that gate on
+/// `assert_app_is_authorized`, so app authorization is bound to App's defining
+/// module — not just to the type tag.
+public struct AppKeyV2<phantom App: drop> has copy, drop, store {}
 
 /// Authorize an application to access protected features of the DeepBook.
 public fun authorize_app<App: drop>(self: &mut Registry, _admin_cap: &DeepbookAdminCap) {
-    self.id.add(AppKey<App> {}, true);
+    self.id.add(AppKeyV2<App> {}, true);
 }
 
 /// Deauthorize an application by removing its authorization key.
 public fun deauthorize_app<App: drop>(self: &mut Registry, _admin_cap: &DeepbookAdminCap): bool {
-    self.id.remove(AppKey<App> {})
+    self.id.remove(AppKeyV2<App> {})
 }
 
 /// Assert that an application is authorized to access protected features of DeepBook.
 public fun assert_app_is_authorized<App: drop>(self: &Registry) {
-    assert!(self.id.exists_(AppKey<App> {}), EAppNotAuthorized);
+    assert!(self.id.exists_(AppKeyV2<App> {}), EAppNotAuthorized);
 }
 
 fun init(_: REGISTRY, ctx: &mut TxContext) {
@@ -123,9 +138,63 @@ public fun enable_version(self: &mut Registry, version: u64, _cap: &DeepbookAdmi
 /// This function does not have version restrictions
 public fun disable_version(self: &mut Registry, version: u64, _cap: &DeepbookAdminCap) {
     let self: &mut RegistryInner = self.inner.load_value_mut();
-    assert!(version != constants::current_version(), ECannotDisableCurrentVersion);
     assert!(self.allowed_versions.contains(&version), EVersionNotEnabled);
     self.allowed_versions.remove(&version);
+}
+
+/// Mint a `DeepbookCorePauseCap`. The new cap's ID is recorded so it can later
+/// disable a version via `disable_version_pause_cap`. Only Admin can mint.
+/// This function does not have version restrictions.
+public fun mint_pause_cap(
+    self: &mut Registry,
+    _cap: &DeepbookAdminCap,
+    ctx: &mut TxContext,
+): DeepbookCorePauseCap {
+    let id = object::new(ctx);
+    if (!self.id.exists_(AllowedPauseCapsKey())) {
+        self.id.add(AllowedPauseCapsKey(), vec_set::empty<ID>());
+    };
+    let allowed_pause_caps: &mut VecSet<ID> = df::borrow_mut(
+        &mut self.id,
+        AllowedPauseCapsKey(),
+    );
+    allowed_pause_caps.insert(id.to_inner());
+
+    DeepbookCorePauseCap { id }
+}
+
+/// Revoke a previously minted pause cap by ID. Only Admin can revoke.
+/// This function does not have version restrictions.
+public fun revoke_pause_cap(self: &mut Registry, _cap: &DeepbookAdminCap, pause_cap_id: ID) {
+    assert!(self.id.exists_(AllowedPauseCapsKey()), EPauseCapNotValid);
+    let allowed_pause_caps: &mut VecSet<ID> = df::borrow_mut(
+        &mut self.id,
+        AllowedPauseCapsKey(),
+    );
+    assert!(allowed_pause_caps.contains(&pause_cap_id), EPauseCapNotValid);
+    allowed_pause_caps.remove(&pause_cap_id);
+}
+
+/// Disable any allowed package version (including the current one) using a
+/// valid `DeepbookCorePauseCap`. The pause cap must be in `allowed_pause_caps`.
+/// This function is the emergency kill switch; admin can re-enable via
+/// `enable_version`.
+/// This function does not have version restrictions.
+public fun disable_version_pause_cap(
+    self: &mut Registry,
+    version: u64,
+    pause_cap: &DeepbookCorePauseCap,
+) {
+    assert!(self.id.exists_(AllowedPauseCapsKey()), EPauseCapNotValid);
+    let allowed_pause_caps: &VecSet<ID> = df::borrow(
+        &self.id,
+        AllowedPauseCapsKey(),
+    );
+    assert!(allowed_pause_caps.contains(&pause_cap.id.to_inner()), EPauseCapNotValid);
+
+    let inner: &mut RegistryInner = self.inner.load_value_mut();
+    assert!(inner.allowed_versions.contains(&version), EVersionNotEnabled);
+    inner.allowed_versions.remove(&version);
 }
 
 /// Adds a stablecoin to the whitelist
@@ -203,6 +272,16 @@ public fun get_balance_manager_ids(self: &Registry, owner: address): VecSet<ID> 
     );
     if (balance_manager_map.contains(owner)) {
         *balance_manager_map.borrow<address, VecSet<ID>>(owner)
+    } else {
+        vec_set::empty()
+    }
+}
+
+/// Get the set of pause cap IDs allowed to disable package versions.
+/// Returns an empty set if no pause caps have been minted yet.
+public fun allowed_pause_caps(self: &Registry): VecSet<ID> {
+    if (self.id.exists_(AllowedPauseCapsKey())) {
+        *df::borrow<AllowedPauseCapsKey, VecSet<ID>>(&self.id, AllowedPauseCapsKey())
     } else {
         vec_set::empty()
     }
@@ -314,10 +393,13 @@ public(package) fun treasury_address(self: &Registry): address {
     self.treasury_address
 }
 
+/// Read the registry's `allowed_versions` set. Bypasses the version gate so
+/// it remains callable while the registry is paused — pool's `allowed_versions`
+/// (what actually gates pool trading) is refreshed from this via
+/// `update_allowed_versions` and `update_pool_allowed_versions`.
 public(package) fun allowed_versions(self: &Registry): VecSet<u64> {
-    let self = self.load_inner();
-
-    self.allowed_versions
+    let inner: &RegistryInner = self.inner.load_value();
+    inner.allowed_versions
 }
 
 // === Test Functions ===

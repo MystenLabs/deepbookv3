@@ -1165,7 +1165,7 @@ public fun has_base_debt<BaseAsset, QuoteAsset>(self: &MarginManager<BaseAsset, 
 public fun conditional_order_ids<BaseAsset, QuoteAsset>(
     self: &MarginManager<BaseAsset, QuoteAsset>,
 ): vector<u64> {
-    let mut ids = vector::empty();
+    let mut ids = vector[];
 
     let trigger_below = self.take_profit_stop_loss.trigger_below_orders();
     let mut i = 0;
@@ -1437,7 +1437,8 @@ fun new_margin_manager<BaseAsset, QuoteAsset>(
         deposit_cap,
         withdraw_cap,
         trade_cap,
-    ) = balance_manager::new_with_custom_owner_caps<MarginApp>(
+    ) = balance_manager::new_with_custom_owner_caps_v2<MarginApp>(
+        MarginApp {},
         deepbook_registry,
         id.to_address(),
         ctx,
@@ -1659,6 +1660,7 @@ fun place_pending_limit_order_v2<BaseAsset, QuoteAsset>(
     assert!(registry.pool_enabled(pool), EPoolNotEnabledForMarginTrading);
 
     registry.assert_price(pool.id(), price, is_bid, clock);
+    let expire_timestamp = registry.clamp_expire_timestamp(pool.id(), expire_timestamp, clock);
 
     let trade_proof = self.trade_proof(ctx);
     let balance_manager = self.balance_manager_unsafe_mut();

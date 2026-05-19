@@ -240,8 +240,8 @@ public fun is_limit_order(pending_order: &PendingOrder): bool {
 // === public(package) functions ===
 public(package) fun new(): TakeProfitStopLoss {
     TakeProfitStopLoss {
-        trigger_below: vector::empty(),
-        trigger_above: vector::empty(),
+        trigger_below: vector[],
+        trigger_above: vector[],
     }
 }
 

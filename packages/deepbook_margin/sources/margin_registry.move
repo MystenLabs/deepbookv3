@@ -46,6 +46,7 @@ const EToleranceTooLow: u64 = 19;
 const EToleranceTooHigh: u64 = 20;
 const EMaxPriceAgeTooLow: u64 = 21;
 const EMaxPriceAgeTooHigh: u64 = 22;
+const EInvalidOrderTtl: u64 = 23;
 
 public struct MARGIN_REGISTRY has drop {}
 
@@ -96,6 +97,10 @@ public struct CurrentPriceData has store {
     tolerance: u64,
     max_price_age_ms: u64,
 }
+
+/// Dynamic field key for storing the per-pool max limit-order TTL (in ms).
+/// Stored value is `u64`; absent means use `margin_constants::default_max_order_ttl_ms()`.
+public struct MaxOrderTtlKey(ID) has copy, drop, store;
 
 // === Caps ===
 public struct MarginAdminCap has key, store {
@@ -161,6 +166,12 @@ public struct PriceToleranceUpdated has copy, drop {
 public struct MaxPriceAgeUpdated has copy, drop {
     pool_id: ID,
     max_age_ms: u64,
+    timestamp: u64,
+}
+
+public struct MaxOrderTtlUpdated has copy, drop {
+    pool_id: ID,
+    max_order_ttl_ms: u64,
     timestamp: u64,
 }
 
@@ -494,6 +505,40 @@ public fun set_max_price_age<BaseAsset, QuoteAsset>(
     event::emit(MaxPriceAgeUpdated {
         pool_id,
         max_age_ms,
+        timestamp: clock.timestamp_ms(),
+    });
+}
+
+/// Set the maximum lifetime (in ms) of margin limit orders for a pool.
+/// User-supplied `expire_timestamp` on margin limit-order placements is
+/// clamped to at most `now + max_order_ttl_ms`. Bounds margin orders'
+/// exposure to stale-price exploitation if liquidity disappears after
+/// placement.
+/// Only Admin can set max order TTL.
+public fun set_max_order_ttl<BaseAsset, QuoteAsset>(
+    self: &mut MarginRegistry,
+    _admin_cap: &MarginAdminCap,
+    pool: &Pool<BaseAsset, QuoteAsset>,
+    max_order_ttl_ms: u64,
+    clock: &Clock,
+) {
+    self.load_inner();
+    assert!(max_order_ttl_ms >= margin_constants::min_max_order_ttl_ms(), EInvalidOrderTtl);
+    assert!(max_order_ttl_ms <= margin_constants::max_max_order_ttl_ms(), EInvalidOrderTtl);
+
+    let pool_id = pool.id();
+    let key = MaxOrderTtlKey(pool_id);
+
+    if (self.id.exists_with_type<MaxOrderTtlKey, u64>(key)) {
+        let stored: &mut u64 = self.id.borrow_mut(key);
+        *stored = max_order_ttl_ms;
+    } else {
+        self.id.add(key, max_order_ttl_ms);
+    };
+
+    event::emit(MaxOrderTtlUpdated {
+        pool_id,
+        max_order_ttl_ms,
         timestamp: clock.timestamp_ms(),
     });
 }
@@ -863,6 +908,32 @@ public(package) fun assert_price(
     } else {
         assert!(price >= lower_bound, EPriceDeviationTooHigh);
     };
+}
+
+/// Returns the per-pool max limit-order TTL in ms. Falls back to the default
+/// when the admin has not set a pool-specific value.
+public(package) fun max_order_ttl_ms(self: &MarginRegistry, pool_id: ID): u64 {
+    let key = MaxOrderTtlKey(pool_id);
+    if (self.id.exists_with_type<MaxOrderTtlKey, u64>(key)) {
+        *self.id.borrow<MaxOrderTtlKey, u64>(key)
+    } else {
+        margin_constants::default_max_order_ttl_ms()
+    }
+}
+
+/// Clamps a user-supplied limit-order `expire_timestamp` to at most
+/// `clock.timestamp_ms() + max_order_ttl_ms(pool_id)`. Applied at every
+/// margin limit-order placement site (regular, reduce-only, TPSL) so a
+/// resting order cannot outlive the price-protection envelope and become an
+/// instrument for stale-price extraction.
+public(package) fun clamp_expire_timestamp(
+    self: &MarginRegistry,
+    pool_id: ID,
+    expire_timestamp: u64,
+    clock: &Clock,
+): u64 {
+    let cap = clock.timestamp_ms() + self.max_order_ttl_ms(pool_id);
+    if (expire_timestamp > cap) cap else expire_timestamp
 }
 
 /// Calculate risk parameters based on leverage factor

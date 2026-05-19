@@ -25,6 +25,9 @@ const MIN_PRICE_AGE_MS: u64 = 30_000; // 30 seconds
 const MAX_PRICE_AGE_MS: u64 = 3_600_000; // 1 hour
 const MIN_PRICE_TOLERANCE: u64 = 10_000_000; // 1%
 const MAX_PRICE_TOLERANCE: u64 = 500_000_000; // 50%
+const DEFAULT_MAX_ORDER_TTL_MS: u64 = 3 * 24 * 60 * 60 * 1000; // 3 days
+const MIN_MAX_ORDER_TTL_MS: u64 = 60 * 60 * 1000; // 1 hour
+const MAX_MAX_ORDER_TTL_MS: u64 = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 public fun margin_version(): u64 {
     MARGIN_VERSION
@@ -112,4 +115,16 @@ public fun min_price_tolerance(): u64 {
 
 public fun max_price_tolerance(): u64 {
     MAX_PRICE_TOLERANCE
+}
+
+public fun default_max_order_ttl_ms(): u64 {
+    DEFAULT_MAX_ORDER_TTL_MS
+}
+
+public fun min_max_order_ttl_ms(): u64 {
+    MIN_MAX_ORDER_TTL_MS
+}
+
+public fun max_max_order_ttl_ms(): u64 {
+    MAX_MAX_ORDER_TTL_MS
 }

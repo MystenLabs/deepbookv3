@@ -10,7 +10,6 @@ use deepbook_margin::{
     margin_manager::{Self, MarginManager},
     margin_pool::{Self, MarginPool},
     margin_registry::{Self, MarginRegistry},
-    pool_proxy,
     test_constants::{Self, USDC, USDT, BTC, INVALID_ASSET, btc_multiplier},
     test_helpers::{
         Self,
@@ -160,7 +159,7 @@ fun test_btc_usd_deepbook_margin() {
         clock,
         admin_cap,
         maintainer_cap,
-        btc_pool_id,
+        _btc_pool_id,
         usdc_pool_id,
         _pool_id,
         registry_id,
@@ -1102,7 +1101,7 @@ fun test_liquidation_reward_calculations() {
         clock,
         admin_cap,
         maintainer_cap,
-        btc_pool_id,
+        _btc_pool_id,
         usdc_pool_id,
         _pool_id,
         registry_id,
@@ -2344,7 +2343,7 @@ fun test_liquidate_fails_with_too_low_repay_amount() {
         mut clock,
         _admin_cap,
         _maintainer_cap,
-        btc_pool_id,
+        _btc_pool_id,
         usdc_pool_id,
         _pool_id,
         registry_id,
@@ -2616,7 +2615,7 @@ fun test_borrow_quote_fails_when_pool_disabled() {
         clock,
         admin_cap,
         _maintainer_cap,
-        btc_pool_id,
+        _btc_pool_id,
         usdc_pool_id,
         _pool_id,
         registry_id,
@@ -2810,7 +2809,7 @@ fun test_unregister_margin_manager_fails_with_outstanding_quote_debt() {
         clock,
         _admin_cap,
         _maintainer_cap,
-        btc_pool_id,
+        _btc_pool_id,
         usdc_pool_id,
         _pool_id,
         registry_id,
@@ -3665,12 +3664,11 @@ fun locked_balance_reflects_open_orders() {
     cleanup_margin_test(registry, _admin_cap, _maintainer_cap, clock, scenario);
 }
 
-// === V1 deprecation regression test ===
+// === V1 deprecation tests ===
 //
 // `execute_conditional_orders` (v1) preserves its on-chain ABI for upgrade
 // compatibility but the body is replaced with `abort EDeprecatedUseV2`. This
-// test asserts the abort fires, so a future refactor can't silently restore
-// the v1 path that lacks the post-fill `risk_ratio` invariant.
+// test asserts the abort fires.
 #[test, expected_failure(abort_code = margin_manager::EDeprecatedUseV2)]
 fun execute_conditional_orders_v1_aborts() {
     let (
@@ -3715,7 +3713,7 @@ fun execute_conditional_orders_v1_aborts() {
     abort 999
 }
 
-// === Conditional-orders post-loop solvency regression test ===
+// === Conditional-orders post-loop solvency tests ===
 //
 // Borrow against collateral right at the borrow floor (1.25), pre-register a
 // conditional order whose trigger fires when the oracle drops, with a pending
@@ -3845,15 +3843,12 @@ fun execute_conditional_orders_v2_post_loop_check_aborts() {
     abort 999
 }
 
-// === Audit Followup Regression Tests ===
+// === Liquidation edge-case tests ===
 
-// Issue 1 regression (audit report on `withdraw_with_proof` aborting when the BalanceKey
-// is missing): a fully one-sided position — user deposits base and borrows base, so the
-// quote (USDC) key is never created — must liquidate without aborting on the missing key.
-// Pre-PR #756 the inner `assert!(key_exists, EBalanceManagerBalanceTooLow)` in
-// `balance_manager::withdraw_with_proof` would abort the `liquidation_withdraw(0, USDC)`
-// call that runs for the empty side; PR #756 made the missing key auto-allocate a zero
-// balance, so the call now passes.
+// Fully one-sided position — user deposits base and borrows base, so the quote (USDC)
+// key is never created on the manager. Liquidation must still succeed: the
+// `liquidation_withdraw(0, USDC)` call against the missing key should pass through
+// (zero amount, key absent) rather than abort.
 #[test]
 fun test_liquidate_one_sided_base_collateral_base_debt() {
     let (
@@ -3948,12 +3943,11 @@ fun test_liquidate_one_sided_base_collateral_base_debt() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-// Issue 2 main fix: when the position is liquidatable AND still solvent in [1.0, 1.05]
-// (assets are insufficient to cover full debt + reward), liquidation drains all collateral
-// at `max_repay`. The old `risk_ratio < float_scaling()` gate left residual borrow shares
-// proportional to `repay_amount / debt` on an empty manager — silent bad debt. The fix
-// switches the gate to `assets_in_debt_unit <= debt_with_reward`, which fires for the
-// whole exhausted-collateral range and clears every share.
+// Position is liquidatable AND still solvent in [1.0, 1.05] — assets are insufficient
+// to cover full debt + reward, so liquidation drains all collateral at `max_repay`.
+// The `assets_in_debt_unit <= debt_with_reward` gate fires across the whole
+// exhausted-collateral range and every borrow share is cleared, so no residual shares
+// remain on the empty manager.
 #[test]
 fun test_liquidate_slightly_solvent_clears_all_shares() {
     let (
@@ -4053,10 +4047,9 @@ fun test_liquidate_slightly_solvent_clears_all_shares() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-// Issue 2 negative case: scenario (c) — partial liquidation when assets > debt * 1.05.
-// The proportional share formula must still run; the manager keeps residual shares
-// backed by remaining collateral. This guards against the fix over-clearing shares in
-// healthy partial liquidations.
+// Healthy partial liquidation when assets > debt * 1.05. The proportional share
+// formula runs and the manager keeps residual shares backed by remaining collateral —
+// shares are not over-cleared.
 #[test]
 fun test_liquidate_partial_keeps_proportional_shares() {
     let (
@@ -4154,11 +4147,11 @@ fun test_liquidate_partial_keeps_proportional_shares() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-// Issue 2 negative case (partial liquidator in the slightly-solvent range): same risk
-// envelope as `test_liquidate_slightly_solvent_clears_all_shares` (risk_ratio ≈ 1.0375,
+// Partial liquidator in the slightly-solvent range: same risk envelope as
+// `test_liquidate_slightly_solvent_clears_all_shares` (risk_ratio ≈ 1.0375,
 // `assets_exhausted` is true), but the liquidator brings a small repay coin so
-// `repay_amount < max_repay`. The fix's IF branch must NOT fire on the second predicate
-// — proportional shares run, residual debt + residual collateral remain.
+// `repay_amount < max_repay`. The clear-all branch must NOT fire — proportional shares
+// run, residual debt + residual collateral remain.
 #[test]
 fun test_liquidate_partial_in_slightly_solvent_range_keeps_residual() {
     let (
@@ -4255,11 +4248,9 @@ fun test_liquidate_partial_in_slightly_solvent_range_keeps_residual() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-// Issue 2 default-recording check: deep into the slightly-solvent range
-// (risk_ratio ≈ 1.01, below the ≈1.0194 break-even where pool coin covers full debt),
-// the fix must clear all shares AND `repay_liquidation` must record an honest
-// `pool_default`. The before-fix proportional path silently absorbed this shortfall as
-// unrepayable residual shares; the after-fix path surfaces it via
+// Deep into the slightly-solvent range (risk_ratio ≈ 1.01, below the ≈1.0194
+// break-even where pool coin covers full debt). All shares must clear AND
+// `repay_liquidation` must record a `pool_default`. The shortfall surfaces via
 // `decrease_supply_absolute`, observable as a drop in `pool.total_supply()`.
 #[test]
 fun test_liquidate_records_pool_default_when_repay_below_debt() {
@@ -4362,10 +4353,10 @@ fun test_liquidate_records_pool_default_when_repay_below_debt() {
     cleanup_margin_test(registry, admin_cap, maintainer_cap, clock, scenario);
 }
 
-// Issue 2 deep-default check: risk_ratio ≈ 1.001 (near the bottom of the
-// slightly-solvent range). Verifies that the fix records a large default — close to
-// the maximum default magnitude of ~1.9% of debt — and that no excess value leaks to
-// the liquidator beyond the standard 2% user reward envelope.
+// risk_ratio ≈ 1.001 (near the bottom of the slightly-solvent range). Verifies a
+// large default is recorded — close to the maximum default magnitude of ~1.9% of
+// debt — and that no excess value leaks to the liquidator beyond the standard 2%
+// user reward envelope.
 #[test]
 fun test_liquidate_near_risk_ratio_one_records_large_default() {
     let (
