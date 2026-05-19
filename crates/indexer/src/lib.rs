@@ -44,7 +44,9 @@ const TESTNET_PACKAGES: &[&str] = &[
 const MAINNET_MARGIN_PACKAGES: &[&str] = &[
     "0x97d9473771b01f77b0940c589484184b49f6444627ec121314fae6a6d36fb86b",
     "0xcb4fc91921494ebe6979e201fdb2d67388ffdf6a1b1eb4952526259074de8d0b",
-    "0xfbd322126f1452fd4c89aedbaeb9fd0c44df9b5cedbe70d76bf80dc086031377", // Latest
+    "0xfbd322126f1452fd4c89aedbaeb9fd0c44df9b5cedbe70d76bf80dc086031377",
+    "0x7767428727629a08dfd196bd4fc00d8a060e30da33aa63f4087fb3271e615a98",
+    "0x124bb3d8105d6d301c0d40feaa54d65df6b301e4d8ddd5eb8475b0f8a18cff2e", // Latest
 ];
 const TESTNET_MARGIN_PACKAGES: &[&str] = &[
     "0xb8620c24c9ea1a4a41e79613d2b3d1d93648d1bb6f6b789a7c8f261c94110e4b",
