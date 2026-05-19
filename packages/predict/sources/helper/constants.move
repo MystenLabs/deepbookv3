@@ -21,6 +21,14 @@ public macro fun float_scaling(): u64 { 1_000_000_000 }
 /// form into the package's 1e9-scaled `u64`.
 public macro fun float_scaling_decimals(): u64 { 9 }
 
+// === Builder Fees ===
+
+/// Add-on builder fee as a fraction of the normal trade fee.
+public macro fun builder_fee_multiplier(): u64 { 100_000_000 }
+
+/// Maximum all-in builder fee rate per traded quantity.
+public macro fun max_builder_fee_rate(): u64 { 5_000_000 }
+
 // === Time Constants ===
 
 /// Milliseconds in a 365-day year.

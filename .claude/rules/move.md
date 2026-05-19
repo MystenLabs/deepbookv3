@@ -333,6 +333,7 @@ entry fun mint_and_keep(ctx: &mut TxContext) { /* ... */ }
 - Avoid wide positional tuples, especially 4+ items or repeated primitive types with domain meaning.
 - If several values need to travel together, either reduce the return shape or use a named package-only summary struct.
 - Private, tightly local algorithm helpers can use tuples when destructuring names make the meaning clear.
+- When a struct repeats the exact field group of another local struct and helpers only copy values between them, prefer embedding the named struct directly. This keeps the real data shape visible and removes projection boilerplate such as `to_summary` / `write_summary` helpers.
 
 ### Objects Go First (Except for Clock)
 

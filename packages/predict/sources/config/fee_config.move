@@ -1,24 +1,26 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Stored fee split config for new expiry fee reserves.
+/// Stored fee policy config.
 ///
-/// ProtocolConfig owns the current template. Each FeeReserve snapshots these
-/// shares when its expiry market is created.
+/// PoolVault reads the current fee-share policy when compacting fee surplus.
+/// Expiry markets snapshot the settlement loss rebate rate at creation.
 module deepbook_predict::fee_config;
 
 use deepbook_predict::{config_constants, constants};
 
 const EInvalidFeeSplit: u64 = 0;
 
-/// Fee distribution shares. Shares must sum to 100%.
+/// Fee surplus distribution and settlement loss rebate policy.
 public struct FeeConfig has store {
-    /// LP fee share in FLOAT_SCALING; returned into LP-owned expiry cash.
+    /// LP fee share in FLOAT_SCALING; returned into pool idle liquidity.
     lp_fee_share: u64,
-    /// Protocol fee share in FLOAT_SCALING; reserved in the expiry fee reserve.
+    /// Protocol revenue share in FLOAT_SCALING.
     protocol_fee_share: u64,
-    /// Insurance fee share in FLOAT_SCALING; reserved in the expiry fee reserve.
+    /// Insurance fund share in FLOAT_SCALING.
     insurance_fee_share: u64,
+    /// Fraction of losing positions' raw fee basis rebated after settlement.
+    settlement_loss_rebate_rate: u64,
 }
 
 // === Public-Package Functions ===
@@ -35,11 +37,16 @@ public(package) fun insurance_fee_share(config: &FeeConfig): u64 {
     config.insurance_fee_share
 }
 
+public(package) fun settlement_loss_rebate_rate(config: &FeeConfig): u64 {
+    config.settlement_loss_rebate_rate
+}
+
 public(package) fun new(): FeeConfig {
     FeeConfig {
         lp_fee_share: config_constants::default_lp_fee_share!(),
         protocol_fee_share: config_constants::default_protocol_fee_share!(),
         insurance_fee_share: config_constants::default_insurance_fee_share!(),
+        settlement_loss_rebate_rate: config_constants::default_settlement_loss_rebate_rate!(),
     }
 }
 
@@ -59,6 +66,11 @@ public(package) fun set_fee_shares(
     config.insurance_fee_share = insurance_fee_share;
 }
 
+public(package) fun set_settlement_loss_rebate_rate(config: &mut FeeConfig, value: u64) {
+    config_constants::assert_settlement_loss_rebate_rate(value);
+    config.settlement_loss_rebate_rate = value;
+}
+
 // === Test-Only Functions ===
 
 #[test_only]
@@ -67,5 +79,6 @@ public fun destroy_for_testing(config: FeeConfig) {
         lp_fee_share: _,
         protocol_fee_share: _,
         insurance_fee_share: _,
+        settlement_loss_rebate_rate: _,
     } = config;
 }

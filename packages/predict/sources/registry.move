@@ -10,6 +10,7 @@
 module deepbook_predict::registry;
 
 use deepbook_predict::{
+    builder_code,
     expiry_market,
     market_oracle::{Self, MarketOracle, MarketOracleCap},
     plp::PoolVault,
@@ -102,7 +103,7 @@ public fun set_block_scholes_svi_freshness_ms(
     config.set_block_scholes_svi_freshness_ms(value);
 }
 
-/// Set the fee distribution shares.
+/// Set the current fee surplus distribution shares used during compaction.
 public fun set_fee_shares(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
@@ -111,6 +112,15 @@ public fun set_fee_shares(
     insurance_fee_share: u64,
 ) {
     config.set_fee_shares(lp_fee_share, protocol_fee_share, insurance_fee_share);
+}
+
+/// Set the settlement loss rebate rate template used by future expiry markets.
+public fun set_template_settlement_loss_rebate_rate(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.set_template_settlement_loss_rebate_rate(value);
 }
 
 /// Set the maximum total exposure percentage.
@@ -283,6 +293,11 @@ public fun create_expiry_market(
     registry.expiry_market_ids.add(expiry, expiry_market_id);
 
     (expiry_market_id, market_oracle_id)
+}
+
+/// Create a derived shared BuilderCode for the caller and index.
+public fun create_builder_code(registry: &mut Registry, index: u64, ctx: &mut TxContext): ID {
+    builder_code::create_and_share(&mut registry.id, index, ctx)
 }
 
 /// Create a derived PredictManager for the caller.
