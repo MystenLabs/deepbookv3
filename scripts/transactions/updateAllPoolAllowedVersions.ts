@@ -3,7 +3,7 @@
 import { Transaction } from '@mysten/sui/transactions';
 import { getClient, getSigner } from '../utils/utils.js';
 
-const DEEPBOOK_PACKAGE_ID = '0x337f4f4f6567fcd778d5454f27c16c70e2f274cc6377ea6249ddf491482ef497';
+const DEEPBOOK_PACKAGE_ID = '0x0e735f8c93a95722efd73521aca7a7652c0bb71ed1daf41b26dfd7d1ff71f748';
 const REGISTRY_ID = '0xaf16199a2dff736e9f07a845f23c5da6df6f756eddb631aed9d24a93efc4549d';
 const POOL_CREATED_ENDPOINT = 'https://deepbook-indexer.mainnet.mystenlabs.com/pool_created';
 
