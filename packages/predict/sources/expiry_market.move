@@ -79,6 +79,8 @@ public struct ExpiryValuation {
 public struct FeeAccrued has copy, drop, store {
     expiry_market_id: ID,
     total_fee: u64,
+    builder_fee: u64,
+    builder_code_id: Option<ID>,
 }
 
 // === Public Functions ===
@@ -455,7 +457,9 @@ fun mint_internal(
         quantity,
         clock,
     );
-    let payment_amount = principal_amount + fee_amount;
+    let builder_code_id = manager.builder_code_id();
+    let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity);
+    let payment_amount = principal_amount + fee_amount + builder_fee_amount;
 
     market
         .strike_exposure
@@ -470,9 +474,11 @@ fun mint_internal(
 
     manager.increase_position(key, quantity, fee_amount);
     let mut payment = manager.withdraw(payment_amount, ctx).into_balance();
+    let builder_fee_payment = payment.split(builder_fee_amount);
     let fee_payment = payment.split(fee_amount);
     market.fee_balance.join(fee_payment);
-    market.emit_fee_accrued(fee_amount);
+    send_builder_fee(builder_code_id, builder_fee_payment);
+    market.emit_fee_accrued(fee_amount, builder_fee_amount, builder_code_id);
     market.lp_cash_balance.join(payment);
     market.assert_cash_backing();
 }
@@ -517,11 +523,17 @@ fun redeem_live_internal(
         quantity,
         clock,
     );
+    let builder_code_id = manager.builder_code_id();
+    let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity).min(
+        principal_amount - fee_amount,
+    );
 
     let mut payout = market.dispense_lp_cash(principal_amount);
     let fee = payout.split(fee_amount);
+    let builder_fee = payout.split(builder_fee_amount);
     market.fee_balance.join(fee);
-    market.emit_fee_accrued(fee_amount);
+    send_builder_fee(builder_code_id, builder_fee);
+    market.emit_fee_accrued(fee_amount, builder_fee_amount, builder_code_id);
     market.assert_cash_backing();
     manager.deposit(payout.into_coin(ctx), ctx);
 }
@@ -672,12 +684,19 @@ fun assert_nonzero_quantity(quantity: u64) {
     assert!(quantity > 0, EZeroQuantity);
 }
 
-fun emit_fee_accrued(market: &ExpiryMarket, total_fee: u64) {
-    if (total_fee == 0) return;
+fun emit_fee_accrued(
+    market: &ExpiryMarket,
+    total_fee: u64,
+    builder_fee: u64,
+    builder_code_id: Option<ID>,
+) {
+    if (total_fee == 0 && builder_fee == 0) return;
 
     event::emit(FeeAccrued {
         expiry_market_id: market.id(),
         total_fee,
+        builder_fee,
+        builder_code_id,
     });
 }
 
@@ -691,6 +710,25 @@ fun assert_not_compacted(market: &ExpiryMarket) {
 
 fun rebate_liability(market: &ExpiryMarket, losing_fee_basis: u64): u64 {
     math::mul(losing_fee_basis, market.settlement_loss_rebate_rate)
+}
+
+fun builder_fee_amount(builder_code_id: &Option<ID>, fee_amount: u64, quantity: u64): u64 {
+    if (builder_code_id.is_some()) {
+        math::mul(fee_amount, constants::builder_fee_multiplier!()).min(
+            math::mul(quantity, constants::max_builder_fee_rate!()),
+        )
+    } else {
+        0
+    }
+}
+
+fun send_builder_fee(builder_code_id: Option<ID>, fee: Balance<DUSDC>) {
+    if (fee.value() == 0) {
+        fee.destroy_zero();
+        return
+    };
+    let builder_code_id = builder_code_id.destroy_some();
+    balance::send_funds(fee, builder_code_id.to_address());
 }
 
 fun lp_fee_surplus_value(config: &ProtocolConfig, fee_surplus: u64): u64 {
