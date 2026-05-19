@@ -36,6 +36,7 @@ const EOracleInactive: u64 = 22;
 const ELazerAuthoritativeAtExpiry: u64 = 23;
 const ELazerStaleAtExpiry: u64 = 24;
 const ECapNotRegistered: u64 = 25;
+const EInvalidSVIParams: u64 = 26;
 
 // Pre-expiry oracle that has not been activated yet.
 const STATUS_INACTIVE: u8 = 0;
@@ -417,12 +418,11 @@ public fun update_spot_from_lazer(oracle: &mut OracleSVI, update: LazerUpdate, c
     oracle.apply_lazer_spot(spot, lazer_published_at_us, clock);
 }
 
-// TODO: Add validation on pushed SVI params so obviously bad updates are
-// rejected before they mutate state.
 /// Push SVI parameters (low frequency ~10-20s) while the oracle is still
 /// unsettled and pre-expiry.
 public fun update_svi(oracle: &mut OracleSVI, cap: &OracleSVICap, svi: SVIParams, clock: &Clock) {
     oracle.assert_authorized_cap(cap);
+    validate_svi_params(&svi);
     let oracle_status = oracle.status(clock);
     assert!(oracle_status != status_settled(), EOracleSettled);
     assert!(oracle_status != status_pending_settlement(), EOracleExpired);
@@ -1035,6 +1035,18 @@ fun emit_bounds_updated(oracle: &OracleSVI) {
         min_basis: b.min_basis,
         max_basis: b.max_basis,
     });
+}
+
+/// Validate SVI parameters before storing them.
+fun validate_svi_params(svi: &SVIParams) {
+    let ceiling = tuning_constants::max_svi_param_ceiling!();
+    assert!(svi.a <= ceiling, EInvalidSVIParams);
+    assert!(svi.b <= ceiling, EInvalidSVIParams);
+    assert!(svi.sigma <= ceiling, EInvalidSVIParams);
+    assert!(svi.m.magnitude() <= ceiling, EInvalidSVIParams);
+
+    let max_rho = tuning_constants::max_svi_rho!();
+    assert!(svi.rho.magnitude() <= max_rho, EInvalidSVIParams);
 }
 
 /// Binary pricing from SVI total variance:

@@ -88,3 +88,15 @@ public macro fun min_basis_floor(): u64 { 500_000_000 }
 /// setters. Symmetric with `min_basis_floor`: wide enough for contango
 /// spikes, tight enough that `max_basis = u64::MAX` is rejected.
 public macro fun max_basis_ceiling(): u64 { 2_000_000_000 }
+
+// === SVI Parameters ===
+
+/// Hard ceiling (0.995) on the SVI skew parameter `rho`.
+/// Beyond this, the volatility surface becomes too steep and can produce
+/// numerical instability or negative variance at extreme strikes.
+public macro fun max_svi_rho(): u64 { 995_000_000 }
+
+/// Hard ceiling (10.0) on the SVI `a` (variance), `b` (slope), and `sigma`
+/// (curvature) parameters. 10.0 is an extremely wide variance/slope for
+/// any credible asset.
+public macro fun max_svi_param_ceiling(): u64 { 10_000_000_000 }
