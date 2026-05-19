@@ -242,9 +242,37 @@ public struct OracleSVI has key {
     settlement_price: Option<u64>,
 }
 
-/// Capability for Block Scholes operator to create and update SVI oracles.
-public struct OracleSVICap has key, store {
-    id: UID,
+#[test_only]
+public fun create_oracle_test(
+    underlying_asset: String,
+    pyth_lazer_feed_id: u32,
+    expiry: u64,
+    bounds: OracleBounds,
+    cap: &OracleSVICap,
+    ctx: &mut TxContext,
+): OracleSVI {
+    OracleSVI {
+        id: object::new(ctx),
+        authorized_caps: vec_set::singleton(object::id(cap)),
+        underlying_asset,
+        pyth_lazer_feed_id,
+        expiry,
+        active: true,
+        prices: PriceData { spot: 0, basis: 0 },
+        svi: SVIParams {
+            a: 0,
+            b: 0,
+            rho: i64::zero(),
+            m: i64::zero(),
+            sigma: 0,
+        },
+        spot_timestamp_ms: 0,
+        lazer_spot_timestamp_ms: 0,
+        basis_timestamp_ms: 0,
+        lazer_published_at_us: 0,
+        bounds,
+        settlement_price: option::none(),
+    }
 }
 
 // === Public Functions ===

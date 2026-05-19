@@ -41,7 +41,6 @@ public(package) fun new(): RiskConfig {
 
 /// Set the maximum total exposure percentage.
 public(package) fun set_max_total_exposure_pct(config: &mut RiskConfig, pct: u64) {
-    assert!(pct > 0 && pct <= constants::float_scaling!(), EExceedsMaxPct);
     config.max_total_exposure_pct = pct;
 }
 

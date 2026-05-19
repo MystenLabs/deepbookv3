@@ -1,0 +1,16 @@
+[package]
+name = "deepbook-predict-schema"
+version = "0.1.0"
+authors = ["Mysten Labs <build@mystenlabs.com>"]
+license = "Apache-2.0"
+publish = false
+edition = "2021"
+
+[dependencies]
+diesel = { workspace = true, features = ["postgres", "numeric", "chrono", "serde_json"] }
+diesel_migrations.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+chrono = { version = "0.4", features = ["serde"] }
+bigdecimal = { version = "0.4", features = ["serde"] }
+sui-types = { workspace = true }

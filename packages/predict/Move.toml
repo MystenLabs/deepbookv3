@@ -4,19 +4,17 @@ edition = "2024.beta"
 version = "0.0.1"
 
 [dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "5612ba3005e94b1eaf2dc0dcdbddb0e45668a6fc" }
 deepbook = { local = "../deepbook" }
-# Official Pyth Lazer Sui package. Used by `oracle::update_spot_from_lazer` to
-# consume a verified `pyth_lazer::update::Update`. The `Update` constructor is
-# package-scoped, so the Move type system enforces "this value came from
-# Pyth's verifier." Use `rev = "sui-testnet"` for testnet because Wormhole is
-# custom-deployed there.
 pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "sui-testnet" }
+wormhole = { git = "https://github.com/pyth-network/wormhole.git", subdir = "sui/wormhole", rev = "sui-testnet" }
 
-# `pyth_lazer` and `wormhole` are already published on Sui. We depend on source
-# for typechecking only; `dep-replacements` tells `sui client publish` to link
-# against the on-chain packages instead of re-publishing them. Addresses come
-# from `contract_manager/src/store/contracts/SuiLazerContracts.json` in the
-# pyth-network/pyth-crosschain repo (sui-testnet branch).
-[dep-replacements.testnet]
-pyth_lazer = { git = "https://github.com/pyth-network/pyth-crosschain.git", subdir = "lazer/contracts/sui", rev = "sui-testnet", published-at = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21", original-id = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21" }
-wormhole = { git = "https://github.com/pyth-network/wormhole.git", subdir = "sui/wormhole", rev = "sui-testnet", published-at = "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2", original-id = "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2" }
+[addresses]
+deepbook_predict = "0xDEB3"
+sui = "0x2"
+std = "0x1"
+pyth_lazer = "0xf5bd2141967507050a91b58de3d95e77c432cd90d1799ee46effc27430a68c21"
+wormhole = "0xd5afd4e456e5451f1ca1e7b3d734ce7a0a3b397811a6cb72a4bd1dfc387839f2"
+
+[dev-dependencies]
+# ... dev dependencies if needed

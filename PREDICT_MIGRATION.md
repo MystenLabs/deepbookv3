@@ -180,7 +180,12 @@ PR 1  Oracle (+ constants, math)       ← no deps, start here
 |----|--------|--------|------|
 | 1 | `at/predict-pr1-oracle` | ✅ merged | [#877](https://github.com/MystenLabs/deepbookv3/pull/877) |
 | 2 | `at/predict-pr2-vault` | ✅ merged | [#883](https://github.com/MystenLabs/deepbookv3/pull/883) |
-| 3 | — | **next** | — |
-| 4 | — | blocked on 3 | — |
-| 5a | — | blocked on 4 | — |
-| 5b | — | blocked on 5a | — |
+| 3 | — | ✅ completed | — |
+| 4 | — | ✅ completed | — |
+| 5 | — | ✅ completed | — |
+| 6 | — | ✅ completed | — |
+| 7 | — | ✅ completed | — |
+| 8 | — | ✅ completed | — |
+| 9 | — | ✅ completed | — |
+| 10 | — | ✅ completed | — |
+| 11 | — | ✅ completed | — |

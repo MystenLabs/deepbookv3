@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: predict
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  indexer:
+    build:
+      context: .
+      dockerfile: docker/predict-indexer/Dockerfile
+    environment:
+      DATABASE_URL: postgres://postgres@db/predict
+      ENV: testnet
+    depends_on:
+      db:
+        condition: service_healthy
+
+  server:
+    build:
+      context: .
+      dockerfile: docker/predict-server/Dockerfile
+    environment:
+      DATABASE_URL: postgres://postgres@db/predict
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  oracle:
+    build:
+      context: .
+      dockerfile: docker/oracle-feed/Dockerfile
+    environment:
+      PACKAGE_ID: ${PACKAGE_ID}
+      ORACLE_CAP_ID: ${ORACLE_CAP_ID}
+      BTC_ORACLE_ID: ${BTC_ORACLE_ID}
+      PRIVATE_KEY: ${PRIVATE_KEY}
+      NETWORK: testnet
+    depends_on:
+      - server

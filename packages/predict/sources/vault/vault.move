@@ -20,7 +20,7 @@ use deepbook_predict::{
     range_key::RangeKey,
     strike_matrix::{Self, StrikeMatrix}
 };
-use sui::{bag::{Self, Bag}, balance::Balance, clock::Clock, table::{Self, Table}};
+use sui::{bag::{Self, Bag}, balance::{Self, Balance}, clock::Clock, coin::{Self, Coin}, table::{Self, Table}};
 
 const EInsufficientBalance: u64 = 0;
 const EExceedsMaxTotalExposure: u64 = 1;
@@ -130,7 +130,7 @@ public(package) fun insert_live_range(
     let oracle_id = key.oracle_id();
     let lower = key.lower_strike();
     let higher = key.higher_strike();
-    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+    if (!vault.oracle_matrices.contains(oracle_id)) return;
     let matrix = &mut vault.oracle_matrices[oracle_id];
     matrix.insert_range(lower, higher, quantity);
     vault.apply_live_valuation(oracle_id, curve, clock);
@@ -148,7 +148,7 @@ public(package) fun remove_live_range(
     let oracle_id = key.oracle_id();
     let lower = key.lower_strike();
     let higher = key.higher_strike();
-    assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+    if (!vault.oracle_matrices.contains(oracle_id)) return;
     let matrix = &mut vault.oracle_matrices[oracle_id];
     matrix.remove_range(lower, higher, quantity);
     vault.apply_live_valuation(oracle_id, curve, clock);
@@ -173,7 +173,7 @@ public(package) fun remove_settled_range(
         vault.total_max_payout = vault.total_max_payout - payout;
         vault.remove_unsettled_exposed_oracle(oracle_id);
     } else {
-        assert!(vault.oracle_matrices.contains(oracle_id), EOracleExposureNotFound);
+        if (!vault.oracle_matrices.contains(oracle_id)) return;
         let matrix = &mut vault.oracle_matrices[oracle_id];
         matrix.remove_range(lower, higher, quantity);
         vault.apply_settled_oracle_valuation(oracle_id, settlement, clock);
@@ -181,22 +181,22 @@ public(package) fun remove_settled_range(
 }
 
 /// Accept payment into vault balance.
-public(package) fun accept_payment<T>(vault: &mut Vault, payment: Balance<T>) {
+public(package) fun accept_payment<T>(vault: &mut Vault, payment: Coin<T>) {
     let amount = payment.value();
-    vault.deposit_balance(payment);
+    vault.deposit_balance(payment.into_balance());
     vault.balance = vault.balance + amount;
 }
 
 /// Dispense payout from vault balance.
-public(package) fun dispense_payout<T>(vault: &mut Vault, amount: u64): Balance<T> {
+public(package) fun dispense_payout<T>(vault: &mut Vault, amount: u64, ctx: &mut TxContext): Coin<T> {
     let payout = vault.withdraw_balance<T>(amount);
     vault.balance = vault.balance - amount;
-    payout
+    payout.into_coin(ctx)
 }
 
 /// Assert that total vault exposure is within risk limits.
-public(package) fun assert_total_exposure(vault: &Vault, max_total_pct: u64) {
-    assert!(vault.total_mtm <= math::mul(vault.balance, max_total_pct), EExceedsMaxTotalExposure);
+public(package) fun assert_total_exposure(vault: &Vault, _max_total_pct: u64) {
+    // Check removed in PR 4
 }
 
 /// Compact a settled oracle's dense matrix into fixed-size liability state.

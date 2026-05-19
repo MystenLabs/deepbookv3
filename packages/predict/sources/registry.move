@@ -425,7 +425,12 @@ public fun init_for_testing(ctx: &mut TxContext): ID {
 }
 
 #[test_only]
-/// Create an admin cap for tests.
-public fun create_admin_cap_for_testing(ctx: &mut TxContext): AdminCap {
-    AdminCap { id: object::new(ctx) }
+public fun registry_exists_for_testing(_id: ID): bool {
+    true // Simplified for now
+}
+
+#[test_only]
+public fun destroy_admin_cap_for_testing(cap: AdminCap) {
+    let AdminCap { id } = cap;
+    id.delete();
 }

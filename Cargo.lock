@@ -2251,6 +2251,53 @@ dependencies = [
 ]
 
 [[package]]
+name = "deepbook-predict-indexer"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bcs",
+ "bigdecimal",
+ "chrono",
+ "clap",
+ "deepbook-predict-schema",
+ "diesel",
+ "diesel-async",
+ "fastcrypto 0.1.9 (git+https://github.com/MystenLabs/fastcrypto?rev=4db0e90c732bbf7420ca20de808b698883148d9c)",
+ "hex",
+ "insta",
+ "move-core-types",
+ "prometheus",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "sui-indexer-alt-framework",
+ "sui-indexer-alt-metrics",
+ "sui-pg-db",
+ "sui-sdk-types 0.0.7",
+ "sui-storage",
+ "sui-transaction-builder 0.0.7",
+ "sui-types",
+ "telemetry-subscribers",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "deepbook-predict-schema"
+version = "0.1.0"
+dependencies = [
+ "bigdecimal",
+ "chrono",
+ "diesel",
+ "diesel_migrations",
+ "serde",
+ "serde_json",
+ "sui-types",
+]
+
+[[package]]
 name = "deepbook-schema"
 version = "0.1.0"
 dependencies = [
