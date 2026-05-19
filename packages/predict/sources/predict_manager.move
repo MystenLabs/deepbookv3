@@ -9,9 +9,9 @@
 module deepbook_predict::predict_manager;
 
 use deepbook::balance_manager::{Self, BalanceManager, DepositCap};
-use deepbook_predict::{math, range_key::RangeKey};
+use deepbook_predict::{builder_code::{Self, BuilderCode}, math, range_key::RangeKey};
 use dusdc::dusdc::DUSDC;
-use sui::{coin::Coin, derived_object, table::{Self, Table}};
+use sui::{coin::Coin, derived_object, event, table::{Self, Table}};
 
 const EInsufficientPosition: u64 = 0;
 const ENotOwner: u64 = 1;
@@ -26,6 +26,7 @@ public struct PredictManager has key {
     id: UID,
     balance_manager: BalanceManager,
     deposit_cap: DepositCap,
+    builder_code_id: Option<ID>,
     /// RangeKey -> position quantity and raw rebate fee basis.
     positions: Table<RangeKey, Position>,
 }
@@ -36,11 +37,23 @@ public struct Position has store {
     rebate_fee_basis: u64,
 }
 
+/// Emitted when a manager owner changes sticky builder-code attribution.
+public struct BuilderCodeSet has copy, drop, store {
+    predict_manager_id: ID,
+    owner: address,
+    builder_code_id: Option<ID>,
+}
+
 // === Public Functions ===
 
 /// Share a newly created PredictManager object.
 public fun share(self: PredictManager) {
     transfer::share_object(self);
+}
+
+/// Return the PredictManager object ID.
+public fun id(self: &PredictManager): ID {
+    self.id.to_inner()
 }
 
 /// Deposit coins into the PredictManager.
@@ -81,6 +94,38 @@ public fun balance(self: &PredictManager): u64 {
     self.balance_manager.balance<DUSDC>()
 }
 
+/// Return the sticky builder-code ID used for future trades, if one is set.
+public fun builder_code_id(self: &PredictManager): Option<ID> {
+    self.builder_code_id
+}
+
+/// Set sticky builder-code attribution for future trades.
+public fun set_builder_code(
+    self: &mut PredictManager,
+    builder_code: &BuilderCode,
+    ctx: &TxContext,
+) {
+    self.assert_owner(ctx);
+    let builder_code_id = builder_code::id(builder_code);
+    self.builder_code_id = option::some(builder_code_id);
+    event::emit(BuilderCodeSet {
+        predict_manager_id: self.id(),
+        owner: self.owner(),
+        builder_code_id: option::some(builder_code_id),
+    });
+}
+
+/// Clear sticky builder-code attribution for future trades.
+public fun unset_builder_code(self: &mut PredictManager, ctx: &TxContext) {
+    self.assert_owner(ctx);
+    self.builder_code_id = option::none();
+    event::emit(BuilderCodeSet {
+        predict_manager_id: self.id(),
+        owner: self.owner(),
+        builder_code_id: option::none(),
+    });
+}
+
 // === Public-Package Functions ===
 
 /// Create a derived PredictManager for the sender.
@@ -93,6 +138,7 @@ public(package) fun new(registry_uid: &mut UID, ctx: &mut TxContext): PredictMan
         id,
         balance_manager,
         deposit_cap,
+        builder_code_id: option::none(),
         positions: table::new(ctx),
     }
 }

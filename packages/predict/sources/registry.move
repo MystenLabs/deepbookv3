@@ -10,6 +10,7 @@
 module deepbook_predict::registry;
 
 use deepbook_predict::{
+    builder_code,
     expiry_market,
     market_oracle::{Self, MarketOracle, MarketOracleCap},
     plp::PoolVault,
@@ -292,6 +293,11 @@ public fun create_expiry_market(
     registry.expiry_market_ids.add(expiry, expiry_market_id);
 
     (expiry_market_id, market_oracle_id)
+}
+
+/// Create a derived shared BuilderCode for the caller and index.
+public fun create_builder_code(registry: &mut Registry, index: u64, ctx: &mut TxContext): ID {
+    builder_code::create_and_share(&mut registry.id, index, ctx)
 }
 
 /// Create a derived PredictManager for the caller.
