@@ -16,5 +16,8 @@
     "@mysten/sui": "^2.5.0",
     "esbuild": "^0.27.2",
     "tsx": "^4.21.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
   }
 }
