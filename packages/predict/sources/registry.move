@@ -66,6 +66,15 @@ public fun set_utilization_multiplier(
     config.set_utilization_multiplier(multiplier);
 }
 
+/// Set the maximum borrow-index increase charged over an expiry.
+public fun set_max_expiry_borrow_fee(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.set_max_expiry_borrow_fee(value);
+}
+
 /// Set the global minimum allowed mint price.
 public fun set_min_ask_price(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
     config.set_min_ask_price(value);

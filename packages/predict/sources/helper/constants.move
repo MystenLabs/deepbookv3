@@ -21,6 +21,11 @@ public macro fun float_scaling(): u64 { 1_000_000_000 }
 /// form into the package's 1e9-scaled `u64`.
 public macro fun float_scaling_decimals(): u64 { 9 }
 
+// === Leverage ===
+
+/// Window before expiry over which leverage borrow fees accrue.
+public macro fun leverage_borrow_window_ms(): u64 { 31_536_000_000 }
+
 // === Builder Fees ===
 
 /// Add-on builder fee as a fraction of the normal trade fee.

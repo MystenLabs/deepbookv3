@@ -31,6 +31,7 @@ const EInvalidShrinkUtilizationThreshold: u64 = 19;
 const EInvalidGrowFactor: u64 = 20;
 const EInvalidShrinkFactor: u64 = 21;
 const EInvalidSettlementLossRebateRate: u64 = 22;
+const EInvalidMaxExpiryBorrowFee: u64 = 23;
 
 // === Pool Risk ===
 
@@ -128,6 +129,21 @@ public(package) fun assert_utilization_multiplier(value: u64) {
     assert!(
         value >= min_utilization_multiplier!() && value <= max_utilization_multiplier!(),
         EInvalidUtilizationMultiplier,
+    );
+}
+
+// === Leverage ===
+
+public(package) macro fun default_max_expiry_borrow_fee(): u64 { 200_000_000 }
+public(package) macro fun min_max_expiry_borrow_fee(): u64 { 0 }
+public(package) macro fun max_max_expiry_borrow_fee(): u64 {
+    deepbook_predict::constants::float_scaling!()
+}
+
+public(package) fun assert_max_expiry_borrow_fee(value: u64) {
+    assert!(
+        value >= min_max_expiry_borrow_fee!() && value <= max_max_expiry_borrow_fee!(),
+        EInvalidMaxExpiryBorrowFee,
     );
 }
 
