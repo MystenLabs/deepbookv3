@@ -12,7 +12,6 @@ import {
   deepMarginPoolCapID,
   walMarginPoolCapID,
   suiUsdeMarginPoolCapID,
-  usdSuiMarginPoolCapID,
   xbtcMarginPoolCapID,
 } from "../config/constants.js";
 import { deepbook } from "@mysten/deepbook-v3";
@@ -35,16 +34,18 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
 
   const tx = new Transaction();
 
-  // Step 1: Disable old margin package versions 3 and 4 (v5 is the live version)
+  // Step 1: Disable margin package versions 3 and 4
   client.deepbook.marginAdmin.disableVersion(3)(tx);
   client.deepbook.marginAdmin.disableVersion(4)(tx);
 
-  // Step 2: Mint 3 DeepbookCorePauseCaps and distribute to ops addresses
-  //   - 2 caps to 0x517f822cd3c45a3ac3dbfab73c060d9a0d96bec7fffa204c341e7e0877c9787c
-  //   - 1 cap  to 0x1b71380623813c8aee2ab9a68d96c19d0e45fc872e8c22dd70dfedfb76cbb192
+  // Step 2: Mint 4 DeepbookCorePauseCaps and distribute
+  //   - 2 to 0x517f822cd3c45a3ac3dbfab73c060d9a0d96bec7fffa204c341e7e0877c9787c
+  //   - 1 to 0x1b71380623813c8aee2ab9a68d96c19d0e45fc872e8c22dd70dfedfb76cbb192
+  //   - 1 to 0xe9584eb3262c8cee0d0e8ff4fe4f20c5053e4748a23a4c46954d0c21fbbf0aff
   const corePauseCap1 = client.deepbook.deepBookAdmin.mintCorePauseCap()(tx);
   const corePauseCap2 = client.deepbook.deepBookAdmin.mintCorePauseCap()(tx);
   const corePauseCap3 = client.deepbook.deepBookAdmin.mintCorePauseCap()(tx);
+  const corePauseCap4 = client.deepbook.deepBookAdmin.mintCorePauseCap()(tx);
   tx.transferObjects(
     [corePauseCap1, corePauseCap2],
     "0x517f822cd3c45a3ac3dbfab73c060d9a0d96bec7fffa204c341e7e0877c9787c",
@@ -53,12 +54,26 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
     [corePauseCap3],
     "0x1b71380623813c8aee2ab9a68d96c19d0e45fc872e8c22dd70dfedfb76cbb192",
   );
+  tx.transferObjects(
+    [corePauseCap4],
+    "0xe9584eb3262c8cee0d0e8ff4fe4f20c5053e4748a23a4c46954d0c21fbbf0aff",
+  );
 
-  // Step 3: Re-enable margin trading on the 6 pairs.
-  // All 6 pools (SUI_USDC, DEEP_USDC, WAL_USDC, SUI_SUIUSDE, SUIUSDE_USDC, XBTC_USDC)
-  // were previously registered and are currently disabled. pool_registry persists
-  // across disable_version, so re-registering would abort with EPoolAlreadyRegistered.
-  // USDSUI pairs intentionally remain disabled in margin.
+  // Step 3: Mint 2 margin pause caps and distribute
+  //   - 1 to 0x517f822cd3c45a3ac3dbfab73c060d9a0d96bec7fffa204c341e7e0877c9787c
+  //   - 1 to 0xe9584eb3262c8cee0d0e8ff4fe4f20c5053e4748a23a4c46954d0c21fbbf0aff
+  const marginPauseCap1 = client.deepbook.marginAdmin.mintPauseCap()(tx);
+  const marginPauseCap2 = client.deepbook.marginAdmin.mintPauseCap()(tx);
+  tx.transferObjects(
+    [marginPauseCap1],
+    "0x517f822cd3c45a3ac3dbfab73c060d9a0d96bec7fffa204c341e7e0877c9787c",
+  );
+  tx.transferObjects(
+    [marginPauseCap2],
+    "0xe9584eb3262c8cee0d0e8ff4fe4f20c5053e4748a23a4c46954d0c21fbbf0aff",
+  );
+
+  // Step 4: Enable margin trading on the 6 pairs
   client.deepbook.marginAdmin.enableDeepbookPool("SUI_USDC")(tx);
   client.deepbook.marginAdmin.enableDeepbookPool("DEEP_USDC")(tx);
   client.deepbook.marginAdmin.enableDeepbookPool("WAL_USDC")(tx);
@@ -66,7 +81,7 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   client.deepbook.marginAdmin.enableDeepbookPool("SUIUSDE_USDC")(tx);
   client.deepbook.marginAdmin.enableDeepbookPool("XBTC_USDC")(tx);
 
-  // Step 4: Enable each (pair, asset) loan flow for the 6 enabled pairs
+  // Step 5: Enable each (pair, asset) loan flow for the 6 pairs
   client.deepbook.marginMaintainer.enableDeepbookPoolForLoan(
     "SUI_USDC",
     "SUI",
@@ -124,28 +139,6 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   )(tx);
   client.deepbook.marginMaintainer.enableDeepbookPoolForLoan(
     "XBTC_USDC",
-    "USDC",
-    tx.object(usdcMarginPoolCapID[env]),
-  )(tx);
-
-  // Step 5: Stage loan flow for USDSUI pairs (pairs stay disabled in margin)
-  client.deepbook.marginMaintainer.enableDeepbookPoolForLoan(
-    "SUI_USDSUI",
-    "SUI",
-    tx.object(suiMarginPoolCapID[env]),
-  )(tx);
-  client.deepbook.marginMaintainer.enableDeepbookPoolForLoan(
-    "SUI_USDSUI",
-    "USDSUI",
-    tx.object(usdSuiMarginPoolCapID[env]),
-  )(tx);
-  client.deepbook.marginMaintainer.enableDeepbookPoolForLoan(
-    "USDSUI_USDC",
-    "USDSUI",
-    tx.object(usdSuiMarginPoolCapID[env]),
-  )(tx);
-  client.deepbook.marginMaintainer.enableDeepbookPoolForLoan(
-    "USDSUI_USDC",
     "USDC",
     tx.object(usdcMarginPoolCapID[env]),
   )(tx);
