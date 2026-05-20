@@ -412,12 +412,14 @@ fun current_liabilities(
         let (settled_value, losing_fee_basis) = market.strike_exposure.settled_values(settlement);
         (settled_value, market.rebate_liability(losing_fee_basis))
     } else {
-        let (live_value, max_losing_fee_basis) = market.strike_exposure.live_values(
-            config.pricing_config(),
-            market_oracle,
-            pyth,
-            clock,
-        );
+        let (live_value, max_losing_fee_basis) = market
+            .strike_exposure
+            .live_values(
+                config.pricing_config(),
+                market_oracle,
+                pyth,
+                clock,
+            );
         (live_value, market.rebate_liability(max_losing_fee_basis))
     }
 }

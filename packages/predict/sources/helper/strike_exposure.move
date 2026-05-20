@@ -118,11 +118,7 @@ public(package) fun settled_order_price(
 /// Return compacted settlement, payout liability, and rebate liability.
 public(package) fun compacted_values(exposure: &StrikeExposure): (u64, u64, u64) {
     let compacted = exposure.compacted.borrow();
-    (
-        compacted.settlement,
-        compacted.payout_liability,
-        compacted.rebate_liability,
-    )
+    (compacted.settlement, compacted.payout_liability, compacted.rebate_liability)
 }
 
 /// Create a strike exposure book for the oracle grid.

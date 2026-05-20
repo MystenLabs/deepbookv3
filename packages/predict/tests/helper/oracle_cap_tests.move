@@ -91,9 +91,7 @@ fun self_unregistered_cap_loses_market_oracle_access() {
     abort 999
 }
 
-fun setup(
-    ctx: &mut TxContext,
-): (MarketOracle, ProtocolConfig, MarketOracleCap, clock::Clock) {
+fun setup(ctx: &mut TxContext): (MarketOracle, ProtocolConfig, MarketOracleCap, clock::Clock) {
     let cap = market_oracle::create_cap(ctx);
     let config = protocol_config::new_for_testing(ctx);
     let market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
