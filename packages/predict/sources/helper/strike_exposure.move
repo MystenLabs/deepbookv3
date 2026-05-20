@@ -52,9 +52,17 @@ public struct CompactedExposure has copy, drop, store {
     rebate_liability: u64,
 }
 
-/// Return live strikes for an encoded order.
-public(package) fun live_order_strikes(exposure: &StrikeExposure, order_id: u256): (u64, u64) {
-    exposure.order_strikes(order_id)
+/// Quote a live encoded order from current oracle state.
+public(package) fun quote_live_order(
+    exposure: &StrikeExposure,
+    config: &PricingConfig,
+    market: &MarketOracle,
+    pyth: &PythSource,
+    clock: &Clock,
+    order_id: u256,
+): (u64, u64) {
+    let (lower, higher) = exposure.order_strikes(order_id);
+    pricing::quote_live_strikes(config, market, pyth, clock, lower, higher)
 }
 
 /// Return the exact worst-case settled payout across all settlement prices.

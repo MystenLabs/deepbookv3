@@ -513,51 +513,6 @@ public(package) fun self_unregister_cap(market: &mut MarketOracle, cap: &MarketO
     market.unregister_cap(cap.cap_id());
 }
 
-// === Test-Only Functions ===
-
-#[test_only]
-public(package) fun create_test_market_oracle(
-    expiry: u64,
-    cap: &MarketOracleCap,
-    ctx: &mut TxContext,
-): MarketOracle {
-    let pyth_uid = object::new(ctx);
-    let pyth_source_id = pyth_uid.to_inner();
-    pyth_uid.delete();
-
-    let mut authorized_cap_ids = vec_set::empty();
-    authorized_cap_ids.insert(cap.cap_id());
-
-    MarketOracle {
-        id: object::new(ctx),
-        authorized_cap_ids,
-        pyth_source_id,
-        expiry,
-        block_scholes_spot: 0,
-        block_scholes_forward: 0,
-        block_scholes_price_source_timestamp_ms: 0,
-        block_scholes_price_update_timestamp_ms: 0,
-        block_scholes_svi: SVIParams {
-            a: 0,
-            b: 0,
-            rho: i64::zero(),
-            m: i64::zero(),
-            sigma: 0,
-        },
-        block_scholes_svi_source_timestamp_ms: 0,
-        block_scholes_svi_update_timestamp_ms: 0,
-        settlement_freshness_ms: config_constants::default_settlement_freshness_ms!(),
-        max_spot_deviation: config_constants::default_max_spot_deviation!(),
-        max_basis_deviation: config_constants::default_max_basis_deviation!(),
-        min_basis: config_constants::default_min_basis!(),
-        max_basis: config_constants::default_max_basis!(),
-        settlement_price: option::none(),
-        settlement_source: 0,
-        settlement_source_timestamp_ms: 0,
-        settlement_update_timestamp_ms: 0,
-    }
-}
-
 // === Private Functions ===
 
 fun assert_authorized_cap(market: &MarketOracle, cap: &MarketOracleCap) {
@@ -747,4 +702,49 @@ fun emit_bounds_updated(market: &MarketOracle) {
         min_basis: market.min_basis,
         max_basis: market.max_basis,
     });
+}
+
+// === Test-Only Functions ===
+
+#[test_only]
+public(package) fun create_test_market_oracle(
+    expiry: u64,
+    cap: &MarketOracleCap,
+    ctx: &mut TxContext,
+): MarketOracle {
+    let pyth_uid = object::new(ctx);
+    let pyth_source_id = pyth_uid.to_inner();
+    pyth_uid.delete();
+
+    let mut authorized_cap_ids = vec_set::empty();
+    authorized_cap_ids.insert(cap.cap_id());
+
+    MarketOracle {
+        id: object::new(ctx),
+        authorized_cap_ids,
+        pyth_source_id,
+        expiry,
+        block_scholes_spot: 0,
+        block_scholes_forward: 0,
+        block_scholes_price_source_timestamp_ms: 0,
+        block_scholes_price_update_timestamp_ms: 0,
+        block_scholes_svi: SVIParams {
+            a: 0,
+            b: 0,
+            rho: i64::zero(),
+            m: i64::zero(),
+            sigma: 0,
+        },
+        block_scholes_svi_source_timestamp_ms: 0,
+        block_scholes_svi_update_timestamp_ms: 0,
+        settlement_freshness_ms: config_constants::default_settlement_freshness_ms!(),
+        max_spot_deviation: config_constants::default_max_spot_deviation!(),
+        max_basis_deviation: config_constants::default_max_basis_deviation!(),
+        min_basis: config_constants::default_min_basis!(),
+        max_basis: config_constants::default_max_basis!(),
+        settlement_price: option::none(),
+        settlement_source: 0,
+        settlement_source_timestamp_ms: 0,
+        settlement_update_timestamp_ms: 0,
+    }
 }

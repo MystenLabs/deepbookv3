@@ -399,7 +399,7 @@ fun remaining_global_allocation_capacity(vault: &PoolVault, risk_config: &RiskCo
 }
 
 fun grow_amount(vault: &PoolVault, risk_config: &RiskConfig, market: &ExpiryMarket): u64 {
-    let utilization = market.utilization();
+    let utilization = market.allocation_utilization();
     assert!(
         utilization >= risk_config.grow_utilization_threshold(),
         EGrowUtilizationBelowThreshold,
@@ -419,7 +419,7 @@ fun grow_amount(vault: &PoolVault, risk_config: &RiskConfig, market: &ExpiryMark
 }
 
 fun shrink_amount(risk_config: &RiskConfig, market: &ExpiryMarket): u64 {
-    let utilization = market.utilization();
+    let utilization = market.allocation_utilization();
     assert!(
         utilization <= risk_config.shrink_utilization_threshold(),
         EShrinkUtilizationAboveThreshold,

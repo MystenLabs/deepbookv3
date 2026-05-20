@@ -272,8 +272,8 @@ public fun redeem(
 
 // === Public-Package Functions ===
 
-/// Return current expiry utilization as max payout over allocated capital.
-public(package) fun utilization(market: &ExpiryMarket): u64 {
+/// Return allocation utilization as max payout over allocated capital.
+public(package) fun allocation_utilization(market: &ExpiryMarket): u64 {
     let allocated_capital = market.allocated_capital;
     assert!(allocated_capital > 0, EZeroAllocatedCapital);
     math::div(market.max_payout(), allocated_capital)
@@ -479,15 +479,15 @@ fun mint_internal(
 
     // Quote before recording exposure so the fee basis stored with the position
     // matches the exact fee charged for this mint.
-    let (lower, higher) = market.strike_exposure.live_order_strikes(order_id);
-    let (fair_price, price_fee_rate) = pricing::quote_live_strikes(
-        config.pricing_config(),
-        market_oracle,
-        pyth,
-        clock,
-        lower,
-        higher,
-    );
+    let (fair_price, price_fee_rate) = market
+        .strike_exposure
+        .quote_live_order(
+            config.pricing_config(),
+            market_oracle,
+            pyth,
+            clock,
+            order_id,
+        );
     pricing::assert_mint_ask_price(config.pricing_config(), fair_price + price_fee_rate);
     let principal_amount = math::mul(fair_price, quantity);
     let fee_amount = math::mul(price_fee_rate, quantity);
@@ -535,15 +535,15 @@ fun redeem_live_internal(
     market.assert_pyth_feed(pyth);
     assert_valid_quantity(quantity);
 
-    let (lower, higher) = market.strike_exposure.live_order_strikes(order_id);
-    let (fair_price, price_fee_rate) = pricing::quote_live_strikes(
-        config.pricing_config(),
-        market_oracle,
-        pyth,
-        clock,
-        lower,
-        higher,
-    );
+    let (fair_price, price_fee_rate) = market
+        .strike_exposure
+        .quote_live_order(
+            config.pricing_config(),
+            market_oracle,
+            pyth,
+            clock,
+            order_id,
+        );
     let principal_amount = math::mul(fair_price, quantity);
     let fee_amount = math::mul(price_fee_rate, quantity).min(principal_amount);
     let builder_code_id = manager.builder_code_id();

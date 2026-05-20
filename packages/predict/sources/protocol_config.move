@@ -234,6 +234,13 @@ public(package) fun end_valuation(config: &mut ProtocolConfig) {
     config.valuation_in_progress = false;
 }
 
+// === Private Functions ===
+
+/// Abort unless trading is not paused.
+fun assert_not_trading_paused(config: &ProtocolConfig) {
+    assert!(!config.trading_paused, ETradingPaused);
+}
+
 // === Test-Only Functions ===
 
 #[test_only]
@@ -248,11 +255,4 @@ public(package) fun new_for_testing(ctx: &mut TxContext): ProtocolConfig {
         trading_paused: false,
         valuation_in_progress: false,
     }
-}
-
-// === Private Functions ===
-
-/// Abort unless trading is not paused.
-fun assert_not_trading_paused(config: &ProtocolConfig) {
-    assert!(!config.trading_paused, ETradingPaused);
 }
