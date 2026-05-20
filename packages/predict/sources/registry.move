@@ -15,7 +15,7 @@ use deepbook_predict::{
     market_oracle::{Self, MarketOracle, MarketOracleCap},
     plp::PoolVault,
     predict_manager::{Self, PredictManager},
-    protocol_config::{Self, ProtocolConfig},
+    protocol_config::{Self, PredictPauseCap, ProtocolConfig},
     pyth_source::{Self, PythSource}
 };
 use sui::{clock::Clock, table::{Self, Table}};
@@ -198,6 +198,29 @@ public fun set_market_oracle_template_basis_bounds(
 /// Set whether trading is paused.
 public fun set_trading_paused(config: &mut ProtocolConfig, _admin_cap: &AdminCap, paused: bool) {
     config.set_trading_paused(paused);
+}
+
+/// Mint a `PredictPauseCap`. The new cap's id is recorded in
+/// `allowed_pause_caps` so it can later flip `trading_paused` via
+/// `pause_trading`. Only admin can mint.
+public fun mint_pause_cap(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    ctx: &mut TxContext,
+): PredictPauseCap {
+    config.mint_pause_cap(ctx)
+}
+
+/// Revoke a previously minted pause cap by id. Only admin can revoke.
+public fun revoke_pause_cap(config: &mut ProtocolConfig, _admin_cap: &AdminCap, pause_cap_id: ID) {
+    config.revoke_pause_cap(pause_cap_id);
+}
+
+/// Emergency kill switch — flip `trading_paused` to `true` without admin
+/// involvement. Cap must be in `allowed_pause_caps`. Admin alone can
+/// unpause via `set_trading_paused`.
+public fun pause_trading(config: &mut ProtocolConfig, pause_cap: &PredictPauseCap) {
+    config.pause_trading_with_cap(pause_cap);
 }
 
 /// Create a shared Pyth source for one admin-approved Lazer feed.

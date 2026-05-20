@@ -14,10 +14,17 @@ use deepbook_predict::{
     pricing_config::{Self, PricingConfig},
     risk_config::{Self, RiskConfig}
 };
+use sui::{dynamic_field as df, vec_set::{Self, VecSet}};
+
+use fun df::add as UID.add;
+use fun df::borrow as UID.borrow;
+use fun df::borrow_mut as UID.borrow_mut;
+use fun df::exists as UID.exists;
 
 const ETradingPaused: u64 = 0;
 const EValuationInProgress: u64 = 1;
 const EValuationNotInProgress: u64 = 2;
+const EPauseCapNotValid: u64 = 3;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -32,6 +39,15 @@ public struct ProtocolConfig has key {
     valuation_in_progress: bool,
 }
 
+/// Cap that can unilaterally flip `trading_paused` to `true` without admin
+/// involvement, enabling fast emergency response. Admin retains exclusive
+/// rights to mint, revoke, and unpause via `set_trading_paused`.
+public struct PredictPauseCap has key, store {
+    id: UID,
+}
+
+public struct AllowedPauseCapsKey() has copy, drop, store;
+
 // === Public Functions ===
 
 /// Return the protocol config object ID.
@@ -42,6 +58,16 @@ public fun id(config: &ProtocolConfig): ID {
 /// Return whether trading is currently paused.
 public fun trading_paused(config: &ProtocolConfig): bool {
     config.trading_paused
+}
+
+/// Return the set of pause cap ids allowed to pause trading. Empty if no
+/// caps have been minted yet.
+public fun allowed_pause_caps(config: &ProtocolConfig): VecSet<ID> {
+    if (config.id.exists(AllowedPauseCapsKey())) {
+        *df::borrow<AllowedPauseCapsKey, VecSet<ID>>(&config.id, AllowedPauseCapsKey())
+    } else {
+        vec_set::empty()
+    }
 }
 
 // === Public-Package Functions ===
@@ -218,6 +244,47 @@ public(package) fun set_market_oracle_template_basis_bounds(
 public(package) fun set_trading_paused(config: &mut ProtocolConfig, paused: bool) {
     config.assert_not_valuation_in_progress();
     config.trading_paused = paused;
+}
+
+/// Mint a `PredictPauseCap` and record its id in `allowed_pause_caps`. The
+/// recorded id is what later authorizes `pause_trading_with_cap`.
+public(package) fun mint_pause_cap(
+    config: &mut ProtocolConfig,
+    ctx: &mut TxContext,
+): PredictPauseCap {
+    config.assert_not_valuation_in_progress();
+    let id = object::new(ctx);
+    if (!config.id.exists(AllowedPauseCapsKey())) {
+        config.id.add(AllowedPauseCapsKey(), vec_set::empty<ID>());
+    };
+    let allowed: &mut VecSet<ID> = config.id.borrow_mut(AllowedPauseCapsKey());
+    allowed.insert(id.to_inner());
+
+    PredictPauseCap { id }
+}
+
+/// Revoke a previously minted pause cap by id. Revoked caps can no longer
+/// pause trading even though the underlying object still exists.
+public(package) fun revoke_pause_cap(config: &mut ProtocolConfig, pause_cap_id: ID) {
+    config.assert_not_valuation_in_progress();
+    assert!(config.id.exists(AllowedPauseCapsKey()), EPauseCapNotValid);
+    let allowed: &mut VecSet<ID> = config.id.borrow_mut(AllowedPauseCapsKey());
+    assert!(allowed.contains(&pause_cap_id), EPauseCapNotValid);
+    allowed.remove(&pause_cap_id);
+}
+
+/// Emergency kill switch. The cap must be in `allowed_pause_caps`. Sets
+/// `trading_paused = true`; admin alone can unpause via `set_trading_paused`.
+/// Intentionally bypasses the valuation-in-progress gate so an emergency
+/// pause can land mid-valuation.
+public(package) fun pause_trading_with_cap(
+    config: &mut ProtocolConfig,
+    pause_cap: &PredictPauseCap,
+) {
+    assert!(config.id.exists(AllowedPauseCapsKey()), EPauseCapNotValid);
+    let allowed: &VecSet<ID> = config.id.borrow(AllowedPauseCapsKey());
+    assert!(allowed.contains(&pause_cap.id.to_inner()), EPauseCapNotValid);
+    config.trading_paused = true;
 }
 
 /// Begin a transaction-local full-pool valuation lock.
