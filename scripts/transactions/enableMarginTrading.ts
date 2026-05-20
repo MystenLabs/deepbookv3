@@ -38,14 +38,16 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   client.deepbook.marginAdmin.disableVersion(3)(tx);
   client.deepbook.marginAdmin.disableVersion(4)(tx);
 
-  // Step 2: Mint 4 DeepbookCorePauseCaps and distribute
+  // Step 2: Mint 5 DeepbookCorePauseCaps and distribute
   //   - 2 to 0x517f822cd3c45a3ac3dbfab73c060d9a0d96bec7fffa204c341e7e0877c9787c
   //   - 1 to 0x1b71380623813c8aee2ab9a68d96c19d0e45fc872e8c22dd70dfedfb76cbb192
   //   - 1 to 0xe9584eb3262c8cee0d0e8ff4fe4f20c5053e4748a23a4c46954d0c21fbbf0aff
+  //   - 1 to 0x361b079475aa70e00ee71022168a7eb0ea4ace066c4c0d7bec4a66d721deec0a
   const corePauseCap1 = client.deepbook.deepBookAdmin.mintCorePauseCap()(tx);
   const corePauseCap2 = client.deepbook.deepBookAdmin.mintCorePauseCap()(tx);
   const corePauseCap3 = client.deepbook.deepBookAdmin.mintCorePauseCap()(tx);
   const corePauseCap4 = client.deepbook.deepBookAdmin.mintCorePauseCap()(tx);
+  const corePauseCap5 = client.deepbook.deepBookAdmin.mintCorePauseCap()(tx);
   tx.transferObjects(
     [corePauseCap1, corePauseCap2],
     "0x517f822cd3c45a3ac3dbfab73c060d9a0d96bec7fffa204c341e7e0877c9787c",
@@ -58,12 +60,18 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
     [corePauseCap4],
     "0xe9584eb3262c8cee0d0e8ff4fe4f20c5053e4748a23a4c46954d0c21fbbf0aff",
   );
+  tx.transferObjects(
+    [corePauseCap5],
+    "0x361b079475aa70e00ee71022168a7eb0ea4ace066c4c0d7bec4a66d721deec0a",
+  );
 
-  // Step 3: Mint 2 margin pause caps and distribute
+  // Step 3: Mint 3 margin pause caps and distribute
   //   - 1 to 0x517f822cd3c45a3ac3dbfab73c060d9a0d96bec7fffa204c341e7e0877c9787c
   //   - 1 to 0xe9584eb3262c8cee0d0e8ff4fe4f20c5053e4748a23a4c46954d0c21fbbf0aff
+  //   - 1 to 0x361b079475aa70e00ee71022168a7eb0ea4ace066c4c0d7bec4a66d721deec0a
   const marginPauseCap1 = client.deepbook.marginAdmin.mintPauseCap()(tx);
   const marginPauseCap2 = client.deepbook.marginAdmin.mintPauseCap()(tx);
+  const marginPauseCap3 = client.deepbook.marginAdmin.mintPauseCap()(tx);
   tx.transferObjects(
     [marginPauseCap1],
     "0x517f822cd3c45a3ac3dbfab73c060d9a0d96bec7fffa204c341e7e0877c9787c",
@@ -71,6 +79,10 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   tx.transferObjects(
     [marginPauseCap2],
     "0xe9584eb3262c8cee0d0e8ff4fe4f20c5053e4748a23a4c46954d0c21fbbf0aff",
+  );
+  tx.transferObjects(
+    [marginPauseCap3],
+    "0x361b079475aa70e00ee71022168a7eb0ea4ace066c4c0d7bec4a66d721deec0a",
   );
 
   // Step 4: Enable margin trading on the 6 pairs

@@ -40,11 +40,12 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   client.deepbook.marginAdmin.disableVersion(3)(tx);
   client.deepbook.marginAdmin.disableVersion(4)(tx);
 
-  // 2a. Mint core pause caps (2 to 0x517..., 1 to 0x1b71..., 1 to 0xe958...)
+  // 2a. Mint core pause caps (2 to 0x517..., 1 to 0x1b71..., 1 to 0xe958..., 1 to 0x361b...)
   const corePauseCap1 = client.deepbook.deepBookAdmin.mintCorePauseCap()(tx);
   const corePauseCap2 = client.deepbook.deepBookAdmin.mintCorePauseCap()(tx);
   const corePauseCap3 = client.deepbook.deepBookAdmin.mintCorePauseCap()(tx);
   const corePauseCap4 = client.deepbook.deepBookAdmin.mintCorePauseCap()(tx);
+  const corePauseCap5 = client.deepbook.deepBookAdmin.mintCorePauseCap()(tx);
   tx.transferObjects(
     [corePauseCap1, corePauseCap2],
     "0x517f822cd3c45a3ac3dbfab73c060d9a0d96bec7fffa204c341e7e0877c9787c",
@@ -57,10 +58,15 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
     [corePauseCap4],
     "0xe9584eb3262c8cee0d0e8ff4fe4f20c5053e4748a23a4c46954d0c21fbbf0aff",
   );
+  tx.transferObjects(
+    [corePauseCap5],
+    "0x361b079475aa70e00ee71022168a7eb0ea4ace066c4c0d7bec4a66d721deec0a",
+  );
 
-  // 2b. Mint margin pause caps (1 each to 0x517... and 0xe958...)
+  // 2b. Mint margin pause caps (1 each to 0x517..., 0xe958..., 0x361b...)
   const marginPauseCap1 = client.deepbook.marginAdmin.mintPauseCap()(tx);
   const marginPauseCap2 = client.deepbook.marginAdmin.mintPauseCap()(tx);
+  const marginPauseCap3 = client.deepbook.marginAdmin.mintPauseCap()(tx);
   tx.transferObjects(
     [marginPauseCap1],
     "0x517f822cd3c45a3ac3dbfab73c060d9a0d96bec7fffa204c341e7e0877c9787c",
@@ -68,6 +74,10 @@ import { SuiGrpcClient } from "@mysten/sui/grpc";
   tx.transferObjects(
     [marginPauseCap2],
     "0xe9584eb3262c8cee0d0e8ff4fe4f20c5053e4748a23a4c46954d0c21fbbf0aff",
+  );
+  tx.transferObjects(
+    [marginPauseCap3],
+    "0x361b079475aa70e00ee71022168a7eb0ea4ace066c4c0d7bec4a66d721deec0a",
   );
 
   // // 3. Mint maintainerCap
