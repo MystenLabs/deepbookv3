@@ -33,6 +33,7 @@ on:
           - Prep Balance Manager
           - Revoke Pausecap
           - Admin Inject Capital
+          - Setup Upgrades
       sui_tools_image:
         description: "image reference of sui_tools"
         default: "mysten/sui-tools:mainnet"
@@ -491,6 +492,17 @@ jobs:
           ORIGIN: gh_action
         run: |
           cd scripts && pnpm install && pnpm tsx transactions/newDeepbookVersion.ts
+
+      - name: Setup Upgrades
+        if: ${{ inputs.transaction_type == 'Setup Upgrades' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/setupUpgrades.ts
 
       - name: Show Transaction Data (To sign)
         run: |
