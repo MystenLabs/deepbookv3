@@ -16,8 +16,7 @@ use deepbook_predict::{
     market_oracle::{MarketOracle, SVIParams},
     math as predict_math,
     pricing_config::PricingConfig,
-    pyth_source::PythSource,
-    range_key::RangeKey
+    pyth_source::PythSource
 };
 use sui::clock::Clock;
 
@@ -37,13 +36,6 @@ const EInvalidStrikeRatio: u64 = 14;
 public struct CurvePoint has copy, drop, store {
     strike: u64,
     up_price: u64,
-}
-
-// === Public Functions ===
-
-/// Return terminal settlement price, aborting if the market is unsettled.
-public fun settlement_price(market: &MarketOracle): u64 {
-    market.settlement_price()
 }
 
 // === Public-Package Functions ===
@@ -72,69 +64,26 @@ public(package) fun build_live_curve(
     build_curve(forward, &svi, grid_min, grid_tick, grid_max, min_strike, max_strike)
 }
 
-/// Quote a live range from current oracle state and capacity utilization.
-public(package) fun quote_live_range(
+/// Quote a live strike interval from current oracle state.
+public(package) fun quote_live_strikes(
     config: &PricingConfig,
     market: &MarketOracle,
     pyth: &PythSource,
     clock: &Clock,
-    key: &RangeKey,
-    liability: u64,
-    balance: u64,
+    lower: u64,
+    higher: u64,
 ): (u64, u64) {
     let (forward, svi) = resolve_live_inputs(config, market, pyth, clock);
-    let fair_price = compute_range_price(
-        forward,
-        &svi,
-        key.lower_strike(),
-        key.higher_strike(),
-    );
-    (fair_price, quote_fee_rate(config, fair_price, liability, balance))
+    let fair_price = compute_range_price(forward, &svi, lower, higher);
+    (fair_price, price_fee_rate(config, fair_price))
 }
 
-/// Quote a live mint range and abort unless the all-in mint price is allowed.
-public(package) fun quote_mint_live_range(
-    config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
-    clock: &Clock,
-    key: &RangeKey,
-    liability: u64,
-    balance: u64,
-): (u64, u64) {
-    let (fair_price, fee_rate) = quote_live_range(
-        config,
-        market,
-        pyth,
-        clock,
-        key,
-        liability,
-        balance,
-    );
-    let ask_price = fair_price + fee_rate;
+/// Abort unless the full mint ask price, including all fees, is inside configured bounds.
+public(package) fun assert_mint_ask_price(config: &PricingConfig, ask_price: u64) {
     assert!(
         ask_price >= config.min_ask_price() && ask_price <= config.max_ask_price(),
         EAskPriceOutOfBounds,
     );
-    (fair_price, fee_rate)
-}
-
-/// Abort unless the live oracle inputs needed for a quote are currently usable.
-public(package) fun assert_live_oracle_fresh(
-    config: &PricingConfig,
-    market: &MarketOracle,
-    clock: &Clock,
-) {
-    assert!(block_scholes_price_is_fresh(config, market, clock), EBlockScholesPriceStale);
-    assert!(block_scholes_svi_is_fresh(config, market, clock), EBlockScholesSVIStale);
-}
-
-/// Return settled payout for a range position at a terminal settlement price.
-public(package) fun settled_range_payout(settlement: u64, key: &RangeKey, quantity: u64): u64 {
-    math::mul(
-        compute_settled_range_price(settlement, key.lower_strike(), key.higher_strike()),
-        quantity,
-    )
 }
 
 // === Private Functions ===
@@ -163,10 +112,9 @@ fun resolve_live_inputs(
     (forward, market.block_scholes_svi())
 }
 
-/// Compute the settled price for the range `(lower, higher]`.
-fun compute_settled_range_price(settlement: u64, lower: u64, higher: u64): u64 {
-    assert!(lower < higher, EInvalidRange);
-    if (settlement > lower && settlement <= higher) constants::float_scaling!() else 0
+fun assert_live_oracle_fresh(config: &PricingConfig, market: &MarketOracle, clock: &Clock) {
+    assert!(block_scholes_price_is_fresh(config, market, clock), EBlockScholesPriceStale);
+    assert!(block_scholes_svi_is_fresh(config, market, clock), EBlockScholesSVIStale);
 }
 
 fun block_scholes_price_is_fresh(
@@ -273,12 +221,6 @@ fun compute_range_price(forward: u64, svi: &SVIParams, lower: u64, higher: u64):
     lower_up_price - higher_up_price
 }
 
-fun quote_fee_rate(config: &PricingConfig, fair_price: u64, liability: u64, balance: u64): u64 {
-    let price_fee = price_fee_rate(config, fair_price);
-    let utilization_fee = utilization_fee_rate(config, liability, balance);
-    price_fee + utilization_fee
-}
-
 fun price_fee_rate(config: &PricingConfig, fair_price: u64): u64 {
     let raw_fee = raw_bernoulli_fee_rate(config, fair_price);
     let min_fee = config.min_fee();
@@ -293,21 +235,6 @@ fun raw_bernoulli_fee_rate(config: &PricingConfig, fair_price: u64): u64 {
     let variance = math::mul(fair_price, complement);
     let bernoulli_factor = predict_math::sqrt(variance, constants::float_scaling!());
     math::mul(config.base_fee(), bernoulli_factor)
-}
-
-fun utilization_fee_rate(config: &PricingConfig, liability: u64, balance: u64): u64 {
-    if (balance == 0 || liability == 0) return 0;
-
-    let util = if (liability >= balance) {
-        constants::float_scaling!()
-    } else {
-        math::div(liability, balance)
-    };
-    let util_sq = math::mul(util, util);
-    math::mul(
-        config.base_fee(),
-        math::mul(config.utilization_multiplier(), util_sq),
-    )
 }
 
 /// Binary pricing from SVI total variance:
@@ -365,17 +292,6 @@ fun assert_curve_range(
     assert!((max_strike - grid_min) % grid_tick == 0, EInvalidCurveRange);
 }
 
-/// Insert a new curve point while preserving ascending strike order.
-fun insert_asc(points: &mut vector<CurvePoint>, new_point: CurvePoint) {
-    points.push_back(new_point);
-    let mut i = points.length() - 1;
-    while (i > 0) {
-        if (points[i - 1].strike <= points[i].strike) break;
-        points.swap(i - 1, i);
-        i = i - 1;
-    };
-}
-
 /// Pick the next adjacent gap to bisect based on endpoint UP-price difference.
 fun find_gap(points: &vector<CurvePoint>, grid_tick: u64): (bool, u64) {
     let len = points.length();
@@ -409,4 +325,15 @@ fun find_gap(points: &vector<CurvePoint>, grid_tick: u64): (bool, u64) {
 /// Round a strike down to the nearest tick boundary.
 fun snap_to_tick(strike: u64, grid_min: u64, grid_tick: u64): u64 {
     grid_min + (strike - grid_min) / grid_tick * grid_tick
+}
+
+/// Insert a new curve point while preserving ascending strike order.
+fun insert_asc(points: &mut vector<CurvePoint>, new_point: CurvePoint) {
+    points.push_back(new_point);
+    let mut i = points.length() - 1;
+    while (i > 0) {
+        if (points[i - 1].strike <= points[i].strike) break;
+        points.swap(i - 1, i);
+        i = i - 1;
+    };
 }

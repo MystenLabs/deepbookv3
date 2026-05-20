@@ -438,6 +438,21 @@ fun shrink_amount(risk_config: &RiskConfig, market: &ExpiryMarket): u64 {
     amount
 }
 
+fun validated_pool_value(
+    vault: &PoolVault,
+    config: &ProtocolConfig,
+    valuation: &PoolValuation,
+): u64 {
+    config.assert_valuation_in_progress();
+    assert!(valuation.pool_vault_id == vault.id(), EWrongPoolVault);
+    assert_active_set_unchanged(vault, &valuation.expected_expiry_markets);
+    assert_all_expected_valued(
+        &valuation.expected_expiry_markets,
+        &valuation.valued_expiry_markets,
+    );
+    valuation.value
+}
+
 fun distribute_fee_surplus(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
@@ -454,21 +469,6 @@ fun distribute_fee_surplus(
     vault.insurance_fee_balance.join(insurance_fee_balance);
 }
 
-fun validated_pool_value(
-    vault: &PoolVault,
-    config: &ProtocolConfig,
-    valuation: &PoolValuation,
-): u64 {
-    config.assert_valuation_in_progress();
-    assert!(valuation.pool_vault_id == vault.id(), EWrongPoolVault);
-    assert_active_set_unchanged(vault, &valuation.expected_expiry_markets);
-    assert_all_expected_valued(
-        &valuation.expected_expiry_markets,
-        &valuation.valued_expiry_markets,
-    );
-    valuation.value
-}
-
 fun finish_valuation(config: &mut ProtocolConfig, valuation: PoolValuation) {
     let PoolValuation {
         pool_vault_id: _,
@@ -477,12 +477,4 @@ fun finish_valuation(config: &mut ProtocolConfig, valuation: PoolValuation) {
         value: _,
     } = valuation;
     config.end_valuation();
-}
-
-// === Test-Only Functions ===
-
-#[test_only]
-/// Register PLP in tests.
-public fun init_for_testing(ctx: &mut TxContext) {
-    init(PLP {}, ctx);
 }

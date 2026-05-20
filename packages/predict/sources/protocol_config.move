@@ -84,11 +84,6 @@ public(package) fun assert_not_valuation_in_progress(config: &ProtocolConfig) {
     assert!(!config.valuation_in_progress, EValuationInProgress);
 }
 
-/// Abort unless trading is not paused.
-fun assert_not_trading_paused(config: &ProtocolConfig) {
-    assert!(!config.trading_paused, ETradingPaused);
-}
-
 /// Create and share the protocol-wide configuration object.
 public(package) fun create_and_share(ctx: &mut TxContext): ID {
     let config = ProtocolConfig {
@@ -114,11 +109,6 @@ public(package) fun set_base_fee(config: &mut ProtocolConfig, fee: u64) {
 public(package) fun set_min_fee(config: &mut ProtocolConfig, fee: u64) {
     config.assert_not_valuation_in_progress();
     config.pricing_config.set_min_fee(fee);
-}
-
-public(package) fun set_utilization_multiplier(config: &mut ProtocolConfig, multiplier: u64) {
-    config.assert_not_valuation_in_progress();
-    config.pricing_config.set_utilization_multiplier(multiplier);
 }
 
 public(package) fun set_max_expiry_borrow_fee(config: &mut ProtocolConfig, value: u64) {
@@ -247,7 +237,7 @@ public(package) fun end_valuation(config: &mut ProtocolConfig) {
 // === Test-Only Functions ===
 
 #[test_only]
-public fun new_for_testing(ctx: &mut TxContext): ProtocolConfig {
+public(package) fun new_for_testing(ctx: &mut TxContext): ProtocolConfig {
     ProtocolConfig {
         id: object::new(ctx),
         pricing_config: pricing_config::new(),
@@ -260,21 +250,9 @@ public fun new_for_testing(ctx: &mut TxContext): ProtocolConfig {
     }
 }
 
-#[test_only]
-public fun destroy_for_testing(config: ProtocolConfig) {
-    let ProtocolConfig {
-        id,
-        pricing_config,
-        fee_config,
-        risk_config,
-        market_oracle_config,
-        leverage_config: _,
-        trading_paused: _,
-        valuation_in_progress: _,
-    } = config;
-    id.delete();
-    pricing_config.destroy_for_testing();
-    fee_config.destroy_for_testing();
-    risk_config.destroy_for_testing();
-    market_oracle_config.destroy_for_testing();
+// === Private Functions ===
+
+/// Abort unless trading is not paused.
+fun assert_not_trading_paused(config: &ProtocolConfig) {
+    assert!(!config.trading_paused, ETradingPaused);
 }

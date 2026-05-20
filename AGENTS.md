@@ -117,6 +117,7 @@ These are the most important rule files to consult based on the code you touch:
   - Keep admin-tunable config structs readable inside the package by default.
   - Expose public getters only for values needed by external Move composition, PTB construction, or clear user-facing protocol state.
   - Keep config constructors, setters, bounds checks, and template/snapshot wiring `public(package)`.
+  - For test-only cleanup of non-`drop` values, call `std::unit_test::destroy(value)` directly in the test file. Do not add or keep source-package `destroy_for_testing` wrappers solely to consume fields.
 - Predict naming and API rules:
   - Functions that create and share a shared object should be named `create_and_share`.
   - Pyth Lazer feed IDs should use `u32` consistently across Predict.

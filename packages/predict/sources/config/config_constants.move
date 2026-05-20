@@ -11,7 +11,6 @@ module deepbook_predict::config_constants;
 const EInvalidMaxTotalExposurePct: u64 = 0;
 const EInvalidBaseFee: u64 = 1;
 const EInvalidMinFee: u64 = 2;
-const EInvalidUtilizationMultiplier: u64 = 3;
 const EInvalidMinAskPrice: u64 = 4;
 const EInvalidMaxAskPrice: u64 = 5;
 const EInvalidPythSpotFreshnessMs: u64 = 6;
@@ -119,17 +118,6 @@ public(package) macro fun max_min_fee(): u64 { deepbook_predict::constants::floa
 
 public(package) fun assert_min_fee(value: u64) {
     assert!(value >= min_min_fee!() && value <= max_min_fee!(), EInvalidMinFee);
-}
-
-public(package) macro fun default_utilization_multiplier(): u64 { 2_000_000_000 }
-public(package) macro fun min_utilization_multiplier(): u64 { 0 }
-public(package) macro fun max_utilization_multiplier(): u64 { 10_000_000_000 }
-
-public(package) fun assert_utilization_multiplier(value: u64) {
-    assert!(
-        value >= min_utilization_multiplier!() && value <= max_utilization_multiplier!(),
-        EInvalidUtilizationMultiplier,
-    );
 }
 
 // === Leverage ===

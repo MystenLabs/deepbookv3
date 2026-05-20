@@ -47,6 +47,15 @@ public fun id(registry: &Registry): ID {
     registry.id.to_inner()
 }
 
+/// Return the shared PythSource ID for a feed, if it has been created.
+public fun pyth_source_id(registry: &Registry, pyth_lazer_feed_id: u32): Option<ID> {
+    if (registry.pyth_source_ids.contains(pyth_lazer_feed_id)) {
+        option::some(registry.pyth_source_ids[pyth_lazer_feed_id])
+    } else {
+        option::none()
+    }
+}
+
 /// Set the base fee multiplier.
 public fun set_base_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
     config.set_base_fee(fee);
@@ -55,15 +64,6 @@ public fun set_base_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee:
 /// Set the minimum fee floor.
 public fun set_min_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
     config.set_min_fee(fee);
-}
-
-/// Set the utilization multiplier.
-public fun set_utilization_multiplier(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    multiplier: u64,
-) {
-    config.set_utilization_multiplier(multiplier);
 }
 
 /// Set the maximum borrow-index increase charged over an expiry.
@@ -319,15 +319,6 @@ entry fun create_and_share_manager(registry: &mut Registry, ctx: &mut TxContext)
     create_manager(registry, ctx).share();
 }
 
-/// Return the shared PythSource ID for a feed, if it has been created.
-public fun pyth_source_id(registry: &Registry, pyth_lazer_feed_id: u32): Option<ID> {
-    if (registry.pyth_source_ids.contains(pyth_lazer_feed_id)) {
-        option::some(registry.pyth_source_ids[pyth_lazer_feed_id])
-    } else {
-        option::none()
-    }
-}
-
 // === Private Functions ===
 
 /// Package initializer - creates Registry and AdminCap.
@@ -350,24 +341,4 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
             id: object::new(ctx),
         },
     )
-}
-
-// === Test-Only Functions ===
-
-#[test_only]
-/// Initialize registry and admin cap for tests, returning the registry ID.
-public fun init_for_testing(ctx: &mut TxContext): ID {
-    let (registry, admin_cap) = new_registry_and_admin_cap(ctx);
-    let registry_id = registry.id();
-    protocol_config::create_and_share(ctx);
-    transfer::share_object(registry);
-    transfer::transfer(admin_cap, ctx.sender());
-
-    registry_id
-}
-
-#[test_only]
-/// Create an admin cap for tests.
-public fun create_admin_cap_for_testing(ctx: &mut TxContext): AdminCap {
-    AdminCap { id: object::new(ctx) }
 }

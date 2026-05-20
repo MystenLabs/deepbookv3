@@ -41,44 +41,6 @@ public struct NavSlot has copy, drop, store {
     agg_qk_end: u64,
 }
 
-/// Create a fully preallocated NAV matrix for the oracle strike grid.
-public(package) fun new(
-    ctx: &mut TxContext,
-    tick_size: u64,
-    min_strike: u64,
-    max_strike: u64,
-): StrikeNavMatrix {
-    assert_valid_grid(tick_size, min_strike, max_strike);
-
-    let total_strikes = (max_strike - min_strike) / tick_size + 1;
-    let page_count = page_count(total_strikes);
-    let mut pages = table::new(ctx);
-    let mut page_key = 0;
-    while (page_key < page_count) {
-        pages.add(page_key, empty_nav_page());
-        page_key = page_key + 1;
-    };
-
-    StrikeNavMatrix {
-        pages,
-        tick_size,
-        min_strike,
-        max_strike,
-        total_strikes,
-        base_qty: 0,
-    }
-}
-
-/// Insert interval quantity for `(lower, higher]`.
-public(package) fun insert_range(nav: &mut StrikeNavMatrix, lower: u64, higher: u64, qty: u64) {
-    nav.apply_range(lower, higher, qty, true);
-}
-
-/// Remove interval quantity for `(lower, higher]`.
-public(package) fun remove_range(nav: &mut StrikeNavMatrix, lower: u64, higher: u64, qty: u64) {
-    nav.apply_range(lower, higher, qty, false);
-}
-
 /// Evaluate live option value against a sampled pricing curve.
 public(package) fun live_value(
     nav: &StrikeNavMatrix,
@@ -145,9 +107,42 @@ public(package) fun live_value(
     value
 }
 
-/// Return the strike grid this matrix was created with.
-public(package) fun strike_grid(nav: &StrikeNavMatrix): (u64, u64, u64) {
-    (nav.min_strike, nav.tick_size, nav.max_strike)
+/// Create a fully preallocated NAV matrix for the oracle strike grid.
+public(package) fun new(
+    tick_size: u64,
+    min_strike: u64,
+    max_strike: u64,
+    ctx: &mut TxContext,
+): StrikeNavMatrix {
+    assert_valid_grid(tick_size, min_strike, max_strike);
+
+    let total_strikes = (max_strike - min_strike) / tick_size + 1;
+    let page_count = page_count(total_strikes);
+    let mut pages = table::new(ctx);
+    let mut page_key = 0;
+    while (page_key < page_count) {
+        pages.add(page_key, empty_nav_page());
+        page_key = page_key + 1;
+    };
+
+    StrikeNavMatrix {
+        pages,
+        tick_size,
+        min_strike,
+        max_strike,
+        total_strikes,
+        base_qty: 0,
+    }
+}
+
+/// Insert interval quantity for `(lower, higher]`.
+public(package) fun insert_range(nav: &mut StrikeNavMatrix, lower: u64, higher: u64, qty: u64) {
+    nav.apply_range(lower, higher, qty, true);
+}
+
+/// Remove interval quantity for `(lower, higher]`.
+public(package) fun remove_range(nav: &mut StrikeNavMatrix, lower: u64, higher: u64, qty: u64) {
+    nav.apply_range(lower, higher, qty, false);
 }
 
 /// Destroy all preallocated page storage.
@@ -169,50 +164,7 @@ public(package) fun destroy(nav: StrikeNavMatrix) {
     pages.destroy_empty();
 }
 
-fun apply_range(nav: &mut StrikeNavMatrix, lower: u64, higher: u64, qty: u64, add: bool) {
-    assert_range_shape(lower, higher, qty);
-    if (lower == constants::neg_inf!()) {
-        apply_exact_delta(&mut nav.base_qty, qty, add);
-    } else {
-        nav.apply_boundary_delta(lower, qty, true, add);
-    };
-
-    if (higher != constants::pos_inf!()) {
-        nav.apply_boundary_delta(higher, qty, false, add);
-    };
-}
-
-fun apply_boundary_delta(
-    nav: &mut StrikeNavMatrix,
-    strike: u64,
-    qty: u64,
-    is_start: bool,
-    add: bool,
-) {
-    assert!(strike >= nav.min_strike && strike <= nav.max_strike, EInvalidStrikeRange);
-    assert!((strike - nav.min_strike) % nav.tick_size == 0, EUnalignedStrike);
-
-    let (page_key, slot) = nav.unchecked_strike_to_coords(strike);
-    let qk = math::mul(qty, strike);
-    {
-        let page = nav.pages.borrow_mut(page_key);
-        let mut i = slot;
-        while (i < PAGE_SLOTS) {
-            let tick_index = page_key * PAGE_SLOTS + i;
-            if (tick_index >= nav.total_strikes) break;
-
-            let node = &mut page[i];
-            if (is_start) {
-                apply_exact_delta(&mut node.agg_q_start, qty, add);
-                apply_exact_delta(&mut node.agg_qk_start, qk, add);
-            } else {
-                apply_exact_delta(&mut node.agg_q_end, qty, add);
-                apply_exact_delta(&mut node.agg_qk_end, qk, add);
-            };
-            i = i + 1;
-        };
-    };
-}
+// === Private Functions ===
 
 fun boundary_quantities(nav: &StrikeNavMatrix, page_key: u64, slot: u64): (u64, u64) {
     let page = &nav.pages[page_key];
@@ -296,15 +248,6 @@ fun assert_range_shape(lower: u64, higher: u64, qty: u64) {
     assert!(qty > 0, EZeroQuantity);
 }
 
-fun apply_exact_delta(value: &mut u64, amount: u64, add: bool) {
-    if (add) {
-        *value = *value + amount;
-    } else {
-        assert!(*value >= amount, EInsufficientQuantity);
-        *value = *value - amount;
-    };
-}
-
 fun interpolate_price_at_avg_strike(
     qty: u64,
     qty_strike: u64,
@@ -331,4 +274,58 @@ fun unchecked_strike_to_coords(nav: &StrikeNavMatrix, strike: u64): (u64, u64) {
 
 fun page_count(total_strikes: u64): u64 {
     (total_strikes - 1) / PAGE_SLOTS + 1
+}
+
+fun apply_range(nav: &mut StrikeNavMatrix, lower: u64, higher: u64, qty: u64, add: bool) {
+    assert_range_shape(lower, higher, qty);
+    if (lower == constants::neg_inf!()) {
+        apply_exact_delta(&mut nav.base_qty, qty, add);
+    } else {
+        nav.apply_boundary_delta(lower, qty, true, add);
+    };
+
+    if (higher != constants::pos_inf!()) {
+        nav.apply_boundary_delta(higher, qty, false, add);
+    };
+}
+
+fun apply_boundary_delta(
+    nav: &mut StrikeNavMatrix,
+    strike: u64,
+    qty: u64,
+    is_start: bool,
+    add: bool,
+) {
+    assert!(strike >= nav.min_strike && strike <= nav.max_strike, EInvalidStrikeRange);
+    assert!((strike - nav.min_strike) % nav.tick_size == 0, EUnalignedStrike);
+
+    let (page_key, slot) = nav.unchecked_strike_to_coords(strike);
+    let qk = math::mul(qty, strike);
+    {
+        let page = nav.pages.borrow_mut(page_key);
+        let mut i = slot;
+        while (i < PAGE_SLOTS) {
+            let tick_index = page_key * PAGE_SLOTS + i;
+            if (tick_index >= nav.total_strikes) break;
+
+            let node = &mut page[i];
+            if (is_start) {
+                apply_exact_delta(&mut node.agg_q_start, qty, add);
+                apply_exact_delta(&mut node.agg_qk_start, qk, add);
+            } else {
+                apply_exact_delta(&mut node.agg_q_end, qty, add);
+                apply_exact_delta(&mut node.agg_qk_end, qk, add);
+            };
+            i = i + 1;
+        };
+    };
+}
+
+fun apply_exact_delta(value: &mut u64, amount: u64, add: bool) {
+    if (add) {
+        *value = *value + amount;
+    } else {
+        assert!(*value >= amount, EInsufficientQuantity);
+        *value = *value - amount;
+    };
 }

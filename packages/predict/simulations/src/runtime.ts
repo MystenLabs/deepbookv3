@@ -361,17 +361,10 @@ export function mintTx(params: {
   strike: bigint;
   isUp: boolean;
   quantity: bigint;
+  leverage?: bigint;
 }): Transaction {
   const tx = new Transaction();
   const { lower, higher } = binaryRangeBounds(params.strike, params.isUp);
-  const key = tx.moveCall({
-    target: target("expiry_market", "range_key"),
-    arguments: [
-      tx.object(params.expiryMarketId),
-      tx.pure.u64(lower),
-      tx.pure.u64(higher),
-    ],
-  });
   tx.moveCall({
     target: target("expiry_market", "mint"),
     arguments: [
@@ -380,8 +373,10 @@ export function mintTx(params: {
       tx.object(params.managerId),
       tx.object(params.oracleId),
       tx.object(params.pythSourceId),
-      key,
+      tx.pure.u64(lower),
+      tx.pure.u64(higher),
       tx.pure.u64(params.quantity),
+      tx.pure.u64(params.leverage ?? 0n),
       tx.object(CLOCK_ID),
     ],
   });
@@ -398,6 +393,7 @@ export function refreshOracleAndMintTx(params: {
   strike: bigint;
   isUp: boolean;
   quantity: bigint;
+  leverage?: bigint;
   spot: bigint;
   forward: bigint;
   svi: {
@@ -456,14 +452,6 @@ export function refreshOracleAndMintTx(params: {
   });
 
   const { lower, higher } = binaryRangeBounds(params.strike, params.isUp);
-  const key = tx.moveCall({
-    target: target("expiry_market", "range_key"),
-    arguments: [
-      tx.object(params.expiryMarketId),
-      tx.pure.u64(lower),
-      tx.pure.u64(higher),
-    ],
-  });
   tx.moveCall({
     target: target("expiry_market", "mint"),
     arguments: [
@@ -472,8 +460,10 @@ export function refreshOracleAndMintTx(params: {
       tx.object(params.managerId),
       tx.object(params.oracleId),
       tx.object(params.pythSourceId),
-      key,
+      tx.pure.u64(lower),
+      tx.pure.u64(higher),
       tx.pure.u64(params.quantity),
+      tx.pure.u64(params.leverage ?? 0n),
       tx.object(CLOCK_ID),
     ],
   });
