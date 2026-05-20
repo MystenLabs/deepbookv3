@@ -14,12 +14,7 @@ use deepbook_predict::{
     pricing_config::{Self, PricingConfig},
     risk_config::{Self, RiskConfig}
 };
-use sui::{dynamic_field as df, vec_set::{Self, VecSet}};
-
-use fun df::add as UID.add;
-use fun df::borrow as UID.borrow;
-use fun df::borrow_mut as UID.borrow_mut;
-use fun df::exists as UID.exists;
+use sui::vec_set::{Self, VecSet};
 
 const ETradingPaused: u64 = 0;
 const EValuationInProgress: u64 = 1;
@@ -37,6 +32,8 @@ public struct ProtocolConfig has key {
     trading_paused: bool,
     /// Transaction-local lock held while a full-pool valuation is assembled.
     valuation_in_progress: bool,
+    /// Ids of `PredictPauseCap`s authorized to flip `trading_paused`.
+    allowed_pause_caps: VecSet<ID>,
 }
 
 /// Cap that can unilaterally flip `trading_paused` to `true` without admin
@@ -45,8 +42,6 @@ public struct ProtocolConfig has key {
 public struct PredictPauseCap has key, store {
     id: UID,
 }
-
-public struct AllowedPauseCapsKey() has copy, drop, store;
 
 // === Public Functions ===
 
@@ -60,14 +55,9 @@ public fun trading_paused(config: &ProtocolConfig): bool {
     config.trading_paused
 }
 
-/// Return the set of pause cap ids allowed to pause trading. Empty if no
-/// caps have been minted yet.
+/// Return the set of pause cap ids allowed to pause trading.
 public fun allowed_pause_caps(config: &ProtocolConfig): VecSet<ID> {
-    if (config.id.exists(AllowedPauseCapsKey())) {
-        *df::borrow<AllowedPauseCapsKey, VecSet<ID>>(&config.id, AllowedPauseCapsKey())
-    } else {
-        vec_set::empty()
-    }
+    config.allowed_pause_caps
 }
 
 // === Public-Package Functions ===
@@ -119,6 +109,7 @@ public(package) fun create_and_share(ctx: &mut TxContext): ID {
         market_oracle_config: market_oracle_config::new(),
         trading_paused: false,
         valuation_in_progress: false,
+        allowed_pause_caps: vec_set::empty(),
     };
     let id = config.id();
     transfer::share_object(config);
@@ -254,11 +245,7 @@ public(package) fun mint_pause_cap(
 ): PredictPauseCap {
     config.assert_not_valuation_in_progress();
     let id = object::new(ctx);
-    if (!config.id.exists(AllowedPauseCapsKey())) {
-        config.id.add(AllowedPauseCapsKey(), vec_set::empty<ID>());
-    };
-    let allowed: &mut VecSet<ID> = config.id.borrow_mut(AllowedPauseCapsKey());
-    allowed.insert(id.to_inner());
+    config.allowed_pause_caps.insert(id.to_inner());
 
     PredictPauseCap { id }
 }
@@ -267,10 +254,8 @@ public(package) fun mint_pause_cap(
 /// pause trading even though the underlying object still exists.
 public(package) fun revoke_pause_cap(config: &mut ProtocolConfig, pause_cap_id: ID) {
     config.assert_not_valuation_in_progress();
-    assert!(config.id.exists(AllowedPauseCapsKey()), EPauseCapNotValid);
-    let allowed: &mut VecSet<ID> = config.id.borrow_mut(AllowedPauseCapsKey());
-    assert!(allowed.contains(&pause_cap_id), EPauseCapNotValid);
-    allowed.remove(&pause_cap_id);
+    assert!(config.allowed_pause_caps.contains(&pause_cap_id), EPauseCapNotValid);
+    config.allowed_pause_caps.remove(&pause_cap_id);
 }
 
 /// Emergency kill switch. The cap must be in `allowed_pause_caps`. Sets
@@ -281,9 +266,7 @@ public(package) fun pause_trading_with_cap(
     config: &mut ProtocolConfig,
     pause_cap: &PredictPauseCap,
 ) {
-    assert!(config.id.exists(AllowedPauseCapsKey()), EPauseCapNotValid);
-    let allowed: &VecSet<ID> = config.id.borrow(AllowedPauseCapsKey());
-    assert!(allowed.contains(&pause_cap.id.to_inner()), EPauseCapNotValid);
+    assert!(config.allowed_pause_caps.contains(&pause_cap.id.to_inner()), EPauseCapNotValid);
     config.trading_paused = true;
 }
 
@@ -311,6 +294,7 @@ public fun new_for_testing(ctx: &mut TxContext): ProtocolConfig {
         market_oracle_config: market_oracle_config::new(),
         trading_paused: false,
         valuation_in_progress: false,
+        allowed_pause_caps: vec_set::empty(),
     }
 }
 
@@ -324,6 +308,7 @@ public fun destroy_for_testing(config: ProtocolConfig) {
         market_oracle_config,
         trading_paused: _,
         valuation_in_progress: _,
+        allowed_pause_caps: _,
     } = config;
     id.delete();
     pricing_config.destroy_for_testing();
