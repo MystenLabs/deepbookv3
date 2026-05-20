@@ -80,6 +80,19 @@ Mainnet multisig transactions require a gas object:
 GAS_OBJECT=0x... pnpm tsx transactions/script.ts
 ```
 
+### Margin Registry State Persists Across `disable_version`
+`MarginRegistry.disable_version(v)` only removes `v` from `allowed_versions`. It does **not**
+clear `pool_registry` (the `Table<ID, PoolConfig>` of registered deepbook pools) or reset each
+pool's `enabled` flag. Practical consequences for migration scripts:
+- Re-calling `registerDeepbookPool` on a pool that's already in the table aborts with
+  `EPoolAlreadyRegistered` (margin_registry code 2). After a version disable, use only
+  `enableDeepbookPool` to re-enable previously-registered pools.
+- A pool's `enabled` state survives the disable. If a pool is already enabled,
+  `enableDeepbookPool` aborts with `EPoolAlreadyEnabled` (code 5); if already disabled,
+  `disableDeepbookPool` aborts with `EPoolAlreadyDisabled` (code 6).
+- `enableDeepbookPoolForLoan` only requires the deepbook pool to be registered, not enabled,
+  so you can stage loan flows for pools that will stay disabled in trading.
+
 ### Move Abort Errors
 Format: `MoveAbort(MoveLocation { module: ModuleId { address: ..., name: "module_name" }, function: N, instruction: M }, ERROR_CODE)`
 

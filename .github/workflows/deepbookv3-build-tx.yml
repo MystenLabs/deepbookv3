@@ -30,6 +30,7 @@ on:
           - Fund Liquidation Vault
           - Update Interest Rates
           - Margin Prep
+          - Enable Margin Trading
           - Prep Balance Manager
           - Revoke Pausecap
           - Admin Inject Capital
@@ -450,6 +451,17 @@ jobs:
           ORIGIN: gh_action
         run: |
           cd scripts && pnpm install && pnpm tsx transactions/marginPrep.ts
+
+      - name: Enable Margin Trading
+        if: ${{ inputs.transaction_type == 'Enable Margin Trading' }}
+        env:
+          NODE_ENV: production
+          GAS_OBJECT: ${{ inputs.gas_object_id }}
+          NETWORK: mainnet
+          ORIGIN: gh_action
+          RPC_URL: ${{ inputs.rpc }}
+        run: |
+          cd scripts && pnpm install && pnpm tsx transactions/enableMarginTrading.ts
 
       - name: Prep Balance Manager
         if: ${{ inputs.transaction_type == 'Prep Balance Manager' }}
