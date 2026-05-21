@@ -9,14 +9,13 @@
 /// PredictManager position state, not in the identifier.
 module deepbook_predict::predict_order_id;
 
-use deepbook_predict::constants;
+use deepbook_predict::{constants, math};
 
 const EInvalidExpiry: u64 = 0;
 const EInvalidInsertedAt: u64 = 1;
 const EInvalidStrikeIndex: u64 = 2;
 const EInvalidLeverage: u64 = 3;
 const EInvalidVersion: u64 = 4;
-const EUnsupportedLeverage: u64 = 5;
 const EInvalidStrikeRange: u64 = 6;
 
 const ORDER_ID_VERSION: u64 = 1;
@@ -31,7 +30,6 @@ const LEVERAGE_OFFSET: u8 = 96;
 const U8_MASK: u256 = (1u256 << 8) - 1;
 const U24_MASK: u256 = (1u256 << 24) - 1;
 const U48_MASK: u256 = (1u256 << 48) - 1;
-const U64_MASK: u256 = (1u256 << 64) - 1;
 
 const LEVERAGE_ONE_X: u64 = 0;
 const LEVERAGE_ONE_AND_HALF_X: u64 = 1;
@@ -66,16 +64,6 @@ public fun leverage_three_x(): u64 {
     LEVERAGE_THREE_X
 }
 
-/// Return the endpoint code used for an open strike boundary.
-public fun open_strike_index(): u64 {
-    constants::oracle_strike_grid_ticks!() + 1
-}
-
-/// Return the encoding version embedded in an order ID.
-public fun version(order_id: u256): u64 {
-    ((order_id >> VERSION_OFFSET) & U8_MASK) as u64
-}
-
 /// Return the expiry timestamp embedded in an order ID.
 public fun expiry_ms(order_id: u256): u64 {
     assert_valid_version(order_id);
@@ -88,31 +76,17 @@ public fun inserted_at_ms(order_id: u256): u64 {
     ((order_id >> INSERTED_AT_OFFSET) & U48_MASK) as u64
 }
 
-/// Return the encoded lower strike index.
-public fun min_strike_index(order_id: u256): u64 {
-    assert_valid_version(order_id);
-    ((order_id >> MIN_STRIKE_INDEX_OFFSET) & U24_MASK) as u64
-}
-
-/// Return the encoded upper strike index.
-public fun max_strike_index(order_id: u256): u64 {
-    assert_valid_version(order_id);
-    ((order_id >> MAX_STRIKE_INDEX_OFFSET) & U24_MASK) as u64
-}
-
 /// Return the leverage code embedded in an order ID.
 public fun leverage(order_id: u256): u64 {
     assert_valid_version(order_id);
     ((order_id >> LEVERAGE_OFFSET) & U8_MASK) as u64
 }
 
-/// Return the expiry-local sequence embedded in an order ID.
-public fun sequence(order_id: u256): u64 {
-    assert_valid_version(order_id);
-    (order_id & U64_MASK) as u64
-}
-
 // === Public-Package Functions ===
+
+public(package) fun open_strike_index(): u64 {
+    constants::oracle_strike_grid_ticks!() + 1
+}
 
 /// Encode immutable order routing facts into a u256 order ID.
 public(package) fun encode(
@@ -125,8 +99,7 @@ public(package) fun encode(
 ): u256 {
     assert!(expiry_ms <= U48_MASK as u64, EInvalidExpiry);
     assert!(inserted_at_ms <= U48_MASK as u64, EInvalidInsertedAt);
-    assert_valid_strike_index_range(min_strike_index, max_strike_index);
-    assert_valid_leverage(leverage);
+    assert_valid_order_shape(min_strike_index, max_strike_index, leverage);
 
     ((ORDER_ID_VERSION as u256) << VERSION_OFFSET)
         | ((expiry_ms as u256) << EXPIRY_OFFSET)
@@ -146,7 +119,7 @@ public(package) fun strike_range(
 ): (u64, u64) {
     let min_strike_index = min_strike_index(order_id);
     let max_strike_index = max_strike_index(order_id);
-    assert_valid_strike_index_range(min_strike_index, max_strike_index);
+    assert_valid_order_shape(min_strike_index, max_strike_index, leverage(order_id));
 
     (
         decode_strike(min_strike_index, grid_min, grid_tick, grid_max, true),
@@ -154,12 +127,38 @@ public(package) fun strike_range(
     )
 }
 
-/// Abort unless the requested leverage is currently enabled.
-public(package) fun assert_one_x_leverage(leverage: u64) {
-    assert!(leverage == LEVERAGE_ONE_X, EUnsupportedLeverage);
+public(package) fun is_leveraged_order(order_id: u256): bool {
+    !is_one_x_leverage(leverage(order_id))
+}
+
+public(package) fun leverage_multiplier(leverage: u64): u64 {
+    assert_valid_leverage(leverage);
+    constants::float_scaling!() + leverage * constants::float_scaling!() / 2
+}
+
+public(package) fun equity_amount(principal_amount: u64, leverage: u64): u64 {
+    math::mul_div_round_up(
+        principal_amount,
+        constants::float_scaling!(),
+        leverage_multiplier(leverage),
+    )
 }
 
 // === Private Functions ===
+
+fun version(order_id: u256): u64 {
+    ((order_id >> VERSION_OFFSET) & U8_MASK) as u64
+}
+
+fun min_strike_index(order_id: u256): u64 {
+    assert_valid_version(order_id);
+    ((order_id >> MIN_STRIKE_INDEX_OFFSET) & U24_MASK) as u64
+}
+
+fun max_strike_index(order_id: u256): u64 {
+    assert_valid_version(order_id);
+    ((order_id >> MAX_STRIKE_INDEX_OFFSET) & U24_MASK) as u64
+}
 
 fun decode_strike(
     strike_index: u64,
@@ -185,7 +184,12 @@ fun assert_valid_leverage(leverage: u64) {
     assert!(leverage <= LEVERAGE_THREE_X, EInvalidLeverage);
 }
 
-fun assert_valid_strike_index_range(min_strike_index: u64, max_strike_index: u64) {
+fun is_one_x_leverage(leverage: u64): bool {
+    leverage == LEVERAGE_ONE_X
+}
+
+fun assert_valid_order_shape(min_strike_index: u64, max_strike_index: u64, leverage: u64) {
+    assert_valid_leverage(leverage);
     let open_index = open_strike_index();
     assert!(min_strike_index <= open_index, EInvalidStrikeIndex);
     assert!(max_strike_index <= open_index, EInvalidStrikeIndex);
@@ -199,4 +203,7 @@ fun assert_valid_strike_index_range(min_strike_index: u64, max_strike_index: u64
             || min_strike_index < max_strike_index,
         EInvalidStrikeRange,
     );
+    if (is_one_x_leverage(leverage)) return;
+
+    assert!(min_strike_index == open_index || max_strike_index == open_index, EInvalidStrikeRange);
 }

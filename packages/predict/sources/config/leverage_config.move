@@ -36,7 +36,22 @@ public(package) fun set_max_expiry_borrow_fee(config: &mut LeverageConfig, value
     config.max_expiry_borrow_fee = value;
 }
 
-public(package) fun borrow_index(max_expiry_borrow_fee: u64, expiry_ms: u64, now_ms: u64): u64 {
+public(package) fun debt_terms(
+    max_expiry_borrow_fee: u64,
+    expiry_ms: u64,
+    inserted_at_ms: u64,
+    now_ms: u64,
+    borrowed_principal: u64,
+): (u64, u64) {
+    let initial_index = borrow_index(max_expiry_borrow_fee, expiry_ms, inserted_at_ms);
+    let current_index = borrow_index(max_expiry_borrow_fee, expiry_ms, now_ms);
+    let debt_amount = math::mul_div_round_up(borrowed_principal, current_index, initial_index);
+    (debt_amount, debt_amount - borrowed_principal)
+}
+
+// === Private Functions ===
+
+fun borrow_index(max_expiry_borrow_fee: u64, expiry_ms: u64, now_ms: u64): u64 {
     assert!(expiry_ms > 0, EInvalidExpiryWindow);
 
     let window = constants::leverage_borrow_window_ms!();
