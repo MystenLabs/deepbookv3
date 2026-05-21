@@ -13,7 +13,7 @@ use deepbook::math;
 use deepbook_predict::{
     constants,
     market_oracle::MarketOracle,
-    predict_manager::PredictManager,
+    predict_manager::{PredictManager, TradeProof},
     pricing,
     protocol_config::ProtocolConfig,
     pyth_source::PythSource,
@@ -39,6 +39,7 @@ const ESettledLiabilityUnderflow: u64 = 16;
 const ECompactedLiabilityMismatch: u64 = 17;
 const EInsufficientFeeBalance: u64 = 18;
 const ECompactedRebateLiabilityUnderflow: u64 = 19;
+const EMarketNotSettled: u64 = 20;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -206,12 +207,15 @@ public fun read_valuation(
 
 /// Mint a live position interval against this expiry market.
 ///
-/// Requires trading to be allowed, manager ownership, a live fresh oracle, and
-/// enough expiry allocation to back the post-mint max payout.
+/// Requires trading to be allowed, a `TradeProof` for the manager, a live
+/// fresh oracle, and enough expiry allocation to back the post-mint max
+/// payout. Mint fees are paid by routing a withdraw through the manager's
+/// trade proof, so the proof must be present even for owner-initiated mints.
 public fun mint(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     manager: &mut PredictManager,
+    proof: &TradeProof,
     market_oracle: &MarketOracle,
     pyth: &PythSource,
     key: RangeKey,
@@ -220,17 +224,20 @@ public fun mint(
     ctx: &mut TxContext,
 ) {
     config.assert_trading_allowed();
-    market.mint_internal(config, manager, market_oracle, pyth, key, quantity, clock, ctx);
+    market.mint_internal(config, manager, proof, market_oracle, pyth, key, quantity, clock, ctx);
 }
 
 /// Redeem a live, settled, or compacted position interval.
 ///
-/// Live redeems require manager ownership and fresh oracle data. Settled and
-/// compacted redeems are permissionless and pay into the manager balance.
+/// All paths require a `TradeProof` for the manager so the holder of any
+/// `TradeCap` can redeem. Permissionless redemption of settled / compacted
+/// markets (e.g. by a keeper without a cap) is available via
+/// `redeem_permissionless`.
 public fun redeem(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     manager: &mut PredictManager,
+    proof: &TradeProof,
     market_oracle: &MarketOracle,
     pyth: &PythSource,
     key: RangeKey,
@@ -239,6 +246,7 @@ public fun redeem(
     ctx: &mut TxContext,
 ) {
     config.assert_not_valuation_in_progress();
+    manager.validate_proof(proof);
     if (market.is_compacted()) {
         market.redeem_compacted_internal(manager, key, quantity, ctx);
     } else {
@@ -249,6 +257,7 @@ public fun redeem(
             market.redeem_live_internal(
                 config,
                 manager,
+                proof,
                 market_oracle,
                 pyth,
                 key,
@@ -257,6 +266,28 @@ public fun redeem(
                 ctx,
             );
         }
+    }
+}
+
+/// Permissionless redemption for settled or compacted expiries. Aborts if the
+/// market is still live, since live redeems must produce a `TradeProof`
+/// before they can withdraw the manager's fee payment.
+public fun redeem_permissionless(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    manager: &mut PredictManager,
+    market_oracle: &MarketOracle,
+    key: RangeKey,
+    quantity: u64,
+    ctx: &mut TxContext,
+) {
+    config.assert_not_valuation_in_progress();
+    if (market.is_compacted()) {
+        market.redeem_compacted_internal(manager, key, quantity, ctx);
+    } else {
+        market.assert_market_oracle(market_oracle);
+        assert!(market_oracle.is_settled(), EMarketNotSettled);
+        market.redeem_settled_internal(manager, market_oracle, key, quantity, ctx);
     }
 }
 
@@ -430,6 +461,7 @@ fun mint_internal(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     manager: &mut PredictManager,
+    proof: &TradeProof,
     market_oracle: &MarketOracle,
     pyth: &PythSource,
     key: RangeKey,
@@ -437,7 +469,7 @@ fun mint_internal(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    manager.assert_owner(ctx);
+    manager.validate_proof(proof);
     market.assert_market_oracle(market_oracle);
     market.assert_pyth_feed(pyth);
     market_oracle.assert_pyth_source(pyth);
@@ -473,7 +505,7 @@ fun mint_internal(
     assert!(market.allocated_capital >= market.max_payout(), EAllocationBelowMaxPayout);
 
     manager.increase_position(key, quantity, fee_amount);
-    let mut payment = manager.withdraw(payment_amount, ctx).into_balance();
+    let mut payment = manager.withdraw_with_proof(proof, payment_amount, ctx).into_balance();
     let builder_fee_payment = payment.split(builder_fee_amount);
     let fee_payment = payment.split(fee_amount);
     market.fee_balance.join(fee_payment);
@@ -487,6 +519,7 @@ fun redeem_live_internal(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     manager: &mut PredictManager,
+    proof: &TradeProof,
     market_oracle: &MarketOracle,
     pyth: &PythSource,
     key: RangeKey,
@@ -494,7 +527,7 @@ fun redeem_live_internal(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    manager.assert_owner(ctx);
+    manager.validate_proof(proof);
     market.assert_pyth_feed(pyth);
     market_oracle.assert_pyth_source(pyth);
     market_oracle.assert_active(clock);
@@ -535,7 +568,7 @@ fun redeem_live_internal(
     send_builder_fee(builder_code_id, builder_fee);
     market.emit_fee_accrued(fee_amount, builder_fee_amount, builder_code_id);
     market.assert_cash_backing();
-    manager.deposit(payout.into_coin(ctx), ctx);
+    manager.deposit_with_proof(proof, payout.into_coin(ctx), ctx);
 }
 
 fun redeem_settled_internal(
