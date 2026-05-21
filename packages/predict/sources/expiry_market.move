@@ -449,7 +449,7 @@ fun mint_internal(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    manager.validate_proof(proof);
+    // Proof is validated inside withdraw_with_proof below.
     market.assert_market_oracle(market_oracle);
     market.assert_pyth_feed(pyth);
     market_oracle.assert_pyth_source(pyth);
@@ -507,7 +507,7 @@ fun redeem_live_internal(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
-    manager.validate_proof(proof);
+    // Proof is validated inside deposit_with_proof / withdraw_with_proof below.
     market.assert_pyth_feed(pyth);
     market_oracle.assert_pyth_source(pyth);
     market_oracle.assert_active(clock);

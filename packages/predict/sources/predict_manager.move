@@ -18,7 +18,7 @@
 module deepbook_predict::predict_manager;
 
 use deepbook::{
-    balance_manager::{Self, BalanceManager, DepositCap, WithdrawCap, TradeCap as BMTradeCap},
+    balance_manager::{Self, BalanceManager, DepositCap, WithdrawCap, TradeCap},
     registry::Registry as DeepbookRegistry
 };
 use deepbook_predict::{builder_code::{Self, BuilderCode}, constants, math, range_key::RangeKey};
@@ -61,12 +61,12 @@ public struct PredictManager has key {
     /// Inner BalanceManager `WithdrawCap` used by PredictManager to debit the
     /// underlying balance without going through the BalanceManager owner check.
     withdraw_cap: WithdrawCap,
-    /// Unused TradeCap returned by `balance_manager::new_with_custom_owner_caps_v2`.
-    /// PredictManager doesn't trade on deepbook pools, so this cap is dead
-    /// weight — we stash it because BalanceManager doesn't expose a public
-    /// destroy for TradeCap. `option::none` for sender-owned managers, since
-    /// the sender-owned constructor doesn't go through `_v2`.
-    bm_trade_cap: Option<BMTradeCap>,
+    /// BalanceManager `TradeCap` returned by `new_with_custom_owner_caps_v2`.
+    /// PredictManager doesn't trade on deepbook pools, so the cap is never
+    /// consumed — we hold it because BalanceManager doesn't expose a public
+    /// destroy. `option::none` on sender-owned managers (their constructor
+    /// doesn't go through `_v2`).
+    bm_trade_cap: Option<TradeCap>,
     /// IDs of PredictManager caps (PredictTradeCap / PredictDepositCap /
     /// PredictWithdrawCap) authorized to act on this manager. Revoking removes
     /// the ID from this set.
@@ -504,11 +504,6 @@ public(package) fun decrease_position(
 /// Abort unless the transaction sender owns this manager.
 public(package) fun assert_owner(self: &PredictManager, ctx: &TxContext) {
     assert!(ctx.sender() == self.balance_manager.owner(), ENotOwner);
-}
-
-/// Return the address that generated a trade proof.
-public(package) fun trader(proof: &PredictTradeProof): address {
-    proof.trader
 }
 
 // === Private Functions ===
