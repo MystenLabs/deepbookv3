@@ -102,6 +102,24 @@ public struct BuilderCodeSet has copy, drop, store {
     builder_code_id: Option<ID>,
 }
 
+/// Emitted when a `PredictTradeCap` is minted.
+public struct PredictTradeCapMinted has copy, drop, store {
+    predict_manager_id: ID,
+    cap_id: ID,
+}
+
+/// Emitted when a `PredictDepositCap` is minted.
+public struct PredictDepositCapMinted has copy, drop, store {
+    predict_manager_id: ID,
+    cap_id: ID,
+}
+
+/// Emitted when a `PredictWithdrawCap` is minted.
+public struct PredictWithdrawCapMinted has copy, drop, store {
+    predict_manager_id: ID,
+    cap_id: ID,
+}
+
 // === Public Functions ===
 
 /// Share a newly created PredictManager object.
@@ -179,7 +197,9 @@ public fun mint_trade_cap(self: &mut PredictManager, ctx: &mut TxContext): Predi
     self.assert_owner(ctx);
     self.assert_caps_capacity();
     let id = object::new(ctx);
-    self.allow_listed.insert(id.to_inner());
+    let cap_id = id.to_inner();
+    self.allow_listed.insert(cap_id);
+    event::emit(PredictTradeCapMinted { predict_manager_id: self.id(), cap_id });
     PredictTradeCap { id, predict_manager_id: self.id() }
 }
 
@@ -188,7 +208,9 @@ public fun mint_deposit_cap(self: &mut PredictManager, ctx: &mut TxContext): Pre
     self.assert_owner(ctx);
     self.assert_caps_capacity();
     let id = object::new(ctx);
-    self.allow_listed.insert(id.to_inner());
+    let cap_id = id.to_inner();
+    self.allow_listed.insert(cap_id);
+    event::emit(PredictDepositCapMinted { predict_manager_id: self.id(), cap_id });
     PredictDepositCap { id, predict_manager_id: self.id() }
 }
 
@@ -197,7 +219,9 @@ public fun mint_withdraw_cap(self: &mut PredictManager, ctx: &mut TxContext): Pr
     self.assert_owner(ctx);
     self.assert_caps_capacity();
     let id = object::new(ctx);
-    self.allow_listed.insert(id.to_inner());
+    let cap_id = id.to_inner();
+    self.allow_listed.insert(cap_id);
+    event::emit(PredictWithdrawCapMinted { predict_manager_id: self.id(), cap_id });
     PredictWithdrawCap { id, predict_manager_id: self.id() }
 }
 
