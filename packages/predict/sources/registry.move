@@ -11,23 +11,31 @@ module deepbook_predict::registry;
 
 use deepbook_predict::{
     builder_code,
-    expiry_market,
+    expiry_market::{Self, ExpiryMarket},
     market_oracle::{Self, MarketOracle, MarketOracleCap},
     plp::PoolVault,
     predict_manager::{Self, PredictManager},
     protocol_config::{Self, ProtocolConfig},
     pyth_source::{Self, PythSource}
 };
-use sui::{clock::Clock, table::{Self, Table}};
+use sui::{clock::Clock, table::{Self, Table}, vec_set::{Self, VecSet}};
 
 const EFeedIdMismatch: u64 = 2;
 const EPythSourceAlreadyCreated: u64 = 3;
 const EInvalidExpiry: u64 = 4;
 const EExpiryMarketAlreadyCreated: u64 = 5;
+const EPauseCapNotValid: u64 = 6;
 
 /// Capability for admin operations.
 /// Created during package init, transferred to deployer (multisig).
 public struct AdminCap has key, store {
+    id: UID,
+}
+
+/// Capability for emergency pause operations. Admin can mint these for
+/// trusted operators; holders can disable versions, pause global trading,
+/// and pause per-market minting. Cannot unpause anything.
+public struct PauseCap has key, store {
     id: UID,
 }
 
@@ -38,6 +46,9 @@ public struct Registry has key {
     pyth_source_ids: Table<u32, ID>,
     /// Created expiry markets keyed by expiry timestamp.
     expiry_market_ids: Table<u64, ID>,
+    /// IDs of `PauseCap` objects currently authorized to use pause-only entries.
+    /// Admin mints into this set and revokes from it.
+    allowed_pause_caps: VecSet<ID>,
 }
 
 // === Public Functions ===
@@ -200,15 +211,106 @@ public fun set_trading_paused(config: &mut ProtocolConfig, _admin_cap: &AdminCap
     config.set_trading_paused(paused);
 }
 
+// === Version Management (admin) ===
+
+/// Add `version` to `ProtocolConfig.allowed_versions`.
+///
+/// Not version-gated so admin can re-enable a previously disabled version.
+public fun enable_version(config: &mut ProtocolConfig, _admin_cap: &AdminCap, version: u64) {
+    config.enable_version(version);
+}
+
+/// Remove `version` from `ProtocolConfig.allowed_versions`.
+///
+/// Not version-gated so admin can revoke a version even after the active
+/// version has been paused. The set may not be left empty.
+public fun disable_version(config: &mut ProtocolConfig, _admin_cap: &AdminCap, version: u64) {
+    config.disable_version(version);
+}
+
+// === PauseCap Lifecycle (admin) ===
+
+/// Mint a new `PauseCap`. Admin-only and bypasses the version gate so the
+/// kill switch remains available even when admin has misconfigured versions.
+public fun mint_pause_cap(
+    registry: &mut Registry,
+    _admin_cap: &AdminCap,
+    ctx: &mut TxContext,
+): PauseCap {
+    let id = object::new(ctx);
+    registry.allowed_pause_caps.insert(id.to_inner());
+    PauseCap { id }
+}
+
+/// Revoke a previously minted `PauseCap` by ID. Admin-only.
+public fun revoke_pause_cap(registry: &mut Registry, _admin_cap: &AdminCap, pause_cap_id: ID) {
+    assert!(registry.allowed_pause_caps.contains(&pause_cap_id), EPauseCapNotValid);
+    registry.allowed_pause_caps.remove(&pause_cap_id);
+}
+
+/// Destroy a `PauseCap` the holder no longer needs.
+public fun destroy_pause_cap(cap: PauseCap) {
+    let PauseCap { id } = cap;
+    id.delete();
+}
+
+// === Emergency Pause (PauseCap) ===
+
+/// Disable a package version via a valid `PauseCap`. One-way: admin must
+/// `enable_version` to restore.
+public fun disable_version_pause_cap(
+    registry: &Registry,
+    config: &mut ProtocolConfig,
+    version: u64,
+    pause_cap: &PauseCap,
+) {
+    registry.assert_valid_pause_cap(pause_cap);
+    config.disable_version(version);
+}
+
+/// Force `trading_paused = true` via a valid `PauseCap`. One-way.
+public fun pause_trading_pause_cap(
+    registry: &Registry,
+    config: &mut ProtocolConfig,
+    pause_cap: &PauseCap,
+) {
+    registry.assert_valid_pause_cap(pause_cap);
+    config.pause_trading();
+}
+
+/// Force `mint_paused = true` on a single expiry market via a valid `PauseCap`.
+/// One-way; admin's `set_expiry_market_mint_paused` is needed to unpause.
+public fun pause_expiry_market_mint_pause_cap(
+    registry: &Registry,
+    market: &mut ExpiryMarket,
+    pause_cap: &PauseCap,
+) {
+    registry.assert_valid_pause_cap(pause_cap);
+    market.pause_mint();
+}
+
+// === Per-Market Mint Pause (admin) ===
+
+/// Set `mint_paused` on a single expiry market. Admin can pause or unpause.
+public fun set_expiry_market_mint_paused(
+    market: &mut ExpiryMarket,
+    _admin_cap: &AdminCap,
+    paused: bool,
+) {
+    market.set_mint_paused(paused);
+}
+
 /// Create a shared Pyth source for one admin-approved Lazer feed.
 ///
 /// The registry enforces one source object per feed ID.
 public fun create_pyth_source(
     registry: &mut Registry,
+    config: &ProtocolConfig,
     _admin_cap: &AdminCap,
     pyth_lazer_feed_id: u32,
     ctx: &mut TxContext,
 ): ID {
+    config.assert_version_allowed();
     assert!(!registry.pyth_source_ids.contains(pyth_lazer_feed_id), EPythSourceAlreadyCreated);
     let pyth_source_id = pyth_source::create_and_share(pyth_lazer_feed_id, ctx);
     registry.pyth_source_ids.add(pyth_lazer_feed_id, pyth_source_id);
@@ -264,6 +366,7 @@ public fun create_expiry_market(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (ID, ID) {
+    config.assert_version_allowed();
     config.assert_trading_allowed();
     assert!(expiry > clock.timestamp_ms(), EInvalidExpiry);
     let pyth_lazer_feed_id = pyth.feed_id();
@@ -336,11 +439,17 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
             id: object::new(ctx),
             pyth_source_ids: table::new(ctx),
             expiry_market_ids: table::new(ctx),
+            allowed_pause_caps: vec_set::empty(),
         },
         AdminCap {
             id: object::new(ctx),
         },
     )
+}
+
+/// Abort unless the supplied `PauseCap` was minted by admin and not revoked.
+fun assert_valid_pause_cap(registry: &Registry, pause_cap: &PauseCap) {
+    assert!(registry.allowed_pause_caps.contains(&pause_cap.id.to_inner()), EPauseCapNotValid);
 }
 
 // === Test-Only Functions ===
@@ -361,4 +470,24 @@ public fun init_for_testing(ctx: &mut TxContext): ID {
 /// Create an admin cap for tests.
 public fun create_admin_cap_for_testing(ctx: &mut TxContext): AdminCap {
     AdminCap { id: object::new(ctx) }
+}
+
+#[test_only]
+/// Return a Registry + AdminCap without sharing or storing the registry.
+/// Use this when a test wants direct access without `test_scenario`.
+public fun new_for_testing(ctx: &mut TxContext): (Registry, AdminCap) {
+    new_registry_and_admin_cap(ctx)
+}
+
+#[test_only]
+public fun destroy_registry_for_testing(registry: Registry) {
+    let Registry {
+        id,
+        pyth_source_ids,
+        expiry_market_ids,
+        allowed_pause_caps: _,
+    } = registry;
+    id.delete();
+    pyth_source_ids.destroy_empty();
+    expiry_market_ids.destroy_empty();
 }

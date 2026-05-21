@@ -8,13 +8,14 @@
 /// forward, apply circuit breakers, or settle a market.
 module deepbook_predict::pyth_source;
 
-use deepbook_predict::{lazer_helper, protocol_config::ProtocolConfig};
+use deepbook_predict::{constants, lazer_helper, protocol_config::ProtocolConfig};
 use pyth_lazer::update::Update as LazerUpdate;
-use sui::{clock::Clock, event};
+use sui::{clock::Clock, event, vec_set::{Self, VecSet}};
 
 const EStaleSourceUpdate: u64 = 0;
 const EZeroSpot: u64 = 1;
 const EFutureSourceUpdate: u64 = 2;
+const EPackageVersionDisabled: u64 = 3;
 
 /// Emitted when a verified Pyth Lazer spot update is accepted.
 public struct PythSourceUpdated has copy, drop, store {
@@ -34,6 +35,8 @@ public struct PythSource has key {
     source_timestamp_ms: u64,
     /// On-chain timestamp when the latest accepted update landed.
     update_timestamp_ms: u64,
+    /// Mirror of `ProtocolConfig.allowed_versions`; synced permissionlessly.
+    allowed_versions: VecSet<u64>,
 }
 
 /// Decode and store a verified Pyth Lazer spot update.
@@ -46,6 +49,7 @@ public fun update_from_lazer(
     update: LazerUpdate,
     clock: &Clock,
 ) {
+    source.assert_version_allowed();
     config.assert_not_valuation_in_progress();
     let (spot, source_timestamp_us) = lazer_helper::extract_spot(&update, source.feed_id);
     let source_timestamp_ms = us_to_ms_ceil(source_timestamp_us);
@@ -92,6 +96,19 @@ public fun update_timestamp_ms(source: &PythSource): u64 {
     source.update_timestamp_ms
 }
 
+/// Return this source's mirrored set of allowed package versions.
+public fun allowed_versions(source: &PythSource): VecSet<u64> {
+    source.allowed_versions
+}
+
+/// Permissionlessly refresh this source's mirrored `allowed_versions`.
+public fun update_allowed_versions_permissionless(
+    source: &mut PythSource,
+    config: &ProtocolConfig,
+) {
+    source.allowed_versions = config.allowed_versions();
+}
+
 // === Public-Package Functions ===
 
 /// Return the timestamp that pricing can use for freshness checks.
@@ -107,10 +124,24 @@ public(package) fun create_and_share(feed_id: u32, ctx: &mut TxContext): ID {
         spot: 0,
         source_timestamp_ms: 0,
         update_timestamp_ms: 0,
+        allowed_versions: vec_set::singleton(constants::current_version!()),
     };
     let id = source.id();
     transfer::share_object(source);
     id
+}
+
+/// Abort if the running package version is not allowed for this source.
+public(package) fun assert_version_allowed(source: &PythSource) {
+    assert!(
+        source.allowed_versions.contains(&constants::current_version!()),
+        EPackageVersionDisabled,
+    );
+}
+
+/// Authoritative sync of mirrored `allowed_versions` from protocol config.
+public(package) fun update_allowed_versions(source: &mut PythSource, config: &ProtocolConfig) {
+    source.allowed_versions = config.allowed_versions();
 }
 
 fun us_to_ms_ceil(timestamp_us: u64): u64 {

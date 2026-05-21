@@ -9,13 +9,20 @@
 module deepbook_predict::predict_manager;
 
 use deepbook::balance_manager::{Self, BalanceManager, DepositCap};
-use deepbook_predict::{builder_code::{Self, BuilderCode}, math, range_key::RangeKey};
+use deepbook_predict::{
+    builder_code::{Self, BuilderCode},
+    constants,
+    math,
+    protocol_config::ProtocolConfig,
+    range_key::RangeKey
+};
 use dusdc::dusdc::DUSDC;
-use sui::{coin::Coin, derived_object, event, table::{Self, Table}};
+use sui::{coin::Coin, derived_object, event, table::{Self, Table}, vec_set::{Self, VecSet}};
 
 const EInsufficientPosition: u64 = 0;
 const ENotOwner: u64 = 1;
 const EZeroQuantity: u64 = 2;
+const EPackageVersionDisabled: u64 = 3;
 
 /// The key for deriving predict manager. u64 is optional for
 /// supporting multiple managers per address. Defaults to 0 in v1.
@@ -29,6 +36,9 @@ public struct PredictManager has key {
     builder_code_id: Option<ID>,
     /// RangeKey -> position quantity and raw rebate fee basis.
     positions: Table<RangeKey, Position>,
+    /// Mirror of `ProtocolConfig.allowed_versions`. Owners run the permissionless
+    /// sync to track admin changes; package mutations gate on this set.
+    allowed_versions: VecSet<u64>,
 }
 
 /// Quantity plus raw fee basis attached to one active range position.
@@ -58,12 +68,27 @@ public fun id(self: &PredictManager): ID {
 
 /// Deposit coins into the PredictManager.
 public fun deposit(self: &mut PredictManager, coin: Coin<DUSDC>, ctx: &mut TxContext) {
+    self.assert_version_allowed();
     self.balance_manager.deposit(coin, ctx);
 }
 
 /// Withdraw coins from the PredictManager.
 public fun withdraw(self: &mut PredictManager, amount: u64, ctx: &mut TxContext): Coin<DUSDC> {
+    self.assert_version_allowed();
     self.balance_manager.withdraw(amount, ctx)
+}
+
+/// Return this manager's mirrored set of allowed package versions.
+public fun allowed_versions(self: &PredictManager): VecSet<u64> {
+    self.allowed_versions
+}
+
+/// Permissionlessly refresh this manager's mirrored `allowed_versions`.
+public fun update_allowed_versions_permissionless(
+    self: &mut PredictManager,
+    config: &ProtocolConfig,
+) {
+    self.allowed_versions = config.allowed_versions();
 }
 
 /// Return the BalanceManager owner for this PredictManager.
@@ -105,6 +130,7 @@ public fun set_builder_code(
     builder_code: &BuilderCode,
     ctx: &TxContext,
 ) {
+    self.assert_version_allowed();
     self.assert_owner(ctx);
     let builder_code_id = builder_code::id(builder_code);
     self.builder_code_id = option::some(builder_code_id);
@@ -117,6 +143,7 @@ public fun set_builder_code(
 
 /// Clear sticky builder-code attribution for future trades.
 public fun unset_builder_code(self: &mut PredictManager, ctx: &TxContext) {
+    self.assert_version_allowed();
     self.assert_owner(ctx);
     self.builder_code_id = option::none();
     event::emit(BuilderCodeSet {
@@ -140,7 +167,16 @@ public(package) fun new(registry_uid: &mut UID, ctx: &mut TxContext): PredictMan
         deposit_cap,
         builder_code_id: option::none(),
         positions: table::new(ctx),
+        allowed_versions: vec_set::singleton(constants::current_version!()),
     }
+}
+
+/// Abort if the running package version is not allowed for this manager.
+public(package) fun assert_version_allowed(self: &PredictManager) {
+    assert!(
+        self.allowed_versions.contains(&constants::current_version!()),
+        EPackageVersionDisabled,
+    );
 }
 
 /// Deposit protocol payouts without requiring the manager owner as sender.

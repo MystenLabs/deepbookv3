@@ -12,6 +12,7 @@ module deepbook_predict::plp;
 use deepbook::math;
 use deepbook_predict::{
     config_constants,
+    constants,
     expiry_market::{ExpiryMarket, ExpiryValuation},
     market_oracle::MarketOracle,
     math as predict_math,
@@ -19,7 +20,13 @@ use deepbook_predict::{
     risk_config::RiskConfig
 };
 use dusdc::dusdc::DUSDC;
-use sui::{balance::{Self, Balance}, clock::Clock, coin::{Self, Coin, TreasuryCap}, coin_registry};
+use sui::{
+    balance::{Self, Balance},
+    clock::Clock,
+    coin::{Self, Coin, TreasuryCap},
+    coin_registry,
+    vec_set::{Self, VecSet}
+};
 
 const EExpiryMarketAlreadyActive: u64 = 0;
 const EExpiryMarketNotActive: u64 = 1;
@@ -38,6 +45,7 @@ const EZeroWithdraw: u64 = 17;
 const EInvalidInitialSupply: u64 = 18;
 const EZeroShares: u64 = 19;
 const EZeroPoolValue: u64 = 20;
+const EPackageVersionDisabled: u64 = 21;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -56,6 +64,8 @@ public struct PoolVault has key {
     active_expiry_markets: vector<ID>,
     /// Sum of active expiry risk budgets allocated out of the pool.
     total_allocated_capital: u64,
+    /// Mirror of `ProtocolConfig.allowed_versions`; synced permissionlessly.
+    allowed_versions: VecSet<u64>,
 }
 
 /// Transaction-local pool valuation accumulator.
@@ -95,6 +105,16 @@ public fun id(vault: &PoolVault): ID {
     vault.id.to_inner()
 }
 
+/// Return this vault's mirrored set of allowed package versions.
+public fun allowed_versions(vault: &PoolVault): VecSet<u64> {
+    vault.allowed_versions
+}
+
+/// Permissionlessly refresh this vault's mirrored `allowed_versions`.
+public fun update_allowed_versions_permissionless(vault: &mut PoolVault, config: &ProtocolConfig) {
+    vault.allowed_versions = config.allowed_versions();
+}
+
 /// Return idle DUSDC held by the pool.
 public fun idle_balance(vault: &PoolVault): u64 {
     vault.idle_balance.value()
@@ -131,6 +151,7 @@ public fun total_allocated_capital(vault: &PoolVault): u64 {
 /// Callers must add one valuation witness for each active expiry before
 /// supplying or withdrawing.
 public fun start_valuation(vault: &PoolVault, config: &mut ProtocolConfig): PoolValuation {
+    vault.assert_version_allowed();
     config.begin_valuation();
     PoolValuation {
         pool_vault_id: vault.id(),
@@ -166,6 +187,7 @@ public fun grow_expiry_allocation(
     market_oracle: &MarketOracle,
     clock: &Clock,
 ) {
+    vault.assert_version_allowed();
     config.assert_trading_allowed();
     assert!(vault.active_expiry_markets.contains(&market.id()), EExpiryMarketNotActive);
     market.assert_market_oracle(market_oracle);
@@ -189,6 +211,7 @@ public fun shrink_expiry_allocation(
     market_oracle: &MarketOracle,
     clock: &Clock,
 ) {
+    vault.assert_version_allowed();
     config.assert_not_valuation_in_progress();
     assert!(vault.active_expiry_markets.contains(&market.id()), EExpiryMarketNotActive);
     market.assert_market_oracle(market_oracle);
@@ -211,6 +234,7 @@ public fun compact_expiry_market(
     market: &mut ExpiryMarket,
     market_oracle: &MarketOracle,
 ) {
+    vault.assert_version_allowed();
     config.assert_not_valuation_in_progress();
     assert!(vault.active_expiry_markets.contains(&market.id()), EExpiryMarketNotActive);
     let allocated_reduction = market.allocated_capital();
@@ -236,6 +260,7 @@ public fun supply(
     payment: Coin<DUSDC>,
     ctx: &mut TxContext,
 ): Coin<PLP> {
+    vault.assert_version_allowed();
     let pool_value = vault.validated_pool_value(config, &valuation);
     let payment_amount = payment.value();
     assert!(payment_amount > 0, EZeroSupply);
@@ -267,6 +292,7 @@ public fun withdraw(
     lp_coin: Coin<PLP>,
     ctx: &mut TxContext,
 ): Coin<DUSDC> {
+    vault.assert_version_allowed();
     let pool_value = vault.validated_pool_value(config, &valuation);
     let lp_amount = lp_coin.value();
     assert!(lp_amount > 0, EZeroWithdraw);
@@ -301,7 +327,21 @@ public(package) fun new(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): Po
         treasury_cap,
         active_expiry_markets: vector[],
         total_allocated_capital: 0,
+        allowed_versions: vec_set::singleton(constants::current_version!()),
     }
+}
+
+/// Abort if the running package version is not allowed for this vault.
+public(package) fun assert_version_allowed(vault: &PoolVault) {
+    assert!(
+        vault.allowed_versions.contains(&constants::current_version!()),
+        EPackageVersionDisabled,
+    );
+}
+
+/// Authoritative sync of mirrored `allowed_versions` from protocol config.
+public(package) fun update_allowed_versions(vault: &mut PoolVault, config: &ProtocolConfig) {
+    vault.allowed_versions = config.allowed_versions();
 }
 
 /// Create and share an empty pool vault from the PLP treasury cap.

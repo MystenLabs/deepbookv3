@@ -10,6 +10,12 @@
 /// - Use deepbook::math for all mul/div operations
 module deepbook_predict::constants;
 
+// === Package Versioning ===
+
+/// Current package version. Bumped on each upgrade and added to the protocol
+/// `allowed_versions` set by admin so version-gated entry points keep working.
+public macro fun current_version(): u64 { 1 }
+
 // === Scaling ===
 
 /// Fixed-point scaling factor (1e9) for math operations and prices.
