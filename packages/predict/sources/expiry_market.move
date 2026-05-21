@@ -42,6 +42,11 @@ const EInsufficientFeeBalance: u64 = 18;
 const EInvalidQuantity: u64 = 20;
 const EMarketNotCompacted: u64 = 21;
 
+const REDEEM_STATE_LIQUIDATED: u8 = 0;
+const REDEEM_STATE_LIVE: u8 = 1;
+const REDEEM_STATE_SETTLED: u8 = 2;
+const REDEEM_STATE_COMPACTED: u8 = 3;
+
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
     id: UID,
@@ -294,23 +299,19 @@ public fun redeem(
     ctx: &mut TxContext,
 ) {
     config.assert_not_valuation_in_progress();
-    assert!(predict_order_id::expiry_ms(order_id) == market.expiry, EWrongOrderExpiry);
-    if (market.leverage_book.is_liquidated(order_id)) {
+    let redeem_state = market.prepare_redeem_state(
+        config,
+        market_oracle,
+        pyth,
+        order_id,
+        clock,
+    );
+
+    if (redeem_state == REDEEM_STATE_LIQUIDATED) {
         market.redeem_liquidated_internal(manager, order_id, quantity);
-        return
-    };
-
-    if (!market.is_compacted()) {
-        market.liquidate(config, market_oracle, pyth, clock);
-        if (market.leverage_book.is_liquidated(order_id)) {
-            market.redeem_liquidated_internal(manager, order_id, quantity);
-            return
-        };
-    };
-
-    if (market.is_compacted()) {
+    } else if (redeem_state == REDEEM_STATE_COMPACTED) {
         market.redeem_compacted_internal(manager, order_id, quantity, ctx);
-    } else if (market_oracle.is_settled()) {
+    } else if (redeem_state == REDEEM_STATE_SETTLED) {
         market.redeem_settled_internal(manager, market_oracle, order_id, quantity, ctx);
     } else {
         market.redeem_live_internal(
@@ -537,6 +538,31 @@ fun current_liability(
     }
 }
 
+fun prepare_redeem_state(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    order_id: u256,
+    clock: &Clock,
+): u8 {
+    assert!(predict_order_id::expiry_ms(order_id) == market.expiry, EWrongOrderExpiry);
+    if (market.leverage_book.is_liquidated(order_id)) return REDEEM_STATE_LIQUIDATED;
+
+    if (!market.is_compacted()) {
+        market.liquidate(config, market_oracle, pyth, clock);
+        if (market.leverage_book.is_liquidated(order_id)) return REDEEM_STATE_LIQUIDATED;
+    };
+
+    if (market.is_compacted()) {
+        REDEEM_STATE_COMPACTED
+    } else if (market_oracle.is_settled()) {
+        REDEEM_STATE_SETTLED
+    } else {
+        REDEEM_STATE_LIVE
+    }
+}
+
 fun assert_pyth_feed(market: &ExpiryMarket, pyth: &PythSource) {
     assert!(market.pyth_lazer_feed_id == pyth.feed_id(), EWrongPythSource);
 }
@@ -635,6 +661,92 @@ fun extract_borrow_fee(market: &mut ExpiryMarket, amount: u64) {
     market.borrow_fee_balance.join(borrow_fee);
 }
 
+fun quote_mint_order(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    clock: &Clock,
+    order_id: u256,
+): (u64, u64) {
+    let (fair_price, price_fee_rate) = market
+        .strike_exposure
+        .quote_live_order(
+            config.pricing_config(),
+            market_oracle,
+            pyth,
+            clock,
+            order_id,
+        );
+    pricing::assert_mint_ask_price(config.pricing_config(), fair_price + price_fee_rate);
+    (fair_price, price_fee_rate)
+}
+
+fun mint_principal_terms(fair_price: u64, quantity: u64, leverage: u64): (u64, u64) {
+    let principal_amount = math::mul(fair_price, quantity);
+    let equity_amount = predict_order_id::equity_amount(principal_amount, leverage);
+    let borrowed_principal = principal_amount - equity_amount;
+    (equity_amount, borrowed_principal)
+}
+
+fun insert_live_order_state(
+    market: &mut ExpiryMarket,
+    manager: &mut PredictManager,
+    order_id: u256,
+    quantity: u64,
+    borrowed_principal: u64,
+) {
+    market.strike_exposure.insert_order(order_id, quantity);
+    if (predict_order_id::is_leveraged_order(order_id)) {
+        market.leverage_book.insert_order(order_id, quantity, borrowed_principal);
+    };
+    assert!(market.allocated_capital >= market.max_payout(), EAllocationBelowMaxPayout);
+    manager.increase_position(market.id(), order_id, quantity);
+}
+
+fun settle_mint_payment(
+    market: &mut ExpiryMarket,
+    manager: &mut PredictManager,
+    builder_code_id: Option<ID>,
+    equity_amount: u64,
+    fee_amount: u64,
+    builder_fee_amount: u64,
+    ctx: &mut TxContext,
+) {
+    manager.record_cash_paid_to_expiry(market.id(), equity_amount + fee_amount);
+    market.record_pool_trading_fee(manager, fee_amount);
+    let payment_amount = equity_amount + fee_amount + builder_fee_amount;
+    let mut payment = manager.withdraw(payment_amount, ctx).into_balance();
+    let builder_fee_payment = payment.split(builder_fee_amount);
+    let fee_payment = payment.split(fee_amount);
+    market.fee_balance.join(fee_payment);
+    send_builder_fee(builder_code_id, builder_fee_payment);
+    market.emit_fee_accrued(fee_amount, builder_fee_amount, builder_code_id);
+    market.lp_cash_balance.join(payment);
+    market.assert_cash_backing();
+}
+
+fun emit_order_minted(
+    market: &ExpiryMarket,
+    manager: &PredictManager,
+    order_id: u256,
+    min_strike: u64,
+    max_strike: u64,
+    quantity: u64,
+    leverage: u64,
+) {
+    event::emit(OrderMinted {
+        expiry_market_id: market.id(),
+        predict_manager_id: manager.id(),
+        order_id,
+        min_strike,
+        max_strike,
+        quantity,
+        leverage,
+        inserted_at_ms: predict_order_id::inserted_at_ms(order_id),
+    });
+}
+
 fun mint_internal(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
@@ -657,51 +769,32 @@ fun mint_internal(
         .strike_exposure
         .new_order_id(market.expiry, min_strike, max_strike, leverage, clock);
 
-    let (fair_price, price_fee_rate) = market
-        .strike_exposure
-        .quote_live_order(
-            config.pricing_config(),
-            market_oracle,
-            pyth,
-            clock,
-            order_id,
-        );
-    pricing::assert_mint_ask_price(config.pricing_config(), fair_price + price_fee_rate);
-    let principal_amount = math::mul(fair_price, quantity);
-    let equity_amount = predict_order_id::equity_amount(principal_amount, leverage);
-    let borrowed_principal = principal_amount - equity_amount;
-    let fee_amount = math::mul(price_fee_rate, quantity);
-    let builder_code_id = manager.builder_code_id();
-    let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity);
-    let payment_amount = equity_amount + fee_amount + builder_fee_amount;
-
-    market.strike_exposure.insert_order(order_id, quantity);
-    if (predict_order_id::is_leveraged_order(order_id)) {
-        market.leverage_book.insert_order(order_id, quantity, borrowed_principal);
-    };
-    assert!(market.allocated_capital >= market.max_payout(), EAllocationBelowMaxPayout);
-
-    manager.increase_position(market.id(), order_id, quantity);
-    manager.record_cash_paid_to_expiry(market.id(), equity_amount + fee_amount);
-    market.record_pool_trading_fee(manager, fee_amount);
-    let mut payment = manager.withdraw(payment_amount, ctx).into_balance();
-    let builder_fee_payment = payment.split(builder_fee_amount);
-    let fee_payment = payment.split(fee_amount);
-    market.fee_balance.join(fee_payment);
-    send_builder_fee(builder_code_id, builder_fee_payment);
-    market.emit_fee_accrued(fee_amount, builder_fee_amount, builder_code_id);
-    market.lp_cash_balance.join(payment);
-    market.assert_cash_backing();
-    event::emit(OrderMinted {
-        expiry_market_id: market.id(),
-        predict_manager_id: manager.id(),
+    let (fair_price, price_fee_rate) = market.quote_mint_order(
+        config,
+        market_oracle,
+        pyth,
+        clock,
         order_id,
-        min_strike,
-        max_strike,
+    );
+    let builder_code_id = manager.builder_code_id();
+    let (equity_amount, borrowed_principal) = mint_principal_terms(
+        fair_price,
         quantity,
         leverage,
-        inserted_at_ms: predict_order_id::inserted_at_ms(order_id),
-    });
+    );
+    let fee_amount = math::mul(price_fee_rate, quantity);
+    let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity);
+
+    market.insert_live_order_state(manager, order_id, quantity, borrowed_principal);
+    market.settle_mint_payment(
+        manager,
+        builder_code_id,
+        equity_amount,
+        fee_amount,
+        builder_fee_amount,
+        ctx,
+    );
+    market.emit_order_minted(manager, order_id, min_strike, max_strike, quantity, leverage);
     order_id
 }
 
