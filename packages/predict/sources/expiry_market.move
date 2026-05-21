@@ -39,7 +39,7 @@ const ESettledLiabilityUnderflow: u64 = 16;
 const ECompactedLiabilityMismatch: u64 = 17;
 const EInsufficientFeeBalance: u64 = 18;
 const ECompactedRebateLiabilityUnderflow: u64 = 19;
-const EMarketNotSettled: u64 = 20;
+const EProofRequiredForLiveRedeem: u64 = 20;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -229,15 +229,16 @@ public fun mint(
 
 /// Redeem a live, settled, or compacted position interval.
 ///
-/// All paths require a `PredictTradeProof` for the manager so the holder of any
-/// `TradeCap` can redeem. Permissionless redemption of settled / compacted
-/// markets (e.g. by a keeper without a cap) is available via
-/// `redeem_permissionless`.
+/// `proof` must be `some` for live redeems (needed to route the fee withdraw
+/// through the manager). Settled and compacted redeems are permissionless;
+/// pass `none` from a keeper without a cap. `PredictTradeProof` has `drop`,
+/// so the proof is consumed by value and silently dropped on paths that
+/// don't need it.
 public fun redeem(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     manager: &mut PredictManager,
-    proof: &PredictTradeProof,
+    proof: Option<PredictTradeProof>,
     market_oracle: &MarketOracle,
     pyth: &PythSource,
     key: RangeKey,
@@ -246,7 +247,6 @@ public fun redeem(
     ctx: &mut TxContext,
 ) {
     config.assert_not_valuation_in_progress();
-    manager.validate_proof(proof);
     if (market.is_compacted()) {
         market.redeem_compacted_internal(manager, key, quantity, ctx);
     } else {
@@ -254,10 +254,12 @@ public fun redeem(
         if (market_oracle.is_settled()) {
             market.redeem_settled_internal(manager, market_oracle, key, quantity, ctx);
         } else {
+            assert!(proof.is_some(), EProofRequiredForLiveRedeem);
+            let live_proof = proof.destroy_some();
             market.redeem_live_internal(
                 config,
                 manager,
-                proof,
+                &live_proof,
                 market_oracle,
                 pyth,
                 key,
@@ -266,28 +268,6 @@ public fun redeem(
                 ctx,
             );
         }
-    }
-}
-
-/// Permissionless redemption for settled or compacted expiries. Aborts if the
-/// market is still live, since live redeems must produce a `PredictTradeProof`
-/// before they can withdraw the manager's fee payment.
-public fun redeem_permissionless(
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    manager: &mut PredictManager,
-    market_oracle: &MarketOracle,
-    key: RangeKey,
-    quantity: u64,
-    ctx: &mut TxContext,
-) {
-    config.assert_not_valuation_in_progress();
-    if (market.is_compacted()) {
-        market.redeem_compacted_internal(manager, key, quantity, ctx);
-    } else {
-        market.assert_market_oracle(market_oracle);
-        assert!(market_oracle.is_settled(), EMarketNotSettled);
-        market.redeem_settled_internal(manager, market_oracle, key, quantity, ctx);
     }
 }
 
