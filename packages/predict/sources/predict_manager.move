@@ -41,12 +41,9 @@ const MAX_CAPS: u64 = 1000;
 
 /// The key for deriving predict manager. u64 is optional for
 /// supporting multiple managers per address. Defaults to 0 in v1.
+/// Shared between sender-owned and self-owned managers — a sender picks
+/// one ownership model per index.
 public struct PredictManagerKey(address, u64) has copy, drop, store;
-
-/// Key for deriving a self-owned PredictManager. Kept separate from
-/// `PredictManagerKey` so a single sender can create one of each kind without
-/// derived-object key collisions.
-public struct SelfOwnedPredictManagerKey(address, u64) has copy, drop, store;
 
 /// Witness used to prove that calls into `balance_manager::new_with_custom_owner_caps_v2`
 /// originate from this package. The deepbook `Registry` admin must authorize
@@ -355,7 +352,7 @@ public(package) fun new_self_owned(
     deepbook_registry: &DeepbookRegistry,
     ctx: &mut TxContext,
 ): (PredictManager, PredictDepositCap, PredictWithdrawCap, PredictTradeCap) {
-    let id = derived_object::claim(registry_uid, SelfOwnedPredictManagerKey(ctx.sender(), 0));
+    let id = derived_object::claim(registry_uid, PredictManagerKey(ctx.sender(), 0));
     let owner_address = id.to_inner().to_address();
 
     let (
