@@ -9,12 +9,13 @@
 /// owning modules.
 module deepbook_predict::registry;
 
+use deepbook::registry::Registry as DeepbookRegistry;
 use deepbook_predict::{
     builder_code,
     expiry_market,
     market_oracle::{Self, MarketOracle, MarketOracleCap},
     plp::PoolVault,
-    predict_manager::{Self, PredictManager},
+    predict_manager::{Self, PredictDepositCap, PredictManager, PredictTradeCap, PredictWithdrawCap},
     protocol_config::{Self, ProtocolConfig},
     pyth_source::{Self, PythSource}
 };
@@ -300,7 +301,8 @@ public fun create_builder_code(registry: &mut Registry, index: u64, ctx: &mut Tx
     builder_code::create_and_share(&mut registry.id, index, ctx)
 }
 
-/// Create a derived PredictManager for the caller.
+/// Create a derived PredictManager for the caller. Sender becomes the
+/// BalanceManager owner and can act directly on the manager.
 public fun create_manager(registry: &mut Registry, ctx: &mut TxContext): PredictManager {
     predict_manager::new(&mut registry.id, ctx)
 }
@@ -308,6 +310,20 @@ public fun create_manager(registry: &mut Registry, ctx: &mut TxContext): Predict
 /// Create and share a derived PredictManager for the caller.
 entry fun create_and_share_manager(registry: &mut Registry, ctx: &mut TxContext) {
     create_manager(registry, ctx).share();
+}
+
+/// Create a self-owned PredictManager and all of its caps. The manager has
+/// no human owner; the returned caps are the only authority that will ever
+/// exist on it. Intended for contracts that don't want a deployer-key trust
+/// anchor (e.g. vaults that install caps into their own object).
+///
+/// Requires `PredictApp` to be authorized on the deepbook `Registry`.
+public fun create_self_owned_manager(
+    registry: &mut Registry,
+    deepbook_registry: &DeepbookRegistry,
+    ctx: &mut TxContext,
+): (PredictManager, PredictDepositCap, PredictWithdrawCap, PredictTradeCap) {
+    predict_manager::new_self_owned(&mut registry.id, deepbook_registry, ctx)
 }
 
 /// Return the shared PythSource ID for a feed, if it has been created.

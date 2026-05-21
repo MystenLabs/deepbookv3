@@ -17,7 +17,10 @@
 /// cap holder's call.
 module deepbook_predict::predict_manager;
 
-use deepbook::balance_manager::{Self, BalanceManager, DepositCap, WithdrawCap};
+use deepbook::{
+    balance_manager::{Self, BalanceManager, DepositCap, WithdrawCap, TradeCap as BMTradeCap},
+    registry::Registry as DeepbookRegistry
+};
 use deepbook_predict::{builder_code::{Self, BuilderCode}, math, range_key::RangeKey};
 use dusdc::dusdc::DUSDC;
 use sui::{coin::Coin, derived_object, event, table::{Self, Table}, vec_set::{Self, VecSet}};
@@ -40,6 +43,17 @@ const MAX_CAPS: u64 = 1000;
 /// supporting multiple managers per address. Defaults to 0 in v1.
 public struct PredictManagerKey(address, u64) has copy, drop, store;
 
+/// Key for deriving a self-owned PredictManager. Kept separate from
+/// `PredictManagerKey` so a single sender can create one of each kind without
+/// derived-object key collisions.
+public struct SelfOwnedPredictManagerKey(address, u64) has copy, drop, store;
+
+/// Witness used to prove that calls into `balance_manager::new_with_custom_owner_caps_v2`
+/// originate from this package. The deepbook `Registry` admin must authorize
+/// `PredictApp` once via `authorize_app<PredictApp>` before `new_self_owned`
+/// can succeed.
+public struct PredictApp has drop {}
+
 /// PredictManager stores DUSDC in a BalanceManager and tracks positions.
 public struct PredictManager has key {
     id: UID,
@@ -50,6 +64,12 @@ public struct PredictManager has key {
     /// Inner BalanceManager `WithdrawCap` used by PredictManager to debit the
     /// underlying balance without going through the BalanceManager owner check.
     withdraw_cap: WithdrawCap,
+    /// Unused TradeCap returned by `balance_manager::new_with_custom_owner_caps_v2`.
+    /// PredictManager doesn't trade on deepbook pools, so this cap is dead
+    /// weight — we stash it because BalanceManager doesn't expose a public
+    /// destroy for TradeCap. `option::none` for sender-owned managers, since
+    /// the sender-owned constructor doesn't go through `_v2`.
+    bm_trade_cap: Option<BMTradeCap>,
     /// IDs of PredictManager caps (PredictTradeCap / PredictDepositCap /
     /// PredictWithdrawCap) authorized to act on this manager. Revoking removes
     /// the ID from this set.
@@ -192,7 +212,8 @@ public fun unset_builder_code(self: &mut PredictManager, ctx: &TxContext) {
     });
 }
 
-/// Mint a `PredictTradeCap`. Only the manager owner can mint.
+/// Mint a `PredictTradeCap`. Only the manager owner can mint. Unreachable
+/// on self-owned managers; all caps for those are minted by `new_self_owned`.
 public fun mint_trade_cap(self: &mut PredictManager, ctx: &mut TxContext): PredictTradeCap {
     self.assert_owner(ctx);
     self.assert_caps_capacity();
@@ -203,7 +224,8 @@ public fun mint_trade_cap(self: &mut PredictManager, ctx: &mut TxContext): Predi
     PredictTradeCap { id, predict_manager_id: self.id() }
 }
 
-/// Mint a `PredictDepositCap`. Only the manager owner can mint.
+/// Mint a `PredictDepositCap`. Only the manager owner can mint. Unreachable
+/// on self-owned managers; all caps for those are minted by `new_self_owned`.
 public fun mint_deposit_cap(self: &mut PredictManager, ctx: &mut TxContext): PredictDepositCap {
     self.assert_owner(ctx);
     self.assert_caps_capacity();
@@ -214,7 +236,8 @@ public fun mint_deposit_cap(self: &mut PredictManager, ctx: &mut TxContext): Pre
     PredictDepositCap { id, predict_manager_id: self.id() }
 }
 
-/// Mint a `PredictWithdrawCap`. Only the manager owner can mint.
+/// Mint a `PredictWithdrawCap`. Only the manager owner can mint. Unreachable
+/// on self-owned managers; all caps for those are minted by `new_self_owned`.
 public fun mint_withdraw_cap(self: &mut PredictManager, ctx: &mut TxContext): PredictWithdrawCap {
     self.assert_owner(ctx);
     self.assert_caps_capacity();
@@ -292,7 +315,10 @@ public fun withdraw_with_cap(
 
 // === Public-Package Functions ===
 
-/// Create a derived PredictManager for the sender.
+/// Create a sender-owned PredictManager. The sender is the BalanceManager
+/// owner and can act directly on the manager without holding any cap. Use
+/// this when the manager is held by a human/EOA who is expected to be the
+/// trust anchor.
 public(package) fun new(registry_uid: &mut UID, ctx: &mut TxContext): PredictManager {
     let id = derived_object::claim(registry_uid, PredictManagerKey(ctx.sender(), 0));
     let mut balance_manager = balance_manager::new(ctx);
@@ -304,10 +330,96 @@ public(package) fun new(registry_uid: &mut UID, ctx: &mut TxContext): PredictMan
         balance_manager,
         deposit_cap,
         withdraw_cap,
+        bm_trade_cap: option::none(),
         allow_listed: vec_set::empty(),
         builder_code_id: option::none(),
         positions: table::new(ctx),
     }
+}
+
+/// Create a PredictManager that owns itself: the inner BalanceManager's
+/// owner is set to the PredictManager's own ID-as-address, which no
+/// transaction sender can ever match. The owner-direct deposit/withdraw and
+/// `mint_*_cap` paths are permanently unreachable, so caps minted here are
+/// the only authority that will ever exist on this manager.
+///
+/// Intended for contracts (vaults, custodial products) that don't want a
+/// deployer-key trust anchor. The caller receives one cap of each kind and
+/// is expected to install them inside its own contract object.
+///
+/// Requires `PredictApp` to be authorized on the deepbook `Registry` via
+/// `deepbook::registry::authorize_app<PredictApp>` — a one-time admin tx
+/// on the deepbook side.
+public(package) fun new_self_owned(
+    registry_uid: &mut UID,
+    deepbook_registry: &DeepbookRegistry,
+    ctx: &mut TxContext,
+): (PredictManager, PredictDepositCap, PredictWithdrawCap, PredictTradeCap) {
+    let id = derived_object::claim(registry_uid, SelfOwnedPredictManagerKey(ctx.sender(), 0));
+    let owner_address = id.to_inner().to_address();
+
+    let (
+        balance_manager,
+        bm_deposit_cap,
+        bm_withdraw_cap,
+        bm_trade_cap,
+    ) = balance_manager::new_with_custom_owner_caps_v2(
+        PredictApp {},
+        deepbook_registry,
+        owner_address,
+        ctx,
+    );
+
+    let mut manager = PredictManager {
+        id,
+        balance_manager,
+        deposit_cap: bm_deposit_cap,
+        withdraw_cap: bm_withdraw_cap,
+        bm_trade_cap: option::some(bm_trade_cap),
+        allow_listed: vec_set::empty(),
+        builder_code_id: option::none(),
+        positions: table::new(ctx),
+    };
+
+    let manager_id = manager.id();
+
+    let predict_trade_id = object::new(ctx);
+    let predict_trade_cap_id = predict_trade_id.to_inner();
+    manager.allow_listed.insert(predict_trade_cap_id);
+    event::emit(PredictTradeCapMinted {
+        predict_manager_id: manager_id,
+        cap_id: predict_trade_cap_id,
+    });
+    let predict_trade_cap = PredictTradeCap {
+        id: predict_trade_id,
+        predict_manager_id: manager_id,
+    };
+
+    let predict_deposit_id = object::new(ctx);
+    let predict_deposit_cap_id = predict_deposit_id.to_inner();
+    manager.allow_listed.insert(predict_deposit_cap_id);
+    event::emit(PredictDepositCapMinted {
+        predict_manager_id: manager_id,
+        cap_id: predict_deposit_cap_id,
+    });
+    let predict_deposit_cap = PredictDepositCap {
+        id: predict_deposit_id,
+        predict_manager_id: manager_id,
+    };
+
+    let predict_withdraw_id = object::new(ctx);
+    let predict_withdraw_cap_id = predict_withdraw_id.to_inner();
+    manager.allow_listed.insert(predict_withdraw_cap_id);
+    event::emit(PredictWithdrawCapMinted {
+        predict_manager_id: manager_id,
+        cap_id: predict_withdraw_cap_id,
+    });
+    let predict_withdraw_cap = PredictWithdrawCap {
+        id: predict_withdraw_id,
+        predict_manager_id: manager_id,
+    };
+
+    (manager, predict_deposit_cap, predict_withdraw_cap, predict_trade_cap)
 }
 
 /// Deposit protocol payouts without requiring any authorization. Used for
