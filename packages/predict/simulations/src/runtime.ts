@@ -138,6 +138,8 @@ export function createExpiryMarketTx(params: {
   expiry: bigint;
   minStrike: bigint;
   tickSize: bigint;
+  mintCutoffMs?: bigint;
+  redeemCutoffMs?: bigint;
 }): Transaction {
   const tx = new Transaction();
   tx.moveCall({
@@ -151,6 +153,8 @@ export function createExpiryMarketTx(params: {
       tx.pure.u64(params.expiry),
       tx.pure.u64(params.minStrike),
       tx.pure.u64(params.tickSize),
+      tx.pure.u64(params.mintCutoffMs ?? 0n),
+      tx.pure.u64(params.redeemCutoffMs ?? 0n),
       tx.object(CLOCK_ID),
     ],
   });

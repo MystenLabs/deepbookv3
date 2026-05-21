@@ -215,20 +215,11 @@ public fun set_market_oracle_template_settlement_freshness_ms(
     config.set_market_oracle_template_settlement_freshness_ms(value);
 }
 
-/// Set the mint cutoff template used by future market oracles.
-///
-/// Zero disables the cutoff for new oracles. Existing oracles keep their
-/// snapshotted value until updated via the cap path or
-/// `set_market_oracle_mint_cutoff_ms` admin override.
-public fun set_market_oracle_template_mint_cutoff_ms(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.set_market_oracle_template_mint_cutoff_ms(value);
-}
-
 /// Admin override of an existing market oracle's mint cutoff.
+///
+/// The market creator picks the initial value at `create_expiry_market`; the
+/// cap holder tunes via `market_oracle::set_mint_cutoff_ms`; this admin path
+/// exists for governance or incident response.
 public fun set_market_oracle_mint_cutoff_ms(
     market: &mut MarketOracle,
     config: &ProtocolConfig,
@@ -236,15 +227,6 @@ public fun set_market_oracle_mint_cutoff_ms(
     value: u64,
 ) {
     market.force_set_mint_cutoff_ms(config, value);
-}
-
-/// Set the live-redeem cutoff template used by future market oracles.
-public fun set_market_oracle_template_redeem_cutoff_ms(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.set_market_oracle_template_redeem_cutoff_ms(value);
 }
 
 /// Admin override of an existing market oracle's live-redeem cutoff.
@@ -430,6 +412,8 @@ public fun create_expiry_market(
     expiry: u64,
     min_strike: u64,
     tick_size: u64,
+    mint_cutoff_ms: u64,
+    redeem_cutoff_ms: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (ID, ID) {
@@ -449,6 +433,8 @@ public fun create_expiry_market(
         cap,
         expiry,
         allowed_versions,
+        mint_cutoff_ms,
+        redeem_cutoff_ms,
         ctx,
     );
     let expiry_market_id = expiry_market::create_and_share(

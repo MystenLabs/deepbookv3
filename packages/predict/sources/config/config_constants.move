@@ -291,9 +291,8 @@ public(package) fun assert_max_basis(value: u64) {
     assert!(value >= min_max_basis!() && value <= max_max_basis!(), EInvalidMaxBasis);
 }
 
-/// Default 0 disables the cutoff; max is one day to keep an upper bound on
-/// how aggressively mints can be choked off ahead of expiry.
-public(package) macro fun default_mint_cutoff_ms(): u64 { 0 }
+/// Per-oracle mint cutoff window before expiry. Zero disables; one-day cap
+/// keeps mint choke-off from being permanent.
 public(package) macro fun min_mint_cutoff_ms(): u64 { 0 }
 public(package) macro fun max_mint_cutoff_ms(): u64 { 86_400_000 }
 
@@ -301,9 +300,8 @@ public(package) fun assert_mint_cutoff_ms(value: u64) {
     assert!(value >= min_mint_cutoff_ms!() && value <= max_mint_cutoff_ms!(), EInvalidMintCutoffMs);
 }
 
-/// Default 0 disables the cutoff; max is one day. Forces positions to wait
-/// for terminal settlement once the cutoff window starts.
-public(package) macro fun default_redeem_cutoff_ms(): u64 { 0 }
+/// Per-oracle live-redeem cutoff window before expiry. Zero disables;
+/// positions inside the window must wait for terminal settlement.
 public(package) macro fun min_redeem_cutoff_ms(): u64 { 0 }
 public(package) macro fun max_redeem_cutoff_ms(): u64 { 86_400_000 }
 

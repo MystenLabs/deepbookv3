@@ -200,24 +200,6 @@ public(package) fun set_market_oracle_template_settlement_freshness_ms(
     config.market_oracle_config.set_settlement_freshness_ms(value);
 }
 
-/// Set the mint cutoff template for future market oracles.
-public(package) fun set_market_oracle_template_mint_cutoff_ms(
-    config: &mut ProtocolConfig,
-    value: u64,
-) {
-    config.assert_not_valuation_in_progress();
-    config.market_oracle_config.set_mint_cutoff_ms(value);
-}
-
-/// Set the redeem cutoff template for future market oracles.
-public(package) fun set_market_oracle_template_redeem_cutoff_ms(
-    config: &mut ProtocolConfig,
-    value: u64,
-) {
-    config.assert_not_valuation_in_progress();
-    config.market_oracle_config.set_redeem_cutoff_ms(value);
-}
-
 /// Set basis guard bounds template for future market oracles.
 public(package) fun set_market_oracle_template_basis_bounds(
     config: &mut ProtocolConfig,

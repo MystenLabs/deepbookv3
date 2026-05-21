@@ -516,8 +516,12 @@ public(package) fun create_and_share(
     cap: &MarketOracleCap,
     expiry: u64,
     allowed_versions: VecSet<u64>,
+    mint_cutoff_ms: u64,
+    redeem_cutoff_ms: u64,
     ctx: &mut TxContext,
 ): ID {
+    config_constants::assert_mint_cutoff_ms(mint_cutoff_ms);
+    config_constants::assert_redeem_cutoff_ms(redeem_cutoff_ms);
     let cap_id = cap.cap_id();
     let mut authorized_cap_ids = vec_set::empty();
     authorized_cap_ids.insert(cap_id);
@@ -545,8 +549,8 @@ public(package) fun create_and_share(
         max_basis_deviation: config.max_basis_deviation(),
         min_basis: config.min_basis(),
         max_basis: config.max_basis(),
-        mint_cutoff_ms: config.mint_cutoff_ms(),
-        redeem_cutoff_ms: config.redeem_cutoff_ms(),
+        mint_cutoff_ms,
+        redeem_cutoff_ms,
         settlement_price: option::none(),
         settlement_source: 0,
         settlement_source_timestamp_ms: 0,
@@ -879,8 +883,8 @@ public(package) fun create_test_market_oracle(
         max_basis_deviation: config_constants::default_max_basis_deviation!(),
         min_basis: config_constants::default_min_basis!(),
         max_basis: config_constants::default_max_basis!(),
-        mint_cutoff_ms: config_constants::default_mint_cutoff_ms!(),
-        redeem_cutoff_ms: config_constants::default_redeem_cutoff_ms!(),
+        mint_cutoff_ms: 0,
+        redeem_cutoff_ms: 0,
         settlement_price: option::none(),
         settlement_source: 0,
         settlement_source_timestamp_ms: 0,
