@@ -24,7 +24,6 @@ use sui::clock::Clock;
 
 const EMarketCompacted: u64 = 0;
 const ECompactedLiabilityUnderflow: u64 = 2;
-const ECompactedRebateLiabilityUnderflow: u64 = 3;
 const EInvalidStrikeGrid: u64 = 4;
 
 /// Exposure lifecycle state for one oracle grid.
@@ -49,7 +48,6 @@ public struct LiveExposure has store {
 public struct CompactedExposure has copy, drop, store {
     settlement: u64,
     payout_liability: u64,
-    rebate_liability: u64,
 }
 
 /// Quote a live encoded order from current oracle state.
@@ -79,16 +77,16 @@ public(package) fun is_compacted(exposure: &StrikeExposure): bool {
     exposure.compacted.is_some()
 }
 
-/// Evaluate live option value and conservative maximum losing fee basis from current pricing inputs.
+/// Evaluate live option value from current pricing inputs.
 public(package) fun live_values(
     exposure: &StrikeExposure,
     config: &PricingConfig,
     market: &MarketOracle,
     pyth: &PythSource,
     clock: &Clock,
-): (u64, u64) {
+): u64 {
     let (minted_min_strike, minted_max_strike) = exposure.minted_strike_range();
-    if (minted_min_strike == 0 && minted_max_strike == 0) return (0, 0);
+    if (minted_min_strike == 0 && minted_max_strike == 0) return 0;
 
     let curve = pricing::build_live_curve(
         config,
@@ -102,15 +100,12 @@ public(package) fun live_values(
         minted_max_strike,
     );
     let live = exposure.live.borrow();
-    (
-        live.nav.live_value(&curve, minted_min_strike, minted_max_strike),
-        live.payout.conservative_losing_fee_basis(),
-    )
+    live.nav.live_value(&curve, minted_min_strike, minted_max_strike)
 }
 
-/// Evaluate settled liability and exact losing fee basis.
-public(package) fun settled_values(exposure: &StrikeExposure, settlement: u64): (u64, u64) {
-    exposure.live.borrow().payout.settled_values(settlement)
+/// Evaluate settled liability at a terminal settlement price.
+public(package) fun settled_liability(exposure: &StrikeExposure, settlement: u64): u64 {
+    exposure.live.borrow().payout.settled_liability(settlement)
 }
 
 /// Return the terminal fixed-point price for an encoded order at settlement.
@@ -123,10 +118,10 @@ public(package) fun settled_order_price(
     if (settlement > lower && settlement <= higher) constants::float_scaling!() else 0
 }
 
-/// Return compacted settlement, payout liability, and rebate liability.
-public(package) fun compacted_values(exposure: &StrikeExposure): (u64, u64, u64) {
+/// Return compacted settlement and payout liability.
+public(package) fun compacted_values(exposure: &StrikeExposure): (u64, u64) {
     let compacted = exposure.compacted.borrow();
-    (compacted.settlement, compacted.payout_liability, compacted.rebate_liability)
+    (compacted.settlement, compacted.payout_liability)
 }
 
 /// Create a strike exposure book for the oracle grid.
@@ -179,11 +174,10 @@ public(package) fun insert_order(
     exposure: &mut StrikeExposure,
     order_id: u256,
     qty: u64,
-    fee_basis: u64,
 ) {
     let (lower, higher) = exposure.order_strikes(order_id);
     let live = exposure.live.borrow_mut();
-    live.payout.insert_range(lower, higher, qty, fee_basis);
+    live.payout.insert_range(lower, higher, qty);
     live.nav.insert_range(lower, higher, qty);
     track_minted_boundaries(live, lower, higher);
 }
@@ -193,11 +187,10 @@ public(package) fun remove_order(
     exposure: &mut StrikeExposure,
     order_id: u256,
     qty: u64,
-    fee_basis: u64,
 ) {
     let (lower, higher) = exposure.order_strikes(order_id);
     let live = exposure.live.borrow_mut();
-    live.payout.remove_range(lower, higher, qty, fee_basis);
+    live.payout.remove_range(lower, higher, qty);
     live.nav.remove_range(lower, higher, qty);
 }
 
@@ -205,21 +198,14 @@ public(package) fun remove_order(
 public(package) fun decrease_compacted_liabilities(
     exposure: &mut StrikeExposure,
     payout_amount: u64,
-    rebate_amount: u64,
 ) {
     let compacted = exposure.compacted.borrow_mut();
     assert!(compacted.payout_liability >= payout_amount, ECompactedLiabilityUnderflow);
-    assert!(compacted.rebate_liability >= rebate_amount, ECompactedRebateLiabilityUnderflow);
     compacted.payout_liability = compacted.payout_liability - payout_amount;
-    compacted.rebate_liability = compacted.rebate_liability - rebate_amount;
 }
 
 /// Compact live indexes into settled liability state.
-public(package) fun compact(
-    exposure: &mut StrikeExposure,
-    settlement: u64,
-    rebate_liability: u64,
-): u64 {
+public(package) fun compact(exposure: &mut StrikeExposure, settlement: u64): u64 {
     assert!(!exposure.is_compacted(), EMarketCompacted);
     let live = exposure.live.extract();
     let LiveExposure {
@@ -234,7 +220,6 @@ public(package) fun compact(
         option::some(CompactedExposure {
             settlement,
             payout_liability,
-            rebate_liability,
         });
     payout_liability
 }

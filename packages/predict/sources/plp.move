@@ -203,8 +203,8 @@ public fun shrink_expiry_allocation(
 /// Compact a settled active expiry and remove it from pool valuation.
 ///
 /// The expiry keeps exactly its remaining settled redeem liability. Surplus LP
-/// cash returns to idle liquidity, while fee surplus is split into LP,
-/// protocol revenue, and insurance destinations.
+/// cash returns to idle liquidity, and compacted fee surplus is swept through
+/// the same public sweep path used by post-compaction cleanup jobs.
 public fun compact_expiry_market(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
@@ -218,11 +218,22 @@ public fun compact_expiry_market(
         vault.total_allocated_capital >= allocated_reduction,
         EInsufficientTotalAllocatedCapital,
     );
-    let (returned_cash, returned_fee_surplus) = market.compact_settled(market_oracle);
+    let returned_cash = market.compact_settled(market_oracle);
     vault.total_allocated_capital = vault.total_allocated_capital - allocated_reduction;
     vault.idle_balance.join(returned_cash);
-    vault.distribute_fee_surplus(config, returned_fee_surplus);
     vault.unregister_expiry_market(market.id());
+    vault.sweep_compacted_fee_surplus(config, market);
+}
+
+/// Sweep compacted expiry fee surplus that has been released after rebate cleanup.
+public fun sweep_compacted_fee_surplus(
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    market: &mut ExpiryMarket,
+) {
+    config.assert_not_valuation_in_progress();
+    let fee_surplus = market.sweep_compacted_fee_surplus();
+    vault.distribute_fee_surplus(config, fee_surplus);
 }
 
 /// Supply DUSDC into the pool vault against a complete full-pool valuation.
