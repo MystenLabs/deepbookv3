@@ -151,13 +151,10 @@ public fun allowed_versions(market: &MarketOracle): VecSet<u64> {
     market.allowed_versions
 }
 
-/// Permissionlessly refresh this oracle's mirrored `allowed_versions` from
-/// the live protocol config.
-public fun update_allowed_versions_permissionless(
-    market: &mut MarketOracle,
-    config: &ProtocolConfig,
-) {
-    market.allowed_versions = config.allowed_versions();
+/// Refresh this oracle's mirrored `allowed_versions`. Permissionless: callers
+/// pass `registry.allowed_versions()` as the source of truth.
+public fun update_allowed_versions(market: &mut MarketOracle, allowed_versions: VecSet<u64>) {
+    market.allowed_versions = allowed_versions;
 }
 
 /// Return the MarketOracleCap object ID.
@@ -465,6 +462,7 @@ public(package) fun create_and_share(
     config: &MarketOracleConfig,
     cap: &MarketOracleCap,
     expiry: u64,
+    allowed_versions: VecSet<u64>,
     ctx: &mut TxContext,
 ): ID {
     let cap_id = cap.cap_id();
@@ -473,7 +471,7 @@ public(package) fun create_and_share(
     let market = MarketOracle {
         id: object::new(ctx),
         authorized_cap_ids,
-        allowed_versions: vec_set::singleton(constants::current_version!()),
+        allowed_versions,
         pyth_source_id: pyth.id(),
         expiry,
         block_scholes_spot: 0,
@@ -531,11 +529,6 @@ public(package) fun assert_version_allowed(market: &MarketOracle) {
         market.allowed_versions.contains(&constants::current_version!()),
         EPackageVersionDisabled,
     );
-}
-
-/// Authoritative sync of mirrored `allowed_versions` from protocol config.
-public(package) fun update_allowed_versions(market: &mut MarketOracle, config: &ProtocolConfig) {
-    market.allowed_versions = config.allowed_versions();
 }
 
 /// Abort unless this oracle is bound to the supplied Pyth source.

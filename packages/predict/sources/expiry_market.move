@@ -21,7 +21,7 @@ use deepbook_predict::{
     strike_exposure::{Self, StrikeExposure}
 };
 use dusdc::dusdc::DUSDC;
-use sui::{balance::{Self, Balance}, clock::Clock, event, vec_set::{Self, VecSet}};
+use sui::{balance::{Self, Balance}, clock::Clock, event, vec_set::VecSet};
 
 const EWrongMarketOracle: u64 = 0;
 const EWrongPythSource: u64 = 1;
@@ -186,14 +186,10 @@ public fun allowed_versions(market: &ExpiryMarket): VecSet<u64> {
     market.allowed_versions
 }
 
-/// Permissionlessly refresh this market's mirrored `allowed_versions` from
-/// the live protocol config. Anyone can call to propagate an admin/PauseCap
-/// version change to a lagging market.
-public fun update_allowed_versions_permissionless(
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-) {
-    market.allowed_versions = config.allowed_versions();
+/// Refresh this market's mirrored `allowed_versions`. Permissionless: callers
+/// pass `registry.allowed_versions()` as the source of truth.
+public fun update_allowed_versions(market: &mut ExpiryMarket, allowed_versions: VecSet<u64>) {
+    market.allowed_versions = allowed_versions;
 }
 
 /// Construct a range key for this expiry market.
@@ -304,6 +300,7 @@ public(package) fun create_and_share(
     expiry: u64,
     min_strike: u64,
     tick_size: u64,
+    allowed_versions: VecSet<u64>,
     ctx: &mut TxContext,
 ): ID {
     assert_valid_strike_grid(min_strike, tick_size);
@@ -320,7 +317,7 @@ public(package) fun create_and_share(
         fee_balance: balance::zero(),
         strike_exposure: option::some(strike_exposure::new(ctx, tick_size, min_strike, max_strike)),
         compacted_state: option::none(),
-        allowed_versions: vec_set::singleton(constants::current_version!()),
+        allowed_versions,
         mint_paused: false,
     };
     let id = market.id();
@@ -390,12 +387,6 @@ public(package) fun set_mint_paused(market: &mut ExpiryMarket, paused: bool) {
 /// Force `mint_paused = true` (used by PauseCap path on registry; one-way).
 public(package) fun pause_mint(market: &mut ExpiryMarket) {
     market.mint_paused = true;
-}
-
-/// Authoritative sync of mirrored `allowed_versions` from protocol config.
-/// Used by both the admin and pause cap paths through registry.
-public(package) fun update_allowed_versions(market: &mut ExpiryMarket, config: &ProtocolConfig) {
-    market.allowed_versions = config.allowed_versions();
 }
 
 /// Compact settled expiry state and return surplus cash to the pool.

@@ -110,9 +110,10 @@ public fun allowed_versions(vault: &PoolVault): VecSet<u64> {
     vault.allowed_versions
 }
 
-/// Permissionlessly refresh this vault's mirrored `allowed_versions`.
-public fun update_allowed_versions_permissionless(vault: &mut PoolVault, config: &ProtocolConfig) {
-    vault.allowed_versions = config.allowed_versions();
+/// Refresh this vault's mirrored `allowed_versions`. Permissionless: callers
+/// pass `registry.allowed_versions()` as the source of truth.
+public fun update_allowed_versions(vault: &mut PoolVault, allowed_versions: VecSet<u64>) {
+    vault.allowed_versions = allowed_versions;
 }
 
 /// Return idle DUSDC held by the pool.
@@ -337,11 +338,6 @@ public(package) fun assert_version_allowed(vault: &PoolVault) {
         vault.allowed_versions.contains(&constants::current_version!()),
         EPackageVersionDisabled,
     );
-}
-
-/// Authoritative sync of mirrored `allowed_versions` from protocol config.
-public(package) fun update_allowed_versions(vault: &mut PoolVault, config: &ProtocolConfig) {
-    vault.allowed_versions = config.allowed_versions();
 }
 
 /// Create and share an empty pool vault from the PLP treasury cap.

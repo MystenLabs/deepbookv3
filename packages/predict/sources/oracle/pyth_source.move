@@ -10,7 +10,7 @@ module deepbook_predict::pyth_source;
 
 use deepbook_predict::{constants, lazer_helper, protocol_config::ProtocolConfig};
 use pyth_lazer::update::Update as LazerUpdate;
-use sui::{clock::Clock, event, vec_set::{Self, VecSet}};
+use sui::{clock::Clock, event, vec_set::VecSet};
 
 const EStaleSourceUpdate: u64 = 0;
 const EZeroSpot: u64 = 1;
@@ -101,12 +101,10 @@ public fun allowed_versions(source: &PythSource): VecSet<u64> {
     source.allowed_versions
 }
 
-/// Permissionlessly refresh this source's mirrored `allowed_versions`.
-public fun update_allowed_versions_permissionless(
-    source: &mut PythSource,
-    config: &ProtocolConfig,
-) {
-    source.allowed_versions = config.allowed_versions();
+/// Refresh this source's mirrored `allowed_versions`. Permissionless: callers
+/// pass `registry.allowed_versions()` as the source of truth.
+public fun update_allowed_versions(source: &mut PythSource, allowed_versions: VecSet<u64>) {
+    source.allowed_versions = allowed_versions;
 }
 
 // === Public-Package Functions ===
@@ -117,14 +115,18 @@ public(package) fun freshness_timestamp_ms(source: &PythSource): u64 {
 }
 
 /// Create and share a Pyth source bound to a Lazer feed id.
-public(package) fun create_and_share(feed_id: u32, ctx: &mut TxContext): ID {
+public(package) fun create_and_share(
+    feed_id: u32,
+    allowed_versions: VecSet<u64>,
+    ctx: &mut TxContext,
+): ID {
     let source = PythSource {
         id: object::new(ctx),
         feed_id,
         spot: 0,
         source_timestamp_ms: 0,
         update_timestamp_ms: 0,
-        allowed_versions: vec_set::singleton(constants::current_version!()),
+        allowed_versions,
     };
     let id = source.id();
     transfer::share_object(source);
@@ -137,11 +139,6 @@ public(package) fun assert_version_allowed(source: &PythSource) {
         source.allowed_versions.contains(&constants::current_version!()),
         EPackageVersionDisabled,
     );
-}
-
-/// Authoritative sync of mirrored `allowed_versions` from protocol config.
-public(package) fun update_allowed_versions(source: &mut PythSource, config: &ProtocolConfig) {
-    source.allowed_versions = config.allowed_versions();
 }
 
 fun us_to_ms_ceil(timestamp_us: u64): u64 {

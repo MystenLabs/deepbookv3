@@ -125,12 +125,7 @@ export function createPythSourceTx(feedId: number): Transaction {
   const tx = new Transaction();
   tx.moveCall({
     target: target("registry", "create_pyth_source"),
-    arguments: [
-      tx.object(REGISTRY_ID),
-      tx.object(PROTOCOL_CONFIG_ID),
-      tx.object(ADMIN_CAP_ID),
-      tx.pure.u32(feedId),
-    ],
+    arguments: [tx.object(REGISTRY_ID), tx.object(ADMIN_CAP_ID), tx.pure.u32(feedId)],
   });
   return tx;
 }

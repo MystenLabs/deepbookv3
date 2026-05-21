@@ -9,21 +9,15 @@
 module deepbook_predict::protocol_config;
 
 use deepbook_predict::{
-    constants,
     fee_config::{Self, FeeConfig},
     market_oracle_config::{Self, MarketOracleConfig},
     pricing_config::{Self, PricingConfig},
     risk_config::{Self, RiskConfig}
 };
-use sui::vec_set::{Self, VecSet};
 
 const ETradingPaused: u64 = 0;
 const EValuationInProgress: u64 = 1;
 const EValuationNotInProgress: u64 = 2;
-const EPackageVersionDisabled: u64 = 3;
-const EVersionAlreadyEnabled: u64 = 4;
-const EVersionNotEnabled: u64 = 5;
-const ECannotDisableLastVersion: u64 = 6;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -36,10 +30,6 @@ public struct ProtocolConfig has key {
     trading_paused: bool,
     /// Transaction-local lock held while a full-pool valuation is assembled.
     valuation_in_progress: bool,
-    /// Package versions currently permitted to mutate protocol state. Per-pool
-    /// objects mirror this set; admin and pause cap holders update via the
-    /// registry, while permissionless syncers refresh the mirror from here.
-    allowed_versions: VecSet<u64>,
 }
 
 // === Public Functions ===
@@ -52,15 +42,6 @@ public fun id(config: &ProtocolConfig): ID {
 /// Return whether trading is currently paused.
 public fun trading_paused(config: &ProtocolConfig): bool {
     config.trading_paused
-}
-
-/// Return the set of package versions currently permitted to mutate state.
-///
-/// Read accessor used by per-pool sync helpers (`update_*_allowed_versions`)
-/// and external monitoring. Bypasses the version gate so it stays callable
-/// while the package is paused.
-public fun allowed_versions(config: &ProtocolConfig): VecSet<u64> {
-    config.allowed_versions
 }
 
 // === Public-Package Functions ===
@@ -83,24 +64,12 @@ public(package) fun market_oracle_config(config: &ProtocolConfig): &MarketOracle
 
 /// Abort unless trading mutations are currently allowed.
 ///
-/// Intentionally omits the global version gate: per-pool mutating flows that
-/// call this assert their own mirrored `allowed_versions` set, which lets each
-/// pool lag behind a global version change until a permissionless sync.
+/// Intentionally omits the package-version gate: per-pool mutating flows that
+/// call this assert their own mirrored `allowed_versions`, sourced from the
+/// registry.
 public(package) fun assert_trading_allowed(config: &ProtocolConfig) {
     config.assert_not_trading_paused();
     config.assert_not_valuation_in_progress();
-}
-
-/// Abort if the running package version is not in `allowed_versions`.
-///
-/// Used as the global kill switch on top-level admin entry points that mutate
-/// `ProtocolConfig`. Per-pool mutating functions check their own mirrored set
-/// instead, so each pool can advance independently after a permissionless sync.
-public(package) fun assert_version_allowed(config: &ProtocolConfig) {
-    assert!(
-        config.allowed_versions.contains(&constants::current_version!()),
-        EPackageVersionDisabled,
-    );
 }
 
 /// Abort unless a valuation lock is currently active.
@@ -118,12 +87,6 @@ fun assert_not_trading_paused(config: &ProtocolConfig) {
     assert!(!config.trading_paused, ETradingPaused);
 }
 
-/// Bundled gate used by every admin setter on `ProtocolConfig`.
-fun assert_admin_setter_allowed(config: &ProtocolConfig) {
-    config.assert_version_allowed();
-    config.assert_not_valuation_in_progress();
-}
-
 /// Create and share the protocol-wide configuration object.
 public(package) fun create_and_share(ctx: &mut TxContext): ID {
     let config = ProtocolConfig {
@@ -134,69 +97,49 @@ public(package) fun create_and_share(ctx: &mut TxContext): ID {
         market_oracle_config: market_oracle_config::new(),
         trading_paused: false,
         valuation_in_progress: false,
-        allowed_versions: vec_set::singleton(constants::current_version!()),
     };
     let id = config.id();
     transfer::share_object(config);
     id
 }
 
-/// Add a package version to the allowed set.
-///
-/// Bypasses the version gate so admin can re-enable a paused version even when
-/// the active version is disabled.
-public(package) fun enable_version(config: &mut ProtocolConfig, version: u64) {
-    assert!(!config.allowed_versions.contains(&version), EVersionAlreadyEnabled);
-    config.allowed_versions.insert(version);
-}
-
-/// Remove a package version from the allowed set.
-///
-/// Bypasses the version gate so admin can revoke a version even when the
-/// active version is already disabled. Refuses to leave the set empty.
-public(package) fun disable_version(config: &mut ProtocolConfig, version: u64) {
-    assert!(config.allowed_versions.contains(&version), EVersionNotEnabled);
-    assert!(config.allowed_versions.length() > 1, ECannotDisableLastVersion);
-    config.allowed_versions.remove(&version);
-}
-
 public(package) fun set_base_fee(config: &mut ProtocolConfig, fee: u64) {
-    config.assert_admin_setter_allowed();
+    config.assert_not_valuation_in_progress();
     config.pricing_config.set_base_fee(fee);
 }
 
 public(package) fun set_min_fee(config: &mut ProtocolConfig, fee: u64) {
-    config.assert_admin_setter_allowed();
+    config.assert_not_valuation_in_progress();
     config.pricing_config.set_min_fee(fee);
 }
 
 public(package) fun set_utilization_multiplier(config: &mut ProtocolConfig, multiplier: u64) {
-    config.assert_admin_setter_allowed();
+    config.assert_not_valuation_in_progress();
     config.pricing_config.set_utilization_multiplier(multiplier);
 }
 
 public(package) fun set_min_ask_price(config: &mut ProtocolConfig, value: u64) {
-    config.assert_admin_setter_allowed();
+    config.assert_not_valuation_in_progress();
     config.pricing_config.set_min_ask_price(value);
 }
 
 public(package) fun set_max_ask_price(config: &mut ProtocolConfig, value: u64) {
-    config.assert_admin_setter_allowed();
+    config.assert_not_valuation_in_progress();
     config.pricing_config.set_max_ask_price(value);
 }
 
 public(package) fun set_pyth_spot_freshness_ms(config: &mut ProtocolConfig, value: u64) {
-    config.assert_admin_setter_allowed();
+    config.assert_not_valuation_in_progress();
     config.pricing_config.set_pyth_spot_freshness_ms(value);
 }
 
 public(package) fun set_block_scholes_prices_freshness_ms(config: &mut ProtocolConfig, value: u64) {
-    config.assert_admin_setter_allowed();
+    config.assert_not_valuation_in_progress();
     config.pricing_config.set_block_scholes_prices_freshness_ms(value);
 }
 
 public(package) fun set_block_scholes_svi_freshness_ms(config: &mut ProtocolConfig, value: u64) {
-    config.assert_admin_setter_allowed();
+    config.assert_not_valuation_in_progress();
     config.pricing_config.set_block_scholes_svi_freshness_ms(value);
 }
 
@@ -206,7 +149,7 @@ public(package) fun set_fee_shares(
     protocol_fee_share: u64,
     insurance_fee_share: u64,
 ) {
-    config.assert_admin_setter_allowed();
+    config.assert_not_valuation_in_progress();
     config.fee_config.set_fee_shares(lp_fee_share, protocol_fee_share, insurance_fee_share);
 }
 
@@ -214,37 +157,37 @@ public(package) fun set_template_settlement_loss_rebate_rate(
     config: &mut ProtocolConfig,
     value: u64,
 ) {
-    config.assert_admin_setter_allowed();
+    config.assert_not_valuation_in_progress();
     config.fee_config.set_settlement_loss_rebate_rate(value);
 }
 
 public(package) fun set_max_total_exposure_pct(config: &mut ProtocolConfig, pct: u64) {
-    config.assert_admin_setter_allowed();
+    config.assert_not_valuation_in_progress();
     config.risk_config.set_max_total_exposure_pct(pct);
 }
 
 public(package) fun set_expiry_allocation(config: &mut ProtocolConfig, allocation: u64) {
-    config.assert_admin_setter_allowed();
+    config.assert_not_valuation_in_progress();
     config.risk_config.set_expiry_allocation(allocation);
 }
 
 public(package) fun set_grow_utilization_threshold(config: &mut ProtocolConfig, threshold: u64) {
-    config.assert_admin_setter_allowed();
+    config.assert_not_valuation_in_progress();
     config.risk_config.set_grow_utilization_threshold(threshold);
 }
 
 public(package) fun set_shrink_utilization_threshold(config: &mut ProtocolConfig, threshold: u64) {
-    config.assert_admin_setter_allowed();
+    config.assert_not_valuation_in_progress();
     config.risk_config.set_shrink_utilization_threshold(threshold);
 }
 
 public(package) fun set_grow_factor(config: &mut ProtocolConfig, factor: u64) {
-    config.assert_admin_setter_allowed();
+    config.assert_not_valuation_in_progress();
     config.risk_config.set_grow_factor(factor);
 }
 
 public(package) fun set_shrink_factor(config: &mut ProtocolConfig, factor: u64) {
-    config.assert_admin_setter_allowed();
+    config.assert_not_valuation_in_progress();
     config.risk_config.set_shrink_factor(factor);
 }
 
@@ -253,7 +196,7 @@ public(package) fun set_market_oracle_template_settlement_freshness_ms(
     config: &mut ProtocolConfig,
     value: u64,
 ) {
-    config.assert_admin_setter_allowed();
+    config.assert_not_valuation_in_progress();
     config.market_oracle_config.set_settlement_freshness_ms(value);
 }
 
@@ -265,7 +208,7 @@ public(package) fun set_market_oracle_template_basis_bounds(
     min_basis: u64,
     max_basis: u64,
 ) {
-    config.assert_admin_setter_allowed();
+    config.assert_not_valuation_in_progress();
     config
         .market_oracle_config
         .set_basis_bounds(
@@ -277,7 +220,7 @@ public(package) fun set_market_oracle_template_basis_bounds(
 }
 
 public(package) fun set_trading_paused(config: &mut ProtocolConfig, paused: bool) {
-    config.assert_admin_setter_allowed();
+    config.assert_not_valuation_in_progress();
     config.trading_paused = paused;
 }
 
@@ -312,7 +255,6 @@ public fun new_for_testing(ctx: &mut TxContext): ProtocolConfig {
         market_oracle_config: market_oracle_config::new(),
         trading_paused: false,
         valuation_in_progress: false,
-        allowed_versions: vec_set::singleton(constants::current_version!()),
     }
 }
 
@@ -326,7 +268,6 @@ public fun destroy_for_testing(config: ProtocolConfig) {
         market_oracle_config,
         trading_paused: _,
         valuation_in_progress: _,
-        allowed_versions: _,
     } = config;
     id.delete();
     pricing_config.destroy_for_testing();

@@ -9,15 +9,9 @@
 module deepbook_predict::predict_manager;
 
 use deepbook::balance_manager::{Self, BalanceManager, DepositCap};
-use deepbook_predict::{
-    builder_code::{Self, BuilderCode},
-    constants,
-    math,
-    protocol_config::ProtocolConfig,
-    range_key::RangeKey
-};
+use deepbook_predict::{builder_code::{Self, BuilderCode}, math, range_key::RangeKey};
 use dusdc::dusdc::DUSDC;
-use sui::{coin::Coin, derived_object, event, table::{Self, Table}, vec_set::{Self, VecSet}};
+use sui::{coin::Coin, derived_object, event, table::{Self, Table}, vec_set::VecSet};
 
 const EInsufficientPosition: u64 = 0;
 const ENotOwner: u64 = 1;
@@ -83,12 +77,10 @@ public fun allowed_versions(self: &PredictManager): VecSet<u64> {
     self.allowed_versions
 }
 
-/// Permissionlessly refresh this manager's mirrored `allowed_versions`.
-public fun update_allowed_versions_permissionless(
-    self: &mut PredictManager,
-    config: &ProtocolConfig,
-) {
-    self.allowed_versions = config.allowed_versions();
+/// Refresh this manager's mirrored `allowed_versions`. Permissionless: callers
+/// pass `registry.allowed_versions()` as the source of truth.
+public fun update_allowed_versions(self: &mut PredictManager, allowed_versions: VecSet<u64>) {
+    self.allowed_versions = allowed_versions;
 }
 
 /// Return the BalanceManager owner for this PredictManager.
@@ -156,7 +148,11 @@ public fun unset_builder_code(self: &mut PredictManager, ctx: &TxContext) {
 // === Public-Package Functions ===
 
 /// Create a derived PredictManager for the sender.
-public(package) fun new(registry_uid: &mut UID, ctx: &mut TxContext): PredictManager {
+public(package) fun new(
+    registry_uid: &mut UID,
+    allowed_versions: VecSet<u64>,
+    ctx: &mut TxContext,
+): PredictManager {
     let id = derived_object::claim(registry_uid, PredictManagerKey(ctx.sender(), 0));
     let mut balance_manager = balance_manager::new(ctx);
     let deposit_cap = balance_manager.mint_deposit_cap(ctx);
@@ -167,14 +163,14 @@ public(package) fun new(registry_uid: &mut UID, ctx: &mut TxContext): PredictMan
         deposit_cap,
         builder_code_id: option::none(),
         positions: table::new(ctx),
-        allowed_versions: vec_set::singleton(constants::current_version!()),
+        allowed_versions,
     }
 }
 
 /// Abort if the running package version is not allowed for this manager.
 public(package) fun assert_version_allowed(self: &PredictManager) {
     assert!(
-        self.allowed_versions.contains(&constants::current_version!()),
+        self.allowed_versions.contains(&deepbook_predict::constants::current_version!()),
         EPackageVersionDisabled,
     );
 }

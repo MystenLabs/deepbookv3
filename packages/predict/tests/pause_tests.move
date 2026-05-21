@@ -16,72 +16,55 @@ const SVI_TIMESTAMP_MS: u64 = 1_000;
 #[test]
 fun default_allowed_versions_contains_current() {
     let ctx = &mut tx_context::dummy();
-    let config = protocol_config::new_for_testing(ctx);
-    let allowed = config.allowed_versions();
+    let (registry, admin_cap) = registry::new_for_testing(ctx);
+    let allowed = registry.allowed_versions();
     let current = constants::current_version!();
     assert_eq!(allowed.length(), 1);
     assert!(allowed.contains(&current));
-    destroy(config);
+    registry::destroy_registry_for_testing(registry);
+    destroy(admin_cap);
 }
 
 #[test]
 fun admin_can_enable_then_disable_a_version() {
     let ctx = &mut tx_context::dummy();
-    let mut config = protocol_config::new_for_testing(ctx);
-    let admin_cap = registry::create_admin_cap_for_testing(ctx);
+    let (mut registry, admin_cap) = registry::new_for_testing(ctx);
 
     let next = NEXT_VERSION;
-    registry::enable_version(&mut config, &admin_cap, next);
-    assert!(config.allowed_versions().contains(&next));
+    registry::enable_version(&mut registry, &admin_cap, next);
+    assert!(registry.allowed_versions().contains(&next));
 
-    registry::disable_version(&mut config, &admin_cap, next);
-    assert!(!config.allowed_versions().contains(&next));
+    registry::disable_version(&mut registry, &admin_cap, next);
+    assert!(!registry.allowed_versions().contains(&next));
 
-    destroy(config);
+    registry::destroy_registry_for_testing(registry);
     destroy(admin_cap);
 }
 
-#[test, expected_failure(abort_code = protocol_config::ECannotDisableLastVersion)]
+#[test, expected_failure(abort_code = registry::ECannotDisableLastVersion)]
 fun cannot_disable_last_allowed_version() {
     let ctx = &mut tx_context::dummy();
-    let mut config = protocol_config::new_for_testing(ctx);
-    let admin_cap = registry::create_admin_cap_for_testing(ctx);
+    let (mut registry, admin_cap) = registry::new_for_testing(ctx);
 
-    registry::disable_version(&mut config, &admin_cap, constants::current_version!());
+    registry::disable_version(&mut registry, &admin_cap, constants::current_version!());
     abort 999
 }
 
-#[test, expected_failure(abort_code = protocol_config::EVersionAlreadyEnabled)]
+#[test, expected_failure(abort_code = registry::EVersionAlreadyEnabled)]
 fun enable_already_enabled_version_aborts() {
     let ctx = &mut tx_context::dummy();
-    let mut config = protocol_config::new_for_testing(ctx);
-    let admin_cap = registry::create_admin_cap_for_testing(ctx);
+    let (mut registry, admin_cap) = registry::new_for_testing(ctx);
 
-    registry::enable_version(&mut config, &admin_cap, constants::current_version!());
+    registry::enable_version(&mut registry, &admin_cap, constants::current_version!());
     abort 999
 }
 
-#[test, expected_failure(abort_code = protocol_config::EVersionNotEnabled)]
+#[test, expected_failure(abort_code = registry::EVersionNotEnabled)]
 fun disable_not_enabled_version_aborts() {
     let ctx = &mut tx_context::dummy();
-    let mut config = protocol_config::new_for_testing(ctx);
-    let admin_cap = registry::create_admin_cap_for_testing(ctx);
+    let (mut registry, admin_cap) = registry::new_for_testing(ctx);
 
-    registry::disable_version(&mut config, &admin_cap, NEXT_VERSION);
-    abort 999
-}
-
-#[test, expected_failure(abort_code = protocol_config::EPackageVersionDisabled)]
-fun disabled_version_blocks_admin_setter() {
-    let ctx = &mut tx_context::dummy();
-    let mut config = protocol_config::new_for_testing(ctx);
-    let admin_cap = registry::create_admin_cap_for_testing(ctx);
-
-    // Add NEXT_VERSION so we can disable current_version!() without leaving an empty set.
-    registry::enable_version(&mut config, &admin_cap, NEXT_VERSION);
-    registry::disable_version(&mut config, &admin_cap, constants::current_version!());
-
-    registry::set_base_fee(&mut config, &admin_cap, 1);
+    registry::disable_version(&mut registry, &admin_cap, NEXT_VERSION);
     abort 999
 }
 
@@ -89,18 +72,16 @@ fun disabled_version_blocks_admin_setter() {
 fun pause_cap_can_disable_version() {
     let ctx = &mut tx_context::dummy();
     let (mut registry, admin_cap) = registry::new_for_testing(ctx);
-    let mut config = protocol_config::new_for_testing(ctx);
     let current = constants::current_version!();
 
-    registry::enable_version(&mut config, &admin_cap, NEXT_VERSION);
+    registry::enable_version(&mut registry, &admin_cap, NEXT_VERSION);
     let pause_cap = registry::mint_pause_cap(&mut registry, &admin_cap, ctx);
 
-    registry::disable_version_pause_cap(&registry, &mut config, current, &pause_cap);
-    assert!(!config.allowed_versions().contains(&current));
+    registry::disable_version_pause_cap(&mut registry, current, &pause_cap);
+    assert!(!registry.allowed_versions().contains(&current));
 
     registry::destroy_pause_cap(pause_cap);
     registry::destroy_registry_for_testing(registry);
-    destroy(config);
     destroy(admin_cap);
 }
 
@@ -125,36 +106,30 @@ fun pause_cap_pause_trading_is_one_way() {
 fun revoked_pause_cap_cannot_act() {
     let ctx = &mut tx_context::dummy();
     let (mut registry, admin_cap) = registry::new_for_testing(ctx);
-    let mut config = protocol_config::new_for_testing(ctx);
-    registry::enable_version(&mut config, &admin_cap, NEXT_VERSION);
+    registry::enable_version(&mut registry, &admin_cap, NEXT_VERSION);
     let pause_cap = registry::mint_pause_cap(&mut registry, &admin_cap, ctx);
     let pause_cap_id = object::id(&pause_cap);
 
     registry::revoke_pause_cap(&mut registry, &admin_cap, pause_cap_id);
-    registry::disable_version_pause_cap(
-        &registry,
-        &mut config,
-        NEXT_VERSION,
-        &pause_cap,
-    );
+    registry::disable_version_pause_cap(&mut registry, NEXT_VERSION, &pause_cap);
     abort 999
 }
 
 #[test, expected_failure(abort_code = market_oracle::EPackageVersionDisabled)]
 fun synced_market_oracle_blocks_disabled_version() {
     let ctx = &mut tx_context::dummy();
-    let mut config = protocol_config::new_for_testing(ctx);
-    let admin_cap = registry::create_admin_cap_for_testing(ctx);
+    let (mut registry, admin_cap) = registry::new_for_testing(ctx);
+    let config = protocol_config::new_for_testing(ctx);
     let cap = registry::create_market_oracle_cap(&admin_cap, ctx);
     let mut market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
     let mut clock = clock::create_for_testing(ctx);
     clock.set_for_testing(NOW_MS);
 
-    // Disable current_version, then sync the market to propagate the change.
+    // Disable current_version on the registry, then sync the market.
     let current = constants::current_version!();
-    registry::enable_version(&mut config, &admin_cap, NEXT_VERSION);
-    registry::disable_version(&mut config, &admin_cap, current);
-    market.update_allowed_versions_permissionless(&config);
+    registry::enable_version(&mut registry, &admin_cap, NEXT_VERSION);
+    registry::disable_version(&mut registry, &admin_cap, current);
+    market.update_allowed_versions(registry.allowed_versions());
 
     market.update_svi(
         &config,
