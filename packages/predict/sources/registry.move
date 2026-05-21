@@ -238,6 +238,25 @@ public fun set_market_oracle_mint_cutoff_ms(
     market.force_set_mint_cutoff_ms(config, value);
 }
 
+/// Set the live-redeem cutoff template used by future market oracles.
+public fun set_market_oracle_template_redeem_cutoff_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.set_market_oracle_template_redeem_cutoff_ms(value);
+}
+
+/// Admin override of an existing market oracle's live-redeem cutoff.
+public fun set_market_oracle_redeem_cutoff_ms(
+    market: &mut MarketOracle,
+    config: &ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    market.force_set_redeem_cutoff_ms(config, value);
+}
+
 /// Set basis guard bounds template used by future market oracles.
 public fun set_market_oracle_template_basis_bounds(
     config: &mut ProtocolConfig,

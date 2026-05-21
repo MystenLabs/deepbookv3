@@ -32,6 +32,7 @@ const EInvalidGrowFactor: u64 = 20;
 const EInvalidShrinkFactor: u64 = 21;
 const EInvalidSettlementLossRebateRate: u64 = 22;
 const EInvalidMintCutoffMs: u64 = 23;
+const EInvalidRedeemCutoffMs: u64 = 24;
 
 // === Pool Risk ===
 
@@ -298,4 +299,17 @@ public(package) macro fun max_mint_cutoff_ms(): u64 { 86_400_000 }
 
 public(package) fun assert_mint_cutoff_ms(value: u64) {
     assert!(value >= min_mint_cutoff_ms!() && value <= max_mint_cutoff_ms!(), EInvalidMintCutoffMs);
+}
+
+/// Default 0 disables the cutoff; max is one day. Forces positions to wait
+/// for terminal settlement once the cutoff window starts.
+public(package) macro fun default_redeem_cutoff_ms(): u64 { 0 }
+public(package) macro fun min_redeem_cutoff_ms(): u64 { 0 }
+public(package) macro fun max_redeem_cutoff_ms(): u64 { 86_400_000 }
+
+public(package) fun assert_redeem_cutoff_ms(value: u64) {
+    assert!(
+        value >= min_redeem_cutoff_ms!() && value <= max_redeem_cutoff_ms!(),
+        EInvalidRedeemCutoffMs,
+    );
 }

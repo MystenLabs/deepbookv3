@@ -273,6 +273,7 @@ public fun redeem(
         if (market_oracle.is_settled()) {
             market.redeem_settled_internal(manager, market_oracle, key, quantity, ctx);
         } else {
+            market_oracle.assert_redeem_allowed_for_cutoff(clock);
             market.redeem_live_internal(
                 config,
                 manager,

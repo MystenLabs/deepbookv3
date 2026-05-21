@@ -25,6 +25,10 @@ public struct MarketOracleConfig has store {
     max_basis: u64,
     /// Minimum time remaining before expiry for new mints. Zero disables the gate.
     mint_cutoff_ms: u64,
+    /// Minimum time remaining before expiry for redeems on a live (unsettled)
+    /// market. Zero disables the gate; positions inside the window must wait
+    /// for terminal settlement.
+    redeem_cutoff_ms: u64,
 }
 
 // === Public-Package Functions ===
@@ -53,6 +57,10 @@ public(package) fun mint_cutoff_ms(config: &MarketOracleConfig): u64 {
     config.mint_cutoff_ms
 }
 
+public(package) fun redeem_cutoff_ms(config: &MarketOracleConfig): u64 {
+    config.redeem_cutoff_ms
+}
+
 public(package) fun new(): MarketOracleConfig {
     MarketOracleConfig {
         settlement_freshness_ms: config_constants::default_settlement_freshness_ms!(),
@@ -61,6 +69,7 @@ public(package) fun new(): MarketOracleConfig {
         min_basis: config_constants::default_min_basis!(),
         max_basis: config_constants::default_max_basis!(),
         mint_cutoff_ms: config_constants::default_mint_cutoff_ms!(),
+        redeem_cutoff_ms: config_constants::default_redeem_cutoff_ms!(),
     }
 }
 
@@ -74,6 +83,12 @@ public(package) fun set_settlement_freshness_ms(config: &mut MarketOracleConfig,
 public(package) fun set_mint_cutoff_ms(config: &mut MarketOracleConfig, value: u64) {
     config_constants::assert_mint_cutoff_ms(value);
     config.mint_cutoff_ms = value;
+}
+
+/// Set redeem cutoff threshold for future market oracles. Zero disables the gate.
+public(package) fun set_redeem_cutoff_ms(config: &mut MarketOracleConfig, value: u64) {
+    config_constants::assert_redeem_cutoff_ms(value);
+    config.redeem_cutoff_ms = value;
 }
 
 /// Set basis guard bounds for future market oracles.
@@ -117,5 +132,6 @@ public fun destroy_for_testing(config: MarketOracleConfig) {
         min_basis: _,
         max_basis: _,
         mint_cutoff_ms: _,
+        redeem_cutoff_ms: _,
     } = config;
 }

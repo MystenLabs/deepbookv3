@@ -84,6 +84,78 @@ fun unregistered_cap_cannot_set_mint_cutoff() {
     abort 999
 }
 
+// === Redeem Cutoff ===
+
+#[test]
+fun default_redeem_cutoff_is_zero() {
+    let ctx = &mut tx_context::dummy();
+    let (market, config, cap, admin_cap, clock) = setup(ctx);
+    assert_eq!(market.redeem_cutoff_ms(), 0);
+    market.assert_redeem_allowed_for_cutoff(&clock);
+    cleanup(market, config, cap, admin_cap, clock);
+}
+
+#[test]
+fun cap_can_set_redeem_cutoff() {
+    let ctx = &mut tx_context::dummy();
+    let (mut market, config, cap, admin_cap, clock) = setup(ctx);
+    market.set_redeem_cutoff_ms(&config, &cap, CUTOFF_MS);
+    assert_eq!(market.redeem_cutoff_ms(), CUTOFF_MS);
+    cleanup(market, config, cap, admin_cap, clock);
+}
+
+#[test]
+fun admin_can_override_redeem_cutoff() {
+    let ctx = &mut tx_context::dummy();
+    let (mut market, config, cap, admin_cap, clock) = setup(ctx);
+    registry::set_market_oracle_redeem_cutoff_ms(&mut market, &config, &admin_cap, CUTOFF_MS);
+    assert_eq!(market.redeem_cutoff_ms(), CUTOFF_MS);
+    cleanup(market, config, cap, admin_cap, clock);
+}
+
+#[test]
+fun redeem_assert_passes_outside_cutoff_window() {
+    let ctx = &mut tx_context::dummy();
+    let (mut market, config, cap, admin_cap, mut clock) = setup(ctx);
+    clock.set_for_testing(FRESH_NOW_MS); // 90s remaining > 30s cutoff
+    market.set_redeem_cutoff_ms(&config, &cap, CUTOFF_MS);
+    market.assert_redeem_allowed_for_cutoff(&clock);
+    cleanup(market, config, cap, admin_cap, clock);
+}
+
+#[test, expected_failure(abort_code = market_oracle::ERedeemCutoffReached)]
+fun redeem_assert_aborts_inside_cutoff_window() {
+    let ctx = &mut tx_context::dummy();
+    let (mut market, config, cap, _admin_cap, mut clock) = setup(ctx);
+    clock.set_for_testing(NEAR_EXPIRY_NOW_MS); // 5s remaining < 30s cutoff
+    market.set_redeem_cutoff_ms(&config, &cap, CUTOFF_MS);
+    market.assert_redeem_allowed_for_cutoff(&clock);
+    abort 999
+}
+
+#[test]
+fun mint_and_redeem_cutoffs_are_independent() {
+    let ctx = &mut tx_context::dummy();
+    let (mut market, config, cap, admin_cap, mut clock) = setup(ctx);
+    // mint cutoff 30s, redeem cutoff 2s, clock at 5s remaining: mint blocked, redeem allowed
+    clock.set_for_testing(NEAR_EXPIRY_NOW_MS);
+    market.set_mint_cutoff_ms(&config, &cap, CUTOFF_MS);
+    market.set_redeem_cutoff_ms(&config, &cap, 2_000);
+    market.assert_redeem_allowed_for_cutoff(&clock);
+    assert_eq!(market.mint_cutoff_ms(), CUTOFF_MS);
+    assert_eq!(market.redeem_cutoff_ms(), 2_000);
+    cleanup(market, config, cap, admin_cap, clock);
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidRedeemCutoffMs)]
+fun redeem_cap_setter_rejects_value_above_bound() {
+    let ctx = &mut tx_context::dummy();
+    let (mut market, config, cap, _admin_cap, _clock) = setup(ctx);
+    let too_high = config_constants::max_redeem_cutoff_ms!() + 1;
+    market.set_redeem_cutoff_ms(&config, &cap, too_high);
+    abort 999
+}
+
 fun setup(
     ctx: &mut TxContext,
 ): (MarketOracle, ProtocolConfig, MarketOracleCap, AdminCap, clock::Clock) {
