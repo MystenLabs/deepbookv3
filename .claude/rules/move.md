@@ -98,6 +98,8 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 
 - Avoid deprecated Sui framework functions. Use the current recommended API (e.g., `coin_registry::new_currency_with_otw` instead of `coin::create_currency`). If a deprecated function must be used, add a comment explaining why the replacement doesn't work for this case.
 
+- When constructing an object struct, the `UID` field must come *directly* from `object::new(ctx)`, `derived_object::claim(...)`, or `test_scenario::new_object(...)`. You cannot factor UID creation into a helper that returns `UID` — the bytecode verifier rejects it as `Sui E01001: invalid object construction / Non fresh UID from this position`. Inline `let id = object::new(ctx);` in every constructor and keep shared bookkeeping (capacity asserts, allow-list inserts) in helpers that take `&mut Self` and return `()`.
+
 ## Tool Calling Instructions
 
 - `sui move build` to build the package, must be run in a directory with Move.toml in it

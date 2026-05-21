@@ -8,20 +8,16 @@
 /// RangeKey.
 ///
 /// Authorization mirrors BalanceManager: the manager owner can act directly,
-/// or grant `TradeCap`, `DepositCap`, and `WithdrawCap` to other addresses.
-/// `TradeProof` is used by predict modules to validate the caller against the
-/// manager when moving funds during mint/redeem. The inner BalanceManager
-/// `DepositCap` and `WithdrawCap` are held by PredictManager itself and never
-/// exposed — all custody operations route through them so the inner
-/// BalanceManager owner check never fires from a cap holder's call.
+/// or grant `PredictTradeCap`, `PredictDepositCap`, and `PredictWithdrawCap`
+/// to other addresses. `TradeProof` is used by predict modules to validate
+/// the caller against the manager when moving funds during mint/redeem. The
+/// inner BalanceManager `DepositCap` and `WithdrawCap` are held by
+/// PredictManager itself and never exposed — all custody operations route
+/// through them so the inner BalanceManager owner check never fires from a
+/// cap holder's call.
 module deepbook_predict::predict_manager;
 
-use deepbook::balance_manager::{
-    Self,
-    BalanceManager,
-    DepositCap as BMDepositCap,
-    WithdrawCap as BMWithdrawCap
-};
+use deepbook::balance_manager::{Self, BalanceManager, DepositCap, WithdrawCap};
 use deepbook_predict::{builder_code::{Self, BuilderCode}, math, range_key::RangeKey};
 use dusdc::dusdc::DUSDC;
 use sui::{coin::Coin, derived_object, event, table::{Self, Table}, vec_set::{Self, VecSet}};
@@ -50,12 +46,13 @@ public struct PredictManager has key {
     balance_manager: BalanceManager,
     /// Inner BalanceManager `DepositCap` used by PredictManager to credit the
     /// underlying balance without going through the BalanceManager owner check.
-    deposit_cap: BMDepositCap,
+    deposit_cap: DepositCap,
     /// Inner BalanceManager `WithdrawCap` used by PredictManager to debit the
     /// underlying balance without going through the BalanceManager owner check.
-    withdraw_cap: BMWithdrawCap,
-    /// IDs of PredictManager caps (TradeCap/DepositCap/WithdrawCap) authorized
-    /// to act on this manager. Revoking removes the ID from this set.
+    withdraw_cap: WithdrawCap,
+    /// IDs of PredictManager caps (PredictTradeCap / PredictDepositCap /
+    /// PredictWithdrawCap) authorized to act on this manager. Revoking removes
+    /// the ID from this set.
     allow_listed: VecSet<ID>,
     builder_code_id: Option<ID>,
     /// RangeKey -> position quantity and raw rebate fee basis.
@@ -68,29 +65,31 @@ public struct Position has store {
     rebate_fee_basis: u64,
 }
 
-/// Owners of a `TradeCap` can generate a `TradeProof` to mint/redeem
-/// positions on this manager. Risk of equivocation since `TradeCap` is an
-/// owned object — high-frequency callers should trade as the manager owner.
-public struct TradeCap has key, store {
+/// Owners of a `PredictTradeCap` can generate a `TradeProof` to mint/redeem
+/// positions on this manager. Risk of equivocation since `PredictTradeCap` is
+/// an owned object — high-frequency callers should trade as the manager owner.
+public struct PredictTradeCap has key, store {
     id: UID,
     predict_manager_id: ID,
 }
 
-/// `DepositCap` is used to deposit funds into a PredictManager by a non-owner.
-public struct DepositCap has key, store {
+/// `PredictDepositCap` is used to deposit funds into a PredictManager by a
+/// non-owner.
+public struct PredictDepositCap has key, store {
     id: UID,
     predict_manager_id: ID,
 }
 
-/// `WithdrawCap` is used to withdraw funds from a PredictManager by a non-owner.
-public struct WithdrawCap has key, store {
+/// `PredictWithdrawCap` is used to withdraw funds from a PredictManager by a
+/// non-owner.
+public struct PredictWithdrawCap has key, store {
     id: UID,
     predict_manager_id: ID,
 }
 
-/// Manager owner and `TradeCap` holders can generate a `TradeProof`. Predict
-/// modules consume the proof to authorize the trade and to route deposit /
-/// withdraw through the manager's inner BalanceManager caps.
+/// Manager owner and `PredictTradeCap` holders can generate a `TradeProof`.
+/// Predict modules consume the proof to authorize the trade and to route
+/// deposit / withdraw through the manager's inner BalanceManager caps.
 public struct TradeProof has drop {
     predict_manager_id: ID,
     trader: address,
@@ -175,36 +174,36 @@ public fun unset_builder_code(self: &mut PredictManager, ctx: &TxContext) {
     });
 }
 
-/// Mint a `TradeCap`. Only the manager owner can mint.
-public fun mint_trade_cap(self: &mut PredictManager, ctx: &mut TxContext): TradeCap {
+/// Mint a `PredictTradeCap`. Only the manager owner can mint.
+public fun mint_trade_cap(self: &mut PredictManager, ctx: &mut TxContext): PredictTradeCap {
     self.assert_owner(ctx);
     self.assert_caps_capacity();
     let id = object::new(ctx);
     self.allow_listed.insert(id.to_inner());
-    TradeCap { id, predict_manager_id: self.id() }
+    PredictTradeCap { id, predict_manager_id: self.id() }
 }
 
-/// Mint a `DepositCap`. Only the manager owner can mint.
-public fun mint_deposit_cap(self: &mut PredictManager, ctx: &mut TxContext): DepositCap {
+/// Mint a `PredictDepositCap`. Only the manager owner can mint.
+public fun mint_deposit_cap(self: &mut PredictManager, ctx: &mut TxContext): PredictDepositCap {
     self.assert_owner(ctx);
     self.assert_caps_capacity();
     let id = object::new(ctx);
     self.allow_listed.insert(id.to_inner());
-    DepositCap { id, predict_manager_id: self.id() }
+    PredictDepositCap { id, predict_manager_id: self.id() }
 }
 
-/// Mint a `WithdrawCap`. Only the manager owner can mint.
-public fun mint_withdraw_cap(self: &mut PredictManager, ctx: &mut TxContext): WithdrawCap {
+/// Mint a `PredictWithdrawCap`. Only the manager owner can mint.
+public fun mint_withdraw_cap(self: &mut PredictManager, ctx: &mut TxContext): PredictWithdrawCap {
     self.assert_owner(ctx);
     self.assert_caps_capacity();
     let id = object::new(ctx);
     self.allow_listed.insert(id.to_inner());
-    WithdrawCap { id, predict_manager_id: self.id() }
+    PredictWithdrawCap { id, predict_manager_id: self.id() }
 }
 
 /// Revoke a previously minted cap. Only the manager owner can revoke. Works
-/// for any of `TradeCap`, `DepositCap`, or `WithdrawCap` since they all live
-/// in the same `allow_listed` set.
+/// for any of `PredictTradeCap`, `PredictDepositCap`, or `PredictWithdrawCap`
+/// since they all live in the same `allow_listed` set.
 public fun revoke_cap(self: &mut PredictManager, cap_id: &ID, ctx: &TxContext) {
     self.assert_owner(ctx);
     assert!(self.allow_listed.contains(cap_id), ECapNotInList);
@@ -217,11 +216,11 @@ public fun generate_proof_as_owner(self: &PredictManager, ctx: &TxContext): Trad
     TradeProof { predict_manager_id: self.id(), trader: ctx.sender() }
 }
 
-/// Generate a `TradeProof` using a `TradeCap`. Cap is an owned object so the
-/// holder risks equivocation when generating proofs in concurrent PTBs.
+/// Generate a `TradeProof` using a `PredictTradeCap`. Cap is an owned object
+/// so the holder risks equivocation when generating proofs in concurrent PTBs.
 public fun generate_proof_as_trader(
     self: &PredictManager,
-    trade_cap: &TradeCap,
+    trade_cap: &PredictTradeCap,
     ctx: &TxContext,
 ): TradeProof {
     self.validate_trader(trade_cap);
@@ -245,10 +244,10 @@ public fun withdraw(self: &mut PredictManager, amount: u64, ctx: &mut TxContext)
     self.balance_manager.withdraw_with_cap(&self.withdraw_cap, amount, ctx)
 }
 
-/// Deposit DUSDC using a `DepositCap`.
+/// Deposit DUSDC using a `PredictDepositCap`.
 public fun deposit_with_cap(
     self: &mut PredictManager,
-    cap: &DepositCap,
+    cap: &PredictDepositCap,
     coin: Coin<DUSDC>,
     ctx: &TxContext,
 ) {
@@ -256,10 +255,10 @@ public fun deposit_with_cap(
     self.balance_manager.deposit_with_cap(&self.deposit_cap, coin, ctx);
 }
 
-/// Withdraw DUSDC using a `WithdrawCap`.
+/// Withdraw DUSDC using a `PredictWithdrawCap`.
 public fun withdraw_with_cap(
     self: &mut PredictManager,
-    cap: &WithdrawCap,
+    cap: &PredictWithdrawCap,
     amount: u64,
     ctx: &mut TxContext,
 ): Coin<DUSDC> {
@@ -379,15 +378,15 @@ fun assert_caps_capacity(self: &PredictManager) {
     assert!(self.allow_listed.length() < MAX_CAPS, EMaxCapsReached);
 }
 
-fun validate_trader(self: &PredictManager, trade_cap: &TradeCap) {
+fun validate_trader(self: &PredictManager, trade_cap: &PredictTradeCap) {
     assert!(self.allow_listed.contains(object::borrow_id(trade_cap)), EInvalidCap);
 }
 
-fun validate_depositor(self: &PredictManager, deposit_cap: &DepositCap) {
+fun validate_depositor(self: &PredictManager, deposit_cap: &PredictDepositCap) {
     assert!(self.allow_listed.contains(object::borrow_id(deposit_cap)), EInvalidCap);
 }
 
-fun validate_withdrawer(self: &PredictManager, withdraw_cap: &WithdrawCap) {
+fun validate_withdrawer(self: &PredictManager, withdraw_cap: &PredictWithdrawCap) {
     assert!(self.allow_listed.contains(object::borrow_id(withdraw_cap)), EInvalidCap);
 }
 
