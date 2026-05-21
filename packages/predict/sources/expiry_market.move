@@ -13,7 +13,7 @@ use deepbook::math;
 use deepbook_predict::{
     constants,
     market_oracle::MarketOracle,
-    predict_manager::{PredictManager, TradeProof},
+    predict_manager::{PredictManager, PredictTradeProof},
     pricing,
     protocol_config::ProtocolConfig,
     pyth_source::PythSource,
@@ -207,7 +207,7 @@ public fun read_valuation(
 
 /// Mint a live position interval against this expiry market.
 ///
-/// Requires trading to be allowed, a `TradeProof` for the manager, a live
+/// Requires trading to be allowed, a `PredictTradeProof` for the manager, a live
 /// fresh oracle, and enough expiry allocation to back the post-mint max
 /// payout. Mint fees are paid by routing a withdraw through the manager's
 /// trade proof, so the proof must be present even for owner-initiated mints.
@@ -215,7 +215,7 @@ public fun mint(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     manager: &mut PredictManager,
-    proof: &TradeProof,
+    proof: &PredictTradeProof,
     market_oracle: &MarketOracle,
     pyth: &PythSource,
     key: RangeKey,
@@ -229,7 +229,7 @@ public fun mint(
 
 /// Redeem a live, settled, or compacted position interval.
 ///
-/// All paths require a `TradeProof` for the manager so the holder of any
+/// All paths require a `PredictTradeProof` for the manager so the holder of any
 /// `TradeCap` can redeem. Permissionless redemption of settled / compacted
 /// markets (e.g. by a keeper without a cap) is available via
 /// `redeem_permissionless`.
@@ -237,7 +237,7 @@ public fun redeem(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     manager: &mut PredictManager,
-    proof: &TradeProof,
+    proof: &PredictTradeProof,
     market_oracle: &MarketOracle,
     pyth: &PythSource,
     key: RangeKey,
@@ -270,7 +270,7 @@ public fun redeem(
 }
 
 /// Permissionless redemption for settled or compacted expiries. Aborts if the
-/// market is still live, since live redeems must produce a `TradeProof`
+/// market is still live, since live redeems must produce a `PredictTradeProof`
 /// before they can withdraw the manager's fee payment.
 public fun redeem_permissionless(
     market: &mut ExpiryMarket,
@@ -461,7 +461,7 @@ fun mint_internal(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     manager: &mut PredictManager,
-    proof: &TradeProof,
+    proof: &PredictTradeProof,
     market_oracle: &MarketOracle,
     pyth: &PythSource,
     key: RangeKey,
@@ -519,7 +519,7 @@ fun redeem_live_internal(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     manager: &mut PredictManager,
-    proof: &TradeProof,
+    proof: &PredictTradeProof,
     market_oracle: &MarketOracle,
     pyth: &PythSource,
     key: RangeKey,

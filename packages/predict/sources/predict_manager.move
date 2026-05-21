@@ -9,7 +9,7 @@
 ///
 /// Authorization mirrors BalanceManager: the manager owner can act directly,
 /// or grant `PredictTradeCap`, `PredictDepositCap`, and `PredictWithdrawCap`
-/// to other addresses. `TradeProof` is used by predict modules to validate
+/// to other addresses. `PredictTradeProof` is used by predict modules to validate
 /// the caller against the manager when moving funds during mint/redeem. The
 /// inner BalanceManager `DepositCap` and `WithdrawCap` are held by
 /// PredictManager itself and never exposed — all custody operations route
@@ -65,7 +65,7 @@ public struct Position has store {
     rebate_fee_basis: u64,
 }
 
-/// Owners of a `PredictTradeCap` can generate a `TradeProof` to mint/redeem
+/// Owners of a `PredictTradeCap` can generate a `PredictTradeProof` to mint/redeem
 /// positions on this manager. Risk of equivocation since `PredictTradeCap` is
 /// an owned object — high-frequency callers should trade as the manager owner.
 public struct PredictTradeCap has key, store {
@@ -87,10 +87,10 @@ public struct PredictWithdrawCap has key, store {
     predict_manager_id: ID,
 }
 
-/// Manager owner and `PredictTradeCap` holders can generate a `TradeProof`.
+/// Manager owner and `PredictTradeCap` holders can generate a `PredictTradeProof`.
 /// Predict modules consume the proof to authorize the trade and to route
 /// deposit / withdraw through the manager's inner BalanceManager caps.
-public struct TradeProof has drop {
+public struct PredictTradeProof has drop {
     predict_manager_id: ID,
     trader: address,
 }
@@ -210,25 +210,25 @@ public fun revoke_cap(self: &mut PredictManager, cap_id: &ID, ctx: &TxContext) {
     self.allow_listed.remove(cap_id);
 }
 
-/// Generate a `TradeProof` as the manager owner. No equivocation risk.
-public fun generate_proof_as_owner(self: &PredictManager, ctx: &TxContext): TradeProof {
+/// Generate a `PredictTradeProof` as the manager owner. No equivocation risk.
+public fun generate_proof_as_owner(self: &PredictManager, ctx: &TxContext): PredictTradeProof {
     self.assert_owner(ctx);
-    TradeProof { predict_manager_id: self.id(), trader: ctx.sender() }
+    PredictTradeProof { predict_manager_id: self.id(), trader: ctx.sender() }
 }
 
-/// Generate a `TradeProof` using a `PredictTradeCap`. Cap is an owned object
+/// Generate a `PredictTradeProof` using a `PredictTradeCap`. Cap is an owned object
 /// so the holder risks equivocation when generating proofs in concurrent PTBs.
 public fun generate_proof_as_trader(
     self: &PredictManager,
     trade_cap: &PredictTradeCap,
     ctx: &TxContext,
-): TradeProof {
+): PredictTradeProof {
     self.validate_trader(trade_cap);
-    TradeProof { predict_manager_id: self.id(), trader: ctx.sender() }
+    PredictTradeProof { predict_manager_id: self.id(), trader: ctx.sender() }
 }
 
 /// Abort unless the proof was generated for this manager.
-public fun validate_proof(self: &PredictManager, proof: &TradeProof) {
+public fun validate_proof(self: &PredictManager, proof: &PredictTradeProof) {
     assert!(self.id() == proof.predict_manager_id, EInvalidProof);
 }
 
@@ -296,10 +296,10 @@ public(package) fun deposit_permissionless(
     self.balance_manager.deposit_with_cap(&self.deposit_cap, coin, ctx);
 }
 
-/// Deposit DUSDC into the manager using a validated `TradeProof`.
+/// Deposit DUSDC into the manager using a validated `PredictTradeProof`.
 public(package) fun deposit_with_proof(
     self: &mut PredictManager,
-    proof: &TradeProof,
+    proof: &PredictTradeProof,
     coin: Coin<DUSDC>,
     ctx: &TxContext,
 ) {
@@ -307,10 +307,10 @@ public(package) fun deposit_with_proof(
     self.balance_manager.deposit_with_cap(&self.deposit_cap, coin, ctx);
 }
 
-/// Withdraw DUSDC from the manager using a validated `TradeProof`.
+/// Withdraw DUSDC from the manager using a validated `PredictTradeProof`.
 public(package) fun withdraw_with_proof(
     self: &mut PredictManager,
-    proof: &TradeProof,
+    proof: &PredictTradeProof,
     amount: u64,
     ctx: &mut TxContext,
 ): Coin<DUSDC> {
@@ -368,7 +368,7 @@ public(package) fun assert_owner(self: &PredictManager, ctx: &TxContext) {
 }
 
 /// Return the address that generated a trade proof.
-public(package) fun trader(proof: &TradeProof): address {
+public(package) fun trader(proof: &PredictTradeProof): address {
     proof.trader
 }
 
