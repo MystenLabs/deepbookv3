@@ -21,7 +21,7 @@ use deepbook::{
     balance_manager::{Self, BalanceManager, DepositCap, WithdrawCap, TradeCap as BMTradeCap},
     registry::Registry as DeepbookRegistry
 };
-use deepbook_predict::{builder_code::{Self, BuilderCode}, math, range_key::RangeKey};
+use deepbook_predict::{builder_code::{Self, BuilderCode}, constants, math, range_key::RangeKey};
 use dusdc::dusdc::DUSDC;
 use sui::{coin::Coin, derived_object, event, table::{Self, Table}, vec_set::{Self, VecSet}};
 
@@ -317,7 +317,10 @@ public fun withdraw_with_cap(
 /// this when the manager is held by a human/EOA who is expected to be the
 /// trust anchor.
 public(package) fun new(registry_uid: &mut UID, ctx: &mut TxContext): PredictManager {
-    let id = derived_object::claim(registry_uid, PredictManagerKey(ctx.sender(), 0));
+    let id = derived_object::claim(
+        registry_uid,
+        PredictManagerKey(ctx.sender(), constants::sender_owned_manager_slot!()),
+    );
     let mut balance_manager = balance_manager::new(ctx);
     let deposit_cap = balance_manager.mint_deposit_cap(ctx);
     let withdraw_cap = balance_manager.mint_withdraw_cap(ctx);
@@ -352,7 +355,10 @@ public(package) fun new_self_owned(
     deepbook_registry: &DeepbookRegistry,
     ctx: &mut TxContext,
 ): (PredictManager, PredictDepositCap, PredictWithdrawCap, PredictTradeCap) {
-    let id = derived_object::claim(registry_uid, PredictManagerKey(ctx.sender(), 1));
+    let id = derived_object::claim(
+        registry_uid,
+        PredictManagerKey(ctx.sender(), constants::self_owned_manager_slot!()),
+    );
     let owner_address = id.to_inner().to_address();
 
     let (

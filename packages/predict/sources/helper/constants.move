@@ -55,3 +55,13 @@ public macro fun neg_inf(): u64 { 0 }
 
 /// Sentinel upper strike for ranges open to positive infinity.
 public macro fun pos_inf(): u64 { std::u64::max_value!() }
+
+// === PredictManager Derivation ===
+
+/// `PredictManagerKey` u64 slot for sender-owned managers created via
+/// `predict_manager::new`.
+public macro fun sender_owned_manager_slot(): u64 { 0 }
+
+/// `PredictManagerKey` u64 slot for self-owned managers created via
+/// `predict_manager::new_self_owned`.
+public macro fun self_owned_manager_slot(): u64 { 1 }
