@@ -215,6 +215,29 @@ public fun set_market_oracle_template_settlement_freshness_ms(
     config.set_market_oracle_template_settlement_freshness_ms(value);
 }
 
+/// Set the mint cutoff template used by future market oracles.
+///
+/// Zero disables the cutoff for new oracles. Existing oracles keep their
+/// snapshotted value until updated via the cap path or
+/// `set_market_oracle_mint_cutoff_ms` admin override.
+public fun set_market_oracle_template_mint_cutoff_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.set_market_oracle_template_mint_cutoff_ms(value);
+}
+
+/// Admin override of an existing market oracle's mint cutoff.
+public fun set_market_oracle_mint_cutoff_ms(
+    market: &mut MarketOracle,
+    config: &ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    market.force_set_mint_cutoff_ms(config, value);
+}
+
 /// Set basis guard bounds template used by future market oracles.
 public fun set_market_oracle_template_basis_bounds(
     config: &mut ProtocolConfig,

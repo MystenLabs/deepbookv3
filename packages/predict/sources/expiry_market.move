@@ -244,6 +244,7 @@ public fun mint(
 ) {
     market.assert_version_allowed();
     market.assert_mint_not_paused();
+    market_oracle.assert_mint_allowed_for_cutoff(clock);
     config.assert_trading_allowed();
     market.mint_internal(config, manager, market_oracle, pyth, key, quantity, clock, ctx);
 }

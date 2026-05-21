@@ -38,6 +38,7 @@ const EPendingSettlement: u64 = 14;
 const EMarketNotSettled: u64 = 15;
 const EInvalidSettlementTimestamp: u64 = 16;
 const EPackageVersionDisabled: u64 = 17;
+const EMintCutoffReached: u64 = 18;
 
 const STATUS_ACTIVE: u8 = 1;
 const STATUS_PENDING_SETTLEMENT: u8 = 2;
@@ -76,6 +77,8 @@ public struct MarketOracle has key {
     max_basis_deviation: u64,
     min_basis: u64,
     max_basis: u64,
+    /// Minimum time remaining before expiry for new mints. Zero disables the gate.
+    mint_cutoff_ms: u64,
     /// None until terminal settlement records a source price.
     settlement_price: Option<u64>,
     /// Settlement source code; zero before settlement.
@@ -119,6 +122,7 @@ public struct MarketOracleBoundsUpdated has copy, drop, store {
     max_basis_deviation: u64,
     min_basis: u64,
     max_basis: u64,
+    mint_cutoff_ms: u64,
 }
 
 /// Emitted when the oracle records terminal settlement.
@@ -379,6 +383,28 @@ public fun update_svi(
     });
 }
 
+/// Return the per-oracle mint cutoff. Zero disables the gate.
+public fun mint_cutoff_ms(market: &MarketOracle): u64 {
+    market.mint_cutoff_ms
+}
+
+/// Set the per-oracle mint cutoff. Cap-authorized: any registered
+/// `MarketOracleCap` can tighten or loosen it. `assert_mint_cutoff_ms`
+/// enforces the upgrade-required upper bound. Zero disables the gate.
+public fun set_mint_cutoff_ms(
+    market: &mut MarketOracle,
+    config: &ProtocolConfig,
+    cap: &MarketOracleCap,
+    value: u64,
+) {
+    market.assert_version_allowed();
+    market.assert_authorized_cap(cap);
+    config.assert_not_valuation_in_progress();
+    config_constants::assert_mint_cutoff_ms(value);
+    market.mint_cutoff_ms = value;
+    market.emit_bounds_updated();
+}
+
 /// Set the settlement freshness threshold for this oracle.
 ///
 /// This is per-oracle cap-authorized config and affects this oracle directly.
@@ -492,6 +518,7 @@ public(package) fun create_and_share(
         max_basis_deviation: config.max_basis_deviation(),
         min_basis: config.min_basis(),
         max_basis: config.max_basis(),
+        mint_cutoff_ms: config.mint_cutoff_ms(),
         settlement_price: option::none(),
         settlement_source: 0,
         settlement_source_timestamp_ms: 0,
@@ -529,6 +556,29 @@ public(package) fun assert_version_allowed(market: &MarketOracle) {
         market.allowed_versions.contains(&constants::current_version!()),
         EPackageVersionDisabled,
     );
+}
+
+/// Abort if a mint right now would land inside the per-oracle cutoff window
+/// before expiry. Zero `mint_cutoff_ms` disables the gate.
+public(package) fun assert_mint_allowed_for_cutoff(market: &MarketOracle, clock: &Clock) {
+    if (market.mint_cutoff_ms == 0) return;
+    let now = clock.timestamp_ms();
+    if (market.expiry <= now) return;
+    assert!(market.expiry - now >= market.mint_cutoff_ms, EMintCutoffReached);
+}
+
+/// Admin override of the per-oracle mint cutoff, routed through registry.
+/// Skips the cap check; still enforces the upgrade-required upper bound.
+public(package) fun force_set_mint_cutoff_ms(
+    market: &mut MarketOracle,
+    config: &ProtocolConfig,
+    value: u64,
+) {
+    market.assert_version_allowed();
+    config.assert_not_valuation_in_progress();
+    config_constants::assert_mint_cutoff_ms(value);
+    market.mint_cutoff_ms = value;
+    market.emit_bounds_updated();
 }
 
 /// Abort unless this oracle is bound to the supplied Pyth source.
@@ -734,6 +784,7 @@ fun emit_bounds_updated(market: &MarketOracle) {
         max_basis_deviation: market.max_basis_deviation,
         min_basis: market.min_basis,
         max_basis: market.max_basis,
+        mint_cutoff_ms: market.mint_cutoff_ms,
     });
 }
 
@@ -776,6 +827,7 @@ public(package) fun create_test_market_oracle(
         max_basis_deviation: config_constants::default_max_basis_deviation!(),
         min_basis: config_constants::default_min_basis!(),
         max_basis: config_constants::default_max_basis!(),
+        mint_cutoff_ms: config_constants::default_mint_cutoff_ms!(),
         settlement_price: option::none(),
         settlement_source: 0,
         settlement_source_timestamp_ms: 0,
@@ -803,6 +855,7 @@ public(package) fun destroy_for_testing(market: MarketOracle) {
         max_basis_deviation: _,
         min_basis: _,
         max_basis: _,
+        mint_cutoff_ms: _,
         settlement_price: _,
         settlement_source: _,
         settlement_source_timestamp_ms: _,

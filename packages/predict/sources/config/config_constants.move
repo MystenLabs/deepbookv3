@@ -31,6 +31,7 @@ const EInvalidShrinkUtilizationThreshold: u64 = 19;
 const EInvalidGrowFactor: u64 = 20;
 const EInvalidShrinkFactor: u64 = 21;
 const EInvalidSettlementLossRebateRate: u64 = 22;
+const EInvalidMintCutoffMs: u64 = 23;
 
 // === Pool Risk ===
 
@@ -287,4 +288,14 @@ public(package) macro fun max_max_basis(): u64 { 2_000_000_000 }
 
 public(package) fun assert_max_basis(value: u64) {
     assert!(value >= min_max_basis!() && value <= max_max_basis!(), EInvalidMaxBasis);
+}
+
+/// Default 0 disables the cutoff; max is one day to keep an upper bound on
+/// how aggressively mints can be choked off ahead of expiry.
+public(package) macro fun default_mint_cutoff_ms(): u64 { 0 }
+public(package) macro fun min_mint_cutoff_ms(): u64 { 0 }
+public(package) macro fun max_mint_cutoff_ms(): u64 { 86_400_000 }
+
+public(package) fun assert_mint_cutoff_ms(value: u64) {
+    assert!(value >= min_mint_cutoff_ms!() && value <= max_mint_cutoff_ms!(), EInvalidMintCutoffMs);
 }
