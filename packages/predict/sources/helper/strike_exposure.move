@@ -152,6 +152,7 @@ public(package) fun new_order_id(
     expiry_ms: u64,
     lower: u64,
     higher: u64,
+    quantity: u64,
     leverage: u64,
     clock: &Clock,
 ): u256 {
@@ -165,6 +166,7 @@ public(package) fun new_order_id(
         min_strike_index,
         max_strike_index,
         leverage,
+        quantity,
         sequence,
     )
 }
@@ -173,8 +175,8 @@ public(package) fun new_order_id(
 public(package) fun insert_order(
     exposure: &mut StrikeExposure,
     order_id: u256,
-    qty: u64,
 ) {
+    let qty = predict_order_id::quantity(order_id);
     let (lower, higher) = exposure.order_strikes(order_id);
     let live = exposure.live.borrow_mut();
     live.payout.insert_range(lower, higher, qty);
@@ -186,8 +188,8 @@ public(package) fun insert_order(
 public(package) fun remove_order(
     exposure: &mut StrikeExposure,
     order_id: u256,
-    qty: u64,
 ) {
+    let qty = predict_order_id::quantity(order_id);
     let (lower, higher) = exposure.order_strikes(order_id);
     let live = exposure.live.borrow_mut();
     live.payout.remove_range(lower, higher, qty);

@@ -294,7 +294,6 @@ public fun redeem(
     market_oracle: &MarketOracle,
     pyth: &PythSource,
     order_id: u256,
-    quantity: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
@@ -308,11 +307,11 @@ public fun redeem(
     );
 
     if (redeem_state == REDEEM_STATE_LIQUIDATED) {
-        market.redeem_liquidated_internal(manager, order_id, quantity);
+        market.redeem_liquidated_internal(manager, order_id);
     } else if (redeem_state == REDEEM_STATE_COMPACTED) {
-        market.redeem_compacted_internal(manager, order_id, quantity, ctx);
+        market.redeem_compacted_internal(manager, order_id, ctx);
     } else if (redeem_state == REDEEM_STATE_SETTLED) {
-        market.redeem_settled_internal(manager, market_oracle, order_id, quantity, ctx);
+        market.redeem_settled_internal(manager, market_oracle, order_id, ctx);
     } else {
         market.redeem_live_internal(
             config,
@@ -320,7 +319,6 @@ public fun redeem(
             market_oracle,
             pyth,
             order_id,
-            quantity,
             clock,
             ctx,
         );
@@ -348,14 +346,13 @@ public fun close_all_and_claim_rebate(
     let mut order_ids = manager.active_order_ids(expiry_market_id);
     while (!order_ids.is_empty()) {
         let order_id = order_ids.pop_back();
-        let quantity = manager.position(expiry_market_id, order_id);
         assert!(predict_order_id::expiry_ms(order_id) == market.expiry, EWrongOrderExpiry);
         if (market.leverage_book.is_liquidated(order_id)) {
-            market.redeem_liquidated_internal(manager, order_id, quantity);
+            market.redeem_liquidated_internal(manager, order_id);
         } else if (market.is_compacted()) {
-            market.redeem_compacted_internal(manager, order_id, quantity, ctx);
+            market.redeem_compacted_internal(manager, order_id, ctx);
         } else {
-            market.redeem_settled_internal(manager, market_oracle, order_id, quantity, ctx);
+            market.redeem_settled_internal(manager, market_oracle, order_id, ctx);
         };
     };
     order_ids.destroy_empty();
@@ -621,7 +618,7 @@ fun active_debt_terms_at_ms(market: &ExpiryMarket, now_ms: u64): (u64, u64) {
     let mut order_ids = market.leverage_book.active_order_ids();
     while (!order_ids.is_empty()) {
         let order_id = order_ids.pop_back();
-        let (_, borrowed_principal) = market.leverage_book.order_terms(order_id);
+        let borrowed_principal = market.leverage_book.borrowed_principal(order_id);
         let (debt_amount, borrow_fee_amount) = leverage_config::debt_terms(
             market.max_expiry_borrow_fee,
             market.expiry,
@@ -636,15 +633,10 @@ fun active_debt_terms_at_ms(market: &ExpiryMarket, now_ms: u64): (u64, u64) {
     (total_debt, total_fee)
 }
 
-fun order_debt_terms(
-    market: &ExpiryMarket,
-    order_id: u256,
-    quantity: u64,
-    now_ms: u64,
-): (u64, u64) {
+fun order_debt_terms(market: &ExpiryMarket, order_id: u256, now_ms: u64): (u64, u64) {
     if (!predict_order_id::is_leveraged_order(order_id)) return (0, 0);
 
-    let borrowed_principal = market.leverage_book.borrowed_principal_to_remove(order_id, quantity);
+    let borrowed_principal = market.leverage_book.borrowed_principal(order_id);
     let (debt_amount, borrow_fee_amount) = leverage_config::debt_terms(
         market.max_expiry_borrow_fee,
         market.expiry,
@@ -693,15 +685,14 @@ fun insert_live_order_state(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
     order_id: u256,
-    quantity: u64,
     borrowed_principal: u64,
 ) {
-    market.strike_exposure.insert_order(order_id, quantity);
+    market.strike_exposure.insert_order(order_id);
     if (predict_order_id::is_leveraged_order(order_id)) {
-        market.leverage_book.insert_order(order_id, quantity, borrowed_principal);
+        market.leverage_book.insert_order(order_id, borrowed_principal);
     };
     assert!(market.allocated_capital >= market.max_payout(), EAllocationBelowMaxPayout);
-    manager.increase_position(market.id(), order_id, quantity);
+    manager.increase_position(market.id(), order_id);
 }
 
 fun settle_mint_payment(
@@ -767,7 +758,7 @@ fun mint_internal(
 
     let order_id = market
         .strike_exposure
-        .new_order_id(market.expiry, min_strike, max_strike, leverage, clock);
+        .new_order_id(market.expiry, min_strike, max_strike, quantity, leverage, clock);
 
     let (fair_price, price_fee_rate) = market.quote_mint_order(
         config,
@@ -785,7 +776,7 @@ fun mint_internal(
     let fee_amount = math::mul(price_fee_rate, quantity);
     let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity);
 
-    market.insert_live_order_state(manager, order_id, quantity, borrowed_principal);
+    market.insert_live_order_state(manager, order_id, borrowed_principal);
     market.settle_mint_payment(
         manager,
         builder_code_id,
@@ -805,12 +796,12 @@ fun redeem_live_internal(
     market_oracle: &MarketOracle,
     pyth: &PythSource,
     order_id: u256,
-    quantity: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
     manager.assert_owner(ctx);
     market.assert_pyth_feed(pyth);
+    let quantity = predict_order_id::quantity(order_id);
     assert_valid_quantity(quantity);
 
     let (fair_price, price_fee_rate) = market
@@ -823,11 +814,7 @@ fun redeem_live_internal(
             order_id,
         );
     let principal_amount = math::mul(fair_price, quantity);
-    let (debt_amount, borrow_fee_amount) = market.order_debt_terms(
-        order_id,
-        quantity,
-        clock.timestamp_ms(),
-    );
+    let (debt_amount, borrow_fee_amount) = market.order_debt_terms(order_id, clock.timestamp_ms());
     let redeemable_principal = principal_amount - debt_amount;
     let fee_amount = math::mul(price_fee_rate, quantity).min(redeemable_principal);
     let builder_code_id = manager.builder_code_id();
@@ -835,11 +822,11 @@ fun redeem_live_internal(
         redeemable_principal - fee_amount,
     );
 
-    manager.decrease_position(market.id(), order_id, quantity);
+    manager.remove_position(market.id(), order_id);
     if (predict_order_id::is_leveraged_order(order_id)) {
-        market.leverage_book.decrease_order(order_id, quantity);
+        market.leverage_book.remove_order(order_id);
     };
-    market.strike_exposure.remove_order(order_id, quantity);
+    market.strike_exposure.remove_order(order_id);
     market.extract_borrow_fee(borrow_fee_amount);
 
     let mut payout = market.dispense_lp_cash(redeemable_principal);
@@ -859,9 +846,9 @@ fun redeem_settled_internal(
     manager: &mut PredictManager,
     market_oracle: &MarketOracle,
     order_id: u256,
-    quantity: u64,
     ctx: &mut TxContext,
 ) {
+    let quantity = predict_order_id::quantity(order_id);
     assert_valid_quantity(quantity);
 
     let settlement = market_oracle.settlement_price();
@@ -874,18 +861,14 @@ fun redeem_settled_internal(
     };
     assert!(current_liability >= payout_amount, ESettledLiabilityUnderflow);
 
-    let (debt_amount, borrow_fee_amount) = market.order_debt_terms(
-        order_id,
-        quantity,
-        market.expiry,
-    );
+    let (debt_amount, borrow_fee_amount) = market.order_debt_terms(order_id, market.expiry);
     let net_payout_amount = payout_amount - debt_amount;
-    manager.decrease_position(market.id(), order_id, quantity);
+    manager.remove_position(market.id(), order_id);
     if (predict_order_id::is_leveraged_order(order_id)) {
-        market.leverage_book.decrease_order(order_id, quantity);
+        market.leverage_book.remove_order(order_id);
     };
 
-    market.strike_exposure.remove_order(order_id, quantity);
+    market.strike_exposure.remove_order(order_id);
     market.extract_borrow_fee(borrow_fee_amount);
     let payout = market.dispense_lp_cash(net_payout_amount);
     manager.record_cash_received_from_expiry(market.id(), payout.value());
@@ -896,21 +879,21 @@ fun redeem_compacted_internal(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
     order_id: u256,
-    quantity: u64,
     ctx: &mut TxContext,
 ) {
+    let quantity = predict_order_id::quantity(order_id);
     assert_valid_quantity(quantity);
 
     let (settlement, current_payout_liability) = market.strike_exposure.compacted_values();
     let order_price = market.strike_exposure.settled_order_price(settlement, order_id);
     let gross_payout_amount = math::mul(order_price, quantity);
-    let (debt_amount, _) = market.order_debt_terms(order_id, quantity, market.expiry);
+    let (debt_amount, _) = market.order_debt_terms(order_id, market.expiry);
     let payout_amount = gross_payout_amount - debt_amount;
     assert!(market.lp_cash_balance.value() >= current_payout_liability, EInsufficientLpCash);
 
-    manager.decrease_position(market.id(), order_id, quantity);
+    manager.remove_position(market.id(), order_id);
     if (predict_order_id::is_leveraged_order(order_id)) {
-        market.leverage_book.decrease_order(order_id, quantity);
+        market.leverage_book.remove_order(order_id);
     };
 
     market.strike_exposure.decrease_compacted_liabilities(payout_amount);
@@ -923,11 +906,11 @@ fun redeem_liquidated_internal(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
     order_id: u256,
-    quantity: u64,
 ) {
+    let quantity = predict_order_id::quantity(order_id);
     assert_valid_quantity(quantity);
-    manager.decrease_position(market.id(), order_id, quantity);
-    market.leverage_book.decrease_liquidated_order(order_id, quantity);
+    manager.remove_position(market.id(), order_id);
+    market.leverage_book.remove_liquidated_order(order_id);
 }
 
 fun liquidate_live_orders(
@@ -942,7 +925,8 @@ fun liquidate_live_orders(
     while (i < order_ids.length()) {
         let order_id = order_ids[i];
         if (market.leverage_book.is_active(order_id)) {
-            let (quantity, borrowed_principal) = market.leverage_book.order_terms(order_id);
+            let quantity = predict_order_id::quantity(order_id);
+            let borrowed_principal = market.leverage_book.borrowed_principal(order_id);
             let (debt_amount, _) = leverage_config::debt_terms(
                 market.max_expiry_borrow_fee,
                 market.expiry,
@@ -972,7 +956,8 @@ fun liquidate_settled_orders(market: &mut ExpiryMarket, settlement: u64, now_ms:
     while (i < order_ids.length()) {
         let order_id = order_ids[i];
         if (market.leverage_book.is_active(order_id)) {
-            let (quantity, borrowed_principal) = market.leverage_book.order_terms(order_id);
+            let quantity = predict_order_id::quantity(order_id);
+            let borrowed_principal = market.leverage_book.borrowed_principal(order_id);
             let (debt_amount, _) = leverage_config::debt_terms(
                 market.max_expiry_borrow_fee,
                 market.expiry,
@@ -998,8 +983,9 @@ fun liquidate_order(
     position_value: u64,
     debt_amount: u64,
 ) {
-    let (quantity, borrowed_principal) = market.leverage_book.liquidate_order(order_id);
-    market.strike_exposure.remove_order(order_id, quantity);
+    let quantity = predict_order_id::quantity(order_id);
+    let borrowed_principal = market.leverage_book.liquidate_order(order_id);
+    market.strike_exposure.remove_order(order_id);
     let principal_recovered = position_value.min(borrowed_principal);
     let borrow_fee_recovered = position_value - principal_recovered;
     market.extract_borrow_fee(borrow_fee_recovered);

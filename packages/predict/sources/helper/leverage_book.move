@@ -8,25 +8,23 @@
 /// leveraged order IDs.
 module deepbook_predict::leverage_book;
 
-use deepbook_predict::{math, predict_order_id};
+use deepbook_predict::predict_order_id;
 use sui::table::{Self, Table};
 
 const EInvalidLeveragedOrder: u64 = 0;
 const EOrderNotActive: u64 = 1;
 const ELiquidatedOrderNotFound: u64 = 2;
-const EInsufficientLiquidatedQuantity: u64 = 3;
 const EZeroQuantity: u64 = 4;
 
 /// Active and liquidated leveraged orders for one expiry market.
 public struct LeverageBook has store {
     active_order_ids: vector<u256>,
     orders: Table<u256, LeveragedOrder>,
-    liquidated_orders: Table<u256, u64>,
+    liquidated_orders: Table<u256, bool>,
 }
 
 /// Debt and cleanup terms for one active leveraged order.
 public struct LeveragedOrder has copy, drop, store {
-    quantity: u64,
     borrowed_principal: u64,
 }
 
@@ -50,20 +48,8 @@ public(package) fun is_liquidated(book: &LeverageBook, order_id: u256): bool {
     book.liquidated_orders.contains(order_id)
 }
 
-public(package) fun order_terms(book: &LeverageBook, order_id: u256): (u64, u64) {
-    let order = &book.orders[order_id];
-    (order.quantity, order.borrowed_principal)
-}
-
-public(package) fun borrowed_principal_to_remove(
-    book: &LeverageBook,
-    order_id: u256,
-    quantity: u64,
-): u64 {
-    assert_nonzero_quantity(quantity);
-    let order = &book.orders[order_id];
-    assert!(order.quantity >= quantity, EOrderNotActive);
-    proportional_remove(order.borrowed_principal, quantity, order.quantity)
+public(package) fun borrowed_principal(book: &LeverageBook, order_id: u256): u64 {
+    book.orders[order_id].borrowed_principal
 }
 
 public(package) fun new(ctx: &mut TxContext): LeverageBook {
@@ -77,10 +63,9 @@ public(package) fun new(ctx: &mut TxContext): LeverageBook {
 public(package) fun insert_order(
     book: &mut LeverageBook,
     order_id: u256,
-    quantity: u64,
     borrowed_principal: u64,
 ) {
-    assert_nonzero_quantity(quantity);
+    assert_nonzero_quantity(predict_order_id::quantity(order_id));
     assert!(predict_order_id::is_leveraged_order(order_id), EInvalidLeveragedOrder);
     book.active_order_ids.push_back(order_id);
     book
@@ -88,65 +73,29 @@ public(package) fun insert_order(
         .add(
             order_id,
             LeveragedOrder {
-                quantity,
                 borrowed_principal,
             },
         );
 }
 
-public(package) fun decrease_order(book: &mut LeverageBook, order_id: u256, quantity: u64) {
-    assert_nonzero_quantity(quantity);
-    let remove_order;
-    {
-        let order = &mut book.orders[order_id];
-        assert!(order.quantity >= quantity, EOrderNotActive);
-        let borrowed_principal_removed = proportional_remove(
-            order.borrowed_principal,
-            quantity,
-            order.quantity,
-        );
-        order.quantity = order.quantity - quantity;
-        order.borrowed_principal = order.borrowed_principal - borrowed_principal_removed;
-        remove_order = order.quantity == 0;
-    };
-    if (remove_order) {
-        let LeveragedOrder {
-            quantity: _,
-            borrowed_principal: _,
-        } = book.orders.remove(order_id);
-        book.remove_active_order_id(order_id);
-    };
+public(package) fun remove_order(book: &mut LeverageBook, order_id: u256) {
+    assert!(book.orders.contains(order_id), EOrderNotActive);
+    let LeveragedOrder { borrowed_principal: _ } = book.orders.remove(order_id);
+    book.remove_active_order_id(order_id);
 }
 
-public(package) fun liquidate_order(book: &mut LeverageBook, order_id: u256): (u64, u64) {
-    let LeveragedOrder {
-        quantity,
-        borrowed_principal,
-    } = book.orders.remove(order_id);
+public(package) fun liquidate_order(book: &mut LeverageBook, order_id: u256): u64 {
+    let LeveragedOrder { borrowed_principal } = book.orders.remove(order_id);
     book.remove_active_order_id(order_id);
     book
         .liquidated_orders
-        .add(order_id, quantity);
-    (quantity, borrowed_principal)
+        .add(order_id, true);
+    borrowed_principal
 }
 
-public(package) fun decrease_liquidated_order(
-    book: &mut LeverageBook,
-    order_id: u256,
-    quantity: u64,
-) {
-    assert_nonzero_quantity(quantity);
+public(package) fun remove_liquidated_order(book: &mut LeverageBook, order_id: u256) {
     assert!(book.liquidated_orders.contains(order_id), ELiquidatedOrderNotFound);
-    let remove_order;
-    {
-        let order = &mut book.liquidated_orders[order_id];
-        assert!(*order >= quantity, EInsufficientLiquidatedQuantity);
-        *order = *order - quantity;
-        remove_order = *order == 0;
-    };
-    if (remove_order) {
-        let _quantity = book.liquidated_orders.remove(order_id);
-    };
+    let _liquidated = book.liquidated_orders.remove(order_id);
 }
 
 // === Private Functions ===
@@ -158,11 +107,6 @@ fun remove_active_order_id(book: &mut LeverageBook, order_id: u256) {
     };
     assert!(i < book.active_order_ids.length(), EOrderNotActive);
     book.active_order_ids.swap_remove(i);
-}
-
-fun proportional_remove(amount: u64, quantity: u64, total_quantity: u64): u64 {
-    if (quantity == total_quantity) amount
-    else math::mul_div_round_up(amount, quantity, total_quantity)
 }
 
 fun assert_nonzero_quantity(quantity: u64) {

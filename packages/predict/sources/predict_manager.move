@@ -10,7 +10,7 @@
 module deepbook_predict::predict_manager;
 
 use deepbook::{balance_manager::{Self, BalanceManager, DepositCap}, math};
-use deepbook_predict::{builder_code::{Self, BuilderCode}, constants};
+use deepbook_predict::{builder_code::{Self, BuilderCode}, constants, predict_order_id};
 use dusdc::dusdc::DUSDC;
 use sui::{coin::Coin, derived_object, event, table::{Self, Table}};
 
@@ -18,6 +18,7 @@ const EInsufficientPosition: u64 = 0;
 const ENotOwner: u64 = 1;
 const EZeroQuantity: u64 = 2;
 const EOpenPositions: u64 = 3;
+const EWrongOrderQuantity: u64 = 4;
 
 /// The key for deriving predict manager. u64 is optional for
 /// supporting multiple managers per address. Defaults to 0 in v1.
@@ -29,7 +30,7 @@ public struct PredictManager has key {
     balance_manager: BalanceManager,
     deposit_cap: DepositCap,
     builder_code_id: Option<ID>,
-    /// Per-order quantity keyed by expiry market and order ID.
+    /// Active order quantity mirror keyed by expiry market and order ID.
     positions: Table<PositionKey, u64>,
     /// Active order IDs by expiry market, used for full-expiry cleanup.
     expiry_order_ids: Table<ID, vector<u256>>,
@@ -213,8 +214,8 @@ public(package) fun increase_position(
     self: &mut PredictManager,
     expiry_market_id: ID,
     order_id: u256,
-    quantity: u64,
 ) {
+    let quantity = predict_order_id::quantity(order_id);
     assert_nonzero_quantity(quantity);
     let position_key = position_key(expiry_market_id, order_id);
     self.insert_expiry_order_id(expiry_market_id, order_id);
@@ -289,31 +290,25 @@ public(package) fun claim_expiry_rebate(
     )
 }
 
-/// Remove position quantity and delete empty positions.
-public(package) fun decrease_position(
+/// Remove a full order position.
+public(package) fun remove_position(
     self: &mut PredictManager,
     expiry_market_id: ID,
     order_id: u256,
-    quantity: u64,
 ) {
     let position_key = position_key(expiry_market_id, order_id);
-    self.assert_can_decrease_position(position_key, quantity);
-    let remove_position;
-    {
-        let position = &mut self.positions[position_key];
-        *position = *position - quantity;
-        remove_position = *position == 0;
-    };
-    if (remove_position) {
-        let _quantity = self.positions.remove(position_key);
-        self.remove_expiry_order_id(expiry_market_id, order_id);
-    };
+    self.assert_can_remove_position(position_key);
+    let _quantity = self.positions.remove(position_key);
+    self.remove_expiry_order_id(expiry_market_id, order_id);
 }
 
-fun assert_can_decrease_position(self: &PredictManager, key: PositionKey, quantity: u64) {
-    assert_nonzero_quantity(quantity);
+fun assert_can_remove_position(self: &PredictManager, key: PositionKey) {
     assert!(self.positions.contains(key), EInsufficientPosition);
-    assert!(self.positions[key] >= quantity, EInsufficientPosition);
+    let position_quantity = self.positions[key];
+    assert!(
+        predict_order_id::quantity(key.order_id) == position_quantity,
+        EWrongOrderQuantity,
+    );
 }
 
 fun assert_nonzero_quantity(quantity: u64) {

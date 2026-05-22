@@ -3,10 +3,10 @@
 
 /// Packed Predict order identifiers.
 ///
-/// Order IDs encode immutable routing facts for one minted order: encoding
-/// version, expiry, insertion timestamp, strike indices, leverage code, and an
-/// expiry-local sequence. Position quantities and accounting amounts live in
-/// PredictManager position state, not in the identifier.
+/// Order IDs encode immutable routing facts for one minted order: expiry,
+/// insertion timestamp, strike indices, leverage code, immutable quantity, and
+/// an expiry-local sequence. Accounting amounts live in PredictManager position
+/// state, not in the identifier.
 module deepbook_predict::predict_order_id;
 
 use deepbook_predict::{constants, math};
@@ -15,21 +15,22 @@ const EInvalidExpiry: u64 = 0;
 const EInvalidInsertedAt: u64 = 1;
 const EInvalidStrikeIndex: u64 = 2;
 const EInvalidLeverage: u64 = 3;
-const EInvalidVersion: u64 = 4;
 const EInvalidStrikeRange: u64 = 6;
+const EInvalidQuantity: u64 = 7;
+const EInvalidSequence: u64 = 8;
 
-const ORDER_ID_VERSION: u64 = 1;
-
-const VERSION_OFFSET: u8 = 248;
-const EXPIRY_OFFSET: u8 = 200;
-const INSERTED_AT_OFFSET: u8 = 152;
-const MIN_STRIKE_INDEX_OFFSET: u8 = 128;
-const MAX_STRIKE_INDEX_OFFSET: u8 = 104;
-const LEVERAGE_OFFSET: u8 = 96;
+const EXPIRY_OFFSET: u8 = 208;
+const INSERTED_AT_OFFSET: u8 = 160;
+const MIN_STRIKE_INDEX_OFFSET: u8 = 136;
+const MAX_STRIKE_INDEX_OFFSET: u8 = 112;
+const LEVERAGE_OFFSET: u8 = 104;
+const QUANTITY_OFFSET: u8 = 32;
 
 const U8_MASK: u256 = (1u256 << 8) - 1;
 const U24_MASK: u256 = (1u256 << 24) - 1;
+const U32_MASK: u256 = (1u256 << 32) - 1;
 const U48_MASK: u256 = (1u256 << 48) - 1;
+const U64_MASK: u256 = (1u256 << 64) - 1;
 
 const LEVERAGE_ONE_X: u64 = 0;
 const LEVERAGE_ONE_AND_HALF_X: u64 = 1;
@@ -66,20 +67,22 @@ public fun leverage_three_x(): u64 {
 
 /// Return the expiry timestamp embedded in an order ID.
 public fun expiry_ms(order_id: u256): u64 {
-    assert_valid_version(order_id);
     ((order_id >> EXPIRY_OFFSET) & U48_MASK) as u64
 }
 
 /// Return the insertion timestamp embedded in an order ID.
 public fun inserted_at_ms(order_id: u256): u64 {
-    assert_valid_version(order_id);
     ((order_id >> INSERTED_AT_OFFSET) & U48_MASK) as u64
 }
 
 /// Return the leverage code embedded in an order ID.
 public fun leverage(order_id: u256): u64 {
-    assert_valid_version(order_id);
     ((order_id >> LEVERAGE_OFFSET) & U8_MASK) as u64
+}
+
+/// Return the immutable quantity embedded in an order ID.
+public fun quantity(order_id: u256): u64 {
+    ((order_id >> QUANTITY_OFFSET) & U64_MASK) as u64
 }
 
 // === Public-Package Functions ===
@@ -95,18 +98,21 @@ public(package) fun encode(
     min_strike_index: u64,
     max_strike_index: u64,
     leverage: u64,
+    quantity: u64,
     sequence: u64,
 ): u256 {
     assert!(expiry_ms <= U48_MASK as u64, EInvalidExpiry);
     assert!(inserted_at_ms <= U48_MASK as u64, EInvalidInsertedAt);
+    assert!(quantity > 0, EInvalidQuantity);
+    assert!(sequence <= U32_MASK as u64, EInvalidSequence);
     assert_valid_order_shape(min_strike_index, max_strike_index, leverage);
 
-    ((ORDER_ID_VERSION as u256) << VERSION_OFFSET)
-        | ((expiry_ms as u256) << EXPIRY_OFFSET)
+    ((expiry_ms as u256) << EXPIRY_OFFSET)
         | ((inserted_at_ms as u256) << INSERTED_AT_OFFSET)
         | ((min_strike_index as u256) << MIN_STRIKE_INDEX_OFFSET)
         | ((max_strike_index as u256) << MAX_STRIKE_INDEX_OFFSET)
         | ((leverage as u256) << LEVERAGE_OFFSET)
+        | ((quantity as u256) << QUANTITY_OFFSET)
         | (sequence as u256)
 }
 
@@ -146,17 +152,11 @@ public(package) fun equity_amount(principal_amount: u64, leverage: u64): u64 {
 
 // === Private Functions ===
 
-fun version(order_id: u256): u64 {
-    ((order_id >> VERSION_OFFSET) & U8_MASK) as u64
-}
-
 fun min_strike_index(order_id: u256): u64 {
-    assert_valid_version(order_id);
     ((order_id >> MIN_STRIKE_INDEX_OFFSET) & U24_MASK) as u64
 }
 
 fun max_strike_index(order_id: u256): u64 {
-    assert_valid_version(order_id);
     ((order_id >> MAX_STRIKE_INDEX_OFFSET) & U24_MASK) as u64
 }
 
@@ -174,10 +174,6 @@ fun decode_strike(
     let strike = grid_min + strike_index * grid_tick;
     assert!(strike <= grid_max, EInvalidStrikeIndex);
     strike
-}
-
-fun assert_valid_version(order_id: u256) {
-    assert!(version(order_id) == ORDER_ID_VERSION, EInvalidVersion);
 }
 
 fun assert_valid_leverage(leverage: u64) {
