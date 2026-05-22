@@ -103,6 +103,19 @@ public fun set_utilization_multiplier(
     config.set_utilization_multiplier(multiplier);
 }
 
+/// Set the per-asset time-to-expiry fee ramp for a Pyth source's markets.
+/// `window_ms` (0 disables) is the ms-before-expiry over which the fee ramps up;
+/// `max_multiplier` (FLOAT_SCALING, 1x disables) is the multiplier reached at
+/// expiry. Larger values suit more volatile assets.
+public fun set_pyth_source_expiry_fee_params(
+    pyth: &mut PythSource,
+    _admin_cap: &AdminCap,
+    window_ms: u64,
+    max_multiplier: u64,
+) {
+    pyth.set_expiry_fee_params(window_ms, max_multiplier);
+}
+
 /// Set the global minimum allowed mint price.
 public fun set_min_ask_price(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
     config.set_min_ask_price(value);

@@ -89,7 +89,14 @@ public(package) fun quote_live_range(
         key.lower_strike(),
         key.higher_strike(),
     );
-    (fair_price, quote_fee_rate(config, fair_price, liability, balance))
+    // `resolve_live_inputs` asserts the market is active, so `now < expiry` holds here.
+    let time_to_expiry_ms = market.expiry() - clock.timestamp_ms();
+    let fee_multiplier = expiry_fee_multiplier(
+        pyth.expiry_fee_window_ms(),
+        pyth.expiry_fee_max_multiplier(),
+        time_to_expiry_ms,
+    );
+    (fair_price, quote_fee_rate(config, fair_price, liability, balance, fee_multiplier))
 }
 
 /// Quote a live mint range and abort unless the all-in mint price is allowed.
@@ -273,10 +280,34 @@ fun compute_range_price(forward: u64, svi: &SVIParams, lower: u64, higher: u64):
     lower_up_price - higher_up_price
 }
 
-fun quote_fee_rate(config: &PricingConfig, fair_price: u64, liability: u64, balance: u64): u64 {
+fun quote_fee_rate(
+    config: &PricingConfig,
+    fair_price: u64,
+    liability: u64,
+    balance: u64,
+    fee_multiplier: u64,
+): u64 {
     let price_fee = price_fee_rate(config, fair_price);
     let utilization_fee = utilization_fee_rate(config, liability, balance);
-    price_fee + utilization_fee
+    math::mul(price_fee + utilization_fee, fee_multiplier)
+}
+
+/// Linear ramp that scales the trade fee up as expiry approaches: 1x outside the
+/// window, rising linearly to `max_multiplier` at expiry. `window_ms` and
+/// `max_multiplier` are per-asset (from PythSource); `time_to_expiry_ms` is the
+/// live remaining time (caller guarantees `now < expiry`).
+fun expiry_fee_multiplier(window_ms: u64, max_multiplier: u64, time_to_expiry_ms: u64): u64 {
+    // Outside the window (or ramp disabled, window == 0) the fee is unscaled; the
+    // early return also avoids a zero-divisor when window == 0.
+    if (time_to_expiry_ms >= window_ms) return constants::float_scaling!();
+
+    // mult = 1 + (max - 1) * (window - ttx) / window
+    let ramp = predict_math::mul_div_round_down(
+        max_multiplier - constants::float_scaling!(),
+        window_ms - time_to_expiry_ms,
+        window_ms,
+    );
+    constants::float_scaling!() + ramp
 }
 
 fun price_fee_rate(config: &PricingConfig, fair_price: u64): u64 {
@@ -409,4 +440,15 @@ fun find_gap(points: &vector<CurvePoint>, grid_tick: u64): (bool, u64) {
 /// Round a strike down to the nearest tick boundary.
 fun snap_to_tick(strike: u64, grid_min: u64, grid_tick: u64): u64 {
     grid_min + (strike - grid_min) / grid_tick * grid_tick
+}
+
+// === Test-Only Functions ===
+
+#[test_only]
+public fun expiry_fee_multiplier_for_testing(
+    window_ms: u64,
+    max_multiplier: u64,
+    time_to_expiry_ms: u64,
+): u64 {
+    expiry_fee_multiplier(window_ms, max_multiplier, time_to_expiry_ms)
 }
