@@ -43,10 +43,10 @@ public struct NavSlot has copy, drop, store {
 
 /// Create a fully preallocated NAV matrix for the oracle strike grid.
 public(package) fun new(
-    ctx: &mut TxContext,
     tick_size: u64,
     min_strike: u64,
     max_strike: u64,
+    ctx: &mut TxContext,
 ): StrikeNavMatrix {
     assert_valid_grid(tick_size, min_strike, max_strike);
 
@@ -143,11 +143,6 @@ public(package) fun live_value(
     };
 
     value
-}
-
-/// Return the strike grid this matrix was created with.
-public(package) fun strike_grid(nav: &StrikeNavMatrix): (u64, u64, u64) {
-    (nav.min_strike, nav.tick_size, nav.max_strike)
 }
 
 /// Destroy all preallocated page storage.

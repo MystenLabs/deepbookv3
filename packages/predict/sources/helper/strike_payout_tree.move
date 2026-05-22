@@ -57,10 +57,10 @@ public struct PayoutSummary has copy, drop, store {
 
 /// Create an empty sparse payout tree for the oracle strike grid.
 public(package) fun new(
-    ctx: &mut TxContext,
     tick_size: u64,
     min_strike: u64,
     max_strike: u64,
+    ctx: &mut TxContext,
 ): StrikePayoutTree {
     assert_valid_grid(tick_size, min_strike, max_strike);
 
