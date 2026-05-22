@@ -27,6 +27,11 @@ public macro fun float_scaling(): u64 { 1_000_000_000 }
 /// form into the package's 1e9-scaled `u64`.
 public macro fun float_scaling_decimals(): u64 { 9 }
 
+// === Position Sizing ===
+
+/// Minimum position quantity increment.
+public macro fun position_lot_size(): u64 { 10_000 }
+
 // === Leverage ===
 
 /// Window before expiry over which leverage borrow fees accrue.

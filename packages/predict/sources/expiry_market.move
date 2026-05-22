@@ -41,6 +41,7 @@ const EInsufficientFeeBalance: u64 = 18;
 const ECompactedRebateLiabilityUnderflow: u64 = 19;
 const EPackageVersionDisabled: u64 = 20;
 const EMintPaused: u64 = 21;
+const EInvalidQuantity: u64 = 22;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -503,7 +504,7 @@ fun mint_internal(
     pricing::assert_live_oracle_fresh(config.pricing_config(), market_oracle, clock);
     market.assert_range_key_matches(&key);
     market.assert_not_compacted();
-    assert_nonzero_quantity(quantity);
+    assert_valid_quantity(quantity);
 
     // Quote before recording exposure so the fee basis stored with the position
     // matches the exact fee charged for this mint.
@@ -559,7 +560,7 @@ fun redeem_live_internal(
     pricing::assert_live_oracle_fresh(config.pricing_config(), market_oracle, clock);
     market.assert_range_key_matches(&key);
     market.assert_not_compacted();
-    assert_nonzero_quantity(quantity);
+    assert_valid_quantity(quantity);
     let removed_fee_basis = manager.decrease_position(key, quantity);
 
     // Live redeem quotes intentionally use post-removal liability for utilization fees.
@@ -606,7 +607,7 @@ fun redeem_settled_internal(
 ) {
     market.assert_range_key_matches(&key);
     market.assert_not_compacted();
-    assert_nonzero_quantity(quantity);
+    assert_valid_quantity(quantity);
 
     let settlement = pricing::settlement_price(market_oracle);
     let payout_amount = pricing::settled_range_payout(settlement, &key, quantity);
@@ -645,7 +646,7 @@ fun redeem_compacted_internal(
 ) {
     market.assert_range_key_matches(&key);
     assert!(market.is_compacted(), EMarketNotCompacted);
-    assert_nonzero_quantity(quantity);
+    assert_valid_quantity(quantity);
 
     let (settlement, current_payout_liability, current_rebate_liability) = {
         let compacted_state = market.compacted_state.borrow();
@@ -738,8 +739,9 @@ fun assert_range_key_matches(market: &ExpiryMarket, key: &RangeKey) {
     assert!(key.oracle_id() == market.market_oracle_id, EWrongMarketOracle);
 }
 
-fun assert_nonzero_quantity(quantity: u64) {
+fun assert_valid_quantity(quantity: u64) {
     assert!(quantity > 0, EZeroQuantity);
+    assert!(quantity % constants::position_lot_size!() == 0, EInvalidQuantity);
 }
 
 fun emit_fee_accrued(

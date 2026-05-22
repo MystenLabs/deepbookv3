@@ -92,6 +92,7 @@ const SCENARIO_COLUMNS = [
 
 const DEFAULT_SCENARIO_QUANTITY_SCALE = 10_000n;
 const SCENARIO_QUANTITY_SCALE_ENV = "SIM_QUANTITY_SCALE";
+const POSITION_LOT_SIZE = 10_000n;
 
 function resolveScenarioQuantityScale(): bigint {
   const value = process.env[SCENARIO_QUANTITY_SCALE_ENV];
@@ -148,7 +149,12 @@ function normalizeMintQuantity(rawQuantity: bigint, lineNumber: number): bigint 
   if (normalized <= 0n) {
     throw new Error(`Scenario line ${lineNumber}: normalized mint quantity must be positive`);
   }
-  return normalized;
+
+  const lots = normalized / POSITION_LOT_SIZE;
+  if (lots <= 0n) {
+    throw new Error(`Scenario line ${lineNumber}: normalized mint quantity must be at least one position lot`);
+  }
+  return lots * POSITION_LOT_SIZE;
 }
 
 function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
