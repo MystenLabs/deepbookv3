@@ -26,6 +26,7 @@ const EMarketCompacted: u64 = 0;
 const EMarketNotCompacted: u64 = 1;
 const ECompactedLiabilityUnderflow: u64 = 2;
 const EInvalidStrikeGrid: u64 = 3;
+const ECompactedLiabilityMismatch: u64 = 4;
 
 /// Exposure lifecycle state for one oracle grid.
 public struct StrikeExposure has store {
@@ -224,7 +225,11 @@ public(package) fun decrease_compacted_liability(
 }
 
 /// Compact live indexes into settled liability state.
-public(package) fun compact(exposure: &mut StrikeExposure, settlement: u64): u64 {
+public(package) fun compact(
+    exposure: &mut StrikeExposure,
+    settlement: u64,
+    expected_payout_liability: u64,
+) {
     assert!(!exposure.is_compacted(), EMarketCompacted);
     let live = exposure.live.extract();
     let LiveExposure {
@@ -235,12 +240,12 @@ public(package) fun compact(exposure: &mut StrikeExposure, settlement: u64): u64
     } = live;
     nav.destroy();
     let payout_liability = payout.into_settled_liability(settlement);
+    assert!(payout_liability == expected_payout_liability, ECompactedLiabilityMismatch);
     exposure.compacted =
         option::some(CompactedExposure {
             settlement,
             payout_liability,
         });
-    payout_liability
 }
 
 fun minted_strike_range(live: &LiveExposure): (u64, u64) {

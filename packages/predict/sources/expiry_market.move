@@ -397,7 +397,7 @@ public(package) fun compact_settled(
     assert!(market.fee_balance.value() >= rebate_liability, EInsufficientFeeBalance);
     assert!(market.allocated_capital >= settled_liability, EAllocationBelowMaxPayout);
 
-    market.strike_exposure.compact(settlement);
+    market.strike_exposure.compact(settlement, settled_liability);
     let returned_cash_amount = market.lp_cash_balance.value() - settled_liability;
     let returned_cash = market.lp_cash_balance.split(returned_cash_amount);
     let returned_fee_amount = market.fee_balance.value() - rebate_liability;
