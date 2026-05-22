@@ -41,6 +41,9 @@ const ECompactedLiabilityMismatch: u64 = 17;
 const EInsufficientFeeBalance: u64 = 18;
 const EInvalidQuantity: u64 = 20;
 const EMarketNotCompacted: u64 = 21;
+const EInvalidPartialQuantity: u64 = 22;
+const EInsufficientPartialRedeemValue: u64 = 23;
+const EOrderNotLive: u64 = 24;
 
 const REDEEM_STATE_LIQUIDATED: u8 = 0;
 const REDEEM_STATE_LIVE: u8 = 1;
@@ -108,6 +111,22 @@ public struct OrderLiquidated has copy, drop, store {
     debt_amount: u64,
     borrow_fee_recovered: u64,
     position_value: u64,
+}
+
+/// Emitted when a live order is partially redeemed by replacing the remaining quantity.
+public struct OrderPartiallyRedeemed has copy, drop, store {
+    expiry_market_id: ID,
+    predict_manager_id: ID,
+    old_order_id: u256,
+    new_order_id: u256,
+    closed_quantity: u64,
+    remaining_quantity: u64,
+    net_payout_amount: u64,
+    old_debt_amount: u64,
+    old_borrow_fee_amount: u64,
+    replacement_equity_amount: u64,
+    fee_amount: u64,
+    builder_fee_amount: u64,
 }
 
 // === Public Functions ===
@@ -323,6 +342,42 @@ public fun redeem(
             ctx,
         );
     }
+}
+
+/// Partially redeem a live order by fully closing it and opening a fresh replacement.
+///
+/// The old order's full borrow debt is settled, the remaining quantity receives a
+/// fresh order ID, and only the net close value is paid into the manager.
+public fun redeem_partial(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    manager: &mut PredictManager,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    order_id: u256,
+    close_quantity: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u256 {
+    config.assert_not_valuation_in_progress();
+    let redeem_state = market.prepare_redeem_state(
+        config,
+        market_oracle,
+        pyth,
+        order_id,
+        clock,
+    );
+    assert!(redeem_state == REDEEM_STATE_LIVE, EOrderNotLive);
+    market.redeem_partial_live_internal(
+        config,
+        manager,
+        market_oracle,
+        pyth,
+        order_id,
+        close_quantity,
+        clock,
+        ctx,
+    )
 }
 
 /// Close every remaining order for this manager after settlement and claim aggregate fee rebate.
@@ -569,6 +624,11 @@ fun assert_valid_quantity(quantity: u64) {
     assert!(quantity % constants::position_lot_size!() == 0, EInvalidQuantity);
 }
 
+fun assert_valid_partial_quantity(close_quantity: u64, order_quantity: u64) {
+    assert_valid_quantity(close_quantity);
+    assert!(close_quantity < order_quantity, EInvalidPartialQuantity);
+}
+
 fun assert_cash_backing(market: &ExpiryMarket) {
     assert!(market.lp_cash_balance.value() >= market.max_payout(), EInsufficientLpCash);
 }
@@ -695,6 +755,20 @@ fun insert_live_order_state(
     manager.increase_position(market.id(), order_id);
 }
 
+fun remove_live_order_state(
+    market: &mut ExpiryMarket,
+    manager: &mut PredictManager,
+    order_id: u256,
+    borrow_fee_amount: u64,
+) {
+    manager.remove_position(market.id(), order_id);
+    if (predict_order_id::is_leveraged_order(order_id)) {
+        market.leverage_book.remove_order(order_id);
+    };
+    market.strike_exposure.remove_order(order_id);
+    market.extract_borrow_fee(borrow_fee_amount);
+}
+
 fun settle_mint_payment(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
@@ -717,6 +791,43 @@ fun settle_mint_payment(
     market.assert_cash_backing();
 }
 
+fun live_redeem_fee_terms(
+    manager: &PredictManager,
+    price_fee_rate: u64,
+    fee_quantity: u64,
+    available_amount: u64,
+): (Option<ID>, u64, u64) {
+    let fee_amount = math::mul(price_fee_rate, fee_quantity).min(available_amount);
+    let builder_code_id = manager.builder_code_id();
+    let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, fee_quantity).min(
+        available_amount - fee_amount,
+    );
+    (builder_code_id, fee_amount, builder_fee_amount)
+}
+
+fun settle_live_redeem_payout(
+    market: &mut ExpiryMarket,
+    manager: &mut PredictManager,
+    builder_code_id: Option<ID>,
+    payout_amount: u64,
+    fee_amount: u64,
+    builder_fee_amount: u64,
+    ctx: &mut TxContext,
+): u64 {
+    let mut payout = market.dispense_lp_cash(payout_amount);
+    let fee = payout.split(fee_amount);
+    let builder_fee = payout.split(builder_fee_amount);
+    market.fee_balance.join(fee);
+    send_builder_fee(builder_code_id, builder_fee);
+    market.emit_fee_accrued(fee_amount, builder_fee_amount, builder_code_id);
+    market.assert_cash_backing();
+    market.record_pool_trading_fee(manager, fee_amount);
+    let net_payout_amount = payout.value();
+    manager.record_cash_received_from_expiry(market.id(), net_payout_amount);
+    manager.deposit(payout.into_coin(ctx), ctx);
+    net_payout_amount
+}
+
 fun emit_order_minted(
     market: &ExpiryMarket,
     manager: &PredictManager,
@@ -735,6 +846,36 @@ fun emit_order_minted(
         quantity,
         leverage,
         inserted_at_ms: predict_order_id::inserted_at_ms(order_id),
+    });
+}
+
+fun emit_order_partially_redeemed(
+    market: &ExpiryMarket,
+    manager: &PredictManager,
+    old_order_id: u256,
+    new_order_id: u256,
+    closed_quantity: u64,
+    remaining_quantity: u64,
+    net_payout_amount: u64,
+    old_debt_amount: u64,
+    old_borrow_fee_amount: u64,
+    replacement_equity_amount: u64,
+    fee_amount: u64,
+    builder_fee_amount: u64,
+) {
+    event::emit(OrderPartiallyRedeemed {
+        expiry_market_id: market.id(),
+        predict_manager_id: manager.id(),
+        old_order_id,
+        new_order_id,
+        closed_quantity,
+        remaining_quantity,
+        net_payout_amount,
+        old_debt_amount,
+        old_borrow_fee_amount,
+        replacement_equity_amount,
+        fee_amount,
+        builder_fee_amount,
     });
 }
 
@@ -812,33 +953,107 @@ fun redeem_live_internal(
             pyth,
             clock,
             order_id,
-        );
+    );
     let principal_amount = math::mul(fair_price, quantity);
     let (debt_amount, borrow_fee_amount) = market.order_debt_terms(order_id, clock.timestamp_ms());
     let redeemable_principal = principal_amount - debt_amount;
-    let fee_amount = math::mul(price_fee_rate, quantity).min(redeemable_principal);
-    let builder_code_id = manager.builder_code_id();
-    let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity).min(
-        redeemable_principal - fee_amount,
+    let (builder_code_id, fee_amount, builder_fee_amount) = live_redeem_fee_terms(
+        manager,
+        price_fee_rate,
+        quantity,
+        redeemable_principal,
     );
 
-    manager.remove_position(market.id(), order_id);
-    if (predict_order_id::is_leveraged_order(order_id)) {
-        market.leverage_book.remove_order(order_id);
-    };
-    market.strike_exposure.remove_order(order_id);
-    market.extract_borrow_fee(borrow_fee_amount);
+    market.remove_live_order_state(manager, order_id, borrow_fee_amount);
+    market.settle_live_redeem_payout(
+        manager,
+        builder_code_id,
+        redeemable_principal,
+        fee_amount,
+        builder_fee_amount,
+        ctx,
+    );
+}
 
-    let mut payout = market.dispense_lp_cash(redeemable_principal);
-    let fee = payout.split(fee_amount);
-    let builder_fee = payout.split(builder_fee_amount);
-    market.fee_balance.join(fee);
-    send_builder_fee(builder_code_id, builder_fee);
-    market.emit_fee_accrued(fee_amount, builder_fee_amount, builder_code_id);
-    market.assert_cash_backing();
-    market.record_pool_trading_fee(manager, fee_amount);
-    manager.record_cash_received_from_expiry(market.id(), payout.value());
-    manager.deposit(payout.into_coin(ctx), ctx);
+fun redeem_partial_live_internal(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    manager: &mut PredictManager,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    order_id: u256,
+    close_quantity: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): u256 {
+    manager.assert_owner(ctx);
+    market.assert_pyth_feed(pyth);
+    let old_quantity = predict_order_id::quantity(order_id);
+    assert_valid_quantity(old_quantity);
+    assert_valid_partial_quantity(close_quantity, old_quantity);
+    let remaining_quantity = old_quantity - close_quantity;
+    assert_valid_quantity(remaining_quantity);
+
+    let (fair_price, price_fee_rate) = market
+        .strike_exposure
+        .quote_live_order(
+            config.pricing_config(),
+            market_oracle,
+            pyth,
+            clock,
+            order_id,
+        );
+    let old_principal_amount = math::mul(fair_price, old_quantity);
+    let (old_debt_amount, old_borrow_fee_amount) = market.order_debt_terms(
+        order_id,
+        clock.timestamp_ms(),
+    );
+    let old_equity_value = old_principal_amount - old_debt_amount;
+    let (replacement_equity_amount, replacement_borrowed_principal) = mint_principal_terms(
+        fair_price,
+        remaining_quantity,
+        predict_order_id::leverage(order_id),
+    );
+    assert!(
+        old_equity_value >= replacement_equity_amount,
+        EInsufficientPartialRedeemValue,
+    );
+    let available_payout_amount = old_equity_value - replacement_equity_amount;
+    let (builder_code_id, fee_amount, builder_fee_amount) = live_redeem_fee_terms(
+        manager,
+        price_fee_rate,
+        close_quantity,
+        available_payout_amount,
+    );
+
+    let new_order_id = market
+        .strike_exposure
+        .replacement_order_id(market.expiry, order_id, remaining_quantity, clock);
+    market.remove_live_order_state(manager, order_id, old_borrow_fee_amount);
+    market.insert_live_order_state(manager, new_order_id, replacement_borrowed_principal);
+
+    let net_payout_amount = market.settle_live_redeem_payout(
+        manager,
+        builder_code_id,
+        available_payout_amount,
+        fee_amount,
+        builder_fee_amount,
+        ctx,
+    );
+    market.emit_order_partially_redeemed(
+        manager,
+        order_id,
+        new_order_id,
+        close_quantity,
+        remaining_quantity,
+        net_payout_amount,
+        old_debt_amount,
+        old_borrow_fee_amount,
+        replacement_equity_amount,
+        fee_amount,
+        builder_fee_amount,
+    );
+    new_order_id
 }
 
 fun redeem_settled_internal(

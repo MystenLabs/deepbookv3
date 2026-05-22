@@ -171,6 +171,25 @@ public(package) fun new_order_id(
     )
 }
 
+/// Encode a fresh order ID for the same interval and leverage as an existing order.
+public(package) fun replacement_order_id(
+    exposure: &mut StrikeExposure,
+    expiry_ms: u64,
+    order_id: u256,
+    quantity: u64,
+    clock: &Clock,
+): u256 {
+    let (lower, higher) = exposure.order_strikes(order_id);
+    exposure.new_order_id(
+        expiry_ms,
+        lower,
+        higher,
+        quantity,
+        predict_order_id::leverage(order_id),
+        clock,
+    )
+}
+
 /// Insert interval quantity for an encoded order ID.
 public(package) fun insert_order(
     exposure: &mut StrikeExposure,
