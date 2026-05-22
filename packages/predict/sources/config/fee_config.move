@@ -70,15 +70,3 @@ public(package) fun set_settlement_loss_rebate_rate(config: &mut FeeConfig, valu
     config_constants::assert_settlement_loss_rebate_rate(value);
     config.settlement_loss_rebate_rate = value;
 }
-
-// === Test-Only Functions ===
-
-#[test_only]
-public fun destroy_for_testing(config: FeeConfig) {
-    let FeeConfig {
-        lp_fee_share: _,
-        protocol_fee_share: _,
-        insurance_fee_share: _,
-        settlement_loss_rebate_rate: _,
-    } = config;
-}
