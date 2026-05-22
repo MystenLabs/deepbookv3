@@ -111,9 +111,9 @@ public(package) fun set_min_fee(config: &mut ProtocolConfig, fee: u64) {
     config.pricing_config.set_min_fee(fee);
 }
 
-public(package) fun set_max_expiry_borrow_fee(config: &mut ProtocolConfig, value: u64) {
+public(package) fun set_template_max_expiry_borrow_fee(config: &mut ProtocolConfig, value: u64) {
     config.assert_not_valuation_in_progress();
-    config.leverage_config.set_max_expiry_borrow_fee(value);
+    config.leverage_config.set_template_max_expiry_borrow_fee(value);
 }
 
 public(package) fun set_min_ask_price(config: &mut ProtocolConfig, value: u64) {

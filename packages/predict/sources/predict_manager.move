@@ -6,7 +6,7 @@
 /// Users deposit DUSDC into the PredictManager. DUSDC custody is delegated to
 /// BalanceManager, while positions are tracked as individual orders keyed by
 /// expiry market and order ID. The manager also tracks per-expiry aggregate cash
-/// flows for settlement cleanup and rebate accounting.
+/// flows for settlement cleanup and expiry trading loss rebate accounting.
 module deepbook_predict::predict_manager;
 
 use deepbook::{balance_manager::{Self, BalanceManager, DepositCap}, math};
@@ -18,7 +18,6 @@ const EInsufficientPosition: u64 = 0;
 const ENotOwner: u64 = 1;
 const EZeroQuantity: u64 = 2;
 const EOpenPositions: u64 = 3;
-const EWrongOrderQuantity: u64 = 4;
 
 /// The key for deriving predict manager. u64 is optional for
 /// supporting multiple managers per address. Defaults to 0 in v1.
@@ -30,8 +29,8 @@ public struct PredictManager has key {
     balance_manager: BalanceManager,
     deposit_cap: DepositCap,
     builder_code_id: Option<ID>,
-    /// Active order quantity mirror keyed by expiry market and order ID.
-    positions: Table<PositionKey, u64>,
+    /// Active order presence keyed by expiry market and order ID.
+    positions: Table<PositionKey, bool>,
     /// Active order IDs by expiry market, used for full-expiry cleanup.
     expiry_order_ids: Table<ID, vector<u256>>,
     /// Per-expiry aggregate user trading cash flows.
@@ -77,7 +76,7 @@ public fun owner(self: &PredictManager): address {
 public fun position(self: &PredictManager, expiry_market_id: ID, order_id: u256): u64 {
     let key = position_key(expiry_market_id, order_id);
     if (self.positions.contains(key)) {
-        self.positions[key]
+        predict_order_id::quantity(order_id)
     } else {
         0
     }
@@ -110,7 +109,7 @@ public fun cash_received_from_expiry(self: &PredictManager, expiry_market_id: ID
     }
 }
 
-/// Return the current aggregate fee rebate estimate for one expiry market.
+/// Return the current aggregate expiry trading loss rebate estimate for one expiry market.
 public fun estimated_expiry_rebate(self: &PredictManager, expiry_market_id: ID): u64 {
     if (self.expiry_summaries.contains(expiry_market_id)) {
         let summary = &self.expiry_summaries[expiry_market_id];
@@ -209,17 +208,16 @@ public(package) fun deposit_permissionless(
     self.balance_manager.deposit_with_cap(&self.deposit_cap, coin, ctx);
 }
 
-/// Add position quantity for a new order.
+/// Add position presence for a new order.
 public(package) fun increase_position(
     self: &mut PredictManager,
     expiry_market_id: ID,
     order_id: u256,
 ) {
-    let quantity = predict_order_id::quantity(order_id);
-    assert_nonzero_quantity(quantity);
+    assert!(predict_order_id::quantity(order_id) > 0, EZeroQuantity);
     let position_key = position_key(expiry_market_id, order_id);
     self.insert_expiry_order_id(expiry_market_id, order_id);
-    self.positions.add(position_key, quantity);
+    self.positions.add(position_key, true);
 }
 
 public(package) fun active_order_ids(self: &PredictManager, expiry_market_id: ID): vector<u256> {
@@ -297,22 +295,9 @@ public(package) fun remove_position(
     order_id: u256,
 ) {
     let position_key = position_key(expiry_market_id, order_id);
-    self.assert_can_remove_position(position_key);
-    let _quantity = self.positions.remove(position_key);
+    assert!(self.positions.contains(position_key), EInsufficientPosition);
+    let _present = self.positions.remove(position_key);
     self.remove_expiry_order_id(expiry_market_id, order_id);
-}
-
-fun assert_can_remove_position(self: &PredictManager, key: PositionKey) {
-    assert!(self.positions.contains(key), EInsufficientPosition);
-    let position_quantity = self.positions[key];
-    assert!(
-        predict_order_id::quantity(key.order_id) == position_quantity,
-        EWrongOrderQuantity,
-    );
-}
-
-fun assert_nonzero_quantity(quantity: u64) {
-    assert!(quantity > 0, EZeroQuantity);
 }
 
 fun rebate_amount(
@@ -329,7 +314,7 @@ fun rebate_amount(
 }
 
 fun rebate_cap(trading_fees_paid: u64): u64 {
-    math::mul(trading_fees_paid, constants::settlement_loss_rebate_rate!())
+    math::mul(trading_fees_paid, constants::expiry_trading_loss_rebate_rate!())
 }
 
 fun ensure_expiry_summary(self: &mut PredictManager, expiry_market_id: ID) {

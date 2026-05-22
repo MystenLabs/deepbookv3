@@ -66,13 +66,13 @@ public fun set_min_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: 
     config.set_min_fee(fee);
 }
 
-/// Set the maximum borrow-index increase charged over an expiry.
-public fun set_max_expiry_borrow_fee(
+/// Set the maximum borrow-index increase snapshotted by future expiry markets.
+public fun set_template_max_expiry_borrow_fee(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     value: u64,
 ) {
-    config.set_max_expiry_borrow_fee(value);
+    config.set_template_max_expiry_borrow_fee(value);
 }
 
 /// Set the global minimum allowed mint price.

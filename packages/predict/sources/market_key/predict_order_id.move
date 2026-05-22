@@ -3,12 +3,12 @@
 
 /// Packed Predict order identifiers.
 ///
-/// Order IDs encode immutable routing facts for one minted order: expiry,
-/// insertion timestamp, strike indices, leverage code, immutable quantity, and
-/// an expiry-local sequence. Accounting amounts live in PredictManager position
-/// state, not in the identifier.
+/// Order IDs encode immutable terms for one minted order: expiry, insertion
+/// timestamp, strike indices, leverage code, minted price, immutable quantity
+/// lots, and an expiry-local sequence.
 module deepbook_predict::predict_order_id;
 
+use deepbook::math as deepbook_math;
 use deepbook_predict::{constants, math};
 
 const EInvalidExpiry: u64 = 0;
@@ -18,19 +18,21 @@ const EInvalidLeverage: u64 = 3;
 const EInvalidStrikeRange: u64 = 6;
 const EInvalidQuantity: u64 = 7;
 const EInvalidSequence: u64 = 8;
+const EInvalidMintedPrice: u64 = 9;
 
 const EXPIRY_OFFSET: u8 = 208;
 const INSERTED_AT_OFFSET: u8 = 160;
 const MIN_STRIKE_INDEX_OFFSET: u8 = 136;
 const MAX_STRIKE_INDEX_OFFSET: u8 = 112;
 const LEVERAGE_OFFSET: u8 = 104;
-const QUANTITY_OFFSET: u8 = 32;
+const MINTED_PRICE_OFFSET: u8 = 72;
+const QUANTITY_LOTS_OFFSET: u8 = 40;
 
 const U8_MASK: u256 = (1u256 << 8) - 1;
 const U24_MASK: u256 = (1u256 << 24) - 1;
 const U32_MASK: u256 = (1u256 << 32) - 1;
+const U40_MASK: u256 = (1u256 << 40) - 1;
 const U48_MASK: u256 = (1u256 << 48) - 1;
-const U64_MASK: u256 = (1u256 << 64) - 1;
 
 const LEVERAGE_ONE_X: u64 = 0;
 const LEVERAGE_ONE_AND_HALF_X: u64 = 1;
@@ -80,9 +82,14 @@ public fun leverage(order_id: u256): u64 {
     ((order_id >> LEVERAGE_OFFSET) & U8_MASK) as u64
 }
 
+/// Return the 1e9-scaled contract price embedded in an order ID.
+public fun minted_price(order_id: u256): u64 {
+    ((order_id >> MINTED_PRICE_OFFSET) & U32_MASK) as u64
+}
+
 /// Return the immutable quantity embedded in an order ID.
 public fun quantity(order_id: u256): u64 {
-    ((order_id >> QUANTITY_OFFSET) & U64_MASK) as u64
+    quantity_lots(order_id) * constants::position_lot_size!()
 }
 
 // === Public-Package Functions ===
@@ -91,20 +98,22 @@ public(package) fun open_strike_index(): u64 {
     constants::oracle_strike_grid_ticks!() + 1
 }
 
-/// Encode immutable order routing facts into a u256 order ID.
+/// Encode immutable order terms into a u256 order ID.
 public(package) fun encode(
     expiry_ms: u64,
     inserted_at_ms: u64,
     min_strike_index: u64,
     max_strike_index: u64,
     leverage: u64,
+    minted_price: u64,
     quantity: u64,
     sequence: u64,
 ): u256 {
     assert!(expiry_ms <= U48_MASK as u64, EInvalidExpiry);
     assert!(inserted_at_ms <= U48_MASK as u64, EInvalidInsertedAt);
-    assert!(quantity > 0, EInvalidQuantity);
-    assert!(sequence <= U32_MASK as u64, EInvalidSequence);
+    assert!(minted_price <= constants::float_scaling!(), EInvalidMintedPrice);
+    let quantity_lots = encode_quantity_lots(quantity);
+    assert!(sequence <= U40_MASK as u64, EInvalidSequence);
     assert_valid_order_shape(min_strike_index, max_strike_index, leverage);
 
     ((expiry_ms as u256) << EXPIRY_OFFSET)
@@ -112,7 +121,8 @@ public(package) fun encode(
         | ((min_strike_index as u256) << MIN_STRIKE_INDEX_OFFSET)
         | ((max_strike_index as u256) << MAX_STRIKE_INDEX_OFFSET)
         | ((leverage as u256) << LEVERAGE_OFFSET)
-        | ((quantity as u256) << QUANTITY_OFFSET)
+        | ((minted_price as u256) << MINTED_PRICE_OFFSET)
+        | ((quantity_lots as u256) << QUANTITY_LOTS_OFFSET)
         | (sequence as u256)
 }
 
@@ -150,6 +160,15 @@ public(package) fun equity_amount(principal_amount: u64, leverage: u64): u64 {
     )
 }
 
+public(package) fun principal_amount(order_id: u256): u64 {
+    deepbook_math::mul(minted_price(order_id), quantity(order_id))
+}
+
+public(package) fun borrowed_principal(order_id: u256): u64 {
+    let principal_amount = principal_amount(order_id);
+    principal_amount - equity_amount(principal_amount, leverage(order_id))
+}
+
 // === Private Functions ===
 
 fun min_strike_index(order_id: u256): u64 {
@@ -158,6 +177,18 @@ fun min_strike_index(order_id: u256): u64 {
 
 fun max_strike_index(order_id: u256): u64 {
     ((order_id >> MAX_STRIKE_INDEX_OFFSET) & U24_MASK) as u64
+}
+
+fun quantity_lots(order_id: u256): u64 {
+    ((order_id >> QUANTITY_LOTS_OFFSET) & U32_MASK) as u64
+}
+
+fun encode_quantity_lots(quantity: u64): u64 {
+    let lot_size = constants::position_lot_size!();
+    assert!(quantity > 0 && quantity % lot_size == 0, EInvalidQuantity);
+    let quantity_lots = quantity / lot_size;
+    assert!(quantity_lots > 0 && quantity_lots <= U32_MASK as u64, EInvalidQuantity);
+    quantity_lots
 }
 
 fun decode_strike(

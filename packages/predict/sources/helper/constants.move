@@ -26,10 +26,10 @@ public macro fun float_scaling_decimals(): u64 { 9 }
 /// Minimum position quantity increment.
 public macro fun position_lot_size(): u64 { 10_000 }
 
-// === Settlement Rebates ===
+// === Expiry Trading Loss Rebates ===
 
-/// Maximum loss rebate as a fraction of pool trading fees paid.
-public macro fun settlement_loss_rebate_rate(): u64 { 500_000_000 }
+/// Maximum expiry trading loss rebate as a fraction of pool trading fees paid.
+public macro fun expiry_trading_loss_rebate_rate(): u64 { 500_000_000 }
 
 // === Leverage ===
 
