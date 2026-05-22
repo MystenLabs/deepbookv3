@@ -98,6 +98,16 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 
 - Avoid deprecated Sui framework functions. Use the current recommended API (e.g., `coin_registry::new_currency_with_otw` instead of `coin::create_currency`). If a deprecated function must be used, add a comment explaining why the replacement doesn't work for this case.
 
+## DeepBook Margin: risk ratio, solvency, and slippage
+
+- `risk_ratio` (`margin_manager.move:risk_ratio_int`) is `assets / debt` with **assets valued at the Pyth oracle price, not the orderbook execution price**. Debt only changes on `borrow`/`repay`/`liquidate`, never on a trade. Consequence: any close/trade that *executes worse than oracle* (real slippage) hands oracle-measured value to the counterparty while debt is fixed, so it **strictly lowers the measured risk ratio**.
+
+- Two distinct post-trade invariants in `pool_proxy.move`: regular trades use `assert_post_trade_solvent` (floor = `min_borrow_risk_ratio`, ~1.25); reduce-only trades use `assert_reduce_only_monotonic` (`ratio_after >= ratio_before`). The monotonic check fires on the **swap-only intermediate state, before any `repay`**, where slippage is pure value leak — so a reduce-only *market* close that pays the spread aborts on `EReduceOnlyMustImproveRiskRatio`. This is intentional and is asserted by `pool_proxy_tests.move::test_place_reduce_only_market_order_ok`, which is an `expected_failure`. Deleveraging only improves the ratio when the `repay` is included; check the invariant on the net (swap+repay) state, not the swap alone.
+
+- Slippage tolerance and solvency are orthogonal knobs. Allowable slippage belongs in the per-pool `price_tolerance` band enforced by `margin_registry.move::assert_price` (bids capped above oracle, asks capped below; 1%–50%, default 5%) — not in the risk-ratio check. Do not relax the risk-ratio floor to make room for slippage.
+
+- Risk-ratio config ordering (`calculate_risk_ratios` / `set_risk_params`): `liquidation_risk_ratio < min_borrow_risk_ratio < min_withdraw_risk_ratio`, and `liquidation_risk_ratio < target_liquidation_risk_ratio`, with `liquidation_risk_ratio >= float_scaling()`. Users in the `liquidation..min_borrow` "danger zone" cannot reach the borrow floor in a single swap; only an atomic deleveraging close (or liquidation) moves them up.
+
 ## Tool Calling Instructions
 
 - `sui move build` to build the package, must be run in a directory with Move.toml in it
