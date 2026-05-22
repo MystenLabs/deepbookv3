@@ -1336,7 +1336,7 @@ fun reduce_only_and_repay_bid_succeeds_where_swap_only_fails() {
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
     let mut registry = scenario.take_shared<MarginRegistry>();
     let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
-    let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
     let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
     margin_manager::new<USDC, USDT>(
         &pool,
@@ -1397,13 +1397,13 @@ fun reduce_only_and_repay_bid_succeeds_where_swap_only_fails() {
     let order_info = test_helpers::place_reduce_only_market_order_and_repay_loan_for_test<
         USDC,
         USDT,
-        USDC,
     >(
         &mut scenario,
         &registry,
         &mut mm,
         &mut pool,
         &mut base_pool,
+        &mut quote_pool,
         2,
         constants::self_matching_allowed(),
         100 * test_constants::usdc_multiplier(),
@@ -1457,7 +1457,7 @@ fun reduce_only_and_repay_ask_succeeds_where_swap_only_fails() {
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
     let mut registry = scenario.take_shared<MarginRegistry>();
-    let base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
     let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
     let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
     margin_manager::new<USDC, USDT>(
@@ -1519,12 +1519,12 @@ fun reduce_only_and_repay_ask_succeeds_where_swap_only_fails() {
     let order_info = test_helpers::place_reduce_only_market_order_and_repay_loan_for_test<
         USDC,
         USDT,
-        USDT,
     >(
         &mut scenario,
         &registry,
         &mut mm,
         &mut pool,
+        &mut base_pool,
         &mut quote_pool,
         2,
         constants::self_matching_allowed(),
@@ -1592,7 +1592,7 @@ fun reduce_only_and_repay_closes_from_danger_zone() {
     scenario.next_tx(test_constants::user1());
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
     let mut registry = scenario.take_shared<MarginRegistry>();
-    let base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
+    let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
     let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
     let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
     margin_manager::new<USDC, USDT>(
@@ -1671,10 +1671,11 @@ fun reduce_only_and_repay_closes_from_danger_zone() {
     assert!(rr_before < registry.min_borrow_risk_ratio(pool_id_inner));
     assert!(rr_before >= registry.liquidation_risk_ratio(pool_id_inner));
 
-    let order_info = pool_proxy::place_reduce_only_market_order_and_repay_loan<USDC, USDT, USDT>(
+    let order_info = pool_proxy::place_reduce_only_market_order_and_repay_loan<USDC, USDT>(
         &registry,
         &mut mm,
         &mut pool,
+        &mut base_pool,
         &mut quote_pool,
         &usdc_drifted,
         &usdt_price,
@@ -1732,7 +1733,7 @@ fun reduce_only_and_repay_quantity_exceeds_debt_aborts() {
     let mut pool = scenario.take_shared_by_id<Pool<USDC, USDT>>(pool_id);
     let mut registry = scenario.take_shared<MarginRegistry>();
     let mut base_pool = scenario.take_shared_by_id<MarginPool<USDC>>(base_pool_id);
-    let quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
+    let mut quote_pool = scenario.take_shared_by_id<MarginPool<USDT>>(quote_pool_id);
     let deepbook_registry = scenario.take_shared_by_id<Registry>(registry_id);
     margin_manager::new<USDC, USDT>(
         &pool,
@@ -1782,13 +1783,13 @@ fun reduce_only_and_repay_quantity_exceeds_debt_aborts() {
     let order_info = test_helpers::place_reduce_only_market_order_and_repay_loan_for_test<
         USDC,
         USDT,
-        USDC,
     >(
         &mut scenario,
         &registry,
         &mut mm,
         &mut pool,
         &mut base_pool,
+        &mut quote_pool,
         2,
         constants::self_matching_allowed(),
         400 * test_constants::usdc_multiplier(),

@@ -1447,12 +1447,13 @@ public fun place_reduce_only_market_order_v2_for_test<BaseAsset, QuoteAsset>(
 /// Wraps `place_reduce_only_market_order_and_repay_loan` with demo ($1.00)
 /// oracle prices built/destroyed inline. For tests that drift the oracle, call
 /// the proxy entry directly with custom price objects instead.
-public fun place_reduce_only_market_order_and_repay_loan_for_test<BaseAsset, QuoteAsset, DebtAsset>(
+public fun place_reduce_only_market_order_and_repay_loan_for_test<BaseAsset, QuoteAsset>(
     scenario: &mut Scenario,
     registry: &MarginRegistry,
     mm: &mut deepbook_margin::margin_manager::MarginManager<BaseAsset, QuoteAsset>,
     pool: &mut Pool<BaseAsset, QuoteAsset>,
-    margin_pool: &mut MarginPool<DebtAsset>,
+    base_margin_pool: &mut MarginPool<BaseAsset>,
+    quote_margin_pool: &mut MarginPool<QuoteAsset>,
     client_order_id: u64,
     self_matching_option: u8,
     quantity: u64,
@@ -1465,12 +1466,12 @@ public fun place_reduce_only_market_order_and_repay_loan_for_test<BaseAsset, Quo
     let order_info = pool_proxy::place_reduce_only_market_order_and_repay_loan<
         BaseAsset,
         QuoteAsset,
-        DebtAsset,
     >(
         registry,
         mm,
         pool,
-        margin_pool,
+        base_margin_pool,
+        quote_margin_pool,
         &base_oracle,
         &quote_oracle,
         client_order_id,
