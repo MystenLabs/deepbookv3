@@ -9,14 +9,13 @@
 /// compacted payout facts after dense strike state is destroyed.
 module deepbook_predict::strike_exposure;
 
-use deepbook::{constants::max_u64, math};
+use deepbook::constants::max_u64;
 use deepbook_predict::{
     constants,
     market_oracle::MarketOracle,
     pricing,
     pricing_config::PricingConfig,
     pyth_source::PythSource,
-    range_key::RangeKey,
     strike_nav_matrix::{Self, StrikeNavMatrix},
     strike_payout_tree::{Self, StrikePayoutTree}
 };
@@ -107,58 +106,6 @@ public(package) fun compacted_values(exposure: &StrikeExposure): (u64, u64) {
     assert!(exposure.is_compacted(), EMarketNotCompacted);
     let compacted = exposure.compacted.borrow();
     (compacted.settlement, compacted.payout_liability)
-}
-
-/// Quote live mint amounts for a grid-aligned range.
-public(package) fun quote_mint_amounts(
-    exposure: &StrikeExposure,
-    config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
-    clock: &Clock,
-    key: &RangeKey,
-    quantity: u64,
-    allocated_capital: u64,
-): (u64, u64) {
-    assert!(!exposure.is_compacted(), EMarketCompacted);
-    exposure.assert_range_on_grid(key);
-    let (fair_price, fee_rate) = pricing::quote_mint_live_range(
-        config,
-        market,
-        pyth,
-        clock,
-        key,
-        exposure.max_payout(),
-        allocated_capital,
-    );
-    (math::mul(fair_price, quantity), math::mul(fee_rate, quantity))
-}
-
-/// Quote live redeem amounts for a grid-aligned range.
-public(package) fun quote_live_redeem_amounts(
-    exposure: &StrikeExposure,
-    config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
-    clock: &Clock,
-    key: &RangeKey,
-    quantity: u64,
-    allocated_capital: u64,
-): (u64, u64) {
-    assert!(!exposure.is_compacted(), EMarketCompacted);
-    exposure.assert_range_on_grid(key);
-    let (fair_price, fee_rate) = pricing::quote_live_range(
-        config,
-        market,
-        pyth,
-        clock,
-        key,
-        exposure.max_payout(),
-        allocated_capital,
-    );
-    let principal_amount = math::mul(fair_price, quantity);
-    let fee_amount = math::mul(fee_rate, quantity).min(principal_amount);
-    (principal_amount, fee_amount)
 }
 
 /// Create a strike exposure book for the oracle grid.
@@ -253,10 +200,6 @@ fun minted_strike_range(live: &LiveExposure): (u64, u64) {
         live.minted_min_strike,
         live.minted_max_strike,
     )
-}
-
-fun assert_range_on_grid(exposure: &StrikeExposure, key: &RangeKey) {
-    exposure.assert_strikes_on_grid(key.lower_strike(), key.higher_strike())
 }
 
 fun assert_strikes_on_grid(exposure: &StrikeExposure, lower: u64, higher: u64) {

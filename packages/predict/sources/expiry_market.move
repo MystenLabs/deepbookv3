@@ -468,17 +468,14 @@ fun mint_internal(
 
     // Quote before recording exposure so the fee basis stored with the position
     // matches the exact fee charged for this mint.
-    let (principal_amount, fee_amount) = market
-        .strike_exposure
-        .quote_mint_amounts(
-            config.pricing_config(),
-            market_oracle,
-            pyth,
-            clock,
-            &key,
-            quantity,
-            market.allocated_capital,
-        );
+    let (principal_amount, fee_amount) = market.quote_mint_amounts(
+        config,
+        market_oracle,
+        pyth,
+        key,
+        quantity,
+        clock,
+    );
     let builder_code_id = manager.builder_code_id();
     let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity);
     let payment_amount = principal_amount + fee_amount + builder_fee_amount;
@@ -525,17 +522,14 @@ fun redeem_live_internal(
         .strike_exposure
         .remove_range(key.lower_strike(), key.higher_strike(), quantity, removed_fee_basis);
 
-    let (principal_amount, fee_amount) = market
-        .strike_exposure
-        .quote_live_redeem_amounts(
-            config.pricing_config(),
-            market_oracle,
-            pyth,
-            clock,
-            &key,
-            quantity,
-            market.allocated_capital,
-        );
+    let (principal_amount, fee_amount) = market.quote_live_redeem_amounts(
+        config,
+        market_oracle,
+        pyth,
+        key,
+        quantity,
+        clock,
+    );
     let builder_code_id = manager.builder_code_id();
     let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity).min(
         principal_amount - fee_amount,
@@ -616,6 +610,50 @@ fun redeem_compacted_internal(
     let mut payout = market.dispense_lp_cash(payout_amount);
     payout.join(market.dispense_fee_cash(rebate));
     manager.deposit_permissionless(payout.into_coin(ctx), ctx);
+}
+
+fun quote_mint_amounts(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    key: RangeKey,
+    quantity: u64,
+    clock: &Clock,
+): (u64, u64) {
+    let (fair_price, fee_rate) = pricing::quote_mint_live_range(
+        config.pricing_config(),
+        market_oracle,
+        pyth,
+        clock,
+        &key,
+        market.max_payout(),
+        market.allocated_capital,
+    );
+    (math::mul(fair_price, quantity), math::mul(fee_rate, quantity))
+}
+
+fun quote_live_redeem_amounts(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    key: RangeKey,
+    quantity: u64,
+    clock: &Clock,
+): (u64, u64) {
+    let (fair_price, fee_rate) = pricing::quote_live_range(
+        config.pricing_config(),
+        market_oracle,
+        pyth,
+        clock,
+        &key,
+        market.max_payout(),
+        market.allocated_capital,
+    );
+    let principal_amount = math::mul(fair_price, quantity);
+    let fee_amount = math::mul(fee_rate, quantity).min(principal_amount);
+    (principal_amount, fee_amount)
 }
 
 fun dispense_lp_cash(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
