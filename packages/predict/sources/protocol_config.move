@@ -63,6 +63,10 @@ public(package) fun market_oracle_config(config: &ProtocolConfig): &MarketOracle
 }
 
 /// Abort unless trading mutations are currently allowed.
+///
+/// Intentionally omits the package-version gate: per-pool mutating flows that
+/// call this assert their own mirrored `allowed_versions`, sourced from the
+/// registry.
 public(package) fun assert_trading_allowed(config: &ProtocolConfig) {
     config.assert_not_trading_paused();
     config.assert_not_valuation_in_progress();
@@ -218,6 +222,13 @@ public(package) fun set_market_oracle_template_basis_bounds(
 public(package) fun set_trading_paused(config: &mut ProtocolConfig, paused: bool) {
     config.assert_not_valuation_in_progress();
     config.trading_paused = paused;
+}
+
+/// Force `trading_paused = true` without admin authority. Reserved for
+/// `PauseCap` holders going through the registry; cannot be used to unpause.
+public(package) fun pause_trading(config: &mut ProtocolConfig) {
+    config.assert_not_valuation_in_progress();
+    config.trading_paused = true;
 }
 
 /// Begin a transaction-local full-pool valuation lock.

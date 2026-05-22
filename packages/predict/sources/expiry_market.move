@@ -21,7 +21,7 @@ use deepbook_predict::{
     strike_exposure::{Self, StrikeExposure}
 };
 use dusdc::dusdc::DUSDC;
-use sui::{balance::{Self, Balance}, clock::Clock, event};
+use sui::{balance::{Self, Balance}, clock::Clock, event, vec_set::VecSet};
 
 const EWrongMarketOracle: u64 = 0;
 const EWrongPythSource: u64 = 1;
@@ -39,6 +39,8 @@ const ESettledLiabilityUnderflow: u64 = 16;
 const ECompactedLiabilityMismatch: u64 = 17;
 const EInsufficientFeeBalance: u64 = 18;
 const ECompactedRebateLiabilityUnderflow: u64 = 19;
+const EPackageVersionDisabled: u64 = 20;
+const EMintPaused: u64 = 21;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -58,6 +60,10 @@ public struct ExpiryMarket has key {
     strike_exposure: Option<StrikeExposure>,
     /// Post-compaction settlement facts and remaining escrow liabilities.
     compacted_state: Option<CompactedState>,
+    /// Mirror of `ProtocolConfig.allowed_versions`; synced permissionlessly.
+    allowed_versions: VecSet<u64>,
+    /// When true, `mint` aborts. Other flows (redeem, settle, compact) unaffected.
+    mint_paused: bool,
 }
 
 /// Settlement facts retained after strike exposure state is compacted.
@@ -170,6 +176,22 @@ public fun is_compacted(market: &ExpiryMarket): bool {
     market.compacted_state.is_some()
 }
 
+/// Return whether minting is currently paused on this expiry market.
+public fun mint_paused(market: &ExpiryMarket): bool {
+    market.mint_paused
+}
+
+/// Return this market's mirrored set of allowed package versions.
+public fun allowed_versions(market: &ExpiryMarket): VecSet<u64> {
+    market.allowed_versions
+}
+
+/// Refresh this market's mirrored `allowed_versions`. Permissionless: callers
+/// pass `registry.allowed_versions()` as the source of truth.
+public fun update_allowed_versions(market: &mut ExpiryMarket, allowed_versions: VecSet<u64>) {
+    market.allowed_versions = allowed_versions;
+}
+
 /// Construct a range key for this expiry market.
 public fun range_key(market: &ExpiryMarket, lower_strike: u64, higher_strike: u64): RangeKey {
     range_key::new(market.market_oracle_id, lower_strike, higher_strike)
@@ -206,8 +228,9 @@ public fun read_valuation(
 
 /// Mint a live position interval against this expiry market.
 ///
-/// Requires trading to be allowed, manager ownership, a live fresh oracle, and
-/// enough expiry allocation to back the post-mint max payout.
+/// Requires the package version to be allowed for this market, per-market mint
+/// pause to be off, trading globally enabled, manager ownership, a live fresh
+/// oracle, and enough expiry allocation to back the post-mint max payout.
 public fun mint(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
@@ -219,6 +242,8 @@ public fun mint(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    market.assert_version_allowed();
+    market.assert_mint_not_paused();
     config.assert_trading_allowed();
     market.mint_internal(config, manager, market_oracle, pyth, key, quantity, clock, ctx);
 }
@@ -238,6 +263,7 @@ public fun redeem(
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
+    market.assert_version_allowed();
     config.assert_not_valuation_in_progress();
     if (market.is_compacted()) {
         market.redeem_compacted_internal(manager, key, quantity, ctx);
@@ -274,6 +300,7 @@ public(package) fun create_and_share(
     expiry: u64,
     min_strike: u64,
     tick_size: u64,
+    allowed_versions: VecSet<u64>,
     ctx: &mut TxContext,
 ): ID {
     assert_valid_strike_grid(min_strike, tick_size);
@@ -290,6 +317,8 @@ public(package) fun create_and_share(
         fee_balance: balance::zero(),
         strike_exposure: option::some(strike_exposure::new(ctx, tick_size, min_strike, max_strike)),
         compacted_state: option::none(),
+        allowed_versions,
+        mint_paused: false,
     };
     let id = market.id();
     transfer::share_object(market);
@@ -298,6 +327,7 @@ public(package) fun create_and_share(
 
 /// Add pool-provided DUSDC to this live expiry's allocation and LP cash.
 public(package) fun receive_allocation(market: &mut ExpiryMarket, allocation: Balance<DUSDC>) {
+    market.assert_version_allowed();
     market.assert_not_compacted();
     let amount = allocation.value();
     market.allocated_capital = market.allocated_capital + amount;
@@ -309,6 +339,7 @@ public(package) fun receive_allocation(market: &mut ExpiryMarket, allocation: Ba
 /// Aborts if the requested amount would reduce allocation or cash below the
 /// expiry's current worst-case payout backing.
 public(package) fun return_allocation(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
+    market.assert_version_allowed();
     assert!(amount <= market.returnable_capital(), EAllocationBelowMaxPayout);
 
     market.allocated_capital = market.allocated_capital - amount;
@@ -340,6 +371,24 @@ public(package) fun assert_market_oracle(market: &ExpiryMarket, market_oracle: &
     assert!(market.market_oracle_id == market_oracle.id(), EWrongMarketOracle);
 }
 
+/// Abort if the running package version is not allowed for this market.
+public(package) fun assert_version_allowed(market: &ExpiryMarket) {
+    assert!(
+        market.allowed_versions.contains(&constants::current_version!()),
+        EPackageVersionDisabled,
+    );
+}
+
+/// Set per-market mint pause (used by AdminCap admin path on registry).
+public(package) fun set_mint_paused(market: &mut ExpiryMarket, paused: bool) {
+    market.mint_paused = paused;
+}
+
+/// Force `mint_paused = true` (used by PauseCap path on registry; one-way).
+public(package) fun pause_mint(market: &mut ExpiryMarket) {
+    market.mint_paused = true;
+}
+
 /// Compact settled expiry state and return surplus cash to the pool.
 ///
 /// Consumes strike exposure state, leaves only settled liability backing in the
@@ -349,6 +398,7 @@ public(package) fun compact_settled(
     market: &mut ExpiryMarket,
     market_oracle: &MarketOracle,
 ): (Balance<DUSDC>, Balance<DUSDC>) {
+    market.assert_version_allowed();
     market.assert_market_oracle(market_oracle);
     market.assert_not_compacted();
 
@@ -706,6 +756,10 @@ fun assert_cash_backing(market: &ExpiryMarket) {
 
 fun assert_not_compacted(market: &ExpiryMarket) {
     assert!(!market.is_compacted(), EMarketCompacted);
+}
+
+fun assert_mint_not_paused(market: &ExpiryMarket) {
+    assert!(!market.mint_paused, EMintPaused);
 }
 
 fun rebate_liability(market: &ExpiryMarket, losing_fee_basis: u64): u64 {

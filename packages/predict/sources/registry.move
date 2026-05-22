@@ -11,23 +11,36 @@ module deepbook_predict::registry;
 
 use deepbook_predict::{
     builder_code,
-    expiry_market,
+    constants,
+    expiry_market::{Self, ExpiryMarket},
     market_oracle::{Self, MarketOracle, MarketOracleCap},
     plp::PoolVault,
     predict_manager::{Self, PredictManager},
     protocol_config::{Self, ProtocolConfig},
     pyth_source::{Self, PythSource}
 };
-use sui::{clock::Clock, table::{Self, Table}};
+use sui::{clock::Clock, table::{Self, Table}, vec_set::{Self, VecSet}};
 
 const EFeedIdMismatch: u64 = 2;
 const EPythSourceAlreadyCreated: u64 = 3;
 const EInvalidExpiry: u64 = 4;
 const EExpiryMarketAlreadyCreated: u64 = 5;
+const EPauseCapNotValid: u64 = 6;
+const EPackageVersionDisabled: u64 = 7;
+const EVersionAlreadyEnabled: u64 = 8;
+const EVersionNotEnabled: u64 = 9;
+const ECannotDisableLastVersion: u64 = 10;
 
 /// Capability for admin operations.
 /// Created during package init, transferred to deployer (multisig).
 public struct AdminCap has key, store {
+    id: UID,
+}
+
+/// Capability for emergency pause operations. Admin can mint these for
+/// trusted operators; holders can disable versions, pause global trading,
+/// and pause per-market minting. Cannot unpause anything.
+public struct PauseCap has key, store {
     id: UID,
 }
 
@@ -38,6 +51,12 @@ public struct Registry has key {
     pyth_source_ids: Table<u32, ID>,
     /// Created expiry markets keyed by expiry timestamp.
     expiry_market_ids: Table<u64, ID>,
+    /// IDs of `PauseCap` objects currently authorized to use pause-only entries.
+    /// Admin mints into this set and revokes from it.
+    allowed_pause_caps: VecSet<ID>,
+    /// Package versions currently permitted to mutate per-pool state. Authoritative
+    /// source; pool objects mirror this set and refresh via permissionless sync.
+    allowed_versions: VecSet<u64>,
 }
 
 // === Public Functions ===
@@ -45,6 +64,24 @@ public struct Registry has key {
 /// Return the registry object ID.
 public fun id(registry: &Registry): ID {
     registry.id.to_inner()
+}
+
+/// Return the set of package versions currently permitted to mutate per-pool
+/// state. Pool sync helpers snapshot this; newly-created pools inherit it.
+public fun allowed_versions(registry: &Registry): VecSet<u64> {
+    registry.allowed_versions
+}
+
+/// Abort if the running package version is not in the allowed set.
+///
+/// Bypasses are package-internal version-management entries
+/// (`enable_version`, `disable_version`, PauseCap-based disables) so admin
+/// can recover from any disabled state.
+public(package) fun assert_version_allowed(registry: &Registry) {
+    assert!(
+        registry.allowed_versions.contains(&constants::current_version!()),
+        EPackageVersionDisabled,
+    );
 }
 
 /// Set the base fee multiplier.
@@ -200,6 +237,91 @@ public fun set_trading_paused(config: &mut ProtocolConfig, _admin_cap: &AdminCap
     config.set_trading_paused(paused);
 }
 
+// === Version Management (admin) ===
+
+/// Add `version` to the registry's allowed set.
+///
+/// Not version-gated so admin can re-enable a previously disabled version.
+public fun enable_version(registry: &mut Registry, _admin_cap: &AdminCap, version: u64) {
+    assert!(!registry.allowed_versions.contains(&version), EVersionAlreadyEnabled);
+    registry.allowed_versions.insert(version);
+}
+
+/// Remove `version` from the registry's allowed set.
+///
+/// Not version-gated so admin can revoke a version even after the active
+/// version has been paused. The set may not be left empty.
+public fun disable_version(registry: &mut Registry, _admin_cap: &AdminCap, version: u64) {
+    registry.disable_version_internal(version);
+}
+
+// === PauseCap Lifecycle (admin) ===
+
+/// Mint a new `PauseCap`. Admin-only and bypasses the version gate so the
+/// kill switch remains available even when admin has misconfigured versions.
+public fun mint_pause_cap(
+    registry: &mut Registry,
+    _admin_cap: &AdminCap,
+    ctx: &mut TxContext,
+): PauseCap {
+    let id = object::new(ctx);
+    registry.allowed_pause_caps.insert(id.to_inner());
+    PauseCap { id }
+}
+
+/// Revoke a previously minted `PauseCap` by ID. Admin-only.
+public fun revoke_pause_cap(registry: &mut Registry, _admin_cap: &AdminCap, pause_cap_id: ID) {
+    assert!(registry.allowed_pause_caps.contains(&pause_cap_id), EPauseCapNotValid);
+    registry.allowed_pause_caps.remove(&pause_cap_id);
+}
+
+/// Destroy a `PauseCap` the holder no longer needs.
+public fun destroy_pause_cap(cap: PauseCap) {
+    let PauseCap { id } = cap;
+    id.delete();
+}
+
+// === Emergency Pause (PauseCap) ===
+
+/// Disable a package version via a valid `PauseCap`. One-way: admin must
+/// `enable_version` to restore.
+public fun disable_version_pause_cap(registry: &mut Registry, version: u64, pause_cap: &PauseCap) {
+    registry.assert_valid_pause_cap(pause_cap);
+    registry.disable_version_internal(version);
+}
+
+/// Force `trading_paused = true` via a valid `PauseCap`. One-way.
+public fun pause_trading_pause_cap(
+    registry: &Registry,
+    config: &mut ProtocolConfig,
+    pause_cap: &PauseCap,
+) {
+    registry.assert_valid_pause_cap(pause_cap);
+    config.pause_trading();
+}
+
+/// Force `mint_paused = true` on a single expiry market via a valid `PauseCap`.
+/// One-way; admin's `set_expiry_market_mint_paused` is needed to unpause.
+public fun pause_expiry_market_mint_pause_cap(
+    registry: &Registry,
+    market: &mut ExpiryMarket,
+    pause_cap: &PauseCap,
+) {
+    registry.assert_valid_pause_cap(pause_cap);
+    market.pause_mint();
+}
+
+// === Per-Market Mint Pause (admin) ===
+
+/// Set `mint_paused` on a single expiry market. Admin can pause or unpause.
+public fun set_expiry_market_mint_paused(
+    market: &mut ExpiryMarket,
+    _admin_cap: &AdminCap,
+    paused: bool,
+) {
+    market.set_mint_paused(paused);
+}
+
 /// Create a shared Pyth source for one admin-approved Lazer feed.
 ///
 /// The registry enforces one source object per feed ID.
@@ -209,8 +331,13 @@ public fun create_pyth_source(
     pyth_lazer_feed_id: u32,
     ctx: &mut TxContext,
 ): ID {
+    registry.assert_version_allowed();
     assert!(!registry.pyth_source_ids.contains(pyth_lazer_feed_id), EPythSourceAlreadyCreated);
-    let pyth_source_id = pyth_source::create_and_share(pyth_lazer_feed_id, ctx);
+    let pyth_source_id = pyth_source::create_and_share(
+        pyth_lazer_feed_id,
+        registry.allowed_versions,
+        ctx,
+    );
     registry.pyth_source_ids.add(pyth_lazer_feed_id, pyth_source_id);
     pyth_source_id
 }
@@ -264,6 +391,7 @@ public fun create_expiry_market(
     clock: &Clock,
     ctx: &mut TxContext,
 ): (ID, ID) {
+    registry.assert_version_allowed();
     config.assert_trading_allowed();
     assert!(expiry > clock.timestamp_ms(), EInvalidExpiry);
     let pyth_lazer_feed_id = pyth.feed_id();
@@ -271,12 +399,14 @@ public fun create_expiry_market(
     assert!(registry.pyth_source_ids[pyth_lazer_feed_id] == pyth.id(), EFeedIdMismatch);
     expiry_market::assert_valid_strike_grid(min_strike, tick_size);
     assert!(!registry.expiry_market_ids.contains(expiry), EExpiryMarketAlreadyCreated);
+    let allowed_versions = registry.allowed_versions;
     let allocation = pool_vault.allocate_to_new_expiry(config.risk_config());
     let market_oracle_id = market_oracle::create_and_share(
         pyth,
         config.market_oracle_config(),
         cap,
         expiry,
+        allowed_versions,
         ctx,
     );
     let expiry_market_id = expiry_market::create_and_share(
@@ -287,6 +417,7 @@ public fun create_expiry_market(
         expiry,
         min_strike,
         tick_size,
+        allowed_versions,
         ctx,
     );
     pool_vault.register_expiry_market(expiry_market_id);
@@ -302,7 +433,8 @@ public fun create_builder_code(registry: &mut Registry, index: u64, ctx: &mut Tx
 
 /// Create a derived PredictManager for the caller.
 public fun create_manager(registry: &mut Registry, ctx: &mut TxContext): PredictManager {
-    predict_manager::new(&mut registry.id, ctx)
+    let allowed_versions = registry.allowed_versions;
+    predict_manager::new(&mut registry.id, allowed_versions, ctx)
 }
 
 /// Create and share a derived PredictManager for the caller.
@@ -336,11 +468,26 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
             id: object::new(ctx),
             pyth_source_ids: table::new(ctx),
             expiry_market_ids: table::new(ctx),
+            allowed_pause_caps: vec_set::empty(),
+            allowed_versions: vec_set::singleton(constants::current_version!()),
         },
         AdminCap {
             id: object::new(ctx),
         },
     )
+}
+
+/// Abort unless the supplied `PauseCap` was minted by admin and not revoked.
+fun assert_valid_pause_cap(registry: &Registry, pause_cap: &PauseCap) {
+    assert!(registry.allowed_pause_caps.contains(&pause_cap.id.to_inner()), EPauseCapNotValid);
+}
+
+/// Remove a version from the allowed set, enforcing the non-empty invariant.
+/// Shared by the admin `disable_version` and PauseCap `disable_version_pause_cap`.
+fun disable_version_internal(registry: &mut Registry, version: u64) {
+    assert!(registry.allowed_versions.contains(&version), EVersionNotEnabled);
+    assert!(registry.allowed_versions.length() > 1, ECannotDisableLastVersion);
+    registry.allowed_versions.remove(&version);
 }
 
 // === Test-Only Functions ===
@@ -361,4 +508,25 @@ public fun init_for_testing(ctx: &mut TxContext): ID {
 /// Create an admin cap for tests.
 public fun create_admin_cap_for_testing(ctx: &mut TxContext): AdminCap {
     AdminCap { id: object::new(ctx) }
+}
+
+#[test_only]
+/// Return a Registry + AdminCap without sharing or storing the registry.
+/// Use this when a test wants direct access without `test_scenario`.
+public fun new_for_testing(ctx: &mut TxContext): (Registry, AdminCap) {
+    new_registry_and_admin_cap(ctx)
+}
+
+#[test_only]
+public fun destroy_registry_for_testing(registry: Registry) {
+    let Registry {
+        id,
+        pyth_source_ids,
+        expiry_market_ids,
+        allowed_pause_caps: _,
+        allowed_versions: _,
+    } = registry;
+    id.delete();
+    pyth_source_ids.destroy_empty();
+    expiry_market_ids.destroy_empty();
 }
