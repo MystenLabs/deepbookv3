@@ -446,9 +446,9 @@ public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
 }
 
 /// Closes (winds down) a leveraged position atomically: places a reduce-only
-/// market order, settles the taker proceeds, repays as much of the loan as the
-/// settled balance allows, and only then enforces the monotonic solvency
-/// invariant on the *net* (post-repay) state.
+/// market order (which settles the taker fill into the manager's balance),
+/// repays as much of the loan as that balance allows, and only then enforces
+/// the monotonic solvency invariant on the *net* (post-repay) state.
 ///
 /// Why this needs to be a single entry rather than composing
 /// `place_reduce_only_market_order_v2` + `repay_*` in a PTB: the standalone
@@ -531,11 +531,10 @@ public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset, 
         clock,
         ctx,
     );
-    // Move the taker proceeds out of pool-settled state into the manager's
-    // balance so `repay` can draw on them.
-    pool.withdraw_settled_amounts(balance_manager, &trade_proof);
 
-    // Repay as much of the debt as the (now-settled) debt-asset balance allows.
+    // `place_market_order` settles the taker fill into the manager's balance,
+    // so the proceeds are already drawable. Repay as much of the debt as that
+    // balance allows.
     margin_manager.repay(margin_pool, option::none(), clock, ctx);
 
     // Net-state solvency: if any debt remains the close must not have worsened
