@@ -167,6 +167,15 @@ These are the most important rule files to consult based on the code you touch:
 
 ## Code Review Norms
 
+- Trigger: when the user asks to "review uncommitted changes" or "review uncomitted changes", review the full working-tree diff with emphasis on:
+  - rule violations, including repo guidance, package-specific rules, visibility, comments, validation ownership, and API naming.
+  - simplification opportunities, especially one-use helpers, wide tuples, unnecessary structs, duplicated state, boolean-mode helpers, and wrappers that only reroute.
+  - redundancies to remove, including duplicated assertions, duplicated accounting calculations, stale compatibility paths, and dead comments/imports/functions created by the diff.
+  - architectural bottlenecks and new chokepoints introduced by the change.
+  - flow and branching friction: trace the affected flows end to end and identify new dependencies, surprising sequencing, non-landable intermediate states, or branches that now do too much.
+  - intuitive behavior: check whether names, public APIs, events, and state transitions match what a protocol integrator or maintainer would expect.
+  - ownership and responsibility boundaries for modules/functions: verify state is mutated by its owner, helpers do not absorb parent responsibilities, and callers do not duplicate leaf invariants without a sequencing reason.
+  - landability: say whether the diff is safe as a standalone PR or only as an intermediate step that requires follow-up work in the same branch.
 - Findings should focus on correctness, regressions, missing coverage, and brittle assumptions.
 - For generated-test changes, check for:
   - duplicate scenarios

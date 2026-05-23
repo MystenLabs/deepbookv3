@@ -30,7 +30,7 @@ const EInvalidGrowUtilizationThreshold: u64 = 18;
 const EInvalidShrinkUtilizationThreshold: u64 = 19;
 const EInvalidGrowFactor: u64 = 20;
 const EInvalidShrinkFactor: u64 = 21;
-const EInvalidSettlementLossRebateRate: u64 = 22;
+const EInvalidTradingLossRebateRate: u64 = 22;
 const EInvalidMaxExpiryBorrowFee: u64 = 23;
 
 // === Pool Risk ===
@@ -238,19 +238,19 @@ public(package) fun assert_insurance_fee_share(value: u64) {
     );
 }
 
-public(package) macro fun default_settlement_loss_rebate_rate(): u64 {
+public(package) macro fun default_trading_loss_rebate_rate(): u64 {
     500_000_000
 }
-public(package) macro fun min_settlement_loss_rebate_rate(): u64 { 0 }
-public(package) macro fun max_settlement_loss_rebate_rate(): u64 {
+public(package) macro fun min_trading_loss_rebate_rate(): u64 { 0 }
+public(package) macro fun max_trading_loss_rebate_rate(): u64 {
     deepbook_predict::constants::float_scaling!()
 }
 
-public(package) fun assert_settlement_loss_rebate_rate(value: u64) {
+public(package) fun assert_trading_loss_rebate_rate(value: u64) {
     assert!(
-        value >= min_settlement_loss_rebate_rate!()
-            && value <= max_settlement_loss_rebate_rate!(),
-        EInvalidSettlementLossRebateRate,
+        value >= min_trading_loss_rebate_rate!()
+            && value <= max_trading_loss_rebate_rate!(),
+        EInvalidTradingLossRebateRate,
     );
 }
 

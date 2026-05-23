@@ -160,13 +160,13 @@ public fun set_fee_shares(
     config.set_fee_shares(lp_fee_share, protocol_fee_share, insurance_fee_share);
 }
 
-/// Set the settlement loss rebate rate template used by future expiry markets.
-public fun set_template_settlement_loss_rebate_rate(
+/// Set the trading loss rebate rate template used by future expiry markets.
+public fun set_template_trading_loss_rebate_rate(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     value: u64,
 ) {
-    config.set_template_settlement_loss_rebate_rate(value);
+    config.set_template_trading_loss_rebate_rate(value);
 }
 
 /// Set the maximum total exposure percentage.

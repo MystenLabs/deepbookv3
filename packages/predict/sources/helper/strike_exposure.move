@@ -64,19 +64,19 @@ public(package) fun is_compacted(exposure: &StrikeExposure): bool {
     exposure.compacted.is_some()
 }
 
-/// Evaluate live option value and conservative maximum losing fee basis.
-public(package) fun live_values(
+/// Evaluate live option value for active exposure.
+public(package) fun live_value(
     exposure: &StrikeExposure,
     config: &PricingConfig,
     market: &MarketOracle,
     pyth: &PythSource,
     clock: &Clock,
-): (u64, u64) {
+): u64 {
     assert!(!exposure.is_compacted(), EMarketCompacted);
 
     let live = exposure.live.borrow();
     let (minted_min_strike, minted_max_strike) = live.minted_strike_range();
-    let option_value = if (minted_min_strike == 0 && minted_max_strike == 0) {
+    if (minted_min_strike == 0 && minted_max_strike == 0) {
         0
     } else {
         let curve = pricing::build_live_curve(
@@ -91,14 +91,13 @@ public(package) fun live_values(
             minted_max_strike,
         );
         live.nav.live_value(&curve, minted_min_strike, minted_max_strike)
-    };
-    (option_value, live.payout.conservative_losing_fee_basis())
+    }
 }
 
-/// Evaluate settled liability and exact losing fee basis.
-public(package) fun settled_values(exposure: &StrikeExposure, settlement: u64): (u64, u64) {
+/// Evaluate settled payout liability.
+public(package) fun settled_value(exposure: &StrikeExposure, settlement: u64): u64 {
     assert!(!exposure.is_compacted(), EMarketCompacted);
-    exposure.live.borrow().payout.settled_values(settlement)
+    exposure.live.borrow().payout.settled_value(settlement)
 }
 
 /// Return compacted settlement facts.
@@ -130,33 +129,21 @@ public(package) fun new(
 }
 
 /// Insert interval quantity for `(lower, higher]`.
-public(package) fun insert_range(
-    exposure: &mut StrikeExposure,
-    lower: u64,
-    higher: u64,
-    qty: u64,
-    fee_basis: u64,
-) {
+public(package) fun insert_range(exposure: &mut StrikeExposure, lower: u64, higher: u64, qty: u64) {
     assert!(!exposure.is_compacted(), EMarketCompacted);
     exposure.assert_strikes_on_grid(lower, higher);
     let live = exposure.live.borrow_mut();
-    live.payout.insert_range(lower, higher, qty, fee_basis);
+    live.payout.insert_range(lower, higher, qty);
     live.nav.insert_range(lower, higher, qty);
     live.track_minted_boundaries(lower, higher);
 }
 
 /// Remove interval quantity for `(lower, higher]`.
-public(package) fun remove_range(
-    exposure: &mut StrikeExposure,
-    lower: u64,
-    higher: u64,
-    qty: u64,
-    fee_basis: u64,
-) {
+public(package) fun remove_range(exposure: &mut StrikeExposure, lower: u64, higher: u64, qty: u64) {
     assert!(!exposure.is_compacted(), EMarketCompacted);
     exposure.assert_strikes_on_grid(lower, higher);
     let live = exposure.live.borrow_mut();
-    live.payout.remove_range(lower, higher, qty, fee_basis);
+    live.payout.remove_range(lower, higher, qty);
     live.nav.remove_range(lower, higher, qty);
 }
 
