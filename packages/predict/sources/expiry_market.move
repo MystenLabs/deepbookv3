@@ -60,6 +60,8 @@ public struct ExpiryMarket has key {
     fee_balance: Balance<DUSDC>,
     /// Trading fees whose rebate eligibility has not been resolved.
     unresolved_trading_fees_paid: u64,
+    /// Settled payout liability cached once expiry economics are finalized.
+    settled_payout_liability: Option<u64>,
     /// Exposure lifecycle state for this expiry's oracle grid.
     strike_exposure: StrikeExposure,
     /// Mirror of `ProtocolConfig.allowed_versions`; synced permissionlessly.
@@ -144,6 +146,16 @@ public fun trading_loss_rebate_rate(market: &ExpiryMarket): u64 {
 /// Return the terminal borrow premium snapshotted for this expiry.
 public fun max_expiry_borrow_fee(market: &ExpiryMarket): u64 {
     market.max_expiry_borrow_fee
+}
+
+/// Return whether this expiry's settled payout liability has been finalized.
+public fun is_settlement_finalized(market: &ExpiryMarket): bool {
+    market.settled_payout_liability.is_some()
+}
+
+/// Return cached settled payout liability once finalized.
+public fun settled_payout_liability(market: &ExpiryMarket): Option<u64> {
+    market.settled_payout_liability
 }
 
 /// Return the expiry-local worst-case payout.
@@ -377,6 +389,7 @@ public(package) fun create_and_share(
         lp_cash_balance: allocation,
         fee_balance: balance::zero(),
         unresolved_trading_fees_paid: 0,
+        settled_payout_liability: option::none(),
         strike_exposure: strike_exposure::new(tick_size, min_strike, max_strike, ctx),
         allowed_versions,
         mint_paused: false,
@@ -448,6 +461,22 @@ public(package) fun set_mint_paused(market: &mut ExpiryMarket, paused: bool) {
 /// Force `mint_paused = true` (used by PauseCap path on registry; one-way).
 public(package) fun pause_mint(market: &mut ExpiryMarket) {
     market.mint_paused = true;
+}
+
+/// Finalize and cache settled payout liability for this expiry.
+public(package) fun ensure_settlement_finalized(
+    market: &mut ExpiryMarket,
+    market_oracle: &MarketOracle,
+): u64 {
+    if (market.settled_payout_liability.is_some()) {
+        return *market.settled_payout_liability.borrow()
+    };
+
+    market.assert_market_oracle(market_oracle);
+    let settlement = pricing::settlement_price(market_oracle);
+    let settled_liability = market.strike_exposure.settled_value(settlement);
+    market.settled_payout_liability = option::some(settled_liability);
+    settled_liability
 }
 
 /// Compact settled expiry state and return surplus cash to the pool.
