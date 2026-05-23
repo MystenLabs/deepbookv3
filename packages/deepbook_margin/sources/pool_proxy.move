@@ -445,6 +445,113 @@ public fun place_reduce_only_market_order_v2<BaseAsset, QuoteAsset>(
     order_info
 }
 
+/// Atomically winds down a leveraged position: places a reduce-only market
+/// order, repays the loan with the proceeds, then requires the net (post-repay)
+/// risk ratio to be at least the pre-trade ratio.
+///
+/// The post-repay check is the point. A market close pays the spread, which
+/// alone lowers the oracle-valued ratio (debt is unchanged until repay) and
+/// would abort the plain reduce-only path. Repaying first deleverages and
+/// absorbs the slippage (still bounded by the `assert_price` band), and lets a
+/// manager in the `liquidation..min_borrow` band climb out — it cannot reach
+/// the borrow floor in a single swap.
+public fun place_reduce_only_market_order_and_repay_loan<BaseAsset, QuoteAsset>(
+    registry: &MarginRegistry,
+    margin_manager: &mut MarginManager<BaseAsset, QuoteAsset>,
+    pool: &mut Pool<BaseAsset, QuoteAsset>,
+    base_margin_pool: &mut MarginPool<BaseAsset>,
+    quote_margin_pool: &mut MarginPool<QuoteAsset>,
+    base_oracle: &PriceInfoObject,
+    quote_oracle: &PriceInfoObject,
+    client_order_id: u64,
+    self_matching_option: u8,
+    quantity: u64,
+    is_bid: bool,
+    pay_with_deep: bool,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): OrderInfo {
+    registry.load_inner();
+    assert!(margin_manager.deepbook_pool() == pool.id(), EIncorrectDeepBookPool);
+
+    let (base_debt, quote_debt) = if (margin_manager.has_base_debt()) {
+        margin_manager.calculate_debts(base_margin_pool, clock)
+    } else {
+        margin_manager.calculate_debts(quote_margin_pool, clock)
+    };
+    let (base_asset, quote_asset) = margin_manager.calculate_assets<BaseAsset, QuoteAsset>(pool);
+
+    let (effective_price, quote_quantity) = calculate_effective_price(
+        pool,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        clock,
+    );
+
+    // Reduce-only: a bid buys back at most the net base debt; an ask sells for
+    // at most the net quote debt.
+    assert!(
+        (is_bid && base_debt > base_asset && quantity <= base_debt - base_asset) ||
+            (!is_bid && quote_debt > quote_asset && quote_quantity <= quote_debt - quote_asset),
+        ENotReduceOnlyOrder,
+    );
+
+    registry.assert_price(pool.id(), effective_price, is_bid, clock);
+
+    let risk_ratio_before = margin_manager.risk_ratio(
+        registry,
+        base_oracle,
+        quote_oracle,
+        pool,
+        base_margin_pool,
+        quote_margin_pool,
+        clock,
+    );
+
+    let trade_proof = margin_manager.trade_proof(ctx);
+    let balance_manager = margin_manager.balance_manager_trading_mut(ctx);
+    let order_info = pool.place_market_order(
+        balance_manager,
+        &trade_proof,
+        client_order_id,
+        self_matching_option,
+        quantity,
+        is_bid,
+        pay_with_deep,
+        clock,
+        ctx,
+    );
+
+    // place_market_order settles the taker fill into the manager's balance, so
+    // the proceeds are drawable. Repay the debt side with that balance.
+    if (margin_manager.has_base_debt()) {
+        margin_manager.repay_base(registry, base_margin_pool, option::none(), clock, ctx);
+    } else {
+        margin_manager.repay_quote(registry, quote_margin_pool, option::none(), clock, ctx);
+    };
+
+    // Net-state solvency: if debt remains, the close must not have worsened the
+    // ratio. A full repay clears the debt, so the check is skipped.
+    if (
+        margin_manager.borrowed_base_shares() > 0
+        || margin_manager.borrowed_quote_shares() > 0
+    ) {
+        let risk_ratio_after = margin_manager.risk_ratio(
+            registry,
+            base_oracle,
+            quote_oracle,
+            pool,
+            base_margin_pool,
+            quote_margin_pool,
+            clock,
+        );
+        assert!(risk_ratio_after >= risk_ratio_before, EReduceOnlyMustImproveRiskRatio);
+    };
+
+    order_info
+}
+
 /// Modifies an order
 public fun modify_order<BaseAsset, QuoteAsset>(
     registry: &MarginRegistry,
