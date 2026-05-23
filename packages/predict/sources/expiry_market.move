@@ -40,6 +40,7 @@ const EInsufficientFeeBalance: u64 = 18;
 const EPackageVersionDisabled: u64 = 20;
 const EMintPaused: u64 = 21;
 const EInvalidQuantity: u64 = 22;
+const EUnresolvedTradingFeesUnderflow: u64 = 23;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -55,7 +56,7 @@ public struct ExpiryMarket has key {
     allocated_capital: u64,
     /// LP-owned DUSDC backing this expiry's liability.
     lp_cash_balance: Balance<DUSDC>,
-    /// Unified fee cash used for aggregate expiry trading loss rebates.
+    /// Fee cash held until rebate reserve and fee surplus are resolved.
     fee_balance: Balance<DUSDC>,
     /// Trading fees whose rebate eligibility has not been resolved.
     unresolved_trading_fees_paid: u64,
@@ -81,6 +82,16 @@ public struct FeeAccrued has copy, drop, store {
     total_fee: u64,
     builder_fee: u64,
     builder_code_id: Option<ID>,
+}
+
+/// Emitted when an expiry trading-loss rebate is resolved for one manager.
+public struct TradingLossRebateClaimed has copy, drop, store {
+    expiry_market_id: ID,
+    predict_manager_id: ID,
+    trading_fees_paid: u64,
+    cash_paid_to_expiry: u64,
+    cash_received_from_expiry: u64,
+    rebate_amount: u64,
 }
 
 // === Public Functions ===
@@ -289,6 +300,52 @@ public fun redeem(
     }
 }
 
+/// Resolve a manager's aggregate expiry trading-loss rebate after all positions close.
+public fun claim_trading_loss_rebate(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    manager: &mut PredictManager,
+    market_oracle: &MarketOracle,
+    ctx: &mut TxContext,
+) {
+    market.assert_version_allowed();
+    config.assert_not_valuation_in_progress();
+    market.assert_market_oracle(market_oracle);
+    pricing::settlement_price(market_oracle);
+
+    let (
+        trading_fees_paid,
+        cash_paid_to_expiry,
+        cash_received_from_expiry,
+    ) = manager.resolve_expiry_summary(market.id());
+    if (trading_fees_paid == 0 && cash_paid_to_expiry == 0 && cash_received_from_expiry == 0) {
+        return
+    };
+
+    market.resolve_trading_fee_basis(trading_fees_paid);
+    let trading_loss = if (cash_paid_to_expiry > cash_received_from_expiry) {
+        cash_paid_to_expiry - cash_received_from_expiry
+    } else {
+        0
+    };
+    let max_rebate = math::mul(trading_fees_paid, market.trading_loss_rebate_rate);
+    let rebate_amount = trading_loss.min(max_rebate);
+
+    if (rebate_amount > 0) {
+        let payout = market.dispense_fee_cash(rebate_amount);
+        manager.deposit_permissionless(payout.into_coin(ctx), ctx);
+    };
+
+    event::emit(TradingLossRebateClaimed {
+        expiry_market_id: market.id(),
+        predict_manager_id: manager.id(),
+        trading_fees_paid,
+        cash_paid_to_expiry,
+        cash_received_from_expiry,
+        rebate_amount,
+    });
+}
+
 // === Public-Package Functions ===
 
 /// Create and share a funded expiry market for one market oracle.
@@ -416,13 +473,19 @@ public(package) fun compact_settled(
     market.strike_exposure.compact(settlement, settled_liability);
     let returned_cash_amount = market.lp_cash_balance.value() - settled_liability;
     let returned_cash = market.lp_cash_balance.split(returned_cash_amount);
-    let returned_fee_amount = market.fee_balance.value() - rebate_reserve;
-    let returned_fees = market.fee_balance.split(returned_fee_amount);
+    let returned_fees = market.split_fee_surplus();
 
     market.allocated_capital = 0;
     market.assert_cash_backing();
 
     (returned_cash, returned_fees)
+}
+
+/// Release fee surplus after compacted rebate reserves have been reduced by claims.
+public(package) fun release_fee_surplus(market: &mut ExpiryMarket): Balance<DUSDC> {
+    market.assert_version_allowed();
+    assert!(market.is_compacted(), EMarketNotCompacted);
+    market.split_fee_surplus()
 }
 
 // === Private Functions ===
@@ -693,9 +756,26 @@ fun record_trading_fee_paid(market: &mut ExpiryMarket, manager: &mut PredictMana
     market.unresolved_trading_fees_paid = market.unresolved_trading_fees_paid + amount;
 }
 
+fun resolve_trading_fee_basis(market: &mut ExpiryMarket, amount: u64) {
+    assert!(market.unresolved_trading_fees_paid >= amount, EUnresolvedTradingFeesUnderflow);
+    market.unresolved_trading_fees_paid = market.unresolved_trading_fees_paid - amount;
+}
+
+fun split_fee_surplus(market: &mut ExpiryMarket): Balance<DUSDC> {
+    let rebate_reserve = market.aggregate_rebate_reserve();
+    let fee_balance = market.fee_balance.value();
+    assert!(fee_balance >= rebate_reserve, EInsufficientFeeBalance);
+    market.fee_balance.split(fee_balance - rebate_reserve)
+}
+
 fun dispense_lp_cash(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
     assert!(market.lp_cash_balance.value() >= amount, EInsufficientLpCash);
     market.lp_cash_balance.split(amount)
+}
+
+fun dispense_fee_cash(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
+    assert!(market.fee_balance.value() >= amount, EInsufficientFeeBalance);
+    market.fee_balance.split(amount)
 }
 
 fun assert_pyth_feed(market: &ExpiryMarket, pyth: &PythSource) {

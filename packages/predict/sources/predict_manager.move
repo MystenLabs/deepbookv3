@@ -17,6 +17,7 @@ const EInsufficientPosition: u64 = 0;
 const ENotOwner: u64 = 1;
 const EZeroQuantity: u64 = 2;
 const EPackageVersionDisabled: u64 = 3;
+const EExpirySummaryHasOpenPositions: u64 = 4;
 
 /// The key for deriving predict manager. u64 is optional for
 /// supporting multiple managers per address. Defaults to 0 in v1.
@@ -295,6 +296,26 @@ public(package) fun record_trading_fee_paid(
     self.ensure_expiry_summary(expiry_market_id);
     let summary = &mut self.expiry_summaries[expiry_market_id];
     summary.trading_fees_paid = summary.trading_fees_paid + amount;
+}
+
+/// Remove and return the aggregate trading summary once all expiry positions are closed.
+public(package) fun resolve_expiry_summary(
+    self: &mut PredictManager,
+    expiry_market_id: ID,
+): (u64, u64, u64) {
+    if (!self.expiry_summaries.contains(expiry_market_id)) return (0, 0, 0);
+
+    assert!(
+        self.expiry_summaries[expiry_market_id].open_position_count == 0,
+        EExpirySummaryHasOpenPositions,
+    );
+    let ExpiryTradingSummary {
+        open_position_count: _,
+        trading_fees_paid,
+        cash_paid_to_expiry,
+        cash_received_from_expiry,
+    } = self.expiry_summaries.remove(expiry_market_id);
+    (trading_fees_paid, cash_paid_to_expiry, cash_received_from_expiry)
 }
 
 /// Abort unless the transaction sender owns this manager.

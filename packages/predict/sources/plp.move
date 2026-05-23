@@ -250,6 +250,18 @@ public fun compact_expiry_market(
     vault.unregister_expiry_market(market.id());
 }
 
+/// Sweep fee surplus released after compacted expiry rebate claims resolve.
+public fun sweep_expiry_fee_surplus(
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    market: &mut ExpiryMarket,
+) {
+    vault.assert_version_allowed();
+    config.assert_not_valuation_in_progress();
+    let fee_surplus = market.release_fee_surplus();
+    vault.distribute_fee_surplus(config, fee_surplus);
+}
+
 /// Supply DUSDC into the pool vault against a complete full-pool valuation.
 ///
 /// Completes the valuation after flow preconditions pass and mints PLP shares
