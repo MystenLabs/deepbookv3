@@ -3,10 +3,9 @@
 
 /// Strike exposure store for one oracle.
 ///
-/// This module is the package boundary for expiry exposure accounting across
-/// the live, settled, and compacted phases. It keeps live NAV and payout
-/// indexes in sync while they exist, owns grid-aware quote helpers, and retains
-/// compacted payout facts after dense strike state is destroyed.
+/// This module owns the live NAV and payout indexes for one expiry grid. It can
+/// compute settled liability before settlement economics are finalized, but does
+/// not retain finalized settlement facts after dense storage is destroyed.
 module deepbook_predict::strike_exposure;
 
 use deepbook::constants::max_u64;
@@ -22,10 +21,7 @@ use deepbook_predict::{
 use sui::clock::Clock;
 
 const EMarketCompacted: u64 = 0;
-const EMarketNotCompacted: u64 = 1;
-const ECompactedLiabilityUnderflow: u64 = 2;
 const EInvalidStrikeGrid: u64 = 3;
-const ECompactedLiabilityMismatch: u64 = 4;
 
 /// Exposure lifecycle state for one oracle grid.
 public struct StrikeExposure has store {
@@ -33,7 +29,6 @@ public struct StrikeExposure has store {
     grid_tick: u64,
     grid_max: u64,
     live: Option<LiveExposure>,
-    compacted: Option<CompactedExposure>,
 }
 
 /// Live exposure indexes composed from dense NAV and sparse payout storage.
@@ -44,24 +39,15 @@ public struct LiveExposure has store {
     minted_max_strike: u64,
 }
 
-/// Settlement facts retained after live exposure indexes are compacted.
-public struct CompactedExposure has copy, drop, store {
-    settlement: u64,
-    payout_liability: u64,
-}
-
 /// Return the exact worst-case settled payout across all settlement prices.
 public(package) fun max_payout(exposure: &StrikeExposure): u64 {
-    if (exposure.is_compacted()) {
-        exposure.compacted.borrow().payout_liability
-    } else {
-        exposure.live.borrow().payout.max_payout()
-    }
+    assert!(!exposure.is_compacted(), EMarketCompacted);
+    exposure.live.borrow().payout.max_payout()
 }
 
-/// Return true once live indexes have been compacted into settled liabilities.
+/// Return true once live indexes have been destroyed.
 public(package) fun is_compacted(exposure: &StrikeExposure): bool {
-    exposure.compacted.is_some()
+    exposure.live.is_none()
 }
 
 /// Evaluate live option value for active exposure.
@@ -100,13 +86,6 @@ public(package) fun settled_value(exposure: &StrikeExposure, settlement: u64): u
     exposure.live.borrow().payout.settled_value(settlement)
 }
 
-/// Return compacted settlement facts.
-public(package) fun compacted_values(exposure: &StrikeExposure): (u64, u64) {
-    assert!(exposure.is_compacted(), EMarketNotCompacted);
-    let compacted = exposure.compacted.borrow();
-    (compacted.settlement, compacted.payout_liability)
-}
-
 /// Create a strike exposure book for the oracle grid.
 public(package) fun new(
     tick_size: u64,
@@ -124,7 +103,6 @@ public(package) fun new(
             minted_min_strike: max_u64(),
             minted_max_strike: 0,
         }),
-        compacted: option::none(),
     }
 }
 
@@ -147,23 +125,8 @@ public(package) fun remove_range(exposure: &mut StrikeExposure, lower: u64, high
     live.nav.remove_range(lower, higher, qty);
 }
 
-/// Reduce compacted payout liability after a post-compaction redeem.
-public(package) fun decrease_compacted_liability(
-    exposure: &mut StrikeExposure,
-    payout_amount: u64,
-) {
-    assert!(exposure.is_compacted(), EMarketNotCompacted);
-    let compacted = exposure.compacted.borrow_mut();
-    assert!(compacted.payout_liability >= payout_amount, ECompactedLiabilityUnderflow);
-    compacted.payout_liability = compacted.payout_liability - payout_amount;
-}
-
-/// Compact live indexes into settled liability state.
-public(package) fun compact(
-    exposure: &mut StrikeExposure,
-    settlement: u64,
-    expected_payout_liability: u64,
-) {
+/// Destroy live NAV and payout indexes after expiry economics are finalized.
+public(package) fun destroy_live_indexes(exposure: &mut StrikeExposure) {
     assert!(!exposure.is_compacted(), EMarketCompacted);
     let live = exposure.live.extract();
     let LiveExposure {
@@ -173,13 +136,7 @@ public(package) fun compact(
         minted_max_strike: _,
     } = live;
     nav.destroy();
-    let payout_liability = payout.into_settled_liability(settlement);
-    assert!(payout_liability == expected_payout_liability, ECompactedLiabilityMismatch);
-    exposure.compacted =
-        option::some(CompactedExposure {
-            settlement,
-            payout_liability,
-        });
+    payout.destroy();
 }
 
 fun minted_strike_range(live: &LiveExposure): (u64, u64) {

@@ -88,9 +88,8 @@ public(package) fun settled_value(tree: &StrikePayoutTree, settlement: u64): u64
     tree.base_qty + prefix_q_start - prefix_q_end
 }
 
-/// Consume a payout tree after settlement and return exact settled liability.
-public(package) fun into_settled_liability(tree: StrikePayoutTree, settlement: u64): u64 {
-    let settled_liability = tree.settled_value(settlement);
+/// Destroy all sparse payout storage without reading settlement liability.
+public(package) fun destroy(tree: StrikePayoutTree) {
     let StrikePayoutTree {
         root,
         mut nodes,
@@ -102,7 +101,6 @@ public(package) fun into_settled_liability(tree: StrikePayoutTree, settlement: u
     } = tree;
     destroy_nodes(&mut nodes, root);
     nodes.destroy_empty();
-    settled_liability
 }
 
 fun apply_range(tree: &mut StrikePayoutTree, lower: u64, higher: u64, qty: u64, add: bool) {

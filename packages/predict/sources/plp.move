@@ -55,9 +55,9 @@ public struct PoolVault has key {
     id: UID,
     /// Idle LP-owned DUSDC available for withdrawals and new allocations.
     idle_balance: Balance<DUSDC>,
-    /// Protocol revenue swept from compacted expiry fee surplus.
+    /// Protocol revenue swept from post-compaction expiry fee surplus.
     protocol_fee_balance: Balance<DUSDC>,
-    /// Insurance fees swept from compacted expiry fee surplus.
+    /// Insurance fees swept from post-compaction expiry fee surplus.
     insurance_fee_balance: Balance<DUSDC>,
     treasury_cap: TreasuryCap<PLP>,
     /// Expiry markets that still contribute active pool valuation/risk.
@@ -121,12 +121,12 @@ public fun idle_balance(vault: &PoolVault): u64 {
     vault.idle_balance.value()
 }
 
-/// Return protocol revenue swept from compacted expiry fee surplus.
+/// Return protocol revenue swept from post-compaction expiry fee surplus.
 public fun protocol_fee_balance(vault: &PoolVault): u64 {
     vault.protocol_fee_balance.value()
 }
 
-/// Return insurance fees swept from compacted expiry fee surplus.
+/// Return insurance fees swept from post-compaction expiry fee surplus.
 public fun insurance_fee_balance(vault: &PoolVault): u64 {
     vault.insurance_fee_balance.value()
 }
@@ -244,14 +244,14 @@ public fun compact_expiry_market(
         EInsufficientTotalAllocatedCapital,
     );
     market.ensure_settlement_finalized(market_oracle);
-    let (returned_cash, returned_fee_surplus) = market.compact_settled(market_oracle);
+    let (returned_cash, returned_fee_surplus) = market.compact_finalized();
     vault.total_allocated_capital = vault.total_allocated_capital - allocated_reduction;
     vault.idle_balance.join(returned_cash);
     vault.distribute_fee_surplus(config, returned_fee_surplus);
     vault.unregister_expiry_market(market.id());
 }
 
-/// Sweep fee surplus released after compacted expiry rebate claims resolve.
+/// Sweep fee surplus released after post-compaction expiry rebate claims resolve.
 public fun sweep_expiry_fee_surplus(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
