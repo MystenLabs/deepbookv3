@@ -20,7 +20,8 @@ use deepbook_predict::{
 };
 use sui::clock::Clock;
 
-const EMarketCompacted: u64 = 0;
+const ELiveIndexesDestroyed: u64 = 0;
+const ELiveIndexesNotDestroyed: u64 = 1;
 const EInvalidStrikeGrid: u64 = 3;
 
 /// Exposure lifecycle state for one oracle grid.
@@ -41,13 +42,13 @@ public struct LiveExposure has store {
 
 /// Return the exact worst-case settled payout across all settlement prices.
 public(package) fun max_payout(exposure: &StrikeExposure): u64 {
-    assert!(!exposure.is_compacted(), EMarketCompacted);
+    exposure.assert_live_indexes_exist();
     exposure.live.borrow().payout.max_payout()
 }
 
-/// Return true once live indexes have been destroyed.
-public(package) fun is_compacted(exposure: &StrikeExposure): bool {
-    exposure.live.is_none()
+/// Abort unless live indexes have been destroyed.
+public(package) fun assert_live_indexes_destroyed(exposure: &StrikeExposure) {
+    assert!(exposure.live.is_none(), ELiveIndexesNotDestroyed);
 }
 
 /// Evaluate live option value for active exposure.
@@ -58,7 +59,7 @@ public(package) fun live_value(
     pyth: &PythSource,
     clock: &Clock,
 ): u64 {
-    assert!(!exposure.is_compacted(), EMarketCompacted);
+    exposure.assert_live_indexes_exist();
 
     let live = exposure.live.borrow();
     let (minted_min_strike, minted_max_strike) = live.minted_strike_range();
@@ -82,7 +83,7 @@ public(package) fun live_value(
 
 /// Evaluate settled payout liability.
 public(package) fun settled_value(exposure: &StrikeExposure, settlement: u64): u64 {
-    assert!(!exposure.is_compacted(), EMarketCompacted);
+    exposure.assert_live_indexes_exist();
     exposure.live.borrow().payout.settled_value(settlement)
 }
 
@@ -108,7 +109,7 @@ public(package) fun new(
 
 /// Insert interval quantity for `(lower, higher]`.
 public(package) fun insert_range(exposure: &mut StrikeExposure, lower: u64, higher: u64, qty: u64) {
-    assert!(!exposure.is_compacted(), EMarketCompacted);
+    exposure.assert_live_indexes_exist();
     exposure.assert_strikes_on_grid(lower, higher);
     let live = exposure.live.borrow_mut();
     live.payout.insert_range(lower, higher, qty);
@@ -118,7 +119,7 @@ public(package) fun insert_range(exposure: &mut StrikeExposure, lower: u64, high
 
 /// Remove interval quantity for `(lower, higher]`.
 public(package) fun remove_range(exposure: &mut StrikeExposure, lower: u64, higher: u64, qty: u64) {
-    assert!(!exposure.is_compacted(), EMarketCompacted);
+    exposure.assert_live_indexes_exist();
     exposure.assert_strikes_on_grid(lower, higher);
     let live = exposure.live.borrow_mut();
     live.payout.remove_range(lower, higher, qty);
@@ -127,7 +128,7 @@ public(package) fun remove_range(exposure: &mut StrikeExposure, lower: u64, high
 
 /// Destroy live NAV and payout indexes after expiry economics are finalized.
 public(package) fun destroy_live_indexes(exposure: &mut StrikeExposure) {
-    assert!(!exposure.is_compacted(), EMarketCompacted);
+    exposure.assert_live_indexes_exist();
     let live = exposure.live.extract();
     let LiveExposure {
         nav,
@@ -137,6 +138,10 @@ public(package) fun destroy_live_indexes(exposure: &mut StrikeExposure) {
     } = live;
     nav.destroy();
     payout.destroy();
+}
+
+fun assert_live_indexes_exist(exposure: &StrikeExposure) {
+    assert!(exposure.live.is_some(), ELiveIndexesDestroyed);
 }
 
 fun minted_strike_range(live: &LiveExposure): (u64, u64) {

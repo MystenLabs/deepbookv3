@@ -5,7 +5,7 @@
 ///
 /// An ExpiryMarket is the hot shared object for one expiry. It owns the
 /// expiry-local DUSDC allocation, strike exposure state, fee balance, trade execution,
-/// valuation witness, finalized settlement liability, and storage compaction state. Pool-wide PLP
+/// valuation witness, finalized settlement liability, and storage cleanup state. Pool-wide PLP
 /// accounting and allocation coordination remain outside this module.
 module deepbook_predict::expiry_market;
 
@@ -28,8 +28,6 @@ const EWrongPythSource: u64 = 1;
 const EValuationExceedsCash: u64 = 2;
 const EAllocationBelowMaxPayout: u64 = 3;
 const EZeroQuantity: u64 = 5;
-const EMarketCompacted: u64 = 6;
-const EMarketNotCompacted: u64 = 7;
 const EInsufficientLpCash: u64 = 8;
 const EZeroAllocatedCapital: u64 = 10;
 const EInvalidTickSize: u64 = 11;
@@ -66,7 +64,7 @@ public struct ExpiryMarket has key {
     strike_exposure: StrikeExposure,
     /// Mirror of `ProtocolConfig.allowed_versions`; synced permissionlessly.
     allowed_versions: VecSet<u64>,
-    /// When true, `mint` aborts. Other flows (redeem, settle, compact) unaffected.
+    /// When true, `mint` aborts. Other flows (redeem, settle, cleanup) unaffected.
     mint_paused: bool,
 }
 
@@ -198,11 +196,6 @@ public(package) fun utilization(market: &ExpiryMarket): u64 {
     math::div(market.max_payout(), allocated_capital)
 }
 
-/// Return true once live strike exposure storage has been destroyed.
-public fun is_compacted(market: &ExpiryMarket): bool {
-    market.strike_exposure.is_compacted()
-}
-
 /// Return whether minting is currently paused on this expiry market.
 public fun mint_paused(market: &ExpiryMarket): bool {
     market.mint_paused
@@ -282,7 +275,7 @@ public fun mint(
 ///
 /// Live redeems require manager ownership and fresh oracle data. Settled
 /// redeems are permissionless, pay into the manager balance, and use finalized
-/// expiry settlement liability before and after storage compaction.
+/// expiry settlement liability.
 public fun redeem(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
@@ -402,7 +395,6 @@ public(package) fun create_and_share(
 /// Add pool-provided DUSDC to this live expiry's allocation and LP cash.
 public(package) fun receive_allocation(market: &mut ExpiryMarket, allocation: Balance<DUSDC>) {
     market.assert_version_allowed();
-    market.assert_not_compacted();
     let amount = allocation.value();
     market.allocated_capital = market.allocated_capital + amount;
     market.lp_cash_balance.join(allocation);
@@ -486,7 +478,6 @@ public(package) fun ensure_settlement_finalized(
 /// aggregate rebate reserve in fee cash, and returns all other cash to the pool.
 public(package) fun compact_finalized(market: &mut ExpiryMarket): (Balance<DUSDC>, Balance<DUSDC>) {
     market.assert_version_allowed();
-    market.assert_not_compacted();
 
     let settled_liability = market.finalized_settled_payout_liability();
     let rebate_reserve = market.aggregate_rebate_reserve();
@@ -505,10 +496,10 @@ public(package) fun compact_finalized(market: &mut ExpiryMarket): (Balance<DUSDC
     (returned_cash, returned_fees)
 }
 
-/// Release fee surplus after post-compaction rebate reserves have been reduced by claims.
+/// Release fee surplus after live exposure storage has been destroyed.
 public(package) fun release_fee_surplus(market: &mut ExpiryMarket): Balance<DUSDC> {
     market.assert_version_allowed();
-    assert!(market.is_compacted(), EMarketNotCompacted);
+    market.strike_exposure.assert_live_indexes_destroyed();
     market.split_fee_surplus()
 }
 
@@ -564,7 +555,6 @@ fun mint_internal(
     market_oracle.assert_active(clock);
     pricing::assert_live_oracle_fresh(config.pricing_config(), market_oracle, clock);
     market.assert_range_key_matches(&key);
-    market.assert_not_compacted();
     assert_valid_quantity(quantity);
 
     let (principal_amount, fee_amount) = market.quote_mint_amounts(
@@ -608,7 +598,6 @@ fun redeem_live_internal(
     market_oracle.assert_active(clock);
     pricing::assert_live_oracle_fresh(config.pricing_config(), market_oracle, clock);
     market.assert_range_key_matches(&key);
-    market.assert_not_compacted();
     assert_valid_quantity(quantity);
     manager.decrease_position(market.id(), key, quantity);
 
@@ -819,10 +808,6 @@ fun emit_fee_accrued(
 
 fun assert_cash_backing(market: &ExpiryMarket) {
     assert!(market.lp_cash_balance.value() >= market.max_payout(), EInsufficientLpCash);
-}
-
-fun assert_not_compacted(market: &ExpiryMarket) {
-    assert!(!market.is_compacted(), EMarketCompacted);
 }
 
 fun assert_mint_not_paused(market: &ExpiryMarket) {
