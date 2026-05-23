@@ -296,6 +296,7 @@ public fun redeem(
     } else {
         market.assert_market_oracle(market_oracle);
         if (market_oracle.is_settled()) {
+            market.ensure_settlement_finalized(market_oracle);
             market.redeem_settled_internal(manager, market_oracle, key, quantity, ctx);
         } else {
             market.redeem_live_internal(
@@ -322,8 +323,7 @@ public fun claim_trading_loss_rebate(
 ) {
     market.assert_version_allowed();
     config.assert_not_valuation_in_progress();
-    market.assert_market_oracle(market_oracle);
-    pricing::settlement_price(market_oracle);
+    market.ensure_settlement_finalized(market_oracle);
 
     let (
         trading_fees_paid,

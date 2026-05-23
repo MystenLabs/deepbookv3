@@ -243,6 +243,7 @@ public fun compact_expiry_market(
         vault.total_allocated_capital >= allocated_reduction,
         EInsufficientTotalAllocatedCapital,
     );
+    market.ensure_settlement_finalized(market_oracle);
     let (returned_cash, returned_fee_surplus) = market.compact_settled(market_oracle);
     vault.total_allocated_capital = vault.total_allocated_capital - allocated_reduction;
     vault.idle_balance.join(returned_cash);
