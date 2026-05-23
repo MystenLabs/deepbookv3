@@ -149,7 +149,7 @@ public fun set_block_scholes_svi_freshness_ms(
     config.set_block_scholes_svi_freshness_ms(value);
 }
 
-/// Set the current fee surplus distribution shares used during compaction.
+/// Set the current fee surplus distribution shares used during settled expiry surplus sweeps.
 public fun set_fee_shares(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,

@@ -6,7 +6,7 @@
 /// PoolVault owns idle DUSDC and the PLP treasury cap. Expiry markets own
 /// active trading capital and risk state. This module coordinates full-pool
 /// valuation, PLP supply/withdrawal, allocation resize, and settled-expiry
-/// compaction. It does not own expiry-local strike, oracle, or position state.
+/// surplus sweeping. It does not own expiry-local strike, oracle, or position state.
 module deepbook_predict::plp;
 
 use deepbook::math;
@@ -55,9 +55,9 @@ public struct PoolVault has key {
     id: UID,
     /// Idle LP-owned DUSDC available for withdrawals and new allocations.
     idle_balance: Balance<DUSDC>,
-    /// Protocol revenue swept from post-compaction expiry fee surplus.
+    /// Protocol revenue swept from settled expiry fee surplus.
     protocol_fee_balance: Balance<DUSDC>,
-    /// Insurance fees swept from post-compaction expiry fee surplus.
+    /// Insurance fees swept from settled expiry fee surplus.
     insurance_fee_balance: Balance<DUSDC>,
     treasury_cap: TreasuryCap<PLP>,
     /// Expiry markets that still contribute active pool valuation/risk.
@@ -121,12 +121,12 @@ public fun idle_balance(vault: &PoolVault): u64 {
     vault.idle_balance.value()
 }
 
-/// Return protocol revenue swept from post-compaction expiry fee surplus.
+/// Return protocol revenue swept from settled expiry fee surplus.
 public fun protocol_fee_balance(vault: &PoolVault): u64 {
     vault.protocol_fee_balance.value()
 }
 
-/// Return insurance fees swept from post-compaction expiry fee surplus.
+/// Return insurance fees swept from settled expiry fee surplus.
 public fun insurance_fee_balance(vault: &PoolVault): u64 {
     vault.insurance_fee_balance.value()
 }
@@ -224,12 +224,12 @@ public fun shrink_expiry_allocation(
     vault.idle_balance.join(allocation);
 }
 
-/// Compact a settled active expiry and remove it from pool valuation.
+/// Sweep settled expiry surplus into the pool.
 ///
-/// The expiry keeps exactly its remaining settled redeem liability. Surplus LP
-/// cash returns to idle liquidity, while fee surplus is split into LP,
-/// protocol revenue, and insurance destinations.
-public fun compact_expiry_market(
+/// This no-ops before settlement. Once settled, it finalizes expiry settlement if
+/// needed, retires active allocation on the first sweep, and distributes any fee
+/// surplus not reserved for unresolved rebates.
+public fun sweep_settled_expiry_surplus(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
     market: &mut ExpiryMarket,
@@ -237,29 +237,29 @@ public fun compact_expiry_market(
 ) {
     vault.assert_version_allowed();
     config.assert_not_valuation_in_progress();
-    assert!(vault.active_expiry_markets.contains(&market.id()), EExpiryMarketNotActive);
-    let allocated_reduction = market.allocated_capital();
-    assert!(
-        vault.total_allocated_capital >= allocated_reduction,
-        EInsufficientTotalAllocatedCapital,
-    );
-    let (returned_cash, returned_fee_surplus) = market.compact_settled_storage(market_oracle);
-    vault.total_allocated_capital = vault.total_allocated_capital - allocated_reduction;
-    vault.idle_balance.join(returned_cash);
-    vault.distribute_fee_surplus(config, returned_fee_surplus);
-    vault.unregister_expiry_market(market.id());
-}
+    market.assert_market_oracle(market_oracle);
+    if (!market_oracle.is_settled()) return;
 
-/// Sweep fee surplus released after post-compaction expiry rebate claims resolve.
-public fun sweep_expiry_fee_surplus(
-    vault: &mut PoolVault,
-    config: &ProtocolConfig,
-    market: &mut ExpiryMarket,
-) {
-    vault.assert_version_allowed();
-    config.assert_not_valuation_in_progress();
-    let fee_surplus = market.release_fee_surplus();
-    vault.distribute_fee_surplus(config, fee_surplus);
+    let allocated_reduction = market.allocated_capital();
+    if (allocated_reduction > 0) {
+        assert!(vault.active_expiry_markets.contains(&market.id()), EExpiryMarketNotActive);
+        assert!(
+            vault.total_allocated_capital >= allocated_reduction,
+            EInsufficientTotalAllocatedCapital,
+        );
+    };
+
+    let (released_allocation, returned_cash, returned_fee_surplus) = market.release_settled_surplus(
+        market_oracle,
+    );
+    if (released_allocation > 0) {
+        vault.total_allocated_capital = vault.total_allocated_capital - released_allocation;
+        vault.idle_balance.join(returned_cash);
+        vault.unregister_expiry_market(market.id());
+    } else {
+        returned_cash.destroy_zero();
+    };
+    vault.distribute_fee_surplus(config, returned_fee_surplus);
 }
 
 /// Supply DUSDC into the pool vault against a complete full-pool valuation.

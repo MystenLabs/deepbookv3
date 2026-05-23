@@ -54,7 +54,7 @@ public struct ExpiryMarket has key {
     allocated_capital: u64,
     /// LP-owned DUSDC backing this expiry's liability.
     lp_cash_balance: Balance<DUSDC>,
-    /// Fee cash held until rebate reserve and fee surplus are resolved.
+    /// Fee cash held until rebate reserve and settled-expiry fee surplus are resolved.
     fee_balance: Balance<DUSDC>,
     /// Trading fees whose rebate eligibility has not been resolved.
     unresolved_trading_fees_paid: u64,
@@ -471,37 +471,46 @@ public(package) fun ensure_settlement_finalized(
     settled_liability
 }
 
-/// Finalize settlement if needed, destroy live exposure storage, and return surplus cash to the pool.
+/// Finalize settlement if needed and destroy live exposure storage.
 ///
-/// Leaves remaining settled payout liability backed in LP cash, leaves only aggregate
-/// rebate reserve in fee cash, and returns all other cash to the pool.
-public(package) fun compact_settled_storage(
+/// This is a structural cleanup only. Surplus LP cash and fee cash remain in the
+/// expiry until a pool sweep moves them.
+public fun compact_storage(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    market_oracle: &MarketOracle,
+) {
+    market.assert_version_allowed();
+    config.assert_not_valuation_in_progress();
+    market.ensure_settlement_finalized(market_oracle);
+    market.strike_exposure.destroy_live_indexes();
+    market.assert_cash_backing();
+}
+
+/// Release settled LP and fee surplus derived from finalized settlement liability.
+public(package) fun release_settled_surplus(
     market: &mut ExpiryMarket,
     market_oracle: &MarketOracle,
-): (Balance<DUSDC>, Balance<DUSDC>) {
+): (u64, Balance<DUSDC>, Balance<DUSDC>) {
     market.assert_version_allowed();
     let settled_liability = market.ensure_settlement_finalized(market_oracle);
     let rebate_reserve = market.aggregate_rebate_reserve();
     assert!(market.lp_cash_balance.value() >= settled_liability, EInsufficientLpCash);
     assert!(market.fee_balance.value() >= rebate_reserve, EInsufficientFeeBalance);
-    assert!(market.allocated_capital >= settled_liability, EAllocationBelowMaxPayout);
 
-    market.strike_exposure.destroy_live_indexes();
-    let returned_cash_amount = market.lp_cash_balance.value() - settled_liability;
-    let returned_cash = market.lp_cash_balance.split(returned_cash_amount);
+    let allocated_reduction = market.allocated_capital;
+    let returned_cash = if (allocated_reduction > 0) {
+        assert!(allocated_reduction >= settled_liability, EAllocationBelowMaxPayout);
+        market.allocated_capital = 0;
+        let returned_cash_amount = market.lp_cash_balance.value() - settled_liability;
+        market.lp_cash_balance.split(returned_cash_amount)
+    } else {
+        balance::zero()
+    };
     let returned_fees = market.split_fee_surplus();
-
-    market.allocated_capital = 0;
     market.assert_cash_backing();
 
-    (returned_cash, returned_fees)
-}
-
-/// Release fee surplus after live exposure storage has been destroyed.
-public(package) fun release_fee_surplus(market: &mut ExpiryMarket): Balance<DUSDC> {
-    market.assert_version_allowed();
-    market.strike_exposure.assert_live_indexes_destroyed();
-    market.split_fee_surplus()
+    (allocated_reduction, returned_cash, returned_fees)
 }
 
 // === Private Functions ===
