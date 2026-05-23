@@ -546,11 +546,12 @@ public(package) fun assert_not_pending_settlement(market: &MarketOracle, clock: 
     assert!(market.status(clock) != STATUS_PENDING_SETTLEMENT, EPendingSettlement);
 }
 
-// === Private Functions ===
-
-fun assert_authorized_cap(market: &MarketOracle, cap: &MarketOracleCap) {
+/// Abort unless the cap is authorized for this oracle.
+public(package) fun assert_authorized_cap(market: &MarketOracle, cap: &MarketOracleCap) {
     assert!(market.authorized_cap_ids.contains(&cap.cap_id()), EInvalidMarketOracleCap);
 }
+
+// === Private Functions ===
 
 fun apply_block_scholes_prices(
     market: &mut MarketOracle,

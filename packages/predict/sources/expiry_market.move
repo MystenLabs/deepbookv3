@@ -12,7 +12,7 @@ module deepbook_predict::expiry_market;
 use deepbook::math;
 use deepbook_predict::{
     constants,
-    market_oracle::MarketOracle,
+    market_oracle::{MarketOracle, MarketOracleCap},
     predict_manager::PredictManager,
     pricing,
     protocol_config::ProtocolConfig,
@@ -479,9 +479,11 @@ public fun compact_storage(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     market_oracle: &MarketOracle,
+    cap: &MarketOracleCap,
 ) {
     market.assert_version_allowed();
     config.assert_not_valuation_in_progress();
+    market_oracle.assert_authorized_cap(cap);
     market.ensure_settlement_finalized(market_oracle);
     market.strike_exposure.destroy_live_indexes();
     market.assert_cash_backing();
