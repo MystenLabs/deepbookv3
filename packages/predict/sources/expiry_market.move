@@ -58,6 +58,8 @@ public struct ExpiryMarket has key {
     lp_cash_balance: Balance<DUSDC>,
     /// Unified fee cash used for settlement loss rebates until compaction.
     fee_balance: Balance<DUSDC>,
+    /// Trading fees still backing potential aggregate expiry trading loss rebates.
+    unclaimed_rebate_trading_fees: u64,
     /// Exposure lifecycle state for this expiry's oracle grid.
     strike_exposure: StrikeExposure,
     /// Remaining settlement loss rebate escrow after compaction.
@@ -119,6 +121,11 @@ public fun lp_cash_balance(market: &ExpiryMarket): u64 {
 /// Return DUSDC fees held by this expiry.
 public fun fee_balance(market: &ExpiryMarket): u64 {
     market.fee_balance.value()
+}
+
+/// Return trading fees still backing potential aggregate rebates.
+public fun unclaimed_rebate_trading_fees(market: &ExpiryMarket): u64 {
+    market.unclaimed_rebate_trading_fees
 }
 
 /// Return the settlement loss rebate rate snapshotted for this expiry.
@@ -312,6 +319,7 @@ public(package) fun create_and_share(
         allocated_capital,
         lp_cash_balance: allocation,
         fee_balance: balance::zero(),
+        unclaimed_rebate_trading_fees: 0,
         strike_exposure: strike_exposure::new(tick_size, min_strike, max_strike, ctx),
         compacted_rebate_liability: 0,
         allowed_versions,
@@ -494,14 +502,12 @@ fun mint_internal(
         .insert_range(key.lower_strike(), key.higher_strike(), quantity, fee_amount);
     assert!(market.allocated_capital >= market.max_payout(), EAllocationBelowMaxPayout);
 
-    manager.increase_position(key, quantity, fee_amount);
+    manager.increase_position(market.id(), key, quantity, fee_amount);
     let mut payment = manager.withdraw(payment_amount, ctx).into_balance();
     let builder_fee_payment = payment.split(builder_fee_amount);
-    let fee_payment = payment.split(fee_amount);
-    market.fee_balance.join(fee_payment);
     send_builder_fee(builder_code_id, builder_fee_payment);
     market.emit_fee_accrued(fee_amount, builder_fee_amount, builder_code_id);
-    market.lp_cash_balance.join(payment);
+    market.receive_trade_payment(manager, payment, fee_amount);
     market.assert_cash_backing();
 }
 
@@ -524,7 +530,7 @@ fun redeem_live_internal(
     market.assert_range_key_matches(&key);
     market.assert_not_compacted();
     assert_valid_quantity(quantity);
-    let removed_fee_basis = manager.decrease_position(key, quantity);
+    let removed_fee_basis = manager.decrease_position(market.id(), key, quantity);
 
     // Live redeem quotes intentionally use post-removal liability for utilization fees.
     market
@@ -547,11 +553,11 @@ fun redeem_live_internal(
     let mut payout = market.dispense_lp_cash(principal_amount);
     let fee = payout.split(fee_amount);
     let builder_fee = payout.split(builder_fee_amount);
-    market.fee_balance.join(fee);
+    market.collect_redeem_fee(manager, fee);
     send_builder_fee(builder_code_id, builder_fee);
     market.emit_fee_accrued(fee_amount, builder_fee_amount, builder_code_id);
     market.assert_cash_backing();
-    manager.deposit(payout.into_coin(ctx), ctx);
+    market.deposit_live_payout(manager, payout, ctx);
 }
 
 fun redeem_settled_internal(
@@ -572,7 +578,7 @@ fun redeem_settled_internal(
     assert!(current_liability >= payout_amount, ESettledLiabilityUnderflow);
     assert!(market.lp_cash_balance.value() >= current_liability, EInsufficientLpCash);
 
-    let removed_fee_basis = manager.decrease_position(key, quantity);
+    let removed_fee_basis = manager.decrease_position(market.id(), key, quantity);
     let rebate = if (range_loses(settlement, &key)) {
         market.rebate_liability(removed_fee_basis)
     } else {
@@ -585,7 +591,7 @@ fun redeem_settled_internal(
         .remove_range(key.lower_strike(), key.higher_strike(), quantity, removed_fee_basis);
     let mut payout = market.dispense_lp_cash(payout_amount);
     payout.join(market.dispense_fee_cash(rebate));
-    manager.deposit_permissionless(payout.into_coin(ctx), ctx);
+    market.deposit_permissionless_payout(manager, payout, ctx);
 }
 
 fun redeem_compacted_internal(
@@ -605,7 +611,7 @@ fun redeem_compacted_internal(
     assert!(current_payout_liability >= payout_amount, ECompactedLiabilityUnderflow);
     assert!(market.lp_cash_balance.value() >= current_payout_liability, EInsufficientLpCash);
 
-    let removed_fee_basis = manager.decrease_position(key, quantity);
+    let removed_fee_basis = manager.decrease_position(market.id(), key, quantity);
     let rebate = if (range_loses(settlement, &key)) {
         market.rebate_liability(removed_fee_basis)
     } else {
@@ -618,7 +624,7 @@ fun redeem_compacted_internal(
     market.compacted_rebate_liability = current_rebate_liability - rebate;
     let mut payout = market.dispense_lp_cash(payout_amount);
     payout.join(market.dispense_fee_cash(rebate));
-    manager.deposit_permissionless(payout.into_coin(ctx), ctx);
+    market.deposit_permissionless_payout(manager, payout, ctx);
 }
 
 fun quote_mint_amounts(
@@ -663,6 +669,56 @@ fun quote_live_redeem_amounts(
     let principal_amount = math::mul(fair_price, quantity);
     let fee_amount = math::mul(fee_rate, quantity).min(principal_amount);
     (principal_amount, fee_amount)
+}
+
+fun receive_trade_payment(
+    market: &mut ExpiryMarket,
+    manager: &mut PredictManager,
+    mut payment: Balance<DUSDC>,
+    fee_amount: u64,
+) {
+    let payment_amount = payment.value();
+    let fee_payment = payment.split(fee_amount);
+    market.fee_balance.join(fee_payment);
+    market.lp_cash_balance.join(payment);
+    manager.record_cash_paid_to_expiry(market.id(), payment_amount);
+    market.record_trading_fee_paid(manager, fee_amount);
+}
+
+fun collect_redeem_fee(
+    market: &mut ExpiryMarket,
+    manager: &mut PredictManager,
+    fee: Balance<DUSDC>,
+) {
+    let fee_amount = fee.value();
+    market.fee_balance.join(fee);
+    market.record_trading_fee_paid(manager, fee_amount);
+}
+
+fun deposit_live_payout(
+    market: &ExpiryMarket,
+    manager: &mut PredictManager,
+    payout: Balance<DUSDC>,
+    ctx: &mut TxContext,
+) {
+    manager.record_cash_received_from_expiry(market.id(), payout.value());
+    manager.deposit(payout.into_coin(ctx), ctx);
+}
+
+fun deposit_permissionless_payout(
+    market: &ExpiryMarket,
+    manager: &mut PredictManager,
+    payout: Balance<DUSDC>,
+    ctx: &mut TxContext,
+) {
+    manager.record_cash_received_from_expiry(market.id(), payout.value());
+    manager.deposit_permissionless(payout.into_coin(ctx), ctx);
+}
+
+fun record_trading_fee_paid(market: &mut ExpiryMarket, manager: &mut PredictManager, amount: u64) {
+    if (amount == 0) return;
+    manager.record_trading_fee_paid(market.id(), amount);
+    market.unclaimed_rebate_trading_fees = market.unclaimed_rebate_trading_fees + amount;
 }
 
 fun dispense_lp_cash(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {

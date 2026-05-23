@@ -30,6 +30,8 @@ public struct PredictManager has key {
     builder_code_id: Option<ID>,
     /// RangeKey -> position quantity and raw rebate fee basis.
     positions: Table<RangeKey, Position>,
+    /// Per-expiry aggregate trading cash flows and open position count.
+    expiry_summaries: Table<ID, ExpiryTradingSummary>,
     /// Mirror of `ProtocolConfig.allowed_versions`. Owners run the permissionless
     /// sync to track admin changes; package mutations gate on this set.
     allowed_versions: VecSet<u64>,
@@ -39,6 +41,18 @@ public struct PredictManager has key {
 public struct Position has store {
     quantity: u64,
     rebate_fee_basis: u64,
+}
+
+/// Aggregate trading cash flow for one manager in one expiry market.
+public struct ExpiryTradingSummary has store {
+    /// Open position row count for this expiry.
+    open_position_count: u64,
+    /// Trading fees paid to the pool, excluding builder fees.
+    trading_fees_paid: u64,
+    /// DUSDC paid from this manager into the expiry market.
+    cash_paid_to_expiry: u64,
+    /// DUSDC received from the expiry market into this manager.
+    cash_received_from_expiry: u64,
 }
 
 /// Emitted when a manager owner changes sticky builder-code attribution.
@@ -106,6 +120,42 @@ public fun rebate_fee_basis(self: &PredictManager, key: RangeKey): u64 {
     }
 }
 
+/// Return open position row count for one expiry market.
+public fun expiry_position_count(self: &PredictManager, expiry_market_id: ID): u64 {
+    if (self.expiry_summaries.contains(expiry_market_id)) {
+        self.expiry_summaries[expiry_market_id].open_position_count
+    } else {
+        0
+    }
+}
+
+/// Return aggregate trading fees paid to the pool for one expiry market.
+public fun trading_fees_paid(self: &PredictManager, expiry_market_id: ID): u64 {
+    if (self.expiry_summaries.contains(expiry_market_id)) {
+        self.expiry_summaries[expiry_market_id].trading_fees_paid
+    } else {
+        0
+    }
+}
+
+/// Return aggregate DUSDC paid from this manager to one expiry market.
+public fun cash_paid_to_expiry(self: &PredictManager, expiry_market_id: ID): u64 {
+    if (self.expiry_summaries.contains(expiry_market_id)) {
+        self.expiry_summaries[expiry_market_id].cash_paid_to_expiry
+    } else {
+        0
+    }
+}
+
+/// Return aggregate DUSDC received from one expiry market into this manager.
+public fun cash_received_from_expiry(self: &PredictManager, expiry_market_id: ID): u64 {
+    if (self.expiry_summaries.contains(expiry_market_id)) {
+        self.expiry_summaries[expiry_market_id].cash_received_from_expiry
+    } else {
+        0
+    }
+}
+
 /// Return the DUSDC balance held by this PredictManager.
 public fun balance(self: &PredictManager): u64 {
     self.balance_manager.balance<DUSDC>()
@@ -163,6 +213,7 @@ public(package) fun new(
         deposit_cap,
         builder_code_id: option::none(),
         positions: table::new(ctx),
+        expiry_summaries: table::new(ctx),
         allowed_versions,
     }
 }
@@ -187,13 +238,17 @@ public(package) fun deposit_permissionless(
 /// Add position quantity and raw rebate-eligible fee basis to a range.
 public(package) fun increase_position(
     self: &mut PredictManager,
+    expiry_market_id: ID,
     key: RangeKey,
     quantity: u64,
     rebate_fee_basis: u64,
 ) {
     assert_nonzero_quantity(quantity);
     if (!self.positions.contains(key)) {
+        self.ensure_expiry_summary(expiry_market_id);
         self.positions.add(key, Position { quantity: 0, rebate_fee_basis: 0 });
+        let summary = &mut self.expiry_summaries[expiry_market_id];
+        summary.open_position_count = summary.open_position_count + 1;
     };
     let position = &mut self.positions[key];
     position.quantity = position.quantity + quantity;
@@ -210,6 +265,7 @@ public(package) fun increase_position(
 /// zero.
 public(package) fun decrease_position(
     self: &mut PredictManager,
+    expiry_market_id: ID,
     key: RangeKey,
     quantity: u64,
 ): u64 {
@@ -223,14 +279,66 @@ public(package) fun decrease_position(
     };
     if (remove_position) {
         let Position { quantity: _, rebate_fee_basis: _ } = self.positions.remove(key);
+        self.ensure_expiry_summary(expiry_market_id);
+        let summary = &mut self.expiry_summaries[expiry_market_id];
+        assert!(summary.open_position_count > 0, EInsufficientPosition);
+        summary.open_position_count = summary.open_position_count - 1;
     };
 
     rebate_fee_basis
 }
 
+/// Record DUSDC paid from this manager into an expiry market.
+public(package) fun record_cash_paid_to_expiry(
+    self: &mut PredictManager,
+    expiry_market_id: ID,
+    amount: u64,
+) {
+    if (amount == 0) return;
+    self.ensure_expiry_summary(expiry_market_id);
+    let summary = &mut self.expiry_summaries[expiry_market_id];
+    summary.cash_paid_to_expiry = summary.cash_paid_to_expiry + amount;
+}
+
+/// Record DUSDC received from an expiry market into this manager.
+public(package) fun record_cash_received_from_expiry(
+    self: &mut PredictManager,
+    expiry_market_id: ID,
+    amount: u64,
+) {
+    if (amount == 0) return;
+    self.ensure_expiry_summary(expiry_market_id);
+    let summary = &mut self.expiry_summaries[expiry_market_id];
+    summary.cash_received_from_expiry = summary.cash_received_from_expiry + amount;
+}
+
+/// Record pool trading fees paid by this manager for one expiry market.
+public(package) fun record_trading_fee_paid(
+    self: &mut PredictManager,
+    expiry_market_id: ID,
+    amount: u64,
+) {
+    if (amount == 0) return;
+    self.ensure_expiry_summary(expiry_market_id);
+    let summary = &mut self.expiry_summaries[expiry_market_id];
+    summary.trading_fees_paid = summary.trading_fees_paid + amount;
+}
+
 /// Abort unless the transaction sender owns this manager.
 public(package) fun assert_owner(self: &PredictManager, ctx: &TxContext) {
     assert!(ctx.sender() == self.balance_manager.owner(), ENotOwner);
+}
+
+fun ensure_expiry_summary(self: &mut PredictManager, expiry_market_id: ID) {
+    if (!self.expiry_summaries.contains(expiry_market_id)) {
+        let summary = ExpiryTradingSummary {
+            open_position_count: 0,
+            trading_fees_paid: 0,
+            cash_paid_to_expiry: 0,
+            cash_received_from_expiry: 0,
+        };
+        self.expiry_summaries.add(expiry_market_id, summary);
+    }
 }
 
 fun fee_basis_to_remove(self: &PredictManager, key: RangeKey, quantity: u64): u64 {
