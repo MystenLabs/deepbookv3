@@ -471,15 +471,16 @@ public(package) fun ensure_settlement_finalized(
     settled_liability
 }
 
-/// Compact finalized expiry storage and return surplus cash to the pool.
+/// Finalize settlement if needed, destroy live exposure storage, and return surplus cash to the pool.
 ///
-/// Destroys dense strike exposure state after settled payout liability has been
-/// finalized, leaves remaining settled liability backed in LP cash, leaves only
-/// aggregate rebate reserve in fee cash, and returns all other cash to the pool.
-public(package) fun compact_finalized(market: &mut ExpiryMarket): (Balance<DUSDC>, Balance<DUSDC>) {
+/// Leaves remaining settled payout liability backed in LP cash, leaves only aggregate
+/// rebate reserve in fee cash, and returns all other cash to the pool.
+public(package) fun compact_settled_storage(
+    market: &mut ExpiryMarket,
+    market_oracle: &MarketOracle,
+): (Balance<DUSDC>, Balance<DUSDC>) {
     market.assert_version_allowed();
-
-    let settled_liability = market.finalized_settled_payout_liability();
+    let settled_liability = market.ensure_settlement_finalized(market_oracle);
     let rebate_reserve = market.aggregate_rebate_reserve();
     assert!(market.lp_cash_balance.value() >= settled_liability, EInsufficientLpCash);
     assert!(market.fee_balance.value() >= rebate_reserve, EInsufficientFeeBalance);
