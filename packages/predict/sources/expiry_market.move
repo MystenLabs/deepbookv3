@@ -483,6 +483,7 @@ public fun compact_storage(
 ) {
     market.assert_version_allowed();
     config.assert_not_valuation_in_progress();
+    market.assert_market_oracle(market_oracle);
     market_oracle.assert_authorized_cap(cap);
     market.ensure_settlement_finalized(market_oracle);
     market.strike_exposure.destroy_live_indexes();
