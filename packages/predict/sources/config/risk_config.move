@@ -95,17 +95,3 @@ public(package) fun set_shrink_factor(config: &mut RiskConfig, factor: u64) {
     config_constants::assert_shrink_factor(factor);
     config.shrink_factor = factor;
 }
-
-// === Test-Only Functions ===
-
-#[test_only]
-public fun destroy_for_testing(config: RiskConfig) {
-    let RiskConfig {
-        max_total_exposure_pct: _,
-        expiry_allocation: _,
-        grow_utilization_threshold: _,
-        shrink_utilization_threshold: _,
-        grow_factor: _,
-        shrink_factor: _,
-    } = config;
-}

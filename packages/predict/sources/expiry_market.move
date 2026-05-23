@@ -51,6 +51,8 @@ public struct ExpiryMarket has key {
     expiry: u64,
     /// Settlement loss rebate rate snapshotted from fee config at creation.
     settlement_loss_rebate_rate: u64,
+    /// Terminal borrow premium snapshotted from leverage config at creation.
+    max_expiry_borrow_fee: u64,
     /// Active risk budget assigned by the pool.
     allocated_capital: u64,
     /// LP-owned DUSDC backing this expiry's liability.
@@ -130,6 +132,11 @@ public fun fee_balance(market: &ExpiryMarket): u64 {
 /// Return the settlement loss rebate rate snapshotted for this expiry.
 public fun settlement_loss_rebate_rate(market: &ExpiryMarket): u64 {
     market.settlement_loss_rebate_rate
+}
+
+/// Return the terminal borrow premium snapshotted for this expiry.
+public fun max_expiry_borrow_fee(market: &ExpiryMarket): u64 {
+    market.max_expiry_borrow_fee
 }
 
 /// Return the expiry-local worst-case payout.
@@ -313,6 +320,7 @@ public(package) fun create_and_share(
         pyth_lazer_feed_id,
         expiry,
         settlement_loss_rebate_rate: config.fee_config().settlement_loss_rebate_rate(),
+        max_expiry_borrow_fee: config.leverage_config().max_expiry_borrow_fee(),
         allocated_capital,
         lp_cash_balance: allocation,
         fee_balance: balance::zero(),

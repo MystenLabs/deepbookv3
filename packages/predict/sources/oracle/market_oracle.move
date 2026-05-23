@@ -782,31 +782,3 @@ public(package) fun create_test_market_oracle(
         settlement_update_timestamp_ms: 0,
     }
 }
-
-#[test_only]
-public(package) fun destroy_for_testing(market: MarketOracle) {
-    let MarketOracle {
-        id,
-        authorized_cap_ids: _,
-        allowed_versions: _,
-        pyth_source_id: _,
-        expiry: _,
-        block_scholes_spot: _,
-        block_scholes_forward: _,
-        block_scholes_price_source_timestamp_ms: _,
-        block_scholes_price_update_timestamp_ms: _,
-        block_scholes_svi: _,
-        block_scholes_svi_source_timestamp_ms: _,
-        block_scholes_svi_update_timestamp_ms: _,
-        settlement_freshness_ms: _,
-        max_spot_deviation: _,
-        max_basis_deviation: _,
-        min_basis: _,
-        max_basis: _,
-        settlement_price: _,
-        settlement_source: _,
-        settlement_source_timestamp_ms: _,
-        settlement_update_timestamp_ms: _,
-    } = market;
-    id.delete();
-}

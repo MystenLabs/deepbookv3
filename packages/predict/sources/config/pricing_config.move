@@ -122,19 +122,3 @@ public(package) fun set_block_scholes_svi_freshness_ms(config: &mut PricingConfi
     config_constants::assert_block_scholes_svi_freshness_ms(value);
     config.block_scholes_svi_freshness_ms = value;
 }
-
-// === Test-Only Functions ===
-
-#[test_only]
-public fun destroy_for_testing(config: PricingConfig) {
-    let PricingConfig {
-        base_fee: _,
-        min_fee: _,
-        utilization_multiplier: _,
-        min_ask_price: _,
-        max_ask_price: _,
-        pyth_spot_freshness_ms: _,
-        block_scholes_prices_freshness_ms: _,
-        block_scholes_svi_freshness_ms: _,
-    } = config;
-}
