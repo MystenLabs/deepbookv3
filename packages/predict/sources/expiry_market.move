@@ -13,21 +13,23 @@ use deepbook::math;
 use deepbook_predict::{
     constants,
     market_oracle::{MarketOracle, MarketOracleCap},
+    order::{Self, Order},
     predict_manager::PredictManager,
     pricing,
+    pricing_config::PricingConfig,
     protocol_config::ProtocolConfig,
     pyth_source::PythSource,
-    range_key::{Self, RangeKey},
     strike_exposure::{Self, StrikeExposure}
 };
 use dusdc::dusdc::DUSDC;
 use sui::{balance::{Self, Balance}, clock::Clock, event, vec_set::VecSet};
 
+use fun pricing::assert_live_quote_available as PricingConfig.assert_live_quote_available;
+
 const EWrongMarketOracle: u64 = 0;
 const EWrongPythSource: u64 = 1;
 const EValuationExceedsCash: u64 = 2;
 const EAllocationBelowMaxPayout: u64 = 3;
-const EZeroQuantity: u64 = 5;
 const EInsufficientLpCash: u64 = 8;
 const EZeroAllocatedCapital: u64 = 10;
 const EInvalidTickSize: u64 = 11;
@@ -36,9 +38,10 @@ const ESettledLiabilityUnderflow: u64 = 16;
 const EInsufficientFeeBalance: u64 = 18;
 const EPackageVersionDisabled: u64 = 20;
 const EMintPaused: u64 = 21;
-const EInvalidQuantity: u64 = 22;
 const EUnresolvedTradingFeesUnderflow: u64 = 23;
 const ESettlementNotFinalized: u64 = 24;
+const EUnsupportedLeverage: u64 = 25;
+const EWrongOrderExpiry: u64 = 26;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -212,11 +215,6 @@ public fun update_allowed_versions(market: &mut ExpiryMarket, allowed_versions: 
     market.allowed_versions = allowed_versions;
 }
 
-/// Construct a range key for this expiry market.
-public fun range_key(market: &ExpiryMarket, lower_strike: u64, higher_strike: u64): RangeKey {
-    range_key::new(market.market_oracle_id, lower_strike, higher_strike)
-}
-
 /// Produce this expiry's valuation witness for a full-pool valuation.
 ///
 /// Requires the protocol valuation lock, aborts while the oracle is expired but
@@ -254,52 +252,67 @@ public fun read_valuation(
 /// Requires the package version to be allowed for this market, per-market mint
 /// pause to be off, trading globally enabled, manager ownership, a live fresh
 /// oracle, and enough expiry allocation to back the post-mint max payout.
+/// Returns the minted order ID for future order-scoped flows. Only 1x leverage
+/// is currently accepted.
 public fun mint(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     manager: &mut PredictManager,
     market_oracle: &MarketOracle,
     pyth: &PythSource,
-    key: RangeKey,
+    lower_strike: u64,
+    higher_strike: u64,
     quantity: u64,
+    leverage: u64,
     clock: &Clock,
     ctx: &mut TxContext,
-) {
+): u256 {
     market.assert_version_allowed();
     market.assert_mint_not_paused();
     config.assert_trading_allowed();
-    market.mint_internal(config, manager, market_oracle, pyth, key, quantity, clock, ctx);
+    market.mint_internal(
+        config,
+        manager,
+        market_oracle,
+        pyth,
+        lower_strike,
+        higher_strike,
+        quantity,
+        leverage,
+        clock,
+        ctx,
+    )
 }
 
-/// Redeem a live or settled position interval.
+/// Redeem a live or settled order.
 ///
-/// Live redeems require manager ownership and fresh oracle data. Settled
-/// redeems are permissionless, pay into the manager balance, and use finalized
-/// expiry settlement liability.
+/// Live redeems require manager ownership and fresh oracle data. Settled redeems
+/// are permissionless, pay into the manager balance, and use finalized expiry
+/// settlement liability.
 public fun redeem(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     manager: &mut PredictManager,
     market_oracle: &MarketOracle,
     pyth: &PythSource,
-    key: RangeKey,
-    quantity: u64,
+    order_id: u256,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
     market.assert_version_allowed();
     config.assert_not_valuation_in_progress();
     market.assert_market_oracle(market_oracle);
+    let redeemed_order = order::from_order_id(order_id);
+    market.assert_order_matches(&redeemed_order);
     if (market_oracle.is_settled()) {
-        market.redeem_settled_internal(manager, market_oracle, key, quantity, ctx);
+        market.redeem_settled_internal(manager, market_oracle, &redeemed_order, ctx);
     } else {
         market.redeem_live_internal(
             config,
             manager,
             market_oracle,
             pyth,
-            key,
-            quantity,
+            &redeemed_order,
             clock,
             ctx,
         );
@@ -465,7 +478,7 @@ public(package) fun ensure_settlement_finalized(
         return *market.settled_payout_liability.borrow()
     };
 
-    let settlement = pricing::settlement_price(market_oracle);
+    let settlement = market_oracle.settlement_price();
     let settled_liability = market.strike_exposure.settled_value(settlement);
     market.settled_payout_liability = option::some(settled_liability);
     settled_liability
@@ -532,7 +545,7 @@ fun current_liabilities(
     };
 
     if (market_oracle.is_settled()) {
-        let settlement = pricing::settlement_price(market_oracle);
+        let settlement = market_oracle.settlement_price();
         let settled_value = market.strike_exposure.settled_value(settlement);
         (settled_value, rebate_reserve)
     } else {
@@ -556,42 +569,60 @@ fun mint_internal(
     manager: &mut PredictManager,
     market_oracle: &MarketOracle,
     pyth: &PythSource,
-    key: RangeKey,
+    lower_strike: u64,
+    higher_strike: u64,
     quantity: u64,
+    leverage: u64,
     clock: &Clock,
     ctx: &mut TxContext,
-) {
+): u256 {
     manager.assert_owner(ctx);
     market.assert_market_oracle(market_oracle);
     market.assert_pyth_feed(pyth);
-    market_oracle.assert_pyth_source(pyth);
-    market_oracle.assert_active(clock);
-    pricing::assert_live_oracle_fresh(config.pricing_config(), market_oracle, clock);
-    market.assert_range_key_matches(&key);
-    assert_valid_quantity(quantity);
+    market.strike_exposure.assert_valid_order_strikes(lower_strike, higher_strike);
+    assert!(leverage == order::leverage_one_x(), EUnsupportedLeverage);
 
-    let (principal_amount, fee_amount) = market.quote_mint_amounts(
-        config,
+    let (fair_price, fee_rate) = pricing::quote_mint_live_range(
+        config.pricing_config(),
         market_oracle,
         pyth,
-        key,
-        quantity,
         clock,
+        lower_strike,
+        higher_strike,
+        market.max_payout(),
+        market.allocated_capital,
     );
+
+    let minted_order = market
+        .strike_exposure
+        .allocate_order(
+            market.expiry,
+            lower_strike,
+            higher_strike,
+            quantity,
+            leverage,
+            fair_price,
+            clock,
+        );
+    let order_id = minted_order.id();
+    let quantity = minted_order.quantity();
+    let principal_amount = math::mul(minted_order.minted_price(), quantity);
+    let fee_amount = math::mul(fee_rate, quantity);
     let builder_code_id = manager.builder_code_id();
     let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity);
     let payment_amount = principal_amount + fee_amount + builder_fee_amount;
 
-    market.strike_exposure.insert_range(key.lower_strike(), key.higher_strike(), quantity);
+    market.strike_exposure.insert_order(&minted_order);
     assert!(market.allocated_capital >= market.max_payout(), EAllocationBelowMaxPayout);
 
-    manager.increase_position(market.id(), key, quantity);
+    manager.add_position(market.id(), order_id);
     let mut payment = manager.withdraw(payment_amount, ctx).into_balance();
     let builder_fee_payment = payment.split(builder_fee_amount);
     send_builder_fee(builder_code_id, builder_fee_payment);
     market.emit_fee_accrued(fee_amount, builder_fee_amount, builder_code_id);
     market.receive_trade_payment(manager, payment, fee_amount);
     market.assert_cash_backing();
+    order_id
 }
 
 fun redeem_live_internal(
@@ -600,28 +631,24 @@ fun redeem_live_internal(
     manager: &mut PredictManager,
     market_oracle: &MarketOracle,
     pyth: &PythSource,
-    key: RangeKey,
-    quantity: u64,
+    order: &Order,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
     manager.assert_owner(ctx);
     market.assert_pyth_feed(pyth);
-    market_oracle.assert_pyth_source(pyth);
-    market_oracle.assert_active(clock);
-    pricing::assert_live_oracle_fresh(config.pricing_config(), market_oracle, clock);
-    market.assert_range_key_matches(&key);
-    assert_valid_quantity(quantity);
-    manager.decrease_position(market.id(), key, quantity);
+    config.pricing_config().assert_live_quote_available(market_oracle, pyth, clock);
+    manager.remove_position(market.id(), order.id());
 
     // Live redeem quotes intentionally use post-removal liability for utilization fees.
-    market.strike_exposure.remove_range(key.lower_strike(), key.higher_strike(), quantity);
+    let (lower_strike, higher_strike, quantity) = market.strike_exposure.remove_order(order);
 
     let (principal_amount, fee_amount) = market.quote_live_redeem_amounts(
         config,
         market_oracle,
         pyth,
-        key,
+        lower_strike,
+        higher_strike,
         quantity,
         clock,
     );
@@ -644,42 +671,18 @@ fun redeem_settled_internal(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
     market_oracle: &MarketOracle,
-    key: RangeKey,
-    quantity: u64,
+    order: &Order,
     ctx: &mut TxContext,
 ) {
-    market.assert_range_key_matches(&key);
-    assert_valid_quantity(quantity);
     market.ensure_settlement_finalized(market_oracle);
 
-    let settlement = pricing::settlement_price(market_oracle);
-    let payout_amount = pricing::settled_range_payout(settlement, &key, quantity);
+    let settlement = market_oracle.settlement_price();
+    let payout_amount = market.strike_exposure.settled_order_payout(order, settlement);
+    manager.remove_position(market.id(), order.id());
     market.decrease_settled_payout_liability(payout_amount);
 
-    manager.decrease_position(market.id(), key, quantity);
     let payout = market.dispense_lp_cash(payout_amount);
     market.deposit_permissionless_payout(manager, payout, ctx);
-}
-
-fun quote_mint_amounts(
-    market: &ExpiryMarket,
-    config: &ProtocolConfig,
-    market_oracle: &MarketOracle,
-    pyth: &PythSource,
-    key: RangeKey,
-    quantity: u64,
-    clock: &Clock,
-): (u64, u64) {
-    let (fair_price, fee_rate) = pricing::quote_mint_live_range(
-        config.pricing_config(),
-        market_oracle,
-        pyth,
-        clock,
-        &key,
-        market.max_payout(),
-        market.allocated_capital,
-    );
-    (math::mul(fair_price, quantity), math::mul(fee_rate, quantity))
 }
 
 fun quote_live_redeem_amounts(
@@ -687,7 +690,8 @@ fun quote_live_redeem_amounts(
     config: &ProtocolConfig,
     market_oracle: &MarketOracle,
     pyth: &PythSource,
-    key: RangeKey,
+    lower_strike: u64,
+    higher_strike: u64,
     quantity: u64,
     clock: &Clock,
 ): (u64, u64) {
@@ -696,7 +700,8 @@ fun quote_live_redeem_amounts(
         market_oracle,
         pyth,
         clock,
-        &key,
+        lower_strike,
+        higher_strike,
         market.max_payout(),
         market.allocated_capital,
     );
@@ -794,13 +799,8 @@ fun assert_pyth_feed(market: &ExpiryMarket, pyth: &PythSource) {
     assert!(market.pyth_lazer_feed_id == pyth.feed_id(), EWrongPythSource);
 }
 
-fun assert_range_key_matches(market: &ExpiryMarket, key: &RangeKey) {
-    assert!(key.oracle_id() == market.market_oracle_id, EWrongMarketOracle);
-}
-
-fun assert_valid_quantity(quantity: u64) {
-    assert!(quantity > 0, EZeroQuantity);
-    assert!(quantity % constants::position_lot_size!() == 0, EInvalidQuantity);
+fun assert_order_matches(market: &ExpiryMarket, order: &Order) {
+    assert!(order.expiry_ms() == market.expiry, EWrongOrderExpiry);
 }
 
 fun emit_fee_accrued(

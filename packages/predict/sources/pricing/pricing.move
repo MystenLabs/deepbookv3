@@ -16,8 +16,7 @@ use deepbook_predict::{
     market_oracle::{MarketOracle, SVIParams},
     math as predict_math,
     pricing_config::PricingConfig,
-    pyth_source::PythSource,
-    range_key::RangeKey
+    pyth_source::PythSource
 };
 use sui::clock::Clock;
 
@@ -78,17 +77,13 @@ public(package) fun quote_live_range(
     market: &MarketOracle,
     pyth: &PythSource,
     clock: &Clock,
-    key: &RangeKey,
+    lower: u64,
+    higher: u64,
     liability: u64,
     balance: u64,
 ): (u64, u64) {
     let (forward, svi) = resolve_live_inputs(config, market, pyth, clock);
-    let fair_price = compute_range_price(
-        forward,
-        &svi,
-        key.lower_strike(),
-        key.higher_strike(),
-    );
+    let fair_price = compute_range_price(forward, &svi, lower, higher);
     (fair_price, quote_fee_rate(config, fair_price, liability, balance))
 }
 
@@ -98,7 +93,8 @@ public(package) fun quote_mint_live_range(
     market: &MarketOracle,
     pyth: &PythSource,
     clock: &Clock,
-    key: &RangeKey,
+    lower: u64,
+    higher: u64,
     liability: u64,
     balance: u64,
 ): (u64, u64) {
@@ -107,7 +103,8 @@ public(package) fun quote_mint_live_range(
         market,
         pyth,
         clock,
-        key,
+        lower,
+        higher,
         liability,
         balance,
     );
@@ -120,21 +117,20 @@ public(package) fun quote_mint_live_range(
 }
 
 /// Abort unless the live oracle inputs needed for a quote are currently usable.
-public(package) fun assert_live_oracle_fresh(
+public(package) fun assert_live_quote_available(
     config: &PricingConfig,
     market: &MarketOracle,
+    pyth: &PythSource,
     clock: &Clock,
 ) {
-    assert!(block_scholes_price_is_fresh(config, market, clock), EBlockScholesPriceStale);
-    assert!(block_scholes_svi_is_fresh(config, market, clock), EBlockScholesSVIStale);
+    market.assert_pyth_source(pyth);
+    market.assert_active(clock);
+    assert_live_oracle_fresh(config, market, clock);
 }
 
-/// Return settled payout for a range position at a terminal settlement price.
-public(package) fun settled_range_payout(settlement: u64, key: &RangeKey, quantity: u64): u64 {
-    math::mul(
-        compute_settled_range_price(settlement, key.lower_strike(), key.higher_strike()),
-        quantity,
-    )
+fun assert_live_oracle_fresh(config: &PricingConfig, market: &MarketOracle, clock: &Clock) {
+    assert!(block_scholes_price_is_fresh(config, market, clock), EBlockScholesPriceStale);
+    assert!(block_scholes_svi_is_fresh(config, market, clock), EBlockScholesSVIStale);
 }
 
 // === Private Functions ===
@@ -150,9 +146,7 @@ fun resolve_live_inputs(
     pyth: &PythSource,
     clock: &Clock,
 ): (u64, SVIParams) {
-    market.assert_pyth_source(pyth);
-    market.assert_active(clock);
-    assert_live_oracle_fresh(config, market, clock);
+    assert_live_quote_available(config, market, pyth, clock);
 
     let forward = if (pyth_spot_is_fresh(config, pyth, clock)) {
         math::mul(pyth.spot(), market.block_scholes_basis())
@@ -161,12 +155,6 @@ fun resolve_live_inputs(
     };
 
     (forward, market.block_scholes_svi())
-}
-
-/// Compute the settled price for the range `(lower, higher]`.
-fun compute_settled_range_price(settlement: u64, lower: u64, higher: u64): u64 {
-    assert!(lower < higher, EInvalidRange);
-    if (settlement > lower && settlement <= higher) constants::float_scaling!() else 0
 }
 
 fun block_scholes_price_is_fresh(
