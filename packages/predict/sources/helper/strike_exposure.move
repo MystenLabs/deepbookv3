@@ -89,13 +89,28 @@ public(package) fun settled_order_payout(
     if (settlement > lower && settlement <= higher) quantity else 0
 }
 
-/// Assert that an order range is valid for this exposure book's strike grid.
-public(package) fun assert_valid_order_strikes(exposure: &StrikeExposure, lower: u64, higher: u64) {
-    exposure.assert_strikes_on_grid(lower, higher);
-    assert!(
-        !(lower == constants::neg_inf!() && higher == constants::pos_inf!()),
-        EInvalidStrikeGrid,
-    );
+/// Quote a live mint over this exposure book's strike grid.
+public(package) fun quote_mint_order(
+    exposure: &StrikeExposure,
+    config: &PricingConfig,
+    market: &MarketOracle,
+    pyth: &PythSource,
+    clock: &Clock,
+    lower: u64,
+    higher: u64,
+    allocated_capital: u64,
+): (u64, u64) {
+    exposure.assert_valid_order_strikes(lower, higher);
+    pricing::quote_mint_live_range(
+        config,
+        market,
+        pyth,
+        clock,
+        lower,
+        higher,
+        exposure.max_payout(),
+        allocated_capital,
+    )
 }
 
 /// Create a strike exposure book for the oracle grid.
@@ -200,6 +215,14 @@ fun assert_strikes_on_grid(exposure: &StrikeExposure, lower: u64, higher: u64) {
     assert!(lower < higher, EInvalidStrikeGrid);
     if (lower != constants::neg_inf!()) exposure.assert_finite_strike_on_grid(lower);
     if (higher != constants::pos_inf!()) exposure.assert_finite_strike_on_grid(higher);
+}
+
+fun assert_valid_order_strikes(exposure: &StrikeExposure, lower: u64, higher: u64) {
+    exposure.assert_strikes_on_grid(lower, higher);
+    assert!(
+        !(lower == constants::neg_inf!() && higher == constants::pos_inf!()),
+        EInvalidStrikeGrid,
+    );
 }
 
 fun assert_finite_strike_on_grid(exposure: &StrikeExposure, strike: u64) {

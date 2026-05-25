@@ -579,19 +579,19 @@ fun mint_internal(
     manager.assert_owner(ctx);
     market.assert_market_oracle(market_oracle);
     market.assert_pyth_feed(pyth);
-    market.strike_exposure.assert_valid_order_strikes(lower_strike, higher_strike);
     assert!(leverage == order::leverage_one_x(), EUnsupportedLeverage);
 
-    let (fair_price, fee_rate) = pricing::quote_mint_live_range(
-        config.pricing_config(),
-        market_oracle,
-        pyth,
-        clock,
-        lower_strike,
-        higher_strike,
-        market.max_payout(),
-        market.allocated_capital,
-    );
+    let (fair_price, fee_rate) = market
+        .strike_exposure
+        .quote_mint_order(
+            config.pricing_config(),
+            market_oracle,
+            pyth,
+            clock,
+            lower_strike,
+            higher_strike,
+            market.allocated_capital,
+        );
 
     let minted_order = market
         .strike_exposure
