@@ -17,7 +17,8 @@ use deepbook_predict::{
     plp::PoolVault,
     predict_manager::{Self, PredictManager},
     protocol_config::{Self, ProtocolConfig},
-    pyth_source::{Self, PythSource}
+    pyth_source::{Self, PythSource},
+    strike_exposure
 };
 use sui::{clock::Clock, table::{Self, Table}, vec_set::{Self, VecSet}};
 
@@ -72,16 +73,13 @@ public fun allowed_versions(registry: &Registry): VecSet<u64> {
     registry.allowed_versions
 }
 
-/// Abort if the running package version is not in the allowed set.
-///
-/// Bypasses are package-internal version-management entries
-/// (`enable_version`, `disable_version`, PauseCap-based disables) so admin
-/// can recover from any disabled state.
-public(package) fun assert_version_allowed(registry: &Registry) {
-    assert!(
-        registry.allowed_versions.contains(&constants::current_version!()),
-        EPackageVersionDisabled,
-    );
+/// Return the shared PythSource ID for a feed, if it has been created.
+public fun pyth_source_id(registry: &Registry, pyth_lazer_feed_id: u32): Option<ID> {
+    if (registry.pyth_source_ids.contains(pyth_lazer_feed_id)) {
+        option::some(registry.pyth_source_ids[pyth_lazer_feed_id])
+    } else {
+        option::none()
+    }
 }
 
 /// Set the base fee multiplier.
@@ -406,7 +404,7 @@ public fun create_expiry_market(
     let pyth_lazer_feed_id = pyth.feed_id();
     assert!(registry.pyth_source_ids.contains(pyth_lazer_feed_id), EFeedIdMismatch);
     assert!(registry.pyth_source_ids[pyth_lazer_feed_id] == pyth.id(), EFeedIdMismatch);
-    expiry_market::assert_valid_strike_grid(min_strike, tick_size);
+    strike_exposure::assert_valid_strike_grid(min_strike, tick_size);
     assert!(!registry.expiry_market_ids.contains(expiry), EExpiryMarketAlreadyCreated);
     let allowed_versions = registry.allowed_versions;
     let allocation = pool_vault.allocate_to_new_expiry(config.risk_config());
@@ -451,13 +449,18 @@ entry fun create_and_share_manager(registry: &mut Registry, ctx: &mut TxContext)
     create_manager(registry, ctx).share();
 }
 
-/// Return the shared PythSource ID for a feed, if it has been created.
-public fun pyth_source_id(registry: &Registry, pyth_lazer_feed_id: u32): Option<ID> {
-    if (registry.pyth_source_ids.contains(pyth_lazer_feed_id)) {
-        option::some(registry.pyth_source_ids[pyth_lazer_feed_id])
-    } else {
-        option::none()
-    }
+// === Public-Package Functions ===
+
+/// Abort if the running package version is not in the allowed set.
+///
+/// Bypasses are package-internal version-management entries
+/// (`enable_version`, `disable_version`, PauseCap-based disables) so admin
+/// can recover from any disabled state.
+public(package) fun assert_version_allowed(registry: &Registry) {
+    assert!(
+        registry.allowed_versions.contains(&constants::current_version!()),
+        EPackageVersionDisabled,
+    );
 }
 
 // === Private Functions ===

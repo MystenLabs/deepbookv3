@@ -70,6 +70,8 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
   2. `public(package) fun` - package-internal functions
   3. `fun` - private/internal helper functions
 
+  Within each visibility group, put read-only/query functions before mutating/write functions. Place private helpers after the function that first makes the call when that does not conflict with the visibility grouping; if read/write ordering and adjacency conflict, preserve the broader read-before-write grouping.
+
   Exception: `init` function typically comes early (after struct definitions).
 
 - Utility and math modules should only guard local mathematical or data-structure preconditions (division by zero, invalid precision, insufficient balance/quantity, invalid ranges). They should not encode application-level policy decisions like "this state shouldn't happen" or "this user type gets different treatment." Application-level guards belong in the calling module.
@@ -91,6 +93,10 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 - Distinguish on-chain landing time from source-data time in the field name itself. A bare `lazer_timestamp` is ambiguous — does it mean the publisher's timestamp embedded in the verified payload, or `clock.timestamp_ms()` captured when the payload landed on chain? Use a unit suffix that encodes both the unit and the source: `*_timestamp_ms` for `clock.timestamp_ms()` values (on-chain landing time, always milliseconds in Sui), and `*_published_at_us` (or similar explicit phrase) for timestamps that come from the data being pushed. Same convention for event payload fields and getter names. Bulk renames across an entire package are safe with `perl -i -pe 's/\bX\b/Y/g'` since `\b` correctly skips compound identifiers like `lazer_X_ms`.
 
 - Validate before mutate means contract-owned facts, not broad application preflighting. A function must validate the mutation-independent facts it owns before mutating state: flow gates, authorization, object binding, branch/lifecycle policy, static creation inputs, and facts that decide whether the function may start its transition. Do not duplicate another module's leaf guard just to avoid a later abort; preflight another module's fact only when the caller must know it before mutating a different state owner. If accounting or pricing intentionally depends on post-mutation state, make that dependency obvious and validate mutation-independent facts first. Always validate before consuming irreversible resources such as burning coins or destroying objects.
+
+- In multi-object flows, a mid-function assertion is often a phase boundary. Prefer extracting that phase into a helper where the helper starts with its own mutation-independent preconditions, performs one coherent state transition, and ends with the postconditions for the resources it changed. Keep postcondition helpers named by the resource they protect, such as allocation backing versus cash backing, and only combine them when they are always meaningful at the same point.
+
+- Emit events after the state transition and postconditions they report have completed, unless the event intentionally reports an attempted action rather than a completed one.
 
 - If a flow branches on another object's lifecycle or state, validate the object binding before using that state for branch selection, unless that branch intentionally does not require the object.
 

@@ -8,7 +8,7 @@
 /// not retain finalized settlement facts after dense storage is destroyed.
 module deepbook_predict::strike_exposure;
 
-use deepbook::constants::max_u64;
+use deepbook::{constants::max_u64, math};
 use deepbook_predict::{
     constants,
     market_oracle::MarketOracle,
@@ -21,6 +21,7 @@ use deepbook_predict::{
 };
 use sui::clock::Clock;
 
+const EInvalidTickSize: u64 = 2;
 const EInvalidStrikeGrid: u64 = 3;
 const EInvalidStrikeIndex: u64 = 4;
 
@@ -89,19 +90,27 @@ public(package) fun settled_order_payout(
     if (settlement > lower && settlement <= higher) quantity else 0
 }
 
-/// Quote a live mint over this exposure book's strike grid.
-public(package) fun quote_mint_order(
-    exposure: &StrikeExposure,
+/// Assert that strike grid creation parameters are valid.
+public(package) fun assert_valid_strike_grid(min_strike: u64, tick_size: u64) {
+    let _max_strike = validated_max_strike(min_strike, tick_size);
+}
+
+/// Quote and allocate a live mint order over this exposure book's strike grid.
+public(package) fun allocate_mint_order(
+    exposure: &mut StrikeExposure,
     config: &PricingConfig,
     market: &MarketOracle,
     pyth: &PythSource,
     clock: &Clock,
+    expiry_ms: u64,
     lower: u64,
     higher: u64,
+    quantity: u64,
+    leverage: u64,
     allocated_capital: u64,
-): (u64, u64) {
-    exposure.assert_valid_order_strikes(lower, higher);
-    pricing::quote_mint_live_range(
+): (Order, u64, u64) {
+    let (min_strike_index, max_strike_index) = exposure.strike_indices(lower, higher);
+    let (fair_price, fee_rate) = pricing::quote_mint_live_range(
         config,
         market,
         pyth,
@@ -110,16 +119,35 @@ public(package) fun quote_mint_order(
         higher,
         exposure.max_payout(),
         allocated_capital,
-    )
+    );
+
+    let sequence = exposure.next_order_sequence;
+    let allocated_order = order::new_from_strike_indices(
+        expiry_ms,
+        clock.timestamp_ms(),
+        min_strike_index,
+        max_strike_index,
+        leverage,
+        fair_price,
+        quantity,
+        sequence,
+    );
+    exposure.next_order_sequence = sequence + 1;
+
+    let quantity = allocated_order.quantity();
+    let live = exposure.live.borrow_mut();
+    live.payout.insert_range(lower, higher, quantity);
+    live.nav.insert_range(lower, higher, quantity);
+    live.track_minted_boundaries(lower, higher);
+
+    let principal_amount = math::mul(allocated_order.minted_price(), quantity);
+    let fee_amount = math::mul(fee_rate, quantity);
+    (allocated_order, principal_amount, fee_amount)
 }
 
 /// Create a strike exposure book for the oracle grid.
-public(package) fun new(
-    tick_size: u64,
-    min_strike: u64,
-    max_strike: u64,
-    ctx: &mut TxContext,
-): StrikeExposure {
+public(package) fun new(min_strike: u64, tick_size: u64, ctx: &mut TxContext): StrikeExposure {
+    let max_strike = validated_max_strike(min_strike, tick_size);
     StrikeExposure {
         grid_min: min_strike,
         grid_tick: tick_size,
@@ -134,61 +162,30 @@ public(package) fun new(
     }
 }
 
-/// Allocate an order view using this exposure book's strike grid and sequence.
-public(package) fun allocate_order(
+/// Remove an order and quote its live redeem amount using post-removal exposure.
+public(package) fun remove_and_quote_live_order(
     exposure: &mut StrikeExposure,
-    expiry_ms: u64,
-    lower: u64,
-    higher: u64,
-    quantity: u64,
-    leverage: u64,
-    minted_price: u64,
+    config: &PricingConfig,
+    market: &MarketOracle,
+    pyth: &PythSource,
     clock: &Clock,
-): Order {
-    let sequence = exposure.next_order_sequence;
-    let (min_strike_index, max_strike_index) = exposure.strike_indices(lower, higher);
-    let allocated_order = order::new_from_strike_indices(
-        expiry_ms,
-        clock.timestamp_ms(),
-        min_strike_index,
-        max_strike_index,
-        leverage,
-        minted_price,
-        quantity,
-        sequence,
+    order: &Order,
+    allocated_capital: u64,
+): (u64, u64) {
+    let (lower, higher, quantity) = exposure.remove_order(order);
+    let (fair_price, fee_rate) = pricing::quote_live_range(
+        config,
+        market,
+        pyth,
+        clock,
+        lower,
+        higher,
+        exposure.max_payout(),
+        allocated_capital,
     );
-    exposure.next_order_sequence = sequence + 1;
-    allocated_order
-}
-
-/// Insert interval quantity for `(lower, higher]`.
-fun insert_range(exposure: &mut StrikeExposure, lower: u64, higher: u64, qty: u64) {
-    exposure.assert_strikes_on_grid(lower, higher);
-    let live = exposure.live.borrow_mut();
-    live.payout.insert_range(lower, higher, qty);
-    live.nav.insert_range(lower, higher, qty);
-    live.track_minted_boundaries(lower, higher);
-}
-
-/// Insert interval quantity for an order.
-public(package) fun insert_order(exposure: &mut StrikeExposure, order: &Order) {
-    let (lower, higher, quantity) = exposure.order_terms(order);
-    exposure.insert_range(lower, higher, quantity);
-}
-
-/// Remove interval quantity for `(lower, higher]`.
-fun remove_range(exposure: &mut StrikeExposure, lower: u64, higher: u64, qty: u64) {
-    exposure.assert_strikes_on_grid(lower, higher);
-    let live = exposure.live.borrow_mut();
-    live.payout.remove_range(lower, higher, qty);
-    live.nav.remove_range(lower, higher, qty);
-}
-
-/// Remove interval quantity for an order and return its range terms.
-public(package) fun remove_order(exposure: &mut StrikeExposure, order: &Order): (u64, u64, u64) {
-    let (lower, higher, quantity) = exposure.order_terms(order);
-    exposure.remove_range(lower, higher, quantity);
-    (lower, higher, quantity)
+    let principal_amount = math::mul(fair_price, quantity);
+    let fee_amount = math::mul(fee_rate, quantity).min(principal_amount);
+    (principal_amount, fee_amount)
 }
 
 /// Destroy live NAV and payout indexes after expiry economics are finalized.
@@ -211,43 +208,40 @@ fun minted_strike_range(live: &LiveExposure): (u64, u64) {
     )
 }
 
-fun assert_strikes_on_grid(exposure: &StrikeExposure, lower: u64, higher: u64) {
-    assert!(lower < higher, EInvalidStrikeGrid);
-    if (lower != constants::neg_inf!()) exposure.assert_finite_strike_on_grid(lower);
-    if (higher != constants::pos_inf!()) exposure.assert_finite_strike_on_grid(higher);
+fun validated_max_strike(min_strike: u64, tick_size: u64): u64 {
+    assert!(tick_size > 0, EInvalidTickSize);
+    assert!(tick_size % constants::oracle_tick_size_unit!() == 0, EInvalidTickSize);
+    assert!(min_strike > 0, EInvalidStrikeGrid);
+    assert!(min_strike % tick_size == 0, EInvalidStrikeGrid);
+    let ticks = constants::oracle_strike_grid_ticks!();
+    assert!(ticks > 0, EInvalidStrikeGrid);
+    min_strike + tick_size * ticks
 }
 
-fun assert_valid_order_strikes(exposure: &StrikeExposure, lower: u64, higher: u64) {
-    exposure.assert_strikes_on_grid(lower, higher);
+fun strike_indices(exposure: &StrikeExposure, lower: u64, higher: u64): (u64, u64) {
+    assert!(lower < higher, EInvalidStrikeGrid);
     assert!(
         !(lower == constants::neg_inf!() && higher == constants::pos_inf!()),
         EInvalidStrikeGrid,
     );
-}
-
-fun assert_finite_strike_on_grid(exposure: &StrikeExposure, strike: u64) {
-    assert!(strike >= exposure.grid_min && strike <= exposure.grid_max, EInvalidStrikeGrid);
-    assert!((strike - exposure.grid_min) % exposure.grid_tick == 0, EInvalidStrikeGrid);
-}
-
-fun strike_indices(exposure: &StrikeExposure, lower: u64, higher: u64): (u64, u64) {
-    exposure.assert_valid_order_strikes(lower, higher);
+    let open_index = order::open_strike_index();
     let min_strike_index = if (lower == constants::neg_inf!()) {
-        order::open_strike_index()
+        open_index
     } else {
-        exposure.finite_strike_index(lower)
+        exposure.checked_finite_strike_index(lower)
     };
     let max_strike_index = if (higher == constants::pos_inf!()) {
-        order::open_strike_index()
+        open_index
     } else {
-        exposure.finite_strike_index(higher)
+        exposure.checked_finite_strike_index(higher)
     };
 
     (min_strike_index, max_strike_index)
 }
 
-fun finite_strike_index(exposure: &StrikeExposure, strike: u64): u64 {
-    exposure.assert_finite_strike_on_grid(strike);
+fun checked_finite_strike_index(exposure: &StrikeExposure, strike: u64): u64 {
+    assert!(strike >= exposure.grid_min && strike <= exposure.grid_max, EInvalidStrikeGrid);
+    assert!((strike - exposure.grid_min) % exposure.grid_tick == 0, EInvalidStrikeGrid);
     (strike - exposure.grid_min) / exposure.grid_tick
 }
 
@@ -275,6 +269,15 @@ fun order_terms(exposure: &StrikeExposure, order: &Order): (u64, u64, u64) {
     };
 
     (lower, higher, order.quantity())
+}
+
+/// Remove interval quantity for an order and return its range terms.
+fun remove_order(exposure: &mut StrikeExposure, order: &Order): (u64, u64, u64) {
+    let (lower, higher, quantity) = exposure.order_terms(order);
+    let live = exposure.live.borrow_mut();
+    live.payout.remove_range(lower, higher, quantity);
+    live.nav.remove_range(lower, higher, quantity);
+    (lower, higher, quantity)
 }
 
 fun track_minted_boundaries(live: &mut LiveExposure, lower: u64, higher: u64) {
