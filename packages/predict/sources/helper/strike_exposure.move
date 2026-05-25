@@ -26,6 +26,7 @@ const EInvalidStrikeGrid: u64 = 3;
 const EInvalidStrikeIndex: u64 = 4;
 const ESettledLiabilityNotMaterialized: u64 = 5;
 const ESettledLiabilityUnderflow: u64 = 6;
+const EInvalidCloseQuantity: u64 = 7;
 
 /// Exposure lifecycle state for one oracle grid.
 public struct StrikeExposure has store {
@@ -159,17 +160,23 @@ public(package) fun new(min_strike: u64, tick_size: u64, ctx: &mut TxContext): S
     }
 }
 
-/// Remove an order and quote its live redeem amount using post-removal exposure.
-public(package) fun remove_and_quote_live_order(
+/// Close live indexed quantity and quote the redeemed amount using post-close exposure.
+public(package) fun close_and_quote_live_order(
     exposure: &mut StrikeExposure,
     config: &PricingConfig,
     market: &MarketOracle,
     pyth: &PythSource,
     clock: &Clock,
     order: &Order,
+    close_quantity: u64,
     allocated_capital: u64,
-): (u64, u64) {
-    let (lower, higher, quantity) = exposure.remove_order(order);
+): (Order, u64, u64) {
+    let (lower, higher, old_quantity) = exposure.order_terms(order);
+    order::assert_valid_quantity(close_quantity);
+    assert!(close_quantity <= old_quantity, EInvalidCloseQuantity);
+    let replacement_quantity = old_quantity - close_quantity;
+
+    exposure.remove_live_quantity(lower, higher, close_quantity);
     let (fair_price, fee_rate) = pricing::quote_live_range(
         config,
         market,
@@ -180,9 +187,22 @@ public(package) fun remove_and_quote_live_order(
         exposure.payout_liability,
         allocated_capital,
     );
-    let principal_amount = math::mul(fair_price, quantity);
-    let fee_amount = math::mul(fee_rate, quantity).min(principal_amount);
-    (principal_amount, fee_amount)
+    let resulting_order = if (replacement_quantity == 0) {
+        *order
+    } else {
+        let sequence = exposure.next_order_sequence;
+        let replacement_order = order::replacement(
+            order,
+            clock.timestamp_ms(),
+            replacement_quantity,
+            sequence,
+        );
+        exposure.next_order_sequence = sequence + 1;
+        replacement_order
+    };
+    let principal_amount = math::mul(fair_price, close_quantity);
+    let fee_amount = math::mul(fee_rate, close_quantity).min(principal_amount);
+    (resulting_order, principal_amount, fee_amount)
 }
 
 /// Cache the terminal settled payout liability in `payout_liability`.
@@ -299,13 +319,10 @@ fun order_terms(exposure: &StrikeExposure, order: &Order): (u64, u64, u64) {
     (lower, higher, order.quantity())
 }
 
-/// Remove interval quantity for an order and return its range terms.
-fun remove_order(exposure: &mut StrikeExposure, order: &Order): (u64, u64, u64) {
-    let (lower, higher, quantity) = exposure.order_terms(order);
+fun remove_live_quantity(exposure: &mut StrikeExposure, lower: u64, higher: u64, quantity: u64) {
     let live = exposure.live.borrow_mut();
     exposure.payout_liability = live.payout.remove_range(lower, higher, quantity);
     live.nav.remove_range(lower, higher, quantity);
-    (lower, higher, quantity)
 }
 
 fun track_minted_boundaries(live: &mut LiveExposure, lower: u64, higher: u64) {

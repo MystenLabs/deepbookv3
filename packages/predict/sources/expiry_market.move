@@ -37,6 +37,7 @@ const EPackageVersionDisabled: u64 = 20;
 const EMintPaused: u64 = 21;
 const EUnresolvedTradingFeesUnderflow: u64 = 23;
 const EWrongOrderExpiry: u64 = 26;
+const EInvalidCloseQuantity: u64 = 27;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -262,11 +263,11 @@ public fun mint(
     )
 }
 
-/// Redeem a live or settled order.
+/// Redeem live or settled order quantity.
 ///
-/// Live redeems require manager ownership and fresh oracle data. Settled redeems
-/// are permissionless, pay into the manager balance, and use settled expiry
-/// settlement liability.
+/// Live redeems can close part or all of an order; if quantity remains, the
+/// returned ID is an open replacement order. Settled redeems require full order
+/// quantity, are permissionless, and return the closed order ID.
 public fun redeem(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
@@ -274,26 +275,31 @@ public fun redeem(
     market_oracle: &MarketOracle,
     pyth: &PythSource,
     order_id: u256,
+    close_quantity: u64,
     clock: &Clock,
     ctx: &mut TxContext,
-) {
+): u256 {
     market.assert_version_allowed();
     config.assert_not_valuation_in_progress();
     market.assert_market_oracle(market_oracle);
     let redeemed_order = order::from_order_id(order_id);
     market.assert_order_matches(&redeemed_order);
     if (market_oracle.is_settled()) {
+        assert!(close_quantity == redeemed_order.quantity(), EInvalidCloseQuantity);
         market.redeem_settled_internal(manager, market_oracle, &redeemed_order, ctx);
+        redeemed_order.id()
     } else {
-        market.redeem_live_internal(
+        let resulting_order = market.redeem_live_internal(
             config,
             manager,
             market_oracle,
             pyth,
             &redeemed_order,
+            close_quantity,
             clock,
             ctx,
         );
+        resulting_order.id()
     }
 }
 
@@ -599,27 +605,40 @@ fun redeem_live_internal(
     market_oracle: &MarketOracle,
     pyth: &PythSource,
     order: &Order,
+    close_quantity: u64,
     clock: &Clock,
     ctx: &mut TxContext,
-) {
+): Order {
     manager.assert_owner(ctx);
     market.assert_pyth_feed(pyth);
     config.pricing_config().assert_live_quote_available(market_oracle, pyth, clock);
-    manager.remove_position(market.id(), order.id());
 
     let allocated_capital = market.allocated_capital;
-    let (principal_amount, fee_amount) = market
+    let (resulting_order, principal_amount, fee_amount) = market
         .strike_exposure
-        .remove_and_quote_live_order(
+        .close_and_quote_live_order(
             config.pricing_config(),
             market_oracle,
             pyth,
             clock,
             order,
+            close_quantity,
             allocated_capital,
         );
 
-    market.settle_live_redeem_payment(manager, order, principal_amount, fee_amount, ctx);
+    manager.remove_position(market.id(), order.id());
+    if (resulting_order.id() != order.id()) {
+        manager.add_position(market.id(), resulting_order.id());
+    };
+
+    market.settle_live_redeem_payment(
+        manager,
+        principal_amount,
+        fee_amount,
+        close_quantity,
+        ctx,
+    );
+    resulting_order
 }
 
 fun redeem_settled_internal(
@@ -667,14 +686,17 @@ fun settle_mint_payment(
 fun settle_live_redeem_payment(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
-    order: &Order,
     principal_amount: u64,
     fee_amount: u64,
+    redeemed_quantity: u64,
     ctx: &mut TxContext,
 ) {
-    let quantity = order.quantity();
     let builder_code_id = manager.builder_code_id();
-    let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity).min(
+    let builder_fee_amount = builder_fee_amount(
+        &builder_code_id,
+        fee_amount,
+        redeemed_quantity,
+    ).min(
         principal_amount - fee_amount,
     );
 

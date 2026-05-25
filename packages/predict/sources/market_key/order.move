@@ -130,6 +130,25 @@ public(package) fun new_from_strike_indices(
     )
 }
 
+/// Construct a replacement order that preserves range, leverage, and original mint price.
+public(package) fun replacement(
+    old_order: &Order,
+    inserted_at_ms: u64,
+    quantity: u64,
+    sequence: u64,
+): Order {
+    new_from_strike_indices(
+        old_order.expiry_ms(),
+        inserted_at_ms,
+        old_order.min_strike_index(),
+        old_order.max_strike_index(),
+        old_order.leverage(),
+        old_order.minted_price(),
+        quantity,
+        sequence,
+    )
+}
+
 /// Return the sentinel index for an unbounded order side.
 public(package) fun open_strike_index(): u64 {
     constants::oracle_strike_grid_ticks!() + 1
