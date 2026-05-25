@@ -4,15 +4,16 @@
 /// Typed wrapper around a packed Predict order ID.
 ///
 /// Order IDs are the canonical protocol key stored by managers and emitted at
-/// flow boundaries. `Order` keeps that packed ID as the single source of truth
+/// flow boundaries. They are scoped by expiry market, not globally
+/// self-describing. `Order` keeps the packed ID as the single source of truth
 /// while exposing validated accessors for its immutable terms. Concrete oracle
-/// strike grids are interpreted by `StrikeExposure`.
+/// strike grids and terminal expiry are interpreted by `StrikeExposure`.
 module deepbook_predict::order;
 
 use deepbook::math as deepbook_math;
 use deepbook_predict::{constants, math};
 
-const EInvalidExpiry: u64 = 0;
+const EInvalidOrderId: u64 = 0;
 const EInvalidOpenedAt: u64 = 1;
 const EInvalidStrikeIndex: u64 = 2;
 const EInvalidLeverage: u64 = 3;
@@ -21,13 +22,13 @@ const EInvalidQuantity: u64 = 5;
 const EInvalidSequence: u64 = 6;
 const EInvalidMintedPrice: u64 = 7;
 
-const EXPIRY_OFFSET: u8 = 208;
 const OPENED_AT_OFFSET: u8 = 160;
 const MIN_STRIKE_INDEX_OFFSET: u8 = 136;
 const MAX_STRIKE_INDEX_OFFSET: u8 = 112;
 const LEVERAGE_OFFSET: u8 = 104;
 const MINTED_PRICE_OFFSET: u8 = 72;
 const QUANTITY_LOTS_OFFSET: u8 = 40;
+const ORDER_ID_BITS: u8 = 208;
 
 const U8_MASK: u256 = (1u256 << 8) - 1;
 const U24_MASK: u256 = (1u256 << 24) - 1;
@@ -85,11 +86,6 @@ public fun id(order: &Order): u256 {
     order.id
 }
 
-/// Return the expiry timestamp in milliseconds.
-public fun expiry_ms(order: &Order): u64 {
-    decode_u48(order.id, EXPIRY_OFFSET)
-}
-
 /// Return the timestamp in milliseconds when this position was originally opened.
 public fun opened_at_ms(order: &Order): u64 {
     decode_u48(order.id, OPENED_AT_OFFSET)
@@ -134,7 +130,6 @@ public fun sequence(order: &Order): u64 {
 
 /// Construct an order ID from already-normalized strike indices.
 public(package) fun new_from_strike_indices(
-    expiry_ms: u64,
     opened_at_ms: u64,
     min_strike_index: u64,
     max_strike_index: u64,
@@ -144,7 +139,6 @@ public(package) fun new_from_strike_indices(
     sequence: u64,
 ): Order {
     new(
-        expiry_ms,
         opened_at_ms,
         min_strike_index,
         max_strike_index,
@@ -158,7 +152,6 @@ public(package) fun new_from_strike_indices(
 /// Construct a replacement order that preserves range, leverage, original mint price, and accrual start.
 public(package) fun replacement(old_order: &Order, quantity: u64, sequence: u64): Order {
     new_from_strike_indices(
-        old_order.expiry_ms(),
         old_order.opened_at_ms(),
         old_order.min_strike_index(),
         old_order.max_strike_index(),
@@ -208,7 +201,6 @@ public(package) fun borrowed_principal(order: &Order): u64 {
 }
 
 fun new(
-    expiry_ms: u64,
     opened_at_ms: u64,
     min_strike_index: u64,
     max_strike_index: u64,
@@ -217,7 +209,6 @@ fun new(
     quantity_lots: u64,
     sequence: u64,
 ): Order {
-    assert!(expiry_ms <= U48_MASK as u64, EInvalidExpiry);
     assert!(opened_at_ms <= U48_MASK as u64, EInvalidOpenedAt);
     assert!(min_strike_index <= U24_MASK as u64, EInvalidStrikeIndex);
     assert!(max_strike_index <= U24_MASK as u64, EInvalidStrikeIndex);
@@ -227,8 +218,7 @@ fun new(
     assert_valid_order_shape(min_strike_index, max_strike_index, leverage);
 
     let id =
-        ((expiry_ms as u256) << EXPIRY_OFFSET)
-        | ((opened_at_ms as u256) << OPENED_AT_OFFSET)
+        ((opened_at_ms as u256) << OPENED_AT_OFFSET)
         | ((min_strike_index as u256) << MIN_STRIKE_INDEX_OFFSET)
         | ((max_strike_index as u256) << MAX_STRIKE_INDEX_OFFSET)
         | ((leverage as u256) << LEVERAGE_OFFSET)
@@ -264,6 +254,7 @@ fun quantity_lots_from_quantity(quantity: u64): u64 {
 
 fun assert_valid(order: &Order) {
     let quantity_lots = order.quantity_lots();
+    assert!(order.id >> ORDER_ID_BITS == 0, EInvalidOrderId);
     assert!(order.minted_price() <= constants::float_scaling!(), EInvalidMintedPrice);
     assert!(quantity_lots > 0, EInvalidQuantity);
     assert_valid_order_shape(order.min_strike_index(), order.max_strike_index(), order.leverage());

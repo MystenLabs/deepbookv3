@@ -36,7 +36,6 @@ const EInsufficientFeeBalance: u64 = 18;
 const EPackageVersionDisabled: u64 = 20;
 const EMintPaused: u64 = 21;
 const EUnresolvedTradingFeesUnderflow: u64 = 23;
-const EWrongOrderExpiry: u64 = 26;
 const EInvalidCloseQuantity: u64 = 27;
 
 /// Per-expiry market state.
@@ -281,7 +280,6 @@ public fun redeem(
     config.assert_not_valuation_in_progress();
     market.assert_market_oracle(market_oracle);
     let redeemed_order = order::from_order_id(order_id);
-    market.assert_order_matches(&redeemed_order);
     if (market_oracle.is_settled()) {
         assert!(close_quantity == redeemed_order.quantity(), EInvalidCloseQuantity);
         market.redeem_settled_internal(manager, market_oracle, &redeemed_order, clock, ctx);
@@ -546,10 +544,6 @@ fun builder_fee_amount(builder_code_id: &Option<ID>, fee_amount: u64, quantity: 
     } else {
         0
     }
-}
-
-fun assert_order_matches(market: &ExpiryMarket, order: &Order) {
-    assert!(order.expiry_ms() == market.expiry, EWrongOrderExpiry);
 }
 
 fun assert_allocation_backing(market: &ExpiryMarket) {

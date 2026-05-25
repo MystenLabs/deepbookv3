@@ -33,7 +33,7 @@ const EDebtExceedsMaxPayout: u64 = 8;
 
 /// Exposure lifecycle state for one oracle grid.
 public struct StrikeExposure has store {
-    /// Expiry timestamp shared by every order in this exposure book.
+    /// Terminal timestamp used by borrow-index and order debt math.
     expiry_ms: u64,
     grid_min: u64,
     grid_tick: u64,
@@ -166,7 +166,6 @@ public(package) fun allocate_mint_order(
 
     let sequence = exposure.next_order_sequence;
     let allocated_order = order::new_from_strike_indices(
-        exposure.expiry_ms,
         clock.timestamp_ms(),
         min_strike_index,
         max_strike_index,

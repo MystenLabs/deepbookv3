@@ -160,6 +160,7 @@ These are the most important rule files to consult based on the code you touch:
   - `MarketOracle` owns lifecycle facts such as active, pending settlement, settled, and Pyth-source binding.
   - `Pricing` owns price construction, live oracle freshness, live market status for pricing, and price-specific bounds.
   - `ExpiryMarket` owns trade-flow validation and expiry-local invariants for mint, live redeem, settled redeem, compacted redeem, valuation, allocation, and compaction.
+  - Predict order IDs are scoped by `(expiry_market_id, order_id)`. Do not encode or infer market lifecycle facts such as expiry from the order ID; bind an order to a market through `PredictManager` position keys and the market/exposure state that created it.
   - `PoolVault.active_expiry_markets` tracks only expiries that still contribute active pool valuation/risk. Compaction must unregister the expiry from the active index.
   - Pool-coordinated compaction is required when compaction returns LP cash to `PoolVault`, unregisters an active expiry, or updates `PoolVault.total_allocated_capital`; do not expose a separate public expiry-only compaction path that can strand free capital.
   - `allocated_capital` is active risk budget only. After compaction it should be `0`, and `PoolVault.total_allocated_capital` should be reduced by the expiry's full pre-compaction allocation.
