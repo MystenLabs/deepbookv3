@@ -648,12 +648,13 @@ fun settle_mint_payment(
     let quantity = order.quantity();
     let builder_code_id = manager.builder_code_id();
     let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity);
-    let payment_amount = principal_amount + fee_amount + builder_fee_amount;
+    let withdraw_amount = principal_amount + fee_amount + builder_fee_amount;
 
     manager.add_position(market.id(), order.id());
-    let mut payment = manager.withdraw(payment_amount, ctx).into_balance();
+    let mut payment = manager.withdraw(withdraw_amount, ctx).into_balance();
     let builder_fee_payment = payment.split(builder_fee_amount);
     send_builder_fee(builder_code_id, builder_fee_payment);
+    let payment_amount = payment.value();
     let fee_payment = payment.split(fee_amount);
     market.collect_trade_fee(manager, fee_payment);
     market.lp_cash_balance.join(payment);
