@@ -254,11 +254,9 @@ public fun sweep_settled_expiry_surplus(
     );
     if (released_allocation > 0) {
         vault.total_allocated_capital = vault.total_allocated_capital - released_allocation;
-        vault.idle_balance.join(returned_cash);
         vault.unregister_expiry_market(market.id());
-    } else {
-        returned_cash.destroy_zero();
     };
+    vault.idle_balance.join(returned_cash);
     vault.distribute_fee_surplus(config, returned_fee_surplus);
 }
 

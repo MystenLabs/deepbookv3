@@ -167,6 +167,8 @@ These are the most important rule files to consult based on the code you touch:
   - Dynamic allocation resize is live-market-only. Settled, pending-settlement, or compacted markets should not grow or shrink; settled cleanup should happen through compaction.
   - Inline one-off, obvious assertions. Use private helpers for repeated local facts or nontrivial checks. Use flow validation helpers only when they remove real duplication or clarify a complex branch.
   - Trading pause blocks new risk creation, but exits, settlement cleanup, and valuation should only be blocked by the valuation lock unless the protocol intentionally changes pause semantics.
+  - For leveraged Predict economics, borrowed debt is limited-recourse to the order that created it. Debt can offset only that order's live value or settled payout, capped at that value/payout. Do not treat aggregate active debt that exceeds aggregate position liability as positive NAV unless the implementation explicitly models exact per-order recoverability.
+  - Leveraged Predict orders must satisfy `max_terminal_debt <= max_terminal_payout` at creation, where max terminal debt is the order's debt amount evaluated at expiry under the market's snapshotted borrow curve and max terminal payout is the order quantity. Trading fees and builder fees are transaction costs, not debt, and should not be included in this invariant.
   - When adding or materially changing a public Predict flow, add at least one production-valid success test and focused failure tests for its main gates, state transitions, and accounting effects.
 
 ## Code Review Norms
