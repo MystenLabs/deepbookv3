@@ -3,8 +3,8 @@
 
 /// Strike exposure store for one oracle.
 ///
-/// This module owns live NAV/payout indexes and the materialized settled
-/// liability for one expiry grid. Expiry-market cash backing and payout movement
+/// This module owns live NAV/payout indexes and the terminal settled liability
+/// cache for one expiry grid. Expiry-market cash backing and payout movement
 /// stay outside this module.
 module deepbook_predict::strike_exposure;
 
@@ -33,8 +33,9 @@ public struct StrikeExposure has store {
     grid_tick: u64,
     grid_max: u64,
     next_order_sequence: u64,
-    /// Live worst-case payout before settlement; remaining settled liability after materialization.
+    /// Live max payout before settlement; after settlement is cached, remaining settled liability.
     payout_liability: u64,
+    /// True once `payout_liability` has switched from live max payout to settled liability.
     settled_liability_materialized: bool,
     live: Option<LiveExposure>,
 }
@@ -47,7 +48,7 @@ public struct LiveExposure has store {
     minted_max_strike: u64,
 }
 
-/// Return live worst-case payout, or remaining settled payout liability once materialized.
+/// Return live worst-case payout, or remaining settled payout liability once cached.
 public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
     exposure.payout_liability
 }
@@ -184,7 +185,10 @@ public(package) fun remove_and_quote_live_order(
     (principal_amount, fee_amount)
 }
 
-/// Materialize settled payout liability from terminal settlement price.
+/// Cache the terminal settled payout liability in `payout_liability`.
+///
+/// This changes `payout_liability` from live max payout to remaining settled
+/// liability. Live indexes are kept until privileged compaction destroys them.
 public(package) fun materialize_settled_liability(
     exposure: &mut StrikeExposure,
     settlement: u64,
@@ -199,7 +203,7 @@ public(package) fun materialize_settled_liability(
     settled_liability
 }
 
-/// Decrease materialized settled payout liability after a settled redeem.
+/// Reduce cached settled liability after paying one settled order.
 public(package) fun decrease_materialized_settled_liability(
     exposure: &mut StrikeExposure,
     amount: u64,
@@ -210,7 +214,10 @@ public(package) fun decrease_materialized_settled_liability(
     exposure.payout_liability = current_liability - amount;
 }
 
-/// Destroy live NAV and payout indexes after settled liability is materialized.
+/// Destroy live indexes after terminal liability has been cached.
+///
+/// Callers must keep this behind privileged compaction because destruction
+/// returns storage rebates.
 public(package) fun destroy_live_indexes(exposure: &mut StrikeExposure) {
     assert!(exposure.settled_liability_materialized, ESettledLiabilityNotMaterialized);
     let live = exposure.live.extract();
@@ -276,7 +283,6 @@ fun order_terms(exposure: &StrikeExposure, order: &Order): (u64, u64, u64) {
     let lower = if (min_strike_index == open_index) {
         constants::neg_inf!()
     } else {
-        assert!(min_strike_index < open_index, EInvalidStrikeIndex);
         let strike = exposure.grid_min + min_strike_index * exposure.grid_tick;
         assert!(strike <= exposure.grid_max, EInvalidStrikeIndex);
         strike
@@ -285,7 +291,6 @@ fun order_terms(exposure: &StrikeExposure, order: &Order): (u64, u64, u64) {
     let higher = if (max_strike_index == open_index) {
         constants::pos_inf!()
     } else {
-        assert!(max_strike_index < open_index, EInvalidStrikeIndex);
         let strike = exposure.grid_min + max_strike_index * exposure.grid_tick;
         assert!(strike <= exposure.grid_max, EInvalidStrikeIndex);
         strike

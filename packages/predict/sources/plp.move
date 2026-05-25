@@ -226,9 +226,9 @@ public fun shrink_expiry_allocation(
 
 /// Sweep settled expiry surplus into the pool.
 ///
-/// This no-ops before settlement. Once settled, it finalizes expiry settlement if
-/// needed, retires active allocation on the first sweep, and distributes any fee
-/// surplus not reserved for unresolved rebates.
+/// This no-ops before settlement. Once settled, it caches terminal payout
+/// liability if needed, retires active allocation on the first sweep, and
+/// distributes fee surplus not reserved for unresolved rebates.
 public fun sweep_settled_expiry_surplus(
     vault: &mut PoolVault,
     config: &ProtocolConfig,

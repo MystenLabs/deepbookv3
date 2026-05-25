@@ -188,8 +188,8 @@ public fun allowed_versions(market: &ExpiryMarket): VecSet<u64> {
 
 /// Produce this expiry's valuation witness for a full-pool valuation.
 ///
-/// Requires the protocol valuation lock, aborts while the oracle is expired but
-/// unsettled, and materializes settled liability when the oracle has settled.
+/// If the oracle is settled, this also caches terminal payout liability in
+/// strike exposure. It does not destroy live indexes; privileged compaction owns that.
 public fun produce_valuation(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
@@ -342,10 +342,10 @@ public fun claim_trading_loss_rebate(
     });
 }
 
-/// Materialize settled liability if needed and destroy live exposure storage.
+/// Cache terminal liability if needed, then destroy live exposure indexes.
 ///
-/// This is a structural cleanup only. Surplus LP cash and fee cash remain in the
-/// expiry until a pool sweep moves them.
+/// This is cap-gated because index destruction returns storage rebates. Surplus
+/// LP cash and fee cash remain in the expiry until a pool sweep moves them.
 public fun compact_storage(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
@@ -458,7 +458,7 @@ public(package) fun pause_mint(market: &mut ExpiryMarket) {
     market.mint_paused = true;
 }
 
-/// Materialize settled payout liability for this expiry.
+/// Cache terminal payout liability in strike exposure if it has not already been cached.
 public(package) fun materialize_settled_liability(
     market: &mut ExpiryMarket,
     market_oracle: &MarketOracle,
