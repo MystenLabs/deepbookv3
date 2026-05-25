@@ -38,6 +38,7 @@ const EMintPaused: u64 = 21;
 const EUnresolvedTradingFeesUnderflow: u64 = 23;
 const EWrongOrderExpiry: u64 = 26;
 const EInvalidCloseQuantity: u64 = 27;
+const EUnsupportedLeverage: u64 = 28;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -47,8 +48,6 @@ public struct ExpiryMarket has key {
     expiry: u64,
     /// Trading loss rebate rate snapshotted from fee config at creation.
     trading_loss_rebate_rate: u64,
-    /// Terminal borrow premium snapshotted from leverage config at creation.
-    max_expiry_borrow_fee: u64,
     /// Active risk budget assigned by the pool.
     allocated_capital: u64,
     /// LP-owned DUSDC backing this expiry's liability.
@@ -140,7 +139,7 @@ public fun trading_loss_rebate_rate(market: &ExpiryMarket): u64 {
 
 /// Return the terminal borrow premium snapshotted for this expiry.
 public fun max_expiry_borrow_fee(market: &ExpiryMarket): u64 {
-    market.max_expiry_borrow_fee
+    market.strike_exposure.max_expiry_borrow_fee()
 }
 
 /// Return live worst-case payout, or remaining settled payout liability once materialized.
@@ -420,12 +419,17 @@ public(package) fun create_and_share(
         pyth_lazer_feed_id,
         expiry,
         trading_loss_rebate_rate: config.fee_config().trading_loss_rebate_rate(),
-        max_expiry_borrow_fee: config.leverage_config().max_expiry_borrow_fee(),
         allocated_capital,
         lp_cash_balance: allocation,
         fee_balance: balance::zero(),
         unresolved_trading_fees_paid: 0,
-        strike_exposure: strike_exposure::new(min_strike, tick_size, ctx),
+        strike_exposure: strike_exposure::new(
+            expiry,
+            min_strike,
+            tick_size,
+            config.leverage_config().max_expiry_borrow_fee(),
+            ctx,
+        ),
         allowed_versions,
         mint_paused: false,
     };
@@ -575,17 +579,16 @@ fun mint_internal(
     manager.assert_owner(ctx);
     market.assert_market_oracle(market_oracle);
     market.assert_pyth_feed(pyth);
+    assert!(leverage == order::leverage_one_x(), EUnsupportedLeverage);
 
-    let expiry = market.expiry;
     let allocated_capital = market.allocated_capital;
-    let (minted_order, principal_amount, fee_amount) = market
+    let (minted_order, fee_amount) = market
         .strike_exposure
         .allocate_mint_order(
             config.pricing_config(),
             market_oracle,
             pyth,
             clock,
-            expiry,
             lower_strike,
             higher_strike,
             quantity,
@@ -594,7 +597,7 @@ fun mint_internal(
         );
 
     market.assert_allocation_backing();
-    market.settle_mint_payment(manager, &minted_order, principal_amount, fee_amount, ctx);
+    market.settle_mint_payment(manager, &minted_order, fee_amount, ctx);
     minted_order.id()
 }
 
@@ -660,11 +663,11 @@ fun settle_mint_payment(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
     order: &Order,
-    principal_amount: u64,
     fee_amount: u64,
     ctx: &mut TxContext,
 ) {
     let quantity = order.quantity();
+    let principal_amount = order.principal_amount();
     let builder_code_id = manager.builder_code_id();
     let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity);
     let withdraw_amount = principal_amount + fee_amount + builder_fee_amount;

@@ -3,15 +3,17 @@
 
 /// Strike exposure store for one oracle.
 ///
-/// This module owns live NAV/payout indexes and the terminal settled liability
-/// cache for one expiry grid. Expiry-market cash backing and payout movement
-/// stay outside this module.
+/// This module owns live NAV/payout indexes, the active leveraged-order index,
+/// and terminal settled liability cache for one expiry grid. Expiry-market cash
+/// backing and payout movement stay outside this module.
 module deepbook_predict::strike_exposure;
 
 use deepbook::{constants::max_u64, math};
 use deepbook_predict::{
     constants,
+    leverage_book::{Self, LeverageBook},
     market_oracle::MarketOracle,
+    math as predict_math,
     order::{Self, Order},
     pricing,
     pricing_config::PricingConfig,
@@ -30,14 +32,20 @@ const EInvalidCloseQuantity: u64 = 7;
 
 /// Exposure lifecycle state for one oracle grid.
 public struct StrikeExposure has store {
+    /// Expiry timestamp shared by every order in this exposure book.
+    expiry_ms: u64,
     grid_min: u64,
     grid_tick: u64,
     grid_max: u64,
+    /// Terminal borrow premium snapshotted for this exposure book.
+    max_expiry_borrow_fee: u64,
     next_order_sequence: u64,
     /// Live max payout before settlement; after settlement is cached, remaining settled liability.
     payout_liability: u64,
     /// True once `payout_liability` has switched from live max payout to settled liability.
     settled_liability_materialized: bool,
+    /// Active leveraged orders whose debt is still owed to LPs.
+    leverage_book: LeverageBook,
     live: Option<LiveExposure>,
 }
 
@@ -52,6 +60,11 @@ public struct LiveExposure has store {
 /// Return live worst-case payout, or remaining settled payout liability once cached.
 public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
     exposure.payout_liability
+}
+
+/// Return the terminal borrow premium snapshotted for this exposure book.
+public(package) fun max_expiry_borrow_fee(exposure: &StrikeExposure): u64 {
+    exposure.max_expiry_borrow_fee
 }
 
 /// Evaluate live option value for active exposure.
@@ -82,6 +95,23 @@ public(package) fun live_value(
     }
 }
 
+/// Return current debt and borrow-fee amounts for all active leveraged orders.
+public(package) fun active_debt_terms(exposure: &StrikeExposure, clock: &Clock): (u64, u64) {
+    let current_index = exposure.borrow_index_at_ms(clock.timestamp_ms());
+    exposure.leverage_book.aggregate_debt_terms(current_index)
+}
+
+/// Return current debt terms for one order, or zeroes for an unleveraged order.
+public(package) fun order_debt_terms(
+    exposure: &StrikeExposure,
+    order: &Order,
+    clock: &Clock,
+): (u64, u64) {
+    if (!order.is_leveraged()) return (0, 0);
+
+    exposure.active_order_debt_terms(order, clock)
+}
+
 /// Return settled payout for one order at a terminal settlement price.
 public(package) fun settled_order_payout(
     exposure: &StrikeExposure,
@@ -99,13 +129,12 @@ public(package) fun allocate_mint_order(
     market: &MarketOracle,
     pyth: &PythSource,
     clock: &Clock,
-    expiry_ms: u64,
     lower: u64,
     higher: u64,
     quantity: u64,
     leverage: u64,
     allocated_capital: u64,
-): (Order, u64, u64) {
+): (Order, u64) {
     let (min_strike_index, max_strike_index) = exposure.strike_indices(lower, higher);
     let (fair_price, fee_rate) = pricing::quote_mint_live_range(
         config,
@@ -120,7 +149,7 @@ public(package) fun allocate_mint_order(
 
     let sequence = exposure.next_order_sequence;
     let allocated_order = order::new_from_strike_indices(
-        expiry_ms,
+        exposure.expiry_ms,
         clock.timestamp_ms(),
         min_strike_index,
         max_strike_index,
@@ -135,22 +164,31 @@ public(package) fun allocate_mint_order(
     exposure.payout_liability = live.payout.insert_range(lower, higher, quantity);
     live.nav.insert_range(lower, higher, quantity);
     live.track_minted_boundaries(lower, higher);
+    exposure.insert_leverage_order(&allocated_order);
 
-    let principal_amount = math::mul(allocated_order.minted_price(), quantity);
     let fee_amount = math::mul(fee_rate, quantity);
-    (allocated_order, principal_amount, fee_amount)
+    (allocated_order, fee_amount)
 }
 
 /// Create a strike exposure book for the oracle grid.
-public(package) fun new(min_strike: u64, tick_size: u64, ctx: &mut TxContext): StrikeExposure {
+public(package) fun new(
+    expiry_ms: u64,
+    min_strike: u64,
+    tick_size: u64,
+    max_expiry_borrow_fee: u64,
+    ctx: &mut TxContext,
+): StrikeExposure {
     let max_strike = validated_max_strike(min_strike, tick_size);
     StrikeExposure {
+        expiry_ms,
         grid_min: min_strike,
         grid_tick: tick_size,
         grid_max: max_strike,
+        max_expiry_borrow_fee,
         next_order_sequence: 0,
         payout_liability: 0,
         settled_liability_materialized: false,
+        leverage_book: leverage_book::new(ctx),
         live: option::some(LiveExposure {
             nav: strike_nav_matrix::new(tick_size, min_strike, max_strike, ctx),
             payout: strike_payout_tree::new(tick_size, min_strike, max_strike, ctx),
@@ -193,12 +231,15 @@ public(package) fun close_and_quote_live_order(
         let sequence = exposure.next_order_sequence;
         let replacement_order = order::replacement(
             order,
-            clock.timestamp_ms(),
             replacement_quantity,
             sequence,
         );
         exposure.next_order_sequence = sequence + 1;
         replacement_order
+    };
+    exposure.remove_leverage_order(order);
+    if (resulting_order.id() != order.id()) {
+        exposure.insert_leverage_order(&resulting_order);
     };
     let principal_amount = math::mul(fair_price, close_quantity);
     let fee_amount = math::mul(fee_rate, close_quantity).min(principal_amount);
@@ -249,6 +290,75 @@ public(package) fun destroy_live_indexes(exposure: &mut StrikeExposure) {
     } = live;
     nav.destroy();
     payout.destroy();
+}
+
+fun active_order_debt_terms(exposure: &StrikeExposure, order: &Order, clock: &Clock): (u64, u64) {
+    exposure.leverage_book.assert_active(order);
+    exposure.order_debt_terms_at_ms(order, clock.timestamp_ms())
+}
+
+fun order_debt_terms_at_ms(
+    exposure: &StrikeExposure,
+    order: &Order,
+    timestamp_ms: u64,
+): (u64, u64) {
+    let borrowed_principal = order.borrowed_principal();
+    let open_index = exposure.borrow_index_at_ms(order.opened_at_ms());
+    let current_index = exposure.borrow_index_at_ms(timestamp_ms);
+    let debt_amount = predict_math::mul_div_round_up(
+        borrowed_principal,
+        current_index,
+        open_index,
+    );
+    (debt_amount, debt_amount - borrowed_principal)
+}
+
+fun order_normalized_debt(exposure: &StrikeExposure, order: &Order): u64 {
+    let initial_index = exposure.borrow_index_at_ms(order.opened_at_ms());
+    predict_math::mul_div_round_up(
+        order.borrowed_principal(),
+        constants::float_scaling!(),
+        initial_index,
+    )
+}
+
+fun insert_leverage_order(exposure: &mut StrikeExposure, order: &Order) {
+    if (!order.is_leveraged()) return;
+    let normalized_debt = exposure.order_normalized_debt(order);
+    exposure.leverage_book.insert_order(order, normalized_debt);
+}
+
+fun remove_leverage_order(exposure: &mut StrikeExposure, order: &Order) {
+    if (!order.is_leveraged()) return;
+    let normalized_debt = exposure.order_normalized_debt(order);
+    exposure.leverage_book.remove_order(order, normalized_debt);
+}
+
+fun borrow_index_at_ms(exposure: &StrikeExposure, timestamp_ms: u64): u64 {
+    let window = constants::leverage_borrow_window_ms!();
+    let remaining = if (timestamp_ms >= exposure.expiry_ms) {
+        0
+    } else {
+        exposure.expiry_ms - timestamp_ms
+    };
+    let elapsed = if (remaining >= window) {
+        0
+    } else {
+        window - remaining
+    };
+    let phase = predict_math::mul_div_round_down(elapsed, constants::float_scaling!(), window);
+    let phase_squared = predict_math::mul_div_round_down(
+        phase,
+        phase,
+        constants::float_scaling!(),
+    );
+
+    constants::float_scaling!()
+        + predict_math::mul_div_round_down(
+            exposure.max_expiry_borrow_fee,
+            phase_squared,
+            constants::float_scaling!(),
+        )
 }
 
 fun minted_strike_range(live: &LiveExposure): (u64, u64) {

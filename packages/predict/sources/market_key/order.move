@@ -9,10 +9,11 @@
 /// strike grids are interpreted by `StrikeExposure`.
 module deepbook_predict::order;
 
-use deepbook_predict::constants;
+use deepbook::math as deepbook_math;
+use deepbook_predict::{constants, math};
 
 const EInvalidExpiry: u64 = 0;
-const EInvalidInsertedAt: u64 = 1;
+const EInvalidOpenedAt: u64 = 1;
 const EInvalidStrikeIndex: u64 = 2;
 const EInvalidLeverage: u64 = 3;
 const EInvalidStrikeRange: u64 = 4;
@@ -21,7 +22,7 @@ const EInvalidSequence: u64 = 6;
 const EInvalidMintedPrice: u64 = 7;
 
 const EXPIRY_OFFSET: u8 = 208;
-const INSERTED_AT_OFFSET: u8 = 160;
+const OPENED_AT_OFFSET: u8 = 160;
 const MIN_STRIKE_INDEX_OFFSET: u8 = 136;
 const MAX_STRIKE_INDEX_OFFSET: u8 = 112;
 const LEVERAGE_OFFSET: u8 = 104;
@@ -35,6 +36,10 @@ const U40_MASK: u256 = (1u256 << 40) - 1;
 const U48_MASK: u256 = (1u256 << 48) - 1;
 
 const LEVERAGE_ONE_X: u64 = 0;
+const LEVERAGE_ONE_AND_HALF_X: u64 = 1;
+const LEVERAGE_TWO_X: u64 = 2;
+const LEVERAGE_TWO_AND_HALF_X: u64 = 3;
+const LEVERAGE_THREE_X: u64 = 4;
 
 /// Validated typed view over one packed Predict order ID.
 public struct Order has copy, drop {
@@ -46,6 +51,26 @@ public struct Order has copy, drop {
 /// Return the leverage code for a 1x position.
 public fun leverage_one_x(): u64 {
     LEVERAGE_ONE_X
+}
+
+/// Return the leverage code for a 1.5x position.
+public fun leverage_one_and_half_x(): u64 {
+    LEVERAGE_ONE_AND_HALF_X
+}
+
+/// Return the leverage code for a 2x position.
+public fun leverage_two_x(): u64 {
+    LEVERAGE_TWO_X
+}
+
+/// Return the leverage code for a 2.5x position.
+public fun leverage_two_and_half_x(): u64 {
+    LEVERAGE_TWO_AND_HALF_X
+}
+
+/// Return the leverage code for a 3x position.
+public fun leverage_three_x(): u64 {
+    LEVERAGE_THREE_X
 }
 
 /// Validate a packed order ID and return it as an `Order` view.
@@ -65,9 +90,9 @@ public fun expiry_ms(order: &Order): u64 {
     decode_u48(order.id, EXPIRY_OFFSET)
 }
 
-/// Return the timestamp in milliseconds when this order was inserted.
-public fun inserted_at_ms(order: &Order): u64 {
-    decode_u48(order.id, INSERTED_AT_OFFSET)
+/// Return the timestamp in milliseconds when this position was originally opened.
+public fun opened_at_ms(order: &Order): u64 {
+    decode_u48(order.id, OPENED_AT_OFFSET)
 }
 
 /// Return the lower strike index encoded in this order.
@@ -110,7 +135,7 @@ public fun sequence(order: &Order): u64 {
 /// Construct an order ID from already-normalized strike indices.
 public(package) fun new_from_strike_indices(
     expiry_ms: u64,
-    inserted_at_ms: u64,
+    opened_at_ms: u64,
     min_strike_index: u64,
     max_strike_index: u64,
     leverage: u64,
@@ -120,7 +145,7 @@ public(package) fun new_from_strike_indices(
 ): Order {
     new(
         expiry_ms,
-        inserted_at_ms,
+        opened_at_ms,
         min_strike_index,
         max_strike_index,
         leverage,
@@ -130,16 +155,11 @@ public(package) fun new_from_strike_indices(
     )
 }
 
-/// Construct a replacement order that preserves range, leverage, and original mint price.
-public(package) fun replacement(
-    old_order: &Order,
-    inserted_at_ms: u64,
-    quantity: u64,
-    sequence: u64,
-): Order {
+/// Construct a replacement order that preserves range, leverage, original mint price, and accrual start.
+public(package) fun replacement(old_order: &Order, quantity: u64, sequence: u64): Order {
     new_from_strike_indices(
         old_order.expiry_ms(),
-        inserted_at_ms,
+        old_order.opened_at_ms(),
         old_order.min_strike_index(),
         old_order.max_strike_index(),
         old_order.leverage(),
@@ -161,9 +181,35 @@ public(package) fun assert_valid_quantity(quantity: u64) {
     assert!(quantity / lot_size <= U32_MASK as u64, EInvalidQuantity);
 }
 
+public(package) fun is_leveraged(order: &Order): bool {
+    order.leverage() != LEVERAGE_ONE_X
+}
+
+/// Return the 1e9-scaled leverage multiplier for a supported leverage code.
+public(package) fun leverage_multiplier(leverage: u64): u64 {
+    assert_valid_leverage(leverage);
+    constants::float_scaling!() + leverage * constants::float_scaling!() / 2
+}
+
+/// Return full notional principal implied by mint price and quantity.
+public(package) fun principal_amount(order: &Order): u64 {
+    deepbook_math::mul(order.minted_price(), order.quantity())
+}
+
+/// Return user-funded equity, rounded up so leverage never exceeds its code.
+public(package) fun equity_amount(order: &Order): u64 {
+    equity_amount_from_principal(order.principal_amount(), order.leverage())
+}
+
+/// Return LP-funded principal implied by this order's leverage.
+public(package) fun borrowed_principal(order: &Order): u64 {
+    let principal_amount = order.principal_amount();
+    principal_amount - equity_amount_from_principal(principal_amount, order.leverage())
+}
+
 fun new(
     expiry_ms: u64,
-    inserted_at_ms: u64,
+    opened_at_ms: u64,
     min_strike_index: u64,
     max_strike_index: u64,
     leverage: u64,
@@ -172,7 +218,7 @@ fun new(
     sequence: u64,
 ): Order {
     assert!(expiry_ms <= U48_MASK as u64, EInvalidExpiry);
-    assert!(inserted_at_ms <= U48_MASK as u64, EInvalidInsertedAt);
+    assert!(opened_at_ms <= U48_MASK as u64, EInvalidOpenedAt);
     assert!(min_strike_index <= U24_MASK as u64, EInvalidStrikeIndex);
     assert!(max_strike_index <= U24_MASK as u64, EInvalidStrikeIndex);
     assert!(minted_price <= constants::float_scaling!(), EInvalidMintedPrice);
@@ -182,7 +228,7 @@ fun new(
 
     let id =
         ((expiry_ms as u256) << EXPIRY_OFFSET)
-        | ((inserted_at_ms as u256) << INSERTED_AT_OFFSET)
+        | ((opened_at_ms as u256) << OPENED_AT_OFFSET)
         | ((min_strike_index as u256) << MIN_STRIKE_INDEX_OFFSET)
         | ((max_strike_index as u256) << MAX_STRIKE_INDEX_OFFSET)
         | ((leverage as u256) << LEVERAGE_OFFSET)
@@ -223,8 +269,20 @@ fun assert_valid(order: &Order) {
     assert_valid_order_shape(order.min_strike_index(), order.max_strike_index(), order.leverage());
 }
 
+fun equity_amount_from_principal(principal_amount: u64, leverage: u64): u64 {
+    math::mul_div_round_up(
+        principal_amount,
+        constants::float_scaling!(),
+        leverage_multiplier(leverage),
+    )
+}
+
+fun assert_valid_leverage(leverage: u64) {
+    assert!(leverage <= LEVERAGE_THREE_X, EInvalidLeverage);
+}
+
 fun assert_valid_order_shape(min_strike_index: u64, max_strike_index: u64, leverage: u64) {
-    assert!(leverage == LEVERAGE_ONE_X, EInvalidLeverage);
+    assert_valid_leverage(leverage);
     let open_index = open_strike_index();
     assert!(min_strike_index <= open_index, EInvalidStrikeIndex);
     assert!(max_strike_index <= open_index, EInvalidStrikeIndex);
@@ -238,4 +296,7 @@ fun assert_valid_order_shape(min_strike_index: u64, max_strike_index: u64, lever
             || min_strike_index < max_strike_index,
         EInvalidStrikeRange,
     );
+    if (leverage == LEVERAGE_ONE_X) return;
+
+    assert!(min_strike_index == open_index || max_strike_index == open_index, EInvalidStrikeRange);
 }
