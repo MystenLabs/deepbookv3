@@ -292,7 +292,7 @@ export function supplyWithExpiryValuationTx(params: {
     arguments: [tx.object(params.poolVaultId), tx.object(params.protocolConfigId)],
   });
   const expiryValuation = tx.moveCall({
-    target: target("expiry_market", "read_valuation"),
+    target: target("expiry_market", "produce_valuation"),
     arguments: [
       tx.object(params.expiryMarketId),
       tx.object(params.protocolConfigId),

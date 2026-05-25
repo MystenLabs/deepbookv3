@@ -5,8 +5,8 @@
 ///
 /// An ExpiryMarket is the hot shared object for one expiry. It owns the
 /// expiry-local DUSDC allocation, strike exposure state, fee balance, trade execution,
-/// valuation witness, finalized settlement liability, and storage cleanup state. Pool-wide PLP
-/// accounting and allocation coordination remain outside this module.
+/// valuation witness, and storage cleanup state. Pool-wide PLP accounting and
+/// allocation coordination remain outside this module.
 module deepbook_predict::expiry_market;
 
 use deepbook::math;
@@ -32,12 +32,10 @@ const EValuationExceedsCash: u64 = 2;
 const EAllocationBelowMaxPayout: u64 = 3;
 const EInsufficientLpCash: u64 = 8;
 const EZeroAllocatedCapital: u64 = 10;
-const ESettledLiabilityUnderflow: u64 = 16;
 const EInsufficientFeeBalance: u64 = 18;
 const EPackageVersionDisabled: u64 = 20;
 const EMintPaused: u64 = 21;
 const EUnresolvedTradingFeesUnderflow: u64 = 23;
-const ESettlementNotFinalized: u64 = 24;
 const EWrongOrderExpiry: u64 = 26;
 
 /// Per-expiry market state.
@@ -58,8 +56,6 @@ public struct ExpiryMarket has key {
     fee_balance: Balance<DUSDC>,
     /// Trading fees whose rebate eligibility has not been resolved.
     unresolved_trading_fees_paid: u64,
-    /// Settled payout liability cached once expiry economics are finalized.
-    settled_payout_liability: Option<u64>,
     /// Exposure lifecycle state for this expiry's oracle grid.
     strike_exposure: StrikeExposure,
     /// Mirror of `ProtocolConfig.allowed_versions`; synced permissionlessly.
@@ -146,31 +142,17 @@ public fun max_expiry_borrow_fee(market: &ExpiryMarket): u64 {
     market.max_expiry_borrow_fee
 }
 
-/// Return whether this expiry's settled payout liability has been finalized.
-public fun is_settlement_finalized(market: &ExpiryMarket): bool {
-    market.settled_payout_liability.is_some()
-}
-
-/// Return cached settled payout liability once finalized.
-public fun settled_payout_liability(market: &ExpiryMarket): Option<u64> {
-    market.settled_payout_liability
-}
-
-/// Return live worst-case payout, or remaining settled payout liability after finalization.
-public fun max_payout(market: &ExpiryMarket): u64 {
-    if (market.settled_payout_liability.is_some()) {
-        *market.settled_payout_liability.borrow()
-    } else {
-        market.strike_exposure.max_payout()
-    }
+/// Return live worst-case payout, or remaining settled payout liability once materialized.
+public fun payout_liability(market: &ExpiryMarket): u64 {
+    market.strike_exposure.payout_liability()
 }
 
 /// Return allocated capital not needed for worst-case payout backing.
 public fun free_capital(market: &ExpiryMarket): u64 {
     let allocated_capital = market.allocated_capital();
-    let max_payout = market.max_payout();
-    if (allocated_capital > max_payout) {
-        allocated_capital - max_payout
+    let payout_liability = market.payout_liability();
+    if (allocated_capital > payout_liability) {
+        allocated_capital - payout_liability
     } else {
         0
     }
@@ -178,11 +160,16 @@ public fun free_capital(market: &ExpiryMarket): u64 {
 
 /// Return DUSDC allocation that can leave while preserving risk and cash backing.
 public fun returnable_capital(market: &ExpiryMarket): u64 {
-    let max_payout = market.max_payout();
-    let risk_free = market.free_capital();
+    let payout_liability = market.payout_liability();
+    let allocated_capital = market.allocated_capital();
+    let risk_free = if (allocated_capital > payout_liability) {
+        allocated_capital - payout_liability
+    } else {
+        0
+    };
     let lp_cash_balance = market.lp_cash_balance.value();
-    let cash_free = if (lp_cash_balance > max_payout) {
-        lp_cash_balance - max_payout
+    let cash_free = if (lp_cash_balance > payout_liability) {
+        lp_cash_balance - payout_liability
     } else {
         0
     };
@@ -202,14 +189,15 @@ public fun allowed_versions(market: &ExpiryMarket): VecSet<u64> {
 /// Produce this expiry's valuation witness for a full-pool valuation.
 ///
 /// Requires the protocol valuation lock, aborts while the oracle is expired but
-/// unsettled, and does not mutate expiry or oracle state.
-public fun read_valuation(
-    market: &ExpiryMarket,
+/// unsettled, and materializes settled liability when the oracle has settled.
+public fun produce_valuation(
+    market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     market_oracle: &MarketOracle,
     pyth: &PythSource,
     clock: &Clock,
 ): ExpiryValuation {
+    market.assert_version_allowed();
     config.assert_valuation_in_progress();
     let (option_value, rebate_reserve) = market.current_liabilities(
         config,
@@ -277,7 +265,7 @@ public fun mint(
 /// Redeem a live or settled order.
 ///
 /// Live redeems require manager ownership and fresh oracle data. Settled redeems
-/// are permissionless, pay into the manager balance, and use finalized expiry
+/// are permissionless, pay into the manager balance, and use settled expiry
 /// settlement liability.
 public fun redeem(
     market: &mut ExpiryMarket,
@@ -319,7 +307,7 @@ public fun claim_trading_loss_rebate(
 ) {
     market.assert_version_allowed();
     config.assert_not_valuation_in_progress();
-    market.ensure_settlement_finalized(market_oracle);
+    market.materialize_settled_liability(market_oracle);
 
     let (
         trading_fees_paid,
@@ -354,7 +342,7 @@ public fun claim_trading_loss_rebate(
     });
 }
 
-/// Finalize settlement if needed and destroy live exposure storage.
+/// Materialize settled liability if needed and destroy live exposure storage.
 ///
 /// This is a structural cleanup only. Surplus LP cash and fee cash remain in the
 /// expiry until a pool sweep moves them.
@@ -368,18 +356,18 @@ public fun compact_storage(
     config.assert_not_valuation_in_progress();
     market.assert_market_oracle(market_oracle);
     market_oracle.assert_authorized_cap(cap);
-    market.ensure_settlement_finalized(market_oracle);
+    market.materialize_settled_liability(market_oracle);
     market.strike_exposure.destroy_live_indexes();
     market.assert_cash_backing();
 }
 
 // === Public-Package Functions ===
 
-/// Return current expiry utilization as max payout over allocated capital.
+/// Return current expiry utilization as payout liability over allocated capital.
 public(package) fun utilization(market: &ExpiryMarket): u64 {
     let allocated_capital = market.allocated_capital;
     assert!(allocated_capital > 0, EZeroAllocatedCapital);
-    math::div(market.max_payout(), allocated_capital)
+    math::div(market.payout_liability(), allocated_capital)
 }
 
 /// Consume an expiry valuation and return its market ID and value.
@@ -431,7 +419,6 @@ public(package) fun create_and_share(
         lp_cash_balance: allocation,
         fee_balance: balance::zero(),
         unresolved_trading_fees_paid: 0,
-        settled_payout_liability: option::none(),
         strike_exposure: strike_exposure::new(min_strike, tick_size, ctx),
         allowed_versions,
         mint_paused: false,
@@ -471,29 +458,23 @@ public(package) fun pause_mint(market: &mut ExpiryMarket) {
     market.mint_paused = true;
 }
 
-/// Finalize and cache settled payout liability for this expiry.
-public(package) fun ensure_settlement_finalized(
+/// Materialize settled payout liability for this expiry.
+public(package) fun materialize_settled_liability(
     market: &mut ExpiryMarket,
     market_oracle: &MarketOracle,
 ): u64 {
     market.assert_market_oracle(market_oracle);
-    if (market.settled_payout_liability.is_some()) {
-        return *market.settled_payout_liability.borrow()
-    };
-
     let settlement = market_oracle.settlement_price();
-    let settled_liability = market.strike_exposure.settled_value(settlement);
-    market.settled_payout_liability = option::some(settled_liability);
-    settled_liability
+    market.strike_exposure.materialize_settled_liability(settlement)
 }
 
-/// Release settled LP and fee surplus derived from finalized settlement liability.
+/// Release settled LP and fee surplus derived from materialized settlement liability.
 public(package) fun release_settled_surplus(
     market: &mut ExpiryMarket,
     market_oracle: &MarketOracle,
 ): (u64, Balance<DUSDC>, Balance<DUSDC>) {
     market.assert_version_allowed();
-    let settled_liability = market.ensure_settlement_finalized(market_oracle);
+    let settled_liability = market.materialize_settled_liability(market_oracle);
     let rebate_reserve = market.aggregate_rebate_reserve();
     assert!(market.lp_cash_balance.value() >= settled_liability, EInsufficientLpCash);
     assert!(market.fee_balance.value() >= rebate_reserve, EInsufficientFeeBalance);
@@ -516,7 +497,7 @@ public(package) fun release_settled_surplus(
 // === Private Functions ===
 
 fun current_liabilities(
-    market: &ExpiryMarket,
+    market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     market_oracle: &MarketOracle,
     pyth: &PythSource,
@@ -524,14 +505,9 @@ fun current_liabilities(
 ): (u64, u64) {
     market.assert_market_oracle(market_oracle);
     let rebate_reserve = market.aggregate_rebate_reserve();
-    if (market.settled_payout_liability.is_some()) {
-        return (*market.settled_payout_liability.borrow(), rebate_reserve)
-    };
-
     if (market_oracle.is_settled()) {
-        let settlement = market_oracle.settlement_price();
-        let settled_value = market.strike_exposure.settled_value(settlement);
-        (settled_value, rebate_reserve)
+        let settled_liability = market.materialize_settled_liability(market_oracle);
+        (settled_liability, rebate_reserve)
     } else {
         market.assert_pyth_feed(pyth);
         market_oracle.assert_not_pending_settlement(clock);
@@ -570,11 +546,11 @@ fun assert_order_matches(market: &ExpiryMarket, order: &Order) {
 }
 
 fun assert_allocation_backing(market: &ExpiryMarket) {
-    assert!(market.allocated_capital >= market.max_payout(), EAllocationBelowMaxPayout);
+    assert!(market.allocated_capital >= market.payout_liability(), EAllocationBelowMaxPayout);
 }
 
 fun assert_cash_backing(market: &ExpiryMarket) {
-    assert!(market.lp_cash_balance.value() >= market.max_payout(), EInsufficientLpCash);
+    assert!(market.lp_cash_balance.value() >= market.payout_liability(), EInsufficientLpCash);
 }
 
 fun mint_internal(
@@ -653,7 +629,7 @@ fun redeem_settled_internal(
     order: &Order,
     ctx: &mut TxContext,
 ) {
-    market.ensure_settlement_finalized(market_oracle);
+    market.materialize_settled_liability(market_oracle);
 
     let settlement = market_oracle.settlement_price();
     let payout_amount = market.strike_exposure.settled_order_payout(order, settlement);
@@ -718,7 +694,8 @@ fun settle_settled_redeem_payment(
     payout_amount: u64,
     ctx: &mut TxContext,
 ) {
-    market.decrease_settled_payout_liability(payout_amount);
+    market.assert_cash_backing();
+    market.strike_exposure.decrease_materialized_settled_liability(payout_amount);
 
     let payout = market.dispense_lp_cash(payout_amount);
     market.deposit_permissionless_payout(manager, payout, ctx);
@@ -761,15 +738,6 @@ fun deposit_permissionless_payout(
 fun resolve_trading_fee_basis(market: &mut ExpiryMarket, amount: u64) {
     assert!(market.unresolved_trading_fees_paid >= amount, EUnresolvedTradingFeesUnderflow);
     market.unresolved_trading_fees_paid = market.unresolved_trading_fees_paid - amount;
-}
-
-fun decrease_settled_payout_liability(market: &mut ExpiryMarket, amount: u64) {
-    assert!(market.settled_payout_liability.is_some(), ESettlementNotFinalized);
-    let current_liability = *market.settled_payout_liability.borrow();
-    assert!(current_liability >= amount, ESettledLiabilityUnderflow);
-    assert!(market.lp_cash_balance.value() >= current_liability, EInsufficientLpCash);
-    let liability = market.settled_payout_liability.borrow_mut();
-    *liability = current_liability - amount;
 }
 
 fun split_fee_surplus(market: &mut ExpiryMarket): Balance<DUSDC> {

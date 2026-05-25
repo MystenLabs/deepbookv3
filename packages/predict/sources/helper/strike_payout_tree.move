@@ -4,8 +4,8 @@
 /// Sparse strike exposure index for settlement-oriented payout accounting.
 ///
 /// This treap stores only finite interval boundaries touched by positions. It
-/// maintains subtree summaries for exact max-payout and settled-liability
-/// queries without storing NAV-specific strike-weighted quantities.
+/// returns exact max-payout updates and settled-liability queries without
+/// storing NAV-specific strike-weighted quantities.
 module deepbook_predict::strike_payout_tree;
 
 use deepbook_predict::constants;
@@ -25,7 +25,6 @@ public struct StrikePayoutTree has store {
     tick_size: u64,
     min_strike: u64,
     max_strike: u64,
-    max_payout: u64,
     base_qty: u64,
 }
 
@@ -62,24 +61,28 @@ public(package) fun new(
         tick_size,
         min_strike,
         max_strike,
-        max_payout: 0,
         base_qty: 0,
     }
 }
 
-/// Insert interval quantity for `(lower, higher]`.
-public(package) fun insert_range(tree: &mut StrikePayoutTree, lower: u64, higher: u64, qty: u64) {
-    tree.apply_range(lower, higher, qty, true);
+/// Insert interval quantity for `(lower, higher]` and return new max payout.
+public(package) fun insert_range(
+    tree: &mut StrikePayoutTree,
+    lower: u64,
+    higher: u64,
+    qty: u64,
+): u64 {
+    tree.apply_range(lower, higher, qty, true)
 }
 
-/// Remove interval quantity for `(lower, higher]`.
-public(package) fun remove_range(tree: &mut StrikePayoutTree, lower: u64, higher: u64, qty: u64) {
-    tree.apply_range(lower, higher, qty, false);
-}
-
-/// Return the exact worst-case settled payout across all settlement prices.
-public(package) fun max_payout(tree: &StrikePayoutTree): u64 {
-    tree.max_payout
+/// Remove interval quantity for `(lower, higher]` and return new max payout.
+public(package) fun remove_range(
+    tree: &mut StrikePayoutTree,
+    lower: u64,
+    higher: u64,
+    qty: u64,
+): u64 {
+    tree.apply_range(lower, higher, qty, false)
 }
 
 /// Evaluate settled payout liability.
@@ -96,14 +99,13 @@ public(package) fun destroy(tree: StrikePayoutTree) {
         tick_size: _,
         min_strike: _,
         max_strike: _,
-        max_payout: _,
         base_qty: _,
     } = tree;
     destroy_nodes(&mut nodes, root);
     nodes.destroy_empty();
 }
 
-fun apply_range(tree: &mut StrikePayoutTree, lower: u64, higher: u64, qty: u64, add: bool) {
+fun apply_range(tree: &mut StrikePayoutTree, lower: u64, higher: u64, qty: u64, add: bool): u64 {
     tree.assert_can_apply_range(lower, higher, qty, add);
 
     let root_summary = if (lower == constants::neg_inf!()) {
@@ -117,7 +119,7 @@ fun apply_range(tree: &mut StrikePayoutTree, lower: u64, higher: u64, qty: u64, 
         summary
     };
 
-    tree.max_payout = tree.base_qty + root_summary.best_prefix_start - root_summary.best_prefix_end;
+    tree.base_qty + root_summary.best_prefix_start - root_summary.best_prefix_end
 }
 
 fun assert_can_apply_range(tree: &StrikePayoutTree, lower: u64, higher: u64, qty: u64, add: bool) {

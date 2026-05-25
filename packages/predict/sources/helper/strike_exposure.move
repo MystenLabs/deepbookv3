@@ -3,9 +3,9 @@
 
 /// Strike exposure store for one oracle.
 ///
-/// This module owns the live NAV and payout indexes for one expiry grid. It can
-/// compute settled liability before settlement economics are finalized, but does
-/// not retain finalized settlement facts after dense storage is destroyed.
+/// This module owns live NAV/payout indexes and the materialized settled
+/// liability for one expiry grid. Expiry-market cash backing and payout movement
+/// stay outside this module.
 module deepbook_predict::strike_exposure;
 
 use deepbook::{constants::max_u64, math};
@@ -24,6 +24,8 @@ use sui::clock::Clock;
 const EInvalidTickSize: u64 = 2;
 const EInvalidStrikeGrid: u64 = 3;
 const EInvalidStrikeIndex: u64 = 4;
+const ESettledLiabilityNotMaterialized: u64 = 5;
+const ESettledLiabilityUnderflow: u64 = 6;
 
 /// Exposure lifecycle state for one oracle grid.
 public struct StrikeExposure has store {
@@ -31,6 +33,9 @@ public struct StrikeExposure has store {
     grid_tick: u64,
     grid_max: u64,
     next_order_sequence: u64,
+    /// Live worst-case payout before settlement; remaining settled liability after materialization.
+    payout_liability: u64,
+    settled_liability_materialized: bool,
     live: Option<LiveExposure>,
 }
 
@@ -42,9 +47,9 @@ public struct LiveExposure has store {
     minted_max_strike: u64,
 }
 
-/// Return the exact worst-case settled payout across all settlement prices.
-public(package) fun max_payout(exposure: &StrikeExposure): u64 {
-    exposure.live.borrow().payout.max_payout()
+/// Return live worst-case payout, or remaining settled payout liability once materialized.
+public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
+    exposure.payout_liability
 }
 
 /// Evaluate live option value for active exposure.
@@ -75,11 +80,6 @@ public(package) fun live_value(
     }
 }
 
-/// Evaluate settled payout liability.
-public(package) fun settled_value(exposure: &StrikeExposure, settlement: u64): u64 {
-    exposure.live.borrow().payout.settled_value(settlement)
-}
-
 /// Return settled payout for one order at a terminal settlement price.
 public(package) fun settled_order_payout(
     exposure: &StrikeExposure,
@@ -88,11 +88,6 @@ public(package) fun settled_order_payout(
 ): u64 {
     let (lower, higher, quantity) = exposure.order_terms(order);
     if (settlement > lower && settlement <= higher) quantity else 0
-}
-
-/// Assert that strike grid creation parameters are valid.
-public(package) fun assert_valid_strike_grid(min_strike: u64, tick_size: u64) {
-    let _max_strike = validated_max_strike(min_strike, tick_size);
 }
 
 /// Quote and allocate a live mint order over this exposure book's strike grid.
@@ -117,7 +112,7 @@ public(package) fun allocate_mint_order(
         clock,
         lower,
         higher,
-        exposure.max_payout(),
+        exposure.payout_liability,
         allocated_capital,
     );
 
@@ -134,9 +129,8 @@ public(package) fun allocate_mint_order(
     );
     exposure.next_order_sequence = sequence + 1;
 
-    let quantity = allocated_order.quantity();
     let live = exposure.live.borrow_mut();
-    live.payout.insert_range(lower, higher, quantity);
+    exposure.payout_liability = live.payout.insert_range(lower, higher, quantity);
     live.nav.insert_range(lower, higher, quantity);
     live.track_minted_boundaries(lower, higher);
 
@@ -153,6 +147,8 @@ public(package) fun new(min_strike: u64, tick_size: u64, ctx: &mut TxContext): S
         grid_tick: tick_size,
         grid_max: max_strike,
         next_order_sequence: 0,
+        payout_liability: 0,
+        settled_liability_materialized: false,
         live: option::some(LiveExposure {
             nav: strike_nav_matrix::new(tick_size, min_strike, max_strike, ctx),
             payout: strike_payout_tree::new(tick_size, min_strike, max_strike, ctx),
@@ -180,7 +176,7 @@ public(package) fun remove_and_quote_live_order(
         clock,
         lower,
         higher,
-        exposure.max_payout(),
+        exposure.payout_liability,
         allocated_capital,
     );
     let principal_amount = math::mul(fair_price, quantity);
@@ -188,8 +184,35 @@ public(package) fun remove_and_quote_live_order(
     (principal_amount, fee_amount)
 }
 
-/// Destroy live NAV and payout indexes after expiry economics are finalized.
+/// Materialize settled payout liability from terminal settlement price.
+public(package) fun materialize_settled_liability(
+    exposure: &mut StrikeExposure,
+    settlement: u64,
+): u64 {
+    if (exposure.settled_liability_materialized) {
+        return exposure.payout_liability
+    };
+
+    let settled_liability = exposure.live.borrow().payout.settled_value(settlement);
+    exposure.payout_liability = settled_liability;
+    exposure.settled_liability_materialized = true;
+    settled_liability
+}
+
+/// Decrease materialized settled payout liability after a settled redeem.
+public(package) fun decrease_materialized_settled_liability(
+    exposure: &mut StrikeExposure,
+    amount: u64,
+) {
+    assert!(exposure.settled_liability_materialized, ESettledLiabilityNotMaterialized);
+    let current_liability = exposure.payout_liability;
+    assert!(current_liability >= amount, ESettledLiabilityUnderflow);
+    exposure.payout_liability = current_liability - amount;
+}
+
+/// Destroy live NAV and payout indexes after settled liability is materialized.
 public(package) fun destroy_live_indexes(exposure: &mut StrikeExposure) {
+    assert!(exposure.settled_liability_materialized, ESettledLiabilityNotMaterialized);
     let live = exposure.live.extract();
     let LiveExposure {
         nav,
@@ -275,7 +298,7 @@ fun order_terms(exposure: &StrikeExposure, order: &Order): (u64, u64, u64) {
 fun remove_order(exposure: &mut StrikeExposure, order: &Order): (u64, u64, u64) {
     let (lower, higher, quantity) = exposure.order_terms(order);
     let live = exposure.live.borrow_mut();
-    live.payout.remove_range(lower, higher, quantity);
+    exposure.payout_liability = live.payout.remove_range(lower, higher, quantity);
     live.nav.remove_range(lower, higher, quantity);
     (lower, higher, quantity)
 }

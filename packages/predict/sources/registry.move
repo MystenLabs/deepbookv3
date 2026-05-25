@@ -17,8 +17,7 @@ use deepbook_predict::{
     plp::PoolVault,
     predict_manager::{Self, PredictManager},
     protocol_config::{Self, ProtocolConfig},
-    pyth_source::{Self, PythSource},
-    strike_exposure
+    pyth_source::{Self, PythSource}
 };
 use sui::{clock::Clock, table::{Self, Table}, vec_set::{Self, VecSet}};
 
@@ -404,7 +403,6 @@ public fun create_expiry_market(
     let pyth_lazer_feed_id = pyth.feed_id();
     assert!(registry.pyth_source_ids.contains(pyth_lazer_feed_id), EFeedIdMismatch);
     assert!(registry.pyth_source_ids[pyth_lazer_feed_id] == pyth.id(), EFeedIdMismatch);
-    strike_exposure::assert_valid_strike_grid(min_strike, tick_size);
     assert!(!registry.expiry_market_ids.contains(expiry), EExpiryMarketAlreadyCreated);
     let allowed_versions = registry.allowed_versions;
     let allocation = pool_vault.allocate_to_new_expiry(config.risk_config());

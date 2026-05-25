@@ -474,9 +474,10 @@ fun shrink_amount(risk_config: &RiskConfig, market: &ExpiryMarket): u64 {
     );
 
     let current_allocation = market.allocated_capital();
-    let target_allocation = math::mul(current_allocation, risk_config.shrink_factor())
-        .max(risk_config.expiry_allocation())
-        .max(market.max_payout());
+    let target_allocation = math::mul(
+        current_allocation,
+        risk_config.shrink_factor(),
+    ).max(risk_config.expiry_allocation());
     let amount = if (target_allocation < current_allocation) {
         current_allocation - target_allocation
     } else {
