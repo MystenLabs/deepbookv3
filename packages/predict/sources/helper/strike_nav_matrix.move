@@ -51,12 +51,12 @@ public struct NavSlot has copy, drop, store {
 
 /// Create a fully preallocated NAV matrix for the oracle strike grid.
 public(package) fun new(
-    tick_size: u64,
     min_strike: u64,
+    tick_size: u64,
     max_strike: u64,
     ctx: &mut TxContext,
 ): StrikeNavMatrix {
-    assert_valid_grid(tick_size, min_strike, max_strike);
+    assert_valid_grid(min_strike, tick_size, max_strike);
 
     let total_strikes = (max_strike - min_strike) / tick_size + 1;
     let page_count = page_count(total_strikes);
@@ -196,6 +196,8 @@ fun apply_range(
 }
 
 fun floor_amount(floor_shares: u64, floor_index: u64): u64 {
+    // Aggregate NAV rounds down so one-unit fixed-point dust cannot make
+    // valuation abort; per-order redeem and settlement floors remain exact.
     predict_math::mul_div_round_down(floor_shares, floor_index, constants::float_scaling!())
 }
 
@@ -290,7 +292,7 @@ fun empty_nav_page(): vector<NavSlot> {
     )
 }
 
-fun assert_valid_grid(tick_size: u64, min_strike: u64, max_strike: u64) {
+fun assert_valid_grid(min_strike: u64, tick_size: u64, max_strike: u64) {
     assert!(tick_size > 0, EInvalidTickSize);
     assert!(min_strike <= max_strike, EInvalidStrikeRange);
     assert!(min_strike % tick_size == 0 && max_strike % tick_size == 0, EUnalignedStrike);

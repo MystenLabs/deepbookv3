@@ -4,21 +4,20 @@
 /// Sparse strike exposure index for payout-liability accounting.
 ///
 /// This treap stores finite interval boundaries touched by positions. It tracks
-/// only atomic payout terms: range quantity and floor shares. Live and settled
-/// payout liability are derived by applying the relevant floor index at read
-/// time.
+/// atomic payout terms: each order's exact terminal payout and maximum future
+/// live payout. Live backing uses the static max-live term for an instant
+/// conservative lookup. Settled liability uses exact terminal-payout prefixes.
 module deepbook_predict::strike_payout_tree;
 
-use deepbook_predict::{constants, math as predict_math};
+use deepbook_predict::constants;
 use sui::{bcs, hash::blake2b256, table::{Self, Table}};
 
 const EInvalidTickSize: u64 = 0;
 const EInvalidStrikeRange: u64 = 1;
-const EInsufficientQuantity: u64 = 2;
+const EInsufficientPayoutTerms: u64 = 2;
 const EUnalignedStrike: u64 = 5;
-const EZeroQuantity: u64 = 6;
 const ETooManyStrikes: u64 = 7;
-const EFloorExceedsQuantity: u64 = 8;
+const EInvalidPayoutTerms: u64 = 8;
 
 /// Sparse payout-liability tree for strike prefixes.
 public struct StrikePayoutTree has store {
@@ -30,10 +29,17 @@ public struct StrikePayoutTree has store {
     base: PayoutTerms,
 }
 
-/// Quantity and floor shares tracked together at each payout boundary.
+/// Atomic payout terms used for boundary deltas and subtree totals.
 public struct PayoutTerms has copy, drop, store {
-    quantity: u64,
-    floor_shares: u64,
+    terminal_payout: u64,
+    live_backing_payout: u64,
+}
+
+/// Subtree totals and max static live backing prefix gain.
+public struct PayoutSummary has copy, drop, store {
+    total_start: PayoutTerms,
+    total_end: PayoutTerms,
+    max_live_backing_prefix_gain: u64,
 }
 
 /// Treap node keyed by finite boundary strike.
@@ -41,18 +47,38 @@ public struct PayoutNode has copy, drop, store {
     priority: u64,
     left: Option<u64>,
     right: Option<u64>,
-    start: PayoutTerms,
-    end: PayoutTerms,
+    summary: PayoutSummary,
+}
+
+/// Return the static conservative live backing requirement.
+public(package) fun max_live_backing_payout(tree: &StrikePayoutTree): u64 {
+    let mut max_payout = tree.base.live_backing_payout;
+    if (tree.root.is_some()) {
+        max_payout =
+            max_payout + tree.nodes[*tree.root.borrow()].summary.max_live_backing_prefix_gain;
+    };
+    max_payout
+}
+
+/// Evaluate exact settled payout liability at one settlement price.
+public(package) fun settled_payout_liability(tree: &StrikePayoutTree, settlement: u64): u64 {
+    let terms = settlement_prefix_terms(
+        &tree.nodes,
+        tree.root,
+        settlement,
+        tree.base,
+    );
+    terms.terminal_payout
 }
 
 /// Create an empty sparse payout tree for the oracle strike grid.
 public(package) fun new(
-    tick_size: u64,
     min_strike: u64,
+    tick_size: u64,
     max_strike: u64,
     ctx: &mut TxContext,
 ): StrikePayoutTree {
-    assert_valid_grid(tick_size, min_strike, max_strike);
+    assert_valid_grid(min_strike, tick_size, max_strike);
 
     StrikePayoutTree {
         root: option::none(),
@@ -64,50 +90,26 @@ public(package) fun new(
     }
 }
 
-/// Insert interval quantity/floor shares for `(lower, higher]`.
+/// Insert interval payout terms for `(lower, higher]`.
 public(package) fun insert_range(
     tree: &mut StrikePayoutTree,
     lower: u64,
     higher: u64,
-    qty: u64,
-    floor_shares: u64,
+    terminal_payout: u64,
+    live_backing_payout: u64,
 ) {
-    tree.apply_range(lower, higher, payout_terms(qty, floor_shares), true);
+    tree.apply_range(lower, higher, payout_terms(terminal_payout, live_backing_payout), true);
 }
 
-/// Remove interval quantity/floor shares for `(lower, higher]`.
+/// Remove interval payout terms for `(lower, higher]`.
 public(package) fun remove_range(
     tree: &mut StrikePayoutTree,
     lower: u64,
     higher: u64,
-    qty: u64,
-    floor_shares: u64,
+    terminal_payout: u64,
+    live_backing_payout: u64,
 ) {
-    tree.apply_range(lower, higher, payout_terms(qty, floor_shares), false);
-}
-
-/// Return current live max payout under aggregate floor rounding.
-public(package) fun max_live_payout(tree: &StrikePayoutTree, floor_index: u64): u64 {
-    let best = payout_amount(tree.base, floor_index);
-    let (_, best) = scan_max_live_payout(
-        &tree.nodes,
-        tree.root,
-        tree.base,
-        floor_index,
-        best,
-    );
-    best
-}
-
-/// Evaluate settled payout liability at one settlement price and floor index.
-public(package) fun settled_value(tree: &StrikePayoutTree, settlement: u64, floor_index: u64): u64 {
-    let terms = scan_settled_payout(
-        &tree.nodes,
-        tree.root,
-        settlement,
-        tree.base,
-    );
-    payout_amount(terms, floor_index)
+    tree.apply_range(lower, higher, payout_terms(terminal_payout, live_backing_payout), false);
 }
 
 /// Destroy all sparse payout storage without reading settlement liability.
@@ -131,7 +133,9 @@ fun apply_range(
     terms: PayoutTerms,
     add: bool,
 ) {
-    tree.assert_range_boundaries(lower, higher, terms.quantity);
+    tree.assert_range_boundaries(lower, higher);
+    if (terms.terminal_payout == 0 && terms.live_backing_payout == 0) return;
+    assert!(terms.terminal_payout <= terms.live_backing_payout, EInvalidPayoutTerms);
 
     if (lower == constants::neg_inf!()) {
         apply_terms_delta(&mut tree.base, terms, add);
@@ -171,7 +175,7 @@ fun apply_at(
     add: bool,
 ): u64 {
     if (root.is_none()) {
-        assert!(add, EInsufficientQuantity);
+        assert!(add, EInsufficientPayoutTerms);
         let leaf = new_leaf(strike, terms, is_start);
         nodes.add(strike, leaf);
         return strike
@@ -179,13 +183,28 @@ fun apply_at(
 
     let root_strike = *root.borrow();
     let mut node = nodes[root_strike];
+    let mut left_summary = subtree_summary(nodes, node.left);
+    let mut right_summary = subtree_summary(nodes, node.right);
+    let (mut local_start, mut local_end) = local_boundary_terms_from_summaries(
+        &node,
+        left_summary,
+        right_summary,
+    );
     if (strike == root_strike) {
         if (is_start) {
-            apply_terms_delta(&mut node.start, terms, add);
+            apply_terms_delta(&mut local_start, terms, add);
         } else {
-            apply_terms_delta(&mut node.end, terms, add);
+            apply_terms_delta(&mut local_end, terms, add);
         };
-        write_node(nodes, root_strike, node);
+        write_node_with_summaries(
+            nodes,
+            root_strike,
+            node,
+            local_start,
+            local_end,
+            left_summary,
+            right_summary,
+        );
         return root_strike
     };
 
@@ -200,9 +219,19 @@ fun apply_at(
         );
         let left_node = nodes[new_left];
         if (left_node.priority > node.priority) {
-            return rotate_right(nodes, root_strike, node, new_left, left_node)
+            let new_root = rotate_right(
+                nodes,
+                root_strike,
+                node,
+                local_start,
+                local_end,
+                new_left,
+                left_node,
+            );
+            return new_root
         };
         node.left = option::some(new_left);
+        left_summary = left_node.summary;
     } else {
         let new_right = apply_at(
             nodes,
@@ -214,12 +243,30 @@ fun apply_at(
         );
         let right_node = nodes[new_right];
         if (right_node.priority > node.priority) {
-            return rotate_left(nodes, root_strike, node, new_right, right_node)
+            let new_root = rotate_left(
+                nodes,
+                root_strike,
+                node,
+                local_start,
+                local_end,
+                new_right,
+                right_node,
+            );
+            return new_root
         };
         node.right = option::some(new_right);
+        right_summary = right_node.summary;
     };
 
-    write_node(nodes, root_strike, node);
+    write_node_with_summaries(
+        nodes,
+        root_strike,
+        node,
+        local_start,
+        local_end,
+        left_summary,
+        right_summary,
+    );
     root_strike
 }
 
@@ -234,8 +281,7 @@ fun new_leaf(strike: u64, terms: PayoutTerms, is_start: bool): PayoutNode {
         priority: strike_priority(strike),
         left: option::none(),
         right: option::none(),
-        start,
-        end,
+        summary: boundary_summary(start, end),
     }
 }
 
@@ -243,14 +289,17 @@ fun rotate_right(
     nodes: &mut Table<u64, PayoutNode>,
     root_strike: u64,
     mut root_node: PayoutNode,
+    root_start: PayoutTerms,
+    root_end: PayoutTerms,
     left_strike: u64,
     mut left_node: PayoutNode,
 ): u64 {
+    let (left_start, left_end) = local_boundary_terms(nodes, &left_node);
     root_node.left = left_node.right;
-    write_node(nodes, root_strike, root_node);
+    write_node(nodes, root_strike, root_node, root_start, root_end);
 
     left_node.right = option::some(root_strike);
-    write_node(nodes, left_strike, left_node);
+    write_node(nodes, left_strike, left_node, left_start, left_end);
     left_strike
 }
 
@@ -258,43 +307,21 @@ fun rotate_left(
     nodes: &mut Table<u64, PayoutNode>,
     root_strike: u64,
     mut root_node: PayoutNode,
+    root_start: PayoutTerms,
+    root_end: PayoutTerms,
     right_strike: u64,
     mut right_node: PayoutNode,
 ): u64 {
+    let (right_start, right_end) = local_boundary_terms(nodes, &right_node);
     root_node.right = right_node.left;
-    write_node(nodes, root_strike, root_node);
+    write_node(nodes, root_strike, root_node, root_start, root_end);
 
     right_node.left = option::some(root_strike);
-    write_node(nodes, right_strike, right_node);
+    write_node(nodes, right_strike, right_node, right_start, right_end);
     right_strike
 }
 
-fun scan_max_live_payout(
-    nodes: &Table<u64, PayoutNode>,
-    root: Option<u64>,
-    running: PayoutTerms,
-    floor_index: u64,
-    best: u64,
-): (PayoutTerms, u64) {
-    if (root.is_none()) return (running, best);
-    let node = nodes[*root.borrow()];
-    let (mut running, mut best) = scan_max_live_payout(
-        nodes,
-        node.left,
-        running,
-        floor_index,
-        best,
-    );
-
-    apply_terms_delta(&mut running, node.start, true);
-    apply_terms_delta(&mut running, node.end, false);
-    let candidate = payout_amount(running, floor_index);
-    if (candidate > best) best = candidate;
-
-    scan_max_live_payout(nodes, node.right, running, floor_index, best)
-}
-
-fun scan_settled_payout(
+fun settlement_prefix_terms(
     nodes: &Table<u64, PayoutNode>,
     root: Option<u64>,
     settlement: u64,
@@ -303,37 +330,140 @@ fun scan_settled_payout(
     if (root.is_none()) return running;
     let strike = *root.borrow();
     let node = nodes[strike];
-    let mut running = scan_settled_payout(
-        nodes,
-        node.left,
-        settlement,
-        running,
+    if (settlement <= strike) {
+        return settlement_prefix_terms(nodes, node.left, settlement, running)
+    };
+
+    let mut running = running;
+    let left_summary = subtree_summary(nodes, node.left);
+    let right_summary = subtree_summary(nodes, node.right);
+    apply_terms_delta(&mut running, left_summary.total_start, true);
+    apply_terms_delta(&mut running, left_summary.total_end, false);
+    let (local_start, local_end) = local_boundary_terms_from_summaries(
+        &node,
+        left_summary,
+        right_summary,
     );
-
-    if (settlement <= strike) return running;
-
-    apply_terms_delta(&mut running, node.start, true);
-    apply_terms_delta(&mut running, node.end, false);
-
-    scan_settled_payout(nodes, node.right, settlement, running)
+    apply_terms_delta(&mut running, local_start, true);
+    apply_terms_delta(&mut running, local_end, false);
+    settlement_prefix_terms(nodes, node.right, settlement, running)
 }
 
-fun write_node(nodes: &mut Table<u64, PayoutNode>, strike: u64, node: PayoutNode) {
+fun write_node(
+    nodes: &mut Table<u64, PayoutNode>,
+    strike: u64,
+    node: PayoutNode,
+    local_start: PayoutTerms,
+    local_end: PayoutTerms,
+) {
+    let left = subtree_summary(nodes, node.left);
+    let right = subtree_summary(nodes, node.right);
+    write_node_with_summaries(nodes, strike, node, local_start, local_end, left, right);
+}
+
+fun write_node_with_summaries(
+    nodes: &mut Table<u64, PayoutNode>,
+    strike: u64,
+    mut node: PayoutNode,
+    local_start: PayoutTerms,
+    local_end: PayoutTerms,
+    left: PayoutSummary,
+    right: PayoutSummary,
+) {
+    node.summary = summarize_node(left, local_start, local_end, right);
     *(&mut nodes[strike]) = node;
 }
 
-fun payout_terms(quantity: u64, floor_shares: u64): PayoutTerms {
-    PayoutTerms { quantity, floor_shares }
+fun summarize_node(
+    left: PayoutSummary,
+    local_start: PayoutTerms,
+    local_end: PayoutTerms,
+    right: PayoutSummary,
+): PayoutSummary {
+    let boundary = boundary_summary(local_start, local_end);
+    combine_summaries(combine_summaries(left, boundary), right)
 }
 
-fun payout_amount(terms: PayoutTerms, floor_index: u64): u64 {
-    let floor_amount = predict_math::mul_div_round_down(
-        terms.floor_shares,
-        floor_index,
-        constants::float_scaling!(),
+fun local_boundary_terms(
+    nodes: &Table<u64, PayoutNode>,
+    node: &PayoutNode,
+): (PayoutTerms, PayoutTerms) {
+    let left = subtree_summary(nodes, node.left);
+    let right = subtree_summary(nodes, node.right);
+    local_boundary_terms_from_summaries(node, left, right)
+}
+
+fun local_boundary_terms_from_summaries(
+    node: &PayoutNode,
+    left: PayoutSummary,
+    right: PayoutSummary,
+): (PayoutTerms, PayoutTerms) {
+    // Local boundary terms are derived instead of stored so each node only
+    // carries its aggregate summary.
+    let mut local_start = node.summary.total_start;
+    let mut local_end = node.summary.total_end;
+
+    apply_terms_delta(&mut local_start, left.total_start, false);
+    apply_terms_delta(&mut local_start, right.total_start, false);
+    apply_terms_delta(&mut local_end, left.total_end, false);
+    apply_terms_delta(&mut local_end, right.total_end, false);
+
+    (local_start, local_end)
+}
+
+fun subtree_summary(nodes: &Table<u64, PayoutNode>, root: Option<u64>): PayoutSummary {
+    if (root.is_none()) return zero_summary();
+    nodes[*root.borrow()].summary
+}
+
+fun boundary_summary(start: PayoutTerms, end: PayoutTerms): PayoutSummary {
+    PayoutSummary {
+        total_start: start,
+        total_end: end,
+        max_live_backing_prefix_gain: positive_live_delta(
+            start.live_backing_payout,
+            end.live_backing_payout,
+            0,
+        ),
+    }
+}
+
+fun zero_summary(): PayoutSummary {
+    PayoutSummary {
+        total_start: payout_terms(0, 0),
+        total_end: payout_terms(0, 0),
+        max_live_backing_prefix_gain: 0,
+    }
+}
+
+fun combine_summaries(left: PayoutSummary, right: PayoutSummary): PayoutSummary {
+    let right_gain_after_left = positive_live_delta(
+        left.total_start.live_backing_payout,
+        left.total_end.live_backing_payout,
+        right.max_live_backing_prefix_gain,
     );
-    assert!(floor_amount <= terms.quantity, EFloorExceedsQuantity);
-    terms.quantity - floor_amount
+
+    PayoutSummary {
+        total_start: add_terms(left.total_start, right.total_start),
+        total_end: add_terms(left.total_end, right.total_end),
+        max_live_backing_prefix_gain: left.max_live_backing_prefix_gain.max(right_gain_after_left),
+    }
+}
+
+fun positive_live_delta(start: u64, end: u64, gain: u64): u64 {
+    let positive = start + gain;
+    if (positive > end) positive - end else 0
+}
+
+fun add_terms(left: PayoutTerms, right: PayoutTerms): PayoutTerms {
+    payout_terms(
+        left.terminal_payout + right.terminal_payout,
+        left.live_backing_payout + right.live_backing_payout,
+    )
+}
+
+fun payout_terms(terminal_payout: u64, live_backing_payout: u64): PayoutTerms {
+    PayoutTerms { terminal_payout, live_backing_payout }
 }
 
 fun destroy_nodes(nodes: &mut Table<u64, PayoutNode>, root: Option<u64>) {
@@ -344,7 +474,7 @@ fun destroy_nodes(nodes: &mut Table<u64, PayoutNode>, root: Option<u64>) {
     destroy_nodes(nodes, node.right);
 }
 
-fun assert_valid_grid(tick_size: u64, min_strike: u64, max_strike: u64) {
+fun assert_valid_grid(min_strike: u64, tick_size: u64, max_strike: u64) {
     assert!(tick_size > 0, EInvalidTickSize);
     assert!(min_strike <= max_strike, EInvalidStrikeRange);
     assert!(min_strike % tick_size == 0 && max_strike % tick_size == 0, EUnalignedStrike);
@@ -353,8 +483,8 @@ fun assert_valid_grid(tick_size: u64, min_strike: u64, max_strike: u64) {
     assert!(total_strikes <= constants::oracle_strike_grid_ticks!() + 1, ETooManyStrikes);
 }
 
-fun assert_range_boundaries(tree: &StrikePayoutTree, lower: u64, higher: u64, qty: u64) {
-    assert_range_shape(lower, higher, qty);
+fun assert_range_boundaries(tree: &StrikePayoutTree, lower: u64, higher: u64) {
+    assert_range_shape(lower, higher);
     if (lower != constants::neg_inf!()) tree.assert_finite_boundary(lower);
     if (higher != constants::pos_inf!()) tree.assert_finite_boundary(higher);
 }
@@ -364,29 +494,31 @@ fun assert_finite_boundary(tree: &StrikePayoutTree, strike: u64) {
     assert!((strike - tree.min_strike) % tree.tick_size == 0, EUnalignedStrike);
 }
 
-fun assert_range_shape(lower: u64, higher: u64, qty: u64) {
+fun assert_range_shape(lower: u64, higher: u64) {
     assert!(lower < higher, EInvalidStrikeRange);
     assert!(
         !(lower == constants::neg_inf!() && higher == constants::pos_inf!()),
         EInvalidStrikeRange,
     );
-    assert!(qty > 0, EZeroQuantity);
 }
 
 fun apply_terms_delta(value: &mut PayoutTerms, delta: PayoutTerms, add: bool) {
     if (add) {
-        value.quantity = value.quantity + delta.quantity;
-        value.floor_shares = value.floor_shares + delta.floor_shares;
+        value.terminal_payout = value.terminal_payout + delta.terminal_payout;
+        value.live_backing_payout = value.live_backing_payout + delta.live_backing_payout;
     } else {
         assert_terms_available(*value, delta);
-        value.quantity = value.quantity - delta.quantity;
-        value.floor_shares = value.floor_shares - delta.floor_shares;
+        value.terminal_payout = value.terminal_payout - delta.terminal_payout;
+        value.live_backing_payout = value.live_backing_payout - delta.live_backing_payout;
     };
 }
 
 fun assert_terms_available(available: PayoutTerms, required: PayoutTerms) {
-    assert!(available.quantity >= required.quantity, EInsufficientQuantity);
-    assert!(available.floor_shares >= required.floor_shares, EInsufficientQuantity);
+    assert!(available.terminal_payout >= required.terminal_payout, EInsufficientPayoutTerms);
+    assert!(
+        available.live_backing_payout >= required.live_backing_payout,
+        EInsufficientPayoutTerms,
+    );
 }
 
 fun strike_priority(strike: u64): u64 {
