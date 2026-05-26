@@ -264,7 +264,7 @@ export function supplyTx(poolVaultId: string, protocolConfigId: string, amount: 
   });
   const valuation = tx.moveCall({
     target: target("plp", "start_valuation"),
-    arguments: [tx.object(poolVaultId), tx.object(protocolConfigId)],
+    arguments: [tx.object(protocolConfigId), tx.object(poolVaultId)],
   });
   const [plpCoin] = tx.moveCall({
     target: target("plp", "supply"),
@@ -290,7 +290,7 @@ export function supplyWithExpiryValuationTx(params: {
   });
   const valuation = tx.moveCall({
     target: target("plp", "start_valuation"),
-    arguments: [tx.object(params.poolVaultId), tx.object(params.protocolConfigId)],
+    arguments: [tx.object(params.protocolConfigId), tx.object(params.poolVaultId)],
   });
   const expiryValuation = tx.moveCall({
     target: target("expiry_market", "produce_valuation"),
@@ -369,8 +369,8 @@ export function mintTx(params: {
     target: target("expiry_market", "mint"),
     arguments: [
       tx.object(params.expiryMarketId),
-      tx.object(params.protocolConfigId),
       tx.object(params.managerId),
+      tx.object(params.protocolConfigId),
       tx.object(params.oracleId),
       tx.object(params.pythSourceId),
       tx.pure.u64(lower),
@@ -455,8 +455,8 @@ export function refreshOracleAndMintTx(params: {
     target: target("expiry_market", "mint"),
     arguments: [
       tx.object(params.expiryMarketId),
-      tx.object(params.protocolConfigId),
       tx.object(params.managerId),
+      tx.object(params.protocolConfigId),
       tx.object(params.oracleId),
       tx.object(params.pythSourceId),
       tx.pure.u64(lower),
