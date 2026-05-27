@@ -173,7 +173,7 @@ public(package) fun allocate_mint_order(
         higher,
         clock,
     );
-    let fee_rate = pricing::assert_mint_fee_rate(config, entry_probability);
+    let fee_rate = pricing::assert_mint_fee_rate(config, market, pyth, entry_probability, clock);
     let fee_amount = math::mul(fee_rate, quantity);
 
     let sequence = exposure.next_order_sequence;
@@ -218,7 +218,7 @@ public(package) fun close_and_quote_live_order(
         higher,
         clock,
     );
-    let fee_rate = pricing::fee_rate(config, range_probability);
+    let fee_rate = pricing::fee_rate(config, market, pyth, range_probability, clock);
 
     let (resulting_order, closed_floor_amount) = exposure.close_live_exposure(
         order,

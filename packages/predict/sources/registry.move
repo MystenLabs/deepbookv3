@@ -100,6 +100,19 @@ public fun set_template_max_expiry_floor_premium(
     config.set_template_max_expiry_floor_premium(value);
 }
 
+/// Set the per-asset time-to-expiry fee ramp for a Pyth source's markets.
+/// `window_ms` (0 disables) is the ms-before-expiry over which the fee ramps up;
+/// `max_multiplier` (FLOAT_SCALING, 1x disables) is the multiplier reached at
+/// expiry. Larger values suit more volatile assets.
+public fun set_pyth_source_expiry_fee_params(
+    pyth: &mut PythSource,
+    _admin_cap: &AdminCap,
+    window_ms: u64,
+    max_multiplier: u64,
+) {
+    pyth.set_expiry_fee_params(window_ms, max_multiplier);
+}
+
 /// Set the global minimum allowed mint price.
 public fun set_min_ask_price(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
     config.set_min_ask_price(value);
@@ -319,13 +332,16 @@ public fun set_expiry_market_mint_paused(
     market.set_mint_paused(paused);
 }
 
-/// Create a shared Pyth source for one admin-approved Lazer feed.
+/// Create a shared Pyth source for one admin-approved Lazer feed, configuring
+/// the per-asset expiry-fee ramp up front (window 0 or multiplier 1x disables it).
 ///
 /// The registry enforces one source object per feed ID.
 public fun create_pyth_source(
     registry: &mut Registry,
     _admin_cap: &AdminCap,
     pyth_lazer_feed_id: u32,
+    expiry_fee_window_ms: u64,
+    expiry_fee_max_multiplier: u64,
     ctx: &mut TxContext,
 ): ID {
     registry.assert_version_allowed();
@@ -333,6 +349,8 @@ public fun create_pyth_source(
     let pyth_source_id = pyth_source::create_and_share(
         pyth_lazer_feed_id,
         registry.allowed_versions,
+        expiry_fee_window_ms,
+        expiry_fee_max_multiplier,
         ctx,
     );
     registry.pyth_source_ids.add(pyth_lazer_feed_id, pyth_source_id);

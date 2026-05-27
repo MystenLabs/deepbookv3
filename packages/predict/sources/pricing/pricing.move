@@ -84,16 +84,37 @@ public(package) fun live_range_probability(
     compute_range_price(&svi, forward, lower, higher)
 }
 
-/// Return the per-unit fee for a raw contract probability.
-public(package) fun fee_rate(config: &PricingConfig, probability: u64): u64 {
+/// Return the per-unit fee for a raw contract probability, scaled by the
+/// per-asset time-to-expiry ramp. Callers must have already established that
+/// the market is active (`now < expiry`).
+public(package) fun fee_rate(
+    config: &PricingConfig,
+    market: &MarketOracle,
+    pyth: &PythSource,
+    probability: u64,
+    clock: &Clock,
+): u64 {
     let raw_fee = raw_bernoulli_fee_rate(config, probability);
     let min_fee = config.min_fee();
-    if (raw_fee > min_fee) raw_fee else min_fee
+    let base = if (raw_fee > min_fee) raw_fee else min_fee;
+    let time_to_expiry_ms = market.expiry() - clock.timestamp_ms();
+    let multiplier = expiry_fee_multiplier(
+        pyth.expiry_fee_window_ms(),
+        pyth.expiry_fee_max_multiplier(),
+        time_to_expiry_ms,
+    );
+    math::mul(base, multiplier)
 }
 
 /// Return fee rate and abort unless the all-in mint price is allowed.
-public(package) fun assert_mint_fee_rate(config: &PricingConfig, probability: u64): u64 {
-    let fee_rate = fee_rate(config, probability);
+public(package) fun assert_mint_fee_rate(
+    config: &PricingConfig,
+    market: &MarketOracle,
+    pyth: &PythSource,
+    probability: u64,
+    clock: &Clock,
+): u64 {
+    let fee_rate = fee_rate(config, market, pyth, probability, clock);
     let ask_price = probability + fee_rate;
     assert!(
         ask_price >= config.min_ask_price() && ask_price <= config.max_ask_price(),
@@ -257,6 +278,24 @@ fun raw_bernoulli_fee_rate(config: &PricingConfig, probability: u64): u64 {
     math::mul(config.base_fee(), bernoulli_factor)
 }
 
+/// Linear ramp that scales the trade fee up as expiry approaches: 1x outside the
+/// window, rising linearly to `max_multiplier` at expiry. `window_ms` and
+/// `max_multiplier` are per-asset (from PythSource); `time_to_expiry_ms` is the
+/// live remaining time (caller guarantees `now < expiry`).
+fun expiry_fee_multiplier(window_ms: u64, max_multiplier: u64, time_to_expiry_ms: u64): u64 {
+    // Outside the window (or ramp disabled, window == 0) the fee is unscaled; the
+    // early return also avoids a zero-divisor when window == 0.
+    if (time_to_expiry_ms >= window_ms) return constants::float_scaling!();
+
+    // mult = 1 + (max - 1) * (window - ttx) / window
+    let ramp = predict_math::mul_div_round_down(
+        max_multiplier - constants::float_scaling!(),
+        window_ms - time_to_expiry_ms,
+        window_ms,
+    );
+    constants::float_scaling!() + ramp
+}
+
 /// Binary pricing from SVI total variance:
 /// - k = ln(strike / forward)
 /// - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
@@ -356,4 +395,15 @@ fun find_gap(points: &vector<CurvePoint>, grid_tick: u64): (bool, u64) {
 /// Round a strike down to the nearest tick boundary.
 fun snap_to_tick(strike: u64, grid_min: u64, grid_tick: u64): u64 {
     grid_min + (strike - grid_min) / grid_tick * grid_tick
+}
+
+// === Test-Only Functions ===
+
+#[test_only]
+public fun expiry_fee_multiplier_for_testing(
+    window_ms: u64,
+    max_multiplier: u64,
+    time_to_expiry_ms: u64,
+): u64 {
+    expiry_fee_multiplier(window_ms, max_multiplier, time_to_expiry_ms)
 }

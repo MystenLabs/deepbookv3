@@ -122,11 +122,21 @@ export function createMarketOracleCapTx(recipient: string): Transaction {
   return tx;
 }
 
-export function createPythSourceTx(feedId: number): Transaction {
+export function createPythSourceTx(
+  feedId: number,
+  expiryFeeWindowMs: bigint = 0n,
+  expiryFeeMaxMultiplier: bigint = 1_000_000_000n,
+): Transaction {
   const tx = new Transaction();
   tx.moveCall({
     target: target("registry", "create_pyth_source"),
-    arguments: [tx.object(REGISTRY_ID), tx.object(ADMIN_CAP_ID), tx.pure.u32(feedId)],
+    arguments: [
+      tx.object(REGISTRY_ID),
+      tx.object(ADMIN_CAP_ID),
+      tx.pure.u32(feedId),
+      tx.pure.u64(expiryFeeWindowMs),
+      tx.pure.u64(expiryFeeMaxMultiplier),
+    ],
   });
   return tx;
 }
