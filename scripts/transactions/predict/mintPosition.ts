@@ -10,18 +10,6 @@
 //
 // The user's active sui-client address must already hold DUSDC. This script
 // does NOT touch the treasury cap.
-//
-// Required env:
-//   MANAGER_ID   the user's PredictManager id (from createManager.ts)
-//   ORACLE_ID    target OracleSVI id (from listMarkets.ts)
-//   EXPIRY       oracle expiry in ms (from listMarkets.ts)
-//   STRIKE       strike, 1e9-scaled. e.g. 75000_000_000_000 = $75,000
-//   DIRECTION    "up" or "down"
-// Optional:
-//   QUANTITY     contract count in DUSDC units (1e6). default 1_000_000 = $1.
-//   TOPUP        DUSDC to deposit into the manager before mint, in DUSDC
-//                units. default = QUANTITY (enough to cover up to a $1 ask).
-//   SKIP_TOPUP   set to 1 to skip the deposit step (use manager balance).
 
 import { Transaction } from '@mysten/sui/transactions';
 import { getActiveAddress, getClient, getSigner } from '../../utils/utils.js';
@@ -31,50 +19,70 @@ import {
 	predictPackageID,
 } from '../../config/constants.js';
 
+// === Edit these for your trade =====================================
+// Values are human units. The script scales them on the way to the chain.
+//   STRIKE          → dollars (multiplied by 1e9 for the 9-decimal price)
+//   QUANTITY/TOPUP  → DUSDC dollars (multiplied by 1e6)
+// MANAGER_ID is unique per attendee — paste the id printed by
+// pnpm predict-create-manager.
+// ORACLE_ID / EXPIRY come from pnpm predict-list-markets.
+const CONFIG = {
+	MANAGER_ID:  'PASTE_YOUR_MANAGER_ID',
+	ORACLE_ID:   '0xec05af6806cc08ffb2656ad1b21e7510493fe499b8992167e61e39529d851d2d', // BTC 2026-05-28 08:00 UTC
+	EXPIRY:      1779955200000,        // ms since epoch
+	STRIKE:      75_000,               // $75,000
+	DIRECTION:   'up' as 'up' | 'down',
+	QUANTITY:    1,                    // $1 face
+	TOPUP:       1,                    // DUSDC to deposit before mint
+	SKIP_TOPUP:  false,                // true → reuse manager's existing balance
+};
+// Env vars override CONFIG if set, using the same human units.
+// ===================================================================
+
 const network = 'testnet' as const;
 const DUSDC_TYPE = `${dusdcPackageID[network]}::dusdc::DUSDC`;
 const CLOCK = '0x6';
-
-const required = (name: string): string => {
-	const v = process.env[name];
-	if (!v) {
-		console.error(`Missing required env var: ${name}`);
-		process.exit(1);
-	}
-	return v;
-};
+const PRICE_SCALE = 1_000_000_000n;  // 9 decimals for strikes/prices
+const DUSDC_SCALE = 1_000_000n;       // 6 decimals for quantities/DUSDC
 
 (async () => {
 	const client = getClient(network);
 	const signer = getSigner();
 	const address = getActiveAddress();
 
-	const managerId = required('MANAGER_ID');
-	const oracleId = required('ORACLE_ID');
-	const expiry = BigInt(required('EXPIRY'));
-	const strike = BigInt(required('STRIKE'));
-	const direction = required('DIRECTION').toLowerCase();
-	const quantity = BigInt(process.env.QUANTITY ?? 1_000_000); // $1 face
-	const topup = BigInt(process.env.TOPUP ?? quantity);
-	const skipTopup = process.env.SKIP_TOPUP === '1';
+	const managerId = process.env.MANAGER_ID ?? CONFIG.MANAGER_ID;
+	const oracleId = process.env.ORACLE_ID ?? CONFIG.ORACLE_ID;
+	const expiry = BigInt(process.env.EXPIRY ?? CONFIG.EXPIRY);
+	const strikeDollars = BigInt(process.env.STRIKE ?? CONFIG.STRIKE);
+	const direction = (process.env.DIRECTION ?? CONFIG.DIRECTION).toLowerCase();
+	const quantityDollars = BigInt(process.env.QUANTITY ?? CONFIG.QUANTITY);
+	const topupDollars = BigInt(process.env.TOPUP ?? CONFIG.TOPUP);
+	const skipTopup = process.env.SKIP_TOPUP ? process.env.SKIP_TOPUP === '1' : CONFIG.SKIP_TOPUP;
 
+	if (managerId === 'PASTE_YOUR_MANAGER_ID') {
+		console.error('Set MANAGER_ID in the CONFIG block (or as an env var). Run pnpm predict-create-manager first.');
+		process.exit(1);
+	}
 	if (direction !== 'up' && direction !== 'down') {
 		console.error('DIRECTION must be "up" or "down"');
 		process.exit(1);
 	}
 
-	console.log(`Trader:   ${address}`);
-	console.log(`Manager:  ${managerId}`);
-	console.log(`Oracle:   ${oracleId}`);
-	console.log(`Expiry:   ${new Date(Number(expiry)).toISOString()}`);
-	console.log(`Strike:   ${Number(strike) / 1e9}`);
+	const strike = strikeDollars * PRICE_SCALE;
+	const quantity = quantityDollars * DUSDC_SCALE;
+	const topup = topupDollars * DUSDC_SCALE;
+
+	console.log(`Trader:    ${address}`);
+	console.log(`Manager:   ${managerId}`);
+	console.log(`Oracle:    ${oracleId}`);
+	console.log(`Expiry:    ${new Date(Number(expiry)).toISOString()}`);
+	console.log(`Strike:    $${strikeDollars}`);
 	console.log(`Direction: ${direction.toUpperCase()}`);
-	console.log(`Quantity: ${Number(quantity) / 1e6} contracts ($${Number(quantity) / 1e6} face)`);
-	console.log(`Top-up:   ${skipTopup ? 'skipped' : `${Number(topup) / 1e6} DUSDC`}\n`);
+	console.log(`Quantity:  $${quantityDollars} face`);
+	console.log(`Top-up:    ${skipTopup ? 'skipped' : `$${topupDollars} DUSDC`}\n`);
 
 	const tx = new Transaction();
 
-	// 1. Take DUSDC from the user's wallet and 2. deposit it into the manager.
 	if (!skipTopup) {
 		const coins = await client.getCoins({ owner: address, coinType: DUSDC_TYPE });
 		if (coins.data.length === 0) {
@@ -83,7 +91,7 @@ const required = (name: string): string => {
 		}
 		const total = coins.data.reduce((s, c) => s + BigInt(c.balance), 0n);
 		if (total < topup) {
-			console.error(`Insufficient DUSDC: have ${Number(total) / 1e6}, need ${Number(topup) / 1e6}`);
+			console.error(`Insufficient DUSDC: have $${Number(total) / 1e6}, need $${topupDollars}`);
 			process.exit(1);
 		}
 
@@ -102,14 +110,12 @@ const required = (name: string): string => {
 		});
 	}
 
-	// 3. Build the MarketKey.
 	const keyFn = direction === 'up' ? 'up' : 'down';
 	const key = tx.moveCall({
 		target: `${predictPackageID[network]}::market_key::${keyFn}`,
 		arguments: [tx.pure.id(oracleId), tx.pure.u64(expiry), tx.pure.u64(strike)],
 	});
 
-	// 4. Mint the position. Cost is debited from the manager's DUSDC balance.
 	tx.moveCall({
 		target: `${predictPackageID[network]}::predict::mint`,
 		typeArguments: [DUSDC_TYPE],

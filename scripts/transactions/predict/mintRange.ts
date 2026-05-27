@@ -3,15 +3,6 @@
 
 // Workshop step 5: mint a vertical range — a bet that the settlement lands
 // inside (lower, higher]. Single ask covers the whole band.
-//
-// Required env:
-//   MANAGER_ID, ORACLE_ID, EXPIRY
-//   LOWER_STRIKE   1e9-scaled
-//   HIGHER_STRIKE  1e9-scaled, must be > LOWER_STRIKE
-// Optional:
-//   QUANTITY     default 1_000_000 ($1 face)
-//   TOPUP        DUSDC (1e6 units) to deposit before mint. default = QUANTITY.
-//   SKIP_TOPUP   set to 1 to use existing manager balance only.
 
 import { Transaction } from '@mysten/sui/transactions';
 import { getActiveAddress, getClient, getSigner } from '../../utils/utils.js';
@@ -21,44 +12,61 @@ import {
 	predictPackageID,
 } from '../../config/constants.js';
 
+// === Edit these for your trade =====================================
+// Values are human units. Strikes scale by 1e9 (price), DUSDC by 1e6.
+const CONFIG = {
+	MANAGER_ID:    'PASTE_YOUR_MANAGER_ID',
+	ORACLE_ID:     '0xec05af6806cc08ffb2656ad1b21e7510493fe499b8992167e61e39529d851d2d', // BTC 2026-05-28 08:00 UTC
+	EXPIRY:        1779955200000,    // ms since epoch
+	LOWER_STRIKE:  70_000,           // $70,000
+	HIGHER_STRIKE: 80_000,           // $80,000
+	QUANTITY:      1,                // $1 face
+	TOPUP:         1,                // DUSDC to deposit before mint
+	SKIP_TOPUP:    false,
+};
+// Env vars override CONFIG if set.
+// ===================================================================
+
 const network = 'testnet' as const;
 const DUSDC_TYPE = `${dusdcPackageID[network]}::dusdc::DUSDC`;
 const CLOCK = '0x6';
-
-const required = (name: string): string => {
-	const v = process.env[name];
-	if (!v) {
-		console.error(`Missing required env var: ${name}`);
-		process.exit(1);
-	}
-	return v;
-};
+const PRICE_SCALE = 1_000_000_000n;
+const DUSDC_SCALE = 1_000_000n;
 
 (async () => {
 	const client = getClient(network);
 	const signer = getSigner();
 	const address = getActiveAddress();
 
-	const managerId = required('MANAGER_ID');
-	const oracleId = required('ORACLE_ID');
-	const expiry = BigInt(required('EXPIRY'));
-	const lower = BigInt(required('LOWER_STRIKE'));
-	const higher = BigInt(required('HIGHER_STRIKE'));
-	const quantity = BigInt(process.env.QUANTITY ?? 1_000_000);
-	const topup = BigInt(process.env.TOPUP ?? quantity);
-	const skipTopup = process.env.SKIP_TOPUP === '1';
+	const managerId = process.env.MANAGER_ID ?? CONFIG.MANAGER_ID;
+	const oracleId = process.env.ORACLE_ID ?? CONFIG.ORACLE_ID;
+	const expiry = BigInt(process.env.EXPIRY ?? CONFIG.EXPIRY);
+	const lowerDollars = BigInt(process.env.LOWER_STRIKE ?? CONFIG.LOWER_STRIKE);
+	const higherDollars = BigInt(process.env.HIGHER_STRIKE ?? CONFIG.HIGHER_STRIKE);
+	const quantityDollars = BigInt(process.env.QUANTITY ?? CONFIG.QUANTITY);
+	const topupDollars = BigInt(process.env.TOPUP ?? CONFIG.TOPUP);
+	const skipTopup = process.env.SKIP_TOPUP ? process.env.SKIP_TOPUP === '1' : CONFIG.SKIP_TOPUP;
 
-	if (lower >= higher) {
+	if (managerId === 'PASTE_YOUR_MANAGER_ID') {
+		console.error('Set MANAGER_ID in the CONFIG block (or as an env var).');
+		process.exit(1);
+	}
+	if (lowerDollars >= higherDollars) {
 		console.error('LOWER_STRIKE must be < HIGHER_STRIKE');
 		process.exit(1);
 	}
 
-	console.log(`Trader:   ${address}`);
-	console.log(`Manager:  ${managerId}`);
-	console.log(`Oracle:   ${oracleId}`);
-	console.log(`Band:     (${Number(lower) / 1e9}, ${Number(higher) / 1e9}]`);
-	console.log(`Quantity: ${Number(quantity) / 1e6} contracts ($${Number(quantity) / 1e6} face)`);
-	console.log(`Top-up:   ${skipTopup ? 'skipped' : `${Number(topup) / 1e6} DUSDC`}\n`);
+	const lower = lowerDollars * PRICE_SCALE;
+	const higher = higherDollars * PRICE_SCALE;
+	const quantity = quantityDollars * DUSDC_SCALE;
+	const topup = topupDollars * DUSDC_SCALE;
+
+	console.log(`Trader:    ${address}`);
+	console.log(`Manager:   ${managerId}`);
+	console.log(`Oracle:    ${oracleId}`);
+	console.log(`Band:      ($${lowerDollars}, $${higherDollars}]`);
+	console.log(`Quantity:  $${quantityDollars} face`);
+	console.log(`Top-up:    ${skipTopup ? 'skipped' : `$${topupDollars} DUSDC`}\n`);
 
 	const tx = new Transaction();
 
@@ -70,7 +78,7 @@ const required = (name: string): string => {
 		}
 		const total = coins.data.reduce((s, c) => s + BigInt(c.balance), 0n);
 		if (total < topup) {
-			console.error(`Insufficient DUSDC: have ${Number(total) / 1e6}, need ${Number(topup) / 1e6}`);
+			console.error(`Insufficient DUSDC: have $${Number(total) / 1e6}, need $${topupDollars}`);
 			process.exit(1);
 		}
 

@@ -2,14 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Workshop step 6 (LP demo): redeem PLP shares back to DUSDC via predict::withdraw.
-//
-// Required env:
-//   PLP_COIN     the PLP coin object id to burn.
-//                tip: `sui client objects --json` and grep "::plp::PLP"
-//                or use the address from supply/deposit.ts output.
-// Optional:
-//   AMOUNT       amount of PLP shares (1e6 units) to burn. If unset, burns the
-//                entire PLP_COIN. If set, splits the coin first.
 
 import { Transaction } from '@mysten/sui/transactions';
 import { getActiveAddress, getClient, getSigner } from '../../utils/utils.js';
@@ -19,37 +11,50 @@ import {
 	predictPackageID,
 } from '../../config/constants.js';
 
+// === Edit these to burn your PLP back to DUSDC ======================
+// PLP_COIN is printed by pnpm predict-deposit. Find existing PLP coins
+// with: sui client objects --json | jq '... ::plp::PLP ...'
+// AMOUNT is in PLP units (1e6 scaling, like DUSDC). null burns the full coin.
+const CONFIG = {
+	PLP_COIN: 'PASTE_YOUR_PLP_COIN',
+	AMOUNT:   null as number | null,  // e.g. 50 for 50 PLP shares; null = burn entire coin
+};
+// Env vars override CONFIG if set (PLP_COIN, AMOUNT).
+// ====================================================================
+
 const network = 'testnet' as const;
 const DUSDC_TYPE = `${dusdcPackageID[network]}::dusdc::DUSDC`;
 const CLOCK = '0x6';
-
-const required = (name: string): string => {
-	const v = process.env[name];
-	if (!v) {
-		console.error(`Missing required env var: ${name}`);
-		process.exit(1);
-	}
-	return v;
-};
+const PLP_SCALE = 1_000_000n;  // PLP shares share the 6-decimal scaling
 
 (async () => {
 	const client = getClient(network);
 	const signer = getSigner();
 	const address = getActiveAddress();
 
-	const plpCoin = required('PLP_COIN');
-	const amount = process.env.AMOUNT ? BigInt(process.env.AMOUNT) : undefined;
+	const plpCoin = process.env.PLP_COIN ?? CONFIG.PLP_COIN;
+	const amountUnits = process.env.AMOUNT
+		? BigInt(process.env.AMOUNT)
+		: CONFIG.AMOUNT === null
+			? null
+			: BigInt(CONFIG.AMOUNT);
+
+	if (plpCoin === 'PASTE_YOUR_PLP_COIN') {
+		console.error('Set PLP_COIN in the CONFIG block (or as an env var). Run pnpm predict-deposit first.');
+		process.exit(1);
+	}
+
+	const amountScaled = amountUnits === null ? null : amountUnits * PLP_SCALE;
 
 	console.log(`LP:       ${address}`);
 	console.log(`PLP coin: ${plpCoin}`);
-	console.log(`Burn:     ${amount === undefined ? 'entire balance' : `${Number(amount) / 1e6} PLP`}\n`);
+	console.log(`Burn:     ${amountScaled === null ? 'entire balance' : `${amountUnits} PLP`}\n`);
 
 	const tx = new Transaction();
 
-	// Split off `amount` if specified, otherwise burn the whole PLP coin.
-	const coinArg = amount === undefined
+	const coinArg = amountScaled === null
 		? tx.object(plpCoin)
-		: tx.splitCoins(tx.object(plpCoin), [tx.pure.u64(amount)]);
+		: tx.splitCoins(tx.object(plpCoin), [tx.pure.u64(amountScaled)]);
 
 	const dusdcOut = tx.moveCall({
 		target: `${predictPackageID[network]}::predict::withdraw`,

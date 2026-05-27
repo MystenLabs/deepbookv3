@@ -5,10 +5,7 @@
 //
 // Two modes:
 //   - default (oracle still live):  predict::redeem
-//   - SETTLED=1 (oracle settled):   predict::redeem_permissionless
-//
-// Required env: MANAGER_ID, ORACLE_ID, EXPIRY, STRIKE, DIRECTION, QUANTITY.
-// Optional env: SETTLED=1 to use the permissionless settled redemption.
+//   - SETTLED=true (oracle settled): predict::redeem_permissionless
 
 import { Transaction } from '@mysten/sui/transactions';
 import { getClient, getSigner } from '../../utils/utils.js';
@@ -18,38 +15,52 @@ import {
 	predictPackageID,
 } from '../../config/constants.js';
 
+// === Edit these to match the position you want to close ============
+// Values are human units. Strikes in dollars (×1e9). QUANTITY in DUSDC (×1e6).
+// Must mirror the MarketKey of the position you minted.
+const CONFIG = {
+	MANAGER_ID: 'PASTE_YOUR_MANAGER_ID',
+	ORACLE_ID:  '0xec05af6806cc08ffb2656ad1b21e7510493fe499b8992167e61e39529d851d2d', // BTC 2026-05-28 08:00 UTC
+	EXPIRY:     1779955200000,    // ms since epoch
+	STRIKE:     75_000,           // $75,000
+	DIRECTION:  'up' as 'up' | 'down',
+	QUANTITY:   1,                // $1 face to close
+	SETTLED:    false,            // true → use redeem_permissionless
+};
+// Env vars override CONFIG if set.
+// ===================================================================
+
 const network = 'testnet' as const;
 const DUSDC_TYPE = `${dusdcPackageID[network]}::dusdc::DUSDC`;
 const CLOCK = '0x6';
-
-const required = (name: string): string => {
-	const v = process.env[name];
-	if (!v) {
-		console.error(`Missing required env var: ${name}`);
-		process.exit(1);
-	}
-	return v;
-};
+const PRICE_SCALE = 1_000_000_000n;
+const DUSDC_SCALE = 1_000_000n;
 
 (async () => {
 	const client = getClient(network);
 	const signer = getSigner();
 
-	const managerId = required('MANAGER_ID');
-	const oracleId = required('ORACLE_ID');
-	const expiry = BigInt(required('EXPIRY'));
-	const strike = BigInt(required('STRIKE'));
-	const direction = required('DIRECTION').toLowerCase();
-	const quantity = BigInt(required('QUANTITY'));
-	const settled = process.env.SETTLED === '1';
+	const managerId = process.env.MANAGER_ID ?? CONFIG.MANAGER_ID;
+	const oracleId = process.env.ORACLE_ID ?? CONFIG.ORACLE_ID;
+	const expiry = BigInt(process.env.EXPIRY ?? CONFIG.EXPIRY);
+	const strikeDollars = BigInt(process.env.STRIKE ?? CONFIG.STRIKE);
+	const direction = (process.env.DIRECTION ?? CONFIG.DIRECTION).toLowerCase();
+	const quantityDollars = BigInt(process.env.QUANTITY ?? CONFIG.QUANTITY);
+	const settled = process.env.SETTLED ? process.env.SETTLED === '1' : CONFIG.SETTLED;
 
+	if (managerId === 'PASTE_YOUR_MANAGER_ID') {
+		console.error('Set MANAGER_ID in the CONFIG block (or as an env var).');
+		process.exit(1);
+	}
 	if (direction !== 'up' && direction !== 'down') {
 		console.error('DIRECTION must be "up" or "down"');
 		process.exit(1);
 	}
 
+	const strike = strikeDollars * PRICE_SCALE;
+	const quantity = quantityDollars * DUSDC_SCALE;
 	const target = settled ? 'redeem_permissionless' : 'redeem';
-	console.log(`Calling predict::${target} for ${direction.toUpperCase()} @ ${Number(strike) / 1e9}, qty=${Number(quantity) / 1e6}`);
+	console.log(`Calling predict::${target} for ${direction.toUpperCase()} @ $${strikeDollars}, qty=$${quantityDollars}`);
 
 	const tx = new Transaction();
 	const keyFn = direction === 'up' ? 'up' : 'down';

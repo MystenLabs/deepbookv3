@@ -14,7 +14,7 @@ This is the attendee handout for the live walkthrough. The full protocol concept
 | Quote asset | `…::dusdc::DUSDC` (test token, 6 decimals) |
 | Public indexer | https://predict-server.testnet.mystenlabs.com |
 
-Strikes and prices use **1e9 scaling** (a $75,000 BTC strike is `75_000_000_000_000`). Quantities and DUSDC are in **1e6 units** (one $1 contract = `1_000_000`).
+Internally, strikes and prices use **9-decimal scaling** and DUSDC uses **6-decimal scaling** — but the workshop scripts take **human units** (strikes in whole dollars, quantities in whole DUSDC) and scale them up for you. So `STRIKE: 75_000` means $75,000 and `QUANTITY: 1` means one $1 contract.
 
 ## Prerequisites
 
@@ -53,45 +53,56 @@ export MANAGER_ID=0x...
 
 ### 3. Mint a directional position
 
-UP/DOWN binary bet on a strike. The script also tops up your manager with DUSDC in the same PTB (sourced from coins you already own).
+UP/DOWN binary bet on a strike. Edit the `CONFIG` block at the top of `scripts/transactions/predict/mintPosition.ts` — only `MANAGER_ID` is per-attendee; the rest is pre-filled to the workshop oracle:
 
+```ts
+const CONFIG = {
+    MANAGER_ID:  'PASTE_YOUR_MANAGER_ID',  // ← paste your manager id here
+    ORACLE_ID:   '0xec05af68…d851d2d',     // BTC 2026-05-28 08:00 UTC
+    EXPIRY:      1779955200000,
+    STRIKE:      75_000,                   // $75,000
+    DIRECTION:   'up',                     // or 'down'
+    QUANTITY:    1,                        // $1 face
+    TOPUP:       1,                        // DUSDC to deposit before mint
+    SKIP_TOPUP:  false,                    // true → reuse manager's existing balance
+};
 ```
-export ORACLE_ID=0x...                        # from step 1
-export EXPIRY=1748419200000                   # from step 1
-export STRIKE=75000000000000                  # $75,000 in 1e9
-export DIRECTION=up                           # or down
-export QUANTITY=1000000                       # $1 face
-# optional:
-# export TOPUP=2000000                        # DUSDC to deposit before mint (default = QUANTITY)
-# export SKIP_TOPUP=1                         # skip deposit, use manager's existing balance
 
+Then run:
+```
 pnpm predict-mint
 ```
+
 The PTB does, in order: pick up your existing DUSDC → `predict_manager::deposit` → `market_key::up/down` → `predict::mint`. A `PositionMinted` event prints.
+
+(Env vars with the same names override `CONFIG` if you'd rather pass them inline.)
 
 ### 4. Redeem the position
 
-Same env vars, plus `QUANTITY` of however much you want to close.
+Edit `CONFIG` in `redeemPosition.ts` to mirror the position you minted (same ORACLE_ID, EXPIRY, STRIKE, DIRECTION) and choose how much to close in `QUANTITY`. Set `SETTLED: true` to use `redeem_permissionless` once the oracle has settled.
+
 ```
 pnpm predict-redeem
 ```
-After settlement, set `SETTLED=1` to use `redeem_permissionless`.
 
 ### 5. Vertical range (spread)
 
-Bet that settlement lands inside a band `(lower, higher]`. Pays the full $1·qty if it does, otherwise the live bid.
+Bet that settlement lands inside a band `(lower, higher]`. Pays $1 × qty if it does, otherwise the live bid. Edit `CONFIG` in `mintRange.ts`:
+
+```ts
+LOWER_STRIKE:  70_000,   // $70,000
+HIGHER_STRIKE: 80_000,   // $80,000
+```
 
 ```
-export LOWER_STRIKE=70000000000000
-export HIGHER_STRIKE=80000000000000
 pnpm predict-mint-range
 ```
 
 ### Bonus: provide liquidity
 
 ```
-pnpm predict-deposit         # supply DUSDC → receive PLP
-pnpm predict-withdraw        # burn PLP → receive DUSDC  (set PLP_COIN=0x…)
+pnpm predict-deposit         # supply DUSDC → receive PLP (edit AMOUNT in deposit.ts)
+pnpm predict-withdraw        # burn PLP → receive DUSDC   (edit PLP_COIN in withdraw.ts)
 ```
 
 ## What's happening on-chain

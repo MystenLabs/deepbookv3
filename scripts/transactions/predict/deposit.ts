@@ -6,9 +6,6 @@
 //
 // The active sui-client address must already hold ≥ AMOUNT DUSDC. This script
 // does NOT use the treasury cap.
-//
-// Env:
-//   AMOUNT   DUSDC to supply, in DUSDC units (1e6). default 1_000_000 = $1.
 
 import { Transaction } from '@mysten/sui/transactions';
 import { getActiveAddress, getClient, getSigner } from '../../utils/utils.js';
@@ -18,15 +15,26 @@ import {
 	dusdcPackageID,
 } from '../../config/constants.js';
 
+// === Edit this to choose how much to supply =========================
+// AMOUNT is in DUSDC dollars (×1e6 internally).
+const CONFIG = {
+	AMOUNT: 1,  // $1 DUSDC
+};
+// Env var AMOUNT overrides CONFIG.AMOUNT.
+// ====================================================================
+
 const network = 'testnet' as const;
 const DUSDC_TYPE = `${dusdcPackageID[network]}::dusdc::DUSDC`;
 const CLOCK = '0x6';
-const SUPPLY_AMOUNT = BigInt(process.env.AMOUNT ?? 1_000_000);
+const DUSDC_SCALE = 1_000_000n;
 
 (async () => {
 	const client = getClient(network);
 	const signer = getSigner();
 	const address = getActiveAddress();
+
+	const supplyDollars = BigInt(process.env.AMOUNT ?? CONFIG.AMOUNT);
+	const supplyAmount = supplyDollars * DUSDC_SCALE;
 
 	const coins = await client.getCoins({ owner: address, coinType: DUSDC_TYPE });
 	if (coins.data.length === 0) {
@@ -34,13 +42,13 @@ const SUPPLY_AMOUNT = BigInt(process.env.AMOUNT ?? 1_000_000);
 		process.exit(1);
 	}
 	const total = coins.data.reduce((s, c) => s + BigInt(c.balance), 0n);
-	if (total < SUPPLY_AMOUNT) {
-		console.error(`Insufficient DUSDC: have ${Number(total) / 1e6}, need ${Number(SUPPLY_AMOUNT) / 1e6}`);
+	if (total < supplyAmount) {
+		console.error(`Insufficient DUSDC: have $${Number(total) / 1e6}, need $${supplyDollars}`);
 		process.exit(1);
 	}
 
 	console.log(`LP:     ${address}`);
-	console.log(`Supply: ${Number(SUPPLY_AMOUNT) / 1e6} DUSDC\n`);
+	console.log(`Supply: $${supplyDollars} DUSDC\n`);
 
 	const tx = new Transaction();
 	const primary = tx.object(coins.data[0].coinObjectId);
@@ -50,7 +58,7 @@ const SUPPLY_AMOUNT = BigInt(process.env.AMOUNT ?? 1_000_000);
 			coins.data.slice(1).map((c) => tx.object(c.coinObjectId)),
 		);
 	}
-	const [supplyCoin] = tx.splitCoins(primary, [tx.pure.u64(SUPPLY_AMOUNT)]);
+	const [supplyCoin] = tx.splitCoins(primary, [tx.pure.u64(supplyAmount)]);
 
 	const lpCoin = tx.moveCall({
 		target: `${predictPackageID[network]}::predict::supply`,
