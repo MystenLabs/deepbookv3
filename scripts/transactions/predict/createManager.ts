@@ -47,8 +47,10 @@ const network = 'testnet' as const;
 	}
 
 	console.log(`\nPredictManager created.`);
-	console.log(`MANAGER_ID=${created.objectId}`);
-	console.log(`Digest: ${result.digest}`);
-	console.log(`\nExport that as MANAGER_ID for the next scripts:`);
-	console.log(`  export MANAGER_ID=${created.objectId}`);
+	console.log(`MANAGER_ID: ${created.objectId}`);
+	console.log(`Digest:     ${result.digest}`);
+	console.log(`\nPaste the id above into the CONFIG block of each script you'll run:`);
+	console.log(`  mintPosition.ts  → MANAGER_ID: '${created.objectId}',`);
+	console.log(`  mintRange.ts     → MANAGER_ID: '${created.objectId}',`);
+	console.log(`  redeemPosition.ts → MANAGER_ID: '${created.objectId}',`);
 })();

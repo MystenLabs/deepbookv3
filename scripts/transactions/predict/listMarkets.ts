@@ -77,11 +77,11 @@ const get = async (path: string) => {
 		console.log(`  svi:          a=${state.latest_svi.a}, b=${state.latest_svi.b}, sigma=${state.latest_svi.sigma}`);
 	}
 
-	console.log('\nExport for the next scripts:');
-	console.log(`  export ORACLE_ID=${targetId}`);
-	console.log(`  export EXPIRY=${o.expiry}`);
-	const sampleStrike = p.spot ? (BigInt(p.spot) / 1_000_000_000n) * 1_000_000_000n : null;
-	if (sampleStrike) {
-		console.log(`  export STRIKE=${sampleStrike}     # near-the-money, 1e9-scaled (~$${fmtPrice(sampleStrike)})`);
+	console.log(`\nPaste into the CONFIG block of mintPosition.ts / mintRange.ts / redeemPosition.ts:`);
+	console.log(`  ORACLE_ID: '${targetId}',`);
+	console.log(`  EXPIRY:    ${o.expiry},`);
+	const sampleStrikeDollars = p.spot ? BigInt(p.spot) / 1_000_000_000n : null;
+	if (sampleStrikeDollars !== null) {
+		console.log(`  STRIKE:    ${sampleStrikeDollars},   // ~spot, in dollars`);
 	}
 })();

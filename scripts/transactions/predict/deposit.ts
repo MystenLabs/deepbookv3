@@ -86,7 +86,9 @@ const DUSDC_SCALE = 1_000_000n;
 		(c) => c.type === 'created' && c.objectType.includes('::plp::PLP'),
 	);
 	if (plp && plp.type === 'created') {
-		console.log(`\nPLP_COIN=${plp.objectId}`);
+		console.log(`\nPLP coin received: ${plp.objectId}`);
+		console.log(`Paste into withdraw.ts CONFIG to redeem it:`);
+		console.log(`  PLP_COIN: '${plp.objectId}',`);
 	}
 	console.log(`\nDigest: ${result.digest}`);
 })();
