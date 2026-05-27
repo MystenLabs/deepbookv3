@@ -266,21 +266,13 @@ async function load() {
 			get(server, `/ranges/redeemed?manager_id=${manager}`).catch(() => []),
 		]);
 
-		// Summary card
+		// Summary card — owner / balance are stable from the indexer.
 		document.getElementById('s-owner').textContent = shortId(summary.owner);
 		document.getElementById('s-owner').title = summary.owner;
 		const bal = (summary.balances ?? [])[0];
 		document.getElementById('s-balance').textContent = bal ? fmtUsd(bal.balance) : '$0';
-		document.getElementById('s-exposure').textContent = fmtUsd(summary.open_exposure);
-		document.getElementById('s-account').textContent = fmtUsd(summary.account_value);
-		const rpnl = document.getElementById('s-rpnl');
-		rpnl.textContent = fmtUsd(summary.realized_pnl);
-		rpnl.className = 'value ' + colorize(summary.realized_pnl);
-		const upnl = document.getElementById('s-upnl');
-		upnl.textContent = fmtUsd(summary.unrealized_pnl);
-		upnl.className = 'value ' + colorize(summary.unrealized_pnl);
-		document.getElementById('s-positions').textContent = summary.open_positions ?? 0;
 		document.getElementById('s-await').textContent = summary.awaiting_settlement_positions ?? 0;
+		// Exposure / account value / P&L are updated below once range quotes resolve.
 
 		// Positions
 		const posBody = document.getElementById('positions-body');
@@ -343,6 +335,35 @@ async function load() {
 				),
 			)),
 		]);
+
+		// Roll range numbers into the summary card.
+		let rangeCost = 0n, rangeMark = 0n, rangeUpnl = 0n, rangeQuoted = 0;
+		for (let i = 0; i < openRanges.length; i++) {
+			rangeCost += openRanges[i].cost;
+			const q = quotes[i];
+			if (q) {
+				rangeMark += q.payout;
+				rangeUpnl += q.payout - openRanges[i].cost;
+				rangeQuoted++;
+			}
+		}
+		const totalExposure = BigInt(summary.open_exposure ?? 0) + rangeCost;
+		const totalAccount  = BigInt(summary.account_value ?? 0) + rangeMark;
+		const totalUpnl     = BigInt(summary.unrealized_pnl ?? 0) + rangeUpnl;
+		document.getElementById('s-exposure').textContent = fmtUsd(totalExposure);
+		document.getElementById('s-account').textContent  = fmtUsd(totalAccount);
+		const rpnlEl = document.getElementById('s-rpnl');
+		rpnlEl.textContent = fmtUsd(summary.realized_pnl);
+		rpnlEl.className = 'value ' + colorize(summary.realized_pnl);
+		const upnlEl = document.getElementById('s-upnl');
+		upnlEl.textContent = fmtUsd(totalUpnl);
+		upnlEl.className = 'value ' + colorize(totalUpnl);
+		document.getElementById('s-positions').textContent =
+			(summary.open_positions ?? 0) + openRanges.length;
+		// If some range quotes failed, flag it so the user knows the totals are partial.
+		if (openRanges.length > 0 && rangeQuoted < openRanges.length) {
+			status.textContent = `partial: ${openRanges.length - rangeQuoted} range quote(s) failed`;
+		}
 
 		const rangeBody = document.getElementById('ranges-body');
 		if (openRanges.length === 0) {
