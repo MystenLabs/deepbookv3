@@ -11,7 +11,6 @@ module deepbook_predict::config_constants;
 const EInvalidMaxTotalExposurePct: u64 = 0;
 const EInvalidBaseFee: u64 = 1;
 const EInvalidMinFee: u64 = 2;
-const EInvalidUtilizationMultiplier: u64 = 3;
 const EInvalidMinAskPrice: u64 = 4;
 const EInvalidMaxAskPrice: u64 = 5;
 const EInvalidPythSpotFreshnessMs: u64 = 6;
@@ -30,9 +29,10 @@ const EInvalidGrowUtilizationThreshold: u64 = 18;
 const EInvalidShrinkUtilizationThreshold: u64 = 19;
 const EInvalidGrowFactor: u64 = 20;
 const EInvalidShrinkFactor: u64 = 21;
-const EInvalidSettlementLossRebateRate: u64 = 22;
-const EInvalidExpiryFeeWindowMs: u64 = 23;
-const EInvalidExpiryFeeMaxMultiplier: u64 = 24;
+const EInvalidTradingLossRebateRate: u64 = 22;
+const EInvalidMaxExpiryFloorPremium: u64 = 23;
+const EInvalidExpiryFeeWindowMs: u64 = 24;
+const EInvalidExpiryFeeMaxMultiplier: u64 = 25;
 
 // === Pool Risk ===
 
@@ -104,6 +104,21 @@ public(package) fun assert_shrink_factor(value: u64) {
     assert!(value >= min_shrink_factor!() && value <= max_shrink_factor!(), EInvalidShrinkFactor);
 }
 
+// === Leverage ===
+
+public(package) macro fun default_max_expiry_floor_premium(): u64 { 200_000_000 }
+public(package) macro fun min_max_expiry_floor_premium(): u64 { 0 }
+public(package) macro fun max_max_expiry_floor_premium(): u64 {
+    deepbook_predict::constants::float_scaling!()
+}
+
+public(package) fun assert_max_expiry_floor_premium(value: u64) {
+    assert!(
+        value >= min_max_expiry_floor_premium!() && value <= max_max_expiry_floor_premium!(),
+        EInvalidMaxExpiryFloorPremium,
+    );
+}
+
 // === Pricing ===
 
 public(package) macro fun default_base_fee(): u64 { 20_000_000 }
@@ -120,17 +135,6 @@ public(package) macro fun max_min_fee(): u64 { deepbook_predict::constants::floa
 
 public(package) fun assert_min_fee(value: u64) {
     assert!(value >= min_min_fee!() && value <= max_min_fee!(), EInvalidMinFee);
-}
-
-public(package) macro fun default_utilization_multiplier(): u64 { 2_000_000_000 }
-public(package) macro fun min_utilization_multiplier(): u64 { 0 }
-public(package) macro fun max_utilization_multiplier(): u64 { 10_000_000_000 }
-
-public(package) fun assert_utilization_multiplier(value: u64) {
-    assert!(
-        value >= min_utilization_multiplier!() && value <= max_utilization_multiplier!(),
-        EInvalidUtilizationMultiplier,
-    );
 }
 
 /// Final window (ms before expiry) over which the fee ramps up. 0 disables it.
@@ -254,19 +258,19 @@ public(package) fun assert_insurance_fee_share(value: u64) {
     );
 }
 
-public(package) macro fun default_settlement_loss_rebate_rate(): u64 {
+public(package) macro fun default_trading_loss_rebate_rate(): u64 {
     500_000_000
 }
-public(package) macro fun min_settlement_loss_rebate_rate(): u64 { 0 }
-public(package) macro fun max_settlement_loss_rebate_rate(): u64 {
+public(package) macro fun min_trading_loss_rebate_rate(): u64 { 0 }
+public(package) macro fun max_trading_loss_rebate_rate(): u64 {
     deepbook_predict::constants::float_scaling!()
 }
 
-public(package) fun assert_settlement_loss_rebate_rate(value: u64) {
+public(package) fun assert_trading_loss_rebate_rate(value: u64) {
     assert!(
-        value >= min_settlement_loss_rebate_rate!()
-            && value <= max_settlement_loss_rebate_rate!(),
-        EInvalidSettlementLossRebateRate,
+        value >= min_trading_loss_rebate_rate!()
+            && value <= max_trading_loss_rebate_rate!(),
+        EInvalidTradingLossRebateRate,
     );
 }
 

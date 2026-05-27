@@ -117,8 +117,8 @@ fun cleanup(
         registry::destroy_market_oracle_cap(caps.pop_back());
     };
     caps.destroy_empty();
-    market.destroy_for_testing();
-    config.destroy_for_testing();
+    destroy(market);
+    destroy(config);
     clock.destroy_for_testing();
     destroy(admin_cap);
 }

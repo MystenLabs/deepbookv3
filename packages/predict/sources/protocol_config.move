@@ -10,6 +10,7 @@ module deepbook_predict::protocol_config;
 
 use deepbook_predict::{
     fee_config::{Self, FeeConfig},
+    leverage_config::{Self, LeverageConfig},
     market_oracle_config::{Self, MarketOracleConfig},
     pricing_config::{Self, PricingConfig},
     risk_config::{Self, RiskConfig}
@@ -26,6 +27,7 @@ public struct ProtocolConfig has key {
     fee_config: FeeConfig,
     risk_config: RiskConfig,
     market_oracle_config: MarketOracleConfig,
+    leverage_config: LeverageConfig,
     /// Blocks new risk creation while true.
     trading_paused: bool,
     /// Transaction-local lock held while a full-pool valuation is assembled.
@@ -62,6 +64,10 @@ public(package) fun market_oracle_config(config: &ProtocolConfig): &MarketOracle
     &config.market_oracle_config
 }
 
+public(package) fun leverage_config(config: &ProtocolConfig): &LeverageConfig {
+    &config.leverage_config
+}
+
 /// Abort unless trading mutations are currently allowed.
 ///
 /// Intentionally omits the package-version gate: per-pool mutating flows that
@@ -95,6 +101,7 @@ public(package) fun create_and_share(ctx: &mut TxContext): ID {
         fee_config: fee_config::new(),
         risk_config: risk_config::new(),
         market_oracle_config: market_oracle_config::new(),
+        leverage_config: leverage_config::new(),
         trading_paused: false,
         valuation_in_progress: false,
     };
@@ -113,9 +120,9 @@ public(package) fun set_min_fee(config: &mut ProtocolConfig, fee: u64) {
     config.pricing_config.set_min_fee(fee);
 }
 
-public(package) fun set_utilization_multiplier(config: &mut ProtocolConfig, multiplier: u64) {
+public(package) fun set_template_max_expiry_floor_premium(config: &mut ProtocolConfig, value: u64) {
     config.assert_not_valuation_in_progress();
-    config.pricing_config.set_utilization_multiplier(multiplier);
+    config.leverage_config.set_template_max_expiry_floor_premium(value);
 }
 
 public(package) fun set_min_ask_price(config: &mut ProtocolConfig, value: u64) {
@@ -153,12 +160,9 @@ public(package) fun set_fee_shares(
     config.fee_config.set_fee_shares(lp_fee_share, protocol_fee_share, insurance_fee_share);
 }
 
-public(package) fun set_template_settlement_loss_rebate_rate(
-    config: &mut ProtocolConfig,
-    value: u64,
-) {
+public(package) fun set_template_trading_loss_rebate_rate(config: &mut ProtocolConfig, value: u64) {
     config.assert_not_valuation_in_progress();
-    config.fee_config.set_settlement_loss_rebate_rate(value);
+    config.fee_config.set_trading_loss_rebate_rate(value);
 }
 
 public(package) fun set_max_total_exposure_pct(config: &mut ProtocolConfig, pct: u64) {
@@ -253,25 +257,8 @@ public fun new_for_testing(ctx: &mut TxContext): ProtocolConfig {
         fee_config: fee_config::new(),
         risk_config: risk_config::new(),
         market_oracle_config: market_oracle_config::new(),
+        leverage_config: leverage_config::new(),
         trading_paused: false,
         valuation_in_progress: false,
     }
-}
-
-#[test_only]
-public fun destroy_for_testing(config: ProtocolConfig) {
-    let ProtocolConfig {
-        id,
-        pricing_config,
-        fee_config,
-        risk_config,
-        market_oracle_config,
-        trading_paused: _,
-        valuation_in_progress: _,
-    } = config;
-    id.delete();
-    pricing_config.destroy_for_testing();
-    fee_config.destroy_for_testing();
-    risk_config.destroy_for_testing();
-    market_oracle_config.destroy_for_testing();
 }
