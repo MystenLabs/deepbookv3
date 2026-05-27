@@ -374,12 +374,17 @@ export function mintTx(params: {
   quantity: bigint;
 }): Transaction {
   const tx = new Transaction();
+  const proof = tx.moveCall({
+    target: target("predict_manager", "generate_proof_as_owner"),
+    arguments: [tx.object(params.managerId)],
+  });
   const { lower, higher } = binaryRangeBounds(params.strike, params.isUp);
   tx.moveCall({
     target: target("expiry_market", "mint"),
     arguments: [
       tx.object(params.expiryMarketId),
       tx.object(params.managerId),
+      proof,
       tx.object(params.protocolConfigId),
       tx.object(params.oracleId),
       tx.object(params.pythSourceId),
@@ -460,12 +465,17 @@ export function refreshOracleAndMintTx(params: {
     ],
   });
 
+  const proof = tx.moveCall({
+    target: target("predict_manager", "generate_proof_as_owner"),
+    arguments: [tx.object(params.managerId)],
+  });
   const { lower, higher } = binaryRangeBounds(params.strike, params.isUp);
   tx.moveCall({
     target: target("expiry_market", "mint"),
     arguments: [
       tx.object(params.expiryMarketId),
       tx.object(params.managerId),
+      proof,
       tx.object(params.protocolConfigId),
       tx.object(params.oracleId),
       tx.object(params.pythSourceId),
