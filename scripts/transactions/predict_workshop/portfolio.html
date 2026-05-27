@@ -4,6 +4,16 @@
 <meta charset="utf-8" />
 <title>DeepBook Predict — Portfolio</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<!-- esm.sh returns modules whose internal imports start with "/@mysten/…".
+     From a file:// origin those resolve to the local filesystem and 404, so
+     remap the leading slash to esm.sh. -->
+<script type="importmap">
+{
+	"imports": {
+		"/": "https://esm.sh/"
+	}
+}
+</script>
 <style>
 	:root {
 		--bg: #0d1117;
@@ -133,15 +143,28 @@
 </footer>
 
 <script type="module">
-import { SuiClient } from 'https://esm.sh/@mysten/sui@2.5.0/client?bundle';
-import { Transaction } from 'https://esm.sh/@mysten/sui@2.5.0/transactions?bundle';
-
 const PREDICT_PACKAGE = '0xf5ea2b3749c65d6e56507cc35388719aadb28f9cab873696a2f8687f5c785138';
 const PREDICT_OBJECT  = '0xc8736204d12f0a7277c86388a68bf8a194b0a14c5538ad13f22cbd8e2a38028a';
 const SUI_RPC_URL     = 'https://fullnode.testnet.sui.io';
 const ZERO_ADDR       = '0x0000000000000000000000000000000000000000000000000000000000000000';
 
-const suiClient = new SuiClient({ url: SUI_RPC_URL });
+// Lazily resolve the @mysten/sui SDK so a CDN issue can't kill the page.
+let suiSdkPromise = null;
+async function getSuiSdk() {
+	if (!suiSdkPromise) {
+		suiSdkPromise = (async () => {
+			const [clientMod, txMod] = await Promise.all([
+				import('https://esm.sh/@mysten/sui@2.5.0/client?bundle'),
+				import('https://esm.sh/@mysten/sui@2.5.0/transactions?bundle'),
+			]);
+			return {
+				client: new clientMod.SuiClient({ url: SUI_RPC_URL }),
+				Transaction: txMod.Transaction,
+			};
+		})();
+	}
+	return suiSdkPromise;
+}
 
 const PRICE_SCALE = 1_000_000_000n;
 const DUSDC_SCALE = 1_000_000n;
@@ -187,6 +210,10 @@ const decodeU64 = (bytes) => {
 // Calls predict::get_range_trade_amounts via devInspect and returns
 // { cost, payout } both in 1e6 DUSDC units, or null on error.
 async function quoteRange(oracleId, expiry, lower, higher, qty) {
+	let sdk;
+	try { sdk = await getSuiSdk(); }
+	catch (err) { console.warn('Sui SDK failed to load', err); return null; }
+	const { client, Transaction } = sdk;
 	const tx = new Transaction();
 	const key = tx.moveCall({
 		target: `${PREDICT_PACKAGE}::range_key::new`,
@@ -208,7 +235,7 @@ async function quoteRange(oracleId, expiry, lower, higher, qty) {
 		],
 	});
 	try {
-		const res = await suiClient.devInspectTransactionBlock({
+		const res = await client.devInspectTransactionBlock({
 			sender: ZERO_ADDR,
 			transactionBlock: tx,
 		});
