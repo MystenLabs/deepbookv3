@@ -477,6 +477,7 @@ fun shrink_amount(risk_config: &RiskConfig, market: &ExpiryMarket): u64 {
         current_allocation,
         risk_config.shrink_factor(),
     ).max(risk_config.expiry_allocation());
+    // returnable_capital caps the shrink so allocation and cash remain above payout liability.
     let amount = if (target_allocation < current_allocation) {
         current_allocation - target_allocation
     } else {
