@@ -144,12 +144,17 @@ public(package) fun set_expiry_fee_params(
     source.expiry_fee_max_multiplier = max_multiplier;
 }
 
-/// Create and share a Pyth source bound to a Lazer feed id.
+/// Create and share a Pyth source bound to a Lazer feed id with the per-asset
+/// expiry-fee ramp configured up front.
 public(package) fun create_and_share(
     feed_id: u32,
     allowed_versions: VecSet<u64>,
+    expiry_fee_window_ms: u64,
+    expiry_fee_max_multiplier: u64,
     ctx: &mut TxContext,
 ): ID {
+    config_constants::assert_expiry_fee_window_ms(expiry_fee_window_ms);
+    config_constants::assert_expiry_fee_max_multiplier(expiry_fee_max_multiplier);
     let source = PythSource {
         id: object::new(ctx),
         feed_id,
@@ -157,8 +162,8 @@ public(package) fun create_and_share(
         source_timestamp_ms: 0,
         update_timestamp_ms: 0,
         allowed_versions,
-        expiry_fee_window_ms: config_constants::default_expiry_fee_window_ms!(),
-        expiry_fee_max_multiplier: config_constants::default_expiry_fee_max_multiplier!(),
+        expiry_fee_window_ms,
+        expiry_fee_max_multiplier,
     };
     let id = source.id();
     transfer::share_object(source);

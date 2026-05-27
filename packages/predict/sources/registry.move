@@ -332,13 +332,16 @@ public fun set_expiry_market_mint_paused(
     market.set_mint_paused(paused);
 }
 
-/// Create a shared Pyth source for one admin-approved Lazer feed.
+/// Create a shared Pyth source for one admin-approved Lazer feed, configuring
+/// the per-asset expiry-fee ramp up front (window 0 or multiplier 1x disables it).
 ///
 /// The registry enforces one source object per feed ID.
 public fun create_pyth_source(
     registry: &mut Registry,
     _admin_cap: &AdminCap,
     pyth_lazer_feed_id: u32,
+    expiry_fee_window_ms: u64,
+    expiry_fee_max_multiplier: u64,
     ctx: &mut TxContext,
 ): ID {
     registry.assert_version_allowed();
@@ -346,6 +349,8 @@ public fun create_pyth_source(
     let pyth_source_id = pyth_source::create_and_share(
         pyth_lazer_feed_id,
         registry.allowed_versions,
+        expiry_fee_window_ms,
+        expiry_fee_max_multiplier,
         ctx,
     );
     registry.pyth_source_ids.add(pyth_lazer_feed_id, pyth_source_id);
