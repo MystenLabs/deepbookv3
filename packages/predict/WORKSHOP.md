@@ -90,8 +90,8 @@ pnpm predict-redeem
 Bet that settlement lands inside a band `(lower, higher]`. Pays $1 × qty if it does, otherwise the live bid. Edit `CONFIG` in `mintRange.ts`:
 
 ```ts
-LOWER_STRIKE:  70_000,   // $70,000
-HIGHER_STRIKE: 80_000,   // $80,000
+LOWER_STRIKE:  74_000,   // $74,000
+HIGHER_STRIKE: 76_000,   // $76,000
 ```
 
 ```

@@ -18,8 +18,8 @@ const CONFIG = {
 	MANAGER_ID:    'PASTE_YOUR_MANAGER_ID',
 	ORACLE_ID:     '0x57ab16e132ef0083085d1bdef7ed820892a4d574155f47a3cba168dcb43deb79', // BTC 2026-05-29 08:00 UTC
 	EXPIRY:        1780041600000,    // ms since epoch
-	LOWER_STRIKE:  70_000,           // $70,000
-	HIGHER_STRIKE: 80_000,           // $80,000
+	LOWER_STRIKE:  74_000,           // $74,000
+	HIGHER_STRIKE: 76_000,           // $76,000
 	QUANTITY:      1,                // $1 face
 	TOPUP:         1,                // DUSDC to deposit before mint
 	SKIP_TOPUP:    false,
