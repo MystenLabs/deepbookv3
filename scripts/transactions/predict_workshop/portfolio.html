@@ -112,11 +112,17 @@
 		<thead>
 			<tr>
 				<th>Underlying</th><th>Band</th><th>Expiry (UTC)</th>
-				<th style="text-align:right">Qty</th><th>Oracle</th>
+				<th style="text-align:right">Qty</th>
+				<th style="text-align:right">Entry</th>
+				<th style="text-align:right">Cost</th>
+				<th>Oracle</th>
 			</tr>
 		</thead>
-		<tbody id="ranges-body"><tr><td colspan="5" class="empty">—</td></tr></tbody>
+		<tbody id="ranges-body"><tr><td colspan="7" class="empty">—</td></tr></tbody>
 	</table>
+	<div style="color: var(--muted); font-size: 11px; margin-top: 8px;">
+		Mark / uPnL omitted — range pricing requires an on-chain view call.
+	</div>
 </div>
 
 <footer>
@@ -148,6 +154,16 @@ const get = async (server, path) => {
 	if (!res.ok) throw new Error(`GET ${path} → ${res.status}`);
 	return res.json();
 };
+
+const oracleMetaCache = new Map();
+async function fetchOracleMeta(server, oracleId) {
+	if (oracleMetaCache.has(oracleId)) return oracleMetaCache.get(oracleId);
+	const p = get(server, `/oracles/${oracleId}/state`)
+		.then((s) => s.oracle ?? {})
+		.catch(() => ({}));
+	oracleMetaCache.set(oracleId, p);
+	return p;
+}
 
 async function load() {
 	const manager = document.getElementById('manager').value.trim();
@@ -203,37 +219,55 @@ async function load() {
 			`).join('');
 		}
 
-		// Ranges (net mint − redeem)
+		// Ranges (net mint − redeem). Accumulate cost basis alongside qty.
 		const net = new Map();
 		const keyOf = (e) => `${e.oracle_id}|${e.expiry}|${e.lower_strike}|${e.higher_strike}`;
 		for (const m of mints) {
 			const k = keyOf(m);
 			const cur = net.get(k);
-			const delta = BigInt(m.quantity);
-			if (cur) cur.qty += delta; else net.set(k, { row: m, qty: delta });
+			const dq = BigInt(m.quantity);
+			const dc = BigInt(m.cost ?? 0);
+			if (cur) { cur.qty += dq; cur.mintedQty += dq; cur.cost += dc; }
+			else net.set(k, { row: m, qty: dq, mintedQty: dq, cost: dc });
 		}
 		for (const r of redeems) {
 			const k = keyOf(r);
 			const cur = net.get(k);
-			if (cur) cur.qty -= BigInt(r.quantity);
+			if (!cur) continue;
+			const dq = BigInt(r.quantity);
+			// Reduce cost basis proportionally to the redeemed slice.
+			if (cur.mintedQty > 0n) {
+				cur.cost = cur.cost - (cur.cost * dq) / cur.mintedQty;
+				cur.mintedQty -= dq;
+			}
+			cur.qty -= dq;
 		}
 		const openRanges = [...net.values()].filter((r) => r.qty > 0n);
 
+		// Resolve underlying per oracle in parallel.
+		const metas = await Promise.all(openRanges.map((r) => fetchOracleMeta(server, r.row.oracle_id)));
+
 		const rangeBody = document.getElementById('ranges-body');
 		if (openRanges.length === 0) {
-			rangeBody.innerHTML = '<tr><td colspan="5" class="empty">No open vertical ranges.</td></tr>';
+			rangeBody.innerHTML = '<tr><td colspan="7" class="empty">No open vertical ranges.</td></tr>';
 		} else {
-			rangeBody.innerHTML = openRanges.map(({ row, qty }) => `
+			rangeBody.innerHTML = openRanges.map(({ row, qty, cost }, i) => {
+				const meta = metas[i] ?? {};
+				const entryRaw = qty > 0n ? (cost * BigInt(1_000_000)) / qty : 0n; // 1e6 → 1e9 scale
+				const entry = (Number(entryRaw) / 1e9).toFixed(4);
+				return `
 				<tr>
-					<td>${row.underlying_asset ?? '?'}</td>
+					<td>${meta.underlying_asset ?? '?'}</td>
 					<td class="mono">(${fmtStrike(row.lower_strike)}, ${fmtStrike(row.higher_strike)}]</td>
 					<td class="mono">${fmtTime(row.expiry)}</td>
 					<td class="num">${fmtUsd(qty)}</td>
+					<td class="num">${entry}</td>
+					<td class="num">${fmtUsd(cost)}</td>
 					<td class="mono ellide" title="${row.oracle_id}">
 						<a target="_blank" rel="noopener" href="https://testnet.suivision.xyz/object/${row.oracle_id}">${shortId(row.oracle_id)}</a>
 					</td>
-				</tr>
-			`).join('');
+				</tr>`;
+			}).join('');
 		}
 
 		status.textContent = 'updated ' + new Date().toLocaleTimeString();
