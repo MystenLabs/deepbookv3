@@ -28,6 +28,7 @@ const CLOCK_ID = "0x6";
 const COIN_REGISTRY_ID = "0xc";
 const NEG_INF_STRIKE = 0n;
 const POS_INF_STRIKE = (1n << 64n) - 1n;
+const LEVERAGE_ONE_X = 0n;
 const SETUP_RESPONSE_OPTIONS = {
   showEffects: true,
   showEvents: true,
@@ -263,7 +264,7 @@ export function supplyTx(poolVaultId: string, protocolConfigId: string, amount: 
   });
   const valuation = tx.moveCall({
     target: target("plp", "start_valuation"),
-    arguments: [tx.object(poolVaultId), tx.object(protocolConfigId)],
+    arguments: [tx.object(protocolConfigId), tx.object(poolVaultId)],
   });
   const [plpCoin] = tx.moveCall({
     target: target("plp", "supply"),
@@ -289,10 +290,10 @@ export function supplyWithExpiryValuationTx(params: {
   });
   const valuation = tx.moveCall({
     target: target("plp", "start_valuation"),
-    arguments: [tx.object(params.poolVaultId), tx.object(params.protocolConfigId)],
+    arguments: [tx.object(params.protocolConfigId), tx.object(params.poolVaultId)],
   });
   const expiryValuation = tx.moveCall({
-    target: target("expiry_market", "read_valuation"),
+    target: target("expiry_market", "produce_valuation"),
     arguments: [
       tx.object(params.expiryMarketId),
       tx.object(params.protocolConfigId),
@@ -364,24 +365,18 @@ export function mintTx(params: {
 }): Transaction {
   const tx = new Transaction();
   const { lower, higher } = binaryRangeBounds(params.strike, params.isUp);
-  const key = tx.moveCall({
-    target: target("expiry_market", "range_key"),
-    arguments: [
-      tx.object(params.expiryMarketId),
-      tx.pure.u64(lower),
-      tx.pure.u64(higher),
-    ],
-  });
   tx.moveCall({
     target: target("expiry_market", "mint"),
     arguments: [
       tx.object(params.expiryMarketId),
-      tx.object(params.protocolConfigId),
       tx.object(params.managerId),
+      tx.object(params.protocolConfigId),
       tx.object(params.oracleId),
       tx.object(params.pythSourceId),
-      key,
+      tx.pure.u64(lower),
+      tx.pure.u64(higher),
       tx.pure.u64(params.quantity),
+      tx.pure.u64(LEVERAGE_ONE_X),
       tx.object(CLOCK_ID),
     ],
   });
@@ -456,24 +451,18 @@ export function refreshOracleAndMintTx(params: {
   });
 
   const { lower, higher } = binaryRangeBounds(params.strike, params.isUp);
-  const key = tx.moveCall({
-    target: target("expiry_market", "range_key"),
-    arguments: [
-      tx.object(params.expiryMarketId),
-      tx.pure.u64(lower),
-      tx.pure.u64(higher),
-    ],
-  });
   tx.moveCall({
     target: target("expiry_market", "mint"),
     arguments: [
       tx.object(params.expiryMarketId),
-      tx.object(params.protocolConfigId),
       tx.object(params.managerId),
+      tx.object(params.protocolConfigId),
       tx.object(params.oracleId),
       tx.object(params.pythSourceId),
-      key,
+      tx.pure.u64(lower),
+      tx.pure.u64(higher),
       tx.pure.u64(params.quantity),
+      tx.pure.u64(LEVERAGE_ONE_X),
       tx.object(CLOCK_ID),
     ],
   });
