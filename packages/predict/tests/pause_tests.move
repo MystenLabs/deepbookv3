@@ -115,6 +115,35 @@ fun revoked_pause_cap_cannot_act() {
     abort 999
 }
 
+#[test]
+fun sync_market_oracle_copies_registry_allowed_versions() {
+    let ctx = &mut tx_context::dummy();
+    let (mut registry, admin_cap) = registry::new_for_testing(ctx);
+    let cap = registry::create_market_oracle_cap(&admin_cap, ctx);
+    let mut market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
+    let current = constants::current_version!();
+    let next = NEXT_VERSION;
+
+    // Market mirrors only {current_version!()} at creation.
+    assert_eq!(market.allowed_versions().length(), 1);
+    assert!(market.allowed_versions().contains(&current));
+
+    // Admin adds NEXT_VERSION; the market's mirror is still stale.
+    registry::enable_version(&mut registry, &admin_cap, next);
+    assert!(!market.allowed_versions().contains(&next));
+
+    // Sync copies the registry's set verbatim into the market.
+    registry::sync_market_oracle_allowed_versions(&registry, &mut market);
+    assert_eq!(market.allowed_versions().length(), 2);
+    assert!(market.allowed_versions().contains(&current));
+    assert!(market.allowed_versions().contains(&next));
+
+    registry::destroy_registry_for_testing(registry);
+    destroy(market);
+    destroy(cap);
+    destroy(admin_cap);
+}
+
 #[test, expected_failure(abort_code = market_oracle::EPackageVersionDisabled)]
 fun synced_market_oracle_blocks_disabled_version() {
     let ctx = &mut tx_context::dummy();
@@ -129,7 +158,7 @@ fun synced_market_oracle_blocks_disabled_version() {
     let current = constants::current_version!();
     registry::enable_version(&mut registry, &admin_cap, NEXT_VERSION);
     registry::disable_version(&mut registry, &admin_cap, current);
-    market.update_allowed_versions(registry.allowed_versions());
+    registry::sync_market_oracle_allowed_versions(&registry, &mut market);
 
     market.update_svi(
         &config,

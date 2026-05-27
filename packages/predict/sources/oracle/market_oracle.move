@@ -151,12 +151,6 @@ public fun allowed_versions(market: &MarketOracle): VecSet<u64> {
     market.allowed_versions
 }
 
-/// Refresh this oracle's mirrored `allowed_versions`. Permissionless: callers
-/// pass `registry.allowed_versions()` as the source of truth.
-public fun update_allowed_versions(market: &mut MarketOracle, allowed_versions: VecSet<u64>) {
-    market.allowed_versions = allowed_versions;
-}
-
 /// Return the MarketOracleCap object ID.
 public fun cap_id(cap: &MarketOracleCap): ID {
     cap.id.to_inner()
@@ -420,6 +414,13 @@ public fun set_basis_bounds(
 }
 
 // === Public-Package Functions ===
+
+/// Overwrite this oracle's mirrored `allowed_versions`. The only authorized
+/// caller is `registry::sync_market_oracle_allowed_versions`, which reads the
+/// source of truth from `Registry`.
+public(package) fun set_allowed_versions(market: &mut MarketOracle, allowed_versions: VecSet<u64>) {
+    market.allowed_versions = allowed_versions;
+}
 
 /// Return forward / spot basis, aborting until both values are initialized.
 public(package) fun block_scholes_basis(market: &MarketOracle): u64 {
