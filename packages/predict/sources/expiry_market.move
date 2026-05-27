@@ -209,12 +209,6 @@ public fun produce_valuation(
     }
 }
 
-/// Refresh this market's mirrored `allowed_versions`. Permissionless: callers
-/// pass `registry.allowed_versions()` as the source of truth.
-public fun update_allowed_versions(market: &mut ExpiryMarket, allowed_versions: VecSet<u64>) {
-    market.allowed_versions = allowed_versions;
-}
-
 /// Mint a live position interval against this expiry market.
 ///
 /// Requires the package version to be allowed for this market, per-market mint
@@ -356,6 +350,13 @@ public fun compact_storage(
 }
 
 // === Public-Package Functions ===
+
+/// Overwrite this market's mirrored `allowed_versions`. The only authorized
+/// caller is `registry::sync_expiry_market_allowed_versions`, which reads the
+/// source of truth from `Registry`.
+public(package) fun set_allowed_versions(market: &mut ExpiryMarket, allowed_versions: VecSet<u64>) {
+    market.allowed_versions = allowed_versions;
+}
 
 /// Consume an expiry valuation and return its market ID and value.
 public(package) fun unpack(valuation: ExpiryValuation): (ID, u64) {

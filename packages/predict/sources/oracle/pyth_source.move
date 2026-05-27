@@ -118,13 +118,14 @@ public fun expiry_fee_max_multiplier(source: &PythSource): u64 {
     source.expiry_fee_max_multiplier
 }
 
-/// Refresh this source's mirrored `allowed_versions`. Permissionless: callers
-/// pass `registry.allowed_versions()` as the source of truth.
-public fun update_allowed_versions(source: &mut PythSource, allowed_versions: VecSet<u64>) {
+// === Public-Package Functions ===
+
+/// Overwrite this source's mirrored `allowed_versions`. The only authorized
+/// caller is `registry::sync_pyth_source_allowed_versions`, which reads the
+/// source of truth from `Registry`.
+public(package) fun set_allowed_versions(source: &mut PythSource, allowed_versions: VecSet<u64>) {
     source.allowed_versions = allowed_versions;
 }
-
-// === Public-Package Functions ===
 
 /// Return the timestamp that pricing can use for freshness checks.
 public(package) fun freshness_timestamp_ms(source: &PythSource): u64 {

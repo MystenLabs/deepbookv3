@@ -265,6 +265,35 @@ public fun disable_version(registry: &mut Registry, _admin_cap: &AdminCap, versi
     registry.disable_version_internal(version);
 }
 
+// === Version Sync (permissionless) ===
+//
+// Each shared object that gates flows on a mirrored `allowed_versions` set
+// exposes one `sync_*` entry below. The registry is the source of truth: the
+// caller supplies `&Registry`, and the entry copies its current set into the
+// target. The package-internal `set_allowed_versions` setters on the target
+// modules are not callable from outside the package, so user-supplied
+// `VecSet<u64>` cannot reach a mirror through any other path.
+
+/// Sync an expiry market's `allowed_versions` mirror from the registry.
+public fun sync_expiry_market_allowed_versions(registry: &Registry, market: &mut ExpiryMarket) {
+    market.set_allowed_versions(registry.allowed_versions);
+}
+
+/// Sync a pool vault's `allowed_versions` mirror from the registry.
+public fun sync_pool_vault_allowed_versions(registry: &Registry, vault: &mut PoolVault) {
+    vault.set_allowed_versions(registry.allowed_versions);
+}
+
+/// Sync a market oracle's `allowed_versions` mirror from the registry.
+public fun sync_market_oracle_allowed_versions(registry: &Registry, market: &mut MarketOracle) {
+    market.set_allowed_versions(registry.allowed_versions);
+}
+
+/// Sync a Pyth source's `allowed_versions` mirror from the registry.
+public fun sync_pyth_source_allowed_versions(registry: &Registry, source: &mut PythSource) {
+    source.set_allowed_versions(registry.allowed_versions);
+}
+
 // === PauseCap Lifecycle (admin) ===
 
 /// Mint a new `PauseCap`. Admin-only and bypasses the version gate so the
@@ -447,8 +476,7 @@ public fun create_builder_code(registry: &mut Registry, index: u64, ctx: &mut Tx
 
 /// Create a derived PredictManager for the caller.
 public fun create_manager(registry: &mut Registry, ctx: &mut TxContext): PredictManager {
-    let allowed_versions = registry.allowed_versions;
-    predict_manager::new(&mut registry.id, allowed_versions, ctx)
+    predict_manager::new(&mut registry.id, ctx)
 }
 
 /// Create and share a derived PredictManager for the caller.

@@ -111,12 +111,6 @@ public fun allowed_versions(vault: &PoolVault): VecSet<u64> {
     vault.allowed_versions
 }
 
-/// Refresh this vault's mirrored `allowed_versions`. Permissionless: callers
-/// pass `registry.allowed_versions()` as the source of truth.
-public fun update_allowed_versions(vault: &mut PoolVault, allowed_versions: VecSet<u64>) {
-    vault.allowed_versions = allowed_versions;
-}
-
 /// Return idle DUSDC held by the pool.
 public fun idle_balance(vault: &PoolVault): u64 {
     vault.idle_balance.value()
@@ -328,6 +322,13 @@ public fun withdraw(
 }
 
 // === Public-Package Functions ===
+
+/// Overwrite this vault's mirrored `allowed_versions`. The only authorized
+/// caller is `registry::sync_pool_vault_allowed_versions`, which reads the
+/// source of truth from `Registry`.
+public(package) fun set_allowed_versions(vault: &mut PoolVault, allowed_versions: VecSet<u64>) {
+    vault.allowed_versions = allowed_versions;
+}
 
 /// Create an empty pool vault from the PLP treasury cap.
 public(package) fun new(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): PoolVault {
