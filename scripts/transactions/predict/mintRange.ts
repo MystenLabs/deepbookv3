@@ -16,8 +16,8 @@ import {
 // Values are human units. Strikes scale by 1e9 (price), DUSDC by 1e6.
 const CONFIG = {
 	MANAGER_ID:    'PASTE_YOUR_MANAGER_ID',
-	ORACLE_ID:     '0xec05af6806cc08ffb2656ad1b21e7510493fe499b8992167e61e39529d851d2d', // BTC 2026-05-28 08:00 UTC
-	EXPIRY:        1779955200000,    // ms since epoch
+	ORACLE_ID:     '0x57ab16e132ef0083085d1bdef7ed820892a4d574155f47a3cba168dcb43deb79', // BTC 2026-05-29 08:00 UTC
+	EXPIRY:        1780041600000,    // ms since epoch
 	LOWER_STRIKE:  70_000,           // $70,000
 	HIGHER_STRIKE: 80_000,           // $80,000
 	QUANTITY:      1,                // $1 face

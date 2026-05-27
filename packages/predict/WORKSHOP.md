@@ -58,8 +58,8 @@ UP/DOWN binary bet on a strike. Edit the `CONFIG` block at the top of `scripts/t
 ```ts
 const CONFIG = {
     MANAGER_ID:  'PASTE_YOUR_MANAGER_ID',  // ← paste your manager id here
-    ORACLE_ID:   '0xec05af68…d851d2d',     // BTC 2026-05-28 08:00 UTC
-    EXPIRY:      1779955200000,
+    ORACLE_ID:   '0x57ab16e1…b43deb79',     // BTC 2026-05-29 08:00 UTC
+    EXPIRY:      1780041600000,
     STRIKE:      75_000,                   // $75,000
     DIRECTION:   'up',                     // or 'down'
     QUANTITY:    1,                        // $1 face

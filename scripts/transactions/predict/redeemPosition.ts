@@ -20,8 +20,8 @@ import {
 // Must mirror the MarketKey of the position you minted.
 const CONFIG = {
 	MANAGER_ID: 'PASTE_YOUR_MANAGER_ID',
-	ORACLE_ID:  '0xec05af6806cc08ffb2656ad1b21e7510493fe499b8992167e61e39529d851d2d', // BTC 2026-05-28 08:00 UTC
-	EXPIRY:     1779955200000,    // ms since epoch
+	ORACLE_ID:  '0x57ab16e132ef0083085d1bdef7ed820892a4d574155f47a3cba168dcb43deb79', // BTC 2026-05-29 08:00 UTC
+	EXPIRY:     1780041600000,    // ms since epoch
 	STRIKE:     75_000,           // $75,000
 	DIRECTION:  'up' as 'up' | 'down',
 	QUANTITY:   1,                // $1 face to close
