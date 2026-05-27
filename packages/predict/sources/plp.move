@@ -46,6 +46,7 @@ const EInvalidInitialSupply: u64 = 18;
 const EZeroShares: u64 = 19;
 const EZeroPoolValue: u64 = 20;
 const EPackageVersionDisabled: u64 = 21;
+const EZeroAllocatedCapital: u64 = 22;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -151,7 +152,7 @@ public fun total_allocated_capital(vault: &PoolVault): u64 {
 /// The accumulator snapshots the active expiry set and starts with idle DUSDC.
 /// Callers must add one valuation witness for each active expiry before
 /// supplying or withdrawing.
-public fun start_valuation(vault: &PoolVault, config: &mut ProtocolConfig): PoolValuation {
+public fun start_valuation(config: &mut ProtocolConfig, vault: &PoolVault): PoolValuation {
     vault.assert_version_allowed();
     config.begin_valuation();
     PoolValuation {
@@ -183,8 +184,8 @@ public fun add_expiry_valuation(valuation: &mut PoolValuation, expiry_valuation:
 /// allocation capacity and the upgrade-required per-expiry hard cap.
 public fun grow_expiry_allocation(
     vault: &mut PoolVault,
-    config: &ProtocolConfig,
     market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
     market_oracle: &MarketOracle,
     clock: &Clock,
 ) {
@@ -207,8 +208,8 @@ public fun grow_expiry_allocation(
 /// inside the expiry market.
 public fun shrink_expiry_allocation(
     vault: &mut PoolVault,
-    config: &ProtocolConfig,
     market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
     market_oracle: &MarketOracle,
     clock: &Clock,
 ) {
@@ -226,13 +227,13 @@ public fun shrink_expiry_allocation(
 
 /// Sweep settled expiry surplus into the pool.
 ///
-/// This no-ops before settlement. Once settled, it finalizes expiry settlement if
-/// needed, retires active allocation on the first sweep, and distributes any fee
-/// surplus not reserved for unresolved rebates.
+/// This no-ops before settlement. Once settled, it caches terminal payout
+/// liability if needed, retires active allocation on the first sweep, and
+/// distributes fee surplus not reserved for unresolved rebates.
 public fun sweep_settled_expiry_surplus(
     vault: &mut PoolVault,
-    config: &ProtocolConfig,
     market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
     market_oracle: &MarketOracle,
 ) {
     vault.assert_version_allowed();
@@ -254,11 +255,9 @@ public fun sweep_settled_expiry_surplus(
     );
     if (released_allocation > 0) {
         vault.total_allocated_capital = vault.total_allocated_capital - released_allocation;
-        vault.idle_balance.join(returned_cash);
         vault.unregister_expiry_market(market.id());
-    } else {
-        returned_cash.destroy_zero();
     };
+    vault.idle_balance.join(returned_cash);
     vault.distribute_fee_surplus(config, returned_fee_surplus);
 }
 
@@ -447,13 +446,13 @@ fun remaining_global_allocation_capacity(vault: &PoolVault, risk_config: &RiskCo
 }
 
 fun grow_amount(vault: &PoolVault, risk_config: &RiskConfig, market: &ExpiryMarket): u64 {
-    let utilization = market.utilization();
+    let current_allocation = market.allocated_capital();
+    let utilization = allocation_utilization(market.payout_liability(), current_allocation);
     assert!(
         utilization >= risk_config.grow_utilization_threshold(),
         EGrowUtilizationBelowThreshold,
     );
 
-    let current_allocation = market.allocated_capital();
     let desired_target = math::mul(current_allocation, risk_config.grow_factor()).min(
         config_constants::max_allocation!(),
     );
@@ -467,16 +466,18 @@ fun grow_amount(vault: &PoolVault, risk_config: &RiskConfig, market: &ExpiryMark
 }
 
 fun shrink_amount(risk_config: &RiskConfig, market: &ExpiryMarket): u64 {
-    let utilization = market.utilization();
+    let current_allocation = market.allocated_capital();
+    let utilization = allocation_utilization(market.payout_liability(), current_allocation);
     assert!(
         utilization <= risk_config.shrink_utilization_threshold(),
         EShrinkUtilizationAboveThreshold,
     );
 
-    let current_allocation = market.allocated_capital();
-    let target_allocation = math::mul(current_allocation, risk_config.shrink_factor())
-        .max(risk_config.expiry_allocation())
-        .max(market.max_payout());
+    let target_allocation = math::mul(
+        current_allocation,
+        risk_config.shrink_factor(),
+    ).max(risk_config.expiry_allocation());
+    // returnable_capital caps the shrink so allocation and cash remain above payout liability.
     let amount = if (target_allocation < current_allocation) {
         current_allocation - target_allocation
     } else {
@@ -484,6 +485,11 @@ fun shrink_amount(risk_config: &RiskConfig, market: &ExpiryMarket): u64 {
     }.min(market.returnable_capital());
     assert!(amount > 0, ENoAllocationResize);
     amount
+}
+
+fun allocation_utilization(payout_liability: u64, allocated_capital: u64): u64 {
+    assert!(allocated_capital > 0, EZeroAllocatedCapital);
+    math::div(payout_liability, allocated_capital)
 }
 
 fun distribute_fee_surplus(

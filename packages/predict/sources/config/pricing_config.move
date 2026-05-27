@@ -19,9 +19,6 @@ public struct PricingConfig has store {
     base_fee: u64,
     /// Minimum per-unit fee floor; live quotes never go below this value.
     min_fee: u64,
-    /// Utilization multiplier in FLOAT_SCALING (e.g., 2_000_000_000 = 2x).
-    /// Controls how aggressively fees increase as capacity utilization rises.
-    utilization_multiplier: u64,
     /// Global minimum allowed all-in mint price after adding the fee.
     min_ask_price: u64,
     /// Global maximum allowed all-in mint price after adding the fee.
@@ -42,10 +39,6 @@ public(package) fun base_fee(config: &PricingConfig): u64 {
 
 public(package) fun min_fee(config: &PricingConfig): u64 {
     config.min_fee
-}
-
-public(package) fun utilization_multiplier(config: &PricingConfig): u64 {
-    config.utilization_multiplier
 }
 
 public(package) fun min_ask_price(config: &PricingConfig): u64 {
@@ -72,7 +65,6 @@ public(package) fun new(): PricingConfig {
     PricingConfig {
         base_fee: config_constants::default_base_fee!(),
         min_fee: config_constants::default_min_fee!(),
-        utilization_multiplier: config_constants::default_utilization_multiplier!(),
         min_ask_price: config_constants::default_min_ask_price!(),
         max_ask_price: config_constants::default_max_ask_price!(),
         pyth_spot_freshness_ms: config_constants::default_pyth_spot_freshness_ms!(),
@@ -89,11 +81,6 @@ public(package) fun set_base_fee(config: &mut PricingConfig, fee: u64) {
 public(package) fun set_min_fee(config: &mut PricingConfig, fee: u64) {
     config_constants::assert_min_fee(fee);
     config.min_fee = fee;
-}
-
-public(package) fun set_utilization_multiplier(config: &mut PricingConfig, multiplier: u64) {
-    config_constants::assert_utilization_multiplier(multiplier);
-    config.utilization_multiplier = multiplier;
 }
 
 public(package) fun set_min_ask_price(config: &mut PricingConfig, value: u64) {

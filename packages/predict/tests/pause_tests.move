@@ -77,7 +77,7 @@ fun pause_cap_can_disable_version() {
     registry::enable_version(&mut registry, &admin_cap, NEXT_VERSION);
     let pause_cap = registry::mint_pause_cap(&mut registry, &admin_cap, ctx);
 
-    registry::disable_version_pause_cap(&mut registry, current, &pause_cap);
+    registry::disable_version_pause_cap(&mut registry, &pause_cap, current);
     assert!(!registry.allowed_versions().contains(&current));
 
     registry::destroy_pause_cap(pause_cap);
@@ -93,7 +93,7 @@ fun pause_cap_pause_trading_is_one_way() {
     let pause_cap = registry::mint_pause_cap(&mut registry, &admin_cap, ctx);
 
     assert!(!config.trading_paused());
-    registry::pause_trading_pause_cap(&registry, &mut config, &pause_cap);
+    registry::pause_trading_pause_cap(&mut config, &registry, &pause_cap);
     assert!(config.trading_paused());
 
     registry::destroy_pause_cap(pause_cap);
@@ -111,7 +111,7 @@ fun revoked_pause_cap_cannot_act() {
     let pause_cap_id = object::id(&pause_cap);
 
     registry::revoke_pause_cap(&mut registry, &admin_cap, pause_cap_id);
-    registry::disable_version_pause_cap(&mut registry, NEXT_VERSION, &pause_cap);
+    registry::disable_version_pause_cap(&mut registry, &pause_cap, NEXT_VERSION);
     abort 999
 }
 
