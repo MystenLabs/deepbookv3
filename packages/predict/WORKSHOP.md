@@ -102,7 +102,7 @@ pnpm predict-mint-range
 
 ```
 pnpm predict-deposit         # supply DUSDC → receive PLP (edit AMOUNT in deposit.ts)
-pnpm predict-withdraw        # burn PLP → receive DUSDC   (edit PLP_COIN in withdraw.ts)
+pnpm predict-withdraw        # burn PLP → receive DUSDC   (auto-finds your PLP coin)
 ```
 
 ## What's happening on-chain

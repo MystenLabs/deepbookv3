@@ -87,8 +87,7 @@ const DUSDC_SCALE = 1_000_000n;
 	);
 	if (plp && plp.type === 'created') {
 		console.log(`\nPLP coin received: ${plp.objectId}`);
-		console.log(`Paste into withdraw.ts CONFIG to redeem it:`);
-		console.log(`  PLP_COIN: '${plp.objectId}',`);
+		console.log(`Run pnpm predict-withdraw to redeem it (auto-discovers PLP coins).`);
 	}
 	console.log(`\nDigest: ${result.digest}`);
 })();
