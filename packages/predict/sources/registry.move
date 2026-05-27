@@ -9,6 +9,7 @@
 /// owning modules.
 module deepbook_predict::registry;
 
+use deepbook::registry::Registry as DeepbookRegistry;
 use deepbook_predict::{
     admin::{Self, AdminCap},
     builder_code,
@@ -18,7 +19,7 @@ use deepbook_predict::{
     expiry_market::{Self, ExpiryMarket},
     market_oracle::{Self, MarketOracle, MarketOracleCap},
     plp::PoolVault,
-    predict_manager::{Self, PredictManager},
+    predict_manager::{Self, PredictDepositCap, PredictManager, PredictTradeCap, PredictWithdrawCap},
     pricing,
     protocol_config::{Self, ProtocolConfig},
     pyth_source::{Self, PythSource}
@@ -477,6 +478,22 @@ public fun create_manager(registry: &mut Registry, ctx: &mut TxContext): Predict
 /// Create and share a derived PredictManager for the caller.
 public fun create_and_share_manager(registry: &mut Registry, ctx: &mut TxContext) {
     create_manager(registry, ctx).share();
+}
+
+/// Create a derived self-owned PredictManager for callers that don't want a
+/// deployer-key trust anchor (vaults, structured products). The inner
+/// BalanceManager owner is set to the manager's own ID-as-address, so the
+/// returned caps are the only authority that will ever exist on this manager.
+///
+/// Requires `PredictApp` to be authorized on the deepbook `Registry` via
+/// `deepbook::registry::authorize_app<PredictApp>` — a one-time admin tx on
+/// the deepbook side.
+public fun create_self_owned_manager(
+    registry: &mut Registry,
+    deepbook_registry: &DeepbookRegistry,
+    ctx: &mut TxContext,
+): (PredictManager, PredictDepositCap, PredictWithdrawCap, PredictTradeCap) {
+    predict_manager::new_self_owned(&mut registry.id, deepbook_registry, ctx)
 }
 
 // === Public-Package Functions ===

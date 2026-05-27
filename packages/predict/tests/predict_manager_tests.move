@@ -494,3 +494,127 @@ fun remove_all_stake_returns_active_plus_inactive_and_zeroes() {
     destroy(manager);
     scenario.end();
 }
+
+// === Cap system / trade proofs ===
+
+#[test]
+fun owner_can_mint_and_revoke_caps() {
+    let (mut scenario, registry_id) = setup();
+    let mut manager = create_alice_manager(&mut scenario, registry_id);
+
+    let trade_cap = manager.mint_trade_cap(scenario.ctx());
+    let deposit_cap = manager.mint_deposit_cap(scenario.ctx());
+    let withdraw_cap = manager.mint_withdraw_cap(scenario.ctx());
+
+    // Revoke each by id; the cap object remains but can no longer authorize.
+    manager.revoke_cap(object::borrow_id(&trade_cap), scenario.ctx());
+    manager.revoke_cap(object::borrow_id(&deposit_cap), scenario.ctx());
+    manager.revoke_cap(object::borrow_id(&withdraw_cap), scenario.ctx());
+
+    destroy(trade_cap);
+    destroy(deposit_cap);
+    destroy(withdraw_cap);
+    destroy(manager);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = predict_manager::ENotOwner)]
+fun non_owner_cannot_mint_trade_cap() {
+    let (mut scenario, registry_id) = setup();
+    let mut manager = create_alice_manager(&mut scenario, registry_id);
+
+    scenario.next_tx(test_constants::bob());
+    let _cap = manager.mint_trade_cap(scenario.ctx());
+
+    abort 999
+}
+
+#[test]
+fun owner_can_generate_proof() {
+    let (mut scenario, registry_id) = setup();
+    let manager = create_alice_manager(&mut scenario, registry_id);
+
+    let proof = manager.generate_proof_as_owner(scenario.ctx());
+    manager.validate_proof(&proof);
+
+    destroy(manager);
+    scenario.end();
+}
+
+#[test]
+fun trade_cap_holder_can_generate_proof() {
+    let (mut scenario, registry_id) = setup();
+    let mut manager = create_alice_manager(&mut scenario, registry_id);
+    let trade_cap = manager.mint_trade_cap(scenario.ctx());
+
+    scenario.next_tx(test_constants::bob());
+    let proof = manager.generate_proof_as_trader(&trade_cap, scenario.ctx());
+    manager.validate_proof(&proof);
+
+    destroy(trade_cap);
+    destroy(manager);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = predict_manager::EInvalidCap)]
+fun revoked_trade_cap_cannot_generate_proof() {
+    let (mut scenario, registry_id) = setup();
+    let mut manager = create_alice_manager(&mut scenario, registry_id);
+    let trade_cap = manager.mint_trade_cap(scenario.ctx());
+
+    manager.revoke_cap(object::borrow_id(&trade_cap), scenario.ctx());
+
+    scenario.next_tx(test_constants::bob());
+    let _proof = manager.generate_proof_as_trader(&trade_cap, scenario.ctx());
+
+    abort 999
+}
+
+#[test, expected_failure(abort_code = predict_manager::ECapNotInList)]
+fun revoking_unknown_cap_aborts() {
+    let (mut scenario, registry_id) = setup();
+    let mut manager = create_alice_manager(&mut scenario, registry_id);
+
+    let fake_id = object::id_from_address(@0xDEAD);
+    manager.revoke_cap(&fake_id, scenario.ctx());
+
+    abort 999
+}
+
+#[test]
+fun proof_from_one_manager_does_not_validate_against_another() {
+    let (mut scenario, registry_id) = setup();
+    let manager_a = create_alice_manager(&mut scenario, registry_id);
+
+    scenario.next_tx(test_constants::bob());
+    let mut reg = scenario.take_shared_by_id<registry::Registry>(registry_id);
+    let manager_b = registry::create_manager(&mut reg, scenario.ctx());
+    return_shared(reg);
+
+    scenario.next_tx(test_constants::alice());
+    let proof_a = manager_a.generate_proof_as_owner(scenario.ctx());
+    // The two managers are distinct; A's proof validates against A only.
+    assert!(manager_a.id() != manager_b.id());
+    manager_a.validate_proof(&proof_a);
+
+    destroy(manager_a);
+    destroy(manager_b);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = predict_manager::EInvalidProof)]
+fun cross_manager_proof_validation_aborts() {
+    let (mut scenario, registry_id) = setup();
+    let manager_a = create_alice_manager(&mut scenario, registry_id);
+
+    scenario.next_tx(test_constants::bob());
+    let mut reg = scenario.take_shared_by_id<registry::Registry>(registry_id);
+    let manager_b = registry::create_manager(&mut reg, scenario.ctx());
+    return_shared(reg);
+
+    scenario.next_tx(test_constants::alice());
+    let proof_a = manager_a.generate_proof_as_owner(scenario.ctx());
+    manager_b.validate_proof(&proof_a);
+
+    abort 999
+}
