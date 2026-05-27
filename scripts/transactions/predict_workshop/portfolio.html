@@ -149,16 +149,18 @@ const SUI_RPC_URL     = 'https://fullnode.testnet.sui.io';
 const ZERO_ADDR       = '0x0000000000000000000000000000000000000000000000000000000000000000';
 
 // Lazily resolve the @mysten/sui SDK so a CDN issue can't kill the page.
+// 2.5.0 ships the JSON-RPC client under /jsonRpc as SuiJsonRpcClient — NOT
+// SuiClient from /client (that's the lower-level BaseClient surface).
 let suiSdkPromise = null;
 async function getSuiSdk() {
 	if (!suiSdkPromise) {
 		suiSdkPromise = (async () => {
-			const [clientMod, txMod] = await Promise.all([
-				import('https://esm.sh/@mysten/sui@2.5.0/client?bundle'),
+			const [rpcMod, txMod] = await Promise.all([
+				import('https://esm.sh/@mysten/sui@2.5.0/jsonRpc?bundle'),
 				import('https://esm.sh/@mysten/sui@2.5.0/transactions?bundle'),
 			]);
 			return {
-				client: new clientMod.SuiClient({ url: SUI_RPC_URL }),
+				client: new rpcMod.SuiJsonRpcClient({ url: SUI_RPC_URL, network: 'testnet' }),
 				Transaction: txMod.Transaction,
 			};
 		})();
