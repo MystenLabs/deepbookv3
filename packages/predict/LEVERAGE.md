@@ -16,6 +16,8 @@ A leveraged Predict order adds a deterministic floor to that same contract:
 live_value = quantity * max(probability(range) - floor_probability, 0)
 ```
 
+![Contract value versus probability](docs/assets/leverage-contract-value.svg)
+
 The floor is the probability threshold where the contract becomes worthless to
 the holder. If the current probability is at or below the floor, the contract is
 economically liquidated: there is no remaining user value to redeem. For 1x
@@ -37,6 +39,8 @@ user_contribution    = entry_exposure_value / leverage_multiplier
 floor_seed_probability = entry_probability * (1 - 1 / leverage_multiplier)
 floor_seed_amount      = quantity * floor_seed_probability
 ```
+
+![Floor seed and user contribution as wedges of the contract](docs/assets/leverage-wedge.svg)
 
 The user owns the upside above the floor. The floor consumes the first part of
 the contract's value, which is equivalent to the implied financing cost of the
@@ -66,6 +70,8 @@ The current floor window is one year. If an expiry is more than one year away,
 the floor index stays at `1.0` until the expiry enters its final one-year
 window. Inside that window, the index rises deterministically toward its
 terminal value.
+
+![Floor probability over time](docs/assets/leverage-floor-over-time.svg)
 
 Orders store their opening timestamp. That timestamp anchors the initial floor
 index used to normalize the order's floor into shares:
