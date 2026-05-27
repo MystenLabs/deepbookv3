@@ -53,7 +53,7 @@ export MANAGER_ID=0x...
 
 ### 3. Mint a directional position
 
-UP/DOWN binary bet on a strike. Edit the `CONFIG` block at the top of `scripts/transactions/predict/mintPosition.ts` — only `MANAGER_ID` is per-attendee; the rest is pre-filled to the workshop oracle:
+UP/DOWN binary bet on a strike. Edit the `CONFIG` block at the top of `scripts/transactions/predict_workshop/mintPosition.ts` — only `MANAGER_ID` is per-attendee; the rest is pre-filled to the workshop oracle:
 
 ```ts
 const CONFIG = {
@@ -125,5 +125,5 @@ pnpm predict-withdraw        # burn PLP → receive DUSDC   (auto-finds your PLP
 ## Source pointers
 
 - Move sources: [sources/predict.move](./sources/predict.move), [sources/predict_manager.move](./sources/predict_manager.move), [sources/market_key/](./sources/market_key/), [sources/oracle.move](./sources/oracle.move)
-- Workshop scripts: [`../../scripts/transactions/predict/`](../../scripts/transactions/predict/)
+- Workshop scripts: [`../../scripts/transactions/predict_workshop/`](../../scripts/transactions/predict_workshop/)
 - Concepts deep dive: [README.md](./README.md)
