@@ -407,3 +407,11 @@ public fun expiry_fee_multiplier_for_testing(
 ): u64 {
     expiry_fee_multiplier(window_ms, max_multiplier, time_to_expiry_ms)
 }
+
+/// Construct a `CurvePoint` directly for tests that need to drive `live_value`
+/// without a full pricing/oracle fixture. Production builds points only inside
+/// `build_curve`, but downstream NAV math is independent of that builder.
+#[test_only]
+public fun new_curve_point_for_testing(strike: u64, up_price: u64): CurvePoint {
+    CurvePoint { strike, up_price }
+}
