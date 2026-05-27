@@ -138,7 +138,6 @@ public(package) fun assert_min_fee(value: u64) {
 }
 
 /// Final window (ms before expiry) over which the fee ramps up. 0 disables it.
-public(package) macro fun default_expiry_fee_window_ms(): u64 { 0 }
 public(package) macro fun min_expiry_fee_window_ms(): u64 { 0 }
 /// 30 days; predict markets are short-dated, so this is a generous envelope.
 public(package) macro fun max_expiry_fee_window_ms(): u64 { 2_592_000_000 }
@@ -152,9 +151,6 @@ public(package) fun assert_expiry_fee_window_ms(value: u64) {
 
 /// Fee multiplier reached at expiry, in FLOAT_SCALING. 1x (float_scaling) disables
 /// the ramp; min is 1x so the ramp can never reduce fees below the base rate.
-public(package) macro fun default_expiry_fee_max_multiplier(): u64 {
-    deepbook_predict::constants::float_scaling!()
-}
 public(package) macro fun min_expiry_fee_max_multiplier(): u64 {
     deepbook_predict::constants::float_scaling!()
 }

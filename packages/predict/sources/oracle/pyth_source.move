@@ -194,7 +194,7 @@ public fun new_for_testing(ctx: &mut TxContext): PythSource {
         source_timestamp_ms: 0,
         update_timestamp_ms: 0,
         allowed_versions: sui::vec_set::singleton(constants::current_version!()),
-        expiry_fee_window_ms: config_constants::default_expiry_fee_window_ms!(),
-        expiry_fee_max_multiplier: config_constants::default_expiry_fee_max_multiplier!(),
+        expiry_fee_window_ms: deepbook_predict::test_constants::default_expiry_fee_window_ms!(),
+        expiry_fee_max_multiplier: deepbook_predict::test_constants::default_expiry_fee_max_multiplier!(),
     }
 }

@@ -4,7 +4,7 @@
 #[test_only]
 module deepbook_predict::pyth_source_tests;
 
-use deepbook_predict::{config_constants, pyth_source};
+use deepbook_predict::{config_constants, pyth_source, test_constants};
 use std::unit_test::{assert_eq, destroy};
 
 const HOUR_MS: u64 = 3_600_000;
@@ -15,10 +15,10 @@ fun defaults_disable_the_ramp() {
     let ctx = &mut tx_context::dummy();
     let source = pyth_source::new_for_testing(ctx);
 
-    assert_eq!(source.expiry_fee_window_ms(), config_constants::default_expiry_fee_window_ms!());
+    assert_eq!(source.expiry_fee_window_ms(), test_constants::default_expiry_fee_window_ms!());
     assert_eq!(
         source.expiry_fee_max_multiplier(),
-        config_constants::default_expiry_fee_max_multiplier!(),
+        test_constants::default_expiry_fee_max_multiplier!(),
     );
     destroy(source);
 }
