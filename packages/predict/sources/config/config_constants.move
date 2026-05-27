@@ -154,7 +154,9 @@ public(package) fun assert_expiry_fee_window_ms(value: u64) {
 public(package) macro fun min_expiry_fee_max_multiplier(): u64 {
     deepbook_predict::constants::float_scaling!()
 }
-public(package) macro fun max_expiry_fee_max_multiplier(): u64 { 10_000_000_000 }
+public(package) macro fun max_expiry_fee_max_multiplier(): u64 {
+    10 * deepbook_predict::constants::float_scaling!()
+}
 
 public(package) fun assert_expiry_fee_max_multiplier(value: u64) {
     assert!(
