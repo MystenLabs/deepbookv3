@@ -14,7 +14,7 @@ use deepbook_predict::{
     constants,
     market_oracle::{MarketOracle, MarketOracleCap},
     order::{Self, Order},
-    predict_manager::PredictManager,
+    predict_manager::{PredictManager, PredictTradeProof},
     pricing,
     pricing_config::PricingConfig,
     protocol_config::ProtocolConfig,
@@ -36,6 +36,7 @@ const EPackageVersionDisabled: u64 = 20;
 const EMintPaused: u64 = 21;
 const EUnresolvedTradingFeesUnderflow: u64 = 23;
 const EFullCloseRequired: u64 = 27;
+const EProofRequiredForLiveRedeem: u64 = 28;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -212,12 +213,15 @@ public fun produce_valuation(
 /// Mint a live position interval against this expiry market.
 ///
 /// Requires the package version to be allowed for this market, per-market mint
-/// pause to be off, trading globally enabled, manager ownership, a live fresh
-/// oracle, and enough expiry allocation to back the post-mint max payout.
-/// Returns the minted order ID for future order-scoped flows.
+/// pause to be off, trading globally enabled, a valid `PredictTradeProof` for
+/// the manager, a live fresh oracle, and enough expiry allocation to back the
+/// post-mint max payout. Mint fees are paid by routing a withdraw through the
+/// manager's trade proof, so the proof is required even for owner-initiated
+/// mints. Returns the minted order ID for future order-scoped flows.
 public fun mint(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
+    proof: &PredictTradeProof,
     config: &ProtocolConfig,
     market_oracle: &MarketOracle,
     pyth: &PythSource,
@@ -233,6 +237,7 @@ public fun mint(
     config.assert_trading_allowed();
     market.mint_internal(
         manager,
+        proof,
         config,
         market_oracle,
         pyth,
@@ -247,13 +252,18 @@ public fun mint(
 
 /// Redeem live or settled order quantity.
 ///
-/// Live redeems can close part or all of an order; if quantity remains, the
-/// Returns `(closed_order_id, replacement_order_id)`. A replacement ID is present
-/// only when a live partial close leaves remaining quantity open. Settled
-/// redeems require full order quantity and return no replacement.
+/// `proof` must be `some` for live redeems (needed to route the manager
+/// payout through the trade proof). Settled redeems are permissionless;
+/// pass `none` from a keeper without a cap. `PredictTradeProof` has `drop`,
+/// so the proof is consumed by value and silently dropped on settled paths.
+///
+/// Returns `(closed_order_id, replacement_order_id)`. A replacement ID is
+/// present only when a live partial close leaves remaining quantity open.
+/// Settled redeems require full order quantity and return no replacement.
 public fun redeem(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
+    proof: Option<PredictTradeProof>,
     config: &ProtocolConfig,
     market_oracle: &MarketOracle,
     pyth: &PythSource,
@@ -271,8 +281,11 @@ public fun redeem(
         market.redeem_settled_internal(manager, market_oracle, &redeemed_order, ctx);
         (redeemed_order.id(), option::none())
     } else {
+        assert!(proof.is_some(), EProofRequiredForLiveRedeem);
+        let live_proof = proof.destroy_some();
         let replacement_order_id = market.redeem_live_internal(
             manager,
+            &live_proof,
             config,
             market_oracle,
             pyth,
@@ -546,6 +559,7 @@ fun assert_cash_backing(market: &ExpiryMarket) {
 fun mint_internal(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
+    proof: &PredictTradeProof,
     config: &ProtocolConfig,
     market_oracle: &MarketOracle,
     pyth: &PythSource,
@@ -556,7 +570,7 @@ fun mint_internal(
     clock: &Clock,
     ctx: &mut TxContext,
 ): u256 {
-    manager.assert_owner(ctx);
+    // Proof is validated inside withdraw_with_proof below.
     market.assert_market_oracle(market_oracle);
     market.assert_pyth_feed(pyth);
 
@@ -574,13 +588,14 @@ fun mint_internal(
         );
 
     market.assert_allocation_backing();
-    market.settle_mint_payment(manager, &minted_order, fee_amount, ctx);
+    market.settle_mint_payment(manager, proof, &minted_order, fee_amount, ctx);
     minted_order.id()
 }
 
 fun redeem_live_internal(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
+    proof: &PredictTradeProof,
     config: &ProtocolConfig,
     market_oracle: &MarketOracle,
     pyth: &PythSource,
@@ -589,7 +604,7 @@ fun redeem_live_internal(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Option<u256> {
-    manager.assert_owner(ctx);
+    // Proof is validated inside deposit_with_proof below.
     market.assert_pyth_feed(pyth);
     config.pricing_config().assert_live_quote_available(market_oracle, pyth, clock);
     manager.remove_position(market.id(), order.id());
@@ -615,6 +630,7 @@ fun redeem_live_internal(
 
     market.settle_live_redeem_payment(
         manager,
+        proof,
         net_redeem_amount,
         fee_amount,
         close_quantity,
@@ -641,6 +657,7 @@ fun redeem_settled_internal(
 fun settle_mint_payment(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
+    proof: &PredictTradeProof,
     order: &Order,
     fee_amount: u64,
     ctx: &mut TxContext,
@@ -652,7 +669,7 @@ fun settle_mint_payment(
     let withdraw_amount = user_contribution + fee_amount + builder_fee_amount;
 
     manager.add_position(market.id(), order.id());
-    let mut payment = manager.withdraw(withdraw_amount, ctx).into_balance();
+    let mut payment = manager.withdraw_with_proof(proof, withdraw_amount, ctx).into_balance();
     let builder_fee_payment = payment.split(builder_fee_amount);
     send_builder_fee(builder_code_id, builder_fee_payment);
     let payment_amount = payment.value();
@@ -668,6 +685,7 @@ fun settle_mint_payment(
 fun settle_live_redeem_payment(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
+    proof: &PredictTradeProof,
     net_redeem_amount: u64,
     fee_amount: u64,
     redeemed_quantity: u64,
@@ -689,7 +707,7 @@ fun settle_live_redeem_payment(
     send_builder_fee(builder_code_id, builder_fee);
 
     market.assert_cash_backing();
-    deposit_live_payout(manager, market, payout, ctx);
+    deposit_live_payout(manager, proof, market, payout, ctx);
     market.emit_fee_accrued(fee_amount, builder_fee_amount, builder_code_id);
 }
 
@@ -719,12 +737,13 @@ fun collect_trade_fee(
 
 fun deposit_live_payout(
     manager: &mut PredictManager,
+    proof: &PredictTradeProof,
     market: &ExpiryMarket,
     payout: Balance<DUSDC>,
     ctx: &mut TxContext,
 ) {
     manager.record_cash_received_from_expiry(market.id(), payout.value());
-    manager.deposit(payout.into_coin(ctx), ctx);
+    manager.deposit_with_proof(proof, payout.into_coin(ctx), ctx);
 }
 
 fun deposit_permissionless_payout(
