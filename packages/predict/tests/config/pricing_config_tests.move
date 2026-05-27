@@ -175,6 +175,17 @@ fun set_pyth_spot_freshness_ms_updates() {
     destroy(config);
 }
 
+#[test]
+fun set_pyth_spot_freshness_ms_accepts_endpoints() {
+    // Envelope = [1, 60_000].
+    let mut config = pricing_config::new();
+    config.set_pyth_spot_freshness_ms(1);
+    assert_eq!(config.pyth_spot_freshness_ms(), 1);
+    config.set_pyth_spot_freshness_ms(60_000);
+    assert_eq!(config.pyth_spot_freshness_ms(), 60_000);
+    destroy(config);
+}
+
 #[test, expected_failure(abort_code = config_constants::EInvalidPythSpotFreshnessMs)]
 fun set_pyth_spot_freshness_ms_zero_aborts() {
     let mut config = pricing_config::new();
@@ -199,6 +210,16 @@ fun set_block_scholes_prices_freshness_ms_updates() {
     destroy(config);
 }
 
+#[test]
+fun set_block_scholes_prices_freshness_ms_accepts_endpoints() {
+    let mut config = pricing_config::new();
+    config.set_block_scholes_prices_freshness_ms(1);
+    assert_eq!(config.block_scholes_prices_freshness_ms(), 1);
+    config.set_block_scholes_prices_freshness_ms(60_000);
+    assert_eq!(config.block_scholes_prices_freshness_ms(), 60_000);
+    destroy(config);
+}
+
 #[test, expected_failure(abort_code = config_constants::EInvalidBlockScholesPricesFreshnessMs)]
 fun set_block_scholes_prices_freshness_ms_zero_aborts() {
     let mut config = pricing_config::new();
@@ -220,6 +241,16 @@ fun set_block_scholes_svi_freshness_ms_updates() {
     let mut config = pricing_config::new();
     config.set_block_scholes_svi_freshness_ms(VALID_BLOCK_SCHOLES_SVI_FRESHNESS_MS);
     assert_eq!(config.block_scholes_svi_freshness_ms(), VALID_BLOCK_SCHOLES_SVI_FRESHNESS_MS);
+    destroy(config);
+}
+
+#[test]
+fun set_block_scholes_svi_freshness_ms_accepts_endpoints() {
+    let mut config = pricing_config::new();
+    config.set_block_scholes_svi_freshness_ms(1);
+    assert_eq!(config.block_scholes_svi_freshness_ms(), 1);
+    config.set_block_scholes_svi_freshness_ms(60_000);
+    assert_eq!(config.block_scholes_svi_freshness_ms(), 60_000);
     destroy(config);
 }
 

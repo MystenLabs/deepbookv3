@@ -42,6 +42,17 @@ fun set_settlement_freshness_ms_updates() {
     destroy(config);
 }
 
+#[test]
+fun set_settlement_freshness_ms_accepts_endpoints() {
+    // Envelope = [1, 60_000].
+    let mut config = market_oracle_config::new();
+    config.set_settlement_freshness_ms(1);
+    assert_eq!(config.settlement_freshness_ms(), 1);
+    config.set_settlement_freshness_ms(60_000);
+    assert_eq!(config.settlement_freshness_ms(), 60_000);
+    destroy(config);
+}
+
 #[test, expected_failure(abort_code = config_constants::EInvalidSettlementFreshnessMs)]
 fun set_settlement_freshness_ms_below_min_aborts() {
     // min = 1; 0 is out of range.
@@ -59,6 +70,23 @@ fun set_settlement_freshness_ms_above_max_aborts() {
 }
 
 // === set_basis_bounds: happy path ===
+
+#[test]
+fun set_basis_bounds_accepts_envelope_endpoints() {
+    // Exercise the exact envelope endpoints for all four fields. min_basis at
+    // its envelope min (500e6) and max_basis at its envelope max (2e9) keep
+    // the strict min<max invariant satisfied.
+    let mut config = market_oracle_config::new();
+    config.set_basis_bounds(1, 1, 500_000_000, 2_000_000_000);
+    assert_eq!(config.max_spot_deviation(), 1);
+    assert_eq!(config.max_basis_deviation(), 1);
+    assert_eq!(config.min_basis(), 500_000_000);
+    assert_eq!(config.max_basis(), 2_000_000_000);
+    config.set_basis_bounds(100_000_000, 100_000_000, 500_000_000, 2_000_000_000);
+    assert_eq!(config.max_spot_deviation(), 100_000_000);
+    assert_eq!(config.max_basis_deviation(), 100_000_000);
+    destroy(config);
+}
 
 #[test]
 fun set_basis_bounds_updates_all_four() {

@@ -84,6 +84,18 @@ fun set_expiry_allocation_updates() {
     destroy(config);
 }
 
+#[test]
+fun set_expiry_allocation_accepts_endpoints() {
+    // Envelope = [50e9, 250e9]. Endpoints are exactly where off-by-one bounds
+    // bugs hide — assert both pass.
+    let mut config = risk_config::new();
+    config.set_expiry_allocation(50_000_000_000);
+    assert_eq!(config.expiry_allocation(), 50_000_000_000);
+    config.set_expiry_allocation(250_000_000_000);
+    assert_eq!(config.expiry_allocation(), 250_000_000_000);
+    destroy(config);
+}
+
 #[test, expected_failure(abort_code = config_constants::EInvalidExpiryAllocation)]
 fun set_expiry_allocation_below_min_aborts() {
     let mut config = risk_config::new();
@@ -114,6 +126,18 @@ fun set_grow_utilization_threshold_equal_to_shrink_is_allowed() {
     let mut config = risk_config::new();
     config.set_grow_utilization_threshold(DEFAULT_SHRINK_THRESHOLD);
     assert_eq!(config.grow_utilization_threshold(), DEFAULT_SHRINK_THRESHOLD);
+    destroy(config);
+}
+
+#[test]
+fun set_grow_utilization_threshold_zero_after_shrink_zeroed() {
+    // 0 is in the envelope but normally blocked by the cross-field check
+    // against the default shrink threshold (300e6). Drop shrink to 0 first
+    // and 0 becomes a valid grow value.
+    let mut config = risk_config::new();
+    config.set_shrink_utilization_threshold(0);
+    config.set_grow_utilization_threshold(0);
+    assert_eq!(config.grow_utilization_threshold(), 0);
     destroy(config);
 }
 
@@ -187,6 +211,15 @@ fun set_grow_factor_accepts_endpoints() {
     config.set_grow_factor(10 * float!());
     assert_eq!(config.grow_factor(), 10 * float!());
     destroy(config);
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidGrowFactor)]
+fun set_grow_factor_zero_aborts() {
+    // Far below min (which is float!() + 1) — exercises the under-flow path
+    // distinctly from the float!() boundary.
+    let mut config = risk_config::new();
+    config.set_grow_factor(0);
+    abort 999
 }
 
 #[test, expected_failure(abort_code = config_constants::EInvalidGrowFactor)]
