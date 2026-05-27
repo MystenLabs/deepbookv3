@@ -35,7 +35,7 @@ const EInsufficientFeeBalance: u64 = 18;
 const EPackageVersionDisabled: u64 = 20;
 const EMintPaused: u64 = 21;
 const EUnresolvedTradingFeesUnderflow: u64 = 23;
-const EInvalidCloseQuantity: u64 = 27;
+const EFullCloseRequired: u64 = 27;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -254,8 +254,9 @@ public fun mint(
 /// Redeem live or settled order quantity.
 ///
 /// Live redeems can close part or all of an order; if quantity remains, the
-/// returned ID is an open replacement order. Settled redeems require full order
-/// quantity, are permissionless, and return the closed order ID.
+/// Returns `(closed_order_id, replacement_order_id)`. A replacement ID is present
+/// only when a live partial close leaves remaining quantity open. Settled
+/// redeems require full order quantity and return no replacement.
 public fun redeem(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
@@ -266,17 +267,17 @@ public fun redeem(
     close_quantity: u64,
     clock: &Clock,
     ctx: &mut TxContext,
-): u256 {
+): (u256, Option<u256>) {
     market.assert_version_allowed();
     config.assert_not_valuation_in_progress();
     market.assert_market_oracle(market_oracle);
     let redeemed_order = order::from_order_id(order_id);
     if (market_oracle.is_settled()) {
-        assert!(close_quantity == redeemed_order.quantity(), EInvalidCloseQuantity);
+        assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
         market.redeem_settled_internal(manager, market_oracle, &redeemed_order, ctx);
-        redeemed_order.id()
+        (redeemed_order.id(), option::none())
     } else {
-        let resulting_order = market.redeem_live_internal(
+        let replacement_order_id = market.redeem_live_internal(
             manager,
             config,
             market_oracle,
@@ -286,7 +287,7 @@ public fun redeem(
             clock,
             ctx,
         );
-        resulting_order.id()
+        (redeemed_order.id(), replacement_order_id)
     }
 }
 
@@ -586,7 +587,7 @@ fun redeem_live_internal(
     close_quantity: u64,
     clock: &Clock,
     ctx: &mut TxContext,
-): Order {
+): Option<u256> {
     manager.assert_owner(ctx);
     market.assert_pyth_feed(pyth);
     config.pricing_config().assert_live_quote_available(market_oracle, pyth, clock);
@@ -603,8 +604,12 @@ fun redeem_live_internal(
             clock,
         );
 
-    if (resulting_order.id() != order.id()) {
-        manager.add_position(market.id(), resulting_order.id());
+    let replacement_order_id = if (resulting_order.id() == order.id()) {
+        option::none()
+    } else {
+        let replacement_order_id = resulting_order.id();
+        manager.add_position(market.id(), replacement_order_id);
+        option::some(replacement_order_id)
     };
 
     market.settle_live_redeem_payment(
@@ -614,7 +619,7 @@ fun redeem_live_internal(
         close_quantity,
         ctx,
     );
-    resulting_order
+    replacement_order_id
 }
 
 fun redeem_settled_internal(
