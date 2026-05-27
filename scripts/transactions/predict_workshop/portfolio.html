@@ -114,14 +114,16 @@
 				<th>Underlying</th><th>Band</th><th>Expiry (UTC)</th>
 				<th style="text-align:right">Qty</th>
 				<th style="text-align:right">Entry</th>
+				<th style="text-align:right">Mark</th>
+				<th style="text-align:right">uPnL</th>
 				<th style="text-align:right">Cost</th>
 				<th>Oracle</th>
 			</tr>
 		</thead>
-		<tbody id="ranges-body"><tr><td colspan="7" class="empty">—</td></tr></tbody>
+		<tbody id="ranges-body"><tr><td colspan="9" class="empty">—</td></tr></tbody>
 	</table>
 	<div style="color: var(--muted); font-size: 11px; margin-top: 8px;">
-		Mark / uPnL omitted — range pricing requires an on-chain view call.
+		Mark / uPnL computed live via devInspect of <code>predict::get_range_trade_amounts</code>.
 	</div>
 </div>
 
@@ -130,7 +132,17 @@
 	<a target="_blank" rel="noopener" href="https://testnet.suivision.xyz/object/0xc8736204d12f0a7277c86388a68bf8a194b0a14c5538ad13f22cbd8e2a38028a">0xc873…028a</a>
 </footer>
 
-<script>
+<script type="module">
+import { SuiClient } from 'https://esm.sh/@mysten/sui@2.5.0/client?bundle';
+import { Transaction } from 'https://esm.sh/@mysten/sui@2.5.0/transactions?bundle';
+
+const PREDICT_PACKAGE = '0xf5ea2b3749c65d6e56507cc35388719aadb28f9cab873696a2f8687f5c785138';
+const PREDICT_OBJECT  = '0xc8736204d12f0a7277c86388a68bf8a194b0a14c5538ad13f22cbd8e2a38028a';
+const SUI_RPC_URL     = 'https://fullnode.testnet.sui.io';
+const ZERO_ADDR       = '0x0000000000000000000000000000000000000000000000000000000000000000';
+
+const suiClient = new SuiClient({ url: SUI_RPC_URL });
+
 const PRICE_SCALE = 1_000_000_000n;
 const DUSDC_SCALE = 1_000_000n;
 
@@ -163,6 +175,51 @@ async function fetchOracleMeta(server, oracleId) {
 		.catch(() => ({}));
 	oracleMetaCache.set(oracleId, p);
 	return p;
+}
+
+// Read u64 little-endian from a Uint8Array.
+const decodeU64 = (bytes) => {
+	const buf = new Uint8Array(bytes);
+	const v = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+	return v.getBigUint64(0, true);
+};
+
+// Calls predict::get_range_trade_amounts via devInspect and returns
+// { cost, payout } both in 1e6 DUSDC units, or null on error.
+async function quoteRange(oracleId, expiry, lower, higher, qty) {
+	const tx = new Transaction();
+	const key = tx.moveCall({
+		target: `${PREDICT_PACKAGE}::range_key::new`,
+		arguments: [
+			tx.pure.id(oracleId),
+			tx.pure.u64(expiry),
+			tx.pure.u64(lower),
+			tx.pure.u64(higher),
+		],
+	});
+	tx.moveCall({
+		target: `${PREDICT_PACKAGE}::predict::get_range_trade_amounts`,
+		arguments: [
+			tx.object(PREDICT_OBJECT),
+			tx.object(oracleId),
+			key,
+			tx.pure.u64(qty),
+			tx.object('0x6'),
+		],
+	});
+	try {
+		const res = await suiClient.devInspectTransactionBlock({
+			sender: ZERO_ADDR,
+			transactionBlock: tx,
+		});
+		// results[0] is range_key::new; results[1] is get_range_trade_amounts.
+		const ret = res.results?.[1]?.returnValues;
+		if (!ret || ret.length < 2) return null;
+		return { cost: decodeU64(ret[0][0]), payout: decodeU64(ret[1][0]) };
+	} catch (err) {
+		console.warn('quoteRange failed', err);
+		return null;
+	}
 }
 
 async function load() {
@@ -244,17 +301,38 @@ async function load() {
 		}
 		const openRanges = [...net.values()].filter((r) => r.qty > 0n);
 
-		// Resolve underlying per oracle in parallel.
-		const metas = await Promise.all(openRanges.map((r) => fetchOracleMeta(server, r.row.oracle_id)));
+		// Resolve underlying per oracle + quote each range's live mark in parallel.
+		const [metas, quotes] = await Promise.all([
+			Promise.all(openRanges.map((r) => fetchOracleMeta(server, r.row.oracle_id))),
+			Promise.all(openRanges.map((r) =>
+				quoteRange(
+					r.row.oracle_id,
+					BigInt(r.row.expiry),
+					BigInt(r.row.lower_strike),
+					BigInt(r.row.higher_strike),
+					r.qty,
+				),
+			)),
+		]);
 
 		const rangeBody = document.getElementById('ranges-body');
 		if (openRanges.length === 0) {
-			rangeBody.innerHTML = '<tr><td colspan="7" class="empty">No open vertical ranges.</td></tr>';
+			rangeBody.innerHTML = '<tr><td colspan="9" class="empty">No open vertical ranges.</td></tr>';
 		} else {
 			rangeBody.innerHTML = openRanges.map(({ row, qty, cost }, i) => {
 				const meta = metas[i] ?? {};
-				const entryRaw = qty > 0n ? (cost * BigInt(1_000_000)) / qty : 0n; // 1e6 → 1e9 scale
+				const quote = quotes[i];
+				// Entry / mark prices: payout × 1e9 / qty (both in 1e6 units) → 1e9-scaled price.
+				const entryRaw = qty > 0n ? (cost * 1_000_000_000n) / qty : 0n;
 				const entry = (Number(entryRaw) / 1e9).toFixed(4);
+				let mark = '—', upnl = '—', upnlCls = '';
+				if (quote) {
+					const markRaw = qty > 0n ? (quote.payout * 1_000_000_000n) / qty : 0n;
+					mark = (Number(markRaw) / 1e9).toFixed(4);
+					const upnlRaw = quote.payout - cost;
+					upnl = fmtUsd(upnlRaw);
+					upnlCls = colorize(upnlRaw);
+				}
 				return `
 				<tr>
 					<td>${meta.underlying_asset ?? '?'}</td>
@@ -262,6 +340,8 @@ async function load() {
 					<td class="mono">${fmtTime(row.expiry)}</td>
 					<td class="num">${fmtUsd(qty)}</td>
 					<td class="num">${entry}</td>
+					<td class="num">${mark}</td>
+					<td class="num ${upnlCls}">${upnl}</td>
 					<td class="num">${fmtUsd(cost)}</td>
 					<td class="mono ellide" title="${row.oracle_id}">
 						<a target="_blank" rel="noopener" href="https://testnet.suivision.xyz/object/${row.oracle_id}">${shortId(row.oracle_id)}</a>
