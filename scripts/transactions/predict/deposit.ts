@@ -1,47 +1,84 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+// LP supply: take DUSDC from the active wallet's existing balance and call
+// predict::supply<DUSDC>, then transfer the resulting PLP coin back.
+//
+// The active sui-client address must already hold ≥ AMOUNT DUSDC. This script
+// does NOT use the treasury cap.
+//
+// Env:
+//   AMOUNT   DUSDC to supply, in DUSDC units (1e6). default 1_000_000 = $1.
+
 import { Transaction } from '@mysten/sui/transactions';
 import { getActiveAddress, getClient, getSigner } from '../../utils/utils.js';
 import {
-    predictPackageID,
-    predictObjectID,
-    dusdcPackageID,
-    dusdcTreasuryCapID,
+	predictPackageID,
+	predictObjectID,
+	dusdcPackageID,
 } from '../../config/constants.js';
 
 const network = 'testnet' as const;
 const DUSDC_TYPE = `${dusdcPackageID[network]}::dusdc::DUSDC`;
 const CLOCK = '0x6';
-const DEPOSIT_AMOUNT = BigInt(process.env.AMOUNT ?? 1_000_000) * 1_000_000n;
+const SUPPLY_AMOUNT = BigInt(process.env.AMOUNT ?? 1_000_000);
 
 (async () => {
-    const client = getClient(network);
-    const signer = getSigner();
-    const address = getActiveAddress();
+	const client = getClient(network);
+	const signer = getSigner();
+	const address = getActiveAddress();
 
-    const tx = new Transaction();
-    const coin = tx.moveCall({
-        target: '0x2::coin::mint',
-        typeArguments: [DUSDC_TYPE],
-        arguments: [tx.object(dusdcTreasuryCapID[network]), tx.pure.u64(DEPOSIT_AMOUNT)],
-    });
-    // Move signature: supply<Quote>(predict, coin, clock, ctx)
-    const lpCoin = tx.moveCall({
-        target: `${predictPackageID[network]}::predict::supply`,
-        typeArguments: [DUSDC_TYPE],
-        arguments: [tx.object(predictObjectID[network]), coin, tx.object(CLOCK)],
-    });
-    tx.transferObjects([lpCoin], tx.pure.address(address));
+	const coins = await client.getCoins({ owner: address, coinType: DUSDC_TYPE });
+	if (coins.data.length === 0) {
+		console.error(`No DUSDC found for ${address}. Ask the host to mint you DUSDC.`);
+		process.exit(1);
+	}
+	const total = coins.data.reduce((s, c) => s + BigInt(c.balance), 0n);
+	if (total < SUPPLY_AMOUNT) {
+		console.error(`Insufficient DUSDC: have ${Number(total) / 1e6}, need ${Number(SUPPLY_AMOUNT) / 1e6}`);
+		process.exit(1);
+	}
 
-    const result = await client.signAndExecuteTransaction({
-        transaction: tx,
-        signer,
-        options: { showEffects: true },
-    });
-    if (result.effects?.status.status !== 'success') {
-        console.error('Supply failed:', result.effects?.status);
-        process.exit(1);
-    }
-    console.log(`Supplied ${Number(DEPOSIT_AMOUNT) / 1e6} DUSDC. Digest: ${result.digest}`);
+	console.log(`LP:     ${address}`);
+	console.log(`Supply: ${Number(SUPPLY_AMOUNT) / 1e6} DUSDC\n`);
+
+	const tx = new Transaction();
+	const primary = tx.object(coins.data[0].coinObjectId);
+	if (coins.data.length > 1) {
+		tx.mergeCoins(
+			primary,
+			coins.data.slice(1).map((c) => tx.object(c.coinObjectId)),
+		);
+	}
+	const [supplyCoin] = tx.splitCoins(primary, [tx.pure.u64(SUPPLY_AMOUNT)]);
+
+	const lpCoin = tx.moveCall({
+		target: `${predictPackageID[network]}::predict::supply`,
+		typeArguments: [DUSDC_TYPE],
+		arguments: [tx.object(predictObjectID[network]), supplyCoin, tx.object(CLOCK)],
+	});
+	tx.transferObjects([lpCoin], tx.pure.address(address));
+
+	const result = await client.signAndExecuteTransaction({
+		transaction: tx,
+		signer,
+		options: { showEffects: true, showEvents: true, showObjectChanges: true },
+	});
+	if (result.effects?.status.status !== 'success') {
+		console.error('Supply failed:', result.effects?.status);
+		process.exit(1);
+	}
+
+	const supplied = result.events?.find((e) => e.type.endsWith('::predict::Supplied'));
+	if (supplied) {
+		console.log('Supplied event:');
+		console.dir(supplied.parsedJson, { depth: null });
+	}
+	const plp = result.objectChanges?.find(
+		(c) => c.type === 'created' && c.objectType.includes('::plp::PLP'),
+	);
+	if (plp && plp.type === 'created') {
+		console.log(`\nPLP_COIN=${plp.objectId}`);
+	}
+	console.log(`\nDigest: ${result.digest}`);
 })();

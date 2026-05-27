@@ -28,7 +28,7 @@ Strikes and prices use **1e9 scaling** (a $75,000 BTC strike is `75_000_000_000_
    ```
    cd scripts && pnpm install
    ```
-3. **DUSDC**. There is no public faucet — drop your testnet address in the workshop chat and the host will mint you DUSDC. (If you're running these scripts yourself and hold the treasury cap, every mint/range script will auto-mint the DUSDC it needs.)
+3. **DUSDC**. There is no public faucet — drop your testnet address in the workshop chat and the host will mint you DUSDC. Every script that needs DUSDC pulls from the coins you already own (no treasury cap required); you just need a non-zero balance to start.
 
 ## The five commands
 
@@ -53,7 +53,7 @@ export MANAGER_ID=0x...
 
 ### 3. Mint a directional position
 
-UP/DOWN binary bet on a strike. The script also tops up your manager with DUSDC in the same PTB.
+UP/DOWN binary bet on a strike. The script also tops up your manager with DUSDC in the same PTB (sourced from coins you already own).
 
 ```
 export ORACLE_ID=0x...                        # from step 1
@@ -61,10 +61,13 @@ export EXPIRY=1748419200000                   # from step 1
 export STRIKE=75000000000000                  # $75,000 in 1e9
 export DIRECTION=up                           # or down
 export QUANTITY=1000000                       # $1 face
+# optional:
+# export TOPUP=2000000                        # DUSDC to deposit before mint (default = QUANTITY)
+# export SKIP_TOPUP=1                         # skip deposit, use manager's existing balance
 
 pnpm predict-mint
 ```
-The PTB does, in order: mint DUSDC → `predict_manager::deposit` → `market_key::up/down` → `predict::mint`. A `PositionMinted` event prints.
+The PTB does, in order: pick up your existing DUSDC → `predict_manager::deposit` → `market_key::up/down` → `predict::mint`. A `PositionMinted` event prints.
 
 ### 4. Redeem the position
 

@@ -3,10 +3,13 @@
 
 // Workshop step 3: mint a directional binary position (UP or DOWN bet on a
 // strike). One PTB:
-//   1. mint DUSDC from the test treasury cap
+//   1. take DUSDC from the user's existing balance (merge + split)
 //   2. deposit it into the caller's PredictManager
 //   3. build a MarketKey from (oracle_id, expiry, strike, direction)
 //   4. call predict::mint<DUSDC>
+//
+// The user's active sui-client address must already hold DUSDC. This script
+// does NOT touch the treasury cap.
 //
 // Required env:
 //   MANAGER_ID   the user's PredictManager id (from createManager.ts)
@@ -16,14 +19,14 @@
 //   DIRECTION    "up" or "down"
 // Optional:
 //   QUANTITY     contract count in DUSDC units (1e6). default 1_000_000 = $1.
-//   DEPOSIT      DUSDC to top up the manager before mint, in DUSDC units.
-//                default = QUANTITY (enough to cover up to a $1 ask).
+//   TOPUP        DUSDC to deposit into the manager before mint, in DUSDC
+//                units. default = QUANTITY (enough to cover up to a $1 ask).
+//   SKIP_TOPUP   set to 1 to skip the deposit step (use manager balance).
 
 import { Transaction } from '@mysten/sui/transactions';
 import { getActiveAddress, getClient, getSigner } from '../../utils/utils.js';
 import {
 	dusdcPackageID,
-	dusdcTreasuryCapID,
 	predictObjectID,
 	predictPackageID,
 } from '../../config/constants.js';
@@ -52,7 +55,8 @@ const required = (name: string): string => {
 	const strike = BigInt(required('STRIKE'));
 	const direction = required('DIRECTION').toLowerCase();
 	const quantity = BigInt(process.env.QUANTITY ?? 1_000_000); // $1 face
-	const deposit = BigInt(process.env.DEPOSIT ?? quantity); // top up at least the qty
+	const topup = BigInt(process.env.TOPUP ?? quantity);
+	const skipTopup = process.env.SKIP_TOPUP === '1';
 
 	if (direction !== 'up' && direction !== 'down') {
 		console.error('DIRECTION must be "up" or "down"');
@@ -66,21 +70,37 @@ const required = (name: string): string => {
 	console.log(`Strike:   ${Number(strike) / 1e9}`);
 	console.log(`Direction: ${direction.toUpperCase()}`);
 	console.log(`Quantity: ${Number(quantity) / 1e6} contracts ($${Number(quantity) / 1e6} face)`);
-	console.log(`Top-up:   ${Number(deposit) / 1e6} DUSDC\n`);
+	console.log(`Top-up:   ${skipTopup ? 'skipped' : `${Number(topup) / 1e6} DUSDC`}\n`);
 
 	const tx = new Transaction();
 
-	// 1. Mint DUSDC for the trader and 2. deposit it into the PredictManager.
-	const dusdc = tx.moveCall({
-		target: '0x2::coin::mint',
-		typeArguments: [DUSDC_TYPE],
-		arguments: [tx.object(dusdcTreasuryCapID[network]), tx.pure.u64(deposit)],
-	});
-	tx.moveCall({
-		target: `${predictPackageID[network]}::predict_manager::deposit`,
-		typeArguments: [DUSDC_TYPE],
-		arguments: [tx.object(managerId), dusdc],
-	});
+	// 1. Take DUSDC from the user's wallet and 2. deposit it into the manager.
+	if (!skipTopup) {
+		const coins = await client.getCoins({ owner: address, coinType: DUSDC_TYPE });
+		if (coins.data.length === 0) {
+			console.error(`No DUSDC found for ${address}. Ask the host to mint you DUSDC.`);
+			process.exit(1);
+		}
+		const total = coins.data.reduce((s, c) => s + BigInt(c.balance), 0n);
+		if (total < topup) {
+			console.error(`Insufficient DUSDC: have ${Number(total) / 1e6}, need ${Number(topup) / 1e6}`);
+			process.exit(1);
+		}
+
+		const primary = tx.object(coins.data[0].coinObjectId);
+		if (coins.data.length > 1) {
+			tx.mergeCoins(
+				primary,
+				coins.data.slice(1).map((c) => tx.object(c.coinObjectId)),
+			);
+		}
+		const [depositCoin] = tx.splitCoins(primary, [tx.pure.u64(topup)]);
+		tx.moveCall({
+			target: `${predictPackageID[network]}::predict_manager::deposit`,
+			typeArguments: [DUSDC_TYPE],
+			arguments: [tx.object(managerId), depositCoin],
+		});
+	}
 
 	// 3. Build the MarketKey.
 	const keyFn = direction === 'up' ? 'up' : 'down';
