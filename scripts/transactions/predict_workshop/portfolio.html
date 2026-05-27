@@ -126,11 +126,10 @@
 				<th style="text-align:right">Entry</th>
 				<th style="text-align:right">Mark</th>
 				<th style="text-align:right">uPnL</th>
-				<th style="text-align:right">Cost</th>
 				<th>Oracle</th>
 			</tr>
 		</thead>
-		<tbody id="ranges-body"><tr><td colspan="9" class="empty">—</td></tr></tbody>
+		<tbody id="ranges-body"><tr><td colspan="8" class="empty">—</td></tr></tbody>
 	</table>
 	<div style="color: var(--muted); font-size: 11px; margin-top: 8px;">
 		Mark / uPnL computed live via devInspect of <code>predict::get_range_trade_amounts</code>.
@@ -367,7 +366,7 @@ async function load() {
 
 		const rangeBody = document.getElementById('ranges-body');
 		if (openRanges.length === 0) {
-			rangeBody.innerHTML = '<tr><td colspan="9" class="empty">No open vertical ranges.</td></tr>';
+			rangeBody.innerHTML = '<tr><td colspan="8" class="empty">No open vertical ranges.</td></tr>';
 		} else {
 			rangeBody.innerHTML = openRanges.map(({ row, qty, cost }, i) => {
 				const meta = metas[i] ?? {};
@@ -392,7 +391,6 @@ async function load() {
 					<td class="num">${entry}</td>
 					<td class="num">${mark}</td>
 					<td class="num ${upnlCls}">${upnl}</td>
-					<td class="num">${fmtUsd(cost)}</td>
 					<td class="mono ellide" title="${row.oracle_id}">
 						<a target="_blank" rel="noopener" href="https://testnet.suivision.xyz/object/${row.oracle_id}">${shortId(row.oracle_id)}</a>
 					</td>
