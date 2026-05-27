@@ -16,6 +16,7 @@
     "predict-withdraw": "pnpm tsx transactions/predict_workshop/withdraw.ts",
     "predict-create-manager": "pnpm tsx transactions/predict_workshop/createManager.ts",
     "predict-list-markets": "pnpm tsx transactions/predict_workshop/listMarkets.ts",
+    "predict-list-positions": "pnpm tsx transactions/predict_workshop/listPositions.ts",
     "predict-mint": "pnpm tsx transactions/predict_workshop/mintPosition.ts",
     "predict-redeem": "pnpm tsx transactions/predict_workshop/redeemPosition.ts",
     "predict-mint-range": "pnpm tsx transactions/predict_workshop/mintRange.ts",
