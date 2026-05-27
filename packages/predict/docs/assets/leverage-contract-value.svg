@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="420" viewBox="0 0 720 420" role="img" aria-labelledby="cv-title cv-desc" font-family="Inter, system-ui, -apple-system, Segoe UI, sans-serif">
+  <title id="cv-title">Contract value versus probability</title>
+  <desc id="cv-desc">A 1x contract's value scales linearly with the range probability. A leveraged contract pays zero up to the floor probability, then scales in parallel above it.</desc>
+
+  <rect width="720" height="420" fill="#ffffff"/>
+
+  <g stroke="#eef2f7" stroke-width="1">
+    <line x1="80" y1="80" x2="640" y2="80"/>
+    <line x1="80" y1="145" x2="640" y2="145"/>
+    <line x1="80" y1="210" x2="640" y2="210"/>
+    <line x1="80" y1="275" x2="640" y2="275"/>
+  </g>
+
+  <line x1="80" y1="340" x2="640" y2="340" stroke="#cbd5e1" stroke-width="1.25"/>
+  <line x1="80" y1="80" x2="80" y2="340" stroke="#cbd5e1" stroke-width="1.25"/>
+
+  <line x1="276" y1="80" x2="276" y2="340" stroke="#ea580c" stroke-width="1.25" stroke-dasharray="4 4"/>
+  <text x="276" y="68" text-anchor="middle" fill="#c2410c" font-size="11" font-weight="600">floor probability</text>
+
+  <line x1="80" y1="340" x2="640" y2="80" stroke="#94a3b8" stroke-width="2"/>
+  <path d="M 80 340 L 276 340 L 640 171" stroke="#0f766e" stroke-width="2.5" fill="none" stroke-linejoin="round"/>
+
+  <text x="650" y="84" fill="#64748b" font-size="12" font-weight="600">1x</text>
+  <text x="650" y="175" fill="#0f766e" font-size="12" font-weight="600">leveraged</text>
+
+  <g font-size="11" fill="#64748b" text-anchor="end">
+    <text x="72" y="344">0</text>
+    <text x="72" y="214">1/2 quantity</text>
+    <text x="72" y="84">quantity</text>
+  </g>
+
+  <g font-size="11" fill="#64748b" text-anchor="middle">
+    <text x="80" y="358">0%</text>
+    <text x="276" y="358">floor</text>
+    <text x="640" y="358">100%</text>
+  </g>
+
+  <text x="360" y="385" text-anchor="middle" fill="#475569" font-size="11">current range probability</text>
+  <text x="28" y="210" text-anchor="middle" transform="rotate(-90 28 210)" fill="#475569" font-size="11">contract value</text>
+</svg>
