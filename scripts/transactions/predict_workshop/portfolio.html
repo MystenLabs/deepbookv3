@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>DeepBook Predict — Portfolio</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+	:root {
+		--bg: #0d1117;
+		--panel: #161b22;
+		--border: #30363d;
+		--fg: #e6edf3;
+		--muted: #8b949e;
+		--accent: #f7c777;
+		--up: #3fb950;
+		--down: #f85149;
+		--mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+	}
+	* { box-sizing: border-box; }
+	html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+	body { padding: 32px; max-width: 1200px; margin: 0 auto; }
+	h1 { margin: 0 0 4px; font-size: 22px; letter-spacing: -0.01em; }
+	.tagline { color: var(--muted); margin-bottom: 28px; font-size: 13px; }
+	.controls { display: flex; gap: 8px; align-items: center; margin-bottom: 24px; flex-wrap: wrap; }
+	.controls label { color: var(--muted); font-size: 12px; }
+	.controls input {
+		background: var(--panel); border: 1px solid var(--border); color: var(--fg);
+		padding: 8px 10px; border-radius: 6px; font-family: var(--mono); font-size: 12px;
+	}
+	.controls input.manager { min-width: 540px; }
+	.controls input.server  { min-width: 320px; }
+	.controls button {
+		background: var(--accent); color: #1c1300; border: 0; padding: 8px 14px;
+		border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px;
+	}
+	.controls button:hover { filter: brightness(1.1); }
+	.controls .auto { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+	.card {
+		background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+		padding: 20px; margin-bottom: 20px;
+	}
+	.card h2 { margin: 0 0 14px; font-size: 14px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
+	.grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
+	.stat { display: flex; flex-direction: column; gap: 4px; }
+	.stat .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+	.stat .value { font-family: var(--mono); font-size: 18px; font-weight: 600; }
+	.value.up { color: var(--up); }
+	.value.down { color: var(--down); }
+	table { width: 100%; border-collapse: collapse; font-size: 13px; }
+	th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+	th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+	td.mono { font-family: var(--mono); }
+	td.num  { font-family: var(--mono); text-align: right; }
+	td.ellide { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.empty { color: var(--muted); padding: 14px 0; font-style: italic; font-size: 13px; }
+	.status { color: var(--muted); font-size: 12px; margin-left: auto; }
+	.dir-up   { color: var(--up);   font-weight: 600; }
+	.dir-down { color: var(--down); font-weight: 600; }
+	footer { color: var(--muted); font-size: 11px; margin-top: 24px; }
+	footer a { color: var(--muted); }
+	a { color: var(--accent); text-decoration: none; }
+	a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<h1>DeepBook Predict — Portfolio</h1>
+<div class="tagline">Read-only viewer for a PredictManager. Sourced from the public indexer.</div>
+
+<div class="controls">
+	<label for="manager">Manager</label>
+	<input id="manager" class="manager" value="0xb7f44301182aeaad54f2e35cbdef164ffa0bbb24aa84a6ab25d6ef05bd5310f0" spellcheck="false" />
+	<label for="server">Server</label>
+	<input id="server" class="server" value="https://predict-server.testnet.mystenlabs.com" spellcheck="false" />
+	<button id="refresh">Refresh</button>
+	<label class="auto"><input type="checkbox" id="auto" /> auto-refresh (10s)</label>
+	<span class="status" id="status">idle</span>
+</div>
+
+<div class="card">
+	<h2>Summary</h2>
+	<div class="grid" id="summary">
+		<div class="stat"><span class="label">Owner</span><span class="value mono" id="s-owner">—</span></div>
+		<div class="stat"><span class="label">DUSDC balance</span><span class="value" id="s-balance">—</span></div>
+		<div class="stat"><span class="label">Open exposure</span><span class="value" id="s-exposure">—</span></div>
+		<div class="stat"><span class="label">Account value</span><span class="value" id="s-account">—</span></div>
+		<div class="stat"><span class="label">Realized P&amp;L</span><span class="value" id="s-rpnl">—</span></div>
+		<div class="stat"><span class="label">Unrealized P&amp;L</span><span class="value" id="s-upnl">—</span></div>
+		<div class="stat"><span class="label">Open positions</span><span class="value" id="s-positions">—</span></div>
+		<div class="stat"><span class="label">Awaiting settlement</span><span class="value" id="s-await">—</span></div>
+	</div>
+</div>
+
+<div class="card">
+	<h2>Directional positions</h2>
+	<table id="positions-table">
+		<thead>
+			<tr>
+				<th>Side</th><th>Underlying</th><th>Strike</th><th>Expiry (UTC)</th>
+				<th style="text-align:right">Qty</th><th style="text-align:right">Entry</th>
+				<th style="text-align:right">Mark</th><th style="text-align:right">uPnL</th>
+				<th>Oracle</th>
+			</tr>
+		</thead>
+		<tbody id="positions-body"><tr><td colspan="9" class="empty">—</td></tr></tbody>
+	</table>
+</div>
+
+<div class="card">
+	<h2>Vertical ranges</h2>
+	<table id="ranges-table">
+		<thead>
+			<tr>
+				<th>Underlying</th><th>Band</th><th>Expiry (UTC)</th>
+				<th style="text-align:right">Qty</th><th>Oracle</th>
+			</tr>
+		</thead>
+		<tbody id="ranges-body"><tr><td colspan="5" class="empty">—</td></tr></tbody>
+	</table>
+</div>
+
+<footer>
+	Predict object on testnet:
+	<a target="_blank" rel="noopener" href="https://testnet.suivision.xyz/object/0xc8736204d12f0a7277c86388a68bf8a194b0a14c5538ad13f22cbd8e2a38028a">0xc873…028a</a>
+</footer>
+
+<script>
+const PRICE_SCALE = 1_000_000_000n;
+const DUSDC_SCALE = 1_000_000n;
+
+const fmtUsd = (raw, scale = DUSDC_SCALE) => {
+	if (raw === null || raw === undefined) return '—';
+	const n = Number(BigInt(raw)) / Number(scale);
+	const sign = n < 0 ? '−' : '';
+	return sign + '$' + Math.abs(n).toLocaleString(undefined, { maximumFractionDigits: 4 });
+};
+const fmtStrike = (raw) => {
+	const n = Number(BigInt(raw)) / Number(PRICE_SCALE);
+	return '$' + n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+};
+const fmtPrice = (raw) => (Number(BigInt(raw)) / Number(PRICE_SCALE)).toFixed(4);
+const fmtTime = (ms) => new Date(Number(ms)).toISOString().replace('T', ' ').slice(0, 16) + 'Z';
+const shortId = (id) => id.slice(0, 6) + '…' + id.slice(-4);
+const colorize = (raw) => Number(raw) === 0 ? '' : (Number(raw) > 0 ? 'up' : 'down');
+
+const get = async (server, path) => {
+	const res = await fetch(server + path);
+	if (!res.ok) throw new Error(`GET ${path} → ${res.status}`);
+	return res.json();
+};
+
+async function load() {
+	const manager = document.getElementById('manager').value.trim();
+	const server = document.getElementById('server').value.trim().replace(/\/$/, '');
+	const status = document.getElementById('status');
+	if (!manager.startsWith('0x')) { status.textContent = 'invalid manager id'; return; }
+
+	status.textContent = 'loading…';
+	try {
+		const [summary, positions, mints, redeems] = await Promise.all([
+			get(server, `/managers/${manager}/summary`),
+			get(server, `/managers/${manager}/positions/summary`),
+			get(server, `/ranges/minted?manager_id=${manager}`).catch(() => []),
+			get(server, `/ranges/redeemed?manager_id=${manager}`).catch(() => []),
+		]);
+
+		// Summary card
+		document.getElementById('s-owner').textContent = shortId(summary.owner);
+		document.getElementById('s-owner').title = summary.owner;
+		const bal = (summary.balances ?? [])[0];
+		document.getElementById('s-balance').textContent = bal ? fmtUsd(bal.balance) : '$0';
+		document.getElementById('s-exposure').textContent = fmtUsd(summary.open_exposure);
+		document.getElementById('s-account').textContent = fmtUsd(summary.account_value);
+		const rpnl = document.getElementById('s-rpnl');
+		rpnl.textContent = fmtUsd(summary.realized_pnl);
+		rpnl.className = 'value ' + colorize(summary.realized_pnl);
+		const upnl = document.getElementById('s-upnl');
+		upnl.textContent = fmtUsd(summary.unrealized_pnl);
+		upnl.className = 'value ' + colorize(summary.unrealized_pnl);
+		document.getElementById('s-positions').textContent = summary.open_positions ?? 0;
+		document.getElementById('s-await').textContent = summary.awaiting_settlement_positions ?? 0;
+
+		// Positions
+		const posBody = document.getElementById('positions-body');
+		const open = (positions ?? []).filter((p) => Number(p.open_quantity) > 0);
+		if (open.length === 0) {
+			posBody.innerHTML = '<tr><td colspan="9" class="empty">No open directional positions.</td></tr>';
+		} else {
+			posBody.innerHTML = open.map((p) => `
+				<tr>
+					<td class="${p.is_up ? 'dir-up' : 'dir-down'}">${p.is_up ? 'UP' : 'DOWN'}</td>
+					<td>${p.underlying_asset}</td>
+					<td class="mono">${fmtStrike(p.strike)}</td>
+					<td class="mono">${fmtTime(p.expiry)}</td>
+					<td class="num">${fmtUsd(p.open_quantity)}</td>
+					<td class="num">${fmtPrice(p.average_entry_price)}</td>
+					<td class="num">${p.mark_price ? fmtPrice(p.mark_price) : '—'}</td>
+					<td class="num ${colorize(p.unrealized_pnl)}">${fmtUsd(p.unrealized_pnl)}</td>
+					<td class="mono ellide" title="${p.oracle_id}">
+						<a target="_blank" rel="noopener" href="https://testnet.suivision.xyz/object/${p.oracle_id}">${shortId(p.oracle_id)}</a>
+					</td>
+				</tr>
+			`).join('');
+		}
+
+		// Ranges (net mint − redeem)
+		const net = new Map();
+		const keyOf = (e) => `${e.oracle_id}|${e.expiry}|${e.lower_strike}|${e.higher_strike}`;
+		for (const m of mints) {
+			const k = keyOf(m);
+			const cur = net.get(k);
+			const delta = BigInt(m.quantity);
+			if (cur) cur.qty += delta; else net.set(k, { row: m, qty: delta });
+		}
+		for (const r of redeems) {
+			const k = keyOf(r);
+			const cur = net.get(k);
+			if (cur) cur.qty -= BigInt(r.quantity);
+		}
+		const openRanges = [...net.values()].filter((r) => r.qty > 0n);
+
+		const rangeBody = document.getElementById('ranges-body');
+		if (openRanges.length === 0) {
+			rangeBody.innerHTML = '<tr><td colspan="5" class="empty">No open vertical ranges.</td></tr>';
+		} else {
+			rangeBody.innerHTML = openRanges.map(({ row, qty }) => `
+				<tr>
+					<td>${row.underlying_asset ?? '?'}</td>
+					<td class="mono">(${fmtStrike(row.lower_strike)}, ${fmtStrike(row.higher_strike)}]</td>
+					<td class="mono">${fmtTime(row.expiry)}</td>
+					<td class="num">${fmtUsd(qty)}</td>
+					<td class="mono ellide" title="${row.oracle_id}">
+						<a target="_blank" rel="noopener" href="https://testnet.suivision.xyz/object/${row.oracle_id}">${shortId(row.oracle_id)}</a>
+					</td>
+				</tr>
+			`).join('');
+		}
+
+		status.textContent = 'updated ' + new Date().toLocaleTimeString();
+	} catch (err) {
+		console.error(err);
+		status.textContent = 'error: ' + err.message;
+	}
+}
+
+document.getElementById('refresh').addEventListener('click', load);
+document.getElementById('manager').addEventListener('keydown', (e) => { if (e.key === 'Enter') load(); });
+
+let timer = null;
+document.getElementById('auto').addEventListener('change', (e) => {
+	if (timer) { clearInterval(timer); timer = null; }
+	if (e.target.checked) timer = setInterval(load, 10_000);
+});
+
+load();
+</script>
+</body>
+</html>

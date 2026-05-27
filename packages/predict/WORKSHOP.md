@@ -98,6 +98,19 @@ HIGHER_STRIKE: 76_000,   // $76,000
 pnpm predict-mint-range
 ```
 
+### Portfolio view
+
+CLI portfolio check (any manager id):
+```
+pnpm predict-list-positions
+```
+
+Or open the standalone HTML viewer in your browser — no build, no server, just `open` (or `xdg-open`) the file:
+```
+open scripts/transactions/predict_workshop/portfolio.html
+```
+Edit the manager id in the input bar, toggle auto-refresh, watch P&L tick.
+
 ### Bonus: provide liquidity
 
 ```
