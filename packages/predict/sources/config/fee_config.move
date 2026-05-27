@@ -3,7 +3,7 @@
 
 /// Stored fee policy config.
 ///
-/// PoolVault reads the current fee-share policy when compacting fee surplus.
+/// PoolVault reads the current fee-share policy when sweeping settled expiry fee surplus.
 /// Expiry markets snapshot the trading loss rebate rate at creation.
 module deepbook_predict::fee_config;
 

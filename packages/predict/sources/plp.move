@@ -6,7 +6,7 @@
 /// PoolVault owns idle DUSDC and the PLP treasury cap. Expiry markets own
 /// active trading capital and risk state. This module coordinates full-pool
 /// valuation, PLP supply/withdrawal, allocation resize, and settled-expiry
-/// compaction. It does not own expiry-local strike, oracle, or position state.
+/// surplus sweeping. It does not own expiry-local strike, oracle, or position state.
 module deepbook_predict::plp;
 
 use deepbook::math;
@@ -46,6 +46,7 @@ const EInvalidInitialSupply: u64 = 18;
 const EZeroShares: u64 = 19;
 const EZeroPoolValue: u64 = 20;
 const EPackageVersionDisabled: u64 = 21;
+const EZeroAllocatedCapital: u64 = 22;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -55,9 +56,9 @@ public struct PoolVault has key {
     id: UID,
     /// Idle LP-owned DUSDC available for withdrawals and new allocations.
     idle_balance: Balance<DUSDC>,
-    /// Protocol revenue swept from compacted expiry fee surplus.
+    /// Protocol revenue swept from settled expiry fee surplus.
     protocol_fee_balance: Balance<DUSDC>,
-    /// Insurance fees swept from compacted expiry fee surplus.
+    /// Insurance fees swept from settled expiry fee surplus.
     insurance_fee_balance: Balance<DUSDC>,
     treasury_cap: TreasuryCap<PLP>,
     /// Expiry markets that still contribute active pool valuation/risk.
@@ -121,12 +122,12 @@ public fun idle_balance(vault: &PoolVault): u64 {
     vault.idle_balance.value()
 }
 
-/// Return protocol revenue swept from compacted expiry fee surplus.
+/// Return protocol revenue swept from settled expiry fee surplus.
 public fun protocol_fee_balance(vault: &PoolVault): u64 {
     vault.protocol_fee_balance.value()
 }
 
-/// Return insurance fees swept from compacted expiry fee surplus.
+/// Return insurance fees swept from settled expiry fee surplus.
 public fun insurance_fee_balance(vault: &PoolVault): u64 {
     vault.insurance_fee_balance.value()
 }
@@ -151,7 +152,7 @@ public fun total_allocated_capital(vault: &PoolVault): u64 {
 /// The accumulator snapshots the active expiry set and starts with idle DUSDC.
 /// Callers must add one valuation witness for each active expiry before
 /// supplying or withdrawing.
-public fun start_valuation(vault: &PoolVault, config: &mut ProtocolConfig): PoolValuation {
+public fun start_valuation(config: &mut ProtocolConfig, vault: &PoolVault): PoolValuation {
     vault.assert_version_allowed();
     config.begin_valuation();
     PoolValuation {
@@ -183,8 +184,8 @@ public fun add_expiry_valuation(valuation: &mut PoolValuation, expiry_valuation:
 /// allocation capacity and the upgrade-required per-expiry hard cap.
 public fun grow_expiry_allocation(
     vault: &mut PoolVault,
-    config: &ProtocolConfig,
     market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
     market_oracle: &MarketOracle,
     clock: &Clock,
 ) {
@@ -207,8 +208,8 @@ public fun grow_expiry_allocation(
 /// inside the expiry market.
 public fun shrink_expiry_allocation(
     vault: &mut PoolVault,
-    config: &ProtocolConfig,
     market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
     market_oracle: &MarketOracle,
     clock: &Clock,
 ) {
@@ -224,42 +225,40 @@ public fun shrink_expiry_allocation(
     vault.idle_balance.join(allocation);
 }
 
-/// Compact a settled active expiry and remove it from pool valuation.
+/// Sweep settled expiry surplus into the pool.
 ///
-/// The expiry keeps exactly its remaining settled redeem liability. Surplus LP
-/// cash returns to idle liquidity, while fee surplus is split into LP,
-/// protocol revenue, and insurance destinations.
-public fun compact_expiry_market(
+/// This no-ops before settlement. Once settled, it caches terminal payout
+/// liability if needed, retires active allocation on the first sweep, and
+/// distributes fee surplus not reserved for unresolved rebates.
+public fun sweep_settled_expiry_surplus(
     vault: &mut PoolVault,
-    config: &ProtocolConfig,
     market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
     market_oracle: &MarketOracle,
 ) {
     vault.assert_version_allowed();
     config.assert_not_valuation_in_progress();
-    assert!(vault.active_expiry_markets.contains(&market.id()), EExpiryMarketNotActive);
+    market.assert_market_oracle(market_oracle);
+    if (!market_oracle.is_settled()) return;
+
     let allocated_reduction = market.allocated_capital();
-    assert!(
-        vault.total_allocated_capital >= allocated_reduction,
-        EInsufficientTotalAllocatedCapital,
+    if (allocated_reduction > 0) {
+        assert!(vault.active_expiry_markets.contains(&market.id()), EExpiryMarketNotActive);
+        assert!(
+            vault.total_allocated_capital >= allocated_reduction,
+            EInsufficientTotalAllocatedCapital,
+        );
+    };
+
+    let (released_allocation, returned_cash, returned_fee_surplus) = market.release_settled_surplus(
+        market_oracle,
     );
-    let (returned_cash, returned_fee_surplus) = market.compact_settled(market_oracle);
-    vault.total_allocated_capital = vault.total_allocated_capital - allocated_reduction;
+    if (released_allocation > 0) {
+        vault.total_allocated_capital = vault.total_allocated_capital - released_allocation;
+        vault.unregister_expiry_market(market.id());
+    };
     vault.idle_balance.join(returned_cash);
     vault.distribute_fee_surplus(config, returned_fee_surplus);
-    vault.unregister_expiry_market(market.id());
-}
-
-/// Sweep fee surplus released after compacted expiry rebate claims resolve.
-public fun sweep_expiry_fee_surplus(
-    vault: &mut PoolVault,
-    config: &ProtocolConfig,
-    market: &mut ExpiryMarket,
-) {
-    vault.assert_version_allowed();
-    config.assert_not_valuation_in_progress();
-    let fee_surplus = market.release_fee_surplus();
-    vault.distribute_fee_surplus(config, fee_surplus);
 }
 
 /// Supply DUSDC into the pool vault against a complete full-pool valuation.
@@ -447,13 +446,13 @@ fun remaining_global_allocation_capacity(vault: &PoolVault, risk_config: &RiskCo
 }
 
 fun grow_amount(vault: &PoolVault, risk_config: &RiskConfig, market: &ExpiryMarket): u64 {
-    let utilization = market.utilization();
+    let current_allocation = market.allocated_capital();
+    let utilization = allocation_utilization(market.payout_liability(), current_allocation);
     assert!(
         utilization >= risk_config.grow_utilization_threshold(),
         EGrowUtilizationBelowThreshold,
     );
 
-    let current_allocation = market.allocated_capital();
     let desired_target = math::mul(current_allocation, risk_config.grow_factor()).min(
         config_constants::max_allocation!(),
     );
@@ -467,16 +466,18 @@ fun grow_amount(vault: &PoolVault, risk_config: &RiskConfig, market: &ExpiryMark
 }
 
 fun shrink_amount(risk_config: &RiskConfig, market: &ExpiryMarket): u64 {
-    let utilization = market.utilization();
+    let current_allocation = market.allocated_capital();
+    let utilization = allocation_utilization(market.payout_liability(), current_allocation);
     assert!(
         utilization <= risk_config.shrink_utilization_threshold(),
         EShrinkUtilizationAboveThreshold,
     );
 
-    let current_allocation = market.allocated_capital();
-    let target_allocation = math::mul(current_allocation, risk_config.shrink_factor())
-        .max(risk_config.expiry_allocation())
-        .max(market.max_payout());
+    let target_allocation = math::mul(
+        current_allocation,
+        risk_config.shrink_factor(),
+    ).max(risk_config.expiry_allocation());
+    // returnable_capital caps the shrink so allocation and cash remain above payout liability.
     let amount = if (target_allocation < current_allocation) {
         current_allocation - target_allocation
     } else {
@@ -484,6 +485,11 @@ fun shrink_amount(risk_config: &RiskConfig, market: &ExpiryMarket): u64 {
     }.min(market.returnable_capital());
     assert!(amount > 0, ENoAllocationResize);
     amount
+}
+
+fun allocation_utilization(payout_liability: u64, allocated_capital: u64): u64 {
+    assert!(allocated_capital > 0, EZeroAllocatedCapital);
+    math::div(payout_liability, allocated_capital)
 }
 
 fun distribute_fee_surplus(

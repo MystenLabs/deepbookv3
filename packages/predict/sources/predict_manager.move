@@ -4,24 +4,32 @@
 /// PredictManager wraps a BalanceManager for Predict trading.
 ///
 /// Users deposit DUSDC into the PredictManager. DUSDC custody is delegated to
-/// BalanceManager, while positions are tracked as canonical ranges keyed by
-/// RangeKey.
+/// BalanceManager, while positions are tracked by order IDs scoped to an
+/// ExpiryMarket.
 module deepbook_predict::predict_manager;
 
 use deepbook::balance_manager::{Self, BalanceManager, DepositCap};
-use deepbook_predict::{builder_code::{Self, BuilderCode}, range_key::RangeKey};
+use deepbook_predict::builder_code::{Self, BuilderCode};
 use dusdc::dusdc::DUSDC;
 use sui::{coin::Coin, derived_object, event, table::{Self, Table}, vec_set::VecSet};
 
 const EInsufficientPosition: u64 = 0;
 const ENotOwner: u64 = 1;
-const EZeroQuantity: u64 = 2;
 const EPackageVersionDisabled: u64 = 3;
 const EExpirySummaryHasOpenPositions: u64 = 4;
+const EPositionAlreadyExists: u64 = 5;
 
 /// The key for deriving predict manager. u64 is optional for
 /// supporting multiple managers per address. Defaults to 0 in v1.
 public struct PredictManagerKey(address, u64) has copy, drop, store;
+
+/// Manager-local position key binding an order ID to the expiry market that minted it.
+public struct PositionKey has copy, drop, store {
+    /// Expiry market object that minted the order.
+    expiry_market_id: ID,
+    /// Packed order ID returned by the mint flow.
+    order_id: u256,
+}
 
 /// PredictManager stores DUSDC in a BalanceManager and tracks positions.
 public struct PredictManager has key {
@@ -29,8 +37,8 @@ public struct PredictManager has key {
     balance_manager: BalanceManager,
     deposit_cap: DepositCap,
     builder_code_id: Option<ID>,
-    /// RangeKey -> open position quantity.
-    positions: Table<RangeKey, u64>,
+    /// Open order positions scoped by expiry market.
+    positions: Table<PositionKey, bool>,
     /// Per-expiry aggregate trading cash flows and open position count.
     expiry_summaries: Table<ID, ExpiryTradingSummary>,
     /// Mirror of `ProtocolConfig.allowed_versions`. Owners run the permissionless
@@ -97,13 +105,9 @@ public fun owner(self: &PredictManager): address {
     self.balance_manager.owner()
 }
 
-/// Return the position quantity for a range key.
-public fun position(self: &PredictManager, key: RangeKey): u64 {
-    if (self.positions.contains(key)) {
-        self.positions[key]
-    } else {
-        0
-    }
+/// Return whether this manager has an open position for an order in one expiry market.
+public fun has_position(self: &PredictManager, expiry_market_id: ID, order_id: u256): bool {
+    self.positions.contains(position_key(expiry_market_id, order_id))
 }
 
 /// Return open position row count for one expiry market.
@@ -221,45 +225,29 @@ public(package) fun deposit_permissionless(
     self.balance_manager.deposit_with_cap(&self.deposit_cap, coin, ctx);
 }
 
-/// Add position quantity to a range.
-public(package) fun increase_position(
-    self: &mut PredictManager,
-    expiry_market_id: ID,
-    key: RangeKey,
-    quantity: u64,
-) {
-    assert_nonzero_quantity(quantity);
-    if (!self.positions.contains(key)) {
-        self.ensure_expiry_summary(expiry_market_id);
-        self.positions.add(key, 0);
-        let summary = &mut self.expiry_summaries[expiry_market_id];
-        summary.open_position_count = summary.open_position_count + 1;
-    };
-    let position = &mut self.positions[key];
-    *position = *position + quantity;
+/// Add an order position.
+public(package) fun add_position(self: &mut PredictManager, expiry_market_id: ID, order_id: u256) {
+    let key = position_key(expiry_market_id, order_id);
+    assert!(!self.positions.contains(key), EPositionAlreadyExists);
+    self.ensure_expiry_summary(expiry_market_id);
+    self.positions.add(key, true);
+    let summary = &mut self.expiry_summaries[expiry_market_id];
+    summary.open_position_count = summary.open_position_count + 1;
 }
 
-/// Remove position quantity from a range and delete empty rows.
-public(package) fun decrease_position(
+/// Remove an order position.
+public(package) fun remove_position(
     self: &mut PredictManager,
     expiry_market_id: ID,
-    key: RangeKey,
-    quantity: u64,
+    order_id: u256,
 ) {
-    self.assert_can_decrease_position(key, quantity);
-    let remove_position;
-    {
-        let position = &mut self.positions[key];
-        *position = *position - quantity;
-        remove_position = *position == 0;
-    };
-    if (remove_position) {
-        self.positions.remove(key);
-        self.ensure_expiry_summary(expiry_market_id);
-        let summary = &mut self.expiry_summaries[expiry_market_id];
-        assert!(summary.open_position_count > 0, EInsufficientPosition);
-        summary.open_position_count = summary.open_position_count - 1;
-    };
+    let key = position_key(expiry_market_id, order_id);
+    assert!(self.positions.contains(key), EInsufficientPosition);
+    self.positions.remove(key);
+    self.ensure_expiry_summary(expiry_market_id);
+    let summary = &mut self.expiry_summaries[expiry_market_id];
+    assert!(summary.open_position_count > 0, EInsufficientPosition);
+    summary.open_position_count = summary.open_position_count - 1;
 }
 
 /// Record DUSDC paid from this manager into an expiry market.
@@ -335,12 +323,6 @@ fun ensure_expiry_summary(self: &mut PredictManager, expiry_market_id: ID) {
     }
 }
 
-fun assert_can_decrease_position(self: &PredictManager, key: RangeKey, quantity: u64) {
-    assert_nonzero_quantity(quantity);
-    assert!(self.positions.contains(key), EInsufficientPosition);
-    assert!(self.positions[key] >= quantity, EInsufficientPosition);
-}
-
-fun assert_nonzero_quantity(quantity: u64) {
-    assert!(quantity > 0, EZeroQuantity);
+fun position_key(expiry_market_id: ID, order_id: u256): PositionKey {
+    PositionKey { expiry_market_id, order_id }
 }
