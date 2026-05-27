@@ -1,7 +1,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Pricing, fees, quotes, and valuation curves for Predict markets.
+/// Pricing, fees, and valuation curves for Predict markets.
 ///
 /// This module is the app-facing read layer for oracle data. It resolves
 /// market oracle and Pyth source state on demand, computes SVI prices, applies
@@ -60,60 +60,46 @@ public(package) fun build_live_curve(
     config: &PricingConfig,
     market: &MarketOracle,
     pyth: &PythSource,
-    clock: &Clock,
     grid_min: u64,
     grid_tick: u64,
     grid_max: u64,
     min_strike: u64,
     max_strike: u64,
+    clock: &Clock,
 ): vector<CurvePoint> {
     let (forward, svi) = resolve_live_inputs(config, market, pyth, clock);
-    build_curve(forward, &svi, grid_min, grid_tick, grid_max, min_strike, max_strike)
+    build_curve(&svi, forward, grid_min, grid_tick, grid_max, min_strike, max_strike)
 }
 
-/// Quote a live range from current oracle state and capacity utilization.
-public(package) fun quote_live_range(
+/// Return the current raw probability for a live range.
+public(package) fun live_range_probability(
     config: &PricingConfig,
     market: &MarketOracle,
     pyth: &PythSource,
-    clock: &Clock,
     lower: u64,
     higher: u64,
-    liability: u64,
-    balance: u64,
-): (u64, u64) {
+    clock: &Clock,
+): u64 {
     let (forward, svi) = resolve_live_inputs(config, market, pyth, clock);
-    let fair_price = compute_range_price(forward, &svi, lower, higher);
-    (fair_price, quote_fee_rate(config, fair_price, liability, balance))
+    compute_range_price(&svi, forward, lower, higher)
 }
 
-/// Quote a live mint range and abort unless the all-in mint price is allowed.
-public(package) fun quote_mint_live_range(
-    config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
-    clock: &Clock,
-    lower: u64,
-    higher: u64,
-    liability: u64,
-    balance: u64,
-): (u64, u64) {
-    let (fair_price, fee_rate) = quote_live_range(
-        config,
-        market,
-        pyth,
-        clock,
-        lower,
-        higher,
-        liability,
-        balance,
-    );
-    let ask_price = fair_price + fee_rate;
+/// Return the per-unit fee for a raw contract probability.
+public(package) fun fee_rate(config: &PricingConfig, probability: u64): u64 {
+    let raw_fee = raw_bernoulli_fee_rate(config, probability);
+    let min_fee = config.min_fee();
+    if (raw_fee > min_fee) raw_fee else min_fee
+}
+
+/// Return fee rate and abort unless the all-in mint price is allowed.
+public(package) fun assert_mint_fee_rate(config: &PricingConfig, probability: u64): u64 {
+    let fee_rate = fee_rate(config, probability);
+    let ask_price = probability + fee_rate;
     assert!(
         ask_price >= config.min_ask_price() && ask_price <= config.max_ask_price(),
         EAskPriceOutOfBounds,
     );
-    (fair_price, fee_rate)
+    fee_rate
 }
 
 /// Abort unless the live oracle inputs needed for a quote are currently usable.
@@ -182,8 +168,8 @@ fun pyth_spot_is_fresh(config: &PricingConfig, pyth: &PythSource, clock: &Clock)
 }
 
 fun build_curve(
-    forward: u64,
     svi: &SVIParams,
+    forward: u64,
     grid_min: u64,
     grid_tick: u64,
     grid_max: u64,
@@ -193,7 +179,7 @@ fun build_curve(
     assert_curve_range(grid_min, grid_tick, grid_max, min_strike, max_strike);
 
     if (min_strike == max_strike) {
-        let price = compute_up_price(forward, svi, min_strike);
+        let price = compute_up_price(svi, forward, min_strike);
         return vector[
             CurvePoint {
                 strike: min_strike,
@@ -202,8 +188,8 @@ fun build_curve(
         ]
     };
 
-    let price_lo = compute_up_price(forward, svi, min_strike);
-    let price_hi = compute_up_price(forward, svi, max_strike);
+    let price_lo = compute_up_price(svi, forward, min_strike);
+    let price_hi = compute_up_price(svi, forward, max_strike);
     let mut points = vector[
         CurvePoint {
             strike: min_strike,
@@ -224,7 +210,7 @@ fun build_curve(
         let strike_lo = points[idx].strike;
         let strike_hi = points[idx + 1].strike;
         let mid_strike = snap_to_tick((strike_lo + strike_hi) / 2, grid_min, grid_tick);
-        let price = compute_up_price(forward, svi, mid_strike);
+        let price = compute_up_price(svi, forward, mid_strike);
         insert_asc(
             &mut points,
             CurvePoint {
@@ -239,7 +225,7 @@ fun build_curve(
 }
 
 /// Compute the fair UP tail price for `strike`.
-fun compute_up_price(forward: u64, svi: &SVIParams, strike: u64): u64 {
+fun compute_up_price(svi: &SVIParams, forward: u64, strike: u64): u64 {
     if (strike == constants::neg_inf!()) {
         return constants::float_scaling!()
     };
@@ -247,62 +233,35 @@ fun compute_up_price(forward: u64, svi: &SVIParams, strike: u64): u64 {
         return 0
     };
 
-    compute_nd2(forward, svi, strike)
+    compute_nd2(svi, forward, strike)
 }
 
 /// Compute the fair price for the range `(lower, higher]`.
-fun compute_range_price(forward: u64, svi: &SVIParams, lower: u64, higher: u64): u64 {
+fun compute_range_price(svi: &SVIParams, forward: u64, lower: u64, higher: u64): u64 {
     assert!(lower < higher, EInvalidRange);
 
-    let lower_up_price = compute_up_price(forward, svi, lower);
-    let higher_up_price = compute_up_price(forward, svi, higher);
+    let lower_up_price = compute_up_price(svi, forward, lower);
+    let higher_up_price = compute_up_price(svi, forward, higher);
     assert!(lower_up_price >= higher_up_price, ERangePriceUnderflow);
 
     lower_up_price - higher_up_price
 }
 
-fun quote_fee_rate(config: &PricingConfig, fair_price: u64, liability: u64, balance: u64): u64 {
-    let price_fee = price_fee_rate(config, fair_price);
-    let utilization_fee = utilization_fee_rate(config, liability, balance);
-    price_fee + utilization_fee
-}
+fun raw_bernoulli_fee_rate(config: &PricingConfig, probability: u64): u64 {
+    assert!(probability <= constants::float_scaling!(), EInvalidLiveFairPrice);
+    if (probability == 0 || probability == constants::float_scaling!()) return 0;
 
-fun price_fee_rate(config: &PricingConfig, fair_price: u64): u64 {
-    let raw_fee = raw_bernoulli_fee_rate(config, fair_price);
-    let min_fee = config.min_fee();
-    if (raw_fee > min_fee) raw_fee else min_fee
-}
-
-fun raw_bernoulli_fee_rate(config: &PricingConfig, fair_price: u64): u64 {
-    assert!(fair_price <= constants::float_scaling!(), EInvalidLiveFairPrice);
-    if (fair_price == 0 || fair_price == constants::float_scaling!()) return 0;
-
-    let complement = constants::float_scaling!() - fair_price;
-    let variance = math::mul(fair_price, complement);
+    let complement = constants::float_scaling!() - probability;
+    let variance = math::mul(probability, complement);
     let bernoulli_factor = predict_math::sqrt(variance, constants::float_scaling!());
     math::mul(config.base_fee(), bernoulli_factor)
-}
-
-fun utilization_fee_rate(config: &PricingConfig, liability: u64, balance: u64): u64 {
-    if (balance == 0 || liability == 0) return 0;
-
-    let util = if (liability >= balance) {
-        constants::float_scaling!()
-    } else {
-        math::div(liability, balance)
-    };
-    let util_sq = math::mul(util, util);
-    math::mul(
-        config.base_fee(),
-        math::mul(config.utilization_multiplier(), util_sq),
-    )
 }
 
 /// Binary pricing from SVI total variance:
 /// - k = ln(strike / forward)
 /// - w(k) = a + b * (rho * (k - m) + sqrt((k - m)^2 + sigma^2))
 /// - d2 = -((k + w(k) / 2) / sqrt(w(k)))
-fun compute_nd2(forward: u64, svi_params: &SVIParams, strike: u64): u64 {
+fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     assert!(forward > 0, EZeroForward);
 
     let strike_ratio = math::div(strike, forward);

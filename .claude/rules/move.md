@@ -74,6 +74,8 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 
   Exception: `init` function typically comes early (after struct definitions).
 
+- Function inputs should be ordered by role: mutable domain objects first, immutable domain objects second, primitive/domain values third, execution context last. `clock: &Clock` is execution context and should be second-to-last when present; `ctx: &mut TxContext` is always last. Constructors with only primitive grid inputs should use natural domain order such as `min_strike, tick_size, max_strike, ctx`. Private algorithm helpers may keep traversal/key ordering when changing it would make the algorithm less readable, but public and package APIs should not put primitive values before object references.
+
 - Utility and math modules should only guard local mathematical or data-structure preconditions (division by zero, invalid precision, insufficient balance/quantity, invalid ranges). They should not encode application-level policy decisions like "this state shouldn't happen" or "this user type gets different treatment." Application-level guards belong in the calling module.
 
 - Do not add explicit overflow, underflow, or numeric-cast asserts solely to replace Move's primitive VM aborts. Move arithmetic and numeric casts already abort atomically on overflow. Keep named assertions for semantic domain bounds, division by zero when the module has a meaningful named zero error, solvency/accounting invariants, authorization, lifecycle, and gas-bounded iteration.

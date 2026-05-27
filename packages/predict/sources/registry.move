@@ -91,22 +91,13 @@ public fun set_min_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: 
     config.set_min_fee(fee);
 }
 
-/// Set the maximum borrow-index increase snapshotted by future expiry markets.
-public fun set_template_max_expiry_borrow_fee(
+/// Set the maximum floor-index increase snapshotted by future expiry markets.
+public fun set_template_max_expiry_floor_premium(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     value: u64,
 ) {
-    config.set_template_max_expiry_borrow_fee(value);
-}
-
-/// Set the utilization multiplier.
-public fun set_utilization_multiplier(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    multiplier: u64,
-) {
-    config.set_utilization_multiplier(multiplier);
+    config.set_template_max_expiry_floor_premium(value);
 }
 
 /// Set the global minimum allowed mint price.
@@ -291,15 +282,15 @@ public fun destroy_pause_cap(cap: PauseCap) {
 
 /// Disable a package version via a valid `PauseCap`. One-way: admin must
 /// `enable_version` to restore.
-public fun disable_version_pause_cap(registry: &mut Registry, version: u64, pause_cap: &PauseCap) {
+public fun disable_version_pause_cap(registry: &mut Registry, pause_cap: &PauseCap, version: u64) {
     registry.assert_valid_pause_cap(pause_cap);
     registry.disable_version_internal(version);
 }
 
 /// Force `trading_paused = true` via a valid `PauseCap`. One-way.
 public fun pause_trading_pause_cap(
-    registry: &Registry,
     config: &mut ProtocolConfig,
+    registry: &Registry,
     pause_cap: &PauseCap,
 ) {
     registry.assert_valid_pause_cap(pause_cap);
@@ -309,8 +300,8 @@ public fun pause_trading_pause_cap(
 /// Force `mint_paused = true` on a single expiry market via a valid `PauseCap`.
 /// One-way; admin's `set_expiry_market_mint_paused` is needed to unpause.
 public fun pause_expiry_market_mint_pause_cap(
-    registry: &Registry,
     market: &mut ExpiryMarket,
+    registry: &Registry,
     pause_cap: &PauseCap,
 ) {
     registry.assert_valid_pause_cap(pause_cap);
@@ -415,14 +406,14 @@ public fun create_expiry_market(
         ctx,
     );
     let expiry_market_id = expiry_market::create_and_share(
-        market_oracle_id,
-        pyth_lazer_feed_id,
         config,
         allocation,
+        allowed_versions,
+        market_oracle_id,
+        pyth_lazer_feed_id,
         expiry,
         min_strike,
         tick_size,
-        allowed_versions,
         ctx,
     );
     pool_vault.register_expiry_market(expiry_market_id);

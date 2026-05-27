@@ -120,14 +120,9 @@ public(package) fun set_min_fee(config: &mut ProtocolConfig, fee: u64) {
     config.pricing_config.set_min_fee(fee);
 }
 
-public(package) fun set_template_max_expiry_borrow_fee(config: &mut ProtocolConfig, value: u64) {
+public(package) fun set_template_max_expiry_floor_premium(config: &mut ProtocolConfig, value: u64) {
     config.assert_not_valuation_in_progress();
-    config.leverage_config.set_template_max_expiry_borrow_fee(value);
-}
-
-public(package) fun set_utilization_multiplier(config: &mut ProtocolConfig, multiplier: u64) {
-    config.assert_not_valuation_in_progress();
-    config.pricing_config.set_utilization_multiplier(multiplier);
+    config.leverage_config.set_template_max_expiry_floor_premium(value);
 }
 
 public(package) fun set_min_ask_price(config: &mut ProtocolConfig, value: u64) {
