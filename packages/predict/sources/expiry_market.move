@@ -75,6 +75,8 @@ public struct FeeAccrued has copy, drop, store {
     expiry_market_id: ID,
     total_fee: u64,
     builder_fee: u64,
+    /// Staking fee discount applied to this trade, in FLOAT_SCALING (0..50%).
+    fee_discount: u64,
     builder_code_id: Option<ID>,
 }
 
@@ -538,12 +540,13 @@ fun assert_pyth_feed(market: &ExpiryMarket, pyth: &PythSource) {
     assert!(market.pyth_lazer_feed_id == pyth.feed_id(), EWrongPythSource);
 }
 
-/// Reduce a trade fee by the manager's staking discount (0..50%). The discount
-/// applies to protocol fee margin only, never to payout backing, so cash-backing
-/// invariants are unaffected.
-fun apply_stake_fee_discount(manager: &PredictManager, fee_amount: u64, clock: &Clock): u64 {
+/// Reduce a trade fee by the manager's staking discount and return the
+/// discounted fee together with the applied discount fraction (FLOAT_SCALING,
+/// 0..50%). The discount applies to protocol fee margin only, never to payout
+/// backing, so cash-backing invariants are unaffected.
+fun apply_stake_fee_discount(manager: &PredictManager, fee_amount: u64, clock: &Clock): (u64, u64) {
     let discount = staking::fee_discount_fraction(manager.effective_power(clock));
-    fee_amount - math::mul(fee_amount, discount)
+    (fee_amount - math::mul(fee_amount, discount), discount)
 }
 
 fun builder_fee_amount(builder_code_id: &Option<ID>, fee_amount: u64, quantity: u64): u64 {
@@ -593,10 +596,10 @@ fun mint_internal(
             leverage,
             clock,
         );
-    let fee_amount = apply_stake_fee_discount(manager, fee_amount, clock);
+    let (fee_amount, fee_discount) = apply_stake_fee_discount(manager, fee_amount, clock);
 
     market.assert_allocation_backing();
-    market.settle_mint_payment(manager, &minted_order, fee_amount, ctx);
+    market.settle_mint_payment(manager, &minted_order, fee_amount, fee_discount, ctx);
     minted_order.id()
 }
 
@@ -626,7 +629,7 @@ fun redeem_live_internal(
             close_quantity,
             clock,
         );
-    let fee_amount = apply_stake_fee_discount(manager, fee_amount, clock);
+    let (fee_amount, fee_discount) = apply_stake_fee_discount(manager, fee_amount, clock);
 
     let replacement_order_id = if (resulting_order.id() == order.id()) {
         option::none()
@@ -640,6 +643,7 @@ fun redeem_live_internal(
         manager,
         net_redeem_amount,
         fee_amount,
+        fee_discount,
         close_quantity,
         ctx,
     );
@@ -666,6 +670,7 @@ fun settle_mint_payment(
     manager: &mut PredictManager,
     order: &Order,
     fee_amount: u64,
+    fee_discount: u64,
     ctx: &mut TxContext,
 ) {
     let quantity = order.quantity();
@@ -685,7 +690,7 @@ fun settle_mint_payment(
     manager.record_cash_paid_to_expiry(market.id(), payment_amount);
 
     market.assert_cash_backing();
-    market.emit_fee_accrued(fee_amount, builder_fee_amount, builder_code_id);
+    market.emit_fee_accrued(fee_amount, builder_fee_amount, fee_discount, builder_code_id);
 }
 
 fun settle_live_redeem_payment(
@@ -693,6 +698,7 @@ fun settle_live_redeem_payment(
     manager: &mut PredictManager,
     net_redeem_amount: u64,
     fee_amount: u64,
+    fee_discount: u64,
     redeemed_quantity: u64,
     ctx: &mut TxContext,
 ) {
@@ -713,7 +719,7 @@ fun settle_live_redeem_payment(
 
     market.assert_cash_backing();
     deposit_live_payout(manager, market, payout, ctx);
-    market.emit_fee_accrued(fee_amount, builder_fee_amount, builder_code_id);
+    market.emit_fee_accrued(fee_amount, builder_fee_amount, fee_discount, builder_code_id);
 }
 
 fun settle_settled_redeem_payment(
@@ -786,6 +792,7 @@ fun emit_fee_accrued(
     market: &ExpiryMarket,
     total_fee: u64,
     builder_fee: u64,
+    fee_discount: u64,
     builder_code_id: Option<ID>,
 ) {
     if (total_fee == 0 && builder_fee == 0) return;
@@ -794,6 +801,7 @@ fun emit_fee_accrued(
         expiry_market_id: market.id(),
         total_fee,
         builder_fee,
+        fee_discount,
         builder_code_id,
     });
 }

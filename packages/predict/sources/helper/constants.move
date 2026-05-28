@@ -45,19 +45,19 @@ public macro fun day_ms(): u64 { 86_400_000 }
 /// Raw units in one whole DEEP (DEEP uses 6 decimals).
 public macro fun deep_decimals(): u64 { 1_000_000 }
 
-/// Staking power per tier: 10k DEEP, in raw units. Each whole tier of power
-/// grants one step of fee discount and loss rebate.
-public macro fun stake_tier_step(): u64 { 10_000 * deep_decimals!() }
+/// Lock horizon for full staking-power weight: 2 years. Shorter remaining locks
+/// earn proportionally less power; longer locks saturate the weight at 1.
+public macro fun max_stake_period_ms(): u64 { 2 * ms_per_year!() }
 
-/// Maximum number of staking tiers; caps the fee discount at 50% and the loss
-/// rebate at 100%.
-public macro fun max_stake_tiers(): u64 { 10 }
+/// Staking power at which trading benefits reach their maximum: 100k DEEP.
+/// Below this, benefits scale linearly with power; above it they stay capped.
+public macro fun max_benefit_power(): u64 { 100_000 * deep_decimals!() }
 
-/// Trading-fee discount granted per staking tier, in FLOAT_SCALING (5%).
-public macro fun fee_discount_per_tier(): u64 { 50_000_000 }
+/// Trading-fee discount at full benefit power, in FLOAT_SCALING (50%).
+public macro fun max_fee_discount(): u64 { 500_000_000 }
 
-/// Trading-loss rebate fraction granted per staking tier, in FLOAT_SCALING (10%).
-public macro fun rebate_per_tier(): u64 { 100_000_000 }
+/// Loss-rebate share at full benefit power, in FLOAT_SCALING (100%).
+public macro fun max_rebate_fraction(): u64 { 1_000_000_000 }
 
 // === Builder Fees ===
 

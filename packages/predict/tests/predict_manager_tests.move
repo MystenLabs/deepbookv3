@@ -26,7 +26,6 @@ const FEE_AMOUNT: u64 = 5_000;
 const CASH_PAID: u64 = 100_000;
 const CASH_RECEIVED: u64 = 60_000;
 const STAKE_AMOUNT: u64 = 100_000_000_000; // 100k DEEP raw (6 decimals)
-const FIFTH_YEAR_MS: u64 = 6_307_200_000; // 365/5 of a year in ms
 
 // === Helpers ===
 
@@ -430,19 +429,19 @@ fun effective_power_is_live_and_zero_after_expiry() {
     let mut manager = create_alice_manager(&mut scenario, registry_id);
     let mut clock = clock::create_for_testing(scenario.ctx());
 
-    // Lock 100k DEEP until one year from epoch 0.
-    manager.set_stake(STAKE_AMOUNT, constants::ms_per_year!());
+    // Lock 100k DEEP for the full two-year horizon from epoch 0.
+    manager.set_stake(STAKE_AMOUNT, constants::max_stake_period_ms!());
 
     // Full lock remaining -> full power.
     clock.set_for_testing(0);
     assert_eq!(manager.effective_power(&clock), STAKE_AMOUNT);
 
-    // A fifth of the year left -> weight 0.2, squared 0.04 -> 4k DEEP.
-    clock.set_for_testing(constants::ms_per_year!() - FIFTH_YEAR_MS);
-    assert_eq!(manager.effective_power(&clock), 4_000_000_000);
+    // One year left of two -> weight 0.5, squared 0.25 -> 25k DEEP.
+    clock.set_for_testing(constants::ms_per_year!());
+    assert_eq!(manager.effective_power(&clock), 25_000_000_000);
 
     // At expiry -> zero.
-    clock.set_for_testing(constants::ms_per_year!());
+    clock.set_for_testing(constants::max_stake_period_ms!());
     assert_eq!(manager.effective_power(&clock), 0);
 
     destroy(manager);

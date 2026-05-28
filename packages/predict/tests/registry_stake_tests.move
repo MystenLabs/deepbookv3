@@ -14,8 +14,9 @@ const FIFTY_K_DEEP: u64 = 50_000_000_000;
 const TWO_HUNDRED_K_DEEP: u64 = 200_000_000_000;
 const ONE_YEAR_DAYS: u64 = 365;
 const ONE_YEAR_MS: u64 = 31_536_000_000; // 365 * 86_400_000
-const FIFTH_YEAR_DAYS: u64 = 73; // 365 / 5
 const TWO_YEAR_DAYS: u64 = 730;
+const TWO_YEAR_MS: u64 = 63_072_000_000; // 730 * 86_400_000
+const THREE_YEAR_DAYS: u64 = 1095;
 const SHORTER_LOCK_DAYS: u64 = 100;
 
 // === Helpers ===
@@ -49,11 +50,11 @@ fun stake_locks_deep_and_sets_live_power() {
     let (mut scenario, mut reg, admin_cap, clock, mut manager) = begin();
 
     let deep = coin::mint_for_testing<DEEP>(HUNDRED_K_DEEP, scenario.ctx());
-    reg.stake_deep(&mut manager, deep, ONE_YEAR_DAYS, &clock, scenario.ctx());
+    reg.stake_deep(&mut manager, deep, TWO_YEAR_DAYS, &clock, scenario.ctx());
 
     assert_eq!(manager.staked_deep(), HUNDRED_K_DEEP);
-    assert_eq!(manager.stake_end_ms(), ONE_YEAR_MS);
-    // Full year remaining -> weight 1 -> power == staked.
+    assert_eq!(manager.stake_end_ms(), TWO_YEAR_MS);
+    // Full two-year lock -> weight 1 -> power == staked.
     assert_eq!(manager.effective_power(&clock), HUNDRED_K_DEEP);
 
     finish(scenario, reg, admin_cap, clock, manager);
@@ -64,12 +65,12 @@ fun top_up_adds_deep_and_raises_power() {
     let (mut scenario, mut reg, admin_cap, clock, mut manager) = begin();
 
     let first = coin::mint_for_testing<DEEP>(FIFTY_K_DEEP, scenario.ctx());
-    reg.stake_deep(&mut manager, first, ONE_YEAR_DAYS, &clock, scenario.ctx());
+    reg.stake_deep(&mut manager, first, TWO_YEAR_DAYS, &clock, scenario.ctx());
     assert_eq!(manager.effective_power(&clock), FIFTY_K_DEEP);
 
-    // Add another 50k keeping the same one-year end.
+    // Add another 50k keeping the same two-year end.
     let second = coin::mint_for_testing<DEEP>(FIFTY_K_DEEP, scenario.ctx());
-    reg.stake_deep(&mut manager, second, ONE_YEAR_DAYS, &clock, scenario.ctx());
+    reg.stake_deep(&mut manager, second, TWO_YEAR_DAYS, &clock, scenario.ctx());
 
     assert_eq!(manager.staked_deep(), HUNDRED_K_DEEP);
     assert_eq!(manager.effective_power(&clock), HUNDRED_K_DEEP);
@@ -81,14 +82,14 @@ fun top_up_adds_deep_and_raises_power() {
 fun extend_lock_with_zero_topup_raises_power() {
     let (mut scenario, mut reg, admin_cap, clock, mut manager) = begin();
 
-    // 100k locked for a fifth of a year -> weight 0.2, squared 0.04 -> 4k power.
+    // 100k locked for one year of a two-year horizon -> weight 0.5, 0.25 -> 25k.
     let deep = coin::mint_for_testing<DEEP>(HUNDRED_K_DEEP, scenario.ctx());
-    reg.stake_deep(&mut manager, deep, FIFTH_YEAR_DAYS, &clock, scenario.ctx());
-    assert_eq!(manager.effective_power(&clock), 4_000_000_000);
+    reg.stake_deep(&mut manager, deep, ONE_YEAR_DAYS, &clock, scenario.ctx());
+    assert_eq!(manager.effective_power(&clock), 25_000_000_000);
 
-    // Extend to a full year with no added DEEP -> full power.
+    // Extend to the full two-year horizon with no added DEEP -> full power.
     let zero = coin::zero<DEEP>(scenario.ctx());
-    reg.stake_deep(&mut manager, zero, ONE_YEAR_DAYS, &clock, scenario.ctx());
+    reg.stake_deep(&mut manager, zero, TWO_YEAR_DAYS, &clock, scenario.ctx());
     assert_eq!(manager.staked_deep(), HUNDRED_K_DEEP);
     assert_eq!(manager.effective_power(&clock), HUNDRED_K_DEEP);
 
@@ -96,12 +97,12 @@ fun extend_lock_with_zero_topup_raises_power() {
 }
 
 #[test]
-fun lock_over_a_year_saturates_weight() {
+fun lock_beyond_max_period_saturates_weight() {
     let (mut scenario, mut reg, admin_cap, clock, mut manager) = begin();
 
-    // A two-year lock is allowed; the period weight still saturates at 1.
+    // A three-year lock is allowed; the period weight still saturates at 1.
     let deep = coin::mint_for_testing<DEEP>(FIFTY_K_DEEP, scenario.ctx());
-    reg.stake_deep(&mut manager, deep, TWO_YEAR_DAYS, &clock, scenario.ctx());
+    reg.stake_deep(&mut manager, deep, THREE_YEAR_DAYS, &clock, scenario.ctx());
 
     assert_eq!(manager.effective_power(&clock), FIFTY_K_DEEP);
 
@@ -109,12 +110,12 @@ fun lock_over_a_year_saturates_weight() {
 }
 
 #[test]
-fun power_above_top_tier_counts_higher() {
+fun power_above_max_benefit_counts_higher() {
     let (mut scenario, mut reg, admin_cap, clock, mut manager) = begin();
 
-    // Staking beyond 100k is allowed; power is uncapped (benefits cap by tier).
+    // Staking beyond 100k is allowed; power is uncapped (benefits cap by power).
     let deep = coin::mint_for_testing<DEEP>(TWO_HUNDRED_K_DEEP, scenario.ctx());
-    reg.stake_deep(&mut manager, deep, ONE_YEAR_DAYS, &clock, scenario.ctx());
+    reg.stake_deep(&mut manager, deep, TWO_YEAR_DAYS, &clock, scenario.ctx());
 
     assert_eq!(manager.effective_power(&clock), TWO_HUNDRED_K_DEEP);
 
