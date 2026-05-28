@@ -741,6 +741,19 @@ fun emit_bounds_updated(market: &MarketOracle) {
 
 // === Test-Only Functions ===
 
+/// Variant of `create_test_market_oracle` that binds to a real `PythSource`,
+/// so flows that call `assert_pyth_source(pyth)` (update_block_scholes_prices,
+/// settle_if_possible) can exercise the matched-source happy path.
+#[test_only]
+public(package) fun create_test_market_oracle_with_pyth(
+    pyth: &PythSource,
+    expiry: u64,
+    cap: &MarketOracleCap,
+    ctx: &mut TxContext,
+): MarketOracle {
+    create_test_market_oracle_with_pyth_id(pyth.id(), expiry, cap, ctx)
+}
+
 #[test_only]
 public(package) fun create_test_market_oracle(
     expiry: u64,
@@ -750,7 +763,16 @@ public(package) fun create_test_market_oracle(
     let pyth_uid = object::new(ctx);
     let pyth_source_id = pyth_uid.to_inner();
     pyth_uid.delete();
+    create_test_market_oracle_with_pyth_id(pyth_source_id, expiry, cap, ctx)
+}
 
+#[test_only]
+fun create_test_market_oracle_with_pyth_id(
+    pyth_source_id: ID,
+    expiry: u64,
+    cap: &MarketOracleCap,
+    ctx: &mut TxContext,
+): MarketOracle {
     let mut authorized_cap_ids = vec_set::empty();
     authorized_cap_ids.insert(cap.cap_id());
 
