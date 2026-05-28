@@ -23,7 +23,7 @@ import {
 // === Edit these to match the settled position you want to close ====
 // Defaults point at the settled BTC 2026-05-28 08:00 UTC oracle.
 const CONFIG = {
-	MANAGER_ID: '0xb7f44301182aeaad54f2e35cbdef164ffa0bbb24aa84a6ab25d6ef05bd5310f0',
+	MANAGER_ID: '0x51f082104ca41498acdbd6181786978117ae4cc34a72a9a847083ecffe0011ea',
 	ORACLE_ID:  '0xec05af6806cc08ffb2656ad1b21e7510493fe499b8992167e61e39529d851d2d', // BTC 2026-05-28 08:00 UTC (settled)
 	EXPIRY:     1779955200000, // ms since epoch
 	STRIKE:     75_000,        // $75,000

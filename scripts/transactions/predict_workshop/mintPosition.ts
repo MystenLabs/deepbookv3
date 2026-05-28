@@ -28,7 +28,7 @@ import {
 // ORACLE_ID / EXPIRY come from pnpm predict-list-markets.
 const CONFIG = {
   MANAGER_ID:
-    "0xb7f44301182aeaad54f2e35cbdef164ffa0bbb24aa84a6ab25d6ef05bd5310f0",
+    "0x51f082104ca41498acdbd6181786978117ae4cc34a72a9a847083ecffe0011ea",
   ORACLE_ID:
     "0x57ab16e132ef0083085d1bdef7ed820892a4d574155f47a3cba168dcb43deb79", // BTC 2026-05-29 08:00 UTC
   EXPIRY: 1780041600000, // ms since epoch

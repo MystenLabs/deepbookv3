@@ -22,7 +22,7 @@ import {
 // === Edit these to match the range you want to close ===============
 // Must mirror the RangeKey of the range you minted.
 const CONFIG = {
-	MANAGER_ID:    '0xb7f44301182aeaad54f2e35cbdef164ffa0bbb24aa84a6ab25d6ef05bd5310f0',
+	MANAGER_ID:    '0x51f082104ca41498acdbd6181786978117ae4cc34a72a9a847083ecffe0011ea',
 	ORACLE_ID:     '0x57ab16e132ef0083085d1bdef7ed820892a4d574155f47a3cba168dcb43deb79', // BTC 2026-05-29 08:00 UTC
 	EXPIRY:        1780041600000, // ms since epoch
 	LOWER_STRIKE:  74_000,        // $74,000
