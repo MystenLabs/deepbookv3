@@ -79,3 +79,14 @@ fun scale_up(magnitude: u64, shift: u64): u64 {
     let factor = predict_math::pow10(shift);
     magnitude * factor
 }
+
+// === Test-Only Functions ===
+
+/// Expose the private `normalize_pyth_price` so the price/exponent
+/// normalization logic can be exercised directly. `extract_spot`'s feed
+/// walk requires a `pyth_lazer::Update`, which is `public(package)` in the
+/// upstream package and cannot be constructed from a test module here.
+#[test_only]
+public fun normalize_pyth_price_for_testing(price: LazerI64, exponent: LazerI16): u64 {
+    normalize_pyth_price(price, exponent)
+}

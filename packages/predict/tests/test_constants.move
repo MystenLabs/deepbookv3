@@ -7,6 +7,20 @@ module deepbook_predict::test_constants;
 
 use deepbook_predict::constants;
 
+// === Test Addresses ===
+const ADMIN: address = @0x0;
+const ALICE: address = @0xA;
+const BOB: address = @0xB;
+const CAROL: address = @0xC;
+
+public fun admin(): address { ADMIN }
+
+public fun alice(): address { ALICE }
+
+public fun bob(): address { BOB }
+
+public fun carol(): address { CAROL }
+
 /// Default expiry-fee ramp window seeded by test helpers; matches the
 /// production "ramp disabled" sentinel.
 public(package) macro fun default_expiry_fee_window_ms(): u64 { 0 }

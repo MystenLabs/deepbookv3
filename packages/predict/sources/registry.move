@@ -577,3 +577,19 @@ public fun destroy_registry_for_testing(registry: Registry) {
     pyth_source_ids.destroy_empty();
     expiry_market_ids.destroy_empty();
 }
+
+/// Variant for tests that exercise registration paths: drops the uniqueness
+/// tables without requiring them to be empty.
+#[test_only]
+public fun destroy_registry_drop_for_testing(registry: Registry) {
+    let Registry {
+        id,
+        pyth_source_ids,
+        expiry_market_ids,
+        allowed_pause_caps: _,
+        allowed_versions: _,
+    } = registry;
+    id.delete();
+    pyth_source_ids.drop();
+    expiry_market_ids.drop();
+}
