@@ -288,7 +288,12 @@ public fun redeem(
     }
 }
 
-/// Resolve a manager's aggregate expiry trading-loss rebate after all positions close.
+/// Resolve a manager's aggregate expiry trading-loss rebate after all its
+/// positions close. Permissionless by design: any caller may settle this for a
+/// manager — the rebate is credited to the manager via its deposit cap and the
+/// un-granted remainder compounds into PLP cash, so PLP value accrues without
+/// the owner acting. The rebate share uses the manager's live staking power at
+/// claim time.
 public fun claim_trading_loss_rebate(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
