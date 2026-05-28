@@ -42,9 +42,12 @@ public macro fun leverage_floor_window_ms(): u64 { 31_536_000_000 }
 /// Milliseconds in a day; DEEP stake lock periods are expressed in whole days.
 public macro fun day_ms(): u64 { 86_400_000 }
 
-/// Staking power per tier, in raw DEEP units (DEEP has 6 decimals), i.e. 10k DEEP.
-/// Each whole tier of power grants one step of fee discount and loss rebate.
-public macro fun stake_tier_step(): u64 { 10_000_000_000 }
+/// Raw units in one whole DEEP (DEEP uses 6 decimals).
+public macro fun deep_decimals(): u64 { 1_000_000 }
+
+/// Staking power per tier: 10k DEEP, in raw units. Each whole tier of power
+/// grants one step of fee discount and loss rebate.
+public macro fun stake_tier_step(): u64 { 10_000 * deep_decimals!() }
 
 /// Maximum number of staking tiers; caps the fee discount at 50% and the loss
 /// rebate at 100%.
