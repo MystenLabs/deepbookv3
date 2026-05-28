@@ -6,13 +6,14 @@ module deepbook_predict::predict_manager_tests;
 
 use deepbook_predict::{
     builder_code,
+    constants,
     predict_manager::{Self, PredictManager},
     registry,
     test_constants
 };
 use dusdc::dusdc::DUSDC;
 use std::unit_test::{assert_eq, destroy};
-use sui::{coin, test_scenario::{Self as test, return_shared}};
+use sui::{clock, coin, test_scenario::{Self as test, return_shared}};
 
 const DEPOSIT_AMOUNT: u64 = 1_000_000;
 const WITHDRAW_AMOUNT: u64 = 400_000;
@@ -24,6 +25,8 @@ const BUILDER_INDEX: u64 = 7;
 const FEE_AMOUNT: u64 = 5_000;
 const CASH_PAID: u64 = 100_000;
 const CASH_RECEIVED: u64 = 60_000;
+const STAKE_AMOUNT: u64 = 100_000_000_000; // 100k DEEP raw (6 decimals)
+const FIFTH_YEAR_MS: u64 = 6_307_200_000; // 365/5 of a year in ms
 
 // === Helpers ===
 
@@ -404,4 +407,63 @@ fun assert_owner_aborts_for_non_owner() {
     scenario.next_tx(test_constants::bob());
     manager.assert_owner(scenario.ctx());
     abort 999
+}
+
+// === Staking state ===
+
+#[test]
+fun set_stake_records_amount_and_end() {
+    let (mut scenario, registry_id) = setup();
+    let mut manager = create_alice_manager(&mut scenario, registry_id);
+
+    manager.set_stake(STAKE_AMOUNT, 5_000);
+    assert_eq!(manager.staked_deep(), STAKE_AMOUNT);
+    assert_eq!(manager.stake_end_ms(), 5_000);
+
+    destroy(manager);
+    scenario.end();
+}
+
+#[test]
+fun effective_power_is_live_and_zero_after_expiry() {
+    let (mut scenario, registry_id) = setup();
+    let mut manager = create_alice_manager(&mut scenario, registry_id);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+
+    // Lock 100k DEEP until one year from epoch 0.
+    manager.set_stake(STAKE_AMOUNT, constants::ms_per_year!());
+
+    // Full lock remaining -> full power.
+    clock.set_for_testing(0);
+    assert_eq!(manager.effective_power(&clock), STAKE_AMOUNT);
+
+    // A fifth of the year left -> weight 0.2, squared 0.04 -> 4k DEEP.
+    clock.set_for_testing(constants::ms_per_year!() - FIFTH_YEAR_MS);
+    assert_eq!(manager.effective_power(&clock), 4_000_000_000);
+
+    // At expiry -> zero.
+    clock.set_for_testing(constants::ms_per_year!());
+    assert_eq!(manager.effective_power(&clock), 0);
+
+    destroy(manager);
+    destroy(clock);
+    scenario.end();
+}
+
+#[test]
+fun clear_stake_returns_amount_and_zeroes_state() {
+    let (mut scenario, registry_id) = setup();
+    let mut manager = create_alice_manager(&mut scenario, registry_id);
+    let clock = clock::create_for_testing(scenario.ctx());
+
+    manager.set_stake(STAKE_AMOUNT, constants::ms_per_year!());
+    let returned = manager.clear_stake();
+    assert_eq!(returned, STAKE_AMOUNT);
+    assert_eq!(manager.staked_deep(), 0);
+    assert_eq!(manager.stake_end_ms(), 0);
+    assert_eq!(manager.effective_power(&clock), 0);
+
+    destroy(manager);
+    destroy(clock);
+    scenario.end();
 }

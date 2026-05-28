@@ -19,6 +19,7 @@ use deepbook_predict::{
     pricing_config::PricingConfig,
     protocol_config::ProtocolConfig,
     pyth_source::PythSource,
+    staking,
     strike_exposure::{Self, StrikeExposure}
 };
 use dusdc::dusdc::DUSDC;
@@ -291,6 +292,7 @@ public fun claim_trading_loss_rebate(
     manager: &mut PredictManager,
     config: &ProtocolConfig,
     market_oracle: &MarketOracle,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     market.assert_version_allowed();
@@ -313,11 +315,22 @@ public fun claim_trading_loss_rebate(
         0
     };
     let max_rebate = math::mul(trading_fees_paid, market.trading_loss_rebate_rate);
-    let rebate_amount = trading_loss.min(max_rebate);
+    let eligible_rebate = trading_loss.min(max_rebate);
+
+    // Staking power decides the manager's share of the eligible rebate; the
+    // remainder compounds into LP cash (returns fully to the pool on the
+    // settlement sweep, no protocol/insurance split).
+    let fraction = staking::rebate_fraction(manager.effective_power(clock));
+    let rebate_amount = math::mul(eligible_rebate, fraction);
+    let lp_compound_amount = eligible_rebate - rebate_amount;
 
     if (rebate_amount > 0) {
         let payout = market.dispense_fee_cash(rebate_amount);
         manager.deposit_permissionless(payout.into_coin(ctx), ctx);
+    };
+    if (lp_compound_amount > 0) {
+        let lp_cash = market.dispense_fee_cash(lp_compound_amount);
+        market.lp_cash_balance.join(lp_cash);
     };
 
     event::emit(TradingLossRebateClaimed {
@@ -525,6 +538,14 @@ fun assert_pyth_feed(market: &ExpiryMarket, pyth: &PythSource) {
     assert!(market.pyth_lazer_feed_id == pyth.feed_id(), EWrongPythSource);
 }
 
+/// Reduce a trade fee by the manager's staking discount (0..50%). The discount
+/// applies to protocol fee margin only, never to payout backing, so cash-backing
+/// invariants are unaffected.
+fun apply_stake_fee_discount(manager: &PredictManager, fee_amount: u64, clock: &Clock): u64 {
+    let discount = staking::fee_discount_fraction(manager.effective_power(clock));
+    fee_amount - math::mul(fee_amount, discount)
+}
+
 fun builder_fee_amount(builder_code_id: &Option<ID>, fee_amount: u64, quantity: u64): u64 {
     if (builder_code_id.is_some()) {
         math::mul(fee_amount, constants::builder_fee_multiplier!()).min(
@@ -572,6 +593,7 @@ fun mint_internal(
             leverage,
             clock,
         );
+    let fee_amount = apply_stake_fee_discount(manager, fee_amount, clock);
 
     market.assert_allocation_backing();
     market.settle_mint_payment(manager, &minted_order, fee_amount, ctx);
@@ -604,6 +626,7 @@ fun redeem_live_internal(
             close_quantity,
             clock,
         );
+    let fee_amount = apply_stake_fee_discount(manager, fee_amount, clock);
 
     let replacement_order_id = if (resulting_order.id() == order.id()) {
         option::none()

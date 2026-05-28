@@ -9,9 +9,9 @@
 module deepbook_predict::predict_manager;
 
 use deepbook::balance_manager::{Self, BalanceManager, DepositCap};
-use deepbook_predict::builder_code::{Self, BuilderCode};
+use deepbook_predict::{builder_code::{Self, BuilderCode}, staking};
 use dusdc::dusdc::DUSDC;
-use sui::{coin::Coin, derived_object, event, table::{Self, Table}};
+use sui::{clock::Clock, coin::Coin, derived_object, event, table::{Self, Table}};
 
 const EInsufficientPosition: u64 = 0;
 const ENotOwner: u64 = 1;
@@ -40,6 +40,13 @@ public struct PredictManager has key {
     positions: Table<PositionKey, bool>,
     /// Per-expiry aggregate trading cash flows and open position count.
     expiry_summaries: Table<ID, ExpiryTradingSummary>,
+    /// DEEP locked for staking, in raw units. Actual custody lives in the
+    /// Registry's pooled balance; this mirrors this manager's share of it.
+    staked_deep: u64,
+    /// Lock expiry (ms). DEEP cannot be unstaked until now passes this. Staking
+    /// power is computed live from this and now, so benefits decay to 0 at
+    /// expiry. 0 when nothing is staked.
+    stake_end_ms: u64,
 }
 
 /// Aggregate trading cash flow for one manager in one expiry market.
@@ -134,6 +141,23 @@ public fun balance(self: &PredictManager): u64 {
     self.balance_manager.balance<DUSDC>()
 }
 
+/// Return the raw DEEP amount this manager has locked for staking.
+public fun staked_deep(self: &PredictManager): u64 {
+    self.staked_deep
+}
+
+/// Return the stake lock expiry timestamp in milliseconds (0 when unstaked).
+public fun stake_end_ms(self: &PredictManager): u64 {
+    self.stake_end_ms
+}
+
+/// Return current staking power, computed live from the locked DEEP and the
+/// remaining lock; 0 once the lock has expired. Trading benefits (fee discount,
+/// loss rebate) read this value.
+public fun effective_power(self: &PredictManager, clock: &Clock): u64 {
+    staking::power(self.staked_deep, self.stake_end_ms, clock.timestamp_ms())
+}
+
 /// Return the sticky builder-code ID used for future trades, if one is set.
 public fun builder_code_id(self: &PredictManager): Option<ID> {
     self.builder_code_id
@@ -181,6 +205,8 @@ public(package) fun new(registry_uid: &mut UID, ctx: &mut TxContext): PredictMan
         builder_code_id: option::none(),
         positions: table::new(ctx),
         expiry_summaries: table::new(ctx),
+        staked_deep: 0,
+        stake_end_ms: 0,
     }
 }
 
@@ -272,6 +298,20 @@ public(package) fun resolve_expiry_summary(
         cash_received_from_expiry,
     } = self.expiry_summaries.remove(expiry_market_id);
     (trading_fees_paid, cash_paid_to_expiry, cash_received_from_expiry)
+}
+
+/// Overwrite this manager's stake amount and lock expiry.
+public(package) fun set_stake(self: &mut PredictManager, staked_deep: u64, stake_end_ms: u64) {
+    self.staked_deep = staked_deep;
+    self.stake_end_ms = stake_end_ms;
+}
+
+/// Zero out the stake and return the previously locked DEEP amount.
+public(package) fun clear_stake(self: &mut PredictManager): u64 {
+    let amount = self.staked_deep;
+    self.staked_deep = 0;
+    self.stake_end_ms = 0;
+    amount
 }
 
 /// Abort unless the transaction sender owns this manager.

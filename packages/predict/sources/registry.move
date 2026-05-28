@@ -19,7 +19,14 @@ use deepbook_predict::{
     protocol_config::{Self, ProtocolConfig},
     pyth_source::{Self, PythSource}
 };
-use sui::{clock::Clock, table::{Self, Table}, vec_set::{Self, VecSet}};
+use sui::{
+    balance::{Self, Balance},
+    clock::Clock,
+    coin::Coin,
+    table::{Self, Table},
+    vec_set::{Self, VecSet}
+};
+use token::deep::DEEP;
 
 const EFeedIdMismatch: u64 = 2;
 const EPythSourceAlreadyCreated: u64 = 3;
@@ -30,6 +37,10 @@ const EPackageVersionDisabled: u64 = 7;
 const EVersionAlreadyEnabled: u64 = 8;
 const EVersionNotEnabled: u64 = 9;
 const ECannotDisableLastVersion: u64 = 10;
+/// The DEEP lock is still binding: it has not expired (on unstake) or a stake
+/// action tried to set an earlier lock end than the current one.
+const EStakeLocked: u64 = 11;
+const EInvalidLockDays: u64 = 12;
 
 /// Capability for admin operations.
 /// Created during package init, transferred to deployer (multisig).
@@ -57,6 +68,9 @@ public struct Registry has key {
     /// Package versions currently permitted to mutate per-pool state. Authoritative
     /// source; pool objects mirror this set and refresh via permissionless sync.
     allowed_versions: VecSet<u64>,
+    /// Pooled DEEP locked by all managers for staking. Per-manager amounts are
+    /// mirrored on each `PredictManager`.
+    staked_deep: Balance<DEEP>,
 }
 
 // === Public Functions ===
@@ -479,6 +493,48 @@ public fun create_manager(registry: &mut Registry, ctx: &mut TxContext): Predict
     predict_manager::new(&mut registry.id, ctx)
 }
 
+/// Stake DEEP, or top up / extend an existing lock, for trading benefits.
+///
+/// Adds `deep` to the manager's locked balance and commits the lock to
+/// `lock_days` from now. The new lock end may not be earlier than the current
+/// one. Longer locks and larger stakes both raise live power; locks beyond a
+/// year saturate the period weight. Pass a zero-value coin to extend the lock
+/// without adding DEEP.
+public fun stake_deep(
+    registry: &mut Registry,
+    manager: &mut PredictManager,
+    deep: Coin<DEEP>,
+    lock_days: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    registry.assert_version_allowed();
+    manager.assert_owner(ctx);
+    assert!(lock_days >= 1, EInvalidLockDays);
+
+    let new_end_ms = clock.timestamp_ms() + lock_days * constants::day_ms!();
+    assert!(new_end_ms >= manager.stake_end_ms(), EStakeLocked);
+
+    let new_amount = manager.staked_deep() + deep.value();
+    registry.staked_deep.join(deep.into_balance());
+    manager.set_stake(new_amount, new_end_ms);
+}
+
+/// Withdraw all locked DEEP once the lock has expired.
+public fun unstake_deep(
+    registry: &mut Registry,
+    manager: &mut PredictManager,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Coin<DEEP> {
+    registry.assert_version_allowed();
+    manager.assert_owner(ctx);
+    assert!(clock.timestamp_ms() >= manager.stake_end_ms(), EStakeLocked);
+
+    let amount = manager.clear_stake();
+    registry.staked_deep.split(amount).into_coin(ctx)
+}
+
 /// Create and share a derived PredictManager for the caller.
 entry fun create_and_share_manager(registry: &mut Registry, ctx: &mut TxContext) {
     create_manager(registry, ctx).share();
@@ -517,6 +573,7 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
             expiry_market_ids: table::new(ctx),
             allowed_pause_caps: vec_set::empty(),
             allowed_versions: vec_set::singleton(constants::current_version!()),
+            staked_deep: balance::zero(),
         },
         AdminCap {
             id: object::new(ctx),
@@ -572,10 +629,12 @@ public fun destroy_registry_for_testing(registry: Registry) {
         expiry_market_ids,
         allowed_pause_caps: _,
         allowed_versions: _,
+        staked_deep,
     } = registry;
     id.delete();
     pyth_source_ids.destroy_empty();
     expiry_market_ids.destroy_empty();
+    staked_deep.destroy_for_testing();
 }
 
 /// Variant for tests that exercise registration paths: drops the uniqueness
@@ -588,8 +647,10 @@ public fun destroy_registry_drop_for_testing(registry: Registry) {
         expiry_market_ids,
         allowed_pause_caps: _,
         allowed_versions: _,
+        staked_deep,
     } = registry;
     id.delete();
     pyth_source_ids.drop();
     expiry_market_ids.drop();
+    staked_deep.destroy_for_testing();
 }

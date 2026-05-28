@@ -37,6 +37,25 @@ public macro fun position_lot_size(): u64 { 10_000 }
 /// Window before expiry over which the leverage floor index rises.
 public macro fun leverage_floor_window_ms(): u64 { 31_536_000_000 }
 
+// === Staking ===
+
+/// Milliseconds in a day; DEEP stake lock periods are expressed in whole days.
+public macro fun day_ms(): u64 { 86_400_000 }
+
+/// Staking power per tier, in raw DEEP units (DEEP has 6 decimals), i.e. 10k DEEP.
+/// Each whole tier of power grants one step of fee discount and loss rebate.
+public macro fun stake_tier_step(): u64 { 10_000_000_000 }
+
+/// Maximum number of staking tiers; caps the fee discount at 50% and the loss
+/// rebate at 100%.
+public macro fun max_stake_tiers(): u64 { 10 }
+
+/// Trading-fee discount granted per staking tier, in FLOAT_SCALING (5%).
+public macro fun fee_discount_per_tier(): u64 { 50_000_000 }
+
+/// Trading-loss rebate fraction granted per staking tier, in FLOAT_SCALING (10%).
+public macro fun rebate_per_tier(): u64 { 100_000_000 }
+
 // === Builder Fees ===
 
 /// Add-on builder fee as a fraction of the normal trade fee.
