@@ -7,7 +7,7 @@ module deepbook_predict::registry_stake_tests;
 use deepbook_predict::{predict_manager::{Self, PredictManager}, registry, test_constants};
 use std::unit_test::{assert_eq, destroy};
 use sui::{clock::{Self, Clock}, coin, test_scenario as test};
-use token::deep::DEEP;
+use token::deep::{Self, DEEP, ProtectedTreasury};
 
 const HUNDRED_K_DEEP: u64 = 100_000_000_000; // 100k DEEP raw (6 decimals)
 const FIFTY_K_DEEP: u64 = 50_000_000_000;
@@ -182,6 +182,54 @@ fun unstake_before_expiry_aborts() {
 
     // Lock still active (clock at 0 < end).
     let returned = reg.unstake_deep(&mut manager, &clock, scenario.ctx());
+    destroy(returned);
+    abort 999
+}
+
+// === early_unstake_deep ===
+
+#[test]
+fun early_unstake_burns_half_and_returns_rest() {
+    let mut scenario = test::begin(test_constants::alice());
+    deep::share_treasury_for_testing(scenario.ctx());
+    scenario.next_tx(test_constants::alice());
+
+    let mut treasury = scenario.take_shared<ProtectedTreasury>();
+    let (mut reg, admin_cap) = registry::new_for_testing(scenario.ctx());
+    let clock = clock::create_for_testing(scenario.ctx());
+    let mut manager = registry::create_manager(&mut reg, scenario.ctx());
+
+    let deep = coin::mint_for_testing<DEEP>(HUNDRED_K_DEEP, scenario.ctx());
+    reg.stake_deep(&mut manager, deep, ONE_YEAR_DAYS, &clock, scenario.ctx());
+
+    // Still locked (clock at 0 < end): 50% burned, 50% returned.
+    let returned = reg.early_unstake_deep(&mut manager, &mut treasury, &clock, scenario.ctx());
+    assert_eq!(returned.value(), HUNDRED_K_DEEP / 2);
+    assert_eq!(manager.staked_deep(), 0);
+    assert_eq!(manager.stake_end_ms(), 0);
+
+    destroy(returned);
+    test::return_shared(treasury);
+    finish(scenario, reg, admin_cap, clock, manager);
+}
+
+#[test, expected_failure(abort_code = registry::EStakeNotLocked)]
+fun early_unstake_after_expiry_aborts() {
+    let mut scenario = test::begin(test_constants::alice());
+    deep::share_treasury_for_testing(scenario.ctx());
+    scenario.next_tx(test_constants::alice());
+
+    let mut treasury = scenario.take_shared<ProtectedTreasury>();
+    let (mut reg, _admin_cap) = registry::new_for_testing(scenario.ctx());
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    let mut manager = registry::create_manager(&mut reg, scenario.ctx());
+
+    let deep = coin::mint_for_testing<DEEP>(HUNDRED_K_DEEP, scenario.ctx());
+    reg.stake_deep(&mut manager, deep, ONE_YEAR_DAYS, &clock, scenario.ctx());
+
+    // Lock expired -> early unstake is rejected (use unstake_deep instead).
+    clock.set_for_testing(ONE_YEAR_MS);
+    let returned = reg.early_unstake_deep(&mut manager, &mut treasury, &clock, scenario.ctx());
     destroy(returned);
     abort 999
 }

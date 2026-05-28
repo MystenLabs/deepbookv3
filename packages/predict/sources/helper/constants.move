@@ -54,6 +54,10 @@ public macro fun max_stake_period_ms(): u64 { 2 * ms_per_year!() }
 /// rejected at the staking entry point.
 public macro fun max_lock_days(): u64 { max_stake_period_ms!() / day_ms!() }
 
+/// Fraction of staked DEEP burned when unstaking before the lock ends, in
+/// FLOAT_SCALING (50%). A penalty for breaking the committed lock early.
+public macro fun early_unstake_burn_rate(): u64 { 500_000_000 }
+
 /// Trading-fee discount at full benefit power, in FLOAT_SCALING (50%).
 public macro fun max_fee_discount(): u64 { 500_000_000 }
 

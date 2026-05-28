@@ -9,6 +9,7 @@
 /// owning modules.
 module deepbook_predict::registry;
 
+use deepbook::math;
 use deepbook_predict::{
     builder_code,
     constants,
@@ -23,10 +24,11 @@ use sui::{
     balance::{Self, Balance},
     clock::Clock,
     coin::Coin,
+    event,
     table::{Self, Table},
     vec_set::{Self, VecSet}
 };
-use token::deep::DEEP;
+use token::deep::{Self, DEEP, ProtectedTreasury};
 
 const EFeedIdMismatch: u64 = 2;
 const EPythSourceAlreadyCreated: u64 = 3;
@@ -41,6 +43,8 @@ const ECannotDisableLastVersion: u64 = 10;
 /// action tried to set an earlier lock end than the current one.
 const EStakeLocked: u64 = 11;
 const EInvalidLockDays: u64 = 12;
+/// Early unstake was called but the lock already ended; use `unstake_deep`.
+const EStakeNotLocked: u64 = 13;
 
 /// Capability for admin operations.
 /// Created during package init, transferred to deployer (multisig).
@@ -71,6 +75,13 @@ public struct Registry has key {
     /// Pooled DEEP locked by all managers for staking. Per-manager amounts are
     /// mirrored on each `PredictManager`.
     staked_deep: Balance<DEEP>,
+}
+
+/// Emitted when a manager unstakes DEEP before its lock ends and a penalty is burned.
+public struct DeepUnstakedEarly has copy, drop, store {
+    predict_manager_id: ID,
+    returned: u64,
+    burned: u64,
 }
 
 // === Public Functions ===
@@ -538,6 +549,35 @@ public fun unstake_deep(
 
     let amount = manager.clear_stake();
     registry.staked_deep.split(amount).into_coin(ctx)
+}
+
+/// Unstake DEEP before the lock ends, burning a fixed penalty fraction.
+///
+/// Burns `early_unstake_burn_rate` of the locked DEEP via the DEEP treasury and
+/// returns the remainder to the owner. Aborts once the lock has expired — use
+/// `unstake_deep` for a penalty-free withdrawal then.
+public fun early_unstake_deep(
+    registry: &mut Registry,
+    manager: &mut PredictManager,
+    treasury: &mut ProtectedTreasury,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Coin<DEEP> {
+    registry.assert_version_allowed();
+    manager.assert_owner(ctx);
+    assert!(clock.timestamp_ms() < manager.stake_end_ms(), EStakeNotLocked);
+
+    let amount = manager.clear_stake();
+    let burn_amount = math::mul(amount, constants::early_unstake_burn_rate!());
+    let mut withdrawn = registry.staked_deep.split(amount);
+    deep::burn(treasury, withdrawn.split(burn_amount).into_coin(ctx));
+
+    event::emit(DeepUnstakedEarly {
+        predict_manager_id: manager.id(),
+        returned: withdrawn.value(),
+        burned: burn_amount,
+    });
+    withdrawn.into_coin(ctx)
 }
 
 /// Create and share a derived PredictManager for the caller.
