@@ -100,6 +100,8 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 
 - Emit events after the state transition and postconditions they report have completed, unless the event intentionally reports an attempted action rather than a completed one.
 
+- A permissionless or keeper-callable settlement/claim function should treat empty or zero-amount cases as a no-op, not an abort: early-return when there is nothing to resolve, and guard each payout with `if (amount > 0)` before splitting/dispensing a balance. This keeps a single caller — or a batch sweep over many accounts — from reverting just because one account is owed nothing. Reserve aborts for real preconditions (authorization, lifecycle/settlement state, unclosed positions).
+
 - If a flow branches on another object's lifecycle or state, validate the object binding before using that state for branch selection, unless that branch intentionally does not require the object.
 
 - Prefer explicit loop bounds over `while (true)` when the iteration range is easy to express. If a loop naturally means "from `min_page` to `max_page` inclusive" or "while `slot <= end_slot`", write that directly instead of using `while (true)` plus interior `break`s.
