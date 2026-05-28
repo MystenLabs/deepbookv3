@@ -46,8 +46,12 @@ public macro fun day_ms(): u64 { 86_400_000 }
 public macro fun deep_decimals(): u64 { 1_000_000 }
 
 /// Lock horizon for full staking-power weight: 2 years. Shorter remaining locks
-/// earn proportionally less power; longer locks saturate the weight at 1.
+/// earn proportionally less power.
 public macro fun max_stake_period_ms(): u64 { 2 * ms_per_year!() }
+
+/// Maximum stake lock in whole days (the 2-year horizon). Locks beyond this are
+/// rejected at the staking entry point.
+public macro fun max_lock_days(): u64 { max_stake_period_ms!() / day_ms!() }
 
 /// Staking power at which trading benefits reach their maximum: 100k DEEP.
 /// Below this, benefits scale linearly with power; above it they stay capped.

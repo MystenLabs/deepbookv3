@@ -16,7 +16,7 @@ const ONE_YEAR_DAYS: u64 = 365;
 const ONE_YEAR_MS: u64 = 31_536_000_000; // 365 * 86_400_000
 const TWO_YEAR_DAYS: u64 = 730;
 const TWO_YEAR_MS: u64 = 63_072_000_000; // 730 * 86_400_000
-const THREE_YEAR_DAYS: u64 = 1095;
+const OVER_MAX_LOCK_DAYS: u64 = 731; // one day past the 2-year cap
 const SHORTER_LOCK_DAYS: u64 = 100;
 
 // === Helpers ===
@@ -96,17 +96,14 @@ fun extend_lock_with_zero_topup_raises_power() {
     finish(scenario, reg, admin_cap, clock, manager);
 }
 
-#[test]
-fun lock_beyond_max_period_saturates_weight() {
-    let (mut scenario, mut reg, admin_cap, clock, mut manager) = begin();
+#[test, expected_failure(abort_code = registry::EInvalidLockDays)]
+fun stake_beyond_max_period_aborts() {
+    let (mut scenario, mut reg, _admin_cap, clock, mut manager) = begin();
 
-    // A three-year lock is allowed; the period weight still saturates at 1.
+    // A lock past the 2-year cap is rejected.
     let deep = coin::mint_for_testing<DEEP>(FIFTY_K_DEEP, scenario.ctx());
-    reg.stake_deep(&mut manager, deep, THREE_YEAR_DAYS, &clock, scenario.ctx());
-
-    assert_eq!(manager.effective_power(&clock), FIFTY_K_DEEP);
-
-    finish(scenario, reg, admin_cap, clock, manager);
+    reg.stake_deep(&mut manager, deep, OVER_MAX_LOCK_DAYS, &clock, scenario.ctx());
+    abort 999
 }
 
 #[test]
