@@ -179,6 +179,17 @@ dependency edge. In this repo, `packages/margin_liquidation` still depends on ol
 `packages/deepbook_margin/Move.toml` breaks dependents with
 `Packages with old-style Move.toml files cannot depend on new-style packages`.
 
+### Match the source of a transitively-shared dependency
+
+When you add a dependency on a package that another of your dependencies already pulls in, declare
+it with the *same source* that dependency uses — do not mix `git` and `local` for the same package
+name. Example: `packages/deepbook` depends on `token` via
+`{ git = "...deepbookv3.git", subdir = "packages/token", rev = "main" }`. When `packages/predict`
+(which depends on `deepbook` locally) needed `token::deep::DEEP`, adding
+`token = { local = "../token" }` would have created a git-vs-local source conflict for the single
+`token` package; declaring `token` with the identical git line lets the resolver unify it. Copy the
+exact `git`/`subdir`/`rev` (or local path) from the existing consumer.
+
 ## Imports, Module and Constants
 
 ### Using Module Label
