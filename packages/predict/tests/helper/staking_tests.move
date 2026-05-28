@@ -18,35 +18,34 @@ const HUNDRED_K_POWER: u64 = 100_000_000_000;
 const TWO_HUNDRED_K_POWER: u64 = 200_000_000_000;
 // Benefit threshold used in the fraction tests (raw DEEP units).
 const MAX_BENEFIT_POWER: u64 = 100_000_000_000;
+// Half of a year in ms (weight 0.5, squared 0.25).
+const HALF_YEAR_MS: u64 = 15_768_000_000;
 
-// === power (2-year horizon, weight squared) ===
+// === power (1-year weight horizon, squared) ===
 
 #[test]
-fun power_full_two_year_lock_equals_stake() {
-    // remaining == 2 years -> weight 1 -> power == staked.
-    assert_eq!(staking::power(FIFTY_K_DEEP, constants::max_stake_period_ms!(), 0), FIFTY_K_DEEP);
+fun power_one_year_lock_is_full() {
+    // >= 1 year remaining -> weight 1 -> power == staked.
+    assert_eq!(staking::power(FIFTY_K_DEEP, constants::ms_per_year!(), 0), FIFTY_K_DEEP);
 }
 
 #[test]
-fun power_one_year_lock_is_quarter_weight() {
-    // 1 year of a 2-year horizon -> weight 0.5, squared 0.25: 100k * 0.25 = 25k.
-    assert_eq!(staking::power(HUNDRED_K_DEEP, constants::ms_per_year!(), 0), 25_000_000_000);
+fun power_two_year_lock_still_full() {
+    // Locking up to 2 years keeps full weight; the weight saturates at 1 year.
+    assert_eq!(staking::power(FIFTY_K_DEEP, 2 * constants::ms_per_year!(), 0), FIFTY_K_DEEP);
 }
 
 #[test]
-fun power_weight_saturates_beyond_two_years() {
-    // A three-year remaining lock still weights as 1.
-    assert_eq!(staking::power(FIFTY_K_DEEP, 3 * constants::ms_per_year!(), 0), FIFTY_K_DEEP);
+fun power_half_year_is_quarter() {
+    // weight 0.5, squared 0.25: 100k * 0.25 = 25k.
+    assert_eq!(staking::power(HUNDRED_K_DEEP, HALF_YEAR_MS, 0), 25_000_000_000);
 }
 
 #[test]
 fun power_decays_as_lock_runs_down() {
-    // End two years out, evaluated with one year left -> weight 0.5, 0.25 squared.
-    let now = constants::max_stake_period_ms!() - constants::ms_per_year!();
-    assert_eq!(
-        staking::power(HUNDRED_K_DEEP, constants::max_stake_period_ms!(), now),
-        25_000_000_000,
-    );
+    // End one year out, evaluated with half a year left -> weight 0.5, 0.25 squared.
+    let now = constants::ms_per_year!() - HALF_YEAR_MS;
+    assert_eq!(staking::power(HUNDRED_K_DEEP, constants::ms_per_year!(), now), 25_000_000_000);
 }
 
 #[test]

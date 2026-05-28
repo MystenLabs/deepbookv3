@@ -45,8 +45,9 @@ public macro fun day_ms(): u64 { 86_400_000 }
 /// Raw units in one whole DEEP (DEEP uses 6 decimals).
 public macro fun deep_decimals(): u64 { 1_000_000 }
 
-/// Lock horizon for full staking-power weight: 2 years. Shorter remaining locks
-/// earn proportionally less power.
+/// Maximum stake lock duration: 2 years. The staking-power weight saturates at 1
+/// once at least a year (`ms_per_year`) remains, so locking beyond a year keeps
+/// power at the cap for longer rather than adding weight.
 public macro fun max_stake_period_ms(): u64 { 2 * ms_per_year!() }
 
 /// Maximum stake lock in whole days (the 2-year horizon). Locks beyond this are

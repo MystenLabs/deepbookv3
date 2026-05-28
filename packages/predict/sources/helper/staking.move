@@ -6,9 +6,10 @@
 /// Pure functions that turn a manager's locked DEEP into staking power and map
 /// that power to trading benefits. Power is computed live from the current
 /// stake, the lock end, and now: `staked_DEEP * weight^2` where
-/// `weight = min(remaining_lock / 2y, 1)`. It decays to 0 as the lock runs
-/// out, and the period weight saturates at 1 for locks longer than two years.
-/// Benefits scale linearly with power, reaching their maximum (50% fee
+/// `weight = min(remaining_lock / 1y, 1)`. It decays to 0 as the lock runs out,
+/// and the period weight saturates at 1 once at least a year remains — locks may
+/// run up to 2 years, which keeps power at the cap for longer rather than adding
+/// weight. Benefits scale linearly with power, reaching their maximum (50% fee
 /// discount, 100% loss rebate) at the admin-configured `max_benefit_power` and
 /// staying capped above it. All policy lives here so callers stay free of
 /// staking math.
@@ -26,7 +27,7 @@ use deepbook_predict::constants;
 public(package) fun power(staked_deep_raw: u64, stake_end_ms: u64, now_ms: u64): u64 {
     if (now_ms >= stake_end_ms) return 0;
     let remaining_ms = stake_end_ms - now_ms;
-    let weight = math::div(remaining_ms, constants::max_stake_period_ms!()).min(
+    let weight = math::div(remaining_ms, constants::ms_per_year!()).min(
         constants::float_scaling!(),
     );
     let weight_squared = math::mul(weight, weight);

@@ -17,6 +17,7 @@ const ONE_YEAR_MS: u64 = 31_536_000_000; // 365 * 86_400_000
 const TWO_YEAR_DAYS: u64 = 730;
 const TWO_YEAR_MS: u64 = 63_072_000_000; // 730 * 86_400_000
 const OVER_MAX_LOCK_DAYS: u64 = 731; // one day past the 2-year cap
+const PARTIAL_LOCK_DAYS: u64 = 146; // 0.4 of a year (146/365)
 const SHORTER_LOCK_DAYS: u64 = 100;
 
 // === Helpers ===
@@ -82,14 +83,14 @@ fun top_up_adds_deep_and_raises_power() {
 fun extend_lock_with_zero_topup_raises_power() {
     let (mut scenario, mut reg, admin_cap, clock, mut manager) = begin();
 
-    // 100k locked for one year of a two-year horizon -> weight 0.5, 0.25 -> 25k.
+    // 100k locked for 0.4 of a year -> weight 0.4, squared 0.16 -> 16k.
     let deep = coin::mint_for_testing<DEEP>(HUNDRED_K_DEEP, scenario.ctx());
-    reg.stake_deep(&mut manager, deep, ONE_YEAR_DAYS, &clock, scenario.ctx());
-    assert_eq!(manager.effective_power(&clock), 25_000_000_000);
+    reg.stake_deep(&mut manager, deep, PARTIAL_LOCK_DAYS, &clock, scenario.ctx());
+    assert_eq!(manager.effective_power(&clock), 16_000_000_000);
 
-    // Extend to the full two-year horizon with no added DEEP -> full power.
+    // Extend to a full year with no added DEEP -> full power (weight saturates at 1y).
     let zero = coin::zero<DEEP>(scenario.ctx());
-    reg.stake_deep(&mut manager, zero, TWO_YEAR_DAYS, &clock, scenario.ctx());
+    reg.stake_deep(&mut manager, zero, ONE_YEAR_DAYS, &clock, scenario.ctx());
     assert_eq!(manager.staked_deep(), HUNDRED_K_DEEP);
     assert_eq!(manager.effective_power(&clock), HUNDRED_K_DEEP);
 

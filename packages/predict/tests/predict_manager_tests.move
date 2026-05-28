@@ -429,15 +429,17 @@ fun effective_power_is_live_and_zero_after_expiry() {
     let mut manager = create_alice_manager(&mut scenario, registry_id);
     let mut clock = clock::create_for_testing(scenario.ctx());
 
-    // Lock 100k DEEP for the full two-year horizon from epoch 0.
+    // Lock 100k DEEP for the full 2-year cap from epoch 0.
     manager.set_stake(STAKE_AMOUNT, constants::max_stake_period_ms!());
 
-    // Full lock remaining -> full power.
+    // Full power while >= 1 year remains (the weight saturates at 1 year).
     clock.set_for_testing(0);
     assert_eq!(manager.effective_power(&clock), STAKE_AMOUNT);
+    clock.set_for_testing(constants::ms_per_year!()); // 1 year remaining
+    assert_eq!(manager.effective_power(&clock), STAKE_AMOUNT);
 
-    // One year left of two -> weight 0.5, squared 0.25 -> 25k DEEP.
-    clock.set_for_testing(constants::ms_per_year!());
+    // Half a year remaining -> weight 0.5, squared 0.25 -> 25k DEEP.
+    clock.set_for_testing(2 * constants::ms_per_year!() - constants::ms_per_year!() / 2);
     assert_eq!(manager.effective_power(&clock), 25_000_000_000);
 
     // At expiry -> zero.
