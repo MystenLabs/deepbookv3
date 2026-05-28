@@ -106,6 +106,8 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 
 - Avoid deprecated Sui framework functions. Use the current recommended API (e.g., `coin_registry::new_currency_with_otw` instead of `coin::create_currency`). If a deprecated function must be used, add a comment explaining why the replacement doesn't work for this case.
 
+- Burning DEEP requires the shared `token::deep::ProtectedTreasury` (it holds the `TreasuryCap` in a dynamic field) — you cannot just drop a `Coin<DEEP>`. Take `&mut ProtectedTreasury` as a parameter and call `token::deep::burn(treasury, coin)`, mirroring `deepbook::pool::burn_deep` (`packages/deepbook/sources/pool.move`). In tests, share one with `token::deep::share_treasury_for_testing(ctx)` then `take_shared<ProtectedTreasury>()`; `coin::mint_for_testing<DEEP>(...)` mints test DEEP and `token::deep::burn` reduces the cap's supply (no check that the coin came from that cap, so this works in tests).
+
 - `create_and_share` constructors should accept tunable per-instance config as constructor parameters rather than seeding defaults that the admin must immediately overwrite. After `share_object` the only way to reconfigure is a separate setter tx, so a default-only constructor forces a two-tx admin flow whenever an instance needs non-default values. Take the params directly, validate them with the same `assert_*` helpers the setter uses (so creation and update share one validation path), and use defaults only when the config is genuinely the same for every instance.
 
 ## Tool Calling Instructions
