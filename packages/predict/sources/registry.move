@@ -114,6 +114,11 @@ public fun set_template_max_expiry_floor_premium(
     config.set_template_max_expiry_floor_premium(value);
 }
 
+/// Set the staking power at which trading benefits reach their maximum.
+public fun set_max_benefit_power(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
+    config.set_max_benefit_power(value);
+}
+
 /// Set the per-asset time-to-expiry fee ramp for a Pyth source's markets.
 /// `window_ms` (0 disables) is the ms-before-expiry over which the fee ramps up;
 /// `max_multiplier` (FLOAT_SCALING, 1x disables) is the multiplier reached at

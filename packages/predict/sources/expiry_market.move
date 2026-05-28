@@ -327,7 +327,10 @@ public fun claim_trading_loss_rebate(
     // Staking power decides the manager's share of the eligible rebate; the
     // remainder compounds into LP cash (returns fully to the pool on the
     // settlement sweep, no protocol/insurance split).
-    let fraction = staking::rebate_fraction(manager.effective_power(clock));
+    let fraction = staking::rebate_fraction(
+        manager.effective_power(clock),
+        config.stake_config().max_benefit_power(),
+    );
     let rebate_amount = math::mul(eligible_rebate, fraction);
     let lp_compound_amount = eligible_rebate - rebate_amount;
 
@@ -549,8 +552,16 @@ fun assert_pyth_feed(market: &ExpiryMarket, pyth: &PythSource) {
 /// discounted fee together with the applied discount fraction (FLOAT_SCALING,
 /// 0..50%). The discount applies to protocol fee margin only, never to payout
 /// backing, so cash-backing invariants are unaffected.
-fun apply_stake_fee_discount(manager: &PredictManager, fee_amount: u64, clock: &Clock): (u64, u64) {
-    let discount = staking::fee_discount_fraction(manager.effective_power(clock));
+fun apply_stake_fee_discount(
+    manager: &PredictManager,
+    config: &ProtocolConfig,
+    fee_amount: u64,
+    clock: &Clock,
+): (u64, u64) {
+    let discount = staking::fee_discount_fraction(
+        manager.effective_power(clock),
+        config.stake_config().max_benefit_power(),
+    );
     (fee_amount - math::mul(fee_amount, discount), discount)
 }
 
@@ -601,7 +612,7 @@ fun mint_internal(
             leverage,
             clock,
         );
-    let (fee_amount, fee_discount) = apply_stake_fee_discount(manager, fee_amount, clock);
+    let (fee_amount, fee_discount) = apply_stake_fee_discount(manager, config, fee_amount, clock);
 
     market.assert_allocation_backing();
     market.settle_mint_payment(manager, &minted_order, fee_amount, fee_discount, ctx);
@@ -634,7 +645,7 @@ fun redeem_live_internal(
             close_quantity,
             clock,
         );
-    let (fee_amount, fee_discount) = apply_stake_fee_discount(manager, fee_amount, clock);
+    let (fee_amount, fee_discount) = apply_stake_fee_discount(manager, config, fee_amount, clock);
 
     let replacement_order_id = if (resulting_order.id() == order.id()) {
         option::none()

@@ -53,10 +53,6 @@ public macro fun max_stake_period_ms(): u64 { 2 * ms_per_year!() }
 /// rejected at the staking entry point.
 public macro fun max_lock_days(): u64 { max_stake_period_ms!() / day_ms!() }
 
-/// Staking power at which trading benefits reach their maximum: 100k DEEP.
-/// Below this, benefits scale linearly with power; above it they stay capped.
-public macro fun max_benefit_power(): u64 { 100_000 * deep_decimals!() }
-
 /// Trading-fee discount at full benefit power, in FLOAT_SCALING (50%).
 public macro fun max_fee_discount(): u64 { 500_000_000 }
 

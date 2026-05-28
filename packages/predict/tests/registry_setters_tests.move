@@ -17,7 +17,8 @@ use deepbook_predict::{
     protocol_config,
     pyth_source,
     registry,
-    risk_config
+    risk_config,
+    stake_config
 };
 use std::unit_test::{assert_eq, destroy};
 
@@ -169,6 +170,21 @@ fun set_template_max_expiry_floor_premium_forwards_to_leverage_config() {
 
     registry::set_template_max_expiry_floor_premium(&mut config, &admin_cap, 300_000_000);
     assert_eq!(leverage_config::max_expiry_floor_premium(config.leverage_config()), 300_000_000);
+
+    destroy(config);
+    destroy(admin_cap);
+}
+
+// === Stake config setter ===
+
+#[test]
+fun set_max_benefit_power_forwards_to_stake_config() {
+    let ctx = &mut tx_context::dummy();
+    let admin_cap = registry::create_admin_cap_for_testing(ctx);
+    let mut config = protocol_config::new_for_testing(ctx);
+
+    registry::set_max_benefit_power(&mut config, &admin_cap, 250_000_000_000);
+    assert_eq!(stake_config::max_benefit_power(config.stake_config()), 250_000_000_000);
 
     destroy(config);
     destroy(admin_cap);

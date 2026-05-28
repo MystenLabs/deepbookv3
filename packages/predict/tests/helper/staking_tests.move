@@ -14,8 +14,10 @@ const HUNDRED_K_DEEP: u64 = 100_000_000_000;
 const TEN_K_POWER: u64 = 10_000_000_000;
 const FIFTEEN_K_POWER: u64 = 15_000_000_000;
 const FIFTY_K_POWER: u64 = 50_000_000_000;
-const HUNDRED_K_POWER: u64 = 100_000_000_000; // == max_benefit_power
+const HUNDRED_K_POWER: u64 = 100_000_000_000;
 const TWO_HUNDRED_K_POWER: u64 = 200_000_000_000;
+// Benefit threshold used in the fraction tests (raw DEEP units).
+const MAX_BENEFIT_POWER: u64 = 100_000_000_000;
 
 // === power (2-year horizon, weight squared) ===
 
@@ -57,40 +59,48 @@ fun power_zero_at_lock_expiry() {
 
 #[test]
 fun fee_discount_zero_without_power() {
-    assert_eq!(staking::fee_discount_fraction(0), 0);
+    assert_eq!(staking::fee_discount_fraction(0, MAX_BENEFIT_POWER), 0);
 }
 
 #[test]
 fun fee_discount_scales_linearly() {
     // 10k power = 10% of max -> 5%; 15k = 15% -> 7.5%; 50k = 50% -> 25%.
-    assert_eq!(staking::fee_discount_fraction(TEN_K_POWER), 50_000_000);
-    assert_eq!(staking::fee_discount_fraction(FIFTEEN_K_POWER), 75_000_000);
-    assert_eq!(staking::fee_discount_fraction(FIFTY_K_POWER), 250_000_000);
+    assert_eq!(staking::fee_discount_fraction(TEN_K_POWER, MAX_BENEFIT_POWER), 50_000_000);
+    assert_eq!(staking::fee_discount_fraction(FIFTEEN_K_POWER, MAX_BENEFIT_POWER), 75_000_000);
+    assert_eq!(staking::fee_discount_fraction(FIFTY_K_POWER, MAX_BENEFIT_POWER), 250_000_000);
 }
 
 #[test]
 fun fee_discount_caps_at_50pct() {
-    assert_eq!(staking::fee_discount_fraction(HUNDRED_K_POWER), 500_000_000);
-    assert_eq!(staking::fee_discount_fraction(TWO_HUNDRED_K_POWER), 500_000_000);
+    assert_eq!(staking::fee_discount_fraction(HUNDRED_K_POWER, MAX_BENEFIT_POWER), 500_000_000);
+    assert_eq!(staking::fee_discount_fraction(TWO_HUNDRED_K_POWER, MAX_BENEFIT_POWER), 500_000_000);
 }
 
-// === rebate_fraction: linear to 100% at 100k power ===
+// === rebate_fraction: linear to 100% at max benefit power ===
 
 #[test]
 fun rebate_zero_without_power() {
-    assert_eq!(staking::rebate_fraction(0), 0);
+    assert_eq!(staking::rebate_fraction(0, MAX_BENEFIT_POWER), 0);
 }
 
 #[test]
 fun rebate_scales_linearly() {
     // 10k power -> 10%; 15k -> 15%; 50k -> 50%.
-    assert_eq!(staking::rebate_fraction(TEN_K_POWER), 100_000_000);
-    assert_eq!(staking::rebate_fraction(FIFTEEN_K_POWER), 150_000_000);
-    assert_eq!(staking::rebate_fraction(FIFTY_K_POWER), 500_000_000);
+    assert_eq!(staking::rebate_fraction(TEN_K_POWER, MAX_BENEFIT_POWER), 100_000_000);
+    assert_eq!(staking::rebate_fraction(FIFTEEN_K_POWER, MAX_BENEFIT_POWER), 150_000_000);
+    assert_eq!(staking::rebate_fraction(FIFTY_K_POWER, MAX_BENEFIT_POWER), 500_000_000);
 }
 
 #[test]
 fun rebate_caps_at_100pct() {
-    assert_eq!(staking::rebate_fraction(HUNDRED_K_POWER), 1_000_000_000);
-    assert_eq!(staking::rebate_fraction(TWO_HUNDRED_K_POWER), 1_000_000_000);
+    assert_eq!(staking::rebate_fraction(HUNDRED_K_POWER, MAX_BENEFIT_POWER), 1_000_000_000);
+    assert_eq!(staking::rebate_fraction(TWO_HUNDRED_K_POWER, MAX_BENEFIT_POWER), 1_000_000_000);
+}
+
+#[test]
+fun benefit_threshold_is_configurable() {
+    // Halving the threshold doubles the benefit at a given power: 10k power
+    // against a 50k threshold = 20% of max -> 10% fee discount, 20% rebate.
+    assert_eq!(staking::fee_discount_fraction(TEN_K_POWER, FIFTY_K_POWER), 100_000_000);
+    assert_eq!(staking::rebate_fraction(TEN_K_POWER, FIFTY_K_POWER), 200_000_000);
 }

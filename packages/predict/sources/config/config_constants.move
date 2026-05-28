@@ -33,6 +33,7 @@ const EInvalidTradingLossRebateRate: u64 = 22;
 const EInvalidMaxExpiryFloorPremium: u64 = 23;
 const EInvalidExpiryFeeWindowMs: u64 = 24;
 const EInvalidExpiryFeeMaxMultiplier: u64 = 25;
+const EInvalidMaxBenefitPower: u64 = 26;
 
 // === Pool Risk ===
 
@@ -269,6 +270,29 @@ public(package) fun assert_trading_loss_rebate_rate(value: u64) {
         value >= min_trading_loss_rebate_rate!()
             && value <= max_trading_loss_rebate_rate!(),
         EInvalidTradingLossRebateRate,
+    );
+}
+
+// === Staking ===
+
+/// Staking power at which trading benefits reach their maximum (50% fee
+/// discount, 100% loss rebate): 100k DEEP, in raw units.
+public(package) macro fun default_max_benefit_power(): u64 {
+    100_000 * deepbook_predict::constants::deep_decimals!()
+}
+/// Floor of 1k DEEP and ceiling of 10M DEEP keep the benefit threshold from
+/// being set to a trivially-disabling value in either direction.
+public(package) macro fun min_max_benefit_power(): u64 {
+    1_000 * deepbook_predict::constants::deep_decimals!()
+}
+public(package) macro fun max_max_benefit_power(): u64 {
+    10_000_000 * deepbook_predict::constants::deep_decimals!()
+}
+
+public(package) fun assert_max_benefit_power(value: u64) {
+    assert!(
+        value >= min_max_benefit_power!() && value <= max_max_benefit_power!(),
+        EInvalidMaxBenefitPower,
     );
 }
 

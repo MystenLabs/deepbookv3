@@ -9,8 +9,9 @@
 /// `weight = min(remaining_lock / 2y, 1)`. It decays to 0 as the lock runs
 /// out, and the period weight saturates at 1 for locks longer than two years.
 /// Benefits scale linearly with power, reaching their maximum (50% fee
-/// discount, 100% loss rebate) at `max_benefit_power` (100k DEEP) and staying
-/// capped above it. All policy lives here so callers stay free of staking math.
+/// discount, 100% loss rebate) at the admin-configured `max_benefit_power` and
+/// staying capped above it. All policy lives here so callers stay free of
+/// staking math.
 module deepbook_predict::staking;
 
 use deepbook::math;
@@ -33,22 +34,22 @@ public(package) fun power(staked_deep_raw: u64, stake_end_ms: u64, now_ms: u64):
 }
 
 /// Trading-fee discount for a power level, in FLOAT_SCALING (0..50%). Scales
-/// linearly with power up to `max_benefit_power`.
-public(package) fun fee_discount_fraction(power: u64): u64 {
-    math::mul(benefit_ratio(power), constants::max_fee_discount!())
+/// linearly with power up to the admin-configured `max_benefit_power`.
+public(package) fun fee_discount_fraction(power: u64, max_benefit_power: u64): u64 {
+    math::mul(benefit_ratio(power, max_benefit_power), constants::max_fee_discount!())
 }
 
 /// Share of a manager's eligible trading-loss rebate that is paid out for a
-/// power level, in FLOAT_SCALING (0..100%). Scales linearly with power up to
-/// `max_benefit_power`; the complement compounds to LPs.
-public(package) fun rebate_fraction(power: u64): u64 {
-    math::mul(benefit_ratio(power), constants::max_rebate_fraction!())
+/// power level, in FLOAT_SCALING (0..100%). Scales linearly with power up to the
+/// admin-configured `max_benefit_power`; the complement compounds to LPs.
+public(package) fun rebate_fraction(power: u64, max_benefit_power: u64): u64 {
+    math::mul(benefit_ratio(power, max_benefit_power), constants::max_rebate_fraction!())
 }
 
 // === Private Functions ===
 
 /// Fraction of the maximum benefit earned at a power level, in FLOAT_SCALING
 /// (0..1), linear in power and capped at full benefit.
-fun benefit_ratio(power: u64): u64 {
-    math::div(power, constants::max_benefit_power!()).min(constants::float_scaling!())
+fun benefit_ratio(power: u64, max_benefit_power: u64): u64 {
+    math::div(power, max_benefit_power).min(constants::float_scaling!())
 }
