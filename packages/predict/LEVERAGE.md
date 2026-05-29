@@ -125,15 +125,24 @@ flows operate on validated `Order` values.
 Minting creates the contract terms and inserts the order into the expiry's live
 indexes.
 
-For every minted order, the protocol checks:
+Mint admission checks three leverage-specific facts:
 
 ```text
-terminal_floor <= quantity
+entry_probability < 10c  => leverage must be 1x
+entry_probability < 20c  => leverage must be <= 2x
+entry_probability >= 20c => leverage may be up to the protocol max
+
+gross_entry_value > ceil(current_floor_amount * 1e9 / liquidation_ltv)
+
+terminal_floor < floor(quantity * liquidation_ltv / 1e9)
 ```
 
-This guarantees that a winning leveraged contract can never owe a negative
-settlement payout. Equivalently, the floor can consume at most the order's full
-notional payout.
+The entry-value check prevents minting an order that would be liquidated
+immediately under the expiry's snapshotted LTV policy. The terminal check
+guarantees that a winning leveraged contract can never owe a negative settlement
+payout and still leaves the configured liquidation buffer at expiry. Trading and
+builder fees are transaction costs, not floor value, and do not affect these
+checks.
 
 After mint, the expiry tracks two indexed views of the same contract:
 
@@ -225,19 +234,24 @@ payout can understate live backing.
 
 ## Liquidation
 
-The economic liquidation condition is:
+The economic liquidation condition includes the expiry's snapshotted LTV buffer:
 
 ```text
-probability(range) <= floor_probability
+gross_value     = quantity * probability(range)
+threshold_value = ceil(floor_amount * 1e9 / liquidation_ltv)
+
+liquidate when gross_value <= threshold_value
 ```
 
-At that point, the contract has no user value. A liquidation flow can remove the
-worthless order from active indexes without paying the holder.
+At that point, the order is below the protocol health threshold. A liquidation
+flow removes it from active indexes without paying the holder.
 
-This README describes the contract model that liquidation relies on. The current
-leverage economics PR does not implement the full liquidation/health flow. Until
-that flow exists, live aggregate NAV must be treated as conditional on the
-above-floor invariant.
+Liquidation is bounded and policy-driven. Trade and valuation flows run a
+configured candidate scan before relying on aggregate NAV floor subtraction, and
+off-chain simulations are used to tune the priority policy and budget. Because
+the scan is bounded, aggregate live NAV should still be read as conditional on
+the health policy keeping active leveraged orders above their floor/LTV
+thresholds.
 
 ## Design Rules
 

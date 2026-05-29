@@ -37,6 +37,12 @@ public macro fun position_lot_size(): u64 { 10_000 }
 /// Window before expiry over which the leverage floor index rises.
 public macro fun leverage_floor_window_ms(): u64 { 31_536_000_000 }
 
+/// Entry probability below which only 1x mints are allowed.
+public(package) macro fun leverage_one_x_only_price_threshold(): u64 { 100_000_000 }
+
+/// Entry probability below which leverage is capped at 2x.
+public(package) macro fun leverage_two_x_max_price_threshold(): u64 { 200_000_000 }
+
 // === Staking ===
 
 /// Raw units in one whole DEEP (DEEP uses 6 decimals).

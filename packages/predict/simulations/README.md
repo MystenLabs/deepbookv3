@@ -115,6 +115,12 @@ multiples. Leverage codes are explicit:
 4 = 3x
 ```
 
+Leverage is tiered by entry probability. Rows with entry probability below
+`100_000_000` must use 1x. Rows from `100_000_000` up to but not including
+`200_000_000` may use at most 2x. Rows at or above `200_000_000` may use the
+protocol max of 3x. Leveraged mint rows must also be above their liquidation
+threshold at entry and below their terminal liquidation-LTV floor.
+
 `order_ref` and `lp_ref` are local aliases. They keep packed on-chain order IDs
 and Sui object IDs out of comparable economic data while allowing later rows to
 refer to earlier outputs.
@@ -123,6 +129,10 @@ The generator uses the same composition for normal and long scenarios: 60%
 mints, 30% redeems, 5% supply, and 5% withdraw. Normal scenarios contain 1,000
 rows evenly spaced through `scenario_dataset.csv`; long scenarios contain one
 row per source snapshot so exact-time replay does not reuse source timestamps.
+Generated mint rows are checked against the Python replay mirror for lot sizing,
+fee bounds, leverage tier, entry liquidation threshold, and terminal floor LTV
+before they are written. Hand-authored illegal rows are not repaired by the
+runner; they fail loudly in localnet and Python.
 
 ## Timestamp Model
 

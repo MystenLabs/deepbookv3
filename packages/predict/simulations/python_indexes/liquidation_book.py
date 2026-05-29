@@ -24,11 +24,23 @@ U40_MASK = (1 << 40) - 1
 U48_MASK = (1 << 48) - 1
 U28_MASK = (1 << 28) - 1
 MAX_LEVERAGE_CODE = 4
+LEVERAGE_ONE_X_ONLY_PRICE_THRESHOLD = 100_000_000
+LEVERAGE_TWO_X_MAX_PRICE_THRESHOLD = 200_000_000
 
 
 def liquidation_priority(leverage: int, quantity_lots: int) -> int:
     quantity_bucket = min(quantity_lots, U28_MASK)
     return ((MAX_LEVERAGE_CODE - leverage) << 28) | (U28_MASK - quantity_bucket)
+
+
+def assert_valid_leverage_tier(entry_probability: int, leverage: int) -> None:
+    if leverage < 0 or leverage > MAX_LEVERAGE_CODE:
+        raise ValueError("invalid leverage")
+    if entry_probability < LEVERAGE_ONE_X_ONLY_PRICE_THRESHOLD:
+        if leverage != 0:
+            raise ValueError("entry probability below 10c allows only 1x leverage")
+    elif entry_probability < LEVERAGE_TWO_X_MAX_PRICE_THRESHOLD and leverage > 2:
+        raise ValueError("entry probability below 20c allows at most 2x leverage")
 
 
 def open_strike_index(min_strike: int, tick_size: int, max_strike: int) -> int:
@@ -73,6 +85,9 @@ def encode_order_id(
         raise ValueError("opened_at_ms does not fit in order id")
     if sequence > U40_MASK:
         raise ValueError("sequence does not fit in order id")
+    if entry_probability > float_scaling:
+        raise ValueError("invalid entry probability")
+    assert_valid_leverage_tier(entry_probability, leverage)
 
     priority = liquidation_priority(leverage, quantity_lots)
     return (

@@ -207,6 +207,8 @@ public fun produce_valuation(
 /// pause to be off, trading globally enabled, manager ownership, a live fresh
 /// oracle, enough expiry allocation to back the post-mint max payout, and
 /// leveraged floor terms below this expiry's liquidation LTV at terminal.
+/// Leveraged mints must also satisfy leverage tier policy and be above the
+/// current liquidation threshold at entry.
 /// Returns the minted order ID for future order-scoped flows.
 public fun mint(
     market: &mut ExpiryMarket,

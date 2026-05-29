@@ -161,15 +161,22 @@ class Generator:
         for _ in range(MAX_ROW_ATTEMPTS):
             strike = self.random_strike(forward)
             is_up = bool(self.rng.randrange(2))
-            leverage = self.random_leverage()
             quantity = self.random_quantity()
             lower, higher = replay.binary_range_bounds(replay.align_strike_to_grid(strike), is_up)
             try:
                 entry_probability = replay.compute_range_price(svi, forward, lower, higher)
                 fee_rate = replay.assert_mint_fee_rate(entry_probability, self.fee_time_to_expiry(snapshot))
+                leverage = self.random_leverage(entry_probability)
                 terms = replay.compute_mint_terms(entry_probability, quantity, leverage)
                 open_floor_index = self.open_floor_index(snapshot)
                 replay.assert_terminal_ltv_mint_allowed(
+                    quantity,
+                    leverage,
+                    terms["floor_seed_amount"],
+                    open_floor_index,
+                )
+                replay.assert_mint_above_liquidation_threshold(
+                    entry_probability,
                     quantity,
                     leverage,
                     terms["floor_seed_amount"],
@@ -236,17 +243,29 @@ class Generator:
         strike = max(replay.ORACLE_MIN_STRIKE, min(replay.ORACLE_MAX_STRIKE, strike))
         return replay.align_strike_to_grid(strike)
 
-    def random_leverage(self) -> int:
-        cursor = self.rng.randrange(100)
-        if cursor < 45:
+    def max_leverage_for_probability(self, entry_probability: int) -> int:
+        if entry_probability < replay.LEVERAGE_ONE_X_ONLY_PRICE_THRESHOLD:
             return 0
-        if cursor < 60:
-            return 1
-        if cursor < 75:
+        if entry_probability < replay.LEVERAGE_TWO_X_MAX_PRICE_THRESHOLD:
             return 2
-        if cursor < 87:
-            return 3
         return 4
+
+    def random_leverage(self, entry_probability: int) -> int:
+        max_leverage = self.max_leverage_for_probability(entry_probability)
+        weighted = [
+            (0, 45),
+            (1, 15),
+            (2, 15),
+            (3, 12),
+            (4, 13),
+        ]
+        legal_weighted = [(leverage, weight) for leverage, weight in weighted if leverage <= max_leverage]
+        cursor = self.rng.randrange(sum(weight for _, weight in legal_weighted))
+        for leverage, weight in legal_weighted:
+            if cursor < weight:
+                return leverage
+            cursor -= weight
+        raise AssertionError("unreachable leverage selection")
 
     def random_quantity(self) -> int:
         lots = self.rng.randint(self.config.min_quantity_lots, self.config.max_quantity_lots)

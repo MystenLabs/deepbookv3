@@ -35,6 +35,7 @@ const ESettledLiabilityNotMaterialized: u64 = 5;
 const ESettledLiabilityUnderflow: u64 = 6;
 const EInvalidCloseQuantity: u64 = 7;
 const ETerminalFloorExceedsLiquidationLtv: u64 = 8;
+const EOrderBelowLiquidationThreshold: u64 = 9;
 
 /// Exposure lifecycle state for one oracle grid.
 public struct StrikeExposure has store {
@@ -208,6 +209,7 @@ public(package) fun allocate_mint_order(
         higher,
         clock,
     );
+    order::assert_mint_leverage_tier(entry_probability, leverage);
     let fee_rate = pricing::assert_mint_fee_rate(config, market, pyth, entry_probability, clock);
     let fee_amount = math::mul(fee_rate, quantity);
 
@@ -677,12 +679,30 @@ fun liquidate_candidate_if_under_floor(
     true
 }
 
+fun assert_mint_above_liquidation_threshold(
+    exposure: &StrikeExposure,
+    order: &Order,
+    floor_shares: u64,
+) {
+    if (!order.is_leveraged()) return;
+
+    let floor_amount = exposure.floor_amount_at_ms(floor_shares, order.opened_at_ms());
+    let threshold = predict_math::mul_div_round_up(
+        floor_amount,
+        constants::float_scaling!(),
+        exposure.liquidation_ltv,
+    );
+    let gross_value = math::mul(order.entry_probability(), order.quantity());
+    assert!(gross_value > threshold, EOrderBelowLiquidationThreshold);
+}
+
 /// Insert one active order into both live indexes.
 fun insert_live_order(exposure: &mut StrikeExposure, order: &Order, lower: u64, higher: u64) {
     let quantity = order.quantity();
     let (floor_shares, terminal_payout, live_backing_payout) = exposure.order_index_update_terms(
         order,
     );
+    exposure.assert_mint_above_liquidation_threshold(order, floor_shares);
     let live = exposure.live.borrow_mut();
     live.payout.insert_range(lower, higher, terminal_payout, live_backing_payout);
     live.nav.insert_range(lower, higher, quantity, floor_shares);

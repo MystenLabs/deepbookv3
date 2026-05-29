@@ -65,6 +65,8 @@ EXPIRY_FEE_MAX_MULTIPLIER = FLOAT_SCALING
 # flat index to match localnet's far-future expiry; long replay uses source
 # timestamps and settlement data from scenario_config.json.
 LEVERAGE_FLOOR_WINDOW_MS = 31_536_000_000  # 365 days, core/constants.move
+LEVERAGE_ONE_X_ONLY_PRICE_THRESHOLD = 100_000_000  # 0.10, core/constants.move
+LEVERAGE_TWO_X_MAX_PRICE_THRESHOLD = 200_000_000  # 0.20, core/constants.move
 MAX_EXPIRY_FLOOR_PREMIUM = 200_000_000  # 0.20, default_max_expiry_floor_premium
 LIQUIDATION_LTV = 850_000_000  # 0.85, default_liquidation_ltv
 BORROW_STEP_DT_MS: int | None = None  # None => window / total_steps (a full 0->1 phase sweep)
@@ -432,11 +434,20 @@ def leverage_multiplier(leverage: int) -> int:
     return FLOAT_SCALING + leverage * FLOAT_SCALING // 2
 
 
+def assert_valid_leverage_tier(entry_probability: int, leverage: int) -> None:
+    if entry_probability < LEVERAGE_ONE_X_ONLY_PRICE_THRESHOLD:
+        if leverage != 0:
+            raise ValueError("entry probability below 10c allows only 1x leverage")
+    elif entry_probability < LEVERAGE_TWO_X_MAX_PRICE_THRESHOLD and leverage > 2:
+        raise ValueError("entry probability below 20c allows at most 2x leverage")
+
+
 def user_contribution_from_exposure_value(exposure_value: int, leverage: int) -> int:
     return mul_div_round_up(exposure_value, FLOAT_SCALING, leverage_multiplier(leverage))
 
 
 def compute_mint_terms(entry_probability: int, quantity: int, leverage: int) -> dict[str, int]:
+    assert_valid_leverage_tier(entry_probability, leverage)
     entry_exposure_value = deepbook_mul(entry_probability, quantity)
     contribution = user_contribution_from_exposure_value(entry_exposure_value, leverage)
     return {
@@ -894,6 +905,28 @@ def liquidation_threshold_value(floor_amount: int) -> int:
     return mul_div_round_up(floor_amount, FLOAT_SCALING, LIQUIDATION_LTV)
 
 
+def assert_mint_above_liquidation_threshold(
+    entry_probability: int,
+    quantity: int,
+    leverage: int,
+    floor_seed_amount: int,
+    open_floor_index: int = FLOAT_SCALING,
+    floor_shares: int | None = None,
+) -> None:
+    if leverage == 0:
+        return
+    shares = (
+        floor_shares
+        if floor_shares is not None
+        else order_floor_shares_from_seed(floor_seed_amount, leverage, open_floor_index)
+    )
+    floor_amount = floor_amount_for_index(shares, open_floor_index)
+    threshold_value = liquidation_threshold_value(floor_amount)
+    gross_value = deepbook_mul(entry_probability, quantity)
+    if gross_value <= threshold_value:
+        raise ValueError("order below liquidation threshold at entry")
+
+
 def model_floor_index(model: dict[str, Any], timestamp_ms: int | None = None) -> int:
     if not model.get("exact_time"):
         return FLOAT_SCALING
@@ -950,6 +983,14 @@ def invalidate_valuation_cache(model: dict[str, Any]) -> None:
 
 def insert_live_order(model: dict[str, Any], order: dict[str, Any]) -> None:
     floor_shares, terminal_payout, live_backing_payout = order_index_update_terms(order)
+    assert_mint_above_liquidation_threshold(
+        order["entry_probability"],
+        order["quantity"],
+        order["leverage"],
+        order["floor_seed_amount"],
+        order.get("open_floor_index", FLOAT_SCALING),
+        floor_shares,
+    )
     model["payout"].insert_range(order["lower"], order["higher"], terminal_payout, live_backing_payout)
     model["nav"].insert_range(order["lower"], order["higher"], order["quantity"], floor_shares)
     invalidate_valuation_cache(model)
