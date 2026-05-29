@@ -34,23 +34,23 @@ use token::deep::DEEP;
 
 const EExpiryMarketAlreadyActive: u64 = 0;
 const EExpiryMarketNotActive: u64 = 1;
-const EInsufficientIdleBalance: u64 = 3;
-const EMaxTotalExposureExceeded: u64 = 4;
-const EWrongPoolVault: u64 = 6;
-const EExpiryMarketAlreadyValued: u64 = 7;
-const EMissingExpiryValuation: u64 = 8;
-const EActiveExpirySetChanged: u64 = 9;
-const EGrowUtilizationBelowThreshold: u64 = 12;
-const EShrinkUtilizationAboveThreshold: u64 = 13;
-const ENoAllocationResize: u64 = 14;
-const EInsufficientTotalAllocatedCapital: u64 = 15;
-const EZeroSupply: u64 = 16;
-const EZeroWithdraw: u64 = 17;
-const EInvalidInitialSupply: u64 = 18;
-const EZeroShares: u64 = 19;
-const EZeroPoolValue: u64 = 20;
-const EPackageVersionDisabled: u64 = 21;
-const EZeroAllocatedCapital: u64 = 22;
+const EInsufficientIdleBalance: u64 = 2;
+const EMaxTotalExposureExceeded: u64 = 3;
+const EWrongPoolVault: u64 = 4;
+const EExpiryMarketAlreadyValued: u64 = 5;
+const EMissingExpiryValuation: u64 = 6;
+const EActiveExpirySetChanged: u64 = 7;
+const EGrowUtilizationBelowThreshold: u64 = 8;
+const EShrinkUtilizationAboveThreshold: u64 = 9;
+const ENoAllocationResize: u64 = 10;
+const EInsufficientTotalAllocatedCapital: u64 = 11;
+const EZeroSupply: u64 = 12;
+const EZeroWithdraw: u64 = 13;
+const EInvalidInitialSupply: u64 = 14;
+const EZeroShares: u64 = 15;
+const EZeroPoolValue: u64 = 16;
+const EPackageVersionDisabled: u64 = 17;
+const EZeroAllocatedCapital: u64 = 18;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}

@@ -9,7 +9,7 @@ module deepbook_predict::market_oracle_config;
 
 use deepbook_predict::config_constants;
 
-const EInvalidBasisBounds: u64 = 1;
+const EInvalidBasisBounds: u64 = 0;
 
 /// Oracle bounds template snapshotted into each MarketOracle at creation.
 public struct MarketOracleConfig has store {

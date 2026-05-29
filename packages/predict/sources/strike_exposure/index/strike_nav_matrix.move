@@ -21,11 +21,11 @@ const PAGE_SLOTS: u64 = 128;
 const EInvalidTickSize: u64 = 0;
 const EInvalidStrikeRange: u64 = 1;
 const EInsufficientQuantity: u64 = 2;
-const EInvalidCurveRange: u64 = 4;
-const EUnalignedStrike: u64 = 5;
-const EZeroQuantity: u64 = 6;
-const ETooManyStrikes: u64 = 7;
-const EFloorExceedsLiveValue: u64 = 8;
+const EInvalidCurveRange: u64 = 3;
+const EUnalignedStrike: u64 = 4;
+const EZeroQuantity: u64 = 5;
+const ETooManyStrikes: u64 = 6;
+const EFloorExceedsLiveValue: u64 = 7;
 
 /// Dense preallocated page store for exact live NAV segment reads.
 public struct StrikeNavMatrix has store {

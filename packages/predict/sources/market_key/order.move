@@ -193,6 +193,16 @@ public(package) fun floor_seed_amount(order: &Order): u64 {
     exposure_value - user_contribution_from_exposure_value(exposure_value, order.leverage())
 }
 
+/// Assert the mint-time leverage tier allowed for an entry probability.
+public(package) fun assert_mint_leverage_tier(entry_probability: u64, leverage: u64) {
+    assert_valid_leverage(leverage);
+    if (entry_probability < constants::leverage_one_x_only_price_threshold!()) {
+        assert!(leverage == LEVERAGE_ONE_X, EInvalidLeverageTier);
+    } else if (entry_probability < constants::leverage_two_x_max_price_threshold!()) {
+        assert!(leverage <= LEVERAGE_TWO_X, EInvalidLeverageTier);
+    };
+}
+
 fun new(
     opened_at_ms: u64,
     min_strike_index: u64,
@@ -222,16 +232,6 @@ fun new(
         | (sequence as u256);
 
     Order { id }
-}
-
-/// Assert the mint-time leverage tier allowed for an entry probability.
-public(package) fun assert_mint_leverage_tier(entry_probability: u64, leverage: u64) {
-    assert_valid_leverage(leverage);
-    if (entry_probability < constants::leverage_one_x_only_price_threshold!()) {
-        assert!(leverage == LEVERAGE_ONE_X, EInvalidLeverageTier);
-    } else if (entry_probability < constants::leverage_two_x_max_price_threshold!()) {
-        assert!(leverage <= LEVERAGE_TWO_X, EInvalidLeverageTier);
-    };
 }
 
 // === Private Functions ===

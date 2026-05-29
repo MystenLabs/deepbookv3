@@ -95,11 +95,6 @@ public(package) fun assert_not_valuation_in_progress(config: &ProtocolConfig) {
     assert!(!config.valuation_in_progress, EValuationInProgress);
 }
 
-/// Abort unless trading is not paused.
-fun assert_not_trading_paused(config: &ProtocolConfig) {
-    assert!(!config.trading_paused, ETradingPaused);
-}
-
 /// Create and share the protocol-wide configuration object.
 public(package) fun create_and_share(ctx: &mut TxContext): ID {
     let config = new(ctx);
@@ -290,6 +285,11 @@ public(package) fun begin_valuation(config: &mut ProtocolConfig) {
 public(package) fun end_valuation(config: &mut ProtocolConfig) {
     config.assert_valuation_in_progress();
     config.valuation_in_progress = false;
+}
+
+/// Abort unless trading is not paused.
+fun assert_not_trading_paused(config: &ProtocolConfig) {
+    assert!(!config.trading_paused, ETradingPaused);
 }
 
 fun new(ctx: &mut TxContext): ProtocolConfig {

@@ -20,17 +20,17 @@ use deepbook_predict::{
 };
 use sui::clock::Clock;
 
-const EAskPriceOutOfBounds: u64 = 1;
-const EZeroForward: u64 = 2;
-const ECannotBeNegative: u64 = 3;
-const EZeroVariance: u64 = 4;
-const EInvalidRange: u64 = 5;
-const ERangePriceUnderflow: u64 = 6;
-const EInvalidLiveFairPrice: u64 = 9;
-const EInvalidCurveRange: u64 = 11;
-const EBlockScholesPriceStale: u64 = 12;
-const EBlockScholesSVIStale: u64 = 13;
-const EInvalidStrikeRatio: u64 = 14;
+const EAskPriceOutOfBounds: u64 = 0;
+const EZeroForward: u64 = 1;
+const ECannotBeNegative: u64 = 2;
+const EZeroVariance: u64 = 3;
+const EInvalidRange: u64 = 4;
+const ERangePriceUnderflow: u64 = 5;
+const EInvalidLiveFairPrice: u64 = 6;
+const EInvalidCurveRange: u64 = 7;
+const EBlockScholesPriceStale: u64 = 8;
+const EBlockScholesSVIStale: u64 = 9;
+const EInvalidStrikeRatio: u64 = 10;
 
 /// Curve sample point with strike and one-sided UP price.
 public struct CurvePoint has copy, drop, store {
@@ -160,11 +160,6 @@ public(package) fun assert_live_quote_available(
     assert_live_oracle_fresh(config, market, clock);
 }
 
-fun assert_live_oracle_fresh(config: &PricingConfig, market: &MarketOracle, clock: &Clock) {
-    assert!(block_scholes_price_is_fresh(config, market, clock), EBlockScholesPriceStale);
-    assert!(block_scholes_svi_is_fresh(config, market, clock), EBlockScholesSVIStale);
-}
-
 /// Resolve the live forward/SVI tuple used by all live pricing paths.
 ///
 /// Fresh Pyth spot is canonical for spot; forward is then derived from the
@@ -185,35 +180,6 @@ public(package) fun live_inputs(
     };
 
     (forward, market.block_scholes_svi())
-}
-
-fun block_scholes_price_is_fresh(
-    config: &PricingConfig,
-    market: &MarketOracle,
-    clock: &Clock,
-): bool {
-    timestamp_is_fresh(
-        market.block_scholes_price_freshness_timestamp_ms(),
-        config.block_scholes_prices_freshness_ms(),
-        clock,
-    )
-}
-
-fun block_scholes_svi_is_fresh(config: &PricingConfig, market: &MarketOracle, clock: &Clock): bool {
-    timestamp_is_fresh(
-        market.block_scholes_svi_freshness_timestamp_ms(),
-        config.block_scholes_svi_freshness_ms(),
-        clock,
-    )
-}
-
-fun pyth_spot_is_fresh(config: &PricingConfig, pyth: &PythSource, clock: &Clock): bool {
-    timestamp_is_fresh(pyth.freshness_timestamp_ms(), config.pyth_spot_freshness_ms(), clock)
-}
-
-fun timestamp_is_fresh(timestamp: u64, max_age_ms: u64, clock: &Clock): bool {
-    let now = clock.timestamp_ms();
-    timestamp > 0 && timestamp <= now && now - timestamp <= max_age_ms
 }
 
 /// Build an adaptive piecewise-linear UP-price curve over a configured grid range.
@@ -291,6 +257,40 @@ public(package) fun compute_range_price(
 }
 
 // === Private Functions ===
+
+fun assert_live_oracle_fresh(config: &PricingConfig, market: &MarketOracle, clock: &Clock) {
+    assert!(block_scholes_price_is_fresh(config, market, clock), EBlockScholesPriceStale);
+    assert!(block_scholes_svi_is_fresh(config, market, clock), EBlockScholesSVIStale);
+}
+
+fun block_scholes_price_is_fresh(
+    config: &PricingConfig,
+    market: &MarketOracle,
+    clock: &Clock,
+): bool {
+    timestamp_is_fresh(
+        market.block_scholes_price_freshness_timestamp_ms(),
+        config.block_scholes_prices_freshness_ms(),
+        clock,
+    )
+}
+
+fun block_scholes_svi_is_fresh(config: &PricingConfig, market: &MarketOracle, clock: &Clock): bool {
+    timestamp_is_fresh(
+        market.block_scholes_svi_freshness_timestamp_ms(),
+        config.block_scholes_svi_freshness_ms(),
+        clock,
+    )
+}
+
+fun pyth_spot_is_fresh(config: &PricingConfig, pyth: &PythSource, clock: &Clock): bool {
+    timestamp_is_fresh(pyth.freshness_timestamp_ms(), config.pyth_spot_freshness_ms(), clock)
+}
+
+fun timestamp_is_fresh(timestamp: u64, max_age_ms: u64, clock: &Clock): bool {
+    let now = clock.timestamp_ms();
+    timestamp > 0 && timestamp <= now && now - timestamp <= max_age_ms
+}
 
 /// Compute the fair UP tail price for `strike`.
 fun compute_up_price(svi: &SVIParams, forward: u64, strike: u64): u64 {

@@ -27,18 +27,16 @@ use deepbook_predict::{
 use dusdc::dusdc::DUSDC;
 use sui::{balance::{Self, Balance}, clock::Clock, vec_set::VecSet};
 
-use fun pricing::assert_live_quote_available as PricingConfig.assert_live_quote_available;
-
 const EWrongMarketOracle: u64 = 0;
 const EWrongPythSource: u64 = 1;
 const EValuationExceedsCash: u64 = 2;
 const EAllocationBelowMaxPayout: u64 = 3;
-const EInsufficientLpCash: u64 = 8;
-const EInsufficientFeeBalance: u64 = 18;
-const EPackageVersionDisabled: u64 = 20;
-const EMintPaused: u64 = 21;
-const EUnresolvedTradingFeesUnderflow: u64 = 23;
-const EFullCloseRequired: u64 = 27;
+const EInsufficientLpCash: u64 = 4;
+const EInsufficientFeeBalance: u64 = 5;
+const EPackageVersionDisabled: u64 = 6;
+const EMintPaused: u64 = 7;
+const EUnresolvedTradingFeesUnderflow: u64 = 8;
+const EFullCloseRequired: u64 = 9;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -721,7 +719,7 @@ fun redeem_live_internal(
     manager.assert_owner(ctx);
     manager.update_stake(ctx);
     market.assert_pyth_feed(pyth);
-    config.pricing_config().assert_live_quote_available(market_oracle, pyth, clock);
+    pricing::assert_live_quote_available(config.pricing_config(), market_oracle, pyth, clock);
     manager.remove_position(market.id(), order.id());
 
     let (resulting_order, redeem_amount, fee_amount) = market

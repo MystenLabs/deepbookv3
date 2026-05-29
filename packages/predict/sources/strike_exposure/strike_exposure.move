@@ -28,14 +28,14 @@ use deepbook_predict::{
 };
 use sui::clock::Clock;
 
-const EInvalidTickSize: u64 = 2;
-const EInvalidStrikeGrid: u64 = 3;
-const EInvalidStrikeIndex: u64 = 4;
-const ESettledLiabilityNotMaterialized: u64 = 5;
-const ESettledLiabilityUnderflow: u64 = 6;
-const EInvalidCloseQuantity: u64 = 7;
-const ETerminalFloorExceedsLiquidationLtv: u64 = 8;
-const EOrderBelowLiquidationThreshold: u64 = 9;
+const EInvalidTickSize: u64 = 0;
+const EInvalidStrikeGrid: u64 = 1;
+const EInvalidStrikeIndex: u64 = 2;
+const ESettledLiabilityNotMaterialized: u64 = 3;
+const ESettledLiabilityUnderflow: u64 = 4;
+const EInvalidCloseQuantity: u64 = 5;
+const ETerminalFloorExceedsLiquidationLtv: u64 = 6;
+const EOrderBelowLiquidationThreshold: u64 = 7;
 
 /// Exposure lifecycle state for one oracle grid.
 public struct StrikeExposure has store {
@@ -291,72 +291,6 @@ public(package) fun liquidate_live_orders(
     exposure.liquidate_candidates_with_inputs(&svi, forward, candidates, clock)
 }
 
-fun liquidate_candidates_with_inputs(
-    exposure: &mut StrikeExposure,
-    svi: &SVIParams,
-    forward: u64,
-    candidates: vector<u256>,
-    clock: &Clock,
-): u64 {
-    let mut liquidated_count = 0;
-    let mut i = 0;
-    while (i < candidates.length()) {
-        let order = order::from_order_id(candidates[i]);
-        let (lower, higher) = exposure.order_strikes(&order);
-        let range_probability = pricing::compute_range_price(
-            svi,
-            forward,
-            lower,
-            higher,
-        );
-        if (
-            exposure.liquidate_candidate_if_under_floor(
-                &order,
-                lower,
-                higher,
-                range_probability,
-                clock,
-            )
-        ) {
-            liquidated_count = liquidated_count + 1;
-        };
-        i = i + 1;
-    };
-    liquidated_count
-}
-
-fun liquidate_candidates_with_curve(
-    exposure: &mut StrikeExposure,
-    curve: &vector<CurvePoint>,
-    candidates: vector<u256>,
-    clock: &Clock,
-): u64 {
-    let mut liquidated_count = 0;
-    let mut i = 0;
-    while (i < candidates.length()) {
-        let order = order::from_order_id(candidates[i]);
-        let (lower, higher) = exposure.order_strikes(&order);
-        let range_probability = pricing::directional_probability_upper_bound(
-            curve,
-            lower,
-            higher,
-        );
-        if (
-            exposure.liquidate_candidate_if_under_floor(
-                &order,
-                lower,
-                higher,
-                range_probability,
-                clock,
-            )
-        ) {
-            liquidated_count = liquidated_count + 1;
-        };
-        i = i + 1;
-    };
-    liquidated_count
-}
-
 /// Cache terminal settled payout liability.
 ///
 /// Live indexes are kept until privileged compaction destroys them.
@@ -400,6 +334,72 @@ public(package) fun destroy_live_indexes(exposure: &mut StrikeExposure) {
     } = live;
     nav.destroy();
     payout.destroy();
+}
+
+fun liquidate_candidates_with_curve(
+    exposure: &mut StrikeExposure,
+    curve: &vector<CurvePoint>,
+    candidates: vector<u256>,
+    clock: &Clock,
+): u64 {
+    let mut liquidated_count = 0;
+    let mut i = 0;
+    while (i < candidates.length()) {
+        let order = order::from_order_id(candidates[i]);
+        let (lower, higher) = exposure.order_strikes(&order);
+        let range_probability = pricing::directional_probability_upper_bound(
+            curve,
+            lower,
+            higher,
+        );
+        if (
+            exposure.liquidate_candidate_if_under_floor(
+                &order,
+                lower,
+                higher,
+                range_probability,
+                clock,
+            )
+        ) {
+            liquidated_count = liquidated_count + 1;
+        };
+        i = i + 1;
+    };
+    liquidated_count
+}
+
+fun liquidate_candidates_with_inputs(
+    exposure: &mut StrikeExposure,
+    svi: &SVIParams,
+    forward: u64,
+    candidates: vector<u256>,
+    clock: &Clock,
+): u64 {
+    let mut liquidated_count = 0;
+    let mut i = 0;
+    while (i < candidates.length()) {
+        let order = order::from_order_id(candidates[i]);
+        let (lower, higher) = exposure.order_strikes(&order);
+        let range_probability = pricing::compute_range_price(
+            svi,
+            forward,
+            lower,
+            higher,
+        );
+        if (
+            exposure.liquidate_candidate_if_under_floor(
+                &order,
+                lower,
+                higher,
+                range_probability,
+                clock,
+            )
+        ) {
+            liquidated_count = liquidated_count + 1;
+        };
+        i = i + 1;
+    };
+    liquidated_count
 }
 
 /// Return terminal payout for one order at settlement, including the contract floor.

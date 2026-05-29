@@ -15,8 +15,8 @@ use sui::{coin::Coin, derived_object, table::{Self, Table}};
 
 const EInsufficientPosition: u64 = 0;
 const ENotOwner: u64 = 1;
-const EExpirySummaryHasOpenPositions: u64 = 4;
-const EPositionAlreadyExists: u64 = 5;
+const EExpirySummaryHasOpenPositions: u64 = 2;
+const EPositionAlreadyExists: u64 = 3;
 
 /// The key for deriving predict manager. u64 is optional for
 /// supporting multiple managers per address. Defaults to 0 in v1.

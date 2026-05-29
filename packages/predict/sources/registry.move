@@ -23,15 +23,15 @@ use deepbook_predict::{
 };
 use sui::{clock::Clock, table::{Self, Table}, vec_set::{Self, VecSet}};
 
-const EFeedIdMismatch: u64 = 2;
-const EPythSourceAlreadyCreated: u64 = 3;
-const EInvalidExpiry: u64 = 4;
-const EExpiryMarketAlreadyCreated: u64 = 5;
-const EPauseCapNotValid: u64 = 6;
-const EPackageVersionDisabled: u64 = 7;
-const EVersionAlreadyEnabled: u64 = 8;
-const EVersionNotEnabled: u64 = 9;
-const ECannotDisableLastVersion: u64 = 10;
+const EFeedIdMismatch: u64 = 0;
+const EPythSourceAlreadyCreated: u64 = 1;
+const EInvalidExpiry: u64 = 2;
+const EExpiryMarketAlreadyCreated: u64 = 3;
+const EPauseCapNotValid: u64 = 4;
+const EPackageVersionDisabled: u64 = 5;
+const EVersionAlreadyEnabled: u64 = 6;
+const EVersionNotEnabled: u64 = 7;
+const ECannotDisableLastVersion: u64 = 8;
 
 /// Capability for admin operations.
 /// Created during package init, transferred to deployer (multisig).
@@ -538,7 +538,7 @@ public fun create_manager(registry: &mut Registry, ctx: &mut TxContext): Predict
 }
 
 /// Create and share a derived PredictManager for the caller.
-entry fun create_and_share_manager(registry: &mut Registry, ctx: &mut TxContext) {
+public fun create_and_share_manager(registry: &mut Registry, ctx: &mut TxContext) {
     create_manager(registry, ctx).share();
 }
 

@@ -15,9 +15,9 @@ use sui::{bcs, hash::blake2b256, table::{Self, Table}};
 const EInvalidTickSize: u64 = 0;
 const EInvalidStrikeRange: u64 = 1;
 const EInsufficientPayoutTerms: u64 = 2;
-const EUnalignedStrike: u64 = 5;
-const ETooManyStrikes: u64 = 7;
-const EInvalidPayoutTerms: u64 = 8;
+const EUnalignedStrike: u64 = 3;
+const ETooManyStrikes: u64 = 4;
+const EInvalidPayoutTerms: u64 = 5;
 
 /// Sparse payout-liability tree for strike prefixes.
 public struct StrikePayoutTree has store {

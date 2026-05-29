@@ -280,7 +280,7 @@ fun div_scaled_rounds_down() {
     assert_eq!(r.magnitude(), 333_333_333);
 }
 
-// EZeroDivisor (= 1) is the only abort in this module.
+// EZeroDivisor is the only abort in this module.
 #[test, expected_failure(abort_code = i64::EZeroDivisor)]
 fun div_scaled_by_zero_aborts() {
     i64::from_u64(1).div_scaled(&i64::zero());
