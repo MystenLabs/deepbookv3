@@ -4,11 +4,12 @@
 /// Immutable contract terms encoded in a Predict order ID.
 ///
 /// An `Order` represents the contract sold to a user: a range, entry
-/// probability, quantity, leverage code, and original open time. Leverage changes
-/// the contract's deterministic floor schedule; 1x is the special case where the
-/// floor is zero and the behavior looks like a plain range payout. The packed ID
-/// is the single source of truth at protocol boundaries, while concrete strike
-/// grids and floor-index timing are interpreted by `StrikeExposure`.
+/// probability, quantity, fixed-point leverage multiplier, and original open
+/// time. Leverage changes the contract's deterministic floor schedule; 1x is the
+/// special case where the floor is zero and the behavior looks like a plain range
+/// payout. The packed ID is the single source of truth at protocol boundaries,
+/// while concrete strike grids and floor-index timing are interpreted by
+/// `StrikeExposure`.
 module deepbook_predict::order;
 
 use deepbook::math as deepbook_math;
@@ -23,25 +24,24 @@ const EInvalidQuantity: u64 = 5;
 const EInvalidSequence: u64 = 6;
 const EInvalidEntryProbability: u64 = 7;
 
-const OPENED_AT_OFFSET: u8 = 160;
-const MIN_STRIKE_INDEX_OFFSET: u8 = 136;
-const MAX_STRIKE_INDEX_OFFSET: u8 = 112;
+const OPENED_AT_OFFSET: u8 = 184;
+const MIN_STRIKE_INDEX_OFFSET: u8 = 160;
+const MAX_STRIKE_INDEX_OFFSET: u8 = 136;
 const LEVERAGE_OFFSET: u8 = 104;
 const ENTRY_PROBABILITY_OFFSET: u8 = 72;
 const QUANTITY_LOTS_OFFSET: u8 = 40;
-const ORDER_ID_BITS: u8 = 208;
+const ORDER_ID_BITS: u8 = 232;
 
-const U8_MASK: u256 = (1u256 << 8) - 1;
 const U24_MASK: u256 = (1u256 << 24) - 1;
 const U32_MASK: u256 = (1u256 << 32) - 1;
 const U40_MASK: u256 = (1u256 << 40) - 1;
 const U48_MASK: u256 = (1u256 << 48) - 1;
 
-const LEVERAGE_ONE_X: u64 = 0;
-const LEVERAGE_ONE_AND_HALF_X: u64 = 1;
-const LEVERAGE_TWO_X: u64 = 2;
-const LEVERAGE_TWO_AND_HALF_X: u64 = 3;
-const LEVERAGE_THREE_X: u64 = 4;
+const LEVERAGE_ONE_X: u64 = 1_000_000_000;
+const LEVERAGE_ONE_AND_HALF_X: u64 = 1_500_000_000;
+const LEVERAGE_TWO_X: u64 = 2_000_000_000;
+const LEVERAGE_TWO_AND_HALF_X: u64 = 2_500_000_000;
+const LEVERAGE_THREE_X: u64 = 3_000_000_000;
 
 /// Validated typed view over one packed Predict order ID.
 public struct Order has copy, drop {
@@ -50,27 +50,27 @@ public struct Order has copy, drop {
 
 // === Public Functions ===
 
-/// Return the leverage code for a 1x position.
+/// Return the 1e9-scaled leverage multiplier for a 1x position.
 public fun leverage_one_x(): u64 {
     LEVERAGE_ONE_X
 }
 
-/// Return the leverage code for a 1.5x position.
+/// Return the 1e9-scaled leverage multiplier for a 1.5x position.
 public fun leverage_one_and_half_x(): u64 {
     LEVERAGE_ONE_AND_HALF_X
 }
 
-/// Return the leverage code for a 2x position.
+/// Return the 1e9-scaled leverage multiplier for a 2x position.
 public fun leverage_two_x(): u64 {
     LEVERAGE_TWO_X
 }
 
-/// Return the leverage code for a 2.5x position.
+/// Return the 1e9-scaled leverage multiplier for a 2.5x position.
 public fun leverage_two_and_half_x(): u64 {
     LEVERAGE_TWO_AND_HALF_X
 }
 
-/// Return the leverage code for a 3x position.
+/// Return the 1e9-scaled leverage multiplier for a 3x position.
 public fun leverage_three_x(): u64 {
     LEVERAGE_THREE_X
 }
@@ -102,9 +102,9 @@ public fun max_strike_index(order: &Order): u64 {
     decode_u24(order.id, MAX_STRIKE_INDEX_OFFSET)
 }
 
-/// Return the leverage code encoded in this order.
+/// Return the 1e9-scaled leverage multiplier encoded in this order.
 public fun leverage(order: &Order): u64 {
-    decode_u8(order.id, LEVERAGE_OFFSET)
+    decode_u32(order.id, LEVERAGE_OFFSET)
 }
 
 /// Return the 1e9-scaled raw range probability encoded at order entry.
@@ -180,7 +180,7 @@ public(package) fun is_leveraged(order: &Order): bool {
     order.leverage() != LEVERAGE_ONE_X
 }
 
-/// Return user contribution, rounded up so leverage never exceeds its code.
+/// Return user contribution, rounded up so effective leverage never exceeds the multiplier.
 public(package) fun user_contribution(order: &Order): u64 {
     user_contribution_from_exposure_value(order.entry_exposure_value(), order.leverage())
 }
@@ -222,10 +222,6 @@ fun new(
 
 // === Private Functions ===
 
-fun decode_u8(id: u256, offset: u8): u64 {
-    ((id >> offset) & U8_MASK) as u64
-}
-
 fun decode_u24(id: u256, offset: u8): u64 {
     ((id >> offset) & U24_MASK) as u64
 }
@@ -252,16 +248,8 @@ fun assert_valid(order: &Order) {
 }
 
 fun user_contribution_from_exposure_value(exposure_value: u64, leverage: u64): u64 {
-    math::mul_div_round_up(
-        exposure_value,
-        constants::float_scaling!(),
-        leverage_multiplier(leverage),
-    )
-}
-
-fun leverage_multiplier(leverage: u64): u64 {
     assert_valid_leverage(leverage);
-    constants::float_scaling!() + leverage * constants::float_scaling!() / 2
+    math::mul_div_round_up(exposure_value, constants::float_scaling!(), leverage)
 }
 
 fun entry_exposure_value(order: &Order): u64 {
@@ -269,7 +257,14 @@ fun entry_exposure_value(order: &Order): u64 {
 }
 
 fun assert_valid_leverage(leverage: u64) {
-    assert!(leverage <= LEVERAGE_THREE_X, EInvalidLeverage);
+    assert!(
+        leverage == LEVERAGE_ONE_X
+            || leverage == LEVERAGE_ONE_AND_HALF_X
+            || leverage == LEVERAGE_TWO_X
+            || leverage == LEVERAGE_TWO_AND_HALF_X
+            || leverage == LEVERAGE_THREE_X,
+        EInvalidLeverage,
+    );
 }
 
 fun assert_valid_order_shape(min_strike_index: u64, max_strike_index: u64, leverage: u64) {

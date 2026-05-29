@@ -96,7 +96,7 @@ terms:
 
 - opened timestamp
 - lower and upper strike indices
-- leverage code
+- fixed-point leverage multiplier
 - entry probability
 - quantity
 - expiry-local sequence
