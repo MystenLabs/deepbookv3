@@ -10,7 +10,6 @@
 module deepbook_predict::registry;
 
 use deepbook_predict::{
-    account_events,
     builder_code,
     config_events,
     constants,
@@ -535,9 +534,7 @@ public fun create_builder_code(registry: &mut Registry, index: u64, ctx: &mut Tx
 
 /// Create a derived PredictManager for the caller.
 public fun create_manager(registry: &mut Registry, ctx: &mut TxContext): PredictManager {
-    let manager = predict_manager::new(&mut registry.id, ctx);
-    account_events::emit_predict_manager_created(manager.id(), manager.owner());
-    manager
+    predict_manager::new(&mut registry.id, ctx)
 }
 
 /// Create and share a derived PredictManager for the caller.

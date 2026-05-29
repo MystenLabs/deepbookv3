@@ -500,34 +500,25 @@ public(package) fun unregister_expiry_market(vault: &mut PoolVault, expiry_marke
 // === Private Functions ===
 
 fun assert_active_set_unchanged(vault: &PoolVault, expected_expiry_markets: &vector<ID>) {
-    assert!(
-        vault.active_expiry_markets.length() == expected_expiry_markets.length(),
+    assert_same_id_set(
+        &vault.active_expiry_markets,
+        expected_expiry_markets,
         EActiveExpirySetChanged,
     );
-    let mut i = 0;
-    while (i < expected_expiry_markets.length()) {
-        assert!(
-            vault.active_expiry_markets.contains(&expected_expiry_markets[i]),
-            EActiveExpirySetChanged,
-        );
-        i = i + 1;
-    };
 }
 
 fun assert_all_expected_valued(
     expected_expiry_markets: &vector<ID>,
     valued_expiry_markets: &vector<ID>,
 ) {
-    assert!(
-        expected_expiry_markets.length() == valued_expiry_markets.length(),
-        EMissingExpiryValuation,
-    );
+    assert_same_id_set(valued_expiry_markets, expected_expiry_markets, EMissingExpiryValuation);
+}
+
+fun assert_same_id_set(actual: &vector<ID>, expected: &vector<ID>, error: u64) {
+    assert!(actual.length() == expected.length(), error);
     let mut i = 0;
-    while (i < expected_expiry_markets.length()) {
-        assert!(
-            valued_expiry_markets.contains(&expected_expiry_markets[i]),
-            EMissingExpiryValuation,
-        );
+    while (i < expected.length()) {
+        assert!(actual.contains(&expected[i]), error);
         i = i + 1;
     };
 }

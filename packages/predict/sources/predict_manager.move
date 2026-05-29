@@ -181,7 +181,7 @@ public(package) fun new(registry_uid: &mut UID, ctx: &mut TxContext): PredictMan
     let mut balance_manager = balance_manager::new(ctx);
     let deposit_cap = balance_manager.mint_deposit_cap(ctx);
 
-    PredictManager {
+    let manager = PredictManager {
         id,
         balance_manager,
         deposit_cap,
@@ -191,7 +191,9 @@ public(package) fun new(registry_uid: &mut UID, ctx: &mut TxContext): PredictMan
         active_stake: 0,
         inactive_stake: 0,
         stake_epoch: ctx.epoch(),
-    }
+    };
+    account_events::emit_predict_manager_created(manager.id(), manager.owner());
+    manager
 }
 
 /// Deposit protocol payouts without requiring the manager owner as sender.

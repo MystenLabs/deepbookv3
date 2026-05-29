@@ -192,23 +192,28 @@ fun block_scholes_price_is_fresh(
     market: &MarketOracle,
     clock: &Clock,
 ): bool {
-    let now = clock.timestamp_ms();
-    let timestamp = market.block_scholes_price_freshness_timestamp_ms();
-    timestamp > 0 && timestamp <= now && now - timestamp <= config
-        .block_scholes_prices_freshness_ms()
+    timestamp_is_fresh(
+        market.block_scholes_price_freshness_timestamp_ms(),
+        config.block_scholes_prices_freshness_ms(),
+        clock,
+    )
 }
 
 fun block_scholes_svi_is_fresh(config: &PricingConfig, market: &MarketOracle, clock: &Clock): bool {
-    let now = clock.timestamp_ms();
-    let timestamp = market.block_scholes_svi_freshness_timestamp_ms();
-    timestamp > 0 && timestamp <= now && now - timestamp <= config
-        .block_scholes_svi_freshness_ms()
+    timestamp_is_fresh(
+        market.block_scholes_svi_freshness_timestamp_ms(),
+        config.block_scholes_svi_freshness_ms(),
+        clock,
+    )
 }
 
 fun pyth_spot_is_fresh(config: &PricingConfig, pyth: &PythSource, clock: &Clock): bool {
+    timestamp_is_fresh(pyth.freshness_timestamp_ms(), config.pyth_spot_freshness_ms(), clock)
+}
+
+fun timestamp_is_fresh(timestamp: u64, max_age_ms: u64, clock: &Clock): bool {
     let now = clock.timestamp_ms();
-    let timestamp = pyth.freshness_timestamp_ms();
-    timestamp > 0 && timestamp <= now && now - timestamp <= config.pyth_spot_freshness_ms()
+    timestamp > 0 && timestamp <= now && now - timestamp <= max_age_ms
 }
 
 /// Build an adaptive piecewise-linear UP-price curve over a configured grid range.

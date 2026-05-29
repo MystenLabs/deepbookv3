@@ -495,7 +495,7 @@ public(package) fun return_allocation(market: &mut ExpiryMarket, amount: u64): B
     market.lp_cash_balance.split(amount)
 }
 
-/// Set per-market mint pause (used by AdminCap admin path on registry).
+/// Set per-market mint pause and emit the pause-state event.
 public(package) fun set_mint_paused(market: &mut ExpiryMarket, paused: bool) {
     market.mint_paused = paused;
     config_events::emit_expiry_market_mint_paused_updated(market.id(), paused);
@@ -503,8 +503,7 @@ public(package) fun set_mint_paused(market: &mut ExpiryMarket, paused: bool) {
 
 /// Force `mint_paused = true` (used by PauseCap path on registry; one-way).
 public(package) fun pause_mint(market: &mut ExpiryMarket) {
-    market.mint_paused = true;
-    config_events::emit_expiry_market_mint_paused_updated(market.id(), true);
+    market.set_mint_paused(true);
 }
 
 /// Cache terminal payout liability in strike exposure if it has not already been cached.
@@ -528,9 +527,8 @@ public(package) fun release_settled_surplus(
     assert!(market.lp_cash_balance.value() >= settled_liability, EInsufficientLpCash);
     assert!(market.fee_balance.value() >= rebate_reserve, EInsufficientFeeBalance);
 
-    let allocated_reduction = market.allocated_capital;
-    if (allocated_reduction > 0) {
-        assert!(allocated_reduction >= settled_liability, EAllocationBelowMaxPayout);
+    if (market.allocated_capital > 0) {
+        assert!(market.allocated_capital >= settled_liability, EAllocationBelowMaxPayout);
         market.allocated_capital = 0;
     };
     let returned_cash_amount = market.lp_cash_balance.value() - settled_liability;

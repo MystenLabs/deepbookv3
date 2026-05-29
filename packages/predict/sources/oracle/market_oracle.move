@@ -597,25 +597,19 @@ fun valid_settlement_spot_source(
 }
 
 fun settle_from_spot_source(market: &mut MarketOracle, pyth: &PythSource, spot_source: u8) {
-    if (spot_source == SOURCE_PYTH) {
-        let pyth_source_timestamp_ms = pyth.source_timestamp_ms();
-        market.settle(
-            pyth.spot(),
-            SOURCE_PYTH,
-            pyth_source_timestamp_ms,
-            pyth.update_timestamp_ms(),
-        );
+    let (price, source, source_timestamp_ms, update_timestamp_ms) = if (
+        spot_source == SOURCE_PYTH
+    ) {
+        (pyth.spot(), SOURCE_PYTH, pyth.source_timestamp_ms(), pyth.update_timestamp_ms())
     } else {
-        let block_scholes_spot = market.block_scholes_spot;
-        let block_scholes_source_timestamp_ms = market.block_scholes_price_source_timestamp_ms;
-        let block_scholes_update_timestamp_ms = market.block_scholes_price_update_timestamp_ms;
-        market.settle(
-            block_scholes_spot,
+        (
+            market.block_scholes_spot,
             SOURCE_BLOCK_SCHOLES,
-            block_scholes_source_timestamp_ms,
-            block_scholes_update_timestamp_ms,
-        );
+            market.block_scholes_price_source_timestamp_ms,
+            market.block_scholes_price_update_timestamp_ms,
+        )
     };
+    market.settle(price, source, source_timestamp_ms, update_timestamp_ms);
 }
 
 fun settle(

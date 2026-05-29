@@ -102,17 +102,7 @@ fun assert_not_trading_paused(config: &ProtocolConfig) {
 
 /// Create and share the protocol-wide configuration object.
 public(package) fun create_and_share(ctx: &mut TxContext): ID {
-    let config = ProtocolConfig {
-        id: object::new(ctx),
-        pricing_config: pricing_config::new(),
-        fee_config: fee_config::new(),
-        risk_config: risk_config::new(),
-        market_oracle_config: market_oracle_config::new(),
-        leverage_config: leverage_config::new(),
-        stake_config: stake_config::new(),
-        trading_paused: false,
-        valuation_in_progress: false,
-    };
+    let config = new(ctx);
     let id = config.id();
     transfer::share_object(config);
     id
@@ -287,9 +277,7 @@ public(package) fun set_trading_paused(config: &mut ProtocolConfig, paused: bool
 /// Force `trading_paused = true` without admin authority. Reserved for
 /// `PauseCap` holders going through the registry; cannot be used to unpause.
 public(package) fun pause_trading(config: &mut ProtocolConfig) {
-    config.assert_not_valuation_in_progress();
-    config.trading_paused = true;
-    config_events::emit_trading_paused_updated(config.id(), true);
+    config.set_trading_paused(true);
 }
 
 /// Begin a transaction-local full-pool valuation lock.
@@ -304,10 +292,7 @@ public(package) fun end_valuation(config: &mut ProtocolConfig) {
     config.valuation_in_progress = false;
 }
 
-// === Test-Only Functions ===
-
-#[test_only]
-public fun new_for_testing(ctx: &mut TxContext): ProtocolConfig {
+fun new(ctx: &mut TxContext): ProtocolConfig {
     ProtocolConfig {
         id: object::new(ctx),
         pricing_config: pricing_config::new(),
@@ -319,4 +304,11 @@ public fun new_for_testing(ctx: &mut TxContext): ProtocolConfig {
         trading_paused: false,
         valuation_in_progress: false,
     }
+}
+
+// === Test-Only Functions ===
+
+#[test_only]
+public fun new_for_testing(ctx: &mut TxContext): ProtocolConfig {
+    new(ctx)
 }
