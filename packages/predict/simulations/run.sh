@@ -147,11 +147,11 @@ if [ "$PYTHON_ONLY" -eq 1 ]; then
   (cd "$SCRIPT_DIR" && python3 summarize_economics.py "$INSTANCE_DIR/artifacts")
   echo ""
   echo "==> Rendering charts..."
-  (cd "$SCRIPT_DIR" && python3 chart_market_overview.py "$PYTHON_LONG_DATA" "$INSTANCE_DIR/artifacts/python_derived.json")
-  (cd "$SCRIPT_DIR" && python3 chart_vault_pnl_fee_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json")
-  (cd "$SCRIPT_DIR" && python3 chart_vault_risk_profile.py "$INSTANCE_DIR/artifacts/python_derived.json")
-  (cd "$SCRIPT_DIR" && python3 chart_liquidation_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json")
-  (cd "$SCRIPT_DIR" && python3 chart_liquidation_execution_quality.py "$PYTHON_LONG_DATA")
+  (cd "$SCRIPT_DIR" && python3 charts/chart_market_overview.py "$PYTHON_LONG_DATA" "$INSTANCE_DIR/artifacts/python_derived.json")
+  (cd "$SCRIPT_DIR" && python3 charts/chart_vault_pnl_fee_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json")
+  (cd "$SCRIPT_DIR" && python3 charts/chart_vault_risk_profile.py "$INSTANCE_DIR/artifacts/python_derived.json")
+  (cd "$SCRIPT_DIR" && python3 charts/chart_liquidation_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json")
+  (cd "$SCRIPT_DIR" && python3 charts/chart_liquidation_execution_quality.py "$PYTHON_LONG_DATA")
   echo "==> Updating economic summary..."
   (cd "$SCRIPT_DIR" && python3 summarize_economics.py "$INSTANCE_DIR/artifacts")
   cleanup_long_outputs
@@ -458,7 +458,7 @@ for required_artifact in \
 done
 
 echo "==> Rendering gas chart..."
-python3 chart_gas.py "$INSTANCE_DIR/artifacts/local_trace.json"
+python3 charts/chart_gas.py "$INSTANCE_DIR/artifacts/local_trace.json"
 
 echo "==> Updating economic summary..."
 python3 summarize_economics.py "$INSTANCE_DIR/artifacts"
@@ -476,11 +476,11 @@ if python3 -c 'import json,sys; a=json.load(open(sys.argv[1])); b=json.load(open
   echo "==> Writing economic summary..."
   python3 summarize_economics.py "$INSTANCE_DIR/artifacts"
   echo "==> Rendering charts..."
-  python3 chart_market_overview.py "$PYTHON_LONG_DATA" "$INSTANCE_DIR/artifacts/python_derived.json"
-  python3 chart_vault_pnl_fee_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json"
-  python3 chart_vault_risk_profile.py "$INSTANCE_DIR/artifacts/python_derived.json"
-  python3 chart_liquidation_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json"
-  python3 chart_liquidation_execution_quality.py "$PYTHON_LONG_DATA"
+  python3 charts/chart_market_overview.py "$PYTHON_LONG_DATA" "$INSTANCE_DIR/artifacts/python_derived.json"
+  python3 charts/chart_vault_pnl_fee_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json"
+  python3 charts/chart_vault_risk_profile.py "$INSTANCE_DIR/artifacts/python_derived.json"
+  python3 charts/chart_liquidation_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json"
+  python3 charts/chart_liquidation_execution_quality.py "$PYTHON_LONG_DATA"
   echo "==> Updating economic summary..."
   python3 summarize_economics.py "$INSTANCE_DIR/artifacts"
   cleanup_long_outputs

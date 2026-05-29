@@ -60,14 +60,18 @@ can be iterated quickly inside the latest run folder.
   synthetic time, while the generator and long Python replay consume the real
   source expiry/settlement timing.
 - `data/generate_scenario.py`: random normal/long scenario generator.
+- `docs/ANALYSIS_NOTES.md`: current simulation interpretation notes and
+  follow-up analysis questions.
+- `charts/chart_*.py`: standalone chart scripts; one script writes one chart
+  file.
+- `charts/chart_common.py`: shared chart styling and timeline helpers.
+- `tools/analyze_liquidation_priority_encodings.py`: standalone research tool,
+  not called by `run.sh`.
 - `src/sim.ts`: localnet setup and generated CSV replay engine.
 - `src/runtime.ts`: Sui transaction builders and execution helpers.
 - `src/shared.ts`: CSV parsing, shared schemas, paths, and JSON helpers.
 - `python_replay.py`: Python economic mirror and derived metric generator.
-- `chart_*.py`: standalone chart scripts; one script writes one chart file.
-- `chart_common.py` and `sim_artifacts.py`: shared chart/summary helpers.
-- `analyze_liquidation_priority_encodings.py`: standalone research tool, not
-  called by `run.sh`.
+- `sim_artifacts.py`: shared JSON, unit-conversion, and summary helpers.
 - `runs/`: ignored output directory for local run instances.
 - `data/generated/`: ignored temporary generated scenario files.
 
@@ -287,8 +291,9 @@ Important fields:
 - Keep raw long-run data temporary by default. Use
   `bash run.sh --python-only --keep-derived` only when iterating on charts or
   inspecting raw records.
-- Keep charts standalone: one `chart_*.py` script writes one chart file. Every
-  chart should include a one-sentence subtitle describing what it measures.
+- Keep charts in `charts/` and standalone: one `charts/chart_*.py` script writes
+  one chart file. Every chart should include a one-sentence subtitle describing
+  what it measures.
 
 ## Current Caveats
 
