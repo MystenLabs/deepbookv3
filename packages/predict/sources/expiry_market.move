@@ -329,6 +329,7 @@ public fun claim_trading_loss_rebate(
     let fraction = staking::rebate_fraction(
         manager.active_stake(),
         config.stake_config().max_benefit_power(),
+        config.stake_config().max_rebate_fraction(),
     );
     let rebate_amount = math::mul(eligible_rebate, fraction);
     let lp_compound_amount = eligible_rebate - rebate_amount;
@@ -559,6 +560,7 @@ fun apply_stake_fee_discount(
     let discount = staking::fee_discount_fraction(
         manager.active_stake(),
         config.stake_config().max_benefit_power(),
+        config.stake_config().max_fee_discount(),
     );
     (fee_amount - math::mul(fee_amount, discount), discount)
 }

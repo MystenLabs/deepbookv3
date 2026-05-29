@@ -42,12 +42,6 @@ public macro fun leverage_floor_window_ms(): u64 { 31_536_000_000 }
 /// Raw units in one whole DEEP (DEEP uses 6 decimals).
 public macro fun deep_decimals(): u64 { 1_000_000 }
 
-/// Trading-fee discount at full active stake, in FLOAT_SCALING (50%).
-public macro fun max_fee_discount(): u64 { 500_000_000 }
-
-/// Loss-rebate share at full active stake, in FLOAT_SCALING (100%).
-public macro fun max_rebate_fraction(): u64 { 1_000_000_000 }
-
 // === Builder Fees ===
 
 /// Add-on builder fee as a fraction of the normal trade fee.

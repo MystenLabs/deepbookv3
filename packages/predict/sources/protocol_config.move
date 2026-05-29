@@ -137,6 +137,16 @@ public(package) fun set_max_benefit_power(config: &mut ProtocolConfig, value: u6
     config.stake_config.set_max_benefit_power(value);
 }
 
+public(package) fun set_max_fee_discount(config: &mut ProtocolConfig, value: u64) {
+    config.assert_not_valuation_in_progress();
+    config.stake_config.set_max_fee_discount(value);
+}
+
+public(package) fun set_max_rebate_fraction(config: &mut ProtocolConfig, value: u64) {
+    config.assert_not_valuation_in_progress();
+    config.stake_config.set_max_rebate_fraction(value);
+}
+
 public(package) fun set_min_ask_price(config: &mut ProtocolConfig, value: u64) {
     config.assert_not_valuation_in_progress();
     config.pricing_config.set_min_ask_price(value);

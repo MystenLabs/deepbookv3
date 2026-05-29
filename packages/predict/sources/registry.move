@@ -110,9 +110,19 @@ public fun set_template_max_expiry_floor_premium(
     config.set_template_max_expiry_floor_premium(value);
 }
 
-/// Set the staking power at which trading benefits reach their maximum.
+/// Set the active stake at which trading benefits reach their maximum.
 public fun set_max_benefit_power(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
     config.set_max_benefit_power(value);
+}
+
+/// Set the fee discount at full active stake (0..50%).
+public fun set_max_fee_discount(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
+    config.set_max_fee_discount(value);
+}
+
+/// Set the loss-rebate share at full active stake (0..100%).
+public fun set_max_rebate_fraction(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
+    config.set_max_rebate_fraction(value);
 }
 
 /// Set the per-asset time-to-expiry fee ramp for a Pyth source's markets.

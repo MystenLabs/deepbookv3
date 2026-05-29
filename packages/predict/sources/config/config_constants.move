@@ -34,6 +34,8 @@ const EInvalidMaxExpiryFloorPremium: u64 = 23;
 const EInvalidExpiryFeeWindowMs: u64 = 24;
 const EInvalidExpiryFeeMaxMultiplier: u64 = 25;
 const EInvalidMaxBenefitPower: u64 = 26;
+const EInvalidMaxFeeDiscount: u64 = 27;
+const EInvalidMaxRebateFraction: u64 = 28;
 
 // === Pool Risk ===
 
@@ -293,6 +295,34 @@ public(package) fun assert_max_benefit_power(value: u64) {
     assert!(
         value >= min_max_benefit_power!() && value <= max_max_benefit_power!(),
         EInvalidMaxBenefitPower,
+    );
+}
+
+/// Fee discount at full active stake, in FLOAT_SCALING. Admin-tunable 0..50%.
+public(package) macro fun default_max_fee_discount(): u64 { 500_000_000 }
+public(package) macro fun min_max_fee_discount(): u64 { 0 }
+public(package) macro fun max_max_fee_discount(): u64 { 500_000_000 }
+
+public(package) fun assert_max_fee_discount(value: u64) {
+    assert!(
+        value >= min_max_fee_discount!() && value <= max_max_fee_discount!(),
+        EInvalidMaxFeeDiscount,
+    );
+}
+
+/// Loss-rebate share at full active stake, in FLOAT_SCALING. Admin-tunable 0..100%.
+public(package) macro fun default_max_rebate_fraction(): u64 {
+    deepbook_predict::constants::float_scaling!()
+}
+public(package) macro fun min_max_rebate_fraction(): u64 { 0 }
+public(package) macro fun max_max_rebate_fraction(): u64 {
+    deepbook_predict::constants::float_scaling!()
+}
+
+public(package) fun assert_max_rebate_fraction(value: u64) {
+    assert!(
+        value >= min_max_rebate_fraction!() && value <= max_max_rebate_fraction!(),
+        EInvalidMaxRebateFraction,
     );
 }
 
