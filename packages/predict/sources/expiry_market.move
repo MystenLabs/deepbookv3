@@ -325,9 +325,8 @@ public fun claim_trading_loss_rebate(
     // remainder compounds into LP cash (returns fully to the pool on the
     // settlement sweep, no protocol/insurance split).
     manager.update_stake(ctx);
-    let fraction = config.stake_config().rebate_fraction(manager.active_stake());
-    let rebate_amount = math::mul(eligible_rebate, fraction);
-    let lp_compound_amount = eligible_rebate - rebate_amount;
+    let rebate_fraction = config.stake_config().rebate_fraction(manager.active_stake());
+    let (rebate_amount, lp_compound_amount) = apply_stake_benefit(eligible_rebate, rebate_fraction);
 
     if (rebate_amount > 0) {
         let payout = market.dispense_fee_cash(rebate_amount);
@@ -543,17 +542,15 @@ fun assert_pyth_feed(market: &ExpiryMarket, pyth: &PythSource) {
     assert!(market.pyth_lazer_feed_id == pyth.feed_id(), EWrongPythSource);
 }
 
-/// Reduce a trade fee by the manager's staking discount and return the
-/// discounted fee together with the applied discount fraction (FLOAT_SCALING,
-/// 0..50%). The discount applies to protocol fee margin only, never to payout
-/// backing, so cash-backing invariants are unaffected.
-fun apply_stake_fee_discount(
-    manager: &PredictManager,
-    config: &ProtocolConfig,
-    fee_amount: u64,
-): (u64, u64) {
-    let discount = config.stake_config().fee_discount_fraction(manager.active_stake());
-    (fee_amount - math::mul(fee_amount, discount), discount)
+/// Split `amount` by a stake benefit `fraction` (FLOAT_SCALING) into the
+/// fraction-weighted part and the remainder. The fee discount discards the
+/// weighted part and charges only the remainder — reducing protocol fee margin
+/// only, never payout backing, so cash-backing invariants are unaffected. The
+/// loss rebate pays the manager the weighted part and compounds the remainder
+/// to LPs.
+fun apply_stake_benefit(amount: u64, fraction: u64): (u64, u64) {
+    let weighted = math::mul(amount, fraction);
+    (weighted, amount - weighted)
 }
 
 fun builder_fee_amount(builder_code_id: &Option<ID>, fee_amount: u64, quantity: u64): u64 {
@@ -604,7 +601,8 @@ fun mint_internal(
             leverage,
             clock,
         );
-    let (fee_amount, fee_discount) = apply_stake_fee_discount(manager, config, fee_amount);
+    let fee_discount = config.stake_config().fee_discount_fraction(manager.active_stake());
+    let (_, fee_amount) = apply_stake_benefit(fee_amount, fee_discount);
 
     market.assert_allocation_backing();
     market.settle_mint_payment(manager, &minted_order, fee_amount, fee_discount, ctx);
@@ -638,7 +636,8 @@ fun redeem_live_internal(
             close_quantity,
             clock,
         );
-    let (fee_amount, fee_discount) = apply_stake_fee_discount(manager, config, fee_amount);
+    let fee_discount = config.stake_config().fee_discount_fraction(manager.active_stake());
+    let (_, fee_amount) = apply_stake_benefit(fee_amount, fee_discount);
 
     let replacement_order_id = if (resulting_order.id() == order.id()) {
         option::none()
