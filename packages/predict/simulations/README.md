@@ -56,9 +56,9 @@ can be iterated quickly inside the latest run folder.
   snapshots.
 - `data/scenario_config.json`: source expiry/settlement values, normal/long
   capital sizing, mint spend ranges, fee-ramp settings, and protocol knobs.
-  Localnet setup consumes the normal capital and knobs it can replay under
-  synthetic time, while the generator and long Python replay consume the real
-  source expiry/settlement timing.
+  Localnet setup applies the normal capital sizing and Pyth fee-ramp settings;
+  other protocol values in this file mirror Move defaults for parity and are
+  consumed directly by the generator and Python replay.
 - `data/generate_scenario.py`: random normal/long scenario generator.
 - `docs/ANALYSIS_NOTES.md`: current simulation interpretation notes and
   follow-up analysis questions.
@@ -288,6 +288,9 @@ Important fields:
   capital sizing, generation sizing, and source settlement inputs. When Move
   defaults, admin setup, fee policy, liquidation policy, or settlement
   assumptions change, update the Python mirror and this config in the same PR.
+  Localnet does not run admin setters for every mirrored protocol field; fields
+  such as liquidation budgets, fee shares, LTV, and floor premium should remain
+  equal to Move defaults unless the localnet setup is intentionally extended.
 - Keep raw long-run data temporary by default. Use
   `bash run.sh --python-only --keep-derived` only when iterating on charts or
   inspecting raw records.
@@ -302,6 +305,9 @@ Important fields:
   settlement inputs used by the long Python replay. If Move defaults, admin
   setup, fee-ramp policy, liquidation policy, capital sizing, or settlement
   assumptions change, update this file at the same time.
+- Long-run capital sizing is intentionally allowed to exceed the current
+  on-chain per-expiry allocation bound. It is an off-chain scale-up for Python
+  economic analysis, not a deployable allocation policy.
 - Full localnet replay can be gas-heavy when supply/withdraw valuation finds a
   liquidation backlog. The runner default transaction gas budget is currently
   `1_000_000_000` MIST.
