@@ -16,6 +16,7 @@ use deepbook_predict::{
     expiry_market::{ExpiryMarket, ExpiryValuation},
     market_oracle::MarketOracle,
     math as predict_math,
+    predict_manager::PredictManager,
     protocol_config::ProtocolConfig,
     risk_config::RiskConfig
 };
@@ -27,6 +28,7 @@ use sui::{
     coin_registry,
     vec_set::{Self, VecSet}
 };
+use token::deep::DEEP;
 
 const EExpiryMarketAlreadyActive: u64 = 0;
 const EExpiryMarketNotActive: u64 = 1;
@@ -60,6 +62,9 @@ public struct PoolVault has key {
     protocol_fee_balance: Balance<DUSDC>,
     /// Insurance fees swept from settled expiry fee surplus.
     insurance_fee_balance: Balance<DUSDC>,
+    /// Pooled DEEP staked by all managers for trading benefits. Per-manager
+    /// active/inactive amounts are mirrored on each `PredictManager`.
+    staked_deep: Balance<DEEP>,
     treasury_cap: TreasuryCap<PLP>,
     /// Expiry markets that still contribute active pool valuation/risk.
     active_expiry_markets: vector<ID>,
@@ -114,6 +119,11 @@ public fun allowed_versions(vault: &PoolVault): VecSet<u64> {
 /// Return idle DUSDC held by the pool.
 public fun idle_balance(vault: &PoolVault): u64 {
     vault.idle_balance.value()
+}
+
+/// Return DEEP staked by managers and held in custody by the pool.
+public fun staked_deep(vault: &PoolVault): u64 {
+    vault.staked_deep.value()
 }
 
 /// Return protocol revenue swept from settled expiry fee surplus.
@@ -321,6 +331,35 @@ public fun withdraw(
     vault.idle_balance.split(withdraw_amount).into_coin(ctx)
 }
 
+/// Stake DEEP for trading benefits. The DEEP is held in the pool vault; the
+/// amount is recorded as inactive on the manager and activates next epoch
+/// (`PredictManager.update_stake`, run by the trade/claim flows). Callable
+/// anytime, any number of times.
+public fun stake_deep(
+    vault: &mut PoolVault,
+    manager: &mut PredictManager,
+    deep: Coin<DEEP>,
+    ctx: &TxContext,
+) {
+    vault.assert_version_allowed();
+    manager.assert_owner(ctx);
+    manager.update_stake(ctx);
+    manager.add_inactive_stake(deep.value());
+    vault.staked_deep.join(deep.into_balance());
+}
+
+/// Withdraw all staked DEEP (active and inactive) at any time, no penalty.
+public fun unstake_deep(
+    vault: &mut PoolVault,
+    manager: &mut PredictManager,
+    ctx: &mut TxContext,
+): Coin<DEEP> {
+    vault.assert_version_allowed();
+    manager.assert_owner(ctx);
+    let amount = manager.remove_all_stake();
+    vault.staked_deep.split(amount).into_coin(ctx)
+}
+
 // === Public-Package Functions ===
 
 /// Overwrite this vault's mirrored `allowed_versions`. The only authorized
@@ -337,6 +376,7 @@ public(package) fun new(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): Po
         idle_balance: balance::zero(),
         protocol_fee_balance: balance::zero(),
         insurance_fee_balance: balance::zero(),
+        staked_deep: balance::zero(),
         treasury_cap,
         active_expiry_markets: vector[],
         total_allocated_capital: 0,
