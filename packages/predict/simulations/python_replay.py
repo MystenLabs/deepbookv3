@@ -2302,8 +2302,11 @@ def replay(
             updates.append(mint_order(model, row, row_timestamp_ms))
         elif action == "redeem":
             apply_inline_oracle_refresh(model, row, updates)
+            ref = row["orderRef"]
+            order = model["orders"].get(ref)
             scan_active_count = active_order_count(model)
-            updates.extend(run_liquidation_pass(model, TRADE_LIQUIDATION_BUDGET))
+            if order is None or order["status"] != "liquidated":
+                updates.extend(run_liquidation_pass(model, TRADE_LIQUIDATION_BUDGET))
             updates.append(redeem_order(model, row))
         elif action == "supply":
             apply_inline_oracle_refresh(model, row, updates)

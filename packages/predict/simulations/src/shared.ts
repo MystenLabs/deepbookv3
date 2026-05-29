@@ -74,7 +74,13 @@ export interface LocalTraceStep {
   action: ScenarioActionName;
   digest: string;
   gas: GasLike;
-  events: unknown[];
+  events: LocalTraceEvent[];
+}
+
+export interface LocalTraceEvent {
+  type: string;
+  full_type: string;
+  parsedJson: unknown;
 }
 
 export interface GasLike {
@@ -85,7 +91,7 @@ export interface GasLike {
 }
 
 export interface LocalTraceFile {
-  schema_version: "predict_local_trace_v1";
+  schema_version: typeof LOCAL_TRACE_SCHEMA_VERSION;
   steps: LocalTraceStep[];
 }
 
@@ -325,7 +331,7 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
 const instanceDir = resolveInstanceDir();
 
 export const ECONOMIC_SCHEMA_VERSION = "predict_economic_v1";
-export const LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v1";
+export const LOCAL_TRACE_SCHEMA_VERSION = "predict_local_trace_v2";
 export const SCENARIO_PATH = fileURLToPath(new URL("../data/generated/normal_scenario.csv", import.meta.url));
 export const STATE_PATH = path.join(instanceDir, "artifacts", "state.json");
 export const LOCAL_TRACE_PATH = path.join(instanceDir, "artifacts", "local_trace.json");

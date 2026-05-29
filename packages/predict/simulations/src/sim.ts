@@ -484,7 +484,11 @@ function traceStep(row: ScenarioRow, receipt: ExecutionReceipt): LocalTraceStep 
     action: row.action,
     digest: receipt.digest,
     gas: receipt.gas,
-    events: receipt.events,
+    events: receipt.events.map((event: any) => ({
+      type: eventName(event),
+      full_type: String(event.type ?? ""),
+      parsedJson: event.parsedJson ?? {},
+    })),
   };
 }
 

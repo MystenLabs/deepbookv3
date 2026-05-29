@@ -78,7 +78,8 @@ can be iterated quickly inside the latest run folder.
 2. Starts localnet.
 3. Publishes DeepBook, DUSDC, the Pyth Lazer stub, and Predict.
 4. Creates the vault, expiry market, oracle, manager, and seed balances.
-5. Generates `data/generated/normal_scenario.csv`.
+5. Generates `data/generated/normal_scenario.csv` and copies it into the run
+   artifacts.
 6. Runs Python over the normal scenario to create `python_data.json`.
 7. Replays the same normal scenario against localnet.
 8. Writes `local_trace.json` and `local_data.json`.
@@ -166,8 +167,10 @@ long Python = real timestamp economic analysis
 
 Full localnet runs can produce:
 
-- `artifacts/local_trace.json`: localnet transaction digests, gas, and raw Move
-  events.
+- `artifacts/normal_scenario.csv`: the exact generated normal scenario replayed
+  by both localnet and Python.
+- `artifacts/local_trace.json`: compact localnet transaction trace with digests,
+  gas, and normalized Move event payloads.
 - `artifacts/local_data.json`: cleaned localnet economic projection.
 - `artifacts/python_data.json`: cleaned Python economic projection for parity.
 - `artifacts/python_long_data.json`: long-run Python canonical data. Deleted by
@@ -176,7 +179,8 @@ Full localnet runs can produce:
   liquidation-efficiency metrics. Deleted by default after charts unless
   `--python-only --keep-derived` is used.
 - `artifacts/economic_summary.json`: compact persistent summary of canonical,
-  gas, PnL, and liquidation-efficiency metrics.
+  gas, PnL, and liquidation-efficiency metrics. The artifact list only includes
+  files that exist for that run.
 - `artifacts/chart_gas.png`: mint/redeem and supply/withdraw gas costs.
 - `artifacts/chart_market_overview.png`: BTC price, mint/redeem strikes,
   live pre-terminal vault MTM PnL, active book PnL, and live book risk.

@@ -323,11 +323,13 @@ def summarize_gas(trace: dict[str, Any] | None) -> dict[str, Any] | None:
 
 def summarize_artifacts(artifacts_dir: Path) -> dict[str, Any]:
     names = [
+        "normal_scenario.csv",
         "local_data.json",
         "python_data.json",
         "python_long_data.json",
         "python_derived.json",
         "local_trace.json",
+        "state.json",
         "chart_gas.png",
         "chart_market_overview.png",
         "chart_vault_pnl_fee_coverage.png",
@@ -335,11 +337,9 @@ def summarize_artifacts(artifacts_dir: Path) -> dict[str, Any]:
         "chart_liquidation_execution_quality.png",
     ]
     return {
-        name: {
-            "exists": (artifacts_dir / name).exists(),
-            "bytes": (artifacts_dir / name).stat().st_size if (artifacts_dir / name).exists() else 0,
-        }
+        name: {"bytes": (artifacts_dir / name).stat().st_size}
         for name in names
+        if (artifacts_dir / name).exists()
     }
 
 

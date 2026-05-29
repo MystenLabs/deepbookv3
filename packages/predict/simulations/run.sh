@@ -434,7 +434,9 @@ NORMAL_SCENARIO="$SCRIPT_DIR/data/generated/normal_scenario.csv"
 
 run_sim() {
   echo "==> Generating normal localnet/Python scenario..."
+  mkdir -p "$INSTANCE_DIR/artifacts"
   generate_scenario normal "$NORMAL_SCENARIO"
+  cp "$NORMAL_SCENARIO" "$INSTANCE_DIR/artifacts/normal_scenario.csv"
   if [ -n "$RUN_MAX_ROWS" ]; then
     set -- "$@" --max-rows "$RUN_MAX_ROWS"
   fi
