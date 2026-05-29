@@ -1,26 +1,36 @@
+import { existsSync, unlinkSync } from "fs";
+import { spawnSync } from "child_process";
+import { fileURLToPath } from "url";
+
 import {
-  RESULTS_PATH,
-  RESULTS_SCHEMA_VERSION,
+  ECONOMIC_SCHEMA_VERSION,
+  LOCAL_DATA_PATH,
+  LOCAL_TRACE_PATH,
+  LOCAL_TRACE_SCHEMA_VERSION,
+  PYTHON_DATA_PATH,
+  SCENARIO_PATH,
   STATE_PATH,
-  type ActionName,
-  type ActionSummary,
-  type ExecutionResult,
-  type RejectedMintResult,
-  type ResultsFile,
+  type EconomicDataFile,
+  type EconomicRecord,
+  type LocalTraceFile,
+  type LocalTraceStep,
+  type MintRow,
+  type OracleRefreshData,
   type ScenarioRow,
   type SimState,
   loadScenario,
   readJson,
+  scenarioQuantityScale,
   ts,
   validateSimState,
   writeJson,
 } from "./shared.js";
 import {
-  address,
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
-  createManagerTx,
+  address,
   createExpiryMarketTx,
+  createManagerTx,
   createMarketOracleCapTx,
   createPythSourceTx,
   depositToManagerTx,
@@ -28,27 +38,101 @@ import {
   execute,
   executeAndWait,
   finalizeDusdcCurrencyRegistrationTx,
+  liquidateTx,
   mintTx,
+  redeemTx,
+  refreshOracleAndLiquidateTx,
   refreshOracleAndMintTx,
+  refreshOracleAndRedeemTx,
+  refreshOracleAndSupplyWithExpiryValuationTx,
+  refreshOracleAndWithdrawWithExpiryValuationTx,
   setMarketOracleBasisBoundsTx,
   supplyTx,
   supplyWithExpiryValuationTx,
   updateBlockScholesPricesTx,
   updateSviTx,
+  withdrawWithExpiryValuationTx,
+  type ExecutionReceipt,
 } from "./runtime.js";
 
 const DUSDC_DECIMALS = 1_000_000n;
-const EXPIRY_MS = BigInt(Date.now()) + 7n * 24n * 60n * 60n * 1000n;
+const VAULT_SEED = 500_000n * DUSDC_DECIMALS;
+const MANAGER_SEED = 500_000n * DUSDC_DECIMALS;
+const INITIAL_EXPIRY_ALLOCATION = 50_000n * DUSDC_DECIMALS;
+const EXPIRY_MS = BigInt(Date.now()) + 400n * 24n * 60n * 60n * 1000n;
 const FLOAT_SCALING = 1_000_000_000n;
-// Must satisfy the on-chain invariant:
-// max_strike - min_strike == tick_size * 100_000
 const ORACLE_MIN_STRIKE = 25_000n * FLOAT_SCALING;
 const ORACLE_TICK_SIZE = 1n * FLOAT_SCALING;
 const ORACLE_MAX_STRIKE = ORACLE_MIN_STRIKE + 100_000n * ORACLE_TICK_SIZE;
-const NAV_SUPPLY_INTERVAL = 100;
-const NAV_SUPPLY_AMOUNT = 1n * DUSDC_DECIMALS;
+const NEG_INF_STRIKE = 0n;
+const POS_INF_STRIKE = (1n << 64n) - 1n;
+const ORDER_SEQUENCE_MASK = (1n << 40n) - 1n;
+const INITIAL_TOTAL_PLP_SUPPLY = VAULT_SEED;
 
-type MintRow = Extract<ScenarioRow, { action: "mint" }>;
+interface EconomicState {
+  managerBalance: bigint;
+  expiryLpCash: bigint;
+  expiryFeeBalance: bigint;
+  expiryUnresolvedTradingFees: bigint;
+  vaultIdleBalance: bigint;
+  vaultTotalAllocated: bigint;
+  vaultTotalPlpSupply: bigint;
+  openOrderCount: bigint;
+  openOrderQuantity: bigint;
+  liquidatedOrderCount: bigint;
+}
+
+interface AliasState {
+  orderIdsByRef: Map<string, string>;
+  orderRefsById: Map<string, string>;
+  lpCoinIdsByRef: Map<string, string>;
+}
+
+function parseArgs() {
+  let maxRows: number | undefined;
+  const maxRowsIdx = process.argv.indexOf("--max-rows");
+  if (maxRowsIdx !== -1 && process.argv[maxRowsIdx + 1]) {
+    maxRows = parseInt(process.argv[maxRowsIdx + 1], 10);
+  }
+  let scenarioPath = SCENARIO_PATH;
+  const scenarioIdx = process.argv.indexOf("--scenario");
+  if (scenarioIdx !== -1 && process.argv[scenarioIdx + 1]) {
+    scenarioPath = process.argv[scenarioIdx + 1];
+  }
+  const scenarioArg = process.argv.find((arg) => arg.startsWith("--scenario="));
+  if (scenarioArg) {
+    scenarioPath = scenarioArg.slice("--scenario=".length);
+  }
+  return {
+    setupOnly: process.argv.includes("--setup-only"),
+    executeOnly: process.argv.includes("--execute-only"),
+    maxRows,
+    scenarioPath,
+  };
+}
+
+function initialEconomicState(): EconomicState {
+  return {
+    managerBalance: MANAGER_SEED,
+    expiryLpCash: INITIAL_EXPIRY_ALLOCATION,
+    expiryFeeBalance: 0n,
+    expiryUnresolvedTradingFees: 0n,
+    vaultIdleBalance: VAULT_SEED - INITIAL_EXPIRY_ALLOCATION,
+    vaultTotalAllocated: INITIAL_EXPIRY_ALLOCATION,
+    vaultTotalPlpSupply: INITIAL_TOTAL_PLP_SUPPLY,
+    openOrderCount: 0n,
+    openOrderQuantity: 0n,
+    liquidatedOrderCount: 0n,
+  };
+}
+
+function initialAliases(): AliasState {
+  return {
+    orderIdsByRef: new Map(),
+    orderRefsById: new Map(),
+    lpCoinIdsByRef: new Map(),
+  };
+}
 
 function alignStrikeToGrid(strike: bigint): bigint {
   const relative = strike - ORACLE_MIN_STRIKE;
@@ -59,94 +143,10 @@ function alignStrikeToGrid(strike: bigint): bigint {
   return snapped;
 }
 
-function parseArgs() {
-  let maxRows: number | undefined;
-  const maxRowsIdx = process.argv.indexOf("--max-rows");
-  if (maxRowsIdx !== -1 && process.argv[maxRowsIdx + 1]) {
-    maxRows = parseInt(process.argv[maxRowsIdx + 1], 10);
-  }
-  return {
-    setupOnly: process.argv.includes("--setup-only"),
-    executeOnly: process.argv.includes("--execute-only"),
-    continueOnRejects: process.argv.includes("--continue-on-rejects"),
-    maxRows,
-  };
-}
-
-function summarizeRows(rows: ExecutionResult[]): ActionSummary {
-  return {
-    count: rows.length,
-    gas: {
-      avg: rows.reduce((sum, row) => sum + row.gasTotal, 0) / rows.length,
-      min: Math.min(...rows.map((row) => row.gasTotal)),
-      max: Math.max(...rows.map((row) => row.gasTotal)),
-    },
-    wallMs: {
-      avg: rows.reduce((sum, row) => sum + row.wallMs, 0) / rows.length,
-      min: Math.min(...rows.map((row) => row.wallMs)),
-      max: Math.max(...rows.map((row) => row.wallMs)),
-    },
-  };
-}
-
-function buildResultsFile(
-  byAction: Record<ActionName, ExecutionResult[]>,
-  rejectedMints: RejectedMintResult[],
-  targetMints: number,
-  attemptedMints: number
-): ResultsFile {
-  const summaryByAction: ResultsFile["summary"]["byAction"] = {};
-
-  for (const action of ["update_prices", "update_svi", "mint", "supply"] as const) {
-    if (byAction[action].length > 0) {
-      summaryByAction[action] = summarizeRows(byAction[action]);
-    }
-  }
-
-  return {
-    schema_version: RESULTS_SCHEMA_VERSION,
-    summary: {
-      totalTxs: byAction.update_prices.length + byAction.update_svi.length + byAction.mint.length + byAction.supply.length,
-      attemptedMints,
-      successfulMints: byAction.mint.length,
-      rejectedMints: rejectedMints.length,
-      targetMints,
-      byAction: summaryByAction,
-    },
-    mints: byAction.mint,
-    supplies: byAction.supply,
-    rejectedMints,
-  };
-}
-
-async function recordNavSupplyCheckpoint(
-  byAction: Record<ActionName, ExecutionResult[]>,
-  state: SimState,
-  targetMints: number
-): Promise<void> {
-  const successfulMints = byAction.mint.length;
-  if (successfulMints === 0 || successfulMints % NAV_SUPPLY_INTERVAL !== 0) return;
-
-  const startedAt = performance.now();
-  const gas = await execute(
-    () => supplyWithExpiryValuationTx({
-      poolVaultId: state.poolVaultId,
-      protocolConfigId: state.protocolConfigId,
-      expiryMarketId: state.expiryMarketId,
-      oracleId: state.oracleId,
-      pythSourceId: state.pythSourceId,
-      amount: NAV_SUPPLY_AMOUNT,
-    }),
-    "supply"
-  );
-  const wallMs = performance.now() - startedAt;
-  byAction.supply.push({ wallMs, ...gas });
-
-  process.stdout.write(`[${ts()}]   [NAV ${successfulMints}/${targetMints}] supply ${wallMs.toFixed(0)}ms\n`);
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+function binaryRangeBounds(strike: bigint, isUp: boolean): { lower: bigint; higher: bigint } {
+  return isUp
+    ? { lower: strike, higher: POS_INF_STRIKE }
+    : { lower: NEG_INF_STRIKE, higher: strike };
 }
 
 function direction(row: MintRow): "UP" | "DN" {
@@ -157,32 +157,450 @@ function scaledUsd(value: bigint): string {
   return (Number(value) / 1e9).toFixed(0);
 }
 
-function mintContext(
-  row: MintRow,
-  alignedStrike: bigint,
-  attemptedMintIndex: number,
-  targetMints: number
-): string {
-  return `mint ${attemptedMintIndex}/${targetMints} csv_line=${row.lineNumber} ${direction(row)} strike=$${scaledUsd(alignedStrike)} quantity=${row.quantity}`;
+function formatLeverage(leverage: bigint): string {
+  const halfUnits = 2n + leverage;
+  if (halfUnits % 2n === 0n) return `${halfUnits / 2n}x`;
+  return `${halfUnits / 2n}.5x`;
 }
 
-function rejectedMintResult(
-  row: MintRow,
-  alignedStrike: bigint,
-  attemptedMintIndex: number,
-  wallMs: number,
-  error: unknown
-): RejectedMintResult {
+function signedValue(magnitude: bigint, isNegative: boolean): string {
+  if (magnitude === 0n) return "0";
+  return isNegative ? `-${magnitude}` : magnitude.toString();
+}
+
+function decimal(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number") return String(value);
+  if (typeof value === "bigint") return value.toString();
+  throw new Error(`Expected decimal-compatible value, got ${JSON.stringify(value)}`);
+}
+
+function booleanField(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return value === "true";
+  return Boolean(value);
+}
+
+function signedI64(value: any): string {
+  const fields = value?.fields ?? value ?? {};
+  const magnitude = BigInt(decimal(fields.magnitude ?? fields.value ?? 0));
+  const isNegative = booleanField(
+    fields.is_negative ?? fields.isNegative ?? fields.negative ?? false,
+  );
+  return signedValue(magnitude, isNegative);
+}
+
+function orderSequence(orderId: string): string {
+  return (BigInt(orderId) & ORDER_SEQUENCE_MASK).toString();
+}
+
+function optionDecimal(value: any): string | null {
+  if (value === null || value === undefined) return null;
+  if (Array.isArray(value)) return value.length === 0 ? null : decimal(value[0]);
+  if (typeof value === "string" || typeof value === "number" || typeof value === "bigint") {
+    return decimal(value);
+  }
+  const fields = value.fields ?? value;
+  if (Array.isArray(fields.vec)) return fields.vec.length === 0 ? null : decimal(fields.vec[0]);
+  if (Array.isArray(fields)) return fields.length === 0 ? null : decimal(fields[0]);
+  if (fields.some !== undefined) return decimal(fields.some);
+  if (fields.value !== undefined) return decimal(fields.value);
+  return null;
+}
+
+function eventName(event: any): string {
+  return String(event.type ?? "").split("::").pop() ?? "";
+}
+
+function findEvent(events: any[], name: string): any | undefined {
+  return events.find((event) => eventName(event) === name || String(event.type ?? "").includes(name));
+}
+
+function allEvents(events: any[], name: string): any[] {
+  return events.filter((event) => eventName(event) === name || String(event.type ?? "").includes(name));
+}
+
+function sviInput(row: Extract<ScenarioRow, { action: "update_svi" | "oracle_mint_ptb" }> | OracleRefreshData) {
   return {
-    attemptedMintIndex,
-    csvLine: row.lineNumber,
-    direction: direction(row),
-    strike: row.strike.toString(),
-    alignedStrike: alignedStrike.toString(),
-    quantity: row.quantity.toString(),
-    wallMs,
-    error: errorMessage(error),
+    a: row.a.toString(),
+    b: row.b.toString(),
+    rho: signedValue(row.rho, row.rhoNegative),
+    m: signedValue(row.m, row.mNegative),
+    sigma: row.sigma.toString(),
   };
+}
+
+function mintInput(row: MintRow): Record<string, string> {
+  const strike = alignStrikeToGrid(row.strike);
+  const { lower, higher } = binaryRangeBounds(strike, row.isUp);
+  return {
+    order_ref: row.orderRef,
+    lower_strike: lower.toString(),
+    higher_strike: higher.toString(),
+    quantity: row.quantity.toString(),
+    leverage: row.leverage.toString(),
+  };
+}
+
+function rowInput(row: ScenarioRow): Record<string, unknown> {
+  if (row.action === "oracle_mint_ptb") {
+    return {
+      spot: row.spot.toString(),
+      forward: row.forward.toString(),
+      svi: sviInput(row),
+      ...mintInput(row),
+    };
+  }
+  if (row.action === "update_prices") {
+    return { spot: row.spot.toString(), forward: row.forward.toString() };
+  }
+  if (row.action === "update_svi") {
+    return { svi: sviInput(row) };
+  }
+  if (row.action === "mint") {
+    return { ...oracleRefreshInput(row), ...mintInput(row) };
+  }
+  if (row.action === "liquidate") {
+    return { ...oracleRefreshInput(row), budget: row.budget.toString() };
+  }
+  if (row.action === "redeem") {
+    return {
+      ...oracleRefreshInput(row),
+      order_ref: row.orderRef,
+      close_quantity: row.closeQuantity.toString(),
+      replacement_order_ref: row.replacementOrderRef,
+    };
+  }
+  if (row.action === "supply") {
+    return { ...oracleRefreshInput(row), amount: row.amount.toString(), lp_ref: row.lpRef };
+  }
+  return { ...oracleRefreshInput(row), lp_ref: row.lpRef };
+}
+
+function oracleRefreshInput(row: ScenarioRow): Record<string, unknown> {
+  if (!("oracleRefresh" in row) || !row.oracleRefresh) return {};
+  return {
+    spot: row.oracleRefresh.spot.toString(),
+    forward: row.oracleRefresh.forward.toString(),
+    svi: sviInput(row.oracleRefresh),
+  };
+}
+
+function normalizePricesUpdated(event: any): Record<string, unknown> {
+  const json = event.parsedJson ?? {};
+  return {
+    type: "oracle_prices_updated",
+    spot: decimal(json.spot),
+    forward: decimal(json.forward),
+    basis: decimal(json.basis),
+  };
+}
+
+function normalizeSviUpdated(event: any): Record<string, unknown> {
+  const json = event.parsedJson ?? {};
+  return {
+    type: "oracle_svi_updated",
+    a: decimal(json.a),
+    b: decimal(json.b),
+    rho: signedI64(json.rho),
+    m: signedI64(json.m),
+    sigma: decimal(json.sigma),
+  };
+}
+
+function normalizeOrderMinted(event: any, row: ScenarioRow): Record<string, unknown> {
+  const json = event.parsedJson ?? {};
+  const orderRef = row.action === "mint" || row.action === "oracle_mint_ptb" ? row.orderRef : null;
+  return {
+    type: "order_minted",
+    order_ref: orderRef,
+    order_sequence: orderSequence(decimal(json.order_id)),
+    lower_strike: decimal(json.lower_strike),
+    higher_strike: decimal(json.higher_strike),
+    leverage: decimal(json.leverage),
+    entry_probability: decimal(json.entry_probability),
+    quantity: decimal(json.quantity),
+    contribution: decimal(json.contribution),
+    trading_fee: decimal(json.trading_fee),
+    builder_fee: decimal(json.builder_fee),
+    floor_seed_amount: decimal(json.floor_seed_amount),
+  };
+}
+
+function normalizeOrderLiquidated(event: any, aliases: AliasState): Record<string, unknown> {
+  const json = event.parsedJson ?? {};
+  const orderId = decimal(json.order_id);
+  return {
+    type: "order_liquidated",
+    order_ref: aliases.orderRefsById.get(orderId) ?? null,
+    order_sequence: orderSequence(orderId),
+    quantity: decimal(json.quantity),
+    gross_value: decimal(json.gross_value),
+    floor_amount: decimal(json.floor_amount),
+    liquidation_ltv: decimal(json.liquidation_ltv),
+  };
+}
+
+function normalizeLiveOrderRedeemed(event: any, row: ScenarioRow): Record<string, unknown> {
+  const json = event.parsedJson ?? {};
+  const replacementOrderId = optionDecimal(json.replacement_order_id);
+  const replacementRef =
+    row.action === "redeem" && replacementOrderId !== null
+      ? row.replacementOrderRef ?? row.orderRef
+      : null;
+  return {
+    type: "live_order_redeemed",
+    order_ref: row.action === "redeem" ? row.orderRef : null,
+    order_sequence: orderSequence(decimal(json.order_id)),
+    quantity_closed: decimal(json.quantity_closed),
+    remaining_quantity: decimal(json.remaining_quantity),
+    replacement_order_ref: replacementRef,
+    replacement_order_sequence: replacementOrderId === null ? null : orderSequence(replacementOrderId),
+    redeem_amount: decimal(json.redeem_amount),
+    trading_fee: decimal(json.trading_fee),
+    builder_fee: decimal(json.builder_fee),
+  };
+}
+
+function normalizeLiquidatedOrderRedeemed(event: any, row: ScenarioRow): Record<string, unknown> {
+  const json = event.parsedJson ?? {};
+  return {
+    type: "liquidated_order_redeemed",
+    order_ref: row.action === "redeem" ? row.orderRef : null,
+    order_sequence: orderSequence(decimal(json.order_id)),
+    quantity_closed: decimal(json.quantity_closed),
+  };
+}
+
+function normalizeSettledOrderRedeemed(event: any, row: ScenarioRow): Record<string, unknown> {
+  const json = event.parsedJson ?? {};
+  return {
+    type: "settled_order_redeemed",
+    order_ref: row.action === "redeem" ? row.orderRef : null,
+    order_sequence: orderSequence(decimal(json.order_id)),
+    quantity_closed: decimal(json.quantity_closed),
+    settlement_price: decimal(json.settlement_price),
+    payout_amount: decimal(json.payout_amount),
+  };
+}
+
+function normalizeSupplyExecuted(event: any, row: ScenarioRow): Record<string, unknown> {
+  const json = event.parsedJson ?? {};
+  return {
+    type: "pool_supply",
+    lp_ref: row.action === "supply" ? row.lpRef : null,
+    payment: decimal(json.payment),
+    shares_minted: decimal(json.shares_minted),
+    pool_value_before: decimal(json.pool_value_before),
+    total_supply_after: decimal(json.total_supply_after),
+    idle_balance_after: decimal(json.idle_balance_after),
+    total_allocated_after: decimal(json.total_allocated_after),
+  };
+}
+
+function normalizeWithdrawExecuted(event: any, row: ScenarioRow): Record<string, unknown> {
+  const json = event.parsedJson ?? {};
+  return {
+    type: "pool_withdraw",
+    lp_ref: row.action === "withdraw" ? row.lpRef : null,
+    shares_burned: decimal(json.shares_burned),
+    payout: decimal(json.payout),
+    pool_value_before: decimal(json.pool_value_before),
+    total_supply_after: decimal(json.total_supply_after),
+    idle_balance_after: decimal(json.idle_balance_after),
+    total_allocated_after: decimal(json.total_allocated_after),
+  };
+}
+
+function normalizeUpdates(row: ScenarioRow, receipt: ExecutionReceipt, aliases: AliasState): Record<string, unknown>[] {
+  const updates: Record<string, unknown>[] = [];
+  for (const event of receipt.events) {
+    const name = eventName(event);
+    if (name === "BlockScholesPricesUpdated") updates.push(normalizePricesUpdated(event));
+    else if (name === "BlockScholesSVIUpdated") updates.push(normalizeSviUpdated(event));
+    else if (name === "OrderLiquidated") updates.push(normalizeOrderLiquidated(event, aliases));
+    else if (name === "OrderMinted") updates.push(normalizeOrderMinted(event, row));
+    else if (name === "LiveOrderRedeemed") updates.push(normalizeLiveOrderRedeemed(event, row));
+    else if (name === "LiquidatedOrderRedeemed") updates.push(normalizeLiquidatedOrderRedeemed(event, row));
+    else if (name === "SettledOrderRedeemed") updates.push(normalizeSettledOrderRedeemed(event, row));
+    else if (name === "SupplyExecuted") updates.push(normalizeSupplyExecuted(event, row));
+    else if (name === "WithdrawExecuted") updates.push(normalizeWithdrawExecuted(event, row));
+  }
+  if (row.action === "liquidate") {
+    const liquidationPass = {
+      type: "liquidation_pass",
+      budget: row.budget.toString(),
+      liquidated_count: allEvents(receipt.events, "OrderLiquidated").length.toString(),
+    };
+    const firstLiquidation = updates.findIndex((update) => update.type === "order_liquidated");
+    updates.splice(firstLiquidation === -1 ? updates.length : firstLiquidation, 0, liquidationPass);
+  }
+  return updates;
+}
+
+function applyUpdate(state: EconomicState, update: Record<string, unknown>) {
+  if (update.type === "order_minted") {
+    const contribution = BigInt(decimal(update.contribution));
+    const tradingFee = BigInt(decimal(update.trading_fee));
+    const builderFee = BigInt(decimal(update.builder_fee));
+    const quantity = BigInt(decimal(update.quantity));
+    state.managerBalance -= contribution + tradingFee + builderFee;
+    state.expiryLpCash += contribution;
+    state.expiryFeeBalance += tradingFee;
+    state.expiryUnresolvedTradingFees += tradingFee;
+    state.openOrderCount += 1n;
+    state.openOrderQuantity += quantity;
+  } else if (update.type === "order_liquidated") {
+    const quantity = BigInt(decimal(update.quantity));
+    state.openOrderCount -= 1n;
+    state.openOrderQuantity -= quantity;
+    state.liquidatedOrderCount += 1n;
+  } else if (update.type === "live_order_redeemed") {
+    const redeemAmount = BigInt(decimal(update.redeem_amount));
+    const tradingFee = BigInt(decimal(update.trading_fee));
+    const builderFee = BigInt(decimal(update.builder_fee));
+    const quantityClosed = BigInt(decimal(update.quantity_closed));
+    const remainingQuantity = BigInt(decimal(update.remaining_quantity));
+    state.managerBalance += redeemAmount - tradingFee - builderFee;
+    state.expiryLpCash -= redeemAmount;
+    state.expiryFeeBalance += tradingFee;
+    state.expiryUnresolvedTradingFees += tradingFee;
+    state.openOrderQuantity -= quantityClosed;
+    if (remainingQuantity === 0n) state.openOrderCount -= 1n;
+  } else if (update.type === "liquidated_order_redeemed") {
+    state.liquidatedOrderCount -= 1n;
+  } else if (update.type === "settled_order_redeemed") {
+    const payout = BigInt(decimal(update.payout_amount));
+    const quantityClosed = BigInt(decimal(update.quantity_closed));
+    state.managerBalance += payout;
+    state.expiryLpCash -= payout;
+    state.openOrderCount -= 1n;
+    state.openOrderQuantity -= quantityClosed;
+  } else if (update.type === "pool_supply") {
+    state.vaultIdleBalance = BigInt(decimal(update.idle_balance_after));
+    state.vaultTotalAllocated = BigInt(decimal(update.total_allocated_after));
+    state.vaultTotalPlpSupply = BigInt(decimal(update.total_supply_after));
+  } else if (update.type === "pool_withdraw") {
+    state.vaultIdleBalance = BigInt(decimal(update.idle_balance_after));
+    state.vaultTotalAllocated = BigInt(decimal(update.total_allocated_after));
+    state.vaultTotalPlpSupply = BigInt(decimal(update.total_supply_after));
+  }
+}
+
+function stateSnapshot(state: EconomicState): Record<string, string> {
+  return {
+    manager_balance: state.managerBalance.toString(),
+    expiry_lp_cash: state.expiryLpCash.toString(),
+    expiry_fee_balance: state.expiryFeeBalance.toString(),
+    expiry_unresolved_trading_fees: state.expiryUnresolvedTradingFees.toString(),
+    vault_idle_balance: state.vaultIdleBalance.toString(),
+    vault_total_allocated: state.vaultTotalAllocated.toString(),
+    vault_total_plp_supply: state.vaultTotalPlpSupply.toString(),
+    open_order_count: state.openOrderCount.toString(),
+    open_order_quantity: state.openOrderQuantity.toString(),
+    liquidated_order_count: state.liquidatedOrderCount.toString(),
+  };
+}
+
+function economicRecord(row: ScenarioRow, receipt: ExecutionReceipt, state: EconomicState, aliases: AliasState): EconomicRecord {
+  const updates = normalizeUpdates(row, receipt, aliases);
+  for (const update of updates) {
+    applyUpdate(state, update);
+  }
+
+  return {
+    step: row.step,
+    action: row.action,
+    input: rowInput(row),
+    updates,
+    state: stateSnapshot(state),
+  };
+}
+
+function traceStep(row: ScenarioRow, receipt: ExecutionReceipt): LocalTraceStep {
+  return {
+    step: row.step,
+    action: row.action,
+    digest: receipt.digest,
+    gas: receipt.gas,
+    events: receipt.events,
+  };
+}
+
+function eventOrderId(receipt: ExecutionReceipt, name: string): string | null {
+  const event = findEvent(receipt.events, name);
+  if (!event) return null;
+  const json = event.parsedJson ?? {};
+  return json.order_id === undefined ? null : decimal(json.order_id);
+}
+
+function createdPlpCoinId(receipt: ExecutionReceipt): string {
+  const change = receipt.objectChanges.find(
+    (objectChange: any) =>
+      objectChange.type === "created" &&
+      String(objectChange.objectType ?? "").includes("::coin::Coin") &&
+      String(objectChange.objectType ?? "").includes("::plp::PLP"),
+  );
+  if (!change?.objectId) {
+    throw new Error("Supply transaction did not create a PLP coin object");
+  }
+  return change.objectId;
+}
+
+function recordAliases(row: ScenarioRow, receipt: ExecutionReceipt, aliases: AliasState) {
+  if (row.action === "mint" || row.action === "oracle_mint_ptb") {
+    const orderId = eventOrderId(receipt, "OrderMinted");
+    if (!orderId) throw new Error(`Missing OrderMinted event for ${row.orderRef}`);
+    aliases.orderIdsByRef.set(row.orderRef, orderId);
+    aliases.orderRefsById.set(orderId, row.orderRef);
+    return;
+  }
+
+  if (row.action === "redeem") {
+    const liveRedeem = findEvent(receipt.events, "LiveOrderRedeemed");
+    if (liveRedeem) {
+      const oldOrderId = decimal(liveRedeem.parsedJson.order_id);
+      aliases.orderRefsById.delete(oldOrderId);
+      const replacementOrderId = optionDecimal(liveRedeem.parsedJson.replacement_order_id);
+      if (replacementOrderId === null) {
+        aliases.orderIdsByRef.delete(row.orderRef);
+      } else {
+        const replacementRef = row.replacementOrderRef ?? row.orderRef;
+        aliases.orderIdsByRef.delete(row.orderRef);
+        aliases.orderIdsByRef.set(replacementRef, replacementOrderId);
+        aliases.orderRefsById.set(replacementOrderId, replacementRef);
+      }
+      return;
+    }
+
+    const closedOrderId =
+      eventOrderId(receipt, "LiquidatedOrderRedeemed") ?? eventOrderId(receipt, "SettledOrderRedeemed");
+    if (closedOrderId) {
+      aliases.orderIdsByRef.delete(row.orderRef);
+      aliases.orderRefsById.delete(closedOrderId);
+    }
+    return;
+  }
+
+  if (row.action === "supply") {
+    aliases.lpCoinIdsByRef.set(row.lpRef, createdPlpCoinId(receipt));
+  } else if (row.action === "withdraw") {
+    aliases.lpCoinIdsByRef.delete(row.lpRef);
+  }
+}
+
+function mintContext(row: MintRow, alignedStrike: bigint): string {
+  return `${row.action} csv_line=${row.lineNumber} ${direction(row)} strike=$${scaledUsd(alignedStrike)} quantity=${row.quantity} leverage=${formatLeverage(row.leverage)} ref=${row.orderRef}`;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function clearOutputArtifacts() {
+  for (const path of [LOCAL_TRACE_PATH, LOCAL_DATA_PATH, PYTHON_DATA_PATH]) {
+    if (existsSync(path)) unlinkSync(path);
+  }
 }
 
 async function setupSimulation(): Promise<SimState> {
@@ -190,13 +608,13 @@ async function setupSimulation(): Promise<SimState> {
 
   let result = await executeAndWait(
     finalizeDusdcCurrencyRegistrationTx(),
-    "finalize_dusdc_currency_registration"
+    "finalize_dusdc_currency_registration",
   );
   const dusdcCurrencyChange = result.objectChanges.find(
     (change: any) =>
       change.type === "created" &&
       change.objectType.includes("coin_registry::Currency") &&
-      change.objectType.includes("dusdc::DUSDC")
+      change.objectType.includes("dusdc::DUSDC"),
   );
   const dusdcCurrencyId: string = dusdcCurrencyChange.objectId;
   console.log(`[${ts()}]   DUSDC Currency: ${dusdcCurrencyId}`);
@@ -208,21 +626,20 @@ async function setupSimulation(): Promise<SimState> {
 
   result = await executeAndWait(createMarketOracleCapTx(address), "create_market_oracle_cap");
   const oracleCapChange = result.objectChanges.find(
-    (change: any) => change.type === "created" && change.objectType.includes("MarketOracleCap")
+    (change: any) => change.type === "created" && change.objectType.includes("MarketOracleCap"),
   );
   const oracleCapId: string = oracleCapChange.objectId;
   console.log(`[${ts()}]   OracleCap: ${oracleCapId}`);
 
   result = await executeAndWait(createPythSourceTx(1), "create_pyth_source");
   const pythSourceChange = result.objectChanges.find(
-    (change: any) => change.type === "created" && change.objectType.includes("PythSource")
+    (change: any) => change.type === "created" && change.objectType.includes("PythSource"),
   );
   const pythSourceId: string = pythSourceChange.objectId;
   console.log(`[${ts()}]   PythSource: ${pythSourceId}`);
 
-  const vaultSeed = 500_000n * DUSDC_DECIMALS;
-  await executeAndWait(supplyTx(poolVaultId, protocolConfigId, vaultSeed), "supply");
-  console.log(`[${ts()}]   Vault funded: ${vaultSeed / DUSDC_DECIMALS} DUSDC`);
+  await executeAndWait(supplyTx(poolVaultId, protocolConfigId, VAULT_SEED), "supply");
+  console.log(`[${ts()}]   Vault funded: ${VAULT_SEED / DUSDC_DECIMALS} DUSDC`);
 
   result = await executeAndWait(
     createExpiryMarketTx({
@@ -235,22 +652,22 @@ async function setupSimulation(): Promise<SimState> {
       tickSize: ORACLE_TICK_SIZE,
     }),
     "create_expiry_market",
-    50_000_000_000n
+    50_000_000_000n,
   );
   const oracleChange = result.objectChanges.find(
-    (change: any) => change.type === "created" && change.objectType.includes("MarketOracle") && !change.objectType.includes("Cap")
+    (change: any) =>
+      change.type === "created" &&
+      change.objectType.includes("MarketOracle") &&
+      !change.objectType.includes("Cap"),
   );
   const oracleId: string = oracleChange.objectId;
   const expiryMarketChange = result.objectChanges.find(
-    (change: any) => change.type === "created" && change.objectType.includes("ExpiryMarket")
+    (change: any) => change.type === "created" && change.objectType.includes("ExpiryMarket"),
   );
   const expiryMarketId: string = expiryMarketChange.objectId;
   console.log(`[${ts()}]   ExpiryMarket: ${expiryMarketId}`);
   console.log(`[${ts()}]   Oracle: ${oracleId}`);
 
-  // Scenario CSV has historical spot moves up to ~8% between consecutive
-  // update_prices rows. Default per-push bounds (2%) would trip the circuit
-  // breaker; widen to the admin ceiling (10%) so the sim replays the trace.
   await executeAndWait(
     setMarketOracleBasisBoundsTx(
       oracleId,
@@ -259,9 +676,9 @@ async function setupSimulation(): Promise<SimState> {
       100_000_000n,
       100_000_000n,
       900_000_000n,
-      1_100_000_000n
+      1_100_000_000n,
     ),
-    "set_basis_bounds"
+    "set_basis_bounds",
   );
   console.log(`[${ts()}]   Basis bounds widened for oracle`);
 
@@ -269,9 +686,8 @@ async function setupSimulation(): Promise<SimState> {
   await executeAndWait(createManagerTx(), "create_manager");
   console.log(`[${ts()}]   Manager: ${managerId}`);
 
-  const userFunds = 500_000n * DUSDC_DECIMALS;
-  await executeAndWait(depositToManagerTx(managerId, userFunds), "deposit_to_manager");
-  console.log(`[${ts()}]   Manager funded: ${userFunds / DUSDC_DECIMALS} DUSDC`);
+  await executeAndWait(depositToManagerTx(managerId, MANAGER_SEED), "deposit_to_manager");
+  console.log(`[${ts()}]   Manager funded: ${MANAGER_SEED / DUSDC_DECIMALS} DUSDC`);
 
   const state: SimState = {
     poolVaultId,
@@ -289,204 +705,280 @@ async function setupSimulation(): Promise<SimState> {
   return state;
 }
 
-async function executeScenario(
-  rows: ScenarioRow[],
-  state: SimState,
-  continueOnRejects: boolean
-): Promise<void> {
-  const mintRows = rows.filter((row): row is MintRow => row.action === "mint");
-
-  console.log(`\n[${ts()}] Loaded ${rows.length} rows (${mintRows.length} mints)`);
-  if (continueOnRejects) {
-    console.log(`[${ts()}] Continue-on-rejects enabled; run still requires ${mintRows.length} successful mints`);
+async function executeRow(row: ScenarioRow, state: SimState, aliases: AliasState): Promise<ExecutionReceipt> {
+  if (row.action === "oracle_mint_ptb") {
+    const alignedStrike = alignStrikeToGrid(row.strike);
+    return execute(
+      () => refreshOracleAndMintTx({
+        expiryMarketId: state.expiryMarketId,
+        protocolConfigId: state.protocolConfigId,
+        managerId: state.managerId,
+        oracleId: state.oracleId,
+        oracleCapId: state.oracleCapId,
+        pythSourceId: state.pythSourceId,
+        strike: alignedStrike,
+        isUp: row.isUp,
+        quantity: row.quantity,
+        leverage: row.leverage,
+        spot: row.spot,
+        forward: row.forward,
+        svi: {
+          a: row.a,
+          b: row.b,
+          rho: row.rho,
+          rhoNegative: row.rhoNegative,
+          m: row.m,
+          mNegative: row.mNegative,
+          sigma: row.sigma,
+        },
+      }),
+      "oracle_mint_ptb",
+    );
   }
-  console.log(`[${ts()}] --- Executing ${rows.length} actions ---\n`);
 
-  const byAction: Record<ActionName, ExecutionResult[]> = {
-    update_prices: [],
-    update_svi: [],
-    mint: [],
-    supply: [],
-  };
-  const rejectedMints: RejectedMintResult[] = [];
-  let attemptedMintIndex = 0;
-  let i = 0;
-  while (i < rows.length) {
-    const row = rows[i];
-    const startedAt = performance.now();
+  if (row.action === "update_prices") {
+    return execute(
+      () => updateBlockScholesPricesTx(
+        state.oracleId,
+        state.protocolConfigId,
+        state.pythSourceId,
+        state.oracleCapId,
+        row.spot,
+        row.forward,
+      ),
+      "update_prices",
+    );
+  }
 
-    const nextRow = i + 1 < rows.length ? rows[i + 1] : null;
-    const nextNextRow = i + 2 < rows.length ? rows[i + 2] : null;
-    if (
-      row.action === "update_prices" &&
-      nextRow?.action === "update_svi" &&
-      nextNextRow?.action === "mint"
-    ) {
-      attemptedMintIndex++;
-      const alignedStrike = alignStrikeToGrid(nextNextRow.strike);
-      let mintSucceeded = false;
-      try {
-        const gas = await execute(
-          () => refreshOracleAndMintTx({
+  if (row.action === "update_svi") {
+    return execute(
+      () => updateSviTx(state.oracleId, state.protocolConfigId, state.oracleCapId, row),
+      "update_svi",
+    );
+  }
+
+  if (row.action === "mint") {
+    const alignedStrike = alignStrikeToGrid(row.strike);
+    return execute(
+      () => mintTx({
+        expiryMarketId: state.expiryMarketId,
+        protocolConfigId: state.protocolConfigId,
+        managerId: state.managerId,
+        oracleId: state.oracleId,
+        pythSourceId: state.pythSourceId,
+        strike: alignedStrike,
+        isUp: row.isUp,
+        quantity: row.quantity,
+        leverage: row.leverage,
+      }),
+      "mint",
+    );
+  }
+
+  if (row.action === "liquidate") {
+    return execute(
+      () => row.oracleRefresh
+        ? refreshOracleAndLiquidateTx({
+            expiryMarketId: state.expiryMarketId,
+            protocolConfigId: state.protocolConfigId,
+            oracleId: state.oracleId,
+            oracleCapId: state.oracleCapId,
+            pythSourceId: state.pythSourceId,
+            budget: row.budget,
+            spot: row.oracleRefresh.spot,
+            forward: row.oracleRefresh.forward,
+            svi: row.oracleRefresh,
+          })
+        : liquidateTx({
+            expiryMarketId: state.expiryMarketId,
+            protocolConfigId: state.protocolConfigId,
+            oracleId: state.oracleId,
+            pythSourceId: state.pythSourceId,
+            budget: row.budget,
+          }),
+      "liquidate",
+    );
+  }
+
+  if (row.action === "redeem") {
+    const orderId = aliases.orderIdsByRef.get(row.orderRef);
+    if (!orderId) throw new Error(`Unknown order_ref ${row.orderRef}`);
+    return execute(
+      () => row.oracleRefresh
+        ? refreshOracleAndRedeemTx({
             expiryMarketId: state.expiryMarketId,
             protocolConfigId: state.protocolConfigId,
             managerId: state.managerId,
             oracleId: state.oracleId,
             oracleCapId: state.oracleCapId,
             pythSourceId: state.pythSourceId,
-            strike: alignedStrike,
-            isUp: nextNextRow.isUp,
-            quantity: nextNextRow.quantity,
-            spot: row.spot,
-            forward: row.forward,
-            svi: {
-              a: nextRow.a,
-              b: nextRow.b,
-              rho: nextRow.rho,
-              rhoNegative: nextRow.rhoNegative,
-              m: nextRow.m,
-              mNegative: nextRow.mNegative,
-              sigma: nextRow.sigma,
-            },
+            orderId,
+            closeQuantity: row.closeQuantity,
+            spot: row.oracleRefresh.spot,
+            forward: row.oracleRefresh.forward,
+            svi: row.oracleRefresh,
+          })
+        : redeemTx({
+            expiryMarketId: state.expiryMarketId,
+            protocolConfigId: state.protocolConfigId,
+            managerId: state.managerId,
+            oracleId: state.oracleId,
+            pythSourceId: state.pythSourceId,
+            orderId,
+            closeQuantity: row.closeQuantity,
           }),
-          "refresh_oracle_and_mint"
-        );
+      "redeem",
+    );
+  }
 
-        const wallMs = performance.now() - startedAt;
-        byAction.mint.push({ wallMs, ...gas });
+  if (row.action === "supply") {
+    return execute(
+      () => row.oracleRefresh
+        ? refreshOracleAndSupplyWithExpiryValuationTx({
+            poolVaultId: state.poolVaultId,
+            protocolConfigId: state.protocolConfigId,
+            expiryMarketId: state.expiryMarketId,
+            oracleId: state.oracleId,
+            oracleCapId: state.oracleCapId,
+            pythSourceId: state.pythSourceId,
+            amount: row.amount,
+            spot: row.oracleRefresh.spot,
+            forward: row.oracleRefresh.forward,
+            svi: row.oracleRefresh,
+          })
+        : supplyWithExpiryValuationTx({
+            poolVaultId: state.poolVaultId,
+            protocolConfigId: state.protocolConfigId,
+            expiryMarketId: state.expiryMarketId,
+            oracleId: state.oracleId,
+            pythSourceId: state.pythSourceId,
+            amount: row.amount,
+          }),
+      "supply",
+    );
+  }
 
-        process.stdout.write(`[${ts()}]   [${byAction.mint.length}/${mintRows.length}] ${direction(nextNextRow)} $${scaledUsd(alignedStrike)} ${wallMs.toFixed(0)}ms\n`);
-        mintSucceeded = true;
-      } catch (error) {
-        const wallMs = performance.now() - startedAt;
-        if (!continueOnRejects) {
-          throw new Error(`${mintContext(nextNextRow, alignedStrike, attemptedMintIndex, mintRows.length)} failed: ${errorMessage(error)}`);
-        }
-        rejectedMints.push(rejectedMintResult(nextNextRow, alignedStrike, attemptedMintIndex, wallMs, error));
-        process.stdout.write(`[${ts()}]   [reject ${attemptedMintIndex}/${mintRows.length}] ${direction(nextNextRow)} $${scaledUsd(alignedStrike)} ${wallMs.toFixed(0)}ms ${errorMessage(error)}\n`);
-      }
-      if (mintSucceeded) {
-        await recordNavSupplyCheckpoint(byAction, state, mintRows.length);
-      }
-      i += 3;
-      continue;
-    }
-
-    if (row.action === "update_prices") {
-      const gas = await execute(
-        () => updateBlockScholesPricesTx(
-          state.oracleId,
-          state.protocolConfigId,
-          state.pythSourceId,
-          state.oracleCapId,
-          row.spot,
-          row.forward
-        ),
-        "update_prices"
-      );
-      byAction.update_prices.push({ wallMs: performance.now() - startedAt, ...gas });
-      i++;
-      continue;
-    }
-
-    if (row.action === "update_svi") {
-      const gas = await execute(
-        () => updateSviTx(
-          state.oracleId,
-          state.protocolConfigId,
-          state.oracleCapId,
-          {
-            a: row.a,
-            b: row.b,
-            rho: row.rho,
-            rhoNegative: row.rhoNegative,
-            m: row.m,
-            mNegative: row.mNegative,
-            sigma: row.sigma,
-          }
-        ),
-        "update_svi"
-      );
-      byAction.update_svi.push({ wallMs: performance.now() - startedAt, ...gas });
-      i++;
-      continue;
-    }
-
-    attemptedMintIndex++;
-    const alignedStrike = alignStrikeToGrid(row.strike);
-    let mintSucceeded = false;
-    try {
-      const gas = await execute(
-        () => mintTx({
-          expiryMarketId: state.expiryMarketId,
+  const lpCoinId = aliases.lpCoinIdsByRef.get(row.lpRef);
+  if (!lpCoinId) throw new Error(`Unknown lp_ref ${row.lpRef}`);
+  return execute(
+    () => row.oracleRefresh
+      ? refreshOracleAndWithdrawWithExpiryValuationTx({
+          poolVaultId: state.poolVaultId,
           protocolConfigId: state.protocolConfigId,
-          managerId: state.managerId,
+          expiryMarketId: state.expiryMarketId,
+          oracleId: state.oracleId,
+          oracleCapId: state.oracleCapId,
+          pythSourceId: state.pythSourceId,
+          lpCoinId,
+          spot: row.oracleRefresh.spot,
+          forward: row.oracleRefresh.forward,
+          svi: row.oracleRefresh,
+        })
+      : withdrawWithExpiryValuationTx({
+          poolVaultId: state.poolVaultId,
+          protocolConfigId: state.protocolConfigId,
+          expiryMarketId: state.expiryMarketId,
           oracleId: state.oracleId,
           pythSourceId: state.pythSourceId,
-          strike: alignedStrike,
-          isUp: row.isUp,
-          quantity: row.quantity,
+          lpCoinId,
         }),
-        "mint"
-      );
+    "withdraw",
+  );
+}
 
-      const wallMs = performance.now() - startedAt;
-      byAction.mint.push({ wallMs, ...gas });
+async function executeScenario(
+  rows: ScenarioRow[],
+  state: SimState,
+  scenarioPath: string,
+  maxRows?: number,
+): Promise<void> {
+  clearOutputArtifacts();
+  runPythonReplay(scenarioPath, maxRows);
 
-      process.stdout.write(`[${ts()}]   [${byAction.mint.length}/${mintRows.length}] ${direction(row)} $${scaledUsd(alignedStrike)} ${wallMs.toFixed(0)}ms\n`);
-      mintSucceeded = true;
-    } catch (error) {
-      const wallMs = performance.now() - startedAt;
-      if (!continueOnRejects) {
-        throw new Error(`${mintContext(row, alignedStrike, attemptedMintIndex, mintRows.length)} failed: ${errorMessage(error)}`);
+  const traceSteps: LocalTraceStep[] = [];
+  const records: EconomicRecord[] = [];
+  const economicState = initialEconomicState();
+  const aliases = initialAliases();
+  const targetMints = rows.filter((row) => row.action === "mint" || row.action === "oracle_mint_ptb").length;
+  let successfulMints = 0;
+
+  console.log(`\n[${ts()}] Loaded ${rows.length} executable tx rows (${targetMints} mints)`);
+  console.log(`[${ts()}] --- Executing economic replay ---\n`);
+
+  for (const row of rows) {
+    try {
+      const receipt = await executeRow(row, state, aliases);
+      const record = economicRecord(row, receipt, economicState, aliases);
+      recordAliases(row, receipt, aliases);
+      traceSteps.push(traceStep(row, receipt));
+      records.push(record);
+
+      if (row.action === "mint" || row.action === "oracle_mint_ptb") {
+        successfulMints++;
+        const alignedStrike = alignStrikeToGrid(row.strike);
+        process.stdout.write(
+          `[${ts()}]   [${row.step}] ${direction(row)} $${scaledUsd(alignedStrike)} qty=${row.quantity} leverage=${formatLeverage(row.leverage)} ref=${row.orderRef}\n`,
+        );
+      } else {
+        process.stdout.write(`[${ts()}]   [${row.step}] ${row.action}\n`);
       }
-      rejectedMints.push(rejectedMintResult(row, alignedStrike, attemptedMintIndex, wallMs, error));
-      process.stdout.write(`[${ts()}]   [reject ${attemptedMintIndex}/${mintRows.length}] ${direction(row)} $${scaledUsd(alignedStrike)} ${wallMs.toFixed(0)}ms ${errorMessage(error)}\n`);
+    } catch (error) {
+      if (row.action === "mint" || row.action === "oracle_mint_ptb") {
+        throw new Error(`${mintContext(row, alignStrikeToGrid(row.strike))} failed: ${errorMessage(error)}`);
+      }
+      throw new Error(`${row.action} csv_line=${row.lineNumber} tx=${row.step} failed: ${errorMessage(error)}`);
     }
-    if (mintSucceeded) {
-      await recordNavSupplyCheckpoint(byAction, state, mintRows.length);
-    }
-    i++;
   }
 
-  const results = buildResultsFile(byAction, rejectedMints, mintRows.length, attemptedMintIndex);
-  writeJson(RESULTS_PATH, results);
+  const trace: LocalTraceFile = {
+    schema_version: LOCAL_TRACE_SCHEMA_VERSION,
+    steps: traceSteps,
+  };
+  const data: EconomicDataFile = {
+    schema_version: ECONOMIC_SCHEMA_VERSION,
+    scenario: {
+      quantity_scale: scenarioQuantityScale(),
+    },
+    records,
+  };
 
-  const mintSummary = results.summary.byAction.mint;
+  writeJson(LOCAL_TRACE_PATH, trace);
+  writeJson(LOCAL_DATA_PATH, data);
+
   console.log(`\n[${ts()}] --- Done ---`);
-  console.log(`[${ts()}]   ${results.summary.totalTxs} txs, ${results.mints.length}/${mintRows.length} successful mints`);
-  if (rejectedMints.length > 0) {
-    console.log(`[${ts()}]   ${rejectedMints.length} rejected mints recorded`);
-  }
-  if (mintSummary) {
-    console.log(
-      `[${ts()}]   Avg mint: ${mintSummary.wallMs.avg.toFixed(0)}ms, avg gas: ${(mintSummary.gas.avg / 1e9).toFixed(6)} SUI`
-    );
-  }
-  const supplySummary = results.summary.byAction.supply;
-  if (supplySummary) {
-    console.log(
-      `[${ts()}]   Avg NAV supply: ${supplySummary.wallMs.avg.toFixed(0)}ms, avg gas: ${(supplySummary.gas.avg / 1e9).toFixed(6)} SUI`
-    );
-  }
-  console.log(`[${ts()}]   Results saved to ${RESULTS_PATH}`);
+  console.log(`[${ts()}]   ${traceSteps.length} txs, ${successfulMints}/${targetMints} successful mints`);
+  console.log(`[${ts()}]   Local trace: ${LOCAL_TRACE_PATH}`);
+  console.log(`[${ts()}]   Local data:  ${LOCAL_DATA_PATH}`);
+  console.log(`[${ts()}]   Python data: ${PYTHON_DATA_PATH}`);
+}
 
-  if (byAction.mint.length !== mintRows.length) {
-    throw new Error(`Simulation produced ${byAction.mint.length}/${mintRows.length} successful mints; see rejectedMints in ${RESULTS_PATH}`);
+function runPythonReplay(scenarioPath: string, maxRows?: number) {
+  const script = fileURLToPath(new URL("../python_replay.py", import.meta.url));
+  const args = [script, "--scenario", scenarioPath, "--out", PYTHON_DATA_PATH];
+  if (maxRows !== undefined) {
+    args.push("--max-rows", String(maxRows));
+  }
+
+  const result = spawnSync("python3", args, {
+    stdio: "inherit",
+    env: process.env,
+  });
+  if (result.status !== 0) {
+    throw new Error(`python_replay.py failed with exit code ${result.status}`);
   }
 }
 
 async function main() {
   const args = parseArgs();
-  let rows = loadScenario();
+  let rows = loadScenario(args.scenarioPath);
   if (args.maxRows !== undefined) {
-    console.log(`[${ts()}] Limiting to ${args.maxRows} rows`);
+    console.log(`[${ts()}] Limiting to ${args.maxRows} tx rows`);
     rows = rows.slice(0, args.maxRows);
   }
 
   if (args.executeOnly) {
     const state = validateSimState(readJson<SimState>(STATE_PATH));
-    await executeScenario(rows, state, args.continueOnRejects);
+    await executeScenario(rows, state, args.scenarioPath, args.maxRows);
     return;
   }
 
@@ -497,7 +989,7 @@ async function main() {
     return;
   }
 
-  await executeScenario(rows, state, args.continueOnRejects);
+  await executeScenario(rows, state, args.scenarioPath, args.maxRows);
 }
 
 main().catch((error) => {

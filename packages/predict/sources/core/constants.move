@@ -47,6 +47,11 @@ public macro fun deep_decimals(): u64 { 1_000_000 }
 /// per-expiry `trading_loss_rebate_rate` in `fee_config`.
 public macro fun max_fee_discount(): u64 { 500_000_000 }
 
+// === Liquidation ===
+
+/// Divisor used to reserve a head-priority slice of each liquidation candidate budget.
+public macro fun liquidation_head_scan_divisor(): u64 { 3 }
+
 // === Builder Fees ===
 
 /// Add-on builder fee as a fraction of the normal trade fee.

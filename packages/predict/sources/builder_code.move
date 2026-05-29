@@ -8,8 +8,9 @@
 /// balance, and the code owner can later claim those accumulated DUSDC funds.
 module deepbook_predict::builder_code;
 
+use deepbook_predict::{account_events, claim_events};
 use dusdc::dusdc::DUSDC;
-use sui::{accumulator::AccumulatorRoot, balance, coin::Coin, derived_object, event};
+use sui::{accumulator::AccumulatorRoot, balance, coin::Coin, derived_object};
 
 const ENotOwner: u64 = 0;
 
@@ -21,13 +22,6 @@ public struct BuilderCode has key {
     id: UID,
     owner: address,
     index: u64,
-}
-
-/// Emitted when a builder code owner claims accumulated builder fees.
-public struct BuilderFeesClaimed has copy, drop, store {
-    builder_code_id: ID,
-    owner: address,
-    amount: u64,
 }
 
 // === Public Functions ===
@@ -62,11 +56,9 @@ public fun claim_all_builder_fees(
     let amount = claimable_builder_fees(root, code);
     let withdrawal = balance::withdraw_funds_from_object<DUSDC>(&mut code.id, amount);
     let coin = balance::redeem_funds(withdrawal).into_coin(ctx);
-    event::emit(BuilderFeesClaimed {
-        builder_code_id: code.id(),
-        owner: code.owner,
-        amount,
-    });
+    if (amount > 0) {
+        claim_events::emit_builder_fees_claimed(code.id(), code.owner, amount);
+    };
     coin
 }
 
@@ -74,13 +66,15 @@ public fun claim_all_builder_fees(
 
 /// Create and share a derived builder code for the transaction sender.
 public(package) fun create_and_share(registry_uid: &mut UID, index: u64, ctx: &TxContext): ID {
+    let owner = ctx.sender();
     let code = BuilderCode {
-        id: derived_object::claim(registry_uid, BuilderCodeKey(ctx.sender(), index)),
-        owner: ctx.sender(),
+        id: derived_object::claim(registry_uid, BuilderCodeKey(owner, index)),
+        owner,
         index,
     };
     let id = code.id();
     transfer::share_object(code);
+    account_events::emit_builder_code_created(id, owner, index);
     id
 }
 

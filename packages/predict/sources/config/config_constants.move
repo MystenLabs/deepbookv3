@@ -36,6 +36,9 @@ const EInvalidExpiryFeeMaxMultiplier: u64 = 25;
 const EInvalidLowerBenefitPower: u64 = 26;
 const EInvalidUpperBenefitPower: u64 = 27;
 const EInvalidBenefitPowers: u64 = 28;
+const EInvalidValuationLiquidationBudget: u64 = 29;
+const EInvalidTradeLiquidationBudget: u64 = 30;
+const EInvalidLiquidationLtv: u64 = 31;
 
 // === Pool Risk ===
 
@@ -107,6 +110,24 @@ public(package) fun assert_shrink_factor(value: u64) {
     assert!(value >= min_shrink_factor!() && value <= max_shrink_factor!(), EInvalidShrinkFactor);
 }
 
+public(package) macro fun default_valuation_liquidation_budget(): u64 { 192 }
+public(package) macro fun max_valuation_liquidation_budget(): u64 {
+    30_000
+}
+
+public(package) fun assert_valuation_liquidation_budget(value: u64) {
+    assert!(value <= max_valuation_liquidation_budget!(), EInvalidValuationLiquidationBudget);
+}
+
+public(package) macro fun default_trade_liquidation_budget(): u64 { 24 }
+public(package) macro fun max_trade_liquidation_budget(): u64 {
+    3_000
+}
+
+public(package) fun assert_trade_liquidation_budget(value: u64) {
+    assert!(value <= max_trade_liquidation_budget!(), EInvalidTradeLiquidationBudget);
+}
+
 // === Leverage ===
 
 public(package) macro fun default_max_expiry_floor_premium(): u64 { 200_000_000 }
@@ -119,6 +140,17 @@ public(package) fun assert_max_expiry_floor_premium(value: u64) {
     assert!(
         value >= min_max_expiry_floor_premium!() && value <= max_max_expiry_floor_premium!(),
         EInvalidMaxExpiryFloorPremium,
+    );
+}
+
+public(package) macro fun default_liquidation_ltv(): u64 { 850_000_000 }
+public(package) macro fun min_liquidation_ltv(): u64 { 500_000_000 }
+public(package) macro fun max_liquidation_ltv(): u64 { 950_000_000 }
+
+public(package) fun assert_liquidation_ltv(value: u64) {
+    assert!(
+        value >= min_liquidation_ltv!() && value <= max_liquidation_ltv!(),
+        EInvalidLiquidationLtv,
     );
 }
 

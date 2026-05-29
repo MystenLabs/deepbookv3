@@ -1,0 +1,291 @@
+#!/usr/bin/env python3
+"""Render liquidation coverage and attribution from Python derived data."""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+import matplotlib
+
+matplotlib.use("Agg")
+
+import matplotlib.pyplot as plt
+from matplotlib.ticker import PercentFormatter
+
+
+DUSDC_SCALING = 1_000_000
+BUCKET_COUNT = 48
+ACTION_ORDER = ("mint", "redeem", "supply", "withdraw", "liquidate")
+ACTION_LABELS = {
+    "mint": "passive mint",
+    "redeem": "passive redeem",
+    "supply": "passive supply",
+    "withdraw": "passive withdraw",
+    "liquidate": "manual liquidate",
+}
+ACTION_COLORS = {
+    "mint": "#2563eb",
+    "redeem": "#7c3aed",
+    "supply": "#0891b2",
+    "withdraw": "#f97316",
+    "liquidate": "#dc2626",
+}
+
+
+def load_derived(path: Path) -> dict[str, Any]:
+    data = json.loads(path.read_text())
+    if data.get("schema_version") != "predict_derived_v1":
+        raise ValueError("input file must use schema_version='predict_derived_v1'")
+    if not isinstance(data.get("records"), list):
+        raise ValueError("input file must contain records[]")
+    return data
+
+
+def int_or_none(value: Any) -> int | None:
+    if value is None:
+        return None
+    return int(value)
+
+
+def to_dusdc(value: int) -> float:
+    return value / DUSDC_SCALING
+
+
+def normalized_action(action: str) -> str:
+    return "mint" if action == "oracle_mint_ptb" else action
+
+
+def timeline_mode(records: list[dict[str, Any]]) -> tuple[str, int, str]:
+    for record in records:
+        timestamp_ms = record.get("timestamp_ms")
+        if timestamp_ms is not None:
+            return "timestamp", int(timestamp_ms), "source elapsed hours"
+    return "step", 0, "transaction"
+
+
+def record_x(record: dict[str, Any], mode: str, origin: int) -> float:
+    if mode == "timestamp":
+        timestamp_ms = record.get("timestamp_ms")
+        if timestamp_ms is not None:
+            return (int(timestamp_ms) - origin) / 3_600_000
+    return float(record.get("step", 0))
+
+
+def x_bounds(records: list[dict[str, Any]], mode: str, origin: int) -> tuple[float, float]:
+    xs = [record_x(record, mode, origin) for record in records]
+    if not xs:
+        return 0.0, 1.0
+    lo = min(xs)
+    hi = max(xs)
+    if lo == hi:
+        hi = lo + 1.0
+    return lo, hi
+
+
+def bucket_index(x: float, x_min: float, x_max: float) -> int:
+    index = int((x - x_min) / (x_max - x_min) * BUCKET_COUNT)
+    return max(0, min(BUCKET_COUNT - 1, index))
+
+
+def extract_pressure_series(
+    records: list[dict[str, Any]], mode: str, origin: int
+) -> dict[str, list[float]]:
+    series = {
+        "x": [],
+        "value_pressure": [],
+        "count_pressure": [],
+    }
+    for record in records:
+        liquidation = record.get("liquidation", {})
+        valuation = record.get("valuation", {})
+        count = int_or_none(liquidation.get("liquidatable_count"))
+        value = int_or_none(liquidation.get("liquidatable_value"))
+        active_count = int_or_none(liquidation.get("active_count"))
+        liability = int_or_none(valuation.get("position_liability"))
+        if count is None or value is None or active_count is None or liability is None:
+            continue
+        series["x"].append(record_x(record, mode, origin))
+        series["value_pressure"].append(0.0 if liability <= 0 else value / liability)
+        series["count_pressure"].append(0.0 if active_count <= 0 else count / active_count)
+    return series
+
+
+def bucket_liquidation_flow(
+    records: list[dict[str, Any]], mode: str, origin: int
+) -> dict[str, Any]:
+    x_min, x_max = x_bounds(records, mode, origin)
+    width = (x_max - x_min) / BUCKET_COUNT
+    centers = [x_min + width * (index + 0.5) for index in range(BUCKET_COUNT)]
+    by_action = {action: [0.0 for _ in range(BUCKET_COUNT)] for action in ACTION_ORDER}
+    has_interval_fields = any(
+        record.get("liquidation", {}).get("interval_liquidated_value_by_action") is not None
+        for record in records
+    )
+
+    if has_interval_fields:
+        for record in records:
+            liquidation = record.get("liquidation", {})
+            values_by_action = liquidation.get("interval_liquidated_value_by_action")
+            if values_by_action is None:
+                continue
+            x = record_x(record, mode, origin)
+            index = bucket_index(x, x_min, x_max)
+            for action, raw_value in values_by_action.items():
+                if action in by_action:
+                    by_action[action][index] += to_dusdc(int(raw_value))
+        return {
+            "centers": centers,
+            "width": width * 0.86,
+            "by_action": by_action,
+        }
+
+    for record in records:
+        liquidation = record.get("liquidation", {})
+        index = bucket_index(record_x(record, mode, origin), x_min, x_max)
+
+        value = int(liquidation.get("liquidated_value") or 0)
+        if value <= 0:
+            continue
+        action = normalized_action(record["action"])
+        if action not in by_action:
+            continue
+        by_action[action][index] += to_dusdc(value)
+
+    return {
+        "centers": centers,
+        "width": width * 0.86,
+        "by_action": by_action,
+    }
+
+
+def configure_axis(ax: plt.Axes) -> None:
+    ax.grid(True, axis="y", color="#d7dde5", linewidth=0.8, alpha=0.7)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+
+def apply_percent_ylim(ax: plt.Axes, values: list[float], minimum_top: float = 0.02) -> None:
+    if not values:
+        ax.set_ylim(0, minimum_top)
+        return
+    observed = max(values)
+    top = min(1.0, max(minimum_top, observed * 1.2))
+    ax.set_ylim(0, top)
+
+
+def plot_pressure_panel(ax: plt.Axes, pressure: dict[str, list[float]]) -> None:
+    ax.plot(
+        pressure["x"],
+        pressure["value_pressure"],
+        color="#dc2626",
+        linewidth=1.5,
+        label="value pressure (% liability)",
+    )
+    ax.plot(
+        pressure["x"],
+        pressure["count_pressure"],
+        color="#2563eb",
+        linewidth=1.25,
+        label="count pressure (% active orders)",
+    )
+    ax.axhline(0, color="#64748b", linewidth=0.8)
+    ax.yaxis.set_major_formatter(PercentFormatter(xmax=1.0))
+    apply_percent_ylim(ax, pressure["value_pressure"] + pressure["count_pressure"])
+    ax.set_title(
+        "Backlog Pressure\n"
+        "Point-in-time percentages show what share of live liability and active orders is liquidatable.",
+        loc="left",
+        fontsize=11,
+    )
+    ax.set_ylabel("share of live book")
+    configure_axis(ax)
+    ax.legend(loc="upper left", ncols=2, fontsize=8, frameon=False)
+
+
+def plot_throughput_panel(ax: plt.Axes, buckets: dict[str, Any]) -> None:
+    bottoms = [0.0 for _ in buckets["centers"]]
+    for action in ACTION_ORDER:
+        values = buckets["by_action"][action]
+        ax.bar(
+            buckets["centers"],
+            values,
+            width=buckets["width"],
+            bottom=bottoms,
+            color=ACTION_COLORS[action],
+            alpha=0.82,
+            label=ACTION_LABELS[action],
+        )
+        bottoms = [bottom + value for bottom, value in zip(bottoms, values)]
+
+    ax.set_title(
+        "Liquidated Value By Trigger\n"
+        "Bucketed liquidation throughput shows which transaction types actually clear risk.",
+        loc="left",
+        fontsize=11,
+    )
+    ax.set_ylabel("DUSDC")
+    configure_axis(ax)
+    ax.legend(loc="upper left", ncols=3, fontsize=8, frameon=False)
+
+
+def render(derived_path: Path, output_path: Path) -> None:
+    data = load_derived(derived_path)
+    records = data["records"]
+    if not records:
+        raise ValueError(f"{derived_path} has no records")
+
+    mode, origin, x_label = timeline_mode(records)
+    pressure = extract_pressure_series(records, mode, origin)
+    buckets = bucket_liquidation_flow(records, mode, origin)
+
+    fig = plt.figure(figsize=(13, 8), constrained_layout=False)
+    grid = fig.add_gridspec(
+        2,
+        1,
+        height_ratios=[2.0, 2.0],
+        hspace=0.34,
+        top=0.84,
+    )
+    ax_pressure = fig.add_subplot(grid[0])
+    ax_throughput = fig.add_subplot(grid[1], sharex=ax_pressure)
+
+    fig.suptitle("Liquidation Coverage And Attribution", fontsize=16, fontweight="bold", x=0.075, ha="left")
+    fig.text(
+        0.075,
+        0.93,
+        "Shows normalized liquidation pressure and which transaction types clear liquidation risk.",
+        fontsize=10,
+        color="#475569",
+        ha="left",
+    )
+
+    plot_pressure_panel(ax_pressure, pressure)
+    plot_throughput_panel(ax_throughput, buckets)
+
+    ax_pressure.tick_params(labelbottom=False)
+    ax_throughput.set_xlabel(x_label)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+
+
+def main() -> None:
+    if len(sys.argv) != 2:
+        print(
+            "usage: chart_liquidation_coverage.py <python_derived.json>",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+    derived_path = Path(sys.argv[1])
+    output_path = derived_path.with_name("chart_liquidation_coverage.png")
+    render(derived_path, output_path)
+    print(f"wrote {output_path}")
+
+
+if __name__ == "__main__":
+    main()

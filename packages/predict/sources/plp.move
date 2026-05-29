@@ -17,8 +17,10 @@ use deepbook_predict::{
     market_oracle::MarketOracle,
     math as predict_math,
     predict_manager::PredictManager,
+    pricing,
     protocol_config::ProtocolConfig,
-    risk_config::RiskConfig
+    risk_config::RiskConfig,
+    vault_events
 };
 use dusdc::dusdc::DUSDC;
 use sui::{
@@ -204,6 +206,15 @@ public fun grow_expiry_allocation(
     let allocation = vault.idle_balance.split(amount);
     vault.total_allocated_capital = new_total_allocated;
     market.receive_allocation(allocation);
+
+    vault_events::emit_expiry_allocation_changed(
+        vault.id(),
+        market.id(),
+        amount,
+        true,
+        market.allocated_capital(),
+        vault.idle_balance.value(),
+    );
 }
 
 /// Shrink an active live expiry allocation when utilization reaches the low watermark.
@@ -227,6 +238,15 @@ public fun shrink_expiry_allocation(
     let allocation = market.return_allocation(amount);
     vault.total_allocated_capital = vault.total_allocated_capital - amount;
     vault.idle_balance.join(allocation);
+
+    vault_events::emit_expiry_allocation_changed(
+        vault.id(),
+        market.id(),
+        amount,
+        false,
+        market.allocated_capital(),
+        vault.idle_balance.value(),
+    );
 }
 
 /// Sweep settled expiry surplus into the pool.
@@ -254,15 +274,34 @@ public fun sweep_settled_expiry_surplus(
         );
     };
 
-    let (released_allocation, returned_cash, returned_fee_surplus) = market.release_settled_surplus(
-        market_oracle,
-    );
-    if (released_allocation > 0) {
-        vault.total_allocated_capital = vault.total_allocated_capital - released_allocation;
+    let (returned_cash, returned_fee_surplus) = market.release_settled_surplus(market_oracle);
+    let returned_cash_amount = returned_cash.value();
+    if (allocated_reduction > 0) {
+        vault.total_allocated_capital = vault.total_allocated_capital - allocated_reduction;
         vault.unregister_expiry_market(market.id());
     };
     vault.idle_balance.join(returned_cash);
-    vault.distribute_fee_surplus(config, returned_fee_surplus);
+    let (protocol_fee, insurance_fee, lp_fee) = vault.distribute_fee_surplus(
+        config,
+        returned_fee_surplus,
+    );
+
+    if (
+        allocated_reduction > 0 || returned_cash_amount > 0 || protocol_fee > 0 || insurance_fee > 0 || lp_fee > 0
+    ) {
+        vault_events::emit_expiry_surplus_swept(
+            vault.id(),
+            market.id(),
+            pricing::settlement_price(market_oracle),
+            allocated_reduction,
+            returned_cash_amount,
+            vault.idle_balance.value(),
+            vault.total_allocated_capital,
+            protocol_fee,
+            insurance_fee,
+            lp_fee,
+        );
+    };
 }
 
 /// Supply DUSDC into the pool vault against a complete full-pool valuation.
@@ -294,7 +333,17 @@ public fun supply(
 
     finish_valuation(config, valuation);
     vault.idle_balance.join(payment.into_balance());
-    coin::mint(&mut vault.treasury_cap, shares, ctx)
+    let plp = coin::mint(&mut vault.treasury_cap, shares, ctx);
+    vault_events::emit_supply_executed(
+        vault.id(),
+        payment_amount,
+        shares,
+        pool_value,
+        vault.treasury_cap.total_supply(),
+        vault.idle_balance.value(),
+        vault.total_allocated_capital,
+    );
+    plp
 }
 
 /// Withdraw DUSDC from the pool vault against a complete full-pool valuation.
@@ -328,7 +377,17 @@ public fun withdraw(
 
     finish_valuation(config, valuation);
     vault.treasury_cap.burn(lp_coin);
-    vault.idle_balance.split(withdraw_amount).into_coin(ctx)
+    let payout = vault.idle_balance.split(withdraw_amount).into_coin(ctx);
+    vault_events::emit_withdraw_executed(
+        vault.id(),
+        lp_amount,
+        withdraw_amount,
+        pool_value,
+        vault.treasury_cap.total_supply(),
+        vault.idle_balance.value(),
+        vault.total_allocated_capital,
+    );
+    payout
 }
 
 /// Stake DEEP for trading benefits. The DEEP is held in the pool vault; the
@@ -533,20 +592,23 @@ fun allocation_utilization(payout_liability: u64, allocated_capital: u64): u64 {
     math::div(payout_liability, allocated_capital)
 }
 
+/// Split fee surplus to protocol, insurance, and LP, returning the three amounts.
 fun distribute_fee_surplus(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
     fee_surplus: Balance<DUSDC>,
-) {
+): (u64, u64, u64) {
     let total_fee = fee_surplus.value();
     let protocol_fee = math::mul(total_fee, config.fee_config().protocol_fee_share());
     let insurance_fee = math::mul(total_fee, config.fee_config().insurance_fee_share());
     let mut lp_fee = fee_surplus;
     let protocol_fee_balance = lp_fee.split(protocol_fee);
     let insurance_fee_balance = lp_fee.split(insurance_fee);
+    let lp_fee_amount = lp_fee.value();
     vault.idle_balance.join(lp_fee);
     vault.protocol_fee_balance.join(protocol_fee_balance);
     vault.insurance_fee_balance.join(insurance_fee_balance);
+    (protocol_fee, insurance_fee, lp_fee_amount)
 }
 
 fun validated_pool_value(

@@ -5,8 +5,8 @@
 ///
 /// This module is the app-facing read layer for oracle data. It resolves
 /// market oracle and Pyth source state on demand, computes SVI prices, applies
-/// fees, and builds valuation curves. It does not mutate oracle, pool, expiry, or
-/// position state.
+/// fees, and builds aggregate valuation curves. It does not mutate oracle, pool,
+/// expiry, or position state.
 module deepbook_predict::pricing;
 
 use deepbook::math;
@@ -55,20 +55,45 @@ public(package) fun up_price(point: &CurvePoint): u64 {
     point.up_price
 }
 
-/// Build an adaptive piecewise-linear UP-price curve over a configured grid range.
-public(package) fun build_live_curve(
-    config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
-    grid_min: u64,
-    grid_tick: u64,
-    grid_max: u64,
-    min_strike: u64,
-    max_strike: u64,
-    clock: &Clock,
-): vector<CurvePoint> {
-    let (forward, svi) = resolve_live_inputs(config, market, pyth, clock);
-    build_curve(&svi, forward, grid_min, grid_tick, grid_max, min_strike, max_strike)
+/// Return a conservative directional probability from a prebuilt UP-price curve.
+///
+/// This is for valuation-time liquidation checks, so it returns an upper bound:
+/// UP orders use the higher UP price around the strike, and DOWN orders use the
+/// higher DOWN price implied by the lower UP price around the strike.
+public(package) fun directional_probability_upper_bound(
+    curve: &vector<CurvePoint>,
+    lower: u64,
+    higher: u64,
+): u64 {
+    assert!(lower < higher, EInvalidRange);
+    assert!((lower == constants::neg_inf!()) != (higher == constants::pos_inf!()), EInvalidRange);
+
+    let is_up = higher == constants::pos_inf!();
+    let strike = if (is_up) lower else higher;
+
+    let len = curve.length();
+    assert!(len > 0, EInvalidCurveRange);
+    assert!(strike >= curve[0].strike && strike <= curve[len - 1].strike, EInvalidCurveRange);
+
+    let mut lo = 0;
+    let mut hi = len;
+    while (lo < hi) {
+        let mid = (lo + hi) / 2;
+        if (curve[mid].strike < strike) {
+            lo = mid + 1;
+        } else {
+            hi = mid;
+        };
+    };
+
+    let point = &curve[lo];
+    if (point.strike == strike) {
+        return if (is_up) point.up_price else constants::float_scaling!() - point.up_price
+    };
+
+    let lo_point = &curve[lo - 1];
+    assert!(lo_point.up_price >= point.up_price, ERangePriceUnderflow);
+    if (is_up) lo_point.up_price else constants::float_scaling!() - point.up_price
 }
 
 /// Return the current raw probability for a live range.
@@ -80,7 +105,7 @@ public(package) fun live_range_probability(
     higher: u64,
     clock: &Clock,
 ): u64 {
-    let (forward, svi) = resolve_live_inputs(config, market, pyth, clock);
+    let (forward, svi) = live_inputs(config, market, pyth, clock);
     compute_range_price(&svi, forward, lower, higher)
 }
 
@@ -140,14 +165,12 @@ fun assert_live_oracle_fresh(config: &PricingConfig, market: &MarketOracle, cloc
     assert!(block_scholes_svi_is_fresh(config, market, clock), EBlockScholesSVIStale);
 }
 
-// === Private Functions ===
-
 /// Resolve the live forward/SVI tuple used by all live pricing paths.
 ///
 /// Fresh Pyth spot is canonical for spot; forward is then derived from the
 /// latest Block Scholes basis. If Pyth is stale, pricing falls back to the
 /// fresh Block Scholes forward. SVI must be fresh either way.
-fun resolve_live_inputs(
+public(package) fun live_inputs(
     config: &PricingConfig,
     market: &MarketOracle,
     pyth: &PythSource,
@@ -188,7 +211,8 @@ fun pyth_spot_is_fresh(config: &PricingConfig, pyth: &PythSource, clock: &Clock)
     timestamp > 0 && timestamp <= now && now - timestamp <= config.pyth_spot_freshness_ms()
 }
 
-fun build_curve(
+/// Build an adaptive piecewise-linear UP-price curve over a configured grid range.
+public(package) fun build_curve(
     svi: &SVIParams,
     forward: u64,
     grid_min: u64,
@@ -245,6 +269,24 @@ fun build_curve(
     points
 }
 
+/// Compute the fair price for the range `(lower, higher]`.
+public(package) fun compute_range_price(
+    svi: &SVIParams,
+    forward: u64,
+    lower: u64,
+    higher: u64,
+): u64 {
+    assert!(lower < higher, EInvalidRange);
+
+    let lower_up_price = compute_up_price(svi, forward, lower);
+    let higher_up_price = compute_up_price(svi, forward, higher);
+    assert!(lower_up_price >= higher_up_price, ERangePriceUnderflow);
+
+    lower_up_price - higher_up_price
+}
+
+// === Private Functions ===
+
 /// Compute the fair UP tail price for `strike`.
 fun compute_up_price(svi: &SVIParams, forward: u64, strike: u64): u64 {
     if (strike == constants::neg_inf!()) {
@@ -255,17 +297,6 @@ fun compute_up_price(svi: &SVIParams, forward: u64, strike: u64): u64 {
     };
 
     compute_nd2(svi, forward, strike)
-}
-
-/// Compute the fair price for the range `(lower, higher]`.
-fun compute_range_price(svi: &SVIParams, forward: u64, lower: u64, higher: u64): u64 {
-    assert!(lower < higher, EInvalidRange);
-
-    let lower_up_price = compute_up_price(svi, forward, lower);
-    let higher_up_price = compute_up_price(svi, forward, higher);
-    assert!(lower_up_price >= higher_up_price, ERangePriceUnderflow);
-
-    lower_up_price - higher_up_price
 }
 
 fun raw_bernoulli_fee_rate(config: &PricingConfig, probability: u64): u64 {

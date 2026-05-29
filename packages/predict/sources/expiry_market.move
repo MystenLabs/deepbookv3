@@ -11,9 +11,11 @@ module deepbook_predict::expiry_market;
 
 use deepbook::math;
 use deepbook_predict::{
+    claim_events,
     constants,
     market_oracle::{MarketOracle, MarketOracleCap},
     order::{Self, Order},
+    order_events,
     predict_manager::PredictManager,
     pricing,
     pricing_config::PricingConfig,
@@ -22,7 +24,7 @@ use deepbook_predict::{
     strike_exposure::{Self, StrikeExposure}
 };
 use dusdc::dusdc::DUSDC;
-use sui::{balance::{Self, Balance}, clock::Clock, event, vec_set::VecSet};
+use sui::{balance::{Self, Balance}, clock::Clock, vec_set::VecSet};
 
 use fun pricing::assert_live_quote_available as PricingConfig.assert_live_quote_available;
 
@@ -67,26 +69,6 @@ public struct ExpiryValuation {
     expiry_market_id: ID,
     /// LP NAV contribution for this expiry.
     value: u64,
-}
-
-/// Emitted whenever a trade fee is accrued for an expiry market.
-public struct FeeAccrued has copy, drop, store {
-    expiry_market_id: ID,
-    total_fee: u64,
-    builder_fee: u64,
-    /// Staking fee discount applied to this trade, in FLOAT_SCALING (0..50%).
-    fee_discount: u64,
-    builder_code_id: Option<ID>,
-}
-
-/// Emitted when an expiry trading-loss rebate is resolved for one manager.
-public struct TradingLossRebateClaimed has copy, drop, store {
-    expiry_market_id: ID,
-    predict_manager_id: ID,
-    trading_fees_paid: u64,
-    cash_paid_to_expiry: u64,
-    cash_received_from_expiry: u64,
-    rebate_amount: u64,
 }
 
 // === Public Functions ===
@@ -141,6 +123,11 @@ public fun max_expiry_floor_premium(market: &ExpiryMarket): u64 {
     market.strike_exposure.max_expiry_floor_premium()
 }
 
+/// Return the liquidation LTV snapshotted for this expiry.
+public fun liquidation_ltv(market: &ExpiryMarket): u64 {
+    market.strike_exposure.liquidation_ltv()
+}
+
 /// Return conservative max-live backing, or remaining settled payout liability once materialized.
 public fun payout_liability(market: &ExpiryMarket): u64 {
     market.strike_exposure.payout_liability()
@@ -179,6 +166,8 @@ public fun allowed_versions(market: &ExpiryMarket): VecSet<u64> {
 
 /// Produce this expiry's valuation witness for a full-pool valuation.
 ///
+/// For live markets, valuation first runs a bounded liquidation pass inside
+/// strike exposure, then evaluates NAV against the same pricing curve.
 /// If the oracle is settled, this also caches terminal payout liability in
 /// strike exposure. It does not destroy live indexes; privileged compaction owns that.
 public fun produce_valuation(
@@ -215,7 +204,8 @@ public fun produce_valuation(
 ///
 /// Requires the package version to be allowed for this market, per-market mint
 /// pause to be off, trading globally enabled, manager ownership, a live fresh
-/// oracle, and enough expiry allocation to back the post-mint max payout.
+/// oracle, enough expiry allocation to back the post-mint max payout, and
+/// leveraged floor terms below this expiry's liquidation LTV at terminal.
 /// Returns the minted order ID for future order-scoped flows.
 public fun mint(
     market: &mut ExpiryMarket,
@@ -249,10 +239,9 @@ public fun mint(
 
 /// Redeem live or settled order quantity.
 ///
-/// Live redeems can close part or all of an order; if quantity remains, the
-/// Returns `(closed_order_id, replacement_order_id)`. A replacement ID is present
-/// only when a live partial close leaves remaining quantity open. Settled
-/// redeems require full order quantity and return no replacement.
+/// Live redeems can close part or all of an order. Settled and liquidated-order
+/// redeems require a full close and return no replacement. Returns
+/// `(closed_order_id, replacement_order_id)`.
 public fun redeem(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
@@ -267,7 +256,27 @@ public fun redeem(
     market.assert_version_allowed();
     config.assert_not_valuation_in_progress();
     market.assert_market_oracle(market_oracle);
+    market.run_configured_liquidation_pass(
+        config.pricing_config(),
+        market_oracle,
+        pyth,
+        config.risk_config().trade_liquidation_budget(),
+        clock,
+    );
+
     let redeemed_order = order::from_order_id(order_id);
+    if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
+        assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
+        manager.remove_position(market.id(), redeemed_order.id());
+        market.strike_exposure.clear_liquidated_order(&redeemed_order);
+        order_events::emit_liquidated_order_redeemed(
+            market.id(),
+            manager,
+            &redeemed_order,
+        );
+        return (redeemed_order.id(), option::none())
+    };
+
     if (market_oracle.is_settled()) {
         assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
         market.redeem_settled_internal(manager, market_oracle, &redeemed_order, ctx);
@@ -285,6 +294,34 @@ public fun redeem(
         );
         (redeemed_order.id(), replacement_order_id)
     }
+}
+
+/// Run one bounded liquidation pass over active leveraged orders.
+///
+/// The liquidation book selects up to `budget` candidates and returns the
+/// number of orders liquidated. It does not touch PredictManagers; users clear
+/// their liquidated position later through `redeem`, receiving no payout.
+public fun liquidate(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    budget: u64,
+    clock: &Clock,
+): u64 {
+    market.assert_version_allowed();
+    config.assert_not_valuation_in_progress();
+    market.assert_market_oracle(market_oracle);
+    market.assert_pyth_feed(pyth);
+    market
+        .strike_exposure
+        .liquidate_live_orders(
+            config.pricing_config(),
+            market_oracle,
+            pyth,
+            budget,
+            clock,
+        )
 }
 
 /// Resolve a manager's aggregate expiry trading-loss rebate after all its
@@ -337,14 +374,14 @@ public fun claim_trading_loss_rebate(
         market.lp_cash_balance.join(lp_cash);
     };
 
-    event::emit(TradingLossRebateClaimed {
-        expiry_market_id: market.id(),
-        predict_manager_id: manager.id(),
+    claim_events::emit_trading_loss_rebate_claimed(
+        market.id(),
+        manager.id(),
         trading_fees_paid,
         cash_paid_to_expiry,
         cash_received_from_expiry,
         rebate_amount,
-    });
+    );
 }
 
 /// Cache terminal liability if needed, then destroy live exposure indexes.
@@ -413,8 +450,10 @@ public(package) fun create_and_share(
     ctx: &mut TxContext,
 ): ID {
     let allocated_capital = allocation.value();
+    let id = object::new(ctx);
+    let expiry_market_id = id.to_inner();
     let market = ExpiryMarket {
-        id: object::new(ctx),
+        id,
         market_oracle_id,
         pyth_lazer_feed_id,
         expiry,
@@ -424,18 +463,19 @@ public(package) fun create_and_share(
         fee_balance: balance::zero(),
         unresolved_trading_fees_paid: 0,
         strike_exposure: strike_exposure::new(
+            expiry_market_id,
             expiry,
             min_strike,
             tick_size,
             config.leverage_config().max_expiry_floor_premium(),
+            config.leverage_config().liquidation_ltv(),
             ctx,
         ),
         allowed_versions,
         mint_paused: false,
     };
-    let id = market.id();
     transfer::share_object(market);
-    id
+    expiry_market_id
 }
 
 /// Add pool-provided DUSDC to this live expiry's allocation and LP cash.
@@ -482,7 +522,7 @@ public(package) fun materialize_settled_liability(
 public(package) fun release_settled_surplus(
     market: &mut ExpiryMarket,
     market_oracle: &MarketOracle,
-): (u64, Balance<DUSDC>, Balance<DUSDC>) {
+): (Balance<DUSDC>, Balance<DUSDC>) {
     market.assert_version_allowed();
     let settled_liability = market.materialize_settled_liability(market_oracle);
     let rebate_reserve = market.aggregate_rebate_reserve();
@@ -499,7 +539,7 @@ public(package) fun release_settled_surplus(
     let returned_fees = market.split_fee_surplus();
     market.assert_cash_backing();
 
-    (allocated_reduction, returned_cash, returned_fees)
+    (returned_cash, returned_fees)
 }
 
 // === Private Functions ===
@@ -524,10 +564,11 @@ fun current_nav_terms(
         // current floor before this aggregate NAV path is used.
         let live_position_liability = market
             .strike_exposure
-            .live_position_liability(
+            .liquidate_and_live_position_liability(
                 config.pricing_config(),
                 market_oracle,
                 pyth,
+                config.risk_config().valuation_liquidation_budget(),
                 clock,
             );
         (live_position_liability, rebate_reserve)
@@ -551,6 +592,31 @@ fun assert_pyth_feed(market: &ExpiryMarket, pyth: &PythSource) {
 fun apply_stake_benefit(amount: u64, fraction: u64): (u64, u64) {
     let weighted = math::mul(amount, fraction);
     (weighted, amount - weighted)
+}
+
+fun run_configured_liquidation_pass(
+    market: &mut ExpiryMarket,
+    pricing_config: &PricingConfig,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    budget: u64,
+    clock: &Clock,
+) {
+    if (budget == 0) return;
+
+    market.assert_market_oracle(market_oracle);
+    if (market_oracle.is_settled()) return;
+
+    market.assert_pyth_feed(pyth);
+    market
+        .strike_exposure
+        .liquidate_live_orders(
+            pricing_config,
+            market_oracle,
+            pyth,
+            budget,
+            clock,
+        );
 }
 
 fun builder_fee_amount(builder_code_id: &Option<ID>, fee_amount: u64, quantity: u64): u64 {
@@ -588,6 +654,13 @@ fun mint_internal(
     manager.update_stake(ctx);
     market.assert_market_oracle(market_oracle);
     market.assert_pyth_feed(pyth);
+    market.run_configured_liquidation_pass(
+        config.pricing_config(),
+        market_oracle,
+        pyth,
+        config.risk_config().trade_liquidation_budget(),
+        clock,
+    );
 
     let (minted_order, fee_amount) = market
         .strike_exposure
@@ -605,7 +678,21 @@ fun mint_internal(
     let (_, fee_amount) = apply_stake_benefit(fee_amount, fee_discount);
 
     market.assert_allocation_backing();
-    market.settle_mint_payment(manager, &minted_order, fee_amount, fee_discount, ctx);
+    let builder_fee_amount = market.settle_mint_payment(
+        manager,
+        &minted_order,
+        fee_amount,
+        ctx,
+    );
+    order_events::emit_order_minted(
+        market.id(),
+        manager,
+        &minted_order,
+        lower_strike,
+        higher_strike,
+        fee_amount,
+        builder_fee_amount,
+    );
     minted_order.id()
 }
 
@@ -626,7 +713,7 @@ fun redeem_live_internal(
     config.pricing_config().assert_live_quote_available(market_oracle, pyth, clock);
     manager.remove_position(market.id(), order.id());
 
-    let (resulting_order, net_redeem_amount, fee_amount) = market
+    let (resulting_order, redeem_amount, fee_amount) = market
         .strike_exposure
         .close_and_quote_live_order(
             config.pricing_config(),
@@ -647,13 +734,23 @@ fun redeem_live_internal(
         option::some(replacement_order_id)
     };
 
-    market.settle_live_redeem_payment(
+    let builder_fee_amount = market.settle_live_redeem_payment(
         manager,
-        net_redeem_amount,
+        redeem_amount,
         fee_amount,
-        fee_discount,
         close_quantity,
         ctx,
+    );
+
+    order_events::emit_live_order_redeemed(
+        market.id(),
+        manager,
+        order,
+        close_quantity,
+        replacement_order_id,
+        redeem_amount,
+        fee_amount,
+        builder_fee_amount,
     );
     replacement_order_id
 }
@@ -671,6 +768,14 @@ fun redeem_settled_internal(
     let settlement = pricing::settlement_price(market_oracle);
     let payout_amount = market.strike_exposure.close_settled_order(order, settlement);
     market.settle_settled_redeem_payment(manager, payout_amount, ctx);
+
+    order_events::emit_settled_order_redeemed(
+        market.id(),
+        manager,
+        order,
+        settlement,
+        payout_amount,
+    );
 }
 
 fun settle_mint_payment(
@@ -678,9 +783,8 @@ fun settle_mint_payment(
     manager: &mut PredictManager,
     order: &Order,
     fee_amount: u64,
-    fee_discount: u64,
     ctx: &mut TxContext,
-) {
+): u64 {
     let quantity = order.quantity();
     let user_contribution = order.user_contribution();
     let builder_code_id = manager.builder_code_id();
@@ -698,28 +802,28 @@ fun settle_mint_payment(
     manager.record_cash_paid_to_expiry(market.id(), payment_amount);
 
     market.assert_cash_backing();
-    market.emit_fee_accrued(fee_amount, builder_fee_amount, fee_discount, builder_code_id);
+    builder_fee_amount
 }
 
+/// Settle a live redeem and return the builder fee paid.
 fun settle_live_redeem_payment(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
-    net_redeem_amount: u64,
+    redeem_amount: u64,
     fee_amount: u64,
-    fee_discount: u64,
     redeemed_quantity: u64,
     ctx: &mut TxContext,
-) {
+): u64 {
     let builder_code_id = manager.builder_code_id();
     let builder_fee_amount = builder_fee_amount(
         &builder_code_id,
         fee_amount,
         redeemed_quantity,
     ).min(
-        net_redeem_amount - fee_amount,
+        redeem_amount - fee_amount,
     );
 
-    let mut payout = market.dispense_lp_cash(net_redeem_amount);
+    let mut payout = market.dispense_lp_cash(redeem_amount);
     let fee = payout.split(fee_amount);
     let builder_fee = payout.split(builder_fee_amount);
     market.collect_trade_fee(manager, fee);
@@ -727,7 +831,7 @@ fun settle_live_redeem_payment(
 
     market.assert_cash_backing();
     deposit_live_payout(manager, market, payout, ctx);
-    market.emit_fee_accrued(fee_amount, builder_fee_amount, fee_discount, builder_code_id);
+    builder_fee_amount
 }
 
 fun settle_settled_redeem_payment(
@@ -794,24 +898,6 @@ fun dispense_lp_cash(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
 fun dispense_fee_cash(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
     assert!(market.fee_balance.value() >= amount, EInsufficientFeeBalance);
     market.fee_balance.split(amount)
-}
-
-fun emit_fee_accrued(
-    market: &ExpiryMarket,
-    total_fee: u64,
-    builder_fee: u64,
-    fee_discount: u64,
-    builder_code_id: Option<ID>,
-) {
-    if (total_fee == 0 && builder_fee == 0) return;
-
-    event::emit(FeeAccrued {
-        expiry_market_id: market.id(),
-        total_fee,
-        builder_fee,
-        fee_discount,
-        builder_code_id,
-    });
 }
 
 fun send_builder_fee(builder_code_id: Option<ID>, fee: Balance<DUSDC>) {

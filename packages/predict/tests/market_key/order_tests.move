@@ -297,6 +297,56 @@ fun from_order_id_with_bits_above_payload_aborts() {
     abort 999
 }
 
+// === liquidation priority ordering ===
+
+#[test]
+fun higher_leverage_order_id_sorts_first() {
+    let high = order::new_from_strike_indices(
+        OPENED_AT_MS,
+        order::open_strike_index(),
+        STRIKE_INDEX_HI,
+        order::leverage_three_x(),
+        500_000_000,
+        ONE_LOT_QTY,
+        0,
+    );
+    let low = order::new_from_strike_indices(
+        OPENED_AT_MS,
+        order::open_strike_index(),
+        STRIKE_INDEX_HI,
+        order::leverage_two_x(),
+        500_000_000,
+        ONE_LOT_QTY,
+        0,
+    );
+
+    assert!(high.id() < low.id());
+}
+
+#[test]
+fun larger_quantity_order_id_sorts_first_at_same_leverage() {
+    let large = order::new_from_strike_indices(
+        OPENED_AT_MS,
+        order::open_strike_index(),
+        STRIKE_INDEX_HI,
+        order::leverage_three_x(),
+        500_000_000,
+        TWO_LOTS_QTY,
+        0,
+    );
+    let small = order::new_from_strike_indices(
+        OPENED_AT_MS,
+        order::open_strike_index(),
+        STRIKE_INDEX_HI,
+        order::leverage_three_x(),
+        500_000_000,
+        ONE_LOT_QTY,
+        0,
+    );
+
+    assert!(large.id() < small.id());
+}
+
 // === replacement ===
 
 #[test]

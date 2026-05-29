@@ -1,0 +1,20 @@
+{
+  "source": {
+    "expiry_ms": "1779955200000",
+    "settlement_timestamp_ms": "1779955200001",
+    "settlement_price": "73380034988828"
+  },
+  "protocol": {
+    "trade_liquidation_budget": "24",
+    "valuation_liquidation_budget": "192",
+    "liquidation_head_scan_divisor": "3",
+    "curve_samples": "50",
+    "lp_fee_share": "600000000",
+    "protocol_fee_share": "200000000",
+    "insurance_fee_share": "200000000",
+    "trading_loss_rebate_rate": "500000000",
+    "leverage_floor_window_ms": "31536000000",
+    "max_expiry_floor_premium": "200000000",
+    "liquidation_ltv": "850000000"
+  }
+}

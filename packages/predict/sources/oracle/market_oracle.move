@@ -12,13 +12,15 @@ module deepbook_predict::market_oracle;
 use deepbook::math;
 use deepbook_predict::{
     config_constants,
+    config_events,
     constants,
     i64,
     market_oracle_config::MarketOracleConfig,
+    oracle_events,
     protocol_config::ProtocolConfig,
     pyth_source::PythSource
 };
-use sui::{clock::Clock, event, vec_set::{Self, VecSet}};
+use sui::{clock::Clock, vec_set::{Self, VecSet}};
 
 const EInvalidMarketOracleCap: u64 = 0;
 const EMarketNotActive: u64 = 1;
@@ -87,51 +89,6 @@ public struct MarketOracle has key {
 /// Capability authorized to write Block Scholes data and tune this oracle.
 public struct MarketOracleCap has key, store {
     id: UID,
-}
-
-/// Emitted when Block Scholes spot/forward data is accepted.
-public struct BlockScholesPricesUpdated has copy, drop, store {
-    market_oracle_id: ID,
-    spot: u64,
-    forward: u64,
-    basis: u64,
-    source_timestamp_ms: u64,
-    update_timestamp_ms: u64,
-}
-
-/// Emitted when Block Scholes SVI data is accepted.
-public struct BlockScholesSVIUpdated has copy, drop, store {
-    market_oracle_id: ID,
-    a: u64,
-    b: u64,
-    rho: i64::I64,
-    m: i64::I64,
-    sigma: u64,
-    source_timestamp_ms: u64,
-    update_timestamp_ms: u64,
-}
-
-/// Emitted when per-oracle bounds are updated.
-public struct MarketOracleBoundsUpdated has copy, drop, store {
-    market_oracle_id: ID,
-    settlement_freshness_ms: u64,
-    max_spot_deviation: u64,
-    max_basis_deviation: u64,
-    min_basis: u64,
-    max_basis: u64,
-}
-
-/// Emitted when the oracle records terminal settlement.
-public struct MarketOracleSettled has copy, drop, store {
-    market_oracle_id: ID,
-    expiry: u64,
-    settlement_price: u64,
-    /// `1` means Pyth supplied the settlement spot; `2` means Block Scholes fallback did.
-    spot_source: u8,
-    /// Timestamp from the data source used for settlement, in milliseconds.
-    source_timestamp_ms: u64,
-    /// On-chain timestamp when that data source update landed, in milliseconds.
-    update_timestamp_ms: u64,
 }
 
 // === Public Functions ===
@@ -361,16 +318,16 @@ public fun update_svi(
     market.block_scholes_svi_source_timestamp_ms = source_timestamp_ms;
     market.block_scholes_svi_update_timestamp_ms = update_timestamp_ms;
 
-    event::emit(BlockScholesSVIUpdated {
-        market_oracle_id: market.id(),
-        a: svi.a(),
-        b: svi.b(),
-        rho: svi.rho(),
-        m: svi.m(),
-        sigma: svi.sigma(),
+    oracle_events::emit_block_scholes_svi_updated(
+        market.id(),
+        svi.a(),
+        svi.b(),
+        svi.rho(),
+        svi.m(),
+        svi.sigma(),
         source_timestamp_ms,
         update_timestamp_ms,
-    });
+    );
 }
 
 /// Set the settlement freshness threshold for this oracle.
@@ -568,14 +525,14 @@ fun apply_block_scholes_prices(
     market.block_scholes_price_source_timestamp_ms = source_timestamp_ms;
     market.block_scholes_price_update_timestamp_ms = update_timestamp_ms;
 
-    event::emit(BlockScholesPricesUpdated {
-        market_oracle_id: market.id(),
+    oracle_events::emit_block_scholes_prices_updated(
+        market.id(),
         spot,
         forward,
         basis,
         source_timestamp_ms,
         update_timestamp_ms,
-    });
+    );
 }
 
 fun validate_block_scholes_price_update(
@@ -673,14 +630,14 @@ fun settle(
     market.settlement_source_timestamp_ms = source_timestamp_ms;
     market.settlement_update_timestamp_ms = update_timestamp_ms;
 
-    event::emit(MarketOracleSettled {
-        market_oracle_id: market.id(),
-        expiry: market.expiry,
+    oracle_events::emit_market_oracle_settled(
+        market.id(),
+        market.expiry,
         settlement_price,
         spot_source,
         source_timestamp_ms,
         update_timestamp_ms,
-    });
+    );
 }
 
 fun compute_bounded_basis(market: &MarketOracle, spot: u64, forward: u64): u64 {
@@ -729,14 +686,14 @@ fun within_deviation(prev: u64, next: u64, max_deviation: u64): bool {
 }
 
 fun emit_bounds_updated(market: &MarketOracle) {
-    event::emit(MarketOracleBoundsUpdated {
-        market_oracle_id: market.id(),
-        settlement_freshness_ms: market.settlement_freshness_ms,
-        max_spot_deviation: market.max_spot_deviation,
-        max_basis_deviation: market.max_basis_deviation,
-        min_basis: market.min_basis,
-        max_basis: market.max_basis,
-    });
+    config_events::emit_market_oracle_bounds_updated(
+        market.id(),
+        market.settlement_freshness_ms,
+        market.max_spot_deviation,
+        market.max_basis_deviation,
+        market.min_basis,
+        market.max_basis,
+    );
 }
 
 // === Test-Only Functions ===

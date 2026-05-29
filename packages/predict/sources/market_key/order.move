@@ -7,9 +7,10 @@
 /// probability, quantity, fixed-point leverage multiplier, and original open
 /// time. Leverage changes the contract's deterministic floor schedule; 1x is the
 /// special case where the floor is zero and the behavior looks like a plain range
-/// payout. The packed ID is the single source of truth at protocol boundaries,
-/// while concrete strike grids and floor-index timing are interpreted by
-/// `StrikeExposure`.
+/// payout. The packed ID is the single source of truth at protocol boundaries.
+/// Its field ordering also acts as liquidation-check priority for active
+/// leveraged IDs, while concrete strike grids and floor-index timing are
+/// interpreted by `StrikeExposure`.
 module deepbook_predict::order;
 
 use deepbook::math as deepbook_math;
@@ -23,13 +24,14 @@ const EInvalidStrikeRange: u64 = 4;
 const EInvalidQuantity: u64 = 5;
 const EInvalidSequence: u64 = 6;
 const EInvalidEntryProbability: u64 = 7;
+const EInvalidLeverageTier: u64 = 8;
 
-const OPENED_AT_OFFSET: u8 = 184;
-const MIN_STRIKE_INDEX_OFFSET: u8 = 160;
-const MAX_STRIKE_INDEX_OFFSET: u8 = 136;
-const LEVERAGE_OFFSET: u8 = 104;
-const ENTRY_PROBABILITY_OFFSET: u8 = 72;
-const QUANTITY_LOTS_OFFSET: u8 = 40;
+const LEVERAGE_RANK_OFFSET: u8 = 200;
+const INVERSE_QUANTITY_LOTS_OFFSET: u8 = 168;
+const OPENED_AT_OFFSET: u8 = 120;
+const MIN_STRIKE_INDEX_OFFSET: u8 = 96;
+const MAX_STRIKE_INDEX_OFFSET: u8 = 72;
+const ENTRY_PROBABILITY_OFFSET: u8 = 40;
 const ORDER_ID_BITS: u8 = 232;
 
 const U24_MASK: u256 = (1u256 << 24) - 1;
@@ -104,7 +106,7 @@ public fun max_strike_index(order: &Order): u64 {
 
 /// Return the 1e9-scaled leverage multiplier encoded in this order.
 public fun leverage(order: &Order): u64 {
-    decode_u32(order.id, LEVERAGE_OFFSET)
+    leverage_from_rank(decode_u32(order.id, LEVERAGE_RANK_OFFSET))
 }
 
 /// Return the 1e9-scaled raw range probability encoded at order entry.
@@ -114,7 +116,7 @@ public fun entry_probability(order: &Order): u64 {
 
 /// Return the encoded quantity in position lots.
 public fun quantity_lots(order: &Order): u64 {
-    decode_u32(order.id, QUANTITY_LOTS_OFFSET)
+    U32_MASK as u64 - decode_u32(order.id, INVERSE_QUANTITY_LOTS_OFFSET)
 }
 
 /// Return the immutable quantity encoded in this order.
@@ -208,16 +210,28 @@ fun new(
     assert!(sequence <= U40_MASK as u64, EInvalidSequence);
     assert_valid_order_shape(min_strike_index, max_strike_index, leverage);
 
+    let leverage_rank = leverage_rank(leverage);
+    let inverse_quantity_lots = U32_MASK as u64 - quantity_lots;
     let id =
-        ((opened_at_ms as u256) << OPENED_AT_OFFSET)
+        ((leverage_rank as u256) << LEVERAGE_RANK_OFFSET)
+        | ((inverse_quantity_lots as u256) << INVERSE_QUANTITY_LOTS_OFFSET)
+        | ((opened_at_ms as u256) << OPENED_AT_OFFSET)
         | ((min_strike_index as u256) << MIN_STRIKE_INDEX_OFFSET)
         | ((max_strike_index as u256) << MAX_STRIKE_INDEX_OFFSET)
-        | ((leverage as u256) << LEVERAGE_OFFSET)
         | ((entry_probability as u256) << ENTRY_PROBABILITY_OFFSET)
-        | ((quantity_lots as u256) << QUANTITY_LOTS_OFFSET)
         | (sequence as u256);
 
     Order { id }
+}
+
+/// Assert the mint-time leverage tier allowed for an entry probability.
+public(package) fun assert_mint_leverage_tier(entry_probability: u64, leverage: u64) {
+    assert_valid_leverage(leverage);
+    if (entry_probability < constants::leverage_one_x_only_price_threshold!()) {
+        assert!(leverage == LEVERAGE_ONE_X, EInvalidLeverageTier);
+    } else if (entry_probability < constants::leverage_two_x_max_price_threshold!()) {
+        assert!(leverage <= LEVERAGE_TWO_X, EInvalidLeverageTier);
+    };
 }
 
 // === Private Functions ===
@@ -265,6 +279,38 @@ fun assert_valid_leverage(leverage: u64) {
             || leverage == LEVERAGE_THREE_X,
         EInvalidLeverage,
     );
+}
+
+fun leverage_rank(leverage: u64): u64 {
+    if (leverage == LEVERAGE_THREE_X) {
+        0
+    } else if (leverage == LEVERAGE_TWO_AND_HALF_X) {
+        1
+    } else if (leverage == LEVERAGE_TWO_X) {
+        2
+    } else if (leverage == LEVERAGE_ONE_AND_HALF_X) {
+        3
+    } else if (leverage == LEVERAGE_ONE_X) {
+        4
+    } else {
+        abort EInvalidLeverage
+    }
+}
+
+fun leverage_from_rank(rank: u64): u64 {
+    if (rank == 0) {
+        LEVERAGE_THREE_X
+    } else if (rank == 1) {
+        LEVERAGE_TWO_AND_HALF_X
+    } else if (rank == 2) {
+        LEVERAGE_TWO_X
+    } else if (rank == 3) {
+        LEVERAGE_ONE_AND_HALF_X
+    } else if (rank == 4) {
+        LEVERAGE_ONE_X
+    } else {
+        abort EInvalidLeverage
+    }
 }
 
 fun assert_valid_order_shape(min_strike_index: u64, max_strike_index: u64, leverage: u64) {
