@@ -3,46 +3,22 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Any
 
-import matplotlib
+from chart_common import FLOW_ACTION_COLORS, FLOW_ACTION_LABELS, configure_axis, plt
+from sim_artifacts import load_json_object, normalized_action, sui
 
-matplotlib.use("Agg")
-
-import matplotlib.pyplot as plt
-
-
-MIST_PER_SUI = 1_000_000_000
-ACTION_LABELS = {
-    "mint": "mint",
-    "redeem": "redeem",
-    "supply": "supply",
-    "withdraw": "withdraw",
-}
-ACTION_COLORS = {
-    "mint": "#2563eb",
-    "redeem": "#7c3aed",
-    "supply": "#0891b2",
-    "withdraw": "#f97316",
-}
 TRADE_ACTIONS = ("mint", "redeem")
 POOL_ACTIONS = ("supply", "withdraw")
 
 
 def load_trace(path: Path) -> dict[str, Any]:
-    data = json.loads(path.read_text())
-    if not isinstance(data, dict):
-        raise ValueError(f"{path} must contain a JSON object")
+    data = load_json_object(path)
     if not isinstance(data.get("steps"), list):
         raise ValueError(f"{path} is missing steps[]")
     return data
-
-
-def normalized_action(action: str) -> str:
-    return "mint" if action == "oracle_mint_ptb" else action
 
 
 def gas_total(step: dict[str, Any]) -> int:
@@ -50,10 +26,6 @@ def gas_total(step: dict[str, Any]) -> int:
     if not isinstance(gas, dict) or gas.get("gasTotal") is None:
         raise ValueError(f"trace step {step.get('step')} is missing gas.gasTotal")
     return int(gas["gasTotal"])
-
-
-def sui(value: int) -> float:
-    return value / MIST_PER_SUI
 
 
 def extract_series(steps: list[dict[str, Any]]) -> dict[str, list[Any]]:
@@ -70,18 +42,13 @@ def extract_series(steps: list[dict[str, Any]]) -> dict[str, list[Any]]:
     return series
 
 
-def configure_axis(ax: plt.Axes) -> None:
-    ax.grid(True, axis="y", color="#d7dde5", linewidth=0.8, alpha=0.7)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-
-
 def plot_timeline_panel(
     ax: plt.Axes,
     series: dict[str, list[Any]],
     actions: tuple[str, ...],
     title: str,
 ) -> None:
+    has_points = False
     for action in actions:
         xs = [
             step
@@ -95,13 +62,14 @@ def plot_timeline_panel(
         ]
         if not xs:
             continue
+        has_points = True
         ax.scatter(
             xs,
             ys,
             s=14,
             alpha=0.72,
-            color=ACTION_COLORS.get(action, "#64748b"),
-            label=ACTION_LABELS.get(action, action),
+            color=FLOW_ACTION_COLORS.get(action, "#64748b"),
+            label=FLOW_ACTION_LABELS.get(action, action),
         )
 
     ax.set_title(
@@ -111,7 +79,8 @@ def plot_timeline_panel(
     )
     ax.set_ylabel("SUI")
     configure_axis(ax)
-    ax.legend(loc="upper left", ncols=len(actions), fontsize=8, frameon=False)
+    if has_points:
+        ax.legend(loc="upper left", ncols=len(actions), fontsize=8, frameon=False)
 
 
 def render(trace_path: Path, output_path: Path) -> None:

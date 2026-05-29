@@ -3,86 +3,30 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Any
 
-import matplotlib
+from chart_common import (
+    LIQUIDATION_ACTION_COLORS,
+    LIQUIDATION_ACTION_LABELS,
+    LIQUIDATION_ACTION_ORDER,
+    PercentFormatter,
+    configure_axis,
+    plt,
+    record_x,
+    timeline_mode,
+    x_bounds,
+)
+from sim_artifacts import (
+    PREDICT_DERIVED_SCHEMA_VERSION,
+    dusdc as to_dusdc,
+    int_or_none,
+    load_records,
+    normalized_action,
+)
 
-matplotlib.use("Agg")
-
-import matplotlib.pyplot as plt
-from matplotlib.ticker import PercentFormatter
-
-
-DUSDC_SCALING = 1_000_000
 BUCKET_COUNT = 48
-ACTION_ORDER = ("mint", "redeem", "supply", "withdraw", "liquidate")
-ACTION_LABELS = {
-    "mint": "passive mint",
-    "redeem": "passive redeem",
-    "supply": "passive supply",
-    "withdraw": "passive withdraw",
-    "liquidate": "manual liquidate",
-}
-ACTION_COLORS = {
-    "mint": "#2563eb",
-    "redeem": "#7c3aed",
-    "supply": "#0891b2",
-    "withdraw": "#f97316",
-    "liquidate": "#dc2626",
-}
-
-
-def load_derived(path: Path) -> dict[str, Any]:
-    data = json.loads(path.read_text())
-    if data.get("schema_version") != "predict_derived_v1":
-        raise ValueError("input file must use schema_version='predict_derived_v1'")
-    if not isinstance(data.get("records"), list):
-        raise ValueError("input file must contain records[]")
-    return data
-
-
-def int_or_none(value: Any) -> int | None:
-    if value is None:
-        return None
-    return int(value)
-
-
-def to_dusdc(value: int) -> float:
-    return value / DUSDC_SCALING
-
-
-def normalized_action(action: str) -> str:
-    return "mint" if action == "oracle_mint_ptb" else action
-
-
-def timeline_mode(records: list[dict[str, Any]]) -> tuple[str, int, str]:
-    for record in records:
-        timestamp_ms = record.get("timestamp_ms")
-        if timestamp_ms is not None:
-            return "timestamp", int(timestamp_ms), "source elapsed hours"
-    return "step", 0, "transaction"
-
-
-def record_x(record: dict[str, Any], mode: str, origin: int) -> float:
-    if mode == "timestamp":
-        timestamp_ms = record.get("timestamp_ms")
-        if timestamp_ms is not None:
-            return (int(timestamp_ms) - origin) / 3_600_000
-    return float(record.get("step", 0))
-
-
-def x_bounds(records: list[dict[str, Any]], mode: str, origin: int) -> tuple[float, float]:
-    xs = [record_x(record, mode, origin) for record in records]
-    if not xs:
-        return 0.0, 1.0
-    lo = min(xs)
-    hi = max(xs)
-    if lo == hi:
-        hi = lo + 1.0
-    return lo, hi
 
 
 def bucket_index(x: float, x_min: float, x_max: float) -> int:
@@ -119,7 +63,7 @@ def bucket_liquidation_flow(
     x_min, x_max = x_bounds(records, mode, origin)
     width = (x_max - x_min) / BUCKET_COUNT
     centers = [x_min + width * (index + 0.5) for index in range(BUCKET_COUNT)]
-    by_action = {action: [0.0 for _ in range(BUCKET_COUNT)] for action in ACTION_ORDER}
+    by_action = {action: [0.0 for _ in range(BUCKET_COUNT)] for action in LIQUIDATION_ACTION_ORDER}
     has_interval_fields = any(
         record.get("liquidation", {}).get("interval_liquidated_value_by_action") is not None
         for record in records
@@ -159,12 +103,6 @@ def bucket_liquidation_flow(
         "width": width * 0.86,
         "by_action": by_action,
     }
-
-
-def configure_axis(ax: plt.Axes) -> None:
-    ax.grid(True, axis="y", color="#d7dde5", linewidth=0.8, alpha=0.7)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
 
 
 def apply_percent_ylim(ax: plt.Axes, values: list[float], minimum_top: float = 0.02) -> None:
@@ -207,16 +145,16 @@ def plot_pressure_panel(ax: plt.Axes, pressure: dict[str, list[float]]) -> None:
 
 def plot_throughput_panel(ax: plt.Axes, buckets: dict[str, Any]) -> None:
     bottoms = [0.0 for _ in buckets["centers"]]
-    for action in ACTION_ORDER:
+    for action in LIQUIDATION_ACTION_ORDER:
         values = buckets["by_action"][action]
         ax.bar(
             buckets["centers"],
             values,
             width=buckets["width"],
             bottom=bottoms,
-            color=ACTION_COLORS[action],
+            color=LIQUIDATION_ACTION_COLORS[action],
             alpha=0.82,
-            label=ACTION_LABELS[action],
+            label=LIQUIDATION_ACTION_LABELS[action],
         )
         bottoms = [bottom + value for bottom, value in zip(bottoms, values)]
 
@@ -232,8 +170,7 @@ def plot_throughput_panel(ax: plt.Axes, buckets: dict[str, Any]) -> None:
 
 
 def render(derived_path: Path, output_path: Path) -> None:
-    data = load_derived(derived_path)
-    records = data["records"]
+    records = load_records(derived_path, PREDICT_DERIVED_SCHEMA_VERSION)
     if not records:
         raise ValueError(f"{derived_path} has no records")
 

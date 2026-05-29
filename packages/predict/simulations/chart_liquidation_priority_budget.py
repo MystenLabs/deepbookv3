@@ -3,43 +3,12 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Any
 
-import matplotlib
-
-matplotlib.use("Agg")
-
-import matplotlib.pyplot as plt
-from matplotlib.ticker import PercentFormatter
-
-
-FLOAT_SCALING = 1_000_000_000
-
-
-def load_derived(path: Path) -> dict[str, Any]:
-    data = json.loads(path.read_text())
-    if data.get("schema_version") != "predict_derived_v1":
-        raise ValueError("input file must use schema_version='predict_derived_v1'")
-    if not isinstance(data.get("records"), list):
-        raise ValueError("input file must contain records[]")
-    return data
-
-
-def int_or_none(value: Any) -> int | None:
-    if value is None:
-        return None
-    return int(value)
-
-
-def percentile(sorted_values: list[float], pct: float) -> float:
-    if not sorted_values:
-        return 0.0
-    if len(sorted_values) == 1:
-        return sorted_values[0]
-    return sorted_values[round((len(sorted_values) - 1) * pct)]
+from chart_common import PercentFormatter, configure_axis, plt
+from sim_artifacts import FLOAT_SCALING, PREDICT_DERIVED_SCHEMA_VERSION, int_or_none, load_records, percentile
 
 
 def aggregate_priority_curve(records: list[dict[str, Any]]) -> tuple[list[float], list[float]]:
@@ -116,12 +85,6 @@ def mean_capture_breakdown(records: list[dict[str, Any]]) -> dict[str, dict[str,
         for budget, values in sorted(totals.items(), key=lambda item: int(item[0]))
         if counts.get(budget, 0) > 0
     }
-
-
-def configure_axis(ax: plt.Axes) -> None:
-    ax.grid(True, axis="y", color="#d7dde5", linewidth=0.8, alpha=0.7)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
 
 
 def plot_priority_curve(ax: plt.Axes, xs: list[float], ys: list[float]) -> None:
@@ -201,8 +164,7 @@ def plot_capture_breakdown(ax: plt.Axes, breakdown: dict[str, dict[str, float]])
 
 
 def render(derived_path: Path, output_path: Path) -> bool:
-    data = load_derived(derived_path)
-    records = data["records"]
+    records = load_records(derived_path, PREDICT_DERIVED_SCHEMA_VERSION)
     if not records:
         raise ValueError(f"{derived_path} has no records")
     curve_x, curve_y = aggregate_priority_curve(records)

@@ -69,19 +69,6 @@ class FlowConfig:
     max_supply: int
 
 
-@dataclass
-class OrderInfo:
-    ref: str
-    strike: int
-    is_up: bool
-    lower: int
-    higher: int
-    quantity: int
-    leverage: int
-    entry_probability: int
-    floor_seed_amount: int
-
-
 class GenerationError(RuntimeError):
     pass
 
@@ -100,7 +87,7 @@ class Generator:
             "liquidate": config.liquidate_count,
         }
         self.rows: list[dict[str, str]] = []
-        self.orders: dict[str, OrderInfo] = {}
+        self.order_quantities: dict[str, int] = {}
         self.redeemable_refs: list[str] = []
         self.lp_amounts: dict[str, int] = {}
         self.withdrawable_lp_refs: list[str] = []
@@ -209,17 +196,7 @@ class Generator:
             self.manager_balance -= cash_required
             self.current_snapshot = snapshot
             self.remaining["oracle_mint_ptb"] -= 1
-            self.orders[order_ref] = OrderInfo(
-                ref=order_ref,
-                strike=strike,
-                is_up=is_up,
-                lower=lower,
-                higher=higher,
-                quantity=quantity,
-                leverage=leverage,
-                entry_probability=entry_probability,
-                floor_seed_amount=terms["floor_seed_amount"],
-            )
+            self.order_quantities[order_ref] = quantity
             self.redeemable_refs.append(order_ref)
 
             return scenario_row(
@@ -290,13 +267,13 @@ class Generator:
 
         idx = self.rng.randrange(len(self.redeemable_refs))
         order_ref = self.redeemable_refs.pop(idx)
-        order = self.orders[order_ref]
+        quantity = self.order_quantities.pop(order_ref)
         self.remaining["redeem"] -= 1
         return scenario_row(
             tx=tx,
             action="redeem",
             order_ref=order_ref,
-            close_quantity=order.quantity,
+            close_quantity=quantity,
         )
 
     def build_supply_row(self, tx: int) -> dict[str, str]:

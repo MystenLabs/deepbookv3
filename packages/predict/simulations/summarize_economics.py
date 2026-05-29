@@ -3,51 +3,24 @@
 
 from __future__ import annotations
 
-import json
 import statistics
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
+from sim_artifacts import (
+    dusdc,
+    int_or_none,
+    load_optional_json as load_json,
+    normalized_action,
+    percentile,
+    ratio,
+    sui,
+    write_json,
+)
 
 SCHEMA_VERSION = "predict_economic_summary_v2"
-DUSDC_DECIMALS = 1_000_000
-FLOAT_SCALING = 1_000_000_000
-MIST_PER_SUI = 1_000_000_000
-
-
-def load_json(path: Path) -> Any | None:
-    if not path.exists():
-        return None
-    return json.loads(path.read_text())
-
-
-def int_or_none(value: Any) -> int | None:
-    if value is None:
-        return None
-    return int(value)
-
-
-def dusdc(value: int) -> float:
-    return value / DUSDC_DECIMALS
-
-
-def sui(value: int) -> float:
-    return value / MIST_PER_SUI
-
-
-def ratio(value: int) -> float:
-    return value / FLOAT_SCALING
-
-
-def percentile(sorted_values: list[int], pct: float) -> int:
-    if not sorted_values:
-        return 0
-    if len(sorted_values) == 1:
-        return sorted_values[0]
-    index = round((len(sorted_values) - 1) * pct)
-    return sorted_values[index]
 
 
 def integer_stats(values: list[int]) -> dict[str, int] | None:
@@ -99,10 +72,6 @@ def ratio_stats(values: list[int]) -> dict[str, Any] | None:
 
 def counter_dict(values: list[str]) -> dict[str, int]:
     return dict(sorted(Counter(values).items()))
-
-
-def normalized_action(action: str) -> str:
-    return "mint" if action == "oracle_mint_ptb" else action
 
 
 def update_totals(records: list[dict[str, Any]]) -> dict[str, int]:
@@ -495,7 +464,7 @@ def main() -> None:
     artifacts_dir = Path(sys.argv[1])
     summary = build_summary(artifacts_dir)
     out_path = artifacts_dir / "economic_summary.json"
-    out_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
+    write_json(out_path, summary)
     print(f"  Saved {out_path}")
 
 

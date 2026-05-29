@@ -3,66 +3,18 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Any
 
-import matplotlib
-
-matplotlib.use("Agg")
-
-import matplotlib.pyplot as plt
-
-
-DUSDC_SCALING = 1_000_000
-
-
-def load_json(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as infile:
-        data = json.load(infile)
-    if not isinstance(data, dict):
-        raise ValueError(f"{path} must contain a JSON object")
-    return data
-
-
-def records_from_payload(payload: dict[str, Any], path: Path) -> list[dict[str, Any]]:
-    records = payload.get("records")
-    if not isinstance(records, list):
-        raise ValueError(f"{path} is missing records[]")
-    return records
-
-
-def int_or_none(value: Any) -> int | None:
-    if value is None:
-        return None
-    return int(value)
-
-
-def int_or_zero(value: Any) -> int:
-    if value is None:
-        return 0
-    return int(value)
-
-
-def timeline_mode(records: list[dict[str, Any]]) -> tuple[str, int, str]:
-    for record in records:
-        timestamp_ms = record.get("timestamp_ms")
-        if timestamp_ms is not None:
-            return "timestamp", int(timestamp_ms), "source elapsed hours"
-    return "step", 0, "transaction"
-
-
-def record_x(record: dict[str, Any], mode: str, origin: int) -> float:
-    if mode == "timestamp":
-        timestamp_ms = record.get("timestamp_ms")
-        if timestamp_ms is not None:
-            return (int(timestamp_ms) - origin) / 3_600_000
-    return float(record.get("step", 0))
-
-
-def dusdc(value: int) -> float:
-    return value / DUSDC_SCALING
+from chart_common import configure_axis, plt, record_x, timeline_mode
+from sim_artifacts import (
+    PREDICT_DERIVED_SCHEMA_VERSION,
+    dusdc,
+    int_or_none,
+    int_or_zero,
+    load_records,
+)
 
 
 def extract_series(records: list[dict[str, Any]], mode: str, origin: int) -> dict[str, list[float]]:
@@ -102,12 +54,6 @@ def extract_series(records: list[dict[str, Any]], mode: str, origin: int) -> dic
         series["net_compensation"].append(dusdc(net_compensation))
 
     return series
-
-
-def configure_axis(ax: plt.Axes) -> None:
-    ax.grid(True, axis="y", color="#d7dde5", linewidth=0.8, alpha=0.7)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
 
 
 def plot_components_panel(ax: plt.Axes, series: dict[str, list[float]]) -> None:
@@ -165,8 +111,7 @@ def plot_net_compensation_panel(ax: plt.Axes, series: dict[str, list[float]]) ->
 
 
 def render(derived_path: Path, output_path: Path) -> None:
-    payload = load_json(derived_path)
-    records = records_from_payload(payload, derived_path)
+    records = load_records(derived_path, PREDICT_DERIVED_SCHEMA_VERSION)
     if not records:
         raise ValueError(f"{derived_path} has no records")
 

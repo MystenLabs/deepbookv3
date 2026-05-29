@@ -3,73 +3,28 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Any
 
-import matplotlib
+from chart_common import configure_axis, plt, record_x, timeline_mode_from_records
+from sim_artifacts import (
+    DUSDC_SCALING,
+    FLOAT_SCALING,
+    PREDICT_DERIVED_SCHEMA_VERSION,
+    PREDICT_ECONOMIC_SCHEMA_VERSION,
+    int_or_none,
+    int_or_zero,
+    load_records,
+)
 
-matplotlib.use("Agg")
-
-import matplotlib.pyplot as plt
-
-
-DUSDC_SCALING = 1_000_000
-FLOAT_SCALING = 1_000_000_000
 POS_INF_STRIKE = 18_446_744_073_709_551_615
-
-
-def load_json(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as infile:
-        data = json.load(infile)
-    if not isinstance(data, dict):
-        raise ValueError(f"{path} must contain a JSON object")
-    return data
-
-
-def int_or_none(value: Any) -> int | None:
-    if value is None:
-        return None
-    return int(value)
-
-
-def int_or_zero(value: Any) -> int:
-    if value is None:
-        return 0
-    return int(value)
 
 
 def to_price(value: int | None) -> float | None:
     if value is None:
         return None
     return value / FLOAT_SCALING
-
-
-def records_from_payload(payload: dict[str, Any], path: Path) -> list[dict[str, Any]]:
-    records = payload.get("records")
-    if not isinstance(records, list):
-        raise ValueError(f"{path} is missing records[]")
-    return records
-
-
-def timeline_mode(
-    economic_records: list[dict[str, Any]], derived_records: list[dict[str, Any]]
-) -> tuple[str, int, str]:
-    for records in (economic_records, derived_records):
-        for record in records:
-            timestamp_ms = record.get("timestamp_ms")
-            if timestamp_ms is not None:
-                return "timestamp", int(timestamp_ms), "source elapsed hours"
-    return "step", 0, "transaction"
-
-
-def record_x(record: dict[str, Any], mode: str, origin: int) -> float:
-    if mode == "timestamp":
-        timestamp_ms = record.get("timestamp_ms")
-        if timestamp_ms is not None:
-            return (int(timestamp_ms) - origin) / 3_600_000
-    return float(record.get("step", 0))
 
 
 def finite_order_strike(update: dict[str, Any]) -> int | None:
@@ -193,12 +148,6 @@ def extract_value_series(
     return series
 
 
-def configure_axis(ax: plt.Axes, *, grid_axis: str = "y") -> None:
-    ax.grid(True, axis=grid_axis, color="#d7dde5", linewidth=0.8, alpha=0.7)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-
-
 def plot_activity_panel(
     ax_price: plt.Axes,
     prices: list[tuple[float, float]],
@@ -308,16 +257,14 @@ def render(
     derived_path: Path,
     output_path: Path,
 ) -> None:
-    economic_payload = load_json(economic_path)
-    derived_payload = load_json(derived_path)
-    economic_records = records_from_payload(economic_payload, economic_path)
-    derived_records = records_from_payload(derived_payload, derived_path)
+    economic_records = load_records(economic_path, PREDICT_ECONOMIC_SCHEMA_VERSION)
+    derived_records = load_records(derived_path, PREDICT_DERIVED_SCHEMA_VERSION)
     if not economic_records:
         raise ValueError(f"{economic_path} has no records")
     if not derived_records:
         raise ValueError(f"{derived_path} has no records")
 
-    mode, origin, x_label = timeline_mode(economic_records, derived_records)
+    mode, origin, x_label = timeline_mode_from_records(economic_records, derived_records)
     prices, events = extract_market_activity(economic_records, mode, origin)
     series = extract_value_series(derived_records, mode, origin)
 

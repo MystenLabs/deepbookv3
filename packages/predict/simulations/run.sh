@@ -605,7 +605,7 @@ run_sim() {
 
 if [ "$RUN_SETUP" -eq 1 ] && [ "$RUN_SIM" -eq 0 ]; then
   echo "==> Running setup only..."
-  npx tsx src/sim.ts --setup-only
+  run_sim --setup-only
 elif [ "$RUN_SETUP" -eq 1 ] && [ "$RUN_SIM" -eq 1 ]; then
   echo "==> Running simulation (setup + execute)..."
   run_sim

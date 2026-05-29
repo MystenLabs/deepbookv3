@@ -1365,6 +1365,10 @@ def active_refs(model: dict[str, Any]) -> list[str]:
     return model["liquidation"].active_refs()
 
 
+def active_order_count(model: dict[str, Any]) -> int:
+    return model["liquidation"].active_order_count
+
+
 def insert_active_order(model: dict[str, Any], ref: str) -> None:
     order = model["orders"][ref]
     if order["leverage"] == 0:
@@ -2655,13 +2659,13 @@ def replay(
         action = row["action"]
         row_timestamp_ms = exact_row_timestamp_ms(row) if exact_time else row["step"]
         model["now_ms"] = row_timestamp_ms
-        scan_active_count = len(active_refs(model))
+        scan_active_count = active_order_count(model)
         if action == "oracle_mint_ptb":
             model["current_forward"] = row["forward"]
             model["current_svi"] = row
             updates.append(oracle_prices_update(row))
             updates.append(oracle_svi_update(row))
-            scan_active_count = len(active_refs(model))
+            scan_active_count = active_order_count(model)
             updates.extend(run_liquidation_pass(model, TRADE_LIQUIDATION_BUDGET))
             updates.append(mint_order(model, row, row_timestamp_ms))
         elif action == "update_prices":
@@ -2671,12 +2675,12 @@ def replay(
             model["current_svi"] = row
             updates.append(oracle_svi_update(row))
         elif action == "mint":
-            scan_active_count = len(active_refs(model))
+            scan_active_count = active_order_count(model)
             updates.extend(run_liquidation_pass(model, TRADE_LIQUIDATION_BUDGET))
             updates.append(mint_order(model, row, row_timestamp_ms))
         elif action == "liquidate":
             apply_inline_oracle_refresh(model, row, updates)
-            scan_active_count = len(active_refs(model))
+            scan_active_count = active_order_count(model)
             liquidation_updates = run_liquidation_pass(model, row["budget"])
             updates.append(
                 {
@@ -2688,19 +2692,19 @@ def replay(
             updates.extend(liquidation_updates)
         elif action == "redeem":
             apply_inline_oracle_refresh(model, row, updates)
-            scan_active_count = len(active_refs(model))
+            scan_active_count = active_order_count(model)
             updates.extend(run_liquidation_pass(model, TRADE_LIQUIDATION_BUDGET))
             updates.append(redeem_order(model, row))
         elif action == "supply":
             apply_inline_oracle_refresh(model, row, updates)
             curve = build_valuation_curve(model)
-            scan_active_count = len(active_refs(model))
+            scan_active_count = active_order_count(model)
             updates.extend(run_liquidation_pass(model, VALUATION_LIQUIDATION_BUDGET, curve))
             updates.append(supply_update(model, state, row, curve))
         elif action == "withdraw":
             apply_inline_oracle_refresh(model, row, updates)
             curve = build_valuation_curve(model)
-            scan_active_count = len(active_refs(model))
+            scan_active_count = active_order_count(model)
             updates.extend(run_liquidation_pass(model, VALUATION_LIQUIDATION_BUDGET, curve))
             updates.append(withdraw_update(model, state, row, curve))
         else:

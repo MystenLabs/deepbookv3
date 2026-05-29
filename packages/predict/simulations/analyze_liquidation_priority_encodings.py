@@ -16,6 +16,7 @@ if str(SIM_DIR) not in sys.path:
     sys.path.insert(0, str(SIM_DIR))
 
 import python_replay as replay  # noqa: E402
+from sim_artifacts import load_json_object, write_json  # noqa: E402
 
 
 U32_MASK = (1 << 32) - 1
@@ -433,13 +434,6 @@ def default_encodings() -> list[Encoding]:
     return encodings
 
 
-def load_json(path: Path) -> dict[str, Any]:
-    data = json.loads(path.read_text())
-    if not isinstance(data, dict):
-        raise ValueError(f"{path} must contain a JSON object")
-    return data
-
-
 def signed_svi_field(value: str) -> tuple[int, bool]:
     parsed = int(value)
     return abs(parsed), parsed < 0
@@ -847,7 +841,7 @@ def main() -> None:
     if expiry_ms is None:
         raise SystemExit("scenario config must include source.expiry_ms")
 
-    economic_data = load_json(args.python_long_data)
+    economic_data = load_json_object(args.python_long_data)
     if economic_data.get("schema_version") != replay.ECONOMIC_SCHEMA_VERSION:
         raise SystemExit("input must use predict_economic_v1 schema")
 
@@ -859,7 +853,7 @@ def main() -> None:
     )
     print_table(results, args.top)
     if args.out_json is not None:
-        args.out_json.write_text(json.dumps(results, indent=2, sort_keys=True) + "\n")
+        write_json(args.out_json, results)
         print(f"\nwrote {args.out_json}")
     if args.out_csv is not None:
         write_csv(args.out_csv, results)

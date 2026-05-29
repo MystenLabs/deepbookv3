@@ -125,6 +125,52 @@ interface OracleRefreshParams {
   };
 }
 
+interface ExpiryValuationParams {
+  poolVaultId: string;
+  protocolConfigId: string;
+  expiryMarketId: string;
+  oracleId: string;
+  pythSourceId: string;
+}
+
+interface SupplyWithExpiryValuationParams extends ExpiryValuationParams {
+  amount: bigint;
+}
+
+interface WithdrawWithExpiryValuationParams extends ExpiryValuationParams {
+  lpCoinId: string;
+}
+
+interface MintParams {
+  expiryMarketId: string;
+  protocolConfigId: string;
+  managerId: string;
+  oracleId: string;
+  pythSourceId: string;
+  strike: bigint;
+  isUp: boolean;
+  quantity: bigint;
+  leverage: bigint;
+}
+
+interface LiquidateParams {
+  expiryMarketId: string;
+  protocolConfigId: string;
+  oracleId: string;
+  pythSourceId: string;
+  budget: bigint;
+}
+
+interface RedeemParams {
+  expiryMarketId: string;
+  protocolConfigId: string;
+  managerId: string;
+  oracleId: string;
+  pythSourceId: string;
+  orderId: string;
+  closeQuantity: bigint;
+}
+
 function addOracleRefresh(tx: Transaction, params: OracleRefreshParams): void {
   tx.moveCall({
     target: target("market_oracle", "update_block_scholes_prices"),
@@ -166,6 +212,86 @@ function addOracleRefresh(tx: Transaction, params: OracleRefreshParams): void {
       tx.object(params.oracleCapId),
       sviParams,
       tx.pure.u64(nextSourceTimestampMs()),
+      tx.object(CLOCK_ID),
+    ],
+  });
+}
+
+function mintDusdc(tx: Transaction, amount: bigint) {
+  const [coin] = tx.moveCall({
+    target: "0x2::coin::mint",
+    typeArguments: [DUSDC_TYPE],
+    arguments: [tx.object(TREASURY_CAP_ID), tx.pure.u64(amount)],
+  });
+  return coin;
+}
+
+function startPlpValuationWithExpiry(tx: Transaction, params: ExpiryValuationParams) {
+  const valuation = tx.moveCall({
+    target: target("plp", "start_valuation"),
+    arguments: [tx.object(params.protocolConfigId), tx.object(params.poolVaultId)],
+  });
+  const expiryValuation = tx.moveCall({
+    target: target("expiry_market", "produce_valuation"),
+    arguments: [
+      tx.object(params.expiryMarketId),
+      tx.object(params.protocolConfigId),
+      tx.object(params.oracleId),
+      tx.object(params.pythSourceId),
+      tx.object(CLOCK_ID),
+    ],
+  });
+  tx.moveCall({
+    target: target("plp", "add_expiry_valuation"),
+    arguments: [valuation, expiryValuation],
+  });
+  return valuation;
+}
+
+function addMint(tx: Transaction, params: MintParams): void {
+  const { lower, higher } = binaryRangeBounds(params.strike, params.isUp);
+  tx.moveCall({
+    target: target("expiry_market", "mint"),
+    arguments: [
+      tx.object(params.expiryMarketId),
+      tx.object(params.managerId),
+      tx.object(params.protocolConfigId),
+      tx.object(params.oracleId),
+      tx.object(params.pythSourceId),
+      tx.pure.u64(lower),
+      tx.pure.u64(higher),
+      tx.pure.u64(params.quantity),
+      tx.pure.u64(params.leverage),
+      tx.object(CLOCK_ID),
+    ],
+  });
+}
+
+function addLiquidate(tx: Transaction, params: LiquidateParams): void {
+  tx.moveCall({
+    target: target("expiry_market", "liquidate"),
+    arguments: [
+      tx.object(params.expiryMarketId),
+      tx.object(params.protocolConfigId),
+      tx.object(params.oracleId),
+      tx.object(params.pythSourceId),
+      tx.pure.u64(params.budget),
+      tx.object(CLOCK_ID),
+    ],
+  });
+}
+
+function addRedeem(tx: Transaction, params: RedeemParams): void {
+  tx.moveCall({
+    target: target("expiry_market", "redeem"),
+    arguments: [
+      tx.object(params.expiryMarketId),
+      tx.object(params.managerId),
+      tx.object(params.protocolConfigId),
+      tx.object(params.oracleId),
+      tx.object(params.pythSourceId),
+      tx.pure.u256(BigInt(params.orderId)),
+      tx.pure.u64(params.closeQuantity),
       tx.object(CLOCK_ID),
     ],
   });
@@ -342,11 +468,7 @@ export function updateSviTx(
 
 export function supplyTx(poolVaultId: string, protocolConfigId: string, amount: bigint): Transaction {
   const tx = new Transaction();
-  const [dusdc] = tx.moveCall({
-    target: "0x2::coin::mint",
-    typeArguments: [DUSDC_TYPE],
-    arguments: [tx.object(TREASURY_CAP_ID), tx.pure.u64(amount)],
-  });
+  const dusdc = mintDusdc(tx, amount);
   const valuation = tx.moveCall({
     target: target("plp", "start_valuation"),
     arguments: [tx.object(protocolConfigId), tx.object(poolVaultId)],
@@ -359,38 +481,10 @@ export function supplyTx(poolVaultId: string, protocolConfigId: string, amount: 
   return tx;
 }
 
-export function supplyWithExpiryValuationTx(params: {
-  poolVaultId: string;
-  protocolConfigId: string;
-  expiryMarketId: string;
-  oracleId: string;
-  pythSourceId: string;
-  amount: bigint;
-}): Transaction {
+export function supplyWithExpiryValuationTx(params: SupplyWithExpiryValuationParams): Transaction {
   const tx = new Transaction();
-  const [dusdc] = tx.moveCall({
-    target: "0x2::coin::mint",
-    typeArguments: [DUSDC_TYPE],
-    arguments: [tx.object(TREASURY_CAP_ID), tx.pure.u64(params.amount)],
-  });
-  const valuation = tx.moveCall({
-    target: target("plp", "start_valuation"),
-    arguments: [tx.object(params.protocolConfigId), tx.object(params.poolVaultId)],
-  });
-  const expiryValuation = tx.moveCall({
-    target: target("expiry_market", "produce_valuation"),
-    arguments: [
-      tx.object(params.expiryMarketId),
-      tx.object(params.protocolConfigId),
-      tx.object(params.oracleId),
-      tx.object(params.pythSourceId),
-      tx.object(CLOCK_ID),
-    ],
-  });
-  tx.moveCall({
-    target: target("plp", "add_expiry_valuation"),
-    arguments: [valuation, expiryValuation],
-  });
+  const dusdc = mintDusdc(tx, params.amount);
+  const valuation = startPlpValuationWithExpiry(tx, params);
   const [plpCoin] = tx.moveCall({
     target: target("plp", "supply"),
     arguments: [tx.object(params.poolVaultId), tx.object(params.protocolConfigId), valuation, dusdc],
@@ -399,36 +493,13 @@ export function supplyWithExpiryValuationTx(params: {
   return tx;
 }
 
-export function refreshOracleAndSupplyWithExpiryValuationTx(params: OracleRefreshParams & {
-  poolVaultId: string;
-  expiryMarketId: string;
-  amount: bigint;
-}): Transaction {
+export function refreshOracleAndSupplyWithExpiryValuationTx(
+  params: OracleRefreshParams & SupplyWithExpiryValuationParams
+): Transaction {
   const tx = new Transaction();
   addOracleRefresh(tx, params);
-  const [dusdc] = tx.moveCall({
-    target: "0x2::coin::mint",
-    typeArguments: [DUSDC_TYPE],
-    arguments: [tx.object(TREASURY_CAP_ID), tx.pure.u64(params.amount)],
-  });
-  const valuation = tx.moveCall({
-    target: target("plp", "start_valuation"),
-    arguments: [tx.object(params.protocolConfigId), tx.object(params.poolVaultId)],
-  });
-  const expiryValuation = tx.moveCall({
-    target: target("expiry_market", "produce_valuation"),
-    arguments: [
-      tx.object(params.expiryMarketId),
-      tx.object(params.protocolConfigId),
-      tx.object(params.oracleId),
-      tx.object(params.pythSourceId),
-      tx.object(CLOCK_ID),
-    ],
-  });
-  tx.moveCall({
-    target: target("plp", "add_expiry_valuation"),
-    arguments: [valuation, expiryValuation],
-  });
+  const dusdc = mintDusdc(tx, params.amount);
+  const valuation = startPlpValuationWithExpiry(tx, params);
   const [plpCoin] = tx.moveCall({
     target: target("plp", "supply"),
     arguments: [tx.object(params.poolVaultId), tx.object(params.protocolConfigId), valuation, dusdc],
@@ -437,33 +508,9 @@ export function refreshOracleAndSupplyWithExpiryValuationTx(params: OracleRefres
   return tx;
 }
 
-export function withdrawWithExpiryValuationTx(params: {
-  poolVaultId: string;
-  protocolConfigId: string;
-  expiryMarketId: string;
-  oracleId: string;
-  pythSourceId: string;
-  lpCoinId: string;
-}): Transaction {
+export function withdrawWithExpiryValuationTx(params: WithdrawWithExpiryValuationParams): Transaction {
   const tx = new Transaction();
-  const valuation = tx.moveCall({
-    target: target("plp", "start_valuation"),
-    arguments: [tx.object(params.protocolConfigId), tx.object(params.poolVaultId)],
-  });
-  const expiryValuation = tx.moveCall({
-    target: target("expiry_market", "produce_valuation"),
-    arguments: [
-      tx.object(params.expiryMarketId),
-      tx.object(params.protocolConfigId),
-      tx.object(params.oracleId),
-      tx.object(params.pythSourceId),
-      tx.object(CLOCK_ID),
-    ],
-  });
-  tx.moveCall({
-    target: target("plp", "add_expiry_valuation"),
-    arguments: [valuation, expiryValuation],
-  });
+  const valuation = startPlpValuationWithExpiry(tx, params);
   const [dusdc] = tx.moveCall({
     target: target("plp", "withdraw"),
     arguments: [
@@ -477,31 +524,12 @@ export function withdrawWithExpiryValuationTx(params: {
   return tx;
 }
 
-export function refreshOracleAndWithdrawWithExpiryValuationTx(params: OracleRefreshParams & {
-  poolVaultId: string;
-  expiryMarketId: string;
-  lpCoinId: string;
-}): Transaction {
+export function refreshOracleAndWithdrawWithExpiryValuationTx(
+  params: OracleRefreshParams & WithdrawWithExpiryValuationParams
+): Transaction {
   const tx = new Transaction();
   addOracleRefresh(tx, params);
-  const valuation = tx.moveCall({
-    target: target("plp", "start_valuation"),
-    arguments: [tx.object(params.protocolConfigId), tx.object(params.poolVaultId)],
-  });
-  const expiryValuation = tx.moveCall({
-    target: target("expiry_market", "produce_valuation"),
-    arguments: [
-      tx.object(params.expiryMarketId),
-      tx.object(params.protocolConfigId),
-      tx.object(params.oracleId),
-      tx.object(params.pythSourceId),
-      tx.object(CLOCK_ID),
-    ],
-  });
-  tx.moveCall({
-    target: target("plp", "add_expiry_valuation"),
-    arguments: [valuation, expiryValuation],
-  });
+  const valuation = startPlpValuationWithExpiry(tx, params);
   const [dusdc] = tx.moveCall({
     target: target("plp", "withdraw"),
     arguments: [
@@ -542,11 +570,7 @@ export function deriveManagerId(owner: string, index: bigint = 0n): string {
 
 export function depositToManagerTx(managerId: string, amount: bigint): Transaction {
   const tx = new Transaction();
-  const [coin] = tx.moveCall({
-    target: "0x2::coin::mint",
-    typeArguments: [DUSDC_TYPE],
-    arguments: [tx.object(TREASURY_CAP_ID), tx.pure.u64(amount)],
-  });
+  const coin = mintDusdc(tx, amount);
   tx.moveCall({
     target: target("predict_manager", "deposit"),
     arguments: [tx.object(managerId), coin],
@@ -554,172 +578,42 @@ export function depositToManagerTx(managerId: string, amount: bigint): Transacti
   return tx;
 }
 
-export function mintTx(params: {
-  expiryMarketId: string;
-  protocolConfigId: string;
-  managerId: string;
-  oracleId: string;
-  pythSourceId: string;
-  strike: bigint;
-  isUp: boolean;
-  quantity: bigint;
-  leverage: bigint;
-}): Transaction {
+export function mintTx(params: MintParams): Transaction {
   const tx = new Transaction();
-  const { lower, higher } = binaryRangeBounds(params.strike, params.isUp);
-  tx.moveCall({
-    target: target("expiry_market", "mint"),
-    arguments: [
-      tx.object(params.expiryMarketId),
-      tx.object(params.managerId),
-      tx.object(params.protocolConfigId),
-      tx.object(params.oracleId),
-      tx.object(params.pythSourceId),
-      tx.pure.u64(lower),
-      tx.pure.u64(higher),
-      tx.pure.u64(params.quantity),
-      tx.pure.u64(params.leverage),
-      tx.object(CLOCK_ID),
-    ],
-  });
+  addMint(tx, params);
   return tx;
 }
 
-export function refreshOracleAndMintTx(params: {
-  expiryMarketId: string;
-  protocolConfigId: string;
-  managerId: string;
-  oracleId: string;
-  oracleCapId: string;
-  pythSourceId: string;
-  strike: bigint;
-  isUp: boolean;
-  quantity: bigint;
-  leverage: bigint;
-  spot: bigint;
-  forward: bigint;
-  svi: {
-    a: bigint;
-    b: bigint;
-    rho: bigint;
-    rhoNegative: boolean;
-    m: bigint;
-    mNegative: boolean;
-    sigma: bigint;
-  };
-}): Transaction {
+export function refreshOracleAndMintTx(params: OracleRefreshParams & MintParams): Transaction {
   const tx = new Transaction();
   addOracleRefresh(tx, params);
-
-  const { lower, higher } = binaryRangeBounds(params.strike, params.isUp);
-  tx.moveCall({
-    target: target("expiry_market", "mint"),
-    arguments: [
-      tx.object(params.expiryMarketId),
-      tx.object(params.managerId),
-      tx.object(params.protocolConfigId),
-      tx.object(params.oracleId),
-      tx.object(params.pythSourceId),
-      tx.pure.u64(lower),
-      tx.pure.u64(higher),
-      tx.pure.u64(params.quantity),
-      tx.pure.u64(params.leverage),
-      tx.object(CLOCK_ID),
-    ],
-  });
-
+  addMint(tx, params);
   return tx;
 }
 
-export function refreshOracleAndLiquidateTx(params: OracleRefreshParams & {
-  expiryMarketId: string;
-  budget: bigint;
-}): Transaction {
+export function refreshOracleAndLiquidateTx(params: OracleRefreshParams & LiquidateParams): Transaction {
   const tx = new Transaction();
   addOracleRefresh(tx, params);
-  tx.moveCall({
-    target: target("expiry_market", "liquidate"),
-    arguments: [
-      tx.object(params.expiryMarketId),
-      tx.object(params.protocolConfigId),
-      tx.object(params.oracleId),
-      tx.object(params.pythSourceId),
-      tx.pure.u64(params.budget),
-      tx.object(CLOCK_ID),
-    ],
-  });
+  addLiquidate(tx, params);
   return tx;
 }
 
-export function refreshOracleAndRedeemTx(params: OracleRefreshParams & {
-  expiryMarketId: string;
-  managerId: string;
-  orderId: string;
-  closeQuantity: bigint;
-}): Transaction {
+export function refreshOracleAndRedeemTx(params: OracleRefreshParams & RedeemParams): Transaction {
   const tx = new Transaction();
   addOracleRefresh(tx, params);
-  tx.moveCall({
-    target: target("expiry_market", "redeem"),
-    arguments: [
-      tx.object(params.expiryMarketId),
-      tx.object(params.managerId),
-      tx.object(params.protocolConfigId),
-      tx.object(params.oracleId),
-      tx.object(params.pythSourceId),
-      tx.pure.u256(BigInt(params.orderId)),
-      tx.pure.u64(params.closeQuantity),
-      tx.object(CLOCK_ID),
-    ],
-  });
+  addRedeem(tx, params);
   return tx;
 }
 
-export function liquidateTx(params: {
-  expiryMarketId: string;
-  protocolConfigId: string;
-  oracleId: string;
-  pythSourceId: string;
-  budget: bigint;
-}): Transaction {
+export function liquidateTx(params: LiquidateParams): Transaction {
   const tx = new Transaction();
-  tx.moveCall({
-    target: target("expiry_market", "liquidate"),
-    arguments: [
-      tx.object(params.expiryMarketId),
-      tx.object(params.protocolConfigId),
-      tx.object(params.oracleId),
-      tx.object(params.pythSourceId),
-      tx.pure.u64(params.budget),
-      tx.object(CLOCK_ID),
-    ],
-  });
+  addLiquidate(tx, params);
   return tx;
 }
 
-export function redeemTx(params: {
-  expiryMarketId: string;
-  protocolConfigId: string;
-  managerId: string;
-  oracleId: string;
-  pythSourceId: string;
-  orderId: string;
-  closeQuantity: bigint;
-}): Transaction {
+export function redeemTx(params: RedeemParams): Transaction {
   const tx = new Transaction();
-  tx.moveCall({
-    target: target("expiry_market", "redeem"),
-    arguments: [
-      tx.object(params.expiryMarketId),
-      tx.object(params.managerId),
-      tx.object(params.protocolConfigId),
-      tx.object(params.oracleId),
-      tx.object(params.pythSourceId),
-      tx.pure.u256(BigInt(params.orderId)),
-      tx.pure.u64(params.closeQuantity),
-      tx.object(CLOCK_ID),
-    ],
-  });
+  addRedeem(tx, params);
   return tx;
 }
 

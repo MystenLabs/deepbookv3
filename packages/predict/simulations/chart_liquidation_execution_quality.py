@@ -3,27 +3,12 @@
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 from typing import Any
 
-try:
-    import matplotlib
-
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from matplotlib.ticker import PercentFormatter
-except ImportError as error:
-    raise SystemExit("matplotlib is required to render liquidation execution charts") from error
-
-
-DUSDC_DECIMALS = 1_000_000
-FLOAT_SCALING = 1_000_000_000
-
-
-def to_dusdc(value: int) -> float:
-    return value / DUSDC_DECIMALS
+from chart_common import PercentFormatter, plt
+from sim_artifacts import FLOAT_SCALING, PREDICT_ECONOMIC_SCHEMA_VERSION, dusdc as to_dusdc, load_records, percentile
 
 
 def liquidation_threshold_value(update: dict[str, Any], floor: int) -> int:
@@ -36,23 +21,6 @@ def liquidation_threshold_value(update: dict[str, Any], floor: int) -> int:
     numerator = floor * FLOAT_SCALING
     denominator = int(ltv)
     return numerator // denominator + (0 if numerator % denominator == 0 else 1)
-
-
-def load_economic(path: Path) -> dict[str, Any]:
-    data = json.loads(path.read_text())
-    if data.get("schema_version") != "predict_economic_v1":
-        raise ValueError("input file must use schema_version='predict_economic_v1'")
-    if not isinstance(data.get("records"), list):
-        raise ValueError("input file must contain records[]")
-    return data
-
-
-def percentile(sorted_values: list[float], pct: float) -> float:
-    if not sorted_values:
-        return 0.0
-    if len(sorted_values) == 1:
-        return sorted_values[0]
-    return sorted_values[round((len(sorted_values) - 1) * pct)]
 
 
 def liquidation_events(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -223,9 +191,8 @@ def main() -> None:
         raise SystemExit(1)
 
     path = Path(sys.argv[1])
-    data = load_economic(path)
     chart_execution_quality(
-        liquidation_events(data["records"]),
+        liquidation_events(load_records(path, PREDICT_ECONOMIC_SCHEMA_VERSION)),
         path.parent / "chart_liquidation_execution_quality.png",
     )
 
