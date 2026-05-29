@@ -12,6 +12,7 @@ module deepbook_predict::expiry_market;
 use deepbook::math;
 use deepbook_predict::{
     claim_events,
+    config_events,
     constants,
     market_oracle::{MarketOracle, MarketOracleCap},
     order::{Self, Order},
@@ -256,24 +257,9 @@ public fun redeem(
     market.assert_version_allowed();
     config.assert_not_valuation_in_progress();
     market.assert_market_oracle(market_oracle);
-    market.run_configured_liquidation_pass(
-        config.pricing_config(),
-        market_oracle,
-        pyth,
-        config.risk_config().trade_liquidation_budget(),
-        clock,
-    );
-
     let redeemed_order = order::from_order_id(order_id);
     if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
-        assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
-        manager.remove_position(market.id(), redeemed_order.id());
-        market.strike_exposure.clear_liquidated_order(&redeemed_order);
-        order_events::emit_liquidated_order_redeemed(
-            market.id(),
-            manager,
-            &redeemed_order,
-        );
+        market.redeem_liquidated_order(manager, &redeemed_order, close_quantity);
         return (redeemed_order.id(), option::none())
     };
 
@@ -282,6 +268,17 @@ public fun redeem(
         market.redeem_settled_internal(manager, market_oracle, &redeemed_order, ctx);
         (redeemed_order.id(), option::none())
     } else {
+        market.run_configured_liquidation_pass(
+            config.pricing_config(),
+            market_oracle,
+            pyth,
+            config.risk_config().trade_liquidation_budget(),
+            clock,
+        );
+        if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
+            market.redeem_liquidated_order(manager, &redeemed_order, close_quantity);
+            return (redeemed_order.id(), option::none())
+        };
         let replacement_order_id = market.redeem_live_internal(
             manager,
             config,
@@ -501,11 +498,13 @@ public(package) fun return_allocation(market: &mut ExpiryMarket, amount: u64): B
 /// Set per-market mint pause (used by AdminCap admin path on registry).
 public(package) fun set_mint_paused(market: &mut ExpiryMarket, paused: bool) {
     market.mint_paused = paused;
+    config_events::emit_expiry_market_mint_paused_updated(market.id(), paused);
 }
 
 /// Force `mint_paused = true` (used by PauseCap path on registry; one-way).
 public(package) fun pause_mint(market: &mut ExpiryMarket) {
     market.mint_paused = true;
+    config_events::emit_expiry_market_mint_paused_updated(market.id(), true);
 }
 
 /// Cache terminal payout liability in strike exposure if it has not already been cached.
@@ -559,9 +558,9 @@ fun current_nav_terms(
     } else {
         market.assert_pyth_feed(pyth);
         market_oracle.assert_not_pending_settlement(clock);
-        // TODO(liquidation): Leveraged valuation is not safe until the health flow
-        // enforces that every active floor-bearing order is individually above its
-        // current floor before this aggregate NAV path is used.
+        // Valuation uses a bounded, policy-tuned liquidation maintenance pass.
+        // Residual underwater-order risk is controlled by the configured budget,
+        // LTV buffer, priority ordering, and off-chain simulation policy.
         let live_position_liability = market
             .strike_exposure
             .liquidate_and_live_position_liability(
@@ -627,6 +626,18 @@ fun builder_fee_amount(builder_code_id: &Option<ID>, fee_amount: u64, quantity: 
     } else {
         0
     }
+}
+
+fun redeem_liquidated_order(
+    market: &mut ExpiryMarket,
+    manager: &mut PredictManager,
+    order: &Order,
+    close_quantity: u64,
+) {
+    assert!(close_quantity == order.quantity(), EFullCloseRequired);
+    manager.remove_position(market.id(), order.id());
+    market.strike_exposure.clear_liquidated_order(order);
+    order_events::emit_liquidated_order_redeemed(market.id(), manager, order);
 }
 
 fun assert_allocation_backing(market: &ExpiryMarket) {

@@ -111,21 +111,30 @@ public(package) fun assert_shrink_factor(value: u64) {
 }
 
 public(package) macro fun default_valuation_liquidation_budget(): u64 { 192 }
+public(package) macro fun min_valuation_liquidation_budget(): u64 { 24 }
 public(package) macro fun max_valuation_liquidation_budget(): u64 {
     30_000
 }
 
 public(package) fun assert_valuation_liquidation_budget(value: u64) {
-    assert!(value <= max_valuation_liquidation_budget!(), EInvalidValuationLiquidationBudget);
+    assert!(
+        value >= min_valuation_liquidation_budget!()
+            && value <= max_valuation_liquidation_budget!(),
+        EInvalidValuationLiquidationBudget,
+    );
 }
 
 public(package) macro fun default_trade_liquidation_budget(): u64 { 24 }
+public(package) macro fun min_trade_liquidation_budget(): u64 { 24 }
 public(package) macro fun max_trade_liquidation_budget(): u64 {
     3_000
 }
 
 public(package) fun assert_trade_liquidation_budget(value: u64) {
-    assert!(value <= max_trade_liquidation_budget!(), EInvalidTradeLiquidationBudget);
+    assert!(
+        value >= min_trade_liquidation_budget!() && value <= max_trade_liquidation_budget!(),
+        EInvalidTradeLiquidationBudget,
+    );
 }
 
 // === Leverage ===

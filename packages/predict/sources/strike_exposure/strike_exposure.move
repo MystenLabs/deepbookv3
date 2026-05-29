@@ -90,8 +90,10 @@ public(package) fun liquidation_ltv(exposure: &StrikeExposure): u64 {
 
 /// Run bounded liquidations and evaluate live user-position liability.
 ///
-/// Valuation reuses one aggregate curve for both bounded liquidation checks and
-/// NAV because valuation scans a larger batch than trade flows.
+/// The bounded scan is the protocol's valuation-maintenance policy; it does not
+/// prove complete health of every active leveraged order. Valuation reuses one
+/// aggregate curve for both liquidation checks and NAV because valuation scans a
+/// larger batch than trade flows.
 public(package) fun liquidate_and_live_position_liability(
     exposure: &mut StrikeExposure,
     config: &PricingConfig,
@@ -100,13 +102,13 @@ public(package) fun liquidate_and_live_position_liability(
     budget: u64,
     clock: &Clock,
 ): u64 {
-    let (forward, svi) = pricing::live_inputs(config, market, pyth, clock);
     let live = exposure.live.borrow();
     let (minted_min_strike, minted_max_strike) = live.minted_strike_range();
     if (minted_min_strike == 0 && minted_max_strike == 0) {
         return 0
     };
 
+    let (forward, svi) = pricing::live_inputs(config, market, pyth, clock);
     let curve = pricing::build_curve(
         &svi,
         forward,

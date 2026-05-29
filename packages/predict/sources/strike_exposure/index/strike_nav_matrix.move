@@ -108,9 +108,9 @@ public(package) fun remove_range(
 
 /// Evaluate live contract value against a sampled pricing curve.
 ///
-/// The matrix subtracts one aggregate floor value. Callers must maintain the
-/// invariant that active floor-bearing orders are individually above floor
-/// before using this aggregate NAV path.
+/// The matrix subtracts aggregate floor value from aggregate range value. This
+/// is the valuation path used after the caller's bounded liquidation-maintenance
+/// policy, not an exact per-order recoverability proof.
 public(package) fun live_value(
     nav: &StrikeNavMatrix,
     curve: &vector<CurvePoint>,

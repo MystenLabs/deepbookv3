@@ -10,6 +10,7 @@ module deepbook_predict::pyth_source;
 
 use deepbook_predict::{
     config_constants,
+    config_events,
     constants,
     lazer_helper,
     oracle_events,
@@ -140,6 +141,12 @@ public(package) fun set_expiry_fee_params(
     config_constants::assert_expiry_fee_max_multiplier(max_multiplier);
     source.expiry_fee_window_ms = window_ms;
     source.expiry_fee_max_multiplier = max_multiplier;
+    config_events::emit_pyth_source_expiry_fee_params_updated(
+        source.id(),
+        source.feed_id,
+        window_ms,
+        max_multiplier,
+    );
 }
 
 /// Create and share a Pyth source bound to a Lazer feed id with the per-asset
