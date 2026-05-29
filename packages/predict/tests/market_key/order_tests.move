@@ -27,12 +27,15 @@ fun leverage_constants_are_distinct_and_ordered() {
     let l25 = order::leverage_two_and_half_x();
     let l3 = order::leverage_three_x();
 
-    assert_eq!(l1, 0);
+    assert_eq!(l1, constants::float_scaling!());
     assert!(l1 < l15);
+    assert_eq!(l15, constants::float_scaling!() + constants::float_scaling!() / 2);
     assert!(l15 < l2);
+    assert_eq!(l2, 2 * constants::float_scaling!());
     assert!(l2 < l25);
+    assert_eq!(l25, 2 * constants::float_scaling!() + constants::float_scaling!() / 2);
     assert!(l25 < l3);
-    assert_eq!(l3, 4);
+    assert_eq!(l3, 3 * constants::float_scaling!());
 }
 
 // === open_strike_index sentinel ===
@@ -210,6 +213,20 @@ fun new_leverage_above_three_x_aborts() {
     abort 999
 }
 
+#[test, expected_failure(abort_code = order::EInvalidLeverage)]
+fun new_unsupported_leverage_multiplier_aborts() {
+    order::new_from_strike_indices(
+        OPENED_AT_MS,
+        STRIKE_INDEX_LO,
+        STRIKE_INDEX_HI,
+        order::leverage_one_x() + 1,
+        0,
+        ONE_LOT_QTY,
+        0,
+    );
+    abort 999
+}
+
 #[test, expected_failure(abort_code = order::EInvalidStrikeRange)]
 fun new_swapped_finite_strike_range_aborts() {
     // Both sides finite -> require min < max strictly.
@@ -274,8 +291,8 @@ fun new_sequence_above_u40_aborts() {
 
 #[test, expected_failure(abort_code = order::EInvalidOrderId)]
 fun from_order_id_with_bits_above_payload_aborts() {
-    // Setting any bit above ORDER_ID_BITS=208 must be rejected.
-    let bad_id: u256 = 1u256 << 208;
+    // Setting any bit above ORDER_ID_BITS=232 must be rejected.
+    let bad_id: u256 = 1u256 << 232;
     order::from_order_id(bad_id);
     abort 999
 }
