@@ -63,6 +63,8 @@ class FlowConfig:
     exact_time_ltv: bool
     min_quantity_lots: int
     max_quantity_lots: int
+    min_mint_spend: int
+    max_mint_spend: int
     min_supply: int
     max_supply: int
 
@@ -75,6 +77,8 @@ class Generator:
     def __init__(self, snapshots: list[dict[str, Any]], config: FlowConfig, source_config: dict[str, Any]):
         self.snapshots = snapshots
         self.config = config
+        if config.min_mint_spend <= 0 or config.max_mint_spend < config.min_mint_spend:
+            raise GenerationError("mint spend range must be positive and ordered")
         self.expiry_ms = replay.config_source_value(source_config, "expiry_ms") if config.exact_time_ltv else None
         self.rng = secrets.SystemRandom()
         self.remaining = {
@@ -161,12 +165,17 @@ class Generator:
         for _ in range(MAX_ROW_ATTEMPTS):
             strike = self.random_strike(forward)
             is_up = bool(self.rng.randrange(2))
-            quantity = self.random_quantity()
             lower, higher = replay.binary_range_bounds(replay.align_strike_to_grid(strike), is_up)
             try:
                 entry_probability = replay.compute_range_price(svi, forward, lower, higher)
                 fee_rate = replay.assert_mint_fee_rate(entry_probability, self.fee_time_to_expiry(snapshot))
                 leverage = self.random_leverage(entry_probability)
+                quantity = self.quantity_for_spend(
+                    self.random_mint_spend(),
+                    entry_probability,
+                    fee_rate,
+                    leverage,
+                )
                 terms = replay.compute_mint_terms(entry_probability, quantity, leverage)
                 open_floor_index = self.open_floor_index(snapshot)
                 replay.assert_terminal_ltv_mint_allowed(
@@ -267,8 +276,23 @@ class Generator:
             cursor -= weight
         raise AssertionError("unreachable leverage selection")
 
-    def random_quantity(self) -> int:
-        lots = self.rng.randint(self.config.min_quantity_lots, self.config.max_quantity_lots)
+    def random_mint_spend(self) -> int:
+        return self.rng.randint(self.config.min_mint_spend, self.config.max_mint_spend)
+
+    def quantity_for_spend(
+        self,
+        target_spend: int,
+        entry_probability: int,
+        fee_rate: int,
+        leverage: int,
+    ) -> int:
+        lot_terms = replay.compute_mint_terms(entry_probability, replay.POSITION_LOT_SIZE, leverage)
+        lot_fee = replay.deepbook_mul(fee_rate, replay.POSITION_LOT_SIZE)
+        lot_cost = lot_terms["contribution"] + lot_fee
+        if lot_cost <= 0:
+            raise GenerationError("mint lot cost must be positive")
+        lots = max(1, (target_spend + lot_cost // 2) // lot_cost)
+        lots = max(self.config.min_quantity_lots, min(self.config.max_quantity_lots, lots))
         return lots * replay.POSITION_LOT_SIZE
 
     def build_redeem_row(self, tx: int) -> dict[str, str]:
@@ -419,7 +443,17 @@ def flow_counts(total_rows: int) -> tuple[int, int, int, int]:
     return mint_count, redeem_count, supply_count, withdraw_count
 
 
-def config_for_mode(mode: str, source_rows: int) -> FlowConfig:
+def generation_config_int(
+    source_config: dict[str, Any],
+    mode: str,
+    key: str,
+    default: int,
+) -> int:
+    value = source_config.get("generation", {}).get(mode, {}).get(key, default)
+    return int(value)
+
+
+def config_for_mode(mode: str, source_rows: int, source_config: dict[str, Any]) -> FlowConfig:
     if mode == "normal":
         mint_count, redeem_count, supply_count, withdraw_count = flow_counts(1_000)
         return FlowConfig(
@@ -430,7 +464,9 @@ def config_for_mode(mode: str, source_rows: int) -> FlowConfig:
             withdraw_count=withdraw_count,
             exact_time_ltv=False,
             min_quantity_lots=100,
-            max_quantity_lots=4_000,
+            max_quantity_lots=100_000,
+            min_mint_spend=generation_config_int(source_config, mode, "min_mint_spend", 2 * DUSDC),
+            max_mint_spend=generation_config_int(source_config, mode, "max_mint_spend", 20 * DUSDC),
             min_supply=500 * DUSDC,
             max_supply=5_000 * DUSDC,
         )
@@ -444,7 +480,9 @@ def config_for_mode(mode: str, source_rows: int) -> FlowConfig:
             withdraw_count=withdraw_count,
             exact_time_ltv=True,
             min_quantity_lots=10,
-            max_quantity_lots=250,
+            max_quantity_lots=250_000,
+            min_mint_spend=generation_config_int(source_config, mode, "min_mint_spend", 5 * DUSDC),
+            max_mint_spend=generation_config_int(source_config, mode, "max_mint_spend", 50 * DUSDC),
             min_supply=10 * DUSDC,
             max_supply=100 * DUSDC,
         )
@@ -465,7 +503,7 @@ def write_scenario(path: Path, rows: list[dict[str, str]]) -> None:
 
 def generate_mode(mode: str, source: Path, out: Path | None, source_config: dict[str, Any]) -> Path:
     snapshots = read_snapshots(source)
-    generator = Generator(snapshots, config_for_mode(mode, len(snapshots)), source_config)
+    generator = Generator(snapshots, config_for_mode(mode, len(snapshots), source_config), source_config)
     rows = generator.generate()
     out_path = out if out is not None else output_path_for_mode(mode)
     write_scenario(out_path, rows)
@@ -485,7 +523,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     source_config = replay.load_scenario_config(args.config)
-    replay.apply_scenario_config(source_config)
+    replay.apply_scenario_config(source_config, long_run=args.mode == "long")
     generate_mode(args.mode, args.source, args.out, source_config)
 
 

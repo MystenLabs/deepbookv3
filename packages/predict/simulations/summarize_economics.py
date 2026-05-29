@@ -268,6 +268,36 @@ def summarize_derived(data: dict[str, Any] | None) -> dict[str, Any] | None:
             if last_live_liability is None
             else dusdc(int(last_live_liability)),
         },
+        "risk": {
+            "allocated_capital": dusdc_stats(field_values(records, ("risk", "allocated_capital"))),
+            "position_liability_over_allocated": ratio_stats(
+                field_values(records, ("risk", "position_liability_over_allocated"))
+            ),
+            "active_open_contribution_over_allocated": ratio_stats(
+                field_values(records, ("risk", "active_open_contribution_over_allocated"))
+            ),
+            "lp_live_mtm_pnl_over_allocated": ratio_stats(
+                field_values(records, ("risk", "lp_live_mtm_pnl_over_allocated"))
+            ),
+            "active_book_live_pnl_over_allocated": ratio_stats(
+                field_values(records, ("risk", "active_book_live_pnl_over_allocated"))
+            ),
+            "active_book_live_pnl_over_liability": ratio_stats(
+                field_values(records, ("risk", "active_book_live_pnl_over_liability"))
+            ),
+            "liquidatable_value_over_liability": ratio_stats(
+                field_values(records, ("risk", "liquidatable_value_over_liability"))
+            ),
+            "step_trading_fee_over_allocated": ratio_stats(
+                field_values(records, ("risk", "step_trading_fee_over_allocated"))
+            ),
+            "step_liquidation_gap_over_allocated": ratio_stats(
+                field_values(records, ("risk", "step_liquidation_gap_over_allocated"))
+            ),
+            "step_net_liquidation_over_allocated": ratio_stats(
+                field_values(records, ("risk", "step_net_liquidation_over_allocated"))
+            ),
+        },
         "liquidation": {
             "liquidated_count": sum(field_values(records, ("liquidation", "liquidated_count"))),
             "txs_with_liquidations": sum(1 for record in records if int(record["liquidation"]["liquidated_count"]) > 0),
@@ -333,6 +363,7 @@ def summarize_artifacts(artifacts_dir: Path) -> dict[str, Any]:
         "chart_gas.png",
         "chart_market_overview.png",
         "chart_vault_pnl_fee_coverage.png",
+        "chart_vault_risk_profile.png",
         "chart_liquidation_coverage.png",
         "chart_liquidation_execution_quality.png",
     ]

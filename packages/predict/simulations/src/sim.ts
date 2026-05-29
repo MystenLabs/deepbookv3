@@ -47,9 +47,9 @@ import {
 } from "./runtime.js";
 
 const DUSDC_DECIMALS = 1_000_000n;
-const VAULT_SEED = 500_000n * DUSDC_DECIMALS;
-const MANAGER_SEED = 500_000n * DUSDC_DECIMALS;
-const INITIAL_EXPIRY_ALLOCATION = 50_000n * DUSDC_DECIMALS;
+const DEFAULT_VAULT_SEED = 500_000n * DUSDC_DECIMALS;
+const DEFAULT_MANAGER_SEED = 500_000n * DUSDC_DECIMALS;
+const DEFAULT_INITIAL_EXPIRY_ALLOCATION = 50_000n * DUSDC_DECIMALS;
 const EXPIRY_MS = BigInt(Date.now()) + 400n * 24n * 60n * 60n * 1000n;
 const FLOAT_SCALING = 1_000_000_000n;
 const SCENARIO_CONFIG_PATH = fileURLToPath(new URL("../data/scenario_config.json", import.meta.url));
@@ -59,7 +59,13 @@ const ORACLE_MAX_STRIKE = ORACLE_MIN_STRIKE + 100_000n * ORACLE_TICK_SIZE;
 const NEG_INF_STRIKE = 0n;
 const POS_INF_STRIKE = (1n << 64n) - 1n;
 const ORDER_SEQUENCE_MASK = (1n << 40n) - 1n;
-const INITIAL_TOTAL_PLP_SUPPLY = VAULT_SEED;
+
+interface SimulationCapital {
+  vaultSeed: bigint;
+  managerSeed: bigint;
+  initialExpiryAllocation: bigint;
+  initialTotalPlpSupply: bigint;
+}
 
 interface EconomicState {
   managerBalance: bigint;
@@ -97,15 +103,15 @@ function parseArgs() {
   return { maxRows };
 }
 
-function initialEconomicState(): EconomicState {
+function initialEconomicState(capital: SimulationCapital): EconomicState {
   return {
-    managerBalance: MANAGER_SEED,
-    expiryLpCash: INITIAL_EXPIRY_ALLOCATION,
+    managerBalance: capital.managerSeed,
+    expiryLpCash: capital.initialExpiryAllocation,
     expiryFeeBalance: 0n,
     expiryUnresolvedTradingFees: 0n,
-    vaultIdleBalance: VAULT_SEED - INITIAL_EXPIRY_ALLOCATION,
-    vaultTotalAllocated: INITIAL_EXPIRY_ALLOCATION,
-    vaultTotalPlpSupply: INITIAL_TOTAL_PLP_SUPPLY,
+    vaultIdleBalance: capital.vaultSeed - capital.initialExpiryAllocation,
+    vaultTotalAllocated: capital.initialExpiryAllocation,
+    vaultTotalPlpSupply: capital.initialTotalPlpSupply,
     openOrderCount: 0n,
     openOrderQuantity: 0n,
     liquidatedOrderCount: 0n,
@@ -573,9 +579,32 @@ function protocolConfigValue(config: any, key: string, fallback: bigint): bigint
   return value === undefined || value === null || value === "" ? fallback : BigInt(value);
 }
 
-async function setupSimulation(): Promise<SimState> {
+function capitalConfigValue(config: any, mode: string, key: string, fallback: bigint): bigint {
+  const value = config?.capital?.[mode]?.[key];
+  return value === undefined || value === null || value === "" ? fallback : BigInt(value);
+}
+
+function simulationCapital(config: any, mode: "normal" | "long"): SimulationCapital {
+  const vaultSeed = capitalConfigValue(config, mode, "vault_seed", DEFAULT_VAULT_SEED);
+  const initialExpiryAllocation = capitalConfigValue(
+    config,
+    mode,
+    "initial_expiry_allocation",
+    DEFAULT_INITIAL_EXPIRY_ALLOCATION,
+  );
+  if (initialExpiryAllocation > vaultSeed) {
+    throw new Error(`${mode} initial_expiry_allocation exceeds vault_seed`);
+  }
+  return {
+    vaultSeed,
+    managerSeed: capitalConfigValue(config, mode, "manager_seed", DEFAULT_MANAGER_SEED),
+    initialExpiryAllocation,
+    initialTotalPlpSupply: vaultSeed,
+  };
+}
+
+async function setupSimulation(scenarioConfig: any, capital: SimulationCapital): Promise<SimState> {
   console.log(`[${ts()}] --- Setup ---`);
-  const scenarioConfig = readJson<any>(SCENARIO_CONFIG_PATH);
   const expiryFeeWindowMs = protocolConfigValue(scenarioConfig, "expiry_fee_window_ms", 0n);
   const expiryFeeMaxMultiplier = protocolConfigValue(
     scenarioConfig,
@@ -621,8 +650,8 @@ async function setupSimulation(): Promise<SimState> {
     `[${ts()}]   PythSource fee ramp: window=${expiryFeeWindowMs}ms max_multiplier=${expiryFeeMaxMultiplier}`,
   );
 
-  await executeAndWait(supplyTx(poolVaultId, protocolConfigId, VAULT_SEED), "supply");
-  console.log(`[${ts()}]   Vault funded: ${VAULT_SEED / DUSDC_DECIMALS} DUSDC`);
+  await executeAndWait(supplyTx(poolVaultId, protocolConfigId, capital.vaultSeed), "supply");
+  console.log(`[${ts()}]   Vault funded: ${capital.vaultSeed / DUSDC_DECIMALS} DUSDC`);
 
   result = await executeAndWait(
     createExpiryMarketTx({
@@ -669,8 +698,8 @@ async function setupSimulation(): Promise<SimState> {
   await executeAndWait(createManagerTx(), "create_manager");
   console.log(`[${ts()}]   Manager: ${managerId}`);
 
-  await executeAndWait(depositToManagerTx(managerId, MANAGER_SEED), "deposit_to_manager");
-  console.log(`[${ts()}]   Manager funded: ${MANAGER_SEED / DUSDC_DECIMALS} DUSDC`);
+  await executeAndWait(depositToManagerTx(managerId, capital.managerSeed), "deposit_to_manager");
+  console.log(`[${ts()}]   Manager funded: ${capital.managerSeed / DUSDC_DECIMALS} DUSDC`);
 
   const state: SimState = {
     poolVaultId,
@@ -780,6 +809,7 @@ async function executeRow(row: ScenarioRow, state: SimState, aliases: AliasState
 async function executeScenario(
   rows: ScenarioRow[],
   state: SimState,
+  capital: SimulationCapital,
   scenarioPath: string,
   maxRows?: number,
 ): Promise<void> {
@@ -788,7 +818,7 @@ async function executeScenario(
 
   const traceSteps: LocalTraceStep[] = [];
   const records: EconomicRecord[] = [];
-  const economicState = initialEconomicState();
+  const economicState = initialEconomicState(capital);
   const aliases = initialAliases();
   const targetMints = rows.filter((row) => row.action === "oracle_mint_ptb").length;
   let successfulMints = 0;
@@ -861,14 +891,16 @@ function runPythonReplay(scenarioPath: string, maxRows?: number) {
 
 async function main() {
   const args = parseArgs();
+  const scenarioConfig = readJson<any>(SCENARIO_CONFIG_PATH);
+  const capital = simulationCapital(scenarioConfig, "normal");
   let rows = loadScenario(SCENARIO_PATH);
   if (args.maxRows !== undefined) {
     console.log(`[${ts()}] Limiting to ${args.maxRows} tx rows`);
     rows = rows.slice(0, args.maxRows);
   }
 
-  const state = await setupSimulation();
-  await executeScenario(rows, state, SCENARIO_PATH, args.maxRows);
+  const state = await setupSimulation(scenarioConfig, capital);
+  await executeScenario(rows, state, capital, SCENARIO_PATH, args.maxRows);
 }
 
 main().catch((error) => {

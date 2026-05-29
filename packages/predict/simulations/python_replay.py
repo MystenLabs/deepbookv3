@@ -122,7 +122,16 @@ def _config_int(config: dict[str, Any], section: str, key: str, default: int) ->
     return int(value)
 
 
-def apply_scenario_config(config: dict[str, Any]) -> None:
+def _capital_int(config: dict[str, Any], mode: str, key: str, default: int) -> int:
+    value = config.get("capital", {}).get(mode, {}).get(key, default)
+    return int(value)
+
+
+def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> None:
+    global VAULT_SEED
+    global MANAGER_SEED
+    global INITIAL_EXPIRY_ALLOCATION
+    global INITIAL_TOTAL_PLP_SUPPLY
     global TRADE_LIQUIDATION_BUDGET
     global VALUATION_LIQUIDATION_BUDGET
     global LIQUIDATION_HEAD_SCAN_DIVISOR
@@ -137,6 +146,19 @@ def apply_scenario_config(config: dict[str, Any]) -> None:
     global MAX_EXPIRY_FLOOR_PREMIUM
     global LIQUIDATION_LTV
     global TERMINAL_FLOOR_INDEX
+
+    capital_mode = "long" if long_run else "normal"
+    VAULT_SEED = _capital_int(config, capital_mode, "vault_seed", VAULT_SEED)
+    MANAGER_SEED = _capital_int(config, capital_mode, "manager_seed", MANAGER_SEED)
+    INITIAL_EXPIRY_ALLOCATION = _capital_int(
+        config,
+        capital_mode,
+        "initial_expiry_allocation",
+        INITIAL_EXPIRY_ALLOCATION,
+    )
+    if INITIAL_EXPIRY_ALLOCATION > VAULT_SEED:
+        raise ValueError(f"{capital_mode} initial_expiry_allocation exceeds vault_seed")
+    INITIAL_TOTAL_PLP_SUPPLY = VAULT_SEED
 
     TRADE_LIQUIDATION_BUDGET = _config_int(config, "protocol", "trade_liquidation_budget", TRADE_LIQUIDATION_BUDGET)
     VALUATION_LIQUIDATION_BUDGET = _config_int(
@@ -2020,6 +2042,13 @@ def ratio_scaled(numerator: int, denominator: int) -> int | None:
     return mul_div_round_down(numerator, FLOAT_SCALING, denominator)
 
 
+def signed_ratio_scaled(numerator: int, denominator: int) -> int | None:
+    if denominator <= 0:
+        return None
+    sign = -1 if numerator < 0 else 1
+    return sign * mul_div_round_down(abs(numerator), FLOAT_SCALING, denominator)
+
+
 def should_sample_global_observability(row: dict[str, Any]) -> bool:
     return row["step"] % GLOBAL_OBSERVABILITY_INTERVAL == 0
 
@@ -2131,6 +2160,27 @@ def build_derived_record(
             "withdraw": 0,
         }
 
+    allocated_capital = state["vault_total_allocated"]
+    lp_live_mtm_pnl = None if liability is None else state["expiry_lp_cash"] - INITIAL_EXPIRY_ALLOCATION + fee_surplus - liability
+    active_book_live_pnl = None if liability is None else active_contribution - liability
+    position_liability_over_allocated = None if liability is None else ratio_scaled(liability, allocated_capital)
+    active_open_contribution_over_allocated = ratio_scaled(active_contribution, allocated_capital)
+    lp_live_mtm_pnl_over_allocated = (
+        None if lp_live_mtm_pnl is None else signed_ratio_scaled(lp_live_mtm_pnl, allocated_capital)
+    )
+    active_book_live_pnl_over_allocated = (
+        None if active_book_live_pnl is None else signed_ratio_scaled(active_book_live_pnl, allocated_capital)
+    )
+    active_book_live_pnl_over_liability = (
+        None if active_book_live_pnl is None or liability is None else signed_ratio_scaled(active_book_live_pnl, liability)
+    )
+    liquidatable_value_over_liability = (
+        None if liquidatable_value is None or liability is None else ratio_scaled(liquidatable_value, liability)
+    )
+    step_trading_fee_over_allocated = ratio_scaled(trading_fee, allocated_capital)
+    step_liquidation_gap_over_allocated = ratio_scaled(liquidation_gap, allocated_capital)
+    step_net_liquidation_over_allocated = signed_ratio_scaled(liquidation_surplus - liquidation_gap, allocated_capital)
+
     return {
         "step": row["step"],
         "action": row["action"],
@@ -2145,10 +2195,8 @@ def build_derived_record(
             "position_liability": None if liability is None else str(liability),
             "lp_fee_surplus": str(fee_surplus),
             "active_open_contribution": str(active_contribution),
-            "lp_live_mtm_pnl": None
-            if liability is None
-            else str(state["expiry_lp_cash"] - INITIAL_EXPIRY_ALLOCATION + fee_surplus - liability),
-            "active_book_live_pnl": None if liability is None else str(active_contribution - liability),
+            "lp_live_mtm_pnl": None if lp_live_mtm_pnl is None else str(lp_live_mtm_pnl),
+            "active_book_live_pnl": None if active_book_live_pnl is None else str(active_book_live_pnl),
         },
         "flows": {
             "premium": str(premium),
@@ -2198,6 +2246,38 @@ def build_derived_record(
             "scan_coverage": str(scan_coverage),
             "backlog_remaining_ratio": None if backlog_remaining_ratio is None else str(backlog_remaining_ratio),
             "sampled": sampled_global,
+        },
+        "risk": {
+            "allocated_capital": str(allocated_capital),
+            "open_order_quantity": str(state["open_order_quantity"]),
+            "active_leveraged_count": str(active_count),
+            "position_liability_over_allocated": None
+            if position_liability_over_allocated is None
+            else str(position_liability_over_allocated),
+            "active_open_contribution_over_allocated": None
+            if active_open_contribution_over_allocated is None
+            else str(active_open_contribution_over_allocated),
+            "lp_live_mtm_pnl_over_allocated": None
+            if lp_live_mtm_pnl_over_allocated is None
+            else str(lp_live_mtm_pnl_over_allocated),
+            "active_book_live_pnl_over_allocated": None
+            if active_book_live_pnl_over_allocated is None
+            else str(active_book_live_pnl_over_allocated),
+            "active_book_live_pnl_over_liability": None
+            if active_book_live_pnl_over_liability is None
+            else str(active_book_live_pnl_over_liability),
+            "liquidatable_value_over_liability": None
+            if liquidatable_value_over_liability is None
+            else str(liquidatable_value_over_liability),
+            "step_trading_fee_over_allocated": None
+            if step_trading_fee_over_allocated is None
+            else str(step_trading_fee_over_allocated),
+            "step_liquidation_gap_over_allocated": None
+            if step_liquidation_gap_over_allocated is None
+            else str(step_liquidation_gap_over_allocated),
+            "step_net_liquidation_over_allocated": None
+            if step_net_liquidation_over_allocated is None
+            else str(step_net_liquidation_over_allocated),
         },
     }
 
@@ -2435,7 +2515,7 @@ def main() -> None:
         parser.error("at least one of --out / --derived-out is required")
 
     config = load_scenario_config(args.config)
-    apply_scenario_config(config)
+    apply_scenario_config(config, long_run=args.long_run)
     expiry_ms = config_source_value(config, "expiry_ms")
     settlement_price = config_source_value(config, "settlement_price")
     settlement_timestamp_ms = config_source_value(config, "settlement_timestamp_ms")

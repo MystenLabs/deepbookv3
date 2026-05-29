@@ -54,10 +54,11 @@ can be iterated quickly inside the latest run folder.
 - `run.sh`: orchestrates fresh full runs and Python-only runs.
 - `data/scenario_dataset.csv`: ignored local source data with paired SVI/price
   snapshots.
-- `data/scenario_config.json`: source expiry/settlement values, fee-ramp
-  settings, and protocol knobs. Localnet setup consumes the knobs it can replay
-  under synthetic time, while the generator and long Python replay consume the
-  real source expiry/settlement timing.
+- `data/scenario_config.json`: source expiry/settlement values, normal/long
+  capital sizing, mint spend ranges, fee-ramp settings, and protocol knobs.
+  Localnet setup consumes the normal capital and knobs it can replay under
+  synthetic time, while the generator and long Python replay consume the real
+  source expiry/settlement timing.
 - `data/generate_scenario.py`: random normal/long scenario generator.
 - `src/sim.ts`: localnet setup and generated CSV replay engine.
 - `src/runtime.ts`: Sui transaction builders and execution helpers.
@@ -130,10 +131,14 @@ The generator uses the same composition for normal and long scenarios: 60%
 mints, 30% redeems, 5% supply, and 5% withdraw. Normal scenarios contain 1,000
 rows evenly spaced through `scenario_dataset.csv`; long scenarios contain one
 row per source snapshot so exact-time replay does not reuse source timestamps.
-Generated mint rows are checked against the Python replay mirror for lot sizing,
-fee bounds, leverage tier, entry liquidation threshold, and terminal floor LTV
-before they are written. Hand-authored illegal rows are not repaired by the
-runner; they fail loudly in localnet and Python.
+Mint quantities are spend-sized: the generator samples a target cash spend from
+`data/scenario_config.json`, then derives a valid lot quantity from entry
+probability, leverage contribution, and trading fee. This keeps cheap contracts
+economically represented without making the CSV runner infer anything after
+generation. Generated mint rows are checked against the Python replay mirror for
+lot sizing, fee bounds, leverage tier, entry liquidation threshold, and terminal
+floor LTV before they are written. Hand-authored illegal rows are not repaired
+by the runner; they fail loudly in localnet and Python.
 
 ## Timestamp Model
 
@@ -186,6 +191,8 @@ Full localnet runs can produce:
   live pre-terminal vault MTM PnL, active book PnL, and live book risk.
 - `artifacts/chart_vault_pnl_fee_coverage.png`: cumulative fees, net
   liquidation, and live pre-terminal MTM risk-compensation mark.
+- `artifacts/chart_vault_risk_profile.png`: PnL, fees, liquidation losses, and
+  backlog normalized against allocated capital and active liability.
 - `artifacts/chart_liquidation_coverage.png`: normalized backlog pressure and
   liquidated value by passive trigger.
 - `artifacts/chart_liquidation_execution_quality.png`: liquidation execution
@@ -250,6 +257,16 @@ Important fields:
   only mint/redeem passive flows.
 `scan_active_count` is sampled before that transaction's liquidation pass, so
 `scan_coverage` uses the same denominator the scanner saw.
+- `risk.allocated_capital`: current capital allocated from the vault into the
+  expiry.
+- `risk.position_liability_over_allocated`: live liability divided by allocated
+  capital.
+- `risk.lp_live_mtm_pnl_over_allocated`: live LP MTM PnL divided by allocated
+  capital.
+- `risk.active_book_live_pnl_over_allocated`: active open-book PnL divided by
+  allocated capital.
+- `risk.liquidatable_value_over_liability`: standing liquidatable floor value
+  divided by live liability.
 
 ## Maintenance Rules
 
@@ -263,10 +280,10 @@ Important fields:
   behavior from adjacent rows.
 - Keep localnet timestamp-synthetic. Do not add sleeps or wall-clock waiting to
   simulate the 24-hour source window.
-- Treat `data/scenario_config.json` as the simulation mirror of protocol knobs
-  and source settlement inputs. When Move defaults, admin setup, fee policy,
-  liquidation policy, or settlement assumptions change, update the Python mirror
-  and this config in the same PR.
+- Treat `data/scenario_config.json` as the simulation mirror of protocol knobs,
+  capital sizing, generation sizing, and source settlement inputs. When Move
+  defaults, admin setup, fee policy, liquidation policy, or settlement
+  assumptions change, update the Python mirror and this config in the same PR.
 - Keep raw long-run data temporary by default. Use
   `bash run.sh --python-only --keep-derived` only when iterating on charts or
   inspecting raw records.
@@ -276,8 +293,9 @@ Important fields:
 ## Current Caveats
 
 - `data/scenario_config.json` mirrors Move defaults, localnet-replayable setup
-  knobs, and source settlement inputs used by the long Python replay. If Move
-  defaults, admin setup, fee-ramp policy, liquidation policy, or settlement
+  knobs, normal/long capital sizing, generation spend ranges, and source
+  settlement inputs used by the long Python replay. If Move defaults, admin
+  setup, fee-ramp policy, liquidation policy, capital sizing, or settlement
   assumptions change, update this file at the same time.
 - Full localnet replay can be gas-heavy when supply/withdraw valuation finds a
   liquidation backlog. The runner default transaction gas budget is currently

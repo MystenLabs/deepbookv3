@@ -4,6 +4,28 @@
     "settlement_timestamp_ms": "1779955200001",
     "settlement_price": "73380034988828"
   },
+  "capital": {
+    "normal": {
+      "manager_seed": "500000000000",
+      "vault_seed": "500000000000",
+      "initial_expiry_allocation": "50000000000"
+    },
+    "long": {
+      "manager_seed": "5000000000000",
+      "vault_seed": "5000000000000",
+      "initial_expiry_allocation": "500000000000"
+    }
+  },
+  "generation": {
+    "normal": {
+      "min_mint_spend": "2000000",
+      "max_mint_spend": "20000000"
+    },
+    "long": {
+      "min_mint_spend": "5000000",
+      "max_mint_spend": "50000000"
+    }
+  },
   "protocol": {
     "trade_liquidation_budget": "24",
     "valuation_liquidation_budget": "192",

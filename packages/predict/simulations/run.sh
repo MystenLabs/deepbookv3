@@ -149,6 +149,7 @@ if [ "$PYTHON_ONLY" -eq 1 ]; then
   echo "==> Rendering charts..."
   (cd "$SCRIPT_DIR" && python3 chart_market_overview.py "$PYTHON_LONG_DATA" "$INSTANCE_DIR/artifacts/python_derived.json")
   (cd "$SCRIPT_DIR" && python3 chart_vault_pnl_fee_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json")
+  (cd "$SCRIPT_DIR" && python3 chart_vault_risk_profile.py "$INSTANCE_DIR/artifacts/python_derived.json")
   (cd "$SCRIPT_DIR" && python3 chart_liquidation_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json")
   (cd "$SCRIPT_DIR" && python3 chart_liquidation_execution_quality.py "$PYTHON_LONG_DATA")
   echo "==> Updating economic summary..."
@@ -477,6 +478,7 @@ if python3 -c 'import json,sys; a=json.load(open(sys.argv[1])); b=json.load(open
   echo "==> Rendering charts..."
   python3 chart_market_overview.py "$PYTHON_LONG_DATA" "$INSTANCE_DIR/artifacts/python_derived.json"
   python3 chart_vault_pnl_fee_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json"
+  python3 chart_vault_risk_profile.py "$INSTANCE_DIR/artifacts/python_derived.json"
   python3 chart_liquidation_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json"
   python3 chart_liquidation_execution_quality.py "$PYTHON_LONG_DATA"
   echo "==> Updating economic summary..."
