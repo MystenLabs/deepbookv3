@@ -40,6 +40,14 @@ public struct PredictManager has key {
     positions: Table<PositionKey, bool>,
     /// Per-expiry aggregate trading cash flows and open position count.
     expiry_summaries: Table<ID, ExpiryTradingSummary>,
+    /// DEEP staked and active for trading benefits, in raw units. Custody lives
+    /// in the Registry's pooled balance; this mirrors this manager's share.
+    active_stake: u64,
+    /// DEEP staked this epoch, not yet active. Rolls into `active_stake` on the
+    /// first interaction in a later epoch (`update_stake`).
+    inactive_stake: u64,
+    /// Epoch the active/inactive split was last reconciled in.
+    stake_epoch: u64,
 }
 
 /// Aggregate trading cash flow for one manager in one expiry market.
@@ -134,6 +142,16 @@ public fun balance(self: &PredictManager): u64 {
     self.balance_manager.balance<DUSDC>()
 }
 
+/// Return the manager's active staked DEEP (the amount that earns benefits).
+public fun active_stake(self: &PredictManager): u64 {
+    self.active_stake
+}
+
+/// Return the manager's inactive staked DEEP (activates next epoch).
+public fun inactive_stake(self: &PredictManager): u64 {
+    self.inactive_stake
+}
+
 /// Return the sticky builder-code ID used for future trades, if one is set.
 public fun builder_code_id(self: &PredictManager): Option<ID> {
     self.builder_code_id
@@ -181,6 +199,9 @@ public(package) fun new(registry_uid: &mut UID, ctx: &mut TxContext): PredictMan
         builder_code_id: option::none(),
         positions: table::new(ctx),
         expiry_summaries: table::new(ctx),
+        active_stake: 0,
+        inactive_stake: 0,
+        stake_epoch: ctx.epoch(),
     }
 }
 
@@ -272,6 +293,28 @@ public(package) fun resolve_expiry_summary(
         cash_received_from_expiry,
     } = self.expiry_summaries.remove(expiry_market_id);
     (trading_fees_paid, cash_paid_to_expiry, cash_received_from_expiry)
+}
+
+/// Roll inactive stake into active stake once a new epoch has begun. Idempotent
+/// within an epoch; callers run it before reading `active_stake`.
+public(package) fun update_stake(self: &mut PredictManager, ctx: &TxContext) {
+    if (self.stake_epoch == ctx.epoch()) return;
+    self.active_stake = self.active_stake + self.inactive_stake;
+    self.inactive_stake = 0;
+    self.stake_epoch = ctx.epoch();
+}
+
+/// Add freshly staked DEEP as inactive; it activates next epoch.
+public(package) fun add_inactive_stake(self: &mut PredictManager, stake: u64) {
+    self.inactive_stake = self.inactive_stake + stake;
+}
+
+/// Zero out active and inactive stake and return the combined amount.
+public(package) fun remove_all_stake(self: &mut PredictManager): u64 {
+    let total = self.active_stake + self.inactive_stake;
+    self.active_stake = 0;
+    self.inactive_stake = 0;
+    total
 }
 
 /// Abort unless the transaction sender owns this manager.

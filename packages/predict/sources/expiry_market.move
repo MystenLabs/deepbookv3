@@ -74,6 +74,8 @@ public struct FeeAccrued has copy, drop, store {
     expiry_market_id: ID,
     total_fee: u64,
     builder_fee: u64,
+    /// Staking fee discount applied to this trade, in FLOAT_SCALING (0..50%).
+    fee_discount: u64,
     builder_code_id: Option<ID>,
 }
 
@@ -285,7 +287,11 @@ public fun redeem(
     }
 }
 
-/// Resolve a manager's aggregate expiry trading-loss rebate after all positions close.
+/// Resolve a manager's aggregate expiry trading-loss rebate after all its
+/// positions close. Permissionless by design: any caller may settle this for a
+/// manager — the rebate is credited to the manager via its deposit cap and the
+/// un-granted remainder compounds into PLP cash, so PLP value accrues without
+/// the owner acting. The rebate share uses the manager's active staking.
 public fun claim_trading_loss_rebate(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
@@ -313,11 +319,22 @@ public fun claim_trading_loss_rebate(
         0
     };
     let max_rebate = math::mul(trading_fees_paid, market.trading_loss_rebate_rate);
-    let rebate_amount = trading_loss.min(max_rebate);
+    let eligible_rebate = trading_loss.min(max_rebate);
+
+    // Active staking decides the manager's share of the eligible rebate; the
+    // remainder compounds into LP cash (returns fully to the pool on the
+    // settlement sweep, no protocol/insurance split).
+    manager.update_stake(ctx);
+    let rebate_fraction = config.stake_config().rebate_fraction(manager.active_stake());
+    let (rebate_amount, lp_compound_amount) = apply_stake_benefit(eligible_rebate, rebate_fraction);
 
     if (rebate_amount > 0) {
         let payout = market.dispense_fee_cash(rebate_amount);
         manager.deposit_permissionless(payout.into_coin(ctx), ctx);
+    };
+    if (lp_compound_amount > 0) {
+        let lp_cash = market.dispense_fee_cash(lp_compound_amount);
+        market.lp_cash_balance.join(lp_cash);
     };
 
     event::emit(TradingLossRebateClaimed {
@@ -525,6 +542,17 @@ fun assert_pyth_feed(market: &ExpiryMarket, pyth: &PythSource) {
     assert!(market.pyth_lazer_feed_id == pyth.feed_id(), EWrongPythSource);
 }
 
+/// Split `amount` by a stake benefit `fraction` (FLOAT_SCALING) into the
+/// fraction-weighted part and the remainder. The fee discount discards the
+/// weighted part and charges only the remainder — reducing protocol fee margin
+/// only, never payout backing, so cash-backing invariants are unaffected. The
+/// loss rebate pays the manager the weighted part and compounds the remainder
+/// to LPs.
+fun apply_stake_benefit(amount: u64, fraction: u64): (u64, u64) {
+    let weighted = math::mul(amount, fraction);
+    (weighted, amount - weighted)
+}
+
 fun builder_fee_amount(builder_code_id: &Option<ID>, fee_amount: u64, quantity: u64): u64 {
     if (builder_code_id.is_some()) {
         math::mul(fee_amount, constants::builder_fee_multiplier!()).min(
@@ -557,6 +585,7 @@ fun mint_internal(
     ctx: &mut TxContext,
 ): u256 {
     manager.assert_owner(ctx);
+    manager.update_stake(ctx);
     market.assert_market_oracle(market_oracle);
     market.assert_pyth_feed(pyth);
 
@@ -572,9 +601,11 @@ fun mint_internal(
             leverage,
             clock,
         );
+    let fee_discount = config.stake_config().fee_discount_fraction(manager.active_stake());
+    let (_, fee_amount) = apply_stake_benefit(fee_amount, fee_discount);
 
     market.assert_allocation_backing();
-    market.settle_mint_payment(manager, &minted_order, fee_amount, ctx);
+    market.settle_mint_payment(manager, &minted_order, fee_amount, fee_discount, ctx);
     minted_order.id()
 }
 
@@ -590,6 +621,7 @@ fun redeem_live_internal(
     ctx: &mut TxContext,
 ): Option<u256> {
     manager.assert_owner(ctx);
+    manager.update_stake(ctx);
     market.assert_pyth_feed(pyth);
     config.pricing_config().assert_live_quote_available(market_oracle, pyth, clock);
     manager.remove_position(market.id(), order.id());
@@ -604,6 +636,8 @@ fun redeem_live_internal(
             close_quantity,
             clock,
         );
+    let fee_discount = config.stake_config().fee_discount_fraction(manager.active_stake());
+    let (_, fee_amount) = apply_stake_benefit(fee_amount, fee_discount);
 
     let replacement_order_id = if (resulting_order.id() == order.id()) {
         option::none()
@@ -617,6 +651,7 @@ fun redeem_live_internal(
         manager,
         net_redeem_amount,
         fee_amount,
+        fee_discount,
         close_quantity,
         ctx,
     );
@@ -643,6 +678,7 @@ fun settle_mint_payment(
     manager: &mut PredictManager,
     order: &Order,
     fee_amount: u64,
+    fee_discount: u64,
     ctx: &mut TxContext,
 ) {
     let quantity = order.quantity();
@@ -662,7 +698,7 @@ fun settle_mint_payment(
     manager.record_cash_paid_to_expiry(market.id(), payment_amount);
 
     market.assert_cash_backing();
-    market.emit_fee_accrued(fee_amount, builder_fee_amount, builder_code_id);
+    market.emit_fee_accrued(fee_amount, builder_fee_amount, fee_discount, builder_code_id);
 }
 
 fun settle_live_redeem_payment(
@@ -670,6 +706,7 @@ fun settle_live_redeem_payment(
     manager: &mut PredictManager,
     net_redeem_amount: u64,
     fee_amount: u64,
+    fee_discount: u64,
     redeemed_quantity: u64,
     ctx: &mut TxContext,
 ) {
@@ -690,7 +727,7 @@ fun settle_live_redeem_payment(
 
     market.assert_cash_backing();
     deposit_live_payout(manager, market, payout, ctx);
-    market.emit_fee_accrued(fee_amount, builder_fee_amount, builder_code_id);
+    market.emit_fee_accrued(fee_amount, builder_fee_amount, fee_discount, builder_code_id);
 }
 
 fun settle_settled_redeem_payment(
@@ -763,6 +800,7 @@ fun emit_fee_accrued(
     market: &ExpiryMarket,
     total_fee: u64,
     builder_fee: u64,
+    fee_discount: u64,
     builder_code_id: Option<ID>,
 ) {
     if (total_fee == 0 && builder_fee == 0) return;
@@ -771,6 +809,7 @@ fun emit_fee_accrued(
         expiry_market_id: market.id(),
         total_fee,
         builder_fee,
+        fee_discount,
         builder_code_id,
     });
 }

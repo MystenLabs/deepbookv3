@@ -6,6 +6,9 @@ version = "0.0.1"
 [dependencies]
 deepbook = { local = "../deepbook" }
 dusdc = { local = "../dusdc" }
+# DEEP token, used for staking custody (`registry::stake_deep`). Declared with the
+# same git source as `deepbook`'s dependency so the resolver unifies the package.
+token = { git = "https://github.com/MystenLabs/deepbookv3.git", subdir = "packages/token", rev = "main" }
 # Official Pyth Lazer Sui package. Used by `pyth_source::update_from_lazer` to
 # consume a verified `pyth_lazer::update::Update`. The `Update` constructor is
 # package-scoped, so the Move type system enforces "this value came from

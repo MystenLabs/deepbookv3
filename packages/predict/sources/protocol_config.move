@@ -13,7 +13,8 @@ use deepbook_predict::{
     leverage_config::{Self, LeverageConfig},
     market_oracle_config::{Self, MarketOracleConfig},
     pricing_config::{Self, PricingConfig},
-    risk_config::{Self, RiskConfig}
+    risk_config::{Self, RiskConfig},
+    stake_config::{Self, StakeConfig}
 };
 
 const ETradingPaused: u64 = 0;
@@ -28,6 +29,7 @@ public struct ProtocolConfig has key {
     risk_config: RiskConfig,
     market_oracle_config: MarketOracleConfig,
     leverage_config: LeverageConfig,
+    stake_config: StakeConfig,
     /// Blocks new risk creation while true.
     trading_paused: bool,
     /// Transaction-local lock held while a full-pool valuation is assembled.
@@ -68,6 +70,10 @@ public(package) fun leverage_config(config: &ProtocolConfig): &LeverageConfig {
     &config.leverage_config
 }
 
+public(package) fun stake_config(config: &ProtocolConfig): &StakeConfig {
+    &config.stake_config
+}
+
 /// Abort unless trading mutations are currently allowed.
 ///
 /// Intentionally omits the package-version gate: per-pool mutating flows that
@@ -102,6 +108,7 @@ public(package) fun create_and_share(ctx: &mut TxContext): ID {
         risk_config: risk_config::new(),
         market_oracle_config: market_oracle_config::new(),
         leverage_config: leverage_config::new(),
+        stake_config: stake_config::new(),
         trading_paused: false,
         valuation_in_progress: false,
     };
@@ -123,6 +130,11 @@ public(package) fun set_min_fee(config: &mut ProtocolConfig, fee: u64) {
 public(package) fun set_template_max_expiry_floor_premium(config: &mut ProtocolConfig, value: u64) {
     config.assert_not_valuation_in_progress();
     config.leverage_config.set_template_max_expiry_floor_premium(value);
+}
+
+public(package) fun set_benefit_powers(config: &mut ProtocolConfig, lower: u64, upper: u64) {
+    config.assert_not_valuation_in_progress();
+    config.stake_config.set_benefit_powers(lower, upper);
 }
 
 public(package) fun set_min_ask_price(config: &mut ProtocolConfig, value: u64) {
@@ -258,6 +270,7 @@ public fun new_for_testing(ctx: &mut TxContext): ProtocolConfig {
         risk_config: risk_config::new(),
         market_oracle_config: market_oracle_config::new(),
         leverage_config: leverage_config::new(),
+        stake_config: stake_config::new(),
         trading_paused: false,
         valuation_in_progress: false,
     }

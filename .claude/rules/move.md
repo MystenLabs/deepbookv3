@@ -100,11 +100,23 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 
 - Emit events after the state transition and postconditions they report have completed, unless the event intentionally reports an attempted action rather than a completed one.
 
+- A permissionless or keeper-callable settlement/claim function should treat empty or zero-amount cases as a no-op, not an abort: early-return when there is nothing to resolve, and guard each payout with `if (amount > 0)` before splitting/dispensing a balance. This keeps a single caller — or a batch sweep over many accounts — from reverting just because one account is owed nothing. Reserve aborts for real preconditions (authorization, lifecycle/settlement state, unclosed positions).
+
+- Distributing reward assets to holders of a freely-transferable fungible share token (an LP/share `Coin`) is a fairness-vs-composability tradeoff. A bare transferable coin has nowhere to store a per-holder `reward_debt`, so naive pro-rata-at-claim lets a fresh depositor grab already-accrued rewards (mint shares → immediately claim a pro-rata slice → exit). Fair distribution needs one of: (a) lock/stake the token into a tracked position/ledger so an `acc_reward_per_share` + per-position `reward_debt` accumulator credits only post-join rewards; or (b) keep the token transferable but fold reward value into its redemption price — either swap rewards into the share's base asset (no oracle; yield realized as the base asset) or price them into NAV via an oracle (pays foreign assets in-kind). You cannot have transferable shares + fairness + foreign-assets-in-kind-without-pricing simultaneously. The same-asset case (reward == principal, e.g. slush_strategies) hides this because folding into share price is automatic.
+
+- Lazily-rolled epoch state (e.g. DeepBook-style `active_stake`/`inactive_stake` where an `update(ctx)`/`update_stake(ctx)` moves inactive→active only on the first interaction in a new epoch, guarded by `if (self.epoch == ctx.epoch()) return`) is only authoritative right after that update runs. Always call the update at the top of any flow that reads the rolled field (mint/redeem/claim), and treat a bare getter (`active_stake()`) as potentially stale otherwise — it can read 0 while a full epoch's inactive amount is waiting to roll. The `==` guard is correct because epochs are monotonic: any later epoch (not just the next) triggers the roll, so skipped epochs are fine and inactive never expires.
+
+- A public entrypoint that mutates a `Balance`/field belongs in the module that *declares* that field (struct fields are module-private). When asked to relocate custody (e.g. "hold the staked balance in `PoolVault` instead of `Registry`"), move the entrypoint that touches it into the owning module too, rather than adding leaky `join_x`/`split_x` package accessors just to keep the function where it was — the function can take the other domain objects (`&mut PredictManager`, etc.) as parameters. Place the move-version gate on the object being mutated (`vault.assert_version_allowed()`), not on an unrelated object that's only passed for the old location's sake.
+
+- Default convention here is to separate *config storage* from *compute*: `pricing_config`/`risk_config`/etc. only store fields + getters + `assert_*`, while the math lives elsewhere (`pricing.move`). But a single, self-contained compute that only reads one config's own fields is fine to fold into that config module as a `&Config` method (e.g. `stake_config::fee_discount_fraction(&StakeConfig, active_stake)` reading its own `lower`/`upper`/caps) — it removes a whole module and shrinks call sites to `config.stake_config().fee_discount_fraction(active)`. Reserve a dedicated compute module for math that spans multiple inputs/objects or is large; don't stand one up for a lone config-bound formula.
+
 - If a flow branches on another object's lifecycle or state, validate the object binding before using that state for branch selection, unless that branch intentionally does not require the object.
 
 - Prefer explicit loop bounds over `while (true)` when the iteration range is easy to express. If a loop naturally means "from `min_page` to `max_page` inclusive" or "while `slot <= end_slot`", write that directly instead of using `while (true)` plus interior `break`s.
 
 - Avoid deprecated Sui framework functions. Use the current recommended API (e.g., `coin_registry::new_currency_with_otw` instead of `coin::create_currency`). If a deprecated function must be used, add a comment explaining why the replacement doesn't work for this case.
+
+- Burning DEEP requires the shared `token::deep::ProtectedTreasury` (it holds the `TreasuryCap` in a dynamic field) — you cannot just drop a `Coin<DEEP>`. Take `&mut ProtectedTreasury` as a parameter and call `token::deep::burn(treasury, coin)`, mirroring `deepbook::pool::burn_deep` (`packages/deepbook/sources/pool.move`). In tests, share one with `token::deep::share_treasury_for_testing(ctx)` then `take_shared<ProtectedTreasury>()`; `coin::mint_for_testing<DEEP>(...)` mints test DEEP and `token::deep::burn` reduces the cap's supply (no check that the coin came from that cap, so this works in tests).
 
 - `create_and_share` constructors should accept tunable per-instance config as constructor parameters rather than seeding defaults that the admin must immediately overwrite. After `share_object` the only way to reconfigure is a separate setter tx, so a default-only constructor forces a two-tx admin flow whenever an instance needs non-default values. Take the params directly, validate them with the same `assert_*` helpers the setter uses (so creation and update share one validation path), and use defaults only when the config is genuinely the same for every instance.
 
@@ -178,6 +190,17 @@ dependency edge. In this repo, `packages/margin_liquidation` still depends on ol
 `packages/deepbook_margin`, so removing `[addresses] deepbook_margin = "0x0"` from
 `packages/deepbook_margin/Move.toml` breaks dependents with
 `Packages with old-style Move.toml files cannot depend on new-style packages`.
+
+### Match the source of a transitively-shared dependency
+
+When you add a dependency on a package that another of your dependencies already pulls in, declare
+it with the *same source* that dependency uses — do not mix `git` and `local` for the same package
+name. Example: `packages/deepbook` depends on `token` via
+`{ git = "...deepbookv3.git", subdir = "packages/token", rev = "main" }`. When `packages/predict`
+(which depends on `deepbook` locally) needed `token::deep::DEEP`, adding
+`token = { local = "../token" }` would have created a git-vs-local source conflict for the single
+`token` package; declaring `token` with the identical git line lets the resolver unify it. Copy the
+exact `git`/`subdir`/`rev` (or local path) from the existing consumer.
 
 ## Imports, Module and Constants
 

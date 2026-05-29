@@ -33,6 +33,9 @@ const EInvalidTradingLossRebateRate: u64 = 22;
 const EInvalidMaxExpiryFloorPremium: u64 = 23;
 const EInvalidExpiryFeeWindowMs: u64 = 24;
 const EInvalidExpiryFeeMaxMultiplier: u64 = 25;
+const EInvalidLowerBenefitPower: u64 = 26;
+const EInvalidUpperBenefitPower: u64 = 27;
+const EInvalidBenefitPowers: u64 = 28;
 
 // === Pool Risk ===
 
@@ -270,6 +273,56 @@ public(package) fun assert_trading_loss_rebate_rate(value: u64) {
             && value <= max_trading_loss_rebate_rate!(),
         EInvalidTradingLossRebateRate,
     );
+}
+
+// === Staking ===
+
+/// Active stake at the benefit-curve kink: half of max benefits. Default 100k
+/// DEEP, admin-tunable 10k..1M.
+public(package) macro fun default_lower_benefit_power(): u64 {
+    100_000 * deepbook_predict::constants::deep_decimals!()
+}
+public(package) macro fun min_lower_benefit_power(): u64 {
+    10_000 * deepbook_predict::constants::deep_decimals!()
+}
+public(package) macro fun max_lower_benefit_power(): u64 {
+    1_000_000 * deepbook_predict::constants::deep_decimals!()
+}
+
+/// Active stake for full (max) benefits. Default 1.1M DEEP, admin-tunable
+/// 100k..50M.
+public(package) macro fun default_upper_benefit_power(): u64 {
+    1_100_000 * deepbook_predict::constants::deep_decimals!()
+}
+public(package) macro fun min_upper_benefit_power(): u64 {
+    100_000 * deepbook_predict::constants::deep_decimals!()
+}
+public(package) macro fun max_upper_benefit_power(): u64 {
+    50_000_000 * deepbook_predict::constants::deep_decimals!()
+}
+
+public(package) fun assert_lower_benefit_power(value: u64) {
+    assert!(
+        value >= min_lower_benefit_power!() && value <= max_lower_benefit_power!(),
+        EInvalidLowerBenefitPower,
+    );
+}
+
+public(package) fun assert_upper_benefit_power(value: u64) {
+    assert!(
+        value >= min_upper_benefit_power!() && value <= max_upper_benefit_power!(),
+        EInvalidUpperBenefitPower,
+    );
+}
+
+/// Validate both benefit thresholds together. The upper segment must require
+/// strictly more stake than the lower one: `upper - lower > lower`, i.e.
+/// `upper > 2 * lower` (which also guarantees `upper > lower`, so the curve's
+/// `upper - lower` denominator is positive).
+public(package) fun assert_benefit_powers(lower: u64, upper: u64) {
+    assert_lower_benefit_power(lower);
+    assert_upper_benefit_power(upper);
+    assert!(upper > 2 * lower, EInvalidBenefitPowers);
 }
 
 // === Market Oracle ===

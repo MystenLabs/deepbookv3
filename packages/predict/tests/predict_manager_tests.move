@@ -24,6 +24,8 @@ const BUILDER_INDEX: u64 = 7;
 const FEE_AMOUNT: u64 = 5_000;
 const CASH_PAID: u64 = 100_000;
 const CASH_RECEIVED: u64 = 60_000;
+const STAKE_AMOUNT: u64 = 100_000_000_000; // 100k DEEP raw (6 decimals)
+const STAKE_AMOUNT_2: u64 = 30_000_000_000; // 30k DEEP raw
 
 // === Helpers ===
 
@@ -404,4 +406,73 @@ fun assert_owner_aborts_for_non_owner() {
     scenario.next_tx(test_constants::bob());
     manager.assert_owner(scenario.ctx());
     abort 999
+}
+
+// === Staking state ===
+
+#[test]
+fun add_inactive_stake_goes_to_inactive() {
+    let (mut scenario, registry_id) = setup();
+    let mut manager = create_alice_manager(&mut scenario, registry_id);
+
+    manager.add_inactive_stake(STAKE_AMOUNT);
+    assert_eq!(manager.inactive_stake(), STAKE_AMOUNT);
+    assert_eq!(manager.active_stake(), 0);
+
+    destroy(manager);
+    scenario.end();
+}
+
+#[test]
+fun update_stake_is_noop_within_epoch() {
+    let (mut scenario, registry_id) = setup();
+    let mut manager = create_alice_manager(&mut scenario, registry_id);
+
+    manager.add_inactive_stake(STAKE_AMOUNT);
+    manager.update_stake(scenario.ctx()); // same epoch as creation
+    assert_eq!(manager.inactive_stake(), STAKE_AMOUNT);
+    assert_eq!(manager.active_stake(), 0);
+
+    destroy(manager);
+    scenario.end();
+}
+
+#[test]
+fun update_stake_activates_inactive_next_epoch() {
+    let (mut scenario, registry_id) = setup();
+    let mut manager = create_alice_manager(&mut scenario, registry_id);
+
+    manager.add_inactive_stake(STAKE_AMOUNT);
+    scenario.next_epoch(test_constants::alice());
+    manager.update_stake(scenario.ctx());
+
+    assert_eq!(manager.active_stake(), STAKE_AMOUNT);
+    assert_eq!(manager.inactive_stake(), 0);
+
+    // Staking more after activation lands in inactive again.
+    manager.add_inactive_stake(STAKE_AMOUNT_2);
+    assert_eq!(manager.active_stake(), STAKE_AMOUNT);
+    assert_eq!(manager.inactive_stake(), STAKE_AMOUNT_2);
+
+    destroy(manager);
+    scenario.end();
+}
+
+#[test]
+fun remove_all_stake_returns_active_plus_inactive_and_zeroes() {
+    let (mut scenario, registry_id) = setup();
+    let mut manager = create_alice_manager(&mut scenario, registry_id);
+
+    manager.add_inactive_stake(STAKE_AMOUNT);
+    scenario.next_epoch(test_constants::alice());
+    manager.update_stake(scenario.ctx()); // STAKE_AMOUNT now active
+    manager.add_inactive_stake(STAKE_AMOUNT_2); // plus inactive
+
+    let returned = manager.remove_all_stake();
+    assert_eq!(returned, STAKE_AMOUNT + STAKE_AMOUNT_2);
+    assert_eq!(manager.active_stake(), 0);
+    assert_eq!(manager.inactive_stake(), 0);
+
+    destroy(manager);
+    scenario.end();
 }

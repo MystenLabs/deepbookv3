@@ -37,6 +37,16 @@ public macro fun position_lot_size(): u64 { 10_000 }
 /// Window before expiry over which the leverage floor index rises.
 public macro fun leverage_floor_window_ms(): u64 { 31_536_000_000 }
 
+// === Staking ===
+
+/// Raw units in one whole DEEP (DEEP uses 6 decimals).
+public macro fun deep_decimals(): u64 { 1_000_000 }
+
+/// Trading-fee discount at full active stake, in FLOAT_SCALING (fixed 50% cap).
+/// The loss rebate has no staking-side cap — its size is governed by the
+/// per-expiry `trading_loss_rebate_rate` in `fee_config`.
+public macro fun max_fee_discount(): u64 { 500_000_000 }
+
 // === Builder Fees ===
 
 /// Add-on builder fee as a fraction of the normal trade fee.

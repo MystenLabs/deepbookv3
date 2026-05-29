@@ -100,6 +100,17 @@ public fun set_template_max_expiry_floor_premium(
     config.set_template_max_expiry_floor_premium(value);
 }
 
+/// Set the staking benefit thresholds: `lower` (half of max benefits) and
+/// `upper` (full benefits). Validated as a pair (`upper > 2 * lower`).
+public fun set_benefit_powers(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    lower: u64,
+    upper: u64,
+) {
+    config.set_benefit_powers(lower, upper);
+}
+
 /// Set the per-asset time-to-expiry fee ramp for a Pyth source's markets.
 /// `window_ms` (0 disables) is the ms-before-expiry over which the fee ramps up;
 /// `max_multiplier` (FLOAT_SCALING, 1x disables) is the multiplier reached at
