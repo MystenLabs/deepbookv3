@@ -23,8 +23,9 @@ the same cleaned shape. Those cleaned files are compared directly.
 - `data/scenario_dataset.csv`: local-only paired oracle price/SVI snapshots used
   as source data for generated scenarios. This file is intentionally ignored so
   raw source data does not get committed.
-- `data/scenario_config.json`: source expiry/settlement values and protocol
-  knobs consumed by the generator and Python replay.
+- `data/scenario_config.json`: source expiry/settlement values, fee-ramp
+  settings, and protocol knobs consumed by localnet setup, the generator, and
+  Python replay.
 - `data/generate_scenario.py`: random scenario generator for normal and long
   flows.
 - `src/sim.ts`: localnet setup and CSV replay engine.
@@ -103,10 +104,15 @@ bash run.sh --python-only
 bash run.sh --python-only --sim_max_rows=300
 bash run.sh --keep-derived
 bash run.sh --skip-charts
+bash run.sh --skip-analysis
 ```
 
 `--sim-max-rows` is also accepted as an alias for `--sim_max_rows`. The
 `SIM_MAX_ROWS=100 bash run.sh` environment form is still supported.
+
+`--skip-charts` suppresses chart rendering only. Localnet/Python parity, long
+Python replay, and summary generation still run. `--skip-analysis` is the heavier
+escape hatch: it skips post-localnet parity, long replay, and charts.
 
 `--python-only` generates the long scenario, skips localnet, and runs only the
 long Python economic replay. It writes `python_long_data.json` and
@@ -161,7 +167,8 @@ Supported actions:
   order in one PTB.
 - `update_prices`: standalone Block Scholes price update.
 - `update_svi`: standalone SVI update.
-- `mint`: mint against the current oracle state.
+- `mint`: mint against the current oracle state. It must not include oracle
+  refresh fields; use `oracle_mint_ptb` for update+mint in one transaction.
 - `redeem`: redeem the order referenced by `order_ref`.
 - `liquidate`: run a bounded liquidation pass with `budget`.
 - `supply`: supply DUSDC and bind the resulting PLP coin to `lp_ref`.
@@ -251,12 +258,15 @@ state deltas.
 
 The long Python replay intentionally extends that validated live mirror with
 features the localnet runner cannot model practically: exact replay timestamps,
-real expiry/settlement inputs from `data/scenario_config.json`, and a direct
-terminal closeout. That terminal closeout is Python-only, but it includes
-internal checks such as indexed-versus-scanned terminal payout and final closed
-state assertions. Use long-run outputs for tuning with this boundary in mind:
-parity validates the shared live transaction engine; Python-specific assertions
-guard the extra terminal analysis layer.
+real expiry/settlement inputs from `data/scenario_config.json`, exact-time
+fee-ramp economics, and a direct terminal closeout. The normal localnet parity
+market is far enough from expiry that configured fee ramps remain at 1x; the
+long Python replay uses source timestamps near expiry, so the same ramp settings
+affect mint/redeem fees there. The terminal closeout is Python-only, but it
+includes internal checks such as indexed-versus-scanned terminal payout and final
+closed state assertions. Use long-run outputs for tuning with this boundary in
+mind: parity validates the shared live transaction engine; Python-specific
+assertions guard the extra terminal analysis layer.
 
 ## Derived Data
 
@@ -359,9 +369,9 @@ and future charts but is not parity-validated.
 
 ## Current Caveats
 
-- `data/scenario_config.json` mirrors the Move defaults and source settlement
-  inputs used by the long Python replay. If Move defaults or admin setup change,
-  update this file at the same time.
+- `data/scenario_config.json` mirrors the Move defaults, localnet setup knobs,
+  and source settlement inputs used by the long Python replay. If Move defaults,
+  admin setup, or fee-ramp policy changes, update this file at the same time.
 - The fixture CSV preserves old oracle/SVI row ordering. Some adjacent rows have
   large forward/spot jumps, so current economics are useful for stress testing
   but not a realistic chronological market path.

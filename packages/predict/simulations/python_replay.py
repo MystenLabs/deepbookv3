@@ -25,6 +25,18 @@ POSITION_LOT_SIZE = 10_000
 ECONOMIC_SCHEMA_VERSION = "predict_economic_v1"
 DERIVED_SCHEMA_VERSION = "predict_derived_v1"
 DEFAULT_SCENARIO_CONFIG_PATH = Path(__file__).with_name("data") / "scenario_config.json"
+ORACLE_REFRESH_FIELDS = (
+    "spot",
+    "forward",
+    "a",
+    "b",
+    "rho",
+    "rho_negative",
+    "m",
+    "m_negative",
+    "sigma",
+    "risk_free_rate",
+)
 BASE_FEE = 20_000_000
 MIN_FEE = 5_000_000
 MIN_ASK_PRICE = 10_000_000
@@ -47,6 +59,8 @@ LP_FEE_SHARE = 600_000_000
 PROTOCOL_FEE_SHARE = 200_000_000
 INSURANCE_FEE_SHARE = 200_000_000
 TRADING_LOSS_REBATE_RATE = 500_000_000
+EXPIRY_FEE_WINDOW_MS = 0
+EXPIRY_FEE_MAX_MULTIPLIER = FLOAT_SCALING
 
 # Floor-index model for Python-only observability. Normal parity replay keeps a
 # flat index to match localnet's far-future expiry; long replay uses source
@@ -119,6 +133,8 @@ def apply_scenario_config(config: dict[str, Any]) -> None:
     global PROTOCOL_FEE_SHARE
     global INSURANCE_FEE_SHARE
     global TRADING_LOSS_REBATE_RATE
+    global EXPIRY_FEE_WINDOW_MS
+    global EXPIRY_FEE_MAX_MULTIPLIER
     global LEVERAGE_FLOOR_WINDOW_MS
     global MAX_EXPIRY_FLOOR_PREMIUM
     global LIQUIDATION_LTV
@@ -146,6 +162,13 @@ def apply_scenario_config(config: dict[str, Any]) -> None:
         "protocol",
         "trading_loss_rebate_rate",
         TRADING_LOSS_REBATE_RATE,
+    )
+    EXPIRY_FEE_WINDOW_MS = _config_int(config, "protocol", "expiry_fee_window_ms", EXPIRY_FEE_WINDOW_MS)
+    EXPIRY_FEE_MAX_MULTIPLIER = _config_int(
+        config,
+        "protocol",
+        "expiry_fee_max_multiplier",
+        EXPIRY_FEE_MAX_MULTIPLIER,
     )
     LEVERAGE_FLOOR_WINDOW_MS = _config_int(
         config,
@@ -302,22 +325,10 @@ def _bool(row: dict[str, str], field: str, line_number: int) -> bool:
 
 
 def _optional_oracle_refresh(row: dict[str, str], line_number: int) -> dict[str, Any]:
-    fields = (
-        "spot",
-        "forward",
-        "a",
-        "b",
-        "rho",
-        "rho_negative",
-        "m",
-        "m_negative",
-        "sigma",
-        "risk_free_rate",
-    )
-    present = [field for field in fields if row.get(field, "") != ""]
+    present = [field for field in ORACLE_REFRESH_FIELDS if row.get(field, "") != ""]
     if not present:
         return {}
-    if len(present) != len(fields):
+    if len(present) != len(ORACLE_REFRESH_FIELDS):
         raise ValueError(f"Scenario line {line_number}: oracle refresh fields must be all present or all empty")
     return {
         "oracleRefresh": {
@@ -333,6 +344,14 @@ def _optional_oracle_refresh(row: dict[str, str], line_number: int) -> dict[str,
             "riskFreeRate": _uint(row, "risk_free_rate", line_number),
         },
     }
+
+
+def _assert_no_oracle_refresh(row: dict[str, str], line_number: int, action: str) -> None:
+    present = [field for field in ORACLE_REFRESH_FIELDS if row.get(field, "") != ""]
+    if present:
+        raise ValueError(
+            f"Scenario line {line_number}: {action} cannot include oracle refresh fields; use oracle_mint_ptb"
+        )
 
 
 def parse_scenario_text(text: str) -> list[dict[str, Any]]:
@@ -399,13 +418,13 @@ def parse_scenario_text(text: str) -> list[dict[str, Any]]:
                 }
             )
         elif action == "mint":
+            _assert_no_oracle_refresh(row, index, action)
             rows.append(
                 {
                     "action": action,
                     "lineNumber": index,
                     "step": tx,
                     **_optional_timestamps(row, index),
-                    **_optional_oracle_refresh(row, index),
                     "strike": _uint(row, "strike", index),
                     "isUp": _bool(row, "is_up", index),
                     "quantity": parse_mint_quantity(_uint(row, "quantity", index), index),
@@ -980,6 +999,16 @@ def current_order_floor_amount(model: dict[str, Any], order: dict[str, Any]) -> 
     return order_floor_amount_at_index(order, model_floor_index(model))
 
 
+def model_fee_time_to_expiry_ms(model: dict[str, Any], timestamp_ms: int | None = None) -> int | None:
+    if not model.get("exact_time"):
+        return None
+    now_ms = model.get("now_ms") if timestamp_ms is None else timestamp_ms
+    expiry_ms = model.get("expiry_ms")
+    if now_ms is None or expiry_ms is None:
+        raise ValueError("exact-time fee ramp requires now_ms and expiry_ms")
+    return max(0, expiry_ms - now_ms)
+
+
 def order_index_update_terms(order: dict[str, Any]) -> tuple[int, int, int]:
     floor_shares = order_floor_shares(order)
     assert_terminal_ltv_mint_allowed(
@@ -1118,7 +1147,18 @@ def compute_pool_value(
     return state["vault_idle_balance"] + position_value + lp_fee_surplus
 
 
-def fee_rate(probability: int) -> int:
+def expiry_fee_multiplier(time_to_expiry_ms: int | None) -> int:
+    if time_to_expiry_ms is None or time_to_expiry_ms >= EXPIRY_FEE_WINDOW_MS:
+        return FLOAT_SCALING
+    ramp = mul_div_round_down(
+        EXPIRY_FEE_MAX_MULTIPLIER - FLOAT_SCALING,
+        EXPIRY_FEE_WINDOW_MS - time_to_expiry_ms,
+        EXPIRY_FEE_WINDOW_MS,
+    )
+    return FLOAT_SCALING + ramp
+
+
+def fee_rate(probability: int, time_to_expiry_ms: int | None = None) -> int:
     if probability == 0 or probability == FLOAT_SCALING:
         raw_fee = 0
     else:
@@ -1126,11 +1166,12 @@ def fee_rate(probability: int) -> int:
         variance = deepbook_mul(probability, complement)
         bernoulli_factor = sqrt_fixed(variance, FLOAT_SCALING)
         raw_fee = deepbook_mul(BASE_FEE, bernoulli_factor)
-    return raw_fee if raw_fee > MIN_FEE else MIN_FEE
+    base = raw_fee if raw_fee > MIN_FEE else MIN_FEE
+    return deepbook_mul(base, expiry_fee_multiplier(time_to_expiry_ms))
 
 
-def assert_mint_fee_rate(probability: int) -> int:
-    rate = fee_rate(probability)
+def assert_mint_fee_rate(probability: int, time_to_expiry_ms: int | None = None) -> int:
+    rate = fee_rate(probability, time_to_expiry_ms)
     ask_price = probability + rate
     if ask_price < MIN_ASK_PRICE or ask_price > MAX_ASK_PRICE:
         raise ValueError("ask price out of bounds")
@@ -1195,7 +1236,7 @@ def row_input(row: dict[str, Any]) -> dict[str, Any]:
     if action == "update_svi":
         return {"svi": svi_input(row)}
     if action == "mint":
-        return {**oracle_refresh_input(row), **mint_input(row)}
+        return mint_input(row)
     if action == "liquidate":
         return {**oracle_refresh_input(row), "budget": str(row["budget"])}
     if action == "redeem":
@@ -1252,11 +1293,12 @@ def order_minted_update(
     svi: dict[str, Any],
     forward: int,
     sequence: int,
+    time_to_expiry_ms: int | None = None,
 ) -> dict[str, str]:
     strike = align_strike_to_grid(mint["strike"])
     lower, higher = binary_range_bounds(strike, mint["isUp"])
     entry_probability = compute_range_price(svi, forward, lower, higher)
-    fee_amount = deepbook_mul(assert_mint_fee_rate(entry_probability), mint["quantity"])
+    fee_amount = deepbook_mul(assert_mint_fee_rate(entry_probability, time_to_expiry_ms), mint["quantity"])
     terms = compute_mint_terms(entry_probability, mint["quantity"], mint["leverage"])
     return {
         "type": "order_minted",
@@ -1418,7 +1460,13 @@ def mint_order(model: dict[str, Any], row: dict[str, Any], opened_at_ms: int) ->
         raise ValueError("mint requires prior price and SVI updates")
     if row["orderRef"] in model["orders"]:
         raise ValueError(f"duplicate order_ref {row['orderRef']}")
-    update = order_minted_update(row, model["current_svi"], model["current_forward"], model["next_sequence"])
+    update = order_minted_update(
+        row,
+        model["current_svi"],
+        model["current_forward"],
+        model["next_sequence"],
+        model_fee_time_to_expiry_ms(model, opened_at_ms),
+    )
     order = {
         "ref": row["orderRef"],
         "sequence": model["next_sequence"],
@@ -1467,7 +1515,7 @@ def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
         raise ValueError(f"order_ref {ref} is not redeemable")
 
     probability = compute_range_price(model["current_svi"], model["current_forward"], order["lower"], order["higher"])
-    fee = deepbook_mul(fee_rate(probability), close_quantity)
+    fee = deepbook_mul(fee_rate(probability, model_fee_time_to_expiry_ms(model)), close_quantity)
     gross = deepbook_mul(probability, close_quantity)
 
     remaining_quantity = order["quantity"] - close_quantity
@@ -2623,7 +2671,6 @@ def replay(
             model["current_svi"] = row
             updates.append(oracle_svi_update(row))
         elif action == "mint":
-            apply_inline_oracle_refresh(model, row, updates)
             scan_active_count = len(active_refs(model))
             updates.extend(run_liquidation_pass(model, TRADE_LIQUIDATION_BUDGET))
             updates.append(mint_order(model, row, row_timestamp_ms))

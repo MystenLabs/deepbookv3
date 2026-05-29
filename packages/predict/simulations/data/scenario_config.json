@@ -13,6 +13,8 @@
     "protocol_fee_share": "200000000",
     "insurance_fee_share": "200000000",
     "trading_loss_rebate_rate": "500000000",
+    "expiry_fee_window_ms": "86400000",
+    "expiry_fee_max_multiplier": "2000000000",
     "leverage_floor_window_ms": "31536000000",
     "max_expiry_floor_premium": "200000000",
     "liquidation_ltv": "850000000"

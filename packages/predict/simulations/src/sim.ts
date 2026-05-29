@@ -61,6 +61,7 @@ const MANAGER_SEED = 500_000n * DUSDC_DECIMALS;
 const INITIAL_EXPIRY_ALLOCATION = 50_000n * DUSDC_DECIMALS;
 const EXPIRY_MS = BigInt(Date.now()) + 400n * 24n * 60n * 60n * 1000n;
 const FLOAT_SCALING = 1_000_000_000n;
+const SCENARIO_CONFIG_PATH = fileURLToPath(new URL("../data/scenario_config.json", import.meta.url));
 const ORACLE_MIN_STRIKE = 25_000n * FLOAT_SCALING;
 const ORACLE_TICK_SIZE = 1n * FLOAT_SCALING;
 const ORACLE_MAX_STRIKE = ORACLE_MIN_STRIKE + 100_000n * ORACLE_TICK_SIZE;
@@ -258,7 +259,7 @@ function rowInput(row: ScenarioRow): Record<string, unknown> {
     return { svi: sviInput(row) };
   }
   if (row.action === "mint") {
-    return { ...oracleRefreshInput(row), ...mintInput(row) };
+    return mintInput(row);
   }
   if (row.action === "liquidate") {
     return { ...oracleRefreshInput(row), budget: row.budget.toString() };
@@ -603,8 +604,20 @@ function clearOutputArtifacts() {
   }
 }
 
+function protocolConfigValue(config: any, key: string, fallback: bigint): bigint {
+  const value = config?.protocol?.[key];
+  return value === undefined || value === null || value === "" ? fallback : BigInt(value);
+}
+
 async function setupSimulation(): Promise<SimState> {
   console.log(`[${ts()}] --- Setup ---`);
+  const scenarioConfig = readJson<any>(SCENARIO_CONFIG_PATH);
+  const expiryFeeWindowMs = protocolConfigValue(scenarioConfig, "expiry_fee_window_ms", 0n);
+  const expiryFeeMaxMultiplier = protocolConfigValue(
+    scenarioConfig,
+    "expiry_fee_max_multiplier",
+    FLOAT_SCALING,
+  );
 
   let result = await executeAndWait(
     finalizeDusdcCurrencyRegistrationTx(),
@@ -631,12 +644,18 @@ async function setupSimulation(): Promise<SimState> {
   const oracleCapId: string = oracleCapChange.objectId;
   console.log(`[${ts()}]   OracleCap: ${oracleCapId}`);
 
-  result = await executeAndWait(createPythSourceTx(1), "create_pyth_source");
+  result = await executeAndWait(
+    createPythSourceTx(1, expiryFeeWindowMs, expiryFeeMaxMultiplier),
+    "create_pyth_source",
+  );
   const pythSourceChange = result.objectChanges.find(
     (change: any) => change.type === "created" && change.objectType.includes("PythSource"),
   );
   const pythSourceId: string = pythSourceChange.objectId;
   console.log(`[${ts()}]   PythSource: ${pythSourceId}`);
+  console.log(
+    `[${ts()}]   PythSource fee ramp: window=${expiryFeeWindowMs}ms max_multiplier=${expiryFeeMaxMultiplier}`,
+  );
 
   await executeAndWait(supplyTx(poolVaultId, protocolConfigId, VAULT_SEED), "supply");
   console.log(`[${ts()}]   Vault funded: ${VAULT_SEED / DUSDC_DECIMALS} DUSDC`);

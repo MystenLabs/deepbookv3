@@ -187,7 +187,7 @@ class Generator:
             lower, higher = replay.binary_range_bounds(replay.align_strike_to_grid(strike), is_up)
             try:
                 entry_probability = replay.compute_range_price(svi, forward, lower, higher)
-                fee_rate = replay.assert_mint_fee_rate(entry_probability)
+                fee_rate = replay.assert_mint_fee_rate(entry_probability, self.fee_time_to_expiry(snapshot))
                 terms = replay.compute_mint_terms(entry_probability, quantity, leverage)
                 open_floor_index = self.open_floor_index(snapshot)
                 replay.assert_terminal_ltv_mint_allowed(
@@ -256,6 +256,11 @@ class Generator:
             replay.LEVERAGE_FLOOR_WINDOW_MS,
             replay.MAX_EXPIRY_FLOOR_PREMIUM,
         )
+
+    def fee_time_to_expiry(self, snapshot: dict[str, Any]) -> int | None:
+        if self.expiry_ms is None:
+            return None
+        return max(0, self.expiry_ms - snapshot["price_checkpoint_timestamp_ms"])
 
     def random_strike(self, forward: int) -> int:
         offset_bps = self.rng.randint(-2_500, 2_500)

@@ -42,7 +42,7 @@ export type ScenarioRow =
       sigma: bigint;
       riskFreeRate: bigint;
     }
-  | WithOracleRefresh<{
+  | {
       action: "mint";
       lineNumber: number;
       step: number;
@@ -51,7 +51,7 @@ export type ScenarioRow =
       quantity: bigint;
       leverage: bigint;
       orderRef: string;
-    }>
+    }
   | {
       action: "oracle_mint_ptb";
       lineNumber: number;
@@ -177,6 +177,19 @@ const SCENARIO_COLUMNS = [
   "lp_ref",
 ] as const;
 
+const ORACLE_REFRESH_FIELDS = [
+  "spot",
+  "forward",
+  "a",
+  "b",
+  "rho",
+  "rho_negative",
+  "m",
+  "m_negative",
+  "sigma",
+  "risk_free_rate",
+] as const;
+
 const POSITION_LOT_SIZE = 10_000n;
 
 function resolveInstanceDir(): string {
@@ -242,21 +255,9 @@ function parseOptionalString(row: RawScenarioRow, field: string): string | null 
 }
 
 function parseOptionalOracleRefresh(row: RawScenarioRow, lineNumber: number): { oracleRefresh?: OracleRefreshData } {
-  const fields = [
-    "spot",
-    "forward",
-    "a",
-    "b",
-    "rho",
-    "rho_negative",
-    "m",
-    "m_negative",
-    "sigma",
-    "risk_free_rate",
-  ];
-  const present = fields.filter((field) => (row[field] ?? "") !== "");
+  const present = ORACLE_REFRESH_FIELDS.filter((field) => (row[field] ?? "") !== "");
   if (present.length === 0) return {};
-  if (present.length !== fields.length) {
+  if (present.length !== ORACLE_REFRESH_FIELDS.length) {
     throw new Error(`Scenario line ${lineNumber}: oracle refresh fields must be all present or all empty`);
   }
   return {
@@ -273,6 +274,15 @@ function parseOptionalOracleRefresh(row: RawScenarioRow, lineNumber: number): { 
       riskFreeRate: parseUnsignedInteger(row, "risk_free_rate", lineNumber),
     },
   };
+}
+
+function assertNoOracleRefresh(row: RawScenarioRow, lineNumber: number, action: string): void {
+  const present = ORACLE_REFRESH_FIELDS.filter((field) => (row[field] ?? "") !== "");
+  if (present.length !== 0) {
+    throw new Error(
+      `Scenario line ${lineNumber}: ${action} cannot include oracle refresh fields; use oracle_mint_ptb`,
+    );
+  }
 }
 
 function parseRef(row: RawScenarioRow, field: string, lineNumber: number): string {
@@ -333,11 +343,11 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
   }
 
   if (action === "mint") {
+    assertNoOracleRefresh(row, lineNumber, action);
     return {
       action,
       lineNumber,
       step,
-      ...parseOptionalOracleRefresh(row, lineNumber),
       strike: parseUnsignedInteger(row, "strike", lineNumber),
       isUp: parseBoolean(row, "is_up", lineNumber),
       quantity: parseMintQuantity(row, "quantity", lineNumber),

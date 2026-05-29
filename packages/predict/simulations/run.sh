@@ -25,6 +25,7 @@ RUN_SIM=0
 EXPLICIT_PHASES=0
 LIST=0
 SKIP_ANALYSIS=0
+SKIP_CHARTS=0
 CONTINUE_ON_REJECTS=0
 PYTHON_ONLY=0
 KEEP_DERIVED=0
@@ -37,8 +38,8 @@ Options:
   --resume <id>    Resume an existing instance
   --setup          Only run setup phase (publish + create objects)
   --sim            Only run sim phase (execute replay + write artifacts)
-  --skip-charts    Skip post-run charts
-  --skip-analysis  Alias for --skip-charts
+  --skip-charts    Skip chart rendering only
+  --skip-analysis  Skip post-run parity, long replay, and charts
   --sim_max_rows <n>
   --sim_max_rows=<n>
   --sim-max-rows <n>
@@ -84,8 +85,13 @@ while [[ $# -gt 0 ]]; do
       LIST=1
       shift
       ;;
-    --skip-analysis|--skip-charts)
+    --skip-analysis)
       SKIP_ANALYSIS=1
+      SKIP_CHARTS=1
+      shift
+      ;;
+    --skip-charts)
+      SKIP_CHARTS=1
       shift
       ;;
     --sim_max_rows|--sim-max-rows)
@@ -225,7 +231,7 @@ if [ "$PYTHON_ONLY" -eq 1 ]; then
   run_long_python_replay "$PYTHON_SCENARIO" "$PYTHON_LONG_DATA"
   echo "==> Writing economic summary..."
   (cd "$SCRIPT_DIR" && python3 summarize_economics.py "$INSTANCE_DIR/artifacts")
-  if [ "$SKIP_ANALYSIS" -eq 0 ]; then
+  if [ "$SKIP_ANALYSIS" -eq 0 ] && [ "$SKIP_CHARTS" -eq 0 ]; then
     echo ""
     echo "==> Rendering charts..."
     (cd "$SCRIPT_DIR" && python3 chart_market_overview.py "$PYTHON_LONG_DATA" "$INSTANCE_DIR/artifacts/python_derived.json")
@@ -608,10 +614,14 @@ elif [ "$RUN_SIM" -eq 1 ]; then
   run_sim --execute-only
 fi
 
-if [ "$RUN_SIM" -eq 1 ] && [ "$SKIP_ANALYSIS" -eq 0 ] \
+if [ "$RUN_SIM" -eq 1 ] && [ "$SKIP_CHARTS" -eq 0 ] \
    && [ -f "$INSTANCE_DIR/artifacts/local_trace.json" ]; then
   echo "==> Rendering gas chart..."
   python3 chart_gas.py "$INSTANCE_DIR/artifacts/local_trace.json"
+fi
+
+if [ "$RUN_SIM" -eq 1 ] && [ "$SKIP_ANALYSIS" -eq 0 ] \
+   && [ -f "$INSTANCE_DIR/artifacts/local_trace.json" ]; then
   echo "==> Updating economic summary..."
   python3 summarize_economics.py "$INSTANCE_DIR/artifacts"
 fi
@@ -631,14 +641,16 @@ if [ "$RUN_SIM" -eq 1 ] && [ "$SKIP_ANALYSIS" -eq 0 ] \
     run_long_python_replay "$LONG_SCENARIO" "$PYTHON_LONG_DATA"
     echo "==> Writing economic summary..."
     python3 summarize_economics.py "$INSTANCE_DIR/artifacts"
-    echo "==> Rendering charts..."
-    python3 chart_market_overview.py "$PYTHON_LONG_DATA" "$INSTANCE_DIR/artifacts/python_derived.json"
-    python3 chart_vault_pnl_fee_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json"
-    python3 chart_liquidation_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json"
-    python3 chart_liquidation_priority_budget.py "$INSTANCE_DIR/artifacts/python_derived.json"
-    python3 chart_liquidation_execution_quality.py "$PYTHON_LONG_DATA"
-    echo "==> Updating economic summary..."
-    python3 summarize_economics.py "$INSTANCE_DIR/artifacts"
+    if [ "$SKIP_CHARTS" -eq 0 ]; then
+      echo "==> Rendering charts..."
+      python3 chart_market_overview.py "$PYTHON_LONG_DATA" "$INSTANCE_DIR/artifacts/python_derived.json"
+      python3 chart_vault_pnl_fee_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json"
+      python3 chart_liquidation_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json"
+      python3 chart_liquidation_priority_budget.py "$INSTANCE_DIR/artifacts/python_derived.json"
+      python3 chart_liquidation_execution_quality.py "$PYTHON_LONG_DATA"
+      echo "==> Updating economic summary..."
+      python3 summarize_economics.py "$INSTANCE_DIR/artifacts"
+    fi
     cleanup_long_outputs
     echo "==> Finalizing economic summary..."
     python3 summarize_economics.py "$INSTANCE_DIR/artifacts"
