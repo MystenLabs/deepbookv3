@@ -191,21 +191,6 @@ fun set_benefit_powers_forwards_to_stake_config() {
     destroy(admin_cap);
 }
 
-#[test]
-fun set_max_fee_discount_and_rebate_forward_to_stake_config() {
-    let ctx = &mut tx_context::dummy();
-    let admin_cap = registry::create_admin_cap_for_testing(ctx);
-    let mut config = protocol_config::new_for_testing(ctx);
-
-    registry::set_max_fee_discount(&mut config, &admin_cap, 250_000_000); // 25%
-    registry::set_max_rebate_fraction(&mut config, &admin_cap, 600_000_000); // 60%
-    assert_eq!(stake_config::max_fee_discount(config.stake_config()), 250_000_000);
-    assert_eq!(stake_config::max_rebate_fraction(config.stake_config()), 600_000_000);
-
-    destroy(config);
-    destroy(admin_cap);
-}
-
 // === Market oracle template setters ===
 
 #[test]

@@ -21,8 +21,6 @@ fun default_matches_config_constants() {
     let config = stake_config::new();
     assert_eq!(config.lower_benefit_power(), config_constants::default_lower_benefit_power!());
     assert_eq!(config.upper_benefit_power(), config_constants::default_upper_benefit_power!());
-    assert_eq!(config.max_fee_discount(), config_constants::default_max_fee_discount!());
-    assert_eq!(config.max_rebate_fraction(), config_constants::default_max_rebate_fraction!());
     destroy(config);
 }
 
@@ -86,7 +84,7 @@ fun set_benefit_powers_upper_below_min_aborts() {
     abort 999
 }
 
-// === benefit curve (default config: lower 100k, upper 1.1M, 50% fee, 100% rebate) ===
+// === benefit curve (default config: lower 100k, upper 1.1M; fee cap 50%, rebate uncapped) ===
 
 #[test]
 fun fee_discount_follows_two_segment_curve() {
@@ -95,13 +93,14 @@ fun fee_discount_follows_two_segment_curve() {
     assert_eq!(config.fee_discount_fraction(TWENTY_K), 50_000_000); // ratio 0.1 -> 5%
     assert_eq!(config.fee_discount_fraction(LOWER), 250_000_000); // kink, ratio 0.5 -> 25%
     assert_eq!(config.fee_discount_fraction(THREE_HUNDRED_K), 300_000_000); // ratio 0.6 -> 30%
-    assert_eq!(config.fee_discount_fraction(UPPER), 500_000_000); // ratio 1.0 -> 50%
+    assert_eq!(config.fee_discount_fraction(UPPER), 500_000_000); // ratio 1.0 -> 50% (cap)
     assert_eq!(config.fee_discount_fraction(TWO_MILLION), 500_000_000); // capped
     destroy(config);
 }
 
 #[test]
 fun rebate_follows_two_segment_curve() {
+    // rebate_fraction is the benefit ratio directly (no staking cap).
     let config = stake_config::new();
     assert_eq!(config.rebate_fraction(0), 0);
     assert_eq!(config.rebate_fraction(TWENTY_K), 100_000_000); // 10%
@@ -110,64 +109,4 @@ fun rebate_follows_two_segment_curve() {
     assert_eq!(config.rebate_fraction(UPPER), 1_000_000_000); // 100%
     assert_eq!(config.rebate_fraction(TWO_MILLION), 1_000_000_000); // capped
     destroy(config);
-}
-
-#[test]
-fun benefits_respect_configured_caps() {
-    let mut config = stake_config::new();
-    config.set_max_fee_discount(250_000_000); // 25%
-    config.set_max_rebate_fraction(500_000_000); // 50%
-
-    assert_eq!(config.fee_discount_fraction(UPPER), 250_000_000); // full stake -> 25%
-    assert_eq!(config.fee_discount_fraction(LOWER), 125_000_000); // half-benefit -> 12.5%
-    assert_eq!(config.rebate_fraction(UPPER), 500_000_000); // full stake -> 50%
-    assert_eq!(config.rebate_fraction(LOWER), 250_000_000); // half-benefit -> 25%
-
-    destroy(config);
-}
-
-// === set_max_fee_discount (0..50%) ===
-
-#[test]
-fun set_max_fee_discount_updates_and_accepts_boundaries() {
-    let mut config = stake_config::new();
-    config.set_max_fee_discount(250_000_000); // 25%
-    assert_eq!(config.max_fee_discount(), 250_000_000);
-
-    config.set_max_fee_discount(config_constants::min_max_fee_discount!()); // 0%
-    assert_eq!(config.max_fee_discount(), 0);
-    config.set_max_fee_discount(config_constants::max_max_fee_discount!()); // 50%
-    assert_eq!(config.max_fee_discount(), config_constants::max_max_fee_discount!());
-
-    destroy(config);
-}
-
-#[test, expected_failure(abort_code = config_constants::EInvalidMaxFeeDiscount)]
-fun set_max_fee_discount_above_ceiling_aborts() {
-    let mut config = stake_config::new();
-    config.set_max_fee_discount(config_constants::max_max_fee_discount!() + 1); // > 50%
-    abort 999
-}
-
-// === set_max_rebate_fraction (0..100%) ===
-
-#[test]
-fun set_max_rebate_fraction_updates_and_accepts_boundaries() {
-    let mut config = stake_config::new();
-    config.set_max_rebate_fraction(500_000_000); // 50%
-    assert_eq!(config.max_rebate_fraction(), 500_000_000);
-
-    config.set_max_rebate_fraction(config_constants::min_max_rebate_fraction!()); // 0%
-    assert_eq!(config.max_rebate_fraction(), 0);
-    config.set_max_rebate_fraction(config_constants::max_max_rebate_fraction!()); // 100%
-    assert_eq!(config.max_rebate_fraction(), config_constants::max_max_rebate_fraction!());
-
-    destroy(config);
-}
-
-#[test, expected_failure(abort_code = config_constants::EInvalidMaxRebateFraction)]
-fun set_max_rebate_fraction_above_ceiling_aborts() {
-    let mut config = stake_config::new();
-    config.set_max_rebate_fraction(config_constants::max_max_rebate_fraction!() + 1); // > 100%
-    abort 999
 }

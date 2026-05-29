@@ -111,16 +111,6 @@ public fun set_benefit_powers(
     config.set_benefit_powers(lower, upper);
 }
 
-/// Set the fee discount at full active stake (0..50%).
-public fun set_max_fee_discount(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
-    config.set_max_fee_discount(value);
-}
-
-/// Set the loss-rebate share at full active stake (0..100%).
-public fun set_max_rebate_fraction(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
-    config.set_max_rebate_fraction(value);
-}
-
 /// Set the per-asset time-to-expiry fee ramp for a Pyth source's markets.
 /// `window_ms` (0 disables) is the ms-before-expiry over which the fee ramps up;
 /// `max_multiplier` (FLOAT_SCALING, 1x disables) is the multiplier reached at
