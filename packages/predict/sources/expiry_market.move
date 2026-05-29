@@ -19,7 +19,6 @@ use deepbook_predict::{
     pricing_config::PricingConfig,
     protocol_config::ProtocolConfig,
     pyth_source::PythSource,
-    staking,
     strike_exposure::{Self, StrikeExposure}
 };
 use dusdc::dusdc::DUSDC;
@@ -326,12 +325,7 @@ public fun claim_trading_loss_rebate(
     // remainder compounds into LP cash (returns fully to the pool on the
     // settlement sweep, no protocol/insurance split).
     manager.update_stake(ctx);
-    let fraction = staking::rebate_fraction(
-        manager.active_stake(),
-        config.stake_config().lower_benefit_power(),
-        config.stake_config().upper_benefit_power(),
-        config.stake_config().max_rebate_fraction(),
-    );
+    let fraction = config.stake_config().rebate_fraction(manager.active_stake());
     let rebate_amount = math::mul(eligible_rebate, fraction);
     let lp_compound_amount = eligible_rebate - rebate_amount;
 
@@ -558,12 +552,7 @@ fun apply_stake_fee_discount(
     config: &ProtocolConfig,
     fee_amount: u64,
 ): (u64, u64) {
-    let discount = staking::fee_discount_fraction(
-        manager.active_stake(),
-        config.stake_config().lower_benefit_power(),
-        config.stake_config().upper_benefit_power(),
-        config.stake_config().max_fee_discount(),
-    );
+    let discount = config.stake_config().fee_discount_fraction(manager.active_stake());
     (fee_amount - math::mul(fee_amount, discount), discount)
 }
 
