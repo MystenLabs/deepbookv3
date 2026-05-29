@@ -6,40 +6,29 @@ module deepbook_predict::registry_stake_tests;
 
 use deepbook_predict::{predict_manager::{Self, PredictManager}, registry, test_constants};
 use std::unit_test::{assert_eq, destroy};
-use sui::{clock::{Self, Clock}, coin, test_scenario as test};
-use token::deep::{Self, DEEP, ProtectedTreasury};
+use sui::{coin, test_scenario as test};
+use token::deep::DEEP;
 
-const HUNDRED_K_DEEP: u64 = 100_000_000_000; // 100k DEEP raw (6 decimals)
-const FIFTY_K_DEEP: u64 = 50_000_000_000;
-const TWO_HUNDRED_K_DEEP: u64 = 200_000_000_000;
-const ONE_YEAR_DAYS: u64 = 365;
-const ONE_YEAR_MS: u64 = 31_536_000_000; // 365 * 86_400_000
-const TWO_YEAR_DAYS: u64 = 730;
-const TWO_YEAR_MS: u64 = 63_072_000_000; // 730 * 86_400_000
-const OVER_MAX_LOCK_DAYS: u64 = 731; // one day past the 2-year cap
-const PARTIAL_LOCK_DAYS: u64 = 146; // 0.4 of a year (146/365)
-const SHORTER_LOCK_DAYS: u64 = 100;
+const FIFTY_K_DEEP: u64 = 50_000_000_000; // 50k DEEP raw (6 decimals)
+const THIRTY_K_DEEP: u64 = 30_000_000_000;
 
 // === Helpers ===
 
-fun begin(): (test::Scenario, registry::Registry, registry::AdminCap, Clock, PredictManager) {
+fun begin(): (test::Scenario, registry::Registry, registry::AdminCap, PredictManager) {
     let mut scenario = test::begin(test_constants::alice());
     let (mut reg, admin_cap) = registry::new_for_testing(scenario.ctx());
-    let clock = clock::create_for_testing(scenario.ctx());
     let manager = registry::create_manager(&mut reg, scenario.ctx());
-    (scenario, reg, admin_cap, clock, manager)
+    (scenario, reg, admin_cap, manager)
 }
 
 fun finish(
     scenario: test::Scenario,
     reg: registry::Registry,
     admin_cap: registry::AdminCap,
-    clock: Clock,
     manager: PredictManager,
 ) {
     destroy(manager);
     destroy(admin_cap);
-    destroy(clock);
     registry::destroy_registry_drop_for_testing(reg);
     scenario.end();
 }
@@ -47,189 +36,82 @@ fun finish(
 // === stake_deep ===
 
 #[test]
-fun stake_locks_deep_and_sets_live_power() {
-    let (mut scenario, mut reg, admin_cap, clock, mut manager) = begin();
+fun stake_adds_to_inactive() {
+    let (mut scenario, mut reg, admin_cap, mut manager) = begin();
 
-    let deep = coin::mint_for_testing<DEEP>(HUNDRED_K_DEEP, scenario.ctx());
-    reg.stake_deep(&mut manager, deep, TWO_YEAR_DAYS, &clock, scenario.ctx());
+    let deep = coin::mint_for_testing<DEEP>(FIFTY_K_DEEP, scenario.ctx());
+    reg.stake_deep(&mut manager, deep, scenario.ctx());
 
-    assert_eq!(manager.staked_deep(), HUNDRED_K_DEEP);
-    assert_eq!(manager.stake_end_ms(), TWO_YEAR_MS);
-    // Full two-year lock -> weight 1 -> power == staked.
-    assert_eq!(manager.effective_power(&clock), HUNDRED_K_DEEP);
+    // Not active until the next epoch.
+    assert_eq!(manager.inactive_stake(), FIFTY_K_DEEP);
+    assert_eq!(manager.active_stake(), 0);
 
-    finish(scenario, reg, admin_cap, clock, manager);
+    finish(scenario, reg, admin_cap, manager);
 }
 
 #[test]
-fun top_up_adds_deep_and_raises_power() {
-    let (mut scenario, mut reg, admin_cap, clock, mut manager) = begin();
+fun stake_activates_prior_inactive_next_epoch() {
+    let (mut scenario, mut reg, admin_cap, mut manager) = begin();
 
     let first = coin::mint_for_testing<DEEP>(FIFTY_K_DEEP, scenario.ctx());
-    reg.stake_deep(&mut manager, first, TWO_YEAR_DAYS, &clock, scenario.ctx());
-    assert_eq!(manager.effective_power(&clock), FIFTY_K_DEEP);
+    reg.stake_deep(&mut manager, first, scenario.ctx());
 
-    // Add another 50k keeping the same two-year end.
-    let second = coin::mint_for_testing<DEEP>(FIFTY_K_DEEP, scenario.ctx());
-    reg.stake_deep(&mut manager, second, TWO_YEAR_DAYS, &clock, scenario.ctx());
+    // New epoch + a second stake: the first stake rolls into active, the new
+    // one lands in inactive.
+    scenario.next_epoch(test_constants::alice());
+    let second = coin::mint_for_testing<DEEP>(THIRTY_K_DEEP, scenario.ctx());
+    reg.stake_deep(&mut manager, second, scenario.ctx());
 
-    assert_eq!(manager.staked_deep(), HUNDRED_K_DEEP);
-    assert_eq!(manager.effective_power(&clock), HUNDRED_K_DEEP);
+    assert_eq!(manager.active_stake(), FIFTY_K_DEEP);
+    assert_eq!(manager.inactive_stake(), THIRTY_K_DEEP);
 
-    finish(scenario, reg, admin_cap, clock, manager);
-}
-
-#[test]
-fun extend_lock_with_zero_topup_raises_power() {
-    let (mut scenario, mut reg, admin_cap, clock, mut manager) = begin();
-
-    // 100k locked for 0.4 of a year -> weight 0.4, squared 0.16 -> 16k.
-    let deep = coin::mint_for_testing<DEEP>(HUNDRED_K_DEEP, scenario.ctx());
-    reg.stake_deep(&mut manager, deep, PARTIAL_LOCK_DAYS, &clock, scenario.ctx());
-    assert_eq!(manager.effective_power(&clock), 16_000_000_000);
-
-    // Extend to a full year with no added DEEP -> full power (weight saturates at 1y).
-    let zero = coin::zero<DEEP>(scenario.ctx());
-    reg.stake_deep(&mut manager, zero, ONE_YEAR_DAYS, &clock, scenario.ctx());
-    assert_eq!(manager.staked_deep(), HUNDRED_K_DEEP);
-    assert_eq!(manager.effective_power(&clock), HUNDRED_K_DEEP);
-
-    finish(scenario, reg, admin_cap, clock, manager);
-}
-
-#[test, expected_failure(abort_code = registry::EInvalidLockDays)]
-fun stake_beyond_max_period_aborts() {
-    let (mut scenario, mut reg, _admin_cap, clock, mut manager) = begin();
-
-    // A lock past the 2-year cap is rejected.
-    let deep = coin::mint_for_testing<DEEP>(FIFTY_K_DEEP, scenario.ctx());
-    reg.stake_deep(&mut manager, deep, OVER_MAX_LOCK_DAYS, &clock, scenario.ctx());
-    abort 999
-}
-
-#[test]
-fun power_above_max_benefit_counts_higher() {
-    let (mut scenario, mut reg, admin_cap, clock, mut manager) = begin();
-
-    // Staking beyond 100k is allowed; power is uncapped (benefits cap by power).
-    let deep = coin::mint_for_testing<DEEP>(TWO_HUNDRED_K_DEEP, scenario.ctx());
-    reg.stake_deep(&mut manager, deep, TWO_YEAR_DAYS, &clock, scenario.ctx());
-
-    assert_eq!(manager.effective_power(&clock), TWO_HUNDRED_K_DEEP);
-
-    finish(scenario, reg, admin_cap, clock, manager);
-}
-
-#[test, expected_failure(abort_code = registry::EInvalidLockDays)]
-fun stake_zero_lock_days_aborts() {
-    let (mut scenario, mut reg, _admin_cap, clock, mut manager) = begin();
-
-    let deep = coin::mint_for_testing<DEEP>(HUNDRED_K_DEEP, scenario.ctx());
-    reg.stake_deep(&mut manager, deep, 0, &clock, scenario.ctx());
-    abort 999
-}
-
-#[test, expected_failure(abort_code = registry::EStakeLocked)]
-fun stake_shortening_lock_aborts() {
-    let (mut scenario, mut reg, _admin_cap, clock, mut manager) = begin();
-
-    let first = coin::mint_for_testing<DEEP>(HUNDRED_K_DEEP, scenario.ctx());
-    reg.stake_deep(&mut manager, first, ONE_YEAR_DAYS, &clock, scenario.ctx());
-
-    // A shorter end than the current lock is rejected.
-    let second = coin::mint_for_testing<DEEP>(FIFTY_K_DEEP, scenario.ctx());
-    reg.stake_deep(&mut manager, second, SHORTER_LOCK_DAYS, &clock, scenario.ctx());
-    abort 999
-}
-
-#[test, expected_failure(abort_code = predict_manager::ENotOwner)]
-fun stake_by_non_owner_aborts() {
-    let (mut scenario, mut reg, _admin_cap, clock, mut manager) = begin();
-
-    scenario.next_tx(test_constants::bob());
-    let deep = coin::mint_for_testing<DEEP>(HUNDRED_K_DEEP, scenario.ctx());
-    reg.stake_deep(&mut manager, deep, ONE_YEAR_DAYS, &clock, scenario.ctx());
-    abort 999
+    finish(scenario, reg, admin_cap, manager);
 }
 
 // === unstake_deep ===
 
 #[test]
-fun unstake_after_expiry_returns_deep_and_clears_state() {
-    let (mut scenario, mut reg, admin_cap, mut clock, mut manager) = begin();
+fun unstake_returns_all_anytime_no_penalty() {
+    let (mut scenario, mut reg, admin_cap, mut manager) = begin();
 
-    let deep = coin::mint_for_testing<DEEP>(HUNDRED_K_DEEP, scenario.ctx());
-    reg.stake_deep(&mut manager, deep, ONE_YEAR_DAYS, &clock, scenario.ctx());
+    let deep = coin::mint_for_testing<DEEP>(FIFTY_K_DEEP, scenario.ctx());
+    reg.stake_deep(&mut manager, deep, scenario.ctx());
 
-    clock.set_for_testing(ONE_YEAR_MS);
-    let returned = reg.unstake_deep(&mut manager, &clock, scenario.ctx());
-
-    assert_eq!(returned.value(), HUNDRED_K_DEEP);
-    assert_eq!(manager.staked_deep(), 0);
-    assert_eq!(manager.stake_end_ms(), 0);
-    assert_eq!(manager.effective_power(&clock), 0);
+    // Unstake immediately (same epoch, still inactive) — full amount, no penalty.
+    let returned = reg.unstake_deep(&mut manager, scenario.ctx());
+    assert_eq!(returned.value(), FIFTY_K_DEEP);
+    assert_eq!(manager.active_stake(), 0);
+    assert_eq!(manager.inactive_stake(), 0);
 
     destroy(returned);
-    finish(scenario, reg, admin_cap, clock, manager);
+    finish(scenario, reg, admin_cap, manager);
 }
-
-#[test, expected_failure(abort_code = registry::EStakeLocked)]
-fun unstake_before_expiry_aborts() {
-    let (mut scenario, mut reg, _admin_cap, clock, mut manager) = begin();
-
-    let deep = coin::mint_for_testing<DEEP>(HUNDRED_K_DEEP, scenario.ctx());
-    reg.stake_deep(&mut manager, deep, ONE_YEAR_DAYS, &clock, scenario.ctx());
-
-    // Lock still active (clock at 0 < end).
-    let returned = reg.unstake_deep(&mut manager, &clock, scenario.ctx());
-    destroy(returned);
-    abort 999
-}
-
-// === early_unstake_deep ===
 
 #[test]
-fun early_unstake_burns_half_and_returns_rest() {
-    let mut scenario = test::begin(test_constants::alice());
-    deep::share_treasury_for_testing(scenario.ctx());
-    scenario.next_tx(test_constants::alice());
+fun unstake_returns_active_and_inactive() {
+    let (mut scenario, mut reg, admin_cap, mut manager) = begin();
 
-    let mut treasury = scenario.take_shared<ProtectedTreasury>();
-    let (mut reg, admin_cap) = registry::new_for_testing(scenario.ctx());
-    let clock = clock::create_for_testing(scenario.ctx());
-    let mut manager = registry::create_manager(&mut reg, scenario.ctx());
+    let first = coin::mint_for_testing<DEEP>(FIFTY_K_DEEP, scenario.ctx());
+    reg.stake_deep(&mut manager, first, scenario.ctx());
+    scenario.next_epoch(test_constants::alice());
+    let second = coin::mint_for_testing<DEEP>(THIRTY_K_DEEP, scenario.ctx());
+    reg.stake_deep(&mut manager, second, scenario.ctx()); // 50k active, 30k inactive
 
-    let deep = coin::mint_for_testing<DEEP>(HUNDRED_K_DEEP, scenario.ctx());
-    reg.stake_deep(&mut manager, deep, ONE_YEAR_DAYS, &clock, scenario.ctx());
-
-    // Still locked (clock at 0 < end): 50% burned, 50% returned.
-    let returned = reg.early_unstake_deep(&mut manager, &mut treasury, &clock, scenario.ctx());
-    assert_eq!(returned.value(), HUNDRED_K_DEEP / 2);
-    assert_eq!(manager.staked_deep(), 0);
-    assert_eq!(manager.stake_end_ms(), 0);
+    let returned = reg.unstake_deep(&mut manager, scenario.ctx());
+    assert_eq!(returned.value(), FIFTY_K_DEEP + THIRTY_K_DEEP);
+    assert_eq!(manager.active_stake(), 0);
+    assert_eq!(manager.inactive_stake(), 0);
 
     destroy(returned);
-    test::return_shared(treasury);
-    finish(scenario, reg, admin_cap, clock, manager);
+    finish(scenario, reg, admin_cap, manager);
 }
 
-#[test, expected_failure(abort_code = registry::EStakeNotLocked)]
-fun early_unstake_after_expiry_aborts() {
-    let mut scenario = test::begin(test_constants::alice());
-    deep::share_treasury_for_testing(scenario.ctx());
-    scenario.next_tx(test_constants::alice());
+#[test, expected_failure(abort_code = predict_manager::ENotOwner)]
+fun stake_by_non_owner_aborts() {
+    let (mut scenario, mut reg, _admin_cap, mut manager) = begin();
 
-    let mut treasury = scenario.take_shared<ProtectedTreasury>();
-    let (mut reg, _admin_cap) = registry::new_for_testing(scenario.ctx());
-    let mut clock = clock::create_for_testing(scenario.ctx());
-    let mut manager = registry::create_manager(&mut reg, scenario.ctx());
-
-    let deep = coin::mint_for_testing<DEEP>(HUNDRED_K_DEEP, scenario.ctx());
-    reg.stake_deep(&mut manager, deep, ONE_YEAR_DAYS, &clock, scenario.ctx());
-
-    // Lock expired -> early unstake is rejected (use unstake_deep instead).
-    clock.set_for_testing(ONE_YEAR_MS);
-    let returned = reg.early_unstake_deep(&mut manager, &mut treasury, &clock, scenario.ctx());
-    destroy(returned);
+    scenario.next_tx(test_constants::bob());
+    let deep = coin::mint_for_testing<DEEP>(FIFTY_K_DEEP, scenario.ctx());
+    reg.stake_deep(&mut manager, deep, scenario.ctx());
     abort 999
 }

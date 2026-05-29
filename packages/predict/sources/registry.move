@@ -9,7 +9,6 @@
 /// owning modules.
 module deepbook_predict::registry;
 
-use deepbook::math;
 use deepbook_predict::{
     builder_code,
     constants,
@@ -24,11 +23,10 @@ use sui::{
     balance::{Self, Balance},
     clock::Clock,
     coin::Coin,
-    event,
     table::{Self, Table},
     vec_set::{Self, VecSet}
 };
-use token::deep::{Self, DEEP, ProtectedTreasury};
+use token::deep::DEEP;
 
 const EFeedIdMismatch: u64 = 2;
 const EPythSourceAlreadyCreated: u64 = 3;
@@ -39,12 +37,6 @@ const EPackageVersionDisabled: u64 = 7;
 const EVersionAlreadyEnabled: u64 = 8;
 const EVersionNotEnabled: u64 = 9;
 const ECannotDisableLastVersion: u64 = 10;
-/// The DEEP lock is still binding: it has not expired (on unstake) or a stake
-/// action tried to set an earlier lock end than the current one.
-const EStakeLocked: u64 = 11;
-const EInvalidLockDays: u64 = 12;
-/// Early unstake was called but the lock already ended; use `unstake_deep`.
-const EStakeNotLocked: u64 = 13;
 
 /// Capability for admin operations.
 /// Created during package init, transferred to deployer (multisig).
@@ -72,16 +64,9 @@ public struct Registry has key {
     /// Package versions currently permitted to mutate per-pool state. Authoritative
     /// source; pool objects mirror this set and refresh via permissionless sync.
     allowed_versions: VecSet<u64>,
-    /// Pooled DEEP locked by all managers for staking. Per-manager amounts are
-    /// mirrored on each `PredictManager`.
+    /// Pooled DEEP staked by all managers. Per-manager active/inactive amounts
+    /// are mirrored on each `PredictManager`.
     staked_deep: Balance<DEEP>,
-}
-
-/// Emitted when a manager unstakes DEEP before its lock ends and a penalty is burned.
-public struct DeepUnstakedEarly has copy, drop, store {
-    predict_manager_id: ID,
-    returned: u64,
-    burned: u64,
 }
 
 // === Public Functions ===
@@ -509,75 +494,34 @@ public fun create_manager(registry: &mut Registry, ctx: &mut TxContext): Predict
     predict_manager::new(&mut registry.id, ctx)
 }
 
-/// Stake DEEP, or top up / extend an existing lock, for trading benefits.
+/// Stake DEEP for trading benefits.
 ///
-/// Adds `deep` to the manager's locked balance and commits the lock to
-/// `lock_days` from now (1..=2 years; longer is rejected). The new lock end may
-/// not be earlier than the current one. Longer locks and larger stakes both
-/// raise live power. Pass a zero-value coin to extend the lock without adding
-/// DEEP.
+/// Adds `deep` to the manager's stake as inactive; it activates next epoch
+/// (`PredictManager.update_stake`, run by the trade/claim flows). Can be called
+/// anytime, any number of times.
 public fun stake_deep(
     registry: &mut Registry,
     manager: &mut PredictManager,
     deep: Coin<DEEP>,
-    lock_days: u64,
-    clock: &Clock,
     ctx: &TxContext,
 ) {
     registry.assert_version_allowed();
     manager.assert_owner(ctx);
-    assert!(lock_days >= 1 && lock_days <= constants::max_lock_days!(), EInvalidLockDays);
-
-    let new_end_ms = clock.timestamp_ms() + lock_days * constants::day_ms!();
-    assert!(new_end_ms >= manager.stake_end_ms(), EStakeLocked);
-
-    let new_amount = manager.staked_deep() + deep.value();
+    manager.update_stake(ctx);
+    manager.add_inactive_stake(deep.value());
     registry.staked_deep.join(deep.into_balance());
-    manager.set_stake(new_amount, new_end_ms);
 }
 
-/// Withdraw all locked DEEP once the lock has expired.
+/// Withdraw all staked DEEP (active and inactive) at any time, no penalty.
 public fun unstake_deep(
     registry: &mut Registry,
     manager: &mut PredictManager,
-    clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<DEEP> {
     registry.assert_version_allowed();
     manager.assert_owner(ctx);
-    assert!(clock.timestamp_ms() >= manager.stake_end_ms(), EStakeLocked);
-
-    let amount = manager.clear_stake();
+    let amount = manager.remove_all_stake();
     registry.staked_deep.split(amount).into_coin(ctx)
-}
-
-/// Unstake DEEP before the lock ends, burning a fixed penalty fraction.
-///
-/// Burns `early_unstake_burn_rate` of the locked DEEP via the DEEP treasury and
-/// returns the remainder to the owner. Aborts once the lock has expired — use
-/// `unstake_deep` for a penalty-free withdrawal then.
-public fun early_unstake_deep(
-    registry: &mut Registry,
-    manager: &mut PredictManager,
-    treasury: &mut ProtectedTreasury,
-    clock: &Clock,
-    ctx: &mut TxContext,
-): Coin<DEEP> {
-    registry.assert_version_allowed();
-    manager.assert_owner(ctx);
-    assert!(clock.timestamp_ms() < manager.stake_end_ms(), EStakeNotLocked);
-
-    let amount = manager.clear_stake();
-    let burn_amount = math::mul(amount, constants::early_unstake_burn_rate!());
-    let mut withdrawn = registry.staked_deep.split(amount);
-    deep::burn(treasury, withdrawn.split(burn_amount).into_coin(ctx));
-
-    event::emit(DeepUnstakedEarly {
-        predict_manager_id: manager.id(),
-        returned: withdrawn.value(),
-        burned: burn_amount,
-    });
-    withdrawn.into_coin(ctx)
 }
 
 /// Create and share a derived PredictManager for the caller.

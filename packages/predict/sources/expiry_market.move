@@ -292,14 +292,12 @@ public fun redeem(
 /// positions close. Permissionless by design: any caller may settle this for a
 /// manager — the rebate is credited to the manager via its deposit cap and the
 /// un-granted remainder compounds into PLP cash, so PLP value accrues without
-/// the owner acting. The rebate share uses the manager's live staking power at
-/// claim time.
+/// the owner acting. The rebate share uses the manager's active staking.
 public fun claim_trading_loss_rebate(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
     config: &ProtocolConfig,
     market_oracle: &MarketOracle,
-    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     market.assert_version_allowed();
@@ -324,11 +322,12 @@ public fun claim_trading_loss_rebate(
     let max_rebate = math::mul(trading_fees_paid, market.trading_loss_rebate_rate);
     let eligible_rebate = trading_loss.min(max_rebate);
 
-    // Staking power decides the manager's share of the eligible rebate; the
+    // Active staking decides the manager's share of the eligible rebate; the
     // remainder compounds into LP cash (returns fully to the pool on the
     // settlement sweep, no protocol/insurance split).
+    manager.update_stake(ctx);
     let fraction = staking::rebate_fraction(
-        manager.effective_power(clock),
+        manager.active_stake(),
         config.stake_config().max_benefit_power(),
     );
     let rebate_amount = math::mul(eligible_rebate, fraction);
@@ -556,10 +555,9 @@ fun apply_stake_fee_discount(
     manager: &PredictManager,
     config: &ProtocolConfig,
     fee_amount: u64,
-    clock: &Clock,
 ): (u64, u64) {
     let discount = staking::fee_discount_fraction(
-        manager.effective_power(clock),
+        manager.active_stake(),
         config.stake_config().max_benefit_power(),
     );
     (fee_amount - math::mul(fee_amount, discount), discount)
@@ -597,6 +595,7 @@ fun mint_internal(
     ctx: &mut TxContext,
 ): u256 {
     manager.assert_owner(ctx);
+    manager.update_stake(ctx);
     market.assert_market_oracle(market_oracle);
     market.assert_pyth_feed(pyth);
 
@@ -612,7 +611,7 @@ fun mint_internal(
             leverage,
             clock,
         );
-    let (fee_amount, fee_discount) = apply_stake_fee_discount(manager, config, fee_amount, clock);
+    let (fee_amount, fee_discount) = apply_stake_fee_discount(manager, config, fee_amount);
 
     market.assert_allocation_backing();
     market.settle_mint_payment(manager, &minted_order, fee_amount, fee_discount, ctx);
@@ -631,6 +630,7 @@ fun redeem_live_internal(
     ctx: &mut TxContext,
 ): Option<u256> {
     manager.assert_owner(ctx);
+    manager.update_stake(ctx);
     market.assert_pyth_feed(pyth);
     config.pricing_config().assert_live_quote_available(market_oracle, pyth, clock);
     manager.remove_position(market.id(), order.id());
@@ -645,7 +645,7 @@ fun redeem_live_internal(
             close_quantity,
             clock,
         );
-    let (fee_amount, fee_discount) = apply_stake_fee_discount(manager, config, fee_amount, clock);
+    let (fee_amount, fee_discount) = apply_stake_fee_discount(manager, config, fee_amount);
 
     let replacement_order_id = if (resulting_order.id() == order.id()) {
         option::none()

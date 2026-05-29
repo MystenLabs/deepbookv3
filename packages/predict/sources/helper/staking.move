@@ -3,16 +3,12 @@
 
 /// DEEP staking policy for Predict.
 ///
-/// Pure functions that turn a manager's locked DEEP into staking power and map
-/// that power to trading benefits. Power is computed live from the current
-/// stake, the lock end, and now: `staked_DEEP * weight^2` where
-/// `weight = min(remaining_lock / 1y, 1)`. It decays to 0 as the lock runs out,
-/// and the period weight saturates at 1 once at least a year remains — locks may
-/// run up to 2 years, which keeps power at the cap for longer rather than adding
-/// weight. Benefits scale linearly with power, reaching their maximum (50% fee
+/// Pure functions mapping a manager's active staked DEEP to trading benefits.
+/// Benefits scale linearly with active stake, reaching their maximum (50% fee
 /// discount, 100% loss rebate) at the admin-configured `max_benefit_power` and
-/// staying capped above it. All policy lives here so callers stay free of
-/// staking math.
+/// staying capped above it (more stake earns no extra benefit). Active stake is
+/// the epoch-activated portion tracked on the manager; this module is unaware of
+/// the epoch lifecycle. All policy lives here so callers stay free of staking math.
 module deepbook_predict::staking;
 
 use deepbook::math;
@@ -20,37 +16,23 @@ use deepbook_predict::constants;
 
 // === Public-Package Functions ===
 
-/// Live staking power for a stake of `staked_deep_raw` (raw DEEP units, 6
-/// decimals) locked until `stake_end_ms`, evaluated at `now_ms`. Zero once the
-/// lock has expired. The remaining-lock weight is squared, so longer locks earn
-/// disproportionately more power, and saturates at 1 beyond a full year.
-public(package) fun power(staked_deep_raw: u64, stake_end_ms: u64, now_ms: u64): u64 {
-    if (now_ms >= stake_end_ms) return 0;
-    let remaining_ms = stake_end_ms - now_ms;
-    let weight = math::div(remaining_ms, constants::ms_per_year!()).min(
-        constants::float_scaling!(),
-    );
-    let weight_squared = math::mul(weight, weight);
-    math::mul(staked_deep_raw, weight_squared)
+/// Trading-fee discount for an active stake, in FLOAT_SCALING (0..50%). Scales
+/// linearly up to the admin-configured `max_benefit_power`, capped above it.
+public(package) fun fee_discount_fraction(active_stake: u64, max_benefit_power: u64): u64 {
+    math::mul(benefit_ratio(active_stake, max_benefit_power), constants::max_fee_discount!())
 }
 
-/// Trading-fee discount for a power level, in FLOAT_SCALING (0..50%). Scales
-/// linearly with power up to the admin-configured `max_benefit_power`.
-public(package) fun fee_discount_fraction(power: u64, max_benefit_power: u64): u64 {
-    math::mul(benefit_ratio(power, max_benefit_power), constants::max_fee_discount!())
-}
-
-/// Share of a manager's eligible trading-loss rebate that is paid out for a
-/// power level, in FLOAT_SCALING (0..100%). Scales linearly with power up to the
+/// Share of a manager's eligible trading-loss rebate that is paid out for an
+/// active stake, in FLOAT_SCALING (0..100%). Scales linearly up to the
 /// admin-configured `max_benefit_power`; the complement compounds to LPs.
-public(package) fun rebate_fraction(power: u64, max_benefit_power: u64): u64 {
-    math::mul(benefit_ratio(power, max_benefit_power), constants::max_rebate_fraction!())
+public(package) fun rebate_fraction(active_stake: u64, max_benefit_power: u64): u64 {
+    math::mul(benefit_ratio(active_stake, max_benefit_power), constants::max_rebate_fraction!())
 }
 
 // === Private Functions ===
 
-/// Fraction of the maximum benefit earned at a power level, in FLOAT_SCALING
-/// (0..1), linear in power and capped at full benefit.
-fun benefit_ratio(power: u64, max_benefit_power: u64): u64 {
-    math::div(power, max_benefit_power).min(constants::float_scaling!())
+/// Fraction of the maximum benefit earned at an active stake, in FLOAT_SCALING
+/// (0..1), linear in stake and capped at full benefit.
+fun benefit_ratio(active_stake: u64, max_benefit_power: u64): u64 {
+    math::div(active_stake, max_benefit_power).min(constants::float_scaling!())
 }

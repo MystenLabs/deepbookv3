@@ -39,29 +39,13 @@ public macro fun leverage_floor_window_ms(): u64 { 31_536_000_000 }
 
 // === Staking ===
 
-/// Milliseconds in a day; DEEP stake lock periods are expressed in whole days.
-public macro fun day_ms(): u64 { 86_400_000 }
-
 /// Raw units in one whole DEEP (DEEP uses 6 decimals).
 public macro fun deep_decimals(): u64 { 1_000_000 }
 
-/// Maximum stake lock duration: 2 years. The staking-power weight saturates at 1
-/// once at least a year (`ms_per_year`) remains, so locking beyond a year keeps
-/// power at the cap for longer rather than adding weight.
-public macro fun max_stake_period_ms(): u64 { 2 * ms_per_year!() }
-
-/// Maximum stake lock in whole days (the 2-year horizon). Locks beyond this are
-/// rejected at the staking entry point.
-public macro fun max_lock_days(): u64 { max_stake_period_ms!() / day_ms!() }
-
-/// Fraction of staked DEEP burned when unstaking before the lock ends, in
-/// FLOAT_SCALING (50%). A penalty for breaking the committed lock early.
-public macro fun early_unstake_burn_rate(): u64 { 500_000_000 }
-
-/// Trading-fee discount at full benefit power, in FLOAT_SCALING (50%).
+/// Trading-fee discount at full active stake, in FLOAT_SCALING (50%).
 public macro fun max_fee_discount(): u64 { 500_000_000 }
 
-/// Loss-rebate share at full benefit power, in FLOAT_SCALING (100%).
+/// Loss-rebate share at full active stake, in FLOAT_SCALING (100%).
 public macro fun max_rebate_fraction(): u64 { 1_000_000_000 }
 
 // === Builder Fees ===

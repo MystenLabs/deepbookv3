@@ -6,14 +6,13 @@ module deepbook_predict::predict_manager_tests;
 
 use deepbook_predict::{
     builder_code,
-    constants,
     predict_manager::{Self, PredictManager},
     registry,
     test_constants
 };
 use dusdc::dusdc::DUSDC;
 use std::unit_test::{assert_eq, destroy};
-use sui::{clock, coin, test_scenario::{Self as test, return_shared}};
+use sui::{coin, test_scenario::{Self as test, return_shared}};
 
 const DEPOSIT_AMOUNT: u64 = 1_000_000;
 const WITHDRAW_AMOUNT: u64 = 400_000;
@@ -26,6 +25,7 @@ const FEE_AMOUNT: u64 = 5_000;
 const CASH_PAID: u64 = 100_000;
 const CASH_RECEIVED: u64 = 60_000;
 const STAKE_AMOUNT: u64 = 100_000_000_000; // 100k DEEP raw (6 decimals)
+const STAKE_AMOUNT_2: u64 = 30_000_000_000; // 30k DEEP raw
 
 // === Helpers ===
 
@@ -411,60 +411,68 @@ fun assert_owner_aborts_for_non_owner() {
 // === Staking state ===
 
 #[test]
-fun set_stake_records_amount_and_end() {
+fun add_inactive_stake_goes_to_inactive() {
     let (mut scenario, registry_id) = setup();
     let mut manager = create_alice_manager(&mut scenario, registry_id);
 
-    manager.set_stake(STAKE_AMOUNT, 5_000);
-    assert_eq!(manager.staked_deep(), STAKE_AMOUNT);
-    assert_eq!(manager.stake_end_ms(), 5_000);
+    manager.add_inactive_stake(STAKE_AMOUNT);
+    assert_eq!(manager.inactive_stake(), STAKE_AMOUNT);
+    assert_eq!(manager.active_stake(), 0);
 
     destroy(manager);
     scenario.end();
 }
 
 #[test]
-fun effective_power_is_live_and_zero_after_expiry() {
+fun update_stake_is_noop_within_epoch() {
     let (mut scenario, registry_id) = setup();
     let mut manager = create_alice_manager(&mut scenario, registry_id);
-    let mut clock = clock::create_for_testing(scenario.ctx());
 
-    // Lock 100k DEEP for the full 2-year cap from epoch 0.
-    manager.set_stake(STAKE_AMOUNT, constants::max_stake_period_ms!());
-
-    // Full power while >= 1 year remains (the weight saturates at 1 year).
-    clock.set_for_testing(0);
-    assert_eq!(manager.effective_power(&clock), STAKE_AMOUNT);
-    clock.set_for_testing(constants::ms_per_year!()); // 1 year remaining
-    assert_eq!(manager.effective_power(&clock), STAKE_AMOUNT);
-
-    // Half a year remaining -> weight 0.5, squared 0.25 -> 25k DEEP.
-    clock.set_for_testing(2 * constants::ms_per_year!() - constants::ms_per_year!() / 2);
-    assert_eq!(manager.effective_power(&clock), 25_000_000_000);
-
-    // At expiry -> zero.
-    clock.set_for_testing(constants::max_stake_period_ms!());
-    assert_eq!(manager.effective_power(&clock), 0);
+    manager.add_inactive_stake(STAKE_AMOUNT);
+    manager.update_stake(scenario.ctx()); // same epoch as creation
+    assert_eq!(manager.inactive_stake(), STAKE_AMOUNT);
+    assert_eq!(manager.active_stake(), 0);
 
     destroy(manager);
-    destroy(clock);
     scenario.end();
 }
 
 #[test]
-fun clear_stake_returns_amount_and_zeroes_state() {
+fun update_stake_activates_inactive_next_epoch() {
     let (mut scenario, registry_id) = setup();
     let mut manager = create_alice_manager(&mut scenario, registry_id);
-    let clock = clock::create_for_testing(scenario.ctx());
 
-    manager.set_stake(STAKE_AMOUNT, constants::ms_per_year!());
-    let returned = manager.clear_stake();
-    assert_eq!(returned, STAKE_AMOUNT);
-    assert_eq!(manager.staked_deep(), 0);
-    assert_eq!(manager.stake_end_ms(), 0);
-    assert_eq!(manager.effective_power(&clock), 0);
+    manager.add_inactive_stake(STAKE_AMOUNT);
+    scenario.next_epoch(test_constants::alice());
+    manager.update_stake(scenario.ctx());
+
+    assert_eq!(manager.active_stake(), STAKE_AMOUNT);
+    assert_eq!(manager.inactive_stake(), 0);
+
+    // Staking more after activation lands in inactive again.
+    manager.add_inactive_stake(STAKE_AMOUNT_2);
+    assert_eq!(manager.active_stake(), STAKE_AMOUNT);
+    assert_eq!(manager.inactive_stake(), STAKE_AMOUNT_2);
 
     destroy(manager);
-    destroy(clock);
+    scenario.end();
+}
+
+#[test]
+fun remove_all_stake_returns_active_plus_inactive_and_zeroes() {
+    let (mut scenario, registry_id) = setup();
+    let mut manager = create_alice_manager(&mut scenario, registry_id);
+
+    manager.add_inactive_stake(STAKE_AMOUNT);
+    scenario.next_epoch(test_constants::alice());
+    manager.update_stake(scenario.ctx()); // STAKE_AMOUNT now active
+    manager.add_inactive_stake(STAKE_AMOUNT_2); // plus inactive
+
+    let returned = manager.remove_all_stake();
+    assert_eq!(returned, STAKE_AMOUNT + STAKE_AMOUNT_2);
+    assert_eq!(manager.active_stake(), 0);
+    assert_eq!(manager.inactive_stake(), 0);
+
+    destroy(manager);
     scenario.end();
 }
