@@ -208,8 +208,8 @@ def plot_overall_pnl_panel(ax: plt.Axes, series: dict[str, list[float]]) -> None
     )
     ax.axhline(0, color="#64748b", linewidth=0.8)
     ax.set_title(
-        "Overall Vault PnL\n"
-        "LP live MTM PnL includes realized cash movements, fee surplus, and current live liability.",
+        "Live Pre-Terminal Vault PnL\n"
+        "LP live MTM PnL includes realized cash movements, fee surplus, and current live liability before terminal closeout.",
         loc="left",
         fontsize=11,
     )
@@ -243,7 +243,7 @@ def plot_scale_panel(ax: plt.Axes, series: dict[str, list[float]]) -> None:
     ax.axhline(0, color="#64748b", linewidth=0.8)
     ax.set_title(
         "Live Book Risk\n"
-        "Open contribution, live liability, and net open-book PnL share one DUSDC axis.",
+        "Open contribution, live liability, and net open-book PnL are sampled before terminal settlement.",
         loc="left",
         fontsize=11,
     )
@@ -284,8 +284,8 @@ def render(
     fig.text(
         0.075,
         0.93,
-        "Shows BTC context, overall vault live MTM PnL, and live open-book risk "
-        "over the source window.",
+        "Shows BTC context, live pre-terminal vault MTM PnL, and live open-book risk "
+        "over the source window before settlement closeout.",
         fontsize=10,
         color="#475569",
         ha="left",

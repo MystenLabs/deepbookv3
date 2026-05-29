@@ -153,14 +153,6 @@ interface MintParams {
   leverage: bigint;
 }
 
-interface LiquidateParams {
-  expiryMarketId: string;
-  protocolConfigId: string;
-  oracleId: string;
-  pythSourceId: string;
-  budget: bigint;
-}
-
 interface RedeemParams {
   expiryMarketId: string;
   protocolConfigId: string;
@@ -262,20 +254,6 @@ function addMint(tx: Transaction, params: MintParams): void {
       tx.pure.u64(higher),
       tx.pure.u64(params.quantity),
       tx.pure.u64(params.leverage),
-      tx.object(CLOCK_ID),
-    ],
-  });
-}
-
-function addLiquidate(tx: Transaction, params: LiquidateParams): void {
-  tx.moveCall({
-    target: target("expiry_market", "liquidate"),
-    arguments: [
-      tx.object(params.expiryMarketId),
-      tx.object(params.protocolConfigId),
-      tx.object(params.oracleId),
-      tx.object(params.pythSourceId),
-      tx.pure.u64(params.budget),
       tx.object(CLOCK_ID),
     ],
   });
@@ -394,78 +372,6 @@ export function setMarketOracleBasisBoundsTx(
   return tx;
 }
 
-export function updateBlockScholesPricesTx(
-  oracleId: string,
-  protocolConfigId: string,
-  pythSourceId: string,
-  oracleCapId: string,
-  spot: bigint,
-  forward: bigint
-): Transaction {
-  const tx = new Transaction();
-  tx.moveCall({
-    target: target("market_oracle", "update_block_scholes_prices"),
-    arguments: [
-      tx.object(oracleId),
-      tx.object(protocolConfigId),
-      tx.object(pythSourceId),
-      tx.object(oracleCapId),
-      tx.pure.u64(spot),
-      tx.pure.u64(forward),
-      tx.pure.u64(nextSourceTimestampMs()),
-      tx.object(CLOCK_ID),
-    ],
-  });
-  return tx;
-}
-
-export function updateSviTx(
-  oracleId: string,
-  protocolConfigId: string,
-  oracleCapId: string,
-  svi: {
-    a: bigint;
-    b: bigint;
-    rho: bigint;
-    rhoNegative: boolean;
-    m: bigint;
-    mNegative: boolean;
-    sigma: bigint;
-  }
-): Transaction {
-  const tx = new Transaction();
-  const rho = tx.moveCall({
-    target: target("i64", "from_parts"),
-    arguments: [tx.pure.u64(svi.rho), tx.pure.bool(svi.rhoNegative)],
-  });
-  const m = tx.moveCall({
-    target: target("i64", "from_parts"),
-    arguments: [tx.pure.u64(svi.m), tx.pure.bool(svi.mNegative)],
-  });
-  const sviParams = tx.moveCall({
-    target: target("market_oracle", "new_svi_params"),
-    arguments: [
-      tx.pure.u64(svi.a),
-      tx.pure.u64(svi.b),
-      rho,
-      m,
-      tx.pure.u64(svi.sigma),
-    ],
-  });
-  tx.moveCall({
-    target: target("market_oracle", "update_svi"),
-    arguments: [
-      tx.object(oracleId),
-      tx.object(protocolConfigId),
-      tx.object(oracleCapId),
-      sviParams,
-      tx.pure.u64(nextSourceTimestampMs()),
-      tx.object(CLOCK_ID),
-    ],
-  });
-  return tx;
-}
-
 export function supplyTx(poolVaultId: string, protocolConfigId: string, amount: bigint): Transaction {
   const tx = new Transaction();
   const dusdc = mintDusdc(tx, amount);
@@ -476,18 +382,6 @@ export function supplyTx(poolVaultId: string, protocolConfigId: string, amount: 
   const [plpCoin] = tx.moveCall({
     target: target("plp", "supply"),
     arguments: [tx.object(poolVaultId), tx.object(protocolConfigId), valuation, dusdc],
-  });
-  tx.transferObjects([plpCoin], tx.pure.address(address));
-  return tx;
-}
-
-export function supplyWithExpiryValuationTx(params: SupplyWithExpiryValuationParams): Transaction {
-  const tx = new Transaction();
-  const dusdc = mintDusdc(tx, params.amount);
-  const valuation = startPlpValuationWithExpiry(tx, params);
-  const [plpCoin] = tx.moveCall({
-    target: target("plp", "supply"),
-    arguments: [tx.object(params.poolVaultId), tx.object(params.protocolConfigId), valuation, dusdc],
   });
   tx.transferObjects([plpCoin], tx.pure.address(address));
   return tx;
@@ -505,22 +399,6 @@ export function refreshOracleAndSupplyWithExpiryValuationTx(
     arguments: [tx.object(params.poolVaultId), tx.object(params.protocolConfigId), valuation, dusdc],
   });
   tx.transferObjects([plpCoin], tx.pure.address(address));
-  return tx;
-}
-
-export function withdrawWithExpiryValuationTx(params: WithdrawWithExpiryValuationParams): Transaction {
-  const tx = new Transaction();
-  const valuation = startPlpValuationWithExpiry(tx, params);
-  const [dusdc] = tx.moveCall({
-    target: target("plp", "withdraw"),
-    arguments: [
-      tx.object(params.poolVaultId),
-      tx.object(params.protocolConfigId),
-      valuation,
-      tx.object(params.lpCoinId),
-    ],
-  });
-  tx.transferObjects([dusdc], tx.pure.address(address));
   return tx;
 }
 
@@ -578,12 +456,6 @@ export function depositToManagerTx(managerId: string, amount: bigint): Transacti
   return tx;
 }
 
-export function mintTx(params: MintParams): Transaction {
-  const tx = new Transaction();
-  addMint(tx, params);
-  return tx;
-}
-
 export function refreshOracleAndMintTx(params: OracleRefreshParams & MintParams): Transaction {
   const tx = new Transaction();
   addOracleRefresh(tx, params);
@@ -591,28 +463,9 @@ export function refreshOracleAndMintTx(params: OracleRefreshParams & MintParams)
   return tx;
 }
 
-export function refreshOracleAndLiquidateTx(params: OracleRefreshParams & LiquidateParams): Transaction {
-  const tx = new Transaction();
-  addOracleRefresh(tx, params);
-  addLiquidate(tx, params);
-  return tx;
-}
-
 export function refreshOracleAndRedeemTx(params: OracleRefreshParams & RedeemParams): Transaction {
   const tx = new Transaction();
   addOracleRefresh(tx, params);
-  addRedeem(tx, params);
-  return tx;
-}
-
-export function liquidateTx(params: LiquidateParams): Transaction {
-  const tx = new Transaction();
-  addLiquidate(tx, params);
-  return tx;
-}
-
-export function redeemTx(params: RedeemParams): Transaction {
-  const tx = new Transaction();
   addRedeem(tx, params);
   return tx;
 }

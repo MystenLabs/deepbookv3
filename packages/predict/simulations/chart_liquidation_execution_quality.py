@@ -12,12 +12,9 @@ from sim_artifacts import FLOAT_SCALING, PREDICT_ECONOMIC_SCHEMA_VERSION, dusdc 
 
 
 def liquidation_threshold_value(update: dict[str, Any], floor: int) -> int:
-    explicit = update.get("liquidation_threshold_value")
-    if explicit is not None:
-        return int(explicit)
     ltv = update.get("liquidation_ltv")
     if ltv is None:
-        return floor
+        raise ValueError("order_liquidated update is missing liquidation_ltv")
     numerator = floor * FLOAT_SCALING
     denominator = int(ltv)
     return numerator // denominator + (0 if numerator % denominator == 0 else 1)
@@ -76,7 +73,27 @@ def set_subtitle(fig, subtitle: str) -> None:
 
 def chart_execution_quality(events: list[dict[str, Any]], out_path: Path) -> None:
     if not events:
-        print(f"  Skipping {out_path.name}: no order_liquidated updates found")
+        fig, ax = plt.subplots(1, 1, figsize=(12, 5))
+        fig.suptitle("Liquidation Execution Quality", fontsize=16, y=0.98)
+        set_subtitle(
+            fig,
+            "Shows execution value versus debt floor and the LTV trigger, with bad debt only below the floor.",
+        )
+        ax.text(
+            0.5,
+            0.5,
+            "No order_liquidated updates were produced in this run.",
+            ha="center",
+            va="center",
+            fontsize=12,
+            color="#475569",
+            transform=ax.transAxes,
+        )
+        ax.set_axis_off()
+        fig.tight_layout(rect=(0, 0, 1, 0.9))
+        fig.savefig(out_path, dpi=150)
+        plt.close(fig)
+        print(f"  Saved {out_path}")
         return
 
     ratios = sorted(event["gap_ratio"] for event in events)

@@ -27,17 +27,15 @@ FLOW_ACTION_COLORS = {
     "withdraw": "#f97316",
 }
 
-LIQUIDATION_ACTION_ORDER = ("mint", "redeem", "supply", "withdraw", "liquidate")
+LIQUIDATION_ACTION_ORDER = ("mint", "redeem", "supply", "withdraw")
 LIQUIDATION_ACTION_LABELS = {
     "mint": "passive mint",
     "redeem": "passive redeem",
     "supply": "passive supply",
     "withdraw": "passive withdraw",
-    "liquidate": "manual liquidate",
 }
 LIQUIDATION_ACTION_COLORS = {
     **FLOW_ACTION_COLORS,
-    "liquidate": "#dc2626",
 }
 
 

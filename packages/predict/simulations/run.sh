@@ -19,87 +19,27 @@ BUILD_ENV="sim"
 SCENARIO_CONFIG="$SCRIPT_DIR/data/scenario_config.json"
 
 # --- Flag defaults ---
-RESUME=""
-RUN_SETUP=0
-RUN_SIM=0
-EXPLICIT_PHASES=0
-LIST=0
-SKIP_ANALYSIS=0
-SKIP_CHARTS=0
-CONTINUE_ON_REJECTS=0
 PYTHON_ONLY=0
 KEEP_DERIVED=0
+RUN_MAX_ROWS=""
+RUN_MAX_ROWS_SET=0
 
 usage() {
   cat <<EOF
-Usage: $0 [OPTIONS]
-
-Options:
-  --resume <id>    Resume an existing instance
-  --setup          Only run setup phase (publish + create objects)
-  --sim            Only run sim phase (execute replay + write artifacts)
-  --skip-charts    Skip chart rendering only
-  --skip-analysis  Skip post-run parity, long replay, and charts
-  --sim_max_rows <n>
-  --sim_max_rows=<n>
-  --sim-max-rows <n>
-  --sim-max-rows=<n>
-                   Limit replay to the first n executable CSV rows
-  --python-only    Run only the Python economic replay; no localnet
-  --keep-derived   Keep raw long-run Python data instead of deleting it after summary/charts
-  --continue-on-rejects
-                   Legacy no-op; executable CSV rows are expected to be legal
-  --list           List existing instances
-  -h, --help       Show this help
-
-Examples:
-  $0                              # new instance, full flow
-  $0 --setup                      # new instance, stop after setup
-  $0 --resume mar30-1422          # resume, auto-detect missing phases
-  $0 --resume mar30-1422 --sim    # resume, only run sim
-  $0 --resume mar30-1422 --sim --skip-charts
-  $0 --sim_max_rows=100
-  $0 --python-only --sim_max_rows=300
-  SIM_MAX_ROWS=100 $0
+Usage:
+  bash run.sh
+  bash run.sh --python-only
+  bash run.sh --sim_max_rows=N
+  bash run.sh --python-only --keep-derived
 EOF
 }
 
 # --- Parse flags ---
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --resume)
-      RESUME="$2"
-      shift 2
-      ;;
-    --setup)
-      RUN_SETUP=1
-      EXPLICIT_PHASES=1
-      shift
-      ;;
-    --sim)
-      RUN_SIM=1
-      EXPLICIT_PHASES=1
-      shift
-      ;;
-    --list)
-      LIST=1
-      shift
-      ;;
-    --skip-analysis)
-      SKIP_ANALYSIS=1
-      SKIP_CHARTS=1
-      shift
-      ;;
-    --skip-charts)
-      SKIP_CHARTS=1
-      shift
-      ;;
-    --sim_max_rows|--sim-max-rows)
-      SIM_MAX_ROWS="$2"
-      shift 2
-      ;;
-    --sim_max_rows=*|--sim-max-rows=*)
-      SIM_MAX_ROWS="${1#*=}"
+    --sim_max_rows=*)
+      RUN_MAX_ROWS="${1#*=}"
+      RUN_MAX_ROWS_SET=1
       shift
       ;;
     --python-only)
@@ -110,14 +50,6 @@ while [[ $# -gt 0 ]]; do
       KEEP_DERIVED=1
       shift
       ;;
-    --continue-on-rejects)
-      CONTINUE_ON_REJECTS=1
-      shift
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
     *)
       echo "Unknown argument: $1"
       usage
@@ -126,52 +58,35 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [ "$PYTHON_ONLY" -eq 1 ]; then
-  if [ "$RUN_SETUP" -eq 1 ] || [ "$RUN_SIM" -eq 1 ] || [ "$EXPLICIT_PHASES" -eq 1 ]; then
-    echo "ERROR: --python-only cannot be combined with --setup or --sim"
-    exit 1
-  fi
+if [ "$RUN_MAX_ROWS_SET" -eq 1 ] && ! [[ "$RUN_MAX_ROWS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: --sim_max_rows must be a positive integer"
+  usage
+  exit 1
 fi
 
-# --- List instances ---
-if [ "$LIST" -eq 1 ]; then
-  if [ ! -d "$RUNS_DIR" ] || [ -z "$(ls -A "$RUNS_DIR" 2>/dev/null)" ]; then
-    echo "No instances found."
-    exit 0
-  fi
-  printf "%-20s %-8s %-8s %-8s\n" "INSTANCE" "SETUP" "LOCAL" "PYTHON"
-  printf "%-20s %-8s %-8s %-8s\n" "--------" "-----" "-----" "------"
-  for dir in "$RUNS_DIR"/*/; do
-    id=$(basename "$dir")
-    has_setup=$( [ -f "$dir/.env.localnet" ] && echo "done" || echo "-" )
-    has_local=$( [ -f "$dir/artifacts/local_data.json" ] && echo "done" || echo "-" )
-    has_python=$( [ -f "$dir/artifacts/python_data.json" ] && echo "done" || echo "-" )
-    printf "%-20s %-8s %-8s %-8s\n" "$id" "$has_setup" "$has_local" "$has_python"
-  done
-  exit 0
+if [ "$PYTHON_ONLY" -eq 1 ] && [ "$RUN_MAX_ROWS_SET" -eq 1 ]; then
+  echo "ERROR: --sim_max_rows is only supported for the full localnet/Python flow"
+  usage
+  exit 1
+fi
+
+if [ "$PYTHON_ONLY" -eq 0 ] && [ "$KEEP_DERIVED" -eq 1 ]; then
+  echo "ERROR: --keep-derived is only supported with --python-only"
+  usage
+  exit 1
 fi
 
 # --- Determine instance ---
-if [ -n "$RESUME" ]; then
-  INSTANCE_ID="$RESUME"
-  INSTANCE_DIR="$RUNS_DIR/$INSTANCE_ID"
-  if [ ! -d "$INSTANCE_DIR" ]; then
-    echo "ERROR: Instance '$INSTANCE_ID' not found at $INSTANCE_DIR"
-    exit 1
-  fi
-else
-  # Generate timestamp-based ID
-  INSTANCE_ID="$(date +%b%d-%H%M | tr '[:upper:]' '[:lower:]')"
-  if [ -d "$RUNS_DIR/$INSTANCE_ID" ]; then
-    suffix=2
-    while [ -d "$RUNS_DIR/${INSTANCE_ID}-${suffix}" ]; do
-      suffix=$((suffix + 1))
-    done
-    INSTANCE_ID="${INSTANCE_ID}-${suffix}"
-  fi
-  INSTANCE_DIR="$RUNS_DIR/$INSTANCE_ID"
-  mkdir -p "$INSTANCE_DIR"
+INSTANCE_ID="$(date +%b%d-%H%M | tr '[:upper:]' '[:lower:]')"
+if [ -d "$RUNS_DIR/$INSTANCE_ID" ]; then
+  suffix=2
+  while [ -d "$RUNS_DIR/${INSTANCE_ID}-${suffix}" ]; do
+    suffix=$((suffix + 1))
+  done
+  INSTANCE_ID="${INSTANCE_ID}-${suffix}"
 fi
+INSTANCE_DIR="$RUNS_DIR/$INSTANCE_ID"
+mkdir -p "$INSTANCE_DIR"
 
 CONFIG_DIR="$INSTANCE_DIR/localnet"
 CLIENT_CONFIG="$CONFIG_DIR/client.yaml"
@@ -179,7 +94,6 @@ export INSTANCE_DIR
 
 echo ""
 echo "==> Instance: $INSTANCE_ID"
-echo "    Resume:   bash run.sh --resume $INSTANCE_ID"
 echo ""
 
 cleanup_generated() {
@@ -212,17 +126,17 @@ run_long_python_replay() {
     --out "$out"
     --derived-out "$INSTANCE_DIR/artifacts/python_derived.json"
     --config "$SCENARIO_CONFIG"
-    --exact-time
-    --terminal-closeout
+    --long-run
   )
-  if [ -n "${SIM_MAX_ROWS:-}" ]; then
-    args+=(--max-rows "$SIM_MAX_ROWS")
+  if [ -n "$RUN_MAX_ROWS" ]; then
+    args+=(--max-rows "$RUN_MAX_ROWS")
   fi
   (cd "$SCRIPT_DIR" && python3 "${args[@]}")
 }
 
 if [ "$PYTHON_ONLY" -eq 1 ]; then
   mkdir -p "$INSTANCE_DIR/artifacts"
+  cleanup_generated
   PYTHON_SCENARIO="$SCRIPT_DIR/data/generated/long_scenario.csv"
   PYTHON_LONG_DATA="$INSTANCE_DIR/artifacts/python_long_data.json"
   echo "==> Generating long Python scenario..."
@@ -231,17 +145,14 @@ if [ "$PYTHON_ONLY" -eq 1 ]; then
   run_long_python_replay "$PYTHON_SCENARIO" "$PYTHON_LONG_DATA"
   echo "==> Writing economic summary..."
   (cd "$SCRIPT_DIR" && python3 summarize_economics.py "$INSTANCE_DIR/artifacts")
-  if [ "$SKIP_ANALYSIS" -eq 0 ] && [ "$SKIP_CHARTS" -eq 0 ]; then
-    echo ""
-    echo "==> Rendering charts..."
-    (cd "$SCRIPT_DIR" && python3 chart_market_overview.py "$PYTHON_LONG_DATA" "$INSTANCE_DIR/artifacts/python_derived.json")
-    (cd "$SCRIPT_DIR" && python3 chart_vault_pnl_fee_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json")
-    (cd "$SCRIPT_DIR" && python3 chart_liquidation_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json")
-    (cd "$SCRIPT_DIR" && python3 chart_liquidation_priority_budget.py "$INSTANCE_DIR/artifacts/python_derived.json")
-    (cd "$SCRIPT_DIR" && python3 chart_liquidation_execution_quality.py "$PYTHON_LONG_DATA")
-    echo "==> Updating economic summary..."
-    (cd "$SCRIPT_DIR" && python3 summarize_economics.py "$INSTANCE_DIR/artifacts")
-  fi
+  echo ""
+  echo "==> Rendering charts..."
+  (cd "$SCRIPT_DIR" && python3 chart_market_overview.py "$PYTHON_LONG_DATA" "$INSTANCE_DIR/artifacts/python_derived.json")
+  (cd "$SCRIPT_DIR" && python3 chart_vault_pnl_fee_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json")
+  (cd "$SCRIPT_DIR" && python3 chart_liquidation_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json")
+  (cd "$SCRIPT_DIR" && python3 chart_liquidation_execution_quality.py "$PYTHON_LONG_DATA")
+  echo "==> Updating economic summary..."
+  (cd "$SCRIPT_DIR" && python3 summarize_economics.py "$INSTANCE_DIR/artifacts")
   cleanup_long_outputs
   echo "==> Finalizing economic summary..."
   (cd "$SCRIPT_DIR" && python3 summarize_economics.py "$INSTANCE_DIR/artifacts")
@@ -249,37 +160,6 @@ if [ "$PYTHON_ONLY" -eq 1 ]; then
   echo "==> Done. Instance: $INSTANCE_ID"
   echo "    Summary: $INSTANCE_DIR/artifacts/economic_summary.json"
   exit 0
-fi
-
-# --- Phase selection ---
-if [ -n "$RESUME" ] && [ "$EXPLICIT_PHASES" -eq 0 ]; then
-  # Auto-detect missing phases
-  [ ! -f "$INSTANCE_DIR/.env.localnet" ] && RUN_SETUP=1
-  if [ ! -f "$INSTANCE_DIR/artifacts/local_data.json" ] || [ ! -f "$INSTANCE_DIR/artifacts/python_data.json" ]; then
-    RUN_SIM=1
-  fi
-
-  if [ "$RUN_SETUP" -eq 0 ] && [ "$RUN_SIM" -eq 0 ]; then
-    echo "All phases already complete. Nothing to do."
-    echo "Use --sim to force a re-run."
-    exit 0
-  fi
-elif [ -z "$RESUME" ] && [ "$EXPLICIT_PHASES" -eq 0 ]; then
-  # New instance, full flow
-  RUN_SETUP=1
-  RUN_SIM=1
-elif [ -z "$RESUME" ] && [ "$EXPLICIT_PHASES" -eq 1 ]; then
-  # New instance with explicit phase
-  if [ "$RUN_SIM" -eq 1 ]; then
-    echo "ERROR: --sim requires --resume (need existing instance state)"
-    exit 1
-  fi
-fi
-
-# --- Validate phase preconditions ---
-if [ "$RUN_SIM" -eq 1 ] && [ "$RUN_SETUP" -eq 0 ] && [ ! -f "$INSTANCE_DIR/artifacts/state.json" ]; then
-  echo "ERROR: --sim requires setup to be completed first (no state.json found)"
-  exit 1
 fi
 
 # --- Helpers ---
@@ -363,38 +243,11 @@ publish_package() {
     2>/tmp/sui-publish.err || true
 }
 
-wait_for_object() {
-  local object_id="$1"
-  local label="$2"
-
-  echo -n "    Waiting for $label"
-  for i in $(seq 1 30); do
-    if sui_client object "$object_id" --json >/dev/null 2>&1; then
-      echo " ready!"
-      return
-    fi
-    echo -n "."
-    sleep 1
-  done
-
-  echo " TIMEOUT"
-  echo "ERROR: $label object $object_id was not readable after localnet startup"
-  exit 1
-}
-
 # --- 1. Genesis ---
-if [ -z "$RESUME" ]; then
-  echo "==> Generating fresh genesis..."
-  rm -rf "$CONFIG_DIR"
-  mkdir -p "$CONFIG_DIR"
-  $SUI genesis --force --working-dir "$CONFIG_DIR"
-else
-  echo "==> Resuming instance $INSTANCE_ID (using existing chain state)"
-  if [ ! -d "$CONFIG_DIR" ]; then
-    echo "ERROR: localnet dir missing for instance $INSTANCE_ID"
-    exit 1
-  fi
-fi
+echo "==> Generating fresh genesis..."
+rm -rf "$CONFIG_DIR"
+mkdir -p "$CONFIG_DIR"
+$SUI genesis --force --working-dir "$CONFIG_DIR"
 
 # --- 2. Start localnet ---
 echo "==> Starting localnet..."
@@ -414,16 +267,7 @@ for i in $(seq 1 30); do
   [ "$i" -eq 30 ] && { echo " TIMEOUT"; exit 1; }
 done
 
-if [ -n "$RESUME" ] && [ -f "$INSTANCE_DIR/.env.localnet" ]; then
-  set -a
-  # shellcheck disable=SC1091
-  . "$INSTANCE_DIR/.env.localnet"
-  set +a
-  wait_for_object "$PACKAGE_ID" "predict package"
-fi
-
 # --- 3. Setup (publish packages) ---
-if [ "$RUN_SETUP" -eq 1 ]; then
   ACTIVE_ADDR=$(sui_client active-address)
   echo "==> Active address: $ACTIVE_ADDR"
 
@@ -581,85 +425,68 @@ RPC_URL=http://127.0.0.1:9000
 KEYSTORE_PATH=$CONFIG_DIR/sui.keystore
 EOF
   echo "==> Wrote .env.localnet"
-fi
 
 # --- 4. Run simulation ---
 cd "$SCRIPT_DIR"
+cleanup_generated
 
 NORMAL_SCENARIO="$SCRIPT_DIR/data/generated/normal_scenario.csv"
 
 run_sim() {
-  if [ ! -f "$NORMAL_SCENARIO" ]; then
-    echo "==> Generating normal localnet/Python scenario..."
-    generate_scenario normal "$NORMAL_SCENARIO"
-  fi
-  set -- "$@" --scenario "$NORMAL_SCENARIO"
-  if [ -n "${SIM_MAX_ROWS:-}" ]; then
-    set -- "$@" --max-rows "$SIM_MAX_ROWS"
-  fi
-  if [ "$CONTINUE_ON_REJECTS" -eq 1 ]; then
-    set -- "$@" --continue-on-rejects
+  echo "==> Generating normal localnet/Python scenario..."
+  generate_scenario normal "$NORMAL_SCENARIO"
+  if [ -n "$RUN_MAX_ROWS" ]; then
+    set -- "$@" --max-rows "$RUN_MAX_ROWS"
   fi
   npx tsx src/sim.ts "$@"
 }
 
-if [ "$RUN_SETUP" -eq 1 ] && [ "$RUN_SIM" -eq 0 ]; then
-  echo "==> Running setup only..."
-  run_sim --setup-only
-elif [ "$RUN_SETUP" -eq 1 ] && [ "$RUN_SIM" -eq 1 ]; then
-  echo "==> Running simulation (setup + execute)..."
-  run_sim
-elif [ "$RUN_SIM" -eq 1 ]; then
-  echo "==> Running simulation (execute only)..."
-  run_sim --execute-only
-fi
+echo "==> Running simulation (setup + execute)..."
+run_sim
 
-if [ "$RUN_SIM" -eq 1 ] && [ "$SKIP_CHARTS" -eq 0 ] \
-   && [ -f "$INSTANCE_DIR/artifacts/local_trace.json" ]; then
-  echo "==> Rendering gas chart..."
-  python3 chart_gas.py "$INSTANCE_DIR/artifacts/local_trace.json"
-fi
+for required_artifact in \
+  "$INSTANCE_DIR/artifacts/local_trace.json" \
+  "$INSTANCE_DIR/artifacts/local_data.json" \
+  "$INSTANCE_DIR/artifacts/python_data.json"; do
+  if [ ! -f "$required_artifact" ]; then
+    echo "ERROR: expected simulation artifact was not written: $required_artifact"
+    exit 1
+  fi
+done
 
-if [ "$RUN_SIM" -eq 1 ] && [ "$SKIP_ANALYSIS" -eq 0 ] \
-   && [ -f "$INSTANCE_DIR/artifacts/local_trace.json" ]; then
+echo "==> Rendering gas chart..."
+python3 chart_gas.py "$INSTANCE_DIR/artifacts/local_trace.json"
+
+echo "==> Updating economic summary..."
+python3 summarize_economics.py "$INSTANCE_DIR/artifacts"
+
+echo ""
+echo "==> Checking localnet/Python parity..."
+if python3 -c 'import json,sys; a=json.load(open(sys.argv[1])); b=json.load(open(sys.argv[2])); sys.exit(0 if a==b else 1)' \
+     "$INSTANCE_DIR/artifacts/local_data.json" "$INSTANCE_DIR/artifacts/python_data.json"; then
+  LONG_SCENARIO="$SCRIPT_DIR/data/generated/long_scenario.csv"
+  PYTHON_LONG_DATA="$INSTANCE_DIR/artifacts/python_long_data.json"
+  echo "    Parity OK. Generating long Python scenario..."
+  generate_scenario long "$LONG_SCENARIO"
+  echo "==> Running long Python economic replay..."
+  run_long_python_replay "$LONG_SCENARIO" "$PYTHON_LONG_DATA"
+  echo "==> Writing economic summary..."
+  python3 summarize_economics.py "$INSTANCE_DIR/artifacts"
+  echo "==> Rendering charts..."
+  python3 chart_market_overview.py "$PYTHON_LONG_DATA" "$INSTANCE_DIR/artifacts/python_derived.json"
+  python3 chart_vault_pnl_fee_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json"
+  python3 chart_liquidation_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json"
+  python3 chart_liquidation_execution_quality.py "$PYTHON_LONG_DATA"
   echo "==> Updating economic summary..."
   python3 summarize_economics.py "$INSTANCE_DIR/artifacts"
-fi
-
-if [ "$RUN_SIM" -eq 1 ] && [ "$SKIP_ANALYSIS" -eq 0 ] \
-   && [ -f "$INSTANCE_DIR/artifacts/local_data.json" ] \
-   && [ -f "$INSTANCE_DIR/artifacts/python_data.json" ]; then
-  echo ""
-  echo "==> Checking localnet/Python parity..."
-  if python3 -c 'import json,sys; a=json.load(open(sys.argv[1])); b=json.load(open(sys.argv[2])); sys.exit(0 if a==b else 1)' \
-       "$INSTANCE_DIR/artifacts/local_data.json" "$INSTANCE_DIR/artifacts/python_data.json"; then
-    LONG_SCENARIO="$SCRIPT_DIR/data/generated/long_scenario.csv"
-    PYTHON_LONG_DATA="$INSTANCE_DIR/artifacts/python_long_data.json"
-    echo "    Parity OK. Generating long Python scenario..."
-    generate_scenario long "$LONG_SCENARIO"
-    echo "==> Running long Python economic replay..."
-    run_long_python_replay "$LONG_SCENARIO" "$PYTHON_LONG_DATA"
-    echo "==> Writing economic summary..."
-    python3 summarize_economics.py "$INSTANCE_DIR/artifacts"
-    if [ "$SKIP_CHARTS" -eq 0 ]; then
-      echo "==> Rendering charts..."
-      python3 chart_market_overview.py "$PYTHON_LONG_DATA" "$INSTANCE_DIR/artifacts/python_derived.json"
-      python3 chart_vault_pnl_fee_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json"
-      python3 chart_liquidation_coverage.py "$INSTANCE_DIR/artifacts/python_derived.json"
-      python3 chart_liquidation_priority_budget.py "$INSTANCE_DIR/artifacts/python_derived.json"
-      python3 chart_liquidation_execution_quality.py "$PYTHON_LONG_DATA"
-      echo "==> Updating economic summary..."
-      python3 summarize_economics.py "$INSTANCE_DIR/artifacts"
-    fi
-    cleanup_long_outputs
-    echo "==> Finalizing economic summary..."
-    python3 summarize_economics.py "$INSTANCE_DIR/artifacts"
-  else
-    echo "    Parity MISMATCH: skipping derived data and charts."
-    echo "    Compare local_data.json vs python_data.json to debug."
-  fi
+  cleanup_long_outputs
+  echo "==> Finalizing economic summary..."
+  python3 summarize_economics.py "$INSTANCE_DIR/artifacts"
+else
+  echo "    Parity MISMATCH: skipping long replay and charts."
+  echo "    Compare local_data.json vs python_data.json to debug."
+  exit 1
 fi
 
 echo ""
 echo "==> Done. Instance: $INSTANCE_ID"
-echo "    Resume: bash run.sh --resume $INSTANCE_ID"

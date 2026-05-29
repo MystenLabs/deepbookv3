@@ -37,7 +37,6 @@ SCENARIO_COLUMNS = [
     "order_ref",
     "close_quantity",
     "replacement_order_ref",
-    "budget",
     "amount",
     "lp_ref",
     "replay_timestamp_ms",
@@ -61,7 +60,6 @@ class FlowConfig:
     redeem_count: int
     supply_count: int
     withdraw_count: int
-    liquidate_count: int
     exact_time_ltv: bool
     min_quantity_lots: int
     max_quantity_lots: int
@@ -84,7 +82,6 @@ class Generator:
             "redeem": config.redeem_count,
             "supply": config.supply_count,
             "withdraw": config.withdraw_count,
-            "liquidate": config.liquidate_count,
         }
         self.rows: list[dict[str, str]] = []
         self.order_quantities: dict[str, int] = {}
@@ -95,7 +92,6 @@ class Generator:
         self.vault_idle_balance = replay.VAULT_SEED - replay.INITIAL_EXPIRY_ALLOCATION
         self.next_order = 1
         self.next_lp = 1
-        self.current_snapshot: dict[str, Any] | None = None
 
     def generate(self) -> list[dict[str, str]]:
         for index in range(self.config.rows):
@@ -122,9 +118,7 @@ class Generator:
                     return with_oracle_fields(self.build_redeem_row(tx), snapshot)
                 if action == "supply":
                     return with_oracle_fields(self.build_supply_row(tx), snapshot)
-                if action == "withdraw":
-                    return with_oracle_fields(self.build_withdraw_row(tx), snapshot)
-                return with_oracle_fields(self.build_liquidate_row(tx), snapshot)
+                return with_oracle_fields(self.build_withdraw_row(tx), snapshot)
             except GenerationError as error:
                 reasons.append(str(error))
         raise GenerationError(
@@ -147,8 +141,6 @@ class Generator:
             weighted.append(("supply", self.remaining["supply"]))
         if self.remaining["withdraw"] > 0 and self.withdrawable_lp_refs:
             weighted.append(("withdraw", self.remaining["withdraw"]))
-        if self.remaining["liquidate"] > 0 and self.current_snapshot is not None:
-            weighted.append(("liquidate", self.remaining["liquidate"]))
 
         if not weighted:
             raise GenerationError(f"no eligible actions at tx={tx} remaining={self.remaining}")
@@ -194,7 +186,6 @@ class Generator:
             order_ref = f"o_{self.next_order:06d}"
             self.next_order += 1
             self.manager_balance -= cash_required
-            self.current_snapshot = snapshot
             self.remaining["oracle_mint_ptb"] -= 1
             self.order_quantities[order_ref] = quantity
             self.redeemable_refs.append(order_ref)
@@ -302,13 +293,6 @@ class Generator:
         self.remaining["withdraw"] -= 1
         return scenario_row(tx=tx, action="withdraw", lp_ref=lp_ref)
 
-    def build_liquidate_row(self, tx: int) -> dict[str, str]:
-        if self.remaining["liquidate"] <= 0 or self.current_snapshot is None:
-            raise GenerationError("liquidate unavailable")
-        self.remaining["liquidate"] -= 1
-        return scenario_row(tx=tx, action="liquidate", budget=self.rng.choice((24, 48, 96)))
-
-
 def scenario_row(tx: int, action: str, **values: Any) -> dict[str, str]:
     row = {column: "" for column in SCENARIO_COLUMNS}
     row["tx"] = str(tx)
@@ -408,15 +392,23 @@ def read_snapshots(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def config_for_mode(mode: str) -> FlowConfig:
+def flow_counts(total_rows: int) -> tuple[int, int, int, int]:
+    mint_count = total_rows * 60 // 100
+    redeem_count = total_rows * 30 // 100
+    withdraw_count = total_rows * 5 // 100
+    supply_count = total_rows - mint_count - redeem_count - withdraw_count
+    return mint_count, redeem_count, supply_count, withdraw_count
+
+
+def config_for_mode(mode: str, source_rows: int) -> FlowConfig:
     if mode == "normal":
+        mint_count, redeem_count, supply_count, withdraw_count = flow_counts(1_000)
         return FlowConfig(
             rows=1_000,
-            mint_count=600,
-            redeem_count=300,
-            supply_count=50,
-            withdraw_count=50,
-            liquidate_count=0,
+            mint_count=mint_count,
+            redeem_count=redeem_count,
+            supply_count=supply_count,
+            withdraw_count=withdraw_count,
             exact_time_ltv=False,
             min_quantity_lots=100,
             max_quantity_lots=4_000,
@@ -424,13 +416,13 @@ def config_for_mode(mode: str) -> FlowConfig:
             max_supply=5_000 * DUSDC,
         )
     if mode == "long":
+        mint_count, redeem_count, supply_count, withdraw_count = flow_counts(source_rows)
         return FlowConfig(
-            rows=50_000,
-            mint_count=30_000,
-            redeem_count=15_000,
-            supply_count=2_500,
-            withdraw_count=2_500,
-            liquidate_count=0,
+            rows=source_rows,
+            mint_count=mint_count,
+            redeem_count=redeem_count,
+            supply_count=supply_count,
+            withdraw_count=withdraw_count,
             exact_time_ltv=True,
             min_quantity_lots=10,
             max_quantity_lots=250,
@@ -454,7 +446,7 @@ def write_scenario(path: Path, rows: list[dict[str, str]]) -> None:
 
 def generate_mode(mode: str, source: Path, out: Path | None, source_config: dict[str, Any]) -> Path:
     snapshots = read_snapshots(source)
-    generator = Generator(snapshots, config_for_mode(mode), source_config)
+    generator = Generator(snapshots, config_for_mode(mode, len(snapshots)), source_config)
     rows = generator.generate()
     out_path = out if out is not None else output_path_for_mode(mode)
     write_scenario(out_path, rows)
@@ -464,10 +456,10 @@ def generate_mode(mode: str, source: Path, out: Path | None, source_config: dict
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=("normal", "long", "both"), default="normal")
+    parser.add_argument("--mode", choices=("normal", "long"), default="normal")
     parser.add_argument("--source", type=Path, default=SOURCE_DATASET)
     parser.add_argument("--config", type=Path, default=SCENARIO_CONFIG)
-    parser.add_argument("--out", type=Path, help="output path; only valid with --mode normal or --mode long")
+    parser.add_argument("--out", type=Path)
     return parser.parse_args()
 
 
@@ -475,13 +467,7 @@ def main() -> None:
     args = parse_args()
     source_config = replay.load_scenario_config(args.config)
     replay.apply_scenario_config(source_config)
-    if args.mode == "both" and args.out is not None:
-        raise SystemExit("--out cannot be used with --mode both")
-    if args.mode == "both":
-        generate_mode("normal", args.source, None, source_config)
-        generate_mode("long", args.source, None, source_config)
-    else:
-        generate_mode(args.mode, args.source, args.out, source_config)
+    generate_mode(args.mode, args.source, args.out, source_config)
 
 
 if __name__ == "__main__":

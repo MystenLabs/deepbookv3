@@ -4,10 +4,6 @@ import { fileURLToPath } from "url";
 
 export type ScenarioActionName =
   | "oracle_mint_ptb"
-  | "update_prices"
-  | "update_svi"
-  | "mint"
-  | "liquidate"
   | "redeem"
   | "supply"
   | "withdraw";
@@ -25,33 +21,7 @@ export interface OracleRefreshData {
   riskFreeRate: bigint;
 }
 
-type WithOracleRefresh<T> = T & { oracleRefresh?: OracleRefreshData };
-
 export type ScenarioRow =
-  | { action: "update_prices"; lineNumber: number; step: number; spot: bigint; forward: bigint }
-  | {
-      action: "update_svi";
-      lineNumber: number;
-      step: number;
-      a: bigint;
-      b: bigint;
-      rho: bigint;
-      rhoNegative: boolean;
-      m: bigint;
-      mNegative: boolean;
-      sigma: bigint;
-      riskFreeRate: bigint;
-    }
-  | {
-      action: "mint";
-      lineNumber: number;
-      step: number;
-      strike: bigint;
-      isUp: boolean;
-      quantity: bigint;
-      leverage: bigint;
-      orderRef: string;
-    }
   | {
       action: "oracle_mint_ptb";
       lineNumber: number;
@@ -72,37 +42,32 @@ export type ScenarioRow =
       leverage: bigint;
       orderRef: string;
     }
-  | WithOracleRefresh<{
-      action: "liquidate";
-      lineNumber: number;
-      step: number;
-      budget: bigint;
-    }>
-  | WithOracleRefresh<{
+  | {
       action: "redeem";
       lineNumber: number;
       step: number;
+      oracleRefresh: OracleRefreshData;
       orderRef: string;
       closeQuantity: bigint;
       replacementOrderRef: string | null;
-    }>
-  | WithOracleRefresh<{
+    }
+  | {
       action: "supply";
       lineNumber: number;
       step: number;
+      oracleRefresh: OracleRefreshData;
       amount: bigint;
       lpRef: string;
-    }>
-  | WithOracleRefresh<{
+    }
+  | {
       action: "withdraw";
       lineNumber: number;
       step: number;
+      oracleRefresh: OracleRefreshData;
       lpRef: string;
-    }>;
+    };
 
-export type PriceRow = Extract<ScenarioRow, { action: "update_prices" }>;
-export type SviRow = Extract<ScenarioRow, { action: "update_svi" }>;
-export type MintRow = Extract<ScenarioRow, { action: "mint" | "oracle_mint_ptb" }>;
+export type MintRow = Extract<ScenarioRow, { action: "oracle_mint_ptb" }>;
 
 export interface LocalTraceStep {
   step: number;
@@ -172,9 +137,11 @@ const SCENARIO_COLUMNS = [
   "order_ref",
   "close_quantity",
   "replacement_order_ref",
-  "budget",
   "amount",
   "lp_ref",
+  "replay_timestamp_ms",
+  "source_timestamp_ms",
+  "price_source_timestamp_ms",
 ] as const;
 
 const ORACLE_REFRESH_FIELDS = [
@@ -201,10 +168,6 @@ function resolveInstanceDir(): string {
 function isScenarioActionName(value: string): value is ScenarioActionName {
   return (
     value === "oracle_mint_ptb" ||
-    value === "update_prices" ||
-    value === "update_svi" ||
-    value === "mint" ||
-    value === "liquidate" ||
     value === "redeem" ||
     value === "supply" ||
     value === "withdraw"
@@ -254,35 +217,23 @@ function parseOptionalString(row: RawScenarioRow, field: string): string | null 
   return value === "" ? null : value;
 }
 
-function parseOptionalOracleRefresh(row: RawScenarioRow, lineNumber: number): { oracleRefresh?: OracleRefreshData } {
+function parseOracleRefresh(row: RawScenarioRow, lineNumber: number): OracleRefreshData {
   const present = ORACLE_REFRESH_FIELDS.filter((field) => (row[field] ?? "") !== "");
-  if (present.length === 0) return {};
   if (present.length !== ORACLE_REFRESH_FIELDS.length) {
-    throw new Error(`Scenario line ${lineNumber}: oracle refresh fields must be all present or all empty`);
+    throw new Error(`Scenario line ${lineNumber}: oracle refresh fields must all be present`);
   }
   return {
-    oracleRefresh: {
-      spot: parseUnsignedInteger(row, "spot", lineNumber),
-      forward: parseUnsignedInteger(row, "forward", lineNumber),
-      a: parseUnsignedInteger(row, "a", lineNumber),
-      b: parseUnsignedInteger(row, "b", lineNumber),
-      rho: parseUnsignedInteger(row, "rho", lineNumber),
-      rhoNegative: parseBoolean(row, "rho_negative", lineNumber),
-      m: parseUnsignedInteger(row, "m", lineNumber),
-      mNegative: parseBoolean(row, "m_negative", lineNumber),
-      sigma: parseUnsignedInteger(row, "sigma", lineNumber),
-      riskFreeRate: parseUnsignedInteger(row, "risk_free_rate", lineNumber),
-    },
+    spot: parseUnsignedInteger(row, "spot", lineNumber),
+    forward: parseUnsignedInteger(row, "forward", lineNumber),
+    a: parseUnsignedInteger(row, "a", lineNumber),
+    b: parseUnsignedInteger(row, "b", lineNumber),
+    rho: parseUnsignedInteger(row, "rho", lineNumber),
+    rhoNegative: parseBoolean(row, "rho_negative", lineNumber),
+    m: parseUnsignedInteger(row, "m", lineNumber),
+    mNegative: parseBoolean(row, "m_negative", lineNumber),
+    sigma: parseUnsignedInteger(row, "sigma", lineNumber),
+    riskFreeRate: parseUnsignedInteger(row, "risk_free_rate", lineNumber),
   };
-}
-
-function assertNoOracleRefresh(row: RawScenarioRow, lineNumber: number, action: string): void {
-  const present = ORACLE_REFRESH_FIELDS.filter((field) => (row[field] ?? "") !== "");
-  if (present.length !== 0) {
-    throw new Error(
-      `Scenario line ${lineNumber}: ${action} cannot include oracle refresh fields; use oracle_mint_ptb`,
-    );
-  }
 }
 
 function parseRef(row: RawScenarioRow, field: string, lineNumber: number): string {
@@ -316,46 +267,6 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
     throw new Error(`Scenario line ${lineNumber}: tx must be a positive safe integer`);
   }
 
-  if (action === "update_prices") {
-    return {
-      action,
-      lineNumber,
-      step,
-      spot: parseUnsignedInteger(row, "spot", lineNumber),
-      forward: parseUnsignedInteger(row, "forward", lineNumber),
-    };
-  }
-
-  if (action === "update_svi") {
-    return {
-      action,
-      lineNumber,
-      step,
-      a: parseUnsignedInteger(row, "a", lineNumber),
-      b: parseUnsignedInteger(row, "b", lineNumber),
-      rho: parseUnsignedInteger(row, "rho", lineNumber),
-      rhoNegative: parseBoolean(row, "rho_negative", lineNumber),
-      m: parseUnsignedInteger(row, "m", lineNumber),
-      mNegative: parseBoolean(row, "m_negative", lineNumber),
-      sigma: parseUnsignedInteger(row, "sigma", lineNumber),
-      riskFreeRate: parseUnsignedInteger(row, "risk_free_rate", lineNumber),
-    };
-  }
-
-  if (action === "mint") {
-    assertNoOracleRefresh(row, lineNumber, action);
-    return {
-      action,
-      lineNumber,
-      step,
-      strike: parseUnsignedInteger(row, "strike", lineNumber),
-      isUp: parseBoolean(row, "is_up", lineNumber),
-      quantity: parseMintQuantity(row, "quantity", lineNumber),
-      leverage: parseOptionalUnsignedInteger(row, "leverage", lineNumber, 0n),
-      orderRef: parseRef(row, "order_ref", lineNumber),
-    };
-  }
-
   if (action === "oracle_mint_ptb") {
     return {
       action,
@@ -379,22 +290,12 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
     };
   }
 
-  if (action === "liquidate") {
-    return {
-      action,
-      lineNumber,
-      step,
-      ...parseOptionalOracleRefresh(row, lineNumber),
-      budget: parseUnsignedInteger(row, "budget", lineNumber),
-    };
-  }
-
   if (action === "redeem") {
     return {
       action,
       lineNumber,
       step,
-      ...parseOptionalOracleRefresh(row, lineNumber),
+      oracleRefresh: parseOracleRefresh(row, lineNumber),
       orderRef: parseRef(row, "order_ref", lineNumber),
       closeQuantity: parseMintQuantity(row, "close_quantity", lineNumber),
       replacementOrderRef: parseOptionalString(row, "replacement_order_ref"),
@@ -406,7 +307,7 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
       action,
       lineNumber,
       step,
-      ...parseOptionalOracleRefresh(row, lineNumber),
+      oracleRefresh: parseOracleRefresh(row, lineNumber),
       amount: parseUnsignedInteger(row, "amount", lineNumber),
       lpRef: parseRef(row, "lp_ref", lineNumber),
     };
@@ -416,7 +317,7 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
     action,
     lineNumber,
     step,
-    ...parseOptionalOracleRefresh(row, lineNumber),
+    oracleRefresh: parseOracleRefresh(row, lineNumber),
     lpRef: parseRef(row, "lp_ref", lineNumber),
   };
 }
@@ -476,26 +377,6 @@ export function loadScenario(path = SCENARIO_PATH): ScenarioRow[] {
 
 export function readJson<T>(filePath: string): T {
   return JSON.parse(readFileSync(filePath, "utf8")) as T;
-}
-
-export function validateSimState(value: SimState): SimState {
-  const requiredFields = [
-    "poolVaultId",
-    "protocolConfigId",
-    "expiryMarketId",
-    "pythSourceId",
-    "oracleId",
-    "oracleCapId",
-    "managerId",
-  ] as const;
-  for (const field of requiredFields) {
-    if (typeof value[field] !== "string" || value[field].length === 0) {
-      throw new Error(
-        `Simulation state is missing ${field}; rerun setup after the parallel pool rearchitecture`
-      );
-    }
-  }
-  return value;
 }
 
 export function writeJson(filePath: string, value: unknown): void {

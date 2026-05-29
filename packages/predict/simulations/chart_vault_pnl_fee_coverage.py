@@ -81,7 +81,7 @@ def plot_components_panel(ax: plt.Axes, series: dict[str, list[float]]) -> None:
     ax.axhline(0, color="#64748b", linewidth=0.8)
     ax.set_title(
         "Fee And Liquidation Components\n"
-        "Cumulative fees, open borrow accrual, and net liquidation show compensation for current risk.",
+        "Cumulative fees, open borrow accrual, and net liquidation show live pre-terminal risk compensation.",
         loc="left",
         fontsize=11,
     )
@@ -101,7 +101,7 @@ def plot_net_compensation_panel(ax: plt.Axes, series: dict[str, list[float]]) ->
     ax.axhline(0, color="#64748b", linewidth=0.8)
     ax.set_title(
         "Net Risk Compensation Mark\n"
-        "Trading fees plus open borrow accrual plus net liquidation shows an MTM compensation view.",
+        "Trading fees plus open borrow accrual plus net liquidation shows a live MTM compensation view.",
         loc="left",
         fontsize=11,
     )
@@ -134,7 +134,7 @@ def render(derived_path: Path, output_path: Path) -> None:
         0.075,
         0.93,
         "Shows fee/risk components and MTM compensation after "
-        "liquidation surplus or bad debt.",
+        "liquidation surplus or bad debt before terminal closeout.",
         fontsize=10,
         color="#475569",
         ha="left",

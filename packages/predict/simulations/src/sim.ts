@@ -22,7 +22,6 @@ import {
   readJson,
   scenarioQuantityScale,
   ts,
-  validateSimState,
   writeJson,
 } from "./shared.js";
 import {
@@ -38,20 +37,12 @@ import {
   execute,
   executeAndWait,
   finalizeDusdcCurrencyRegistrationTx,
-  liquidateTx,
-  mintTx,
-  redeemTx,
-  refreshOracleAndLiquidateTx,
   refreshOracleAndMintTx,
   refreshOracleAndRedeemTx,
   refreshOracleAndSupplyWithExpiryValuationTx,
   refreshOracleAndWithdrawWithExpiryValuationTx,
   setMarketOracleBasisBoundsTx,
   supplyTx,
-  supplyWithExpiryValuationTx,
-  updateBlockScholesPricesTx,
-  updateSviTx,
-  withdrawWithExpiryValuationTx,
   type ExecutionReceipt,
 } from "./runtime.js";
 
@@ -91,25 +82,19 @@ interface AliasState {
 
 function parseArgs() {
   let maxRows: number | undefined;
-  const maxRowsIdx = process.argv.indexOf("--max-rows");
-  if (maxRowsIdx !== -1 && process.argv[maxRowsIdx + 1]) {
-    maxRows = parseInt(process.argv[maxRowsIdx + 1], 10);
+  const args = process.argv.slice(2);
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== "--max-rows") {
+      throw new Error(`Unsupported sim argument ${args[i]}`);
+    }
+    const value = args[i + 1];
+    if (value === undefined || !/^[1-9][0-9]*$/.test(value)) {
+      throw new Error("--max-rows requires a positive integer");
+    }
+    maxRows = parseInt(value, 10);
+    i += 1;
   }
-  let scenarioPath = SCENARIO_PATH;
-  const scenarioIdx = process.argv.indexOf("--scenario");
-  if (scenarioIdx !== -1 && process.argv[scenarioIdx + 1]) {
-    scenarioPath = process.argv[scenarioIdx + 1];
-  }
-  const scenarioArg = process.argv.find((arg) => arg.startsWith("--scenario="));
-  if (scenarioArg) {
-    scenarioPath = scenarioArg.slice("--scenario=".length);
-  }
-  return {
-    setupOnly: process.argv.includes("--setup-only"),
-    executeOnly: process.argv.includes("--execute-only"),
-    maxRows,
-    scenarioPath,
-  };
+  return { maxRows };
 }
 
 function initialEconomicState(): EconomicState {
@@ -217,11 +202,7 @@ function findEvent(events: any[], name: string): any | undefined {
   return events.find((event) => eventName(event) === name || String(event.type ?? "").includes(name));
 }
 
-function allEvents(events: any[], name: string): any[] {
-  return events.filter((event) => eventName(event) === name || String(event.type ?? "").includes(name));
-}
-
-function sviInput(row: Extract<ScenarioRow, { action: "update_svi" | "oracle_mint_ptb" }> | OracleRefreshData) {
+function sviInput(row: MintRow | OracleRefreshData) {
   return {
     a: row.a.toString(),
     b: row.b.toString(),
@@ -252,18 +233,6 @@ function rowInput(row: ScenarioRow): Record<string, unknown> {
       ...mintInput(row),
     };
   }
-  if (row.action === "update_prices") {
-    return { spot: row.spot.toString(), forward: row.forward.toString() };
-  }
-  if (row.action === "update_svi") {
-    return { svi: sviInput(row) };
-  }
-  if (row.action === "mint") {
-    return mintInput(row);
-  }
-  if (row.action === "liquidate") {
-    return { ...oracleRefreshInput(row), budget: row.budget.toString() };
-  }
   if (row.action === "redeem") {
     return {
       ...oracleRefreshInput(row),
@@ -279,7 +248,7 @@ function rowInput(row: ScenarioRow): Record<string, unknown> {
 }
 
 function oracleRefreshInput(row: ScenarioRow): Record<string, unknown> {
-  if (!("oracleRefresh" in row) || !row.oracleRefresh) return {};
+  if (row.action === "oracle_mint_ptb") return {};
   return {
     spot: row.oracleRefresh.spot.toString(),
     forward: row.oracleRefresh.forward.toString(),
@@ -311,7 +280,7 @@ function normalizeSviUpdated(event: any): Record<string, unknown> {
 
 function normalizeOrderMinted(event: any, row: ScenarioRow): Record<string, unknown> {
   const json = event.parsedJson ?? {};
-  const orderRef = row.action === "mint" || row.action === "oracle_mint_ptb" ? row.orderRef : null;
+  const orderRef = row.action === "oracle_mint_ptb" ? row.orderRef : null;
   return {
     type: "order_minted",
     order_ref: orderRef,
@@ -427,15 +396,6 @@ function normalizeUpdates(row: ScenarioRow, receipt: ExecutionReceipt, aliases: 
     else if (name === "SupplyExecuted") updates.push(normalizeSupplyExecuted(event, row));
     else if (name === "WithdrawExecuted") updates.push(normalizeWithdrawExecuted(event, row));
   }
-  if (row.action === "liquidate") {
-    const liquidationPass = {
-      type: "liquidation_pass",
-      budget: row.budget.toString(),
-      liquidated_count: allEvents(receipt.events, "OrderLiquidated").length.toString(),
-    };
-    const firstLiquidation = updates.findIndex((update) => update.type === "order_liquidated");
-    updates.splice(firstLiquidation === -1 ? updates.length : firstLiquidation, 0, liquidationPass);
-  }
   return updates;
 }
 
@@ -549,7 +509,7 @@ function createdPlpCoinId(receipt: ExecutionReceipt): string {
 }
 
 function recordAliases(row: ScenarioRow, receipt: ExecutionReceipt, aliases: AliasState) {
-  if (row.action === "mint" || row.action === "oracle_mint_ptb") {
+  if (row.action === "oracle_mint_ptb") {
     const orderId = eventOrderId(receipt, "OrderMinted");
     if (!orderId) throw new Error(`Missing OrderMinted event for ${row.orderRef}`);
     aliases.orderIdsByRef.set(row.orderRef, orderId);
@@ -755,124 +715,41 @@ async function executeRow(row: ScenarioRow, state: SimState, aliases: AliasState
     );
   }
 
-  if (row.action === "update_prices") {
-    return execute(
-      () => updateBlockScholesPricesTx(
-        state.oracleId,
-        state.protocolConfigId,
-        state.pythSourceId,
-        state.oracleCapId,
-        row.spot,
-        row.forward,
-      ),
-      "update_prices",
-    );
-  }
-
-  if (row.action === "update_svi") {
-    return execute(
-      () => updateSviTx(state.oracleId, state.protocolConfigId, state.oracleCapId, row),
-      "update_svi",
-    );
-  }
-
-  if (row.action === "mint") {
-    const alignedStrike = alignStrikeToGrid(row.strike);
-    return execute(
-      () => mintTx({
-        expiryMarketId: state.expiryMarketId,
-        protocolConfigId: state.protocolConfigId,
-        managerId: state.managerId,
-        oracleId: state.oracleId,
-        pythSourceId: state.pythSourceId,
-        strike: alignedStrike,
-        isUp: row.isUp,
-        quantity: row.quantity,
-        leverage: row.leverage,
-      }),
-      "mint",
-    );
-  }
-
-  if (row.action === "liquidate") {
-    return execute(
-      () => row.oracleRefresh
-        ? refreshOracleAndLiquidateTx({
-            expiryMarketId: state.expiryMarketId,
-            protocolConfigId: state.protocolConfigId,
-            oracleId: state.oracleId,
-            oracleCapId: state.oracleCapId,
-            pythSourceId: state.pythSourceId,
-            budget: row.budget,
-            spot: row.oracleRefresh.spot,
-            forward: row.oracleRefresh.forward,
-            svi: row.oracleRefresh,
-          })
-        : liquidateTx({
-            expiryMarketId: state.expiryMarketId,
-            protocolConfigId: state.protocolConfigId,
-            oracleId: state.oracleId,
-            pythSourceId: state.pythSourceId,
-            budget: row.budget,
-          }),
-      "liquidate",
-    );
-  }
-
   if (row.action === "redeem") {
     const orderId = aliases.orderIdsByRef.get(row.orderRef);
     if (!orderId) throw new Error(`Unknown order_ref ${row.orderRef}`);
     return execute(
-      () => row.oracleRefresh
-        ? refreshOracleAndRedeemTx({
-            expiryMarketId: state.expiryMarketId,
-            protocolConfigId: state.protocolConfigId,
-            managerId: state.managerId,
-            oracleId: state.oracleId,
-            oracleCapId: state.oracleCapId,
-            pythSourceId: state.pythSourceId,
-            orderId,
-            closeQuantity: row.closeQuantity,
-            spot: row.oracleRefresh.spot,
-            forward: row.oracleRefresh.forward,
-            svi: row.oracleRefresh,
-          })
-        : redeemTx({
-            expiryMarketId: state.expiryMarketId,
-            protocolConfigId: state.protocolConfigId,
-            managerId: state.managerId,
-            oracleId: state.oracleId,
-            pythSourceId: state.pythSourceId,
-            orderId,
-            closeQuantity: row.closeQuantity,
-          }),
+      () => refreshOracleAndRedeemTx({
+        expiryMarketId: state.expiryMarketId,
+        protocolConfigId: state.protocolConfigId,
+        managerId: state.managerId,
+        oracleId: state.oracleId,
+        oracleCapId: state.oracleCapId,
+        pythSourceId: state.pythSourceId,
+        orderId,
+        closeQuantity: row.closeQuantity,
+        spot: row.oracleRefresh.spot,
+        forward: row.oracleRefresh.forward,
+        svi: row.oracleRefresh,
+      }),
       "redeem",
     );
   }
 
   if (row.action === "supply") {
     return execute(
-      () => row.oracleRefresh
-        ? refreshOracleAndSupplyWithExpiryValuationTx({
-            poolVaultId: state.poolVaultId,
-            protocolConfigId: state.protocolConfigId,
-            expiryMarketId: state.expiryMarketId,
-            oracleId: state.oracleId,
-            oracleCapId: state.oracleCapId,
-            pythSourceId: state.pythSourceId,
-            amount: row.amount,
-            spot: row.oracleRefresh.spot,
-            forward: row.oracleRefresh.forward,
-            svi: row.oracleRefresh,
-          })
-        : supplyWithExpiryValuationTx({
-            poolVaultId: state.poolVaultId,
-            protocolConfigId: state.protocolConfigId,
-            expiryMarketId: state.expiryMarketId,
-            oracleId: state.oracleId,
-            pythSourceId: state.pythSourceId,
-            amount: row.amount,
-          }),
+      () => refreshOracleAndSupplyWithExpiryValuationTx({
+        poolVaultId: state.poolVaultId,
+        protocolConfigId: state.protocolConfigId,
+        expiryMarketId: state.expiryMarketId,
+        oracleId: state.oracleId,
+        oracleCapId: state.oracleCapId,
+        pythSourceId: state.pythSourceId,
+        amount: row.amount,
+        spot: row.oracleRefresh.spot,
+        forward: row.oracleRefresh.forward,
+        svi: row.oracleRefresh,
+      }),
       "supply",
     );
   }
@@ -880,27 +757,18 @@ async function executeRow(row: ScenarioRow, state: SimState, aliases: AliasState
   const lpCoinId = aliases.lpCoinIdsByRef.get(row.lpRef);
   if (!lpCoinId) throw new Error(`Unknown lp_ref ${row.lpRef}`);
   return execute(
-    () => row.oracleRefresh
-      ? refreshOracleAndWithdrawWithExpiryValuationTx({
-          poolVaultId: state.poolVaultId,
-          protocolConfigId: state.protocolConfigId,
-          expiryMarketId: state.expiryMarketId,
-          oracleId: state.oracleId,
-          oracleCapId: state.oracleCapId,
-          pythSourceId: state.pythSourceId,
-          lpCoinId,
-          spot: row.oracleRefresh.spot,
-          forward: row.oracleRefresh.forward,
-          svi: row.oracleRefresh,
-        })
-      : withdrawWithExpiryValuationTx({
-          poolVaultId: state.poolVaultId,
-          protocolConfigId: state.protocolConfigId,
-          expiryMarketId: state.expiryMarketId,
-          oracleId: state.oracleId,
-          pythSourceId: state.pythSourceId,
-          lpCoinId,
-        }),
+    () => refreshOracleAndWithdrawWithExpiryValuationTx({
+      poolVaultId: state.poolVaultId,
+      protocolConfigId: state.protocolConfigId,
+      expiryMarketId: state.expiryMarketId,
+      oracleId: state.oracleId,
+      oracleCapId: state.oracleCapId,
+      pythSourceId: state.pythSourceId,
+      lpCoinId,
+      spot: row.oracleRefresh.spot,
+      forward: row.oracleRefresh.forward,
+      svi: row.oracleRefresh,
+    }),
     "withdraw",
   );
 }
@@ -918,7 +786,7 @@ async function executeScenario(
   const records: EconomicRecord[] = [];
   const economicState = initialEconomicState();
   const aliases = initialAliases();
-  const targetMints = rows.filter((row) => row.action === "mint" || row.action === "oracle_mint_ptb").length;
+  const targetMints = rows.filter((row) => row.action === "oracle_mint_ptb").length;
   let successfulMints = 0;
 
   console.log(`\n[${ts()}] Loaded ${rows.length} executable tx rows (${targetMints} mints)`);
@@ -932,7 +800,7 @@ async function executeScenario(
       traceSteps.push(traceStep(row, receipt));
       records.push(record);
 
-      if (row.action === "mint" || row.action === "oracle_mint_ptb") {
+      if (row.action === "oracle_mint_ptb") {
         successfulMints++;
         const alignedStrike = alignStrikeToGrid(row.strike);
         process.stdout.write(
@@ -942,7 +810,7 @@ async function executeScenario(
         process.stdout.write(`[${ts()}]   [${row.step}] ${row.action}\n`);
       }
     } catch (error) {
-      if (row.action === "mint" || row.action === "oracle_mint_ptb") {
+      if (row.action === "oracle_mint_ptb") {
         throw new Error(`${mintContext(row, alignStrikeToGrid(row.strike))} failed: ${errorMessage(error)}`);
       }
       throw new Error(`${row.action} csv_line=${row.lineNumber} tx=${row.step} failed: ${errorMessage(error)}`);
@@ -989,26 +857,14 @@ function runPythonReplay(scenarioPath: string, maxRows?: number) {
 
 async function main() {
   const args = parseArgs();
-  let rows = loadScenario(args.scenarioPath);
+  let rows = loadScenario(SCENARIO_PATH);
   if (args.maxRows !== undefined) {
     console.log(`[${ts()}] Limiting to ${args.maxRows} tx rows`);
     rows = rows.slice(0, args.maxRows);
   }
 
-  if (args.executeOnly) {
-    const state = validateSimState(readJson<SimState>(STATE_PATH));
-    await executeScenario(rows, state, args.scenarioPath, args.maxRows);
-    return;
-  }
-
   const state = await setupSimulation();
-
-  if (args.setupOnly) {
-    console.log(`[${ts()}] Setup complete`);
-    return;
-  }
-
-  await executeScenario(rows, state, args.scenarioPath, args.maxRows);
+  await executeScenario(rows, state, SCENARIO_PATH, args.maxRows);
 }
 
 main().catch((error) => {

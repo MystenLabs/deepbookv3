@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-from bisect import bisect_right
 from functools import lru_cache
 from io import StringIO
 from pathlib import Path
@@ -71,9 +70,6 @@ LIQUIDATION_LTV = 850_000_000  # 0.85, default_liquidation_ltv
 BORROW_STEP_DT_MS: int | None = None  # None => window / total_steps (a full 0->1 phase sweep)
 GLOBAL_OBSERVABILITY_INTERVAL = 10
 TERMINAL_FLOOR_INDEX = FLOAT_SCALING + MAX_EXPIRY_FLOOR_PREMIUM
-LIQUIDATION_PRIORITY_BUCKETS = 20
-LIQUIDATION_BUDGET_PROBES = (24, 48, 96, 192, 500)
-LIQUIDATION_BACKLOG_TARGET = 10_000_000  # 1% scaled by FLOAT_SCALING
 
 F = 1_000_000_000
 PRICE_CACHE_SIZE = 1_000_000
@@ -291,22 +287,11 @@ def _optional_str(row: dict[str, str], field: str) -> str | None:
     return None if value == "" else value
 
 
-def _optional_uint_or_none(row: dict[str, str], field: str, line_number: int) -> int | None:
-    value = row.get(field, "")
-    if value == "":
-        return None
-    if not value.isdigit():
-        raise ValueError(
-            f'Scenario line {line_number}: expected {field} to be an unsigned integer, got "{value}"'
-        )
-    return int(value)
-
-
-def _optional_timestamps(row: dict[str, str], line_number: int) -> dict[str, int | None]:
+def _timestamps(row: dict[str, str], line_number: int) -> dict[str, int]:
     return {
-        "replayTimestampMs": _optional_uint_or_none(row, "replay_timestamp_ms", line_number),
-        "sourceTimestampMs": _optional_uint_or_none(row, "source_timestamp_ms", line_number),
-        "priceSourceTimestampMs": _optional_uint_or_none(row, "price_source_timestamp_ms", line_number),
+        "replayTimestampMs": _uint(row, "replay_timestamp_ms", line_number),
+        "sourceTimestampMs": _uint(row, "source_timestamp_ms", line_number),
+        "priceSourceTimestampMs": _uint(row, "price_source_timestamp_ms", line_number),
     }
 
 
@@ -324,12 +309,10 @@ def _bool(row: dict[str, str], field: str, line_number: int) -> bool:
     return value == "true"
 
 
-def _optional_oracle_refresh(row: dict[str, str], line_number: int) -> dict[str, Any]:
+def _oracle_refresh(row: dict[str, str], line_number: int) -> dict[str, Any]:
     present = [field for field in ORACLE_REFRESH_FIELDS if row.get(field, "") != ""]
-    if not present:
-        return {}
     if len(present) != len(ORACLE_REFRESH_FIELDS):
-        raise ValueError(f"Scenario line {line_number}: oracle refresh fields must be all present or all empty")
+        raise ValueError(f"Scenario line {line_number}: oracle refresh fields must all be present")
     return {
         "oracleRefresh": {
             "spot": _uint(row, "spot", line_number),
@@ -344,14 +327,6 @@ def _optional_oracle_refresh(row: dict[str, str], line_number: int) -> dict[str,
             "riskFreeRate": _uint(row, "risk_free_rate", line_number),
         },
     }
-
-
-def _assert_no_oracle_refresh(row: dict[str, str], line_number: int, action: str) -> None:
-    present = [field for field in ORACLE_REFRESH_FIELDS if row.get(field, "") != ""]
-    if present:
-        raise ValueError(
-            f"Scenario line {line_number}: {action} cannot include oracle refresh fields; use oracle_mint_ptb"
-        )
 
 
 def parse_scenario_text(text: str) -> list[dict[str, Any]]:
@@ -371,7 +346,7 @@ def parse_scenario_text(text: str) -> list[dict[str, Any]]:
                     "action": action,
                     "lineNumber": index,
                     "step": tx,
-                    **_optional_timestamps(row, index),
+                    **_timestamps(row, index),
                     "spot": _uint(row, "spot", index),
                     "forward": _uint(row, "forward", index),
                     "a": _uint(row, "a", index),
@@ -387,60 +362,6 @@ def parse_scenario_text(text: str) -> list[dict[str, Any]]:
                     "quantity": parse_mint_quantity(_uint(row, "quantity", index), index),
                     "leverage": _optional_uint(row, "leverage", index, 0),
                     "orderRef": _ref(row, "order_ref", index),
-                }
-            )
-        elif action == "update_prices":
-            rows.append(
-                {
-                    "action": action,
-                    "lineNumber": index,
-                    "step": tx,
-                    **_optional_timestamps(row, index),
-                    "spot": _uint(row, "spot", index),
-                    "forward": _uint(row, "forward", index),
-                }
-            )
-        elif action == "update_svi":
-            rows.append(
-                {
-                    "action": action,
-                    "lineNumber": index,
-                    "step": tx,
-                    **_optional_timestamps(row, index),
-                    "a": _uint(row, "a", index),
-                    "b": _uint(row, "b", index),
-                    "rho": _uint(row, "rho", index),
-                    "rhoNegative": _bool(row, "rho_negative", index),
-                    "m": _uint(row, "m", index),
-                    "mNegative": _bool(row, "m_negative", index),
-                    "sigma": _uint(row, "sigma", index),
-                    "riskFreeRate": _uint(row, "risk_free_rate", index),
-                }
-            )
-        elif action == "mint":
-            _assert_no_oracle_refresh(row, index, action)
-            rows.append(
-                {
-                    "action": action,
-                    "lineNumber": index,
-                    "step": tx,
-                    **_optional_timestamps(row, index),
-                    "strike": _uint(row, "strike", index),
-                    "isUp": _bool(row, "is_up", index),
-                    "quantity": parse_mint_quantity(_uint(row, "quantity", index), index),
-                    "leverage": _optional_uint(row, "leverage", index, 0),
-                    "orderRef": _ref(row, "order_ref", index),
-                }
-            )
-        elif action == "liquidate":
-            rows.append(
-                {
-                    "action": action,
-                    "lineNumber": index,
-                    "step": tx,
-                    **_optional_timestamps(row, index),
-                    **_optional_oracle_refresh(row, index),
-                    "budget": _uint(row, "budget", index),
                 }
             )
         elif action == "redeem":
@@ -449,8 +370,8 @@ def parse_scenario_text(text: str) -> list[dict[str, Any]]:
                     "action": action,
                     "lineNumber": index,
                     "step": tx,
-                    **_optional_timestamps(row, index),
-                    **_optional_oracle_refresh(row, index),
+                    **_timestamps(row, index),
+                    **_oracle_refresh(row, index),
                     "orderRef": _ref(row, "order_ref", index),
                     "closeQuantity": parse_mint_quantity(_uint(row, "close_quantity", index), index, "close_quantity"),
                     "replacementOrderRef": _optional_str(row, "replacement_order_ref"),
@@ -462,8 +383,8 @@ def parse_scenario_text(text: str) -> list[dict[str, Any]]:
                     "action": action,
                     "lineNumber": index,
                     "step": tx,
-                    **_optional_timestamps(row, index),
-                    **_optional_oracle_refresh(row, index),
+                    **_timestamps(row, index),
+                    **_oracle_refresh(row, index),
                     "amount": _uint(row, "amount", index),
                     "lpRef": _ref(row, "lp_ref", index),
                 }
@@ -474,8 +395,8 @@ def parse_scenario_text(text: str) -> list[dict[str, Any]]:
                     "action": action,
                     "lineNumber": index,
                     "step": tx,
-                    **_optional_timestamps(row, index),
-                    **_optional_oracle_refresh(row, index),
+                    **_timestamps(row, index),
+                    **_oracle_refresh(row, index),
                     "lpRef": _ref(row, "lp_ref", index),
                 }
             )
@@ -1228,17 +1149,6 @@ def row_input(row: dict[str, Any]) -> dict[str, Any]:
             "svi": svi_input(row),
             **mint_input(row),
         }
-    if action == "update_prices":
-        return {
-            "spot": str(row["spot"]),
-            "forward": str(row["forward"]),
-        }
-    if action == "update_svi":
-        return {"svi": svi_input(row)}
-    if action == "mint":
-        return mint_input(row)
-    if action == "liquidate":
-        return {**oracle_refresh_input(row), "budget": str(row["budget"])}
     if action == "redeem":
         return {
             **oracle_refresh_input(row),
@@ -1252,9 +1162,7 @@ def row_input(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def oracle_refresh_input(row: dict[str, Any]) -> dict[str, Any]:
-    oracle = row.get("oracleRefresh")
-    if oracle is None:
-        return {}
+    oracle = row["oracleRefresh"]
     return {
         "spot": str(oracle["spot"]),
         "forward": str(oracle["forward"]),
@@ -1279,9 +1187,7 @@ def oracle_svi_update(svi: dict[str, Any]) -> dict[str, str]:
 
 
 def apply_inline_oracle_refresh(model: dict[str, Any], row: dict[str, Any], updates: list[dict[str, Any]]) -> None:
-    oracle = row.get("oracleRefresh")
-    if oracle is None:
-        return
+    oracle = row["oracleRefresh"]
     model["current_forward"] = oracle["forward"]
     model["current_svi"] = oracle
     updates.append(oracle_prices_update(oracle))
@@ -1792,7 +1698,6 @@ def initial_analytics() -> dict[str, Any]:
         "orders": {},
         "active_refs": set(),
         "orders_by_range": {},
-        "borrow_floor_by_index_open": {},
         "probability_oracle_key": None,
         "probability_cache": {},
     }
@@ -1802,14 +1707,6 @@ def active_range_key(order: dict[str, Any]) -> tuple[int, int]:
     return (order["lower"], order["higher"])
 
 
-def add_to_sum(mapping: dict[int, int], key: int, amount: int) -> None:
-    updated = mapping.get(key, 0) + amount
-    if updated == 0:
-        mapping.pop(key, None)
-    else:
-        mapping[key] = updated
-
-
 def analytics_insert_order(analytics: dict[str, Any], order: dict[str, Any]) -> None:
     ref = order["ref"]
     analytics["orders"][ref] = order
@@ -1817,7 +1714,6 @@ def analytics_insert_order(analytics: dict[str, Any], order: dict[str, Any]) -> 
         return
     analytics["active_refs"].add(ref)
     analytics["orders_by_range"].setdefault(active_range_key(order), []).append(order)
-    add_to_sum(analytics["borrow_floor_by_index_open"], order["borrow_index_open"], order["floor_seed_amount"])
 
 
 def analytics_remove_active_order(analytics: dict[str, Any], ref: str) -> dict[str, Any] | None:
@@ -1831,7 +1727,6 @@ def analytics_remove_active_order(analytics: dict[str, Any], ref: str) -> dict[s
         orders.remove(order)
         if not orders:
             del analytics["orders_by_range"][range_key]
-    add_to_sum(analytics["borrow_floor_by_index_open"], order["borrow_index_open"], -order["floor_seed_amount"])
     return order
 
 
@@ -1846,6 +1741,11 @@ def apply_analytics_update(analytics: dict[str, Any], update: dict[str, Any], ti
         leverage = int(update["leverage"])
         if leverage == 0:
             return
+        borrow_index_open = floor_index_at_ms(
+            time_ctx["now_ms"], time_ctx["expiry_ms"], time_ctx["window"], time_ctx["max_premium"]
+        )
+        floor_seed_amount = int(update["floor_seed_amount"])
+        floor_shares = order_floor_shares_from_seed(floor_seed_amount, leverage, borrow_index_open)
         analytics_insert_order(
             analytics,
             {
@@ -1856,11 +1756,11 @@ def apply_analytics_update(analytics: dict[str, Any], update: dict[str, Any], ti
                 "leverage": leverage,
                 "entry_probability": int(update["entry_probability"]),
                 "quantity": int(update["quantity"]),
-                "floor_seed_amount": int(update["floor_seed_amount"]),
+                "floor_seed_amount": floor_seed_amount,
                 "opened_ms": time_ctx["now_ms"],
-                "borrow_index_open": floor_index_at_ms(
-                    time_ctx["now_ms"], time_ctx["expiry_ms"], time_ctx["window"], time_ctx["max_premium"]
-                ),
+                "borrow_index_open": borrow_index_open,
+                "floor_shares": floor_shares,
+                "floor_at_open": floor_amount_for_index(floor_shares, borrow_index_open),
                 "status": "active",
             },
         )
@@ -1875,6 +1775,11 @@ def apply_analytics_update(analytics: dict[str, Any], update: dict[str, Any], ti
         if remaining_quantity == 0 or not replacement_ref:
             return
         replacement_terms = compute_mint_terms(order["entry_probability"], remaining_quantity, order["leverage"])
+        floor_shares = order_floor_shares_from_seed(
+            replacement_terms["floor_seed_amount"],
+            order["leverage"],
+            order["borrow_index_open"],
+        )
         analytics_insert_order(
             analytics,
             {
@@ -1883,6 +1788,8 @@ def apply_analytics_update(analytics: dict[str, Any], update: dict[str, Any], ti
                 "sequence": int(update["replacement_order_sequence"]),
                 "quantity": remaining_quantity,
                 "floor_seed_amount": replacement_terms["floor_seed_amount"],
+                "floor_shares": floor_shares,
+                "floor_at_open": floor_amount_for_index(floor_shares, order["borrow_index_open"]),
                 "opened_ms": order["opened_ms"],
                 "borrow_index_open": order["borrow_index_open"],
                 "status": "active",
@@ -1901,83 +1808,17 @@ def apply_analytics_updates(analytics: dict[str, Any], updates: list[dict[str, A
         apply_analytics_update(analytics, update, time_ctx)
 
 
-def verify_analytics_sync(model: dict[str, Any], analytics: dict[str, Any]) -> None:
-    canonical_active = set(active_refs(model))
-    if analytics["active_refs"] != canonical_active:
-        raise ValueError("analytics active refs drifted")
-
-    range_refs: set[str] = set()
-    for orders in analytics["orders_by_range"].values():
-        range_refs.update(order["ref"] for order in orders)
-    if range_refs != analytics["active_refs"]:
-        raise ValueError("analytics range index drifted")
-
-    borrow_floor_total = sum(analytics["borrow_floor_by_index_open"].values())
-    active_floor_total = 0
-    for ref in canonical_active:
-        canonical = model["orders"][ref]
-        indexed = analytics["orders"].get(ref)
-        if indexed is None:
-            raise ValueError(f"analytics missing active order {ref}")
-        fields = ("sequence", "lower", "higher", "leverage", "entry_probability", "quantity", "floor_seed_amount", "status")
-        for field in fields:
-            if indexed[field] != canonical[field]:
-                raise ValueError(f"analytics order {ref} field {field} drifted")
-        active_floor_total += indexed["floor_seed_amount"]
-    if borrow_floor_total != active_floor_total:
-        raise ValueError("analytics borrow floor index drifted")
-
-
 def budget_for_action(action: str, row: dict[str, Any]) -> int:
     """Liquidation scan budget the engine applies for this action's pass."""
-    if action in ("oracle_mint_ptb", "mint", "redeem"):
+    if action in ("oracle_mint_ptb", "redeem"):
         return TRADE_LIQUIDATION_BUDGET
     if action in ("supply", "withdraw"):
         return VALUATION_LIQUIDATION_BUDGET
-    if action == "liquidate":
-        return row["budget"]
     return 0
 
 
 def normalized_flow_action(action: str) -> str:
     return "mint" if action == "oracle_mint_ptb" else action
-
-
-def order_floor_amount_for_time_ctx(order: dict[str, Any], time_ctx: dict[str, int]) -> int:
-    floor_index = floor_index_at_ms(time_ctx["now_ms"], time_ctx["expiry_ms"], time_ctx["window"], time_ctx["max_premium"])
-    return order_floor_amount_at_index(order, floor_index)
-
-
-def slow_liquidatable_orders(model: dict[str, Any], time_ctx: dict[str, int]) -> list[tuple[str, int]]:
-    """Every active order currently liquidateable (the full standing backlog).
-
-    Mirrors the eligibility predicate in run_liquidation_pass but scans all
-    active orders instead of the bounded-budget subset, so the result captures
-    orders the bounded crank could not reach this pass.
-    """
-    refs = active_refs(model)
-    if not refs:
-        return []
-    try:
-        assert_liquidation_inputs(model)
-    except ValueError:
-        return []
-    backlog = []
-    for ref in refs:
-        order = model["orders"][ref]
-        if order["status"] != "active":
-            continue
-        probability = compute_range_price(
-            model["current_svi"],
-            model["current_forward"],
-            order["lower"],
-            order["higher"],
-        )
-        gross_value = deepbook_mul(probability, order["quantity"])
-        floor_amount = order_floor_amount_for_time_ctx(order, time_ctx)
-        if gross_value <= liquidation_threshold_value(floor_amount):
-            backlog.append((ref, floor_amount))
-    return backlog
 
 
 def analytics_oracle_key(model: dict[str, Any]) -> tuple[int, int, int, int, bool, int, bool, int]:
@@ -2002,115 +1843,13 @@ def analytics_range_probability(model: dict[str, Any], analytics: dict[str, Any]
 
 def analytics_order_floor_amount(order: dict[str, Any], time_ctx: dict[str, int]) -> int:
     floor_index = floor_index_at_ms(time_ctx["now_ms"], time_ctx["expiry_ms"], time_ctx["window"], time_ctx["max_premium"])
-    floor_shares = order_floor_shares_from_seed(
-        order["floor_seed_amount"],
-        order["leverage"],
-        order["borrow_index_open"],
-    )
-    return floor_amount_for_index(floor_shares, floor_index)
+    return floor_amount_for_index(order["floor_shares"], floor_index)
 
 
 def empty_liquidation_observability() -> dict[str, Any]:
     return {
         "liquidatable_count": 0,
         "liquidatable_value": 0,
-        "rank_bucket_liquidatable_value": [0 for _ in range(LIQUIDATION_PRIORITY_BUCKETS)],
-        "budget_capture_value": {budget: 0 for budget in LIQUIDATION_BUDGET_PROBES},
-        "budget_capture_share": {budget: None for budget in LIQUIDATION_BUDGET_PROBES},
-        "policy_capture_value_by_budget": {budget: 0 for budget in LIQUIDATION_BUDGET_PROBES},
-        "policy_capture_share_by_budget": {budget: None for budget in LIQUIDATION_BUDGET_PROBES},
-        "head_capture_value_by_budget": {budget: 0 for budget in LIQUIDATION_BUDGET_PROBES},
-        "head_capture_share_by_budget": {budget: None for budget in LIQUIDATION_BUDGET_PROBES},
-        "watermark_capture_value_by_budget": {budget: 0 for budget in LIQUIDATION_BUDGET_PROBES},
-        "watermark_capture_share_by_budget": {budget: None for budget in LIQUIDATION_BUDGET_PROBES},
-        "missed_value_by_budget": {budget: 0 for budget in LIQUIDATION_BUDGET_PROBES},
-        "missed_share_by_budget": {budget: None for budget in LIQUIDATION_BUDGET_PROBES},
-        "budget_needed_for_target": 0,
-    }
-
-
-def scan_policy_refs_for_budget(
-    model: dict[str, Any],
-    ordered_refs: list[str],
-    ordered_order_ids: list[int],
-    budget: int,
-) -> tuple[list[str], list[str]]:
-    if budget == 0 or not ordered_refs:
-        return ([], [])
-
-    head_budget = budget // LIQUIDATION_HEAD_SCAN_DIVISOR
-    if budget % LIQUIDATION_HEAD_SCAN_DIVISOR != 0:
-        head_budget += 1
-
-    head_refs = ordered_refs[: min(head_budget, len(ordered_refs))]
-    tail_start = len(head_refs)
-    scan_budget = budget - len(head_refs)
-    passive_domain_count = len(ordered_refs) - tail_start
-    if scan_budget == 0 or passive_domain_count == 0:
-        return (head_refs, [])
-
-    start = tail_start
-    watermark = model["liquidation"].passive_watermark
-    if watermark is not None:
-        candidate = bisect_right(ordered_order_ids, watermark)
-        if candidate < len(ordered_refs) and candidate >= tail_start:
-            start = candidate
-
-    passive_refs: list[str] = []
-    index = start
-    for _ in range(min(scan_budget, passive_domain_count)):
-        passive_refs.append(ordered_refs[index])
-        index += 1
-        if index >= len(ordered_refs):
-            index = tail_start
-    return (head_refs, passive_refs)
-
-
-def sum_liquidatable_value(refs: list[str], liquidatable_floor_by_ref: dict[str, int]) -> int:
-    return sum(liquidatable_floor_by_ref.get(ref, 0) for ref in refs)
-
-
-def scanner_policy_observability(
-    model: dict[str, Any],
-    ordered_refs: list[str],
-    liquidatable_floor_by_ref: dict[str, int],
-    total_liquidatable_value: int,
-) -> dict[str, dict[int, int | None]]:
-    ordered_order_ids = [model["liquidation"].order_ids_by_ref[ref] for ref in ordered_refs]
-    policy_values: dict[int, int] = {}
-    head_values: dict[int, int] = {}
-    watermark_values: dict[int, int] = {}
-    missed_values: dict[int, int] = {}
-    policy_shares: dict[int, int | None] = {}
-    head_shares: dict[int, int | None] = {}
-    watermark_shares: dict[int, int | None] = {}
-    missed_shares: dict[int, int | None] = {}
-
-    for budget in LIQUIDATION_BUDGET_PROBES:
-        head_refs, watermark_refs = scan_policy_refs_for_budget(model, ordered_refs, ordered_order_ids, budget)
-        head_value = sum_liquidatable_value(head_refs, liquidatable_floor_by_ref)
-        watermark_value = sum_liquidatable_value(watermark_refs, liquidatable_floor_by_ref)
-        policy_value = head_value + watermark_value
-        missed_value = max(0, total_liquidatable_value - policy_value)
-
-        head_values[budget] = head_value
-        watermark_values[budget] = watermark_value
-        policy_values[budget] = policy_value
-        missed_values[budget] = missed_value
-        policy_shares[budget] = ratio_scaled(policy_value, total_liquidatable_value)
-        head_shares[budget] = ratio_scaled(head_value, total_liquidatable_value)
-        watermark_shares[budget] = ratio_scaled(watermark_value, total_liquidatable_value)
-        missed_shares[budget] = ratio_scaled(missed_value, total_liquidatable_value)
-
-    return {
-        "policy_capture_value_by_budget": policy_values,
-        "policy_capture_share_by_budget": policy_shares,
-        "head_capture_value_by_budget": head_values,
-        "head_capture_share_by_budget": head_shares,
-        "watermark_capture_value_by_budget": watermark_values,
-        "watermark_capture_share_by_budget": watermark_shares,
-        "missed_value_by_budget": missed_values,
-        "missed_share_by_budget": missed_shares,
     }
 
 
@@ -2119,7 +1858,6 @@ def analytics_liquidation_observability(
     analytics: dict[str, Any],
     curve: list[dict[str, int]] | None,
     time_ctx: dict[str, int],
-    liability: int | None,
 ) -> dict[str, Any]:
     if not analytics["active_refs"]:
         return empty_liquidation_observability()
@@ -2150,54 +1888,11 @@ def analytics_liquidation_observability(
             if gross_value <= threshold_value:
                 liquidatable_floor_by_ref[order["ref"]] = floor_amount
 
-    ordered_refs = active_refs(model)
-    active_count = len(ordered_refs)
-    bucket_values = [0 for _ in range(LIQUIDATION_PRIORITY_BUCKETS)]
-    capture_values = {budget: 0 for budget in LIQUIDATION_BUDGET_PROBES}
-    cumulative = 0
-    required_capture: int | None = None
     total_liquidatable_value = sum(liquidatable_floor_by_ref.values())
-    if liability is not None:
-        allowed_backlog = mul_div_round_down(liability, LIQUIDATION_BACKLOG_TARGET, FLOAT_SCALING)
-        required_capture = max(0, total_liquidatable_value - allowed_backlog)
-    budget_needed: int | None = 0 if required_capture == 0 else None
-
-    for index, ref in enumerate(ordered_refs, start=1):
-        floor_value = liquidatable_floor_by_ref.get(ref, 0)
-        if floor_value > 0:
-            bucket = min(
-                LIQUIDATION_PRIORITY_BUCKETS - 1,
-                (index - 1) * LIQUIDATION_PRIORITY_BUCKETS // max(1, active_count),
-            )
-            bucket_values[bucket] += floor_value
-            cumulative += floor_value
-        for budget in LIQUIDATION_BUDGET_PROBES:
-            if index <= budget:
-                capture_values[budget] = cumulative
-        if required_capture is not None and budget_needed is None and cumulative >= required_capture:
-            budget_needed = index
-
-    capture_shares = {
-        budget: None
-        if total_liquidatable_value == 0
-        else mul_div_round_down(capture_values[budget], FLOAT_SCALING, total_liquidatable_value)
-        for budget in LIQUIDATION_BUDGET_PROBES
-    }
-    scanner_policy = scanner_policy_observability(
-        model,
-        ordered_refs,
-        liquidatable_floor_by_ref,
-        total_liquidatable_value,
-    )
 
     return {
         "liquidatable_count": len(liquidatable_floor_by_ref),
         "liquidatable_value": total_liquidatable_value,
-        "rank_bucket_liquidatable_value": bucket_values,
-        "budget_capture_value": capture_values,
-        "budget_capture_share": capture_shares,
-        **scanner_policy,
-        "budget_needed_for_target": budget_needed,
     }
 
 
@@ -2214,32 +1909,13 @@ def floor_index_at_ms(timestamp_ms: int, expiry_ms: int, window: int, max_premiu
     return FLOAT_SCALING + mul_div_round_down(max_premium, phase_squared, FLOAT_SCALING)
 
 
-def slow_crystallized_borrow_fee(model: dict[str, Any], open_ms: dict[str, int], time_ctx: dict[str, int]) -> int:
-    """Borrow fee accrued across all open leveraged orders at the current step.
-
-    Per order the floor has grown from floor_seed to floor_seed * index_now /
-    index_open; the borrow fee is that increase. Summing over open orders
-    'crystallizes' the value the on-chain protocol only realizes lazily.
-    """
-    index_now = floor_index_at_ms(time_ctx["now_ms"], time_ctx["expiry_ms"], time_ctx["window"], time_ctx["max_premium"])
-    total = 0
-    for ref in active_refs(model):
-        order = model["orders"][ref]
-        if order["status"] != "active":
-            continue
-        opened = open_ms.get(ref, time_ctx["now_ms"])
-        index_open = floor_index_at_ms(opened, time_ctx["expiry_ms"], time_ctx["window"], time_ctx["max_premium"])
-        floor_now = mul_div_round_down(order["floor_seed_amount"], index_now, index_open)
-        total += floor_now - order["floor_seed_amount"]
-    return total
-
-
 def analytics_crystallized_borrow_fee(analytics: dict[str, Any], time_ctx: dict[str, int]) -> int:
     index_now = floor_index_at_ms(time_ctx["now_ms"], time_ctx["expiry_ms"], time_ctx["window"], time_ctx["max_premium"])
     total = 0
-    for index_open, floor_seed_amount in analytics["borrow_floor_by_index_open"].items():
-        floor_now = mul_div_round_down(floor_seed_amount, index_now, index_open)
-        total += floor_now - floor_seed_amount
+    for ref in analytics["active_refs"]:
+        order = analytics["orders"][ref]
+        floor_now = floor_amount_for_index(order["floor_shares"], index_now)
+        total += floor_now - order["floor_at_open"]
     return total
 
 
@@ -2307,38 +1983,16 @@ def should_sample_global_observability(row: dict[str, Any]) -> bool:
     return row["step"] % GLOBAL_OBSERVABILITY_INTERVAL == 0
 
 
-def observability_budget_strings(
-    liquidation_observability: dict[str, Any] | None,
-    field: str,
-) -> dict[str, str | None] | None:
-    if liquidation_observability is None:
-        return None
-    return {
-        str(key): None if value is None else str(value)
-        for key, value in liquidation_observability[field].items()
-    }
-
-
 def build_derived_record(
     model: dict[str, Any],
     state: dict[str, int],
     row: dict[str, Any],
     updates: list[dict[str, Any]],
     analytics: dict[str, Any],
-    open_ms: dict[str, int],
     interval: dict[str, Any],
     scan_active_count: int,
     time_ctx: dict[str, int],
-    verify_analytics: bool = False,
 ) -> dict[str, Any]:
-    # Track synthetic open times for borrow accrual: new mints open now;
-    # partial-redeem replacements inherit the original order's open time.
-    for update in updates:
-        if update["type"] == "order_minted":
-            open_ms[update["order_ref"]] = time_ctx["now_ms"]
-        elif update["type"] == "live_order_redeemed" and update["replacement_order_ref"]:
-            open_ms[update["replacement_order_ref"]] = open_ms.get(update["order_ref"], time_ctx["now_ms"])
-
     sampled_global = should_sample_global_observability(row)
     curve = None
     liability: int | None = None
@@ -2359,22 +2013,11 @@ def build_derived_record(
     liquidatable_value: int | None = None
     borrow_fee: int | None = None
 
-    if verify_analytics:
-        verify_analytics_sync(model, analytics)
     if sampled_global:
-        liquidation_observability = analytics_liquidation_observability(model, analytics, curve, time_ctx, liability)
+        liquidation_observability = analytics_liquidation_observability(model, analytics, curve, time_ctx)
         liquidatable_count = liquidation_observability["liquidatable_count"]
         liquidatable_value = liquidation_observability["liquidatable_value"]
         borrow_fee = analytics_crystallized_borrow_fee(analytics, time_ctx)
-        if verify_analytics:
-            slow_backlog = slow_liquidatable_orders(model, time_ctx)
-            slow_count = len(slow_backlog)
-            slow_value = sum(floor for _, floor in slow_backlog)
-            if (liquidatable_count, liquidatable_value) != (slow_count, slow_value):
-                raise ValueError("analytics liquidatable summary drifted")
-            slow_borrow_fee = slow_crystallized_borrow_fee(model, open_ms, time_ctx)
-            if borrow_fee != slow_borrow_fee:
-                raise ValueError("analytics borrow fee drifted")
     liquidated_this_step = sum(1 for update in updates if update["type"] == "order_liquidated")
     premium = step_premium(updates)
     trading_fee = step_trading_fee(updates)
@@ -2419,11 +2062,7 @@ def build_derived_record(
             0,
             liquidatable_value - previous_backlog_value + interval_liquidated_value,
         )
-        all_passive_value = sum(
-            value
-            for action, value in interval["liquidated_value_by_action"].items()
-            if action != "liquidate"
-        )
+        all_passive_value = sum(interval["liquidated_value_by_action"].values())
         mint_redeem_value = (
             interval["liquidated_value_by_action"].get("mint", 0)
             + interval["liquidated_value_by_action"].get("redeem", 0)
@@ -2449,7 +2088,6 @@ def build_derived_record(
             "redeem": 0,
             "supply": 0,
             "withdraw": 0,
-            "liquidate": 0,
         }
 
     return {
@@ -2514,49 +2152,6 @@ def build_derived_record(
             "mint_redeem_required_manual_topup_share": None
             if mint_redeem_required_manual_topup_share is None
             else str(mint_redeem_required_manual_topup_share),
-            "rank_bucket_liquidatable_value": None
-            if liquidation_observability is None
-            else [str(value) for value in liquidation_observability["rank_bucket_liquidatable_value"]],
-            "budget_capture_value": None
-            if liquidation_observability is None
-            else {str(key): str(value) for key, value in liquidation_observability["budget_capture_value"].items()},
-            "budget_capture_share": observability_budget_strings(liquidation_observability, "budget_capture_share"),
-            "policy_capture_value_by_budget": observability_budget_strings(
-                liquidation_observability,
-                "policy_capture_value_by_budget",
-            ),
-            "policy_capture_share_by_budget": observability_budget_strings(
-                liquidation_observability,
-                "policy_capture_share_by_budget",
-            ),
-            "head_capture_value_by_budget": observability_budget_strings(
-                liquidation_observability,
-                "head_capture_value_by_budget",
-            ),
-            "head_capture_share_by_budget": observability_budget_strings(
-                liquidation_observability,
-                "head_capture_share_by_budget",
-            ),
-            "watermark_capture_value_by_budget": observability_budget_strings(
-                liquidation_observability,
-                "watermark_capture_value_by_budget",
-            ),
-            "watermark_capture_share_by_budget": observability_budget_strings(
-                liquidation_observability,
-                "watermark_capture_share_by_budget",
-            ),
-            "missed_value_by_budget": observability_budget_strings(
-                liquidation_observability,
-                "missed_value_by_budget",
-            ),
-            "missed_share_by_budget": observability_budget_strings(
-                liquidation_observability,
-                "missed_share_by_budget",
-            ),
-            "budget_needed_for_1pct_value_pressure": None
-            if liquidation_observability is None or liquidation_observability["budget_needed_for_target"] is None
-            else str(liquidation_observability["budget_needed_for_target"]),
-            "budget_target_value_pressure": str(LIQUIDATION_BACKLOG_TARGET),
             "budget": str(budget),
             "scan_active_count": str(scan_active_count),
             "scan_coverage": str(scan_coverage),
@@ -2578,7 +2173,6 @@ def exact_row_timestamp_ms(row: dict[str, Any]) -> int:
 def replay(
     rows: list[dict[str, Any]],
     collect_derived: bool = False,
-    verify_analytics: bool = False,
     exact_time: bool = False,
     expiry_ms: int | None = None,
     settlement_price: int | None = None,
@@ -2642,7 +2236,6 @@ def replay(
             "redeem": 0,
             "supply": 0,
             "withdraw": 0,
-            "liquidate": 0,
         },
     }
     manager_summary = initial_manager_summary()
@@ -2652,8 +2245,6 @@ def replay(
     total_steps = len(rows)
     step_dt = BORROW_STEP_DT_MS if BORROW_STEP_DT_MS else max(1, LEVERAGE_FLOOR_WINDOW_MS // max(1, total_steps))
     derived_expiry_ms = expiry_ms if exact_time and expiry_ms is not None else total_steps * step_dt
-    open_ms: dict[str, int] = {}
-
     for step_index, row in enumerate(rows):
         updates: list[dict[str, Any]] = []
         action = row["action"]
@@ -2668,28 +2259,6 @@ def replay(
             scan_active_count = active_order_count(model)
             updates.extend(run_liquidation_pass(model, TRADE_LIQUIDATION_BUDGET))
             updates.append(mint_order(model, row, row_timestamp_ms))
-        elif action == "update_prices":
-            model["current_forward"] = row["forward"]
-            updates.append(oracle_prices_update(row))
-        elif action == "update_svi":
-            model["current_svi"] = row
-            updates.append(oracle_svi_update(row))
-        elif action == "mint":
-            scan_active_count = active_order_count(model)
-            updates.extend(run_liquidation_pass(model, TRADE_LIQUIDATION_BUDGET))
-            updates.append(mint_order(model, row, row_timestamp_ms))
-        elif action == "liquidate":
-            apply_inline_oracle_refresh(model, row, updates)
-            scan_active_count = active_order_count(model)
-            liquidation_updates = run_liquidation_pass(model, row["budget"])
-            updates.append(
-                {
-                    "type": "liquidation_pass",
-                    "budget": str(row["budget"]),
-                    "liquidated_count": str(len(liquidation_updates)),
-                }
-            )
-            updates.extend(liquidation_updates)
         elif action == "redeem":
             apply_inline_oracle_refresh(model, row, updates)
             scan_active_count = active_order_count(model)
@@ -2742,11 +2311,9 @@ def replay(
                     row,
                     updates,
                     analytics,
-                    open_ms,
                     derived_interval,
                     scan_active_count,
                     time_ctx,
-                    verify_analytics,
                 )
             )
 
@@ -2816,13 +2383,8 @@ def main() -> None:
     parser.add_argument("--out")
     parser.add_argument("--derived-out")
     parser.add_argument("--max-rows", type=int)
-    parser.add_argument("--verify-analytics", action="store_true")
     parser.add_argument("--config", type=Path, default=DEFAULT_SCENARIO_CONFIG_PATH)
-    parser.add_argument("--exact-time", action="store_true", help="use replay timestamps and expiry for floor indexes")
-    parser.add_argument("--terminal-closeout", action="store_true", help="append a direct Python-only settlement closeout")
-    parser.add_argument("--expiry-ms", type=int)
-    parser.add_argument("--settlement-price", type=int)
-    parser.add_argument("--settlement-timestamp-ms", type=int)
+    parser.add_argument("--long-run", action="store_true")
     args = parser.parse_args()
 
     if not args.out and not args.derived_out:
@@ -2830,15 +2392,9 @@ def main() -> None:
 
     config = load_scenario_config(args.config)
     apply_scenario_config(config)
-    expiry_ms = args.expiry_ms if args.expiry_ms is not None else config_source_value(config, "expiry_ms")
-    settlement_price = (
-        args.settlement_price if args.settlement_price is not None else config_source_value(config, "settlement_price")
-    )
-    settlement_timestamp_ms = (
-        args.settlement_timestamp_ms
-        if args.settlement_timestamp_ms is not None
-        else config_source_value(config, "settlement_timestamp_ms")
-    )
+    expiry_ms = config_source_value(config, "expiry_ms")
+    settlement_price = config_source_value(config, "settlement_price")
+    settlement_timestamp_ms = config_source_value(config, "settlement_timestamp_ms")
 
     rows = parse_scenario(Path(args.scenario))
     if args.max_rows is not None:
@@ -2846,12 +2402,11 @@ def main() -> None:
     canonical, derived = replay(
         rows,
         collect_derived=bool(args.derived_out),
-        verify_analytics=args.verify_analytics,
-        exact_time=args.exact_time,
+        exact_time=args.long_run,
         expiry_ms=expiry_ms,
         settlement_price=settlement_price,
         settlement_timestamp_ms=settlement_timestamp_ms,
-        terminal_closeout=args.terminal_closeout,
+        terminal_closeout=args.long_run,
     )
     if args.out:
         write_json(Path(args.out), canonical)

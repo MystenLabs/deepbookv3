@@ -178,62 +178,6 @@ def sampled_backlog_area(records: list[dict[str, Any]]) -> int:
     return area
 
 
-def budget_share_summary(records: list[dict[str, Any]], field: str) -> dict[str, Any] | None:
-    values_by_budget: dict[str, list[int]] = defaultdict(list)
-    for record in records:
-        shares = record.get("liquidation", {}).get(field)
-        if not isinstance(shares, dict):
-            continue
-        for budget, value in shares.items():
-            parsed = int_or_none(value)
-            if parsed is not None:
-                values_by_budget[str(budget)].append(parsed)
-    if not values_by_budget:
-        return None
-    return {
-        budget: ratio_stats(values)
-        for budget, values in sorted(values_by_budget.items(), key=lambda item: int(item[0]))
-    }
-
-
-def budget_capture_summary(records: list[dict[str, Any]]) -> dict[str, Any] | None:
-    return budget_share_summary(records, "budget_capture_share")
-
-
-def priority_bucket_summary(records: list[dict[str, Any]]) -> dict[str, Any] | None:
-    bucket_totals: list[int] | None = None
-    for record in records:
-        values = record.get("liquidation", {}).get("rank_bucket_liquidatable_value")
-        if not isinstance(values, list):
-            continue
-        parsed = [int(value) for value in values]
-        if bucket_totals is None:
-            bucket_totals = [0 for _ in parsed]
-        for index, value in enumerate(parsed):
-            bucket_totals[index] += value
-    if not bucket_totals:
-        return None
-    total = sum(bucket_totals)
-    if total == 0:
-        return {
-            "bucket_count": len(bucket_totals),
-            "total_liquidatable_value_raw": "0",
-            "total_liquidatable_value_dusdc": 0.0,
-            "cumulative_capture_share": [],
-        }
-    running = 0
-    capture_share: list[float] = []
-    for value in bucket_totals:
-        running += value
-        capture_share.append(running / total)
-    return {
-        "bucket_count": len(bucket_totals),
-        "total_liquidatable_value_raw": str(total),
-        "total_liquidatable_value_dusdc": dusdc(total),
-        "cumulative_capture_share": capture_share,
-    }
-
-
 def last_sampled(records: list[dict[str, Any]], path: tuple[str, ...]) -> str | None:
     for record in reversed(records):
         value: Any = record
@@ -273,27 +217,15 @@ def summarize_derived(data: dict[str, Any] | None) -> dict[str, Any] | None:
 
     liquidated_by_action = defaultdict(int)
     liquidated_value_by_action = defaultdict(int)
-    liquidated_by_flow_type = defaultdict(int)
-    liquidated_value_by_flow_type = defaultdict(int)
     txs_with_liquidations_by_action = Counter()
-    txs_with_liquidations_by_flow_type = Counter()
     for record in records:
         action = normalized_action(record["action"])
-        flow_type = "manual" if action == "liquidate" else "passive"
         liquidated_count = int(record["liquidation"]["liquidated_count"])
         liquidated_value = int(record["liquidation"]["liquidated_value"])
         if liquidated_count > 0:
             txs_with_liquidations_by_action[action] += 1
-            txs_with_liquidations_by_flow_type[flow_type] += 1
             liquidated_by_action[action] += liquidated_count
             liquidated_value_by_action[action] += liquidated_value
-            liquidated_by_flow_type[flow_type] += liquidated_count
-            liquidated_value_by_flow_type[flow_type] += liquidated_value
-
-    manual_liquidated_count = liquidated_by_flow_type["manual"]
-    total_liquidated_count = sum(liquidated_by_flow_type.values())
-    manual_liquidated_value = liquidated_value_by_flow_type["manual"]
-    total_liquidated_value = sum(liquidated_value_by_flow_type.values())
 
     last_live_lp_pnl = last_sampled(records, ("valuation", "lp_live_mtm_pnl"))
     last_live_active_pnl = last_sampled(records, ("valuation", "active_book_live_pnl"))
@@ -341,18 +273,7 @@ def summarize_derived(data: dict[str, Any] | None) -> dict[str, Any] | None:
             "txs_with_liquidations": sum(1 for record in records if int(record["liquidation"]["liquidated_count"]) > 0),
             "liquidated_by_action": dict(sorted(liquidated_by_action.items())),
             "liquidated_value_by_action": totals_with_dusdc(dict(liquidated_value_by_action)),
-            "liquidated_by_flow_type": dict(sorted(liquidated_by_flow_type.items())),
-            "liquidated_value_by_flow_type": totals_with_dusdc(dict(liquidated_value_by_flow_type)),
             "txs_with_liquidations_by_action": dict(sorted(txs_with_liquidations_by_action.items())),
-            "txs_with_liquidations_by_flow_type": dict(sorted(txs_with_liquidations_by_flow_type.items())),
-            "manual_dependency": {
-                "manual_count_share": None
-                if total_liquidated_count == 0
-                else manual_liquidated_count / total_liquidated_count,
-                "manual_value_share": None
-                if total_liquidated_value == 0
-                else manual_liquidated_value / total_liquidated_value,
-            },
             "standing_backlog_count": integer_stats(field_values(records, ("liquidation", "liquidatable_count"))),
             "standing_backlog_value": dusdc_stats(field_values(records, ("liquidation", "liquidatable_value"))),
             "liquidated_value_per_tx": dusdc_stats(field_values(records, ("liquidation", "liquidated_value"))),
@@ -367,15 +288,6 @@ def summarize_derived(data: dict[str, Any] | None) -> dict[str, Any] | None:
             "mint_redeem_required_manual_topup_share": ratio_stats(
                 field_values(records, ("liquidation", "mint_redeem_required_manual_topup_share"))
             ),
-            "budget_needed_for_1pct_value_pressure": integer_stats(
-                field_values(records, ("liquidation", "budget_needed_for_1pct_value_pressure"))
-            ),
-            "budget_capture_share": budget_capture_summary(records),
-            "policy_capture_share_by_budget": budget_share_summary(records, "policy_capture_share_by_budget"),
-            "head_capture_share_by_budget": budget_share_summary(records, "head_capture_share_by_budget"),
-            "watermark_capture_share_by_budget": budget_share_summary(records, "watermark_capture_share_by_budget"),
-            "missed_share_by_budget": budget_share_summary(records, "missed_share_by_budget"),
-            "priority_bucket_capture": priority_bucket_summary(records),
             "sampled_backlog_value_area_raw": str(backlog_area),
             "sampled_backlog_value_area_dusdc_txs": dusdc(backlog_area),
         },
@@ -420,7 +332,6 @@ def summarize_artifacts(artifacts_dir: Path) -> dict[str, Any]:
         "chart_market_overview.png",
         "chart_vault_pnl_fee_coverage.png",
         "chart_liquidation_coverage.png",
-        "chart_liquidation_priority_budget.png",
         "chart_liquidation_execution_quality.png",
     ]
     return {
