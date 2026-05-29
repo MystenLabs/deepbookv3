@@ -110,9 +110,15 @@ public fun set_template_max_expiry_floor_premium(
     config.set_template_max_expiry_floor_premium(value);
 }
 
-/// Set the active stake at which trading benefits reach their maximum.
-public fun set_max_benefit_power(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
-    config.set_max_benefit_power(value);
+/// Set the staking benefit thresholds: `lower` (half of max benefits) and
+/// `upper` (full benefits). Validated as a pair (`upper > 2 * lower`).
+public fun set_benefit_powers(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    lower: u64,
+    upper: u64,
+) {
+    config.set_benefit_powers(lower, upper);
 }
 
 /// Set the fee discount at full active stake (0..50%).

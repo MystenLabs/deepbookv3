@@ -132,9 +132,9 @@ public(package) fun set_template_max_expiry_floor_premium(config: &mut ProtocolC
     config.leverage_config.set_template_max_expiry_floor_premium(value);
 }
 
-public(package) fun set_max_benefit_power(config: &mut ProtocolConfig, value: u64) {
+public(package) fun set_benefit_powers(config: &mut ProtocolConfig, lower: u64, upper: u64) {
     config.assert_not_valuation_in_progress();
-    config.stake_config.set_max_benefit_power(value);
+    config.stake_config.set_benefit_powers(lower, upper);
 }
 
 public(package) fun set_max_fee_discount(config: &mut ProtocolConfig, value: u64) {

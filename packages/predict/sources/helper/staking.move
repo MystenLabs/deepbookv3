@@ -3,12 +3,14 @@
 
 /// DEEP staking policy for Predict.
 ///
-/// Pure functions mapping a manager's active staked DEEP to trading benefits.
-/// Benefits scale linearly with active stake, reaching their admin-configured
-/// maxima (`max_fee_discount`, `max_rebate_fraction`) at `max_benefit_power` and
-/// staying capped above it (more stake earns no extra benefit). Active stake is
-/// the epoch-activated portion tracked on the manager; this module is unaware of
-/// the epoch lifecycle. All policy lives here so callers stay free of staking math.
+/// Pure functions mapping a manager's active staked DEEP to trading benefits
+/// along a two-segment curve: the benefit ratio rises linearly from 0 to 50% of
+/// max as active stake goes 0 -> `lower_benefit_power`, then linearly from 50%
+/// to 100% as it goes `lower_benefit_power` -> `upper_benefit_power`, and is
+/// capped at 100% above. The ratio then scales the admin-configured maxima
+/// (`max_fee_discount`, `max_rebate_fraction`). Active stake is the
+/// epoch-activated portion tracked on the manager; this module is unaware of the
+/// epoch lifecycle. All policy lives here so callers stay free of staking math.
 module deepbook_predict::staking;
 
 use deepbook::math;
@@ -16,32 +18,48 @@ use deepbook_predict::constants;
 
 // === Public-Package Functions ===
 
-/// Trading-fee discount for an active stake, in FLOAT_SCALING. Scales linearly
-/// from 0 to `max_fee_discount` as active stake goes from 0 to
-/// `max_benefit_power`, capped above it.
+/// Trading-fee discount for an active stake, in FLOAT_SCALING. The two-segment
+/// benefit ratio scaled by `max_fee_discount`.
 public(package) fun fee_discount_fraction(
     active_stake: u64,
-    max_benefit_power: u64,
+    lower_benefit_power: u64,
+    upper_benefit_power: u64,
     max_fee_discount: u64,
 ): u64 {
-    math::mul(benefit_ratio(active_stake, max_benefit_power), max_fee_discount)
+    math::mul(
+        benefit_ratio(active_stake, lower_benefit_power, upper_benefit_power),
+        max_fee_discount,
+    )
 }
 
-/// Share of a manager's eligible trading-loss rebate paid out for an active
-/// stake, in FLOAT_SCALING. Scales linearly from 0 to `max_rebate_fraction` as
-/// active stake goes from 0 to `max_benefit_power`; the complement compounds to LPs.
+/// Share of a manager's eligible trading-loss rebate for an active stake, in
+/// FLOAT_SCALING. The two-segment benefit ratio scaled by `max_rebate_fraction`;
+/// the complement compounds to LPs.
 public(package) fun rebate_fraction(
     active_stake: u64,
-    max_benefit_power: u64,
+    lower_benefit_power: u64,
+    upper_benefit_power: u64,
     max_rebate_fraction: u64,
 ): u64 {
-    math::mul(benefit_ratio(active_stake, max_benefit_power), max_rebate_fraction)
+    math::mul(
+        benefit_ratio(active_stake, lower_benefit_power, upper_benefit_power),
+        max_rebate_fraction,
+    )
 }
 
 // === Private Functions ===
 
 /// Fraction of the maximum benefit earned at an active stake, in FLOAT_SCALING
-/// (0..1), linear in stake and capped at full benefit.
-fun benefit_ratio(active_stake: u64, max_benefit_power: u64): u64 {
-    math::div(active_stake, max_benefit_power).min(constants::float_scaling!())
+/// (0..1): linear 0 -> 0.5 over `0..lower`, linear 0.5 -> 1 over `lower..upper`,
+/// capped at 1 above `upper`. Relies on the config invariant `upper > 2 * lower`
+/// (so `lower > 0` and `upper - lower > 0`).
+fun benefit_ratio(active_stake: u64, lower: u64, upper: u64): u64 {
+    let full = constants::float_scaling!();
+    if (active_stake >= upper) return full;
+    let half = full / 2;
+    if (active_stake <= lower) {
+        math::mul(half, math::div(active_stake, lower))
+    } else {
+        half + math::mul(half, math::div(active_stake - lower, upper - lower))
+    }
 }

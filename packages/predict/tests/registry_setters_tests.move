@@ -178,13 +178,14 @@ fun set_template_max_expiry_floor_premium_forwards_to_leverage_config() {
 // === Stake config setter ===
 
 #[test]
-fun set_max_benefit_power_forwards_to_stake_config() {
+fun set_benefit_powers_forwards_to_stake_config() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = registry::create_admin_cap_for_testing(ctx);
     let mut config = protocol_config::new_for_testing(ctx);
 
-    registry::set_max_benefit_power(&mut config, &admin_cap, 250_000_000_000);
-    assert_eq!(stake_config::max_benefit_power(config.stake_config()), 250_000_000_000);
+    registry::set_benefit_powers(&mut config, &admin_cap, 200_000_000_000, 1_000_000_000_000);
+    assert_eq!(stake_config::lower_benefit_power(config.stake_config()), 200_000_000_000);
+    assert_eq!(stake_config::upper_benefit_power(config.stake_config()), 1_000_000_000_000);
 
     destroy(config);
     destroy(admin_cap);

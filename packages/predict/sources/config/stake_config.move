@@ -3,16 +3,20 @@
 
 /// Admin-tunable DEEP staking parameters.
 ///
-/// Benefits scale linearly with active stake up to `max_benefit_power` (stake
-/// above it earns no extra), reaching `max_fee_discount` off trading fees and
-/// `max_rebate_fraction` of the eligible loss rebate.
+/// Benefits scale with active stake along a two-segment curve: linearly from 0
+/// to half of max over `0..lower_benefit_power`, then linearly from half to full
+/// over `lower_benefit_power..upper_benefit_power`, capped at full above. "Full"
+/// means `max_fee_discount` off trading fees and `max_rebate_fraction` of the
+/// eligible loss rebate.
 module deepbook_predict::stake_config;
 
 use deepbook_predict::config_constants;
 
 public struct StakeConfig has store {
-    /// Active stake for full trading benefits, in raw DEEP units.
-    max_benefit_power: u64,
+    /// Active stake at the curve kink (half of max benefits), in raw DEEP units.
+    lower_benefit_power: u64,
+    /// Active stake for full (max) benefits, in raw DEEP units.
+    upper_benefit_power: u64,
     /// Fee discount at full active stake, in FLOAT_SCALING (0..50%).
     max_fee_discount: u64,
     /// Loss-rebate share at full active stake, in FLOAT_SCALING (0..100%).
@@ -21,8 +25,12 @@ public struct StakeConfig has store {
 
 // === Public-Package Functions ===
 
-public(package) fun max_benefit_power(config: &StakeConfig): u64 {
-    config.max_benefit_power
+public(package) fun lower_benefit_power(config: &StakeConfig): u64 {
+    config.lower_benefit_power
+}
+
+public(package) fun upper_benefit_power(config: &StakeConfig): u64 {
+    config.upper_benefit_power
 }
 
 public(package) fun max_fee_discount(config: &StakeConfig): u64 {
@@ -35,15 +43,19 @@ public(package) fun max_rebate_fraction(config: &StakeConfig): u64 {
 
 public(package) fun new(): StakeConfig {
     StakeConfig {
-        max_benefit_power: config_constants::default_max_benefit_power!(),
+        lower_benefit_power: config_constants::default_lower_benefit_power!(),
+        upper_benefit_power: config_constants::default_upper_benefit_power!(),
         max_fee_discount: config_constants::default_max_fee_discount!(),
         max_rebate_fraction: config_constants::default_max_rebate_fraction!(),
     }
 }
 
-public(package) fun set_max_benefit_power(config: &mut StakeConfig, value: u64) {
-    config_constants::assert_max_benefit_power(value);
-    config.max_benefit_power = value;
+/// Set both benefit thresholds together (validated as a pair: each in range and
+/// `upper > 2 * lower`).
+public(package) fun set_benefit_powers(config: &mut StakeConfig, lower: u64, upper: u64) {
+    config_constants::assert_benefit_powers(lower, upper);
+    config.lower_benefit_power = lower;
+    config.upper_benefit_power = upper;
 }
 
 public(package) fun set_max_fee_discount(config: &mut StakeConfig, value: u64) {
