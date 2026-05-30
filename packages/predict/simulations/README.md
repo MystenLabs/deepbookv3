@@ -66,7 +66,9 @@ can be iterated quickly inside the latest run folder.
   file.
 - `charts/chart_common.py`: shared chart styling and timeline helpers.
 - `tools/analyze_liquidation_priority_encodings.py`: standalone research tool,
-  not called by `run.sh`.
+  not called by `run.sh`. It evaluates static order-id priority layouts against
+  kept long-run data; the current protocol layout is quantity first, then
+  leverage, then stable encoded order terms with sequence last.
 - `src/sim.ts`: localnet setup and generated CSV replay engine.
 - `src/runtime.ts`: Sui transaction builders and execution helpers.
 - `src/shared.ts`: CSV parsing, shared schemas, paths, and JSON helpers.
@@ -111,14 +113,14 @@ The CSV is the source of truth for transaction execution. The runner does not
 infer grouped actions from neighboring rows and does not repair illegal rows.
 
 Quantities are exact on-chain quantities and must already be valid lot-size
-multiples. Leverage codes are explicit:
+multiples. Leverage is the same 1e9-scaled multiplier used by the contracts:
 
 ```text
-0 = 1x
-1 = 1.5x
-2 = 2x
-3 = 2.5x
-4 = 3x
+1_000_000_000 = 1x
+1_500_000_000 = 1.5x
+2_000_000_000 = 2x
+2_500_000_000 = 2.5x
+3_000_000_000 = 3x
 ```
 
 Leverage is tiered by entry probability. Rows with entry probability below

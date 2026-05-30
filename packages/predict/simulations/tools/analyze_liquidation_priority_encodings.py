@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
-"""Compare candidate 32-bit liquidation priority encodings against replay data."""
+"""Compare candidate liquidation priority orderings against replay data."""
 
 from __future__ import annotations
 
 import argparse
 import csv
+import itertools
 import json
+import os
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 SIM_DIR = Path(__file__).resolve().parents[1]
 if str(SIM_DIR) not in sys.path:
@@ -19,35 +22,22 @@ import python_replay as replay  # noqa: E402
 from sim_artifacts import load_json_object, write_json  # noqa: E402
 
 
-U32_MASK = (1 << 32) - 1
-U28_MASK = (1 << 28) - 1
 FRONT_SHARES = (0.05, 0.10, 0.25, 0.50)
 SCAN_BUDGETS = (24, 48, 96, 192, 500)
-MAX_LEVERAGE_CODE = 4
+LEVERAGE_ONE_X = replay.LEVERAGE_ONE_X
 
 
 @dataclass(frozen=True)
-class Encoding:
+class LayoutField:
     name: str
-    bits_used: int
-    key_fn: Callable[[dict[str, int]], tuple[int, ...]]
+    desc: bool
 
 
-def uint_ratio_bucket(value: int, bits: int, max_value: int = replay.FLOAT_SCALING) -> int:
-    if bits == 0:
-        return 0
-    mask = (1 << bits) - 1
-    if value <= 0:
-        return 0
-    if value >= max_value:
-        return mask
-    return value * mask // max_value
-
-
-def saturated_bucket(value: int, bits: int) -> int:
-    if bits == 0:
-        return 0
-    return min((1 << bits) - 1, max(0, value))
+@dataclass(frozen=True)
+class LayoutCandidate:
+    name: str
+    category: str
+    fields: tuple[LayoutField, ...]
 
 
 def scaled_ratio(numerator: int, denominator: int) -> int:
@@ -56,382 +46,183 @@ def scaled_ratio(numerator: int, denominator: int) -> int:
     return numerator * replay.FLOAT_SCALING // denominator
 
 
-def log_bucket(value: int, bits: int) -> int:
-    if bits == 0 or value <= 0:
-        return 0
-    return min((1 << bits) - 1, value.bit_length() - 1)
+def field(name: str, desc: bool) -> LayoutField:
+    return LayoutField(name, desc)
 
 
-def quantity_lots(order: dict[str, int]) -> int:
-    return order["quantity_lots"]
+def field_label(layout_field: LayoutField) -> str:
+    return f"{layout_field.name}_{'desc' if layout_field.desc else 'asc'}"
 
 
-def user_contribution_probability(order: dict[str, int]) -> int:
-    return order["user_contribution_probability"]
+def layout_name(prefix: str, fields: tuple[LayoutField, ...]) -> str:
+    return prefix + "__" + "__".join(field_label(layout_field) for layout_field in fields) + "__sequence_asc"
 
 
-def floor_seed_probability(order: dict[str, int]) -> int:
-    return order["floor_seed_probability"]
-
-
-def ltv_headroom_probability(order: dict[str, int]) -> int:
-    return order["ltv_headroom_probability"]
-
-
-def ltv_headroom_ratio(order: dict[str, int]) -> int:
-    return order["ltv_headroom_ratio"]
-
-
-def terminal_ltv_headroom_probability(order: dict[str, int]) -> int:
-    return order["terminal_ltv_headroom_probability"]
-
-
-def liquidation_threshold_probability(order: dict[str, int]) -> int:
-    return order["liquidation_threshold_probability"]
-
-
-def floor_ratio(order: dict[str, int]) -> int:
-    return order["floor_ratio"]
-
-
-def risk_value_score(order: dict[str, int]) -> int:
-    return order["risk_value_score"]
-
-
-def leverage_code(order: dict[str, int]) -> int:
-    return order["leverage"]
-
-
-def range_width_ticks(order: dict[str, int]) -> int:
-    return order["range_width_ticks"]
-
-
-def floor_lots(order: dict[str, int]) -> int:
-    return order["floor_lots"]
-
-
-def order_tie_breakers(order: dict[str, int]) -> tuple[int, ...]:
-    return order["tie_breakers"]
-
-
-def make_old_floor_desc_encoding() -> Encoding:
-    def key(order: dict[str, int]) -> tuple[int, ...]:
-        priority = U32_MASK - floor_seed_probability(order)
-        return (priority, *order_tie_breakers(order))
-
-    return Encoding("old_floor_desc", 32, key)
-
-
-def make_current_encoding() -> Encoding:
-    def key(order: dict[str, int]) -> tuple[int, ...]:
-        quantity_bucket = min(quantity_lots(order), U28_MASK)
-        priority = ((MAX_LEVERAGE_CODE - leverage_code(order)) << 28) | (U28_MASK - quantity_bucket)
-        return (priority, *order_tie_breakers(order))
-
-    return Encoding("current_leverage_quantity", 32, key)
-
-
-def make_full_probability_encoding(name: str, probability_fn: Callable[[dict[str, int]], int]) -> Encoding:
-    def key(order: dict[str, int]) -> tuple[int, ...]:
-        priority = uint_ratio_bucket(probability_fn(order), 32)
-        return (priority, *order_tie_breakers(order))
-
-    return Encoding(name, 32, key)
-
-
-def make_desc_probability_encoding(name: str, probability_fn: Callable[[dict[str, int]], int]) -> Encoding:
-    def key(order: dict[str, int]) -> tuple[int, ...]:
-        priority = U32_MASK - uint_ratio_bucket(probability_fn(order), 32)
-        return (priority, *order_tie_breakers(order))
-
-    return Encoding(name, 32, key)
-
-
-def make_ascending_int_encoding(name: str, metric_fn: Callable[[dict[str, int]], int]) -> Encoding:
-    def key(order: dict[str, int]) -> tuple[int, ...]:
-        priority = saturated_bucket(metric_fn(order), 32)
-        return (priority, *order_tie_breakers(order))
-
-    return Encoding(name, 32, key)
-
-
-def make_desc_int_encoding(name: str, metric_fn: Callable[[dict[str, int]], int]) -> Encoding:
-    def key(order: dict[str, int]) -> tuple[int, ...]:
-        priority = U32_MASK - saturated_bucket(metric_fn(order), 32)
-        return (priority, *order_tie_breakers(order))
-
-    return Encoding(name, 32, key)
-
-
-def deterministic_hash_u32(value: int) -> int:
-    x = value & U32_MASK
-    x ^= (x >> 16)
-    x = (x * 0x7FEB352D) & U32_MASK
-    x ^= (x >> 15)
-    x = (x * 0x846CA68B) & U32_MASK
-    x ^= (x >> 16)
-    return x & U32_MASK
-
-
-def make_hash_baseline() -> Encoding:
-    def key(order: dict[str, int]) -> tuple[int, ...]:
-        return (deterministic_hash_u32(order["sequence"]), *order_tie_breakers(order))
-
-    return Encoding("random_sequence_hash", 32, key)
-
-
-def value_for_metric(order: dict[str, int], metric: str) -> int:
-    if metric == "floor_lots":
-        return floor_lots(order)
-    if metric == "quantity_lots":
-        return quantity_lots(order)
-    raise ValueError(f"unknown value metric {metric}")
-
-
-def make_bucketed_encoding(
-    likelihood_name: str,
-    likelihood_fn: Callable[[dict[str, int]], int],
-    likelihood_bits: int,
-    value_metric: str,
-    value_bits: int,
+def layout_candidate(
+    fields: tuple[LayoutField, ...],
     *,
-    likelihood_desc: bool = False,
-    value_log: bool = False,
-) -> Encoding:
-    bits_used = likelihood_bits + value_bits
-    if bits_used > 32:
-        raise ValueError("encoding exceeds 32 bits")
-    likelihood_mask = (1 << likelihood_bits) - 1 if likelihood_bits > 0 else 0
-    value_mask = (1 << value_bits) - 1 if value_bits > 0 else 0
-    value_kind = "log_value" if value_log else "value"
-    name = f"{likelihood_name}{likelihood_bits}_{value_kind}{value_bits}_{value_metric}"
-
-    def key(order: dict[str, int]) -> tuple[int, ...]:
-        likelihood_bucket = uint_ratio_bucket(likelihood_fn(order), likelihood_bits)
-        if likelihood_desc:
-            likelihood_bucket = likelihood_mask - likelihood_bucket
-        value = value_for_metric(order, value_metric)
-        value_bucket = log_bucket(value, value_bits) if value_log else saturated_bucket(value, value_bits)
-        inverse_value_bucket = value_mask - value_bucket if value_bits > 0 else 0
-        priority = (likelihood_bucket << value_bits) | inverse_value_bucket
-        if priority > U32_MASK:
-            raise ValueError(f"encoding {name} overflowed u32")
-        return (priority, *order_tie_breakers(order))
-
-    return Encoding(name, bits_used, key)
+    category: str = "implementable",
+    prefix: str = "layout",
+) -> LayoutCandidate:
+    return LayoutCandidate(layout_name(prefix, fields), category, fields)
 
 
-def make_three_part_encoding(
-    name: str,
-    first_fn: Callable[[dict[str, int]], int],
-    first_bits: int,
-    first_desc: bool,
-    second_fn: Callable[[dict[str, int]], int],
-    second_bits: int,
-    second_desc: bool,
-    value_metric: str,
-    value_bits: int,
-) -> Encoding:
-    bits_used = first_bits + second_bits + value_bits
-    if bits_used > 32:
-        raise ValueError("encoding exceeds 32 bits")
-    first_mask = (1 << first_bits) - 1 if first_bits > 0 else 0
-    second_mask = (1 << second_bits) - 1 if second_bits > 0 else 0
-    value_mask = (1 << value_bits) - 1 if value_bits > 0 else 0
-
-    def key(order: dict[str, int]) -> tuple[int, ...]:
-        first_bucket = uint_ratio_bucket(first_fn(order), first_bits)
-        if first_desc:
-            first_bucket = first_mask - first_bucket
-        second_bucket = uint_ratio_bucket(second_fn(order), second_bits)
-        if second_desc:
-            second_bucket = second_mask - second_bucket
-        value_bucket = saturated_bucket(value_for_metric(order, value_metric), value_bits)
-        inverse_value_bucket = value_mask - value_bucket if value_bits > 0 else 0
-        priority = (first_bucket << (second_bits + value_bits)) | (second_bucket << value_bits) | inverse_value_bucket
-        if priority > U32_MASK:
-            raise ValueError(f"encoding {name} overflowed u32")
-        return (priority, *order_tie_breakers(order))
-
-    return Encoding(name, bits_used, key)
+def has_duplicate_field_names(fields: tuple[LayoutField, ...]) -> bool:
+    names = [layout_field.name for layout_field in fields]
+    return len(names) != len(set(names))
 
 
-def make_leverage_value_encoding(value_metric: str, value_bits: int) -> Encoding:
-    bits_used = 4 + value_bits
-    if bits_used > 32:
-        raise ValueError("encoding exceeds 32 bits")
-    value_mask = (1 << value_bits) - 1 if value_bits > 0 else 0
-    name = f"leverage_desc4_value{value_bits}_{value_metric}"
-
-    def key(order: dict[str, int]) -> tuple[int, ...]:
-        leverage_bucket = MAX_LEVERAGE_CODE - min(MAX_LEVERAGE_CODE, leverage_code(order))
-        value_bucket = saturated_bucket(value_for_metric(order, value_metric), value_bits)
-        inverse_value_bucket = value_mask - value_bucket if value_bits > 0 else 0
-        priority = (leverage_bucket << value_bits) | inverse_value_bucket
-        if priority > U32_MASK:
-            raise ValueError(f"encoding {name} overflowed u32")
-        return (priority, *order_tie_breakers(order))
-
-    return Encoding(name, bits_used, key)
+def dedupe_layouts(candidates: list[LayoutCandidate]) -> list[LayoutCandidate]:
+    seen: set[tuple[tuple[str, bool], ...]] = set()
+    out: list[LayoutCandidate] = []
+    for candidate in candidates:
+        key = tuple((layout_field.name, layout_field.desc) for layout_field in candidate.fields)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(candidate)
+    return out
 
 
-def leverage_risk(order: dict[str, int]) -> int:
-    return scaled_ratio(leverage_code(order), MAX_LEVERAGE_CODE)
+def current_order_id_fields() -> tuple[LayoutField, ...]:
+    return (
+        field("quantity_lots", True),
+        field("leverage", True),
+        field("opened_at_ms", False),
+        field("min_strike_index", False),
+        field("max_strike_index", False),
+        field("entry_probability", False),
+    )
 
 
-def inverse_width_risk(order: dict[str, int]) -> int:
-    return scaled_ratio(1, max(1, range_width_ticks(order)))
+def curated_layout_candidates() -> list[LayoutCandidate]:
+    leverage_desc = field("leverage", True)
+    quantity_desc = field("quantity_lots", True)
+    floor_prob_desc = field("floor_seed_probability", True)
+    floor_prob_asc = field("floor_seed_probability", False)
+    floor_lots_desc = field("floor_lots", True)
+    floor_lots_asc = field("floor_lots", False)
+    entry_desc = field("entry_probability", True)
+    entry_asc = field("entry_probability", False)
+    floor_ratio_desc = field("floor_ratio", True)
+    floor_ratio_asc = field("floor_ratio", False)
+    headroom_asc = field("ltv_headroom_probability", False)
+    headroom_desc = field("ltv_headroom_probability", True)
+    terminal_headroom_asc = field("terminal_ltv_headroom_probability", False)
+    terminal_headroom_desc = field("terminal_ltv_headroom_probability", True)
+    opened_asc = field("opened_at_ms", False)
+    opened_desc = field("opened_at_ms", True)
+    width_asc = field("range_width_ticks", False)
+    width_desc = field("range_width_ticks", True)
+    risk_desc = field("risk_value_score", True)
 
-
-def default_encodings() -> list[Encoding]:
-    encodings = [
-        make_current_encoding(),
-        make_old_floor_desc_encoding(),
-        make_hash_baseline(),
-        make_full_probability_encoding("headroom_full", user_contribution_probability),
-        make_full_probability_encoding("ltv_headroom_full", ltv_headroom_probability),
-        make_full_probability_encoding("ltv_headroom_ratio_full", ltv_headroom_ratio),
-        make_full_probability_encoding("terminal_ltv_headroom_full", terminal_ltv_headroom_probability),
-        make_desc_probability_encoding("liquidation_threshold_desc_full", liquidation_threshold_probability),
-        make_desc_probability_encoding("floor_ratio_desc_full", floor_ratio),
-        make_desc_int_encoding("risk_value_desc_full", risk_value_score),
+    prefixes = [
+        (quantity_desc, leverage_desc),
+        (leverage_desc, quantity_desc),
+        (leverage_desc, floor_prob_desc),
+        (leverage_desc, floor_prob_asc),
+        (leverage_desc, floor_lots_desc),
+        (leverage_desc, floor_lots_asc),
+        (leverage_desc, entry_desc),
+        (leverage_desc, entry_asc),
+        (leverage_desc, headroom_asc),
+        (floor_prob_desc, leverage_desc),
+        (floor_prob_asc, leverage_desc),
+        (floor_lots_desc, leverage_desc),
+        (entry_desc, leverage_desc),
+        (entry_asc, leverage_desc),
+        (headroom_asc, leverage_desc),
     ]
-    for likelihood_name, likelihood_fn in (
-        ("headroom", user_contribution_probability),
-        ("ltv_headroom", ltv_headroom_probability),
-        ("ltv_headroom_ratio", ltv_headroom_ratio),
-        ("terminal_ltv_headroom", terminal_ltv_headroom_probability),
-    ):
-        for value_metric in ("floor_lots", "quantity_lots"):
-            for likelihood_bits in range(12, 31, 2):
-                value_bits = 32 - likelihood_bits
-                if value_bits < 2:
-                    continue
-                encodings.append(
-                    make_bucketed_encoding(
-                        likelihood_name,
-                        likelihood_fn,
-                        likelihood_bits,
-                        value_metric,
-                        value_bits,
-                    )
-                )
-            for likelihood_bits, value_bits in ((26, 6), (24, 8), (20, 12)):
-                encodings.append(
-                    make_bucketed_encoding(
-                        likelihood_name,
-                        likelihood_fn,
-                        likelihood_bits,
-                        value_metric,
-                        value_bits,
-                        value_log=True,
-                    )
-                )
-    for likelihood_name, likelihood_fn in (
-        ("liquidation_threshold_desc", liquidation_threshold_probability),
-        ("floor_ratio_desc", floor_ratio),
-    ):
-        for value_metric in ("floor_lots", "quantity_lots"):
-            for likelihood_bits in range(12, 31, 2):
-                value_bits = 32 - likelihood_bits
-                if value_bits < 2:
-                    continue
-                encodings.append(
-                    make_bucketed_encoding(
-                        likelihood_name,
-                        likelihood_fn,
-                        likelihood_bits,
-                        value_metric,
-                        value_bits,
-                        likelihood_desc=True,
-                    )
-                )
-    for first_name, first_fn, first_desc in (
-        ("leverage_desc", leverage_risk, True),
-        ("width_desc", inverse_width_risk, True),
-        ("risk_value_desc", risk_value_score, True),
-    ):
-        encodings.append(
-            make_three_part_encoding(
-                f"{first_name}4_ltv_headroom20_value8_floor_lots",
-                first_fn,
-                4,
-                first_desc,
-                ltv_headroom_probability,
-                20,
-                False,
-                "floor_lots",
-                8,
+    suffixes = [
+        quantity_desc,
+        floor_prob_desc,
+        floor_prob_asc,
+        floor_lots_desc,
+        floor_lots_asc,
+        entry_desc,
+        entry_asc,
+        floor_ratio_desc,
+        floor_ratio_asc,
+        headroom_asc,
+        headroom_desc,
+        terminal_headroom_asc,
+        terminal_headroom_desc,
+        opened_asc,
+        opened_desc,
+        width_asc,
+        width_desc,
+        risk_desc,
+    ]
+
+    candidates = [
+        layout_candidate(current_order_id_fields(), prefix="current"),
+        layout_candidate((leverage_desc, quantity_desc), prefix="previous_primary"),
+        layout_candidate((floor_prob_desc, quantity_desc), prefix="floor_first"),
+        layout_candidate((floor_prob_asc, quantity_desc), prefix="floor_first"),
+        layout_candidate((entry_desc, quantity_desc), prefix="entry_first"),
+        layout_candidate((entry_asc, quantity_desc), prefix="entry_first"),
+        layout_candidate((headroom_asc, quantity_desc), prefix="headroom_first"),
+        layout_candidate((headroom_desc, quantity_desc), prefix="headroom_first"),
+    ]
+
+    for prefix_fields in prefixes:
+        candidates.append(layout_candidate(prefix_fields))
+        for suffix in suffixes:
+            fields = (*prefix_fields, suffix)
+            if has_duplicate_field_names(fields):
+                continue
+            candidates.append(layout_candidate(fields))
+
+    benchmark_fields = (
+        field("live_liquidatable_value", True),
+        field("live_bad_debt", True),
+        field("live_surplus", False),
+    )
+    for benchmark in benchmark_fields:
+        candidates.append(
+            layout_candidate(
+                (benchmark, leverage_desc, quantity_desc),
+                category="oracle_benchmark",
+                prefix="benchmark",
             )
         )
-        encodings.append(
-            make_three_part_encoding(
-                f"ltv_headroom20_{first_name}4_value8_floor_lots",
-                ltv_headroom_probability,
-                20,
-                False,
-                first_fn,
-                4,
-                first_desc,
-                "floor_lots",
-                8,
-            )
-        )
-    for value_metric in ("floor_lots", "quantity_lots"):
-        encodings.append(make_leverage_value_encoding(value_metric, 28))
-        encodings.append(
-            make_three_part_encoding(
-                f"leverage_desc4_ltv_headroom_ratio20_value8_{value_metric}",
-                leverage_risk,
-                4,
-                True,
-                ltv_headroom_ratio,
-                20,
-                False,
-                value_metric,
-                8,
-            )
-        )
-        encodings.append(
-            make_three_part_encoding(
-                f"leverage_desc4_floor_ratio_desc20_value8_{value_metric}",
-                leverage_risk,
-                4,
-                True,
-                floor_ratio,
-                20,
-                True,
-                value_metric,
-                8,
-            )
-        )
-        encodings.append(
-            make_three_part_encoding(
-                f"ltv_headroom_ratio20_leverage_desc4_value8_{value_metric}",
-                ltv_headroom_ratio,
-                20,
-                False,
-                leverage_risk,
-                4,
-                True,
-                value_metric,
-                8,
-            )
-        )
-        encodings.append(
-            make_three_part_encoding(
-                f"floor_ratio_desc20_leverage_desc4_value8_{value_metric}",
-                floor_ratio,
-                20,
-                True,
-                leverage_risk,
-                4,
-                True,
-                value_metric,
-                8,
-            )
-        )
-    return encodings
+
+    return dedupe_layouts(candidates)
+
+
+def wide_layout_candidates(width: int, limit: int | None) -> list[LayoutCandidate]:
+    if width < 1:
+        raise ValueError("layout width must be positive")
+    directed_fields = [
+        field("leverage", True),
+        field("leverage", False),
+        field("quantity_lots", True),
+        field("quantity_lots", False),
+        field("floor_seed_probability", True),
+        field("floor_seed_probability", False),
+        field("floor_lots", True),
+        field("floor_lots", False),
+        field("entry_probability", True),
+        field("entry_probability", False),
+        field("floor_ratio", True),
+        field("floor_ratio", False),
+        field("ltv_headroom_probability", True),
+        field("ltv_headroom_probability", False),
+        field("terminal_ltv_headroom_probability", True),
+        field("terminal_ltv_headroom_probability", False),
+        field("opened_at_ms", True),
+        field("opened_at_ms", False),
+        field("range_width_ticks", True),
+        field("range_width_ticks", False),
+    ]
+    candidates: list[LayoutCandidate] = []
+    for fields in itertools.permutations(directed_fields, width):
+        if has_duplicate_field_names(fields):
+            continue
+        candidates.append(layout_candidate(fields, prefix=f"wide{width}"))
+        if limit is not None and len(candidates) >= limit:
+            break
+    return dedupe_layouts(candidates)
 
 
 def signed_svi_field(value: str) -> tuple[int, bool]:
@@ -503,15 +294,15 @@ def floor_amount_at(order: dict[str, int], floor_index: int) -> int:
     return replay.floor_amount_for_index(order["floor_shares"], floor_index)
 
 
-def liquidatable_floor_by_ref(
+def liquidatable_metrics_by_ref(
     active_orders: dict[str, dict[str, int]],
     current_svi: dict[str, Any],
     current_forward: int,
     timestamp_ms: int,
     expiry_ms: int,
-) -> dict[str, int]:
+) -> dict[str, dict[str, int]]:
     probabilities: dict[tuple[int, int], int] = {}
-    out: dict[str, int] = {}
+    out: dict[str, dict[str, int]] = {}
     floor_index = replay.floor_index_at_ms(
         timestamp_ms,
         expiry_ms,
@@ -528,20 +319,13 @@ def liquidatable_floor_by_ref(
         threshold_value = replay.liquidation_threshold_value(floor_amount)
         gross_value = replay.deepbook_mul(probability, order["quantity"])
         if gross_value <= threshold_value:
-            out[ref] = floor_amount
+            out[ref] = {
+                "floor_amount": floor_amount,
+                "gross_value": gross_value,
+                "bad_debt": max(0, floor_amount - gross_value),
+                "surplus": max(0, gross_value - floor_amount),
+            }
     return out
-
-
-def prefix_sums_for_ordered_refs(
-    ordered: list[tuple[str, dict[str, int]]],
-    liquidatable: dict[str, int],
-) -> list[int]:
-    prefix: list[int] = []
-    running = 0
-    for ref, _order in ordered:
-        running += liquidatable.get(ref, 0)
-        prefix.append(running)
-    return prefix
 
 
 def prefix_capture(prefix_values: list[int], count: int) -> int:
@@ -554,23 +338,6 @@ def head_budget(scan_budget: int) -> int:
     return (scan_budget + replay.LIQUIDATION_HEAD_SCAN_DIVISOR - 1) // replay.LIQUIDATION_HEAD_SCAN_DIVISOR
 
 
-def empty_metrics(encodings: list[Encoding]) -> dict[str, dict[str, Any]]:
-    return {
-        encoding.name: {
-            "encoding": encoding.name,
-            "bits_used": encoding.bits_used,
-            "samples_with_backlog": 0,
-            "total_liquidatable_value": 0,
-            "front_value": {share: 0 for share in FRONT_SHARES},
-            "head_value": {budget: 0 for budget in SCAN_BUDGETS},
-            "prefix_value": {budget: 0 for budget in SCAN_BUDGETS},
-            "head_nonzero_samples": {budget: 0 for budget in SCAN_BUDGETS},
-            "head_full_samples": {budget: 0 for budget in SCAN_BUDGETS},
-        }
-        for encoding in encodings
-    }
-
-
 def apply_order_updates(
     active_orders: dict[str, dict[str, int]],
     updates: list[dict[str, str]],
@@ -581,12 +348,14 @@ def apply_order_updates(
         update_type = update["type"]
         if update_type == "order_minted":
             leverage = int(update["leverage"])
-            if leverage == 0:
+            if leverage == LEVERAGE_ONE_X:
                 continue
             active_orders[update["order_ref"]] = enrich_order({
                 "sequence": int(update["order_sequence"]),
                 "lower": int(update["lower_strike"]),
                 "higher": int(update["higher_strike"]),
+                "min_strike_index": replay.order_strike_index(int(update["lower_strike"])),
+                "max_strike_index": replay.order_strike_index(int(update["higher_strike"])),
                 "leverage": leverage,
                 "entry_probability": int(update["entry_probability"]),
                 "quantity": int(update["quantity"]),
@@ -621,20 +390,41 @@ def apply_order_updates(
             active_orders.pop(update["order_ref"], None)
 
 
-def analyze(
+def project_order_for_ranking(ref: str, order: dict[str, int]) -> dict[str, int | str]:
+    return {
+        "ref": ref,
+        "sequence": order["sequence"],
+        "leverage": order["leverage"],
+        "quantity_lots": order["quantity_lots"],
+        "min_strike_index": order["min_strike_index"],
+        "max_strike_index": order["max_strike_index"],
+        "floor_seed_probability": order["floor_seed_probability"],
+        "floor_lots": order["floor_lots"],
+        "entry_probability": order["entry_probability"],
+        "floor_ratio": order["floor_ratio"],
+        "liquidation_threshold_probability": order["liquidation_threshold_probability"],
+        "ltv_headroom_probability": order["ltv_headroom_probability"],
+        "ltv_headroom_ratio": order["ltv_headroom_ratio"],
+        "terminal_ltv_headroom_probability": order["terminal_ltv_headroom_probability"],
+        "risk_value_score": order["risk_value_score"],
+        "opened_at_ms": order["opened_at_ms"],
+        "range_width_ticks": order["range_width_ticks"],
+    }
+
+
+def build_ranking_dataset(
     economic_data: dict[str, Any],
     expiry_ms: int,
     *,
     sample_interval: int,
     max_samples: int | None,
 ) -> dict[str, Any]:
-    encodings = default_encodings()
-    metrics = empty_metrics(encodings)
     active_orders: dict[str, dict[str, int]] = {}
     current_forward = 0
     current_svi: dict[str, Any] | None = None
     sampled_records = 0
     samples_with_backlog = 0
+    samples: list[dict[str, Any]] = []
 
     for record in economic_data["records"]:
         if record["action"] == "terminal_closeout":
@@ -653,39 +443,41 @@ def analyze(
         if current_svi is None or current_forward == 0 or not active_orders:
             continue
         sampled_records += 1
-        liquidatable = liquidatable_floor_by_ref(
+        liquidatable = liquidatable_metrics_by_ref(
             active_orders,
             current_svi,
             current_forward,
             timestamp_ms,
             expiry_ms,
         )
-        total_liquidatable_value = sum(liquidatable.values())
+        total_liquidatable_value = sum(metrics["floor_amount"] for metrics in liquidatable.values())
         if total_liquidatable_value == 0:
+            if max_samples is not None and sampled_records >= max_samples:
+                break
             continue
         samples_with_backlog += 1
-        orders = list(active_orders.items())
 
-        for encoding in encodings:
-            ordered = sorted(orders, key=lambda item: encoding.key_fn(item[1]))
-            prefix_values = prefix_sums_for_ordered_refs(ordered, liquidatable)
-            metric = metrics[encoding.name]
-            metric["samples_with_backlog"] += 1
-            metric["total_liquidatable_value"] += total_liquidatable_value
-            for share in FRONT_SHARES:
-                count = max(1, int(len(ordered) * share))
-                metric["front_value"][share] += prefix_capture(prefix_values, count)
-            for budget in SCAN_BUDGETS:
-                head_count = min(head_budget(budget), len(ordered))
-                prefix_count = min(budget, len(ordered))
-                head_captured = prefix_capture(prefix_values, head_count)
-                prefix_captured = prefix_capture(prefix_values, prefix_count)
-                metric["head_value"][budget] += head_captured
-                metric["prefix_value"][budget] += prefix_captured
-                if head_captured > 0:
-                    metric["head_nonzero_samples"][budget] += 1
-                if head_captured >= total_liquidatable_value:
-                    metric["head_full_samples"][budget] += 1
+        orders: list[dict[str, int | str]] = []
+        liquidatable_values: list[int] = []
+        live_bad_debt: list[int] = []
+        live_surplus: list[int] = []
+        for ref, order in active_orders.items():
+            metrics = liquidatable.get(ref)
+            orders.append(project_order_for_ranking(ref, order))
+            liquidatable_values.append(0 if metrics is None else metrics["floor_amount"])
+            live_bad_debt.append(0 if metrics is None else metrics["bad_debt"])
+            live_surplus.append(0 if metrics is None else metrics["surplus"])
+        samples.append(
+            {
+                "step": int(record["step"]),
+                "timestamp_ms": timestamp_ms,
+                "orders": orders,
+                "liquidatable_values": liquidatable_values,
+                "live_bad_debt": live_bad_debt,
+                "live_surplus": live_surplus,
+                "total_liquidatable_value": total_liquidatable_value,
+            }
+        )
 
         if max_samples is not None and sampled_records >= max_samples:
             break
@@ -694,10 +486,190 @@ def analyze(
         "sample_interval": sample_interval,
         "sampled_records": sampled_records,
         "samples_with_backlog": samples_with_backlog,
+        "liquidation_head_scan_divisor": replay.LIQUIDATION_HEAD_SCAN_DIVISOR,
+        "samples": samples,
+    }
+
+
+def empty_layout_metric(candidate: LayoutCandidate) -> dict[str, Any]:
+    return {
+        "encoding": candidate.name,
+        "category": candidate.category,
+        "field_order": [field_label(layout_field) for layout_field in candidate.fields] + ["sequence_asc"],
+        "bits_used": 0,
+        "samples_with_backlog": 0,
+        "total_liquidatable_value": 0,
+        "front_value": {share: 0 for share in FRONT_SHARES},
+        "head_value": {budget: 0 for budget in SCAN_BUDGETS},
+        "prefix_value": {budget: 0 for budget in SCAN_BUDGETS},
+        "head_nonzero_samples": {budget: 0 for budget in SCAN_BUDGETS},
+        "head_full_samples": {budget: 0 for budget in SCAN_BUDGETS},
+    }
+
+
+def layout_field_value(
+    order: dict[str, int | str],
+    sample: dict[str, Any],
+    index: int,
+    layout_field: LayoutField,
+) -> int:
+    if layout_field.name == "live_liquidatable_value":
+        return sample["liquidatable_values"][index]
+    if layout_field.name == "live_bad_debt":
+        return sample["live_bad_debt"][index]
+    if layout_field.name == "live_surplus":
+        return sample["live_surplus"][index]
+    value = order[layout_field.name]
+    if not isinstance(value, int):
+        raise TypeError(f"layout field {layout_field.name} is not numeric")
+    return value
+
+
+def layout_sort_key(
+    order: dict[str, int | str],
+    sample: dict[str, Any],
+    index: int,
+    candidate: LayoutCandidate,
+) -> tuple[int, ...]:
+    values = []
+    for layout_field in candidate.fields:
+        value = layout_field_value(order, sample, index, layout_field)
+        values.append(-value if layout_field.desc else value)
+    sequence = order["sequence"]
+    if not isinstance(sequence, int):
+        raise TypeError("sequence is not numeric")
+    values.append(sequence)
+    return tuple(values)
+
+
+def score_layout_candidate(samples: list[dict[str, Any]], candidate: LayoutCandidate) -> dict[str, Any]:
+    metric = empty_layout_metric(candidate)
+    for sample in samples:
+        orders = sample["orders"]
+        liquidatable_values = sample["liquidatable_values"]
+        ordered_indices = sorted(
+            range(len(orders)),
+            key=lambda index: layout_sort_key(orders[index], sample, index, candidate),
+        )
+
+        prefix_values = []
+        running = 0
+        for index in ordered_indices:
+            running += liquidatable_values[index]
+            prefix_values.append(running)
+
+        total_liquidatable_value = sample["total_liquidatable_value"]
+        metric["samples_with_backlog"] += 1
+        metric["total_liquidatable_value"] += total_liquidatable_value
+        for share in FRONT_SHARES:
+            count = max(1, int(len(ordered_indices) * share))
+            metric["front_value"][share] += prefix_capture(prefix_values, count)
+        for budget in SCAN_BUDGETS:
+            head_count = min(head_budget(budget), len(ordered_indices))
+            prefix_count = min(budget, len(ordered_indices))
+            head_captured = prefix_capture(prefix_values, head_count)
+            prefix_captured = prefix_capture(prefix_values, prefix_count)
+            metric["head_value"][budget] += head_captured
+            metric["prefix_value"][budget] += prefix_captured
+            if head_captured > 0:
+                metric["head_nonzero_samples"][budget] += 1
+            if head_captured >= total_liquidatable_value:
+                metric["head_full_samples"][budget] += 1
+    return finalize_metric(metric)
+
+
+_WORKER_SAMPLES: list[dict[str, Any]] = []
+
+
+def init_layout_worker(samples: list[dict[str, Any]]) -> None:
+    global _WORKER_SAMPLES
+    _WORKER_SAMPLES = samples
+
+
+def score_layout_candidate_worker(candidate: LayoutCandidate) -> dict[str, Any]:
+    return score_layout_candidate(_WORKER_SAMPLES, candidate)
+
+
+def score_layout_candidates(
+    samples: list[dict[str, Any]],
+    candidates: list[LayoutCandidate],
+    workers: int,
+) -> list[dict[str, Any]]:
+    if workers <= 1 or len(candidates) <= 1:
+        return [score_layout_candidate(samples, candidate) for candidate in candidates]
+    chunksize = max(1, len(candidates) // (workers * 4))
+    with ProcessPoolExecutor(
+        max_workers=workers,
+        initializer=init_layout_worker,
+        initargs=(samples,),
+    ) as executor:
+        return list(executor.map(score_layout_candidate_worker, candidates, chunksize=chunksize))
+
+
+def select_layout_candidates(
+    wide_layout_search: bool,
+    layout_width: int,
+    max_candidates: int | None,
+) -> list[LayoutCandidate]:
+    candidates = curated_layout_candidates()
+    if wide_layout_search:
+        candidates.extend(wide_layout_candidates(layout_width, max_candidates))
+        candidates = dedupe_layouts(candidates)
+    if max_candidates is not None:
+        candidates = candidates[:max_candidates]
+    return candidates
+
+
+def rank_ranking_dataset(
+    dataset: dict[str, Any],
+    *,
+    wide_layout_search: bool,
+    layout_width: int,
+    max_candidates: int | None,
+    workers: int,
+) -> dict[str, Any]:
+    candidates = select_layout_candidates(wide_layout_search, layout_width, max_candidates)
+    if workers <= 0:
+        workers = min(8, os.cpu_count() or 1)
+    finalized = score_layout_candidates(dataset["samples"], candidates, workers)
+
+    return {
+        "sample_interval": dataset["sample_interval"],
+        "sampled_records": dataset["sampled_records"],
+        "samples_with_backlog": dataset["samples_with_backlog"],
+        "ranking_samples": len(dataset["samples"]),
+        "candidate_count": len(candidates),
+        "workers": workers,
         "scan_budgets": list(SCAN_BUDGETS),
         "front_shares": list(FRONT_SHARES),
-        "encodings": [finalize_metric(metric) for metric in metrics.values()],
+        "encodings": finalized,
     }
+
+
+def analyze(
+    economic_data: dict[str, Any],
+    expiry_ms: int,
+    *,
+    sample_interval: int,
+    max_samples: int | None,
+    wide_layout_search: bool,
+    layout_width: int,
+    max_candidates: int | None,
+    workers: int,
+) -> dict[str, Any]:
+    dataset = build_ranking_dataset(
+        economic_data,
+        expiry_ms,
+        sample_interval=sample_interval,
+        max_samples=max_samples,
+    )
+    return rank_ranking_dataset(
+        dataset,
+        wide_layout_search=wide_layout_search,
+        layout_width=layout_width,
+        max_candidates=max_candidates,
+        workers=workers,
+    )
 
 
 def safe_share(numerator: int, denominator: int) -> float:
@@ -713,6 +685,8 @@ def finalize_metric(metric: dict[str, Any]) -> dict[str, Any]:
     score = 0.40 * head_24 + 0.25 * head_48 + 0.20 * front_10 + 0.15 * front_25
     return {
         "encoding": metric["encoding"],
+        "category": metric.get("category", "legacy"),
+        "field_order": metric.get("field_order", []),
         "bits_used": metric["bits_used"],
         "samples_with_backlog": metric["samples_with_backlog"],
         "total_liquidatable_value_raw": str(total),
@@ -746,16 +720,19 @@ def print_table(results: dict[str, Any], limit: int) -> None:
     print(
         f"samples={results['sampled_records']} "
         f"samples_with_backlog={results['samples_with_backlog']} "
+        f"ranking_samples={results.get('ranking_samples', results['samples_with_backlog'])} "
+        f"candidates={results.get('candidate_count', len(results['encodings']))} "
+        f"workers={results.get('workers', 1)} "
         f"sample_interval={results['sample_interval']}"
     )
     print(
-        "rank,encoding,bits,score,front10,front25,head24,head48,head96,head192,prefix24"
+        "rank,encoding,category,score,front10,front25,head24,head48,head96,head192,prefix24,fields"
     )
     for index, row in enumerate(ranked[:limit], start=1):
         print(
             f"{index},"
             f"{row['encoding']},"
-            f"{row['bits_used']},"
+            f"{row.get('category', 'legacy')},"
             f"{row['score']:.6f},"
             f"{row['front_capture']['10pct']:.6f},"
             f"{row['front_capture']['25pct']:.6f},"
@@ -763,12 +740,14 @@ def print_table(results: dict[str, Any], limit: int) -> None:
             f"{row['head_capture']['48']:.6f},"
             f"{row['head_capture']['96']:.6f},"
             f"{row['head_capture']['192']:.6f},"
-            f"{row['prefix_capture']['24']:.6f}"
+            f"{row['prefix_capture']['24']:.6f},"
+            f"{' > '.join(row.get('field_order') or [])}"
         )
 
-    baseline = next(row for row in ranked if row["encoding"] == "current_leverage_quantity")
-    print("\nbaseline_current_leverage_quantity:")
-    print(json.dumps(baseline, indent=2, sort_keys=True))
+    baseline = next((row for row in ranked if row["encoding"].startswith("current__")), None)
+    if baseline is not None:
+        print("\nbaseline_current_order_id_layout:")
+        print(json.dumps(baseline, indent=2, sort_keys=True))
 
 
 def write_csv(path: Path, results: dict[str, Any]) -> None:
@@ -778,6 +757,8 @@ def write_csv(path: Path, results: dict[str, Any]) -> None:
             outfile,
             fieldnames=[
                 "encoding",
+                "category",
+                "field_order",
                 "bits_used",
                 "score",
                 "front_10pct",
@@ -797,6 +778,8 @@ def write_csv(path: Path, results: dict[str, Any]) -> None:
             writer.writerow(
                 {
                     "encoding": row["encoding"],
+                    "category": row.get("category", "legacy"),
+                    "field_order": " > ".join(row.get("field_order") or []),
                     "bits_used": row["bits_used"],
                     "score": row["score"],
                     "front_10pct": row["front_capture"]["10pct"],
@@ -815,7 +798,7 @@ def write_csv(path: Path, results: dict[str, Any]) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("python_long_data", type=Path, help="path to python_long_data.json")
+    parser.add_argument("python_long_data", type=Path, nargs="?", help="path to python_long_data.json")
     parser.add_argument(
         "--config",
         type=Path,
@@ -824,7 +807,39 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--sample-interval", type=int, default=replay.GLOBAL_OBSERVABILITY_INTERVAL)
     parser.add_argument("--max-samples", type=int)
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=0,
+        help="ranking workers; 0 uses up to 8 local CPUs",
+    )
+    parser.add_argument(
+        "--wide-layout-search",
+        action="store_true",
+        help="also generate wider directed field permutations",
+    )
+    parser.add_argument(
+        "--layout-width",
+        type=int,
+        default=3,
+        help="field count for --wide-layout-search permutations; sequence is always appended last",
+    )
+    parser.add_argument(
+        "--max-candidates",
+        type=int,
+        help="cap candidate layouts after curated layouts and optional wide generation",
+    )
     parser.add_argument("--top", type=int, default=20)
+    parser.add_argument(
+        "--ranking-dataset-in",
+        type=Path,
+        help="read a previously materialized ranking dataset and skip replay reconstruction",
+    )
+    parser.add_argument(
+        "--ranking-dataset-out",
+        type=Path,
+        help="write the materialized ranking dataset used for scoring",
+    )
     parser.add_argument("--out-json", type=Path)
     parser.add_argument("--out-csv", type=Path)
     return parser.parse_args()
@@ -834,22 +849,41 @@ def main() -> None:
     args = parse_args()
     if args.sample_interval <= 0:
         raise SystemExit("--sample-interval must be positive")
+    if args.layout_width <= 0:
+        raise SystemExit("--layout-width must be positive")
+    if args.max_candidates is not None and args.max_candidates <= 0:
+        raise SystemExit("--max-candidates must be positive")
 
     config = replay.load_scenario_config(args.config)
     replay.apply_scenario_config(config)
-    expiry_ms = replay.config_source_value(config, "expiry_ms")
-    if expiry_ms is None:
-        raise SystemExit("scenario config must include source.expiry_ms")
 
-    economic_data = load_json_object(args.python_long_data)
-    if economic_data.get("schema_version") != replay.ECONOMIC_SCHEMA_VERSION:
-        raise SystemExit("input must use predict_economic_v1 schema")
+    if args.ranking_dataset_in is not None:
+        dataset = load_json_object(args.ranking_dataset_in)
+    else:
+        if args.python_long_data is None:
+            raise SystemExit("python_long_data is required unless --ranking-dataset-in is provided")
+        expiry_ms = replay.config_source_value(config, "expiry_ms")
+        if expiry_ms is None:
+            raise SystemExit("scenario config must include source.expiry_ms")
+        economic_data = load_json_object(args.python_long_data)
+        if economic_data.get("schema_version") != replay.ECONOMIC_SCHEMA_VERSION:
+            raise SystemExit("input must use predict_economic_v1 schema")
+        dataset = build_ranking_dataset(
+            economic_data,
+            expiry_ms,
+            sample_interval=args.sample_interval,
+            max_samples=args.max_samples,
+        )
+        if args.ranking_dataset_out is not None:
+            write_json(args.ranking_dataset_out, dataset)
+            print(f"wrote ranking dataset {args.ranking_dataset_out}")
 
-    results = analyze(
-        economic_data,
-        expiry_ms,
-        sample_interval=args.sample_interval,
-        max_samples=args.max_samples,
+    results = rank_ranking_dataset(
+        dataset,
+        wide_layout_search=args.wide_layout_search,
+        layout_width=args.layout_width,
+        max_candidates=args.max_candidates,
+        workers=args.workers,
     )
     print_table(results, args.top)
     if args.out_json is not None:

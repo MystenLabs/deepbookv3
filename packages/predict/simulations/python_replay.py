@@ -72,6 +72,11 @@ LIQUIDATION_LTV = 850_000_000  # 0.85, default_liquidation_ltv
 BORROW_STEP_DT_MS: int | None = None  # None => window / total_steps (a full 0->1 phase sweep)
 GLOBAL_OBSERVABILITY_INTERVAL = 10
 TERMINAL_FLOOR_INDEX = FLOAT_SCALING + MAX_EXPIRY_FLOOR_PREMIUM
+LEVERAGE_ONE_X = 1_000_000_000
+LEVERAGE_ONE_AND_HALF_X = 1_500_000_000
+LEVERAGE_TWO_X = 2_000_000_000
+LEVERAGE_TWO_AND_HALF_X = 2_500_000_000
+LEVERAGE_THREE_X = 3_000_000_000
 
 F = 1_000_000_000
 PRICE_CACHE_SIZE = 1_000_000
@@ -384,7 +389,7 @@ def parse_scenario_text(text: str) -> list[dict[str, Any]]:
                     "strike": _uint(row, "strike", index),
                     "isUp": _bool(row, "is_up", index),
                     "quantity": parse_mint_quantity(_uint(row, "quantity", index), index),
-                    "leverage": _optional_uint(row, "leverage", index, 0),
+                    "leverage": _optional_uint(row, "leverage", index, LEVERAGE_ONE_X),
                     "orderRef": _ref(row, "order_ref", index),
                 }
             )
@@ -450,17 +455,28 @@ def mul_div_round_down(a: int, b: int, c: int) -> int:
     return a * b // c
 
 
+def assert_valid_leverage(leverage: int) -> None:
+    if leverage not in (
+        LEVERAGE_ONE_X,
+        LEVERAGE_ONE_AND_HALF_X,
+        LEVERAGE_TWO_X,
+        LEVERAGE_TWO_AND_HALF_X,
+        LEVERAGE_THREE_X,
+    ):
+        raise ValueError("invalid leverage multiplier")
+
+
 def leverage_multiplier(leverage: int) -> int:
-    if leverage < 0 or leverage > 4:
-        raise ValueError("leverage must be in range 0..4")
-    return FLOAT_SCALING + leverage * FLOAT_SCALING // 2
+    assert_valid_leverage(leverage)
+    return leverage
 
 
 def assert_valid_leverage_tier(entry_probability: int, leverage: int) -> None:
+    assert_valid_leverage(leverage)
     if entry_probability < LEVERAGE_ONE_X_ONLY_PRICE_THRESHOLD:
-        if leverage != 0:
+        if leverage != LEVERAGE_ONE_X:
             raise ValueError("entry probability below 10c allows only 1x leverage")
-    elif entry_probability < LEVERAGE_TWO_X_MAX_PRICE_THRESHOLD and leverage > 2:
+    elif entry_probability < LEVERAGE_TWO_X_MAX_PRICE_THRESHOLD and leverage > LEVERAGE_TWO_X:
         raise ValueError("entry probability below 20c allows at most 2x leverage")
 
 
@@ -905,7 +921,7 @@ def floor_amount_for_index(floor_shares: int, floor_index: int) -> int:
 
 
 def order_floor_shares_from_seed(floor_seed_amount: int, leverage: int, open_floor_index: int) -> int:
-    if leverage == 0:
+    if leverage == LEVERAGE_ONE_X:
         return 0
     return mul_div_round_up(floor_seed_amount, FLOAT_SCALING, open_floor_index)
 
@@ -935,7 +951,7 @@ def assert_mint_above_liquidation_threshold(
     open_floor_index: int = FLOAT_SCALING,
     floor_shares: int | None = None,
 ) -> None:
-    if leverage == 0:
+    if leverage == LEVERAGE_ONE_X:
         return
     shares = (
         floor_shares
@@ -1340,21 +1356,21 @@ def active_order_count(model: dict[str, Any]) -> int:
 
 def insert_active_order(model: dict[str, Any], ref: str) -> None:
     order = model["orders"][ref]
-    if order["leverage"] == 0:
+    if order["leverage"] == LEVERAGE_ONE_X:
         return
     model["liquidation"].insert_order(order["order_id"], ref)
 
 
 def remove_active_order(model: dict[str, Any], ref: str) -> None:
     order = model["orders"][ref]
-    if order["leverage"] == 0:
+    if order["leverage"] == LEVERAGE_ONE_X:
         return
     model["liquidation"].remove_ref(ref)
 
 
 def mark_order_liquidated(model: dict[str, Any], ref: str) -> None:
     order = model["orders"][ref]
-    if order["leverage"] == 0:
+    if order["leverage"] == LEVERAGE_ONE_X:
         return
     model["liquidation"].mark_ref_liquidated(ref)
 
@@ -1475,7 +1491,7 @@ def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
     if order["status"] == "liquidated":
         if close_quantity != order["quantity"]:
             raise ValueError("liquidated redeem requires full close")
-        if order["leverage"] != 0:
+        if order["leverage"] != LEVERAGE_ONE_X:
             model["liquidation"].clear_liquidated(order["order_id"])
         del model["orders"][ref]
         return {
@@ -1773,7 +1789,7 @@ def active_range_key(order: dict[str, Any]) -> tuple[int, int]:
 def analytics_insert_order(analytics: dict[str, Any], order: dict[str, Any]) -> None:
     ref = order["ref"]
     analytics["orders"][ref] = order
-    if order["leverage"] == 0 or order["status"] != "active":
+    if order["leverage"] == LEVERAGE_ONE_X or order["status"] != "active":
         return
     analytics["active_refs"].add(ref)
     analytics["orders_by_range"].setdefault(active_range_key(order), []).append(order)
@@ -1802,7 +1818,7 @@ def apply_analytics_update(analytics: dict[str, Any], update: dict[str, Any], ti
     update_type = update["type"]
     if update_type == "order_minted":
         leverage = int(update["leverage"])
-        if leverage == 0:
+        if leverage == LEVERAGE_ONE_X:
             return
         borrow_index_open = floor_index_at_ms(
             time_ctx["now_ms"], time_ctx["expiry_ms"], time_ctx["window"], time_ctx["max_premium"]

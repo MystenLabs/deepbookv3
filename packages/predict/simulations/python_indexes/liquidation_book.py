@@ -11,35 +11,45 @@ from bisect import bisect_left, bisect_right
 
 PAGE_CAPACITY = 64
 
-LIQUIDATION_PRIORITY_OFFSET = 208
-OPENED_AT_OFFSET = 160
-MIN_STRIKE_INDEX_OFFSET = 136
-MAX_STRIKE_INDEX_OFFSET = 112
-LEVERAGE_OFFSET = 104
-ENTRY_PROBABILITY_OFFSET = 72
-QUANTITY_LOTS_OFFSET = 40
+INVERSE_QUANTITY_LOTS_OFFSET = 200
+LEVERAGE_RANK_OFFSET = 168
+OPENED_AT_OFFSET = 120
+MIN_STRIKE_INDEX_OFFSET = 96
+MAX_STRIKE_INDEX_OFFSET = 72
+ENTRY_PROBABILITY_OFFSET = 40
 
 U32_MASK = (1 << 32) - 1
 U40_MASK = (1 << 40) - 1
 U48_MASK = (1 << 48) - 1
-U28_MASK = (1 << 28) - 1
-MAX_LEVERAGE_CODE = 4
+LEVERAGE_ONE_X = 1_000_000_000
+LEVERAGE_ONE_AND_HALF_X = 1_500_000_000
+LEVERAGE_TWO_X = 2_000_000_000
+LEVERAGE_TWO_AND_HALF_X = 2_500_000_000
+LEVERAGE_THREE_X = 3_000_000_000
 LEVERAGE_ONE_X_ONLY_PRICE_THRESHOLD = 100_000_000
 LEVERAGE_TWO_X_MAX_PRICE_THRESHOLD = 200_000_000
 
 
-def liquidation_priority(leverage: int, quantity_lots: int) -> int:
-    quantity_bucket = min(quantity_lots, U28_MASK)
-    return ((MAX_LEVERAGE_CODE - leverage) << 28) | (U28_MASK - quantity_bucket)
+def leverage_rank(leverage: int) -> int:
+    if leverage == LEVERAGE_THREE_X:
+        return 0
+    if leverage == LEVERAGE_TWO_AND_HALF_X:
+        return 1
+    if leverage == LEVERAGE_TWO_X:
+        return 2
+    if leverage == LEVERAGE_ONE_AND_HALF_X:
+        return 3
+    if leverage == LEVERAGE_ONE_X:
+        return 4
+    raise ValueError("invalid leverage")
 
 
 def assert_valid_leverage_tier(entry_probability: int, leverage: int) -> None:
-    if leverage < 0 or leverage > MAX_LEVERAGE_CODE:
-        raise ValueError("invalid leverage")
+    leverage_rank(leverage)
     if entry_probability < LEVERAGE_ONE_X_ONLY_PRICE_THRESHOLD:
-        if leverage != 0:
+        if leverage != LEVERAGE_ONE_X:
             raise ValueError("entry probability below 10c allows only 1x leverage")
-    elif entry_probability < LEVERAGE_TWO_X_MAX_PRICE_THRESHOLD and leverage > 2:
+    elif entry_probability < LEVERAGE_TWO_X_MAX_PRICE_THRESHOLD and leverage > LEVERAGE_TWO_X:
         raise ValueError("entry probability below 20c allows at most 2x leverage")
 
 
@@ -79,7 +89,7 @@ def encode_order_id(
     float_scaling: int,
 ) -> int:
     quantity_lots = quantity // position_lot_size
-    if quantity_lots <= 0 or quantity % position_lot_size != 0:
+    if quantity_lots <= 0 or quantity_lots > U32_MASK or quantity % position_lot_size != 0:
         raise ValueError("invalid order quantity")
     if opened_at_ms > U48_MASK:
         raise ValueError("opened_at_ms does not fit in order id")
@@ -89,15 +99,15 @@ def encode_order_id(
         raise ValueError("invalid entry probability")
     assert_valid_leverage_tier(entry_probability, leverage)
 
-    priority = liquidation_priority(leverage, quantity_lots)
+    rank = leverage_rank(leverage)
+    inverse_quantity_lots = U32_MASK - quantity_lots
     return (
-        (priority << LIQUIDATION_PRIORITY_OFFSET)
+        (inverse_quantity_lots << INVERSE_QUANTITY_LOTS_OFFSET)
+        | (rank << LEVERAGE_RANK_OFFSET)
         | (opened_at_ms << OPENED_AT_OFFSET)
         | (min_strike_index << MIN_STRIKE_INDEX_OFFSET)
         | (max_strike_index << MAX_STRIKE_INDEX_OFFSET)
-        | (leverage << LEVERAGE_OFFSET)
         | (entry_probability << ENTRY_PROBABILITY_OFFSET)
-        | (quantity_lots << QUANTITY_LOTS_OFFSET)
         | sequence
     )
 

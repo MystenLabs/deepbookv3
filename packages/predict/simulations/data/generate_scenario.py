@@ -254,19 +254,19 @@ class Generator:
 
     def max_leverage_for_probability(self, entry_probability: int) -> int:
         if entry_probability < replay.LEVERAGE_ONE_X_ONLY_PRICE_THRESHOLD:
-            return 0
+            return replay.LEVERAGE_ONE_X
         if entry_probability < replay.LEVERAGE_TWO_X_MAX_PRICE_THRESHOLD:
-            return 2
-        return 4
+            return replay.LEVERAGE_TWO_X
+        return replay.LEVERAGE_THREE_X
 
     def random_leverage(self, entry_probability: int) -> int:
         max_leverage = self.max_leverage_for_probability(entry_probability)
         weighted = [
-            (0, 45),
-            (1, 15),
-            (2, 15),
-            (3, 12),
-            (4, 13),
+            (replay.LEVERAGE_ONE_X, 45),
+            (replay.LEVERAGE_ONE_AND_HALF_X, 15),
+            (replay.LEVERAGE_TWO_X, 15),
+            (replay.LEVERAGE_TWO_AND_HALF_X, 12),
+            (replay.LEVERAGE_THREE_X, 13),
         ]
         legal_weighted = [(leverage, weight) for leverage, weight in weighted if leverage <= max_leverage]
         cursor = self.rng.randrange(sum(weight for _, weight in legal_weighted))

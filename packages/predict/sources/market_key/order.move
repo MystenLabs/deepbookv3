@@ -26,8 +26,8 @@ const EInvalidSequence: u64 = 6;
 const EInvalidEntryProbability: u64 = 7;
 const EInvalidLeverageTier: u64 = 8;
 
-const LEVERAGE_RANK_OFFSET: u8 = 200;
-const INVERSE_QUANTITY_LOTS_OFFSET: u8 = 168;
+const INVERSE_QUANTITY_LOTS_OFFSET: u8 = 200;
+const LEVERAGE_RANK_OFFSET: u8 = 168;
 const OPENED_AT_OFFSET: u8 = 120;
 const MIN_STRIKE_INDEX_OFFSET: u8 = 96;
 const MAX_STRIKE_INDEX_OFFSET: u8 = 72;
@@ -223,8 +223,8 @@ fun new(
     let leverage_rank = leverage_rank(leverage);
     let inverse_quantity_lots = U32_MASK as u64 - quantity_lots;
     let id =
-        ((leverage_rank as u256) << LEVERAGE_RANK_OFFSET)
-        | ((inverse_quantity_lots as u256) << INVERSE_QUANTITY_LOTS_OFFSET)
+        ((inverse_quantity_lots as u256) << INVERSE_QUANTITY_LOTS_OFFSET)
+        | ((leverage_rank as u256) << LEVERAGE_RANK_OFFSET)
         | ((opened_at_ms as u256) << OPENED_AT_OFFSET)
         | ((min_strike_index as u256) << MIN_STRIKE_INDEX_OFFSET)
         | ((max_strike_index as u256) << MAX_STRIKE_INDEX_OFFSET)

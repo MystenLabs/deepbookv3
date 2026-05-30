@@ -164,6 +164,7 @@ const ORACLE_REFRESH_FIELDS = [
 ] as const;
 
 const POSITION_LOT_SIZE = 10_000n;
+const LEVERAGE_ONE_X = 1_000_000_000n;
 
 function resolveInstanceDir(): string {
   const dir = process.env.INSTANCE_DIR;
@@ -291,7 +292,7 @@ function parseRow(row: RawScenarioRow, lineNumber: number): ScenarioRow {
       strike: parseUnsignedInteger(row, "strike", lineNumber),
       isUp: parseBoolean(row, "is_up", lineNumber),
       quantity: parseMintQuantity(row, "quantity", lineNumber),
-      leverage: parseOptionalUnsignedInteger(row, "leverage", lineNumber, 0n),
+      leverage: parseOptionalUnsignedInteger(row, "leverage", lineNumber, LEVERAGE_ONE_X),
       orderRef: parseRef(row, "order_ref", lineNumber),
     };
   }

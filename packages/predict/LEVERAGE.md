@@ -248,10 +248,16 @@ flow removes it from active indexes without paying the holder.
 
 Liquidation is bounded and policy-driven. Trade and valuation flows run a
 configured candidate scan before relying on aggregate NAV floor subtraction, and
-off-chain simulations are used to tune the priority policy and budget. Because
-the scan is bounded, aggregate live NAV should still be read as conditional on
-the health policy keeping active leveraged orders above their floor/LTV
-thresholds.
+off-chain simulations are used to tune the priority policy and budget. Active
+leveraged orders are sorted by packed `order_id`; the high fields encode larger
+quantity first, then higher leverage first, before the stable order terms. This
+keeps liquidation priority deterministic from immutable order terms without a
+separate mutable ranking index. Simulation replay analysis favored quantity as
+the primary static proxy because it captured more liquidatable value inside the
+bounded scan than leverage-first ordering on the sampled long-run backlog.
+Because the scan is bounded, aggregate live NAV should still be read as
+conditional on the health policy keeping active leveraged orders above their
+floor/LTV thresholds.
 
 ## Design Rules
 

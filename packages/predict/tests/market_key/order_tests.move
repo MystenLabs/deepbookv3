@@ -324,12 +324,12 @@ fun higher_leverage_order_id_sorts_first() {
 }
 
 #[test]
-fun larger_quantity_order_id_sorts_first_at_same_leverage() {
+fun larger_quantity_order_id_sorts_first_before_leverage() {
     let large = order::new_from_strike_indices(
         OPENED_AT_MS,
         order::open_strike_index(),
         STRIKE_INDEX_HI,
-        order::leverage_three_x(),
+        order::leverage_two_x(),
         500_000_000,
         TWO_LOTS_QTY,
         0,

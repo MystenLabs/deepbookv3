@@ -150,9 +150,11 @@ function scaledUsd(value: bigint): string {
 }
 
 function formatLeverage(leverage: bigint): string {
-  const halfUnits = 2n + leverage;
-  if (halfUnits % 2n === 0n) return `${halfUnits / 2n}x`;
-  return `${halfUnits / 2n}.5x`;
+  const whole = leverage / FLOAT_SCALING;
+  const fraction = leverage % FLOAT_SCALING;
+  if (fraction === 0n) return `${whole}x`;
+  if (fraction === FLOAT_SCALING / 2n) return `${whole}.5x`;
+  return `${Number(leverage) / Number(FLOAT_SCALING)}x`;
 }
 
 function signedValue(magnitude: bigint, isNegative: boolean): string {

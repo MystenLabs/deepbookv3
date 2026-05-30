@@ -127,6 +127,21 @@ What this run does not prove:
 The right interpretation is path-dependent risk: the vault may earn fees on
 average, but it can accumulate one-sided exposure before a market move.
 
+## Liquidation Priority Encoding
+
+The bounded liquidation scan sorts active leveraged orders by packed `order_id`.
+An offline priority search over the `may29-1738` long-run backlog samples found
+that the exact packed layout, `quantity_lots desc > leverage desc > opened_at_ms
+asc > min_strike_index asc > max_strike_index asc > entry_probability asc >
+sequence asc`, captured more liquidatable value than the previous leverage-first
+layout.
+
+The useful interpretation is that order size was the strongest immutable proxy
+for value-at-risk in that run. Higher leverage still matters, but using it as the
+primary field spent scan budget on smaller orders too often. Live liquidatable
+value remains the upper-bound oracle ordering, so the static `order_id` layout is
+only a gas-cheap proxy, not an exact liquidation-risk ranking.
+
 ## Charts To Add
 
 The next useful local charts should focus on exposure formation, not only final
@@ -178,4 +193,3 @@ Key questions for the larger framework:
   limits?
 - Should order generation and risk charts track delta-like exposure rather than
   only quantity, contribution, and liability?
-
