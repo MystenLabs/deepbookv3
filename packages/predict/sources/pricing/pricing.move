@@ -31,6 +31,7 @@ const EInvalidCurveRange: u64 = 7;
 const EBlockScholesPriceStale: u64 = 8;
 const EBlockScholesSVIStale: u64 = 9;
 const EInvalidStrikeRatio: u64 = 10;
+const EPythSpotStale: u64 = 11;
 
 /// Curve sample point with strike and one-sided UP price.
 public struct CurvePoint has copy, drop, store {
@@ -158,6 +159,14 @@ public(package) fun assert_live_quote_available(
     market.assert_pyth_source(pyth);
     market.assert_active(clock);
     assert_live_oracle_fresh(config, market, clock);
+}
+
+public(package) fun assert_pyth_spot_fresh(
+    config: &PricingConfig,
+    pyth: &PythSource,
+    clock: &Clock,
+) {
+    assert!(pyth_spot_is_fresh(config, pyth, clock), EPythSpotStale);
 }
 
 /// Resolve the live forward/SVI tuple used by all live pricing paths.

@@ -5,10 +5,12 @@
 module deepbook_predict::registry_create_tests;
 
 use deepbook_predict::{
+    config_constants,
     constants,
     expiry_market::ExpiryMarket,
-    market_oracle::MarketOracle,
+    market_oracle::{MarketOracle, MarketOracleCap},
     plp::{Self, PoolVault},
+    pricing,
     protocol_config::ProtocolConfig,
     pyth_source::PythSource,
     registry,
@@ -17,7 +19,7 @@ use deepbook_predict::{
 };
 use dusdc::dusdc::DUSDC;
 use std::unit_test::{assert_eq, destroy};
-use sui::{clock, coin, test_scenario::{Self as test, return_shared}};
+use sui::{clock, coin, test_scenario::{Self as test, Scenario, return_shared}};
 
 const PYTH_FEED_BTC: u32 = 100;
 const PYTH_FEED_ETH: u32 = 200;
@@ -26,13 +28,16 @@ const WIDER_BTC_TICK_SIZE: u64 = 10_000_000_000; // $10.00 in 1e9 price scaling
 const ETH_TICK_SIZE: u64 = 100_000_000; // $0.10 in 1e9 price scaling
 const INVALID_TICK_SIZE: u64 = BTC_TICK_SIZE + 1;
 const INITIAL_EXPIRY_TICK_SIZE: u64 = 3_000_000_000;
-const UPDATED_EXPIRY_TICK_SIZE: u64 = 2_000_000_000;
+const UPDATED_EXPIRY_TICK_SIZE: u64 = 1_000_000_000;
+const TOO_WIDE_EXPIRY_TICK_SIZE: u64 = 2_000_000_000;
 const EXPIRY_FEE_WINDOW_DISABLED: u64 = 0;
 const EXPIRY_FEE_MAX_MULTIPLIER_DISABLED: u64 = 1_000_000_000; // 1.0 — sentinel disables ramp
 const NOW_MS: u64 = 1_700_000_000_000;
 const SOURCE_TIMESTAMP_MS: u64 = 1_699_999_999_000;
 const EXPIRY_MS: u64 = 1_700_003_600_000;
 const BTC_SPOT: u64 = 100_000_000_000_000;
+const EXPECTED_CENTERED_MIN_STRIKE: u64 = 50_000_000_000_000;
+const EXPECTED_CENTERED_MAX_STRIKE: u64 = 150_000_000_000_000;
 const POOL_SUPPLY: u64 = 100_000_000_000;
 
 // === create_pyth_source ===
@@ -202,6 +207,121 @@ fun set_pyth_feed_tick_size_unknown_feed_aborts() {
 
 #[test]
 fun create_expiry_market_uses_registered_tick_size() {
+    let (mut scenario, registry_id, pyth_id, cap) = setup_ready_expiry_creation(
+        UPDATED_EXPIRY_TICK_SIZE,
+    );
+
+    scenario.next_tx(test_constants::admin());
+    let mut reg = scenario.take_shared_by_id<registry::Registry>(registry_id);
+    let mut vault = scenario.take_shared<PoolVault>();
+    let config = scenario.take_shared<ProtocolConfig>();
+    let pyth = scenario.take_shared_by_id<PythSource>(pyth_id);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(NOW_MS);
+
+    let (expiry_market_id, market_oracle_id) = registry::create_expiry_market(
+        &mut reg,
+        &mut vault,
+        &config,
+        &pyth,
+        &cap,
+        EXPIRY_MS,
+        &clock,
+        scenario.ctx(),
+    );
+    assert!(vault.active_expiry_markets().contains(&expiry_market_id));
+    assert_eq!(
+        vault.total_allocated_capital(),
+        deepbook_predict::config_constants::default_allocation!(),
+    );
+    return_shared(pyth);
+    return_shared(config);
+    return_shared(vault);
+    return_shared(reg);
+    clock.destroy_for_testing();
+    destroy(cap);
+
+    scenario.next_tx(test_constants::admin());
+    let market = scenario.take_shared_by_id<ExpiryMarket>(expiry_market_id);
+    let oracle = scenario.take_shared_by_id<MarketOracle>(market_oracle_id);
+    assert_eq!(market.market_oracle_id(), market_oracle_id);
+    assert_eq!(market.pyth_lazer_feed_id(), PYTH_FEED_BTC);
+    assert_eq!(market.expiry(), EXPIRY_MS);
+    assert_eq!(market.min_strike(), EXPECTED_CENTERED_MIN_STRIKE);
+    assert_eq!(market.tick_size(), UPDATED_EXPIRY_TICK_SIZE);
+    assert_eq!(market.max_strike(), EXPECTED_CENTERED_MAX_STRIKE);
+    assert_eq!(
+        market.allocated_capital(),
+        deepbook_predict::config_constants::default_allocation!(),
+    );
+    assert_eq!(oracle.id(), market_oracle_id);
+    return_shared(oracle);
+    return_shared(market);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = config_constants::EOracleTickSizeTooLargeForSpot)]
+fun create_expiry_market_aborts_when_centered_min_strike_is_not_positive() {
+    let (mut scenario, registry_id, pyth_id, cap) = setup_ready_expiry_creation(
+        TOO_WIDE_EXPIRY_TICK_SIZE,
+    );
+
+    scenario.next_tx(test_constants::admin());
+    let mut reg = scenario.take_shared_by_id<registry::Registry>(registry_id);
+    let mut vault = scenario.take_shared<PoolVault>();
+    let config = scenario.take_shared<ProtocolConfig>();
+    let pyth = scenario.take_shared_by_id<PythSource>(pyth_id);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(NOW_MS);
+
+    registry::create_expiry_market(
+        &mut reg,
+        &mut vault,
+        &config,
+        &pyth,
+        &cap,
+        EXPIRY_MS,
+        &clock,
+        scenario.ctx(),
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = pricing::EPythSpotStale)]
+fun create_expiry_market_aborts_when_pyth_spot_is_stale() {
+    let (mut scenario, registry_id, pyth_id, cap) = setup_ready_expiry_creation(
+        UPDATED_EXPIRY_TICK_SIZE,
+    );
+
+    scenario.next_tx(test_constants::admin());
+    let mut pyth = scenario.take_shared_by_id<PythSource>(pyth_id);
+    let stale_timestamp_ms =
+        NOW_MS - deepbook_predict::config_constants::default_pyth_spot_freshness_ms!() - 1;
+    pyth.set_state_for_testing(BTC_SPOT, stale_timestamp_ms, stale_timestamp_ms);
+    return_shared(pyth);
+
+    scenario.next_tx(test_constants::admin());
+    let mut reg = scenario.take_shared_by_id<registry::Registry>(registry_id);
+    let mut vault = scenario.take_shared<PoolVault>();
+    let config = scenario.take_shared<ProtocolConfig>();
+    let pyth = scenario.take_shared_by_id<PythSource>(pyth_id);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(NOW_MS);
+
+    registry::create_expiry_market(
+        &mut reg,
+        &mut vault,
+        &config,
+        &pyth,
+        &cap,
+        EXPIRY_MS,
+        &clock,
+        scenario.ctx(),
+    );
+    abort 999
+}
+
+fun setup_ready_expiry_creation(expiry_tick_size: u64): (Scenario, ID, ID, MarketOracleCap) {
     let mut scenario = test::begin(test_constants::admin());
     let registry_id = registry::init_for_testing(scenario.ctx());
     plp::init_for_testing(scenario.ctx());
@@ -219,12 +339,7 @@ fun create_expiry_market_uses_registered_tick_size() {
         EXPIRY_FEE_MAX_MULTIPLIER_DISABLED,
         scenario.ctx(),
     );
-    registry::set_pyth_feed_tick_size(
-        &mut reg,
-        &admin_cap,
-        PYTH_FEED_BTC,
-        UPDATED_EXPIRY_TICK_SIZE,
-    );
+    registry::set_pyth_feed_tick_size(&mut reg, &admin_cap, PYTH_FEED_BTC, expiry_tick_size);
     return_shared(reg);
     destroy(admin_cap);
 
@@ -247,51 +362,7 @@ fun create_expiry_market_uses_registered_tick_size() {
     return_shared(config);
     return_shared(vault);
 
-    scenario.next_tx(test_constants::admin());
-    let mut reg = scenario.take_shared_by_id<registry::Registry>(registry_id);
-    let mut vault = scenario.take_shared<PoolVault>();
-    let config = scenario.take_shared<ProtocolConfig>();
-    let pyth = scenario.take_shared_by_id<PythSource>(pyth_id);
-    let mut clock = clock::create_for_testing(scenario.ctx());
-    clock.set_for_testing(NOW_MS);
-
-    let (expiry_market_id, market_oracle_id) = registry::create_expiry_market(
-        &mut reg,
-        &mut vault,
-        &config,
-        &pyth,
-        &cap,
-        EXPIRY_MS,
-        BTC_SPOT,
-        &clock,
-        scenario.ctx(),
-    );
-    assert!(vault.active_expiry_markets().contains(&expiry_market_id));
-    assert_eq!(
-        vault.total_allocated_capital(),
-        deepbook_predict::config_constants::default_allocation!(),
-    );
-    return_shared(pyth);
-    return_shared(config);
-    return_shared(vault);
-    return_shared(reg);
-    clock.destroy_for_testing();
-    destroy(cap);
-
-    scenario.next_tx(test_constants::admin());
-    let market = scenario.take_shared_by_id<ExpiryMarket>(expiry_market_id);
-    let oracle = scenario.take_shared_by_id<MarketOracle>(market_oracle_id);
-    assert_eq!(market.market_oracle_id(), market_oracle_id);
-    assert_eq!(market.pyth_lazer_feed_id(), PYTH_FEED_BTC);
-    assert_eq!(market.expiry(), EXPIRY_MS);
-    assert_eq!(
-        market.allocated_capital(),
-        deepbook_predict::config_constants::default_allocation!(),
-    );
-    assert_eq!(oracle.id(), market_oracle_id);
-    return_shared(oracle);
-    return_shared(market);
-    scenario.end();
+    (scenario, registry_id, pyth_id, cap)
 }
 
 // === create_manager / create_and_share_manager ===

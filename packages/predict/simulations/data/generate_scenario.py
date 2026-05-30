@@ -504,8 +504,22 @@ def write_scenario(path: Path, rows: list[dict[str, str]]) -> None:
 
 def generate_mode(mode: str, source: Path, out: Path | None, source_config: dict[str, Any]) -> Path:
     snapshots = read_snapshots(source)
+    replay.configure_oracle_grid(snapshots[0]["spot"])
     generator = Generator(snapshots, config_for_mode(mode, len(snapshots), source_config), source_config)
     rows = generator.generate()
+    # The grid is centered on snapshots[0] above, but every replay (Python and
+    # localnet) re-centers on the first emitted row's spot. They coincide only
+    # because tx=1 is a mint built from snapshots[0]; assert it so a future
+    # change to row ordering can't silently desync the generator's grid from
+    # the grid the replays validate against.
+    centered_spot = snapshots[0]["spot"]
+    first_row_spot = int(rows[0]["spot"])
+    if first_row_spot != centered_spot:
+        raise GenerationError(
+            f"oracle grid centered on snapshot spot {centered_spot} but first "
+            f"emitted row spot is {first_row_spot}; replay would center on a "
+            f"different grid"
+        )
     out_path = out if out is not None else output_path_for_mode(mode)
     write_scenario(out_path, rows)
     print(f"wrote {out_path} rows={len(rows)}")

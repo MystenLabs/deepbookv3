@@ -18,6 +18,7 @@ use deepbook_predict::{
     market_oracle::{Self, MarketOracle, MarketOracleCap},
     plp::PoolVault,
     predict_manager::{Self, PredictManager},
+    pricing,
     protocol_config::{Self, ProtocolConfig},
     pyth_source::{Self, PythSource},
     vault_events
@@ -511,7 +512,6 @@ public fun create_expiry_market(
     pyth: &PythSource,
     cap: &MarketOracleCap,
     expiry: u64,
-    min_strike: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (ID, ID) {
@@ -523,7 +523,9 @@ public fun create_expiry_market(
     let pyth_config = registry.pyth_feed_configs.borrow(pyth_lazer_feed_id);
     assert!(pyth_config.pyth_source_id == pyth.id(), EFeedIdMismatch);
     let tick_size = pyth_config.tick_size;
-    config_constants::assert_oracle_tick_size_covers_spot(tick_size, pyth.spot());
+    pricing::assert_pyth_spot_fresh(config.pricing_config(), pyth, clock);
+    let min_strike = centered_min_strike(pyth.spot(), tick_size);
+    let preallocated_ticks = expiry_preallocated_ticks(expiry, clock.timestamp_ms());
     assert!(!registry.expiry_market_ids.contains(expiry), EExpiryMarketAlreadyCreated);
     let allowed_versions = registry.allowed_versions;
     let allocation = pool_vault.allocate_to_new_expiry(config.risk_config());
@@ -545,6 +547,7 @@ public fun create_expiry_market(
         expiry,
         min_strike,
         tick_size,
+        preallocated_ticks,
         ctx,
     );
     pool_vault.register_expiry_market(expiry_market_id);
@@ -628,6 +631,25 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
 /// Abort unless the supplied `PauseCap` was minted by admin and not revoked.
 fun assert_valid_pause_cap(registry: &Registry, pause_cap: &PauseCap) {
     assert!(registry.allowed_pause_caps.contains(&pause_cap.id.to_inner()), EPauseCapNotValid);
+}
+
+/// Floor spot to the configured tick and center the fixed oracle grid around it.
+fun centered_min_strike(spot: u64, tick_size: u64): u64 {
+    config_constants::assert_oracle_tick_size_covers_spot(tick_size, spot);
+    let center_ticks = constants::oracle_strike_grid_ticks!() / 2;
+
+    (spot / tick_size - center_ticks) * tick_size
+}
+
+fun expiry_preallocated_ticks(expiry: u64, now_ms: u64): u64 {
+    let time_to_expiry = expiry - now_ms;
+    if (time_to_expiry <= constants::short_expiry_preallocation_window_ms!()) {
+        constants::short_expiry_preallocated_ticks!()
+    } else if (time_to_expiry <= constants::medium_expiry_preallocation_window_ms!()) {
+        constants::medium_expiry_preallocated_ticks!()
+    } else {
+        constants::default_expiry_preallocated_ticks!()
+    }
 }
 
 /// Remove a version from the allowed set, enforcing the non-empty invariant.

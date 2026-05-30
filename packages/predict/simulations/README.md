@@ -80,6 +80,8 @@ interface.
   leverage, then stable encoded order terms with sequence last.
 - `src/sim.ts`: localnet setup and generated CSV replay engine.
 - `src/runtime.ts`: Sui transaction builders and execution helpers.
+- `src/localPyth.ts`: local Wormhole/Pyth key and signed update helpers used
+  only by the localnet harness.
 - `src/shared.ts`: CSV parsing, shared schemas, paths, and JSON helpers.
 - `python_replay.py`: Python economic mirror and derived metric generator.
   Pricing values used by replay, such as base fee, min fee, and ask bounds,
@@ -96,8 +98,11 @@ interface.
 
 1. Generates fresh localnet genesis.
 2. Starts localnet.
-3. Publishes DeepBook, DUSDC, the Pyth Lazer stub, and Predict.
-4. Creates the vault, expiry market, oracle, manager, and seed balances.
+3. Publishes DeepBook, DUSDC, upstream Wormhole, upstream Pyth Lazer, and
+   Predict.
+4. Configures a local Wormhole guardian and Pyth Lazer signer, creates the
+   vault, then seeds the `PythSource` with the first Block Scholes spot and
+   creates the expiry market in one PTB so creation sees a fresh Pyth spot.
 5. Generates `data/generated/normal_scenario.csv` and copies it into the run
    artifacts.
 6. Runs Python over the normal scenario to create `python_data.json`.
@@ -166,9 +171,11 @@ The harness intentionally uses two time models.
 Normal localnet/Python parity uses synthetic localnet time. The localnet runner
 cannot advance the Sui `Clock` through a 24-hour source window without waiting
 in real time, so it creates an expiry roughly 400 days after the run starts and
-submits oracle updates with monotonic `Date.now()` source timestamps. The normal
-Python replay matches this parity role by using CSV transaction order, not exact
-source timestamps, for floor-index and fee-ramp math.
+submits oracle updates with monotonic source timestamps derived from the
+localnet `Clock`. It does not use CSV source timestamps for localnet oracle
+freshness. The normal Python replay matches this parity role by using CSV
+transaction order, not exact source timestamps, for floor-index and fee-ramp
+math.
 
 Long Python replay uses the source timestamps. The scenario generator writes
 `replay_timestamp_ms` from `price_checkpoint_timestamp_ms`,
@@ -186,6 +193,23 @@ The practical rule is:
 normal localnet/Python = parity under synthetic localnet time
 long Python = real timestamp economic analysis
 ```
+
+Expiry market creation derives the oracle strike grid from the first Pyth spot
+seeded into `PythSource`. The generator, Python replay, and localnet runner all
+center the fixed 100,000-tick grid around the first Block Scholes spot from the
+scenario they are about to use. Do not restore a hardcoded min/max strike range
+unless the Move creation policy changes back to explicit grid inputs.
+
+Because the grid is centered, the first spot must land in
+`(grid_width/2, grid_width]`. With the simulation's $1 tick size and
+100,000-tick grid that band is `($50,000, $100,000]`: the spot must be high
+enough to keep `min_strike >= 0` (`spot > grid_width/2`) and low enough for the
+grid to reach it (`spot <= grid_width`). A first spot outside that band aborts
+market creation identically in Move, Python replay, and localnet. To cover a
+higher spot (for example BTC above $100,000), raise the oracle tick size so the
+band scales (a $2 tick covers up to $200,000); change it in the
+`create_pyth_source` call and both replay mirrors together so the three layers
+stay on the same grid.
 
 ## Outputs
 

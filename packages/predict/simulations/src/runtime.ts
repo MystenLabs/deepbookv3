@@ -7,14 +7,30 @@ import {
   ADMIN_CAP_ID,
   DUSDC_CURRENCY_ID,
   DUSDC_PACKAGE_ID,
+  LOCAL_PYTH_GOVERNANCE_CHAIN,
+  LOCAL_PYTH_GOVERNANCE_CONTRACT,
+  LOCAL_PYTH_GUARDIAN_PRIVATE_KEY,
+  LOCAL_PYTH_RECEIVER_CHAIN,
+  LOCAL_PYTH_SIGNER_EXPIRES_AT_SECONDS,
+  LOCAL_PYTH_SIGNER_PRIVATE_KEY,
+  LOCAL_PYTH_SIGNER_PUBLIC_KEY,
   PACKAGE_ID,
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
+  PYTH_LAZER_PACKAGE_ID,
+  PYTH_LAZER_STATE_ID,
   REGISTRY_ID,
   RPC_URL,
   TREASURY_CAP_ID,
+  WORMHOLE_PACKAGE_ID,
+  WORMHOLE_STATE_ID,
   getSigner,
 } from "./env.js";
+import {
+  type LocalPythConfig,
+  lazerUpdateFromConfig,
+  updateTrustedSignerVaaFromConfig,
+} from "./localPyth.js";
 
 export interface GasUsage {
   computationCost: number;
@@ -34,6 +50,7 @@ export interface ExecutionReceipt {
 const DUSDC_TYPE = `${DUSDC_PACKAGE_ID}::dusdc::DUSDC`;
 const CLOCK_ID = "0x6";
 const COIN_REGISTRY_ID = "0xc";
+const PYTH_FEED_ID = 1;
 const NEG_INF_STRIKE = 0n;
 const POS_INF_STRIKE = (1n << 64n) - 1n;
 const SETUP_RESPONSE_OPTIONS = {
@@ -98,13 +115,55 @@ export function target(module: string, fn: string): `${string}::${string}::${str
   return `${PACKAGE_ID}::${module}::${fn}`;
 }
 
+function pythLazerTarget(module: string, fn: string): `${string}::${string}::${string}` {
+  return `${PYTH_LAZER_PACKAGE_ID}::${module}::${fn}`;
+}
+
+function wormholeTarget(module: string, fn: string): `${string}::${string}::${string}` {
+  return `${WORMHOLE_PACKAGE_ID}::${module}::${fn}`;
+}
+
+function localPythConfig(): LocalPythConfig {
+  return {
+    governanceChain: LOCAL_PYTH_GOVERNANCE_CHAIN,
+    governanceContract: LOCAL_PYTH_GOVERNANCE_CONTRACT,
+    receiverChain: LOCAL_PYTH_RECEIVER_CHAIN,
+    guardianPrivateKey: LOCAL_PYTH_GUARDIAN_PRIVATE_KEY,
+    signerPrivateKey: LOCAL_PYTH_SIGNER_PRIVATE_KEY,
+    signerPublicKey: LOCAL_PYTH_SIGNER_PUBLIC_KEY,
+    signerExpiresAtSeconds: LOCAL_PYTH_SIGNER_EXPIRES_AT_SECONDS,
+  };
+}
+
 let lastSourceTimestampMs = 0n;
 
-function nextSourceTimestampMs(): bigint {
-  const conservativeNow = BigInt(Date.now()) - 1_000n;
-  const next = conservativeNow > lastSourceTimestampMs ? conservativeNow : lastSourceTimestampMs + 1n;
-  lastSourceTimestampMs = next;
-  return next;
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function clockTimestampMs(): Promise<bigint> {
+  const object = await client.getObject({
+    id: CLOCK_ID,
+    options: { showContent: true },
+  });
+  const timestamp = (object.data?.content as any)?.fields?.timestamp_ms;
+  if (timestamp === undefined) {
+    throw new Error("unable to read localnet Clock timestamp");
+  }
+  return BigInt(timestamp);
+}
+
+async function nextSourceTimestampMs(): Promise<bigint> {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const latestAllowed = (await clockTimestampMs()) - 1n;
+    if (latestAllowed > lastSourceTimestampMs) {
+      lastSourceTimestampMs = latestAllowed;
+      return latestAllowed;
+    }
+    await sleep(25);
+  }
+
+  throw new Error("localnet Clock did not advance enough for a fresh source timestamp");
 }
 
 interface OracleRefreshParams {
@@ -163,7 +222,16 @@ interface RedeemParams {
   closeQuantity: bigint;
 }
 
-function addOracleRefresh(tx: Transaction, params: OracleRefreshParams): void {
+async function addOracleRefresh(tx: Transaction, params: OracleRefreshParams): Promise<void> {
+  const priceSourceTimestampMs = await nextSourceTimestampMs();
+  addPythSourceUpdate(
+    tx,
+    params.pythSourceId,
+    params.protocolConfigId,
+    params.spot,
+    priceSourceTimestampMs,
+  );
+
   tx.moveCall({
     target: target("market_oracle", "update_block_scholes_prices"),
     arguments: [
@@ -173,7 +241,7 @@ function addOracleRefresh(tx: Transaction, params: OracleRefreshParams): void {
       tx.object(params.oracleCapId),
       tx.pure.u64(params.spot),
       tx.pure.u64(params.forward),
-      tx.pure.u64(nextSourceTimestampMs()),
+      tx.pure.u64(priceSourceTimestampMs),
       tx.object(CLOCK_ID),
     ],
   });
@@ -203,9 +271,36 @@ function addOracleRefresh(tx: Transaction, params: OracleRefreshParams): void {
       tx.object(params.protocolConfigId),
       tx.object(params.oracleCapId),
       sviParams,
-      tx.pure.u64(nextSourceTimestampMs()),
+      tx.pure.u64(priceSourceTimestampMs),
       tx.object(CLOCK_ID),
     ],
+  });
+}
+
+function addPythSourceUpdate(
+  tx: Transaction,
+  pythSourceId: string,
+  protocolConfigId: string,
+  spot: bigint,
+  sourceTimestampMs: bigint,
+): void {
+  const updateBytes = lazerUpdateFromConfig(
+    localPythConfig(),
+    PYTH_FEED_ID,
+    spot,
+    sourceTimestampMs,
+  );
+  const update = tx.moveCall({
+    target: pythLazerTarget("pyth_lazer", "parse_and_verify_le_ecdsa_update"),
+    arguments: [
+      tx.object(PYTH_LAZER_STATE_ID),
+      tx.object(CLOCK_ID),
+      tx.pure.vector("u8", Array.from(updateBytes)),
+    ],
+  });
+  tx.moveCall({
+    target: target("pyth_source", "update_from_lazer"),
+    arguments: [tx.object(pythSourceId), tx.object(protocolConfigId), update, tx.object(CLOCK_ID)],
   });
 }
 
@@ -322,15 +417,40 @@ export function createPythSourceTx(
   return tx;
 }
 
-export function createExpiryMarketTx(params: {
+export function updatePythTrustedSignerTx(): Transaction {
+  const tx = new Transaction();
+  const vaaBytes = updateTrustedSignerVaaFromConfig(localPythConfig());
+  const vaa = tx.moveCall({
+    target: wormholeTarget("vaa", "parse_and_verify"),
+    arguments: [
+      tx.object(WORMHOLE_STATE_ID),
+      tx.pure.vector("u8", Array.from(vaaBytes)),
+      tx.object(CLOCK_ID),
+    ],
+  });
+  tx.moveCall({
+    target: pythLazerTarget("actions", "update_trusted_signer"),
+    arguments: [tx.object(PYTH_LAZER_STATE_ID), vaa],
+  });
+  return tx;
+}
+
+export async function seedPythSourceAndCreateExpiryMarketTx(params: {
   poolVaultId: string;
   protocolConfigId: string;
   pythSourceId: string;
   oracleCapId: string;
   expiry: bigint;
-  minStrike: bigint;
-}): Transaction {
+  spot: bigint;
+}): Promise<Transaction> {
   const tx = new Transaction();
+  addPythSourceUpdate(
+    tx,
+    params.pythSourceId,
+    params.protocolConfigId,
+    params.spot,
+    await nextSourceTimestampMs(),
+  );
   tx.moveCall({
     target: target("registry", "create_expiry_market"),
     arguments: [
@@ -340,7 +460,6 @@ export function createExpiryMarketTx(params: {
       tx.object(params.pythSourceId),
       tx.object(params.oracleCapId),
       tx.pure.u64(params.expiry),
-      tx.pure.u64(params.minStrike),
       tx.object(CLOCK_ID),
     ],
   });
@@ -387,11 +506,11 @@ export function supplyTx(poolVaultId: string, protocolConfigId: string, amount: 
   return tx;
 }
 
-export function refreshOracleAndSupplyWithExpiryValuationTx(
+export async function refreshOracleAndSupplyWithExpiryValuationTx(
   params: OracleRefreshParams & SupplyWithExpiryValuationParams
-): Transaction {
+): Promise<Transaction> {
   const tx = new Transaction();
-  addOracleRefresh(tx, params);
+  await addOracleRefresh(tx, params);
   const dusdc = mintDusdc(tx, params.amount);
   const valuation = startPlpValuationWithExpiry(tx, params);
   const [plpCoin] = tx.moveCall({
@@ -402,11 +521,11 @@ export function refreshOracleAndSupplyWithExpiryValuationTx(
   return tx;
 }
 
-export function refreshOracleAndWithdrawWithExpiryValuationTx(
+export async function refreshOracleAndWithdrawWithExpiryValuationTx(
   params: OracleRefreshParams & WithdrawWithExpiryValuationParams
-): Transaction {
+): Promise<Transaction> {
   const tx = new Transaction();
-  addOracleRefresh(tx, params);
+  await addOracleRefresh(tx, params);
   const valuation = startPlpValuationWithExpiry(tx, params);
   const [dusdc] = tx.moveCall({
     target: target("plp", "withdraw"),
@@ -456,16 +575,16 @@ export function depositToManagerTx(managerId: string, amount: bigint): Transacti
   return tx;
 }
 
-export function refreshOracleAndMintTx(params: OracleRefreshParams & MintParams): Transaction {
+export async function refreshOracleAndMintTx(params: OracleRefreshParams & MintParams): Promise<Transaction> {
   const tx = new Transaction();
-  addOracleRefresh(tx, params);
+  await addOracleRefresh(tx, params);
   addMint(tx, params);
   return tx;
 }
 
-export function refreshOracleAndRedeemTx(params: OracleRefreshParams & RedeemParams): Transaction {
+export async function refreshOracleAndRedeemTx(params: OracleRefreshParams & RedeemParams): Promise<Transaction> {
   const tx = new Transaction();
-  addOracleRefresh(tx, params);
+  await addOracleRefresh(tx, params);
   addRedeem(tx, params);
   return tx;
 }
@@ -509,14 +628,14 @@ const EXECUTE_MAX_ATTEMPTS = 5;
 const EXECUTE_RETRY_DELAY_MS = 1000;
 
 export async function execute(
-  buildTx: Transaction | (() => Transaction),
+  buildTx: Transaction | (() => Transaction | Promise<Transaction>),
   label = "transaction",
 ): Promise<ExecutionReceipt> {
   let lastError: unknown;
   for (let attempt = 0; attempt < EXECUTE_MAX_ATTEMPTS; attempt++) {
     try {
       // Build a fresh transaction on each attempt so object versions are re-resolved.
-      const tx = typeof buildTx === "function" ? buildTx() : buildTx;
+      const tx = typeof buildTx === "function" ? await buildTx() : buildTx;
       tx.setSender(address);
       tx.setGasBudget(DEFAULT_GAS_BUDGET);
 

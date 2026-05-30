@@ -18,10 +18,14 @@ Before editing `packages/predict/simulations/**`, read:
 
 ## Change Boundaries
 
+- Do not add unit tests for `packages/predict/simulations/**`. Make direct implementation changes and verify them with the relevant typecheck, replay, or localnet smoke command instead.
 - Do not broadly apply `data/scenario_config.json` values to localnet setup unless the setup intentionally changes. Some values are parity mirrors of Move defaults, some are localnet-replayable setup inputs, and some are long-run Python/economic knobs.
 - Keep one CSV row equal to one PTB. Do not infer behavior from adjacent rows or add unsupported row types casually.
 - If Move mint admission or pricing changes, update the relevant mirrors deliberately: generator, Python replay, config values, and localnet transaction setup only when localnet behavior actually needs that setup change.
 - Upgrade-required constants may be mirrored directly in Python. Admin-tunable defaults in `scenario_config.json` should match Move defaults unless the localnet setup is intentionally extended to set them.
+- Localnet oracle freshness must use timestamps derived from the localnet Sui `Clock`, not CSV `source_timestamp_ms`, `price_source_timestamp_ms`, or `replay_timestamp_ms`. Those CSV timestamps belong to long Python replay and source-data analysis.
+- When market creation requires a fresh Pyth spot, seed `PythSource` and create the expiry market in the same PTB. Do not add a separate setup transaction between Pyth seeding and market creation.
+- The Predict expiry strike grid is centered from the first Block Scholes/Pyth spot used at creation. Keep the generator, Python replay, and localnet runner on that derived grid; do not reintroduce static simulation min/max strikes.
 
 ## Verification
 

@@ -42,9 +42,15 @@ BASE_FEE = 20_000_000
 MIN_FEE = 5_000_000
 MIN_ASK_PRICE = 10_000_000
 MAX_ASK_PRICE = 990_000_000
-ORACLE_MIN_STRIKE = 25_000 * FLOAT_SCALING
 ORACLE_TICK_SIZE = FLOAT_SCALING
-ORACLE_MAX_STRIKE = ORACLE_MIN_STRIKE + 100_000 * ORACLE_TICK_SIZE
+ORACLE_GRID_TICKS = 100_000
+ORACLE_CENTER_TICKS = ORACLE_GRID_TICKS // 2
+# Centered grid bounds are derived from the first scenario spot by
+# configure_oracle_grid(). They stay None until then so any strike math run
+# before configuration fails loudly instead of silently snapping against a
+# stale default grid (mirrors the oracleGrid() guard in sim.ts).
+ORACLE_MIN_STRIKE = None
+ORACLE_MAX_STRIKE = None
 NEG_INF_STRIKE = 0
 POS_INF_STRIKE = (1 << 64) - 1
 MIN_ORDER_PRINCIPAL = 1_000_000
@@ -266,6 +272,34 @@ def scenario_quantity_scale() -> int:
     return 1
 
 
+def configure_oracle_grid(initial_spot: int) -> None:
+    global ORACLE_MIN_STRIKE
+    global ORACLE_MAX_STRIKE
+
+    if initial_spot <= 0:
+        raise ValueError("initial Pyth spot must be positive")
+    if initial_spot > ORACLE_TICK_SIZE * ORACLE_GRID_TICKS:
+        raise ValueError(
+            "initial Pyth spot exceeds oracle tick coverage; raise the oracle "
+            "tick size to cover a higher spot"
+        )
+    center_strike_index = initial_spot // ORACLE_TICK_SIZE
+    if center_strike_index <= ORACLE_CENTER_TICKS:
+        raise ValueError("initial Pyth spot is too low for centered oracle grid")
+
+    ORACLE_MIN_STRIKE = (center_strike_index - ORACLE_CENTER_TICKS) * ORACLE_TICK_SIZE
+    ORACLE_MAX_STRIKE = ORACLE_MIN_STRIKE + ORACLE_GRID_TICKS * ORACLE_TICK_SIZE
+
+
+def first_block_scholes_spot(rows: list[dict[str, Any]]) -> int:
+    if not rows:
+        raise ValueError("scenario has no executable rows")
+    first = rows[0]
+    if first["action"] == "oracle_mint_ptb":
+        return first["spot"]
+    return first["oracleRefresh"]["spot"]
+
+
 def signed_svi_value(magnitude: int, is_negative: bool) -> str:
     if magnitude == 0:
         return "0"
@@ -273,6 +307,8 @@ def signed_svi_value(magnitude: int, is_negative: bool) -> str:
 
 
 def align_strike_to_grid(strike: int) -> int:
+    if ORACLE_MIN_STRIKE is None:
+        raise ValueError("oracle grid has not been configured")
     relative = strike - ORACLE_MIN_STRIKE
     tick_index = relative // ORACLE_TICK_SIZE
     snapped = ORACLE_MIN_STRIKE + tick_index * ORACLE_TICK_SIZE
@@ -2351,6 +2387,8 @@ def replay(
             raise ValueError("terminal closeout requires expiry_ms and settlement_price")
         if settlement_timestamp_ms is None:
             settlement_timestamp_ms = expiry_ms + 1
+
+    configure_oracle_grid(first_block_scholes_spot(rows))
 
     state = initial_state()
     model: dict[str, Any] = {

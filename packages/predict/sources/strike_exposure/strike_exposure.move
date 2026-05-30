@@ -90,6 +90,18 @@ public(package) fun liquidation_ltv(exposure: &StrikeExposure): u64 {
     exposure.liquidation_ltv
 }
 
+public(package) fun min_strike(exposure: &StrikeExposure): u64 {
+    exposure.grid_min
+}
+
+public(package) fun tick_size(exposure: &StrikeExposure): u64 {
+    exposure.grid_tick
+}
+
+public(package) fun max_strike(exposure: &StrikeExposure): u64 {
+    exposure.grid_max
+}
+
 /// Run bounded liquidations and evaluate live user-position liability.
 ///
 /// The bounded scan is the protocol's valuation-maintenance policy; it does not
@@ -149,6 +161,7 @@ public(package) fun new(
     expiry_ms: u64,
     min_strike: u64,
     tick_size: u64,
+    preallocated_ticks: u64,
     max_expiry_floor_premium: u64,
     liquidation_ltv: u64,
     ctx: &mut TxContext,
@@ -167,7 +180,7 @@ public(package) fun new(
         settled_liability_materialized: false,
         liquidation: liquidation_book::new(ctx),
         live: option::some(LiveExposure {
-            nav: strike_nav_matrix::new(min_strike, tick_size, max_strike, ctx),
+            nav: strike_nav_matrix::new(min_strike, tick_size, max_strike, preallocated_ticks, ctx),
             payout: strike_payout_tree::new(min_strike, tick_size, max_strike, ctx),
             minted_min_strike: max_u64(),
             minted_max_strike: 0,
@@ -225,7 +238,7 @@ public(package) fun allocate_mint_order(
         sequence,
     );
     assert!(
-        allocated_order.user_contribution() > constants::min_order_principal!(),
+        allocated_order.user_contribution() >= constants::min_order_principal!(),
         EOrderPrincipalBelowMinimum,
     );
     exposure.next_order_sequence = sequence + 1;

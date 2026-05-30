@@ -42,6 +42,7 @@ const EInvalidLiquidationLtv: u64 = 30;
 const EInvalidOracleTickSize: u64 = 31;
 const EOracleTickSizeTooSmallForSpot: u64 = 32;
 const EInvalidOracleSpot: u64 = 33;
+const EOracleTickSizeTooLargeForSpot: u64 = 34;
 
 // === Pool Risk ===
 
@@ -212,15 +213,6 @@ public(package) fun assert_expiry_fee_max_multiplier(value: u64) {
     );
 }
 
-/// Maximum number of spot-price ticks allowed at market creation.
-///
-/// With the current fixed 100,000-tick grid, this prevents a feed's configured
-/// tick size from being so small that a market cannot cover a sane range around
-/// the current spot.
-public(package) macro fun max_spot_ticks_per_tick_size(): u64 {
-    deepbook_predict::constants::oracle_strike_grid_ticks!()
-}
-
 public(package) fun assert_oracle_tick_size(value: u64) {
     assert!(
         value > 0 && value % deepbook_predict::constants::oracle_tick_size_unit!() == 0,
@@ -228,10 +220,19 @@ public(package) fun assert_oracle_tick_size(value: u64) {
     );
 }
 
+/// Validate that `spot` can anchor a centered oracle grid at `tick_size`.
+///
+/// The fixed `oracle_strike_grid_ticks` window is centered on the tick-floored
+/// spot, so `spot / tick_size` must land in `(grid_ticks / 2, grid_ticks]`. The
+/// lower bound keeps `min_strike` positive; the upper bound keeps `tick_size`
+/// large enough that the grid's downside still reaches at least half of spot.
 public(package) fun assert_oracle_tick_size_covers_spot(tick_size: u64, spot: u64) {
     assert!(spot > 0, EInvalidOracleSpot);
     assert_oracle_tick_size(tick_size);
-    assert!(spot <= tick_size * max_spot_ticks_per_tick_size!(), EOracleTickSizeTooSmallForSpot);
+    let grid_ticks = deepbook_predict::constants::oracle_strike_grid_ticks!();
+    let spot_ticks = spot / tick_size;
+    assert!(spot_ticks > grid_ticks / 2, EOracleTickSizeTooLargeForSpot);
+    assert!(spot_ticks <= grid_ticks, EOracleTickSizeTooSmallForSpot);
 }
 
 public(package) macro fun default_min_ask_price(): u64 { 10_000_000 }
