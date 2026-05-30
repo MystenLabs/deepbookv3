@@ -90,14 +90,6 @@ public struct MarketOracleBoundsUpdated has copy, drop, store {
     max_basis: u64,
 }
 
-/// Emitted when a Pyth source's expiry-fee ramp policy changes.
-public struct PythSourceExpiryFeeParamsUpdated has copy, drop, store {
-    pyth_source_id: ID,
-    feed_id: u32,
-    expiry_fee_window_ms: u64,
-    expiry_fee_max_multiplier: u64,
-}
-
 /// Emitted when minting pause state changes for one expiry market.
 public struct ExpiryMarketMintPausedUpdated has copy, drop, store {
     expiry_market_id: ID,
@@ -205,20 +197,6 @@ public(package) fun emit_market_oracle_bounds_updated(
         max_basis_deviation,
         min_basis,
         max_basis,
-    });
-}
-
-public(package) fun emit_pyth_source_expiry_fee_params_updated(
-    pyth_source_id: ID,
-    feed_id: u32,
-    expiry_fee_window_ms: u64,
-    expiry_fee_max_multiplier: u64,
-) {
-    event::emit(PythSourceExpiryFeeParamsUpdated {
-        pyth_source_id,
-        feed_id,
-        expiry_fee_window_ms,
-        expiry_fee_max_multiplier,
     });
 }
 

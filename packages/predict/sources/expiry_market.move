@@ -127,6 +127,11 @@ public fun liquidation_ltv(market: &ExpiryMarket): u64 {
     market.strike_exposure.liquidation_ltv()
 }
 
+/// Return the trade-fee ramp max multiplier snapshotted for this expiry.
+public fun expiry_fee_max_multiplier(market: &ExpiryMarket): u64 {
+    market.strike_exposure.expiry_fee_max_multiplier()
+}
+
 /// Return the minimum strike snapshotted for this expiry's oracle grid.
 public fun min_strike(market: &ExpiryMarket): u64 {
     market.strike_exposure.min_strike()
@@ -460,6 +465,7 @@ public(package) fun create_and_share(
     min_strike: u64,
     tick_size: u64,
     preallocated_ticks: u64,
+    expiry_fee_max_multiplier: u64,
     ctx: &mut TxContext,
 ): ID {
     let allocated_capital = allocation.value();
@@ -483,6 +489,7 @@ public(package) fun create_and_share(
             preallocated_ticks,
             config.leverage_config().max_expiry_floor_premium(),
             config.leverage_config().liquidation_ltv(),
+            expiry_fee_max_multiplier,
             ctx,
         ),
         allowed_versions,

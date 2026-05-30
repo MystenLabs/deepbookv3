@@ -69,6 +69,13 @@ public macro fun builder_fee_multiplier(): u64 { 100_000_000 }
 /// Maximum all-in builder fee rate per traded quantity.
 public macro fun max_builder_fee_rate(): u64 { 5_000_000 }
 
+// === Trade Fee Ramp ===
+
+/// Window before expiry over which the trade fee ramps up to a market's
+/// per-feed max multiplier; the ramp is inactive earlier. Read live by
+/// `pricing::fee_rate` (the per-feed max multiplier stays snapshotted per market).
+public macro fun expiry_fee_window_ms(): u64 { 60 * 60 * 24 * 1000 }
+
 // === Time Constants ===
 
 /// Milliseconds in a 365-day year.

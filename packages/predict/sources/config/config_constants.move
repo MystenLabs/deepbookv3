@@ -31,7 +31,6 @@ const EInvalidGrowFactor: u64 = 19;
 const EInvalidShrinkFactor: u64 = 20;
 const EInvalidTradingLossRebateRate: u64 = 21;
 const EInvalidMaxExpiryFloorPremium: u64 = 22;
-const EInvalidExpiryFeeWindowMs: u64 = 23;
 const EInvalidExpiryFeeMaxMultiplier: u64 = 24;
 const EInvalidLowerBenefitPower: u64 = 25;
 const EInvalidUpperBenefitPower: u64 = 26;
@@ -183,18 +182,6 @@ public(package) macro fun max_min_fee(): u64 { deepbook_predict::constants::floa
 
 public(package) fun assert_min_fee(value: u64) {
     assert!(value >= min_min_fee!() && value <= max_min_fee!(), EInvalidMinFee);
-}
-
-/// Final window (ms before expiry) over which the fee ramps up. 0 disables it.
-public(package) macro fun min_expiry_fee_window_ms(): u64 { 0 }
-/// 30 days; predict markets are short-dated, so this is a generous envelope.
-public(package) macro fun max_expiry_fee_window_ms(): u64 { 2_592_000_000 }
-
-public(package) fun assert_expiry_fee_window_ms(value: u64) {
-    assert!(
-        value >= min_expiry_fee_window_ms!() && value <= max_expiry_fee_window_ms!(),
-        EInvalidExpiryFeeWindowMs,
-    );
 }
 
 /// Fee multiplier reached at expiry, in FLOAT_SCALING. 1x (float_scaling) disables

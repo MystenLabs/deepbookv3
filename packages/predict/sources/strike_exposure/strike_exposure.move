@@ -52,6 +52,9 @@ public struct StrikeExposure has store {
     max_expiry_floor_premium: u64,
     /// 1e9-scaled floor-to-live-value liquidation threshold snapshotted at creation.
     liquidation_ltv: u64,
+    /// Fee multiplier reached at expiry, in FLOAT_SCALING; 1x disables. Snapshotted at creation.
+    /// The ramp window itself is the `constants::expiry_fee_window_ms!()` protocol constant.
+    expiry_fee_max_multiplier: u64,
     next_order_sequence: u64,
     /// Remaining settled liability after settlement has been materialized.
     settled_payout_liability: u64,
@@ -88,6 +91,10 @@ public(package) fun max_expiry_floor_premium(exposure: &StrikeExposure): u64 {
 /// Return the liquidation LTV snapshotted for this exposure book.
 public(package) fun liquidation_ltv(exposure: &StrikeExposure): u64 {
     exposure.liquidation_ltv
+}
+
+public(package) fun expiry_fee_max_multiplier(exposure: &StrikeExposure): u64 {
+    exposure.expiry_fee_max_multiplier
 }
 
 public(package) fun min_strike(exposure: &StrikeExposure): u64 {
@@ -164,6 +171,7 @@ public(package) fun new(
     preallocated_ticks: u64,
     max_expiry_floor_premium: u64,
     liquidation_ltv: u64,
+    expiry_fee_max_multiplier: u64,
     ctx: &mut TxContext,
 ): StrikeExposure {
     let max_strike = validated_max_strike(min_strike, tick_size);
@@ -175,6 +183,7 @@ public(package) fun new(
         grid_max: max_strike,
         max_expiry_floor_premium,
         liquidation_ltv,
+        expiry_fee_max_multiplier,
         next_order_sequence: 0,
         settled_payout_liability: 0,
         settled_liability_materialized: false,
@@ -224,7 +233,13 @@ public(package) fun allocate_mint_order(
         clock,
     );
     order::assert_mint_leverage_tier(entry_probability, leverage);
-    let fee_rate = pricing::assert_mint_fee_rate(config, market, pyth, entry_probability, clock);
+    let fee_rate = pricing::assert_mint_fee_rate(
+        config,
+        market,
+        exposure.expiry_fee_max_multiplier,
+        entry_probability,
+        clock,
+    );
     let fee_amount = math::mul(fee_rate, quantity);
 
     let sequence = exposure.next_order_sequence;
@@ -273,7 +288,13 @@ public(package) fun close_and_quote_live_order(
         higher,
         clock,
     );
-    let fee_rate = pricing::fee_rate(config, market, pyth, range_probability, clock);
+    let fee_rate = pricing::fee_rate(
+        config,
+        market,
+        exposure.expiry_fee_max_multiplier,
+        range_probability,
+        clock,
+    );
 
     let (resulting_order, closed_floor_amount) = exposure.close_live_exposure(
         order,

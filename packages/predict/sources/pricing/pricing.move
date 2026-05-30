@@ -116,7 +116,7 @@ public(package) fun live_range_probability(
 public(package) fun fee_rate(
     config: &PricingConfig,
     market: &MarketOracle,
-    pyth: &PythSource,
+    expiry_fee_max_multiplier: u64,
     probability: u64,
     clock: &Clock,
 ): u64 {
@@ -124,11 +124,7 @@ public(package) fun fee_rate(
     let min_fee = config.min_fee();
     let base = if (raw_fee > min_fee) raw_fee else min_fee;
     let time_to_expiry_ms = market.expiry() - clock.timestamp_ms();
-    let multiplier = expiry_fee_multiplier(
-        pyth.expiry_fee_window_ms(),
-        pyth.expiry_fee_max_multiplier(),
-        time_to_expiry_ms,
-    );
+    let multiplier = expiry_fee_multiplier(expiry_fee_max_multiplier, time_to_expiry_ms);
     math::mul(base, multiplier)
 }
 
@@ -136,11 +132,11 @@ public(package) fun fee_rate(
 public(package) fun assert_mint_fee_rate(
     config: &PricingConfig,
     market: &MarketOracle,
-    pyth: &PythSource,
+    expiry_fee_max_multiplier: u64,
     probability: u64,
     clock: &Clock,
 ): u64 {
-    let fee_rate = fee_rate(config, market, pyth, probability, clock);
+    let fee_rate = fee_rate(config, market, expiry_fee_max_multiplier, probability, clock);
     let ask_price = probability + fee_rate;
     assert!(
         ask_price >= config.min_ask_price() && ask_price <= config.max_ask_price(),
@@ -324,12 +320,12 @@ fun raw_bernoulli_fee_rate(config: &PricingConfig, probability: u64): u64 {
 }
 
 /// Linear ramp that scales the trade fee up as expiry approaches: 1x outside the
-/// window, rising linearly to `max_multiplier` at expiry. `window_ms` and
-/// `max_multiplier` are per-asset (from PythSource); `time_to_expiry_ms` is the
-/// live remaining time (caller guarantees `now < expiry`).
-fun expiry_fee_multiplier(window_ms: u64, max_multiplier: u64, time_to_expiry_ms: u64): u64 {
-    // Outside the window (or ramp disabled, window == 0) the fee is unscaled; the
-    // early return also avoids a zero-divisor when window == 0.
+/// `expiry_fee_window_ms` protocol window, rising linearly to the per-asset
+/// `max_multiplier` at expiry. `time_to_expiry_ms` is the live remaining time
+/// (caller guarantees `now < expiry`); `max_multiplier == 1x` disables the ramp.
+fun expiry_fee_multiplier(max_multiplier: u64, time_to_expiry_ms: u64): u64 {
+    let window_ms = constants::expiry_fee_window_ms!();
+    // Outside the window the fee is unscaled.
     if (time_to_expiry_ms >= window_ms) return constants::float_scaling!();
 
     // mult = 1 + (max - 1) * (window - ttx) / window
@@ -445,12 +441,8 @@ fun snap_to_tick(strike: u64, grid_min: u64, grid_tick: u64): u64 {
 // === Test-Only Functions ===
 
 #[test_only]
-public fun expiry_fee_multiplier_for_testing(
-    window_ms: u64,
-    max_multiplier: u64,
-    time_to_expiry_ms: u64,
-): u64 {
-    expiry_fee_multiplier(window_ms, max_multiplier, time_to_expiry_ms)
+public fun expiry_fee_multiplier_for_testing(max_multiplier: u64, time_to_expiry_ms: u64): u64 {
+    expiry_fee_multiplier(max_multiplier, time_to_expiry_ms)
 }
 
 /// Construct a `CurvePoint` directly for tests that need to drive `live_value`

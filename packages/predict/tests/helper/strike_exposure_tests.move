@@ -57,6 +57,7 @@ fun new_exposure(
         constants::default_expiry_preallocated_ticks!(),
         max_expiry_floor_premium,
         LIQUIDATION_LTV,
+        constants::float_scaling!(),
         ctx,
     )
 }

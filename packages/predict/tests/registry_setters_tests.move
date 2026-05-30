@@ -9,19 +9,22 @@
 module deepbook_predict::registry_setters_tests;
 
 use deepbook_predict::{
+    config_constants,
     constants::float_scaling as float,
     fee_config,
     leverage_config,
     market_oracle_config,
     pricing_config,
     protocol_config,
-    pyth_source,
     registry,
     risk_config,
     stake_config,
     test_helpers
 };
 use std::unit_test::{assert_eq, destroy};
+
+const PYTH_FEED_BTC: u32 = 100;
+const BTC_TICK_SIZE: u64 = 1_000_000_000; // $1.00 in 1e9 price scaling
 
 // === Pricing config setters ===
 
@@ -238,17 +241,50 @@ fun set_trading_paused_round_trips_through_config_getter() {
     test_helpers::finish_registry_test(scenario, registry, admin_cap);
 }
 
-// === Pyth source expiry-fee setter ===
+// === Pyth feed expiry-fee setter ===
 
 #[test]
-fun set_pyth_source_expiry_fee_params_forwards_to_pyth() {
-    let (mut scenario, registry, admin_cap) = test_helpers::begin_registry_test();
-    let mut pyth = pyth_source::new_for_testing(scenario.ctx());
+fun set_pyth_feed_expiry_fee_max_multiplier_updates_config() {
+    let (mut scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
+    registry::create_pyth_source(
+        &mut reg,
+        &admin_cap,
+        PYTH_FEED_BTC,
+        BTC_TICK_SIZE,
+        float!(),
+        scenario.ctx(),
+    );
 
-    registry::set_pyth_source_expiry_fee_params(&mut pyth, &admin_cap, 3_600_000, 2 * float!());
-    assert_eq!(pyth.expiry_fee_window_ms(), 3_600_000);
-    assert_eq!(pyth.expiry_fee_max_multiplier(), 2 * float!());
+    registry::set_pyth_feed_expiry_fee_max_multiplier(
+        &mut reg,
+        &admin_cap,
+        PYTH_FEED_BTC,
+        2 * float!(),
+    );
+    assert_eq!(
+        *registry::pyth_feed_expiry_fee_max_multiplier(&reg, PYTH_FEED_BTC).borrow(),
+        2 * float!(),
+    );
 
-    destroy(pyth);
-    test_helpers::finish_registry_test(scenario, registry, admin_cap);
+    test_helpers::finish_registry_test(scenario, reg, admin_cap);
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidExpiryFeeMaxMultiplier)]
+fun set_pyth_feed_expiry_fee_multiplier_below_min_aborts() {
+    let (mut scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
+    registry::create_pyth_source(
+        &mut reg,
+        &admin_cap,
+        PYTH_FEED_BTC,
+        BTC_TICK_SIZE,
+        float!(),
+        scenario.ctx(),
+    );
+    registry::set_pyth_feed_expiry_fee_max_multiplier(
+        &mut reg,
+        &admin_cap,
+        PYTH_FEED_BTC,
+        config_constants::min_expiry_fee_max_multiplier!() - 1,
+    );
+    abort 999
 }

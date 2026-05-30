@@ -30,8 +30,8 @@ const INVALID_TICK_SIZE: u64 = BTC_TICK_SIZE + 1;
 const INITIAL_EXPIRY_TICK_SIZE: u64 = 3_000_000_000;
 const UPDATED_EXPIRY_TICK_SIZE: u64 = 1_000_000_000;
 const TOO_WIDE_EXPIRY_TICK_SIZE: u64 = 2_000_000_000;
-const EXPIRY_FEE_WINDOW_DISABLED: u64 = 0;
 const EXPIRY_FEE_MAX_MULTIPLIER_DISABLED: u64 = 1_000_000_000; // 1.0 — sentinel disables ramp
+const RAMP_MAX_MULTIPLIER: u64 = 2_000_000_000; // 2.0x at expiry
 const NOW_MS: u64 = 1_700_000_000_000;
 const SOURCE_TIMESTAMP_MS: u64 = 1_699_999_999_000;
 const EXPIRY_MS: u64 = 1_700_003_600_000;
@@ -51,7 +51,6 @@ fun create_pyth_source_returns_id_and_registers() {
         &admin_cap,
         PYTH_FEED_BTC,
         BTC_TICK_SIZE,
-        EXPIRY_FEE_WINDOW_DISABLED,
         EXPIRY_FEE_MAX_MULTIPLIER_DISABLED,
         scenario.ctx(),
     );
@@ -61,9 +60,12 @@ fun create_pyth_source_returns_id_and_registers() {
     let tick_size = registry::pyth_feed_tick_size(&reg, PYTH_FEED_BTC);
     assert!(tick_size.is_some());
     assert!(*tick_size.borrow() == BTC_TICK_SIZE);
+    let multiplier = registry::pyth_feed_expiry_fee_max_multiplier(&reg, PYTH_FEED_BTC);
+    assert!(*multiplier.borrow() == EXPIRY_FEE_MAX_MULTIPLIER_DISABLED);
     // Other feed ids must remain unmapped.
     assert!(registry::pyth_source_id(&reg, PYTH_FEED_ETH).is_none());
     assert!(registry::pyth_feed_tick_size(&reg, PYTH_FEED_ETH).is_none());
+    assert!(registry::pyth_feed_expiry_fee_max_multiplier(&reg, PYTH_FEED_ETH).is_none());
 
     test_helpers::finish_registry_test(scenario, reg, admin_cap);
 }
@@ -77,7 +79,6 @@ fun create_pyth_source_distinct_feeds_yield_distinct_ids() {
         &admin_cap,
         PYTH_FEED_BTC,
         BTC_TICK_SIZE,
-        EXPIRY_FEE_WINDOW_DISABLED,
         EXPIRY_FEE_MAX_MULTIPLIER_DISABLED,
         scenario.ctx(),
     );
@@ -86,7 +87,6 @@ fun create_pyth_source_distinct_feeds_yield_distinct_ids() {
         &admin_cap,
         PYTH_FEED_ETH,
         ETH_TICK_SIZE,
-        EXPIRY_FEE_WINDOW_DISABLED,
         EXPIRY_FEE_MAX_MULTIPLIER_DISABLED,
         scenario.ctx(),
     );
@@ -104,7 +104,6 @@ fun create_pyth_source_duplicate_feed_aborts() {
         &admin_cap,
         PYTH_FEED_BTC,
         BTC_TICK_SIZE,
-        EXPIRY_FEE_WINDOW_DISABLED,
         EXPIRY_FEE_MAX_MULTIPLIER_DISABLED,
         scenario.ctx(),
     );
@@ -113,7 +112,6 @@ fun create_pyth_source_duplicate_feed_aborts() {
         &admin_cap,
         PYTH_FEED_BTC,
         BTC_TICK_SIZE,
-        EXPIRY_FEE_WINDOW_DISABLED,
         EXPIRY_FEE_MAX_MULTIPLIER_DISABLED,
         scenario.ctx(),
     );
@@ -136,7 +134,6 @@ fun create_pyth_source_with_current_version_disabled_aborts() {
         &admin_cap,
         PYTH_FEED_BTC,
         BTC_TICK_SIZE,
-        EXPIRY_FEE_WINDOW_DISABLED,
         EXPIRY_FEE_MAX_MULTIPLIER_DISABLED,
         scenario.ctx(),
     );
@@ -152,7 +149,6 @@ fun create_pyth_source_unaligned_tick_size_aborts() {
         &admin_cap,
         PYTH_FEED_BTC,
         INVALID_TICK_SIZE,
-        EXPIRY_FEE_WINDOW_DISABLED,
         EXPIRY_FEE_MAX_MULTIPLIER_DISABLED,
         scenario.ctx(),
     );
@@ -182,7 +178,6 @@ fun set_pyth_feed_tick_size_updates_registered_feed() {
         &admin_cap,
         PYTH_FEED_BTC,
         BTC_TICK_SIZE,
-        EXPIRY_FEE_WINDOW_DISABLED,
         EXPIRY_FEE_MAX_MULTIPLIER_DISABLED,
         scenario.ctx(),
     );
@@ -250,6 +245,7 @@ fun create_expiry_market_uses_registered_tick_size() {
     assert_eq!(market.min_strike(), EXPECTED_CENTERED_MIN_STRIKE);
     assert_eq!(market.tick_size(), UPDATED_EXPIRY_TICK_SIZE);
     assert_eq!(market.max_strike(), EXPECTED_CENTERED_MAX_STRIKE);
+    assert_eq!(market.expiry_fee_max_multiplier(), RAMP_MAX_MULTIPLIER);
     assert_eq!(
         market.allocated_capital(),
         deepbook_predict::config_constants::default_allocation!(),
@@ -335,11 +331,16 @@ fun setup_ready_expiry_creation(expiry_tick_size: u64): (Scenario, ID, ID, Marke
         &admin_cap,
         PYTH_FEED_BTC,
         INITIAL_EXPIRY_TICK_SIZE,
-        EXPIRY_FEE_WINDOW_DISABLED,
         EXPIRY_FEE_MAX_MULTIPLIER_DISABLED,
         scenario.ctx(),
     );
     registry::set_pyth_feed_tick_size(&mut reg, &admin_cap, PYTH_FEED_BTC, expiry_tick_size);
+    registry::set_pyth_feed_expiry_fee_max_multiplier(
+        &mut reg,
+        &admin_cap,
+        PYTH_FEED_BTC,
+        RAMP_MAX_MULTIPLIER,
+    );
     return_shared(reg);
     destroy(admin_cap);
 
