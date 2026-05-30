@@ -303,6 +303,7 @@ export function createMarketOracleCapTx(recipient: string): Transaction {
 
 export function createPythSourceTx(
   feedId: number,
+  tickSize: bigint,
   expiryFeeWindowMs: bigint = 0n,
   expiryFeeMaxMultiplier: bigint = 1_000_000_000n,
 ): Transaction {
@@ -313,6 +314,7 @@ export function createPythSourceTx(
       tx.object(REGISTRY_ID),
       tx.object(ADMIN_CAP_ID),
       tx.pure.u32(feedId),
+      tx.pure.u64(tickSize),
       tx.pure.u64(expiryFeeWindowMs),
       tx.pure.u64(expiryFeeMaxMultiplier),
     ],
@@ -327,7 +329,6 @@ export function createExpiryMarketTx(params: {
   oracleCapId: string;
   expiry: bigint;
   minStrike: bigint;
-  tickSize: bigint;
 }): Transaction {
   const tx = new Transaction();
   tx.moveCall({
@@ -340,7 +341,6 @@ export function createExpiryMarketTx(params: {
       tx.object(params.oracleCapId),
       tx.pure.u64(params.expiry),
       tx.pure.u64(params.minStrike),
-      tx.pure.u64(params.tickSize),
       tx.object(CLOCK_ID),
     ],
   });

@@ -11,6 +11,7 @@ module deepbook_predict::registry;
 
 use deepbook_predict::{
     builder_code,
+    config_constants,
     config_events,
     constants,
     expiry_market::{Self, ExpiryMarket},
@@ -32,6 +33,15 @@ const EPackageVersionDisabled: u64 = 5;
 const EVersionAlreadyEnabled: u64 = 6;
 const EVersionNotEnabled: u64 = 7;
 const ECannotDisableLastVersion: u64 = 8;
+const EPythFeedNotRegistered: u64 = 9;
+
+/// Registry-owned config for one Pyth Lazer feed.
+public struct PythFeedConfig has copy, drop, store {
+    /// Shared PythSource object bound to the feed.
+    pyth_source_id: ID,
+    /// Admin-selected strike tick size for future expiries.
+    tick_size: u64,
+}
 
 /// Capability for admin operations.
 /// Created during package init, transferred to deployer (multisig).
@@ -49,8 +59,8 @@ public struct PauseCap has key, store {
 /// Shared registry for source and expiry uniqueness.
 public struct Registry has key {
     id: UID,
-    /// Pyth Lazer feed ID -> shared PythSource ID.
-    pyth_source_ids: Table<u32, ID>,
+    /// Pyth Lazer feed ID -> source object and creation-time market config.
+    pyth_feed_configs: Table<u32, PythFeedConfig>,
     /// Created expiry markets keyed by expiry timestamp.
     expiry_market_ids: Table<u64, ID>,
     /// IDs of `PauseCap` objects currently authorized to use pause-only entries.
@@ -76,8 +86,17 @@ public fun allowed_versions(registry: &Registry): VecSet<u64> {
 
 /// Return the shared PythSource ID for a feed, if it has been created.
 public fun pyth_source_id(registry: &Registry, pyth_lazer_feed_id: u32): Option<ID> {
-    if (registry.pyth_source_ids.contains(pyth_lazer_feed_id)) {
-        option::some(registry.pyth_source_ids[pyth_lazer_feed_id])
+    if (registry.pyth_feed_configs.contains(pyth_lazer_feed_id)) {
+        option::some(registry.pyth_feed_configs.borrow(pyth_lazer_feed_id).pyth_source_id)
+    } else {
+        option::none()
+    }
+}
+
+/// Return the configured strike tick size for a Pyth Lazer feed, if registered.
+public fun pyth_feed_tick_size(registry: &Registry, pyth_lazer_feed_id: u32): Option<u64> {
+    if (registry.pyth_feed_configs.contains(pyth_lazer_feed_id)) {
+        option::some(registry.pyth_feed_configs.borrow(pyth_lazer_feed_id).tick_size)
     } else {
         option::none()
     }
@@ -124,6 +143,18 @@ public fun set_pyth_source_expiry_fee_params(
     max_multiplier: u64,
 ) {
     pyth.set_expiry_fee_params(window_ms, max_multiplier);
+}
+
+/// Set the strike tick size used by future expiry markets for one Pyth feed.
+public fun set_pyth_feed_tick_size(
+    registry: &mut Registry,
+    _admin_cap: &AdminCap,
+    pyth_lazer_feed_id: u32,
+    tick_size: u64,
+) {
+    assert!(registry.pyth_feed_configs.contains(pyth_lazer_feed_id), EPythFeedNotRegistered);
+    config_constants::assert_oracle_tick_size(tick_size);
+    registry.pyth_feed_configs.borrow_mut(pyth_lazer_feed_id).tick_size = tick_size;
 }
 
 /// Set the liquidation LTV snapshotted by future expiry markets.
@@ -409,12 +440,14 @@ public fun create_pyth_source(
     registry: &mut Registry,
     _admin_cap: &AdminCap,
     pyth_lazer_feed_id: u32,
+    tick_size: u64,
     expiry_fee_window_ms: u64,
     expiry_fee_max_multiplier: u64,
     ctx: &mut TxContext,
 ): ID {
     registry.assert_version_allowed();
-    assert!(!registry.pyth_source_ids.contains(pyth_lazer_feed_id), EPythSourceAlreadyCreated);
+    assert!(!registry.pyth_feed_configs.contains(pyth_lazer_feed_id), EPythSourceAlreadyCreated);
+    config_constants::assert_oracle_tick_size(tick_size);
     let pyth_source_id = pyth_source::create_and_share(
         pyth_lazer_feed_id,
         registry.allowed_versions,
@@ -422,7 +455,15 @@ public fun create_pyth_source(
         expiry_fee_max_multiplier,
         ctx,
     );
-    registry.pyth_source_ids.add(pyth_lazer_feed_id, pyth_source_id);
+    registry
+        .pyth_feed_configs
+        .add(
+            pyth_lazer_feed_id,
+            PythFeedConfig {
+                pyth_source_id,
+                tick_size,
+            },
+        );
     pyth_source_id
 }
 
@@ -471,7 +512,6 @@ public fun create_expiry_market(
     cap: &MarketOracleCap,
     expiry: u64,
     min_strike: u64,
-    tick_size: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ): (ID, ID) {
@@ -479,8 +519,11 @@ public fun create_expiry_market(
     config.assert_trading_allowed();
     assert!(expiry > clock.timestamp_ms(), EInvalidExpiry);
     let pyth_lazer_feed_id = pyth.feed_id();
-    assert!(registry.pyth_source_ids.contains(pyth_lazer_feed_id), EFeedIdMismatch);
-    assert!(registry.pyth_source_ids[pyth_lazer_feed_id] == pyth.id(), EFeedIdMismatch);
+    assert!(registry.pyth_feed_configs.contains(pyth_lazer_feed_id), EFeedIdMismatch);
+    let pyth_config = registry.pyth_feed_configs.borrow(pyth_lazer_feed_id);
+    assert!(pyth_config.pyth_source_id == pyth.id(), EFeedIdMismatch);
+    let tick_size = pyth_config.tick_size;
+    config_constants::assert_oracle_tick_size_covers_spot(tick_size, pyth.spot());
     assert!(!registry.expiry_market_ids.contains(expiry), EExpiryMarketAlreadyCreated);
     let allowed_versions = registry.allowed_versions;
     let allocation = pool_vault.allocate_to_new_expiry(config.risk_config());
@@ -571,7 +614,7 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
     (
         Registry {
             id: object::new(ctx),
-            pyth_source_ids: table::new(ctx),
+            pyth_feed_configs: table::new(ctx),
             expiry_market_ids: table::new(ctx),
             allowed_pause_caps: vec_set::empty(),
             allowed_versions: vec_set::singleton(constants::current_version!()),
@@ -607,47 +650,4 @@ public fun init_for_testing(ctx: &mut TxContext): ID {
     transfer::transfer(admin_cap, ctx.sender());
 
     registry_id
-}
-
-#[test_only]
-/// Create an admin cap for tests.
-public fun create_admin_cap_for_testing(ctx: &mut TxContext): AdminCap {
-    AdminCap { id: object::new(ctx) }
-}
-
-#[test_only]
-/// Return a Registry + AdminCap without sharing or storing the registry.
-/// Use this when a test wants direct access without `test_scenario`.
-public fun new_for_testing(ctx: &mut TxContext): (Registry, AdminCap) {
-    new_registry_and_admin_cap(ctx)
-}
-
-#[test_only]
-public fun destroy_registry_for_testing(registry: Registry) {
-    let Registry {
-        id,
-        pyth_source_ids,
-        expiry_market_ids,
-        allowed_pause_caps: _,
-        allowed_versions: _,
-    } = registry;
-    id.delete();
-    pyth_source_ids.destroy_empty();
-    expiry_market_ids.destroy_empty();
-}
-
-/// Variant for tests that exercise registration paths: drops the uniqueness
-/// tables without requiring them to be empty.
-#[test_only]
-public fun destroy_registry_drop_for_testing(registry: Registry) {
-    let Registry {
-        id,
-        pyth_source_ids,
-        expiry_market_ids,
-        allowed_pause_caps: _,
-        allowed_versions: _,
-    } = registry;
-    id.delete();
-    pyth_source_ids.drop();
-    expiry_market_ids.drop();
 }

@@ -39,6 +39,9 @@ const EInvalidBenefitPowers: u64 = 27;
 const EInvalidValuationLiquidationBudget: u64 = 28;
 const EInvalidTradeLiquidationBudget: u64 = 29;
 const EInvalidLiquidationLtv: u64 = 30;
+const EInvalidOracleTickSize: u64 = 31;
+const EOracleTickSizeTooSmallForSpot: u64 = 32;
+const EInvalidOracleSpot: u64 = 33;
 
 // === Pool Risk ===
 
@@ -207,6 +210,28 @@ public(package) fun assert_expiry_fee_max_multiplier(value: u64) {
         value >= min_expiry_fee_max_multiplier!() && value <= max_expiry_fee_max_multiplier!(),
         EInvalidExpiryFeeMaxMultiplier,
     );
+}
+
+/// Maximum number of spot-price ticks allowed at market creation.
+///
+/// With the current fixed 100,000-tick grid, this prevents a feed's configured
+/// tick size from being so small that a market cannot cover a sane range around
+/// the current spot.
+public(package) macro fun max_spot_ticks_per_tick_size(): u64 {
+    deepbook_predict::constants::oracle_strike_grid_ticks!()
+}
+
+public(package) fun assert_oracle_tick_size(value: u64) {
+    assert!(
+        value > 0 && value % deepbook_predict::constants::oracle_tick_size_unit!() == 0,
+        EInvalidOracleTickSize,
+    );
+}
+
+public(package) fun assert_oracle_tick_size_covers_spot(tick_size: u64, spot: u64) {
+    assert!(spot > 0, EInvalidOracleSpot);
+    assert_oracle_tick_size(tick_size);
+    assert!(spot <= tick_size * max_spot_ticks_per_tick_size!(), EOracleTickSizeTooSmallForSpot);
 }
 
 public(package) macro fun default_min_ask_price(): u64 { 10_000_000 }

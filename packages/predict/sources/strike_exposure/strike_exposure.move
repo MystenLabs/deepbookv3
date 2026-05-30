@@ -36,6 +36,7 @@ const ESettledLiabilityUnderflow: u64 = 4;
 const EInvalidCloseQuantity: u64 = 5;
 const ETerminalFloorExceedsLiquidationLtv: u64 = 6;
 const EOrderBelowLiquidationThreshold: u64 = 7;
+const EOrderPrincipalBelowMinimum: u64 = 8;
 
 /// Exposure lifecycle state for one oracle grid.
 public struct StrikeExposure has store {
@@ -222,6 +223,10 @@ public(package) fun allocate_mint_order(
         entry_probability,
         quantity,
         sequence,
+    );
+    assert!(
+        allocated_order.user_contribution() > constants::min_order_principal!(),
+        EOrderPrincipalBelowMinimum,
     );
     exposure.next_order_sequence = sequence + 1;
     exposure.insert_live_order(&allocated_order, lower, higher);

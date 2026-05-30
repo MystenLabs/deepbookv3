@@ -36,9 +36,8 @@ ORACLE_REFRESH_FIELDS = (
     "sigma",
     "risk_free_rate",
 )
-# Lightweight mirror of Move pricing defaults in config_constants.move. Keep
-# these in sync when pricing config defaults change; this harness intentionally
-# does not parse Move source into Python config.
+# Lightweight mirror of Move config defaults. scenario_config.json may override
+# these only when the corresponding localnet setup is intentionally extended.
 BASE_FEE = 20_000_000
 MIN_FEE = 5_000_000
 MIN_ASK_PRICE = 10_000_000
@@ -48,6 +47,7 @@ ORACLE_TICK_SIZE = FLOAT_SCALING
 ORACLE_MAX_STRIKE = ORACLE_MIN_STRIKE + 100_000 * ORACLE_TICK_SIZE
 NEG_INF_STRIKE = 0
 POS_INF_STRIKE = (1 << 64) - 1
+MIN_ORDER_PRINCIPAL = 1_000_000
 DUSDC_DECIMALS = 1_000_000
 VAULT_SEED = 500_000 * DUSDC_DECIMALS
 MANAGER_SEED = 500_000 * DUSDC_DECIMALS
@@ -141,6 +141,10 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
     global MANAGER_SEED
     global INITIAL_EXPIRY_ALLOCATION
     global INITIAL_TOTAL_PLP_SUPPLY
+    global BASE_FEE
+    global MIN_FEE
+    global MIN_ASK_PRICE
+    global MAX_ASK_PRICE
     global TRADE_LIQUIDATION_BUDGET
     global VALUATION_LIQUIDATION_BUDGET
     global LIQUIDATION_HEAD_SCAN_DIVISOR
@@ -170,6 +174,10 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
         raise ValueError(f"{capital_mode} initial_expiry_allocation exceeds vault_seed")
     INITIAL_TOTAL_PLP_SUPPLY = VAULT_SEED
 
+    BASE_FEE = _config_int(config, "protocol", "base_fee", BASE_FEE)
+    MIN_FEE = _config_int(config, "protocol", "min_fee", MIN_FEE)
+    MIN_ASK_PRICE = _config_int(config, "protocol", "min_ask_price", MIN_ASK_PRICE)
+    MAX_ASK_PRICE = _config_int(config, "protocol", "max_ask_price", MAX_ASK_PRICE)
     TRADE_LIQUIDATION_BUDGET = _config_int(config, "protocol", "trade_liquidation_budget", TRADE_LIQUIDATION_BUDGET)
     VALUATION_LIQUIDATION_BUDGET = _config_int(
         config,
@@ -488,6 +496,11 @@ def assert_valid_leverage_tier(entry_probability: int, leverage: int) -> None:
 
 def user_contribution_from_exposure_value(exposure_value: int, leverage: int) -> int:
     return mul_div_round_up(exposure_value, FLOAT_SCALING, leverage_multiplier(leverage))
+
+
+def assert_mint_principal_above_min(contribution: int) -> None:
+    if contribution <= MIN_ORDER_PRINCIPAL:
+        raise ValueError("order principal below minimum")
 
 
 def compute_mint_terms(entry_probability: int, quantity: int, leverage: int) -> dict[str, int]:
@@ -1291,6 +1304,7 @@ def order_minted_update(
     entry_probability = compute_range_price(svi, forward, lower, higher)
     fee_amount = deepbook_mul(assert_mint_fee_rate(entry_probability, time_to_expiry_ms), mint["quantity"])
     terms = compute_mint_terms(entry_probability, mint["quantity"], mint["leverage"])
+    assert_mint_principal_above_min(terms["contribution"])
     return {
         "type": "order_minted",
         "order_ref": mint["orderRef"],

@@ -1,0 +1,31 @@
+---
+paths:
+  - "packages/predict/simulations/**"
+---
+
+# Predict Simulation Rules
+
+Before editing `packages/predict/simulations/**`, read:
+- `packages/predict/simulations/README.md`
+- `packages/predict/simulations/docs/ANALYSIS_NOTES.md` when touching economics, derived metrics, charts, liquidation policy, risk analysis, or interpretation of outputs.
+
+## Simulation Layers
+
+- Normal localnet/Python replay is the canonical parity path. It uses synthetic localnet time and compares localnet economic events/state against the Python mirror for the same generated normal CSV rows.
+- `--sim_max_rows=N` is only a truncated version of the full localnet/Python parity flow for smoke testing. Do not treat it as a separate economic mode.
+- Long Python replay is Python-only exact-time economic analysis. It uses source timestamps, settlement inputs, terminal closeout, and derived chart data that localnet does not practically model.
+- `python_derived.json` is Python-only observability. It is never compared against localnet parity output.
+
+## Change Boundaries
+
+- Do not broadly apply `data/scenario_config.json` values to localnet setup unless the setup intentionally changes. Some values are parity mirrors of Move defaults, some are localnet-replayable setup inputs, and some are long-run Python/economic knobs.
+- Keep one CSV row equal to one PTB. Do not infer behavior from adjacent rows or add unsupported row types casually.
+- If Move mint admission or pricing changes, update the relevant mirrors deliberately: generator, Python replay, config values, and localnet transaction setup only when localnet behavior actually needs that setup change.
+- Upgrade-required constants may be mirrored directly in Python. Admin-tunable defaults in `scenario_config.json` should match Move defaults unless the localnet setup is intentionally extended to set them.
+
+## Verification
+
+- TypeScript-only changes: run `pnpm exec tsc --noEmit` from `packages/predict/simulations`.
+- Generator or Python replay changes: generate normal and long scenarios, then replay both with `python_replay.py`.
+- Runtime/localnet transaction changes: run a small `bash run.sh --sim_max_rows=N --skip-analysis` smoke test from `packages/predict/simulations`.
+- Parity-sensitive changes should run the full simulation flow when practical.

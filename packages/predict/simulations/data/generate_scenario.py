@@ -177,6 +177,7 @@ class Generator:
                     leverage,
                 )
                 terms = replay.compute_mint_terms(entry_probability, quantity, leverage)
+                replay.assert_mint_principal_above_min(terms["contribution"])
                 open_floor_index = self.open_floor_index(snapshot)
                 replay.assert_terminal_ltv_mint_allowed(
                     quantity,

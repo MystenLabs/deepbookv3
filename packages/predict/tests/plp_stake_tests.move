@@ -19,27 +19,21 @@ const THIRTY_K_DEEP: u64 = 30_000_000_000;
 
 // === Helpers ===
 
-fun begin(): (test::Scenario, registry::Registry, registry::AdminCap, PoolVault, PredictManager) {
+fun begin(): (test::Scenario, PoolVault, PredictManager) {
     let mut scenario = test::begin(test_constants::alice());
     plp::init_for_testing(scenario.ctx()); // shares a PoolVault
-    let (mut reg, admin_cap) = registry::new_for_testing(scenario.ctx());
-    let manager = registry::create_manager(&mut reg, scenario.ctx());
+    let registry_id = registry::init_for_testing(scenario.ctx());
     scenario.next_tx(test_constants::alice());
+    let mut reg = scenario.take_shared_by_id<registry::Registry>(registry_id);
+    let manager = registry::create_manager(&mut reg, scenario.ctx());
+    test::return_shared(reg);
     let vault = scenario.take_shared<PoolVault>();
-    (scenario, reg, admin_cap, vault, manager)
+    (scenario, vault, manager)
 }
 
-fun finish(
-    scenario: test::Scenario,
-    reg: registry::Registry,
-    admin_cap: registry::AdminCap,
-    vault: PoolVault,
-    manager: PredictManager,
-) {
+fun finish(scenario: test::Scenario, vault: PoolVault, manager: PredictManager) {
     destroy(manager);
-    destroy(admin_cap);
     test::return_shared(vault);
-    registry::destroy_registry_drop_for_testing(reg);
     scenario.end();
 }
 
@@ -47,7 +41,7 @@ fun finish(
 
 #[test]
 fun stake_adds_to_inactive_and_vault_custody() {
-    let (mut scenario, reg, admin_cap, mut vault, mut manager) = begin();
+    let (mut scenario, mut vault, mut manager) = begin();
 
     let deep = coin::mint_for_testing<DEEP>(FIFTY_K_DEEP, scenario.ctx());
     vault.stake_deep(&mut manager, deep, scenario.ctx());
@@ -57,12 +51,12 @@ fun stake_adds_to_inactive_and_vault_custody() {
     assert_eq!(manager.active_stake(), 0);
     assert_eq!(vault.staked_deep(), FIFTY_K_DEEP);
 
-    finish(scenario, reg, admin_cap, vault, manager);
+    finish(scenario, vault, manager);
 }
 
 #[test]
 fun stake_activates_prior_inactive_next_epoch() {
-    let (mut scenario, reg, admin_cap, mut vault, mut manager) = begin();
+    let (mut scenario, mut vault, mut manager) = begin();
 
     let first = coin::mint_for_testing<DEEP>(FIFTY_K_DEEP, scenario.ctx());
     vault.stake_deep(&mut manager, first, scenario.ctx());
@@ -75,14 +69,14 @@ fun stake_activates_prior_inactive_next_epoch() {
     assert_eq!(manager.inactive_stake(), THIRTY_K_DEEP);
     assert_eq!(vault.staked_deep(), FIFTY_K_DEEP + THIRTY_K_DEEP);
 
-    finish(scenario, reg, admin_cap, vault, manager);
+    finish(scenario, vault, manager);
 }
 
 // === unstake_deep ===
 
 #[test]
 fun unstake_returns_all_anytime_no_penalty() {
-    let (mut scenario, reg, admin_cap, mut vault, mut manager) = begin();
+    let (mut scenario, mut vault, mut manager) = begin();
 
     let deep = coin::mint_for_testing<DEEP>(FIFTY_K_DEEP, scenario.ctx());
     vault.stake_deep(&mut manager, deep, scenario.ctx());
@@ -95,12 +89,12 @@ fun unstake_returns_all_anytime_no_penalty() {
     assert_eq!(vault.staked_deep(), 0);
 
     destroy(returned);
-    finish(scenario, reg, admin_cap, vault, manager);
+    finish(scenario, vault, manager);
 }
 
 #[test]
 fun unstake_returns_active_and_inactive() {
-    let (mut scenario, reg, admin_cap, mut vault, mut manager) = begin();
+    let (mut scenario, mut vault, mut manager) = begin();
 
     let first = coin::mint_for_testing<DEEP>(FIFTY_K_DEEP, scenario.ctx());
     vault.stake_deep(&mut manager, first, scenario.ctx());
@@ -114,12 +108,12 @@ fun unstake_returns_active_and_inactive() {
     assert_eq!(manager.inactive_stake(), 0);
 
     destroy(returned);
-    finish(scenario, reg, admin_cap, vault, manager);
+    finish(scenario, vault, manager);
 }
 
 #[test, expected_failure(abort_code = predict_manager::ENotOwner)]
 fun stake_by_non_owner_aborts() {
-    let (mut scenario, _reg, _admin_cap, mut vault, mut manager) = begin();
+    let (mut scenario, mut vault, mut manager) = begin();
 
     scenario.next_tx(test_constants::bob());
     let deep = coin::mint_for_testing<DEEP>(FIFTY_K_DEEP, scenario.ctx());

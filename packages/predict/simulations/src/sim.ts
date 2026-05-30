@@ -651,7 +651,7 @@ async function setupSimulation(scenarioConfig: any, capital: SimulationCapital):
   console.log(`[${ts()}]   OracleCap: ${oracleCapId}`);
 
   result = await executeAndWait(
-    createPythSourceTx(1, expiryFeeWindowMs, expiryFeeMaxMultiplier),
+    createPythSourceTx(1, ORACLE_TICK_SIZE, expiryFeeWindowMs, expiryFeeMaxMultiplier),
     "create_pyth_source",
   );
   const pythSourceChange = result.objectChanges.find(
@@ -674,7 +674,6 @@ async function setupSimulation(scenarioConfig: any, capital: SimulationCapital):
       oracleCapId,
       expiry: EXPIRY_MS,
       minStrike: ORACLE_MIN_STRIKE,
-      tickSize: ORACLE_TICK_SIZE,
     }),
     "create_expiry_market",
     50_000_000_000n,

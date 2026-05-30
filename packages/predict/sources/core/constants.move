@@ -32,6 +32,9 @@ public macro fun float_scaling_decimals(): u64 { 9 }
 /// Minimum position quantity increment.
 public macro fun position_lot_size(): u64 { 10_000 }
 
+/// Minimum mint-time user principal, excluding trading and builder fees.
+public macro fun min_order_principal(): u64 { 1_000_000 }
+
 // === Leverage ===
 
 /// Window before expiry over which the leverage floor index rises.

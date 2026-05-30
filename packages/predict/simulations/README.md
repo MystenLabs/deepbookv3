@@ -82,9 +82,8 @@ interface.
 - `src/runtime.ts`: Sui transaction builders and execution helpers.
 - `src/shared.ts`: CSV parsing, shared schemas, paths, and JSON helpers.
 - `python_replay.py`: Python economic mirror and derived metric generator.
-  Small pricing defaults such as base fee, min fee, and ask bounds are a manual
-  mirror of Move defaults inside this file rather than generated from Move
-  source.
+  Pricing values used by replay, such as base fee, min fee, and ask bounds,
+  are read from `data/scenario_config.json` with Python defaults as fallback.
 - `sim_artifacts.py`: shared JSON, unit-conversion, and summary helpers.
 - `write_benchmark_results.py`: CI helper that converts `local_trace.json` into
   the legacy gas benchmark `results.json`.
@@ -311,10 +310,10 @@ Important fields:
   defaults, admin setup, fee policy, liquidation policy, or settlement
   assumptions change, update the Python mirror and this config in the same PR.
   Localnet does not run admin setters for every mirrored protocol field; fields
-  such as liquidation budgets, fee shares, LTV, and floor premium should remain
-  equal to Move defaults unless the localnet setup is intentionally extended.
-  Small fixed pricing defaults are intentionally mirrored manually in
-  `python_replay.py` to keep the harness lightweight.
+  such as pricing config, liquidation budgets, fee shares, LTV, and floor
+  premium should remain equal to Move defaults unless localnet setup is
+  intentionally extended. Upgrade-only constants are mirrored directly in
+  Python.
 - Keep raw long-run data temporary by default. Use
   `bash run.sh --python-only --keep-derived` only when iterating on charts or
   inspecting raw records.
