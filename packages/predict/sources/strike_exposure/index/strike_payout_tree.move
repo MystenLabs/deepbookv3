@@ -47,6 +47,10 @@ public struct PayoutNode has copy, drop, store {
     priority: u64,
     left: Option<u64>,
     right: Option<u64>,
+    /// This node's own boundary terms, stored so the subtree `summary` can be
+    /// recomputed without deriving locals by subtracting child summaries.
+    local_start: PayoutTerms,
+    local_end: PayoutTerms,
     summary: PayoutSummary,
 }
 
@@ -183,28 +187,14 @@ fun apply_at(
 
     let root_strike = *root.borrow();
     let mut node = nodes[root_strike];
-    let mut left_summary = subtree_summary(nodes, node.left);
-    let mut right_summary = subtree_summary(nodes, node.right);
-    let (mut local_start, mut local_end) = local_boundary_terms_from_summaries(
-        &node,
-        left_summary,
-        right_summary,
-    );
+
     if (strike == root_strike) {
         if (is_start) {
-            apply_terms_delta(&mut local_start, terms, add);
+            apply_terms_delta(&mut node.local_start, terms, add);
         } else {
-            apply_terms_delta(&mut local_end, terms, add);
+            apply_terms_delta(&mut node.local_end, terms, add);
         };
-        write_node_with_summaries(
-            nodes,
-            root_strike,
-            node,
-            local_start,
-            local_end,
-            left_summary,
-            right_summary,
-        );
+        resummarize(nodes, root_strike, node);
         return root_strike
     };
 
@@ -219,19 +209,9 @@ fun apply_at(
         );
         let left_node = nodes[new_left];
         if (left_node.priority > node.priority) {
-            let new_root = rotate_right(
-                nodes,
-                root_strike,
-                node,
-                local_start,
-                local_end,
-                new_left,
-                left_node,
-            );
-            return new_root
+            return rotate_right(nodes, root_strike, node, new_left, left_node)
         };
         node.left = option::some(new_left);
-        left_summary = left_node.summary;
     } else {
         let new_right = apply_at(
             nodes,
@@ -243,30 +223,12 @@ fun apply_at(
         );
         let right_node = nodes[new_right];
         if (right_node.priority > node.priority) {
-            let new_root = rotate_left(
-                nodes,
-                root_strike,
-                node,
-                local_start,
-                local_end,
-                new_right,
-                right_node,
-            );
-            return new_root
+            return rotate_left(nodes, root_strike, node, new_right, right_node)
         };
         node.right = option::some(new_right);
-        right_summary = right_node.summary;
     };
 
-    write_node_with_summaries(
-        nodes,
-        root_strike,
-        node,
-        local_start,
-        local_end,
-        left_summary,
-        right_summary,
-    );
+    resummarize(nodes, root_strike, node);
     root_strike
 }
 
@@ -281,6 +243,8 @@ fun new_leaf(strike: u64, terms: PayoutTerms, is_start: bool): PayoutNode {
         priority: strike_priority(strike),
         left: option::none(),
         right: option::none(),
+        local_start: start,
+        local_end: end,
         summary: boundary_summary(start, end),
     }
 }
@@ -289,17 +253,15 @@ fun rotate_right(
     nodes: &mut Table<u64, PayoutNode>,
     root_strike: u64,
     mut root_node: PayoutNode,
-    root_start: PayoutTerms,
-    root_end: PayoutTerms,
     left_strike: u64,
     mut left_node: PayoutNode,
 ): u64 {
-    let (left_start, left_end) = local_boundary_terms(nodes, &left_node);
+    // Write the demoted node first so the new parent re-summarizes against it.
     root_node.left = left_node.right;
-    write_node(nodes, root_strike, root_node, root_start, root_end);
+    resummarize(nodes, root_strike, root_node);
 
     left_node.right = option::some(root_strike);
-    write_node(nodes, left_strike, left_node, left_start, left_end);
+    resummarize(nodes, left_strike, left_node);
     left_strike
 }
 
@@ -307,17 +269,15 @@ fun rotate_left(
     nodes: &mut Table<u64, PayoutNode>,
     root_strike: u64,
     mut root_node: PayoutNode,
-    root_start: PayoutTerms,
-    root_end: PayoutTerms,
     right_strike: u64,
     mut right_node: PayoutNode,
 ): u64 {
-    let (right_start, right_end) = local_boundary_terms(nodes, &right_node);
+    // Write the demoted node first so the new parent re-summarizes against it.
     root_node.right = right_node.left;
-    write_node(nodes, root_strike, root_node, root_start, root_end);
+    resummarize(nodes, root_strike, root_node);
 
     right_node.left = option::some(root_strike);
-    write_node(nodes, right_strike, right_node, right_start, right_end);
+    resummarize(nodes, right_strike, right_node);
     right_strike
 }
 
@@ -336,79 +296,19 @@ fun settlement_prefix_terms(
 
     let mut running = running;
     let left_summary = subtree_summary(nodes, node.left);
-    let right_summary = subtree_summary(nodes, node.right);
     apply_terms_delta(&mut running, left_summary.total_start, true);
     apply_terms_delta(&mut running, left_summary.total_end, false);
-    let (local_start, local_end) = local_boundary_terms_from_summaries(
-        &node,
-        left_summary,
-        right_summary,
-    );
-    apply_terms_delta(&mut running, local_start, true);
-    apply_terms_delta(&mut running, local_end, false);
+    apply_terms_delta(&mut running, node.local_start, true);
+    apply_terms_delta(&mut running, node.local_end, false);
     settlement_prefix_terms(nodes, node.right, settlement, running)
 }
 
-fun write_node(
-    nodes: &mut Table<u64, PayoutNode>,
-    strike: u64,
-    node: PayoutNode,
-    local_start: PayoutTerms,
-    local_end: PayoutTerms,
-) {
+fun resummarize(nodes: &mut Table<u64, PayoutNode>, strike: u64, mut node: PayoutNode) {
     let left = subtree_summary(nodes, node.left);
     let right = subtree_summary(nodes, node.right);
-    write_node_with_summaries(nodes, strike, node, local_start, local_end, left, right);
-}
-
-fun write_node_with_summaries(
-    nodes: &mut Table<u64, PayoutNode>,
-    strike: u64,
-    mut node: PayoutNode,
-    local_start: PayoutTerms,
-    local_end: PayoutTerms,
-    left: PayoutSummary,
-    right: PayoutSummary,
-) {
-    node.summary = summarize_node(left, local_start, local_end, right);
-    *(&mut nodes[strike]) = node;
-}
-
-fun summarize_node(
-    left: PayoutSummary,
-    local_start: PayoutTerms,
-    local_end: PayoutTerms,
-    right: PayoutSummary,
-): PayoutSummary {
-    let boundary = boundary_summary(local_start, local_end);
-    combine_summaries(combine_summaries(left, boundary), right)
-}
-
-fun local_boundary_terms(
-    nodes: &Table<u64, PayoutNode>,
-    node: &PayoutNode,
-): (PayoutTerms, PayoutTerms) {
-    let left = subtree_summary(nodes, node.left);
-    let right = subtree_summary(nodes, node.right);
-    local_boundary_terms_from_summaries(node, left, right)
-}
-
-fun local_boundary_terms_from_summaries(
-    node: &PayoutNode,
-    left: PayoutSummary,
-    right: PayoutSummary,
-): (PayoutTerms, PayoutTerms) {
-    // Local boundary terms are derived instead of stored so each node only
-    // carries its aggregate summary.
-    let mut local_start = node.summary.total_start;
-    let mut local_end = node.summary.total_end;
-
-    apply_terms_delta(&mut local_start, left.total_start, false);
-    apply_terms_delta(&mut local_start, right.total_start, false);
-    apply_terms_delta(&mut local_end, left.total_end, false);
-    apply_terms_delta(&mut local_end, right.total_end, false);
-
-    (local_start, local_end)
+    let boundary = boundary_summary(node.local_start, node.local_end);
+    node.summary = combine_summaries(combine_summaries(left, boundary), right);
+    *nodes.borrow_mut(strike) = node;
 }
 
 fun subtree_summary(nodes: &Table<u64, PayoutNode>, root: Option<u64>): PayoutSummary {

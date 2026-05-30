@@ -4,7 +4,7 @@
 #[test_only]
 module deepbook_predict::market_oracle_getters_tests;
 
-use deepbook_predict::{constants, i64, market_oracle, registry};
+use deepbook_predict::{constants, i64, market_oracle};
 use std::unit_test::{assert_eq, destroy};
 use sui::clock;
 
@@ -18,8 +18,7 @@ const AFTER_EXPIRY: u64 = 200_000;
 #[test]
 fun id_round_trips_through_object() {
     let ctx = &mut tx_context::dummy();
-    let admin_cap = registry::create_admin_cap_for_testing(ctx);
-    let cap = registry::create_market_oracle_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_cap(ctx);
     let market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
 
     let id = market.id();
@@ -27,41 +26,35 @@ fun id_round_trips_through_object() {
 
     destroy(market);
     destroy(cap);
-    destroy(admin_cap);
 }
 
 #[test]
 fun cap_id_round_trips() {
     let ctx = &mut tx_context::dummy();
-    let admin_cap = registry::create_admin_cap_for_testing(ctx);
-    let cap = registry::create_market_oracle_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_cap(ctx);
 
     let cap_id_first = cap.cap_id();
     assert_eq!(cap.cap_id(), cap_id_first);
 
     destroy(cap);
-    destroy(admin_cap);
 }
 
 #[test]
 fun expiry_returns_constructor_value() {
     let ctx = &mut tx_context::dummy();
-    let admin_cap = registry::create_admin_cap_for_testing(ctx);
-    let cap = registry::create_market_oracle_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_cap(ctx);
     let market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
 
     assert_eq!(market.expiry(), EXPIRY_MS);
 
     destroy(market);
     destroy(cap);
-    destroy(admin_cap);
 }
 
 #[test]
 fun allowed_versions_seeded_with_current() {
     let ctx = &mut tx_context::dummy();
-    let admin_cap = registry::create_admin_cap_for_testing(ctx);
-    let cap = registry::create_market_oracle_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_cap(ctx);
     let market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
 
     let versions = market.allowed_versions();
@@ -70,14 +63,12 @@ fun allowed_versions_seeded_with_current() {
 
     destroy(market);
     destroy(cap);
-    destroy(admin_cap);
 }
 
 #[test]
 fun pyth_source_id_is_persisted() {
     let ctx = &mut tx_context::dummy();
-    let admin_cap = registry::create_admin_cap_for_testing(ctx);
-    let cap = registry::create_market_oracle_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_cap(ctx);
     let market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
 
     // Stable binding identity (same value across reads).
@@ -85,7 +76,6 @@ fun pyth_source_id_is_persisted() {
 
     destroy(market);
     destroy(cap);
-    destroy(admin_cap);
 }
 
 // === is_settled / raw_settlement_price ===
@@ -93,8 +83,7 @@ fun pyth_source_id_is_persisted() {
 #[test]
 fun is_settled_false_on_fresh_market() {
     let ctx = &mut tx_context::dummy();
-    let admin_cap = registry::create_admin_cap_for_testing(ctx);
-    let cap = registry::create_market_oracle_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_cap(ctx);
     let market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
 
     assert!(!market.is_settled());
@@ -102,7 +91,6 @@ fun is_settled_false_on_fresh_market() {
 
     destroy(market);
     destroy(cap);
-    destroy(admin_cap);
 }
 
 // === status state machine ===
@@ -110,8 +98,7 @@ fun is_settled_false_on_fresh_market() {
 #[test]
 fun status_is_active_before_expiry() {
     let ctx = &mut tx_context::dummy();
-    let admin_cap = registry::create_admin_cap_for_testing(ctx);
-    let cap = registry::create_market_oracle_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_cap(ctx);
     let market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
     let mut clock = clock::create_for_testing(ctx);
     clock.set_for_testing(BEFORE_EXPIRY);
@@ -120,15 +107,13 @@ fun status_is_active_before_expiry() {
 
     destroy(market);
     destroy(cap);
-    destroy(admin_cap);
     clock.destroy_for_testing();
 }
 
 #[test]
 fun status_pending_at_and_after_expiry() {
     let ctx = &mut tx_context::dummy();
-    let admin_cap = registry::create_admin_cap_for_testing(ctx);
-    let cap = registry::create_market_oracle_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_cap(ctx);
     let market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
     let mut clock = clock::create_for_testing(ctx);
 
@@ -142,7 +127,6 @@ fun status_pending_at_and_after_expiry() {
 
     destroy(market);
     destroy(cap);
-    destroy(admin_cap);
     clock.destroy_for_testing();
 }
 
@@ -166,8 +150,7 @@ fun source_constants_are_distinct() {
 #[test]
 fun default_block_scholes_state_is_zero() {
     let ctx = &mut tx_context::dummy();
-    let admin_cap = registry::create_admin_cap_for_testing(ctx);
-    let cap = registry::create_market_oracle_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_cap(ctx);
     let market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
 
     assert_eq!(market.block_scholes_spot(), 0);
@@ -186,7 +169,6 @@ fun default_block_scholes_state_is_zero() {
 
     destroy(market);
     destroy(cap);
-    destroy(admin_cap);
 }
 
 // === new_svi_params constructor ===

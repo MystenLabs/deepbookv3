@@ -12,8 +12,7 @@ use deepbook_predict::{
     constants::float_scaling as float,
     market_oracle,
     protocol_config,
-    pyth_source,
-    registry
+    pyth_source
 };
 use std::unit_test::{assert_eq, destroy};
 use sui::clock;
@@ -37,7 +36,7 @@ const FORWARD_FOR_1100_AT_BASIS_0_95: u64 = 1_045_000_000_000;
 #[test]
 fun update_prices_stores_values_and_emits_basis_one() {
     // basis = forward/spot = 1.0 falls inside the default envelope [0.9, 1.1].
-    let (mut market, config, cap, admin_cap, pyth, clock) = setup_active(NOW_MS);
+    let (mut market, config, cap, pyth, clock) = setup_active(NOW_MS);
 
     market.update_block_scholes_prices(
         &config,
@@ -56,13 +55,13 @@ fun update_prices_stores_values_and_emits_basis_one() {
     // Once both spot and forward are stored, basis() returns forward/spot in 1e9 scale.
     assert_eq!(market.block_scholes_basis(), float!());
 
-    cleanup(market, config, cap, admin_cap, pyth, clock);
+    cleanup(market, config, cap, pyth, clock);
 }
 
 #[test]
 fun update_prices_accepts_envelope_endpoint_basis() {
     // Default basis envelope is [0.9, 1.1]; both endpoints must be valid.
-    let (mut market, config, cap, admin_cap, pyth, clock) = setup_active(NOW_MS);
+    let (mut market, config, cap, pyth, clock) = setup_active(NOW_MS);
 
     market.update_block_scholes_prices(
         &config,
@@ -75,12 +74,12 @@ fun update_prices_accepts_envelope_endpoint_basis() {
     );
     assert_eq!(market.block_scholes_basis(), 950_000_000);
 
-    cleanup(market, config, cap, admin_cap, pyth, clock);
+    cleanup(market, config, cap, pyth, clock);
 }
 
 #[test]
 fun update_prices_strictly_advances_source_timestamp() {
-    let (mut market, config, cap, admin_cap, pyth, clock) = setup_active(NOW_MS);
+    let (mut market, config, cap, pyth, clock) = setup_active(NOW_MS);
 
     market.update_block_scholes_prices(
         &config,
@@ -102,14 +101,14 @@ fun update_prices_strictly_advances_source_timestamp() {
     );
     assert_eq!(market.block_scholes_price_source_timestamp_ms(), SECOND_SOURCE_TIMESTAMP_MS);
 
-    cleanup(market, config, cap, admin_cap, pyth, clock);
+    cleanup(market, config, cap, pyth, clock);
 }
 
 // === Validation aborts ===
 
 #[test, expected_failure(abort_code = market_oracle::EZeroSpot)]
 fun update_prices_zero_spot_aborts() {
-    let (mut market, config, cap, _admin_cap, pyth, clock) = setup_active(NOW_MS);
+    let (mut market, config, cap, pyth, clock) = setup_active(NOW_MS);
     market.update_block_scholes_prices(
         &config,
         &pyth,
@@ -124,7 +123,7 @@ fun update_prices_zero_spot_aborts() {
 
 #[test, expected_failure(abort_code = market_oracle::EZeroForward)]
 fun update_prices_zero_forward_aborts() {
-    let (mut market, config, cap, _admin_cap, pyth, clock) = setup_active(NOW_MS);
+    let (mut market, config, cap, pyth, clock) = setup_active(NOW_MS);
     market.update_block_scholes_prices(
         &config,
         &pyth,
@@ -139,7 +138,7 @@ fun update_prices_zero_forward_aborts() {
 
 #[test, expected_failure(abort_code = market_oracle::EStalePriceSourceUpdate)]
 fun update_prices_equal_source_timestamp_aborts() {
-    let (mut market, config, cap, _admin_cap, pyth, clock) = setup_active(NOW_MS);
+    let (mut market, config, cap, pyth, clock) = setup_active(NOW_MS);
     market.update_block_scholes_prices(
         &config,
         &pyth,
@@ -163,7 +162,7 @@ fun update_prices_equal_source_timestamp_aborts() {
 
 #[test, expected_failure(abort_code = market_oracle::EFuturePriceSourceUpdate)]
 fun update_prices_source_after_now_aborts() {
-    let (mut market, config, cap, _admin_cap, pyth, clock) = setup_active(NOW_MS);
+    let (mut market, config, cap, pyth, clock) = setup_active(NOW_MS);
     market.update_block_scholes_prices(
         &config,
         &pyth,
@@ -179,7 +178,7 @@ fun update_prices_source_after_now_aborts() {
 #[test, expected_failure(abort_code = market_oracle::EBasisOutOfRange)]
 fun update_prices_basis_below_min_aborts() {
     // forward = 800, spot = 1000 -> basis = 0.8 which is < envelope min 0.9.
-    let (mut market, config, cap, _admin_cap, pyth, clock) = setup_active(NOW_MS);
+    let (mut market, config, cap, pyth, clock) = setup_active(NOW_MS);
     market.update_block_scholes_prices(
         &config,
         &pyth,
@@ -195,7 +194,7 @@ fun update_prices_basis_below_min_aborts() {
 #[test, expected_failure(abort_code = market_oracle::EBasisOutOfRange)]
 fun update_prices_basis_above_max_aborts() {
     // forward = 1200, spot = 1000 -> basis = 1.2 which is > envelope max 1.1.
-    let (mut market, config, cap, _admin_cap, pyth, clock) = setup_active(NOW_MS);
+    let (mut market, config, cap, pyth, clock) = setup_active(NOW_MS);
     market.update_block_scholes_prices(
         &config,
         &pyth,
@@ -212,7 +211,7 @@ fun update_prices_basis_above_max_aborts() {
 fun update_prices_second_push_spot_deviation_too_large_aborts() {
     // Default max_spot_deviation = 2% (20_000_000). Jumping spot by 10%
     // breaches the deviation cap, even though the new basis is still in range.
-    let (mut market, config, cap, _admin_cap, pyth, clock) = setup_active(NOW_MS);
+    let (mut market, config, cap, pyth, clock) = setup_active(NOW_MS);
     market.update_block_scholes_prices(
         &config,
         &pyth,
@@ -239,7 +238,7 @@ fun update_prices_second_push_spot_deviation_too_large_aborts() {
 fun update_prices_second_push_basis_deviation_too_large_aborts() {
     // Default max_basis_deviation = 2% (20_000_000). Hold spot constant so
     // the spot-deviation check passes, then jump basis from 0.95 to 1.05.
-    let (mut market, config, cap, _admin_cap, pyth, clock) = setup_active(NOW_MS);
+    let (mut market, config, cap, pyth, clock) = setup_active(NOW_MS);
     market.update_block_scholes_prices(
         &config,
         &pyth,
@@ -263,8 +262,11 @@ fun update_prices_second_push_basis_deviation_too_large_aborts() {
 
 #[test, expected_failure(abort_code = market_oracle::EInvalidMarketOracleCap)]
 fun update_prices_with_unregistered_cap_aborts() {
-    let (mut market, config, cap, admin_cap, pyth, clock) = setup_active(NOW_MS);
-    let unregistered_cap = registry::create_market_oracle_cap(&admin_cap, &mut tx_context::dummy());
+    let (mut market, config, cap, pyth, clock) = setup_active(NOW_MS);
+    let dummy_ctx = &mut tx_context::dummy();
+    let same_id_as_registered_cap = market_oracle::create_cap(dummy_ctx);
+    let unregistered_cap = market_oracle::create_cap(dummy_ctx);
+    destroy(same_id_as_registered_cap);
     market.update_block_scholes_prices(
         &config,
         &pyth,
@@ -280,7 +282,7 @@ fun update_prices_with_unregistered_cap_aborts() {
 
 #[test, expected_failure(abort_code = market_oracle::EWrongPythSource)]
 fun update_prices_with_wrong_pyth_source_aborts() {
-    let (mut market, config, cap, _admin_cap, pyth, clock) = setup_active(NOW_MS);
+    let (mut market, config, cap, pyth, clock) = setup_active(NOW_MS);
     let wrong_pyth = pyth_source::new_for_testing(&mut tx_context::dummy());
     market.update_block_scholes_prices(
         &config,
@@ -298,8 +300,7 @@ fun update_prices_with_wrong_pyth_source_aborts() {
 #[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
 fun update_prices_during_valuation_aborts() {
     let ctx = &mut tx_context::dummy();
-    let admin_cap = registry::create_admin_cap_for_testing(ctx);
-    let cap = registry::create_market_oracle_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_cap(ctx);
     let mut config = protocol_config::new_for_testing(ctx);
     let pyth = pyth_source::new_for_testing(ctx);
     let mut market = market_oracle::create_test_market_oracle_with_pyth(
@@ -332,33 +333,29 @@ fun setup_active(
     market_oracle::MarketOracle,
     protocol_config::ProtocolConfig,
     market_oracle::MarketOracleCap,
-    registry::AdminCap,
     pyth_source::PythSource,
     clock::Clock,
 ) {
     let ctx = &mut tx_context::dummy();
-    let admin_cap = registry::create_admin_cap_for_testing(ctx);
-    let cap = registry::create_market_oracle_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_cap(ctx);
     let config = protocol_config::new_for_testing(ctx);
     let pyth = pyth_source::new_for_testing(ctx);
     let market = market_oracle::create_test_market_oracle_with_pyth(&pyth, EXPIRY_MS, &cap, ctx);
     let mut clock = clock::create_for_testing(ctx);
     clock.set_for_testing(now_ms);
-    (market, config, cap, admin_cap, pyth, clock)
+    (market, config, cap, pyth, clock)
 }
 
 fun cleanup(
     market: market_oracle::MarketOracle,
     config: protocol_config::ProtocolConfig,
     cap: market_oracle::MarketOracleCap,
-    admin_cap: registry::AdminCap,
     pyth: pyth_source::PythSource,
     clock: clock::Clock,
 ) {
     destroy(market);
     destroy(config);
     destroy(cap);
-    destroy(admin_cap);
     destroy(pyth);
     clock.destroy_for_testing();
 }

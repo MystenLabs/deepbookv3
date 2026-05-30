@@ -6,3 +6,6 @@ edition = "2024.beta"
 
 [addresses]
 dusdc = "0x0"
+
+[environments]
+sim = "5c36c3fa"

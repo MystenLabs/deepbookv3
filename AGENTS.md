@@ -28,6 +28,7 @@ These are the most important rule files to consult based on the code you touch:
 - `.claude/rules/code-review.md` when reviewing Move changes
 - `.claude/rules/indexer.md` for `crates/server/**`, `crates/indexer/**`, `crates/schema/**`
 - `.claude/rules/scripts.md` for `scripts/**`
+- `.claude/rules/predict-simulations.md` for `packages/predict/simulations/**`
 
 ## Common Commands
 

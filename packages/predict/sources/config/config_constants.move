@@ -31,7 +31,6 @@ const EInvalidGrowFactor: u64 = 19;
 const EInvalidShrinkFactor: u64 = 20;
 const EInvalidTradingLossRebateRate: u64 = 21;
 const EInvalidMaxExpiryFloorPremium: u64 = 22;
-const EInvalidExpiryFeeWindowMs: u64 = 23;
 const EInvalidExpiryFeeMaxMultiplier: u64 = 24;
 const EInvalidLowerBenefitPower: u64 = 25;
 const EInvalidUpperBenefitPower: u64 = 26;
@@ -39,6 +38,10 @@ const EInvalidBenefitPowers: u64 = 27;
 const EInvalidValuationLiquidationBudget: u64 = 28;
 const EInvalidTradeLiquidationBudget: u64 = 29;
 const EInvalidLiquidationLtv: u64 = 30;
+const EInvalidOracleTickSize: u64 = 31;
+const EOracleTickSizeTooSmallForSpot: u64 = 32;
+const EInvalidOracleSpot: u64 = 33;
+const EOracleTickSizeTooLargeForSpot: u64 = 34;
 
 // === Pool Risk ===
 
@@ -181,18 +184,6 @@ public(package) fun assert_min_fee(value: u64) {
     assert!(value >= min_min_fee!() && value <= max_min_fee!(), EInvalidMinFee);
 }
 
-/// Final window (ms before expiry) over which the fee ramps up. 0 disables it.
-public(package) macro fun min_expiry_fee_window_ms(): u64 { 0 }
-/// 30 days; predict markets are short-dated, so this is a generous envelope.
-public(package) macro fun max_expiry_fee_window_ms(): u64 { 2_592_000_000 }
-
-public(package) fun assert_expiry_fee_window_ms(value: u64) {
-    assert!(
-        value >= min_expiry_fee_window_ms!() && value <= max_expiry_fee_window_ms!(),
-        EInvalidExpiryFeeWindowMs,
-    );
-}
-
 /// Fee multiplier reached at expiry, in FLOAT_SCALING. 1x (float_scaling) disables
 /// the ramp; min is 1x so the ramp can never reduce fees below the base rate.
 public(package) macro fun min_expiry_fee_max_multiplier(): u64 {
@@ -207,6 +198,28 @@ public(package) fun assert_expiry_fee_max_multiplier(value: u64) {
         value >= min_expiry_fee_max_multiplier!() && value <= max_expiry_fee_max_multiplier!(),
         EInvalidExpiryFeeMaxMultiplier,
     );
+}
+
+public(package) fun assert_oracle_tick_size(value: u64) {
+    assert!(
+        value > 0 && value % deepbook_predict::constants::oracle_tick_size_unit!() == 0,
+        EInvalidOracleTickSize,
+    );
+}
+
+/// Validate that `spot` can anchor a centered oracle grid at `tick_size`.
+///
+/// The fixed `oracle_strike_grid_ticks` window is centered on the tick-floored
+/// spot, so `spot / tick_size` must land in `(grid_ticks / 2, grid_ticks]`. The
+/// lower bound keeps `min_strike` positive; the upper bound keeps `tick_size`
+/// large enough that the grid's downside still reaches at least half of spot.
+public(package) fun assert_oracle_tick_size_covers_spot(tick_size: u64, spot: u64) {
+    assert!(spot > 0, EInvalidOracleSpot);
+    assert_oracle_tick_size(tick_size);
+    let grid_ticks = deepbook_predict::constants::oracle_strike_grid_ticks!();
+    let spot_ticks = spot / tick_size;
+    assert!(spot_ticks > grid_ticks / 2, EOracleTickSizeTooLargeForSpot);
+    assert!(spot_ticks <= grid_ticks, EOracleTickSizeTooSmallForSpot);
 }
 
 public(package) macro fun default_min_ask_price(): u64 { 10_000_000 }

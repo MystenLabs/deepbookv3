@@ -28,7 +28,6 @@ import {
   POOL_VAULT_ID,
   PROTOCOL_CONFIG_ID,
   address,
-  createExpiryMarketTx,
   createManagerTx,
   createMarketOracleCapTx,
   createPythSourceTx,
@@ -41,9 +40,11 @@ import {
   refreshOracleAndRedeemTx,
   refreshOracleAndSupplyWithExpiryValuationTx,
   refreshOracleAndWithdrawWithExpiryValuationTx,
+  seedPythSourceAndCreateExpiryMarketTx,
   setMarketOracleBasisBoundsTx,
   supplyTx,
   type ExecutionReceipt,
+  updatePythTrustedSignerTx,
 } from "./runtime.js";
 
 const DUSDC_DECIMALS = 1_000_000n;
@@ -53,12 +54,18 @@ const DEFAULT_INITIAL_EXPIRY_ALLOCATION = 50_000n * DUSDC_DECIMALS;
 const EXPIRY_MS = BigInt(Date.now()) + 400n * 24n * 60n * 60n * 1000n;
 const FLOAT_SCALING = 1_000_000_000n;
 const SCENARIO_CONFIG_PATH = fileURLToPath(new URL("../data/scenario_config.json", import.meta.url));
-const ORACLE_MIN_STRIKE = 25_000n * FLOAT_SCALING;
 const ORACLE_TICK_SIZE = 1n * FLOAT_SCALING;
-const ORACLE_MAX_STRIKE = ORACLE_MIN_STRIKE + 100_000n * ORACLE_TICK_SIZE;
+const ORACLE_GRID_TICKS = 100_000n;
+const ORACLE_CENTER_TICKS = ORACLE_GRID_TICKS / 2n;
 const NEG_INF_STRIKE = 0n;
 const POS_INF_STRIKE = (1n << 64n) - 1n;
 const ORDER_SEQUENCE_MASK = (1n << 40n) - 1n;
+
+interface OracleGrid {
+  minStrike: bigint;
+  tickSize: bigint;
+  maxStrike: bigint;
+}
 
 interface SimulationCapital {
   vaultSeed: bigint;
@@ -136,12 +143,47 @@ function initialAliases(): AliasState {
   };
 }
 
+let configuredOracleGrid: OracleGrid | null = null;
+
+function oracleGridForSpot(spot: bigint): OracleGrid {
+  if (spot <= 0n) throw new Error("initial Pyth spot must be positive");
+  // Mirror config_constants::assert_oracle_tick_size_covers_spot: Move checks the
+  // tick-floored spot (`spot / tick_size <= grid_ticks`), so compare on ticks too.
+  if (spot / ORACLE_TICK_SIZE > ORACLE_GRID_TICKS) {
+    throw new Error(
+      "initial Pyth spot exceeds oracle tick coverage; raise the oracle tick size to cover a higher spot",
+    );
+  }
+  const centerStrikeIndex = spot / ORACLE_TICK_SIZE;
+  if (centerStrikeIndex <= ORACLE_CENTER_TICKS) {
+    throw new Error("initial Pyth spot is too low for centered oracle grid");
+  }
+  const minStrike = (centerStrikeIndex - ORACLE_CENTER_TICKS) * ORACLE_TICK_SIZE;
+  return {
+    minStrike,
+    tickSize: ORACLE_TICK_SIZE,
+    maxStrike: minStrike + ORACLE_GRID_TICKS * ORACLE_TICK_SIZE,
+  };
+}
+
+function setOracleGrid(grid: OracleGrid): void {
+  configuredOracleGrid = grid;
+}
+
+function oracleGrid(): OracleGrid {
+  if (configuredOracleGrid === null) {
+    throw new Error("oracle grid has not been configured");
+  }
+  return configuredOracleGrid;
+}
+
 function alignStrikeToGrid(strike: bigint): bigint {
-  const relative = strike - ORACLE_MIN_STRIKE;
-  const tickIndex = relative / ORACLE_TICK_SIZE;
-  const snapped = ORACLE_MIN_STRIKE + tickIndex * ORACLE_TICK_SIZE;
-  if (snapped < ORACLE_MIN_STRIKE) return ORACLE_MIN_STRIKE;
-  if (snapped > ORACLE_MAX_STRIKE) return ORACLE_MAX_STRIKE;
+  const grid = oracleGrid();
+  const relative = strike - grid.minStrike;
+  const tickIndex = relative / grid.tickSize;
+  const snapped = grid.minStrike + tickIndex * grid.tickSize;
+  if (snapped < grid.minStrike) return grid.minStrike;
+  if (snapped > grid.maxStrike) return grid.maxStrike;
   return snapped;
 }
 
@@ -616,9 +658,17 @@ function simulationCapital(config: any, mode: "normal" | "long"): SimulationCapi
   };
 }
 
-async function setupSimulation(scenarioConfig: any, capital: SimulationCapital): Promise<SimState> {
+function firstBlockScholesSpot(row: ScenarioRow): bigint {
+  return row.action === "oracle_mint_ptb" ? row.spot : row.oracleRefresh.spot;
+}
+
+async function setupSimulation(
+  scenarioConfig: any,
+  capital: SimulationCapital,
+  initialPythSpot: bigint,
+  grid: OracleGrid,
+): Promise<SimState> {
   console.log(`[${ts()}] --- Setup ---`);
-  const expiryFeeWindowMs = protocolConfigValue(scenarioConfig, "expiry_fee_window_ms", 0n);
   const expiryFeeMaxMultiplier = protocolConfigValue(
     scenarioConfig,
     "expiry_fee_max_multiplier",
@@ -651,7 +701,7 @@ async function setupSimulation(scenarioConfig: any, capital: SimulationCapital):
   console.log(`[${ts()}]   OracleCap: ${oracleCapId}`);
 
   result = await executeAndWait(
-    createPythSourceTx(1, expiryFeeWindowMs, expiryFeeMaxMultiplier),
+    createPythSourceTx(1, ORACLE_TICK_SIZE, expiryFeeMaxMultiplier),
     "create_pyth_source",
   );
   const pythSourceChange = result.objectChanges.find(
@@ -659,25 +709,28 @@ async function setupSimulation(scenarioConfig: any, capital: SimulationCapital):
   );
   const pythSourceId: string = pythSourceChange.objectId;
   console.log(`[${ts()}]   PythSource: ${pythSourceId}`);
-  console.log(
-    `[${ts()}]   PythSource fee ramp: window=${expiryFeeWindowMs}ms max_multiplier=${expiryFeeMaxMultiplier}`,
-  );
+  console.log(`[${ts()}]   PythSource fee ramp: max_multiplier=${expiryFeeMaxMultiplier}`);
+
+  await executeAndWait(updatePythTrustedSignerTx(), "update_pyth_trusted_signer");
+  console.log(`[${ts()}]   Pyth trusted signer configured`);
 
   await executeAndWait(supplyTx(poolVaultId, protocolConfigId, capital.vaultSeed), "supply");
   console.log(`[${ts()}]   Vault funded: ${capital.vaultSeed / DUSDC_DECIMALS} DUSDC`);
 
   result = await executeAndWait(
-    createExpiryMarketTx({
+    await seedPythSourceAndCreateExpiryMarketTx({
       poolVaultId,
       protocolConfigId,
       pythSourceId,
       oracleCapId,
       expiry: EXPIRY_MS,
-      minStrike: ORACLE_MIN_STRIKE,
-      tickSize: ORACLE_TICK_SIZE,
+      spot: initialPythSpot,
     }),
-    "create_expiry_market",
+    "seed_pyth_source_and_create_expiry_market",
     50_000_000_000n,
+  );
+  console.log(
+    `[${ts()}]   PythSource seeded: spot=${initialPythSpot} grid=$${scaledUsd(grid.minStrike)}-$${scaledUsd(grid.maxStrike)} tick=$${scaledUsd(grid.tickSize)}`,
   );
   const oracleChange = result.objectChanges.find(
     (change: any) =>
@@ -919,8 +972,12 @@ async function main() {
     console.log(`[${ts()}] Limiting to ${args.maxRows} tx rows`);
     rows = rows.slice(0, args.maxRows);
   }
+  if (rows.length === 0) throw new Error("Scenario has no executable rows");
 
-  const state = await setupSimulation(scenarioConfig, capital);
+  const initialPythSpot = firstBlockScholesSpot(rows[0]);
+  const grid = oracleGridForSpot(initialPythSpot);
+  setOracleGrid(grid);
+  const state = await setupSimulation(scenarioConfig, capital, initialPythSpot, grid);
   await executeScenario(rows, state, capital, scenario, args.maxRows, !args.skipPython);
 }
 

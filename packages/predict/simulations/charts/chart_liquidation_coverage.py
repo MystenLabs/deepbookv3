@@ -44,15 +44,14 @@ def extract_pressure_series(
     }
     for record in records:
         liquidation = record.get("liquidation", {})
-        valuation = record.get("valuation", {})
         count = int_or_none(liquidation.get("liquidatable_count"))
         value = int_or_none(liquidation.get("liquidatable_value"))
         active_count = int_or_none(liquidation.get("active_count"))
-        liability = int_or_none(valuation.get("position_liability"))
-        if count is None or value is None or active_count is None or liability is None:
+        leveraged_floor = int_or_none(liquidation.get("leveraged_floor_value"))
+        if count is None or value is None or active_count is None or leveraged_floor is None:
             continue
         series["x"].append(record_x(record, mode, origin))
-        series["value_pressure"].append(0.0 if liability <= 0 else value / liability)
+        series["value_pressure"].append(0.0 if leveraged_floor <= 0 else value / leveraged_floor)
         series["count_pressure"].append(0.0 if active_count <= 0 else count / active_count)
     return series
 
@@ -120,7 +119,7 @@ def plot_pressure_panel(ax: plt.Axes, pressure: dict[str, list[float]]) -> None:
         pressure["value_pressure"],
         color="#dc2626",
         linewidth=1.5,
-        label="value pressure (% liability)",
+        label="value pressure (% leveraged floor)",
     )
     ax.plot(
         pressure["x"],
@@ -134,11 +133,11 @@ def plot_pressure_panel(ax: plt.Axes, pressure: dict[str, list[float]]) -> None:
     apply_percent_ylim(ax, pressure["value_pressure"] + pressure["count_pressure"])
     ax.set_title(
         "Backlog Pressure\n"
-        "Point-in-time percentages show what share of live liability and active orders is liquidatable.",
+        "Point-in-time percentages show what share of the leveraged floor book and active orders is liquidatable.",
         loc="left",
         fontsize=11,
     )
-    ax.set_ylabel("share of live book")
+    ax.set_ylabel("share of leveraged book")
     configure_axis(ax)
     ax.legend(loc="upper left", ncols=2, fontsize=8, frameon=False)
 

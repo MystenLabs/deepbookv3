@@ -1,7 +1,9 @@
 # Predict Simulation Analysis Notes
 
-This document captures economic observations from local simulation runs. It is
-not a runner manual; operational details live in `README.md`.
+This document captures **economic** observations from local simulation runs. It is
+not a runner manual; operational details live in `README.md`. For
+**gas/performance** experiments (contract changes measured for gas, run-to-run
+comparisons, perf hypotheses), see `GAS_EXPERIMENTS.md`.
 
 ## Directional Accumulation
 
@@ -141,6 +143,35 @@ for value-at-risk in that run. Higher leverage still matters, but using it as th
 primary field spent scan budget on smaller orders too often. Live liquidatable
 value remains the upper-bound oracle ordering, so the static `order_id` layout is
 only a gas-cheap proxy, not an exact liquidation-risk ranking.
+
+## Liquidatable Backlog: Coverage vs Severity
+
+"Standing liquidatable value we have not caught yet" is one quantity
+(`liquidation.liquidatable_value`, the summed floor/debt of leveraged orders that
+currently breach the LTV trigger), but it answers two different questions, so it
+lives in two charts with two different denominators. Do not collapse them back
+into one ratio.
+
+- **Coverage / is the engine keeping pace?** `chart_liquidation_coverage.py`,
+  "Backlog Pressure" panel. Numerator `liquidatable_value` over denominator
+  `liquidation.leveraged_floor_value` (summed floor of **all** leveraged orders,
+  breaching or not). Reads as "X% of the leveraged debt book is liquidatable but
+  uncaught." Both sides are floor/debt and leveraged-only, so the ratio is a true
+  bounded subset (numerator is always a subset of the denominator) and is not
+  diluted by 1x volume.
+
+- **Severity / can the vault absorb it?** `chart_vault_risk_profile.py`,
+  "Liquidatable Backlog On Capital" panel. Same numerator over
+  `risk.allocated_capital` (emitted as `risk.liquidatable_value_over_allocated`).
+  Reads as "uncaught liquidatable exposure is Y% of the capital backstopping it,"
+  matching the other capital-normalized panels in that file.
+
+The earlier version divided both panels by `valuation.position_liability` (notional
+of all positions, leveraged plus 1x). That mixed a debt numerator with a notional
+denominator and diluted with un-liquidatable 1x volume, so neither panel cleanly
+answered its own question. `risk.liquidatable_value_over_liability` is still
+emitted for any consumer that wants the liability-normalized view, but no chart
+uses it.
 
 ## Charts To Add
 

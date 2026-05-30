@@ -27,6 +27,10 @@
     }
   },
   "protocol": {
+    "base_fee": "20000000",
+    "min_fee": "5000000",
+    "min_ask_price": "10000000",
+    "max_ask_price": "990000000",
     "trade_liquidation_budget": "24",
     "valuation_liquidation_budget": "192",
     "liquidation_head_scan_divisor": "3",
@@ -35,7 +39,6 @@
     "protocol_fee_share": "200000000",
     "insurance_fee_share": "200000000",
     "trading_loss_rebate_rate": "500000000",
-    "expiry_fee_window_ms": "86400000",
     "expiry_fee_max_multiplier": "2000000000",
     "leverage_floor_window_ms": "31536000000",
     "max_expiry_floor_premium": "200000000",

@@ -13,9 +13,10 @@ The purpose of unit tests is to **define correct behavior and catch bugs**. A te
 
 ## Rules
 
-### 1. Never compute expected values using contract functions
+### 1. Never use circular logic for expected values
 
 This is the most common mistake. If the test uses the same code path as the production code to derive the expected value, it will pass even when the code is wrong.
+This is a hard rule: expected values must be independent of the implementation under test. Do not compute them with contract functions, source helpers, wrappers around source helpers, or the same formula copied from the production implementation.
 
 ```move
 // BAD — circular logic. If calculate_fee is wrong, this still passes.

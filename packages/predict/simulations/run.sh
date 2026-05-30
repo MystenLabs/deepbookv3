@@ -264,10 +264,35 @@ for change in data.get("objectChanges", []):
 publish_package() {
   local package_path="$1"
   sui_client test-publish \
-    --build-env "$BUILD_ENV" --with-unpublished-dependencies --gas-budget 2000000000 \
+    --build-env "$BUILD_ENV" --with-unpublished-dependencies --gas-budget 5000000000 \
     --skip-dependency-verification --allow-dirty --force --json \
     --pubfile-path "$INSTANCE_DIR/Pub.$BUILD_ENV.toml" "$package_path" \
     2>/tmp/sui-publish.err || true
+}
+
+publish_linked_package() {
+  local package_path="$1"
+  sui_client test-publish \
+    --build-env "$BUILD_ENV" --gas-budget 5000000000 \
+    --skip-dependency-verification --allow-dirty --force --json \
+    --pubfile-path "$INSTANCE_DIR/Pub.$BUILD_ENV.toml" "$package_path" \
+    2>/tmp/sui-publish.err || true
+}
+
+json_field() {
+  python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$1" "$2"
+}
+
+copy_move_dep() {
+  local name="$1" repo="$2" branch="$3" subdir="$4" cache_path="$5" dest="$6"
+  if [ -d "$cache_path/sources" ]; then
+    cp -R "$cache_path" "$dest"
+    return
+  fi
+
+  local checkout="$DEPS_DIR/${name}_repo"
+  git clone --depth 1 --branch "$branch" "$repo" "$checkout" >/dev/null 2>&1
+  cp -R "$checkout/$subdir" "$dest"
 }
 
 # --- 1. Genesis ---
@@ -321,6 +346,18 @@ done
     python3 -c "import json,sys; print(json.load(sys.stdin)['result'])")
   echo "    Chain ID: $CHAIN_ID"
 
+  LOCAL_PYTH_CONFIG="$INSTANCE_DIR/local_pyth.json"
+  (cd "$SCRIPT_DIR" && npx tsx src/localPythCli.ts "$LOCAL_PYTH_CONFIG")
+  LOCAL_PYTH_GOVERNANCE_CHAIN=$(json_field "$LOCAL_PYTH_CONFIG" governanceChain)
+  LOCAL_PYTH_GOVERNANCE_CONTRACT=$(json_field "$LOCAL_PYTH_CONFIG" governanceContract)
+  LOCAL_PYTH_RECEIVER_CHAIN=$(json_field "$LOCAL_PYTH_CONFIG" receiverChain)
+  LOCAL_PYTH_GUARDIAN_PRIVATE_KEY=$(json_field "$LOCAL_PYTH_CONFIG" guardianPrivateKey)
+  LOCAL_PYTH_GUARDIAN_ADDRESS=$(json_field "$LOCAL_PYTH_CONFIG" guardianAddress)
+  LOCAL_PYTH_SIGNER_PRIVATE_KEY=$(json_field "$LOCAL_PYTH_CONFIG" signerPrivateKey)
+  LOCAL_PYTH_SIGNER_PUBLIC_KEY=$(json_field "$LOCAL_PYTH_CONFIG" signerPublicKey)
+  LOCAL_PYTH_SIGNER_EXPIRES_AT_SECONDS=$(json_field "$LOCAL_PYTH_CONFIG" signerExpiresAtSeconds)
+  echo "    Local Pyth guardian: $LOCAL_PYTH_GUARDIAN_ADDRESS"
+
   find "$PACKAGES_DIR" -name "Pub.*.toml" -delete 2>/dev/null || true
   find "$SCRIPT_DIR" -maxdepth 1 -name "Pub.*.toml" -delete 2>/dev/null || true
   find "$REPO_DIR" -maxdepth 1 -name "Pub.*.toml" -delete 2>/dev/null || true
@@ -359,63 +396,121 @@ done
 
   mv "$DUSDC_DIR/Move.toml.bak" "$DUSDC_DIR/Move.toml"
 
-  # predict's Move.toml depends on the real `pyth_lazer` package via git, which
-  # transitively pulls in `wormhole`. Wormhole's source is designed to be
-  # linked as pre-published bytecode via `dep-replacements.testnet/mainnet`
-  # and cannot be compiled fresh against 2024.beta (old `struct` / `friend`
-  # syntax). Localnet has no pre-published ids, so both deps
-  # are unavailable here. Point predict at a local stub pyth_lazer for sim
-  # builds — the stub exposes just the symbols `pyth_source::update_from_lazer`
-  # references so the module typechecks without the real deps.
-  #
-  # We can't just drop it in as a `local` dep at 0x0 alongside predict: both
-  # packages would compile into the same 0x0 namespace and predict's own
-  # `deepbook_predict::i64` module collides with stub's `pyth_lazer::i64`. So
-  # publish the stub first in its own tx, capture its real address, then
-  # point predict at it via `dep-replacements.sim` with `published-at` set.
   # test-publish regenerates `[pinned.sim.*]` entries in predict/Move.lock with
   # instance-specific local paths. Snapshot so cleanup restores it to pristine.
   cp "$PREDICT_DIR/Move.lock" "$PREDICT_DIR/Move.lock.bak"
 
-  echo "==> Phase 2b: Publishing pyth_lazer stub..."
-  STUB_PYTH_LAZER_DIR="$SCRIPT_DIR/stubs/pyth_lazer"
+  echo "==> Phase 2b: Publishing Wormhole and Pyth Lazer..."
   DEPS_DIR="$INSTANCE_DIR/deps"
   rm -rf "$DEPS_DIR"
   mkdir -p "$DEPS_DIR"
-  cp -R "$STUB_PYTH_LAZER_DIR" "$DEPS_DIR/pyth_lazer"
-  inject_env "$DEPS_DIR/pyth_lazer/Move.toml" "$CHAIN_ID"
+  WORMHOLE_DIR="$DEPS_DIR/wormhole"
+  PYTH_LAZER_DIR="$DEPS_DIR/pyth_lazer"
+  copy_move_dep \
+    wormhole \
+    "https://github.com/pyth-network/wormhole.git" \
+    "sui-testnet" \
+    "sui/wormhole" \
+    "$HOME/.move/https___github_com_pyth-network_wormhole_git_sui-testnet/sui/wormhole" \
+    "$WORMHOLE_DIR"
+  copy_move_dep \
+    pyth_lazer \
+    "https://github.com/pyth-network/pyth-crosschain.git" \
+    "sui-testnet" \
+    "lazer/contracts/sui" \
+    "$HOME/.move/https___github_com_pyth-network_pyth-crosschain_git_sui-testnet/lazer/contracts/sui" \
+    "$PYTH_LAZER_DIR"
 
-  STUB_OUTPUT=$(publish_package "$DEPS_DIR/pyth_lazer" "pyth_lazer_stub")
-  check_publish "$STUB_OUTPUT" "pyth_lazer stub"
-  STUB_PKG_ID=$(echo "$STUB_OUTPUT" | extract_published_package_id)
-  echo "    pyth_lazer stub: $STUB_PKG_ID"
+  inject_env "$WORMHOLE_DIR/Move.toml" "$CHAIN_ID"
+  WORMHOLE_OUTPUT=$(publish_package "$WORMHOLE_DIR" "Wormhole")
+  check_publish "$WORMHOLE_OUTPUT" "Wormhole"
+  WORMHOLE_PACKAGE_ID=$(echo "$WORMHOLE_OUTPUT" | extract_published_package_id)
+  WORMHOLE_DEPLOYER_CAP_ID=$(echo "$WORMHOLE_OUTPUT" | extract_created_object_id "setup::DeployerCap")
+  WORMHOLE_UPGRADE_CAP_ID=$(echo "$WORMHOLE_OUTPUT" | extract_created_object_id "UpgradeCap")
+  WORMHOLE_INIT_OUTPUT=$(sui_client call \
+    --package "$WORMHOLE_PACKAGE_ID" \
+    --module setup \
+    --function complete \
+    --args \
+      "$WORMHOLE_DEPLOYER_CAP_ID" \
+      "$WORMHOLE_UPGRADE_CAP_ID" \
+      "$LOCAL_PYTH_GOVERNANCE_CHAIN" \
+      "$LOCAL_PYTH_GOVERNANCE_CONTRACT" \
+      0 \
+      "[$LOCAL_PYTH_GUARDIAN_ADDRESS]" \
+      86400 \
+      0 \
+    --gas-budget 1000000000 \
+    --json)
+  WORMHOLE_STATE_ID=$(echo "$WORMHOLE_INIT_OUTPUT" | extract_created_object_id "state::State")
+  echo "    Wormhole: $WORMHOLE_PACKAGE_ID"
+  echo "    Wormhole State: $WORMHOLE_STATE_ID"
+
+  inject_env "$PYTH_LAZER_DIR/Move.toml" "$CHAIN_ID"
+  python3 - "$PYTH_LAZER_DIR/Move.toml" "$WORMHOLE_DIR" "$WORMHOLE_PACKAGE_ID" "$BUILD_ENV" <<'PY'
+import pathlib, re, sys
+toml_path = pathlib.Path(sys.argv[1])
+wormhole_path = sys.argv[2]
+wormhole_pkg_id = sys.argv[3]
+build_env = sys.argv[4]
+text = toml_path.read_text()
+text = re.sub(
+    r"\[dependencies\.wormhole\][^\[]*",
+    f'[dependencies.wormhole]\nlocal = "{wormhole_path}"\n\n',
+    text,
+)
+text = re.sub(r"\[dep-replacements\.[^\]]+\][^\[]*", "", text)
+text = text.rstrip() + (
+    f'\n\n[dep-replacements.{build_env}]\n'
+    f'wormhole = {{ local = "{wormhole_path}", '
+    f'published-at = "{wormhole_pkg_id}", original-id = "{wormhole_pkg_id}" }}\n'
+)
+toml_path.write_text(text)
+PY
+
+  PYTH_LAZER_OUTPUT=$(publish_linked_package "$PYTH_LAZER_DIR" "Pyth Lazer")
+  check_publish "$PYTH_LAZER_OUTPUT" "Pyth Lazer"
+  PYTH_LAZER_PACKAGE_ID=$(echo "$PYTH_LAZER_OUTPUT" | extract_published_package_id)
+  PYTH_LAZER_UPGRADE_CAP_ID=$(echo "$PYTH_LAZER_OUTPUT" | extract_created_object_id "UpgradeCap")
+  PYTH_LAZER_INIT_OUTPUT=$(sui_client call \
+    --package "$PYTH_LAZER_PACKAGE_ID" \
+    --module actions \
+    --function init_lazer \
+    --args \
+      "$PYTH_LAZER_UPGRADE_CAP_ID" \
+      "$LOCAL_PYTH_GOVERNANCE_CHAIN" \
+      "$LOCAL_PYTH_GOVERNANCE_CONTRACT" \
+    --gas-budget 1000000000 \
+    --json)
+  PYTH_LAZER_STATE_ID=$(echo "$PYTH_LAZER_INIT_OUTPUT" | extract_created_object_id "state::State")
+  echo "    Pyth Lazer: $PYTH_LAZER_PACKAGE_ID"
+  echo "    Pyth Lazer State: $PYTH_LAZER_STATE_ID"
 
   # Publish predict
   echo "==> Phase 3: Publishing predict..."
 
   inject_env "$PREDICT_DIR/Move.toml" "$CHAIN_ID"
-  python3 - "$PREDICT_DIR/Move.toml" "$DEPS_DIR/pyth_lazer" "$STUB_PKG_ID" <<'PY'
+  python3 - "$PREDICT_DIR/Move.toml" "$PYTH_LAZER_DIR" "$PYTH_LAZER_PACKAGE_ID" "$WORMHOLE_DIR" "$WORMHOLE_PACKAGE_ID" "$BUILD_ENV" <<'PY'
 import pathlib, re, sys
 toml_path = pathlib.Path(sys.argv[1])
 pyth_lazer_path = sys.argv[2]
-stub_pkg_id = sys.argv[3]
+pyth_lazer_pkg_id = sys.argv[3]
+wormhole_path = sys.argv[4]
+wormhole_pkg_id = sys.argv[5]
+build_env = sys.argv[6]
 text = toml_path.read_text()
-# Rewrite main git dep to point at the local stub (for source-level typecheck).
 text = re.sub(
     r"pyth_lazer = \{ git[^}]*\}",
     f'pyth_lazer = {{ local = "{pyth_lazer_path}" }}',
     text,
 )
-# Drop the testnet dep-replacements block (its published-at points at testnet,
-# not our sim-local stub).
 text = re.sub(r"\[dep-replacements\.testnet\][^\[]*", "", text)
-# Add a sim dep-replacements block pinning pyth_lazer to the just-published
-# stub address. Without this, sui would try to link pyth_lazer as unpublished
-# (address 0x0), colliding with deepbook_predict's own 0x0 i64 module.
 text = text.rstrip() + (
-    f'\n\n[dep-replacements.sim]\n'
+    f'\n\n[dep-replacements.{build_env}]\n'
     f'pyth_lazer = {{ local = "{pyth_lazer_path}", '
-    f'published-at = "{stub_pkg_id}", original-id = "{stub_pkg_id}" }}\n'
+    f'published-at = "{pyth_lazer_pkg_id}", original-id = "{pyth_lazer_pkg_id}" }}\n'
+    f'wormhole = {{ local = "{wormhole_path}", '
+    f'published-at = "{wormhole_pkg_id}", original-id = "{wormhole_pkg_id}" }}\n'
 )
 toml_path.write_text(text)
 PY
@@ -447,6 +542,17 @@ POOL_VAULT_ID=$POOL_VAULT_ID
 DUSDC_PACKAGE_ID=$DUSDC_PACKAGE_ID
 DUSDC_CURRENCY_ID=$DUSDC_CURRENCY_ID
 TREASURY_CAP_ID=$TREASURY_CAP_ID
+WORMHOLE_PACKAGE_ID=$WORMHOLE_PACKAGE_ID
+WORMHOLE_STATE_ID=$WORMHOLE_STATE_ID
+PYTH_LAZER_PACKAGE_ID=$PYTH_LAZER_PACKAGE_ID
+PYTH_LAZER_STATE_ID=$PYTH_LAZER_STATE_ID
+LOCAL_PYTH_GOVERNANCE_CHAIN=$LOCAL_PYTH_GOVERNANCE_CHAIN
+LOCAL_PYTH_GOVERNANCE_CONTRACT=$LOCAL_PYTH_GOVERNANCE_CONTRACT
+LOCAL_PYTH_RECEIVER_CHAIN=$LOCAL_PYTH_RECEIVER_CHAIN
+LOCAL_PYTH_GUARDIAN_PRIVATE_KEY=$LOCAL_PYTH_GUARDIAN_PRIVATE_KEY
+LOCAL_PYTH_SIGNER_PRIVATE_KEY=$LOCAL_PYTH_SIGNER_PRIVATE_KEY
+LOCAL_PYTH_SIGNER_PUBLIC_KEY=$LOCAL_PYTH_SIGNER_PUBLIC_KEY
+LOCAL_PYTH_SIGNER_EXPIRES_AT_SECONDS=$LOCAL_PYTH_SIGNER_EXPIRES_AT_SECONDS
 ACTIVE_ADDRESS=$ACTIVE_ADDR
 RPC_URL=http://127.0.0.1:9000
 KEYSTORE_PATH=$CONFIG_DIR/sui.keystore
