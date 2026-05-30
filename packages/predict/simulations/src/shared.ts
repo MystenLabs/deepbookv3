@@ -73,6 +73,7 @@ export interface LocalTraceStep {
   step: number;
   action: ScenarioActionName;
   digest: string;
+  wallMs: number;
   gas: GasLike;
   events: LocalTraceEvent[];
 }

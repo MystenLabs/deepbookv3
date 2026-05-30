@@ -31,7 +31,8 @@ bash run.sh --sim_max_rows=100
 bash run.sh --python-only --keep-derived
 ```
 
-Those are the only supported runner forms. Unknown flags fail loudly.
+Those are the only supported manual runner forms. Unknown manual flags fail
+loudly.
 
 `bash run.sh` creates a fresh localnet instance, runs the normal generated
 scenario against both localnet and Python, checks canonical economic parity, and
@@ -48,6 +49,11 @@ for short manual smoke runs.
 `bash run.sh --python-only --keep-derived` keeps
 `artifacts/python_long_data.json` and `artifacts/python_derived.json` so charts
 can be iterated quickly inside the latest run folder.
+
+The gas benchmark Docker entrypoint uses an internal compatibility mode to run
+localnet only and write the legacy `artifacts/results.json` consumed by the
+benchmark service. That CI path may read `SCENARIO_PATH` and `SIM_MAX_ROWS` from
+the job environment; it is not a manual simulation interface.
 
 ## File Map
 
@@ -74,6 +80,8 @@ can be iterated quickly inside the latest run folder.
 - `src/shared.ts`: CSV parsing, shared schemas, paths, and JSON helpers.
 - `python_replay.py`: Python economic mirror and derived metric generator.
 - `sim_artifacts.py`: shared JSON, unit-conversion, and summary helpers.
+- `write_benchmark_results.py`: CI helper that converts `local_trace.json` into
+  the legacy gas benchmark `results.json`.
 - `runs/`: ignored output directory for local run instances.
 - `data/generated/`: ignored temporary generated scenario files.
 
@@ -204,6 +212,8 @@ Full localnet runs can produce:
 - `artifacts/chart_liquidation_execution_quality.png`: liquidation execution
   price versus floor, bad-debt ratio distribution, and net liquidation surplus.
 - `artifacts/state.json`: localnet setup state snapshot.
+- `artifacts/results.json`: legacy gas-benchmark payload written only by the CI
+  benchmark compatibility path.
 
 ## Parity Contract
 
@@ -276,9 +286,9 @@ Important fields:
 
 ## Maintenance Rules
 
-- Keep `run.sh` limited to the four documented command forms. Do not add resume,
-  phase-selection, skip-analysis, or compatibility aliases without intentionally
-  reopening the runner design.
+- Keep `run.sh` limited to the four documented manual command forms. The hidden
+  benchmark compatibility path exists only for the Docker benchmark worker and
+  should not grow into a second manual runner interface.
 - Keep generated scenarios on the current CSV shape only. Do not add
   backwards-compatible support for standalone oracle updates, plain mint rows,
   or explicit liquidation rows.

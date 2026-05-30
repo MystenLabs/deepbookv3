@@ -21,6 +21,7 @@ SCENARIO_CONFIG="$SCRIPT_DIR/data/scenario_config.json"
 # --- Flag defaults ---
 PYTHON_ONLY=0
 KEEP_DERIVED=0
+SKIP_ANALYSIS=0
 RUN_MAX_ROWS=""
 RUN_MAX_ROWS_SET=0
 
@@ -50,6 +51,10 @@ while [[ $# -gt 0 ]]; do
       KEEP_DERIVED=1
       shift
       ;;
+    --skip-analysis)
+      SKIP_ANALYSIS=1
+      shift
+      ;;
     *)
       echo "Unknown argument: $1"
       usage
@@ -57,6 +62,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [ "$PYTHON_ONLY" -eq 0 ] && [ "$RUN_MAX_ROWS_SET" -eq 0 ] && [ -n "${SIM_MAX_ROWS:-}" ]; then
+  RUN_MAX_ROWS="$SIM_MAX_ROWS"
+  RUN_MAX_ROWS_SET=1
+fi
 
 if [ "$RUN_MAX_ROWS_SET" -eq 1 ] && ! [[ "$RUN_MAX_ROWS" =~ ^[1-9][0-9]*$ ]]; then
   echo "ERROR: --sim_max_rows must be a positive integer"
@@ -72,6 +82,12 @@ fi
 
 if [ "$PYTHON_ONLY" -eq 0 ] && [ "$KEEP_DERIVED" -eq 1 ]; then
   echo "ERROR: --keep-derived is only supported with --python-only"
+  usage
+  exit 1
+fi
+
+if [ "$PYTHON_ONLY" -eq 1 ] && [ "$SKIP_ANALYSIS" -eq 1 ]; then
+  echo "ERROR: --skip-analysis is only supported for the localnet benchmark flow"
   usage
   exit 1
 fi
@@ -434,12 +450,26 @@ cleanup_generated
 NORMAL_SCENARIO="$SCRIPT_DIR/data/generated/normal_scenario.csv"
 
 run_sim() {
-  echo "==> Generating normal localnet/Python scenario..."
   mkdir -p "$INSTANCE_DIR/artifacts"
-  generate_scenario normal "$NORMAL_SCENARIO"
-  cp "$NORMAL_SCENARIO" "$INSTANCE_DIR/artifacts/normal_scenario.csv"
+
+  if [ -n "${SCENARIO_PATH:-}" ]; then
+    echo "==> Using scenario from SCENARIO_PATH..."
+    if [ ! -f "$SCENARIO_PATH" ]; then
+      echo "ERROR: SCENARIO_PATH does not exist: $SCENARIO_PATH"
+      exit 1
+    fi
+    cp "$SCENARIO_PATH" "$INSTANCE_DIR/artifacts/normal_scenario.csv"
+  else
+    echo "==> Generating normal localnet/Python scenario..."
+    generate_scenario normal "$NORMAL_SCENARIO"
+    cp "$NORMAL_SCENARIO" "$INSTANCE_DIR/artifacts/normal_scenario.csv"
+  fi
+
   if [ -n "$RUN_MAX_ROWS" ]; then
     set -- "$@" --max-rows "$RUN_MAX_ROWS"
+  fi
+  if [ "$SKIP_ANALYSIS" -eq 1 ]; then
+    set -- "$@" --skip-python
   fi
   npx tsx src/sim.ts "$@"
 }
@@ -449,13 +479,26 @@ run_sim
 
 for required_artifact in \
   "$INSTANCE_DIR/artifacts/local_trace.json" \
-  "$INSTANCE_DIR/artifacts/local_data.json" \
-  "$INSTANCE_DIR/artifacts/python_data.json"; do
+  "$INSTANCE_DIR/artifacts/local_data.json"; do
   if [ ! -f "$required_artifact" ]; then
     echo "ERROR: expected simulation artifact was not written: $required_artifact"
     exit 1
   fi
 done
+
+if [ "$SKIP_ANALYSIS" -eq 1 ]; then
+  echo "==> Writing benchmark results..."
+  python3 write_benchmark_results.py "$INSTANCE_DIR/artifacts/local_trace.json" "$INSTANCE_DIR/artifacts/results.json"
+  echo ""
+  echo "==> Done. Instance: $INSTANCE_ID"
+  echo "    Results: $INSTANCE_DIR/artifacts/results.json"
+  exit 0
+fi
+
+if [ ! -f "$INSTANCE_DIR/artifacts/python_data.json" ]; then
+  echo "ERROR: expected simulation artifact was not written: $INSTANCE_DIR/artifacts/python_data.json"
+  exit 1
+fi
 
 echo "==> Rendering gas chart..."
 python3 charts/chart_gas.py "$INSTANCE_DIR/artifacts/local_trace.json"

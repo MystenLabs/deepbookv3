@@ -8,7 +8,7 @@ import {
   LOCAL_TRACE_PATH,
   LOCAL_TRACE_SCHEMA_VERSION,
   PYTHON_DATA_PATH,
-  SCENARIO_PATH,
+  SCENARIO_PATH as DEFAULT_SCENARIO_PATH,
   STATE_PATH,
   type EconomicDataFile,
   type EconomicRecord,
@@ -88,8 +88,13 @@ interface AliasState {
 
 function parseArgs() {
   let maxRows: number | undefined;
+  let skipPython = false;
   const args = process.argv.slice(2);
   for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--skip-python") {
+      skipPython = true;
+      continue;
+    }
     if (args[i] !== "--max-rows") {
       throw new Error(`Unsupported sim argument ${args[i]}`);
     }
@@ -100,7 +105,12 @@ function parseArgs() {
     maxRows = parseInt(value, 10);
     i += 1;
   }
-  return { maxRows };
+  return { maxRows, skipPython };
+}
+
+function scenarioPath(): string {
+  const configured = process.env.SCENARIO_PATH?.trim();
+  return configured && configured.length > 0 ? configured : DEFAULT_SCENARIO_PATH;
 }
 
 function initialEconomicState(capital: SimulationCapital): EconomicState {
@@ -486,11 +496,12 @@ function economicRecord(row: ScenarioRow, receipt: ExecutionReceipt, state: Econ
   };
 }
 
-function traceStep(row: ScenarioRow, receipt: ExecutionReceipt): LocalTraceStep {
+function traceStep(row: ScenarioRow, receipt: ExecutionReceipt, wallMs: number): LocalTraceStep {
   return {
     step: row.step,
     action: row.action,
     digest: receipt.digest,
+    wallMs,
     gas: receipt.gas,
     events: receipt.events.map((event: any) => ({
       type: eventName(event),
@@ -814,9 +825,12 @@ async function executeScenario(
   capital: SimulationCapital,
   scenarioPath: string,
   maxRows?: number,
+  runPython = true,
 ): Promise<void> {
   clearOutputArtifacts();
-  runPythonReplay(scenarioPath, maxRows);
+  if (runPython) {
+    runPythonReplay(scenarioPath, maxRows);
+  }
 
   const traceSteps: LocalTraceStep[] = [];
   const records: EconomicRecord[] = [];
@@ -830,10 +844,12 @@ async function executeScenario(
 
   for (const row of rows) {
     try {
+      const startedAt = performance.now();
       const receipt = await executeRow(row, state, aliases);
+      const wallMs = performance.now() - startedAt;
       const record = economicRecord(row, receipt, economicState, aliases);
       recordAliases(row, receipt, aliases);
-      traceSteps.push(traceStep(row, receipt));
+      traceSteps.push(traceStep(row, receipt, wallMs));
       records.push(record);
 
       if (row.action === "oracle_mint_ptb") {
@@ -872,7 +888,9 @@ async function executeScenario(
   console.log(`[${ts()}]   ${traceSteps.length} txs, ${successfulMints}/${targetMints} successful mints`);
   console.log(`[${ts()}]   Local trace: ${LOCAL_TRACE_PATH}`);
   console.log(`[${ts()}]   Local data:  ${LOCAL_DATA_PATH}`);
-  console.log(`[${ts()}]   Python data: ${PYTHON_DATA_PATH}`);
+  if (runPython) {
+    console.log(`[${ts()}]   Python data: ${PYTHON_DATA_PATH}`);
+  }
 }
 
 function runPythonReplay(scenarioPath: string, maxRows?: number) {
@@ -893,16 +911,17 @@ function runPythonReplay(scenarioPath: string, maxRows?: number) {
 
 async function main() {
   const args = parseArgs();
+  const scenario = scenarioPath();
   const scenarioConfig = readJson<any>(SCENARIO_CONFIG_PATH);
   const capital = simulationCapital(scenarioConfig, "normal");
-  let rows = loadScenario(SCENARIO_PATH);
+  let rows = loadScenario(scenario);
   if (args.maxRows !== undefined) {
     console.log(`[${ts()}] Limiting to ${args.maxRows} tx rows`);
     rows = rows.slice(0, args.maxRows);
   }
 
   const state = await setupSimulation(scenarioConfig, capital);
-  await executeScenario(rows, state, capital, SCENARIO_PATH, args.maxRows);
+  await executeScenario(rows, state, capital, scenario, args.maxRows, !args.skipPython);
 }
 
 main().catch((error) => {
