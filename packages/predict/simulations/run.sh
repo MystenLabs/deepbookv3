@@ -347,7 +347,7 @@ done
   echo "    Chain ID: $CHAIN_ID"
 
   LOCAL_PYTH_CONFIG="$INSTANCE_DIR/local_pyth.json"
-  (cd "$SCRIPT_DIR" && pnpm exec tsx src/localPythCli.ts "$LOCAL_PYTH_CONFIG")
+  (cd "$SCRIPT_DIR" && npx tsx src/localPythCli.ts "$LOCAL_PYTH_CONFIG")
   LOCAL_PYTH_GOVERNANCE_CHAIN=$(json_field "$LOCAL_PYTH_CONFIG" governanceChain)
   LOCAL_PYTH_GOVERNANCE_CONTRACT=$(json_field "$LOCAL_PYTH_CONFIG" governanceContract)
   LOCAL_PYTH_RECEIVER_CHAIN=$(json_field "$LOCAL_PYTH_CONFIG" receiverChain)

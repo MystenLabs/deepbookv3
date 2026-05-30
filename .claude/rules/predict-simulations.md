@@ -8,6 +8,13 @@ paths:
 Before editing `packages/predict/simulations/**`, read:
 - `packages/predict/simulations/README.md`
 - `packages/predict/simulations/docs/ANALYSIS_NOTES.md` when touching economics, derived metrics, charts, liquidation policy, risk analysis, or interpretation of outputs.
+- `packages/predict/simulations/docs/GAS_EXPERIMENTS.md` when analyzing gas/performance, comparing run gas, or proposing contract changes for gas reasons. It logs prior experiments (including dead ends) and the run-to-run noise caveat (scenarios differ per run, so action-level averages are not a controlled A/B by default).
+
+## Gas Experiments
+
+- **Before running or proposing a gas/performance experiment, read `packages/predict/simulations/docs/GAS_EXPERIMENTS.md` first** to avoid repeating logged dead ends.
+- When you analyze a gas/performance experiment (a contract change measured for gas, a run-to-run gas comparison, or a perf hypothesis), ask the user **"should I add this to the experiments doc?"** before finishing. If yes, append a compact ~5-line entry to `GAS_EXPERIMENTS.md` in its existing format (date · change · decision, then hypothesis/method/result). Keep the doc tight — do not let entries bloat.
+- Gas verdicts must respect the determinism caveat in that doc: different `run.sh` invocations use different generated scenarios, so treat per-action deltas below the run-to-run noise floor (watch an untouched action like `supply`/`withdraw`) as neutral. Only a pinned-scenario A/B gives a trustworthy signal.
 
 ## Simulation Layers
 
@@ -29,7 +36,7 @@ Before editing `packages/predict/simulations/**`, read:
 
 ## Verification
 
-- TypeScript-only changes: run `pnpm exec tsc --noEmit` from `packages/predict/simulations`.
+- TypeScript-only changes: run `npx tsc --noEmit` from `packages/predict/simulations`.
 - Generator or Python replay changes: generate normal and long scenarios, then replay both with `python_replay.py`.
 - Runtime/localnet transaction changes: run a small `bash run.sh --sim_max_rows=N --skip-analysis` smoke test from `packages/predict/simulations`.
 - Parity-sensitive changes should run the full simulation flow when practical.

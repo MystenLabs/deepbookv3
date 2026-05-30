@@ -147,7 +147,9 @@ let configuredOracleGrid: OracleGrid | null = null;
 
 function oracleGridForSpot(spot: bigint): OracleGrid {
   if (spot <= 0n) throw new Error("initial Pyth spot must be positive");
-  if (spot > ORACLE_TICK_SIZE * ORACLE_GRID_TICKS) {
+  // Mirror config_constants::assert_oracle_tick_size_covers_spot: Move checks the
+  // tick-floored spot (`spot / tick_size <= grid_ticks`), so compare on ticks too.
+  if (spot / ORACLE_TICK_SIZE > ORACLE_GRID_TICKS) {
     throw new Error(
       "initial Pyth spot exceeds oracle tick coverage; raise the oracle tick size to cover a higher spot",
     );
@@ -667,7 +669,6 @@ async function setupSimulation(
   grid: OracleGrid,
 ): Promise<SimState> {
   console.log(`[${ts()}] --- Setup ---`);
-  const expiryFeeWindowMs = protocolConfigValue(scenarioConfig, "expiry_fee_window_ms", 0n);
   const expiryFeeMaxMultiplier = protocolConfigValue(
     scenarioConfig,
     "expiry_fee_max_multiplier",
@@ -700,7 +701,7 @@ async function setupSimulation(
   console.log(`[${ts()}]   OracleCap: ${oracleCapId}`);
 
   result = await executeAndWait(
-    createPythSourceTx(1, ORACLE_TICK_SIZE, expiryFeeWindowMs, expiryFeeMaxMultiplier),
+    createPythSourceTx(1, ORACLE_TICK_SIZE, expiryFeeMaxMultiplier),
     "create_pyth_source",
   );
   const pythSourceChange = result.objectChanges.find(
@@ -708,9 +709,7 @@ async function setupSimulation(
   );
   const pythSourceId: string = pythSourceChange.objectId;
   console.log(`[${ts()}]   PythSource: ${pythSourceId}`);
-  console.log(
-    `[${ts()}]   PythSource fee ramp: window=${expiryFeeWindowMs}ms max_multiplier=${expiryFeeMaxMultiplier}`,
-  );
+  console.log(`[${ts()}]   PythSource fee ramp: max_multiplier=${expiryFeeMaxMultiplier}`);
 
   await executeAndWait(updatePythTrustedSignerTx(), "update_pyth_trusted_signer");
   console.log(`[${ts()}]   Pyth trusted signer configured`);

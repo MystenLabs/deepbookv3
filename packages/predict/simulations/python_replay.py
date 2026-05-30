@@ -68,7 +68,8 @@ PROTOCOL_FEE_SHARE = 200_000_000
 INSURANCE_FEE_SHARE = 200_000_000
 TRADING_LOSS_REBATE_RATE = 500_000_000
 TERMINAL_REBATE_FRACTION = 0
-EXPIRY_FEE_WINDOW_MS = 0
+# Upgrade constant, mirrored directly from constants::expiry_fee_window_ms!() (1 day).
+EXPIRY_FEE_WINDOW_MS = 24 * 60 * 60 * 1000
 EXPIRY_FEE_MAX_MULTIPLIER = FLOAT_SCALING
 
 # Floor-index model for Python-only observability. Normal parity replay keeps a
@@ -160,7 +161,6 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
     global INSURANCE_FEE_SHARE
     global TRADING_LOSS_REBATE_RATE
     global TERMINAL_REBATE_FRACTION
-    global EXPIRY_FEE_WINDOW_MS
     global EXPIRY_FEE_MAX_MULTIPLIER
     global LEVERAGE_FLOOR_WINDOW_MS
     global MAX_EXPIRY_FLOOR_PREMIUM
@@ -208,7 +208,6 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
         TRADING_LOSS_REBATE_RATE,
     )
     TERMINAL_REBATE_FRACTION = FLOAT_SCALING if long_run else 0
-    EXPIRY_FEE_WINDOW_MS = _config_int(config, "protocol", "expiry_fee_window_ms", EXPIRY_FEE_WINDOW_MS)
     EXPIRY_FEE_MAX_MULTIPLIER = _config_int(
         config,
         "protocol",
@@ -278,7 +277,9 @@ def configure_oracle_grid(initial_spot: int) -> None:
 
     if initial_spot <= 0:
         raise ValueError("initial Pyth spot must be positive")
-    if initial_spot > ORACLE_TICK_SIZE * ORACLE_GRID_TICKS:
+    # Mirror config_constants::assert_oracle_tick_size_covers_spot: Move checks the
+    # tick-floored spot (`spot / tick_size <= grid_ticks`), so compare on ticks too.
+    if initial_spot // ORACLE_TICK_SIZE > ORACLE_GRID_TICKS:
         raise ValueError(
             "initial Pyth spot exceeds oracle tick coverage; raise the oracle "
             "tick size to cover a higher spot"
@@ -505,6 +506,17 @@ def mul_div_round_down(a: int, b: int, c: int) -> int:
     return a * b // c
 
 
+def live_forward(spot: int, forward: int) -> int:
+    # Mirror pricing::live_inputs fresh-spot branch: the on-chain forward used for
+    # every live quote/valuation/liquidation is NOT the pushed forward, but is
+    # re-derived from the live Pyth spot and the stored Block Scholes basis as
+    # mul(spot, div(forward, spot)). That round-trip is lossy (two floors), so it
+    # generally differs from `forward` by a few units. In the localnet parity flow
+    # the Pyth spot equals the Block Scholes spot pushed in the same PTB, so this
+    # is exactly the forward the contracts price with.
+    return deepbook_mul(spot, deepbook_div(forward, spot))
+
+
 def assert_valid_leverage(leverage: int) -> None:
     if leverage not in (
         LEVERAGE_ONE_X,
@@ -535,7 +547,9 @@ def user_contribution_from_exposure_value(exposure_value: int, leverage: int) ->
 
 
 def assert_mint_principal_above_min(contribution: int) -> None:
-    if contribution <= MIN_ORDER_PRINCIPAL:
+    # Mirror strike_exposure.move: `user_contribution() >= min_order_principal!()`,
+    # so a contribution exactly equal to the minimum is allowed.
+    if contribution < MIN_ORDER_PRINCIPAL:
         raise ValueError("order principal below minimum")
 
 
@@ -1322,7 +1336,7 @@ def oracle_svi_update(svi: dict[str, Any]) -> dict[str, str]:
 
 def apply_inline_oracle_refresh(model: dict[str, Any], row: dict[str, Any], updates: list[dict[str, Any]]) -> None:
     oracle = row["oracleRefresh"]
-    model["current_forward"] = oracle["forward"]
+    model["current_forward"] = live_forward(oracle["spot"], oracle["forward"])
     model["current_svi"] = oracle
     updates.append(oracle_prices_update(oracle))
     updates.append(oracle_svi_update(oracle))
@@ -2453,7 +2467,7 @@ def replay(
         model["now_ms"] = row_timestamp_ms
         scan_active_count = active_order_count(model)
         if action == "oracle_mint_ptb":
-            model["current_forward"] = row["forward"]
+            model["current_forward"] = live_forward(row["spot"], row["forward"])
             model["current_svi"] = row
             updates.append(oracle_prices_update(row))
             updates.append(oracle_svi_update(row))

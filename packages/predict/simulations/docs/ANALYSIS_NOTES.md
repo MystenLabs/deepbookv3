@@ -1,7 +1,9 @@
 # Predict Simulation Analysis Notes
 
-This document captures economic observations from local simulation runs. It is
-not a runner manual; operational details live in `README.md`.
+This document captures **economic** observations from local simulation runs. It is
+not a runner manual; operational details live in `README.md`. For
+**gas/performance** experiments (contract changes measured for gas, run-to-run
+comparisons, perf hypotheses), see `GAS_EXPERIMENTS.md`.
 
 ## Directional Accumulation
 

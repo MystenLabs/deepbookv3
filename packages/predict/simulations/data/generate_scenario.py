@@ -162,12 +162,18 @@ class Generator:
 
         svi = svi_for_replay(snapshot)
         forward = snapshot["forward"]
+        # The raw `forward` is written to the CSV (localnet pushes it to
+        # update_block_scholes_prices), but pricing must use the value the
+        # contracts actually quote with: forward re-derived from the live Pyth
+        # spot via pricing::live_inputs. Mirror that here so admission decisions
+        # (tier, LTV, min principal) match localnet and the replay.
+        pricing_forward = replay.live_forward(snapshot["spot"], forward)
         for _ in range(MAX_ROW_ATTEMPTS):
             strike = self.random_strike(forward)
             is_up = bool(self.rng.randrange(2))
             lower, higher = replay.binary_range_bounds(replay.align_strike_to_grid(strike), is_up)
             try:
-                entry_probability = replay.compute_range_price(svi, forward, lower, higher)
+                entry_probability = replay.compute_range_price(svi, pricing_forward, lower, higher)
                 fee_rate = replay.assert_mint_fee_rate(entry_probability, self.fee_time_to_expiry(snapshot))
                 leverage = self.random_leverage(entry_probability)
                 quantity = self.quantity_for_spend(
