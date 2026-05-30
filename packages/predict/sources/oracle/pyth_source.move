@@ -8,23 +8,21 @@
 /// forward, apply circuit breakers, or settle a market.
 module deepbook_predict::pyth_source;
 
-use deepbook_predict::{config_constants, constants, lazer_helper, protocol_config::ProtocolConfig};
+use deepbook_predict::{
+    config_constants,
+    config_events,
+    constants,
+    lazer_helper,
+    oracle_events,
+    protocol_config::ProtocolConfig
+};
 use pyth_lazer::update::Update as LazerUpdate;
-use sui::{clock::Clock, event, vec_set::VecSet};
+use sui::{clock::Clock, vec_set::VecSet};
 
 const EStaleSourceUpdate: u64 = 0;
 const EZeroSpot: u64 = 1;
 const EFutureSourceUpdate: u64 = 2;
 const EPackageVersionDisabled: u64 = 3;
-
-/// Emitted when a verified Pyth Lazer spot update is accepted.
-public struct PythSourceUpdated has copy, drop, store {
-    pyth_source_id: ID,
-    feed_id: u32,
-    spot: u64,
-    source_timestamp_ms: u64,
-    update_timestamp_ms: u64,
-}
 
 /// Latest normalized spot observed from one Pyth Lazer feed.
 public struct PythSource has key {
@@ -69,13 +67,13 @@ public fun update_from_lazer(
     source.spot = spot;
     source.source_timestamp_ms = source_timestamp_ms;
     source.update_timestamp_ms = update_timestamp_ms;
-    event::emit(PythSourceUpdated {
-        pyth_source_id: source.id(),
-        feed_id: source.feed_id,
+    oracle_events::emit_pyth_source_updated(
+        source.id(),
+        source.feed_id,
         spot,
         source_timestamp_ms,
         update_timestamp_ms,
-    });
+    );
 }
 
 /// Return the Pyth source object ID.
@@ -143,6 +141,12 @@ public(package) fun set_expiry_fee_params(
     config_constants::assert_expiry_fee_max_multiplier(max_multiplier);
     source.expiry_fee_window_ms = window_ms;
     source.expiry_fee_max_multiplier = max_multiplier;
+    config_events::emit_pyth_source_expiry_fee_params_updated(
+        source.id(),
+        source.feed_id,
+        window_ms,
+        max_multiplier,
+    );
 }
 
 /// Create and share a Pyth source bound to a Lazer feed id with the per-asset

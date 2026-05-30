@@ -7,7 +7,9 @@
 /// existing storage instead of lazily creating new dynamic fields. It stores
 /// page-local prefix quantities and strike-weighted quantities for exact
 /// valuation across sampled live pricing curve segments, plus aggregate live
-/// floor shares for contracts whose value has a non-zero floor.
+/// floor shares for contracts whose value has a non-zero floor. It also keeps
+/// in-object full-page totals so wide valuation reads can skip dynamic-field
+/// page loads for complete middle pages.
 module deepbook_predict::strike_nav_matrix;
 
 use deepbook::math;
@@ -19,15 +21,16 @@ const PAGE_SLOTS: u64 = 128;
 const EInvalidTickSize: u64 = 0;
 const EInvalidStrikeRange: u64 = 1;
 const EInsufficientQuantity: u64 = 2;
-const EInvalidCurveRange: u64 = 4;
-const EUnalignedStrike: u64 = 5;
-const EZeroQuantity: u64 = 6;
-const ETooManyStrikes: u64 = 7;
-const EFloorExceedsLiveValue: u64 = 8;
+const EInvalidCurveRange: u64 = 3;
+const EUnalignedStrike: u64 = 4;
+const EZeroQuantity: u64 = 5;
+const ETooManyStrikes: u64 = 6;
+const EFloorExceedsLiveValue: u64 = 7;
 
 /// Dense preallocated page store for exact live NAV segment reads.
 public struct StrikeNavMatrix has store {
-    pages: Table<u64, vector<NavSlot>>,
+    pages: Table<u64, vector<NavTotals>>,
+    page_totals: vector<NavTotals>,
     tick_size: u64,
     min_strike: u64,
     max_strike: u64,
@@ -43,8 +46,8 @@ public struct WeightedQuantity has copy, drop, store {
     strike_quantity: u64,
 }
 
-/// Page-local prefix totals at one finite strike grid slot.
-public struct NavSlot has copy, drop, store {
+/// Boundary totals for either one page-local prefix slot or one full page.
+public struct NavTotals has copy, drop, store {
     start: WeightedQuantity,
     end: WeightedQuantity,
 }
@@ -61,14 +64,17 @@ public(package) fun new(
     let total_strikes = (max_strike - min_strike) / tick_size + 1;
     let page_count = page_count(total_strikes);
     let mut pages = table::new(ctx);
+    let mut page_totals = vector[];
     let mut page_key = 0;
     while (page_key < page_count) {
         pages.add(page_key, empty_nav_page());
+        page_totals.push_back(empty_nav_totals());
         page_key = page_key + 1;
     };
 
     StrikeNavMatrix {
         pages,
+        page_totals,
         tick_size,
         min_strike,
         max_strike,
@@ -102,9 +108,9 @@ public(package) fun remove_range(
 
 /// Evaluate live contract value against a sampled pricing curve.
 ///
-/// The matrix subtracts one aggregate floor value. Callers must maintain the
-/// invariant that active floor-bearing orders are individually above floor
-/// before using this aggregate NAV path.
+/// The matrix subtracts aggregate floor value from aggregate range value. This
+/// is the valuation path used after the caller's bounded liquidation-maintenance
+/// policy, not an exact per-order recoverability proof.
 public(package) fun live_value(
     nav: &StrikeNavMatrix,
     curve: &vector<CurvePoint>,
@@ -157,6 +163,7 @@ public(package) fun live_value(
 public(package) fun destroy(nav: StrikeNavMatrix) {
     let StrikeNavMatrix {
         mut pages,
+        page_totals: _,
         tick_size: _,
         min_strike: _,
         max_strike: _,
@@ -211,6 +218,14 @@ fun apply_boundary_delta(
     let (page_key, slot) = nav.unchecked_strike_to_coords(strike);
     let weighted = weighted_quantity(qty, math::mul(qty, strike));
     {
+        let totals = &mut nav.page_totals[page_key];
+        if (is_start) {
+            apply_weighted_delta(&mut totals.start, weighted, add);
+        } else {
+            apply_weighted_delta(&mut totals.end, weighted, add);
+        };
+    };
+    {
         let page = nav.pages.borrow_mut(page_key);
         let mut i = slot;
         while (i < PAGE_SLOTS) {
@@ -254,42 +269,50 @@ fun accumulate_segment_values(
     end_page: u64,
     end_slot: u64,
 ): (WeightedQuantity, WeightedQuantity) {
-    let mut page_key = start_page;
-    let mut start_delta = weighted_quantity(0, 0);
-    let mut end_delta = weighted_quantity(0, 0);
-    while (page_key <= end_page) {
-        let page = &nav.pages[page_key];
-        let end_inclusive = if (page_key == end_page) {
-            end_slot
-        } else {
-            PAGE_SLOTS - 1
-        };
-        let end_node = &page[end_inclusive];
+    if (start_page == end_page) {
+        let page = &nav.pages[start_page];
+        let end_node = &page[end_slot];
+        let mut start_delta = end_node.start;
+        let mut end_delta = end_node.end;
+        let start_node = &page[start_slot];
+        apply_weighted_delta(&mut start_delta, start_node.start, false);
+        apply_weighted_delta(&mut end_delta, start_node.end, false);
+        return (start_delta, end_delta)
+    };
 
-        apply_weighted_delta(&mut start_delta, end_node.start, true);
-        apply_weighted_delta(&mut end_delta, end_node.end, true);
+    let first_page = &nav.pages[start_page];
+    let first_end = &first_page[PAGE_SLOTS - 1];
+    let mut start_delta = first_end.start;
+    let mut end_delta = first_end.end;
+    let first_start = &first_page[start_slot];
+    apply_weighted_delta(&mut start_delta, first_start.start, false);
+    apply_weighted_delta(&mut end_delta, first_start.end, false);
 
-        if (page_key == start_page) {
-            let start_node = &page[start_slot];
-            apply_weighted_delta(&mut start_delta, start_node.start, false);
-            apply_weighted_delta(&mut end_delta, start_node.end, false);
-        };
-
-        if (page_key == end_page) break;
+    let mut page_key = start_page + 1;
+    while (page_key < end_page) {
+        let totals = nav.page_totals[page_key];
+        apply_weighted_delta(&mut start_delta, totals.start, true);
+        apply_weighted_delta(&mut end_delta, totals.end, true);
         page_key = page_key + 1;
     };
+
+    let last_page = &nav.pages[end_page];
+    let last_end = &last_page[end_slot];
+    apply_weighted_delta(&mut start_delta, last_end.start, true);
+    apply_weighted_delta(&mut end_delta, last_end.end, true);
 
     (start_delta, end_delta)
 }
 
-fun empty_nav_page(): vector<NavSlot> {
-    vector::tabulate!(
-        PAGE_SLOTS,
-        |_| NavSlot {
-            start: weighted_quantity(0, 0),
-            end: weighted_quantity(0, 0),
-        },
-    )
+fun empty_nav_totals(): NavTotals {
+    NavTotals {
+        start: weighted_quantity(0, 0),
+        end: weighted_quantity(0, 0),
+    }
+}
+
+fun empty_nav_page(): vector<NavTotals> {
+    vector::tabulate!(PAGE_SLOTS, |_| empty_nav_totals())
 }
 
 fun assert_valid_grid(min_strike: u64, tick_size: u64, max_strike: u64) {

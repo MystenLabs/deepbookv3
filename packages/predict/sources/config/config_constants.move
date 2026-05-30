@@ -11,31 +11,34 @@ module deepbook_predict::config_constants;
 const EInvalidMaxTotalExposurePct: u64 = 0;
 const EInvalidBaseFee: u64 = 1;
 const EInvalidMinFee: u64 = 2;
-const EInvalidMinAskPrice: u64 = 4;
-const EInvalidMaxAskPrice: u64 = 5;
-const EInvalidPythSpotFreshnessMs: u64 = 6;
-const EInvalidBlockScholesPricesFreshnessMs: u64 = 7;
-const EInvalidBlockScholesSVIFreshnessMs: u64 = 8;
-const EInvalidLpFeeShare: u64 = 9;
-const EInvalidProtocolFeeShare: u64 = 10;
-const EInvalidInsuranceFeeShare: u64 = 11;
-const EInvalidSettlementFreshnessMs: u64 = 12;
-const EInvalidMaxSpotDeviation: u64 = 13;
-const EInvalidMaxBasisDeviation: u64 = 14;
-const EInvalidMinBasis: u64 = 15;
-const EInvalidMaxBasis: u64 = 16;
-const EInvalidExpiryAllocation: u64 = 17;
-const EInvalidGrowUtilizationThreshold: u64 = 18;
-const EInvalidShrinkUtilizationThreshold: u64 = 19;
-const EInvalidGrowFactor: u64 = 20;
-const EInvalidShrinkFactor: u64 = 21;
-const EInvalidTradingLossRebateRate: u64 = 22;
-const EInvalidMaxExpiryFloorPremium: u64 = 23;
-const EInvalidExpiryFeeWindowMs: u64 = 24;
-const EInvalidExpiryFeeMaxMultiplier: u64 = 25;
-const EInvalidLowerBenefitPower: u64 = 26;
-const EInvalidUpperBenefitPower: u64 = 27;
-const EInvalidBenefitPowers: u64 = 28;
+const EInvalidMinAskPrice: u64 = 3;
+const EInvalidMaxAskPrice: u64 = 4;
+const EInvalidPythSpotFreshnessMs: u64 = 5;
+const EInvalidBlockScholesPricesFreshnessMs: u64 = 6;
+const EInvalidBlockScholesSVIFreshnessMs: u64 = 7;
+const EInvalidLpFeeShare: u64 = 8;
+const EInvalidProtocolFeeShare: u64 = 9;
+const EInvalidInsuranceFeeShare: u64 = 10;
+const EInvalidSettlementFreshnessMs: u64 = 11;
+const EInvalidMaxSpotDeviation: u64 = 12;
+const EInvalidMaxBasisDeviation: u64 = 13;
+const EInvalidMinBasis: u64 = 14;
+const EInvalidMaxBasis: u64 = 15;
+const EInvalidExpiryAllocation: u64 = 16;
+const EInvalidGrowUtilizationThreshold: u64 = 17;
+const EInvalidShrinkUtilizationThreshold: u64 = 18;
+const EInvalidGrowFactor: u64 = 19;
+const EInvalidShrinkFactor: u64 = 20;
+const EInvalidTradingLossRebateRate: u64 = 21;
+const EInvalidMaxExpiryFloorPremium: u64 = 22;
+const EInvalidExpiryFeeWindowMs: u64 = 23;
+const EInvalidExpiryFeeMaxMultiplier: u64 = 24;
+const EInvalidLowerBenefitPower: u64 = 25;
+const EInvalidUpperBenefitPower: u64 = 26;
+const EInvalidBenefitPowers: u64 = 27;
+const EInvalidValuationLiquidationBudget: u64 = 28;
+const EInvalidTradeLiquidationBudget: u64 = 29;
+const EInvalidLiquidationLtv: u64 = 30;
 
 // === Pool Risk ===
 
@@ -107,6 +110,33 @@ public(package) fun assert_shrink_factor(value: u64) {
     assert!(value >= min_shrink_factor!() && value <= max_shrink_factor!(), EInvalidShrinkFactor);
 }
 
+public(package) macro fun default_valuation_liquidation_budget(): u64 { 192 }
+public(package) macro fun min_valuation_liquidation_budget(): u64 { 24 }
+public(package) macro fun max_valuation_liquidation_budget(): u64 {
+    30_000
+}
+
+public(package) fun assert_valuation_liquidation_budget(value: u64) {
+    assert!(
+        value >= min_valuation_liquidation_budget!()
+            && value <= max_valuation_liquidation_budget!(),
+        EInvalidValuationLiquidationBudget,
+    );
+}
+
+public(package) macro fun default_trade_liquidation_budget(): u64 { 24 }
+public(package) macro fun min_trade_liquidation_budget(): u64 { 24 }
+public(package) macro fun max_trade_liquidation_budget(): u64 {
+    3_000
+}
+
+public(package) fun assert_trade_liquidation_budget(value: u64) {
+    assert!(
+        value >= min_trade_liquidation_budget!() && value <= max_trade_liquidation_budget!(),
+        EInvalidTradeLiquidationBudget,
+    );
+}
+
 // === Leverage ===
 
 public(package) macro fun default_max_expiry_floor_premium(): u64 { 200_000_000 }
@@ -119,6 +149,17 @@ public(package) fun assert_max_expiry_floor_premium(value: u64) {
     assert!(
         value >= min_max_expiry_floor_premium!() && value <= max_max_expiry_floor_premium!(),
         EInvalidMaxExpiryFloorPremium,
+    );
+}
+
+public(package) macro fun default_liquidation_ltv(): u64 { 850_000_000 }
+public(package) macro fun min_liquidation_ltv(): u64 { 500_000_000 }
+public(package) macro fun max_liquidation_ltv(): u64 { 950_000_000 }
+
+public(package) fun assert_liquidation_ltv(value: u64) {
+    assert!(
+        value >= min_liquidation_ltv!() && value <= max_liquidation_ltv!(),
+        EInvalidLiquidationLtv,
     );
 }
 

@@ -6,7 +6,7 @@ module deepbook_predict::i64;
 
 use deepbook_predict::constants;
 
-const EZeroDivisor: u64 = 1;
+const EZeroDivisor: u64 = 0;
 
 /// Signed integer represented as magnitude plus sign.
 public struct I64 has copy, drop, store {

@@ -25,6 +25,10 @@ public struct RiskConfig has store {
     grow_factor: u64,
     /// Multiplier used to target a smaller allocation during shrink.
     shrink_factor: u64,
+    /// Total liquidation candidates checked before live pool valuation.
+    valuation_liquidation_budget: u64,
+    /// Total liquidation candidates checked before mint and redeem flows.
+    trade_liquidation_budget: u64,
 }
 
 // === Public-Package Functions ===
@@ -53,6 +57,14 @@ public(package) fun shrink_factor(config: &RiskConfig): u64 {
     config.shrink_factor
 }
 
+public(package) fun valuation_liquidation_budget(config: &RiskConfig): u64 {
+    config.valuation_liquidation_budget
+}
+
+public(package) fun trade_liquidation_budget(config: &RiskConfig): u64 {
+    config.trade_liquidation_budget
+}
+
 public(package) fun new(): RiskConfig {
     RiskConfig {
         max_total_exposure_pct: config_constants::default_max_total_exposure_pct!(),
@@ -61,6 +73,8 @@ public(package) fun new(): RiskConfig {
         shrink_utilization_threshold: config_constants::default_shrink_utilization_threshold!(),
         grow_factor: config_constants::default_grow_factor!(),
         shrink_factor: config_constants::default_shrink_factor!(),
+        valuation_liquidation_budget: config_constants::default_valuation_liquidation_budget!(),
+        trade_liquidation_budget: config_constants::default_trade_liquidation_budget!(),
     }
 }
 
@@ -94,4 +108,14 @@ public(package) fun set_grow_factor(config: &mut RiskConfig, factor: u64) {
 public(package) fun set_shrink_factor(config: &mut RiskConfig, factor: u64) {
     config_constants::assert_shrink_factor(factor);
     config.shrink_factor = factor;
+}
+
+public(package) fun set_valuation_liquidation_budget(config: &mut RiskConfig, budget: u64) {
+    config_constants::assert_valuation_liquidation_budget(budget);
+    config.valuation_liquidation_budget = budget;
+}
+
+public(package) fun set_trade_liquidation_budget(config: &mut RiskConfig, budget: u64) {
+    config_constants::assert_trade_liquidation_budget(budget);
+    config.trade_liquidation_budget = budget;
 }

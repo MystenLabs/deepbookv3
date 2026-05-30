@@ -11,25 +11,27 @@ module deepbook_predict::registry;
 
 use deepbook_predict::{
     builder_code,
+    config_events,
     constants,
     expiry_market::{Self, ExpiryMarket},
     market_oracle::{Self, MarketOracle, MarketOracleCap},
     plp::PoolVault,
     predict_manager::{Self, PredictManager},
     protocol_config::{Self, ProtocolConfig},
-    pyth_source::{Self, PythSource}
+    pyth_source::{Self, PythSource},
+    vault_events
 };
 use sui::{clock::Clock, table::{Self, Table}, vec_set::{Self, VecSet}};
 
-const EFeedIdMismatch: u64 = 2;
-const EPythSourceAlreadyCreated: u64 = 3;
-const EInvalidExpiry: u64 = 4;
-const EExpiryMarketAlreadyCreated: u64 = 5;
-const EPauseCapNotValid: u64 = 6;
-const EPackageVersionDisabled: u64 = 7;
-const EVersionAlreadyEnabled: u64 = 8;
-const EVersionNotEnabled: u64 = 9;
-const ECannotDisableLastVersion: u64 = 10;
+const EFeedIdMismatch: u64 = 0;
+const EPythSourceAlreadyCreated: u64 = 1;
+const EInvalidExpiry: u64 = 2;
+const EExpiryMarketAlreadyCreated: u64 = 3;
+const EPauseCapNotValid: u64 = 4;
+const EPackageVersionDisabled: u64 = 5;
+const EVersionAlreadyEnabled: u64 = 6;
+const EVersionNotEnabled: u64 = 7;
+const ECannotDisableLastVersion: u64 = 8;
 
 /// Capability for admin operations.
 /// Created during package init, transferred to deployer (multisig).
@@ -122,6 +124,15 @@ public fun set_pyth_source_expiry_fee_params(
     max_multiplier: u64,
 ) {
     pyth.set_expiry_fee_params(window_ms, max_multiplier);
+}
+
+/// Set the liquidation LTV snapshotted by future expiry markets.
+public fun set_template_liquidation_ltv(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.set_template_liquidation_ltv(value);
 }
 
 /// Set the global minimum allowed mint price.
@@ -225,6 +236,24 @@ public fun set_grow_factor(config: &mut ProtocolConfig, _admin_cap: &AdminCap, f
 /// Set the allocation shrink target multiplier.
 public fun set_shrink_factor(config: &mut ProtocolConfig, _admin_cap: &AdminCap, factor: u64) {
     config.set_shrink_factor(factor);
+}
+
+/// Set the total liquidation candidate budget used before live valuations.
+public fun set_valuation_liquidation_budget(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    budget: u64,
+) {
+    config.set_valuation_liquidation_budget(budget);
+}
+
+/// Set the total liquidation candidate budget used before mint and redeem flows.
+public fun set_trade_liquidation_budget(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    budget: u64,
+) {
+    config.set_trade_liquidation_budget(budget);
 }
 
 /// Set the settlement freshness threshold template used by future market oracles.
@@ -455,6 +484,7 @@ public fun create_expiry_market(
     assert!(!registry.expiry_market_ids.contains(expiry), EExpiryMarketAlreadyCreated);
     let allowed_versions = registry.allowed_versions;
     let allocation = pool_vault.allocate_to_new_expiry(config.risk_config());
+    let allocation_amount = allocation.value();
     let market_oracle_id = market_oracle::create_and_share(
         pyth,
         config.market_oracle_config(),
@@ -477,6 +507,23 @@ public fun create_expiry_market(
     pool_vault.register_expiry_market(expiry_market_id);
     registry.expiry_market_ids.add(expiry, expiry_market_id);
 
+    config_events::emit_market_created(
+        expiry_market_id,
+        market_oracle_id,
+        pool_vault.id(),
+        expiry,
+        min_strike,
+        tick_size,
+    );
+    vault_events::emit_expiry_allocation_changed(
+        pool_vault.id(),
+        expiry_market_id,
+        allocation_amount,
+        true,
+        allocation_amount,
+        pool_vault.idle_balance(),
+    );
+
     (expiry_market_id, market_oracle_id)
 }
 
@@ -491,7 +538,7 @@ public fun create_manager(registry: &mut Registry, ctx: &mut TxContext): Predict
 }
 
 /// Create and share a derived PredictManager for the caller.
-entry fun create_and_share_manager(registry: &mut Registry, ctx: &mut TxContext) {
+public fun create_and_share_manager(registry: &mut Registry, ctx: &mut TxContext) {
     create_manager(registry, ctx).share();
 }
 

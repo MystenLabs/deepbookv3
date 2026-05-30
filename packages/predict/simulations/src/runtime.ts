@@ -23,12 +23,19 @@ export interface GasUsage {
   gasTotal: number;
 }
 
+export interface ExecutionReceipt {
+  digest: string;
+  gas: GasUsage;
+  events: any[];
+  objectChanges: any[];
+  effects: any;
+}
+
 const DUSDC_TYPE = `${DUSDC_PACKAGE_ID}::dusdc::DUSDC`;
 const CLOCK_ID = "0x6";
 const COIN_REGISTRY_ID = "0xc";
 const NEG_INF_STRIKE = 0n;
 const POS_INF_STRIKE = (1n << 64n) - 1n;
-const LEVERAGE_ONE_X = 0n;
 const SETUP_RESPONSE_OPTIONS = {
   showEffects: true,
   showEvents: true,
@@ -36,12 +43,16 @@ const SETUP_RESPONSE_OPTIONS = {
 } as const;
 const EXECUTION_RESPONSE_OPTIONS = {
   showEffects: true,
+  showEvents: true,
+  showObjectChanges: true,
 } as const;
 
 export const client = new SuiJsonRpcClient({ url: RPC_URL, network: "localnet" });
 export const signer = getSigner();
 export const address = signer.getPublicKey().toSuiAddress();
 export { POOL_VAULT_ID, PROTOCOL_CONFIG_ID };
+
+const DEFAULT_GAS_BUDGET = 1_000_000_000n;
 
 function isSuccessStatus(status: any): boolean {
   return status?.status === "success" || status?.success === true;
@@ -94,6 +105,174 @@ function nextSourceTimestampMs(): bigint {
   const next = conservativeNow > lastSourceTimestampMs ? conservativeNow : lastSourceTimestampMs + 1n;
   lastSourceTimestampMs = next;
   return next;
+}
+
+interface OracleRefreshParams {
+  oracleId: string;
+  protocolConfigId: string;
+  pythSourceId: string;
+  oracleCapId: string;
+  spot: bigint;
+  forward: bigint;
+  svi: {
+    a: bigint;
+    b: bigint;
+    rho: bigint;
+    rhoNegative: boolean;
+    m: bigint;
+    mNegative: boolean;
+    sigma: bigint;
+  };
+}
+
+interface ExpiryValuationParams {
+  poolVaultId: string;
+  protocolConfigId: string;
+  expiryMarketId: string;
+  oracleId: string;
+  pythSourceId: string;
+}
+
+interface SupplyWithExpiryValuationParams extends ExpiryValuationParams {
+  amount: bigint;
+}
+
+interface WithdrawWithExpiryValuationParams extends ExpiryValuationParams {
+  lpCoinId: string;
+}
+
+interface MintParams {
+  expiryMarketId: string;
+  protocolConfigId: string;
+  managerId: string;
+  oracleId: string;
+  pythSourceId: string;
+  strike: bigint;
+  isUp: boolean;
+  quantity: bigint;
+  leverage: bigint;
+}
+
+interface RedeemParams {
+  expiryMarketId: string;
+  protocolConfigId: string;
+  managerId: string;
+  oracleId: string;
+  pythSourceId: string;
+  orderId: string;
+  closeQuantity: bigint;
+}
+
+function addOracleRefresh(tx: Transaction, params: OracleRefreshParams): void {
+  tx.moveCall({
+    target: target("market_oracle", "update_block_scholes_prices"),
+    arguments: [
+      tx.object(params.oracleId),
+      tx.object(params.protocolConfigId),
+      tx.object(params.pythSourceId),
+      tx.object(params.oracleCapId),
+      tx.pure.u64(params.spot),
+      tx.pure.u64(params.forward),
+      tx.pure.u64(nextSourceTimestampMs()),
+      tx.object(CLOCK_ID),
+    ],
+  });
+
+  const rho = tx.moveCall({
+    target: target("i64", "from_parts"),
+    arguments: [tx.pure.u64(params.svi.rho), tx.pure.bool(params.svi.rhoNegative)],
+  });
+  const m = tx.moveCall({
+    target: target("i64", "from_parts"),
+    arguments: [tx.pure.u64(params.svi.m), tx.pure.bool(params.svi.mNegative)],
+  });
+  const sviParams = tx.moveCall({
+    target: target("market_oracle", "new_svi_params"),
+    arguments: [
+      tx.pure.u64(params.svi.a),
+      tx.pure.u64(params.svi.b),
+      rho,
+      m,
+      tx.pure.u64(params.svi.sigma),
+    ],
+  });
+  tx.moveCall({
+    target: target("market_oracle", "update_svi"),
+    arguments: [
+      tx.object(params.oracleId),
+      tx.object(params.protocolConfigId),
+      tx.object(params.oracleCapId),
+      sviParams,
+      tx.pure.u64(nextSourceTimestampMs()),
+      tx.object(CLOCK_ID),
+    ],
+  });
+}
+
+function mintDusdc(tx: Transaction, amount: bigint) {
+  const [coin] = tx.moveCall({
+    target: "0x2::coin::mint",
+    typeArguments: [DUSDC_TYPE],
+    arguments: [tx.object(TREASURY_CAP_ID), tx.pure.u64(amount)],
+  });
+  return coin;
+}
+
+function startPlpValuationWithExpiry(tx: Transaction, params: ExpiryValuationParams) {
+  const valuation = tx.moveCall({
+    target: target("plp", "start_valuation"),
+    arguments: [tx.object(params.protocolConfigId), tx.object(params.poolVaultId)],
+  });
+  const expiryValuation = tx.moveCall({
+    target: target("expiry_market", "produce_valuation"),
+    arguments: [
+      tx.object(params.expiryMarketId),
+      tx.object(params.protocolConfigId),
+      tx.object(params.oracleId),
+      tx.object(params.pythSourceId),
+      tx.object(CLOCK_ID),
+    ],
+  });
+  tx.moveCall({
+    target: target("plp", "add_expiry_valuation"),
+    arguments: [valuation, expiryValuation],
+  });
+  return valuation;
+}
+
+function addMint(tx: Transaction, params: MintParams): void {
+  const { lower, higher } = binaryRangeBounds(params.strike, params.isUp);
+  tx.moveCall({
+    target: target("expiry_market", "mint"),
+    arguments: [
+      tx.object(params.expiryMarketId),
+      tx.object(params.managerId),
+      tx.object(params.protocolConfigId),
+      tx.object(params.oracleId),
+      tx.object(params.pythSourceId),
+      tx.pure.u64(lower),
+      tx.pure.u64(higher),
+      tx.pure.u64(params.quantity),
+      tx.pure.u64(params.leverage),
+      tx.object(CLOCK_ID),
+    ],
+  });
+}
+
+function addRedeem(tx: Transaction, params: RedeemParams): void {
+  tx.moveCall({
+    target: target("expiry_market", "redeem"),
+    arguments: [
+      tx.object(params.expiryMarketId),
+      tx.object(params.managerId),
+      tx.object(params.protocolConfigId),
+      tx.object(params.oracleId),
+      tx.object(params.pythSourceId),
+      tx.pure.u256(BigInt(params.orderId)),
+      tx.pure.u64(params.closeQuantity),
+      tx.object(CLOCK_ID),
+    ],
+  });
 }
 
 function binaryRangeBounds(strike: bigint, isUp: boolean): { lower: bigint; higher: bigint } {
@@ -193,85 +372,9 @@ export function setMarketOracleBasisBoundsTx(
   return tx;
 }
 
-export function updateBlockScholesPricesTx(
-  oracleId: string,
-  protocolConfigId: string,
-  pythSourceId: string,
-  oracleCapId: string,
-  spot: bigint,
-  forward: bigint
-): Transaction {
-  const tx = new Transaction();
-  tx.moveCall({
-    target: target("market_oracle", "update_block_scholes_prices"),
-    arguments: [
-      tx.object(oracleId),
-      tx.object(protocolConfigId),
-      tx.object(pythSourceId),
-      tx.object(oracleCapId),
-      tx.pure.u64(spot),
-      tx.pure.u64(forward),
-      tx.pure.u64(nextSourceTimestampMs()),
-      tx.object(CLOCK_ID),
-    ],
-  });
-  return tx;
-}
-
-export function updateSviTx(
-  oracleId: string,
-  protocolConfigId: string,
-  oracleCapId: string,
-  svi: {
-    a: bigint;
-    b: bigint;
-    rho: bigint;
-    rhoNegative: boolean;
-    m: bigint;
-    mNegative: boolean;
-    sigma: bigint;
-  }
-): Transaction {
-  const tx = new Transaction();
-  const rho = tx.moveCall({
-    target: target("i64", "from_parts"),
-    arguments: [tx.pure.u64(svi.rho), tx.pure.bool(svi.rhoNegative)],
-  });
-  const m = tx.moveCall({
-    target: target("i64", "from_parts"),
-    arguments: [tx.pure.u64(svi.m), tx.pure.bool(svi.mNegative)],
-  });
-  const sviParams = tx.moveCall({
-    target: target("market_oracle", "new_svi_params"),
-    arguments: [
-      tx.pure.u64(svi.a),
-      tx.pure.u64(svi.b),
-      rho,
-      m,
-      tx.pure.u64(svi.sigma),
-    ],
-  });
-  tx.moveCall({
-    target: target("market_oracle", "update_svi"),
-    arguments: [
-      tx.object(oracleId),
-      tx.object(protocolConfigId),
-      tx.object(oracleCapId),
-      sviParams,
-      tx.pure.u64(nextSourceTimestampMs()),
-      tx.object(CLOCK_ID),
-    ],
-  });
-  return tx;
-}
-
 export function supplyTx(poolVaultId: string, protocolConfigId: string, amount: bigint): Transaction {
   const tx = new Transaction();
-  const [dusdc] = tx.moveCall({
-    target: "0x2::coin::mint",
-    typeArguments: [DUSDC_TYPE],
-    arguments: [tx.object(TREASURY_CAP_ID), tx.pure.u64(amount)],
-  });
+  const dusdc = mintDusdc(tx, amount);
   const valuation = tx.moveCall({
     target: target("plp", "start_valuation"),
     arguments: [tx.object(protocolConfigId), tx.object(poolVaultId)],
@@ -284,43 +387,37 @@ export function supplyTx(poolVaultId: string, protocolConfigId: string, amount: 
   return tx;
 }
 
-export function supplyWithExpiryValuationTx(params: {
-  poolVaultId: string;
-  protocolConfigId: string;
-  expiryMarketId: string;
-  oracleId: string;
-  pythSourceId: string;
-  amount: bigint;
-}): Transaction {
+export function refreshOracleAndSupplyWithExpiryValuationTx(
+  params: OracleRefreshParams & SupplyWithExpiryValuationParams
+): Transaction {
   const tx = new Transaction();
-  const [dusdc] = tx.moveCall({
-    target: "0x2::coin::mint",
-    typeArguments: [DUSDC_TYPE],
-    arguments: [tx.object(TREASURY_CAP_ID), tx.pure.u64(params.amount)],
-  });
-  const valuation = tx.moveCall({
-    target: target("plp", "start_valuation"),
-    arguments: [tx.object(params.protocolConfigId), tx.object(params.poolVaultId)],
-  });
-  const expiryValuation = tx.moveCall({
-    target: target("expiry_market", "produce_valuation"),
-    arguments: [
-      tx.object(params.expiryMarketId),
-      tx.object(params.protocolConfigId),
-      tx.object(params.oracleId),
-      tx.object(params.pythSourceId),
-      tx.object(CLOCK_ID),
-    ],
-  });
-  tx.moveCall({
-    target: target("plp", "add_expiry_valuation"),
-    arguments: [valuation, expiryValuation],
-  });
+  addOracleRefresh(tx, params);
+  const dusdc = mintDusdc(tx, params.amount);
+  const valuation = startPlpValuationWithExpiry(tx, params);
   const [plpCoin] = tx.moveCall({
     target: target("plp", "supply"),
     arguments: [tx.object(params.poolVaultId), tx.object(params.protocolConfigId), valuation, dusdc],
   });
   tx.transferObjects([plpCoin], tx.pure.address(address));
+  return tx;
+}
+
+export function refreshOracleAndWithdrawWithExpiryValuationTx(
+  params: OracleRefreshParams & WithdrawWithExpiryValuationParams
+): Transaction {
+  const tx = new Transaction();
+  addOracleRefresh(tx, params);
+  const valuation = startPlpValuationWithExpiry(tx, params);
+  const [dusdc] = tx.moveCall({
+    target: target("plp", "withdraw"),
+    arguments: [
+      tx.object(params.poolVaultId),
+      tx.object(params.protocolConfigId),
+      valuation,
+      tx.object(params.lpCoinId),
+    ],
+  });
+  tx.transferObjects([dusdc], tx.pure.address(address));
   return tx;
 }
 
@@ -351,11 +448,7 @@ export function deriveManagerId(owner: string, index: bigint = 0n): string {
 
 export function depositToManagerTx(managerId: string, amount: bigint): Transaction {
   const tx = new Transaction();
-  const [coin] = tx.moveCall({
-    target: "0x2::coin::mint",
-    typeArguments: [DUSDC_TYPE],
-    arguments: [tx.object(TREASURY_CAP_ID), tx.pure.u64(amount)],
-  });
+  const coin = mintDusdc(tx, amount);
   tx.moveCall({
     target: target("predict_manager", "deposit"),
     arguments: [tx.object(managerId), coin],
@@ -363,127 +456,24 @@ export function depositToManagerTx(managerId: string, amount: bigint): Transacti
   return tx;
 }
 
-export function mintTx(params: {
-  expiryMarketId: string;
-  protocolConfigId: string;
-  managerId: string;
-  oracleId: string;
-  pythSourceId: string;
-  strike: bigint;
-  isUp: boolean;
-  quantity: bigint;
-}): Transaction {
+export function refreshOracleAndMintTx(params: OracleRefreshParams & MintParams): Transaction {
   const tx = new Transaction();
-  const { lower, higher } = binaryRangeBounds(params.strike, params.isUp);
-  tx.moveCall({
-    target: target("expiry_market", "mint"),
-    arguments: [
-      tx.object(params.expiryMarketId),
-      tx.object(params.managerId),
-      tx.object(params.protocolConfigId),
-      tx.object(params.oracleId),
-      tx.object(params.pythSourceId),
-      tx.pure.u64(lower),
-      tx.pure.u64(higher),
-      tx.pure.u64(params.quantity),
-      tx.pure.u64(LEVERAGE_ONE_X),
-      tx.object(CLOCK_ID),
-    ],
-  });
+  addOracleRefresh(tx, params);
+  addMint(tx, params);
   return tx;
 }
 
-export function refreshOracleAndMintTx(params: {
-  expiryMarketId: string;
-  protocolConfigId: string;
-  managerId: string;
-  oracleId: string;
-  oracleCapId: string;
-  pythSourceId: string;
-  strike: bigint;
-  isUp: boolean;
-  quantity: bigint;
-  spot: bigint;
-  forward: bigint;
-  svi: {
-    a: bigint;
-    b: bigint;
-    rho: bigint;
-    rhoNegative: boolean;
-    m: bigint;
-    mNegative: boolean;
-    sigma: bigint;
-  };
-}): Transaction {
+export function refreshOracleAndRedeemTx(params: OracleRefreshParams & RedeemParams): Transaction {
   const tx = new Transaction();
-  tx.moveCall({
-    target: target("market_oracle", "update_block_scholes_prices"),
-    arguments: [
-      tx.object(params.oracleId),
-      tx.object(params.protocolConfigId),
-      tx.object(params.pythSourceId),
-      tx.object(params.oracleCapId),
-      tx.pure.u64(params.spot),
-      tx.pure.u64(params.forward),
-      tx.pure.u64(nextSourceTimestampMs()),
-      tx.object(CLOCK_ID),
-    ],
-  });
-
-  const rho = tx.moveCall({
-    target: target("i64", "from_parts"),
-    arguments: [tx.pure.u64(params.svi.rho), tx.pure.bool(params.svi.rhoNegative)],
-  });
-  const m = tx.moveCall({
-    target: target("i64", "from_parts"),
-    arguments: [tx.pure.u64(params.svi.m), tx.pure.bool(params.svi.mNegative)],
-  });
-  const sviParams = tx.moveCall({
-    target: target("market_oracle", "new_svi_params"),
-    arguments: [
-      tx.pure.u64(params.svi.a),
-      tx.pure.u64(params.svi.b),
-      rho,
-      m,
-      tx.pure.u64(params.svi.sigma),
-    ],
-  });
-  tx.moveCall({
-    target: target("market_oracle", "update_svi"),
-    arguments: [
-      tx.object(params.oracleId),
-      tx.object(params.protocolConfigId),
-      tx.object(params.oracleCapId),
-      sviParams,
-      tx.pure.u64(nextSourceTimestampMs()),
-      tx.object(CLOCK_ID),
-    ],
-  });
-
-  const { lower, higher } = binaryRangeBounds(params.strike, params.isUp);
-  tx.moveCall({
-    target: target("expiry_market", "mint"),
-    arguments: [
-      tx.object(params.expiryMarketId),
-      tx.object(params.managerId),
-      tx.object(params.protocolConfigId),
-      tx.object(params.oracleId),
-      tx.object(params.pythSourceId),
-      tx.pure.u64(lower),
-      tx.pure.u64(higher),
-      tx.pure.u64(params.quantity),
-      tx.pure.u64(LEVERAGE_ONE_X),
-      tx.object(CLOCK_ID),
-    ],
-  });
-
+  addOracleRefresh(tx, params);
+  addRedeem(tx, params);
   return tx;
 }
 
 export async function executeAndWait(
   tx: Transaction,
   label = "transaction",
-  gasBudget = 500_000_000n
+  gasBudget = DEFAULT_GAS_BUDGET
 ): Promise<any> {
   tx.setSender(address);
   tx.setGasBudget(gasBudget);
@@ -518,14 +508,17 @@ export async function executeAndWait(
 const EXECUTE_MAX_ATTEMPTS = 5;
 const EXECUTE_RETRY_DELAY_MS = 1000;
 
-export async function execute(buildTx: Transaction | (() => Transaction), label = "transaction"): Promise<GasUsage> {
+export async function execute(
+  buildTx: Transaction | (() => Transaction),
+  label = "transaction",
+): Promise<ExecutionReceipt> {
   let lastError: unknown;
   for (let attempt = 0; attempt < EXECUTE_MAX_ATTEMPTS; attempt++) {
     try {
       // Build a fresh transaction on each attempt so object versions are re-resolved.
       const tx = typeof buildTx === "function" ? buildTx() : buildTx;
       tx.setSender(address);
-      tx.setGasBudget(500_000_000n);
+      tx.setGasBudget(DEFAULT_GAS_BUDGET);
 
       const raw: any = await client.signAndExecuteTransaction({
         transaction: tx,
@@ -539,7 +532,13 @@ export async function execute(buildTx: Transaction | (() => Transaction), label 
       }
 
       const settled = await getTransactionBlockWithRetry(raw.digest);
-      return gasSummaryFromEffects(settled.effects ?? raw.effects);
+      return {
+        digest: raw.digest,
+        gas: gasSummaryFromEffects(settled.effects ?? raw.effects),
+        events: settled.events ?? raw.events ?? [],
+        objectChanges: settled.objectChanges ?? raw.objectChanges ?? [],
+        effects: settled.effects ?? raw.effects,
+      };
     } catch (error) {
       lastError = error;
       const msg = String(error);

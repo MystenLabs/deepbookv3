@@ -9,14 +9,14 @@
 module deepbook_predict::predict_manager;
 
 use deepbook::balance_manager::{Self, BalanceManager, DepositCap};
-use deepbook_predict::builder_code::{Self, BuilderCode};
+use deepbook_predict::{account_events, builder_code::{Self, BuilderCode}};
 use dusdc::dusdc::DUSDC;
-use sui::{coin::Coin, derived_object, event, table::{Self, Table}};
+use sui::{coin::Coin, derived_object, table::{Self, Table}};
 
 const EInsufficientPosition: u64 = 0;
 const ENotOwner: u64 = 1;
-const EExpirySummaryHasOpenPositions: u64 = 4;
-const EPositionAlreadyExists: u64 = 5;
+const EExpirySummaryHasOpenPositions: u64 = 2;
+const EPositionAlreadyExists: u64 = 3;
 
 /// The key for deriving predict manager. u64 is optional for
 /// supporting multiple managers per address. Defaults to 0 in v1.
@@ -60,13 +60,6 @@ public struct ExpiryTradingSummary has store {
     cash_paid_to_expiry: u64,
     /// DUSDC received from the expiry market into this manager.
     cash_received_from_expiry: u64,
-}
-
-/// Emitted when a manager owner changes sticky builder-code attribution.
-public struct BuilderCodeSet has copy, drop, store {
-    predict_manager_id: ID,
-    owner: address,
-    builder_code_id: Option<ID>,
 }
 
 // === Public Functions ===
@@ -166,22 +159,18 @@ public fun set_builder_code(
     self.assert_owner(ctx);
     let builder_code_id = builder_code::id(builder_code);
     self.builder_code_id = option::some(builder_code_id);
-    event::emit(BuilderCodeSet {
-        predict_manager_id: self.id(),
-        owner: self.owner(),
-        builder_code_id: option::some(builder_code_id),
-    });
+    account_events::emit_builder_code_set(
+        self.id(),
+        self.owner(),
+        option::some(builder_code_id),
+    );
 }
 
 /// Clear sticky builder-code attribution for future trades.
 public fun unset_builder_code(self: &mut PredictManager, ctx: &TxContext) {
     self.assert_owner(ctx);
     self.builder_code_id = option::none();
-    event::emit(BuilderCodeSet {
-        predict_manager_id: self.id(),
-        owner: self.owner(),
-        builder_code_id: option::none(),
-    });
+    account_events::emit_builder_code_set(self.id(), self.owner(), option::none());
 }
 
 // === Public-Package Functions ===
@@ -192,7 +181,7 @@ public(package) fun new(registry_uid: &mut UID, ctx: &mut TxContext): PredictMan
     let mut balance_manager = balance_manager::new(ctx);
     let deposit_cap = balance_manager.mint_deposit_cap(ctx);
 
-    PredictManager {
+    let manager = PredictManager {
         id,
         balance_manager,
         deposit_cap,
@@ -202,7 +191,9 @@ public(package) fun new(registry_uid: &mut UID, ctx: &mut TxContext): PredictMan
         active_stake: 0,
         inactive_stake: 0,
         stake_epoch: ctx.epoch(),
-    }
+    };
+    account_events::emit_predict_manager_created(manager.id(), manager.owner());
+    manager
 }
 
 /// Deposit protocol payouts without requiring the manager owner as sender.

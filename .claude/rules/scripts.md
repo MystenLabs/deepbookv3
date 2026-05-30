@@ -19,8 +19,9 @@ paths:
 
 - Run script: `pnpm tsx transactions/<script>.ts`
 - With gas object: `GAS_OBJECT=0x... pnpm tsx transactions/<script>.ts`
-- Predict simulation setup smoke test: `cd packages/predict/simulations && bash run.sh --setup --skip-analysis`
-- Predict simulation end-to-end smoke test: `cd packages/predict/simulations && SIM_MAX_ROWS=1 bash run.sh --skip-analysis`
+- Predict simulation shell syntax check: `bash -n packages/predict/simulations/run.sh`
+- Predict simulation end-to-end smoke test: `cd packages/predict/simulations && bash run.sh --sim_max_rows=1`
+- Predict simulation Python-only analysis run: `cd packages/predict/simulations && bash run.sh --python-only`
 
 ## User Preferences
 
@@ -56,9 +57,10 @@ const res = await signAndExecute(tx, "testnet");
 
 ### Verify Predict Simulation Changes End to End
 If you change files under `packages/predict/simulations/**` or change Move entrypoints used by the
-predict benchmark harness, do not stop at Move unit tests. Run at least the local setup smoke test,
-and if execution paths may be affected, also run a small end-to-end sim like
-`SIM_MAX_ROWS=1 bash run.sh --skip-analysis`.
+predict benchmark harness, do not stop at Move unit tests. Run static checks first
+(`bash -n`, Python compile, TypeScript compile). If execution paths may be affected
+and the user has not asked you to avoid running simulations, also run a small
+end-to-end sim like `bash run.sh --sim_max_rows=1`.
 
 ### Keep Predict Simulation Calls in Sync with Move Entrypoints
 When a Move entrypoint used by the predict simulation changes its generic parameters or signature,

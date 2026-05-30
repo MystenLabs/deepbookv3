@@ -47,7 +47,8 @@ cd "${SIM_DIR}"
 npm install
 cd /workspace/repo
 
-# Run the full localnet simulation (setup + sim, skip python analysis).
+# Run the localnet benchmark flow. The benchmark service passes SIM_MAX_ROWS
+# and optionally SCENARIO_PATH through the job environment.
 bash "${SIM_DIR}/run.sh" --skip-analysis
 
 # Find results.
