@@ -2005,6 +2005,7 @@ def empty_liquidation_observability() -> dict[str, Any]:
     return {
         "liquidatable_count": 0,
         "liquidatable_value": 0,
+        "leveraged_floor_value": 0,
     }
 
 
@@ -2024,11 +2025,13 @@ def analytics_liquidation_observability(
         curve = build_valuation_curve(model)
 
     liquidatable_floor_by_ref: dict[str, int] = {}
+    total_leveraged_floor = 0
     for (lower, higher), orders in analytics["orders_by_range"].items():
         lower_probability, upper_probability = directional_probability_bounds(curve, lower, higher)
         exact_probability: int | None = None
         for order in orders:
             floor_amount = analytics_order_floor_amount(order, time_ctx)
+            total_leveraged_floor += floor_amount
             threshold_value = liquidation_threshold_value(floor_amount)
             upper_gross_value = deepbook_mul(upper_probability, order["quantity"])
             if upper_gross_value <= threshold_value:
@@ -2048,6 +2051,7 @@ def analytics_liquidation_observability(
     return {
         "liquidatable_count": len(liquidatable_floor_by_ref),
         "liquidatable_value": total_liquidatable_value,
+        "leveraged_floor_value": total_leveraged_floor,
     }
 
 
@@ -2173,12 +2177,14 @@ def build_derived_record(
     liquidation_observability: dict[str, Any] | None = None
     liquidatable_count: int | None = None
     liquidatable_value: int | None = None
+    leveraged_floor_value: int | None = None
     borrow_fee: int | None = None
 
     if sampled_global:
         liquidation_observability = analytics_liquidation_observability(model, analytics, curve, time_ctx)
         liquidatable_count = liquidation_observability["liquidatable_count"]
         liquidatable_value = liquidation_observability["liquidatable_value"]
+        leveraged_floor_value = liquidation_observability["leveraged_floor_value"]
         borrow_fee = analytics_crystallized_borrow_fee(analytics, time_ctx)
     liquidated_this_step = sum(1 for update in updates if update["type"] == "order_liquidated")
     premium = step_premium(updates)
@@ -2269,6 +2275,9 @@ def build_derived_record(
     liquidatable_value_over_liability = (
         None if liquidatable_value is None or liability is None else ratio_scaled(liquidatable_value, liability)
     )
+    liquidatable_value_over_allocated = (
+        None if liquidatable_value is None else ratio_scaled(liquidatable_value, allocated_capital)
+    )
     step_trading_fee_over_allocated = ratio_scaled(trading_fee, allocated_capital)
     step_liquidation_gap_over_allocated = ratio_scaled(liquidation_gap, allocated_capital)
     step_net_liquidation_over_allocated = signed_ratio_scaled(liquidation_surplus - liquidation_gap, allocated_capital)
@@ -2305,6 +2314,7 @@ def build_derived_record(
             "active_count": str(active_count),
             "liquidatable_count": None if liquidatable_count is None else str(liquidatable_count),
             "liquidatable_value": None if liquidatable_value is None else str(liquidatable_value),
+            "leveraged_floor_value": None if leveraged_floor_value is None else str(leveraged_floor_value),
             "liquidated_count": str(liquidated_this_step),
             "liquidated_value": str(liquidated_floor_value),
             "interval_liquidated_count": None if interval_liquidated_count is None else str(interval_liquidated_count),
@@ -2361,6 +2371,9 @@ def build_derived_record(
             "liquidatable_value_over_liability": None
             if liquidatable_value_over_liability is None
             else str(liquidatable_value_over_liability),
+            "liquidatable_value_over_allocated": None
+            if liquidatable_value_over_allocated is None
+            else str(liquidatable_value_over_allocated),
             "step_trading_fee_over_allocated": None
             if step_trading_fee_over_allocated is None
             else str(step_trading_fee_over_allocated),

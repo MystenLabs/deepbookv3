@@ -323,7 +323,7 @@ fun raw_bernoulli_fee_rate(config: &PricingConfig, probability: u64): u64 {
 /// `expiry_fee_window_ms` protocol window, rising linearly to the per-asset
 /// `max_multiplier` at expiry. `time_to_expiry_ms` is the live remaining time
 /// (caller guarantees `now < expiry`); `max_multiplier == 1x` disables the ramp.
-fun expiry_fee_multiplier(max_multiplier: u64, time_to_expiry_ms: u64): u64 {
+public(package) fun expiry_fee_multiplier(max_multiplier: u64, time_to_expiry_ms: u64): u64 {
     let window_ms = constants::expiry_fee_window_ms!();
     // Outside the window the fee is unscaled.
     if (time_to_expiry_ms >= window_ms) return constants::float_scaling!();
@@ -439,11 +439,6 @@ fun snap_to_tick(strike: u64, grid_min: u64, grid_tick: u64): u64 {
 }
 
 // === Test-Only Functions ===
-
-#[test_only]
-public fun expiry_fee_multiplier_for_testing(max_multiplier: u64, time_to_expiry_ms: u64): u64 {
-    expiry_fee_multiplier(max_multiplier, time_to_expiry_ms)
-}
 
 /// Construct a `CurvePoint` directly for tests that need to drive `live_value`
 /// without a full pricing/oracle fixture. Production builds points only inside
