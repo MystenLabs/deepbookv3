@@ -53,7 +53,10 @@ can be iterated quickly inside the latest run folder.
 The gas benchmark Docker entrypoint uses an internal compatibility mode to run
 localnet only and write the legacy `artifacts/results.json` consumed by the
 benchmark service. That CI path may read `SCENARIO_PATH` and `SIM_MAX_ROWS` from
-the job environment; it is not a manual simulation interface.
+the job environment. `SCENARIO_PATH` is treated as source market data in the
+same shape as `data/scenario_dataset.csv`; the runner still generates a
+temporary executable scenario before replay. This is not a manual simulation
+interface.
 
 ## File Map
 

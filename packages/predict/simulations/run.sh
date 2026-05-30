@@ -130,7 +130,17 @@ trap early_cleanup EXIT
 generate_scenario() {
   local mode="$1"
   local out="$2"
-  (cd "$SCRIPT_DIR" && python3 data/generate_scenario.py --mode "$mode" --config "$SCENARIO_CONFIG" --out "$out")
+  local source="${3:-}"
+  local args=(
+    data/generate_scenario.py
+    --mode "$mode"
+    --config "$SCENARIO_CONFIG"
+    --out "$out"
+  )
+  if [ -n "$source" ]; then
+    args+=(--source "$source")
+  fi
+  (cd "$SCRIPT_DIR" && python3 "${args[@]}")
 }
 
 run_long_python_replay() {
@@ -453,17 +463,17 @@ run_sim() {
   mkdir -p "$INSTANCE_DIR/artifacts"
 
   if [ -n "${SCENARIO_PATH:-}" ]; then
-    echo "==> Using scenario from SCENARIO_PATH..."
+    echo "==> Generating normal localnet/Python scenario from SCENARIO_PATH..."
     if [ ! -f "$SCENARIO_PATH" ]; then
       echo "ERROR: SCENARIO_PATH does not exist: $SCENARIO_PATH"
       exit 1
     fi
-    cp "$SCENARIO_PATH" "$INSTANCE_DIR/artifacts/normal_scenario.csv"
+    generate_scenario normal "$NORMAL_SCENARIO" "$SCENARIO_PATH"
   else
     echo "==> Generating normal localnet/Python scenario..."
     generate_scenario normal "$NORMAL_SCENARIO"
-    cp "$NORMAL_SCENARIO" "$INSTANCE_DIR/artifacts/normal_scenario.csv"
   fi
+  cp "$NORMAL_SCENARIO" "$INSTANCE_DIR/artifacts/normal_scenario.csv"
 
   if [ -n "$RUN_MAX_ROWS" ]; then
     set -- "$@" --max-rows "$RUN_MAX_ROWS"
