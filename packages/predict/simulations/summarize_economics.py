@@ -91,7 +91,11 @@ def update_totals(records: list[dict[str, Any]]) -> dict[str, int]:
                 settled_payout = int(update["settled_payout_amount"])
                 totals["redeem_payout"] += settled_payout
                 totals["terminal_settled_payout"] += settled_payout
+                totals["terminal_trading_loss_eligible_rebate"] += int(
+                    update.get("trading_loss_eligible_rebate", "0")
+                )
                 totals["terminal_trading_loss_rebate"] += int(update["trading_loss_rebate"])
+                totals["terminal_trading_loss_rebate_to_lp"] += int(update.get("trading_loss_rebate_to_lp", "0"))
                 totals["terminal_returned_lp_cash"] += int(update["returned_lp_cash"])
                 totals["terminal_fee_surplus"] += int(update["fee_surplus"])
                 totals["terminal_fee_surplus_to_lp"] += int(update["fee_surplus_to_lp"])

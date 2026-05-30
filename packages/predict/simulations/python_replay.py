@@ -36,6 +36,9 @@ ORACLE_REFRESH_FIELDS = (
     "sigma",
     "risk_free_rate",
 )
+# Lightweight mirror of Move pricing defaults in config_constants.move. Keep
+# these in sync when pricing config defaults change; this harness intentionally
+# does not parse Move source into Python config.
 BASE_FEE = 20_000_000
 MIN_FEE = 5_000_000
 MIN_ASK_PRICE = 10_000_000
@@ -58,6 +61,7 @@ LP_FEE_SHARE = 600_000_000
 PROTOCOL_FEE_SHARE = 200_000_000
 INSURANCE_FEE_SHARE = 200_000_000
 TRADING_LOSS_REBATE_RATE = 500_000_000
+TERMINAL_REBATE_FRACTION = 0
 EXPIRY_FEE_WINDOW_MS = 0
 EXPIRY_FEE_MAX_MULTIPLIER = FLOAT_SCALING
 
@@ -145,6 +149,7 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
     global PROTOCOL_FEE_SHARE
     global INSURANCE_FEE_SHARE
     global TRADING_LOSS_REBATE_RATE
+    global TERMINAL_REBATE_FRACTION
     global EXPIRY_FEE_WINDOW_MS
     global EXPIRY_FEE_MAX_MULTIPLIER
     global LEVERAGE_FLOOR_WINDOW_MS
@@ -188,6 +193,7 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
         "trading_loss_rebate_rate",
         TRADING_LOSS_REBATE_RATE,
     )
+    TERMINAL_REBATE_FRACTION = FLOAT_SCALING if long_run else 0
     EXPIRY_FEE_WINDOW_MS = _config_int(config, "protocol", "expiry_fee_window_ms", EXPIRY_FEE_WINDOW_MS)
     EXPIRY_FEE_MAX_MULTIPLIER = _config_int(
         config,
@@ -1709,9 +1715,12 @@ def terminal_closeout_update(
 
     trading_loss = max(0, manager_summary["cash_paid_to_expiry"] - manager_summary["cash_received_from_expiry"])
     max_rebate = deepbook_mul(manager_summary["trading_fee_paid"], TRADING_LOSS_REBATE_RATE)
-    trading_loss_rebate = min(trading_loss, max_rebate, state["expiry_fee_balance"])
+    eligible_rebate = min(trading_loss, max_rebate, state["expiry_fee_balance"])
+    trading_loss_rebate = deepbook_mul(eligible_rebate, TERMINAL_REBATE_FRACTION)
+    trading_loss_rebate_to_lp = eligible_rebate - trading_loss_rebate
     state["manager_balance"] += trading_loss_rebate
-    state["expiry_fee_balance"] -= trading_loss_rebate
+    state["expiry_fee_balance"] -= eligible_rebate
+    state["expiry_lp_cash"] += trading_loss_rebate_to_lp
 
     fee_surplus = state["expiry_fee_balance"]
     protocol_fee_surplus = deepbook_mul(fee_surplus, PROTOCOL_FEE_SHARE)
@@ -1746,7 +1755,10 @@ def terminal_closeout_update(
         "cash_received_from_expiry": str(manager_summary["cash_received_from_expiry"]),
         "trading_fee_paid": str(manager_summary["trading_fee_paid"]),
         "trading_loss_before_rebate": str(trading_loss),
+        "trading_loss_eligible_rebate": str(eligible_rebate),
+        "trading_loss_rebate_fraction": str(TERMINAL_REBATE_FRACTION),
         "trading_loss_rebate": str(trading_loss_rebate),
+        "trading_loss_rebate_to_lp": str(trading_loss_rebate_to_lp),
         "returned_lp_cash": str(returned_lp_cash),
         "fee_surplus": str(fee_surplus),
         "fee_surplus_to_lp": str(lp_fee_surplus),

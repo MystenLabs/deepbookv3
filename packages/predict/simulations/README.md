@@ -82,6 +82,9 @@ interface.
 - `src/runtime.ts`: Sui transaction builders and execution helpers.
 - `src/shared.ts`: CSV parsing, shared schemas, paths, and JSON helpers.
 - `python_replay.py`: Python economic mirror and derived metric generator.
+  Small pricing defaults such as base fee, min fee, and ask bounds are a manual
+  mirror of Move defaults inside this file rather than generated from Move
+  source.
 - `sim_artifacts.py`: shared JSON, unit-conversion, and summary helpers.
 - `write_benchmark_results.py`: CI helper that converts `local_trace.json` into
   the legacy gas benchmark `results.json`.
@@ -229,9 +232,13 @@ and tracked state deltas.
 The long Python replay intentionally extends that validated live mirror with
 features the localnet runner cannot model practically: exact replay timestamps,
 real expiry/settlement inputs from `data/scenario_config.json`, exact-time
-fee-ramp economics, and direct terminal closeout. Use long-run outputs for
-tuning with this boundary in mind: parity validates the shared live transaction
-engine; Python-specific assertions guard the extra terminal analysis layer.
+fee-ramp economics, and direct terminal closeout. The parity path assumes the
+localnet manager has no active stake and therefore no terminal trading-loss
+rebate. The long Python closeout intentionally applies the full eligible
+trading-loss rebate to the manager as a worst-case vault-risk assumption. Use
+long-run outputs for tuning with this boundary in mind: parity validates the
+shared live transaction engine; Python-specific assertions guard the extra
+terminal analysis layer.
 
 Read long-run outputs in two layers:
 
@@ -274,8 +281,8 @@ Important fields:
   explicit generated `liquidate` transaction.
 - `liquidation.mint_redeem_required_manual_topup_share`: same estimate using
   only mint/redeem passive flows.
-`scan_active_count` is sampled before that transaction's liquidation pass, so
-`scan_coverage` uses the same denominator the scanner saw.
+- `scan_active_count` is sampled before that transaction's liquidation pass, so
+  `scan_coverage` uses the same denominator the scanner saw.
 - `risk.allocated_capital`: current capital allocated from the vault into the
   expiry.
 - `risk.position_liability_over_allocated`: live liability divided by allocated
@@ -306,6 +313,8 @@ Important fields:
   Localnet does not run admin setters for every mirrored protocol field; fields
   such as liquidation budgets, fee shares, LTV, and floor premium should remain
   equal to Move defaults unless the localnet setup is intentionally extended.
+  Small fixed pricing defaults are intentionally mirrored manually in
+  `python_replay.py` to keep the harness lightweight.
 - Keep raw long-run data temporary by default. Use
   `bash run.sh --python-only --keep-derived` only when iterating on charts or
   inspecting raw records.
