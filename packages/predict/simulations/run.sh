@@ -481,7 +481,7 @@ run_sim() {
   if [ "$SKIP_ANALYSIS" -eq 1 ]; then
     set -- "$@" --skip-python
   fi
-  npx tsx src/sim.ts "$@"
+  SCENARIO_PATH="$NORMAL_SCENARIO" npx tsx src/sim.ts "$@"
 }
 
 echo "==> Running simulation (setup + execute)..."
