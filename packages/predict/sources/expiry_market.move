@@ -278,57 +278,10 @@ public fun liquidate(
         )
 }
 
-/// Resolve a manager's aggregate expiry trading-loss rebate after all its
-/// positions close. Permissionless by design: any caller may settle this for a
-/// manager — the rebate is credited to the manager via its deposit cap and any
-/// un-granted reserve becomes expiry NAV. The rebate share uses the manager's
-/// active staking.
-public fun claim_trading_loss_rebate(
-    market: &mut ExpiryMarket,
-    manager: &mut PredictManager,
-    config: &ProtocolConfig,
-    market_oracle: &MarketOracle,
-    ctx: &mut TxContext,
-) {
-    market.assert_version_allowed();
-    config.assert_not_valuation_in_progress();
-    market.materialize_settled_liability(market_oracle);
-
-    let (trading_fees_paid, trading_loss) = manager.resolve_expiry_summary(market.id());
-    if (trading_fees_paid == 0 && trading_loss == 0) {
-        return
-    };
-
-    market.resolve_trading_fee_basis(trading_fees_paid);
-    let max_rebate = math::mul(trading_fees_paid, market.trading_loss_rebate_rate);
-    let eligible_rebate = trading_loss.min(max_rebate);
-
-    // Active staking decides the manager's share of the eligible rebate. Any
-    // un-granted reserve remains in cash after its rebate basis is resolved.
-    manager.update_stake(ctx);
-    let rebate_amount = config
-        .stake_config()
-        .rebate_amount(eligible_rebate, manager.active_stake());
-
-    if (rebate_amount > 0) {
-        let payout = market.dispense_cash(rebate_amount);
-        manager.deposit_permissionless(payout.into_coin(ctx), ctx);
-    };
-    market.assert_cash_backing();
-
-    claim_events::emit_trading_loss_rebate_claimed(
-        market.id(),
-        manager.id(),
-        trading_fees_paid,
-        trading_loss,
-        rebate_amount,
-    );
-}
-
 /// Cache terminal liability if needed, then destroy live exposure indexes.
 ///
-/// This is cap-gated because index destruction returns storage rebates. Surplus
-/// cash remains in the expiry until a pool sweep moves it.
+/// This is cap-gated because index destruction returns storage rebates. Settled
+/// pool cash remains in the expiry until PLP rebalancing receives it.
 public fun compact_storage(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
@@ -375,13 +328,12 @@ public(package) fun assert_version_allowed(market: &ExpiryMarket) {
     );
 }
 
-/// Create and share a funded expiry market for one market oracle.
+/// Create and share a zero-cash expiry market for one market oracle.
 ///
 /// The market snapshots the Pyth feed ID, initializes strike exposure state, and
-/// takes custody of pool-provided funding as expiry cash.
+/// starts with zero expiry cash. Pool funding only enters through PLP rebalancing.
 public(package) fun create_and_share(
     config: &ProtocolConfig,
-    funding: Balance<DUSDC>,
     allowed_versions: VecSet<u64>,
     market_oracle_id: ID,
     pyth_lazer_feed_id: u32,
@@ -398,7 +350,7 @@ public(package) fun create_and_share(
         pyth_lazer_feed_id,
         expiry,
         trading_loss_rebate_rate: config.fee_config().trading_loss_rebate_rate(),
-        cash_balance: funding,
+        cash_balance: balance::zero(),
         unresolved_trading_fees_paid: 0,
         strike_exposure: strike_exposure::new(
             expiry_market_id,
@@ -437,8 +389,60 @@ public(package) fun materialize_settled_liability(
     market.strike_exposure.materialize_settled_liability(settlement)
 }
 
-/// Release settled surplus derived from materialized settlement liability and rebate reserve.
-public(package) fun release_settled_surplus(
+/// Resolve one manager's trading-loss rebate and return unclaimed rebate reserve.
+public(package) fun claim_trading_loss_rebate(
+    market: &mut ExpiryMarket,
+    manager: &mut PredictManager,
+    config: &ProtocolConfig,
+    market_oracle: &MarketOracle,
+    ctx: &mut TxContext,
+): Balance<DUSDC> {
+    market.assert_version_allowed();
+    market.materialize_settled_liability(market_oracle);
+
+    let (trading_fees_paid, gross_profit) = manager.resolve_expiry_summary(market.id());
+    if (trading_fees_paid == 0 && gross_profit == 0) {
+        return balance::zero()
+    };
+
+    market.resolve_trading_fee_basis(trading_fees_paid);
+    let resolved_rebate_reserve = math::mul(
+        trading_fees_paid,
+        market.trading_loss_rebate_rate,
+    );
+    let eligible_rebate = if (resolved_rebate_reserve > gross_profit) {
+        resolved_rebate_reserve - gross_profit
+    } else {
+        0
+    };
+
+    // Active staking decides the manager's share of the eligible rebate.
+    manager.update_stake(ctx);
+    let rebate_amount = config
+        .stake_config()
+        .rebate_amount(eligible_rebate, manager.active_stake());
+
+    if (rebate_amount > 0) {
+        let payout = market.dispense_cash(rebate_amount);
+        manager.deposit_permissionless(payout.into_coin(ctx), ctx);
+    };
+    let residual_rebate_reserve = resolved_rebate_reserve - rebate_amount;
+    let residual_rebate_cash = market.dispense_cash(residual_rebate_reserve);
+    market.assert_cash_backing();
+
+    claim_events::emit_trading_loss_rebate_claimed(
+        market.id(),
+        manager.id(),
+        trading_fees_paid,
+        gross_profit,
+        eligible_rebate,
+        rebate_amount,
+    );
+    residual_rebate_cash
+}
+
+/// Release settled pool cash above terminal payout liability and rebate reserve.
+public(package) fun release_settled_pool_cash(
     market: &mut ExpiryMarket,
     market_oracle: &MarketOracle,
 ): Balance<DUSDC> {
@@ -449,10 +453,7 @@ public(package) fun release_settled_surplus(
     assert!(market.cash_balance.value() >= reserved_cash, EInsufficientCash);
 
     let returned_cash_amount = market.cash_balance.value() - reserved_cash;
-    let returned_cash = market.cash_balance.split(returned_cash_amount);
-    market.assert_cash_backing();
-
-    returned_cash
+    market.release_pool_cash(returned_cash_amount)
 }
 
 /// Receive pool-provided cash without interpreting pool allocation policy.
@@ -720,11 +721,10 @@ fun settle_mint_payment(
     let mut payment = manager.withdraw(withdraw_amount, ctx).into_balance();
     let builder_fee_payment = payment.split(builder_fee_amount);
     send_builder_fee(builder_code_id, builder_fee_payment);
-    let payment_amount = payment.value();
     let fee_payment = payment.split(fee_amount);
     market.collect_trade_fee(manager, fee_payment);
     market.cash_balance.join(payment);
-    manager.record_cash_paid_to_expiry(market.id(), payment_amount);
+    manager.record_gross_paid_to_expiry(market.id(), user_contribution);
 
     market.assert_cash_backing();
     builder_fee_amount
@@ -755,7 +755,7 @@ fun settle_live_redeem_payment(
     send_builder_fee(builder_code_id, builder_fee);
 
     market.assert_cash_backing();
-    deposit_live_payout(manager, market, payout, ctx);
+    deposit_live_payout(manager, market, payout, redeem_amount, ctx);
     builder_fee_amount
 }
 
@@ -787,9 +787,10 @@ fun deposit_live_payout(
     manager: &mut PredictManager,
     market: &ExpiryMarket,
     payout: Balance<DUSDC>,
+    gross_received_amount: u64,
     ctx: &mut TxContext,
 ) {
-    manager.record_cash_received_from_expiry(market.id(), payout.value());
+    manager.record_gross_received_from_expiry(market.id(), gross_received_amount);
     manager.deposit(payout.into_coin(ctx), ctx);
 }
 
@@ -799,7 +800,7 @@ fun deposit_permissionless_payout(
     payout: Balance<DUSDC>,
     ctx: &mut TxContext,
 ) {
-    manager.record_cash_received_from_expiry(market.id(), payout.value());
+    manager.record_gross_received_from_expiry(market.id(), payout.value());
     manager.deposit_permissionless(payout.into_coin(ctx), ctx);
 }
 

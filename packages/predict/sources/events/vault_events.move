@@ -4,8 +4,8 @@
 /// Pool-vault lifecycle events for Predict.
 ///
 /// These are low-frequency relative to trades, so they are rich: supply and
-/// withdraw carry the pool value used to price shares, and settled-expiry
-/// sweeps carry the pool-owned expiry cash-flow movements.
+/// withdraw carry the pool value used to price shares, and expiry cash receipts
+/// carry the pool-owned expiry cash-flow movements.
 module deepbook_predict::vault_events;
 
 use sui::event;
@@ -34,16 +34,6 @@ public struct WithdrawExecuted has copy, drop, store {
     idle_balance_after: u64,
 }
 
-/// Emitted when the pool funds a newly created expiry.
-public struct ExpiryCashFunded has copy, drop, store {
-    pool_vault_id: ID,
-    expiry_market_id: ID,
-    funding: u64,
-    idle_balance_after: u64,
-    sent_to_expiry_after: u64,
-    received_from_expiry_after: u64,
-}
-
 /// Emitted when live expiry cash is rebalanced against current backing needs.
 public struct ExpiryCashRebalanced has copy, drop, store {
     pool_vault_id: ID,
@@ -65,13 +55,12 @@ public struct ExpiryMaxFundingUpdated has copy, drop, store {
     net_funding: u64,
 }
 
-/// Emitted when a settled expiry is deactivated or returns surplus cash.
-public struct ExpirySurplusSwept has copy, drop, store {
+/// Emitted when an expiry returns cash to the pool.
+public struct ExpiryCashReceived has copy, drop, store {
     pool_vault_id: ID,
     expiry_market_id: ID,
     settlement_price: u64,
-    /// Surplus cash returned to the pool this sweep.
-    returned_cash: u64,
+    amount: u64,
     idle_balance_after: u64,
     sent_to_expiry_after: u64,
     received_from_expiry_after: u64,
@@ -125,24 +114,6 @@ public(package) fun emit_withdraw_executed(
     });
 }
 
-public(package) fun emit_expiry_cash_funded(
-    pool_vault_id: ID,
-    expiry_market_id: ID,
-    funding: u64,
-    idle_balance_after: u64,
-    sent_to_expiry_after: u64,
-    received_from_expiry_after: u64,
-) {
-    event::emit(ExpiryCashFunded {
-        pool_vault_id,
-        expiry_market_id,
-        funding,
-        idle_balance_after,
-        sent_to_expiry_after,
-        received_from_expiry_after,
-    });
-}
-
 public(package) fun emit_expiry_cash_rebalanced(
     pool_vault_id: ID,
     expiry_market_id: ID,
@@ -181,20 +152,20 @@ public(package) fun emit_expiry_max_funding_updated(
     });
 }
 
-public(package) fun emit_expiry_surplus_swept(
+public(package) fun emit_expiry_cash_received(
     pool_vault_id: ID,
     expiry_market_id: ID,
     settlement_price: u64,
-    returned_cash: u64,
+    amount: u64,
     idle_balance_after: u64,
     sent_to_expiry_after: u64,
     received_from_expiry_after: u64,
 ) {
-    event::emit(ExpirySurplusSwept {
+    event::emit(ExpiryCashReceived {
         pool_vault_id,
         expiry_market_id,
         settlement_price,
-        returned_cash,
+        amount,
         idle_balance_after,
         sent_to_expiry_after,
         received_from_expiry_after,

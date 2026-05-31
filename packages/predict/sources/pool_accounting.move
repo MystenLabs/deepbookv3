@@ -78,6 +78,11 @@ public(package) fun available_expiry_funding(ledger: &Ledger, expiry_market_id: 
     }
 }
 
+/// Abort unless this expiry is registered to the pool.
+public(package) fun assert_registered_expiry(ledger: &Ledger, expiry_market_id: ID) {
+    assert!(ledger.registered_expiries.contains(expiry_market_id), EUnknownRegisteredExpiry);
+}
+
 public(package) fun new(ctx: &mut TxContext): Ledger {
     Ledger {
         active_expiry_markets: vector[],
@@ -87,29 +92,24 @@ public(package) fun new(ctx: &mut TxContext): Ledger {
     }
 }
 
-public(package) fun register_expiry(
-    ledger: &mut Ledger,
-    expiry_market_id: ID,
-    initial_sent_to_expiry: u64,
-) {
+public(package) fun register_expiry(ledger: &mut Ledger, expiry_market_id: ID) {
     assert!(!ledger.registered_expiries.contains(expiry_market_id), ERegisteredExpiryAlreadyExists);
     let max_expiry_funding = config_constants::default_max_expiry_funding!();
-    assert!(initial_sent_to_expiry <= max_expiry_funding, EMaxExpiryFundingExceeded);
     ledger.active_expiry_markets.push_back(expiry_market_id);
     ledger
         .registered_expiries
         .add(
             expiry_market_id,
             RegisteredExpiry {
-                sent_to_expiry: initial_sent_to_expiry,
+                sent_to_expiry: 0,
                 received_from_expiry: 0,
                 max_expiry_funding,
             },
         );
-    ledger.profit_basis_debits = ledger.profit_basis_debits + initial_sent_to_expiry;
 }
 
-public(package) fun deactivate_expiry_if_present(ledger: &mut Ledger, expiry_market_id: ID) {
+/// Remove an expiry from active valuation if present, returning whether it was active.
+public(package) fun deactivate_expiry_if_present(ledger: &mut Ledger, expiry_market_id: ID): bool {
     ledger.assert_registered_expiry(expiry_market_id);
     let mut i = 0;
     let len = ledger.active_expiry_markets.length();
@@ -117,9 +117,10 @@ public(package) fun deactivate_expiry_if_present(ledger: &mut Ledger, expiry_mar
         i = i + 1;
     };
     if (i == len) {
-        return
+        return false
     };
     ledger.active_expiry_markets.swap_remove(i);
+    true
 }
 
 public(package) fun set_max_expiry_funding(
@@ -165,10 +166,6 @@ public(package) fun materialize_profit(ledger: &mut Ledger): u64 {
     let profit = ledger.profit_basis_credits - ledger.profit_basis_debits;
     ledger.profit_basis_debits = ledger.profit_basis_credits;
     profit
-}
-
-fun assert_registered_expiry(ledger: &Ledger, expiry_market_id: ID) {
-    assert!(ledger.registered_expiries.contains(expiry_market_id), EUnknownRegisteredExpiry);
 }
 
 fun expiry_net_funding(ledger: &Ledger, expiry_market_id: ID): u64 {

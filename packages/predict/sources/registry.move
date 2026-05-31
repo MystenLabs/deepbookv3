@@ -18,8 +18,7 @@ use deepbook_predict::{
     plp::PoolVault,
     predict_manager::{Self, PredictManager},
     protocol_config::{Self, ProtocolConfig},
-    pyth_source::{Self, PythSource},
-    vault_events
+    pyth_source::{Self, PythSource}
 };
 use sui::{clock::Clock, table::{Self, Table}, vec_set::{Self, VecSet}};
 
@@ -425,7 +424,8 @@ public fun destroy_market_oracle_cap(cap: MarketOracleCap) {
 /// Create the MarketOracle and ExpiryMarket objects for one future expiry.
 ///
 /// The registry enforces one market per expiry, validates the registered Pyth
-/// source, funds the expiry with initial pool cash, and registers it as active.
+/// source, and registers the expiry as active. Pool funding happens later through
+/// PLP rebalancing.
 public fun create_expiry_market(
     registry: &mut Registry,
     pool_vault: &mut PoolVault,
@@ -446,8 +446,6 @@ public fun create_expiry_market(
     assert!(registry.pyth_source_ids[pyth_lazer_feed_id] == pyth.id(), EFeedIdMismatch);
     assert!(!registry.expiry_market_ids.contains(expiry), EExpiryMarketAlreadyCreated);
     let allowed_versions = registry.allowed_versions;
-    let funding = pool_vault.fund_new_expiry();
-    let funding_amount = funding.value();
     let market_oracle_id = market_oracle::create_and_share(
         pyth,
         config.market_oracle_config(),
@@ -458,7 +456,6 @@ public fun create_expiry_market(
     );
     let expiry_market_id = expiry_market::create_and_share(
         config,
-        funding,
         allowed_versions,
         market_oracle_id,
         pyth_lazer_feed_id,
@@ -467,11 +464,8 @@ public fun create_expiry_market(
         tick_size,
         ctx,
     );
-    pool_vault.register_expiry_market(expiry_market_id, funding_amount);
+    pool_vault.register_expiry_market(expiry_market_id);
     registry.expiry_market_ids.add(expiry, expiry_market_id);
-    let (sent_to_expiry_after, received_from_expiry_after) = pool_vault.expiry_flow_amounts(
-        expiry_market_id,
-    );
 
     config_events::emit_market_created(
         expiry_market_id,
@@ -480,14 +474,6 @@ public fun create_expiry_market(
         expiry,
         min_strike,
         tick_size,
-    );
-    vault_events::emit_expiry_cash_funded(
-        pool_vault.id(),
-        expiry_market_id,
-        funding_amount,
-        pool_vault.idle_balance(),
-        sent_to_expiry_after,
-        received_from_expiry_after,
     );
 
     (expiry_market_id, market_oracle_id)

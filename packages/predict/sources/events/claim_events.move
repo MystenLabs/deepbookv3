@@ -18,7 +18,8 @@ public struct TradingLossRebateClaimed has copy, drop, store {
     expiry_market_id: ID,
     predict_manager_id: ID,
     trading_fees_paid: u64,
-    trading_loss: u64,
+    gross_profit: u64,
+    eligible_rebate: u64,
     rebate_amount: u64,
 }
 
@@ -36,14 +37,16 @@ public(package) fun emit_trading_loss_rebate_claimed(
     expiry_market_id: ID,
     predict_manager_id: ID,
     trading_fees_paid: u64,
-    trading_loss: u64,
+    gross_profit: u64,
+    eligible_rebate: u64,
     rebate_amount: u64,
 ) {
     event::emit(TradingLossRebateClaimed {
         expiry_market_id,
         predict_manager_id,
         trading_fees_paid,
-        trading_loss,
+        gross_profit,
+        eligible_rebate,
         rebate_amount,
     });
 }
