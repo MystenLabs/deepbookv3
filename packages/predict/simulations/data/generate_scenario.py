@@ -93,7 +93,7 @@ class Generator:
         self.lp_amounts: dict[str, int] = {}
         self.withdrawable_lp_refs: list[str] = []
         self.manager_balance = replay.MANAGER_SEED
-        self.vault_idle_balance = replay.VAULT_SEED - replay.INITIAL_EXPIRY_ALLOCATION
+        self.vault_idle_balance = replay.VAULT_SEED - replay.INITIAL_EXPIRY_FUNDING
         self.next_order = 1
         self.next_lp = 1
 
