@@ -339,17 +339,16 @@ fun resolve_expiry_summary_returns_zeros_for_untouched_expiry() {
     let mut manager = create_alice_manager(&mut scenario, registry_id);
     let expiry = FAKE_EXPIRY_ID.to_id();
 
-    let (fees, paid, received) = manager.resolve_expiry_summary(expiry);
+    let (fees, trading_loss) = manager.resolve_expiry_summary(expiry);
     assert_eq!(fees, 0);
-    assert_eq!(paid, 0);
-    assert_eq!(received, 0);
+    assert_eq!(trading_loss, 0);
 
     destroy(manager);
     scenario.end();
 }
 
 #[test]
-fun resolve_expiry_summary_returns_recorded_cash_flows_when_no_open_positions() {
+fun resolve_expiry_summary_returns_fees_and_realized_trading_loss() {
     let (mut scenario, registry_id) = setup();
     let mut manager = create_alice_manager(&mut scenario, registry_id);
     let expiry = FAKE_EXPIRY_ID.to_id();
@@ -358,16 +357,14 @@ fun resolve_expiry_summary_returns_recorded_cash_flows_when_no_open_positions() 
     manager.record_cash_paid_to_expiry(expiry, CASH_PAID);
     manager.record_cash_received_from_expiry(expiry, CASH_RECEIVED);
 
-    let (fees, paid, received) = manager.resolve_expiry_summary(expiry);
+    let (fees, trading_loss) = manager.resolve_expiry_summary(expiry);
     assert_eq!(fees, FEE_AMOUNT);
-    assert_eq!(paid, CASH_PAID);
-    assert_eq!(received, CASH_RECEIVED);
+    assert_eq!(trading_loss, CASH_PAID - CASH_RECEIVED);
 
     // Summary entry has been removed — second call returns zeros.
-    let (fees_again, paid_again, received_again) = manager.resolve_expiry_summary(expiry);
+    let (fees_again, trading_loss_again) = manager.resolve_expiry_summary(expiry);
     assert_eq!(fees_again, 0);
-    assert_eq!(paid_again, 0);
-    assert_eq!(received_again, 0);
+    assert_eq!(trading_loss_again, 0);
 
     destroy(manager);
     scenario.end();
@@ -380,7 +377,7 @@ fun resolve_expiry_summary_with_open_positions_aborts() {
     let expiry = FAKE_EXPIRY_ID.to_id();
 
     manager.add_position(expiry, ORDER_ID_A);
-    let (_, _, _) = manager.resolve_expiry_summary(expiry);
+    let (_, _) = manager.resolve_expiry_summary(expiry);
     abort 999
 }
 

@@ -24,10 +24,8 @@ fun defaults_match_config_constants() {
         config.trading_loss_rebate_rate(),
         config_constants::default_trading_loss_rebate_rate!(),
     );
-    // Defaults must sum to 1.0 because LP share is derived as the complement.
-    assert_eq!(config.lp_fee_share() + config.protocol_reserve_fee_share(), float!());
     assert_eq!(
-        config.lp_fee_share(),
+        float!() - config.protocol_reserve_fee_share(),
         float!() - config_constants::default_protocol_reserve_fee_share!(),
     );
     destroy(config);
@@ -42,7 +40,7 @@ fun set_protocol_reserve_fee_share_updates_protocol_reserve_and_derived_lp() {
     config.set_protocol_reserve_fee_share(THIRTY_PERCENT);
 
     assert_eq!(config.protocol_reserve_fee_share(), THIRTY_PERCENT);
-    assert_eq!(config.lp_fee_share(), SEVENTY_PERCENT);
+    assert_eq!(float!() - config.protocol_reserve_fee_share(), SEVENTY_PERCENT);
     destroy(config);
 }
 
@@ -51,7 +49,7 @@ fun set_protocol_reserve_fee_share_accepts_zero() {
     let mut config = fee_config::new();
     config.set_protocol_reserve_fee_share(0);
     assert_eq!(config.protocol_reserve_fee_share(), 0);
-    assert_eq!(config.lp_fee_share(), float!());
+    assert_eq!(float!() - config.protocol_reserve_fee_share(), float!());
     destroy(config);
 }
 
@@ -60,7 +58,7 @@ fun set_protocol_reserve_fee_share_accepts_full_protocol_reserve() {
     let mut config = fee_config::new();
     config.set_protocol_reserve_fee_share(float!());
     assert_eq!(config.protocol_reserve_fee_share(), float!());
-    assert_eq!(config.lp_fee_share(), 0);
+    assert_eq!(float!() - config.protocol_reserve_fee_share(), 0);
     destroy(config);
 }
 

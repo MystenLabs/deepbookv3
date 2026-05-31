@@ -13,6 +13,8 @@ const LOWER: u64 = 100_000_000_000; // default lower_benefit_power
 const THREE_HUNDRED_K: u64 = 300_000_000_000;
 const UPPER: u64 = 1_100_000_000_000; // default upper_benefit_power
 const TWO_MILLION: u64 = 2_000_000_000_000;
+const FEE_AMOUNT: u64 = 1_000_000_000;
+const ELIGIBLE_REBATE: u64 = 1_000_000_000;
 
 // === Construction and getter ===
 
@@ -87,26 +89,25 @@ fun set_benefit_powers_upper_below_min_aborts() {
 // === benefit curve (default config: lower 100k, upper 1.1M; fee cap 50%, rebate uncapped) ===
 
 #[test]
-fun fee_discount_follows_two_segment_curve() {
+fun fee_amount_after_discount_follows_two_segment_curve() {
     let config = stake_config::new();
-    assert_eq!(config.fee_discount_fraction(0), 0);
-    assert_eq!(config.fee_discount_fraction(TWENTY_K), 50_000_000); // ratio 0.1 -> 5%
-    assert_eq!(config.fee_discount_fraction(LOWER), 250_000_000); // kink, ratio 0.5 -> 25%
-    assert_eq!(config.fee_discount_fraction(THREE_HUNDRED_K), 300_000_000); // ratio 0.6 -> 30%
-    assert_eq!(config.fee_discount_fraction(UPPER), 500_000_000); // ratio 1.0 -> 50% (cap)
-    assert_eq!(config.fee_discount_fraction(TWO_MILLION), 500_000_000); // capped
+    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, 0), 1_000_000_000);
+    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, TWENTY_K), 950_000_000);
+    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, LOWER), 750_000_000);
+    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, THREE_HUNDRED_K), 700_000_000);
+    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, UPPER), 500_000_000);
+    assert_eq!(config.fee_amount_after_discount(FEE_AMOUNT, TWO_MILLION), 500_000_000);
     destroy(config);
 }
 
 #[test]
-fun rebate_follows_two_segment_curve() {
-    // rebate_fraction is the benefit ratio directly (no staking cap).
+fun rebate_amount_follows_two_segment_curve() {
     let config = stake_config::new();
-    assert_eq!(config.rebate_fraction(0), 0);
-    assert_eq!(config.rebate_fraction(TWENTY_K), 100_000_000); // 10%
-    assert_eq!(config.rebate_fraction(LOWER), 500_000_000); // 50%
-    assert_eq!(config.rebate_fraction(THREE_HUNDRED_K), 600_000_000); // 60%
-    assert_eq!(config.rebate_fraction(UPPER), 1_000_000_000); // 100%
-    assert_eq!(config.rebate_fraction(TWO_MILLION), 1_000_000_000); // capped
+    assert_eq!(config.rebate_amount(ELIGIBLE_REBATE, 0), 0);
+    assert_eq!(config.rebate_amount(ELIGIBLE_REBATE, TWENTY_K), 100_000_000);
+    assert_eq!(config.rebate_amount(ELIGIBLE_REBATE, LOWER), 500_000_000);
+    assert_eq!(config.rebate_amount(ELIGIBLE_REBATE, THREE_HUNDRED_K), 600_000_000);
+    assert_eq!(config.rebate_amount(ELIGIBLE_REBATE, UPPER), 1_000_000_000);
+    assert_eq!(config.rebate_amount(ELIGIBLE_REBATE, TWO_MILLION), 1_000_000_000);
     destroy(config);
 }

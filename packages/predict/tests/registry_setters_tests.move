@@ -92,7 +92,6 @@ fun set_protocol_reserve_fee_share_forwards_to_fee_config() {
 
     registry::set_protocol_reserve_fee_share(&mut config, &admin_cap, 300_000_000);
     assert_eq!(fee_config::protocol_reserve_fee_share(config.fee_config()), 300_000_000);
-    assert_eq!(fee_config::lp_fee_share(config.fee_config()), 700_000_000);
 
     destroy(config);
     destroy(admin_cap);
@@ -114,46 +113,26 @@ fun set_template_trading_loss_rebate_rate_forwards_to_fee_config() {
 // === Risk config setters ===
 
 #[test]
-fun set_max_total_exposure_pct_forwards_to_risk_config() {
+fun set_valuation_liquidation_budget_forwards_to_risk_config() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = registry::create_admin_cap_for_testing(ctx);
     let mut config = protocol_config::new_for_testing(ctx);
 
-    registry::set_max_total_exposure_pct(&mut config, &admin_cap, 500_000_000);
-    assert_eq!(risk_config::max_total_exposure_pct(config.risk_config()), 500_000_000);
+    registry::set_valuation_liquidation_budget(&mut config, &admin_cap, 256);
+    assert_eq!(risk_config::valuation_liquidation_budget(config.risk_config()), 256);
 
     destroy(config);
     destroy(admin_cap);
 }
 
 #[test]
-fun set_expiry_allocation_forwards_to_risk_config() {
+fun set_trade_liquidation_budget_forwards_to_risk_config() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = registry::create_admin_cap_for_testing(ctx);
     let mut config = protocol_config::new_for_testing(ctx);
 
-    registry::set_expiry_allocation(&mut config, &admin_cap, 100_000_000_000);
-    assert_eq!(risk_config::expiry_allocation(config.risk_config()), 100_000_000_000);
-
-    destroy(config);
-    destroy(admin_cap);
-}
-
-#[test]
-fun set_resize_setters_forward_to_risk_config() {
-    let ctx = &mut tx_context::dummy();
-    let admin_cap = registry::create_admin_cap_for_testing(ctx);
-    let mut config = protocol_config::new_for_testing(ctx);
-
-    registry::set_grow_utilization_threshold(&mut config, &admin_cap, 900_000_000);
-    registry::set_shrink_utilization_threshold(&mut config, &admin_cap, 200_000_000);
-    registry::set_grow_factor(&mut config, &admin_cap, 3 * float!());
-    registry::set_shrink_factor(&mut config, &admin_cap, 400_000_000);
-
-    assert_eq!(risk_config::grow_utilization_threshold(config.risk_config()), 900_000_000);
-    assert_eq!(risk_config::shrink_utilization_threshold(config.risk_config()), 200_000_000);
-    assert_eq!(risk_config::grow_factor(config.risk_config()), 3 * float!());
-    assert_eq!(risk_config::shrink_factor(config.risk_config()), 400_000_000);
+    registry::set_trade_liquidation_budget(&mut config, &admin_cap, 48);
+    assert_eq!(risk_config::trade_liquidation_budget(config.risk_config()), 48);
 
     destroy(config);
     destroy(admin_cap);
