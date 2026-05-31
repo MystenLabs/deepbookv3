@@ -21,8 +21,8 @@ from python_indexes.strike_payout_tree import StrikePayoutTree
 
 FLOAT_SCALING = 1_000_000_000
 POSITION_LOT_SIZE = 10_000
-ECONOMIC_SCHEMA_VERSION = "predict_economic_v1"
-DERIVED_SCHEMA_VERSION = "predict_derived_v1"
+ECONOMIC_SCHEMA_VERSION = "predict_economic_v2"
+DERIVED_SCHEMA_VERSION = "predict_derived_v2"
 DEFAULT_SCENARIO_CONFIG_PATH = Path(__file__).with_name("data") / "scenario_config.json"
 ORACLE_REFRESH_FIELDS = (
     "spot",
@@ -51,15 +51,13 @@ POS_INF_STRIKE = (1 << 64) - 1
 DUSDC_DECIMALS = 1_000_000
 VAULT_SEED = 500_000 * DUSDC_DECIMALS
 MANAGER_SEED = 500_000 * DUSDC_DECIMALS
-INITIAL_EXPIRY_ALLOCATION = 50_000 * DUSDC_DECIMALS
+INITIAL_EXPIRY_FUNDING = 50_000 * DUSDC_DECIMALS
 INITIAL_TOTAL_PLP_SUPPLY = VAULT_SEED
 TRADE_LIQUIDATION_BUDGET = 24
 VALUATION_LIQUIDATION_BUDGET = 192
 LIQUIDATION_HEAD_SCAN_DIVISOR = 3
 CURVE_SAMPLES = 50
-LP_FEE_SHARE = 600_000_000
-PROTOCOL_FEE_SHARE = 200_000_000
-INSURANCE_FEE_SHARE = 200_000_000
+PROTOCOL_RESERVE_FEE_SHARE = 400_000_000
 TRADING_LOSS_REBATE_RATE = 500_000_000
 TERMINAL_REBATE_FRACTION = 0
 EXPIRY_FEE_WINDOW_MS = 0
@@ -139,15 +137,13 @@ def _capital_int(config: dict[str, Any], mode: str, key: str, default: int) -> i
 def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> None:
     global VAULT_SEED
     global MANAGER_SEED
-    global INITIAL_EXPIRY_ALLOCATION
+    global INITIAL_EXPIRY_FUNDING
     global INITIAL_TOTAL_PLP_SUPPLY
     global TRADE_LIQUIDATION_BUDGET
     global VALUATION_LIQUIDATION_BUDGET
     global LIQUIDATION_HEAD_SCAN_DIVISOR
     global CURVE_SAMPLES
-    global LP_FEE_SHARE
-    global PROTOCOL_FEE_SHARE
-    global INSURANCE_FEE_SHARE
+    global PROTOCOL_RESERVE_FEE_SHARE
     global TRADING_LOSS_REBATE_RATE
     global TERMINAL_REBATE_FRACTION
     global EXPIRY_FEE_WINDOW_MS
@@ -160,14 +156,14 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
     capital_mode = "long" if long_run else "normal"
     VAULT_SEED = _capital_int(config, capital_mode, "vault_seed", VAULT_SEED)
     MANAGER_SEED = _capital_int(config, capital_mode, "manager_seed", MANAGER_SEED)
-    INITIAL_EXPIRY_ALLOCATION = _capital_int(
+    INITIAL_EXPIRY_FUNDING = _capital_int(
         config,
         capital_mode,
-        "initial_expiry_allocation",
-        INITIAL_EXPIRY_ALLOCATION,
+        "initial_expiry_funding",
+        INITIAL_EXPIRY_FUNDING,
     )
-    if INITIAL_EXPIRY_ALLOCATION > VAULT_SEED:
-        raise ValueError(f"{capital_mode} initial_expiry_allocation exceeds vault_seed")
+    if INITIAL_EXPIRY_FUNDING > VAULT_SEED:
+        raise ValueError(f"{capital_mode} initial_expiry_funding exceeds vault_seed")
     INITIAL_TOTAL_PLP_SUPPLY = VAULT_SEED
 
     TRADE_LIQUIDATION_BUDGET = _config_int(config, "protocol", "trade_liquidation_budget", TRADE_LIQUIDATION_BUDGET)
@@ -184,9 +180,12 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
         LIQUIDATION_HEAD_SCAN_DIVISOR,
     )
     CURVE_SAMPLES = _config_int(config, "protocol", "curve_samples", CURVE_SAMPLES)
-    LP_FEE_SHARE = _config_int(config, "protocol", "lp_fee_share", LP_FEE_SHARE)
-    PROTOCOL_FEE_SHARE = _config_int(config, "protocol", "protocol_fee_share", PROTOCOL_FEE_SHARE)
-    INSURANCE_FEE_SHARE = _config_int(config, "protocol", "insurance_fee_share", INSURANCE_FEE_SHARE)
+    PROTOCOL_RESERVE_FEE_SHARE = _config_int(
+        config,
+        "protocol",
+        "protocol_reserve_fee_share",
+        PROTOCOL_RESERVE_FEE_SHARE,
+    )
     TRADING_LOSS_REBATE_RATE = _config_int(
         config,
         "protocol",
@@ -1144,13 +1143,20 @@ def compute_pool_value(
     if position_liability is None:
         position_liability = live_position_liability(model, curve)
     rebate_reserve = deepbook_mul(state["expiry_unresolved_trading_fees"], TRADING_LOSS_REBATE_RATE)
-    if state["expiry_lp_cash"] < position_liability:
-        raise ValueError("valuation exceeds LP cash")
-    if state["expiry_fee_balance"] < rebate_reserve:
-        raise ValueError("fee balance below rebate reserve")
-    position_value = state["expiry_lp_cash"] - position_liability
-    lp_fee_surplus = deepbook_mul(state["expiry_fee_balance"] - rebate_reserve, LP_FEE_SHARE)
-    return state["vault_idle_balance"] + position_value + lp_fee_surplus
+    reserved_cash = position_liability + rebate_reserve
+    if state["expiry_cash_balance"] < reserved_cash:
+        raise ValueError("valuation exceeds expiry cash")
+    active_expiry_value = state["expiry_cash_balance"] - reserved_cash
+    pending_protocol_profit = pending_protocol_profit_exclusion(state, active_expiry_value)
+    return state["vault_idle_balance"] + active_expiry_value - pending_protocol_profit
+
+
+def pending_protocol_profit_exclusion(state: dict[str, int], active_expiry_value: int) -> int:
+    aggregate_credits = state["profit_basis_credits"] + active_expiry_value
+    aggregate_debits = state["profit_basis_debits"]
+    if aggregate_credits <= aggregate_debits:
+        return 0
+    return deepbook_mul(aggregate_credits - aggregate_debits, PROTOCOL_RESERVE_FEE_SHARE)
 
 
 def expiry_fee_multiplier(time_to_expiry_ms: int | None) -> int:
@@ -1187,11 +1193,12 @@ def assert_mint_fee_rate(probability: int, time_to_expiry_ms: int | None = None)
 def initial_state() -> dict[str, int]:
     return {
         "manager_balance": MANAGER_SEED,
-        "expiry_lp_cash": INITIAL_EXPIRY_ALLOCATION,
-        "expiry_fee_balance": 0,
+        "expiry_cash_balance": INITIAL_EXPIRY_FUNDING,
         "expiry_unresolved_trading_fees": 0,
-        "vault_idle_balance": VAULT_SEED - INITIAL_EXPIRY_ALLOCATION,
-        "vault_total_allocated": INITIAL_EXPIRY_ALLOCATION,
+        "vault_idle_balance": VAULT_SEED - INITIAL_EXPIRY_FUNDING,
+        "vault_protocol_reserve_balance": 0,
+        "profit_basis_debits": INITIAL_EXPIRY_FUNDING,
+        "profit_basis_credits": 0,
         "vault_total_plp_supply": INITIAL_TOTAL_PLP_SUPPLY,
         "open_order_count": 0,
         "open_order_quantity": 0,
@@ -1314,8 +1321,7 @@ def apply_update(state: dict[str, int], update: dict[str, str]) -> None:
         builder_fee = int(update["builder_fee"])
         quantity = int(update["quantity"])
         state["manager_balance"] -= contribution + trading_fee + builder_fee
-        state["expiry_lp_cash"] += contribution
-        state["expiry_fee_balance"] += trading_fee
+        state["expiry_cash_balance"] += contribution + trading_fee
         state["expiry_unresolved_trading_fees"] += trading_fee
         state["open_order_count"] += 1
         state["open_order_quantity"] += quantity
@@ -1331,8 +1337,8 @@ def apply_update(state: dict[str, int], update: dict[str, str]) -> None:
         quantity_closed = int(update["quantity_closed"])
         remaining_quantity = int(update["remaining_quantity"])
         state["manager_balance"] += redeem_amount - trading_fee - builder_fee
-        state["expiry_lp_cash"] -= redeem_amount
-        state["expiry_fee_balance"] += trading_fee
+        state["expiry_cash_balance"] -= redeem_amount
+        state["expiry_cash_balance"] += trading_fee
         state["expiry_unresolved_trading_fees"] += trading_fee
         state["open_order_quantity"] -= quantity_closed
         if remaining_quantity == 0:
@@ -1343,12 +1349,11 @@ def apply_update(state: dict[str, int], update: dict[str, str]) -> None:
         payout = int(update["payout_amount"])
         quantity_closed = int(update["quantity_closed"])
         state["manager_balance"] += payout
-        state["expiry_lp_cash"] -= payout
+        state["expiry_cash_balance"] -= payout
         state["open_order_count"] -= 1
         state["open_order_quantity"] -= quantity_closed
     elif update["type"] in ("pool_supply", "pool_withdraw"):
         state["vault_idle_balance"] = int(update["idle_balance_after"])
-        state["vault_total_allocated"] = int(update["total_allocated_after"])
         state["vault_total_plp_supply"] = int(update["total_supply_after"])
 
 
@@ -1579,7 +1584,6 @@ def supply_update(
         "pool_value_before": str(pool_value),
         "total_supply_after": str(total_supply + shares),
         "idle_balance_after": str(state["vault_idle_balance"] + row["amount"]),
-        "total_allocated_after": str(state["vault_total_allocated"]),
     }
 
 
@@ -1608,7 +1612,6 @@ def withdraw_update(
         "pool_value_before": str(pool_value),
         "total_supply_after": str(total_supply - shares),
         "idle_balance_after": str(state["vault_idle_balance"] - payout),
-        "total_allocated_after": str(state["vault_total_allocated"]),
     }
 
 
@@ -1666,10 +1669,8 @@ def reset_terminal_model(model: dict[str, Any]) -> None:
 
 def assert_terminal_state_closed(state: dict[str, int]) -> None:
     expected_zero = (
-        "expiry_lp_cash",
-        "expiry_fee_balance",
+        "expiry_cash_balance",
         "expiry_unresolved_trading_fees",
-        "vault_total_allocated",
         "open_order_count",
         "open_order_quantity",
         "liquidated_order_count",
@@ -1706,34 +1707,43 @@ def terminal_closeout_update(
     indexed_payout = model["payout"].settled_payout_liability(settlement_price)
     if indexed_payout != settled_payout:
         raise ValueError(f"terminal payout index drifted: indexed={indexed_payout} scanned={settled_payout}")
-    if settled_payout > state["expiry_lp_cash"]:
-        raise ValueError("terminal payout exceeds expiry LP cash")
+    if settled_payout > state["expiry_cash_balance"]:
+        raise ValueError("terminal payout exceeds expiry cash")
 
     state["manager_balance"] += settled_payout
-    state["expiry_lp_cash"] -= settled_payout
+    state["expiry_cash_balance"] -= settled_payout
     manager_summary["cash_received_from_expiry"] += settled_payout
 
     trading_loss = max(0, manager_summary["cash_paid_to_expiry"] - manager_summary["cash_received_from_expiry"])
-    max_rebate = deepbook_mul(manager_summary["trading_fee_paid"], TRADING_LOSS_REBATE_RATE)
-    eligible_rebate = min(trading_loss, max_rebate, state["expiry_fee_balance"])
+    trading_fees_paid = manager_summary["trading_fee_paid"]
+    if trading_fees_paid > state["expiry_unresolved_trading_fees"]:
+        raise ValueError("terminal trading fee basis exceeds unresolved trading fees")
+    max_rebate = deepbook_mul(trading_fees_paid, TRADING_LOSS_REBATE_RATE)
+    eligible_rebate = min(trading_loss, max_rebate)
     trading_loss_rebate = deepbook_mul(eligible_rebate, TERMINAL_REBATE_FRACTION)
-    trading_loss_rebate_to_lp = eligible_rebate - trading_loss_rebate
+    if trading_loss_rebate > state["expiry_cash_balance"]:
+        raise ValueError("terminal rebate exceeds expiry cash")
+    trading_loss_unpaid_rebate = eligible_rebate - trading_loss_rebate
     state["manager_balance"] += trading_loss_rebate
-    state["expiry_fee_balance"] -= eligible_rebate
-    state["expiry_lp_cash"] += trading_loss_rebate_to_lp
+    state["expiry_cash_balance"] -= trading_loss_rebate
+    state["expiry_unresolved_trading_fees"] -= trading_fees_paid
 
-    fee_surplus = state["expiry_fee_balance"]
-    protocol_fee_surplus = deepbook_mul(fee_surplus, PROTOCOL_FEE_SHARE)
-    insurance_fee_surplus = deepbook_mul(fee_surplus, INSURANCE_FEE_SHARE)
-    lp_fee_surplus = fee_surplus - protocol_fee_surplus - insurance_fee_surplus
-    returned_lp_cash = state["expiry_lp_cash"]
-    allocated_reduction = state["vault_total_allocated"]
+    returned_cash = state["expiry_cash_balance"]
+    state["expiry_cash_balance"] = 0
+    state["vault_idle_balance"] += returned_cash
+    state["profit_basis_credits"] += returned_cash
 
-    state["vault_idle_balance"] += returned_lp_cash + lp_fee_surplus
-    state["vault_total_allocated"] = 0
-    state["expiry_lp_cash"] = 0
-    state["expiry_fee_balance"] = 0
-    state["expiry_unresolved_trading_fees"] = 0
+    materialized_profit = 0
+    protocol_profit = 0
+    lp_profit = 0
+    if state["profit_basis_credits"] > state["profit_basis_debits"]:
+        materialized_profit = state["profit_basis_credits"] - state["profit_basis_debits"]
+        protocol_profit = deepbook_mul(materialized_profit, PROTOCOL_RESERVE_FEE_SHARE)
+        lp_profit = materialized_profit - protocol_profit
+        state["profit_basis_debits"] = state["profit_basis_credits"]
+        state["vault_idle_balance"] -= protocol_profit
+        state["vault_protocol_reserve_balance"] += protocol_profit
+
     state["open_order_count"] = 0
     state["open_order_quantity"] = 0
     state["liquidated_order_count"] = 0
@@ -1758,18 +1768,17 @@ def terminal_closeout_update(
         "trading_loss_eligible_rebate": str(eligible_rebate),
         "trading_loss_rebate_fraction": str(TERMINAL_REBATE_FRACTION),
         "trading_loss_rebate": str(trading_loss_rebate),
-        "trading_loss_rebate_to_lp": str(trading_loss_rebate_to_lp),
-        "returned_lp_cash": str(returned_lp_cash),
-        "fee_surplus": str(fee_surplus),
-        "fee_surplus_to_lp": str(lp_fee_surplus),
-        "fee_surplus_to_protocol": str(protocol_fee_surplus),
-        "fee_surplus_to_insurance": str(insurance_fee_surplus),
-        "allocated_reduction": str(allocated_reduction),
+        "trading_loss_unpaid_rebate": str(trading_loss_unpaid_rebate),
+        "returned_cash": str(returned_cash),
+        "materialized_profit": str(materialized_profit),
+        "lp_profit": str(lp_profit),
+        "protocol_profit": str(protocol_profit),
         "manager_balance_after": str(state["manager_balance"]),
         "vault_idle_balance_after": str(state["vault_idle_balance"]),
-        "vault_total_allocated_after": str(state["vault_total_allocated"]),
-        "expiry_lp_cash_after": str(state["expiry_lp_cash"]),
-        "expiry_fee_balance_after": str(state["expiry_fee_balance"]),
+        "vault_protocol_reserve_balance_after": str(state["vault_protocol_reserve_balance"]),
+        "profit_basis_debits_after": str(state["profit_basis_debits"]),
+        "profit_basis_credits_after": str(state["profit_basis_credits"]),
+        "expiry_cash_balance_after": str(state["expiry_cash_balance"]),
         "expiry_unresolved_trading_fees_after": str(state["expiry_unresolved_trading_fees"]),
         "open_order_count_after": str(state["open_order_count"]),
         "liquidated_order_count_after": str(state["liquidated_order_count"]),
@@ -2104,7 +2113,13 @@ def build_derived_record(
         except ValueError:
             vault_value = None
     rebate_reserve = deepbook_mul(state["expiry_unresolved_trading_fees"], TRADING_LOSS_REBATE_RATE)
-    fee_surplus = deepbook_mul(max(0, state["expiry_fee_balance"] - rebate_reserve), LP_FEE_SHARE)
+    active_expiry_value = None
+    pending_protocol_profit = None
+    if liability is not None:
+        reserved_cash = liability + rebate_reserve
+        if state["expiry_cash_balance"] >= reserved_cash:
+            active_expiry_value = state["expiry_cash_balance"] - reserved_cash
+            pending_protocol_profit = pending_protocol_profit_exclusion(state, active_expiry_value)
 
     liquidation_observability: dict[str, Any] | None = None
     liquidatable_count: int | None = None
@@ -2188,16 +2203,20 @@ def build_derived_record(
             "withdraw": 0,
         }
 
-    allocated_capital = state["vault_total_allocated"]
-    lp_live_mtm_pnl = None if liability is None else state["expiry_lp_cash"] - INITIAL_EXPIRY_ALLOCATION + fee_surplus - liability
-    active_book_live_pnl = None if liability is None else active_contribution - liability
-    position_liability_over_allocated = None if liability is None else ratio_scaled(liability, allocated_capital)
-    active_open_contribution_over_allocated = ratio_scaled(active_contribution, allocated_capital)
-    lp_live_mtm_pnl_over_allocated = (
-        None if lp_live_mtm_pnl is None else signed_ratio_scaled(lp_live_mtm_pnl, allocated_capital)
+    expiry_funding_basis = max(0, state["profit_basis_debits"] - state["profit_basis_credits"])
+    lp_live_mtm_pnl = (
+        None
+        if active_expiry_value is None or pending_protocol_profit is None
+        else active_expiry_value - pending_protocol_profit - expiry_funding_basis
     )
-    active_book_live_pnl_over_allocated = (
-        None if active_book_live_pnl is None else signed_ratio_scaled(active_book_live_pnl, allocated_capital)
+    active_book_live_pnl = None if liability is None else active_contribution - liability
+    position_liability_over_funding = None if liability is None else ratio_scaled(liability, expiry_funding_basis)
+    active_open_contribution_over_funding = ratio_scaled(active_contribution, expiry_funding_basis)
+    lp_live_mtm_pnl_over_funding = (
+        None if lp_live_mtm_pnl is None else signed_ratio_scaled(lp_live_mtm_pnl, expiry_funding_basis)
+    )
+    active_book_live_pnl_over_funding = (
+        None if active_book_live_pnl is None else signed_ratio_scaled(active_book_live_pnl, expiry_funding_basis)
     )
     active_book_live_pnl_over_liability = (
         None if active_book_live_pnl is None or liability is None else signed_ratio_scaled(active_book_live_pnl, liability)
@@ -2205,9 +2224,9 @@ def build_derived_record(
     liquidatable_value_over_liability = (
         None if liquidatable_value is None or liability is None else ratio_scaled(liquidatable_value, liability)
     )
-    step_trading_fee_over_allocated = ratio_scaled(trading_fee, allocated_capital)
-    step_liquidation_gap_over_allocated = ratio_scaled(liquidation_gap, allocated_capital)
-    step_net_liquidation_over_allocated = signed_ratio_scaled(liquidation_surplus - liquidation_gap, allocated_capital)
+    step_trading_fee_over_funding = ratio_scaled(trading_fee, expiry_funding_basis)
+    step_liquidation_gap_over_funding = ratio_scaled(liquidation_gap, expiry_funding_basis)
+    step_net_liquidation_over_funding = signed_ratio_scaled(liquidation_surplus - liquidation_gap, expiry_funding_basis)
 
     return {
         "step": row["step"],
@@ -2219,9 +2238,11 @@ def build_derived_record(
             "vault_value": None if vault_value is None else str(vault_value),
             "total_plp_supply": str(state["vault_total_plp_supply"]),
             "idle": str(state["vault_idle_balance"]),
-            "position_value": None if liability is None else str(state["expiry_lp_cash"] - liability),
+            "expiry_cash_balance": str(state["expiry_cash_balance"]),
+            "active_expiry_value": None if active_expiry_value is None else str(active_expiry_value),
             "position_liability": None if liability is None else str(liability),
-            "lp_fee_surplus": str(fee_surplus),
+            "rebate_reserve": str(rebate_reserve),
+            "pending_protocol_profit": None if pending_protocol_profit is None else str(pending_protocol_profit),
             "active_open_contribution": str(active_contribution),
             "lp_live_mtm_pnl": None if lp_live_mtm_pnl is None else str(lp_live_mtm_pnl),
             "active_book_live_pnl": None if active_book_live_pnl is None else str(active_book_live_pnl),
@@ -2276,36 +2297,36 @@ def build_derived_record(
             "sampled": sampled_global,
         },
         "risk": {
-            "allocated_capital": str(allocated_capital),
+            "expiry_funding_basis": str(expiry_funding_basis),
             "open_order_quantity": str(state["open_order_quantity"]),
             "active_leveraged_count": str(active_count),
-            "position_liability_over_allocated": None
-            if position_liability_over_allocated is None
-            else str(position_liability_over_allocated),
-            "active_open_contribution_over_allocated": None
-            if active_open_contribution_over_allocated is None
-            else str(active_open_contribution_over_allocated),
-            "lp_live_mtm_pnl_over_allocated": None
-            if lp_live_mtm_pnl_over_allocated is None
-            else str(lp_live_mtm_pnl_over_allocated),
-            "active_book_live_pnl_over_allocated": None
-            if active_book_live_pnl_over_allocated is None
-            else str(active_book_live_pnl_over_allocated),
+            "position_liability_over_funding": None
+            if position_liability_over_funding is None
+            else str(position_liability_over_funding),
+            "active_open_contribution_over_funding": None
+            if active_open_contribution_over_funding is None
+            else str(active_open_contribution_over_funding),
+            "lp_live_mtm_pnl_over_funding": None
+            if lp_live_mtm_pnl_over_funding is None
+            else str(lp_live_mtm_pnl_over_funding),
+            "active_book_live_pnl_over_funding": None
+            if active_book_live_pnl_over_funding is None
+            else str(active_book_live_pnl_over_funding),
             "active_book_live_pnl_over_liability": None
             if active_book_live_pnl_over_liability is None
             else str(active_book_live_pnl_over_liability),
             "liquidatable_value_over_liability": None
             if liquidatable_value_over_liability is None
             else str(liquidatable_value_over_liability),
-            "step_trading_fee_over_allocated": None
-            if step_trading_fee_over_allocated is None
-            else str(step_trading_fee_over_allocated),
-            "step_liquidation_gap_over_allocated": None
-            if step_liquidation_gap_over_allocated is None
-            else str(step_liquidation_gap_over_allocated),
-            "step_net_liquidation_over_allocated": None
-            if step_net_liquidation_over_allocated is None
-            else str(step_net_liquidation_over_allocated),
+            "step_trading_fee_over_funding": None
+            if step_trading_fee_over_funding is None
+            else str(step_trading_fee_over_funding),
+            "step_liquidation_gap_over_funding": None
+            if step_liquidation_gap_over_funding is None
+            else str(step_liquidation_gap_over_funding),
+            "step_net_liquidation_over_funding": None
+            if step_net_liquidation_over_funding is None
+            else str(step_net_liquidation_over_funding),
         },
     }
 

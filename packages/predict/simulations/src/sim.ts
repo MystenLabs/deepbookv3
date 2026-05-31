@@ -49,7 +49,7 @@ import {
 const DUSDC_DECIMALS = 1_000_000n;
 const DEFAULT_VAULT_SEED = 500_000n * DUSDC_DECIMALS;
 const DEFAULT_MANAGER_SEED = 500_000n * DUSDC_DECIMALS;
-const DEFAULT_INITIAL_EXPIRY_ALLOCATION = 50_000n * DUSDC_DECIMALS;
+const DEFAULT_INITIAL_EXPIRY_FUNDING = 50_000n * DUSDC_DECIMALS;
 const EXPIRY_MS = BigInt(Date.now()) + 400n * 24n * 60n * 60n * 1000n;
 const FLOAT_SCALING = 1_000_000_000n;
 const SCENARIO_CONFIG_PATH = fileURLToPath(new URL("../data/scenario_config.json", import.meta.url));
@@ -63,17 +63,18 @@ const ORDER_SEQUENCE_MASK = (1n << 40n) - 1n;
 interface SimulationCapital {
   vaultSeed: bigint;
   managerSeed: bigint;
-  initialExpiryAllocation: bigint;
+  initialExpiryFunding: bigint;
   initialTotalPlpSupply: bigint;
 }
 
 interface EconomicState {
   managerBalance: bigint;
-  expiryLpCash: bigint;
-  expiryFeeBalance: bigint;
+  expiryCashBalance: bigint;
   expiryUnresolvedTradingFees: bigint;
   vaultIdleBalance: bigint;
-  vaultTotalAllocated: bigint;
+  vaultProtocolReserveBalance: bigint;
+  profitBasisDebits: bigint;
+  profitBasisCredits: bigint;
   vaultTotalPlpSupply: bigint;
   openOrderCount: bigint;
   openOrderQuantity: bigint;
@@ -116,11 +117,12 @@ function scenarioPath(): string {
 function initialEconomicState(capital: SimulationCapital): EconomicState {
   return {
     managerBalance: capital.managerSeed,
-    expiryLpCash: capital.initialExpiryAllocation,
-    expiryFeeBalance: 0n,
+    expiryCashBalance: capital.initialExpiryFunding,
     expiryUnresolvedTradingFees: 0n,
-    vaultIdleBalance: capital.vaultSeed - capital.initialExpiryAllocation,
-    vaultTotalAllocated: capital.initialExpiryAllocation,
+    vaultIdleBalance: capital.vaultSeed - capital.initialExpiryFunding,
+    vaultProtocolReserveBalance: 0n,
+    profitBasisDebits: capital.initialExpiryFunding,
+    profitBasisCredits: 0n,
     vaultTotalPlpSupply: capital.initialTotalPlpSupply,
     openOrderCount: 0n,
     openOrderQuantity: 0n,
@@ -382,7 +384,6 @@ function normalizeSupplyExecuted(event: any, row: ScenarioRow): Record<string, u
     pool_value_before: decimal(json.pool_value_before),
     total_supply_after: decimal(json.total_supply_after),
     idle_balance_after: decimal(json.idle_balance_after),
-    total_allocated_after: decimal(json.total_allocated_after),
   };
 }
 
@@ -396,7 +397,6 @@ function normalizeWithdrawExecuted(event: any, row: ScenarioRow): Record<string,
     pool_value_before: decimal(json.pool_value_before),
     total_supply_after: decimal(json.total_supply_after),
     idle_balance_after: decimal(json.idle_balance_after),
-    total_allocated_after: decimal(json.total_allocated_after),
   };
 }
 
@@ -424,8 +424,7 @@ function applyUpdate(state: EconomicState, update: Record<string, unknown>) {
     const builderFee = BigInt(decimal(update.builder_fee));
     const quantity = BigInt(decimal(update.quantity));
     state.managerBalance -= contribution + tradingFee + builderFee;
-    state.expiryLpCash += contribution;
-    state.expiryFeeBalance += tradingFee;
+    state.expiryCashBalance += contribution + tradingFee;
     state.expiryUnresolvedTradingFees += tradingFee;
     state.openOrderCount += 1n;
     state.openOrderQuantity += quantity;
@@ -441,8 +440,8 @@ function applyUpdate(state: EconomicState, update: Record<string, unknown>) {
     const quantityClosed = BigInt(decimal(update.quantity_closed));
     const remainingQuantity = BigInt(decimal(update.remaining_quantity));
     state.managerBalance += redeemAmount - tradingFee - builderFee;
-    state.expiryLpCash -= redeemAmount;
-    state.expiryFeeBalance += tradingFee;
+    state.expiryCashBalance -= redeemAmount;
+    state.expiryCashBalance += tradingFee;
     state.expiryUnresolvedTradingFees += tradingFee;
     state.openOrderQuantity -= quantityClosed;
     if (remainingQuantity === 0n) state.openOrderCount -= 1n;
@@ -452,16 +451,14 @@ function applyUpdate(state: EconomicState, update: Record<string, unknown>) {
     const payout = BigInt(decimal(update.payout_amount));
     const quantityClosed = BigInt(decimal(update.quantity_closed));
     state.managerBalance += payout;
-    state.expiryLpCash -= payout;
+    state.expiryCashBalance -= payout;
     state.openOrderCount -= 1n;
     state.openOrderQuantity -= quantityClosed;
   } else if (update.type === "pool_supply") {
     state.vaultIdleBalance = BigInt(decimal(update.idle_balance_after));
-    state.vaultTotalAllocated = BigInt(decimal(update.total_allocated_after));
     state.vaultTotalPlpSupply = BigInt(decimal(update.total_supply_after));
   } else if (update.type === "pool_withdraw") {
     state.vaultIdleBalance = BigInt(decimal(update.idle_balance_after));
-    state.vaultTotalAllocated = BigInt(decimal(update.total_allocated_after));
     state.vaultTotalPlpSupply = BigInt(decimal(update.total_supply_after));
   }
 }
@@ -469,11 +466,12 @@ function applyUpdate(state: EconomicState, update: Record<string, unknown>) {
 function stateSnapshot(state: EconomicState): Record<string, string> {
   return {
     manager_balance: state.managerBalance.toString(),
-    expiry_lp_cash: state.expiryLpCash.toString(),
-    expiry_fee_balance: state.expiryFeeBalance.toString(),
+    expiry_cash_balance: state.expiryCashBalance.toString(),
     expiry_unresolved_trading_fees: state.expiryUnresolvedTradingFees.toString(),
     vault_idle_balance: state.vaultIdleBalance.toString(),
-    vault_total_allocated: state.vaultTotalAllocated.toString(),
+    vault_protocol_reserve_balance: state.vaultProtocolReserveBalance.toString(),
+    profit_basis_debits: state.profitBasisDebits.toString(),
+    profit_basis_credits: state.profitBasisCredits.toString(),
     vault_total_plp_supply: state.vaultTotalPlpSupply.toString(),
     open_order_count: state.openOrderCount.toString(),
     open_order_quantity: state.openOrderQuantity.toString(),
@@ -599,19 +597,19 @@ function capitalConfigValue(config: any, mode: string, key: string, fallback: bi
 
 function simulationCapital(config: any, mode: "normal" | "long"): SimulationCapital {
   const vaultSeed = capitalConfigValue(config, mode, "vault_seed", DEFAULT_VAULT_SEED);
-  const initialExpiryAllocation = capitalConfigValue(
+  const initialExpiryFunding = capitalConfigValue(
     config,
     mode,
-    "initial_expiry_allocation",
-    DEFAULT_INITIAL_EXPIRY_ALLOCATION,
+    "initial_expiry_funding",
+    DEFAULT_INITIAL_EXPIRY_FUNDING,
   );
-  if (initialExpiryAllocation > vaultSeed) {
-    throw new Error(`${mode} initial_expiry_allocation exceeds vault_seed`);
+  if (initialExpiryFunding > vaultSeed) {
+    throw new Error(`${mode} initial_expiry_funding exceeds vault_seed`);
   }
   return {
     vaultSeed,
     managerSeed: capitalConfigValue(config, mode, "manager_seed", DEFAULT_MANAGER_SEED),
-    initialExpiryAllocation,
+    initialExpiryFunding,
     initialTotalPlpSupply: vaultSeed,
   };
 }

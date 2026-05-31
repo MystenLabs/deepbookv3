@@ -212,7 +212,7 @@ Full localnet runs can produce:
 - `artifacts/chart_vault_pnl_fee_coverage.png`: cumulative fees, net
   liquidation, and live pre-terminal MTM risk-compensation mark.
 - `artifacts/chart_vault_risk_profile.png`: PnL, fees, liquidation losses, and
-  backlog normalized against allocated capital and active liability.
+  backlog normalized against expiry funding and active liability.
 - `artifacts/chart_liquidation_coverage.png`: normalized backlog pressure and
   liquidated value by passive trigger.
 - `artifacts/chart_liquidation_execution_quality.png`: liquidation execution
@@ -256,13 +256,13 @@ mirror, then use the long Python run for economic tuning.
 
 ## Derived Data
 
-`python_derived.json` uses schema `predict_derived_v1`. It is Python-only and is
+`python_derived.json` uses schema `predict_derived_v2`. It is Python-only and is
 never compared against localnet.
 
 Important fields:
 
-- `valuation.lp_live_mtm_pnl`: LP cash above the initial expiry allocation plus
-  LP fee surplus, minus current live position liability.
+- `valuation.lp_live_mtm_pnl`: active expiry value after pending protocol-profit
+  exclusion, minus current expiry funding basis.
 - `valuation.active_book_live_pnl`: open-order contribution minus current live
   liability.
 - `flows.trading_fee`: trading fee collected in that transaction.
@@ -283,14 +283,13 @@ Important fields:
   only mint/redeem passive flows.
 - `scan_active_count` is sampled before that transaction's liquidation pass, so
   `scan_coverage` uses the same denominator the scanner saw.
-- `risk.allocated_capital`: current capital allocated from the vault into the
-  expiry.
-- `risk.position_liability_over_allocated`: live liability divided by allocated
-  capital.
-- `risk.lp_live_mtm_pnl_over_allocated`: live LP MTM PnL divided by allocated
-  capital.
-- `risk.active_book_live_pnl_over_allocated`: active open-book PnL divided by
-  allocated capital.
+- `risk.expiry_funding_basis`: current net pool funding basis for the expiry.
+- `risk.position_liability_over_funding`: live liability divided by expiry
+  funding basis.
+- `risk.lp_live_mtm_pnl_over_funding`: live LP MTM PnL divided by expiry
+  funding basis.
+- `risk.active_book_live_pnl_over_funding`: active open-book PnL divided by
+  expiry funding basis.
 - `risk.liquidatable_value_over_liability`: standing liquidatable floor value
   divided by live liability.
 
@@ -311,8 +310,9 @@ Important fields:
   defaults, admin setup, fee policy, liquidation policy, or settlement
   assumptions change, update the Python mirror and this config in the same PR.
   Localnet does not run admin setters for every mirrored protocol field; fields
-  such as liquidation budgets, fee shares, LTV, and floor premium should remain
-  equal to Move defaults unless the localnet setup is intentionally extended.
+  such as liquidation budgets, protocol reserve fee share, LTV, and floor
+  premium should remain equal to Move defaults unless the localnet setup is
+  intentionally extended.
   Small fixed pricing defaults are intentionally mirrored manually in
   `python_replay.py` to keep the harness lightweight.
 - Keep raw long-run data temporary by default. Use
@@ -329,9 +329,9 @@ Important fields:
   settlement inputs used by the long Python replay. If Move defaults, admin
   setup, fee-ramp policy, liquidation policy, capital sizing, or settlement
   assumptions change, update this file at the same time.
-- Long-run capital sizing is intentionally allowed to exceed the current
-  on-chain per-expiry allocation bound. It is an off-chain scale-up for Python
-  economic analysis, not a deployable allocation policy.
+- Long-run vault and manager seeds can be larger than normal mode, but initial
+  expiry funding stays at the protocol cash floor unless the simulator adds an
+  existing protocol top-up flow.
 - Full localnet replay can be gas-heavy when supply/withdraw valuation finds a
   liquidation backlog. The runner default transaction gas budget is currently
   `1_000_000_000` MIST.

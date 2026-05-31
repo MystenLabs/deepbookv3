@@ -8,12 +8,12 @@
     "normal": {
       "manager_seed": "500000000000",
       "vault_seed": "500000000000",
-      "initial_expiry_allocation": "50000000000"
+      "initial_expiry_funding": "50000000000"
     },
     "long": {
       "manager_seed": "5000000000000",
       "vault_seed": "5000000000000",
-      "initial_expiry_allocation": "500000000000"
+      "initial_expiry_funding": "50000000000"
     }
   },
   "generation": {
@@ -31,9 +31,7 @@
     "valuation_liquidation_budget": "192",
     "liquidation_head_scan_divisor": "3",
     "curve_samples": "50",
-    "lp_fee_share": "600000000",
-    "protocol_fee_share": "200000000",
-    "insurance_fee_share": "200000000",
+    "protocol_reserve_fee_share": "400000000",
     "trading_loss_rebate_rate": "500000000",
     "expiry_fee_window_ms": "86400000",
     "expiry_fee_max_multiplier": "2000000000",

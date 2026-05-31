@@ -20,7 +20,7 @@ from sim_artifacts import (
     write_json,
 )
 
-SCHEMA_VERSION = "predict_economic_summary_v2"
+SCHEMA_VERSION = "predict_economic_summary_v3"
 
 
 def integer_stats(values: list[int]) -> dict[str, int] | None:
@@ -95,13 +95,13 @@ def update_totals(records: list[dict[str, Any]]) -> dict[str, int]:
                     update.get("trading_loss_eligible_rebate", "0")
                 )
                 totals["terminal_trading_loss_rebate"] += int(update["trading_loss_rebate"])
-                totals["terminal_trading_loss_rebate_to_lp"] += int(update.get("trading_loss_rebate_to_lp", "0"))
-                totals["terminal_returned_lp_cash"] += int(update["returned_lp_cash"])
-                totals["terminal_fee_surplus"] += int(update["fee_surplus"])
-                totals["terminal_fee_surplus_to_lp"] += int(update["fee_surplus_to_lp"])
-                totals["terminal_fee_surplus_to_protocol"] += int(update["fee_surplus_to_protocol"])
-                totals["terminal_fee_surplus_to_insurance"] += int(update["fee_surplus_to_insurance"])
-                totals["terminal_allocated_reduction"] += int(update["allocated_reduction"])
+                totals["terminal_trading_loss_unpaid_rebate"] += int(
+                    update.get("trading_loss_unpaid_rebate", "0")
+                )
+                totals["terminal_returned_cash"] += int(update["returned_cash"])
+                totals["terminal_materialized_profit"] += int(update["materialized_profit"])
+                totals["terminal_lp_profit"] += int(update["lp_profit"])
+                totals["terminal_protocol_profit"] += int(update["protocol_profit"])
             elif update_type == "order_liquidated":
                 floor_value = int(update["floor_amount"])
                 gross_value = int(update["gross_value"])
@@ -273,18 +273,18 @@ def summarize_derived(data: dict[str, Any] | None) -> dict[str, Any] | None:
             else dusdc(int(last_live_liability)),
         },
         "risk": {
-            "allocated_capital": dusdc_stats(field_values(records, ("risk", "allocated_capital"))),
-            "position_liability_over_allocated": ratio_stats(
-                field_values(records, ("risk", "position_liability_over_allocated"))
+            "expiry_funding_basis": dusdc_stats(field_values(records, ("risk", "expiry_funding_basis"))),
+            "position_liability_over_funding": ratio_stats(
+                field_values(records, ("risk", "position_liability_over_funding"))
             ),
-            "active_open_contribution_over_allocated": ratio_stats(
-                field_values(records, ("risk", "active_open_contribution_over_allocated"))
+            "active_open_contribution_over_funding": ratio_stats(
+                field_values(records, ("risk", "active_open_contribution_over_funding"))
             ),
-            "lp_live_mtm_pnl_over_allocated": ratio_stats(
-                field_values(records, ("risk", "lp_live_mtm_pnl_over_allocated"))
+            "lp_live_mtm_pnl_over_funding": ratio_stats(
+                field_values(records, ("risk", "lp_live_mtm_pnl_over_funding"))
             ),
-            "active_book_live_pnl_over_allocated": ratio_stats(
-                field_values(records, ("risk", "active_book_live_pnl_over_allocated"))
+            "active_book_live_pnl_over_funding": ratio_stats(
+                field_values(records, ("risk", "active_book_live_pnl_over_funding"))
             ),
             "active_book_live_pnl_over_liability": ratio_stats(
                 field_values(records, ("risk", "active_book_live_pnl_over_liability"))
@@ -292,14 +292,14 @@ def summarize_derived(data: dict[str, Any] | None) -> dict[str, Any] | None:
             "liquidatable_value_over_liability": ratio_stats(
                 field_values(records, ("risk", "liquidatable_value_over_liability"))
             ),
-            "step_trading_fee_over_allocated": ratio_stats(
-                field_values(records, ("risk", "step_trading_fee_over_allocated"))
+            "step_trading_fee_over_funding": ratio_stats(
+                field_values(records, ("risk", "step_trading_fee_over_funding"))
             ),
-            "step_liquidation_gap_over_allocated": ratio_stats(
-                field_values(records, ("risk", "step_liquidation_gap_over_allocated"))
+            "step_liquidation_gap_over_funding": ratio_stats(
+                field_values(records, ("risk", "step_liquidation_gap_over_funding"))
             ),
-            "step_net_liquidation_over_allocated": ratio_stats(
-                field_values(records, ("risk", "step_net_liquidation_over_allocated"))
+            "step_net_liquidation_over_funding": ratio_stats(
+                field_values(records, ("risk", "step_net_liquidation_over_funding"))
             ),
         },
         "liquidation": {
