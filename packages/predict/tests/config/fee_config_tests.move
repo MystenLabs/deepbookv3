@@ -17,55 +17,55 @@ fun defaults_match_config_constants() {
     let config = fee_config::new();
 
     assert_eq!(
-        config.protocol_reserve_fee_share(),
-        config_constants::default_protocol_reserve_fee_share!(),
+        config.protocol_reserve_profit_share(),
+        config_constants::default_protocol_reserve_profit_share!(),
     );
     assert_eq!(
         config.trading_loss_rebate_rate(),
         config_constants::default_trading_loss_rebate_rate!(),
     );
     assert_eq!(
-        float!() - config.protocol_reserve_fee_share(),
-        float!() - config_constants::default_protocol_reserve_fee_share!(),
+        float!() - config.protocol_reserve_profit_share(),
+        float!() - config_constants::default_protocol_reserve_profit_share!(),
     );
     destroy(config);
 }
 
-// === set_protocol_reserve_fee_share ===
+// === set_protocol_reserve_profit_share ===
 
 #[test]
-fun set_protocol_reserve_fee_share_updates_protocol_reserve_and_derived_lp() {
+fun set_protocol_reserve_profit_share_updates_protocol_reserve_and_derived_lp() {
     let mut config = fee_config::new();
 
-    config.set_protocol_reserve_fee_share(THIRTY_PERCENT);
+    config.set_protocol_reserve_profit_share(THIRTY_PERCENT);
 
-    assert_eq!(config.protocol_reserve_fee_share(), THIRTY_PERCENT);
-    assert_eq!(float!() - config.protocol_reserve_fee_share(), SEVENTY_PERCENT);
+    assert_eq!(config.protocol_reserve_profit_share(), THIRTY_PERCENT);
+    assert_eq!(float!() - config.protocol_reserve_profit_share(), SEVENTY_PERCENT);
     destroy(config);
 }
 
 #[test]
-fun set_protocol_reserve_fee_share_accepts_zero() {
+fun set_protocol_reserve_profit_share_accepts_zero() {
     let mut config = fee_config::new();
-    config.set_protocol_reserve_fee_share(0);
-    assert_eq!(config.protocol_reserve_fee_share(), 0);
-    assert_eq!(float!() - config.protocol_reserve_fee_share(), float!());
+    config.set_protocol_reserve_profit_share(0);
+    assert_eq!(config.protocol_reserve_profit_share(), 0);
+    assert_eq!(float!() - config.protocol_reserve_profit_share(), float!());
     destroy(config);
 }
 
 #[test]
-fun set_protocol_reserve_fee_share_accepts_full_protocol_reserve() {
+fun set_protocol_reserve_profit_share_accepts_full_protocol_reserve() {
     let mut config = fee_config::new();
-    config.set_protocol_reserve_fee_share(float!());
-    assert_eq!(config.protocol_reserve_fee_share(), float!());
-    assert_eq!(float!() - config.protocol_reserve_fee_share(), 0);
+    config.set_protocol_reserve_profit_share(float!());
+    assert_eq!(config.protocol_reserve_profit_share(), float!());
+    assert_eq!(float!() - config.protocol_reserve_profit_share(), 0);
     destroy(config);
 }
 
-#[test, expected_failure(abort_code = config_constants::EInvalidProtocolReserveFeeShare)]
-fun set_protocol_reserve_fee_share_above_float_aborts() {
+#[test, expected_failure(abort_code = config_constants::EInvalidProtocolReserveProfitShare)]
+fun set_protocol_reserve_profit_share_above_float_aborts() {
     let mut config = fee_config::new();
-    config.set_protocol_reserve_fee_share(float!() + 1);
+    config.set_protocol_reserve_profit_share(float!() + 1);
     abort 999
 }
 

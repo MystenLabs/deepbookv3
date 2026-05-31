@@ -310,7 +310,7 @@ Important fields:
   defaults, admin setup, fee policy, liquidation policy, or settlement
   assumptions change, update the Python mirror and this config in the same PR.
   Localnet does not run admin setters for every mirrored protocol field; fields
-  such as liquidation budgets, protocol reserve fee share, LTV, and floor
+  such as liquidation budgets, protocol reserve profit share, LTV, and floor
   premium should remain equal to Move defaults unless the localnet setup is
   intentionally extended.
   Small fixed pricing defaults are intentionally mirrored manually in

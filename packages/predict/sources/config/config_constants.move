@@ -7,30 +7,30 @@
 /// envelope admin setters can tune within. Changing a bound requires a package upgrade.
 module deepbook_predict::config_constants;
 
-const EInvalidBaseFee: u64 = 1;
-const EInvalidMinFee: u64 = 2;
-const EInvalidMinAskPrice: u64 = 3;
-const EInvalidMaxAskPrice: u64 = 4;
-const EInvalidPythSpotFreshnessMs: u64 = 5;
-const EInvalidBlockScholesPricesFreshnessMs: u64 = 6;
-const EInvalidBlockScholesSVIFreshnessMs: u64 = 7;
-const EInvalidProtocolReserveFeeShare: u64 = 9;
-const EInvalidSettlementFreshnessMs: u64 = 11;
-const EInvalidMaxSpotDeviation: u64 = 12;
-const EInvalidMaxBasisDeviation: u64 = 13;
-const EInvalidMinBasis: u64 = 14;
-const EInvalidMaxBasis: u64 = 15;
-const EInvalidMaxExpiryFunding: u64 = 16;
-const EInvalidTradingLossRebateRate: u64 = 21;
-const EInvalidMaxExpiryFloorPremium: u64 = 22;
-const EInvalidExpiryFeeWindowMs: u64 = 23;
-const EInvalidExpiryFeeMaxMultiplier: u64 = 24;
-const EInvalidLowerBenefitPower: u64 = 25;
-const EInvalidUpperBenefitPower: u64 = 26;
-const EInvalidBenefitPowers: u64 = 27;
-const EInvalidValuationLiquidationBudget: u64 = 28;
-const EInvalidTradeLiquidationBudget: u64 = 29;
-const EInvalidLiquidationLtv: u64 = 30;
+const EInvalidBaseFee: u64 = 0;
+const EInvalidMinFee: u64 = 1;
+const EInvalidMinAskPrice: u64 = 2;
+const EInvalidMaxAskPrice: u64 = 3;
+const EInvalidPythSpotFreshnessMs: u64 = 4;
+const EInvalidBlockScholesPricesFreshnessMs: u64 = 5;
+const EInvalidBlockScholesSVIFreshnessMs: u64 = 6;
+const EInvalidProtocolReserveProfitShare: u64 = 7;
+const EInvalidSettlementFreshnessMs: u64 = 8;
+const EInvalidMaxSpotDeviation: u64 = 9;
+const EInvalidMaxBasisDeviation: u64 = 10;
+const EInvalidMinBasis: u64 = 11;
+const EInvalidMaxBasis: u64 = 12;
+const EInvalidMaxExpiryFunding: u64 = 13;
+const EInvalidTradingLossRebateRate: u64 = 14;
+const EInvalidMaxExpiryFloorPremium: u64 = 15;
+const EInvalidExpiryFeeWindowMs: u64 = 16;
+const EInvalidExpiryFeeMaxMultiplier: u64 = 17;
+const EInvalidLowerBenefitPower: u64 = 18;
+const EInvalidUpperBenefitPower: u64 = 19;
+const EInvalidBenefitPowers: u64 = 20;
+const EInvalidValuationLiquidationBudget: u64 = 21;
+const EInvalidTradeLiquidationBudget: u64 = 22;
+const EInvalidLiquidationLtv: u64 = 23;
 
 // === Expiry Funding and Liquidation ===
 
@@ -203,17 +203,17 @@ public(package) fun assert_block_scholes_svi_freshness_ms(value: u64) {
 
 // === Fees ===
 
-public(package) macro fun default_protocol_reserve_fee_share(): u64 { 400_000_000 }
-public(package) macro fun min_protocol_reserve_fee_share(): u64 { 0 }
-public(package) macro fun max_protocol_reserve_fee_share(): u64 {
+public(package) macro fun default_protocol_reserve_profit_share(): u64 { 400_000_000 }
+public(package) macro fun min_protocol_reserve_profit_share(): u64 { 0 }
+public(package) macro fun max_protocol_reserve_profit_share(): u64 {
     deepbook_predict::constants::float_scaling!()
 }
 
-public(package) fun assert_protocol_reserve_fee_share(value: u64) {
+public(package) fun assert_protocol_reserve_profit_share(value: u64) {
     assert!(
-        value >= min_protocol_reserve_fee_share!()
-            && value <= max_protocol_reserve_fee_share!(),
-        EInvalidProtocolReserveFeeShare,
+        value >= min_protocol_reserve_profit_share!()
+            && value <= max_protocol_reserve_profit_share!(),
+        EInvalidProtocolReserveProfitShare,
     );
 }
 

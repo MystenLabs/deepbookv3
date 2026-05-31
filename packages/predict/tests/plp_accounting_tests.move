@@ -321,7 +321,7 @@ fun setup_pool_with_pyth(): Fixture {
     plp::init_for_testing(scenario.ctx());
     let (mut registry, admin_cap) = registry::new_for_testing(scenario.ctx());
     let mut config = protocol_config::new_for_testing(scenario.ctx());
-    config.set_protocol_reserve_fee_share(PROTOCOL_RESERVE_SHARE);
+    config.set_protocol_reserve_profit_share(PROTOCOL_RESERVE_SHARE);
     let cap = registry::create_market_oracle_cap(&admin_cap, scenario.ctx());
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(NOW_MS);

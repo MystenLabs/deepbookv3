@@ -172,13 +172,13 @@ public fun set_block_scholes_svi_freshness_ms(
     config.set_block_scholes_svi_freshness_ms(value);
 }
 
-/// Set the current protocol reserve share used during settled expiry surplus sweeps.
-public fun set_protocol_reserve_fee_share(
+/// Set the current protocol reserve profit share used when materializing aggregate expiry profit.
+public fun set_protocol_reserve_profit_share(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
-    protocol_reserve_fee_share: u64,
+    protocol_reserve_profit_share: u64,
 ) {
-    config.set_protocol_reserve_fee_share(protocol_reserve_fee_share);
+    config.set_protocol_reserve_profit_share(protocol_reserve_profit_share);
 }
 
 /// Set the trading loss rebate rate template used by future expiry markets.

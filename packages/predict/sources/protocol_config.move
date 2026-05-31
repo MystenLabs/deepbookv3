@@ -162,12 +162,12 @@ public(package) fun set_block_scholes_svi_freshness_ms(config: &mut ProtocolConf
     config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
 }
 
-public(package) fun set_protocol_reserve_fee_share(
+public(package) fun set_protocol_reserve_profit_share(
     config: &mut ProtocolConfig,
-    protocol_reserve_fee_share: u64,
+    protocol_reserve_profit_share: u64,
 ) {
     config.assert_not_valuation_in_progress();
-    config.fee_config.set_protocol_reserve_fee_share(protocol_reserve_fee_share);
+    config.fee_config.set_protocol_reserve_profit_share(protocol_reserve_profit_share);
     config_events::emit_fee_config_updated(config.id(), &config.fee_config);
 }
 

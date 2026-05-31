@@ -65,7 +65,7 @@ public struct ExpiryMaxFundingUpdated has copy, drop, store {
     net_funding: u64,
 }
 
-/// Emitted when a settled expiry returns surplus cash.
+/// Emitted when a settled expiry is deactivated or returns surplus cash.
 public struct ExpirySurplusSwept has copy, drop, store {
     pool_vault_id: ID,
     expiry_market_id: ID,
@@ -80,13 +80,11 @@ public struct ExpirySurplusSwept has copy, drop, store {
 /// Emitted when aggregate returned expiry cash is split between LPs and protocol reserves.
 public struct ExpiryProfitMaterialized has copy, drop, store {
     pool_vault_id: ID,
-    profit: u64,
     lp_profit: u64,
     protocol_profit: u64,
     idle_balance_after: u64,
     protocol_reserve_balance_after: u64,
-    profit_basis_debits_after: u64,
-    profit_basis_credits_after: u64,
+    profit_basis_after: u64,
 }
 
 // === Public-Package Functions ===
@@ -205,22 +203,18 @@ public(package) fun emit_expiry_surplus_swept(
 
 public(package) fun emit_expiry_profit_materialized(
     pool_vault_id: ID,
-    profit: u64,
     lp_profit: u64,
     protocol_profit: u64,
     idle_balance_after: u64,
     protocol_reserve_balance_after: u64,
-    profit_basis_debits_after: u64,
-    profit_basis_credits_after: u64,
+    profit_basis_after: u64,
 ) {
     event::emit(ExpiryProfitMaterialized {
         pool_vault_id,
-        profit,
         lp_profit,
         protocol_profit,
         idle_balance_after,
         protocol_reserve_balance_after,
-        profit_basis_debits_after,
-        profit_basis_credits_after,
+        profit_basis_after,
     });
 }

@@ -28,7 +28,7 @@ public struct PricingConfigUpdated has copy, drop, store {
 /// Emitted when profit-reserve or trading-loss rebate policy changes.
 public struct FeeConfigUpdated has copy, drop, store {
     protocol_config_id: ID,
-    protocol_reserve_fee_share: u64,
+    protocol_reserve_profit_share: u64,
     trading_loss_rebate_rate: u64,
 }
 
@@ -114,7 +114,7 @@ public(package) fun emit_pricing_config_updated(protocol_config_id: ID, config: 
 public(package) fun emit_fee_config_updated(protocol_config_id: ID, config: &FeeConfig) {
     event::emit(FeeConfigUpdated {
         protocol_config_id,
-        protocol_reserve_fee_share: config.protocol_reserve_fee_share(),
+        protocol_reserve_profit_share: config.protocol_reserve_profit_share(),
         trading_loss_rebate_rate: config.trading_loss_rebate_rate(),
     });
 }

@@ -57,7 +57,7 @@ TRADE_LIQUIDATION_BUDGET = 24
 VALUATION_LIQUIDATION_BUDGET = 192
 LIQUIDATION_HEAD_SCAN_DIVISOR = 3
 CURVE_SAMPLES = 50
-PROTOCOL_RESERVE_FEE_SHARE = 400_000_000
+PROTOCOL_RESERVE_PROFIT_SHARE = 400_000_000
 TRADING_LOSS_REBATE_RATE = 500_000_000
 TERMINAL_REBATE_FRACTION = 0
 EXPIRY_FEE_WINDOW_MS = 0
@@ -143,7 +143,7 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
     global VALUATION_LIQUIDATION_BUDGET
     global LIQUIDATION_HEAD_SCAN_DIVISOR
     global CURVE_SAMPLES
-    global PROTOCOL_RESERVE_FEE_SHARE
+    global PROTOCOL_RESERVE_PROFIT_SHARE
     global TRADING_LOSS_REBATE_RATE
     global TERMINAL_REBATE_FRACTION
     global EXPIRY_FEE_WINDOW_MS
@@ -180,11 +180,11 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
         LIQUIDATION_HEAD_SCAN_DIVISOR,
     )
     CURVE_SAMPLES = _config_int(config, "protocol", "curve_samples", CURVE_SAMPLES)
-    PROTOCOL_RESERVE_FEE_SHARE = _config_int(
+    PROTOCOL_RESERVE_PROFIT_SHARE = _config_int(
         config,
         "protocol",
-        "protocol_reserve_fee_share",
-        PROTOCOL_RESERVE_FEE_SHARE,
+        "protocol_reserve_profit_share",
+        PROTOCOL_RESERVE_PROFIT_SHARE,
     )
     TRADING_LOSS_REBATE_RATE = _config_int(
         config,
@@ -1156,7 +1156,7 @@ def pending_protocol_profit_exclusion(state: dict[str, int], active_expiry_value
     aggregate_debits = state["profit_basis_debits"]
     if aggregate_credits <= aggregate_debits:
         return 0
-    return deepbook_mul(aggregate_credits - aggregate_debits, PROTOCOL_RESERVE_FEE_SHARE)
+    return deepbook_mul(aggregate_credits - aggregate_debits, PROTOCOL_RESERVE_PROFIT_SHARE)
 
 
 def expiry_fee_multiplier(time_to_expiry_ms: int | None) -> int:
@@ -1738,7 +1738,7 @@ def terminal_closeout_update(
     lp_profit = 0
     if state["profit_basis_credits"] > state["profit_basis_debits"]:
         materialized_profit = state["profit_basis_credits"] - state["profit_basis_debits"]
-        protocol_profit = deepbook_mul(materialized_profit, PROTOCOL_RESERVE_FEE_SHARE)
+        protocol_profit = deepbook_mul(materialized_profit, PROTOCOL_RESERVE_PROFIT_SHARE)
         lp_profit = materialized_profit - protocol_profit
         state["profit_basis_debits"] = state["profit_basis_credits"]
         state["vault_idle_balance"] -= protocol_profit

@@ -31,7 +31,7 @@
     "valuation_liquidation_budget": "192",
     "liquidation_head_scan_divisor": "3",
     "curve_samples": "50",
-    "protocol_reserve_fee_share": "400000000",
+    "protocol_reserve_profit_share": "400000000",
     "trading_loss_rebate_rate": "500000000",
     "expiry_fee_window_ms": "86400000",
     "expiry_fee_max_multiplier": "2000000000",

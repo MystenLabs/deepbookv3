@@ -85,13 +85,13 @@ fun set_freshness_setters_forward_to_pricing_config() {
 // === Fee config setters ===
 
 #[test]
-fun set_protocol_reserve_fee_share_forwards_to_fee_config() {
+fun set_protocol_reserve_profit_share_forwards_to_fee_config() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = registry::create_admin_cap_for_testing(ctx);
     let mut config = protocol_config::new_for_testing(ctx);
 
-    registry::set_protocol_reserve_fee_share(&mut config, &admin_cap, 300_000_000);
-    assert_eq!(fee_config::protocol_reserve_fee_share(config.fee_config()), 300_000_000);
+    registry::set_protocol_reserve_profit_share(&mut config, &admin_cap, 300_000_000);
+    assert_eq!(fee_config::protocol_reserve_profit_share(config.fee_config()), 300_000_000);
 
     destroy(config);
     destroy(admin_cap);

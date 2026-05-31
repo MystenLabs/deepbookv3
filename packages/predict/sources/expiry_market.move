@@ -30,11 +30,11 @@ use sui::{balance::{Self, Balance}, clock::Clock, vec_set::VecSet};
 const EWrongMarketOracle: u64 = 0;
 const EWrongPythSource: u64 = 1;
 const EValuationExceedsCash: u64 = 2;
-const EInsufficientCash: u64 = 4;
-const EPackageVersionDisabled: u64 = 6;
-const EMintPaused: u64 = 7;
-const EUnresolvedTradingFeesUnderflow: u64 = 8;
-const EFullCloseRequired: u64 = 9;
+const EInsufficientCash: u64 = 3;
+const EPackageVersionDisabled: u64 = 4;
+const EMintPaused: u64 = 5;
+const EUnresolvedTradingFeesUnderflow: u64 = 6;
+const EFullCloseRequired: u64 = 7;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {

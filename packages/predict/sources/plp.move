@@ -32,19 +32,19 @@ use sui::{
 };
 use token::deep::DEEP;
 
-const EExpiryMarketNotActive: u64 = 1;
-const EInsufficientIdleBalance: u64 = 2;
-const EWrongPoolVault: u64 = 4;
-const EExpiryMarketAlreadyValued: u64 = 5;
-const EMissingExpiryValuation: u64 = 6;
-const EActiveExpirySetChanged: u64 = 7;
-const EZeroSupply: u64 = 12;
-const EZeroWithdraw: u64 = 13;
-const EInvalidInitialSupply: u64 = 14;
-const EZeroShares: u64 = 15;
-const EZeroPoolValue: u64 = 16;
-const EPackageVersionDisabled: u64 = 17;
-const EInsufficientExpiryCashBacking: u64 = 18;
+const EExpiryMarketNotActive: u64 = 0;
+const EInsufficientIdleBalance: u64 = 1;
+const EWrongPoolVault: u64 = 2;
+const EExpiryMarketAlreadyValued: u64 = 3;
+const EMissingExpiryValuation: u64 = 4;
+const EActiveExpirySetChanged: u64 = 5;
+const EZeroSupply: u64 = 6;
+const EZeroWithdraw: u64 = 7;
+const EInvalidInitialSupply: u64 = 8;
+const EZeroShares: u64 = 9;
+const EZeroPoolValue: u64 = 10;
+const EPackageVersionDisabled: u64 = 11;
+const EInsufficientExpiryCashBacking: u64 = 12;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -258,6 +258,7 @@ public fun sweep_settled_expiry_surplus(
     if (!market_oracle.is_settled()) return;
 
     let market_id = market.id();
+    let was_active = vault.expiry_accounting.is_active_expiry(market_id);
     vault.expiry_accounting.deactivate_expiry_if_present(market_id);
     let returned_cash = market.release_settled_surplus(market_oracle);
     let returned_cash_amount = vault.receive_expiry_cash(config, market_id, returned_cash);
@@ -265,7 +266,7 @@ public fun sweep_settled_expiry_surplus(
         .expiry_accounting
         .expiry_flow_amounts(market_id);
 
-    if (returned_cash_amount > 0) {
+    if (was_active || returned_cash_amount > 0) {
         vault_events::emit_expiry_surplus_swept(
             vault.id(),
             market_id,
@@ -530,24 +531,20 @@ fun materialize_profit(vault: &mut PoolVault, config: &ProtocolConfig) {
 
     // Materialized profit is cash-backed and irreversible: LP profit stays in
     // idle liquidity, while protocol profit leaves PLP NAV.
-    let protocol_profit = math::mul(profit, config.fee_config().protocol_reserve_fee_share());
+    let protocol_profit = math::mul(profit, config.fee_config().protocol_reserve_profit_share());
     let lp_profit = profit - protocol_profit;
     if (protocol_profit > 0) {
         let protocol_profit_balance = vault.idle_balance.split(protocol_profit);
         vault.protocol_reserve_balance.join(protocol_profit_balance);
     };
-    let (profit_basis_debits_after, profit_basis_credits_after) = vault
-        .expiry_accounting
-        .profit_basis_amounts();
+    let profit_basis_after = vault.expiry_accounting.profit_basis_debits();
     vault_events::emit_expiry_profit_materialized(
         vault.id(),
-        profit,
         lp_profit,
         protocol_profit,
         vault.idle_balance.value(),
         vault.protocol_reserve_balance.value(),
-        profit_basis_debits_after,
-        profit_basis_credits_after,
+        profit_basis_after,
     );
 }
 
@@ -580,7 +577,7 @@ fun pending_protocol_profit_exclusion(
     };
     math::mul(
         aggregate_credits - aggregate_debits,
-        config.fee_config().protocol_reserve_fee_share(),
+        config.fee_config().protocol_reserve_profit_share(),
     )
 }
 
