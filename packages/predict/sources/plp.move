@@ -279,24 +279,6 @@ public fun sweep_settled_expiry_surplus(
     };
 }
 
-/// Set the max net DUSDC the pool may have funded into one expiry.
-public(package) fun set_max_expiry_funding(
-    vault: &mut PoolVault,
-    config: &ProtocolConfig,
-    expiry_market_id: ID,
-    funding: u64,
-) {
-    vault.assert_version_allowed();
-    config.assert_not_valuation_in_progress();
-    vault.expiry_accounting.set_max_expiry_funding(expiry_market_id, funding);
-    vault_events::emit_expiry_max_funding_updated(
-        vault.id(),
-        expiry_market_id,
-        funding,
-        vault.expiry_accounting.expiry_net_funding(expiry_market_id),
-    );
-}
-
 /// Supply DUSDC into the pool vault against a complete full-pool valuation.
 ///
 /// Completes the valuation after flow preconditions pass and mints PLP shares
@@ -405,11 +387,12 @@ public fun unstake_deep(
 
 // === Public-Package Functions ===
 
-/// Overwrite this vault's mirrored `allowed_versions`. The only authorized
-/// caller is `registry::sync_pool_vault_allowed_versions`, which reads the
-/// source of truth from `Registry`.
-public(package) fun set_allowed_versions(vault: &mut PoolVault, allowed_versions: VecSet<u64>) {
-    vault.allowed_versions = allowed_versions;
+/// Abort if the running package version is not allowed for this vault.
+public(package) fun assert_version_allowed(vault: &PoolVault) {
+    assert!(
+        vault.allowed_versions.contains(&constants::current_version!()),
+        EPackageVersionDisabled,
+    );
 }
 
 /// Create an empty pool vault from the PLP treasury cap.
@@ -425,20 +408,19 @@ public(package) fun new(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): Po
     }
 }
 
-/// Abort if the running package version is not allowed for this vault.
-public(package) fun assert_version_allowed(vault: &PoolVault) {
-    assert!(
-        vault.allowed_versions.contains(&constants::current_version!()),
-        EPackageVersionDisabled,
-    );
-}
-
 /// Create and share an empty pool vault from the PLP treasury cap.
 public(package) fun create_and_share(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): ID {
     let vault = new(treasury_cap, ctx);
     let id = vault.id();
     transfer::share_object(vault);
     id
+}
+
+/// Overwrite this vault's mirrored `allowed_versions`. The only authorized
+/// caller is `registry::sync_pool_vault_allowed_versions`, which reads the
+/// source of truth from `Registry`.
+public(package) fun set_allowed_versions(vault: &mut PoolVault, allowed_versions: VecSet<u64>) {
+    vault.allowed_versions = allowed_versions;
 }
 
 /// Move initial idle DUSDC funding into a newly created expiry market.
@@ -459,6 +441,24 @@ public(package) fun register_expiry_market(
     initial_funding: u64,
 ) {
     vault.expiry_accounting.register_expiry(expiry_market_id, initial_funding);
+}
+
+/// Set the max net DUSDC the pool may have funded into one expiry.
+public(package) fun set_max_expiry_funding(
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    expiry_market_id: ID,
+    funding: u64,
+) {
+    vault.assert_version_allowed();
+    config.assert_not_valuation_in_progress();
+    let net_funding = vault.expiry_accounting.set_max_expiry_funding(expiry_market_id, funding);
+    vault_events::emit_expiry_max_funding_updated(
+        vault.id(),
+        expiry_market_id,
+        funding,
+        net_funding,
+    );
 }
 
 // === Private Functions ===

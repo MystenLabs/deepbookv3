@@ -39,15 +39,6 @@ public struct RegisteredExpiry has store {
     max_expiry_funding: u64,
 }
 
-public(package) fun new(ctx: &mut TxContext): Ledger {
-    Ledger {
-        active_expiry_markets: vector[],
-        registered_expiries: table::new(ctx),
-        profit_basis_debits: 0,
-        profit_basis_credits: 0,
-    }
-}
-
 public(package) fun active_expiry_markets(ledger: &Ledger): &vector<ID> {
     &ledger.active_expiry_markets
 }
@@ -64,28 +55,10 @@ public(package) fun profit_basis_credits(ledger: &Ledger): u64 {
     ledger.profit_basis_credits
 }
 
-public(package) fun profit_basis_amounts(ledger: &Ledger): (u64, u64) {
-    (ledger.profit_basis_debits, ledger.profit_basis_credits)
-}
-
-/// Abort unless this expiry is registered to the pool.
-public(package) fun assert_registered_expiry(ledger: &Ledger, expiry_market_id: ID) {
-    assert!(ledger.registered_expiries.contains(expiry_market_id), EUnknownRegisteredExpiry);
-}
-
 public(package) fun expiry_flow_amounts(ledger: &Ledger, expiry_market_id: ID): (u64, u64) {
     ledger.assert_registered_expiry(expiry_market_id);
     let flow = ledger.registered_expiries.borrow(expiry_market_id);
     (flow.sent_to_expiry, flow.received_from_expiry)
-}
-
-public(package) fun expiry_net_funding(ledger: &Ledger, expiry_market_id: ID): u64 {
-    let (sent, received) = ledger.expiry_flow_amounts(expiry_market_id);
-    if (sent > received) {
-        sent - received
-    } else {
-        0
-    }
 }
 
 public(package) fun max_expiry_funding(ledger: &Ledger, expiry_market_id: ID): u64 {
@@ -102,6 +75,15 @@ public(package) fun available_expiry_funding(ledger: &Ledger, expiry_market_id: 
         flow.max_expiry_funding - net_funding
     } else {
         0
+    }
+}
+
+public(package) fun new(ctx: &mut TxContext): Ledger {
+    Ledger {
+        active_expiry_markets: vector[],
+        registered_expiries: table::new(ctx),
+        profit_basis_debits: 0,
+        profit_basis_credits: 0,
     }
 }
 
@@ -144,14 +126,13 @@ public(package) fun set_max_expiry_funding(
     ledger: &mut Ledger,
     expiry_market_id: ID,
     max_expiry_funding: u64,
-) {
+): u64 {
     config_constants::assert_max_expiry_funding(max_expiry_funding);
     ledger.assert_registered_expiry(expiry_market_id);
-    assert!(
-        ledger.expiry_net_funding(expiry_market_id) <= max_expiry_funding,
-        EMaxExpiryFundingExceeded,
-    );
+    let net_funding = ledger.expiry_net_funding(expiry_market_id);
+    assert!(net_funding <= max_expiry_funding, EMaxExpiryFundingExceeded);
     ledger.registered_expiries.borrow_mut(expiry_market_id).max_expiry_funding = max_expiry_funding;
+    net_funding
 }
 
 public(package) fun record_sent_to_expiry(ledger: &mut Ledger, expiry_market_id: ID, amount: u64) {
@@ -184,6 +165,16 @@ public(package) fun materialize_profit(ledger: &mut Ledger): u64 {
     let profit = ledger.profit_basis_credits - ledger.profit_basis_debits;
     ledger.profit_basis_debits = ledger.profit_basis_credits;
     profit
+}
+
+fun assert_registered_expiry(ledger: &Ledger, expiry_market_id: ID) {
+    assert!(ledger.registered_expiries.contains(expiry_market_id), EUnknownRegisteredExpiry);
+}
+
+fun expiry_net_funding(ledger: &Ledger, expiry_market_id: ID): u64 {
+    ledger.assert_registered_expiry(expiry_market_id);
+    let flow = ledger.registered_expiries.borrow(expiry_market_id);
+    flow_net_funding(flow)
 }
 
 fun flow_net_funding(flow: &RegisteredExpiry): u64 {
