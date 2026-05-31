@@ -4,22 +4,22 @@
 /// PLP token and pool vault accounting.
 ///
 /// PoolVault owns idle DUSDC and the PLP treasury cap. Expiry markets own
-/// active trading capital and risk state. This module coordinates full-pool
-/// valuation, PLP supply/withdrawal, allocation resize, and settled-expiry
-/// surplus sweeping. It does not own expiry-local strike, oracle, or position state.
+/// active trading cash and risk state. This module coordinates full-pool
+/// valuation, PLP supply/withdrawal, expiry funding, live expiry cash
+/// rebalancing, profit materialization, and settled-expiry surplus sweeping.
+/// It does not own expiry-local strike, oracle, or position state.
 module deepbook_predict::plp;
 
 use deepbook::math;
 use deepbook_predict::{
-    config_constants,
     constants,
     expiry_market::{ExpiryMarket, ExpiryValuation},
     market_oracle::MarketOracle,
     math as predict_math,
+    pool_accounting::{Self, Ledger},
     predict_manager::PredictManager,
     pricing,
     protocol_config::ProtocolConfig,
-    risk_config::RiskConfig,
     vault_events
 };
 use dusdc::dusdc::DUSDC;
@@ -32,25 +32,19 @@ use sui::{
 };
 use token::deep::DEEP;
 
-const EExpiryMarketAlreadyActive: u64 = 0;
 const EExpiryMarketNotActive: u64 = 1;
 const EInsufficientIdleBalance: u64 = 2;
-const EMaxTotalExposureExceeded: u64 = 3;
 const EWrongPoolVault: u64 = 4;
 const EExpiryMarketAlreadyValued: u64 = 5;
 const EMissingExpiryValuation: u64 = 6;
 const EActiveExpirySetChanged: u64 = 7;
-const EGrowUtilizationBelowThreshold: u64 = 8;
-const EShrinkUtilizationAboveThreshold: u64 = 9;
-const ENoAllocationResize: u64 = 10;
-const EInsufficientTotalAllocatedCapital: u64 = 11;
 const EZeroSupply: u64 = 12;
 const EZeroWithdraw: u64 = 13;
 const EInvalidInitialSupply: u64 = 14;
 const EZeroShares: u64 = 15;
 const EZeroPoolValue: u64 = 16;
 const EPackageVersionDisabled: u64 = 17;
-const EZeroAllocatedCapital: u64 = 18;
+const EInsufficientExpiryCashBacking: u64 = 18;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -58,20 +52,16 @@ public struct PLP has drop {}
 /// Pool-level capital and PLP accounting state.
 public struct PoolVault has key {
     id: UID,
-    /// Idle LP-owned DUSDC available for withdrawals and new allocations.
+    /// Idle LP-owned DUSDC available for withdrawals and expiry funding.
     idle_balance: Balance<DUSDC>,
-    /// Protocol revenue swept from settled expiry fee surplus.
-    protocol_fee_balance: Balance<DUSDC>,
-    /// Insurance fees swept from settled expiry fee surplus.
-    insurance_fee_balance: Balance<DUSDC>,
+    /// Protocol-owned DUSDC excluded from PLP redemption.
+    protocol_reserve_balance: Balance<DUSDC>,
     /// Pooled DEEP staked by all managers for trading benefits. Per-manager
     /// active/inactive amounts are mirrored on each `PredictManager`.
     staked_deep: Balance<DEEP>,
     treasury_cap: TreasuryCap<PLP>,
-    /// Expiry markets that still contribute active pool valuation/risk.
-    active_expiry_markets: vector<ID>,
-    /// Sum of active expiry risk budgets allocated out of the pool.
-    total_allocated_capital: u64,
+    /// Active expiry IDs, pool cash-flow rows, profit basis, and per-expiry funding caps.
+    expiry_accounting: Ledger,
     /// Mirror of `ProtocolConfig.allowed_versions`; synced permissionlessly.
     allowed_versions: VecSet<u64>,
 }
@@ -84,8 +74,10 @@ public struct PoolValuation {
     expected_expiry_markets: vector<ID>,
     /// Expiry IDs whose valuation witnesses have been consumed.
     valued_expiry_markets: vector<ID>,
-    /// Running pool value, starting from idle DUSDC and adding each expiry NAV.
+    /// Running gross pool value, starting from idle DUSDC and adding each expiry NAV.
     value: u64,
+    /// Running NAV of active expiries in this valuation.
+    active_expiry_value: u64,
 }
 
 // === Private Functions ===
@@ -128,19 +120,14 @@ public fun staked_deep(vault: &PoolVault): u64 {
     vault.staked_deep.value()
 }
 
-/// Return protocol revenue swept from settled expiry fee surplus.
-public fun protocol_fee_balance(vault: &PoolVault): u64 {
-    vault.protocol_fee_balance.value()
-}
-
-/// Return insurance fees swept from settled expiry fee surplus.
-public fun insurance_fee_balance(vault: &PoolVault): u64 {
-    vault.insurance_fee_balance.value()
+/// Return protocol-owned DUSDC excluded from PLP redemption.
+public fun protocol_reserve_balance(vault: &PoolVault): u64 {
+    vault.protocol_reserve_balance.value()
 }
 
 /// Return active expiry market IDs tracked by the pool.
 public fun active_expiry_markets(vault: &PoolVault): &vector<ID> {
-    &vault.active_expiry_markets
+    vault.expiry_accounting.active_expiry_markets()
 }
 
 /// Return total PLP supply.
@@ -148,9 +135,77 @@ public fun total_supply(vault: &PoolVault): u64 {
     vault.treasury_cap.total_supply()
 }
 
-/// Return total DUSDC allocated as expiry risk budget.
-public fun total_allocated_capital(vault: &PoolVault): u64 {
-    vault.total_allocated_capital
+/// Return the money-out side of aggregate expiry profit basis.
+public fun profit_basis_debits(vault: &PoolVault): u64 {
+    vault.expiry_accounting.profit_basis_debits()
+}
+
+/// Return the money-in side of aggregate expiry profit basis.
+public fun profit_basis_credits(vault: &PoolVault): u64 {
+    vault.expiry_accounting.profit_basis_credits()
+}
+
+/// Return DUSDC sent to and received from one expiry market.
+public fun expiry_flow_amounts(vault: &PoolVault, expiry_market_id: ID): (u64, u64) {
+    vault.expiry_accounting.expiry_flow_amounts(expiry_market_id)
+}
+
+/// Return the max net DUSDC the pool may have funded into an expiry.
+public fun max_expiry_funding(vault: &PoolVault, expiry_market_id: ID): u64 {
+    vault.expiry_accounting.max_expiry_funding(expiry_market_id)
+}
+
+/// Rebalance live expiry cash toward the configured buffer around current backing needs.
+///
+/// PLP owns the allocation policy: it compares expiry cash against payout
+/// liability plus rebate reserve, preserves the fixed expiry cash floor, and
+/// records every cash movement in the pool money-out/money-in ledger. This
+/// remains callable while trading is paused because it manages existing pool
+/// cash rather than creating new risk.
+public fun rebalance_expiry_cash(
+    vault: &mut PoolVault,
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    market_oracle: &MarketOracle,
+    clock: &Clock,
+) {
+    vault.assert_version_allowed();
+    market.assert_version_allowed();
+    config.assert_not_valuation_in_progress();
+    market.assert_market_oracle(market_oracle);
+    market_oracle.assert_active(clock);
+
+    let expiry_market_id = market.id();
+    assert!(vault.expiry_accounting.is_active_expiry(expiry_market_id), EExpiryMarketNotActive);
+
+    let (cash_balance, target_cash, sweep_threshold_cash) = expiry_rebalance_cash_terms(
+        market,
+    );
+
+    if (cash_balance < target_cash) {
+        let requested_top_up = target_cash - cash_balance;
+        let funding_room = vault.expiry_accounting.available_expiry_funding(expiry_market_id);
+        let top_up = requested_top_up.min(vault.idle_balance.value()).min(funding_room);
+        if (top_up == 0) return;
+
+        vault.send_expiry_cash(market, expiry_market_id, top_up);
+        vault.emit_expiry_cash_rebalanced(market, expiry_market_id, top_up, true, target_cash);
+    } else if (cash_balance > sweep_threshold_cash) {
+        let cash_to_return = cash_balance - target_cash;
+        let returned_cash = market.release_pool_cash(cash_to_return);
+        let returned_cash_amount = vault.receive_expiry_cash(
+            config,
+            expiry_market_id,
+            returned_cash,
+        );
+        vault.emit_expiry_cash_rebalanced(
+            market,
+            expiry_market_id,
+            returned_cash_amount,
+            false,
+            target_cash,
+        );
+    };
 }
 
 /// Begin a full-pool valuation and lock protocol valuation-sensitive flows.
@@ -163,9 +218,10 @@ public fun start_valuation(config: &mut ProtocolConfig, vault: &PoolVault): Pool
     config.begin_valuation();
     PoolValuation {
         pool_vault_id: vault.id(),
-        expected_expiry_markets: *&vault.active_expiry_markets,
+        expected_expiry_markets: *vault.expiry_accounting.active_expiry_markets(),
         valued_expiry_markets: vector[],
         value: vault.idle_balance.value(),
+        active_expiry_value: 0,
     }
 }
 
@@ -182,78 +238,14 @@ public fun add_expiry_valuation(valuation: &mut PoolValuation, expiry_valuation:
     );
     valuation.valued_expiry_markets.push_back(expiry_market_id);
     valuation.value = valuation.value + expiry_value;
-}
-
-/// Grow an active live expiry allocation when utilization reaches the high watermark.
-///
-/// Moves idle DUSDC from the pool into the expiry while respecting global pool
-/// allocation capacity and the upgrade-required per-expiry hard cap.
-public fun grow_expiry_allocation(
-    vault: &mut PoolVault,
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    market_oracle: &MarketOracle,
-    clock: &Clock,
-) {
-    vault.assert_version_allowed();
-    config.assert_trading_allowed();
-    assert!(vault.active_expiry_markets.contains(&market.id()), EExpiryMarketNotActive);
-    market.assert_market_oracle(market_oracle);
-    market_oracle.assert_active(clock);
-    let risk_config = config.risk_config();
-    let amount = vault.grow_amount(risk_config, market);
-    let new_total_allocated = vault.total_allocated_capital + amount;
-    let allocation = vault.idle_balance.split(amount);
-    vault.total_allocated_capital = new_total_allocated;
-    market.receive_allocation(allocation);
-
-    vault_events::emit_expiry_allocation_changed(
-        vault.id(),
-        market.id(),
-        amount,
-        true,
-        market.allocated_capital(),
-        vault.idle_balance.value(),
-    );
-}
-
-/// Shrink an active live expiry allocation when utilization reaches the low watermark.
-///
-/// Moves only returnable free cash back to the pool; expiry payout backing stays
-/// inside the expiry market.
-public fun shrink_expiry_allocation(
-    vault: &mut PoolVault,
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    market_oracle: &MarketOracle,
-    clock: &Clock,
-) {
-    vault.assert_version_allowed();
-    config.assert_not_valuation_in_progress();
-    assert!(vault.active_expiry_markets.contains(&market.id()), EExpiryMarketNotActive);
-    market.assert_market_oracle(market_oracle);
-    market_oracle.assert_active(clock);
-    let amount = shrink_amount(config.risk_config(), market);
-    assert!(vault.total_allocated_capital >= amount, EInsufficientTotalAllocatedCapital);
-    let allocation = market.return_allocation(amount);
-    vault.total_allocated_capital = vault.total_allocated_capital - amount;
-    vault.idle_balance.join(allocation);
-
-    vault_events::emit_expiry_allocation_changed(
-        vault.id(),
-        market.id(),
-        amount,
-        false,
-        market.allocated_capital(),
-        vault.idle_balance.value(),
-    );
+    valuation.active_expiry_value = valuation.active_expiry_value + expiry_value;
 }
 
 /// Sweep settled expiry surplus into the pool.
 ///
 /// This no-ops before settlement. Once settled, it caches terminal payout
-/// liability if needed, retires active allocation on the first sweep, and
-/// distributes fee surplus not reserved for unresolved rebates.
+/// liability if needed, deactivates the expiry from active valuation on the
+/// first sweep, and returns sweepable cash to idle pool liquidity.
 public fun sweep_settled_expiry_surplus(
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
@@ -265,43 +257,43 @@ public fun sweep_settled_expiry_surplus(
     market.assert_market_oracle(market_oracle);
     if (!market_oracle.is_settled()) return;
 
-    let allocated_reduction = market.allocated_capital();
-    if (allocated_reduction > 0) {
-        assert!(vault.active_expiry_markets.contains(&market.id()), EExpiryMarketNotActive);
-        assert!(
-            vault.total_allocated_capital >= allocated_reduction,
-            EInsufficientTotalAllocatedCapital,
-        );
-    };
+    let market_id = market.id();
+    vault.expiry_accounting.deactivate_expiry_if_present(market_id);
+    let returned_cash = market.release_settled_surplus(market_oracle);
+    let returned_cash_amount = vault.receive_expiry_cash(config, market_id, returned_cash);
+    let (sent_to_expiry_after, received_from_expiry_after) = vault
+        .expiry_accounting
+        .expiry_flow_amounts(market_id);
 
-    let (returned_cash, returned_fee_surplus) = market.release_settled_surplus(market_oracle);
-    let returned_cash_amount = returned_cash.value();
-    if (allocated_reduction > 0) {
-        vault.total_allocated_capital = vault.total_allocated_capital - allocated_reduction;
-        vault.unregister_expiry_market(market.id());
-    };
-    vault.idle_balance.join(returned_cash);
-    let (protocol_fee, insurance_fee, lp_fee) = vault.distribute_fee_surplus(
-        config,
-        returned_fee_surplus,
-    );
-
-    if (
-        allocated_reduction > 0 || returned_cash_amount > 0 || protocol_fee > 0 || insurance_fee > 0 || lp_fee > 0
-    ) {
+    if (returned_cash_amount > 0) {
         vault_events::emit_expiry_surplus_swept(
             vault.id(),
-            market.id(),
+            market_id,
             pricing::settlement_price(market_oracle),
-            allocated_reduction,
             returned_cash_amount,
             vault.idle_balance.value(),
-            vault.total_allocated_capital,
-            protocol_fee,
-            insurance_fee,
-            lp_fee,
+            sent_to_expiry_after,
+            received_from_expiry_after,
         );
     };
+}
+
+/// Set the max net DUSDC the pool may have funded into one expiry.
+public(package) fun set_max_expiry_funding(
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    expiry_market_id: ID,
+    funding: u64,
+) {
+    vault.assert_version_allowed();
+    config.assert_not_valuation_in_progress();
+    vault.expiry_accounting.set_max_expiry_funding(expiry_market_id, funding);
+    vault_events::emit_expiry_max_funding_updated(
+        vault.id(),
+        expiry_market_id,
+        funding,
+        vault.expiry_accounting.expiry_net_funding(expiry_market_id),
+    );
 }
 
 /// Supply DUSDC into the pool vault against a complete full-pool valuation.
@@ -341,7 +333,6 @@ public fun supply(
         pool_value,
         vault.treasury_cap.total_supply(),
         vault.idle_balance.value(),
-        vault.total_allocated_capital,
     );
     plp
 }
@@ -349,7 +340,7 @@ public fun supply(
 /// Withdraw DUSDC from the pool vault against a complete full-pool valuation.
 ///
 /// Completes the valuation after flow preconditions pass, burns PLP, and
-/// enforces the pool-level allocated-capital limit after withdrawal.
+/// enforces enough idle liquidity for the withdrawal.
 public fun withdraw(
     vault: &mut PoolVault,
     config: &mut ProtocolConfig,
@@ -367,13 +358,6 @@ public fun withdraw(
     assert!(withdraw_amount > 0, EZeroWithdraw);
     let idle_balance = vault.idle_balance.value();
     assert!(idle_balance >= withdraw_amount, EInsufficientIdleBalance);
-    let pool_capital_after_withdraw =
-        idle_balance - withdraw_amount + vault.total_allocated_capital;
-    let max_allocated = math::mul(
-        pool_capital_after_withdraw,
-        config.risk_config().max_total_exposure_pct(),
-    );
-    assert!(vault.total_allocated_capital <= max_allocated, EMaxTotalExposureExceeded);
 
     finish_valuation(config, valuation);
     vault.treasury_cap.burn(lp_coin);
@@ -385,7 +369,6 @@ public fun withdraw(
         pool_value,
         vault.treasury_cap.total_supply(),
         vault.idle_balance.value(),
-        vault.total_allocated_capital,
     );
     payout
 }
@@ -433,12 +416,10 @@ public(package) fun new(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): Po
     PoolVault {
         id: object::new(ctx),
         idle_balance: balance::zero(),
-        protocol_fee_balance: balance::zero(),
-        insurance_fee_balance: balance::zero(),
+        protocol_reserve_balance: balance::zero(),
         staked_deep: balance::zero(),
         treasury_cap,
-        active_expiry_markets: vector[],
-        total_allocated_capital: 0,
+        expiry_accounting: pool_accounting::new(ctx),
         allowed_versions: vec_set::singleton(constants::current_version!()),
     }
 }
@@ -459,49 +440,31 @@ public(package) fun create_and_share(treasury_cap: TreasuryCap<PLP>, ctx: &mut T
     id
 }
 
-/// Allocate idle DUSDC into a newly created expiry market.
+/// Move initial idle DUSDC funding into a newly created expiry market.
 ///
 /// This is intentionally unusable on a freshly published package until the LP
 /// funding path is implemented; the pool must already hold enough idle DUSDC.
-public(package) fun allocate_to_new_expiry(
-    vault: &mut PoolVault,
-    risk_config: &RiskConfig,
-): Balance<DUSDC> {
-    let amount = risk_config.expiry_allocation();
+public(package) fun fund_new_expiry(vault: &mut PoolVault): Balance<DUSDC> {
+    let amount = constants::expiry_cash_floor!();
     let idle_balance = vault.idle_balance.value();
     assert!(idle_balance >= amount, EInsufficientIdleBalance);
-
-    let pool_capital = idle_balance + vault.total_allocated_capital;
-    let new_total_allocated = vault.total_allocated_capital + amount;
-    let max_allocated = math::mul(pool_capital, risk_config.max_total_exposure_pct());
-    assert!(new_total_allocated <= max_allocated, EMaxTotalExposureExceeded);
-
-    vault.total_allocated_capital = new_total_allocated;
     vault.idle_balance.split(amount)
 }
 
-/// Register an expiry market as active for valuation and pool allocation accounting.
-public(package) fun register_expiry_market(vault: &mut PoolVault, expiry_market_id: ID) {
-    assert!(!vault.active_expiry_markets.contains(&expiry_market_id), EExpiryMarketAlreadyActive);
-    vault.active_expiry_markets.push_back(expiry_market_id);
-}
-
-/// Remove an expiry market from active valuation and pool allocation accounting.
-public(package) fun unregister_expiry_market(vault: &mut PoolVault, expiry_market_id: ID) {
-    let mut i = 0;
-    let len = vault.active_expiry_markets.length();
-    while (i < len && vault.active_expiry_markets[i] != expiry_market_id) {
-        i = i + 1;
-    };
-    assert!(i < len, EExpiryMarketNotActive);
-    vault.active_expiry_markets.swap_remove(i);
+/// Register an expiry market for pool accounting and active valuation.
+public(package) fun register_expiry_market(
+    vault: &mut PoolVault,
+    expiry_market_id: ID,
+    initial_funding: u64,
+) {
+    vault.expiry_accounting.register_expiry(expiry_market_id, initial_funding);
 }
 
 // === Private Functions ===
 
 fun assert_active_set_unchanged(vault: &PoolVault, expected_expiry_markets: &vector<ID>) {
     assert_same_id_set(
-        &vault.active_expiry_markets,
+        vault.expiry_accounting.active_expiry_markets(),
         expected_expiry_markets,
         EActiveExpirySetChanged,
     );
@@ -523,83 +486,69 @@ fun assert_same_id_set(actual: &vector<ID>, expected: &vector<ID>, error: u64) {
     };
 }
 
-fun remaining_global_allocation_capacity(vault: &PoolVault, risk_config: &RiskConfig): u64 {
-    let idle_balance = vault.idle_balance.value();
-    let max_total_allocation = math::mul(
-        idle_balance + vault.total_allocated_capital,
-        risk_config.max_total_exposure_pct(),
+// Returns sampled branch terms and enforces the expiry backing invariant.
+fun expiry_rebalance_cash_terms(market: &ExpiryMarket): (u64, u64, u64) {
+    let required_cash = market.payout_liability() + market.rebate_reserve();
+    let target_buffer = math::mul(required_cash, constants::expiry_rebalance_pct!());
+    let target_cash = (required_cash + target_buffer).max(constants::expiry_cash_floor!());
+    let sweep_threshold_cash = (required_cash + target_buffer + target_buffer).max(
+        constants::expiry_cash_floor!(),
     );
-    if (max_total_allocation > vault.total_allocated_capital) {
-        max_total_allocation - vault.total_allocated_capital
-    } else {
-        0
-    }
+    let cash_balance = market.cash_balance();
+    assert!(cash_balance >= required_cash, EInsufficientExpiryCashBacking);
+    (cash_balance, target_cash, sweep_threshold_cash)
 }
 
-fun grow_amount(vault: &PoolVault, risk_config: &RiskConfig, market: &ExpiryMarket): u64 {
-    let current_allocation = market.allocated_capital();
-    let utilization = allocation_utilization(market.payout_liability(), current_allocation);
-    assert!(
-        utilization >= risk_config.grow_utilization_threshold(),
-        EGrowUtilizationBelowThreshold,
-    );
-
-    let desired_target = math::mul(current_allocation, risk_config.grow_factor()).min(
-        config_constants::max_allocation!(),
-    );
-    assert!(desired_target > current_allocation, ENoAllocationResize);
-    let desired_growth = desired_target - current_allocation;
-    let amount = desired_growth
-        .min(vault.remaining_global_allocation_capacity(risk_config))
-        .min(vault.idle_balance.value());
-    assert!(amount > 0, ENoAllocationResize);
-    amount
+fun send_expiry_cash(
+    vault: &mut PoolVault,
+    market: &mut ExpiryMarket,
+    expiry_market_id: ID,
+    amount: u64,
+) {
+    if (amount == 0) return;
+    let cash = vault.idle_balance.split(amount);
+    market.receive_pool_cash(cash);
+    vault.expiry_accounting.record_sent_to_expiry(expiry_market_id, amount);
 }
 
-fun shrink_amount(risk_config: &RiskConfig, market: &ExpiryMarket): u64 {
-    let current_allocation = market.allocated_capital();
-    let utilization = allocation_utilization(market.payout_liability(), current_allocation);
-    assert!(
-        utilization <= risk_config.shrink_utilization_threshold(),
-        EShrinkUtilizationAboveThreshold,
-    );
-
-    let target_allocation = math::mul(
-        current_allocation,
-        risk_config.shrink_factor(),
-    ).max(risk_config.expiry_allocation());
-    // returnable_capital caps the shrink so allocation and cash remain above payout liability.
-    let amount = if (target_allocation < current_allocation) {
-        current_allocation - target_allocation
-    } else {
-        0
-    }.min(market.returnable_capital());
-    assert!(amount > 0, ENoAllocationResize);
-    amount
-}
-
-fun allocation_utilization(payout_liability: u64, allocated_capital: u64): u64 {
-    assert!(allocated_capital > 0, EZeroAllocatedCapital);
-    math::div(payout_liability, allocated_capital)
-}
-
-/// Split fee surplus to protocol, insurance, and LP, returning the three amounts.
-fun distribute_fee_surplus(
+fun receive_expiry_cash(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
-    fee_surplus: Balance<DUSDC>,
-): (u64, u64, u64) {
-    let total_fee = fee_surplus.value();
-    let protocol_fee = math::mul(total_fee, config.fee_config().protocol_fee_share());
-    let insurance_fee = math::mul(total_fee, config.fee_config().insurance_fee_share());
-    let mut lp_fee = fee_surplus;
-    let protocol_fee_balance = lp_fee.split(protocol_fee);
-    let insurance_fee_balance = lp_fee.split(insurance_fee);
-    let lp_fee_amount = lp_fee.value();
-    vault.idle_balance.join(lp_fee);
-    vault.protocol_fee_balance.join(protocol_fee_balance);
-    vault.insurance_fee_balance.join(insurance_fee_balance);
-    (protocol_fee, insurance_fee, lp_fee_amount)
+    expiry_market_id: ID,
+    cash: Balance<DUSDC>,
+): u64 {
+    let amount = cash.value();
+    vault.idle_balance.join(cash);
+    vault.expiry_accounting.record_received_from_expiry(expiry_market_id, amount);
+    vault.materialize_profit(config);
+    amount
+}
+
+fun materialize_profit(vault: &mut PoolVault, config: &ProtocolConfig) {
+    let profit = vault.expiry_accounting.materialize_profit();
+    if (profit == 0) return;
+
+    // Materialized profit is cash-backed and irreversible: LP profit stays in
+    // idle liquidity, while protocol profit leaves PLP NAV.
+    let protocol_profit = math::mul(profit, config.fee_config().protocol_reserve_fee_share());
+    let lp_profit = profit - protocol_profit;
+    if (protocol_profit > 0) {
+        let protocol_profit_balance = vault.idle_balance.split(protocol_profit);
+        vault.protocol_reserve_balance.join(protocol_profit_balance);
+    };
+    let (profit_basis_debits_after, profit_basis_credits_after) = vault
+        .expiry_accounting
+        .profit_basis_amounts();
+    vault_events::emit_expiry_profit_materialized(
+        vault.id(),
+        profit,
+        lp_profit,
+        protocol_profit,
+        vault.idle_balance.value(),
+        vault.protocol_reserve_balance.value(),
+        profit_basis_debits_after,
+        profit_basis_credits_after,
+    );
 }
 
 fun validated_pool_value(
@@ -614,7 +563,49 @@ fun validated_pool_value(
         &valuation.expected_expiry_markets,
         &valuation.valued_expiry_markets,
     );
-    valuation.value
+    valuation.value - vault.pending_protocol_profit_exclusion(config, valuation.active_expiry_value)
+}
+
+fun pending_protocol_profit_exclusion(
+    vault: &PoolVault,
+    config: &ProtocolConfig,
+    active_expiry_value: u64,
+): u64 {
+    // NAV prices pending protocol profit before it is cash-backed. Actual
+    // reserve custody only changes when expiry cash returns through materialization.
+    let aggregate_credits = vault.expiry_accounting.profit_basis_credits() + active_expiry_value;
+    let aggregate_debits = vault.expiry_accounting.profit_basis_debits();
+    if (aggregate_credits <= aggregate_debits) {
+        return 0
+    };
+    math::mul(
+        aggregate_credits - aggregate_debits,
+        config.fee_config().protocol_reserve_fee_share(),
+    )
+}
+
+fun emit_expiry_cash_rebalanced(
+    vault: &PoolVault,
+    market: &ExpiryMarket,
+    expiry_market_id: ID,
+    amount: u64,
+    to_expiry: bool,
+    target_cash: u64,
+) {
+    let (sent_to_expiry_after, received_from_expiry_after) = vault
+        .expiry_accounting
+        .expiry_flow_amounts(expiry_market_id);
+    vault_events::emit_expiry_cash_rebalanced(
+        vault.id(),
+        expiry_market_id,
+        amount,
+        to_expiry,
+        target_cash,
+        market.cash_balance(),
+        vault.idle_balance.value(),
+        sent_to_expiry_after,
+        received_from_expiry_after,
+    );
 }
 
 fun finish_valuation(config: &mut ProtocolConfig, valuation: PoolValuation) {
@@ -623,6 +614,7 @@ fun finish_valuation(config: &mut ProtocolConfig, valuation: PoolValuation) {
         expected_expiry_markets: _,
         valued_expiry_markets: _,
         value: _,
+        active_expiry_value: _,
     } = valuation;
     config.end_valuation();
 }

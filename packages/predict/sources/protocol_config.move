@@ -162,14 +162,12 @@ public(package) fun set_block_scholes_svi_freshness_ms(config: &mut ProtocolConf
     config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
 }
 
-public(package) fun set_fee_shares(
+public(package) fun set_protocol_reserve_fee_share(
     config: &mut ProtocolConfig,
-    lp_fee_share: u64,
-    protocol_fee_share: u64,
-    insurance_fee_share: u64,
+    protocol_reserve_fee_share: u64,
 ) {
     config.assert_not_valuation_in_progress();
-    config.fee_config.set_fee_shares(lp_fee_share, protocol_fee_share, insurance_fee_share);
+    config.fee_config.set_protocol_reserve_fee_share(protocol_reserve_fee_share);
     config_events::emit_fee_config_updated(config.id(), &config.fee_config);
 }
 
@@ -177,42 +175,6 @@ public(package) fun set_template_trading_loss_rebate_rate(config: &mut ProtocolC
     config.assert_not_valuation_in_progress();
     config.fee_config.set_trading_loss_rebate_rate(value);
     config_events::emit_fee_config_updated(config.id(), &config.fee_config);
-}
-
-public(package) fun set_max_total_exposure_pct(config: &mut ProtocolConfig, pct: u64) {
-    config.assert_not_valuation_in_progress();
-    config.risk_config.set_max_total_exposure_pct(pct);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
-}
-
-public(package) fun set_expiry_allocation(config: &mut ProtocolConfig, allocation: u64) {
-    config.assert_not_valuation_in_progress();
-    config.risk_config.set_expiry_allocation(allocation);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
-}
-
-public(package) fun set_grow_utilization_threshold(config: &mut ProtocolConfig, threshold: u64) {
-    config.assert_not_valuation_in_progress();
-    config.risk_config.set_grow_utilization_threshold(threshold);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
-}
-
-public(package) fun set_shrink_utilization_threshold(config: &mut ProtocolConfig, threshold: u64) {
-    config.assert_not_valuation_in_progress();
-    config.risk_config.set_shrink_utilization_threshold(threshold);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
-}
-
-public(package) fun set_grow_factor(config: &mut ProtocolConfig, factor: u64) {
-    config.assert_not_valuation_in_progress();
-    config.risk_config.set_grow_factor(factor);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
-}
-
-public(package) fun set_shrink_factor(config: &mut ProtocolConfig, factor: u64) {
-    config.assert_not_valuation_in_progress();
-    config.risk_config.set_shrink_factor(factor);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
 }
 
 public(package) fun set_valuation_liquidation_budget(config: &mut ProtocolConfig, budget: u64) {

@@ -32,6 +32,14 @@ public macro fun float_scaling_decimals(): u64 { 9 }
 /// Minimum position quantity increment.
 public macro fun position_lot_size(): u64 { 10_000 }
 
+// === Pool Funding ===
+
+/// DUSDC cash every expiry starts with, in 6-decimal quote units.
+public(package) macro fun expiry_cash_floor(): u64 { 50_000_000_000 }
+
+/// Rebalancing band and target buffer fraction, in FLOAT_SCALING.
+public(package) macro fun expiry_rebalance_pct(): u64 { 100_000_000 }
+
 // === Leverage ===
 
 /// Window before expiry over which the leverage floor index rises.

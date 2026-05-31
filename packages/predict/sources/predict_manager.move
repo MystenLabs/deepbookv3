@@ -266,12 +266,12 @@ public(package) fun record_trading_fee_paid(
     summary.trading_fees_paid = summary.trading_fees_paid + amount;
 }
 
-/// Remove and return the aggregate trading summary once all expiry positions are closed.
+/// Remove and return aggregate fees and realized trading loss once all expiry positions are closed.
 public(package) fun resolve_expiry_summary(
     self: &mut PredictManager,
     expiry_market_id: ID,
-): (u64, u64, u64) {
-    if (!self.expiry_summaries.contains(expiry_market_id)) return (0, 0, 0);
+): (u64, u64) {
+    if (!self.expiry_summaries.contains(expiry_market_id)) return (0, 0);
 
     assert!(
         self.expiry_summaries[expiry_market_id].open_position_count == 0,
@@ -283,7 +283,12 @@ public(package) fun resolve_expiry_summary(
         cash_paid_to_expiry,
         cash_received_from_expiry,
     } = self.expiry_summaries.remove(expiry_market_id);
-    (trading_fees_paid, cash_paid_to_expiry, cash_received_from_expiry)
+    let trading_loss = if (cash_paid_to_expiry > cash_received_from_expiry) {
+        cash_paid_to_expiry - cash_received_from_expiry
+    } else {
+        0
+    };
+    (trading_fees_paid, trading_loss)
 }
 
 /// Roll inactive stake into active stake once a new epoch has begun. Idempotent

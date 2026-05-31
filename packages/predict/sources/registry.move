@@ -172,15 +172,13 @@ public fun set_block_scholes_svi_freshness_ms(
     config.set_block_scholes_svi_freshness_ms(value);
 }
 
-/// Set the current fee surplus distribution shares used during settled expiry surplus sweeps.
-public fun set_fee_shares(
+/// Set the current protocol reserve share used during settled expiry surplus sweeps.
+public fun set_protocol_reserve_fee_share(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
-    lp_fee_share: u64,
-    protocol_fee_share: u64,
-    insurance_fee_share: u64,
+    protocol_reserve_fee_share: u64,
 ) {
-    config.set_fee_shares(lp_fee_share, protocol_fee_share, insurance_fee_share);
+    config.set_protocol_reserve_fee_share(protocol_reserve_fee_share);
 }
 
 /// Set the trading loss rebate rate template used by future expiry markets.
@@ -192,50 +190,15 @@ public fun set_template_trading_loss_rebate_rate(
     config.set_template_trading_loss_rebate_rate(value);
 }
 
-/// Set the maximum total exposure percentage.
-public fun set_max_total_exposure_pct(
-    config: &mut ProtocolConfig,
+/// Set the max net DUSDC the pool may fund into one expiry.
+public fun set_max_expiry_funding(
+    pool_vault: &mut PoolVault,
+    config: &ProtocolConfig,
     _admin_cap: &AdminCap,
-    pct: u64,
+    expiry_market_id: ID,
+    funding: u64,
 ) {
-    config.set_max_total_exposure_pct(pct);
-}
-
-/// Set the current DUSDC allocation for new expiry markets.
-public fun set_expiry_allocation(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    allocation: u64,
-) {
-    config.set_expiry_allocation(allocation);
-}
-
-/// Set the utilization threshold that enables expiry allocation growth.
-public fun set_grow_utilization_threshold(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    threshold: u64,
-) {
-    config.set_grow_utilization_threshold(threshold);
-}
-
-/// Set the utilization threshold that enables expiry allocation shrink.
-public fun set_shrink_utilization_threshold(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    threshold: u64,
-) {
-    config.set_shrink_utilization_threshold(threshold);
-}
-
-/// Set the allocation growth target multiplier.
-public fun set_grow_factor(config: &mut ProtocolConfig, _admin_cap: &AdminCap, factor: u64) {
-    config.set_grow_factor(factor);
-}
-
-/// Set the allocation shrink target multiplier.
-public fun set_shrink_factor(config: &mut ProtocolConfig, _admin_cap: &AdminCap, factor: u64) {
-    config.set_shrink_factor(factor);
+    pool_vault.set_max_expiry_funding(config, expiry_market_id, funding);
 }
 
 /// Set the total liquidation candidate budget used before live valuations.
@@ -462,7 +425,7 @@ public fun destroy_market_oracle_cap(cap: MarketOracleCap) {
 /// Create the MarketOracle and ExpiryMarket objects for one future expiry.
 ///
 /// The registry enforces one market per expiry, validates the registered Pyth
-/// source, allocates initial pool capital, and registers the expiry as active.
+/// source, funds the expiry with initial pool cash, and registers it as active.
 public fun create_expiry_market(
     registry: &mut Registry,
     pool_vault: &mut PoolVault,
@@ -483,8 +446,8 @@ public fun create_expiry_market(
     assert!(registry.pyth_source_ids[pyth_lazer_feed_id] == pyth.id(), EFeedIdMismatch);
     assert!(!registry.expiry_market_ids.contains(expiry), EExpiryMarketAlreadyCreated);
     let allowed_versions = registry.allowed_versions;
-    let allocation = pool_vault.allocate_to_new_expiry(config.risk_config());
-    let allocation_amount = allocation.value();
+    let funding = pool_vault.fund_new_expiry();
+    let funding_amount = funding.value();
     let market_oracle_id = market_oracle::create_and_share(
         pyth,
         config.market_oracle_config(),
@@ -495,7 +458,7 @@ public fun create_expiry_market(
     );
     let expiry_market_id = expiry_market::create_and_share(
         config,
-        allocation,
+        funding,
         allowed_versions,
         market_oracle_id,
         pyth_lazer_feed_id,
@@ -504,8 +467,11 @@ public fun create_expiry_market(
         tick_size,
         ctx,
     );
-    pool_vault.register_expiry_market(expiry_market_id);
+    pool_vault.register_expiry_market(expiry_market_id, funding_amount);
     registry.expiry_market_ids.add(expiry, expiry_market_id);
+    let (sent_to_expiry_after, received_from_expiry_after) = pool_vault.expiry_flow_amounts(
+        expiry_market_id,
+    );
 
     config_events::emit_market_created(
         expiry_market_id,
@@ -515,13 +481,13 @@ public fun create_expiry_market(
         min_strike,
         tick_size,
     );
-    vault_events::emit_expiry_allocation_changed(
+    vault_events::emit_expiry_cash_funded(
         pool_vault.id(),
         expiry_market_id,
-        allocation_amount,
-        true,
-        allocation_amount,
+        funding_amount,
         pool_vault.idle_balance(),
+        sent_to_expiry_after,
+        received_from_expiry_after,
     );
 
     (expiry_market_id, market_oracle_id)

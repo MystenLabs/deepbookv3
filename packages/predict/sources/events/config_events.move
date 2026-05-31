@@ -25,24 +25,16 @@ public struct PricingConfigUpdated has copy, drop, store {
     block_scholes_svi_freshness_ms: u64,
 }
 
-/// Emitted when fee-share or trading-loss rebate policy changes.
+/// Emitted when profit-reserve or trading-loss rebate policy changes.
 public struct FeeConfigUpdated has copy, drop, store {
     protocol_config_id: ID,
-    lp_fee_share: u64,
-    protocol_fee_share: u64,
-    insurance_fee_share: u64,
+    protocol_reserve_fee_share: u64,
     trading_loss_rebate_rate: u64,
 }
 
-/// Emitted when pool risk, allocation, or liquidation-budget policy changes.
+/// Emitted when liquidation-budget policy changes.
 public struct RiskConfigUpdated has copy, drop, store {
     protocol_config_id: ID,
-    max_total_exposure_pct: u64,
-    expiry_allocation: u64,
-    grow_utilization_threshold: u64,
-    shrink_utilization_threshold: u64,
-    grow_factor: u64,
-    shrink_factor: u64,
     valuation_liquidation_budget: u64,
     trade_liquidation_budget: u64,
 }
@@ -122,9 +114,7 @@ public(package) fun emit_pricing_config_updated(protocol_config_id: ID, config: 
 public(package) fun emit_fee_config_updated(protocol_config_id: ID, config: &FeeConfig) {
     event::emit(FeeConfigUpdated {
         protocol_config_id,
-        lp_fee_share: config.lp_fee_share(),
-        protocol_fee_share: config.protocol_fee_share(),
-        insurance_fee_share: config.insurance_fee_share(),
+        protocol_reserve_fee_share: config.protocol_reserve_fee_share(),
         trading_loss_rebate_rate: config.trading_loss_rebate_rate(),
     });
 }
@@ -132,12 +122,6 @@ public(package) fun emit_fee_config_updated(protocol_config_id: ID, config: &Fee
 public(package) fun emit_risk_config_updated(protocol_config_id: ID, config: &RiskConfig) {
     event::emit(RiskConfigUpdated {
         protocol_config_id,
-        max_total_exposure_pct: config.max_total_exposure_pct(),
-        expiry_allocation: config.expiry_allocation(),
-        grow_utilization_threshold: config.grow_utilization_threshold(),
-        shrink_utilization_threshold: config.shrink_utilization_threshold(),
-        grow_factor: config.grow_factor(),
-        shrink_factor: config.shrink_factor(),
         valuation_liquidation_budget: config.valuation_liquidation_budget(),
         trade_liquidation_budget: config.trade_liquidation_budget(),
     });
