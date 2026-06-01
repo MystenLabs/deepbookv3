@@ -8,7 +8,7 @@
 /// payout liability for cash backing, and live position liability for LP
 /// valuation. It stores the parent market identity so market-scoped liquidation
 /// events can be emitted atomically with exposure removal. Expiry-market cash
-/// backing, fee custody, manager positions, and payout movement stay outside
+/// custody, rebate accounting, manager positions, and payout movement stay outside
 /// this module.
 module deepbook_predict::strike_exposure;
 
@@ -20,7 +20,7 @@ use deepbook_predict::{
     math as predict_math,
     order::{Self, Order},
     order_events,
-    pricing::{Self, CurvePoint},
+    pricing,
     pricing_config::PricingConfig,
     pyth_source::PythSource,
     strike_nav_matrix::{Self, StrikeNavMatrix},
@@ -89,18 +89,12 @@ public(package) fun liquidation_ltv(exposure: &StrikeExposure): u64 {
     exposure.liquidation_ltv
 }
 
-/// Run bounded liquidations and evaluate live user-position liability.
-///
-/// The bounded scan is the protocol's valuation-maintenance policy; it does not
-/// prove complete health of every active leveraged order. Valuation reuses one
-/// aggregate curve for both liquidation checks and NAV because valuation scans a
-/// larger batch than trade flows.
-public(package) fun liquidate_and_live_position_liability(
-    exposure: &mut StrikeExposure,
+/// Evaluate live user-position liability over the current minted strike range.
+public(package) fun valuation_liability(
+    exposure: &StrikeExposure,
     config: &PricingConfig,
     market: &MarketOracle,
     pyth: &PythSource,
-    budget: u64,
     clock: &Clock,
 ): u64 {
     let live = exposure.live.borrow();
@@ -119,14 +113,6 @@ public(package) fun liquidate_and_live_position_liability(
         minted_min_strike,
         minted_max_strike,
     );
-    if (budget > 0) {
-        let candidates = exposure.liquidation.select_liquidation_candidates(budget);
-        if (!candidates.is_empty()) {
-            exposure.liquidate_candidates_with_curve(&curve, candidates, clock);
-        };
-    };
-
-    let live = exposure.live.borrow();
     live
         .nav
         .live_value(
@@ -275,7 +261,7 @@ public(package) fun clear_liquidated_order(exposure: &mut StrikeExposure, order:
     exposure.liquidation.clear_liquidated(order);
 }
 
-/// Run one bounded liquidation pass and emit one event per removed order.
+/// Run one bounded liquidation pass using exact per-candidate pricing.
 public(package) fun liquidate_live_orders(
     exposure: &mut StrikeExposure,
     config: &PricingConfig,
@@ -288,7 +274,7 @@ public(package) fun liquidate_live_orders(
     if (candidates.is_empty()) return 0;
 
     let (forward, svi) = pricing::live_inputs(config, market, pyth, clock);
-    exposure.liquidate_candidates_with_inputs(&svi, forward, candidates, clock)
+    exposure.liquidate_candidates(&svi, forward, candidates, clock)
 }
 
 /// Cache terminal settled payout liability.
@@ -336,39 +322,7 @@ public(package) fun destroy_live_indexes(exposure: &mut StrikeExposure) {
     payout.destroy();
 }
 
-fun liquidate_candidates_with_curve(
-    exposure: &mut StrikeExposure,
-    curve: &vector<CurvePoint>,
-    candidates: vector<u256>,
-    clock: &Clock,
-): u64 {
-    let mut liquidated_count = 0;
-    let mut i = 0;
-    while (i < candidates.length()) {
-        let order = order::from_order_id(candidates[i]);
-        let (lower, higher) = exposure.order_strikes(&order);
-        let range_probability = pricing::directional_probability_upper_bound(
-            curve,
-            lower,
-            higher,
-        );
-        if (
-            exposure.liquidate_candidate_if_under_floor(
-                &order,
-                lower,
-                higher,
-                range_probability,
-                clock,
-            )
-        ) {
-            liquidated_count = liquidated_count + 1;
-        };
-        i = i + 1;
-    };
-    liquidated_count
-}
-
-fun liquidate_candidates_with_inputs(
+fun liquidate_candidates(
     exposure: &mut StrikeExposure,
     svi: &SVIParams,
     forward: u64,

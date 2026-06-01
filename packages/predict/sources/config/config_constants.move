@@ -1,113 +1,50 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Constants and validation helpers for admin-tunable config.
+/// Constants and validation helpers for admin-tunable policy.
 ///
-/// Default values seed stored config objects at creation. Bounds define the hard
-/// envelope admin setters can tune within. Changing a bound requires a package
-/// upgrade.
+/// Default values seed stored policy state at creation. Bounds define the hard
+/// envelope admin setters can tune within. Changing a bound requires a package upgrade.
 module deepbook_predict::config_constants;
 
-const EInvalidMaxTotalExposurePct: u64 = 0;
-const EInvalidBaseFee: u64 = 1;
-const EInvalidMinFee: u64 = 2;
-const EInvalidMinAskPrice: u64 = 3;
-const EInvalidMaxAskPrice: u64 = 4;
-const EInvalidPythSpotFreshnessMs: u64 = 5;
-const EInvalidBlockScholesPricesFreshnessMs: u64 = 6;
-const EInvalidBlockScholesSVIFreshnessMs: u64 = 7;
-const EInvalidLpFeeShare: u64 = 8;
-const EInvalidProtocolFeeShare: u64 = 9;
-const EInvalidInsuranceFeeShare: u64 = 10;
-const EInvalidSettlementFreshnessMs: u64 = 11;
-const EInvalidMaxSpotDeviation: u64 = 12;
-const EInvalidMaxBasisDeviation: u64 = 13;
-const EInvalidMinBasis: u64 = 14;
-const EInvalidMaxBasis: u64 = 15;
-const EInvalidExpiryAllocation: u64 = 16;
-const EInvalidGrowUtilizationThreshold: u64 = 17;
-const EInvalidShrinkUtilizationThreshold: u64 = 18;
-const EInvalidGrowFactor: u64 = 19;
-const EInvalidShrinkFactor: u64 = 20;
-const EInvalidTradingLossRebateRate: u64 = 21;
-const EInvalidMaxExpiryFloorPremium: u64 = 22;
-const EInvalidExpiryFeeWindowMs: u64 = 23;
-const EInvalidExpiryFeeMaxMultiplier: u64 = 24;
-const EInvalidLowerBenefitPower: u64 = 25;
-const EInvalidUpperBenefitPower: u64 = 26;
-const EInvalidBenefitPowers: u64 = 27;
-const EInvalidValuationLiquidationBudget: u64 = 28;
-const EInvalidTradeLiquidationBudget: u64 = 29;
-const EInvalidLiquidationLtv: u64 = 30;
+const EInvalidBaseFee: u64 = 0;
+const EInvalidMinFee: u64 = 1;
+const EInvalidMinAskPrice: u64 = 2;
+const EInvalidMaxAskPrice: u64 = 3;
+const EInvalidPythSpotFreshnessMs: u64 = 4;
+const EInvalidBlockScholesPricesFreshnessMs: u64 = 5;
+const EInvalidBlockScholesSVIFreshnessMs: u64 = 6;
+const EInvalidProtocolReserveProfitShare: u64 = 7;
+const EInvalidSettlementFreshnessMs: u64 = 8;
+const EInvalidMaxSpotDeviation: u64 = 9;
+const EInvalidMaxBasisDeviation: u64 = 10;
+const EInvalidMinBasis: u64 = 11;
+const EInvalidMaxBasis: u64 = 12;
+const EInvalidMaxExpiryFunding: u64 = 13;
+const EInvalidTradingLossRebateRate: u64 = 14;
+const EInvalidMaxExpiryFloorPremium: u64 = 15;
+const EInvalidExpiryFeeWindowMs: u64 = 16;
+const EInvalidExpiryFeeMaxMultiplier: u64 = 17;
+const EInvalidLowerBenefitPower: u64 = 18;
+const EInvalidUpperBenefitPower: u64 = 19;
+const EInvalidBenefitPowers: u64 = 20;
+const EInvalidValuationLiquidationBudget: u64 = 21;
+const EInvalidTradeLiquidationBudget: u64 = 22;
+const EInvalidLiquidationLtv: u64 = 23;
 
-// === Pool Risk ===
+// === Expiry Funding and Liquidation ===
 
-public(package) macro fun default_max_total_exposure_pct(): u64 { 800_000_000 }
-public(package) macro fun min_max_total_exposure_pct(): u64 { 1 }
-public(package) macro fun max_max_total_exposure_pct(): u64 {
-    deepbook_predict::constants::float_scaling!()
+public(package) macro fun default_max_expiry_funding(): u64 { 250_000_000_000 }
+public(package) macro fun min_max_expiry_funding(): u64 {
+    deepbook_predict::constants::expiry_cash_floor!()
 }
+public(package) macro fun max_max_expiry_funding(): u64 { 250_000_000_000 }
 
-public(package) fun assert_max_total_exposure_pct(value: u64) {
+public(package) fun assert_max_expiry_funding(value: u64) {
     assert!(
-        value >= min_max_total_exposure_pct!() && value <= max_max_total_exposure_pct!(),
-        EInvalidMaxTotalExposurePct,
+        value >= min_max_expiry_funding!() && value <= max_max_expiry_funding!(),
+        EInvalidMaxExpiryFunding,
     );
-}
-
-public(package) macro fun default_allocation(): u64 { 50_000_000_000 }
-public(package) macro fun min_allocation(): u64 { 50_000_000_000 }
-public(package) macro fun max_allocation(): u64 { 250_000_000_000 }
-
-public(package) fun assert_expiry_allocation(value: u64) {
-    assert!(value >= min_allocation!() && value <= max_allocation!(), EInvalidExpiryAllocation);
-}
-
-public(package) macro fun default_grow_utilization_threshold(): u64 { 800_000_000 }
-public(package) macro fun min_grow_utilization_threshold(): u64 { 0 }
-public(package) macro fun max_grow_utilization_threshold(): u64 {
-    deepbook_predict::constants::float_scaling!()
-}
-
-public(package) fun assert_grow_utilization_threshold(value: u64) {
-    assert!(
-        value >= min_grow_utilization_threshold!() && value <= max_grow_utilization_threshold!(),
-        EInvalidGrowUtilizationThreshold,
-    );
-}
-
-public(package) macro fun default_shrink_utilization_threshold(): u64 { 300_000_000 }
-public(package) macro fun min_shrink_utilization_threshold(): u64 { 0 }
-public(package) macro fun max_shrink_utilization_threshold(): u64 {
-    deepbook_predict::constants::float_scaling!()
-}
-
-public(package) fun assert_shrink_utilization_threshold(value: u64) {
-    assert!(
-        value >= min_shrink_utilization_threshold!()
-            && value <= max_shrink_utilization_threshold!(),
-        EInvalidShrinkUtilizationThreshold,
-    );
-}
-
-public(package) macro fun default_grow_factor(): u64 { 2_000_000_000 }
-public(package) macro fun min_grow_factor(): u64 {
-    deepbook_predict::constants::float_scaling!() + 1
-}
-public(package) macro fun max_grow_factor(): u64 { 10_000_000_000 }
-
-public(package) fun assert_grow_factor(value: u64) {
-    assert!(value >= min_grow_factor!() && value <= max_grow_factor!(), EInvalidGrowFactor);
-}
-
-public(package) macro fun default_shrink_factor(): u64 { 500_000_000 }
-public(package) macro fun min_shrink_factor(): u64 { 0 }
-public(package) macro fun max_shrink_factor(): u64 {
-    deepbook_predict::constants::float_scaling!() - 1
-}
-
-public(package) fun assert_shrink_factor(value: u64) {
-    assert!(value >= min_shrink_factor!() && value <= max_shrink_factor!(), EInvalidShrinkFactor);
 }
 
 public(package) macro fun default_valuation_liquidation_budget(): u64 { 192 }
@@ -266,37 +203,17 @@ public(package) fun assert_block_scholes_svi_freshness_ms(value: u64) {
 
 // === Fees ===
 
-public(package) macro fun default_lp_fee_share(): u64 { 600_000_000 }
-public(package) macro fun min_lp_fee_share(): u64 { 0 }
-public(package) macro fun max_lp_fee_share(): u64 { deepbook_predict::constants::float_scaling!() }
-
-public(package) fun assert_lp_fee_share(value: u64) {
-    assert!(value >= min_lp_fee_share!() && value <= max_lp_fee_share!(), EInvalidLpFeeShare);
-}
-
-public(package) macro fun default_protocol_fee_share(): u64 { 200_000_000 }
-public(package) macro fun min_protocol_fee_share(): u64 { 0 }
-public(package) macro fun max_protocol_fee_share(): u64 {
+public(package) macro fun default_protocol_reserve_profit_share(): u64 { 400_000_000 }
+public(package) macro fun min_protocol_reserve_profit_share(): u64 { 0 }
+public(package) macro fun max_protocol_reserve_profit_share(): u64 {
     deepbook_predict::constants::float_scaling!()
 }
 
-public(package) fun assert_protocol_fee_share(value: u64) {
+public(package) fun assert_protocol_reserve_profit_share(value: u64) {
     assert!(
-        value >= min_protocol_fee_share!() && value <= max_protocol_fee_share!(),
-        EInvalidProtocolFeeShare,
-    );
-}
-
-public(package) macro fun default_insurance_fee_share(): u64 { 200_000_000 }
-public(package) macro fun min_insurance_fee_share(): u64 { 0 }
-public(package) macro fun max_insurance_fee_share(): u64 {
-    deepbook_predict::constants::float_scaling!()
-}
-
-public(package) fun assert_insurance_fee_share(value: u64) {
-    assert!(
-        value >= min_insurance_fee_share!() && value <= max_insurance_fee_share!(),
-        EInvalidInsuranceFeeShare,
+        value >= min_protocol_reserve_profit_share!()
+            && value <= max_protocol_reserve_profit_share!(),
+        EInvalidProtocolReserveProfitShare,
     );
 }
 

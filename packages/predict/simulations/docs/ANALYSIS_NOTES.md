@@ -77,27 +77,26 @@ skews became large exposure skews.
 `chart_market_overview.png` uses live pre-terminal vault PnL:
 
 ```text
-expiry LP cash - initial allocation + LP fee surplus - current live position liability
+active expiry value - pending protocol profit exclusion - expiry funding basis
 ```
 
 Fees and realized cash movements are included, but the chart is still a live
 mark. It can fall sharply when liability reprices faster than fees accumulate.
 
-In `may29-1738`, the hour 19-20 drop was mostly liability repricing:
+In the old split-balance `may29-1738` run, the hour 19-20 drop was mostly
+liability repricing:
 
 ```text
 hour 19:
 spot: 74177.91
 position liability: 65031.68 DUSDC
-cash above allocation: 66688.65 DUSDC
-fee surplus: 9170.46 DUSDC
+expiry value above funding basis: 75859.11 DUSDC
 LP MTM PnL: 10827.42 DUSDC
 
 hour 20:
 spot: 73147.74
 position liability: 158460.90 DUSDC
-cash above allocation: 69510.65 DUSDC
-fee surplus: 9886.08 DUSDC
+expiry value above funding basis: 79396.73 DUSDC
 LP MTM PnL: -79064.17 DUSDC
 ```
 
@@ -187,7 +186,7 @@ Key questions for the larger framework:
 - Does independent flow create persistent directional imbalance in expectation?
 - How often does spend-sized random flow generate one-sided open exposure before
   large market moves?
-- Are fees sufficient relative to tail drawdown on allocated capital?
+- Are fees sufficient relative to tail drawdown on expiry funding?
 - Should the protocol charge direction/skew-sensitive fees?
 - Should the vault enforce directional exposure limits, not just aggregate risk
   limits?

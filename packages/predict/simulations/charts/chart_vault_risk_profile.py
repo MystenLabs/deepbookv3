@@ -39,17 +39,17 @@ def append_scaled(series: dict[str, list[float]], x_key: str, y_key: str, x: flo
 def extract_series(records: list[dict[str, Any]], mode: str, origin: int) -> dict[str, list[float]]:
     series: dict[str, list[float]] = {
         "capital_x": [],
-        "liability_over_allocated": [],
+        "liability_over_funding": [],
         "contribution_x": [],
-        "contribution_over_allocated": [],
+        "contribution_over_funding": [],
         "pnl_x": [],
-        "lp_pnl_over_allocated": [],
+        "lp_pnl_over_funding": [],
         "book_pnl_x": [],
-        "book_pnl_over_allocated": [],
+        "book_pnl_over_funding": [],
         "comp_x": [],
-        "cumulative_trading_fee_over_allocated": [],
-        "cumulative_liquidation_gap_over_allocated": [],
-        "cumulative_net_liquidation_over_allocated": [],
+        "cumulative_trading_fee_over_funding": [],
+        "cumulative_liquidation_gap_over_funding": [],
+        "cumulative_net_liquidation_over_funding": [],
         "backlog_x": [],
         "backlog_over_liability": [],
     }
@@ -68,30 +68,30 @@ def extract_series(records: list[dict[str, Any]], mode: str, origin: int) -> dic
         append_scaled(
             series,
             "capital_x",
-            "liability_over_allocated",
+            "liability_over_funding",
             x,
-            risk.get("position_liability_over_allocated"),
+            risk.get("position_liability_over_funding"),
         )
         append_scaled(
             series,
             "contribution_x",
-            "contribution_over_allocated",
+            "contribution_over_funding",
             x,
-            risk.get("active_open_contribution_over_allocated"),
+            risk.get("active_open_contribution_over_funding"),
         )
         append_scaled(
             series,
             "pnl_x",
-            "lp_pnl_over_allocated",
+            "lp_pnl_over_funding",
             x,
-            risk.get("lp_live_mtm_pnl_over_allocated"),
+            risk.get("lp_live_mtm_pnl_over_funding"),
         )
         append_scaled(
             series,
             "book_pnl_x",
-            "book_pnl_over_allocated",
+            "book_pnl_over_funding",
             x,
-            active_book_pnl_over_allocated(record),
+            active_book_pnl_over_funding(record),
         )
         append_scaled(
             series,
@@ -101,35 +101,35 @@ def extract_series(records: list[dict[str, Any]], mode: str, origin: int) -> dic
             risk.get("liquidatable_value_over_liability"),
         )
 
-        allocated = int_or_none(risk.get("allocated_capital"))
-        if allocated is None or allocated <= 0:
+        funding = int_or_none(risk.get("expiry_funding_basis"))
+        if funding is None or funding <= 0:
             continue
-        trading_ratio = scaled_ratio(cumulative_trading_fee, allocated)
-        gap_ratio = scaled_ratio(cumulative_liquidation_gap, allocated)
+        trading_ratio = scaled_ratio(cumulative_trading_fee, funding)
+        gap_ratio = scaled_ratio(cumulative_liquidation_gap, funding)
         net_liquidation_ratio = scaled_ratio(
             cumulative_liquidation_surplus - cumulative_liquidation_gap,
-            allocated,
+            funding,
         )
         if trading_ratio is None or gap_ratio is None or net_liquidation_ratio is None:
             continue
         series["comp_x"].append(x)
-        series["cumulative_trading_fee_over_allocated"].append(pct_from_scaled(trading_ratio))
-        series["cumulative_liquidation_gap_over_allocated"].append(pct_from_scaled(gap_ratio))
-        series["cumulative_net_liquidation_over_allocated"].append(pct_from_scaled(net_liquidation_ratio))
+        series["cumulative_trading_fee_over_funding"].append(pct_from_scaled(trading_ratio))
+        series["cumulative_liquidation_gap_over_funding"].append(pct_from_scaled(gap_ratio))
+        series["cumulative_net_liquidation_over_funding"].append(pct_from_scaled(net_liquidation_ratio))
 
     return series
 
 
-def active_book_pnl_over_allocated(record: dict[str, Any]) -> int | None:
+def active_book_pnl_over_funding(record: dict[str, Any]) -> int | None:
     risk = record.get("risk", {})
-    existing = int_or_none(risk.get("active_book_live_pnl_over_allocated"))
+    existing = int_or_none(risk.get("active_book_live_pnl_over_funding"))
     if existing is not None:
         return existing
-    allocated = int_or_none(risk.get("allocated_capital"))
+    funding = int_or_none(risk.get("expiry_funding_basis"))
     active_book_pnl = int_or_none(record.get("valuation", {}).get("active_book_live_pnl"))
-    if allocated is None or active_book_pnl is None:
+    if funding is None or active_book_pnl is None:
         return None
-    return scaled_ratio(active_book_pnl, allocated)
+    return scaled_ratio(active_book_pnl, funding)
 
 
 def use_percent_axis(ax: plt.Axes) -> None:
@@ -140,25 +140,25 @@ def use_percent_axis(ax: plt.Axes) -> None:
 def plot_capital_panel(ax: plt.Axes, series: dict[str, list[float]]) -> None:
     ax.plot(
         series["capital_x"],
-        series["liability_over_allocated"],
+        series["liability_over_funding"],
         color="#2563eb",
         linewidth=1.6,
-        label="position liability / allocated capital",
+        label="position liability / expiry funding",
     )
     ax.plot(
         series["contribution_x"],
-        series["contribution_over_allocated"],
+        series["contribution_over_funding"],
         color="#0891b2",
         linewidth=1.4,
-        label="open contribution / allocated capital",
+        label="open contribution / expiry funding",
     )
     ax.set_title(
         "Capital Utilization\n"
-        "Shows how much allocated counterparty capital is represented by current live liability and trader contribution.",
+        "Shows how much expiry funding is represented by current live liability and trader contribution.",
         loc="left",
         fontsize=11,
     )
-    ax.set_ylabel("share of allocation")
+    ax.set_ylabel("share of funding")
     use_percent_axis(ax)
     ax.legend(loc="upper left", ncols=2, fontsize=8, frameon=False)
 
@@ -166,22 +166,22 @@ def plot_capital_panel(ax: plt.Axes, series: dict[str, list[float]]) -> None:
 def plot_return_panel(ax: plt.Axes, series: dict[str, list[float]]) -> None:
     ax.plot(
         series["pnl_x"],
-        series["lp_pnl_over_allocated"],
+        series["lp_pnl_over_funding"],
         color="#9333ea",
         linewidth=1.7,
-        label="LP MTM PnL / allocated capital",
+        label="LP MTM PnL / expiry funding",
     )
     ax.plot(
         series["book_pnl_x"],
-        series["book_pnl_over_allocated"],
+        series["book_pnl_over_funding"],
         color="#059669",
         linewidth=1.4,
-        label="active book PnL / allocated capital",
+        label="active book PnL / expiry funding",
     )
     ax.axhline(0, color="#64748b", linewidth=0.8)
     ax.set_title(
         "Risk-Normalized Return\n"
-        "Compares live vault PnL and open-book PnL against the same allocated-capital denominator.",
+        "Compares live vault PnL and open-book PnL against the same expiry-funding denominator.",
         loc="left",
         fontsize=11,
     )
@@ -193,33 +193,33 @@ def plot_return_panel(ax: plt.Axes, series: dict[str, list[float]]) -> None:
 def plot_compensation_panel(ax: plt.Axes, series: dict[str, list[float]]) -> None:
     ax.plot(
         series["comp_x"],
-        series["cumulative_trading_fee_over_allocated"],
+        series["cumulative_trading_fee_over_funding"],
         color="#2563eb",
         linewidth=1.4,
-        label="cumulative trading fees / allocation",
+        label="cumulative trading fees / funding",
     )
     ax.plot(
         series["comp_x"],
-        series["cumulative_liquidation_gap_over_allocated"],
+        series["cumulative_liquidation_gap_over_funding"],
         color="#dc2626",
         linewidth=1.4,
-        label="cumulative bad debt / allocation",
+        label="cumulative bad debt / funding",
     )
     ax.plot(
         series["comp_x"],
-        series["cumulative_net_liquidation_over_allocated"],
+        series["cumulative_net_liquidation_over_funding"],
         color="#059669",
         linewidth=1.6,
-        label="cumulative net liquidation / allocation",
+        label="cumulative net liquidation / funding",
     )
     ax.axhline(0, color="#64748b", linewidth=0.8)
     ax.set_title(
         "Fees And Liquidation Results On Capital\n"
-        "Normalizes cumulative trading fees, bad debt, and net liquidation surplus against allocated counterparty capital.",
+        "Normalizes cumulative trading fees, bad debt, and net liquidation surplus against expiry funding.",
         loc="left",
         fontsize=11,
     )
-    ax.set_ylabel("share of allocation")
+    ax.set_ylabel("share of funding")
     use_percent_axis(ax)
     ax.legend(loc="upper left", ncols=3, fontsize=8, frameon=False)
 

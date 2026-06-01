@@ -125,7 +125,7 @@ interface OracleRefreshParams {
   };
 }
 
-interface ExpiryValuationParams {
+interface ExpiryPoolSyncParams {
   poolVaultId: string;
   protocolConfigId: string;
   expiryMarketId: string;
@@ -133,11 +133,11 @@ interface ExpiryValuationParams {
   pythSourceId: string;
 }
 
-interface SupplyWithExpiryValuationParams extends ExpiryValuationParams {
+interface SupplyWithExpiryPoolSyncParams extends ExpiryPoolSyncParams {
   amount: bigint;
 }
 
-interface WithdrawWithExpiryValuationParams extends ExpiryValuationParams {
+interface WithdrawWithExpiryPoolSyncParams extends ExpiryPoolSyncParams {
   lpCoinId: string;
 }
 
@@ -218,14 +218,16 @@ function mintDusdc(tx: Transaction, amount: bigint) {
   return coin;
 }
 
-function startPlpValuationWithExpiry(tx: Transaction, params: ExpiryValuationParams) {
-  const valuation = tx.moveCall({
-    target: target("plp", "start_valuation"),
+function startPoolSyncWithExpiry(tx: Transaction, params: ExpiryPoolSyncParams) {
+  const sync = tx.moveCall({
+    target: target("plp", "start_pool_sync"),
     arguments: [tx.object(params.protocolConfigId), tx.object(params.poolVaultId)],
   });
-  const expiryValuation = tx.moveCall({
-    target: target("expiry_market", "produce_valuation"),
+  tx.moveCall({
+    target: target("plp", "sync_expiry"),
     arguments: [
+      sync,
+      tx.object(params.poolVaultId),
       tx.object(params.expiryMarketId),
       tx.object(params.protocolConfigId),
       tx.object(params.oracleId),
@@ -233,11 +235,15 @@ function startPlpValuationWithExpiry(tx: Transaction, params: ExpiryValuationPar
       tx.object(CLOCK_ID),
     ],
   });
+  return sync;
+}
+
+function finishPoolSyncWithExpiry(tx: Transaction, params: ExpiryPoolSyncParams): void {
+  const sync = startPoolSyncWithExpiry(tx, params);
   tx.moveCall({
-    target: target("plp", "add_expiry_valuation"),
-    arguments: [valuation, expiryValuation],
+    target: target("plp", "finish_pool_sync"),
+    arguments: [tx.object(params.poolVaultId), tx.object(params.protocolConfigId), sync],
   });
-  return valuation;
 }
 
 function addMint(tx: Transaction, params: MintParams): void {
@@ -375,45 +381,45 @@ export function setMarketOracleBasisBoundsTx(
 export function supplyTx(poolVaultId: string, protocolConfigId: string, amount: bigint): Transaction {
   const tx = new Transaction();
   const dusdc = mintDusdc(tx, amount);
-  const valuation = tx.moveCall({
-    target: target("plp", "start_valuation"),
+  const sync = tx.moveCall({
+    target: target("plp", "start_pool_sync"),
     arguments: [tx.object(protocolConfigId), tx.object(poolVaultId)],
   });
   const [plpCoin] = tx.moveCall({
     target: target("plp", "supply"),
-    arguments: [tx.object(poolVaultId), tx.object(protocolConfigId), valuation, dusdc],
+    arguments: [tx.object(poolVaultId), tx.object(protocolConfigId), sync, dusdc],
   });
   tx.transferObjects([plpCoin], tx.pure.address(address));
   return tx;
 }
 
-export function refreshOracleAndSupplyWithExpiryValuationTx(
-  params: OracleRefreshParams & SupplyWithExpiryValuationParams
+export function refreshOracleAndSupplyWithExpiryPoolSyncTx(
+  params: OracleRefreshParams & SupplyWithExpiryPoolSyncParams
 ): Transaction {
   const tx = new Transaction();
   addOracleRefresh(tx, params);
   const dusdc = mintDusdc(tx, params.amount);
-  const valuation = startPlpValuationWithExpiry(tx, params);
+  const sync = startPoolSyncWithExpiry(tx, params);
   const [plpCoin] = tx.moveCall({
     target: target("plp", "supply"),
-    arguments: [tx.object(params.poolVaultId), tx.object(params.protocolConfigId), valuation, dusdc],
+    arguments: [tx.object(params.poolVaultId), tx.object(params.protocolConfigId), sync, dusdc],
   });
   tx.transferObjects([plpCoin], tx.pure.address(address));
   return tx;
 }
 
-export function refreshOracleAndWithdrawWithExpiryValuationTx(
-  params: OracleRefreshParams & WithdrawWithExpiryValuationParams
+export function refreshOracleAndWithdrawWithExpiryPoolSyncTx(
+  params: OracleRefreshParams & WithdrawWithExpiryPoolSyncParams
 ): Transaction {
   const tx = new Transaction();
   addOracleRefresh(tx, params);
-  const valuation = startPlpValuationWithExpiry(tx, params);
+  const sync = startPoolSyncWithExpiry(tx, params);
   const [dusdc] = tx.moveCall({
     target: target("plp", "withdraw"),
     arguments: [
       tx.object(params.poolVaultId),
       tx.object(params.protocolConfigId),
-      valuation,
+      sync,
       tx.object(params.lpCoinId),
     ],
   });
@@ -456,16 +462,18 @@ export function depositToManagerTx(managerId: string, amount: bigint): Transacti
   return tx;
 }
 
-export function refreshOracleAndMintTx(params: OracleRefreshParams & MintParams): Transaction {
+export function refreshOracleAndMintTx(params: OracleRefreshParams & ExpiryPoolSyncParams & MintParams): Transaction {
   const tx = new Transaction();
   addOracleRefresh(tx, params);
+  finishPoolSyncWithExpiry(tx, params);
   addMint(tx, params);
   return tx;
 }
 
-export function refreshOracleAndRedeemTx(params: OracleRefreshParams & RedeemParams): Transaction {
+export function refreshOracleAndRedeemTx(params: OracleRefreshParams & ExpiryPoolSyncParams & RedeemParams): Transaction {
   const tx = new Transaction();
   addOracleRefresh(tx, params);
+  finishPoolSyncWithExpiry(tx, params);
   addRedeem(tx, params);
   return tx;
 }

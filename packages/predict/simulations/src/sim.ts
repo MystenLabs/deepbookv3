@@ -39,8 +39,8 @@ import {
   finalizeDusdcCurrencyRegistrationTx,
   refreshOracleAndMintTx,
   refreshOracleAndRedeemTx,
-  refreshOracleAndSupplyWithExpiryValuationTx,
-  refreshOracleAndWithdrawWithExpiryValuationTx,
+  refreshOracleAndSupplyWithExpiryPoolSyncTx,
+  refreshOracleAndWithdrawWithExpiryPoolSyncTx,
   setMarketOracleBasisBoundsTx,
   supplyTx,
   type ExecutionReceipt,
@@ -49,7 +49,6 @@ import {
 const DUSDC_DECIMALS = 1_000_000n;
 const DEFAULT_VAULT_SEED = 500_000n * DUSDC_DECIMALS;
 const DEFAULT_MANAGER_SEED = 500_000n * DUSDC_DECIMALS;
-const DEFAULT_INITIAL_EXPIRY_ALLOCATION = 50_000n * DUSDC_DECIMALS;
 const EXPIRY_MS = BigInt(Date.now()) + 400n * 24n * 60n * 60n * 1000n;
 const FLOAT_SCALING = 1_000_000_000n;
 const SCENARIO_CONFIG_PATH = fileURLToPath(new URL("../data/scenario_config.json", import.meta.url));
@@ -63,17 +62,17 @@ const ORDER_SEQUENCE_MASK = (1n << 40n) - 1n;
 interface SimulationCapital {
   vaultSeed: bigint;
   managerSeed: bigint;
-  initialExpiryAllocation: bigint;
   initialTotalPlpSupply: bigint;
 }
 
 interface EconomicState {
   managerBalance: bigint;
-  expiryLpCash: bigint;
-  expiryFeeBalance: bigint;
+  expiryCashBalance: bigint;
   expiryUnresolvedTradingFees: bigint;
   vaultIdleBalance: bigint;
-  vaultTotalAllocated: bigint;
+  vaultProtocolReserveBalance: bigint;
+  profitBasisDebits: bigint;
+  profitBasisCredits: bigint;
   vaultTotalPlpSupply: bigint;
   openOrderCount: bigint;
   openOrderQuantity: bigint;
@@ -116,11 +115,12 @@ function scenarioPath(): string {
 function initialEconomicState(capital: SimulationCapital): EconomicState {
   return {
     managerBalance: capital.managerSeed,
-    expiryLpCash: capital.initialExpiryAllocation,
-    expiryFeeBalance: 0n,
+    expiryCashBalance: 0n,
     expiryUnresolvedTradingFees: 0n,
-    vaultIdleBalance: capital.vaultSeed - capital.initialExpiryAllocation,
-    vaultTotalAllocated: capital.initialExpiryAllocation,
+    vaultIdleBalance: capital.vaultSeed,
+    vaultProtocolReserveBalance: 0n,
+    profitBasisDebits: 0n,
+    profitBasisCredits: 0n,
     vaultTotalPlpSupply: capital.initialTotalPlpSupply,
     openOrderCount: 0n,
     openOrderQuantity: 0n,
@@ -382,7 +382,6 @@ function normalizeSupplyExecuted(event: any, row: ScenarioRow): Record<string, u
     pool_value_before: decimal(json.pool_value_before),
     total_supply_after: decimal(json.total_supply_after),
     idle_balance_after: decimal(json.idle_balance_after),
-    total_allocated_after: decimal(json.total_allocated_after),
   };
 }
 
@@ -396,7 +395,45 @@ function normalizeWithdrawExecuted(event: any, row: ScenarioRow): Record<string,
     pool_value_before: decimal(json.pool_value_before),
     total_supply_after: decimal(json.total_supply_after),
     idle_balance_after: decimal(json.idle_balance_after),
-    total_allocated_after: decimal(json.total_allocated_after),
+  };
+}
+
+function normalizeExpiryCashRebalanced(event: any): Record<string, unknown> {
+  const json = event.parsedJson ?? {};
+  return {
+    type: "expiry_cash_rebalanced",
+    amount: decimal(json.amount),
+    to_expiry: booleanField(json.to_expiry),
+    target_cash: decimal(json.target_cash),
+    expiry_cash_after: decimal(json.expiry_cash_after),
+    idle_balance_after: decimal(json.idle_balance_after),
+    sent_to_expiry_after: decimal(json.sent_to_expiry_after),
+    received_from_expiry_after: decimal(json.received_from_expiry_after),
+  };
+}
+
+function normalizeExpiryCashReceived(event: any): Record<string, unknown> {
+  const json = event.parsedJson ?? {};
+  return {
+    type: "expiry_cash_received",
+    settlement_price: decimal(json.settlement_price),
+    amount: decimal(json.amount),
+    idle_balance_after: decimal(json.idle_balance_after),
+    sent_to_expiry_after: decimal(json.sent_to_expiry_after),
+    received_from_expiry_after: decimal(json.received_from_expiry_after),
+  };
+}
+
+function normalizeExpiryProfitMaterialized(event: any): Record<string, unknown> {
+  const json = event.parsedJson ?? {};
+  return {
+    type: "expiry_profit_materialized",
+    expiry_market_id: json.expiry_market_id ?? null,
+    lp_profit: decimal(json.lp_profit),
+    protocol_profit: decimal(json.protocol_profit),
+    idle_balance_after: decimal(json.idle_balance_after),
+    protocol_reserve_balance_after: decimal(json.protocol_reserve_balance_after),
+    profit_basis_after: decimal(json.profit_basis_after),
   };
 }
 
@@ -413,6 +450,9 @@ function normalizeUpdates(row: ScenarioRow, receipt: ExecutionReceipt, aliases: 
     else if (name === "SettledOrderRedeemed") updates.push(normalizeSettledOrderRedeemed(event, row));
     else if (name === "SupplyExecuted") updates.push(normalizeSupplyExecuted(event, row));
     else if (name === "WithdrawExecuted") updates.push(normalizeWithdrawExecuted(event, row));
+    else if (name === "ExpiryCashRebalanced") updates.push(normalizeExpiryCashRebalanced(event));
+    else if (name === "ExpiryCashReceived") updates.push(normalizeExpiryCashReceived(event));
+    else if (name === "ExpiryProfitMaterialized") updates.push(normalizeExpiryProfitMaterialized(event));
   }
   return updates;
 }
@@ -424,8 +464,7 @@ function applyUpdate(state: EconomicState, update: Record<string, unknown>) {
     const builderFee = BigInt(decimal(update.builder_fee));
     const quantity = BigInt(decimal(update.quantity));
     state.managerBalance -= contribution + tradingFee + builderFee;
-    state.expiryLpCash += contribution;
-    state.expiryFeeBalance += tradingFee;
+    state.expiryCashBalance += contribution + tradingFee;
     state.expiryUnresolvedTradingFees += tradingFee;
     state.openOrderCount += 1n;
     state.openOrderQuantity += quantity;
@@ -441,8 +480,8 @@ function applyUpdate(state: EconomicState, update: Record<string, unknown>) {
     const quantityClosed = BigInt(decimal(update.quantity_closed));
     const remainingQuantity = BigInt(decimal(update.remaining_quantity));
     state.managerBalance += redeemAmount - tradingFee - builderFee;
-    state.expiryLpCash -= redeemAmount;
-    state.expiryFeeBalance += tradingFee;
+    state.expiryCashBalance -= redeemAmount;
+    state.expiryCashBalance += tradingFee;
     state.expiryUnresolvedTradingFees += tradingFee;
     state.openOrderQuantity -= quantityClosed;
     if (remainingQuantity === 0n) state.openOrderCount -= 1n;
@@ -452,16 +491,33 @@ function applyUpdate(state: EconomicState, update: Record<string, unknown>) {
     const payout = BigInt(decimal(update.payout_amount));
     const quantityClosed = BigInt(decimal(update.quantity_closed));
     state.managerBalance += payout;
-    state.expiryLpCash -= payout;
+    state.expiryCashBalance -= payout;
     state.openOrderCount -= 1n;
     state.openOrderQuantity -= quantityClosed;
+  } else if (update.type === "expiry_cash_rebalanced") {
+    const amount = BigInt(decimal(update.amount));
+    state.expiryCashBalance = BigInt(decimal(update.expiry_cash_after));
+    state.vaultIdleBalance = BigInt(decimal(update.idle_balance_after));
+    if (update.to_expiry === true) {
+      state.profitBasisDebits += amount;
+    } else {
+      state.profitBasisCredits += amount;
+    }
+  } else if (update.type === "expiry_cash_received") {
+    const amount = BigInt(decimal(update.amount));
+    state.expiryCashBalance -= amount;
+    state.vaultIdleBalance = BigInt(decimal(update.idle_balance_after));
+    state.profitBasisCredits += amount;
+  } else if (update.type === "expiry_profit_materialized") {
+    const profitBasisAfter = BigInt(decimal(update.profit_basis_after));
+    state.vaultIdleBalance = BigInt(decimal(update.idle_balance_after));
+    state.vaultProtocolReserveBalance = BigInt(decimal(update.protocol_reserve_balance_after));
+    state.profitBasisDebits = profitBasisAfter;
   } else if (update.type === "pool_supply") {
     state.vaultIdleBalance = BigInt(decimal(update.idle_balance_after));
-    state.vaultTotalAllocated = BigInt(decimal(update.total_allocated_after));
     state.vaultTotalPlpSupply = BigInt(decimal(update.total_supply_after));
   } else if (update.type === "pool_withdraw") {
     state.vaultIdleBalance = BigInt(decimal(update.idle_balance_after));
-    state.vaultTotalAllocated = BigInt(decimal(update.total_allocated_after));
     state.vaultTotalPlpSupply = BigInt(decimal(update.total_supply_after));
   }
 }
@@ -469,11 +525,12 @@ function applyUpdate(state: EconomicState, update: Record<string, unknown>) {
 function stateSnapshot(state: EconomicState): Record<string, string> {
   return {
     manager_balance: state.managerBalance.toString(),
-    expiry_lp_cash: state.expiryLpCash.toString(),
-    expiry_fee_balance: state.expiryFeeBalance.toString(),
+    expiry_cash_balance: state.expiryCashBalance.toString(),
     expiry_unresolved_trading_fees: state.expiryUnresolvedTradingFees.toString(),
     vault_idle_balance: state.vaultIdleBalance.toString(),
-    vault_total_allocated: state.vaultTotalAllocated.toString(),
+    vault_protocol_reserve_balance: state.vaultProtocolReserveBalance.toString(),
+    profit_basis_debits: state.profitBasisDebits.toString(),
+    profit_basis_credits: state.profitBasisCredits.toString(),
     vault_total_plp_supply: state.vaultTotalPlpSupply.toString(),
     open_order_count: state.openOrderCount.toString(),
     open_order_quantity: state.openOrderQuantity.toString(),
@@ -599,19 +656,9 @@ function capitalConfigValue(config: any, mode: string, key: string, fallback: bi
 
 function simulationCapital(config: any, mode: "normal" | "long"): SimulationCapital {
   const vaultSeed = capitalConfigValue(config, mode, "vault_seed", DEFAULT_VAULT_SEED);
-  const initialExpiryAllocation = capitalConfigValue(
-    config,
-    mode,
-    "initial_expiry_allocation",
-    DEFAULT_INITIAL_EXPIRY_ALLOCATION,
-  );
-  if (initialExpiryAllocation > vaultSeed) {
-    throw new Error(`${mode} initial_expiry_allocation exceeds vault_seed`);
-  }
   return {
     vaultSeed,
     managerSeed: capitalConfigValue(config, mode, "manager_seed", DEFAULT_MANAGER_SEED),
-    initialExpiryAllocation,
     initialTotalPlpSupply: vaultSeed,
   };
 }
@@ -735,6 +782,7 @@ async function executeRow(row: ScenarioRow, state: SimState, aliases: AliasState
     const alignedStrike = alignStrikeToGrid(row.strike);
     return execute(
       () => refreshOracleAndMintTx({
+        poolVaultId: state.poolVaultId,
         expiryMarketId: state.expiryMarketId,
         protocolConfigId: state.protocolConfigId,
         managerId: state.managerId,
@@ -766,6 +814,7 @@ async function executeRow(row: ScenarioRow, state: SimState, aliases: AliasState
     if (!orderId) throw new Error(`Unknown order_ref ${row.orderRef}`);
     return execute(
       () => refreshOracleAndRedeemTx({
+        poolVaultId: state.poolVaultId,
         expiryMarketId: state.expiryMarketId,
         protocolConfigId: state.protocolConfigId,
         managerId: state.managerId,
@@ -784,7 +833,7 @@ async function executeRow(row: ScenarioRow, state: SimState, aliases: AliasState
 
   if (row.action === "supply") {
     return execute(
-      () => refreshOracleAndSupplyWithExpiryValuationTx({
+      () => refreshOracleAndSupplyWithExpiryPoolSyncTx({
         poolVaultId: state.poolVaultId,
         protocolConfigId: state.protocolConfigId,
         expiryMarketId: state.expiryMarketId,
@@ -803,7 +852,7 @@ async function executeRow(row: ScenarioRow, state: SimState, aliases: AliasState
   const lpCoinId = aliases.lpCoinIdsByRef.get(row.lpRef);
   if (!lpCoinId) throw new Error(`Unknown lp_ref ${row.lpRef}`);
   return execute(
-    () => refreshOracleAndWithdrawWithExpiryValuationTx({
+    () => refreshOracleAndWithdrawWithExpiryPoolSyncTx({
       poolVaultId: state.poolVaultId,
       protocolConfigId: state.protocolConfigId,
       expiryMarketId: state.expiryMarketId,

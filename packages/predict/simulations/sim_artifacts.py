@@ -6,8 +6,8 @@ import json
 from pathlib import Path
 from typing import Any, Sequence, TypeVar
 
-PREDICT_ECONOMIC_SCHEMA_VERSION = "predict_economic_v1"
-PREDICT_DERIVED_SCHEMA_VERSION = "predict_derived_v1"
+PREDICT_ECONOMIC_SCHEMA_VERSION = "predict_economic_v2"
+PREDICT_DERIVED_SCHEMA_VERSION = "predict_derived_v2"
 
 DUSDC_DECIMALS = 1_000_000
 DUSDC_SCALING = DUSDC_DECIMALS
