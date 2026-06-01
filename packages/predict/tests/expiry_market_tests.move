@@ -5,6 +5,7 @@
 module deepbook_predict::expiry_market_tests;
 
 use deepbook_predict::{
+    config_constants,
     constants,
     expiry_market::{Self, ExpiryMarket},
     i64,
@@ -24,9 +25,10 @@ const NOW_MS: u64 = 100_000;
 const EXPIRY_MS: u64 = 200_000;
 const MIN_STRIKE: u64 = 100_000_000_000;
 const TICK_SIZE: u64 = 1_000_000_000;
-const SETTLEMENT_PRICE: u64 = 100_000_000_000;
+const LIVE_PRICE: u64 = 100_000_000_000;
+const SETTLEMENT_PRICE: u64 = 99_000_000_000;
 const LIVE_SOURCE_TIMESTAMP_MS: u64 = 99_000;
-const ZERO_TAIL_LOWER_STRIKE: u64 = 100_100_000_000_000;
+const MIN_FEE_LOWER_STRIKE: u64 = 100_000_000_000;
 
 const MINT_QUANTITY: u64 = 1_000_000_000;
 const MINT_DEPOSIT: u64 = 1_000_000_000;
@@ -41,6 +43,7 @@ fun rebate_eligibility_offsets_fee_reserve_by_gross_profit() {
     let mut scenario = test::begin(test_constants::alice());
     let (mut registry, admin_cap) = registry::new_for_testing(scenario.ctx());
     let mut config = protocol_config::new_for_testing(scenario.ctx());
+    config.set_base_fee(&admin_cap, 1);
     config.set_min_ask_price(&admin_cap, 0);
     let cap = market_oracle::create_cap(&admin_cap, scenario.ctx());
     let mut clock = clock::create_for_testing(scenario.ctx());
@@ -60,6 +63,9 @@ fun rebate_eligibility_offsets_fee_reserve_by_gross_profit() {
         EXPIRY_MS,
         MIN_STRIKE,
         TICK_SIZE,
+        constants::default_expiry_preallocated_ticks!(),
+        config_constants::default_expiry_fee_window_ms!(),
+        constants::float_scaling!(),
         scenario.ctx(),
     );
     let mut manager = registry::create_manager(&mut registry, scenario.ctx());
@@ -81,7 +87,7 @@ fun rebate_eligibility_offsets_fee_reserve_by_gross_profit() {
         &config,
         &oracle,
         &pyth,
-        ZERO_TAIL_LOWER_STRIKE,
+        MIN_FEE_LOWER_STRIKE,
         constants::pos_inf!(),
         MINT_QUANTITY,
         order::leverage_one_x(),
@@ -91,7 +97,11 @@ fun rebate_eligibility_offsets_fee_reserve_by_gross_profit() {
     assert_eq!(manager.trading_fees_paid(expiry_id), MINT_FEE);
     assert_eq!(market.rebate_reserve(), REBATE_RESERVE);
 
-    manager.record_gross_received_from_expiry(expiry_id, GROSS_PROFIT_ONE);
+    let order = order::from_order_id(order_id);
+    manager.record_gross_received_from_expiry(
+        expiry_id,
+        order.user_contribution() + GROSS_PROFIT_ONE,
+    );
     manager.remove_position(expiry_id, order_id);
     manager.add_inactive_stake(FULL_REBATE_STAKE);
     return_shared(market);
@@ -133,7 +143,7 @@ fun prepare_live_oracle_for_trading(
     clock: &Clock,
 ) {
     pyth.set_state_for_testing(
-        SETTLEMENT_PRICE,
+        LIVE_PRICE,
         LIVE_SOURCE_TIMESTAMP_MS,
         LIVE_SOURCE_TIMESTAMP_MS,
     );
@@ -141,8 +151,8 @@ fun prepare_live_oracle_for_trading(
         config,
         pyth,
         cap,
-        SETTLEMENT_PRICE,
-        SETTLEMENT_PRICE,
+        LIVE_PRICE,
+        LIVE_PRICE,
         LIVE_SOURCE_TIMESTAMP_MS,
         clock,
     );

@@ -48,6 +48,10 @@ paths:
 
 - Don't worry about "missing imports", because the compiler includes many std::/sui:: imports by default.
 
+- Current smart-contract work in this repo is pre-deploy development. Do not optimize contract changes for backwards compatibility, object layout preservation, or migration paths unless the user explicitly says deployed objects or upgrade compatibility matter.
+
+- Do not add `sui::dynamic_field` storage unless the user explicitly requests it or agrees to that design before editing. If dynamic fields look like the right upgrade/storage shape, surface the tradeoff and get confirmation first.
+
 - When using `sui::dynamic_field`, always define `use fun` aliases for method syntax on UID:
 ```move
 use sui::dynamic_field as df;

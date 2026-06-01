@@ -6,6 +6,7 @@ module deepbook_predict::plp_rebate_flow_tests;
 
 use deepbook_predict::{
     admin::AdminCap,
+    config_constants,
     constants::{Self, float_scaling as float},
     expiry_market::ExpiryMarket,
     i64,
@@ -29,11 +30,12 @@ use sui::{
 const PYTH_FEED_ID: u32 = 1;
 const NOW_MS: u64 = 100_000;
 const EXPIRY_MS: u64 = 200_000;
-const MIN_STRIKE: u64 = 100_000_000_000;
 const TICK_SIZE: u64 = 1_000_000_000;
-const SETTLEMENT_PRICE: u64 = 100_000_000_000;
+const CREATION_SPOT: u64 = 50_100_000_000_000;
+const LIVE_PRICE: u64 = 100_000_000_000;
+const SETTLEMENT_PRICE: u64 = 99_000_000_000;
 const LIVE_SOURCE_TIMESTAMP_MS: u64 = 99_000;
-const ZERO_TAIL_LOWER_STRIKE: u64 = 100_100_000_000_000;
+const MIN_FEE_LOWER_STRIKE: u64 = 100_000_000_000;
 
 const INITIAL_SUPPLY: u64 = 300_000_000_000;
 const PROTOCOL_RESERVE_SHARE: u64 = 400_000_000;
@@ -42,6 +44,8 @@ const MIN_FEE_MINT_DEPOSIT: u64 = 1_000_000_000;
 const MIN_FEE_MINT_FEE: u64 = 5_000_000;
 const MIN_FEE_REBATE_RESERVE: u64 = 2_500_000;
 const MIN_FEE_PROTOCOL_PROFIT: u64 = 1_000_000;
+const MIN_FEE_TERMINAL_MATERIALIZED_PROFIT: u64 = 502_500_000;
+const MIN_FEE_TERMINAL_PROTOCOL_PROFIT: u64 = 201_000_000;
 
 /// Scenario-local objects shared by the PLP rebate flow tests.
 public struct Fixture {
@@ -79,7 +83,7 @@ fun same_expiry_residual_rebate_cash_materializes_new_terminal_profit() {
         &fixture.config,
         &oracle,
         &pyth,
-        ZERO_TAIL_LOWER_STRIKE,
+        MIN_FEE_LOWER_STRIKE,
         constants::pos_inf!(),
         MIN_FEE_MINT_QUANTITY,
         order::leverage_one_x(),
@@ -91,14 +95,14 @@ fun same_expiry_residual_rebate_cash_materializes_new_terminal_profit() {
     settle_oracle(&mut fixture, &mut oracle, &mut pyth);
     sync_expiry_for_testing(&mut fixture, &mut vault, &mut market, &oracle, &pyth);
 
-    assert_eq!(vault.protocol_reserve_balance(), MIN_FEE_PROTOCOL_PROFIT);
+    assert_eq!(vault.protocol_reserve_balance(), MIN_FEE_TERMINAL_PROTOCOL_PROFIT);
     assert_eq!(
         vault.profit_basis_debits(),
-        constants::expiry_cash_floor!() + MIN_FEE_REBATE_RESERVE,
+        constants::expiry_cash_floor!() + MIN_FEE_TERMINAL_MATERIALIZED_PROFIT,
     );
     assert_eq!(
         vault.profit_basis_credits(),
-        constants::expiry_cash_floor!() + MIN_FEE_REBATE_RESERVE,
+        constants::expiry_cash_floor!() + MIN_FEE_TERMINAL_MATERIALIZED_PROFIT,
     );
 
     let (closed_order_id, replacement_order_id) = market.redeem(
@@ -123,14 +127,21 @@ fun same_expiry_residual_rebate_cash_materializes_new_terminal_profit() {
         fixture.scenario.ctx(),
     );
 
-    assert_eq!(vault.protocol_reserve_balance(), 2 * MIN_FEE_PROTOCOL_PROFIT);
+    assert_eq!(
+        vault.protocol_reserve_balance(),
+        MIN_FEE_TERMINAL_PROTOCOL_PROFIT + MIN_FEE_PROTOCOL_PROFIT,
+    );
     assert_eq!(
         vault.profit_basis_debits(),
-        constants::expiry_cash_floor!() + 2 * MIN_FEE_REBATE_RESERVE,
+        constants::expiry_cash_floor!()
+            + MIN_FEE_TERMINAL_MATERIALIZED_PROFIT
+            + MIN_FEE_REBATE_RESERVE,
     );
     assert_eq!(
         vault.profit_basis_credits(),
-        constants::expiry_cash_floor!() + 2 * MIN_FEE_REBATE_RESERVE,
+        constants::expiry_cash_floor!()
+            + MIN_FEE_TERMINAL_MATERIALIZED_PROFIT
+            + MIN_FEE_REBATE_RESERVE,
     );
     assert_eq!(market.cash_balance(), 0);
 
@@ -148,6 +159,7 @@ fun setup_pool_with_pyth(): Fixture {
     let (mut registry, admin_cap) = registry::new_for_testing(scenario.ctx());
     let mut config = protocol_config::new_for_testing(scenario.ctx());
     config.set_protocol_reserve_profit_share(&admin_cap, PROTOCOL_RESERVE_SHARE);
+    config.set_base_fee(&admin_cap, 1);
     config.set_min_ask_price(&admin_cap, 0);
     let cap = market_oracle::create_cap(&admin_cap, scenario.ctx());
     let mut clock = clock::create_for_testing(scenario.ctx());
@@ -170,10 +182,15 @@ fun setup_pool_with_pyth(): Fixture {
         &mut registry,
         &admin_cap,
         PYTH_FEED_ID,
-        test_constants::default_expiry_fee_window_ms!(),
+        TICK_SIZE,
+        config_constants::default_expiry_fee_window_ms!(),
         float!(),
         scenario.ctx(),
     );
+    scenario.next_tx(test_constants::admin());
+    let mut pyth = scenario.take_shared_by_id<PythSource>(pyth_id);
+    pyth.set_state_for_testing(CREATION_SPOT, LIVE_SOURCE_TIMESTAMP_MS, LIVE_SOURCE_TIMESTAMP_MS);
+    return_shared(pyth);
     scenario.next_tx(test_constants::admin());
 
     Fixture {
@@ -200,8 +217,6 @@ fun create_expiry(fixture: &mut Fixture, expiry: u64): (ID, ID) {
         &pyth,
         &fixture.cap,
         expiry,
-        MIN_STRIKE,
-        TICK_SIZE,
         &fixture.clock,
         fixture.scenario.ctx(),
     );
@@ -222,7 +237,7 @@ fun prepare_live_oracle_for_trading(
     pyth: &mut PythSource,
 ) {
     pyth.set_state_for_testing(
-        SETTLEMENT_PRICE,
+        LIVE_PRICE,
         LIVE_SOURCE_TIMESTAMP_MS,
         LIVE_SOURCE_TIMESTAMP_MS,
     );
@@ -230,8 +245,8 @@ fun prepare_live_oracle_for_trading(
         &fixture.config,
         pyth,
         &fixture.cap,
-        SETTLEMENT_PRICE,
-        SETTLEMENT_PRICE,
+        LIVE_PRICE,
+        LIVE_PRICE,
         LIVE_SOURCE_TIMESTAMP_MS,
         &fixture.clock,
     );

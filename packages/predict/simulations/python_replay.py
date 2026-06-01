@@ -36,18 +36,24 @@ ORACLE_REFRESH_FIELDS = (
     "sigma",
     "risk_free_rate",
 )
-# Lightweight mirror of Move pricing defaults in config_constants.move. Keep
-# these in sync when pricing config defaults change; this harness intentionally
-# does not parse Move source into Python config.
+# Lightweight mirror of Move config defaults. scenario_config.json may override
+# these only when the corresponding localnet setup is intentionally extended.
 BASE_FEE = 20_000_000
 MIN_FEE = 5_000_000
 MIN_ASK_PRICE = 10_000_000
 MAX_ASK_PRICE = 990_000_000
-ORACLE_MIN_STRIKE = 25_000 * FLOAT_SCALING
 ORACLE_TICK_SIZE = FLOAT_SCALING
-ORACLE_MAX_STRIKE = ORACLE_MIN_STRIKE + 100_000 * ORACLE_TICK_SIZE
+ORACLE_GRID_TICKS = 100_000
+ORACLE_CENTER_TICKS = ORACLE_GRID_TICKS // 2
+# Centered grid bounds are derived from the first scenario spot by
+# configure_oracle_grid(). They stay None until then so any strike math run
+# before configuration fails loudly instead of silently snapping against a
+# stale default grid (mirrors the oracleGrid() guard in sim.ts).
+ORACLE_MIN_STRIKE = None
+ORACLE_MAX_STRIKE = None
 NEG_INF_STRIKE = 0
 POS_INF_STRIKE = (1 << 64) - 1
+MIN_ORDER_PRINCIPAL = 1_000_000
 DUSDC_DECIMALS = 1_000_000
 VAULT_SEED = 500_000 * DUSDC_DECIMALS
 MANAGER_SEED = 500_000 * DUSDC_DECIMALS
@@ -62,7 +68,8 @@ CURVE_SAMPLES = 50
 PROTOCOL_RESERVE_PROFIT_SHARE = 400_000_000
 TRADING_LOSS_REBATE_RATE = 500_000_000
 TERMINAL_REBATE_FRACTION = 0
-EXPIRY_FEE_WINDOW_MS = 0
+# Admin-tunable per-feed default, mirrored from config_constants::default_expiry_fee_window_ms!().
+EXPIRY_FEE_WINDOW_MS = 24 * 60 * 60 * 1000
 EXPIRY_FEE_MAX_MULTIPLIER = FLOAT_SCALING
 
 # Floor-index model for Python-only observability. Normal parity replay keeps a
@@ -140,6 +147,10 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
     global VAULT_SEED
     global MANAGER_SEED
     global INITIAL_TOTAL_PLP_SUPPLY
+    global BASE_FEE
+    global MIN_FEE
+    global MIN_ASK_PRICE
+    global MAX_ASK_PRICE
     global TRADE_LIQUIDATION_BUDGET
     global VALUATION_LIQUIDATION_BUDGET
     global LIQUIDATION_HEAD_SCAN_DIVISOR
@@ -159,6 +170,10 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
     MANAGER_SEED = _capital_int(config, capital_mode, "manager_seed", MANAGER_SEED)
     INITIAL_TOTAL_PLP_SUPPLY = VAULT_SEED
 
+    BASE_FEE = _config_int(config, "protocol", "base_fee", BASE_FEE)
+    MIN_FEE = _config_int(config, "protocol", "min_fee", MIN_FEE)
+    MIN_ASK_PRICE = _config_int(config, "protocol", "min_ask_price", MIN_ASK_PRICE)
+    MAX_ASK_PRICE = _config_int(config, "protocol", "max_ask_price", MAX_ASK_PRICE)
     TRADE_LIQUIDATION_BUDGET = _config_int(config, "protocol", "trade_liquidation_budget", TRADE_LIQUIDATION_BUDGET)
     VALUATION_LIQUIDATION_BUDGET = _config_int(
         config,
@@ -186,7 +201,12 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
         TRADING_LOSS_REBATE_RATE,
     )
     TERMINAL_REBATE_FRACTION = FLOAT_SCALING if long_run else 0
-    EXPIRY_FEE_WINDOW_MS = _config_int(config, "protocol", "expiry_fee_window_ms", EXPIRY_FEE_WINDOW_MS)
+    EXPIRY_FEE_WINDOW_MS = _config_int(
+        config,
+        "protocol",
+        "expiry_fee_window_ms",
+        EXPIRY_FEE_WINDOW_MS,
+    )
     EXPIRY_FEE_MAX_MULTIPLIER = _config_int(
         config,
         "protocol",
@@ -250,6 +270,36 @@ def scenario_quantity_scale() -> int:
     return 1
 
 
+def configure_oracle_grid(initial_spot: int) -> None:
+    global ORACLE_MIN_STRIKE
+    global ORACLE_MAX_STRIKE
+
+    if initial_spot <= 0:
+        raise ValueError("initial Pyth spot must be positive")
+    # Mirror config_constants::assert_oracle_tick_size_covers_spot: Move checks the
+    # tick-floored spot (`spot / tick_size <= grid_ticks`), so compare on ticks too.
+    if initial_spot // ORACLE_TICK_SIZE > ORACLE_GRID_TICKS:
+        raise ValueError(
+            "initial Pyth spot exceeds oracle tick coverage; raise the oracle "
+            "tick size to cover a higher spot"
+        )
+    center_strike_index = initial_spot // ORACLE_TICK_SIZE
+    if center_strike_index <= ORACLE_CENTER_TICKS:
+        raise ValueError("initial Pyth spot is too low for centered oracle grid")
+
+    ORACLE_MIN_STRIKE = (center_strike_index - ORACLE_CENTER_TICKS) * ORACLE_TICK_SIZE
+    ORACLE_MAX_STRIKE = ORACLE_MIN_STRIKE + ORACLE_GRID_TICKS * ORACLE_TICK_SIZE
+
+
+def first_block_scholes_spot(rows: list[dict[str, Any]]) -> int:
+    if not rows:
+        raise ValueError("scenario has no executable rows")
+    first = rows[0]
+    if first["action"] == "oracle_mint_ptb":
+        return first["spot"]
+    return first["oracleRefresh"]["spot"]
+
+
 def signed_svi_value(magnitude: int, is_negative: bool) -> str:
     if magnitude == 0:
         return "0"
@@ -257,6 +307,8 @@ def signed_svi_value(magnitude: int, is_negative: bool) -> str:
 
 
 def align_strike_to_grid(strike: int) -> int:
+    if ORACLE_MIN_STRIKE is None:
+        raise ValueError("oracle grid has not been configured")
     relative = strike - ORACLE_MIN_STRIKE
     tick_index = relative // ORACLE_TICK_SIZE
     snapped = ORACLE_MIN_STRIKE + tick_index * ORACLE_TICK_SIZE
@@ -453,6 +505,17 @@ def mul_div_round_down(a: int, b: int, c: int) -> int:
     return a * b // c
 
 
+def live_forward(spot: int, forward: int) -> int:
+    # Mirror pricing::live_inputs fresh-spot branch: the on-chain forward used for
+    # every live quote/valuation/liquidation is NOT the pushed forward, but is
+    # re-derived from the live Pyth spot and the stored Block Scholes basis as
+    # mul(spot, div(forward, spot)). That round-trip is lossy (two floors), so it
+    # generally differs from `forward` by a few units. In the localnet parity flow
+    # the Pyth spot equals the Block Scholes spot pushed in the same PTB, so this
+    # is exactly the forward the contracts price with.
+    return deepbook_mul(spot, deepbook_div(forward, spot))
+
+
 def assert_valid_leverage(leverage: int) -> None:
     if leverage not in (
         LEVERAGE_ONE_X,
@@ -480,6 +543,13 @@ def assert_valid_leverage_tier(entry_probability: int, leverage: int) -> None:
 
 def user_contribution_from_exposure_value(exposure_value: int, leverage: int) -> int:
     return mul_div_round_up(exposure_value, FLOAT_SCALING, leverage_multiplier(leverage))
+
+
+def assert_mint_principal_above_min(contribution: int) -> None:
+    # Mirror strike_exposure.move: `user_contribution() >= min_order_principal!()`,
+    # so a contribution exactly equal to the minimum is allowed.
+    if contribution < MIN_ORDER_PRINCIPAL:
+        raise ValueError("order principal below minimum")
 
 
 def compute_mint_terms(entry_probability: int, quantity: int, leverage: int) -> dict[str, int]:
@@ -1392,7 +1462,7 @@ def oracle_svi_update(svi: dict[str, Any]) -> dict[str, str]:
 
 def apply_inline_oracle_refresh(model: dict[str, Any], row: dict[str, Any], updates: list[dict[str, Any]]) -> None:
     oracle = row["oracleRefresh"]
-    model["current_forward"] = oracle["forward"]
+    model["current_forward"] = live_forward(oracle["spot"], oracle["forward"])
     model["current_svi"] = oracle
     updates.append(oracle_prices_update(oracle))
     updates.append(oracle_svi_update(oracle))
@@ -1410,6 +1480,7 @@ def order_minted_update(
     entry_probability = compute_range_price(svi, forward, lower, higher)
     fee_amount = deepbook_mul(assert_mint_fee_rate(entry_probability, time_to_expiry_ms), mint["quantity"])
     terms = compute_mint_terms(entry_probability, mint["quantity"], mint["leverage"])
+    assert_mint_principal_above_min(terms["contribution"])
     return {
         "type": "order_minted",
         "order_ref": mint["orderRef"],
@@ -2100,6 +2171,7 @@ def empty_liquidation_observability() -> dict[str, Any]:
     return {
         "liquidatable_count": 0,
         "liquidatable_value": 0,
+        "leveraged_floor_value": 0,
     }
 
 
@@ -2119,11 +2191,13 @@ def analytics_liquidation_observability(
         curve = build_valuation_curve(model)
 
     liquidatable_floor_by_ref: dict[str, int] = {}
+    total_leveraged_floor = 0
     for (lower, higher), orders in analytics["orders_by_range"].items():
         lower_probability, upper_probability = directional_probability_bounds(curve, lower, higher)
         exact_probability: int | None = None
         for order in orders:
             floor_amount = analytics_order_floor_amount(order, time_ctx)
+            total_leveraged_floor += floor_amount
             threshold_value = liquidation_threshold_value(floor_amount)
             upper_gross_value = deepbook_mul(upper_probability, order["quantity"])
             if upper_gross_value <= threshold_value:
@@ -2143,6 +2217,7 @@ def analytics_liquidation_observability(
     return {
         "liquidatable_count": len(liquidatable_floor_by_ref),
         "liquidatable_value": total_liquidatable_value,
+        "leveraged_floor_value": total_leveraged_floor,
     }
 
 
@@ -2274,12 +2349,14 @@ def build_derived_record(
     liquidation_observability: dict[str, Any] | None = None
     liquidatable_count: int | None = None
     liquidatable_value: int | None = None
+    leveraged_floor_value: int | None = None
     borrow_fee: int | None = None
 
     if sampled_global:
         liquidation_observability = analytics_liquidation_observability(model, analytics, curve, time_ctx)
         liquidatable_count = liquidation_observability["liquidatable_count"]
         liquidatable_value = liquidation_observability["liquidatable_value"]
+        leveraged_floor_value = liquidation_observability["leveraged_floor_value"]
         borrow_fee = analytics_crystallized_borrow_fee(analytics, time_ctx)
     liquidated_this_step = sum(1 for update in updates if update["type"] == "order_liquidated")
     premium = step_premium(updates)
@@ -2412,6 +2489,7 @@ def build_derived_record(
             "active_count": str(active_count),
             "liquidatable_count": None if liquidatable_count is None else str(liquidatable_count),
             "liquidatable_value": None if liquidatable_value is None else str(liquidatable_value),
+            "leveraged_floor_value": None if leveraged_floor_value is None else str(leveraged_floor_value),
             "liquidated_count": str(liquidated_this_step),
             "liquidated_value": str(liquidated_floor_value),
             "interval_liquidated_count": None if interval_liquidated_count is None else str(interval_liquidated_count),
@@ -2509,6 +2587,8 @@ def replay(
         if settlement_timestamp_ms is None:
             settlement_timestamp_ms = expiry_ms + 1
 
+    configure_oracle_grid(first_block_scholes_spot(rows))
+
     state = initial_state()
     model: dict[str, Any] = {
         "current_forward": 0,
@@ -2572,7 +2652,7 @@ def replay(
         model["now_ms"] = row_timestamp_ms
         scan_active_count = active_order_count(model)
         if action == "oracle_mint_ptb":
-            model["current_forward"] = row["forward"]
+            model["current_forward"] = live_forward(row["spot"], row["forward"])
             model["current_svi"] = row
             updates.append(oracle_prices_update(row))
             updates.append(oracle_svi_update(row))

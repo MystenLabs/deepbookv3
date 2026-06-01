@@ -1,15 +1,14 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Dense strike exposure index for live NAV valuation.
+/// Sparse-initialized strike exposure index for live NAV valuation.
 ///
-/// The matrix preallocates page objects at market creation so user trades update
-/// existing storage instead of lazily creating new dynamic fields. It stores
-/// page-local prefix quantities and strike-weighted quantities for exact
-/// valuation across sampled live pricing curve segments, plus aggregate live
-/// floor shares for contracts whose value has a non-zero floor. It also keeps
-/// in-object full-page totals so wide valuation reads can skip dynamic-field
-/// page loads for complete middle pages.
+/// The matrix preallocates a centered subset of page objects at market creation
+/// and lazily materializes outer pages on first write. It stores page-local
+/// prefix quantities and strike-weighted quantities for exact valuation across
+/// sampled live pricing curve segments, plus aggregate live floor shares for
+/// contracts whose value has a non-zero floor. It also keeps in-object full-page
+/// totals so wide valuation reads can skip page loads for complete middle pages.
 module deepbook_predict::strike_nav_matrix;
 
 use deepbook::math;
@@ -26,8 +25,9 @@ const EUnalignedStrike: u64 = 4;
 const EZeroQuantity: u64 = 5;
 const ETooManyStrikes: u64 = 6;
 const EFloorExceedsLiveValue: u64 = 7;
+const EInvalidPreallocatedTicks: u64 = 8;
 
-/// Dense preallocated page store for exact live NAV segment reads.
+/// Page store for exact live NAV segment reads.
 public struct StrikeNavMatrix has store {
     pages: Table<u64, vector<NavTotals>>,
     page_totals: vector<NavTotals>,
@@ -52,23 +52,30 @@ public struct NavTotals has copy, drop, store {
     end: WeightedQuantity,
 }
 
-/// Create a fully preallocated NAV matrix for the oracle strike grid.
+/// Create a NAV matrix with a centered preallocated span for the oracle strike grid.
 public(package) fun new(
     min_strike: u64,
     tick_size: u64,
     max_strike: u64,
+    preallocated_ticks: u64,
     ctx: &mut TxContext,
 ): StrikeNavMatrix {
     assert_valid_grid(min_strike, tick_size, max_strike);
 
     let total_strikes = (max_strike - min_strike) / tick_size + 1;
+    assert_valid_preallocated_ticks(total_strikes, preallocated_ticks);
     let page_count = page_count(total_strikes);
     let mut pages = table::new(ctx);
     let mut page_totals = vector[];
     let mut page_key = 0;
     while (page_key < page_count) {
-        pages.add(page_key, empty_nav_page());
         page_totals.push_back(empty_nav_totals());
+        page_key = page_key + 1;
+    };
+    let (start_page, end_page) = preallocated_page_bounds(total_strikes, preallocated_ticks);
+    page_key = start_page;
+    while (page_key <= end_page) {
+        pages.add(page_key, empty_nav_page());
         page_key = page_key + 1;
     };
 
@@ -159,7 +166,7 @@ public(package) fun live_value(
     value - floor_value
 }
 
-/// Destroy all preallocated page storage.
+/// Destroy all materialized page storage.
 public(package) fun destroy(nav: StrikeNavMatrix) {
     let StrikeNavMatrix {
         mut pages,
@@ -174,7 +181,9 @@ public(package) fun destroy(nav: StrikeNavMatrix) {
     let page_count = page_count(total_strikes);
     let mut page_key = 0;
     while (page_key < page_count) {
-        let _page = pages.remove(page_key);
+        if (pages.contains(page_key)) {
+            let _page = pages.remove(page_key);
+        };
         page_key = page_key + 1;
     };
     pages.destroy_empty();
@@ -217,6 +226,7 @@ fun apply_boundary_delta(
 ) {
     let (page_key, slot) = nav.unchecked_strike_to_coords(strike);
     let weighted = weighted_quantity(qty, math::mul(qty, strike));
+    nav.ensure_page(page_key);
     {
         let totals = &mut nav.page_totals[page_key];
         if (is_start) {
@@ -248,12 +258,11 @@ fun boundary_weighted_quantities(
     page_key: u64,
     slot: u64,
 ): (WeightedQuantity, WeightedQuantity) {
-    let page = &nav.pages[page_key];
-    let node = page[slot];
+    let node = nav.page_prefix_totals(page_key, slot);
     if (slot == 0) {
         (node.start, node.end)
     } else {
-        let prev = page[slot - 1];
+        let prev = nav.page_prefix_totals(page_key, slot - 1);
         let mut start = node.start;
         let mut end = node.end;
         apply_weighted_delta(&mut start, prev.start, false);
@@ -270,21 +279,19 @@ fun accumulate_segment_values(
     end_slot: u64,
 ): (WeightedQuantity, WeightedQuantity) {
     if (start_page == end_page) {
-        let page = &nav.pages[start_page];
-        let end_node = &page[end_slot];
+        let end_node = nav.page_prefix_totals(end_page, end_slot);
         let mut start_delta = end_node.start;
         let mut end_delta = end_node.end;
-        let start_node = &page[start_slot];
+        let start_node = nav.page_prefix_totals(start_page, start_slot);
         apply_weighted_delta(&mut start_delta, start_node.start, false);
         apply_weighted_delta(&mut end_delta, start_node.end, false);
         return (start_delta, end_delta)
     };
 
-    let first_page = &nav.pages[start_page];
-    let first_end = &first_page[PAGE_SLOTS - 1];
+    let first_end = nav.page_totals[start_page];
     let mut start_delta = first_end.start;
     let mut end_delta = first_end.end;
-    let first_start = &first_page[start_slot];
+    let first_start = nav.page_prefix_totals(start_page, start_slot);
     apply_weighted_delta(&mut start_delta, first_start.start, false);
     apply_weighted_delta(&mut end_delta, first_start.end, false);
 
@@ -296,8 +303,7 @@ fun accumulate_segment_values(
         page_key = page_key + 1;
     };
 
-    let last_page = &nav.pages[end_page];
-    let last_end = &last_page[end_slot];
+    let last_end = nav.page_prefix_totals(end_page, end_slot);
     apply_weighted_delta(&mut start_delta, last_end.start, true);
     apply_weighted_delta(&mut end_delta, last_end.end, true);
 
@@ -315,6 +321,20 @@ fun empty_nav_page(): vector<NavTotals> {
     vector::tabulate!(PAGE_SLOTS, |_| empty_nav_totals())
 }
 
+fun ensure_page(nav: &mut StrikeNavMatrix, page_key: u64) {
+    if (!nav.pages.contains(page_key)) {
+        nav.pages.add(page_key, empty_nav_page());
+    };
+}
+
+fun page_prefix_totals(nav: &StrikeNavMatrix, page_key: u64, slot: u64): NavTotals {
+    if (nav.pages.contains(page_key)) {
+        nav.pages.borrow(page_key)[slot]
+    } else {
+        empty_nav_totals()
+    }
+}
+
 fun assert_valid_grid(min_strike: u64, tick_size: u64, max_strike: u64) {
     assert!(tick_size > 0, EInvalidTickSize);
     assert!(min_strike <= max_strike, EInvalidStrikeRange);
@@ -322,6 +342,19 @@ fun assert_valid_grid(min_strike: u64, tick_size: u64, max_strike: u64) {
 
     let total_strikes = (max_strike - min_strike) / tick_size + 1;
     assert!(total_strikes <= constants::oracle_strike_grid_ticks!() + 1, ETooManyStrikes);
+}
+
+fun assert_valid_preallocated_ticks(total_strikes: u64, preallocated_ticks: u64) {
+    assert!(preallocated_ticks <= total_strikes - 1, EInvalidPreallocatedTicks);
+}
+
+fun preallocated_page_bounds(total_strikes: u64, preallocated_ticks: u64): (u64, u64) {
+    let total_ticks = total_strikes - 1;
+    let center_tick = total_ticks / 2;
+    let start_tick = center_tick - preallocated_ticks / 2;
+    let end_tick = start_tick + preallocated_ticks;
+
+    (start_tick / PAGE_SLOTS, end_tick / PAGE_SLOTS)
 }
 
 fun assert_range_boundaries(nav: &StrikeNavMatrix, lower: u64, higher: u64, qty: u64) {
@@ -396,4 +429,9 @@ fun unchecked_strike_to_coords(nav: &StrikeNavMatrix, strike: u64): (u64, u64) {
 
 fun page_count(total_strikes: u64): u64 {
     (total_strikes - 1) / PAGE_SLOTS + 1
+}
+
+#[test_only]
+public fun materialized_page_count_for_testing(nav: &StrikeNavMatrix): u64 {
+    nav.pages.length()
 }

@@ -51,7 +51,7 @@ def extract_series(records: list[dict[str, Any]], mode: str, origin: int) -> dic
         "cumulative_liquidation_gap_over_funding": [],
         "cumulative_net_liquidation_over_funding": [],
         "backlog_x": [],
-        "backlog_over_liability": [],
+        "backlog_over_allocated": [],
     }
     cumulative_trading_fee = 0
     cumulative_liquidation_gap = 0
@@ -96,9 +96,9 @@ def extract_series(records: list[dict[str, Any]], mode: str, origin: int) -> dic
         append_scaled(
             series,
             "backlog_x",
-            "backlog_over_liability",
+            "backlog_over_allocated",
             x,
-            risk.get("liquidatable_value_over_liability"),
+            risk.get("liquidatable_value_over_allocated"),
         )
 
         funding = int_or_none(risk.get("expiry_funding_basis"))
@@ -227,18 +227,18 @@ def plot_compensation_panel(ax: plt.Axes, series: dict[str, list[float]]) -> Non
 def plot_backlog_panel(ax: plt.Axes, series: dict[str, list[float]]) -> None:
     ax.plot(
         series["backlog_x"],
-        series["backlog_over_liability"],
+        series["backlog_over_allocated"],
         color="#be123c",
         linewidth=1.5,
-        label="liquidatable value / position liability",
+        label="liquidatable value / allocated capital",
     )
     ax.set_title(
-        "Liquidatable Backlog On Liability\n"
-        "Shows standing liquidatable floor value as a share of the live liability book.",
+        "Liquidatable Backlog On Capital\n"
+        "Shows standing liquidatable floor value as a share of allocated counterparty capital.",
         loc="left",
         fontsize=11,
     )
-    ax.set_ylabel("share of liability")
+    ax.set_ylabel("share of allocation")
     use_percent_axis(ax)
     ax.legend(loc="upper left", fontsize=8, frameon=False)
 

@@ -55,3 +55,20 @@ public fun take_registry_and_admin(scenario: &mut Scenario, registry_id: ID): (R
 
     (registry, admin_cap)
 }
+
+/// Begin a scenario-backed registry test transaction and take the real
+/// `Registry` + `AdminCap` created by package-style setup.
+public fun begin_registry_test(): (Scenario, Registry, AdminCap) {
+    let (mut scenario, registry_id) = setup_test();
+    scenario.next_tx(test_constants::admin());
+    let (registry, admin_cap) = take_registry_and_admin(&mut scenario, registry_id);
+
+    (scenario, registry, admin_cap)
+}
+
+/// Return the shared registry and destroy the test-owned admin cap.
+public fun finish_registry_test(scenario: Scenario, registry: Registry, admin_cap: AdminCap) {
+    test::return_shared(registry);
+    destroy(admin_cap);
+    scenario.end();
+}

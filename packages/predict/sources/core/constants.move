@@ -32,6 +32,9 @@ public macro fun float_scaling_decimals(): u64 { 9 }
 /// Minimum position quantity increment.
 public macro fun position_lot_size(): u64 { 10_000 }
 
+/// Minimum mint-time user principal, excluding trading and builder fees.
+public macro fun min_order_principal(): u64 { 1_000_000 }
+
 // === Pool Funding ===
 
 /// DUSDC cash floor targeted by pool rebalancing, in 6-decimal quote units.
@@ -97,6 +100,21 @@ public macro fun oracle_strike_grid_ticks(): u64 { 100_000 }
 
 /// Granularity unit for oracle tick sizes; every tick_size must be a multiple of this value.
 public macro fun oracle_tick_size_unit(): u64 { 10_000 }
+
+/// Expiries within this window preallocate the smallest centered NAV matrix span.
+public macro fun short_expiry_preallocation_window_ms(): u64 { 60 * 60 * 1000 }
+
+/// Expiries within this window preallocate the medium centered NAV matrix span.
+public macro fun medium_expiry_preallocation_window_ms(): u64 { 60 * 60 * 24 * 1000 }
+
+/// Centered strike ticks preallocated for expiries within one hour.
+public macro fun short_expiry_preallocated_ticks(): u64 { 10_000 }
+
+/// Centered strike ticks preallocated for expiries within one day.
+public macro fun medium_expiry_preallocated_ticks(): u64 { 25_000 }
+
+/// Centered strike ticks preallocated for later expiries.
+public macro fun default_expiry_preallocated_ticks(): u64 { 50_000 }
 
 /// Sentinel lower strike for ranges open to negative infinity.
 public macro fun neg_inf(): u64 { 0 }

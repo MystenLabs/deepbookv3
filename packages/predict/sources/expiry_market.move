@@ -104,6 +104,31 @@ public fun liquidation_ltv(market: &ExpiryMarket): u64 {
     market.strike_exposure.liquidation_ltv()
 }
 
+/// Return the trade-fee ramp window snapshotted for this expiry.
+public fun expiry_fee_window_ms(market: &ExpiryMarket): u64 {
+    market.strike_exposure.expiry_fee_window_ms()
+}
+
+/// Return the trade-fee ramp max multiplier snapshotted for this expiry.
+public fun expiry_fee_max_multiplier(market: &ExpiryMarket): u64 {
+    market.strike_exposure.expiry_fee_max_multiplier()
+}
+
+/// Return the minimum strike snapshotted for this expiry's oracle grid.
+public fun min_strike(market: &ExpiryMarket): u64 {
+    market.strike_exposure.min_strike()
+}
+
+/// Return the strike tick size snapshotted for this expiry's oracle grid.
+public fun tick_size(market: &ExpiryMarket): u64 {
+    market.strike_exposure.tick_size()
+}
+
+/// Return the maximum strike snapshotted for this expiry's oracle grid.
+public fun max_strike(market: &ExpiryMarket): u64 {
+    market.strike_exposure.max_strike()
+}
+
 /// Return conservative max-live backing, or remaining settled payout liability once materialized.
 public fun payout_liability(market: &ExpiryMarket): u64 {
     market.strike_exposure.payout_liability()
@@ -291,6 +316,9 @@ public(package) fun create_and_share(
     expiry: u64,
     min_strike: u64,
     tick_size: u64,
+    preallocated_ticks: u64,
+    expiry_fee_window_ms: u64,
+    expiry_fee_max_multiplier: u64,
     ctx: &mut TxContext,
 ): ID {
     let id = object::new(ctx);
@@ -308,8 +336,11 @@ public(package) fun create_and_share(
             expiry,
             min_strike,
             tick_size,
+            preallocated_ticks,
             config.leverage_config().max_expiry_floor_premium(),
             config.leverage_config().liquidation_ltv(),
+            expiry_fee_window_ms,
+            expiry_fee_max_multiplier,
             ctx,
         ),
         allowed_versions,

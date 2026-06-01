@@ -412,6 +412,14 @@ def project_order_for_ranking(ref: str, order: dict[str, int]) -> dict[str, int 
     }
 
 
+def first_oracle_spot(economic_data: dict[str, Any]) -> int:
+    for record in economic_data["records"]:
+        for update in record["updates"]:
+            if update["type"] == "oracle_prices_updated":
+                return int(update["spot"])
+    raise ValueError("economic data has no oracle price update")
+
+
 def build_ranking_dataset(
     economic_data: dict[str, Any],
     expiry_ms: int,
@@ -868,6 +876,7 @@ def main() -> None:
         economic_data = load_json_object(args.python_long_data)
         if economic_data.get("schema_version") != replay.ECONOMIC_SCHEMA_VERSION:
             raise SystemExit(f"input must use {replay.ECONOMIC_SCHEMA_VERSION} schema")
+        replay.configure_oracle_grid(first_oracle_spot(economic_data))
         dataset = build_ranking_dataset(
             economic_data,
             expiry_ms,

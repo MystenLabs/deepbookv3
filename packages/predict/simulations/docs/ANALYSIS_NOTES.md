@@ -1,7 +1,9 @@
 # Predict Simulation Analysis Notes
 
-This document captures economic observations from local simulation runs. It is
-not a runner manual; operational details live in `README.md`.
+This document captures **economic** observations from local simulation runs. It is
+not a runner manual; operational details live in `README.md`. For
+**gas/performance** experiments (contract changes measured for gas, run-to-run
+comparisons, perf hypotheses), see `GAS_EXPERIMENTS.md`.
 
 ## Directional Accumulation
 
@@ -40,13 +42,13 @@ faster than accumulated fees.
 
 Random direction count is not the same as balanced economic exposure.
 
-- Accepted mints are filtered. The generator retries failed rows, and failed
-  rows can depend on side, strike, fee bounds, leverage tier, liquidation entry
-  guard, terminal LTV guard, and available manager cash.
-- Spend-based sizing amplifies probability differences. For the same target
-  spend, cheaper contracts receive more quantity.
-- Redeems and liquidations are path-dependent. The final open book is the
-  surviving book, not the original minted book.
+-   Accepted mints are filtered. The generator retries failed rows, and failed
+    rows can depend on side, strike, fee bounds, leverage tier, liquidation entry
+    guard, terminal LTV guard, and available manager cash.
+-   Spend-based sizing amplifies probability differences. For the same target
+    spend, cheaper contracts receive more quantity.
+-   Redeems and liquidations are path-dependent. The final open book is the
+    surviving book, not the original minted book.
 
 In `may29-1738`, accepted DN mints were cheaper on average:
 
@@ -110,18 +112,18 @@ can mechanically win against the vault.
 
 What this run does show:
 
-- Independent random mint flow can leave the vault with material directional
-  exposure.
-- Spend-sized orders can make cheap contracts dominate quantity exposure.
-- A realized market move can turn that accumulated directional exposure into a
-  large live MTM loss even while fees increase.
+-   Independent random mint flow can leave the vault with material directional
+    exposure.
+-   Spend-sized orders can make cheap contracts dominate quantity exposure.
+-   A realized market move can turn that accumulated directional exposure into a
+    large live MTM loss even while fees increase.
 
 What this run does not prove:
 
-- That DN contracts are systematically underpriced.
-- That a directional buyer has positive expected value after fees.
-- That this behavior survives across many independent market paths, expiries,
-  volatility regimes, and flow models.
+-   That DN contracts are systematically underpriced.
+-   That a directional buyer has positive expected value after fees.
+-   That this behavior survives across many independent market paths, expiries,
+    volatility regimes, and flow models.
 
 The right interpretation is path-dependent risk: the vault may earn fees on
 average, but it can accumulate one-sided exposure before a market move.
@@ -140,6 +142,35 @@ for value-at-risk in that run. Higher leverage still matters, but using it as th
 primary field spent scan budget on smaller orders too often. Live liquidatable
 value remains the upper-bound oracle ordering, so the static `order_id` layout is
 only a gas-cheap proxy, not an exact liquidation-risk ranking.
+
+## Liquidatable Backlog: Coverage vs Severity
+
+"Standing liquidatable value we have not caught yet" is one quantity
+(`liquidation.liquidatable_value`, the summed floor/debt of leveraged orders that
+currently breach the LTV trigger), but it answers two different questions, so it
+lives in two charts with two different denominators. Do not collapse them back
+into one ratio.
+
+-   **Coverage / is the engine keeping pace?** `chart_liquidation_coverage.py`,
+    "Backlog Pressure" panel. Numerator `liquidatable_value` over denominator
+    `liquidation.leveraged_floor_value` (summed floor of **all** leveraged orders,
+    breaching or not). Reads as "X% of the leveraged debt book is liquidatable but
+    uncaught." Both sides are floor/debt and leveraged-only, so the ratio is a true
+    bounded subset (numerator is always a subset of the denominator) and is not
+    diluted by 1x volume.
+
+-   **Severity / can the vault absorb it?** `chart_vault_risk_profile.py`,
+    "Liquidatable Backlog On Capital" panel. Same numerator over
+    `risk.allocated_capital` (emitted as `risk.liquidatable_value_over_allocated`).
+    Reads as "uncaught liquidatable exposure is Y% of the capital backstopping it,"
+    matching the other capital-normalized panels in that file.
+
+The earlier version divided both panels by `valuation.position_liability` (notional
+of all positions, leveraged plus 1x). That mixed a debt numerator with a notional
+denominator and diluted with un-liquidatable 1x volume, so neither panel cleanly
+answered its own question. `risk.liquidatable_value_over_liability` is still
+emitted for any consumer that wants the liability-normalized view, but no chart
+uses it.
 
 ## Charts To Add
 
@@ -173,22 +204,22 @@ tune vault risk policy.
 For risk-policy decisions, we need larger-scale simulations outside the localnet
 harness:
 
-- many expiry windows
-- many realized BTC paths
-- different volatility and skew regimes
-- different trader flow assumptions
-- separate market-maker, retail directional, and adversarial flow models
-- repeated runs with controlled random seeds
-- directional exposure limits and pricing/fee variants
+-   many expiry windows
+-   many realized BTC paths
+-   different volatility and skew regimes
+-   different trader flow assumptions
+-   separate market-maker, retail directional, and adversarial flow models
+-   repeated runs with controlled random seeds
+-   directional exposure limits and pricing/fee variants
 
 Key questions for the larger framework:
 
-- Does independent flow create persistent directional imbalance in expectation?
-- How often does spend-sized random flow generate one-sided open exposure before
-  large market moves?
-- Are fees sufficient relative to tail drawdown on expiry funding?
-- Should the protocol charge direction/skew-sensitive fees?
-- Should the vault enforce directional exposure limits, not just aggregate risk
-  limits?
-- Should order generation and risk charts track delta-like exposure rather than
-  only quantity, contribution, and liability?
+-   Does independent flow create persistent directional imbalance in expectation?
+-   How often does spend-sized random flow generate one-sided open exposure before
+    large market moves?
+-   Are fees sufficient relative to tail drawdown on expiry funding?
+-   Should the protocol charge direction/skew-sensitive fees?
+-   Should the vault enforce directional exposure limits, not just aggregate risk
+    limits?
+-   Should order generation and risk charts track delta-like exposure rather than
+    only quantity, contribution, and liability?

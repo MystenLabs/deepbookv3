@@ -8,15 +8,7 @@
 /// forward, apply circuit breakers, or settle a market.
 module deepbook_predict::pyth_source;
 
-use deepbook_predict::{
-    admin::AdminCap,
-    config_constants,
-    config_events,
-    constants,
-    lazer_helper,
-    oracle_events,
-    protocol_config::ProtocolConfig
-};
+use deepbook_predict::{constants, lazer_helper, oracle_events, protocol_config::ProtocolConfig};
 use pyth_lazer::update::Update as LazerUpdate;
 use sui::{clock::Clock, vec_set::VecSet};
 
@@ -36,13 +28,6 @@ public struct PythSource has key {
     update_timestamp_ms: u64,
     /// Mirror of `ProtocolConfig.allowed_versions`; synced permissionlessly.
     allowed_versions: VecSet<u64>,
-    /// Final window (ms before expiry) over which the trade fee ramps up for this
-    /// asset's markets; 0 disables the ramp. Per-asset so more volatile assets can
-    /// use a larger ramp. Applied in `pricing::expiry_fee_multiplier`.
-    expiry_fee_window_ms: u64,
-    /// Fee multiplier reached at expiry, in FLOAT_SCALING. 1x disables the ramp;
-    /// larger values suit more volatile assets.
-    expiry_fee_max_multiplier: u64,
 }
 
 /// Decode and store a verified Pyth Lazer spot update.
@@ -107,36 +92,6 @@ public fun allowed_versions(source: &PythSource): VecSet<u64> {
     source.allowed_versions
 }
 
-/// Return the trade-fee ramp window (ms before expiry) for this asset's markets.
-public fun expiry_fee_window_ms(source: &PythSource): u64 {
-    source.expiry_fee_window_ms
-}
-
-/// Return the trade-fee multiplier reached at expiry for this asset's markets.
-public fun expiry_fee_max_multiplier(source: &PythSource): u64 {
-    source.expiry_fee_max_multiplier
-}
-
-/// Set the trade-fee ramp parameters for this asset's markets. Window 0 or
-/// multiplier 1x disables the ramp.
-public fun set_expiry_fee_params(
-    source: &mut PythSource,
-    _admin_cap: &AdminCap,
-    window_ms: u64,
-    max_multiplier: u64,
-) {
-    config_constants::assert_expiry_fee_window_ms(window_ms);
-    config_constants::assert_expiry_fee_max_multiplier(max_multiplier);
-    source.expiry_fee_window_ms = window_ms;
-    source.expiry_fee_max_multiplier = max_multiplier;
-    config_events::emit_pyth_source_expiry_fee_params_updated(
-        source.id(),
-        source.feed_id,
-        window_ms,
-        max_multiplier,
-    );
-}
-
 // === Public-Package Functions ===
 
 /// Overwrite this source's mirrored `allowed_versions`. The only authorized
@@ -151,17 +106,12 @@ public(package) fun freshness_timestamp_ms(source: &PythSource): u64 {
     source.source_timestamp_ms.min(source.update_timestamp_ms)
 }
 
-/// Create and share a Pyth source bound to a Lazer feed id with the per-asset
-/// expiry-fee ramp configured up front.
+/// Create and share a Pyth source bound to a Lazer feed id.
 public(package) fun create_and_share(
     feed_id: u32,
     allowed_versions: VecSet<u64>,
-    expiry_fee_window_ms: u64,
-    expiry_fee_max_multiplier: u64,
     ctx: &mut TxContext,
 ): ID {
-    config_constants::assert_expiry_fee_window_ms(expiry_fee_window_ms);
-    config_constants::assert_expiry_fee_max_multiplier(expiry_fee_max_multiplier);
     let source = PythSource {
         id: object::new(ctx),
         feed_id,
@@ -169,8 +119,6 @@ public(package) fun create_and_share(
         source_timestamp_ms: 0,
         update_timestamp_ms: 0,
         allowed_versions,
-        expiry_fee_window_ms,
-        expiry_fee_max_multiplier,
     };
     let id = source.id();
     transfer::share_object(source);
@@ -201,8 +149,6 @@ public fun new_for_testing(ctx: &mut TxContext): PythSource {
         source_timestamp_ms: 0,
         update_timestamp_ms: 0,
         allowed_versions: sui::vec_set::singleton(constants::current_version!()),
-        expiry_fee_window_ms: deepbook_predict::test_constants::default_expiry_fee_window_ms!(),
-        expiry_fee_max_multiplier: deepbook_predict::test_constants::default_expiry_fee_max_multiplier!(),
     }
 }
 

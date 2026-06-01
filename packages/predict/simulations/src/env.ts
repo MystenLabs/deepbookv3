@@ -44,6 +44,19 @@ export const POOL_VAULT_ID = requireEnv("POOL_VAULT_ID");
 export const DUSDC_PACKAGE_ID = requireEnv("DUSDC_PACKAGE_ID");
 export const DUSDC_CURRENCY_ID = requireEnv("DUSDC_CURRENCY_ID");
 export const TREASURY_CAP_ID = requireEnv("TREASURY_CAP_ID");
+export const WORMHOLE_PACKAGE_ID = requireEnv("WORMHOLE_PACKAGE_ID");
+export const WORMHOLE_STATE_ID = requireEnv("WORMHOLE_STATE_ID");
+export const PYTH_LAZER_PACKAGE_ID = requireEnv("PYTH_LAZER_PACKAGE_ID");
+export const PYTH_LAZER_STATE_ID = requireEnv("PYTH_LAZER_STATE_ID");
+export const LOCAL_PYTH_GOVERNANCE_CHAIN = Number(requireEnv("LOCAL_PYTH_GOVERNANCE_CHAIN"));
+export const LOCAL_PYTH_GOVERNANCE_CONTRACT = requireEnv("LOCAL_PYTH_GOVERNANCE_CONTRACT");
+export const LOCAL_PYTH_RECEIVER_CHAIN = Number(requireEnv("LOCAL_PYTH_RECEIVER_CHAIN"));
+export const LOCAL_PYTH_GUARDIAN_PRIVATE_KEY = requireEnv("LOCAL_PYTH_GUARDIAN_PRIVATE_KEY");
+export const LOCAL_PYTH_SIGNER_PRIVATE_KEY = requireEnv("LOCAL_PYTH_SIGNER_PRIVATE_KEY");
+export const LOCAL_PYTH_SIGNER_PUBLIC_KEY = requireEnv("LOCAL_PYTH_SIGNER_PUBLIC_KEY");
+export const LOCAL_PYTH_SIGNER_EXPIRES_AT_SECONDS = requireEnv(
+  "LOCAL_PYTH_SIGNER_EXPIRES_AT_SECONDS",
+);
 export const ACTIVE_ADDRESS = requireEnv("ACTIVE_ADDRESS");
 export const RPC_URL = requireEnv("RPC_URL");
 export const KEYSTORE_PATH = env.KEYSTORE_PATH

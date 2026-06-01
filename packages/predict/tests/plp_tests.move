@@ -28,9 +28,10 @@ const PYTH_FEED_ID: u32 = 1;
 const NOW_MS: u64 = 100_000;
 const EXPIRY_MS: u64 = 200_000;
 const SECOND_EXPIRY_MS: u64 = 400_000;
-const MIN_STRIKE: u64 = 100_000_000_000;
 const TICK_SIZE: u64 = 1_000_000_000;
+const CREATION_SPOT: u64 = 50_100_000_000_000;
 const SETTLEMENT_PRICE: u64 = 100_000_000_000;
+const LIVE_SOURCE_TIMESTAMP_MS: u64 = 99_000;
 
 const INITIAL_SUPPLY: u64 = 300_000_000_000;
 const PROTOCOL_RESERVE_SHARE: u64 = 400_000_000;
@@ -463,10 +464,15 @@ fun setup_pool_with_pyth(): Fixture {
         &mut registry,
         &admin_cap,
         PYTH_FEED_ID,
-        test_constants::default_expiry_fee_window_ms!(),
+        TICK_SIZE,
+        config_constants::default_expiry_fee_window_ms!(),
         float!(),
         scenario.ctx(),
     );
+    scenario.next_tx(test_constants::admin());
+    let mut pyth = scenario.take_shared_by_id<PythSource>(pyth_id);
+    pyth.set_state_for_testing(CREATION_SPOT, LIVE_SOURCE_TIMESTAMP_MS, LIVE_SOURCE_TIMESTAMP_MS);
+    return_shared(pyth);
     scenario.next_tx(test_constants::admin());
 
     Fixture {
@@ -484,8 +490,13 @@ fun setup_pool_with_pyth(): Fixture {
 
 fun create_expiry(fixture: &mut Fixture, expiry: u64): (ID, ID) {
     fixture.scenario.next_tx(test_constants::admin());
-    let pyth = fixture.scenario.take_shared_by_id<PythSource>(fixture.pyth_id);
+    let mut pyth = fixture.scenario.take_shared_by_id<PythSource>(fixture.pyth_id);
     let mut vault = fixture.scenario.take_shared_by_id<PoolVault>(fixture.vault_id);
+    pyth.set_state_for_testing(
+        CREATION_SPOT,
+        fixture.clock.timestamp_ms(),
+        fixture.clock.timestamp_ms(),
+    );
     let (expiry_id, oracle_id) = registry::create_expiry_market(
         &mut fixture.registry,
         &mut vault,
@@ -493,8 +504,6 @@ fun create_expiry(fixture: &mut Fixture, expiry: u64): (ID, ID) {
         &pyth,
         &fixture.cap,
         expiry,
-        MIN_STRIKE,
-        TICK_SIZE,
         &fixture.clock,
         fixture.scenario.ctx(),
     );
