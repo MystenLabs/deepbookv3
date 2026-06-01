@@ -392,6 +392,7 @@ public(package) fun set_allowed_versions(vault: &mut PoolVault, allowed_versions
 
 /// Register an expiry market for pool accounting and active valuation.
 public(package) fun register_expiry_market(vault: &mut PoolVault, expiry_market_id: ID) {
+    vault.assert_version_allowed();
     vault.expiry_accounting.register_expiry(expiry_market_id);
 }
 
@@ -564,6 +565,7 @@ fun materialize_expiry_profit(
     let profit_basis_after = vault.expiry_accounting.profit_basis_debits();
     vault_events::emit_expiry_profit_materialized(
         vault.id(),
+        expiry_market_id,
         lp_profit,
         protocol_profit,
         vault.idle_balance.value(),

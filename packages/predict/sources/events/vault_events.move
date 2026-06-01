@@ -66,9 +66,10 @@ public struct ExpiryCashReceived has copy, drop, store {
     received_from_expiry_after: u64,
 }
 
-/// Emitted when aggregate returned expiry cash is split between LPs and protocol reserves.
+/// Emitted when terminal expiry profit is split between LPs and protocol reserves.
 public struct ExpiryProfitMaterialized has copy, drop, store {
     pool_vault_id: ID,
+    expiry_market_id: ID,
     lp_profit: u64,
     protocol_profit: u64,
     idle_balance_after: u64,
@@ -174,6 +175,7 @@ public(package) fun emit_expiry_cash_received(
 
 public(package) fun emit_expiry_profit_materialized(
     pool_vault_id: ID,
+    expiry_market_id: ID,
     lp_profit: u64,
     protocol_profit: u64,
     idle_balance_after: u64,
@@ -182,6 +184,7 @@ public(package) fun emit_expiry_profit_materialized(
 ) {
     event::emit(ExpiryProfitMaterialized {
         pool_vault_id,
+        expiry_market_id,
         lp_profit,
         protocol_profit,
         idle_balance_after,
