@@ -310,7 +310,7 @@ fun init(ctx: &mut TxContext) {
     let (registry, admin_cap) = new_registry_and_admin_cap(ctx);
     protocol_config::create_and_share(ctx);
     transfer::share_object(registry);
-    transfer::transfer(admin_cap, ctx.sender());
+    transfer::public_transfer(admin_cap, ctx.sender());
 }
 
 /// Construct registry and admin cap during package init or tests.
@@ -349,7 +349,7 @@ public fun init_for_testing(ctx: &mut TxContext): ID {
     let registry_id = registry.id();
     protocol_config::create_and_share(ctx);
     transfer::share_object(registry);
-    transfer::transfer(admin_cap, ctx.sender());
+    transfer::public_transfer(admin_cap, ctx.sender());
 
     registry_id
 }
