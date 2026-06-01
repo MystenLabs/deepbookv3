@@ -7,7 +7,7 @@ module deepbook_predict::plp_accounting_tests;
 use deepbook_predict::{
     config_constants,
     constants::{Self, float_scaling as float},
-    expiry_market::{Self, ExpiryMarket},
+    expiry_market::ExpiryMarket,
     market_oracle::{MarketOracle, MarketOracleCap},
     plp::{Self, PLP, PoolVault},
     protocol_config::{Self, ProtocolConfig},
@@ -92,8 +92,8 @@ fun set_max_expiry_funding_updates_registered_expiry() {
 
     registry::set_max_expiry_funding(
         &mut vault,
-        &fixture.config,
         &fixture.admin_cap,
+        &fixture.config,
         expiry_id,
         100_000_000_000,
     );
@@ -101,8 +101,8 @@ fun set_max_expiry_funding_updates_registered_expiry() {
 
     registry::set_max_expiry_funding(
         &mut vault,
-        &fixture.config,
         &fixture.admin_cap,
+        &fixture.config,
         expiry_id,
         constants::expiry_cash_floor!(),
     );
@@ -353,28 +353,6 @@ fun sync_same_expiry_twice_aborts() {
         &pyth,
         &fixture.clock,
     );
-    abort 999
-}
-
-#[test, expected_failure(abort_code = expiry_market::EWrongPreparedPoolNav)]
-fun finish_pool_nav_with_wrong_market_aborts() {
-    let mut fixture = setup_pool_with_pyth();
-    let (expiry_a_id, oracle_a_id) = create_expiry(&mut fixture, EXPIRY_MS);
-    let (expiry_b_id, _oracle_b_id) = create_expiry(&mut fixture, SECOND_EXPIRY_MS);
-
-    let mut market_a = fixture.scenario.take_shared_by_id<ExpiryMarket>(expiry_a_id);
-    let market_b = fixture.scenario.take_shared_by_id<ExpiryMarket>(expiry_b_id);
-    let oracle_a = fixture.scenario.take_shared_by_id<MarketOracle>(oracle_a_id);
-    let pyth = fixture.scenario.take_shared_by_id<PythSource>(fixture.pyth_id);
-
-    fixture.config.begin_valuation();
-    let prepared_nav = market_a.prepare_pool_sync(
-        &fixture.config,
-        &oracle_a,
-        &pyth,
-        &fixture.clock,
-    );
-    let _expiry_nav = market_b.finish_pool_nav(prepared_nav);
     abort 999
 }
 

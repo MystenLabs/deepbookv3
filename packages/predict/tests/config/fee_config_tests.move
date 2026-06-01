@@ -8,7 +8,6 @@ use deepbook_predict::{config_constants, constants::float_scaling as float, fee_
 use std::unit_test::{assert_eq, destroy};
 
 const THIRTY_PERCENT: u64 = 300_000_000;
-const SEVENTY_PERCENT: u64 = 700_000_000;
 
 // === Construction and getters ===
 
@@ -24,23 +23,18 @@ fun defaults_match_config_constants() {
         config.trading_loss_rebate_rate(),
         config_constants::default_trading_loss_rebate_rate!(),
     );
-    assert_eq!(
-        float!() - config.protocol_reserve_profit_share(),
-        float!() - config_constants::default_protocol_reserve_profit_share!(),
-    );
     destroy(config);
 }
 
 // === set_protocol_reserve_profit_share ===
 
 #[test]
-fun set_protocol_reserve_profit_share_updates_protocol_reserve_and_derived_lp() {
+fun set_protocol_reserve_profit_share_updates_value() {
     let mut config = fee_config::new();
 
     config.set_protocol_reserve_profit_share(THIRTY_PERCENT);
 
     assert_eq!(config.protocol_reserve_profit_share(), THIRTY_PERCENT);
-    assert_eq!(float!() - config.protocol_reserve_profit_share(), SEVENTY_PERCENT);
     destroy(config);
 }
 
@@ -49,7 +43,6 @@ fun set_protocol_reserve_profit_share_accepts_zero() {
     let mut config = fee_config::new();
     config.set_protocol_reserve_profit_share(0);
     assert_eq!(config.protocol_reserve_profit_share(), 0);
-    assert_eq!(float!() - config.protocol_reserve_profit_share(), float!());
     destroy(config);
 }
 
@@ -58,7 +51,6 @@ fun set_protocol_reserve_profit_share_accepts_full_protocol_reserve() {
     let mut config = fee_config::new();
     config.set_protocol_reserve_profit_share(float!());
     assert_eq!(config.protocol_reserve_profit_share(), float!());
-    assert_eq!(float!() - config.protocol_reserve_profit_share(), 0);
     destroy(config);
 }
 

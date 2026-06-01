@@ -130,7 +130,10 @@ public(package) fun set_max_expiry_funding(
 ): u64 {
     config_constants::assert_max_expiry_funding(max_expiry_funding);
     ledger.assert_registered_expiry(expiry_market_id);
-    let net_funding = ledger.expiry_net_funding(expiry_market_id);
+    let net_funding = {
+        let flow = ledger.registered_expiries.borrow(expiry_market_id);
+        flow_net_funding(flow)
+    };
     assert!(net_funding <= max_expiry_funding, EMaxExpiryFundingExceeded);
     ledger.registered_expiries.borrow_mut(expiry_market_id).max_expiry_funding = max_expiry_funding;
     net_funding
@@ -166,12 +169,6 @@ public(package) fun materialize_profit(ledger: &mut Ledger): u64 {
     let profit = ledger.profit_basis_credits - ledger.profit_basis_debits;
     ledger.profit_basis_debits = ledger.profit_basis_credits;
     profit
-}
-
-fun expiry_net_funding(ledger: &Ledger, expiry_market_id: ID): u64 {
-    ledger.assert_registered_expiry(expiry_market_id);
-    let flow = ledger.registered_expiries.borrow(expiry_market_id);
-    flow_net_funding(flow)
 }
 
 fun flow_net_funding(flow: &RegisteredExpiry): u64 {

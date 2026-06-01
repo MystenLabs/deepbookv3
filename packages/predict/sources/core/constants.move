@@ -34,7 +34,7 @@ public macro fun position_lot_size(): u64 { 10_000 }
 
 // === Pool Funding ===
 
-/// DUSDC cash every expiry starts with, in 6-decimal quote units.
+/// DUSDC cash floor targeted by pool rebalancing, in 6-decimal quote units.
 public(package) macro fun expiry_cash_floor(): u64 { 50_000_000_000 }
 
 /// Rebalancing band and target buffer fraction, in FLOAT_SCALING.

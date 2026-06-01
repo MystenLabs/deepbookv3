@@ -192,8 +192,8 @@ public fun set_template_trading_loss_rebate_rate(
 /// Set the max net DUSDC the pool may fund into one expiry.
 public fun set_max_expiry_funding(
     pool_vault: &mut PoolVault,
-    config: &ProtocolConfig,
     _admin_cap: &AdminCap,
+    config: &ProtocolConfig,
     expiry_market_id: ID,
     funding: u64,
 ) {

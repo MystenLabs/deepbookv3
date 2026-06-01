@@ -55,47 +55,6 @@ public(package) fun up_price(point: &CurvePoint): u64 {
     point.up_price
 }
 
-/// Return a conservative directional probability from a prebuilt UP-price curve.
-///
-/// This is for valuation-time liquidation checks, so it returns an upper bound:
-/// UP orders use the higher UP price around the strike, and DOWN orders use the
-/// higher DOWN price implied by the lower UP price around the strike.
-public(package) fun directional_probability_upper_bound(
-    curve: &vector<CurvePoint>,
-    lower: u64,
-    higher: u64,
-): u64 {
-    assert!(lower < higher, EInvalidRange);
-    assert!((lower == constants::neg_inf!()) != (higher == constants::pos_inf!()), EInvalidRange);
-
-    let is_up = higher == constants::pos_inf!();
-    let strike = if (is_up) lower else higher;
-
-    let len = curve.length();
-    assert!(len > 0, EInvalidCurveRange);
-    assert!(strike >= curve[0].strike && strike <= curve[len - 1].strike, EInvalidCurveRange);
-
-    let mut lo = 0;
-    let mut hi = len;
-    while (lo < hi) {
-        let mid = (lo + hi) / 2;
-        if (curve[mid].strike < strike) {
-            lo = mid + 1;
-        } else {
-            hi = mid;
-        };
-    };
-
-    let point = &curve[lo];
-    if (point.strike == strike) {
-        return if (is_up) point.up_price else constants::float_scaling!() - point.up_price
-    };
-
-    let lo_point = &curve[lo - 1];
-    assert!(lo_point.up_price >= point.up_price, ERangePriceUnderflow);
-    if (is_up) lo_point.up_price else constants::float_scaling!() - point.up_price
-}
-
 /// Return the current raw probability for a live range.
 public(package) fun live_range_probability(
     config: &PricingConfig,

@@ -194,16 +194,17 @@ public fun sync_expiry(
         return
     };
 
-    market_oracle.assert_active(clock);
     assert!(vault.expiry_accounting.is_active_expiry(expiry_market_id), EExpiryMarketNotActive);
 
-    let expiry_nav = vault.sync_active_expiry_cash_and_nav(
-        market,
-        config,
+    market.run_liquidation_pass(
+        config.pricing_config(),
         market_oracle,
         pyth,
+        config.risk_config().valuation_liquidation_budget(),
         clock,
     );
+    vault.rebalance_active_expiry_cash(market, config);
+    let expiry_nav = market.pool_nav(config, market_oracle, pyth, clock);
     sync.record_expiry_synced(expiry_market_id, expiry_nav);
 }
 
@@ -453,19 +454,6 @@ fun assert_expiry_ready_to_sync(sync: &PoolSync, expiry_market_id: ID) {
 fun record_expiry_synced(sync: &mut PoolSync, expiry_market_id: ID, expiry_nav: u64) {
     sync.active_expiry_value = sync.active_expiry_value + expiry_nav;
     sync.synced_expiry_markets.push_back(expiry_market_id);
-}
-
-fun sync_active_expiry_cash_and_nav(
-    vault: &mut PoolVault,
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    market_oracle: &MarketOracle,
-    pyth: &PythSource,
-    clock: &Clock,
-): u64 {
-    let prepared_nav = market.prepare_pool_sync(config, market_oracle, pyth, clock);
-    vault.rebalance_active_expiry_cash(market, config);
-    market.finish_pool_nav(prepared_nav)
 }
 
 fun rebalance_active_expiry_cash(
