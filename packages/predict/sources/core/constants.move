@@ -37,6 +37,9 @@ public macro fun position_lot_size(): u64 { 10_000 }
 /// DUSDC cash floor targeted by pool rebalancing, in 6-decimal quote units.
 public(package) macro fun expiry_cash_floor(): u64 { 50_000_000_000 }
 
+/// Maximum active expiries that can require full-pool sync processing.
+public(package) macro fun max_active_expiry_markets(): u64 { 10 }
+
 /// Rebalancing band and target buffer fraction, in FLOAT_SCALING.
 public(package) macro fun expiry_rebalance_pct(): u64 { 100_000_000 }
 

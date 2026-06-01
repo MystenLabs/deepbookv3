@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module deepbook_predict::plp_accounting_tests;
+module deepbook_predict::plp_tests;
 
 use deepbook_predict::{
     config_constants,
@@ -38,8 +38,9 @@ const PARTIAL_LOSS: u64 = 20_000_000_000;
 const SECOND_EXPIRY_PROFIT: u64 = 90_000_000_000;
 const NAV_TEST_SUPPLY: u64 = 36_000_000_000;
 const NAV_TEST_EXPECTED_SHARES: u64 = 30_000_000_000;
+const REGISTERED_EXPIRY_ID: address = @0xA11C;
 
-/// Scenario-local objects shared by the PLP accounting tests.
+/// Scenario-local objects shared by the PLP tests.
 public struct Fixture {
     scenario: Scenario,
     registry: Registry,
@@ -55,14 +56,13 @@ public struct Fixture {
 // === Expiry Registration ===
 
 #[test]
-fun create_expiry_registers_zero_cash_active_flow_and_default_funding() {
-    let mut fixture = setup_pool_with_pyth();
-    let (expiry_id, _oracle_id) = create_expiry(&mut fixture, EXPIRY_MS);
+fun register_expiry_market_adds_zero_flow_with_default_funding() {
+    let fixture = setup_pool_with_pyth();
+    let expiry_id = REGISTERED_EXPIRY_ID.to_id();
 
-    let vault = fixture.scenario.take_shared_by_id<PoolVault>(fixture.vault_id);
-    let market = fixture.scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
+    let mut vault = fixture.scenario.take_shared_by_id<PoolVault>(fixture.vault_id);
+    vault.register_expiry_market(expiry_id);
 
-    assert_eq!(market.cash_balance(), 0);
     assert_eq!(vault.idle_balance(), INITIAL_SUPPLY);
     assert_eq!(vault.active_expiry_markets().length(), 1);
     assert_eq!(vault.active_expiry_markets()[0], expiry_id);
@@ -76,7 +76,6 @@ fun create_expiry_registers_zero_cash_active_flow_and_default_funding() {
     assert_eq!(vault.profit_basis_debits(), 0);
     assert_eq!(vault.profit_basis_credits(), 0);
 
-    return_shared(market);
     return_shared(vault);
     finish(fixture);
 }
@@ -85,27 +84,16 @@ fun create_expiry_registers_zero_cash_active_flow_and_default_funding() {
 
 #[test]
 fun set_max_expiry_funding_updates_registered_expiry() {
-    let mut fixture = setup_pool_with_pyth();
-    let (expiry_id, _oracle_id) = create_expiry(&mut fixture, EXPIRY_MS);
+    let fixture = setup_pool_with_pyth();
+    let expiry_id = REGISTERED_EXPIRY_ID.to_id();
 
     let mut vault = fixture.scenario.take_shared_by_id<PoolVault>(fixture.vault_id);
+    vault.register_expiry_market(expiry_id);
 
-    registry::set_max_expiry_funding(
-        &mut vault,
-        &fixture.admin_cap,
-        &fixture.config,
-        expiry_id,
-        100_000_000_000,
-    );
+    vault.set_max_expiry_funding(&fixture.config, expiry_id, 100_000_000_000);
     assert_eq!(vault.max_expiry_funding(expiry_id), 100_000_000_000);
 
-    registry::set_max_expiry_funding(
-        &mut vault,
-        &fixture.admin_cap,
-        &fixture.config,
-        expiry_id,
-        constants::expiry_cash_floor!(),
-    );
+    vault.set_max_expiry_funding(&fixture.config, expiry_id, constants::expiry_cash_floor!());
     assert_eq!(vault.max_expiry_funding(expiry_id), constants::expiry_cash_floor!());
 
     return_shared(vault);
@@ -142,7 +130,7 @@ fun pool_sync_tops_up_expiry_below_floor() {
 }
 
 #[test]
-fun pool_sync_sweeps_excess_and_materializes_cash_backed_profit() {
+fun pool_sync_sweeps_live_excess_without_materializing_profit() {
     let mut fixture = setup_pool_with_pyth();
     let (expiry_id, oracle_id) = create_expiry(&mut fixture, EXPIRY_MS);
 
@@ -156,20 +144,104 @@ fun pool_sync_sweeps_excess_and_materializes_cash_backed_profit() {
     sync_expiry_for_testing(&mut fixture, &mut vault, &mut market, &oracle, &pyth);
 
     assert_eq!(market.cash_balance(), constants::expiry_cash_floor!());
-    // Sweep returns 50b above the zero-liability floor; all 50b is materialized
-    // profit, split 30b LP / 20b protocol at 40%.
-    assert_eq!(vault.idle_balance(), 330_000_000_000);
-    assert_eq!(vault.protocol_reserve_balance(), 20_000_000_000);
+    // Live sweep returns 50b above the zero-liability floor, but live cash is
+    // not terminal profit. It remains in pricing basis until the expiry settles.
+    assert_eq!(vault.idle_balance(), 350_000_000_000);
+    assert_eq!(vault.protocol_reserve_balance(), 0);
     let (sent_to_expiry, received_from_expiry) = vault.expiry_flow_amounts(expiry_id);
     assert_eq!(sent_to_expiry, 0);
     assert_eq!(received_from_expiry, constants::expiry_cash_floor!());
-    assert_eq!(vault.profit_basis_debits(), constants::expiry_cash_floor!());
+    assert_eq!(vault.profit_basis_debits(), 0);
     assert_eq!(vault.profit_basis_credits(), constants::expiry_cash_floor!());
 
     return_shared(pyth);
     return_shared(oracle);
     return_shared(market);
     return_shared(vault);
+    finish(fixture);
+}
+
+#[test]
+fun settled_break_even_expiry_does_not_materialize_prior_live_sweep_profit() {
+    let mut fixture = setup_pool_with_pyth();
+    let (live_expiry_id, live_oracle_id) = create_expiry(&mut fixture, SECOND_EXPIRY_MS);
+
+    let mut vault = fixture.scenario.take_shared_by_id<PoolVault>(fixture.vault_id);
+    let mut live_market = fixture.scenario.take_shared_by_id<ExpiryMarket>(live_expiry_id);
+    let live_oracle = fixture.scenario.take_shared_by_id<MarketOracle>(live_oracle_id);
+    let pyth = fixture.scenario.take_shared_by_id<PythSource>(fixture.pyth_id);
+
+    add_expiry_cash_for_accounting_test(
+        &mut live_market,
+        EXTRA_EXPIRY_CASH,
+        fixture.scenario.ctx(),
+    );
+    sync_expiry_for_testing(&mut fixture, &mut vault, &mut live_market, &live_oracle, &pyth);
+    assert_eq!(vault.protocol_reserve_balance(), 0);
+
+    return_shared(pyth);
+    return_shared(live_oracle);
+    return_shared(live_market);
+    return_shared(vault);
+
+    let (settled_expiry_id, settled_oracle_id) = create_expiry(&mut fixture, EXPIRY_MS);
+
+    let mut vault = fixture.scenario.take_shared_by_id<PoolVault>(fixture.vault_id);
+    let mut live_market = fixture.scenario.take_shared_by_id<ExpiryMarket>(live_expiry_id);
+    let live_oracle = fixture.scenario.take_shared_by_id<MarketOracle>(live_oracle_id);
+    let mut settled_market = fixture.scenario.take_shared_by_id<ExpiryMarket>(settled_expiry_id);
+    let mut settled_oracle = fixture.scenario.take_shared_by_id<MarketOracle>(settled_oracle_id);
+    let mut pyth = fixture.scenario.take_shared_by_id<PythSource>(fixture.pyth_id);
+
+    let mut sync = plp::start_pool_sync(&mut fixture.config, &vault);
+    sync.sync_expiry(
+        &mut vault,
+        &mut live_market,
+        &fixture.config,
+        &live_oracle,
+        &pyth,
+        &fixture.clock,
+    );
+    sync.sync_expiry(
+        &mut vault,
+        &mut settled_market,
+        &fixture.config,
+        &settled_oracle,
+        &pyth,
+        &fixture.clock,
+    );
+    let _pool_value = vault.finish_pool_sync(&mut fixture.config, sync);
+
+    settle_oracle(&mut fixture, &mut settled_oracle, &mut pyth, EXPIRY_MS);
+    let mut sync = plp::start_pool_sync(&mut fixture.config, &vault);
+    sync.sync_expiry(
+        &mut vault,
+        &mut live_market,
+        &fixture.config,
+        &live_oracle,
+        &pyth,
+        &fixture.clock,
+    );
+    sync.sync_expiry(
+        &mut vault,
+        &mut settled_market,
+        &fixture.config,
+        &settled_oracle,
+        &pyth,
+        &fixture.clock,
+    );
+    let _pool_value = vault.finish_pool_sync(&mut fixture.config, sync);
+
+    assert_eq!(vault.protocol_reserve_balance(), 0);
+    assert_eq!(vault.profit_basis_debits(), constants::expiry_cash_floor!());
+    assert_eq!(vault.profit_basis_credits(), 2 * constants::expiry_cash_floor!());
+
+    return_shared(settled_oracle);
+    return_shared(settled_market);
+    return_shared(live_oracle);
+    return_shared(live_market);
+    return_shared(vault);
+    return_shared(pyth);
     finish(fixture);
 }
 

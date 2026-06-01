@@ -132,12 +132,12 @@ public fun total_supply(vault: &PoolVault): u64 {
     vault.treasury_cap.total_supply()
 }
 
-/// Return the money-out side of aggregate expiry profit basis.
+/// Return the pricing debit side of aggregate expiry profit basis.
 public fun profit_basis_debits(vault: &PoolVault): u64 {
     vault.expiry_accounting.profit_basis_debits()
 }
 
-/// Return the money-in side of aggregate expiry profit basis.
+/// Return the pricing credit side of aggregate expiry profit basis.
 public fun profit_basis_credits(vault: &PoolVault): u64 {
     vault.expiry_accounting.profit_basis_credits()
 }
@@ -203,7 +203,7 @@ public fun sync_expiry(
         config.risk_config().valuation_liquidation_budget(),
         clock,
     );
-    vault.rebalance_active_expiry_cash(market, config);
+    vault.rebalance_active_expiry_cash(market);
     let expiry_nav = market.pool_nav(config, market_oracle, pyth, clock);
     sync.record_expiry_synced(expiry_market_id, expiry_nav);
 }
@@ -241,7 +241,8 @@ public fun claim_trading_loss_rebate(
     let expiry_market_id = market.id();
     vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
     let residual_cash = market.claim_trading_loss_rebate(manager, config, market_oracle, ctx);
-    let returned_cash_amount = vault.receive_expiry_cash(config, expiry_market_id, residual_cash);
+    let returned_cash_amount = vault.receive_expiry_cash(expiry_market_id, residual_cash);
+    vault.materialize_expiry_profit(config, expiry_market_id);
     if (returned_cash_amount > 0) {
         vault.emit_expiry_cash_received(
             expiry_market_id,
@@ -456,11 +457,7 @@ fun record_expiry_synced(sync: &mut PoolSync, expiry_market_id: ID, expiry_nav: 
     sync.synced_expiry_markets.push_back(expiry_market_id);
 }
 
-fun rebalance_active_expiry_cash(
-    vault: &mut PoolVault,
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-) {
+fun rebalance_active_expiry_cash(vault: &mut PoolVault, market: &mut ExpiryMarket) {
     let expiry_market_id = market.id();
     let (cash_balance, target_cash, sweep_threshold_cash) = expiry_rebalance_cash_terms(market);
 
@@ -475,11 +472,7 @@ fun rebalance_active_expiry_cash(
     } else if (cash_balance > sweep_threshold_cash) {
         let cash_to_return = cash_balance - target_cash;
         let returned_cash = market.release_pool_cash(cash_to_return);
-        let returned_cash_amount = vault.receive_expiry_cash(
-            config,
-            expiry_market_id,
-            returned_cash,
-        );
+        let returned_cash_amount = vault.receive_expiry_cash(expiry_market_id, returned_cash);
         vault.emit_expiry_cash_rebalanced(
             market,
             expiry_market_id,
@@ -499,7 +492,8 @@ fun unregister_settled_expiry(
     let expiry_market_id = market.id();
     let deactivated = vault.expiry_accounting.deactivate_expiry_if_present(expiry_market_id);
     let returned_cash = market.release_settled_pool_cash(market_oracle);
-    let returned_cash_amount = vault.receive_expiry_cash(config, expiry_market_id, returned_cash);
+    let returned_cash_amount = vault.receive_expiry_cash(expiry_market_id, returned_cash);
+    vault.materialize_expiry_profit(config, expiry_market_id);
 
     if (deactivated || returned_cash_amount > 0) {
         vault.emit_expiry_cash_received(
@@ -522,12 +516,7 @@ fun send_expiry_cash(
     vault.expiry_accounting.record_sent_to_expiry(expiry_market_id, amount);
 }
 
-fun receive_expiry_cash(
-    vault: &mut PoolVault,
-    config: &ProtocolConfig,
-    expiry_market_id: ID,
-    cash: Balance<DUSDC>,
-): u64 {
+fun receive_expiry_cash(vault: &mut PoolVault, expiry_market_id: ID, cash: Balance<DUSDC>): u64 {
     let amount = cash.value();
     if (amount == 0) {
         cash.destroy_zero();
@@ -535,7 +524,6 @@ fun receive_expiry_cash(
     };
     vault.idle_balance.join(cash);
     vault.expiry_accounting.record_received_from_expiry(expiry_market_id, amount);
-    vault.materialize_profit(config);
     amount
 }
 
@@ -559,8 +547,12 @@ fun emit_expiry_cash_received(
     );
 }
 
-fun materialize_profit(vault: &mut PoolVault, config: &ProtocolConfig) {
-    let profit = vault.expiry_accounting.materialize_profit();
+fun materialize_expiry_profit(
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    expiry_market_id: ID,
+) {
+    let profit = vault.expiry_accounting.materialize_expiry_profit(expiry_market_id);
     if (profit == 0) return;
 
     // Materialized profit is cash-backed and irreversible: LP profit stays in
@@ -592,8 +584,8 @@ fun pending_protocol_profit_exclusion(
     config: &ProtocolConfig,
     active_expiry_value: u64,
 ): u64 {
-    // NAV prices pending protocol profit before it is cash-backed. Actual
-    // reserve custody only changes when expiry cash returns through materialization.
+    // NAV prices pending protocol profit before it is terminally materialized.
+    // Live cash returns update credits, but reserve custody waits for terminal profit.
     let aggregate_credits = vault.expiry_accounting.profit_basis_credits() + active_expiry_value;
     let aggregate_debits = vault.expiry_accounting.profit_basis_debits();
     if (aggregate_credits <= aggregate_debits) {
