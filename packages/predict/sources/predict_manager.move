@@ -41,7 +41,7 @@ public struct PredictManager has key {
     /// Per-expiry aggregate trading cash flows and open position count.
     expiry_summaries: Table<ID, ExpiryTradingSummary>,
     /// DEEP staked and active for trading benefits, in raw units. Custody lives
-    /// in the Registry's pooled balance; this mirrors this manager's share.
+    /// in PoolVault; this mirrors this manager's share.
     active_stake: u64,
     /// DEEP staked this epoch, not yet active. Rolls into `active_stake` on the
     /// first interaction in a later epoch (`update_stake`).

@@ -8,7 +8,7 @@
 /// payout liability for cash backing, and live position liability for LP
 /// valuation. It stores the parent market identity so market-scoped liquidation
 /// events can be emitted atomically with exposure removal. Expiry-market cash
-/// backing, fee custody, manager positions, and payout movement stay outside
+/// custody, rebate accounting, manager positions, and payout movement stay outside
 /// this module.
 module deepbook_predict::strike_exposure;
 

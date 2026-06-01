@@ -194,8 +194,6 @@ public fun sync_expiry(
         return
     };
 
-    assert!(vault.expiry_accounting.is_active_expiry(expiry_market_id), EExpiryMarketNotActive);
-
     market.run_liquidation_pass(
         config.pricing_config(),
         market_oracle,
