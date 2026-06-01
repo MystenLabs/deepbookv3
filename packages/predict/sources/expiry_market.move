@@ -167,6 +167,7 @@ public fun allowed_versions(market: &ExpiryMarket): VecSet<u64> {
 /// Set per-market mint pause. Admin can pause or unpause one expiry without
 /// changing global trading state.
 public fun set_mint_paused(market: &mut ExpiryMarket, _admin_cap: &AdminCap, paused: bool) {
+    market.assert_version_allowed();
     market.set_mint_paused_internal(paused);
 }
 
