@@ -229,13 +229,18 @@ canonical live economics for the same generated CSV rows: oracle refreshes,
 mints, redeems, passive liquidations, supply, withdraw, normalized event fields,
 and tracked state deltas.
 
+Live pool-sync sweeps increase aggregate pricing credits but do not materialize
+protocol profit. Protocol reserves move only when terminal expiry accounting
+materializes profit after that expiry's terminal losses and watermarks are
+applied.
+
 The long Python replay intentionally extends that validated live mirror with
 features the localnet runner cannot model practically: exact replay timestamps,
 real expiry/settlement inputs from `data/scenario_config.json`, exact-time
 fee-ramp economics, and direct terminal closeout. The parity path assumes the
-localnet manager has no active stake and therefore no terminal trading-loss
-rebate. The long Python closeout intentionally applies the full eligible
-trading-loss rebate to the manager as a worst-case vault-risk assumption. Use
+localnet manager has no active stake and therefore no terminal rebate payout.
+The long Python closeout intentionally applies the full eligible rebate after
+the protocol's gross-profit offset as a worst-case vault-risk assumption. Use
 long-run outputs for tuning with this boundary in mind: parity validates the
 shared live transaction engine; Python-specific assertions guard the extra
 terminal analysis layer.
@@ -284,6 +289,8 @@ Important fields:
 - `scan_active_count` is sampled before that transaction's liquidation pass, so
   `scan_coverage` uses the same denominator the scanner saw.
 - `risk.expiry_funding_basis`: current net pool funding basis for the expiry.
+  This starts at zero after market creation and rises only when PLP pool sync
+  sends cash into the expiry; it falls when that same expiry returns cash.
 - `risk.position_liability_over_funding`: live liability divided by expiry
   funding basis.
 - `risk.lp_live_mtm_pnl_over_funding`: live LP MTM PnL divided by expiry
@@ -329,9 +336,9 @@ Important fields:
   settlement inputs used by the long Python replay. If Move defaults, admin
   setup, fee-ramp policy, liquidation policy, capital sizing, or settlement
   assumptions change, update this file at the same time.
-- Long-run vault and manager seeds can be larger than normal mode, but initial
-  expiry funding stays at the protocol cash floor unless the simulator adds an
-  existing protocol top-up flow.
+- Long-run vault and manager seeds can be larger than normal mode, but expiry
+  cash starts at zero and reaches the protocol cash floor only through existing
+  PLP pool-sync rebalancing.
 - Full localnet replay can be gas-heavy when supply/withdraw valuation finds a
   liquidation backlog. The runner default transaction gas budget is currently
   `1_000_000_000` MIST.

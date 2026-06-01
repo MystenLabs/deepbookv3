@@ -91,13 +91,13 @@ def update_totals(records: list[dict[str, Any]]) -> dict[str, int]:
                 settled_payout = int(update["settled_payout_amount"])
                 totals["redeem_payout"] += settled_payout
                 totals["terminal_settled_payout"] += settled_payout
-                totals["terminal_trading_loss_eligible_rebate"] += int(
-                    update.get("trading_loss_eligible_rebate", "0")
-                )
-                totals["terminal_trading_loss_rebate"] += int(update["trading_loss_rebate"])
-                totals["terminal_trading_loss_unpaid_rebate"] += int(
-                    update.get("trading_loss_unpaid_rebate", "0")
-                )
+                totals["terminal_gross_profit_before_rebate"] += int(update["gross_profit_before_rebate"])
+                totals["terminal_resolved_rebate_reserve"] += int(update["resolved_rebate_reserve"])
+                totals["terminal_eligible_rebate"] += int(update["eligible_rebate"])
+                totals["terminal_rebate_amount"] += int(update["rebate_amount"])
+                totals["terminal_residual_rebate_reserve"] += int(update["residual_rebate_reserve"])
+                totals["terminal_returned_rebate_reserve"] += int(update["returned_rebate_reserve"])
+                totals["terminal_returned_pool_cash"] += int(update["returned_pool_cash"])
                 totals["terminal_returned_cash"] += int(update["returned_cash"])
                 totals["terminal_materialized_profit"] += int(update["materialized_profit"])
                 totals["terminal_lp_profit"] += int(update["lp_profit"])

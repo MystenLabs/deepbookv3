@@ -238,6 +238,14 @@ function startPoolSyncWithExpiry(tx: Transaction, params: ExpiryPoolSyncParams) 
   return sync;
 }
 
+function finishPoolSyncWithExpiry(tx: Transaction, params: ExpiryPoolSyncParams): void {
+  const sync = startPoolSyncWithExpiry(tx, params);
+  tx.moveCall({
+    target: target("plp", "finish_pool_sync"),
+    arguments: [tx.object(params.poolVaultId), tx.object(params.protocolConfigId), sync],
+  });
+}
+
 function addMint(tx: Transaction, params: MintParams): void {
   const { lower, higher } = binaryRangeBounds(params.strike, params.isUp);
   tx.moveCall({
@@ -454,16 +462,18 @@ export function depositToManagerTx(managerId: string, amount: bigint): Transacti
   return tx;
 }
 
-export function refreshOracleAndMintTx(params: OracleRefreshParams & MintParams): Transaction {
+export function refreshOracleAndMintTx(params: OracleRefreshParams & ExpiryPoolSyncParams & MintParams): Transaction {
   const tx = new Transaction();
   addOracleRefresh(tx, params);
+  finishPoolSyncWithExpiry(tx, params);
   addMint(tx, params);
   return tx;
 }
 
-export function refreshOracleAndRedeemTx(params: OracleRefreshParams & RedeemParams): Transaction {
+export function refreshOracleAndRedeemTx(params: OracleRefreshParams & ExpiryPoolSyncParams & RedeemParams): Transaction {
   const tx = new Transaction();
   addOracleRefresh(tx, params);
+  finishPoolSyncWithExpiry(tx, params);
   addRedeem(tx, params);
   return tx;
 }

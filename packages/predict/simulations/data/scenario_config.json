@@ -7,13 +7,11 @@
   "capital": {
     "normal": {
       "manager_seed": "500000000000",
-      "vault_seed": "500000000000",
-      "initial_expiry_funding": "50000000000"
+      "vault_seed": "500000000000"
     },
     "long": {
       "manager_seed": "5000000000000",
-      "vault_seed": "5000000000000",
-      "initial_expiry_funding": "50000000000"
+      "vault_seed": "5000000000000"
     }
   },
   "generation": {
