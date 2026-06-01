@@ -9,11 +9,11 @@
 module deepbook_predict::market_oracle_update_prices_tests;
 
 use deepbook_predict::{
+    admin,
     constants::float_scaling as float,
     market_oracle,
     protocol_config,
-    pyth_source,
-    registry
+    pyth_source
 };
 use std::unit_test::{assert_eq, destroy};
 use sui::clock;
@@ -264,7 +264,7 @@ fun update_prices_second_push_basis_deviation_too_large_aborts() {
 #[test, expected_failure(abort_code = market_oracle::EInvalidMarketOracleCap)]
 fun update_prices_with_unregistered_cap_aborts() {
     let (mut market, config, cap, admin_cap, pyth, clock) = setup_active(NOW_MS);
-    let unregistered_cap = registry::create_market_oracle_cap(&admin_cap, &mut tx_context::dummy());
+    let unregistered_cap = market_oracle::create_cap(&admin_cap, &mut tx_context::dummy());
     market.update_block_scholes_prices(
         &config,
         &pyth,
@@ -298,8 +298,8 @@ fun update_prices_with_wrong_pyth_source_aborts() {
 #[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
 fun update_prices_during_valuation_aborts() {
     let ctx = &mut tx_context::dummy();
-    let admin_cap = registry::create_admin_cap_for_testing(ctx);
-    let cap = registry::create_market_oracle_cap(&admin_cap, ctx);
+    let admin_cap = admin::create_admin_cap_for_testing(ctx);
+    let cap = market_oracle::create_cap(&admin_cap, ctx);
     let mut config = protocol_config::new_for_testing(ctx);
     let pyth = pyth_source::new_for_testing(ctx);
     let mut market = market_oracle::create_test_market_oracle_with_pyth(
@@ -332,13 +332,13 @@ fun setup_active(
     market_oracle::MarketOracle,
     protocol_config::ProtocolConfig,
     market_oracle::MarketOracleCap,
-    registry::AdminCap,
+    admin::AdminCap,
     pyth_source::PythSource,
     clock::Clock,
 ) {
     let ctx = &mut tx_context::dummy();
-    let admin_cap = registry::create_admin_cap_for_testing(ctx);
-    let cap = registry::create_market_oracle_cap(&admin_cap, ctx);
+    let admin_cap = admin::create_admin_cap_for_testing(ctx);
+    let cap = market_oracle::create_cap(&admin_cap, ctx);
     let config = protocol_config::new_for_testing(ctx);
     let pyth = pyth_source::new_for_testing(ctx);
     let market = market_oracle::create_test_market_oracle_with_pyth(&pyth, EXPIRY_MS, &cap, ctx);
@@ -351,7 +351,7 @@ fun cleanup(
     market: market_oracle::MarketOracle,
     config: protocol_config::ProtocolConfig,
     cap: market_oracle::MarketOracleCap,
-    admin_cap: registry::AdminCap,
+    admin_cap: admin::AdminCap,
     pyth: pyth_source::PythSource,
     clock: clock::Clock,
 ) {

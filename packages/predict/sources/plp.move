@@ -13,6 +13,7 @@ module deepbook_predict::plp;
 
 use deepbook::math;
 use deepbook_predict::{
+    admin::AdminCap,
     constants,
     expiry_market::ExpiryMarket,
     market_oracle::MarketOracle,
@@ -397,8 +398,9 @@ public(package) fun register_expiry_market(vault: &mut PoolVault, expiry_market_
 }
 
 /// Set the max net DUSDC the pool may have funded into one expiry.
-public(package) fun set_max_expiry_funding(
+public fun set_max_expiry_funding(
     vault: &mut PoolVault,
+    _admin_cap: &AdminCap,
     config: &ProtocolConfig,
     expiry_market_id: ID,
     funding: u64,

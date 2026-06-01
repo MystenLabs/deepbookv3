@@ -13,7 +13,7 @@ use deepbook_predict::{
     predict_manager::PredictManager,
     protocol_config::{Self, ProtocolConfig},
     pyth_source::{Self, PythSource},
-    registry::{Self, AdminCap, Registry},
+    registry::{Self, Registry},
     test_constants
 };
 use dusdc::dusdc::DUSDC;
@@ -41,8 +41,8 @@ fun rebate_eligibility_offsets_fee_reserve_by_gross_profit() {
     let mut scenario = test::begin(test_constants::alice());
     let (mut registry, admin_cap) = registry::new_for_testing(scenario.ctx());
     let mut config = protocol_config::new_for_testing(scenario.ctx());
-    config.set_min_ask_price(0);
-    let cap = registry::create_market_oracle_cap(&admin_cap, scenario.ctx());
+    config.set_min_ask_price(&admin_cap, 0);
+    let cap = market_oracle::create_cap(&admin_cap, scenario.ctx());
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(NOW_MS);
     let mut pyth = pyth_source::new_for_testing(scenario.ctx());
@@ -117,7 +117,7 @@ fun rebate_eligibility_offsets_fee_reserve_by_gross_profit() {
     destroy(manager);
     destroy(oracle);
     destroy(pyth);
-    registry::destroy_market_oracle_cap(cap);
+    market_oracle::destroy_cap(cap);
     destroy(config);
     destroy(admin_cap);
     registry::destroy_registry_drop_for_testing(registry);

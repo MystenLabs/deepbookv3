@@ -5,6 +5,7 @@
 module deepbook_predict::plp_rebate_flow_tests;
 
 use deepbook_predict::{
+    admin::AdminCap,
     constants::{Self, float_scaling as float},
     expiry_market::ExpiryMarket,
     i64,
@@ -14,7 +15,7 @@ use deepbook_predict::{
     predict_manager::PredictManager,
     protocol_config::{Self, ProtocolConfig},
     pyth_source::PythSource,
-    registry::{Self, AdminCap, Registry},
+    registry::{Self, Registry},
     test_constants
 };
 use dusdc::dusdc::DUSDC;
@@ -58,7 +59,6 @@ public struct Fixture {
 #[test]
 fun same_expiry_residual_rebate_cash_materializes_new_terminal_profit() {
     let mut fixture = setup_pool_with_pyth();
-    fixture.config.set_min_ask_price(0);
     let (expiry_id, oracle_id) = create_expiry(&mut fixture, EXPIRY_MS);
     let mut manager = create_manager_for_testing(&mut fixture);
 
@@ -147,8 +147,9 @@ fun setup_pool_with_pyth(): Fixture {
     plp::init_for_testing(scenario.ctx());
     let (mut registry, admin_cap) = registry::new_for_testing(scenario.ctx());
     let mut config = protocol_config::new_for_testing(scenario.ctx());
-    config.set_protocol_reserve_profit_share(PROTOCOL_RESERVE_SHARE);
-    let cap = registry::create_market_oracle_cap(&admin_cap, scenario.ctx());
+    config.set_protocol_reserve_profit_share(&admin_cap, PROTOCOL_RESERVE_SHARE);
+    config.set_min_ask_price(&admin_cap, 0);
+    let cap = market_oracle::create_cap(&admin_cap, scenario.ctx());
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(NOW_MS);
 
@@ -288,7 +289,7 @@ fun finish(fixture: Fixture) {
         initial_plp,
     } = fixture;
     destroy(initial_plp);
-    registry::destroy_market_oracle_cap(cap);
+    market_oracle::destroy_cap(cap);
     destroy(config);
     destroy(admin_cap);
     registry::destroy_registry_drop_for_testing(registry);

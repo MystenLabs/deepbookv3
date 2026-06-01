@@ -5,14 +5,15 @@
 module deepbook_predict::plp_tests;
 
 use deepbook_predict::{
+    admin::AdminCap,
     config_constants,
     constants::{Self, float_scaling as float},
     expiry_market::ExpiryMarket,
-    market_oracle::{MarketOracle, MarketOracleCap},
+    market_oracle::{Self, MarketOracle, MarketOracleCap},
     plp::{Self, PLP, PoolVault},
     protocol_config::{Self, ProtocolConfig},
     pyth_source::PythSource,
-    registry::{Self, AdminCap, Registry},
+    registry::{Self, Registry},
     test_constants
 };
 use dusdc::dusdc::DUSDC;
@@ -90,10 +91,15 @@ fun set_max_expiry_funding_updates_registered_expiry() {
     let mut vault = fixture.scenario.take_shared_by_id<PoolVault>(fixture.vault_id);
     vault.register_expiry_market(expiry_id);
 
-    vault.set_max_expiry_funding(&fixture.config, expiry_id, 100_000_000_000);
+    vault.set_max_expiry_funding(&fixture.admin_cap, &fixture.config, expiry_id, 100_000_000_000);
     assert_eq!(vault.max_expiry_funding(expiry_id), 100_000_000_000);
 
-    vault.set_max_expiry_funding(&fixture.config, expiry_id, constants::expiry_cash_floor!());
+    vault.set_max_expiry_funding(
+        &fixture.admin_cap,
+        &fixture.config,
+        expiry_id,
+        constants::expiry_cash_floor!(),
+    );
     assert_eq!(vault.max_expiry_funding(expiry_id), constants::expiry_cash_floor!());
 
     return_shared(vault);
@@ -435,8 +441,8 @@ fun setup_pool_with_pyth(): Fixture {
     plp::init_for_testing(scenario.ctx());
     let (mut registry, admin_cap) = registry::new_for_testing(scenario.ctx());
     let mut config = protocol_config::new_for_testing(scenario.ctx());
-    config.set_protocol_reserve_profit_share(PROTOCOL_RESERVE_SHARE);
-    let cap = registry::create_market_oracle_cap(&admin_cap, scenario.ctx());
+    config.set_protocol_reserve_profit_share(&admin_cap, PROTOCOL_RESERVE_SHARE);
+    let cap = market_oracle::create_cap(&admin_cap, scenario.ctx());
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(NOW_MS);
 
@@ -555,7 +561,7 @@ fun finish(fixture: Fixture) {
         initial_plp,
     } = fixture;
     destroy(initial_plp);
-    registry::destroy_market_oracle_cap(cap);
+    market_oracle::destroy_cap(cap);
     destroy(config);
     destroy(admin_cap);
     registry::destroy_registry_drop_for_testing(registry);

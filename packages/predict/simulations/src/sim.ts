@@ -690,7 +690,7 @@ async function setupSimulation(scenarioConfig: any, capital: SimulationCapital):
   console.log(`[${ts()}]   PoolVault: ${poolVaultId}`);
   console.log(`[${ts()}]   ProtocolConfig: ${protocolConfigId}`);
 
-  result = await executeAndWait(createMarketOracleCapTx(address), "create_market_oracle_cap");
+  result = await executeAndWait(createMarketOracleCapTx(address), "create_oracle_cap");
   const oracleCapChange = result.objectChanges.find(
     (change: any) => change.type === "created" && change.objectType.includes("MarketOracleCap"),
   );
