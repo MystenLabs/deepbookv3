@@ -13,23 +13,30 @@ DeepBook is a decentralized order book on the Sui blockchain.
 ### Move
 - `sui move build` - Build Move packages
 - `sui move test --gas-limit 100000000000` - Run Move tests
-- `bunx prettier-move -c *.move --write` - Format Move code
+- `bunx prettier-move -c path/to/file.move --write` - Format Move code
 
 ### Indexer
 - `cargo build -p deepbook-server` - Build indexer
 - `cargo test -p deepbook-server` - Run indexer tests
 
-## Auto-Loaded Rules
+## Context Routing
 
-Claude automatically loads contextual knowledge based on files being edited:
+Use these routing rules for repo context. Path-scoped rules are normally selected based on files being edited; manual-trigger rules must be read explicitly when the request matches the trigger.
+
+### Path-Scoped Rules
+
 - **Move files** (`packages/**/*.move`) → `.claude/rules/move.md`
 - **Indexer files** (`crates/server/**`, `crates/schema/**`, `crates/indexer/**`) → `.claude/rules/indexer.md`
 - **Scripts** (`scripts/**`) → `.claude/rules/scripts.md`
 - **Predict simulations** (`packages/predict/simulations/**`) → `.claude/rules/predict-simulations.md`
 - **Unit tests** (`packages/**/tests/**`) → `.claude/rules/unit-tests.md`
-- **Code review** (`packages/**/*.move`) → `.claude/rules/code-review.md`
 
-When reviewing code in this repo, always read `.claude/rules/code-review.md` and check against its patterns.
+### Manual-Trigger Rules
+
+- **Code review requests** → `.claude/rules/code-review.md`
+- **Wrap-up requests** → `.claude/rules/wrap-up.md`
+
+When reviewing code in this repo, always read `.claude/rules/code-review.md` and check against its patterns. When I say "wrap up", follow `.claude/rules/wrap-up.md`.
 
 **Important:** Update rule files when discovering new insights during sessions, including:
 - Bug fixes and their root causes
@@ -63,10 +70,6 @@ The Linear API key is in `.env` as `LINEAR_API_KEY` — use it (via `source .env
 
 - Repo's project: **Deepbook Maintenance** (id `1fa68715-f85f-4e4c-bdfe-38b9fbf7be40`) under team **DeFi** / key `DBU` (id `fa06ddc0-54b9-4a24-b1ed-06dee49e0c1b`).
 - To auto-link a PR to a Linear issue, include the issue identifier (e.g. `DBU-402`) in the branch name or PR title.
-
-## Wrap Up
-
-When I say "wrap up", follow the instructions in `.claude/rules/wrap-up.md`.
 
 ## Behavioral Guidelines
 
