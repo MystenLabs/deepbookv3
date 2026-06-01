@@ -408,6 +408,7 @@ export function createMarketOracleCapTx(recipient: string): Transaction {
 }
 
 export function createPythSourceTx(
+    protocolConfigId: string,
     feedId: number,
     tickSize: bigint,
     expiryFeeWindowMs: bigint,
@@ -418,6 +419,7 @@ export function createPythSourceTx(
         target: target("registry", "create_pyth_source"),
         arguments: [
             tx.object(REGISTRY_ID),
+            tx.object(protocolConfigId),
             tx.object(ADMIN_CAP_ID),
             tx.pure.u32(feedId),
             tx.pure.u64(tickSize),

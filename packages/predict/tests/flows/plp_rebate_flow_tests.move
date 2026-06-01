@@ -180,6 +180,7 @@ fun setup_pool_with_pyth(): Fixture {
     scenario.next_tx(test_constants::admin());
     let pyth_id = registry::create_pyth_source(
         &mut registry,
+        &mut config,
         &admin_cap,
         PYTH_FEED_ID,
         TICK_SIZE,

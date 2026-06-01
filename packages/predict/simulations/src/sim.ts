@@ -777,7 +777,13 @@ async function setupSimulation(
     console.log(`[${ts()}]   OracleCap: ${oracleCapId}`);
 
     result = await executeAndWait(
-        createPythSourceTx(1, ORACLE_TICK_SIZE, expiryFeeWindowMs, expiryFeeMaxMultiplier),
+        createPythSourceTx(
+            protocolConfigId,
+            1,
+            ORACLE_TICK_SIZE,
+            expiryFeeWindowMs,
+            expiryFeeMaxMultiplier,
+        ),
         "create_pyth_source",
     );
     const pythSourceChange = result.objectChanges.find(

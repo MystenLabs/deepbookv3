@@ -10,18 +10,74 @@ module deepbook_predict::protocol_config;
 
 use deepbook_predict::{
     admin::AdminCap,
+    config_constants,
     config_events,
     fee_config::{Self, FeeConfig},
+    feed_template::FeedTemplate,
     leverage_config::{Self, LeverageConfig},
     market_oracle_config::{Self, MarketOracleConfig},
     pricing_config::{Self, PricingConfig},
     risk_config::{Self, RiskConfig},
     stake_config::{Self, StakeConfig}
 };
+use sui::table::{Self, Table};
 
 const ETradingPaused: u64 = 0;
 const EValuationInProgress: u64 = 1;
 const EValuationNotInProgress: u64 = 2;
+const EFeedTemplateAlreadyExists: u64 = 3;
+const EFeedTemplateNotFound: u64 = 4;
+const EExpiryEntryAlreadyExists: u64 = 5;
+const EExpiryEntryNotFound: u64 = 6;
+const EWrongMarketOracle: u64 = 7;
+const EInvalidExpirySnapshot: u64 = 8;
+const EInvalidOraclePolicy: u64 = 9;
+
+/// Frozen contract terms stamped for one expiry.
+public struct ExpiryConfigSnapshot has copy, drop, store {
+    /// 1e9-scaled floor-to-live-value threshold for liquidation.
+    liquidation_ltv: u64,
+    /// Maximum terminal increase in the contract floor index over one expiry.
+    max_expiry_floor_premium: u64,
+    /// Fraction of aggregate expiry trading fees reserved for loss rebates.
+    trading_loss_rebate_rate: u64,
+    /// Minimum finite strike in this expiry's oracle grid.
+    min_strike: u64,
+    /// Strike tick size for this expiry's oracle grid.
+    tick_size: u64,
+    /// Pyth Lazer feed ID bound to this expiry.
+    pyth_lazer_feed_id: u32,
+    /// Window before expiry over which trade fees ramp up.
+    expiry_fee_window_ms: u64,
+    /// Fee multiplier reached at expiry, in FLOAT_SCALING; 1x disables.
+    expiry_fee_max_multiplier: u64,
+}
+
+/// Mutable per-expiry oracle policy controlled by authorized oracle operators.
+public struct ExpiryOraclePolicy has copy, drop, store {
+    /// Maximum age for a source to be used for settlement.
+    settlement_freshness_ms: u64,
+    /// Maximum allowed spot move between Block Scholes pushes.
+    max_spot_deviation: u64,
+    /// Maximum allowed basis move between Block Scholes pushes.
+    max_basis_deviation: u64,
+    /// Minimum allowed forward / spot basis.
+    min_basis: u64,
+    /// Maximum allowed forward / spot basis.
+    max_basis: u64,
+}
+
+/// Central per-expiry config row.
+public struct ExpiryEntry has copy, drop, store {
+    /// Market oracle object bound to this expiry.
+    market_oracle_id: ID,
+    /// Frozen contract terms for this expiry.
+    snapshot: ExpiryConfigSnapshot,
+    /// Mutable oracle bounds/freshness policy for this expiry.
+    oracle_policy: ExpiryOraclePolicy,
+    /// Blocks new mints for this expiry while true.
+    mint_paused: bool,
+}
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -36,6 +92,10 @@ public struct ProtocolConfig has key {
     trading_paused: bool,
     /// Transaction-local lock held while a full-pool valuation is assembled.
     valuation_in_progress: bool,
+    /// Pyth Lazer feed ID -> future-expiry template policy.
+    per_feed: Table<u32, FeedTemplate>,
+    /// Expiry timestamp -> frozen snapshot and mutable per-expiry controls.
+    per_expiry: Table<u64, ExpiryEntry>,
 }
 
 // === Public Functions ===
@@ -48,6 +108,39 @@ public fun id(config: &ProtocolConfig): ID {
 /// Return whether trading is currently paused.
 public fun trading_paused(config: &ProtocolConfig): bool {
     config.trading_paused
+}
+
+/// Return the configured strike tick size for a Pyth Lazer feed, if registered.
+public fun pyth_feed_tick_size(config: &ProtocolConfig, pyth_lazer_feed_id: u32): Option<u64> {
+    if (config.has_feed_template(pyth_lazer_feed_id)) {
+        option::some(config.feed_template(pyth_lazer_feed_id).tick_size())
+    } else {
+        option::none()
+    }
+}
+
+/// Return the configured expiry-fee ramp window for a Pyth Lazer feed, if registered.
+public fun pyth_feed_expiry_fee_window_ms(
+    config: &ProtocolConfig,
+    pyth_lazer_feed_id: u32,
+): Option<u64> {
+    if (config.has_feed_template(pyth_lazer_feed_id)) {
+        option::some(config.feed_template(pyth_lazer_feed_id).expiry_fee_window_ms())
+    } else {
+        option::none()
+    }
+}
+
+/// Return the configured expiry-fee max multiplier for a Pyth Lazer feed, if registered.
+public fun pyth_feed_expiry_fee_max_multiplier(
+    config: &ProtocolConfig,
+    pyth_lazer_feed_id: u32,
+): Option<u64> {
+    if (config.has_feed_template(pyth_lazer_feed_id)) {
+        option::some(config.feed_template(pyth_lazer_feed_id).expiry_fee_max_multiplier())
+    } else {
+        option::none()
+    }
 }
 
 /// Set the base fee multiplier.
@@ -227,6 +320,48 @@ public fun set_market_oracle_template_basis_bounds(
     );
 }
 
+/// Set the strike tick size used by future expiry markets for one Pyth feed.
+public fun set_pyth_feed_tick_size(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    pyth_lazer_feed_id: u32,
+    tick_size: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.assert_feed_template_exists(pyth_lazer_feed_id);
+    config.per_feed.borrow_mut(pyth_lazer_feed_id).set_tick_size(tick_size);
+    config.emit_feed_template_updated(pyth_lazer_feed_id);
+}
+
+/// Set the per-asset expiry-fee ramp window snapshotted by future expiry markets
+/// for one Pyth feed.
+public fun set_pyth_feed_expiry_fee_window_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    pyth_lazer_feed_id: u32,
+    window_ms: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.assert_feed_template_exists(pyth_lazer_feed_id);
+    config.per_feed.borrow_mut(pyth_lazer_feed_id).set_expiry_fee_window_ms(window_ms);
+    config.emit_feed_template_updated(pyth_lazer_feed_id);
+}
+
+/// Set the per-asset expiry-fee max multiplier snapshotted by future expiry markets
+/// for one Pyth feed. `max_multiplier` (FLOAT_SCALING, 1x disables) is the multiplier
+/// reached at expiry over the configured ramp window. Larger values suit more volatile assets.
+public fun set_pyth_feed_expiry_fee_max_multiplier(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    pyth_lazer_feed_id: u32,
+    max_multiplier: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.assert_feed_template_exists(pyth_lazer_feed_id);
+    config.per_feed.borrow_mut(pyth_lazer_feed_id).set_expiry_fee_max_multiplier(max_multiplier);
+    config.emit_feed_template_updated(pyth_lazer_feed_id);
+}
+
 /// Set whether trading is paused.
 public fun set_trading_paused(config: &mut ProtocolConfig, _admin_cap: &AdminCap, paused: bool) {
     config.set_trading_paused_internal(paused);
@@ -256,6 +391,201 @@ public(package) fun leverage_config(config: &ProtocolConfig): &LeverageConfig {
 
 public(package) fun stake_config(config: &ProtocolConfig): &StakeConfig {
     &config.stake_config
+}
+
+public(package) fun liquidation_ltv(snapshot: &ExpiryConfigSnapshot): u64 {
+    snapshot.liquidation_ltv
+}
+
+public(package) fun max_expiry_floor_premium(snapshot: &ExpiryConfigSnapshot): u64 {
+    snapshot.max_expiry_floor_premium
+}
+
+public(package) fun trading_loss_rebate_rate(snapshot: &ExpiryConfigSnapshot): u64 {
+    snapshot.trading_loss_rebate_rate
+}
+
+public(package) fun min_strike(snapshot: &ExpiryConfigSnapshot): u64 {
+    snapshot.min_strike
+}
+
+public(package) fun snapshot_tick_size(snapshot: &ExpiryConfigSnapshot): u64 {
+    snapshot.tick_size
+}
+
+public(package) fun pyth_lazer_feed_id(snapshot: &ExpiryConfigSnapshot): u32 {
+    snapshot.pyth_lazer_feed_id
+}
+
+public(package) fun snapshot_expiry_fee_window_ms(snapshot: &ExpiryConfigSnapshot): u64 {
+    snapshot.expiry_fee_window_ms
+}
+
+public(package) fun snapshot_expiry_fee_max_multiplier(snapshot: &ExpiryConfigSnapshot): u64 {
+    snapshot.expiry_fee_max_multiplier
+}
+
+public(package) fun settlement_freshness_ms(policy: &ExpiryOraclePolicy): u64 {
+    policy.settlement_freshness_ms
+}
+
+public(package) fun max_spot_deviation(policy: &ExpiryOraclePolicy): u64 {
+    policy.max_spot_deviation
+}
+
+public(package) fun max_basis_deviation(policy: &ExpiryOraclePolicy): u64 {
+    policy.max_basis_deviation
+}
+
+public(package) fun min_basis(policy: &ExpiryOraclePolicy): u64 {
+    policy.min_basis
+}
+
+public(package) fun max_basis(policy: &ExpiryOraclePolicy): u64 {
+    policy.max_basis
+}
+
+public(package) fun entry_market_oracle_id(entry: &ExpiryEntry): ID {
+    entry.market_oracle_id
+}
+
+public(package) fun entry_snapshot(entry: &ExpiryEntry): &ExpiryConfigSnapshot {
+    &entry.snapshot
+}
+
+public(package) fun entry_oracle_policy(entry: &ExpiryEntry): &ExpiryOraclePolicy {
+    &entry.oracle_policy
+}
+
+public(package) fun entry_mint_paused(entry: &ExpiryEntry): bool {
+    entry.mint_paused
+}
+
+public(package) fun has_feed_template(config: &ProtocolConfig, pyth_lazer_feed_id: u32): bool {
+    config.per_feed.contains(pyth_lazer_feed_id)
+}
+
+public(package) fun feed_template(config: &ProtocolConfig, pyth_lazer_feed_id: u32): &FeedTemplate {
+    config.assert_feed_template_exists(pyth_lazer_feed_id);
+    config.per_feed.borrow(pyth_lazer_feed_id)
+}
+
+public(package) fun has_expiry_entry(config: &ProtocolConfig, expiry: u64): bool {
+    config.per_expiry.contains(expiry)
+}
+
+public(package) fun expiry_entry(config: &ProtocolConfig, expiry: u64): &ExpiryEntry {
+    assert!(config.has_expiry_entry(expiry), EExpiryEntryNotFound);
+    config.per_expiry.borrow(expiry)
+}
+
+public(package) fun expiry_snapshot(config: &ProtocolConfig, expiry: u64): &ExpiryConfigSnapshot {
+    config.expiry_entry(expiry).entry_snapshot()
+}
+
+public(package) fun expiry_oracle_policy(
+    config: &ProtocolConfig,
+    expiry: u64,
+): &ExpiryOraclePolicy {
+    config.expiry_entry(expiry).entry_oracle_policy()
+}
+
+public(package) fun expiry_mint_paused(config: &ProtocolConfig, expiry: u64): bool {
+    config.expiry_entry(expiry).entry_mint_paused()
+}
+
+public(package) fun assert_expiry_oracle_binding(
+    config: &ProtocolConfig,
+    expiry: u64,
+    market_oracle_id: ID,
+) {
+    assert!(
+        config.expiry_entry(expiry).entry_market_oracle_id() == market_oracle_id,
+        EWrongMarketOracle,
+    );
+}
+
+public(package) fun new_expiry_config_snapshot(
+    liquidation_ltv: u64,
+    max_expiry_floor_premium: u64,
+    trading_loss_rebate_rate: u64,
+    min_strike: u64,
+    tick_size: u64,
+    pyth_lazer_feed_id: u32,
+    expiry_fee_window_ms: u64,
+    expiry_fee_max_multiplier: u64,
+): ExpiryConfigSnapshot {
+    config_constants::assert_liquidation_ltv(liquidation_ltv);
+    config_constants::assert_max_expiry_floor_premium(max_expiry_floor_premium);
+    config_constants::assert_trading_loss_rebate_rate(trading_loss_rebate_rate);
+    config_constants::assert_oracle_tick_size(tick_size);
+    assert!(min_strike > 0 && min_strike % tick_size == 0, EInvalidExpirySnapshot);
+    config_constants::assert_expiry_fee_window_ms(expiry_fee_window_ms);
+    config_constants::assert_expiry_fee_max_multiplier(expiry_fee_max_multiplier);
+    ExpiryConfigSnapshot {
+        liquidation_ltv,
+        max_expiry_floor_premium,
+        trading_loss_rebate_rate,
+        min_strike,
+        tick_size,
+        pyth_lazer_feed_id,
+        expiry_fee_window_ms,
+        expiry_fee_max_multiplier,
+    }
+}
+
+public(package) fun new_expiry_oracle_policy(
+    settlement_freshness_ms: u64,
+    max_spot_deviation: u64,
+    max_basis_deviation: u64,
+    min_basis: u64,
+    max_basis: u64,
+): ExpiryOraclePolicy {
+    config_constants::assert_settlement_freshness_ms(settlement_freshness_ms);
+    config_constants::assert_max_spot_deviation(max_spot_deviation);
+    config_constants::assert_max_basis_deviation(max_basis_deviation);
+    config_constants::assert_min_basis(min_basis);
+    config_constants::assert_max_basis(max_basis);
+    assert!(min_basis < max_basis, EInvalidOraclePolicy);
+    ExpiryOraclePolicy {
+        settlement_freshness_ms,
+        max_spot_deviation,
+        max_basis_deviation,
+        min_basis,
+        max_basis,
+    }
+}
+
+public(package) fun add_feed_template(
+    config: &mut ProtocolConfig,
+    pyth_lazer_feed_id: u32,
+    template: FeedTemplate,
+) {
+    config.assert_not_valuation_in_progress();
+    assert!(!config.has_feed_template(pyth_lazer_feed_id), EFeedTemplateAlreadyExists);
+    config.per_feed.add(pyth_lazer_feed_id, template);
+    config.emit_feed_template_updated(pyth_lazer_feed_id);
+}
+
+public(package) fun stamp_expiry_entry(
+    config: &mut ProtocolConfig,
+    expiry: u64,
+    market_oracle_id: ID,
+    snapshot: ExpiryConfigSnapshot,
+    oracle_policy: ExpiryOraclePolicy,
+) {
+    assert!(!config.has_expiry_entry(expiry), EExpiryEntryAlreadyExists);
+    config
+        .per_expiry
+        .add(
+            expiry,
+            ExpiryEntry {
+                market_oracle_id,
+                snapshot,
+                oracle_policy,
+                mint_paused: false,
+            },
+        );
 }
 
 /// Abort unless trading mutations are currently allowed.
@@ -315,6 +645,18 @@ fun assert_not_trading_paused(config: &ProtocolConfig) {
     assert!(!config.trading_paused, ETradingPaused);
 }
 
+fun assert_feed_template_exists(config: &ProtocolConfig, pyth_lazer_feed_id: u32) {
+    assert!(config.has_feed_template(pyth_lazer_feed_id), EFeedTemplateNotFound);
+}
+
+fun emit_feed_template_updated(config: &ProtocolConfig, pyth_lazer_feed_id: u32) {
+    config_events::emit_feed_template_updated(
+        config.id(),
+        pyth_lazer_feed_id,
+        config.feed_template(pyth_lazer_feed_id),
+    );
+}
+
 fun new(ctx: &mut TxContext): ProtocolConfig {
     ProtocolConfig {
         id: object::new(ctx),
@@ -326,6 +668,8 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         stake_config: stake_config::new(),
         trading_paused: false,
         valuation_in_progress: false,
+        per_feed: table::new(ctx),
+        per_expiry: table::new(ctx),
     }
 }
 

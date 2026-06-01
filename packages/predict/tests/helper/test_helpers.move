@@ -11,7 +11,12 @@
 #[test_only]
 module deepbook_predict::test_helpers;
 
-use deepbook_predict::{admin::AdminCap, registry::Registry, test_constants};
+use deepbook_predict::{
+    admin::AdminCap,
+    protocol_config::ProtocolConfig,
+    registry::Registry,
+    test_constants
+};
 use std::unit_test::destroy;
 use sui::test_scenario::{Self as test, Scenario};
 
@@ -66,8 +71,33 @@ public fun begin_registry_test(): (Scenario, Registry, AdminCap) {
     (scenario, registry, admin_cap)
 }
 
+/// Begin a scenario-backed registry/config test transaction and take the real
+/// `Registry`, `ProtocolConfig`, and `AdminCap` created by package-style setup.
+public fun begin_registry_config_test(): (Scenario, Registry, ProtocolConfig, AdminCap) {
+    let (mut scenario, registry_id) = setup_test();
+    scenario.next_tx(test_constants::admin());
+    let registry = scenario.take_shared_by_id<Registry>(registry_id);
+    let config = scenario.take_shared<ProtocolConfig>();
+    let admin_cap = scenario.take_from_sender<AdminCap>();
+
+    (scenario, registry, config, admin_cap)
+}
+
 /// Return the shared registry and destroy the test-owned admin cap.
 public fun finish_registry_test(scenario: Scenario, registry: Registry, admin_cap: AdminCap) {
+    test::return_shared(registry);
+    destroy(admin_cap);
+    scenario.end();
+}
+
+/// Return shared registry/config state and destroy the test-owned admin cap.
+public fun finish_registry_config_test(
+    scenario: Scenario,
+    registry: Registry,
+    config: ProtocolConfig,
+    admin_cap: AdminCap,
+) {
+    test::return_shared(config);
     test::return_shared(registry);
     destroy(admin_cap);
     scenario.end();
