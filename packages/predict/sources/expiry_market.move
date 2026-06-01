@@ -5,7 +5,7 @@
 ///
 /// An ExpiryMarket is the hot shared object for one expiry. It owns the
 /// expiry-local DUSDC cash, strike exposure state, rebate reserve basis, trade execution,
-/// valuation witness, and storage cleanup state. Pool-wide PLP accounting and
+/// pool NAV production, and storage cleanup state. Pool-wide PLP accounting and
 /// profit accounting remain outside this module.
 module deepbook_predict::expiry_market;
 
@@ -35,6 +35,7 @@ const EPackageVersionDisabled: u64 = 4;
 const EMintPaused: u64 = 5;
 const EUnresolvedTradingFeesUnderflow: u64 = 6;
 const EFullCloseRequired: u64 = 7;
+const EWrongPreparedPoolNav: u64 = 8;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -56,12 +57,12 @@ public struct ExpiryMarket has key {
     mint_paused: bool,
 }
 
-/// Transaction-local valuation produced by an expiry market.
-public struct ExpiryValuation {
-    /// Expiry market that produced this valuation.
+/// Transaction-local expiry NAV prepared for a pool sync.
+public struct PreparedPoolNav {
+    /// Expiry market that produced this NAV input.
     expiry_market_id: ID,
-    /// LP NAV contribution for this expiry.
-    value: u64,
+    /// User-position liability sampled during valuation maintenance.
+    position_liability: u64,
 }
 
 // === Public Functions ===
@@ -124,36 +125,6 @@ public fun mint_paused(market: &ExpiryMarket): bool {
 /// Return this market's mirrored set of allowed package versions.
 public fun allowed_versions(market: &ExpiryMarket): VecSet<u64> {
     market.allowed_versions
-}
-
-/// Produce this expiry's valuation witness for a full-pool valuation.
-///
-/// For live markets, valuation first runs a bounded liquidation pass inside
-/// strike exposure, then evaluates NAV against the same pricing curve.
-/// If the oracle is settled, this also caches terminal payout liability in
-/// strike exposure. It does not destroy live indexes; privileged compaction owns that.
-public fun produce_valuation(
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    market_oracle: &MarketOracle,
-    pyth: &PythSource,
-    clock: &Clock,
-): ExpiryValuation {
-    market.assert_version_allowed();
-    config.assert_valuation_in_progress();
-    let position_liability = market.position_liability_for_valuation(
-        config,
-        market_oracle,
-        pyth,
-        clock,
-    );
-    let reserved_cash = position_liability + market.rebate_reserve();
-    let cash_balance = market.cash_balance.value();
-    assert!(cash_balance >= reserved_cash, EValuationExceedsCash);
-    ExpiryValuation {
-        expiry_market_id: market.id(),
-        value: cash_balance - reserved_cash,
-    }
 }
 
 /// Mint a live position interval against this expiry market.
@@ -306,15 +277,6 @@ public(package) fun set_allowed_versions(market: &mut ExpiryMarket, allowed_vers
     market.allowed_versions = allowed_versions;
 }
 
-/// Consume an expiry valuation and return its market ID and value.
-public(package) fun unpack(valuation: ExpiryValuation): (ID, u64) {
-    let ExpiryValuation {
-        expiry_market_id,
-        value,
-    } = valuation;
-    (expiry_market_id, value)
-}
-
 /// Assert that a market oracle belongs to this expiry market.
 public(package) fun assert_market_oracle(market: &ExpiryMarket, market_oracle: &MarketOracle) {
     assert!(market.market_oracle_id == market_oracle.id(), EWrongMarketOracle);
@@ -387,6 +349,47 @@ public(package) fun materialize_settled_liability(
     market.assert_market_oracle(market_oracle);
     let settlement = pricing::settlement_price(market_oracle);
     market.strike_exposure.materialize_settled_liability(settlement)
+}
+
+/// Run expiry-local valuation maintenance and return the prepared NAV input.
+public(package) fun prepare_pool_sync(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    clock: &Clock,
+): PreparedPoolNav {
+    market.assert_version_allowed();
+    config.assert_valuation_in_progress();
+    market.assert_market_oracle(market_oracle);
+    market.assert_pyth_feed(pyth);
+    market_oracle.assert_active(clock);
+    let position_liability = market
+        .strike_exposure
+        .prepare_valuation_liability(
+            config.pricing_config(),
+            market_oracle,
+            pyth,
+            config.risk_config().valuation_liquidation_budget(),
+            clock,
+        );
+    PreparedPoolNav {
+        expiry_market_id: market.id(),
+        position_liability,
+    }
+}
+
+/// Consume prepared NAV input and return current pool-owned expiry NAV.
+public(package) fun finish_pool_nav(market: &ExpiryMarket, prepared_nav: PreparedPoolNav): u64 {
+    let PreparedPoolNav {
+        expiry_market_id,
+        position_liability,
+    } = prepared_nav;
+    assert!(expiry_market_id == market.id(), EWrongPreparedPoolNav);
+    let required_cash = position_liability + market.rebate_reserve();
+    let cash_balance = market.cash_balance.value();
+    assert!(cash_balance >= required_cash, EValuationExceedsCash);
+    cash_balance - required_cash
 }
 
 /// Resolve one manager's trading-loss rebate and return unclaimed rebate reserve.
@@ -477,34 +480,6 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
 }
 
 // === Private Functions ===
-
-fun position_liability_for_valuation(
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    market_oracle: &MarketOracle,
-    pyth: &PythSource,
-    clock: &Clock,
-): u64 {
-    market.assert_market_oracle(market_oracle);
-    if (market_oracle.is_settled()) {
-        market.materialize_settled_liability(market_oracle)
-    } else {
-        market.assert_pyth_feed(pyth);
-        market_oracle.assert_not_pending_settlement(clock);
-        // Valuation uses a bounded, policy-tuned liquidation maintenance pass.
-        // Residual underwater-order risk is controlled by the configured budget,
-        // LTV buffer, priority ordering, and off-chain simulation policy.
-        market
-            .strike_exposure
-            .liquidate_and_live_position_liability(
-                config.pricing_config(),
-                market_oracle,
-                pyth,
-                config.risk_config().valuation_liquidation_budget(),
-                clock,
-            )
-    }
-}
 
 fun assert_pyth_feed(market: &ExpiryMarket, pyth: &PythSource) {
     assert!(market.pyth_lazer_feed_id == pyth.feed_id(), EWrongPythSource);

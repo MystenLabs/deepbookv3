@@ -39,8 +39,8 @@ import {
   finalizeDusdcCurrencyRegistrationTx,
   refreshOracleAndMintTx,
   refreshOracleAndRedeemTx,
-  refreshOracleAndSupplyWithExpiryValuationTx,
-  refreshOracleAndWithdrawWithExpiryValuationTx,
+  refreshOracleAndSupplyWithExpiryPoolSyncTx,
+  refreshOracleAndWithdrawWithExpiryPoolSyncTx,
   setMarketOracleBasisBoundsTx,
   supplyTx,
   type ExecutionReceipt,
@@ -782,7 +782,7 @@ async function executeRow(row: ScenarioRow, state: SimState, aliases: AliasState
 
   if (row.action === "supply") {
     return execute(
-      () => refreshOracleAndSupplyWithExpiryValuationTx({
+      () => refreshOracleAndSupplyWithExpiryPoolSyncTx({
         poolVaultId: state.poolVaultId,
         protocolConfigId: state.protocolConfigId,
         expiryMarketId: state.expiryMarketId,
@@ -801,7 +801,7 @@ async function executeRow(row: ScenarioRow, state: SimState, aliases: AliasState
   const lpCoinId = aliases.lpCoinIdsByRef.get(row.lpRef);
   if (!lpCoinId) throw new Error(`Unknown lp_ref ${row.lpRef}`);
   return execute(
-    () => refreshOracleAndWithdrawWithExpiryValuationTx({
+    () => refreshOracleAndWithdrawWithExpiryPoolSyncTx({
       poolVaultId: state.poolVaultId,
       protocolConfigId: state.protocolConfigId,
       expiryMarketId: state.expiryMarketId,
