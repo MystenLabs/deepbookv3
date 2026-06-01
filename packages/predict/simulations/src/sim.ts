@@ -790,7 +790,10 @@ async function setupSimulation(
     await executeAndWait(updatePythTrustedSignerTx(), "update_pyth_trusted_signer");
     console.log(`[${ts()}]   Pyth trusted signer configured`);
 
-    await executeAndWait(supplyTx(poolVaultId, protocolConfigId, capital.vaultSeed), "supply");
+    await executeAndWait(
+        supplyTx(poolVaultId, protocolConfigId, capital.vaultSeed, pythSourceId),
+        "supply",
+    );
     console.log(`[${ts()}]   Vault funded: ${capital.vaultSeed / DUSDC_DECIMALS} DUSDC`);
 
     result = await executeAndWait(

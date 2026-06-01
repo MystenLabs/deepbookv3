@@ -15,7 +15,7 @@ use deepbook_predict::{
     plp::{Self, PLP, PoolVault},
     predict_manager::PredictManager,
     protocol_config::{Self, ProtocolConfig},
-    pyth_source::PythSource,
+    pyth_source::{Self, PythSource},
     registry::{Self, Registry},
     test_constants
 };
@@ -169,12 +169,18 @@ fun setup_pool_with_pyth(): Fixture {
     let mut vault = scenario.take_shared<PoolVault>();
     let vault_id = vault.id();
     let sync = plp::start_pool_sync(&mut config, &vault);
+    // Bootstrap supply: no incentives exist yet, so the sources are ignored.
+    let placeholder = pyth_source::new_for_testing(scenario.ctx());
     let initial_plp = vault.supply(
         &mut config,
         sync,
         coin::mint_for_testing<DUSDC>(INITIAL_SUPPLY, scenario.ctx()),
+        &placeholder,
+        &placeholder,
+        &clock,
         scenario.ctx(),
     );
+    destroy(placeholder);
     return_shared(vault);
 
     scenario.next_tx(test_constants::admin());
