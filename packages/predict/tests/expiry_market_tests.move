@@ -5,6 +5,7 @@
 module deepbook_predict::expiry_market_tests;
 
 use deepbook_predict::{
+    config_constants,
     constants,
     expiry_market::{Self, ExpiryMarket},
     i64,
@@ -63,6 +64,7 @@ fun rebate_eligibility_offsets_fee_reserve_by_gross_profit() {
         MIN_STRIKE,
         TICK_SIZE,
         constants::default_expiry_preallocated_ticks!(),
+        config_constants::default_expiry_fee_window_ms!(),
         constants::float_scaling!(),
         scenario.ctx(),
     );

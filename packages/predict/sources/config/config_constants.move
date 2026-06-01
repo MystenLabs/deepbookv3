@@ -23,17 +23,18 @@ const EInvalidMaxBasis: u64 = 12;
 const EInvalidMaxExpiryFunding: u64 = 13;
 const EInvalidTradingLossRebateRate: u64 = 14;
 const EInvalidMaxExpiryFloorPremium: u64 = 15;
-const EInvalidExpiryFeeMaxMultiplier: u64 = 16;
-const EInvalidLowerBenefitPower: u64 = 17;
-const EInvalidUpperBenefitPower: u64 = 18;
-const EInvalidBenefitPowers: u64 = 19;
-const EInvalidValuationLiquidationBudget: u64 = 20;
-const EInvalidTradeLiquidationBudget: u64 = 21;
-const EInvalidLiquidationLtv: u64 = 22;
-const EInvalidOracleTickSize: u64 = 23;
-const EOracleTickSizeTooSmallForSpot: u64 = 24;
-const EInvalidOracleSpot: u64 = 25;
-const EOracleTickSizeTooLargeForSpot: u64 = 26;
+const EInvalidExpiryFeeWindowMs: u64 = 16;
+const EInvalidExpiryFeeMaxMultiplier: u64 = 17;
+const EInvalidLowerBenefitPower: u64 = 18;
+const EInvalidUpperBenefitPower: u64 = 19;
+const EInvalidBenefitPowers: u64 = 20;
+const EInvalidValuationLiquidationBudget: u64 = 21;
+const EInvalidTradeLiquidationBudget: u64 = 22;
+const EInvalidLiquidationLtv: u64 = 23;
+const EInvalidOracleTickSize: u64 = 24;
+const EOracleTickSizeTooSmallForSpot: u64 = 25;
+const EInvalidOracleSpot: u64 = 26;
+const EOracleTickSizeTooLargeForSpot: u64 = 27;
 
 // === Expiry Funding and Liquidation ===
 
@@ -119,6 +120,21 @@ public(package) macro fun max_min_fee(): u64 { deepbook_predict::constants::floa
 
 public(package) fun assert_min_fee(value: u64) {
     assert!(value >= min_min_fee!() && value <= max_min_fee!(), EInvalidMinFee);
+}
+
+/// Window before expiry over which trade fees ramp up to the per-feed max
+/// multiplier. Five minutes is the shortest admin-tunable window.
+public(package) macro fun default_expiry_fee_window_ms(): u64 { 60 * 60 * 24 * 1000 }
+public(package) macro fun min_expiry_fee_window_ms(): u64 { 5 * 60 * 1000 }
+public(package) macro fun max_expiry_fee_window_ms(): u64 {
+    deepbook_predict::constants::ms_per_year!()
+}
+
+public(package) fun assert_expiry_fee_window_ms(value: u64) {
+    assert!(
+        value >= min_expiry_fee_window_ms!() && value <= max_expiry_fee_window_ms!(),
+        EInvalidExpiryFeeWindowMs,
+    );
 }
 
 /// Fee multiplier reached at expiry, in FLOAT_SCALING. 1x (float_scaling) disables

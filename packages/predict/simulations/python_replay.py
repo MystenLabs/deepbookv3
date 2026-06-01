@@ -68,7 +68,7 @@ CURVE_SAMPLES = 50
 PROTOCOL_RESERVE_PROFIT_SHARE = 400_000_000
 TRADING_LOSS_REBATE_RATE = 500_000_000
 TERMINAL_REBATE_FRACTION = 0
-# Upgrade constant, mirrored directly from constants::expiry_fee_window_ms!() (1 day).
+# Admin-tunable per-feed default, mirrored from config_constants::default_expiry_fee_window_ms!().
 EXPIRY_FEE_WINDOW_MS = 24 * 60 * 60 * 1000
 EXPIRY_FEE_MAX_MULTIPLIER = FLOAT_SCALING
 
@@ -158,6 +158,7 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
     global PROTOCOL_RESERVE_PROFIT_SHARE
     global TRADING_LOSS_REBATE_RATE
     global TERMINAL_REBATE_FRACTION
+    global EXPIRY_FEE_WINDOW_MS
     global EXPIRY_FEE_MAX_MULTIPLIER
     global LEVERAGE_FLOOR_WINDOW_MS
     global MAX_EXPIRY_FLOOR_PREMIUM
@@ -200,6 +201,12 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
         TRADING_LOSS_REBATE_RATE,
     )
     TERMINAL_REBATE_FRACTION = FLOAT_SCALING if long_run else 0
+    EXPIRY_FEE_WINDOW_MS = _config_int(
+        config,
+        "protocol",
+        "expiry_fee_window_ms",
+        EXPIRY_FEE_WINDOW_MS,
+    )
     EXPIRY_FEE_MAX_MULTIPLIER = _config_int(
         config,
         "protocol",

@@ -75,6 +75,7 @@ public(package) fun live_range_probability(
 public(package) fun fee_rate(
     config: &PricingConfig,
     market: &MarketOracle,
+    expiry_fee_window_ms: u64,
     expiry_fee_max_multiplier: u64,
     probability: u64,
     clock: &Clock,
@@ -83,7 +84,11 @@ public(package) fun fee_rate(
     let min_fee = config.min_fee();
     let base = if (raw_fee > min_fee) raw_fee else min_fee;
     let time_to_expiry_ms = market.expiry() - clock.timestamp_ms();
-    let multiplier = expiry_fee_multiplier(expiry_fee_max_multiplier, time_to_expiry_ms);
+    let multiplier = expiry_fee_multiplier(
+        expiry_fee_window_ms,
+        expiry_fee_max_multiplier,
+        time_to_expiry_ms,
+    );
     math::mul(base, multiplier)
 }
 
@@ -91,11 +96,19 @@ public(package) fun fee_rate(
 public(package) fun assert_mint_fee_rate(
     config: &PricingConfig,
     market: &MarketOracle,
+    expiry_fee_window_ms: u64,
     expiry_fee_max_multiplier: u64,
     probability: u64,
     clock: &Clock,
 ): u64 {
-    let fee_rate = fee_rate(config, market, expiry_fee_max_multiplier, probability, clock);
+    let fee_rate = fee_rate(
+        config,
+        market,
+        expiry_fee_window_ms,
+        expiry_fee_max_multiplier,
+        probability,
+        clock,
+    );
     let ask_price = probability + fee_rate;
     assert!(
         ask_price >= config.min_ask_price() && ask_price <= config.max_ask_price(),
@@ -278,12 +291,15 @@ fun raw_bernoulli_fee_rate(config: &PricingConfig, probability: u64): u64 {
     math::mul(config.base_fee(), bernoulli_factor)
 }
 
-/// Linear ramp that scales the trade fee up as expiry approaches: 1x outside the
-/// `expiry_fee_window_ms` protocol window, rising linearly to the per-asset
-/// `max_multiplier` at expiry. `time_to_expiry_ms` is the live remaining time
-/// (caller guarantees `now < expiry`); `max_multiplier == 1x` disables the ramp.
-public(package) fun expiry_fee_multiplier(max_multiplier: u64, time_to_expiry_ms: u64): u64 {
-    let window_ms = constants::expiry_fee_window_ms!();
+/// Linear ramp that scales the trade fee up as expiry approaches: 1x outside
+/// `window_ms`, rising linearly to the per-asset `max_multiplier` at expiry.
+/// `time_to_expiry_ms` is the live remaining time (caller guarantees `now < expiry`);
+/// `max_multiplier == 1x` disables the ramp.
+public(package) fun expiry_fee_multiplier(
+    window_ms: u64,
+    max_multiplier: u64,
+    time_to_expiry_ms: u64,
+): u64 {
     // Outside the window the fee is unscaled.
     if (time_to_expiry_ms >= window_ms) return constants::float_scaling!();
 

@@ -6,6 +6,7 @@ module deepbook_predict::plp_rebate_flow_tests;
 
 use deepbook_predict::{
     admin::AdminCap,
+    config_constants,
     constants::{Self, float_scaling as float},
     expiry_market::ExpiryMarket,
     i64,
@@ -182,6 +183,7 @@ fun setup_pool_with_pyth(): Fixture {
         &admin_cap,
         PYTH_FEED_ID,
         TICK_SIZE,
+        config_constants::default_expiry_fee_window_ms!(),
         float!(),
         scenario.ctx(),
     );

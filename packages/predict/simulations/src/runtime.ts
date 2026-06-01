@@ -410,6 +410,7 @@ export function createMarketOracleCapTx(recipient: string): Transaction {
 export function createPythSourceTx(
     feedId: number,
     tickSize: bigint,
+    expiryFeeWindowMs: bigint,
     expiryFeeMaxMultiplier: bigint = 1_000_000_000n,
 ): Transaction {
     const tx = new Transaction();
@@ -420,6 +421,7 @@ export function createPythSourceTx(
             tx.object(ADMIN_CAP_ID),
             tx.pure.u32(feedId),
             tx.pure.u64(tickSize),
+            tx.pure.u64(expiryFeeWindowMs),
             tx.pure.u64(expiryFeeMaxMultiplier),
         ],
     });

@@ -104,6 +104,11 @@ public fun liquidation_ltv(market: &ExpiryMarket): u64 {
     market.strike_exposure.liquidation_ltv()
 }
 
+/// Return the trade-fee ramp window snapshotted for this expiry.
+public fun expiry_fee_window_ms(market: &ExpiryMarket): u64 {
+    market.strike_exposure.expiry_fee_window_ms()
+}
+
 /// Return the trade-fee ramp max multiplier snapshotted for this expiry.
 public fun expiry_fee_max_multiplier(market: &ExpiryMarket): u64 {
     market.strike_exposure.expiry_fee_max_multiplier()
@@ -312,6 +317,7 @@ public(package) fun create_and_share(
     min_strike: u64,
     tick_size: u64,
     preallocated_ticks: u64,
+    expiry_fee_window_ms: u64,
     expiry_fee_max_multiplier: u64,
     ctx: &mut TxContext,
 ): ID {
@@ -333,6 +339,7 @@ public(package) fun create_and_share(
             preallocated_ticks,
             config.leverage_config().max_expiry_floor_premium(),
             config.leverage_config().liquidation_ltv(),
+            expiry_fee_window_ms,
             expiry_fee_max_multiplier,
             ctx,
         ),

@@ -6,6 +6,7 @@ module deepbook_predict::strike_exposure_tests;
 
 use deepbook_predict::{
     admin,
+    config_constants,
     constants::{Self, float_scaling as float},
     i64,
     market_oracle,
@@ -58,6 +59,7 @@ fun new_exposure(
         constants::default_expiry_preallocated_ticks!(),
         max_expiry_floor_premium,
         LIQUIDATION_LTV,
+        config_constants::default_expiry_fee_window_ms!(),
         constants::float_scaling!(),
         ctx,
     )

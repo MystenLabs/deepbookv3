@@ -52,8 +52,9 @@ public struct StrikeExposure has store {
     max_expiry_floor_premium: u64,
     /// 1e9-scaled floor-to-live-value liquidation threshold snapshotted at creation.
     liquidation_ltv: u64,
+    /// Window before expiry over which the trade fee ramps up. Snapshotted at creation.
+    expiry_fee_window_ms: u64,
     /// Fee multiplier reached at expiry, in FLOAT_SCALING; 1x disables. Snapshotted at creation.
-    /// The ramp window itself is the `constants::expiry_fee_window_ms!()` protocol constant.
     expiry_fee_max_multiplier: u64,
     next_order_sequence: u64,
     /// Remaining settled liability after settlement has been materialized.
@@ -91,6 +92,10 @@ public(package) fun max_expiry_floor_premium(exposure: &StrikeExposure): u64 {
 /// Return the liquidation LTV snapshotted for this exposure book.
 public(package) fun liquidation_ltv(exposure: &StrikeExposure): u64 {
     exposure.liquidation_ltv
+}
+
+public(package) fun expiry_fee_window_ms(exposure: &StrikeExposure): u64 {
+    exposure.expiry_fee_window_ms
 }
 
 public(package) fun expiry_fee_max_multiplier(exposure: &StrikeExposure): u64 {
@@ -157,6 +162,7 @@ public(package) fun new(
     preallocated_ticks: u64,
     max_expiry_floor_premium: u64,
     liquidation_ltv: u64,
+    expiry_fee_window_ms: u64,
     expiry_fee_max_multiplier: u64,
     ctx: &mut TxContext,
 ): StrikeExposure {
@@ -169,6 +175,7 @@ public(package) fun new(
         grid_max: max_strike,
         max_expiry_floor_premium,
         liquidation_ltv,
+        expiry_fee_window_ms,
         expiry_fee_max_multiplier,
         next_order_sequence: 0,
         settled_payout_liability: 0,
@@ -222,6 +229,7 @@ public(package) fun allocate_mint_order(
     let fee_rate = pricing::assert_mint_fee_rate(
         config,
         market,
+        exposure.expiry_fee_window_ms,
         exposure.expiry_fee_max_multiplier,
         entry_probability,
         clock,
@@ -277,6 +285,7 @@ public(package) fun close_and_quote_live_order(
     let fee_rate = pricing::fee_rate(
         config,
         market,
+        exposure.expiry_fee_window_ms,
         exposure.expiry_fee_max_multiplier,
         range_probability,
         clock,

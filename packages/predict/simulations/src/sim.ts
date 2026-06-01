@@ -52,6 +52,7 @@ const DEFAULT_VAULT_SEED = 500_000n * DUSDC_DECIMALS;
 const DEFAULT_MANAGER_SEED = 500_000n * DUSDC_DECIMALS;
 const EXPIRY_MS = BigInt(Date.now()) + 400n * 24n * 60n * 60n * 1000n;
 const FLOAT_SCALING = 1_000_000_000n;
+const DEFAULT_EXPIRY_FEE_WINDOW_MS = 24n * 60n * 60n * 1000n;
 const SCENARIO_CONFIG_PATH = fileURLToPath(
     new URL("../data/scenario_config.json", import.meta.url),
 );
@@ -744,6 +745,11 @@ async function setupSimulation(
         "expiry_fee_max_multiplier",
         FLOAT_SCALING,
     );
+    const expiryFeeWindowMs = protocolConfigValue(
+        scenarioConfig,
+        "expiry_fee_window_ms",
+        DEFAULT_EXPIRY_FEE_WINDOW_MS,
+    );
 
     let result = await executeAndWait(
         finalizeDusdcCurrencyRegistrationTx(),
@@ -771,7 +777,7 @@ async function setupSimulation(
     console.log(`[${ts()}]   OracleCap: ${oracleCapId}`);
 
     result = await executeAndWait(
-        createPythSourceTx(1, ORACLE_TICK_SIZE, expiryFeeMaxMultiplier),
+        createPythSourceTx(1, ORACLE_TICK_SIZE, expiryFeeWindowMs, expiryFeeMaxMultiplier),
         "create_pyth_source",
     );
     const pythSourceChange = result.objectChanges.find(

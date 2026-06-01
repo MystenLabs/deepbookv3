@@ -465,6 +465,7 @@ fun setup_pool_with_pyth(): Fixture {
         &admin_cap,
         PYTH_FEED_ID,
         TICK_SIZE,
+        config_constants::default_expiry_fee_window_ms!(),
         float!(),
         scenario.ctx(),
     );

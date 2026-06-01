@@ -252,6 +252,7 @@ fun set_pyth_feed_expiry_fee_max_multiplier_updates_config() {
         &admin_cap,
         PYTH_FEED_BTC,
         BTC_TICK_SIZE,
+        config_constants::default_expiry_fee_window_ms!(),
         float!(),
         ctx,
     );
@@ -271,6 +272,35 @@ fun set_pyth_feed_expiry_fee_max_multiplier_updates_config() {
     destroy(admin_cap);
 }
 
+#[test]
+fun set_pyth_feed_expiry_fee_window_updates_config() {
+    let ctx = &mut tx_context::dummy();
+    let (mut reg, admin_cap) = registry::new_for_testing(ctx);
+    registry::create_pyth_source(
+        &mut reg,
+        &admin_cap,
+        PYTH_FEED_BTC,
+        BTC_TICK_SIZE,
+        config_constants::default_expiry_fee_window_ms!(),
+        float!(),
+        ctx,
+    );
+
+    registry::set_pyth_feed_expiry_fee_window_ms(
+        &mut reg,
+        &admin_cap,
+        PYTH_FEED_BTC,
+        config_constants::min_expiry_fee_window_ms!(),
+    );
+    assert_eq!(
+        *registry::pyth_feed_expiry_fee_window_ms(&reg, PYTH_FEED_BTC).borrow(),
+        config_constants::min_expiry_fee_window_ms!(),
+    );
+
+    registry::destroy_registry_drop_for_testing(reg);
+    destroy(admin_cap);
+}
+
 #[test, expected_failure(abort_code = config_constants::EInvalidExpiryFeeMaxMultiplier)]
 fun set_pyth_feed_expiry_fee_multiplier_below_min_aborts() {
     let ctx = &mut tx_context::dummy();
@@ -280,6 +310,7 @@ fun set_pyth_feed_expiry_fee_multiplier_below_min_aborts() {
         &admin_cap,
         PYTH_FEED_BTC,
         BTC_TICK_SIZE,
+        config_constants::default_expiry_fee_window_ms!(),
         float!(),
         ctx,
     );
@@ -289,6 +320,29 @@ fun set_pyth_feed_expiry_fee_multiplier_below_min_aborts() {
         &admin_cap,
         PYTH_FEED_BTC,
         config_constants::min_expiry_fee_max_multiplier!() - 1,
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidExpiryFeeWindowMs)]
+fun set_pyth_feed_expiry_fee_window_below_min_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let (mut reg, admin_cap) = registry::new_for_testing(ctx);
+    registry::create_pyth_source(
+        &mut reg,
+        &admin_cap,
+        PYTH_FEED_BTC,
+        BTC_TICK_SIZE,
+        config_constants::default_expiry_fee_window_ms!(),
+        float!(),
+        ctx,
+    );
+
+    registry::set_pyth_feed_expiry_fee_window_ms(
+        &mut reg,
+        &admin_cap,
+        PYTH_FEED_BTC,
+        config_constants::min_expiry_fee_window_ms!() - 1,
     );
     abort 999
 }
