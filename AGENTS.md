@@ -108,7 +108,7 @@ These are the most important rule files to consult based on the code you touch:
   - Defaults are applied in the module that creates the config/object.
   - Global template config can be snapshotted into per-object state at creation; existing objects should only change through an explicit admin path if one is intentionally added.
   - Name global-template setters with `template` when the value affects future objects but not existing objects.
-  - External admin entrypoints live in the admin/router module, currently `registry`; config struct setters stay `public(package)`.
+  - `AdminCap` lives in `admin`. Public admin entrypoints live on the module that owns the mutated state: `protocol_config` for global protocol config, object modules for per-object admin state, and `registry` only for registry-owned version, pause-cap, uniqueness, and multi-object creation flows. Embedded config struct setters stay `public(package)`.
   - Single-value bounds live in `config_constants::assert_*`; relational checks that depend on multiple fields live in the owning config setter.
   - Do not store generic `config_id` fields inside config structs or events; object identity is enough when identity matters.
   - Do not add singleton creation flags for objects created during package init.

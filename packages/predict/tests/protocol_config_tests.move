@@ -4,7 +4,7 @@
 #[test_only]
 module deepbook_predict::protocol_config_tests;
 
-use deepbook_predict::protocol_config;
+use deepbook_predict::{admin, protocol_config};
 use std::unit_test::destroy;
 
 // === trading_paused / pause_trading ===
@@ -37,17 +37,17 @@ fun pause_trading_is_one_way_from_package() {
 
 #[test]
 fun set_trading_paused_round_trips_both_directions() {
-    // The package-internal set_trading_paused is the admin path; it can flip
-    // either direction.
     let ctx = &mut tx_context::dummy();
+    let admin_cap = admin::create_admin_cap_for_testing(ctx);
     let mut config = protocol_config::new_for_testing(ctx);
 
-    config.set_trading_paused(true);
+    config.set_trading_paused(&admin_cap, true);
     assert!(config.trading_paused());
-    config.set_trading_paused(false);
+    config.set_trading_paused(&admin_cap, false);
     assert!(!config.trading_paused());
 
     destroy(config);
+    destroy(admin_cap);
 }
 
 // === assert_trading_allowed ===
@@ -65,8 +65,9 @@ fun assert_trading_allowed_passes_when_not_paused_and_no_valuation() {
 #[test, expected_failure(abort_code = protocol_config::ETradingPaused)]
 fun assert_trading_allowed_aborts_when_paused() {
     let ctx = &mut tx_context::dummy();
+    let admin_cap = admin::create_admin_cap_for_testing(ctx);
     let mut config = protocol_config::new_for_testing(ctx);
-    config.set_trading_paused(true);
+    config.set_trading_paused(&admin_cap, true);
 
     config.assert_trading_allowed();
     abort 999
@@ -173,9 +174,10 @@ fun pause_trading_during_valuation_aborts() {
 #[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
 fun set_trading_paused_during_valuation_aborts() {
     let ctx = &mut tx_context::dummy();
+    let admin_cap = admin::create_admin_cap_for_testing(ctx);
     let mut config = protocol_config::new_for_testing(ctx);
     config.begin_valuation();
 
-    config.set_trading_paused(true);
+    config.set_trading_paused(&admin_cap, true);
     abort 999
 }

@@ -425,7 +425,7 @@ PY
 
   PACKAGE_ID=$(echo "$PREDICT_OUTPUT" | extract_published_package_id)
   REGISTRY_ID=$(echo "$PREDICT_OUTPUT" | extract_created_object_id "registry::Registry")
-  ADMIN_CAP_ID=$(echo "$PREDICT_OUTPUT" | extract_created_object_id "registry::AdminCap")
+  ADMIN_CAP_ID=$(echo "$PREDICT_OUTPUT" | extract_created_object_id "admin::AdminCap")
   PROTOCOL_CONFIG_ID=$(echo "$PREDICT_OUTPUT" | extract_created_object_id "protocol_config::ProtocolConfig")
   POOL_VAULT_ID=$(echo "$PREDICT_OUTPUT" | extract_created_object_id "plp::PoolVault")
 

@@ -9,6 +9,7 @@
 module deepbook_predict::pyth_source;
 
 use deepbook_predict::{
+    admin::AdminCap,
     config_constants,
     config_events,
     constants,
@@ -116,24 +117,11 @@ public fun expiry_fee_max_multiplier(source: &PythSource): u64 {
     source.expiry_fee_max_multiplier
 }
 
-// === Public-Package Functions ===
-
-/// Overwrite this source's mirrored `allowed_versions`. The only authorized
-/// caller is `registry::sync_pyth_source_allowed_versions`, which reads the
-/// source of truth from `Registry`.
-public(package) fun set_allowed_versions(source: &mut PythSource, allowed_versions: VecSet<u64>) {
-    source.allowed_versions = allowed_versions;
-}
-
-/// Return the timestamp that pricing can use for freshness checks.
-public(package) fun freshness_timestamp_ms(source: &PythSource): u64 {
-    source.source_timestamp_ms.min(source.update_timestamp_ms)
-}
-
 /// Set the trade-fee ramp parameters for this asset's markets. Window 0 or
 /// multiplier 1x disables the ramp.
-public(package) fun set_expiry_fee_params(
+public fun set_expiry_fee_params(
     source: &mut PythSource,
+    _admin_cap: &AdminCap,
     window_ms: u64,
     max_multiplier: u64,
 ) {
@@ -147,6 +135,20 @@ public(package) fun set_expiry_fee_params(
         window_ms,
         max_multiplier,
     );
+}
+
+// === Public-Package Functions ===
+
+/// Overwrite this source's mirrored `allowed_versions`. The only authorized
+/// caller is `registry::sync_pyth_source_allowed_versions`, which reads the
+/// source of truth from `Registry`.
+public(package) fun set_allowed_versions(source: &mut PythSource, allowed_versions: VecSet<u64>) {
+    source.allowed_versions = allowed_versions;
+}
+
+/// Return the timestamp that pricing can use for freshness checks.
+public(package) fun freshness_timestamp_ms(source: &PythSource): u64 {
+    source.source_timestamp_ms.min(source.update_timestamp_ms)
 }
 
 /// Create and share a Pyth source bound to a Lazer feed id with the per-asset
