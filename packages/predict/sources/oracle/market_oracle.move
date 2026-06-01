@@ -11,6 +11,7 @@ module deepbook_predict::market_oracle;
 
 use deepbook::math;
 use deepbook_predict::{
+    admin::AdminCap,
     config_constants,
     config_events,
     constants,
@@ -370,6 +371,32 @@ public fun set_basis_bounds(
     market.emit_bounds_updated();
 }
 
+/// Create a new oracle writer capability.
+public fun create_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): MarketOracleCap {
+    MarketOracleCap { id: object::new(ctx) }
+}
+
+/// Destroy a MarketOracleCap the holder no longer needs.
+public fun destroy_cap(cap: MarketOracleCap) {
+    let MarketOracleCap { id } = cap;
+    id.delete();
+}
+
+/// Authorize an additional cap to write this market oracle.
+public fun register_cap(market: &mut MarketOracle, _admin_cap: &AdminCap, cap: &MarketOracleCap) {
+    market.register_cap_internal(cap);
+}
+
+/// Remove a cap from this market oracle's writer set.
+public fun unregister_cap(market: &mut MarketOracle, _admin_cap: &AdminCap, cap_id: ID) {
+    market.unregister_cap_internal(cap_id);
+}
+
+/// Let a cap holder remove its own cap from this market oracle.
+public fun self_unregister_cap(market: &mut MarketOracle, cap: &MarketOracleCap) {
+    market.unregister_cap_internal(cap.cap_id());
+}
+
 // === Public-Package Functions ===
 
 /// Overwrite this oracle's mirrored `allowed_versions`. The only authorized
@@ -403,15 +430,6 @@ public(package) fun settlement_price(market: &MarketOracle): u64 {
     assert!(market.is_settled(), EMarketNotSettled);
     assert!(market.settlement_source_timestamp_ms > market.expiry, EInvalidSettlementTimestamp);
     market.settlement_price.destroy_some()
-}
-
-public(package) fun create_cap(ctx: &mut TxContext): MarketOracleCap {
-    MarketOracleCap { id: object::new(ctx) }
-}
-
-public(package) fun destroy_cap(cap: MarketOracleCap) {
-    let MarketOracleCap { id } = cap;
-    id.delete();
 }
 
 /// Create and share a market oracle bound to a Pyth source and initial writer cap.
@@ -461,26 +479,6 @@ public(package) fun create_and_share(
     market_oracle_id
 }
 
-/// Authorize an additional cap to write this market oracle.
-public(package) fun register_cap(market: &mut MarketOracle, cap: &MarketOracleCap) {
-    market.assert_version_allowed();
-    let cap_id = cap.cap_id();
-    assert!(!market.authorized_cap_ids.contains(&cap_id), EInvalidMarketOracleCap);
-    market.authorized_cap_ids.insert(cap_id);
-}
-
-/// Remove a cap from this market oracle's writer set.
-public(package) fun unregister_cap(market: &mut MarketOracle, cap_id: ID) {
-    market.assert_version_allowed();
-    assert!(market.authorized_cap_ids.contains(&cap_id), EInvalidMarketOracleCap);
-    market.authorized_cap_ids.remove(&cap_id);
-}
-
-/// Let a cap holder remove its own cap from this market oracle.
-public(package) fun self_unregister_cap(market: &mut MarketOracle, cap: &MarketOracleCap) {
-    market.unregister_cap(cap.cap_id());
-}
-
 /// Abort if the running package version is not allowed for this oracle.
 public(package) fun assert_version_allowed(market: &MarketOracle) {
     assert!(
@@ -510,6 +508,19 @@ public(package) fun assert_authorized_cap(market: &MarketOracle, cap: &MarketOra
 }
 
 // === Private Functions ===
+
+fun register_cap_internal(market: &mut MarketOracle, cap: &MarketOracleCap) {
+    market.assert_version_allowed();
+    let cap_id = cap.cap_id();
+    assert!(!market.authorized_cap_ids.contains(&cap_id), EInvalidMarketOracleCap);
+    market.authorized_cap_ids.insert(cap_id);
+}
+
+fun unregister_cap_internal(market: &mut MarketOracle, cap_id: ID) {
+    market.assert_version_allowed();
+    assert!(market.authorized_cap_ids.contains(&cap_id), EInvalidMarketOracleCap);
+    market.authorized_cap_ids.remove(&cap_id);
+}
 
 fun apply_block_scholes_prices(
     market: &mut MarketOracle,

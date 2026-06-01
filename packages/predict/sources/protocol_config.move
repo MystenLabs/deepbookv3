@@ -9,6 +9,7 @@
 module deepbook_predict::protocol_config;
 
 use deepbook_predict::{
+    admin::AdminCap,
     config_events,
     fee_config::{Self, FeeConfig},
     leverage_config::{Self, LeverageConfig},
@@ -47,6 +48,248 @@ public fun id(config: &ProtocolConfig): ID {
 /// Return whether trading is currently paused.
 public fun trading_paused(config: &ProtocolConfig): bool {
     config.trading_paused
+}
+
+/// Set the base fee multiplier.
+public fun set_base_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
+    config.assert_not_valuation_in_progress();
+    config.pricing_config.set_base_fee(fee);
+    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
+}
+
+/// Set the minimum fee floor.
+public fun set_min_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
+    config.assert_not_valuation_in_progress();
+    config.pricing_config.set_min_fee(fee);
+    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
+}
+
+/// Set the maximum floor-index increase snapshotted by future expiry markets.
+public fun set_template_max_expiry_floor_premium(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.leverage_config.set_template_max_expiry_floor_premium(value);
+    config_events::emit_leverage_config_updated(config.id(), &config.leverage_config);
+}
+
+/// Set the liquidation LTV snapshotted by future expiry markets.
+public fun set_template_liquidation_ltv(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.leverage_config.set_template_liquidation_ltv(value);
+    config_events::emit_leverage_config_updated(config.id(), &config.leverage_config);
+}
+
+/// Set the staking benefit thresholds: `lower` (half of max benefits) and
+/// `upper` (full benefits). Validated as a pair (`upper > 2 * lower`).
+public fun set_benefit_powers(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    lower: u64,
+    upper: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.stake_config.set_benefit_powers(lower, upper);
+}
+
+/// Set the global minimum allowed mint price.
+public fun set_min_ask_price(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
+    config.assert_not_valuation_in_progress();
+    config.pricing_config.set_min_ask_price(value);
+    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
+}
+
+/// Set the global maximum allowed mint price.
+public fun set_max_ask_price(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
+    config.assert_not_valuation_in_progress();
+    config.pricing_config.set_max_ask_price(value);
+    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
+}
+
+/// Set the live Pyth spot freshness threshold.
+public fun set_pyth_spot_freshness_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.pricing_config.set_pyth_spot_freshness_ms(value);
+    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
+}
+
+/// Set the live Block Scholes spot/forward freshness threshold.
+public fun set_block_scholes_prices_freshness_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.pricing_config.set_block_scholes_prices_freshness_ms(value);
+    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
+}
+
+/// Set the live Block Scholes SVI freshness threshold.
+public fun set_block_scholes_svi_freshness_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.pricing_config.set_block_scholes_svi_freshness_ms(value);
+    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
+}
+
+/// Set the current fee surplus distribution shares used during settled expiry surplus sweeps.
+public fun set_fee_shares(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    lp_fee_share: u64,
+    protocol_fee_share: u64,
+    insurance_fee_share: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.fee_config.set_fee_shares(lp_fee_share, protocol_fee_share, insurance_fee_share);
+    config_events::emit_fee_config_updated(config.id(), &config.fee_config);
+}
+
+/// Set the trading loss rebate rate template used by future expiry markets.
+public fun set_template_trading_loss_rebate_rate(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.fee_config.set_trading_loss_rebate_rate(value);
+    config_events::emit_fee_config_updated(config.id(), &config.fee_config);
+}
+
+/// Set the maximum total exposure percentage.
+public fun set_max_total_exposure_pct(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    pct: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.risk_config.set_max_total_exposure_pct(pct);
+    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
+}
+
+/// Set the current DUSDC allocation for new expiry markets.
+public fun set_expiry_allocation(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    allocation: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.risk_config.set_expiry_allocation(allocation);
+    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
+}
+
+/// Set the utilization threshold that enables expiry allocation growth.
+public fun set_grow_utilization_threshold(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    threshold: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.risk_config.set_grow_utilization_threshold(threshold);
+    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
+}
+
+/// Set the utilization threshold that enables expiry allocation shrink.
+public fun set_shrink_utilization_threshold(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    threshold: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.risk_config.set_shrink_utilization_threshold(threshold);
+    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
+}
+
+/// Set the allocation growth target multiplier.
+public fun set_grow_factor(config: &mut ProtocolConfig, _admin_cap: &AdminCap, factor: u64) {
+    config.assert_not_valuation_in_progress();
+    config.risk_config.set_grow_factor(factor);
+    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
+}
+
+/// Set the allocation shrink target multiplier.
+public fun set_shrink_factor(config: &mut ProtocolConfig, _admin_cap: &AdminCap, factor: u64) {
+    config.assert_not_valuation_in_progress();
+    config.risk_config.set_shrink_factor(factor);
+    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
+}
+
+/// Set the total liquidation candidate budget used before live valuations.
+public fun set_valuation_liquidation_budget(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    budget: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.risk_config.set_valuation_liquidation_budget(budget);
+    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
+}
+
+/// Set the total liquidation candidate budget used before mint and redeem flows.
+public fun set_trade_liquidation_budget(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    budget: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.risk_config.set_trade_liquidation_budget(budget);
+    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
+}
+
+/// Set the settlement freshness threshold template for future market oracles.
+public fun set_market_oracle_template_settlement_freshness_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.market_oracle_config.set_settlement_freshness_ms(value);
+    config_events::emit_market_oracle_template_config_updated(
+        config.id(),
+        &config.market_oracle_config,
+    );
+}
+
+/// Set basis guard bounds template for future market oracles.
+public fun set_market_oracle_template_basis_bounds(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    max_spot_deviation: u64,
+    max_basis_deviation: u64,
+    min_basis: u64,
+    max_basis: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config
+        .market_oracle_config
+        .set_basis_bounds(
+            max_spot_deviation,
+            max_basis_deviation,
+            min_basis,
+            max_basis,
+        );
+    config_events::emit_market_oracle_template_config_updated(
+        config.id(),
+        &config.market_oracle_config,
+    );
+}
+
+/// Set whether trading is paused.
+public fun set_trading_paused(config: &mut ProtocolConfig, _admin_cap: &AdminCap, paused: bool) {
+    config.set_trading_paused_internal(paused);
 }
 
 // === Public-Package Functions ===
@@ -103,176 +346,10 @@ public(package) fun create_and_share(ctx: &mut TxContext): ID {
     id
 }
 
-public(package) fun set_base_fee(config: &mut ProtocolConfig, fee: u64) {
-    config.assert_not_valuation_in_progress();
-    config.pricing_config.set_base_fee(fee);
-    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
-}
-
-public(package) fun set_min_fee(config: &mut ProtocolConfig, fee: u64) {
-    config.assert_not_valuation_in_progress();
-    config.pricing_config.set_min_fee(fee);
-    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
-}
-
-public(package) fun set_template_max_expiry_floor_premium(config: &mut ProtocolConfig, value: u64) {
-    config.assert_not_valuation_in_progress();
-    config.leverage_config.set_template_max_expiry_floor_premium(value);
-    config_events::emit_leverage_config_updated(config.id(), &config.leverage_config);
-}
-
-public(package) fun set_template_liquidation_ltv(config: &mut ProtocolConfig, value: u64) {
-    config.assert_not_valuation_in_progress();
-    config.leverage_config.set_template_liquidation_ltv(value);
-    config_events::emit_leverage_config_updated(config.id(), &config.leverage_config);
-}
-
-public(package) fun set_benefit_powers(config: &mut ProtocolConfig, lower: u64, upper: u64) {
-    config.assert_not_valuation_in_progress();
-    config.stake_config.set_benefit_powers(lower, upper);
-}
-
-public(package) fun set_min_ask_price(config: &mut ProtocolConfig, value: u64) {
-    config.assert_not_valuation_in_progress();
-    config.pricing_config.set_min_ask_price(value);
-    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
-}
-
-public(package) fun set_max_ask_price(config: &mut ProtocolConfig, value: u64) {
-    config.assert_not_valuation_in_progress();
-    config.pricing_config.set_max_ask_price(value);
-    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
-}
-
-public(package) fun set_pyth_spot_freshness_ms(config: &mut ProtocolConfig, value: u64) {
-    config.assert_not_valuation_in_progress();
-    config.pricing_config.set_pyth_spot_freshness_ms(value);
-    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
-}
-
-public(package) fun set_block_scholes_prices_freshness_ms(config: &mut ProtocolConfig, value: u64) {
-    config.assert_not_valuation_in_progress();
-    config.pricing_config.set_block_scholes_prices_freshness_ms(value);
-    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
-}
-
-public(package) fun set_block_scholes_svi_freshness_ms(config: &mut ProtocolConfig, value: u64) {
-    config.assert_not_valuation_in_progress();
-    config.pricing_config.set_block_scholes_svi_freshness_ms(value);
-    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
-}
-
-public(package) fun set_fee_shares(
-    config: &mut ProtocolConfig,
-    lp_fee_share: u64,
-    protocol_fee_share: u64,
-    insurance_fee_share: u64,
-) {
-    config.assert_not_valuation_in_progress();
-    config.fee_config.set_fee_shares(lp_fee_share, protocol_fee_share, insurance_fee_share);
-    config_events::emit_fee_config_updated(config.id(), &config.fee_config);
-}
-
-public(package) fun set_template_trading_loss_rebate_rate(config: &mut ProtocolConfig, value: u64) {
-    config.assert_not_valuation_in_progress();
-    config.fee_config.set_trading_loss_rebate_rate(value);
-    config_events::emit_fee_config_updated(config.id(), &config.fee_config);
-}
-
-public(package) fun set_max_total_exposure_pct(config: &mut ProtocolConfig, pct: u64) {
-    config.assert_not_valuation_in_progress();
-    config.risk_config.set_max_total_exposure_pct(pct);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
-}
-
-public(package) fun set_expiry_allocation(config: &mut ProtocolConfig, allocation: u64) {
-    config.assert_not_valuation_in_progress();
-    config.risk_config.set_expiry_allocation(allocation);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
-}
-
-public(package) fun set_grow_utilization_threshold(config: &mut ProtocolConfig, threshold: u64) {
-    config.assert_not_valuation_in_progress();
-    config.risk_config.set_grow_utilization_threshold(threshold);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
-}
-
-public(package) fun set_shrink_utilization_threshold(config: &mut ProtocolConfig, threshold: u64) {
-    config.assert_not_valuation_in_progress();
-    config.risk_config.set_shrink_utilization_threshold(threshold);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
-}
-
-public(package) fun set_grow_factor(config: &mut ProtocolConfig, factor: u64) {
-    config.assert_not_valuation_in_progress();
-    config.risk_config.set_grow_factor(factor);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
-}
-
-public(package) fun set_shrink_factor(config: &mut ProtocolConfig, factor: u64) {
-    config.assert_not_valuation_in_progress();
-    config.risk_config.set_shrink_factor(factor);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
-}
-
-public(package) fun set_valuation_liquidation_budget(config: &mut ProtocolConfig, budget: u64) {
-    config.assert_not_valuation_in_progress();
-    config.risk_config.set_valuation_liquidation_budget(budget);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
-}
-
-public(package) fun set_trade_liquidation_budget(config: &mut ProtocolConfig, budget: u64) {
-    config.assert_not_valuation_in_progress();
-    config.risk_config.set_trade_liquidation_budget(budget);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
-}
-
-/// Set the settlement freshness threshold template for future market oracles.
-public(package) fun set_market_oracle_template_settlement_freshness_ms(
-    config: &mut ProtocolConfig,
-    value: u64,
-) {
-    config.assert_not_valuation_in_progress();
-    config.market_oracle_config.set_settlement_freshness_ms(value);
-    config_events::emit_market_oracle_template_config_updated(
-        config.id(),
-        &config.market_oracle_config,
-    );
-}
-
-/// Set basis guard bounds template for future market oracles.
-public(package) fun set_market_oracle_template_basis_bounds(
-    config: &mut ProtocolConfig,
-    max_spot_deviation: u64,
-    max_basis_deviation: u64,
-    min_basis: u64,
-    max_basis: u64,
-) {
-    config.assert_not_valuation_in_progress();
-    config
-        .market_oracle_config
-        .set_basis_bounds(
-            max_spot_deviation,
-            max_basis_deviation,
-            min_basis,
-            max_basis,
-        );
-    config_events::emit_market_oracle_template_config_updated(
-        config.id(),
-        &config.market_oracle_config,
-    );
-}
-
-public(package) fun set_trading_paused(config: &mut ProtocolConfig, paused: bool) {
-    config.assert_not_valuation_in_progress();
-    config.trading_paused = paused;
-    config_events::emit_trading_paused_updated(config.id(), paused);
-}
-
 /// Force `trading_paused = true` without admin authority. Reserved for
 /// `PauseCap` holders going through the registry; cannot be used to unpause.
 public(package) fun pause_trading(config: &mut ProtocolConfig) {
-    config.set_trading_paused(true);
+    config.set_trading_paused_internal(true);
 }
 
 /// Begin a transaction-local full-pool valuation lock.
@@ -285,6 +362,12 @@ public(package) fun begin_valuation(config: &mut ProtocolConfig) {
 public(package) fun end_valuation(config: &mut ProtocolConfig) {
     config.assert_valuation_in_progress();
     config.valuation_in_progress = false;
+}
+
+fun set_trading_paused_internal(config: &mut ProtocolConfig, paused: bool) {
+    config.assert_not_valuation_in_progress();
+    config.trading_paused = paused;
+    config_events::emit_trading_paused_updated(config.id(), paused);
 }
 
 /// Abort unless trading is not paused.

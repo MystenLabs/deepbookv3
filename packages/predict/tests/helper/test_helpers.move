@@ -11,7 +11,7 @@
 #[test_only]
 module deepbook_predict::test_helpers;
 
-use deepbook_predict::{registry::{AdminCap, Registry}, test_constants};
+use deepbook_predict::{admin::AdminCap, registry::Registry, test_constants};
 use std::unit_test::destroy;
 use sui::test_scenario::{Self as test, Scenario};
 

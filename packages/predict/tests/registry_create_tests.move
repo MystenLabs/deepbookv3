@@ -5,10 +5,11 @@
 module deepbook_predict::registry_create_tests;
 
 use deepbook_predict::{
+    admin::AdminCap,
     config_constants,
     constants,
     expiry_market::ExpiryMarket,
-    market_oracle::{MarketOracle, MarketOracleCap},
+    market_oracle::{Self, MarketOracle, MarketOracleCap},
     plp::{Self, PoolVault},
     pricing,
     protocol_config::ProtocolConfig,
@@ -324,8 +325,8 @@ fun setup_ready_expiry_creation(expiry_tick_size: u64): (Scenario, ID, ID, Marke
 
     scenario.next_tx(test_constants::admin());
     let mut reg = scenario.take_shared_by_id<registry::Registry>(registry_id);
-    let admin_cap = scenario.take_from_sender<registry::AdminCap>();
-    let cap = registry::create_market_oracle_cap(&admin_cap, scenario.ctx());
+    let admin_cap = scenario.take_from_sender<AdminCap>();
+    let cap = market_oracle::create_cap(&admin_cap, scenario.ctx());
     let pyth_id = registry::create_pyth_source(
         &mut reg,
         &admin_cap,

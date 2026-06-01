@@ -389,7 +389,7 @@ export function finalizeDusdcCurrencyRegistrationTx(): Transaction {
 export function createMarketOracleCapTx(recipient: string): Transaction {
   const tx = new Transaction();
   const cap = tx.moveCall({
-    target: target("registry", "create_market_oracle_cap"),
+    target: target("market_oracle", "create_cap"),
     arguments: [tx.object(ADMIN_CAP_ID)],
   });
   tx.transferObjects([cap], tx.pure.address(recipient));

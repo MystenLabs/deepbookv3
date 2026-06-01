@@ -1,15 +1,16 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Registry and admin entrypoints for the Predict protocol.
+/// Registry, versioning, and creation entrypoints for the Predict protocol.
 ///
 /// This module creates shared setup objects, stores uniqueness indexes for
-/// Pyth sources and expiries, and exposes admin/governance entrypoints. Runtime
+/// Pyth sources and expiries, and exposes registry-owned governance entrypoints. Runtime
 /// pool accounting, expiry risk, oracle state, and user positions stay in their
 /// owning modules.
 module deepbook_predict::registry;
 
 use deepbook_predict::{
+    admin::{Self, AdminCap},
     builder_code,
     config_constants,
     config_events,
@@ -45,12 +46,6 @@ public struct PythFeedConfig has copy, drop, store {
     /// Fee multiplier reached at expiry, in FLOAT_SCALING; 1x disables. Snapshotted into
     /// each market at creation. The ramp window is `constants::expiry_fee_window_ms!()`.
     expiry_fee_max_multiplier: u64,
-}
-
-/// Capability for admin operations.
-/// Created during package init, transferred to deployer (multisig).
-public struct AdminCap has key, store {
-    id: UID,
 }
 
 /// Capability for emergency pause operations. Admin can mint these for
@@ -121,36 +116,6 @@ public fun pyth_feed_expiry_fee_max_multiplier(
     }
 }
 
-/// Set the base fee multiplier.
-public fun set_base_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
-    config.set_base_fee(fee);
-}
-
-/// Set the minimum fee floor.
-public fun set_min_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
-    config.set_min_fee(fee);
-}
-
-/// Set the maximum floor-index increase snapshotted by future expiry markets.
-public fun set_template_max_expiry_floor_premium(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.set_template_max_expiry_floor_premium(value);
-}
-
-/// Set the staking benefit thresholds: `lower` (half of max benefits) and
-/// `upper` (full benefits). Validated as a pair (`upper > 2 * lower`).
-public fun set_benefit_powers(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    lower: u64,
-    upper: u64,
-) {
-    config.set_benefit_powers(lower, upper);
-}
-
 /// Set the per-asset expiry-fee max multiplier snapshotted by future expiry markets
 /// for one Pyth feed. `max_multiplier` (FLOAT_SCALING, 1x disables) is the multiplier
 /// reached at expiry over the `constants::expiry_fee_window_ms!()` ramp window. Larger
@@ -177,167 +142,6 @@ public fun set_pyth_feed_tick_size(
     assert!(registry.pyth_feed_configs.contains(pyth_lazer_feed_id), EPythFeedNotRegistered);
     config_constants::assert_oracle_tick_size(tick_size);
     registry.pyth_feed_configs.borrow_mut(pyth_lazer_feed_id).tick_size = tick_size;
-}
-
-/// Set the liquidation LTV snapshotted by future expiry markets.
-public fun set_template_liquidation_ltv(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.set_template_liquidation_ltv(value);
-}
-
-/// Set the global minimum allowed mint price.
-public fun set_min_ask_price(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
-    config.set_min_ask_price(value);
-}
-
-/// Set the global maximum allowed mint price.
-public fun set_max_ask_price(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
-    config.set_max_ask_price(value);
-}
-
-/// Set the live Pyth spot freshness threshold.
-public fun set_pyth_spot_freshness_ms(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.set_pyth_spot_freshness_ms(value);
-}
-
-/// Set the live Block Scholes spot/forward freshness threshold.
-public fun set_block_scholes_prices_freshness_ms(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.set_block_scholes_prices_freshness_ms(value);
-}
-
-/// Set the live Block Scholes SVI freshness threshold.
-public fun set_block_scholes_svi_freshness_ms(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.set_block_scholes_svi_freshness_ms(value);
-}
-
-/// Set the current fee surplus distribution shares used during settled expiry surplus sweeps.
-public fun set_fee_shares(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    lp_fee_share: u64,
-    protocol_fee_share: u64,
-    insurance_fee_share: u64,
-) {
-    config.set_fee_shares(lp_fee_share, protocol_fee_share, insurance_fee_share);
-}
-
-/// Set the trading loss rebate rate template used by future expiry markets.
-public fun set_template_trading_loss_rebate_rate(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.set_template_trading_loss_rebate_rate(value);
-}
-
-/// Set the maximum total exposure percentage.
-public fun set_max_total_exposure_pct(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    pct: u64,
-) {
-    config.set_max_total_exposure_pct(pct);
-}
-
-/// Set the current DUSDC allocation for new expiry markets.
-public fun set_expiry_allocation(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    allocation: u64,
-) {
-    config.set_expiry_allocation(allocation);
-}
-
-/// Set the utilization threshold that enables expiry allocation growth.
-public fun set_grow_utilization_threshold(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    threshold: u64,
-) {
-    config.set_grow_utilization_threshold(threshold);
-}
-
-/// Set the utilization threshold that enables expiry allocation shrink.
-public fun set_shrink_utilization_threshold(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    threshold: u64,
-) {
-    config.set_shrink_utilization_threshold(threshold);
-}
-
-/// Set the allocation growth target multiplier.
-public fun set_grow_factor(config: &mut ProtocolConfig, _admin_cap: &AdminCap, factor: u64) {
-    config.set_grow_factor(factor);
-}
-
-/// Set the allocation shrink target multiplier.
-public fun set_shrink_factor(config: &mut ProtocolConfig, _admin_cap: &AdminCap, factor: u64) {
-    config.set_shrink_factor(factor);
-}
-
-/// Set the total liquidation candidate budget used before live valuations.
-public fun set_valuation_liquidation_budget(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    budget: u64,
-) {
-    config.set_valuation_liquidation_budget(budget);
-}
-
-/// Set the total liquidation candidate budget used before mint and redeem flows.
-public fun set_trade_liquidation_budget(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    budget: u64,
-) {
-    config.set_trade_liquidation_budget(budget);
-}
-
-/// Set the settlement freshness threshold template used by future market oracles.
-public fun set_market_oracle_template_settlement_freshness_ms(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    value: u64,
-) {
-    config.set_market_oracle_template_settlement_freshness_ms(value);
-}
-
-/// Set basis guard bounds template used by future market oracles.
-public fun set_market_oracle_template_basis_bounds(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    max_spot_deviation: u64,
-    max_basis_deviation: u64,
-    min_basis: u64,
-    max_basis: u64,
-) {
-    config.set_market_oracle_template_basis_bounds(
-        max_spot_deviation,
-        max_basis_deviation,
-        min_basis,
-        max_basis,
-    );
-}
-
-/// Set whether trading is paused.
-public fun set_trading_paused(config: &mut ProtocolConfig, _admin_cap: &AdminCap, paused: bool) {
-    config.set_trading_paused(paused);
 }
 
 // === Version Management (admin) ===
@@ -433,7 +237,7 @@ public fun pause_trading_pause_cap(
 }
 
 /// Force `mint_paused = true` on a single expiry market via a valid `PauseCap`.
-/// One-way; admin's `set_expiry_market_mint_paused` is needed to unpause.
+/// One-way; admin's `expiry_market::set_mint_paused` is needed to unpause.
 public fun pause_expiry_market_mint_pause_cap(
     market: &mut ExpiryMarket,
     registry: &Registry,
@@ -441,17 +245,6 @@ public fun pause_expiry_market_mint_pause_cap(
 ) {
     registry.assert_valid_pause_cap(pause_cap);
     market.pause_mint();
-}
-
-// === Per-Market Mint Pause (admin) ===
-
-/// Set `mint_paused` on a single expiry market. Admin can pause or unpause.
-public fun set_expiry_market_mint_paused(
-    market: &mut ExpiryMarket,
-    _admin_cap: &AdminCap,
-    paused: bool,
-) {
-    market.set_mint_paused(paused);
 }
 
 /// Create a shared Pyth source for one admin-approved Lazer feed, configuring
@@ -486,39 +279,6 @@ public fun create_pyth_source(
             },
         );
     pyth_source_id
-}
-
-/// Admin-only creation of a new MarketOracleCap.
-public fun create_market_oracle_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): MarketOracleCap {
-    market_oracle::create_cap(ctx)
-}
-
-/// Register an additional MarketOracleCap as authorized to update a market oracle.
-public fun register_market_oracle_cap(
-    market: &mut MarketOracle,
-    _admin_cap: &AdminCap,
-    cap: &MarketOracleCap,
-) {
-    market.register_cap(cap);
-}
-
-/// Revoke a MarketOracleCap's authorization on a market oracle.
-public fun unregister_market_oracle_cap(
-    market: &mut MarketOracle,
-    _admin_cap: &AdminCap,
-    cap_id: ID,
-) {
-    market.unregister_cap(cap_id);
-}
-
-/// Cap holder voluntarily removes its own cap from a market oracle.
-public fun self_unregister_market_oracle_cap(market: &mut MarketOracle, cap: &MarketOracleCap) {
-    market.self_unregister_cap(cap);
-}
-
-/// Destroy a MarketOracleCap the holder no longer needs.
-public fun destroy_market_oracle_cap(cap: MarketOracleCap) {
-    cap.destroy_cap();
 }
 
 /// Create the MarketOracle and ExpiryMarket objects for one future expiry.
@@ -631,7 +391,7 @@ fun init(ctx: &mut TxContext) {
     let (registry, admin_cap) = new_registry_and_admin_cap(ctx);
     protocol_config::create_and_share(ctx);
     transfer::share_object(registry);
-    transfer::transfer(admin_cap, ctx.sender());
+    transfer::public_transfer(admin_cap, ctx.sender());
 }
 
 /// Construct registry and admin cap during package init or tests.
@@ -644,9 +404,7 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
             allowed_pause_caps: vec_set::empty(),
             allowed_versions: vec_set::singleton(constants::current_version!()),
         },
-        AdminCap {
-            id: object::new(ctx),
-        },
+        admin::new(ctx),
     )
 }
 
@@ -691,7 +449,44 @@ public fun init_for_testing(ctx: &mut TxContext): ID {
     let registry_id = registry.id();
     protocol_config::create_and_share(ctx);
     transfer::share_object(registry);
-    transfer::transfer(admin_cap, ctx.sender());
+    transfer::public_transfer(admin_cap, ctx.sender());
 
     registry_id
+}
+
+#[test_only]
+/// Return a Registry + AdminCap without sharing or storing the registry.
+/// Use this when a test wants direct access without `test_scenario`.
+public fun new_for_testing(ctx: &mut TxContext): (Registry, AdminCap) {
+    new_registry_and_admin_cap(ctx)
+}
+
+#[test_only]
+public fun destroy_registry_for_testing(registry: Registry) {
+    let Registry {
+        id,
+        pyth_feed_configs,
+        expiry_market_ids,
+        allowed_pause_caps: _,
+        allowed_versions: _,
+    } = registry;
+    id.delete();
+    pyth_feed_configs.destroy_empty();
+    expiry_market_ids.destroy_empty();
+}
+
+/// Variant for tests that exercise registration paths: drops the uniqueness
+/// tables without requiring them to be empty.
+#[test_only]
+public fun destroy_registry_drop_for_testing(registry: Registry) {
+    let Registry {
+        id,
+        pyth_feed_configs,
+        expiry_market_ids,
+        allowed_pause_caps: _,
+        allowed_versions: _,
+    } = registry;
+    id.delete();
+    pyth_feed_configs.drop();
+    expiry_market_ids.drop();
 }

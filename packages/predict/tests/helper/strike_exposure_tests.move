@@ -5,6 +5,7 @@
 module deepbook_predict::strike_exposure_tests;
 
 use deepbook_predict::{
+    admin,
     constants::{Self, float_scaling as float},
     i64,
     market_oracle,
@@ -69,10 +70,12 @@ fun setup_live_mint(
     protocol_config::ProtocolConfig,
     market_oracle::MarketOracle,
     market_oracle::MarketOracleCap,
+    admin::AdminCap,
     pyth_source::PythSource,
     clock::Clock,
 ) {
-    let cap = market_oracle::create_cap(ctx);
+    let admin_cap = admin::create_admin_cap_for_testing(ctx);
+    let cap = market_oracle::create_cap(&admin_cap, ctx);
     let config = protocol_config::new_for_testing(ctx);
     let mut pyth = pyth_source::new_for_testing(ctx);
     let mut market = market_oracle::create_test_market_oracle_with_pyth(
@@ -103,7 +106,7 @@ fun setup_live_mint(
     market.update_svi(&config, &cap, svi, ORACLE_SOURCE_TIMESTAMP_MS, &clock);
     let exposure = new_exposure(EXPIRY_MS, MIN_STRIKE, TICK_SIZE, MAX_PREMIUM, ctx);
 
-    (exposure, config, market, cap, pyth, clock)
+    (exposure, config, market, cap, admin_cap, pyth, clock)
 }
 
 fun cleanup_live_mint(
@@ -111,6 +114,7 @@ fun cleanup_live_mint(
     config: protocol_config::ProtocolConfig,
     market: market_oracle::MarketOracle,
     cap: market_oracle::MarketOracleCap,
+    admin_cap: admin::AdminCap,
     pyth: pyth_source::PythSource,
     clock: clock::Clock,
 ) {
@@ -118,6 +122,7 @@ fun cleanup_live_mint(
     destroy(config);
     destroy(market);
     destroy(cap);
+    destroy(admin_cap);
     destroy(pyth);
     clock.destroy_for_testing();
 }
@@ -258,7 +263,7 @@ fun max_expiry_floor_premium_round_trips_at_float_scaling() {
 #[test, expected_failure(abort_code = strike_exposure::EOrderPrincipalBelowMinimum)]
 fun allocate_mint_order_below_min_principal_aborts() {
     let ctx = &mut tx_context::dummy();
-    let (mut exposure, config, market, _cap, pyth, clock) = setup_live_mint(ctx);
+    let (mut exposure, config, market, _cap, _admin_cap, pyth, clock) = setup_live_mint(ctx);
 
     exposure.allocate_mint_order(
         config.pricing_config(),
@@ -276,7 +281,7 @@ fun allocate_mint_order_below_min_principal_aborts() {
 #[test]
 fun allocate_mint_order_above_min_principal_succeeds() {
     let ctx = &mut tx_context::dummy();
-    let (mut exposure, config, market, cap, pyth, clock) = setup_live_mint(ctx);
+    let (mut exposure, config, market, cap, admin_cap, pyth, clock) = setup_live_mint(ctx);
 
     let (minted_order, _fee_amount) = exposure.allocate_mint_order(
         config.pricing_config(),
@@ -293,5 +298,5 @@ fun allocate_mint_order_above_min_principal_succeeds() {
     assert_eq!(minted_order.quantity(), ABOVE_MIN_PRINCIPAL_QUANTITY);
     assert_eq!(exposure.payout_liability(), ABOVE_MIN_PRINCIPAL_QUANTITY);
 
-    cleanup_live_mint(exposure, config, market, cap, pyth, clock);
+    cleanup_live_mint(exposure, config, market, cap, admin_cap, pyth, clock);
 }
