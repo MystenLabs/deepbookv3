@@ -18,12 +18,7 @@ use deepbook_predict::{
 };
 use dusdc::dusdc::DUSDC;
 use std::unit_test::{assert_eq, destroy};
-use sui::{
-    clock::{Self, Clock},
-    coin,
-    test_scenario::{Self as test, return_shared},
-    vec_set
-};
+use sui::{clock::{Self, Clock}, coin, test_scenario::{Self as test, return_shared}, vec_set};
 
 const NOW_MS: u64 = 100_000;
 const EXPIRY_MS: u64 = 200_000;
@@ -72,10 +67,10 @@ fun rebate_eligibility_offsets_fee_reserve_by_gross_profit() {
     let mut market = scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
 
     prepare_live_oracle_for_trading(&mut oracle, &mut pyth, &config, &cap, &clock);
-    market.receive_pool_cash(
-        coin::mint_for_testing<DUSDC>(constants::expiry_cash_floor!(), scenario.ctx())
-            .into_balance(),
-    );
+    market.receive_pool_cash(coin::mint_for_testing<DUSDC>(
+        constants::expiry_cash_floor!(),
+        scenario.ctx(),
+    ).into_balance());
     manager.deposit(
         coin::mint_for_testing<DUSDC>(MINT_DEPOSIT, scenario.ctx()),
         scenario.ctx(),
@@ -113,10 +108,7 @@ fun rebate_eligibility_offsets_fee_reserve_by_gross_profit() {
         scenario.ctx(),
     );
 
-    assert_eq!(
-        manager.balance(),
-        balance_before_claim + EXPECTED_REBATE_WITH_ONE_GROSS_PROFIT,
-    );
+    assert_eq!(manager.balance(), balance_before_claim + EXPECTED_REBATE_WITH_ONE_GROSS_PROFIT);
     assert_eq!(residual_cash.value(), GROSS_PROFIT_ONE);
     assert_eq!(market.rebate_reserve(), 0);
 
@@ -179,10 +171,12 @@ fun settle_oracle(
         settlement_source_timestamp_ms,
         settlement_update_timestamp_ms,
     );
-    assert!(oracle.settle_if_possible(
-        config,
-        pyth,
-        cap,
-        clock,
-    ));
+    assert!(
+        oracle.settle_if_possible(
+            config,
+            pyth,
+            cap,
+            clock,
+        ),
+    );
 }
