@@ -5,6 +5,7 @@
 module deepbook_predict::plp_stake_tests;
 
 use deepbook_predict::{
+    admin,
     plp::{Self, PoolVault},
     predict_manager::{Self, PredictManager},
     registry,
@@ -19,7 +20,7 @@ const THIRTY_K_DEEP: u64 = 30_000_000_000;
 
 // === Helpers ===
 
-fun begin(): (test::Scenario, registry::Registry, registry::AdminCap, PoolVault, PredictManager) {
+fun begin(): (test::Scenario, registry::Registry, admin::AdminCap, PoolVault, PredictManager) {
     let mut scenario = test::begin(test_constants::alice());
     plp::init_for_testing(scenario.ctx()); // shares a PoolVault
     let (mut reg, admin_cap) = registry::new_for_testing(scenario.ctx());
@@ -32,7 +33,7 @@ fun begin(): (test::Scenario, registry::Registry, registry::AdminCap, PoolVault,
 fun finish(
     scenario: test::Scenario,
     reg: registry::Registry,
-    admin_cap: registry::AdminCap,
+    admin_cap: admin::AdminCap,
     vault: PoolVault,
     manager: PredictManager,
 ) {

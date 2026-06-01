@@ -5,7 +5,7 @@
 #[allow(unused_variable)]
 module deepbook_predict::market_oracle_settlement_tests;
 
-use deepbook_predict::{market_oracle, protocol_config, pyth_source, registry};
+use deepbook_predict::{admin, market_oracle, protocol_config, pyth_source};
 use std::unit_test::{assert_eq, destroy};
 use sui::clock;
 
@@ -211,13 +211,13 @@ fun setup(
     market_oracle::MarketOracle,
     protocol_config::ProtocolConfig,
     market_oracle::MarketOracleCap,
-    registry::AdminCap,
+    admin::AdminCap,
     pyth_source::PythSource,
     clock::Clock,
 ) {
     let ctx = &mut tx_context::dummy();
-    let admin_cap = registry::create_admin_cap_for_testing(ctx);
-    let cap = registry::create_market_oracle_cap(&admin_cap, ctx);
+    let admin_cap = admin::create_admin_cap_for_testing(ctx);
+    let cap = market_oracle::create_cap(&admin_cap, ctx);
     let config = protocol_config::new_for_testing(ctx);
     let pyth = pyth_source::new_for_testing(ctx);
     let market = market_oracle::create_test_market_oracle_with_pyth(&pyth, EXPIRY_MS, &cap, ctx);
@@ -230,7 +230,7 @@ fun cleanup(
     market: market_oracle::MarketOracle,
     config: protocol_config::ProtocolConfig,
     cap: market_oracle::MarketOracleCap,
-    admin_cap: registry::AdminCap,
+    admin_cap: admin::AdminCap,
     pyth: pyth_source::PythSource,
     clock: clock::Clock,
 ) {

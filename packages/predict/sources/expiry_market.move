@@ -11,6 +11,7 @@ module deepbook_predict::expiry_market;
 
 use deepbook::math;
 use deepbook_predict::{
+    admin::AdminCap,
     claim_events,
     config_events,
     constants,
@@ -161,6 +162,12 @@ public fun mint_paused(market: &ExpiryMarket): bool {
 /// Return this market's mirrored set of allowed package versions.
 public fun allowed_versions(market: &ExpiryMarket): VecSet<u64> {
     market.allowed_versions
+}
+
+/// Set per-market mint pause. Admin can pause or unpause one expiry without
+/// changing global trading state.
+public fun set_mint_paused(market: &mut ExpiryMarket, _admin_cap: &AdminCap, paused: bool) {
+    market.set_mint_paused_internal(paused);
 }
 
 /// Produce this expiry's valuation witness for a full-pool valuation.
@@ -495,15 +502,9 @@ public(package) fun return_allocation(market: &mut ExpiryMarket, amount: u64): B
     market.lp_cash_balance.split(amount)
 }
 
-/// Set per-market mint pause and emit the pause-state event.
-public(package) fun set_mint_paused(market: &mut ExpiryMarket, paused: bool) {
-    market.mint_paused = paused;
-    config_events::emit_expiry_market_mint_paused_updated(market.id(), paused);
-}
-
 /// Force `mint_paused = true` (used by PauseCap path on registry; one-way).
 public(package) fun pause_mint(market: &mut ExpiryMarket) {
-    market.set_mint_paused(true);
+    market.set_mint_paused_internal(true);
 }
 
 /// Cache terminal payout liability in strike exposure if it has not already been cached.
@@ -540,6 +541,11 @@ public(package) fun release_settled_surplus(
 }
 
 // === Private Functions ===
+
+fun set_mint_paused_internal(market: &mut ExpiryMarket, paused: bool) {
+    market.mint_paused = paused;
+    config_events::emit_expiry_market_mint_paused_updated(market.id(), paused);
+}
 
 fun current_nav_terms(
     market: &mut ExpiryMarket,
