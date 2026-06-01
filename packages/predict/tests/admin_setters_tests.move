@@ -5,7 +5,7 @@
 /// The tests verify each value reaches its destination and can be read back
 /// through the owning object's getter.
 #[test_only]
-module deepbook_predict::registry_setters_tests;
+module deepbook_predict::admin_setters_tests;
 
 use deepbook_predict::{
     admin,
