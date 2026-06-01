@@ -442,6 +442,29 @@ fun expiry_rebalance_cash_terms(market: &ExpiryMarket): (u64, u64, u64) {
     (market.cash_balance(), target_cash, sweep_threshold_cash)
 }
 
+fun synced_pool_value(vault: &PoolVault, config: &ProtocolConfig, active_expiry_value: u64): u64 {
+    let gross_pool_value = vault.idle_balance.value() + active_expiry_value;
+    gross_pool_value - vault.pending_protocol_profit_exclusion(config, active_expiry_value)
+}
+
+fun pending_protocol_profit_exclusion(
+    vault: &PoolVault,
+    config: &ProtocolConfig,
+    active_expiry_value: u64,
+): u64 {
+    // NAV prices pending protocol profit before it is terminally materialized.
+    // Live cash returns update credits, but reserve custody waits for terminal profit.
+    let aggregate_credits = vault.expiry_accounting.profit_basis_credits() + active_expiry_value;
+    let aggregate_debits = vault.expiry_accounting.profit_basis_debits();
+    if (aggregate_credits <= aggregate_debits) {
+        return 0
+    };
+    math::mul(
+        aggregate_credits - aggregate_debits,
+        config.fee_config().protocol_reserve_profit_share(),
+    )
+}
+
 fun assert_pool_vault(sync: &PoolSync, vault: &PoolVault) {
     assert!(sync.pool_vault_id == vault.id(), EWrongPoolVault);
 }
@@ -526,26 +549,6 @@ fun receive_expiry_cash(vault: &mut PoolVault, expiry_market_id: ID, cash: Balan
     amount
 }
 
-fun emit_expiry_cash_received(
-    vault: &PoolVault,
-    expiry_market_id: ID,
-    market_oracle: &MarketOracle,
-    amount: u64,
-) {
-    let (sent_to_expiry_after, received_from_expiry_after) = vault
-        .expiry_accounting
-        .expiry_flow_amounts(expiry_market_id);
-    vault_events::emit_expiry_cash_received(
-        vault.id(),
-        expiry_market_id,
-        pricing::settlement_price(market_oracle),
-        amount,
-        vault.idle_balance.value(),
-        sent_to_expiry_after,
-        received_from_expiry_after,
-    );
-}
-
 fun materialize_expiry_profit(
     vault: &mut PoolVault,
     config: &ProtocolConfig,
@@ -574,27 +577,24 @@ fun materialize_expiry_profit(
     );
 }
 
-fun synced_pool_value(vault: &PoolVault, config: &ProtocolConfig, active_expiry_value: u64): u64 {
-    let gross_pool_value = vault.idle_balance.value() + active_expiry_value;
-    gross_pool_value - vault.pending_protocol_profit_exclusion(config, active_expiry_value)
-}
-
-fun pending_protocol_profit_exclusion(
+fun emit_expiry_cash_received(
     vault: &PoolVault,
-    config: &ProtocolConfig,
-    active_expiry_value: u64,
-): u64 {
-    // NAV prices pending protocol profit before it is terminally materialized.
-    // Live cash returns update credits, but reserve custody waits for terminal profit.
-    let aggregate_credits = vault.expiry_accounting.profit_basis_credits() + active_expiry_value;
-    let aggregate_debits = vault.expiry_accounting.profit_basis_debits();
-    if (aggregate_credits <= aggregate_debits) {
-        return 0
-    };
-    math::mul(
-        aggregate_credits - aggregate_debits,
-        config.fee_config().protocol_reserve_profit_share(),
-    )
+    expiry_market_id: ID,
+    market_oracle: &MarketOracle,
+    amount: u64,
+) {
+    let (sent_to_expiry_after, received_from_expiry_after) = vault
+        .expiry_accounting
+        .expiry_flow_amounts(expiry_market_id);
+    vault_events::emit_expiry_cash_received(
+        vault.id(),
+        expiry_market_id,
+        pricing::settlement_price(market_oracle),
+        amount,
+        vault.idle_balance.value(),
+        sent_to_expiry_after,
+        received_from_expiry_after,
+    );
 }
 
 fun emit_expiry_cash_rebalanced(

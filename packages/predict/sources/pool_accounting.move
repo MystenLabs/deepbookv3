@@ -52,10 +52,6 @@ public(package) fun active_expiry_markets(ledger: &Ledger): &vector<ID> {
     &ledger.active_expiry_markets
 }
 
-public(package) fun is_active_expiry(ledger: &Ledger, expiry_market_id: ID): bool {
-    ledger.active_expiry_markets.contains(&expiry_market_id)
-}
-
 public(package) fun profit_basis_debits(ledger: &Ledger): u64 {
     ledger.profit_basis_debits
 }
@@ -209,6 +205,14 @@ public(package) fun materialize_expiry_profit(ledger: &mut Ledger, expiry_market
     }
 }
 
+fun flow_net_funding(flow: &RegisteredExpiry): u64 {
+    if (flow.sent_to_expiry > flow.received_from_expiry) {
+        flow.sent_to_expiry - flow.received_from_expiry
+    } else {
+        0
+    }
+}
+
 fun start_terminal_accounting_if_needed(flow: &mut RegisteredExpiry): u64 {
     if (flow.terminal_accounting_started) {
         return 0
@@ -221,14 +225,6 @@ fun start_terminal_accounting_if_needed(flow: &mut RegisteredExpiry): u64 {
         // Start at sent cash so the normal received-delta path consumes any
         // initial terminal profit without special-case materialization logic.
         flow.terminal_received_watermark = flow.sent_to_expiry;
-        0
-    }
-}
-
-fun flow_net_funding(flow: &RegisteredExpiry): u64 {
-    if (flow.sent_to_expiry > flow.received_from_expiry) {
-        flow.sent_to_expiry - flow.received_from_expiry
-    } else {
         0
     }
 }
