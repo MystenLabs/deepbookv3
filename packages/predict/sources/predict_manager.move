@@ -41,7 +41,7 @@ public struct PredictManager has key {
     /// Per-expiry aggregate trading cash flows and open position count.
     expiry_summaries: Table<ID, ExpiryTradingSummary>,
     /// DEEP staked and active for trading benefits, in raw units. Custody lives
-    /// in the Registry's pooled balance; this mirrors this manager's share.
+    /// in PoolVault; this mirrors this manager's share.
     active_stake: u64,
     /// DEEP staked this epoch, not yet active. Rolls into `active_stake` on the
     /// first interaction in a later epoch (`update_stake`).
@@ -56,10 +56,10 @@ public struct ExpiryTradingSummary has store {
     open_position_count: u64,
     /// Trading fees paid to the pool, excluding builder fees.
     trading_fees_paid: u64,
-    /// DUSDC paid from this manager into the expiry market.
-    cash_paid_to_expiry: u64,
-    /// DUSDC received from the expiry market into this manager.
-    cash_received_from_expiry: u64,
+    /// DUSDC paid for positions, excluding trading and builder fees.
+    gross_paid_to_expiry: u64,
+    /// DUSDC payout before redeem trading and builder fees are deducted.
+    gross_received_from_expiry: u64,
 }
 
 // === Public Functions ===
@@ -107,24 +107,6 @@ public fun expiry_position_count(self: &PredictManager, expiry_market_id: ID): u
 public fun trading_fees_paid(self: &PredictManager, expiry_market_id: ID): u64 {
     if (self.expiry_summaries.contains(expiry_market_id)) {
         self.expiry_summaries[expiry_market_id].trading_fees_paid
-    } else {
-        0
-    }
-}
-
-/// Return aggregate DUSDC paid from this manager to one expiry market.
-public fun cash_paid_to_expiry(self: &PredictManager, expiry_market_id: ID): u64 {
-    if (self.expiry_summaries.contains(expiry_market_id)) {
-        self.expiry_summaries[expiry_market_id].cash_paid_to_expiry
-    } else {
-        0
-    }
-}
-
-/// Return aggregate DUSDC received from one expiry market into this manager.
-public fun cash_received_from_expiry(self: &PredictManager, expiry_market_id: ID): u64 {
-    if (self.expiry_summaries.contains(expiry_market_id)) {
-        self.expiry_summaries[expiry_market_id].cash_received_from_expiry
     } else {
         0
     }
@@ -230,8 +212,8 @@ public(package) fun remove_position(
     summary.open_position_count = summary.open_position_count - 1;
 }
 
-/// Record DUSDC paid from this manager into an expiry market.
-public(package) fun record_cash_paid_to_expiry(
+/// Record DUSDC paid for positions in an expiry market, excluding fees.
+public(package) fun record_gross_paid_to_expiry(
     self: &mut PredictManager,
     expiry_market_id: ID,
     amount: u64,
@@ -239,11 +221,11 @@ public(package) fun record_cash_paid_to_expiry(
     if (amount == 0) return;
     self.ensure_expiry_summary(expiry_market_id);
     let summary = &mut self.expiry_summaries[expiry_market_id];
-    summary.cash_paid_to_expiry = summary.cash_paid_to_expiry + amount;
+    summary.gross_paid_to_expiry = summary.gross_paid_to_expiry + amount;
 }
 
-/// Record DUSDC received from an expiry market into this manager.
-public(package) fun record_cash_received_from_expiry(
+/// Record gross DUSDC payout from an expiry market before fee deductions.
+public(package) fun record_gross_received_from_expiry(
     self: &mut PredictManager,
     expiry_market_id: ID,
     amount: u64,
@@ -251,7 +233,7 @@ public(package) fun record_cash_received_from_expiry(
     if (amount == 0) return;
     self.ensure_expiry_summary(expiry_market_id);
     let summary = &mut self.expiry_summaries[expiry_market_id];
-    summary.cash_received_from_expiry = summary.cash_received_from_expiry + amount;
+    summary.gross_received_from_expiry = summary.gross_received_from_expiry + amount;
 }
 
 /// Record pool trading fees paid by this manager for one expiry market.
@@ -266,12 +248,12 @@ public(package) fun record_trading_fee_paid(
     summary.trading_fees_paid = summary.trading_fees_paid + amount;
 }
 
-/// Remove and return the aggregate trading summary once all expiry positions are closed.
+/// Remove and return aggregate fees and gross profit once all expiry positions are closed.
 public(package) fun resolve_expiry_summary(
     self: &mut PredictManager,
     expiry_market_id: ID,
-): (u64, u64, u64) {
-    if (!self.expiry_summaries.contains(expiry_market_id)) return (0, 0, 0);
+): (u64, u64) {
+    if (!self.expiry_summaries.contains(expiry_market_id)) return (0, 0);
 
     assert!(
         self.expiry_summaries[expiry_market_id].open_position_count == 0,
@@ -280,10 +262,15 @@ public(package) fun resolve_expiry_summary(
     let ExpiryTradingSummary {
         open_position_count: _,
         trading_fees_paid,
-        cash_paid_to_expiry,
-        cash_received_from_expiry,
+        gross_paid_to_expiry,
+        gross_received_from_expiry,
     } = self.expiry_summaries.remove(expiry_market_id);
-    (trading_fees_paid, cash_paid_to_expiry, cash_received_from_expiry)
+    let gross_profit = if (gross_received_from_expiry > gross_paid_to_expiry) {
+        gross_received_from_expiry - gross_paid_to_expiry
+    } else {
+        0
+    };
+    (trading_fees_paid, gross_profit)
 }
 
 /// Roll inactive stake into active stake once a new epoch has begun. Idempotent
@@ -318,8 +305,8 @@ fun ensure_expiry_summary(self: &mut PredictManager, expiry_market_id: ID) {
         let summary = ExpiryTradingSummary {
             open_position_count: 0,
             trading_fees_paid: 0,
-            cash_paid_to_expiry: 0,
-            cash_received_from_expiry: 0,
+            gross_paid_to_expiry: 0,
+            gross_received_from_expiry: 0,
         };
         self.expiry_summaries.add(expiry_market_id, summary);
     }

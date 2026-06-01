@@ -227,9 +227,12 @@ fun create_expiry_market_uses_registered_tick_size() {
     );
     assert!(vault.active_expiry_markets().contains(&expiry_market_id));
     assert_eq!(
-        vault.total_allocated_capital(),
-        deepbook_predict::config_constants::default_allocation!(),
+        vault.max_expiry_funding(expiry_market_id),
+        config_constants::default_max_expiry_funding!(),
     );
+    let (sent_to_expiry, received_from_expiry) = vault.expiry_flow_amounts(expiry_market_id);
+    assert_eq!(sent_to_expiry, 0);
+    assert_eq!(received_from_expiry, 0);
     return_shared(pyth);
     return_shared(config);
     return_shared(vault);
@@ -247,10 +250,7 @@ fun create_expiry_market_uses_registered_tick_size() {
     assert_eq!(market.tick_size(), UPDATED_EXPIRY_TICK_SIZE);
     assert_eq!(market.max_strike(), EXPECTED_CENTERED_MAX_STRIKE);
     assert_eq!(market.expiry_fee_max_multiplier(), RAMP_MAX_MULTIPLIER);
-    assert_eq!(
-        market.allocated_capital(),
-        deepbook_predict::config_constants::default_allocation!(),
-    );
+    assert_eq!(market.cash_balance(), 0);
     assert_eq!(oracle.id(), market_oracle_id);
     return_shared(oracle);
     return_shared(market);
@@ -353,10 +353,10 @@ fun setup_ready_expiry_creation(expiry_tick_size: u64): (Scenario, ID, ID, Marke
     scenario.next_tx(test_constants::admin());
     let mut vault = scenario.take_shared<PoolVault>();
     let mut config = scenario.take_shared<ProtocolConfig>();
-    let valuation = plp::start_valuation(&mut config, &vault);
+    let sync = plp::start_pool_sync(&mut config, &vault);
     let lp = vault.supply(
         &mut config,
-        valuation,
+        sync,
         coin::mint_for_testing<DUSDC>(POOL_SUPPLY, scenario.ctx()),
         scenario.ctx(),
     );

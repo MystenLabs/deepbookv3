@@ -875,7 +875,7 @@ def main() -> None:
             raise SystemExit("scenario config must include source.expiry_ms")
         economic_data = load_json_object(args.python_long_data)
         if economic_data.get("schema_version") != replay.ECONOMIC_SCHEMA_VERSION:
-            raise SystemExit("input must use predict_economic_v1 schema")
+            raise SystemExit(f"input must use {replay.ECONOMIC_SCHEMA_VERSION} schema")
         replay.configure_oracle_grid(first_oracle_spot(economic_data))
         dataset = build_ranking_dataset(
             economic_data,

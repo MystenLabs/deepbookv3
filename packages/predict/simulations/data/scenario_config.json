@@ -1,47 +1,43 @@
 {
-  "source": {
-    "expiry_ms": "1779955200000",
-    "settlement_timestamp_ms": "1779955200001",
-    "settlement_price": "73380034988828"
-  },
-  "capital": {
-    "normal": {
-      "manager_seed": "500000000000",
-      "vault_seed": "500000000000",
-      "initial_expiry_allocation": "50000000000"
+    "source": {
+        "expiry_ms": "1779955200000",
+        "settlement_timestamp_ms": "1779955200001",
+        "settlement_price": "73380034988828"
     },
-    "long": {
-      "manager_seed": "5000000000000",
-      "vault_seed": "5000000000000",
-      "initial_expiry_allocation": "500000000000"
-    }
-  },
-  "generation": {
-    "normal": {
-      "min_mint_spend": "2000000",
-      "max_mint_spend": "20000000"
+    "capital": {
+        "normal": {
+            "manager_seed": "500000000000",
+            "vault_seed": "500000000000"
+        },
+        "long": {
+            "manager_seed": "5000000000000",
+            "vault_seed": "5000000000000"
+        }
     },
-    "long": {
-      "min_mint_spend": "5000000",
-      "max_mint_spend": "50000000"
+    "generation": {
+        "normal": {
+            "min_mint_spend": "2000000",
+            "max_mint_spend": "20000000"
+        },
+        "long": {
+            "min_mint_spend": "5000000",
+            "max_mint_spend": "50000000"
+        }
+    },
+    "protocol": {
+        "base_fee": "20000000",
+        "min_fee": "5000000",
+        "min_ask_price": "10000000",
+        "max_ask_price": "990000000",
+        "trade_liquidation_budget": "24",
+        "valuation_liquidation_budget": "192",
+        "liquidation_head_scan_divisor": "3",
+        "curve_samples": "50",
+        "protocol_reserve_profit_share": "400000000",
+        "trading_loss_rebate_rate": "500000000",
+        "expiry_fee_max_multiplier": "2000000000",
+        "leverage_floor_window_ms": "31536000000",
+        "max_expiry_floor_premium": "200000000",
+        "liquidation_ltv": "850000000"
     }
-  },
-  "protocol": {
-    "base_fee": "20000000",
-    "min_fee": "5000000",
-    "min_ask_price": "10000000",
-    "max_ask_price": "990000000",
-    "trade_liquidation_budget": "24",
-    "valuation_liquidation_budget": "192",
-    "liquidation_head_scan_divisor": "3",
-    "curve_samples": "50",
-    "lp_fee_share": "600000000",
-    "protocol_fee_share": "200000000",
-    "insurance_fee_share": "200000000",
-    "trading_loss_rebate_rate": "500000000",
-    "expiry_fee_max_multiplier": "2000000000",
-    "leverage_floor_window_ms": "31536000000",
-    "max_expiry_floor_premium": "200000000",
-    "liquidation_ltv": "850000000"
-  }
 }

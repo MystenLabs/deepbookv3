@@ -145,16 +145,14 @@ public fun set_block_scholes_svi_freshness_ms(
     config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
 }
 
-/// Set the current fee surplus distribution shares used during settled expiry surplus sweeps.
-public fun set_fee_shares(
+/// Set the current protocol reserve profit share used when materializing aggregate expiry profit.
+public fun set_protocol_reserve_profit_share(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
-    lp_fee_share: u64,
-    protocol_fee_share: u64,
-    insurance_fee_share: u64,
+    protocol_reserve_profit_share: u64,
 ) {
     config.assert_not_valuation_in_progress();
-    config.fee_config.set_fee_shares(lp_fee_share, protocol_fee_share, insurance_fee_share);
+    config.fee_config.set_protocol_reserve_profit_share(protocol_reserve_profit_share);
     config_events::emit_fee_config_updated(config.id(), &config.fee_config);
 }
 
@@ -167,64 +165,6 @@ public fun set_template_trading_loss_rebate_rate(
     config.assert_not_valuation_in_progress();
     config.fee_config.set_trading_loss_rebate_rate(value);
     config_events::emit_fee_config_updated(config.id(), &config.fee_config);
-}
-
-/// Set the maximum total exposure percentage.
-public fun set_max_total_exposure_pct(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    pct: u64,
-) {
-    config.assert_not_valuation_in_progress();
-    config.risk_config.set_max_total_exposure_pct(pct);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
-}
-
-/// Set the current DUSDC allocation for new expiry markets.
-public fun set_expiry_allocation(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    allocation: u64,
-) {
-    config.assert_not_valuation_in_progress();
-    config.risk_config.set_expiry_allocation(allocation);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
-}
-
-/// Set the utilization threshold that enables expiry allocation growth.
-public fun set_grow_utilization_threshold(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    threshold: u64,
-) {
-    config.assert_not_valuation_in_progress();
-    config.risk_config.set_grow_utilization_threshold(threshold);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
-}
-
-/// Set the utilization threshold that enables expiry allocation shrink.
-public fun set_shrink_utilization_threshold(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    threshold: u64,
-) {
-    config.assert_not_valuation_in_progress();
-    config.risk_config.set_shrink_utilization_threshold(threshold);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
-}
-
-/// Set the allocation growth target multiplier.
-public fun set_grow_factor(config: &mut ProtocolConfig, _admin_cap: &AdminCap, factor: u64) {
-    config.assert_not_valuation_in_progress();
-    config.risk_config.set_grow_factor(factor);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
-}
-
-/// Set the allocation shrink target multiplier.
-public fun set_shrink_factor(config: &mut ProtocolConfig, _admin_cap: &AdminCap, factor: u64) {
-    config.assert_not_valuation_in_progress();
-    config.risk_config.set_shrink_factor(factor);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
 }
 
 /// Set the total liquidation candidate budget used before live valuations.

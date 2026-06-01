@@ -9,12 +9,12 @@ one oracle, one manager, and many orders. The generated CSV is the transaction
 ledger. Each row is one executable transaction, and only these row actions are
 supported:
 
-- `oracle_mint_ptb`: update Block Scholes prices, update SVI, and mint one
-  order in one PTB.
-- `redeem`: refresh oracle data and redeem one referenced order.
-- `supply`: refresh oracle data, value the active expiry, and supply DUSDC.
-- `withdraw`: refresh oracle data, value the active expiry, and withdraw one
-  referenced PLP coin.
+-   `oracle_mint_ptb`: update Block Scholes prices, update SVI, and mint one
+    order in one PTB.
+-   `redeem`: refresh oracle data and redeem one referenced order.
+-   `supply`: refresh oracle data, value the active expiry, and supply DUSDC.
+-   `withdraw`: refresh oracle data, value the active expiry, and withdraw one
+    referenced PLP coin.
 
 Explicit manual liquidation rows are not generated or replayed. Liquidations are
 measured as passive liquidation work performed inside mint/redeem/supply/withdraw
@@ -60,39 +60,39 @@ interface.
 
 ## File Map
 
-- `run.sh`: orchestrates fresh full runs and Python-only runs.
-- `data/scenario_dataset.csv`: ignored local source data with paired SVI/price
-  snapshots.
-- `data/scenario_config.json`: source expiry/settlement values, normal/long
-  capital sizing, mint spend ranges, fee-ramp settings, and protocol knobs.
-  Localnet setup applies the normal capital sizing and Pyth fee-ramp settings;
-  other protocol values in this file mirror Move defaults for parity and are
-  consumed directly by the generator and Python replay.
-- `data/generate_scenario.py`: random normal/long scenario generator.
-- `docs/ANALYSIS_NOTES.md`: current simulation interpretation notes and
-  follow-up analysis questions (economics).
-- `docs/GAS_EXPERIMENTS.md`: running log of gas/performance experiments on the
-  Predict contracts — hypothesis, change, measurement, and keep/revert decision.
-- `charts/chart_*.py`: standalone chart scripts; one script writes one chart
-  file.
-- `charts/chart_common.py`: shared chart styling and timeline helpers.
-- `tools/analyze_liquidation_priority_encodings.py`: standalone research tool,
-  not called by `run.sh`. It evaluates static order-id priority layouts against
-  kept long-run data; the current protocol layout is quantity first, then
-  leverage, then stable encoded order terms with sequence last.
-- `src/sim.ts`: localnet setup and generated CSV replay engine.
-- `src/runtime.ts`: Sui transaction builders and execution helpers.
-- `src/localPyth.ts`: local Wormhole/Pyth key and signed update helpers used
-  only by the localnet harness.
-- `src/shared.ts`: CSV parsing, shared schemas, paths, and JSON helpers.
-- `python_replay.py`: Python economic mirror and derived metric generator.
-  Pricing values used by replay, such as base fee, min fee, and ask bounds,
-  are read from `data/scenario_config.json` with Python defaults as fallback.
-- `sim_artifacts.py`: shared JSON, unit-conversion, and summary helpers.
-- `write_benchmark_results.py`: CI helper that converts `local_trace.json` into
-  the legacy gas benchmark `results.json`.
-- `runs/`: ignored output directory for local run instances.
-- `data/generated/`: ignored temporary generated scenario files.
+-   `run.sh`: orchestrates fresh full runs and Python-only runs.
+-   `data/scenario_dataset.csv`: ignored local source data with paired SVI/price
+    snapshots.
+-   `data/scenario_config.json`: source expiry/settlement values, normal/long
+    capital sizing, mint spend ranges, fee-ramp settings, and protocol knobs.
+    Localnet setup applies the normal capital sizing and Pyth fee-ramp settings;
+    other protocol values in this file mirror Move defaults for parity and are
+    consumed directly by the generator and Python replay.
+-   `data/generate_scenario.py`: random normal/long scenario generator.
+-   `docs/ANALYSIS_NOTES.md`: current simulation interpretation notes and
+    follow-up analysis questions (economics).
+-   `docs/GAS_EXPERIMENTS.md`: running log of gas/performance experiments on the
+    Predict contracts — hypothesis, change, measurement, and keep/revert decision.
+-   `charts/chart_*.py`: standalone chart scripts; one script writes one chart
+    file.
+-   `charts/chart_common.py`: shared chart styling and timeline helpers.
+-   `tools/analyze_liquidation_priority_encodings.py`: standalone research tool,
+    not called by `run.sh`. It evaluates static order-id priority layouts against
+    kept long-run data; the current protocol layout is quantity first, then
+    leverage, then stable encoded order terms with sequence last.
+-   `src/sim.ts`: localnet setup and generated CSV replay engine.
+-   `src/runtime.ts`: Sui transaction builders and execution helpers.
+-   `src/localPyth.ts`: local Wormhole/Pyth key and signed update helpers used
+    only by the localnet harness.
+-   `src/shared.ts`: CSV parsing, shared schemas, paths, and JSON helpers.
+-   `python_replay.py`: Python economic mirror and derived metric generator.
+    Pricing values used by replay, such as base fee, min fee, and ask bounds,
+    are read from `data/scenario_config.json` with Python defaults as fallback.
+-   `sim_artifacts.py`: shared JSON, unit-conversion, and summary helpers.
+-   `write_benchmark_results.py`: CI helper that converts `local_trace.json` into
+    the legacy gas benchmark `results.json`.
+-   `runs/`: ignored output directory for local run instances.
+-   `data/generated/`: ignored temporary generated scenario files.
 
 ## Full Run Flow
 
@@ -217,34 +217,34 @@ stay on the same grid.
 
 Full localnet runs can produce:
 
-- `artifacts/normal_scenario.csv`: the exact generated normal scenario replayed
-  by both localnet and Python.
-- `artifacts/local_trace.json`: compact localnet transaction trace with digests,
-  gas, and normalized Move event payloads.
-- `artifacts/local_data.json`: cleaned localnet economic projection.
-- `artifacts/python_data.json`: cleaned Python economic projection for parity.
-- `artifacts/python_long_data.json`: long-run Python canonical data. Deleted by
-  default after charts unless `--python-only --keep-derived` is used.
-- `artifacts/python_derived.json`: long-run Python derived valuation, flow, and
-  liquidation-efficiency metrics. Deleted by default after charts unless
-  `--python-only --keep-derived` is used.
-- `artifacts/economic_summary.json`: compact persistent summary of canonical,
-  gas, PnL, and liquidation-efficiency metrics. The artifact list only includes
-  files that exist for that run.
-- `artifacts/chart_gas.png`: mint/redeem and supply/withdraw gas costs.
-- `artifacts/chart_market_overview.png`: BTC price, mint/redeem strikes,
-  live pre-terminal vault MTM PnL, active book PnL, and live book risk.
-- `artifacts/chart_vault_pnl_fee_coverage.png`: cumulative fees, net
-  liquidation, and live pre-terminal MTM risk-compensation mark.
-- `artifacts/chart_vault_risk_profile.png`: PnL, fees, liquidation losses, and
-  backlog normalized against allocated capital and active liability.
-- `artifacts/chart_liquidation_coverage.png`: normalized backlog pressure and
-  liquidated value by passive trigger.
-- `artifacts/chart_liquidation_execution_quality.png`: liquidation execution
-  price versus floor, bad-debt ratio distribution, and net liquidation surplus.
-- `artifacts/state.json`: localnet setup state snapshot.
-- `artifacts/results.json`: legacy gas-benchmark payload written only by the CI
-  benchmark compatibility path.
+-   `artifacts/normal_scenario.csv`: the exact generated normal scenario replayed
+    by both localnet and Python.
+-   `artifacts/local_trace.json`: compact localnet transaction trace with digests,
+    gas, and normalized Move event payloads.
+-   `artifacts/local_data.json`: cleaned localnet economic projection.
+-   `artifacts/python_data.json`: cleaned Python economic projection for parity.
+-   `artifacts/python_long_data.json`: long-run Python canonical data. Deleted by
+    default after charts unless `--python-only --keep-derived` is used.
+-   `artifacts/python_derived.json`: long-run Python derived valuation, flow, and
+    liquidation-efficiency metrics. Deleted by default after charts unless
+    `--python-only --keep-derived` is used.
+-   `artifacts/economic_summary.json`: compact persistent summary of canonical,
+    gas, PnL, and liquidation-efficiency metrics. The artifact list only includes
+    files that exist for that run.
+-   `artifacts/chart_gas.png`: mint/redeem and supply/withdraw gas costs.
+-   `artifacts/chart_market_overview.png`: BTC price, mint/redeem strikes,
+    live pre-terminal vault MTM PnL, active book PnL, and live book risk.
+-   `artifacts/chart_vault_pnl_fee_coverage.png`: cumulative fees, net
+    liquidation, and live pre-terminal MTM risk-compensation mark.
+-   `artifacts/chart_vault_risk_profile.png`: PnL, fees, liquidation losses, and
+    backlog normalized against expiry funding and active liability.
+-   `artifacts/chart_liquidation_coverage.png`: normalized backlog pressure and
+    liquidated value by passive trigger.
+-   `artifacts/chart_liquidation_execution_quality.png`: liquidation execution
+    price versus floor, bad-debt ratio distribution, and net liquidation surplus.
+-   `artifacts/state.json`: localnet setup state snapshot.
+-   `artifacts/results.json`: legacy gas-benchmark payload written only by the CI
+    benchmark compatibility path.
 
 ## Parity Contract
 
@@ -254,26 +254,31 @@ canonical live economics for the same generated CSV rows: oracle refreshes,
 mints, redeems, passive liquidations, supply, withdraw, normalized event fields,
 and tracked state deltas.
 
+Live pool-sync sweeps increase aggregate pricing credits but do not materialize
+protocol profit. Protocol reserves move only when terminal expiry accounting
+materializes profit after that expiry's terminal losses and watermarks are
+applied.
+
 The long Python replay intentionally extends that validated live mirror with
 features the localnet runner cannot model practically: exact replay timestamps,
 real expiry/settlement inputs from `data/scenario_config.json`, exact-time
 fee-ramp economics, and direct terminal closeout. The parity path assumes the
-localnet manager has no active stake and therefore no terminal trading-loss
-rebate. The long Python closeout intentionally applies the full eligible
-trading-loss rebate to the manager as a worst-case vault-risk assumption. Use
+localnet manager has no active stake and therefore no terminal rebate payout.
+The long Python closeout intentionally applies the full eligible rebate after
+the protocol's gross-profit offset as a worst-case vault-risk assumption. Use
 long-run outputs for tuning with this boundary in mind: parity validates the
 shared live transaction engine; Python-specific assertions guard the extra
 terminal analysis layer.
 
 Read long-run outputs in two layers:
 
-- `python_long_data.json` / `economic_summary.long_canonical`: canonical
-  transaction economics plus Python-only terminal closeout.
-- `python_derived.json` / `economic_summary.derived`: live per-transaction
-  observability sampled before terminal closeout. The market overview, fee
-  coverage, and liquidation coverage charts use this live/pre-terminal layer.
-  The liquidation execution quality chart reads canonical liquidation events,
-  but still plots only liquidation events that occurred before terminal closeout.
+-   `python_long_data.json` / `economic_summary.long_canonical`: canonical
+    transaction economics plus Python-only terminal closeout.
+-   `python_derived.json` / `economic_summary.derived`: live per-transaction
+    observability sampled before terminal closeout. The market overview, fee
+    coverage, and liquidation coverage charts use this live/pre-terminal layer.
+    The liquidation execution quality chart reads canonical liquidation events,
+    but still plots only liquidation events that occurred before terminal closeout.
 
 Do not use the normal localnet parity run to tune near-expiry economics. Use it
 to detect implementation drift between Move events/accounting and the Python
@@ -281,85 +286,87 @@ mirror, then use the long Python run for economic tuning.
 
 ## Derived Data
 
-`python_derived.json` uses schema `predict_derived_v1`. It is Python-only and is
+`python_derived.json` uses schema `predict_derived_v2`. It is Python-only and is
 never compared against localnet.
 
 Important fields:
 
-- `valuation.lp_live_mtm_pnl`: LP cash above the initial expiry allocation plus
-  LP fee surplus, minus current live position liability.
-- `valuation.active_book_live_pnl`: open-order contribution minus current live
-  liability.
-- `flows.trading_fee`: trading fee collected in that transaction.
-- `flows.borrow_fee_accrued`: current open-order floor growth modeled with the
-  same floor-share rounding as Move; this is an MTM/accrual view, not realized
-  cash.
-- `flows.liquidation_gap`: bad debt, `max(floor - gross, 0)`.
-- `flows.liquidation_surplus`: execution surplus above the liquidation floor.
-- `liquidation.liquidatable_value`: standing liquidatable floor value after the
-  step.
-- `liquidation.interval_liquidated_value_by_action`: interval liquidation value
-  split across mint/redeem/supply/withdraw triggers.
-- `liquidation.all_passive_required_manual_topup_share`: estimated share of
-  interval liquidation pressure not cleared by all passive flows. This means
-  active/operator intervention beyond the generated passive user flows, not an
-  explicit generated `liquidate` transaction.
-- `liquidation.mint_redeem_required_manual_topup_share`: same estimate using
-  only mint/redeem passive flows.
-- `scan_active_count` is sampled before that transaction's liquidation pass, so
-  `scan_coverage` uses the same denominator the scanner saw.
-- `risk.allocated_capital`: current capital allocated from the vault into the
-  expiry.
-- `risk.position_liability_over_allocated`: live liability divided by allocated
-  capital.
-- `risk.lp_live_mtm_pnl_over_allocated`: live LP MTM PnL divided by allocated
-  capital.
-- `risk.active_book_live_pnl_over_allocated`: active open-book PnL divided by
-  allocated capital.
-- `risk.liquidatable_value_over_liability`: standing liquidatable floor value
-  divided by live liability.
+-   `valuation.lp_live_mtm_pnl`: active expiry value after pending protocol-profit
+    exclusion, minus current expiry funding basis.
+-   `valuation.active_book_live_pnl`: open-order contribution minus current live
+    liability.
+-   `flows.trading_fee`: trading fee collected in that transaction.
+-   `flows.borrow_fee_accrued`: current open-order floor growth modeled with the
+    same floor-share rounding as Move; this is an MTM/accrual view, not realized
+    cash.
+-   `flows.liquidation_gap`: bad debt, `max(floor - gross, 0)`.
+-   `flows.liquidation_surplus`: execution surplus above the liquidation floor.
+-   `liquidation.liquidatable_value`: standing liquidatable floor value after the
+    step.
+-   `liquidation.interval_liquidated_value_by_action`: interval liquidation value
+    split across mint/redeem/supply/withdraw triggers.
+-   `liquidation.all_passive_required_manual_topup_share`: estimated share of
+    interval liquidation pressure not cleared by all passive flows. This means
+    active/operator intervention beyond the generated passive user flows, not an
+    explicit generated `liquidate` transaction.
+-   `liquidation.mint_redeem_required_manual_topup_share`: same estimate using
+    only mint/redeem passive flows.
+-   `scan_active_count` is sampled before that transaction's liquidation pass, so
+    `scan_coverage` uses the same denominator the scanner saw.
+-   `risk.expiry_funding_basis`: current net pool funding basis for the expiry.
+    This starts at zero after market creation and rises only when PLP pool sync
+    sends cash into the expiry; it falls when that same expiry returns cash.
+-   `risk.position_liability_over_funding`: live liability divided by expiry
+    funding basis.
+-   `risk.lp_live_mtm_pnl_over_funding`: live LP MTM PnL divided by expiry
+    funding basis.
+-   `risk.active_book_live_pnl_over_funding`: active open-book PnL divided by
+    expiry funding basis.
+-   `risk.liquidatable_value_over_liability`: standing liquidatable floor value
+    divided by live liability.
 
 ## Maintenance Rules
 
-- Keep `run.sh` limited to the four documented manual command forms. The hidden
-  benchmark compatibility path exists only for the Docker benchmark worker and
-  should not grow into a second manual runner interface.
-- Keep generated scenarios on the current CSV shape only. Do not add
-  backwards-compatible support for standalone oracle updates, plain mint rows,
-  or explicit liquidation rows.
-- Preserve the invariant that one CSV row is one PTB. Do not infer transaction
-  behavior from adjacent rows.
-- Keep localnet timestamp-synthetic. Do not add sleeps or wall-clock waiting to
-  simulate the 24-hour source window.
-- Treat `data/scenario_config.json` as the simulation mirror of protocol knobs,
-  capital sizing, generation sizing, and source settlement inputs. When Move
-  defaults, admin setup, fee policy, liquidation policy, or settlement
-  assumptions change, update the Python mirror and this config in the same PR.
-  Localnet does not run admin setters for every mirrored protocol field; fields
-  such as pricing config, liquidation budgets, fee shares, LTV, and floor
-  premium should remain equal to Move defaults unless localnet setup is
-  intentionally extended. Upgrade-only constants are mirrored directly in
-  Python.
-- Keep raw long-run data temporary by default. Use
-  `bash run.sh --python-only --keep-derived` only when iterating on charts or
-  inspecting raw records.
-- Keep charts in `charts/` and standalone: one `charts/chart_*.py` script writes
-  one chart file. Every chart should include a one-sentence subtitle describing
-  what it measures.
+-   Keep `run.sh` limited to the four documented manual command forms. The hidden
+    benchmark compatibility path exists only for the Docker benchmark worker and
+    should not grow into a second manual runner interface.
+-   Keep generated scenarios on the current CSV shape only. Do not add
+    backwards-compatible support for standalone oracle updates, plain mint rows,
+    or explicit liquidation rows.
+-   Preserve the invariant that one CSV row is one PTB. Do not infer transaction
+    behavior from adjacent rows.
+-   Keep localnet timestamp-synthetic. Do not add sleeps or wall-clock waiting to
+    simulate the 24-hour source window.
+-   Treat `data/scenario_config.json` as the simulation mirror of protocol knobs,
+    capital sizing, generation sizing, and source settlement inputs. When Move
+    defaults, admin setup, fee policy, liquidation policy, or settlement
+    assumptions change, update the Python mirror and this config in the same PR.
+    Localnet does not run admin setters for every mirrored protocol field; fields
+    such as pricing config, liquidation budgets, protocol reserve profit share,
+    LTV, and floor premium should remain equal to Move defaults unless localnet
+    setup is intentionally extended. Upgrade-only constants are mirrored directly
+    in Python, and small fixed pricing defaults are intentionally mirrored
+    manually in `python_replay.py` to keep the harness lightweight.
+-   Keep raw long-run data temporary by default. Use
+    `bash run.sh --python-only --keep-derived` only when iterating on charts or
+    inspecting raw records.
+-   Keep charts in `charts/` and standalone: one `charts/chart_*.py` script writes
+    one chart file. Every chart should include a one-sentence subtitle describing
+    what it measures.
 
 ## Current Caveats
 
-- `data/scenario_config.json` mirrors Move defaults, localnet-replayable setup
-  knobs, normal/long capital sizing, generation spend ranges, and source
-  settlement inputs used by the long Python replay. If Move defaults, admin
-  setup, fee-ramp policy, liquidation policy, capital sizing, or settlement
-  assumptions change, update this file at the same time.
-- Long-run capital sizing is intentionally allowed to exceed the current
-  on-chain per-expiry allocation bound. It is an off-chain scale-up for Python
-  economic analysis, not a deployable allocation policy.
-- Full localnet replay can be gas-heavy when supply/withdraw valuation finds a
-  liquidation backlog. The runner default transaction gas budget is currently
-  `1_000_000_000` MIST.
-- Live leveraged NAV still depends on bounded liquidation plus aggregate floor
-  accounting in the Move implementation. That is the core protocol risk being
-  explored by this harness, not something the simulator hides.
+-   `data/scenario_config.json` mirrors Move defaults, localnet-replayable setup
+    knobs, normal/long capital sizing, generation spend ranges, and source
+    settlement inputs used by the long Python replay. If Move defaults, admin
+    setup, fee-ramp policy, liquidation policy, capital sizing, or settlement
+    assumptions change, update this file at the same time.
+-   Long-run vault and manager seeds can be larger than normal mode, but expiry
+    cash starts at zero and reaches the protocol cash floor only through existing
+    PLP pool-sync rebalancing.
+-   Full localnet replay can be gas-heavy when supply/withdraw valuation finds a
+    liquidation backlog. The runner default transaction gas budget is currently
+    `1_000_000_000` MIST.
+-   Live leveraged NAV still depends on bounded liquidation plus aggregate floor
+    accounting in the Move implementation. That is the core protocol risk being
+    explored by this harness, not something the simulator hides.

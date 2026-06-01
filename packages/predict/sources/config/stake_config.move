@@ -32,18 +32,26 @@ public(package) fun upper_benefit_power(config: &StakeConfig): u64 {
     config.upper_benefit_power
 }
 
-/// Trading-fee discount for an active stake, in FLOAT_SCALING: the two-segment
-/// benefit ratio scaled by the fixed `max_fee_discount` (50%).
-public(package) fun fee_discount_fraction(config: &StakeConfig, active_stake: u64): u64 {
-    math::mul(config.benefit_ratio(active_stake), constants::max_fee_discount!())
+/// Fee amount remaining after the active stake discount is applied.
+public(package) fun fee_amount_after_discount(
+    config: &StakeConfig,
+    amount: u64,
+    active_stake: u64,
+): u64 {
+    let discount_fraction = math::mul(
+        config.benefit_ratio(active_stake),
+        constants::max_fee_discount!(),
+    );
+    amount - math::mul(amount, discount_fraction)
 }
 
-/// Share of a manager's eligible trading-loss rebate for an active stake, in
-/// FLOAT_SCALING: the two-segment benefit ratio directly (no staking-side cap;
-/// the rebate's size is set by `trading_loss_rebate_rate`). The complement
-/// compounds to LPs.
-public(package) fun rebate_fraction(config: &StakeConfig, active_stake: u64): u64 {
-    config.benefit_ratio(active_stake)
+/// Trading-loss rebate amount paid for an active stake.
+public(package) fun rebate_amount(
+    config: &StakeConfig,
+    eligible_rebate: u64,
+    active_stake: u64,
+): u64 {
+    math::mul(eligible_rebate, config.benefit_ratio(active_stake))
 }
 
 public(package) fun new(): StakeConfig {
