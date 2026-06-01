@@ -12,7 +12,7 @@ use deepbook_predict::{
     market_oracle::{Self, MarketOracle, MarketOracleCap},
     plp::{Self, PLP, PoolVault},
     protocol_config::{Self, ProtocolConfig},
-    pyth_source::PythSource,
+    pyth_source::{Self, PythSource},
     registry::{Self, Registry},
     test_constants
 };
@@ -371,12 +371,20 @@ fun supply_prices_active_unrealized_profit_net_of_protocol_share() {
         &pyth,
         &fixture.clock,
     );
+    // No incentives in this pool, so supply's incentive sources/clock are unused;
+    // a local clock keeps the call from borrowing both config and clock off `fixture`.
+    let payment = coin::mint_for_testing<DUSDC>(NAV_TEST_SUPPLY, fixture.scenario.ctx());
+    let nav_clock = clock::create_for_testing(fixture.scenario.ctx());
     let new_plp = vault.supply(
         &mut fixture.config,
         sync,
-        coin::mint_for_testing<DUSDC>(NAV_TEST_SUPPLY, fixture.scenario.ctx()),
+        payment,
+        &pyth,
+        &pyth,
+        &nav_clock,
         fixture.scenario.ctx(),
     );
+    nav_clock.destroy_for_testing();
 
     // Pool value used for pricing is 360b:
     // idle 330b + active expiry NAV 50b - pending protocol share 20b.
@@ -451,12 +459,18 @@ fun setup_pool_with_pyth(): Fixture {
     let mut vault = scenario.take_shared<PoolVault>();
     let vault_id = vault.id();
     let sync = plp::start_pool_sync(&mut config, &vault);
+    // Bootstrap supply: no incentives exist yet, so the sources are ignored.
+    let placeholder = pyth_source::new_for_testing(scenario.ctx());
     let initial_plp = vault.supply(
         &mut config,
         sync,
         coin::mint_for_testing<DUSDC>(INITIAL_SUPPLY, scenario.ctx()),
+        &placeholder,
+        &placeholder,
+        &clock,
         scenario.ctx(),
     );
+    destroy(placeholder);
     return_shared(vault);
 
     scenario.next_tx(test_constants::admin());

@@ -31,6 +31,7 @@ use sui::{
     clock::Clock,
     coin::{Self, Coin, TreasuryCap},
     coin_registry,
+    sui::SUI,
     vec_set::{Self, VecSet}
 };
 use token::deep::DEEP;
@@ -46,9 +47,40 @@ const EInvalidInitialSupply: u64 = 7;
 const EZeroShares: u64 = 8;
 const EZeroPoolValue: u64 = 9;
 const EPackageVersionDisabled: u64 = 10;
+const EZeroIncentiveDeposit: u64 = 11;
+const ENoPlpHolders: u64 = 12;
+const EZeroStreamDuration: u64 = 13;
+const EStreamDurationTooLong: u64 = 14;
+const EIncentiveFeedMismatch: u64 = 15;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
+
+/// Per-incentive holdings on a linear vesting schedule, plus the oracle binding
+/// cached from the registry at deposit time (decimals + Lazer feed id) so the
+/// pool can value the asset during a sync without reading the registry (which
+/// depends on this module). The pool holds exactly two of these, one per fixed
+/// incentive asset (`SUI`, `DEEP`).
+///
+/// A deposit lands in `locked` and vests linearly into `released` over the
+/// window `[last_compound_ms, end_ms]`. Only `released` is folded into pool NAV
+/// and paid out in-kind on withdrawal, so a deposit accrues to holders gradually
+/// rather than instantly — and an instant supply+withdraw cannot capture the
+/// still-locked remainder (compounding advances on wall-clock time only).
+public struct IncentiveState<phantom T> has store {
+    /// Vested, claimable balance: priced into NAV and paid out in-kind.
+    released: Balance<T>,
+    /// Unvested balance still streaming into `released`.
+    locked: Balance<T>,
+    /// Start of the current release interval (last compound time), in ms.
+    last_compound_ms: u64,
+    /// End of the linear release window, in ms; 0 once fully vested (no schedule).
+    end_ms: u64,
+    /// Coin decimals and Lazer feed id, cached from the registry on deposit; 0
+    /// until the first deposit (the state is empty and unvalued until then).
+    decimals: u8,
+    feed_id: u32,
+}
 
 /// Pool-level capital and PLP accounting state.
 public struct PoolVault has key {
@@ -63,6 +95,14 @@ public struct PoolVault has key {
     treasury_cap: TreasuryCap<PLP>,
     /// Active expiry IDs, pool cash-flow rows, profit basis, and per-expiry funding caps.
     expiry_accounting: Ledger,
+    /// Admin-deposited LP-owned incentive in SUI: valued into pool NAV (released
+    /// portion, via `pyth_source::value_in_dusdc`) and paid out pro-rata in-kind
+    /// on withdrawal.
+    incentive_sui: IncentiveState<SUI>,
+    /// Admin-deposited LP-owned incentive in DEEP. Distinct from `staked_deep`
+    /// (manager custody, not redeemable): this balance is LP-owned and redeemed
+    /// in-kind on withdrawal.
+    incentive_deep: IncentiveState<DEEP>,
     /// Mirror of `ProtocolConfig.allowed_versions`; synced permissionlessly.
     allowed_versions: VecSet<u64>,
 }
@@ -131,6 +171,27 @@ public fun active_expiry_markets(vault: &PoolVault): &vector<ID> {
 /// Return total PLP supply.
 public fun total_supply(vault: &PoolVault): u64 {
     vault.treasury_cap.total_supply()
+}
+
+/// Return the vested (claimable) SUI incentive balance — the portion folded into
+/// NAV and paid out in-kind; the still-vesting remainder is `incentive_sui_locked`.
+public fun incentive_sui_balance(vault: &PoolVault): u64 {
+    vault.incentive_sui.released.value()
+}
+
+/// Return the unvested (still-streaming) SUI incentive balance.
+public fun incentive_sui_locked(vault: &PoolVault): u64 {
+    vault.incentive_sui.locked.value()
+}
+
+/// Return the vested (claimable) DEEP incentive balance.
+public fun incentive_deep_balance(vault: &PoolVault): u64 {
+    vault.incentive_deep.released.value()
+}
+
+/// Return the unvested (still-streaming) DEEP incentive balance.
+public fun incentive_deep_locked(vault: &PoolVault): u64 {
+    vault.incentive_deep.locked.value()
 }
 
 /// Return the pricing debit side of aggregate expiry profit basis.
@@ -207,21 +268,20 @@ public fun sync_expiry(
     sync.record_expiry_synced(expiry_market_id, expiry_nav);
 }
 
-/// Finish a full-pool sync flow and return current PLP-owned pool value.
+/// Finish a full-pool sync flow and return the PLP-owned DUSDC-denominated value
+/// (idle + active expiry NAV, net of pending protocol profit). Asserts every
+/// active expiry was synced. Incentives are valued separately by `supply` (priced
+/// into NAV) and paid in-kind by `withdraw`, so the sync flow itself is unaware
+/// of them.
 public fun finish_pool_sync(vault: &PoolVault, config: &mut ProtocolConfig, sync: PoolSync): u64 {
     vault.assert_version_allowed();
     config.assert_valuation_in_progress();
     sync.assert_pool_vault(vault);
     assert_all_expected_synced(&sync.expected_expiry_markets, &sync.synced_expiry_markets);
-    let pool_value = vault.synced_pool_value(config, sync.active_expiry_value);
-    let PoolSync {
-        pool_vault_id: _,
-        expected_expiry_markets: _,
-        synced_expiry_markets: _,
-        active_expiry_value: _,
-    } = sync;
+    let dusdc_value = vault.synced_pool_value(config, sync.active_expiry_value);
+    let PoolSync { .. } = sync;
     config.end_valuation();
-    pool_value
+    dusdc_value
 }
 
 /// Resolve one manager's settled trading-loss rebate and return residual reserve to the pool.
@@ -253,22 +313,36 @@ public fun claim_trading_loss_rebate(
 
 /// Supply DUSDC into the pool vault against a complete full-pool sync.
 ///
-/// Finishes pool sync to price shares, then mints PLP against the supplied DUSDC.
+/// Values both incentive assets from their fresh feeds, finishes the sync to get
+/// the DUSDC NAV, then prices shares against the total (DUSDC + incentive value)
+/// and mints PLP. Pricing against total NAV means a new depositor pays the
+/// incentives' fair value and cannot dilute existing holders' in-kind claim on
+/// them. `sui_source`/`deep_source` are the bound incentive feeds; an empty
+/// incentive ignores its source.
 public fun supply(
     vault: &mut PoolVault,
     config: &mut ProtocolConfig,
     sync: PoolSync,
     payment: Coin<DUSDC>,
+    sui_source: &PythSource,
+    deep_source: &PythSource,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<PLP> {
     vault.assert_version_allowed();
-    let pool_value = vault.finish_pool_sync(config, sync);
+    // Value incentives while the valuation window is still open (before the
+    // finisher ends it), then finish for the DUSDC NAV.
+    let incentive_value = vault.value_incentives(config, sui_source, deep_source, clock);
+    let dusdc_value = vault.finish_pool_sync(config, sync);
+    let pool_value = dusdc_value + incentive_value;
     let payment_amount = payment.value();
     assert!(payment_amount > 0, EZeroSupply);
 
     let total_supply = vault.treasury_cap.total_supply();
     let shares = if (total_supply == 0) {
-        assert!(pool_value == 0, EInvalidInitialSupply);
+        // Bootstrap mints 1:1; only the DUSDC side must be empty (incentives
+        // can't exist before the first supply — see deposit guards).
+        assert!(dusdc_value == 0, EInvalidInitialSupply);
         payment_amount
     } else {
         assert!(pool_value > 0, EZeroPoolValue);
@@ -290,38 +364,51 @@ public fun supply(
     plp
 }
 
-/// Withdraw DUSDC from the pool vault against a complete full-pool sync.
+/// Withdraw from the pool vault against a complete full-pool sync.
 ///
-/// Finishes pool sync to price shares, then burns PLP and withdraws idle DUSDC.
+/// Pays the DUSDC-denominated pro-rata share plus the pro-rata in-kind share of
+/// each incentive asset (SUI, DEEP), all in one call. Each incentive is vested up
+/// to the withdrawal time, then `lp_amount * released / total_supply` (supply
+/// snapshotted before the burn) is split from its released balance, rounding
+/// down: the holder's slice covers every unit vested while they still held
+/// shares, and the locked remainder stays for those who remain. Incentives need
+/// no oracle here — an in-kind slice is fair by construction — so a stale feed
+/// can never block an exit.
 public fun withdraw(
     vault: &mut PoolVault,
     config: &mut ProtocolConfig,
     sync: PoolSync,
     lp_coin: Coin<PLP>,
+    clock: &Clock,
     ctx: &mut TxContext,
-): Coin<DUSDC> {
+): (Coin<DUSDC>, Coin<SUI>, Coin<DEEP>) {
     vault.assert_version_allowed();
-    let pool_value = vault.finish_pool_sync(config, sync);
+    // Only the DUSDC-denominated value backs the DUSDC payout; incentives are
+    // paid in-kind below from their live released balances (no oracle).
+    let dusdc_value = vault.finish_pool_sync(config, sync);
     let lp_amount = lp_coin.value();
     assert!(lp_amount > 0, EZeroWithdraw);
 
     let total_supply = vault.treasury_cap.total_supply();
-    let withdraw_amount = predict_math::mul_div_round_down(lp_amount, pool_value, total_supply);
+    let withdraw_amount = predict_math::mul_div_round_down(lp_amount, dusdc_value, total_supply);
     assert!(withdraw_amount > 0, EZeroWithdraw);
     let idle_balance = vault.idle_balance.value();
     assert!(idle_balance >= withdraw_amount, EInsufficientIdleBalance);
 
     vault.treasury_cap.burn(lp_coin);
     let payout = vault.idle_balance.split(withdraw_amount).into_coin(ctx);
+    let now_ms = clock.timestamp_ms();
+    let sui = vault.incentive_sui.claim(lp_amount, total_supply, now_ms, ctx);
+    let deep = vault.incentive_deep.claim(lp_amount, total_supply, now_ms, ctx);
     vault_events::emit_withdraw_executed(
         vault.id(),
         lp_amount,
         withdraw_amount,
-        pool_value,
+        dusdc_value,
         vault.treasury_cap.total_supply(),
         vault.idle_balance.value(),
     );
-    payout
+    (payout, sui, deep)
 }
 
 /// Stake DEEP for trading benefits. The DEEP is held in the pool vault; the
@@ -372,6 +459,8 @@ public(package) fun new(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): Po
         staked_deep: balance::zero(),
         treasury_cap,
         expiry_accounting: pool_accounting::new(ctx),
+        incentive_sui: empty_incentive_state(),
+        incentive_deep: empty_incentive_state(),
         allowed_versions: vec_set::singleton(constants::current_version!()),
     }
 }
@@ -395,6 +484,45 @@ public(package) fun set_allowed_versions(vault: &mut PoolVault, allowed_versions
 public(package) fun register_expiry_market(vault: &mut PoolVault, expiry_market_id: ID) {
     vault.assert_version_allowed();
     vault.expiry_accounting.register_expiry(expiry_market_id);
+}
+
+/// Take custody of an admin SUI incentive deposit, caching its oracle binding and
+/// arming a linear vesting schedule over `duration_ms`.
+///
+/// Mints no PLP. The deposit lands in the locked balance and vests into the
+/// released balance over `[now, now + duration_ms]`; released value accrues to
+/// existing holders via share price and is paid back in-kind on withdrawal.
+/// Requires existing PLP holders so the first future supplier can't capture the
+/// whole deposit. A deposit onto a still-vesting schedule first vests the prior
+/// schedule to now (locking in its released portion), then re-stretches the
+/// unvested remainder plus the new deposit over a fresh window. The authorizing
+/// `AdminCap` and feed-config checks live in `registry::deposit_sui_incentive`,
+/// which supplies the binding read from the registry.
+public(package) fun receive_sui_incentive(
+    vault: &mut PoolVault,
+    deposit: Coin<SUI>,
+    decimals: u8,
+    feed_id: u32,
+    duration_ms: u64,
+    clock: &Clock,
+) {
+    vault.assert_version_allowed();
+    assert!(vault.treasury_cap.total_supply() > 0, ENoPlpHolders);
+    vault.incentive_sui.fund(deposit, decimals, feed_id, duration_ms, clock);
+}
+
+/// Take custody of an admin DEEP incentive deposit. See `receive_sui_incentive`.
+public(package) fun receive_deep_incentive(
+    vault: &mut PoolVault,
+    deposit: Coin<DEEP>,
+    decimals: u8,
+    feed_id: u32,
+    duration_ms: u64,
+    clock: &Clock,
+) {
+    vault.assert_version_allowed();
+    assert!(vault.treasury_cap.total_supply() > 0, ENoPlpHolders);
+    vault.incentive_deep.fund(deposit, decimals, feed_id, duration_ms, clock);
 }
 
 /// Set the max net DUSDC the pool may have funded into one expiry.
@@ -444,6 +572,28 @@ fun expiry_rebalance_cash_terms(market: &ExpiryMarket): (u64, u64, u64) {
     (market.cash_balance(), target_cash, sweep_threshold_cash)
 }
 
+/// Total DUSDC-denominated value of both incentive assets for `supply` pricing.
+///
+/// Vests each non-empty incentive to now and prices its released balance from its
+/// bound, fresh feed; an empty incentive contributes 0 and ignores its source.
+/// Must be called inside the valuation window (before the finisher ends it) so
+/// the oracle reads are gated like the expiry path's.
+fun value_incentives(
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    sui_source: &PythSource,
+    deep_source: &PythSource,
+    clock: &Clock,
+): u64 {
+    let sui_value = if (!vault.incentive_sui.is_empty()) {
+        vault.incentive_sui.sync_value(config, sui_source, clock)
+    } else 0;
+    let deep_value = if (!vault.incentive_deep.is_empty()) {
+        vault.incentive_deep.sync_value(config, deep_source, clock)
+    } else 0;
+    sui_value + deep_value
+}
+
 fun synced_pool_value(vault: &PoolVault, config: &ProtocolConfig, active_expiry_value: u64): u64 {
     let gross_pool_value = vault.idle_balance.value() + active_expiry_value;
     gross_pool_value - vault.pending_protocol_profit_exclusion(config, active_expiry_value)
@@ -479,6 +629,102 @@ fun assert_expiry_ready_to_sync(sync: &PoolSync, expiry_market_id: ID) {
 fun record_expiry_synced(sync: &mut PoolSync, expiry_market_id: ID, expiry_nav: u64) {
     sync.active_expiry_value = sync.active_expiry_value + expiry_nav;
     sync.synced_expiry_markets.push_back(expiry_market_id);
+}
+
+fun empty_incentive_state<T>(): IncentiveState<T> {
+    IncentiveState<T> {
+        released: balance::zero<T>(),
+        locked: balance::zero<T>(),
+        last_compound_ms: 0,
+        end_ms: 0,
+        decimals: 0,
+        feed_id: 0,
+    }
+}
+
+/// Whether this incentive has no holdings (no released and no locked balance),
+/// so it need not be valued during a pool sync.
+fun is_empty<T>(state: &IncentiveState<T>): bool {
+    state.released.value() == 0 && state.locked.value() == 0
+}
+
+/// Add a deposit and (re)arm the linear vesting window. Vests any prior schedule
+/// to now first, so its already-vested portion stays in `released` and only the
+/// unvested remainder is re-stretched over the new window with the new deposit.
+fun fund<T>(
+    state: &mut IncentiveState<T>,
+    deposit: Coin<T>,
+    decimals: u8,
+    feed_id: u32,
+    duration_ms: u64,
+    clock: &Clock,
+) {
+    assert!(deposit.value() > 0, EZeroIncentiveDeposit);
+    assert!(duration_ms > 0, EZeroStreamDuration);
+    assert!(duration_ms <= constants::max_incentive_stream_ms!(), EStreamDurationTooLong);
+    let now_ms = clock.timestamp_ms();
+    state.compound(now_ms);
+    state.decimals = decimals;
+    state.feed_id = feed_id;
+    state.locked.join(deposit.into_balance());
+    state.last_compound_ms = now_ms;
+    state.end_ms = now_ms + duration_ms;
+}
+
+/// Verify the source binding + freshness, vest to now, and return the released
+/// balance's DUSDC value. Same freshness bound the market path applies.
+fun sync_value<T>(
+    state: &mut IncentiveState<T>,
+    config: &ProtocolConfig,
+    pyth_source: &PythSource,
+    clock: &Clock,
+): u64 {
+    assert!(pyth_source.feed_id() == state.feed_id, EIncentiveFeedMismatch);
+    pricing::assert_pyth_spot_fresh(config.pricing_config(), pyth_source, clock);
+    state.compound(clock.timestamp_ms());
+    pyth_source.value_in_dusdc(state.released.value(), state.decimals)
+}
+
+/// Vest to `now_ms`, then split the pro-rata `lp_amount / total_supply` share of
+/// the released balance, rounding down. `lp_amount <= total_supply`, so the share
+/// never exceeds the released balance.
+fun claim<T>(
+    state: &mut IncentiveState<T>,
+    lp_amount: u64,
+    total_supply: u64,
+    now_ms: u64,
+    ctx: &mut TxContext,
+): Coin<T> {
+    state.compound(now_ms);
+    let amount = predict_math::mul_div_round_down(lp_amount, state.released.value(), total_supply);
+    state.released.split(amount).into_coin(ctx)
+}
+
+/// Vest the linear schedule up to `now_ms`, moving the elapsed fraction of the
+/// locked balance into the released balance:
+///   release = locked * (now_ms - last_compound_ms) / (end_ms - last_compound_ms)
+/// No-op when there is no active schedule (`end_ms == 0`) or no time has passed.
+/// Once `now_ms` reaches `end_ms`, releases the entire locked remainder and
+/// clears the schedule (`end_ms = 0`), so later compounds are no-ops until the
+/// next deposit re-arms it.
+fun compound<T>(state: &mut IncentiveState<T>, now_ms: u64) {
+    if (state.end_ms == 0) return;
+    if (now_ms <= state.last_compound_ms) return;
+
+    let locked = state.locked.value();
+    let remaining = state.end_ms - state.last_compound_ms;
+    let amount = if (now_ms >= state.end_ms) {
+        state.last_compound_ms = 0;
+        state.end_ms = 0;
+        locked
+    } else {
+        let elapsed = now_ms - state.last_compound_ms;
+        state.last_compound_ms = now_ms;
+        predict_math::mul_div_round_down(locked, elapsed, remaining)
+    };
+    if (amount > 0) {
+        state.released.join(state.locked.split(amount));
+    };
 }
 
 fun rebalance_active_expiry_cash(vault: &mut PoolVault, market: &mut ExpiryMarket) {
