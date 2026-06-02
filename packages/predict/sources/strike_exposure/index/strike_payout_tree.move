@@ -16,8 +16,8 @@ module deepbook_predict::strike_payout_tree;
 use deepbook_predict::{constants, strike_grid::StrikeGrid};
 use sui::{bcs, hash::blake2b256, table::{Self, Table}};
 
-const EInsufficientPayoutTerms: u64 = 2;
-const EInvalidPayoutTerms: u64 = 5;
+const EInsufficientPayoutTerms: u64 = 0;
+const EInvalidPayoutTerms: u64 = 1;
 
 /// Sparse payout-liability tree for strike prefixes.
 public struct StrikePayoutTree has store {

@@ -29,12 +29,12 @@ use deepbook_predict::{
 };
 use sui::clock::Clock;
 
-const ESettledLiabilityNotMaterialized: u64 = 3;
-const ESettledLiabilityUnderflow: u64 = 4;
-const EInvalidCloseQuantity: u64 = 5;
-const ETerminalFloorExceedsLiquidationLtv: u64 = 6;
-const EOrderBelowLiquidationThreshold: u64 = 7;
-const EOrderPrincipalBelowMinimum: u64 = 8;
+const ESettledLiabilityNotMaterialized: u64 = 0;
+const ESettledLiabilityUnderflow: u64 = 1;
+const EInvalidCloseQuantity: u64 = 2;
+const ETerminalFloorExceedsLiquidationLtv: u64 = 3;
+const EOrderBelowLiquidationThreshold: u64 = 4;
+const EOrderPrincipalBelowMinimum: u64 = 5;
 
 /// Exposure lifecycle state for one oracle grid.
 public struct StrikeExposure has store {
