@@ -3,8 +3,8 @@
 
 /// Registry, versioning, and creation entrypoints for the Predict protocol.
 ///
-/// This module creates shared setup objects, stores uniqueness indexes for
-/// Pyth sources and expiries, and exposes registry-owned governance entrypoints.
+/// This module creates shared setup objects, stores Pyth source uniqueness,
+/// and exposes registry-owned governance entrypoints.
 /// Runtime pool accounting, config policy, expiry risk, oracle state, and user
 /// positions stay in their owning modules.
 module deepbook_predict::registry;
@@ -12,7 +12,6 @@ module deepbook_predict::registry;
 use deepbook_predict::{
     admin::{Self, AdminCap},
     builder_code,
-    config_constants,
     config_events,
     constants,
     expiry_market::{Self, ExpiryMarket},
@@ -29,7 +28,6 @@ use sui::{clock::Clock, table::{Self, Table}, vec_set::{Self, VecSet}};
 const EFeedIdMismatch: u64 = 0;
 const EPythSourceAlreadyCreated: u64 = 1;
 const EInvalidExpiry: u64 = 2;
-const EExpiryMarketAlreadyCreated: u64 = 3;
 const EPauseCapNotValid: u64 = 4;
 const EPackageVersionDisabled: u64 = 5;
 const EVersionAlreadyEnabled: u64 = 6;
@@ -43,13 +41,11 @@ public struct PauseCap has key, store {
     id: UID,
 }
 
-/// Shared registry for source and expiry uniqueness.
+/// Shared registry for Pyth source uniqueness and governance state.
 public struct Registry has key {
     id: UID,
     /// Pyth Lazer feed ID -> canonical shared PythSource object.
     pyth_source_ids: Table<u32, ID>,
-    /// Created expiry markets keyed by expiry timestamp.
-    expiry_market_ids: Table<u64, ID>,
     /// IDs of `PauseCap` objects currently authorized to use pause-only entries.
     /// Admin mints into this set and revokes from it.
     allowed_pause_caps: VecSet<ID>,
@@ -173,14 +169,15 @@ public fun pause_trading_pause_cap(
 }
 
 /// Force `mint_paused = true` on a single expiry market via a valid `PauseCap`.
-/// One-way; admin's `expiry_market::set_mint_paused` is needed to unpause.
+/// One-way; admin's `protocol_config::set_expiry_mint_paused` is needed to unpause.
 public fun pause_expiry_market_mint_pause_cap(
-    market: &mut ExpiryMarket,
+    config: &mut ProtocolConfig,
     registry: &Registry,
     pause_cap: &PauseCap,
+    expiry: u64,
 ) {
     registry.assert_valid_pause_cap(pause_cap);
-    market.pause_mint();
+    config.pause_expiry_mint(expiry);
 }
 
 /// Create a shared Pyth source for one admin-approved Lazer feed, configuring
@@ -216,13 +213,13 @@ public fun create_pyth_source(
 
 /// Create the MarketOracle and ExpiryMarket objects for one future expiry.
 ///
-/// The registry enforces one market per expiry, validates the registered Pyth
-/// source, and registers the expiry as active. Pool funding happens later through
-/// PLP rebalancing.
+/// The registry validates the registered Pyth source, asks `ProtocolConfig` to
+/// enforce one row per expiry, and registers the expiry as active. Pool funding
+/// happens later through PLP rebalancing.
 public fun create_expiry_market(
     registry: &mut Registry,
     pool_vault: &mut PoolVault,
-    config: &ProtocolConfig,
+    config: &mut ProtocolConfig,
     pyth: &PythSource,
     cap: &MarketOracleCap,
     expiry: u64,
@@ -235,38 +232,26 @@ public fun create_expiry_market(
     let pyth_lazer_feed_id = pyth.feed_id();
     assert!(registry.pyth_source_ids.contains(pyth_lazer_feed_id), EFeedIdMismatch);
     assert!(*registry.pyth_source_ids.borrow(pyth_lazer_feed_id) == pyth.id(), EFeedIdMismatch);
-    let feed_template = config.feed_template(pyth_lazer_feed_id);
-    let tick_size = feed_template.tick_size();
-    let expiry_fee_window_ms = feed_template.expiry_fee_window_ms();
-    let expiry_fee_max_multiplier = feed_template.expiry_fee_max_multiplier();
     pricing::assert_pyth_spot_fresh(config.pricing_config(), pyth, clock);
-    let min_strike = centered_min_strike(pyth.spot(), tick_size);
     let preallocated_ticks = expiry_preallocated_ticks(expiry, clock.timestamp_ms());
-    assert!(!registry.expiry_market_ids.contains(expiry), EExpiryMarketAlreadyCreated);
     let allowed_versions = registry.allowed_versions;
     let market_oracle_id = market_oracle::create_and_share(
         pyth,
-        config.market_oracle_config(),
         cap,
         expiry,
         allowed_versions,
         ctx,
     );
-    let expiry_market_id = expiry_market::create_and_share(
+    let (expiry_market_id, min_strike, tick_size) = expiry_market::create_and_share(
         config,
         allowed_versions,
         market_oracle_id,
-        pyth_lazer_feed_id,
+        pyth,
         expiry,
-        min_strike,
-        tick_size,
         preallocated_ticks,
-        expiry_fee_window_ms,
-        expiry_fee_max_multiplier,
         ctx,
     );
     pool_vault.register_expiry_market(expiry_market_id);
-    registry.expiry_market_ids.add(expiry, expiry_market_id);
 
     config_events::emit_market_created(
         expiry_market_id,
@@ -325,7 +310,6 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
         Registry {
             id: object::new(ctx),
             pyth_source_ids: table::new(ctx),
-            expiry_market_ids: table::new(ctx),
             allowed_pause_caps: vec_set::empty(),
             allowed_versions: vec_set::singleton(constants::current_version!()),
         },
@@ -336,14 +320,6 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
 /// Abort unless the supplied `PauseCap` was minted by admin and not revoked.
 fun assert_valid_pause_cap(registry: &Registry, pause_cap: &PauseCap) {
     assert!(registry.allowed_pause_caps.contains(&pause_cap.id.to_inner()), EPauseCapNotValid);
-}
-
-/// Floor spot to the configured tick and center the fixed oracle grid around it.
-fun centered_min_strike(spot: u64, tick_size: u64): u64 {
-    config_constants::assert_oracle_tick_size_covers_spot(tick_size, spot);
-    let center_ticks = constants::oracle_strike_grid_ticks!() / 2;
-
-    (spot / tick_size - center_ticks) * tick_size
 }
 
 fun expiry_preallocated_ticks(expiry: u64, now_ms: u64): u64 {
@@ -391,27 +367,23 @@ public fun destroy_registry_for_testing(registry: Registry) {
     let Registry {
         id,
         pyth_source_ids,
-        expiry_market_ids,
         allowed_pause_caps: _,
         allowed_versions: _,
     } = registry;
     id.delete();
     pyth_source_ids.destroy_empty();
-    expiry_market_ids.destroy_empty();
 }
 
 /// Variant for tests that exercise registration paths: drops the uniqueness
-/// tables without requiring them to be empty.
+/// table without requiring it to be empty.
 #[test_only]
 public fun destroy_registry_drop_for_testing(registry: Registry) {
     let Registry {
         id,
         pyth_source_ids,
-        expiry_market_ids,
         allowed_pause_caps: _,
         allowed_versions: _,
     } = registry;
     id.delete();
     pyth_source_ids.drop();
-    expiry_market_ids.drop();
 }

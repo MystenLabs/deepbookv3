@@ -23,13 +23,12 @@ use deepbook_predict::{
     pricing,
     pricing_config::PricingConfig,
     pyth_source::PythSource,
+    strike_grid::{Self, StrikeGrid},
     strike_nav_matrix::{Self, StrikeNavMatrix},
     strike_payout_tree::{Self, StrikePayoutTree}
 };
 use sui::clock::Clock;
 
-const EInvalidTickSize: u64 = 0;
-const EInvalidStrikeGrid: u64 = 1;
 const EInvalidStrikeIndex: u64 = 2;
 const ESettledLiabilityNotMaterialized: u64 = 3;
 const ESettledLiabilityUnderflow: u64 = 4;
@@ -44,18 +43,10 @@ public struct StrikeExposure has store {
     expiry_market_id: ID,
     /// Terminal timestamp used by floor-index and order floor math.
     expiry_ms: u64,
-    grid_min: u64,
-    grid_tick: u64,
-    grid_max: u64,
-    /// Max increase of the floor index over this expiry's floor window.
-    /// `200_000_000` means the index rises from 1.0 to 1.2 by expiry.
+    grid: StrikeGrid,
+    /// Frozen per-expiry leverage and liquidation terms.
     max_expiry_floor_premium: u64,
-    /// 1e9-scaled floor-to-live-value liquidation threshold snapshotted at creation.
     liquidation_ltv: u64,
-    /// Window before expiry over which the trade fee ramps up. Snapshotted at creation.
-    expiry_fee_window_ms: u64,
-    /// Fee multiplier reached at expiry, in FLOAT_SCALING; 1x disables. Snapshotted at creation.
-    expiry_fee_max_multiplier: u64,
     next_order_sequence: u64,
     /// Remaining settled liability after settlement has been materialized.
     settled_payout_liability: u64,
@@ -75,6 +66,12 @@ public struct LiveExposure has store {
     minted_max_strike: u64,
 }
 
+/// Decoded strike range for one order in this exposure grid.
+public struct OrderStrikes has copy, drop {
+    lower: u64,
+    higher: u64,
+}
+
 /// Return conservative max-live backing, or remaining settled payout liability once materialized.
 public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
     if (exposure.settled_liability_materialized) {
@@ -84,34 +81,24 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
     }
 }
 
-/// Return the terminal floor-index premium snapshotted for this exposure book.
+public(package) fun min_strike(exposure: &StrikeExposure): u64 {
+    exposure.grid.min_strike()
+}
+
+public(package) fun tick_size(exposure: &StrikeExposure): u64 {
+    exposure.grid.tick_size()
+}
+
+public(package) fun max_strike(exposure: &StrikeExposure): u64 {
+    exposure.grid.max_strike()
+}
+
 public(package) fun max_expiry_floor_premium(exposure: &StrikeExposure): u64 {
     exposure.max_expiry_floor_premium
 }
 
-/// Return the liquidation LTV snapshotted for this exposure book.
 public(package) fun liquidation_ltv(exposure: &StrikeExposure): u64 {
     exposure.liquidation_ltv
-}
-
-public(package) fun expiry_fee_window_ms(exposure: &StrikeExposure): u64 {
-    exposure.expiry_fee_window_ms
-}
-
-public(package) fun expiry_fee_max_multiplier(exposure: &StrikeExposure): u64 {
-    exposure.expiry_fee_max_multiplier
-}
-
-public(package) fun min_strike(exposure: &StrikeExposure): u64 {
-    exposure.grid_min
-}
-
-public(package) fun tick_size(exposure: &StrikeExposure): u64 {
-    exposure.grid_tick
-}
-
-public(package) fun max_strike(exposure: &StrikeExposure): u64 {
-    exposure.grid_max
 }
 
 /// Evaluate live user-position liability over the current minted strike range.
@@ -132,15 +119,16 @@ public(package) fun valuation_liability(
     let curve = pricing::build_curve(
         &svi,
         forward,
-        exposure.grid_min,
-        exposure.grid_tick,
-        exposure.grid_max,
+        exposure.grid.min_strike(),
+        exposure.grid.tick_size(),
+        exposure.grid.max_strike(),
         minted_min_strike,
         minted_max_strike,
     );
     live
         .nav
         .live_value(
+            &exposure.grid,
             &curve,
             minted_min_strike,
             minted_max_strike,
@@ -153,37 +141,64 @@ public(package) fun is_liquidated_order(exposure: &StrikeExposure, order: &Order
     exposure.liquidation.is_liquidated(order)
 }
 
+/// Decode an order into `(lower, higher)` strikes for this grid.
+public(package) fun order_strikes(exposure: &StrikeExposure, order: &Order): OrderStrikes {
+    let open_index = order::open_strike_index();
+    let min_strike_index = order.min_strike_index();
+    let max_strike_index = order.max_strike_index();
+
+    let lower = if (min_strike_index == open_index) {
+        constants::neg_inf!()
+    } else {
+        let strike = exposure.grid.min_strike() + min_strike_index * exposure.grid.tick_size();
+        assert!(strike <= exposure.grid.max_strike(), EInvalidStrikeIndex);
+        strike
+    };
+
+    let higher = if (max_strike_index == open_index) {
+        constants::pos_inf!()
+    } else {
+        let strike = exposure.grid.min_strike() + max_strike_index * exposure.grid.tick_size();
+        assert!(strike <= exposure.grid.max_strike(), EInvalidStrikeIndex);
+        strike
+    };
+
+    OrderStrikes { lower, higher }
+}
+
+public(package) fun lower(strikes: &OrderStrikes): u64 {
+    strikes.lower
+}
+
+public(package) fun higher(strikes: &OrderStrikes): u64 {
+    strikes.higher
+}
+
 /// Create a strike exposure book for the oracle grid.
 public(package) fun new(
     expiry_market_id: ID,
     expiry_ms: u64,
     min_strike: u64,
     tick_size: u64,
-    preallocated_ticks: u64,
     max_expiry_floor_premium: u64,
     liquidation_ltv: u64,
-    expiry_fee_window_ms: u64,
-    expiry_fee_max_multiplier: u64,
+    preallocated_ticks: u64,
     ctx: &mut TxContext,
 ): StrikeExposure {
-    let max_strike = validated_max_strike(min_strike, tick_size);
+    let grid = strike_grid::new(min_strike, tick_size);
     StrikeExposure {
         expiry_market_id,
         expiry_ms,
-        grid_min: min_strike,
-        grid_tick: tick_size,
-        grid_max: max_strike,
+        grid,
         max_expiry_floor_premium,
         liquidation_ltv,
-        expiry_fee_window_ms,
-        expiry_fee_max_multiplier,
         next_order_sequence: 0,
         settled_payout_liability: 0,
         settled_liability_materialized: false,
         liquidation: liquidation_book::new(ctx),
         live: option::some(LiveExposure {
-            nav: strike_nav_matrix::new(min_strike, tick_size, max_strike, preallocated_ticks, ctx),
-            payout: strike_payout_tree::new(min_strike, tick_size, max_strike, ctx),
+            nav: strike_nav_matrix::new(&grid, preallocated_ticks, ctx),
+            payout: strike_payout_tree::new(ctx),
             minted_min_strike: max_u64(),
             minted_max_strike: 0,
         }),
@@ -202,40 +217,17 @@ public(package) fun close_settled_order(
     user_payout
 }
 
-/// Quote and allocate a live mint order over this exposure book's strike grid.
-///
-/// Returns `(order, fee_amount)`.
+/// Allocate a live mint order over this exposure book's strike grid.
 public(package) fun allocate_mint_order(
     exposure: &mut StrikeExposure,
-    config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
     lower: u64,
     higher: u64,
     quantity: u64,
     leverage: u64,
+    entry_probability: u64,
     clock: &Clock,
-): (Order, u64) {
+): Order {
     let (min_strike_index, max_strike_index) = exposure.strike_indices(lower, higher);
-    let entry_probability = pricing::live_range_probability(
-        config,
-        market,
-        pyth,
-        lower,
-        higher,
-        clock,
-    );
-    order::assert_mint_leverage_tier(entry_probability, leverage);
-    let fee_rate = pricing::assert_mint_fee_rate(
-        config,
-        market,
-        exposure.expiry_fee_window_ms,
-        exposure.expiry_fee_max_multiplier,
-        entry_probability,
-        clock,
-    );
-    let fee_amount = math::mul(fee_rate, quantity);
-
     let sequence = exposure.next_order_sequence;
     let allocated_order = order::new_from_strike_indices(
         clock.timestamp_ms(),
@@ -253,55 +245,36 @@ public(package) fun allocate_mint_order(
     exposure.next_order_sequence = sequence + 1;
     exposure.insert_live_order(&allocated_order, lower, higher);
 
-    (allocated_order, fee_amount)
+    allocated_order
 }
 
 /// Close live indexed quantity and return redeem terms.
 ///
-/// Returns `(resulting_order, redeem_amount, trading_fee)`.
+/// Returns `(resulting_order, redeem_amount)`.
 /// `resulting_order` is the original order for a full close, or the replacement
 /// order that remains after a partial close.
-public(package) fun close_and_quote_live_order(
+public(package) fun close_live_order(
     exposure: &mut StrikeExposure,
-    config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
     order: &Order,
     close_quantity: u64,
+    range_probability: u64,
     clock: &Clock,
-): (Order, u64, u64) {
-    let (lower, higher) = exposure.order_strikes(order);
+): (Order, u64) {
     let old_quantity = order.quantity();
     order::assert_valid_quantity(close_quantity);
     assert!(close_quantity <= old_quantity, EInvalidCloseQuantity);
-    let range_probability = pricing::live_range_probability(
-        config,
-        market,
-        pyth,
-        lower,
-        higher,
-        clock,
-    );
-    let fee_rate = pricing::fee_rate(
-        config,
-        market,
-        exposure.expiry_fee_window_ms,
-        exposure.expiry_fee_max_multiplier,
-        range_probability,
-        clock,
-    );
 
+    let strikes = exposure.order_strikes(order);
     let (resulting_order, closed_floor_amount) = exposure.close_live_exposure(
         order,
-        lower,
-        higher,
+        strikes.lower,
+        strikes.higher,
         close_quantity,
         clock,
     );
     let gross_redeem_amount = math::mul(range_probability, close_quantity);
     let redeem_amount = gross_redeem_amount - gross_redeem_amount.min(closed_floor_amount);
-    let fee_amount = math::mul(fee_rate, close_quantity).min(redeem_amount);
-    (resulting_order, redeem_amount, fee_amount)
+    (resulting_order, redeem_amount)
 }
 
 /// Clear one liquidated-order tombstone after its manager position is closed.
@@ -381,18 +354,18 @@ fun liquidate_candidates(
     let mut i = 0;
     while (i < candidates.length()) {
         let order = order::from_order_id(candidates[i]);
-        let (lower, higher) = exposure.order_strikes(&order);
+        let strikes = exposure.order_strikes(&order);
         let range_probability = pricing::compute_range_price(
             svi,
             forward,
-            lower,
-            higher,
+            strikes.lower,
+            strikes.higher,
         );
         if (
             exposure.liquidate_candidate_if_under_floor(
                 &order,
-                lower,
-                higher,
+                strikes.lower,
+                strikes.higher,
                 range_probability,
                 clock,
             )
@@ -406,8 +379,8 @@ fun liquidate_candidates(
 
 /// Return terminal payout for one order at settlement, including the contract floor.
 fun settled_order_payout(exposure: &StrikeExposure, order: &Order, settlement: u64): u64 {
-    let (lower, higher) = exposure.order_strikes(order);
-    if (settlement > lower && settlement <= higher) {
+    let strikes = exposure.order_strikes(order);
+    if (settlement > strikes.lower && settlement <= strikes.higher) {
         let (_, terminal_payout, _) = exposure.order_index_update_terms(order);
         terminal_payout
     } else {
@@ -432,10 +405,7 @@ fun order_index_update_terms(exposure: &StrikeExposure, order: &Order): (u64, u6
         terminal_floor < max_terminal_floor_before_liquidation,
         ETerminalFloorExceedsLiquidationLtv,
     );
-    let floor_at_open = exposure.floor_amount_at_ms(
-        floor_shares,
-        order.opened_at_ms(),
-    );
+    let floor_at_open = exposure.floor_amount_at_ms(floor_shares, order.opened_at_ms());
     (floor_shares, quantity - terminal_floor, quantity - floor_at_open)
 }
 
@@ -494,24 +464,9 @@ fun minted_strike_range(live: &LiveExposure): (u64, u64) {
     )
 }
 
-/// Validate the creation grid and return its finite max strike.
-fun validated_max_strike(min_strike: u64, tick_size: u64): u64 {
-    assert!(tick_size > 0, EInvalidTickSize);
-    assert!(tick_size % constants::oracle_tick_size_unit!() == 0, EInvalidTickSize);
-    assert!(min_strike > 0, EInvalidStrikeGrid);
-    assert!(min_strike % tick_size == 0, EInvalidStrikeGrid);
-    let ticks = constants::oracle_strike_grid_ticks!();
-    assert!(ticks > 0, EInvalidStrikeGrid);
-    min_strike + tick_size * ticks
-}
-
 /// Convert raw order strikes into `(min_strike_index, max_strike_index)` for this grid.
 fun strike_indices(exposure: &StrikeExposure, lower: u64, higher: u64): (u64, u64) {
-    assert!(lower < higher, EInvalidStrikeGrid);
-    assert!(
-        !(lower == constants::neg_inf!() && higher == constants::pos_inf!()),
-        EInvalidStrikeGrid,
-    );
+    exposure.grid.assert_range_boundaries(lower, higher);
     let open_index = order::open_strike_index();
     let min_strike_index = if (lower == constants::neg_inf!()) {
         open_index
@@ -529,34 +484,7 @@ fun strike_indices(exposure: &StrikeExposure, lower: u64, higher: u64): (u64, u6
 
 /// Validate one finite strike and return its grid index.
 fun checked_finite_strike_index(exposure: &StrikeExposure, strike: u64): u64 {
-    assert!(strike >= exposure.grid_min && strike <= exposure.grid_max, EInvalidStrikeGrid);
-    assert!((strike - exposure.grid_min) % exposure.grid_tick == 0, EInvalidStrikeGrid);
-    (strike - exposure.grid_min) / exposure.grid_tick
-}
-
-/// Decode an order into `(lower, higher)` strikes for this grid.
-fun order_strikes(exposure: &StrikeExposure, order: &Order): (u64, u64) {
-    let open_index = order::open_strike_index();
-    let min_strike_index = order.min_strike_index();
-    let max_strike_index = order.max_strike_index();
-
-    let lower = if (min_strike_index == open_index) {
-        constants::neg_inf!()
-    } else {
-        let strike = exposure.grid_min + min_strike_index * exposure.grid_tick;
-        assert!(strike <= exposure.grid_max, EInvalidStrikeIndex);
-        strike
-    };
-
-    let higher = if (max_strike_index == open_index) {
-        constants::pos_inf!()
-    } else {
-        let strike = exposure.grid_min + max_strike_index * exposure.grid_tick;
-        assert!(strike <= exposure.grid_max, EInvalidStrikeIndex);
-        strike
-    };
-
-    (lower, higher)
+    exposure.grid.finite_strike_index(strike)
 }
 
 /// Close live exposure and return `(resulting_order, closed_floor_amount)`.
@@ -630,16 +558,18 @@ fun remove_closed_live_order(
         clock.timestamp_ms(),
     );
 
+    let grid = exposure.grid;
     let live = exposure.live.borrow_mut();
     live
         .payout
         .remove_range(
+            &grid,
             lower,
             higher,
             closed_terminal_payout,
             closed_live_backing_payout,
         );
-    live.nav.remove_range(lower, higher, close_quantity, closed_floor_shares);
+    live.nav.remove_range(&grid, lower, higher, close_quantity, closed_floor_shares);
     closed_floor_amount
 }
 
@@ -667,9 +597,10 @@ fun liquidate_candidate_if_under_floor(
     let (floor_shares, terminal_payout, live_backing_payout) = exposure.order_index_update_terms(
         order,
     );
+    let grid = exposure.grid;
     let live = exposure.live.borrow_mut();
-    live.payout.remove_range(lower, higher, terminal_payout, live_backing_payout);
-    live.nav.remove_range(lower, higher, quantity, floor_shares);
+    live.payout.remove_range(&grid, lower, higher, terminal_payout, live_backing_payout);
+    live.nav.remove_range(&grid, lower, higher, quantity, floor_shares);
     exposure.liquidation.mark_liquidated(order);
     order_events::emit_order_liquidated(
         exposure.expiry_market_id,
@@ -705,9 +636,10 @@ fun insert_live_order(exposure: &mut StrikeExposure, order: &Order, lower: u64, 
         order,
     );
     exposure.assert_mint_above_liquidation_threshold(order, floor_shares);
+    let grid = exposure.grid;
     let live = exposure.live.borrow_mut();
-    live.payout.insert_range(lower, higher, terminal_payout, live_backing_payout);
-    live.nav.insert_range(lower, higher, quantity, floor_shares);
+    live.payout.insert_range(&grid, lower, higher, terminal_payout, live_backing_payout);
+    live.nav.insert_range(&grid, lower, higher, quantity, floor_shares);
     live.track_minted_boundaries(lower, higher);
     exposure.liquidation.insert_order(order);
 }
