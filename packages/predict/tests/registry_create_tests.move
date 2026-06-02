@@ -12,7 +12,7 @@ use deepbook_predict::{
     market_oracle::{Self, MarketOracle, MarketOracleCap},
     plp::{Self, PoolVault},
     pricing,
-    protocol_config::ProtocolConfig,
+    protocol_config::{Self, ProtocolConfig},
     pyth_source::PythSource,
     registry,
     test_constants,
@@ -46,10 +46,11 @@ const POOL_SUPPLY: u64 = 100_000_000_000;
 
 #[test]
 fun create_pyth_source_returns_id_and_registers() {
-    let (mut scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
+    let (mut scenario, mut reg, mut config, admin_cap) = test_helpers::begin_registry_config_test();
 
     let pyth_id = registry::create_pyth_source(
         &mut reg,
+        &mut config,
         &admin_cap,
         PYTH_FEED_BTC,
         BTC_TICK_SIZE,
@@ -60,28 +61,29 @@ fun create_pyth_source_returns_id_and_registers() {
     let registered = registry::pyth_source_id(&reg, PYTH_FEED_BTC);
     assert!(registered.is_some());
     assert!(*registered.borrow() == pyth_id);
-    let tick_size = registry::pyth_feed_tick_size(&reg, PYTH_FEED_BTC);
+    let tick_size = protocol_config::pyth_feed_tick_size(&config, PYTH_FEED_BTC);
     assert!(tick_size.is_some());
     assert!(*tick_size.borrow() == BTC_TICK_SIZE);
-    let window = registry::pyth_feed_expiry_fee_window_ms(&reg, PYTH_FEED_BTC);
+    let window = protocol_config::pyth_feed_expiry_fee_window_ms(&config, PYTH_FEED_BTC);
     assert!(*window.borrow() == config_constants::default_expiry_fee_window_ms!());
-    let multiplier = registry::pyth_feed_expiry_fee_max_multiplier(&reg, PYTH_FEED_BTC);
+    let multiplier = protocol_config::pyth_feed_expiry_fee_max_multiplier(&config, PYTH_FEED_BTC);
     assert!(*multiplier.borrow() == EXPIRY_FEE_MAX_MULTIPLIER_DISABLED);
     // Other feed ids must remain unmapped.
     assert!(registry::pyth_source_id(&reg, PYTH_FEED_ETH).is_none());
-    assert!(registry::pyth_feed_tick_size(&reg, PYTH_FEED_ETH).is_none());
-    assert!(registry::pyth_feed_expiry_fee_window_ms(&reg, PYTH_FEED_ETH).is_none());
-    assert!(registry::pyth_feed_expiry_fee_max_multiplier(&reg, PYTH_FEED_ETH).is_none());
+    assert!(protocol_config::pyth_feed_tick_size(&config, PYTH_FEED_ETH).is_none());
+    assert!(protocol_config::pyth_feed_expiry_fee_window_ms(&config, PYTH_FEED_ETH).is_none());
+    assert!(protocol_config::pyth_feed_expiry_fee_max_multiplier(&config, PYTH_FEED_ETH).is_none());
 
-    test_helpers::finish_registry_test(scenario, reg, admin_cap);
+    test_helpers::finish_registry_config_test(scenario, reg, config, admin_cap);
 }
 
 #[test]
 fun create_pyth_source_distinct_feeds_yield_distinct_ids() {
-    let (mut scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
+    let (mut scenario, mut reg, mut config, admin_cap) = test_helpers::begin_registry_config_test();
 
     let btc_id = registry::create_pyth_source(
         &mut reg,
+        &mut config,
         &admin_cap,
         PYTH_FEED_BTC,
         BTC_TICK_SIZE,
@@ -91,6 +93,7 @@ fun create_pyth_source_distinct_feeds_yield_distinct_ids() {
     );
     let eth_id = registry::create_pyth_source(
         &mut reg,
+        &mut config,
         &admin_cap,
         PYTH_FEED_ETH,
         ETH_TICK_SIZE,
@@ -100,15 +103,16 @@ fun create_pyth_source_distinct_feeds_yield_distinct_ids() {
     );
     assert!(btc_id != eth_id);
 
-    test_helpers::finish_registry_test(scenario, reg, admin_cap);
+    test_helpers::finish_registry_config_test(scenario, reg, config, admin_cap);
 }
 
 #[test, expected_failure(abort_code = registry::EPythSourceAlreadyCreated)]
 fun create_pyth_source_duplicate_feed_aborts() {
-    let (mut scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
+    let (mut scenario, mut reg, mut config, admin_cap) = test_helpers::begin_registry_config_test();
 
     registry::create_pyth_source(
         &mut reg,
+        &mut config,
         &admin_cap,
         PYTH_FEED_BTC,
         BTC_TICK_SIZE,
@@ -118,6 +122,7 @@ fun create_pyth_source_duplicate_feed_aborts() {
     );
     registry::create_pyth_source(
         &mut reg,
+        &mut config,
         &admin_cap,
         PYTH_FEED_BTC,
         BTC_TICK_SIZE,
@@ -133,7 +138,7 @@ fun create_pyth_source_with_current_version_disabled_aborts() {
     // Admin can disable current_version via the version-management path (which
     // bypasses the version gate). Subsequent create_pyth_source then fails the
     // mirrored-version check.
-    let (mut scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
+    let (mut scenario, mut reg, mut config, admin_cap) = test_helpers::begin_registry_config_test();
     let current = constants::current_version!();
     let next = current + 1;
     registry::enable_version(&mut reg, &admin_cap, next);
@@ -141,6 +146,7 @@ fun create_pyth_source_with_current_version_disabled_aborts() {
 
     registry::create_pyth_source(
         &mut reg,
+        &mut config,
         &admin_cap,
         PYTH_FEED_BTC,
         BTC_TICK_SIZE,
@@ -153,10 +159,11 @@ fun create_pyth_source_with_current_version_disabled_aborts() {
 
 #[test, expected_failure(abort_code = deepbook_predict::config_constants::EInvalidOracleTickSize)]
 fun create_pyth_source_unaligned_tick_size_aborts() {
-    let (mut scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
+    let (mut scenario, mut reg, mut config, admin_cap) = test_helpers::begin_registry_config_test();
 
     registry::create_pyth_source(
         &mut reg,
+        &mut config,
         &admin_cap,
         PYTH_FEED_BTC,
         INVALID_TICK_SIZE,
@@ -171,23 +178,24 @@ fun create_pyth_source_unaligned_tick_size_aborts() {
 
 #[test]
 fun pyth_source_id_returns_none_for_unmapped_feed() {
-    let (scenario, reg, admin_cap) = test_helpers::begin_registry_test();
+    let (scenario, reg, config, admin_cap) = test_helpers::begin_registry_config_test();
 
     assert!(registry::pyth_source_id(&reg, PYTH_FEED_BTC).is_none());
-    assert!(registry::pyth_feed_tick_size(&reg, PYTH_FEED_BTC).is_none());
-    assert!(registry::pyth_feed_expiry_fee_window_ms(&reg, PYTH_FEED_BTC).is_none());
+    assert!(protocol_config::pyth_feed_tick_size(&config, PYTH_FEED_BTC).is_none());
+    assert!(protocol_config::pyth_feed_expiry_fee_window_ms(&config, PYTH_FEED_BTC).is_none());
 
-    test_helpers::finish_registry_test(scenario, reg, admin_cap);
+    test_helpers::finish_registry_config_test(scenario, reg, config, admin_cap);
 }
 
 // === pyth feed tick size admin setter ===
 
 #[test]
 fun set_pyth_feed_tick_size_updates_registered_feed() {
-    let (mut scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
+    let (mut scenario, mut reg, mut config, admin_cap) = test_helpers::begin_registry_config_test();
 
     registry::create_pyth_source(
         &mut reg,
+        &mut config,
         &admin_cap,
         PYTH_FEED_BTC,
         BTC_TICK_SIZE,
@@ -195,20 +203,25 @@ fun set_pyth_feed_tick_size_updates_registered_feed() {
         EXPIRY_FEE_MAX_MULTIPLIER_DISABLED,
         scenario.ctx(),
     );
-    registry::set_pyth_feed_tick_size(&mut reg, &admin_cap, PYTH_FEED_BTC, WIDER_BTC_TICK_SIZE);
+    protocol_config::set_pyth_feed_tick_size(
+        &mut config,
+        &admin_cap,
+        PYTH_FEED_BTC,
+        WIDER_BTC_TICK_SIZE,
+    );
 
-    let tick_size = registry::pyth_feed_tick_size(&reg, PYTH_FEED_BTC);
+    let tick_size = protocol_config::pyth_feed_tick_size(&config, PYTH_FEED_BTC);
     assert!(tick_size.is_some());
     assert!(*tick_size.borrow() == WIDER_BTC_TICK_SIZE);
 
-    test_helpers::finish_registry_test(scenario, reg, admin_cap);
+    test_helpers::finish_registry_config_test(scenario, reg, config, admin_cap);
 }
 
-#[test, expected_failure(abort_code = registry::EPythFeedNotRegistered)]
+#[test, expected_failure(abort_code = protocol_config::EFeedTemplateNotFound)]
 fun set_pyth_feed_tick_size_unknown_feed_aborts() {
-    let (_scenario, mut reg, admin_cap) = test_helpers::begin_registry_test();
+    let (_scenario, _reg, mut config, admin_cap) = test_helpers::begin_registry_config_test();
 
-    registry::set_pyth_feed_tick_size(&mut reg, &admin_cap, PYTH_FEED_BTC, BTC_TICK_SIZE);
+    protocol_config::set_pyth_feed_tick_size(&mut config, &admin_cap, PYTH_FEED_BTC, BTC_TICK_SIZE);
     abort 999
 }
 
@@ -339,10 +352,12 @@ fun setup_ready_expiry_creation(expiry_tick_size: u64): (Scenario, ID, ID, Marke
 
     scenario.next_tx(test_constants::admin());
     let mut reg = scenario.take_shared_by_id<registry::Registry>(registry_id);
+    let mut config = scenario.take_shared<ProtocolConfig>();
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let cap = market_oracle::create_cap(&admin_cap, scenario.ctx());
     let pyth_id = registry::create_pyth_source(
         &mut reg,
+        &mut config,
         &admin_cap,
         PYTH_FEED_BTC,
         INITIAL_EXPIRY_TICK_SIZE,
@@ -350,19 +365,25 @@ fun setup_ready_expiry_creation(expiry_tick_size: u64): (Scenario, ID, ID, Marke
         EXPIRY_FEE_MAX_MULTIPLIER_DISABLED,
         scenario.ctx(),
     );
-    registry::set_pyth_feed_tick_size(&mut reg, &admin_cap, PYTH_FEED_BTC, expiry_tick_size);
-    registry::set_pyth_feed_expiry_fee_window_ms(
-        &mut reg,
+    protocol_config::set_pyth_feed_tick_size(
+        &mut config,
+        &admin_cap,
+        PYTH_FEED_BTC,
+        expiry_tick_size,
+    );
+    protocol_config::set_pyth_feed_expiry_fee_window_ms(
+        &mut config,
         &admin_cap,
         PYTH_FEED_BTC,
         RAMP_WINDOW_MS,
     );
-    registry::set_pyth_feed_expiry_fee_max_multiplier(
-        &mut reg,
+    protocol_config::set_pyth_feed_expiry_fee_max_multiplier(
+        &mut config,
         &admin_cap,
         PYTH_FEED_BTC,
         RAMP_MAX_MULTIPLIER,
     );
+    return_shared(config);
     return_shared(reg);
     destroy(admin_cap);
 

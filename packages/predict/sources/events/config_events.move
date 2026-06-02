@@ -6,6 +6,7 @@ module deepbook_predict::config_events;
 
 use deepbook_predict::{
     fee_config::FeeConfig,
+    feed_template::FeedTemplate,
     leverage_config::LeverageConfig,
     market_oracle_config::MarketOracleConfig,
     pricing_config::PricingConfig,
@@ -54,6 +55,15 @@ public struct MarketOracleTemplateConfigUpdated has copy, drop, store {
     max_basis_deviation: u64,
     min_basis: u64,
     max_basis: u64,
+}
+
+/// Emitted when per-feed future-expiry template policy changes.
+public struct FeedTemplateUpdated has copy, drop, store {
+    protocol_config_id: ID,
+    pyth_lazer_feed_id: u32,
+    tick_size: u64,
+    expiry_fee_window_ms: u64,
+    expiry_fee_max_multiplier: u64,
 }
 
 /// Emitted when global trading pause state changes.
@@ -138,6 +148,20 @@ public(package) fun emit_market_oracle_template_config_updated(
         max_basis_deviation: config.max_basis_deviation(),
         min_basis: config.min_basis(),
         max_basis: config.max_basis(),
+    });
+}
+
+public(package) fun emit_feed_template_updated(
+    protocol_config_id: ID,
+    pyth_lazer_feed_id: u32,
+    template: &FeedTemplate,
+) {
+    event::emit(FeedTemplateUpdated {
+        protocol_config_id,
+        pyth_lazer_feed_id,
+        tick_size: template.tick_size(),
+        expiry_fee_window_ms: template.expiry_fee_window_ms(),
+        expiry_fee_max_multiplier: template.expiry_fee_max_multiplier(),
     });
 }
 

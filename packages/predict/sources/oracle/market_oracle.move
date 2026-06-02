@@ -4,16 +4,14 @@
 /// Per-expiry Predict market oracle state and write API.
 ///
 /// This module owns market-specific state: expiry, settlement, operator
-/// authorization, Pyth source binding, bounds, and inline Block Scholes data.
-/// It stores oracle updates and terminal settlement state. Live oracle reads
-/// are resolved by `pricing.move`.
+/// authorization, Pyth source binding, and inline Block Scholes data. Config
+/// owns per-expiry oracle policy. This module stores oracle updates and terminal
+/// settlement state. Live oracle reads are resolved by `pricing.move`.
 module deepbook_predict::market_oracle;
 
 use deepbook::math;
 use deepbook_predict::{
     admin::AdminCap,
-    config_constants,
-    config_events,
     constants,
     i64,
     market_oracle_config::MarketOracleConfig,
@@ -26,7 +24,6 @@ use sui::{clock::Clock, vec_set::{Self, VecSet}};
 const EInvalidMarketOracleCap: u64 = 0;
 const EMarketNotActive: u64 = 1;
 const EMarketSettled: u64 = 2;
-const EInvalidBasisBounds: u64 = 3;
 const ESpotDeviationTooLarge: u64 = 4;
 const EBasisDeviationTooLarge: u64 = 5;
 const EBasisOutOfRange: u64 = 6;
@@ -74,11 +71,6 @@ public struct MarketOracle has key {
     block_scholes_svi: SVIParams,
     block_scholes_svi_source_timestamp_ms: u64,
     block_scholes_svi_update_timestamp_ms: u64,
-    settlement_freshness_ms: u64,
-    max_spot_deviation: u64,
-    max_basis_deviation: u64,
-    min_basis: u64,
-    max_basis: u64,
     /// None until terminal settlement records a source price.
     settlement_price: Option<u64>,
     /// Settlement source code; zero before settlement.
@@ -256,14 +248,17 @@ public fun update_block_scholes_prices(
 
     let status = market.status(clock);
     assert!(status != STATUS_SETTLED, EMarketSettled);
+    config.assert_expiry_oracle_binding(market.expiry, market.id());
+    let policy = config.expiry_oracle_policy(market.expiry);
 
     let basis = market.validate_block_scholes_price_update(
+        policy,
         block_scholes_spot,
         block_scholes_forward,
         block_scholes_source_timestamp_ms,
         clock,
     );
-    market.validate_basis_push(block_scholes_spot, basis);
+    market.validate_basis_push(policy, block_scholes_spot, basis);
     market.apply_block_scholes_prices(
         block_scholes_spot,
         block_scholes_forward,
@@ -271,7 +266,7 @@ public fun update_block_scholes_prices(
         block_scholes_source_timestamp_ms,
         clock,
     );
-    market.settle_if_possible_internal(pyth, clock);
+    market.settle_if_possible_internal(policy, pyth, clock);
 }
 
 /// Settle from the earliest valid stored source, if one is available.
@@ -291,7 +286,9 @@ public fun settle_if_possible(
     config.assert_not_valuation_in_progress();
     if (market.status(clock) != STATUS_PENDING_SETTLEMENT) return false;
     market.assert_pyth_source(pyth);
-    market.settle_if_possible_internal(pyth, clock)
+    config.assert_expiry_oracle_binding(market.expiry, market.id());
+    let policy = config.expiry_oracle_policy(market.expiry);
+    market.settle_if_possible_internal(policy, pyth, clock)
 }
 
 /// Update live SVI data from an authorized Block Scholes writer.
@@ -333,27 +330,24 @@ public fun update_svi(
 
 /// Set the settlement freshness threshold for this oracle.
 ///
-/// This is per-oracle cap-authorized config and affects this oracle directly.
+/// This is per-oracle cap-authorized config stored in `ProtocolConfig`.
 public fun set_settlement_freshness_ms(
-    market: &mut MarketOracle,
-    config: &ProtocolConfig,
+    config: &mut ProtocolConfig,
+    market: &MarketOracle,
     cap: &MarketOracleCap,
     value: u64,
 ) {
     market.assert_version_allowed();
     market.assert_authorized_cap(cap);
-    config.assert_not_valuation_in_progress();
-    config_constants::assert_settlement_freshness_ms(value);
-    market.settlement_freshness_ms = value;
-    market.emit_bounds_updated();
+    config.set_expiry_oracle_settlement_freshness_ms(market.expiry, market.id(), value);
 }
 
 /// Set basis and deviation bounds for this oracle.
 ///
-/// This is per-oracle cap-authorized config and affects this oracle directly.
+/// This is per-oracle cap-authorized config stored in `ProtocolConfig`.
 public fun set_basis_bounds(
-    market: &mut MarketOracle,
-    config: &ProtocolConfig,
+    config: &mut ProtocolConfig,
+    market: &MarketOracle,
     cap: &MarketOracleCap,
     max_spot_deviation: u64,
     max_basis_deviation: u64,
@@ -362,13 +356,14 @@ public fun set_basis_bounds(
 ) {
     market.assert_version_allowed();
     market.assert_authorized_cap(cap);
-    config.assert_not_valuation_in_progress();
-    validate_basis_bounds_inputs(max_spot_deviation, max_basis_deviation, min_basis, max_basis);
-    market.max_spot_deviation = max_spot_deviation;
-    market.max_basis_deviation = max_basis_deviation;
-    market.min_basis = min_basis;
-    market.max_basis = max_basis;
-    market.emit_bounds_updated();
+    config.set_expiry_oracle_basis_bounds(
+        market.expiry,
+        market.id(),
+        max_spot_deviation,
+        max_basis_deviation,
+        min_basis,
+        max_basis,
+    );
 }
 
 /// Create a new oracle writer capability.
@@ -435,7 +430,6 @@ public(package) fun settlement_price(market: &MarketOracle): u64 {
 /// Create and share a market oracle bound to a Pyth source and initial writer cap.
 public(package) fun create_and_share(
     pyth: &PythSource,
-    config: &MarketOracleConfig,
     cap: &MarketOracleCap,
     expiry: u64,
     allowed_versions: VecSet<u64>,
@@ -463,11 +457,6 @@ public(package) fun create_and_share(
         },
         block_scholes_svi_source_timestamp_ms: 0,
         block_scholes_svi_update_timestamp_ms: 0,
-        settlement_freshness_ms: config.settlement_freshness_ms(),
-        max_spot_deviation: config.max_spot_deviation(),
-        max_basis_deviation: config.max_basis_deviation(),
-        min_basis: config.min_basis(),
-        max_basis: config.max_basis(),
         settlement_price: option::none(),
         settlement_source: 0,
         settlement_source_timestamp_ms: 0,
@@ -548,6 +537,7 @@ fun apply_block_scholes_prices(
 
 fun validate_block_scholes_price_update(
     market: &MarketOracle,
+    policy: &MarketOracleConfig,
     spot: u64,
     forward: u64,
     source_timestamp_ms: u64,
@@ -561,13 +551,18 @@ fun validate_block_scholes_price_update(
     );
     assert!(source_timestamp_ms <= clock.timestamp_ms(), EFuturePriceSourceUpdate);
 
-    compute_bounded_basis(market, spot, forward)
+    compute_bounded_basis(policy, spot, forward)
 }
 
-fun settle_if_possible_internal(market: &mut MarketOracle, pyth: &PythSource, clock: &Clock): bool {
+fun settle_if_possible_internal(
+    market: &mut MarketOracle,
+    policy: &MarketOracleConfig,
+    pyth: &PythSource,
+    clock: &Clock,
+): bool {
     if (market.status(clock) != STATUS_PENDING_SETTLEMENT) return false;
 
-    let spot_source = market.valid_settlement_spot_source(pyth, clock);
+    let spot_source = market.valid_settlement_spot_source(policy, pyth, clock);
     if (spot_source.is_none()) return false;
 
     market.settle_from_spot_source(pyth, spot_source.destroy_some());
@@ -576,6 +571,7 @@ fun settle_if_possible_internal(market: &mut MarketOracle, pyth: &PythSource, cl
 
 fun valid_settlement_spot_source(
     market: &MarketOracle,
+    policy: &MarketOracleConfig,
     pyth: &PythSource,
     clock: &Clock,
 ): Option<u8> {
@@ -591,12 +587,12 @@ fun valid_settlement_spot_source(
     let pyth_valid =
         pyth_timestamp > 0
         && pyth_timestamp <= now
-        && now - pyth_timestamp <= market.settlement_freshness_ms
+        && now - pyth_timestamp <= policy.settlement_freshness_ms()
         && pyth_source_timestamp_ms > market.expiry;
     let block_scholes_valid =
         block_scholes_timestamp > 0
         && block_scholes_timestamp <= now
-        && now - block_scholes_timestamp <= market.settlement_freshness_ms
+        && now - block_scholes_timestamp <= policy.settlement_freshness_ms()
         && block_scholes_source_timestamp_ms > market.expiry;
     if (pyth_valid) {
         option::some(SOURCE_PYTH)
@@ -645,18 +641,23 @@ fun settle(
     );
 }
 
-fun compute_bounded_basis(market: &MarketOracle, spot: u64, forward: u64): u64 {
+fun compute_bounded_basis(policy: &MarketOracleConfig, spot: u64, forward: u64): u64 {
     let basis = math::div(forward, spot);
-    assert!(basis >= market.min_basis, EBasisOutOfRange);
-    assert!(basis <= market.max_basis, EBasisOutOfRange);
+    assert!(basis >= policy.min_basis(), EBasisOutOfRange);
+    assert!(basis <= policy.max_basis(), EBasisOutOfRange);
     basis
 }
 
-fun validate_basis_push(market: &MarketOracle, new_spot: u64, new_basis: u64) {
+fun validate_basis_push(
+    market: &MarketOracle,
+    policy: &MarketOracleConfig,
+    new_spot: u64,
+    new_basis: u64,
+) {
     let prev_spot = market.block_scholes_spot;
     if (prev_spot > 0) {
         assert!(
-            within_deviation(prev_spot, new_spot, market.max_spot_deviation),
+            within_deviation(prev_spot, new_spot, policy.max_spot_deviation()),
             ESpotDeviationTooLarge,
         );
     };
@@ -665,40 +666,16 @@ fun validate_basis_push(market: &MarketOracle, new_spot: u64, new_basis: u64) {
     if (prev_spot > 0 && prev_forward > 0) {
         let prev_basis = market.block_scholes_basis();
         assert!(
-            within_deviation(prev_basis, new_basis, market.max_basis_deviation),
+            within_deviation(prev_basis, new_basis, policy.max_basis_deviation()),
             EBasisDeviationTooLarge,
         );
     };
-}
-
-fun validate_basis_bounds_inputs(
-    max_spot_deviation: u64,
-    max_basis_deviation: u64,
-    min_basis: u64,
-    max_basis: u64,
-) {
-    config_constants::assert_max_spot_deviation(max_spot_deviation);
-    config_constants::assert_max_basis_deviation(max_basis_deviation);
-    config_constants::assert_min_basis(min_basis);
-    config_constants::assert_max_basis(max_basis);
-    assert!(min_basis < max_basis, EInvalidBasisBounds);
 }
 
 fun within_deviation(prev: u64, next: u64, max_deviation: u64): bool {
     let diff = if (next >= prev) { next - prev } else { prev - next };
     let max_allowed = math::mul(prev, max_deviation);
     diff <= max_allowed
-}
-
-fun emit_bounds_updated(market: &MarketOracle) {
-    config_events::emit_market_oracle_bounds_updated(
-        market.id(),
-        market.settlement_freshness_ms,
-        market.max_spot_deviation,
-        market.max_basis_deviation,
-        market.min_basis,
-        market.max_basis,
-    );
 }
 
 // === Test-Only Functions ===
@@ -757,11 +734,6 @@ fun create_test_market_oracle_with_pyth_id(
         },
         block_scholes_svi_source_timestamp_ms: 0,
         block_scholes_svi_update_timestamp_ms: 0,
-        settlement_freshness_ms: config_constants::default_settlement_freshness_ms!(),
-        max_spot_deviation: config_constants::default_max_spot_deviation!(),
-        max_basis_deviation: config_constants::default_max_basis_deviation!(),
-        min_basis: config_constants::default_min_basis!(),
-        max_basis: config_constants::default_max_basis!(),
         settlement_price: option::none(),
         settlement_source: 0,
         settlement_source_timestamp_ms: 0,

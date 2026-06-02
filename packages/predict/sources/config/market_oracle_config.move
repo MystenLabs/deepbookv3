@@ -1,18 +1,19 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Stored oracle template config for newly created market oracles.
+/// Stored oracle policy values for market oracle settlement and push guards.
 ///
-/// ProtocolConfig owns the current template. Each MarketOracle snapshots these
-/// bounds at creation and can later be tuned through its cap-authorized path.
+/// `ProtocolConfig` owns a global template for future expiries and stamps a
+/// mutable per-expiry copy when an expiry market is created. `MarketOracle`
+/// cap-authorized setters mutate that stamped copy through `ProtocolConfig`.
 module deepbook_predict::market_oracle_config;
 
 use deepbook_predict::config_constants;
 
 const EInvalidBasisBounds: u64 = 0;
 
-/// Oracle bounds template snapshotted into each MarketOracle at creation.
-public struct MarketOracleConfig has store {
+/// Oracle bounds/freshness policy used as both template and per-expiry copy.
+public struct MarketOracleConfig has copy, drop, store {
     /// Maximum age for a source update to be usable for settlement.
     settlement_freshness_ms: u64,
     /// Maximum spot deviation allowed between consecutive Block Scholes pushes.
@@ -57,13 +58,13 @@ public(package) fun new(): MarketOracleConfig {
     }
 }
 
-/// Set the settlement freshness threshold for future market oracles.
+/// Set the settlement freshness threshold.
 public(package) fun set_settlement_freshness_ms(config: &mut MarketOracleConfig, value: u64) {
     config_constants::assert_settlement_freshness_ms(value);
     config.settlement_freshness_ms = value;
 }
 
-/// Set basis guard bounds for future market oracles.
+/// Set basis guard bounds.
 public(package) fun set_basis_bounds(
     config: &mut MarketOracleConfig,
     max_spot_deviation: u64,

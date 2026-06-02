@@ -9,23 +9,16 @@
 /// conservative lookup. Settled liability uses exact terminal-payout prefixes.
 module deepbook_predict::strike_payout_tree;
 
-use deepbook_predict::constants;
+use deepbook_predict::{constants, strike_grid::StrikeGrid};
 use sui::{bcs, hash::blake2b256, table::{Self, Table}};
 
-const EInvalidTickSize: u64 = 0;
-const EInvalidStrikeRange: u64 = 1;
 const EInsufficientPayoutTerms: u64 = 2;
-const EUnalignedStrike: u64 = 3;
-const ETooManyStrikes: u64 = 4;
 const EInvalidPayoutTerms: u64 = 5;
 
 /// Sparse payout-liability tree for strike prefixes.
 public struct StrikePayoutTree has store {
     root: Option<u64>,
     nodes: Table<u64, PayoutNode>,
-    tick_size: u64,
-    min_strike: u64,
-    max_strike: u64,
     base: PayoutTerms,
 }
 
@@ -76,20 +69,10 @@ public(package) fun settled_payout_liability(tree: &StrikePayoutTree, settlement
 }
 
 /// Create an empty sparse payout tree for the oracle strike grid.
-public(package) fun new(
-    min_strike: u64,
-    tick_size: u64,
-    max_strike: u64,
-    ctx: &mut TxContext,
-): StrikePayoutTree {
-    assert_valid_grid(min_strike, tick_size, max_strike);
-
+public(package) fun new(ctx: &mut TxContext): StrikePayoutTree {
     StrikePayoutTree {
         root: option::none(),
         nodes: table::new(ctx),
-        tick_size,
-        min_strike,
-        max_strike,
         base: payout_terms(0, 0),
     }
 }
@@ -97,23 +80,31 @@ public(package) fun new(
 /// Insert interval payout terms for `(lower, higher]`.
 public(package) fun insert_range(
     tree: &mut StrikePayoutTree,
+    grid: &StrikeGrid,
     lower: u64,
     higher: u64,
     terminal_payout: u64,
     live_backing_payout: u64,
 ) {
-    tree.apply_range(lower, higher, payout_terms(terminal_payout, live_backing_payout), true);
+    tree.apply_range(grid, lower, higher, payout_terms(terminal_payout, live_backing_payout), true);
 }
 
 /// Remove interval payout terms for `(lower, higher]`.
 public(package) fun remove_range(
     tree: &mut StrikePayoutTree,
+    grid: &StrikeGrid,
     lower: u64,
     higher: u64,
     terminal_payout: u64,
     live_backing_payout: u64,
 ) {
-    tree.apply_range(lower, higher, payout_terms(terminal_payout, live_backing_payout), false);
+    tree.apply_range(
+        grid,
+        lower,
+        higher,
+        payout_terms(terminal_payout, live_backing_payout),
+        false,
+    );
 }
 
 /// Destroy all sparse payout storage without reading settlement liability.
@@ -121,9 +112,6 @@ public(package) fun destroy(tree: StrikePayoutTree) {
     let StrikePayoutTree {
         root,
         mut nodes,
-        tick_size: _,
-        min_strike: _,
-        max_strike: _,
         base: _,
     } = tree;
     destroy_nodes(&mut nodes, root);
@@ -132,12 +120,13 @@ public(package) fun destroy(tree: StrikePayoutTree) {
 
 fun apply_range(
     tree: &mut StrikePayoutTree,
+    grid: &StrikeGrid,
     lower: u64,
     higher: u64,
     terms: PayoutTerms,
     add: bool,
 ) {
-    tree.assert_range_boundaries(lower, higher);
+    grid.assert_range_boundaries(lower, higher);
     if (terms.terminal_payout == 0 && terms.live_backing_payout == 0) return;
     assert!(terms.terminal_payout <= terms.live_backing_payout, EInvalidPayoutTerms);
 
@@ -372,34 +361,6 @@ fun destroy_nodes(nodes: &mut Table<u64, PayoutNode>, root: Option<u64>) {
     let node = nodes.remove(strike);
     destroy_nodes(nodes, node.left);
     destroy_nodes(nodes, node.right);
-}
-
-fun assert_valid_grid(min_strike: u64, tick_size: u64, max_strike: u64) {
-    assert!(tick_size > 0, EInvalidTickSize);
-    assert!(min_strike <= max_strike, EInvalidStrikeRange);
-    assert!(min_strike % tick_size == 0 && max_strike % tick_size == 0, EUnalignedStrike);
-
-    let total_strikes = (max_strike - min_strike) / tick_size + 1;
-    assert!(total_strikes <= constants::oracle_strike_grid_ticks!() + 1, ETooManyStrikes);
-}
-
-fun assert_range_boundaries(tree: &StrikePayoutTree, lower: u64, higher: u64) {
-    assert_range_shape(lower, higher);
-    if (lower != constants::neg_inf!()) tree.assert_finite_boundary(lower);
-    if (higher != constants::pos_inf!()) tree.assert_finite_boundary(higher);
-}
-
-fun assert_finite_boundary(tree: &StrikePayoutTree, strike: u64) {
-    assert!(strike >= tree.min_strike && strike <= tree.max_strike, EInvalidStrikeRange);
-    assert!((strike - tree.min_strike) % tree.tick_size == 0, EUnalignedStrike);
-}
-
-fun assert_range_shape(lower: u64, higher: u64) {
-    assert!(lower < higher, EInvalidStrikeRange);
-    assert!(
-        !(lower == constants::neg_inf!() && higher == constants::pos_inf!()),
-        EInvalidStrikeRange,
-    );
 }
 
 fun apply_terms_delta(value: &mut PayoutTerms, delta: PayoutTerms, add: bool) {
