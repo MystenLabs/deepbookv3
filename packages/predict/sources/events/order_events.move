@@ -28,6 +28,8 @@ public struct OrderMinted has copy, drop, store {
     contribution: u64,
     trading_fee: u64,
     builder_fee: u64,
+    /// EWMA gas-price congestion surcharge retained by the pool, in DUSDC base units.
+    penalty_fee: u64,
     builder_code_id: Option<ID>,
     /// Leverage-implied floor seed amount, in DUSDC base units.
     floor_seed_amount: u64,
@@ -48,6 +50,8 @@ public struct LiveOrderRedeemed has copy, drop, store {
     redeem_amount: u64,
     trading_fee: u64,
     builder_fee: u64,
+    /// EWMA gas-price congestion surcharge retained by the pool, in DUSDC base units.
+    penalty_fee: u64,
     builder_code_id: Option<ID>,
 }
 
@@ -97,6 +101,7 @@ public(package) fun emit_order_minted(
     higher_strike: u64,
     trading_fee: u64,
     builder_fee: u64,
+    penalty_fee: u64,
 ) {
     event::emit(OrderMinted {
         expiry_market_id,
@@ -111,6 +116,7 @@ public(package) fun emit_order_minted(
         contribution: order.user_contribution(),
         trading_fee,
         builder_fee,
+        penalty_fee,
         builder_code_id: if (builder_fee == 0) option::none() else manager.builder_code_id(),
         floor_seed_amount: order.floor_seed_amount(),
     });
@@ -125,6 +131,7 @@ public(package) fun emit_live_order_redeemed(
     redeem_amount: u64,
     trading_fee: u64,
     builder_fee: u64,
+    penalty_fee: u64,
 ) {
     event::emit(LiveOrderRedeemed {
         expiry_market_id,
@@ -137,6 +144,7 @@ public(package) fun emit_live_order_redeemed(
         redeem_amount,
         trading_fee,
         builder_fee,
+        penalty_fee,
         builder_code_id: if (builder_fee == 0) option::none() else manager.builder_code_id(),
     });
 }
