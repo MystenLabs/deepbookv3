@@ -23,6 +23,7 @@ use deepbook_predict::{
     protocol_config::{Self, ProtocolConfig},
     pyth_source::{Self, PythSource}
 };
+use dusdc::dusdc::DUSDC;
 use std::type_name::{Self, TypeName};
 use sui::{
     clock::Clock,
@@ -387,6 +388,34 @@ public fun deposit_deep_incentive(
     registry.assert_version_allowed();
     let (decimals, feed_id) = registry.incentive_asset<DEEP>();
     vault.receive_deep_incentive(deposit, decimals, feed_id, duration_ms, clock);
+}
+
+/// Buy DEEP back from any seller for DUSDC, permissionlessly, funded by the LP
+/// buyback budget. Reads the registry's DEEP oracle binding and delegates pricing,
+/// NAV folding, and payout to `plp::execute_deep_buyback`. DEEP must be a configured
+/// incentive asset (it shares the registry binding); `min_dusdc_out` bounds slippage.
+public fun swap_deep_for_dusdc(
+    registry: &Registry,
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    deep_source: &PythSource,
+    deep: Coin<DEEP>,
+    min_dusdc_out: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Coin<DUSDC> {
+    registry.assert_version_allowed();
+    let (decimals, feed_id) = registry.incentive_asset<DEEP>();
+    vault.execute_deep_buyback(
+        config,
+        deep_source,
+        deep,
+        decimals,
+        feed_id,
+        min_dusdc_out,
+        clock,
+        ctx,
+    )
 }
 
 /// Read the configured `(decimals, feed_id)` binding for `T`. Aborts if `T` is

@@ -52,6 +52,10 @@ const ENoPlpHolders: u64 = 12;
 const EZeroStreamDuration: u64 = 13;
 const EStreamDurationTooLong: u64 = 14;
 const EIncentiveFeedMismatch: u64 = 15;
+const EInsufficientBuybackBudget: u64 = 16;
+const EZeroDusdcOut: u64 = 17;
+const EMinDusdcOutNotMet: u64 = 18;
+const EZeroDeepIn: u64 = 19;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -89,6 +93,10 @@ public struct PoolVault has key {
     idle_balance: Balance<DUSDC>,
     /// Protocol-owned DUSDC excluded from PLP redemption.
     protocol_reserve_balance: Balance<DUSDC>,
+    /// Cumulative LP-DUSDC authorized for DEEP buybacks and not yet spent. A cap on
+    /// buyback volume, not a segregated balance: the DUSDC stays in `idle_balance`
+    /// (so NAV and withdrawals are unaffected) and is spent down by `execute_deep_buyback`.
+    buyback_budget: u64,
     /// Pooled DEEP staked by all managers for trading benefits. Per-manager
     /// active/inactive amounts are mirrored on each `PredictManager`.
     staked_deep: Balance<DEEP>,
@@ -161,6 +169,11 @@ public fun staked_deep(vault: &PoolVault): u64 {
 /// Return protocol-owned DUSDC excluded from PLP redemption.
 public fun protocol_reserve_balance(vault: &PoolVault): u64 {
     vault.protocol_reserve_balance.value()
+}
+
+/// Return cumulative LP-DUSDC authorized for DEEP buybacks and not yet spent.
+public fun buyback_budget(vault: &PoolVault): u64 {
+    vault.buyback_budget
 }
 
 /// Return active expiry market IDs tracked by the pool.
@@ -456,6 +469,7 @@ public(package) fun new(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): Po
         id: object::new(ctx),
         idle_balance: balance::zero(),
         protocol_reserve_balance: balance::zero(),
+        buyback_budget: 0,
         staked_deep: balance::zero(),
         treasury_cap,
         expiry_accounting: pool_accounting::new(ctx),
@@ -525,6 +539,59 @@ public(package) fun receive_deep_incentive(
     vault.incentive_deep.fund(deposit, decimals, feed_id, duration_ms, clock);
 }
 
+/// Buy DEEP back from any seller, paying DUSDC out of the buyback budget.
+///
+/// Permissionless rotation, funded by the LP buyback budget: the seller's DEEP is
+/// priced off `deep_source` (rounded down, minus the configured discount) and
+/// folded into the LP-owned `incentive_deep` released balance — valued into NAV on
+/// `supply` and paid in-kind on `withdraw` — while the DUSDC payout comes from idle
+/// liquidity, capped by `buyback_budget`. Because the payout rounds down and the
+/// discount is non-negative, the DEEP folded in is worth at least the DUSDC paid out
+/// at oracle mid, so NAV is non-decreasing for remaining holders. `(decimals, feed_id)`
+/// are the registry's DEEP binding, supplied by `registry::swap_deep_for_dusdc`, which
+/// owns the feed-config lookup (`registry` depends on `plp`, not the reverse).
+public(package) fun execute_deep_buyback(
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    deep_source: &PythSource,
+    deep: Coin<DEEP>,
+    decimals: u8,
+    feed_id: u32,
+    min_dusdc_out: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): Coin<DUSDC> {
+    vault.assert_version_allowed();
+    config.assert_not_valuation_in_progress();
+    let deep_amount = deep.value();
+    assert!(deep_amount > 0, EZeroDeepIn);
+    assert!(deep_source.feed_id() == feed_id, EIncentiveFeedMismatch);
+    pricing::assert_pyth_spot_fresh(config.pricing_config(), deep_source, clock);
+
+    let oracle_out = deep_source.value_in_dusdc_round_down(deep_amount, decimals);
+    // dusdc_out = oracle_out * (1 - discount), rounded down.
+    let discount = config.fee_config().buyback_discount();
+    let dusdc_out = math::mul(oracle_out, constants::float_scaling!() - discount);
+    assert!(dusdc_out > 0, EZeroDusdcOut);
+    assert!(dusdc_out >= min_dusdc_out, EMinDusdcOutNotMet);
+    assert!(dusdc_out <= vault.buyback_budget, EInsufficientBuybackBudget);
+    assert!(vault.idle_balance.value() >= dusdc_out, EInsufficientIdleBalance);
+
+    vault.route_deep_into_incentive(deep, decimals, feed_id);
+    vault.buyback_budget = vault.buyback_budget - dusdc_out;
+    let payout = vault.idle_balance.split(dusdc_out).into_coin(ctx);
+    vault_events::emit_deep_bought_back(
+        vault.id(),
+        deep_amount,
+        dusdc_out,
+        discount,
+        vault.buyback_budget,
+        vault.idle_balance.value(),
+        vault.incentive_deep.released.value(),
+    );
+    payout
+}
+
 /// Set the max net DUSDC the pool may have funded into one expiry.
 public fun set_max_expiry_funding(
     vault: &mut PoolVault,
@@ -592,6 +659,18 @@ fun value_incentives(
         vault.incentive_deep.sync_value(config, deep_source, clock)
     } else 0;
     sui_value + deep_value
+}
+
+/// Fold bought-back DEEP into the LP-owned `incentive_deep` released balance — no
+/// vesting (it is bought at fair value, so it is immediately LP-owned and claimable).
+/// Caches the oracle binding when the incentive is empty so a later `sync_value` can
+/// price it; a non-empty incentive already carries the same registry-bound binding.
+fun route_deep_into_incentive(vault: &mut PoolVault, deep: Coin<DEEP>, decimals: u8, feed_id: u32) {
+    if (vault.incentive_deep.is_empty()) {
+        vault.incentive_deep.decimals = decimals;
+        vault.incentive_deep.feed_id = feed_id;
+    };
+    vault.incentive_deep.released.join(deep.into_balance());
 }
 
 fun synced_pool_value(vault: &PoolVault, config: &ProtocolConfig, active_expiry_value: u64): u64 {
@@ -813,6 +892,11 @@ fun materialize_expiry_profit(
         let protocol_profit_balance = vault.idle_balance.split(protocol_profit);
         vault.protocol_reserve_balance.join(protocol_profit_balance);
     };
+    // Authorize a slice of the LP profit for DEEP buybacks. This moves no cash —
+    // the DUSDC stays in idle (still LP NAV); the budget only caps how much can
+    // later be swapped into DEEP via `execute_deep_buyback`.
+    vault.buyback_budget =
+        vault.buyback_budget + math::mul(lp_profit, config.fee_config().buyback_share());
     let profit_basis_after = vault.expiry_accounting.profit_basis_debits();
     vault_events::emit_expiry_profit_materialized(
         vault.id(),
@@ -822,6 +906,7 @@ fun materialize_expiry_profit(
         vault.idle_balance.value(),
         vault.protocol_reserve_balance.value(),
         profit_basis_after,
+        vault.buyback_budget,
     );
 }
 
@@ -875,4 +960,12 @@ fun emit_expiry_cash_rebalanced(
 /// Register PLP in tests.
 public fun init_for_testing(ctx: &mut TxContext) {
     init(PLP {}, ctx);
+}
+
+#[test_only]
+/// Seed the buyback budget directly. Lets the swap flow be tested in isolation
+/// without driving a full expiry settlement; the funding carve is covered
+/// separately through the production materialization path.
+public fun set_buyback_budget_for_testing(vault: &mut PoolVault, amount: u64) {
+    vault.buyback_budget = amount;
 }

@@ -167,6 +167,20 @@ public fun set_template_trading_loss_rebate_rate(
     config_events::emit_fee_config_updated(config.id(), &config.fee_config);
 }
 
+/// Set the fraction of each expiry's LP profit authorized for DEEP buybacks.
+public fun set_buyback_share(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
+    config.assert_not_valuation_in_progress();
+    config.fee_config.set_buyback_share(value);
+    config_events::emit_fee_config_updated(config.id(), &config.fee_config);
+}
+
+/// Set the discount off the oracle price applied when buying back DEEP.
+public fun set_buyback_discount(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
+    config.assert_not_valuation_in_progress();
+    config.fee_config.set_buyback_discount(value);
+    config_events::emit_fee_config_updated(config.id(), &config.fee_config);
+}
+
 /// Set the total liquidation candidate budget used before live valuations.
 public fun set_valuation_liquidation_budget(
     config: &mut ProtocolConfig,

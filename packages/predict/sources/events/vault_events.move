@@ -75,6 +75,21 @@ public struct ExpiryProfitMaterialized has copy, drop, store {
     idle_balance_after: u64,
     protocol_reserve_balance_after: u64,
     profit_basis_after: u64,
+    /// Cumulative LP-DUSDC authorized for DEEP buybacks after this materialization.
+    buyback_budget_after: u64,
+}
+
+/// Emitted when DEEP is bought back: the seller hands in DEEP and receives DUSDC
+/// from the buyback budget, and the DEEP is folded into LP-owned incentive holdings.
+public struct DeepBoughtBack has copy, drop, store {
+    pool_vault_id: ID,
+    deep_in: u64,
+    dusdc_out: u64,
+    /// Discount off the oracle price applied to this swap, in FLOAT_SCALING.
+    discount: u64,
+    buyback_budget_after: u64,
+    idle_balance_after: u64,
+    incentive_deep_released_after: u64,
 }
 
 // === Public-Package Functions ===
@@ -181,6 +196,7 @@ public(package) fun emit_expiry_profit_materialized(
     idle_balance_after: u64,
     protocol_reserve_balance_after: u64,
     profit_basis_after: u64,
+    buyback_budget_after: u64,
 ) {
     event::emit(ExpiryProfitMaterialized {
         pool_vault_id,
@@ -190,5 +206,26 @@ public(package) fun emit_expiry_profit_materialized(
         idle_balance_after,
         protocol_reserve_balance_after,
         profit_basis_after,
+        buyback_budget_after,
+    });
+}
+
+public(package) fun emit_deep_bought_back(
+    pool_vault_id: ID,
+    deep_in: u64,
+    dusdc_out: u64,
+    discount: u64,
+    buyback_budget_after: u64,
+    idle_balance_after: u64,
+    incentive_deep_released_after: u64,
+) {
+    event::emit(DeepBoughtBack {
+        pool_vault_id,
+        deep_in,
+        dusdc_out,
+        discount,
+        buyback_budget_after,
+        idle_balance_after,
+        incentive_deep_released_after,
     });
 }

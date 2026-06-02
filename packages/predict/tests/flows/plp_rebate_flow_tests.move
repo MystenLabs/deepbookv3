@@ -46,6 +46,11 @@ const MIN_FEE_REBATE_RESERVE: u64 = 2_500_000;
 const MIN_FEE_PROTOCOL_PROFIT: u64 = 1_000_000;
 const MIN_FEE_TERMINAL_MATERIALIZED_PROFIT: u64 = 502_500_000;
 const MIN_FEE_TERMINAL_PROTOCOL_PROFIT: u64 = 201_000_000;
+// LP profit (materialized minus protocol) funds the buyback budget at the default
+// 50% buyback share: 50% of (502_500_000 - 201_000_000) = 150_750_000 at settlement,
+// then 50% of (2_500_000 - 1_000_000) = 750_000 more after the rebate claim.
+const MIN_FEE_TERMINAL_BUYBACK_BUDGET: u64 = 150_750_000;
+const MIN_FEE_BUYBACK_BUDGET_AFTER_REBATE: u64 = 151_500_000;
 
 /// Scenario-local objects shared by the PLP rebate flow tests.
 public struct Fixture {
@@ -104,6 +109,7 @@ fun same_expiry_residual_rebate_cash_materializes_new_terminal_profit() {
         vault.profit_basis_credits(),
         constants::expiry_cash_floor!() + MIN_FEE_TERMINAL_MATERIALIZED_PROFIT,
     );
+    assert_eq!(vault.buyback_budget(), MIN_FEE_TERMINAL_BUYBACK_BUDGET);
 
     let (closed_order_id, replacement_order_id) = market.redeem(
         &mut manager,
@@ -143,6 +149,7 @@ fun same_expiry_residual_rebate_cash_materializes_new_terminal_profit() {
             + MIN_FEE_TERMINAL_MATERIALIZED_PROFIT
             + MIN_FEE_REBATE_RESERVE,
     );
+    assert_eq!(vault.buyback_budget(), MIN_FEE_BUYBACK_BUDGET_AFTER_REBATE);
     assert_eq!(market.cash_balance(), 0);
 
     return_shared(oracle);
