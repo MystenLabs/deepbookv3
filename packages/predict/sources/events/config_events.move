@@ -30,6 +30,8 @@ public struct FeeConfigUpdated has copy, drop, store {
     protocol_config_id: ID,
     protocol_reserve_profit_share: u64,
     trading_loss_rebate_rate: u64,
+    buyback_share: u64,
+    buyback_discount: u64,
 }
 
 /// Emitted when liquidation-budget policy changes.
@@ -108,6 +110,8 @@ public(package) fun emit_fee_config_updated(protocol_config_id: ID, config: &Fee
         protocol_config_id,
         protocol_reserve_profit_share: config.protocol_reserve_profit_share(),
         trading_loss_rebate_rate: config.trading_loss_rebate_rate(),
+        buyback_share: config.buyback_share(),
+        buyback_discount: config.buyback_discount(),
     });
 }
 

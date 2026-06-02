@@ -124,6 +124,24 @@ public(package) fun value_in_dusdc(source: &PythSource, amount: u64, asset_decim
     ceil_div((amount as u128) * (spot as u128), pow10(exponent)) as u64
 }
 
+/// DUSDC-denominated value of `amount` raw units of an asset, like `value_in_dusdc`
+/// but rounding DOWN:
+///   floor(amount * spot / 10^(asset_decimals + float_scaling_decimals - dusdc_decimals))
+/// The round-up `value_in_dusdc` is conservative for valuing a holding *into* NAV;
+/// this floor variant is for paying an asset *out* (a buyback payout), so the pool
+/// never overpays. Same feed-binding/freshness contract as `value_in_dusdc`.
+public(package) fun value_in_dusdc_round_down(
+    source: &PythSource,
+    amount: u64,
+    asset_decimals: u8,
+): u64 {
+    let spot = source.spot;
+    assert!(spot > 0, EZeroSpot);
+    let exponent =
+        (asset_decimals as u64) + constants::float_scaling_decimals!() - (constants::dusdc_decimals!() as u64);
+    ((amount as u128) * (spot as u128) / pow10(exponent)) as u64
+}
+
 /// Create and share a Pyth source bound to a Lazer feed id.
 public(package) fun create_and_share(
     feed_id: u32,

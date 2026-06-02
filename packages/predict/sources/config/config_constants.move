@@ -35,6 +35,8 @@ const EInvalidOracleTickSize: u64 = 24;
 const EOracleTickSizeTooSmallForSpot: u64 = 25;
 const EInvalidOracleSpot: u64 = 26;
 const EOracleTickSizeTooLargeForSpot: u64 = 27;
+const EInvalidBuybackShare: u64 = 28;
+const EInvalidBuybackDiscount: u64 = 29;
 
 // === Expiry Funding and Liquidation ===
 
@@ -259,6 +261,33 @@ public(package) fun assert_trading_loss_rebate_rate(value: u64) {
         value >= min_trading_loss_rebate_rate!()
             && value <= max_trading_loss_rebate_rate!(),
         EInvalidTradingLossRebateRate,
+    );
+}
+
+// === Buyback ===
+
+/// Fraction of each expiry's LP profit authorized for DEEP buybacks. Default 50%.
+public(package) macro fun default_buyback_share(): u64 { 500_000_000 }
+public(package) macro fun min_buyback_share(): u64 { 0 }
+public(package) macro fun max_buyback_share(): u64 {
+    deepbook_predict::constants::float_scaling!()
+}
+
+public(package) fun assert_buyback_share(value: u64) {
+    assert!(value >= min_buyback_share!() && value <= max_buyback_share!(), EInvalidBuybackShare);
+}
+
+/// Discount applied to the oracle price when buying back DEEP. Default 0 (oracle mid).
+public(package) macro fun default_buyback_discount(): u64 { 0 }
+public(package) macro fun min_buyback_discount(): u64 { 0 }
+public(package) macro fun max_buyback_discount(): u64 {
+    deepbook_predict::constants::float_scaling!()
+}
+
+public(package) fun assert_buyback_discount(value: u64) {
+    assert!(
+        value >= min_buyback_discount!() && value <= max_buyback_discount!(),
+        EInvalidBuybackDiscount,
     );
 }
 
