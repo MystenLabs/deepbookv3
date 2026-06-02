@@ -47,23 +47,6 @@ public(package) fun new_centered(spot: u64, tick_size: u64): StrikeGrid {
     }
 }
 
-#[test_only]
-public fun new_for_testing(min_strike: u64, tick_size: u64, max_strike: u64): StrikeGrid {
-    assert!(tick_size > 0, EInvalidTickSize);
-    assert!(min_strike > 0, EInvalidStrikeGrid);
-    assert!(min_strike <= max_strike, EInvalidStrikeGrid);
-    assert!((max_strike - min_strike) % tick_size == 0, EInvalidStrikeGrid);
-    let total_strikes = (max_strike - min_strike) / tick_size + 1;
-    assert!(total_strikes <= constants::oracle_strike_grid_ticks!() + 1, EInvalidStrikeGrid);
-
-    StrikeGrid {
-        min_strike,
-        tick_size,
-        max_strike,
-        total_strikes,
-    }
-}
-
 fun assert_tick_size(tick_size: u64) {
     assert!(tick_size > 0, EInvalidTickSize);
     assert!(tick_size % constants::oracle_tick_size_unit!() == 0, EInvalidTickSize);

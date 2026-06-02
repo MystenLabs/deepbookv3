@@ -12,42 +12,35 @@ use deepbook_predict::{
 };
 use std::unit_test::{assert_eq, destroy};
 
-// Grid: 11 ticks 100..200 with tick=10. Small enough to keep math by hand
-// straightforward while spanning more than one matrix page boundary for
-// large stress cases.
-const MIN_STRIKE: u64 = 100;
-const TICK_SIZE: u64 = 10;
-const MAX_STRIKE: u64 = 200;
-const FULL_PREALLOCATED_TICKS: u64 = 10;
-const TOO_MANY_PREALLOCATED_TICKS: u64 = 11;
-
-const WIDE_MIN_STRIKE: u64 = 10;
-const WIDE_MAX_STRIKE: u64 = 3_010;
-const PARTIAL_PREALLOCATED_TICKS: u64 = 10;
+// Production-shaped grid whose first finite boundaries are still small enough
+// for hand-checkable test ranges: 100_000, 110_000, 120_000, ...
+const MIN_STRIKE: u64 = 100_000;
+const TICK_SIZE: u64 = 10_000;
+const PREALLOCATED_TICKS: u64 = 10;
 const PARTIAL_PREALLOCATED_PAGE_COUNT: u64 = 1;
-const OUTER_LOWER_STRIKE: u64 = 20;
-const OUTER_HIGHER_STRIKE: u64 = 30;
 
 const QTY_ONE: u64 = 1;
 const QTY_BIG: u64 = 1_000_000;
 
-fun grid(): StrikeGrid {
-    strike_grid::new_for_testing(MIN_STRIKE, TICK_SIZE, MAX_STRIKE)
+fun grid_center_spot(): u64 {
+    MIN_STRIKE + TICK_SIZE * (constants::oracle_strike_grid_ticks!() / 2)
 }
 
-fun wide_grid(): StrikeGrid {
-    strike_grid::new_for_testing(WIDE_MIN_STRIKE, TICK_SIZE, WIDE_MAX_STRIKE)
+fun max_strike(): u64 {
+    MIN_STRIKE + TICK_SIZE * constants::oracle_strike_grid_ticks!()
+}
+
+fun strike(tick_offset: u64): u64 {
+    MIN_STRIKE + tick_offset * TICK_SIZE
+}
+
+fun grid(): StrikeGrid {
+    strike_grid::new_centered(grid_center_spot(), TICK_SIZE)
 }
 
 fun new_nav(ctx: &mut TxContext): (StrikeGrid, StrikeNavMatrix) {
     let grid = grid();
-    let nav = strike_nav_matrix::new(&grid, FULL_PREALLOCATED_TICKS, ctx);
-    (grid, nav)
-}
-
-fun new_wide_nav(ctx: &mut TxContext): (StrikeGrid, StrikeNavMatrix) {
-    let grid = wide_grid();
-    let nav = strike_nav_matrix::new(&grid, PARTIAL_PREALLOCATED_TICKS, ctx);
+    let nav = strike_nav_matrix::new(&grid, PREALLOCATED_TICKS, ctx);
     (grid, nav)
 }
 
@@ -63,29 +56,29 @@ fun new_returns_empty_matrix() {
 #[test]
 fun live_value_treats_missing_preallocated_pages_as_empty() {
     let ctx = &mut tx_context::dummy();
-    let (grid, nav) = new_wide_nav(ctx);
+    let (grid, nav) = new_nav(ctx);
     assert_eq!(nav.materialized_page_count_for_testing(), PARTIAL_PREALLOCATED_PAGE_COUNT);
     let curve = vector[
-        pricing::new_curve_point_for_testing(WIDE_MIN_STRIKE, float!()),
-        pricing::new_curve_point_for_testing(WIDE_MAX_STRIKE, float!()),
+        pricing::new_curve_point_for_testing(MIN_STRIKE, float!()),
+        pricing::new_curve_point_for_testing(max_strike(), float!()),
     ];
-    assert_eq!(nav.live_value(&grid, &curve, WIDE_MIN_STRIKE, WIDE_MAX_STRIKE, float!()), 0);
+    assert_eq!(nav.live_value(&grid, &curve, MIN_STRIKE, max_strike(), float!()), 0);
     nav.destroy();
 }
 
 #[test]
 fun insert_outside_preallocated_span_materializes_page() {
     let ctx = &mut tx_context::dummy();
-    let (grid, mut nav) = new_wide_nav(ctx);
+    let (grid, mut nav) = new_nav(ctx);
     assert_eq!(nav.materialized_page_count_for_testing(), PARTIAL_PREALLOCATED_PAGE_COUNT);
-    nav.insert_range(&grid, OUTER_LOWER_STRIKE, OUTER_HIGHER_STRIKE, QTY_BIG, 0);
+    nav.insert_range(&grid, strike(2), strike(3), QTY_BIG, 0);
     assert_eq!(nav.materialized_page_count_for_testing(), PARTIAL_PREALLOCATED_PAGE_COUNT + 1);
-    nav.remove_range(&grid, OUTER_LOWER_STRIKE, OUTER_HIGHER_STRIKE, QTY_BIG, 0);
+    nav.remove_range(&grid, strike(2), strike(3), QTY_BIG, 0);
     let curve = vector[
-        pricing::new_curve_point_for_testing(WIDE_MIN_STRIKE, float!()),
-        pricing::new_curve_point_for_testing(WIDE_MAX_STRIKE, float!()),
+        pricing::new_curve_point_for_testing(MIN_STRIKE, float!()),
+        pricing::new_curve_point_for_testing(max_strike(), float!()),
     ];
-    assert_eq!(nav.live_value(&grid, &curve, WIDE_MIN_STRIKE, WIDE_MAX_STRIKE, float!()), 0);
+    assert_eq!(nav.live_value(&grid, &curve, MIN_STRIKE, max_strike(), float!()), 0);
     nav.destroy();
 }
 
@@ -93,7 +86,7 @@ fun insert_outside_preallocated_span_materializes_page() {
 fun new_preallocated_ticks_above_grid_aborts() {
     let ctx = &mut tx_context::dummy();
     let grid = grid();
-    destroy(strike_nav_matrix::new(&grid, TOO_MANY_PREALLOCATED_TICKS, ctx));
+    destroy(strike_nav_matrix::new(&grid, constants::oracle_strike_grid_ticks!() + 1, ctx));
     abort 999
 }
 
@@ -103,7 +96,7 @@ fun new_preallocated_ticks_above_grid_aborts() {
 fun insert_zero_quantity_aborts() {
     let ctx = &mut tx_context::dummy();
     let (grid, mut nav) = new_nav(ctx);
-    nav.insert_range(&grid, 120, 160, 0, 0);
+    nav.insert_range(&grid, strike(2), strike(6), 0, 0);
     abort 999
 }
 
@@ -111,7 +104,7 @@ fun insert_zero_quantity_aborts() {
 fun insert_lower_equal_higher_aborts() {
     let ctx = &mut tx_context::dummy();
     let (grid, mut nav) = new_nav(ctx);
-    nav.insert_range(&grid, 150, 150, QTY_ONE, 0);
+    nav.insert_range(&grid, strike(5), strike(5), QTY_ONE, 0);
     abort 999
 }
 
@@ -128,7 +121,7 @@ fun insert_full_open_range_aborts() {
 fun insert_finite_above_grid_aborts() {
     let ctx = &mut tx_context::dummy();
     let (grid, mut nav) = new_nav(ctx);
-    nav.insert_range(&grid, 150, MAX_STRIKE + TICK_SIZE, QTY_ONE, 0);
+    nav.insert_range(&grid, strike(5), max_strike() + TICK_SIZE, QTY_ONE, 0);
     abort 999
 }
 
@@ -136,7 +129,7 @@ fun insert_finite_above_grid_aborts() {
 fun insert_unaligned_strike_aborts() {
     let ctx = &mut tx_context::dummy();
     let (grid, mut nav) = new_nav(ctx);
-    nav.insert_range(&grid, 125, 160, QTY_ONE, 0);
+    nav.insert_range(&grid, strike(2) + TICK_SIZE / 2, strike(6), QTY_ONE, 0);
     abort 999
 }
 
@@ -146,8 +139,8 @@ fun remove_with_no_floor_underflows_floor_shares_aborts() {
     // floor_shares = 0. The shared decrement path aborts with EInsufficientQuantity.
     let ctx = &mut tx_context::dummy();
     let (grid, mut nav) = new_nav(ctx);
-    nav.insert_range(&grid, 120, 160, QTY_ONE, 0);
-    nav.remove_range(&grid, 120, 160, QTY_ONE, QTY_ONE);
+    nav.insert_range(&grid, strike(2), strike(6), QTY_ONE, 0);
+    nav.remove_range(&grid, strike(2), strike(6), QTY_ONE, QTY_ONE);
     abort 999
 }
 
@@ -155,8 +148,8 @@ fun remove_with_no_floor_underflows_floor_shares_aborts() {
 fun remove_more_quantity_than_inserted_aborts() {
     let ctx = &mut tx_context::dummy();
     let (grid, mut nav) = new_nav(ctx);
-    nav.insert_range(&grid, constants::neg_inf!(), 150, QTY_BIG, 0);
-    nav.remove_range(&grid, constants::neg_inf!(), 150, QTY_BIG + 1, 0);
+    nav.insert_range(&grid, constants::neg_inf!(), strike(5), QTY_BIG, 0);
+    nav.remove_range(&grid, constants::neg_inf!(), strike(5), QTY_BIG + 1, 0);
     abort 999
 }
 
@@ -174,21 +167,21 @@ fun live_value_empty_curve_aborts() {
     let ctx = &mut tx_context::dummy();
     let (grid, nav) = new_nav(ctx);
     let curve: vector<pricing::CurvePoint> = vector[];
-    let _ = nav.live_value(&grid, &curve, MIN_STRIKE, MAX_STRIKE, float!());
+    let _ = nav.live_value(&grid, &curve, MIN_STRIKE, max_strike(), float!());
     abort 999
 }
 
 #[test, expected_failure(abort_code = strike_nav_matrix::EInvalidCurveRange)]
 fun live_value_curve_does_not_span_minted_range_aborts() {
-    // Curve covers [110, 140] but minted_max_strike = 180 — the curve must
+    // Curve covers [strike(1), strike(4)] but minted_max_strike = strike(8) — the curve must
     // span the entire minted range or live_value cannot evaluate the right tail.
     let ctx = &mut tx_context::dummy();
     let (grid, nav) = new_nav(ctx);
     let curve = vector[
-        pricing::new_curve_point_for_testing(110, float!()),
-        pricing::new_curve_point_for_testing(140, float!()),
+        pricing::new_curve_point_for_testing(strike(1), float!()),
+        pricing::new_curve_point_for_testing(strike(4), float!()),
     ];
-    let _ = nav.live_value(&grid, &curve, 110, 180, float!());
+    let _ = nav.live_value(&grid, &curve, strike(1), strike(8), float!());
     abort 999
 }
 
@@ -199,13 +192,13 @@ fun live_value_floor_above_value_aborts() {
     // and floor_index=1.0, the floor amount exceeds the zero live value.
     let ctx = &mut tx_context::dummy();
     let (grid, mut nav) = new_nav(ctx);
-    nav.insert_range(&grid, constants::neg_inf!(), 150, QTY_BIG, QTY_BIG);
-    nav.remove_range(&grid, constants::neg_inf!(), 150, QTY_BIG, 0);
+    nav.insert_range(&grid, constants::neg_inf!(), strike(5), QTY_BIG, QTY_BIG);
+    nav.remove_range(&grid, constants::neg_inf!(), strike(5), QTY_BIG, 0);
     let curve = vector[
         pricing::new_curve_point_for_testing(MIN_STRIKE, float!()),
-        pricing::new_curve_point_for_testing(MAX_STRIKE, float!()),
+        pricing::new_curve_point_for_testing(max_strike(), float!()),
     ];
-    let _ = nav.live_value(&grid, &curve, MIN_STRIKE, MAX_STRIKE, float!());
+    let _ = nav.live_value(&grid, &curve, MIN_STRIKE, max_strike(), float!());
     abort 999
 }
 
@@ -215,9 +208,9 @@ fun live_value_floor_above_value_aborts() {
 fun destroy_after_inserts_and_removes() {
     let ctx = &mut tx_context::dummy();
     let (grid, mut nav) = new_nav(ctx);
-    nav.insert_range(&grid, 120, 160, QTY_BIG, 0);
-    nav.insert_range(&grid, constants::neg_inf!(), 150, QTY_BIG, 0);
-    nav.insert_range(&grid, 150, constants::pos_inf!(), QTY_BIG, 0);
-    nav.remove_range(&grid, 120, 160, QTY_BIG, 0);
+    nav.insert_range(&grid, strike(2), strike(6), QTY_BIG, 0);
+    nav.insert_range(&grid, constants::neg_inf!(), strike(5), QTY_BIG, 0);
+    nav.insert_range(&grid, strike(5), constants::pos_inf!(), QTY_BIG, 0);
+    nav.remove_range(&grid, strike(2), strike(6), QTY_BIG, 0);
     nav.destroy();
 }

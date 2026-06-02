@@ -22,7 +22,6 @@ use sui::clock;
 const EXPIRY_MS: u64 = 1_700_000_000_000;
 const MIN_STRIKE: u64 = 100_000_000_000; // $100
 const TICK_SIZE: u64 = 1_000_000_000; //   $1
-const MAX_STRIKE: u64 = 100_100_000_000_000;
 const MAX_PREMIUM: u64 = 200_000_000; //   1.0 -> 1.2 over the floor window
 const LIQUIDATION_LTV: u64 = 850_000_000;
 const FAKE_EXPIRY_ID: address = @0xCAFE;
@@ -44,6 +43,10 @@ const ABOVE_MIN_PRINCIPAL_QUANTITY: u64 = 3_250_000;
 
 // === Constructor ===
 
+fun grid_center_spot(min_strike: u64, tick_size: u64): u64 {
+    min_strike + tick_size * (constants::oracle_strike_grid_ticks!() / 2)
+}
+
 fun new_exposure(
     expiry_ms: u64,
     min_strike: u64,
@@ -51,7 +54,7 @@ fun new_exposure(
     max_expiry_floor_premium: u64,
     ctx: &mut TxContext,
 ): strike_exposure::StrikeExposure {
-    let grid = strike_grid::new_for_testing(min_strike, tick_size, MAX_STRIKE);
+    let grid = strike_grid::new_centered(grid_center_spot(min_strike, tick_size), tick_size);
     strike_exposure::new(
         FAKE_EXPIRY_ID.to_id(),
         expiry_ms,

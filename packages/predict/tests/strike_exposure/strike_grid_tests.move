@@ -12,9 +12,8 @@ const VALID_BTC_TICK_SIZE: u64 = 1_000_000_000; // $1.00; spot spans 100,000 tic
 const TOO_SMALL_BTC_TICK_SIZE: u64 = 10_000; // $0.00001; spot spans far above the max tick budget
 const TOO_LARGE_BTC_TICK_SIZE: u64 = 3_000_000_000; // $3.00; spot spans fewer than grid_ticks/2 ticks
 
-const TEST_MIN_STRIKE: u64 = 100;
-const TEST_TICK_SIZE: u64 = 10;
-const TEST_MAX_STRIKE: u64 = 200;
+const CENTERED_MIN_STRIKE: u64 = 50_000_000_000_000; // $50,000 in 1e9 price scaling
+const CENTERED_MAX_STRIKE: u64 = 150_000_000_000_000; // $150,000 in 1e9 price scaling
 
 #[test]
 fun new_centered_accepts_boundary_tick_size() {
@@ -48,16 +47,16 @@ fun new_centered_aborts_without_spot() {
 
 #[test]
 fun boundary_indexes_round_trip_raw_boundaries() {
-    let grid = strike_grid::new_for_testing(TEST_MIN_STRIKE, TEST_TICK_SIZE, TEST_MAX_STRIKE);
+    let grid = strike_grid::new_centered(BTC_SPOT, VALID_BTC_TICK_SIZE);
     let max_boundary_index = grid.total_strikes() + 1;
 
     assert_eq!(grid.boundary_index(constants::neg_inf!()), 0);
-    assert_eq!(grid.boundary_index(TEST_MIN_STRIKE), 1);
-    assert_eq!(grid.boundary_index(TEST_MAX_STRIKE), grid.total_strikes());
+    assert_eq!(grid.boundary_index(CENTERED_MIN_STRIKE), 1);
+    assert_eq!(grid.boundary_index(CENTERED_MAX_STRIKE), grid.total_strikes());
     assert_eq!(grid.boundary_index(constants::pos_inf!()), max_boundary_index);
 
     assert_eq!(grid.boundary_at_index(0), constants::neg_inf!());
-    assert_eq!(grid.boundary_at_index(1), TEST_MIN_STRIKE);
-    assert_eq!(grid.boundary_at_index(grid.total_strikes()), TEST_MAX_STRIKE);
+    assert_eq!(grid.boundary_at_index(1), CENTERED_MIN_STRIKE);
+    assert_eq!(grid.boundary_at_index(grid.total_strikes()), CENTERED_MAX_STRIKE);
     assert_eq!(grid.boundary_at_index(max_boundary_index), constants::pos_inf!());
 }

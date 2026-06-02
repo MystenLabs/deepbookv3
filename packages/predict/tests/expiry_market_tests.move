@@ -39,6 +39,10 @@ const GROSS_PROFIT_ONE: u64 = 1;
 const FULL_REBATE_STAKE: u64 = 1_100_000_000_000;
 const EXPECTED_REBATE_WITH_ONE_GROSS_PROFIT: u64 = 2_499_999;
 
+fun grid_center_spot(): u64 {
+    MIN_STRIKE + TICK_SIZE * (constants::oracle_strike_grid_ticks!() / 2)
+}
+
 #[test]
 fun rebate_eligibility_offsets_fee_reserve_by_gross_profit() {
     let mut scenario = test::begin(test_constants::alice());
@@ -56,11 +60,7 @@ fun rebate_eligibility_offsets_fee_reserve_by_gross_profit() {
         &cap,
         scenario.ctx(),
     );
-    let grid = strike_grid::new_for_testing(
-        MIN_STRIKE,
-        TICK_SIZE,
-        MIN_STRIKE + TICK_SIZE * constants::oracle_strike_grid_ticks!(),
-    );
+    let grid = strike_grid::new_centered(grid_center_spot(), TICK_SIZE);
     let expiry_id = expiry_market::create_and_share(
         &config,
         vec_set::singleton(constants::current_version!()),
