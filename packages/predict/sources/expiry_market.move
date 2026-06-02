@@ -220,12 +220,15 @@ public fun redeem(
         market.redeem_settled_internal(manager, market_oracle, &redeemed_order, ctx);
         (redeemed_order.id(), option::none())
     } else {
-        market.run_liquidation_pass(
+        let live_context = market.live_pricing_context(
             config.pricing_config(),
             market_oracle,
             pyth,
-            config.risk_config().trade_liquidation_budget(),
             clock,
+        );
+        market.strike_exposure.liquidate_live_orders(
+            &live_context,
+            config.risk_config().trade_liquidation_budget(),
         );
         if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
             market.redeem_liquidated_order(manager, &redeemed_order, close_quantity);
@@ -234,11 +237,9 @@ public fun redeem(
         let replacement_order_id = market.redeem_live_internal(
             manager,
             config,
-            market_oracle,
-            pyth,
+            &live_context,
             &redeemed_order,
             close_quantity,
-            clock,
             ctx,
         );
         (redeemed_order.id(), replacement_order_id)
@@ -377,7 +378,6 @@ public(package) fun pool_nav(
     config.assert_valuation_in_progress();
     market.assert_market_oracle(market_oracle);
     market.assert_pyth_feed(pyth);
-    market_oracle.assert_active(clock);
     let position_liability = market
         .strike_exposure
         .valuation_liability(
@@ -404,10 +404,9 @@ public(package) fun run_liquidation_pass(
     market.assert_version_allowed();
     market.assert_market_oracle(market_oracle);
     market.assert_pyth_feed(pyth);
-    market_oracle.assert_active(clock);
     market
         .strike_exposure
-        .liquidate_live_orders(
+        .liquidate_live_orders_if_candidates(
             pricing_config,
             market_oracle,
             pyth,
@@ -514,6 +513,18 @@ fun assert_pyth_feed(market: &ExpiryMarket, pyth: &PythSource) {
     assert!(market.pyth_lazer_feed_id == pyth.feed_id(), EWrongPythSource);
 }
 
+fun live_pricing_context(
+    market: &ExpiryMarket,
+    pricing_config: &PricingConfig,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    clock: &Clock,
+): pricing::LivePricingContext {
+    market.assert_market_oracle(market_oracle);
+    market.assert_pyth_feed(pyth);
+    pricing::live_context(pricing_config, market_oracle, pyth, clock)
+}
+
 fun builder_fee_amount(builder_code_id: &Option<ID>, fee_amount: u64, quantity: u64): u64 {
     if (builder_code_id.is_some()) {
         math::mul(fee_amount, constants::builder_fee_multiplier!()).min(
@@ -556,27 +567,26 @@ fun mint_internal(
 ): u256 {
     manager.assert_owner(ctx);
     manager.update_stake(ctx);
-    market.assert_market_oracle(market_oracle);
-    market.assert_pyth_feed(pyth);
-    market.run_liquidation_pass(
+    let live_context = market.live_pricing_context(
         config.pricing_config(),
         market_oracle,
         pyth,
-        config.risk_config().trade_liquidation_budget(),
         clock,
+    );
+    market.strike_exposure.liquidate_live_orders(
+        &live_context,
+        config.risk_config().trade_liquidation_budget(),
     );
 
     let (minted_order, fee_amount) = market
         .strike_exposure
         .allocate_mint_order(
             config.pricing_config(),
-            market_oracle,
-            pyth,
+            &live_context,
             lower_strike,
             higher_strike,
             quantity,
             leverage,
-            clock,
         );
     let fee_amount = config
         .stake_config()
@@ -604,28 +614,22 @@ fun redeem_live_internal(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
     config: &ProtocolConfig,
-    market_oracle: &MarketOracle,
-    pyth: &PythSource,
+    context: &pricing::LivePricingContext,
     order: &Order,
     close_quantity: u64,
-    clock: &Clock,
     ctx: &mut TxContext,
 ): Option<u256> {
     manager.assert_owner(ctx);
     manager.update_stake(ctx);
-    market.assert_pyth_feed(pyth);
-    pricing::assert_live_quote_available(config.pricing_config(), market_oracle, pyth, clock);
     manager.remove_position(market.id(), order.id());
 
     let (resulting_order, redeem_amount, fee_amount) = market
         .strike_exposure
         .close_and_quote_live_order(
             config.pricing_config(),
-            market_oracle,
-            pyth,
+            context,
             order,
             close_quantity,
-            clock,
         );
     let fee_amount = config
         .stake_config()

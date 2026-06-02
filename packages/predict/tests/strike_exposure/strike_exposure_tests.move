@@ -11,6 +11,7 @@ use deepbook_predict::{
     i64,
     market_oracle,
     order,
+    pricing,
     protocol_config,
     pyth_source,
     strike_exposure
@@ -266,16 +267,15 @@ fun max_expiry_floor_premium_round_trips_at_float_scaling() {
 fun allocate_mint_order_below_min_principal_aborts() {
     let ctx = &mut tx_context::dummy();
     let (mut exposure, config, market, _cap, _admin_cap, pyth, clock) = setup_live_mint(ctx);
+    let live_context = pricing::live_context(config.pricing_config(), &market, &pyth, &clock);
 
     exposure.allocate_mint_order(
         config.pricing_config(),
-        &market,
-        &pyth,
+        &live_context,
         FORWARD_1000,
         constants::pos_inf!(),
         BELOW_MIN_PRINCIPAL_QUANTITY,
         order::leverage_one_x(),
-        &clock,
     );
     abort 999
 }
@@ -284,16 +284,15 @@ fun allocate_mint_order_below_min_principal_aborts() {
 fun allocate_mint_order_above_min_principal_succeeds() {
     let ctx = &mut tx_context::dummy();
     let (mut exposure, config, market, cap, admin_cap, pyth, clock) = setup_live_mint(ctx);
+    let live_context = pricing::live_context(config.pricing_config(), &market, &pyth, &clock);
 
     let (minted_order, _fee_amount) = exposure.allocate_mint_order(
         config.pricing_config(),
-        &market,
-        &pyth,
+        &live_context,
         FORWARD_1000,
         constants::pos_inf!(),
         ABOVE_MIN_PRINCIPAL_QUANTITY,
         order::leverage_one_x(),
-        &clock,
     );
 
     assert_eq!(minted_order.entry_probability(), UP_AT_FORWARD_PROBABILITY);
