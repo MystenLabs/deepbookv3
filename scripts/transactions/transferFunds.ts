@@ -31,15 +31,22 @@ export type Network = "mainnet" | "testnet" | "devnet" | "localnet";
   // Update receiving address as needed
   const recevingAddress =
     "0x126bdaa2ef314de60c8214c82a2248e4cc21875330a5c32977eb303be585cab8";
-  const coinType = "SUI"; // "SUI" or "DEEP" or "USDC"
+  const coinType = "SUI" as keyof typeof config; // "SUI" or "DEEP" or "USDC"
   const amount = 10_000;
 
   const totalAmount = amount * config[coinType].scalar;
-  const coin = coinWithBalance({
-    balance: totalAmount,
-    type: config[coinType].type,
-    useGasCoin: false,
-  })(transaction);
+  // For SUI, split from the gas coin itself. The gas object set via GAS_OBJECT is
+  // also a SUI coin, so sourcing the transfer with coinWithBalance can re-select it
+  // and make the same object appear twice in the transaction (gas + input), which
+  // the network rejects. Splitting from tx.gas avoids the duplicate object.
+  const coin =
+    coinType === "SUI"
+      ? transaction.splitCoins(transaction.gas, [totalAmount])[0]
+      : coinWithBalance({
+          balance: totalAmount,
+          type: config[coinType].type,
+          useGasCoin: false,
+        })(transaction);
 
   transaction.transferObjects([coin], recevingAddress);
   let res = await prepareMultisigTx(transaction, env, adminAddress);
