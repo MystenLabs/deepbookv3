@@ -13,16 +13,16 @@ use deepbook_predict::{
     order,
     protocol_config,
     pyth_source,
-    strike_exposure
+    strike_exposure,
+    strike_grid
 };
 use std::unit_test::{assert_eq, destroy};
 use sui::clock;
 
-// Realistic-shape grid: strikes are 1e9-scaled prices, tick is a multiple of
-// oracle_tick_size_unit!() (10_000).
 const EXPIRY_MS: u64 = 1_700_000_000_000;
 const MIN_STRIKE: u64 = 100_000_000_000; // $100
 const TICK_SIZE: u64 = 1_000_000_000; //   $1
+const MAX_STRIKE: u64 = 100_100_000_000_000;
 const MAX_PREMIUM: u64 = 200_000_000; //   1.0 -> 1.2 over the floor window
 const LIQUIDATION_LTV: u64 = 850_000_000;
 const FAKE_EXPIRY_ID: address = @0xCAFE;
@@ -42,7 +42,7 @@ const ABOVE_MIN_PRINCIPAL_QUANTITY: u64 = 3_250_000;
 // and valuation fixtures. This file covers the constructor, mint admission,
 // simple getters, and the settled-liability cache lifecycle.
 
-// === Constructor (grid validation) ===
+// === Constructor ===
 
 fun new_exposure(
     expiry_ms: u64,
@@ -51,11 +51,11 @@ fun new_exposure(
     max_expiry_floor_premium: u64,
     ctx: &mut TxContext,
 ): strike_exposure::StrikeExposure {
+    let grid = strike_grid::new_for_testing(min_strike, tick_size, MAX_STRIKE);
     strike_exposure::new(
         FAKE_EXPIRY_ID.to_id(),
         expiry_ms,
-        min_strike,
-        tick_size,
+        grid,
         constants::default_expiry_preallocated_ticks!(),
         max_expiry_floor_premium,
         LIQUIDATION_LTV,
@@ -138,36 +138,6 @@ fun new_returns_book_with_constructor_values() {
     // Empty exposure book has zero outstanding payout liability.
     assert_eq!(exposure.payout_liability(), 0);
     destroy(exposure);
-}
-
-#[test, expected_failure(abort_code = strike_exposure::EInvalidTickSize)]
-fun new_zero_tick_size_aborts() {
-    let ctx = &mut tx_context::dummy();
-    destroy(new_exposure(EXPIRY_MS, MIN_STRIKE, 0, MAX_PREMIUM, ctx));
-    abort 999
-}
-
-#[test, expected_failure(abort_code = strike_exposure::EInvalidTickSize)]
-fun new_tick_size_not_multiple_of_unit_aborts() {
-    // tick_size must be a multiple of oracle_tick_size_unit!() = 10_000.
-    let ctx = &mut tx_context::dummy();
-    destroy(new_exposure(EXPIRY_MS, MIN_STRIKE, 999_999, MAX_PREMIUM, ctx));
-    abort 999
-}
-
-#[test, expected_failure(abort_code = strike_exposure::EInvalidStrikeGrid)]
-fun new_zero_min_strike_aborts() {
-    let ctx = &mut tx_context::dummy();
-    destroy(new_exposure(EXPIRY_MS, 0, TICK_SIZE, MAX_PREMIUM, ctx));
-    abort 999
-}
-
-#[test, expected_failure(abort_code = strike_exposure::EInvalidStrikeGrid)]
-fun new_min_strike_not_multiple_of_tick_aborts() {
-    let ctx = &mut tx_context::dummy();
-    // tick=1e9, min_strike=1e9+1 -> not a multiple.
-    destroy(new_exposure(EXPIRY_MS, TICK_SIZE + 1, TICK_SIZE, MAX_PREMIUM, ctx));
-    abort 999
 }
 
 // === Settled-liability cache lifecycle ===

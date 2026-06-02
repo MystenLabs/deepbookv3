@@ -13,8 +13,8 @@ from typing import Any
 
 from python_indexes.liquidation_book import (
     LiquidationBook,
+    boundary_index_for_order_side,
     encode_order_id,
-    strike_index_for_order_side,
 )
 from python_indexes.strike_nav_matrix import StrikeNavMatrix
 from python_indexes.strike_payout_tree import StrikePayoutTree
@@ -276,8 +276,8 @@ def configure_oracle_grid(initial_spot: int) -> None:
 
     if initial_spot <= 0:
         raise ValueError("initial Pyth spot must be positive")
-    # Mirror config_constants::assert_oracle_tick_size_covers_spot: Move checks the
-    # tick-floored spot (`spot / tick_size <= grid_ticks`), so compare on ticks too.
+    # Mirror strike_grid::new_centered: Move centers the grid on tick-floored
+    # spot, so compare on whole ticks.
     if initial_spot // ORACLE_TICK_SIZE > ORACLE_GRID_TICKS:
         raise ValueError(
             "initial Pyth spot exceeds oracle tick coverage; raise the oracle "
@@ -930,8 +930,8 @@ def build_curve(svi: dict[str, Any], forward: int, min_strike: int, max_strike: 
     return points
 
 
-def order_strike_index(strike: int) -> int:
-    return strike_index_for_order_side(
+def order_boundary_index(strike: int) -> int:
+    return boundary_index_for_order_side(
         strike,
         min_strike=ORACLE_MIN_STRIKE,
         tick_size=ORACLE_TICK_SIZE,
@@ -944,8 +944,9 @@ def order_strike_index(strike: int) -> int:
 def order_id_for_terms(order: dict[str, Any]) -> int:
     return encode_order_id(
         opened_at_ms=order["opened_at_ms"],
-        min_strike_index=order["min_strike_index"],
-        max_strike_index=order["max_strike_index"],
+        lower_boundary_index=order["lower_boundary_index"],
+        higher_boundary_index=order["higher_boundary_index"],
+        max_boundary_index=ORACLE_GRID_TICKS + 2,
         leverage=order["leverage"],
         entry_probability=order["entry_probability"],
         quantity=order["quantity"],
@@ -1691,8 +1692,8 @@ def mint_order(model: dict[str, Any], row: dict[str, Any], opened_at_ms: int) ->
         "open_floor_index": model_floor_index(model, opened_at_ms),
         "status": "active",
     }
-    order["min_strike_index"] = order_strike_index(order["lower"])
-    order["max_strike_index"] = order_strike_index(order["higher"])
+    order["lower_boundary_index"] = order_boundary_index(order["lower"])
+    order["higher_boundary_index"] = order_boundary_index(order["higher"])
     order["order_id"] = order_id_for_terms(order)
     model["orders"][row["orderRef"]] = order
     model["next_sequence"] += 1

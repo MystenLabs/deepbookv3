@@ -23,7 +23,8 @@ use deepbook_predict::{
     pricing_config::PricingConfig,
     protocol_config::ProtocolConfig,
     pyth_source::PythSource,
-    strike_exposure::{Self, StrikeExposure}
+    strike_exposure::{Self, StrikeExposure},
+    strike_grid::StrikeGrid
 };
 use dusdc::dusdc::DUSDC;
 use sui::{balance::{Self, Balance}, clock::Clock, vec_set::VecSet};
@@ -314,8 +315,7 @@ public(package) fun create_and_share(
     market_oracle_id: ID,
     pyth_lazer_feed_id: u32,
     expiry: u64,
-    min_strike: u64,
-    tick_size: u64,
+    grid: StrikeGrid,
     preallocated_ticks: u64,
     expiry_fee_window_ms: u64,
     expiry_fee_max_multiplier: u64,
@@ -334,8 +334,7 @@ public(package) fun create_and_share(
         strike_exposure: strike_exposure::new(
             expiry_market_id,
             expiry,
-            min_strike,
-            tick_size,
+            grid,
             preallocated_ticks,
             config.leverage_config().max_expiry_floor_premium(),
             config.leverage_config().liquidation_ltv(),

@@ -15,6 +15,7 @@ use deepbook_predict::{
     protocol_config::{Self, ProtocolConfig},
     pyth_source::{Self, PythSource},
     registry::{Self, Registry},
+    strike_grid,
     test_constants
 };
 use dusdc::dusdc::DUSDC;
@@ -55,14 +56,18 @@ fun rebate_eligibility_offsets_fee_reserve_by_gross_profit() {
         &cap,
         scenario.ctx(),
     );
+    let grid = strike_grid::new_for_testing(
+        MIN_STRIKE,
+        TICK_SIZE,
+        MIN_STRIKE + TICK_SIZE * constants::oracle_strike_grid_ticks!(),
+    );
     let expiry_id = expiry_market::create_and_share(
         &config,
         vec_set::singleton(constants::current_version!()),
         oracle.id(),
         pyth.feed_id(),
         EXPIRY_MS,
-        MIN_STRIKE,
-        TICK_SIZE,
+        grid,
         constants::default_expiry_preallocated_ticks!(),
         config_constants::default_expiry_fee_window_ms!(),
         constants::float_scaling!(),

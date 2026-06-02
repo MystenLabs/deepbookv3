@@ -3,6 +3,10 @@
 
 /// Sparse-initialized strike exposure index for live NAV valuation.
 ///
+/// The parent `StrikeExposure` owns the expiry `StrikeGrid`; callers must pass
+/// that same grid into mutation and valuation APIs. The matrix does not duplicate
+/// grid geometry in storage.
+///
 /// The matrix preallocates a centered subset of page objects at market creation
 /// and lazily materializes outer pages on first write. It stores page-local
 /// prefix quantities and strike-weighted quantities for exact valuation across
@@ -12,18 +16,19 @@
 module deepbook_predict::strike_nav_matrix;
 
 use deepbook::math;
-use deepbook_predict::{constants, math as predict_math, pricing::CurvePoint};
+use deepbook_predict::{
+    constants,
+    math as predict_math,
+    pricing::CurvePoint,
+    strike_grid::StrikeGrid
+};
 use sui::table::{Self, Table};
 
 const PAGE_SLOTS: u64 = 128;
 
-const EInvalidTickSize: u64 = 0;
-const EInvalidStrikeRange: u64 = 1;
 const EInsufficientQuantity: u64 = 2;
 const EInvalidCurveRange: u64 = 3;
-const EUnalignedStrike: u64 = 4;
 const EZeroQuantity: u64 = 5;
-const ETooManyStrikes: u64 = 6;
 const EFloorExceedsLiveValue: u64 = 7;
 const EInvalidPreallocatedTicks: u64 = 8;
 
@@ -31,10 +36,6 @@ const EInvalidPreallocatedTicks: u64 = 8;
 public struct StrikeNavMatrix has store {
     pages: Table<u64, vector<NavTotals>>,
     page_totals: vector<NavTotals>,
-    tick_size: u64,
-    min_strike: u64,
-    max_strike: u64,
-    total_strikes: u64,
     base_qty: u64,
     /// Floor-index-normalized aggregate contract floor, realized with round-down math.
     floor_shares: u64,
@@ -54,15 +55,11 @@ public struct NavTotals has copy, drop, store {
 
 /// Create a NAV matrix with a centered preallocated span for the oracle strike grid.
 public(package) fun new(
-    min_strike: u64,
-    tick_size: u64,
-    max_strike: u64,
+    grid: &StrikeGrid,
     preallocated_ticks: u64,
     ctx: &mut TxContext,
 ): StrikeNavMatrix {
-    assert_valid_grid(min_strike, tick_size, max_strike);
-
-    let total_strikes = (max_strike - min_strike) / tick_size + 1;
+    let total_strikes = grid.total_strikes();
     assert_valid_preallocated_ticks(total_strikes, preallocated_ticks);
     let page_count = page_count(total_strikes);
     let mut pages = table::new(ctx);
@@ -82,10 +79,6 @@ public(package) fun new(
     StrikeNavMatrix {
         pages,
         page_totals,
-        tick_size,
-        min_strike,
-        max_strike,
-        total_strikes,
         base_qty: 0,
         floor_shares: 0,
     }
@@ -94,23 +87,25 @@ public(package) fun new(
 /// Insert interval quantity for `(lower, higher]`.
 public(package) fun insert_range(
     nav: &mut StrikeNavMatrix,
+    grid: &StrikeGrid,
     lower: u64,
     higher: u64,
     qty: u64,
     floor_shares: u64,
 ) {
-    nav.apply_range(lower, higher, qty, floor_shares, true);
+    nav.apply_range(grid, lower, higher, qty, floor_shares, true);
 }
 
 /// Remove interval quantity for `(lower, higher]`.
 public(package) fun remove_range(
     nav: &mut StrikeNavMatrix,
+    grid: &StrikeGrid,
     lower: u64,
     higher: u64,
     qty: u64,
     floor_shares: u64,
 ) {
-    nav.apply_range(lower, higher, qty, floor_shares, false);
+    nav.apply_range(grid, lower, higher, qty, floor_shares, false);
 }
 
 /// Evaluate live contract value against a sampled pricing curve.
@@ -120,6 +115,7 @@ public(package) fun remove_range(
 /// policy, not an exact per-order recoverability proof.
 public(package) fun live_value(
     nav: &StrikeNavMatrix,
+    grid: &StrikeGrid,
     curve: &vector<CurvePoint>,
     minted_min_strike: u64,
     minted_max_strike: u64,
@@ -133,7 +129,7 @@ public(package) fun live_value(
     );
 
     let mut value = math::mul(nav.base_qty, constants::float_scaling!());
-    let (mut page_lo, mut slot_lo) = nav.unchecked_strike_to_coords(curve[0].strike());
+    let (mut page_lo, mut slot_lo) = strike_to_coords(grid, curve[0].strike());
     let (start, end) = nav.boundary_weighted_quantities(page_lo, slot_lo);
     value = value + math::mul(start.quantity, curve[0].up_price());
     value = value - math::mul(end.quantity, curve[0].up_price());
@@ -144,7 +140,7 @@ public(package) fun live_value(
         let strike_hi = curve[ci].strike();
         let price_lo = curve[ci - 1].up_price();
         let price_hi = curve[ci].up_price();
-        let (page_hi, slot_hi) = nav.unchecked_strike_to_coords(strike_hi);
+        let (page_hi, slot_hi) = strike_to_coords(grid, strike_hi);
         let (start_delta, end_delta) = nav.accumulate_segment_values(
             page_lo,
             slot_lo,
@@ -170,15 +166,11 @@ public(package) fun live_value(
 public(package) fun destroy(nav: StrikeNavMatrix) {
     let StrikeNavMatrix {
         mut pages,
-        page_totals: _,
-        tick_size: _,
-        min_strike: _,
-        max_strike: _,
-        total_strikes,
+        page_totals,
         base_qty: _,
         floor_shares: _,
     } = nav;
-    let page_count = page_count(total_strikes);
+    let page_count = page_totals.length();
     let mut page_key = 0;
     while (page_key < page_count) {
         if (pages.contains(page_key)) {
@@ -191,23 +183,24 @@ public(package) fun destroy(nav: StrikeNavMatrix) {
 
 fun apply_range(
     nav: &mut StrikeNavMatrix,
+    grid: &StrikeGrid,
     lower: u64,
     higher: u64,
     qty: u64,
     floor_shares: u64,
     add: bool,
 ) {
-    nav.assert_range_boundaries(lower, higher, qty);
+    assert_range_boundaries(grid, lower, higher, qty);
     apply_exact_delta(&mut nav.floor_shares, floor_shares, add);
 
     if (lower == constants::neg_inf!()) {
         apply_exact_delta(&mut nav.base_qty, qty, add);
     } else {
-        nav.apply_boundary_delta(lower, qty, true, add);
+        nav.apply_boundary_delta(grid, lower, qty, true, add);
     };
 
     if (higher != constants::pos_inf!()) {
-        nav.apply_boundary_delta(higher, qty, false, add);
+        nav.apply_boundary_delta(grid, higher, qty, false, add);
     };
 }
 
@@ -219,12 +212,13 @@ fun floor_amount(floor_shares: u64, floor_index: u64): u64 {
 
 fun apply_boundary_delta(
     nav: &mut StrikeNavMatrix,
+    grid: &StrikeGrid,
     strike: u64,
     qty: u64,
     is_start: bool,
     add: bool,
 ) {
-    let (page_key, slot) = nav.unchecked_strike_to_coords(strike);
+    let (page_key, slot) = strike_to_coords(grid, strike);
     let weighted = weighted_quantity(qty, math::mul(qty, strike));
     nav.ensure_page(page_key);
     {
@@ -240,7 +234,7 @@ fun apply_boundary_delta(
         let mut i = slot;
         while (i < PAGE_SLOTS) {
             let tick_index = page_key * PAGE_SLOTS + i;
-            if (tick_index >= nav.total_strikes) break;
+            if (tick_index >= grid.total_strikes()) break;
 
             let node = &mut page[i];
             if (is_start) {
@@ -335,15 +329,6 @@ fun page_prefix_totals(nav: &StrikeNavMatrix, page_key: u64, slot: u64): NavTota
     }
 }
 
-fun assert_valid_grid(min_strike: u64, tick_size: u64, max_strike: u64) {
-    assert!(tick_size > 0, EInvalidTickSize);
-    assert!(min_strike <= max_strike, EInvalidStrikeRange);
-    assert!(min_strike % tick_size == 0 && max_strike % tick_size == 0, EUnalignedStrike);
-
-    let total_strikes = (max_strike - min_strike) / tick_size + 1;
-    assert!(total_strikes <= constants::oracle_strike_grid_ticks!() + 1, ETooManyStrikes);
-}
-
 fun assert_valid_preallocated_ticks(total_strikes: u64, preallocated_ticks: u64) {
     assert!(preallocated_ticks <= total_strikes - 1, EInvalidPreallocatedTicks);
 }
@@ -357,24 +342,9 @@ fun preallocated_page_bounds(total_strikes: u64, preallocated_ticks: u64): (u64,
     (start_tick / PAGE_SLOTS, end_tick / PAGE_SLOTS)
 }
 
-fun assert_range_boundaries(nav: &StrikeNavMatrix, lower: u64, higher: u64, qty: u64) {
-    assert_range_shape(lower, higher, qty);
-    if (lower != constants::neg_inf!()) nav.assert_finite_boundary(lower);
-    if (higher != constants::pos_inf!()) nav.assert_finite_boundary(higher);
-}
-
-fun assert_finite_boundary(nav: &StrikeNavMatrix, strike: u64) {
-    assert!(strike >= nav.min_strike && strike <= nav.max_strike, EInvalidStrikeRange);
-    assert!((strike - nav.min_strike) % nav.tick_size == 0, EUnalignedStrike);
-}
-
-fun assert_range_shape(lower: u64, higher: u64, qty: u64) {
-    assert!(lower < higher, EInvalidStrikeRange);
-    assert!(
-        !(lower == constants::neg_inf!() && higher == constants::pos_inf!()),
-        EInvalidStrikeRange,
-    );
+fun assert_range_boundaries(grid: &StrikeGrid, lower: u64, higher: u64, qty: u64) {
     assert!(qty > 0, EZeroQuantity);
+    grid.assert_range_boundaries(lower, higher);
 }
 
 fun weighted_quantity(quantity: u64, strike_quantity: u64): WeightedQuantity {
@@ -420,8 +390,8 @@ fun weighted_segment_value(
     math::mul(weighted.quantity, price)
 }
 
-fun unchecked_strike_to_coords(nav: &StrikeNavMatrix, strike: u64): (u64, u64) {
-    let tick_index = (strike - nav.min_strike) / nav.tick_size;
+fun strike_to_coords(grid: &StrikeGrid, strike: u64): (u64, u64) {
+    let tick_index = grid.finite_strike_index(strike);
     let page_key = tick_index / PAGE_SLOTS;
     let slot = tick_index % PAGE_SLOTS;
     (page_key, slot)

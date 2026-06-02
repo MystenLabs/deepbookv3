@@ -32,9 +32,6 @@ const EInvalidValuationLiquidationBudget: u64 = 21;
 const EInvalidTradeLiquidationBudget: u64 = 22;
 const EInvalidLiquidationLtv: u64 = 23;
 const EInvalidOracleTickSize: u64 = 24;
-const EOracleTickSizeTooSmallForSpot: u64 = 25;
-const EInvalidOracleSpot: u64 = 26;
-const EOracleTickSizeTooLargeForSpot: u64 = 27;
 
 // === Expiry Funding and Liquidation ===
 
@@ -158,21 +155,6 @@ public(package) fun assert_oracle_tick_size(value: u64) {
         value > 0 && value % deepbook_predict::constants::oracle_tick_size_unit!() == 0,
         EInvalidOracleTickSize,
     );
-}
-
-/// Validate that `spot` can anchor a centered oracle grid at `tick_size`.
-///
-/// The fixed `oracle_strike_grid_ticks` window is centered on the tick-floored
-/// spot, so `spot / tick_size` must land in `(grid_ticks / 2, grid_ticks]`. The
-/// lower bound keeps `min_strike` positive; the upper bound keeps `tick_size`
-/// large enough that the grid's downside still reaches at least half of spot.
-public(package) fun assert_oracle_tick_size_covers_spot(tick_size: u64, spot: u64) {
-    assert!(spot > 0, EInvalidOracleSpot);
-    assert_oracle_tick_size(tick_size);
-    let grid_ticks = deepbook_predict::constants::oracle_strike_grid_ticks!();
-    let spot_ticks = spot / tick_size;
-    assert!(spot_ticks > grid_ticks / 2, EOracleTickSizeTooLargeForSpot);
-    assert!(spot_ticks <= grid_ticks, EOracleTickSizeTooSmallForSpot);
 }
 
 public(package) macro fun default_min_ask_price(): u64 { 10_000_000 }

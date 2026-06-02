@@ -133,9 +133,9 @@ average, but it can accumulate one-sided exposure before a market move.
 The bounded liquidation scan sorts active leveraged orders by packed `order_id`.
 An offline priority search over the `may29-1738` long-run backlog samples found
 that the exact packed layout, `quantity_lots desc > leverage desc > opened_at_ms
-asc > min_strike_index asc > max_strike_index asc > entry_probability asc >
-sequence asc`, captured more liquidatable value than the previous leverage-first
-layout.
+asc > lower_boundary_index asc > higher_boundary_index asc > entry_probability
+asc > sequence asc`, captured more liquidatable value than the previous
+leverage-first layout.
 
 The useful interpretation is that order size was the strongest immutable proxy
 for value-at-risk in that run. Higher leverage still matters, but using it as the

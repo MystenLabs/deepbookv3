@@ -18,9 +18,9 @@ use deepbook_predict::{constants, math};
 
 const EInvalidOrderId: u64 = 0;
 const EInvalidOpenedAt: u64 = 1;
-const EInvalidStrikeIndex: u64 = 2;
+const EInvalidBoundaryIndex: u64 = 2;
 const EInvalidLeverage: u64 = 3;
-const EInvalidStrikeRange: u64 = 4;
+const EInvalidBoundaryRange: u64 = 4;
 const EInvalidQuantity: u64 = 5;
 const EInvalidSequence: u64 = 6;
 const EInvalidEntryProbability: u64 = 7;
@@ -29,8 +29,8 @@ const EInvalidLeverageTier: u64 = 8;
 const INVERSE_QUANTITY_LOTS_OFFSET: u8 = 200;
 const LEVERAGE_RANK_OFFSET: u8 = 168;
 const OPENED_AT_OFFSET: u8 = 120;
-const MIN_STRIKE_INDEX_OFFSET: u8 = 96;
-const MAX_STRIKE_INDEX_OFFSET: u8 = 72;
+const LOWER_BOUNDARY_INDEX_OFFSET: u8 = 96;
+const HIGHER_BOUNDARY_INDEX_OFFSET: u8 = 72;
 const ENTRY_PROBABILITY_OFFSET: u8 = 40;
 const ORDER_ID_BITS: u8 = 232;
 
@@ -94,14 +94,14 @@ public fun opened_at_ms(order: &Order): u64 {
     decode_u48(order.id, OPENED_AT_OFFSET)
 }
 
-/// Return the lower strike index encoded in this order.
-public fun min_strike_index(order: &Order): u64 {
-    decode_u24(order.id, MIN_STRIKE_INDEX_OFFSET)
+/// Return the lower strike boundary index encoded in this order.
+public fun lower_boundary_index(order: &Order): u64 {
+    decode_u24(order.id, LOWER_BOUNDARY_INDEX_OFFSET)
 }
 
-/// Return the upper strike index encoded in this order.
-public fun max_strike_index(order: &Order): u64 {
-    decode_u24(order.id, MAX_STRIKE_INDEX_OFFSET)
+/// Return the higher strike boundary index encoded in this order.
+public fun higher_boundary_index(order: &Order): u64 {
+    decode_u24(order.id, HIGHER_BOUNDARY_INDEX_OFFSET)
 }
 
 /// Return the 1e9-scaled leverage multiplier encoded in this order.
@@ -131,11 +131,11 @@ public fun sequence(order: &Order): u64 {
 
 // === Public-Package Functions ===
 
-/// Construct an order ID from already-normalized strike indices.
-public(package) fun new_from_strike_indices(
+/// Construct an order ID from already-normalized strike boundary indices.
+public(package) fun new_from_boundary_indices(
     opened_at_ms: u64,
-    min_strike_index: u64,
-    max_strike_index: u64,
+    lower_boundary_index: u64,
+    higher_boundary_index: u64,
     leverage: u64,
     entry_probability: u64,
     quantity: u64,
@@ -143,8 +143,8 @@ public(package) fun new_from_strike_indices(
 ): Order {
     new(
         opened_at_ms,
-        min_strike_index,
-        max_strike_index,
+        lower_boundary_index,
+        higher_boundary_index,
         leverage,
         entry_probability,
         quantity_lots_from_quantity(quantity),
@@ -155,20 +155,15 @@ public(package) fun new_from_strike_indices(
 /// Construct a lower-quantity order that inherits the original floor coverage invariant.
 public(package) fun replacement(old_order: &Order, quantity: u64, sequence: u64): Order {
     assert!(quantity < old_order.quantity(), EInvalidQuantity);
-    new_from_strike_indices(
+    new_from_boundary_indices(
         old_order.opened_at_ms(),
-        old_order.min_strike_index(),
-        old_order.max_strike_index(),
+        old_order.lower_boundary_index(),
+        old_order.higher_boundary_index(),
         old_order.leverage(),
         old_order.entry_probability(),
         quantity,
         sequence,
     )
-}
-
-/// Return the sentinel index for an unbounded order side.
-public(package) fun open_strike_index(): u64 {
-    constants::oracle_strike_grid_ticks!() + 1
 }
 
 /// Assert that a user-facing position quantity can be encoded in an order.
@@ -205,20 +200,20 @@ public(package) fun assert_mint_leverage_tier(entry_probability: u64, leverage: 
 
 fun new(
     opened_at_ms: u64,
-    min_strike_index: u64,
-    max_strike_index: u64,
+    lower_boundary_index: u64,
+    higher_boundary_index: u64,
     leverage: u64,
     entry_probability: u64,
     quantity_lots: u64,
     sequence: u64,
 ): Order {
     assert!(opened_at_ms <= U48_MASK as u64, EInvalidOpenedAt);
-    assert!(min_strike_index <= U24_MASK as u64, EInvalidStrikeIndex);
-    assert!(max_strike_index <= U24_MASK as u64, EInvalidStrikeIndex);
+    assert!(lower_boundary_index <= U24_MASK as u64, EInvalidBoundaryIndex);
+    assert!(higher_boundary_index <= U24_MASK as u64, EInvalidBoundaryIndex);
     assert!(entry_probability <= constants::float_scaling!(), EInvalidEntryProbability);
     assert!(quantity_lots > 0 && quantity_lots <= U32_MASK as u64, EInvalidQuantity);
     assert!(sequence <= U40_MASK as u64, EInvalidSequence);
-    assert_valid_order_shape(min_strike_index, max_strike_index, leverage);
+    assert_valid_order_shape(lower_boundary_index, higher_boundary_index, leverage);
 
     let leverage_rank = leverage_rank(leverage);
     let inverse_quantity_lots = U32_MASK as u64 - quantity_lots;
@@ -226,8 +221,8 @@ fun new(
         ((inverse_quantity_lots as u256) << INVERSE_QUANTITY_LOTS_OFFSET)
         | ((leverage_rank as u256) << LEVERAGE_RANK_OFFSET)
         | ((opened_at_ms as u256) << OPENED_AT_OFFSET)
-        | ((min_strike_index as u256) << MIN_STRIKE_INDEX_OFFSET)
-        | ((max_strike_index as u256) << MAX_STRIKE_INDEX_OFFSET)
+        | ((lower_boundary_index as u256) << LOWER_BOUNDARY_INDEX_OFFSET)
+        | ((higher_boundary_index as u256) << HIGHER_BOUNDARY_INDEX_OFFSET)
         | ((entry_probability as u256) << ENTRY_PROBABILITY_OFFSET)
         | (sequence as u256);
 
@@ -258,7 +253,11 @@ fun assert_valid(order: &Order) {
     assert!(order.id >> ORDER_ID_BITS == 0, EInvalidOrderId);
     assert!(order.entry_probability() <= constants::float_scaling!(), EInvalidEntryProbability);
     assert!(quantity_lots > 0, EInvalidQuantity);
-    assert_valid_order_shape(order.min_strike_index(), order.max_strike_index(), order.leverage());
+    assert_valid_order_shape(
+        order.lower_boundary_index(),
+        order.higher_boundary_index(),
+        order.leverage(),
+    );
 }
 
 fun user_contribution_from_exposure_value(exposure_value: u64, leverage: u64): u64 {
@@ -313,22 +312,29 @@ fun leverage_from_rank(rank: u64): u64 {
     }
 }
 
-fun assert_valid_order_shape(min_strike_index: u64, max_strike_index: u64, leverage: u64) {
+fun assert_valid_order_shape(lower_boundary_index: u64, higher_boundary_index: u64, leverage: u64) {
     assert_valid_leverage(leverage);
-    let open_index = open_strike_index();
-    assert!(min_strike_index <= open_index, EInvalidStrikeIndex);
-    assert!(max_strike_index <= open_index, EInvalidStrikeIndex);
+    let max_boundary_index = max_encoded_boundary_index();
+    assert!(lower_boundary_index <= max_boundary_index, EInvalidBoundaryIndex);
+    assert!(higher_boundary_index <= max_boundary_index, EInvalidBoundaryIndex);
+    assert!(lower_boundary_index < higher_boundary_index, EInvalidBoundaryRange);
     assert!(
-        !(min_strike_index == open_index && max_strike_index == open_index),
-        EInvalidStrikeRange,
-    );
-    assert!(
-        min_strike_index == open_index
-            || max_strike_index == open_index
-            || min_strike_index < max_strike_index,
-        EInvalidStrikeRange,
+        !(lower_boundary_index == 0 && higher_boundary_index == max_boundary_index),
+        EInvalidBoundaryRange,
     );
     if (leverage == LEVERAGE_ONE_X) return;
 
-    assert!(min_strike_index == open_index || max_strike_index == open_index, EInvalidStrikeRange);
+    assert!(
+        lower_boundary_index == 0 || higher_boundary_index == max_boundary_index,
+        EInvalidBoundaryRange,
+    );
+}
+
+/// Highest boundary index the packed order ID can encode for any expiry grid.
+///
+/// `Order` does not map indexes to concrete strikes; `StrikeGrid` owns runtime
+/// boundary mapping for each expiry. This bound only validates that the packed
+/// u24 field is within the fixed protocol-wide boundary-index domain.
+fun max_encoded_boundary_index(): u64 {
+    constants::oracle_strike_grid_ticks!() + 2
 }
