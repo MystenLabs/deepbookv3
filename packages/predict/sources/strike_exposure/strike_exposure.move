@@ -16,7 +16,7 @@ use deepbook::{constants::max_u64, math};
 use deepbook_predict::{
     constants,
     liquidation_book::{Self, LiquidationBook},
-    market_oracle::{MarketOracle, SVIParams},
+    market_oracle::MarketOracle,
     math as predict_math,
     order::{Self, Order},
     order_events,
@@ -128,10 +128,10 @@ public(package) fun valuation_liability(
         return 0
     };
 
-    let (forward, svi) = pricing::live_inputs(config, market, pyth, clock);
+    let context = pricing::live_context(config, market, pyth, clock);
     let curve = pricing::build_curve(
-        &svi,
-        forward,
+        context.svi(),
+        context.forward(),
         exposure.grid_min,
         exposure.grid_tick,
         exposure.grid_max,
@@ -144,7 +144,7 @@ public(package) fun valuation_liability(
             &curve,
             minted_min_strike,
             minted_max_strike,
-            exposure.floor_index_at_ms(clock.timestamp_ms()),
+            exposure.floor_index_at_ms(context.now_ms()),
         )
 }
 
@@ -208,37 +208,27 @@ public(package) fun close_settled_order(
 public(package) fun allocate_mint_order(
     exposure: &mut StrikeExposure,
     config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
+    context: &pricing::LivePricingContext,
     lower: u64,
     higher: u64,
     quantity: u64,
     leverage: u64,
-    clock: &Clock,
 ): (Order, u64) {
     let (min_strike_index, max_strike_index) = exposure.strike_indices(lower, higher);
-    let entry_probability = pricing::live_range_probability(
-        config,
-        market,
-        pyth,
-        lower,
-        higher,
-        clock,
-    );
+    let entry_probability = pricing::live_range_probability(context, lower, higher);
     order::assert_mint_leverage_tier(entry_probability, leverage);
     let fee_rate = pricing::assert_mint_fee_rate(
         config,
-        market,
+        context,
         exposure.expiry_fee_window_ms,
         exposure.expiry_fee_max_multiplier,
         entry_probability,
-        clock,
     );
     let fee_amount = math::mul(fee_rate, quantity);
 
     let sequence = exposure.next_order_sequence;
     let allocated_order = order::new_from_strike_indices(
-        clock.timestamp_ms(),
+        context.now_ms(),
         min_strike_index,
         max_strike_index,
         leverage,
@@ -264,31 +254,21 @@ public(package) fun allocate_mint_order(
 public(package) fun close_and_quote_live_order(
     exposure: &mut StrikeExposure,
     config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
+    context: &pricing::LivePricingContext,
     order: &Order,
     close_quantity: u64,
-    clock: &Clock,
 ): (Order, u64, u64) {
     let (lower, higher) = exposure.order_strikes(order);
     let old_quantity = order.quantity();
     order::assert_valid_quantity(close_quantity);
     assert!(close_quantity <= old_quantity, EInvalidCloseQuantity);
-    let range_probability = pricing::live_range_probability(
-        config,
-        market,
-        pyth,
-        lower,
-        higher,
-        clock,
-    );
+    let range_probability = pricing::live_range_probability(context, lower, higher);
     let fee_rate = pricing::fee_rate(
         config,
-        market,
+        context,
         exposure.expiry_fee_window_ms,
         exposure.expiry_fee_max_multiplier,
         range_probability,
-        clock,
     );
 
     let (resulting_order, closed_floor_amount) = exposure.close_live_exposure(
@@ -296,7 +276,7 @@ public(package) fun close_and_quote_live_order(
         lower,
         higher,
         close_quantity,
-        clock,
+        context.now_ms(),
     );
     let gross_redeem_amount = math::mul(range_probability, close_quantity);
     let redeem_amount = gross_redeem_amount - gross_redeem_amount.min(closed_floor_amount);
@@ -312,6 +292,18 @@ public(package) fun clear_liquidated_order(exposure: &mut StrikeExposure, order:
 /// Run one bounded liquidation pass using exact per-candidate pricing.
 public(package) fun liquidate_live_orders(
     exposure: &mut StrikeExposure,
+    context: &pricing::LivePricingContext,
+    budget: u64,
+): u64 {
+    let candidates = exposure.liquidation.select_liquidation_candidates(budget);
+    if (candidates.is_empty()) return 0;
+
+    exposure.liquidate_candidates(context, candidates)
+}
+
+/// Run liquidation only if the passive scan has candidates to price.
+public(package) fun liquidate_live_orders_if_candidates(
+    exposure: &mut StrikeExposure,
     config: &PricingConfig,
     market: &MarketOracle,
     pyth: &PythSource,
@@ -321,8 +313,8 @@ public(package) fun liquidate_live_orders(
     let candidates = exposure.liquidation.select_liquidation_candidates(budget);
     if (candidates.is_empty()) return 0;
 
-    let (forward, svi) = pricing::live_inputs(config, market, pyth, clock);
-    exposure.liquidate_candidates(&svi, forward, candidates, clock)
+    let context = pricing::live_context(config, market, pyth, clock);
+    exposure.liquidate_candidates(&context, candidates)
 }
 
 /// Cache terminal settled payout liability.
@@ -372,10 +364,8 @@ public(package) fun destroy_live_indexes(exposure: &mut StrikeExposure) {
 
 fun liquidate_candidates(
     exposure: &mut StrikeExposure,
-    svi: &SVIParams,
-    forward: u64,
+    context: &pricing::LivePricingContext,
     candidates: vector<u256>,
-    clock: &Clock,
 ): u64 {
     let mut liquidated_count = 0;
     let mut i = 0;
@@ -383,8 +373,8 @@ fun liquidate_candidates(
         let order = order::from_order_id(candidates[i]);
         let (lower, higher) = exposure.order_strikes(&order);
         let range_probability = pricing::compute_range_price(
-            svi,
-            forward,
+            context.svi(),
+            context.forward(),
             lower,
             higher,
         );
@@ -394,7 +384,7 @@ fun liquidate_candidates(
                 lower,
                 higher,
                 range_probability,
-                clock,
+                context.now_ms(),
             )
         ) {
             liquidated_count = liquidated_count + 1;
@@ -569,7 +559,7 @@ fun close_live_exposure(
     lower: u64,
     higher: u64,
     close_quantity: u64,
-    clock: &Clock,
+    now_ms: u64,
 ): (Order, u64) {
     let resulting_order = exposure.resulting_order_after_close(order, close_quantity);
     let closed_floor_amount = exposure.remove_closed_live_order(
@@ -578,7 +568,7 @@ fun close_live_exposure(
         lower,
         higher,
         close_quantity,
-        clock,
+        now_ms,
     );
     exposure.liquidation.remove_order(order);
     if (resulting_order.id() != order.id()) {
@@ -608,7 +598,7 @@ fun remove_closed_live_order(
     lower: u64,
     higher: u64,
     close_quantity: u64,
-    clock: &Clock,
+    now_ms: u64,
 ): u64 {
     let (
         old_floor_shares,
@@ -627,7 +617,7 @@ fun remove_closed_live_order(
     let closed_live_backing_payout = old_live_backing_payout - remaining_live_backing_payout;
     let closed_floor_amount = exposure.floor_amount_at_ms(
         closed_floor_shares,
-        clock.timestamp_ms(),
+        now_ms,
     );
 
     let live = exposure.live.borrow_mut();
@@ -649,12 +639,12 @@ fun liquidate_candidate_if_under_floor(
     lower: u64,
     higher: u64,
     range_probability: u64,
-    clock: &Clock,
+    now_ms: u64,
 ): bool {
     let gross_value = math::mul(range_probability, order.quantity());
     let floor_amount = exposure.floor_amount_at_ms(
         exposure.order_floor_shares(order),
-        clock.timestamp_ms(),
+        now_ms,
     );
     let liquidation_threshold_value = predict_math::mul_div_round_up(
         floor_amount,

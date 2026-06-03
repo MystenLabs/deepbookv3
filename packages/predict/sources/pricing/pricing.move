@@ -39,6 +39,14 @@ public struct CurvePoint has copy, drop, store {
     up_price: u64,
 }
 
+/// Live pricing inputs sampled after liveness, binding, and freshness checks.
+public struct LivePricingContext has copy, drop {
+    forward: u64,
+    svi: SVIParams,
+    now_ms: u64,
+    time_to_expiry_ms: u64,
+}
+
 // === Public Functions ===
 
 /// Return terminal settlement price, aborting if the market is unsettled.
@@ -56,17 +64,60 @@ public(package) fun up_price(point: &CurvePoint): u64 {
     point.up_price
 }
 
-/// Return the current raw probability for a live range.
-public(package) fun live_range_probability(
+public(package) fun forward(context: &LivePricingContext): u64 {
+    context.forward
+}
+
+public(package) fun svi(context: &LivePricingContext): &SVIParams {
+    &context.svi
+}
+
+public(package) fun now_ms(context: &LivePricingContext): u64 {
+    context.now_ms
+}
+
+/// Return the current time to expiry for this live pricing sample.
+public(package) fun time_to_expiry_ms(context: &LivePricingContext): u64 {
+    context.time_to_expiry_ms
+}
+
+/// Resolve the live pricing context used by all live quote paths.
+///
+/// Fresh Pyth spot is canonical for spot; forward is then derived from the
+/// latest Block Scholes basis. If Pyth is stale, pricing falls back to the
+/// fresh Block Scholes forward. SVI must be fresh either way.
+public(package) fun live_context(
     config: &PricingConfig,
     market: &MarketOracle,
     pyth: &PythSource,
+    clock: &Clock,
+): LivePricingContext {
+    market.assert_pyth_source(pyth);
+    market.assert_active(clock);
+    assert_live_oracle_fresh(config, market, clock);
+
+    let now_ms = clock.timestamp_ms();
+    let forward = if (pyth_spot_is_fresh(config, pyth, clock)) {
+        math::mul(pyth.spot(), market.block_scholes_basis())
+    } else {
+        market.block_scholes_forward()
+    };
+
+    LivePricingContext {
+        forward,
+        svi: market.block_scholes_svi(),
+        now_ms,
+        time_to_expiry_ms: market.expiry() - now_ms,
+    }
+}
+
+/// Return the current raw probability for a live range.
+public(package) fun live_range_probability(
+    context: &LivePricingContext,
     lower: u64,
     higher: u64,
-    clock: &Clock,
 ): u64 {
-    let (forward, svi) = live_inputs(config, market, pyth, clock);
-    compute_range_price(&svi, forward, lower, higher)
+    compute_range_price(&context.svi, context.forward, lower, higher)
 }
 
 /// Return the per-unit fee for a raw contract probability, scaled by the
@@ -74,20 +125,18 @@ public(package) fun live_range_probability(
 /// the market is active (`now < expiry`).
 public(package) fun fee_rate(
     config: &PricingConfig,
-    market: &MarketOracle,
+    context: &LivePricingContext,
     expiry_fee_window_ms: u64,
     expiry_fee_max_multiplier: u64,
     probability: u64,
-    clock: &Clock,
 ): u64 {
     let raw_fee = raw_bernoulli_fee_rate(config, probability);
     let min_fee = config.min_fee();
     let base = if (raw_fee > min_fee) raw_fee else min_fee;
-    let time_to_expiry_ms = market.expiry() - clock.timestamp_ms();
     let multiplier = expiry_fee_multiplier(
         expiry_fee_window_ms,
         expiry_fee_max_multiplier,
-        time_to_expiry_ms,
+        context.time_to_expiry_ms,
     );
     math::mul(base, multiplier)
 }
@@ -95,19 +144,17 @@ public(package) fun fee_rate(
 /// Return fee rate and abort unless the all-in mint price is allowed.
 public(package) fun assert_mint_fee_rate(
     config: &PricingConfig,
-    market: &MarketOracle,
+    context: &LivePricingContext,
     expiry_fee_window_ms: u64,
     expiry_fee_max_multiplier: u64,
     probability: u64,
-    clock: &Clock,
 ): u64 {
     let fee_rate = fee_rate(
         config,
-        market,
+        context,
         expiry_fee_window_ms,
         expiry_fee_max_multiplier,
         probability,
-        clock,
     );
     let ask_price = probability + fee_rate;
     assert!(
@@ -117,46 +164,12 @@ public(package) fun assert_mint_fee_rate(
     fee_rate
 }
 
-/// Abort unless the live oracle inputs needed for a quote are currently usable.
-public(package) fun assert_live_quote_available(
-    config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
-    clock: &Clock,
-) {
-    market.assert_pyth_source(pyth);
-    market.assert_active(clock);
-    assert_live_oracle_fresh(config, market, clock);
-}
-
 public(package) fun assert_pyth_spot_fresh(
     config: &PricingConfig,
     pyth: &PythSource,
     clock: &Clock,
 ) {
     assert!(pyth_spot_is_fresh(config, pyth, clock), EPythSpotStale);
-}
-
-/// Resolve the live forward/SVI tuple used by all live pricing paths.
-///
-/// Fresh Pyth spot is canonical for spot; forward is then derived from the
-/// latest Block Scholes basis. If Pyth is stale, pricing falls back to the
-/// fresh Block Scholes forward. SVI must be fresh either way.
-public(package) fun live_inputs(
-    config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
-    clock: &Clock,
-): (u64, SVIParams) {
-    assert_live_quote_available(config, market, pyth, clock);
-
-    let forward = if (pyth_spot_is_fresh(config, pyth, clock)) {
-        math::mul(pyth.spot(), market.block_scholes_basis())
-    } else {
-        market.block_scholes_forward()
-    };
-
-    (forward, market.block_scholes_svi())
 }
 
 /// Build an adaptive piecewise-linear UP-price curve over a configured grid range.
