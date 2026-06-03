@@ -93,20 +93,3 @@ public(package) fun penalty_fee(
 
     math::mul(config.additional_fee(), quantity)
 }
-
-// === Test Functions ===
-
-#[test_only]
-public fun mean(self: &EwmaState): u64 {
-    self.mean
-}
-
-#[test_only]
-public fun variance(self: &EwmaState): u64 {
-    self.variance
-}
-
-#[test_only]
-public fun last_updated_timestamp_ms(self: &EwmaState): u64 {
-    self.last_updated_timestamp_ms
-}
