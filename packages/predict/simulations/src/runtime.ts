@@ -348,11 +348,16 @@ function finishPoolSyncWithExpiry(tx: Transaction, params: ExpiryPoolSyncParams)
 
 function addMint(tx: Transaction, params: MintParams): void {
     const { lower, higher } = binaryRangeBounds(params.strike, params.isUp);
+    const proof = tx.moveCall({
+        target: target("predict_manager", "generate_proof_as_owner"),
+        arguments: [tx.object(params.managerId)],
+    });
     tx.moveCall({
         target: target("expiry_market", "mint"),
         arguments: [
             tx.object(params.expiryMarketId),
             tx.object(params.managerId),
+            proof,
             tx.object(params.protocolConfigId),
             tx.object(params.oracleId),
             tx.object(params.pythSourceId),
@@ -366,11 +371,19 @@ function addMint(tx: Transaction, params: MintParams): void {
 }
 
 function addRedeem(tx: Transaction, params: RedeemParams): void {
+    // The sim always acts as the manager owner, so it uses the authorized
+    // `redeem` with a proof. Works for live redeems (proof consumed) and
+    // settled / liquidated redeems (proof dropped).
+    const proof = tx.moveCall({
+        target: target("predict_manager", "generate_proof_as_owner"),
+        arguments: [tx.object(params.managerId)],
+    });
     tx.moveCall({
         target: target("expiry_market", "redeem"),
         arguments: [
             tx.object(params.expiryMarketId),
             tx.object(params.managerId),
+            proof,
             tx.object(params.protocolConfigId),
             tx.object(params.oracleId),
             tx.object(params.pythSourceId),

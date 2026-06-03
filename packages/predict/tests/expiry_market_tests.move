@@ -82,8 +82,10 @@ fun rebate_eligibility_offsets_fee_reserve_by_gross_profit() {
         scenario.ctx(),
     );
 
+    let proof = manager.generate_proof_as_owner(scenario.ctx());
     let order_id = market.mint(
         &mut manager,
+        &proof,
         &config,
         &oracle,
         &pyth,

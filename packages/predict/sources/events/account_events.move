@@ -26,6 +26,24 @@ public struct BuilderCodeSet has copy, drop, store {
     builder_code_id: Option<ID>,
 }
 
+/// Emitted when a `PredictTradeCap` is minted.
+public struct PredictTradeCapMinted has copy, drop, store {
+    predict_manager_id: ID,
+    cap_id: ID,
+}
+
+/// Emitted when a `PredictDepositCap` is minted.
+public struct PredictDepositCapMinted has copy, drop, store {
+    predict_manager_id: ID,
+    cap_id: ID,
+}
+
+/// Emitted when a `PredictWithdrawCap` is minted.
+public struct PredictWithdrawCapMinted has copy, drop, store {
+    predict_manager_id: ID,
+    cap_id: ID,
+}
+
 // === Public-Package Functions ===
 
 public(package) fun emit_predict_manager_created(predict_manager_id: ID, owner: address) {
@@ -57,4 +75,16 @@ public(package) fun emit_builder_code_set(
         owner,
         builder_code_id,
     });
+}
+
+public(package) fun emit_predict_trade_cap_minted(predict_manager_id: ID, cap_id: ID) {
+    event::emit(PredictTradeCapMinted { predict_manager_id, cap_id });
+}
+
+public(package) fun emit_predict_deposit_cap_minted(predict_manager_id: ID, cap_id: ID) {
+    event::emit(PredictDepositCapMinted { predict_manager_id, cap_id });
+}
+
+public(package) fun emit_predict_withdraw_cap_minted(predict_manager_id: ID, cap_id: ID) {
+    event::emit(PredictWithdrawCapMinted { predict_manager_id, cap_id });
 }
