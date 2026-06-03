@@ -5,6 +5,7 @@
 module deepbook_predict::config_events;
 
 use deepbook_predict::{
+    ewma_config::EwmaConfig,
     fee_config::FeeConfig,
     leverage_config::LeverageConfig,
     market_oracle_config::MarketOracleConfig,
@@ -55,6 +56,15 @@ public struct MarketOracleTemplateConfigUpdated has copy, drop, store {
     max_basis_deviation: u64,
     min_basis: u64,
     max_basis: u64,
+}
+
+/// Emitted when the EWMA gas-price penalty config changes.
+public struct EwmaConfigUpdated has copy, drop, store {
+    protocol_config_id: ID,
+    alpha: u64,
+    z_score_threshold: u64,
+    additional_fee: u64,
+    enabled: bool,
 }
 
 /// Emitted when global trading pause state changes.
@@ -140,6 +150,16 @@ public(package) fun emit_market_oracle_template_config_updated(
         max_basis_deviation: config.max_basis_deviation(),
         min_basis: config.min_basis(),
         max_basis: config.max_basis(),
+    });
+}
+
+public(package) fun emit_ewma_config_updated(protocol_config_id: ID, config: &EwmaConfig) {
+    event::emit(EwmaConfigUpdated {
+        protocol_config_id,
+        alpha: config.alpha(),
+        z_score_threshold: config.z_score_threshold(),
+        additional_fee: config.additional_fee(),
+        enabled: config.enabled(),
     });
 }
 

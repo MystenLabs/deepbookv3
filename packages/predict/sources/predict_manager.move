@@ -6,21 +6,48 @@
 /// Users deposit DUSDC into the PredictManager. DUSDC custody is delegated to
 /// BalanceManager, while positions are tracked by order IDs scoped to an
 /// ExpiryMarket.
+///
+/// Authorization mirrors BalanceManager: the manager owner can act directly,
+/// or grant `PredictTradeCap`, `PredictDepositCap`, and `PredictWithdrawCap`
+/// to other addresses. `PredictTradeProof` is consumed by predict modules to
+/// authorize a mint/redeem trade and to route the fee deposit/withdraw
+/// through the manager's inner BalanceManager caps. The inner BalanceManager
+/// `DepositCap` and `WithdrawCap` are held by PredictManager itself and never
+/// exposed — all custody operations route through them so the inner
+/// BalanceManager owner check never fires from a cap holder's call.
 module deepbook_predict::predict_manager;
 
-use deepbook::balance_manager::{Self, BalanceManager, DepositCap};
-use deepbook_predict::{account_events, builder_code::{Self, BuilderCode}};
+use deepbook::{
+    balance_manager::{Self, BalanceManager, DepositCap, WithdrawCap, TradeCap},
+    registry::Registry as DeepbookRegistry
+};
+use deepbook_predict::{account_events, builder_code::{Self, BuilderCode}, constants};
 use dusdc::dusdc::DUSDC;
-use sui::{coin::Coin, derived_object, table::{Self, Table}};
+use sui::{coin::Coin, derived_object, table::{Self, Table}, vec_set::{Self, VecSet}};
 
 const EInsufficientPosition: u64 = 0;
 const ENotOwner: u64 = 1;
-const EExpirySummaryHasOpenPositions: u64 = 2;
-const EPositionAlreadyExists: u64 = 3;
+const EInvalidProof: u64 = 2;
+const EInvalidCap: u64 = 3;
+const EMaxCapsReached: u64 = 4;
+const ECapNotInList: u64 = 5;
+const EExpirySummaryHasOpenPositions: u64 = 6;
+const EPositionAlreadyExists: u64 = 7;
 
-/// The key for deriving predict manager. u64 is optional for
-/// supporting multiple managers per address. Defaults to 0 in v1.
+/// Cap-count safety ceiling per manager. Mirrors BalanceManager's MAX_TRADE_CAPS.
+const MAX_CAPS: u64 = 1000;
+
+/// The key for deriving predict manager. u64 distinguishes managers per
+/// address: index 0 is reserved for sender-owned managers (`new`), index 1
+/// for self-owned managers (`new_self_owned`). Future indices may extend the
+/// scheme if multiple managers per sender are added.
 public struct PredictManagerKey(address, u64) has copy, drop, store;
+
+/// Witness used to prove that calls into `balance_manager::new_with_custom_owner_caps_v2`
+/// originate from this package. The deepbook `Registry` admin must authorize
+/// `PredictApp` once via `authorize_app<PredictApp>` before `new_self_owned`
+/// can succeed.
+public struct PredictApp has drop {}
 
 /// Manager-local position key binding an order ID to the expiry market that minted it.
 public struct PositionKey has copy, drop, store {
@@ -34,7 +61,22 @@ public struct PositionKey has copy, drop, store {
 public struct PredictManager has key {
     id: UID,
     balance_manager: BalanceManager,
+    /// Inner BalanceManager `DepositCap` used by PredictManager to credit the
+    /// underlying balance without going through the BalanceManager owner check.
     deposit_cap: DepositCap,
+    /// Inner BalanceManager `WithdrawCap` used by PredictManager to debit the
+    /// underlying balance without going through the BalanceManager owner check.
+    withdraw_cap: WithdrawCap,
+    /// BalanceManager `TradeCap` returned by `new_with_custom_owner_caps_v2`.
+    /// PredictManager doesn't trade on deepbook pools, so the cap is never
+    /// consumed — we hold it because BalanceManager doesn't expose a public
+    /// destroy. `option::none` on sender-owned managers (their constructor
+    /// doesn't go through `_v2`).
+    bm_trade_cap: Option<TradeCap>,
+    /// IDs of PredictManager caps (PredictTradeCap / PredictDepositCap /
+    /// PredictWithdrawCap) authorized to act on this manager. Revoking removes
+    /// the ID from this set.
+    allow_listed: VecSet<ID>,
     builder_code_id: Option<ID>,
     /// Open order positions scoped by expiry market.
     positions: Table<PositionKey, bool>,
@@ -62,6 +104,36 @@ public struct ExpiryTradingSummary has store {
     gross_received_from_expiry: u64,
 }
 
+/// Owners of a `PredictTradeCap` can generate a `PredictTradeProof` to mint/redeem
+/// positions on this manager. Risk of equivocation since `PredictTradeCap` is
+/// an owned object — high-frequency callers should trade as the manager owner.
+public struct PredictTradeCap has key, store {
+    id: UID,
+    predict_manager_id: ID,
+}
+
+/// `PredictDepositCap` is used to deposit funds into a PredictManager by a
+/// non-owner.
+public struct PredictDepositCap has key, store {
+    id: UID,
+    predict_manager_id: ID,
+}
+
+/// `PredictWithdrawCap` is used to withdraw funds from a PredictManager by a
+/// non-owner.
+public struct PredictWithdrawCap has key, store {
+    id: UID,
+    predict_manager_id: ID,
+}
+
+/// Manager owner and `PredictTradeCap` holders can generate a `PredictTradeProof`.
+/// Predict modules consume the proof to authorize the trade and to route
+/// deposit / withdraw through the manager's inner BalanceManager caps.
+public struct PredictTradeProof has drop {
+    predict_manager_id: ID,
+    trader: address,
+}
+
 // === Public Functions ===
 
 /// Share a newly created PredictManager object.
@@ -72,16 +144,6 @@ public fun share(self: PredictManager) {
 /// Return the PredictManager object ID.
 public fun id(self: &PredictManager): ID {
     self.id.to_inner()
-}
-
-/// Deposit coins into the PredictManager.
-public fun deposit(self: &mut PredictManager, coin: Coin<DUSDC>, ctx: &mut TxContext) {
-    self.balance_manager.deposit(coin, ctx);
-}
-
-/// Withdraw coins from the PredictManager.
-public fun withdraw(self: &mut PredictManager, amount: u64, ctx: &mut TxContext): Coin<DUSDC> {
-    self.balance_manager.withdraw(amount, ctx)
 }
 
 /// Return the BalanceManager owner for this PredictManager.
@@ -155,18 +217,115 @@ public fun unset_builder_code(self: &mut PredictManager, ctx: &TxContext) {
     account_events::emit_builder_code_set(self.id(), self.owner(), option::none());
 }
 
+/// Mint a `PredictTradeCap`. Only the manager owner can mint. Unreachable
+/// on self-owned managers; all caps for those are minted by `new_self_owned`.
+public fun mint_trade_cap(self: &mut PredictManager, ctx: &mut TxContext): PredictTradeCap {
+    self.assert_owner(ctx);
+    let manager_id = self.id();
+    self.mint_trade_cap_internal(manager_id, ctx)
+}
+
+/// Mint a `PredictDepositCap`. Only the manager owner can mint. Unreachable
+/// on self-owned managers; all caps for those are minted by `new_self_owned`.
+public fun mint_deposit_cap(self: &mut PredictManager, ctx: &mut TxContext): PredictDepositCap {
+    self.assert_owner(ctx);
+    let manager_id = self.id();
+    self.mint_deposit_cap_internal(manager_id, ctx)
+}
+
+/// Mint a `PredictWithdrawCap`. Only the manager owner can mint. Unreachable
+/// on self-owned managers; all caps for those are minted by `new_self_owned`.
+public fun mint_withdraw_cap(self: &mut PredictManager, ctx: &mut TxContext): PredictWithdrawCap {
+    self.assert_owner(ctx);
+    let manager_id = self.id();
+    self.mint_withdraw_cap_internal(manager_id, ctx)
+}
+
+/// Revoke a previously minted cap. Only the manager owner can revoke. Works
+/// for any of `PredictTradeCap`, `PredictDepositCap`, or `PredictWithdrawCap`
+/// since they all live in the same `allow_listed` set.
+public fun revoke_cap(self: &mut PredictManager, cap_id: &ID, ctx: &TxContext) {
+    self.assert_owner(ctx);
+    assert!(self.allow_listed.contains(cap_id), ECapNotInList);
+    self.allow_listed.remove(cap_id);
+}
+
+/// Generate a `PredictTradeProof` as the manager owner. No equivocation risk.
+public fun generate_proof_as_owner(self: &PredictManager, ctx: &TxContext): PredictTradeProof {
+    self.assert_owner(ctx);
+    PredictTradeProof { predict_manager_id: self.id(), trader: ctx.sender() }
+}
+
+/// Generate a `PredictTradeProof` using a `PredictTradeCap`. Cap is an owned object
+/// so the holder risks equivocation when generating proofs in concurrent PTBs.
+public fun generate_proof_as_trader(
+    self: &PredictManager,
+    trade_cap: &PredictTradeCap,
+    ctx: &TxContext,
+): PredictTradeProof {
+    self.validate_trader(trade_cap);
+    PredictTradeProof { predict_manager_id: self.id(), trader: ctx.sender() }
+}
+
+/// Abort unless the proof was generated for this manager.
+public fun validate_proof(self: &PredictManager, proof: &PredictTradeProof) {
+    assert!(self.id() == proof.predict_manager_id, EInvalidProof);
+}
+
+/// Deposit DUSDC into the manager. Only the manager owner may call.
+public fun deposit(self: &mut PredictManager, coin: Coin<DUSDC>, ctx: &mut TxContext) {
+    self.assert_owner(ctx);
+    self.balance_manager.deposit_with_cap(&self.deposit_cap, coin, ctx);
+}
+
+/// Withdraw DUSDC from the manager. Only the manager owner may call.
+public fun withdraw(self: &mut PredictManager, amount: u64, ctx: &mut TxContext): Coin<DUSDC> {
+    self.assert_owner(ctx);
+    self.balance_manager.withdraw_with_cap(&self.withdraw_cap, amount, ctx)
+}
+
+/// Deposit DUSDC using a `PredictDepositCap`.
+public fun deposit_with_cap(
+    self: &mut PredictManager,
+    cap: &PredictDepositCap,
+    coin: Coin<DUSDC>,
+    ctx: &TxContext,
+) {
+    self.validate_depositor(cap);
+    self.balance_manager.deposit_with_cap(&self.deposit_cap, coin, ctx);
+}
+
+/// Withdraw DUSDC using a `PredictWithdrawCap`.
+public fun withdraw_with_cap(
+    self: &mut PredictManager,
+    cap: &PredictWithdrawCap,
+    amount: u64,
+    ctx: &mut TxContext,
+): Coin<DUSDC> {
+    self.validate_withdrawer(cap);
+    self.balance_manager.withdraw_with_cap(&self.withdraw_cap, amount, ctx)
+}
+
 // === Public-Package Functions ===
 
-/// Create a derived PredictManager for the sender.
+/// Create a sender-owned PredictManager. The sender is the BalanceManager
+/// owner and can act directly on the manager without holding any cap.
 public(package) fun new(registry_uid: &mut UID, ctx: &mut TxContext): PredictManager {
-    let id = derived_object::claim(registry_uid, PredictManagerKey(ctx.sender(), 0));
+    let id = derived_object::claim(
+        registry_uid,
+        PredictManagerKey(ctx.sender(), constants::sender_owned_manager_slot!()),
+    );
     let mut balance_manager = balance_manager::new(ctx);
     let deposit_cap = balance_manager.mint_deposit_cap(ctx);
+    let withdraw_cap = balance_manager.mint_withdraw_cap(ctx);
 
     let manager = PredictManager {
         id,
         balance_manager,
         deposit_cap,
+        withdraw_cap,
+        bm_trade_cap: option::none(),
+        allow_listed: vec_set::empty(),
         builder_code_id: option::none(),
         positions: table::new(ctx),
         expiry_summaries: table::new(ctx),
@@ -178,13 +337,96 @@ public(package) fun new(registry_uid: &mut UID, ctx: &mut TxContext): PredictMan
     manager
 }
 
-/// Deposit protocol payouts without requiring the manager owner as sender.
+/// Create a PredictManager that owns itself: the inner BalanceManager's owner
+/// is set to the PredictManager's own ID-as-address, which no transaction
+/// sender can ever match. The owner-direct deposit/withdraw and `mint_*_cap`
+/// paths are permanently unreachable, so the caps minted here are the only
+/// authority that will ever exist on this manager.
+///
+/// Intended for contracts (vaults, custodial products) that don't want a
+/// deployer-key trust anchor. The caller receives one cap of each kind and
+/// is expected to install them inside its own contract object.
+///
+/// Requires `PredictApp` to be authorized on the deepbook `Registry` via
+/// `deepbook::registry::authorize_app<PredictApp>` — a one-time admin tx on
+/// the deepbook side.
+public(package) fun new_self_owned(
+    registry_uid: &mut UID,
+    deepbook_registry: &DeepbookRegistry,
+    ctx: &mut TxContext,
+): (PredictManager, PredictDepositCap, PredictWithdrawCap, PredictTradeCap) {
+    let id = derived_object::claim(
+        registry_uid,
+        PredictManagerKey(ctx.sender(), constants::self_owned_manager_slot!()),
+    );
+    let owner_address = id.to_inner().to_address();
+
+    let (
+        balance_manager,
+        bm_deposit_cap,
+        bm_withdraw_cap,
+        bm_trade_cap,
+    ) = balance_manager::new_with_custom_owner_caps_v2(
+        PredictApp {},
+        deepbook_registry,
+        owner_address,
+        ctx,
+    );
+
+    let mut manager = PredictManager {
+        id,
+        balance_manager,
+        deposit_cap: bm_deposit_cap,
+        withdraw_cap: bm_withdraw_cap,
+        bm_trade_cap: option::some(bm_trade_cap),
+        allow_listed: vec_set::empty(),
+        builder_code_id: option::none(),
+        positions: table::new(ctx),
+        expiry_summaries: table::new(ctx),
+        active_stake: 0,
+        inactive_stake: 0,
+        stake_epoch: ctx.epoch(),
+    };
+    let manager_id = manager.id();
+    account_events::emit_predict_manager_created(manager_id, manager.owner());
+
+    let predict_trade_cap = manager.mint_trade_cap_internal(manager_id, ctx);
+    let predict_deposit_cap = manager.mint_deposit_cap_internal(manager_id, ctx);
+    let predict_withdraw_cap = manager.mint_withdraw_cap_internal(manager_id, ctx);
+
+    (manager, predict_deposit_cap, predict_withdraw_cap, predict_trade_cap)
+}
+
+/// Deposit protocol payouts without requiring any authorization. Used for
+/// settled redemptions, which any caller may trigger.
 public(package) fun deposit_permissionless(
     self: &mut PredictManager,
     coin: Coin<DUSDC>,
     ctx: &TxContext,
 ) {
     self.balance_manager.deposit_with_cap(&self.deposit_cap, coin, ctx);
+}
+
+/// Deposit DUSDC into the manager using a validated `PredictTradeProof`.
+public(package) fun deposit_with_proof(
+    self: &mut PredictManager,
+    proof: &PredictTradeProof,
+    coin: Coin<DUSDC>,
+    ctx: &TxContext,
+) {
+    self.validate_proof(proof);
+    self.balance_manager.deposit_with_cap(&self.deposit_cap, coin, ctx);
+}
+
+/// Withdraw DUSDC from the manager using a validated `PredictTradeProof`.
+public(package) fun withdraw_with_proof(
+    self: &mut PredictManager,
+    proof: &PredictTradeProof,
+    amount: u64,
+    ctx: &mut TxContext,
+): Coin<DUSDC> {
+    self.validate_proof(proof);
+    self.balance_manager.withdraw_with_cap(&self.withdraw_cap, amount, ctx)
 }
 
 /// Add an order position.
@@ -300,6 +542,8 @@ public(package) fun assert_owner(self: &PredictManager, ctx: &TxContext) {
     assert!(ctx.sender() == self.balance_manager.owner(), ENotOwner);
 }
 
+// === Private Functions ===
+
 fun ensure_expiry_summary(self: &mut PredictManager, expiry_market_id: ID) {
     if (!self.expiry_summaries.contains(expiry_market_id)) {
         let summary = ExpiryTradingSummary {
@@ -314,4 +558,62 @@ fun ensure_expiry_summary(self: &mut PredictManager, expiry_market_id: ID) {
 
 fun position_key(expiry_market_id: ID, order_id: u256): PositionKey {
     PositionKey { expiry_market_id, order_id }
+}
+
+fun assert_caps_capacity(self: &PredictManager) {
+    assert!(self.allow_listed.length() < MAX_CAPS, EMaxCapsReached);
+}
+
+fun validate_trader(self: &PredictManager, trade_cap: &PredictTradeCap) {
+    assert!(self.allow_listed.contains(object::borrow_id(trade_cap)), EInvalidCap);
+}
+
+fun validate_depositor(self: &PredictManager, deposit_cap: &PredictDepositCap) {
+    assert!(self.allow_listed.contains(object::borrow_id(deposit_cap)), EInvalidCap);
+}
+
+fun validate_withdrawer(self: &PredictManager, withdraw_cap: &PredictWithdrawCap) {
+    assert!(self.allow_listed.contains(object::borrow_id(withdraw_cap)), EInvalidCap);
+}
+
+/// Allow-list and emit for a new `PredictTradeCap`. Shared by the owner-gated
+/// `mint_trade_cap` and the `new_self_owned` constructor, so it carries no
+/// owner check of its own.
+fun mint_trade_cap_internal(
+    self: &mut PredictManager,
+    manager_id: ID,
+    ctx: &mut TxContext,
+): PredictTradeCap {
+    self.assert_caps_capacity();
+    let id = object::new(ctx);
+    let cap_id = id.to_inner();
+    self.allow_listed.insert(cap_id);
+    account_events::emit_predict_trade_cap_minted(manager_id, cap_id);
+    PredictTradeCap { id, predict_manager_id: manager_id }
+}
+
+fun mint_deposit_cap_internal(
+    self: &mut PredictManager,
+    manager_id: ID,
+    ctx: &mut TxContext,
+): PredictDepositCap {
+    self.assert_caps_capacity();
+    let id = object::new(ctx);
+    let cap_id = id.to_inner();
+    self.allow_listed.insert(cap_id);
+    account_events::emit_predict_deposit_cap_minted(manager_id, cap_id);
+    PredictDepositCap { id, predict_manager_id: manager_id }
+}
+
+fun mint_withdraw_cap_internal(
+    self: &mut PredictManager,
+    manager_id: ID,
+    ctx: &mut TxContext,
+): PredictWithdrawCap {
+    self.assert_caps_capacity();
+    let id = object::new(ctx);
+    let cap_id = id.to_inner();
+    self.allow_listed.insert(cap_id);
+    account_events::emit_predict_withdraw_cap_minted(manager_id, cap_id);
+    PredictWithdrawCap { id, predict_manager_id: manager_id }
 }

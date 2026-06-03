@@ -32,6 +32,9 @@ const EInvalidValuationLiquidationBudget: u64 = 21;
 const EInvalidTradeLiquidationBudget: u64 = 22;
 const EInvalidLiquidationLtv: u64 = 23;
 const EInvalidOracleTickSize: u64 = 24;
+const EInvalidEwmaAlpha: u64 = 28;
+const EInvalidEwmaZScoreThreshold: u64 = 29;
+const EInvalidEwmaAdditionalFee: u64 = 30;
 
 // === Expiry Funding and Liquidation ===
 
@@ -209,6 +212,48 @@ public(package) fun assert_block_scholes_svi_freshness_ms(value: u64) {
         value >= min_block_scholes_svi_freshness_ms!()
             && value <= max_block_scholes_svi_freshness_ms!(),
         EInvalidBlockScholesSVIFreshnessMs,
+    );
+}
+
+// === EWMA Penalty ===
+
+/// Smoothing factor for the gas-price EWMA in FLOAT_SCALING. ~1% reacts slowly,
+/// mirroring DeepBook core. Bounded below float_scaling so `1 - alpha` stays positive.
+public(package) macro fun default_ewma_alpha(): u64 { 10_000_000 }
+public(package) macro fun min_ewma_alpha(): u64 { 1 }
+public(package) macro fun max_ewma_alpha(): u64 { 100_000_000 }
+
+public(package) fun assert_ewma_alpha(value: u64) {
+    assert!(value >= min_ewma_alpha!() && value <= max_ewma_alpha!(), EInvalidEwmaAlpha);
+}
+
+/// Standard deviations above the smoothed mean required before the penalty fires,
+/// in FLOAT_SCALING (3 sigma by default). The min is one sigma so the penalty
+/// cannot be tuned to surcharge near-average gas; the max keeps a single admin
+/// call from raising the bar so high the penalty can never trigger.
+public(package) macro fun default_ewma_z_score_threshold(): u64 { 3_000_000_000 }
+public(package) macro fun min_ewma_z_score_threshold(): u64 {
+    deepbook_predict::constants::float_scaling!()
+}
+public(package) macro fun max_ewma_z_score_threshold(): u64 { 10_000_000_000 }
+
+public(package) fun assert_ewma_z_score_threshold(value: u64) {
+    assert!(
+        value >= min_ewma_z_score_threshold!() && value <= max_ewma_z_score_threshold!(),
+        EInvalidEwmaZScoreThreshold,
+    );
+}
+
+/// Per-unit fee added to a penalized trade, in FLOAT_SCALING (10 bps by default,
+/// capped at 20 bps to bound how punitive the surcharge can be made).
+public(package) macro fun default_ewma_additional_fee(): u64 { 1_000_000 }
+public(package) macro fun min_ewma_additional_fee(): u64 { 0 }
+public(package) macro fun max_ewma_additional_fee(): u64 { 2_000_000 }
+
+public(package) fun assert_ewma_additional_fee(value: u64) {
+    assert!(
+        value >= min_ewma_additional_fee!() && value <= max_ewma_additional_fee!(),
+        EInvalidEwmaAdditionalFee,
     );
 }
 

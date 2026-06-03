@@ -375,14 +375,22 @@ fun setup_ready_expiry_creation(expiry_tick_size: u64): (Scenario, ID, ID, Marke
     scenario.next_tx(test_constants::admin());
     let mut vault = scenario.take_shared<PoolVault>();
     let mut config = scenario.take_shared<ProtocolConfig>();
+    let pyth = scenario.take_shared_by_id<PythSource>(pyth_id);
+    let clock = clock::create_for_testing(scenario.ctx());
     let sync = plp::start_pool_sync(&mut config, &vault);
+    // Bootstrap supply: no incentives exist yet, so the sources are ignored.
     let lp = vault.supply(
         &mut config,
         sync,
         coin::mint_for_testing<DUSDC>(POOL_SUPPLY, scenario.ctx()),
+        &pyth,
+        &pyth,
+        &clock,
         scenario.ctx(),
     );
+    clock.destroy_for_testing();
     assert_eq!(coin::burn_for_testing(lp), POOL_SUPPLY);
+    return_shared(pyth);
     return_shared(config);
     return_shared(vault);
 

@@ -8,14 +8,14 @@ use deepbook_predict::{
     admin::AdminCap,
     config_constants,
     constants::{Self, float_scaling as float},
-    expiry_market::ExpiryMarket,
+    expiry_market::{Self, ExpiryMarket},
     i64,
     market_oracle::{Self, MarketOracle, MarketOracleCap},
     order,
     plp::{Self, PLP, PoolVault},
     predict_manager::PredictManager,
     protocol_config::{Self, ProtocolConfig},
-    pyth_source::PythSource,
+    pyth_source::{Self, PythSource},
     registry::{Self, Registry},
     test_constants
 };
@@ -78,8 +78,10 @@ fun same_expiry_residual_rebate_cash_materializes_new_terminal_profit() {
         coin::mint_for_testing<DUSDC>(MIN_FEE_MINT_DEPOSIT, fixture.scenario.ctx()),
         fixture.scenario.ctx(),
     );
+    let proof = manager.generate_proof_as_owner(fixture.scenario.ctx());
     let order_id = market.mint(
         &mut manager,
+        &proof,
         &fixture.config,
         &oracle,
         &pyth,
@@ -105,7 +107,8 @@ fun same_expiry_residual_rebate_cash_materializes_new_terminal_profit() {
         constants::expiry_cash_floor!() + MIN_FEE_TERMINAL_MATERIALIZED_PROFIT,
     );
 
-    let (closed_order_id, replacement_order_id) = market.redeem(
+    // Settled redeem is permissionless, so it takes no trade proof.
+    let (closed_order_id, replacement_order_id) = market.redeem_settled(
         &mut manager,
         &fixture.config,
         &oracle,
@@ -153,6 +156,55 @@ fun same_expiry_residual_rebate_cash_materializes_new_terminal_profit() {
     finish(fixture);
 }
 
+#[test, expected_failure(abort_code = expiry_market::EProofRequiredForLiveRedeem)]
+fun redeem_settled_on_live_order_aborts() {
+    let mut fixture = setup_pool_with_pyth();
+    let (expiry_id, oracle_id) = create_expiry(&mut fixture, EXPIRY_MS);
+    let mut manager = create_manager_for_testing(&mut fixture);
+
+    let mut pyth = fixture.scenario.take_shared_by_id<PythSource>(fixture.pyth_id);
+    let mut vault = fixture.scenario.take_shared_by_id<PoolVault>(fixture.vault_id);
+    let mut market = fixture.scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
+    let mut oracle = fixture.scenario.take_shared_by_id<MarketOracle>(oracle_id);
+
+    prepare_live_oracle_for_trading(&fixture, &mut oracle, &mut pyth);
+    sync_expiry_for_testing(&mut fixture, &mut vault, &mut market, &oracle, &pyth);
+
+    manager.deposit(
+        coin::mint_for_testing<DUSDC>(MIN_FEE_MINT_DEPOSIT, fixture.scenario.ctx()),
+        fixture.scenario.ctx(),
+    );
+    let proof = manager.generate_proof_as_owner(fixture.scenario.ctx());
+    let order_id = market.mint(
+        &mut manager,
+        &proof,
+        &fixture.config,
+        &oracle,
+        &pyth,
+        MIN_FEE_LOWER_STRIKE,
+        constants::pos_inf!(),
+        MIN_FEE_MINT_QUANTITY,
+        order::leverage_one_x(),
+        &fixture.clock,
+        fixture.scenario.ctx(),
+    );
+
+    // Oracle is not settled, so the order is still live: the permissionless
+    // redeem_settled path must reject it (closing live risk requires a proof).
+    market.redeem_settled(
+        &mut manager,
+        &fixture.config,
+        &oracle,
+        &pyth,
+        order_id,
+        MIN_FEE_MINT_QUANTITY,
+        &fixture.clock,
+        fixture.scenario.ctx(),
+    );
+
+    abort 999
+}
+
 fun setup_pool_with_pyth(): Fixture {
     let mut scenario = test::begin(test_constants::admin());
     plp::init_for_testing(scenario.ctx());
@@ -169,12 +221,18 @@ fun setup_pool_with_pyth(): Fixture {
     let mut vault = scenario.take_shared<PoolVault>();
     let vault_id = vault.id();
     let sync = plp::start_pool_sync(&mut config, &vault);
+    // Bootstrap supply: no incentives exist yet, so the sources are ignored.
+    let placeholder = pyth_source::new_for_testing(scenario.ctx());
     let initial_plp = vault.supply(
         &mut config,
         sync,
         coin::mint_for_testing<DUSDC>(INITIAL_SUPPLY, scenario.ctx()),
+        &placeholder,
+        &placeholder,
+        &clock,
         scenario.ctx(),
     );
+    destroy(placeholder);
     return_shared(vault);
 
     scenario.next_tx(test_constants::admin());

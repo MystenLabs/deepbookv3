@@ -3,9 +3,11 @@
 
 /// Raw Pyth Lazer spot source state.
 ///
-/// This module is intentionally limited to source ingestion and timestamp
-/// bookkeeping. It does not decide whether Pyth is authoritative, derive a
-/// forward, apply circuit breakers, or settle a market.
+/// This module is intentionally limited to source ingestion, timestamp
+/// bookkeeping, and reading its raw spot (including a plain units conversion of
+/// that spot via `value_in_dusdc`). It does not decide whether Pyth is
+/// authoritative, derive a forward, apply circuit breakers, or settle a market;
+/// callers own feed binding and freshness (see `pricing::assert_pyth_spot_fresh`).
 module deepbook_predict::pyth_source;
 
 use deepbook_predict::{constants, lazer_helper, oracle_events, protocol_config::ProtocolConfig};
@@ -106,6 +108,22 @@ public(package) fun freshness_timestamp_ms(source: &PythSource): u64 {
     source.source_timestamp_ms.min(source.update_timestamp_ms)
 }
 
+/// DUSDC-denominated value (DUSDC decimals) of `amount` raw units of an asset
+/// with `asset_decimals`, priced at this source's normalized 1e9-scaled spot,
+/// rounding up:
+///   ceil(amount * spot / 10^(asset_decimals + float_scaling_decimals - dusdc_decimals))
+/// Aborts on a zero spot (a zero oracle price cannot value the asset). Feed
+/// binding and freshness are the caller's responsibility (assert `feed_id()` and
+/// `pricing::assert_pyth_spot_fresh`), exactly as the market pricing path does.
+public(package) fun value_in_dusdc(source: &PythSource, amount: u64, asset_decimals: u8): u64 {
+    let spot = source.spot;
+    assert!(spot > 0, EZeroSpot);
+    // asset_decimals + 9 - 6 >= 3 for any decimals, so no underflow.
+    let exponent =
+        (asset_decimals as u64) + constants::float_scaling_decimals!() - (constants::dusdc_decimals!() as u64);
+    ceil_div((amount as u128) * (spot as u128), pow10(exponent)) as u64
+}
+
 /// Create and share a Pyth source bound to a Lazer feed id.
 public(package) fun create_and_share(
     feed_id: u32,
@@ -136,6 +154,14 @@ public(package) fun assert_version_allowed(source: &PythSource) {
 fun us_to_ms_ceil(timestamp_us: u64): u64 {
     let ms = timestamp_us / 1000;
     if (timestamp_us % 1000 == 0) ms else ms + 1
+}
+
+fun pow10(exponent: u64): u128 {
+    10u128.pow(exponent as u8)
+}
+
+fun ceil_div(numerator: u128, denominator: u128): u128 {
+    (numerator + denominator - 1) / denominator
 }
 
 // === Test-Only Functions ===

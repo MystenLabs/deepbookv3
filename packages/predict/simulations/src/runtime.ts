@@ -348,11 +348,16 @@ function finishPoolSyncWithExpiry(tx: Transaction, params: ExpiryPoolSyncParams)
 
 function addMint(tx: Transaction, params: MintParams): void {
     const { lower, higher } = binaryRangeBounds(params.strike, params.isUp);
+    const proof = tx.moveCall({
+        target: target("predict_manager", "generate_proof_as_owner"),
+        arguments: [tx.object(params.managerId)],
+    });
     tx.moveCall({
         target: target("expiry_market", "mint"),
         arguments: [
             tx.object(params.expiryMarketId),
             tx.object(params.managerId),
+            proof,
             tx.object(params.protocolConfigId),
             tx.object(params.oracleId),
             tx.object(params.pythSourceId),
@@ -366,11 +371,19 @@ function addMint(tx: Transaction, params: MintParams): void {
 }
 
 function addRedeem(tx: Transaction, params: RedeemParams): void {
+    // The sim always acts as the manager owner, so it uses the authorized
+    // `redeem` with a proof. Works for live redeems (proof consumed) and
+    // settled / liquidated redeems (proof dropped).
+    const proof = tx.moveCall({
+        target: target("predict_manager", "generate_proof_as_owner"),
+        arguments: [tx.object(params.managerId)],
+    });
     tx.moveCall({
         target: target("expiry_market", "redeem"),
         arguments: [
             tx.object(params.expiryMarketId),
             tx.object(params.managerId),
+            proof,
             tx.object(params.protocolConfigId),
             tx.object(params.oracleId),
             tx.object(params.pythSourceId),
@@ -506,6 +519,7 @@ export function supplyTx(
     poolVaultId: string,
     protocolConfigId: string,
     amount: bigint,
+    pythSourceId: string,
 ): Transaction {
     const tx = new Transaction();
     const dusdc = mintDusdc(tx, amount);
@@ -513,9 +527,19 @@ export function supplyTx(
         target: target("plp", "start_pool_sync"),
         arguments: [tx.object(protocolConfigId), tx.object(poolVaultId)],
     });
+    // The sim pool holds no SUI/DEEP incentives, so supply's incentive sources are
+    // ignored; pass the market PythSource as a placeholder for both slots.
     const [plpCoin] = tx.moveCall({
         target: target("plp", "supply"),
-        arguments: [tx.object(poolVaultId), tx.object(protocolConfigId), sync, dusdc],
+        arguments: [
+            tx.object(poolVaultId),
+            tx.object(protocolConfigId),
+            sync,
+            dusdc,
+            tx.object(pythSourceId),
+            tx.object(pythSourceId),
+            tx.object(CLOCK_ID),
+        ],
     });
     tx.transferObjects([plpCoin], tx.pure.address(address));
     return tx;
@@ -528,9 +552,19 @@ export async function refreshOracleAndSupplyWithExpiryPoolSyncTx(
     await addOracleRefresh(tx, params);
     const dusdc = mintDusdc(tx, params.amount);
     const sync = startPoolSyncWithExpiry(tx, params);
+    // No incentives in the sim pool, so the incentive sources are ignored; reuse
+    // the market PythSource as a placeholder for both slots.
     const [plpCoin] = tx.moveCall({
         target: target("plp", "supply"),
-        arguments: [tx.object(params.poolVaultId), tx.object(params.protocolConfigId), sync, dusdc],
+        arguments: [
+            tx.object(params.poolVaultId),
+            tx.object(params.protocolConfigId),
+            sync,
+            dusdc,
+            tx.object(params.pythSourceId),
+            tx.object(params.pythSourceId),
+            tx.object(CLOCK_ID),
+        ],
     });
     tx.transferObjects([plpCoin], tx.pure.address(address));
     return tx;
@@ -542,16 +576,20 @@ export async function refreshOracleAndWithdrawWithExpiryPoolSyncTx(
     const tx = new Transaction();
     await addOracleRefresh(tx, params);
     const sync = startPoolSyncWithExpiry(tx, params);
-    const [dusdc] = tx.moveCall({
+    // withdraw returns (Coin<DUSDC>, Coin<SUI>, Coin<DEEP>): DUSDC pro-rata plus
+    // each incentive in-kind. The sim pool holds no incentives, so the SUI/DEEP
+    // coins are zero-value; transfer all three out.
+    const [dusdc, sui, deep] = tx.moveCall({
         target: target("plp", "withdraw"),
         arguments: [
             tx.object(params.poolVaultId),
             tx.object(params.protocolConfigId),
             sync,
             tx.object(params.lpCoinId),
+            tx.object(CLOCK_ID),
         ],
     });
-    tx.transferObjects([dusdc], tx.pure.address(address));
+    tx.transferObjects([dusdc, sui, deep], tx.pure.address(address));
     return tx;
 }
 

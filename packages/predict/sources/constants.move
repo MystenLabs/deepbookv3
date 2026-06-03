@@ -27,6 +27,11 @@ public macro fun float_scaling(): u64 { 1_000_000_000 }
 /// form into the package's 1e9-scaled `u64`.
 public macro fun float_scaling_decimals(): u64 { 9 }
 
+/// Decimals of the DUSDC settlement asset. `pyth_source::value_in_dusdc` converts
+/// the USD value of admin-deposited non-DUSDC incentive assets into this scale so
+/// it sums directly with the pool's DUSDC-denominated value.
+public macro fun dusdc_decimals(): u8 { 6 }
+
 // === Position Sizing ===
 
 /// Minimum position quantity increment.
@@ -45,6 +50,14 @@ public(package) macro fun max_active_expiry_markets(): u64 { 10 }
 
 /// Rebalancing band and target buffer fraction, in FLOAT_SCALING.
 public(package) macro fun expiry_rebalance_pct(): u64 { 100_000_000 }
+
+// === Incentive Streaming ===
+
+/// Maximum linear vesting window for an admin incentive deposit (365 days).
+/// A zero window is rejected separately (it would divide by zero in the release
+/// math); this ceiling stops an admin from locking a donation away from holders
+/// indefinitely.
+public(package) macro fun max_incentive_stream_ms(): u64 { 31_536_000_000 }
 
 // === Leverage ===
 
@@ -121,3 +134,13 @@ public macro fun neg_inf(): u64 { 0 }
 
 /// Sentinel upper strike for ranges open to positive infinity.
 public macro fun pos_inf(): u64 { std::u64::max_value!() }
+
+// === PredictManager Derivation ===
+
+/// `PredictManagerKey` u64 slot for sender-owned managers created via
+/// `predict_manager::new`.
+public macro fun sender_owned_manager_slot(): u64 { 0 }
+
+/// `PredictManagerKey` u64 slot for self-owned managers created via
+/// `predict_manager::new_self_owned`.
+public macro fun self_owned_manager_slot(): u64 { 1 }

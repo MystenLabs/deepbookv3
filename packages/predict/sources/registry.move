@@ -9,6 +9,7 @@
 /// owning modules.
 module deepbook_predict::registry;
 
+use deepbook::registry::Registry as DeepbookRegistry;
 use deepbook_predict::{
     admin::{Self, AdminCap},
     builder_code,
@@ -18,13 +19,23 @@ use deepbook_predict::{
     expiry_market::{Self, ExpiryMarket},
     market_oracle::{Self, MarketOracle, MarketOracleCap},
     plp::PoolVault,
-    predict_manager::{Self, PredictManager},
+    predict_manager::{Self, PredictDepositCap, PredictManager, PredictTradeCap, PredictWithdrawCap},
     pricing,
     protocol_config::{Self, ProtocolConfig},
     pyth_source::{Self, PythSource},
     strike_grid
 };
-use sui::{clock::Clock, table::{Self, Table}, vec_set::{Self, VecSet}};
+use std::type_name::{Self, TypeName};
+use sui::{
+    clock::Clock,
+    coin::Coin,
+    coin_registry::Currency,
+    sui::SUI,
+    table::{Self, Table},
+    vec_map::{Self, VecMap},
+    vec_set::{Self, VecSet}
+};
+use token::deep::DEEP;
 
 const EFeedIdMismatch: u64 = 0;
 const EPythSourceAlreadyCreated: u64 = 1;
@@ -36,6 +47,7 @@ const EVersionAlreadyEnabled: u64 = 6;
 const EVersionNotEnabled: u64 = 7;
 const ECannotDisableLastVersion: u64 = 8;
 const EPythFeedNotRegistered: u64 = 9;
+const EIncentiveAssetNotConfigured: u64 = 10;
 
 /// Registry-owned config for one Pyth Lazer feed.
 public struct PythFeedConfig has copy, drop, store {
@@ -57,11 +69,22 @@ public struct PauseCap has key, store {
     id: UID,
 }
 
+/// Oracle binding for one admin-approved non-DUSDC incentive asset: the Lazer
+/// feed that prices it and its coin decimals (from `Currency<T>` metadata).
+public struct IncentiveAsset has copy, drop, store {
+    decimals: u8,
+    feed_id: u32,
+}
+
 /// Shared registry for source and expiry uniqueness.
 public struct Registry has key {
     id: UID,
     /// Pyth Lazer feed ID -> source object and creation-time market config.
     pyth_feed_configs: Table<u32, PythFeedConfig>,
+    /// Coin type -> Lazer feed binding for admin-deposited incentive assets.
+    /// The single home for oracle bindings: trading feeds (`pyth_feed_configs`)
+    /// and incentive assets live here together.
+    incentive_assets: VecMap<TypeName, IncentiveAsset>,
     /// Created expiry markets keyed by expiry timestamp.
     expiry_market_ids: Table<u64, ID>,
     /// IDs of `PauseCap` objects currently authorized to use pause-only entries.
@@ -310,6 +333,73 @@ public fun create_pyth_source(
     pyth_source_id
 }
 
+// === Incentive Assets (admin) ===
+
+/// Bind non-DUSDC incentive asset `T` to the Lazer `feed_id` that prices it.
+/// Decimals are read from `Currency<T>`. The feed must already have a
+/// registered Pyth config, so trading and incentive oracles share one registry.
+public fun set_incentive_asset<T>(
+    registry: &mut Registry,
+    _admin_cap: &AdminCap,
+    currency: &Currency<T>,
+    feed_id: u32,
+) {
+    registry.assert_version_allowed();
+    assert!(registry.pyth_feed_configs.contains(feed_id), EPythFeedNotRegistered);
+    let key = type_name::with_defining_ids<T>();
+    let asset = IncentiveAsset { decimals: currency.decimals(), feed_id };
+    if (registry.incentive_assets.contains(&key)) {
+        registry.incentive_assets.remove(&key);
+    };
+    registry.incentive_assets.insert(key, asset);
+}
+
+/// Whether `T` is a configured incentive asset.
+public fun has_incentive_asset<T>(registry: &Registry): bool {
+    registry.incentive_assets.contains(&type_name::with_defining_ids<T>())
+}
+
+/// Deposit SUI into the pool as an LP-owned incentive (a donation: no PLP minted).
+/// It vests linearly over `duration_ms`; the vested value accrues to existing
+/// holders pro-rata and the asset accrues to them in-kind on withdrawal. SUI must
+/// be a configured incentive asset; the pool must already have PLP holders
+/// (checked in `plp`).
+public fun deposit_sui_incentive(
+    registry: &Registry,
+    vault: &mut PoolVault,
+    _admin_cap: &AdminCap,
+    deposit: Coin<SUI>,
+    duration_ms: u64,
+    clock: &Clock,
+) {
+    registry.assert_version_allowed();
+    let (decimals, feed_id) = registry.incentive_asset<SUI>();
+    vault.receive_sui_incentive(deposit, decimals, feed_id, duration_ms, clock);
+}
+
+/// Deposit DEEP into the pool as an LP-owned incentive. See `deposit_sui_incentive`.
+public fun deposit_deep_incentive(
+    registry: &Registry,
+    vault: &mut PoolVault,
+    _admin_cap: &AdminCap,
+    deposit: Coin<DEEP>,
+    duration_ms: u64,
+    clock: &Clock,
+) {
+    registry.assert_version_allowed();
+    let (decimals, feed_id) = registry.incentive_asset<DEEP>();
+    vault.receive_deep_incentive(deposit, decimals, feed_id, duration_ms, clock);
+}
+
+/// Read the configured `(decimals, feed_id)` binding for `T`. Aborts if `T` is
+/// not a configured incentive asset.
+fun incentive_asset<T>(registry: &Registry): (u8, u32) {
+    let key = type_name::with_defining_ids<T>();
+    assert!(registry.incentive_assets.contains(&key), EIncentiveAssetNotConfigured);
+    let asset = &registry.incentive_assets[&key];
+    (asset.decimals, asset.feed_id)
+}
+
 /// Create the MarketOracle and ExpiryMarket objects for one future expiry.
 ///
 /// The registry enforces one market per expiry, validates the registered Pyth
@@ -389,6 +479,22 @@ public fun create_and_share_manager(registry: &mut Registry, ctx: &mut TxContext
     create_manager(registry, ctx).share();
 }
 
+/// Create a derived self-owned PredictManager for callers that don't want a
+/// deployer-key trust anchor (vaults, structured products). The inner
+/// BalanceManager owner is set to the manager's own ID-as-address, so the
+/// returned caps are the only authority that will ever exist on this manager.
+///
+/// Requires `PredictApp` to be authorized on the deepbook `Registry` via
+/// `deepbook::registry::authorize_app<PredictApp>` — a one-time admin tx on
+/// the deepbook side.
+public fun create_self_owned_manager(
+    registry: &mut Registry,
+    deepbook_registry: &DeepbookRegistry,
+    ctx: &mut TxContext,
+): (PredictManager, PredictDepositCap, PredictWithdrawCap, PredictTradeCap) {
+    predict_manager::new_self_owned(&mut registry.id, deepbook_registry, ctx)
+}
+
 // === Public-Package Functions ===
 
 /// Abort if the running package version is not in the allowed set.
@@ -419,6 +525,7 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
         Registry {
             id: object::new(ctx),
             pyth_feed_configs: table::new(ctx),
+            incentive_assets: vec_map::empty(),
             expiry_market_ids: table::new(ctx),
             allowed_pause_caps: vec_set::empty(),
             allowed_versions: vec_set::singleton(constants::current_version!()),
@@ -473,10 +580,24 @@ public fun new_for_testing(ctx: &mut TxContext): (Registry, AdminCap) {
 }
 
 #[test_only]
+/// Configure an incentive binding without an on-chain `Currency<T>` or a
+/// registered feed source. Non-production fixture for tests that exercise pool
+/// valuation, not the admin registration path.
+public fun set_incentive_asset_for_testing<T>(registry: &mut Registry, decimals: u8, feed_id: u32) {
+    let key = type_name::with_defining_ids<T>();
+    let asset = IncentiveAsset { decimals, feed_id };
+    if (registry.incentive_assets.contains(&key)) {
+        registry.incentive_assets.remove(&key);
+    };
+    registry.incentive_assets.insert(key, asset);
+}
+
+#[test_only]
 public fun destroy_registry_for_testing(registry: Registry) {
     let Registry {
         id,
         pyth_feed_configs,
+        incentive_assets: _,
         expiry_market_ids,
         allowed_pause_caps: _,
         allowed_versions: _,
@@ -493,6 +614,7 @@ public fun destroy_registry_drop_for_testing(registry: Registry) {
     let Registry {
         id,
         pyth_feed_configs,
+        incentive_assets: _,
         expiry_market_ids,
         allowed_pause_caps: _,
         allowed_versions: _,
