@@ -3,8 +3,8 @@
 
 /// Per-expiry Predict market.
 ///
-/// An ExpiryMarket is the hot shared object for one expiry. It owns the
-/// expiry-local DUSDC cash, strike exposure state, rebate reserve basis, trade execution,
+/// An ExpiryMarket is the hot shared object for one expiry. It owns trade
+/// execution, strike exposure state, an embedded expiry-cash custody component,
 /// pool NAV production, and storage cleanup state. Pool-wide PLP accounting and
 /// profit accounting remain outside this module.
 module deepbook_predict::expiry_market;
@@ -15,6 +15,7 @@ use deepbook_predict::{
     claim_events,
     config_events,
     constants,
+    expiry_cash::{Self, ExpiryCash},
     market_oracle::{MarketOracle, MarketOracleCap},
     order::{Self, Order},
     order_events,
@@ -32,10 +33,8 @@ use sui::{balance::{Self, Balance}, clock::Clock, vec_set::VecSet};
 const EWrongMarketOracle: u64 = 0;
 const EWrongPythSource: u64 = 1;
 const EValuationExceedsCash: u64 = 2;
-const EInsufficientCash: u64 = 3;
 const EPackageVersionDisabled: u64 = 4;
 const EMintPaused: u64 = 5;
-const EUnresolvedTradingFeesUnderflow: u64 = 6;
 const EFullCloseRequired: u64 = 7;
 
 /// Per-expiry market state.
@@ -44,12 +43,8 @@ public struct ExpiryMarket has key {
     market_oracle_id: ID,
     pyth_lazer_feed_id: u32,
     expiry: u64,
-    /// Trading loss rebate rate snapshotted from fee config at creation.
-    trading_loss_rebate_rate: u64,
-    /// DUSDC backing payout liability, rebate reserve, and residual expiry NAV.
-    cash_balance: Balance<DUSDC>,
-    /// Trading-fee basis whose rebate eligibility has not been resolved.
-    unresolved_trading_fees_paid: u64,
+    /// DUSDC custody, payout backing, and unresolved rebate reserve basis.
+    cash: ExpiryCash,
     /// Exposure lifecycle state for this expiry's oracle grid.
     strike_exposure: StrikeExposure,
     /// Mirror of `ProtocolConfig.allowed_versions`; synced permissionlessly.
@@ -82,17 +77,17 @@ public fun expiry(market: &ExpiryMarket): u64 {
 
 /// Return DUSDC currently held by this expiry.
 public fun cash_balance(market: &ExpiryMarket): u64 {
-    market.cash_balance.value()
+    market.cash.balance()
 }
 
 /// Return DUSDC reserved for unresolved trading loss rebates.
 public fun rebate_reserve(market: &ExpiryMarket): u64 {
-    math::mul(market.unresolved_trading_fees_paid, market.trading_loss_rebate_rate)
+    market.cash.rebate_reserve()
 }
 
 /// Return the trading loss rebate rate snapshotted for this expiry.
 public fun trading_loss_rebate_rate(market: &ExpiryMarket): u64 {
-    market.trading_loss_rebate_rate
+    market.cash.trading_loss_rebate_rate()
 }
 
 /// Return the terminal floor-index premium snapshotted for this expiry.
@@ -328,9 +323,7 @@ public(package) fun create_and_share(
         market_oracle_id,
         pyth_lazer_feed_id,
         expiry,
-        trading_loss_rebate_rate: config.fee_config().trading_loss_rebate_rate(),
-        cash_balance: balance::zero(),
-        unresolved_trading_fees_paid: 0,
+        cash: expiry_cash::new(config.fee_config().trading_loss_rebate_rate()),
         strike_exposure: strike_exposure::new(
             expiry_market_id,
             expiry,
@@ -385,8 +378,8 @@ public(package) fun pool_nav(
             pyth,
             clock,
         );
-    let required_cash = position_liability + market.rebate_reserve();
-    let cash_balance = market.cash_balance.value();
+    let required_cash = market.cash.required_cash(position_liability);
+    let cash_balance = market.cash.balance();
     assert!(cash_balance >= required_cash, EValuationExceedsCash);
     cash_balance - required_cash
 }
@@ -431,11 +424,9 @@ public(package) fun claim_trading_loss_rebate(
         return balance::zero()
     };
 
-    market.resolve_trading_fee_basis(trading_fees_paid);
-    let resolved_rebate_reserve = math::mul(
-        trading_fees_paid,
-        market.trading_loss_rebate_rate,
-    );
+    let resolved_rebate_reserve = market
+        .cash
+        .resolve_rebate_reserve_for_fee_basis(trading_fees_paid);
     let eligible_rebate = if (resolved_rebate_reserve > gross_profit) {
         resolved_rebate_reserve - gross_profit
     } else {
@@ -449,11 +440,11 @@ public(package) fun claim_trading_loss_rebate(
         .rebate_amount(eligible_rebate, manager.active_stake());
 
     if (rebate_amount > 0) {
-        let payout = market.dispense_cash(rebate_amount);
+        let payout = market.pay_authorized_cash(rebate_amount);
         manager.deposit_permissionless(payout.into_coin(ctx), ctx);
     };
     let residual_rebate_reserve = resolved_rebate_reserve - rebate_amount;
-    let residual_rebate_cash = market.dispense_cash(residual_rebate_reserve);
+    let residual_rebate_cash = market.pay_authorized_cash(residual_rebate_reserve);
     market.assert_cash_backing();
 
     claim_events::emit_trading_loss_rebate_claimed(
@@ -474,18 +465,17 @@ public(package) fun release_settled_pool_cash(
 ): Balance<DUSDC> {
     market.assert_version_allowed();
     let settled_liability = market.materialize_settled_liability(market_oracle);
-    let rebate_reserve = market.rebate_reserve();
-    let reserved_cash = settled_liability + rebate_reserve;
-    assert!(market.cash_balance.value() >= reserved_cash, EInsufficientCash);
+    let reserved_cash = market.cash.required_cash(settled_liability);
+    market.cash.assert_backing(settled_liability);
 
-    let returned_cash_amount = market.cash_balance.value() - reserved_cash;
+    let returned_cash_amount = market.cash.balance() - reserved_cash;
     market.release_pool_cash(returned_cash_amount)
 }
 
 /// Receive pool-provided cash without interpreting pool allocation policy.
 public(package) fun receive_pool_cash(market: &mut ExpiryMarket, cash: Balance<DUSDC>) {
     market.assert_version_allowed();
-    market.cash_balance.join(cash);
+    market.cash.receive(cash);
     market.assert_cash_backing();
 }
 
@@ -495,9 +485,8 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
     if (amount == 0) {
         return balance::zero()
     };
-    let required_cash = market.payout_liability() + market.rebate_reserve();
-    assert!(market.cash_balance.value() >= required_cash + amount, EInsufficientCash);
-    let released_cash = market.cash_balance.split(amount);
+    let payout_liability = market.payout_liability();
+    let released_cash = market.cash.release_surplus(amount, payout_liability);
     market.assert_cash_backing();
     released_cash
 }
@@ -536,8 +525,7 @@ fun redeem_liquidated_order(
 }
 
 fun assert_cash_backing(market: &ExpiryMarket) {
-    let required_cash = market.payout_liability() + market.rebate_reserve();
-    assert!(market.cash_balance.value() >= required_cash, EInsufficientCash);
+    market.cash.assert_backing(market.payout_liability());
 }
 
 fun mint_internal(
@@ -701,7 +689,7 @@ fun settle_mint_payment(
     send_builder_fee(builder_code_id, builder_fee_payment);
     let fee_payment = payment.split(fee_amount);
     market.collect_trade_fee(manager, fee_payment);
-    market.cash_balance.join(payment);
+    market.cash.receive(payment);
     manager.record_gross_paid_to_expiry(market.id(), user_contribution);
 
     market.assert_cash_backing();
@@ -726,7 +714,7 @@ fun settle_live_redeem_payment(
         redeem_amount - fee_amount,
     );
 
-    let mut payout = market.dispense_cash(redeem_amount);
+    let mut payout = market.pay_authorized_cash(redeem_amount);
     let fee = payout.split(fee_amount);
     let builder_fee = payout.split(builder_fee_amount);
     market.collect_trade_fee(manager, fee);
@@ -743,7 +731,7 @@ fun settle_settled_redeem_payment(
     payout_amount: u64,
     ctx: &mut TxContext,
 ) {
-    let payout = market.dispense_cash(payout_amount);
+    let payout = market.pay_authorized_cash(payout_amount);
     deposit_permissionless_payout(manager, market, payout, ctx);
 
     market.assert_cash_backing();
@@ -754,11 +742,9 @@ fun collect_trade_fee(
     manager: &mut PredictManager,
     fee: Balance<DUSDC>,
 ) {
-    let fee_amount = fee.value();
-    market.cash_balance.join(fee);
+    let fee_amount = market.cash.collect_trade_fee(fee);
     if (fee_amount == 0) return;
     manager.record_trading_fee_paid(market.id(), fee_amount);
-    market.unresolved_trading_fees_paid = market.unresolved_trading_fees_paid + fee_amount;
 }
 
 fun deposit_live_payout(
@@ -782,14 +768,8 @@ fun deposit_permissionless_payout(
     manager.deposit_permissionless(payout.into_coin(ctx), ctx);
 }
 
-fun resolve_trading_fee_basis(market: &mut ExpiryMarket, amount: u64) {
-    assert!(market.unresolved_trading_fees_paid >= amount, EUnresolvedTradingFeesUnderflow);
-    market.unresolved_trading_fees_paid = market.unresolved_trading_fees_paid - amount;
-}
-
-fun dispense_cash(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
-    assert!(market.cash_balance.value() >= amount, EInsufficientCash);
-    market.cash_balance.split(amount)
+fun pay_authorized_cash(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
+    market.cash.pay_authorized(amount)
 }
 
 fun send_builder_fee(builder_code_id: Option<ID>, fee: Balance<DUSDC>) {
