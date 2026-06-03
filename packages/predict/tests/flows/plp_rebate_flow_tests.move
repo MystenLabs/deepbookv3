@@ -8,12 +8,12 @@ use deepbook_predict::{
     admin::AdminCap,
     config_constants,
     constants::{Self, float_scaling as float},
-    expiry_market::ExpiryMarket,
+    expiry_market::{Self, ExpiryMarket},
     i64,
     market_oracle::{Self, MarketOracle, MarketOracleCap},
     order,
     plp::{Self, PLP, PoolVault},
-    predict_manager::PredictManager,
+    predict_manager::{Self, PredictManager},
     protocol_config::{Self, ProtocolConfig},
     pyth_source::PythSource,
     registry::{Self, Registry},
@@ -151,6 +151,163 @@ fun same_expiry_residual_rebate_cash_materializes_new_terminal_profit() {
     return_shared(pyth);
     destroy(manager);
     finish(fixture);
+}
+
+#[test]
+fun redeem_permissionless_settles_for_non_owner() {
+    let mut fixture = setup_pool_with_pyth();
+    let (expiry_id, oracle_id) = create_expiry(&mut fixture, EXPIRY_MS);
+    let mut manager = create_manager_for_testing(&mut fixture);
+
+    let mut pyth = fixture.scenario.take_shared_by_id<PythSource>(fixture.pyth_id);
+    let mut vault = fixture.scenario.take_shared_by_id<PoolVault>(fixture.vault_id);
+    let mut market = fixture.scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
+    let mut oracle = fixture.scenario.take_shared_by_id<MarketOracle>(oracle_id);
+
+    prepare_live_oracle_for_trading(&fixture, &mut oracle, &mut pyth);
+    sync_expiry_for_testing(&mut fixture, &mut vault, &mut market, &oracle, &pyth);
+
+    manager.deposit(
+        coin::mint_for_testing<DUSDC>(MIN_FEE_MINT_DEPOSIT, fixture.scenario.ctx()),
+        fixture.scenario.ctx(),
+    );
+    let order_id = market.mint(
+        &mut manager,
+        &fixture.config,
+        &oracle,
+        &pyth,
+        MIN_FEE_LOWER_STRIKE,
+        constants::pos_inf!(),
+        MIN_FEE_MINT_QUANTITY,
+        order::leverage_one_x(),
+        &fixture.clock,
+        fixture.scenario.ctx(),
+    );
+
+    settle_oracle(&mut fixture, &mut oracle, &mut pyth);
+    sync_expiry_for_testing(&mut fixture, &mut vault, &mut market, &oracle, &pyth);
+
+    // Manager is owned by alice; finalize it from a different sender to prove
+    // `redeem_permissionless` does not require ownership.
+    return_shared(oracle);
+    return_shared(market);
+    return_shared(vault);
+    return_shared(pyth);
+    fixture.scenario.next_tx(test_constants::admin());
+    let oracle = fixture.scenario.take_shared_by_id<MarketOracle>(oracle_id);
+    let mut market = fixture.scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
+
+    let closed_order_id = market.redeem_permissionless(
+        &mut manager,
+        &fixture.config,
+        &oracle,
+        order_id,
+        fixture.scenario.ctx(),
+    );
+    assert_eq!(closed_order_id, order_id);
+    assert!(!manager.has_position(expiry_id, order_id));
+    assert_eq!(manager.expiry_position_count(expiry_id), 0);
+
+    return_shared(oracle);
+    return_shared(market);
+    destroy(manager);
+    finish(fixture);
+}
+
+#[test, expected_failure(abort_code = expiry_market::ENotPermissionlesslyRedeemable)]
+fun redeem_permissionless_live_order_aborts() {
+    let mut fixture = setup_pool_with_pyth();
+    let (expiry_id, oracle_id) = create_expiry(&mut fixture, EXPIRY_MS);
+    let mut manager = create_manager_for_testing(&mut fixture);
+
+    let mut pyth = fixture.scenario.take_shared_by_id<PythSource>(fixture.pyth_id);
+    let mut vault = fixture.scenario.take_shared_by_id<PoolVault>(fixture.vault_id);
+    let mut market = fixture.scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
+    let mut oracle = fixture.scenario.take_shared_by_id<MarketOracle>(oracle_id);
+
+    prepare_live_oracle_for_trading(&fixture, &mut oracle, &mut pyth);
+    sync_expiry_for_testing(&mut fixture, &mut vault, &mut market, &oracle, &pyth);
+
+    manager.deposit(
+        coin::mint_for_testing<DUSDC>(MIN_FEE_MINT_DEPOSIT, fixture.scenario.ctx()),
+        fixture.scenario.ctx(),
+    );
+    let order_id = market.mint(
+        &mut manager,
+        &fixture.config,
+        &oracle,
+        &pyth,
+        MIN_FEE_LOWER_STRIKE,
+        constants::pos_inf!(),
+        MIN_FEE_MINT_QUANTITY,
+        order::leverage_one_x(),
+        &fixture.clock,
+        fixture.scenario.ctx(),
+    );
+
+    // Oracle is not settled and the order is live: there is no permissionless path.
+    market.redeem_permissionless(
+        &mut manager,
+        &fixture.config,
+        &oracle,
+        order_id,
+        fixture.scenario.ctx(),
+    );
+    abort 999
+}
+
+#[test, expected_failure(abort_code = predict_manager::ENotOwner)]
+fun redeem_by_non_owner_aborts() {
+    let mut fixture = setup_pool_with_pyth();
+    let (expiry_id, oracle_id) = create_expiry(&mut fixture, EXPIRY_MS);
+    let mut manager = create_manager_for_testing(&mut fixture);
+
+    let mut pyth = fixture.scenario.take_shared_by_id<PythSource>(fixture.pyth_id);
+    let mut vault = fixture.scenario.take_shared_by_id<PoolVault>(fixture.vault_id);
+    let mut market = fixture.scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
+    let mut oracle = fixture.scenario.take_shared_by_id<MarketOracle>(oracle_id);
+
+    prepare_live_oracle_for_trading(&fixture, &mut oracle, &mut pyth);
+    sync_expiry_for_testing(&mut fixture, &mut vault, &mut market, &oracle, &pyth);
+
+    manager.deposit(
+        coin::mint_for_testing<DUSDC>(MIN_FEE_MINT_DEPOSIT, fixture.scenario.ctx()),
+        fixture.scenario.ctx(),
+    );
+    let order_id = market.mint(
+        &mut manager,
+        &fixture.config,
+        &oracle,
+        &pyth,
+        MIN_FEE_LOWER_STRIKE,
+        constants::pos_inf!(),
+        MIN_FEE_MINT_QUANTITY,
+        order::leverage_one_x(),
+        &fixture.clock,
+        fixture.scenario.ctx(),
+    );
+
+    // Switch to a non-owner sender; the owner-gated `redeem` must reject them.
+    return_shared(oracle);
+    return_shared(market);
+    return_shared(vault);
+    return_shared(pyth);
+    fixture.scenario.next_tx(test_constants::admin());
+    let oracle = fixture.scenario.take_shared_by_id<MarketOracle>(oracle_id);
+    let mut market = fixture.scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
+    let pyth = fixture.scenario.take_shared_by_id<PythSource>(fixture.pyth_id);
+
+    market.redeem(
+        &mut manager,
+        &fixture.config,
+        &oracle,
+        &pyth,
+        order_id,
+        MIN_FEE_MINT_QUANTITY,
+        &fixture.clock,
+        fixture.scenario.ctx(),
+    );
+    abort 999
 }
 
 fun setup_pool_with_pyth(): Fixture {

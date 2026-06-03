@@ -36,6 +36,7 @@ const EPackageVersionDisabled: u64 = 4;
 const EMintPaused: u64 = 5;
 const EUnresolvedTradingFeesUnderflow: u64 = 6;
 const EFullCloseRequired: u64 = 7;
+const ENotPermissionlesslyRedeemable: u64 = 8;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -190,11 +191,13 @@ public fun mint(
     )
 }
 
-/// Redeem live or settled order quantity.
+/// Redeem one of the caller's own order positions.
 ///
-/// Live redeems can close part or all of an order. Settled and liquidated-order
-/// redeems require a full close and return no replacement. Returns
-/// `(closed_order_id, replacement_order_id)`.
+/// Owner-gated: only the manager owner may close their position. Live redeems
+/// can close part or all of an order; settled and liquidated-order redeems
+/// require a full close and return no replacement. For keeper-driven cleanup of
+/// any manager's settled or liquidated orders, use `redeem_permissionless`.
+/// Returns `(closed_order_id, replacement_order_id)`.
 public fun redeem(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
@@ -209,47 +212,52 @@ public fun redeem(
     market.assert_version_allowed();
     config.assert_not_valuation_in_progress();
     market.assert_market_oracle(market_oracle);
-    let redeemed_order = order::from_order_id(order_id);
-    if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
-        market.redeem_liquidated_order(manager, &redeemed_order, close_quantity);
-        return (redeemed_order.id(), option::none())
-    };
+    manager.assert_owner(ctx);
+    market.redeem_internal(
+        manager,
+        config,
+        market_oracle,
+        pyth,
+        order_id,
+        close_quantity,
+        clock,
+        ctx,
+    )
+}
 
-    if (market_oracle.is_settled()) {
-        assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
-        market.redeem_settled_internal(manager, market_oracle, &redeemed_order, ctx);
-        (redeemed_order.id(), option::none())
-    } else {
-        market.run_liquidation_pass(
-            config.pricing_config(),
-            market_oracle,
-            pyth,
-            config.risk_config().trade_liquidation_budget(),
-            clock,
-        );
-        if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
-            market.redeem_liquidated_order(manager, &redeemed_order, close_quantity);
-            return (redeemed_order.id(), option::none())
-        };
-        let replacement_order_id = market.redeem_live_internal(
-            manager,
-            config,
-            market_oracle,
-            pyth,
-            &redeemed_order,
-            close_quantity,
-            clock,
-            ctx,
-        );
-        (redeemed_order.id(), replacement_order_id)
-    }
+/// Permissionlessly finalize a settled or liquidated order for its manager.
+///
+/// Callable by anyone (e.g. a keeper): a liquidated order is closed with no
+/// payout; a settled order pays its terminal payout to the manager, never to the
+/// caller. Always a full close. Aborts on a live order — only the owner can close
+/// a live position, through `redeem`. Returns the closed order id.
+public fun redeem_permissionless(
+    market: &mut ExpiryMarket,
+    manager: &mut PredictManager,
+    config: &ProtocolConfig,
+    market_oracle: &MarketOracle,
+    order_id: u256,
+    ctx: &mut TxContext,
+): u256 {
+    market.assert_version_allowed();
+    config.assert_not_valuation_in_progress();
+    market.assert_market_oracle(market_oracle);
+    let order = order::from_order_id(order_id);
+    if (market.strike_exposure.is_liquidated_order(&order)) {
+        market.redeem_liquidated_order(manager, &order, order.quantity());
+        return order.id()
+    };
+    assert!(market_oracle.is_settled(), ENotPermissionlesslyRedeemable);
+    market.redeem_settled_internal(manager, market_oracle, &order, ctx);
+    order.id()
 }
 
 /// Run one bounded liquidation pass over active leveraged orders.
 ///
 /// The liquidation book selects up to `budget` candidates and returns the
-/// number of orders liquidated. It does not touch PredictManagers; users clear
-/// their liquidated position later through `redeem`, receiving no payout.
+/// number of orders liquidated. It does not touch PredictManagers; the position
+/// is cleared later through `redeem` (owner) or `redeem_permissionless` (keeper),
+/// receiving no payout.
 public fun liquidate(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
@@ -600,6 +608,56 @@ fun mint_internal(
     minted_order.id()
 }
 
+/// Lifecycle dispatch for an owner-authorized redeem: liquidated cleanup,
+/// settled full close, or live close (which runs a liquidation pass first).
+/// `redeem` owns the version, valuation, oracle-binding, and owner gates.
+fun redeem_internal(
+    market: &mut ExpiryMarket,
+    manager: &mut PredictManager,
+    config: &ProtocolConfig,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    order_id: u256,
+    close_quantity: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+): (u256, Option<u256>) {
+    let redeemed_order = order::from_order_id(order_id);
+    if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
+        market.redeem_liquidated_order(manager, &redeemed_order, close_quantity);
+        return (redeemed_order.id(), option::none())
+    };
+
+    if (market_oracle.is_settled()) {
+        assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
+        market.redeem_settled_internal(manager, market_oracle, &redeemed_order, ctx);
+        (redeemed_order.id(), option::none())
+    } else {
+        market.run_liquidation_pass(
+            config.pricing_config(),
+            market_oracle,
+            pyth,
+            config.risk_config().trade_liquidation_budget(),
+            clock,
+        );
+        if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
+            market.redeem_liquidated_order(manager, &redeemed_order, close_quantity);
+            return (redeemed_order.id(), option::none())
+        };
+        let replacement_order_id = market.redeem_live_internal(
+            manager,
+            config,
+            market_oracle,
+            pyth,
+            &redeemed_order,
+            close_quantity,
+            clock,
+            ctx,
+        );
+        (redeemed_order.id(), replacement_order_id)
+    }
+}
+
 fun redeem_live_internal(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
@@ -611,7 +669,6 @@ fun redeem_live_internal(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Option<u256> {
-    manager.assert_owner(ctx);
     manager.update_stake(ctx);
     market.assert_pyth_feed(pyth);
     pricing::assert_live_quote_available(config.pricing_config(), market_oracle, pyth, clock);
