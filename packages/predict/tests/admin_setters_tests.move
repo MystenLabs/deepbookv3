@@ -11,6 +11,7 @@ use deepbook_predict::{
     admin,
     config_constants,
     constants::float_scaling as float,
+    ewma_config,
     fee_config,
     leverage_config,
     market_oracle_config,
@@ -343,6 +344,55 @@ fun set_pyth_feed_expiry_fee_window_below_min_aborts() {
         &admin_cap,
         PYTH_FEED_BTC,
         config_constants::min_expiry_fee_window_ms!() - 1,
+    );
+    abort 999
+}
+
+// === EWMA penalty setters ===
+
+#[test]
+fun set_ewma_params_forwards_to_ewma_config() {
+    let ctx = &mut tx_context::dummy();
+    let admin_cap = admin::create_admin_cap_for_testing(ctx);
+    let mut config = protocol_config::new_for_testing(ctx);
+
+    protocol_config::set_ewma_params(&mut config, &admin_cap, 50_000_000, 5_000_000_000, 1_500_000);
+
+    let ewma = config.ewma_config();
+    assert_eq!(ewma_config::alpha(ewma), 50_000_000);
+    assert_eq!(ewma_config::z_score_threshold(ewma), 5_000_000_000);
+    assert_eq!(ewma_config::additional_fee(ewma), 1_500_000);
+
+    destroy(config);
+    destroy(admin_cap);
+}
+
+#[test]
+fun set_ewma_enabled_forwards_to_ewma_config() {
+    let ctx = &mut tx_context::dummy();
+    let admin_cap = admin::create_admin_cap_for_testing(ctx);
+    let mut config = protocol_config::new_for_testing(ctx);
+
+    assert!(!ewma_config::enabled(config.ewma_config()));
+    protocol_config::set_ewma_enabled(&mut config, &admin_cap, true);
+    assert!(ewma_config::enabled(config.ewma_config()));
+
+    destroy(config);
+    destroy(admin_cap);
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidEwmaAdditionalFee)]
+fun set_ewma_params_fee_above_max_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let admin_cap = admin::create_admin_cap_for_testing(ctx);
+    let mut config = protocol_config::new_for_testing(ctx);
+
+    protocol_config::set_ewma_params(
+        &mut config,
+        &admin_cap,
+        config_constants::default_ewma_alpha!(),
+        config_constants::default_ewma_z_score_threshold!(),
+        config_constants::max_ewma_additional_fee!() + 1,
     );
     abort 999
 }

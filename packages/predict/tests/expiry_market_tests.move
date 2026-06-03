@@ -19,7 +19,12 @@ use deepbook_predict::{
 };
 use dusdc::dusdc::DUSDC;
 use std::unit_test::{assert_eq, destroy};
-use sui::{clock::{Self, Clock}, coin, test_scenario::{Self as test, return_shared}, vec_set};
+use sui::{
+    clock::{Self, Clock},
+    coin,
+    test_scenario::{Self as test, return_shared, Scenario},
+    vec_set
+};
 
 const NOW_MS: u64 = 100_000;
 const EXPIRY_MS: u64 = 200_000;
@@ -37,6 +42,21 @@ const REBATE_RESERVE: u64 = 2_500_000;
 const GROSS_PROFIT_ONE: u64 = 1;
 const FULL_REBATE_STAKE: u64 = 1_100_000_000_000;
 const EXPECTED_REBATE_WITH_ONE_GROSS_PROFIT: u64 = 2_499_999;
+
+// EWMA penalty fixtures. Gas sequence 1000 -> 2000 -> 3000 puts the z-score at
+// ~0.99 after the first observation (below 1 sigma) and ~1.94 after the second
+// (above 1 sigma), so the penalty fires only on the spike. See ewma_tests.
+const ONE_SIGMA: u64 = 1_000_000_000;
+const SEED_GAS: u64 = 1_000;
+const FIRST_TRADE_GAS: u64 = 2_000;
+const SPIKE_GAS: u64 = 3_000;
+const LOW_GAS: u64 = 1;
+const BIG_SPIKE_GAS: u64 = 50_000;
+const PENALTY_FEE_RATE: u64 = 2_000_000; // 0.2% surcharge rate
+// 0.2% of MINT_QUANTITY (1e9) = 2_000_000 base units, derived independently.
+const EXPECTED_PENALTY: u64 = 2_000_000;
+const POOL_CASH: u64 = 1_000_000_000_000;
+const LARGE_DEPOSIT: u64 = 1_000_000_000_000;
 
 #[test]
 fun rebate_eligibility_offsets_fee_reserve_by_gross_profit() {
@@ -135,6 +155,268 @@ fun rebate_eligibility_offsets_fee_reserve_by_gross_profit() {
     registry::destroy_registry_drop_for_testing(registry);
     clock.destroy_for_testing();
     scenario.end();
+}
+
+#[test]
+fun mint_withholds_ewma_penalty_into_pool_on_gas_spike() {
+    let mut scenario = test::begin(test_constants::alice());
+    let (mut registry, admin_cap) = registry::new_for_testing(scenario.ctx());
+    let mut config = protocol_config::new_for_testing(scenario.ctx());
+    config.set_base_fee(&admin_cap, 1);
+    config.set_min_ask_price(&admin_cap, 0);
+    config.set_ewma_params(
+        &admin_cap,
+        config_constants::default_ewma_alpha!(),
+        ONE_SIGMA,
+        PENALTY_FEE_RATE,
+    );
+    config.set_ewma_enabled(&admin_cap, true);
+    let cap = market_oracle::create_cap(&admin_cap, scenario.ctx());
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(NOW_MS);
+    let mut pyth = pyth_source::new_for_testing(scenario.ctx());
+    let mut oracle = market_oracle::create_test_market_oracle_with_pyth(
+        &pyth,
+        EXPIRY_MS,
+        &cap,
+        scenario.ctx(),
+    );
+
+    // Seed the market's EWMA mean at SEED_GAS.
+    advance_to_gas(&mut scenario, SEED_GAS);
+    let expiry_id = expiry_market::create_and_share(
+        &config,
+        vec_set::singleton(constants::current_version!()),
+        oracle.id(),
+        pyth.feed_id(),
+        EXPIRY_MS,
+        MIN_STRIKE,
+        TICK_SIZE,
+        constants::default_expiry_preallocated_ticks!(),
+        config_constants::default_expiry_fee_window_ms!(),
+        constants::float_scaling!(),
+        scenario.ctx(),
+    );
+    let mut manager = registry::create_manager(&mut registry, scenario.ctx());
+    prepare_live_oracle_for_trading(&mut oracle, &mut pyth, &config, &cap, &clock);
+    manager.deposit(
+        coin::mint_for_testing<DUSDC>(LARGE_DEPOSIT, scenario.ctx()),
+        scenario.ctx(),
+    );
+
+    // First mint at FIRST_TRADE_GAS seeds variance; z ~= 0.99 < 1 sigma, no penalty.
+    advance_to_gas(&mut scenario, FIRST_TRADE_GAS);
+    clock.set_for_testing(NOW_MS);
+    let mut market = scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
+    market.receive_pool_cash(coin::mint_for_testing<DUSDC>(
+        POOL_CASH,
+        scenario.ctx(),
+    ).into_balance());
+    let balance_before_first = manager.balance();
+    let proof = manager.generate_proof_as_owner(scenario.ctx());
+    market.mint(
+        &mut manager,
+        &proof,
+        &config,
+        &oracle,
+        &pyth,
+        MIN_FEE_LOWER_STRIKE,
+        constants::pos_inf!(),
+        MINT_QUANTITY,
+        order::leverage_one_x(),
+        &clock,
+        scenario.ctx(),
+    );
+    let first_mint_cost = balance_before_first - manager.balance();
+    return_shared(market);
+
+    // Second mint at SPIKE_GAS: z ~= 1.94 > 1 sigma, penalty fires.
+    advance_to_gas(&mut scenario, SPIKE_GAS);
+    clock.set_for_testing(NOW_MS + 1);
+    let mut market = scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
+    let balance_before_second = manager.balance();
+    let proof = manager.generate_proof_as_owner(scenario.ctx());
+    market.mint(
+        &mut manager,
+        &proof,
+        &config,
+        &oracle,
+        &pyth,
+        MIN_FEE_LOWER_STRIKE,
+        constants::pos_inf!(),
+        MINT_QUANTITY,
+        order::leverage_one_x(),
+        &clock,
+        scenario.ctx(),
+    );
+    let second_mint_cost = balance_before_second - manager.balance();
+
+    // Identical orders, so the only extra cost on the spike is the surcharge.
+    assert_eq!(second_mint_cost - first_mint_cost, EXPECTED_PENALTY);
+    // The penalty is pool surplus, not a recorded trading fee.
+    assert_eq!(manager.trading_fees_paid(expiry_id), 2 * MINT_FEE);
+
+    return_shared(market);
+    destroy(manager);
+    destroy(oracle);
+    destroy(pyth);
+    market_oracle::destroy_cap(cap);
+    destroy(config);
+    destroy(admin_cap);
+    registry::destroy_registry_drop_for_testing(registry);
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test]
+fun redeem_withholds_ewma_penalty_from_payout_on_gas_spike() {
+    let mut scenario = test::begin(test_constants::alice());
+    let (mut registry, admin_cap) = registry::new_for_testing(scenario.ctx());
+    let mut config = protocol_config::new_for_testing(scenario.ctx());
+    config.set_base_fee(&admin_cap, 1);
+    config.set_min_ask_price(&admin_cap, 0);
+    config.set_ewma_params(
+        &admin_cap,
+        config_constants::default_ewma_alpha!(),
+        ONE_SIGMA,
+        PENALTY_FEE_RATE,
+    );
+    config.set_ewma_enabled(&admin_cap, true);
+    let cap = market_oracle::create_cap(&admin_cap, scenario.ctx());
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(NOW_MS);
+    let mut pyth = pyth_source::new_for_testing(scenario.ctx());
+    let mut oracle = market_oracle::create_test_market_oracle_with_pyth(
+        &pyth,
+        EXPIRY_MS,
+        &cap,
+        scenario.ctx(),
+    );
+
+    advance_to_gas(&mut scenario, SEED_GAS);
+    let expiry_id = expiry_market::create_and_share(
+        &config,
+        vec_set::singleton(constants::current_version!()),
+        oracle.id(),
+        pyth.feed_id(),
+        EXPIRY_MS,
+        MIN_STRIKE,
+        TICK_SIZE,
+        constants::default_expiry_preallocated_ticks!(),
+        config_constants::default_expiry_fee_window_ms!(),
+        constants::float_scaling!(),
+        scenario.ctx(),
+    );
+    let mut manager = registry::create_manager(&mut registry, scenario.ctx());
+    prepare_live_oracle_for_trading(&mut oracle, &mut pyth, &config, &cap, &clock);
+    manager.deposit(
+        coin::mint_for_testing<DUSDC>(LARGE_DEPOSIT, scenario.ctx()),
+        scenario.ctx(),
+    );
+
+    // Mint two identical positions; their later redeems differ only by penalty.
+    advance_to_gas(&mut scenario, FIRST_TRADE_GAS);
+    clock.set_for_testing(NOW_MS);
+    let mut market = scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
+    market.receive_pool_cash(coin::mint_for_testing<DUSDC>(
+        POOL_CASH,
+        scenario.ctx(),
+    ).into_balance());
+    let proof = manager.generate_proof_as_owner(scenario.ctx());
+    let order_a = market.mint(
+        &mut manager,
+        &proof,
+        &config,
+        &oracle,
+        &pyth,
+        MIN_FEE_LOWER_STRIKE,
+        constants::pos_inf!(),
+        MINT_QUANTITY,
+        order::leverage_one_x(),
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(market);
+
+    advance_to_gas(&mut scenario, FIRST_TRADE_GAS);
+    clock.set_for_testing(NOW_MS + 1);
+    let mut market = scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
+    let proof = manager.generate_proof_as_owner(scenario.ctx());
+    let order_b = market.mint(
+        &mut manager,
+        &proof,
+        &config,
+        &oracle,
+        &pyth,
+        MIN_FEE_LOWER_STRIKE,
+        constants::pos_inf!(),
+        MINT_QUANTITY,
+        order::leverage_one_x(),
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(market);
+
+    // Redeem A at LOW_GAS: gas below the mean, so no penalty applies.
+    advance_to_gas(&mut scenario, LOW_GAS);
+    clock.set_for_testing(NOW_MS + 2);
+    let mut market = scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
+    let balance_before_a = manager.balance();
+    let proof = manager.generate_proof_as_owner(scenario.ctx());
+    market.redeem(
+        &mut manager,
+        proof,
+        &config,
+        &oracle,
+        &pyth,
+        order_a,
+        MINT_QUANTITY,
+        &clock,
+        scenario.ctx(),
+    );
+    let payout_a = manager.balance() - balance_before_a;
+    return_shared(market);
+
+    // Redeem B at BIG_SPIKE_GAS: z far above 1 sigma, penalty withheld.
+    advance_to_gas(&mut scenario, BIG_SPIKE_GAS);
+    clock.set_for_testing(NOW_MS + 3);
+    let mut market = scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
+    let balance_before_b = manager.balance();
+    let proof = manager.generate_proof_as_owner(scenario.ctx());
+    market.redeem(
+        &mut manager,
+        proof,
+        &config,
+        &oracle,
+        &pyth,
+        order_b,
+        MINT_QUANTITY,
+        &clock,
+        scenario.ctx(),
+    );
+    let payout_b = manager.balance() - balance_before_b;
+
+    // Identical positions: the penalized redeem pays exactly the surcharge less.
+    assert_eq!(payout_a - payout_b, EXPECTED_PENALTY);
+
+    return_shared(market);
+    destroy(manager);
+    destroy(oracle);
+    destroy(pyth);
+    market_oracle::destroy_cap(cap);
+    destroy(config);
+    destroy(admin_cap);
+    registry::destroy_registry_drop_for_testing(registry);
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+/// Start the next transaction with `gas_price` so the per-market EWMA observes
+/// it. Only `gas_price` changes, so the reference gas price stays put and no
+/// epoch advance is required.
+fun advance_to_gas(scenario: &mut Scenario, gas_price: u64) {
+    let builder = scenario.ctx_builder().set_gas_price(gas_price);
+    scenario.next_with_context(builder);
 }
 
 fun prepare_live_oracle_for_trading(

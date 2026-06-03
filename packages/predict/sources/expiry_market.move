@@ -15,6 +15,8 @@ use deepbook_predict::{
     claim_events,
     config_events,
     constants,
+    ewma::{Self, EwmaState},
+    ewma_config::EwmaConfig,
     market_oracle::{MarketOracle, MarketOracleCap},
     order::{Self, Order},
     order_events,
@@ -52,6 +54,8 @@ public struct ExpiryMarket has key {
     unresolved_trading_fees_paid: u64,
     /// Exposure lifecycle state for this expiry's oracle grid.
     strike_exposure: StrikeExposure,
+    /// Smoothed gas-price stats backing the congestion trade penalty.
+    ewma: EwmaState,
     /// Mirror of `ProtocolConfig.allowed_versions`; synced permissionlessly.
     allowed_versions: VecSet<u64>,
     /// When true, `mint` aborts. Other flows (redeem, settle, cleanup) unaffected.
@@ -353,6 +357,7 @@ public(package) fun create_and_share(
             expiry_fee_max_multiplier,
             ctx,
         ),
+        ewma: ewma::new(ctx),
         allowed_versions,
         mint_paused: false,
     };
@@ -609,6 +614,20 @@ fun assert_cash_backing(market: &ExpiryMarket) {
     assert!(market.cash_balance.value() >= required_cash, EInsufficientCash);
 }
 
+/// Fold the current gas price into this market's EWMA and return the congestion
+/// surcharge (in DUSDC) for `quantity`, zero unless the penalty is enabled and
+/// gas is a high outlier. Mutates the smoothed estimate on every trade.
+fun ewma_penalty(
+    market: &mut ExpiryMarket,
+    config: &EwmaConfig,
+    quantity: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+): u64 {
+    market.ewma.update(config, clock, ctx);
+    market.ewma.penalty_fee(config, quantity, ctx)
+}
+
 fun mint_internal(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
@@ -650,12 +669,14 @@ fun mint_internal(
     let fee_amount = config
         .stake_config()
         .fee_amount_after_discount(fee_amount, manager.active_stake());
+    let penalty_amount = market.ewma_penalty(config.ewma_config(), quantity, clock, ctx);
 
     let builder_fee_amount = market.settle_mint_payment(
         manager,
         proof,
         &minted_order,
         fee_amount,
+        penalty_amount,
         ctx,
     );
     order_events::emit_order_minted(
@@ -666,6 +687,7 @@ fun mint_internal(
         higher_strike,
         fee_amount,
         builder_fee_amount,
+        penalty_amount,
     );
     minted_order.id()
 }
@@ -701,6 +723,7 @@ fun redeem_live_internal(
     let fee_amount = config
         .stake_config()
         .fee_amount_after_discount(fee_amount, manager.active_stake());
+    let penalty_amount = market.ewma_penalty(config.ewma_config(), close_quantity, clock, ctx);
 
     let replacement_order_id = if (resulting_order.id() == order.id()) {
         option::none()
@@ -710,11 +733,12 @@ fun redeem_live_internal(
         option::some(replacement_order_id)
     };
 
-    let builder_fee_amount = market.settle_live_redeem_payment(
+    let (builder_fee_amount, penalty_amount) = market.settle_live_redeem_payment(
         manager,
         proof,
         redeem_amount,
         fee_amount,
+        penalty_amount,
         close_quantity,
         ctx,
     );
@@ -728,6 +752,7 @@ fun redeem_live_internal(
         redeem_amount,
         fee_amount,
         builder_fee_amount,
+        penalty_amount,
     );
     replacement_order_id
 }
@@ -755,19 +780,25 @@ fun redeem_settled_internal(
     );
 }
 
+/// Settle a mint payment and return the builder fee paid.
+///
+/// The EWMA penalty is withdrawn alongside the contribution and fees, but rides
+/// into pool `cash_balance` as surplus: it is not part of the rebate fee basis,
+/// earns no builder cut, and is excluded from the user's recorded gross paid.
 fun settle_mint_payment(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
     proof: &PredictTradeProof,
     order: &Order,
     fee_amount: u64,
+    penalty_amount: u64,
     ctx: &mut TxContext,
 ): u64 {
     let quantity = order.quantity();
     let user_contribution = order.user_contribution();
     let builder_code_id = manager.builder_code_id();
     let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity);
-    let withdraw_amount = user_contribution + fee_amount + builder_fee_amount;
+    let withdraw_amount = user_contribution + fee_amount + builder_fee_amount + penalty_amount;
 
     manager.add_position(market.id(), order.id());
     let mut payment = manager.withdraw_with_proof(proof, withdraw_amount, ctx).into_balance();
@@ -775,6 +806,7 @@ fun settle_mint_payment(
     send_builder_fee(builder_code_id, builder_fee_payment);
     let fee_payment = payment.split(fee_amount);
     market.collect_trade_fee(manager, fee_payment);
+    // Remaining balance is the contribution plus the penalty surplus.
     market.cash_balance.join(payment);
     manager.record_gross_paid_to_expiry(market.id(), user_contribution);
 
@@ -782,16 +814,21 @@ fun settle_mint_payment(
     builder_fee_amount
 }
 
-/// Settle a live redeem and return the builder fee paid.
+/// Settle a live redeem and return the builder fee and penalty actually applied.
+///
+/// The EWMA penalty is withheld from the payout and kept in pool `cash_balance`
+/// as surplus. Like the trading fee it comes out of `redeem_amount`, so it is
+/// capped at the payout left after the fee and builder cut.
 fun settle_live_redeem_payment(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
     proof: &PredictTradeProof,
     redeem_amount: u64,
     fee_amount: u64,
+    penalty_amount: u64,
     redeemed_quantity: u64,
     ctx: &mut TxContext,
-): u64 {
+): (u64, u64) {
     let builder_code_id = manager.builder_code_id();
     let builder_fee_amount = builder_fee_amount(
         &builder_code_id,
@@ -800,16 +837,19 @@ fun settle_live_redeem_payment(
     ).min(
         redeem_amount - fee_amount,
     );
+    let penalty_amount = penalty_amount.min(redeem_amount - fee_amount - builder_fee_amount);
 
     let mut payout = market.dispense_cash(redeem_amount);
     let fee = payout.split(fee_amount);
     let builder_fee = payout.split(builder_fee_amount);
     market.collect_trade_fee(manager, fee);
     send_builder_fee(builder_code_id, builder_fee);
+    // Penalty surplus stays in the pool rather than flowing to the redeemer.
+    market.cash_balance.join(payout.split(penalty_amount));
 
     market.assert_cash_backing();
     deposit_live_payout(manager, proof, market, payout, redeem_amount, ctx);
-    builder_fee_amount
+    (builder_fee_amount, penalty_amount)
 }
 
 fun settle_settled_redeem_payment(

@@ -11,6 +11,7 @@ module deepbook_predict::protocol_config;
 use deepbook_predict::{
     admin::AdminCap,
     config_events,
+    ewma_config::{Self, EwmaConfig},
     fee_config::{Self, FeeConfig},
     leverage_config::{Self, LeverageConfig},
     market_oracle_config::{Self, MarketOracleConfig},
@@ -32,6 +33,7 @@ public struct ProtocolConfig has key {
     market_oracle_config: MarketOracleConfig,
     leverage_config: LeverageConfig,
     stake_config: StakeConfig,
+    ewma_config: EwmaConfig,
     /// Blocks new risk creation while true.
     trading_paused: bool,
     /// Transaction-local lock held while a full-pool valuation is assembled.
@@ -227,6 +229,26 @@ public fun set_market_oracle_template_basis_bounds(
     );
 }
 
+/// Set the EWMA gas-price penalty parameters.
+public fun set_ewma_params(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    alpha: u64,
+    z_score_threshold: u64,
+    additional_fee: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.ewma_config.set_params(alpha, z_score_threshold, additional_fee);
+    config_events::emit_ewma_config_updated(config.id(), &config.ewma_config);
+}
+
+/// Enable or disable the EWMA gas-price penalty.
+public fun set_ewma_enabled(config: &mut ProtocolConfig, _admin_cap: &AdminCap, enabled: bool) {
+    config.assert_not_valuation_in_progress();
+    config.ewma_config.set_enabled(enabled);
+    config_events::emit_ewma_config_updated(config.id(), &config.ewma_config);
+}
+
 /// Set whether trading is paused.
 public fun set_trading_paused(config: &mut ProtocolConfig, _admin_cap: &AdminCap, paused: bool) {
     config.set_trading_paused_internal(paused);
@@ -256,6 +278,10 @@ public(package) fun leverage_config(config: &ProtocolConfig): &LeverageConfig {
 
 public(package) fun stake_config(config: &ProtocolConfig): &StakeConfig {
     &config.stake_config
+}
+
+public(package) fun ewma_config(config: &ProtocolConfig): &EwmaConfig {
+    &config.ewma_config
 }
 
 /// Abort unless trading mutations are currently allowed.
@@ -324,6 +350,7 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         market_oracle_config: market_oracle_config::new(),
         leverage_config: leverage_config::new(),
         stake_config: stake_config::new(),
+        ewma_config: ewma_config::new(),
         trading_paused: false,
         valuation_in_progress: false,
     }
