@@ -12,17 +12,22 @@ use deepbook_predict::{
     admin::AdminCap,
     config_events,
     ewma_config::{Self, EwmaConfig},
+    expiry_cash_config::{Self, ExpiryCashConfig},
+    expiry_runtime_config::{Self, ExpiryRuntimeConfig},
     fee_config::{Self, FeeConfig},
-    leverage_config::{Self, LeverageConfig},
     market_oracle_config::{Self, MarketOracleConfig},
     pricing_config::{Self, PricingConfig},
     risk_config::{Self, RiskConfig},
-    stake_config::{Self, StakeConfig}
+    stake_config::{Self, StakeConfig},
+    strike_exposure_config::{Self, StrikeExposureConfig}
 };
+use sui::table::{Self, Table};
 
 const ETradingPaused: u64 = 0;
 const EValuationInProgress: u64 = 1;
 const EValuationNotInProgress: u64 = 2;
+const EExpiryConfigAlreadyExists: u64 = 3;
+const EExpiryConfigNotFound: u64 = 4;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
@@ -30,14 +35,17 @@ public struct ProtocolConfig has key {
     pricing_config: PricingConfig,
     fee_config: FeeConfig,
     risk_config: RiskConfig,
-    market_oracle_config: MarketOracleConfig,
-    leverage_config: LeverageConfig,
+    market_oracle_template_config: MarketOracleConfig,
+    expiry_cash_template_config: ExpiryCashConfig,
+    strike_exposure_template_config: StrikeExposureConfig,
     stake_config: StakeConfig,
     ewma_config: EwmaConfig,
     /// Blocks new risk creation while true.
     trading_paused: bool,
     /// Transaction-local lock held while a full-pool valuation is assembled.
     valuation_in_progress: bool,
+    /// Expiry market ID -> mutable expiry-specific protocol controls.
+    per_expiry: Table<ID, ExpiryRuntimeConfig>,
 }
 
 // === Public Functions ===
@@ -50,6 +58,16 @@ public fun id(config: &ProtocolConfig): ID {
 /// Return whether trading is currently paused.
 public fun trading_paused(config: &ProtocolConfig): bool {
     config.trading_paused
+}
+
+/// Return whether new mints are paused for one expiry market.
+public fun expiry_mint_paused(config: &ProtocolConfig, expiry_market_id: ID): bool {
+    config.expiry_config(expiry_market_id).mint_paused()
+}
+
+/// Return the max net DUSDC the pool may have funded into one expiry.
+public fun expiry_max_funding(config: &ProtocolConfig, expiry_market_id: ID): u64 {
+    config.expiry_config(expiry_market_id).max_expiry_funding()
 }
 
 /// Set the base fee multiplier.
@@ -73,8 +91,11 @@ public fun set_template_max_expiry_floor_premium(
     value: u64,
 ) {
     config.assert_not_valuation_in_progress();
-    config.leverage_config.set_template_max_expiry_floor_premium(value);
-    config_events::emit_leverage_config_updated(config.id(), &config.leverage_config);
+    config.strike_exposure_template_config.set_max_expiry_floor_premium(value);
+    config_events::emit_strike_exposure_template_config_updated(
+        config.id(),
+        &config.strike_exposure_template_config,
+    );
 }
 
 /// Set the liquidation LTV snapshotted by future expiry markets.
@@ -84,8 +105,11 @@ public fun set_template_liquidation_ltv(
     value: u64,
 ) {
     config.assert_not_valuation_in_progress();
-    config.leverage_config.set_template_liquidation_ltv(value);
-    config_events::emit_leverage_config_updated(config.id(), &config.leverage_config);
+    config.strike_exposure_template_config.set_liquidation_ltv(value);
+    config_events::emit_strike_exposure_template_config_updated(
+        config.id(),
+        &config.strike_exposure_template_config,
+    );
 }
 
 /// Set the staking benefit thresholds: `lower` (half of max benefits) and
@@ -165,8 +189,11 @@ public fun set_template_trading_loss_rebate_rate(
     value: u64,
 ) {
     config.assert_not_valuation_in_progress();
-    config.fee_config.set_trading_loss_rebate_rate(value);
-    config_events::emit_fee_config_updated(config.id(), &config.fee_config);
+    config.expiry_cash_template_config.set_trading_loss_rebate_rate(value);
+    config_events::emit_expiry_cash_template_config_updated(
+        config.id(),
+        &config.expiry_cash_template_config,
+    );
 }
 
 /// Set the total liquidation candidate budget used before live valuations.
@@ -198,10 +225,10 @@ public fun set_market_oracle_template_settlement_freshness_ms(
     value: u64,
 ) {
     config.assert_not_valuation_in_progress();
-    config.market_oracle_config.set_settlement_freshness_ms(value);
+    config.market_oracle_template_config.set_settlement_freshness_ms(value);
     config_events::emit_market_oracle_template_config_updated(
         config.id(),
-        &config.market_oracle_config,
+        &config.market_oracle_template_config,
     );
 }
 
@@ -216,7 +243,7 @@ public fun set_market_oracle_template_basis_bounds(
 ) {
     config.assert_not_valuation_in_progress();
     config
-        .market_oracle_config
+        .market_oracle_template_config
         .set_basis_bounds(
             max_spot_deviation,
             max_basis_deviation,
@@ -225,7 +252,7 @@ public fun set_market_oracle_template_basis_bounds(
         );
     config_events::emit_market_oracle_template_config_updated(
         config.id(),
-        &config.market_oracle_config,
+        &config.market_oracle_template_config,
     );
 }
 
@@ -254,6 +281,16 @@ public fun set_trading_paused(config: &mut ProtocolConfig, _admin_cap: &AdminCap
     config.set_trading_paused_internal(paused);
 }
 
+/// Set whether new mints are paused for one expiry market.
+public fun set_expiry_mint_paused(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    expiry_market_id: ID,
+    paused: bool,
+) {
+    config.set_expiry_mint_paused_internal(expiry_market_id, paused);
+}
+
 // === Public-Package Functions ===
 
 public(package) fun pricing_config(config: &ProtocolConfig): &PricingConfig {
@@ -268,12 +305,24 @@ public(package) fun risk_config(config: &ProtocolConfig): &RiskConfig {
     &config.risk_config
 }
 
-public(package) fun market_oracle_config(config: &ProtocolConfig): &MarketOracleConfig {
-    &config.market_oracle_config
+public(package) fun market_oracle_template_config(config: &ProtocolConfig): &MarketOracleConfig {
+    &config.market_oracle_template_config
 }
 
-public(package) fun leverage_config(config: &ProtocolConfig): &LeverageConfig {
-    &config.leverage_config
+public(package) fun market_oracle_config_snapshot(config: &ProtocolConfig): MarketOracleConfig {
+    market_oracle_config::snapshot(&config.market_oracle_template_config)
+}
+
+public(package) fun expiry_cash_template_config(config: &ProtocolConfig): &ExpiryCashConfig {
+    &config.expiry_cash_template_config
+}
+
+public(package) fun expiry_cash_config_snapshot(config: &ProtocolConfig): ExpiryCashConfig {
+    expiry_cash_config::snapshot(&config.expiry_cash_template_config)
+}
+
+public(package) fun strike_exposure_config_snapshot(config: &ProtocolConfig): StrikeExposureConfig {
+    strike_exposure_config::snapshot(&config.strike_exposure_template_config)
 }
 
 public(package) fun stake_config(config: &ProtocolConfig): &StakeConfig {
@@ -282,6 +331,23 @@ public(package) fun stake_config(config: &ProtocolConfig): &StakeConfig {
 
 public(package) fun ewma_config(config: &ProtocolConfig): &EwmaConfig {
     &config.ewma_config
+}
+
+public(package) fun register_expiry_runtime_config(
+    config: &mut ProtocolConfig,
+    expiry_market_id: ID,
+) {
+    assert!(!config.per_expiry.contains(expiry_market_id), EExpiryConfigAlreadyExists);
+    config.per_expiry.add(expiry_market_id, expiry_runtime_config::new());
+}
+
+public(package) fun set_expiry_max_funding(
+    config: &mut ProtocolConfig,
+    expiry_market_id: ID,
+    funding: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.expiry_config_mut(expiry_market_id).set_max_expiry_funding(funding);
 }
 
 /// Abort unless trading mutations are currently allowed.
@@ -318,6 +384,12 @@ public(package) fun pause_trading(config: &mut ProtocolConfig) {
     config.set_trading_paused_internal(true);
 }
 
+/// Force `mint_paused = true` for one expiry. Reserved for `PauseCap` holders
+/// going through the registry; cannot be used to unpause.
+public(package) fun pause_expiry_mint(config: &mut ProtocolConfig, expiry_market_id: ID) {
+    config.set_expiry_mint_paused_internal(expiry_market_id, true);
+}
+
 /// Begin a transaction-local full-pool valuation lock.
 public(package) fun begin_valuation(config: &mut ProtocolConfig) {
     config.assert_not_valuation_in_progress();
@@ -336,9 +408,29 @@ fun set_trading_paused_internal(config: &mut ProtocolConfig, paused: bool) {
     config_events::emit_trading_paused_updated(config.id(), paused);
 }
 
+fun set_expiry_mint_paused_internal(
+    config: &mut ProtocolConfig,
+    expiry_market_id: ID,
+    paused: bool,
+) {
+    config.assert_not_valuation_in_progress();
+    config.expiry_config_mut(expiry_market_id).set_mint_paused(paused);
+    config_events::emit_expiry_market_mint_paused_updated(expiry_market_id, paused);
+}
+
 /// Abort unless trading is not paused.
 fun assert_not_trading_paused(config: &ProtocolConfig) {
     assert!(!config.trading_paused, ETradingPaused);
+}
+
+fun expiry_config(config: &ProtocolConfig, expiry_market_id: ID): &ExpiryRuntimeConfig {
+    assert!(config.per_expiry.contains(expiry_market_id), EExpiryConfigNotFound);
+    config.per_expiry.borrow(expiry_market_id)
+}
+
+fun expiry_config_mut(config: &mut ProtocolConfig, expiry_market_id: ID): &mut ExpiryRuntimeConfig {
+    assert!(config.per_expiry.contains(expiry_market_id), EExpiryConfigNotFound);
+    config.per_expiry.borrow_mut(expiry_market_id)
 }
 
 fun new(ctx: &mut TxContext): ProtocolConfig {
@@ -347,12 +439,14 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         pricing_config: pricing_config::new(),
         fee_config: fee_config::new(),
         risk_config: risk_config::new(),
-        market_oracle_config: market_oracle_config::new(),
-        leverage_config: leverage_config::new(),
+        market_oracle_template_config: market_oracle_config::new(),
+        expiry_cash_template_config: expiry_cash_config::new(),
+        strike_exposure_template_config: strike_exposure_config::new(),
         stake_config: stake_config::new(),
         ewma_config: ewma_config::new(),
         trading_paused: false,
         valuation_in_progress: false,
+        per_expiry: table::new(ctx),
     }
 }
 

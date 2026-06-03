@@ -286,14 +286,15 @@ public fun pause_trading_pause_cap(
 }
 
 /// Force `mint_paused = true` on a single expiry market via a valid `PauseCap`.
-/// One-way; admin's `expiry_market::set_mint_paused` is needed to unpause.
+/// One-way; admin's `protocol_config::set_expiry_mint_paused` is needed to unpause.
 public fun pause_expiry_market_mint_pause_cap(
-    market: &mut ExpiryMarket,
+    config: &mut ProtocolConfig,
     registry: &Registry,
     pause_cap: &PauseCap,
+    expiry_market_id: ID,
 ) {
     registry.assert_valid_pause_cap(pause_cap);
-    market.pause_mint();
+    config.pause_expiry_mint(expiry_market_id);
 }
 
 /// Create a shared Pyth source for one admin-approved Lazer feed, configuring
@@ -408,7 +409,7 @@ fun incentive_asset<T>(registry: &Registry): (u8, u32) {
 public fun create_expiry_market(
     registry: &mut Registry,
     pool_vault: &mut PoolVault,
-    config: &ProtocolConfig,
+    config: &mut ProtocolConfig,
     pyth: &PythSource,
     cap: &MarketOracleCap,
     expiry: u64,
@@ -432,7 +433,7 @@ public fun create_expiry_market(
     let allowed_versions = registry.allowed_versions;
     let market_oracle_id = market_oracle::create_and_share(
         pyth,
-        config.market_oracle_config(),
+        config,
         cap,
         expiry,
         allowed_versions,
@@ -450,7 +451,7 @@ public fun create_expiry_market(
         expiry_fee_max_multiplier,
         ctx,
     );
-    pool_vault.register_expiry_market(expiry_market_id);
+    pool_vault.register_expiry_market(config, expiry_market_id);
     registry.expiry_market_ids.add(expiry, expiry_market_id);
 
     config_events::emit_market_created(

@@ -8,7 +8,7 @@
 /// half to full over `lower_benefit_power..upper_benefit_power`, capped at full
 /// above. That ratio scales the fixed `constants::max_fee_discount` for fees and
 /// applies directly as the rebate share (the rebate's size is already governed
-/// by the per-expiry `trading_loss_rebate_rate` in `fee_config`, so staking
+/// by the per-expiry `trading_loss_rebate_rate` in `expiry_cash_config`, so staking
 /// carries no rebate-specific cap).
 module deepbook_predict::stake_config;
 

@@ -11,7 +11,7 @@
 /// PLP and materialize terminal excess DUSDC.
 module deepbook_predict::pool_accounting;
 
-use deepbook_predict::{config_constants, constants};
+use deepbook_predict::{constants, protocol_config::ProtocolConfig};
 use sui::table::{Self, Table};
 
 const EUnknownRegisteredExpiry: u64 = 0;
@@ -44,8 +44,6 @@ public struct RegisteredExpiry has store {
     terminal_accounting_started: bool,
     /// Received amount already consumed by terminal accounting.
     terminal_received_watermark: u64,
-    /// Max net DUSDC the pool may have funded into this expiry.
-    max_expiry_funding: u64,
 }
 
 public(package) fun active_expiry_markets(ledger: &Ledger): &vector<ID> {
@@ -66,21 +64,27 @@ public(package) fun expiry_flow_amounts(ledger: &Ledger, expiry_market_id: ID): 
     (flow.sent_to_expiry, flow.received_from_expiry)
 }
 
-public(package) fun max_expiry_funding(ledger: &Ledger, expiry_market_id: ID): u64 {
-    ledger.assert_registered_expiry(expiry_market_id);
-    ledger.registered_expiries.borrow(expiry_market_id).max_expiry_funding
-}
-
 /// Return remaining net DUSDC the pool may fund into one expiry.
-public(package) fun available_expiry_funding(ledger: &Ledger, expiry_market_id: ID): u64 {
+public(package) fun available_expiry_funding(
+    ledger: &Ledger,
+    config: &ProtocolConfig,
+    expiry_market_id: ID,
+): u64 {
     ledger.assert_registered_expiry(expiry_market_id);
     let flow = ledger.registered_expiries.borrow(expiry_market_id);
     let net_funding = flow_net_funding(flow);
-    if (net_funding < flow.max_expiry_funding) {
-        flow.max_expiry_funding - net_funding
+    let max_expiry_funding = config.expiry_max_funding(expiry_market_id);
+    if (net_funding < max_expiry_funding) {
+        max_expiry_funding - net_funding
     } else {
         0
     }
+}
+
+/// Return current net DUSDC funded into an expiry.
+public(package) fun net_expiry_funding(ledger: &Ledger, expiry_market_id: ID): u64 {
+    ledger.assert_registered_expiry(expiry_market_id);
+    flow_net_funding(ledger.registered_expiries.borrow(expiry_market_id))
 }
 
 /// Abort unless this expiry is registered to the pool.
@@ -104,7 +108,6 @@ public(package) fun register_expiry(ledger: &mut Ledger, expiry_market_id: ID) {
         ledger.active_expiry_markets.length() < constants::max_active_expiry_markets!(),
         EMaxActiveExpiryMarkets,
     );
-    let max_expiry_funding = config_constants::default_max_expiry_funding!();
     ledger.active_expiry_markets.push_back(expiry_market_id);
     ledger
         .registered_expiries
@@ -115,7 +118,6 @@ public(package) fun register_expiry(ledger: &mut Ledger, expiry_market_id: ID) {
                 received_from_expiry: 0,
                 terminal_accounting_started: false,
                 terminal_received_watermark: 0,
-                max_expiry_funding,
             },
         );
 }
@@ -135,29 +137,32 @@ public(package) fun deactivate_expiry_if_present(ledger: &mut Ledger, expiry_mar
     true
 }
 
-public(package) fun set_max_expiry_funding(
-    ledger: &mut Ledger,
+public(package) fun assert_net_funding_at_most(
+    ledger: &Ledger,
     expiry_market_id: ID,
     max_expiry_funding: u64,
 ): u64 {
-    config_constants::assert_max_expiry_funding(max_expiry_funding);
     ledger.assert_registered_expiry(expiry_market_id);
-    let net_funding = {
-        let flow = ledger.registered_expiries.borrow(expiry_market_id);
-        flow_net_funding(flow)
-    };
+    let net_funding = ledger.net_expiry_funding(expiry_market_id);
     assert!(net_funding <= max_expiry_funding, EMaxExpiryFundingExceeded);
-    ledger.registered_expiries.borrow_mut(expiry_market_id).max_expiry_funding = max_expiry_funding;
     net_funding
 }
 
-public(package) fun record_sent_to_expiry(ledger: &mut Ledger, expiry_market_id: ID, amount: u64) {
+public(package) fun record_sent_to_expiry(
+    ledger: &mut Ledger,
+    config: &ProtocolConfig,
+    expiry_market_id: ID,
+    amount: u64,
+) {
     if (amount == 0) return;
     ledger.assert_registered_expiry(expiry_market_id);
     let flow = ledger.registered_expiries.borrow_mut(expiry_market_id);
     assert!(!flow.terminal_accounting_started, ETerminalAccountingStarted);
     let current_net_funding = flow_net_funding(flow);
-    assert!(current_net_funding + amount <= flow.max_expiry_funding, EMaxExpiryFundingExceeded);
+    assert!(
+        current_net_funding + amount <= config.expiry_max_funding(expiry_market_id),
+        EMaxExpiryFundingExceeded,
+    );
     flow.sent_to_expiry = flow.sent_to_expiry + amount;
     ledger.profit_basis_debits = ledger.profit_basis_debits + amount;
 }

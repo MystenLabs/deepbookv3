@@ -17,12 +17,12 @@ use deepbook_predict::{
     constants,
     liquidation_book::{Self, LiquidationBook},
     market_oracle::{MarketOracle, SVIParams},
-    math as predict_math,
     order::{Self, Order},
     order_events,
     pricing,
     pricing_config::PricingConfig,
     pyth_source::PythSource,
+    strike_exposure_config::StrikeExposureConfig,
     strike_grid::StrikeGrid,
     strike_nav_matrix::{Self, StrikeNavMatrix},
     strike_payout_tree::{Self, StrikePayoutTree}
@@ -32,8 +32,6 @@ use sui::clock::Clock;
 const ESettledLiabilityNotMaterialized: u64 = 0;
 const ESettledLiabilityUnderflow: u64 = 1;
 const EInvalidCloseQuantity: u64 = 2;
-const ETerminalFloorExceedsLiquidationLtv: u64 = 3;
-const EOrderBelowLiquidationThreshold: u64 = 4;
 const EOrderPrincipalBelowMinimum: u64 = 5;
 
 /// Exposure lifecycle state for one oracle grid.
@@ -43,11 +41,8 @@ public struct StrikeExposure has store {
     /// Terminal timestamp used by floor-index and order floor math.
     expiry_ms: u64,
     grid: StrikeGrid,
-    /// Max increase of the floor index over this expiry's floor window.
-    /// `200_000_000` means the index rises from 1.0 to 1.2 by expiry.
-    max_expiry_floor_premium: u64,
-    /// 1e9-scaled floor-to-live-value liquidation threshold snapshotted at creation.
-    liquidation_ltv: u64,
+    /// Snapshotted leverage policy for this exposure book.
+    config: StrikeExposureConfig,
     /// Window before expiry over which the trade fee ramps up. Snapshotted at creation.
     expiry_fee_window_ms: u64,
     /// Fee multiplier reached at expiry, in FLOAT_SCALING; 1x disables. Snapshotted at creation.
@@ -82,12 +77,12 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
 
 /// Return the terminal floor-index premium snapshotted for this exposure book.
 public(package) fun max_expiry_floor_premium(exposure: &StrikeExposure): u64 {
-    exposure.max_expiry_floor_premium
+    exposure.config.max_expiry_floor_premium()
 }
 
 /// Return the liquidation LTV snapshotted for this exposure book.
 public(package) fun liquidation_ltv(exposure: &StrikeExposure): u64 {
-    exposure.liquidation_ltv
+    exposure.config.liquidation_ltv()
 }
 
 public(package) fun expiry_fee_window_ms(exposure: &StrikeExposure): u64 {
@@ -139,7 +134,7 @@ public(package) fun valuation_liability(
             &curve,
             minted_min_strike,
             minted_max_strike,
-            exposure.floor_index_at_ms(clock.timestamp_ms()),
+            exposure.config.floor_index_at_ms(exposure.expiry_ms, clock.timestamp_ms()),
         )
 }
 
@@ -154,8 +149,7 @@ public(package) fun new(
     expiry_ms: u64,
     grid: StrikeGrid,
     preallocated_ticks: u64,
-    max_expiry_floor_premium: u64,
-    liquidation_ltv: u64,
+    config: StrikeExposureConfig,
     expiry_fee_window_ms: u64,
     expiry_fee_max_multiplier: u64,
     ctx: &mut TxContext,
@@ -164,8 +158,7 @@ public(package) fun new(
         expiry_market_id,
         expiry_ms,
         grid,
-        max_expiry_floor_premium,
-        liquidation_ltv,
+        config,
         expiry_fee_window_ms,
         expiry_fee_max_multiplier,
         next_order_sequence: 0,
@@ -406,74 +399,15 @@ fun settled_order_payout(exposure: &StrikeExposure, order: &Order, settlement: u
     }
 }
 
-/// Return index update terms for this order.
-///
-/// `floor_shares` updates NAV; `terminal_payout` and `live_backing_payout`
-/// update payout backing.
 fun order_index_update_terms(exposure: &StrikeExposure, order: &Order): (u64, u64, u64) {
-    let floor_shares = exposure.order_floor_shares(order);
-    let quantity = order.quantity();
-    let terminal_floor = exposure.floor_amount_at_ms(floor_shares, exposure.expiry_ms);
-    let max_terminal_floor_before_liquidation = predict_math::mul_div_round_down(
-        quantity,
-        exposure.liquidation_ltv,
-        constants::float_scaling!(),
-    );
-    assert!(
-        terminal_floor < max_terminal_floor_before_liquidation,
-        ETerminalFloorExceedsLiquidationLtv,
-    );
-    let floor_at_open = exposure.floor_amount_at_ms(
-        floor_shares,
-        order.opened_at_ms(),
-    );
-    (floor_shares, quantity - terminal_floor, quantity - floor_at_open)
-}
-
-/// Convert floor shares into a floor amount at one timestamp in this expiry.
-fun floor_amount_at_ms(exposure: &StrikeExposure, floor_shares: u64, timestamp_ms: u64): u64 {
-    let floor_index = exposure.floor_index_at_ms(timestamp_ms);
-    predict_math::mul_div_round_up(floor_shares, floor_index, constants::float_scaling!())
-}
-
-/// Return floor-index-normalized shares for this order's floor seed.
-fun order_floor_shares(exposure: &StrikeExposure, order: &Order): u64 {
-    if (!order.is_leveraged()) return 0;
-
-    let floor_seed_amount = order.floor_seed_amount();
-    let open_index = exposure.floor_index_at_ms(order.opened_at_ms());
-    predict_math::mul_div_round_up(
-        floor_seed_amount,
-        constants::float_scaling!(),
-        open_index,
-    )
-}
-
-/// Return the deterministic floor index at a timestamp for this expiry.
-fun floor_index_at_ms(exposure: &StrikeExposure, timestamp_ms: u64): u64 {
-    let window = constants::leverage_floor_window_ms!();
-    let remaining = if (timestamp_ms >= exposure.expiry_ms) {
-        0
-    } else {
-        exposure.expiry_ms - timestamp_ms
-    };
-    let elapsed = if (remaining >= window) {
-        0
-    } else {
-        window - remaining
-    };
-    let phase = predict_math::mul_div_round_down(elapsed, constants::float_scaling!(), window);
-    let phase_squared = predict_math::mul_div_round_down(
-        phase,
-        phase,
-        constants::float_scaling!(),
-    );
-
-    constants::float_scaling!()
-        + predict_math::mul_div_round_down(
-            exposure.max_expiry_floor_premium,
-            phase_squared,
-            constants::float_scaling!(),
+    exposure
+        .config
+        .order_index_update_terms(
+            exposure.expiry_ms,
+            order.is_leveraged(),
+            order.floor_seed_amount(),
+            order.opened_at_ms(),
+            order.quantity(),
         )
 }
 
@@ -565,10 +499,9 @@ fun remove_closed_live_order(
     let closed_floor_shares = old_floor_shares - remaining_floor_shares;
     let closed_terminal_payout = old_terminal_payout - remaining_terminal_payout;
     let closed_live_backing_payout = old_live_backing_payout - remaining_live_backing_payout;
-    let closed_floor_amount = exposure.floor_amount_at_ms(
-        closed_floor_shares,
-        clock.timestamp_ms(),
-    );
+    let closed_floor_amount = exposure
+        .config
+        .floor_amount_at_ms(exposure.expiry_ms, closed_floor_shares, clock.timestamp_ms());
 
     let grid = exposure.grid;
     let live = exposure.live.borrow_mut();
@@ -593,19 +526,22 @@ fun liquidate_candidate_if_under_floor(
     range_probability: u64,
     clock: &Clock,
 ): bool {
-    let gross_value = math::mul(range_probability, order.quantity());
-    let floor_amount = exposure.floor_amount_at_ms(
-        exposure.order_floor_shares(order),
-        clock.timestamp_ms(),
-    );
-    let liquidation_threshold_value = predict_math::mul_div_round_up(
-        floor_amount,
-        constants::float_scaling!(),
-        exposure.liquidation_ltv,
-    );
-    if (gross_value > liquidation_threshold_value) return false;
-
     let quantity = order.quantity();
+    let (should_liquidate, gross_value, current_floor_amount) = exposure
+        .config
+        .liquidation_check_terms(
+            exposure.expiry_ms,
+            order.is_leveraged(),
+            order.floor_seed_amount(),
+            order.opened_at_ms(),
+            quantity,
+            range_probability,
+            clock.timestamp_ms(),
+        );
+    if (!should_liquidate) {
+        return false
+    };
+
     let (floor_shares, terminal_payout, live_backing_payout) = exposure.order_index_update_terms(
         order,
     );
@@ -618,36 +554,25 @@ fun liquidate_candidate_if_under_floor(
         exposure.expiry_market_id,
         order,
         gross_value,
-        floor_amount,
-        exposure.liquidation_ltv,
+        current_floor_amount,
+        exposure.config.liquidation_ltv(),
     );
     true
-}
-
-fun assert_mint_above_liquidation_threshold(
-    exposure: &StrikeExposure,
-    order: &Order,
-    floor_shares: u64,
-) {
-    if (!order.is_leveraged()) return;
-
-    let floor_amount = exposure.floor_amount_at_ms(floor_shares, order.opened_at_ms());
-    let threshold = predict_math::mul_div_round_up(
-        floor_amount,
-        constants::float_scaling!(),
-        exposure.liquidation_ltv,
-    );
-    let gross_value = math::mul(order.entry_probability(), order.quantity());
-    assert!(gross_value > threshold, EOrderBelowLiquidationThreshold);
 }
 
 /// Insert one active order into both live indexes.
 fun insert_live_order(exposure: &mut StrikeExposure, order: &Order, lower: u64, higher: u64) {
     let quantity = order.quantity();
-    let (floor_shares, terminal_payout, live_backing_payout) = exposure.order_index_update_terms(
-        order,
-    );
-    exposure.assert_mint_above_liquidation_threshold(order, floor_shares);
+    let (floor_shares, terminal_payout, live_backing_payout) = exposure
+        .config
+        .mint_index_update_terms(
+            exposure.expiry_ms,
+            order.is_leveraged(),
+            order.floor_seed_amount(),
+            order.opened_at_ms(),
+            order.entry_probability(),
+            quantity,
+        );
     let grid = exposure.grid;
     let live = exposure.live.borrow_mut();
     live.payout.insert_range(&grid, lower, higher, terminal_payout, live_backing_payout);

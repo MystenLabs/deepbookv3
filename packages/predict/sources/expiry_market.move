@@ -11,9 +11,7 @@ module deepbook_predict::expiry_market;
 
 use deepbook::math;
 use deepbook_predict::{
-    admin::AdminCap,
     claim_events,
-    config_events,
     constants,
     ewma::{Self, EwmaState},
     ewma_config::EwmaConfig,
@@ -54,8 +52,6 @@ public struct ExpiryMarket has key {
     ewma: EwmaState,
     /// Mirror of `ProtocolConfig.allowed_versions`; synced permissionlessly.
     allowed_versions: VecSet<u64>,
-    /// When true, `mint` aborts. Other flows (redeem, settle, cleanup) unaffected.
-    mint_paused: bool,
 }
 
 // === Public Functions ===
@@ -136,20 +132,13 @@ public fun payout_liability(market: &ExpiryMarket): u64 {
 }
 
 /// Return whether minting is currently paused on this expiry market.
-public fun mint_paused(market: &ExpiryMarket): bool {
-    market.mint_paused
+public fun mint_paused(market: &ExpiryMarket, config: &ProtocolConfig): bool {
+    config.expiry_mint_paused(market.id())
 }
 
 /// Return this market's mirrored set of allowed package versions.
 public fun allowed_versions(market: &ExpiryMarket): VecSet<u64> {
     market.allowed_versions
-}
-
-/// Set per-market mint pause. Admin can pause or unpause one expiry without
-/// changing global trading state.
-public fun set_mint_paused(market: &mut ExpiryMarket, _admin_cap: &AdminCap, paused: bool) {
-    market.assert_version_allowed();
-    market.set_mint_paused_internal(paused);
 }
 
 /// Mint a live position interval against this expiry market.
@@ -178,7 +167,7 @@ public fun mint(
     ctx: &mut TxContext,
 ): u256 {
     market.assert_version_allowed();
-    assert!(!market.mint_paused, EMintPaused);
+    assert!(!config.expiry_mint_paused(market.id()), EMintPaused);
     config.assert_trading_allowed();
     market.mint_internal(
         manager,
@@ -337,29 +326,22 @@ public(package) fun create_and_share(
         market_oracle_id,
         pyth_lazer_feed_id,
         expiry,
-        cash: expiry_cash::new(config.fee_config().trading_loss_rebate_rate()),
+        cash: expiry_cash::new(config.expiry_cash_config_snapshot()),
         strike_exposure: strike_exposure::new(
             expiry_market_id,
             expiry,
             grid,
             preallocated_ticks,
-            config.leverage_config().max_expiry_floor_premium(),
-            config.leverage_config().liquidation_ltv(),
+            config.strike_exposure_config_snapshot(),
             expiry_fee_window_ms,
             expiry_fee_max_multiplier,
             ctx,
         ),
         ewma: ewma::new(ctx),
         allowed_versions,
-        mint_paused: false,
     };
     transfer::share_object(market);
     expiry_market_id
-}
-
-/// Force `mint_paused = true` (used by PauseCap path on registry; one-way).
-public(package) fun pause_mint(market: &mut ExpiryMarket) {
-    market.set_mint_paused_internal(true);
 }
 
 /// Cache terminal payout liability in strike exposure if it has not already been cached.
@@ -507,11 +489,6 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
 }
 
 // === Private Functions ===
-
-fun set_mint_paused_internal(market: &mut ExpiryMarket, paused: bool) {
-    market.mint_paused = paused;
-    config_events::emit_expiry_market_mint_paused_updated(market.id(), paused);
-}
 
 fun assert_pyth_feed(market: &ExpiryMarket, pyth: &PythSource) {
     assert!(market.pyth_lazer_feed_id == pyth.feed_id(), EWrongPythSource);

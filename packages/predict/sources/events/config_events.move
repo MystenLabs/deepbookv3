@@ -6,11 +6,12 @@ module deepbook_predict::config_events;
 
 use deepbook_predict::{
     ewma_config::EwmaConfig,
+    expiry_cash_config::ExpiryCashConfig,
     fee_config::FeeConfig,
-    leverage_config::LeverageConfig,
     market_oracle_config::MarketOracleConfig,
     pricing_config::PricingConfig,
     risk_config::RiskConfig,
+    strike_exposure_config::StrikeExposureConfig,
     strike_grid::StrikeGrid
 };
 use sui::event;
@@ -27,11 +28,10 @@ public struct PricingConfigUpdated has copy, drop, store {
     block_scholes_svi_freshness_ms: u64,
 }
 
-/// Emitted when profit-reserve or trading-loss rebate policy changes.
+/// Emitted when pool profit-reserve policy changes.
 public struct FeeConfigUpdated has copy, drop, store {
     protocol_config_id: ID,
     protocol_reserve_profit_share: u64,
-    trading_loss_rebate_rate: u64,
 }
 
 /// Emitted when liquidation-budget policy changes.
@@ -41,8 +41,14 @@ public struct RiskConfigUpdated has copy, drop, store {
     trade_liquidation_budget: u64,
 }
 
-/// Emitted when future-market leverage template policy changes.
-public struct LeverageConfigUpdated has copy, drop, store {
+/// Emitted when future expiry-cash template policy changes.
+public struct ExpiryCashTemplateConfigUpdated has copy, drop, store {
+    protocol_config_id: ID,
+    trading_loss_rebate_rate: u64,
+}
+
+/// Emitted when future strike-exposure template policy changes.
+public struct StrikeExposureTemplateConfigUpdated has copy, drop, store {
     protocol_config_id: ID,
     max_expiry_floor_premium: u64,
     liquidation_ltv: u64,
@@ -84,7 +90,7 @@ public struct MarketCreated has copy, drop, store {
     max_strike: u64,
 }
 
-/// Emitted when per-oracle bounds are updated.
+/// Emitted when admin updates one live oracle's bounds.
 public struct MarketOracleBoundsUpdated has copy, drop, store {
     market_oracle_id: ID,
     settlement_freshness_ms: u64,
@@ -119,7 +125,6 @@ public(package) fun emit_fee_config_updated(protocol_config_id: ID, config: &Fee
     event::emit(FeeConfigUpdated {
         protocol_config_id,
         protocol_reserve_profit_share: config.protocol_reserve_profit_share(),
-        trading_loss_rebate_rate: config.trading_loss_rebate_rate(),
     });
 }
 
@@ -131,8 +136,21 @@ public(package) fun emit_risk_config_updated(protocol_config_id: ID, config: &Ri
     });
 }
 
-public(package) fun emit_leverage_config_updated(protocol_config_id: ID, config: &LeverageConfig) {
-    event::emit(LeverageConfigUpdated {
+public(package) fun emit_expiry_cash_template_config_updated(
+    protocol_config_id: ID,
+    config: &ExpiryCashConfig,
+) {
+    event::emit(ExpiryCashTemplateConfigUpdated {
+        protocol_config_id,
+        trading_loss_rebate_rate: config.trading_loss_rebate_rate(),
+    });
+}
+
+public(package) fun emit_strike_exposure_template_config_updated(
+    protocol_config_id: ID,
+    config: &StrikeExposureConfig,
+) {
+    event::emit(StrikeExposureTemplateConfigUpdated {
         protocol_config_id,
         max_expiry_floor_premium: config.max_expiry_floor_premium(),
         liquidation_ltv: config.liquidation_ltv(),
@@ -190,19 +208,15 @@ public(package) fun emit_market_created(
 
 public(package) fun emit_market_oracle_bounds_updated(
     market_oracle_id: ID,
-    settlement_freshness_ms: u64,
-    max_spot_deviation: u64,
-    max_basis_deviation: u64,
-    min_basis: u64,
-    max_basis: u64,
+    config: &MarketOracleConfig,
 ) {
     event::emit(MarketOracleBoundsUpdated {
         market_oracle_id,
-        settlement_freshness_ms,
-        max_spot_deviation,
-        max_basis_deviation,
-        min_basis,
-        max_basis,
+        settlement_freshness_ms: config.settlement_freshness_ms(),
+        max_spot_deviation: config.max_spot_deviation(),
+        max_basis_deviation: config.max_basis_deviation(),
+        min_basis: config.min_basis(),
+        max_basis: config.max_basis(),
     });
 }
 

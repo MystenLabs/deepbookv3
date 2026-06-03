@@ -181,8 +181,13 @@ public fun expiry_flow_amounts(vault: &PoolVault, expiry_market_id: ID): (u64, u
 }
 
 /// Return the max net DUSDC the pool may have funded into an expiry.
-public fun max_expiry_funding(vault: &PoolVault, expiry_market_id: ID): u64 {
-    vault.expiry_accounting.max_expiry_funding(expiry_market_id)
+public fun max_expiry_funding(
+    vault: &PoolVault,
+    config: &ProtocolConfig,
+    expiry_market_id: ID,
+): u64 {
+    vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
+    config.expiry_max_funding(expiry_market_id)
 }
 
 /// Start a full-pool sync flow for this vault.
@@ -234,7 +239,7 @@ public fun sync_expiry(
         config.risk_config().valuation_liquidation_budget(),
         clock,
     );
-    vault.rebalance_active_expiry_cash(market);
+    vault.rebalance_active_expiry_cash(config, market);
     let expiry_nav = market.pool_nav(config, market_oracle, pyth, clock);
     sync.record_expiry_synced(expiry_market_id, expiry_nav);
 }
@@ -452,8 +457,13 @@ public(package) fun set_allowed_versions(vault: &mut PoolVault, allowed_versions
 }
 
 /// Register an expiry market for pool accounting and active valuation.
-public(package) fun register_expiry_market(vault: &mut PoolVault, expiry_market_id: ID) {
+public(package) fun register_expiry_market(
+    vault: &mut PoolVault,
+    config: &mut ProtocolConfig,
+    expiry_market_id: ID,
+) {
     vault.assert_version_allowed();
+    config.register_expiry_runtime_config(expiry_market_id);
     vault.expiry_accounting.register_expiry(expiry_market_id);
 }
 
@@ -500,13 +510,14 @@ public(package) fun receive_deep_incentive(
 public fun set_max_expiry_funding(
     vault: &mut PoolVault,
     _admin_cap: &AdminCap,
-    config: &ProtocolConfig,
+    config: &mut ProtocolConfig,
     expiry_market_id: ID,
     funding: u64,
 ) {
     vault.assert_version_allowed();
     config.assert_not_valuation_in_progress();
-    let net_funding = vault.expiry_accounting.set_max_expiry_funding(expiry_market_id, funding);
+    let net_funding = vault.expiry_accounting.assert_net_funding_at_most(expiry_market_id, funding);
+    config.set_expiry_max_funding(expiry_market_id, funding);
     vault_events::emit_expiry_max_funding_updated(
         vault.id(),
         expiry_market_id,
@@ -602,16 +613,22 @@ fun record_expiry_synced(sync: &mut PoolSync, expiry_market_id: ID, expiry_nav: 
     sync.synced_expiry_markets.push_back(expiry_market_id);
 }
 
-fun rebalance_active_expiry_cash(vault: &mut PoolVault, market: &mut ExpiryMarket) {
+fun rebalance_active_expiry_cash(
+    vault: &mut PoolVault,
+    config: &ProtocolConfig,
+    market: &mut ExpiryMarket,
+) {
     let expiry_market_id = market.id();
     let (cash_balance, target_cash, sweep_threshold_cash) = expiry_rebalance_cash_terms(market);
 
     if (cash_balance < target_cash) {
         let requested_top_up = target_cash - cash_balance;
-        let funding_room = vault.expiry_accounting.available_expiry_funding(expiry_market_id);
+        let funding_room = vault
+            .expiry_accounting
+            .available_expiry_funding(config, expiry_market_id);
         let top_up = requested_top_up.min(vault.idle_balance.value()).min(funding_room);
         if (top_up > 0) {
-            vault.send_expiry_cash(market, expiry_market_id, top_up);
+            vault.send_expiry_cash(config, market, expiry_market_id, top_up);
             vault.emit_expiry_cash_rebalanced(market, expiry_market_id, top_up, true, target_cash);
         };
     } else if (cash_balance > sweep_threshold_cash) {
@@ -651,6 +668,7 @@ fun unregister_settled_expiry(
 
 fun send_expiry_cash(
     vault: &mut PoolVault,
+    config: &ProtocolConfig,
     market: &mut ExpiryMarket,
     expiry_market_id: ID,
     amount: u64,
@@ -658,7 +676,7 @@ fun send_expiry_cash(
     if (amount == 0) return;
     let cash = vault.idle_balance.split(amount);
     market.receive_pool_cash(cash);
-    vault.expiry_accounting.record_sent_to_expiry(expiry_market_id, amount);
+    vault.expiry_accounting.record_sent_to_expiry(config, expiry_market_id, amount);
 }
 
 fun receive_expiry_cash(vault: &mut PoolVault, expiry_market_id: ID, cash: Balance<DUSDC>): u64 {
