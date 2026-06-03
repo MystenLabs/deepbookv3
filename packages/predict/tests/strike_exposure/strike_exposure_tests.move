@@ -53,14 +53,16 @@ fun new_exposure(
 ): strike_exposure::StrikeExposure {
     strike_exposure::new(
         FAKE_EXPIRY_ID.to_id(),
-        expiry_ms,
-        min_strike,
-        tick_size,
-        constants::default_expiry_preallocated_ticks!(),
-        max_expiry_floor_premium,
-        LIQUIDATION_LTV,
-        config_constants::default_expiry_fee_window_ms!(),
-        constants::float_scaling!(),
+        strike_exposure::expiry_terms(
+            expiry_ms,
+            min_strike,
+            tick_size,
+            constants::default_expiry_preallocated_ticks!(),
+            max_expiry_floor_premium,
+            LIQUIDATION_LTV,
+            config_constants::default_expiry_fee_window_ms!(),
+            constants::float_scaling!(),
+        ),
         ctx,
     )
 }

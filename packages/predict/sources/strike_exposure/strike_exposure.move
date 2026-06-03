@@ -75,6 +75,22 @@ public struct LiveExposure has store {
     minted_max_strike: u64,
 }
 
+/// Immutable creation terms for one expiry's `StrikeExposure`, bundled so the
+/// market-creation flow passes a single labeled value through `expiry_market` and
+/// into `new` instead of a long list of interchangeable `u64`s. Every field is
+/// snapshotted into `StrikeExposure` by `new`; see that struct for units and
+/// economic meaning.
+public struct ExpiryTerms has copy, drop {
+    expiry_ms: u64,
+    min_strike: u64,
+    tick_size: u64,
+    preallocated_ticks: u64,
+    max_expiry_floor_premium: u64,
+    liquidation_ltv: u64,
+    expiry_fee_window_ms: u64,
+    expiry_fee_max_multiplier: u64,
+}
+
 /// Return conservative max-live backing, or remaining settled payout liability once materialized.
 public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
     if (exposure.settled_liability_materialized) {
@@ -153,9 +169,8 @@ public(package) fun is_liquidated_order(exposure: &StrikeExposure, order: &Order
     exposure.liquidation.is_liquidated(order)
 }
 
-/// Create a strike exposure book for the oracle grid.
-public(package) fun new(
-    expiry_market_id: ID,
+/// Bundle the immutable terms used to create one expiry's `StrikeExposure`.
+public(package) fun expiry_terms(
     expiry_ms: u64,
     min_strike: u64,
     tick_size: u64,
@@ -164,8 +179,40 @@ public(package) fun new(
     liquidation_ltv: u64,
     expiry_fee_window_ms: u64,
     expiry_fee_max_multiplier: u64,
+): ExpiryTerms {
+    ExpiryTerms {
+        expiry_ms,
+        min_strike,
+        tick_size,
+        preallocated_ticks,
+        max_expiry_floor_premium,
+        liquidation_ltv,
+        expiry_fee_window_ms,
+        expiry_fee_max_multiplier,
+    }
+}
+
+/// Terminal timestamp these terms will stamp onto the expiry market.
+public(package) fun expiry_ms(terms: &ExpiryTerms): u64 {
+    terms.expiry_ms
+}
+
+/// Create a strike exposure book for the oracle grid.
+public(package) fun new(
+    expiry_market_id: ID,
+    terms: ExpiryTerms,
     ctx: &mut TxContext,
 ): StrikeExposure {
+    let ExpiryTerms {
+        expiry_ms,
+        min_strike,
+        tick_size,
+        preallocated_ticks,
+        max_expiry_floor_premium,
+        liquidation_ltv,
+        expiry_fee_window_ms,
+        expiry_fee_max_multiplier,
+    } = terms;
     let max_strike = validated_max_strike(min_strike, tick_size);
     StrikeExposure {
         expiry_market_id,

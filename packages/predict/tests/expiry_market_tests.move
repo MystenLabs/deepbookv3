@@ -15,6 +15,7 @@ use deepbook_predict::{
     protocol_config::{Self, ProtocolConfig},
     pyth_source::{Self, PythSource},
     registry::{Self, Registry},
+    strike_exposure,
     test_constants
 };
 use dusdc::dusdc::DUSDC;
@@ -58,6 +59,19 @@ const EXPECTED_PENALTY: u64 = 2_000_000;
 const POOL_CASH: u64 = 1_000_000_000_000;
 const LARGE_DEPOSIT: u64 = 1_000_000_000_000;
 
+fun default_expiry_terms(config: &ProtocolConfig): strike_exposure::ExpiryTerms {
+    strike_exposure::expiry_terms(
+        EXPIRY_MS,
+        MIN_STRIKE,
+        TICK_SIZE,
+        constants::default_expiry_preallocated_ticks!(),
+        config.leverage_config().max_expiry_floor_premium(),
+        config.leverage_config().liquidation_ltv(),
+        config_constants::default_expiry_fee_window_ms!(),
+        constants::float_scaling!(),
+    )
+}
+
 #[test]
 fun rebate_eligibility_offsets_fee_reserve_by_gross_profit() {
     let mut scenario = test::begin(test_constants::alice());
@@ -80,12 +94,7 @@ fun rebate_eligibility_offsets_fee_reserve_by_gross_profit() {
         vec_set::singleton(constants::current_version!()),
         oracle.id(),
         pyth.feed_id(),
-        EXPIRY_MS,
-        MIN_STRIKE,
-        TICK_SIZE,
-        constants::default_expiry_preallocated_ticks!(),
-        config_constants::default_expiry_fee_window_ms!(),
-        constants::float_scaling!(),
+        default_expiry_terms(&config),
         scenario.ctx(),
     );
     let mut manager = registry::create_manager(&mut registry, scenario.ctx());
@@ -189,12 +198,7 @@ fun mint_withholds_ewma_penalty_into_pool_on_gas_spike() {
         vec_set::singleton(constants::current_version!()),
         oracle.id(),
         pyth.feed_id(),
-        EXPIRY_MS,
-        MIN_STRIKE,
-        TICK_SIZE,
-        constants::default_expiry_preallocated_ticks!(),
-        config_constants::default_expiry_fee_window_ms!(),
-        constants::float_scaling!(),
+        default_expiry_terms(&config),
         scenario.ctx(),
     );
     let mut manager = registry::create_manager(&mut registry, scenario.ctx());
@@ -299,12 +303,7 @@ fun redeem_withholds_ewma_penalty_from_payout_on_gas_spike() {
         vec_set::singleton(constants::current_version!()),
         oracle.id(),
         pyth.feed_id(),
-        EXPIRY_MS,
-        MIN_STRIKE,
-        TICK_SIZE,
-        constants::default_expiry_preallocated_ticks!(),
-        config_constants::default_expiry_fee_window_ms!(),
-        constants::float_scaling!(),
+        default_expiry_terms(&config),
         scenario.ctx(),
     );
     let mut manager = registry::create_manager(&mut registry, scenario.ctx());

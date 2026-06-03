@@ -22,7 +22,8 @@ use deepbook_predict::{
     predict_manager::{Self, PredictDepositCap, PredictManager, PredictTradeCap, PredictWithdrawCap},
     pricing,
     protocol_config::{Self, ProtocolConfig},
-    pyth_source::{Self, PythSource}
+    pyth_source::{Self, PythSource},
+    strike_exposure
 };
 use std::type_name::{Self, TypeName};
 use sui::{
@@ -437,17 +438,22 @@ public fun create_expiry_market(
         allowed_versions,
         ctx,
     );
+    let terms = strike_exposure::expiry_terms(
+        expiry,
+        min_strike,
+        tick_size,
+        preallocated_ticks,
+        config.leverage_config().max_expiry_floor_premium(),
+        config.leverage_config().liquidation_ltv(),
+        expiry_fee_window_ms,
+        expiry_fee_max_multiplier,
+    );
     let expiry_market_id = expiry_market::create_and_share(
         config,
         allowed_versions,
         market_oracle_id,
         pyth_lazer_feed_id,
-        expiry,
-        min_strike,
-        tick_size,
-        preallocated_ticks,
-        expiry_fee_window_ms,
-        expiry_fee_max_multiplier,
+        terms,
         ctx,
     );
     pool_vault.register_expiry_market(expiry_market_id);

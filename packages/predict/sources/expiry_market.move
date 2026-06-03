@@ -25,7 +25,7 @@ use deepbook_predict::{
     pricing_config::PricingConfig,
     protocol_config::ProtocolConfig,
     pyth_source::PythSource,
-    strike_exposure::{Self, StrikeExposure}
+    strike_exposure::{Self, ExpiryTerms, StrikeExposure}
 };
 use dusdc::dusdc::DUSDC;
 use sui::{balance::{Self, Balance}, clock::Clock, vec_set::VecSet};
@@ -327,12 +327,7 @@ public(package) fun create_and_share(
     allowed_versions: VecSet<u64>,
     market_oracle_id: ID,
     pyth_lazer_feed_id: u32,
-    expiry: u64,
-    min_strike: u64,
-    tick_size: u64,
-    preallocated_ticks: u64,
-    expiry_fee_window_ms: u64,
-    expiry_fee_max_multiplier: u64,
+    terms: ExpiryTerms,
     ctx: &mut TxContext,
 ): ID {
     let id = object::new(ctx);
@@ -341,22 +336,11 @@ public(package) fun create_and_share(
         id,
         market_oracle_id,
         pyth_lazer_feed_id,
-        expiry,
+        expiry: terms.expiry_ms(),
         trading_loss_rebate_rate: config.fee_config().trading_loss_rebate_rate(),
         cash_balance: balance::zero(),
         unresolved_trading_fees_paid: 0,
-        strike_exposure: strike_exposure::new(
-            expiry_market_id,
-            expiry,
-            min_strike,
-            tick_size,
-            preallocated_ticks,
-            config.leverage_config().max_expiry_floor_premium(),
-            config.leverage_config().liquidation_ltv(),
-            expiry_fee_window_ms,
-            expiry_fee_max_multiplier,
-            ctx,
-        ),
+        strike_exposure: strike_exposure::new(expiry_market_id, terms, ctx),
         ewma: ewma::new(ctx),
         allowed_versions,
         mint_paused: false,
