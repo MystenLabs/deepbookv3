@@ -205,7 +205,7 @@ unless the Move creation policy changes back to explicit grid inputs.
 Because the grid is centered, the first spot must land in
 `(grid_width/2, grid_width]`. With the simulation's $1 tick size and
 100,000-tick grid that band is `($50,000, $100,000]`: the spot must be high
-enough to keep `min_strike >= 0` (`spot > grid_width/2`) and low enough for the
+enough to keep `min_strike > 0` (`spot > grid_width/2`) and low enough for the
 grid to reach it (`spot <= grid_width`). A first spot outside that band aborts
 market creation identically in Move, Python replay, and localnet. To cover a
 higher spot (for example BTC above $100,000), raise the oracle tick size so the

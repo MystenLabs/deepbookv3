@@ -15,6 +15,7 @@ use deepbook_predict::{
     protocol_config::{Self, ProtocolConfig},
     pyth_source::{Self, PythSource},
     registry::{Self, Registry},
+    strike_grid,
     test_constants
 };
 use dusdc::dusdc::DUSDC;
@@ -42,6 +43,10 @@ const REBATE_RESERVE: u64 = 2_500_000;
 const GROSS_PROFIT_ONE: u64 = 1;
 const FULL_REBATE_STAKE: u64 = 1_100_000_000_000;
 const EXPECTED_REBATE_WITH_ONE_GROSS_PROFIT: u64 = 2_499_999;
+
+fun grid_center_spot(): u64 {
+    MIN_STRIKE + TICK_SIZE * (constants::oracle_strike_grid_ticks!() / 2)
+}
 
 // EWMA penalty fixtures. Gas sequence 1000 -> 2000 -> 3000 puts the z-score at
 // ~0.99 after the first observation (below 1 sigma) and ~1.94 after the second
@@ -75,14 +80,14 @@ fun rebate_eligibility_offsets_fee_reserve_by_gross_profit() {
         &cap,
         scenario.ctx(),
     );
+    let grid = strike_grid::new_centered(grid_center_spot(), TICK_SIZE);
     let expiry_id = expiry_market::create_and_share(
         &config,
         vec_set::singleton(constants::current_version!()),
         oracle.id(),
         pyth.feed_id(),
         EXPIRY_MS,
-        MIN_STRIKE,
-        TICK_SIZE,
+        grid,
         constants::default_expiry_preallocated_ticks!(),
         config_constants::default_expiry_fee_window_ms!(),
         constants::float_scaling!(),
@@ -184,14 +189,14 @@ fun mint_withholds_ewma_penalty_into_pool_on_gas_spike() {
 
     // Seed the market's EWMA mean at SEED_GAS.
     advance_to_gas(&mut scenario, SEED_GAS);
+    let grid = strike_grid::new_centered(grid_center_spot(), TICK_SIZE);
     let expiry_id = expiry_market::create_and_share(
         &config,
         vec_set::singleton(constants::current_version!()),
         oracle.id(),
         pyth.feed_id(),
         EXPIRY_MS,
-        MIN_STRIKE,
-        TICK_SIZE,
+        grid,
         constants::default_expiry_preallocated_ticks!(),
         config_constants::default_expiry_fee_window_ms!(),
         constants::float_scaling!(),
@@ -294,14 +299,14 @@ fun redeem_withholds_ewma_penalty_from_payout_on_gas_spike() {
     );
 
     advance_to_gas(&mut scenario, SEED_GAS);
+    let grid = strike_grid::new_centered(grid_center_spot(), TICK_SIZE);
     let expiry_id = expiry_market::create_and_share(
         &config,
         vec_set::singleton(constants::current_version!()),
         oracle.id(),
         pyth.feed_id(),
         EXPIRY_MS,
-        MIN_STRIKE,
-        TICK_SIZE,
+        grid,
         constants::default_expiry_preallocated_ticks!(),
         config_constants::default_expiry_fee_window_ms!(),
         constants::float_scaling!(),

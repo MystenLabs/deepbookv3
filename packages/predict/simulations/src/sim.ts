@@ -150,8 +150,8 @@ let configuredOracleGrid: OracleGrid | null = null;
 
 function oracleGridForSpot(spot: bigint): OracleGrid {
     if (spot <= 0n) throw new Error("initial Pyth spot must be positive");
-    // Mirror config_constants::assert_oracle_tick_size_covers_spot: Move checks the
-    // tick-floored spot (`spot / tick_size <= grid_ticks`), so compare on ticks too.
+    // Mirror strike_grid::new_centered: Move centers the grid on tick-floored
+    // spot, so compare on whole ticks.
     if (spot / ORACLE_TICK_SIZE > ORACLE_GRID_TICKS) {
         throw new Error(
             "initial Pyth spot exceeds oracle tick coverage; raise the oracle tick size to cover a higher spot",

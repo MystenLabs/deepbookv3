@@ -159,17 +159,15 @@ public(package) fun live_inputs(
     (forward, market.block_scholes_svi())
 }
 
-/// Build an adaptive piecewise-linear UP-price curve over a configured grid range.
+/// Build an adaptive piecewise-linear UP-price curve over a caller-validated strike interval.
 public(package) fun build_curve(
     svi: &SVIParams,
     forward: u64,
-    grid_min: u64,
-    grid_tick: u64,
-    grid_max: u64,
+    tick_size: u64,
     min_strike: u64,
     max_strike: u64,
 ): vector<CurvePoint> {
-    assert_curve_range(grid_min, grid_tick, grid_max, min_strike, max_strike);
+    assert_curve_inputs(tick_size, min_strike, max_strike);
 
     if (min_strike == max_strike) {
         let price = compute_up_price(svi, forward, min_strike);
@@ -197,12 +195,12 @@ public(package) fun build_curve(
     let curve_samples = constants::curve_samples!();
     let mut cur_samples = 2;
     while (cur_samples < curve_samples) {
-        let (found, idx) = find_gap(&points, grid_tick);
+        let (found, idx) = find_gap(&points, tick_size);
         if (!found) break;
 
         let strike_lo = points[idx].strike;
         let strike_hi = points[idx + 1].strike;
-        let mid_strike = snap_to_tick((strike_lo + strike_hi) / 2, grid_min, grid_tick);
+        let mid_strike = snap_to_tick((strike_lo + strike_hi) / 2, min_strike, tick_size);
         let price = compute_up_price(svi, forward, mid_strike);
         insert_asc(
             &mut points,
@@ -352,19 +350,9 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     predict_math::normal_cdf(&d2)
 }
 
-fun assert_curve_range(
-    grid_min: u64,
-    grid_tick: u64,
-    grid_max: u64,
-    min_strike: u64,
-    max_strike: u64,
-) {
-    assert!(grid_tick > 0, EInvalidCurveRange);
+fun assert_curve_inputs(tick_size: u64, min_strike: u64, max_strike: u64) {
+    assert!(tick_size > 0, EInvalidCurveRange);
     assert!(min_strike <= max_strike, EInvalidCurveRange);
-    assert!(min_strike >= grid_min && min_strike <= grid_max, EInvalidCurveRange);
-    assert!(max_strike >= grid_min && max_strike <= grid_max, EInvalidCurveRange);
-    assert!((min_strike - grid_min) % grid_tick == 0, EInvalidCurveRange);
-    assert!((max_strike - grid_min) % grid_tick == 0, EInvalidCurveRange);
 }
 
 /// Insert a new curve point while preserving ascending strike order.
@@ -379,7 +367,7 @@ fun insert_asc(points: &mut vector<CurvePoint>, new_point: CurvePoint) {
 }
 
 /// Pick the next adjacent gap to bisect based on endpoint UP-price difference.
-fun find_gap(points: &vector<CurvePoint>, grid_tick: u64): (bool, u64) {
+fun find_gap(points: &vector<CurvePoint>, tick_size: u64): (bool, u64) {
     let len = points.length();
     let mut best_idx = len;
     let mut best_price_diff = 0;
@@ -389,7 +377,7 @@ fun find_gap(points: &vector<CurvePoint>, grid_tick: u64): (bool, u64) {
         let lo = &points[i];
         let hi = &points[i + 1];
 
-        if (hi.strike - lo.strike <= grid_tick) {
+        if (hi.strike - lo.strike <= tick_size) {
             i = i + 1;
             continue
         };
@@ -408,9 +396,9 @@ fun find_gap(points: &vector<CurvePoint>, grid_tick: u64): (bool, u64) {
     (best_idx != len, best_idx)
 }
 
-/// Round a strike down to the nearest tick boundary.
-fun snap_to_tick(strike: u64, grid_min: u64, grid_tick: u64): u64 {
-    grid_min + (strike - grid_min) / grid_tick * grid_tick
+/// Round a strike down to the nearest tick boundary from the curve origin.
+fun snap_to_tick(strike: u64, origin: u64, tick_size: u64): u64 {
+    origin + (strike - origin) / tick_size * tick_size
 }
 
 // === Test-Only Functions ===

@@ -10,7 +10,8 @@ use deepbook_predict::{
     leverage_config::LeverageConfig,
     market_oracle_config::MarketOracleConfig,
     pricing_config::PricingConfig,
-    risk_config::RiskConfig
+    risk_config::RiskConfig,
+    strike_grid::StrikeGrid
 };
 use sui::event;
 
@@ -80,6 +81,7 @@ public struct MarketCreated has copy, drop, store {
     expiry: u64,
     min_strike: u64,
     tick_size: u64,
+    max_strike: u64,
 }
 
 /// Emitted when per-oracle bounds are updated.
@@ -173,16 +175,16 @@ public(package) fun emit_market_created(
     market_oracle_id: ID,
     pool_vault_id: ID,
     expiry: u64,
-    min_strike: u64,
-    tick_size: u64,
+    grid: &StrikeGrid,
 ) {
     event::emit(MarketCreated {
         expiry_market_id,
         market_oracle_id,
         pool_vault_id,
         expiry,
-        min_strike,
-        tick_size,
+        min_strike: grid.min_strike(),
+        tick_size: grid.tick_size(),
+        max_strike: grid.max_strike(),
     });
 }
 

@@ -1,8 +1,8 @@
 """Paged liquidation index mirror used by ``python_replay.py``.
 
-The shape follows ``strike_exposure/index/liquidation_book.move``: active
-leveraged order IDs are held in sorted pages, and the passive scan advances a
-watermark through the tail after a fixed head scan.
+The shape follows ``strike_exposure/index/liquidation_book.move`` and
+``order.move``: active leveraged order IDs are held in sorted pages, and the
+passive scan advances a watermark through the tail after a fixed head scan.
 """
 
 from __future__ import annotations
@@ -14,10 +14,11 @@ PAGE_CAPACITY = 64
 INVERSE_QUANTITY_LOTS_OFFSET = 200
 LEVERAGE_RANK_OFFSET = 168
 OPENED_AT_OFFSET = 120
-MIN_STRIKE_INDEX_OFFSET = 96
-MAX_STRIKE_INDEX_OFFSET = 72
+LOWER_BOUNDARY_INDEX_OFFSET = 96
+HIGHER_BOUNDARY_INDEX_OFFSET = 72
 ENTRY_PROBABILITY_OFFSET = 40
 
+U24_MASK = (1 << 24) - 1
 U32_MASK = (1 << 32) - 1
 U40_MASK = (1 << 40) - 1
 U48_MASK = (1 << 48) - 1
@@ -53,11 +54,7 @@ def assert_valid_leverage_tier(entry_probability: int, leverage: int) -> None:
         raise ValueError("entry probability below 20c allows at most 2x leverage")
 
 
-def open_strike_index(min_strike: int, tick_size: int, max_strike: int) -> int:
-    return (max_strike - min_strike) // tick_size + 1
-
-
-def strike_index_for_order_side(
+def boundary_index_for_order_side(
     strike: int,
     *,
     min_strike: int,
@@ -66,21 +63,25 @@ def strike_index_for_order_side(
     neg_inf: int,
     pos_inf: int,
 ) -> int:
-    if strike == neg_inf or strike == pos_inf:
-        return open_strike_index(min_strike, tick_size, max_strike)
+    total_strikes = (max_strike - min_strike) // tick_size + 1
+    if strike == neg_inf:
+        return 0
+    if strike == pos_inf:
+        return total_strikes + 1
     if strike < min_strike or strike > max_strike:
         raise ValueError("strike out of order grid")
     relative = strike - min_strike
     if relative % tick_size != 0:
         raise ValueError("unaligned order strike")
-    return relative // tick_size
+    return relative // tick_size + 1
 
 
 def encode_order_id(
     *,
     opened_at_ms: int,
-    min_strike_index: int,
-    max_strike_index: int,
+    lower_boundary_index: int,
+    higher_boundary_index: int,
+    max_boundary_index: int,
     leverage: int,
     entry_probability: int,
     quantity: int,
@@ -93,11 +94,25 @@ def encode_order_id(
         raise ValueError("invalid order quantity")
     if opened_at_ms > U48_MASK:
         raise ValueError("opened_at_ms does not fit in order id")
+    if lower_boundary_index > U24_MASK or higher_boundary_index > U24_MASK:
+        raise ValueError("boundary index does not fit in order id")
+    if lower_boundary_index > max_boundary_index or higher_boundary_index > max_boundary_index:
+        raise ValueError("boundary index outside protocol grid")
+    if lower_boundary_index >= higher_boundary_index:
+        raise ValueError("invalid boundary range")
+    if lower_boundary_index == 0 and higher_boundary_index == max_boundary_index:
+        raise ValueError("full-open boundary range is invalid")
     if sequence > U40_MASK:
         raise ValueError("sequence does not fit in order id")
     if entry_probability > float_scaling:
         raise ValueError("invalid entry probability")
     assert_valid_leverage_tier(entry_probability, leverage)
+    if (
+        leverage != LEVERAGE_ONE_X
+        and lower_boundary_index != 0
+        and higher_boundary_index != max_boundary_index
+    ):
+        raise ValueError("leveraged orders must have one open boundary")
 
     rank = leverage_rank(leverage)
     inverse_quantity_lots = U32_MASK - quantity_lots
@@ -105,8 +120,8 @@ def encode_order_id(
         (inverse_quantity_lots << INVERSE_QUANTITY_LOTS_OFFSET)
         | (rank << LEVERAGE_RANK_OFFSET)
         | (opened_at_ms << OPENED_AT_OFFSET)
-        | (min_strike_index << MIN_STRIKE_INDEX_OFFSET)
-        | (max_strike_index << MAX_STRIKE_INDEX_OFFSET)
+        | (lower_boundary_index << LOWER_BOUNDARY_INDEX_OFFSET)
+        | (higher_boundary_index << HIGHER_BOUNDARY_INDEX_OFFSET)
         | (entry_probability << ENTRY_PROBABILITY_OFFSET)
         | sequence
     )

@@ -15,6 +15,7 @@ use deepbook_predict::{
     protocol_config::ProtocolConfig,
     pyth_source::PythSource,
     registry,
+    strike_grid,
     test_constants,
     test_helpers
 };
@@ -271,8 +272,8 @@ fun create_expiry_market_uses_registered_tick_size() {
     scenario.end();
 }
 
-#[test, expected_failure(abort_code = config_constants::EOracleTickSizeTooLargeForSpot)]
-fun create_expiry_market_aborts_when_centered_min_strike_is_not_positive() {
+#[test, expected_failure(abort_code = strike_grid::EOracleTickSizeTooLargeForSpot)]
+fun create_expiry_market_aborts_when_tick_size_too_large_for_spot() {
     let (mut scenario, registry_id, pyth_id, cap) = setup_ready_expiry_creation(
         TOO_WIDE_EXPIRY_TICK_SIZE,
     );

@@ -22,7 +22,8 @@ use deepbook_predict::{
     predict_manager::{Self, PredictDepositCap, PredictManager, PredictTradeCap, PredictWithdrawCap},
     pricing,
     protocol_config::{Self, ProtocolConfig},
-    pyth_source::{Self, PythSource}
+    pyth_source::{Self, PythSource},
+    strike_grid
 };
 use std::type_name::{Self, TypeName};
 use sui::{
@@ -425,7 +426,7 @@ public fun create_expiry_market(
     let expiry_fee_window_ms = pyth_config.expiry_fee_window_ms;
     let expiry_fee_max_multiplier = pyth_config.expiry_fee_max_multiplier;
     pricing::assert_pyth_spot_fresh(config.pricing_config(), pyth, clock);
-    let min_strike = centered_min_strike(pyth.spot(), tick_size);
+    let grid = strike_grid::new_centered(pyth.spot(), tick_size);
     let preallocated_ticks = expiry_preallocated_ticks(expiry, clock.timestamp_ms());
     assert!(!registry.expiry_market_ids.contains(expiry), EExpiryMarketAlreadyCreated);
     let allowed_versions = registry.allowed_versions;
@@ -443,8 +444,7 @@ public fun create_expiry_market(
         market_oracle_id,
         pyth_lazer_feed_id,
         expiry,
-        min_strike,
-        tick_size,
+        grid,
         preallocated_ticks,
         expiry_fee_window_ms,
         expiry_fee_max_multiplier,
@@ -458,8 +458,7 @@ public fun create_expiry_market(
         market_oracle_id,
         pool_vault.id(),
         expiry,
-        min_strike,
-        tick_size,
+        &grid,
     );
 
     (expiry_market_id, market_oracle_id)
@@ -538,14 +537,6 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
 /// Abort unless the supplied `PauseCap` was minted by admin and not revoked.
 fun assert_valid_pause_cap(registry: &Registry, pause_cap: &PauseCap) {
     assert!(registry.allowed_pause_caps.contains(&pause_cap.id.to_inner()), EPauseCapNotValid);
-}
-
-/// Floor spot to the configured tick and center the fixed oracle grid around it.
-fun centered_min_strike(spot: u64, tick_size: u64): u64 {
-    config_constants::assert_oracle_tick_size_covers_spot(tick_size, spot);
-    let center_ticks = constants::oracle_strike_grid_ticks!() / 2;
-
-    (spot / tick_size - center_ticks) * tick_size
 }
 
 fun expiry_preallocated_ticks(expiry: u64, now_ms: u64): u64 {
