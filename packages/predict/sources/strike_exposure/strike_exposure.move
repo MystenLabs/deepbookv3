@@ -361,6 +361,70 @@ public(package) fun clear_liquidated_order(exposure: &mut StrikeExposure, order:
     exposure.liquidation.clear_liquidated(order);
 }
 
+/// Try to liquidate one active leveraged order using exact live pricing.
+public(package) fun liquidate_live_order(
+    exposure: &mut StrikeExposure,
+    config: &PricingConfig,
+    market: &MarketOracle,
+    pyth: &PythSource,
+    order: &Order,
+    clock: &Clock,
+): bool {
+    if (!exposure.liquidation.contains_active_order(order)) return false;
+
+    let quantity = order.quantity();
+    let (lower, higher) = exposure.order_boundaries(order);
+    let range_probability = pricing::live_range_probability(
+        config,
+        market,
+        pyth,
+        lower,
+        higher,
+        clock,
+    );
+    let floor_shares = order.floor_shares();
+    let index_now = exposure.config.floor_index_at_ms(exposure.expiry_ms, clock.timestamp_ms());
+    let current_floor_amount = math::mul(floor_shares, index_now);
+    let gross_value = math::mul(range_probability, quantity);
+    let liquidation_ltv = exposure.config.liquidation_ltv();
+    let liquidation_threshold = math::div(current_floor_amount, liquidation_ltv);
+    let can_liquidate = gross_value <= liquidation_threshold;
+
+    if (!can_liquidate) return false;
+
+    let index_at_open = exposure
+        .config
+        .floor_index_at_ms(
+            exposure.expiry_ms,
+            order.opened_at_ms(),
+        );
+    let index_at_settlement = exposure.config.terminal_floor_index();
+    let terminal_floor = math::mul(floor_shares, index_at_settlement);
+    let terminal_payout = quantity - terminal_floor;
+
+    let floor_amount_at_open = math::mul(floor_shares, index_at_open);
+    let live_backing_payout = quantity - floor_amount_at_open;
+
+    exposure.liquidation.mark_liquidated(order);
+    let grid = exposure.grid;
+    {
+        let live = exposure.live.borrow_mut();
+        live.nav.remove_range(&grid, lower, higher, quantity, floor_shares);
+        live.payout.remove_range(&grid, lower, higher, terminal_payout, live_backing_payout);
+    };
+
+    order_events::emit_order_liquidated(
+        exposure.expiry_market_id,
+        order,
+        quantity,
+        gross_value,
+        current_floor_amount,
+        liquidation_ltv,
+    );
+
+    true
+}
+
 /// Run one bounded liquidation pass using exact per-candidate pricing.
 public(package) fun liquidate_live_orders(
     exposure: &mut StrikeExposure,

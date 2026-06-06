@@ -262,6 +262,27 @@ public fun liquidate(
     market.run_liquidation_pass(config.pricing_config(), market_oracle, pyth, budget, clock)
 }
 
+/// Try to liquidate one active leveraged order by ID.
+public fun liquidate_order(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    order_id: u256,
+    clock: &Clock,
+): bool {
+    market.assert_version_allowed();
+    config.assert_not_valuation_in_progress();
+    market.assert_market_oracle(market_oracle);
+    market.assert_pyth_feed(pyth);
+    market_oracle.assert_active(clock);
+
+    let order = order::from_order_id(order_id);
+    market
+        .strike_exposure
+        .liquidate_live_order(config.pricing_config(), market_oracle, pyth, &order, clock)
+}
+
 /// Cache terminal liability if needed, then destroy live exposure indexes.
 ///
 /// This is cap-gated because index destruction returns storage rebates. Settled

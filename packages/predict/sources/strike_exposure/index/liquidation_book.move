@@ -86,6 +86,18 @@ public(package) fun select_liquidation_candidates(
     candidates
 }
 
+public(package) fun contains_active_order(book: &LiquidationBook, order: &Order): bool {
+    if (!order.is_leveraged() || book.active_order_count == 0) return false;
+
+    let order_id = order.id();
+    let page_ix = lower_bound(&book.max_order_ids, order_id);
+    if (page_ix >= book.page_ids.length()) return false;
+
+    let page = &book.pages[book.page_ids[page_ix]];
+    let offset = lower_bound(&page.order_ids, order_id);
+    offset < page.order_ids.length() && page.order_ids[offset] == order_id
+}
+
 public(package) fun insert_order(book: &mut LiquidationBook, order: &Order) {
     if (!order.is_leveraged()) return;
 
