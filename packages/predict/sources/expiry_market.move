@@ -315,8 +315,6 @@ public(package) fun create_and_share(
     expiry: u64,
     grid: StrikeGrid,
     preallocated_ticks: u64,
-    expiry_fee_window_ms: u64,
-    expiry_fee_max_multiplier: u64,
     ctx: &mut TxContext,
 ): ID {
     let id = object::new(ctx);
@@ -333,8 +331,6 @@ public(package) fun create_and_share(
             grid,
             preallocated_ticks,
             config.strike_exposure_config_snapshot(),
-            expiry_fee_window_ms,
-            expiry_fee_max_multiplier,
             ctx,
         ),
         ewma: ewma::new(ctx),
@@ -618,7 +614,7 @@ fun mint_internal(
         clock,
     );
 
-    let (minted_order, fee_amount) = market
+    let (minted_order, entry_probability, user_contribution) = market
         .strike_exposure
         .allocate_mint_order(
             config.pricing_config(),
@@ -630,15 +626,17 @@ fun mint_internal(
             leverage,
             clock,
         );
+    let raw_fee_amount = market.strike_exposure.trading_fee(entry_probability, quantity, clock);
     let fee_amount = config
         .stake_config()
-        .fee_amount_after_discount(fee_amount, manager.active_stake());
+        .fee_amount_after_discount(raw_fee_amount, manager.active_stake());
     let penalty_amount = market.ewma_penalty(config.ewma_config(), quantity, clock, ctx);
 
     let builder_fee_amount = market.settle_mint_payment(
         manager,
         proof,
         &minted_order,
+        user_contribution,
         fee_amount,
         penalty_amount,
         ctx,
@@ -649,6 +647,9 @@ fun mint_internal(
         &minted_order,
         lower_strike,
         higher_strike,
+        leverage,
+        entry_probability,
+        user_contribution,
         fee_amount,
         builder_fee_amount,
         penalty_amount,
@@ -674,7 +675,7 @@ fun redeem_live_internal(
     pricing::assert_live_quote_available(config.pricing_config(), market_oracle, pyth, clock);
     manager.remove_position(market.id(), order.id());
 
-    let (resulting_order, redeem_amount, fee_amount) = market
+    let (resulting_order, redeem_amount, range_probability) = market
         .strike_exposure
         .close_and_quote_live_order(
             config.pricing_config(),
@@ -684,6 +685,14 @@ fun redeem_live_internal(
             close_quantity,
             clock,
         );
+    let fee_amount = market
+        .strike_exposure
+        .trading_fee(
+            range_probability,
+            close_quantity,
+            clock,
+        )
+        .min(redeem_amount);
     let fee_amount = config
         .stake_config()
         .fee_amount_after_discount(fee_amount, manager.active_stake());
@@ -754,12 +763,12 @@ fun settle_mint_payment(
     manager: &mut PredictManager,
     proof: &PredictTradeProof,
     order: &Order,
+    user_contribution: u64,
     fee_amount: u64,
     penalty_amount: u64,
     ctx: &mut TxContext,
 ): u64 {
     let quantity = order.quantity();
-    let user_contribution = order.user_contribution();
     let builder_code_id = manager.builder_code_id();
     let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity);
     let withdraw_amount = user_contribution + fee_amount + builder_fee_amount + penalty_amount;

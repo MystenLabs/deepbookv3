@@ -7,7 +7,6 @@ module deepbook_predict::strike_exposure_rewrite;
 use deepbook::{constants::max_u64, math};
 use deepbook_predict::{
     constants,
-    strike_exposure_cofig_rewrite::StrikeExposureConfig,
     liquidation_book::{Self, LiquidationBook},
     market_oracle::MarketOracle,
     math as predict_math,
@@ -16,6 +15,7 @@ use deepbook_predict::{
     pricing,
     pricing_config::PricingConfig,
     pyth_source::PythSource,
+    strike_exposure_cofig_rewrite::StrikeExposureConfig,
     strike_grid::StrikeGrid,
     strike_nav_matrix::{Self, StrikeNavMatrix},
     strike_payout_tree::{Self, StrikePayoutTree}
@@ -26,12 +26,20 @@ const ETerminalFloorExceedsLiquidationLtv: u64 = 0;
 const EOrderBelowLiquidationThreshold: u64 = 1;
 const EInvalidCloseQuantity: u64 = 2;
 const EOrderPrincipalBelowMinimum: u64 = 5;
+const EInvalidLeverageTier: u64 = 6;
+const EInvalidLeverage: u64 = 7;
 // Settled-liability codes 0/1 are inlined from `strike_exposure` and intentionally
 // share values with the config-derived codes above (Move permits duplicate constant
 // values). In the original these lived in two separate modules; the merge preserves
 // each abort's source code rather than renumbering. See ledger.
 const ESettledLiabilityNotMaterialized: u64 = 0;
 const ESettledLiabilityUnderflow: u64 = 1;
+
+const LEVERAGE_ONE_X: u64 = 1_000_000_000;
+const LEVERAGE_ONE_AND_HALF_X: u64 = 1_500_000_000;
+const LEVERAGE_TWO_X: u64 = 2_000_000_000;
+const LEVERAGE_TWO_AND_HALF_X: u64 = 2_500_000_000;
+const LEVERAGE_THREE_X: u64 = 3_000_000_000;
 
 /// Exposure lifecycle state for one oracle grid.
 public struct StrikeExposure has store {
@@ -40,12 +48,8 @@ public struct StrikeExposure has store {
     /// Terminal timestamp used by floor-index and order floor math.
     expiry_ms: u64,
     grid: StrikeGrid,
-    /// Snapshotted leverage policy for this exposure book.
+    /// Snapshotted exposure and fee policy for this expiry.
     config: StrikeExposureConfig,
-    /// Window before expiry over which the trade fee ramps up. Snapshotted at creation.
-    expiry_fee_window_ms: u64,
-    /// Fee multiplier reached at expiry, in FLOAT_SCALING; 1x disables. Snapshotted at creation.
-    expiry_fee_max_multiplier: u64,
     next_order_sequence: u64,
     /// Remaining settled liability after settlement has been materialized.
     settled_payout_liability: u64,
@@ -85,11 +89,11 @@ public(package) fun liquidation_ltv(exposure: &StrikeExposure): u64 {
 }
 
 public(package) fun expiry_fee_window_ms(exposure: &StrikeExposure): u64 {
-    exposure.expiry_fee_window_ms
+    exposure.config.expiry_fee_window_ms()
 }
 
 public(package) fun expiry_fee_max_multiplier(exposure: &StrikeExposure): u64 {
-    exposure.expiry_fee_max_multiplier
+    exposure.config.expiry_fee_max_multiplier()
 }
 
 public(package) fun min_strike(exposure: &StrikeExposure): u64 {
@@ -155,33 +159,25 @@ public(package) fun valuation_liability(
         )
 }
 
-/// Per-trade fee for a given live price and quantity.
+/// Return the raw per-trade fee for a live price and quantity.
 ///
-/// The trade fee is a pure relay (`fee_rate(price) * quantity`): it needs none of
-/// the exposure model and no index/field consumes it, so it lives outside the
-/// mint/redeem flows. Callers recover the price differently per flow: mint stamps
-/// it on the returned order (`order.entry_probability()`); redeem returns the live
-/// `range_probability` as its third value. Returns the uncapped raw fee; the redeem
-/// caller applies the `.min(redeem_amount)` cap.
+/// Mint computes its raw fee inside allocation so the all-in ask-price gate and
+/// fee amount share one fee sample. Redeem uses this uncapped raw fee and applies
+/// the `.min(redeem_amount)` cap at the caller.
 public(package) fun trading_fee(
     exposure: &StrikeExposure,
-    config: &PricingConfig,
-    market: &MarketOracle,
-    price: u64,
+    probability: u64,
     quantity: u64,
     clock: &Clock,
 ): u64 {
-    math::mul(
-        pricing::fee_rate(
-            config,
-            market,
-            exposure.expiry_fee_window_ms,
-            exposure.expiry_fee_max_multiplier,
-            price,
-            clock,
-        ),
-        quantity,
-    )
+    exposure
+        .config
+        .trading_fee(
+            exposure.expiry_ms,
+            probability,
+            quantity,
+            clock.timestamp_ms(),
+        )
 }
 
 /// Return whether an order has already been liquidated from live indexes.
@@ -196,8 +192,6 @@ public(package) fun new(
     grid: StrikeGrid,
     preallocated_ticks: u64,
     config: StrikeExposureConfig,
-    expiry_fee_window_ms: u64,
-    expiry_fee_max_multiplier: u64,
     ctx: &mut TxContext,
 ): StrikeExposure {
     StrikeExposure {
@@ -205,8 +199,6 @@ public(package) fun new(
         expiry_ms,
         grid,
         config,
-        expiry_fee_window_ms,
-        expiry_fee_max_multiplier,
         next_order_sequence: 0,
         settled_payout_liability: 0,
         settled_liability_materialized: false,
@@ -265,7 +257,7 @@ public(package) fun close_settled_order(
 
 /// Quote and allocate a live mint order with the full mint flow inlined.
 ///
-/// Returns the allocated order. The trade fee is recovered via `trading_fee`.
+/// Returns `(allocated_order, entry_probability, user_contribution, raw_fee_amount)`.
 public(package) fun allocate_mint_order(
     exposure: &mut StrikeExposure,
     config: &PricingConfig,
@@ -276,13 +268,13 @@ public(package) fun allocate_mint_order(
     quantity: u64,
     leverage: u64,
     clock: &Clock,
-): Order {
+): (Order, u64, u64, u64) {
     // Grid boundary validation, before pricing: a grid-invalid range is rejected
     // before the oracle is consulted (matches strike_exposure ordering).
     exposure.grid.assert_range_boundaries(lower, higher);
 
-    // Live price, leverage tier, and all-in ask-price gate. All three validate
-    // mint preconditions before any index mutation.
+    // Live price, leverage tier, and all-in fee gate. All three validate mint
+    // preconditions before any index mutation.
     let entry_probability = pricing::live_range_probability(
         config,
         market,
@@ -291,18 +283,23 @@ public(package) fun allocate_mint_order(
         higher,
         clock,
     );
-    order::assert_mint_leverage_tier(entry_probability, leverage);
-    // Ask-price gate: asserts the all-in mint price is in bounds (EAskPriceOutOfBounds)
-    // before any index mutation. The fee rate it returns is unused here — the fee is a
-    // pure relay recovered post-mint via `trading_fee` (see ledger §0).
-    pricing::assert_mint_fee_rate(
-        config,
-        market,
-        exposure.expiry_fee_window_ms,
-        exposure.expiry_fee_max_multiplier,
-        entry_probability,
-        clock,
+    assert_mint_leverage_tier(entry_probability, leverage);
+    let raw_fee_amount = exposure
+        .config
+        .mint_trading_fee(
+            exposure.expiry_ms,
+            entry_probability,
+            quantity,
+            clock.timestamp_ms(),
+        );
+    let exposure_value = math::mul(entry_probability, quantity);
+    let user_contribution = predict_math::mul_div_round_up(
+        exposure_value,
+        constants::float_scaling!(),
+        leverage,
     );
+    let floor_seed_amount = exposure_value - user_contribution;
+    assert!(user_contribution >= constants::min_order_principal!(), EOrderPrincipalBelowMinimum);
 
     // Immutable contract terms.
     let opened_at_ms = clock.timestamp_ms();
@@ -312,29 +309,21 @@ public(package) fun allocate_mint_order(
         opened_at_ms,
         lower_boundary_index,
         higher_boundary_index,
-        leverage,
-        entry_probability,
+        floor_seed_amount,
         quantity,
         exposure.next_order_sequence,
-    );
-    assert!(
-        allocated_order.user_contribution() >= constants::min_order_principal!(),
-        EOrderPrincipalBelowMinimum,
     );
 
     // Floor economics: the open-timestamp floor index, then the order's collapsed floor
     // amounts. floor_seed_amount is 0 for a 1x order, so every floor term is 0 with no
     // leverage guard.
-    let open_floor_index = exposure
-        .config
-        .floor_index_at_ms(exposure.expiry_ms, opened_at_ms);
+    let open_floor_index = exposure.config.floor_index_at_ms(exposure.expiry_ms, opened_at_ms);
     // Terminal floor, collapsed to one round-up from the seed (CC2; ledger §1):
     // ceil(seed * (FS + max_premium) / open_index). The faithful floor-at-open round-trip
     // collapses to the seed itself (CC1; ledger §1), so it is not materialized — the live
     // backing payout and the at-open liquidation threshold below read floor_seed_amount
     // directly. floor_shares (the NAV share count) is the only term that survives the
     // collapse, and it is computed at its single sink (nav.insert_range) below.
-    let floor_seed_amount = allocated_order.floor_seed_amount();
     let terminal_floor = predict_math::mul_div_round_up(
         floor_seed_amount,
         constants::float_scaling!() + exposure.config.max_expiry_floor_premium(),
@@ -350,9 +339,8 @@ public(package) fun allocate_mint_order(
         constants::float_scaling!(),
     );
     assert!(terminal_floor < max_terminal_floor, ETerminalFloorExceedsLiquidationLtv);
-    // Open liquidation-threshold check is leveraged-only; for a 1x order the seed is 0, so
-    // the `!is_leveraged` disjunct skips the bound (matches the reference's early return
-    // for non-leveraged orders). With floor-at-open collapsed to the seed (CC1), the
+    // Open liquidation-threshold check is floor-only; for a 1x order the seed is 0, so
+    // the disjunct skips the bound. With floor-at-open collapsed to the seed (CC1), the
     // threshold is ceil(seed * FS / ltv).
     let liquidation_threshold_at_open = predict_math::mul_div_round_up(
         floor_seed_amount,
@@ -361,7 +349,7 @@ public(package) fun allocate_mint_order(
     );
     let gross_value = math::mul(entry_probability, quantity);
     assert!(
-        !allocated_order.is_leveraged() || gross_value > liquidation_threshold_at_open,
+        floor_seed_amount == 0 || gross_value > liquidation_threshold_at_open,
         EOrderBelowLiquidationThreshold,
     );
 
@@ -391,7 +379,7 @@ public(package) fun allocate_mint_order(
     exposure.liquidation.insert_order(&allocated_order);
     exposure.next_order_sequence = exposure.next_order_sequence + 1;
 
-    allocated_order
+    (allocated_order, entry_probability, user_contribution, raw_fee_amount)
 }
 
 /// Close live indexed quantity with the full live-close flow inlined.
@@ -495,7 +483,17 @@ public(package) fun close_and_quote_live_order(
     let replacement_quantity = old_quantity - close_quantity;
     let has_replacement = replacement_quantity > 0;
     let resulting_order = if (has_replacement) {
-        order::replacement(order, replacement_quantity, exposure.next_order_sequence)
+        let replacement_floor_seed_amount = predict_math::mul_div_round_down(
+            old_floor_seed_amount,
+            replacement_quantity,
+            old_quantity,
+        );
+        order::replacement(
+            order,
+            replacement_quantity,
+            replacement_floor_seed_amount,
+            exposure.next_order_sequence,
+        )
     } else {
         *order
     };
@@ -782,4 +780,25 @@ public(package) fun destroy_live_indexes(exposure: &mut StrikeExposure) {
     } = live;
     nav.destroy();
     payout.destroy();
+}
+
+/// Abort unless requested leverage is allowed for a new mint at this entry probability.
+fun assert_mint_leverage_tier(entry_probability: u64, leverage: u64) {
+    assert_valid_leverage(leverage);
+    if (entry_probability < constants::leverage_one_x_only_price_threshold!()) {
+        assert!(leverage == LEVERAGE_ONE_X, EInvalidLeverageTier);
+    } else if (entry_probability < constants::leverage_two_x_max_price_threshold!()) {
+        assert!(leverage <= LEVERAGE_TWO_X, EInvalidLeverageTier);
+    };
+}
+
+fun assert_valid_leverage(leverage: u64) {
+    assert!(
+        leverage == LEVERAGE_ONE_X
+            || leverage == LEVERAGE_ONE_AND_HALF_X
+            || leverage == LEVERAGE_TWO_X
+            || leverage == LEVERAGE_TWO_AND_HALF_X
+            || leverage == LEVERAGE_THREE_X,
+        EInvalidLeverage,
+    );
 }

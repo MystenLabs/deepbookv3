@@ -139,6 +139,9 @@ public(package) fun assert_expiry_fee_window_ms(value: u64) {
 
 /// Fee multiplier reached at expiry, in FLOAT_SCALING. 1x (float_scaling) disables
 /// the ramp; min is 1x so the ramp can never reduce fees below the base rate.
+public(package) macro fun default_expiry_fee_max_multiplier(): u64 {
+    deepbook_predict::constants::float_scaling!()
+}
 public(package) macro fun min_expiry_fee_max_multiplier(): u64 {
     deepbook_predict::constants::float_scaling!()
 }

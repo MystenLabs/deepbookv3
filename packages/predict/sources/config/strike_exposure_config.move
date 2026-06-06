@@ -5,7 +5,8 @@
 ///
 /// ProtocolConfig owns the current global template. Each StrikeExposure stores a
 /// snapshot initialized from that template, so later admin updates do not reprice
-/// active markets.
+/// active markets. Fee policy lives here because fees consume prices but are not
+/// themselves contract probability.
 module deepbook_predict::strike_exposure_config;
 
 use deepbook::math;
@@ -13,8 +14,20 @@ use deepbook_predict::{config_constants, constants, math as predict_math};
 
 const ETerminalFloorExceedsLiquidationLtv: u64 = 0;
 const EOrderBelowLiquidationThreshold: u64 = 1;
+const EAskPriceOutOfBounds: u64 = 2;
+const EInvalidAskBound: u64 = 3;
+const EInvalidFeeProbability: u64 = 4;
+const EOrderPrincipalBelowMinimum: u64 = 5;
+const EInvalidLeverageTier: u64 = 6;
+const EInvalidLeverage: u64 = 7;
 
-/// Leverage parameters expressed in Predict's 1e9 fixed-point price scaling.
+const LEVERAGE_ONE_X: u64 = 1_000_000_000;
+const LEVERAGE_ONE_AND_HALF_X: u64 = 1_500_000_000;
+const LEVERAGE_TWO_X: u64 = 2_000_000_000;
+const LEVERAGE_TWO_AND_HALF_X: u64 = 2_500_000_000;
+const LEVERAGE_THREE_X: u64 = 3_000_000_000;
+
+/// Expiry-local exposure and fee policy expressed in Predict's 1e9 fixed-point scale.
 public struct StrikeExposureConfig has store {
     /// Maximum terminal increase in the contract floor index over one expiry.
     /// `200_000_000` means the floor index rises from 1.00 to 1.20.
@@ -22,6 +35,19 @@ public struct StrikeExposureConfig has store {
     /// 1e9-scaled floor-to-live-value threshold for liquidation.
     /// `850_000_000` means liquidate at 85% LTV.
     liquidation_ltv: u64,
+    /// Base fee multiplier for Bernoulli scaling.
+    /// Effective base fee = base_fee * sqrt(price * (1 - price)).
+    base_fee: u64,
+    /// Minimum per-unit fee floor; live trade fees never go below this value.
+    min_fee: u64,
+    /// Minimum allowed all-in mint price after adding the fee.
+    min_ask_price: u64,
+    /// Maximum allowed all-in mint price after adding the fee.
+    max_ask_price: u64,
+    /// Window before expiry over which trade fees ramp up.
+    expiry_fee_window_ms: u64,
+    /// Fee multiplier reached at expiry, in FLOAT_SCALING; 1x disables the ramp.
+    expiry_fee_max_multiplier: u64,
 }
 
 // === Public-Package Functions ===
@@ -32,6 +58,30 @@ public(package) fun max_expiry_floor_premium(config: &StrikeExposureConfig): u64
 
 public(package) fun liquidation_ltv(config: &StrikeExposureConfig): u64 {
     config.liquidation_ltv
+}
+
+public(package) fun base_fee(config: &StrikeExposureConfig): u64 {
+    config.base_fee
+}
+
+public(package) fun min_fee(config: &StrikeExposureConfig): u64 {
+    config.min_fee
+}
+
+public(package) fun min_ask_price(config: &StrikeExposureConfig): u64 {
+    config.min_ask_price
+}
+
+public(package) fun max_ask_price(config: &StrikeExposureConfig): u64 {
+    config.max_ask_price
+}
+
+public(package) fun expiry_fee_window_ms(config: &StrikeExposureConfig): u64 {
+    config.expiry_fee_window_ms
+}
+
+public(package) fun expiry_fee_max_multiplier(config: &StrikeExposureConfig): u64 {
+    config.expiry_fee_max_multiplier
 }
 
 /// Return the deterministic floor index at a timestamp for an expiry.
@@ -66,46 +116,81 @@ public(package) fun floor_index_at_ms(
     constants::float_scaling!() + floor_premium
 }
 
-/// Convert floor shares into a floor amount at one timestamp in an expiry.
-public(package) fun floor_amount_at_ms(
+/// Return the raw trade fee for a live probability and quantity.
+public(package) fun trading_fee(
     config: &StrikeExposureConfig,
     expiry_ms: u64,
-    floor_shares: u64,
+    probability: u64,
+    quantity: u64,
     timestamp_ms: u64,
 ): u64 {
-    let floor_index = config.floor_index_at_ms(expiry_ms, timestamp_ms);
-    predict_math::mul_div_round_up(floor_shares, floor_index, constants::float_scaling!())
+    math::mul(config.fee_rate(expiry_ms, probability, timestamp_ms), quantity)
 }
 
-/// Return index update terms for one mint order and assert mint-only LTV policy.
+/// Assert all mint-admission policy and return derived mint economics.
 ///
-/// `floor_shares` updates NAV; `terminal_payout` and `live_backing_payout`
-/// update payout backing.
-public(package) fun mint_index_update_terms(
+/// Returns `(user_contribution, floor_seed_amount)`.
+public(package) fun assert_mint_admission_policy(
     config: &StrikeExposureConfig,
     expiry_ms: u64,
-    is_leveraged: bool,
-    floor_seed_amount: u64,
     opened_at_ms: u64,
     entry_probability: u64,
     quantity: u64,
-): (u64, u64, u64) {
-    let (floor_shares, terminal_payout, live_backing_payout) = config.order_index_update_terms(
-        expiry_ms,
-        is_leveraged,
+    leverage: u64,
+): (u64, u64) {
+    let fee_rate = config.fee_rate(expiry_ms, entry_probability, opened_at_ms);
+    let execution_price = entry_probability + fee_rate;
+    assert!(
+        execution_price >= config.min_ask_price && execution_price <= config.max_ask_price,
+        EAskPriceOutOfBounds,
+    );
+
+    assert!(
+        leverage == LEVERAGE_ONE_X
+            || leverage == LEVERAGE_ONE_AND_HALF_X
+            || leverage == LEVERAGE_TWO_X
+            || leverage == LEVERAGE_TWO_AND_HALF_X
+            || leverage == LEVERAGE_THREE_X,
+        EInvalidLeverage,
+    );
+    if (entry_probability < constants::leverage_one_x_only_price_threshold!()) {
+        assert!(leverage == LEVERAGE_ONE_X, EInvalidLeverageTier);
+    } else if (entry_probability < constants::leverage_two_x_max_price_threshold!()) {
+        assert!(leverage <= LEVERAGE_TWO_X, EInvalidLeverageTier);
+    };
+
+    let exposure_value = math::mul(entry_probability, quantity);
+    let user_contribution = predict_math::mul_div_round_up(
+        exposure_value,
+        constants::float_scaling!(),
+        leverage,
+    );
+    assert!(user_contribution >= constants::min_order_principal!(), EOrderPrincipalBelowMinimum);
+    let floor_seed_amount = exposure_value - user_contribution;
+
+    let open_floor_index = config.floor_index_at_ms(expiry_ms, opened_at_ms);
+    let terminal_floor = predict_math::mul_div_round_up(
         floor_seed_amount,
-        opened_at_ms,
-        quantity,
+        constants::float_scaling!() + config.max_expiry_floor_premium,
+        open_floor_index,
     );
-    config.assert_mint_above_liquidation_threshold(
-        expiry_ms,
-        is_leveraged,
-        floor_shares,
-        opened_at_ms,
-        entry_probability,
+    let max_terminal_floor = predict_math::mul_div_round_down(
         quantity,
+        config.liquidation_ltv,
+        constants::float_scaling!(),
     );
-    (floor_shares, terminal_payout, live_backing_payout)
+    assert!(terminal_floor < max_terminal_floor, ETerminalFloorExceedsLiquidationLtv);
+
+    if (floor_seed_amount > 0) {
+        let liquidation_threshold_at_open = predict_math::mul_div_round_up(
+            floor_seed_amount,
+            constants::float_scaling!(),
+            config.liquidation_ltv,
+        );
+        assert!(exposure_value > liquidation_threshold_at_open, EOrderBelowLiquidationThreshold);
+    };
+
+    (user_contribution, floor_seed_amount)
 }
 
 /// Return index update terms for one order's immutable floor fields.
@@ -115,24 +200,27 @@ public(package) fun mint_index_update_terms(
 public(package) fun order_index_update_terms(
     config: &StrikeExposureConfig,
     expiry_ms: u64,
-    is_leveraged: bool,
     floor_seed_amount: u64,
     opened_at_ms: u64,
     quantity: u64,
 ): (u64, u64, u64) {
-    let floor_shares = if (is_leveraged) {
-        config.floor_shares_for_seed(expiry_ms, floor_seed_amount, opened_at_ms)
-    } else {
-        0
-    };
-    let terminal_floor = config.floor_amount_at_ms(expiry_ms, floor_shares, expiry_ms);
-    let max_terminal_floor = predict_math::mul_div_round_down(
-        quantity,
-        config.liquidation_ltv,
+    let open_floor_index = config.floor_index_at_ms(expiry_ms, opened_at_ms);
+    let floor_shares = predict_math::mul_div_round_up(
+        floor_seed_amount,
+        constants::float_scaling!(),
+        open_floor_index,
+    );
+    let terminal_floor_index = config.floor_index_at_ms(expiry_ms, expiry_ms);
+    let terminal_floor = predict_math::mul_div_round_up(
+        floor_shares,
+        terminal_floor_index,
         constants::float_scaling!(),
     );
-    assert!(terminal_floor < max_terminal_floor, ETerminalFloorExceedsLiquidationLtv);
-    let floor_at_open = config.floor_amount_at_ms(expiry_ms, floor_shares, opened_at_ms);
+    let floor_at_open = predict_math::mul_div_round_up(
+        floor_shares,
+        open_floor_index,
+        constants::float_scaling!(),
+    );
     (floor_shares, quantity - terminal_floor, quantity - floor_at_open)
 }
 
@@ -140,7 +228,6 @@ public(package) fun order_index_update_terms(
 public(package) fun liquidation_check_terms(
     config: &StrikeExposureConfig,
     expiry_ms: u64,
-    is_leveraged: bool,
     floor_seed_amount: u64,
     opened_at_ms: u64,
     quantity: u64,
@@ -148,16 +235,18 @@ public(package) fun liquidation_check_terms(
     timestamp_ms: u64,
 ): (bool, u64, u64) {
     let gross_value = math::mul(range_probability, quantity);
-    let current_floor_amount = if (is_leveraged) {
-        let current_floor_shares = config.floor_shares_for_seed(
-            expiry_ms,
-            floor_seed_amount,
-            opened_at_ms,
-        );
-        config.floor_amount_at_ms(expiry_ms, current_floor_shares, timestamp_ms)
-    } else {
-        0
-    };
+    let open_floor_index = config.floor_index_at_ms(expiry_ms, opened_at_ms);
+    let current_floor_shares = predict_math::mul_div_round_up(
+        floor_seed_amount,
+        constants::float_scaling!(),
+        open_floor_index,
+    );
+    let current_floor_index = config.floor_index_at_ms(expiry_ms, timestamp_ms);
+    let current_floor_amount = predict_math::mul_div_round_up(
+        current_floor_shares,
+        current_floor_index,
+        constants::float_scaling!(),
+    );
     let should_liquidate =
         !config.above_liquidation_threshold(
             gross_value,
@@ -170,6 +259,12 @@ public(package) fun new(): StrikeExposureConfig {
     StrikeExposureConfig {
         max_expiry_floor_premium: config_constants::default_max_expiry_floor_premium!(),
         liquidation_ltv: config_constants::default_liquidation_ltv!(),
+        base_fee: config_constants::default_base_fee!(),
+        min_fee: config_constants::default_min_fee!(),
+        min_ask_price: config_constants::default_min_ask_price!(),
+        max_ask_price: config_constants::default_max_ask_price!(),
+        expiry_fee_window_ms: config_constants::default_expiry_fee_window_ms!(),
+        expiry_fee_max_multiplier: config_constants::default_expiry_fee_max_multiplier!(),
     }
 }
 
@@ -178,6 +273,12 @@ public(package) fun snapshot(config: &StrikeExposureConfig): StrikeExposureConfi
     StrikeExposureConfig {
         max_expiry_floor_premium: config.max_expiry_floor_premium,
         liquidation_ltv: config.liquidation_ltv,
+        base_fee: config.base_fee,
+        min_fee: config.min_fee,
+        min_ask_price: config.min_ask_price,
+        max_ask_price: config.max_ask_price,
+        expiry_fee_window_ms: config.expiry_fee_window_ms,
+        expiry_fee_max_multiplier: config.expiry_fee_max_multiplier,
     }
 }
 
@@ -191,19 +292,36 @@ public(package) fun set_liquidation_ltv(config: &mut StrikeExposureConfig, value
     config.liquidation_ltv = value;
 }
 
-/// Return floor-index-normalized shares for a floor seed opened at a timestamp.
-fun floor_shares_for_seed(
-    config: &StrikeExposureConfig,
-    expiry_ms: u64,
-    floor_seed_amount: u64,
-    opened_at_ms: u64,
-): u64 {
-    let open_index = config.floor_index_at_ms(expiry_ms, opened_at_ms);
-    predict_math::mul_div_round_up(
-        floor_seed_amount,
-        constants::float_scaling!(),
-        open_index,
-    )
+public(package) fun set_base_fee(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::assert_base_fee(value);
+    config.base_fee = value;
+}
+
+public(package) fun set_min_fee(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::assert_min_fee(value);
+    config.min_fee = value;
+}
+
+public(package) fun set_min_ask_price(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::assert_min_ask_price(value);
+    assert!(value < config.max_ask_price, EInvalidAskBound);
+    config.min_ask_price = value;
+}
+
+public(package) fun set_max_ask_price(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::assert_max_ask_price(value);
+    assert!(value > config.min_ask_price, EInvalidAskBound);
+    config.max_ask_price = value;
+}
+
+public(package) fun set_expiry_fee_window_ms(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::assert_expiry_fee_window_ms(value);
+    config.expiry_fee_window_ms = value;
+}
+
+public(package) fun set_expiry_fee_max_multiplier(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::assert_expiry_fee_max_multiplier(value);
+    config.expiry_fee_max_multiplier = value;
 }
 
 /// Return whether gross value is safely above the liquidation threshold.
@@ -220,21 +338,36 @@ fun above_liquidation_threshold(
     gross_value > threshold
 }
 
-fun assert_mint_above_liquidation_threshold(
+fun fee_rate(
     config: &StrikeExposureConfig,
     expiry_ms: u64,
-    is_leveraged: bool,
-    floor_shares: u64,
-    opened_at_ms: u64,
-    entry_probability: u64,
-    quantity: u64,
-) {
-    if (!is_leveraged) return;
+    probability: u64,
+    timestamp_ms: u64,
+): u64 {
+    let raw_fee = config.raw_bernoulli_fee_rate(probability);
+    let base = if (raw_fee > config.min_fee) raw_fee else config.min_fee;
+    let multiplier = config.expiry_fee_multiplier(expiry_ms - timestamp_ms);
+    math::mul(base, multiplier)
+}
 
-    let floor_amount = config.floor_amount_at_ms(expiry_ms, floor_shares, opened_at_ms);
-    let gross_value = math::mul(entry_probability, quantity);
-    assert!(
-        config.above_liquidation_threshold(gross_value, floor_amount),
-        EOrderBelowLiquidationThreshold,
+fun raw_bernoulli_fee_rate(config: &StrikeExposureConfig, probability: u64): u64 {
+    assert!(probability <= constants::float_scaling!(), EInvalidFeeProbability);
+    if (probability == 0 || probability == constants::float_scaling!()) return 0;
+
+    let complement = constants::float_scaling!() - probability;
+    let variance = math::mul(probability, complement);
+    let bernoulli_factor = predict_math::sqrt(variance, constants::float_scaling!());
+    math::mul(config.base_fee, bernoulli_factor)
+}
+
+/// Linear ramp that scales the trade fee up as expiry approaches.
+fun expiry_fee_multiplier(config: &StrikeExposureConfig, time_to_expiry_ms: u64): u64 {
+    if (time_to_expiry_ms >= config.expiry_fee_window_ms) return constants::float_scaling!();
+
+    let ramp = predict_math::mul_div_round_down(
+        config.expiry_fee_max_multiplier - constants::float_scaling!(),
+        config.expiry_fee_window_ms - time_to_expiry_ms,
+        config.expiry_fee_window_ms,
     );
+    constants::float_scaling!() + ramp
 }

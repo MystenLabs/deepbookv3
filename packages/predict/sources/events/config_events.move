@@ -16,13 +16,9 @@ use deepbook_predict::{
 };
 use sui::event;
 
-/// Emitted when pricing or quote-freshness config changes.
+/// Emitted when quote-freshness config changes.
 public struct PricingConfigUpdated has copy, drop, store {
     protocol_config_id: ID,
-    base_fee: u64,
-    min_fee: u64,
-    min_ask_price: u64,
-    max_ask_price: u64,
     pyth_spot_freshness_ms: u64,
     block_scholes_prices_freshness_ms: u64,
     block_scholes_svi_freshness_ms: u64,
@@ -52,6 +48,12 @@ public struct StrikeExposureTemplateConfigUpdated has copy, drop, store {
     protocol_config_id: ID,
     max_expiry_floor_premium: u64,
     liquidation_ltv: u64,
+    base_fee: u64,
+    min_fee: u64,
+    min_ask_price: u64,
+    max_ask_price: u64,
+    expiry_fee_window_ms: u64,
+    expiry_fee_max_multiplier: u64,
 }
 
 /// Emitted when future market-oracle template policy changes.
@@ -111,10 +113,6 @@ public struct ExpiryMarketMintPausedUpdated has copy, drop, store {
 public(package) fun emit_pricing_config_updated(protocol_config_id: ID, config: &PricingConfig) {
     event::emit(PricingConfigUpdated {
         protocol_config_id,
-        base_fee: config.base_fee(),
-        min_fee: config.min_fee(),
-        min_ask_price: config.min_ask_price(),
-        max_ask_price: config.max_ask_price(),
         pyth_spot_freshness_ms: config.pyth_spot_freshness_ms(),
         block_scholes_prices_freshness_ms: config.block_scholes_prices_freshness_ms(),
         block_scholes_svi_freshness_ms: config.block_scholes_svi_freshness_ms(),
@@ -154,6 +152,12 @@ public(package) fun emit_strike_exposure_template_config_updated(
         protocol_config_id,
         max_expiry_floor_premium: config.max_expiry_floor_premium(),
         liquidation_ltv: config.liquidation_ltv(),
+        base_fee: config.base_fee(),
+        min_fee: config.min_fee(),
+        min_ask_price: config.min_ask_price(),
+        max_ask_price: config.max_ask_price(),
+        expiry_fee_window_ms: config.expiry_fee_window_ms(),
+        expiry_fee_max_multiplier: config.expiry_fee_max_multiplier(),
     });
 }
 

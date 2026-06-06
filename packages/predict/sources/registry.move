@@ -55,11 +55,6 @@ public struct PythFeedConfig has copy, drop, store {
     pyth_source_id: ID,
     /// Admin-selected strike tick size for future expiries.
     tick_size: u64,
-    /// Window before expiry over which trade fees ramp up for future expiries.
-    expiry_fee_window_ms: u64,
-    /// Fee multiplier reached at expiry, in FLOAT_SCALING; 1x disables. Snapshotted into
-    /// each market at creation.
-    expiry_fee_max_multiplier: u64,
 }
 
 /// Capability for emergency pause operations. Admin can mint these for
@@ -79,7 +74,7 @@ public struct IncentiveAsset has copy, drop, store {
 /// Shared registry for source and expiry uniqueness.
 public struct Registry has key {
     id: UID,
-    /// Pyth Lazer feed ID -> source object and creation-time market config.
+    /// Pyth Lazer feed ID -> source object and oracle-grid config.
     pyth_feed_configs: Table<u32, PythFeedConfig>,
     /// Coin type -> Lazer feed binding for admin-deposited incentive assets.
     /// The single home for oracle bindings: trading feeds (`pyth_feed_configs`)
@@ -124,61 +119,6 @@ public fun pyth_feed_tick_size(registry: &Registry, pyth_lazer_feed_id: u32): Op
     } else {
         option::none()
     }
-}
-
-/// Return the configured expiry-fee ramp window for a Pyth Lazer feed, if registered.
-public fun pyth_feed_expiry_fee_window_ms(
-    registry: &Registry,
-    pyth_lazer_feed_id: u32,
-): Option<u64> {
-    if (registry.pyth_feed_configs.contains(pyth_lazer_feed_id)) {
-        option::some(registry.pyth_feed_configs.borrow(pyth_lazer_feed_id).expiry_fee_window_ms)
-    } else {
-        option::none()
-    }
-}
-
-/// Return the configured expiry-fee max multiplier for a Pyth Lazer feed, if registered.
-public fun pyth_feed_expiry_fee_max_multiplier(
-    registry: &Registry,
-    pyth_lazer_feed_id: u32,
-): Option<u64> {
-    if (registry.pyth_feed_configs.contains(pyth_lazer_feed_id)) {
-        option::some(registry
-            .pyth_feed_configs
-            .borrow(pyth_lazer_feed_id)
-            .expiry_fee_max_multiplier)
-    } else {
-        option::none()
-    }
-}
-
-/// Set the per-asset expiry-fee ramp window snapshotted by future expiry markets
-/// for one Pyth feed.
-public fun set_pyth_feed_expiry_fee_window_ms(
-    registry: &mut Registry,
-    _admin_cap: &AdminCap,
-    pyth_lazer_feed_id: u32,
-    window_ms: u64,
-) {
-    assert!(registry.pyth_feed_configs.contains(pyth_lazer_feed_id), EPythFeedNotRegistered);
-    config_constants::assert_expiry_fee_window_ms(window_ms);
-    registry.pyth_feed_configs.borrow_mut(pyth_lazer_feed_id).expiry_fee_window_ms = window_ms;
-}
-
-/// Set the per-asset expiry-fee max multiplier snapshotted by future expiry markets
-/// for one Pyth feed. `max_multiplier` (FLOAT_SCALING, 1x disables) is the multiplier
-/// reached at expiry over the configured ramp window. Larger values suit more volatile assets.
-public fun set_pyth_feed_expiry_fee_max_multiplier(
-    registry: &mut Registry,
-    _admin_cap: &AdminCap,
-    pyth_lazer_feed_id: u32,
-    max_multiplier: u64,
-) {
-    assert!(registry.pyth_feed_configs.contains(pyth_lazer_feed_id), EPythFeedNotRegistered);
-    config_constants::assert_expiry_fee_max_multiplier(max_multiplier);
-    registry.pyth_feed_configs.borrow_mut(pyth_lazer_feed_id).expiry_fee_max_multiplier =
-        max_multiplier;
 }
 
 /// Set the strike tick size used by future expiry markets for one Pyth feed.
@@ -297,8 +237,7 @@ public fun pause_expiry_market_mint_pause_cap(
     config.pause_expiry_mint(expiry_market_id);
 }
 
-/// Create a shared Pyth source for one admin-approved Lazer feed, configuring
-/// the per-asset expiry-fee ramp policy up front.
+/// Create a shared Pyth source for one admin-approved Lazer feed.
 ///
 /// The registry enforces one source object per feed ID.
 public fun create_pyth_source(
@@ -306,15 +245,11 @@ public fun create_pyth_source(
     _admin_cap: &AdminCap,
     pyth_lazer_feed_id: u32,
     tick_size: u64,
-    expiry_fee_window_ms: u64,
-    expiry_fee_max_multiplier: u64,
     ctx: &mut TxContext,
 ): ID {
     registry.assert_version_allowed();
     assert!(!registry.pyth_feed_configs.contains(pyth_lazer_feed_id), EPythSourceAlreadyCreated);
     config_constants::assert_oracle_tick_size(tick_size);
-    config_constants::assert_expiry_fee_window_ms(expiry_fee_window_ms);
-    config_constants::assert_expiry_fee_max_multiplier(expiry_fee_max_multiplier);
     let pyth_source_id = pyth_source::create_and_share(
         pyth_lazer_feed_id,
         registry.allowed_versions,
@@ -327,8 +262,6 @@ public fun create_pyth_source(
             PythFeedConfig {
                 pyth_source_id,
                 tick_size,
-                expiry_fee_window_ms,
-                expiry_fee_max_multiplier,
             },
         );
     pyth_source_id
@@ -424,8 +357,6 @@ public fun create_expiry_market(
     let pyth_config = registry.pyth_feed_configs.borrow(pyth_lazer_feed_id);
     assert!(pyth_config.pyth_source_id == pyth.id(), EFeedIdMismatch);
     let tick_size = pyth_config.tick_size;
-    let expiry_fee_window_ms = pyth_config.expiry_fee_window_ms;
-    let expiry_fee_max_multiplier = pyth_config.expiry_fee_max_multiplier;
     pricing::assert_pyth_spot_fresh(config.pricing_config(), pyth, clock);
     let grid = strike_grid::new_centered(pyth.spot(), tick_size);
     let preallocated_ticks = expiry_preallocated_ticks(expiry, clock.timestamp_ms());
@@ -447,8 +378,6 @@ public fun create_expiry_market(
         expiry,
         grid,
         preallocated_ticks,
-        expiry_fee_window_ms,
-        expiry_fee_max_multiplier,
         ctx,
     );
     pool_vault.register_expiry_market(config, expiry_market_id);

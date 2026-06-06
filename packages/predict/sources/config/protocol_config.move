@@ -70,18 +70,52 @@ public fun expiry_max_funding(config: &ProtocolConfig, expiry_market_id: ID): u6
     config.expiry_config(expiry_market_id).max_expiry_funding()
 }
 
-/// Set the base fee multiplier.
-public fun set_base_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
+/// Set the base fee multiplier snapshotted by future expiry markets.
+public fun set_template_base_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
     config.assert_not_valuation_in_progress();
-    config.pricing_config.set_base_fee(fee);
-    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
+    config.strike_exposure_template_config.set_base_fee(fee);
+    config_events::emit_strike_exposure_template_config_updated(
+        config.id(),
+        &config.strike_exposure_template_config,
+    );
 }
 
-/// Set the minimum fee floor.
-public fun set_min_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
+/// Set the minimum fee floor snapshotted by future expiry markets.
+public fun set_template_min_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
     config.assert_not_valuation_in_progress();
-    config.pricing_config.set_min_fee(fee);
-    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
+    config.strike_exposure_template_config.set_min_fee(fee);
+    config_events::emit_strike_exposure_template_config_updated(
+        config.id(),
+        &config.strike_exposure_template_config,
+    );
+}
+
+/// Set the expiry-fee ramp window snapshotted by future expiry markets.
+public fun set_template_expiry_fee_window_ms(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.strike_exposure_template_config.set_expiry_fee_window_ms(value);
+    config_events::emit_strike_exposure_template_config_updated(
+        config.id(),
+        &config.strike_exposure_template_config,
+    );
+}
+
+/// Set the expiry-fee max multiplier snapshotted by future expiry markets.
+public fun set_template_expiry_fee_max_multiplier(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.strike_exposure_template_config.set_expiry_fee_max_multiplier(value);
+    config_events::emit_strike_exposure_template_config_updated(
+        config.id(),
+        &config.strike_exposure_template_config,
+    );
 }
 
 /// Set the maximum floor-index increase snapshotted by future expiry markets.
@@ -124,18 +158,32 @@ public fun set_benefit_powers(
     config.stake_config.set_benefit_powers(lower, upper);
 }
 
-/// Set the global minimum allowed mint price.
-public fun set_min_ask_price(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
+/// Set the minimum all-in mint price snapshotted by future expiry markets.
+public fun set_template_min_ask_price(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
     config.assert_not_valuation_in_progress();
-    config.pricing_config.set_min_ask_price(value);
-    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
+    config.strike_exposure_template_config.set_min_ask_price(value);
+    config_events::emit_strike_exposure_template_config_updated(
+        config.id(),
+        &config.strike_exposure_template_config,
+    );
 }
 
-/// Set the global maximum allowed mint price.
-public fun set_max_ask_price(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
+/// Set the maximum all-in mint price snapshotted by future expiry markets.
+public fun set_template_max_ask_price(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
     config.assert_not_valuation_in_progress();
-    config.pricing_config.set_max_ask_price(value);
-    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
+    config.strike_exposure_template_config.set_max_ask_price(value);
+    config_events::emit_strike_exposure_template_config_updated(
+        config.id(),
+        &config.strike_exposure_template_config,
+    );
 }
 
 /// Set the live Pyth spot freshness threshold.
