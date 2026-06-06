@@ -319,13 +319,3 @@ fun find_gap(points: &vector<CurvePoint>, tick_size: u64): (bool, u64) {
 fun snap_to_tick(strike: u64, origin: u64, tick_size: u64): u64 {
     origin + (strike - origin) / tick_size * tick_size
 }
-
-// === Test-Only Functions ===
-
-/// Construct a `CurvePoint` directly for tests that need to drive `live_value`
-/// without a full pricing/oracle fixture. Production builds points only inside
-/// `build_curve`, but downstream NAV math is independent of that builder.
-#[test_only]
-public fun new_curve_point_for_testing(strike: u64, up_price: u64): CurvePoint {
-    CurvePoint { strike, up_price }
-}

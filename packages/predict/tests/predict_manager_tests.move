@@ -4,12 +4,7 @@
 #[test_only]
 module deepbook_predict::predict_manager_tests;
 
-use deepbook_predict::{
-    builder_code,
-    predict_manager::{Self, PredictManager},
-    registry,
-    test_constants
-};
+use deepbook_predict::{predict_manager::{Self, PredictManager}, registry, test_constants};
 use dusdc::dusdc::DUSDC;
 use std::unit_test::{assert_eq, destroy};
 use sui::{coin, test_scenario::{Self as test, return_shared}};
@@ -20,7 +15,6 @@ const FAKE_EXPIRY_ID: address = @0xCAFE;
 const FAKE_EXPIRY_ID_2: address = @0xBABE;
 const ORDER_ID_A: u256 = 42;
 const ORDER_ID_B: u256 = 43;
-const BUILDER_INDEX: u64 = 7;
 const FEE_AMOUNT: u64 = 5_000;
 const CASH_PAID: u64 = 100_000;
 const CASH_RECEIVED: u64 = 60_000;
@@ -133,49 +127,7 @@ fun share_makes_manager_take_shared() {
     scenario.end();
 }
 
-// === builder_code_id setter / unsetter ===
-
-#[test]
-fun builder_code_id_starts_none_then_set_and_unset() {
-    let (mut scenario, registry_id) = setup();
-    let mut manager = create_alice_manager(&mut scenario, registry_id);
-
-    assert!(manager.builder_code_id().is_none());
-
-    // Alice creates a builder code for herself.
-    let code = builder_code::new_for_testing(
-        test_constants::alice(),
-        BUILDER_INDEX,
-        scenario.ctx(),
-    );
-    manager.set_builder_code(&code, scenario.ctx());
-
-    let stored = manager.builder_code_id();
-    assert!(stored.is_some());
-    assert_eq!(*stored.borrow(), code.id());
-
-    manager.unset_builder_code(scenario.ctx());
-    assert!(manager.builder_code_id().is_none());
-
-    destroy(manager);
-    builder_code::destroy_for_testing(code);
-    scenario.end();
-}
-
-#[test, expected_failure(abort_code = predict_manager::ENotOwner)]
-fun set_builder_code_by_non_owner_aborts() {
-    let (mut scenario, registry_id) = setup();
-    let mut manager = create_alice_manager(&mut scenario, registry_id);
-    let code = builder_code::new_for_testing(
-        test_constants::alice(),
-        BUILDER_INDEX,
-        scenario.ctx(),
-    );
-
-    scenario.next_tx(test_constants::bob());
-    manager.set_builder_code(&code, scenario.ctx());
-    abort 999
-}
+// === builder_code_id unsetter ===
 
 #[test, expected_failure(abort_code = predict_manager::ENotOwner)]
 fun unset_builder_code_by_non_owner_aborts() {

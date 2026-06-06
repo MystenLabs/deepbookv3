@@ -163,33 +163,3 @@ fun pow10(exponent: u64): u128 {
 fun ceil_div(numerator: u128, denominator: u128): u128 {
     (numerator + denominator - 1) / denominator
 }
-
-// === Test-Only Functions ===
-
-#[test_only]
-public fun new_for_testing(ctx: &mut TxContext): PythSource {
-    PythSource {
-        id: object::new(ctx),
-        feed_id: 0,
-        spot: 0,
-        source_timestamp_ms: 0,
-        update_timestamp_ms: 0,
-        allowed_versions: sui::vec_set::singleton(constants::current_version!()),
-    }
-}
-
-/// Drive spot and timestamps directly without going through `update_from_lazer`
-/// (which needs a `pyth_lazer::Update` that has no Move-side test constructor).
-/// Used by oracle settlement tests that need a "Pyth has fresh post-expiry data"
-/// state.
-#[test_only]
-public fun set_state_for_testing(
-    source: &mut PythSource,
-    spot: u64,
-    source_timestamp_ms: u64,
-    update_timestamp_ms: u64,
-) {
-    source.spot = spot;
-    source.source_timestamp_ms = source_timestamp_ms;
-    source.update_timestamp_ms = update_timestamp_ms;
-}

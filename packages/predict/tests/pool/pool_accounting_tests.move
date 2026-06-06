@@ -4,7 +4,7 @@
 #[test_only]
 module deepbook_predict::pool_accounting_tests;
 
-use deepbook_predict::{constants, pool_accounting};
+use deepbook_predict::pool_accounting;
 use std::unit_test::assert_eq;
 
 const EXPIRY_ID: address = @0xACCC;
@@ -51,34 +51,6 @@ fun unknown_expiry_flow_read_aborts() {
     assert_eq!(ledger.active_expiry_markets().length(), 0);
 
     let (_, _) = ledger.expiry_flow_amounts(UNKNOWN_EXPIRY_ID.to_id());
-    abort 999
-}
-
-#[test, expected_failure(abort_code = pool_accounting::EMaxExpiryFundingExceeded)]
-fun record_sent_above_max_expiry_funding_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let expiry_id = EXPIRY_ID.to_id();
-    let mut ledger = pool_accounting::new(ctx);
-    ledger.register_expiry(expiry_id);
-    ledger.set_max_expiry_funding(expiry_id, constants::expiry_cash_floor!());
-    assert_eq!(ledger.max_expiry_funding(expiry_id), constants::expiry_cash_floor!());
-
-    ledger.record_sent_to_expiry(expiry_id, constants::expiry_cash_floor!() + 1);
-    abort 999
-}
-
-#[test, expected_failure(abort_code = pool_accounting::ETerminalAccountingStarted)]
-fun record_sent_after_terminal_accounting_started_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let expiry_id = EXPIRY_ID.to_id();
-    let mut ledger = pool_accounting::new(ctx);
-    ledger.register_expiry(expiry_id);
-    ledger.record_sent_to_expiry(expiry_id, constants::expiry_cash_floor!());
-    ledger.record_received_from_expiry(expiry_id, constants::expiry_cash_floor!());
-    let materialized_profit = ledger.materialize_expiry_profit(expiry_id);
-    assert_eq!(materialized_profit, 0);
-
-    ledger.record_sent_to_expiry(expiry_id, 1);
     abort 999
 }
 

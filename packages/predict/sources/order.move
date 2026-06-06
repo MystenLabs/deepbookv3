@@ -70,7 +70,7 @@ public fun higher_boundary_index(order: &Order): u64 {
 
 /// Return the encoded quantity in position lots.
 public fun quantity_lots(order: &Order): u64 {
-    decode_u32(order.id, QUANTITY_LOTS_OFFSET)
+    decode_quantity_lots(order.id)
 }
 
 /// Return the immutable quantity encoded in this order.
@@ -155,8 +155,9 @@ fun new(
     assert!(floor_shares <= quantity, EInvalidFloorShares);
     assert_valid_order_shape(lower_boundary_index, higher_boundary_index, floor_shares > 0);
 
+    let quantity_lots_key = encode_quantity_lots_key(quantity_lots);
     let id =
-        ((quantity_lots as u256) << QUANTITY_LOTS_OFFSET)
+        (quantity_lots_key << QUANTITY_LOTS_OFFSET)
         | ((floor_shares as u256) << FLOOR_SHARES_OFFSET)
         | ((opened_at_ms as u256) << OPENED_AT_OFFSET)
         | ((lower_boundary_index as u256) << LOWER_BOUNDARY_INDEX_OFFSET)
@@ -176,6 +177,10 @@ fun decode_u32(id: u256, offset: u8): u64 {
     ((id >> offset) & U32_MASK) as u64
 }
 
+fun decode_quantity_lots(id: u256): u64 {
+    (U32_MASK as u64) - decode_u32(id, QUANTITY_LOTS_OFFSET)
+}
+
 fun decode_u48(id: u256, offset: u8): u64 {
     ((id >> offset) & U48_MASK) as u64
 }
@@ -187,6 +192,10 @@ fun decode_u64(id: u256, offset: u8): u64 {
 fun quantity_lots_from_quantity(quantity: u64): u64 {
     assert_valid_quantity(quantity);
     quantity / constants::position_lot_size!()
+}
+
+fun encode_quantity_lots_key(quantity_lots: u64): u256 {
+    U32_MASK - (quantity_lots as u256)
 }
 
 fun assert_valid(order: &Order) {

@@ -395,8 +395,3 @@ fun strike_to_coords(grid: &StrikeGrid, strike: u64): (u64, u64) {
 fun page_count(total_strikes: u64): u64 {
     (total_strikes - 1) / PAGE_SLOTS + 1
 }
-
-#[test_only]
-public fun materialized_page_count_for_testing(nav: &StrikeNavMatrix): u64 {
-    nav.pages.length()
-}

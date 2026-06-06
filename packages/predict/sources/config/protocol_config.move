@@ -497,10 +497,3 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         per_expiry: table::new(ctx),
     }
 }
-
-// === Test-Only Functions ===
-
-#[test_only]
-public fun new_for_testing(ctx: &mut TxContext): ProtocolConfig {
-    new(ctx)
-}
