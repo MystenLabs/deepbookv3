@@ -4,7 +4,7 @@
 /// Immutable contract terms encoded in a Predict order ID.
 ///
 /// An `Order` represents the durable contract terms needed after mint: range
-/// boundary indexes, quantity, deterministic floor seed, original open time, and
+/// boundary indexes, quantity, normalized floor shares, original open time, and
 /// expiry-local sequence. Mint-only inputs such as entry probability, leverage,
 /// contribution, and fee policy intentionally live outside this module. The
 /// packed ID is the single source of truth at protocol boundaries, while concrete
@@ -16,13 +16,13 @@ use deepbook_predict::constants;
 const EInvalidOrderId: u64 = 0;
 const EInvalidOpenedAt: u64 = 1;
 const EInvalidBoundaryIndex: u64 = 2;
-const EInvalidFloorSeed: u64 = 3;
+const EInvalidFloorShares: u64 = 3;
 const EInvalidBoundaryRange: u64 = 4;
 const EInvalidQuantity: u64 = 5;
 const EInvalidSequence: u64 = 6;
 
 const QUANTITY_LOTS_OFFSET: u8 = 200;
-const FLOOR_SEED_AMOUNT_OFFSET: u8 = 136;
+const FLOOR_SHARES_OFFSET: u8 = 136;
 const OPENED_AT_OFFSET: u8 = 88;
 const LOWER_BOUNDARY_INDEX_OFFSET: u8 = 64;
 const HIGHER_BOUNDARY_INDEX_OFFSET: u8 = 40;
@@ -90,7 +90,7 @@ public(package) fun new_from_boundary_indices(
     opened_at_ms: u64,
     lower_boundary_index: u64,
     higher_boundary_index: u64,
-    floor_seed_amount: u64,
+    floor_shares: u64,
     quantity: u64,
     sequence: u64,
 ): Order {
@@ -98,7 +98,7 @@ public(package) fun new_from_boundary_indices(
         opened_at_ms,
         lower_boundary_index,
         higher_boundary_index,
-        floor_seed_amount,
+        floor_shares,
         quantity_lots_from_quantity(quantity),
         sequence,
     )
@@ -108,7 +108,7 @@ public(package) fun new_from_boundary_indices(
 public(package) fun replacement(
     old_order: &Order,
     quantity: u64,
-    floor_seed_amount: u64,
+    floor_shares: u64,
     sequence: u64,
 ): Order {
     assert!(quantity < old_order.quantity(), EInvalidQuantity);
@@ -116,7 +116,7 @@ public(package) fun replacement(
         old_order.opened_at_ms(),
         old_order.lower_boundary_index(),
         old_order.higher_boundary_index(),
-        floor_seed_amount,
+        floor_shares,
         quantity,
         sequence,
     )
@@ -130,19 +130,19 @@ public(package) fun assert_valid_quantity(quantity: u64) {
 }
 
 public(package) fun is_leveraged(order: &Order): bool {
-    order.floor_seed_amount() > 0
+    order.floor_shares() > 0
 }
 
-/// Return the deterministic floor seed amount encoded in this order.
-public(package) fun floor_seed_amount(order: &Order): u64 {
-    decode_u64(order.id, FLOOR_SEED_AMOUNT_OFFSET)
+/// Return the normalized floor shares encoded in this order.
+public(package) fun floor_shares(order: &Order): u64 {
+    decode_u64(order.id, FLOOR_SHARES_OFFSET)
 }
 
 fun new(
     opened_at_ms: u64,
     lower_boundary_index: u64,
     higher_boundary_index: u64,
-    floor_seed_amount: u64,
+    floor_shares: u64,
     quantity_lots: u64,
     sequence: u64,
 ): Order {
@@ -152,12 +152,12 @@ fun new(
     assert!(quantity_lots > 0 && quantity_lots <= U32_MASK as u64, EInvalidQuantity);
     assert!(sequence <= U40_MASK as u64, EInvalidSequence);
     let quantity = quantity_lots * constants::position_lot_size!();
-    assert!(floor_seed_amount <= quantity, EInvalidFloorSeed);
-    assert_valid_order_shape(lower_boundary_index, higher_boundary_index, floor_seed_amount > 0);
+    assert!(floor_shares <= quantity, EInvalidFloorShares);
+    assert_valid_order_shape(lower_boundary_index, higher_boundary_index, floor_shares > 0);
 
     let id =
         ((quantity_lots as u256) << QUANTITY_LOTS_OFFSET)
-        | ((floor_seed_amount as u256) << FLOOR_SEED_AMOUNT_OFFSET)
+        | ((floor_shares as u256) << FLOOR_SHARES_OFFSET)
         | ((opened_at_ms as u256) << OPENED_AT_OFFSET)
         | ((lower_boundary_index as u256) << LOWER_BOUNDARY_INDEX_OFFSET)
         | ((higher_boundary_index as u256) << HIGHER_BOUNDARY_INDEX_OFFSET)
@@ -193,7 +193,7 @@ fun assert_valid(order: &Order) {
     let quantity_lots = order.quantity_lots();
     assert!(order.id >> ORDER_ID_BITS == 0, EInvalidOrderId);
     assert!(quantity_lots > 0, EInvalidQuantity);
-    assert!(order.floor_seed_amount() <= order.quantity(), EInvalidFloorSeed);
+    assert!(order.floor_shares() <= order.quantity(), EInvalidFloorShares);
     assert_valid_order_shape(
         order.lower_boundary_index(),
         order.higher_boundary_index(),

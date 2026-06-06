@@ -31,8 +31,6 @@ public struct OrderMinted has copy, drop, store {
     /// EWMA gas-price congestion surcharge retained by the pool, in DUSDC base units.
     penalty_fee: u64,
     builder_code_id: Option<ID>,
-    /// Leverage-implied floor seed amount, in DUSDC base units.
-    floor_seed_amount: u64,
 }
 
 /// Emitted when a live position is closed fully or partially.
@@ -121,7 +119,6 @@ public(package) fun emit_order_minted(
         builder_fee,
         penalty_fee,
         builder_code_id: if (builder_fee == 0) option::none() else manager.builder_code_id(),
-        floor_seed_amount: order.floor_seed_amount(),
     });
 }
 

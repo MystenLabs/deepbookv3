@@ -196,15 +196,8 @@ public(package) fun close_settled_order(
     if (settlement <= lower || settlement > higher) {
         return 0
     };
-    let index_at_open = exposure
-        .config
-        .floor_index_at_ms(
-            exposure.expiry_ms,
-            order.opened_at_ms(),
-        );
     let index_at_settlement = exposure.config.terminal_floor_index();
-    let index_increase = math::div(index_at_settlement, index_at_open);
-    let terminal_floor = math::mul(order.floor_seed_amount(), index_increase);
+    let terminal_floor = math::mul(order.floor_shares(), index_at_settlement);
 
     let quantity = order.quantity();
     let payout = quantity - terminal_floor;
@@ -248,19 +241,18 @@ public(package) fun allocate_mint_order(
 
     let (lower_boundary_index, higher_boundary_index) = exposure.boundary_indices(lower, higher);
     let sequence = exposure.next_order_sequence;
+
+    let index_at_open = exposure.config.floor_index_at_ms(exposure.expiry_ms, opened_at_ms);
+    let floor_shares = math::div_round_up(floor_seed_amount, index_at_open);
     let allocated_order = order::new_from_boundary_indices(
         opened_at_ms,
         lower_boundary_index,
         higher_boundary_index,
-        floor_seed_amount,
+        floor_shares,
         quantity,
         sequence,
     );
     exposure.next_order_sequence = sequence + 1;
-
-    // variables needed to insert to nav
-    let index_at_open = exposure.config.floor_index_at_ms(exposure.expiry_ms, opened_at_ms);
-    let floor_shares = math::div(floor_seed_amount, index_at_open);
 
     // variables needed to insert to payout tree
     let index_at_settlement = exposure.config.terminal_floor_index();
@@ -310,7 +302,7 @@ public(package) fun close_and_quote_live_order(
         );
     let index_at_settlement = exposure.config.terminal_floor_index();
 
-    let old_floor_shares = math::div(order.floor_seed_amount(), index_at_open);
+    let old_floor_shares = order.floor_shares();
     let close_fraction = math::div(close_quantity, old_quantity);
 
     let old_terminal_floor = math::mul(old_floor_shares, index_at_settlement);
@@ -358,11 +350,11 @@ public(package) fun close_and_quote_live_order(
     };
 
     let remaining_fraction = constants::float_scaling!() - close_fraction;
-    let remaining_floor_seed_amount = math::mul(order.floor_seed_amount(), remaining_fraction);
+    let remaining_floor_shares = math::mul(order.floor_shares(), remaining_fraction);
     let replacement_order = order::replacement(
         order,
         remaining_quantity,
-        remaining_floor_seed_amount,
+        remaining_floor_shares,
         exposure.next_order_sequence,
     );
 
@@ -404,14 +396,8 @@ public(package) fun liquidate_live_orders(
             higher,
             clock,
         );
-        let index_at_open = exposure
-            .config
-            .floor_index_at_ms(
-                exposure.expiry_ms,
-                order.opened_at_ms(),
-            );
-        let index_increase = math::div(index_now, index_at_open);
-        let current_floor_amount = math::mul(order.floor_seed_amount(), index_increase);
+        let floor_shares = order.floor_shares();
+        let current_floor_amount = math::mul(floor_shares, index_now);
 
         let can_liquidate = exposure
             .config
@@ -423,18 +409,23 @@ public(package) fun liquidate_live_orders(
 
         if (can_liquidate) {
             let quantity = order.quantity();
-            let index_increase = math::div(index_at_settlement, index_at_open);
-            let terminal_floor = math::mul(order.floor_seed_amount(), index_increase);
-            let floor_share_amount = math::div(order.floor_seed_amount(), index_at_open);
+            let index_at_open = exposure
+                .config
+                .floor_index_at_ms(
+                    exposure.expiry_ms,
+                    order.opened_at_ms(),
+                );
+            let terminal_floor = math::mul(floor_shares, index_at_settlement);
             let terminal_payout = quantity - terminal_floor;
 
-            let live_backing_payout = quantity - order.floor_seed_amount();
+            let floor_at_open = math::mul(floor_shares, index_at_open);
+            let live_backing_payout = quantity - floor_at_open;
 
             exposure.liquidation.mark_liquidated(&order);
             let grid = exposure.grid;
             {
                 let live = exposure.live.borrow_mut();
-                live.nav.remove_range(&grid, lower, higher, quantity, floor_share_amount);
+                live.nav.remove_range(&grid, lower, higher, quantity, floor_shares);
                 live
                     .payout
                     .remove_range(&grid, lower, higher, terminal_payout, live_backing_payout);
