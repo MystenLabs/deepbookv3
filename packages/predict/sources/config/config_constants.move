@@ -22,7 +22,7 @@ const EInvalidMinBasis: u64 = 11;
 const EInvalidMaxBasis: u64 = 12;
 const EInvalidMaxExpiryFunding: u64 = 13;
 const EInvalidTradingLossRebateRate: u64 = 14;
-const EInvalidMaxExpiryFloorPremium: u64 = 15;
+const EInvalidTerminalFloorIndex: u64 = 15;
 const EInvalidExpiryFeeWindowMs: u64 = 16;
 const EInvalidExpiryFeeMaxMultiplier: u64 = 17;
 const EInvalidLowerBenefitPower: u64 = 18;
@@ -78,18 +78,20 @@ public(package) fun assert_trade_liquidation_budget(value: u64) {
     );
 }
 
-// === Leverage ===
+// === Floor Index and Liquidation ===
 
-public(package) macro fun default_max_expiry_floor_premium(): u64 { 200_000_000 }
-public(package) macro fun min_max_expiry_floor_premium(): u64 { 0 }
-public(package) macro fun max_max_expiry_floor_premium(): u64 {
+public(package) macro fun default_terminal_floor_index(): u64 { 1_200_000_000 }
+public(package) macro fun min_terminal_floor_index(): u64 {
     deepbook_predict::constants::float_scaling!()
 }
+public(package) macro fun max_terminal_floor_index(): u64 {
+    2 * deepbook_predict::constants::float_scaling!()
+}
 
-public(package) fun assert_max_expiry_floor_premium(value: u64) {
+public(package) fun assert_terminal_floor_index(value: u64) {
     assert!(
-        value >= min_max_expiry_floor_premium!() && value <= max_max_expiry_floor_premium!(),
-        EInvalidMaxExpiryFloorPremium,
+        value >= min_terminal_floor_index!() && value <= max_terminal_floor_index!(),
+        EInvalidTerminalFloorIndex,
     );
 }
 

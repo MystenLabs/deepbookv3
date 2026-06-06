@@ -91,9 +91,9 @@ public fun trading_loss_rebate_rate(market: &ExpiryMarket): u64 {
     market.cash.trading_loss_rebate_rate()
 }
 
-/// Return the terminal floor-index premium snapshotted for this expiry.
-public fun max_expiry_floor_premium(market: &ExpiryMarket): u64 {
-    market.strike_exposure.max_expiry_floor_premium()
+/// Return the terminal floor index snapshotted for this expiry.
+public fun terminal_floor_index(market: &ExpiryMarket): u64 {
+    market.strike_exposure.terminal_floor_index()
 }
 
 /// Return the liquidation LTV snapshotted for this expiry.

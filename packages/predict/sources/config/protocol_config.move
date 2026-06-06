@@ -118,14 +118,14 @@ public fun set_template_expiry_fee_max_multiplier(
     );
 }
 
-/// Set the maximum floor-index increase snapshotted by future expiry markets.
-public fun set_template_max_expiry_floor_premium(
+/// Set the terminal floor index snapshotted by future expiry markets.
+public fun set_template_terminal_floor_index(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     value: u64,
 ) {
     config.assert_not_valuation_in_progress();
-    config.strike_exposure_template_config.set_max_expiry_floor_premium(value);
+    config.strike_exposure_template_config.set_terminal_floor_index(value);
     config_events::emit_strike_exposure_template_config_updated(
         config.id(),
         &config.strike_exposure_template_config,

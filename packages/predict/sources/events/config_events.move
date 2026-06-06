@@ -46,7 +46,7 @@ public struct ExpiryCashTemplateConfigUpdated has copy, drop, store {
 /// Emitted when future strike-exposure template policy changes.
 public struct StrikeExposureTemplateConfigUpdated has copy, drop, store {
     protocol_config_id: ID,
-    max_expiry_floor_premium: u64,
+    terminal_floor_index: u64,
     liquidation_ltv: u64,
     base_fee: u64,
     min_fee: u64,
@@ -150,7 +150,7 @@ public(package) fun emit_strike_exposure_template_config_updated(
 ) {
     event::emit(StrikeExposureTemplateConfigUpdated {
         protocol_config_id,
-        max_expiry_floor_premium: config.max_expiry_floor_premium(),
+        terminal_floor_index: config.terminal_floor_index(),
         liquidation_ltv: config.liquidation_ltv(),
         base_fee: config.base_fee(),
         min_fee: config.min_fee(),
