@@ -195,10 +195,9 @@ public(package) fun close_settled_order(
     if (settlement <= lower || settlement > higher) {
         return 0
     };
+    let quantity = order.quantity();
     let index_at_settlement = exposure.config.terminal_floor_index();
     let terminal_floor = math::mul(order.floor_shares(), index_at_settlement);
-
-    let quantity = order.quantity();
     let payout = quantity - terminal_floor;
     exposure.settled_payout_liability = exposure.settled_payout_liability - payout;
 
@@ -291,21 +290,20 @@ public(package) fun close_and_quote_live_order(
 
     let (lower, higher) = exposure.order_boundaries(order);
 
+    let old_floor_shares = order.floor_shares();
+    let close_fraction = math::div(close_quantity, old_quantity);
+    let remove_floor_shares = math::mul(old_floor_shares, close_fraction);
+
+    let index_at_settlement = exposure.config.terminal_floor_index();
+    let remove_terminal_floor = math::mul(remove_floor_shares, index_at_settlement);
+    let remove_terminal_payout = close_quantity - remove_terminal_floor;
+
     let index_at_open = exposure
         .config
         .floor_index_at_ms(
             exposure.expiry_ms,
             order.opened_at_ms(),
         );
-    let index_at_settlement = exposure.config.terminal_floor_index();
-
-    let old_floor_shares = order.floor_shares();
-    let close_fraction = math::div(close_quantity, old_quantity);
-    let remove_floor_shares = math::mul(old_floor_shares, close_fraction);
-
-    let remove_terminal_floor = math::mul(remove_floor_shares, index_at_settlement);
-    let remove_terminal_payout = close_quantity - remove_terminal_floor;
-
     let remove_floor_amount_at_open = math::mul(remove_floor_shares, index_at_open);
     let remove_live_backing_payout = close_quantity - remove_floor_amount_at_open;
 

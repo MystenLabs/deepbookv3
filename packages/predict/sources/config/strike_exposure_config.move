@@ -90,23 +90,20 @@ public(package) fun floor_index_at_ms(
     expiry_ms: u64,
     timestamp_ms: u64,
 ): u64 {
+    let base = constants::float_scaling!();
+    if (timestamp_ms >= expiry_ms) return config.terminal_floor_index;
+
     let window = constants::leverage_floor_window_ms!();
-    let remaining = if (timestamp_ms >= expiry_ms) {
-        0
-    } else {
-        expiry_ms - timestamp_ms
-    };
-    let elapsed = if (remaining >= window) {
-        0
-    } else {
-        window - remaining
-    };
+    let remaining = expiry_ms - timestamp_ms;
+    if (remaining >= window) return base;
+
+    let elapsed = window - remaining;
     let phase = math::div(elapsed, window);
     let phase_squared = math::mul(phase, phase);
 
-    let max_floor_premium = config.terminal_floor_index - constants::float_scaling!();
+    let max_floor_premium = config.terminal_floor_index - base;
     let floor_premium = math::mul(max_floor_premium, phase_squared);
-    constants::float_scaling!() + floor_premium
+    base + floor_premium
 }
 
 /// Return the raw trade fee for a live probability and quantity.
