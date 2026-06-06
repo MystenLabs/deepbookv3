@@ -16,7 +16,6 @@ module deepbook_predict::math;
 use deepbook_predict::{constants, i64};
 
 const EInputZero: u64 = 0;
-const EZeroDivisor: u64 = 1;
 const EInvalidPrecision: u64 = 2;
 const EPow10ExponentTooLarge: u64 = 3;
 
@@ -115,22 +114,6 @@ public fun sqrt(x: u64, precision: u64): u64 {
     let multiplier = (constants::float_scaling!() / precision) as u128;
     let scaled = (x as u128) * multiplier * F;
     (sqrt_u128(scaled) / multiplier) as u64
-}
-
-/// (a * b) / c using u128 intermediate for full precision. Rounds down.
-public fun mul_div_round_down(a: u64, b: u64, c: u64): u64 {
-    assert!(c > 0, EZeroDivisor);
-    ((a as u128) * (b as u128) / (c as u128)) as u64
-}
-
-/// (a * b) / c using u128 intermediate for full precision. Rounds up.
-public fun mul_div_round_up(a: u64, b: u64, c: u64): u64 {
-    assert!(c > 0, EZeroDivisor);
-    let numerator = (a as u128) * (b as u128);
-    let denominator = c as u128;
-    let result = numerator / denominator;
-    let round = if (numerator % denominator == 0) 0 else 1;
-    (result + round) as u64
 }
 
 /// 10^n for small non-negative n. Capped at 18 because 10^19 overflows u64.

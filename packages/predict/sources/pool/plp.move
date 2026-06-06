@@ -18,7 +18,6 @@ use deepbook_predict::{
     expiry_market::ExpiryMarket,
     incentive::{Self, IncentiveState},
     market_oracle::MarketOracle,
-    math as predict_math,
     pool_accounting::{Self, Ledger},
     predict_manager::PredictManager,
     pricing,
@@ -322,7 +321,8 @@ public fun supply(
         payment_amount
     } else {
         assert!(pool_value > 0, EZeroPoolValue);
-        let shares = predict_math::mul_div_round_down(payment_amount, total_supply, pool_value);
+        let share_fraction = math::div(total_supply, pool_value);
+        let shares = math::mul(payment_amount, share_fraction);
         assert!(shares > 0, EZeroShares);
         shares
     };
@@ -366,7 +366,8 @@ public fun withdraw(
     assert!(lp_amount > 0, EZeroWithdraw);
 
     let total_supply = vault.treasury_cap.total_supply();
-    let withdraw_amount = predict_math::mul_div_round_down(lp_amount, dusdc_value, total_supply);
+    let withdraw_fraction = math::div(lp_amount, total_supply);
+    let withdraw_amount = math::mul(dusdc_value, withdraw_fraction);
     assert!(withdraw_amount > 0, EZeroWithdraw);
     let idle_balance = vault.idle_balance.value();
     assert!(idle_balance >= withdraw_amount, EInsufficientIdleBalance);

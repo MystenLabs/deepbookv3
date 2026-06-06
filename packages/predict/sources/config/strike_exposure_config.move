@@ -101,32 +101,12 @@ public(package) fun floor_index_at_ms(
     } else {
         window - remaining
     };
-    let phase = predict_math::mul_div_round_down(elapsed, constants::float_scaling!(), window);
-    let phase_squared = predict_math::mul_div_round_down(
-        phase,
-        phase,
-        constants::float_scaling!(),
-    );
+    let phase = math::div(elapsed, window);
+    let phase_squared = math::mul(phase, phase);
 
     let max_floor_premium = config.terminal_floor_index - constants::float_scaling!();
-    let floor_premium = predict_math::mul_div_round_down(
-        max_floor_premium,
-        phase_squared,
-        constants::float_scaling!(),
-    );
+    let floor_premium = math::mul(max_floor_premium, phase_squared);
     constants::float_scaling!() + floor_premium
-}
-
-public(package) fun can_liquidate(
-    config: &StrikeExposureConfig,
-    current_range_probability: u64,
-    quantity: u64,
-    current_floor_amount: u64,
-): bool {
-    let gross_value = math::mul(current_range_probability, quantity);
-    let liquidation_threshold = math::div(current_floor_amount, config.liquidation_ltv);
-
-    gross_value <= liquidation_threshold
 }
 
 /// Return the raw trade fee for a live probability and quantity.
@@ -140,7 +120,7 @@ public(package) fun trading_fee(
     math::mul(config.fee_rate(expiry_ms, probability, timestamp_ms), quantity)
 }
 
-/// Assert all mint-admission policy and return derived mint economics.
+/// Assert mint price, leverage, and principal policy and return derived mint economics.
 ///
 /// Returns `(user_contribution, floor_seed_amount)`.
 public(package) fun assert_mint_admission_policy(
@@ -173,48 +153,36 @@ public(package) fun assert_mint_admission_policy(
     };
 
     let exposure_value = math::mul(entry_probability, quantity);
-    let user_contribution = predict_math::mul_div_round_up(
-        exposure_value,
-        constants::float_scaling!(),
-        leverage,
-    );
+    let user_contribution = math::div(exposure_value, leverage);
     assert!(user_contribution >= constants::min_order_principal!(), EOrderPrincipalBelowMinimum);
     let floor_seed_amount = exposure_value - user_contribution;
 
-    config.assert_terminal_floor_ltv(expiry_ms, opened_at_ms, floor_seed_amount, quantity);
-
     if (floor_seed_amount > 0) {
-        let liquidation_threshold_at_open = predict_math::mul_div_round_up(
-            floor_seed_amount,
-            constants::float_scaling!(),
-            config.liquidation_ltv,
-        );
+        let liquidation_threshold_at_open = math::div(floor_seed_amount, config.liquidation_ltv);
         assert!(exposure_value > liquidation_threshold_at_open, EOrderBelowLiquidationThreshold);
     };
 
     (user_contribution, floor_seed_amount)
 }
 
-/// Assert that one order's terminal floor stays below the liquidation LTV cap.
-public(package) fun assert_terminal_floor_ltv(
+/// Assert mint floor policy and return `(floor_shares, terminal_payout, live_backing_payout)`.
+public(package) fun assert_mint_floor_terms(
     config: &StrikeExposureConfig,
     expiry_ms: u64,
     opened_at_ms: u64,
     floor_seed_amount: u64,
     quantity: u64,
-) {
+): (u64, u64, u64) {
     let open_floor_index = config.floor_index_at_ms(expiry_ms, opened_at_ms);
-    let terminal_floor = predict_math::mul_div_round_up(
-        floor_seed_amount,
-        config.terminal_floor_index,
-        open_floor_index,
-    );
-    let max_terminal_floor = predict_math::mul_div_round_down(
-        quantity,
-        config.liquidation_ltv,
-        constants::float_scaling!(),
-    );
+    let floor_shares = math::div(floor_seed_amount, open_floor_index);
+    let terminal_floor = math::mul(floor_shares, config.terminal_floor_index);
+    let max_terminal_floor = math::mul(quantity, config.liquidation_ltv);
     assert!(terminal_floor < max_terminal_floor, ETerminalFloorExceedsLiquidationLtv);
+
+    let terminal_payout = quantity - terminal_floor;
+    let floor_amount_at_open = math::mul(floor_shares, open_floor_index);
+    let live_backing_payout = quantity - floor_amount_at_open;
+    (floor_shares, terminal_payout, live_backing_payout)
 }
 
 public(package) fun new(): StrikeExposureConfig {
@@ -312,10 +280,10 @@ fun raw_bernoulli_fee_rate(config: &StrikeExposureConfig, probability: u64): u64
 fun expiry_fee_multiplier(config: &StrikeExposureConfig, time_to_expiry_ms: u64): u64 {
     if (time_to_expiry_ms >= config.expiry_fee_window_ms) return constants::float_scaling!();
 
-    let ramp = predict_math::mul_div_round_down(
-        config.expiry_fee_max_multiplier - constants::float_scaling!(),
+    let phase = math::div(
         config.expiry_fee_window_ms - time_to_expiry_ms,
         config.expiry_fee_window_ms,
     );
+    let ramp = math::mul(config.expiry_fee_max_multiplier - constants::float_scaling!(), phase);
     constants::float_scaling!() + ramp
 }

@@ -16,12 +16,7 @@
 module deepbook_predict::strike_nav_matrix;
 
 use deepbook::math;
-use deepbook_predict::{
-    constants,
-    math as predict_math,
-    pricing::CurvePoint,
-    strike_grid::StrikeGrid
-};
+use deepbook_predict::{constants, pricing::CurvePoint, strike_grid::StrikeGrid};
 use sui::table::{Self, Table};
 
 const PAGE_SLOTS: u64 = 128;
@@ -128,7 +123,7 @@ public(package) fun live_value(
         EInvalidCurveRange,
     );
 
-    let mut value = math::mul(nav.base_qty, constants::float_scaling!());
+    let mut value = nav.base_qty;
     let (mut page_lo, mut slot_lo) = strike_to_coords(grid, curve[0].strike());
     let (start, end) = nav.boundary_weighted_quantities(page_lo, slot_lo);
     value = value + math::mul(start.quantity, curve[0].up_price());
@@ -207,7 +202,7 @@ fun apply_range(
 fun floor_amount(floor_shares: u64, floor_index: u64): u64 {
     // Aggregate NAV rounds down so one-unit fixed-point dust cannot make
     // valuation abort; per-order redeem and settlement floors remain exact.
-    predict_math::mul_div_round_down(floor_shares, floor_index, constants::float_scaling!())
+    math::mul(floor_shares, floor_index)
 }
 
 fun apply_boundary_delta(

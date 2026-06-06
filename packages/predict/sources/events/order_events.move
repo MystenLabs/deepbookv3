@@ -184,6 +184,7 @@ public(package) fun emit_liquidated_order_redeemed(
 public(package) fun emit_order_liquidated(
     expiry_market_id: ID,
     order: &Order,
+    quantity: u64,
     gross_value: u64,
     floor_amount: u64,
     liquidation_ltv: u64,
@@ -191,7 +192,7 @@ public(package) fun emit_order_liquidated(
     event::emit(OrderLiquidated {
         expiry_market_id,
         order_id: order.id(),
-        quantity: order.quantity(),
+        quantity,
         gross_value,
         floor_amount,
         liquidation_ltv,

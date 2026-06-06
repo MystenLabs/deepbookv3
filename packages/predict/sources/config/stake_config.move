@@ -80,14 +80,13 @@ fun benefit_ratio(config: &StakeConfig, active_stake: u64): u64 {
     if (active_stake >= config.upper_benefit_power) return full;
     let half = full / 2;
     if (active_stake <= config.lower_benefit_power) {
-        math::mul(half, math::div(active_stake, config.lower_benefit_power))
+        let lower_fraction = math::div(active_stake, config.lower_benefit_power);
+        math::mul(half, lower_fraction)
     } else {
-        half + math::mul(
-            half,
-            math::div(
-                active_stake - config.lower_benefit_power,
-                config.upper_benefit_power - config.lower_benefit_power,
-            ),
-        )
+        let upper_fraction = math::div(
+            active_stake - config.lower_benefit_power,
+            config.upper_benefit_power - config.lower_benefit_power,
+        );
+        half + math::mul(half, upper_fraction)
     }
 }

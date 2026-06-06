@@ -10,9 +10,9 @@
 /// the pool's DUSDC.
 module deepbook_predict::incentive;
 
+use deepbook::math;
 use deepbook_predict::{
     constants,
-    math as predict_math,
     pricing,
     protocol_config::ProtocolConfig,
     pyth_source::PythSource
@@ -128,7 +128,8 @@ public(package) fun claim<T>(
     ctx: &mut TxContext,
 ): Coin<T> {
     state.compound(now_ms);
-    let amount = predict_math::mul_div_round_down(lp_amount, state.released.value(), total_supply);
+    let claim_fraction = math::div(lp_amount, total_supply);
+    let amount = math::mul(state.released.value(), claim_fraction);
     state.released.split(amount).into_coin(ctx)
 }
 
@@ -154,7 +155,8 @@ fun compound<T>(state: &mut IncentiveState<T>, now_ms: u64) {
     } else {
         let elapsed = now_ms - state.last_compound_ms;
         state.last_compound_ms = now_ms;
-        predict_math::mul_div_round_down(locked, elapsed, remaining)
+        let elapsed_fraction = math::div(elapsed, remaining);
+        math::mul(locked, elapsed_fraction)
     };
     if (amount > 0) {
         state.released.join(state.locked.split(amount));
