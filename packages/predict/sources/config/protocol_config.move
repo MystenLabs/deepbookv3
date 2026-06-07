@@ -10,10 +10,10 @@ module deepbook_predict::protocol_config;
 
 use deepbook_predict::{
     admin::AdminCap,
+    config_constants,
     config_events,
     ewma_config::{Self, EwmaConfig},
     expiry_cash_config::{Self, ExpiryCashConfig},
-    expiry_runtime_config::{Self, ExpiryRuntimeConfig},
     fee_config::{Self, FeeConfig},
     market_oracle_config::{Self, MarketOracleConfig},
     pricing_config::{Self, PricingConfig},
@@ -48,6 +48,15 @@ public struct ProtocolConfig has key {
     per_expiry: Table<ID, ExpiryRuntimeConfig>,
 }
 
+/// Mutable per-expiry runtime controls. Not snapshotted; flows read the current
+/// row for the expiry market they operate on.
+public struct ExpiryRuntimeConfig has store {
+    /// When true, new mints abort. Other expiry flows remain available.
+    mint_paused: bool,
+    /// Max net DUSDC the pool may have funded into this expiry.
+    max_expiry_funding: u64,
+}
+
 // === Public Functions ===
 
 /// Return the protocol config object ID.
@@ -62,12 +71,12 @@ public fun trading_paused(config: &ProtocolConfig): bool {
 
 /// Return whether new mints are paused for one expiry market.
 public fun expiry_mint_paused(config: &ProtocolConfig, expiry_market_id: ID): bool {
-    config.expiry_config(expiry_market_id).mint_paused()
+    config.expiry_config(expiry_market_id).mint_paused
 }
 
 /// Return the max net DUSDC the pool may have funded into one expiry.
 public fun expiry_max_funding(config: &ProtocolConfig, expiry_market_id: ID): u64 {
-    config.expiry_config(expiry_market_id).max_expiry_funding()
+    config.expiry_config(expiry_market_id).max_expiry_funding
 }
 
 /// Set the base fee multiplier snapshotted by future expiry markets.
@@ -387,7 +396,13 @@ public(package) fun register_expiry_runtime_config(
     expiry_market_id: ID,
 ) {
     assert!(!config.per_expiry.contains(expiry_market_id), EExpiryConfigAlreadyExists);
-    config.per_expiry.add(expiry_market_id, expiry_runtime_config::new());
+    config.per_expiry.add(
+        expiry_market_id,
+        ExpiryRuntimeConfig {
+            mint_paused: false,
+            max_expiry_funding: config_constants::default_max_expiry_funding!(),
+        },
+    );
 }
 
 public(package) fun set_expiry_max_funding(
@@ -396,7 +411,8 @@ public(package) fun set_expiry_max_funding(
     funding: u64,
 ) {
     config.assert_not_valuation_in_progress();
-    config.expiry_config_mut(expiry_market_id).set_max_expiry_funding(funding);
+    config_constants::assert_max_expiry_funding(funding);
+    config.expiry_config_mut(expiry_market_id).max_expiry_funding = funding;
 }
 
 /// Abort unless trading mutations are currently allowed.
@@ -463,7 +479,7 @@ fun set_expiry_mint_paused_internal(
     paused: bool,
 ) {
     config.assert_not_valuation_in_progress();
-    config.expiry_config_mut(expiry_market_id).set_mint_paused(paused);
+    config.expiry_config_mut(expiry_market_id).mint_paused = paused;
     config_events::emit_expiry_market_mint_paused_updated(expiry_market_id, paused);
 }
 
