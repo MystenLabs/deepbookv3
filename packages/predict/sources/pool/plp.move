@@ -314,18 +314,7 @@ public fun supply(
     assert!(payment_amount > 0, EZeroSupply);
 
     let total_supply = vault.treasury_cap.total_supply();
-    let shares = if (total_supply == 0) {
-        // Bootstrap mints 1:1; only the DUSDC side must be empty (incentives
-        // can't exist before the first supply — see deposit guards).
-        assert!(dusdc_value == 0, EInvalidInitialSupply);
-        payment_amount
-    } else {
-        assert!(pool_value > 0, EZeroPoolValue);
-        let share_fraction = math::div(total_supply, pool_value);
-        let shares = math::mul(payment_amount, share_fraction);
-        assert!(shares > 0, EZeroShares);
-        shares
-    };
+    let shares = shares_for_supply(total_supply, dusdc_value, pool_value, payment_amount);
 
     vault.idle_balance.join(payment.into_balance());
     let plp = coin::mint(&mut vault.treasury_cap, shares, ctx);
@@ -339,6 +328,29 @@ public fun supply(
         vault.idle_balance.value(),
     );
     plp
+}
+
+/// Pure share pricing for a supply: bootstrap mints 1:1, otherwise prices the
+/// payment against the pool's share ratio. No custody, NAV, event, or storage
+/// effects.
+fun shares_for_supply(
+    total_supply: u64,
+    dusdc_value: u64,
+    pool_value: u64,
+    payment_amount: u64,
+): u64 {
+    if (total_supply == 0) {
+        // Bootstrap mints 1:1; only the DUSDC side must be empty (incentives
+        // can't exist before the first supply — see deposit guards).
+        assert!(dusdc_value == 0, EInvalidInitialSupply);
+        payment_amount
+    } else {
+        assert!(pool_value > 0, EZeroPoolValue);
+        let share_fraction = math::div(total_supply, pool_value);
+        let shares = math::mul(payment_amount, share_fraction);
+        assert!(shares > 0, EZeroShares);
+        shares
+    }
 }
 
 /// Withdraw from the pool vault against a complete full-pool sync.
