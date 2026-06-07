@@ -1,0 +1,325 @@
+// Copyright (c) Mysten Labs, Inc.
+// SPDX-License-Identifier: Apache-2.0
+
+/// Shared bring-up for production-valid Predict trade-flow tests.
+///
+/// Stands up a funded, tradeable market through the real creation + PLP funding
+/// paths (`registry::create_expiry_market`, `plp::supply` + sync rebalance) and
+/// exposes thin wrappers for the trade flows. The wrappers are methods on
+/// `Fixture` so they can borrow the fixture's `config`/`clock`/`scenario` fields
+/// disjointly in a single call (a plain accessor would borrow the whole struct
+/// and conflict). Oracle spot is seeded via the test-only `set_state_for_testing`
+/// because a real `pyth_lazer::Update` has no Move-side test constructor.
+#[test_only]
+module deepbook_predict::flow_test_helpers;
+
+use deepbook_predict::{
+    admin::AdminCap,
+    expiry_market::{Self, ExpiryMarket},
+    i64,
+    market_oracle::{Self, MarketOracle, MarketOracleCap},
+    plp::{Self, PLP, PoolVault},
+    predict_manager::PredictManager,
+    protocol_config::{Self, ProtocolConfig},
+    pyth_source::{Self, PythSource},
+    registry::{Self, Registry},
+    test_constants
+};
+use dusdc::dusdc::DUSDC;
+use std::unit_test::destroy;
+use sui::{
+    clock::{Self, Clock},
+    coin::{Self, Coin},
+    test_scenario::{Self as test, Scenario, return_shared}
+};
+
+const PYTH_FEED_ID: u32 = 1;
+const NOW_MS: u64 = 100_000;
+const TICK_SIZE: u64 = 1_000_000_000;
+/// Grid-centering spot: spot/tick = 50_100 lies in (ticks/2, ticks] for the
+/// 100_000-tick oracle grid, so `new_centered` accepts it. min_strike = 100e9.
+const CREATION_SPOT: u64 = 50_100_000_000_000;
+const LIVE_SOURCE_TIMESTAMP_MS: u64 = 99_000;
+const INITIAL_SUPPLY: u64 = 300_000_000_000;
+const PROTOCOL_RESERVE_SHARE: u64 = 400_000_000;
+
+/// The grid's minimum finite strike for the constants above (a valid lower boundary).
+public fun min_strike(): u64 { 100_000_000_000 }
+
+/// Scenario-local objects shared across one flow test.
+public struct Fixture {
+    scenario: Scenario,
+    registry: Registry,
+    admin_cap: AdminCap,
+    config: ProtocolConfig,
+    cap: MarketOracleCap,
+    clock: Clock,
+    vault_id: ID,
+    pyth_id: ID,
+    initial_plp: Coin<PLP>,
+}
+
+/// Stand up a registry + protocol config + bootstrapped PLP pool + registered
+/// Pyth source (spot seeded for grid creation). base_fee is floored to 1 and
+/// min_ask to 0 so small test quantities are admissible.
+public fun setup_pool_with_pyth(): Fixture {
+    let mut scenario = test::begin(test_constants::admin());
+    plp::init_for_testing(scenario.ctx());
+    let (mut registry, admin_cap) = registry::new_for_testing(scenario.ctx());
+    let mut config = protocol_config::new_for_testing(scenario.ctx());
+    config.set_protocol_reserve_profit_share(&admin_cap, PROTOCOL_RESERVE_SHARE);
+    config.set_template_base_fee(&admin_cap, 1);
+    config.set_template_min_ask_price(&admin_cap, 0);
+    let cap = market_oracle::create_cap(&admin_cap, scenario.ctx());
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(NOW_MS);
+
+    scenario.next_tx(test_constants::admin());
+    let mut vault = scenario.take_shared<PoolVault>();
+    let vault_id = vault.id();
+    let sync = plp::start_pool_sync(&mut config, &vault);
+    let placeholder = pyth_source::new_for_testing(scenario.ctx());
+    let initial_plp = vault.supply(
+        &mut config,
+        sync,
+        coin::mint_for_testing<DUSDC>(INITIAL_SUPPLY, scenario.ctx()),
+        &placeholder,
+        &placeholder,
+        &clock,
+        scenario.ctx(),
+    );
+    destroy(placeholder);
+    return_shared(vault);
+
+    scenario.next_tx(test_constants::admin());
+    let pyth_id = registry::create_pyth_source(
+        &mut registry,
+        &admin_cap,
+        PYTH_FEED_ID,
+        TICK_SIZE,
+        scenario.ctx(),
+    );
+    scenario.next_tx(test_constants::admin());
+    let mut pyth = scenario.take_shared_by_id<PythSource>(pyth_id);
+    pyth.set_state_for_testing(CREATION_SPOT, LIVE_SOURCE_TIMESTAMP_MS, LIVE_SOURCE_TIMESTAMP_MS);
+    return_shared(pyth);
+    scenario.next_tx(test_constants::admin());
+
+    Fixture {
+        scenario,
+        registry,
+        admin_cap,
+        config,
+        cap,
+        clock,
+        vault_id,
+        pyth_id,
+        initial_plp,
+    }
+}
+
+/// Create the market + oracle for `expiry` through the production path.
+public fun create_expiry(self: &mut Fixture, expiry: u64): (ID, ID) {
+    self.scenario.next_tx(test_constants::admin());
+    let pyth = self.scenario.take_shared_by_id<PythSource>(self.pyth_id);
+    let mut vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
+    let (expiry_id, oracle_id) = registry::create_expiry_market(
+        &mut self.registry,
+        &mut vault,
+        &mut self.config,
+        &pyth,
+        &self.cap,
+        expiry,
+        &self.clock,
+        self.scenario.ctx(),
+    );
+    return_shared(vault);
+    return_shared(pyth);
+    self.scenario.next_tx(test_constants::admin());
+    (expiry_id, oracle_id)
+}
+
+/// Take the four shared objects a flow test mutates, by captured ID.
+public fun take_market(
+    self: &mut Fixture,
+    expiry_id: ID,
+    oracle_id: ID,
+): (PythSource, PoolVault, ExpiryMarket, MarketOracle) {
+    (
+        self.scenario.take_shared_by_id<PythSource>(self.pyth_id),
+        self.scenario.take_shared_by_id<PoolVault>(self.vault_id),
+        self.scenario.take_shared_by_id<ExpiryMarket>(expiry_id),
+        self.scenario.take_shared_by_id<MarketOracle>(oracle_id),
+    )
+}
+
+/// Create a fresh trader manager (owned by alice) and fund it with DUSDC.
+public fun create_funded_manager(self: &mut Fixture, deposit: u64): PredictManager {
+    self.scenario.next_tx(test_constants::alice());
+    let mut manager = registry::create_manager(&mut self.registry, self.scenario.ctx());
+    manager.deposit(
+        coin::mint_for_testing<DUSDC>(deposit, self.scenario.ctx()),
+        self.scenario.ctx(),
+    );
+    manager
+}
+
+/// Seed fresh live Block Scholes prices + SVI so quotes are available.
+/// `live_price` is used as both spot and forward (basis = 1.0).
+public fun prepare_live_oracle(
+    self: &Fixture,
+    oracle: &mut MarketOracle,
+    pyth: &mut PythSource,
+    live_price: u64,
+) {
+    pyth.set_state_for_testing(live_price, LIVE_SOURCE_TIMESTAMP_MS, LIVE_SOURCE_TIMESTAMP_MS);
+    oracle.update_block_scholes_prices(
+        &self.config,
+        pyth,
+        &self.cap,
+        live_price,
+        live_price,
+        LIVE_SOURCE_TIMESTAMP_MS,
+        &self.clock,
+    );
+    let svi = market_oracle::new_svi_params(1, 2, i64::zero(), i64::zero(), 3);
+    oracle.update_svi(&self.config, &self.cap, svi, LIVE_SOURCE_TIMESTAMP_MS, &self.clock);
+}
+
+/// Run one full pool sync over a single active expiry (rebalances idle cash into
+/// the expiry up to the cash floor and accumulates its NAV).
+public fun sync_expiry(
+    self: &mut Fixture,
+    vault: &mut PoolVault,
+    market: &mut ExpiryMarket,
+    oracle: &MarketOracle,
+    pyth: &PythSource,
+) {
+    let mut sync = plp::start_pool_sync(&mut self.config, vault);
+    sync.sync_expiry(vault, market, &self.config, oracle, pyth, &self.clock);
+    let _pool_value = vault.finish_pool_sync(&mut self.config, sync);
+}
+
+/// Settle the oracle via the production `settle_if_possible` path using a fresh
+/// post-expiry Pyth spot. Advances the clock past expiry.
+public fun settle_oracle(
+    self: &mut Fixture,
+    oracle: &mut MarketOracle,
+    pyth: &mut PythSource,
+    settlement_price: u64,
+) {
+    let expiry = oracle.expiry();
+    let source_timestamp_ms = expiry + 1_000;
+    let update_timestamp_ms = expiry + 2_000;
+    self.clock.set_for_testing(update_timestamp_ms);
+    pyth.set_state_for_testing(settlement_price, source_timestamp_ms, update_timestamp_ms);
+    assert!(oracle.settle_if_possible(&self.config, pyth, &self.cap, &self.clock));
+}
+
+/// Mint one order for `manager` and return its packed order id.
+public fun mint(
+    self: &mut Fixture,
+    manager: &mut PredictManager,
+    market: &mut ExpiryMarket,
+    oracle: &MarketOracle,
+    pyth: &PythSource,
+    lower: u64,
+    higher: u64,
+    quantity: u64,
+    leverage: u64,
+): u256 {
+    let proof = manager.generate_proof_as_owner(self.scenario.ctx());
+    market.mint(
+        manager,
+        &proof,
+        &self.config,
+        oracle,
+        pyth,
+        lower,
+        higher,
+        quantity,
+        leverage,
+        &self.clock,
+        self.scenario.ctx(),
+    )
+}
+
+/// Close (or partially close) a live order. Returns `(closed_id, replacement_id)`.
+public fun redeem(
+    self: &mut Fixture,
+    manager: &mut PredictManager,
+    market: &mut ExpiryMarket,
+    oracle: &MarketOracle,
+    pyth: &PythSource,
+    order_id: u256,
+    close_quantity: u64,
+): (u256, Option<u256>) {
+    let proof = manager.generate_proof_as_owner(self.scenario.ctx());
+    market.redeem(
+        manager,
+        proof,
+        &self.config,
+        oracle,
+        pyth,
+        order_id,
+        close_quantity,
+        &self.clock,
+        self.scenario.ctx(),
+    )
+}
+
+/// Permissionless settled redeem (no proof). Requires a full close.
+public fun redeem_settled(
+    self: &mut Fixture,
+    manager: &mut PredictManager,
+    market: &mut ExpiryMarket,
+    oracle: &MarketOracle,
+    pyth: &PythSource,
+    order_id: u256,
+    close_quantity: u64,
+): (u256, Option<u256>) {
+    market.redeem_settled(
+        manager,
+        &self.config,
+        oracle,
+        pyth,
+        order_id,
+        close_quantity,
+        &self.clock,
+        self.scenario.ctx(),
+    )
+}
+
+// === Accessors ===
+
+public fun scenario_mut(self: &mut Fixture): &mut Scenario { &mut self.scenario }
+
+public fun config(self: &Fixture): &ProtocolConfig { &self.config }
+
+public fun clock(self: &Fixture): &Clock { &self.clock }
+
+public fun vault_id(self: &Fixture): ID { self.vault_id }
+
+public fun pyth_id(self: &Fixture): ID { self.pyth_id }
+
+/// Tear down the fixture and all owned objects.
+public fun finish(self: Fixture) {
+    let Fixture {
+        scenario,
+        registry,
+        admin_cap,
+        config,
+        cap,
+        clock,
+        vault_id: _,
+        pyth_id: _,
+        initial_plp,
+    } = self;
+    destroy(initial_plp);
+    market_oracle::destroy_cap(cap);
+    destroy(config);
+    destroy(admin_cap);
+    registry::destroy_registry_drop_for_testing(registry);
+    clock.destroy_for_testing();
+    scenario.end();
+}

@@ -295,8 +295,16 @@ public(package) fun close_and_quote_live_order(
     let old_floor_shares = order.floor_shares();
     let close_fraction = math::div(close_quantity, old_quantity);
     let remove_floor_shares = math::mul(old_floor_shares, close_fraction);
+    let remaining_quantity = old_quantity - close_quantity;
+    let remaining_floor_shares = old_floor_shares - remove_floor_shares;
 
-    exposure.remove_live_index_quantity(order, lower, higher, close_quantity, remove_floor_shares);
+    // Remove the order's FULL live-index terms (bit-equal to the mint insert),
+    // then reinsert the survivor's exact terms below. Removing only the closed
+    // slice would leave the payout tree's residual 1 ulp short of what
+    // `close_settled_order` recomputes at settlement (round-down `mul` is
+    // sub-additive over the floor-share split: `mul(old_fs,T) >=
+    // mul(remove_fs,T) + mul(remaining_fs,T)`), underflowing the settled redeem.
+    exposure.remove_live_index_quantity(order, lower, higher, old_quantity, old_floor_shares);
     exposure.liquidation.remove_order(order);
 
     // calculate payout
@@ -313,12 +321,10 @@ public(package) fun close_and_quote_live_order(
     let gross_redeem_amount = math::mul(range_probability, close_quantity);
     let redeem_amount = gross_redeem_amount - gross_redeem_amount.min(removed_floor_amount);
 
-    let remaining_quantity = old_quantity - close_quantity;
     if (remaining_quantity == 0) {
         return (*order, redeem_amount, range_probability)
     };
 
-    let remaining_floor_shares = old_floor_shares - remove_floor_shares;
     let replacement_order = order::replacement(
         order,
         remaining_quantity,
@@ -327,6 +333,13 @@ public(package) fun close_and_quote_live_order(
     );
 
     exposure.liquidation.insert_order(&replacement_order);
+    exposure.reinsert_live_index_quantity(
+        &replacement_order,
+        lower,
+        higher,
+        remaining_quantity,
+        remaining_floor_shares,
+    );
     exposure.next_order_sequence = exposure.next_order_sequence + 1;
 
     (replacement_order, redeem_amount, range_probability)
@@ -499,23 +512,63 @@ fun remove_live_index_quantity(
     quantity: u64,
     floor_shares: u64,
 ) {
-    let terminal_floor = math::mul(floor_shares, exposure.config.terminal_floor_index());
-    let terminal_payout = quantity - terminal_floor;
-    let index_at_open = exposure
-        .config
-        .floor_index_at_ms(
-            exposure.expiry_ms,
-            order.opened_at_ms(),
-        );
-    let floor_amount_at_open = math::mul(floor_shares, index_at_open);
-    let live_backing_payout = quantity - floor_amount_at_open;
-
+    let (terminal_payout, live_backing_payout) = exposure.live_index_terms(
+        order,
+        quantity,
+        floor_shares,
+    );
     let grid = exposure.grid;
     {
         let live = exposure.live.borrow_mut();
         live.nav.remove_range(&grid, lower, higher, quantity, floor_shares);
         live.payout.remove_range(&grid, lower, higher, terminal_payout, live_backing_payout);
     };
+}
+
+/// Reinsert a partial-close survivor's exact live-index terms, mirroring the
+/// mint insert so the payout tree's residual is bit-equal to what
+/// `close_settled_order` recomputes for this order at settlement.
+fun reinsert_live_index_quantity(
+    exposure: &mut StrikeExposure,
+    order: &Order,
+    lower: u64,
+    higher: u64,
+    quantity: u64,
+    floor_shares: u64,
+) {
+    let (terminal_payout, live_backing_payout) = exposure.live_index_terms(
+        order,
+        quantity,
+        floor_shares,
+    );
+    exposure.insert_live_index_quantity(
+        lower,
+        higher,
+        quantity,
+        floor_shares,
+        terminal_payout,
+        live_backing_payout,
+    );
+}
+
+/// Payout-tree terms for `quantity`/`floor_shares` of `order`, computed with the
+/// same formula as the mint insert (`assert_mint_floor_terms`): terminal payout
+/// nets the terminal floor; live backing nets the open-index floor, a
+/// conservative upper bound on future live payout. Computing remove and reinsert
+/// terms here keeps them bit-equal to the mint insert and to the settled
+/// recompute.
+fun live_index_terms(
+    exposure: &StrikeExposure,
+    order: &Order,
+    quantity: u64,
+    floor_shares: u64,
+): (u64, u64) {
+    let terminal_floor = math::mul(floor_shares, exposure.config.terminal_floor_index());
+    let terminal_payout = quantity - terminal_floor;
+    let index_at_open = exposure.config.floor_index_at_ms(exposure.expiry_ms, order.opened_at_ms());
+    let floor_amount_at_open = math::mul(floor_shares, index_at_open);
+    let live_backing_payout = quantity - floor_amount_at_open;
+    (terminal_payout, live_backing_payout)
 }
 
 /// Return `(min_strike, max_strike)` bounds used for pricing-curve construction.
