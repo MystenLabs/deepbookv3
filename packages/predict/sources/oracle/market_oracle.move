@@ -35,7 +35,6 @@ const EStaleSVISourceUpdate: u64 = 10;
 const EWrongPythSource: u64 = 11;
 const EFuturePriceSourceUpdate: u64 = 12;
 const EFutureSVISourceUpdate: u64 = 13;
-const EPendingSettlement: u64 = 14;
 const EMarketNotSettled: u64 = 15;
 const EInvalidSettlementTimestamp: u64 = 16;
 const EPackageVersionDisabled: u64 = 17;
@@ -468,11 +467,6 @@ public(package) fun assert_pyth_source(market: &MarketOracle, pyth: &PythSource)
 /// Abort unless this oracle is live and not expired.
 public(package) fun assert_active(market: &MarketOracle, clock: &Clock) {
     assert!(market.status(clock) == STATUS_ACTIVE, EMarketNotActive);
-}
-
-/// Abort if the market is expired but no settlement has been recorded.
-public(package) fun assert_not_pending_settlement(market: &MarketOracle, clock: &Clock) {
-    assert!(market.status(clock) != STATUS_PENDING_SETTLEMENT, EPendingSettlement);
 }
 
 /// Abort unless the cap is authorized for this oracle.
