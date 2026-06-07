@@ -434,7 +434,7 @@ public fun create_self_owned_manager(
 /// Bypasses are package-internal version-management entries
 /// (`enable_version`, `disable_version`, PauseCap-based disables) so admin
 /// can recover from any disabled state.
-public(package) fun assert_version_allowed(registry: &Registry) {
+fun assert_version_allowed(registry: &Registry) {
     assert!(
         registry.allowed_versions.contains(&constants::current_version!()),
         EPackageVersionDisabled,

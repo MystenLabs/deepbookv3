@@ -82,7 +82,7 @@ public(package) fun available_expiry_funding(
 }
 
 /// Return current net DUSDC funded into an expiry.
-public(package) fun net_expiry_funding(ledger: &Ledger, expiry_market_id: ID): u64 {
+fun net_expiry_funding(ledger: &Ledger, expiry_market_id: ID): u64 {
     ledger.assert_registered_expiry(expiry_market_id);
     flow_net_funding(ledger.registered_expiries.borrow(expiry_market_id))
 }

@@ -467,7 +467,7 @@ public(package) fun create_and_share(
 }
 
 /// Abort if the running package version is not allowed for this oracle.
-public(package) fun assert_version_allowed(market: &MarketOracle) {
+fun assert_version_allowed(market: &MarketOracle) {
     assert!(
         market.allowed_versions.contains(&constants::current_version!()),
         EPackageVersionDisabled,

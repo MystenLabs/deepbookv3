@@ -144,7 +144,7 @@ public(package) fun create_and_share(
 }
 
 /// Abort if the running package version is not allowed for this source.
-public(package) fun assert_version_allowed(source: &PythSource) {
+fun assert_version_allowed(source: &PythSource) {
     assert!(
         source.allowed_versions.contains(&constants::current_version!()),
         EPackageVersionDisabled,

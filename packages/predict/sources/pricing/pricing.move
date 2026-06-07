@@ -166,7 +166,7 @@ public(package) fun build_curve(
 }
 
 /// Compute the fair price for the range `(lower, higher]`.
-public(package) fun compute_range_price(
+fun compute_range_price(
     svi: &SVIParams,
     forward: u64,
     lower: u64,

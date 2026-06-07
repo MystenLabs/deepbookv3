@@ -430,7 +430,7 @@ public fun unstake_deep(
 // === Public-Package Functions ===
 
 /// Abort if the running package version is not allowed for this vault.
-public(package) fun assert_version_allowed(vault: &PoolVault) {
+fun assert_version_allowed(vault: &PoolVault) {
     assert!(
         vault.allowed_versions.contains(&constants::current_version!()),
         EPackageVersionDisabled,

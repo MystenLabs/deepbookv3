@@ -371,7 +371,7 @@ public(package) fun create_and_share(
 }
 
 /// Cache terminal payout liability in strike exposure if it has not already been cached.
-public(package) fun materialize_settled_liability(
+fun materialize_settled_liability(
     market: &mut ExpiryMarket,
     market_oracle: &MarketOracle,
 ): u64 {
