@@ -379,11 +379,12 @@ public fun withdraw(
     assert!(lp_amount > 0, EZeroWithdraw);
 
     let total_supply = vault.treasury_cap.total_supply();
-    let withdraw_fraction = math::div(lp_amount, total_supply);
-    let withdraw_amount = math::mul(dusdc_value, withdraw_fraction);
-    assert!(withdraw_amount > 0, EZeroWithdraw);
-    let idle_balance = vault.idle_balance.value();
-    assert!(idle_balance >= withdraw_amount, EInsufficientIdleBalance);
+    let withdraw_amount = dusdc_for_withdraw(
+        lp_amount,
+        total_supply,
+        dusdc_value,
+        vault.idle_balance.value(),
+    );
 
     vault.treasury_cap.burn(lp_coin);
     let payout = vault.idle_balance.split(withdraw_amount).into_coin(ctx);
@@ -399,6 +400,22 @@ public fun withdraw(
         vault.idle_balance.value(),
     );
     (payout, sui, deep)
+}
+
+/// DUSDC payout owed for burning `lp_amount` shares: `dusdc_value * lp_amount /
+/// total_supply` (div then mul, round down). Inverse mirror of
+/// `shares_for_supply`; pure, so it stays out of the custody/event flow.
+fun dusdc_for_withdraw(
+    lp_amount: u64,
+    total_supply: u64,
+    dusdc_value: u64,
+    idle_balance: u64,
+): u64 {
+    let withdraw_fraction = math::div(lp_amount, total_supply);
+    let withdraw_amount = math::mul(dusdc_value, withdraw_fraction);
+    assert!(withdraw_amount > 0, EZeroWithdraw);
+    assert!(idle_balance >= withdraw_amount, EInsufficientIdleBalance);
+    withdraw_amount
 }
 
 /// Stake DEEP for trading benefits. The DEEP is held in the pool vault; the
