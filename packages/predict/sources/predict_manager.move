@@ -454,9 +454,8 @@ public(package) fun add_position(
 ) {
     let key = position_key(expiry_market_id, order_id);
     assert!(!self.positions.contains(key), EPositionAlreadyExists);
-    self.ensure_expiry_summary(expiry_market_id);
     self.positions.add(key, position_root_id);
-    let summary = &mut self.expiry_summaries[expiry_market_id];
+    let summary = self.summary_mut(expiry_market_id);
     summary.open_position_count = summary.open_position_count + 1;
 }
 
@@ -469,8 +468,7 @@ public(package) fun remove_position(
     let key = position_key(expiry_market_id, order_id);
     assert!(self.positions.contains(key), EInsufficientPosition);
     let position_root_id = self.positions.remove(key);
-    self.ensure_expiry_summary(expiry_market_id);
-    let summary = &mut self.expiry_summaries[expiry_market_id];
+    let summary = self.summary_mut(expiry_market_id);
     assert!(summary.open_position_count > 0, EInsufficientPosition);
     summary.open_position_count = summary.open_position_count - 1;
     position_root_id
@@ -483,8 +481,7 @@ public(package) fun record_gross_paid_to_expiry(
     amount: u64,
 ) {
     if (amount == 0) return;
-    self.ensure_expiry_summary(expiry_market_id);
-    let summary = &mut self.expiry_summaries[expiry_market_id];
+    let summary = self.summary_mut(expiry_market_id);
     summary.gross_paid_to_expiry = summary.gross_paid_to_expiry + amount;
 }
 
@@ -495,8 +492,7 @@ public(package) fun record_gross_received_from_expiry(
     amount: u64,
 ) {
     if (amount == 0) return;
-    self.ensure_expiry_summary(expiry_market_id);
-    let summary = &mut self.expiry_summaries[expiry_market_id];
+    let summary = self.summary_mut(expiry_market_id);
     summary.gross_received_from_expiry = summary.gross_received_from_expiry + amount;
 }
 
@@ -507,8 +503,7 @@ public(package) fun record_trading_fee_paid(
     amount: u64,
 ) {
     if (amount == 0) return;
-    self.ensure_expiry_summary(expiry_market_id);
-    let summary = &mut self.expiry_summaries[expiry_market_id];
+    let summary = self.summary_mut(expiry_market_id);
     summary.trading_fees_paid = summary.trading_fees_paid + amount;
 }
 
@@ -566,7 +561,7 @@ public(package) fun assert_owner(self: &PredictManager, ctx: &TxContext) {
 
 // === Private Functions ===
 
-fun ensure_expiry_summary(self: &mut PredictManager, expiry_market_id: ID) {
+fun summary_mut(self: &mut PredictManager, expiry_market_id: ID): &mut ExpiryTradingSummary {
     if (!self.expiry_summaries.contains(expiry_market_id)) {
         let summary = ExpiryTradingSummary {
             open_position_count: 0,
@@ -575,7 +570,8 @@ fun ensure_expiry_summary(self: &mut PredictManager, expiry_market_id: ID) {
             gross_received_from_expiry: 0,
         };
         self.expiry_summaries.add(expiry_market_id, summary);
-    }
+    };
+    &mut self.expiry_summaries[expiry_market_id]
 }
 
 fun position_key(expiry_market_id: ID, order_id: u256): PositionKey {
