@@ -570,10 +570,7 @@ fun valid_settlement_spot_source(
     let pyth_source_timestamp_ms = pyth.source_timestamp_ms();
     let pyth_timestamp = pyth.freshness_timestamp_ms();
     let block_scholes_source_timestamp_ms = market.block_scholes_price_source_timestamp_ms;
-    let block_scholes_update_timestamp_ms = market.block_scholes_price_update_timestamp_ms;
-    let block_scholes_timestamp = block_scholes_source_timestamp_ms.min(
-        block_scholes_update_timestamp_ms,
-    );
+    let block_scholes_timestamp = market.block_scholes_price_freshness_timestamp_ms();
 
     let pyth_valid =
         market.config.settlement_source_fresh(now, pyth_timestamp)
