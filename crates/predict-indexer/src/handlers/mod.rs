@@ -2,11 +2,44 @@ use crate::PredictEnv;
 use sui_indexer_alt_framework::types::full_checkpoint_content::{ExecutedTransaction, ObjectSet};
 use sui_types::transaction::{Command, TransactionDataAPI};
 
+pub mod block_scholes_prices_updated_handler;
+pub mod block_scholes_svi_updated_handler;
+pub mod builder_code_created_handler;
+pub mod builder_code_set_handler;
+pub mod builder_fees_claimed_handler;
+pub mod deep_staked_handler;
+pub mod deep_unstaked_handler;
+pub mod ewma_config_updated_handler;
+pub mod expiry_cash_rebalanced_handler;
+pub mod expiry_cash_received_handler;
+pub mod expiry_cash_template_config_updated_handler;
+pub mod expiry_market_mint_paused_updated_handler;
+pub mod expiry_max_funding_updated_handler;
+pub mod expiry_profit_materialized_handler;
+pub mod fee_config_updated_handler;
 pub mod liquidated_order_redeemed_handler;
 pub mod live_order_redeemed_handler;
+pub mod market_config_snapshot_handler;
+pub mod market_created_handler;
+pub mod market_oracle_bounds_updated_handler;
+pub mod market_oracle_settled_handler;
+pub mod market_oracle_template_config_updated_handler;
 pub mod order_liquidated_handler;
 pub mod order_minted_handler;
+pub mod predict_deposit_cap_minted_handler;
+pub mod predict_manager_created_handler;
+pub mod predict_trade_cap_minted_handler;
+pub mod predict_withdraw_cap_minted_handler;
+pub mod pricing_config_updated_handler;
+pub mod pyth_source_updated_handler;
+pub mod risk_config_updated_handler;
 pub mod settled_order_redeemed_handler;
+pub mod stake_config_updated_handler;
+pub mod strike_exposure_template_config_updated_handler;
+pub mod supply_executed_handler;
+pub mod trading_loss_rebate_claimed_handler;
+pub mod trading_paused_updated_handler;
+pub mod withdraw_executed_handler;
 
 /// Macro to generate a complete Predict handler from minimal configuration.
 ///

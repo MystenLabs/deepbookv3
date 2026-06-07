@@ -34,6 +34,21 @@ use sui_sdk::SuiClientBuilder;
 pub const STATUS_PATH: &str = "/status";
 pub const MARKET_ORDERS_PATH: &str = "/markets/:expiry_market_id/orders";
 pub const MANAGER_ORDERS_PATH: &str = "/managers/:predict_manager_id/orders";
+pub const MANAGERS_PATH: &str = "/managers";
+pub const MARKETS_PATH: &str = "/markets";
+pub const ORACLE_PRICES_PATH: &str = "/oracles/:market_oracle_id/prices";
+pub const ORACLE_SVI_PATH: &str = "/oracles/:market_oracle_id/svi";
+pub const ORACLE_SETTLEMENTS_PATH: &str = "/oracles/:market_oracle_id/settlements";
+pub const PYTH_SOURCE_UPDATES_PATH: &str = "/pyth-sources/:pyth_source_id/updates";
+pub const VAULT_SUPPLIES_PATH: &str = "/vaults/:pool_vault_id/supplies";
+pub const VAULT_WITHDRAWALS_PATH: &str = "/vaults/:pool_vault_id/withdrawals";
+pub const VAULT_PROFIT_PATH: &str = "/vaults/:pool_vault_id/profit";
+pub const VAULT_FUNDING_PATH: &str = "/vaults/:pool_vault_id/funding";
+pub const VAULT_CASH_REBALANCES_PATH: &str = "/vaults/:pool_vault_id/cash-rebalances";
+pub const VAULT_CASH_RECEIPTS_PATH: &str = "/vaults/:pool_vault_id/cash-receipts";
+pub const MANAGER_STAKING_PATH: &str = "/managers/:predict_manager_id/staking";
+pub const MANAGER_REBATES_PATH: &str = "/managers/:predict_manager_id/rebates";
+pub const BUILDER_CODE_FEES_PATH: &str = "/builder-codes/:builder_code_id/fees";
 
 #[derive(Clone)]
 pub struct AppState {
@@ -157,6 +172,21 @@ pub(crate) fn make_router(state: Arc<AppState>) -> Router {
         .route(STATUS_PATH, get(status))
         .route(MARKET_ORDERS_PATH, get(market_orders))
         .route(MANAGER_ORDERS_PATH, get(manager_orders))
+        .route(MANAGERS_PATH, get(managers))
+        .route(MARKETS_PATH, get(markets))
+        .route(ORACLE_PRICES_PATH, get(oracle_prices))
+        .route(ORACLE_SVI_PATH, get(oracle_svi))
+        .route(ORACLE_SETTLEMENTS_PATH, get(oracle_settlements))
+        .route(PYTH_SOURCE_UPDATES_PATH, get(pyth_source_updates))
+        .route(VAULT_SUPPLIES_PATH, get(vault_supplies))
+        .route(VAULT_WITHDRAWALS_PATH, get(vault_withdrawals))
+        .route(VAULT_PROFIT_PATH, get(vault_profit))
+        .route(VAULT_FUNDING_PATH, get(vault_funding))
+        .route(VAULT_CASH_REBALANCES_PATH, get(vault_cash_rebalances))
+        .route(VAULT_CASH_RECEIPTS_PATH, get(vault_cash_receipts))
+        .route(MANAGER_STAKING_PATH, get(manager_staking))
+        .route(MANAGER_REBATES_PATH, get(manager_rebates))
+        .route(BUILDER_CODE_FEES_PATH, get(builder_code_fees))
         .with_state(state.clone())
         .layer(cors)
         .layer(from_fn_with_state(state, track_metrics))
@@ -331,6 +361,270 @@ async fn manager_orders(
         .reader
         .get_manager_orders(
             predict_manager_id,
+            params.start_time_ms(),
+            params.end_time_ms(),
+            params.limit(),
+        )
+        .await?;
+    Ok(Json(data))
+}
+
+/// `predict_manager_created` list, optionally filtered by `?owner`.
+async fn managers(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let data = state
+        .reader
+        .get_managers(
+            params.get("owner").cloned(),
+            params.start_time_ms(),
+            params.end_time_ms(),
+            params.limit(),
+        )
+        .await?;
+    Ok(Json(data))
+}
+
+/// `market_created` list, timestamp-windowed newest-first.
+async fn markets(
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let data = state
+        .reader
+        .get_markets(params.start_time_ms(), params.end_time_ms(), params.limit())
+        .await?;
+    Ok(Json(data))
+}
+
+/// `block_scholes_prices_updated` feed for one oracle.
+async fn oracle_prices(
+    Path(market_oracle_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let data = state
+        .reader
+        .get_oracle_prices(
+            market_oracle_id,
+            params.start_time_ms(),
+            params.end_time_ms(),
+            params.limit(),
+        )
+        .await?;
+    Ok(Json(data))
+}
+
+/// `block_scholes_svi_updated` feed for one oracle.
+async fn oracle_svi(
+    Path(market_oracle_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let data = state
+        .reader
+        .get_oracle_svi(
+            market_oracle_id,
+            params.start_time_ms(),
+            params.end_time_ms(),
+            params.limit(),
+        )
+        .await?;
+    Ok(Json(data))
+}
+
+/// `market_oracle_settled` feed for one oracle.
+async fn oracle_settlements(
+    Path(market_oracle_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let data = state
+        .reader
+        .get_oracle_settlements(
+            market_oracle_id,
+            params.start_time_ms(),
+            params.end_time_ms(),
+            params.limit(),
+        )
+        .await?;
+    Ok(Json(data))
+}
+
+/// `pyth_source_updated` feed for one pyth source.
+async fn pyth_source_updates(
+    Path(pyth_source_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let data = state
+        .reader
+        .get_pyth_source_updates(
+            pyth_source_id,
+            params.start_time_ms(),
+            params.end_time_ms(),
+            params.limit(),
+        )
+        .await?;
+    Ok(Json(data))
+}
+
+/// `supply_executed` feed for one vault.
+async fn vault_supplies(
+    Path(pool_vault_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let data = state
+        .reader
+        .get_vault_supplies(
+            pool_vault_id,
+            params.start_time_ms(),
+            params.end_time_ms(),
+            params.limit(),
+        )
+        .await?;
+    Ok(Json(data))
+}
+
+/// `withdraw_executed` feed for one vault.
+async fn vault_withdrawals(
+    Path(pool_vault_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let data = state
+        .reader
+        .get_vault_withdrawals(
+            pool_vault_id,
+            params.start_time_ms(),
+            params.end_time_ms(),
+            params.limit(),
+        )
+        .await?;
+    Ok(Json(data))
+}
+
+/// `expiry_profit_materialized` feed for one vault.
+async fn vault_profit(
+    Path(pool_vault_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let data = state
+        .reader
+        .get_vault_profit(
+            pool_vault_id,
+            params.start_time_ms(),
+            params.end_time_ms(),
+            params.limit(),
+        )
+        .await?;
+    Ok(Json(data))
+}
+
+/// `expiry_max_funding_updated` feed for one vault.
+async fn vault_funding(
+    Path(pool_vault_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let data = state
+        .reader
+        .get_vault_funding(
+            pool_vault_id,
+            params.start_time_ms(),
+            params.end_time_ms(),
+            params.limit(),
+        )
+        .await?;
+    Ok(Json(data))
+}
+
+/// `expiry_cash_rebalanced` feed for one vault.
+async fn vault_cash_rebalances(
+    Path(pool_vault_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let data = state
+        .reader
+        .get_vault_cash_rebalances(
+            pool_vault_id,
+            params.start_time_ms(),
+            params.end_time_ms(),
+            params.limit(),
+        )
+        .await?;
+    Ok(Json(data))
+}
+
+/// `expiry_cash_received` feed for one vault.
+async fn vault_cash_receipts(
+    Path(pool_vault_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let data = state
+        .reader
+        .get_vault_cash_receipts(
+            pool_vault_id,
+            params.start_time_ms(),
+            params.end_time_ms(),
+            params.limit(),
+        )
+        .await?;
+    Ok(Json(data))
+}
+
+/// Interleaved DEEP staking feed (`deep_staked` + `deep_unstaked`) for one
+/// manager.
+async fn manager_staking(
+    Path(predict_manager_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let data = state
+        .reader
+        .get_manager_staking(
+            predict_manager_id,
+            params.start_time_ms(),
+            params.end_time_ms(),
+            params.limit(),
+        )
+        .await?;
+    Ok(Json(data))
+}
+
+/// `trading_loss_rebate_claimed` feed for one manager.
+async fn manager_rebates(
+    Path(predict_manager_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let data = state
+        .reader
+        .get_manager_rebates(
+            predict_manager_id,
+            params.start_time_ms(),
+            params.end_time_ms(),
+            params.limit(),
+        )
+        .await?;
+    Ok(Json(data))
+}
+
+/// `builder_fees_claimed` feed for one builder code.
+async fn builder_code_fees(
+    Path(builder_code_id): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<serde_json::Value>>, PredictError> {
+    let data = state
+        .reader
+        .get_builder_code_fees(
+            builder_code_id,
             params.start_time_ms(),
             params.end_time_ms(),
             params.limit(),

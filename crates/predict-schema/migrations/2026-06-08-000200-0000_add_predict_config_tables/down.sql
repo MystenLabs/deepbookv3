@@ -1,0 +1,13 @@
+DROP TABLE IF EXISTS expiry_market_mint_paused_updated;
+DROP TABLE IF EXISTS market_oracle_bounds_updated;
+DROP TABLE IF EXISTS market_config_snapshot;
+DROP TABLE IF EXISTS market_created;
+DROP TABLE IF EXISTS trading_paused_updated;
+DROP TABLE IF EXISTS stake_config_updated;
+DROP TABLE IF EXISTS ewma_config_updated;
+DROP TABLE IF EXISTS market_oracle_template_config_updated;
+DROP TABLE IF EXISTS strike_exposure_template_config_updated;
+DROP TABLE IF EXISTS expiry_cash_template_config_updated;
+DROP TABLE IF EXISTS risk_config_updated;
+DROP TABLE IF EXISTS fee_config_updated;
+DROP TABLE IF EXISTS pricing_config_updated;
