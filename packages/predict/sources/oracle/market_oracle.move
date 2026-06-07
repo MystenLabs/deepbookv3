@@ -308,21 +308,7 @@ public fun update_svi(
         EStaleSVISourceUpdate,
     );
     assert!(source_timestamp_ms <= clock.timestamp_ms(), EFutureSVISourceUpdate);
-    let update_timestamp_ms = clock.timestamp_ms();
-    market.block_scholes_svi = svi;
-    market.block_scholes_svi_source_timestamp_ms = source_timestamp_ms;
-    market.block_scholes_svi_update_timestamp_ms = update_timestamp_ms;
-
-    oracle_events::emit_block_scholes_svi_updated(
-        market.id(),
-        svi.a(),
-        svi.b(),
-        svi.rho(),
-        svi.m(),
-        svi.sigma(),
-        source_timestamp_ms,
-        update_timestamp_ms,
-    );
+    market.apply_block_scholes_svi(svi, source_timestamp_ms, clock);
 }
 
 /// Set the live settlement freshness threshold for this oracle.
@@ -528,6 +514,32 @@ fun apply_block_scholes_prices(
         spot,
         forward,
         basis,
+        source_timestamp_ms,
+        update_timestamp_ms,
+    );
+}
+
+/// Commit one Block Scholes SVI update: stamp the on-chain time, write the SVI
+/// fields, and emit. Mirrors `apply_block_scholes_prices`; validation stays in
+/// `update_svi`.
+fun apply_block_scholes_svi(
+    market: &mut MarketOracle,
+    svi: SVIParams,
+    source_timestamp_ms: u64,
+    clock: &Clock,
+) {
+    let update_timestamp_ms = clock.timestamp_ms();
+    market.block_scholes_svi = svi;
+    market.block_scholes_svi_source_timestamp_ms = source_timestamp_ms;
+    market.block_scholes_svi_update_timestamp_ms = update_timestamp_ms;
+
+    oracle_events::emit_block_scholes_svi_updated(
+        market.id(),
+        svi.a(),
+        svi.b(),
+        svi.rho(),
+        svi.m(),
+        svi.sigma(),
         source_timestamp_ms,
         update_timestamp_ms,
     );
