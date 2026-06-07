@@ -563,7 +563,7 @@ fun redeem_internal(
             config.pricing_config(),
             market_oracle,
             pyth,
-            config.risk_config().trade_liquidation_budget(),
+            config.trade_liquidation_budget(),
             clock,
         );
         if (market.try_redeem_if_liquidated(manager, &redeemed_order, close_quantity))
@@ -653,7 +653,7 @@ fun mint_internal(
         config.pricing_config(),
         market_oracle,
         pyth,
-        config.risk_config().trade_liquidation_budget(),
+        config.trade_liquidation_budget(),
         clock,
     );
 

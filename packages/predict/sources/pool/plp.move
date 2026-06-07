@@ -235,7 +235,7 @@ public fun sync_expiry(
         config.pricing_config(),
         market_oracle,
         pyth,
-        config.risk_config().valuation_liquidation_budget(),
+        config.valuation_liquidation_budget(),
         clock,
     );
     vault.rebalance_active_expiry_cash(config, market);
@@ -642,7 +642,7 @@ fun pending_protocol_profit_exclusion(
     };
     math::mul(
         aggregate_credits - aggregate_debits,
-        config.fee_config().protocol_reserve_profit_share(),
+        config.protocol_reserve_profit_share(),
     )
 }
 
@@ -747,7 +747,7 @@ fun materialize_expiry_profit(
 
     // Materialized profit is cash-backed and irreversible: LP profit stays in
     // idle liquidity, while protocol profit leaves PLP NAV.
-    let protocol_profit = math::mul(profit, config.fee_config().protocol_reserve_profit_share());
+    let protocol_profit = math::mul(profit, config.protocol_reserve_profit_share());
     let lp_profit = profit - protocol_profit;
     if (protocol_profit > 0) {
         let protocol_profit_balance = vault.idle_balance.split(protocol_profit);

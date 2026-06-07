@@ -7,10 +7,8 @@ module deepbook_predict::config_events;
 use deepbook_predict::{
     ewma_config::EwmaConfig,
     expiry_cash_config::ExpiryCashConfig,
-    fee_config::FeeConfig,
     market_oracle_config::MarketOracleConfig,
     pricing_config::PricingConfig,
-    risk_config::RiskConfig,
     stake_config::StakeConfig,
     strike_exposure_config::StrikeExposureConfig,
     strike_grid::StrikeGrid
@@ -150,18 +148,25 @@ public(package) fun emit_pricing_config_updated(protocol_config_id: ID, config: 
     });
 }
 
-public(package) fun emit_fee_config_updated(protocol_config_id: ID, config: &FeeConfig) {
+public(package) fun emit_fee_config_updated(
+    protocol_config_id: ID,
+    protocol_reserve_profit_share: u64,
+) {
     event::emit(FeeConfigUpdated {
         protocol_config_id,
-        protocol_reserve_profit_share: config.protocol_reserve_profit_share(),
+        protocol_reserve_profit_share,
     });
 }
 
-public(package) fun emit_risk_config_updated(protocol_config_id: ID, config: &RiskConfig) {
+public(package) fun emit_risk_config_updated(
+    protocol_config_id: ID,
+    valuation_liquidation_budget: u64,
+    trade_liquidation_budget: u64,
+) {
     event::emit(RiskConfigUpdated {
         protocol_config_id,
-        valuation_liquidation_budget: config.valuation_liquidation_budget(),
-        trade_liquidation_budget: config.trade_liquidation_budget(),
+        valuation_liquidation_budget,
+        trade_liquidation_budget,
     });
 }
 

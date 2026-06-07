@@ -14,10 +14,8 @@ use deepbook_predict::{
     config_events,
     ewma_config::{Self, EwmaConfig},
     expiry_cash_config::{Self, ExpiryCashConfig},
-    fee_config::{Self, FeeConfig},
     market_oracle_config::{Self, MarketOracleConfig},
     pricing_config::{Self, PricingConfig},
-    risk_config::{Self, RiskConfig},
     stake_config::{Self, StakeConfig},
     strike_exposure_config::{Self, StrikeExposureConfig}
 };
@@ -33,8 +31,12 @@ const EExpiryConfigNotFound: u64 = 4;
 public struct ProtocolConfig has key {
     id: UID,
     pricing_config: PricingConfig,
-    fee_config: FeeConfig,
-    risk_config: RiskConfig,
+    /// Merged protocol and insurance reserve share in FLOAT_SCALING.
+    protocol_reserve_profit_share: u64,
+    /// Total liquidation candidates checked before live pool valuation.
+    valuation_liquidation_budget: u64,
+    /// Total liquidation candidates checked before mint and redeem flows.
+    trade_liquidation_budget: u64,
     market_oracle_template_config: MarketOracleConfig,
     expiry_cash_template_config: ExpiryCashConfig,
     strike_exposure_template_config: StrikeExposureConfig,
@@ -236,8 +238,9 @@ public fun set_protocol_reserve_profit_share(
     protocol_reserve_profit_share: u64,
 ) {
     config.assert_not_valuation_in_progress();
-    config.fee_config.set_protocol_reserve_profit_share(protocol_reserve_profit_share);
-    config_events::emit_fee_config_updated(config.id(), &config.fee_config);
+    config_constants::assert_protocol_reserve_profit_share(protocol_reserve_profit_share);
+    config.protocol_reserve_profit_share = protocol_reserve_profit_share;
+    config_events::emit_fee_config_updated(config.id(), config.protocol_reserve_profit_share);
 }
 
 /// Set the trading loss rebate rate template used by future expiry markets.
@@ -261,8 +264,13 @@ public fun set_valuation_liquidation_budget(
     budget: u64,
 ) {
     config.assert_not_valuation_in_progress();
-    config.risk_config.set_valuation_liquidation_budget(budget);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
+    config_constants::assert_valuation_liquidation_budget(budget);
+    config.valuation_liquidation_budget = budget;
+    config_events::emit_risk_config_updated(
+        config.id(),
+        config.valuation_liquidation_budget,
+        config.trade_liquidation_budget,
+    );
 }
 
 /// Set the total liquidation candidate budget used before mint and redeem flows.
@@ -272,8 +280,13 @@ public fun set_trade_liquidation_budget(
     budget: u64,
 ) {
     config.assert_not_valuation_in_progress();
-    config.risk_config.set_trade_liquidation_budget(budget);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
+    config_constants::assert_trade_liquidation_budget(budget);
+    config.trade_liquidation_budget = budget;
+    config_events::emit_risk_config_updated(
+        config.id(),
+        config.valuation_liquidation_budget,
+        config.trade_liquidation_budget,
+    );
 }
 
 /// Set the settlement freshness threshold template for future market oracles.
@@ -355,12 +368,16 @@ public(package) fun pricing_config(config: &ProtocolConfig): &PricingConfig {
     &config.pricing_config
 }
 
-public(package) fun fee_config(config: &ProtocolConfig): &FeeConfig {
-    &config.fee_config
+public(package) fun protocol_reserve_profit_share(config: &ProtocolConfig): u64 {
+    config.protocol_reserve_profit_share
 }
 
-public(package) fun risk_config(config: &ProtocolConfig): &RiskConfig {
-    &config.risk_config
+public(package) fun valuation_liquidation_budget(config: &ProtocolConfig): u64 {
+    config.valuation_liquidation_budget
+}
+
+public(package) fun trade_liquidation_budget(config: &ProtocolConfig): u64 {
+    config.trade_liquidation_budget
 }
 
 public(package) fun market_oracle_template_config(config: &ProtocolConfig): &MarketOracleConfig {
@@ -502,8 +519,9 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
     ProtocolConfig {
         id: object::new(ctx),
         pricing_config: pricing_config::new(),
-        fee_config: fee_config::new(),
-        risk_config: risk_config::new(),
+        protocol_reserve_profit_share: config_constants::default_protocol_reserve_profit_share!(),
+        valuation_liquidation_budget: config_constants::default_valuation_liquidation_budget!(),
+        trade_liquidation_budget: config_constants::default_trade_liquidation_budget!(),
         market_oracle_template_config: market_oracle_config::new(),
         expiry_cash_template_config: expiry_cash_config::new(),
         strike_exposure_template_config: strike_exposure_config::new(),
