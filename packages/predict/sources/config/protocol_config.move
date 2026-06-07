@@ -413,13 +413,15 @@ public(package) fun register_expiry_runtime_config(
     expiry_market_id: ID,
 ) {
     assert!(!config.per_expiry.contains(expiry_market_id), EExpiryConfigAlreadyExists);
-    config.per_expiry.add(
-        expiry_market_id,
-        ExpiryRuntimeConfig {
-            mint_paused: false,
-            max_expiry_funding: config_constants::default_max_expiry_funding!(),
-        },
-    );
+    config
+        .per_expiry
+        .add(
+            expiry_market_id,
+            ExpiryRuntimeConfig {
+                mint_paused: false,
+                max_expiry_funding: config_constants::default_max_expiry_funding!(),
+            },
+        );
 }
 
 public(package) fun set_expiry_max_funding(

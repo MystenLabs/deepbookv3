@@ -166,12 +166,7 @@ public(package) fun build_curve(
 }
 
 /// Compute the fair price for the range `(lower, higher]`.
-fun compute_range_price(
-    svi: &SVIParams,
-    forward: u64,
-    lower: u64,
-    higher: u64,
-): u64 {
+fun compute_range_price(svi: &SVIParams, forward: u64, lower: u64, higher: u64): u64 {
     assert!(lower < higher, EInvalidRange);
 
     let lower_up_price = compute_up_price(svi, forward, lower);
