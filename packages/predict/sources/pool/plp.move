@@ -589,6 +589,13 @@ fun value_incentives(
 
 fun synced_pool_value(vault: &PoolVault, config: &ProtocolConfig, active_expiry_value: u64): u64 {
     let gross_pool_value = vault.idle_balance.value() + active_expiry_value;
+    // R1 caveat (flagged for audit; not yet guarded): this assumes gross >= the
+    // pending protocol-profit exclusion. The exclusion counts active-expiry NAV
+    // symmetrically with realized credits, so if active NAV later falls (traders
+    // win) after LPs exited at a higher mark, exclusion can exceed gross and this
+    // subtraction underflows, blocking supply/withdraw until NAV recovers.
+    // Operationally mitigated by a permanent base PLP supply. Revisit with C3
+    // (conservative NAV marking); the minimal guard is `.min(gross_pool_value)`.
     gross_pool_value - vault.pending_protocol_profit_exclusion(config, active_expiry_value)
 }
 

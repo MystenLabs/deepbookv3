@@ -466,6 +466,10 @@ public(package) fun claim_trading_loss_rebate(
         let payout = market.pay_authorized_cash(rebate_amount);
         manager.deposit_permissionless(payout.into_coin(ctx), ctx);
     };
+    // Cannot underflow (R1): rebate_amount = mul(eligible_rebate, benefit_ratio)
+    // with benefit_ratio <= 1e9 and round-down mul, so rebate_amount <=
+    // eligible_rebate <= resolved_rebate_reserve. The user outflow (rebate_amount)
+    // rounds down; the residual returns to the pool.
     let residual_rebate_reserve = resolved_rebate_reserve - rebate_amount;
     let residual_rebate_cash = market.pay_authorized_cash(residual_rebate_reserve);
     market.assert_cash_backing();

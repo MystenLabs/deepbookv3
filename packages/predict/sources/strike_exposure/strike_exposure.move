@@ -197,6 +197,12 @@ public(package) fun close_settled_order(
     };
     let quantity = order.quantity();
     let index_at_settlement = exposure.config.terminal_floor_index();
+    // payout = quantity - floor(floor_shares * terminal_floor_index); rounds down,
+    // winner eats <=1 ulp. The reserve seeded into settled_payout_liability (the
+    // payout tree's terminal_payout, via materialize_settled_liability) is this
+    // exact expression by construction: a partial close reinserts the survivor's
+    // exact terms (close_and_quote_live_order), so reserve == payout and the
+    // subtraction below cannot underflow (R1 liveness).
     let terminal_floor = math::mul(order.floor_shares(), index_at_settlement);
     let payout = quantity - terminal_floor;
     exposure.settled_payout_liability = exposure.settled_payout_liability - payout;
@@ -317,6 +323,9 @@ public(package) fun close_and_quote_live_order(
         clock,
     );
     let index_now = exposure.config.floor_index_at_ms(exposure.expiry_ms, clock.timestamp_ms());
+    // Live redeem outflow rounds down (user eats <=1 ulp): both terms use
+    // round-down mul, and the saturating min() floors redeem_amount at 0, so the
+    // floor deduction can never underflow it (R1/R2).
     let removed_floor_amount = math::mul(remove_floor_shares, index_now);
     let gross_redeem_amount = math::mul(range_probability, close_quantity);
     let redeem_amount = gross_redeem_amount - gross_redeem_amount.min(removed_floor_amount);
