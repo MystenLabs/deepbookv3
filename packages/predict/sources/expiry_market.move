@@ -371,10 +371,7 @@ public(package) fun create_and_share(
 }
 
 /// Cache terminal payout liability in strike exposure if it has not already been cached.
-fun materialize_settled_liability(
-    market: &mut ExpiryMarket,
-    market_oracle: &MarketOracle,
-): u64 {
+fun materialize_settled_liability(market: &mut ExpiryMarket, market_oracle: &MarketOracle): u64 {
     market.assert_market_oracle(market_oracle);
     let settlement = pricing::settlement_price(market_oracle);
     market.strike_exposure.materialize_settled_liability(settlement)
@@ -554,10 +551,8 @@ fun redeem_internal(
     config.assert_not_valuation_in_progress();
     market.assert_market_oracle(market_oracle);
     let redeemed_order = order::from_order_id(order_id);
-    if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
-        market.redeem_liquidated_order(manager, &redeemed_order, close_quantity);
-        return (redeemed_order.id(), option::none())
-    };
+    if (market.try_redeem_if_liquidated(manager, &redeemed_order, close_quantity))
+        return (redeemed_order.id(), option::none());
 
     if (market_oracle.is_settled()) {
         assert!(close_quantity == redeemed_order.quantity(), EFullCloseRequired);
@@ -571,10 +566,8 @@ fun redeem_internal(
             config.risk_config().trade_liquidation_budget(),
             clock,
         );
-        if (market.strike_exposure.is_liquidated_order(&redeemed_order)) {
-            market.redeem_liquidated_order(manager, &redeemed_order, close_quantity);
-            return (redeemed_order.id(), option::none())
-        };
+        if (market.try_redeem_if_liquidated(manager, &redeemed_order, close_quantity))
+            return (redeemed_order.id(), option::none());
         assert!(proof.is_some(), EProofRequiredForLiveRedeem);
         let live_proof = proof.destroy_some();
         let replacement_order_id = market.redeem_live_internal(
@@ -589,6 +582,22 @@ fun redeem_internal(
             ctx,
         );
         (redeemed_order.id(), replacement_order_id)
+    }
+}
+
+/// If `order` has been liquidated, clear it (full close) and return `true`;
+/// otherwise leave state untouched and return `false`.
+fun try_redeem_if_liquidated(
+    market: &mut ExpiryMarket,
+    manager: &mut PredictManager,
+    order: &Order,
+    close_quantity: u64,
+): bool {
+    if (market.strike_exposure.is_liquidated_order(order)) {
+        market.redeem_liquidated_order(manager, order, close_quantity);
+        true
+    } else {
+        false
     }
 }
 
