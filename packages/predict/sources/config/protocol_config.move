@@ -156,6 +156,7 @@ public fun set_benefit_powers(
 ) {
     config.assert_not_valuation_in_progress();
     config.stake_config.set_benefit_powers(lower, upper);
+    config_events::emit_stake_config_updated(config.id(), &config.stake_config);
 }
 
 /// Set the minimum all-in mint price snapshotted by future expiry markets.

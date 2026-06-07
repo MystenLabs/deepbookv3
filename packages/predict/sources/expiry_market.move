@@ -12,6 +12,7 @@ module deepbook_predict::expiry_market;
 use deepbook::math;
 use deepbook_predict::{
     claim_events,
+    config_events,
     constants,
     ewma::{Self, EwmaState},
     ewma_config::EwmaConfig,
@@ -340,18 +341,26 @@ public(package) fun create_and_share(
 ): ID {
     let id = object::new(ctx);
     let expiry_market_id = id.to_inner();
+    let cash_config = config.expiry_cash_config_snapshot();
+    let strike_exposure_config = config.strike_exposure_config_snapshot();
+    config_events::emit_market_config_snapshot(
+        expiry_market_id,
+        market_oracle_id,
+        &strike_exposure_config,
+        &cash_config,
+    );
     let market = ExpiryMarket {
         id,
         market_oracle_id,
         pyth_lazer_feed_id,
         expiry,
-        cash: expiry_cash::new(config.expiry_cash_config_snapshot()),
+        cash: expiry_cash::new(cash_config),
         strike_exposure: strike_exposure::new(
             expiry_market_id,
             expiry,
             grid,
             preallocated_ticks,
-            config.strike_exposure_config_snapshot(),
+            strike_exposure_config,
             ctx,
         ),
         ewma: ewma::new(ctx),
@@ -586,9 +595,9 @@ fun redeem_liquidated_order(
     close_quantity: u64,
 ) {
     assert!(close_quantity == order.quantity(), EFullCloseRequired);
-    manager.remove_position(market.id(), order.id());
+    let position_root_id = manager.remove_position(market.id(), order.id());
     market.strike_exposure.clear_liquidated_order(order);
-    order_events::emit_liquidated_order_redeemed(market.id(), manager, order);
+    order_events::emit_liquidated_order_redeemed(market.id(), manager, order, position_root_id);
 }
 
 fun assert_cash_backing(market: &ExpiryMarket) {
@@ -694,7 +703,7 @@ fun redeem_live_internal(
     manager.update_stake(ctx);
     market.assert_pyth_feed(pyth);
     pricing::assert_live_quote_available(config.pricing_config(), market_oracle, pyth, clock);
-    manager.remove_position(market.id(), order.id());
+    let position_root_id = manager.remove_position(market.id(), order.id());
 
     let (resulting_order, redeem_amount, range_probability) = market
         .strike_exposure
@@ -723,7 +732,7 @@ fun redeem_live_internal(
         option::none()
     } else {
         let replacement_order_id = resulting_order.id();
-        manager.add_position(market.id(), replacement_order_id);
+        manager.add_position(market.id(), replacement_order_id, position_root_id);
         option::some(replacement_order_id)
     };
 
@@ -741,6 +750,7 @@ fun redeem_live_internal(
         market.id(),
         manager,
         order,
+        position_root_id,
         close_quantity,
         replacement_order_id,
         redeem_amount,
@@ -758,7 +768,7 @@ fun redeem_settled_internal(
     order: &Order,
     ctx: &mut TxContext,
 ) {
-    manager.remove_position(market.id(), order.id());
+    let position_root_id = manager.remove_position(market.id(), order.id());
     market.materialize_settled_liability(market_oracle);
 
     let settlement = pricing::settlement_price(market_oracle);
@@ -769,6 +779,7 @@ fun redeem_settled_internal(
         market.id(),
         manager,
         order,
+        position_root_id,
         settlement,
         payout_amount,
     );
@@ -794,7 +805,7 @@ fun settle_mint_payment(
     let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity);
     let withdraw_amount = user_contribution + fee_amount + builder_fee_amount + penalty_amount;
 
-    manager.add_position(market.id(), order.id());
+    manager.add_position(market.id(), order.id(), order.id());
     let mut payment = manager.withdraw_with_proof(proof, withdraw_amount, ctx).into_balance();
     let builder_fee_payment = payment.split(builder_fee_amount);
     send_builder_fee(builder_code_id, builder_fee_payment);

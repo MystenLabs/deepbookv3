@@ -387,6 +387,8 @@ public fun create_expiry_market(
         expiry_market_id,
         market_oracle_id,
         pool_vault.id(),
+        pyth.id(),
+        pyth_lazer_feed_id,
         expiry,
         &grid,
     );

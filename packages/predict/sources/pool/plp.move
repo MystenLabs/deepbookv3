@@ -334,6 +334,7 @@ public fun supply(
         payment_amount,
         shares,
         pool_value,
+        incentive_value,
         vault.treasury_cap.total_supply(),
         vault.idle_balance.value(),
     );
@@ -401,8 +402,16 @@ public fun stake_deep(
     vault.assert_version_allowed();
     manager.assert_owner(ctx);
     manager.update_stake(ctx);
-    manager.add_inactive_stake(deep.value());
+    let amount = deep.value();
+    manager.add_inactive_stake(amount);
     vault.staked_deep.join(deep.into_balance());
+    vault_events::emit_deep_staked(
+        vault.id(),
+        manager.id(),
+        amount,
+        manager.active_stake(),
+        manager.inactive_stake(),
+    );
 }
 
 /// Withdraw all staked DEEP (active and inactive) at any time, no penalty.
@@ -414,6 +423,7 @@ public fun unstake_deep(
     vault.assert_version_allowed();
     manager.assert_owner(ctx);
     let amount = manager.remove_all_stake();
+    vault_events::emit_deep_unstaked(vault.id(), manager.id(), amount);
     vault.staked_deep.split(amount).into_coin(ctx)
 }
 

@@ -17,6 +17,9 @@ public struct OrderMinted has copy, drop, store {
     expiry_market_id: ID,
     predict_manager_id: ID,
     order_id: u256,
+    /// Stable economic-position handle: the original mint's `order_id`, carried
+    /// forward unchanged across partial-close replacements. Equals `order_id` here.
+    position_root_id: u256,
     owner: address,
     lower_strike: u64,
     higher_strike: u64,
@@ -38,6 +41,9 @@ public struct LiveOrderRedeemed has copy, drop, store {
     expiry_market_id: ID,
     predict_manager_id: ID,
     order_id: u256,
+    /// Stable economic-position handle, constant across the replacement chain.
+    /// On a partial close the replacement inherits this same root.
+    position_root_id: u256,
     owner: address,
     quantity_closed: u64,
     /// `0` means the position was fully closed.
@@ -58,6 +64,8 @@ public struct SettledOrderRedeemed has copy, drop, store {
     expiry_market_id: ID,
     predict_manager_id: ID,
     order_id: u256,
+    /// Stable economic-position handle, constant across the replacement chain.
+    position_root_id: u256,
     owner: address,
     quantity_closed: u64,
     settlement_price: u64,
@@ -69,6 +77,8 @@ public struct LiquidatedOrderRedeemed has copy, drop, store {
     expiry_market_id: ID,
     predict_manager_id: ID,
     order_id: u256,
+    /// Stable economic-position handle, constant across the replacement chain.
+    position_root_id: u256,
     owner: address,
     quantity_closed: u64,
 }
@@ -108,6 +118,7 @@ public(package) fun emit_order_minted(
         expiry_market_id,
         predict_manager_id: manager.id(),
         order_id: order.id(),
+        position_root_id: order.id(),
         owner: manager.owner(),
         lower_strike,
         higher_strike,
@@ -126,6 +137,7 @@ public(package) fun emit_live_order_redeemed(
     expiry_market_id: ID,
     manager: &PredictManager,
     order: &Order,
+    position_root_id: u256,
     quantity_closed: u64,
     replacement_order_id: Option<u256>,
     redeem_amount: u64,
@@ -137,6 +149,7 @@ public(package) fun emit_live_order_redeemed(
         expiry_market_id,
         predict_manager_id: manager.id(),
         order_id: order.id(),
+        position_root_id,
         owner: manager.owner(),
         quantity_closed,
         remaining_quantity: order.quantity() - quantity_closed,
@@ -153,6 +166,7 @@ public(package) fun emit_settled_order_redeemed(
     expiry_market_id: ID,
     manager: &PredictManager,
     order: &Order,
+    position_root_id: u256,
     settlement_price: u64,
     payout_amount: u64,
 ) {
@@ -160,6 +174,7 @@ public(package) fun emit_settled_order_redeemed(
         expiry_market_id,
         predict_manager_id: manager.id(),
         order_id: order.id(),
+        position_root_id,
         owner: manager.owner(),
         quantity_closed: order.quantity(),
         settlement_price,
@@ -171,11 +186,13 @@ public(package) fun emit_liquidated_order_redeemed(
     expiry_market_id: ID,
     manager: &PredictManager,
     order: &Order,
+    position_root_id: u256,
 ) {
     event::emit(LiquidatedOrderRedeemed {
         expiry_market_id,
         predict_manager_id: manager.id(),
         order_id: order.id(),
+        position_root_id,
         owner: manager.owner(),
         quantity_closed: order.quantity(),
     });

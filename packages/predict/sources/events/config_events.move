@@ -11,6 +11,7 @@ use deepbook_predict::{
     market_oracle_config::MarketOracleConfig,
     pricing_config::PricingConfig,
     risk_config::RiskConfig,
+    stake_config::StakeConfig,
     strike_exposure_config::StrikeExposureConfig,
     strike_grid::StrikeGrid
 };
@@ -75,6 +76,14 @@ public struct EwmaConfigUpdated has copy, drop, store {
     enabled: bool,
 }
 
+/// Emitted when the DEEP-stake benefit config changes. These thresholds govern
+/// the per-trade fee discount and the trading-loss rebate share.
+public struct StakeConfigUpdated has copy, drop, store {
+    protocol_config_id: ID,
+    lower_benefit_power: u64,
+    upper_benefit_power: u64,
+}
+
 /// Emitted when global trading pause state changes.
 public struct TradingPausedUpdated has copy, drop, store {
     protocol_config_id: ID,
@@ -86,10 +95,32 @@ public struct MarketCreated has copy, drop, store {
     expiry_market_id: ID,
     market_oracle_id: ID,
     pool_vault_id: ID,
+    /// PythSource object and Lazer feed backing this market's spot, so
+    /// `PythSourceUpdated` history (keyed by these) can be fanned into the market.
+    pyth_source_id: ID,
+    pyth_lazer_feed_id: u32,
     expiry: u64,
     min_strike: u64,
     tick_size: u64,
     max_strike: u64,
+}
+
+/// Emitted alongside `MarketCreated` with the per-market policy snapshotted into
+/// the expiry market at creation. These values are immutable for the market's
+/// life (there is no per-market config setter), so this single event is the
+/// authoritative source for the policy actually in force on the market.
+public struct MarketConfigSnapshot has copy, drop, store {
+    expiry_market_id: ID,
+    market_oracle_id: ID,
+    terminal_floor_index: u64,
+    liquidation_ltv: u64,
+    base_fee: u64,
+    min_fee: u64,
+    min_ask_price: u64,
+    max_ask_price: u64,
+    expiry_fee_window_ms: u64,
+    expiry_fee_max_multiplier: u64,
+    trading_loss_rebate_rate: u64,
 }
 
 /// Emitted when admin updates one live oracle's bounds.
@@ -185,6 +216,14 @@ public(package) fun emit_ewma_config_updated(protocol_config_id: ID, config: &Ew
     });
 }
 
+public(package) fun emit_stake_config_updated(protocol_config_id: ID, config: &StakeConfig) {
+    event::emit(StakeConfigUpdated {
+        protocol_config_id,
+        lower_benefit_power: config.lower_benefit_power(),
+        upper_benefit_power: config.upper_benefit_power(),
+    });
+}
+
 public(package) fun emit_trading_paused_updated(protocol_config_id: ID, paused: bool) {
     event::emit(TradingPausedUpdated {
         protocol_config_id,
@@ -196,6 +235,8 @@ public(package) fun emit_market_created(
     expiry_market_id: ID,
     market_oracle_id: ID,
     pool_vault_id: ID,
+    pyth_source_id: ID,
+    pyth_lazer_feed_id: u32,
     expiry: u64,
     grid: &StrikeGrid,
 ) {
@@ -203,10 +244,33 @@ public(package) fun emit_market_created(
         expiry_market_id,
         market_oracle_id,
         pool_vault_id,
+        pyth_source_id,
+        pyth_lazer_feed_id,
         expiry,
         min_strike: grid.min_strike(),
         tick_size: grid.tick_size(),
         max_strike: grid.max_strike(),
+    });
+}
+
+public(package) fun emit_market_config_snapshot(
+    expiry_market_id: ID,
+    market_oracle_id: ID,
+    strike_exposure_config: &StrikeExposureConfig,
+    expiry_cash_config: &ExpiryCashConfig,
+) {
+    event::emit(MarketConfigSnapshot {
+        expiry_market_id,
+        market_oracle_id,
+        terminal_floor_index: strike_exposure_config.terminal_floor_index(),
+        liquidation_ltv: strike_exposure_config.liquidation_ltv(),
+        base_fee: strike_exposure_config.base_fee(),
+        min_fee: strike_exposure_config.min_fee(),
+        min_ask_price: strike_exposure_config.min_ask_price(),
+        max_ask_price: strike_exposure_config.max_ask_price(),
+        expiry_fee_window_ms: strike_exposure_config.expiry_fee_window_ms(),
+        expiry_fee_max_multiplier: strike_exposure_config.expiry_fee_max_multiplier(),
+        trading_loss_rebate_rate: expiry_cash_config.trading_loss_rebate_rate(),
     });
 }
 

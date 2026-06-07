@@ -78,8 +78,10 @@ public struct PredictManager has key {
     /// the ID from this set.
     allow_listed: VecSet<ID>,
     builder_code_id: Option<ID>,
-    /// Open order positions scoped by expiry market.
-    positions: Table<PositionKey, bool>,
+    /// Open order positions scoped by expiry market. The value is the position's
+    /// root order ID (the original mint's `order_id`), carried forward unchanged
+    /// across partial-close replacements so an economic position has one handle.
+    positions: Table<PositionKey, u256>,
     /// Per-expiry aggregate trading cash flows and open position count.
     expiry_summaries: Table<ID, ExpiryTradingSummary>,
     /// DEEP staked and active for trading benefits, in raw units. Custody lives
@@ -149,6 +151,11 @@ public fun id(self: &PredictManager): ID {
 /// Return the BalanceManager owner for this PredictManager.
 public fun owner(self: &PredictManager): address {
     self.balance_manager.owner()
+}
+
+/// Return the inner BalanceManager object ID that holds this manager's DUSDC.
+public fun balance_manager_id(self: &PredictManager): ID {
+    self.balance_manager.id()
 }
 
 /// Return whether this manager has an open position for an order in one expiry market.
@@ -333,7 +340,11 @@ public(package) fun new(registry_uid: &mut UID, ctx: &mut TxContext): PredictMan
         inactive_stake: 0,
         stake_epoch: ctx.epoch(),
     };
-    account_events::emit_predict_manager_created(manager.id(), manager.owner());
+    account_events::emit_predict_manager_created(
+        manager.id(),
+        manager.balance_manager_id(),
+        manager.owner(),
+    );
     manager
 }
 
@@ -388,7 +399,11 @@ public(package) fun new_self_owned(
         stake_epoch: ctx.epoch(),
     };
     let manager_id = manager.id();
-    account_events::emit_predict_manager_created(manager_id, manager.owner());
+    account_events::emit_predict_manager_created(
+        manager_id,
+        manager.balance_manager_id(),
+        manager.owner(),
+    );
 
     let predict_trade_cap = manager.mint_trade_cap_internal(manager_id, ctx);
     let predict_deposit_cap = manager.mint_deposit_cap_internal(manager_id, ctx);
@@ -429,29 +444,36 @@ public(package) fun withdraw_with_proof(
     self.balance_manager.withdraw_with_cap(&self.withdraw_cap, amount, ctx)
 }
 
-/// Add an order position.
-public(package) fun add_position(self: &mut PredictManager, expiry_market_id: ID, order_id: u256) {
+/// Add an order position keyed to its root order ID. At mint the root equals the
+/// order's own ID; a partial-close replacement passes the parent's root forward.
+public(package) fun add_position(
+    self: &mut PredictManager,
+    expiry_market_id: ID,
+    order_id: u256,
+    position_root_id: u256,
+) {
     let key = position_key(expiry_market_id, order_id);
     assert!(!self.positions.contains(key), EPositionAlreadyExists);
     self.ensure_expiry_summary(expiry_market_id);
-    self.positions.add(key, true);
+    self.positions.add(key, position_root_id);
     let summary = &mut self.expiry_summaries[expiry_market_id];
     summary.open_position_count = summary.open_position_count + 1;
 }
 
-/// Remove an order position.
+/// Remove an order position and return its root order ID for event attribution.
 public(package) fun remove_position(
     self: &mut PredictManager,
     expiry_market_id: ID,
     order_id: u256,
-) {
+): u256 {
     let key = position_key(expiry_market_id, order_id);
     assert!(self.positions.contains(key), EInsufficientPosition);
-    self.positions.remove(key);
+    let position_root_id = self.positions.remove(key);
     self.ensure_expiry_summary(expiry_market_id);
     let summary = &mut self.expiry_summaries[expiry_market_id];
     assert!(summary.open_position_count > 0, EInsufficientPosition);
     summary.open_position_count = summary.open_position_count - 1;
+    position_root_id
 }
 
 /// Record DUSDC paid for positions in an expiry market, excluding fees.

@@ -158,11 +158,11 @@ fun add_position_then_remove_round_trip() {
     let mut manager = create_alice_manager(&mut scenario, registry_id);
     let expiry = FAKE_EXPIRY_ID.to_id();
 
-    manager.add_position(expiry, ORDER_ID_A);
+    manager.add_position(expiry, ORDER_ID_A, ORDER_ID_A);
     assert!(manager.has_position(expiry, ORDER_ID_A));
     assert_eq!(manager.expiry_position_count(expiry), 1);
 
-    manager.add_position(expiry, ORDER_ID_B);
+    manager.add_position(expiry, ORDER_ID_B, ORDER_ID_B);
     assert_eq!(manager.expiry_position_count(expiry), 2);
 
     manager.remove_position(expiry, ORDER_ID_A);
@@ -185,8 +185,8 @@ fun positions_are_scoped_per_expiry() {
     let expiry_b = FAKE_EXPIRY_ID_2.to_id();
 
     // Same order_id under two different expiries is two distinct positions.
-    manager.add_position(expiry_a, ORDER_ID_A);
-    manager.add_position(expiry_b, ORDER_ID_A);
+    manager.add_position(expiry_a, ORDER_ID_A, ORDER_ID_A);
+    manager.add_position(expiry_b, ORDER_ID_A, ORDER_ID_A);
 
     assert!(manager.has_position(expiry_a, ORDER_ID_A));
     assert!(manager.has_position(expiry_b, ORDER_ID_A));
@@ -202,8 +202,8 @@ fun add_position_duplicate_aborts() {
     let (mut scenario, registry_id) = setup();
     let mut manager = create_alice_manager(&mut scenario, registry_id);
 
-    manager.add_position(FAKE_EXPIRY_ID.to_id(), ORDER_ID_A);
-    manager.add_position(FAKE_EXPIRY_ID.to_id(), ORDER_ID_A);
+    manager.add_position(FAKE_EXPIRY_ID.to_id(), ORDER_ID_A, ORDER_ID_A);
+    manager.add_position(FAKE_EXPIRY_ID.to_id(), ORDER_ID_A, ORDER_ID_A);
     abort 999
 }
 
@@ -349,7 +349,7 @@ fun resolve_expiry_summary_with_open_positions_aborts() {
     let mut manager = create_alice_manager(&mut scenario, registry_id);
     let expiry = FAKE_EXPIRY_ID.to_id();
 
-    manager.add_position(expiry, ORDER_ID_A);
+    manager.add_position(expiry, ORDER_ID_A, ORDER_ID_A);
     let (_, _) = manager.resolve_expiry_summary(expiry);
     abort 999
 }

@@ -18,8 +18,14 @@ public struct SupplyExecuted has copy, drop, store {
     pool_vault_id: ID,
     payment: u64,
     shares_minted: u64,
-    /// Pool NAV used to price the mint, in DUSDC base units.
+    /// Pool NAV used to price the mint, in DUSDC base units. Includes the
+    /// `incentive_value` slice below; subtract it to get the DUSDC-only NAV,
+    /// which is the basis `WithdrawExecuted.pool_value_before` reports.
     pool_value_before: u64,
+    /// DUSDC-denominated value of vested SUI/DEEP incentives folded into
+    /// `pool_value_before`. Withdraw prices the DUSDC payout on the DUSDC-only
+    /// NAV (incentives paid in-kind), so this field makes the two bases comparable.
+    incentive_value: u64,
     total_supply_after: u64,
     idle_balance_after: u64,
 }
@@ -77,6 +83,24 @@ public struct ExpiryProfitMaterialized has copy, drop, store {
     profit_basis_after: u64,
 }
 
+/// Emitted when a manager stakes DEEP for trading benefits.
+public struct DeepStaked has copy, drop, store {
+    pool_vault_id: ID,
+    predict_manager_id: ID,
+    amount: u64,
+    /// Manager active/inactive stake after the deposit. Freshly staked DEEP is
+    /// inactive until it rolls active in a later epoch, so both are reported.
+    active_stake_after: u64,
+    inactive_stake_after: u64,
+}
+
+/// Emitted when a manager unstakes all of its DEEP (active and inactive).
+public struct DeepUnstaked has copy, drop, store {
+    pool_vault_id: ID,
+    predict_manager_id: ID,
+    amount: u64,
+}
+
 // === Public-Package Functions ===
 
 public(package) fun emit_supply_executed(
@@ -84,6 +108,7 @@ public(package) fun emit_supply_executed(
     payment: u64,
     shares_minted: u64,
     pool_value_before: u64,
+    incentive_value: u64,
     total_supply_after: u64,
     idle_balance_after: u64,
 ) {
@@ -92,6 +117,7 @@ public(package) fun emit_supply_executed(
         payment,
         shares_minted,
         pool_value_before,
+        incentive_value,
         total_supply_after,
         idle_balance_after,
     });
@@ -190,5 +216,29 @@ public(package) fun emit_expiry_profit_materialized(
         idle_balance_after,
         protocol_reserve_balance_after,
         profit_basis_after,
+    });
+}
+
+public(package) fun emit_deep_staked(
+    pool_vault_id: ID,
+    predict_manager_id: ID,
+    amount: u64,
+    active_stake_after: u64,
+    inactive_stake_after: u64,
+) {
+    event::emit(DeepStaked {
+        pool_vault_id,
+        predict_manager_id,
+        amount,
+        active_stake_after,
+        inactive_stake_after,
+    });
+}
+
+public(package) fun emit_deep_unstaked(pool_vault_id: ID, predict_manager_id: ID, amount: u64) {
+    event::emit(DeepUnstaked {
+        pool_vault_id,
+        predict_manager_id,
+        amount,
     });
 }

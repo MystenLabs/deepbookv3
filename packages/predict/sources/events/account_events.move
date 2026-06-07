@@ -9,6 +9,10 @@ use sui::event;
 /// Emitted when a derived PredictManager is created.
 public struct PredictManagerCreated has copy, drop, store {
     predict_manager_id: ID,
+    /// Inner BalanceManager that holds DUSDC custody. Its ID is random (not
+    /// derived), so off-chain consumers need it here to join DeepBook
+    /// `BalanceEvent` deposit/withdraw flows back to this manager.
+    balance_manager_id: ID,
     owner: address,
 }
 
@@ -46,9 +50,14 @@ public struct PredictWithdrawCapMinted has copy, drop, store {
 
 // === Public-Package Functions ===
 
-public(package) fun emit_predict_manager_created(predict_manager_id: ID, owner: address) {
+public(package) fun emit_predict_manager_created(
+    predict_manager_id: ID,
+    balance_manager_id: ID,
+    owner: address,
+) {
     event::emit(PredictManagerCreated {
         predict_manager_id,
+        balance_manager_id,
         owner,
     });
 }

@@ -461,6 +461,7 @@ public(package) fun create_and_share(
     };
 
     let market_oracle_id = market.id();
+    market.emit_bounds_updated();
     transfer::share_object(market);
     market_oracle_id
 }
