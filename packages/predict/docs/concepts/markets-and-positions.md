@@ -115,7 +115,7 @@ Both paths emit **`LiveOrderRedeemed`** (carrying `quantity_closed`, `remaining_
 
 ### Settlement recorded
 
-The `MarketOracle` derives its status from the clock and settlement state: **ACTIVE** before expiry, **PENDING_SETTLEMENT** once `clock.timestamp_ms() >= expiry` but no settlement price is recorded yet, and **SETTLED** once a terminal price is stored (status codes `STATUS_ACTIVE`, `STATUS_PENDING_SETTLEMENT`, `STATUS_SETTLED`). Settlement is recorded by an oracle operator holding the `MarketOracleCap` calling `settle_if_possible` (or as a side effect of an oracle price update), which finalizes a valid post-expiry source price while the market is pending — Pyth is preferred, with Block Scholes as the fallback source. Settlement is the terminal, irreversible transition; settled markets accept no new live risk.
+The `MarketOracle` derives its status from the clock and settlement state: **ACTIVE** before expiry, **PENDING_SETTLEMENT** once `clock.timestamp_ms() >= expiry` but no settlement price is recorded yet, and **SETTLED** once a terminal price is stored (status codes `STATUS_ACTIVE`, `STATUS_PENDING_SETTLEMENT`, `STATUS_SETTLED`). Settlement is recorded permissionlessly by calling `settle_with_randomness`. It prefers a random-subset mean of 30 or more pre-expiry Pyth samples, then the first fresh post-expiry Pyth spot observed by the market oracle, then a random-subset mean of 30 or more pre-expiry Block Scholes samples, then the first fresh post-expiry Block Scholes spot observed by the market oracle. Settlement is the terminal, irreversible transition; settled markets accept no new live risk.
 
 ### Settled redeem
 
@@ -135,7 +135,7 @@ stateDiagram-v2
   state "Oracle" as O {
     [*] --> ACTIVE
     ACTIVE --> PENDING_SETTLEMENT: clock >= expiry
-    PENDING_SETTLEMENT --> SETTLED: settle_if_possible
+    PENDING_SETTLEMENT --> SETTLED: settle_with_randomness
   }
   state "Pool registration" as P {
     [*] --> Registered: create_expiry_market

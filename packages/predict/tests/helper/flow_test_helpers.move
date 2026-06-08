@@ -37,6 +37,7 @@ use std::unit_test::destroy;
 use sui::{
     clock::{Self, Clock},
     coin::{Self, Coin},
+    random,
     test_scenario::{Self as test, Scenario, return_shared}
 };
 
@@ -234,7 +235,6 @@ public fun prepare_live_oracle(
     pyth.set_state_for_testing(live_price, LIVE_SOURCE_TIMESTAMP_MS, LIVE_SOURCE_TIMESTAMP_MS);
     oracle.update_block_scholes_prices(
         config,
-        pyth,
         &self.cap,
         live_price,
         live_price,
@@ -256,7 +256,6 @@ public fun prepare_live_oracle_at(
     pyth.set_state_for_testing(live_price, source_timestamp_ms, source_timestamp_ms);
     oracle.update_block_scholes_prices(
         config,
-        pyth,
         &self.cap,
         live_price,
         live_price,
@@ -291,8 +290,23 @@ public fun sync_expiry(
     let _pool_value = vault.finish_pool_sync(config, sync);
 }
 
-/// Settle the oracle via the production `settle_if_possible` path using a fresh
-/// post-expiry Pyth spot. Advances the clock past expiry.
+public fun sync_expiry_value(
+    self: &Fixture,
+    config: &mut ProtocolConfig,
+    vault: &mut PoolVault,
+    market: &mut ExpiryMarket,
+    oracle: &MarketOracle,
+    pyth: &PythSource,
+): u64 {
+    let mut sync = plp::start_pool_sync(config, vault);
+    sync.sync_expiry(vault, market, config, oracle, pyth, &self.clock);
+    vault.finish_pool_sync(config, sync)
+}
+
+/// Settle the oracle via the test-only generator wrapper using a fresh
+/// post-expiry Pyth spot and an insufficient sample buffer, so settlement latches
+/// and takes the single-spot fallback at `settlement_price`. Advances the clock
+/// past expiry.
 public fun settle_oracle(
     self: &mut Fixture,
     config: &ProtocolConfig,
@@ -305,7 +319,9 @@ public fun settle_oracle(
     let update_timestamp_ms = expiry + 2_000;
     self.clock.set_for_testing(update_timestamp_ms);
     pyth.set_state_for_testing(settlement_price, source_timestamp_ms, update_timestamp_ms);
-    assert!(oracle.settle_if_possible(config, pyth, &self.cap, &self.clock));
+    let mut generator = random::new_generator_for_testing();
+    oracle.settle_with_generator_for_testing(config, pyth, &mut generator, &self.clock);
+    assert!(oracle.is_settled());
 }
 
 /// Mint one order for `manager` and return its packed order id.
@@ -390,6 +406,28 @@ public fun redeem_settled(
 public fun scenario_mut(self: &mut Fixture): &mut Scenario { &mut self.scenario }
 
 public fun clock(self: &Fixture): &Clock { &self.clock }
+
+public fun set_clock_for_testing(self: &mut Fixture, timestamp_ms: u64) {
+    self.clock.set_for_testing(timestamp_ms);
+}
+
+public fun update_block_scholes_prices_for_testing(
+    self: &Fixture,
+    config: &ProtocolConfig,
+    oracle: &mut MarketOracle,
+    spot: u64,
+    forward: u64,
+    source_timestamp_ms: u64,
+) {
+    oracle.update_block_scholes_prices(
+        config,
+        &self.cap,
+        spot,
+        forward,
+        source_timestamp_ms,
+        &self.clock,
+    );
+}
 
 public fun vault_id(self: &Fixture): ID { self.vault_id }
 

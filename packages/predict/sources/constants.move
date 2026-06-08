@@ -136,6 +136,21 @@ public macro fun neg_inf(): u64 { 0 }
 /// Sentinel upper strike for ranges open to positive infinity.
 public macro fun pos_inf(): u64 { std::u64::max_value!() }
 
+// === Settlement Sampling ===
+
+/// Window before expiry over which fresh spot samples are collected for the
+/// random-average settlement price.
+public(package) macro fun settlement_sample_window_ms(): u64 { 60_000 }
+
+/// Minimum pre-expiry samples required before settlement uses the sampled-average
+/// path. With fewer samples, settlement falls through to the next latched source
+/// in priority order.
+public(package) macro fun min_settlement_samples(): u64 { 30 }
+
+/// Maximum pre-expiry spot samples retained per market (most recent kept). Bounds
+/// storage/gas; with the half-subset mean, the averaged subset is <= this / 2.
+public(package) macro fun max_settlement_samples(): u64 { 200 }
+
 // === PredictManager Derivation ===
 
 /// `PredictManagerKey` u64 slot for sender-owned managers created via

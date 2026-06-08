@@ -134,28 +134,33 @@ A `MarketOracle` moves through three states, derived from its expiry and settlem
 stateDiagram-v2
     [*] --> Active
     Active --> PendingSettlement: clock >= expiry
-    PendingSettlement --> Settled: a valid post-expiry source recorded
+    PendingSettlement --> Settled: a valid settlement source recorded
     note right of Settled
-        terminal: settlement_price set,
-        source + timestamps frozen
+        terminal: settlement_price set
     end note
 ```
 
 - **Active** — `clock < expiry` and not yet settled. Live quoting, SVI updates, and live valuation are allowed.
-- **Pending settlement** — `clock >= expiry` but no settlement price recorded yet. Live SVI updates are no longer accepted (SVI is live-market-only), but spot/forward pushes still are, and they can trigger settlement.
+- **Pending settlement** — `clock >= expiry` but no settlement price recorded yet. Live SVI updates are no longer accepted (SVI is live-market-only), but spot/forward pushes still are, and they can latch the first fresh post-expiry Block Scholes fallback.
 - **Settled** — a terminal `settlement_price` has been recorded. The market is frozen; no further oracle writes are accepted.
 
 ### Recording the terminal settlement price
 
-Settlement is triggered by an authorized operator, either as a side effect of a Block Scholes price push or via an explicit `settle_if_possible` call. Both go through the same internal logic, so the privileged path cannot record settlement under weaker checks than the price-push path. Settlement is also a first-writer-wins terminal transition: once recorded it never changes.
+Pre-expiry Pyth settlement samples are recorded permissionlessly during the final sampling window whenever the bound Pyth source is fresh. Pre-expiry Block Scholes settlement samples are cap-gated because Block Scholes data is operator supplied. Block Scholes price pushes record the accepted Block Scholes spot when they are inside the sampling window.
 
-To settle, the oracle looks for a **valid post-expiry spot source**, preferring Pyth and falling back to Block Scholes:
+After expiry, the oracle latches first-observed fresh post-expiry fallback prices instead of reading live oracle fields during final selection. Permissionless Pyth observation or settlement can latch the Pyth fallback; cap-gated Block Scholes price pushes latch the Block Scholes fallback.
 
-- A **Pyth** source is valid when Pyth's freshness timestamp is within the per-oracle `settlement_freshness_ms` window *and* Pyth's publisher `source_timestamp_ms` is strictly after the market's `expiry` — i.e. the price actually reflects a post-expiry observation, not pre-expiry data that merely landed late.
-- A **Block Scholes** source is valid under the same two conditions applied to the Block Scholes price timestamps.
+Settlement is triggered permissionlessly via `settle_with_randomness`. It is a first-writer-wins terminal transition: once recorded it never changes.
 
-If a valid source exists, the oracle records: the `settlement_price` (the chosen source's spot), the `settlement_source` code (Pyth or Block Scholes), the source's publisher timestamp, and the on-chain update timestamp. A settled event is emitted. If no source qualifies yet, settlement is a no-op and can be retried as fresh post-expiry data arrives.
+Settlement source priority is:
 
-Reading the terminal price enforces an additional invariant: the recorded `settlement_source_timestamp_ms` must be strictly greater than `expiry`. Even after the price is stored, any consumer that reads it through `settlement_price` re-checks that the price came from a genuinely post-expiry observation before it is used to compute payouts.
+- 30 or more pre-expiry Pyth samples: random-subset mean of those samples.
+- Otherwise, the first fresh post-expiry Pyth spot observed by this market oracle.
+- Otherwise, 30 or more pre-expiry Block Scholes samples: random-subset mean of those samples.
+- Otherwise, the first fresh post-expiry Block Scholes spot observed by this market oracle.
 
-The settlement source preference — Pyth first, Block Scholes second — means the protocol settles on the higher-frequency, more independently verified feed whenever it is fresh post-expiry, and only relies on the operator-supplied price when Pyth is unavailable. For the trust assumptions behind each oracle and the failure modes of the deviation guards and operator authority, see [risks](../risks.md).
+A fresh post-expiry source means its freshness timestamp is within the per-oracle `settlement_freshness_ms` window when latched and its publisher `source_timestamp_ms` is strictly after the market's `expiry`. If no source qualifies, settlement is a no-op and can be retried as fresh data arrives.
+
+The settlement write path enforces timestamp invariants: sampled settlements must record a pre-expiry source timestamp from the sampling window, while fresh-source settlements must record a post-expiry source timestamp.
+
+For the trust assumptions behind each oracle and the failure modes of the deviation guards and operator authority, see [risks](../risks.md).
