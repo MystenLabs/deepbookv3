@@ -405,7 +405,11 @@ public(package) fun pool_nav(
             pyth,
             clock,
         );
-    let position_liability = total_range - total_floor_amount;
+    let position_liability = if (total_range > total_floor_amount) {
+        total_range - total_floor_amount
+    } else {
+        0
+    };
     let required_cash = market.cash.required_cash(position_liability);
     let cash_balance = market.cash.balance();
     assert!(cash_balance >= required_cash, EValuationExceedsCash);

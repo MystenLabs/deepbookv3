@@ -41,6 +41,170 @@ const TRANSIENT_HEALTHY_COUNT: u64 = 4;
 const TRANSIENT_UNDERWATER_COUNT: u64 = 60;
 const MAX_TRADE_BUDGET: u64 = 3_000;
 
+const CRASH_OPEN_RANGE_PRICE: u64 = 500_000_000;
+const CRASH_UNDERWATER_QUANTITY: u64 = 1_000_000_000;
+const CRASH_UNDERWATER_EXPOSURE_VALUE: u64 = 500_000_000;
+const CRASH_UNDERWATER_USER_CONTRIBUTION: u64 = 250_000_000;
+const CRASH_HEALTHY_COUNT: u64 = 2;
+const CRASH_UNDERWATER_COUNT: u64 = 36;
+const CRASH_REMAINING_UNDERWATER_AFTER_SUPPLY_SYNC: u64 = 12;
+const CRASH_REMAINING_UNDERWATER_AFTER_WITHDRAW_SYNC: u64 = 0;
+const CRASH_UNDERWATER_FLOOR_AMOUNT: u64 = 250_000_000;
+const CRASH_TRUE_LIABILITY: u64 = 2_000_000_000;
+const CRASH_SUPPLY_SYNC_TOTAL_FLOOR: u64 = 3_000_000_000;
+const CRASH_WITHDRAW_SYNC_TOTAL_FLOOR: u64 = 0;
+const CRASH_SUPPLY_SYNC_OPTIMISTIC_ACTIVE_NAV: u64 = 50_000_000_000;
+const CRASH_WITHDRAW_SYNC_OPTIMISTIC_ACTIVE_NAV: u64 = 48_000_000_000;
+const CRASH_SUPPLY_SYNC_CONSERVATIVE_ACTIVE_NAV: u64 = 49_000_000_000;
+const CRASH_WITHDRAW_SYNC_CONSERVATIVE_ACTIVE_NAV: u64 = 48_000_000_000;
+const CRASH_TRUE_NAV: u64 = 48_000_000_000;
+const CRASH_IDLE_AFTER_SUPPLY_SYNC: u64 = 260_000_000_000;
+const CRASH_POOL_VALUE_FOR_SUPPLY: u64 = 309_000_000_000;
+const CRASH_SUPPLY_PAYMENT: u64 = 3_090_000_000;
+const CRASH_EXPECTED_SUPPLY_SHARES: u64 = 2_999_999_998;
+const CRASH_EXPECTED_WITHDRAW_DUSDC: u64 = 3_080_098_979;
+
+#[test]
+fun aggregate_floor_deficit_keeps_sync_supply_and_withdraw_live() {
+    let mut fx = helpers::setup_pool_with_pyth();
+    fx.set_template_zero_min_fee();
+    let (expiry_id, oracle_id) = fx.create_expiry(FAR_EXPIRY_MS);
+    let mut manager = fx.create_funded_manager(test_constants::default_manager_deposit());
+    let (mut pyth, mut vault, mut market, mut oracle, mut config) = fx.take_market(
+        expiry_id,
+        oracle_id,
+    );
+
+    fx.set_protocol_reserve_profit_share(&mut config, ZERO_PROTOCOL_SHARE);
+    fx.set_valuation_liquidation_budget(&mut config, MIN_VALUATION_BUDGET);
+    fx.prepare_live_oracle_at(
+        &config,
+        &mut oracle,
+        &mut pyth,
+        OPEN_PRICE,
+        OPEN_SOURCE_TIMESTAMP_MS,
+    );
+    assert_crash_open_range_prices(&config, &oracle, &pyth, fx.clock());
+    fx.sync_expiry(&mut config, &mut vault, &mut market, &oracle, &pyth);
+
+    mint_order_set(
+        &mut fx,
+        &config,
+        &mut manager,
+        &mut market,
+        &oracle,
+        &pyth,
+        constants::neg_inf!(),
+        helpers::min_strike(),
+        HEALTHY_QUANTITY,
+        test_constants::leverage_one_x(),
+        CRASH_HEALTHY_COUNT,
+    );
+
+    mint_order_set(
+        &mut fx,
+        &config,
+        &mut manager,
+        &mut market,
+        &oracle,
+        &pyth,
+        helpers::min_strike(),
+        constants::pos_inf!(),
+        CRASH_UNDERWATER_QUANTITY,
+        LEVERAGE_TWO_X,
+        CRASH_UNDERWATER_COUNT,
+    );
+    assert_eq!(market.rebate_reserve(), 0);
+
+    fx.set_pyth_price_for_testing(&mut pyth, STRESS_PRICE, STRESS_SOURCE_TIMESTAMP_MS);
+    assert_stress_range_prices(&config, &oracle, &pyth, fx.clock());
+
+    // First stress sync:
+    //   36 underwater 2x UP orders - 24 liquidated = 12 remaining.
+    //   total_range = 2 healthy 1x DOWN orders * 1_000_000_000 = 2_000_000_000.
+    //   total_floor = 12 * 250_000_000 = 3_000_000_000.
+    //   optimistic active NAV = cash floor 50_000_000_000.
+    //   Q = 3_000_000_000 - 2_000_000_000 = 1_000_000_000.
+    //   conservative active NAV = 50_000_000_000 - Q = 49_000_000_000.
+    //   TRUE NAV = 50_000_000_000 - 2_000_000_000 = 48_000_000_000.
+    let mut supply_sync = plp::start_pool_sync(&mut config, &vault);
+    supply_sync.sync_expiry(&mut vault, &mut market, &config, &oracle, &pyth, fx.clock());
+    let (supply_optimistic_nav, supply_total_range, supply_total_floor) = market.pool_nav(
+        &config,
+        &oracle,
+        &pyth,
+        fx.clock(),
+    );
+    assert_eq!(supply_total_range, CRASH_TRUE_LIABILITY);
+    assert_eq!(supply_total_floor, CRASH_SUPPLY_SYNC_TOTAL_FLOOR);
+    assert_eq!(supply_optimistic_nav, CRASH_SUPPLY_SYNC_OPTIMISTIC_ACTIVE_NAV);
+    assert_eq!(
+        CRASH_SUPPLY_SYNC_TOTAL_FLOOR,
+        CRASH_REMAINING_UNDERWATER_AFTER_SUPPLY_SYNC * CRASH_UNDERWATER_FLOOR_AMOUNT,
+    );
+    assert_eq!(
+        CRASH_SUPPLY_SYNC_CONSERVATIVE_ACTIVE_NAV,
+        CRASH_SUPPLY_SYNC_OPTIMISTIC_ACTIVE_NAV
+            - (CRASH_SUPPLY_SYNC_TOTAL_FLOOR - CRASH_TRUE_LIABILITY),
+    );
+    assert!(CRASH_SUPPLY_SYNC_CONSERVATIVE_ACTIVE_NAV >= CRASH_TRUE_NAV);
+    assert!(CRASH_SUPPLY_SYNC_CONSERVATIVE_ACTIVE_NAV <= CRASH_SUPPLY_SYNC_OPTIMISTIC_ACTIVE_NAV);
+    assert_eq!(vault.idle_balance(), CRASH_IDLE_AFTER_SUPPLY_SYNC);
+    assert_eq!(
+        CRASH_POOL_VALUE_FOR_SUPPLY,
+        CRASH_IDLE_AFTER_SUPPLY_SYNC + CRASH_SUPPLY_SYNC_CONSERVATIVE_ACTIVE_NAV,
+    );
+
+    let supplied_plp = fx.supply(
+        &mut config,
+        &mut vault,
+        supply_sync,
+        &pyth,
+        CRASH_SUPPLY_PAYMENT,
+    );
+    assert_eq!(supplied_plp.value(), CRASH_EXPECTED_SUPPLY_SHARES);
+
+    // Second stress sync for withdraw:
+    //   12 remaining underwater orders - 12 liquidated = 0 remaining.
+    //   total_floor = 0, total_range = 2_000_000_000, so the clamp is a no-op.
+    //   optimistic active NAV = conservative active NAV = TRUE = 48_000_000_000.
+    let mut withdraw_sync = plp::start_pool_sync(&mut config, &vault);
+    withdraw_sync.sync_expiry(&mut vault, &mut market, &config, &oracle, &pyth, fx.clock());
+    let (withdraw_optimistic_nav, withdraw_total_range, withdraw_total_floor) = market.pool_nav(
+        &config,
+        &oracle,
+        &pyth,
+        fx.clock(),
+    );
+    assert_eq!(withdraw_total_range, CRASH_TRUE_LIABILITY);
+    assert_eq!(withdraw_total_floor, CRASH_WITHDRAW_SYNC_TOTAL_FLOOR);
+    assert_eq!(withdraw_optimistic_nav, CRASH_WITHDRAW_SYNC_OPTIMISTIC_ACTIVE_NAV);
+    assert_eq!(
+        CRASH_WITHDRAW_SYNC_TOTAL_FLOOR,
+        CRASH_REMAINING_UNDERWATER_AFTER_WITHDRAW_SYNC * CRASH_UNDERWATER_FLOOR_AMOUNT,
+    );
+    assert_eq!(
+        CRASH_WITHDRAW_SYNC_CONSERVATIVE_ACTIVE_NAV,
+        CRASH_WITHDRAW_SYNC_OPTIMISTIC_ACTIVE_NAV,
+    );
+    assert!(CRASH_WITHDRAW_SYNC_CONSERVATIVE_ACTIVE_NAV >= CRASH_TRUE_NAV);
+    assert!(
+        CRASH_WITHDRAW_SYNC_CONSERVATIVE_ACTIVE_NAV <= CRASH_WITHDRAW_SYNC_OPTIMISTIC_ACTIVE_NAV,
+    );
+
+    let (dusdc, sui, deep) = fx.withdraw(&mut config, &mut vault, withdraw_sync, supplied_plp);
+    assert_eq!(dusdc.value(), CRASH_EXPECTED_WITHDRAW_DUSDC);
+    assert_eq!(sui.value(), 0);
+    assert_eq!(deep.value(), 0);
+    destroy(dusdc);
+    destroy(sui);
+    destroy(deep);
+
+    helpers::return_market(pyth, vault, market, oracle, config);
+    destroy(manager);
+    fx.finish();
+}
+
 #[test]
 fun sync_expiry_haircuts_unverified_underfloor_orders() {
     let mut fx = helpers::setup_pool_with_pyth();
@@ -357,4 +521,40 @@ fun assert_stress_range_prices(
 
     assert_eq!(up_price, 0);
     assert_eq!(down_price, float!());
+}
+
+fun assert_crash_open_range_prices(
+    config: &ProtocolConfig,
+    oracle: &MarketOracle,
+    pyth: &PythSource,
+    clock: &Clock,
+) {
+    let up_price = pricing::live_range_probability(
+        config.pricing_config(),
+        oracle,
+        pyth,
+        helpers::min_strike(),
+        constants::pos_inf!(),
+        clock,
+    );
+    let down_price = pricing::live_range_probability(
+        config.pricing_config(),
+        oracle,
+        pyth,
+        constants::neg_inf!(),
+        helpers::min_strike(),
+        clock,
+    );
+
+    assert_eq!(up_price, CRASH_OPEN_RANGE_PRICE);
+    assert_eq!(down_price, CRASH_OPEN_RANGE_PRICE);
+    assert_eq!(math::mul(up_price, CRASH_UNDERWATER_QUANTITY), CRASH_UNDERWATER_EXPOSURE_VALUE);
+    assert_eq!(
+        math::div(CRASH_UNDERWATER_EXPOSURE_VALUE, LEVERAGE_TWO_X),
+        CRASH_UNDERWATER_USER_CONTRIBUTION,
+    );
+    assert_eq!(
+        CRASH_UNDERWATER_EXPOSURE_VALUE - CRASH_UNDERWATER_USER_CONTRIBUTION,
+        CRASH_UNDERWATER_FLOOR_AMOUNT,
+    );
 }

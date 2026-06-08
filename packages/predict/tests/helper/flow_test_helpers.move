@@ -26,7 +26,7 @@ use deepbook_predict::{
     expiry_market::{Self, ExpiryMarket},
     i64,
     market_oracle::{Self, MarketOracle, MarketOracleCap},
-    plp::{Self, PLP, PoolVault},
+    plp::{Self, PLP, PoolSync, PoolVault},
     predict_manager::PredictManager,
     protocol_config::{Self, ProtocolConfig},
     pyth_source::{Self, PythSource},
@@ -39,8 +39,10 @@ use sui::{
     clock::{Self, Clock},
     coin::{Self, Coin},
     random,
+    sui::SUI,
     test_scenario::{Self as test, Scenario, return_shared}
 };
+use token::deep::DEEP;
 
 /// The grid's minimum finite strike for the default tick/grid (a valid lower
 /// boundary). Re-exported from `test_constants` so existing `helpers::min_strike()`
@@ -227,6 +229,14 @@ public fun set_trade_liquidation_budget(self: &Fixture, config: &mut ProtocolCon
     config.set_trade_liquidation_budget(&self.admin_cap, budget);
 }
 
+public fun set_template_zero_min_fee(self: &mut Fixture) {
+    self.scenario.next_tx(test_constants::admin());
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    config.set_template_min_fee(&self.admin_cap, 0);
+    return_shared(config);
+    self.scenario.next_tx(test_constants::admin());
+}
+
 /// Take the four shared market objects + the protocol config a flow test
 /// mutates. The config is threaded into the flow-phase methods as a parameter
 /// (it cannot be a `Fixture` field — see module doc) and returned by the test.
@@ -366,6 +376,35 @@ public fun sync_expiry_value(
     let mut sync = plp::start_pool_sync(config, vault);
     sync.sync_expiry(vault, market, config, oracle, pyth, &self.clock);
     vault.finish_pool_sync(config, sync)
+}
+
+public fun supply(
+    self: &mut Fixture,
+    config: &mut ProtocolConfig,
+    vault: &mut PoolVault,
+    sync: PoolSync,
+    pyth: &PythSource,
+    amount: u64,
+): Coin<PLP> {
+    vault.supply(
+        config,
+        sync,
+        coin::mint_for_testing<DUSDC>(amount, self.scenario.ctx()),
+        pyth,
+        pyth,
+        &self.clock,
+        self.scenario.ctx(),
+    )
+}
+
+public fun withdraw(
+    self: &mut Fixture,
+    config: &mut ProtocolConfig,
+    vault: &mut PoolVault,
+    sync: PoolSync,
+    lp_coin: Coin<PLP>,
+): (Coin<DUSDC>, Coin<SUI>, Coin<DEEP>) {
+    vault.withdraw(config, sync, lp_coin, &self.clock, self.scenario.ctx())
 }
 
 /// Settle the oracle via the test-only generator wrapper using a fresh
