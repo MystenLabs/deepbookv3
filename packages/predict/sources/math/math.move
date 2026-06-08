@@ -18,12 +18,21 @@
 /// held to a documented error budget. The budgets are derived from downstream
 /// pricing sensitivity (`pricing.move` computes `up_price = Φ(d2)`, with `ln`
 /// and `sqrt` feeding `d2`), NOT measured from the implementation's own output.
-/// The binding requirement: the math layer must not move any quote by more than
-/// 1e-7 of full scale (<= 100 units on a 1e9 price) — negligible versus tick
-/// size and fees. `normal_cdf` error reaches the quote 1:1, so it is the binding
-/// term; `ln`/`sqrt`/`exp` errors are attenuated by `φ(d2) <= 0.399` (and `ln`'s
-/// error is largest at deep-OTM strikes, where `φ(d2) -> 0`), so their budgets
-/// can be looser.
+/// Quote impact is regime-dependent. Away from expiry (variance not small) the
+/// math layer moves any quote by at most ~1e-7 of full scale (~100 units on a
+/// 1e9 price): `normal_cdf` error reaches the quote 1:1 (the binding term there),
+/// while `ln`/`sqrt`/`exp` errors are attenuated by `φ(d2) <= 0.399` (and `ln`'s
+/// error is largest at deep-OTM strikes, where `φ(d2) -> 0`). Near expiry the
+/// binding term flips: `d2 = -(k + w/2)/sqrt(w)` is ill-conditioned in the total
+/// variance `w` (its sensitivity `d(d2)/dw = 0.5*w^(-3/2)*(k - w/2)` grows like
+/// `w^(-3/2)`), so a sub-1-ULP error in `w` is amplified by ~1e3-1e4 into `d2`
+/// *before* the `φ(d2)` attenuation. At small variance and moderate moneyness
+/// (`|d2| ~ 1`) this dominates, and the worst-case quote impact rises to ~2.4e-6
+/// of full scale (~2_400 units @1e9). Still negligible versus tick size and fees
+/// and sign-varying (no pool bias), but the variance (`sqrt`/`mul`) term — not
+/// `normal_cdf` — is binding in this regime. Verified per-strike against an
+/// independent erf reference on real near-expiry SVI data in
+/// `pricing_exact_tests.move`.
 ///
 /// | primitive  | budget                | rounding / bias                       |
 /// |------------|-----------------------|---------------------------------------|
