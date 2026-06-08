@@ -22,6 +22,7 @@ module deepbook_predict::flow_test_helpers;
 
 use deepbook_predict::{
     admin::AdminCap,
+    constants,
     expiry_market::{Self, ExpiryMarket},
     i64,
     market_oracle::{Self, MarketOracle, MarketOracleCap},
@@ -302,7 +303,13 @@ public fun prepare_live_oracle(
         live_ts,
         &self.clock,
     );
-    let svi = market_oracle::new_svi_params(1, 2, i64::zero(), i64::zero(), 3);
+    let svi = market_oracle::new_svi_params(
+        test_constants::default_svi_a(),
+        constants::svi_b_min!(),
+        i64::from_u64(test_constants::default_svi_rho_magnitude()),
+        i64::from_u64(test_constants::default_svi_m()),
+        constants::svi_sigma_min!(),
+    );
     oracle.update_svi(config, &self.cap, svi, live_ts, &self.clock);
 }
 
@@ -323,7 +330,13 @@ public fun prepare_live_oracle_at(
         source_timestamp_ms,
         &self.clock,
     );
-    let svi = market_oracle::new_svi_params(1, 2, i64::zero(), i64::zero(), 3);
+    let svi = market_oracle::new_svi_params(
+        test_constants::default_svi_a(),
+        constants::svi_b_min!(),
+        i64::from_u64(test_constants::default_svi_rho_magnitude()),
+        i64::from_u64(test_constants::default_svi_m()),
+        constants::svi_sigma_min!(),
+    );
     oracle.update_svi(config, &self.cap, svi, source_timestamp_ms, &self.clock);
 }
 

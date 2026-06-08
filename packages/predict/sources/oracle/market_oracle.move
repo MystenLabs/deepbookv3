@@ -36,6 +36,9 @@ const EStaleSVISourceUpdate: u64 = 10;
 const EWrongPythSource: u64 = 11;
 const EFuturePriceSourceUpdate: u64 = 12;
 const EFutureSVISourceUpdate: u64 = 13;
+const EInvalidSviB: u64 = 14;
+const EInvalidSviRho: u64 = 15;
+const EInvalidSviSigma: u64 = 16;
 const EPackageVersionDisabled: u64 = 17;
 
 const STATUS_ACTIVE: u8 = 1;
@@ -331,6 +334,7 @@ public fun update_svi(
         EStaleSVISourceUpdate,
     );
     assert!(source_timestamp_ms <= clock.timestamp_ms(), EFutureSVISourceUpdate);
+    assert_valid_svi(&svi);
     market.apply_block_scholes_svi(svi, source_timestamp_ms, clock);
 }
 
@@ -403,6 +407,18 @@ public fun self_unregister_cap(market: &mut MarketOracle, cap: &MarketOracleCap)
 /// source of truth from `Registry`.
 public(package) fun set_allowed_versions(market: &mut MarketOracle, allowed_versions: VecSet<u64>) {
     market.allowed_versions = allowed_versions;
+}
+
+/// Abort unless SVI parameters lie within model-team 1e9 fixed-point bounds.
+public(package) fun assert_valid_svi(svi: &SVIParams) {
+    let b = svi.b();
+    assert!(b >= constants::svi_b_min!() && b <= constants::svi_b_max!(), EInvalidSviB);
+    assert!(svi.rho().magnitude() <= constants::float_scaling!(), EInvalidSviRho);
+    let sigma = svi.sigma();
+    assert!(
+        sigma >= constants::svi_sigma_min!() && sigma <= constants::svi_sigma_max!(),
+        EInvalidSviSigma,
+    );
 }
 
 /// Return forward / spot basis, aborting until both values are initialized.

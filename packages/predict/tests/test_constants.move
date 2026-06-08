@@ -77,6 +77,16 @@ public fun default_expiry_ms(): u64 { 31_536_100_000 }
 /// sits at `min_finite_strike` (≈50% for a `[min_strike, +inf)` range).
 public fun default_live_price(): u64 { 100_000_000_000 }
 
+/// Default SVI `a` for live oracle test fixtures.
+public fun default_svi_a(): u64 { 1 }
+
+/// Default SVI `rho` magnitude for live oracle test fixtures: +1.0.
+public fun default_svi_rho_magnitude(): u64 { constants::float_scaling!() }
+
+/// Default SVI `m` for live oracle test fixtures: far enough right to keep the
+/// wing contribution rounded to zero for default-grid strikes.
+public fun default_svi_m(): u64 { 10 * constants::float_scaling!() }
+
 /// Default trader-manager deposit in the composite bring-up; large enough to fund
 /// several leveraged mints plus fees.
 public fun default_manager_deposit(): u64 { 30_000_000_000 }

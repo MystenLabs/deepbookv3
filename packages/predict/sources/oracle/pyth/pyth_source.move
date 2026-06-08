@@ -129,6 +129,7 @@ public(package) fun value_in_dusdc(source: &PythSource, amount: u64, asset_decim
     // asset_decimals + 9 - 6 >= 3 for any decimals, so no underflow.
     let exponent =
         (asset_decimals as u64) + constants::float_scaling_decimals!() - (constants::dusdc_decimals!() as u64);
+    // Valid asset-decimals/price inputs keep the DUSDC value within u64; the VM abort is the out-of-domain backstop.
     ceil_div((amount as u128) * (spot as u128), pow10(exponent)) as u64
 }
 

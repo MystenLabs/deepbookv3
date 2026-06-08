@@ -24,7 +24,6 @@ const EZeroForward: u64 = 1;
 const ECannotBeNegative: u64 = 2;
 const EZeroVariance: u64 = 3;
 const EInvalidRange: u64 = 4;
-const ERangePriceUnderflow: u64 = 5;
 const EInvalidCurveRange: u64 = 7;
 const EBlockScholesPriceStale: u64 = 8;
 const EBlockScholesSVIStale: u64 = 9;
@@ -171,9 +170,7 @@ fun compute_range_price(svi: &SVIParams, forward: u64, lower: u64, higher: u64):
 
     let lower_up_price = compute_up_price(svi, forward, lower);
     let higher_up_price = compute_up_price(svi, forward, higher);
-    assert!(lower_up_price >= higher_up_price, ERangePriceUnderflow);
-
-    lower_up_price - higher_up_price
+    range_price(lower_up_price, higher_up_price)
 }
 
 // === Private Functions ===
@@ -181,6 +178,13 @@ fun compute_range_price(svi: &SVIParams, forward: u64, lower: u64, higher: u64):
 fun assert_live_oracle_fresh(config: &PricingConfig, market: &MarketOracle, clock: &Clock) {
     assert!(block_scholes_price_is_fresh(config, market, clock), EBlockScholesPriceStale);
     assert!(block_scholes_svi_is_fresh(config, market, clock), EBlockScholesSVIStale);
+}
+
+/// Return the raw range probability from two UP tail prices.
+fun range_price(lower_up_price: u64, higher_up_price: u64): u64 {
+    // A thin / far-OTM range has ~0 true probability; a fixed-point 1-ulp
+    // inversion should price 0, not abort a legitimate mint/redeem/valuation.
+    lower_up_price - lower_up_price.min(higher_up_price)
 }
 
 fun block_scholes_price_is_fresh(
@@ -296,9 +300,7 @@ fun find_gap(points: &vector<CurvePoint>, tick_size: u64): (bool, u64) {
             continue
         };
 
-        // `points` is strike-sorted, and UP price is monotone non-increasing in strike.
-        assert!(lo.up_price >= hi.up_price, ERangePriceUnderflow);
-        let price_diff = lo.up_price - hi.up_price;
+        let price_diff = range_price(lo.up_price, hi.up_price);
         if (price_diff > best_price_diff) {
             best_idx = i;
             best_price_diff = price_diff;

@@ -22,6 +22,7 @@ module deepbook_predict::oracle_fixture;
 
 use deepbook_predict::{
     admin::AdminCap,
+    constants,
     i64,
     market_oracle::{Self, MarketOracle, MarketOracleCap},
     plp::{Self, PoolVault},
@@ -146,7 +147,13 @@ public fun prepare_live_oracle(
         live_ts,
         &self.clock,
     );
-    let svi = market_oracle::new_svi_params(1, 2, i64::zero(), i64::zero(), 3);
+    let svi = market_oracle::new_svi_params(
+        test_constants::default_svi_a(),
+        constants::svi_b_min!(),
+        i64::from_u64(test_constants::default_svi_rho_magnitude()),
+        i64::from_u64(test_constants::default_svi_m()),
+        constants::svi_sigma_min!(),
+    );
     oracle.update_svi(config, &self.cap, svi, live_ts, &self.clock);
 }
 
