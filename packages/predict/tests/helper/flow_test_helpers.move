@@ -33,7 +33,7 @@ use deepbook_predict::{
     test_constants
 };
 use dusdc::dusdc::DUSDC;
-use std::unit_test::destroy;
+use std::unit_test::{assert_eq, destroy};
 use sui::{
     clock::{Self, Clock},
     coin::{Self, Coin},
@@ -41,18 +41,10 @@ use sui::{
     test_scenario::{Self as test, Scenario, return_shared}
 };
 
-const PYTH_FEED_ID: u32 = 1;
-const NOW_MS: u64 = 100_000;
-const TICK_SIZE: u64 = 1_000_000_000;
-/// Grid-centering spot: spot/tick = 50_100 lies in (ticks/2, ticks] for the
-/// 100_000-tick oracle grid, so `new_centered` accepts it. min_strike = 100e9.
-const CREATION_SPOT: u64 = 50_100_000_000_000;
-const LIVE_SOURCE_TIMESTAMP_MS: u64 = 99_000;
-const INITIAL_SUPPLY: u64 = 300_000_000_000;
-const PROTOCOL_RESERVE_SHARE: u64 = 400_000_000;
-
-/// The grid's minimum finite strike for the constants above (a valid lower boundary).
-public fun min_strike(): u64 { 100_000_000_000 }
+/// The grid's minimum finite strike for the default tick/grid (a valid lower
+/// boundary). Re-exported from `test_constants` so existing `helpers::min_strike()`
+/// callers keep working through the one source of truth.
+public fun min_strike(): u64 { test_constants::min_finite_strike() }
 
 /// Scenario-local objects shared across one flow test. `Registry`/`ProtocolConfig`
 /// are real shared objects taken per-transaction, not held here (see module doc).
@@ -67,11 +59,15 @@ public struct Fixture {
 }
 
 /// Stand up a registry + protocol config (via the production-mirroring
-/// `init_for_testing`) + a registered Pyth source + a bootstrapped PLP pool.
-/// base_fee is floored to 1 and min_ask to 0 so small test quantities are
-/// admissible. The real Pyth source is created BEFORE `supply` so it can serve
-/// as the incentive-valuation source (no placeholder seam needed).
-public fun setup_pool_with_pyth(): Fixture {
+/// `init_for_testing`) + a registered Pyth source + a bootstrapped PLP pool, with
+/// the oracle grid centered on `spot`, a `tick`-sized strike grid, and `supply`
+/// DUSDC of initial PLP. base_fee is floored to 1 and min_ask to 0 so small test
+/// quantities are admissible. The real Pyth source is created BEFORE `supply` so
+/// it can serve as the incentive-valuation source (no placeholder seam needed).
+///
+/// `spot/tick` must land in `(grid_ticks/2, grid_ticks]` for `new_centered` to
+/// accept it (the defaults satisfy this — see `test_constants`).
+public fun setup_market(spot: u64, tick: u64, supply: u64): Fixture {
     let mut scenario = test::begin(test_constants::admin());
     plp::init_for_testing(scenario.ctx());
     registry::init_for_testing(scenario.ctx());
@@ -80,7 +76,7 @@ public fun setup_pool_with_pyth(): Fixture {
     scenario.next_tx(test_constants::admin());
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let mut config = scenario.take_shared<ProtocolConfig>();
-    config.set_protocol_reserve_profit_share(&admin_cap, PROTOCOL_RESERVE_SHARE);
+    config.set_protocol_reserve_profit_share(&admin_cap, test_constants::protocol_reserve_share());
     config.set_template_base_fee(&admin_cap, 1);
     config.set_template_min_ask_price(&admin_cap, 0);
     return_shared(config);
@@ -88,20 +84,21 @@ public fun setup_pool_with_pyth(): Fixture {
     let pyth_id = registry::create_pyth_source(
         &mut registry,
         &admin_cap,
-        PYTH_FEED_ID,
-        TICK_SIZE,
+        test_constants::pyth_feed_id(),
+        tick,
         scenario.ctx(),
     );
     return_shared(registry);
     let cap = market_oracle::create_cap(&admin_cap, scenario.ctx());
     let mut clock = clock::create_for_testing(scenario.ctx());
-    clock.set_for_testing(NOW_MS);
+    clock.set_for_testing(test_constants::now_ms());
 
     // tx2: seed Pyth spot, then bootstrap the PLP pool through the real supply
     // path using the registered source as both incentive valuation sources.
     scenario.next_tx(test_constants::admin());
     let mut pyth = scenario.take_shared_by_id<PythSource>(pyth_id);
-    pyth.set_state_for_testing(CREATION_SPOT, LIVE_SOURCE_TIMESTAMP_MS, LIVE_SOURCE_TIMESTAMP_MS);
+    let live_ts = test_constants::live_source_timestamp_ms();
+    pyth.set_state_for_testing(spot, live_ts, live_ts);
     let mut config = scenario.take_shared<ProtocolConfig>();
     let mut vault = scenario.take_shared<PoolVault>();
     let vault_id = vault.id();
@@ -109,7 +106,7 @@ public fun setup_pool_with_pyth(): Fixture {
     let initial_plp = vault.supply(
         &mut config,
         sync,
-        coin::mint_for_testing<DUSDC>(INITIAL_SUPPLY, scenario.ctx()),
+        coin::mint_for_testing<DUSDC>(supply, scenario.ctx()),
         &pyth,
         &pyth,
         &clock,
@@ -130,6 +127,58 @@ public fun setup_pool_with_pyth(): Fixture {
         pyth_id,
         initial_plp,
     }
+}
+
+/// `setup_market` with the default creation spot / tick / initial supply.
+public fun setup_market_default(): Fixture {
+    setup_market(
+        test_constants::default_creation_spot(),
+        test_constants::default_tick_size(),
+        test_constants::default_initial_supply(),
+    )
+}
+
+/// Back-compat alias for the default bring-up (the pre-parameterization name used
+/// across the existing suite).
+public fun setup_pool_with_pyth(): Fixture { setup_market_default() }
+
+/// One-shot composite bring-up: a default funded pool already past
+/// `create_expiry` + `prepare_live_oracle` + a full single-expiry `sync_expiry`,
+/// plus a funded alice manager, so happy-path flow tests start at the first
+/// interesting line. The market objects are returned to the shared pool; the
+/// caller `take_market`s them. Returns `(fixture, expiry_id, oracle_id, manager)`.
+public fun setup_everything(): (Fixture, ID, ID, PredictManager) {
+    let mut fx = setup_market_default();
+    let (expiry_id, oracle_id) = fx.create_expiry(test_constants::default_expiry_ms());
+    let manager = fx.create_funded_manager(test_constants::default_manager_deposit());
+    let (mut pyth, mut vault, mut market, mut oracle, mut config) = fx.take_market(
+        expiry_id,
+        oracle_id,
+    );
+    fx.prepare_live_oracle(&config, &mut oracle, &mut pyth, test_constants::default_live_price());
+    fx.sync_expiry(&mut config, &mut vault, &mut market, &oracle, &pyth);
+    return_market(pyth, vault, market, oracle, config);
+    fx.scenario.next_tx(test_constants::admin());
+    (fx, expiry_id, oracle_id, manager)
+}
+
+/// Create an additional expiry market and bring it fully live (oracle prices +
+/// SVI seeded, one single-expiry sync). Returns `(expiry_id, oracle_id)`. Use for
+/// a SECOND expiry. NOTE: this syncs only the new expiry on its own pool sync, so
+/// call it before any other expiry is active, or drive a manual multi-expiry sync
+/// when several expiries must be valued in one pass (`finish_pool_sync` asserts
+/// every active expiry was synced).
+public fun create_active_expiry(self: &mut Fixture, expiry: u64, live_price: u64): (ID, ID) {
+    let (expiry_id, oracle_id) = self.create_expiry(expiry);
+    let (mut pyth, mut vault, mut market, mut oracle, mut config) = self.take_market(
+        expiry_id,
+        oracle_id,
+    );
+    self.prepare_live_oracle(&config, &mut oracle, &mut pyth, live_price);
+    self.sync_expiry(&mut config, &mut vault, &mut market, &oracle, &pyth);
+    return_market(pyth, vault, market, oracle, config);
+    self.scenario.next_tx(test_constants::admin());
+    (expiry_id, oracle_id)
 }
 
 /// Create the market + oracle for `expiry` through the production path.
@@ -210,9 +259,15 @@ public fun return_market(
     return_shared(config);
 }
 
-/// Create a fresh trader manager (owned by alice) and fund it with DUSDC.
-public fun create_funded_manager(self: &mut Fixture, deposit: u64): PredictManager {
-    self.scenario.next_tx(test_constants::alice());
+/// Create a fresh trader manager owned by `owner` and fund it with DUSDC. The
+/// scenario sender is left as `owner` so the caller's next mint/redeem generates a
+/// valid owner proof. Use this to stand up a SECOND (multi-trader) manager.
+public fun create_funded_manager_for(
+    self: &mut Fixture,
+    owner: address,
+    deposit: u64,
+): PredictManager {
+    self.scenario.next_tx(owner);
     let mut registry = self.scenario.take_shared<Registry>();
     let mut manager = registry::create_manager(&mut registry, self.scenario.ctx());
     return_shared(registry);
@@ -221,6 +276,11 @@ public fun create_funded_manager(self: &mut Fixture, deposit: u64): PredictManag
         self.scenario.ctx(),
     );
     manager
+}
+
+/// Create a fresh trader manager (owned by alice) and fund it with DUSDC.
+public fun create_funded_manager(self: &mut Fixture, deposit: u64): PredictManager {
+    self.create_funded_manager_for(test_constants::alice(), deposit)
 }
 
 /// Seed fresh live Block Scholes prices + SVI so quotes are available.
@@ -232,17 +292,18 @@ public fun prepare_live_oracle(
     pyth: &mut PythSource,
     live_price: u64,
 ) {
-    pyth.set_state_for_testing(live_price, LIVE_SOURCE_TIMESTAMP_MS, LIVE_SOURCE_TIMESTAMP_MS);
+    let live_ts = test_constants::live_source_timestamp_ms();
+    pyth.set_state_for_testing(live_price, live_ts, live_ts);
     oracle.update_block_scholes_prices(
         config,
         &self.cap,
         live_price,
         live_price,
-        LIVE_SOURCE_TIMESTAMP_MS,
+        live_ts,
         &self.clock,
     );
     let svi = market_oracle::new_svi_params(1, 2, i64::zero(), i64::zero(), 3);
-    oracle.update_svi(config, &self.cap, svi, LIVE_SOURCE_TIMESTAMP_MS, &self.clock);
+    oracle.update_svi(config, &self.cap, svi, live_ts, &self.clock);
 }
 
 public fun prepare_live_oracle_at(
@@ -399,6 +460,46 @@ public fun redeem_settled(
         &self.clock,
         self.scenario.ctx(),
     )
+}
+
+// === Manager state-sheet assertions (ExpectedBalances analog) ===
+
+/// A full expected snapshot of one manager's scalar state plus its per-expiry
+/// trading state, asserted in one call by `check_manager`. Mirrors deepbook
+/// core's `ExpectedBalances` pattern so flow tests read as state sheets rather
+/// than scattered getter assertions.
+public struct ExpectedManagerState has copy, drop {
+    /// Free DUSDC balance (`manager.balance()`).
+    balance: u64,
+    /// Cumulative trading fees paid into the checked expiry.
+    fees_paid: u64,
+    /// Open position count in the checked expiry.
+    position_count: u64,
+    /// Active (this-epoch-effective) DEEP stake.
+    active_stake: u64,
+    /// Inactive (next-epoch) DEEP stake.
+    inactive_stake: u64,
+}
+
+public fun expected_manager_state(
+    balance: u64,
+    fees_paid: u64,
+    position_count: u64,
+    active_stake: u64,
+    inactive_stake: u64,
+): ExpectedManagerState {
+    ExpectedManagerState { balance, fees_paid, position_count, active_stake, inactive_stake }
+}
+
+/// Assert a manager's full state sheet against `expected` for `expiry_id`. Each
+/// field is an exact `assert_eq!`, so a single wrong field fails the test with
+/// both values printed.
+public fun check_manager(manager: &PredictManager, expiry_id: ID, expected: ExpectedManagerState) {
+    assert_eq!(manager.balance(), expected.balance);
+    assert_eq!(manager.trading_fees_paid(expiry_id), expected.fees_paid);
+    assert_eq!(manager.expiry_position_count(expiry_id), expected.position_count);
+    assert_eq!(manager.active_stake(), expected.active_stake);
+    assert_eq!(manager.inactive_stake(), expected.inactive_stake);
 }
 
 // === Accessors ===

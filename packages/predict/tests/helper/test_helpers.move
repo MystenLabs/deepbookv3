@@ -69,6 +69,28 @@ public macro fun destroy_4<$T1, $T2, $T3, $T4>($obj1: $T1, $obj2: $T2, $obj3: $T
     destroy($obj4);
 }
 
+// === return_shared macros ===
+// Terse multi-object `test_scenario::return_shared` for flow tests that take
+// several shared objects at once (port of `deepbook_margin::test_helpers`).
+
+public macro fun return_shared_2<$T1, $T2>($o1: $T1, $o2: $T2) {
+    test::return_shared($o1);
+    test::return_shared($o2);
+}
+
+public macro fun return_shared_3<$T1, $T2, $T3>($o1: $T1, $o2: $T2, $o3: $T3) {
+    test::return_shared($o1);
+    test::return_shared($o2);
+    test::return_shared($o3);
+}
+
+public macro fun return_shared_4<$T1, $T2, $T3, $T4>($o1: $T1, $o2: $T2, $o3: $T3, $o4: $T4) {
+    test::return_shared($o1);
+    test::return_shared($o2);
+    test::return_shared($o3);
+    test::return_shared($o4);
+}
+
 // === Scenario setup ===
 
 /// Begin a `Scenario` as `test_constants::admin()` and share a `Registry` +
