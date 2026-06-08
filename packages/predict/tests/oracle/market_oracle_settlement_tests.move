@@ -28,6 +28,7 @@ const SAMPLE_SERIES_BASE_PRICE: u64 = 100_000_000_000;
 const SAME_PRICE_STEP: u64 = 0;
 const SAMPLE_SERIES_STEP: u64 = 1_000_000_000;
 const SEEDED_SAMPLED_AVERAGE_PRICE: u64 = 115_400_000_000;
+const EQUAL_SAMPLE_PRICE: u64 = 123_000_000_000;
 const POST_EXPIRY_SOURCE_TIMESTAMP_MS: u64 = 201_000;
 const POST_EXPIRY_UPDATE_TIMESTAMP_MS: u64 = 202_000;
 const SECOND_POST_EXPIRY_SOURCE_TIMESTAMP_MS: u64 = 202_500;
@@ -188,6 +189,34 @@ fun settled_oracle_ignores_later_settlement_attempts() {
     settle_with_current_pyth(&fx, &config, &mut oracle, &pyth);
 
     assert_eq!(pricing::settlement_price(&oracle), PYTH_POST_EXPIRY_PRICE);
+
+    helpers::return_market(pyth, vault, market, oracle, config);
+    fx.finish();
+}
+
+/// With exactly `min_settlement_samples` equal Pyth samples, the random-subset
+/// mean is that value EXACTLY, independent of the shuffle (mean of equal values).
+/// This pins the sampled-average path at the 30-sample threshold without depending
+/// on the contract's shuffle output (unlike the stepped-price seeded tests).
+#[test]
+fun equal_pyth_samples_settle_to_exact_value() {
+    let mut fx = helpers::setup_pool_with_pyth();
+    let (expiry_id, oracle_id) = fx.create_expiry(EXPIRY_MS);
+    let (mut pyth, vault, market, mut oracle, config) = fx.take_market(expiry_id, oracle_id);
+
+    record_pyth_samples(
+        &mut fx,
+        &config,
+        &mut oracle,
+        &mut pyth,
+        constants::min_settlement_samples!(),
+        EQUAL_SAMPLE_PRICE,
+        SAME_PRICE_STEP,
+    );
+    settle_with_pyth(&mut fx, &config, &mut oracle, &mut pyth, PYTH_POST_EXPIRY_PRICE);
+
+    // Mean of 15 (or any subset of) equal samples is the sample value itself.
+    assert_eq!(pricing::settlement_price(&oracle), EQUAL_SAMPLE_PRICE);
 
     helpers::return_market(pyth, vault, market, oracle, config);
     fx.finish();
