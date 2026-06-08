@@ -7,11 +7,107 @@ module deepbook_predict::plp_tests;
 use deepbook_predict::{constants::float_scaling as float, plp};
 use std::unit_test::assert_eq;
 
+const NAV_OPTIMISTIC: u64 = 1_000;
+const FULLY_VERIFIED_RANGE: u64 = 300;
+const FULLY_VERIFIED_FLOOR: u64 = 100;
+const NOTHING_VERIFIED_RANGE: u64 = 80;
+const NOTHING_VERIFIED_FLOOR: u64 = 120;
+/// D_max = 120, unscanned_range = 80, Q = 40, NAV = 1_000 - 40.
+const NOTHING_VERIFIED_NAV: u64 = 960;
+
+const CLOSED_FORM_NAV_OPTIMISTIC: u64 = 900;
+const CLOSED_FORM_TOTAL_RANGE: u64 = 350;
+const CLOSED_FORM_TOTAL_FLOOR: u64 = 300;
+const CLOSED_FORM_VERIFIED_RANGE: u64 = 300;
+const CLOSED_FORM_VERIFIED_FLOOR: u64 = 100;
+/// cash_minus_rebate = 950 because nav_optimistic = 950 - (350 - 300).
+/// Q = (300 - 100) - (350 - 300) = 150, so conservative NAV = 900 - 150.
+/// Closed form: 950 - (300 - 100) = 750.
+const CLOSED_FORM_NAV: u64 = 750;
+
+const NET_ITM_NAV_OPTIMISTIC: u64 = 900;
+const NET_ITM_TOTAL_RANGE: u64 = 350;
+const NET_ITM_TOTAL_FLOOR: u64 = 200;
+const NET_ITM_VERIFIED_RANGE: u64 = 100;
+const NET_ITM_VERIFIED_FLOOR: u64 = 50;
+
 // `protocol_reserve_profit_share` is 1e9-scaled (`float!()` == 1.0).
 // `plp::lp_pool_value(idle, credits, debits, share, active)` returns the
 // LP-attributable pool value = max(0, gross - exclusion), where
 // gross = idle + active and exclusion = share * max(0, (credits + active) - debits).
 // Expected values below are derived by hand from that definition.
+
+#[test]
+fun conservative_active_nav_fully_verified_keeps_optimistic_nav() {
+    // verified == total:
+    //   D_max = max(0, 100 - 100) = 0
+    //   Q = 0
+    assert_eq!(
+        plp::conservative_active_nav(
+            NAV_OPTIMISTIC,
+            FULLY_VERIFIED_RANGE,
+            FULLY_VERIFIED_FLOOR,
+            FULLY_VERIFIED_RANGE,
+            FULLY_VERIFIED_FLOOR,
+        ),
+        NAV_OPTIMISTIC,
+    );
+}
+
+#[test]
+fun conservative_active_nav_nothing_verified_haircuts_net_underwater() {
+    // nothing verified:
+    //   D_max = 120
+    //   unscanned_range = 80
+    //   Q = 40
+    assert_eq!(
+        plp::conservative_active_nav(
+            NAV_OPTIMISTIC,
+            NOTHING_VERIFIED_RANGE,
+            NOTHING_VERIFIED_FLOOR,
+            0,
+            0,
+        ),
+        NOTHING_VERIFIED_NAV,
+    );
+}
+
+#[test]
+fun conservative_active_nav_q_positive_matches_closed_form() {
+    // Q > 0:
+    //   total_range - total_floor = 350 - 300 = 50
+    //   cash_minus_rebate = nav_optimistic + liability = 900 + 50 = 950
+    //   survivor exact liability = verified_range - verified_floor = 300 - 100 = 200
+    //   conservative NAV = 950 - 200 = 750
+    assert_eq!(
+        plp::conservative_active_nav(
+            CLOSED_FORM_NAV_OPTIMISTIC,
+            CLOSED_FORM_TOTAL_RANGE,
+            CLOSED_FORM_TOTAL_FLOOR,
+            CLOSED_FORM_VERIFIED_RANGE,
+            CLOSED_FORM_VERIFIED_FLOOR,
+        ),
+        CLOSED_FORM_NAV,
+    );
+}
+
+#[test]
+fun conservative_active_nav_net_itm_unscanned_keeps_optimistic_nav() {
+    // unscanned borrowed amount is covered by unscanned option value:
+    //   D_max = 200 - 50 = 150
+    //   unscanned_range = 350 - 100 = 250
+    //   Q = max(0, 150 - 250) = 0
+    assert_eq!(
+        plp::conservative_active_nav(
+            NET_ITM_NAV_OPTIMISTIC,
+            NET_ITM_TOTAL_RANGE,
+            NET_ITM_TOTAL_FLOOR,
+            NET_ITM_VERIFIED_RANGE,
+            NET_ITM_VERIFIED_FLOOR,
+        ),
+        NET_ITM_NAV_OPTIMISTIC,
+    );
+}
 
 #[test]
 fun lp_pool_value_floors_at_zero_when_exclusion_exceeds_gross() {

@@ -156,6 +156,26 @@ public fun create_expiry(self: &mut Fixture, expiry: u64): (ID, ID) {
     (expiry_id, oracle_id)
 }
 
+public fun set_protocol_reserve_profit_share(
+    self: &Fixture,
+    config: &mut ProtocolConfig,
+    share: u64,
+) {
+    config.set_protocol_reserve_profit_share(&self.admin_cap, share);
+}
+
+public fun set_valuation_liquidation_budget(
+    self: &Fixture,
+    config: &mut ProtocolConfig,
+    budget: u64,
+) {
+    config.set_valuation_liquidation_budget(&self.admin_cap, budget);
+}
+
+public fun set_trade_liquidation_budget(self: &Fixture, config: &mut ProtocolConfig, budget: u64) {
+    config.set_trade_liquidation_budget(&self.admin_cap, budget);
+}
+
 /// Take the four shared market objects + the protocol config a flow test
 /// mutates. The config is threaded into the flow-phase methods as a parameter
 /// (it cannot be a `Fixture` field — see module doc) and returned by the test.
@@ -223,6 +243,37 @@ public fun prepare_live_oracle(
     );
     let svi = market_oracle::new_svi_params(1, 2, i64::zero(), i64::zero(), 3);
     oracle.update_svi(config, &self.cap, svi, LIVE_SOURCE_TIMESTAMP_MS, &self.clock);
+}
+
+public fun prepare_live_oracle_at(
+    self: &Fixture,
+    config: &ProtocolConfig,
+    oracle: &mut MarketOracle,
+    pyth: &mut PythSource,
+    live_price: u64,
+    source_timestamp_ms: u64,
+) {
+    pyth.set_state_for_testing(live_price, source_timestamp_ms, source_timestamp_ms);
+    oracle.update_block_scholes_prices(
+        config,
+        pyth,
+        &self.cap,
+        live_price,
+        live_price,
+        source_timestamp_ms,
+        &self.clock,
+    );
+    let svi = market_oracle::new_svi_params(1, 2, i64::zero(), i64::zero(), 3);
+    oracle.update_svi(config, &self.cap, svi, source_timestamp_ms, &self.clock);
+}
+
+public fun set_pyth_price_for_testing(
+    self: &Fixture,
+    pyth: &mut PythSource,
+    live_price: u64,
+    source_timestamp_ms: u64,
+) {
+    pyth.set_state_for_testing(live_price, source_timestamp_ms, self.clock.timestamp_ms());
 }
 
 /// Run one full pool sync over a single active expiry (rebalances idle cash into

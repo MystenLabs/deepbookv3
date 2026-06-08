@@ -99,18 +99,18 @@ public(package) fun max_strike(exposure: &StrikeExposure): u64 {
     exposure.grid.max_strike()
 }
 
-/// Evaluate live user-position liability over the current minted strike range.
-public(package) fun valuation_liability(
+/// Evaluate live valuation components over the current minted strike range.
+public(package) fun valuation_components(
     exposure: &StrikeExposure,
     config: &PricingConfig,
     market: &MarketOracle,
     pyth: &PythSource,
     clock: &Clock,
-): u64 {
+): (u64, u64) {
     let live = exposure.live.borrow();
     let (minted_min_strike, minted_max_strike) = live.minted_strike_range();
     if (minted_min_strike == 0 && minted_max_strike == 0) {
-        return 0
+        return (0, 0)
     };
 
     let (forward, svi) = pricing::live_inputs(config, market, pyth, clock);
@@ -372,7 +372,7 @@ public(package) fun liquidate_live_order(
 
     let index_now = exposure.config.floor_index_at_ms(exposure.expiry_ms, clock.timestamp_ms());
     let liquidation_ltv = exposure.config.liquidation_ltv();
-    exposure.liquidate_order_if_under_floor(
+    let (liquidated, _, _) = exposure.liquidate_order_if_under_floor(
         config,
         market,
         pyth,
@@ -380,7 +380,8 @@ public(package) fun liquidate_live_order(
         index_now,
         liquidation_ltv,
         clock,
-    )
+    );
+    liquidated
 }
 
 /// Run one bounded liquidation pass using exact per-candidate pricing.
@@ -392,33 +393,39 @@ public(package) fun liquidate_live_orders(
     budget: u64,
     clock: &Clock,
 ): u64 {
-    let candidates = exposure.liquidation.select_liquidation_candidates(budget);
-    if (candidates.is_empty()) return 0;
-    let index_now = exposure.config.floor_index_at_ms(exposure.expiry_ms, clock.timestamp_ms());
-    let liquidation_ltv = exposure.config.liquidation_ltv();
-
-    let mut liquidated_count = 0;
-    let mut i = 0;
-    while (i < candidates.length()) {
-        let order = order::from_order_id(candidates[i]);
-        if (
-            exposure.liquidate_order_if_under_floor(
-                config,
-                market,
-                pyth,
-                &order,
-                index_now,
-                liquidation_ltv,
-                clock,
-            )
-        ) {
-            liquidated_count = liquidated_count + 1;
-        };
-
-        i = i + 1;
-    };
-
+    let (liquidated_count, _, _) = exposure.liquidate_live_orders_with_verification(
+        config,
+        market,
+        pyth,
+        budget,
+        clock,
+    );
     liquidated_count
+}
+
+/// Run one valuation liquidation pass and return exact survivor observations.
+///
+/// Returns `(verified_floor_amount, verified_range)`.
+public(package) fun liquidate_live_orders_for_valuation(
+    exposure: &mut StrikeExposure,
+    config: &PricingConfig,
+    market: &MarketOracle,
+    pyth: &PythSource,
+    budget: u64,
+    clock: &Clock,
+): (u64, u64) {
+    let (
+        _,
+        verified_floor_amount,
+        verified_range,
+    ) = exposure.liquidate_live_orders_with_verification(
+        config,
+        market,
+        pyth,
+        budget,
+        clock,
+    );
+    (verified_floor_amount, verified_range)
 }
 
 /// Cache terminal settled payout liability.
@@ -455,6 +462,51 @@ public(package) fun destroy_live_indexes(exposure: &mut StrikeExposure) {
     payout.destroy();
 }
 
+fun liquidate_live_orders_with_verification(
+    exposure: &mut StrikeExposure,
+    config: &PricingConfig,
+    market: &MarketOracle,
+    pyth: &PythSource,
+    budget: u64,
+    clock: &Clock,
+): (u64, u64, u64) {
+    let candidates = exposure.liquidation.select_liquidation_candidates(budget);
+    if (candidates.is_empty()) return (0, 0, 0);
+    let index_now = exposure.config.floor_index_at_ms(exposure.expiry_ms, clock.timestamp_ms());
+    let liquidation_ltv = exposure.config.liquidation_ltv();
+
+    let mut liquidated_count = 0;
+    let mut verified_floor_amount = 0;
+    let mut verified_range = 0;
+    let mut i = 0;
+    while (i < candidates.length()) {
+        let order = order::from_order_id(candidates[i]);
+        let (
+            liquidated,
+            survivor_floor_amount,
+            survivor_range,
+        ) = exposure.liquidate_order_if_under_floor(
+            config,
+            market,
+            pyth,
+            &order,
+            index_now,
+            liquidation_ltv,
+            clock,
+        );
+        if (liquidated) {
+            liquidated_count = liquidated_count + 1;
+        } else {
+            verified_floor_amount = verified_floor_amount + survivor_floor_amount;
+            verified_range = verified_range + survivor_range;
+        };
+
+        i = i + 1;
+    };
+
+    (liquidated_count, verified_floor_amount, verified_range)
+}
+
 fun insert_live_index_quantity(
     exposure: &mut StrikeExposure,
     lower: u64,
@@ -480,7 +532,7 @@ fun liquidate_order_if_under_floor(
     index_now: u64,
     liquidation_ltv: u64,
     clock: &Clock,
-): bool {
+): (bool, u64, u64) {
     let quantity = order.quantity();
     let (lower, higher) = exposure.order_boundaries(order);
     let range_probability = pricing::live_range_probability(
@@ -496,7 +548,7 @@ fun liquidate_order_if_under_floor(
     let gross_value = math::mul(range_probability, quantity);
     let liquidation_threshold = math::div(current_floor_amount, liquidation_ltv);
     let can_liquidate = gross_value <= liquidation_threshold;
-    if (!can_liquidate) return false;
+    if (!can_liquidate) return (false, current_floor_amount, gross_value);
 
     exposure.liquidation.mark_liquidated(order);
     exposure.remove_live_index_quantity(order, lower, higher, quantity, floor_shares);
@@ -510,7 +562,7 @@ fun liquidate_order_if_under_floor(
         liquidation_ltv,
     );
 
-    true
+    (true, 0, 0)
 }
 
 fun remove_live_index_quantity(

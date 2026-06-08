@@ -103,11 +103,11 @@ public(package) fun remove_range(
     nav.apply_range(grid, lower, higher, qty, floor_shares, false);
 }
 
-/// Evaluate live contract value against a sampled pricing curve.
+/// Evaluate aggregate live contract range and floor values against a sampled pricing curve.
 ///
-/// The matrix subtracts aggregate floor value from aggregate range value. This
-/// is the valuation path used after the caller's bounded liquidation-maintenance
-/// policy, not an exact per-order recoverability proof.
+/// This is the valuation path used after the caller's bounded
+/// liquidation-maintenance policy, not an exact per-order recoverability proof.
+/// Returns `(total_range, total_floor_amount)`.
 public(package) fun live_value(
     nav: &StrikeNavMatrix,
     grid: &StrikeGrid,
@@ -115,7 +115,7 @@ public(package) fun live_value(
     minted_min_strike: u64,
     minted_max_strike: u64,
     floor_index: u64,
-): u64 {
+): (u64, u64) {
     let len = curve.length();
     assert!(len > 0, EInvalidCurveRange);
     assert!(
@@ -154,7 +154,7 @@ public(package) fun live_value(
 
     let floor_value = floor_amount(nav.floor_shares, floor_index);
     assert!(value >= floor_value, EFloorExceedsLiveValue);
-    value - floor_value
+    (value, floor_value)
 }
 
 /// Destroy all materialized page storage.

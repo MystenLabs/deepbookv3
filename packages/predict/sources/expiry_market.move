@@ -260,7 +260,13 @@ public fun liquidate(
 ): u64 {
     market.assert_version_allowed();
     config.assert_not_valuation_in_progress();
-    market.run_liquidation_pass(config.pricing_config(), market_oracle, pyth, budget, clock)
+    market.run_liquidation_pass(
+        config.pricing_config(),
+        market_oracle,
+        pyth,
+        budget,
+        clock,
+    )
 }
 
 /// Try to liquidate one active leveraged order by ID.
@@ -378,30 +384,32 @@ fun materialize_settled_liability(market: &mut ExpiryMarket, market_oracle: &Mar
 }
 
 /// Return current pool-owned NAV.
+/// Returns `(nav_optimistic, total_range, total_floor_amount)`.
 public(package) fun pool_nav(
     market: &ExpiryMarket,
     config: &ProtocolConfig,
     market_oracle: &MarketOracle,
     pyth: &PythSource,
     clock: &Clock,
-): u64 {
+): (u64, u64, u64) {
     market.assert_version_allowed();
     config.assert_valuation_in_progress();
     market.assert_market_oracle(market_oracle);
     market.assert_pyth_feed(pyth);
     market_oracle.assert_active(clock);
-    let position_liability = market
+    let (total_range, total_floor_amount) = market
         .strike_exposure
-        .valuation_liability(
+        .valuation_components(
             config.pricing_config(),
             market_oracle,
             pyth,
             clock,
         );
+    let position_liability = total_range - total_floor_amount;
     let required_cash = market.cash.required_cash(position_liability);
     let cash_balance = market.cash.balance();
     assert!(cash_balance >= required_cash, EValuationExceedsCash);
-    cash_balance - required_cash
+    (cash_balance - required_cash, total_range, total_floor_amount)
 }
 
 /// Run one expiry-local liquidation pass with the caller-selected budget.
@@ -420,6 +428,32 @@ public(package) fun run_liquidation_pass(
     market
         .strike_exposure
         .liquidate_live_orders(
+            pricing_config,
+            market_oracle,
+            pyth,
+            budget,
+            clock,
+        )
+}
+
+/// Run one valuation liquidation pass and return exact survivor observations.
+///
+/// Returns `(verified_floor_amount, verified_range)`.
+public(package) fun run_valuation_liquidation_pass(
+    market: &mut ExpiryMarket,
+    pricing_config: &PricingConfig,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    budget: u64,
+    clock: &Clock,
+): (u64, u64) {
+    market.assert_version_allowed();
+    market.assert_market_oracle(market_oracle);
+    market.assert_pyth_feed(pyth);
+    market_oracle.assert_active(clock);
+    market
+        .strike_exposure
+        .liquidate_live_orders_for_valuation(
             pricing_config,
             market_oracle,
             pyth,

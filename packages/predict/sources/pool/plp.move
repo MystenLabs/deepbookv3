@@ -231,7 +231,7 @@ public fun sync_expiry(
         return
     };
 
-    market.run_liquidation_pass(
+    let (verified_floor_amount, verified_range) = market.run_valuation_liquidation_pass(
         config.pricing_config(),
         market_oracle,
         pyth,
@@ -239,7 +239,19 @@ public fun sync_expiry(
         clock,
     );
     vault.rebalance_active_expiry_cash(config, market);
-    let expiry_nav = market.pool_nav(config, market_oracle, pyth, clock);
+    let (nav_optimistic, total_range, total_floor_amount) = market.pool_nav(
+        config,
+        market_oracle,
+        pyth,
+        clock,
+    );
+    let expiry_nav = conservative_active_nav(
+        nav_optimistic,
+        total_range,
+        total_floor_amount,
+        verified_range,
+        verified_floor_amount,
+    );
     sync.record_expiry_synced(expiry_market_id, expiry_nav);
 }
 
@@ -655,8 +667,25 @@ public(package) fun lp_pool_value(
     gross_pool_value - exclusion.min(gross_pool_value)
 }
 
+public(package) fun conservative_active_nav(
+    nav_optimistic: u64,
+    total_range: u64,
+    total_floor_amount: u64,
+    verified_range: u64,
+    verified_floor_amount: u64,
+): u64 {
+    let d_max = sat_sub(total_floor_amount, verified_floor_amount);
+    let unscanned_range = sat_sub(total_range, verified_range);
+    let q = sat_sub(d_max, unscanned_range);
+    sat_sub(nav_optimistic, q)
+}
+
 fun assert_pool_vault(sync: &PoolSync, vault: &PoolVault) {
     assert!(sync.pool_vault_id == vault.id(), EWrongPoolVault);
+}
+
+fun sat_sub(a: u64, b: u64): u64 {
+    if (a > b) a - b else 0
 }
 
 fun assert_expiry_ready_to_sync(sync: &PoolSync, expiry_market_id: ID) {
