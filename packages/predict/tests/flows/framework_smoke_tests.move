@@ -16,10 +16,6 @@ use deepbook_predict::{
 };
 use std::unit_test::{assert_eq, destroy};
 
-const MINT_QUANTITY: u64 = 1_000_000_000;
-/// 1x leverage in FLOAT_SCALING.
-const LEVERAGE_ONE_X: u64 = 1_000_000_000;
-
 #[test]
 fun setup_everything_check_manager_return_market_smoke() {
     let (mut fx, expiry_id, oracle_id, mut manager) = helpers::setup_everything();
@@ -44,8 +40,8 @@ fun setup_everything_check_manager_return_market_smoke() {
         &pyth,
         helpers::min_strike(),
         constants::pos_inf!(),
-        MINT_QUANTITY,
-        LEVERAGE_ONE_X,
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
     );
 
     assert!(manager.has_position(expiry_id, order_id));

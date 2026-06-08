@@ -17,8 +17,6 @@ use deepbook_predict::{
 };
 use std::unit_test::destroy;
 
-const MINT_QUANTITY: u64 = 1_000_000_000;
-const LEVERAGE_ONE_X: u64 = 1_000_000_000;
 const SETTLEMENT_PRICE: u64 = 100_000_000_000;
 const SECOND_EXPIRY_MS: u64 = 31_536_200_000;
 
@@ -41,8 +39,8 @@ fun mint_after_expiry_before_settlement_aborts() {
         &pyth,
         helpers::min_strike(),
         constants::pos_inf!(),
-        MINT_QUANTITY,
-        LEVERAGE_ONE_X,
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
     );
 
     helpers::return_market(pyth, vault, market, oracle, config);
@@ -66,8 +64,8 @@ fun redeem_settled_partial_close_aborts() {
         &pyth,
         helpers::min_strike(),
         constants::pos_inf!(),
-        MINT_QUANTITY,
-        LEVERAGE_ONE_X,
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
     );
     fx.settle_oracle(&config, &mut oracle, &mut pyth, SETTLEMENT_PRICE);
 
@@ -79,7 +77,7 @@ fun redeem_settled_partial_close_aborts() {
         &oracle,
         &pyth,
         order_id,
-        MINT_QUANTITY - constants::position_lot_size!(),
+        test_constants::mint_quantity() - constants::position_lot_size!(),
     );
 
     helpers::return_market(pyth, vault, market, oracle, config);
@@ -104,11 +102,19 @@ fun redeem_settled_on_live_order_aborts() {
         &pyth,
         helpers::min_strike(),
         constants::pos_inf!(),
-        MINT_QUANTITY,
-        LEVERAGE_ONE_X,
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
     );
     // Full close, but no proof and the order is live.
-    fx.redeem_settled(&config, &mut manager, &mut market, &oracle, &pyth, order_id, MINT_QUANTITY);
+    fx.redeem_settled(
+        &config,
+        &mut manager,
+        &mut market,
+        &oracle,
+        &pyth,
+        order_id,
+        test_constants::mint_quantity(),
+    );
 
     helpers::return_market(pyth, vault, market, oracle, config);
     destroy(manager);
@@ -141,7 +147,7 @@ fun redeem_with_wrong_oracle_aborts() {
         &wrong_oracle,
         &pyth,
         dummy_order_id,
-        MINT_QUANTITY,
+        test_constants::mint_quantity(),
     );
 
     helpers::return_market(pyth, vault, market_a, oracle_a, config);

@@ -143,43 +143,43 @@ public fun setup_market_default(): Fixture {
 /// across the existing suite).
 public fun setup_pool_with_pyth(): Fixture { setup_market_default() }
 
-/// One-shot composite bring-up: a default funded pool already past
-/// `create_expiry` + `prepare_live_oracle` + a full single-expiry `sync_expiry`,
-/// plus a funded alice manager, so happy-path flow tests start at the first
-/// interesting line. The market objects are returned to the shared pool; the
-/// caller `take_market`s them. Returns `(fixture, expiry_id, oracle_id, manager)`.
+/// One-shot composite bring-up over `(expiry_ms, live_price)`: a default funded
+/// pool already past `create_expiry` + `prepare_live_oracle` + a full single-expiry
+/// `sync_expiry`, plus a funded alice manager (`mint_deposit`), so a flow test
+/// starts at the first interesting line. The market objects are returned to the
+/// shared pool; the caller `take_market`s them. Returns
+/// `(fixture, expiry_id, oracle_id, manager)`.
+public fun setup_live_market(expiry_ms: u64, live_price: u64): (Fixture, ID, ID, PredictManager) {
+    setup_funded_live_market(expiry_ms, live_price, test_constants::mint_deposit())
+}
+
+/// `setup_live_market` at the far default expiry / live price with the large
+/// default manager deposit (used by the smoke + gate tests).
 public fun setup_everything(): (Fixture, ID, ID, PredictManager) {
+    setup_funded_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+        test_constants::default_manager_deposit(),
+    )
+}
+
+fun setup_funded_live_market(
+    expiry_ms: u64,
+    live_price: u64,
+    deposit: u64,
+): (Fixture, ID, ID, PredictManager) {
     let mut fx = setup_market_default();
-    let (expiry_id, oracle_id) = fx.create_expiry(test_constants::default_expiry_ms());
-    let manager = fx.create_funded_manager(test_constants::default_manager_deposit());
+    let (expiry_id, oracle_id) = fx.create_expiry(expiry_ms);
+    let manager = fx.create_funded_manager(deposit);
     let (mut pyth, mut vault, mut market, mut oracle, mut config) = fx.take_market(
         expiry_id,
         oracle_id,
     );
-    fx.prepare_live_oracle(&config, &mut oracle, &mut pyth, test_constants::default_live_price());
+    fx.prepare_live_oracle(&config, &mut oracle, &mut pyth, live_price);
     fx.sync_expiry(&mut config, &mut vault, &mut market, &oracle, &pyth);
     return_market(pyth, vault, market, oracle, config);
     fx.scenario.next_tx(test_constants::admin());
     (fx, expiry_id, oracle_id, manager)
-}
-
-/// Create an additional expiry market and bring it fully live (oracle prices +
-/// SVI seeded, one single-expiry sync). Returns `(expiry_id, oracle_id)`. Use for
-/// a SECOND expiry. NOTE: this syncs only the new expiry on its own pool sync, so
-/// call it before any other expiry is active, or drive a manual multi-expiry sync
-/// when several expiries must be valued in one pass (`finish_pool_sync` asserts
-/// every active expiry was synced).
-public fun create_active_expiry(self: &mut Fixture, expiry: u64, live_price: u64): (ID, ID) {
-    let (expiry_id, oracle_id) = self.create_expiry(expiry);
-    let (mut pyth, mut vault, mut market, mut oracle, mut config) = self.take_market(
-        expiry_id,
-        oracle_id,
-    );
-    self.prepare_live_oracle(&config, &mut oracle, &mut pyth, live_price);
-    self.sync_expiry(&mut config, &mut vault, &mut market, &oracle, &pyth);
-    return_market(pyth, vault, market, oracle, config);
-    self.scenario.next_tx(test_constants::admin());
-    (expiry_id, oracle_id)
 }
 
 /// Create the market + oracle for `expiry` through the production path.
@@ -260,15 +260,11 @@ public fun return_market(
     return_shared(config);
 }
 
-/// Create a fresh trader manager owned by `owner` and fund it with DUSDC. The
-/// scenario sender is left as `owner` so the caller's next mint/redeem generates a
-/// valid owner proof. Use this to stand up a SECOND (multi-trader) manager.
-public fun create_funded_manager_for(
-    self: &mut Fixture,
-    owner: address,
-    deposit: u64,
-): PredictManager {
-    self.scenario.next_tx(owner);
+/// Create a fresh trader manager (owned by alice) and fund it with DUSDC. The
+/// scenario sender is left as alice so the caller's next mint/redeem generates a
+/// valid owner proof.
+public fun create_funded_manager(self: &mut Fixture, deposit: u64): PredictManager {
+    self.scenario.next_tx(test_constants::alice());
     let mut registry = self.scenario.take_shared<Registry>();
     let mut manager = registry::create_manager(&mut registry, self.scenario.ctx());
     return_shared(registry);
@@ -277,11 +273,6 @@ public fun create_funded_manager_for(
         self.scenario.ctx(),
     );
     manager
-}
-
-/// Create a fresh trader manager (owned by alice) and fund it with DUSDC.
-public fun create_funded_manager(self: &mut Fixture, deposit: u64): PredictManager {
-    self.create_funded_manager_for(test_constants::alice(), deposit)
 }
 
 /// Seed fresh live Block Scholes prices + SVI so quotes are available.

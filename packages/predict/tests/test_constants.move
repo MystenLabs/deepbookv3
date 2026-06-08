@@ -90,3 +90,20 @@ public fun default_svi_m(): u64 { 10 * constants::float_scaling!() }
 /// Default trader-manager deposit in the composite bring-up; large enough to fund
 /// several leveraged mints plus fees.
 public fun default_manager_deposit(): u64 { 30_000_000_000 }
+
+// === Shared happy-path flow values (the short-expiry lifecycle tests) ===
+
+/// 1x leverage in FLOAT_SCALING (a flat floor schedule => zero floor shares).
+public fun leverage_one_x(): u64 { constants::float_scaling!() }
+
+/// Short expiry (`now + 100s`) used by the lifecycle/payout flow tests: near
+/// enough that the leverage floor schedule is non-flat (a 2x order carries a real
+/// floor), unlike the far `default_expiry_ms`.
+public fun short_expiry_ms(): u64 { 200_000 }
+
+/// Standard single-order mint quantity for the flow tests (1e9 = 1_000 contracts).
+public fun mint_quantity(): u64 { 1_000_000_000 }
+
+/// Standard trader deposit for the short-expiry flow tests (covers one mint's
+/// principal + fee, with room for the winning payout).
+public fun mint_deposit(): u64 { 1_000_000_000 }

@@ -27,13 +27,11 @@ const OPEN_PRICE: u64 = 100_000_000_000;
 const STRESS_PRICE: u64 = 10;
 const OPEN_SOURCE_TIMESTAMP_MS: u64 = 99_000;
 const STRESS_SOURCE_TIMESTAMP_MS: u64 = 99_500;
-const LEVERAGE_ONE_X: u64 = 1_000_000_000;
 const LEVERAGE_TWO_X: u64 = 2_000_000_000;
 const HEALTHY_QUANTITY: u64 = 1_000_000_000;
 const UNDERWATER_QUANTITY: u64 = 100_000_000;
 const ONE_X_QUANTITY: u64 = 100_000_000;
 const TRADE_PASS_QUANTITY: u64 = 10_000_000;
-const MANAGER_DEPOSIT: u64 = 30_000_000_000;
 const ZERO_PROTOCOL_SHARE: u64 = 0;
 
 const MIN_VALUATION_BUDGET: u64 = 24;
@@ -47,7 +45,7 @@ const MAX_TRADE_BUDGET: u64 = 3_000;
 fun sync_expiry_haircuts_unverified_underfloor_orders() {
     let mut fx = helpers::setup_pool_with_pyth();
     let (expiry_id, oracle_id) = fx.create_expiry(FAR_EXPIRY_MS);
-    let mut manager = fx.create_funded_manager(MANAGER_DEPOSIT);
+    let mut manager = fx.create_funded_manager(test_constants::default_manager_deposit());
     let (mut pyth, mut vault, mut market, mut oracle, mut config) = fx.take_market(
         expiry_id,
         oracle_id,
@@ -117,7 +115,7 @@ fun sync_expiry_haircuts_unverified_underfloor_orders() {
 fun sync_expiry_one_x_only_keeps_optimistic_nav() {
     let mut fx = helpers::setup_pool_with_pyth();
     let (expiry_id, oracle_id) = fx.create_expiry(FAR_EXPIRY_MS);
-    let mut manager = fx.create_funded_manager(MANAGER_DEPOSIT);
+    let mut manager = fx.create_funded_manager(test_constants::default_manager_deposit());
     let (mut pyth, mut vault, mut market, mut oracle, mut config) = fx.take_market(
         expiry_id,
         oracle_id,
@@ -143,7 +141,7 @@ fun sync_expiry_one_x_only_keeps_optimistic_nav() {
         helpers::min_strike(),
         constants::pos_inf!(),
         ONE_X_QUANTITY,
-        LEVERAGE_ONE_X,
+        test_constants::leverage_one_x(),
         MIN_VALUATION_BUDGET,
     );
 
@@ -170,7 +168,7 @@ fun sync_expiry_one_x_only_keeps_optimistic_nav() {
 fun trade_time_verification_does_not_leak_into_later_valuation() {
     let mut fx = helpers::setup_pool_with_pyth();
     let (expiry_id, oracle_id) = fx.create_expiry(FAR_EXPIRY_MS);
-    let mut manager = fx.create_funded_manager(MANAGER_DEPOSIT);
+    let mut manager = fx.create_funded_manager(test_constants::default_manager_deposit());
     let (mut pyth, mut vault, mut market, mut oracle, mut config) = fx.take_market(
         expiry_id,
         oracle_id,
@@ -223,7 +221,7 @@ fun trade_time_verification_does_not_leak_into_later_valuation() {
         helpers::min_strike(),
         constants::pos_inf!(),
         TRADE_PASS_QUANTITY,
-        LEVERAGE_ONE_X,
+        test_constants::leverage_one_x(),
     );
 
     helpers::return_market(pyth, vault, market, oracle, config);

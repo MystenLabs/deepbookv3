@@ -15,10 +15,16 @@
 #[test_only]
 module deepbook_predict::pricing_tests;
 
-use deepbook_predict::{constants::{Self, float_scaling as float}, oracle_fixture, pricing};
+use deepbook_predict::{
+    constants::{Self, float_scaling as float},
+    oracle_fixture,
+    pricing,
+    test_constants
+};
 use std::unit_test::assert_eq;
 
-const FORWARD: u64 = 100_000_000_000; // default_live_price; spot==forward, basis 1.0
+// Forward == `default_live_price` (spot==forward, basis 1.0). The two scenario
+// strikes straddle it.
 const STRIKE_BELOW: u64 = 90_000_000_000;
 const STRIKE_ABOVE: u64 = 110_000_000_000;
 
@@ -26,21 +32,21 @@ const STRIKE_ABOVE: u64 = 110_000_000_000;
 fun complementary_ranges_sum_to_one_at_the_forward() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let (mut pyth, mut oracle, config) = fx.take_oracle();
-    fx.prepare_live_oracle(&config, &mut oracle, &mut pyth, FORWARD);
+    fx.prepare_live_oracle(&config, &mut oracle, &mut pyth, test_constants::default_live_price());
 
     let below = pricing::live_range_probability(
         config.pricing_config(),
         &oracle,
         &pyth,
         constants::neg_inf!(),
-        FORWARD,
+        test_constants::default_live_price(),
         fx.clock(),
     );
     let above = pricing::live_range_probability(
         config.pricing_config(),
         &oracle,
         &pyth,
-        FORWARD,
+        test_constants::default_live_price(),
         constants::pos_inf!(),
         fx.clock(),
     );
@@ -59,7 +65,7 @@ fun complementary_ranges_sum_to_one_at_the_forward() {
 fun whole_line_range_is_certain() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let (mut pyth, mut oracle, config) = fx.take_oracle();
-    fx.prepare_live_oracle(&config, &mut oracle, &mut pyth, FORWARD);
+    fx.prepare_live_oracle(&config, &mut oracle, &mut pyth, test_constants::default_live_price());
 
     let whole = pricing::live_range_probability(
         config.pricing_config(),
@@ -79,7 +85,7 @@ fun whole_line_range_is_certain() {
 fun digital_above_probability_is_non_increasing_in_strike() {
     let mut fx = oracle_fixture::setup_oracle_default();
     let (mut pyth, mut oracle, config) = fx.take_oracle();
-    fx.prepare_live_oracle(&config, &mut oracle, &mut pyth, FORWARD);
+    fx.prepare_live_oracle(&config, &mut oracle, &mut pyth, test_constants::default_live_price());
 
     // P(price > X) must be non-increasing as X rises: a higher strike is less
     // likely to be exceeded.

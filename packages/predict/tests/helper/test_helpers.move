@@ -13,14 +13,7 @@ module deepbook_predict::test_helpers;
 
 use deepbook_predict::{admin::AdminCap, registry::Registry, test_constants};
 use std::unit_test::destroy;
-use sui::{coin::{Self, Coin}, test_scenario::{Self as test, Scenario}};
-
-// === Coin minting ===
-
-/// Mint a test coin of any type for the current sender.
-public fun mint_coin<T>(amount: u64, scenario: &mut Scenario): Coin<T> {
-    coin::mint_for_testing<T>(amount, scenario.ctx())
-}
+use sui::test_scenario::{Self as test, Scenario};
 
 // === Bounded assertion (math carve-out) ===
 
@@ -67,28 +60,6 @@ public macro fun destroy_4<$T1, $T2, $T3, $T4>($obj1: $T1, $obj2: $T2, $obj3: $T
     destroy($obj2);
     destroy($obj3);
     destroy($obj4);
-}
-
-// === return_shared macros ===
-// Terse multi-object `test_scenario::return_shared` for flow tests that take
-// several shared objects at once (port of `deepbook_margin::test_helpers`).
-
-public macro fun return_shared_2<$T1, $T2>($o1: $T1, $o2: $T2) {
-    test::return_shared($o1);
-    test::return_shared($o2);
-}
-
-public macro fun return_shared_3<$T1, $T2, $T3>($o1: $T1, $o2: $T2, $o3: $T3) {
-    test::return_shared($o1);
-    test::return_shared($o2);
-    test::return_shared($o3);
-}
-
-public macro fun return_shared_4<$T1, $T2, $T3, $T4>($o1: $T1, $o2: $T2, $o3: $T3, $o4: $T4) {
-    test::return_shared($o1);
-    test::return_shared($o2);
-    test::return_shared($o3);
-    test::return_shared($o4);
 }
 
 // === Scenario setup ===
