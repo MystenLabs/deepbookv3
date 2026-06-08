@@ -54,18 +54,20 @@ public struct StrikeExposure has store {
 public struct LiveExposure has store {
     nav: StrikeNavMatrix,
     payout: StrikePayoutTree,
+    /// Sum of live backing payouts for active orders.
+    live_backing_liability: u64,
     /// Monotonic strike range used to bound pricing-curve construction.
     /// Removes do not shrink this cache; a wider curve is safe but can cost more gas.
     minted_min_strike: u64,
     minted_max_strike: u64,
 }
 
-/// Return conservative max-live backing, or remaining settled payout liability once materialized.
+/// Return summed live backing, or remaining settled payout liability once materialized.
 public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
     if (exposure.settled_liability_materialized) {
         exposure.settled_payout_liability
     } else {
-        exposure.live.borrow().payout.max_live_backing_payout()
+        exposure.live.borrow().live_backing_liability
     }
 }
 
@@ -178,6 +180,7 @@ public(package) fun new(
         live: option::some(LiveExposure {
             nav: strike_nav_matrix::new(&grid, preallocated_ticks, ctx),
             payout: strike_payout_tree::new(ctx),
+            live_backing_liability: 0,
             minted_min_strike: max_u64(),
             minted_max_strike: 0,
         }),
@@ -455,6 +458,7 @@ public(package) fun destroy_live_indexes(exposure: &mut StrikeExposure) {
     let LiveExposure {
         nav,
         payout,
+        live_backing_liability: _,
         minted_min_strike: _,
         minted_max_strike: _,
     } = live;
@@ -520,6 +524,7 @@ fun insert_live_index_quantity(
     let live = exposure.live.borrow_mut();
     live.payout.insert_range(&grid, lower, higher, terminal_payout, live_backing_payout);
     live.nav.insert_range(&grid, lower, higher, quantity, floor_shares);
+    live.live_backing_liability = live.live_backing_liability + live_backing_payout;
     live.track_minted_boundaries(lower, higher);
 }
 
@@ -583,6 +588,7 @@ fun remove_live_index_quantity(
         let live = exposure.live.borrow_mut();
         live.nav.remove_range(&grid, lower, higher, quantity, floor_shares);
         live.payout.remove_range(&grid, lower, higher, terminal_payout, live_backing_payout);
+        live.live_backing_liability = live.live_backing_liability - live_backing_payout;
     };
 }
 

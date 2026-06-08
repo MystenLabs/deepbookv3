@@ -64,6 +64,16 @@ const CRASH_SUPPLY_PAYMENT: u64 = 3_090_000_000;
 const CRASH_EXPECTED_SUPPLY_SHARES: u64 = 2_999_999_998;
 const CRASH_EXPECTED_WITHDRAW_DUSDC: u64 = 3_080_098_979;
 
+const FEE_TEST_SUPPLY_PAYMENT: u64 = 3_000_000_000;
+const FEE_TEST_EXPECTED_SUPPLY_SHARES: u64 = 3_000_000_000;
+const FEE_TEST_IDLE_AFTER_STRESS_SYNC: u64 = 263_000_000_000;
+const FEE_TEST_POOL_VALUE_BEFORE_WITHDRAW: u64 = 312_000_000_000;
+const FEE_TEST_EXPECTED_GROSS_WITHDRAW: u64 = 3_089_108_880;
+const FEE_TEST_AGGREGATE_BAND: u64 = 2_000_000_000;
+const FEE_TEST_EXPECTED_FEE: u64 = 4_950_495;
+const FEE_TEST_EXPECTED_NET_WITHDRAW: u64 = 3_084_158_385;
+const FEE_TEST_EXPECTED_IDLE_AFTER_WITHDRAW: u64 = 259_915_841_615;
+
 #[test]
 fun aggregate_floor_deficit_keeps_sync_supply_and_withdraw_live() {
     let mut fx = helpers::setup_pool_with_pyth();
@@ -194,6 +204,113 @@ fun aggregate_floor_deficit_keeps_sync_supply_and_withdraw_live() {
 
     let (dusdc, sui, deep) = fx.withdraw(&mut config, &mut vault, withdraw_sync, supplied_plp);
     assert_eq!(dusdc.value(), CRASH_EXPECTED_WITHDRAW_DUSDC);
+    assert_eq!(sui.value(), 0);
+    assert_eq!(deep.value(), 0);
+    destroy(dusdc);
+    destroy(sui);
+    destroy(deep);
+
+    helpers::return_market(pyth, vault, market, oracle, config);
+    destroy(manager);
+    fx.finish();
+}
+
+#[test]
+fun withdraw_deducts_synced_uncertainty_band_fee_and_retains_idle() {
+    let mut fx = helpers::setup_pool_with_pyth();
+    fx.set_template_zero_min_fee();
+    let (expiry_id, oracle_id) = fx.create_expiry(FAR_EXPIRY_MS);
+    let mut manager = fx.create_funded_manager(test_constants::default_manager_deposit());
+    let (mut pyth, mut vault, mut market, mut oracle, mut config) = fx.take_market(
+        expiry_id,
+        oracle_id,
+    );
+
+    fx.set_protocol_reserve_profit_share(&mut config, ZERO_PROTOCOL_SHARE);
+    fx.set_valuation_liquidation_budget(&mut config, MIN_VALUATION_BUDGET);
+    fx.prepare_live_oracle_at(
+        &config,
+        &mut oracle,
+        &mut pyth,
+        OPEN_PRICE,
+        OPEN_SOURCE_TIMESTAMP_MS,
+    );
+    assert_crash_open_range_prices(&config, &oracle, &pyth, fx.clock());
+    fx.sync_expiry(&mut config, &mut vault, &mut market, &oracle, &pyth);
+
+    let mut supply_sync = plp::start_pool_sync(&mut config, &vault);
+    supply_sync.sync_expiry(&mut vault, &mut market, &config, &oracle, &pyth, fx.clock());
+    let fee_test_plp = fx.supply(
+        &mut config,
+        &mut vault,
+        supply_sync,
+        &pyth,
+        FEE_TEST_SUPPLY_PAYMENT,
+    );
+    assert_eq!(fee_test_plp.value(), FEE_TEST_EXPECTED_SUPPLY_SHARES);
+
+    mint_order_set(
+        &mut fx,
+        &config,
+        &mut manager,
+        &mut market,
+        &oracle,
+        &pyth,
+        constants::neg_inf!(),
+        helpers::min_strike(),
+        HEALTHY_QUANTITY,
+        test_constants::leverage_one_x(),
+        CRASH_HEALTHY_COUNT,
+    );
+    mint_order_set(
+        &mut fx,
+        &config,
+        &mut manager,
+        &mut market,
+        &oracle,
+        &pyth,
+        helpers::min_strike(),
+        constants::pos_inf!(),
+        CRASH_UNDERWATER_QUANTITY,
+        LEVERAGE_TWO_X,
+        CRASH_UNDERWATER_COUNT,
+    );
+
+    fx.set_pyth_price_for_testing(&mut pyth, STRESS_PRICE, STRESS_SOURCE_TIMESTAMP_MS);
+    assert_stress_range_prices(&config, &oracle, &pyth, fx.clock());
+
+    let mut withdraw_sync = plp::start_pool_sync(&mut config, &vault);
+    withdraw_sync.sync_expiry(&mut vault, &mut market, &config, &oracle, &pyth, fx.clock());
+    let (withdraw_optimistic_nav, withdraw_total_range, withdraw_total_floor) = market.pool_nav(
+        &config,
+        &oracle,
+        &pyth,
+        fx.clock(),
+    );
+    assert_eq!(withdraw_total_range, CRASH_TRUE_LIABILITY);
+    assert_eq!(withdraw_total_floor, CRASH_SUPPLY_SYNC_TOTAL_FLOOR);
+    assert_eq!(withdraw_optimistic_nav, CRASH_SUPPLY_SYNC_OPTIMISTIC_ACTIVE_NAV);
+    assert_eq!(FEE_TEST_AGGREGATE_BAND, CRASH_TRUE_LIABILITY.min(CRASH_SUPPLY_SYNC_TOTAL_FLOOR));
+    assert_eq!(vault.idle_balance(), FEE_TEST_IDLE_AFTER_STRESS_SYNC);
+    assert_eq!(
+        FEE_TEST_POOL_VALUE_BEFORE_WITHDRAW,
+        FEE_TEST_IDLE_AFTER_STRESS_SYNC + CRASH_SUPPLY_SYNC_CONSERVATIVE_ACTIVE_NAV,
+    );
+
+    // Gross withdraw = 312_000_000_000 * floor(3_000_000_000 / 303_000_000_000)
+    //                = 312_000_000_000 * 9_900_990 / 1e9 = 3_089_108_880.
+    // Fee band = min(D_max 3_000_000_000, unscanned_range 2_000_000_000).
+    // Default alpha is 25%, so total fee pool = 500_000_000 and
+    // withdraw fee = 500_000_000 * 9_900_990 / 1e9 = 4_950_495.
+    let idle_before_withdraw = vault.idle_balance();
+    let (dusdc, sui, deep) = fx.withdraw(&mut config, &mut vault, withdraw_sync, fee_test_plp);
+    assert_eq!(
+        FEE_TEST_EXPECTED_NET_WITHDRAW,
+        FEE_TEST_EXPECTED_GROSS_WITHDRAW - FEE_TEST_EXPECTED_FEE,
+    );
+    assert_eq!(dusdc.value(), FEE_TEST_EXPECTED_NET_WITHDRAW);
+    assert_eq!(idle_before_withdraw - vault.idle_balance(), FEE_TEST_EXPECTED_NET_WITHDRAW);
+    assert_eq!(vault.idle_balance(), FEE_TEST_EXPECTED_IDLE_AFTER_WITHDRAW);
     assert_eq!(sui.value(), 0);
     assert_eq!(deep.value(), 0);
     destroy(dusdc);

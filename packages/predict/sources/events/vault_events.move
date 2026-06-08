@@ -34,7 +34,10 @@ public struct SupplyExecuted has copy, drop, store {
 public struct WithdrawExecuted has copy, drop, store {
     pool_vault_id: ID,
     shares_burned: u64,
+    /// Gross DUSDC payout priced from pool NAV before `withdraw_fee`.
     payout: u64,
+    /// Band-based withdraw fee retained in idle balance for remaining LPs.
+    withdraw_fee: u64,
     pool_value_before: u64,
     total_supply_after: u64,
     idle_balance_after: u64,
@@ -127,6 +130,7 @@ public(package) fun emit_withdraw_executed(
     pool_vault_id: ID,
     shares_burned: u64,
     payout: u64,
+    withdraw_fee: u64,
     pool_value_before: u64,
     total_supply_after: u64,
     idle_balance_after: u64,
@@ -135,6 +139,7 @@ public(package) fun emit_withdraw_executed(
         pool_vault_id,
         shares_burned,
         payout,
+        withdraw_fee,
         pool_value_before,
         total_supply_after,
         idle_balance_after,

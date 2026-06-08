@@ -23,10 +23,11 @@ public struct PricingConfigUpdated has copy, drop, store {
     block_scholes_svi_freshness_ms: u64,
 }
 
-/// Emitted when pool profit-reserve policy changes.
+/// Emitted when pool fee policy changes.
 public struct FeeConfigUpdated has copy, drop, store {
     protocol_config_id: ID,
     protocol_reserve_profit_share: u64,
+    withdraw_fee_alpha: u64,
 }
 
 /// Emitted when liquidation-budget policy changes.
@@ -151,10 +152,12 @@ public(package) fun emit_pricing_config_updated(protocol_config_id: ID, config: 
 public(package) fun emit_fee_config_updated(
     protocol_config_id: ID,
     protocol_reserve_profit_share: u64,
+    withdraw_fee_alpha: u64,
 ) {
     event::emit(FeeConfigUpdated {
         protocol_config_id,
         protocol_reserve_profit_share,
+        withdraw_fee_alpha,
     });
 }
 

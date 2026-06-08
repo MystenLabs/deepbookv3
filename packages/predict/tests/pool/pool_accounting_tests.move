@@ -4,8 +4,10 @@
 #[test_only]
 module deepbook_predict::pool_accounting_tests;
 
-use deepbook_predict::pool_accounting;
+use deepbook_predict::{config_constants, pool_accounting};
+use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
+use sui::coin;
 
 const EXPIRY_ID: address = @0xACCC;
 const UNKNOWN_EXPIRY_ID: address = @0xBEEF;
@@ -26,10 +28,20 @@ fun register_expiry_twice_aborts() {
     let ctx = &mut tx_context::dummy();
     let expiry_id = EXPIRY_ID.to_id();
     let mut ledger = pool_accounting::new(ctx);
-    ledger.register_expiry(expiry_id);
+    fund_expiry_capacity(&mut ledger, 1, ctx);
+    ledger.register_expiry(expiry_id, default_max_funding());
     assert_eq!(ledger.active_expiry_markets().length(), 1);
 
-    ledger.register_expiry(expiry_id);
+    ledger.register_expiry(expiry_id, default_max_funding());
+    abort 999
+}
+
+#[test, expected_failure(abort_code = pool_accounting::EInsufficientActiveAllocationBacking)]
+fun register_expiry_without_idle_backing_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let mut ledger = pool_accounting::new(ctx);
+
+    ledger.register_expiry(EXPIRY_ID.to_id(), default_max_funding());
     abort 999
 }
 
@@ -37,10 +49,11 @@ fun register_expiry_twice_aborts() {
 fun register_expiry_above_active_limit_aborts() {
     let ctx = &mut tx_context::dummy();
     let mut ledger = pool_accounting::new(ctx);
+    fund_expiry_capacity(&mut ledger, 10, ctx);
     register_ten_active_expiries(&mut ledger);
     assert_eq!(ledger.active_expiry_markets().length(), 10);
 
-    ledger.register_expiry(EXPIRY_ID_10.to_id());
+    ledger.register_expiry(EXPIRY_ID_10.to_id(), default_max_funding());
     abort 999
 }
 
@@ -55,14 +68,23 @@ fun unknown_expiry_flow_read_aborts() {
 }
 
 fun register_ten_active_expiries(ledger: &mut pool_accounting::Ledger) {
-    ledger.register_expiry(EXPIRY_ID_0.to_id());
-    ledger.register_expiry(EXPIRY_ID_1.to_id());
-    ledger.register_expiry(EXPIRY_ID_2.to_id());
-    ledger.register_expiry(EXPIRY_ID_3.to_id());
-    ledger.register_expiry(EXPIRY_ID_4.to_id());
-    ledger.register_expiry(EXPIRY_ID_5.to_id());
-    ledger.register_expiry(EXPIRY_ID_6.to_id());
-    ledger.register_expiry(EXPIRY_ID_7.to_id());
-    ledger.register_expiry(EXPIRY_ID_8.to_id());
-    ledger.register_expiry(EXPIRY_ID_9.to_id());
+    ledger.register_expiry(EXPIRY_ID_0.to_id(), default_max_funding());
+    ledger.register_expiry(EXPIRY_ID_1.to_id(), default_max_funding());
+    ledger.register_expiry(EXPIRY_ID_2.to_id(), default_max_funding());
+    ledger.register_expiry(EXPIRY_ID_3.to_id(), default_max_funding());
+    ledger.register_expiry(EXPIRY_ID_4.to_id(), default_max_funding());
+    ledger.register_expiry(EXPIRY_ID_5.to_id(), default_max_funding());
+    ledger.register_expiry(EXPIRY_ID_6.to_id(), default_max_funding());
+    ledger.register_expiry(EXPIRY_ID_7.to_id(), default_max_funding());
+    ledger.register_expiry(EXPIRY_ID_8.to_id(), default_max_funding());
+    ledger.register_expiry(EXPIRY_ID_9.to_id(), default_max_funding());
+}
+
+fun default_max_funding(): u64 {
+    config_constants::default_max_expiry_funding!()
+}
+
+fun fund_expiry_capacity(ledger: &mut pool_accounting::Ledger, count: u64, ctx: &mut TxContext) {
+    let funding = default_max_funding() * count;
+    ledger.receive_idle(coin::mint_for_testing<DUSDC>(funding, ctx).into_balance());
 }

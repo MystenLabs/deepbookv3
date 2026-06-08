@@ -33,6 +33,8 @@ public struct ProtocolConfig has key {
     pricing_config: PricingConfig,
     /// Merged protocol and insurance reserve share in FLOAT_SCALING.
     protocol_reserve_profit_share: u64,
+    /// Multiplier on the PLP withdraw uncertainty-band fee, in FLOAT_SCALING.
+    withdraw_fee_alpha: u64,
     /// Total liquidation candidates checked before live pool valuation.
     valuation_liquidation_budget: u64,
     /// Total liquidation candidates checked before mint and redeem flows.
@@ -240,7 +242,27 @@ public fun set_protocol_reserve_profit_share(
     config.assert_not_valuation_in_progress();
     config_constants::assert_protocol_reserve_profit_share(protocol_reserve_profit_share);
     config.protocol_reserve_profit_share = protocol_reserve_profit_share;
-    config_events::emit_fee_config_updated(config.id(), config.protocol_reserve_profit_share);
+    config_events::emit_fee_config_updated(
+        config.id(),
+        config.protocol_reserve_profit_share,
+        config.withdraw_fee_alpha,
+    );
+}
+
+/// Set the PLP withdraw uncertainty-band fee multiplier.
+public fun set_withdraw_fee_alpha(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    withdraw_fee_alpha: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config_constants::assert_withdraw_fee_alpha(withdraw_fee_alpha);
+    config.withdraw_fee_alpha = withdraw_fee_alpha;
+    config_events::emit_fee_config_updated(
+        config.id(),
+        config.protocol_reserve_profit_share,
+        config.withdraw_fee_alpha,
+    );
 }
 
 /// Set the trading loss rebate rate template used by future expiry markets.
@@ -370,6 +392,10 @@ public(package) fun pricing_config(config: &ProtocolConfig): &PricingConfig {
 
 public(package) fun protocol_reserve_profit_share(config: &ProtocolConfig): u64 {
     config.protocol_reserve_profit_share
+}
+
+public(package) fun withdraw_fee_alpha(config: &ProtocolConfig): u64 {
+    config.withdraw_fee_alpha
 }
 
 public(package) fun valuation_liquidation_budget(config: &ProtocolConfig): u64 {
@@ -522,6 +548,7 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         id: object::new(ctx),
         pricing_config: pricing_config::new(),
         protocol_reserve_profit_share: config_constants::default_protocol_reserve_profit_share!(),
+        withdraw_fee_alpha: config_constants::default_withdraw_fee_alpha!(),
         valuation_liquidation_budget: config_constants::default_valuation_liquidation_budget!(),
         trade_liquidation_budget: config_constants::default_trade_liquidation_budget!(),
         market_oracle_template_config: market_oracle_config::new(),

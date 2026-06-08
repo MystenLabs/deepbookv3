@@ -129,6 +129,7 @@ fun redeem_settled_on_live_order_aborts() {
 #[test, expected_failure(abort_code = expiry_market::EWrongMarketOracle)]
 fun redeem_with_wrong_oracle_aborts() {
     let mut fx = helpers::setup_market_default();
+    fx.add_idle_supply_before_expiries(test_constants::default_initial_supply());
     let (expiry_a, _oracle_a) = fx.create_expiry(test_constants::default_expiry_ms());
     let (_expiry_b, oracle_b_id) = fx.create_expiry(SECOND_EXPIRY_MS);
     let mut manager = fx.create_funded_manager(test_constants::default_manager_deposit());

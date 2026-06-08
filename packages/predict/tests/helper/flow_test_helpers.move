@@ -397,6 +397,31 @@ public fun supply(
     )
 }
 
+/// Add idle PLP supply before tests create additional active expiries. This is
+/// only for tests that need allocation headroom but do not need the extra PLP
+/// coin for later withdraw accounting.
+public fun add_idle_supply_before_expiries(self: &mut Fixture, amount: u64) {
+    self.scenario.next_tx(test_constants::admin());
+    let pyth = self.scenario.take_shared_by_id<PythSource>(self.pyth_id);
+    let mut vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
+    let sync = plp::start_pool_sync(&mut config, &vault);
+    let extra_plp = vault.supply(
+        &mut config,
+        sync,
+        coin::mint_for_testing<DUSDC>(amount, self.scenario.ctx()),
+        &pyth,
+        &pyth,
+        &self.clock,
+        self.scenario.ctx(),
+    );
+    destroy(extra_plp);
+    return_shared(config);
+    return_shared(vault);
+    return_shared(pyth);
+    self.scenario.next_tx(test_constants::admin());
+}
+
 public fun withdraw(
     self: &mut Fixture,
     config: &mut ProtocolConfig,

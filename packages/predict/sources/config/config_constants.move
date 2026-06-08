@@ -32,6 +32,7 @@ const EInvalidValuationLiquidationBudget: u64 = 21;
 const EInvalidTradeLiquidationBudget: u64 = 22;
 const EInvalidLiquidationLtv: u64 = 23;
 const EInvalidOracleTickSize: u64 = 24;
+const EInvalidWithdrawFeeAlpha: u64 = 25;
 const EInvalidEwmaAlpha: u64 = 28;
 const EInvalidEwmaZScoreThreshold: u64 = 29;
 const EInvalidEwmaAdditionalFee: u64 = 30;
@@ -275,6 +276,20 @@ public(package) fun assert_protocol_reserve_profit_share(value: u64) {
         value >= min_protocol_reserve_profit_share!()
             && value <= max_protocol_reserve_profit_share!(),
         EInvalidProtocolReserveProfitShare,
+    );
+}
+
+/// Multiplier for the PLP withdraw uncertainty-band fee, in FLOAT_SCALING.
+public(package) macro fun default_withdraw_fee_alpha(): u64 { 250_000_000 }
+public(package) macro fun min_withdraw_fee_alpha(): u64 { 50_000_000 }
+public(package) macro fun max_withdraw_fee_alpha(): u64 {
+    deepbook_predict::constants::float_scaling!()
+}
+
+public(package) fun assert_withdraw_fee_alpha(value: u64) {
+    assert!(
+        value >= min_withdraw_fee_alpha!() && value <= max_withdraw_fee_alpha!(),
+        EInvalidWithdrawFeeAlpha,
     );
 }
 
