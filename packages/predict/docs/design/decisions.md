@@ -81,3 +81,19 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   backing reserve uses `max_live_backing` as its safe floor — any reserve ≥ it
   always pays in full at settlement. *Rejected for
   now:* folding settlement into the NAV matrix and deleting the tree.
+
+## Access and operations (recent)
+
+- **Trading-loss-rebate claims are permissionless.** `claim_trading_loss_rebate`
+  has no owner gate — anyone may resolve any manager's rebate. Intentional: a
+  keeper cron runs after each settlement to close out all user redemptions and
+  economically clean out the expiry, so resolution must not depend on each user
+  acting. *Rejected:* an owner gate, which would let an inactive user's rebate
+  strand and block the post-settlement cleanout. *Accepted residual:* a griefer
+  can resolve a victim's rebate at a less-favorable active-stake snapshot; the
+  prompt post-settlement sweep bounds the window.
+- **The protocol reserve is write-only.** `protocol_reserve_balance` accrues
+  protocol profit and exposes no admin withdrawal path. Intentional for now — the
+  reserve is left in the protocol backing solvency, and an explicit admin
+  withdrawal flow can be added later if it is needed. *Rejected (for now):* an
+  admin drain entrypoint.

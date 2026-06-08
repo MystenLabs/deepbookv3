@@ -500,7 +500,7 @@ fun trade_cap_holder_can_generate_proof() {
     let trade_cap = manager.mint_trade_cap(scenario.ctx());
 
     scenario.next_tx(test_constants::bob());
-    let proof = manager.generate_proof_as_trader(&trade_cap, scenario.ctx());
+    let proof = manager.generate_proof_as_trader(&trade_cap);
     manager.validate_proof(&proof);
 
     destroy(trade_cap);
@@ -517,7 +517,7 @@ fun revoked_trade_cap_cannot_generate_proof() {
     manager.revoke_cap(object::borrow_id(&trade_cap), scenario.ctx());
 
     scenario.next_tx(test_constants::bob());
-    let _proof = manager.generate_proof_as_trader(&trade_cap, scenario.ctx());
+    let _proof = manager.generate_proof_as_trader(&trade_cap);
 
     abort 999
 }

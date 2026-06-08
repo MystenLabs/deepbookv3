@@ -133,7 +133,6 @@ public struct PredictWithdrawCap has key, store {
 /// deposit / withdraw through the manager's inner BalanceManager caps.
 public struct PredictTradeProof has drop {
     predict_manager_id: ID,
-    trader: address,
 }
 
 // === Public Functions ===
@@ -260,7 +259,7 @@ public fun revoke_cap(self: &mut PredictManager, cap_id: &ID, ctx: &TxContext) {
 /// Generate a `PredictTradeProof` as the manager owner. No equivocation risk.
 public fun generate_proof_as_owner(self: &PredictManager, ctx: &TxContext): PredictTradeProof {
     self.assert_owner(ctx);
-    PredictTradeProof { predict_manager_id: self.id(), trader: ctx.sender() }
+    PredictTradeProof { predict_manager_id: self.id() }
 }
 
 /// Generate a `PredictTradeProof` using a `PredictTradeCap`. Cap is an owned object
@@ -268,10 +267,9 @@ public fun generate_proof_as_owner(self: &PredictManager, ctx: &TxContext): Pred
 public fun generate_proof_as_trader(
     self: &PredictManager,
     trade_cap: &PredictTradeCap,
-    ctx: &TxContext,
 ): PredictTradeProof {
     self.validate_trader(trade_cap);
-    PredictTradeProof { predict_manager_id: self.id(), trader: ctx.sender() }
+    PredictTradeProof { predict_manager_id: self.id() }
 }
 
 /// Abort unless the proof was generated for this manager.
