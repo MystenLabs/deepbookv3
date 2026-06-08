@@ -444,8 +444,8 @@ fun dusdc_for_withdraw(lp_amount: u64, total_supply: u64, dusdc_value: u64): u64
 }
 
 /// Withdrawer's pro-rata slice of the aggregate uncertainty-band fee, capped at
-/// the gross DUSDC payout so event math stays `net = payout - withdraw_fee`.
-fun withdraw_fee(
+/// `alpha` times the gross NAV-priced DUSDC payout.
+public(package) fun withdraw_fee(
     alpha: u64,
     aggregate_band: u64,
     lp_amount: u64,
@@ -454,7 +454,9 @@ fun withdraw_fee(
 ): u64 {
     let total_fee_pool = math::mul(alpha, aggregate_band);
     let fee_fraction = math::div(lp_amount, total_supply);
-    math::mul(total_fee_pool, fee_fraction).min(gross_payout)
+    let band_fee = math::mul(total_fee_pool, fee_fraction);
+    let nav_fee_cap = math::mul(alpha, gross_payout);
+    band_fee.min(nav_fee_cap)
 }
 
 /// Stake DEEP for trading benefits. The DEEP is held in the pool vault; the

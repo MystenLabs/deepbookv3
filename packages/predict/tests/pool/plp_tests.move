@@ -31,6 +31,13 @@ const NET_ITM_TOTAL_FLOOR: u64 = 200;
 const NET_ITM_VERIFIED_RANGE: u64 = 100;
 const NET_ITM_VERIFIED_FLOOR: u64 = 50;
 
+const WITHDRAW_FEE_ALPHA_25_PCT: u64 = 250_000_000;
+const HIGH_BAND: u64 = 10_000;
+const FEE_TEST_LP_AMOUNT: u64 = 100;
+const FEE_TEST_TOTAL_SUPPLY: u64 = 1_000;
+const FEE_TEST_GROSS_PAYOUT: u64 = 500;
+const FEE_TEST_NAV_CAP: u64 = 125;
+
 // `protocol_reserve_profit_share` is 1e9-scaled (`float!()` == 1.0).
 // `plp::lp_pool_value(idle, credits, debits, share, active)` returns the
 // LP-attributable pool value = max(0, gross - exclusion), where
@@ -125,6 +132,22 @@ fun conservative_active_nav_haircut_equal_to_optimistic_is_zero() {
     //   nav_optimistic = 100, total_floor = 200, verified = 0 -> D_max = 200
     //   unscanned_range = 100 - 0 = 100 -> Q = 100 ; result = 100 - 100 = 0
     assert_eq!(plp::conservative_active_nav(100, 100, 200, 0, 0), 0);
+}
+
+#[test]
+fun withdraw_fee_caps_to_alpha_times_gross_payout() {
+    // Band fee = 25% * 10_000 * 10% = 250.
+    // NAV cap  = 25% * 500 = 125.
+    assert_eq!(
+        plp::withdraw_fee(
+            WITHDRAW_FEE_ALPHA_25_PCT,
+            HIGH_BAND,
+            FEE_TEST_LP_AMOUNT,
+            FEE_TEST_TOTAL_SUPPLY,
+            FEE_TEST_GROSS_PAYOUT,
+        ),
+        FEE_TEST_NAV_CAP,
+    );
 }
 
 #[test]
