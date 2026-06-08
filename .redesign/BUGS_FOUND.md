@@ -21,8 +21,8 @@
 - Active-RED tags in tree: `grep -rho 'KNOWN-FAILING: BUG-[0-9]\+' packages/predict/tests | sort -u`
 - Active-RED ledger entries: ledger `BUG-NNN` headings **not** marked `RESOLVED`.
 - The two lists **must match**, and the count **must equal** the suite's failing-test count.
-- **Current state:** 0 active-RED tags in tree, 0 failing tests (235/235 pass), 0 active-RED
-  ledger entries (BUG-001/002 both RESOLVED; R1 FIXED — see DEFERRED). Reconciled.
+- **Current state:** 0 active-RED tags in tree, 0 failing tests (257/257 pass), 0 active-RED
+  ledger entries (BUG-001/002 both RESOLVED; BUG-003 FIXED; R1 FIXED — see DEFERRED). Reconciled.
 
 ## Special status: DEFERRED (out of scope — do not treat as fresh findings)
 
@@ -82,4 +82,5 @@ If a P0-3 (PLP sync NAV) test naturally hits either, ledger it under this sectio
 - **Defect:** `math::exp` / `exp_u128` (`sources/math/math.move`) positive path computes `result << n`. For `x ≳ 67` the u128 `<<` silently drops high bits, so `exp` could return a **wrapped garbage value** through the final `as u64` cast. For `23.638 < x < 67` the true result exceeds `u64::MAX` and the cast aborts, but with no named error code.
 - **Reachability:** `exp`'s only protocol caller is `normal_cdf` (negative args, right-shift path), so the bad path was **unreached in production** — but `exp` is public API surface, so a future caller/composer could hit it.
 - **Class:** correctness (silent wrong result) — latent. **Severity:** low (unreached by protocol; public-API hardening).
-- **Status:** **FIXED.** Added `EExpOverflow` guard `assert!(x_negative || x_mag <= EXP_MAX_INPUT, EExpOverflow)` with `EXP_MAX_INPUT = 23_638_153_718` (the u64-fit bound `floor((64·ln2 − 9·ln10)·1e9)`, impl-independent). Negative path unaffected (`e^-x < 1`). Tests: `math_tests::exp_above_u64_fit_bound_aborts` (named abort) and `exp_large_negative_does_not_overflow` (guard is one-sided). Distinct from BUG-001/002 (those are in-spec precision; this is a real correctness footgun, now closed).
+- **Status:** **FIXED.** Added `EExpOverflow` guard `assert!(x_negative || x_mag <= EXP_MAX_INPUT, EExpOverflow)`. Negative path unaffected (`e^-x < 1`). Distinct from BUG-001/002 (those are in-spec precision; this is a real correctness footgun, now closed).
+- **Refinement (edge-test audit):** the boundary test `exp_at_u64_fit_bound_returns_within_reference` initially RED'd — `EXP_MAX_INPUT` was first set to the exact *math* bound `23_638_153_718` (`floor((64·ln2 − 9·ln10)·1e9)`, where *true* `e^x·1e9 ≤ u64::MAX`), but the impl runs slightly high there, so its computed value overflowed the `as u64` cast (raw arithmetic abort at `math.move:137`) instead of the named guard, for a ~100-unit window of inputs. Tightened `EXP_MAX_INPUT` to the **budget-conservative** bound `23_638_153_618` (largest `x` with `e^x·1e9·(1+1e-7) ≤ u64::MAX`), so every admitted input is guaranteed to fit `u64` even at the precision ceiling and the named `EExpOverflow` always fires first. Tests now pin all three boundary cases (returns at bound; named-aborts at bound+1; named-aborts well past).

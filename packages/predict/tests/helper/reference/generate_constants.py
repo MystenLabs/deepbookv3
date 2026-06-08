@@ -8,20 +8,29 @@ oracle, not a snapshot of contract output (unit-tests rule 1).
 
 Each reference is `round(f_true(x) * 1e9)` — the correctly-rounded fixed-point
 representation of the true mathematical value. The Move tests assert the contract
-is within ONE fixed-point unit of this (the representation granularity: a correct
-floor/ceil/round result is <= 1 unit from truth). A deviation > 1 unit is genuine
-approximation error beyond rounding, independent of the (undocumented) rounding
-convention.
+is within its documented per-primitive precision budget of this (math.move
+"Precision contract": exp/ln <= 1e-7 relative, normal_cdf <= 2e-8 absolute, sqrt
+<= 1 ULP). A deviation beyond budget is a genuine finding (unit-tests rule 15).
 
 Run: python3 generate_constants.py   (no third-party deps)
 """
 import math
+from decimal import Decimal, getcontext, ROUND_HALF_EVEN
+
+getcontext().prec = 60
 
 F = 1_000_000_000
 
 
 def scaled(x: float) -> int:
     return round(x * F)
+
+
+def exp_scaled(num: int, den: int = 1) -> int:
+    """exp(num/den) * 1e9 via arbitrary-precision Decimal. Required for magnitudes
+    above 2**53 (~9e15), where f64 `math.exp` loses integer-exactness and the
+    `round(... * 1e9)` result carries trailing-digit artifacts."""
+    return int(((Decimal(num) / Decimal(den)).exp() * Decimal(F)).to_integral_value(ROUND_HALF_EVEN))
 
 
 def phi(x: float) -> float:  # standard normal CDF via stdlib erf
@@ -48,6 +57,25 @@ POINTS = [
     ("SQRT_2", scaled(math.sqrt(2))),
     ("SQRT_3", scaled(math.sqrt(3))),
     ("SQRT_HALF", scaled(math.sqrt(0.5))),
+    # --- Edge / boundary points (completeness audit). Same independent oracle. ---
+    # exp: definitely-valid large arg, the u64-fit bound (= EXP_MAX_INPUT/1e9),
+    # and the n=0 (x < ln2) series-only path.
+    ("EXP_20", exp_scaled(20)), # > 2**53: Decimal-exact, not f64
+    ("EXP_AT_U64_FIT_BOUND", exp_scaled(23_638_153_618, F)), # > 2**53: Decimal-exact
+    ("EXP_HALF", scaled(math.exp(0.5))),
+    # normal_cdf: small/medium split (0.66291), medium/clamp split (sqrt(32)),
+    # and deeper tail than the base set (x=4, x=5).
+    ("CDF_066291", scaled(phi(662_910_000 / F))),
+    ("CDF_SQRT32", scaled(phi(5_656_854_249 / F))),
+    ("CDF_4", scaled(phi(4.0))),
+    ("CDF_5", scaled(phi(5.0))),
+    # ln: smallest input (value 1e-9, magnitude) and the u64::MAX input.
+    ("LN_1EM9_MAG", abs(scaled(math.log(1e-9)))),
+    ("LN_U64MAX", scaled(math.log((2**64 - 1) / F))),
+    ("LN_1_5", scaled(math.log(1.5))),  # x in (F, 2F): non-degenerate Horner series
+    # sqrt with non-default precision: sqrt(x, P) == isqrt(x * P) in raw units.
+    ("SQRT_4F_PREC_ONE", math.isqrt(4 * F * 1)),
+    ("SQRT_U64MAX_PREC_ONE", math.isqrt((2**64 - 1) * 1)),  # high-bit Newton path; = 2^32-1
 ]
 
 if __name__ == "__main__":

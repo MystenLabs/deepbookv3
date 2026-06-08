@@ -52,9 +52,11 @@ const EExpOverflow: u64 = 4;
 const F: u128 = 1_000_000_000;
 const LN2_U128: u128 = 693_147_180;
 
-// Largest exp input whose true result fits the u64 return: e^x * 1e9 <= u64::MAX
-// <=> x <= 64*ln(2) - 9*ln(10) ≈ 23.638. floor((64*ln2 - 9*ln10) * 1e9).
-const EXP_MAX_INPUT: u64 = 23_638_153_718;
+// Largest exp input guaranteed to keep the u64 result in range even at the 1e-7
+// precision ceiling: e^x * 1e9 * (1 + 1e-7) <= u64::MAX. Set ~100 units below the
+// exact math bound (64*ln2 - 9*ln10 ≈ 23.638) so the named EExpOverflow guard
+// always fires before the `as u64` cast (line ~137) could overflow on a hot impl.
+const EXP_MAX_INPUT: u64 = 23_638_153_618;
 
 // Cody rational approximation coefficients (scaled to F = 1e9)
 // Source: W.J. Cody (1969), as implemented in GSL gauss.c

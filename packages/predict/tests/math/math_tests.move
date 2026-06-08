@@ -51,6 +51,25 @@ const SQRT_2: u64 = 1_414_213_562;
 const SQRT_3: u64 = 1_732_050_808;
 const SQRT_HALF: u64 = 707_106_781;
 
+// Edge / boundary references (completeness audit) — same independent oracle.
+const EXP_20: u64 = 485_165_195_409_790_278; // Decimal-exact (> 2^53)
+const EXP_AT_U64_FIT_BOUND: u64 = 18_446_742_212_616_000_662; // e^(EXP_MAX_INPUT/1e9)*1e9, Decimal-exact
+const EXP_HALF: u64 = 1_648_721_271; // e^0.5; exercises the n=0 (x < ln2) series-only path
+const CDF_066291: u64 = 746_305_902; // Phi at the small/medium split
+const CDF_SQRT32: u64 = 999_999_992; // Phi at the medium/clamp split (sqrt(32))
+const CDF_4: u64 = 999_968_329;
+const CDF_5: u64 = 999_999_713;
+const LN_1EM9_MAG: u64 = 20_723_265_837; // |ln(1e-9)|; smallest input x = 1
+const LN_U64MAX: u64 = 23_638_153_719; // ln(u64::MAX / 1e9)
+const LN_1_5: u64 = 405_465_108; // ln(1.5); x in (F, 2F): non-degenerate Horner series
+const SQRT_4F_PREC_ONE: u64 = 63_245; // sqrt(4*F, 1) = isqrt(4e9)
+const SQRT_U64MAX_PREC_ONE: u64 = 4_294_967_295; // sqrt(u64::MAX, 1) = isqrt(u64::MAX) = 2^32-1
+
+// Input boundaries mirrored from math.move private constants (for branch-edge tests).
+const EXP_MAX_INPUT: u64 = 23_638_153_618; // = math::EXP_MAX_INPUT (budget-conservative u64-fit bound)
+const CDF_SMALL_THRESHOLD: u64 = 662_910_000; // small/medium split in normal_cdf
+const CDF_MEDIUM_THRESHOLD: u64 = 5_656_854_249; // medium/clamp split = sqrt(32) * 1e9
+
 // === ln ===
 
 #[test]
@@ -80,6 +99,43 @@ fun ln_of_half_is_negative_ln2() {
     let r = math::ln(float!() / 2);
     test_helpers::assert_within_relative(r.magnitude(), LN_2, LN_BUDGET_REL);
     assert!(r.is_negative());
+}
+
+#[test]
+fun ln_of_smallest_input_is_large_negative() {
+    // x = 1 (value 1e-9): the maximal reciprocal (inv = 1e18) on the inverse path.
+    let r = math::ln(1);
+    test_helpers::assert_within_relative(r.magnitude(), LN_1EM9_MAG, LN_BUDGET_REL);
+    assert!(r.is_negative());
+}
+
+#[test]
+fun ln_of_u64_max_within_reference() {
+    // Largest input: exercises normalize's high shift count.
+    let r = math::ln(std::u64::max_value!());
+    test_helpers::assert_within_relative(r.magnitude(), LN_U64MAX, LN_BUDGET_REL);
+    assert!(!r.is_negative());
+}
+
+#[test]
+fun ln_just_below_one_is_near_zero() {
+    // The inverse/direct split boundary. True ln(1 - 1e-9) ~ -1e-9, within 1 ULP of
+    // zero, so only the magnitude (not the sign) is resolvable at this granularity.
+    assert!(math::ln(float!() - 1).magnitude() <= 1);
+}
+
+#[test]
+fun ln_just_above_one_is_near_zero() {
+    assert!(math::ln(float!() + 1).magnitude() <= 1);
+}
+
+#[test]
+fun ln_of_one_point_five_within_reference() {
+    // x in (F, 2F): the normalize n=0 case where the z^k Horner series actually runs
+    // (unlike F+1, where z rounds to 0 and the series is degenerate).
+    let r = math::ln(float!() + float!() / 2);
+    test_helpers::assert_within_relative(r.magnitude(), LN_1_5, LN_BUDGET_REL);
+    assert!(!r.is_negative());
 }
 
 #[test, expected_failure(abort_code = math::EInputZero)]
@@ -165,6 +221,44 @@ fun exp_large_negative_does_not_overflow() {
     assert_eq!(math::exp(&i64::from_parts(24 * float!(), true)), 0);
 }
 
+#[test]
+fun exp_of_twenty_within_reference() {
+    // Large but safely-valid positive arg (e^20 * 1e9 < u64::MAX).
+    test_helpers::assert_within_relative(
+        math::exp(&i64::from_u64(20 * float!())),
+        EXP_20,
+        EXP_BUDGET_REL,
+    );
+}
+
+#[test]
+fun exp_at_u64_fit_bound_returns_within_reference() {
+    // The exact guard boundary: e^x * 1e9 just fits u64, so this must NOT abort.
+    // If it cast-aborts instead, EXP_MAX_INPUT is set a hair too loose.
+    test_helpers::assert_within_relative(
+        math::exp(&i64::from_u64(EXP_MAX_INPUT)),
+        EXP_AT_U64_FIT_BOUND,
+        EXP_BUDGET_REL,
+    );
+}
+
+#[test, expected_failure(abort_code = math::EExpOverflow)]
+fun exp_just_above_u64_fit_bound_aborts() {
+    // One past the bound: the named guard rejects it, before any cast overflow.
+    math::exp(&i64::from_u64(EXP_MAX_INPUT + 1));
+    abort 999
+}
+
+#[test]
+fun exp_of_half_uses_series_only() {
+    // x = 0.5 < ln2, so n = 0: pure Taylor series, no binary shift.
+    test_helpers::assert_within_relative(
+        math::exp(&i64::from_u64(float!() / 2)),
+        EXP_HALF,
+        EXP_BUDGET_REL,
+    );
+}
+
 // === normal_cdf ===
 
 #[test]
@@ -244,6 +338,78 @@ fun normal_cdf_of_negative_three_within_reference() {
 }
 
 #[test]
+fun normal_cdf_at_small_medium_threshold() {
+    // x = SMALL_THRESHOLD (0.66291): the small/medium branch split, medium side.
+    test_helpers::assert_within(
+        math::normal_cdf(&i64::from_u64(CDF_SMALL_THRESHOLD)),
+        CDF_066291,
+        CDF_BUDGET_ABS,
+    );
+}
+
+#[test]
+fun normal_cdf_just_below_small_threshold() {
+    // Small side of the split — continuity across the branch (within budget of ST).
+    test_helpers::assert_within(
+        math::normal_cdf(&i64::from_u64(CDF_SMALL_THRESHOLD - 1)),
+        CDF_066291,
+        CDF_BUDGET_ABS,
+    );
+}
+
+#[test]
+fun normal_cdf_at_medium_threshold_clamps_within_budget() {
+    // x >= MEDIUM_THRESHOLD (sqrt(32)) clamps to F; true Phi = CDF_SQRT32, so the
+    // clamp must stay within the cdf budget of truth (no out-of-budget discontinuity).
+    let v = math::normal_cdf(&i64::from_u64(CDF_MEDIUM_THRESHOLD));
+    assert_eq!(v, float!());
+    test_helpers::assert_within(v, CDF_SQRT32, CDF_BUDGET_ABS);
+}
+
+#[test]
+fun normal_cdf_just_below_medium_threshold() {
+    // Medium side at its extreme: exp(-x^2/2) with x near sqrt(32).
+    test_helpers::assert_within(
+        math::normal_cdf(&i64::from_u64(CDF_MEDIUM_THRESHOLD - 1)),
+        CDF_SQRT32,
+        CDF_BUDGET_ABS,
+    );
+}
+
+#[test]
+fun normal_cdf_of_four_within_reference() {
+    test_helpers::assert_within(
+        math::normal_cdf(&i64::from_u64(4 * float!())),
+        CDF_4,
+        CDF_BUDGET_ABS,
+    );
+}
+
+#[test]
+fun normal_cdf_of_five_within_reference() {
+    test_helpers::assert_within(
+        math::normal_cdf(&i64::from_u64(5 * float!())),
+        CDF_5,
+        CDF_BUDGET_ABS,
+    );
+}
+
+#[test]
+fun normal_cdf_large_negative_clamps_to_zero() {
+    // x in [sqrt(32), 8] negative: the internal large-range clamp (return 0), distinct
+    // from the public |x|>8 short-circuit. True Phi(-6) ~ 1e-9, within budget of 0.
+    assert_eq!(math::normal_cdf(&i64::from_parts(6 * float!(), true)), 0);
+}
+
+#[test]
+fun normal_cdf_at_eight_boundary() {
+    // x_mag == 8F exactly: the public `> 8F` guard is strict, so this falls through
+    // to the internal large-range clamp (F for +, 0 for -). Pins the off-by-one edge.
+    assert_eq!(math::normal_cdf(&i64::from_u64(8 * float!())), float!());
+    assert_eq!(math::normal_cdf(&i64::from_parts(8 * float!(), true)), 0);
+}
+
+#[test]
 fun normal_cdf_clamps_high_to_one() {
     // |x| > 8 short-circuits to F (1.0) for positive inputs.
     assert_eq!(math::normal_cdf(&i64::from_u64(8 * float!() + 1)), float!());
@@ -298,6 +464,49 @@ fun sqrt_of_three_within_reference() {
 fun sqrt_of_half_within_reference() {
     test_helpers::assert_within(math::sqrt(float!() / 2, float!()), SQRT_HALF, SQRT_BUDGET_ABS);
 }
+
+// `precision` < F (multiplier > 1) is never used in production (all callers pass
+// float_scaling), but it is public surface: sqrt(x, P) computes sqrt(x * P) raw.
+
+#[test]
+fun sqrt_with_half_precision() {
+    // precision = F/2: sqrt(4 * 0.5) = sqrt(2). Independent: isqrt(4e9 * 5e8).
+    test_helpers::assert_within(math::sqrt(4 * float!(), float!() / 2), SQRT_2, SQRT_BUDGET_ABS);
+}
+
+#[test]
+fun sqrt_with_half_precision_perfect_square() {
+    // sqrt(2 * 0.5) = sqrt(1) = 1 exactly.
+    assert_eq!(math::sqrt(2 * float!(), float!() / 2), float!());
+}
+
+#[test]
+fun sqrt_with_quarter_precision_perfect_square() {
+    // sqrt(1 * 0.25) = sqrt(0.25) = 0.5 exactly.
+    assert_eq!(math::sqrt(float!(), float!() / 4), float!() / 2);
+}
+
+#[test]
+fun sqrt_with_min_precision() {
+    // precision = 1 (max multiplier): sqrt(4F, 1) = isqrt(4e9) = 63_245.
+    test_helpers::assert_within(math::sqrt(4 * float!(), 1), SQRT_4F_PREC_ONE, SQRT_BUDGET_ABS);
+}
+
+#[test]
+fun sqrt_of_u64_max_min_precision() {
+    // Largest input at max multiplier: scaled ~ 2^123 bits, the high-bit Newton path.
+    // sqrt(u64::MAX, 1) = isqrt(u64::MAX) = 2^32 - 1.
+    test_helpers::assert_within(
+        math::sqrt(std::u64::max_value!(), 1),
+        SQRT_U64MAX_PREC_ONE,
+        SQRT_BUDGET_ABS,
+    );
+}
+
+// Note: sqrt_u128's `x < 4` fast-path and its `g*g > x` floor correction are private
+// and unreachable through the public *F-scaled wrapper (scaled is always 0 or a
+// multiple of 1e9 >= 1e9, on which the Newton iteration never overshoots), so they
+// have no public test by construction — defensive code for the raw u128 helper.
 
 #[test, expected_failure(abort_code = math::EInvalidPrecision)]
 fun sqrt_precision_zero_aborts() {
