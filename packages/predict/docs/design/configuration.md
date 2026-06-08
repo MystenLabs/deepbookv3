@@ -74,12 +74,13 @@ The distinction from class (A) is deliberate: live configs govern protocol-wide 
 - `trading_paused` — when true, blocks *new risk creation*. Exits, settlement cleanup, and valuation are intentionally not blocked by the trading pause; they are gated only by the valuation lock. `assert_trading_allowed` combines the not-paused check with the valuation lock.
 - `valuation_in_progress` — a transaction-local lock held while a full-pool valuation is assembled. `begin_valuation`/`end_valuation` open and close it; while held, config mutations and new-risk flows abort. Most admin setters first assert the valuation lock is *not* in progress so that policy cannot shift mid-valuation.
 - `protocol_reserve_profit_share` — the merged protocol-and-insurance reserve share used when aggregate expiry profit is materialized, in 1e9 scaling.
+- `withdraw_fee_alpha` — the multiplier on the PLP withdrawal uncertainty-band fee, in 1e9 scaling. It scales the fee a withdrawing LP pays against the pool's aggregate live-valuation uncertainty band; the fee is retained in idle for remaining LPs (see [../concepts/liquidity-and-nav.md](../concepts/liquidity-and-nav.md)).
 - `valuation_liquidation_budget` and `trade_liquidation_budget` — the total liquidation-candidate budgets checked before live pool valuation and before mint/redeem flows respectively. These bound how much liquidation work a single flow performs.
 
 **Per-expiry runtime controls (`ExpiryRuntimeConfig`):** a mutable row stored in a per-expiry-market table on `ProtocolConfig`, registered when the market is created. Unlike the template snapshots, these are read live from the current row for the expiry being operated on:
 
 - `mint_paused` — when true, new mints on that one expiry abort; the market's other flows (redeem, valuation, settlement) remain available.
-- `max_expiry_funding` — the maximum net DUSDC the pool may have funded into that expiry. Its admin setter lives on `PoolVault` (the module that coordinates pool funding) and writes this row through a package-internal `protocol_config` helper.
+- `max_expiry_funding` — the maximum net DUSDC the pool may have funded into that expiry. Its admin setter lives on `PoolVault` (the module that coordinates pool funding) and writes this row through a package-internal `protocol_config` helper. The pool also **earmarks** this cap: idle DUSDC must always cover the unfunded portion of every active expiry's cap, so creating a market or raising its cap requires enough free idle to back it, and that earmarked cash is not LP-withdrawable until the market deactivates (see [../concepts/liquidity-and-nav.md](../concepts/liquidity-and-nav.md)).
 
 The folded design: there are no standalone `fee_config`, `risk_config`, or `expiry_runtime_config` modules. Fee and risk scalars (`protocol_reserve_profit_share`, the two liquidation budgets) live directly on `ProtocolConfig` with their defaults and bounds in `config_constants`, and per-expiry runtime controls are the embedded `ExpiryRuntimeConfig` struct on `ProtocolConfig`. Readers should not look for those modules; this is the adopted shape.
 
@@ -114,7 +115,7 @@ A `PauseCap` is a revocable emergency capability the admin mints into `Registry.
 
 | Authority | Can change |
 | --- | --- |
-| `AdminCap` (on `ProtocolConfig`) | All template values (future markets only), all live configs (`PricingConfig`, `EwmaConfig`, `StakeConfig`), `protocol_reserve_profit_share`, both liquidation budgets, global `trading_paused`, per-expiry `mint_paused` (set and unset) |
+| `AdminCap` (on `ProtocolConfig`) | All template values (future markets only), all live configs (`PricingConfig`, `EwmaConfig`, `StakeConfig`), `protocol_reserve_profit_share`, `withdraw_fee_alpha`, both liquidation budgets, global `trading_paused`, per-expiry `mint_paused` (set and unset) |
 | `AdminCap` (on a `MarketOracle`) | Live per-oracle safety bounds: settlement freshness and the spot/basis deviation and min/max basis guards; register/unregister oracle writer caps |
 | `AdminCap` (on a `PoolVault`) | Per-expiry `max_expiry_funding` |
 | `AdminCap` (on `Registry`) | Per-feed `tick_size` (future markets only), version enable/disable, PauseCap mint/revoke, Pyth-source creation, incentive-asset bindings, incentive deposits |

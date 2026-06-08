@@ -8,9 +8,10 @@
 /// directly and does not duplicate grid geometry in storage.
 ///
 /// This treap stores finite interval boundaries touched by positions. It tracks
-/// atomic payout terms: each order's exact terminal payout and maximum future
-/// live payout. Live backing uses the static max-live term for an instant
-/// conservative lookup. Settled liability uses exact terminal-payout prefixes.
+/// each order's exact terminal payout — summed at a settlement price for settled
+/// liability — and a static max-live backing term. Live cash backing is now the
+/// running sum of per-order live backings maintained on `StrikeExposure`; the
+/// tree's max-live term is retained but is no longer the enforced reserve.
 module deepbook_predict::strike_payout_tree;
 
 use deepbook_predict::{constants, strike_grid::StrikeGrid};
@@ -51,7 +52,9 @@ public struct PayoutNode has copy, drop, store {
     summary: PayoutSummary,
 }
 
-/// Return the static conservative live backing requirement.
+/// Return the static max-live backing term: the maximum liability at a single
+/// settlement point. No longer the enforced cash-backing reserve (that is the
+/// running per-order sum on `StrikeExposure`); retained for reference.
 public(package) fun max_live_backing_payout(tree: &StrikePayoutTree): u64 {
     let mut max_payout = tree.base.live_backing_payout;
     if (tree.root.is_some()) {

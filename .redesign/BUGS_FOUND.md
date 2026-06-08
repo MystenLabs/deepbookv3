@@ -30,7 +30,32 @@
   relative budget. `EExpOverflow` guard added (BUG-003). Untouched.
 - R1 `plp::lp_pool_value` underflow — FIXED via `exclusion.min(gross)`; re-confirmed
   by the existing `lp_pool_value_*` tests, unchanged here.
-- C3 `strike_nav_matrix` aggregate-floor — product decision, out of scope.
+- C3 `strike_nav_matrix` aggregate-floor — two halves. **Overstatement** handled by
+  `plp::conservative_active_nav` (the NAV ≥ TRUE haircut). **Severe-case brick FIXED (2026-06-08):**
+  removed the `EFloorExceedsLiveValue` assert in `strike_nav_matrix::live_value` (now returns raw
+  `(total_range, total_floor)`) and clamped `position_liability` to a saturating
+  `total_range - total_floor` in `expiry_market.move:408`. An aggregate-floor *deficit* — positions
+  going under their floor (loan) faster than the budgeted liquidation pass clears them, e.g. a gapping
+  oracle move — now yields a conservative NAV instead of aborting `pool_nav` → `PoolSync` →
+  supply/withdraw pool-wide. The clamp is the supply-safe direction (`max(0, Σ(rangeᵢ−floorᵢ)) ≤
+  Σ max(0, rangeᵢ−floorᵢ) = TRUE`), and `conservative_active_nav` tightens it for withdraw; verified
+  `[TRUE, optimistic]` composition. Test: `plp_nav_haircut_tests::aggregate_floor_deficit_keeps_sync_supply_and_withdraw_live`
+  (RED observed: aborted `EFloorExceedsLiveValue`; GREEN: deficit total_range 2e9 < total_floor 3e9 →
+  conservative 49e9 ∈ [TRUE 48e9, optimistic 50e9]; supply + withdraw both live). Suite 302/302.
+- **Disjoint-range live-redeem under-reservation — FOUND + FIXED (2026-06-08, commit `08bfeb7d`).**
+  A live market reserved `max_live_backing_payout` (worst-case liability at a *single* settlement
+  point), but disjoint orders — and leveraged orders are *forced* one-sided/disjoint — can each be
+  live-redeemed near their own peak at different times, so the self-contained reserve is the **sum**
+  of per-order max live backings, not the max. The expiry could admit two disjoint positions it
+  could not back through sequential redeems; the protective `assert_cash_backing` surfaced this as a
+  *blocked* winning redeem (liveness), never insolvency. Reproduced end-to-end by a throwaway PoC
+  (two complementary 1× digitals; redeem aborted `EInsufficientCash` after the rebalancer swept the
+  transient contributions). Fixed in two layers: per-market `payout_liability` for a live market is
+  now the running per-order sum (`StrikeExposure.live_backing_liability`), which auto-corrects the
+  mint gate and the rebalancer target; and the pool earmarks each active expiry's funding cap
+  (`idle ≥ Σ active (max_funding − net_funding)`) with an LP-withdraw clamp
+  (`EInsufficientActiveAllocationBacking`). A dynamic uncertainty-band withdrawal fee was added
+  alongside. Full analysis: `.redesign/DISJOINT_BACKING_SOLVENCY_ANALYSIS.md`. Suite 312/312.
 
 ---
 

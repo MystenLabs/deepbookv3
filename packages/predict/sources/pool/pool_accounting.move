@@ -9,6 +9,12 @@
 /// terminal cash watermarks, and per-expiry net funding caps. It does not
 /// classify expiry-local liabilities or apply PLP reserve policy; PoolVault uses
 /// the aggregate profit basis to price PLP and decide protocol reserve transfers.
+///
+/// It also enforces the pool-level solvency earmark: idle DUSDC always covers the
+/// unfunded portion of every active expiry's funding cap
+/// (`idle >= sum over active expiries of (max_funding - net_funding)`), so every
+/// active market can be funded to its cap on demand and that earmarked backing is
+/// not LP-withdrawable.
 module deepbook_predict::pool_accounting;
 
 use deepbook_predict::constants;

@@ -127,7 +127,7 @@ public fun max_strike(market: &ExpiryMarket): u64 {
     market.strike_exposure.max_strike()
 }
 
-/// Return conservative max-live backing, or remaining settled payout liability once materialized.
+/// Return summed live backing, or remaining settled payout liability once materialized.
 public fun payout_liability(market: &ExpiryMarket): u64 {
     market.strike_exposure.payout_liability()
 }

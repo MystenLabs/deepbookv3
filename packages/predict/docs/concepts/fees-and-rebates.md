@@ -4,6 +4,8 @@ Every Predict trade — a mint or a live redeem — carries a trading fee, and m
 
 All fees are denominated in DUSDC (6 decimals), the settlement asset, and all ratios use Predict's 1e9 fixed-point scaling (`1_000_000_000` = 1.0 = 100%). For the actual configured rates and bounds, see [../design/configuration.md](../design/configuration.md); this page describes the mechanisms, not the numbers.
 
+This page covers **per-trade** fees. The pool also charges one **LP-side** fee — an uncertainty-band fee on PLP withdrawal that accrues to remaining LPs — documented in [./liquidity-and-nav.md](./liquidity-and-nav.md).
+
 ## Where fees come from
 
 Predict prices a range contract at its range probability `p` — the model's estimate that the settlement price lands inside the order's strike range (see [pricing-and-oracles.md](./pricing-and-oracles.md)). The trading fee is charged on top of that probability and is proportional to the order's `quantity`. A fee charged at mint is added to the all-in execution price; a fee charged at live redeem is withheld from the payout. The fee is collected into the expiry's DUSDC cash custody (`ExpiryCash`) and recorded against the trader's `PredictManager`.
