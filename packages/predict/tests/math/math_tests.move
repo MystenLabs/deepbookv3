@@ -4,76 +4,49 @@
 #[test_only]
 module deepbook_predict::math_tests;
 
-use deepbook_predict::{constants::float_scaling as float, i64, math};
+use deepbook_predict::{constants::float_scaling as float, i64, math, test_helpers};
 use std::unit_test::assert_eq;
 
-// Math approximation snapshot constants (FLOAT_SCALING = 1e9).
+// Independent reference values: round(f_true(x) * 1e9), produced by
+// tests/helper/reference/generate_constants.py (Python stdlib `math`; NO contract
+// input, so these are an independent oracle, not a snapshot of contract output —
+// unit-tests rule 1). They REPLACE the previous "contract returns X; delta" golden
+// snapshots, which asserted the contract's own output and so could never catch a
+// baked-in approximation bug.
 //
-// Each constant is anchored against a scipy ground-truth value documented in
-// the adjacent comment. The asserted value is the contract's current
-// fixed-point output, which differs from scipy by the noted `delta`. This is
-// intentional: the math module trades precision for cheap on-chain evaluation
-// (~5 units of error at 1e9 per the `normal_cdf` source comment), and the
-// snapshot exists so any future change to the approximation surfaces here
-// rather than silently shifting downstream pricing. When `generate_constants.py`
-// lands, regenerate these and re-verify the deltas.
+// Approximate-function points assert the contract is within ONE fixed-point unit
+// (`ULP`) of the reference via `assert_within`. That bound is the representation
+// granularity (a correct floor/ceil/round result is <= 1 unit from truth) — a
+// principled, contract-independent bound, NOT the deleted precision.move's
+// measured error chain. A deviation > 1 unit is genuine approximation error
+// beyond rounding and fails the test (a candidate finding — see BUGS_FOUND.md).
+// Exact points (identities, clamps, perfect squares, Phi(0)) use `assert_eq!`.
 
-// ln: scipy = 0.6931471805599453, expected = 693_147_181 (rounded).
-// Contract returns 693_147_180; delta = -1 (scipy is +1).
-const LN_2: u64 = 693_147_180;
-// ln: scipy = 2.302585092994046, expected = 2_302_585_093.
-// Contract returns 2_302_585_090; delta = -3.
-const LN_10: u64 = 2_302_585_090;
+/// Fixed-point representation granularity (1e-9). The principled bound for a
+/// correctly-rounded fixed-point result.
+const ULP: u64 = 1;
 
-// exp: scipy = 2.718281828459045, expected = 2_718_281_828.
-// Contract returns 2_718_281_820; delta = -8.
-const EXP_1: u64 = 2_718_281_820;
-// exp: scipy = 0.36787944117144233, expected = 367_879_441.
-// Contract returns 367_879_442; delta = +1.
-const EXP_NEG_1: u64 = 367_879_442;
-// exp: scipy = 7.38905609893065, expected = 7_389_056_099.
-// Contract returns 7_389_056_092; delta = -7.
-const EXP_2: u64 = 7_389_056_092;
-// exp: scipy = 0.1353352832366127, expected = 135_335_283. Contract matches.
+const LN_2: u64 = 693_147_181;
+const LN_10: u64 = 2_302_585_093;
+
+const EXP_1: u64 = 2_718_281_828;
+const EXP_NEG_1: u64 = 367_879_441;
+const EXP_2: u64 = 7_389_056_099;
 const EXP_NEG_2: u64 = 135_335_283;
-// exp: scipy = 22026.465794806718, expected = 22_026_465_794_807.
-// Contract returns 22_026_465_902_592; delta = +107_785 (rel ~5e-6).
-// Larger drift at the high end is expected from the shift-by-32 path in
-// `exp_u128`.
-const EXP_10: u64 = 22_026_465_902_592;
-// exp: scipy = 0.00004539992976248485, expected = 45_400.
-// Contract returns 45_399; delta = -1.
-const EXP_NEG_10: u64 = 45_399;
+const EXP_10: u64 = 22_026_465_794_807;
+const EXP_NEG_10: u64 = 45_400;
 
-// normal_cdf: scipy = 0.6914624612740131, expected = 691_462_461. Contract matches.
 const CDF_HALF: u64 = 691_462_461;
-// normal_cdf: scipy = 0.3085375387259869, expected = 308_537_539. Contract matches.
 const CDF_NEG_HALF: u64 = 308_537_539;
-// normal_cdf: scipy = 0.8413447460685429, expected = 841_344_746.
-// Contract returns 841_344_747; delta = +1.
-const CDF_1: u64 = 841_344_747;
-// normal_cdf: scipy = 0.15865525393145707, expected = 158_655_254.
-// Contract returns 158_655_253; delta = -1.
-const CDF_NEG_1: u64 = 158_655_253;
-// normal_cdf: scipy = 0.9772498680518208, expected = 977_249_868.
-// Contract returns 977_249_869; delta = +1.
-const CDF_2: u64 = 977_249_869;
-// normal_cdf: scipy = 0.022750131948179195, expected = 22_750_132.
-// Contract returns 22_750_131; delta = -1.
-const CDF_NEG_2: u64 = 22_750_131;
-// normal_cdf: scipy = 0.9986501019683699, expected = 998_650_102.
-// Contract returns 998_650_103; delta = +1.
-const CDF_3: u64 = 998_650_103;
-// normal_cdf: scipy = 0.0013498980316301035, expected = 1_349_898.
-// Contract returns 1_349_897; delta = -1.
-const CDF_NEG_3: u64 = 1_349_897;
+const CDF_1: u64 = 841_344_746;
+const CDF_NEG_1: u64 = 158_655_254;
+const CDF_2: u64 = 977_249_868;
+const CDF_NEG_2: u64 = 22_750_132;
+const CDF_3: u64 = 998_650_102;
+const CDF_NEG_3: u64 = 1_349_898;
 
-// sqrt: scipy = 1.4142135623730951, expected = 1_414_213_562. Contract matches.
 const SQRT_2: u64 = 1_414_213_562;
-// sqrt: scipy = 1.7320508075688772, expected = 1_732_050_808.
-// Contract returns 1_732_050_807; delta = -1 (Newton-step floor correction).
-const SQRT_3: u64 = 1_732_050_807;
-// sqrt: scipy = 0.7071067811865476, expected = 707_106_781. Contract matches.
+const SQRT_3: u64 = 1_732_050_808;
 const SQRT_HALF: u64 = 707_106_781;
 
 // === ln ===
@@ -86,16 +59,17 @@ fun ln_of_one_is_zero() {
 }
 
 #[test]
-fun ln_of_two_matches_snapshot() {
+fun ln_of_two_within_reference() {
     let r = math::ln(2 * float!());
-    assert_eq!(r.magnitude(), LN_2);
+    test_helpers::assert_within(r.magnitude(), LN_2, ULP);
     assert!(!r.is_negative());
 }
 
+// KNOWN-FAILING: BUG-002 — ln() approximation deviates from truth by 3 ULP at ln(10). See .redesign/BUGS_FOUND.md
 #[test]
-fun ln_of_ten_matches_snapshot() {
+fun ln_of_ten_within_reference() {
     let r = math::ln(10 * float!());
-    assert_eq!(r.magnitude(), LN_10);
+    test_helpers::assert_within(r.magnitude(), LN_10, ULP);
     assert!(!r.is_negative());
 }
 
@@ -103,7 +77,7 @@ fun ln_of_ten_matches_snapshot() {
 fun ln_of_half_is_negative_ln2() {
     // ln(0.5) = -ln(2); exercises the inverse path (`x < float!()`) inside the contract.
     let r = math::ln(float!() / 2);
-    assert_eq!(r.magnitude(), LN_2);
+    test_helpers::assert_within(r.magnitude(), LN_2, ULP);
     assert!(r.is_negative());
 }
 
@@ -120,35 +94,38 @@ fun exp_of_zero_is_one() {
     assert_eq!(math::exp(&i64::zero()), float!());
 }
 
+// KNOWN-FAILING: BUG-001 — exp() approximation deviates from truth by 8 ULP at exp(1). See .redesign/BUGS_FOUND.md
 #[test]
-fun exp_of_one_matches_snapshot() {
-    assert_eq!(math::exp(&i64::from_u64(float!())), EXP_1);
+fun exp_of_one_within_reference() {
+    test_helpers::assert_within(math::exp(&i64::from_u64(float!())), EXP_1, ULP);
 }
 
 #[test]
-fun exp_of_negative_one_matches_snapshot() {
-    assert_eq!(math::exp(&i64::from_parts(float!(), true)), EXP_NEG_1);
+fun exp_of_negative_one_within_reference() {
+    test_helpers::assert_within(math::exp(&i64::from_parts(float!(), true)), EXP_NEG_1, ULP);
+}
+
+// KNOWN-FAILING: BUG-001 — exp() approximation deviates from truth by 7 ULP at exp(2). See .redesign/BUGS_FOUND.md
+#[test]
+fun exp_of_two_within_reference() {
+    test_helpers::assert_within(math::exp(&i64::from_u64(2 * float!())), EXP_2, ULP);
 }
 
 #[test]
-fun exp_of_two_matches_snapshot() {
-    assert_eq!(math::exp(&i64::from_u64(2 * float!())), EXP_2);
+fun exp_of_negative_two_within_reference() {
+    test_helpers::assert_within(math::exp(&i64::from_parts(2 * float!(), true)), EXP_NEG_2, ULP);
 }
 
+// KNOWN-FAILING: BUG-001 — exp() approximation deviates from truth by +107_785 (rel ~4.9e-6) at exp(10). See .redesign/BUGS_FOUND.md
 #[test]
-fun exp_of_negative_two_matches_snapshot() {
-    assert_eq!(math::exp(&i64::from_parts(2 * float!(), true)), EXP_NEG_2);
-}
-
-#[test]
-fun exp_of_ten_matches_snapshot() {
+fun exp_of_ten_within_reference() {
     // Exercises the shift-by-32 branch in `exp_u128`.
-    assert_eq!(math::exp(&i64::from_u64(10 * float!())), EXP_10);
+    test_helpers::assert_within(math::exp(&i64::from_u64(10 * float!())), EXP_10, ULP);
 }
 
 #[test]
-fun exp_of_negative_ten_matches_snapshot() {
-    assert_eq!(math::exp(&i64::from_parts(10 * float!(), true)), EXP_NEG_10);
+fun exp_of_negative_ten_within_reference() {
+    test_helpers::assert_within(math::exp(&i64::from_parts(10 * float!(), true)), EXP_NEG_10, ULP);
 }
 
 // === normal_cdf ===
@@ -160,45 +137,57 @@ fun normal_cdf_of_zero_is_half() {
 }
 
 #[test]
-fun normal_cdf_of_half_matches_snapshot() {
+fun normal_cdf_of_half_within_reference() {
     // x=0.5 is below the small-range threshold (0.66291).
-    assert_eq!(math::normal_cdf(&i64::from_u64(float!() / 2)), CDF_HALF);
+    test_helpers::assert_within(math::normal_cdf(&i64::from_u64(float!() / 2)), CDF_HALF, ULP);
 }
 
 #[test]
-fun normal_cdf_of_negative_half_matches_snapshot() {
-    assert_eq!(math::normal_cdf(&i64::from_parts(float!() / 2, true)), CDF_NEG_HALF);
+fun normal_cdf_of_negative_half_within_reference() {
+    test_helpers::assert_within(
+        math::normal_cdf(&i64::from_parts(float!() / 2, true)),
+        CDF_NEG_HALF,
+        ULP,
+    );
 }
 
 #[test]
-fun normal_cdf_of_one_matches_snapshot() {
+fun normal_cdf_of_one_within_reference() {
     // x=1 is above the small-range threshold, exercising the medium-range branch.
-    assert_eq!(math::normal_cdf(&i64::from_u64(float!())), CDF_1);
+    test_helpers::assert_within(math::normal_cdf(&i64::from_u64(float!())), CDF_1, ULP);
 }
 
 #[test]
-fun normal_cdf_of_negative_one_matches_snapshot() {
-    assert_eq!(math::normal_cdf(&i64::from_parts(float!(), true)), CDF_NEG_1);
+fun normal_cdf_of_negative_one_within_reference() {
+    test_helpers::assert_within(math::normal_cdf(&i64::from_parts(float!(), true)), CDF_NEG_1, ULP);
 }
 
 #[test]
-fun normal_cdf_of_two_matches_snapshot() {
-    assert_eq!(math::normal_cdf(&i64::from_u64(2 * float!())), CDF_2);
+fun normal_cdf_of_two_within_reference() {
+    test_helpers::assert_within(math::normal_cdf(&i64::from_u64(2 * float!())), CDF_2, ULP);
 }
 
 #[test]
-fun normal_cdf_of_negative_two_matches_snapshot() {
-    assert_eq!(math::normal_cdf(&i64::from_parts(2 * float!(), true)), CDF_NEG_2);
+fun normal_cdf_of_negative_two_within_reference() {
+    test_helpers::assert_within(
+        math::normal_cdf(&i64::from_parts(2 * float!(), true)),
+        CDF_NEG_2,
+        ULP,
+    );
 }
 
 #[test]
-fun normal_cdf_of_three_matches_snapshot() {
-    assert_eq!(math::normal_cdf(&i64::from_u64(3 * float!())), CDF_3);
+fun normal_cdf_of_three_within_reference() {
+    test_helpers::assert_within(math::normal_cdf(&i64::from_u64(3 * float!())), CDF_3, ULP);
 }
 
 #[test]
-fun normal_cdf_of_negative_three_matches_snapshot() {
-    assert_eq!(math::normal_cdf(&i64::from_parts(3 * float!(), true)), CDF_NEG_3);
+fun normal_cdf_of_negative_three_within_reference() {
+    test_helpers::assert_within(
+        math::normal_cdf(&i64::from_parts(3 * float!(), true)),
+        CDF_NEG_3,
+        ULP,
+    );
 }
 
 #[test]
@@ -243,18 +232,18 @@ fun sqrt_of_twentyfive_is_five() {
 }
 
 #[test]
-fun sqrt_of_two_matches_snapshot() {
-    assert_eq!(math::sqrt(2 * float!(), float!()), SQRT_2);
+fun sqrt_of_two_within_reference() {
+    test_helpers::assert_within(math::sqrt(2 * float!(), float!()), SQRT_2, ULP);
 }
 
 #[test]
-fun sqrt_of_three_matches_snapshot() {
-    assert_eq!(math::sqrt(3 * float!(), float!()), SQRT_3);
+fun sqrt_of_three_within_reference() {
+    test_helpers::assert_within(math::sqrt(3 * float!(), float!()), SQRT_3, ULP);
 }
 
 #[test]
-fun sqrt_of_half_matches_snapshot() {
-    assert_eq!(math::sqrt(float!() / 2, float!()), SQRT_HALF);
+fun sqrt_of_half_within_reference() {
+    test_helpers::assert_within(math::sqrt(float!() / 2, float!()), SQRT_HALF, ULP);
 }
 
 #[test, expected_failure(abort_code = math::EInvalidPrecision)]
