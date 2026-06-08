@@ -236,17 +236,9 @@ fun scale_up(magnitude: u64, shift: u64): u64 {
 
 // === Test-Only Functions ===
 
-#[test_only]
-public fun new_for_testing(ctx: &mut TxContext): PythSource {
-    PythSource {
-        id: object::new(ctx),
-        feed_id: 0,
-        spot: 0,
-        source_timestamp_ms: 0,
-        update_timestamp_ms: 0,
-        allowed_versions: sui::vec_set::singleton(constants::current_version!()),
-    }
-}
+// `new_for_testing` removed: tests create the real source via
+// `registry::create_pyth_source` before `supply`, so no zero-valued placeholder
+// PythSource is needed.
 
 /// Drive spot and timestamps directly without going through `update_from_lazer`
 /// (which needs a `pyth_lazer::Update` that has no Move-side test constructor).

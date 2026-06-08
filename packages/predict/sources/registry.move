@@ -504,26 +504,5 @@ public fun init_for_testing(ctx: &mut TxContext): ID {
     registry_id
 }
 
-#[test_only]
-/// Return a Registry + AdminCap without sharing or storing the registry.
-/// Use this when a test wants direct access without `test_scenario`.
-public fun new_for_testing(ctx: &mut TxContext): (Registry, AdminCap) {
-    new_registry_and_admin_cap(ctx)
-}
-
-/// Variant for tests that exercise registration paths: drops the uniqueness
-/// tables without requiring them to be empty.
-#[test_only]
-public fun destroy_registry_drop_for_testing(registry: Registry) {
-    let Registry {
-        id,
-        pyth_feed_configs,
-        incentive_assets: _,
-        expiry_market_ids,
-        allowed_pause_caps: _,
-        allowed_versions: _,
-    } = registry;
-    id.delete();
-    pyth_feed_configs.drop();
-    expiry_market_ids.drop();
-}
+// `new_for_testing` and `destroy_registry_drop_for_testing` removed: tests use
+// the production-mirroring `init_for_testing` shared-object path instead.

@@ -33,10 +33,13 @@ fun bringup_funds_expiry_and_allows_mint() {
     let mut fx = helpers::setup_pool_with_pyth();
     let (expiry_id, oracle_id) = fx.create_expiry(EXPIRY_MS);
     let mut manager = fx.create_funded_manager(MINT_DEPOSIT);
-    let (mut pyth, mut vault, mut market, mut oracle) = fx.take_market(expiry_id, oracle_id);
+    let (mut pyth, mut vault, mut market, mut oracle, mut config) = fx.take_market(
+        expiry_id,
+        oracle_id,
+    );
 
-    fx.prepare_live_oracle(&mut oracle, &mut pyth, LIVE_PRICE);
-    fx.sync_expiry(&mut vault, &mut market, &oracle, &pyth);
+    fx.prepare_live_oracle(&config, &mut oracle, &mut pyth, LIVE_PRICE);
+    fx.sync_expiry(&mut config, &mut vault, &mut market, &oracle, &pyth);
 
     // The funding sync rebalanced idle pool cash up to the per-expiry cash floor.
     assert_eq!(market.cash_balance(), constants::expiry_cash_floor!());
@@ -44,6 +47,7 @@ fun bringup_funds_expiry_and_allows_mint() {
     assert_eq!(oracle.status(fx.clock()), market_oracle::status_active());
 
     let order_id = fx.mint(
+        &config,
         &mut manager,
         &mut market,
         &oracle,
@@ -58,6 +62,7 @@ fun bringup_funds_expiry_and_allows_mint() {
     // base_fee floored to 1 in setup, so the per-trade fee floors at min_fee.
     assert_eq!(manager.trading_fees_paid(expiry_id), MINT_MIN_FEE);
 
+    return_shared(config);
     return_shared(oracle);
     return_shared(market);
     return_shared(vault);

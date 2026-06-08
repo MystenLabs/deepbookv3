@@ -5,11 +5,18 @@
 ///
 /// Stands up a funded, tradeable market through the real creation + PLP funding
 /// paths (`registry::create_expiry_market`, `plp::supply` + sync rebalance) and
-/// exposes thin wrappers for the trade flows. The wrappers are methods on
-/// `Fixture` so they can borrow the fixture's `config`/`clock`/`scenario` fields
-/// disjointly in a single call (a plain accessor would borrow the whole struct
-/// and conflict). Oracle spot is seeded via the test-only `set_state_for_testing`
-/// because a real `pyth_lazer::Update` has no Move-side test constructor.
+/// exposes thin wrappers for the trade flows.
+///
+/// The `Registry` and `ProtocolConfig` are real shared objects (created via
+/// `registry::init_for_testing`, which mirrors the production `init`). They are
+/// NOT held as `Fixture` fields: a `take_shared` object cannot cross a `next_tx`
+/// boundary, so each method takes the config/registry it needs as a local and
+/// returns it before the next transaction (setup-phase methods), or the flow
+/// test takes the config once via `take_market` and threads it as a `&`/`&mut`
+/// parameter (flow-phase methods). This keeps every take/return non-nested and
+/// avoids owned config/registry fields entirely. Oracle spot is seeded via the
+/// test-only `set_state_for_testing` because a real `pyth_lazer::Update` has no
+/// Move-side test constructor.
 #[test_only]
 module deepbook_predict::flow_test_helpers;
 
@@ -46,12 +53,11 @@ const PROTOCOL_RESERVE_SHARE: u64 = 400_000_000;
 /// The grid's minimum finite strike for the constants above (a valid lower boundary).
 public fun min_strike(): u64 { 100_000_000_000 }
 
-/// Scenario-local objects shared across one flow test.
+/// Scenario-local objects shared across one flow test. `Registry`/`ProtocolConfig`
+/// are real shared objects taken per-transaction, not held here (see module doc).
 public struct Fixture {
     scenario: Scenario,
-    registry: Registry,
     admin_cap: AdminCap,
-    config: ProtocolConfig,
     cap: MarketOracleCap,
     clock: Clock,
     vault_id: ID,
@@ -59,39 +65,25 @@ public struct Fixture {
     initial_plp: Coin<PLP>,
 }
 
-/// Stand up a registry + protocol config + bootstrapped PLP pool + registered
-/// Pyth source (spot seeded for grid creation). base_fee is floored to 1 and
-/// min_ask to 0 so small test quantities are admissible.
+/// Stand up a registry + protocol config (via the production-mirroring
+/// `init_for_testing`) + a registered Pyth source + a bootstrapped PLP pool.
+/// base_fee is floored to 1 and min_ask to 0 so small test quantities are
+/// admissible. The real Pyth source is created BEFORE `supply` so it can serve
+/// as the incentive-valuation source (no placeholder seam needed).
 public fun setup_pool_with_pyth(): Fixture {
     let mut scenario = test::begin(test_constants::admin());
     plp::init_for_testing(scenario.ctx());
-    let (mut registry, admin_cap) = registry::new_for_testing(scenario.ctx());
-    let mut config = protocol_config::new_for_testing(scenario.ctx());
+    registry::init_for_testing(scenario.ctx());
+
+    // tx1: configure protocol params + register the real Pyth source.
+    scenario.next_tx(test_constants::admin());
+    let admin_cap = scenario.take_from_sender<AdminCap>();
+    let mut config = scenario.take_shared<ProtocolConfig>();
     config.set_protocol_reserve_profit_share(&admin_cap, PROTOCOL_RESERVE_SHARE);
     config.set_template_base_fee(&admin_cap, 1);
     config.set_template_min_ask_price(&admin_cap, 0);
-    let cap = market_oracle::create_cap(&admin_cap, scenario.ctx());
-    let mut clock = clock::create_for_testing(scenario.ctx());
-    clock.set_for_testing(NOW_MS);
-
-    scenario.next_tx(test_constants::admin());
-    let mut vault = scenario.take_shared<PoolVault>();
-    let vault_id = vault.id();
-    let sync = plp::start_pool_sync(&mut config, &vault);
-    let placeholder = pyth_source::new_for_testing(scenario.ctx());
-    let initial_plp = vault.supply(
-        &mut config,
-        sync,
-        coin::mint_for_testing<DUSDC>(INITIAL_SUPPLY, scenario.ctx()),
-        &placeholder,
-        &placeholder,
-        &clock,
-        scenario.ctx(),
-    );
-    destroy(placeholder);
-    return_shared(vault);
-
-    scenario.next_tx(test_constants::admin());
+    return_shared(config);
+    let mut registry = scenario.take_shared<Registry>();
     let pyth_id = registry::create_pyth_source(
         &mut registry,
         &admin_cap,
@@ -99,17 +91,38 @@ public fun setup_pool_with_pyth(): Fixture {
         TICK_SIZE,
         scenario.ctx(),
     );
+    return_shared(registry);
+    let cap = market_oracle::create_cap(&admin_cap, scenario.ctx());
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(NOW_MS);
+
+    // tx2: seed Pyth spot, then bootstrap the PLP pool through the real supply
+    // path using the registered source as both incentive valuation sources.
     scenario.next_tx(test_constants::admin());
     let mut pyth = scenario.take_shared_by_id<PythSource>(pyth_id);
     pyth.set_state_for_testing(CREATION_SPOT, LIVE_SOURCE_TIMESTAMP_MS, LIVE_SOURCE_TIMESTAMP_MS);
+    let mut config = scenario.take_shared<ProtocolConfig>();
+    let mut vault = scenario.take_shared<PoolVault>();
+    let vault_id = vault.id();
+    let sync = plp::start_pool_sync(&mut config, &vault);
+    let initial_plp = vault.supply(
+        &mut config,
+        sync,
+        coin::mint_for_testing<DUSDC>(INITIAL_SUPPLY, scenario.ctx()),
+        &pyth,
+        &pyth,
+        &clock,
+        scenario.ctx(),
+    );
+    return_shared(vault);
+    return_shared(config);
     return_shared(pyth);
+
     scenario.next_tx(test_constants::admin());
 
     Fixture {
         scenario,
-        registry,
         admin_cap,
-        config,
         cap,
         clock,
         vault_id,
@@ -123,40 +136,49 @@ public fun create_expiry(self: &mut Fixture, expiry: u64): (ID, ID) {
     self.scenario.next_tx(test_constants::admin());
     let pyth = self.scenario.take_shared_by_id<PythSource>(self.pyth_id);
     let mut vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
+    let mut registry = self.scenario.take_shared<Registry>();
+    let mut config = self.scenario.take_shared<ProtocolConfig>();
     let (expiry_id, oracle_id) = registry::create_expiry_market(
-        &mut self.registry,
+        &mut registry,
         &mut vault,
-        &mut self.config,
+        &mut config,
         &pyth,
         &self.cap,
         expiry,
         &self.clock,
         self.scenario.ctx(),
     );
+    return_shared(config);
+    return_shared(registry);
     return_shared(vault);
     return_shared(pyth);
     self.scenario.next_tx(test_constants::admin());
     (expiry_id, oracle_id)
 }
 
-/// Take the four shared objects a flow test mutates, by captured ID.
+/// Take the four shared market objects + the protocol config a flow test
+/// mutates. The config is threaded into the flow-phase methods as a parameter
+/// (it cannot be a `Fixture` field — see module doc) and returned by the test.
 public fun take_market(
     self: &mut Fixture,
     expiry_id: ID,
     oracle_id: ID,
-): (PythSource, PoolVault, ExpiryMarket, MarketOracle) {
+): (PythSource, PoolVault, ExpiryMarket, MarketOracle, ProtocolConfig) {
     (
         self.scenario.take_shared_by_id<PythSource>(self.pyth_id),
         self.scenario.take_shared_by_id<PoolVault>(self.vault_id),
         self.scenario.take_shared_by_id<ExpiryMarket>(expiry_id),
         self.scenario.take_shared_by_id<MarketOracle>(oracle_id),
+        self.scenario.take_shared<ProtocolConfig>(),
     )
 }
 
 /// Create a fresh trader manager (owned by alice) and fund it with DUSDC.
 public fun create_funded_manager(self: &mut Fixture, deposit: u64): PredictManager {
     self.scenario.next_tx(test_constants::alice());
-    let mut manager = registry::create_manager(&mut self.registry, self.scenario.ctx());
+    let mut registry = self.scenario.take_shared<Registry>();
+    let mut manager = registry::create_manager(&mut registry, self.scenario.ctx());
+    return_shared(registry);
     manager.deposit(
         coin::mint_for_testing<DUSDC>(deposit, self.scenario.ctx()),
         self.scenario.ctx(),
@@ -168,13 +190,14 @@ public fun create_funded_manager(self: &mut Fixture, deposit: u64): PredictManag
 /// `live_price` is used as both spot and forward (basis = 1.0).
 public fun prepare_live_oracle(
     self: &Fixture,
+    config: &ProtocolConfig,
     oracle: &mut MarketOracle,
     pyth: &mut PythSource,
     live_price: u64,
 ) {
     pyth.set_state_for_testing(live_price, LIVE_SOURCE_TIMESTAMP_MS, LIVE_SOURCE_TIMESTAMP_MS);
     oracle.update_block_scholes_prices(
-        &self.config,
+        config,
         pyth,
         &self.cap,
         live_price,
@@ -183,27 +206,29 @@ public fun prepare_live_oracle(
         &self.clock,
     );
     let svi = market_oracle::new_svi_params(1, 2, i64::zero(), i64::zero(), 3);
-    oracle.update_svi(&self.config, &self.cap, svi, LIVE_SOURCE_TIMESTAMP_MS, &self.clock);
+    oracle.update_svi(config, &self.cap, svi, LIVE_SOURCE_TIMESTAMP_MS, &self.clock);
 }
 
 /// Run one full pool sync over a single active expiry (rebalances idle cash into
 /// the expiry up to the cash floor and accumulates its NAV).
 public fun sync_expiry(
-    self: &mut Fixture,
+    self: &Fixture,
+    config: &mut ProtocolConfig,
     vault: &mut PoolVault,
     market: &mut ExpiryMarket,
     oracle: &MarketOracle,
     pyth: &PythSource,
 ) {
-    let mut sync = plp::start_pool_sync(&mut self.config, vault);
-    sync.sync_expiry(vault, market, &self.config, oracle, pyth, &self.clock);
-    let _pool_value = vault.finish_pool_sync(&mut self.config, sync);
+    let mut sync = plp::start_pool_sync(config, vault);
+    sync.sync_expiry(vault, market, config, oracle, pyth, &self.clock);
+    let _pool_value = vault.finish_pool_sync(config, sync);
 }
 
 /// Settle the oracle via the production `settle_if_possible` path using a fresh
 /// post-expiry Pyth spot. Advances the clock past expiry.
 public fun settle_oracle(
     self: &mut Fixture,
+    config: &ProtocolConfig,
     oracle: &mut MarketOracle,
     pyth: &mut PythSource,
     settlement_price: u64,
@@ -213,12 +238,13 @@ public fun settle_oracle(
     let update_timestamp_ms = expiry + 2_000;
     self.clock.set_for_testing(update_timestamp_ms);
     pyth.set_state_for_testing(settlement_price, source_timestamp_ms, update_timestamp_ms);
-    assert!(oracle.settle_if_possible(&self.config, pyth, &self.cap, &self.clock));
+    assert!(oracle.settle_if_possible(config, pyth, &self.cap, &self.clock));
 }
 
 /// Mint one order for `manager` and return its packed order id.
 public fun mint(
     self: &mut Fixture,
+    config: &ProtocolConfig,
     manager: &mut PredictManager,
     market: &mut ExpiryMarket,
     oracle: &MarketOracle,
@@ -232,7 +258,7 @@ public fun mint(
     market.mint(
         manager,
         &proof,
-        &self.config,
+        config,
         oracle,
         pyth,
         lower,
@@ -247,6 +273,7 @@ public fun mint(
 /// Close (or partially close) a live order. Returns `(closed_id, replacement_id)`.
 public fun redeem(
     self: &mut Fixture,
+    config: &ProtocolConfig,
     manager: &mut PredictManager,
     market: &mut ExpiryMarket,
     oracle: &MarketOracle,
@@ -258,7 +285,7 @@ public fun redeem(
     market.redeem(
         manager,
         proof,
-        &self.config,
+        config,
         oracle,
         pyth,
         order_id,
@@ -271,6 +298,7 @@ public fun redeem(
 /// Permissionless settled redeem (no proof). Requires a full close.
 public fun redeem_settled(
     self: &mut Fixture,
+    config: &ProtocolConfig,
     manager: &mut PredictManager,
     market: &mut ExpiryMarket,
     oracle: &MarketOracle,
@@ -280,7 +308,7 @@ public fun redeem_settled(
 ): (u256, Option<u256>) {
     market.redeem_settled(
         manager,
-        &self.config,
+        config,
         oracle,
         pyth,
         order_id,
@@ -294,21 +322,18 @@ public fun redeem_settled(
 
 public fun scenario_mut(self: &mut Fixture): &mut Scenario { &mut self.scenario }
 
-public fun config(self: &Fixture): &ProtocolConfig { &self.config }
-
 public fun clock(self: &Fixture): &Clock { &self.clock }
 
 public fun vault_id(self: &Fixture): ID { self.vault_id }
 
 public fun pyth_id(self: &Fixture): ID { self.pyth_id }
 
-/// Tear down the fixture and all owned objects.
+/// Tear down the fixture and all owned objects. The shared Registry/ProtocolConfig
+/// are returned by the flow test (via `return_shared`) and reclaimed by `end`.
 public fun finish(self: Fixture) {
     let Fixture {
         scenario,
-        registry,
         admin_cap,
-        config,
         cap,
         clock,
         vault_id: _,
@@ -317,9 +342,7 @@ public fun finish(self: Fixture) {
     } = self;
     destroy(initial_plp);
     market_oracle::destroy_cap(cap);
-    destroy(config);
     destroy(admin_cap);
-    registry::destroy_registry_drop_for_testing(registry);
     clock.destroy_for_testing();
     scenario.end();
 }

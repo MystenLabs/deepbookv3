@@ -62,12 +62,16 @@ fun partial_close_then_settled_redeem_drains_reserve_exactly() {
     let mut fx = helpers::setup_pool_with_pyth();
     let (expiry_id, oracle_id) = fx.create_expiry(EXPIRY_MS);
     let mut manager = fx.create_funded_manager(MINT_DEPOSIT);
-    let (mut pyth, mut vault, mut market, mut oracle) = fx.take_market(expiry_id, oracle_id);
+    let (mut pyth, mut vault, mut market, mut oracle, mut config) = fx.take_market(
+        expiry_id,
+        oracle_id,
+    );
 
-    fx.prepare_live_oracle(&mut oracle, &mut pyth, LIVE_PRICE);
-    fx.sync_expiry(&mut vault, &mut market, &oracle, &pyth);
+    fx.prepare_live_oracle(&config, &mut oracle, &mut pyth, LIVE_PRICE);
+    fx.sync_expiry(&mut config, &mut vault, &mut market, &oracle, &pyth);
 
     let order_id = fx.mint(
+        &config,
         &mut manager,
         &mut market,
         &oracle,
@@ -91,6 +95,7 @@ fun partial_close_then_settled_redeem_drains_reserve_exactly() {
     assert_eq!(gap, 1);
 
     let (_closed, replacement) = fx.redeem(
+        &config,
         &mut manager,
         &mut market,
         &oracle,
@@ -100,12 +105,13 @@ fun partial_close_then_settled_redeem_drains_reserve_exactly() {
     );
     let replacement_id = replacement.destroy_some();
 
-    fx.settle_oracle(&mut oracle, &mut pyth, SETTLEMENT_ITM);
+    fx.settle_oracle(&config, &mut oracle, &mut pyth, SETTLEMENT_ITM);
 
     // Marginal settled redeem of the survivor: pays the winner in full and the
     // reserve drains to exactly zero (R == P, no underflow).
     let balance_before = manager.balance();
     fx.redeem_settled(
+        &config,
         &mut manager,
         &mut market,
         &oracle,
@@ -118,6 +124,7 @@ fun partial_close_then_settled_redeem_drains_reserve_exactly() {
     assert_eq!(market.payout_liability(), 0);
     assert!(!manager.has_position(expiry_id, replacement_id));
 
+    return_shared(config);
     return_shared(oracle);
     return_shared(market);
     return_shared(vault);
@@ -133,12 +140,16 @@ fun partial_close_gap_zero_settled_redeem_is_exact() {
     let mut fx = helpers::setup_pool_with_pyth();
     let (expiry_id, oracle_id) = fx.create_expiry(EXPIRY_MS);
     let mut manager = fx.create_funded_manager(MINT_DEPOSIT);
-    let (mut pyth, mut vault, mut market, mut oracle) = fx.take_market(expiry_id, oracle_id);
+    let (mut pyth, mut vault, mut market, mut oracle, mut config) = fx.take_market(
+        expiry_id,
+        oracle_id,
+    );
 
-    fx.prepare_live_oracle(&mut oracle, &mut pyth, LIVE_PRICE);
-    fx.sync_expiry(&mut vault, &mut market, &oracle, &pyth);
+    fx.prepare_live_oracle(&config, &mut oracle, &mut pyth, LIVE_PRICE);
+    fx.sync_expiry(&mut config, &mut vault, &mut market, &oracle, &pyth);
 
     let order_id = fx.mint(
+        &config,
         &mut manager,
         &mut market,
         &oracle,
@@ -150,6 +161,7 @@ fun partial_close_gap_zero_settled_redeem_is_exact() {
     );
 
     let (_closed, replacement) = fx.redeem(
+        &config,
         &mut manager,
         &mut market,
         &oracle,
@@ -159,10 +171,11 @@ fun partial_close_gap_zero_settled_redeem_is_exact() {
     );
     let replacement_id = replacement.destroy_some();
 
-    fx.settle_oracle(&mut oracle, &mut pyth, SETTLEMENT_ITM);
+    fx.settle_oracle(&config, &mut oracle, &mut pyth, SETTLEMENT_ITM);
 
     let balance_before = manager.balance();
     fx.redeem_settled(
+        &config,
         &mut manager,
         &mut market,
         &oracle,
@@ -174,6 +187,7 @@ fun partial_close_gap_zero_settled_redeem_is_exact() {
     assert_eq!(manager.balance() - balance_before, EXPECTED_GAP_ZERO_PAYOUT);
     assert_eq!(market.payout_liability(), 0);
 
+    return_shared(config);
     return_shared(oracle);
     return_shared(market);
     return_shared(vault);
@@ -191,12 +205,16 @@ fun double_partial_close_then_settled_redeem_is_exact() {
     let mut fx = helpers::setup_pool_with_pyth();
     let (expiry_id, oracle_id) = fx.create_expiry(EXPIRY_MS);
     let mut manager = fx.create_funded_manager(MINT_DEPOSIT);
-    let (mut pyth, mut vault, mut market, mut oracle) = fx.take_market(expiry_id, oracle_id);
+    let (mut pyth, mut vault, mut market, mut oracle, mut config) = fx.take_market(
+        expiry_id,
+        oracle_id,
+    );
 
-    fx.prepare_live_oracle(&mut oracle, &mut pyth, LIVE_PRICE);
-    fx.sync_expiry(&mut vault, &mut market, &oracle, &pyth);
+    fx.prepare_live_oracle(&config, &mut oracle, &mut pyth, LIVE_PRICE);
+    fx.sync_expiry(&mut config, &mut vault, &mut market, &oracle, &pyth);
 
     let order_id = fx.mint(
+        &config,
         &mut manager,
         &mut market,
         &oracle,
@@ -208,6 +226,7 @@ fun double_partial_close_then_settled_redeem_is_exact() {
     );
 
     let (_c1, replacement1) = fx.redeem(
+        &config,
         &mut manager,
         &mut market,
         &oracle,
@@ -217,6 +236,7 @@ fun double_partial_close_then_settled_redeem_is_exact() {
     );
     let replacement1_id = replacement1.destroy_some();
     let (_c2, replacement2) = fx.redeem(
+        &config,
         &mut manager,
         &mut market,
         &oracle,
@@ -226,10 +246,11 @@ fun double_partial_close_then_settled_redeem_is_exact() {
     );
     let replacement2_id = replacement2.destroy_some();
 
-    fx.settle_oracle(&mut oracle, &mut pyth, SETTLEMENT_ITM);
+    fx.settle_oracle(&config, &mut oracle, &mut pyth, SETTLEMENT_ITM);
 
     let balance_before = manager.balance();
     fx.redeem_settled(
+        &config,
         &mut manager,
         &mut market,
         &oracle,
@@ -241,6 +262,7 @@ fun double_partial_close_then_settled_redeem_is_exact() {
     assert_eq!(manager.balance() - balance_before, EXPECTED_DOUBLE_CLOSE_PAYOUT);
     assert_eq!(market.payout_liability(), 0);
 
+    return_shared(config);
     return_shared(oracle);
     return_shared(market);
     return_shared(vault);

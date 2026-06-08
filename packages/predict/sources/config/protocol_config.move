@@ -535,9 +535,6 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
     }
 }
 
-// === Test-Only Functions ===
-
-#[test_only]
-public fun new_for_testing(ctx: &mut TxContext): ProtocolConfig {
-    new(ctx)
-}
+// `new_for_testing` removed: tests obtain the ProtocolConfig that
+// `registry::init_for_testing` shares via `create_and_share`, taken with
+// `take_shared<ProtocolConfig>()`.
