@@ -24,7 +24,7 @@ use deepbook_predict::{
     admin::AdminCap,
     constants,
     i64,
-    market_oracle::{Self, MarketOracle, MarketOracleCap},
+    market_oracle::{Self, MarketOracle, MarketOracleCap, SVIParams},
     plp::{Self, PoolVault},
     protocol_config::ProtocolConfig,
     pyth_source::{Self, PythSource},
@@ -154,6 +154,26 @@ public fun prepare_live_oracle(
         i64::from_u64(test_constants::default_svi_m()),
         constants::svi_sigma_min!(),
     );
+    oracle.update_svi(config, &self.cap, svi, live_ts, &self.clock);
+}
+
+/// Seed fresh live Block Scholes prices + arbitrary SVI through the production cap
+/// path, for exact-pricing tests over real on-chain scenarios. `spot`/`forward` are
+/// the real (1e9) Block Scholes spot/forward; on the fresh-Pyth path pricing derives
+/// the live forward as `mul(spot, div(forward, spot))`. The grid was already centered
+/// on the fixture creation spot, so callers pass real strikes valid for that grid.
+public fun prepare_real_oracle(
+    self: &OracleFixture,
+    config: &ProtocolConfig,
+    oracle: &mut MarketOracle,
+    pyth: &mut PythSource,
+    spot: u64,
+    forward: u64,
+    svi: SVIParams,
+) {
+    let live_ts = test_constants::live_source_timestamp_ms();
+    pyth.set_state_for_testing(spot, live_ts, live_ts);
+    oracle.update_block_scholes_prices(config, &self.cap, spot, forward, live_ts, &self.clock);
     oracle.update_svi(config, &self.cap, svi, live_ts, &self.clock);
 }
 
