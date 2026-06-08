@@ -173,6 +173,22 @@ public fun take_market(
     )
 }
 
+/// Return the five shared objects taken by `take_market` (pairs 1:1 with it so
+/// flow tests don't hand-roll five `return_shared` calls).
+public fun return_market(
+    pyth: PythSource,
+    vault: PoolVault,
+    market: ExpiryMarket,
+    oracle: MarketOracle,
+    config: ProtocolConfig,
+) {
+    return_shared(oracle);
+    return_shared(market);
+    return_shared(vault);
+    return_shared(pyth);
+    return_shared(config);
+}
+
 /// Create a fresh trader manager (owned by alice) and fund it with DUSDC.
 public fun create_funded_manager(self: &mut Fixture, deposit: u64): PredictManager {
     self.scenario.next_tx(test_constants::alice());

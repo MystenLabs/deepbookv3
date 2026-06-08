@@ -13,7 +13,27 @@ module deepbook_predict::test_helpers;
 
 use deepbook_predict::{admin::AdminCap, registry::Registry, test_constants};
 use std::unit_test::destroy;
-use sui::test_scenario::{Self as test, Scenario};
+use sui::{coin::{Self, Coin}, test_scenario::{Self as test, Scenario}};
+
+// === Coin minting ===
+
+/// Mint a test coin of any type for the current sender.
+public fun mint_coin<T>(amount: u64, scenario: &mut Scenario): Coin<T> {
+    coin::mint_for_testing<T>(amount, scenario.ctx())
+}
+
+// === Bounded assertion (math carve-out) ===
+
+/// Assert `actual` is within `max_abs_diff` of an INDEPENDENTLY-derived
+/// `reference`. The only sanctioned use is fixed-point math whose approximation
+/// error is fundamental: `max_abs_diff` must be a principled bound (the fixed-
+/// point representation granularity, or a documented intended precision), NEVER
+/// a value measured from the contract's current output (see unit-tests rule 10
+/// carve-out). Exact results must use `assert_eq!`, not this.
+public fun assert_within(actual: u64, reference: u64, max_abs_diff: u64) {
+    let diff = if (actual > reference) actual - reference else reference - actual;
+    assert!(diff <= max_abs_diff);
+}
 
 // === Destroy macros ===
 
