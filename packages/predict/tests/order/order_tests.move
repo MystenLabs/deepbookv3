@@ -20,8 +20,7 @@ use std::unit_test::assert_eq;
 // === Independently packed reference ids (see Python derivation in the PR) ===
 
 // pack(opened=1000, lower=0, higher=100001, floor=50000, qlots=7, seq=12345)
-const LEVERAGED_ID: u256 =
-    6901746333935059433362838013555625301734449968197559186554275248484409;
+const LEVERAGED_ID: u256 = 6901746333935059433362838013555625301734449968197559186554275248484409;
 // pack(opened=2000, lower=3, higher=7, floor=0, qlots=12, seq=88)
 const NONLEV_ID: u256 = 6901746325900369212067882280231518252016614109401445666363584637042776;
 
@@ -54,7 +53,14 @@ fun max_boundary_index(): u64 { constants::oracle_strike_grid_ticks!() + 2 }
 
 #[test]
 fun leveraged_order_packs_to_independent_layout() {
-    let o = order::new_from_boundary_indices(LEV_OPENED, 0, LEV_HIGHER, LEV_FLOOR, LEV_QUANTITY, LEV_SEQ);
+    let o = order::new_from_boundary_indices(
+        LEV_OPENED,
+        0,
+        LEV_HIGHER,
+        LEV_FLOOR,
+        LEV_QUANTITY,
+        LEV_SEQ,
+    );
     assert_eq!(o.id(), LEVERAGED_ID);
 }
 
@@ -106,7 +112,14 @@ fun max_quantity_lots_round_trips_through_complement_encoding() {
     // must recover U32_MASK, not wrap.
     let max_lots = ((1u256 << 32) - 1) as u64;
     let max_quantity = max_lots * constants::position_lot_size!();
-    let o = order::new_from_boundary_indices(LEV_OPENED, NONLEV_LOWER, NONLEV_HIGHER, 0, max_quantity, LEV_SEQ);
+    let o = order::new_from_boundary_indices(
+        LEV_OPENED,
+        NONLEV_LOWER,
+        NONLEV_HIGHER,
+        0,
+        max_quantity,
+        LEV_SEQ,
+    );
     assert_eq!(o.quantity_lots(), max_lots);
     assert_eq!(o.quantity(), max_quantity);
 }
@@ -166,7 +179,14 @@ fun new_rejects_lower_not_below_higher() {
 
 #[test, expected_failure(abort_code = order::EInvalidFloorShares)]
 fun new_rejects_floor_shares_above_quantity() {
-    order::new_from_boundary_indices(LEV_OPENED, 0, LEV_HIGHER, OVER_FLOOR_SHARES, OVER_FLOOR_QUANTITY, LEV_SEQ);
+    order::new_from_boundary_indices(
+        LEV_OPENED,
+        0,
+        LEV_HIGHER,
+        OVER_FLOOR_SHARES,
+        OVER_FLOOR_QUANTITY,
+        LEV_SEQ,
+    );
     abort 999
 }
 

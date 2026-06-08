@@ -134,7 +134,15 @@ fun redeem_with_wrong_oracle_aborts() {
     // Redeem on market A but pass oracle B: assert_market_oracle aborts before the
     // (here irrelevant) order id is parsed.
     let dummy_order_id = 0;
-    fx.redeem(&config, &mut manager, &mut market_a, &wrong_oracle, &pyth, dummy_order_id, MINT_QUANTITY);
+    fx.redeem(
+        &config,
+        &mut manager,
+        &mut market_a,
+        &wrong_oracle,
+        &pyth,
+        dummy_order_id,
+        MINT_QUANTITY,
+    );
 
     helpers::return_market(pyth, vault, market_a, oracle_a, config);
     sui::test_scenario::return_shared(wrong_oracle);
