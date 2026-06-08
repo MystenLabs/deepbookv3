@@ -82,8 +82,9 @@ public macro fun max_fee_discount(): u64 { 500_000_000 }
 
 // === Liquidation ===
 
-/// Divisor used to reserve a head-priority slice of each liquidation candidate budget.
-public macro fun liquidation_head_scan_divisor(): u64 { 3 }
+/// Divisor for the passive tail slice of each liquidation candidate budget; the
+/// head-priority slice takes the remainder. Divisor 3 => 1/3 tail, 2/3 head.
+public macro fun liquidation_tail_scan_divisor(): u64 { 3 }
 
 // === Builder Fees ===
 

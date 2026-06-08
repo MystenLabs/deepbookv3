@@ -75,11 +75,8 @@ public(package) fun select_liquidation_candidates(
         return candidates
     };
 
-    let divisor = constants::liquidation_head_scan_divisor!();
-    let mut head_budget = budget / divisor;
-    if (budget % divisor != 0) {
-        head_budget = head_budget + 1;
-    };
+    let tail_budget = budget / constants::liquidation_tail_scan_divisor!();
+    let head_budget = budget - tail_budget;
     let tail_start = book.collect_head_candidates(&mut candidates, head_budget);
     let scan_budget = budget - candidates.length();
     book.collect_passive_candidates(&mut candidates, scan_budget, tail_start);
