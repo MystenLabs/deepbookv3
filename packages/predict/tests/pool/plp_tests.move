@@ -110,6 +110,24 @@ fun conservative_active_nav_net_itm_unscanned_keeps_optimistic_nav() {
 }
 
 #[test]
+fun conservative_active_nav_haircut_exceeding_optimistic_floors_at_zero() {
+    // Stress: the unverified-underwater haircut Q exceeds the optimistic NAV, so
+    // the active expiry must contribute 0 (never negative — the final subtraction
+    // must saturate, not underflow-brick the whole sync).
+    //   nav_optimistic = 30, total_floor = 100, verified = 0 -> D_max = 100
+    //   unscanned_range = 0 - 0 = 0 -> Q = 100 ; result = max(0, 30 - 100) = 0
+    assert_eq!(plp::conservative_active_nav(30, 0, 100, 0, 0), 0);
+}
+
+#[test]
+fun conservative_active_nav_haircut_equal_to_optimistic_is_zero() {
+    // Boundary: Q == nav_optimistic exactly -> 0.
+    //   nav_optimistic = 100, total_floor = 200, verified = 0 -> D_max = 200
+    //   unscanned_range = 100 - 0 = 100 -> Q = 100 ; result = 100 - 100 = 0
+    assert_eq!(plp::conservative_active_nav(100, 100, 200, 0, 0), 0);
+}
+
+#[test]
 fun lp_pool_value_floors_at_zero_when_exclusion_exceeds_gross() {
     // Documented R1 underflow scenario: an LP withdrew realized idle cash against a
     // high active mark, draining idle to 0; the active mark then collapsed (traders
