@@ -40,6 +40,36 @@ public struct PythSource has key {
     allowed_versions: VecSet<u64>,
 }
 
+/// Return the Pyth source object ID.
+public fun id(source: &PythSource): ID {
+    source.id.to_inner()
+}
+
+/// Return the configured Pyth Lazer feed id.
+public fun feed_id(source: &PythSource): u32 {
+    source.feed_id
+}
+
+/// Return the latest normalized spot in Predict's 1e9 price scaling.
+public fun spot(source: &PythSource): u64 {
+    source.spot
+}
+
+/// Return Pyth's source timestamp from the latest accepted update, in milliseconds.
+public fun source_timestamp_ms(source: &PythSource): u64 {
+    source.source_timestamp_ms
+}
+
+/// Return the on-chain timestamp when the latest update landed.
+public fun update_timestamp_ms(source: &PythSource): u64 {
+    source.update_timestamp_ms
+}
+
+/// Return this source's mirrored set of allowed package versions.
+public fun allowed_versions(source: &PythSource): VecSet<u64> {
+    source.allowed_versions
+}
+
 /// Decode and store a verified Pyth Lazer spot update.
 ///
 /// Aborts during valuation, rejects stale/future source timestamps, and stores
@@ -72,44 +102,7 @@ public fun update_from_lazer(
     );
 }
 
-/// Return the Pyth source object ID.
-public fun id(source: &PythSource): ID {
-    source.id.to_inner()
-}
-
-/// Return the configured Pyth Lazer feed id.
-public fun feed_id(source: &PythSource): u32 {
-    source.feed_id
-}
-
-/// Return the latest normalized spot in Predict's 1e9 price scaling.
-public fun spot(source: &PythSource): u64 {
-    source.spot
-}
-
-/// Return Pyth's source timestamp from the latest accepted update, in milliseconds.
-public fun source_timestamp_ms(source: &PythSource): u64 {
-    source.source_timestamp_ms
-}
-
-/// Return the on-chain timestamp when the latest update landed.
-public fun update_timestamp_ms(source: &PythSource): u64 {
-    source.update_timestamp_ms
-}
-
-/// Return this source's mirrored set of allowed package versions.
-public fun allowed_versions(source: &PythSource): VecSet<u64> {
-    source.allowed_versions
-}
-
 // === Public-Package Functions ===
-
-/// Overwrite this source's mirrored `allowed_versions`. The only authorized
-/// caller is `registry::sync_pyth_source_allowed_versions`, which reads the
-/// source of truth from `Registry`.
-public(package) fun set_allowed_versions(source: &mut PythSource, allowed_versions: VecSet<u64>) {
-    source.allowed_versions = allowed_versions;
-}
 
 /// Return the timestamp that pricing can use for freshness checks.
 public(package) fun freshness_timestamp_ms(source: &PythSource): u64 {
@@ -131,6 +124,13 @@ public(package) fun value_in_dusdc(source: &PythSource, amount: u64, asset_decim
         (asset_decimals as u64) + constants::float_scaling_decimals!() - (constants::dusdc_decimals!() as u64);
     // Valid asset-decimals/price inputs keep the DUSDC value within u64; the VM abort is the out-of-domain backstop.
     ceil_div((amount as u128) * (spot as u128), pow10(exponent)) as u64
+}
+
+/// Overwrite this source's mirrored `allowed_versions`. The only authorized
+/// caller is `registry::sync_pyth_source_allowed_versions`, which reads the
+/// source of truth from `Registry`.
+public(package) fun set_allowed_versions(source: &mut PythSource, allowed_versions: VecSet<u64>) {
+    source.allowed_versions = allowed_versions;
 }
 
 /// Create and share a Pyth source bound to a Lazer feed id.
@@ -173,7 +173,6 @@ fun ceil_div(numerator: u128, denominator: u128): u128 {
     (numerator + denominator - 1) / denominator
 }
 
-// === Lazer decode (folded in from the former lazer_helper module) ===
 // === Lazer decode (folded in from the former lazer_helper module) ===
 
 /// Decode `feed_id`'s spot out of a verified Lazer `Update`. Returns

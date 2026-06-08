@@ -20,15 +20,15 @@ use deepbook_predict::{
 };
 use sui::clock::Clock;
 
-const EZeroForward: u64 = 1;
-const ECannotBeNegative: u64 = 2;
-const EZeroVariance: u64 = 3;
-const EInvalidRange: u64 = 4;
-const EInvalidCurveRange: u64 = 7;
-const EBlockScholesPriceStale: u64 = 8;
-const EBlockScholesSVIStale: u64 = 9;
-const EInvalidStrikeRatio: u64 = 10;
-const EPythSpotStale: u64 = 11;
+const EZeroForward: u64 = 0;
+const ECannotBeNegative: u64 = 1;
+const EZeroVariance: u64 = 2;
+const EInvalidRange: u64 = 3;
+const EInvalidCurveRange: u64 = 4;
+const EBlockScholesPriceStale: u64 = 5;
+const EBlockScholesSVIStale: u64 = 6;
+const EInvalidStrikeRatio: u64 = 7;
+const EPythSpotStale: u64 = 8;
 
 /// Curve sample point with strike and one-sided UP price.
 public struct CurvePoint has copy, drop, store {
@@ -164,15 +164,6 @@ public(package) fun build_curve(
     points
 }
 
-/// Compute the fair price for the range `(lower, higher]`.
-fun compute_range_price(svi: &SVIParams, forward: u64, lower: u64, higher: u64): u64 {
-    assert!(lower < higher, EInvalidRange);
-
-    let lower_up_price = compute_up_price(svi, forward, lower);
-    let higher_up_price = compute_up_price(svi, forward, higher);
-    range_price(lower_up_price, higher_up_price)
-}
-
 // === Private Functions ===
 
 fun assert_live_oracle_fresh(config: &PricingConfig, market: &MarketOracle, clock: &Clock) {
@@ -214,6 +205,15 @@ fun pyth_spot_is_fresh(config: &PricingConfig, pyth: &PythSource, clock: &Clock)
 fun timestamp_is_fresh(timestamp: u64, max_age_ms: u64, clock: &Clock): bool {
     let now = clock.timestamp_ms();
     timestamp > 0 && timestamp <= now && now - timestamp <= max_age_ms
+}
+
+/// Compute the fair price for the range `(lower, higher]`.
+fun compute_range_price(svi: &SVIParams, forward: u64, lower: u64, higher: u64): u64 {
+    assert!(lower < higher, EInvalidRange);
+
+    let lower_up_price = compute_up_price(svi, forward, lower);
+    let higher_up_price = compute_up_price(svi, forward, higher);
+    range_price(lower_up_price, higher_up_price)
 }
 
 /// Compute the fair UP tail price for `strike`.

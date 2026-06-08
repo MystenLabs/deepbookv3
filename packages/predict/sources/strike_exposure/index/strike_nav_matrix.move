@@ -24,7 +24,7 @@ const PAGE_SLOTS: u64 = 128;
 const EInsufficientQuantity: u64 = 0;
 const EInvalidCurveRange: u64 = 1;
 const EZeroQuantity: u64 = 2;
-const EInvalidPreallocatedTicks: u64 = 4;
+const EInvalidPreallocatedTicks: u64 = 3;
 
 /// Page store for exact live NAV segment reads.
 public struct StrikeNavMatrix has store {

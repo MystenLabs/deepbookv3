@@ -406,16 +406,8 @@ public(package) fun trade_liquidation_budget(config: &ProtocolConfig): u64 {
     config.trade_liquidation_budget
 }
 
-public(package) fun market_oracle_template_config(config: &ProtocolConfig): &MarketOracleConfig {
-    &config.market_oracle_template_config
-}
-
 public(package) fun market_oracle_config_snapshot(config: &ProtocolConfig): MarketOracleConfig {
     market_oracle_config::snapshot(&config.market_oracle_template_config)
-}
-
-public(package) fun expiry_cash_template_config(config: &ProtocolConfig): &ExpiryCashConfig {
-    &config.expiry_cash_template_config
 }
 
 public(package) fun expiry_cash_config_snapshot(config: &ProtocolConfig): ExpiryCashConfig {

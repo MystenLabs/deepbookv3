@@ -30,7 +30,7 @@ use deepbook_predict::{
 use sui::clock::Clock;
 
 const ESettledLiabilityNotMaterialized: u64 = 0;
-const EInvalidCloseQuantity: u64 = 2;
+const EInvalidCloseQuantity: u64 = 1;
 
 /// Exposure lifecycle state for one oracle grid.
 public struct StrikeExposure has store {

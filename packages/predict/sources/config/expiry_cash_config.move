@@ -23,6 +23,7 @@ public(package) fun trading_loss_rebate_rate(config: &ExpiryCashConfig): u64 {
     config.trading_loss_rebate_rate
 }
 
+/// Return the 1e9-scaled trading-fee carve-out reserved for loss rebates.
 public(package) fun rebate_reserve_for_fee_basis(
     config: &ExpiryCashConfig,
     trading_fees_paid: u64,

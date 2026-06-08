@@ -33,9 +33,9 @@ const EInvalidTradeLiquidationBudget: u64 = 22;
 const EInvalidLiquidationLtv: u64 = 23;
 const EInvalidOracleTickSize: u64 = 24;
 const EInvalidWithdrawFeeAlpha: u64 = 25;
-const EInvalidEwmaAlpha: u64 = 28;
-const EInvalidEwmaZScoreThreshold: u64 = 29;
-const EInvalidEwmaAdditionalFee: u64 = 30;
+const EInvalidEwmaAlpha: u64 = 26;
+const EInvalidEwmaZScoreThreshold: u64 = 27;
+const EInvalidEwmaAdditionalFee: u64 = 28;
 
 // === Expiry Funding and Liquidation ===
 

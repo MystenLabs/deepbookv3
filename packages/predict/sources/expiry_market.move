@@ -34,10 +34,10 @@ use sui::{balance::{Self, Balance}, clock::Clock, vec_set::VecSet};
 const EWrongMarketOracle: u64 = 0;
 const EWrongPythSource: u64 = 1;
 const EValuationExceedsCash: u64 = 2;
-const EPackageVersionDisabled: u64 = 4;
-const EMintPaused: u64 = 5;
-const EFullCloseRequired: u64 = 7;
-const EProofRequiredForLiveRedeem: u64 = 8;
+const EPackageVersionDisabled: u64 = 3;
+const EMintPaused: u64 = 4;
+const EFullCloseRequired: u64 = 5;
+const EProofRequiredForLiveRedeem: u64 = 6;
 
 /// Per-expiry market state.
 public struct ExpiryMarket has key {
@@ -311,13 +311,6 @@ public fun compact_storage(
 
 // === Public-Package Functions ===
 
-/// Overwrite this market's mirrored `allowed_versions`. The only authorized
-/// caller is `registry::sync_expiry_market_allowed_versions`, which reads the
-/// source of truth from `Registry`.
-public(package) fun set_allowed_versions(market: &mut ExpiryMarket, allowed_versions: VecSet<u64>) {
-    market.allowed_versions = allowed_versions;
-}
-
 /// Assert that a market oracle belongs to this expiry market.
 public(package) fun assert_market_oracle(market: &ExpiryMarket, market_oracle: &MarketOracle) {
     assert!(market.market_oracle_id == market_oracle.id(), EWrongMarketOracle);
@@ -329,6 +322,13 @@ public(package) fun assert_version_allowed(market: &ExpiryMarket) {
         market.allowed_versions.contains(&constants::current_version!()),
         EPackageVersionDisabled,
     );
+}
+
+/// Overwrite this market's mirrored `allowed_versions`. The only authorized
+/// caller is `registry::sync_expiry_market_allowed_versions`, which reads the
+/// source of truth from `Registry`.
+public(package) fun set_allowed_versions(market: &mut ExpiryMarket, allowed_versions: VecSet<u64>) {
+    market.allowed_versions = allowed_versions;
 }
 
 /// Create and share a zero-cash expiry market for one market oracle.
@@ -376,13 +376,6 @@ public(package) fun create_and_share(
     expiry_market_id
 }
 
-/// Cache terminal payout liability in strike exposure if it has not already been cached.
-fun materialize_settled_liability(market: &mut ExpiryMarket, market_oracle: &MarketOracle): u64 {
-    market.assert_market_oracle(market_oracle);
-    let settlement = pricing::settlement_price(market_oracle);
-    market.strike_exposure.materialize_settled_liability(settlement)
-}
-
 /// Return current pool-owned NAV.
 /// Returns `(nav_optimistic, total_range, total_floor_amount)`.
 public(package) fun pool_nav(
@@ -414,30 +407,6 @@ public(package) fun pool_nav(
     let cash_balance = market.cash.balance();
     assert!(cash_balance >= required_cash, EValuationExceedsCash);
     (cash_balance - required_cash, total_range, total_floor_amount)
-}
-
-/// Run one expiry-local liquidation pass with the caller-selected budget.
-public(package) fun run_liquidation_pass(
-    market: &mut ExpiryMarket,
-    pricing_config: &PricingConfig,
-    market_oracle: &MarketOracle,
-    pyth: &PythSource,
-    budget: u64,
-    clock: &Clock,
-): u64 {
-    market.assert_version_allowed();
-    market.assert_market_oracle(market_oracle);
-    market.assert_pyth_feed(pyth);
-    market_oracle.assert_active(clock);
-    market
-        .strike_exposure
-        .liquidate_live_orders(
-            pricing_config,
-            market_oracle,
-            pyth,
-            budget,
-            clock,
-        )
 }
 
 /// Run one valuation liquidation pass and return exact survivor observations.
@@ -554,6 +523,37 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
 }
 
 // === Private Functions ===
+
+/// Cache terminal payout liability in strike exposure if it has not already been cached.
+fun materialize_settled_liability(market: &mut ExpiryMarket, market_oracle: &MarketOracle): u64 {
+    market.assert_market_oracle(market_oracle);
+    let settlement = pricing::settlement_price(market_oracle);
+    market.strike_exposure.materialize_settled_liability(settlement)
+}
+
+/// Run one expiry-local liquidation pass with the caller-selected budget.
+fun run_liquidation_pass(
+    market: &mut ExpiryMarket,
+    pricing_config: &PricingConfig,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    budget: u64,
+    clock: &Clock,
+): u64 {
+    market.assert_version_allowed();
+    market.assert_market_oracle(market_oracle);
+    market.assert_pyth_feed(pyth);
+    market_oracle.assert_active(clock);
+    market
+        .strike_exposure
+        .liquidate_live_orders(
+            pricing_config,
+            market_oracle,
+            pyth,
+            budget,
+            clock,
+        )
+}
 
 fun assert_pyth_feed(market: &ExpiryMarket, pyth: &PythSource) {
     assert!(market.pyth_lazer_feed_id == pyth.feed_id(), EWrongPythSource);

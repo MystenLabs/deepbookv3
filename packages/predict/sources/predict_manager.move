@@ -412,6 +412,11 @@ public(package) fun new_self_owned(
     (manager, predict_deposit_cap, predict_withdraw_cap, predict_trade_cap)
 }
 
+/// Abort unless the transaction sender owns this manager.
+public(package) fun assert_owner(self: &PredictManager, ctx: &TxContext) {
+    assert!(ctx.sender() == self.balance_manager.owner(), ENotOwner);
+}
+
 /// Deposit protocol payouts without requiring any authorization. Used for
 /// settled redemptions, which any caller may trigger.
 public(package) fun deposit_permissionless(
@@ -552,11 +557,6 @@ public(package) fun remove_all_stake(self: &mut PredictManager): u64 {
     self.active_stake = 0;
     self.inactive_stake = 0;
     total
-}
-
-/// Abort unless the transaction sender owns this manager.
-public(package) fun assert_owner(self: &PredictManager, ctx: &TxContext) {
-    assert!(ctx.sender() == self.balance_manager.owner(), ENotOwner);
 }
 
 // === Private Functions ===

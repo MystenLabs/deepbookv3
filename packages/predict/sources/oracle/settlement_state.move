@@ -11,8 +11,8 @@ module deepbook_predict::settlement_state;
 use deepbook_predict::{constants, market_oracle_config::MarketOracleConfig, oracle_events};
 use sui::random::RandomGenerator;
 
-const EMarketNotSettled: u64 = 15;
-const EInvalidSettlementTimestamp: u64 = 16;
+const EMarketNotSettled: u64 = 0;
+const EInvalidSettlementTimestamp: u64 = 1;
 
 const SOURCE_PYTH_SAMPLED_AVERAGE: u8 = 1;
 const SOURCE_PYTH: u8 = 2;

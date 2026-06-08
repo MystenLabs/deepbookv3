@@ -427,7 +427,7 @@ public fun create_self_owned_manager(
     predict_manager::new_self_owned(&mut registry.id, deepbook_registry, ctx)
 }
 
-// === Public-Package Functions ===
+// === Private Functions ===
 
 /// Abort if the running package version is not in the allowed set.
 ///
@@ -440,8 +440,6 @@ fun assert_version_allowed(registry: &Registry) {
         EPackageVersionDisabled,
     );
 }
-
-// === Private Functions ===
 
 /// Package initializer - creates Registry and AdminCap.
 fun init(ctx: &mut TxContext) {

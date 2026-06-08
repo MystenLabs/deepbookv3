@@ -75,7 +75,7 @@ public(package) fun settled_payout_liability(tree: &StrikePayoutTree, settlement
     terms.terminal_payout
 }
 
-/// Create an empty sparse payout tree for the oracle strike grid.
+/// Create an empty sparse payout tree.
 public(package) fun new(ctx: &mut TxContext): StrikePayoutTree {
     StrikePayoutTree {
         root: option::none(),

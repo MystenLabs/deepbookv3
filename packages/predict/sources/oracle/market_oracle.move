@@ -15,7 +15,7 @@ use deepbook_predict::{
     config_events,
     constants,
     i64,
-    market_oracle_config::{Self, MarketOracleConfig},
+    market_oracle_config::MarketOracleConfig,
     oracle_events,
     protocol_config::ProtocolConfig,
     pyth_source::PythSource,
@@ -26,20 +26,20 @@ use sui::{clock::Clock, random::{Self, Random, RandomGenerator}, vec_set::{Self,
 const EInvalidMarketOracleCap: u64 = 0;
 const EMarketNotActive: u64 = 1;
 const EMarketSettled: u64 = 2;
-const ESpotDeviationTooLarge: u64 = 4;
-const EBasisDeviationTooLarge: u64 = 5;
-const EBasisOutOfRange: u64 = 6;
-const EZeroSpot: u64 = 7;
-const EZeroForward: u64 = 8;
-const EStalePriceSourceUpdate: u64 = 9;
-const EStaleSVISourceUpdate: u64 = 10;
-const EWrongPythSource: u64 = 11;
-const EFuturePriceSourceUpdate: u64 = 12;
-const EFutureSVISourceUpdate: u64 = 13;
-const EInvalidSviB: u64 = 14;
-const EInvalidSviRho: u64 = 15;
-const EInvalidSviSigma: u64 = 16;
-const EPackageVersionDisabled: u64 = 17;
+const ESpotDeviationTooLarge: u64 = 3;
+const EBasisDeviationTooLarge: u64 = 4;
+const EBasisOutOfRange: u64 = 5;
+const EZeroSpot: u64 = 6;
+const EZeroForward: u64 = 7;
+const EStalePriceSourceUpdate: u64 = 8;
+const EStaleSVISourceUpdate: u64 = 9;
+const EWrongPythSource: u64 = 10;
+const EFuturePriceSourceUpdate: u64 = 11;
+const EFutureSVISourceUpdate: u64 = 12;
+const EInvalidSviB: u64 = 13;
+const EInvalidSviRho: u64 = 14;
+const EInvalidSviSigma: u64 = 15;
+const EPackageVersionDisabled: u64 = 16;
 
 const STATUS_ACTIVE: u8 = 1;
 const STATUS_PENDING_SETTLEMENT: u8 = 2;
@@ -297,23 +297,6 @@ public fun record_pyth_settlement_observation(
         );
 }
 
-/// Permissionlessly finalize settlement, drawing Sui native randomness to set the
-/// settlement price from sampled or fresh Pyth/Block Scholes data.
-///
-/// Thin entry wrapper: it only builds the generator; `settle` owns
-/// the gates and the settlement write.
-entry fun settle_with_randomness(
-    market: &mut MarketOracle,
-    config: &ProtocolConfig,
-    pyth: &PythSource,
-    clock: &Clock,
-    r: &Random,
-    ctx: &mut TxContext,
-) {
-    let mut generator = random::new_generator(r, ctx);
-    market.settle(config, pyth, &mut generator, clock);
-}
-
 /// Update live SVI data from an authorized Block Scholes writer.
 ///
 /// SVI is live-market-only and must advance the source timestamp.
@@ -398,6 +381,23 @@ public fun unregister_cap(market: &mut MarketOracle, _admin_cap: &AdminCap, cap_
 /// Let a cap holder remove its own cap from this market oracle.
 public fun self_unregister_cap(market: &mut MarketOracle, cap: &MarketOracleCap) {
     market.unregister_cap_internal(cap.cap_id());
+}
+
+/// Permissionlessly finalize settlement, drawing Sui native randomness to set the
+/// settlement price from sampled or fresh Pyth/Block Scholes data.
+///
+/// Thin entry wrapper: it only builds the generator; `settle` owns
+/// the gates and the settlement write.
+entry fun settle_with_randomness(
+    market: &mut MarketOracle,
+    config: &ProtocolConfig,
+    pyth: &PythSource,
+    clock: &Clock,
+    r: &Random,
+    ctx: &mut TxContext,
+) {
+    let mut generator = random::new_generator(r, ctx);
+    market.settle(config, pyth, &mut generator, clock);
 }
 
 // === Public-Package Functions ===
@@ -529,14 +529,6 @@ public(package) fun create_and_share(
     market_oracle_id
 }
 
-/// Abort if the running package version is not allowed for this oracle.
-fun assert_version_allowed(market: &MarketOracle) {
-    assert!(
-        market.allowed_versions.contains(&constants::current_version!()),
-        EPackageVersionDisabled,
-    );
-}
-
 /// Abort unless this oracle is bound to the supplied Pyth source.
 public(package) fun assert_pyth_source(market: &MarketOracle, pyth: &PythSource) {
     assert!(market.pyth_source_id == pyth.id(), EWrongPythSource);
@@ -553,6 +545,14 @@ public(package) fun assert_authorized_cap(market: &MarketOracle, cap: &MarketOra
 }
 
 // === Private Functions ===
+
+/// Abort if the running package version is not allowed for this oracle.
+fun assert_version_allowed(market: &MarketOracle) {
+    assert!(
+        market.allowed_versions.contains(&constants::current_version!()),
+        EPackageVersionDisabled,
+    );
+}
 
 fun register_cap_internal(market: &mut MarketOracle, cap: &MarketOracleCap) {
     market.assert_version_allowed();

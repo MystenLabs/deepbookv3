@@ -108,12 +108,6 @@ public(package) fun available_expiry_funding(
     }
 }
 
-/// Return current net DUSDC funded into an expiry.
-fun net_expiry_funding(ledger: &Ledger, expiry_market_id: ID): u64 {
-    ledger.assert_registered_expiry(expiry_market_id);
-    flow_net_funding(ledger.registered_expiries.borrow(expiry_market_id))
-}
-
 /// Abort unless this expiry is registered to the pool.
 public(package) fun assert_registered_expiry(ledger: &Ledger, expiry_market_id: ID) {
     assert!(ledger.registered_expiries.contains(expiry_market_id), EUnknownRegisteredExpiry);
@@ -132,6 +126,7 @@ public(package) fun new(ctx: &mut TxContext): Ledger {
     }
 }
 
+/// Register an expiry as active pool risk and re-check idle backing for the new funding cap.
 public(package) fun register_expiry(ledger: &mut Ledger, expiry_market_id: ID, max_funding: u64) {
     assert!(!ledger.registered_expiries.contains(expiry_market_id), ERegisteredExpiryAlreadyExists);
     assert!(
@@ -202,11 +197,13 @@ public(package) fun update_max_expiry_funding(
     net_funding
 }
 
+/// Join idle DUSDC and re-check backing for all active expiry funding caps.
 public(package) fun receive_idle(ledger: &mut Ledger, cash: Balance<DUSDC>) {
     ledger.idle_balance.join(cash);
     ledger.assert_active_allocations_backed();
 }
 
+/// Split withdrawable idle DUSDC while preserving active expiry funding-cap backing.
 public(package) fun withdraw_idle(ledger: &mut Ledger, amount: u64): Balance<DUSDC> {
     ledger.assert_withdrawable_idle(amount);
     ledger.idle_balance.split(amount)
@@ -227,6 +224,7 @@ public(package) fun send_expiry_cash(
     cash
 }
 
+/// Receive DUSDC returned from an expiry and re-check active funding-cap backing.
 public(package) fun receive_expiry_cash(
     ledger: &mut Ledger,
     expiry_market_id: ID,
@@ -272,6 +270,12 @@ public(package) fun materialize_expiry_profit(ledger: &mut Ledger, expiry_market
         ledger.profit_basis_debits = ledger.profit_basis_debits + materialized_profit;
         materialized_profit
     }
+}
+
+/// Return current net DUSDC funded into an expiry.
+fun net_expiry_funding(ledger: &Ledger, expiry_market_id: ID): u64 {
+    ledger.assert_registered_expiry(expiry_market_id);
+    flow_net_funding(ledger.registered_expiries.borrow(expiry_market_id))
 }
 
 fun record_sent_to_expiry(

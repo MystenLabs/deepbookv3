@@ -37,16 +37,16 @@ use sui::{
 use token::deep::DEEP;
 
 const EExpiryMarketNotActive: u64 = 0;
-const EWrongPoolVault: u64 = 2;
-const EExpiryMarketAlreadySynced: u64 = 3;
-const EMissingExpirySync: u64 = 4;
-const EZeroSupply: u64 = 5;
-const EZeroWithdraw: u64 = 6;
-const EInvalidInitialSupply: u64 = 7;
-const EZeroShares: u64 = 8;
-const EZeroPoolValue: u64 = 9;
-const EPackageVersionDisabled: u64 = 10;
-const ENoPlpHolders: u64 = 11;
+const EWrongPoolVault: u64 = 1;
+const EExpiryMarketAlreadySynced: u64 = 2;
+const EMissingExpirySync: u64 = 3;
+const EZeroSupply: u64 = 4;
+const EZeroWithdraw: u64 = 5;
+const EInvalidInitialSupply: u64 = 6;
+const EZeroShares: u64 = 7;
+const EZeroPoolValue: u64 = 8;
+const EPackageVersionDisabled: u64 = 9;
+const ENoPlpHolders: u64 = 10;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -87,7 +87,7 @@ public struct PoolSync {
     aggregate_band: u64,
 }
 
-// === Private Functions ===
+// === Package Initializer ===
 
 /// Register PLP metadata and create the pool vault on package publish.
 fun init(witness: PLP, ctx: &mut TxContext) {
@@ -357,29 +357,6 @@ public fun supply(
     plp
 }
 
-/// Pure share pricing for a supply: bootstrap mints 1:1, otherwise prices the
-/// payment against the pool's share ratio. No custody, NAV, event, or storage
-/// effects.
-fun shares_for_supply(
-    total_supply: u64,
-    dusdc_value: u64,
-    pool_value: u64,
-    payment_amount: u64,
-): u64 {
-    if (total_supply == 0) {
-        // Bootstrap mints 1:1; only the DUSDC side must be empty (incentives
-        // can't exist before the first supply — see deposit guards).
-        assert!(dusdc_value == 0, EInvalidInitialSupply);
-        payment_amount
-    } else {
-        assert!(pool_value > 0, EZeroPoolValue);
-        let share_fraction = math::div(total_supply, pool_value);
-        let shares = math::mul(payment_amount, share_fraction);
-        assert!(shares > 0, EZeroShares);
-        shares
-    }
-}
-
 /// Withdraw from the pool vault against a complete full-pool sync.
 ///
 /// Pays the DUSDC-denominated pro-rata share plus the pro-rata in-kind share of
@@ -433,32 +410,6 @@ public fun withdraw(
     (payout, sui, deep)
 }
 
-/// DUSDC payout owed for burning `lp_amount` shares: `dusdc_value * lp_amount /
-/// total_supply` (div then mul, round down). Inverse mirror of
-/// `shares_for_supply`; pure, so it stays out of the custody/event flow.
-fun dusdc_for_withdraw(lp_amount: u64, total_supply: u64, dusdc_value: u64): u64 {
-    let withdraw_fraction = math::div(lp_amount, total_supply);
-    let withdraw_amount = math::mul(dusdc_value, withdraw_fraction);
-    assert!(withdraw_amount > 0, EZeroWithdraw);
-    withdraw_amount
-}
-
-/// Withdrawer's pro-rata slice of the aggregate uncertainty-band fee, capped at
-/// `alpha` times the gross NAV-priced DUSDC payout.
-public(package) fun withdraw_fee(
-    alpha: u64,
-    aggregate_band: u64,
-    lp_amount: u64,
-    total_supply: u64,
-    gross_payout: u64,
-): u64 {
-    let total_fee_pool = math::mul(alpha, aggregate_band);
-    let fee_fraction = math::div(lp_amount, total_supply);
-    let band_fee = math::mul(total_fee_pool, fee_fraction);
-    let nav_fee_cap = math::mul(alpha, gross_payout);
-    band_fee.min(nav_fee_cap)
-}
-
 /// Stake DEEP for trading benefits. The DEEP is held in the pool vault; the
 /// amount is recorded as inactive on the manager and activates next epoch
 /// (`PredictManager.update_stake`, run by the trade/claim flows). Callable
@@ -497,15 +448,34 @@ public fun unstake_deep(
     vault.staked_deep.split(amount).into_coin(ctx)
 }
 
-// === Public-Package Functions ===
-
-/// Abort if the running package version is not allowed for this vault.
-fun assert_version_allowed(vault: &PoolVault) {
-    assert!(
-        vault.allowed_versions.contains(&constants::current_version!()),
-        EPackageVersionDisabled,
+/// Set the max net DUSDC the pool may have funded into one expiry.
+public fun set_max_expiry_funding(
+    vault: &mut PoolVault,
+    _admin_cap: &AdminCap,
+    config: &mut ProtocolConfig,
+    expiry_market_id: ID,
+    funding: u64,
+) {
+    vault.assert_version_allowed();
+    config.assert_not_valuation_in_progress();
+    let old_funding = config.expiry_max_funding(expiry_market_id);
+    config.set_expiry_max_funding(expiry_market_id, funding);
+    let net_funding = vault
+        .expiry_accounting
+        .update_max_expiry_funding(
+            expiry_market_id,
+            old_funding,
+            funding,
+        );
+    vault_events::emit_expiry_max_funding_updated(
+        vault.id(),
+        expiry_market_id,
+        funding,
+        net_funding,
     );
 }
+
+// === Public-Package Functions ===
 
 /// Create an empty pool vault from the PLP treasury cap.
 public(package) fun new(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): PoolVault {
@@ -527,6 +497,22 @@ public(package) fun create_and_share(treasury_cap: TreasuryCap<PLP>, ctx: &mut T
     let id = vault.id();
     transfer::share_object(vault);
     id
+}
+
+/// Withdrawer's pro-rata slice of the aggregate uncertainty-band fee, capped at
+/// `alpha` times the gross NAV-priced DUSDC payout.
+public(package) fun withdraw_fee(
+    alpha: u64,
+    aggregate_band: u64,
+    lp_amount: u64,
+    total_supply: u64,
+    gross_payout: u64,
+): u64 {
+    let total_fee_pool = math::mul(alpha, aggregate_band);
+    let fee_fraction = math::div(lp_amount, total_supply);
+    let band_fee = math::mul(total_fee_pool, fee_fraction);
+    let nav_fee_cap = math::mul(alpha, gross_payout);
+    band_fee.min(nav_fee_cap)
 }
 
 /// Overwrite this vault's mirrored `allowed_versions`. The only authorized
@@ -591,34 +577,94 @@ public(package) fun receive_deep_incentive(
     vault.incentive_deep.fund(deposit, decimals, feed_id, duration_ms, clock);
 }
 
-/// Set the max net DUSDC the pool may have funded into one expiry.
-public fun set_max_expiry_funding(
-    vault: &mut PoolVault,
-    _admin_cap: &AdminCap,
-    config: &mut ProtocolConfig,
-    expiry_market_id: ID,
-    funding: u64,
-) {
-    vault.assert_version_allowed();
-    config.assert_not_valuation_in_progress();
-    let old_funding = config.expiry_max_funding(expiry_market_id);
-    config.set_expiry_max_funding(expiry_market_id, funding);
-    let net_funding = vault
-        .expiry_accounting
-        .update_max_expiry_funding(
-            expiry_market_id,
-            old_funding,
-            funding,
-        );
-    vault_events::emit_expiry_max_funding_updated(
-        vault.id(),
-        expiry_market_id,
-        funding,
-        net_funding,
-    );
+/// LP-attributable DUSDC pool value used to price PLP supply/withdraw.
+///
+/// `gross = idle_balance + active_expiry_value`. NAV prices the protocol's
+/// not-yet-materialized profit share before terminal materialization and excludes
+/// it from LP value: `exclusion = share * max(0, (credits + active) - debits)`
+/// (live cash returns update credits, but reserve custody waits for terminal
+/// profit).
+public(package) fun lp_pool_value(
+    idle_balance: u64,
+    profit_basis_credits: u64,
+    profit_basis_debits: u64,
+    protocol_reserve_profit_share: u64,
+    active_expiry_value: u64,
+): u64 {
+    let gross_pool_value = idle_balance + active_expiry_value;
+    let aggregate_credits = profit_basis_credits + active_expiry_value;
+    let exclusion = if (aggregate_credits <= profit_basis_debits) {
+        0
+    } else {
+        math::mul(aggregate_credits - profit_basis_debits, protocol_reserve_profit_share)
+    };
+    // The realized `credits - debits` term is sticky: it does not shrink when LPs
+    // withdraw idle cash, so when an active mark they withdrew against later
+    // collapses, the exclusion can exceed gross. LP value can never be negative —
+    // floor it at 0, which also prevents the subtraction from underflowing and
+    // bricking all PLP supply/withdraw.
+    gross_pool_value - exclusion.min(gross_pool_value)
+}
+
+/// Return the active-expiry NAV mark after subtracting
+/// `Q = max(0, (total_floor - verified_floor) - (total_range - verified_range))`.
+/// `Q` never under-counts the verified floor-over-range correction, so the result
+/// does not overcount unscreened leveraged floor recoverability.
+public(package) fun conservative_active_nav(
+    nav_optimistic: u64,
+    total_range: u64,
+    total_floor_amount: u64,
+    verified_range: u64,
+    verified_floor_amount: u64,
+): u64 {
+    let d_max = sat_sub(total_floor_amount, verified_floor_amount);
+    let unscanned_range = sat_sub(total_range, verified_range);
+    let q = sat_sub(d_max, unscanned_range);
+    sat_sub(nav_optimistic, q)
 }
 
 // === Private Functions ===
+
+/// Abort if the running package version is not allowed for this vault.
+fun assert_version_allowed(vault: &PoolVault) {
+    assert!(
+        vault.allowed_versions.contains(&constants::current_version!()),
+        EPackageVersionDisabled,
+    );
+}
+
+/// Pure share pricing for a supply: bootstrap mints 1:1, otherwise prices the
+/// payment against the pool's share ratio. No custody, NAV, event, or storage
+/// effects.
+fun shares_for_supply(
+    total_supply: u64,
+    dusdc_value: u64,
+    pool_value: u64,
+    payment_amount: u64,
+): u64 {
+    if (total_supply == 0) {
+        // Bootstrap mints 1:1; only the DUSDC side must be empty (incentives
+        // can't exist before the first supply — see deposit guards).
+        assert!(dusdc_value == 0, EInvalidInitialSupply);
+        payment_amount
+    } else {
+        assert!(pool_value > 0, EZeroPoolValue);
+        let share_fraction = math::div(total_supply, pool_value);
+        let shares = math::mul(payment_amount, share_fraction);
+        assert!(shares > 0, EZeroShares);
+        shares
+    }
+}
+
+/// DUSDC payout owed for burning `lp_amount` shares: `dusdc_value * lp_amount /
+/// total_supply` (div then mul, round down). Inverse mirror of
+/// `shares_for_supply`; pure, so it stays out of the custody/event flow.
+fun dusdc_for_withdraw(lp_amount: u64, total_supply: u64, dusdc_value: u64): u64 {
+    let withdraw_fraction = math::div(lp_amount, total_supply);
+    let withdraw_amount = math::mul(dusdc_value, withdraw_fraction);
+    assert!(withdraw_amount > 0, EZeroWithdraw);
+    withdraw_amount
+}
 
 fun assert_all_expected_synced(
     expected_expiry_markets: &vector<ID>,
@@ -676,48 +722,6 @@ fun synced_pool_value(vault: &PoolVault, config: &ProtocolConfig, active_expiry_
         config.protocol_reserve_profit_share(),
         active_expiry_value,
     )
-}
-
-/// LP-attributable DUSDC pool value used to price PLP supply/withdraw.
-///
-/// `gross = idle_balance + active_expiry_value`. NAV prices the protocol's
-/// not-yet-materialized profit share before terminal materialization and excludes
-/// it from LP value: `exclusion = share * max(0, (credits + active) - debits)`
-/// (live cash returns update credits, but reserve custody waits for terminal
-/// profit).
-public(package) fun lp_pool_value(
-    idle_balance: u64,
-    profit_basis_credits: u64,
-    profit_basis_debits: u64,
-    protocol_reserve_profit_share: u64,
-    active_expiry_value: u64,
-): u64 {
-    let gross_pool_value = idle_balance + active_expiry_value;
-    let aggregate_credits = profit_basis_credits + active_expiry_value;
-    let exclusion = if (aggregate_credits <= profit_basis_debits) {
-        0
-    } else {
-        math::mul(aggregate_credits - profit_basis_debits, protocol_reserve_profit_share)
-    };
-    // The realized `credits - debits` term is sticky: it does not shrink when LPs
-    // withdraw idle cash, so when an active mark they withdrew against later
-    // collapses, the exclusion can exceed gross. LP value can never be negative —
-    // floor it at 0, which also prevents the subtraction from underflowing and
-    // bricking all PLP supply/withdraw.
-    gross_pool_value - exclusion.min(gross_pool_value)
-}
-
-public(package) fun conservative_active_nav(
-    nav_optimistic: u64,
-    total_range: u64,
-    total_floor_amount: u64,
-    verified_range: u64,
-    verified_floor_amount: u64,
-): u64 {
-    let d_max = sat_sub(total_floor_amount, verified_floor_amount);
-    let unscanned_range = sat_sub(total_range, verified_range);
-    let q = sat_sub(d_max, unscanned_range);
-    sat_sub(nav_optimistic, q)
 }
 
 fun assert_pool_vault(sync: &PoolSync, vault: &PoolVault) {

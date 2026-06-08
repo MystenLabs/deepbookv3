@@ -25,7 +25,7 @@ public macro fun float_scaling(): u64 { 1_000_000_000 }
 /// Decimal exponent of `float_scaling!()` (i.e. `float_scaling!() == 10^9`).
 /// Used when normalizing oracle prices from their native `(magnitude, exponent)`
 /// form into the package's 1e9-scaled `u64`.
-public macro fun float_scaling_decimals(): u64 { 9 }
+public(package) macro fun float_scaling_decimals(): u64 { 9 }
 
 /// Decimals of the DUSDC settlement asset. `pyth_source::value_in_dusdc` converts
 /// the USD value of admin-deposited non-DUSDC incentive assets into this scale so
@@ -62,7 +62,7 @@ public(package) macro fun max_incentive_stream_ms(): u64 { 31_536_000_000 }
 // === Leverage ===
 
 /// Window before expiry over which the leverage floor index rises.
-public macro fun leverage_floor_window_ms(): u64 { 31_536_000_000 }
+public(package) macro fun leverage_floor_window_ms(): u64 { 31_536_000_000 }
 
 /// Entry probability below which only 1x mints are allowed.
 public(package) macro fun leverage_one_x_only_price_threshold(): u64 { 100_000_000 }
@@ -78,13 +78,13 @@ public macro fun deep_decimals(): u64 { 1_000_000 }
 /// Trading-fee discount at full active stake, in FLOAT_SCALING (fixed 50% cap).
 /// The loss rebate has no staking-side cap — its size is governed by the
 /// per-expiry `trading_loss_rebate_rate` in `expiry_cash_config`.
-public macro fun max_fee_discount(): u64 { 500_000_000 }
+public(package) macro fun max_fee_discount(): u64 { 500_000_000 }
 
 // === Liquidation ===
 
 /// Divisor for the passive tail slice of each liquidation candidate budget; the
 /// head-priority slice takes the remainder. Divisor 3 => 1/3 tail, 2/3 head.
-public macro fun liquidation_tail_scan_divisor(): u64 { 3 }
+public(package) macro fun liquidation_tail_scan_divisor(): u64 { 3 }
 
 // === Builder Fees ===
 
@@ -97,15 +97,12 @@ public macro fun max_builder_fee_rate(): u64 { 5_000_000 }
 // === Time Constants ===
 
 /// Milliseconds in a 365-day year.
-public macro fun ms_per_year(): u64 { 31_536_000_000 }
+public(package) macro fun ms_per_year(): u64 { 31_536_000_000 }
 
 // === Curve Builder ===
 
 /// Number of sample points for adaptive curve building.
-public macro fun curve_samples(): u64 { 50 }
-
-/// Minimum interval between curve sample points ($0.001 in FLOAT_SCALING)
-public macro fun min_curve_interval(): u64 { 1_000_000 }
+public(package) macro fun curve_samples(): u64 { 50 }
 
 // === SVI Oracle Bounds ===
 
@@ -130,19 +127,19 @@ public macro fun oracle_strike_grid_ticks(): u64 { 100_000 }
 public macro fun oracle_tick_size_unit(): u64 { 10_000 }
 
 /// Expiries within this window preallocate the smallest centered NAV matrix span.
-public macro fun short_expiry_preallocation_window_ms(): u64 { 60 * 60 * 1000 }
+public(package) macro fun short_expiry_preallocation_window_ms(): u64 { 60 * 60 * 1000 }
 
 /// Expiries within this window preallocate the medium centered NAV matrix span.
-public macro fun medium_expiry_preallocation_window_ms(): u64 { 60 * 60 * 24 * 1000 }
+public(package) macro fun medium_expiry_preallocation_window_ms(): u64 { 60 * 60 * 24 * 1000 }
 
 /// Centered strike ticks preallocated for expiries within one hour.
-public macro fun short_expiry_preallocated_ticks(): u64 { 10_000 }
+public(package) macro fun short_expiry_preallocated_ticks(): u64 { 10_000 }
 
 /// Centered strike ticks preallocated for expiries within one day.
-public macro fun medium_expiry_preallocated_ticks(): u64 { 25_000 }
+public(package) macro fun medium_expiry_preallocated_ticks(): u64 { 25_000 }
 
 /// Centered strike ticks preallocated for later expiries.
-public macro fun default_expiry_preallocated_ticks(): u64 { 50_000 }
+public(package) macro fun default_expiry_preallocated_ticks(): u64 { 50_000 }
 
 /// Sentinel lower strike for ranges open to negative infinity.
 public macro fun neg_inf(): u64 { 0 }

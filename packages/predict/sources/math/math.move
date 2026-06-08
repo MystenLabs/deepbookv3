@@ -53,9 +53,9 @@ module deepbook_predict::math;
 use deepbook_predict::{constants, i64};
 
 const EInputZero: u64 = 0;
-const EInvalidPrecision: u64 = 2;
-const EPow10ExponentTooLarge: u64 = 3;
-const EExpOverflow: u64 = 4;
+const EInvalidPrecision: u64 = 1;
+const EPow10ExponentTooLarge: u64 = 2;
+const EExpOverflow: u64 = 3;
 
 // u128 constants for internal math
 const F: u128 = 1_000_000_000;
@@ -64,7 +64,7 @@ const LN2_U128: u128 = 693_147_180;
 // Largest exp input guaranteed to keep the u64 result in range even at the 1e-7
 // precision ceiling: e^x * 1e9 * (1 + 1e-7) <= u64::MAX. Set ~100 units below the
 // exact math bound (64*ln2 - 9*ln10 ≈ 23.638) so the named EExpOverflow guard
-// always fires before the `as u64` cast (line ~137) could overflow on a hot impl.
+// always fires before the `as u64` cast (line ~148) could overflow on a hot impl.
 const EXP_MAX_INPUT: u64 = 23_638_153_618;
 
 // Cody rational approximation coefficients (scaled to F = 1e9)
