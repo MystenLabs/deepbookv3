@@ -617,33 +617,42 @@ fun value_incentives(
 }
 
 fun synced_pool_value(vault: &PoolVault, config: &ProtocolConfig, active_expiry_value: u64): u64 {
-    let gross_pool_value = vault.idle_balance.value() + active_expiry_value;
-    // R1 caveat (flagged for audit; not yet guarded): this assumes gross >= the
-    // pending protocol-profit exclusion. The exclusion counts active-expiry NAV
-    // symmetrically with realized credits, so if active NAV later falls (traders
-    // win) after LPs exited at a higher mark, exclusion can exceed gross and this
-    // subtraction underflows, blocking supply/withdraw until NAV recovers.
-    // Operationally mitigated by a permanent base PLP supply. Revisit with C3
-    // (conservative NAV marking); the minimal guard is `.min(gross_pool_value)`.
-    gross_pool_value - vault.pending_protocol_profit_exclusion(config, active_expiry_value)
+    lp_pool_value(
+        vault.idle_balance.value(),
+        vault.expiry_accounting.profit_basis_credits(),
+        vault.expiry_accounting.profit_basis_debits(),
+        config.protocol_reserve_profit_share(),
+        active_expiry_value,
+    )
 }
 
-fun pending_protocol_profit_exclusion(
-    vault: &PoolVault,
-    config: &ProtocolConfig,
+/// LP-attributable DUSDC pool value used to price PLP supply/withdraw.
+///
+/// `gross = idle_balance + active_expiry_value`. NAV prices the protocol's
+/// not-yet-materialized profit share before terminal materialization and excludes
+/// it from LP value: `exclusion = share * max(0, (credits + active) - debits)`
+/// (live cash returns update credits, but reserve custody waits for terminal
+/// profit).
+public(package) fun lp_pool_value(
+    idle_balance: u64,
+    profit_basis_credits: u64,
+    profit_basis_debits: u64,
+    protocol_reserve_profit_share: u64,
     active_expiry_value: u64,
 ): u64 {
-    // NAV prices pending protocol profit before it is terminally materialized.
-    // Live cash returns update credits, but reserve custody waits for terminal profit.
-    let aggregate_credits = vault.expiry_accounting.profit_basis_credits() + active_expiry_value;
-    let aggregate_debits = vault.expiry_accounting.profit_basis_debits();
-    if (aggregate_credits <= aggregate_debits) {
-        return 0
+    let gross_pool_value = idle_balance + active_expiry_value;
+    let aggregate_credits = profit_basis_credits + active_expiry_value;
+    let exclusion = if (aggregate_credits <= profit_basis_debits) {
+        0
+    } else {
+        math::mul(aggregate_credits - profit_basis_debits, protocol_reserve_profit_share)
     };
-    math::mul(
-        aggregate_credits - aggregate_debits,
-        config.protocol_reserve_profit_share(),
-    )
+    // The realized `credits - debits` term is sticky: it does not shrink when LPs
+    // withdraw idle cash, so when an active mark they withdrew against later
+    // collapses, the exclusion can exceed gross. LP value can never be negative —
+    // floor it at 0, which also prevents the subtraction from underflowing and
+    // bricking all PLP supply/withdraw.
+    gross_pool_value - exclusion.min(gross_pool_value)
 }
 
 fun assert_pool_vault(sync: &PoolSync, vault: &PoolVault) {
