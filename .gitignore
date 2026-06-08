@@ -42,3 +42,9 @@ tx-data.txt
 example.ts
 /data
 /handoff
+
+# Internal AI design/review working notes (kept local, not for public)
+.claude/predict-design/
+.claude/predict-review/
+.claude/scheduled_tasks.lock
+.redesign/

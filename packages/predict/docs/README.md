@@ -43,6 +43,11 @@ How the protocol is built:
   what capital, the capability and authorization model, and version gating.
 - **[Configuration](./design/configuration.md)** — what is tunable, the
   defaults, how config is snapshotted per expiry, and who can change it.
+- **[Invariants](./design/invariants.md)** — a precise, scannable reference of
+  the conditions the protocol always maintains (solvency, floor, NAV,
+  settlement, liquidation, rounding).
+- **[Design decisions](./design/decisions.md)** — the significant design choices
+  and the alternatives that were rejected, with rationale.
 
 ## Risks
 
