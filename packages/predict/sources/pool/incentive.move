@@ -12,11 +12,11 @@ module deepbook_predict::incentive;
 
 use deepbook_predict::{
     constants,
-    math,
     pricing,
     protocol_config::ProtocolConfig,
     pyth_source::PythSource
 };
+use predict_math::math;
 use sui::{balance::{Self, Balance}, clock::Clock, coin::Coin};
 
 const EZeroDeposit: u64 = 0;

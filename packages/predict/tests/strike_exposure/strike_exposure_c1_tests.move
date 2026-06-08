@@ -25,7 +25,6 @@ use deepbook_predict::{
     expiry_market::ExpiryMarket,
     flow_test_helpers as helpers,
     market_oracle::MarketOracle,
-    math,
     order,
     plp::PoolVault,
     predict_manager::PredictManager,
@@ -33,6 +32,7 @@ use deepbook_predict::{
     pyth_source::PythSource,
     test_constants
 };
+use predict_math::math;
 use std::unit_test::{assert_eq, destroy};
 
 /// Settlement strictly above the order's lower strike => in the money.

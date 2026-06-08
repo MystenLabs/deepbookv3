@@ -5,7 +5,8 @@
 #[test_only]
 module deepbook_predict::fee_config_tests;
 
-use deepbook_predict::{config_constants, math::float_scaling as float};
+use deepbook_predict::config_constants;
+use predict_math::math::float_scaling as float;
 use std::unit_test::assert_eq;
 
 const WITHDRAW_FEE_ALPHA_DEFAULT: u64 = 250_000_000; // 25%

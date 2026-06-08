@@ -9,7 +9,8 @@
 /// themselves contract probability.
 module deepbook_predict::strike_exposure_config;
 
-use deepbook_predict::{config_constants, constants, math};
+use deepbook_predict::{config_constants, constants};
+use predict_math::math;
 
 const ETerminalFloorExceedsLiquidationLtv: u64 = 0;
 const EOrderBelowLiquidationThreshold: u64 = 1;

@@ -29,13 +29,13 @@ module deepbook_predict::pricing_exact_tests;
 
 use deepbook_predict::{
     constants,
-    math,
     oracle_fixture,
     pricing,
     pricing_reference_data as ref_data,
     test_constants,
     test_helpers
 };
+use predict_math::math;
 use std::unit_test::assert_eq;
 
 /// Stand up a production-valid oracle for real scenario `s`, seed its real SVI +

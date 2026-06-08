@@ -12,7 +12,8 @@
 /// carries no rebate-specific cap).
 module deepbook_predict::stake_config;
 
-use deepbook_predict::{config_constants, constants, math};
+use deepbook_predict::{config_constants, constants};
+use predict_math::math;
 
 public struct StakeConfig has store {
     /// Active stake at the curve kink (half of max benefits), in raw DEEP units.

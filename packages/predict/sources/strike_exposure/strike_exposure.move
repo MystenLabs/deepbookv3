@@ -17,7 +17,6 @@ use deepbook_predict::{
     constants,
     liquidation_book::{Self, LiquidationBook},
     market_oracle::MarketOracle,
-    math,
     order::{Self, Order},
     order_events,
     pricing,
@@ -28,6 +27,7 @@ use deepbook_predict::{
     strike_nav_matrix::{Self, StrikeNavMatrix},
     strike_payout_tree::{Self, StrikePayoutTree}
 };
+use predict_math::math;
 use sui::clock::Clock;
 
 const ESettledLiabilityNotMaterialized: u64 = 0;

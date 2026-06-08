@@ -11,12 +11,11 @@ module deepbook_predict::pricing;
 
 use deepbook_predict::{
     constants,
-    i64,
     market_oracle::{MarketOracle, SVIParams},
-    math,
     pricing_config::PricingConfig,
     pyth_source::PythSource
 };
+use predict_math::{i64, math};
 use sui::clock::Clock;
 
 const EZeroForward: u64 = 0;

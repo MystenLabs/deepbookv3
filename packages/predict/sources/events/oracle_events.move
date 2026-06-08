@@ -7,7 +7,7 @@
 /// timestamp because they are genuinely different values used for freshness.
 module deepbook_predict::oracle_events;
 
-use deepbook_predict::i64::I64;
+use predict_math::i64::I64;
 use sui::event;
 
 /// Emitted when Block Scholes spot/forward data is accepted.

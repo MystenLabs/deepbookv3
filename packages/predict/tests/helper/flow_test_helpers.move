@@ -24,7 +24,6 @@ use deepbook_predict::{
     admin::AdminCap,
     constants,
     expiry_market::{Self, ExpiryMarket},
-    i64,
     market_oracle::{Self, MarketOracle, MarketOracleCap},
     plp::{Self, PLP, PoolSync, PoolVault},
     predict_manager::PredictManager,
@@ -34,6 +33,7 @@ use deepbook_predict::{
     test_constants
 };
 use dusdc::dusdc::DUSDC;
+use predict_math::i64;
 use std::unit_test::{assert_eq, destroy};
 use sui::{
     clock::{Self, Clock},

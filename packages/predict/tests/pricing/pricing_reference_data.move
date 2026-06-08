@@ -24,7 +24,8 @@
 #[test_only]
 module deepbook_predict::pricing_reference_data;
 
-use deepbook_predict::{constants, i64, market_oracle::{Self, SVIParams}};
+use deepbook_predict::{constants, market_oracle::{Self, SVIParams}};
+use predict_math::i64;
 
 const ENoSuchScenario: u64 = 0;
 

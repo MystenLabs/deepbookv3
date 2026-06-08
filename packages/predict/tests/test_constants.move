@@ -8,7 +8,8 @@
 #[test_only]
 module deepbook_predict::test_constants;
 
-use deepbook_predict::{constants, math};
+use deepbook_predict::constants;
+use predict_math::math;
 
 // === Test Addresses ===
 const ADMIN: address = @0x0;

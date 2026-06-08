@@ -15,13 +15,8 @@
 #[test_only]
 module deepbook_predict::pricing_tests;
 
-use deepbook_predict::{
-    constants,
-    math::float_scaling as float,
-    oracle_fixture,
-    pricing,
-    test_constants
-};
+use deepbook_predict::{constants, oracle_fixture, pricing, test_constants};
+use predict_math::math::float_scaling as float;
 use std::unit_test::assert_eq;
 
 // Forward == `default_live_price` (spot==forward, basis 1.0). The two scenario

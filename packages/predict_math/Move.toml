@@ -1,0 +1,9 @@
+[package]
+name = "predict_math"
+edition = "2024.beta"
+version = "0.0.1"
+
+[dependencies]
+
+[addresses]
+predict_math = "0x0"

@@ -11,7 +11,8 @@
 /// `ExpiryMarket` owns the stored state and decides when to fold observations in.
 module deepbook_predict::ewma;
 
-use deepbook_predict::{ewma_config::EwmaConfig, math};
+use deepbook_predict::ewma_config::EwmaConfig;
+use predict_math::math;
 use sui::clock::Clock;
 
 /// Smoothed gas-price estimate for one expiry market. `mean` and `variance` are

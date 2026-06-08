@@ -22,7 +22,6 @@ module deepbook_predict::oracle_fixture;
 use deepbook_predict::{
     admin::AdminCap,
     constants,
-    i64,
     market_oracle::{Self, MarketOracle, MarketOracleCap, SVIParams},
     plp::{Self, PLP, PoolVault},
     protocol_config::ProtocolConfig,
@@ -31,6 +30,7 @@ use deepbook_predict::{
     test_constants
 };
 use dusdc::dusdc::DUSDC;
+use predict_math::i64;
 use std::unit_test::destroy;
 use sui::{
     clock::{Self, Clock},

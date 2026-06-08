@@ -13,14 +13,13 @@ use deepbook_predict::{
     admin::AdminCap,
     config_events,
     constants,
-    i64,
     market_oracle_config::MarketOracleConfig,
-    math,
     oracle_events,
     protocol_config::ProtocolConfig,
     pyth_source::PythSource,
     settlement_state::{Self, SettlementState}
 };
+use predict_math::{i64, math};
 use sui::{clock::Clock, random::{Self, Random, RandomGenerator}, vec_set::{Self, VecSet}};
 
 const EInvalidMarketOracleCap: u64 = 0;

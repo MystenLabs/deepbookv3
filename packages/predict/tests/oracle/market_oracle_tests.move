@@ -4,7 +4,8 @@
 #[test_only]
 module deepbook_predict::market_oracle_tests;
 
-use deepbook_predict::{constants, i64, market_oracle, math::float_scaling as float};
+use deepbook_predict::{constants, market_oracle};
+use predict_math::{i64, math::float_scaling as float};
 use std::unit_test::assert_eq;
 
 const VALID_A: u64 = 0;

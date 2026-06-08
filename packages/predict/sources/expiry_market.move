@@ -17,7 +17,6 @@ use deepbook_predict::{
     ewma_config::EwmaConfig,
     expiry_cash::{Self, ExpiryCash},
     market_oracle::{MarketOracle, MarketOracleCap},
-    math,
     order::{Self, Order},
     order_events,
     predict_manager::{PredictManager, PredictTradeProof},
@@ -29,6 +28,7 @@ use deepbook_predict::{
     strike_grid::StrikeGrid
 };
 use dusdc::dusdc::DUSDC;
+use predict_math::math;
 use sui::{balance::{Self, Balance}, clock::Clock, vec_set::VecSet};
 
 const EWrongMarketOracle: u64 = 0;

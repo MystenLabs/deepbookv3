@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module deepbook_predict::i64_tests;
+module predict_math::i64_tests;
 
-use deepbook_predict::{i64, math::float_scaling as float};
+use predict_math::{i64, math::float_scaling as float};
 use std::unit_test::assert_eq;
 
 // === Constructors and getters ===

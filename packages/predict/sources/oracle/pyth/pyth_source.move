@@ -10,7 +10,8 @@
 /// callers own feed binding and freshness (see `pricing::assert_pyth_spot_fresh`).
 module deepbook_predict::pyth_source;
 
-use deepbook_predict::{constants, math, oracle_events, protocol_config::ProtocolConfig};
+use deepbook_predict::{constants, oracle_events, protocol_config::ProtocolConfig};
+use predict_math::math;
 use pyth_lazer::{i16::I16 as LazerI16, i64::I64 as LazerI64, update::Update as LazerUpdate};
 use sui::{clock::Clock, vec_set::VecSet};
 

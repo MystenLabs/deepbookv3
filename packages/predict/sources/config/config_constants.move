@@ -83,10 +83,10 @@ public(package) fun assert_trade_liquidation_budget(value: u64) {
 
 public(package) macro fun default_terminal_floor_index(): u64 { 1_200_000_000 }
 public(package) macro fun min_terminal_floor_index(): u64 {
-    deepbook_predict::math::float_scaling!()
+    predict_math::math::float_scaling!()
 }
 public(package) macro fun max_terminal_floor_index(): u64 {
-    2 * deepbook_predict::math::float_scaling!()
+    2 * predict_math::math::float_scaling!()
 }
 
 public(package) fun assert_terminal_floor_index(value: u64) {
@@ -111,7 +111,7 @@ public(package) fun assert_liquidation_ltv(value: u64) {
 
 public(package) macro fun default_base_fee(): u64 { 20_000_000 }
 public(package) macro fun min_base_fee(): u64 { 1 }
-public(package) macro fun max_base_fee(): u64 { deepbook_predict::math::float_scaling!() }
+public(package) macro fun max_base_fee(): u64 { predict_math::math::float_scaling!() }
 
 public(package) fun assert_base_fee(value: u64) {
     assert!(value >= min_base_fee!() && value <= max_base_fee!(), EInvalidBaseFee);
@@ -119,7 +119,7 @@ public(package) fun assert_base_fee(value: u64) {
 
 public(package) macro fun default_min_fee(): u64 { 5_000_000 }
 public(package) macro fun min_min_fee(): u64 { 0 }
-public(package) macro fun max_min_fee(): u64 { deepbook_predict::math::float_scaling!() }
+public(package) macro fun max_min_fee(): u64 { predict_math::math::float_scaling!() }
 
 public(package) fun assert_min_fee(value: u64) {
     assert!(value >= min_min_fee!() && value <= max_min_fee!(), EInvalidMinFee);
@@ -143,13 +143,13 @@ public(package) fun assert_expiry_fee_window_ms(value: u64) {
 /// Fee multiplier reached at expiry, in FLOAT_SCALING. 1x (float_scaling) disables
 /// the ramp; min is 1x so the ramp can never reduce fees below the base rate.
 public(package) macro fun default_expiry_fee_max_multiplier(): u64 {
-    deepbook_predict::math::float_scaling!()
+    predict_math::math::float_scaling!()
 }
 public(package) macro fun min_expiry_fee_max_multiplier(): u64 {
-    deepbook_predict::math::float_scaling!()
+    predict_math::math::float_scaling!()
 }
 public(package) macro fun max_expiry_fee_max_multiplier(): u64 {
-    10 * deepbook_predict::math::float_scaling!()
+    10 * predict_math::math::float_scaling!()
 }
 
 public(package) fun assert_expiry_fee_max_multiplier(value: u64) {
@@ -169,7 +169,7 @@ public(package) fun assert_oracle_tick_size(value: u64) {
 public(package) macro fun default_min_ask_price(): u64 { 10_000_000 }
 public(package) macro fun min_min_ask_price(): u64 { 0 }
 public(package) macro fun max_min_ask_price(): u64 {
-    deepbook_predict::math::float_scaling!() - 1
+    predict_math::math::float_scaling!() - 1
 }
 
 public(package) fun assert_min_ask_price(value: u64) {
@@ -179,7 +179,7 @@ public(package) fun assert_min_ask_price(value: u64) {
 public(package) macro fun default_max_ask_price(): u64 { 990_000_000 }
 public(package) macro fun min_max_ask_price(): u64 { 0 }
 public(package) macro fun max_max_ask_price(): u64 {
-    deepbook_predict::math::float_scaling!() - 1
+    predict_math::math::float_scaling!() - 1
 }
 
 public(package) fun assert_max_ask_price(value: u64) {
@@ -239,7 +239,7 @@ public(package) fun assert_ewma_alpha(value: u64) {
 /// call from raising the bar so high the penalty can never trigger.
 public(package) macro fun default_ewma_z_score_threshold(): u64 { 3_000_000_000 }
 public(package) macro fun min_ewma_z_score_threshold(): u64 {
-    deepbook_predict::math::float_scaling!()
+    predict_math::math::float_scaling!()
 }
 public(package) macro fun max_ewma_z_score_threshold(): u64 { 10_000_000_000 }
 
@@ -268,7 +268,7 @@ public(package) fun assert_ewma_additional_fee(value: u64) {
 public(package) macro fun default_protocol_reserve_profit_share(): u64 { 400_000_000 }
 public(package) macro fun min_protocol_reserve_profit_share(): u64 { 0 }
 public(package) macro fun max_protocol_reserve_profit_share(): u64 {
-    deepbook_predict::math::float_scaling!()
+    predict_math::math::float_scaling!()
 }
 
 public(package) fun assert_protocol_reserve_profit_share(value: u64) {
@@ -283,7 +283,7 @@ public(package) fun assert_protocol_reserve_profit_share(value: u64) {
 public(package) macro fun default_withdraw_fee_alpha(): u64 { 250_000_000 }
 public(package) macro fun min_withdraw_fee_alpha(): u64 { 50_000_000 }
 public(package) macro fun max_withdraw_fee_alpha(): u64 {
-    deepbook_predict::math::float_scaling!()
+    predict_math::math::float_scaling!()
 }
 
 public(package) fun assert_withdraw_fee_alpha(value: u64) {
@@ -298,7 +298,7 @@ public(package) macro fun default_trading_loss_rebate_rate(): u64 {
 }
 public(package) macro fun min_trading_loss_rebate_rate(): u64 { 0 }
 public(package) macro fun max_trading_loss_rebate_rate(): u64 {
-    deepbook_predict::math::float_scaling!()
+    predict_math::math::float_scaling!()
 }
 
 public(package) fun assert_trading_loss_rebate_rate(value: u64) {

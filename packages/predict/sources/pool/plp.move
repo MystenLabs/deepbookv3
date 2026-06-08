@@ -17,7 +17,6 @@ use deepbook_predict::{
     expiry_market::ExpiryMarket,
     incentive::{Self, IncentiveState},
     market_oracle::MarketOracle,
-    math,
     pool_accounting::{Self, Ledger},
     predict_manager::PredictManager,
     pricing,
@@ -26,6 +25,7 @@ use deepbook_predict::{
     vault_events
 };
 use dusdc::dusdc::DUSDC;
+use predict_math::math;
 use sui::{
     balance::{Self, Balance},
     clock::Clock,

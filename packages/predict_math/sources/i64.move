@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Signed u64 magnitude with normalized zero.
-module deepbook_predict::i64;
+module predict_math::i64;
 
 const EZeroDivisor: u64 = 0;
 const F: u128 = 1_000_000_000;

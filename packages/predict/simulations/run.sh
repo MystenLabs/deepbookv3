@@ -14,6 +14,7 @@ else
 fi
 
 DUSDC_DIR="$PACKAGES_DIR/dusdc"
+PREDICT_MATH_DIR="$PACKAGES_DIR/predict_math"
 RUNS_DIR="$SCRIPT_DIR/runs"
 BUILD_ENV="sim"
 SCENARIO_CONFIG="$SCRIPT_DIR/data/scenario_config.json"
@@ -195,10 +196,10 @@ sui_client() {
 }
 
 cleanup() {
-  for f in "$PACKAGES_DIR"/deepbook/Move.toml "$PACKAGES_DIR"/token/Move.toml "$PREDICT_DIR/Move.toml" "$PREDICT_DIR/Move.lock" "$DUSDC_DIR/Move.toml"; do
+  for f in "$PACKAGES_DIR"/deepbook/Move.toml "$PACKAGES_DIR"/token/Move.toml "$PREDICT_DIR/Move.toml" "$PREDICT_DIR/Move.lock" "$DUSDC_DIR/Move.toml" "$PREDICT_MATH_DIR/Move.toml" "$PREDICT_MATH_DIR/Move.lock"; do
     [ -f "$f.bak" ] && mv "$f.bak" "$f"
   done
-  for f in "$PACKAGES_DIR"/deepbook/Published.toml "$PACKAGES_DIR"/token/Published.toml "$PREDICT_DIR/Published.toml" "$DUSDC_DIR/Published.toml"; do
+  for f in "$PACKAGES_DIR"/deepbook/Published.toml "$PACKAGES_DIR"/token/Published.toml "$PREDICT_DIR/Published.toml" "$DUSDC_DIR/Published.toml" "$PREDICT_MATH_DIR/Published.toml"; do
     if [ -f "$f.bak" ]; then
       mv "$f.bak" "$f"
     fi
@@ -361,7 +362,7 @@ done
   find "$PACKAGES_DIR" -name "Pub.*.toml" -delete 2>/dev/null || true
   find "$SCRIPT_DIR" -maxdepth 1 -name "Pub.*.toml" -delete 2>/dev/null || true
   find "$REPO_DIR" -maxdepth 1 -name "Pub.*.toml" -delete 2>/dev/null || true
-  for f in "$PACKAGES_DIR"/deepbook/Published.toml "$PACKAGES_DIR"/token/Published.toml "$PREDICT_DIR/Published.toml" "$DUSDC_DIR"/Published.toml; do
+  for f in "$PACKAGES_DIR"/deepbook/Published.toml "$PACKAGES_DIR"/token/Published.toml "$PREDICT_DIR/Published.toml" "$DUSDC_DIR"/Published.toml "$PREDICT_MATH_DIR/Published.toml"; do
     [ -f "$f" ] && cp "$f" "$f.bak"
   done
 
@@ -395,6 +396,19 @@ done
   echo "    TreasuryCap: $TREASURY_CAP_ID"
 
   mv "$DUSDC_DIR/Move.toml.bak" "$DUSDC_DIR/Move.toml"
+
+  # Publish predict_math
+  echo "==> Phase 2a: Publishing predict_math..."
+  inject_env "$PREDICT_MATH_DIR/Move.toml" "$CHAIN_ID"
+  cp "$PREDICT_MATH_DIR/Move.lock" "$PREDICT_MATH_DIR/Move.lock.bak"
+
+  PREDICT_MATH_OUTPUT=$(publish_package "$PREDICT_MATH_DIR" "Predict Math")
+  check_publish "$PREDICT_MATH_OUTPUT" "Predict Math"
+
+  PREDICT_MATH_PACKAGE_ID=$(echo "$PREDICT_MATH_OUTPUT" | extract_published_package_id)
+  echo "    Predict Math: $PREDICT_MATH_PACKAGE_ID"
+
+  mv "$PREDICT_MATH_DIR/Move.toml.bak" "$PREDICT_MATH_DIR/Move.toml"
 
   # test-publish regenerates `[pinned.sim.*]` entries in predict/Move.lock with
   # instance-specific local paths. Snapshot so cleanup restores it to pristine.
@@ -490,14 +504,16 @@ PY
   echo "==> Phase 3: Publishing predict..."
 
   inject_env "$PREDICT_DIR/Move.toml" "$CHAIN_ID"
-  python3 - "$PREDICT_DIR/Move.toml" "$PYTH_LAZER_DIR" "$PYTH_LAZER_PACKAGE_ID" "$WORMHOLE_DIR" "$WORMHOLE_PACKAGE_ID" "$BUILD_ENV" <<'PY'
+  python3 - "$PREDICT_DIR/Move.toml" "$PYTH_LAZER_DIR" "$PYTH_LAZER_PACKAGE_ID" "$WORMHOLE_DIR" "$WORMHOLE_PACKAGE_ID" "$PREDICT_MATH_DIR" "$PREDICT_MATH_PACKAGE_ID" "$BUILD_ENV" <<'PY'
 import pathlib, re, sys
 toml_path = pathlib.Path(sys.argv[1])
 pyth_lazer_path = sys.argv[2]
 pyth_lazer_pkg_id = sys.argv[3]
 wormhole_path = sys.argv[4]
 wormhole_pkg_id = sys.argv[5]
-build_env = sys.argv[6]
+predict_math_path = sys.argv[6]
+predict_math_pkg_id = sys.argv[7]
+build_env = sys.argv[8]
 text = toml_path.read_text()
 text = re.sub(
     r"pyth_lazer = \{ git[^}]*\}",
@@ -511,6 +527,8 @@ text = text.rstrip() + (
     f'published-at = "{pyth_lazer_pkg_id}", original-id = "{pyth_lazer_pkg_id}" }}\n'
     f'wormhole = {{ local = "{wormhole_path}", '
     f'published-at = "{wormhole_pkg_id}", original-id = "{wormhole_pkg_id}" }}\n'
+    f'predict_math = {{ local = "{predict_math_path}", '
+    f'published-at = "{predict_math_pkg_id}", original-id = "{predict_math_pkg_id}" }}\n'
 )
 toml_path.write_text(text)
 PY

@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #[test_only]
-module deepbook_predict::math_tests;
+module predict_math::math_tests;
 
-use deepbook_predict::{i64, math::{Self, float_scaling as float}, test_helpers};
+use predict_math::{i64, math::{Self, float_scaling as float}, test_helpers};
 use std::unit_test::assert_eq;
 
 // Independent reference values: round(f_true(x) * 1e9), produced by

@@ -10,7 +10,6 @@ use deepbook_predict::{
     expiry_market::ExpiryMarket,
     flow_test_helpers as helpers,
     market_oracle::MarketOracle,
-    math::{Self, float_scaling as float},
     order,
     plp::{Self, PoolVault},
     predict_manager::PredictManager,
@@ -19,6 +18,7 @@ use deepbook_predict::{
     pyth_source::PythSource,
     test_constants
 };
+use predict_math::math::{Self, float_scaling as float};
 use std::unit_test::{assert_eq, destroy};
 use sui::clock::Clock;
 
