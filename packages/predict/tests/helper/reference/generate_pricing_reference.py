@@ -41,7 +41,7 @@ scale). No param is ever rounded, shortened, or re-derived from another column.
 
 The *forward the contract actually prices with* is NOT the raw pushed forward: in
 `pricing::live_inputs` the fresh-Pyth path re-derives it as
-    forward_live = mul(spot, div(forward, spot))            (two deepbook::math floors)
+    forward_live = mul(spot, div(forward, spot))            (two predict math floors)
 This is the dominant production path (Pyth spot fresh). We reproduce that floor
 round-trip below to obtain the byte-identical forward the model prices at, then
 compute the TRUE Phi(d2) from it. The round-trip is INPUT CONSTRUCTION (it builds
@@ -56,7 +56,7 @@ fixed-point evaluation of UP(K)=Phi(d2), propagated from the math layer's
 DOCUMENTED per-primitive budgets (math.move "Precision contract"):
     ln   : relative error <= 1e-7        (k = ln(strike/forward))
     sqrt : floor, <= 1 ULP (1e-9)
-    mul / div / square (deepbook::math, i64): floor, <= 1 ULP (1e-9) each
+    mul / div / square (predict math, i64): floor, <= 1 ULP (1e-9) each
     normal_cdf : absolute error <= 2e-8  (reaches the quote 1:1)
 
 evaluated at the TRUE (reference) values — NOT read from the contract. The
@@ -130,12 +130,12 @@ CSV_PATH = os.path.join(HERE, "..", "..", "..", "simulations", "data", "scenario
 OUT_PATH = os.path.join(HERE, "..", "..", "pricing", "pricing_reference_data.move")
 
 
-# --- deepbook::math floor ops (INPUT construction only: forward round-trip) ---
-def fp_div(x, y):  # deepbook::math::div: floor(x * F / y)
+# --- predict math floor ops (INPUT construction only: forward round-trip) ---
+def fp_div(x, y):  # math::div: floor(x * F / y)
     return (x * F) // y
 
 
-def fp_mul(x, y):  # deepbook::math::mul: floor(x * y / F)
+def fp_mul(x, y):  # math::mul: floor(x * y / F)
     return (x * y) // F
 
 

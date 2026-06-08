@@ -8,8 +8,7 @@
 /// changing future-oracle defaults.
 module deepbook_predict::market_oracle_config;
 
-use deepbook::math;
-use deepbook_predict::config_constants;
+use deepbook_predict::{config_constants, math};
 
 const EInvalidBasisBounds: u64 = 0;
 

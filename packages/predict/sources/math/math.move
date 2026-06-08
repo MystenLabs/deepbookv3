@@ -4,6 +4,8 @@
 /// Math utilities for fixed-point arithmetic (FLOAT_SCALING = 1e9).
 ///
 /// Provides:
+/// - mul(x, y): 1e9-scaled multiplication, rounded down
+/// - div(x, y): 1e9-scaled division, rounded down
 /// - ln(x): natural logarithm
 /// - exp(x): exponential function for signed fixed-point inputs
 /// - sqrt(x, precision): fixed-point square root
@@ -44,13 +46,13 @@
 /// `exp` is invoked only internally by `normal_cdf` (the `exp(-x²/2)` tail
 /// factor) with moderate negative arguments, where its relative error is ~1e-9;
 /// the large-positive-argument path is unused on the pricing path. No primitive
-/// carries a systematic bias against the pool — the protocol's designed rounding
-/// direction lives downstream in `deepbook::math` mul/div, far above this
+/// carries a systematic bias against the pool — the protocol's designed
+/// floor-rounding direction lives in this module's `mul`/`div`, far above this
 /// resolution. Budgets are asserted in `math_tests.move` against an independent
 /// reference (`tests/helper/reference/generate_constants.py`).
 module deepbook_predict::math;
 
-use deepbook_predict::{constants, i64};
+use deepbook_predict::i64;
 
 const EInputZero: u64 = 0;
 const EInvalidPrecision: u64 = 1;
@@ -112,14 +114,28 @@ const INV_13_U128: u128 = 76_923_077;
 
 // === Public Functions ===
 
+/// Fixed-point scaling factor (1e9) for math operations and prices.
+/// 500_000_000 = 50%, 1_000_000_000 = 100%.
+public macro fun float_scaling(): u64 { 1_000_000_000 }
+
+/// Multiply two 1e9-scaled fixed-point values, rounding down.
+public fun mul(x: u64, y: u64): u64 {
+    (((x as u128) * (y as u128)) / F) as u64
+}
+
+/// Divide two 1e9-scaled fixed-point values, rounding down.
+public fun div(x: u64, y: u64): u64 {
+    (((x as u128) * F) / (y as u128)) as u64
+}
+
 /// Natural logarithm of x (in FLOAT_SCALING 1e9).
 /// Returns a signed fixed-point result.
 /// Precision: relative error <= 1e-7 (see module "Precision contract").
 public fun ln(x: u64): i64::I64 {
     assert!(x > 0, EInputZero);
-    if (x == constants::float_scaling!()) return i64::zero();
+    if (x == float_scaling!()) return i64::zero();
 
-    if (x < constants::float_scaling!()) {
+    if (x < float_scaling!()) {
         let inv = ((F * F / (x as u128)) as u64);
         let result = ln(inv);
         return result.neg()
@@ -137,7 +153,7 @@ public fun ln(x: u64): i64::I64 {
 public fun exp(x: &i64::I64): u64 {
     let x_mag = x.magnitude();
     let x_negative = x.is_negative();
-    if (x_mag == 0) return constants::float_scaling!();
+    if (x_mag == 0) return float_scaling!();
     // e^x must fit the u64 return. For large positive x the `<<` reduction below
     // would silently wrap (Move shifts truncate, they do not abort), so guard the
     // u64-fit bound explicitly. Negative x gives e^x < 1 and never overflows.
@@ -154,8 +170,8 @@ public fun exp(x: &i64::I64): u64 {
 public fun normal_cdf(x: &i64::I64): u64 {
     let x_mag = x.magnitude();
     let x_negative = x.is_negative();
-    if (x_mag > 8 * constants::float_scaling!()) {
-        return if (x_negative) { 0 } else { constants::float_scaling!() }
+    if (x_mag > 8 * float_scaling!()) {
+        return if (x_negative) { 0 } else { float_scaling!() }
     };
     (normal_cdf_u128((x_mag as u128), x_negative) as u64)
 }
@@ -164,8 +180,8 @@ public fun normal_cdf(x: &i64::I64): u64 {
 /// unrolled Newton iterations.
 /// Precision: integer floor-sqrt, exact to <= 1 ULP. See module "Precision contract".
 public fun sqrt(x: u64, precision: u64): u64 {
-    assert!(precision > 0 && precision <= constants::float_scaling!(), EInvalidPrecision);
-    let multiplier = (constants::float_scaling!() / precision) as u128;
+    assert!(precision > 0 && precision <= float_scaling!(), EInvalidPrecision);
+    let multiplier = (float_scaling!() / precision) as u128;
     let scaled = (x as u128) * multiplier * F;
     (sqrt_u128(scaled) / multiplier) as u64
 }
@@ -299,7 +315,7 @@ fun normal_cdf_u128(x: u128, x_negative: bool): u128 {
 fun normalize(x: u64): (u64, u64) {
     let mut y = x;
     let mut n: u64 = 0;
-    let scale = constants::float_scaling!();
+    let scale = float_scaling!();
 
     if (y >> 32 >= scale) { y = y >> 32; n = n + 32; };
     if (y >> 16 >= scale) { y = y >> 16; n = n + 16; };

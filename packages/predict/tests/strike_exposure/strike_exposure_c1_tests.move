@@ -20,12 +20,12 @@
 #[test_only]
 module deepbook_predict::strike_exposure_c1_tests;
 
-use deepbook::math;
 use deepbook_predict::{
     constants,
     expiry_market::ExpiryMarket,
     flow_test_helpers as helpers,
     market_oracle::MarketOracle,
+    math,
     order,
     plp::PoolVault,
     predict_manager::PredictManager,

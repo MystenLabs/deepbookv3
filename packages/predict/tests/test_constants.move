@@ -3,12 +3,12 @@
 
 /// Shared constants for Predict test code — the single source of truth for the
 /// market/price/strike/supply values the fixtures bring up. Values that exist in
-/// the production `constants` module are aliased from it (Rule 7), never
+/// the production `constants` or `math` modules are aliased from them, never
 /// duplicated; the rest are deliberate test-fixture choices documented inline.
 #[test_only]
 module deepbook_predict::test_constants;
 
-use deepbook_predict::constants;
+use deepbook_predict::{constants, math};
 
 // === Test Addresses ===
 const ADMIN: address = @0x0;
@@ -24,10 +24,10 @@ public fun bob(): address { BOB }
 
 public fun carol(): address { CAROL }
 
-// === Unit accessors (aliased from production `constants`) ===
+// === Unit accessors (aliased from production modules) ===
 
 /// FLOAT_SCALING (1e9): `500_000_000` = 50%, `1_000_000_000` = 100%.
-public fun float(): u64 { constants::float_scaling!() }
+public fun float(): u64 { math::float_scaling!() }
 
 /// One whole DUSDC quote unit = `10^dusdc_decimals!()` = `1_000_000` raw units.
 public fun dusdc_unit(): u64 { 10u64.pow(constants::dusdc_decimals!()) }
@@ -81,11 +81,11 @@ public fun default_live_price(): u64 { 100_000_000_000 }
 public fun default_svi_a(): u64 { 1 }
 
 /// Default SVI `rho` magnitude for live oracle test fixtures: +1.0.
-public fun default_svi_rho_magnitude(): u64 { constants::float_scaling!() }
+public fun default_svi_rho_magnitude(): u64 { math::float_scaling!() }
 
 /// Default SVI `m` for live oracle test fixtures: far enough right to keep the
 /// wing contribution rounded to zero for default-grid strikes.
-public fun default_svi_m(): u64 { 10 * constants::float_scaling!() }
+public fun default_svi_m(): u64 { 10 * math::float_scaling!() }
 
 /// Default trader-manager deposit in the composite bring-up; large enough to fund
 /// several leveraged mints plus fees.
@@ -94,7 +94,7 @@ public fun default_manager_deposit(): u64 { 30_000_000_000 }
 // === Shared happy-path flow values (the short-expiry lifecycle tests) ===
 
 /// 1x leverage in FLOAT_SCALING (a flat floor schedule => zero floor shares).
-public fun leverage_one_x(): u64 { constants::float_scaling!() }
+public fun leverage_one_x(): u64 { math::float_scaling!() }
 
 /// Short expiry (`now + 100s`) used by the lifecycle/payout flow tests: near
 /// enough that the leverage floor schedule is non-flat (a 2x order carries a real

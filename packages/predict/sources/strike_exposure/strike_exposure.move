@@ -12,11 +12,12 @@
 /// this module.
 module deepbook_predict::strike_exposure;
 
-use deepbook::{constants::max_u64, math};
+use deepbook::constants::max_u64;
 use deepbook_predict::{
     constants,
     liquidation_book::{Self, LiquidationBook},
     market_oracle::MarketOracle,
+    math,
     order::{Self, Order},
     order_events,
     pricing,

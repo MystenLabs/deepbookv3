@@ -4,7 +4,7 @@
 #[test_only]
 module deepbook_predict::math_tests;
 
-use deepbook_predict::{constants::float_scaling as float, i64, math, test_helpers};
+use deepbook_predict::{i64, math::{Self, float_scaling as float}, test_helpers};
 use std::unit_test::assert_eq;
 
 // Independent reference values: round(f_true(x) * 1e9), produced by
@@ -69,6 +69,32 @@ const SQRT_U64MAX_PREC_ONE: u64 = 4_294_967_295; // sqrt(u64::MAX, 1) = isqrt(u6
 const EXP_MAX_INPUT: u64 = 23_638_153_618; // = math::EXP_MAX_INPUT (budget-conservative u64-fit bound)
 const CDF_SMALL_THRESHOLD: u64 = 662_910_000; // small/medium split in normal_cdf
 const CDF_MEDIUM_THRESHOLD: u64 = 5_656_854_249; // medium/clamp split = sqrt(32) * 1e9
+
+// === Fixed-Point Helpers ===
+
+#[test]
+fun mul_floors_scaled_product() {
+    // 1.5 * 2.25 = 3.375
+    assert_eq!(math::mul(float!() + float!() / 2, 2 * float!() + float!() / 4), 3_375_000_000);
+}
+
+#[test]
+fun mul_rounds_down_to_integer_unit() {
+    // floor(1 * 1 / 1e9) = 0
+    assert_eq!(math::mul(1, 1), 0);
+}
+
+#[test]
+fun div_floors_scaled_quotient() {
+    // floor(5 / 2 * 1e9) = 2.5e9
+    assert_eq!(math::div(5 * float!(), 2 * float!()), 2_500_000_000);
+}
+
+#[test]
+fun div_rounds_down_to_integer_unit() {
+    // floor(1 * 1e9 / 3) = 333_333_333
+    assert_eq!(math::div(1, 3), 333_333_333);
+}
 
 // === ln ===
 

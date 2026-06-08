@@ -16,7 +16,8 @@
 module deepbook_predict::pricing_tests;
 
 use deepbook_predict::{
-    constants::{Self, float_scaling as float},
+    constants,
+    math::float_scaling as float,
     oracle_fixture,
     pricing,
     test_constants

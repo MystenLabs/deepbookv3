@@ -10,9 +10,9 @@
 /// the pool's DUSDC.
 module deepbook_predict::incentive;
 
-use deepbook::math;
 use deepbook_predict::{
     constants,
+    math,
     pricing,
     protocol_config::ProtocolConfig,
     pyth_source::PythSource

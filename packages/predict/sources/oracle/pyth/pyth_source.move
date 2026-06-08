@@ -10,12 +10,7 @@
 /// callers own feed binding and freshness (see `pricing::assert_pyth_spot_fresh`).
 module deepbook_predict::pyth_source;
 
-use deepbook_predict::{
-    constants,
-    math as predict_math,
-    oracle_events,
-    protocol_config::ProtocolConfig
-};
+use deepbook_predict::{constants, math, oracle_events, protocol_config::ProtocolConfig};
 use pyth_lazer::{i16::I16 as LazerI16, i64::I64 as LazerI64, update::Update as LazerUpdate};
 use sui::{clock::Clock, vec_set::VecSet};
 
@@ -204,7 +199,7 @@ fun extract_spot(update: &LazerUpdate, feed_id: u32): (u64, u64) {
 /// Convert a Pyth Lazer `(price, exponent)` pair to the predict package's
 /// 1e9-scaled u64. Target scaling is `price_1e9 = magnitude * 10^(exponent + 9)`.
 /// Aborts on negative price (crypto spot is always positive). Shift bounds are
-/// enforced inside `predict_math::pow10` (real feeds use exponents in [-12, -4]).
+/// enforced inside `math::pow10` (real feeds use exponents in [-12, -4]).
 fun normalize_pyth_price(price: LazerI64, exponent: LazerI16): u64 {
     assert!(!price.get_is_negative(), ELazerNegativePrice);
     let magnitude = price.get_magnitude_if_positive();
@@ -222,7 +217,7 @@ fun normalize_pyth_price(price: LazerI64, exponent: LazerI16): u64 {
         if (exp_mag <= target) {
             scale_up(magnitude, target - exp_mag)
         } else {
-            magnitude / predict_math::pow10(exp_mag - target)
+            magnitude / math::pow10(exp_mag - target)
         }
     } else {
         scale_up(magnitude, target + exp_mag)
@@ -230,7 +225,7 @@ fun normalize_pyth_price(price: LazerI64, exponent: LazerI16): u64 {
 }
 
 fun scale_up(magnitude: u64, shift: u64): u64 {
-    let factor = predict_math::pow10(shift);
+    let factor = math::pow10(shift);
     magnitude * factor
 }
 

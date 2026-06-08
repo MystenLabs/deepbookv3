@@ -4,7 +4,7 @@
 #[test_only]
 module deepbook_predict::plp_tests;
 
-use deepbook_predict::{constants::float_scaling as float, plp};
+use deepbook_predict::{math::float_scaling as float, plp};
 use std::unit_test::assert_eq;
 
 const NAV_OPTIMISTIC: u64 = 1_000;

@@ -9,7 +9,6 @@
 /// profit accounting remain outside this module.
 module deepbook_predict::expiry_market;
 
-use deepbook::math;
 use deepbook_predict::{
     claim_events,
     config_events,
@@ -18,6 +17,7 @@ use deepbook_predict::{
     ewma_config::EwmaConfig,
     expiry_cash::{Self, ExpiryCash},
     market_oracle::{MarketOracle, MarketOracleCap},
+    math,
     order::{Self, Order},
     order_events,
     predict_manager::{PredictManager, PredictTradeProof},

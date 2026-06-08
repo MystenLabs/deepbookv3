@@ -8,8 +8,7 @@
 /// active expiry rebate-reserve accounting.
 module deepbook_predict::expiry_cash_config;
 
-use deepbook::math;
-use deepbook_predict::config_constants;
+use deepbook_predict::{config_constants, math};
 
 /// Rebate reserve policy expressed in Predict's 1e9 fixed-point scaling.
 public struct ExpiryCashConfig has store {

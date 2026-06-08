@@ -15,8 +15,7 @@
 /// totals so wide valuation reads can skip page loads for complete middle pages.
 module deepbook_predict::strike_nav_matrix;
 
-use deepbook::math;
-use deepbook_predict::{constants, pricing::CurvePoint, strike_grid::StrikeGrid};
+use deepbook_predict::{constants, math, pricing::CurvePoint, strike_grid::StrikeGrid};
 use sui::table::{Self, Table};
 
 const PAGE_SLOTS: u64 = 128;

@@ -9,12 +9,11 @@
 /// or position state.
 module deepbook_predict::pricing;
 
-use deepbook::math;
 use deepbook_predict::{
     constants,
     i64,
     market_oracle::{MarketOracle, SVIParams},
-    math as predict_math,
+    math,
     pricing_config::PricingConfig,
     pyth_source::PythSource
 };
@@ -219,7 +218,7 @@ fun compute_range_price(svi: &SVIParams, forward: u64, lower: u64, higher: u64):
 /// Compute the fair UP tail price for `strike`.
 fun compute_up_price(svi: &SVIParams, forward: u64, strike: u64): u64 {
     if (strike == constants::neg_inf!()) {
-        return constants::float_scaling!()
+        return math::float_scaling!()
     };
     if (strike == constants::pos_inf!()) {
         return 0
@@ -237,14 +236,14 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
 
     let strike_ratio = math::div(strike, forward);
     assert!(strike_ratio > 0, EInvalidStrikeRatio);
-    let k = predict_math::ln(strike_ratio);
+    let k = math::ln(strike_ratio);
     let m = svi_params.m();
     let k_minus_m = k.sub(&m);
     let k_minus_m_squared = k_minus_m.square_scaled();
     let sigma = svi_params.sigma();
     let sigma_squared = math::mul(sigma, sigma);
     let sqrt_input = k_minus_m_squared + sigma_squared;
-    let sq = predict_math::sqrt(sqrt_input, constants::float_scaling!());
+    let sq = math::sqrt(sqrt_input, math::float_scaling!());
     let sq_i64 = i64::from_u64(sq);
 
     let rho = svi_params.rho();
@@ -258,14 +257,14 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     let total_var = a + wing_var;
     assert!(total_var > 0, EZeroVariance);
 
-    let sqrt_var = predict_math::sqrt(total_var, constants::float_scaling!());
+    let sqrt_var = math::sqrt(total_var, math::float_scaling!());
     let sqrt_var_i64 = i64::from_u64(sqrt_var);
     let half_var_i64 = i64::from_u64(total_var / 2);
     let d2_numerator = k.add(&half_var_i64);
     let d2 = d2_numerator.div_scaled(&sqrt_var_i64);
     let d2 = d2.neg();
 
-    predict_math::normal_cdf(&d2)
+    math::normal_cdf(&d2)
 }
 
 fun assert_curve_inputs(tick_size: u64, min_strike: u64, max_strike: u64) {

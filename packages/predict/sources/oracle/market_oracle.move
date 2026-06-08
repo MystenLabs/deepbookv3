@@ -9,13 +9,13 @@
 /// state. Live oracle reads are resolved by `pricing.move`.
 module deepbook_predict::market_oracle;
 
-use deepbook::math;
 use deepbook_predict::{
     admin::AdminCap,
     config_events,
     constants,
     i64,
     market_oracle_config::MarketOracleConfig,
+    math,
     oracle_events,
     protocol_config::ProtocolConfig,
     pyth_source::PythSource,
@@ -413,7 +413,7 @@ public(package) fun set_allowed_versions(market: &mut MarketOracle, allowed_vers
 public(package) fun assert_valid_svi(svi: &SVIParams) {
     let b = svi.b();
     assert!(b >= constants::svi_b_min!() && b <= constants::svi_b_max!(), EInvalidSviB);
-    assert!(svi.rho().magnitude() <= constants::float_scaling!(), EInvalidSviRho);
+    assert!(svi.rho().magnitude() <= math::float_scaling!(), EInvalidSviRho);
     let sigma = svi.sigma();
     assert!(
         sigma >= constants::svi_sigma_min!() && sigma <= constants::svi_sigma_max!(),

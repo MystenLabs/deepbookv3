@@ -29,6 +29,7 @@ module deepbook_predict::pricing_exact_tests;
 
 use deepbook_predict::{
     constants,
+    math,
     oracle_fixture,
     pricing,
     pricing_reference_data as ref_data,
@@ -106,7 +107,7 @@ fun at_the_forward_is_exactly_one_half() {
         fx.clock(),
     );
     // 0.5 in FLOAT_SCALING: a perfectly balanced at-the-forward digital.
-    assert_eq!(up, constants::float_scaling!() / 2);
+    assert_eq!(up, math::float_scaling!() / 2);
 
     oracle_fixture::return_oracle(pyth, oracle, config);
     fx.finish();

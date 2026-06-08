@@ -9,8 +9,7 @@
 /// themselves contract probability.
 module deepbook_predict::strike_exposure_config;
 
-use deepbook::math;
-use deepbook_predict::{config_constants, constants, math as predict_math};
+use deepbook_predict::{config_constants, constants, math};
 
 const ETerminalFloorExceedsLiquidationLtv: u64 = 0;
 const EOrderBelowLiquidationThreshold: u64 = 1;
@@ -90,7 +89,7 @@ public(package) fun floor_index_at_ms(
     expiry_ms: u64,
     timestamp_ms: u64,
 ): u64 {
-    let base = constants::float_scaling!();
+    let base = math::float_scaling!();
     if (timestamp_ms >= expiry_ms) return config.terminal_floor_index;
 
     let window = constants::leverage_floor_window_ms!();
@@ -264,23 +263,23 @@ fun fee_rate(
 }
 
 fun raw_bernoulli_fee_rate(config: &StrikeExposureConfig, probability: u64): u64 {
-    assert!(probability <= constants::float_scaling!(), EInvalidFeeProbability);
-    if (probability == 0 || probability == constants::float_scaling!()) return 0;
+    assert!(probability <= math::float_scaling!(), EInvalidFeeProbability);
+    if (probability == 0 || probability == math::float_scaling!()) return 0;
 
-    let complement = constants::float_scaling!() - probability;
+    let complement = math::float_scaling!() - probability;
     let variance = math::mul(probability, complement);
-    let bernoulli_factor = predict_math::sqrt(variance, constants::float_scaling!());
+    let bernoulli_factor = math::sqrt(variance, math::float_scaling!());
     math::mul(config.base_fee, bernoulli_factor)
 }
 
 /// Linear ramp that scales the trade fee up as expiry approaches.
 fun expiry_fee_multiplier(config: &StrikeExposureConfig, time_to_expiry_ms: u64): u64 {
-    if (time_to_expiry_ms >= config.expiry_fee_window_ms) return constants::float_scaling!();
+    if (time_to_expiry_ms >= config.expiry_fee_window_ms) return math::float_scaling!();
 
     let phase = math::div(
         config.expiry_fee_window_ms - time_to_expiry_ms,
         config.expiry_fee_window_ms,
     );
-    let ramp = math::mul(config.expiry_fee_max_multiplier - constants::float_scaling!(), phase);
-    constants::float_scaling!() + ramp
+    let ramp = math::mul(config.expiry_fee_max_multiplier - math::float_scaling!(), phase);
+    math::float_scaling!() + ramp
 }

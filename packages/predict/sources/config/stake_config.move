@@ -12,8 +12,7 @@
 /// carries no rebate-specific cap).
 module deepbook_predict::stake_config;
 
-use deepbook::math;
-use deepbook_predict::{config_constants, constants};
+use deepbook_predict::{config_constants, constants, math};
 
 public struct StakeConfig has store {
     /// Active stake at the curve kink (half of max benefits), in raw DEEP units.
@@ -76,7 +75,7 @@ public(package) fun set_benefit_powers(config: &mut StakeConfig, lower: u64, upp
 /// capped at 1 above `upper`. Relies on the `upper > 2 * lower` invariant (so
 /// `lower > 0` and `upper - lower > 0`).
 fun benefit_ratio(config: &StakeConfig, active_stake: u64): u64 {
-    let full = constants::float_scaling!();
+    let full = math::float_scaling!();
     if (active_stake >= config.upper_benefit_power) return full;
     let half = full / 2;
     if (active_stake <= config.lower_benefit_power) {

@@ -11,13 +11,13 @@
 /// It does not own expiry-local strike, oracle, or position state.
 module deepbook_predict::plp;
 
-use deepbook::math;
 use deepbook_predict::{
     admin::AdminCap,
     constants,
     expiry_market::ExpiryMarket,
     incentive::{Self, IncentiveState},
     market_oracle::MarketOracle,
+    math,
     pool_accounting::{Self, Ledger},
     predict_manager::PredictManager,
     pricing,

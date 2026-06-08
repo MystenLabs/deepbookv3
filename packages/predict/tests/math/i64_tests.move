@@ -4,7 +4,7 @@
 #[test_only]
 module deepbook_predict::i64_tests;
 
-use deepbook_predict::{constants::float_scaling as float, i64};
+use deepbook_predict::{i64, math::float_scaling as float};
 use std::unit_test::assert_eq;
 
 // === Constructors and getters ===

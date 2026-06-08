@@ -5,12 +5,12 @@
 #[test_only]
 module deepbook_predict::plp_nav_haircut_tests;
 
-use deepbook::math;
 use deepbook_predict::{
-    constants::{Self, float_scaling as float},
+    constants,
     expiry_market::ExpiryMarket,
     flow_test_helpers as helpers,
     market_oracle::MarketOracle,
+    math::{Self, float_scaling as float},
     order,
     plp::{Self, PoolVault},
     predict_manager::PredictManager,

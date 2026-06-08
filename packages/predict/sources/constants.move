@@ -7,7 +7,7 @@
 /// - Prices/percentages use FLOAT_SCALING (1e9): 500_000_000 = 50%
 /// - Quantities are in 6-decimal quote units: 1_000_000 = 1 contract = one quote unit
 /// - At settlement, winners receive `quantity` directly
-/// - Use deepbook::math for all mul/div operations
+/// - Use `math` for all fixed-point scaling and mul/div operations
 module deepbook_predict::constants;
 
 // === Package Versioning ===
@@ -18,11 +18,7 @@ public macro fun current_version(): u64 { 1 }
 
 // === Scaling ===
 
-/// Fixed-point scaling factor (1e9) for math operations and prices.
-/// 500_000_000 = 50%, 1_000_000_000 = 100%
-public macro fun float_scaling(): u64 { 1_000_000_000 }
-
-/// Decimal exponent of `float_scaling!()` (i.e. `float_scaling!() == 10^9`).
+/// Decimal exponent of `math::float_scaling!()` (i.e. `math::float_scaling!() == 10^9`).
 /// Used when normalizing oracle prices from their native `(magnitude, exponent)`
 /// form into the package's 1e9-scaled `u64`.
 public(package) macro fun float_scaling_decimals(): u64 { 9 }
