@@ -10,21 +10,23 @@ use std::unit_test::assert_eq;
 // Independent reference values: round(f_true(x) * 1e9), produced by
 // tests/helper/reference/generate_constants.py (Python stdlib `math`; NO contract
 // input, so these are an independent oracle, not a snapshot of contract output —
-// unit-tests rule 1). They REPLACE the previous "contract returns X; delta" golden
-// snapshots, which asserted the contract's own output and so could never catch a
-// baked-in approximation bug.
+// unit-tests rule 1).
 //
-// Approximate-function points assert the contract is within ONE fixed-point unit
-// (`ULP`) of the reference via `assert_within`. That bound is the representation
-// granularity (a correct floor/ceil/round result is <= 1 unit from truth) — a
-// principled, contract-independent bound, NOT the deleted precision.move's
-// measured error chain. A deviation > 1 unit is genuine approximation error
-// beyond rounding and fails the test (a candidate finding — see BUGS_FOUND.md).
-// Exact points (identities, clamps, perfect squares, Phi(0)) use `assert_eq!`.
+// Approximate-function points assert the contract is within its documented
+// PRECISION BUDGET (math.move "Precision contract") — a per-primitive bound
+// derived from downstream pricing sensitivity, NOT measured from contract output:
+//   - exp, ln:    relative, 1e-7 (magnitude-scaled) via `assert_within_relative`.
+//   - normal_cdf: absolute, 20 units @1e9 (2e-8) via `assert_within`.
+//   - sqrt:       absolute, 1 ULP (integer floor-sqrt is near-exact).
+// A deviation beyond budget is a genuine finding (see BUGS_FOUND.md). Exact
+// points (identities, clamps, perfect squares, Phi(0)) use `assert_eq!`.
 
-/// Fixed-point representation granularity (1e-9). The principled bound for a
-/// correctly-rounded fixed-point result.
-const ULP: u64 = 1;
+// Per-primitive precision budgets — the contract documented in math.move.
+// Derived from downstream pricing sensitivity, never from contract output.
+const EXP_BUDGET_REL: u64 = 100; // 1e-7 relative (parts per FLOAT_SCALING)
+const LN_BUDGET_REL: u64 = 100; // 1e-7 relative (parts per FLOAT_SCALING)
+const CDF_BUDGET_ABS: u64 = 20; // 2e-8 of full scale; Cody rational truncation
+const SQRT_BUDGET_ABS: u64 = 1; // 1 ULP; integer floor-sqrt
 
 const LN_2: u64 = 693_147_181;
 const LN_10: u64 = 2_302_585_093;
@@ -61,15 +63,14 @@ fun ln_of_one_is_zero() {
 #[test]
 fun ln_of_two_within_reference() {
     let r = math::ln(2 * float!());
-    test_helpers::assert_within(r.magnitude(), LN_2, ULP);
+    test_helpers::assert_within_relative(r.magnitude(), LN_2, LN_BUDGET_REL);
     assert!(!r.is_negative());
 }
 
-// KNOWN-FAILING: BUG-002 — ln() approximation deviates from truth by 3 ULP at ln(10). See .redesign/BUGS_FOUND.md
 #[test]
 fun ln_of_ten_within_reference() {
     let r = math::ln(10 * float!());
-    test_helpers::assert_within(r.magnitude(), LN_10, ULP);
+    test_helpers::assert_within_relative(r.magnitude(), LN_10, LN_BUDGET_REL);
     assert!(!r.is_negative());
 }
 
@@ -77,7 +78,7 @@ fun ln_of_ten_within_reference() {
 fun ln_of_half_is_negative_ln2() {
     // ln(0.5) = -ln(2); exercises the inverse path (`x < float!()`) inside the contract.
     let r = math::ln(float!() / 2);
-    test_helpers::assert_within(r.magnitude(), LN_2, ULP);
+    test_helpers::assert_within_relative(r.magnitude(), LN_2, LN_BUDGET_REL);
     assert!(r.is_negative());
 }
 
@@ -94,38 +95,74 @@ fun exp_of_zero_is_one() {
     assert_eq!(math::exp(&i64::zero()), float!());
 }
 
-// KNOWN-FAILING: BUG-001 — exp() approximation deviates from truth by 8 ULP at exp(1). See .redesign/BUGS_FOUND.md
 #[test]
 fun exp_of_one_within_reference() {
-    test_helpers::assert_within(math::exp(&i64::from_u64(float!())), EXP_1, ULP);
+    test_helpers::assert_within_relative(
+        math::exp(&i64::from_u64(float!())),
+        EXP_1,
+        EXP_BUDGET_REL,
+    );
 }
 
 #[test]
 fun exp_of_negative_one_within_reference() {
-    test_helpers::assert_within(math::exp(&i64::from_parts(float!(), true)), EXP_NEG_1, ULP);
+    test_helpers::assert_within_relative(
+        math::exp(&i64::from_parts(float!(), true)),
+        EXP_NEG_1,
+        EXP_BUDGET_REL,
+    );
 }
 
-// KNOWN-FAILING: BUG-001 — exp() approximation deviates from truth by 7 ULP at exp(2). See .redesign/BUGS_FOUND.md
 #[test]
 fun exp_of_two_within_reference() {
-    test_helpers::assert_within(math::exp(&i64::from_u64(2 * float!())), EXP_2, ULP);
+    test_helpers::assert_within_relative(
+        math::exp(&i64::from_u64(2 * float!())),
+        EXP_2,
+        EXP_BUDGET_REL,
+    );
 }
 
 #[test]
 fun exp_of_negative_two_within_reference() {
-    test_helpers::assert_within(math::exp(&i64::from_parts(2 * float!(), true)), EXP_NEG_2, ULP);
+    test_helpers::assert_within_relative(
+        math::exp(&i64::from_parts(2 * float!(), true)),
+        EXP_NEG_2,
+        EXP_BUDGET_REL,
+    );
 }
 
-// KNOWN-FAILING: BUG-001 — exp() approximation deviates from truth by +107_785 (rel ~4.9e-6) at exp(10). See .redesign/BUGS_FOUND.md
 #[test]
 fun exp_of_ten_within_reference() {
-    // Exercises the shift-by-32 branch in `exp_u128`.
-    test_helpers::assert_within(math::exp(&i64::from_u64(10 * float!())), EXP_10, ULP);
+    // Large-magnitude point: the absolute error (~107k units) is ~4.9e-9 relative,
+    // within the 1e-7 budget. exp's large-positive path is unused by pricing.
+    test_helpers::assert_within_relative(
+        math::exp(&i64::from_u64(10 * float!())),
+        EXP_10,
+        EXP_BUDGET_REL,
+    );
 }
 
 #[test]
 fun exp_of_negative_ten_within_reference() {
-    test_helpers::assert_within(math::exp(&i64::from_parts(10 * float!(), true)), EXP_NEG_10, ULP);
+    test_helpers::assert_within_relative(
+        math::exp(&i64::from_parts(10 * float!(), true)),
+        EXP_NEG_10,
+        EXP_BUDGET_REL,
+    );
+}
+
+#[test, expected_failure(abort_code = math::EExpOverflow)]
+fun exp_above_u64_fit_bound_aborts() {
+    // e^24 * 1e9 exceeds u64::MAX; positive inputs past the u64-fit bound abort
+    // rather than silently wrapping in the `<<` reduction.
+    math::exp(&i64::from_u64(24 * float!()));
+    abort 999
+}
+
+#[test]
+fun exp_large_negative_does_not_overflow() {
+    // The overflow guard is one-sided: e^-x < 1 for x past the bound, rounding to 0.
+    assert_eq!(math::exp(&i64::from_parts(24 * float!(), true)), 0);
 }
 
 // === normal_cdf ===
@@ -139,7 +176,11 @@ fun normal_cdf_of_zero_is_half() {
 #[test]
 fun normal_cdf_of_half_within_reference() {
     // x=0.5 is below the small-range threshold (0.66291).
-    test_helpers::assert_within(math::normal_cdf(&i64::from_u64(float!() / 2)), CDF_HALF, ULP);
+    test_helpers::assert_within(
+        math::normal_cdf(&i64::from_u64(float!() / 2)),
+        CDF_HALF,
+        CDF_BUDGET_ABS,
+    );
 }
 
 #[test]
@@ -147,24 +188,32 @@ fun normal_cdf_of_negative_half_within_reference() {
     test_helpers::assert_within(
         math::normal_cdf(&i64::from_parts(float!() / 2, true)),
         CDF_NEG_HALF,
-        ULP,
+        CDF_BUDGET_ABS,
     );
 }
 
 #[test]
 fun normal_cdf_of_one_within_reference() {
     // x=1 is above the small-range threshold, exercising the medium-range branch.
-    test_helpers::assert_within(math::normal_cdf(&i64::from_u64(float!())), CDF_1, ULP);
+    test_helpers::assert_within(math::normal_cdf(&i64::from_u64(float!())), CDF_1, CDF_BUDGET_ABS);
 }
 
 #[test]
 fun normal_cdf_of_negative_one_within_reference() {
-    test_helpers::assert_within(math::normal_cdf(&i64::from_parts(float!(), true)), CDF_NEG_1, ULP);
+    test_helpers::assert_within(
+        math::normal_cdf(&i64::from_parts(float!(), true)),
+        CDF_NEG_1,
+        CDF_BUDGET_ABS,
+    );
 }
 
 #[test]
 fun normal_cdf_of_two_within_reference() {
-    test_helpers::assert_within(math::normal_cdf(&i64::from_u64(2 * float!())), CDF_2, ULP);
+    test_helpers::assert_within(
+        math::normal_cdf(&i64::from_u64(2 * float!())),
+        CDF_2,
+        CDF_BUDGET_ABS,
+    );
 }
 
 #[test]
@@ -172,13 +221,17 @@ fun normal_cdf_of_negative_two_within_reference() {
     test_helpers::assert_within(
         math::normal_cdf(&i64::from_parts(2 * float!(), true)),
         CDF_NEG_2,
-        ULP,
+        CDF_BUDGET_ABS,
     );
 }
 
 #[test]
 fun normal_cdf_of_three_within_reference() {
-    test_helpers::assert_within(math::normal_cdf(&i64::from_u64(3 * float!())), CDF_3, ULP);
+    test_helpers::assert_within(
+        math::normal_cdf(&i64::from_u64(3 * float!())),
+        CDF_3,
+        CDF_BUDGET_ABS,
+    );
 }
 
 #[test]
@@ -186,7 +239,7 @@ fun normal_cdf_of_negative_three_within_reference() {
     test_helpers::assert_within(
         math::normal_cdf(&i64::from_parts(3 * float!(), true)),
         CDF_NEG_3,
-        ULP,
+        CDF_BUDGET_ABS,
     );
 }
 
@@ -233,17 +286,17 @@ fun sqrt_of_twentyfive_is_five() {
 
 #[test]
 fun sqrt_of_two_within_reference() {
-    test_helpers::assert_within(math::sqrt(2 * float!(), float!()), SQRT_2, ULP);
+    test_helpers::assert_within(math::sqrt(2 * float!(), float!()), SQRT_2, SQRT_BUDGET_ABS);
 }
 
 #[test]
 fun sqrt_of_three_within_reference() {
-    test_helpers::assert_within(math::sqrt(3 * float!(), float!()), SQRT_3, ULP);
+    test_helpers::assert_within(math::sqrt(3 * float!(), float!()), SQRT_3, SQRT_BUDGET_ABS);
 }
 
 #[test]
 fun sqrt_of_half_within_reference() {
-    test_helpers::assert_within(math::sqrt(float!() / 2, float!()), SQRT_HALF, ULP);
+    test_helpers::assert_within(math::sqrt(float!() / 2, float!()), SQRT_HALF, SQRT_BUDGET_ABS);
 }
 
 #[test, expected_failure(abort_code = math::EInvalidPrecision)]

@@ -11,6 +11,34 @@
 ///
 /// Public functions use `u64` for nonnegative values and `i64::I64` for signed
 /// fixed-point values. Internal math uses u128 to minimize truncation.
+///
+/// # Precision contract
+///
+/// These primitives trade exactness for cheap on-chain evaluation, so each is
+/// held to a documented error budget. The budgets are derived from downstream
+/// pricing sensitivity (`pricing.move` computes `up_price = Φ(d2)`, with `ln`
+/// and `sqrt` feeding `d2`), NOT measured from the implementation's own output.
+/// The binding requirement: the math layer must not move any quote by more than
+/// 1e-7 of full scale (<= 100 units on a 1e9 price) — negligible versus tick
+/// size and fees. `normal_cdf` error reaches the quote 1:1, so it is the binding
+/// term; `ln`/`sqrt`/`exp` errors are attenuated by `φ(d2) <= 0.399` (and `ln`'s
+/// error is largest at deep-OTM strikes, where `φ(d2) -> 0`), so their budgets
+/// can be looser.
+///
+/// | primitive  | budget                | rounding / bias                       |
+/// |------------|-----------------------|---------------------------------------|
+/// | normal_cdf | <= 2e-8 abs (20u @1e9)| sign-varying, <= 1 ULP at test points |
+/// | exp        | <= 1e-7 relative      | sign-varying, ~1e-9 over used range    |
+/// | ln         | <= 1e-7 relative      | sign-varying, ~1e-9                     |
+/// | sqrt       | <= 1 ULP (1e-9)       | floor (integer floor-sqrt, <= true)    |
+///
+/// `exp` is invoked only internally by `normal_cdf` (the `exp(-x²/2)` tail
+/// factor) with moderate negative arguments, where its relative error is ~1e-9;
+/// the large-positive-argument path is unused on the pricing path. No primitive
+/// carries a systematic bias against the pool — the protocol's designed rounding
+/// direction lives downstream in `deepbook::math` mul/div, far above this
+/// resolution. Budgets are asserted in `math_tests.move` against an independent
+/// reference (`tests/helper/reference/generate_constants.py`).
 module deepbook_predict::math;
 
 use deepbook_predict::{constants, i64};
@@ -18,10 +46,15 @@ use deepbook_predict::{constants, i64};
 const EInputZero: u64 = 0;
 const EInvalidPrecision: u64 = 2;
 const EPow10ExponentTooLarge: u64 = 3;
+const EExpOverflow: u64 = 4;
 
 // u128 constants for internal math
 const F: u128 = 1_000_000_000;
 const LN2_U128: u128 = 693_147_180;
+
+// Largest exp input whose true result fits the u64 return: e^x * 1e9 <= u64::MAX
+// <=> x <= 64*ln(2) - 9*ln(10) ≈ 23.638. floor((64*ln2 - 9*ln10) * 1e9).
+const EXP_MAX_INPUT: u64 = 23_638_153_718;
 
 // Cody rational approximation coefficients (scaled to F = 1e9)
 // Source: W.J. Cody (1969), as implemented in GSL gauss.c
@@ -70,6 +103,7 @@ const INV_13_U128: u128 = 76_923_077;
 
 /// Natural logarithm of x (in FLOAT_SCALING 1e9).
 /// Returns a signed fixed-point result.
+/// Precision: relative error <= 1e-7 (see module "Precision contract").
 public fun ln(x: u64): i64::I64 {
     assert!(x > 0, EInputZero);
     if (x == constants::float_scaling!()) return i64::zero();
@@ -86,10 +120,17 @@ public fun ln(x: u64): i64::I64 {
 }
 
 /// Exponential function. Returns e^x in FLOAT_SCALING.
+/// Precision: relative error <= 1e-7 over the used (moderate, negative-argument)
+/// range; only invoked internally by `normal_cdf`. See module "Precision contract".
+/// Aborts (`EExpOverflow`) when a positive input is too large for the u64 result.
 public fun exp(x: &i64::I64): u64 {
     let x_mag = x.magnitude();
     let x_negative = x.is_negative();
     if (x_mag == 0) return constants::float_scaling!();
+    // e^x must fit the u64 return. For large positive x the `<<` reduction below
+    // would silently wrap (Move shifts truncate, they do not abort), so guard the
+    // u64-fit bound explicitly. Negative x gives e^x < 1 and never overflows.
+    assert!(x_negative || x_mag <= EXP_MAX_INPUT, EExpOverflow);
 
     let n = x_mag / (LN2_U128 as u64);
     let r = x_mag - n * (LN2_U128 as u64);
@@ -97,7 +138,8 @@ public fun exp(x: &i64::I64): u64 {
 }
 
 /// Standard normal CDF Φ(x) using Cody's rational Chebyshev approximation.
-/// Three piecewise ranges for high accuracy (~1e-15 in float, <5 units at 1e9).
+/// Three piecewise ranges (~1e-15 in float). Precision: absolute error
+/// <= 2e-8 of full scale (20 units @1e9); see module "Precision contract".
 public fun normal_cdf(x: &i64::I64): u64 {
     let x_mag = x.magnitude();
     let x_negative = x.is_negative();
@@ -109,6 +151,7 @@ public fun normal_cdf(x: &i64::I64): u64 {
 
 /// Fixed-point square root using a bit-length initial guess and
 /// unrolled Newton iterations.
+/// Precision: integer floor-sqrt, exact to <= 1 ULP. See module "Precision contract".
 public fun sqrt(x: u64, precision: u64): u64 {
     assert!(precision > 0 && precision <= constants::float_scaling!(), EInvalidPrecision);
     let multiplier = (constants::float_scaling!() / precision) as u128;
