@@ -658,11 +658,12 @@ fun shares_for_supply(
 /// DUSDC payout owed for burning `lp_amount` shares: `dusdc_value * lp_amount /
 /// total_supply` (div then mul, round down). Inverse mirror of
 /// `shares_for_supply`; pure, so it stays out of the custody/event flow.
+/// A zero payout (sub-share slice or collapsed DUSDC NAV) is allowed: the
+/// withdraw must still complete so the holder can exit and claim the in-kind
+/// incentive share even when the DUSDC leg rounds to nothing.
 fun dusdc_for_withdraw(lp_amount: u64, total_supply: u64, dusdc_value: u64): u64 {
     let withdraw_fraction = math::div(lp_amount, total_supply);
-    let withdraw_amount = math::mul(dusdc_value, withdraw_fraction);
-    assert!(withdraw_amount > 0, EZeroWithdraw);
-    withdraw_amount
+    math::mul(dusdc_value, withdraw_fraction)
 }
 
 fun assert_all_expected_synced(

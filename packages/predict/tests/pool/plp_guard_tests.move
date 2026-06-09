@@ -159,8 +159,9 @@ fun supply_with_zero_payment_aborts() {
 
 // === EZeroWithdraw ===
 
-// `EZeroWithdraw` has two sites: the entry guard (`lp_amount > 0`) and the
-// rounded-payout guard inside `dusdc_for_withdraw`. This covers the entry one.
+// `EZeroWithdraw` guards only the entry (`lp_amount > 0`); a zero rounded
+// payout is allowed so an incentive-only exit can complete (see
+// `supply_withdraw_rounding_tests::sub_share_withdraw_pays_zero_dusdc_and_still_exits`).
 #[test, expected_failure(abort_code = plp::EZeroWithdraw)]
 fun withdraw_with_zero_plp_aborts() {
     let (mut scenario, _admin_cap, clock) = begin_pool();

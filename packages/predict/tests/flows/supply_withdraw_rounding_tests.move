@@ -44,6 +44,14 @@ const UNEVEN_SUPPLY_SHARES: u64 = 999_999_999;
 /// ratio = floor(999_999_999e9 / 300_999_999_999) = 3_322_259, gross
 /// = floor(301_000_000_195 * ratio / 1e9) = 999_999_959 — an exact loss of 41.
 const ROUND_TRIP_PROCEEDS: u64 = 999_999_959;
+/// Sub-share boundary fixtures: a small follow-on supply makes the total
+/// supply 300_000_001_000, so a 300-share slice floors the pro-rata ratio to
+/// zero (300e9 / 300_000_001_000 < 1) while 301 shares is the smallest slice
+/// whose ratio reaches 1, paying floor(300_000_001_000 * 1 / 1e9) = 300.
+const SLICE_SOURCE_SUPPLY: u64 = 1_000;
+const SUB_SHARE_SLICE: u64 = 300;
+const FIRST_PAYING_SLICE: u64 = 301;
+const FIRST_PAYING_PROCEEDS: u64 = 300;
 
 #[test]
 fun rounding_always_favors_the_pool_and_round_trips_lose() {
@@ -135,6 +143,71 @@ fun rounding_always_favors_the_pool_and_round_trips_lose() {
     destroy(deep_a);
     destroy(deep_b);
     destroy(deep_c);
+    return_shared(config);
+    return_shared(vault);
+    return_shared(pyth);
+    fx.finish();
+}
+
+/// A slice below one per-share unit (lp / total_supply floors to ratio 0) pays
+/// zero DUSDC, and the exit must still complete: the shares burn, the in-kind
+/// incentive claims run (zero-value coins on this incentive-less pool), and
+/// idle is untouched — the dust value accrues to remaining holders. One share
+/// more crosses the ratio to 1 and pays the first nonzero pro-rata unit.
+#[test]
+fun sub_share_withdraw_pays_zero_dusdc_and_still_exits() {
+    let mut fx = helpers::setup_market_default();
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let pyth = fx.scenario_mut().take_shared_by_id<PythSource>(fx.pyth_id());
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+
+    // Mint a small sliceable coin at the exact 1:1 pool.
+    let initial = test_constants::default_initial_supply();
+    let sync = plp::start_pool_sync(&mut config, &vault);
+    let mut plp1 = fx.supply(&mut config, &mut vault, sync, &pyth, SLICE_SOURCE_SUPPLY);
+    assert_eq!(plp1.value(), SLICE_SOURCE_SUPPLY);
+    let total = initial + SLICE_SOURCE_SUPPLY;
+
+    // --- Sub-share slice: ratio = floor(300e9 / 300_000_001_000) = 0, so the
+    // DUSDC payout is zero. The withdraw still burns the shares and returns
+    // zero-value coins instead of aborting.
+    let coin_zero = plp1.split(SUB_SHARE_SLICE, fx.scenario_mut().ctx());
+    let sync = plp::start_pool_sync(&mut config, &vault);
+    let (dusdc_zero, sui_zero, deep_zero) = fx.withdraw(&mut config, &mut vault, sync, coin_zero);
+    assert_eq!(dusdc_zero.value(), 0);
+    assert_eq!(sui_zero.value(), 0);
+    assert_eq!(deep_zero.value(), 0);
+    helpers::check_pool(
+        &vault,
+        helpers::expected_pool_state(total, total - SUB_SHARE_SLICE, 0),
+    );
+
+    // --- Boundary partner: 301 shares is the smallest paying slice (ratio 1),
+    // paying exactly 300 — the zero-payout case above is pure sub-share
+    // flooring, not a payout regression.
+    let coin_one = plp1.split(FIRST_PAYING_SLICE, fx.scenario_mut().ctx());
+    let sync = plp::start_pool_sync(&mut config, &vault);
+    let (dusdc_one, sui_one, deep_one) = fx.withdraw(&mut config, &mut vault, sync, coin_one);
+    assert_eq!(dusdc_one.value(), FIRST_PAYING_PROCEEDS);
+    assert_eq!(sui_one.value(), 0);
+    assert_eq!(deep_one.value(), 0);
+    helpers::check_pool(
+        &vault,
+        helpers::expected_pool_state(
+            total - FIRST_PAYING_PROCEEDS,
+            total - SUB_SHARE_SLICE - FIRST_PAYING_SLICE,
+            0,
+        ),
+    );
+
+    destroy(plp1);
+    destroy(dusdc_zero);
+    destroy(dusdc_one);
+    destroy(sui_zero);
+    destroy(sui_one);
+    destroy(deep_zero);
+    destroy(deep_one);
     return_shared(config);
     return_shared(vault);
     return_shared(pyth);
