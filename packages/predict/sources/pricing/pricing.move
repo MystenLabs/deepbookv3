@@ -307,3 +307,11 @@ fun find_gap(points: &vector<CurvePoint>, tick_size: u64): (bool, u64) {
 fun snap_to_tick(strike: u64, origin: u64, tick_size: u64): u64 {
     origin + (strike - origin) / tick_size * tick_size
 }
+
+/// Build a raw curve point directly (production curves come only from
+/// `build_curve`, whose SVI outputs cannot produce the exact round prices
+/// that data-structure valuation tests assert against).
+#[test_only]
+public fun curve_point_for_testing(strike: u64, up_price: u64): CurvePoint {
+    CurvePoint { strike, up_price }
+}
