@@ -38,11 +38,7 @@ public struct StrikeNavMatrix has store {
 /// Quantity and strike-weighted quantity tracked together for one boundary side.
 public struct WeightedQuantity has copy, drop, store {
     quantity: u64,
-    /// `quantity * strike / 1e9` summed per boundary. u128: one max-size order
-    /// at a high strike (~$430k+) already exceeds u64, and the aggregate is
-    /// unbounded across orders — a u64 accumulator would abort the pool NAV
-    /// hot path once enough open interest collects at high strikes.
-    strike_quantity: u128,
+    strike_quantity: u64,
 }
 
 /// Boundary totals for either one page-local prefix slot or one full page.
@@ -216,10 +212,7 @@ fun apply_boundary_delta(
     add: bool,
 ) {
     let (page_key, slot) = strike_to_coords(grid, strike);
-    // qty * strike / 1e9 in u128: the product overflows math::mul's u64 result
-    // for max-size orders at high strikes.
-    let strike_quantity = (qty as u128) * (strike as u128) / (math::float_scaling!() as u128);
-    let weighted = weighted_quantity(qty, strike_quantity);
+    let weighted = weighted_quantity(qty, math::mul(qty, strike));
     nav.ensure_page(page_key);
     {
         let totals = &mut nav.page_totals[page_key];
@@ -347,7 +340,7 @@ fun assert_range_boundaries(grid: &StrikeGrid, lower: u64, higher: u64, qty: u64
     grid.assert_range_boundaries(lower, higher);
 }
 
-fun weighted_quantity(quantity: u64, strike_quantity: u128): WeightedQuantity {
+fun weighted_quantity(quantity: u64, strike_quantity: u64): WeightedQuantity {
     WeightedQuantity { quantity, strike_quantity }
 }
 
@@ -380,12 +373,7 @@ fun weighted_segment_value(
     price_hi: u64,
 ): u64 {
     if (weighted.quantity == 0) return 0;
-    // strike_quantity * 1e9 / quantity in u128; the quantity-weighted average
-    // strike is at most the highest inserted strike, so it fits back in u64.
-    let strike_avg =
-        (
-            weighted.strike_quantity * (math::float_scaling!() as u128) / (weighted.quantity as u128),
-        ) as u64;
+    let strike_avg = math::div(weighted.strike_quantity, weighted.quantity);
     let ratio = math::div((strike_avg - strike_lo), (strike_hi - strike_lo));
     let price = if (price_hi >= price_lo) {
         price_lo + math::mul(price_hi - price_lo, ratio)
