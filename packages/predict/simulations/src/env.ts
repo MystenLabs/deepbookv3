@@ -41,6 +41,7 @@ export const REGISTRY_ID = requireEnv("REGISTRY_ID");
 export const ADMIN_CAP_ID = requireEnv("ADMIN_CAP_ID");
 export const PROTOCOL_CONFIG_ID = requireEnv("PROTOCOL_CONFIG_ID");
 export const POOL_VAULT_ID = requireEnv("POOL_VAULT_ID");
+export const PREDICT_MATH_PACKAGE_ID = requireEnv("PREDICT_MATH_PACKAGE_ID");
 export const DUSDC_PACKAGE_ID = requireEnv("DUSDC_PACKAGE_ID");
 export const DUSDC_CURRENCY_ID = requireEnv("DUSDC_CURRENCY_ID");
 export const TREASURY_CAP_ID = requireEnv("TREASURY_CAP_ID");

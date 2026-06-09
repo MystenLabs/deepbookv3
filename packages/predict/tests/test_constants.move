@@ -81,6 +81,9 @@ public fun default_live_price(): u64 { 100_000_000_000 }
 /// Default SVI `a` for live oracle test fixtures.
 public fun default_svi_a(): u64 { 1 }
 
+/// Default SVI `b` for live oracle test fixtures.
+public fun default_svi_b(): u64 { 10_000 }
+
 /// Default SVI `rho` magnitude for live oracle test fixtures: +1.0.
 public fun default_svi_rho_magnitude(): u64 { math::float_scaling!() }
 

@@ -102,12 +102,6 @@ public(package) macro fun curve_samples(): u64 { 50 }
 
 // === SVI Oracle Bounds ===
 
-/// SVI `b` lower bound: 1e-4 in 1e9 fixed-point.
-public(package) macro fun svi_b_min(): u64 { 100_000 }
-
-/// SVI `b` upper bound: 1.0 in 1e9 fixed-point.
-public(package) macro fun svi_b_max(): u64 { 1_000_000_000 }
-
 /// SVI `sigma` lower bound: 1e-3 in 1e9 fixed-point.
 public(package) macro fun svi_sigma_min(): u64 { 1_000_000 }
 

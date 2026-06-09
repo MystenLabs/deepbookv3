@@ -109,7 +109,6 @@ CUSHION_UNITS = 2                    # reference integer rounding + 2nd-order pr
 
 # SVI production bounds (constants.move) the chosen rows must satisfy so the
 # fixture can seed them through the production cap path (assert_valid_svi).
-SVI_B_MIN, SVI_B_MAX = 100_000, 1_000_000_000
 SVI_SIGMA_MIN, SVI_SIGMA_MAX = 1_000_000, 100_000_000_000
 
 # Three diverse-variance rows from the single real market, selected by stable
@@ -179,7 +178,6 @@ class Scenario:
         self.max_strike = self.min_strike + TICK_SIZE * ORACLE_GRID_TICKS
 
     def _validate(self):
-        assert SVI_B_MIN <= self.b <= SVI_B_MAX, f"{self.digest}: b={self.b} out of SVI bounds"
         assert SVI_SIGMA_MIN <= self.sigma <= SVI_SIGMA_MAX, f"{self.digest}: sigma out of bounds"
         assert self.rho_mag <= F, f"{self.digest}: |rho|>1"
         assert TICK_SIZE % ORACLE_TICK_SIZE_UNIT == 0

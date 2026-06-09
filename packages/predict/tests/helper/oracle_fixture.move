@@ -165,7 +165,7 @@ public fun prepare_live_oracle(
     );
     let svi = market_oracle::new_svi_params(
         test_constants::default_svi_a(),
-        constants::svi_b_min!(),
+        test_constants::default_svi_b(),
         i64::from_u64(test_constants::default_svi_rho_magnitude()),
         i64::from_u64(test_constants::default_svi_m()),
         constants::svi_sigma_min!(),

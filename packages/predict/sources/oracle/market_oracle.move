@@ -35,10 +35,9 @@ const EStaleSVISourceUpdate: u64 = 9;
 const EWrongPythSource: u64 = 10;
 const EFuturePriceSourceUpdate: u64 = 11;
 const EFutureSVISourceUpdate: u64 = 12;
-const EInvalidSviB: u64 = 13;
-const EInvalidSviRho: u64 = 14;
-const EInvalidSviSigma: u64 = 15;
-const EPackageVersionDisabled: u64 = 16;
+const EInvalidSviRho: u64 = 13;
+const EInvalidSviSigma: u64 = 14;
+const EPackageVersionDisabled: u64 = 15;
 
 const STATUS_ACTIVE: u8 = 1;
 const STATUS_PENDING_SETTLEMENT: u8 = 2;
@@ -408,10 +407,8 @@ public(package) fun set_allowed_versions(market: &mut MarketOracle, allowed_vers
     market.allowed_versions = allowed_versions;
 }
 
-/// Abort unless SVI parameters lie within model-team 1e9 fixed-point bounds.
+/// Abort unless SVI rho and sigma lie within model-team 1e9 fixed-point bounds.
 public(package) fun assert_valid_svi(svi: &SVIParams) {
-    let b = svi.b();
-    assert!(b >= constants::svi_b_min!() && b <= constants::svi_b_max!(), EInvalidSviB);
     assert!(svi.rho().magnitude() <= math::float_scaling!(), EInvalidSviRho);
     let sigma = svi.sigma();
     assert!(

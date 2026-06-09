@@ -42,7 +42,9 @@ import {
     refreshOracleAndSupplyWithExpiryPoolSyncTx,
     refreshOracleAndWithdrawWithExpiryPoolSyncTx,
     setMarketOracleBasisBoundsTx,
+    setTemplateExpiryFeeConfigTx,
     supplyTx,
+    syncExpiryTx,
     type ExecutionReceipt,
     updatePythTrustedSignerTx,
 } from "./runtime.js";
@@ -50,6 +52,7 @@ import {
 const DUSDC_DECIMALS = 1_000_000n;
 const DEFAULT_VAULT_SEED = 500_000n * DUSDC_DECIMALS;
 const DEFAULT_MANAGER_SEED = 500_000n * DUSDC_DECIMALS;
+const EXPIRY_CASH_FLOOR = 50_000n * DUSDC_DECIMALS;
 const EXPIRY_MS = BigInt(Date.now()) + 400n * 24n * 60n * 60n * 1000n;
 const FLOAT_SCALING = 1_000_000_000n;
 const DEFAULT_EXPIRY_FEE_WINDOW_MS = 24n * 60n * 60n * 1000n;
@@ -123,13 +126,17 @@ function scenarioPath(): string {
 }
 
 function initialEconomicState(capital: SimulationCapital): EconomicState {
+    if (capital.vaultSeed < EXPIRY_CASH_FLOOR) {
+        throw new Error("vault seed is below the setup expiry cash floor");
+    }
+
     return {
         managerBalance: capital.managerSeed,
-        expiryCashBalance: 0n,
+        expiryCashBalance: EXPIRY_CASH_FLOOR,
         expiryUnresolvedTradingFees: 0n,
-        vaultIdleBalance: capital.vaultSeed,
+        vaultIdleBalance: capital.vaultSeed - EXPIRY_CASH_FLOOR,
         vaultProtocolReserveBalance: 0n,
-        profitBasisDebits: 0n,
+        profitBasisDebits: EXPIRY_CASH_FLOOR,
         profitBasisCredits: 0n,
         vaultTotalPlpSupply: capital.initialTotalPlpSupply,
         openOrderCount: 0n,
@@ -362,7 +369,7 @@ function normalizeOrderMinted(event: any, row: ScenarioRow): Record<string, unkn
         contribution: decimal(json.contribution),
         trading_fee: decimal(json.trading_fee),
         builder_fee: decimal(json.builder_fee),
-        floor_seed_amount: decimal(json.floor_seed_amount),
+        penalty_fee: decimal(json.penalty_fee),
     };
 }
 
@@ -399,6 +406,7 @@ function normalizeLiveOrderRedeemed(event: any, row: ScenarioRow): Record<string
         redeem_amount: decimal(json.redeem_amount),
         trading_fee: decimal(json.trading_fee),
         builder_fee: decimal(json.builder_fee),
+        penalty_fee: decimal(json.penalty_fee),
     };
 }
 
@@ -432,6 +440,7 @@ function normalizeSupplyExecuted(event: any, row: ScenarioRow): Record<string, u
         payment: decimal(json.payment),
         shares_minted: decimal(json.shares_minted),
         pool_value_before: decimal(json.pool_value_before),
+        incentive_value: decimal(json.incentive_value),
         total_supply_after: decimal(json.total_supply_after),
         idle_balance_after: decimal(json.idle_balance_after),
     };
@@ -444,6 +453,7 @@ function normalizeWithdrawExecuted(event: any, row: ScenarioRow): Record<string,
         lp_ref: row.action === "withdraw" ? row.lpRef : null,
         shares_burned: decimal(json.shares_burned),
         payout: decimal(json.payout),
+        withdraw_fee: decimal(json.withdraw_fee),
         pool_value_before: decimal(json.pool_value_before),
         total_supply_after: decimal(json.total_supply_after),
         idle_balance_after: decimal(json.idle_balance_after),
@@ -522,9 +532,10 @@ function applyUpdate(state: EconomicState, update: Record<string, unknown>) {
         const contribution = BigInt(decimal(update.contribution));
         const tradingFee = BigInt(decimal(update.trading_fee));
         const builderFee = BigInt(decimal(update.builder_fee));
+        const penaltyFee = BigInt(decimal(update.penalty_fee));
         const quantity = BigInt(decimal(update.quantity));
-        state.managerBalance -= contribution + tradingFee + builderFee;
-        state.expiryCashBalance += contribution + tradingFee;
+        state.managerBalance -= contribution + tradingFee + builderFee + penaltyFee;
+        state.expiryCashBalance += contribution + tradingFee + penaltyFee;
         state.expiryUnresolvedTradingFees += tradingFee;
         state.openOrderCount += 1n;
         state.openOrderQuantity += quantity;
@@ -537,11 +548,12 @@ function applyUpdate(state: EconomicState, update: Record<string, unknown>) {
         const redeemAmount = BigInt(decimal(update.redeem_amount));
         const tradingFee = BigInt(decimal(update.trading_fee));
         const builderFee = BigInt(decimal(update.builder_fee));
+        const penaltyFee = BigInt(decimal(update.penalty_fee));
         const quantityClosed = BigInt(decimal(update.quantity_closed));
         const remainingQuantity = BigInt(decimal(update.remaining_quantity));
-        state.managerBalance += redeemAmount - tradingFee - builderFee;
+        state.managerBalance += redeemAmount - tradingFee - builderFee - penaltyFee;
         state.expiryCashBalance -= redeemAmount;
-        state.expiryCashBalance += tradingFee;
+        state.expiryCashBalance += tradingFee + penaltyFee;
         state.expiryUnresolvedTradingFees += tradingFee;
         state.openOrderQuantity -= quantityClosed;
         if (remainingQuantity === 0n) state.openOrderCount -= 1n;
@@ -777,7 +789,7 @@ async function setupSimulation(
     console.log(`[${ts()}]   OracleCap: ${oracleCapId}`);
 
     result = await executeAndWait(
-        createPythSourceTx(1, ORACLE_TICK_SIZE, expiryFeeWindowMs, expiryFeeMaxMultiplier),
+        createPythSourceTx(1, ORACLE_TICK_SIZE),
         "create_pyth_source",
     );
     const pythSourceChange = result.objectChanges.find(
@@ -785,7 +797,14 @@ async function setupSimulation(
     );
     const pythSourceId: string = pythSourceChange.objectId;
     console.log(`[${ts()}]   PythSource: ${pythSourceId}`);
-    console.log(`[${ts()}]   PythSource fee ramp: max_multiplier=${expiryFeeMaxMultiplier}`);
+
+    await executeAndWait(
+        setTemplateExpiryFeeConfigTx(protocolConfigId, expiryFeeWindowMs, expiryFeeMaxMultiplier),
+        "set_template_expiry_fee_config",
+    );
+    console.log(
+        `[${ts()}]   Expiry fee ramp: window_ms=${expiryFeeWindowMs} max_multiplier=${expiryFeeMaxMultiplier}`,
+    );
 
     await executeAndWait(updatePythTrustedSignerTx(), "update_pyth_trusted_signer");
     console.log(`[${ts()}]   Pyth trusted signer configured`);
@@ -829,7 +848,6 @@ async function setupSimulation(
         setMarketOracleBasisBoundsTx(
             oracleId,
             protocolConfigId,
-            oracleCapId,
             100_000_000n,
             100_000_000n,
             900_000_000n,
@@ -838,6 +856,18 @@ async function setupSimulation(
         "set_basis_bounds",
     );
     console.log(`[${ts()}]   Basis bounds widened for oracle`);
+
+    await executeAndWait(
+        syncExpiryTx({
+            poolVaultId,
+            protocolConfigId,
+            expiryMarketId,
+            oracleId,
+            pythSourceId,
+        }),
+        "sync_expiry_cash_floor",
+    );
+    console.log(`[${ts()}]   Expiry cash floor funded: ${EXPIRY_CASH_FLOOR / DUSDC_DECIMALS} DUSDC`);
 
     const managerId = deriveManagerId(address);
     await executeAndWait(createManagerTx(), "create_manager");
@@ -872,7 +902,6 @@ async function executeRow(
         return execute(
             () =>
                 refreshOracleAndMintTx({
-                    poolVaultId: state.poolVaultId,
                     expiryMarketId: state.expiryMarketId,
                     protocolConfigId: state.protocolConfigId,
                     managerId: state.managerId,
@@ -905,7 +934,6 @@ async function executeRow(
         return execute(
             () =>
                 refreshOracleAndRedeemTx({
-                    poolVaultId: state.poolVaultId,
                     expiryMarketId: state.expiryMarketId,
                     protocolConfigId: state.protocolConfigId,
                     managerId: state.managerId,

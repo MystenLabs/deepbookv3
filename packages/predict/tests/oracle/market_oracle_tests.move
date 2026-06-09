@@ -17,30 +17,6 @@ const NEGATIVE_RHO_SIGN: bool = true;
 const ONE_ULP: u64 = 1;
 const EUnexpectedSuccess: u64 = 999;
 
-#[test, expected_failure(abort_code = market_oracle::EInvalidSviB)]
-fun assert_valid_svi_rejects_b_below_min() {
-    let svi = new_svi(
-        constants::svi_b_min!() - ONE_ULP,
-        ZERO_RHO_MAGNITUDE,
-        POSITIVE_RHO_SIGN,
-        VALID_SIGMA,
-    );
-    market_oracle::assert_valid_svi(&svi);
-    abort EUnexpectedSuccess
-}
-
-#[test, expected_failure(abort_code = market_oracle::EInvalidSviB)]
-fun assert_valid_svi_rejects_b_above_max() {
-    let svi = new_svi(
-        constants::svi_b_max!() + ONE_ULP,
-        ZERO_RHO_MAGNITUDE,
-        POSITIVE_RHO_SIGN,
-        VALID_SIGMA,
-    );
-    market_oracle::assert_valid_svi(&svi);
-    abort EUnexpectedSuccess
-}
-
 #[test, expected_failure(abort_code = market_oracle::EInvalidSviRho)]
 fun assert_valid_svi_rejects_rho_magnitude_above_one() {
     let svi = new_svi(VALID_B, float!() + ONE_ULP, POSITIVE_RHO_SIGN, VALID_SIGMA);
@@ -70,6 +46,17 @@ fun assert_valid_svi_rejects_sigma_above_max() {
     );
     market_oracle::assert_valid_svi(&svi);
     abort EUnexpectedSuccess
+}
+
+#[test]
+fun assert_valid_svi_does_not_bound_b() {
+    let zero_b = new_svi(0, ZERO_RHO_MAGNITUDE, POSITIVE_RHO_SIGN, VALID_SIGMA);
+    market_oracle::assert_valid_svi(&zero_b);
+    assert_eq!(zero_b.b(), 0);
+
+    let max_b = new_svi(constants::pos_inf!(), ZERO_RHO_MAGNITUDE, POSITIVE_RHO_SIGN, VALID_SIGMA);
+    market_oracle::assert_valid_svi(&max_b);
+    assert_eq!(max_b.b(), constants::pos_inf!());
 }
 
 #[test]

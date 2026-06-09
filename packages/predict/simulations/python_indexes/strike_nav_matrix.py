@@ -69,14 +69,14 @@ class StrikeNavMatrix:
     def remove_range(self, lower: int, higher: int, qty: int, floor_shares: int) -> None:
         self._apply_range(lower, higher, qty, floor_shares, False)
 
-    def live_value(
+    def valuation_components(
         self,
         curve: list[dict[str, int]],
         *,
         minted_min_strike: int,
         minted_max_strike: int,
         floor_index: int,
-    ) -> int:
+    ) -> tuple[int, int]:
         if not curve:
             raise ValueError("empty NAV curve")
         if curve[0]["strike"] > minted_min_strike or curve[-1]["strike"] < minted_max_strike:
@@ -111,9 +111,23 @@ class StrikeNavMatrix:
             page_lo, slot_lo = page_hi, slot_hi
 
         floor_value = self.floor_shares * floor_index // self.float_scaling
-        if value < floor_value:
-            raise ValueError("NAV live value below aggregate floor")
-        return value - floor_value
+        return value, floor_value
+
+    def live_value(
+        self,
+        curve: list[dict[str, int]],
+        *,
+        minted_min_strike: int,
+        minted_max_strike: int,
+        floor_index: int,
+    ) -> int:
+        value, floor_value = self.valuation_components(
+            curve,
+            minted_min_strike=minted_min_strike,
+            minted_max_strike=minted_max_strike,
+            floor_index=floor_index,
+        )
+        return max(0, value - floor_value)
 
     def _apply_range(self, lower: int, higher: int, qty: int, floor_shares: int, add: bool) -> None:
         self._assert_range_boundaries(lower, higher, qty)

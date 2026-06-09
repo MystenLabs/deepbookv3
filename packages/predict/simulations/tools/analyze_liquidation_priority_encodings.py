@@ -359,7 +359,11 @@ def apply_order_updates(
                 "leverage": leverage,
                 "entry_probability": int(update["entry_probability"]),
                 "quantity": int(update["quantity"]),
-                "floor_seed_amount": int(update["floor_seed_amount"]),
+                "floor_seed_amount": replay.compute_mint_terms(
+                    int(update["entry_probability"]),
+                    int(update["quantity"]),
+                    leverage,
+                )["floor_seed_amount"],
                 "opened_at_ms": timestamp_ms,
                 "open_floor_index": replay.floor_index_at_ms(
                     timestamp_ms,
