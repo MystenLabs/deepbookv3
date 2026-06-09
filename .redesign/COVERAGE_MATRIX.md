@@ -6,14 +6,14 @@
 
 **Regenerate:** `python3 .redesign/gen_coverage_matrix.py` (from the repo root).
 
-## Summary — 127/157 covered, 12 documented (defensive / needs-special / gas-bound), 18 open
+## Summary — 145/157 covered, 12 documented (defensive / needs-special / gas-bound), 0 open
 
 | Priority band | Open (untested, undocumented) |
 |---|---|
 | P0 | 0 |
 | P1 | 0 |
 | P2 | 0 |
-| P3 | 18 |
+| P3 | 0 |
 
 Priority bands:
 - **P0** — `expiry_market` public-flow gates + the invariant-level hot-flow pass.
@@ -226,13 +226,13 @@ A constant that is a genuinely-unreachable defensive invariant is marked
 
 ## P3
 
-### `config_constants` — 19/29
+### `config_constants` — 29/29
 | Error const | Covered | Covering test |
 |---|---|---|
-| `EInvalidBaseFee` | ❌ | — |
-| `EInvalidMinFee` | ❌ | — |
-| `EInvalidMinAskPrice` | ❌ | — |
-| `EInvalidMaxAskPrice` | ❌ | — |
+| `EInvalidBaseFee` | ✅ | `template_base_fee_above_max_aborts`; `template_base_fee_below_min_aborts` |
+| `EInvalidMinFee` | ✅ | `template_min_fee_above_max_aborts` |
+| `EInvalidMinAskPrice` | ✅ | `template_min_ask_price_above_max_aborts` |
+| `EInvalidMaxAskPrice` | ✅ | `template_max_ask_price_above_max_aborts` |
 | `EInvalidPythSpotFreshnessMs` | ✅ | `set_pyth_spot_freshness_ms_above_max_aborts`; `set_pyth_spot_freshness_ms_zero_aborts` |
 | `EInvalidBlockScholesPricesFreshnessMs` | ✅ | `set_block_scholes_prices_freshness_ms_above_max_aborts`; `set_block_scholes_prices_freshness_ms_zero_aborts` |
 | `EInvalidBlockScholesSVIFreshnessMs` | ✅ | `set_block_scholes_svi_freshness_ms_above_max_aborts`; `set_block_scholes_svi_freshness_ms_zero_aborts` |
@@ -242,17 +242,17 @@ A constant that is a genuinely-unreachable defensive invariant is marked
 | `EInvalidMaxBasisDeviation` | ✅ | `set_basis_bounds_max_basis_deviation_too_large_aborts`; `set_basis_bounds_max_basis_deviation_zero_aborts` |
 | `EInvalidMinBasis` | ✅ | `set_basis_bounds_min_basis_above_envelope_aborts`; `set_basis_bounds_min_basis_below_envelope_aborts` |
 | `EInvalidMaxBasis` | ✅ | `set_basis_bounds_max_basis_above_envelope_aborts`; `set_basis_bounds_max_basis_below_envelope_aborts` |
-| `EInvalidMaxExpiryFunding` | ❌ | — |
-| `EInvalidTradingLossRebateRate` | ❌ | — |
-| `EInvalidTerminalFloorIndex` | ❌ | — |
-| `EInvalidExpiryFeeWindowMs` | ❌ | — |
-| `EInvalidExpiryFeeMaxMultiplier` | ❌ | — |
+| `EInvalidMaxExpiryFunding` | ✅ | `max_expiry_funding_above_max_aborts`; `max_expiry_funding_below_cash_floor_aborts` |
+| `EInvalidTradingLossRebateRate` | ✅ | `template_trading_loss_rebate_rate_above_max_aborts` |
+| `EInvalidTerminalFloorIndex` | ✅ | `template_terminal_floor_index_above_max_aborts`; `template_terminal_floor_index_below_min_aborts` |
+| `EInvalidExpiryFeeWindowMs` | ✅ | `template_expiry_fee_window_above_max_aborts`; `template_expiry_fee_window_below_min_aborts` |
+| `EInvalidExpiryFeeMaxMultiplier` | ✅ | `template_expiry_fee_max_multiplier_above_max_aborts`; `template_expiry_fee_max_multiplier_below_min_aborts` |
 | `EInvalidLowerBenefitPower` | ✅ | `set_benefit_powers_lower_below_min_aborts` |
 | `EInvalidUpperBenefitPower` | ✅ | `set_benefit_powers_upper_below_min_aborts` |
 | `EInvalidBenefitPowers` | ✅ | `set_benefit_powers_non_steeper_upper_aborts` |
 | `EInvalidValuationLiquidationBudget` | ✅ | `valuation_budget_above_max_aborts`; `valuation_budget_below_min_aborts` |
 | `EInvalidTradeLiquidationBudget` | ✅ | `trade_budget_above_max_aborts`; `trade_budget_below_min_aborts` |
-| `EInvalidLiquidationLtv` | ❌ | — |
+| `EInvalidLiquidationLtv` | ✅ | `template_liquidation_ltv_above_max_aborts`; `template_liquidation_ltv_below_min_aborts` |
 | `EInvalidOracleTickSize` | ✅ | `assert_oracle_tick_size_unaligned_aborts`; `create_pyth_source_unaligned_tick_size_aborts` |
 | `EInvalidWithdrawFeeAlpha` | ✅ | `withdraw_fee_alpha_above_max_aborts`; `withdraw_fee_alpha_below_min_aborts` |
 | `EInvalidEwmaAlpha` | ✅ | `set_params_alpha_above_max_aborts`; `set_params_alpha_zero_aborts` |
@@ -273,32 +273,22 @@ A constant that is a genuinely-unreachable defensive invariant is marked
 | `EExpiryConfigAlreadyExists` | ✅ | `register_expiry_runtime_config_twice_aborts` |
 | `EExpiryConfigNotFound` | ✅ | `set_mint_paused_for_unknown_expiry_aborts` |
 
-### `strike_exposure_config` — 0/8
+### `strike_exposure_config` — 8/8
 | Error const | Covered | Covering test |
 |---|---|---|
-| `ETerminalFloorExceedsLiquidationLtv` | ❌ | — |
-| `EOrderBelowLiquidationThreshold` | ❌ | — |
-| `EAskPriceOutOfBounds` | ❌ | — |
-| `EInvalidAskBound` | ❌ | — |
-| `EInvalidFeeProbability` | ❌ | — |
-| `EOrderPrincipalBelowMinimum` | ❌ | — |
-| `EInvalidLeverageTier` | ❌ | — |
-| `EInvalidLeverage` | ❌ | — |
+| `ETerminalFloorExceedsLiquidationLtv` | ✅ | `mint_terminal_floor_at_liquidation_ltv_aborts` |
+| `EOrderBelowLiquidationThreshold` | ✅ | `mint_three_x_at_min_liquidation_ltv_aborts` |
+| `EAskPriceOutOfBounds` | ✅ | `mint_all_in_price_above_max_ask_aborts`; `mint_all_in_price_below_min_ask_aborts` |
+| `EInvalidAskBound` | ✅ | `template_max_ask_price_at_min_ask_aborts`; `template_min_ask_price_at_max_ask_aborts` |
+| `EInvalidFeeProbability` | ✅ | `trading_fee_probability_above_one_aborts` |
+| `EOrderPrincipalBelowMinimum` | ✅ | `mint_principal_one_lot_below_minimum_aborts` |
+| `EInvalidLeverageTier` | ✅ | `mint_low_probability_above_one_x_aborts` |
+| `EInvalidLeverage` | ✅ | `mint_leverage_outside_tier_set_aborts` |
 
-## Regressions vs `main` — 11 constants covered there, uncovered here
+## Regressions vs `main` — 1 constants covered there, uncovered here
 
 Name-level (not module-qualified). These had `expected_failure` coverage in the granular
 test files deleted during suite consolidation and still exist in HEAD sources:
 
-- `EInvalidAskBound`
-- `EInvalidBaseFee`
-- `EInvalidExpiryFeeMaxMultiplier`
-- `EInvalidExpiryFeeWindowMs`
-- `EInvalidLeverage`
-- `EInvalidMaxAskPrice`
-- `EInvalidMinAskPrice`
-- `EInvalidMinFee`
-- `EInvalidTradingLossRebateRate`
 - `ELazerNegativePrice`
-- `EOrderPrincipalBelowMinimum`
 

@@ -6,8 +6,8 @@ module deepbook_predict::pool_accounting_tests;
 
 use deepbook_predict::{config_constants, pool_accounting};
 use dusdc::dusdc::DUSDC;
-use std::unit_test::assert_eq;
-use sui::{coin, test_utils::destroy};
+use std::unit_test::{assert_eq, destroy};
+use sui::coin;
 
 const EXPIRY_ID: address = @0xACCC;
 const UNKNOWN_EXPIRY_ID: address = @0xBEEF;

@@ -9,7 +9,7 @@
 module deepbook_predict::liquidation_book_tests;
 
 use deepbook_predict::{constants, liquidation_book, order::{Self, Order}};
-use sui::test_utils::destroy;
+use std::unit_test::destroy;
 
 const OPENED_AT_MS: u64 = 1_000;
 // Leveraged orders must be semi-infinite (order.move assert_valid_order_shape:

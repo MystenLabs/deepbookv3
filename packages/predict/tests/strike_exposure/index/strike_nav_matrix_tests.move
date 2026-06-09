@@ -9,7 +9,7 @@
 module deepbook_predict::strike_nav_matrix_tests;
 
 use deepbook_predict::{pricing::CurvePoint, strike_grid, strike_nav_matrix};
-use sui::test_utils::destroy;
+use std::unit_test::destroy;
 
 const BTC_SPOT: u64 = 100_000_000_000_000; // $100,000 in 1e9 price scaling
 const TICK_SIZE: u64 = 1_000_000_000; // $1.00; spot spans 100,000 ticks
