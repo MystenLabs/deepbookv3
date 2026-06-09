@@ -6,12 +6,12 @@
 
 **Regenerate:** `python3 .redesign/gen_coverage_matrix.py` (from the repo root).
 
-## Summary — 102/157 covered, 55 uncovered
+## Summary — 125/157 covered, 12 documented (defensive / needs-special / gas-bound), 20 open
 
-| Priority band | Uncovered |
+| Priority band | Open (untested, undocumented) |
 |---|---|
-| P0 | 1 |
-| P1 | 34 |
+| P0 | 0 |
+| P1 | 0 |
 | P2 | 0 |
 | P3 | 20 |
 
@@ -31,7 +31,7 @@ A constant that is a genuinely-unreachable defensive invariant is marked
 |---|---|---|
 | `EWrongMarketOracle` | ✅ | `redeem_with_wrong_oracle_aborts` |
 | `EWrongPythSource` | ✅ | `mint_with_wrong_pyth_source_aborts` |
-| `EValuationExceedsCash` | ❌ | — |
+| `EValuationExceedsCash` | 📄 documented | DEFENSIVE — pool_nav asserts the valuation lock first (outside a sync EValuationNotInProgress masks it); inside a sync the rebalance tops up cash before pool_nav, and every cash-mutating flow ends with assert_cash_backing whose conservative payout_liability bound already implies required_cash. Pure solvency safety net. |
 | `EPackageVersionDisabled` | ✅ | `mint_with_current_version_disabled_aborts` |
 | `EMintPaused` | ✅ | `mint_while_expiry_mint_paused_aborts` |
 | `EFullCloseRequired` | ✅ | `redeem_settled_partial_close_aborts` |
@@ -42,15 +42,15 @@ A constant that is a genuinely-unreachable defensive invariant is marked
 ### `builder_code` — 0/1
 | Error const | Covered | Covering test |
 |---|---|---|
-| `ENotOwner` | ❌ | — |
+| `ENotOwner` | 📄 documented | UNREACHABLE-IN-UNIT — claim_all_builder_fees takes &sui::accumulator::AccumulatorRoot, created exclusively by the system at the pinned framework rev (no #[test_only] constructor or test_scenario provisioning). |
 
-### `incentive` — 0/4
+### `incentive` — 4/4
 | Error const | Covered | Covering test |
 |---|---|---|
-| `EZeroDeposit` | ❌ | — |
-| `EZeroStreamDuration` | ❌ | — |
-| `EStreamDurationTooLong` | ❌ | — |
-| `EFeedMismatch` | ❌ | — |
+| `EZeroDeposit` | ✅ | `deposit_zero_coin_aborts` |
+| `EZeroStreamDuration` | ✅ | `deposit_zero_duration_aborts` |
+| `EStreamDurationTooLong` | ✅ | `deposit_duration_over_max_aborts` |
+| `EFeedMismatch` | ✅ | `supply_with_wrong_feed_incentive_source_aborts` |
 
 ### `market_oracle` — 16/16
 | Error const | Covered | Covering test |
@@ -83,20 +83,20 @@ A constant that is a genuinely-unreachable defensive invariant is marked
 | `EInvalidQuantity` | ✅ | `new_rejects_non_lot_quantity` |
 | `EInvalidSequence` | ✅ | `new_rejects_sequence_over_u40` |
 
-### `plp` — 0/11
+### `plp` — 9/11
 | Error const | Covered | Covering test |
 |---|---|---|
-| `EExpiryMarketNotActive` | ❌ | — |
-| `EWrongPoolVault` | ❌ | — |
-| `EExpiryMarketAlreadySynced` | ❌ | — |
-| `EMissingExpirySync` | ❌ | — |
-| `EZeroSupply` | ❌ | — |
-| `EZeroWithdraw` | ❌ | — |
-| `EInvalidInitialSupply` | ❌ | — |
-| `EZeroShares` | ❌ | — |
-| `EZeroPoolValue` | ❌ | — |
-| `EPackageVersionDisabled` | ❌ | — |
-| `ENoPlpHolders` | ❌ | — |
+| `EExpiryMarketNotActive` | ✅ | `sync_expiry_on_unregistered_settled_market_aborts` |
+| `EWrongPoolVault` | ✅ | `finish_pool_sync_with_other_vault_sync_aborts` |
+| `EExpiryMarketAlreadySynced` | ✅ | `sync_expiry_twice_in_one_sync_aborts` |
+| `EMissingExpirySync` | ✅ | `finish_pool_sync_without_syncing_active_expiry_aborts` |
+| `EZeroSupply` | ✅ | `supply_with_zero_payment_aborts` |
+| `EZeroWithdraw` | ✅ | `withdraw_with_zero_plp_aborts` |
+| `EInvalidInitialSupply` | 📄 documented | DEFENSIVE — bootstrap (total_supply==0) with nonzero pool value needs idle inflow without supply; every idle inflow path is supply (blocked at bootstrap by this guard) or expiry cash returns, and an expiry cannot be registered at zero supply (register_expiry requires idle >= the max-funding cap). Only a heavy multi-flow (swept premium -> full LP exit -> admin change) could approach it; no minimal production-valid fixture. |
+| `EZeroShares` | ✅ | `supply_dust_payment_rounding_to_zero_shares_aborts` |
+| `EZeroPoolValue` | 📄 documented | DEFENSIVE — requires lp_pool_value to clamp to exactly 0 while total_supply > 0 (the documented active-mark-collapse scenario); the clamp math itself is unit-tested in plp_tests::lp_pool_value_floors_at_zero_*. |
+| `EPackageVersionDisabled` | ✅ | `start_pool_sync_with_current_version_disabled_aborts` |
+| `ENoPlpHolders` | ✅ | `incentive_deposit_with_no_plp_holders_aborts` |
 
 ### `predict_manager` — 7/8
 | Error const | Covered | Covering test |
@@ -105,7 +105,7 @@ A constant that is a genuinely-unreachable defensive invariant is marked
 | `ENotOwner` | ✅ | `assert_owner_aborts_for_non_owner`; `non_owner_cannot_mint_trade_cap`; `unset_builder_code_by_non_owner_aborts` |
 | `EInvalidProof` | ✅ | `cross_manager_proof_validation_aborts` |
 | `EInvalidCap` | ✅ | `revoked_trade_cap_cannot_generate_proof` |
-| `EMaxCapsReached` | ❌ | — |
+| `EMaxCapsReached` | 📄 documented | GAS-BOUND — needs MAX_CAPS (1000) prior cap mints; allow_listed is a linear-scan VecSet so filling it is quadratic gas and exceeds the standard --gas-limit 100000000000 (~750 mints fit, 1000 do not). Guard verified present; not coverable at the suite's standard budget. |
 | `ECapNotInList` | ✅ | `revoking_unknown_cap_aborts` |
 | `EExpirySummaryHasOpenPositions` | ✅ | `resolve_expiry_summary_with_open_positions_aborts` |
 | `EPositionAlreadyExists` | ✅ | `add_position_duplicate_aborts` |
@@ -123,37 +123,37 @@ A constant that is a genuinely-unreachable defensive invariant is marked
 | `EInvalidStrikeRatio` | ✅ | `build_curve_with_sub_resolution_strike_ratio_aborts` |
 | `EPythSpotStale` | ✅ | `assert_pyth_spot_fresh_with_stale_source_aborts` |
 
-### `pyth_source` — 0/7
+### `pyth_source` — 1/7
 | Error const | Covered | Covering test |
 |---|---|---|
-| `EStaleSourceUpdate` | ❌ | — |
-| `EZeroSpot` | ❌ | — |
-| `EFutureSourceUpdate` | ❌ | — |
-| `EPackageVersionDisabled` | ❌ | — |
-| `ELazerFeedNotFound` | ❌ | — |
-| `ELazerPriceUnavailable` | ❌ | — |
-| `ELazerNegativePrice` | ❌ | — |
+| `EStaleSourceUpdate` | 📄 documented | NEEDS-SPECIAL — only in update_from_lazer, which consumes a real signed pyth_lazer::Update (no Move-side test constructor; requires deployed State + trusted ECDSA signers). Integration/testnet coverage only. |
+| `EZeroSpot` | ✅ | `supply_with_zero_spot_incentive_source_aborts` |
+| `EFutureSourceUpdate` | 📄 documented | NEEDS-SPECIAL — same update_from_lazer blocker as EStaleSourceUpdate. |
+| `EPackageVersionDisabled` | 📄 documented | NEEDS-SPECIAL — first gate of update_from_lazer; same Lazer blocker. |
+| `ELazerFeedNotFound` | 📄 documented | DEFENSIVE (unit scope) — private extract_spot behind the un-constructible LazerUpdate. |
+| `ELazerPriceUnavailable` | 📄 documented | DEFENSIVE (unit scope) — same extract_spot blocker; three sites share the code. |
+| `ELazerNegativePrice` | 📄 documented | DEFENSIVE (unit scope) — normalize_pyth_price behind the Lazer blocker; real Pyth prices are non-negative. |
 
-### `registry` — 3/11
+### `registry` — 11/11
 | Error const | Covered | Covering test |
 |---|---|---|
-| `EFeedIdMismatch` | ❌ | — |
+| `EFeedIdMismatch` | ✅ | `create_expiry_market_with_wrong_pyth_source_object_aborts` |
 | `EPythSourceAlreadyCreated` | ✅ | `create_pyth_source_duplicate_feed_aborts` |
-| `EInvalidExpiry` | ❌ | — |
-| `EExpiryMarketAlreadyCreated` | ❌ | — |
-| `EPauseCapNotValid` | ❌ | — |
+| `EInvalidExpiry` | ✅ | `create_expiry_market_with_expiry_at_now_aborts` |
+| `EExpiryMarketAlreadyCreated` | ✅ | `create_expiry_market_duplicate_expiry_aborts` |
+| `EPauseCapNotValid` | ✅ | `revoked_pause_cap_cannot_disable_version` |
 | `EPackageVersionDisabled` | ✅ | `create_pyth_source_with_current_version_disabled_aborts` |
-| `EVersionAlreadyEnabled` | ❌ | — |
-| `EVersionNotEnabled` | ❌ | — |
-| `ECannotDisableLastVersion` | ❌ | — |
+| `EVersionAlreadyEnabled` | ✅ | `enable_version_already_enabled_aborts` |
+| `EVersionNotEnabled` | ✅ | `disable_version_never_enabled_aborts` |
+| `ECannotDisableLastVersion` | ✅ | `disable_last_remaining_version_aborts` |
 | `EPythFeedNotRegistered` | ✅ | `set_pyth_feed_tick_size_unknown_feed_aborts` |
-| `EIncentiveAssetNotConfigured` | ❌ | — |
+| `EIncentiveAssetNotConfigured` | ✅ | `deposit_unconfigured_incentive_asset_aborts` |
 
-### `settlement_state` — 0/2
+### `settlement_state` — 1/2
 | Error const | Covered | Covering test |
 |---|---|---|
-| `EMarketNotSettled` | ❌ | — |
-| `EInvalidSettlementTimestamp` | ❌ | — |
+| `EMarketNotSettled` | ✅ | `settlement_price_read_before_settlement_aborts` |
+| `EInvalidSettlementTimestamp` | 📄 documented | DEFENSIVE — the settlement-recording site enforces source_ts > expiry before storing, so the read-time re-assert cannot fail for any settled oracle produced by production flows. |
 
 ## P2
 
@@ -285,15 +285,11 @@ A constant that is a genuinely-unreachable defensive invariant is marked
 | `EInvalidLeverageTier` | ❌ | — |
 | `EInvalidLeverage` | ❌ | — |
 
-## Regressions vs `main` — 24 constants covered there, uncovered here
+## Regressions vs `main` — 11 constants covered there, uncovered here
 
 Name-level (not module-qualified). These had `expected_failure` coverage in the granular
 test files deleted during suite consolidation and still exist in HEAD sources:
 
-- `ECannotDisableLastVersion`
-- `EExpiryMarketAlreadySynced`
-- `EFeedMismatch`
-- `EIncentiveAssetNotConfigured`
 - `EInvalidAskBound`
 - `EInvalidBaseFee`
 - `EInvalidExpiryFeeMaxMultiplier`
@@ -304,14 +300,5 @@ test files deleted during suite consolidation and still exist in HEAD sources:
 - `EInvalidMinFee`
 - `EInvalidTradingLossRebateRate`
 - `ELazerNegativePrice`
-- `EMarketNotSettled`
-- `EMissingExpirySync`
-- `ENoPlpHolders`
 - `EOrderPrincipalBelowMinimum`
-- `EPauseCapNotValid`
-- `EStreamDurationTooLong`
-- `EVersionAlreadyEnabled`
-- `EVersionNotEnabled`
-- `EZeroDeposit`
-- `EZeroStreamDuration`
 
