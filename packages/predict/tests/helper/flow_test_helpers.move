@@ -229,6 +229,21 @@ public fun set_trade_liquidation_budget(self: &Fixture, config: &mut ProtocolCon
     config.set_trade_liquidation_budget(&self.admin_cap, budget);
 }
 
+/// Pause / unpause global trading through the real admin path.
+public fun set_trading_paused(self: &Fixture, config: &mut ProtocolConfig, paused: bool) {
+    config.set_trading_paused(&self.admin_cap, paused);
+}
+
+/// Pause / unpause minting for one expiry market through the real admin path.
+public fun set_expiry_mint_paused(
+    self: &Fixture,
+    config: &mut ProtocolConfig,
+    expiry_market_id: ID,
+    paused: bool,
+) {
+    config.set_expiry_mint_paused(&self.admin_cap, expiry_market_id, paused);
+}
+
 public fun set_template_zero_min_fee(self: &mut Fixture) {
     self.scenario.next_tx(test_constants::admin());
     let mut config = self.scenario.take_shared<ProtocolConfig>();
@@ -274,7 +289,18 @@ public fun return_market(
 /// scenario sender is left as alice so the caller's next mint/redeem generates a
 /// valid owner proof.
 public fun create_funded_manager(self: &mut Fixture, deposit: u64): PredictManager {
-    self.scenario.next_tx(test_constants::alice());
+    self.create_funded_manager_as(test_constants::alice(), deposit)
+}
+
+/// `create_funded_manager` for an arbitrary owner, for multi-trader flows. The
+/// scenario sender is left as `owner` so the caller's next mint/redeem generates
+/// a valid owner proof.
+public fun create_funded_manager_as(
+    self: &mut Fixture,
+    owner: address,
+    deposit: u64,
+): PredictManager {
+    self.scenario.next_tx(owner);
     let mut registry = self.scenario.take_shared<Registry>();
     let mut manager = registry::create_manager(&mut registry, self.scenario.ctx());
     return_shared(registry);
@@ -528,6 +554,118 @@ public fun redeem_settled(
         &self.clock,
         self.scenario.ctx(),
     )
+}
+
+/// Run a budgeted liquidation pass over the market's active leveraged orders.
+/// Returns the number of orders liquidated.
+public fun liquidate(
+    self: &Fixture,
+    config: &ProtocolConfig,
+    market: &mut ExpiryMarket,
+    oracle: &MarketOracle,
+    pyth: &PythSource,
+    budget: u64,
+): u64 {
+    market.liquidate(config, oracle, pyth, budget, &self.clock)
+}
+
+/// Try to liquidate one active leveraged order by ID. Returns whether it was
+/// liquidated.
+public fun liquidate_order(
+    self: &Fixture,
+    config: &ProtocolConfig,
+    market: &mut ExpiryMarket,
+    oracle: &MarketOracle,
+    pyth: &PythSource,
+    order_id: u256,
+): bool {
+    market.liquidate_order(config, oracle, pyth, order_id, &self.clock)
+}
+
+/// Compact a settled market's live exposure indexes (cap-gated production path).
+public fun compact_storage(
+    self: &Fixture,
+    config: &ProtocolConfig,
+    market: &mut ExpiryMarket,
+    oracle: &MarketOracle,
+) {
+    market.compact_storage(config, oracle, &self.cap);
+}
+
+/// Claim a manager's settled trading-loss rebate and return any residual expiry
+/// cash to the pool.
+public fun claim_trading_loss_rebate(
+    self: &mut Fixture,
+    config: &ProtocolConfig,
+    vault: &mut PoolVault,
+    market: &mut ExpiryMarket,
+    oracle: &MarketOracle,
+    manager: &mut PredictManager,
+) {
+    vault.claim_trading_loss_rebate(market, manager, config, oracle, self.scenario.ctx());
+}
+
+// === Invariant assertions (rule 17 one-call checks) ===
+
+/// S1 — expiry cash backing: the market's DUSDC custody covers its payout
+/// liability plus the unresolved rebate reserve. Assert after every
+/// cash-mutating flow (mint / redeem / liquidate / sync / rebate / compact).
+public fun assert_market_backed(market: &ExpiryMarket) {
+    assert!(market.cash_balance() >= market.payout_liability() + market.rebate_reserve());
+}
+
+/// Expected snapshot of one expiry market's cash-side accounting, asserted in
+/// one call by `check_market_cash`.
+public struct ExpectedMarketCash has copy, drop {
+    /// DUSDC held by the expiry (`market.cash_balance()`).
+    cash_balance: u64,
+    /// Conservative payout backing owed to open + settled orders.
+    payout_liability: u64,
+    /// Cash reserved for unresolved trading-loss rebates.
+    rebate_reserve: u64,
+}
+
+public fun expected_market_cash(
+    cash_balance: u64,
+    payout_liability: u64,
+    rebate_reserve: u64,
+): ExpectedMarketCash {
+    ExpectedMarketCash { cash_balance, payout_liability, rebate_reserve }
+}
+
+/// Assert an expiry market's full cash sheet. Each field is an exact
+/// `assert_eq!`, and the S1 backing inequality is checked on top.
+public fun check_market_cash(market: &ExpiryMarket, expected: ExpectedMarketCash) {
+    assert_eq!(market.cash_balance(), expected.cash_balance);
+    assert_eq!(market.payout_liability(), expected.payout_liability);
+    assert_eq!(market.rebate_reserve(), expected.rebate_reserve);
+    assert_market_backed(market);
+}
+
+/// Expected snapshot of the pool vault's scalar accounting, asserted in one
+/// call by `check_pool`.
+public struct ExpectedPoolState has copy, drop {
+    /// Unallocated DUSDC sitting in the vault (`vault.idle_balance()`).
+    idle_balance: u64,
+    /// Total PLP shares outstanding.
+    total_supply: u64,
+    /// Write-only protocol profit reserve.
+    protocol_reserve_balance: u64,
+}
+
+public fun expected_pool_state(
+    idle_balance: u64,
+    total_supply: u64,
+    protocol_reserve_balance: u64,
+): ExpectedPoolState {
+    ExpectedPoolState { idle_balance, total_supply, protocol_reserve_balance }
+}
+
+/// Assert the pool vault's scalar state sheet with exact `assert_eq!`s.
+public fun check_pool(vault: &PoolVault, expected: ExpectedPoolState) {
+    assert_eq!(vault.idle_balance(), expected.idle_balance);
+    assert_eq!(vault.total_supply(), expected.total_supply);
+    assert_eq!(vault.protocol_reserve_balance(), expected.protocol_reserve_balance);
 }
 
 // === Manager state-sheet assertions (ExpectedBalances analog) ===
