@@ -6,14 +6,14 @@
 
 **Regenerate:** `python3 .redesign/gen_coverage_matrix.py` (from the repo root).
 
-## Summary — 60/157 covered, 97 uncovered
+## Summary — 80/157 covered, 77 uncovered
 
 | Priority band | Uncovered |
 |---|---|
-| P0 | 4 |
+| P0 | 1 |
 | P1 | 56 |
-| P2 | 14 |
-| P3 | 23 |
+| P2 | 0 |
+| P3 | 20 |
 
 Priority bands:
 - **P0** — `expiry_market` public-flow gates + the invariant-level hot-flow pass.
@@ -26,14 +26,14 @@ A constant that is a genuinely-unreachable defensive invariant is marked
 
 ## P0
 
-### `expiry_market` — 3/7
+### `expiry_market` — 6/7
 | Error const | Covered | Covering test |
 |---|---|---|
 | `EWrongMarketOracle` | ✅ | `redeem_with_wrong_oracle_aborts` |
-| `EWrongPythSource` | ❌ | — |
+| `EWrongPythSource` | ✅ | `mint_with_wrong_pyth_source_aborts` |
 | `EValuationExceedsCash` | ❌ | — |
-| `EPackageVersionDisabled` | ❌ | — |
-| `EMintPaused` | ❌ | — |
+| `EPackageVersionDisabled` | ✅ | `mint_with_current_version_disabled_aborts` |
+| `EMintPaused` | ✅ | `mint_while_expiry_mint_paused_aborts` |
 | `EFullCloseRequired` | ✅ | `redeem_settled_partial_close_aborts` |
 | `EProofRequiredForLiveRedeem` | ✅ | `redeem_settled_on_live_order_aborts` |
 
@@ -168,13 +168,13 @@ A constant that is a genuinely-unreachable defensive invariant is marked
 |---|---|---|
 | `EZeroDivisor` | ✅ | `div_scaled_by_zero_aborts` |
 
-### `liquidation_book` — 0/4
+### `liquidation_book` — 4/4
 | Error const | Covered | Covering test |
 |---|---|---|
-| `EActiveOrderAlreadyExists` | ❌ | — |
-| `EActiveOrderNotFound` | ❌ | — |
-| `ELiquidatedOrderAlreadyExists` | ❌ | — |
-| `ELiquidatedOrderNotFound` | ❌ | — |
+| `EActiveOrderAlreadyExists` | ✅ | `insert_same_active_order_twice_aborts` |
+| `EActiveOrderNotFound` | ✅ | `remove_from_empty_book_aborts`; `remove_uninserted_order_from_nonempty_book_aborts` |
+| `ELiquidatedOrderAlreadyExists` | ✅ | `insert_liquidated_order_aborts` |
+| `ELiquidatedOrderNotFound` | ✅ | `clear_never_liquidated_order_aborts` |
 
 ### `math` — 4/4
 | Error const | Covered | Covering test |
@@ -184,39 +184,39 @@ A constant that is a genuinely-unreachable defensive invariant is marked
 | `EPow10ExponentTooLarge` | ✅ | `pow10_nineteen_aborts` |
 | `EExpOverflow` | ✅ | `exp_above_u64_fit_bound_aborts`; `exp_just_above_u64_fit_bound_aborts` |
 
-### `pool_accounting` — 4/7
+### `pool_accounting` — 7/7
 | Error const | Covered | Covering test |
 |---|---|---|
 | `EUnknownRegisteredExpiry` | ✅ | `unknown_expiry_flow_read_aborts` |
 | `ERegisteredExpiryAlreadyExists` | ✅ | `register_expiry_twice_aborts` |
-| `EMaxExpiryFundingExceeded` | ❌ | — |
-| `ETerminalAccountingStarted` | ❌ | — |
+| `EMaxExpiryFundingExceeded` | ✅ | `lowering_funding_cap_below_net_funding_aborts`; `send_expiry_cash_above_funding_cap_aborts` |
+| `ETerminalAccountingStarted` | ✅ | `send_expiry_cash_after_terminal_accounting_aborts` |
 | `EMaxActiveExpiryMarkets` | ✅ | `register_expiry_above_active_limit_aborts` |
 | `EInsufficientActiveAllocationBacking` | ✅ | `register_expiry_without_idle_backing_aborts` |
-| `EInvalidActiveFundingAggregate` | ❌ | — |
+| `EInvalidActiveFundingAggregate` | ✅ | `cap_update_with_inconsistent_old_cap_aborts` |
 
-### `strike_exposure` — 0/2
+### `strike_exposure` — 2/2
 | Error const | Covered | Covering test |
 |---|---|---|
-| `ESettledLiabilityNotMaterialized` | ❌ | — |
-| `EInvalidCloseQuantity` | ❌ | — |
+| `ESettledLiabilityNotMaterialized` | ✅ | `destroy_live_indexes_before_materialize_aborts` |
+| `EInvalidCloseQuantity` | ✅ | `redeem_above_order_quantity_aborts` |
 
-### `strike_grid` — 4/5
+### `strike_grid` — 5/5
 | Error const | Covered | Covering test |
 |---|---|---|
-| `EInvalidTickSize` | ❌ | — |
+| `EInvalidTickSize` | ✅ | `new_centered_aborts_with_unaligned_tick_size`; `new_centered_aborts_with_zero_tick_size` |
 | `EInvalidStrikeGrid` | ✅ | `insert_finite_above_grid_aborts`; `insert_finite_below_grid_aborts`; `insert_full_open_range_aborts`; `insert_lower_above_higher_aborts`; `insert_lower_equal_higher_aborts`; `insert_unaligned_strike_aborts` |
 | `EOracleTickSizeTooSmallForSpot` | ✅ | `new_centered_aborts_when_tick_size_too_small_for_spot` |
 | `EInvalidOracleSpot` | ✅ | `new_centered_aborts_without_spot` |
 | `EOracleTickSizeTooLargeForSpot` | ✅ | `new_centered_aborts_when_tick_size_too_large_for_spot` |
 
-### `strike_nav_matrix` — 0/4
+### `strike_nav_matrix` — 4/4
 | Error const | Covered | Covering test |
 |---|---|---|
-| `EInsufficientQuantity` | ❌ | — |
-| `EInvalidCurveRange` | ❌ | — |
-| `EZeroQuantity` | ❌ | — |
-| `EInvalidPreallocatedTicks` | ❌ | — |
+| `EInsufficientQuantity` | ✅ | `remove_more_floor_shares_than_inserted_aborts`; `remove_range_above_inserted_quantity_aborts` |
+| `EInvalidCurveRange` | ✅ | `live_value_with_empty_curve_aborts` |
+| `EZeroQuantity` | ✅ | `insert_range_with_zero_quantity_aborts` |
+| `EInvalidPreallocatedTicks` | ✅ | `new_with_preallocated_ticks_above_tick_count_aborts` |
 
 ### `strike_payout_tree` — 2/2
 | Error const | Covered | Covering test |
@@ -264,12 +264,12 @@ A constant that is a genuinely-unreachable defensive invariant is marked
 |---|---|---|
 | `EInvalidBasisBounds` | ✅ | `set_basis_bounds_min_equal_to_max_aborts`; `set_basis_bounds_min_greater_than_max_aborts` |
 
-### `protocol_config` — 0/5
+### `protocol_config` — 3/5
 | Error const | Covered | Covering test |
 |---|---|---|
-| `ETradingPaused` | ❌ | — |
-| `EValuationInProgress` | ❌ | — |
-| `EValuationNotInProgress` | ❌ | — |
+| `ETradingPaused` | ✅ | `mint_while_trading_paused_aborts` |
+| `EValuationInProgress` | ✅ | `mint_during_pool_sync_aborts` |
+| `EValuationNotInProgress` | ✅ | `pool_nav_outside_pool_sync_aborts` |
 | `EExpiryConfigAlreadyExists` | ❌ | — |
 | `EExpiryConfigNotFound` | ❌ | — |
 
@@ -285,7 +285,7 @@ A constant that is a genuinely-unreachable defensive invariant is marked
 | `EInvalidLeverageTier` | ❌ | — |
 | `EInvalidLeverage` | ❌ | — |
 
-## Regressions vs `main` — 47 constants covered there, uncovered here
+## Regressions vs `main` — 36 constants covered there, uncovered here
 
 Name-level (not module-qualified). These had `expected_failure` coverage in the granular
 test files deleted during suite consolidation and still exist in HEAD sources:
@@ -298,10 +298,8 @@ test files deleted during suite consolidation and still exist in HEAD sources:
 - `EFuturePriceSourceUpdate`
 - `EFutureSVISourceUpdate`
 - `EIncentiveAssetNotConfigured`
-- `EInsufficientQuantity`
 - `EInvalidAskBound`
 - `EInvalidBaseFee`
-- `EInvalidCurveRange`
 - `EInvalidExpiryFeeMaxMultiplier`
 - `EInvalidExpiryFeeWindowMs`
 - `EInvalidLeverage`
@@ -309,32 +307,23 @@ test files deleted during suite consolidation and still exist in HEAD sources:
 - `EInvalidMaxAskPrice`
 - `EInvalidMinAskPrice`
 - `EInvalidMinFee`
-- `EInvalidPreallocatedTicks`
 - `EInvalidTradingLossRebateRate`
 - `ELazerNegativePrice`
 - `EMarketNotSettled`
 - `EMarketSettled`
-- `EMaxExpiryFundingExceeded`
 - `EMissingExpirySync`
 - `ENoPlpHolders`
 - `EOrderPrincipalBelowMinimum`
 - `EPauseCapNotValid`
 - `EPythSpotStale`
-- `ESettledLiabilityNotMaterialized`
 - `ESpotDeviationTooLarge`
 - `EStalePriceSourceUpdate`
 - `EStaleSVISourceUpdate`
 - `EStreamDurationTooLong`
-- `ETerminalAccountingStarted`
-- `ETradingPaused`
-- `EValuationInProgress`
-- `EValuationNotInProgress`
 - `EVersionAlreadyEnabled`
 - `EVersionNotEnabled`
-- `EWrongPythSource`
 - `EZeroDeposit`
 - `EZeroForward`
-- `EZeroQuantity`
 - `EZeroSpot`
 - `EZeroStreamDuration`
 

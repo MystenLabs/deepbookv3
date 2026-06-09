@@ -7,7 +7,7 @@ module deepbook_predict::pool_accounting_tests;
 use deepbook_predict::{config_constants, pool_accounting};
 use dusdc::dusdc::DUSDC;
 use std::unit_test::assert_eq;
-use sui::coin;
+use sui::{coin, test_utils::destroy};
 
 const EXPIRY_ID: address = @0xACCC;
 const UNKNOWN_EXPIRY_ID: address = @0xBEEF;
@@ -64,6 +64,65 @@ fun unknown_expiry_flow_read_aborts() {
     assert_eq!(ledger.active_expiry_markets().length(), 0);
 
     let (_, _) = ledger.expiry_flow_amounts(UNKNOWN_EXPIRY_ID.to_id());
+    abort 999
+}
+
+#[test, expected_failure(abort_code = pool_accounting::EMaxExpiryFundingExceeded)]
+fun send_expiry_cash_above_funding_cap_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let expiry_id = EXPIRY_ID.to_id();
+    let mut ledger = pool_accounting::new(ctx);
+    fund_expiry_capacity(&mut ledger, 2, ctx);
+    ledger.register_expiry(expiry_id, default_max_funding());
+
+    let cash = ledger.send_expiry_cash(expiry_id, default_max_funding(), default_max_funding() + 1);
+    destroy(cash);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = pool_accounting::EMaxExpiryFundingExceeded)]
+fun lowering_funding_cap_below_net_funding_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let expiry_id = EXPIRY_ID.to_id();
+    let mut ledger = pool_accounting::new(ctx);
+    fund_expiry_capacity(&mut ledger, 1, ctx);
+    ledger.register_expiry(expiry_id, default_max_funding());
+    let sent = default_max_funding() / 2;
+    let cash = ledger.send_expiry_cash(expiry_id, default_max_funding(), sent);
+    destroy(cash);
+
+    // New cap below the expiry's current net funding is rejected.
+    let _ = ledger.update_max_expiry_funding(expiry_id, default_max_funding(), sent - 1);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = pool_accounting::ETerminalAccountingStarted)]
+fun send_expiry_cash_after_terminal_accounting_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let expiry_id = EXPIRY_ID.to_id();
+    let mut ledger = pool_accounting::new(ctx);
+    fund_expiry_capacity(&mut ledger, 1, ctx);
+    ledger.register_expiry(expiry_id, default_max_funding());
+    // Materializing terminal profit latches terminal accounting for the expiry.
+    let _ = ledger.materialize_expiry_profit(expiry_id);
+
+    let cash = ledger.send_expiry_cash(expiry_id, default_max_funding(), 1);
+    destroy(cash);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = pool_accounting::EInvalidActiveFundingAggregate)]
+fun cap_update_with_inconsistent_old_cap_aborts() {
+    let ctx = &mut tx_context::dummy();
+    let expiry_id = EXPIRY_ID.to_id();
+    let mut ledger = pool_accounting::new(ctx);
+    fund_expiry_capacity(&mut ledger, 1, ctx);
+    ledger.register_expiry(expiry_id, default_max_funding());
+
+    // `old_max_expiry_funding` is caller-supplied (the ledger does not store
+    // per-expiry caps); an old value above the tracked active aggregate would
+    // underflow the sum and is rejected as an aggregate-consistency violation.
+    let _ = ledger.update_max_expiry_funding(expiry_id, 2 * default_max_funding(), 0);
     abort 999
 }
 
