@@ -6,12 +6,12 @@
 
 **Regenerate:** `python3 .redesign/gen_coverage_matrix.py` (from the repo root).
 
-## Summary — 80/157 covered, 77 uncovered
+## Summary — 102/157 covered, 55 uncovered
 
 | Priority band | Uncovered |
 |---|---|
 | P0 | 1 |
-| P1 | 56 |
+| P1 | 34 |
 | P2 | 0 |
 | P3 | 20 |
 
@@ -52,25 +52,25 @@ A constant that is a genuinely-unreachable defensive invariant is marked
 | `EStreamDurationTooLong` | ❌ | — |
 | `EFeedMismatch` | ❌ | — |
 
-### `market_oracle` — 3/16
+### `market_oracle` — 16/16
 | Error const | Covered | Covering test |
 |---|---|---|
-| `EInvalidMarketOracleCap` | ❌ | — |
+| `EInvalidMarketOracleCap` | ✅ | `update_svi_with_unregistered_cap_aborts` |
 | `EMarketNotActive` | ✅ | `mint_after_expiry_before_settlement_aborts` |
-| `EMarketSettled` | ❌ | — |
-| `ESpotDeviationTooLarge` | ❌ | — |
-| `EBasisDeviationTooLarge` | ❌ | — |
-| `EBasisOutOfRange` | ❌ | — |
-| `EZeroSpot` | ❌ | — |
-| `EZeroForward` | ❌ | — |
-| `EStalePriceSourceUpdate` | ❌ | — |
-| `EStaleSVISourceUpdate` | ❌ | — |
-| `EWrongPythSource` | ❌ | — |
-| `EFuturePriceSourceUpdate` | ❌ | — |
-| `EFutureSVISourceUpdate` | ❌ | — |
+| `EMarketSettled` | ✅ | `price_push_on_settled_oracle_aborts` |
+| `ESpotDeviationTooLarge` | ✅ | `spot_step_beyond_max_deviation_aborts` |
+| `EBasisDeviationTooLarge` | ✅ | `basis_step_beyond_max_deviation_aborts` |
+| `EBasisOutOfRange` | ✅ | `first_push_basis_outside_absolute_range_aborts` |
+| `EZeroSpot` | ✅ | `zero_spot_push_aborts` |
+| `EZeroForward` | ✅ | `zero_forward_push_aborts` |
+| `EStalePriceSourceUpdate` | ✅ | `price_push_with_non_advancing_source_timestamp_aborts` |
+| `EStaleSVISourceUpdate` | ✅ | `svi_update_with_non_advancing_source_timestamp_aborts` |
+| `EWrongPythSource` | ✅ | `pyth_observation_from_unbound_source_aborts` |
+| `EFuturePriceSourceUpdate` | ✅ | `price_push_with_future_source_timestamp_aborts` |
+| `EFutureSVISourceUpdate` | ✅ | `svi_update_with_future_source_timestamp_aborts` |
 | `EInvalidSviRho` | ✅ | `assert_valid_svi_rejects_rho_magnitude_above_one` |
 | `EInvalidSviSigma` | ✅ | `assert_valid_svi_rejects_sigma_above_max`; `assert_valid_svi_rejects_sigma_below_min` |
-| `EPackageVersionDisabled` | ❌ | — |
+| `EPackageVersionDisabled` | ✅ | `update_svi_after_current_version_disabled_aborts` |
 
 ### `order` — 7/7
 | Error const | Covered | Covering test |
@@ -110,18 +110,18 @@ A constant that is a genuinely-unreachable defensive invariant is marked
 | `EExpirySummaryHasOpenPositions` | ✅ | `resolve_expiry_summary_with_open_positions_aborts` |
 | `EPositionAlreadyExists` | ✅ | `add_position_duplicate_aborts` |
 
-### `pricing` — 0/9
+### `pricing` — 9/9
 | Error const | Covered | Covering test |
 |---|---|---|
-| `EZeroForward` | ❌ | — |
-| `ECannotBeNegative` | ❌ | — |
-| `EZeroVariance` | ❌ | — |
-| `EInvalidRange` | ❌ | — |
-| `EInvalidCurveRange` | ❌ | — |
-| `EBlockScholesPriceStale` | ❌ | — |
-| `EBlockScholesSVIStale` | ❌ | — |
-| `EInvalidStrikeRatio` | ❌ | — |
-| `EPythSpotStale` | ❌ | — |
+| `EZeroForward` | ✅ | `build_curve_with_zero_forward_aborts` |
+| `ECannotBeNegative` | ✅ | `build_curve_with_degenerate_sigma_negative_inner_term_aborts` |
+| `EZeroVariance` | ✅ | `build_curve_with_zero_total_variance_aborts` |
+| `EInvalidRange` | ✅ | `live_quote_with_equal_range_bounds_aborts` |
+| `EInvalidCurveRange` | ✅ | `build_curve_with_zero_tick_size_aborts` |
+| `EBlockScholesPriceStale` | ✅ | `live_quote_with_stale_block_scholes_prices_aborts` |
+| `EBlockScholesSVIStale` | ✅ | `live_quote_with_fresh_prices_but_stale_svi_aborts` |
+| `EInvalidStrikeRatio` | ✅ | `build_curve_with_sub_resolution_strike_ratio_aborts` |
+| `EPythSpotStale` | ✅ | `assert_pyth_spot_fresh_with_stale_source_aborts` |
 
 ### `pyth_source` — 0/7
 | Error const | Covered | Covering test |
@@ -285,45 +285,33 @@ A constant that is a genuinely-unreachable defensive invariant is marked
 | `EInvalidLeverageTier` | ❌ | — |
 | `EInvalidLeverage` | ❌ | — |
 
-## Regressions vs `main` — 36 constants covered there, uncovered here
+## Regressions vs `main` — 24 constants covered there, uncovered here
 
 Name-level (not module-qualified). These had `expected_failure` coverage in the granular
 test files deleted during suite consolidation and still exist in HEAD sources:
 
-- `EBasisDeviationTooLarge`
-- `EBasisOutOfRange`
 - `ECannotDisableLastVersion`
 - `EExpiryMarketAlreadySynced`
 - `EFeedMismatch`
-- `EFuturePriceSourceUpdate`
-- `EFutureSVISourceUpdate`
 - `EIncentiveAssetNotConfigured`
 - `EInvalidAskBound`
 - `EInvalidBaseFee`
 - `EInvalidExpiryFeeMaxMultiplier`
 - `EInvalidExpiryFeeWindowMs`
 - `EInvalidLeverage`
-- `EInvalidMarketOracleCap`
 - `EInvalidMaxAskPrice`
 - `EInvalidMinAskPrice`
 - `EInvalidMinFee`
 - `EInvalidTradingLossRebateRate`
 - `ELazerNegativePrice`
 - `EMarketNotSettled`
-- `EMarketSettled`
 - `EMissingExpirySync`
 - `ENoPlpHolders`
 - `EOrderPrincipalBelowMinimum`
 - `EPauseCapNotValid`
-- `EPythSpotStale`
-- `ESpotDeviationTooLarge`
-- `EStalePriceSourceUpdate`
-- `EStaleSVISourceUpdate`
 - `EStreamDurationTooLong`
 - `EVersionAlreadyEnabled`
 - `EVersionNotEnabled`
 - `EZeroDeposit`
-- `EZeroForward`
-- `EZeroSpot`
 - `EZeroStreamDuration`
 
