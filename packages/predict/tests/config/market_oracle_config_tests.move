@@ -11,8 +11,8 @@ use std::unit_test::{assert_eq, destroy};
 // paths. Aborts reference each constant's specific min/max to stay self-
 // documenting if the envelope ever moves.
 const VALID_SETTLEMENT_FRESHNESS_MS: u64 = 5_000;
-const VALID_MAX_SPOT_DEVIATION: u64 = 50_000_000;
-const VALID_MAX_BASIS_DEVIATION: u64 = 60_000_000;
+const VALID_MAX_SPOT_DEVIATION: u64 = 30_000_000;
+const VALID_MAX_BASIS_DEVIATION: u64 = 40_000_000;
 const VALID_MIN_BASIS: u64 = 950_000_000;
 const VALID_MAX_BASIS: u64 = 1_050_000_000;
 
@@ -74,17 +74,17 @@ fun set_settlement_freshness_ms_above_max_aborts() {
 #[test]
 fun set_basis_bounds_accepts_envelope_endpoints() {
     // Exercise the exact envelope endpoints for all four fields. min_basis at
-    // its envelope min (500e6) and max_basis at its envelope max (2e9) keep
+    // its envelope min (800e6) and max_basis at its envelope max (1.25e9) keep
     // the strict min<max invariant satisfied.
     let mut config = market_oracle_config::new();
-    config.set_basis_bounds(1, 1, 500_000_000, 2_000_000_000);
+    config.set_basis_bounds(1, 1, 800_000_000, 1_250_000_000);
     assert_eq!(config.max_spot_deviation(), 1);
     assert_eq!(config.max_basis_deviation(), 1);
-    assert_eq!(config.min_basis(), 500_000_000);
-    assert_eq!(config.max_basis(), 2_000_000_000);
-    config.set_basis_bounds(100_000_000, 100_000_000, 500_000_000, 2_000_000_000);
-    assert_eq!(config.max_spot_deviation(), 100_000_000);
-    assert_eq!(config.max_basis_deviation(), 100_000_000);
+    assert_eq!(config.min_basis(), 800_000_000);
+    assert_eq!(config.max_basis(), 1_250_000_000);
+    config.set_basis_bounds(50_000_000, 50_000_000, 800_000_000, 1_250_000_000);
+    assert_eq!(config.max_spot_deviation(), 50_000_000);
+    assert_eq!(config.max_basis_deviation(), 50_000_000);
     destroy(config);
 }
 
@@ -116,10 +116,10 @@ fun set_basis_bounds_max_spot_deviation_zero_aborts() {
 
 #[test, expected_failure(abort_code = config_constants::EInvalidMaxSpotDeviation)]
 fun set_basis_bounds_max_spot_deviation_too_large_aborts() {
-    // max = 100_000_000.
+    // max = 50_000_000.
     let mut config = market_oracle_config::new();
     config.set_basis_bounds(
-        100_000_001,
+        50_000_001,
         VALID_MAX_BASIS_DEVIATION,
         VALID_MIN_BASIS,
         VALID_MAX_BASIS,
@@ -139,7 +139,7 @@ fun set_basis_bounds_max_basis_deviation_too_large_aborts() {
     let mut config = market_oracle_config::new();
     config.set_basis_bounds(
         VALID_MAX_SPOT_DEVIATION,
-        100_000_001,
+        50_000_001,
         VALID_MIN_BASIS,
         VALID_MAX_BASIS,
     );
@@ -148,12 +148,12 @@ fun set_basis_bounds_max_basis_deviation_too_large_aborts() {
 
 #[test, expected_failure(abort_code = config_constants::EInvalidMinBasis)]
 fun set_basis_bounds_min_basis_below_envelope_aborts() {
-    // min_basis envelope = [500_000_000, 2_000_000_000].
+    // min_basis envelope = [800_000_000, 1_250_000_000].
     let mut config = market_oracle_config::new();
     config.set_basis_bounds(
         VALID_MAX_SPOT_DEVIATION,
         VALID_MAX_BASIS_DEVIATION,
-        499_999_999,
+        799_999_999,
         VALID_MAX_BASIS,
     );
     abort 999
@@ -165,7 +165,7 @@ fun set_basis_bounds_min_basis_above_envelope_aborts() {
     config.set_basis_bounds(
         VALID_MAX_SPOT_DEVIATION,
         VALID_MAX_BASIS_DEVIATION,
-        2_000_000_001,
+        1_250_000_001,
         VALID_MAX_BASIS,
     );
     abort 999
@@ -178,7 +178,7 @@ fun set_basis_bounds_max_basis_below_envelope_aborts() {
         VALID_MAX_SPOT_DEVIATION,
         VALID_MAX_BASIS_DEVIATION,
         VALID_MIN_BASIS,
-        499_999_999,
+        799_999_999,
     );
     abort 999
 }
@@ -190,7 +190,7 @@ fun set_basis_bounds_max_basis_above_envelope_aborts() {
         VALID_MAX_SPOT_DEVIATION,
         VALID_MAX_BASIS_DEVIATION,
         VALID_MIN_BASIS,
-        2_000_000_001,
+        1_250_000_001,
     );
     abort 999
 }
