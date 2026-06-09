@@ -6,14 +6,14 @@
 
 **Regenerate:** `python3 .redesign/gen_coverage_matrix.py` (from the repo root).
 
-## Summary — 125/157 covered, 12 documented (defensive / needs-special / gas-bound), 20 open
+## Summary — 127/157 covered, 12 documented (defensive / needs-special / gas-bound), 18 open
 
 | Priority band | Open (untested, undocumented) |
 |---|---|
 | P0 | 0 |
 | P1 | 0 |
 | P2 | 0 |
-| P3 | 20 |
+| P3 | 18 |
 
 Priority bands:
 - **P0** — `expiry_market` public-flow gates + the invariant-level hot-flow pass.
@@ -264,14 +264,14 @@ A constant that is a genuinely-unreachable defensive invariant is marked
 |---|---|---|
 | `EInvalidBasisBounds` | ✅ | `set_basis_bounds_min_equal_to_max_aborts`; `set_basis_bounds_min_greater_than_max_aborts` |
 
-### `protocol_config` — 3/5
+### `protocol_config` — 5/5
 | Error const | Covered | Covering test |
 |---|---|---|
 | `ETradingPaused` | ✅ | `mint_while_trading_paused_aborts` |
 | `EValuationInProgress` | ✅ | `mint_during_pool_sync_aborts` |
 | `EValuationNotInProgress` | ✅ | `pool_nav_outside_pool_sync_aborts` |
-| `EExpiryConfigAlreadyExists` | ❌ | — |
-| `EExpiryConfigNotFound` | ❌ | — |
+| `EExpiryConfigAlreadyExists` | ✅ | `register_expiry_runtime_config_twice_aborts` |
+| `EExpiryConfigNotFound` | ✅ | `set_mint_paused_for_unknown_expiry_aborts` |
 
 ### `strike_exposure_config` — 0/8
 | Error const | Covered | Covering test |
