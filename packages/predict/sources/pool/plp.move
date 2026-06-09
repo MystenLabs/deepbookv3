@@ -19,7 +19,6 @@ use deepbook_predict::{
     market_oracle::MarketOracle,
     pool_accounting::{Self, Ledger},
     predict_manager::PredictManager,
-    pricing,
     protocol_config::ProtocolConfig,
     pyth_source::PythSource,
     vault_events
@@ -845,7 +844,7 @@ fun emit_expiry_cash_received(
     vault_events::emit_expiry_cash_received(
         vault.id(),
         expiry_market_id,
-        pricing::settlement_price(market_oracle),
+        market_oracle.settlement_price(),
         amount,
         vault.expiry_accounting.idle_balance(),
         sent_to_expiry_after,

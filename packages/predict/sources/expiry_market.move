@@ -527,7 +527,7 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
 /// Cache terminal payout liability in strike exposure if it has not already been cached.
 fun materialize_settled_liability(market: &mut ExpiryMarket, market_oracle: &MarketOracle): u64 {
     market.assert_market_oracle(market_oracle);
-    let settlement = pricing::settlement_price(market_oracle);
+    let settlement = market_oracle.settlement_price();
     market.strike_exposure.materialize_settled_liability(settlement)
 }
 
@@ -822,7 +822,7 @@ fun redeem_settled_internal(
     let position_root_id = manager.remove_position(market.id(), order.id());
     market.materialize_settled_liability(market_oracle);
 
-    let settlement = pricing::settlement_price(market_oracle);
+    let settlement = market_oracle.settlement_price();
     let payout_amount = market.strike_exposure.close_settled_order(order, settlement);
     market.settle_settled_redeem_payment(manager, payout_amount, ctx);
 

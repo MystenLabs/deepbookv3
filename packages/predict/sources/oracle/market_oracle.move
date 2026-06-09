@@ -114,6 +114,11 @@ public fun is_settled(market: &MarketOracle): bool {
     market.settlement.is_settled()
 }
 
+/// Return the terminal settlement price, aborting if the market is unsettled.
+public fun settlement_price(market: &MarketOracle): u64 {
+    market.settlement.price()
+}
+
 /// Return active, pending-settlement, or settled status for the current clock.
 public fun status(market: &MarketOracle, clock: &Clock): u8 {
     if (market.is_settled()) {
@@ -434,11 +439,6 @@ public(package) fun block_scholes_price_freshness_timestamp_ms(market: &MarketOr
 /// Return the conservative timestamp used for Block Scholes SVI freshness.
 public(package) fun block_scholes_svi_freshness_timestamp_ms(market: &MarketOracle): u64 {
     market.block_scholes_svi_source_timestamp_ms.min(market.block_scholes_svi_update_timestamp_ms)
-}
-
-/// Return terminal settlement price.
-public(package) fun settlement_price(market: &MarketOracle): u64 {
-    market.settlement.price()
 }
 
 #[test_only]

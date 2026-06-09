@@ -39,51 +39,49 @@ public struct Order has copy, drop {
     id: u256,
 }
 
-// === Public Functions ===
+// === Public-Package Functions ===
 
 /// Validate a packed order ID and return it as an `Order` view.
-public fun from_order_id(order_id: u256): Order {
+public(package) fun from_order_id(order_id: u256): Order {
     let order = Order { id: order_id };
     order.assert_valid();
     order
 }
 
 /// Return the canonical packed order ID.
-public fun id(order: &Order): u256 {
+public(package) fun id(order: &Order): u256 {
     order.id
 }
 
 /// Return the timestamp in milliseconds when this position was originally opened.
-public fun opened_at_ms(order: &Order): u64 {
+public(package) fun opened_at_ms(order: &Order): u64 {
     decode_u48(order.id, OPENED_AT_OFFSET)
 }
 
 /// Return the lower strike boundary index encoded in this order.
-public fun lower_boundary_index(order: &Order): u64 {
+public(package) fun lower_boundary_index(order: &Order): u64 {
     decode_u24(order.id, LOWER_BOUNDARY_INDEX_OFFSET)
 }
 
 /// Return the higher strike boundary index encoded in this order.
-public fun higher_boundary_index(order: &Order): u64 {
+public(package) fun higher_boundary_index(order: &Order): u64 {
     decode_u24(order.id, HIGHER_BOUNDARY_INDEX_OFFSET)
 }
 
 /// Return the encoded quantity in position lots.
-public fun quantity_lots(order: &Order): u64 {
+public(package) fun quantity_lots(order: &Order): u64 {
     decode_quantity_lots(order.id)
 }
 
 /// Return the immutable quantity encoded in this order.
-public fun quantity(order: &Order): u64 {
+public(package) fun quantity(order: &Order): u64 {
     order.quantity_lots() * constants::position_lot_size!()
 }
 
 /// Return the expiry-local sequence encoded in this order.
-public fun sequence(order: &Order): u64 {
+public(package) fun sequence(order: &Order): u64 {
     (order.id & U40_MASK) as u64
 }
-
-// === Public-Package Functions ===
 
 /// Construct an order ID from already-normalized strike boundary indices.
 public(package) fun new_from_boundary_indices(

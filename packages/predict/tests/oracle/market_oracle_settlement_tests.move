@@ -9,7 +9,6 @@ use deepbook_predict::{
     constants,
     flow_test_helpers as helpers,
     market_oracle::MarketOracle,
-    pricing,
     protocol_config::ProtocolConfig,
     pyth_source::PythSource
 };
@@ -62,7 +61,7 @@ fun pyth_sample_average_wins_over_fresh_post_expiry_pyth() {
     // Seeded Sui shuffle averages indices
     // [5, 20, 22, 14, 1, 28, 12, 9, 26, 15, 23, 24, 7, 4, 21].
     // Their stepped-price mean is 115_400_000_000.
-    assert_eq!(pricing::settlement_price(&oracle), SEEDED_SAMPLED_AVERAGE_PRICE);
+    assert_eq!(oracle.settlement_price(), SEEDED_SAMPLED_AVERAGE_PRICE);
 
     helpers::return_market(pyth, vault, market, oracle, config);
     fx.finish();
@@ -91,7 +90,7 @@ fun pyth_fresh_post_expiry_price_wins_when_samples_below_minimum() {
         PYTH_POST_EXPIRY_PRICE,
     );
 
-    assert_eq!(pricing::settlement_price(&oracle), PYTH_POST_EXPIRY_PRICE);
+    assert_eq!(oracle.settlement_price(), PYTH_POST_EXPIRY_PRICE);
 
     helpers::return_market(pyth, vault, market, oracle, config);
     fx.finish();
@@ -121,7 +120,7 @@ fun block_scholes_sample_average_wins_over_fresh_post_expiry_block_scholes() {
     );
     settle_with_current_pyth(&fx, &config, &mut oracle, &pyth);
 
-    assert_eq!(pricing::settlement_price(&oracle), SEEDED_SAMPLED_AVERAGE_PRICE);
+    assert_eq!(oracle.settlement_price(), SEEDED_SAMPLED_AVERAGE_PRICE);
 
     helpers::return_market(pyth, vault, market, oracle, config);
     fx.finish();
@@ -145,7 +144,7 @@ fun block_scholes_fresh_post_expiry_price_falls_back_when_pyth_unavailable() {
 
     settle_with_current_pyth(&fx, &config, &mut oracle, &pyth);
 
-    assert_eq!(pricing::settlement_price(&oracle), BLOCK_SCHOLES_FALLBACK_PRICE);
+    assert_eq!(oracle.settlement_price(), BLOCK_SCHOLES_FALLBACK_PRICE);
 
     helpers::return_market(pyth, vault, market, oracle, config);
     fx.finish();
@@ -188,7 +187,7 @@ fun settled_oracle_ignores_later_settlement_attempts() {
     );
     settle_with_current_pyth(&fx, &config, &mut oracle, &pyth);
 
-    assert_eq!(pricing::settlement_price(&oracle), PYTH_POST_EXPIRY_PRICE);
+    assert_eq!(oracle.settlement_price(), PYTH_POST_EXPIRY_PRICE);
 
     helpers::return_market(pyth, vault, market, oracle, config);
     fx.finish();
@@ -216,7 +215,7 @@ fun equal_pyth_samples_settle_to_exact_value() {
     settle_with_pyth(&mut fx, &config, &mut oracle, &mut pyth, PYTH_POST_EXPIRY_PRICE);
 
     // Mean of 15 (or any subset of) equal samples is the sample value itself.
-    assert_eq!(pricing::settlement_price(&oracle), EQUAL_SAMPLE_PRICE);
+    assert_eq!(oracle.settlement_price(), EQUAL_SAMPLE_PRICE);
 
     helpers::return_market(pyth, vault, market, oracle, config);
     fx.finish();

@@ -34,13 +34,6 @@ public struct CurvePoint has copy, drop, store {
     up_price: u64,
 }
 
-// === Public Functions ===
-
-/// Return terminal settlement price, aborting if the market is unsettled.
-public fun settlement_price(market: &MarketOracle): u64 {
-    market.settlement_price()
-}
-
 // === Public-Package Functions ===
 
 public(package) fun strike(point: &CurvePoint): u64 {
