@@ -532,6 +532,8 @@ fun materialize_settled_liability(market: &mut ExpiryMarket, market_oracle: &Mar
 }
 
 /// Run one expiry-local liquidation pass with the caller-selected budget.
+/// Version gating lives on the public entrypoints (`mint`, `redeem`,
+/// `liquidate`) that reach this helper.
 fun run_liquidation_pass(
     market: &mut ExpiryMarket,
     pricing_config: &PricingConfig,
@@ -540,7 +542,6 @@ fun run_liquidation_pass(
     budget: u64,
     clock: &Clock,
 ): u64 {
-    market.assert_version_allowed();
     market.assert_market_oracle(market_oracle);
     market.assert_pyth_feed(pyth);
     market_oracle.assert_active(clock);
