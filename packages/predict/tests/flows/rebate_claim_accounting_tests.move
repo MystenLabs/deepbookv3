@@ -185,3 +185,117 @@ fun rebate_claim_splits_reserve_exactly_and_conserves() {
     destroy(manager);
     fx.finish();
 }
+
+/// Decision-pinned (2026-06-09): the public `plp::claim_trading_loss_rebate`
+/// wrapper is deliberately permissionless (no `assert_owner`), and the claim
+/// resolves at the manager's active stake AT CLAIM TIME. A non-owner can
+/// resolve the one-shot summary while the owner's active stake is zero:
+/// rebate = floor(eligible * benefit_ratio(0)) = floor(2.5e6 * 0) = 0, nothing
+/// is credited to the owner, the full resolved reserve returns to pool idle
+/// (the caller gains nothing), and a later owner claim — even after staking to
+/// the benefit kink and activating it — is a no-op because the summary was
+/// consumed.
+#[test]
+fun non_owner_claim_resolves_at_current_stake_and_is_one_shot() {
+    let (mut fx, expiry_id, oracle_id, mut manager) = helpers::setup_live_market(
+        test_constants::short_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    let cash_floor = constants::expiry_cash_floor!();
+    let initial_supply = test_constants::default_initial_supply();
+
+    // --- TX (alice, the owner): mint the 1x ATM order, settle it worthless ON
+    // its lower boundary, and close the position so the summary is resolvable.
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let (mut pyth, vault, mut market, mut oracle, config) = fx.take_market(
+        expiry_id,
+        oracle_id,
+    );
+    let order_id = fx.mint(
+        &config,
+        &mut manager,
+        &mut market,
+        &oracle,
+        &pyth,
+        helpers::min_strike(),
+        constants::pos_inf!(),
+        test_constants::mint_quantity(),
+        test_constants::leverage_one_x(),
+    );
+    let cash_after_mint = cash_floor + MINT_PRINCIPAL + MINT_MIN_FEE;
+    fx.settle_oracle(&config, &mut oracle, &mut pyth, helpers::min_strike());
+    fx.redeem_settled(
+        &config,
+        &mut manager,
+        &mut market,
+        &oracle,
+        &pyth,
+        order_id,
+        test_constants::mint_quantity(),
+    );
+    helpers::return_market(pyth, vault, market, oracle, config);
+
+    // --- TX (bob, NOT the owner): claim the owner's rebate while the owner has
+    // zero active stake. The wrapper has no owner gate, so the call succeeds.
+    fx.scenario_mut().next_tx(test_constants::bob());
+    let (pyth, mut vault, mut market, oracle, config) = fx.take_market(expiry_id, oracle_id);
+    assert_eq!(manager.owner(), test_constants::alice());
+    fx.claim_trading_loss_rebate(&config, &mut vault, &mut market, &oracle, &mut manager);
+    // Rebate paid = floor(2_500_000 * benefit_ratio(0)) = 0 — the owner's
+    // balance is unchanged and the summary row is consumed (fees read 0).
+    helpers::check_manager(
+        &manager,
+        expiry_id,
+        helpers::expected_manager_state(POST_MINT_BALANCE, 0, 0, 0, 0),
+    );
+    // The full resolved reserve left the expiry as pool residual, not to bob.
+    helpers::check_market_cash(
+        &market,
+        helpers::expected_market_cash(cash_after_mint - RESOLVED_RESERVE, 0, 0),
+    );
+    helpers::check_pool(
+        &vault,
+        helpers::expected_pool_state(
+            initial_supply - cash_floor + RESOLVED_RESERVE,
+            initial_supply,
+            0,
+        ),
+    );
+    helpers::return_market(pyth, vault, market, oracle, config);
+
+    // --- TX (alice): stake to the benefit kink and activate it next epoch —
+    // too late: the re-claim resolves nothing (summary already consumed).
+    fx.scenario_mut().next_tx(test_constants::alice());
+    let (pyth, mut vault, market, oracle, config) = fx.take_market(expiry_id, oracle_id);
+    let kink_stake = config_constants::default_lower_benefit_power!();
+    let deep = coin::mint_for_testing<DEEP>(kink_stake, fx.scenario_mut().ctx());
+    vault.stake_deep(&mut manager, deep, fx.scenario_mut().ctx());
+    helpers::return_market(pyth, vault, market, oracle, config);
+    fx.scenario_mut().next_epoch(test_constants::alice());
+    let (pyth, mut vault, mut market, oracle, config) = fx.take_market(expiry_id, oracle_id);
+    fx.claim_trading_loss_rebate(&config, &mut vault, &mut market, &oracle, &mut manager);
+    // No-op: balance, expiry cash, and pool idle all unchanged. The consumed
+    // summary makes the claim early-return before `update_stake`, so the kink
+    // stake doesn't even roll active here.
+    helpers::check_manager(
+        &manager,
+        expiry_id,
+        helpers::expected_manager_state(POST_MINT_BALANCE, 0, 0, 0, kink_stake),
+    );
+    helpers::check_market_cash(
+        &market,
+        helpers::expected_market_cash(cash_after_mint - RESOLVED_RESERVE, 0, 0),
+    );
+    helpers::check_pool(
+        &vault,
+        helpers::expected_pool_state(
+            initial_supply - cash_floor + RESOLVED_RESERVE,
+            initial_supply,
+            0,
+        ),
+    );
+
+    helpers::return_market(pyth, vault, market, oracle, config);
+    destroy(manager);
+    fx.finish();
+}

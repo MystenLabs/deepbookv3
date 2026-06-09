@@ -1,6 +1,27 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// Pins the EXACT validation box of `market_oracle::assert_valid_svi` — the
+/// only SVI screening on the production `update_svi` path.
+///
+/// Validated (both bounds inclusive):
+///   - `|rho| <= 1.0` (either sign), abort `EInvalidSviRho`;
+///   - `sigma in [svi_sigma_min, svi_sigma_max]`, abort `EInvalidSviSigma`.
+/// NOT validated (pinned as accepted operator freedom, per docs/risks.md the
+/// surface is the authorized operator's to set within hygiene bounds):
+///   - `a`: unbounded above (u64 type gives `a >= 0` implicitly);
+///   - `b`: unbounded (0 and u64::MAX both pass);
+///   - `m`: unbounded, either sign;
+///   - no butterfly no-arbitrage check (Gatheral g(k) >= 0) and no UP-price
+///     monotonicity-in-strike check — an arbitrageable surface passes; the
+///     read side clamps an inverted range to price 0 (`pricing::range_price`)
+///     instead of aborting;
+///   - no wing-slope / Lee moment bound;
+///   - a degenerate zero-variance surface (a = 0, b = 0) passes validation and
+///     only aborts at quote time (`pricing::EZeroVariance`, pinned in
+///     `pricing_guard_tests`);
+///   - calendar arbitrage is structurally out of scope: each `MarketOracle`
+///     stores a single SVI slice for one expiry.
 #[test_only]
 module deepbook_predict::market_oracle_tests;
 
@@ -20,6 +41,13 @@ const EUnexpectedSuccess: u64 = 999;
 #[test, expected_failure(abort_code = market_oracle::EInvalidSviRho)]
 fun assert_valid_svi_rejects_rho_magnitude_above_one() {
     let svi = new_svi(VALID_B, float!() + ONE_ULP, POSITIVE_RHO_SIGN, VALID_SIGMA);
+    market_oracle::assert_valid_svi(&svi);
+    abort EUnexpectedSuccess
+}
+
+#[test, expected_failure(abort_code = market_oracle::EInvalidSviRho)]
+fun assert_valid_svi_rejects_negative_rho_magnitude_above_one() {
+    let svi = new_svi(VALID_B, float!() + ONE_ULP, NEGATIVE_RHO_SIGN, VALID_SIGMA);
     market_oracle::assert_valid_svi(&svi);
     abort EUnexpectedSuccess
 }
@@ -46,6 +74,55 @@ fun assert_valid_svi_rejects_sigma_above_max() {
     );
     market_oracle::assert_valid_svi(&svi);
     abort EUnexpectedSuccess
+}
+
+#[test]
+fun assert_valid_svi_accepts_sigma_boundaries() {
+    let at_min = new_svi(
+        VALID_B,
+        ZERO_RHO_MAGNITUDE,
+        POSITIVE_RHO_SIGN,
+        constants::svi_sigma_min!(),
+    );
+    market_oracle::assert_valid_svi(&at_min);
+    assert_eq!(at_min.sigma(), constants::svi_sigma_min!());
+
+    let at_max = new_svi(
+        VALID_B,
+        ZERO_RHO_MAGNITUDE,
+        POSITIVE_RHO_SIGN,
+        constants::svi_sigma_max!(),
+    );
+    market_oracle::assert_valid_svi(&at_max);
+    assert_eq!(at_max.sigma(), constants::svi_sigma_max!());
+}
+
+#[test]
+fun assert_valid_svi_does_not_bound_a_or_m() {
+    // a at u64::MAX with m at the most negative representable magnitude.
+    let extreme = market_oracle::new_svi_params(
+        std::u64::max_value!(),
+        VALID_B,
+        i64::zero(),
+        i64::from_parts(std::u64::max_value!(), true),
+        VALID_SIGMA,
+    );
+    market_oracle::assert_valid_svi(&extreme);
+    assert_eq!(extreme.a(), std::u64::max_value!());
+    assert_eq!(extreme.m().magnitude(), std::u64::max_value!());
+    assert!(extreme.m().is_negative());
+
+    // m at the most positive representable magnitude.
+    let positive_m = market_oracle::new_svi_params(
+        VALID_A,
+        VALID_B,
+        i64::zero(),
+        i64::from_parts(std::u64::max_value!(), false),
+        VALID_SIGMA,
+    );
+    market_oracle::assert_valid_svi(&positive_m);
+    assert_eq!(positive_m.m().magnitude(), std::u64::max_value!());
+    assert!(!positive_m.m().is_negative());
 }
 
 #[test]

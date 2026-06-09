@@ -5,7 +5,10 @@
 /// through the public registry deposit entrypoints (`deposit_sui_incentive`)
 /// and the `plp::supply` incentive-valuation path: `incentive`'s deposit
 /// guards, its feed-binding check, `pyth_source`'s zero-spot valuation guard,
-/// and the registry's unconfigured-asset guard.
+/// and the registry's unconfigured-asset guard. Also pins the linear-vesting
+/// rounding behavior: a compound whose release rounds down to zero still
+/// advances `last_compound_ms` (deferring vesting), and the terminal branch
+/// releases the full locked remainder by stream end (no loss).
 #[test_only]
 module deepbook_predict::incentive_tests;
 
@@ -20,7 +23,7 @@ use deepbook_predict::{
     test_constants
 };
 use dusdc::dusdc::DUSDC;
-use std::unit_test::destroy;
+use std::unit_test::{assert_eq, destroy};
 use sui::{
     clock::{Self, Clock},
     coin,
@@ -116,7 +119,7 @@ fun supply_with_wrong_feed_incentive_source_aborts() {
     let pyth_id = create_default_pyth(&mut scenario, &admin_cap);
     bootstrap_supply(&mut scenario, &clock, pyth_id);
     configure_sui_incentive(&mut scenario, &admin_cap);
-    fund_sui_incentive(&mut scenario, &admin_cap, &clock);
+    fund_sui_incentive(&mut scenario, &admin_cap, &clock, STREAM_DURATION_MS);
 
     // A second registered feed: its source is real and admin-created, but it
     // is not the feed the SUI incentive was bound to at deposit time.
@@ -155,7 +158,7 @@ fun supply_with_zero_spot_incentive_source_aborts() {
     let pyth_id = create_default_pyth(&mut scenario, &admin_cap);
     bootstrap_supply(&mut scenario, &clock, pyth_id);
     configure_sui_incentive(&mut scenario, &admin_cap);
-    fund_sui_incentive(&mut scenario, &admin_cap, &clock);
+    fund_sui_incentive(&mut scenario, &admin_cap, &clock, STREAM_DURATION_MS);
 
     // Zero spot with FRESH timestamps: the freshness gate passes and the
     // valuation hits `value_in_dusdc`'s zero-spot guard, not EPythSpotStale.
@@ -175,6 +178,92 @@ fun supply_with_zero_spot_incentive_source_aborts() {
         scenario.ctx(),
     );
     abort 999
+}
+
+// === Linear-vesting rounding pins (incentive::compound) ===
+
+#[test]
+fun zero_rounded_release_advances_window_and_vests_nothing() {
+    let (mut scenario, admin_cap, mut clock) = begin_pool();
+    let pyth_id = create_default_pyth(&mut scenario, &admin_cap);
+    bootstrap_supply(&mut scenario, &clock, pyth_id);
+    configure_sui_incentive(&mut scenario, &admin_cap);
+    // 1 SUI vesting over the maximum 1-year stream, deposited at T0 = now_ms.
+    fund_sui_incentive(&mut scenario, &admin_cap, &clock, constants::max_incentive_stream_ms!());
+
+    // First sync 20 ms in. The release fraction floors to zero:
+    //   div(20, 31_536_000_000) = floor(20 * 1e9 / 31_536_000_000) = floor(0.63..) = 0
+    //   release = mul(1_000_000_000, 0) = 0
+    // ...yet compound still advances last_compound_ms to T0 + 20.
+    clock.set_for_testing(test_constants::now_ms() + 20);
+    let (released, locked) = supply_and_read_sui_incentive(&mut scenario, &clock, pyth_id);
+    assert_eq!(released, 0);
+    assert_eq!(locked, INCENTIVE_DEPOSIT);
+
+    // Second sync 20 ms later. Because the window restarted at T0 + 20, elapsed
+    // is again 20 ms (not 40):
+    //   div(20, 31_536_000_000 - 20) = 0, release = 0
+    // 40 ms have passed since the deposit and nothing has vested — the control
+    // test below shows a single 40 ms compound releases 1 unit.
+    clock.set_for_testing(test_constants::now_ms() + 40);
+    let (released, locked) = supply_and_read_sui_incentive(&mut scenario, &clock, pyth_id);
+    assert_eq!(released, 0);
+    assert_eq!(locked, INCENTIVE_DEPOSIT);
+
+    destroy(admin_cap);
+    destroy(clock);
+    scenario.end();
+}
+
+#[test]
+fun same_elapsed_in_one_compound_vests_one_unit() {
+    let (mut scenario, admin_cap, mut clock) = begin_pool();
+    let pyth_id = create_default_pyth(&mut scenario, &admin_cap);
+    bootstrap_supply(&mut scenario, &clock, pyth_id);
+    configure_sui_incentive(&mut scenario, &admin_cap);
+    fund_sui_incentive(&mut scenario, &admin_cap, &clock, constants::max_incentive_stream_ms!());
+
+    // Control for the zero-release test: the same 40 ms after the deposit, but
+    // compounded once instead of twice:
+    //   div(40, 31_536_000_000) = floor(40 * 1e9 / 31_536_000_000) = floor(1.26..) = 1
+    //   release = mul(1_000_000_000, 1) = floor(1_000_000_000 * 1 / 1e9) = 1
+    clock.set_for_testing(test_constants::now_ms() + 40);
+    let (released, locked) = supply_and_read_sui_incentive(&mut scenario, &clock, pyth_id);
+    assert_eq!(released, 1);
+    assert_eq!(locked, INCENTIVE_DEPOSIT - 1);
+
+    destroy(admin_cap);
+    destroy(clock);
+    scenario.end();
+}
+
+#[test]
+fun zero_rounded_deferrals_fully_vest_by_stream_end() {
+    let (mut scenario, admin_cap, mut clock) = begin_pool();
+    let pyth_id = create_default_pyth(&mut scenario, &admin_cap);
+    bootstrap_supply(&mut scenario, &clock, pyth_id);
+    configure_sui_incentive(&mut scenario, &admin_cap);
+    fund_sui_incentive(&mut scenario, &admin_cap, &clock, constants::max_incentive_stream_ms!());
+
+    // Two zero-release window restarts (as in the zero-release pin above)...
+    clock.set_for_testing(test_constants::now_ms() + 20);
+    let (released, _locked) = supply_and_read_sui_incentive(&mut scenario, &clock, pyth_id);
+    assert_eq!(released, 0);
+    clock.set_for_testing(test_constants::now_ms() + 40);
+    let (released, _locked) = supply_and_read_sui_incentive(&mut scenario, &clock, pyth_id);
+    assert_eq!(released, 0);
+
+    // ...then a sync exactly at stream end takes the terminal branch and
+    // releases the entire locked remainder: the rounding deferral is
+    // self-correcting and no vesting is lost.
+    clock.set_for_testing(test_constants::now_ms() + constants::max_incentive_stream_ms!());
+    let (released, locked) = supply_and_read_sui_incentive(&mut scenario, &clock, pyth_id);
+    assert_eq!(released, INCENTIVE_DEPOSIT);
+    assert_eq!(locked, 0);
+
+    destroy(admin_cap);
+    destroy(clock);
+    scenario.end();
 }
 
 // === registry::EIncentiveAssetNotConfigured ===
@@ -286,8 +375,13 @@ fun configure_sui_incentive(scenario: &mut Scenario, admin_cap: &AdminCap) {
 }
 
 /// Deposit `INCENTIVE_DEPOSIT` SUI as an admin incentive vesting over
-/// `STREAM_DURATION_MS` (bound to the default feed).
-fun fund_sui_incentive(scenario: &mut Scenario, admin_cap: &AdminCap, clock: &Clock) {
+/// `duration_ms` (bound to the default feed).
+fun fund_sui_incentive(
+    scenario: &mut Scenario,
+    admin_cap: &AdminCap,
+    clock: &Clock,
+    duration_ms: u64,
+) {
     let registry = scenario.take_shared<Registry>();
     let mut vault = scenario.take_shared<PoolVault>();
     registry::deposit_sui_incentive(
@@ -295,10 +389,40 @@ fun fund_sui_incentive(scenario: &mut Scenario, admin_cap: &AdminCap, clock: &Cl
         &mut vault,
         admin_cap,
         coin::mint_for_testing<SUI>(INCENTIVE_DEPOSIT, scenario.ctx()),
-        STREAM_DURATION_MS,
+        duration_ms,
         clock,
     );
     return_shared(vault);
     return_shared(registry);
     scenario.next_tx(test_constants::admin());
+}
+
+/// Run one follow-on supply at the current clock — re-seeding the Pyth spot
+/// fresh at the clock so the incentive freshness gate passes — which drives
+/// `incentive::sync_value`'s compound. Returns the post-supply SUI incentive
+/// `(released, locked)` balances.
+fun supply_and_read_sui_incentive(scenario: &mut Scenario, clock: &Clock, pyth_id: ID): (u64, u64) {
+    let mut pyth = scenario.take_shared_by_id<PythSource>(pyth_id);
+    let now_ms = clock.timestamp_ms();
+    pyth.set_state_for_testing(test_constants::default_creation_spot(), now_ms, now_ms);
+    let mut vault = scenario.take_shared<PoolVault>();
+    let mut config = scenario.take_shared<ProtocolConfig>();
+    let sync = plp::start_pool_sync(&mut config, &vault);
+    let plp_coin = vault.supply(
+        &mut config,
+        sync,
+        coin::mint_for_testing<DUSDC>(FOLLOW_ON_SUPPLY, scenario.ctx()),
+        &pyth,
+        &pyth,
+        clock,
+        scenario.ctx(),
+    );
+    destroy(plp_coin);
+    let released = vault.incentive_sui_balance();
+    let locked = vault.incentive_sui_locked();
+    return_shared(config);
+    return_shared(vault);
+    return_shared(pyth);
+    scenario.next_tx(test_constants::admin());
+    (released, locked)
 }

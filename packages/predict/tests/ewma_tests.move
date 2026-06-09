@@ -115,6 +115,50 @@ fun penalty_fires_once_z_score_crosses_threshold() {
 }
 
 #[test]
+fun extreme_first_observation_suppresses_penalty_for_later_trades() {
+    let mut test = begin(@0xF);
+    let config = config_with(config_constants::min_ewma_z_score_threshold!(), true);
+    let mut clock = clock::create_for_testing(test.ctx());
+
+    // Market created at gas 1000: mean seeds at 1000, variance at 0.
+    advance_with_gas(&mut test, 1_000, 0);
+    let mut state = ewma::new(test.ctx());
+
+    // First post-creation trade at an extreme (trader-chosen) gas price. The
+    // first observation seeds the variance directly with diff^2 (alpha 0.01):
+    //   mean     = 0.01 * 100_000 + 0.99 * 1_000  = 1_990
+    //   variance = (100_000 - 1_000)^2            = 9_801_000_000
+    //   std_dev  = sqrt(9_801_000_000)            = 99_000
+    advance_with_gas(&mut test, 100_000, 1_000);
+    clock.set_for_testing(1_000);
+    state.update(&config, &clock, test.ctx());
+
+    // The poisoning trade itself pays nothing:
+    //   z = (100_000 - 1_990) / 99_000 = 0.99 sigma exactly, below even the
+    //   tightest 1-sigma threshold.
+    assert_eq!(state.penalty_fee(&config, QUANTITY, test.ctx()), 0);
+
+    // A later gas-3000 trade, folded in first as the market trade path does:
+    //   mean     = 0.01 * 3_000 + 0.99 * 1_990                  = 2_000.1
+    //   variance = 0.99 * 9_801_000_000 + 0.01 * (3_000 - 1_990)^2
+    //            = 9_702_990_000 + 10_201                       = 9_703_000_201
+    //   z = (3_000 - 2_000.1) / sqrt(9_703_000_201) ~= 999.9 / 98_504
+    //     ~= 0.0102 sigma -> suppressed.
+    // The identical gas-3000 trade on the clean 1000 -> 2000 -> 3000 path fires
+    // EXPECTED_PENALTY at this same 1-sigma threshold
+    // (penalty_fires_once_z_score_crosses_threshold).
+    advance_with_gas(&mut test, 3_000, 1_000);
+    clock.set_for_testing(2_000);
+    state.update(&config, &clock, test.ctx());
+    assert_eq!(state.penalty_fee(&config, QUANTITY, test.ctx()), 0);
+
+    destroy(state);
+    destroy(config);
+    destroy(clock);
+    end(test);
+}
+
+#[test]
 fun disabled_config_never_penalizes() {
     let mut test = begin(@0xF);
     let config = config_with(config_constants::min_ewma_z_score_threshold!(), false);
