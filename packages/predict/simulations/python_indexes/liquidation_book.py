@@ -189,9 +189,8 @@ class LiquidationBook:
         if self.active_order_count == 0 or budget == 0:
             return candidates
 
-        head_budget = budget // head_scan_divisor
-        if budget % head_scan_divisor != 0:
-            head_budget += 1
+        tail_budget = budget // head_scan_divisor
+        head_budget = budget - tail_budget
 
         tail_start = self._collect_head_candidates(candidates, head_budget)
         scan_budget = budget - len(candidates)
