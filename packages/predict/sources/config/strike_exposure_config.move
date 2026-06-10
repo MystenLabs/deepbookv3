@@ -35,6 +35,9 @@ public struct StrikeExposureConfig has store {
     /// 1e9-scaled floor-to-live-value threshold for liquidation.
     /// `850_000_000` means liquidate at 85% LTV.
     liquidation_ltv: u64,
+    /// Fraction of the disjoint-book backing gap reserved for early exits.
+    /// 1.0 fully reserves early exits, matching the pre-buffer summed reserve.
+    backing_buffer_lambda: u64,
     /// Base fee multiplier for Bernoulli scaling.
     /// Effective base fee = base_fee * sqrt(price * (1 - price)).
     base_fee: u64,
@@ -58,6 +61,10 @@ public(package) fun terminal_floor_index(config: &StrikeExposureConfig): u64 {
 
 public(package) fun liquidation_ltv(config: &StrikeExposureConfig): u64 {
     config.liquidation_ltv
+}
+
+public(package) fun backing_buffer_lambda(config: &StrikeExposureConfig): u64 {
+    config.backing_buffer_lambda
 }
 
 public(package) fun base_fee(config: &StrikeExposureConfig): u64 {
@@ -186,6 +193,7 @@ public(package) fun new(): StrikeExposureConfig {
     StrikeExposureConfig {
         terminal_floor_index: config_constants::default_terminal_floor_index!(),
         liquidation_ltv: config_constants::default_liquidation_ltv!(),
+        backing_buffer_lambda: config_constants::default_backing_buffer_lambda!(),
         base_fee: config_constants::default_base_fee!(),
         min_fee: config_constants::default_min_fee!(),
         min_ask_price: config_constants::default_min_ask_price!(),
@@ -200,6 +208,7 @@ public(package) fun snapshot(config: &StrikeExposureConfig): StrikeExposureConfi
     StrikeExposureConfig {
         terminal_floor_index: config.terminal_floor_index,
         liquidation_ltv: config.liquidation_ltv,
+        backing_buffer_lambda: config.backing_buffer_lambda,
         base_fee: config.base_fee,
         min_fee: config.min_fee,
         min_ask_price: config.min_ask_price,
@@ -217,6 +226,11 @@ public(package) fun set_terminal_floor_index(config: &mut StrikeExposureConfig, 
 public(package) fun set_liquidation_ltv(config: &mut StrikeExposureConfig, value: u64) {
     config_constants::assert_liquidation_ltv(value);
     config.liquidation_ltv = value;
+}
+
+public(package) fun set_backing_buffer_lambda(config: &mut StrikeExposureConfig, value: u64) {
+    config_constants::assert_backing_buffer_lambda(value);
+    config.backing_buffer_lambda = value;
 }
 
 public(package) fun set_base_fee(config: &mut StrikeExposureConfig, value: u64) {

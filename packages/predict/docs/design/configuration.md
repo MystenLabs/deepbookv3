@@ -29,7 +29,7 @@ Beyond the tunable/constant split, the admin-tunable layer is organized by *when
 
 | Template (on `ProtocolConfig`) | Snapshotted into | Governs |
 | --- | --- | --- |
-| `StrikeExposureConfig` | `StrikeExposure` (embedded on the per-expiry `ExpiryMarket`) | Terminal floor index, liquidation LTV, fee policy (base/min fee, Bernoulli scaling, expiry-fee ramp window and max multiplier), all-in mint price bounds |
+| `StrikeExposureConfig` | `StrikeExposure` (embedded on the per-expiry `ExpiryMarket`) | Terminal floor index, liquidation LTV, backing-buffer lambda (fraction of the disjoint-book gap reserved for early exits; 1.0 = fully summed reserve), fee policy (base/min fee, Bernoulli scaling, expiry-fee ramp window and max multiplier), all-in mint price bounds |
 | `ExpiryCashConfig` | `ExpiryCash` (embedded on the per-expiry `ExpiryMarket`) | Trading-loss rebate rate (fraction of aggregate expiry trading fees reserved for loss rebates) |
 | `MarketOracleConfig` | `MarketOracle` (per expiry) | Settlement-source freshness, spot/basis deviation guards, min/max forward-over-spot basis bounds |
 
@@ -80,7 +80,7 @@ The distinction from class (A) is deliberate: live configs govern protocol-wide 
 **Per-expiry runtime controls (`ExpiryRuntimeConfig`):** a mutable row stored in a per-expiry-market table on `ProtocolConfig`, registered when the market is created. Unlike the template snapshots, these are read live from the current row for the expiry being operated on:
 
 - `mint_paused` — when true, new mints on that one expiry abort; the market's other flows (redeem, valuation, settlement) remain available.
-- `max_expiry_funding` — the maximum net DUSDC the pool may have funded into that expiry. Its admin setter lives on `PoolVault` (the module that coordinates pool funding) and writes this row through a package-internal `protocol_config` helper. The pool also **earmarks** this cap: idle DUSDC must always cover the unfunded portion of every active expiry's cap, so creating a market or raising its cap requires enough free idle to back it, and that earmarked cash is not LP-withdrawable until the market deactivates (see [../concepts/liquidity-and-nav.md](../concepts/liquidity-and-nav.md)).
+- `max_expiry_funding` — the maximum net DUSDC the pool may have funded into that expiry, enforced as a ceiling on every funding move. Its admin setter lives on `PoolVault` (the module that coordinates pool funding) and writes this row through a package-internal `protocol_config` helper; lowering the cap below the expiry's current net funding is rejected. The cap is a risk limit only — the pool holds no idle earmark against it (see [../concepts/liquidity-and-nav.md](../concepts/liquidity-and-nav.md)).
 
 The folded design: there are no standalone `fee_config`, `risk_config`, or `expiry_runtime_config` modules. Fee and risk scalars (`protocol_reserve_profit_share`, the two liquidation budgets) live directly on `ProtocolConfig` with their defaults and bounds in `config_constants`, and per-expiry runtime controls are the embedded `ExpiryRuntimeConfig` struct on `ProtocolConfig`. Readers should not look for those modules; this is the adopted shape.
 

@@ -61,6 +61,7 @@ INITIAL_TOTAL_PLP_SUPPLY = VAULT_SEED
 EXPIRY_CASH_FLOOR = 50_000 * DUSDC_DECIMALS
 EXPIRY_REBALANCE_PCT = 100_000_000
 MAX_EXPIRY_FUNDING = 250_000 * DUSDC_DECIMALS
+BACKING_BUFFER_LAMBDA = 250_000_000
 TRADE_LIQUIDATION_BUDGET = 24
 VALUATION_LIQUIDATION_BUDGET = 192
 LIQUIDATION_HEAD_SCAN_DIVISOR = 3
@@ -162,6 +163,7 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
     global TERMINAL_REBATE_FRACTION
     global EXPIRY_FEE_WINDOW_MS
     global EXPIRY_FEE_MAX_MULTIPLIER
+    global BACKING_BUFFER_LAMBDA
     global LEVERAGE_FLOOR_WINDOW_MS
     global MAX_EXPIRY_FLOOR_PREMIUM
     global LIQUIDATION_LTV
@@ -202,6 +204,12 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
         "protocol",
         "trading_loss_rebate_rate",
         TRADING_LOSS_REBATE_RATE,
+    )
+    BACKING_BUFFER_LAMBDA = _config_int(
+        config,
+        "protocol",
+        "backing_buffer_lambda",
+        BACKING_BUFFER_LAMBDA,
     )
     TERMINAL_REBATE_FRACTION = FLOAT_SCALING if long_run else 0
     EXPIRY_FEE_WINDOW_MS = _config_int(
@@ -1014,6 +1022,8 @@ def model_floor_index(model: dict[str, Any], timestamp_ms: int | None = None) ->
 
 
 def order_floor_shares(order: dict[str, Any]) -> int:
+    if "floor_shares" in order:
+        return order["floor_shares"]
     return order_floor_shares_from_seed(
         order["floor_seed_amount"],
         order["leverage"],
@@ -1092,16 +1102,23 @@ def remove_closed_live_order(
         )
 
     closed_floor_shares = old_floor_shares - remaining_floor_shares
-    closed_terminal_payout = old_terminal_payout - remaining_terminal_payout
-    closed_live_backing_payout = old_live_backing_payout - remaining_live_backing_payout
-    model["payout"].remove_range(
-        order["lower"],
-        order["higher"],
-        closed_terminal_payout,
-        closed_live_backing_payout,
-    )
-    model["nav"].remove_range(order["lower"], order["higher"], close_quantity, closed_floor_shares)
-    model["live_backing_liability"] -= closed_live_backing_payout
+    model["payout"].remove_range(order["lower"], order["higher"], old_terminal_payout, old_live_backing_payout)
+    model["nav"].remove_range(order["lower"], order["higher"], order["quantity"], old_floor_shares)
+    model["live_backing_liability"] -= old_live_backing_payout
+    if resulting_order is not None:
+        model["payout"].insert_range(
+            resulting_order["lower"],
+            resulting_order["higher"],
+            remaining_terminal_payout,
+            remaining_live_backing_payout,
+        )
+        model["nav"].insert_range(
+            resulting_order["lower"],
+            resulting_order["higher"],
+            resulting_order["quantity"],
+            remaining_floor_shares,
+        )
+        model["live_backing_liability"] += remaining_live_backing_payout
     invalidate_valuation_cache(model)
     return floor_amount_for_index(closed_floor_shares, model_floor_index(model))
 
@@ -1202,6 +1219,14 @@ def available_expiry_funding(state: dict[str, int]) -> int:
     return max(0, MAX_EXPIRY_FUNDING - expiry_net_funding(state))
 
 
+def live_backing_reserve(model: dict[str, Any]) -> int:
+    max_live = model["payout"].max_live_backing_payout()
+    gap = model["live_backing_liability"] - max_live
+    if gap < 0:
+        raise ValueError("live backing sum below payout-tree max")
+    return max_live + deepbook_mul(BACKING_BUFFER_LAMBDA, gap)
+
+
 def record_sent_to_expiry(state: dict[str, int], amount: int) -> None:
     if amount == 0:
         return
@@ -1253,7 +1278,7 @@ def materialize_expiry_profit(state: dict[str, int]) -> tuple[int, int, int]:
 
 
 def expiry_rebalance_cash_terms(model: dict[str, Any], state: dict[str, int]) -> tuple[int, int, int]:
-    required_cash = model["live_backing_liability"] + deepbook_mul(
+    required_cash = live_backing_reserve(model) + deepbook_mul(
         state["expiry_unresolved_trading_fees"],
         TRADING_LOSS_REBATE_RATE,
     )
@@ -1746,6 +1771,7 @@ def mint_order(model: dict[str, Any], row: dict[str, Any], opened_at_ms: int) ->
         "open_floor_index": model_floor_index(model, opened_at_ms),
         "status": "active",
     }
+    order["floor_shares"] = order_floor_shares(order)
     order["lower_boundary_index"] = order_boundary_index(order["lower"])
     order["higher_boundary_index"] = order_boundary_index(order["higher"])
     order["order_id"] = order_id_for_terms(order)
@@ -1793,6 +1819,9 @@ def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
     else:
         replacement_ref = row["replacementOrderRef"] or ref
         replacement_terms = compute_mint_terms(order["entry_probability"], remaining_quantity, order["leverage"])
+        old_floor_shares = order_floor_shares(order)
+        close_fraction = deepbook_div(close_quantity, order["quantity"])
+        remaining_floor_shares = old_floor_shares - deepbook_mul(old_floor_shares, close_fraction)
         replacement = {
             **order,
             "ref": replacement_ref,
@@ -1800,6 +1829,7 @@ def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
             "quantity": remaining_quantity,
             "contribution": replacement_terms["contribution"],
             "floor_seed_amount": replacement_terms["floor_seed_amount"],
+            "floor_shares": remaining_floor_shares,
             "status": "active",
         }
         replacement["order_id"] = order_id_for_terms(replacement)
@@ -2167,11 +2197,9 @@ def apply_analytics_update(analytics: dict[str, Any], update: dict[str, Any], ti
         if remaining_quantity == 0 or not replacement_ref:
             return
         replacement_terms = compute_mint_terms(order["entry_probability"], remaining_quantity, order["leverage"])
-        floor_shares = order_floor_shares_from_seed(
-            replacement_terms["floor_seed_amount"],
-            order["leverage"],
-            order["borrow_index_open"],
-        )
+        close_quantity = int(update["quantity_closed"])
+        close_fraction = deepbook_div(close_quantity, order["quantity"])
+        floor_shares = order["floor_shares"] - deepbook_mul(order["floor_shares"], close_fraction)
         analytics_insert_order(
             analytics,
             {

@@ -28,21 +28,22 @@ fun register_expiry_twice_aborts() {
     let ctx = &mut tx_context::dummy();
     let expiry_id = EXPIRY_ID.to_id();
     let mut ledger = pool_accounting::new(ctx);
-    fund_expiry_capacity(&mut ledger, 1, ctx);
-    ledger.register_expiry(expiry_id, default_max_funding());
+    ledger.register_expiry(expiry_id);
     assert_eq!(ledger.active_expiry_markets().length(), 1);
 
-    ledger.register_expiry(expiry_id, default_max_funding());
+    ledger.register_expiry(expiry_id);
     abort 999
 }
 
-#[test, expected_failure(abort_code = pool_accounting::EInsufficientActiveAllocationBacking)]
-fun register_expiry_without_idle_backing_aborts() {
+#[test]
+fun register_expiry_without_idle_backing_succeeds() {
     let ctx = &mut tx_context::dummy();
     let mut ledger = pool_accounting::new(ctx);
 
-    ledger.register_expiry(EXPIRY_ID.to_id(), default_max_funding());
-    abort 999
+    ledger.register_expiry(EXPIRY_ID.to_id());
+    assert_eq!(ledger.active_expiry_markets().length(), 1);
+    assert_eq!(ledger.idle_balance(), 0);
+    destroy(ledger);
 }
 
 #[test, expected_failure(abort_code = pool_accounting::EMaxActiveExpiryMarkets)]
@@ -53,7 +54,7 @@ fun register_expiry_above_active_limit_aborts() {
     register_ten_active_expiries(&mut ledger);
     assert_eq!(ledger.active_expiry_markets().length(), 10);
 
-    ledger.register_expiry(EXPIRY_ID_10.to_id(), default_max_funding());
+    ledger.register_expiry(EXPIRY_ID_10.to_id());
     abort 999
 }
 
@@ -73,7 +74,7 @@ fun send_expiry_cash_above_funding_cap_aborts() {
     let expiry_id = EXPIRY_ID.to_id();
     let mut ledger = pool_accounting::new(ctx);
     fund_expiry_capacity(&mut ledger, 2, ctx);
-    ledger.register_expiry(expiry_id, default_max_funding());
+    ledger.register_expiry(expiry_id);
 
     let cash = ledger.send_expiry_cash(expiry_id, default_max_funding(), default_max_funding() + 1);
     destroy(cash);
@@ -86,14 +87,45 @@ fun lowering_funding_cap_below_net_funding_aborts() {
     let expiry_id = EXPIRY_ID.to_id();
     let mut ledger = pool_accounting::new(ctx);
     fund_expiry_capacity(&mut ledger, 1, ctx);
-    ledger.register_expiry(expiry_id, default_max_funding());
+    ledger.register_expiry(expiry_id);
     let sent = default_max_funding() / 2;
     let cash = ledger.send_expiry_cash(expiry_id, default_max_funding(), sent);
     destroy(cash);
 
     // New cap below the expiry's current net funding is rejected.
-    let _ = ledger.update_max_expiry_funding(expiry_id, default_max_funding(), sent - 1);
+    let _ = ledger.validate_max_expiry_funding(expiry_id, sent - 1);
     abort 999
+}
+
+#[test]
+fun validate_max_expiry_funding_returns_current_net_funding() {
+    let ctx = &mut tx_context::dummy();
+    let expiry_id = EXPIRY_ID.to_id();
+    let mut ledger = pool_accounting::new(ctx);
+    fund_expiry_capacity(&mut ledger, 1, ctx);
+    ledger.register_expiry(expiry_id);
+    let sent = default_max_funding() / 2;
+    let cash = ledger.send_expiry_cash(expiry_id, default_max_funding(), sent);
+    destroy(cash);
+
+    assert_eq!(ledger.validate_max_expiry_funding(expiry_id, sent), sent);
+    destroy(ledger);
+}
+
+#[test]
+fun withdraw_idle_can_drain_after_active_registration() {
+    let ctx = &mut tx_context::dummy();
+    let expiry_id = EXPIRY_ID.to_id();
+    let mut ledger = pool_accounting::new(ctx);
+    fund_expiry_capacity(&mut ledger, 1, ctx);
+    ledger.register_expiry(expiry_id);
+    assert_eq!(ledger.idle_balance(), default_max_funding());
+
+    let cash = ledger.withdraw_idle(default_max_funding());
+    destroy(cash);
+    assert_eq!(ledger.idle_balance(), 0);
+    assert_eq!(ledger.active_expiry_markets().length(), 1);
+    destroy(ledger);
 }
 
 #[test, expected_failure(abort_code = pool_accounting::ETerminalAccountingStarted)]
@@ -102,7 +134,7 @@ fun send_expiry_cash_after_terminal_accounting_aborts() {
     let expiry_id = EXPIRY_ID.to_id();
     let mut ledger = pool_accounting::new(ctx);
     fund_expiry_capacity(&mut ledger, 1, ctx);
-    ledger.register_expiry(expiry_id, default_max_funding());
+    ledger.register_expiry(expiry_id);
     // Materializing terminal profit latches terminal accounting for the expiry.
     let _ = ledger.materialize_expiry_profit(expiry_id);
 
@@ -111,32 +143,17 @@ fun send_expiry_cash_after_terminal_accounting_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = pool_accounting::EInvalidActiveFundingAggregate)]
-fun cap_update_with_inconsistent_old_cap_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let expiry_id = EXPIRY_ID.to_id();
-    let mut ledger = pool_accounting::new(ctx);
-    fund_expiry_capacity(&mut ledger, 1, ctx);
-    ledger.register_expiry(expiry_id, default_max_funding());
-
-    // `old_max_expiry_funding` is caller-supplied (the ledger does not store
-    // per-expiry caps); an old value above the tracked active aggregate would
-    // underflow the sum and is rejected as an aggregate-consistency violation.
-    let _ = ledger.update_max_expiry_funding(expiry_id, 2 * default_max_funding(), 0);
-    abort 999
-}
-
 fun register_ten_active_expiries(ledger: &mut pool_accounting::Ledger) {
-    ledger.register_expiry(EXPIRY_ID_0.to_id(), default_max_funding());
-    ledger.register_expiry(EXPIRY_ID_1.to_id(), default_max_funding());
-    ledger.register_expiry(EXPIRY_ID_2.to_id(), default_max_funding());
-    ledger.register_expiry(EXPIRY_ID_3.to_id(), default_max_funding());
-    ledger.register_expiry(EXPIRY_ID_4.to_id(), default_max_funding());
-    ledger.register_expiry(EXPIRY_ID_5.to_id(), default_max_funding());
-    ledger.register_expiry(EXPIRY_ID_6.to_id(), default_max_funding());
-    ledger.register_expiry(EXPIRY_ID_7.to_id(), default_max_funding());
-    ledger.register_expiry(EXPIRY_ID_8.to_id(), default_max_funding());
-    ledger.register_expiry(EXPIRY_ID_9.to_id(), default_max_funding());
+    ledger.register_expiry(EXPIRY_ID_0.to_id());
+    ledger.register_expiry(EXPIRY_ID_1.to_id());
+    ledger.register_expiry(EXPIRY_ID_2.to_id());
+    ledger.register_expiry(EXPIRY_ID_3.to_id());
+    ledger.register_expiry(EXPIRY_ID_4.to_id());
+    ledger.register_expiry(EXPIRY_ID_5.to_id());
+    ledger.register_expiry(EXPIRY_ID_6.to_id());
+    ledger.register_expiry(EXPIRY_ID_7.to_id());
+    ledger.register_expiry(EXPIRY_ID_8.to_id());
+    ledger.register_expiry(EXPIRY_ID_9.to_id());
 }
 
 fun default_max_funding(): u64 {

@@ -39,7 +39,7 @@
 
 ## Next steps (priority order)
 
-1. **Phase 3** — re-run the derivation workflow, then author invariant tests (single coherent author in main loop, file per scenario under `tests/flows/`). Use the Phase-1 helpers (`check_market_cash`, `check_pool`, `assert_market_backed`). Compaction-parity is metamorphic (assert path A == path B, exempt from independent-expected rule).
+1. **Phase 3 — DONE (commit `21cf04d1`).** Derivation workflow re-run (`wf_ea9453e9-3bf`, 24 agents, all 8 scenarios feasible, all 16 verdicts sound); 8 invariant test files authored under `tests/flows/` (settled_solvency_boundary, cash_backing_flow, multi_expiry_sync_nav, no_double_pay_liquidation, rebate_claim_accounting, supply_withdraw_rounding, liquidation_boundary, compaction_parity). Suite now **predict 327/327, predict_math 104/104, no warnings**. No contract discrepancies — ledger stays empty. Verified derivations archived per scenario at `/tmp/deriv_<key>.json` (ephemeral; full result in the workflow journal).
 2. **Phase 4** — encode the triage verdicts from `.redesign/OPEN_ISSUES_TRIAGE.json`:
    - **RED ledger candidates (re-verify cited file:lines first, then encode + ledger as BUG-001..004 cross-referencing OPEN_ISSUES):**
      - `loss-netting-one-directional` — protocol take depends on settlement order; strongest minimal test: run both orderings, assert equal final `protocol_reserve_balance` (fails iff one-directional). plp.move:819/823, pool_accounting.move:245-273.

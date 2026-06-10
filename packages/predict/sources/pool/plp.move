@@ -59,7 +59,7 @@ public struct PoolVault has key {
     /// active/inactive amounts are mirrored on each `PredictManager`.
     staked_deep: Balance<DEEP>,
     treasury_cap: TreasuryCap<PLP>,
-    /// Active expiry IDs, pool cash-flow rows, profit basis, and per-expiry funding caps.
+    /// Active expiry IDs, pool cash-flow rows, and profit basis.
     expiry_accounting: Ledger,
     /// Admin-deposited LP-owned incentive in SUI: valued into pool NAV (released
     /// portion, via `pyth_source::value_in_dusdc`) and paid out pro-rata in-kind
@@ -175,16 +175,6 @@ public fun profit_basis_credits(vault: &PoolVault): u64 {
 /// Return DUSDC sent to and received from one expiry market.
 public fun expiry_flow_amounts(vault: &PoolVault, expiry_market_id: ID): (u64, u64) {
     vault.expiry_accounting.expiry_flow_amounts(expiry_market_id)
-}
-
-/// Return the sum of max funding for active expiries.
-public fun active_max_funding_sum(vault: &PoolVault): u64 {
-    vault.expiry_accounting.active_max_funding_sum()
-}
-
-/// Return the sum of current net pool funding for active expiries.
-public fun active_net_funding_sum(vault: &PoolVault): u64 {
-    vault.expiry_accounting.active_net_funding_sum()
 }
 
 /// Return the max net DUSDC the pool may have funded into an expiry.
@@ -457,15 +447,10 @@ public fun set_max_expiry_funding(
 ) {
     vault.assert_version_allowed();
     config.assert_not_valuation_in_progress();
-    let old_funding = config.expiry_max_funding(expiry_market_id);
     config.set_expiry_max_funding(expiry_market_id, funding);
     let net_funding = vault
         .expiry_accounting
-        .update_max_expiry_funding(
-            expiry_market_id,
-            old_funding,
-            funding,
-        );
+        .validate_max_expiry_funding(expiry_market_id, funding);
     vault_events::emit_expiry_max_funding_updated(
         vault.id(),
         expiry_market_id,
@@ -529,12 +514,7 @@ public(package) fun register_expiry_market(
 ) {
     vault.assert_version_allowed();
     config.register_expiry_runtime_config(expiry_market_id);
-    vault
-        .expiry_accounting
-        .register_expiry(
-            expiry_market_id,
-            config.expiry_max_funding(expiry_market_id),
-        );
+    vault.expiry_accounting.register_expiry(expiry_market_id);
 }
 
 /// Take custody of an admin SUI incentive deposit, caching its oracle binding and
@@ -788,10 +768,7 @@ fun unregister_settled_expiry(
     market_oracle: &MarketOracle,
 ) {
     let expiry_market_id = market.id();
-    let max_funding = config.expiry_max_funding(expiry_market_id);
-    let deactivated = vault
-        .expiry_accounting
-        .deactivate_expiry_if_present(expiry_market_id, max_funding);
+    let deactivated = vault.expiry_accounting.deactivate_expiry_if_present(expiry_market_id);
     let returned_cash = market.release_settled_pool_cash(market_oracle);
     let returned_cash_amount = vault
         .expiry_accounting

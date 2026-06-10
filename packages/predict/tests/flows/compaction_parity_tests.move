@@ -16,6 +16,7 @@
 module deepbook_predict::compaction_parity_tests;
 
 use deepbook_predict::{
+    config_constants,
     constants,
     expiry_market::ExpiryMarket,
     flow_test_helpers as helpers,
@@ -26,6 +27,7 @@ use deepbook_predict::{
     pyth_source::PythSource,
     test_constants
 };
+use predict_math::math;
 use std::unit_test::{assert_eq, destroy};
 use sui::test_scenario::return_shared;
 
@@ -37,9 +39,7 @@ const EXPIRY_B_MS: u64 = 300_000;
 /// the two books are bit-identical by construction.
 const B_MINT_CLOCK_MS: u64 = 200_000;
 const B_RESEED_SOURCE_TS: u64 = 199_000;
-/// The pool earmark requires idle >= Σ(per-expiry funding cap − net funded);
-/// a second expiry at the default 250_000e6 cap aborts registration on the
-/// 300_000e6 bootstrap idle alone.
+/// Extra idle so both expiries can be independently funded to the cash floor.
 const EXTRA_IDLE: u64 = 250_000_000_000;
 /// Covers two identical 1_265e6 mint phases with headroom.
 const MANAGER_DEPOSIT: u64 = 4_000_000_000;
@@ -57,7 +57,11 @@ const REBATE_PER_MARKET: u64 = 7_500_000;
 /// the 2x order's floor chain (phase 999_996_829 → phase² 999_993_658 →
 /// index_open 1_199_998_731 → floor_shares 208_333_553 → floor_at_open
 /// 249_999_999) leaves backing 750_000_001.
-const LIVE_LIABILITY_PER_MARKET: u64 = 2_750_000_001;
+const SUMMED_LIVE_BACKING_PER_MARKET: u64 = 2_750_000_001;
+/// Max point floor is the two UP winners (1e9 + 750_000_001); the disjoint
+/// DOWN loser contributes a 1e9 gap, so default reserve is 2_000_000_001.
+const MAX_LIVE_BACKING_PER_MARKET: u64 = 1_750_000_001;
+const DISJOINT_GAP_PER_MARKET: u64 = SUMMED_LIVE_BACKING_PER_MARKET - MAX_LIVE_BACKING_PER_MARKET;
 /// ITM for [min_strike, +inf), OTM for (-inf, min_strike].
 const SETTLEMENT_ITM: u64 = 110_000_000_000;
 /// Exact terminal liability at 110e9: 1x winner 1e9 + 1x loser 0 + 2x winner
@@ -111,7 +115,7 @@ fun settled_redeems_are_bit_equal_with_and_without_compaction() {
         &market_a,
         helpers::expected_market_cash(
             cash_after_mints,
-            LIVE_LIABILITY_PER_MARKET,
+            buffered_live_reserve_per_market(),
             REBATE_PER_MARKET,
         ),
     );
@@ -303,4 +307,10 @@ fun redeem_all_settled(
         payouts.push_back(manager.balance() - before);
     });
     payouts
+}
+
+fun buffered_live_reserve_per_market(): u64 {
+    // M + λ(Σ − M) = 1_750_000_001 + 0.25 * 1_000_000_000 = 2_000_000_001.
+    MAX_LIVE_BACKING_PER_MARKET
+        + math::mul(config_constants::default_backing_buffer_lambda!(), DISJOINT_GAP_PER_MARKET)
 }

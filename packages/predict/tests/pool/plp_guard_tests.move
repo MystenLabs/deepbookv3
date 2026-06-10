@@ -8,10 +8,8 @@
 /// minimal production-valid fixture:
 /// - `EInvalidInitialSupply` (bootstrap with nonzero pool value): every idle
 ///   inflow is either `supply` (blocked at bootstrap by this very guard) or cash
-///   returned from an expiry, and an expiry cannot even be registered while
-///   `total_supply == 0` (`pool_accounting::register_expiry` requires idle to
-///   back the default max funding cap). Reaching "value in, zero supply" needs a
-///   full multi-order flow (unmaterialized swept premium + total LP exit + a
+///   returned from an expiry. Reaching "value in, zero supply" needs a custom
+///   multi-order flow (unmaterialized swept premium + total LP exit + a
 ///   protocol-share change before re-bootstrap), so the guard stays as defense.
 /// - `EZeroPoolValue` (supply priced against a zero pool): with `total_supply >
 ///   0` and no incentives this needs `lp_pool_value` to clamp to exactly 0 (the

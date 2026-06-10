@@ -5,15 +5,16 @@
 /// rebate_reserve) triple after EVERY cash-mutating operation of a two-sided
 /// 1x book on the far expiry — mint, mint, partial live redeem, settlement,
 /// winner settled redeem, loser settled redeem. Pins that mint principal AND
-/// fee land in expiry cash, that live liability is the range-independent sum
-/// of per-order backing, that settlement itself is an oracle-only transition
-/// (cash sheet bit-identical, liability getter still reports the lazy
-/// un-materialized live reserve), and that the materialized terminal reserve
-/// drains to exactly zero with the loser paying nothing.
+/// fee land in expiry cash, that disjoint live liability is the max settlement
+/// floor plus the default gap buffer, that settlement itself is an oracle-only
+/// transition (cash sheet bit-identical, liability getter still reports the
+/// lazy un-materialized live reserve), and that the materialized terminal
+/// reserve drains to exactly zero with the loser paying nothing.
 #[test_only]
 module deepbook_predict::cash_backing_flow_tests;
 
-use deepbook_predict::{constants, flow_test_helpers as helpers, test_constants};
+use deepbook_predict::{config_constants, constants, flow_test_helpers as helpers, test_constants};
+use predict_math::math;
 use std::unit_test::destroy;
 
 /// Both mints quote the exact ATM digital: forward == min_strike, so
@@ -92,7 +93,8 @@ fun cash_sheet_exact_after_every_flow() {
     );
 
     // --- Mint 2: 1x DOWN complement (-inf, min_strike], quantity 2e9.
-    // Liability adds the full quantity regardless of range.
+    // The two ranges are disjoint: M = max(1e9, 2e9) = 2e9, Σ = 3e9,
+    // gap = 1e9, default buffer = 250e6, reserve = 2.25e9.
     let order2 = fx.mint(
         &config,
         &mut manager,
@@ -109,7 +111,7 @@ fun cash_sheet_exact_after_every_flow() {
         &market,
         helpers::expected_market_cash(
             cash_after_mints,
-            test_constants::mint_quantity() + DOWN_QUANTITY,
+            DOWN_QUANTITY + default_gap_buffer(test_constants::mint_quantity()),
             REBATE_AFTER_MINT2,
         ),
     );
@@ -128,8 +130,9 @@ fun cash_sheet_exact_after_every_flow() {
 
     // --- Partial live close of half of order 1 at the unchanged ATM quote.
     // Cash pays only the net redeem (the fee is withheld in expiry cash and
-    // grows the rebate basis); cancel-and-replace drops liability by exactly
-    // the closed quantity; the replacement keeps the position count at 2.
+    // grows the rebate basis); cancel-and-replace leaves M = 2e9 and gap =
+    // surviving UP backing 0.5e9, so default reserve = 2.125e9. The
+    // replacement keeps the position count at 2.
     let (_closed_id, replacement) = fx.redeem(
         &config,
         &mut manager,
@@ -141,7 +144,7 @@ fun cash_sheet_exact_after_every_flow() {
     );
     let order1b = replacement.destroy_some();
     let cash_after_close = cash_after_mints - CLOSE_NET_PAYOUT;
-    let liability_after_close = test_constants::mint_quantity() - HALF_CLOSE + DOWN_QUANTITY;
+    let liability_after_close = DOWN_QUANTITY + default_gap_buffer(HALF_CLOSE);
     helpers::check_market_cash(
         &market,
         helpers::expected_market_cash(
@@ -231,4 +234,8 @@ fun cash_sheet_exact_after_every_flow() {
     helpers::return_market(pyth, vault, market, oracle, config);
     destroy(manager);
     fx.finish();
+}
+
+fun default_gap_buffer(gap: u64): u64 {
+    math::mul(config_constants::default_backing_buffer_lambda!(), gap)
 }

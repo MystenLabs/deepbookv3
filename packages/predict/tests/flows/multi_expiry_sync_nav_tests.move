@@ -24,11 +24,9 @@ use deepbook_predict::{
 use std::unit_test::{assert_eq, destroy};
 use sui::test_scenario::return_shared;
 
-/// Second supply before registering the expiries: registration asserts the
-/// pool earmark idle >= Σ(per-expiry funding cap − net funded), and two
-/// expiries at the default 250_000e6 cap need more than the 300_000e6
-/// bootstrap idle. Priced at NAV 1.0 (idle-only pool), so shares == payment
-/// exactly under any rounding order.
+/// Second supply before registering the expiries keeps this two-expiry NAV test
+/// on a 600_000e6 pool scale. Priced at NAV 1.0 (idle-only pool), so shares ==
+/// payment exactly under any rounding order.
 const HEADROOM_SUPPLY: u64 = 300_000_000_000;
 /// Expiry B ≈ 364 days out — far enough for a flat floor schedule, carries no
 /// orders.

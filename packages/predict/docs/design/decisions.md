@@ -62,25 +62,40 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
 
 ## Backing and solvency (recent)
 
-- **The live cash-backing reserve is the summed per-order maximum live backing**
-  (`Σ (quantity − floor_at_open)`), not the worst-case liability at a single
-  price. This makes a market self-contained: every open position can be
-  live-redeemed at its own peak, in any order, without the expiry running dry.
-  *Superseded:* the earlier single-point `max_live_backing` reserve, which
-  under-reserved disjoint positions.
-- **Pool funding-cap earmark.** The pool keeps idle DUSDC ≥ the unfunded portion
-  of every active expiry's cap, so any active market can be funded to its cap on
-  demand; earmarked idle is not LP-withdrawable, and no market depends on a future
-  sync to back positions it has already opened.
+- **The live cash-backing reserve is a settlement floor plus a tunable liquidity
+  buffer**: `max_live_backing + λ · (Σ live_backing − max_live_backing)`, with
+  `λ` (`backing_buffer_lambda`) an admin template value, default 0.25. The floor
+  — the maximum summed payout at any *single* settlement price — pays every
+  settlement winner in full on every price path, because exactly one price
+  settles a market and ranges that share no price can never all win together.
+  The buffer sizes how much *early-exit* demand beyond the floor is funded:
+  Monte Carlo and real-data simulation put worst-case sequential-exit demand on
+  disjoint books at 16–33% of the gap (95th percentile), so the default covers
+  it with margin while reserving ~30% of the old requirement on many-bucket
+  books. A live redeem that would breach the reserve aborts and can retry
+  smaller or later; closing a position releases λ of its own backing, so exit
+  liquidity cannot be monopolized by one holder. `λ = 1` reproduces the summed
+  reserve exactly. *Superseded:* the summed per-order reserve (full early-exit
+  liveness at ~100% capital lockup — itself a cheap capital-lockup grief, since
+  ~1 unit of premium locked N units of pool cash on N disjoint buckets); the
+  original bufferless single-point reserve (documented full early-exit liveness
+  it did not provide).
+- **No pool funding-cap earmark.** Each market's own cash covers its reserve, so
+  solvency is self-contained per expiry at the floor and the pool owes no
+  standing backing to live markets. `max_expiry_funding` remains the per-flow
+  funding ceiling, and the pool sync tops every market toward its reserve
+  target before an LP withdrawal pays out. *Superseded:* the idle earmark
+  (`idle ≥ Σ active (max_funding − net_funding)`), which pinned the full cap of
+  pool capital per active market regardless of book shape and whose backing
+  duty became void under the settlement-floor guarantee.
 - **Uncertainty-band withdrawal fee.** A withdrawing LP pays a fee proportional to
   the pool's unverified-floor valuation uncertainty, retained for the LPs who
   remain — the withdraw-side counterpart to the optimistic (upper-bound) supply
   mark.
-- **Keep the payout tree.** Although the summed reserve made the tree's max-live
-  term no longer the enforced reserve, the tree is retained: the planned flexible
-  backing reserve uses `max_live_backing` as its safe floor — any reserve ≥ it
-  always pays in full at settlement. *Rejected for
-  now:* folding settlement into the NAV matrix and deleting the tree.
+- **Keep the payout tree.** The tree's max-live term is the enforced settlement
+  floor that anchors the live reserve — an O(1) root read, and the structural
+  proof that any reserve ≥ it always pays in full at settlement. *Rejected:*
+  folding settlement into the NAV matrix and deleting the tree.
 
 ## Access and operations (recent)
 

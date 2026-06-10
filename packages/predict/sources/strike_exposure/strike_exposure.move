@@ -55,7 +55,7 @@ public struct StrikeExposure has store {
 public struct LiveExposure has store {
     nav: StrikeNavMatrix,
     payout: StrikePayoutTree,
-    /// Sum of live backing payouts for active orders.
+    /// Sum of live backing payouts for active orders; prices the buffer above the max-point floor.
     live_backing_liability: u64,
     /// Monotonic strike range used to bound pricing-curve construction.
     /// Removes do not shrink this cache; a wider curve is safe but can cost more gas.
@@ -63,12 +63,20 @@ public struct LiveExposure has store {
     minted_max_strike: u64,
 }
 
-/// Return summed live backing, or remaining settled payout liability once materialized.
+/// Return the buffered live reserve, or exact remaining settled payout liability once materialized.
+///
+/// Live reserve is the settlement floor (max single-point backing) plus a
+/// configured fraction of the disjoint-book gap. Lambda at 1.0 reproduces the
+/// old summed reserve because `math::mul(1_000_000_000, gap) == gap`.
 public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
     if (exposure.settled_liability_materialized) {
         exposure.settled_payout_liability
     } else {
-        exposure.live.borrow().live_backing_liability
+        let live = exposure.live.borrow();
+        let max_live = live.payout.max_live_backing_payout();
+        // The point max is a subset-sum of the same non-negative per-order backings.
+        let gap = live.live_backing_liability - max_live;
+        max_live + math::mul(exposure.config.backing_buffer_lambda(), gap)
     }
 }
 
@@ -80,6 +88,11 @@ public(package) fun terminal_floor_index(exposure: &StrikeExposure): u64 {
 /// Return the liquidation LTV snapshotted for this exposure book.
 public(package) fun liquidation_ltv(exposure: &StrikeExposure): u64 {
     exposure.config.liquidation_ltv()
+}
+
+/// Return the backing-buffer lambda snapshotted for this exposure book.
+public(package) fun backing_buffer_lambda(exposure: &StrikeExposure): u64 {
+    exposure.config.backing_buffer_lambda()
 }
 
 public(package) fun expiry_fee_window_ms(exposure: &StrikeExposure): u64 {

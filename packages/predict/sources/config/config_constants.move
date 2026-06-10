@@ -36,6 +36,7 @@ const EInvalidWithdrawFeeAlpha: u64 = 25;
 const EInvalidEwmaAlpha: u64 = 26;
 const EInvalidEwmaZScoreThreshold: u64 = 27;
 const EInvalidEwmaAdditionalFee: u64 = 28;
+const EInvalidBackingBufferLambda: u64 = 29;
 
 // === Expiry Funding and Liquidation ===
 
@@ -79,7 +80,7 @@ public(package) fun assert_trade_liquidation_budget(value: u64) {
     );
 }
 
-// === Floor Index and Liquidation ===
+// === Floor Index, Backing, and Liquidation ===
 
 public(package) macro fun default_terminal_floor_index(): u64 { 1_200_000_000 }
 public(package) macro fun min_terminal_floor_index(): u64 {
@@ -104,6 +105,19 @@ public(package) fun assert_liquidation_ltv(value: u64) {
     assert!(
         value >= min_liquidation_ltv!() && value <= max_liquidation_ltv!(),
         EInvalidLiquidationLtv,
+    );
+}
+
+public(package) macro fun default_backing_buffer_lambda(): u64 { 250_000_000 }
+public(package) macro fun min_backing_buffer_lambda(): u64 { 50_000_000 }
+public(package) macro fun max_backing_buffer_lambda(): u64 {
+    predict_math::math::float_scaling!()
+}
+
+public(package) fun assert_backing_buffer_lambda(value: u64) {
+    assert!(
+        value >= min_backing_buffer_lambda!() && value <= max_backing_buffer_lambda!(),
+        EInvalidBackingBufferLambda,
     );
 }
 

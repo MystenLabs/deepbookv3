@@ -13,7 +13,7 @@ The pool is a single shared object, `PoolVault`. It owns:
 - the **PLP treasury cap**, which mints and burns PLP shares;
 - **staked DEEP** held in custody on behalf of managers (custodial, not LP-owned, not redeemable as PLP);
 - **incentive balances** of SUI and DEEP, admin-deposited and LP-owned, that accrue to PLP holders over time;
-- the **expiry accounting ledger** (`Ledger`), which custodies idle DUSDC, records the active-expiry set, the cash flow to and from each expiry, the aggregate profit basis, and the aggregate funding earmark that keeps the pool able to back every active market.
+- the **expiry accounting ledger** (`Ledger`), which custodies idle DUSDC, records the active-expiry set, the cash flow to and from each expiry, and the aggregate profit basis.
 
 The pool does **not** own expiry-local state. Each expiry market (`ExpiryMarket`) owns its own trading cash, strike exposure, oracle binding, and risk state. The pool coordinates capital across expiries but delegates every expiry-local invariant to the expiry itself. The per-expiry funding cap is a separate policy value, stored in `ProtocolConfig` rather than in the ledger.
 
@@ -36,7 +36,7 @@ Let `total_supply` be the PLP outstanding before the operation.
 
 - **First supply (bootstrap):** when `total_supply == 0`, shares are minted 1:1 with the DUSDC paid. This requires the DUSDC side of NAV to be empty; incentives cannot exist before the first supply, because incentive deposits require existing PLP holders.
 - **Subsequent supply:** `shares = payment × total_supply / pool_value`, where `pool_value` is the full-pool NAV (DUSDC value + incentive value). Pricing against the **total** NAV — not the DUSDC-only NAV — is what makes the depositor pay for the incentives they are buying into.
-- **Withdraw:** `withdraw_amount = dusdc_value × lp_amount / total_supply`; the net payout (after the band fee below) is paid out of idle DUSDC. The payout draws only on **free** idle — idle above the active-allocation earmark, the pool's reserved backing for live markets — so a withdrawal that would dip into earmarked backing aborts (`EInsufficientActiveAllocationBacking`). Cash funded into expiries, and idle earmarked to back them, is not directly redeemable until it returns through rebalance or settlement.
+- **Withdraw:** `withdraw_amount = dusdc_value × lp_amount / total_supply`; the net payout (after the band fee below) is paid out of idle DUSDC. The sync that precedes every withdrawal first tops each live market up toward its reserve target, so the payout draws on whatever idle remains after the markets are funded — an exit cannot front-run a live market's refill. A withdrawal larger than the remaining idle aborts. Cash funded into expiries is not directly redeemable until it returns through rebalance or settlement.
 
 ```mermaid
 flowchart TD
@@ -120,7 +120,7 @@ where `band` is `expiry_rebalance_pct` (a 1e9-scaled fraction) and `expiry_cash_
 
 Funding room is bounded by a **per-expiry funding cap** (`max_expiry_funding`, admin-settable per expiry — see [configuration](../design/configuration.md)). The cap limits **net** funding (`sent − received`); every send checks that net funding stays within the cap. The cap bounds how much LP capital a single expiry can put at risk.
 
-The pool also maintains a matching **earmark invariant**: idle DUSDC always covers the unfunded portion of every active expiry's cap, `idle ≥ Σ active (max_funding − net_funding)`. It is checked when an expiry is registered, when a cap is raised, on every funding move, and on every LP withdrawal. This guarantees the pool can fund each active market all the way to its cap from idle at any time — so an expiry never depends on a future sync to back positions it has already opened — and it is why earmarked idle is not LP-withdrawable. Registering a new market or raising a cap therefore requires enough free idle to back it.
+The pool holds **no standing earmark** against the caps: each expiry's own cash covers its reserve, so a market never depends on a future top-up to pay what it already owes — settlement is fully funded from the market's floor (see the solvency guarantee below). Top-ups beyond the cash a market holds are best-effort, bounded by idle and the funding cap, and always run before an LP withdrawal pays out.
 
 Every cash movement is recorded in the ledger: `sent_to_expiry` accumulates into the profit-basis **debits**, `received_from_expiry` accumulates into the profit-basis **credits**. These running totals are how the pool tracks each expiry's P&L without scanning positions.
 
@@ -132,7 +132,7 @@ The custody leaf (`ExpiryCash`) enforces, on every operation, that:
 cash_balance ≥ payout_liability + rebate_reserve
 ```
 
-For a live market, `payout_liability` is the **sum of every open order's maximum future live payout** (a running per-order total). Because the reserve is the sum, a live redeem always lowers it by at least the cash it pays out, so paying any one winner can never breach the backing of the others — every open position is redeemable, in any order, without the expiry running dry. After settlement, `payout_liability` becomes the exact terminal payout at the settlement price. The pool-level earmark (above) guarantees the cash to meet this reserve is always available without leaning on a future sync.
+For a live market, `payout_liability` is a **settlement floor plus a liquidity buffer**. The floor is the maximum summed payout at any *single* settlement price (the payout tree's `max_live_backing`, an O(1) read); since exactly one price settles a market, the floor alone covers every possible settlement outcome in full. The buffer adds `backing_buffer_lambda` (default 25%) of the gap between that floor and the **sum** of every open order's maximum live payout, and is what funds *early* exits of positions that do not overlap the book's worst-case price point. A live redeem that would push cash below the reserve aborts; the holder can close a smaller quantity, retry after the next rebalance or any offsetting flow, and is always paid in full at settlement. Closing a position releases its own share of the buffer, so exit liquidity cannot be monopolized. A lambda of 1.0 reproduces the fully summed reserve, under which every position is redeemable at its peak in any order. After settlement, `payout_liability` becomes the exact terminal payout at the settlement price, which is always at or below the floor.
 
 - **Receiving cash** joins the funds without re-checking backing (receiving cash can only improve it).
 - **Releasing surplus** to the pool requires cash to cover required backing *plus* the released amount — surplus is, by definition, only what is above the requirement.

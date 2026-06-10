@@ -10,8 +10,8 @@
 /// This treap stores finite interval boundaries touched by positions. It tracks
 /// each order's exact terminal payout — summed at a settlement price for settled
 /// liability — and a static max-live backing term. Live cash backing is now the
-/// running sum of per-order live backings maintained on `StrikeExposure`; the
-/// tree's max-live term is retained but is no longer the enforced reserve.
+/// max-live settlement floor plus a buffer over the disjoint-book gap; the
+/// tree's max-live term is the floor anchor of that enforced reserve.
 module deepbook_predict::strike_payout_tree;
 
 use deepbook_predict::{constants, strike_grid::StrikeGrid};
@@ -53,8 +53,7 @@ public struct PayoutNode has copy, drop, store {
 }
 
 /// Return the static max-live backing term: the maximum liability at a single
-/// settlement point. No longer the enforced cash-backing reserve (that is the
-/// running per-order sum on `StrikeExposure`); retained for reference.
+/// settlement point — the settlement floor that anchors the enforced live reserve.
 public(package) fun max_live_backing_payout(tree: &StrikePayoutTree): u64 {
     let mut max_payout = tree.base.live_backing_payout;
     if (tree.root.is_some()) {

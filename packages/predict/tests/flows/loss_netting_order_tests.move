@@ -24,9 +24,8 @@ use deepbook_predict::{
 use std::unit_test::{assert_eq, destroy};
 use sui::test_scenario::return_shared;
 
-/// Registration earmarks the default 250_000e6 funding cap per expiry; two
-/// expiries need >= 500_000e6 idle backing, so a second 300_000e6 supply joins
-/// the 300_000e6 bootstrap (mirrors `multi_expiry_sync_nav_tests`).
+/// Extra idle keeps the two-expiry flow on the same 600_000e6 pool scale as
+/// `multi_expiry_sync_nav_tests`; registration itself does not reserve idle.
 const HEADROOM_SUPPLY: u64 = 300_000_000_000;
 /// Both supplies priced 1:1 on an idle-only pool.
 const TOTAL_SUPPLY: u64 = 600_000_000_000;

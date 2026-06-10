@@ -6,15 +6,9 @@
 /// This module owns pool idle DUSDC custody, the durable set of expiries
 /// registered to a pool, the active expiry index used for valuation, DUSDC sent
 /// from the main pool into each expiry, DUSDC received back from each expiry,
-/// terminal cash watermarks, and per-expiry net funding caps. It does not
+/// terminal cash watermarks, and per-expiry net funding cap checks. It does not
 /// classify expiry-local liabilities or apply PLP reserve policy; PoolVault uses
 /// the aggregate profit basis to price PLP and decide protocol reserve transfers.
-///
-/// It also enforces the pool-level solvency earmark: idle DUSDC always covers the
-/// unfunded portion of every active expiry's funding cap
-/// (`idle >= sum over active expiries of (max_funding - net_funding)`), so every
-/// active market can be funded to its cap on demand and that earmarked backing is
-/// not LP-withdrawable.
 module deepbook_predict::pool_accounting;
 
 use deepbook_predict::constants;
@@ -26,8 +20,6 @@ const ERegisteredExpiryAlreadyExists: u64 = 1;
 const EMaxExpiryFundingExceeded: u64 = 2;
 const ETerminalAccountingStarted: u64 = 3;
 const EMaxActiveExpiryMarkets: u64 = 4;
-const EInsufficientActiveAllocationBacking: u64 = 5;
-const EInvalidActiveFundingAggregate: u64 = 6;
 
 /// Aggregate and per-expiry DUSDC accounting ledger.
 public struct Ledger has store {
@@ -43,10 +35,6 @@ public struct Ledger has store {
     profit_basis_credits: u64,
     /// Aggregate terminal losses that future terminal profits must recover first.
     net_losses_to_fill: u64,
-    /// Sum of max funding for expiries still active in valuation/rebalancing.
-    active_max_funding_sum: u64,
-    /// Sum of current net pool funding for expiries still active in valuation/rebalancing.
-    active_net_funding_sum: u64,
 }
 
 /// Durable accounting row for one registered expiry market.
@@ -75,14 +63,6 @@ public(package) fun profit_basis_debits(ledger: &Ledger): u64 {
 
 public(package) fun profit_basis_credits(ledger: &Ledger): u64 {
     ledger.profit_basis_credits
-}
-
-public(package) fun active_max_funding_sum(ledger: &Ledger): u64 {
-    ledger.active_max_funding_sum
-}
-
-public(package) fun active_net_funding_sum(ledger: &Ledger): u64 {
-    ledger.active_net_funding_sum
 }
 
 public(package) fun expiry_flow_amounts(ledger: &Ledger, expiry_market_id: ID): (u64, u64) {
@@ -121,20 +101,17 @@ public(package) fun new(ctx: &mut TxContext): Ledger {
         profit_basis_debits: 0,
         profit_basis_credits: 0,
         net_losses_to_fill: 0,
-        active_max_funding_sum: 0,
-        active_net_funding_sum: 0,
     }
 }
 
-/// Register an expiry as active pool risk and re-check idle backing for the new funding cap.
-public(package) fun register_expiry(ledger: &mut Ledger, expiry_market_id: ID, max_funding: u64) {
+/// Register an expiry as active pool risk.
+public(package) fun register_expiry(ledger: &mut Ledger, expiry_market_id: ID) {
     assert!(!ledger.registered_expiries.contains(expiry_market_id), ERegisteredExpiryAlreadyExists);
     assert!(
         ledger.active_expiry_markets.length() < constants::max_active_expiry_markets!(),
         EMaxActiveExpiryMarkets,
     );
     ledger.active_expiry_markets.push_back(expiry_market_id);
-    ledger.active_max_funding_sum = ledger.active_max_funding_sum + max_funding;
     ledger
         .registered_expiries
         .add(
@@ -146,18 +123,10 @@ public(package) fun register_expiry(ledger: &mut Ledger, expiry_market_id: ID, m
                 terminal_received_watermark: 0,
             },
         );
-    ledger.assert_active_allocations_backed();
 }
 
 /// Remove an expiry from active valuation if present, returning whether it was active.
-///
-/// `current_max_funding` must be the same max-funding value currently counted in
-/// `active_max_funding_sum`.
-public(package) fun deactivate_expiry_if_present(
-    ledger: &mut Ledger,
-    expiry_market_id: ID,
-    current_max_funding: u64,
-): bool {
+public(package) fun deactivate_expiry_if_present(ledger: &mut Ledger, expiry_market_id: ID): bool {
     ledger.assert_registered_expiry(expiry_market_id);
     let mut i = 0;
     let len = ledger.active_expiry_markets.length();
@@ -167,45 +136,28 @@ public(package) fun deactivate_expiry_if_present(
     if (i == len) {
         return false
     };
-    let net_funding = ledger.net_expiry_funding(expiry_market_id);
-    // Active aggregates include each active expiry's current max and net funding
-    // contribution. Deactivation removes this expiry's contribution from both.
-    ledger.active_max_funding_sum = ledger.active_max_funding_sum - current_max_funding;
-    ledger.active_net_funding_sum = ledger.active_net_funding_sum - net_funding;
     ledger.active_expiry_markets.swap_remove(i);
     true
 }
 
-/// Adjust active max-funding aggregates after the owning config updates one cap.
-public(package) fun update_max_expiry_funding(
-    ledger: &mut Ledger,
+/// Validate the new max-funding cap against current net funding and return that net funding.
+public(package) fun validate_max_expiry_funding(
+    ledger: &Ledger,
     expiry_market_id: ID,
-    old_max_expiry_funding: u64,
     new_max_expiry_funding: u64,
 ): u64 {
     let net_funding = ledger.net_expiry_funding(expiry_market_id);
     assert!(net_funding <= new_max_expiry_funding, EMaxExpiryFundingExceeded);
-    if (ledger.is_active_expiry(expiry_market_id)) {
-        ledger.active_max_funding_sum =
-            adjust_sum(
-                ledger.active_max_funding_sum,
-                old_max_expiry_funding,
-                new_max_expiry_funding,
-            );
-    };
-    ledger.assert_active_allocations_backed();
     net_funding
 }
 
-/// Join idle DUSDC and re-check backing for all active expiry funding caps.
+/// Join idle DUSDC.
 public(package) fun receive_idle(ledger: &mut Ledger, cash: Balance<DUSDC>) {
     ledger.idle_balance.join(cash);
-    ledger.assert_active_allocations_backed();
 }
 
-/// Split withdrawable idle DUSDC while preserving active expiry funding-cap backing.
+/// Split idle DUSDC.
 public(package) fun withdraw_idle(ledger: &mut Ledger, amount: u64): Balance<DUSDC> {
-    ledger.assert_withdrawable_idle(amount);
     ledger.idle_balance.split(amount)
 }
 
@@ -219,12 +171,10 @@ public(package) fun send_expiry_cash(
 ): Balance<DUSDC> {
     if (amount == 0) return balance::zero();
     ledger.record_sent_to_expiry(expiry_market_id, max_expiry_funding, amount);
-    let cash = ledger.idle_balance.split(amount);
-    ledger.assert_active_allocations_backed();
-    cash
+    ledger.idle_balance.split(amount)
 }
 
-/// Receive DUSDC returned from an expiry and re-check active funding-cap backing.
+/// Receive DUSDC returned from an expiry.
 public(package) fun receive_expiry_cash(
     ledger: &mut Ledger,
     expiry_market_id: ID,
@@ -237,7 +187,6 @@ public(package) fun receive_expiry_cash(
     };
     ledger.idle_balance.join(cash);
     ledger.record_received_from_expiry(expiry_market_id, amount);
-    ledger.assert_active_allocations_backed();
     amount
 }
 
@@ -286,44 +235,19 @@ fun record_sent_to_expiry(
 ) {
     if (amount == 0) return;
     ledger.assert_registered_expiry(expiry_market_id);
-    let is_active = ledger.is_active_expiry(expiry_market_id);
-    let (current_net_funding, new_net_funding) = {
-        let flow = ledger.registered_expiries.borrow_mut(expiry_market_id);
-        assert!(!flow.terminal_accounting_started, ETerminalAccountingStarted);
-        let current_net_funding = flow_net_funding(flow);
-        assert!(current_net_funding + amount <= max_expiry_funding, EMaxExpiryFundingExceeded);
-        flow.sent_to_expiry = flow.sent_to_expiry + amount;
-        (current_net_funding, flow_net_funding(flow))
-    };
-    if (is_active) {
-        ledger.active_net_funding_sum =
-            adjust_sum(
-                ledger.active_net_funding_sum,
-                current_net_funding,
-                new_net_funding,
-            );
-    };
+    let flow = ledger.registered_expiries.borrow_mut(expiry_market_id);
+    assert!(!flow.terminal_accounting_started, ETerminalAccountingStarted);
+    let current_net_funding = flow_net_funding(flow);
+    assert!(current_net_funding + amount <= max_expiry_funding, EMaxExpiryFundingExceeded);
+    flow.sent_to_expiry = flow.sent_to_expiry + amount;
     ledger.profit_basis_debits = ledger.profit_basis_debits + amount;
 }
 
 fun record_received_from_expiry(ledger: &mut Ledger, expiry_market_id: ID, amount: u64) {
     if (amount == 0) return;
     ledger.assert_registered_expiry(expiry_market_id);
-    let is_active = ledger.is_active_expiry(expiry_market_id);
-    let (old_net_funding, new_net_funding) = {
-        let flow = ledger.registered_expiries.borrow_mut(expiry_market_id);
-        let old_net_funding = flow_net_funding(flow);
-        flow.received_from_expiry = flow.received_from_expiry + amount;
-        (old_net_funding, flow_net_funding(flow))
-    };
-    if (is_active) {
-        ledger.active_net_funding_sum =
-            adjust_sum(
-                ledger.active_net_funding_sum,
-                old_net_funding,
-                new_net_funding,
-            );
-    };
+    let flow = ledger.registered_expiries.borrow_mut(expiry_market_id);
+    flow.received_from_expiry = flow.received_from_expiry + amount;
     ledger.profit_basis_credits = ledger.profit_basis_credits + amount;
 }
 
@@ -332,41 +256,6 @@ fun flow_net_funding(flow: &RegisteredExpiry): u64 {
         flow.sent_to_expiry - flow.received_from_expiry
     } else {
         0
-    }
-}
-
-fun assert_withdrawable_idle(ledger: &Ledger, withdraw_amount: u64) {
-    let shortfall = ledger.active_allocation_shortfall();
-    let idle_balance = ledger.idle_balance.value();
-    assert!(idle_balance >= shortfall, EInsufficientActiveAllocationBacking);
-    assert!(idle_balance - shortfall >= withdraw_amount, EInsufficientActiveAllocationBacking);
-}
-
-fun active_allocation_shortfall(ledger: &Ledger): u64 {
-    assert!(
-        ledger.active_net_funding_sum <= ledger.active_max_funding_sum,
-        EInvalidActiveFundingAggregate,
-    );
-    ledger.active_max_funding_sum - ledger.active_net_funding_sum
-}
-
-fun assert_active_allocations_backed(ledger: &Ledger) {
-    assert!(
-        ledger.idle_balance.value() >= ledger.active_allocation_shortfall(),
-        EInsufficientActiveAllocationBacking,
-    );
-}
-
-fun is_active_expiry(ledger: &Ledger, expiry_market_id: ID): bool {
-    ledger.active_expiry_markets.contains(&expiry_market_id)
-}
-
-fun adjust_sum(sum: u64, old_value: u64, new_value: u64): u64 {
-    if (new_value > old_value) {
-        sum + (new_value - old_value)
-    } else {
-        assert!(sum >= old_value - new_value, EInvalidActiveFundingAggregate);
-        sum - (old_value - new_value)
     }
 }
 

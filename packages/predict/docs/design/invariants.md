@@ -15,21 +15,28 @@ and contributors. For *how* each mechanism works, follow the links into
   plus its unresolved trading-loss rebate reserve (`cash ≥ payout_liability +
   rebate_reserve`), re-asserted after every cash mutation
   (`expiry_cash::assert_backing`).
-- **Live payout liability is the summed per-order backing.** It is a running
-  total of each open order's maximum future live payout (`quantity −
-  floor_at_open`) over all open orders (`StrikeExposure.live_backing_liability`),
-  not the worst-case liability at a single price. This is the self-contained
-  reserve: every open position can be live-redeemed at its own peak, in any
-  order, without the expiry running dry. See
+- **Live payout liability is a settlement floor plus a liquidity buffer.** The
+  floor is the maximum summed live backing at any *single* settlement price
+  (`StrikePayoutTree::max_live_backing_payout`, an O(1) root read); the buffer is
+  `backing_buffer_lambda × (Σ live backing − floor)`, with Σ still maintained as
+  a running per-order total (`StrikeExposure.live_backing_liability`). Because
+  exactly one settlement price resolves a market, the floor alone covers every
+  settlement outcome in full (`settled_liability(p) ≤ floor` for every `p`); the
+  buffer governs how much pre-settlement exit demand beyond the floor is funded.
+  A lambda of 1.0 reproduces the fully summed reserve. See
   [../concepts/liquidity-and-nav.md](../concepts/liquidity-and-nav.md).
+- **Early exits are buffer-bounded, settlement is not.** A live redeem that
+  would push cash below the reserve aborts; smaller closes, later retries, and
+  the full settlement payout remain available. Closing a position releases its
+  own share of the buffer, so exit liquidity cannot be monopolized.
 - **Settled liability is exact.** After settlement, payout liability becomes the
   exact terminal liability at the settlement price (`materialize_settled_liability`,
-  idempotent), which is always ≤ the live summed reserve.
-- **Pool earmark.** Idle DUSDC always covers the unfunded portion of every active
-  expiry's funding cap (`idle ≥ Σ active (max_funding − net_funding)`), so any
-  active market can be funded to its cap on demand; earmarked idle is not
-  LP-withdrawable. No expiry depends on a future sync to back positions it has
-  already opened.
+  idempotent), which is always ≤ the settlement floor (hence ≤ the live reserve).
+- **No pool earmark.** Each expiry is settlement-self-contained at its floor: a
+  market that never receives another top-up still pays every settlement winner
+  in full. The per-expiry funding cap (`max_expiry_funding`) is enforced on
+  every funding move as a ceiling, and the pool sync tops every market up toward
+  its reserve target before an LP withdrawal pays out.
 - **Custody.** DUSDC lives in exactly three places: a trader's `PredictManager`
   (inner `BalanceManager`), each expiry's `ExpiryCash`, and the pool ledger's idle
   balance. `ExpiryMarket` is the sole authorizer of expiry cash movement. The

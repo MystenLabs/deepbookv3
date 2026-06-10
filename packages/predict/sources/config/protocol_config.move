@@ -159,6 +159,20 @@ public fun set_template_liquidation_ltv(
     );
 }
 
+/// Set the backing-buffer lambda snapshotted by future expiry markets.
+public fun set_template_backing_buffer_lambda(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.strike_exposure_template_config.set_backing_buffer_lambda(value);
+    config_events::emit_strike_exposure_template_config_updated(
+        config.id(),
+        &config.strike_exposure_template_config,
+    );
+}
+
 /// Set the staking benefit thresholds: `lower` (half of max benefits) and
 /// `upper` (full benefits). Validated as a pair (`upper > 2 * lower`).
 public fun set_benefit_powers(

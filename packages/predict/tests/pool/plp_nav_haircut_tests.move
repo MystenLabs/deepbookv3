@@ -73,6 +73,49 @@ const FEE_TEST_AGGREGATE_BAND: u64 = 2_000_000_000;
 const FEE_TEST_EXPECTED_FEE: u64 = 4_950_495;
 const FEE_TEST_EXPECTED_NET_WITHDRAW: u64 = 3_084_158_385;
 const FEE_TEST_EXPECTED_IDLE_AFTER_WITHDRAW: u64 = 259_915_841_615;
+const IDLE_DRAIN_ROUNDING_DUST: u64 = 100;
+
+#[test]
+fun withdraw_can_drain_idle_with_active_expiry_after_sync() {
+    let (mut fx, expiry_id, oracle_id, manager) = helpers::setup_live_market(
+        test_constants::default_expiry_ms(),
+        test_constants::default_live_price(),
+    );
+    let (pyth, mut vault, mut market, oracle, mut config) = fx.take_market(expiry_id, oracle_id);
+    let idle_before = vault.idle_balance();
+    assert_eq!(
+        idle_before,
+        test_constants::default_initial_supply() - constants::expiry_cash_floor!(),
+    );
+
+    let lp_to_withdraw = fx.split_initial_plp(idle_before);
+    let mut sync = plp::start_pool_sync(&mut config, &vault);
+    sync.sync_expiry(&mut vault, &mut market, &config, &oracle, &pyth, fx.clock());
+    let (dusdc, sui, deep) = fx.withdraw(&mut config, &mut vault, sync, lp_to_withdraw);
+    assert_eq!(dusdc.value(), idle_before - IDLE_DRAIN_ROUNDING_DUST);
+    assert_eq!(vault.idle_balance(), IDLE_DRAIN_ROUNDING_DUST);
+    assert_eq!(sui.value(), 0);
+    assert_eq!(deep.value(), 0);
+    destroy(dusdc);
+    destroy(sui);
+    destroy(deep);
+
+    let dust_plp = fx.split_initial_plp(IDLE_DRAIN_ROUNDING_DUST);
+    let mut sync = plp::start_pool_sync(&mut config, &vault);
+    sync.sync_expiry(&mut vault, &mut market, &config, &oracle, &pyth, fx.clock());
+    let (dusdc, sui, deep) = fx.withdraw(&mut config, &mut vault, sync, dust_plp);
+    assert_eq!(dusdc.value(), IDLE_DRAIN_ROUNDING_DUST);
+    assert_eq!(vault.idle_balance(), 0);
+    assert_eq!(sui.value(), 0);
+    assert_eq!(deep.value(), 0);
+    destroy(dusdc);
+    destroy(sui);
+    destroy(deep);
+
+    helpers::return_market(pyth, vault, market, oracle, config);
+    destroy(manager);
+    fx.finish();
+}
 
 #[test]
 fun aggregate_floor_deficit_keeps_sync_supply_and_withdraw_live() {

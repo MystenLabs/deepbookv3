@@ -16,6 +16,10 @@ use std::unit_test::assert_eq;
 const MIN_STRIKE: u64 = 100_000;
 const TICK_SIZE: u64 = 10_000;
 const DESTROY_INSERT_TICKS: u64 = 10;
+const PARTIAL_SURVIVOR_TERMINAL: u64 = 449_992_342;
+const PARTIAL_SURVIVOR_LIVE: u64 = 449_992_501;
+const LEVERAGED_TERMINAL: u64 = 749_999_737;
+const LEVERAGED_LIVE: u64 = 750_000_001;
 
 fun grid_center_spot(): u64 {
     MIN_STRIKE + TICK_SIZE * (constants::oracle_strike_grid_ticks!() / 2)
@@ -37,6 +41,17 @@ fun new_tree(ctx: &mut TxContext): (StrikeGrid, StrikePayoutTree) {
     let grid = grid();
     let tree = strike_payout_tree::new(ctx);
     (grid, tree)
+}
+
+fun assert_settled_at_most_floor(
+    tree: &StrikePayoutTree,
+    settlement: u64,
+    expected_settled: u64,
+    floor: u64,
+) {
+    let settled = tree.settled_payout_liability(settlement);
+    assert_eq!(settled, expected_settled);
+    assert!(settled <= floor);
 }
 
 // === Constructor (new + grid validation) ===
@@ -113,6 +128,51 @@ fun two_overlapping_ranges_sum_backing() {
     tree.insert_range(&grid, strike(3), strike(7), 30, 30);
 
     assert_eq!(tree.max_live_backing_payout(), 70);
+    tree.destroy();
+}
+
+#[test]
+fun settled_liability_is_bounded_by_max_live_floor_for_mixed_book() {
+    let ctx = &mut tx_context::dummy();
+    let (grid, mut tree) = new_tree(ctx);
+    tree.insert_range(&grid, constants::neg_inf!(), strike(1), 200, 200);
+    // Partial-close survivor terms from the C1 gap-one row.
+    tree.insert_range(
+        &grid,
+        strike(1),
+        strike(3),
+        PARTIAL_SURVIVOR_TERMINAL,
+        PARTIAL_SURVIVOR_LIVE,
+    );
+    // Leveraged 2x UP terms from the compaction parity book.
+    tree.insert_range(
+        &grid,
+        strike(2),
+        constants::pos_inf!(),
+        LEVERAGED_TERMINAL,
+        LEVERAGED_LIVE,
+    );
+
+    let floor = tree.max_live_backing_payout();
+    assert_eq!(floor, PARTIAL_SURVIVOR_LIVE + LEVERAGED_LIVE);
+    assert_settled_at_most_floor(&tree, MIN_STRIKE, 200, floor);
+    assert_settled_at_most_floor(&tree, strike(1), 200, floor);
+    assert_settled_at_most_floor(&tree, strike(1) + 1, PARTIAL_SURVIVOR_TERMINAL, floor);
+    assert_settled_at_most_floor(&tree, strike(2), PARTIAL_SURVIVOR_TERMINAL, floor);
+    assert_settled_at_most_floor(
+        &tree,
+        strike(2) + 1,
+        PARTIAL_SURVIVOR_TERMINAL + LEVERAGED_TERMINAL,
+        floor,
+    );
+    assert_settled_at_most_floor(
+        &tree,
+        strike(3),
+        PARTIAL_SURVIVOR_TERMINAL + LEVERAGED_TERMINAL,
+        floor,
+    );
+    assert_settled_at_most_floor(&tree, strike(3) + 1, LEVERAGED_TERMINAL, floor);
+    assert_settled_at_most_floor(&tree, max_strike(), LEVERAGED_TERMINAL, floor);
     tree.destroy();
 }
 

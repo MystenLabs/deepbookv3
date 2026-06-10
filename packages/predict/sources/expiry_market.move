@@ -102,6 +102,11 @@ public fun liquidation_ltv(market: &ExpiryMarket): u64 {
     market.strike_exposure.liquidation_ltv()
 }
 
+/// Return the backing-buffer lambda snapshotted for this expiry.
+public fun backing_buffer_lambda(market: &ExpiryMarket): u64 {
+    market.strike_exposure.backing_buffer_lambda()
+}
+
 /// Return the trade-fee ramp window snapshotted for this expiry.
 public fun expiry_fee_window_ms(market: &ExpiryMarket): u64 {
     market.strike_exposure.expiry_fee_window_ms()
@@ -127,7 +132,7 @@ public fun max_strike(market: &ExpiryMarket): u64 {
     market.strike_exposure.max_strike()
 }
 
-/// Return summed live backing, or remaining settled payout liability once materialized.
+/// Return buffered live reserve, or exact remaining settled payout liability once materialized.
 public fun payout_liability(market: &ExpiryMarket): u64 {
     market.strike_exposure.payout_liability()
 }
