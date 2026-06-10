@@ -23,7 +23,7 @@ use deepbook_predict::{
 };
 use sui::{clock::Clock, vec_set::{Self, VecSet}};
 
-const EInvalidMarketOracleCap: u64 = 0;
+const EInvalidMarketOracleWriterCap: u64 = 0;
 const EMarketNotActive: u64 = 1;
 const EMarketSettled: u64 = 2;
 const EInvalidBasisBounds: u64 = 3;
@@ -61,8 +61,8 @@ public struct SVIParams has copy, drop, store {
 /// Shared per-expiry oracle object storing live source data and settlement state.
 public struct MarketOracle has key {
     id: UID,
-    /// MarketOracleCap IDs authorized to write Block Scholes data.
-    authorized_cap_ids: VecSet<ID>,
+    /// MarketOracleWriterCap IDs authorized to write Block Scholes data.
+    authorized_writer_cap_ids: VecSet<ID>,
     /// Mirror of `ProtocolConfig.allowed_versions`; synced permissionlessly.
     allowed_versions: VecSet<u64>,
     pyth_source_id: ID,
@@ -88,7 +88,7 @@ public struct MarketOracle has key {
 }
 
 /// Capability authorized to write Block Scholes data and tune this oracle.
-public struct MarketOracleCap has key, store {
+public struct MarketOracleWriterCap has key, store {
     id: UID,
 }
 
@@ -109,8 +109,8 @@ public fun allowed_versions(market: &MarketOracle): VecSet<u64> {
     market.allowed_versions
 }
 
-/// Return the MarketOracleCap object ID.
-public fun cap_id(cap: &MarketOracleCap): ID {
+/// Return the MarketOracleWriterCap object ID.
+public fun cap_id(cap: &MarketOracleWriterCap): ID {
     cap.id.to_inner()
 }
 
@@ -243,14 +243,14 @@ public fun update_block_scholes_prices(
     market: &mut MarketOracle,
     config: &ProtocolConfig,
     pyth: &PythSource,
-    cap: &MarketOracleCap,
+    cap: &MarketOracleWriterCap,
     block_scholes_spot: u64,
     block_scholes_forward: u64,
     block_scholes_source_timestamp_ms: u64,
     clock: &Clock,
 ) {
     market.assert_version_allowed();
-    market.assert_authorized_cap(cap);
+    market.assert_authorized_writer_cap(cap);
     config.assert_not_valuation_in_progress();
     market.assert_pyth_source(pyth);
 
@@ -283,11 +283,11 @@ public fun settle_if_possible(
     market: &mut MarketOracle,
     config: &ProtocolConfig,
     pyth: &PythSource,
-    cap: &MarketOracleCap,
+    cap: &MarketOracleWriterCap,
     clock: &Clock,
 ): bool {
     market.assert_version_allowed();
-    market.assert_authorized_cap(cap);
+    market.assert_authorized_writer_cap(cap);
     config.assert_not_valuation_in_progress();
     if (market.status(clock) != STATUS_PENDING_SETTLEMENT) return false;
     market.assert_pyth_source(pyth);
@@ -300,13 +300,13 @@ public fun settle_if_possible(
 public fun update_svi(
     market: &mut MarketOracle,
     config: &ProtocolConfig,
-    cap: &MarketOracleCap,
+    cap: &MarketOracleWriterCap,
     svi: SVIParams,
     source_timestamp_ms: u64,
     clock: &Clock,
 ) {
     market.assert_version_allowed();
-    market.assert_authorized_cap(cap);
+    market.assert_authorized_writer_cap(cap);
     config.assert_not_valuation_in_progress();
     market.assert_active(clock);
     assert!(
@@ -337,11 +337,11 @@ public fun update_svi(
 public fun set_settlement_freshness_ms(
     market: &mut MarketOracle,
     config: &ProtocolConfig,
-    cap: &MarketOracleCap,
+    cap: &MarketOracleWriterCap,
     value: u64,
 ) {
     market.assert_version_allowed();
-    market.assert_authorized_cap(cap);
+    market.assert_authorized_writer_cap(cap);
     config.assert_not_valuation_in_progress();
     config_constants::assert_settlement_freshness_ms(value);
     market.settlement_freshness_ms = value;
@@ -354,14 +354,14 @@ public fun set_settlement_freshness_ms(
 public fun set_basis_bounds(
     market: &mut MarketOracle,
     config: &ProtocolConfig,
-    cap: &MarketOracleCap,
+    cap: &MarketOracleWriterCap,
     max_spot_deviation: u64,
     max_basis_deviation: u64,
     min_basis: u64,
     max_basis: u64,
 ) {
     market.assert_version_allowed();
-    market.assert_authorized_cap(cap);
+    market.assert_authorized_writer_cap(cap);
     config.assert_not_valuation_in_progress();
     validate_basis_bounds_inputs(max_spot_deviation, max_basis_deviation, min_basis, max_basis);
     market.max_spot_deviation = max_spot_deviation;
@@ -372,29 +372,33 @@ public fun set_basis_bounds(
 }
 
 /// Create a new oracle writer capability.
-public fun create_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): MarketOracleCap {
-    MarketOracleCap { id: object::new(ctx) }
+public fun create_writer_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): MarketOracleWriterCap {
+    MarketOracleWriterCap { id: object::new(ctx) }
 }
 
-/// Destroy a MarketOracleCap the holder no longer needs.
-public fun destroy_cap(cap: MarketOracleCap) {
-    let MarketOracleCap { id } = cap;
+/// Destroy a MarketOracleWriterCap the holder no longer needs.
+public fun destroy_writer_cap(cap: MarketOracleWriterCap) {
+    let MarketOracleWriterCap { id } = cap;
     id.delete();
 }
 
 /// Authorize an additional cap to write this market oracle.
-public fun register_cap(market: &mut MarketOracle, _admin_cap: &AdminCap, cap: &MarketOracleCap) {
-    market.register_cap_internal(cap);
+public fun register_writer_cap(
+    market: &mut MarketOracle,
+    _admin_cap: &AdminCap,
+    cap: &MarketOracleWriterCap,
+) {
+    market.register_writer_cap_internal(cap);
 }
 
 /// Remove a cap from this market oracle's writer set.
-public fun unregister_cap(market: &mut MarketOracle, _admin_cap: &AdminCap, cap_id: ID) {
-    market.unregister_cap_internal(cap_id);
+public fun unregister_writer_cap(market: &mut MarketOracle, _admin_cap: &AdminCap, cap_id: ID) {
+    market.unregister_writer_cap_internal(cap_id);
 }
 
 /// Let a cap holder remove its own cap from this market oracle.
-public fun self_unregister_cap(market: &mut MarketOracle, cap: &MarketOracleCap) {
-    market.unregister_cap_internal(cap.cap_id());
+public fun self_unregister_writer_cap(market: &mut MarketOracle, cap: &MarketOracleWriterCap) {
+    market.unregister_writer_cap_internal(cap.cap_id());
 }
 
 // === Public-Package Functions ===
@@ -436,17 +440,17 @@ public(package) fun settlement_price(market: &MarketOracle): u64 {
 public(package) fun create_and_share(
     pyth: &PythSource,
     config: &MarketOracleConfig,
-    cap: &MarketOracleCap,
+    cap: &MarketOracleWriterCap,
     expiry: u64,
     allowed_versions: VecSet<u64>,
     ctx: &mut TxContext,
 ): ID {
     let cap_id = cap.cap_id();
-    let mut authorized_cap_ids = vec_set::empty();
-    authorized_cap_ids.insert(cap_id);
+    let mut authorized_writer_cap_ids = vec_set::empty();
+    authorized_writer_cap_ids.insert(cap_id);
     let market = MarketOracle {
         id: object::new(ctx),
-        authorized_cap_ids,
+        authorized_writer_cap_ids,
         allowed_versions,
         pyth_source_id: pyth.id(),
         expiry,
@@ -503,23 +507,29 @@ public(package) fun assert_not_pending_settlement(market: &MarketOracle, clock: 
 }
 
 /// Abort unless the cap is authorized for this oracle.
-public(package) fun assert_authorized_cap(market: &MarketOracle, cap: &MarketOracleCap) {
-    assert!(market.authorized_cap_ids.contains(&cap.cap_id()), EInvalidMarketOracleCap);
+public(package) fun assert_authorized_writer_cap(
+    market: &MarketOracle,
+    cap: &MarketOracleWriterCap,
+) {
+    assert!(
+        market.authorized_writer_cap_ids.contains(&cap.cap_id()),
+        EInvalidMarketOracleWriterCap,
+    );
 }
 
 // === Private Functions ===
 
-fun register_cap_internal(market: &mut MarketOracle, cap: &MarketOracleCap) {
+fun register_writer_cap_internal(market: &mut MarketOracle, cap: &MarketOracleWriterCap) {
     market.assert_version_allowed();
     let cap_id = cap.cap_id();
-    assert!(!market.authorized_cap_ids.contains(&cap_id), EInvalidMarketOracleCap);
-    market.authorized_cap_ids.insert(cap_id);
+    assert!(!market.authorized_writer_cap_ids.contains(&cap_id), EInvalidMarketOracleWriterCap);
+    market.authorized_writer_cap_ids.insert(cap_id);
 }
 
-fun unregister_cap_internal(market: &mut MarketOracle, cap_id: ID) {
+fun unregister_writer_cap_internal(market: &mut MarketOracle, cap_id: ID) {
     market.assert_version_allowed();
-    assert!(market.authorized_cap_ids.contains(&cap_id), EInvalidMarketOracleCap);
-    market.authorized_cap_ids.remove(&cap_id);
+    assert!(market.authorized_writer_cap_ids.contains(&cap_id), EInvalidMarketOracleWriterCap);
+    market.authorized_writer_cap_ids.remove(&cap_id);
 }
 
 fun apply_block_scholes_prices(
@@ -710,7 +720,7 @@ fun emit_bounds_updated(market: &MarketOracle) {
 public(package) fun create_test_market_oracle_with_pyth(
     pyth: &PythSource,
     expiry: u64,
-    cap: &MarketOracleCap,
+    cap: &MarketOracleWriterCap,
     ctx: &mut TxContext,
 ): MarketOracle {
     create_test_market_oracle_with_pyth_id(pyth.id(), expiry, cap, ctx)
@@ -719,7 +729,7 @@ public(package) fun create_test_market_oracle_with_pyth(
 #[test_only]
 public(package) fun create_test_market_oracle(
     expiry: u64,
-    cap: &MarketOracleCap,
+    cap: &MarketOracleWriterCap,
     ctx: &mut TxContext,
 ): MarketOracle {
     let pyth_uid = object::new(ctx);
@@ -732,15 +742,15 @@ public(package) fun create_test_market_oracle(
 fun create_test_market_oracle_with_pyth_id(
     pyth_source_id: ID,
     expiry: u64,
-    cap: &MarketOracleCap,
+    cap: &MarketOracleWriterCap,
     ctx: &mut TxContext,
 ): MarketOracle {
-    let mut authorized_cap_ids = vec_set::empty();
-    authorized_cap_ids.insert(cap.cap_id());
+    let mut authorized_writer_cap_ids = vec_set::empty();
+    authorized_writer_cap_ids.insert(cap.cap_id());
 
     MarketOracle {
         id: object::new(ctx),
-        authorized_cap_ids,
+        authorized_writer_cap_ids,
         allowed_versions: vec_set::singleton(constants::current_version!()),
         pyth_source_id,
         expiry,

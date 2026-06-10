@@ -9,7 +9,7 @@ use deepbook_predict::{
     config_constants,
     constants::{Self, float_scaling as float},
     expiry_market::ExpiryMarket,
-    market_oracle::{Self, MarketOracle, MarketOracleCap},
+    market_oracle::{Self, MarketOracle, MarketOracleWriterCap},
     plp::{Self, PLP, PoolVault},
     protocol_config::{Self, ProtocolConfig},
     pyth_source::{Self, PythSource},
@@ -48,7 +48,7 @@ public struct Fixture {
     registry: Registry,
     admin_cap: AdminCap,
     config: ProtocolConfig,
-    cap: MarketOracleCap,
+    cap: MarketOracleWriterCap,
     clock: Clock,
     vault_id: ID,
     pyth_id: ID,
@@ -451,7 +451,7 @@ fun setup_pool_with_pyth(): Fixture {
     let (mut registry, admin_cap) = registry::new_for_testing(scenario.ctx());
     let mut config = protocol_config::new_for_testing(scenario.ctx());
     config.set_protocol_reserve_profit_share(&admin_cap, PROTOCOL_RESERVE_SHARE);
-    let cap = market_oracle::create_cap(&admin_cap, scenario.ctx());
+    let cap = market_oracle::create_writer_cap(&admin_cap, scenario.ctx());
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(NOW_MS);
 
@@ -584,7 +584,7 @@ fun finish(fixture: Fixture) {
         initial_plp,
     } = fixture;
     destroy(initial_plp);
-    market_oracle::destroy_cap(cap);
+    market_oracle::destroy_writer_cap(cap);
     destroy(config);
     destroy(admin_cap);
     registry::destroy_registry_drop_for_testing(registry);

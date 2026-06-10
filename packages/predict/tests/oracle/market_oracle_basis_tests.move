@@ -14,7 +14,7 @@ fun basis_aborts_when_spot_zero() {
     // division-by-zero before forward is even read.
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
 
     let _ = market.block_scholes_basis();

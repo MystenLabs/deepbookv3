@@ -91,7 +91,7 @@ Audit the rule:
 - Config struct setters stay `public(package)`.
 - Constructors, setters, bounds checks, and template/snapshot wiring stay `public(package)`.
 - Global-template setters must include `template` when they affect future objects but not existing objects.
-- Per-market oracle bounds may be tunable by `MarketOracleCap`.
+- Per-market oracle bounds may be tunable by `MarketOracleWriterCap`.
 
 Focus on all config modules, `protocol_config`, `registry`, and `market_oracle`.
 

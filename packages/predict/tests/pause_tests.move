@@ -119,7 +119,7 @@ fun revoked_pause_cap_cannot_act() {
 fun sync_market_oracle_copies_registry_allowed_versions() {
     let ctx = &mut tx_context::dummy();
     let (mut registry, admin_cap) = registry::new_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let mut market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
     let current = constants::current_version!();
     let next = NEXT_VERSION;
@@ -149,7 +149,7 @@ fun synced_market_oracle_blocks_disabled_version() {
     let ctx = &mut tx_context::dummy();
     let (mut registry, admin_cap) = registry::new_for_testing(ctx);
     let config = protocol_config::new_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let mut market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
     let mut clock = clock::create_for_testing(ctx);
     clock.set_for_testing(NOW_MS);
