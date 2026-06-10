@@ -10,7 +10,7 @@ use deepbook_predict::{
     constants::{Self, float_scaling as float},
     expiry_market::{Self, ExpiryMarket},
     i64,
-    market_oracle::{Self, MarketOracle, MarketOracleCap},
+    market_oracle::{Self, MarketOracle, MarketOracleWriterCap},
     order,
     plp::{Self, PLP, PoolVault},
     predict_manager::PredictManager,
@@ -53,7 +53,7 @@ public struct Fixture {
     registry: Registry,
     admin_cap: AdminCap,
     config: ProtocolConfig,
-    cap: MarketOracleCap,
+    cap: MarketOracleWriterCap,
     clock: Clock,
     vault_id: ID,
     pyth_id: ID,
@@ -213,7 +213,7 @@ fun setup_pool_with_pyth(): Fixture {
     config.set_protocol_reserve_profit_share(&admin_cap, PROTOCOL_RESERVE_SHARE);
     config.set_base_fee(&admin_cap, 1);
     config.set_min_ask_price(&admin_cap, 0);
-    let cap = market_oracle::create_cap(&admin_cap, scenario.ctx());
+    let cap = market_oracle::create_writer_cap(&admin_cap, scenario.ctx());
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(NOW_MS);
 
@@ -362,7 +362,7 @@ fun finish(fixture: Fixture) {
         initial_plp,
     } = fixture;
     destroy(initial_plp);
-    market_oracle::destroy_cap(cap);
+    market_oracle::destroy_writer_cap(cap);
     destroy(config);
     destroy(admin_cap);
     registry::destroy_registry_drop_for_testing(registry);

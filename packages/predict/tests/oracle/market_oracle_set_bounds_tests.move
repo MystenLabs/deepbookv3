@@ -20,7 +20,7 @@ const VALID_MAX_BASIS: u64 = 1_050_000_000;
 fun set_settlement_freshness_ms_round_trip_succeeds() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let config = protocol_config::new_for_testing(ctx);
     let mut market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
 
@@ -35,7 +35,7 @@ fun set_settlement_freshness_ms_below_min_aborts() {
     // Envelope min = 1; 0 must be rejected by the config_constants guard.
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let config = protocol_config::new_for_testing(ctx);
     let mut market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
     market.set_settlement_freshness_ms(&config, &cap, 0);
@@ -46,19 +46,19 @@ fun set_settlement_freshness_ms_below_min_aborts() {
 fun set_settlement_freshness_ms_above_max_aborts() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let config = protocol_config::new_for_testing(ctx);
     let mut market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
     market.set_settlement_freshness_ms(&config, &cap, 60_001);
     abort 999
 }
 
-#[test, expected_failure(abort_code = market_oracle::EInvalidMarketOracleCap)]
+#[test, expected_failure(abort_code = market_oracle::EInvalidMarketOracleWriterCap)]
 fun set_settlement_freshness_ms_with_unregistered_cap_aborts() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
-    let unregistered_cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
+    let unregistered_cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let config = protocol_config::new_for_testing(ctx);
     let mut market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
     market.set_settlement_freshness_ms(&config, &unregistered_cap, VALID_FRESHNESS_MS);
@@ -69,7 +69,7 @@ fun set_settlement_freshness_ms_with_unregistered_cap_aborts() {
 fun set_settlement_freshness_ms_during_valuation_aborts() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let mut config = protocol_config::new_for_testing(ctx);
     let mut market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
     config.begin_valuation();
@@ -84,7 +84,7 @@ fun set_settlement_freshness_ms_during_valuation_aborts() {
 fun set_basis_bounds_round_trip_succeeds() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let config = protocol_config::new_for_testing(ctx);
     let mut market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
 
@@ -105,7 +105,7 @@ fun set_basis_bounds_min_equal_to_max_aborts() {
     // Module-level invariant: min_basis < max_basis strictly.
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let config = protocol_config::new_for_testing(ctx);
     let mut market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
 
@@ -124,7 +124,7 @@ fun set_basis_bounds_min_equal_to_max_aborts() {
 fun set_basis_bounds_min_above_max_aborts() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let config = protocol_config::new_for_testing(ctx);
     let mut market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
 
@@ -145,7 +145,7 @@ fun set_basis_bounds_min_above_max_aborts() {
 fun set_basis_bounds_max_spot_deviation_zero_aborts() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let config = protocol_config::new_for_testing(ctx);
     let mut market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
 
@@ -164,7 +164,7 @@ fun set_basis_bounds_max_spot_deviation_zero_aborts() {
 fun set_basis_bounds_max_basis_deviation_zero_aborts() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let config = protocol_config::new_for_testing(ctx);
     let mut market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
 
@@ -183,7 +183,7 @@ fun set_basis_bounds_max_basis_deviation_zero_aborts() {
 fun set_basis_bounds_min_basis_below_envelope_aborts() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let config = protocol_config::new_for_testing(ctx);
     let mut market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
 
@@ -202,7 +202,7 @@ fun set_basis_bounds_min_basis_below_envelope_aborts() {
 fun set_basis_bounds_max_basis_above_envelope_aborts() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let config = protocol_config::new_for_testing(ctx);
     let mut market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
 
@@ -217,12 +217,12 @@ fun set_basis_bounds_max_basis_above_envelope_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = market_oracle::EInvalidMarketOracleCap)]
+#[test, expected_failure(abort_code = market_oracle::EInvalidMarketOracleWriterCap)]
 fun set_basis_bounds_with_unregistered_cap_aborts() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
-    let unregistered_cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
+    let unregistered_cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let config = protocol_config::new_for_testing(ctx);
     let mut market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
 
@@ -241,7 +241,7 @@ fun set_basis_bounds_with_unregistered_cap_aborts() {
 fun set_basis_bounds_during_valuation_aborts() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let mut config = protocol_config::new_for_testing(ctx);
     let mut market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
     config.begin_valuation();
@@ -260,7 +260,7 @@ fun set_basis_bounds_during_valuation_aborts() {
 fun cleanup(
     market: market_oracle::MarketOracle,
     config: protocol_config::ProtocolConfig,
-    cap: market_oracle::MarketOracleCap,
+    cap: market_oracle::MarketOracleWriterCap,
     admin_cap: admin::AdminCap,
 ) {
     destroy(market);

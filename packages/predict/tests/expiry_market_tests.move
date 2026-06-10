@@ -9,7 +9,7 @@ use deepbook_predict::{
     constants,
     expiry_market::{Self, ExpiryMarket},
     i64,
-    market_oracle::{Self, MarketOracle, MarketOracleCap},
+    market_oracle::{Self, MarketOracle, MarketOracleWriterCap},
     order,
     predict_manager::PredictManager,
     protocol_config::{Self, ProtocolConfig},
@@ -70,7 +70,7 @@ fun rebate_eligibility_offsets_fee_reserve_by_gross_profit() {
     let mut config = protocol_config::new_for_testing(scenario.ctx());
     config.set_base_fee(&admin_cap, 1);
     config.set_min_ask_price(&admin_cap, 0);
-    let cap = market_oracle::create_cap(&admin_cap, scenario.ctx());
+    let cap = market_oracle::create_writer_cap(&admin_cap, scenario.ctx());
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(NOW_MS);
     let mut pyth = pyth_source::new_for_testing(scenario.ctx());
@@ -154,7 +154,7 @@ fun rebate_eligibility_offsets_fee_reserve_by_gross_profit() {
     destroy(manager);
     destroy(oracle);
     destroy(pyth);
-    market_oracle::destroy_cap(cap);
+    market_oracle::destroy_writer_cap(cap);
     destroy(config);
     destroy(admin_cap);
     registry::destroy_registry_drop_for_testing(registry);
@@ -176,7 +176,7 @@ fun mint_withholds_ewma_penalty_into_pool_on_gas_spike() {
         PENALTY_FEE_RATE,
     );
     config.set_ewma_enabled(&admin_cap, true);
-    let cap = market_oracle::create_cap(&admin_cap, scenario.ctx());
+    let cap = market_oracle::create_writer_cap(&admin_cap, scenario.ctx());
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(NOW_MS);
     let mut pyth = pyth_source::new_for_testing(scenario.ctx());
@@ -265,7 +265,7 @@ fun mint_withholds_ewma_penalty_into_pool_on_gas_spike() {
     destroy(manager);
     destroy(oracle);
     destroy(pyth);
-    market_oracle::destroy_cap(cap);
+    market_oracle::destroy_writer_cap(cap);
     destroy(config);
     destroy(admin_cap);
     registry::destroy_registry_drop_for_testing(registry);
@@ -287,7 +287,7 @@ fun redeem_withholds_ewma_penalty_from_payout_on_gas_spike() {
         PENALTY_FEE_RATE,
     );
     config.set_ewma_enabled(&admin_cap, true);
-    let cap = market_oracle::create_cap(&admin_cap, scenario.ctx());
+    let cap = market_oracle::create_writer_cap(&admin_cap, scenario.ctx());
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(NOW_MS);
     let mut pyth = pyth_source::new_for_testing(scenario.ctx());
@@ -408,7 +408,7 @@ fun redeem_withholds_ewma_penalty_from_payout_on_gas_spike() {
     destroy(manager);
     destroy(oracle);
     destroy(pyth);
-    market_oracle::destroy_cap(cap);
+    market_oracle::destroy_writer_cap(cap);
     destroy(config);
     destroy(admin_cap);
     registry::destroy_registry_drop_for_testing(registry);
@@ -428,7 +428,7 @@ fun prepare_live_oracle_for_trading(
     oracle: &mut MarketOracle,
     pyth: &mut PythSource,
     config: &ProtocolConfig,
-    cap: &MarketOracleCap,
+    cap: &MarketOracleWriterCap,
     clock: &Clock,
 ) {
     pyth.set_state_for_testing(
@@ -459,7 +459,7 @@ fun settle_oracle(
     oracle: &mut MarketOracle,
     pyth: &mut PythSource,
     config: &ProtocolConfig,
-    cap: &MarketOracleCap,
+    cap: &MarketOracleWriterCap,
     clock: &mut Clock,
 ) {
     let settlement_source_timestamp_ms = EXPIRY_MS + 1_000;

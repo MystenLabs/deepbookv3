@@ -74,13 +74,13 @@ fun setup_live_mint(
     strike_exposure::StrikeExposure,
     protocol_config::ProtocolConfig,
     market_oracle::MarketOracle,
-    market_oracle::MarketOracleCap,
+    market_oracle::MarketOracleWriterCap,
     admin::AdminCap,
     pyth_source::PythSource,
     clock::Clock,
 ) {
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let config = protocol_config::new_for_testing(ctx);
     let mut pyth = pyth_source::new_for_testing(ctx);
     let mut market = market_oracle::create_test_market_oracle_with_pyth(
@@ -118,7 +118,7 @@ fun cleanup_live_mint(
     exposure: strike_exposure::StrikeExposure,
     config: protocol_config::ProtocolConfig,
     market: market_oracle::MarketOracle,
-    cap: market_oracle::MarketOracleCap,
+    cap: market_oracle::MarketOracleWriterCap,
     admin_cap: admin::AdminCap,
     pyth: pyth_source::PythSource,
     clock: clock::Clock,

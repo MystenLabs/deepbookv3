@@ -261,10 +261,10 @@ fun update_prices_second_push_basis_deviation_too_large_aborts() {
     abort 999
 }
 
-#[test, expected_failure(abort_code = market_oracle::EInvalidMarketOracleCap)]
+#[test, expected_failure(abort_code = market_oracle::EInvalidMarketOracleWriterCap)]
 fun update_prices_with_unregistered_cap_aborts() {
     let (mut market, config, cap, admin_cap, pyth, clock) = setup_active(NOW_MS);
-    let unregistered_cap = market_oracle::create_cap(&admin_cap, &mut tx_context::dummy());
+    let unregistered_cap = market_oracle::create_writer_cap(&admin_cap, &mut tx_context::dummy());
     market.update_block_scholes_prices(
         &config,
         &pyth,
@@ -299,7 +299,7 @@ fun update_prices_with_wrong_pyth_source_aborts() {
 fun update_prices_during_valuation_aborts() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let mut config = protocol_config::new_for_testing(ctx);
     let pyth = pyth_source::new_for_testing(ctx);
     let mut market = market_oracle::create_test_market_oracle_with_pyth(
@@ -331,14 +331,14 @@ fun setup_active(
 ): (
     market_oracle::MarketOracle,
     protocol_config::ProtocolConfig,
-    market_oracle::MarketOracleCap,
+    market_oracle::MarketOracleWriterCap,
     admin::AdminCap,
     pyth_source::PythSource,
     clock::Clock,
 ) {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let config = protocol_config::new_for_testing(ctx);
     let pyth = pyth_source::new_for_testing(ctx);
     let market = market_oracle::create_test_market_oracle_with_pyth(&pyth, EXPIRY_MS, &cap, ctx);
@@ -350,7 +350,7 @@ fun setup_active(
 fun cleanup(
     market: market_oracle::MarketOracle,
     config: protocol_config::ProtocolConfig,
-    cap: market_oracle::MarketOracleCap,
+    cap: market_oracle::MarketOracleWriterCap,
     admin_cap: admin::AdminCap,
     pyth: pyth_source::PythSource,
     clock: clock::Clock,

@@ -19,7 +19,7 @@ const AFTER_EXPIRY: u64 = 200_000;
 fun id_round_trips_through_object() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
 
     let id = market.id();
@@ -34,7 +34,7 @@ fun id_round_trips_through_object() {
 fun cap_id_round_trips() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
 
     let cap_id_first = cap.cap_id();
     assert_eq!(cap.cap_id(), cap_id_first);
@@ -47,7 +47,7 @@ fun cap_id_round_trips() {
 fun expiry_returns_constructor_value() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
 
     assert_eq!(market.expiry(), EXPIRY_MS);
@@ -61,7 +61,7 @@ fun expiry_returns_constructor_value() {
 fun allowed_versions_seeded_with_current() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
 
     let versions = market.allowed_versions();
@@ -77,7 +77,7 @@ fun allowed_versions_seeded_with_current() {
 fun pyth_source_id_is_persisted() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
 
     // Stable binding identity (same value across reads).
@@ -94,7 +94,7 @@ fun pyth_source_id_is_persisted() {
 fun is_settled_false_on_fresh_market() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
 
     assert!(!market.is_settled());
@@ -111,7 +111,7 @@ fun is_settled_false_on_fresh_market() {
 fun status_is_active_before_expiry() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
     let mut clock = clock::create_for_testing(ctx);
     clock.set_for_testing(BEFORE_EXPIRY);
@@ -128,7 +128,7 @@ fun status_is_active_before_expiry() {
 fun status_pending_at_and_after_expiry() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
     let mut clock = clock::create_for_testing(ctx);
 
@@ -167,7 +167,7 @@ fun source_constants_are_distinct() {
 fun default_block_scholes_state_is_zero() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
 
     assert_eq!(market.block_scholes_spot(), 0);

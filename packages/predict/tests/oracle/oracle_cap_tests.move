@@ -7,7 +7,7 @@ module deepbook_predict::oracle_cap_tests;
 use deepbook_predict::{
     admin,
     i64,
-    market_oracle::{Self, MarketOracle, MarketOracleCap},
+    market_oracle::{Self, MarketOracle, MarketOracleWriterCap},
     protocol_config::{Self, ProtocolConfig}
 };
 use std::unit_test::destroy;
@@ -22,12 +22,12 @@ const SECOND_SVI_SOURCE_TIMESTAMP_MS: u64 = 2_000;
 fun admin_can_create_multiple_market_oracle_caps() {
     let ctx = &mut tx_context::dummy();
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap_1 = market_oracle::create_cap(&admin_cap, ctx);
-    let cap_2 = market_oracle::create_cap(&admin_cap, ctx);
+    let cap_1 = market_oracle::create_writer_cap(&admin_cap, ctx);
+    let cap_2 = market_oracle::create_writer_cap(&admin_cap, ctx);
 
     assert!(cap_1.cap_id() != cap_2.cap_id());
-    market_oracle::destroy_cap(cap_1);
-    market_oracle::destroy_cap(cap_2);
+    market_oracle::destroy_writer_cap(cap_1);
+    market_oracle::destroy_writer_cap(cap_2);
     destroy(admin_cap);
 }
 
@@ -42,11 +42,11 @@ fun creator_cap_can_update_market_oracle() {
     cleanup(market, config, vector[cap], admin_cap, clock);
 }
 
-#[test, expected_failure(abort_code = market_oracle::EInvalidMarketOracleCap)]
+#[test, expected_failure(abort_code = market_oracle::EInvalidMarketOracleWriterCap)]
 fun unregistered_cap_cannot_update_market_oracle() {
     let ctx = &mut tx_context::dummy();
     let (mut market, config, _cap, admin_cap, clock) = setup(ctx);
-    let unregistered_cap = market_oracle::create_cap(&admin_cap, ctx);
+    let unregistered_cap = market_oracle::create_writer_cap(&admin_cap, ctx);
 
     write_svi(
         &mut market,
@@ -62,43 +62,43 @@ fun unregistered_cap_cannot_update_market_oracle() {
 fun registered_cap_can_update_market_oracle() {
     let ctx = &mut tx_context::dummy();
     let (mut market, config, cap_1, admin_cap, clock) = setup(ctx);
-    let cap_2 = market_oracle::create_cap(&admin_cap, ctx);
+    let cap_2 = market_oracle::create_writer_cap(&admin_cap, ctx);
 
-    market_oracle::register_cap(&mut market, &admin_cap, &cap_2);
+    market_oracle::register_writer_cap(&mut market, &admin_cap, &cap_2);
     write_svi(&mut market, &config, &cap_2, FIRST_SVI_SOURCE_TIMESTAMP_MS, &clock);
     assert!(market.block_scholes_svi_source_timestamp_ms() == FIRST_SVI_SOURCE_TIMESTAMP_MS);
 
     cleanup(market, config, vector[cap_1, cap_2], admin_cap, clock);
 }
 
-#[test, expected_failure(abort_code = market_oracle::EInvalidMarketOracleCap)]
+#[test, expected_failure(abort_code = market_oracle::EInvalidMarketOracleWriterCap)]
 fun unregistered_cap_loses_market_oracle_access() {
     let ctx = &mut tx_context::dummy();
     let (mut market, config, _cap_1, admin_cap, clock) = setup(ctx);
-    let cap_2 = market_oracle::create_cap(&admin_cap, ctx);
+    let cap_2 = market_oracle::create_writer_cap(&admin_cap, ctx);
 
-    market_oracle::register_cap(&mut market, &admin_cap, &cap_2);
+    market_oracle::register_writer_cap(&mut market, &admin_cap, &cap_2);
     write_svi(&mut market, &config, &cap_2, FIRST_SVI_SOURCE_TIMESTAMP_MS, &clock);
-    market_oracle::unregister_cap(&mut market, &admin_cap, cap_2.cap_id());
+    market_oracle::unregister_writer_cap(&mut market, &admin_cap, cap_2.cap_id());
     write_svi(&mut market, &config, &cap_2, SECOND_SVI_SOURCE_TIMESTAMP_MS, &clock);
     abort 999
 }
 
-#[test, expected_failure(abort_code = market_oracle::EInvalidMarketOracleCap)]
+#[test, expected_failure(abort_code = market_oracle::EInvalidMarketOracleWriterCap)]
 fun self_unregistered_cap_loses_market_oracle_access() {
     let ctx = &mut tx_context::dummy();
     let (mut market, config, cap, _admin_cap, clock) = setup(ctx);
 
-    market_oracle::self_unregister_cap(&mut market, &cap);
+    market_oracle::self_unregister_writer_cap(&mut market, &cap);
     write_svi(&mut market, &config, &cap, FIRST_SVI_SOURCE_TIMESTAMP_MS, &clock);
     abort 999
 }
 
 fun setup(
     ctx: &mut TxContext,
-): (MarketOracle, ProtocolConfig, MarketOracleCap, admin::AdminCap, clock::Clock) {
+): (MarketOracle, ProtocolConfig, MarketOracleWriterCap, admin::AdminCap, clock::Clock) {
     let admin_cap = admin::create_admin_cap_for_testing(ctx);
-    let cap = market_oracle::create_cap(&admin_cap, ctx);
+    let cap = market_oracle::create_writer_cap(&admin_cap, ctx);
     let config = protocol_config::new_for_testing(ctx);
     let market = market_oracle::create_test_market_oracle(EXPIRY_MS, &cap, ctx);
     let mut clock = clock::create_for_testing(ctx);
@@ -109,12 +109,12 @@ fun setup(
 fun cleanup(
     market: MarketOracle,
     config: ProtocolConfig,
-    mut caps: vector<MarketOracleCap>,
+    mut caps: vector<MarketOracleWriterCap>,
     admin_cap: admin::AdminCap,
     clock: clock::Clock,
 ) {
     while (!caps.is_empty()) {
-        market_oracle::destroy_cap(caps.pop_back());
+        market_oracle::destroy_writer_cap(caps.pop_back());
     };
     caps.destroy_empty();
     destroy(market);
@@ -126,7 +126,7 @@ fun cleanup(
 fun write_svi(
     market: &mut MarketOracle,
     config: &ProtocolConfig,
-    cap: &MarketOracleCap,
+    cap: &MarketOracleWriterCap,
     source_timestamp_ms: u64,
     clock: &clock::Clock,
 ) {

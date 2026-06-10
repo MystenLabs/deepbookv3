@@ -410,10 +410,10 @@ export function finalizeDusdcCurrencyRegistrationTx(): Transaction {
     return tx;
 }
 
-export function createMarketOracleCapTx(recipient: string): Transaction {
+export function createMarketOracleWriterCapTx(recipient: string): Transaction {
     const tx = new Transaction();
     const cap = tx.moveCall({
-        target: target("market_oracle", "create_cap"),
+        target: target("market_oracle", "create_writer_cap"),
         arguments: [tx.object(ADMIN_CAP_ID)],
     });
     tx.transferObjects([cap], tx.pure.address(recipient));

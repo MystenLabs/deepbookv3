@@ -29,7 +29,7 @@ import {
     PROTOCOL_CONFIG_ID,
     address,
     createManagerTx,
-    createMarketOracleCapTx,
+    createMarketOracleWriterCapTx,
     createPythSourceTx,
     depositToManagerTx,
     deriveManagerId,
@@ -769,12 +769,16 @@ async function setupSimulation(
     console.log(`[${ts()}]   PoolVault: ${poolVaultId}`);
     console.log(`[${ts()}]   ProtocolConfig: ${protocolConfigId}`);
 
-    result = await executeAndWait(createMarketOracleCapTx(address), "create_oracle_cap");
+    result = await executeAndWait(
+        createMarketOracleWriterCapTx(address),
+        "create_oracle_writer_cap",
+    );
     const oracleCapChange = result.objectChanges.find(
-        (change: any) => change.type === "created" && change.objectType.includes("MarketOracleCap"),
+        (change: any) =>
+            change.type === "created" && change.objectType.includes("MarketOracleWriterCap"),
     );
     const oracleCapId: string = oracleCapChange.objectId;
-    console.log(`[${ts()}]   OracleCap: ${oracleCapId}`);
+    console.log(`[${ts()}]   OracleWriterCap: ${oracleCapId}`);
 
     result = await executeAndWait(
         createPythSourceTx(1, ORACLE_TICK_SIZE, expiryFeeWindowMs, expiryFeeMaxMultiplier),

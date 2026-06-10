@@ -18,7 +18,7 @@ use deepbook_predict::{
     ewma::{Self, EwmaState},
     ewma_config::EwmaConfig,
     expiry_cash::{Self, ExpiryCash},
-    market_oracle::{MarketOracle, MarketOracleCap},
+    market_oracle::{MarketOracle, MarketOracleWriterCap},
     order::{Self, Order},
     order_events,
     predict_manager::{PredictManager, PredictTradeProof},
@@ -281,12 +281,12 @@ public fun compact_storage(
     market: &mut ExpiryMarket,
     config: &ProtocolConfig,
     market_oracle: &MarketOracle,
-    cap: &MarketOracleCap,
+    cap: &MarketOracleWriterCap,
 ) {
     market.assert_version_allowed();
     config.assert_not_valuation_in_progress();
     market.assert_market_oracle(market_oracle);
-    market_oracle.assert_authorized_cap(cap);
+    market_oracle.assert_authorized_writer_cap(cap);
     market.materialize_settled_liability(market_oracle);
     market.strike_exposure.destroy_live_indexes();
     market.assert_cash_backing();
