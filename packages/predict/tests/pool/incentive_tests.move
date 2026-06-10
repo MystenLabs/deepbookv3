@@ -8,7 +8,9 @@
 /// and the registry's unconfigured-asset guard. Also pins the linear-vesting
 /// rounding behavior: a compound whose release rounds down to zero still
 /// advances `last_compound_ms` (deferring vesting), and the terminal branch
-/// releases the full locked remainder by stream end (no loss).
+/// releases the full locked remainder by stream end (no loss). Also pins the
+/// accepted full-exit re-bootstrap edge: after every holder exits, the next
+/// supplier re-bootstraps 1:1 and captures the still-vesting stream remainder.
 #[test_only]
 module deepbook_predict::incentive_tests;
 
@@ -43,6 +45,10 @@ const STREAM_DURATION_MS: u64 = 86_400_000;
 const OTHER_FEED_ID: u32 = 2;
 /// 1 DUSDC — an arbitrary nonzero follow-on supply payment.
 const FOLLOW_ON_SUPPLY: u64 = 1_000_000;
+/// Exactly half the 1e9 deposit: at the stream midpoint the vested release is
+/// mul(1_000_000_000, div(43_200_000, 86_400_000)) = mul(1e9, 0.5) = 5e8, and
+/// the locked remainder is the other 5e8.
+const HALF_STREAM: u64 = 500_000_000;
 
 // === incentive::EZeroDeposit ===
 
@@ -287,6 +293,95 @@ fun deposit_unconfigured_incentive_asset_aborts() {
     abort 999
 }
 
+// === Full-exit re-bootstrap capture (decision-pinned) ===
+
+/// Decision-pinned (D027, 2026-06-09: PLP supply mechanics stay as-is): after
+/// EVERY holder exits, `total_supply` returns to 0 while the locked incentive
+/// remainder keeps vesting, and the next supplier re-bootstraps 1:1 (the
+/// bootstrap branch checks only the DUSDC side) — capturing the entire
+/// orphaned remainder for an arbitrary payment. The exiting holder is paid
+/// exactly fairly on the way out; what the re-bootstrapper earns is the
+/// not-yet-vested stream — accepted as "the incentive pays whoever is the
+/// pool during vesting." Mitigation is operational: the protocol seeds the
+/// pool and does not fully exit.
+#[test]
+fun full_exit_then_rebootstrap_captures_orphaned_stream() {
+    let (mut scenario, admin_cap, mut clock) = begin_pool();
+    let pyth_id = create_default_pyth(&mut scenario, &admin_cap);
+    let lp1 = bootstrap_supply_keep(&mut scenario, &clock, pyth_id);
+    configure_sui_incentive(&mut scenario, &admin_cap);
+    fund_sui_incentive(&mut scenario, &admin_cap, &clock, STREAM_DURATION_MS);
+
+    // --- Full exit at the stream midpoint: LP1 is the sole holder, so the
+    // pro-rata ratio is exactly 1.0 (div(S, S) = 1e9) and the band fee is 0
+    // (no expiries). LP1 takes the entire idle balance and exactly the vested
+    // half of the stream: mul(1e9, div(43_200_000, 86_400_000)) = 5e8.
+    let half_ms = test_constants::now_ms() + STREAM_DURATION_MS / 2;
+    clock.set_for_testing(half_ms);
+    let mut vault = scenario.take_shared<PoolVault>();
+    let mut config = scenario.take_shared<ProtocolConfig>();
+    let sync = plp::start_pool_sync(&mut config, &vault);
+    let (dusdc1, sui1, deep1) = vault.withdraw(&mut config, sync, lp1, &clock, scenario.ctx());
+    assert_eq!(dusdc1.value(), test_constants::default_initial_supply());
+    assert_eq!(sui1.value(), HALF_STREAM);
+    assert_eq!(deep1.value(), 0);
+    // The pool is now holder-empty and DUSDC-empty, but the locked half keeps
+    // vesting toward it.
+    assert_eq!(vault.total_supply(), 0);
+    assert_eq!(vault.idle_balance(), 0);
+    assert_eq!(vault.incentive_sui_locked(), HALF_STREAM);
+    return_shared(config);
+    return_shared(vault);
+    scenario.next_tx(test_constants::bob());
+
+    // --- Re-bootstrap by a fresh address: the bootstrap branch requires only
+    // `dusdc_value == 0` and mints 1:1, so 1 DUSDC buys 100% of the supply —
+    // paying nothing for the locked half-stream. (The Pyth spot is re-seeded
+    // fresh at the new clock for the incentive sync gate.)
+    let mut pyth = scenario.take_shared_by_id<PythSource>(pyth_id);
+    pyth.set_state_for_testing(test_constants::default_creation_spot(), half_ms, half_ms);
+    let mut vault = scenario.take_shared<PoolVault>();
+    let mut config = scenario.take_shared<ProtocolConfig>();
+    let sync = plp::start_pool_sync(&mut config, &vault);
+    let lp2 = vault.supply(
+        &mut config,
+        sync,
+        coin::mint_for_testing<DUSDC>(FOLLOW_ON_SUPPLY, scenario.ctx()),
+        &pyth,
+        &pyth,
+        &clock,
+        scenario.ctx(),
+    );
+    assert_eq!(lp2.value(), FOLLOW_ON_SUPPLY);
+
+    // --- THE PIN: at stream end the terminal compound releases the full
+    // locked remainder, and LP2's full-supply withdraw claims all of it:
+    // mul(5e8, div(1e6, 1e6)) = 500_000_000. A 1-DUSDC round-trip captured
+    // the half-stream the depositor funded for the prior LP cohort.
+    clock.set_for_testing(test_constants::now_ms() + STREAM_DURATION_MS);
+    let sync = plp::start_pool_sync(&mut config, &vault);
+    let (dusdc2, sui2, deep2) = vault.withdraw(&mut config, sync, lp2, &clock, scenario.ctx());
+    assert_eq!(dusdc2.value(), FOLLOW_ON_SUPPLY);
+    assert_eq!(sui2.value(), HALF_STREAM);
+    assert_eq!(deep2.value(), 0);
+    assert_eq!(vault.incentive_sui_locked(), 0);
+    assert_eq!(vault.incentive_sui_balance(), 0);
+    assert_eq!(vault.total_supply(), 0);
+
+    destroy(dusdc1);
+    destroy(dusdc2);
+    destroy(sui1);
+    destroy(sui2);
+    destroy(deep1);
+    destroy(deep2);
+    destroy(admin_cap);
+    destroy(clock);
+    return_shared(config);
+    return_shared(vault);
+    return_shared(pyth);
+    scenario.end();
+}
+
 // === Private bring-up helpers (these flows need the AdminCap for
 // `set_incentive_asset` / `deposit_sui_incentive`, which the shared flow
 // fixture holds privately) ===
@@ -324,6 +419,16 @@ fun create_default_pyth(scenario: &mut Scenario, admin_cap: &AdminCap): ID {
 /// `supply` path (1:1 mint), seeding the Pyth source with a fresh spot first.
 /// Required before any incentive deposit (`plp::ENoPlpHolders`).
 fun bootstrap_supply(scenario: &mut Scenario, clock: &Clock, pyth_id: ID) {
+    destroy(bootstrap_supply_keep(scenario, clock, pyth_id));
+}
+
+/// `bootstrap_supply` returning the minted PLP coin, for scenarios that later
+/// withdraw the bootstrap position.
+fun bootstrap_supply_keep(
+    scenario: &mut Scenario,
+    clock: &Clock,
+    pyth_id: ID,
+): coin::Coin<plp::PLP> {
     let mut pyth = scenario.take_shared_by_id<PythSource>(pyth_id);
     let live_ts = test_constants::live_source_timestamp_ms();
     pyth.set_state_for_testing(test_constants::default_creation_spot(), live_ts, live_ts);
@@ -339,11 +444,11 @@ fun bootstrap_supply(scenario: &mut Scenario, clock: &Clock, pyth_id: ID) {
         clock,
         scenario.ctx(),
     );
-    destroy(plp_coin);
     return_shared(config);
     return_shared(vault);
     return_shared(pyth);
     scenario.next_tx(test_constants::admin());
+    plp_coin
 }
 
 /// Bind SUI as an incentive asset to the default feed through the real admin
