@@ -10,7 +10,7 @@ use deepbook_predict::{
     constants::{Self, float_scaling as float},
     expiry_market::{Self, ExpiryMarket},
     i64,
-    market_oracle::{Self, MarketOracle, MarketOracleWriterCap},
+    market_oracle::{Self, MarketOracle, MarketOracleWriterCap, MarketOracleLifecycleCap},
     order,
     plp::{Self, PLP, PoolVault},
     predict_manager::PredictManager,
@@ -54,6 +54,7 @@ public struct Fixture {
     admin_cap: AdminCap,
     config: ProtocolConfig,
     cap: MarketOracleWriterCap,
+    lifecycle_cap: MarketOracleLifecycleCap,
     clock: Clock,
     vault_id: ID,
     pyth_id: ID,
@@ -214,6 +215,11 @@ fun setup_pool_with_pyth(): Fixture {
     config.set_base_fee(&admin_cap, 1);
     config.set_min_ask_price(&admin_cap, 0);
     let cap = market_oracle::create_writer_cap(&admin_cap, scenario.ctx());
+    let lifecycle_cap = market_oracle::create_lifecycle_cap(
+        &cap,
+        PYTH_FEED_ID,
+        scenario.ctx(),
+    );
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(NOW_MS);
 
@@ -257,6 +263,7 @@ fun setup_pool_with_pyth(): Fixture {
         admin_cap,
         config,
         cap,
+        lifecycle_cap,
         clock,
         vault_id,
         pyth_id,
@@ -273,7 +280,7 @@ fun create_expiry(fixture: &mut Fixture, expiry: u64): (ID, ID) {
         &mut vault,
         &fixture.config,
         &pyth,
-        &fixture.cap,
+        &mut fixture.lifecycle_cap,
         expiry,
         &fixture.clock,
         fixture.scenario.ctx(),
@@ -327,7 +334,14 @@ fun settle_oracle(fixture: &mut Fixture, oracle: &mut MarketOracle, pyth: &mut P
         settlement_source_timestamp_ms,
         settlement_update_timestamp_ms,
     );
-    assert!(oracle.settle_if_possible(&fixture.config, pyth, &fixture.cap, &fixture.clock));
+    assert!(
+        oracle.settle_if_possible(
+            &fixture.config,
+            pyth,
+            &fixture.lifecycle_cap,
+            &fixture.clock,
+        ),
+    );
 }
 
 fun sync_expiry_for_testing(
@@ -356,12 +370,14 @@ fun finish(fixture: Fixture) {
         admin_cap,
         config,
         cap,
+        lifecycle_cap,
         clock,
         vault_id: _,
         pyth_id: _,
         initial_plp,
     } = fixture;
     destroy(initial_plp);
+    market_oracle::destroy_lifecycle_cap(lifecycle_cap);
     market_oracle::destroy_writer_cap(cap);
     destroy(config);
     destroy(admin_cap);

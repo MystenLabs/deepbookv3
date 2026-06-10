@@ -41,6 +41,7 @@ const EPendingSettlement: u64 = 14;
 const EMarketNotSettled: u64 = 15;
 const EInvalidSettlementTimestamp: u64 = 16;
 const EPackageVersionDisabled: u64 = 17;
+const EInvalidMarketOracleLifecycleCap: u64 = 18;
 
 const STATUS_ACTIVE: u8 = 1;
 const STATUS_PENDING_SETTLEMENT: u8 = 2;
@@ -61,7 +62,7 @@ public struct SVIParams has copy, drop, store {
 /// Shared per-expiry oracle object storing live source data and settlement state.
 public struct MarketOracle has key {
     id: UID,
-    /// MarketOracleWriterCap IDs authorized to write Block Scholes data.
+    /// MarketOracleWriterCap IDs authorized for high-privilege oracle writes/config.
     authorized_writer_cap_ids: VecSet<ID>,
     /// Mirror of `ProtocolConfig.allowed_versions`; synced permissionlessly.
     allowed_versions: VecSet<u64>,
@@ -87,9 +88,17 @@ public struct MarketOracle has key {
     settlement_update_timestamp_ms: u64,
 }
 
-/// Capability authorized to write Block Scholes data and tune this oracle.
+/// High-privilege capability authorized to write Block Scholes data and tune this oracle.
 public struct MarketOracleWriterCap has key, store {
     id: UID,
+}
+
+/// Lifecycle capability authorized to create, settle, and compact markets without oracle writes.
+public struct MarketOracleLifecycleCap has key, store {
+    id: UID,
+    writer_cap_id: ID,
+    pyth_lazer_feed_id: u32,
+    market_oracle_ids: VecSet<ID>,
 }
 
 // === Public Functions ===
@@ -112,6 +121,16 @@ public fun allowed_versions(market: &MarketOracle): VecSet<u64> {
 /// Return the MarketOracleWriterCap object ID.
 public fun cap_id(cap: &MarketOracleWriterCap): ID {
     cap.id.to_inner()
+}
+
+/// Return the MarketOracleLifecycleCap object ID.
+public fun lifecycle_cap_id(cap: &MarketOracleLifecycleCap): ID {
+    cap.id.to_inner()
+}
+
+/// Return the Pyth Lazer feed ID this lifecycle cap can create markets for.
+public fun lifecycle_pyth_lazer_feed_id(cap: &MarketOracleLifecycleCap): u32 {
+    cap.pyth_lazer_feed_id
 }
 
 /// Return the Pyth source object bound to this oracle.
@@ -283,11 +302,11 @@ public fun settle_if_possible(
     market: &mut MarketOracle,
     config: &ProtocolConfig,
     pyth: &PythSource,
-    cap: &MarketOracleWriterCap,
+    cap: &MarketOracleLifecycleCap,
     clock: &Clock,
 ): bool {
     market.assert_version_allowed();
-    market.assert_authorized_writer_cap(cap);
+    market.assert_authorized_lifecycle_cap(cap);
     config.assert_not_valuation_in_progress();
     if (market.status(clock) != STATUS_PENDING_SETTLEMENT) return false;
     market.assert_pyth_source(pyth);
@@ -371,9 +390,23 @@ public fun set_basis_bounds(
     market.emit_bounds_updated();
 }
 
-/// Create a new oracle writer capability.
+/// Create a new high-privilege oracle writer capability.
 public fun create_writer_cap(_admin_cap: &AdminCap, ctx: &mut TxContext): MarketOracleWriterCap {
     MarketOracleWriterCap { id: object::new(ctx) }
+}
+
+/// Create a new oracle lifecycle capability bound to one high-privilege oracle writer cap.
+public fun create_lifecycle_cap(
+    oracle_writer_cap: &MarketOracleWriterCap,
+    pyth_lazer_feed_id: u32,
+    ctx: &mut TxContext,
+): MarketOracleLifecycleCap {
+    MarketOracleLifecycleCap {
+        id: object::new(ctx),
+        writer_cap_id: oracle_writer_cap.cap_id(),
+        pyth_lazer_feed_id,
+        market_oracle_ids: vec_set::empty(),
+    }
 }
 
 /// Destroy a MarketOracleWriterCap the holder no longer needs.
@@ -382,7 +415,18 @@ public fun destroy_writer_cap(cap: MarketOracleWriterCap) {
     id.delete();
 }
 
-/// Authorize an additional cap to write this market oracle.
+/// Destroy a MarketOracleLifecycleCap the holder no longer needs.
+public fun destroy_lifecycle_cap(cap: MarketOracleLifecycleCap) {
+    let MarketOracleLifecycleCap {
+        id,
+        writer_cap_id: _,
+        pyth_lazer_feed_id: _,
+        market_oracle_ids: _,
+    } = cap;
+    id.delete();
+}
+
+/// Authorize an additional writer cap to write and tune this market oracle.
 public fun register_writer_cap(
     market: &mut MarketOracle,
     _admin_cap: &AdminCap,
@@ -391,7 +435,7 @@ public fun register_writer_cap(
     market.register_writer_cap_internal(cap);
 }
 
-/// Remove a cap from this market oracle's writer set.
+/// Remove a writer cap from this market oracle's authorized writer set.
 public fun unregister_writer_cap(market: &mut MarketOracle, _admin_cap: &AdminCap, cap_id: ID) {
     market.unregister_writer_cap_internal(cap_id);
 }
@@ -399,6 +443,32 @@ public fun unregister_writer_cap(market: &mut MarketOracle, _admin_cap: &AdminCa
 /// Let a cap holder remove its own cap from this market oracle.
 public fun self_unregister_writer_cap(market: &mut MarketOracle, cap: &MarketOracleWriterCap) {
     market.unregister_writer_cap_internal(cap.cap_id());
+}
+
+/// Authorize a lifecycle cap to settle and compact the paired expiry market.
+public fun register_lifecycle_cap(
+    market: &MarketOracle,
+    _admin_cap: &AdminCap,
+    cap: &mut MarketOracleLifecycleCap,
+) {
+    market.assert_version_allowed();
+    let market_oracle_id = market.id();
+    assert!(!cap.market_oracle_ids.contains(&market_oracle_id), EInvalidMarketOracleLifecycleCap);
+    cap.market_oracle_ids.insert(market_oracle_id);
+}
+
+/// Remove a market oracle from this lifecycle cap's authorized set.
+public fun unregister_lifecycle_cap(
+    cap: &mut MarketOracleLifecycleCap,
+    _admin_cap: &AdminCap,
+    market_oracle_id: ID,
+) {
+    unregister_lifecycle_cap_internal(cap, market_oracle_id);
+}
+
+/// Let a lifecycle cap holder remove one of its own market authorizations.
+public fun self_unregister_lifecycle_cap(cap: &mut MarketOracleLifecycleCap, market_oracle_id: ID) {
+    unregister_lifecycle_cap_internal(cap, market_oracle_id);
 }
 
 // === Public-Package Functions ===
@@ -440,14 +510,14 @@ public(package) fun settlement_price(market: &MarketOracle): u64 {
 public(package) fun create_and_share(
     pyth: &PythSource,
     config: &MarketOracleConfig,
-    cap: &MarketOracleWriterCap,
+    cap: &mut MarketOracleLifecycleCap,
     expiry: u64,
     allowed_versions: VecSet<u64>,
     ctx: &mut TxContext,
 ): ID {
-    let cap_id = cap.cap_id();
+    assert!(cap.pyth_lazer_feed_id == pyth.feed_id(), EInvalidMarketOracleLifecycleCap);
     let mut authorized_writer_cap_ids = vec_set::empty();
-    authorized_writer_cap_ids.insert(cap_id);
+    authorized_writer_cap_ids.insert(cap.writer_cap_id);
     let market = MarketOracle {
         id: object::new(ctx),
         authorized_writer_cap_ids,
@@ -479,6 +549,7 @@ public(package) fun create_and_share(
     };
 
     let market_oracle_id = market.id();
+    cap.market_oracle_ids.insert(market_oracle_id);
     transfer::share_object(market);
     market_oracle_id
 }
@@ -506,7 +577,7 @@ public(package) fun assert_not_pending_settlement(market: &MarketOracle, clock: 
     assert!(market.status(clock) != STATUS_PENDING_SETTLEMENT, EPendingSettlement);
 }
 
-/// Abort unless the cap is authorized for this oracle.
+/// Abort unless the writer cap is authorized for this oracle.
 public(package) fun assert_authorized_writer_cap(
     market: &MarketOracle,
     cap: &MarketOracleWriterCap,
@@ -515,6 +586,14 @@ public(package) fun assert_authorized_writer_cap(
         market.authorized_writer_cap_ids.contains(&cap.cap_id()),
         EInvalidMarketOracleWriterCap,
     );
+}
+
+/// Abort unless the lifecycle cap is authorized for this oracle.
+public(package) fun assert_authorized_lifecycle_cap(
+    market: &MarketOracle,
+    cap: &MarketOracleLifecycleCap,
+) {
+    assert!(cap.market_oracle_ids.contains(&market.id()), EInvalidMarketOracleLifecycleCap);
 }
 
 // === Private Functions ===
@@ -530,6 +609,11 @@ fun unregister_writer_cap_internal(market: &mut MarketOracle, cap_id: ID) {
     market.assert_version_allowed();
     assert!(market.authorized_writer_cap_ids.contains(&cap_id), EInvalidMarketOracleWriterCap);
     market.authorized_writer_cap_ids.remove(&cap_id);
+}
+
+fun unregister_lifecycle_cap_internal(cap: &mut MarketOracleLifecycleCap, market_oracle_id: ID) {
+    assert!(cap.market_oracle_ids.contains(&market_oracle_id), EInvalidMarketOracleLifecycleCap);
+    cap.market_oracle_ids.remove(&market_oracle_id);
 }
 
 fun apply_block_scholes_prices(

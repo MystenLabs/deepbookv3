@@ -420,6 +420,20 @@ export function createMarketOracleWriterCapTx(recipient: string): Transaction {
     return tx;
 }
 
+export function createMarketOracleLifecycleCapTx(
+    recipient: string,
+    oracleWriterCapId: string,
+    feedId: number,
+): Transaction {
+    const tx = new Transaction();
+    const cap = tx.moveCall({
+        target: target("market_oracle", "create_lifecycle_cap"),
+        arguments: [tx.object(oracleWriterCapId), tx.pure.u32(feedId)],
+    });
+    tx.transferObjects([cap], tx.pure.address(recipient));
+    return tx;
+}
+
 export function createPythSourceTx(
     feedId: number,
     tickSize: bigint,
@@ -463,7 +477,7 @@ export async function seedPythSourceAndCreateExpiryMarketTx(params: {
     poolVaultId: string;
     protocolConfigId: string;
     pythSourceId: string;
-    oracleCapId: string;
+    oracleLifecycleCapId: string;
     expiry: bigint;
     spot: bigint;
 }): Promise<Transaction> {
@@ -482,7 +496,7 @@ export async function seedPythSourceAndCreateExpiryMarketTx(params: {
             tx.object(params.poolVaultId),
             tx.object(params.protocolConfigId),
             tx.object(params.pythSourceId),
-            tx.object(params.oracleCapId),
+            tx.object(params.oracleLifecycleCapId),
             tx.pure.u64(params.expiry),
             tx.object(CLOCK_ID),
         ],

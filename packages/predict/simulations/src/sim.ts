@@ -30,6 +30,7 @@ import {
     address,
     createManagerTx,
     createMarketOracleWriterCapTx,
+    createMarketOracleLifecycleCapTx,
     createPythSourceTx,
     depositToManagerTx,
     deriveManagerId,
@@ -781,6 +782,17 @@ async function setupSimulation(
     console.log(`[${ts()}]   OracleWriterCap: ${oracleCapId}`);
 
     result = await executeAndWait(
+        createMarketOracleLifecycleCapTx(address, oracleCapId, 1),
+        "create_oracle_lifecycle_cap",
+    );
+    const oracleLifecycleCapChange = result.objectChanges.find(
+        (change: any) =>
+            change.type === "created" && change.objectType.includes("MarketOracleLifecycleCap"),
+    );
+    const oracleLifecycleCapId: string = oracleLifecycleCapChange.objectId;
+    console.log(`[${ts()}]   OracleLifecycleCap: ${oracleLifecycleCapId}`);
+
+    result = await executeAndWait(
         createPythSourceTx(1, ORACLE_TICK_SIZE, expiryFeeWindowMs, expiryFeeMaxMultiplier),
         "create_pyth_source",
     );
@@ -805,7 +817,7 @@ async function setupSimulation(
             poolVaultId,
             protocolConfigId,
             pythSourceId,
-            oracleCapId,
+            oracleLifecycleCapId,
             expiry: EXPIRY_MS,
             spot: initialPythSpot,
         }),
