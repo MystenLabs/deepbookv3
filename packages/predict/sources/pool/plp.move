@@ -523,8 +523,11 @@ public(package) fun register_expiry_market(
 /// Mints no PLP. The deposit lands in the locked balance and vests into the
 /// released balance over `[now, now + duration_ms]`; released value accrues to
 /// existing holders via share price and is paid back in-kind on withdrawal.
-/// Requires existing PLP holders so the first future supplier can't capture the
-/// whole deposit. A deposit onto a still-vesting schedule first vests the prior
+/// Requires existing PLP holders at deposit time; this does not protect the
+/// still-vesting remainder if every holder later fully exits (supply back to
+/// zero) — the next bootstrap supplier captures what is still streaming. The
+/// operational mitigation is that the protocol seeds the pool and never fully
+/// exits. A deposit onto a still-vesting schedule first vests the prior
 /// schedule to now (locking in its released portion), then re-stretches the
 /// unvested remainder plus the new deposit over a fresh window. The authorizing
 /// `AdminCap` and feed-config checks live in `registry::deposit_sui_incentive`,

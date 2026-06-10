@@ -156,6 +156,10 @@ fun assert_version_allowed(source: &PythSource) {
     );
 }
 
+/// Ceil-rounding collapses sub-millisecond publisher timestamps onto the same
+/// millisecond, and the strict-monotonic check above then drops the second
+/// update in that window. Accepted bound: one dropped update only matters if a
+/// feed ever publishes at a finer-than-1ms cadence.
 fun us_to_ms_ceil(timestamp_us: u64): u64 {
     let ms = timestamp_us / 1000;
     if (timestamp_us % 1000 == 0) ms else ms + 1

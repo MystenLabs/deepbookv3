@@ -24,6 +24,14 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   holder once it falls to/below `floor_amount / liquidation_ltv`; a tombstone
   persists until the holder redeems and clears it. *Rejected:* residual-paying
   liquidation.
+- **The ask-price band applies to mint only — redeems price at the live mark.**
+  The mint-time `[min_ask, max_ask]` band is admission policy: the protocol
+  declines to become counterparty in the tail price regions where the curve is
+  least reliable. Once a contract is live, redeeming at the live mark is the
+  holder's right; a redeem clamp would systematically underpay legitimate
+  deep-ITM winners near expiry (range probability legitimately approaches 1,
+  consistent with settlement paying full quantity). *Rejected:* a symmetric
+  redeem-side price band.
 
 ## Data structures
 
@@ -45,6 +53,12 @@ the invariants these decisions must preserve, see [invariants.md](./invariants.m
   orders enter. Priority is encoded by storing the quantity field's complement, so
   an ascending id sort is largest-quantity-first with no decode. *Rejected:* a
   two-level skip-tree with slack certificates; a bucketed leverage book.
+- **Liquidation priority is largest-quantity-first, not most-under-floor-first.**
+  The sort key lives in the immutable packed id, and an order's floor deficit is
+  time-varying — it cannot be a static key. Largest-first is the best feasible
+  static proxy for the quantity that matters (how much a stale order can
+  overstate NAV). *Rejected:* most-under-floor-first (would require re-keying the
+  book on every index tick).
 
 ## Accounting and rounding
 
