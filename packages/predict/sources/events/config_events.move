@@ -61,10 +61,6 @@ public struct StrikeExposureTemplateConfigUpdated has copy, drop, store {
 public struct MarketOracleTemplateConfigUpdated has copy, drop, store {
     protocol_config_id: ID,
     settlement_freshness_ms: u64,
-    max_spot_deviation: u64,
-    max_basis_deviation: u64,
-    min_basis: u64,
-    max_basis: u64,
 }
 
 /// Emitted when the EWMA gas-price penalty config changes.
@@ -124,14 +120,10 @@ public struct MarketConfigSnapshot has copy, drop, store {
     trading_loss_rebate_rate: u64,
 }
 
-/// Emitted when admin updates one live oracle's bounds.
-public struct MarketOracleBoundsUpdated has copy, drop, store {
+/// Emitted when admin updates one live oracle's config.
+public struct MarketOracleConfigUpdated has copy, drop, store {
     market_oracle_id: ID,
     settlement_freshness_ms: u64,
-    max_spot_deviation: u64,
-    max_basis_deviation: u64,
-    min_basis: u64,
-    max_basis: u64,
 }
 
 /// Emitted when minting pause state changes for one expiry market.
@@ -210,10 +202,6 @@ public(package) fun emit_market_oracle_template_config_updated(
     event::emit(MarketOracleTemplateConfigUpdated {
         protocol_config_id,
         settlement_freshness_ms: config.settlement_freshness_ms(),
-        max_spot_deviation: config.max_spot_deviation(),
-        max_basis_deviation: config.max_basis_deviation(),
-        min_basis: config.min_basis(),
-        max_basis: config.max_basis(),
     });
 }
 
@@ -286,17 +274,13 @@ public(package) fun emit_market_config_snapshot(
     });
 }
 
-public(package) fun emit_market_oracle_bounds_updated(
+public(package) fun emit_market_oracle_config_updated(
     market_oracle_id: ID,
     config: &MarketOracleConfig,
 ) {
-    event::emit(MarketOracleBoundsUpdated {
+    event::emit(MarketOracleConfigUpdated {
         market_oracle_id,
         settlement_freshness_ms: config.settlement_freshness_ms(),
-        max_spot_deviation: config.max_spot_deviation(),
-        max_basis_deviation: config.max_basis_deviation(),
-        min_basis: config.min_basis(),
-        max_basis: config.max_basis(),
     });
 }
 

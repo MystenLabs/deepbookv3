@@ -4,7 +4,7 @@
 /// Per-expiry Predict market oracle state and write API.
 ///
 /// This module owns market-specific state: expiry, settlement, operator
-/// authorization, Pyth source binding, admin-tunable snapshotted bounds, and
+/// authorization, Pyth source binding, admin-tunable settlement freshness, and
 /// inline Block Scholes data. It stores oracle updates and terminal settlement
 /// state. Live oracle reads are resolved by `pricing.move`.
 module deepbook_predict::market_oracle;
@@ -25,9 +25,6 @@ use sui::{clock::Clock, random::{Self, Random, RandomGenerator}, vec_set::{Self,
 const EInvalidMarketOracleCap: u64 = 0;
 const EMarketNotActive: u64 = 1;
 const EMarketSettled: u64 = 2;
-const ESpotDeviationTooLarge: u64 = 3;
-const EBasisDeviationTooLarge: u64 = 4;
-const EBasisOutOfRange: u64 = 5;
 const EZeroSpot: u64 = 6;
 const EZeroForward: u64 = 7;
 const EStalePriceSourceUpdate: u64 = 8;
@@ -254,7 +251,6 @@ public fun update_block_scholes_prices(
         block_scholes_source_timestamp_ms,
         clock,
     );
-    market.validate_basis_push(block_scholes_spot, basis);
     market.apply_block_scholes_prices(
         block_scholes_spot,
         block_scholes_forward,
@@ -334,30 +330,7 @@ public fun set_settlement_freshness_ms(
     market.assert_version_allowed();
     config.assert_not_valuation_in_progress();
     market.config.set_settlement_freshness_ms(value);
-    market.emit_bounds_updated();
-}
-
-/// Set the live basis and deviation bounds for this oracle.
-public fun set_basis_bounds(
-    market: &mut MarketOracle,
-    config: &ProtocolConfig,
-    _admin_cap: &AdminCap,
-    max_spot_deviation: u64,
-    max_basis_deviation: u64,
-    min_basis: u64,
-    max_basis: u64,
-) {
-    market.assert_version_allowed();
-    config.assert_not_valuation_in_progress();
-    market
-        .config
-        .set_basis_bounds(
-            max_spot_deviation,
-            max_basis_deviation,
-            min_basis,
-            max_basis,
-        );
-    market.emit_bounds_updated();
+    market.emit_config_updated();
 }
 
 /// Create a new oracle writer capability.
@@ -520,7 +493,7 @@ public(package) fun create_and_share(
     };
 
     let market_oracle_id = market.id();
-    market.emit_bounds_updated();
+    market.emit_config_updated();
     transfer::share_object(market);
     market_oracle_id
 }
@@ -628,31 +601,9 @@ fun validate_block_scholes_price_update(
     );
     assert!(source_timestamp_ms <= clock.timestamp_ms(), EFuturePriceSourceUpdate);
 
-    compute_bounded_basis(market, spot, forward)
+    math::div(forward, spot)
 }
 
-fun compute_bounded_basis(market: &MarketOracle, spot: u64, forward: u64): u64 {
-    let basis = math::div(forward, spot);
-    assert!(market.config.basis_in_range(basis), EBasisOutOfRange);
-    basis
-}
-
-fun validate_basis_push(market: &MarketOracle, new_spot: u64, new_basis: u64) {
-    let prev_spot = market.block_scholes_spot;
-    if (prev_spot > 0) {
-        assert!(market.config.spot_deviation_allowed(prev_spot, new_spot), ESpotDeviationTooLarge);
-    };
-
-    let prev_forward = market.block_scholes_forward;
-    if (prev_spot > 0 && prev_forward > 0) {
-        let prev_basis = market.block_scholes_basis();
-        assert!(
-            market.config.basis_deviation_allowed(prev_basis, new_basis),
-            EBasisDeviationTooLarge,
-        );
-    };
-}
-
-fun emit_bounds_updated(market: &MarketOracle) {
-    config_events::emit_market_oracle_bounds_updated(market.id(), &market.config);
+fun emit_config_updated(market: &MarketOracle) {
+    config_events::emit_market_oracle_config_updated(market.id(), &market.config);
 }

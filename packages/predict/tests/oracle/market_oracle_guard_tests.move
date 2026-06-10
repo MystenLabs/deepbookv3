@@ -19,6 +19,7 @@ use deepbook_predict::{
     test_constants
 };
 use predict_math::i64;
+use std::unit_test::assert_eq;
 use sui::{random, test_scenario::return_shared};
 
 /// Second-push source timestamp: strictly after the seed push at
@@ -33,16 +34,17 @@ const FUTURE_SOURCE_TS_MS: u64 = 100_001;
 /// the strictly-greater staleness check fails.
 const INITIAL_SOURCE_TS_MS: u64 = 0;
 
-/// 1.05 x default_live_price (100e9). As a second-push spot this is a 5% spot
-/// step; as a second-push forward (spot unchanged) it gives basis
-/// 105e9 / 100e9 = 1.05, a 5% basis step. Both exceed the 2% default
-/// max_spot_deviation / max_basis_deviation (20_000_000 in 1e9 scaling), while
-/// the 1.05 basis stays inside the absolute default basis range [0.9, 1.1].
+/// 1.05 x default_live_price (100e9).
 const FIVE_PCT_ABOVE_LIVE_PRICE: u64 = 105_000_000_000;
 
-/// First-push forward giving basis 200e9 / 100e9 = 2.0: outside the absolute
-/// default basis range [0.9, 1.1] (default_max_basis = 1.1e9).
+/// Forward giving basis 200e9 / 100e9 = 2.0.
 const DOUBLE_LIVE_PRICE_FORWARD: u64 = 200_000_000_000;
+
+/// 105e9 / 100e9 = 1.05 in 1e9 scaling.
+const BASIS_ONE_POINT_ZERO_FIVE: u64 = 1_050_000_000;
+
+/// 200e9 / 100e9 = 2.0 in 1e9 scaling.
+const BASIS_TWO: u64 = 2_000_000_000;
 
 /// Post-expiry Pyth observation offsets used to settle the oracle: the source
 /// timestamp lands after expiry and within default_settlement_freshness_ms
@@ -81,9 +83,9 @@ fun price_push_on_settled_oracle_aborts() {
     abort EUnexpectedSuccess
 }
 
-#[test, expected_failure(abort_code = market_oracle::ESpotDeviationTooLarge)]
-fun spot_step_beyond_max_deviation_aborts() {
-    let (fx, _pyth, mut oracle, config) = setup();
+#[test]
+fun large_spot_step_updates() {
+    let (fx, pyth, mut oracle, config) = setup();
     seed_live_prices(&fx, &config, &mut oracle);
     push_prices(
         &fx,
@@ -93,12 +95,15 @@ fun spot_step_beyond_max_deviation_aborts() {
         FIVE_PCT_ABOVE_LIVE_PRICE,
         SECOND_PUSH_SOURCE_TS_MS,
     );
-    abort EUnexpectedSuccess
+    assert_eq!(oracle.block_scholes_spot(), FIVE_PCT_ABOVE_LIVE_PRICE);
+    assert_eq!(oracle.block_scholes_forward(), FIVE_PCT_ABOVE_LIVE_PRICE);
+    oracle_fixture::return_oracle(pyth, oracle, config);
+    fx.finish();
 }
 
-#[test, expected_failure(abort_code = market_oracle::EBasisDeviationTooLarge)]
-fun basis_step_beyond_max_deviation_aborts() {
-    let (fx, _pyth, mut oracle, config) = setup();
+#[test]
+fun large_basis_step_updates() {
+    let (fx, pyth, mut oracle, config) = setup();
     seed_live_prices(&fx, &config, &mut oracle);
     push_prices(
         &fx,
@@ -108,12 +113,16 @@ fun basis_step_beyond_max_deviation_aborts() {
         FIVE_PCT_ABOVE_LIVE_PRICE,
         SECOND_PUSH_SOURCE_TS_MS,
     );
-    abort EUnexpectedSuccess
+    assert_eq!(oracle.block_scholes_spot(), test_constants::default_live_price());
+    assert_eq!(oracle.block_scholes_forward(), FIVE_PCT_ABOVE_LIVE_PRICE);
+    assert_eq!(oracle.block_scholes_basis(), BASIS_ONE_POINT_ZERO_FIVE);
+    oracle_fixture::return_oracle(pyth, oracle, config);
+    fx.finish();
 }
 
-#[test, expected_failure(abort_code = market_oracle::EBasisOutOfRange)]
-fun first_push_basis_outside_absolute_range_aborts() {
-    let (fx, _pyth, mut oracle, config) = setup();
+#[test]
+fun out_of_old_basis_range_updates() {
+    let (fx, pyth, mut oracle, config) = setup();
     push_prices(
         &fx,
         &config,
@@ -122,7 +131,11 @@ fun first_push_basis_outside_absolute_range_aborts() {
         DOUBLE_LIVE_PRICE_FORWARD,
         test_constants::live_source_timestamp_ms(),
     );
-    abort EUnexpectedSuccess
+    assert_eq!(oracle.block_scholes_spot(), test_constants::default_live_price());
+    assert_eq!(oracle.block_scholes_forward(), DOUBLE_LIVE_PRICE_FORWARD);
+    assert_eq!(oracle.block_scholes_basis(), BASIS_TWO);
+    oracle_fixture::return_oracle(pyth, oracle, config);
+    fx.finish();
 }
 
 #[test, expected_failure(abort_code = market_oracle::EZeroSpot)]

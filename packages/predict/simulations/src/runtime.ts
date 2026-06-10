@@ -515,30 +515,6 @@ export async function seedPythSourceAndCreateExpiryMarketTx(params: {
     return tx;
 }
 
-export function setMarketOracleBasisBoundsTx(
-    oracleId: string,
-    protocolConfigId: string,
-    maxSpotDeviation: bigint,
-    maxBasisDeviation: bigint,
-    minBasis: bigint,
-    maxBasis: bigint,
-): Transaction {
-    const tx = new Transaction();
-    tx.moveCall({
-        target: target("market_oracle", "set_basis_bounds"),
-        arguments: [
-            tx.object(oracleId),
-            tx.object(protocolConfigId),
-            tx.object(ADMIN_CAP_ID),
-            tx.pure.u64(maxSpotDeviation),
-            tx.pure.u64(maxBasisDeviation),
-            tx.pure.u64(minBasis),
-            tx.pure.u64(maxBasis),
-        ],
-    });
-    return tx;
-}
-
 export function supplyTx(
     poolVaultId: string,
     protocolConfigId: string,

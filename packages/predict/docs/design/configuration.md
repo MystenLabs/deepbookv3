@@ -31,13 +31,19 @@ Beyond the tunable/constant split, the admin-tunable layer is organized by *when
 | --- | --- | --- |
 | `StrikeExposureConfig` | `StrikeExposure` (embedded on the per-expiry `ExpiryMarket`) | Terminal floor index, liquidation LTV, backing-buffer lambda (fraction of the disjoint-book gap reserved for early exits; 1.0 = fully summed reserve), fee policy (base/min fee, Bernoulli scaling, expiry-fee ramp window and max multiplier), all-in mint price bounds |
 | `ExpiryCashConfig` | `ExpiryCash` (embedded on the per-expiry `ExpiryMarket`) | Trading-loss rebate rate (fraction of aggregate expiry trading fees reserved for loss rebates) |
-| `MarketOracleConfig` | `MarketOracle` (per expiry) | Settlement-source freshness, spot/basis deviation guards, min/max forward-over-spot basis bounds |
+| `MarketOracleConfig` | `MarketOracle` (per expiry) | Settlement-source freshness |
 
 When `create_expiry_market` runs, the per-expiry object constructors snapshot each template into an independent copy stored inside the new object. From that moment the snapshot is decoupled from the template: a later admin change to a template updates the value future markets will snapshot, but it **does not** reach back through the template into any already-created market.
 
 For the two **contract-term** templates — `StrikeExposureConfig` and `ExpiryCashConfig` — this is the full story: those snapshots have no per-object admin setter, so once a market is created its fee schedule, floor curve, liquidation LTV, and rebate rate are fixed for the life of the contract. Traders who minted under one set of terms keep those terms, and an admin cannot retroactively alter the economics of a live market. The contract-term template setters are named with `template` (for example `set_template_base_fee`, `set_template_liquidation_ltv`) to make this "future-only" effect explicit at the call site.
 
-`MarketOracleConfig` is the deliberate exception. The template seeds the snapshot that future oracles start from (via the template setters `set_market_oracle_template_settlement_freshness_ms` and `set_market_oracle_template_basis_bounds`), but the live copy on an existing `MarketOracle` **remains admin-tunable** after creation through `AdminCap`-gated per-oracle setters (`set_settlement_freshness_ms`, `set_basis_bounds`). Oracle freshness and basis/deviation guards are protocol-safety parameters, not contract terms, so they are allowed to move on a live oracle.
+`MarketOracleConfig` is the deliberate exception. The template seeds the
+settlement-freshness value future oracles start from via
+`set_market_oracle_template_settlement_freshness_ms`, but the live copy on an
+existing `MarketOracle` **remains admin-tunable** after creation through the
+`AdminCap`-gated per-oracle setter `set_settlement_freshness_ms`. Settlement
+freshness is a protocol-safety parameter, not a contract term, so it is allowed
+to move on a live oracle.
 
 ```mermaid
 flowchart LR
@@ -53,7 +59,7 @@ flowchart LR
     admin -- AdminCap per-oracle setters retune MarketOracle --> M1
 ```
 
-The contract-term snapshots (`StrikeExposureConfig`, `ExpiryCashConfig`) are frozen by design: there is intentionally no admin path to re-template their economics on an existing market. Per-oracle safety bounds are the only template-class value an admin can still move on a live market.
+The contract-term snapshots (`StrikeExposureConfig`, `ExpiryCashConfig`) are frozen by design: there is intentionally no admin path to re-template their economics on an existing market. Per-oracle settlement freshness is the only template-class value an admin can still move on a live market.
 
 ### (B) Live configs — read by their consumer at use time
 
@@ -90,10 +96,11 @@ Every admin setter follows the same shape, which keeps creation-time and update-
 
 1. The setter asserts no valuation is in progress (for the global lock).
 2. The new value is validated against its `assert_*` bound in `config_constants` (a single specific error code per value), so it lands inside the upgrade-required envelope.
-3. Relational invariants that span more than one field are checked in the owning config setter, not in `config_constants`. For example, the all-in mint price setters require `min_ask_price < max_ask_price`; the basis-bounds setter requires `min_basis < max_basis`; the staking setter validates `lower` and `upper` together with `upper > 2 * lower` (which keeps the curve's `upper - lower` denominator positive and `lower > 0`).
+3. Relational invariants that span more than one field are checked in the owning config setter, not in `config_constants`. For example, the all-in mint price setters require `min_ask_price < max_ask_price`, and the staking setter validates `lower` and `upper` together with `upper > 2 * lower` (which keeps the curve's `upper - lower` denominator positive and `lower > 0`).
 4. The value is stored and a config event is emitted reflecting the new state.
 
-The grouped setters that take several fields at once (the EWMA setter, the basis-bounds setter) still validate each field against its own `config_constants` bound; only the basis-bounds setter adds a cross-field relational check.
+The grouped EWMA setter still validates each field against its own
+`config_constants` bound and then stores the updated policy together.
 
 Defaults are applied only in the module that constructs the config; runtime logic treats config fields as plain numbers and never reads the `default_*` seeds. Bounds (`min_*`/`max_*`) may also be read directly by runtime logic when they intentionally serve as a hard floor or ceiling, but there are no config fields or getters for the bounds themselves.
 
@@ -116,7 +123,7 @@ A `PauseCap` is a revocable emergency capability the admin mints into `Registry.
 | Authority | Can change |
 | --- | --- |
 | `AdminCap` (on `ProtocolConfig`) | All template values (future markets only), all live configs (`PricingConfig`, `EwmaConfig`, `StakeConfig`), `protocol_reserve_profit_share`, `withdraw_fee_alpha`, both liquidation budgets, global `trading_paused`, per-expiry `mint_paused` (set and unset) |
-| `AdminCap` (on a `MarketOracle`) | Live per-oracle safety bounds: settlement freshness and the spot/basis deviation and min/max basis guards; register/unregister oracle writer caps |
+| `AdminCap` (on a `MarketOracle`) | Live per-oracle settlement freshness; register/unregister oracle writer caps |
 | `AdminCap` (on a `PoolVault`) | Per-expiry `max_expiry_funding` |
 | `AdminCap` (on `Registry`) | Per-feed `tick_size` (future markets only), version enable/disable, PauseCap mint/revoke, Pyth-source creation, incentive-asset bindings, incentive deposits |
 | `PauseCap` (via `Registry`) | Disable a version, force global trading pause, force per-expiry mint pause — all one-way (engage only) |
@@ -128,7 +135,7 @@ All admin setters route through their owning module: global protocol policy thro
 
 ## Related reading
 
-- [../concepts/pricing-and-oracles.md](../concepts/pricing-and-oracles.md) — how `PricingConfig` freshness thresholds and the per-oracle bounds enter live probability resolution and settlement.
+- [../concepts/pricing-and-oracles.md](../concepts/pricing-and-oracles.md) — how `PricingConfig` freshness thresholds and per-oracle settlement freshness enter live probability resolution and settlement.
 - [../concepts/leverage-and-floor.md](../concepts/leverage-and-floor.md) — the terminal floor index, liquidation LTV, and leverage tiers that `StrikeExposureConfig` governs.
 - [../risks.md](../risks.md) — operational and governance risk, including pause/version handling.
 - [../overview.md](../overview.md) — object model and lifecycle of expiry markets, oracles, and the pool vault.

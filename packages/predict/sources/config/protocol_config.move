@@ -339,30 +339,6 @@ public fun set_market_oracle_template_settlement_freshness_ms(
     );
 }
 
-/// Set basis guard bounds template for future market oracles.
-public fun set_market_oracle_template_basis_bounds(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    max_spot_deviation: u64,
-    max_basis_deviation: u64,
-    min_basis: u64,
-    max_basis: u64,
-) {
-    config.assert_not_valuation_in_progress();
-    config
-        .market_oracle_template_config
-        .set_basis_bounds(
-            max_spot_deviation,
-            max_basis_deviation,
-            min_basis,
-            max_basis,
-        );
-    config_events::emit_market_oracle_template_config_updated(
-        config.id(),
-        &config.market_oracle_template_config,
-    );
-}
-
 /// Set the EWMA gas-price penalty parameters.
 public fun set_ewma_params(
     config: &mut ProtocolConfig,

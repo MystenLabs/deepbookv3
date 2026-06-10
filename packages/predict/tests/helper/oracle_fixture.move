@@ -193,7 +193,7 @@ public fun prepare_real_oracle(
     oracle.update_svi(config, &self.cap, svi, live_ts, &self.clock);
 }
 
-/// Overwrite the Pyth spot directly (for staleness / deviation guard tests),
+/// Overwrite the Pyth spot directly (for staleness and pricing-source tests),
 /// keeping the fixture clock as the update timestamp.
 public fun set_pyth(
     self: &OracleFixture,

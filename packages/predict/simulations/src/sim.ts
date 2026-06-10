@@ -41,7 +41,6 @@ import {
     seedPythSourceAndCreateExpiryMarketTx,
     refreshOracleAndSupplyWithExpiryPoolSyncTx,
     refreshOracleAndWithdrawWithExpiryPoolSyncTx,
-    setMarketOracleBasisBoundsTx,
     setTemplateExpiryFeeConfigTx,
     supplyTx,
     syncExpiryTx,
@@ -843,19 +842,6 @@ async function setupSimulation(
     const expiryMarketId: string = expiryMarketChange.objectId;
     console.log(`[${ts()}]   ExpiryMarket: ${expiryMarketId}`);
     console.log(`[${ts()}]   Oracle: ${oracleId}`);
-
-    await executeAndWait(
-        setMarketOracleBasisBoundsTx(
-            oracleId,
-            protocolConfigId,
-            100_000_000n,
-            100_000_000n,
-            900_000_000n,
-            1_100_000_000n,
-        ),
-        "set_basis_bounds",
-    );
-    console.log(`[${ts()}]   Basis bounds widened for oracle`);
 
     await executeAndWait(
         syncExpiryTx({

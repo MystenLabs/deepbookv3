@@ -16,10 +16,6 @@ const EInvalidBlockScholesPricesFreshnessMs: u64 = 5;
 const EInvalidBlockScholesSVIFreshnessMs: u64 = 6;
 const EInvalidProtocolReserveProfitShare: u64 = 7;
 const EInvalidSettlementFreshnessMs: u64 = 8;
-const EInvalidMaxSpotDeviation: u64 = 9;
-const EInvalidMaxBasisDeviation: u64 = 10;
-const EInvalidMinBasis: u64 = 11;
-const EInvalidMaxBasis: u64 = 12;
 const EInvalidMaxExpiryFunding: u64 = 13;
 const EInvalidTradingLossRebateRate: u64 = 14;
 const EInvalidTerminalFloorIndex: u64 = 15;
@@ -384,42 +380,4 @@ public(package) fun assert_settlement_freshness_ms(value: u64) {
         value >= min_settlement_freshness_ms!() && value <= max_settlement_freshness_ms!(),
         EInvalidSettlementFreshnessMs,
     );
-}
-
-public(package) macro fun default_max_spot_deviation(): u64 { 20_000_000 }
-public(package) macro fun min_max_spot_deviation(): u64 { 1 }
-public(package) macro fun max_max_spot_deviation(): u64 { 50_000_000 }
-
-public(package) fun assert_max_spot_deviation(value: u64) {
-    assert!(
-        value >= min_max_spot_deviation!() && value <= max_max_spot_deviation!(),
-        EInvalidMaxSpotDeviation,
-    );
-}
-
-public(package) macro fun default_max_basis_deviation(): u64 { 20_000_000 }
-public(package) macro fun min_max_basis_deviation(): u64 { 1 }
-public(package) macro fun max_max_basis_deviation(): u64 { 50_000_000 }
-
-public(package) fun assert_max_basis_deviation(value: u64) {
-    assert!(
-        value >= min_max_basis_deviation!() && value <= max_max_basis_deviation!(),
-        EInvalidMaxBasisDeviation,
-    );
-}
-
-public(package) macro fun default_min_basis(): u64 { 900_000_000 }
-public(package) macro fun min_min_basis(): u64 { 800_000_000 }
-public(package) macro fun max_min_basis(): u64 { 1_250_000_000 }
-
-public(package) fun assert_min_basis(value: u64) {
-    assert!(value >= min_min_basis!() && value <= max_min_basis!(), EInvalidMinBasis);
-}
-
-public(package) macro fun default_max_basis(): u64 { 1_100_000_000 }
-public(package) macro fun min_max_basis(): u64 { 800_000_000 }
-public(package) macro fun max_max_basis(): u64 { 1_250_000_000 }
-
-public(package) fun assert_max_basis(value: u64) {
-    assert!(value >= min_max_basis!() && value <= max_max_basis!(), EInvalidMaxBasis);
 }

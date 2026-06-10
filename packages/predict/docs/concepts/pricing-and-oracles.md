@@ -44,7 +44,7 @@ Alongside the surface, `MarketOracle` stores a Block Scholes `spot` and `forward
 
 The surface and the spot/forward pair are updated through two separate write paths, each carrying its own `source_timestamp_ms` (the operator's observation time) and stamping its own `update_timestamp_ms` (on-chain landing). SVI updates and price updates therefore age independently, and each has its own freshness threshold. Updating SVI does not refresh the price timestamp, and vice versa — keeping each staleness check honest. As with Pyth, each freshness check uses the conservative `min(source, update)` timestamp.
 
-Write authorization is by `MarketOracleCap`: an oracle stores a set of authorized cap IDs, and any update must present a cap in that set. Caps are minted under the protocol `AdminCap`, can be registered or unregistered per oracle, and a cap holder can remove its own authorization. The per-oracle settlement-freshness, deviation, and basis bounds (below) are tunable through an admin-gated path on the oracle itself, distinct from the global template config.
+Write authorization is by `MarketOracleCap`: an oracle stores a set of authorized cap IDs, and any update must present a cap in that set. Caps are minted under the protocol `AdminCap`, can be registered or unregistered per oracle, and a cap holder can remove its own authorization. The per-oracle settlement-freshness threshold is tunable through an admin-gated path on the oracle itself, distinct from the global template config.
 
 ## From SVI to a range probability
 
@@ -102,7 +102,7 @@ The curve relies on the same monotonicity the range price does: strikes stay asc
 
 A live range contract's value derives from this curve as its range probability value minus its deterministic floor value, floored at zero. The floor schedule is the leverage mechanism; see [Leverage and the floor](./leverage-and-floor.md).
 
-## Freshness, deviation, and price bounds
+## Freshness and price bounds
 
 Pricing reads oracle state **on demand** and validates it at read time rather than trusting that a writer kept it fresh. The relevant bounds, and where they live:
 
@@ -114,13 +114,11 @@ Pricing reads oracle state **on demand** and validates it at read time rather th
 
 A timestamp is fresh only if it is positive, not in the future, and within its max age. These thresholds are admin-tunable; see [configuration](../design/configuration.md).
 
-**Write-time deviation and basis bounds (`MarketOracleConfig`, per oracle).** When the Block Scholes operator pushes a new spot/forward, the oracle validates the push before storing it:
-
-- **Basis in range.** The new `forward / spot` basis must lie within `[min_basis, max_basis]`, rejecting absurd forward/spot relationships.
-- **Spot deviation.** The new spot may not move from the last stored spot by more than `max_spot_deviation` as a fraction of the previous spot — a circuit breaker against a single jumpy push.
-- **Basis deviation.** The new basis may not move from the previous basis by more than `max_basis_deviation` as a fraction of the previous basis.
-
-Each `MarketOracle` snapshots these bounds from a global template at creation and can be tuned per oracle through the oracle's admin-gated setter. Deviation checks only apply once there is a previous value to compare against (the first push has nothing to deviate from).
+**Write-time Block Scholes checks.** When the Block Scholes operator pushes a
+new spot/forward, the oracle requires a registered writer cap, nonzero spot and
+forward, a strictly advancing source timestamp, and a source timestamp that is
+not in the future. It stores the resulting `forward / spot` basis, but does not
+apply on-chain economic bounds to that basis or to the step size between pushes.
 
 **Updates rejected during pool valuation.** Every oracle write — Pyth ingestion, Block Scholes spot/forward, and SVI — asserts the protocol is *not* mid-valuation. NAV is computed against a frozen oracle snapshot; allowing a write to land between the start and end of a valuation pass would let the curve and the priced strikes disagree. This is the read-side counterpart to building the curve from one resolved input.
 
@@ -163,4 +161,4 @@ A fresh post-expiry source means its freshness timestamp is within the per-oracl
 
 The settlement write path enforces timestamp invariants: sampled settlements must record a pre-expiry source timestamp from the sampling window, while fresh-source settlements must record a post-expiry source timestamp.
 
-For the trust assumptions behind each oracle and the failure modes of the deviation guards and operator authority, see [risks](../risks.md).
+For the trust assumptions behind each oracle and the Block Scholes operator authority, see [risks](../risks.md).
