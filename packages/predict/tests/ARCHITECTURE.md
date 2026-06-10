@@ -3,9 +3,10 @@
 > The reusable layering that makes a new flow- or error-path test a few lines, not a bespoke
 > setup. Modeled on deepbook core's test framework and improving on it where core is weak.
 > Authoritative for `packages/predict/tests/**` and `packages/predict_math/tests/**`.
-> Companions: `.redesign/COVERAGE_MATRIX.md` (worklist), `.redesign/BUGS_FOUND.md` (ledger),
-> `.redesign/REACHABILITY.md` (stale-source trigger hypotheses — re-verify before use),
-> `.claude/rules/unit-tests.md` (the 18 cardinal rules).
+> Companion: `.claude/rules/unit-tests.md` (the 18 cardinal rules). The build-out
+> worklists (coverage matrix, bug ledger, reachability recipes) were consumed and
+> deleted when the suite reached full error-constant coverage; create a fresh
+> `.redesign/BUGS_FOUND.md` ledger if a future bug-finding pass needs one.
 
 ## Ground truth (verified against HEAD `b10a37d7`, branch `strike-exposure-rewrite-state`)
 
@@ -23,9 +24,9 @@
   Only the existing `registry::init_for_testing`, `plp::init_for_testing`,
   `pyth_source::set_state_for_testing`, and `market_oracle::settle_with_generator_for_testing`
   seams are sanctioned (rule 18). No new `*_for_testing` source seams.
-- On finding a bug: leave the test RED, ledger it in `BUGS_FOUND.md`, tag
-  `// KNOWN-FAILING: BUG-NNN`. Never adjust expecteds, never re-express as
-  `expected_failure` of buggy behavior, never touch source.
+- On finding a bug: leave the test RED, ledger it in `.redesign/BUGS_FOUND.md`
+  (create it if absent), tag `// KNOWN-FAILING: BUG-NNN`. Never adjust expecteds,
+  never re-express as `expected_failure` of buggy behavior, never touch source.
 
 ## Layered design (largely BUILT — extend, don't restart)
 
@@ -133,7 +134,4 @@ is suspect.
 
 ## Provenance warnings
 
-- `.redesign/REACHABILITY.md` was authored against the **divergent predict-track1 branch**
-  (no predict_math, different module layout, 155 different constants). Every recipe is an
-  UNVERIFIED HYPOTHESIS: re-check each cited file:line against HEAD before encoding a test.
-- The redesign repo's `.move` test files target stale source — never import them.
+- The redesign-exploration repo's `.move` test files target stale source — never import them.

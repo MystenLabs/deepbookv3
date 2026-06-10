@@ -1,6 +1,6 @@
 # Pricing and oracles
 
-Predict prices binary range contracts off two independent oracle inputs and turns them into the live probabilities and valuation curves that drive minting, redemption, and net asset value (NAV). This document describes those inputs, how a range probability is derived from them, how the `pricing` module builds a one-sided UP-price curve for live NAV, how freshness and deviation bounds are enforced, and how a market reaches terminal settlement.
+Predict prices binary range contracts off two independent oracle inputs and turns them into the live probabilities and valuation curves that drive minting, redemption, and net asset value (NAV). This document describes those inputs, how a range probability is derived from them, how the `pricing` module builds a one-sided UP-price curve for live NAV, how freshness bounds are enforced, and how a market reaches terminal settlement.
 
 ## Two oracle inputs
 
