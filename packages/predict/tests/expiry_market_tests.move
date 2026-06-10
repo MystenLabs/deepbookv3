@@ -9,12 +9,11 @@ use deepbook_predict::{
     constants,
     expiry_market::{Self, ExpiryMarket},
     i64,
-    market_oracle::{Self, MarketOracle, MarketOracleWriterCap},
+    market_oracle::{Self, MarketOracle, MarketOracleWriterCap, MarketOracleLifecycleCap},
     order,
-    predict_manager::PredictManager,
     protocol_config::{Self, ProtocolConfig},
     pyth_source::{Self, PythSource},
-    registry::{Self, Registry},
+    registry,
     strike_grid,
     test_constants
 };
@@ -80,6 +79,12 @@ fun rebate_eligibility_offsets_fee_reserve_by_gross_profit() {
         &cap,
         scenario.ctx(),
     );
+    let mut lifecycle_cap = market_oracle::create_lifecycle_cap(
+        &cap,
+        pyth.feed_id(),
+        scenario.ctx(),
+    );
+    market_oracle::register_lifecycle_cap(&oracle, &admin_cap, &mut lifecycle_cap);
     let grid = strike_grid::new_centered(grid_center_spot(), TICK_SIZE);
     let expiry_id = expiry_market::create_and_share(
         &config,
@@ -135,7 +140,7 @@ fun rebate_eligibility_offsets_fee_reserve_by_gross_profit() {
 
     scenario.next_epoch(test_constants::alice());
     let mut market = scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
-    settle_oracle(&mut oracle, &mut pyth, &config, &cap, &mut clock);
+    settle_oracle(&mut oracle, &mut pyth, &config, &lifecycle_cap, &mut clock);
 
     let balance_before_claim = manager.balance();
     let residual_cash = market.claim_trading_loss_rebate(
@@ -154,6 +159,7 @@ fun rebate_eligibility_offsets_fee_reserve_by_gross_profit() {
     destroy(manager);
     destroy(oracle);
     destroy(pyth);
+    market_oracle::destroy_lifecycle_cap(lifecycle_cap);
     market_oracle::destroy_writer_cap(cap);
     destroy(config);
     destroy(admin_cap);
@@ -416,6 +422,106 @@ fun redeem_withholds_ewma_penalty_from_payout_on_gas_spike() {
     scenario.end();
 }
 
+#[test]
+fun compact_storage_accepts_registered_lifecycle_cap() {
+    let mut scenario = test::begin(test_constants::alice());
+    let (registry, admin_cap) = registry::new_for_testing(scenario.ctx());
+    let config = protocol_config::new_for_testing(scenario.ctx());
+    let cap = market_oracle::create_writer_cap(&admin_cap, scenario.ctx());
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(NOW_MS);
+    let mut pyth = pyth_source::new_for_testing(scenario.ctx());
+    let mut oracle = market_oracle::create_test_market_oracle_with_pyth(
+        &pyth,
+        EXPIRY_MS,
+        &cap,
+        scenario.ctx(),
+    );
+    let mut lifecycle_cap = market_oracle::create_lifecycle_cap(
+        &cap,
+        pyth.feed_id(),
+        scenario.ctx(),
+    );
+    market_oracle::register_lifecycle_cap(&oracle, &admin_cap, &mut lifecycle_cap);
+    let grid = strike_grid::new_centered(grid_center_spot(), TICK_SIZE);
+    let expiry_id = expiry_market::create_and_share(
+        &config,
+        vec_set::singleton(constants::current_version!()),
+        oracle.id(),
+        pyth.feed_id(),
+        EXPIRY_MS,
+        grid,
+        0,
+        config_constants::default_expiry_fee_window_ms!(),
+        constants::float_scaling!(),
+        scenario.ctx(),
+    );
+
+    scenario.next_tx(test_constants::alice());
+    let mut market = scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
+    settle_oracle(&mut oracle, &mut pyth, &config, &lifecycle_cap, &mut clock);
+    market.compact_storage(&config, &oracle, &lifecycle_cap);
+    assert_eq!(market.payout_liability(), 0);
+
+    return_shared(market);
+    destroy(oracle);
+    destroy(pyth);
+    market_oracle::destroy_lifecycle_cap(lifecycle_cap);
+    market_oracle::destroy_writer_cap(cap);
+    destroy(config);
+    destroy(admin_cap);
+    registry::destroy_registry_drop_for_testing(registry);
+    clock.destroy_for_testing();
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = market_oracle::EInvalidMarketOracleLifecycleCap)]
+fun compact_storage_rejects_unregistered_lifecycle_cap() {
+    let mut scenario = test::begin(test_constants::alice());
+    let (_registry, admin_cap) = registry::new_for_testing(scenario.ctx());
+    let config = protocol_config::new_for_testing(scenario.ctx());
+    let cap = market_oracle::create_writer_cap(&admin_cap, scenario.ctx());
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(NOW_MS);
+    let mut pyth = pyth_source::new_for_testing(scenario.ctx());
+    let mut oracle = market_oracle::create_test_market_oracle_with_pyth(
+        &pyth,
+        EXPIRY_MS,
+        &cap,
+        scenario.ctx(),
+    );
+    let unregistered_lifecycle_cap = market_oracle::create_lifecycle_cap(
+        &cap,
+        pyth.feed_id(),
+        scenario.ctx(),
+    );
+    let grid = strike_grid::new_centered(grid_center_spot(), TICK_SIZE);
+    let expiry_id = expiry_market::create_and_share(
+        &config,
+        vec_set::singleton(constants::current_version!()),
+        oracle.id(),
+        pyth.feed_id(),
+        EXPIRY_MS,
+        grid,
+        0,
+        config_constants::default_expiry_fee_window_ms!(),
+        constants::float_scaling!(),
+        scenario.ctx(),
+    );
+
+    scenario.next_tx(test_constants::alice());
+    let mut market = scenario.take_shared_by_id<ExpiryMarket>(expiry_id);
+    let mut lifecycle_cap = market_oracle::create_lifecycle_cap(
+        &cap,
+        pyth.feed_id(),
+        scenario.ctx(),
+    );
+    market_oracle::register_lifecycle_cap(&oracle, &admin_cap, &mut lifecycle_cap);
+    settle_oracle(&mut oracle, &mut pyth, &config, &lifecycle_cap, &mut clock);
+    market.compact_storage(&config, &oracle, &unregistered_lifecycle_cap);
+    abort 999
+}
+
 /// Start the next transaction with `gas_price` so the per-market EWMA observes
 /// it. Only `gas_price` changes, so the reference gas price stays put and no
 /// epoch advance is required.
@@ -459,7 +565,7 @@ fun settle_oracle(
     oracle: &mut MarketOracle,
     pyth: &mut PythSource,
     config: &ProtocolConfig,
-    cap: &MarketOracleWriterCap,
+    cap: &MarketOracleLifecycleCap,
     clock: &mut Clock,
 ) {
     let settlement_source_timestamp_ms = EXPIRY_MS + 1_000;

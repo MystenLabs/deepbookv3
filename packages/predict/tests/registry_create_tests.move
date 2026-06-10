@@ -9,7 +9,7 @@ use deepbook_predict::{
     config_constants,
     constants,
     expiry_market::ExpiryMarket,
-    market_oracle::{Self, MarketOracle, MarketOracleWriterCap},
+    market_oracle::{Self, MarketOracle, MarketOracleWriterCap, MarketOracleLifecycleCap},
     plp::{Self, PoolVault},
     pricing,
     protocol_config::ProtocolConfig,
@@ -217,7 +217,7 @@ fun set_pyth_feed_tick_size_unknown_feed_aborts() {
 
 #[test]
 fun create_expiry_market_uses_registered_tick_size() {
-    let (mut scenario, registry_id, pyth_id, cap) = setup_ready_expiry_creation(
+    let (mut scenario, registry_id, pyth_id, cap, mut lifecycle_cap) = setup_ready_expiry_creation(
         UPDATED_EXPIRY_TICK_SIZE,
     );
 
@@ -234,7 +234,7 @@ fun create_expiry_market_uses_registered_tick_size() {
         &mut vault,
         &config,
         &pyth,
-        &cap,
+        &mut lifecycle_cap,
         EXPIRY_MS,
         &clock,
         scenario.ctx(),
@@ -252,7 +252,6 @@ fun create_expiry_market_uses_registered_tick_size() {
     return_shared(vault);
     return_shared(reg);
     clock.destroy_for_testing();
-    destroy(cap);
 
     scenario.next_tx(test_constants::admin());
     let market = scenario.take_shared_by_id<ExpiryMarket>(expiry_market_id);
@@ -267,14 +266,18 @@ fun create_expiry_market_uses_registered_tick_size() {
     assert_eq!(market.expiry_fee_max_multiplier(), RAMP_MAX_MULTIPLIER);
     assert_eq!(market.cash_balance(), 0);
     assert_eq!(oracle.id(), market_oracle_id);
+    oracle.assert_authorized_writer_cap(&cap);
+    oracle.assert_authorized_lifecycle_cap(&lifecycle_cap);
     return_shared(oracle);
     return_shared(market);
+    market_oracle::destroy_lifecycle_cap(lifecycle_cap);
+    destroy(cap);
     scenario.end();
 }
 
 #[test, expected_failure(abort_code = strike_grid::EOracleTickSizeTooLargeForSpot)]
 fun create_expiry_market_aborts_when_tick_size_too_large_for_spot() {
-    let (mut scenario, registry_id, pyth_id, cap) = setup_ready_expiry_creation(
+    let (mut scenario, registry_id, pyth_id, _cap, mut lifecycle_cap) = setup_ready_expiry_creation(
         TOO_WIDE_EXPIRY_TICK_SIZE,
     );
 
@@ -291,7 +294,7 @@ fun create_expiry_market_aborts_when_tick_size_too_large_for_spot() {
         &mut vault,
         &config,
         &pyth,
-        &cap,
+        &mut lifecycle_cap,
         EXPIRY_MS,
         &clock,
         scenario.ctx(),
@@ -301,7 +304,7 @@ fun create_expiry_market_aborts_when_tick_size_too_large_for_spot() {
 
 #[test, expected_failure(abort_code = pricing::EPythSpotStale)]
 fun create_expiry_market_aborts_when_pyth_spot_is_stale() {
-    let (mut scenario, registry_id, pyth_id, cap) = setup_ready_expiry_creation(
+    let (mut scenario, registry_id, pyth_id, _cap, mut lifecycle_cap) = setup_ready_expiry_creation(
         UPDATED_EXPIRY_TICK_SIZE,
     );
 
@@ -325,7 +328,7 @@ fun create_expiry_market_aborts_when_pyth_spot_is_stale() {
         &mut vault,
         &config,
         &pyth,
-        &cap,
+        &mut lifecycle_cap,
         EXPIRY_MS,
         &clock,
         scenario.ctx(),
@@ -333,7 +336,50 @@ fun create_expiry_market_aborts_when_pyth_spot_is_stale() {
     abort 999
 }
 
-fun setup_ready_expiry_creation(expiry_tick_size: u64): (Scenario, ID, ID, MarketOracleWriterCap) {
+#[test, expected_failure(abort_code = market_oracle::EInvalidMarketOracleLifecycleCap)]
+fun create_expiry_market_rejects_lifecycle_cap_for_wrong_feed() {
+    let (
+        mut scenario,
+        registry_id,
+        pyth_id,
+        _cap,
+        mut lifecycle_cap,
+    ) = setup_ready_expiry_creation_with_lifecycle_feed(
+        UPDATED_EXPIRY_TICK_SIZE,
+        PYTH_FEED_ETH,
+    );
+
+    scenario.next_tx(test_constants::admin());
+    let mut reg = scenario.take_shared_by_id<registry::Registry>(registry_id);
+    let mut vault = scenario.take_shared<PoolVault>();
+    let config = scenario.take_shared<ProtocolConfig>();
+    let pyth = scenario.take_shared_by_id<PythSource>(pyth_id);
+    let mut clock = clock::create_for_testing(scenario.ctx());
+    clock.set_for_testing(NOW_MS);
+
+    registry::create_expiry_market(
+        &mut reg,
+        &mut vault,
+        &config,
+        &pyth,
+        &mut lifecycle_cap,
+        EXPIRY_MS,
+        &clock,
+        scenario.ctx(),
+    );
+    abort 999
+}
+
+fun setup_ready_expiry_creation(
+    expiry_tick_size: u64,
+): (Scenario, ID, ID, MarketOracleWriterCap, MarketOracleLifecycleCap) {
+    setup_ready_expiry_creation_with_lifecycle_feed(expiry_tick_size, PYTH_FEED_BTC)
+}
+
+fun setup_ready_expiry_creation_with_lifecycle_feed(
+    expiry_tick_size: u64,
+    lifecycle_feed_id: u32,
+): (Scenario, ID, ID, MarketOracleWriterCap, MarketOracleLifecycleCap) {
     let mut scenario = test::begin(test_constants::admin());
     let registry_id = registry::init_for_testing(scenario.ctx());
     plp::init_for_testing(scenario.ctx());
@@ -342,6 +388,11 @@ fun setup_ready_expiry_creation(expiry_tick_size: u64): (Scenario, ID, ID, Marke
     let mut reg = scenario.take_shared_by_id<registry::Registry>(registry_id);
     let admin_cap = scenario.take_from_sender<AdminCap>();
     let cap = market_oracle::create_writer_cap(&admin_cap, scenario.ctx());
+    let lifecycle_cap = market_oracle::create_lifecycle_cap(
+        &cap,
+        lifecycle_feed_id,
+        scenario.ctx(),
+    );
     let pyth_id = registry::create_pyth_source(
         &mut reg,
         &admin_cap,
@@ -394,7 +445,7 @@ fun setup_ready_expiry_creation(expiry_tick_size: u64): (Scenario, ID, ID, Marke
     return_shared(config);
     return_shared(vault);
 
-    (scenario, registry_id, pyth_id, cap)
+    (scenario, registry_id, pyth_id, cap, lifecycle_cap)
 }
 
 // === create_manager / create_and_share_manager ===

@@ -9,7 +9,7 @@ use deepbook_predict::{
     config_constants,
     constants::{Self, float_scaling as float},
     expiry_market::ExpiryMarket,
-    market_oracle::{Self, MarketOracle, MarketOracleWriterCap},
+    market_oracle::{Self, MarketOracle, MarketOracleWriterCap, MarketOracleLifecycleCap},
     plp::{Self, PLP, PoolVault},
     protocol_config::{Self, ProtocolConfig},
     pyth_source::{Self, PythSource},
@@ -49,6 +49,7 @@ public struct Fixture {
     admin_cap: AdminCap,
     config: ProtocolConfig,
     cap: MarketOracleWriterCap,
+    lifecycle_cap: MarketOracleLifecycleCap,
     clock: Clock,
     vault_id: ID,
     pyth_id: ID,
@@ -452,6 +453,11 @@ fun setup_pool_with_pyth(): Fixture {
     let mut config = protocol_config::new_for_testing(scenario.ctx());
     config.set_protocol_reserve_profit_share(&admin_cap, PROTOCOL_RESERVE_SHARE);
     let cap = market_oracle::create_writer_cap(&admin_cap, scenario.ctx());
+    let lifecycle_cap = market_oracle::create_lifecycle_cap(
+        &cap,
+        PYTH_FEED_ID,
+        scenario.ctx(),
+    );
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(NOW_MS);
 
@@ -495,6 +501,7 @@ fun setup_pool_with_pyth(): Fixture {
         admin_cap,
         config,
         cap,
+        lifecycle_cap,
         clock,
         vault_id,
         pyth_id,
@@ -516,7 +523,7 @@ fun create_expiry(fixture: &mut Fixture, expiry: u64): (ID, ID) {
         &mut vault,
         &fixture.config,
         &pyth,
-        &fixture.cap,
+        &mut fixture.lifecycle_cap,
         expiry,
         &fixture.clock,
         fixture.scenario.ctx(),
@@ -549,7 +556,14 @@ fun settle_oracle(
         settlement_source_timestamp_ms,
         settlement_update_timestamp_ms,
     );
-    assert!(oracle.settle_if_possible(&fixture.config, pyth, &fixture.cap, &fixture.clock));
+    assert!(
+        oracle.settle_if_possible(
+            &fixture.config,
+            pyth,
+            &fixture.lifecycle_cap,
+            &fixture.clock,
+        ),
+    );
 }
 
 fun sync_expiry_for_testing(
@@ -578,12 +592,14 @@ fun finish(fixture: Fixture) {
         admin_cap,
         config,
         cap,
+        lifecycle_cap,
         clock,
         vault_id: _,
         pyth_id: _,
         initial_plp,
     } = fixture;
     destroy(initial_plp);
+    market_oracle::destroy_lifecycle_cap(lifecycle_cap);
     market_oracle::destroy_writer_cap(cap);
     destroy(config);
     destroy(admin_cap);
