@@ -8,29 +8,34 @@ use deepbook_predict::plp;
 use predict_math::math::float_scaling as float;
 use std::unit_test::assert_eq;
 
-const NAV_OPTIMISTIC: u64 = 1_000;
+const FREE_CASH: u64 = 1_200;
 const FULLY_VERIFIED_RANGE: u64 = 300;
 const FULLY_VERIFIED_FLOOR: u64 = 100;
-const NOTHING_VERIFIED_RANGE: u64 = 80;
-const NOTHING_VERIFIED_FLOOR: u64 = 120;
-/// D_max = 120, unscanned_range = 80, Q = 40, NAV = 1_000 - 40.
-const NOTHING_VERIFIED_NAV: u64 = 960;
+const SATURATED_FREE_CASH: u64 = 1_000;
+const SATURATED_TOTAL_RANGE: u64 = 80;
+const SATURATED_TOTAL_FLOOR: u64 = 120;
+const SATURATED_NAV: u64 = 1_000;
+const SATURATED_BAND: u64 = 80;
 
-const CLOSED_FORM_NAV_OPTIMISTIC: u64 = 900;
+const CLOSED_FORM_FREE_CASH: u64 = 950;
 const CLOSED_FORM_TOTAL_RANGE: u64 = 350;
 const CLOSED_FORM_TOTAL_FLOOR: u64 = 300;
 const CLOSED_FORM_VERIFIED_RANGE: u64 = 300;
 const CLOSED_FORM_VERIFIED_FLOOR: u64 = 100;
-/// cash_minus_rebate = 950 because nav_optimistic = 950 - (350 - 300).
-/// Q = (300 - 100) - (350 - 300) = 150, so conservative NAV = 900 - 150.
-/// Closed form: 950 - (300 - 100) = 750.
 const CLOSED_FORM_NAV: u64 = 750;
+const CLOSED_FORM_BAND: u64 = 50;
 
-const NET_ITM_NAV_OPTIMISTIC: u64 = 900;
+const NET_ITM_FREE_CASH: u64 = 1_050;
 const NET_ITM_TOTAL_RANGE: u64 = 350;
 const NET_ITM_TOTAL_FLOOR: u64 = 200;
 const NET_ITM_VERIFIED_RANGE: u64 = 100;
 const NET_ITM_VERIFIED_FLOOR: u64 = 50;
+const NET_ITM_NAV: u64 = 900;
+const NET_ITM_BAND: u64 = 150;
+
+const LOW_FREE_CASH: u64 = 50;
+const HIGH_LIABILITY_RANGE: u64 = 300;
+const HIGH_LIABILITY_FLOOR: u64 = 100;
 
 const WITHDRAW_FEE_ALPHA_25_PCT: u64 = 250_000_000;
 const HIGH_BAND: u64 = 10_000;
@@ -46,95 +51,83 @@ const FEE_TEST_NAV_CAP: u64 = 125;
 // Expected values below are derived by hand from that definition.
 
 #[test]
-fun conservative_active_nav_fully_verified_keeps_optimistic_nav() {
+fun active_expiry_nav_and_band_fully_verified_charges_verified_liability() {
     // verified == total:
-    //   D_max = max(0, 100 - 100) = 0
-    //   Q = 0
-    assert_eq!(
-        plp::conservative_active_nav(
-            NAV_OPTIMISTIC,
-            FULLY_VERIFIED_RANGE,
-            FULLY_VERIFIED_FLOOR,
-            FULLY_VERIFIED_RANGE,
-            FULLY_VERIFIED_FLOOR,
-        ),
-        NAV_OPTIMISTIC,
+    //   supply liability = 300 - 100 = 200
+    //   NAV = 1_200 - 200 = 1_000
+    //   band = 0
+    let (nav, band) = plp::active_expiry_nav_and_band(
+        FREE_CASH,
+        FULLY_VERIFIED_RANGE,
+        FULLY_VERIFIED_FLOOR,
+        FULLY_VERIFIED_RANGE,
+        FULLY_VERIFIED_FLOOR,
     );
+    assert_eq!(nav, 1_000);
+    assert_eq!(band, 0);
 }
 
 #[test]
-fun conservative_active_nav_nothing_verified_haircuts_net_underwater() {
-    // nothing verified:
-    //   D_max = 120
-    //   unscanned_range = 80
-    //   Q = 40
-    assert_eq!(
-        plp::conservative_active_nav(
-            NAV_OPTIMISTIC,
-            NOTHING_VERIFIED_RANGE,
-            NOTHING_VERIFIED_FLOOR,
-            0,
-            0,
-        ),
-        NOTHING_VERIFIED_NAV,
+fun active_expiry_nav_and_band_saturated_unscanned_floor_keeps_supply_mark_high() {
+    // Regression: aggregate-clamped liability is 0 because total_floor > total_range.
+    // The unscanned bucket cannot create negative liability, so supply NAV stays at
+    // free cash while the withdraw band records the recoverable unscanned floor.
+    let (nav, band) = plp::active_expiry_nav_and_band(
+        SATURATED_FREE_CASH,
+        SATURATED_TOTAL_RANGE,
+        SATURATED_TOTAL_FLOOR,
+        0,
+        0,
     );
+    assert_eq!(nav, SATURATED_NAV);
+    assert_eq!(band, SATURATED_BAND);
 }
 
 #[test]
-fun conservative_active_nav_q_positive_matches_closed_form() {
-    // Q > 0:
-    //   total_range - total_floor = 350 - 300 = 50
-    //   cash_minus_rebate = nav_optimistic + liability = 900 + 50 = 950
-    //   survivor exact liability = verified_range - verified_floor = 300 - 100 = 200
-    //   conservative NAV = 950 - 200 = 750
-    assert_eq!(
-        plp::conservative_active_nav(
-            CLOSED_FORM_NAV_OPTIMISTIC,
-            CLOSED_FORM_TOTAL_RANGE,
-            CLOSED_FORM_TOTAL_FLOOR,
-            CLOSED_FORM_VERIFIED_RANGE,
-            CLOSED_FORM_VERIFIED_FLOOR,
-        ),
-        CLOSED_FORM_NAV,
+fun active_expiry_nav_and_band_charges_verified_liability_before_unscanned_floor() {
+    // verified liability = 300 - 100 = 200
+    // unscanned range/floor = 50/200, so unscanned liability = 0 and band = 50
+    // NAV = 950 - 200 = 750
+    let (nav, band) = plp::active_expiry_nav_and_band(
+        CLOSED_FORM_FREE_CASH,
+        CLOSED_FORM_TOTAL_RANGE,
+        CLOSED_FORM_TOTAL_FLOOR,
+        CLOSED_FORM_VERIFIED_RANGE,
+        CLOSED_FORM_VERIFIED_FLOOR,
     );
+    assert_eq!(nav, CLOSED_FORM_NAV);
+    assert_eq!(band, CLOSED_FORM_BAND);
 }
 
 #[test]
-fun conservative_active_nav_net_itm_unscanned_keeps_optimistic_nav() {
-    // unscanned borrowed amount is covered by unscanned option value:
-    //   D_max = 200 - 50 = 150
-    //   unscanned_range = 350 - 100 = 250
-    //   Q = max(0, 150 - 250) = 0
-    assert_eq!(
-        plp::conservative_active_nav(
-            NET_ITM_NAV_OPTIMISTIC,
-            NET_ITM_TOTAL_RANGE,
-            NET_ITM_TOTAL_FLOOR,
-            NET_ITM_VERIFIED_RANGE,
-            NET_ITM_VERIFIED_FLOOR,
-        ),
-        NET_ITM_NAV_OPTIMISTIC,
+fun active_expiry_nav_and_band_charges_unscanned_liability_net_of_its_own_floor() {
+    // verified liability = 100 - 50 = 50
+    // unscanned range/floor = 250/150, so unscanned liability = 100 and band = 150
+    // NAV = 1_050 - 150 = 900
+    let (nav, band) = plp::active_expiry_nav_and_band(
+        NET_ITM_FREE_CASH,
+        NET_ITM_TOTAL_RANGE,
+        NET_ITM_TOTAL_FLOOR,
+        NET_ITM_VERIFIED_RANGE,
+        NET_ITM_VERIFIED_FLOOR,
     );
+    assert_eq!(nav, NET_ITM_NAV);
+    assert_eq!(band, NET_ITM_BAND);
 }
 
 #[test]
-fun conservative_active_nav_haircut_exceeding_optimistic_floors_at_zero() {
-    // Stress: the unverified-underwater haircut Q exceeds the optimistic NAV, so
-    // the active expiry must contribute 0 (never negative — the final subtraction
-    // must saturate, not underflow-brick the whole sync).
-    //   nav_optimistic = 30, total_floor = 100, verified = 0 -> D_max = 100
-    //   unscanned_range = 0 - 0 = 0 -> Q = 100 ; result = max(0, 30 - 100) = 0
-    assert_eq!(plp::conservative_active_nav(30, 0, 100, 0, 0), 0);
+fun active_expiry_nav_and_band_floors_at_zero_when_liability_exceeds_free_cash() {
+    // verified liability = 300 - 100 = 200, free cash = 50 -> NAV floors at 0.
+    let (nav, band) = plp::active_expiry_nav_and_band(
+        LOW_FREE_CASH,
+        HIGH_LIABILITY_RANGE,
+        HIGH_LIABILITY_FLOOR,
+        HIGH_LIABILITY_RANGE,
+        HIGH_LIABILITY_FLOOR,
+    );
+    assert_eq!(nav, 0);
+    assert_eq!(band, 0);
 }
-
-#[test]
-fun conservative_active_nav_haircut_equal_to_optimistic_is_zero() {
-    // Boundary: Q == nav_optimistic exactly -> 0.
-    //   nav_optimistic = 100, total_floor = 200, verified = 0 -> D_max = 200
-    //   unscanned_range = 100 - 0 = 100 -> Q = 100 ; result = 100 - 100 = 0
-    assert_eq!(plp::conservative_active_nav(100, 100, 200, 0, 0), 0);
-}
-
 #[test]
 fun withdraw_fee_caps_to_alpha_times_gross_payout() {
     // Band fee = 25% * 10_000 * 10% = 250.

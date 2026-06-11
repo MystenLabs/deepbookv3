@@ -953,12 +953,10 @@ def order_id_for_terms(order: dict[str, Any]) -> int:
         lower_boundary_index=order["lower_boundary_index"],
         higher_boundary_index=order["higher_boundary_index"],
         max_boundary_index=ORACLE_GRID_TICKS + 2,
-        leverage=order["leverage"],
-        entry_probability=order["entry_probability"],
+        floor_shares=order_floor_shares(order),
         quantity=order["quantity"],
         sequence=order["sequence"],
         position_lot_size=POSITION_LOT_SIZE,
-        float_scaling=FLOAT_SCALING,
     )
 
 
@@ -1349,14 +1347,17 @@ def pool_sync_updates_and_value(
     if synced_state["expiry_cash_balance"] < required_cash:
         raise ValueError("valuation exceeds expiry cash")
 
-    nav_optimistic = synced_state["expiry_cash_balance"] - required_cash
-    d_max = max(0, total_floor_amount - verified_floor_amount)
+    free_cash = synced_state["expiry_cash_balance"] - rebate_reserve
+    unscanned_floor = max(0, total_floor_amount - verified_floor_amount)
     unscanned_range = max(0, total_range - verified_range)
-    haircut = max(0, d_max - unscanned_range)
-    active_expiry_value = max(0, nav_optimistic - haircut)
+    supply_liability = max(0, verified_range - verified_floor_amount) + max(
+        0,
+        unscanned_range - unscanned_floor,
+    )
+    active_expiry_value = max(0, free_cash - supply_liability)
     pending_protocol_profit = pending_protocol_profit_exclusion(synced_state, active_expiry_value)
     pool_value = synced_state["vault_idle_balance"] + active_expiry_value - pending_protocol_profit
-    aggregate_band = min(d_max, unscanned_range)
+    aggregate_band = min(unscanned_floor, unscanned_range)
     return updates, pool_value, synced_state, aggregate_band
 
 

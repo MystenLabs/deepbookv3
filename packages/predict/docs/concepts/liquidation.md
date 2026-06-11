@@ -59,10 +59,10 @@ Liquidation passes are also folded into the hot trade paths. Mint and live redee
 
 The active index is a sorted store of leveraged order IDs (`LiquidationBook`). Order IDs are held in ascending order across bounded pages, and the priority an order should be checked at is encoded directly in the bits of its packed `order_id`. The front of the index is therefore the highest-priority candidate, with no separate mutable ranking to maintain: insertion keeps the list sorted, and selection reads from the front.
 
-The packed `order_id` lays out its highest bits as the quantity field, then floor shares, then open time and the strike boundary indexes. Quantity is stored as a *complement* (`U32_MASK − quantity_lots`), so a **larger quantity produces a smaller packed key** and sorts earlier. The resulting ascending order is, in priority order:
+The packed `order_id` lays out its highest bits as the quantity field, then floor shares, then open time and the strike boundary indexes. Quantity and floor shares are stored as *complements* (`U32_MASK − quantity_lots`, `U64_MASK − floor_shares`), so larger values produce smaller packed keys and sort earlier. The resulting ascending order is, in priority order:
 
 1. **larger quantity first** — bigger positions, which carry more pool risk, are checked before smaller ones;
-2. **then smaller floor shares** — among equal quantities, the next field in the key is floor shares ascending.
+2. **then larger floor shares** — among equal quantities, higher floor coverage has the higher liquidation threshold and more pool recovery at stake.
 
 This ordering is a deterministic consequence of the encoding alone. The book never recomputes a health score to rank orders; it relies on the fact that the qualities that make an order worth checking first are baked into the same integer that identifies it.
 

@@ -4,7 +4,7 @@ use crate::schema::{
     expiry_cash_rebalanced, expiry_cash_received, expiry_cash_template_config_updated,
     expiry_market_mint_paused_updated, expiry_max_funding_updated, expiry_profit_materialized,
     fee_config_updated, liquidated_order_redeemed, live_order_redeemed, market_config_snapshot,
-    market_created, market_oracle_bounds_updated, market_oracle_settled,
+    market_created, market_oracle_config_updated, market_oracle_settled,
     market_oracle_template_config_updated, order_liquidated, order_minted,
     predict_deposit_cap_minted, predict_manager_created, predict_trade_cap_minted,
     predict_withdraw_cap_minted, pricing_config_updated, pyth_source_updated, risk_config_updated,
@@ -252,6 +252,7 @@ pub struct FeeConfigUpdated {
     pub package: String,
     pub protocol_config_id: String,
     pub protocol_reserve_profit_share: i64,
+    pub withdraw_fee_alpha: i64,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
@@ -299,6 +300,7 @@ pub struct StrikeExposureTemplateConfigUpdated {
     pub protocol_config_id: String,
     pub terminal_floor_index: i64,
     pub liquidation_ltv: i64,
+    pub backing_buffer_lambda: i64,
     pub base_fee: BigDecimal,
     pub min_fee: BigDecimal,
     pub min_ask_price: BigDecimal,
@@ -320,10 +322,6 @@ pub struct MarketOracleTemplateConfigUpdated {
     pub package: String,
     pub protocol_config_id: String,
     pub settlement_freshness_ms: i64,
-    pub max_spot_deviation: i64,
-    pub max_basis_deviation: i64,
-    pub min_basis: BigDecimal,
-    pub max_basis: BigDecimal,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
@@ -412,6 +410,7 @@ pub struct MarketConfigSnapshot {
     pub market_oracle_id: String,
     pub terminal_floor_index: i64,
     pub liquidation_ltv: i64,
+    pub backing_buffer_lambda: i64,
     pub base_fee: BigDecimal,
     pub min_fee: BigDecimal,
     pub min_ask_price: BigDecimal,
@@ -422,8 +421,8 @@ pub struct MarketConfigSnapshot {
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
-#[diesel(table_name = market_oracle_bounds_updated, primary_key(event_digest))]
-pub struct MarketOracleBoundsUpdated {
+#[diesel(table_name = market_oracle_config_updated, primary_key(event_digest))]
+pub struct MarketOracleConfigUpdated {
     pub event_digest: String,
     pub digest: String,
     pub sender: String,
@@ -434,10 +433,6 @@ pub struct MarketOracleBoundsUpdated {
     pub package: String,
     pub market_oracle_id: String,
     pub settlement_freshness_ms: i64,
-    pub max_spot_deviation: i64,
-    pub max_basis_deviation: i64,
-    pub min_basis: BigDecimal,
-    pub max_basis: BigDecimal,
 }
 
 #[derive(Queryable, Selectable, Insertable, Identifiable, Debug, FieldCount, Serialize)]
@@ -566,6 +561,7 @@ pub struct WithdrawExecuted {
     pub pool_vault_id: String,
     pub shares_burned: BigDecimal,
     pub payout: BigDecimal,
+    pub withdraw_fee: BigDecimal,
     pub pool_value_before: BigDecimal,
     pub total_supply_after: BigDecimal,
     pub idle_balance_after: BigDecimal,

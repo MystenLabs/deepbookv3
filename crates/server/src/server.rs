@@ -20,7 +20,7 @@ use deepbook_schema::models::{
 };
 use deepbook_schema::*;
 use diesel::dsl::count_star;
-use diesel::dsl::{max, min};
+use diesel::dsl::{max as diesel_max, min as diesel_min};
 use diesel::{ExpressionMethods, QueryDsl};
 use governor::{Quota, RateLimiter};
 use secrecy::{ExposeSecret, Secret};
@@ -1015,8 +1015,8 @@ async fn high_low_prices_24h(
         .group_by(schema::order_fills::pool_id)
         .select((
             schema::order_fills::pool_id,
-            max(schema::order_fills::price),
-            min(schema::order_fills::price),
+            diesel_max(schema::order_fills::price),
+            diesel_min(schema::order_fills::price),
         ));
     let results: Vec<(String, Option<i64>, Option<i64>)> = state.reader.results(query).await?;
 

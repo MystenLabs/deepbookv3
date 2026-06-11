@@ -238,21 +238,18 @@ public fun sync_expiry(
         clock,
     );
     vault.rebalance_active_expiry_cash(config, market);
-    let (nav_optimistic, total_range, total_floor_amount) = market.pool_nav(
+    let (free_cash, total_range, total_floor_amount) = market.pool_nav(
         config,
         market_oracle,
         pyth,
         clock,
     );
-    let expiry_nav = conservative_active_nav(
-        nav_optimistic,
+    let (expiry_nav, band) = active_expiry_nav_and_band(
+        free_cash,
         total_range,
         total_floor_amount,
         verified_range,
         verified_floor_amount,
-    );
-    let band = sat_sub(total_floor_amount, verified_floor_amount).min(
-        sat_sub(total_range, verified_range),
     );
     sync.record_expiry_synced(expiry_market_id, expiry_nav, band);
 }
@@ -588,21 +585,26 @@ public(package) fun lp_pool_value(
     gross_pool_value - exclusion.min(gross_pool_value)
 }
 
-/// Return the active-expiry NAV mark after subtracting
-/// `Q = max(0, (total_floor - verified_floor) - (total_range - verified_range))`.
-/// `Q` never under-counts the verified floor-over-range correction, so the result
-/// does not overcount unscreened leveraged floor recoverability.
-public(package) fun conservative_active_nav(
-    nav_optimistic: u64,
+/// Return the active-expiry NAV mark and uncertainty band from one bucket split.
+///
+/// Verified and unscanned buckets each apply their own limited-recourse clamp:
+/// a bucket's floor can only offset that bucket's own range value. The band is
+/// the unscanned floor recovery that supply does not charge but withdraw may
+/// charge pro-rata through the uncertainty-band fee.
+public(package) fun active_expiry_nav_and_band(
+    free_cash: u64,
     total_range: u64,
     total_floor_amount: u64,
     verified_range: u64,
     verified_floor_amount: u64,
-): u64 {
-    let d_max = sat_sub(total_floor_amount, verified_floor_amount);
+): (u64, u64) {
+    let unscanned_floor = sat_sub(total_floor_amount, verified_floor_amount);
     let unscanned_range = sat_sub(total_range, verified_range);
-    let q = sat_sub(d_max, unscanned_range);
-    sat_sub(nav_optimistic, q)
+    let band = unscanned_floor.min(unscanned_range);
+    let supply_liability =
+        sat_sub(verified_range, verified_floor_amount)
+        + sat_sub(unscanned_range, unscanned_floor);
+    (sat_sub(free_cash, supply_liability), band)
 }
 
 // === Private Functions ===

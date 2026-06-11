@@ -80,7 +80,7 @@ fn pricing_config_updated_map() {
 #[test]
 #[ignore = "TODO(testnet-deploy): assert map() output (fixture-free; fill in when revisiting tests)"]
 fn fee_config_updated_map() {
-    // TODO(testnet-deploy): build a decode struct + PredictEventMeta::for_test(...), call map(), assert the Row fields (config id -> canonical 0x, protocol_reserve_profit_share BIGINT, tx_index/event_index).
+    // TODO(testnet-deploy): build a decode struct + PredictEventMeta::for_test(...), call map(), assert the Row fields (config id -> canonical 0x, protocol_reserve_profit_share/withdraw_fee_alpha BIGINT, tx_index/event_index).
 }
 
 #[test]
@@ -98,13 +98,13 @@ fn expiry_cash_template_config_updated_map() {
 #[test]
 #[ignore = "TODO(testnet-deploy): assert map() output (fixture-free; fill in when revisiting tests)"]
 fn strike_exposure_template_config_updated_map() {
-    // TODO(testnet-deploy): build a decode struct + PredictEventMeta::for_test(...), call map(), assert the Row fields (config id -> canonical 0x, fee/ask-price NUMERIC, index/ltv/window/multiplier BIGINT, tx_index/event_index).
+    // TODO(testnet-deploy): build a decode struct + PredictEventMeta::for_test(...), call map(), assert the Row fields (config id -> canonical 0x, fee/ask-price NUMERIC, index/ltv/backing lambda/window/multiplier BIGINT, tx_index/event_index).
 }
 
 #[test]
 #[ignore = "TODO(testnet-deploy): assert map() output (fixture-free; fill in when revisiting tests)"]
 fn market_oracle_template_config_updated_map() {
-    // TODO(testnet-deploy): build a decode struct + PredictEventMeta::for_test(...), call map(), assert the Row fields (config id -> canonical 0x, deviations/freshness BIGINT, min/max basis NUMERIC, tx_index/event_index).
+    // TODO(testnet-deploy): build a decode struct + PredictEventMeta::for_test(...), call map(), assert the Row fields (config id -> canonical 0x, settlement_freshness_ms BIGINT, tx_index/event_index).
 }
 
 #[test]
@@ -134,13 +134,13 @@ fn market_created_map() {
 #[test]
 #[ignore = "TODO(testnet-deploy): assert map() output (fixture-free; fill in when revisiting tests)"]
 fn market_config_snapshot_map() {
-    // TODO(testnet-deploy): build a decode struct + PredictEventMeta::for_test(...), call map(), assert the Row fields (expiry_market_id THEN market_oracle_id -> canonical 0x, fee/ask-price NUMERIC, index/ltv/window/multiplier/rebate BIGINT, tx_index/event_index).
+    // TODO(testnet-deploy): build a decode struct + PredictEventMeta::for_test(...), call map(), assert the Row fields (expiry_market_id THEN market_oracle_id -> canonical 0x, fee/ask-price NUMERIC, index/ltv/backing lambda/window/multiplier/rebate BIGINT, tx_index/event_index).
 }
 
 #[test]
 #[ignore = "TODO(testnet-deploy): assert map() output (fixture-free; fill in when revisiting tests)"]
-fn market_oracle_bounds_updated_map() {
-    // TODO(testnet-deploy): build a decode struct + PredictEventMeta::for_test(...), call map(), assert the Row fields (oracle id -> canonical 0x, deviations/freshness BIGINT, min/max basis NUMERIC, tx_index/event_index).
+fn market_oracle_config_updated_map() {
+    // TODO(testnet-deploy): build a decode struct + PredictEventMeta::for_test(...), call map(), assert the Row fields (oracle id -> canonical 0x, settlement_freshness_ms BIGINT, tx_index/event_index).
 }
 
 #[test]
@@ -182,7 +182,7 @@ fn supply_executed_map() {
 #[test]
 #[ignore = "TODO(testnet-deploy): assert map() output (fixture-free; fill in when revisiting tests)"]
 fn withdraw_executed_map() {
-    // TODO(testnet-deploy): build a decode struct + PredictEventMeta::for_test(...), call map(), assert the Row fields (pool_vault_id -> canonical 0x, shares_burned/payout/pool_value_before/total_supply_after/idle_balance_after NUMERIC, tx_index/event_index).
+    // TODO(testnet-deploy): build a decode struct + PredictEventMeta::for_test(...), call map(), assert the Row fields (pool_vault_id -> canonical 0x, shares_burned/payout/withdraw_fee/pool_value_before/total_supply_after/idle_balance_after NUMERIC, tx_index/event_index).
 }
 
 #[test]

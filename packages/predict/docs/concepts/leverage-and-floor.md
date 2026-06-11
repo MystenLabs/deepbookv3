@@ -187,7 +187,7 @@ The aggregate floor product rounds down so a single unit of fixed-point dust can
 The active-order index stores leveraged orders sorted by their packed `order_id`, and the liquidation scan checks the front first, so priority is encoded directly in the packed layout's high bits — no separate mutable ranking structure is needed.
 
 - **Primary key — larger quantity first.** Quantity occupies the highest field and is stored as the complement `U32_MASK − quantity_lots`, so a larger quantity produces a smaller stored key and sorts to the front.
-- **Secondary key — floor shares ascending.** `floor_shares` occupies the next field, stored directly, so among equal quantities the smaller floor is visited first.
+- **Secondary key — larger floor shares first.** `floor_shares` occupies the next field and is stored as the complement `U64_MASK − floor_shares`, so among equal quantities the larger floor is visited first.
 
 Quantity-first (rather than leverage-first) ordering was chosen because off-chain simulation replay showed it captured more liquidatable value within a bounded scan budget on the sampled long-run backlog. The scan is budgeted and policy-driven; see [liquidation](./liquidation.md) for the economic liquidation condition and the bounded-scan mechanics.
 

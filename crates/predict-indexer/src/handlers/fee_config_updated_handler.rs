@@ -15,6 +15,8 @@ pub fn map(ev: &Ev, meta: &PredictEventMeta) -> Row {
         protocol_config_id: ev.protocol_config_id.to_string(),
         // 1e9-scaled ratio, <= ~1e9.
         protocol_reserve_profit_share: ev.protocol_reserve_profit_share as i64,
+        // 1e9-scaled fee curve parameter, bounded.
+        withdraw_fee_alpha: ev.withdraw_fee_alpha as i64,
     }
 }
 

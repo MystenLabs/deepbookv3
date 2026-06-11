@@ -63,18 +63,16 @@ and contributors. For *how* each mechanism works, follow the links into
 
 ## NAV and valuation
 
-- Live NAV subtracts an aggregate floor (aggregate `floor_shares × current floor
-  index`, rounded **down**) from aggregate range value
-  (`strike_nav_matrix::live_value`). `live_value` returns the raw aggregates; the
-  caller clamps position liability to a saturating `max(0, range − floor)` (no
-  abort), so an aggregate-floor deficit yields a conservative NAV rather than
-  bricking valuation.
-- Aggregate NAV is valid under the precondition that every active leveraged order
-  is individually above its floor, maintained by the bounded liquidation pass run
-  before each valuation. The **withdraw mark ≤ supply mark**, and the supply mark
-  is an upper bound on true recoverable value; the withdraw side takes a further
-  haircut (`conservative_active_nav`) so a leaver can never extract value from
-  remaining holders.
+- Live valuation reads raw aggregate range and floor facts
+  (`strike_nav_matrix::live_value`). `expiry_market::pool_nav` uses the aggregate-
+  clamped liability only for its backing assert, then returns free cash
+  (`cash − rebate_reserve`) plus the raw totals to PLP.
+- PLP computes the active mark and uncertainty band from one limited-recourse
+  bucket split. Verified and unscanned buckets each clamp their own
+  `range − floor`; the supply mark uses the optimistic endpoint, and the
+  withdraw fee charges pro-rata against `band = min(unscanned_floor,
+  unscanned_range)`. The **withdraw mark ≤ supply mark**, and the supply mark is
+  an upper bound on true recoverable value.
 
 ## Settlement
 

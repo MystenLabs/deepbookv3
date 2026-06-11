@@ -6,7 +6,8 @@
 /// The packed-id expectations are derived INDEPENDENTLY from the documented u256
 /// layout (order.move module doc), not from the contract's pack expression:
 ///   [200,232) quantity_lots_key = (2^32-1) - quantity_lots   (32b, complement)
-///   [136,200) floor_shares (64b)  [88,136) opened_at_ms (48b)
+///   [136,200) floor_shares_key = (2^64-1) - floor_shares   (64b, complement)
+///   [ 88,136) opened_at_ms (48b)
 ///   [ 64, 88) lower_idx (24b)     [40, 64) higher_idx (24b)
 ///   [  0, 40) sequence (40b)
 /// The exact-id assertions catch field overlap/offset/truncation bugs; the getter
@@ -20,9 +21,9 @@ use std::unit_test::assert_eq;
 // === Independently packed reference ids (see Python derivation in the PR) ===
 
 // pack(opened=1000, lower=0, higher=100001, floor=50000, qlots=7, seq=12345)
-const LEVERAGED_ID: u256 = 6901746333935059433362838013555625301734449968197559186554275248484409;
+const LEVERAGED_ID: u256 = 6901746335541997477621819577781881932119187661683188027568322148053049;
 // pack(opened=2000, lower=3, higher=7, floor=0, qlots=12, seq=88)
-const NONLEV_ID: u256 = 6901746325900369212067882280231518252016614109401445666363584637042776;
+const NONLEV_ID: u256 = 6901746327507307256326872555686368058426016465277024760643844810211416;
 
 const LEV_OPENED: u64 = 1000;
 const LEV_HIGHER: u64 = 100_001;
@@ -44,6 +45,11 @@ const U40_OVERFLOW: u64 = 1 << 40; // > U40_MASK (sequence)
 const NON_LOT_QUANTITY: u64 = 10_001; // not a multiple of position_lot_size
 const OVER_FLOOR_QUANTITY: u64 = 70_000;
 const OVER_FLOOR_SHARES: u64 = 80_000; // > quantity
+const PRIORITY_LOTS: u64 = 10;
+const PRIORITY_QUANTITY: u64 = 100_000; // 10 * 10_000
+const PRIORITY_HIGHER_BOUNDARY_INDEX: u64 = 2;
+const LOW_FLOOR_SHARES: u64 = 10_000;
+const HIGH_FLOOR_SHARES: u64 = 20_000;
 
 /// Highest boundary index any expiry grid can encode (order.move doc:
 /// `oracle_strike_grid_ticks + 2`). Independent of the contract's private getter.
@@ -122,6 +128,30 @@ fun max_quantity_lots_round_trips_through_complement_encoding() {
     );
     assert_eq!(o.quantity_lots(), max_lots);
     assert_eq!(o.quantity(), max_quantity);
+}
+
+#[test]
+fun larger_floor_shares_sort_before_smaller_floor_shares_for_equal_quantity() {
+    let low_floor = order::new_from_boundary_indices(
+        LEV_OPENED,
+        0,
+        PRIORITY_HIGHER_BOUNDARY_INDEX,
+        LOW_FLOOR_SHARES,
+        PRIORITY_QUANTITY,
+        1,
+    );
+    let high_floor = order::new_from_boundary_indices(
+        LEV_OPENED,
+        0,
+        PRIORITY_HIGHER_BOUNDARY_INDEX,
+        HIGH_FLOOR_SHARES,
+        PRIORITY_QUANTITY,
+        2,
+    );
+
+    assert!(high_floor.id() < low_floor.id());
+    assert_eq!(high_floor.quantity_lots(), PRIORITY_LOTS);
+    assert_eq!(low_floor.quantity_lots(), PRIORITY_LOTS);
 }
 
 // === replacement inherits the original terms ===

@@ -1,6 +1,6 @@
 use crate::meta::PredictEventMeta;
-use crate::models::MarketOracleTemplateConfigUpdated as Ev;
-use predict_schema::models::MarketOracleTemplateConfigUpdated as Row;
+use crate::models::MarketOracleConfigUpdated as Ev;
+use predict_schema::models::MarketOracleConfigUpdated as Row;
 
 pub fn map(ev: &Ev, meta: &PredictEventMeta) -> Row {
     Row {
@@ -12,17 +12,17 @@ pub fn map(ev: &Ev, meta: &PredictEventMeta) -> Row {
         event_index: meta.event_index(),
         checkpoint_timestamp_ms: meta.checkpoint_timestamp_ms(),
         package: meta.package(),
-        protocol_config_id: ev.protocol_config_id.to_string(),
+        market_oracle_id: ev.market_oracle_id.to_string(),
         // Staleness window in ms, bounded.
         settlement_freshness_ms: ev.settlement_freshness_ms as i64,
     }
 }
 
 crate::define_predict_handler! {
-    name: MarketOracleTemplateConfigUpdatedHandler,
-    processor_name: "market_oracle_template_config_updated",
-    event_type: crate::models::MarketOracleTemplateConfigUpdated,
-    db_model: predict_schema::models::MarketOracleTemplateConfigUpdated,
-    table: market_oracle_template_config_updated,
+    name: MarketOracleConfigUpdatedHandler,
+    processor_name: "market_oracle_config_updated",
+    event_type: crate::models::MarketOracleConfigUpdated,
+    db_model: predict_schema::models::MarketOracleConfigUpdated,
+    table: market_oracle_config_updated,
     map_event: |event, meta| map(&event, &meta)
 }

@@ -336,7 +336,7 @@ fun pool_nav_outside_pool_sync_aborts() {
     fx.scenario_mut().next_tx(test_constants::alice());
     let (pyth, vault, market, oracle, config) = fx.take_market(expiry_id, oracle_id);
 
-    let (_nav, _range, _floor) = market.pool_nav(&config, &oracle, &pyth, fx.clock());
+    let (_free_cash, _range, _floor) = market.pool_nav(&config, &oracle, &pyth, fx.clock());
 
     helpers::return_market(pyth, vault, market, oracle, config);
     destroy(manager);

@@ -261,6 +261,7 @@ diesel::table! {
         package -> Text,
         protocol_config_id -> Text,
         protocol_reserve_profit_share -> Int8,
+        withdraw_fee_alpha -> Int8,
     }
 }
 
@@ -311,6 +312,7 @@ diesel::table! {
         protocol_config_id -> Text,
         terminal_floor_index -> Int8,
         liquidation_ltv -> Int8,
+        backing_buffer_lambda -> Int8,
         base_fee -> Numeric,
         min_fee -> Numeric,
         min_ask_price -> Numeric,
@@ -333,10 +335,6 @@ diesel::table! {
         package -> Text,
         protocol_config_id -> Text,
         settlement_freshness_ms -> Int8,
-        max_spot_deviation -> Int8,
-        max_basis_deviation -> Int8,
-        min_basis -> Numeric,
-        max_basis -> Numeric,
     }
 }
 
@@ -430,6 +428,7 @@ diesel::table! {
         market_oracle_id -> Text,
         terminal_floor_index -> Int8,
         liquidation_ltv -> Int8,
+        backing_buffer_lambda -> Int8,
         base_fee -> Numeric,
         min_fee -> Numeric,
         min_ask_price -> Numeric,
@@ -441,7 +440,7 @@ diesel::table! {
 }
 
 diesel::table! {
-    market_oracle_bounds_updated (event_digest) {
+    market_oracle_config_updated (event_digest) {
         event_digest -> Text,
         digest -> Text,
         sender -> Text,
@@ -453,10 +452,6 @@ diesel::table! {
         package -> Text,
         market_oracle_id -> Text,
         settlement_freshness_ms -> Int8,
-        max_spot_deviation -> Int8,
-        max_basis_deviation -> Int8,
-        min_basis -> Numeric,
-        max_basis -> Numeric,
     }
 }
 
@@ -592,6 +587,7 @@ diesel::table! {
         pool_vault_id -> Text,
         shares_burned -> Numeric,
         payout -> Numeric,
+        withdraw_fee -> Numeric,
         pool_value_before -> Numeric,
         total_supply_after -> Numeric,
         idle_balance_after -> Numeric,
@@ -774,7 +770,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     live_order_redeemed,
     market_config_snapshot,
     market_created,
-    market_oracle_bounds_updated,
+    market_oracle_config_updated,
     market_oracle_settled,
     market_oracle_template_config_updated,
     order_liquidated,

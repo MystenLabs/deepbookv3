@@ -133,7 +133,7 @@ public(package) fun is_leveraged(order: &Order): bool {
 
 /// Return the normalized floor shares encoded in this order.
 public(package) fun floor_shares(order: &Order): u64 {
-    decode_u64(order.id, FLOOR_SHARES_OFFSET)
+    decode_floor_shares(order.id)
 }
 
 fun new(
@@ -154,9 +154,10 @@ fun new(
     assert_valid_order_shape(lower_boundary_index, higher_boundary_index, floor_shares > 0);
 
     let quantity_lots_key = encode_quantity_lots_key(quantity_lots);
+    let floor_shares_key = encode_floor_shares_key(floor_shares);
     let id =
         (quantity_lots_key << QUANTITY_LOTS_OFFSET)
-        | ((floor_shares as u256) << FLOOR_SHARES_OFFSET)
+        | (floor_shares_key << FLOOR_SHARES_OFFSET)
         | ((opened_at_ms as u256) << OPENED_AT_OFFSET)
         | ((lower_boundary_index as u256) << LOWER_BOUNDARY_INDEX_OFFSET)
         | ((higher_boundary_index as u256) << HIGHER_BOUNDARY_INDEX_OFFSET)
@@ -187,6 +188,10 @@ fun decode_u64(id: u256, offset: u8): u64 {
     ((id >> offset) & U64_MASK) as u64
 }
 
+fun decode_floor_shares(id: u256): u64 {
+    (U64_MASK as u64) - decode_u64(id, FLOOR_SHARES_OFFSET)
+}
+
 fun quantity_lots_from_quantity(quantity: u64): u64 {
     assert_valid_quantity(quantity);
     quantity / constants::position_lot_size!()
@@ -194,6 +199,10 @@ fun quantity_lots_from_quantity(quantity: u64): u64 {
 
 fun encode_quantity_lots_key(quantity_lots: u64): u256 {
     U32_MASK - (quantity_lots as u256)
+}
+
+fun encode_floor_shares_key(floor_shares: u64): u256 {
+    U64_MASK - (floor_shares as u256)
 }
 
 fun assert_valid(order: &Order) {

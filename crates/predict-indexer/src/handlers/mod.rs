@@ -21,7 +21,7 @@ pub mod liquidated_order_redeemed_handler;
 pub mod live_order_redeemed_handler;
 pub mod market_config_snapshot_handler;
 pub mod market_created_handler;
-pub mod market_oracle_bounds_updated_handler;
+pub mod market_oracle_config_updated_handler;
 pub mod market_oracle_settled_handler;
 pub mod market_oracle_template_config_updated_handler;
 pub mod order_liquidated_handler;

@@ -18,6 +18,8 @@ pub fn map(ev: &Ev, meta: &PredictEventMeta) -> Row {
         terminal_floor_index: ev.terminal_floor_index as i64,
         // 1e9-scaled ratio, <= ~1e9.
         liquidation_ltv: ev.liquidation_ltv as i64,
+        // 1e9-scaled ratio, bounded.
+        backing_buffer_lambda: ev.backing_buffer_lambda as i64,
         base_fee: BigDecimal::from(ev.base_fee),
         min_fee: BigDecimal::from(ev.min_fee),
         min_ask_price: BigDecimal::from(ev.min_ask_price),

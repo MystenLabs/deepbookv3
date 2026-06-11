@@ -16,6 +16,7 @@ pub fn map(ev: &Ev, meta: &PredictEventMeta) -> Row {
         pool_vault_id: ev.pool_vault_id.to_string(),
         shares_burned: BigDecimal::from(ev.shares_burned),
         payout: BigDecimal::from(ev.payout),
+        withdraw_fee: BigDecimal::from(ev.withdraw_fee),
         pool_value_before: BigDecimal::from(ev.pool_value_before),
         total_supply_after: BigDecimal::from(ev.total_supply_after),
         idle_balance_after: BigDecimal::from(ev.idle_balance_after),

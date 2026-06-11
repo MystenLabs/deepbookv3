@@ -50,7 +50,7 @@ flowchart TD
 
 ### The withdrawal uncertainty-band fee
 
-A withdrawal also pays a fee tied to how *uncertain* the pool's live valuation is at that moment. During the sync, each active expiry contributes an **uncertainty band** — the portion of its aggregate floor exposure that the bounded liquidation pass did not individually verify, capped at its unscanned range value (`min(D_max, unscanned_range)`). These sum to an `aggregate_band` for the pool.
+A withdrawal also pays a fee tied to how *uncertain* the pool's live valuation is at that moment. During the sync, each active expiry contributes an **uncertainty band** — the recoverable unscanned floor exposure, capped by that bucket's own range value (`min(unscanned_floor, unscanned_range)`). These sum to an `aggregate_band` for the pool.
 
 The fee a withdrawing LP pays is:
 
@@ -58,7 +58,7 @@ The fee a withdrawing LP pays is:
 withdraw_fee = withdraw_fee_alpha × aggregate_band × (lp_amount / total_supply)
 ```
 
-capped at the gross payout, where `withdraw_fee_alpha` is an admin-tunable multiplier (see [configuration](../design/configuration.md)). The fee is **retained in idle** — it is not paid out — so it accrues to the LPs who remain. The intent is symmetry with the supply side: supply prices shares against an upper-bound (optimistic) NAV so a depositor can never over-mint, and the withdraw fee charges a leaver for the unverified downside they would otherwise hand to remaining holders by exiting at that optimistic mark. The fee is zero when the book is fully verified (no unscanned under-floor exposure).
+capped at the gross payout, where `withdraw_fee_alpha` is an admin-tunable multiplier (see [configuration](../design/configuration.md)). The fee is **retained in idle** — it is not paid out — so it accrues to the LPs who remain. The intent is symmetry with the supply side: supply prices shares against the optimistic end of the limited-recourse interval so a depositor can never over-mint, and the withdraw fee charges a leaver for unverified downside they would otherwise hand to remaining holders by exiting at that mark. The fee is zero when the book is fully verified.
 
 ## Full-pool NAV
 
@@ -81,28 +81,41 @@ and the LP-owned DUSDC value subtracts the **pending protocol-profit exclusion**
 
 ### An active expiry's NAV
 
-An active expiry's contribution to pool NAV is the cash it holds **in excess of what it must reserve**:
+An active expiry first asserts that its cash backs the aggregate-clamped live liability plus the rebate reserve:
 
 ```
-expiry_NAV = cash_balance − required_cash
-required_cash = position_liability + rebate_reserve
+aggregate_liability = max(0, total_range − total_floor)
+cash_balance ≥ aggregate_liability + rebate_reserve
 ```
 
-The valuation aborts if `cash_balance < required_cash` — an expiry can never report a negative or unbacked NAV.
-
-`position_liability` is the live value of all outstanding user positions, evaluated by the `StrikeNavMatrix` (the live strike-exposure index). The matrix computes:
+That assertion is a backing check, not the returned NAV baseline. The expiry returns `free_cash = cash_balance − rebate_reserve` plus the raw range/floor totals. PLP then owns the limited-recourse valuation policy:
 
 ```
-live_value = aggregate_range_value − aggregate_floor_value
+unscanned_floor = max(0, total_floor − verified_floor)
+unscanned_range = max(0, total_range − verified_range)
+band = min(unscanned_floor, unscanned_range)
+
+supply_liability =
+    max(0, verified_range − verified_floor)
+  + max(0, unscanned_range − unscanned_floor)
+
+expiry_NAV = max(0, free_cash − supply_liability)
 ```
 
-and **aborts if `aggregate_range_value < aggregate_floor_value`** rather than reporting a negative value (the aggregate-floor precondition below is what keeps this subtraction sound). The **range value** is the probability-weighted value of every minted interval, sampled against an adaptive piecewise-linear UP-price curve (`build_curve`) derived from the live SVI parameters and forward — see [pricing and oracles](./pricing-and-oracles.md). The matrix stores page-local prefix sums of quantity and strike-weighted quantity so a valuation read costs work proportional to the number of curve segments, not the number of orders. The **floor value** is `floor_shares × floor_index`, the aggregate deterministic floor across all leveraged contracts at the current time-varying floor index (see [leverage and the floor](./leverage-and-floor.md)). Aggregate NAV rounds the floor amount **down** so one-unit fixed-point dust cannot make a valuation abort, while per-order redeem and settlement floors stay exact.
+Each subtraction is a per-bucket limited-recourse clamp: a bucket's floor can only offset that bucket's own range value.
 
-#### The aggregate-floor precondition (load-bearing)
+`total_range` and `total_floor` come from the `StrikeNavMatrix` (the live strike-exposure index). The matrix returns raw aggregate components:
 
-Subtracting one aggregate floor from one aggregate range value is only sound when **every leveraged order is individually above its own floor** before valuation. A floor is limited-recourse to the order that created it: it may offset only that order's value, capped at that value. If some order had already breached its floor, aggregate subtraction would let that order's excess floor cancel another order's value and **overstate** recoverable NAV.
+```
+total_range = aggregate_range_value
+total_floor = aggregate_floor_value
+```
 
-This invariant is maintained by the surrounding health policy: the bounded liquidation pass runs **before** valuation in every sync, removing positions that have fallen to or below their floor. The matrix's `live_value` enforces the local guard `aggregate_range_value ≥ aggregate_floor_value` (aborting otherwise), but the protocol-level guarantee that aggregate subtraction is correct comes from liquidation keeping each order above its floor. See [liquidation](./liquidation.md) and [risks](../risks.md).
+The **range value** is the probability-weighted value of every minted interval, sampled against an adaptive piecewise-linear UP-price curve (`build_curve`) derived from the live SVI parameters and forward — see [pricing and oracles](./pricing-and-oracles.md). The matrix stores page-local prefix sums of quantity and strike-weighted quantity so a valuation read costs work proportional to the number of curve segments, not the number of orders. The **floor value** is `floor_shares × floor_index`, the aggregate deterministic floor across all leveraged contracts at the current time-varying floor index (see [leverage and the floor](./leverage-and-floor.md)). Aggregate NAV rounds the floor amount **down** so one-unit fixed-point dust cannot make a valuation abort, while per-order redeem and settlement floors stay exact.
+
+#### The limited-recourse interval
+
+The verified bucket has exact survivor observations from the bounded liquidation pass. The unscanned bucket is intentionally valued at the optimistic end: its aggregate floor may offset its aggregate range only within that bucket, never against verified value or cash outside the bucket. The true unscanned liability lies inside an interval of width `band`, so supply uses the optimistic endpoint while withdrawal charges a pro-rata uncertainty-band fee for exiting before the scan has resolved that interval.
 
 ## Pool ↔ expiry cash flow
 

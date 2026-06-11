@@ -19,7 +19,7 @@ use predict_indexer::handlers::liquidated_order_redeemed_handler::LiquidatedOrde
 use predict_indexer::handlers::live_order_redeemed_handler::LiveOrderRedeemedHandler;
 use predict_indexer::handlers::market_config_snapshot_handler::MarketConfigSnapshotHandler;
 use predict_indexer::handlers::market_created_handler::MarketCreatedHandler;
-use predict_indexer::handlers::market_oracle_bounds_updated_handler::MarketOracleBoundsUpdatedHandler;
+use predict_indexer::handlers::market_oracle_config_updated_handler::MarketOracleConfigUpdatedHandler;
 use predict_indexer::handlers::market_oracle_settled_handler::MarketOracleSettledHandler;
 use predict_indexer::handlers::market_oracle_template_config_updated_handler::MarketOracleTemplateConfigUpdatedHandler;
 use predict_indexer::handlers::order_liquidated_handler::OrderLiquidatedHandler;
@@ -225,7 +225,7 @@ async fn main() -> Result<(), anyhow::Error> {
                     .await?;
                 indexer
                     .concurrent_pipeline(
-                        MarketOracleBoundsUpdatedHandler::new(env),
+                        MarketOracleConfigUpdatedHandler::new(env),
                         Default::default(),
                     )
                     .await?;

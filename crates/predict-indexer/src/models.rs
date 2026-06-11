@@ -202,6 +202,7 @@ impl MoveStruct for PricingConfigUpdated {
 pub struct FeeConfigUpdated {
     pub protocol_config_id: ObjectID,
     pub protocol_reserve_profit_share: u64,
+    pub withdraw_fee_alpha: u64,
 }
 
 impl MoveStruct for FeeConfigUpdated {
@@ -240,6 +241,7 @@ pub struct StrikeExposureTemplateConfigUpdated {
     pub protocol_config_id: ObjectID,
     pub terminal_floor_index: u64,
     pub liquidation_ltv: u64,
+    pub backing_buffer_lambda: u64,
     pub base_fee: u64,
     pub min_fee: u64,
     pub min_ask_price: u64,
@@ -258,10 +260,6 @@ impl MoveStruct for StrikeExposureTemplateConfigUpdated {
 pub struct MarketOracleTemplateConfigUpdated {
     pub protocol_config_id: ObjectID,
     pub settlement_freshness_ms: u64,
-    pub max_spot_deviation: u64,
-    pub max_basis_deviation: u64,
-    pub min_basis: u64,
-    pub max_basis: u64,
 }
 
 impl MoveStruct for MarketOracleTemplateConfigUpdated {
@@ -335,6 +333,7 @@ pub struct MarketConfigSnapshot {
     pub market_oracle_id: ObjectID,
     pub terminal_floor_index: u64,
     pub liquidation_ltv: u64,
+    pub backing_buffer_lambda: u64,
     pub base_fee: u64,
     pub min_fee: u64,
     pub min_ask_price: u64,
@@ -349,20 +348,16 @@ impl MoveStruct for MarketConfigSnapshot {
     const NAME: &'static str = "MarketConfigSnapshot";
 }
 
-/// Emitted when admin updates one live oracle's bounds.
+/// Emitted when admin updates one live oracle's config.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MarketOracleBoundsUpdated {
+pub struct MarketOracleConfigUpdated {
     pub market_oracle_id: ObjectID,
     pub settlement_freshness_ms: u64,
-    pub max_spot_deviation: u64,
-    pub max_basis_deviation: u64,
-    pub min_basis: u64,
-    pub max_basis: u64,
 }
 
-impl MoveStruct for MarketOracleBoundsUpdated {
+impl MoveStruct for MarketOracleConfigUpdated {
     const MODULE: &'static str = "config_events";
-    const NAME: &'static str = "MarketOracleBoundsUpdated";
+    const NAME: &'static str = "MarketOracleConfigUpdated";
 }
 
 /// Emitted when minting pause state changes for one expiry market.
@@ -473,6 +468,7 @@ pub struct WithdrawExecuted {
     pub pool_vault_id: ObjectID,
     pub shares_burned: u64,
     pub payout: u64,
+    pub withdraw_fee: u64,
     pub pool_value_before: u64,
     pub total_supply_after: u64,
     pub idle_balance_after: u64,

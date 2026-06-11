@@ -381,8 +381,11 @@ public(package) fun create_and_share(
     expiry_market_id
 }
 
-/// Return current pool-owned NAV.
-/// Returns `(nav_optimistic, total_range, total_floor_amount)`.
+/// Return current pool-owned valuation facts after asserting aggregate backing.
+///
+/// Returns `(free_cash, total_range, total_floor_amount)`, where `free_cash` is
+/// expiry cash net of the rebate reserve. PLP owns the downstream limited-
+/// recourse liability policy that turns these facts into an active NAV mark.
 public(package) fun pool_nav(
     market: &ExpiryMarket,
     config: &ProtocolConfig,
@@ -411,7 +414,7 @@ public(package) fun pool_nav(
     let required_cash = market.cash.required_cash(position_liability);
     let cash_balance = market.cash.balance();
     assert!(cash_balance >= required_cash, EValuationExceedsCash);
-    (cash_balance - required_cash, total_range, total_floor_amount)
+    (cash_balance - market.cash.rebate_reserve(), total_range, total_floor_amount)
 }
 
 /// Run one valuation liquidation pass and return exact survivor observations.

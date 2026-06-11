@@ -79,7 +79,7 @@ interface.
 -   `tools/analyze_liquidation_priority_encodings.py`: standalone research tool,
     not called by `run.sh`. It evaluates static order-id priority layouts against
     kept long-run data; the current protocol layout is quantity first, then
-    leverage, then stable encoded order terms with sequence last.
+    floor shares, then stable encoded order terms with sequence last.
 -   `src/sim.ts`: localnet setup and generated CSV replay engine.
 -   `src/runtime.ts`: Sui transaction builders and execution helpers.
 -   `src/localPyth.ts`: local Wormhole/Pyth key and signed update helpers used
