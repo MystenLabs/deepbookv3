@@ -341,11 +341,11 @@ public(package) fun close_and_quote_live_order(
     );
     let index_now = exposure.config.floor_index_at_ms(exposure.expiry_ms, clock.timestamp_ms());
     // Live redeem outflow rounds down (user eats <=1 ulp): both terms use
-    // round-down mul, and the saturating min() floors redeem_amount at 0, so the
+    // round-down mul, and saturating_sub floors redeem_amount at 0, so the
     // floor deduction can never underflow it (R1/R2).
     let removed_floor_amount = math::mul(remove_floor_shares, index_now);
     let gross_redeem_amount = math::mul(range_probability, close_quantity);
-    let redeem_amount = gross_redeem_amount - gross_redeem_amount.min(removed_floor_amount);
+    let redeem_amount = gross_redeem_amount.saturating_sub(removed_floor_amount);
 
     if (remaining_quantity == 0) {
         return (*order, redeem_amount, range_probability)

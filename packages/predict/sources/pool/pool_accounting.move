@@ -81,11 +81,7 @@ public(package) fun available_expiry_funding(
     ledger.assert_registered_expiry(expiry_market_id);
     let flow = ledger.registered_expiries.borrow(expiry_market_id);
     let net_funding = flow_net_funding(flow);
-    if (net_funding < max_expiry_funding) {
-        max_expiry_funding - net_funding
-    } else {
-        0
-    }
+    max_expiry_funding.saturating_sub(net_funding)
 }
 
 /// Abort unless this expiry is registered to the pool.

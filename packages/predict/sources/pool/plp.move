@@ -572,17 +572,16 @@ public(package) fun lp_pool_value(
 ): u64 {
     let gross_pool_value = idle_balance + active_expiry_value;
     let aggregate_credits = profit_basis_credits + active_expiry_value;
-    let exclusion = if (aggregate_credits <= profit_basis_debits) {
-        0
-    } else {
-        math::mul(aggregate_credits - profit_basis_debits, protocol_reserve_profit_share)
-    };
+    let exclusion = math::mul(
+        aggregate_credits.saturating_sub(profit_basis_debits),
+        protocol_reserve_profit_share,
+    );
     // The realized `credits - debits` term is sticky: it does not shrink when LPs
     // withdraw idle cash, so when an active mark they withdrew against later
     // collapses, the exclusion can exceed gross. LP value can never be negative —
     // floor it at 0, which also prevents the subtraction from underflowing and
     // bricking all PLP supply/withdraw.
-    gross_pool_value - exclusion.min(gross_pool_value)
+    gross_pool_value.saturating_sub(exclusion)
 }
 
 /// Return the active-expiry NAV mark and uncertainty band from one bucket split.
@@ -598,13 +597,13 @@ public(package) fun active_expiry_nav_and_band(
     verified_range: u64,
     verified_floor_amount: u64,
 ): (u64, u64) {
-    let unscanned_floor = sat_sub(total_floor_amount, verified_floor_amount);
-    let unscanned_range = sat_sub(total_range, verified_range);
+    let unscanned_floor = total_floor_amount.saturating_sub(verified_floor_amount);
+    let unscanned_range = total_range.saturating_sub(verified_range);
     let band = unscanned_floor.min(unscanned_range);
     let supply_liability =
-        sat_sub(verified_range, verified_floor_amount)
-        + sat_sub(unscanned_range, unscanned_floor);
-    (sat_sub(free_cash, supply_liability), band)
+        verified_range.saturating_sub(verified_floor_amount)
+        + unscanned_range.saturating_sub(unscanned_floor);
+    (free_cash.saturating_sub(supply_liability), band)
 }
 
 // === Private Functions ===
@@ -711,10 +710,6 @@ fun synced_pool_value(vault: &PoolVault, config: &ProtocolConfig, active_expiry_
 
 fun assert_pool_vault(sync: &PoolSync, vault: &PoolVault) {
     assert!(sync.pool_vault_id == vault.id(), EWrongPoolVault);
-}
-
-fun sat_sub(a: u64, b: u64): u64 {
-    if (a > b) a - b else 0
 }
 
 fun assert_expiry_ready_to_sync(sync: &PoolSync, expiry_market_id: ID) {

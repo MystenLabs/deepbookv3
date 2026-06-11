@@ -406,11 +406,7 @@ public(package) fun pool_nav(
             pyth,
             clock,
         );
-    let position_liability = if (total_range > total_floor_amount) {
-        total_range - total_floor_amount
-    } else {
-        0
-    };
+    let position_liability = total_range.saturating_sub(total_floor_amount);
     let required_cash = market.cash.required_cash(position_liability);
     let cash_balance = market.cash.balance();
     assert!(cash_balance >= required_cash, EValuationExceedsCash);
@@ -462,11 +458,7 @@ public(package) fun claim_trading_loss_rebate(
     let resolved_rebate_reserve = market
         .cash
         .resolve_rebate_reserve_for_fee_basis(trading_fees_paid);
-    let eligible_rebate = if (resolved_rebate_reserve > gross_profit) {
-        resolved_rebate_reserve - gross_profit
-    } else {
-        0
-    };
+    let eligible_rebate = resolved_rebate_reserve.saturating_sub(gross_profit);
 
     // Active staking decides the manager's share of the eligible rebate.
     manager.update_stake(ctx);

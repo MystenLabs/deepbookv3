@@ -527,11 +527,7 @@ public(package) fun resolve_expiry_summary(
         gross_paid_to_expiry,
         gross_received_from_expiry,
     } = self.expiry_summaries.remove(expiry_market_id);
-    let gross_profit = if (gross_received_from_expiry > gross_paid_to_expiry) {
-        gross_received_from_expiry - gross_paid_to_expiry
-    } else {
-        0
-    };
+    let gross_profit = gross_received_from_expiry.saturating_sub(gross_paid_to_expiry);
     (trading_fees_paid, gross_profit)
 }
 

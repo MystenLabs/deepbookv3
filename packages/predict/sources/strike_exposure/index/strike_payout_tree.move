@@ -346,8 +346,7 @@ fun combine_summaries(left: PayoutSummary, right: PayoutSummary): PayoutSummary 
 }
 
 fun positive_live_delta(start: u64, end: u64, gain: u64): u64 {
-    let positive = start + gain;
-    if (positive > end) positive - end else 0
+    (start + gain).saturating_sub(end)
 }
 
 fun add_terms(left: PayoutTerms, right: PayoutTerms): PayoutTerms {

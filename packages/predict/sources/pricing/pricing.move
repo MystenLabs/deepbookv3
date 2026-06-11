@@ -166,7 +166,7 @@ fun assert_live_oracle_fresh(config: &PricingConfig, market: &MarketOracle, cloc
 fun range_price(lower_up_price: u64, higher_up_price: u64): u64 {
     // A thin / far-OTM range has ~0 true probability; a fixed-point 1-ulp
     // inversion should price 0, not abort a legitimate mint/redeem/valuation.
-    lower_up_price - lower_up_price.min(higher_up_price)
+    lower_up_price.saturating_sub(higher_up_price)
 }
 
 fun block_scholes_price_is_fresh(
