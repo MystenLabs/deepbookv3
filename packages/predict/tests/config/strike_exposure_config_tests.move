@@ -405,3 +405,74 @@ fun mint_terminal_floor_at_liquidation_ltv_aborts() {
     );
     abort 999
 }
+
+// === Canonical index-term evaluation ===
+
+// Evaluator atoms reused from the C1 regression's hand-derived survivor:
+// floor(124_998_049 * 1.2) = 149_997_658.
+const EVAL_QUANTITY: u64 = 599_990_000;
+const EVAL_FLOOR_SHARES: u64 = 124_998_049;
+/// 599_990_000 - 149_997_658.
+const EVAL_TERMINAL_PAYOUT: u64 = 449_992_342;
+/// At open floor index 1.0: 599_990_000 - 124_998_049.
+const EVAL_LIVE_BACKING_AT_BASE: u64 = 474_991_951;
+/// At open floor index 1.05 (half-window phase, premium 0.2 * 0.5^2):
+/// 599_990_000 - floor(124_998_049 * 1.05) = 599_990_000 - 131_247_951.
+const EVAL_LIVE_BACKING_MID_WINDOW: u64 = 468_742_049;
+
+#[test]
+fun terminal_payout_rounds_terminal_floor_down() {
+    let config = strike_exposure_config::new();
+    assert_eq!(config.terminal_payout(EVAL_QUANTITY, EVAL_FLOOR_SHARES), EVAL_TERMINAL_PAYOUT);
+    destroy(config);
+}
+
+#[test]
+fun index_terms_at_base_floor_index_nets_floor_shares() {
+    let config = strike_exposure_config::new();
+    let window = constants::leverage_floor_window_ms!();
+    // Opened a full window before expiry: open floor index = 1.0, so live
+    // backing nets exactly floor_shares.
+    let (terminal_payout, live_backing_payout) = config.index_terms(
+        2 * window,
+        0,
+        EVAL_QUANTITY,
+        EVAL_FLOOR_SHARES,
+    );
+    assert_eq!(terminal_payout, EVAL_TERMINAL_PAYOUT);
+    assert_eq!(live_backing_payout, EVAL_LIVE_BACKING_AT_BASE);
+    destroy(config);
+}
+
+#[test]
+fun index_terms_mid_window_applies_phase_squared_premium() {
+    let config = strike_exposure_config::new();
+    let window = constants::leverage_floor_window_ms!();
+    let expiry_ms = 2 * window;
+    let (terminal_payout, live_backing_payout) = config.index_terms(
+        expiry_ms,
+        expiry_ms - window / 2,
+        EVAL_QUANTITY,
+        EVAL_FLOOR_SHARES,
+    );
+    assert_eq!(terminal_payout, EVAL_TERMINAL_PAYOUT);
+    assert_eq!(live_backing_payout, EVAL_LIVE_BACKING_MID_WINDOW);
+    destroy(config);
+}
+
+#[test]
+fun index_terms_opened_at_expiry_equals_terminal_payout() {
+    let config = strike_exposure_config::new();
+    let expiry_ms = constants::leverage_floor_window_ms!();
+    // Open floor index has reached the terminal index, so live backing and
+    // terminal payout coincide.
+    let (terminal_payout, live_backing_payout) = config.index_terms(
+        expiry_ms,
+        expiry_ms,
+        EVAL_QUANTITY,
+        EVAL_FLOOR_SHARES,
+    );
+    assert_eq!(terminal_payout, EVAL_TERMINAL_PAYOUT);
+    assert_eq!(live_backing_payout, EVAL_TERMINAL_PAYOUT);
+    destroy(config);
+}

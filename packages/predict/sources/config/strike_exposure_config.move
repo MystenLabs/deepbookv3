@@ -113,6 +113,40 @@ public(package) fun floor_index_at_ms(
     base + floor_premium
 }
 
+/// Terminal payout for an order's atoms: `quantity - floor(floor_shares * terminal_floor_index)`.
+/// The exact subtraction is deliberate: mint asserts the terminal-floor LTV bound
+/// before any term evaluation, so an abort here means the order's atoms did not
+/// survive their round-trip.
+public(package) fun terminal_payout(
+    config: &StrikeExposureConfig,
+    quantity: u64,
+    floor_shares: u64,
+): u64 {
+    quantity - config.terminal_floor(floor_shares)
+}
+
+/// Canonical payout-index term evaluation from an order's atoms.
+///
+/// Returns `(terminal_payout, live_backing_payout)`: terminal payout nets the
+/// terminal floor; live backing nets the open-index floor, a conservative upper
+/// bound on future live payout. Mint insert, close-side remove/reinsert, and the
+/// settled payout recompute all price through this function (or its
+/// `terminal_payout` primitive) — no other module may express these formulas, so
+/// the payout tree's inserted, removed, and settlement-recomputed terms stay
+/// bit-equal by construction.
+public(package) fun index_terms(
+    config: &StrikeExposureConfig,
+    expiry_ms: u64,
+    opened_at_ms: u64,
+    quantity: u64,
+    floor_shares: u64,
+): (u64, u64) {
+    let terminal_payout = config.terminal_payout(quantity, floor_shares);
+    let open_floor_index = config.floor_index_at_ms(expiry_ms, opened_at_ms);
+    let live_backing_payout = quantity - math::mul(floor_shares, open_floor_index);
+    (terminal_payout, live_backing_payout)
+}
+
 /// Return the raw trade fee for a live probability and quantity.
 public(package) fun trading_fee(
     config: &StrikeExposureConfig,
@@ -170,6 +204,14 @@ public(package) fun assert_mint_admission_policy(
 }
 
 /// Assert mint floor policy and return `(floor_shares, terminal_payout, live_backing_payout)`.
+///
+/// Quantizes the floor seed into durable floor shares (mint-only rounding),
+/// asserts the terminal-floor LTV admission bound, then prices the index terms
+/// through the canonical `index_terms` evaluation. Validating before evaluating
+/// keeps every invalid mint on the named abort and keeps the evaluator's
+/// underflow meaning a broken atom round-trip; re-calling the canonical
+/// `terminal_floor` for the assert costs one redundant `mul` but never
+/// re-expresses the formula.
 public(package) fun assert_mint_floor_terms(
     config: &StrikeExposureConfig,
     expiry_ms: u64,
@@ -179,13 +221,17 @@ public(package) fun assert_mint_floor_terms(
 ): (u64, u64, u64) {
     let open_floor_index = config.floor_index_at_ms(expiry_ms, opened_at_ms);
     let floor_shares = math::div(floor_seed_amount, open_floor_index);
-    let terminal_floor = math::mul(floor_shares, config.terminal_floor_index);
     let max_terminal_floor = math::mul(quantity, config.liquidation_ltv);
-    assert!(terminal_floor < max_terminal_floor, ETerminalFloorExceedsLiquidationLtv);
-
-    let terminal_payout = quantity - terminal_floor;
-    let floor_amount_at_open = math::mul(floor_shares, open_floor_index);
-    let live_backing_payout = quantity - floor_amount_at_open;
+    assert!(
+        config.terminal_floor(floor_shares) < max_terminal_floor,
+        ETerminalFloorExceedsLiquidationLtv,
+    );
+    let (terminal_payout, live_backing_payout) = config.index_terms(
+        expiry_ms,
+        opened_at_ms,
+        quantity,
+        floor_shares,
+    );
     (floor_shares, terminal_payout, live_backing_payout)
 }
 
@@ -263,6 +309,11 @@ public(package) fun set_expiry_fee_window_ms(config: &mut StrikeExposureConfig, 
 public(package) fun set_expiry_fee_max_multiplier(config: &mut StrikeExposureConfig, value: u64) {
     config_constants::assert_expiry_fee_max_multiplier(value);
     config.expiry_fee_max_multiplier = value;
+}
+
+/// Terminal floor for quantized floor shares: `floor(floor_shares * terminal_floor_index)`.
+fun terminal_floor(config: &StrikeExposureConfig, floor_shares: u64): u64 {
+    math::mul(floor_shares, config.terminal_floor_index)
 }
 
 fun fee_rate(
