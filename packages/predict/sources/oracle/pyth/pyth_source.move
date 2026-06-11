@@ -13,6 +13,7 @@ module deepbook_predict::pyth_source;
 use deepbook_predict::{constants, oracle_events, protocol_config::ProtocolConfig};
 use predict_math::math;
 use pyth_lazer::{i16::I16 as LazerI16, i64::I64 as LazerI64, update::Update as LazerUpdate};
+use std::option::Option;
 use sui::{clock::Clock, vec_set::VecSet};
 
 const EStaleSourceUpdate: u64 = 0;
@@ -182,23 +183,32 @@ fun extract_spot(update: &LazerUpdate, feed_id: u32): (u64, u64) {
     let lazer_published_at_us = update.timestamp();
     let feeds = update.feeds_ref();
     let idx_opt = feeds.find_index!(|f| f.feed_id() == feed_id);
-    assert!(idx_opt.is_some(), ELazerFeedNotFound);
+    assert_lazer_feed_found(idx_opt.is_some());
     let feed = &feeds[idx_opt.destroy_some()];
 
+    let price = extract_lazer_price(feed.price());
+    let exponent = extract_lazer_exponent(feed.exponent());
+
+    (normalize_pyth_price(price, exponent), lazer_published_at_us)
+}
+
+fun assert_lazer_feed_found(feed_found: bool) {
+    assert!(feed_found, ELazerFeedNotFound);
+}
+
+fun extract_lazer_price(price_outer: Option<Option<LazerI64>>): LazerI64 {
     // Both Option layers must be Some: the field must exist in the update,
     // and the value must be present (Lazer returns None if there are not
     // enough publishers).
-    let price_outer = feed.price();
     assert!(price_outer.is_some(), ELazerPriceUnavailable);
     let price_inner = price_outer.borrow();
     assert!(price_inner.is_some(), ELazerPriceUnavailable);
-    let price = *price_inner.borrow();
+    *price_inner.borrow()
+}
 
-    let exp_outer = feed.exponent();
+fun extract_lazer_exponent(exp_outer: Option<LazerI16>): LazerI16 {
     assert!(exp_outer.is_some(), ELazerPriceUnavailable);
-    let exponent = *exp_outer.borrow();
-
-    (normalize_pyth_price(price, exponent), lazer_published_at_us)
+    *exp_outer.borrow()
 }
 
 /// Convert a Pyth Lazer `(price, exponent)` pair to the predict package's
@@ -254,4 +264,19 @@ public fun set_state_for_testing(
     source.spot = spot;
     source.source_timestamp_ms = source_timestamp_ms;
     source.update_timestamp_ms = update_timestamp_ms;
+}
+
+#[test_only]
+public fun normalize_pyth_price_for_testing(price: LazerI64, exponent: LazerI16): u64 {
+    normalize_pyth_price(price, exponent)
+}
+
+#[test_only]
+public fun extract_spot_fields_for_testing(
+    feed_found: bool,
+    price_outer: Option<Option<LazerI64>>,
+    exp_outer: Option<LazerI16>,
+): u64 {
+    assert_lazer_feed_found(feed_found);
+    normalize_pyth_price(extract_lazer_price(price_outer), extract_lazer_exponent(exp_outer))
 }

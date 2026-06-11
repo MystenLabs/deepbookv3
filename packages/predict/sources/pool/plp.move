@@ -617,8 +617,8 @@ fun assert_version_allowed(vault: &PoolVault) {
 }
 
 /// Pure share pricing for a supply: bootstrap mints 1:1, otherwise prices the
-/// payment against the pool's share ratio. No custody, NAV, event, or storage
-/// effects.
+/// payment as `payment * total_supply / pool_value`, floored once over the raw
+/// product. No custody, NAV, event, or storage effects.
 fun shares_for_supply(
     total_supply: u64,
     dusdc_value: u64,
@@ -632,16 +632,15 @@ fun shares_for_supply(
         payment_amount
     } else {
         assert!(pool_value > 0, EZeroPoolValue);
-        let share_fraction = math::div(total_supply, pool_value);
-        let shares = math::mul(payment_amount, share_fraction);
+        let shares = math::mul_div_down(payment_amount, total_supply, pool_value);
         assert!(shares > 0, EZeroShares);
         shares
     }
 }
 
-/// DUSDC payout owed for burning `lp_amount` shares: `dusdc_value * lp_amount /
-/// total_supply` (div then mul, round down). Inverse mirror of
-/// `shares_for_supply`; pure, so it stays out of the custody/event flow.
+/// DUSDC payout owed for burning `lp_amount` shares, using the pool-favorable
+/// div-then-mul rounding policy. This intentionally differs from supply's
+/// single-floor share minting; pure, so it stays out of the custody/event flow.
 /// A zero payout (sub-share slice or collapsed DUSDC NAV) is allowed: the
 /// withdraw must still complete so the holder can exit and claim the in-kind
 /// incentive share even when the DUSDC leg rounds to nothing.

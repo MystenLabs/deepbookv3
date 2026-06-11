@@ -1871,7 +1871,7 @@ def supply_update(
     shares = (
         row["amount"]
         if total_supply == 0
-        else deepbook_mul(row["amount"], deepbook_div(total_supply, pool_value))
+        else mul_div_round_down(row["amount"], total_supply, pool_value)
     )
     if shares <= 0:
         raise ValueError("supply would mint zero shares")

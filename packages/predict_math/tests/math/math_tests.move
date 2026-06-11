@@ -96,6 +96,19 @@ fun div_rounds_down_to_integer_unit() {
     assert_eq!(math::div(1, 3), 333_333_333);
 }
 
+#[test]
+fun mul_div_down_floors_raw_integer_ratio() {
+    // floor(10 * 10 / 6) = 16
+    assert_eq!(math::mul_div_down(10, 10, 6), 16);
+}
+
+#[test]
+fun mul_div_down_uses_u128_intermediate() {
+    // floor(10_000_000_000 * 10_000_000_000 / 10_000_000_000) = 10_000_000_000.
+    // The product is 1e20, above u64::MAX, so the helper must widen before multiplying.
+    assert_eq!(math::mul_div_down(10_000_000_000, 10_000_000_000, 10_000_000_000), 10_000_000_000);
+}
+
 // === ln ===
 
 #[test]

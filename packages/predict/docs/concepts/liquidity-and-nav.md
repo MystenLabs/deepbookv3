@@ -35,7 +35,7 @@ The asymmetry between supply and withdraw pricing is deliberate:
 Let `total_supply` be the PLP outstanding before the operation.
 
 - **First supply (bootstrap):** when `total_supply == 0`, shares are minted 1:1 with the DUSDC paid. This requires the DUSDC side of NAV to be empty; incentives cannot exist before the first supply, because incentive deposits require existing PLP holders.
-- **Subsequent supply:** `shares = payment × total_supply / pool_value`, where `pool_value` is the full-pool NAV (DUSDC value + incentive value). Pricing against the **total** NAV — not the DUSDC-only NAV — is what makes the depositor pay for the incentives they are buying into.
+- **Subsequent supply:** `shares = payment × total_supply / pool_value`, rounded down once over the raw product, where `pool_value` is the full-pool NAV (DUSDC value + incentive value). Pricing against the **total** NAV — not the DUSDC-only NAV — is what makes the depositor pay for the incentives they are buying into.
 - **Withdraw:** `withdraw_amount = dusdc_value × lp_amount / total_supply`; the net payout (after the band fee below) is paid out of idle DUSDC. The sync that precedes every withdrawal first tops each live market up toward its reserve target, so the payout draws on whatever idle remains after the markets are funded — an exit cannot front-run a live market's refill. A withdrawal larger than the remaining idle aborts. Cash funded into expiries is not directly redeemable until it returns through rebalance or settlement.
 
 ```mermaid

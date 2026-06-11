@@ -1,11 +1,13 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Math utilities for fixed-point arithmetic (FLOAT_SCALING = 1e9).
+/// Math utilities for fixed-point arithmetic (FLOAT_SCALING = 1e9) and exact
+/// integer ratios.
 ///
 /// Provides:
 /// - mul(x, y): 1e9-scaled multiplication, rounded down
 /// - div(x, y): 1e9-scaled division, rounded down
+/// - mul_div_down(x, y, denominator): raw integer x*y/denominator, rounded down
 /// - ln(x): natural logarithm
 /// - exp(x): exponential function for signed fixed-point inputs
 /// - sqrt(x, precision): fixed-point square root
@@ -126,6 +128,12 @@ public fun mul(x: u64, y: u64): u64 {
 /// Divide two 1e9-scaled fixed-point values, rounding down.
 public fun div(x: u64, y: u64): u64 {
     (((x as u128) * F) / (y as u128)) as u64
+}
+
+/// Multiply two raw integer values, divide by a raw denominator, and round down.
+public fun mul_div_down(x: u64, y: u64, denominator: u64): u64 {
+    assert!(denominator > 0, EInputZero);
+    (((x as u128) * (y as u128)) / (denominator as u128)) as u64
 }
 
 /// Natural logarithm of x (in FLOAT_SCALING 1e9).

@@ -75,10 +75,10 @@ Every liquidation pass is bounded. A pass never scans the whole active set; it s
 - **`trade_liquidation_budget`** — the smaller budget spent on the inline pass that runs before each mint and live redeem.
 - **`valuation_liquidation_budget`** — the larger budget spent before each active expiry's contribution to a full-pool live valuation, where solvency of the leveraged book matters most.
 
-Within a single budget, candidates are drawn from two slices:
+Within a single budget, candidates are drawn from two slices. The split ratio is fixed by the upgrade-required `liquidation_tail_scan_divisor` constant: the passive tail receives `budget / liquidation_tail_scan_divisor` rounded down, and the head receives the remainder. With the current divisor of `3`, this spends about two thirds of the budget on the head-priority slice and one third on passive tail rotation (`16/8` for the trade budget of `24`, `128/64` for the valuation budget of `192`).
 
-- **Head slice** — a fixed fraction of the budget (`budget / liquidation_head_scan_divisor`, rounded up) is always taken from the front of the index, i.e. the highest-priority orders. These large, high-risk positions are re-checked on every pass.
-- **Passive slice** — the remaining budget continues a rolling scan from the `passive_watermark`, advancing through the rest of the index and wrapping back to the start of the tail. This guarantees that lower-priority orders are eventually visited over successive passes rather than being starved by the head slice.
+- **Head slice** — the budget remainder (`budget - floor(budget / liquidation_tail_scan_divisor)`) is always taken from the front of the index, i.e. the highest-priority orders. These large, high-risk positions are re-checked on every pass.
+- **Passive slice** — up to `floor(budget / liquidation_tail_scan_divisor)` candidates continue a rolling scan from the `passive_watermark`, advancing through the rest of the index and wrapping back to the start of the tail. This guarantees that lower-priority orders are eventually visited over successive passes rather than being starved by the head slice.
 
 Selecting candidates advances the passive watermark, so the scan makes forward progress across calls even when each individual pass is small.
 

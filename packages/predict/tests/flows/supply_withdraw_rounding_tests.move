@@ -3,12 +3,13 @@
 
 /// A1/A3 PLP supply/withdraw rounding on an idle-only pool (no expiries, so
 /// every sync finishes trivially and the uncertainty-band withdraw fee is
-/// structurally zero). Supply and withdraw both price through a FLOORED
-/// 1e9-scaled ratio (divide then multiply, rounding down), so dust is lost
-/// whenever the ratio is non-terminating — always to the pool, never to the
-/// user: an exactly-dividing withdraw pays full pro-rata, a non-dividing one
-/// rounds down twice, a supply at the enriched per-share mints fractionally
-/// fewer shares, and a same-state supply→withdraw round-trip strictly loses.
+/// structurally zero). Supply floors `payment * total_supply / pool_value` once,
+/// while withdraw keeps the FLOORED 1e9-scaled ratio (divide then multiply,
+/// rounding down). Dust is lost whenever the ratio is non-terminating — always
+/// to the pool, never to the user: an exactly-dividing withdraw pays full
+/// pro-rata, a non-dividing one rounds down twice, a supply at the enriched
+/// per-share mints fractionally fewer shares, and a same-state supply→withdraw
+/// round-trip strictly loses.
 /// The remaining holder's per-share value never falls at any step, and the
 /// protocol reserve stays untouched (rounding dust is LP-owned).
 #[test_only]
@@ -36,8 +37,8 @@ const WITHDRAW_DUST_SHARES: u64 = 15_000_000_000;
 const WITHDRAW_DUST_PROCEEDS: u64 = 14_999_999_805;
 const DUST_RETAINED: u64 = 195;
 /// Supply at the now-enriched per-share (300_000_000_195 value over 300e9
-/// shares): ratio = floor(300e9 * 1e9 / 300_000_000_195) = 999_999_999, so
-/// the 1e9 payment mints 999_999_999 shares (one fractional share to the pool).
+/// shares): floor(1e9 * 300e9 / 300_000_000_195) = 999_999_999, so one
+/// fractional share stays with the pool.
 const UNEVEN_SUPPLY: u64 = 1_000_000_000;
 const UNEVEN_SUPPLY_SHARES: u64 = 999_999_999;
 /// Round-trip: withdrawing those shares back at the same mark pays

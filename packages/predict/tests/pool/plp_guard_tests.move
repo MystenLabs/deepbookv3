@@ -31,7 +31,7 @@ use deepbook_predict::{
     test_constants
 };
 use dusdc::dusdc::DUSDC;
-use std::unit_test::destroy;
+use std::unit_test::{assert_eq, destroy};
 use sui::{
     clock::{Self, Clock},
     coin,
@@ -53,6 +53,11 @@ const LARGE_SUI_INCENTIVE: u64 = 1_000_000_000_000;
 const STREAM_DURATION_MS: u64 = 86_400_000;
 /// Smallest possible DUSDC supply payment (1 raw unit).
 const DUST_PAYMENT: u64 = 1;
+/// Minimal bootstrap that creates a 1-share pool for the extreme share-price edge.
+const TINY_BOOTSTRAP_PAYMENT: u64 = 1;
+/// With a 1-share bootstrap plus the fully vested SUI incentive, this is the
+/// first follow-on payment that mints one share under exact single-floor pricing.
+const EXTREME_SHARE_PRICE_SUPPLY_PAYMENT: u64 = 50_100_000_000_001;
 
 // === EExpiryMarketNotActive ===
 
@@ -192,8 +197,7 @@ fun supply_dust_payment_rounding_to_zero_shares_aborts() {
     //   dusdc_value  = 300_000e6 idle
     //   incentive    = ceil(1e12 SUI-units * 50_100e9 spot / 10^(9+9-6)) = 50_100e9
     //   pool_value   = 300_000e6 + 50_100e9 = 50_400e9
-    //   share_fraction = floor(300_000e6 * 1e9 / 50_400e9) = 5_952_380
-    //   shares = floor(1 * 5_952_380 / 1e9) = 0 -> EZeroShares
+    //   shares = floor(1 * 300_000e6 / 50_400e9) = 0 -> EZeroShares
     let vest_end_ms = test_constants::now_ms() + STREAM_DURATION_MS;
     clock.set_for_testing(vest_end_ms);
     let mut pyth = scenario.take_shared_by_id<PythSource>(pyth_id);
@@ -212,6 +216,46 @@ fun supply_dust_payment_rounding_to_zero_shares_aborts() {
         scenario.ctx(),
     );
     abort 999
+}
+
+#[test]
+fun supply_extreme_share_price_large_payment_mints_one_share() {
+    let (mut scenario, admin_cap, mut clock) = begin_pool();
+    let pyth_id = create_default_pyth(&mut scenario, &admin_cap);
+    bootstrap_supply_amount(&mut scenario, &clock, pyth_id, TINY_BOOTSTRAP_PAYMENT);
+    configure_sui_incentive(&mut scenario, &admin_cap);
+    fund_sui_incentive(&mut scenario, &admin_cap, &clock);
+
+    // One raw PLP share remains outstanding, while the vested incentive pushes
+    // pool value to 50_100_000_000_001. Old ratio-first pricing made
+    // floor(1 * 1e9 / pool_value) = 0 and aborted every supply; exact
+    // single-floor pricing mints floor(pool_value * 1 / pool_value) = 1 share.
+    let vest_end_ms = test_constants::now_ms() + STREAM_DURATION_MS;
+    clock.set_for_testing(vest_end_ms);
+    let mut pyth = scenario.take_shared_by_id<PythSource>(pyth_id);
+    pyth.set_state_for_testing(test_constants::default_creation_spot(), vest_end_ms, vest_end_ms);
+    let mut vault = scenario.take_shared<PoolVault>();
+    let mut config = scenario.take_shared<ProtocolConfig>();
+
+    let sync = plp::start_pool_sync(&mut config, &vault);
+    let plp = vault.supply(
+        &mut config,
+        sync,
+        coin::mint_for_testing<DUSDC>(EXTREME_SHARE_PRICE_SUPPLY_PAYMENT, scenario.ctx()),
+        &pyth,
+        &pyth,
+        &clock,
+        scenario.ctx(),
+    );
+
+    assert_eq!(plp.value(), 1);
+    destroy(plp);
+    return_shared(pyth);
+    return_shared(vault);
+    return_shared(config);
+    destroy(admin_cap);
+    clock.destroy_for_testing();
+    scenario.end();
 }
 
 // === EPackageVersionDisabled ===
@@ -290,6 +334,12 @@ fun create_default_pyth(scenario: &mut Scenario, admin_cap: &AdminCap): ID {
 /// Bootstrap the pool with the default initial PLP supply through the real
 /// `supply` path (1:1 mint), seeding the Pyth source with a fresh spot first.
 fun bootstrap_supply(scenario: &mut Scenario, clock: &Clock, pyth_id: ID) {
+    bootstrap_supply_amount(scenario, clock, pyth_id, test_constants::default_initial_supply());
+}
+
+/// Bootstrap the pool with a caller-selected initial PLP supply through the real
+/// `supply` path (1:1 mint), seeding the Pyth source with a fresh spot first.
+fun bootstrap_supply_amount(scenario: &mut Scenario, clock: &Clock, pyth_id: ID, amount: u64) {
     let mut pyth = scenario.take_shared_by_id<PythSource>(pyth_id);
     let live_ts = test_constants::live_source_timestamp_ms();
     pyth.set_state_for_testing(test_constants::default_creation_spot(), live_ts, live_ts);
@@ -299,7 +349,7 @@ fun bootstrap_supply(scenario: &mut Scenario, clock: &Clock, pyth_id: ID) {
     let plp_coin = vault.supply(
         &mut config,
         sync,
-        coin::mint_for_testing<DUSDC>(test_constants::default_initial_supply(), scenario.ctx()),
+        coin::mint_for_testing<DUSDC>(amount, scenario.ctx()),
         &pyth,
         &pyth,
         clock,
