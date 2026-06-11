@@ -5,6 +5,7 @@ version = "0.0.1"
 
 [dependencies]
 deepbook = { local = "../deepbook" }
+predict_math = { local = "../predict_math" }
 dusdc = { local = "../dusdc" }
 # DEEP token, used for staking custody (`registry::stake_deep`). Declared with the
 # same git source as `deepbook`'s dependency so the resolver unifies the package.

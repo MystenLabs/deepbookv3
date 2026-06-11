@@ -27,6 +27,19 @@ fun new_centered_accepts_boundary_tick_size() {
     assert_eq!(grid.total_strikes(), constants::oracle_strike_grid_ticks!() + 1);
 }
 
+#[test, expected_failure(abort_code = strike_grid::EInvalidTickSize)]
+fun new_centered_aborts_with_zero_tick_size() {
+    strike_grid::new_centered(BTC_SPOT, 0);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = strike_grid::EInvalidTickSize)]
+fun new_centered_aborts_with_unaligned_tick_size() {
+    // One above a multiple of constants::oracle_tick_size_unit!() (10_000).
+    strike_grid::new_centered(BTC_SPOT, VALID_BTC_TICK_SIZE + 1);
+    abort 999
+}
+
 #[test, expected_failure(abort_code = strike_grid::EOracleTickSizeTooSmallForSpot)]
 fun new_centered_aborts_when_tick_size_too_small_for_spot() {
     strike_grid::new_centered(BTC_SPOT, TOO_SMALL_BTC_TICK_SIZE);

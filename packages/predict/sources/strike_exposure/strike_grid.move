@@ -102,7 +102,7 @@ public(package) fun boundary_at_index(grid: &StrikeGrid, boundary_index: u64): u
 }
 
 /// Assert that `strike` is finite, in-bounds, and grid-aligned.
-public(package) fun assert_finite_boundary(grid: &StrikeGrid, strike: u64) {
+fun assert_finite_boundary(grid: &StrikeGrid, strike: u64) {
     assert!(strike >= grid.min_strike && strike <= grid.max_strike, EInvalidStrikeGrid);
     assert!((strike - grid.min_strike) % grid.tick_size == 0, EInvalidStrikeGrid);
 }
@@ -114,7 +114,7 @@ public(package) fun finite_strike_index(grid: &StrikeGrid, strike: u64): u64 {
 }
 
 /// Return the finite strike at `index` on this grid.
-public(package) fun finite_strike_at_index(grid: &StrikeGrid, index: u64): u64 {
+fun finite_strike_at_index(grid: &StrikeGrid, index: u64): u64 {
     assert!(index < grid.total_strikes, EInvalidStrikeGrid);
     grid.min_strike + index * grid.tick_size
 }

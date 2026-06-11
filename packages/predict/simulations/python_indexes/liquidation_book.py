@@ -11,47 +11,17 @@ from bisect import bisect_left, bisect_right
 
 PAGE_CAPACITY = 64
 
-INVERSE_QUANTITY_LOTS_OFFSET = 200
-LEVERAGE_RANK_OFFSET = 168
-OPENED_AT_OFFSET = 120
-LOWER_BOUNDARY_INDEX_OFFSET = 96
-HIGHER_BOUNDARY_INDEX_OFFSET = 72
-ENTRY_PROBABILITY_OFFSET = 40
+QUANTITY_LOTS_OFFSET = 200
+FLOOR_SHARES_OFFSET = 136
+OPENED_AT_OFFSET = 88
+LOWER_BOUNDARY_INDEX_OFFSET = 64
+HIGHER_BOUNDARY_INDEX_OFFSET = 40
 
 U24_MASK = (1 << 24) - 1
 U32_MASK = (1 << 32) - 1
 U40_MASK = (1 << 40) - 1
 U48_MASK = (1 << 48) - 1
-LEVERAGE_ONE_X = 1_000_000_000
-LEVERAGE_ONE_AND_HALF_X = 1_500_000_000
-LEVERAGE_TWO_X = 2_000_000_000
-LEVERAGE_TWO_AND_HALF_X = 2_500_000_000
-LEVERAGE_THREE_X = 3_000_000_000
-LEVERAGE_ONE_X_ONLY_PRICE_THRESHOLD = 100_000_000
-LEVERAGE_TWO_X_MAX_PRICE_THRESHOLD = 200_000_000
-
-
-def leverage_rank(leverage: int) -> int:
-    if leverage == LEVERAGE_THREE_X:
-        return 0
-    if leverage == LEVERAGE_TWO_AND_HALF_X:
-        return 1
-    if leverage == LEVERAGE_TWO_X:
-        return 2
-    if leverage == LEVERAGE_ONE_AND_HALF_X:
-        return 3
-    if leverage == LEVERAGE_ONE_X:
-        return 4
-    raise ValueError("invalid leverage")
-
-
-def assert_valid_leverage_tier(entry_probability: int, leverage: int) -> None:
-    leverage_rank(leverage)
-    if entry_probability < LEVERAGE_ONE_X_ONLY_PRICE_THRESHOLD:
-        if leverage != LEVERAGE_ONE_X:
-            raise ValueError("entry probability below 10c allows only 1x leverage")
-    elif entry_probability < LEVERAGE_TWO_X_MAX_PRICE_THRESHOLD and leverage > LEVERAGE_TWO_X:
-        raise ValueError("entry probability below 20c allows at most 2x leverage")
+U64_MASK = (1 << 64) - 1
 
 
 def boundary_index_for_order_side(
@@ -82,16 +52,16 @@ def encode_order_id(
     lower_boundary_index: int,
     higher_boundary_index: int,
     max_boundary_index: int,
-    leverage: int,
-    entry_probability: int,
+    floor_shares: int,
     quantity: int,
     sequence: int,
     position_lot_size: int,
-    float_scaling: int,
 ) -> int:
     quantity_lots = quantity // position_lot_size
     if quantity_lots <= 0 or quantity_lots > U32_MASK or quantity % position_lot_size != 0:
         raise ValueError("invalid order quantity")
+    if floor_shares < 0 or floor_shares > U64_MASK or floor_shares > quantity:
+        raise ValueError("invalid floor shares")
     if opened_at_ms > U48_MASK:
         raise ValueError("opened_at_ms does not fit in order id")
     if lower_boundary_index > U24_MASK or higher_boundary_index > U24_MASK:
@@ -104,25 +74,21 @@ def encode_order_id(
         raise ValueError("full-open boundary range is invalid")
     if sequence > U40_MASK:
         raise ValueError("sequence does not fit in order id")
-    if entry_probability > float_scaling:
-        raise ValueError("invalid entry probability")
-    assert_valid_leverage_tier(entry_probability, leverage)
     if (
-        leverage != LEVERAGE_ONE_X
+        floor_shares > 0
         and lower_boundary_index != 0
         and higher_boundary_index != max_boundary_index
     ):
         raise ValueError("leveraged orders must have one open boundary")
 
-    rank = leverage_rank(leverage)
-    inverse_quantity_lots = U32_MASK - quantity_lots
+    quantity_lots_key = U32_MASK - quantity_lots
+    floor_shares_key = U64_MASK - floor_shares
     return (
-        (inverse_quantity_lots << INVERSE_QUANTITY_LOTS_OFFSET)
-        | (rank << LEVERAGE_RANK_OFFSET)
+        (quantity_lots_key << QUANTITY_LOTS_OFFSET)
+        | (floor_shares_key << FLOOR_SHARES_OFFSET)
         | (opened_at_ms << OPENED_AT_OFFSET)
         | (lower_boundary_index << LOWER_BOUNDARY_INDEX_OFFSET)
         | (higher_boundary_index << HIGHER_BOUNDARY_INDEX_OFFSET)
-        | (entry_probability << ENTRY_PROBABILITY_OFFSET)
         | sequence
     )
 
@@ -189,9 +155,8 @@ class LiquidationBook:
         if self.active_order_count == 0 or budget == 0:
             return candidates
 
-        head_budget = budget // head_scan_divisor
-        if budget % head_scan_divisor != 0:
-            head_budget += 1
+        tail_budget = budget // head_scan_divisor
+        head_budget = budget - tail_budget
 
         tail_start = self._collect_head_candidates(candidates, head_budget)
         scan_budget = budget - len(candidates)

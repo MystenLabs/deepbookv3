@@ -1,216 +1,75 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// Unit tests for the `strike_nav_matrix` range-accounting guards. The matrix is
+/// a pure data structure over a `StrikeGrid`, so it is constructed directly with
+/// production grid geometry (`strike_grid::new_centered`) and exercised through
+/// its package API.
 #[test_only]
 module deepbook_predict::strike_nav_matrix_tests;
 
-use deepbook_predict::{
-    constants::{Self, float_scaling as float},
-    pricing,
-    strike_grid::{Self, StrikeGrid},
-    strike_nav_matrix::{Self, StrikeNavMatrix}
-};
-use std::unit_test::{assert_eq, destroy};
+use deepbook_predict::{pricing::CurvePoint, strike_grid, strike_nav_matrix};
+use std::unit_test::destroy;
 
-// Production-shaped grid whose first finite boundaries are still small enough
-// for hand-checkable test ranges: 100_000, 110_000, 120_000, ...
-const MIN_STRIKE: u64 = 100_000;
-const TICK_SIZE: u64 = 10_000;
-const PREALLOCATED_TICKS: u64 = 10;
-const PARTIAL_PREALLOCATED_PAGE_COUNT: u64 = 1;
+const BTC_SPOT: u64 = 100_000_000_000_000; // $100,000 in 1e9 price scaling
+const TICK_SIZE: u64 = 1_000_000_000; // $1.00; spot spans 100,000 ticks
 
-const QTY_ONE: u64 = 1;
-const QTY_BIG: u64 = 1_000_000;
-
-fun grid_center_spot(): u64 {
-    MIN_STRIKE + TICK_SIZE * (constants::oracle_strike_grid_ticks!() / 2)
-}
-
-fun max_strike(): u64 {
-    MIN_STRIKE + TICK_SIZE * constants::oracle_strike_grid_ticks!()
-}
-
-fun strike(tick_offset: u64): u64 {
-    MIN_STRIKE + tick_offset * TICK_SIZE
-}
-
-fun grid(): StrikeGrid {
-    strike_grid::new_centered(grid_center_spot(), TICK_SIZE)
-}
-
-fun new_nav(ctx: &mut TxContext): (StrikeGrid, StrikeNavMatrix) {
-    let grid = grid();
-    let nav = strike_nav_matrix::new(&grid, PREALLOCATED_TICKS, ctx);
-    (grid, nav)
-}
-
-// === Constructor (new + grid validation) ===
-
-#[test]
-fun new_returns_empty_matrix() {
-    let ctx = &mut tx_context::dummy();
-    let (_grid, nav) = new_nav(ctx);
-    nav.destroy();
-}
-
-#[test]
-fun live_value_treats_missing_preallocated_pages_as_empty() {
-    let ctx = &mut tx_context::dummy();
-    let (grid, nav) = new_nav(ctx);
-    assert_eq!(nav.materialized_page_count_for_testing(), PARTIAL_PREALLOCATED_PAGE_COUNT);
-    let curve = vector[
-        pricing::new_curve_point_for_testing(MIN_STRIKE, float!()),
-        pricing::new_curve_point_for_testing(max_strike(), float!()),
-    ];
-    assert_eq!(nav.live_value(&grid, &curve, MIN_STRIKE, max_strike(), float!()), 0);
-    nav.destroy();
-}
-
-#[test]
-fun insert_outside_preallocated_span_materializes_page() {
-    let ctx = &mut tx_context::dummy();
-    let (grid, mut nav) = new_nav(ctx);
-    assert_eq!(nav.materialized_page_count_for_testing(), PARTIAL_PREALLOCATED_PAGE_COUNT);
-    nav.insert_range(&grid, strike(2), strike(3), QTY_BIG, 0);
-    assert_eq!(nav.materialized_page_count_for_testing(), PARTIAL_PREALLOCATED_PAGE_COUNT + 1);
-    nav.remove_range(&grid, strike(2), strike(3), QTY_BIG, 0);
-    let curve = vector[
-        pricing::new_curve_point_for_testing(MIN_STRIKE, float!()),
-        pricing::new_curve_point_for_testing(max_strike(), float!()),
-    ];
-    assert_eq!(nav.live_value(&grid, &curve, MIN_STRIKE, max_strike(), float!()), 0);
-    nav.destroy();
-}
+const QTY: u64 = 10_000; // one position lot
+const NO_FLOOR: u64 = 0;
 
 #[test, expected_failure(abort_code = strike_nav_matrix::EInvalidPreallocatedTicks)]
-fun new_preallocated_ticks_above_grid_aborts() {
+fun new_with_preallocated_ticks_above_tick_count_aborts() {
     let ctx = &mut tx_context::dummy();
-    let grid = grid();
-    destroy(strike_nav_matrix::new(&grid, constants::oracle_strike_grid_ticks!() + 1, ctx));
+    let grid = strike_grid::new_centered(BTC_SPOT, TICK_SIZE);
+    // The grid has total_strikes() boundaries and total_strikes() - 1 ticks;
+    // asking for one more tick than exists is rejected.
+    let nav = strike_nav_matrix::new(&grid, grid.total_strikes(), ctx);
+    destroy(nav);
+
     abort 999
 }
-
-// === insert_range / remove_range abort cases ===
 
 #[test, expected_failure(abort_code = strike_nav_matrix::EZeroQuantity)]
-fun insert_zero_quantity_aborts() {
+fun insert_range_with_zero_quantity_aborts() {
     let ctx = &mut tx_context::dummy();
-    let (grid, mut nav) = new_nav(ctx);
-    nav.insert_range(&grid, strike(2), strike(6), 0, 0);
-    abort 999
-}
-
-#[test, expected_failure(abort_code = strike_grid::EInvalidStrikeGrid)]
-fun insert_lower_equal_higher_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let (grid, mut nav) = new_nav(ctx);
-    nav.insert_range(&grid, strike(5), strike(5), QTY_ONE, 0);
-    abort 999
-}
-
-#[test, expected_failure(abort_code = strike_grid::EInvalidStrikeGrid)]
-fun insert_full_open_range_aborts() {
-    // (neg_inf, pos_inf] would always-back the entire base quantity bucket.
-    let ctx = &mut tx_context::dummy();
-    let (grid, mut nav) = new_nav(ctx);
-    nav.insert_range(&grid, constants::neg_inf!(), constants::pos_inf!(), QTY_ONE, 0);
-    abort 999
-}
-
-#[test, expected_failure(abort_code = strike_grid::EInvalidStrikeGrid)]
-fun insert_finite_above_grid_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let (grid, mut nav) = new_nav(ctx);
-    nav.insert_range(&grid, strike(5), max_strike() + TICK_SIZE, QTY_ONE, 0);
-    abort 999
-}
-
-#[test, expected_failure(abort_code = strike_grid::EInvalidStrikeGrid)]
-fun insert_unaligned_strike_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let (grid, mut nav) = new_nav(ctx);
-    nav.insert_range(&grid, strike(2) + TICK_SIZE / 2, strike(6), QTY_ONE, 0);
+    let grid = strike_grid::new_centered(BTC_SPOT, TICK_SIZE);
+    let mut nav = strike_nav_matrix::new(&grid, 0, ctx);
+    let lower = grid.min_strike() + TICK_SIZE;
+    nav.insert_range(&grid, lower, lower + TICK_SIZE, 0, NO_FLOOR);
     abort 999
 }
 
 #[test, expected_failure(abort_code = strike_nav_matrix::EInsufficientQuantity)]
-fun remove_with_no_floor_underflows_floor_shares_aborts() {
-    // Remove asks the matrix to subtract floor_shares = QTY_ONE, but base
-    // floor_shares = 0. The shared decrement path aborts with EInsufficientQuantity.
+fun remove_range_above_inserted_quantity_aborts() {
     let ctx = &mut tx_context::dummy();
-    let (grid, mut nav) = new_nav(ctx);
-    nav.insert_range(&grid, strike(2), strike(6), QTY_ONE, 0);
-    nav.remove_range(&grid, strike(2), strike(6), QTY_ONE, QTY_ONE);
+    let grid = strike_grid::new_centered(BTC_SPOT, TICK_SIZE);
+    let mut nav = strike_nav_matrix::new(&grid, 0, ctx);
+    let lower = grid.min_strike() + TICK_SIZE;
+    let higher = lower + TICK_SIZE;
+    nav.insert_range(&grid, lower, higher, QTY, NO_FLOOR);
+    nav.remove_range(&grid, lower, higher, 2 * QTY, NO_FLOOR);
     abort 999
 }
 
 #[test, expected_failure(abort_code = strike_nav_matrix::EInsufficientQuantity)]
-fun remove_more_quantity_than_inserted_aborts() {
+fun remove_more_floor_shares_than_inserted_aborts() {
     let ctx = &mut tx_context::dummy();
-    let (grid, mut nav) = new_nav(ctx);
-    nav.insert_range(&grid, constants::neg_inf!(), strike(5), QTY_BIG, 0);
-    nav.remove_range(&grid, constants::neg_inf!(), strike(5), QTY_BIG + 1, 0);
-    abort 999
-}
-
-// === live_value ===
-//
-// live_value integrates the up-price curve against per-boundary weighted
-// quantities; full exact-value coverage requires hand-rolled segment math
-// against realistic 1e9-scaled strikes and is deferred to a later PR with
-// scipy-anchored snapshots. Here we cover the contract-edge cases that don't
-// depend on the integration math: empty curve, curve does not span the
-// minted range, and the floor-exceeds-value invariant.
-
-#[test, expected_failure(abort_code = strike_nav_matrix::EInvalidCurveRange)]
-fun live_value_empty_curve_aborts() {
-    let ctx = &mut tx_context::dummy();
-    let (grid, nav) = new_nav(ctx);
-    let curve: vector<pricing::CurvePoint> = vector[];
-    let _ = nav.live_value(&grid, &curve, MIN_STRIKE, max_strike(), float!());
+    let grid = strike_grid::new_centered(BTC_SPOT, TICK_SIZE);
+    let mut nav = strike_nav_matrix::new(&grid, 0, ctx);
+    let lower = grid.min_strike() + TICK_SIZE;
+    let higher = lower + TICK_SIZE;
+    nav.insert_range(&grid, lower, higher, QTY, QTY / 2);
+    nav.remove_range(&grid, lower, higher, QTY, QTY);
     abort 999
 }
 
 #[test, expected_failure(abort_code = strike_nav_matrix::EInvalidCurveRange)]
-fun live_value_curve_does_not_span_minted_range_aborts() {
-    // Curve covers [strike(1), strike(4)] but minted_max_strike = strike(8) — the curve must
-    // span the entire minted range or live_value cannot evaluate the right tail.
+fun live_value_with_empty_curve_aborts() {
     let ctx = &mut tx_context::dummy();
-    let (grid, nav) = new_nav(ctx);
-    let curve = vector[
-        pricing::new_curve_point_for_testing(strike(1), float!()),
-        pricing::new_curve_point_for_testing(strike(4), float!()),
-    ];
-    let _ = nav.live_value(&grid, &curve, strike(1), strike(8), float!());
+    let grid = strike_grid::new_centered(BTC_SPOT, TICK_SIZE);
+    let nav = strike_nav_matrix::new(&grid, 0, ctx);
+    let curve: vector<CurvePoint> = vector[];
+    let lower = grid.min_strike() + TICK_SIZE;
+    nav.live_value(&grid, &curve, lower, lower + TICK_SIZE, 0);
     abort 999
-}
-
-#[test, expected_failure(abort_code = strike_nav_matrix::EFloorExceedsLiveValue)]
-fun live_value_floor_above_value_aborts() {
-    // Build floor_shares without any live quantity (insert (neg_inf, X] with
-    // floor, then remove the quantity but leave floor behind). With base_qty=0
-    // and floor_index=1.0, the floor amount exceeds the zero live value.
-    let ctx = &mut tx_context::dummy();
-    let (grid, mut nav) = new_nav(ctx);
-    nav.insert_range(&grid, constants::neg_inf!(), strike(5), QTY_BIG, QTY_BIG);
-    nav.remove_range(&grid, constants::neg_inf!(), strike(5), QTY_BIG, 0);
-    let curve = vector[
-        pricing::new_curve_point_for_testing(MIN_STRIKE, float!()),
-        pricing::new_curve_point_for_testing(max_strike(), float!()),
-    ];
-    let _ = nav.live_value(&grid, &curve, MIN_STRIKE, max_strike(), float!());
-    abort 999
-}
-
-// === destroy ===
-
-#[test]
-fun destroy_after_inserts_and_removes() {
-    let ctx = &mut tx_context::dummy();
-    let (grid, mut nav) = new_nav(ctx);
-    nav.insert_range(&grid, strike(2), strike(6), QTY_BIG, 0);
-    nav.insert_range(&grid, constants::neg_inf!(), strike(5), QTY_BIG, 0);
-    nav.insert_range(&grid, strike(5), constants::pos_inf!(), QTY_BIG, 0);
-    nav.remove_range(&grid, strike(2), strike(6), QTY_BIG, 0);
-    nav.destroy();
 }

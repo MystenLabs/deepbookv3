@@ -18,6 +18,7 @@ Read this manual-trigger file when the user asks for a code review. It is routed
 - Flow and branching friction: trace the affected flows end to end and identify new dependencies, surprising sequencing, non-landable intermediate states, or branches that now do too much.
 - Intuitive behavior: check whether names, public APIs, events, and state transitions match what a protocol integrator or maintainer would expect.
 - Ownership and responsibility boundaries for modules/functions: verify state is mutated by its owner, helpers do not absorb parent responsibilities, and callers do not duplicate leaf invariants without a sequencing reason.
+- Producer-side policy: flag cross-module returns that pre-apply a consumer's policy — especially lossy transforms (clamp at zero, saturating subtraction, `min`/`max`, rounding) that a downstream consumer then corrects for or re-derives. Bug signatures: the same economic quantity clamped at two altitudes, stance-named returns (`*_optimistic`, `net_*`), or tests that must invert a producer's step to state expectations.
 
 ## Comments and Documentation
 
@@ -66,3 +67,4 @@ Read this manual-trigger file when the user asks for a code review. It is routed
 - [ ] Are all constants imported from the `constants` module, not hardcoded?
 - [ ] Do all `expected_failure` tests specify a named abort code (no bare `expected_failure`)?
 - [ ] Do timestamp updates match the field's documented semantics?
+- [ ] Do cross-module returns carry owned facts, with every lossy clamp applied once at the policy owner?

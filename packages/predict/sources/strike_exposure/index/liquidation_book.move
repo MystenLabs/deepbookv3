@@ -53,6 +53,18 @@ public(package) fun is_liquidated(book: &LiquidationBook, order: &Order): bool {
     book.liquidated_orders.contains(order.id())
 }
 
+public(package) fun contains_active_order(book: &LiquidationBook, order: &Order): bool {
+    if (!order.is_leveraged() || book.active_order_count == 0) return false;
+
+    let order_id = order.id();
+    let page_ix = lower_bound(&book.max_order_ids, order_id);
+    if (page_ix >= book.page_ids.length()) return false;
+
+    let page = &book.pages[book.page_ids[page_ix]];
+    let offset = lower_bound(&page.order_ids, order_id);
+    offset < page.order_ids.length() && page.order_ids[offset] == order_id
+}
+
 public(package) fun new(ctx: &mut TxContext): LiquidationBook {
     LiquidationBook {
         pages: table::new(ctx),
@@ -75,17 +87,15 @@ public(package) fun select_liquidation_candidates(
         return candidates
     };
 
-    let divisor = constants::liquidation_head_scan_divisor!();
-    let mut head_budget = budget / divisor;
-    if (budget % divisor != 0) {
-        head_budget = head_budget + 1;
-    };
+    let tail_budget = budget / constants::liquidation_tail_scan_divisor!();
+    let head_budget = budget - tail_budget;
     let tail_start = book.collect_head_candidates(&mut candidates, head_budget);
     let scan_budget = budget - candidates.length();
     book.collect_passive_candidates(&mut candidates, scan_budget, tail_start);
     candidates
 }
 
+/// Index a leveraged order for liquidation scanning; no-op for 1x orders, aborts if already liquidated.
 public(package) fun insert_order(book: &mut LiquidationBook, order: &Order) {
     if (!order.is_leveraged()) return;
 
@@ -94,12 +104,14 @@ public(package) fun insert_order(book: &mut LiquidationBook, order: &Order) {
     book.insert_active_order_id(order_id);
 }
 
+/// Remove a leveraged order from the active scan index; no-op for 1x orders.
 public(package) fun remove_order(book: &mut LiquidationBook, order: &Order) {
     if (!order.is_leveraged()) return;
 
     book.remove_active_order_id(order.id());
 }
 
+/// Remove the order from the active scan index and record a liquidated tombstone.
 public(package) fun mark_liquidated(book: &mut LiquidationBook, order: &Order) {
     let order_id = order.id();
     book.remove_active_order_id(order_id);
@@ -107,6 +119,7 @@ public(package) fun mark_liquidated(book: &mut LiquidationBook, order: &Order) {
     book.liquidated_orders.add(order_id, true);
 }
 
+/// Clear a liquidated tombstone once the holder has redeemed the worthless order.
 public(package) fun clear_liquidated(book: &mut LiquidationBook, order: &Order) {
     let order_id = order.id();
     assert!(book.liquidated_orders.contains(order_id), ELiquidatedOrderNotFound);

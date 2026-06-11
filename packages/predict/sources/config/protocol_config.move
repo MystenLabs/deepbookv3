@@ -10,34 +10,55 @@ module deepbook_predict::protocol_config;
 
 use deepbook_predict::{
     admin::AdminCap,
+    config_constants,
     config_events,
     ewma_config::{Self, EwmaConfig},
-    fee_config::{Self, FeeConfig},
-    leverage_config::{Self, LeverageConfig},
+    expiry_cash_config::{Self, ExpiryCashConfig},
     market_oracle_config::{Self, MarketOracleConfig},
     pricing_config::{Self, PricingConfig},
-    risk_config::{Self, RiskConfig},
-    stake_config::{Self, StakeConfig}
+    stake_config::{Self, StakeConfig},
+    strike_exposure_config::{Self, StrikeExposureConfig}
 };
+use sui::table::{Self, Table};
 
 const ETradingPaused: u64 = 0;
 const EValuationInProgress: u64 = 1;
 const EValuationNotInProgress: u64 = 2;
+const EExpiryConfigAlreadyExists: u64 = 3;
+const EExpiryConfigNotFound: u64 = 4;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
     id: UID,
     pricing_config: PricingConfig,
-    fee_config: FeeConfig,
-    risk_config: RiskConfig,
-    market_oracle_config: MarketOracleConfig,
-    leverage_config: LeverageConfig,
+    /// Merged protocol and insurance reserve share in FLOAT_SCALING.
+    protocol_reserve_profit_share: u64,
+    /// Multiplier on the PLP withdraw uncertainty-band fee, in FLOAT_SCALING.
+    withdraw_fee_alpha: u64,
+    /// Total liquidation candidates checked before live pool valuation.
+    valuation_liquidation_budget: u64,
+    /// Total liquidation candidates checked before mint and redeem flows.
+    trade_liquidation_budget: u64,
+    market_oracle_template_config: MarketOracleConfig,
+    expiry_cash_template_config: ExpiryCashConfig,
+    strike_exposure_template_config: StrikeExposureConfig,
     stake_config: StakeConfig,
     ewma_config: EwmaConfig,
     /// Blocks new risk creation while true.
     trading_paused: bool,
     /// Transaction-local lock held while a full-pool valuation is assembled.
     valuation_in_progress: bool,
+    /// Expiry market ID -> mutable expiry-specific protocol controls.
+    per_expiry: Table<ID, ExpiryRuntimeConfig>,
+}
+
+/// Mutable per-expiry runtime controls. Not snapshotted; flows read the current
+/// row for the expiry market they operate on.
+public struct ExpiryRuntimeConfig has store {
+    /// When true, new mints abort. Other expiry flows remain available.
+    mint_paused: bool,
+    /// Max net DUSDC the pool may have funded into this expiry.
+    max_expiry_funding: u64,
 }
 
 // === Public Functions ===
@@ -52,29 +73,76 @@ public fun trading_paused(config: &ProtocolConfig): bool {
     config.trading_paused
 }
 
-/// Set the base fee multiplier.
-public fun set_base_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
-    config.assert_not_valuation_in_progress();
-    config.pricing_config.set_base_fee(fee);
-    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
+/// Return whether new mints are paused for one expiry market.
+public fun expiry_mint_paused(config: &ProtocolConfig, expiry_market_id: ID): bool {
+    config.expiry_config(expiry_market_id).mint_paused
 }
 
-/// Set the minimum fee floor.
-public fun set_min_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
-    config.assert_not_valuation_in_progress();
-    config.pricing_config.set_min_fee(fee);
-    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
+/// Return the max net DUSDC the pool may have funded into one expiry.
+public fun expiry_max_funding(config: &ProtocolConfig, expiry_market_id: ID): u64 {
+    config.expiry_config(expiry_market_id).max_expiry_funding
 }
 
-/// Set the maximum floor-index increase snapshotted by future expiry markets.
-public fun set_template_max_expiry_floor_premium(
+/// Set the base fee multiplier snapshotted by future expiry markets.
+public fun set_template_base_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
+    config.assert_not_valuation_in_progress();
+    config.strike_exposure_template_config.set_base_fee(fee);
+    config_events::emit_strike_exposure_template_config_updated(
+        config.id(),
+        &config.strike_exposure_template_config,
+    );
+}
+
+/// Set the minimum fee floor snapshotted by future expiry markets.
+public fun set_template_min_fee(config: &mut ProtocolConfig, _admin_cap: &AdminCap, fee: u64) {
+    config.assert_not_valuation_in_progress();
+    config.strike_exposure_template_config.set_min_fee(fee);
+    config_events::emit_strike_exposure_template_config_updated(
+        config.id(),
+        &config.strike_exposure_template_config,
+    );
+}
+
+/// Set the expiry-fee ramp window snapshotted by future expiry markets.
+public fun set_template_expiry_fee_window_ms(
     config: &mut ProtocolConfig,
     _admin_cap: &AdminCap,
     value: u64,
 ) {
     config.assert_not_valuation_in_progress();
-    config.leverage_config.set_template_max_expiry_floor_premium(value);
-    config_events::emit_leverage_config_updated(config.id(), &config.leverage_config);
+    config.strike_exposure_template_config.set_expiry_fee_window_ms(value);
+    config_events::emit_strike_exposure_template_config_updated(
+        config.id(),
+        &config.strike_exposure_template_config,
+    );
+}
+
+/// Set the expiry-fee max multiplier snapshotted by future expiry markets.
+public fun set_template_expiry_fee_max_multiplier(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.strike_exposure_template_config.set_expiry_fee_max_multiplier(value);
+    config_events::emit_strike_exposure_template_config_updated(
+        config.id(),
+        &config.strike_exposure_template_config,
+    );
+}
+
+/// Set the terminal floor index snapshotted by future expiry markets.
+public fun set_template_terminal_floor_index(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.strike_exposure_template_config.set_terminal_floor_index(value);
+    config_events::emit_strike_exposure_template_config_updated(
+        config.id(),
+        &config.strike_exposure_template_config,
+    );
 }
 
 /// Set the liquidation LTV snapshotted by future expiry markets.
@@ -84,8 +152,25 @@ public fun set_template_liquidation_ltv(
     value: u64,
 ) {
     config.assert_not_valuation_in_progress();
-    config.leverage_config.set_template_liquidation_ltv(value);
-    config_events::emit_leverage_config_updated(config.id(), &config.leverage_config);
+    config.strike_exposure_template_config.set_liquidation_ltv(value);
+    config_events::emit_strike_exposure_template_config_updated(
+        config.id(),
+        &config.strike_exposure_template_config,
+    );
+}
+
+/// Set the backing-buffer lambda snapshotted by future expiry markets.
+public fun set_template_backing_buffer_lambda(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config.strike_exposure_template_config.set_backing_buffer_lambda(value);
+    config_events::emit_strike_exposure_template_config_updated(
+        config.id(),
+        &config.strike_exposure_template_config,
+    );
 }
 
 /// Set the staking benefit thresholds: `lower` (half of max benefits) and
@@ -98,20 +183,35 @@ public fun set_benefit_powers(
 ) {
     config.assert_not_valuation_in_progress();
     config.stake_config.set_benefit_powers(lower, upper);
+    config_events::emit_stake_config_updated(config.id(), &config.stake_config);
 }
 
-/// Set the global minimum allowed mint price.
-public fun set_min_ask_price(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
+/// Set the minimum all-in mint price snapshotted by future expiry markets.
+public fun set_template_min_ask_price(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
     config.assert_not_valuation_in_progress();
-    config.pricing_config.set_min_ask_price(value);
-    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
+    config.strike_exposure_template_config.set_min_ask_price(value);
+    config_events::emit_strike_exposure_template_config_updated(
+        config.id(),
+        &config.strike_exposure_template_config,
+    );
 }
 
-/// Set the global maximum allowed mint price.
-public fun set_max_ask_price(config: &mut ProtocolConfig, _admin_cap: &AdminCap, value: u64) {
+/// Set the maximum all-in mint price snapshotted by future expiry markets.
+public fun set_template_max_ask_price(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    value: u64,
+) {
     config.assert_not_valuation_in_progress();
-    config.pricing_config.set_max_ask_price(value);
-    config_events::emit_pricing_config_updated(config.id(), &config.pricing_config);
+    config.strike_exposure_template_config.set_max_ask_price(value);
+    config_events::emit_strike_exposure_template_config_updated(
+        config.id(),
+        &config.strike_exposure_template_config,
+    );
 }
 
 /// Set the live Pyth spot freshness threshold.
@@ -154,8 +254,29 @@ public fun set_protocol_reserve_profit_share(
     protocol_reserve_profit_share: u64,
 ) {
     config.assert_not_valuation_in_progress();
-    config.fee_config.set_protocol_reserve_profit_share(protocol_reserve_profit_share);
-    config_events::emit_fee_config_updated(config.id(), &config.fee_config);
+    config_constants::assert_protocol_reserve_profit_share(protocol_reserve_profit_share);
+    config.protocol_reserve_profit_share = protocol_reserve_profit_share;
+    config_events::emit_fee_config_updated(
+        config.id(),
+        config.protocol_reserve_profit_share,
+        config.withdraw_fee_alpha,
+    );
+}
+
+/// Set the PLP withdraw uncertainty-band fee multiplier.
+public fun set_withdraw_fee_alpha(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    withdraw_fee_alpha: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config_constants::assert_withdraw_fee_alpha(withdraw_fee_alpha);
+    config.withdraw_fee_alpha = withdraw_fee_alpha;
+    config_events::emit_fee_config_updated(
+        config.id(),
+        config.protocol_reserve_profit_share,
+        config.withdraw_fee_alpha,
+    );
 }
 
 /// Set the trading loss rebate rate template used by future expiry markets.
@@ -165,8 +286,11 @@ public fun set_template_trading_loss_rebate_rate(
     value: u64,
 ) {
     config.assert_not_valuation_in_progress();
-    config.fee_config.set_trading_loss_rebate_rate(value);
-    config_events::emit_fee_config_updated(config.id(), &config.fee_config);
+    config.expiry_cash_template_config.set_trading_loss_rebate_rate(value);
+    config_events::emit_expiry_cash_template_config_updated(
+        config.id(),
+        &config.expiry_cash_template_config,
+    );
 }
 
 /// Set the total liquidation candidate budget used before live valuations.
@@ -176,8 +300,13 @@ public fun set_valuation_liquidation_budget(
     budget: u64,
 ) {
     config.assert_not_valuation_in_progress();
-    config.risk_config.set_valuation_liquidation_budget(budget);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
+    config_constants::assert_valuation_liquidation_budget(budget);
+    config.valuation_liquidation_budget = budget;
+    config_events::emit_risk_config_updated(
+        config.id(),
+        config.valuation_liquidation_budget,
+        config.trade_liquidation_budget,
+    );
 }
 
 /// Set the total liquidation candidate budget used before mint and redeem flows.
@@ -187,8 +316,13 @@ public fun set_trade_liquidation_budget(
     budget: u64,
 ) {
     config.assert_not_valuation_in_progress();
-    config.risk_config.set_trade_liquidation_budget(budget);
-    config_events::emit_risk_config_updated(config.id(), &config.risk_config);
+    config_constants::assert_trade_liquidation_budget(budget);
+    config.trade_liquidation_budget = budget;
+    config_events::emit_risk_config_updated(
+        config.id(),
+        config.valuation_liquidation_budget,
+        config.trade_liquidation_budget,
+    );
 }
 
 /// Set the settlement freshness threshold template for future market oracles.
@@ -198,34 +332,10 @@ public fun set_market_oracle_template_settlement_freshness_ms(
     value: u64,
 ) {
     config.assert_not_valuation_in_progress();
-    config.market_oracle_config.set_settlement_freshness_ms(value);
+    config.market_oracle_template_config.set_settlement_freshness_ms(value);
     config_events::emit_market_oracle_template_config_updated(
         config.id(),
-        &config.market_oracle_config,
-    );
-}
-
-/// Set basis guard bounds template for future market oracles.
-public fun set_market_oracle_template_basis_bounds(
-    config: &mut ProtocolConfig,
-    _admin_cap: &AdminCap,
-    max_spot_deviation: u64,
-    max_basis_deviation: u64,
-    min_basis: u64,
-    max_basis: u64,
-) {
-    config.assert_not_valuation_in_progress();
-    config
-        .market_oracle_config
-        .set_basis_bounds(
-            max_spot_deviation,
-            max_basis_deviation,
-            min_basis,
-            max_basis,
-        );
-    config_events::emit_market_oracle_template_config_updated(
-        config.id(),
-        &config.market_oracle_config,
+        &config.market_oracle_template_config,
     );
 }
 
@@ -254,26 +364,48 @@ public fun set_trading_paused(config: &mut ProtocolConfig, _admin_cap: &AdminCap
     config.set_trading_paused_internal(paused);
 }
 
+/// Set whether new mints are paused for one expiry market.
+public fun set_expiry_mint_paused(
+    config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
+    expiry_market_id: ID,
+    paused: bool,
+) {
+    config.set_expiry_mint_paused_internal(expiry_market_id, paused);
+}
+
 // === Public-Package Functions ===
 
 public(package) fun pricing_config(config: &ProtocolConfig): &PricingConfig {
     &config.pricing_config
 }
 
-public(package) fun fee_config(config: &ProtocolConfig): &FeeConfig {
-    &config.fee_config
+public(package) fun protocol_reserve_profit_share(config: &ProtocolConfig): u64 {
+    config.protocol_reserve_profit_share
 }
 
-public(package) fun risk_config(config: &ProtocolConfig): &RiskConfig {
-    &config.risk_config
+public(package) fun withdraw_fee_alpha(config: &ProtocolConfig): u64 {
+    config.withdraw_fee_alpha
 }
 
-public(package) fun market_oracle_config(config: &ProtocolConfig): &MarketOracleConfig {
-    &config.market_oracle_config
+public(package) fun valuation_liquidation_budget(config: &ProtocolConfig): u64 {
+    config.valuation_liquidation_budget
 }
 
-public(package) fun leverage_config(config: &ProtocolConfig): &LeverageConfig {
-    &config.leverage_config
+public(package) fun trade_liquidation_budget(config: &ProtocolConfig): u64 {
+    config.trade_liquidation_budget
+}
+
+public(package) fun market_oracle_config_snapshot(config: &ProtocolConfig): MarketOracleConfig {
+    market_oracle_config::snapshot(&config.market_oracle_template_config)
+}
+
+public(package) fun expiry_cash_config_snapshot(config: &ProtocolConfig): ExpiryCashConfig {
+    expiry_cash_config::snapshot(&config.expiry_cash_template_config)
+}
+
+public(package) fun strike_exposure_config_snapshot(config: &ProtocolConfig): StrikeExposureConfig {
+    strike_exposure_config::snapshot(&config.strike_exposure_template_config)
 }
 
 public(package) fun stake_config(config: &ProtocolConfig): &StakeConfig {
@@ -282,6 +414,32 @@ public(package) fun stake_config(config: &ProtocolConfig): &StakeConfig {
 
 public(package) fun ewma_config(config: &ProtocolConfig): &EwmaConfig {
     &config.ewma_config
+}
+
+public(package) fun register_expiry_runtime_config(
+    config: &mut ProtocolConfig,
+    expiry_market_id: ID,
+) {
+    assert!(!config.per_expiry.contains(expiry_market_id), EExpiryConfigAlreadyExists);
+    config
+        .per_expiry
+        .add(
+            expiry_market_id,
+            ExpiryRuntimeConfig {
+                mint_paused: false,
+                max_expiry_funding: config_constants::default_max_expiry_funding!(),
+            },
+        );
+}
+
+public(package) fun set_expiry_max_funding(
+    config: &mut ProtocolConfig,
+    expiry_market_id: ID,
+    funding: u64,
+) {
+    config.assert_not_valuation_in_progress();
+    config_constants::assert_max_expiry_funding(funding);
+    config.expiry_config_mut(expiry_market_id).max_expiry_funding = funding;
 }
 
 /// Abort unless trading mutations are currently allowed.
@@ -318,6 +476,12 @@ public(package) fun pause_trading(config: &mut ProtocolConfig) {
     config.set_trading_paused_internal(true);
 }
 
+/// Force `mint_paused = true` for one expiry. Reserved for `PauseCap` holders
+/// going through the registry; cannot be used to unpause.
+public(package) fun pause_expiry_mint(config: &mut ProtocolConfig, expiry_market_id: ID) {
+    config.set_expiry_mint_paused_internal(expiry_market_id, true);
+}
+
 /// Begin a transaction-local full-pool valuation lock.
 public(package) fun begin_valuation(config: &mut ProtocolConfig) {
     config.assert_not_valuation_in_progress();
@@ -336,29 +500,50 @@ fun set_trading_paused_internal(config: &mut ProtocolConfig, paused: bool) {
     config_events::emit_trading_paused_updated(config.id(), paused);
 }
 
+fun set_expiry_mint_paused_internal(
+    config: &mut ProtocolConfig,
+    expiry_market_id: ID,
+    paused: bool,
+) {
+    config.assert_not_valuation_in_progress();
+    config.expiry_config_mut(expiry_market_id).mint_paused = paused;
+    config_events::emit_expiry_market_mint_paused_updated(expiry_market_id, paused);
+}
+
 /// Abort unless trading is not paused.
 fun assert_not_trading_paused(config: &ProtocolConfig) {
     assert!(!config.trading_paused, ETradingPaused);
+}
+
+fun expiry_config(config: &ProtocolConfig, expiry_market_id: ID): &ExpiryRuntimeConfig {
+    assert!(config.per_expiry.contains(expiry_market_id), EExpiryConfigNotFound);
+    config.per_expiry.borrow(expiry_market_id)
+}
+
+fun expiry_config_mut(config: &mut ProtocolConfig, expiry_market_id: ID): &mut ExpiryRuntimeConfig {
+    assert!(config.per_expiry.contains(expiry_market_id), EExpiryConfigNotFound);
+    config.per_expiry.borrow_mut(expiry_market_id)
 }
 
 fun new(ctx: &mut TxContext): ProtocolConfig {
     ProtocolConfig {
         id: object::new(ctx),
         pricing_config: pricing_config::new(),
-        fee_config: fee_config::new(),
-        risk_config: risk_config::new(),
-        market_oracle_config: market_oracle_config::new(),
-        leverage_config: leverage_config::new(),
+        protocol_reserve_profit_share: config_constants::default_protocol_reserve_profit_share!(),
+        withdraw_fee_alpha: config_constants::default_withdraw_fee_alpha!(),
+        valuation_liquidation_budget: config_constants::default_valuation_liquidation_budget!(),
+        trade_liquidation_budget: config_constants::default_trade_liquidation_budget!(),
+        market_oracle_template_config: market_oracle_config::new(),
+        expiry_cash_template_config: expiry_cash_config::new(),
+        strike_exposure_template_config: strike_exposure_config::new(),
         stake_config: stake_config::new(),
         ewma_config: ewma_config::new(),
         trading_paused: false,
         valuation_in_progress: false,
+        per_expiry: table::new(ctx),
     }
 }
 
-// === Test-Only Functions ===
-
-#[test_only]
-public fun new_for_testing(ctx: &mut TxContext): ProtocolConfig {
-    new(ctx)
-}
+// `new_for_testing` removed: tests obtain the ProtocolConfig that
+// `registry::init_for_testing` shares via `create_and_share`, taken with
+// `take_shared<ProtocolConfig>()`.

@@ -4,12 +4,7 @@
 #[test_only]
 module deepbook_predict::predict_manager_tests;
 
-use deepbook_predict::{
-    builder_code,
-    predict_manager::{Self, PredictManager},
-    registry,
-    test_constants
-};
+use deepbook_predict::{predict_manager::{Self, PredictManager}, registry, test_constants};
 use dusdc::dusdc::DUSDC;
 use std::unit_test::{assert_eq, destroy};
 use sui::{coin, test_scenario::{Self as test, return_shared}};
@@ -20,7 +15,6 @@ const FAKE_EXPIRY_ID: address = @0xCAFE;
 const FAKE_EXPIRY_ID_2: address = @0xBABE;
 const ORDER_ID_A: u256 = 42;
 const ORDER_ID_B: u256 = 43;
-const BUILDER_INDEX: u64 = 7;
 const FEE_AMOUNT: u64 = 5_000;
 const CASH_PAID: u64 = 100_000;
 const CASH_RECEIVED: u64 = 60_000;
@@ -133,49 +127,7 @@ fun share_makes_manager_take_shared() {
     scenario.end();
 }
 
-// === builder_code_id setter / unsetter ===
-
-#[test]
-fun builder_code_id_starts_none_then_set_and_unset() {
-    let (mut scenario, registry_id) = setup();
-    let mut manager = create_alice_manager(&mut scenario, registry_id);
-
-    assert!(manager.builder_code_id().is_none());
-
-    // Alice creates a builder code for herself.
-    let code = builder_code::new_for_testing(
-        test_constants::alice(),
-        BUILDER_INDEX,
-        scenario.ctx(),
-    );
-    manager.set_builder_code(&code, scenario.ctx());
-
-    let stored = manager.builder_code_id();
-    assert!(stored.is_some());
-    assert_eq!(*stored.borrow(), code.id());
-
-    manager.unset_builder_code(scenario.ctx());
-    assert!(manager.builder_code_id().is_none());
-
-    destroy(manager);
-    builder_code::destroy_for_testing(code);
-    scenario.end();
-}
-
-#[test, expected_failure(abort_code = predict_manager::ENotOwner)]
-fun set_builder_code_by_non_owner_aborts() {
-    let (mut scenario, registry_id) = setup();
-    let mut manager = create_alice_manager(&mut scenario, registry_id);
-    let code = builder_code::new_for_testing(
-        test_constants::alice(),
-        BUILDER_INDEX,
-        scenario.ctx(),
-    );
-
-    scenario.next_tx(test_constants::bob());
-    manager.set_builder_code(&code, scenario.ctx());
-    abort 999
-}
+// === builder_code_id unsetter ===
 
 #[test, expected_failure(abort_code = predict_manager::ENotOwner)]
 fun unset_builder_code_by_non_owner_aborts() {
@@ -206,11 +158,11 @@ fun add_position_then_remove_round_trip() {
     let mut manager = create_alice_manager(&mut scenario, registry_id);
     let expiry = FAKE_EXPIRY_ID.to_id();
 
-    manager.add_position(expiry, ORDER_ID_A);
+    manager.add_position(expiry, ORDER_ID_A, ORDER_ID_A);
     assert!(manager.has_position(expiry, ORDER_ID_A));
     assert_eq!(manager.expiry_position_count(expiry), 1);
 
-    manager.add_position(expiry, ORDER_ID_B);
+    manager.add_position(expiry, ORDER_ID_B, ORDER_ID_B);
     assert_eq!(manager.expiry_position_count(expiry), 2);
 
     manager.remove_position(expiry, ORDER_ID_A);
@@ -233,8 +185,8 @@ fun positions_are_scoped_per_expiry() {
     let expiry_b = FAKE_EXPIRY_ID_2.to_id();
 
     // Same order_id under two different expiries is two distinct positions.
-    manager.add_position(expiry_a, ORDER_ID_A);
-    manager.add_position(expiry_b, ORDER_ID_A);
+    manager.add_position(expiry_a, ORDER_ID_A, ORDER_ID_A);
+    manager.add_position(expiry_b, ORDER_ID_A, ORDER_ID_A);
 
     assert!(manager.has_position(expiry_a, ORDER_ID_A));
     assert!(manager.has_position(expiry_b, ORDER_ID_A));
@@ -250,8 +202,8 @@ fun add_position_duplicate_aborts() {
     let (mut scenario, registry_id) = setup();
     let mut manager = create_alice_manager(&mut scenario, registry_id);
 
-    manager.add_position(FAKE_EXPIRY_ID.to_id(), ORDER_ID_A);
-    manager.add_position(FAKE_EXPIRY_ID.to_id(), ORDER_ID_A);
+    manager.add_position(FAKE_EXPIRY_ID.to_id(), ORDER_ID_A, ORDER_ID_A);
+    manager.add_position(FAKE_EXPIRY_ID.to_id(), ORDER_ID_A, ORDER_ID_A);
     abort 999
 }
 
@@ -397,7 +349,7 @@ fun resolve_expiry_summary_with_open_positions_aborts() {
     let mut manager = create_alice_manager(&mut scenario, registry_id);
     let expiry = FAKE_EXPIRY_ID.to_id();
 
-    manager.add_position(expiry, ORDER_ID_A);
+    manager.add_position(expiry, ORDER_ID_A, ORDER_ID_A);
     let (_, _) = manager.resolve_expiry_summary(expiry);
     abort 999
 }
@@ -548,7 +500,7 @@ fun trade_cap_holder_can_generate_proof() {
     let trade_cap = manager.mint_trade_cap(scenario.ctx());
 
     scenario.next_tx(test_constants::bob());
-    let proof = manager.generate_proof_as_trader(&trade_cap, scenario.ctx());
+    let proof = manager.generate_proof_as_trader(&trade_cap);
     manager.validate_proof(&proof);
 
     destroy(trade_cap);
@@ -565,7 +517,7 @@ fun revoked_trade_cap_cannot_generate_proof() {
     manager.revoke_cap(object::borrow_id(&trade_cap), scenario.ctx());
 
     scenario.next_tx(test_constants::bob());
-    let _proof = manager.generate_proof_as_trader(&trade_cap, scenario.ctx());
+    let _proof = manager.generate_proof_as_trader(&trade_cap);
 
     abort 999
 }

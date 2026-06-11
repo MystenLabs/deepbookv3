@@ -61,11 +61,13 @@ INITIAL_TOTAL_PLP_SUPPLY = VAULT_SEED
 EXPIRY_CASH_FLOOR = 50_000 * DUSDC_DECIMALS
 EXPIRY_REBALANCE_PCT = 100_000_000
 MAX_EXPIRY_FUNDING = 250_000 * DUSDC_DECIMALS
+BACKING_BUFFER_LAMBDA = 250_000_000
 TRADE_LIQUIDATION_BUDGET = 24
 VALUATION_LIQUIDATION_BUDGET = 192
 LIQUIDATION_HEAD_SCAN_DIVISOR = 3
 CURVE_SAMPLES = 50
 PROTOCOL_RESERVE_PROFIT_SHARE = 400_000_000
+WITHDRAW_FEE_ALPHA = 250_000_000
 TRADING_LOSS_REBATE_RATE = 500_000_000
 TERMINAL_REBATE_FRACTION = 0
 # Admin-tunable per-feed default, mirrored from config_constants::default_expiry_fee_window_ms!().
@@ -156,10 +158,12 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
     global LIQUIDATION_HEAD_SCAN_DIVISOR
     global CURVE_SAMPLES
     global PROTOCOL_RESERVE_PROFIT_SHARE
+    global WITHDRAW_FEE_ALPHA
     global TRADING_LOSS_REBATE_RATE
     global TERMINAL_REBATE_FRACTION
     global EXPIRY_FEE_WINDOW_MS
     global EXPIRY_FEE_MAX_MULTIPLIER
+    global BACKING_BUFFER_LAMBDA
     global LEVERAGE_FLOOR_WINDOW_MS
     global MAX_EXPIRY_FLOOR_PREMIUM
     global LIQUIDATION_LTV
@@ -194,11 +198,18 @@ def apply_scenario_config(config: dict[str, Any], long_run: bool = False) -> Non
         "protocol_reserve_profit_share",
         PROTOCOL_RESERVE_PROFIT_SHARE,
     )
+    WITHDRAW_FEE_ALPHA = _config_int(config, "protocol", "withdraw_fee_alpha", WITHDRAW_FEE_ALPHA)
     TRADING_LOSS_REBATE_RATE = _config_int(
         config,
         "protocol",
         "trading_loss_rebate_rate",
         TRADING_LOSS_REBATE_RATE,
+    )
+    BACKING_BUFFER_LAMBDA = _config_int(
+        config,
+        "protocol",
+        "backing_buffer_lambda",
+        BACKING_BUFFER_LAMBDA,
     )
     TERMINAL_REBATE_FRACTION = FLOAT_SCALING if long_run else 0
     EXPIRY_FEE_WINDOW_MS = _config_int(
@@ -492,11 +503,6 @@ def deepbook_div(x: int, y: int) -> int:
     return x * FLOAT_SCALING // y
 
 
-def mul_div_round_up(a: int, b: int, c: int) -> int:
-    numerator = a * b
-    return numerator // c + (0 if numerator % c == 0 else 1)
-
-
 def deepbook_mul(x: int, y: int) -> int:
     return x * y // FLOAT_SCALING
 
@@ -542,7 +548,7 @@ def assert_valid_leverage_tier(entry_probability: int, leverage: int) -> None:
 
 
 def user_contribution_from_exposure_value(exposure_value: int, leverage: int) -> int:
-    return mul_div_round_up(exposure_value, FLOAT_SCALING, leverage_multiplier(leverage))
+    return deepbook_div(exposure_value, leverage_multiplier(leverage))
 
 
 def assert_mint_principal_above_min(contribution: int) -> None:
@@ -947,23 +953,21 @@ def order_id_for_terms(order: dict[str, Any]) -> int:
         lower_boundary_index=order["lower_boundary_index"],
         higher_boundary_index=order["higher_boundary_index"],
         max_boundary_index=ORACLE_GRID_TICKS + 2,
-        leverage=order["leverage"],
-        entry_probability=order["entry_probability"],
+        floor_shares=order_floor_shares(order),
         quantity=order["quantity"],
         sequence=order["sequence"],
         position_lot_size=POSITION_LOT_SIZE,
-        float_scaling=FLOAT_SCALING,
     )
 
 
 def floor_amount_for_index(floor_shares: int, floor_index: int) -> int:
-    return mul_div_round_up(floor_shares, floor_index, FLOAT_SCALING)
+    return deepbook_mul(floor_shares, floor_index)
 
 
 def order_floor_shares_from_seed(floor_seed_amount: int, leverage: int, open_floor_index: int) -> int:
     if leverage == LEVERAGE_ONE_X:
         return 0
-    return mul_div_round_up(floor_seed_amount, FLOAT_SCALING, open_floor_index)
+    return deepbook_div(floor_seed_amount, open_floor_index)
 
 
 def assert_terminal_ltv_mint_allowed(
@@ -973,14 +977,14 @@ def assert_terminal_ltv_mint_allowed(
     open_floor_index: int = FLOAT_SCALING,
 ) -> None:
     floor_shares = order_floor_shares_from_seed(floor_seed_amount, leverage, open_floor_index)
-    terminal_floor = mul_div_round_up(floor_shares, TERMINAL_FLOOR_INDEX, FLOAT_SCALING)
+    terminal_floor = deepbook_mul(floor_shares, TERMINAL_FLOOR_INDEX)
     max_terminal_floor_before_liquidation = mul_div_round_down(quantity, LIQUIDATION_LTV, FLOAT_SCALING)
     if terminal_floor >= max_terminal_floor_before_liquidation:
         raise ValueError("terminal floor exceeds liquidation LTV")
 
 
 def liquidation_threshold_value(floor_amount: int) -> int:
-    return mul_div_round_up(floor_amount, FLOAT_SCALING, LIQUIDATION_LTV)
+    return deepbook_div(floor_amount, LIQUIDATION_LTV)
 
 
 def assert_mint_above_liquidation_threshold(
@@ -1016,6 +1020,8 @@ def model_floor_index(model: dict[str, Any], timestamp_ms: int | None = None) ->
 
 
 def order_floor_shares(order: dict[str, Any]) -> int:
+    if "floor_shares" in order:
+        return order["floor_shares"]
     return order_floor_shares_from_seed(
         order["floor_seed_amount"],
         order["leverage"],
@@ -1071,6 +1077,7 @@ def insert_live_order(model: dict[str, Any], order: dict[str, Any]) -> None:
     )
     model["payout"].insert_range(order["lower"], order["higher"], terminal_payout, live_backing_payout)
     model["nav"].insert_range(order["lower"], order["higher"], order["quantity"], floor_shares)
+    model["live_backing_liability"] += live_backing_payout
     invalidate_valuation_cache(model)
     track_minted_boundaries(model, order["lower"], order["higher"])
     insert_active_order(model, order["ref"])
@@ -1093,15 +1100,23 @@ def remove_closed_live_order(
         )
 
     closed_floor_shares = old_floor_shares - remaining_floor_shares
-    closed_terminal_payout = old_terminal_payout - remaining_terminal_payout
-    closed_live_backing_payout = old_live_backing_payout - remaining_live_backing_payout
-    model["payout"].remove_range(
-        order["lower"],
-        order["higher"],
-        closed_terminal_payout,
-        closed_live_backing_payout,
-    )
-    model["nav"].remove_range(order["lower"], order["higher"], close_quantity, closed_floor_shares)
+    model["payout"].remove_range(order["lower"], order["higher"], old_terminal_payout, old_live_backing_payout)
+    model["nav"].remove_range(order["lower"], order["higher"], order["quantity"], old_floor_shares)
+    model["live_backing_liability"] -= old_live_backing_payout
+    if resulting_order is not None:
+        model["payout"].insert_range(
+            resulting_order["lower"],
+            resulting_order["higher"],
+            remaining_terminal_payout,
+            remaining_live_backing_payout,
+        )
+        model["nav"].insert_range(
+            resulting_order["lower"],
+            resulting_order["higher"],
+            resulting_order["quantity"],
+            remaining_floor_shares,
+        )
+        model["live_backing_liability"] += remaining_live_backing_payout
     invalidate_valuation_cache(model)
     return floor_amount_for_index(closed_floor_shares, model_floor_index(model))
 
@@ -1143,28 +1158,36 @@ def build_valuation_curve(model: dict[str, Any]) -> list[dict[str, int]] | None:
     return curve
 
 
-def live_position_liability(model: dict[str, Any], curve: list[dict[str, int]] | None = None) -> int:
+def live_valuation_components(
+    model: dict[str, Any],
+    curve: list[dict[str, int]] | None = None,
+) -> tuple[int, int]:
     key = valuation_curve_key(model)
     if key is None:
-        return 0
+        return (0, 0)
     if curve is None:
         curve = build_valuation_curve(model)
     if curve is None:
-        return 0
+        return (0, 0)
     cache = model["valuation_cache"]
     floor_index = model_floor_index(model)
     liability_key = (key, model["nav"].version, floor_index)
     if cache["liability_key"] == liability_key:
         return cache["liability"]
-    liability = model["nav"].live_value(
+    components = model["nav"].valuation_components(
         curve,
         minted_min_strike=model["minted_min_strike"],
         minted_max_strike=model["minted_max_strike"],
         floor_index=floor_index,
     )
     cache["liability_key"] = liability_key
-    cache["liability"] = liability
-    return liability
+    cache["liability"] = components
+    return components
+
+
+def live_position_liability(model: dict[str, Any], curve: list[dict[str, int]] | None = None) -> int:
+    total_range, total_floor_amount = live_valuation_components(model, curve)
+    return max(0, total_range - total_floor_amount)
 
 
 def compute_pool_value(
@@ -1192,6 +1215,14 @@ def expiry_net_funding(state: dict[str, int]) -> int:
 
 def available_expiry_funding(state: dict[str, int]) -> int:
     return max(0, MAX_EXPIRY_FUNDING - expiry_net_funding(state))
+
+
+def live_backing_reserve(model: dict[str, Any]) -> int:
+    max_live = model["payout"].max_live_backing_payout()
+    gap = model["live_backing_liability"] - max_live
+    if gap < 0:
+        raise ValueError("live backing sum below payout-tree max")
+    return max_live + deepbook_mul(BACKING_BUFFER_LAMBDA, gap)
 
 
 def record_sent_to_expiry(state: dict[str, int], amount: int) -> None:
@@ -1245,7 +1276,7 @@ def materialize_expiry_profit(state: dict[str, int]) -> tuple[int, int, int]:
 
 
 def expiry_rebalance_cash_terms(model: dict[str, Any], state: dict[str, int]) -> tuple[int, int, int]:
-    required_cash = model["payout"].max_live_backing_payout() + deepbook_mul(
+    required_cash = live_backing_reserve(model) + deepbook_mul(
         state["expiry_unresolved_trading_fees"],
         TRADING_LOSS_REBATE_RATE,
     )
@@ -1301,12 +1332,33 @@ def pool_sync_updates_and_value(
     model: dict[str, Any],
     state: dict[str, int],
     curve: list[dict[str, int]] | None = None,
-) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
-    position_liability = live_position_liability(model, curve)
+    verified_floor_amount: int = 0,
+    verified_range: int = 0,
+) -> tuple[list[dict[str, Any]], int, dict[str, int], int]:
+    total_range, total_floor_amount = live_valuation_components(model, curve)
+    position_liability = max(0, total_range - total_floor_amount)
     synced_state = dict(state)
     updates = sync_active_expiry_cash_updates(model, synced_state)
-    pool_value = compute_pool_value(model, synced_state, curve, position_liability)
-    return updates, pool_value, synced_state
+    rebate_reserve = deepbook_mul(
+        synced_state["expiry_unresolved_trading_fees"],
+        TRADING_LOSS_REBATE_RATE,
+    )
+    required_cash = position_liability + rebate_reserve
+    if synced_state["expiry_cash_balance"] < required_cash:
+        raise ValueError("valuation exceeds expiry cash")
+
+    free_cash = synced_state["expiry_cash_balance"] - rebate_reserve
+    unscanned_floor = max(0, total_floor_amount - verified_floor_amount)
+    unscanned_range = max(0, total_range - verified_range)
+    supply_liability = max(0, verified_range - verified_floor_amount) + max(
+        0,
+        unscanned_range - unscanned_floor,
+    )
+    active_expiry_value = max(0, free_cash - supply_liability)
+    pending_protocol_profit = pending_protocol_profit_exclusion(synced_state, active_expiry_value)
+    pool_value = synced_state["vault_idle_balance"] + active_expiry_value - pending_protocol_profit
+    aggregate_band = min(unscanned_floor, unscanned_range)
+    return updates, pool_value, synced_state, aggregate_band
 
 
 def pending_protocol_profit_exclusion(state: dict[str, int], active_expiry_value: int) -> int:
@@ -1349,18 +1401,21 @@ def assert_mint_fee_rate(probability: int, time_to_expiry_ms: int | None = None)
 
 
 def initial_state() -> dict[str, int]:
+    if VAULT_SEED < EXPIRY_CASH_FLOOR:
+        raise ValueError("vault seed is below the setup expiry cash floor")
+
     return {
         "manager_balance": MANAGER_SEED,
-        "expiry_cash_balance": 0,
+        "expiry_cash_balance": EXPIRY_CASH_FLOOR,
         "expiry_unresolved_trading_fees": 0,
-        "vault_idle_balance": VAULT_SEED,
+        "vault_idle_balance": VAULT_SEED - EXPIRY_CASH_FLOOR,
         "vault_protocol_reserve_balance": 0,
-        "expiry_sent_to_expiry": 0,
+        "expiry_sent_to_expiry": EXPIRY_CASH_FLOOR,
         "expiry_received_from_expiry": 0,
         "terminal_accounting_started": 0,
         "terminal_received_watermark": 0,
         "net_losses_to_fill": 0,
-        "profit_basis_debits": 0,
+        "profit_basis_debits": EXPIRY_CASH_FLOOR,
         "profit_basis_credits": 0,
         "vault_total_plp_supply": INITIAL_TOTAL_PLP_SUPPLY,
         "open_order_count": 0,
@@ -1494,7 +1549,7 @@ def order_minted_update(
         "contribution": str(terms["contribution"]),
         "trading_fee": str(fee_amount),
         "builder_fee": "0",
-        "floor_seed_amount": str(terms["floor_seed_amount"]),
+        "penalty_fee": "0",
     }
 
 
@@ -1503,9 +1558,10 @@ def apply_update(state: dict[str, int], update: dict[str, Any]) -> None:
         contribution = int(update["contribution"])
         trading_fee = int(update["trading_fee"])
         builder_fee = int(update["builder_fee"])
+        penalty_fee = int(update["penalty_fee"])
         quantity = int(update["quantity"])
-        state["manager_balance"] -= contribution + trading_fee + builder_fee
-        state["expiry_cash_balance"] += contribution + trading_fee
+        state["manager_balance"] -= contribution + trading_fee + builder_fee + penalty_fee
+        state["expiry_cash_balance"] += contribution + trading_fee + penalty_fee
         state["expiry_unresolved_trading_fees"] += trading_fee
         state["open_order_count"] += 1
         state["open_order_quantity"] += quantity
@@ -1518,11 +1574,12 @@ def apply_update(state: dict[str, int], update: dict[str, Any]) -> None:
         redeem_amount = int(update["redeem_amount"])
         trading_fee = int(update["trading_fee"])
         builder_fee = int(update["builder_fee"])
+        penalty_fee = int(update["penalty_fee"])
         quantity_closed = int(update["quantity_closed"])
         remaining_quantity = int(update["remaining_quantity"])
-        state["manager_balance"] += redeem_amount - trading_fee - builder_fee
+        state["manager_balance"] += redeem_amount - trading_fee - builder_fee - penalty_fee
         state["expiry_cash_balance"] -= redeem_amount
-        state["expiry_cash_balance"] += trading_fee
+        state["expiry_cash_balance"] += trading_fee + penalty_fee
         state["expiry_unresolved_trading_fees"] += trading_fee
         state["open_order_quantity"] -= quantity_closed
         if remaining_quantity == 0:
@@ -1603,15 +1660,17 @@ def assert_liquidation_inputs(model: dict[str, Any]) -> None:
         raise ValueError("liquidation requires prior price and SVI updates")
 
 
-def run_liquidation_pass(
+def run_liquidation_pass_with_verification(
     model: dict[str, Any],
     budget: int,
-) -> list[dict[str, str]]:
+) -> tuple[list[dict[str, str]], int, int]:
     candidates = select_liquidation_candidates(model, budget)
     if not candidates:
-        return []
+        return ([], 0, 0)
     assert_liquidation_inputs(model)
     updates = []
+    verified_floor_amount = 0
+    verified_range = 0
     for ref in candidates:
         order = model["orders"][ref]
         if order["status"] != "active":
@@ -1626,6 +1685,8 @@ def run_liquidation_pass(
         floor_amount = current_order_floor_amount(model, order)
         threshold_value = liquidation_threshold_value(floor_amount)
         if gross_value > threshold_value:
+            verified_floor_amount += floor_amount
+            verified_range += gross_value
             continue
         remove_live_order(model, order)
         mark_order_liquidated(model, ref)
@@ -1641,6 +1702,14 @@ def run_liquidation_pass(
                 "liquidation_ltv": str(LIQUIDATION_LTV),
             }
         )
+    return updates, verified_floor_amount, verified_range
+
+
+def run_liquidation_pass(
+    model: dict[str, Any],
+    budget: int,
+) -> list[dict[str, str]]:
+    updates, _, _ = run_liquidation_pass_with_verification(model, budget)
     return updates
 
 
@@ -1648,12 +1717,22 @@ def append_pool_sync_phase(
     model: dict[str, Any],
     state: dict[str, int],
     updates: list[dict[str, Any]],
-) -> tuple[int, dict[str, int]]:
-    updates.extend(run_liquidation_pass(model, VALUATION_LIQUIDATION_BUDGET))
+) -> tuple[int, dict[str, int], int]:
+    liquidation_updates, verified_floor_amount, verified_range = run_liquidation_pass_with_verification(
+        model,
+        VALUATION_LIQUIDATION_BUDGET,
+    )
+    updates.extend(liquidation_updates)
     curve = build_valuation_curve(model)
-    sync_updates, pool_value, synced_state = pool_sync_updates_and_value(model, state, curve)
+    sync_updates, pool_value, synced_state, aggregate_band = pool_sync_updates_and_value(
+        model,
+        state,
+        curve,
+        verified_floor_amount,
+        verified_range,
+    )
     updates.extend(sync_updates)
-    return pool_value, synced_state
+    return pool_value, synced_state, aggregate_band
 
 
 def track_minted_boundaries(model: dict[str, Any], lower: int, higher: int) -> None:
@@ -1678,6 +1757,7 @@ def mint_order(model: dict[str, Any], row: dict[str, Any], opened_at_ms: int) ->
         model["next_sequence"],
         model_fee_time_to_expiry_ms(model, opened_at_ms),
     )
+    terms = compute_mint_terms(int(update["entry_probability"]), row["quantity"], row["leverage"])
     order = {
         "ref": row["orderRef"],
         "sequence": model["next_sequence"],
@@ -1687,11 +1767,12 @@ def mint_order(model: dict[str, Any], row: dict[str, Any], opened_at_ms: int) ->
         "entry_probability": int(update["entry_probability"]),
         "quantity": row["quantity"],
         "contribution": int(update["contribution"]),
-        "floor_seed_amount": int(update["floor_seed_amount"]),
+        "floor_seed_amount": terms["floor_seed_amount"],
         "opened_at_ms": opened_at_ms,
         "open_floor_index": model_floor_index(model, opened_at_ms),
         "status": "active",
     }
+    order["floor_shares"] = order_floor_shares(order)
     order["lower_boundary_index"] = order_boundary_index(order["lower"])
     order["higher_boundary_index"] = order_boundary_index(order["higher"])
     order["order_id"] = order_id_for_terms(order)
@@ -1739,6 +1820,9 @@ def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
     else:
         replacement_ref = row["replacementOrderRef"] or ref
         replacement_terms = compute_mint_terms(order["entry_probability"], remaining_quantity, order["leverage"])
+        old_floor_shares = order_floor_shares(order)
+        close_fraction = deepbook_div(close_quantity, order["quantity"])
+        remaining_floor_shares = old_floor_shares - deepbook_mul(old_floor_shares, close_fraction)
         replacement = {
             **order,
             "ref": replacement_ref,
@@ -1746,6 +1830,7 @@ def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
             "quantity": remaining_quantity,
             "contribution": replacement_terms["contribution"],
             "floor_seed_amount": replacement_terms["floor_seed_amount"],
+            "floor_shares": remaining_floor_shares,
             "status": "active",
         }
         replacement["order_id"] = order_id_for_terms(replacement)
@@ -1770,6 +1855,7 @@ def redeem_order(model: dict[str, Any], row: dict[str, Any]) -> dict[str, str]:
         "redeem_amount": str(redeem_amount),
         "trading_fee": str(fee),
         "builder_fee": "0",
+        "penalty_fee": "0",
     }
 
 
@@ -1782,7 +1868,11 @@ def supply_update(
     if row["lpRef"] in model["lp_refs"]:
         raise ValueError(f"duplicate lp_ref {row['lpRef']}")
     total_supply = synced_state["vault_total_plp_supply"]
-    shares = row["amount"] if total_supply == 0 else mul_div_round_down(row["amount"], total_supply, pool_value)
+    shares = (
+        row["amount"]
+        if total_supply == 0
+        else mul_div_round_down(row["amount"], total_supply, pool_value)
+    )
     if shares <= 0:
         raise ValueError("supply would mint zero shares")
     model["lp_refs"][row["lpRef"]] = shares
@@ -1792,6 +1882,7 @@ def supply_update(
         "payment": str(row["amount"]),
         "shares_minted": str(shares),
         "pool_value_before": str(pool_value),
+        "incentive_value": "0",
         "total_supply_after": str(total_supply + shares),
         "idle_balance_after": str(synced_state["vault_idle_balance"] + row["amount"]),
     }
@@ -1802,15 +1893,22 @@ def withdraw_update(
     row: dict[str, Any],
     pool_value: int,
     synced_state: dict[str, int],
+    aggregate_band: int,
 ) -> dict[str, str]:
     shares = model["lp_refs"].get(row["lpRef"])
     if shares is None:
         raise ValueError(f"unknown lp_ref {row['lpRef']}")
     total_supply = synced_state["vault_total_plp_supply"]
-    payout = mul_div_round_down(shares, pool_value, total_supply)
+    payout = deepbook_mul(pool_value, deepbook_div(shares, total_supply))
     if payout <= 0:
         raise ValueError("withdraw would pay zero")
-    if synced_state["vault_idle_balance"] < payout:
+    total_fee_pool = deepbook_mul(WITHDRAW_FEE_ALPHA, aggregate_band)
+    fee_fraction = deepbook_div(shares, total_supply)
+    band_fee = deepbook_mul(total_fee_pool, fee_fraction)
+    nav_fee_cap = deepbook_mul(WITHDRAW_FEE_ALPHA, payout)
+    withdraw_fee = min(band_fee, nav_fee_cap)
+    net_payout = payout - withdraw_fee
+    if synced_state["vault_idle_balance"] < net_payout:
         raise ValueError("insufficient idle balance for withdraw")
     del model["lp_refs"][row["lpRef"]]
     return {
@@ -1818,9 +1916,10 @@ def withdraw_update(
         "lp_ref": row["lpRef"],
         "shares_burned": str(shares),
         "payout": str(payout),
+        "withdraw_fee": str(withdraw_fee),
         "pool_value_before": str(pool_value),
         "total_supply_after": str(total_supply - shares),
-        "idle_balance_after": str(synced_state["vault_idle_balance"] - payout),
+        "idle_balance_after": str(synced_state["vault_idle_balance"] - net_payout),
     }
 
 
@@ -1871,6 +1970,7 @@ def reset_terminal_model(model: dict[str, Any]) -> None:
         neg_inf=NEG_INF_STRIKE,
         pos_inf=POS_INF_STRIKE,
     )
+    model["live_backing_liability"] = 0
     invalidate_valuation_cache(model)
 
 
@@ -2066,7 +2166,8 @@ def apply_analytics_update(analytics: dict[str, Any], update: dict[str, Any], ti
         borrow_index_open = floor_index_at_ms(
             time_ctx["now_ms"], time_ctx["expiry_ms"], time_ctx["window"], time_ctx["max_premium"]
         )
-        floor_seed_amount = int(update["floor_seed_amount"])
+        terms = compute_mint_terms(int(update["entry_probability"]), int(update["quantity"]), leverage)
+        floor_seed_amount = terms["floor_seed_amount"]
         floor_shares = order_floor_shares_from_seed(floor_seed_amount, leverage, borrow_index_open)
         analytics_insert_order(
             analytics,
@@ -2097,11 +2198,9 @@ def apply_analytics_update(analytics: dict[str, Any], update: dict[str, Any], ti
         if remaining_quantity == 0 or not replacement_ref:
             return
         replacement_terms = compute_mint_terms(order["entry_probability"], remaining_quantity, order["leverage"])
-        floor_shares = order_floor_shares_from_seed(
-            replacement_terms["floor_seed_amount"],
-            order["leverage"],
-            order["borrow_index_open"],
-        )
+        close_quantity = int(update["quantity_closed"])
+        close_fraction = deepbook_div(close_quantity, order["quantity"])
+        floor_shares = order["floor_shares"] - deepbook_mul(order["floor_shares"], close_fraction)
         analytics_insert_order(
             analytics,
             {
@@ -2618,6 +2717,7 @@ def replay(
             neg_inf=NEG_INF_STRIKE,
             pos_inf=POS_INF_STRIKE,
         ),
+        "live_backing_liability": 0,
         "valuation_cache": {
             "curve_key": None,
             "curve": None,
@@ -2658,14 +2758,12 @@ def replay(
             updates.append(oracle_prices_update(row))
             updates.append(oracle_svi_update(row))
             scan_active_count = active_order_count(model)
-            append_pool_sync_phase(model, state, updates)
             updates.extend(run_liquidation_pass(model, TRADE_LIQUIDATION_BUDGET))
             updates.append(mint_order(model, row, row_timestamp_ms))
         elif action == "redeem":
             apply_inline_oracle_refresh(model, row, updates)
             ref = row["orderRef"]
             scan_active_count = active_order_count(model)
-            append_pool_sync_phase(model, state, updates)
             order = model["orders"].get(ref)
             if order is None or order["status"] != "liquidated":
                 updates.extend(run_liquidation_pass(model, TRADE_LIQUIDATION_BUDGET))
@@ -2673,13 +2771,13 @@ def replay(
         elif action == "supply":
             apply_inline_oracle_refresh(model, row, updates)
             scan_active_count = active_order_count(model)
-            pool_value, synced_state = append_pool_sync_phase(model, state, updates)
+            pool_value, synced_state, _ = append_pool_sync_phase(model, state, updates)
             updates.append(supply_update(model, row, pool_value, synced_state))
         elif action == "withdraw":
             apply_inline_oracle_refresh(model, row, updates)
             scan_active_count = active_order_count(model)
-            pool_value, synced_state = append_pool_sync_phase(model, state, updates)
-            updates.append(withdraw_update(model, row, pool_value, synced_state))
+            pool_value, synced_state, aggregate_band = append_pool_sync_phase(model, state, updates)
+            updates.append(withdraw_update(model, row, pool_value, synced_state, aggregate_band))
         else:
             raise ValueError(f"unsupported action {action}")
 

@@ -4,7 +4,7 @@
 #[test_only]
 module deepbook_predict::expiry_cash_tests;
 
-use deepbook_predict::expiry_cash;
+use deepbook_predict::{expiry_cash, expiry_cash_config};
 use dusdc::dusdc::DUSDC;
 use std::unit_test::{assert_eq, destroy};
 use sui::{balance, coin};
@@ -19,7 +19,9 @@ const EXCESS_FEE_BASIS: u64 = 41;
 #[test, expected_failure(abort_code = expiry_cash::EInsufficientCash)]
 fun assert_backing_underfunded_aborts() {
     let ctx = &mut tx_context::dummy();
-    let mut cash = expiry_cash::new(REBATE_RATE);
+    let mut config = expiry_cash_config::new();
+    config.set_trading_loss_rebate_rate(REBATE_RATE);
+    let mut cash = expiry_cash::new(config);
     cash.receive(coin::mint_for_testing<DUSDC>(CASH_AMOUNT, ctx).into_balance());
 
     cash.assert_backing(REQUIRED_PAYOUT_LIABILITY);
@@ -29,7 +31,9 @@ fun assert_backing_underfunded_aborts() {
 #[test, expected_failure(abort_code = expiry_cash::EInsufficientCash)]
 fun release_surplus_preserves_required_cash() {
     let ctx = &mut tx_context::dummy();
-    let mut cash = expiry_cash::new(REBATE_RATE);
+    let mut config = expiry_cash_config::new();
+    config.set_trading_loss_rebate_rate(REBATE_RATE);
+    let mut cash = expiry_cash::new(config);
     cash.receive(coin::mint_for_testing<DUSDC>(CASH_AMOUNT, ctx).into_balance());
 
     let released = cash.release_surplus(SURPLUS_RELEASE, CASH_AMOUNT);
@@ -39,7 +43,9 @@ fun release_surplus_preserves_required_cash() {
 
 #[test, expected_failure(abort_code = expiry_cash::EInsufficientCash)]
 fun pay_authorized_underfunded_aborts() {
-    let mut cash = expiry_cash::new(REBATE_RATE);
+    let mut config = expiry_cash_config::new();
+    config.set_trading_loss_rebate_rate(REBATE_RATE);
+    let mut cash = expiry_cash::new(config);
 
     let payout = cash.pay_authorized(CASH_AMOUNT);
     destroy(payout);
@@ -49,7 +55,9 @@ fun pay_authorized_underfunded_aborts() {
 #[test, expected_failure(abort_code = expiry_cash::EUnresolvedTradingFeesUnderflow)]
 fun resolve_more_fee_basis_than_collected_aborts() {
     let ctx = &mut tx_context::dummy();
-    let mut cash = expiry_cash::new(REBATE_RATE);
+    let mut config = expiry_cash_config::new();
+    config.set_trading_loss_rebate_rate(REBATE_RATE);
+    let mut cash = expiry_cash::new(config);
     cash.collect_trade_fee(coin::mint_for_testing<DUSDC>(FEE_AMOUNT, ctx).into_balance());
 
     cash.resolve_rebate_reserve_for_fee_basis(EXCESS_FEE_BASIS);
@@ -59,7 +67,9 @@ fun resolve_more_fee_basis_than_collected_aborts() {
 #[test]
 fun resolving_fee_basis_reduces_rebate_reserve() {
     let ctx = &mut tx_context::dummy();
-    let mut cash = expiry_cash::new(REBATE_RATE);
+    let mut config = expiry_cash_config::new();
+    config.set_trading_loss_rebate_rate(REBATE_RATE);
+    let mut cash = expiry_cash::new(config);
     cash.collect_trade_fee(coin::mint_for_testing<DUSDC>(FEE_AMOUNT, ctx).into_balance());
 
     let resolved_reserve = cash.resolve_rebate_reserve_for_fee_basis(FEE_AMOUNT);
@@ -75,7 +85,9 @@ fun resolving_fee_basis_reduces_rebate_reserve() {
 
 #[test]
 fun zero_release_returns_zero_balance() {
-    let mut cash = expiry_cash::new(REBATE_RATE);
+    let mut config = expiry_cash_config::new();
+    config.set_trading_loss_rebate_rate(REBATE_RATE);
+    let mut cash = expiry_cash::new(config);
 
     let released = cash.release_surplus(0, 0);
 

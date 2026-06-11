@@ -87,11 +87,10 @@ def dedupe_layouts(candidates: list[LayoutCandidate]) -> list[LayoutCandidate]:
 def current_order_id_fields() -> tuple[LayoutField, ...]:
     return (
         field("quantity_lots", True),
-        field("leverage", True),
+        field("floor_shares", True),
         field("opened_at_ms", False),
         field("lower_boundary_index", False),
         field("higher_boundary_index", False),
-        field("entry_probability", False),
     )
 
 
@@ -359,7 +358,11 @@ def apply_order_updates(
                 "leverage": leverage,
                 "entry_probability": int(update["entry_probability"]),
                 "quantity": int(update["quantity"]),
-                "floor_seed_amount": int(update["floor_seed_amount"]),
+                "floor_seed_amount": replay.compute_mint_terms(
+                    int(update["entry_probability"]),
+                    int(update["quantity"]),
+                    leverage,
+                )["floor_seed_amount"],
                 "opened_at_ms": timestamp_ms,
                 "open_floor_index": replay.floor_index_at_ms(
                     timestamp_ms,
@@ -399,6 +402,7 @@ def project_order_for_ranking(ref: str, order: dict[str, int]) -> dict[str, int 
         "lower_boundary_index": order["lower_boundary_index"],
         "higher_boundary_index": order["higher_boundary_index"],
         "floor_seed_probability": order["floor_seed_probability"],
+        "floor_shares": order["floor_shares"],
         "floor_lots": order["floor_lots"],
         "entry_probability": order["entry_probability"],
         "floor_ratio": order["floor_ratio"],

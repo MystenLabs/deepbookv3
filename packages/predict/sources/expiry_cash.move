@@ -9,7 +9,7 @@
 /// operation is allowed and supplies the relevant payout liability.
 module deepbook_predict::expiry_cash;
 
-use deepbook::math;
+use deepbook_predict::expiry_cash_config::ExpiryCashConfig;
 use dusdc::dusdc::DUSDC;
 use sui::balance::{Self, Balance};
 
@@ -20,15 +20,15 @@ const EUnresolvedTradingFeesUnderflow: u64 = 1;
 public struct ExpiryCash has store {
     cash_balance: Balance<DUSDC>,
     unresolved_trading_fees_paid: u64,
-    trading_loss_rebate_rate: u64,
+    config: ExpiryCashConfig,
 }
 
 /// Create zero-cash expiry custody with a frozen rebate rate.
-public(package) fun new(trading_loss_rebate_rate: u64): ExpiryCash {
+public(package) fun new(config: ExpiryCashConfig): ExpiryCash {
     ExpiryCash {
         cash_balance: balance::zero(),
         unresolved_trading_fees_paid: 0,
-        trading_loss_rebate_rate,
+        config,
     }
 }
 
@@ -37,11 +37,11 @@ public(package) fun balance(cash: &ExpiryCash): u64 {
 }
 
 public(package) fun trading_loss_rebate_rate(cash: &ExpiryCash): u64 {
-    cash.trading_loss_rebate_rate
+    cash.config.trading_loss_rebate_rate()
 }
 
 public(package) fun rebate_reserve(cash: &ExpiryCash): u64 {
-    math::mul(cash.unresolved_trading_fees_paid, cash.trading_loss_rebate_rate)
+    cash.config.rebate_reserve_for_fee_basis(cash.unresolved_trading_fees_paid)
 }
 
 /// Return payout plus unresolved rebate reserve cash required to keep the expiry backed.
@@ -99,5 +99,5 @@ public(package) fun resolve_rebate_reserve_for_fee_basis(
         EUnresolvedTradingFeesUnderflow,
     );
     cash.unresolved_trading_fees_paid = cash.unresolved_trading_fees_paid - trading_fees_paid;
-    math::mul(trading_fees_paid, cash.trading_loss_rebate_rate)
+    cash.config.rebate_reserve_for_fee_basis(trading_fees_paid)
 }

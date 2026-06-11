@@ -1,89 +1,51 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// Validation bounds for pool fee config fields stored on `ProtocolConfig`.
 #[test_only]
 module deepbook_predict::fee_config_tests;
 
-use deepbook_predict::{config_constants, constants::float_scaling as float, fee_config};
-use std::unit_test::{assert_eq, destroy};
+use deepbook_predict::config_constants;
+use predict_math::math::float_scaling as float;
+use std::unit_test::assert_eq;
 
-const THIRTY_PERCENT: u64 = 300_000_000;
-
-// === Construction and getters ===
-
-#[test]
-fun defaults_match_config_constants() {
-    let config = fee_config::new();
-
-    assert_eq!(
-        config.protocol_reserve_profit_share(),
-        config_constants::default_protocol_reserve_profit_share!(),
-    );
-    assert_eq!(
-        config.trading_loss_rebate_rate(),
-        config_constants::default_trading_loss_rebate_rate!(),
-    );
-    destroy(config);
-}
-
-// === set_protocol_reserve_profit_share ===
+const WITHDRAW_FEE_ALPHA_DEFAULT: u64 = 250_000_000; // 25%
+const WITHDRAW_FEE_ALPHA_MIN: u64 = 50_000_000; // 5%
 
 #[test]
-fun set_protocol_reserve_profit_share_updates_value() {
-    let mut config = fee_config::new();
-
-    config.set_protocol_reserve_profit_share(THIRTY_PERCENT);
-
-    assert_eq!(config.protocol_reserve_profit_share(), THIRTY_PERCENT);
-    destroy(config);
-}
-
-#[test]
-fun set_protocol_reserve_profit_share_accepts_zero() {
-    let mut config = fee_config::new();
-    config.set_protocol_reserve_profit_share(0);
-    assert_eq!(config.protocol_reserve_profit_share(), 0);
-    destroy(config);
-}
-
-#[test]
-fun set_protocol_reserve_profit_share_accepts_full_protocol_reserve() {
-    let mut config = fee_config::new();
-    config.set_protocol_reserve_profit_share(float!());
-    assert_eq!(config.protocol_reserve_profit_share(), float!());
-    destroy(config);
+fun reserve_profit_share_accepts_zero_and_full() {
+    config_constants::assert_protocol_reserve_profit_share(0);
+    config_constants::assert_protocol_reserve_profit_share(float!());
 }
 
 #[test, expected_failure(abort_code = config_constants::EInvalidProtocolReserveProfitShare)]
-fun set_protocol_reserve_profit_share_above_float_aborts() {
-    let mut config = fee_config::new();
-    config.set_protocol_reserve_profit_share(float!() + 1);
+fun reserve_profit_share_above_float_aborts() {
+    config_constants::assert_protocol_reserve_profit_share(float!() + 1);
     abort 999
 }
 
-// === set_trading_loss_rebate_rate ===
-
 #[test]
-fun set_trading_loss_rebate_rate_updates_value() {
-    let mut config = fee_config::new();
-    config.set_trading_loss_rebate_rate(100_000_000); // 10%
-    assert_eq!(config.trading_loss_rebate_rate(), 100_000_000);
-    destroy(config);
+fun withdraw_fee_alpha_default_and_bounds_match_policy() {
+    assert_eq!(config_constants::default_withdraw_fee_alpha!(), WITHDRAW_FEE_ALPHA_DEFAULT);
+    assert_eq!(config_constants::min_withdraw_fee_alpha!(), WITHDRAW_FEE_ALPHA_MIN);
+    assert_eq!(config_constants::max_withdraw_fee_alpha!(), float!());
 }
 
 #[test]
-fun set_trading_loss_rebate_rate_accepts_boundaries() {
-    let mut config = fee_config::new();
-    config.set_trading_loss_rebate_rate(0);
-    assert_eq!(config.trading_loss_rebate_rate(), 0);
-    config.set_trading_loss_rebate_rate(float!());
-    assert_eq!(config.trading_loss_rebate_rate(), float!());
-    destroy(config);
+fun withdraw_fee_alpha_accepts_min_default_and_full() {
+    config_constants::assert_withdraw_fee_alpha(config_constants::min_withdraw_fee_alpha!());
+    config_constants::assert_withdraw_fee_alpha(config_constants::default_withdraw_fee_alpha!());
+    config_constants::assert_withdraw_fee_alpha(config_constants::max_withdraw_fee_alpha!());
 }
 
-#[test, expected_failure(abort_code = config_constants::EInvalidTradingLossRebateRate)]
-fun set_trading_loss_rebate_rate_above_float_aborts() {
-    let mut config = fee_config::new();
-    config.set_trading_loss_rebate_rate(float!() + 1);
+#[test, expected_failure(abort_code = config_constants::EInvalidWithdrawFeeAlpha)]
+fun withdraw_fee_alpha_below_min_aborts() {
+    config_constants::assert_withdraw_fee_alpha(WITHDRAW_FEE_ALPHA_MIN - 1);
+    abort 999
+}
+
+#[test, expected_failure(abort_code = config_constants::EInvalidWithdrawFeeAlpha)]
+fun withdraw_fee_alpha_above_max_aborts() {
+    config_constants::assert_withdraw_fee_alpha(float!() + 1);
     abort 999
 }

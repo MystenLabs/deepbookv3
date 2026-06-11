@@ -7,7 +7,7 @@
 /// timestamp because they are genuinely different values used for freshness.
 module deepbook_predict::oracle_events;
 
-use deepbook_predict::i64::I64;
+use predict_math::i64::I64;
 use sui::event;
 
 /// Emitted when Block Scholes spot/forward data is accepted.
@@ -46,7 +46,8 @@ public struct MarketOracleSettled has copy, drop, store {
     market_oracle_id: ID,
     expiry: u64,
     settlement_price: u64,
-    /// `1` means Pyth supplied the settlement spot; `2` means Block Scholes fallback did.
+    /// `1` means sampled Pyth, `2` post-expiry Pyth, `3` sampled Block
+    /// Scholes, and `4` post-expiry Block Scholes.
     spot_source: u8,
     source_timestamp_ms: u64,
     update_timestamp_ms: u64,

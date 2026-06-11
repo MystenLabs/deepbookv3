@@ -15,6 +15,33 @@ use deepbook_predict::{admin::AdminCap, registry::Registry, test_constants};
 use std::unit_test::destroy;
 use sui::test_scenario::{Self as test, Scenario};
 
+// === Bounded assertion (math carve-out) ===
+
+/// Assert `actual` is within `max_abs_diff` of an INDEPENDENTLY-derived
+/// `reference`. The only sanctioned use is fixed-point math whose approximation
+/// error is fundamental: `max_abs_diff` must be a principled bound (the fixed-
+/// point representation granularity, or a documented intended precision), NEVER
+/// a value measured from the contract's current output (see unit-tests rule 10
+/// carve-out). Exact results must use `assert_eq!`, not this.
+public fun assert_within(actual: u64, reference: u64, max_abs_diff: u64) {
+    let diff = if (actual > reference) actual - reference else reference - actual;
+    assert!(diff <= max_abs_diff);
+}
+
+/// Assert `actual` is within a RELATIVE budget of an independently-derived
+/// `reference`, for fixed-point primitives whose error scales with magnitude
+/// (`exp`/`ln`; see math.move "Precision contract"). `rel_budget` is in parts
+/// per 1e9, e.g. 100 = 1e-7. Tolerance is `reference * rel_budget / 1e9`, floored
+/// at 1 ULP so small-magnitude references still admit the representation
+/// granularity. NEVER tune `rel_budget` from contract output (unit-tests rule 10).
+public fun assert_within_relative(actual: u64, reference: u64, rel_budget: u64) {
+    let rel_tol = (reference as u128) * (rel_budget as u128) / 1_000_000_000;
+    let tol = if (rel_tol < 1) 1
+    else (rel_tol as u64); // 1-ULP representation floor
+    let diff = if (actual > reference) actual - reference else reference - actual;
+    assert!(diff <= tol);
+}
+
 // === Destroy macros ===
 
 public macro fun destroy_2<$T1, $T2>($obj1: $T1, $obj2: $T2) {

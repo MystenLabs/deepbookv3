@@ -83,28 +83,3 @@ public(package) fun create_and_share(registry_uid: &mut UID, index: u64, ctx: &T
 fun assert_owner(code: &BuilderCode, ctx: &TxContext) {
     assert!(ctx.sender() == code.owner, ENotOwner);
 }
-
-// === Test-Only Functions ===
-
-/// Construct a `BuilderCode` directly with a chosen owner and index without
-/// going through the registry's derived-object path. Useful when a test only
-/// needs an object of known shape and does not care about uniqueness.
-#[test_only]
-public fun new_for_testing(owner: address, index: u64, ctx: &mut TxContext): BuilderCode {
-    BuilderCode { id: object::new(ctx), owner, index }
-}
-
-/// Destroy a `BuilderCode` created by `new_for_testing` (the production
-/// flow shares the object).
-#[test_only]
-public fun destroy_for_testing(code: BuilderCode) {
-    let BuilderCode { id, owner: _, index: _ } = code;
-    id.delete();
-}
-
-/// Expose the private `assert_owner` so the `ENotOwner` path can be exercised
-/// without a real `AccumulatorRoot` (which has no Move-side test constructor).
-#[test_only]
-public fun assert_owner_for_testing(code: &BuilderCode, ctx: &TxContext) {
-    code.assert_owner(ctx)
-}

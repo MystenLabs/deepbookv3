@@ -8,9 +8,10 @@
 /// directly and does not duplicate grid geometry in storage.
 ///
 /// This treap stores finite interval boundaries touched by positions. It tracks
-/// atomic payout terms: each order's exact terminal payout and maximum future
-/// live payout. Live backing uses the static max-live term for an instant
-/// conservative lookup. Settled liability uses exact terminal-payout prefixes.
+/// each order's exact terminal payout — summed at a settlement price for settled
+/// liability — and a static max-live backing term. Live cash backing is now the
+/// max-live settlement floor plus a buffer over the disjoint-book gap; the
+/// tree's max-live term is the floor anchor of that enforced reserve.
 module deepbook_predict::strike_payout_tree;
 
 use deepbook_predict::{constants, strike_grid::StrikeGrid};
@@ -51,7 +52,8 @@ public struct PayoutNode has copy, drop, store {
     summary: PayoutSummary,
 }
 
-/// Return the static conservative live backing requirement.
+/// Return the static max-live backing term: the maximum liability at a single
+/// settlement point — the settlement floor that anchors the enforced live reserve.
 public(package) fun max_live_backing_payout(tree: &StrikePayoutTree): u64 {
     let mut max_payout = tree.base.live_backing_payout;
     if (tree.root.is_some()) {
@@ -72,7 +74,7 @@ public(package) fun settled_payout_liability(tree: &StrikePayoutTree, settlement
     terms.terminal_payout
 }
 
-/// Create an empty sparse payout tree for the oracle strike grid.
+/// Create an empty sparse payout tree.
 public(package) fun new(ctx: &mut TxContext): StrikePayoutTree {
     StrikePayoutTree {
         root: option::none(),
@@ -344,8 +346,7 @@ fun combine_summaries(left: PayoutSummary, right: PayoutSummary): PayoutSummary 
 }
 
 fun positive_live_delta(start: u64, end: u64, gain: u64): u64 {
-    let positive = start + gain;
-    if (positive > end) positive - end else 0
+    (start + gain).saturating_sub(end)
 }
 
 fun add_terms(left: PayoutTerms, right: PayoutTerms): PayoutTerms {

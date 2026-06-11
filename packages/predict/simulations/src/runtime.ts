@@ -15,6 +15,7 @@ import {
     LOCAL_PYTH_SIGNER_PRIVATE_KEY,
     LOCAL_PYTH_SIGNER_PUBLIC_KEY,
     PACKAGE_ID,
+    PREDICT_MATH_PACKAGE_ID,
     POOL_VAULT_ID,
     PROTOCOL_CONFIG_ID,
     PYTH_LAZER_PACKAGE_ID,
@@ -115,6 +116,10 @@ export function target(module: string, fn: string): `${string}::${string}::${str
     return `${PACKAGE_ID}::${module}::${fn}`;
 }
 
+function predictMathTarget(module: string, fn: string): `${string}::${string}::${string}` {
+    return `${PREDICT_MATH_PACKAGE_ID}::${module}::${fn}`;
+}
+
 function pythLazerTarget(module: string, fn: string): `${string}::${string}::${string}` {
     return `${PYTH_LAZER_PACKAGE_ID}::${module}::${fn}`;
 }
@@ -184,7 +189,7 @@ interface OracleRefreshParams {
     };
 }
 
-interface ExpiryPoolSyncParams {
+export interface ExpiryPoolSyncParams {
     poolVaultId: string;
     protocolConfigId: string;
     expiryMarketId: string;
@@ -237,7 +242,6 @@ async function addOracleRefresh(tx: Transaction, params: OracleRefreshParams): P
         arguments: [
             tx.object(params.oracleId),
             tx.object(params.protocolConfigId),
-            tx.object(params.pythSourceId),
             tx.object(params.oracleCapId),
             tx.pure.u64(params.spot),
             tx.pure.u64(params.forward),
@@ -247,11 +251,11 @@ async function addOracleRefresh(tx: Transaction, params: OracleRefreshParams): P
     });
 
     const rho = tx.moveCall({
-        target: target("i64", "from_parts"),
+        target: predictMathTarget("i64", "from_parts"),
         arguments: [tx.pure.u64(params.svi.rho), tx.pure.bool(params.svi.rhoNegative)],
     });
     const m = tx.moveCall({
-        target: target("i64", "from_parts"),
+        target: predictMathTarget("i64", "from_parts"),
         arguments: [tx.pure.u64(params.svi.m), tx.pure.bool(params.svi.mNegative)],
     });
     const sviParams = tx.moveCall({
@@ -423,8 +427,6 @@ export function createMarketOracleCapTx(recipient: string): Transaction {
 export function createPythSourceTx(
     feedId: number,
     tickSize: bigint,
-    expiryFeeWindowMs: bigint,
-    expiryFeeMaxMultiplier: bigint = 1_000_000_000n,
 ): Transaction {
     const tx = new Transaction();
     tx.moveCall({
@@ -434,7 +436,30 @@ export function createPythSourceTx(
             tx.object(ADMIN_CAP_ID),
             tx.pure.u32(feedId),
             tx.pure.u64(tickSize),
+        ],
+    });
+    return tx;
+}
+
+export function setTemplateExpiryFeeConfigTx(
+    protocolConfigId: string,
+    expiryFeeWindowMs: bigint,
+    expiryFeeMaxMultiplier: bigint,
+): Transaction {
+    const tx = new Transaction();
+    tx.moveCall({
+        target: target("protocol_config", "set_template_expiry_fee_window_ms"),
+        arguments: [
+            tx.object(protocolConfigId),
+            tx.object(ADMIN_CAP_ID),
             tx.pure.u64(expiryFeeWindowMs),
+        ],
+    });
+    tx.moveCall({
+        target: target("protocol_config", "set_template_expiry_fee_max_multiplier"),
+        arguments: [
+            tx.object(protocolConfigId),
+            tx.object(ADMIN_CAP_ID),
             tx.pure.u64(expiryFeeMaxMultiplier),
         ],
     });
@@ -490,31 +515,6 @@ export async function seedPythSourceAndCreateExpiryMarketTx(params: {
     return tx;
 }
 
-export function setMarketOracleBasisBoundsTx(
-    oracleId: string,
-    protocolConfigId: string,
-    oracleCapId: string,
-    maxSpotDeviation: bigint,
-    maxBasisDeviation: bigint,
-    minBasis: bigint,
-    maxBasis: bigint,
-): Transaction {
-    const tx = new Transaction();
-    tx.moveCall({
-        target: target("market_oracle", "set_basis_bounds"),
-        arguments: [
-            tx.object(oracleId),
-            tx.object(protocolConfigId),
-            tx.object(oracleCapId),
-            tx.pure.u64(maxSpotDeviation),
-            tx.pure.u64(maxBasisDeviation),
-            tx.pure.u64(minBasis),
-            tx.pure.u64(maxBasis),
-        ],
-    });
-    return tx;
-}
-
 export function supplyTx(
     poolVaultId: string,
     protocolConfigId: string,
@@ -542,6 +542,12 @@ export function supplyTx(
         ],
     });
     tx.transferObjects([plpCoin], tx.pure.address(address));
+    return tx;
+}
+
+export function syncExpiryTx(params: ExpiryPoolSyncParams): Transaction {
+    const tx = new Transaction();
+    finishPoolSyncWithExpiry(tx, params);
     return tx;
 }
 
@@ -625,21 +631,19 @@ export function depositToManagerTx(managerId: string, amount: bigint): Transacti
 }
 
 export async function refreshOracleAndMintTx(
-    params: OracleRefreshParams & ExpiryPoolSyncParams & MintParams,
+    params: OracleRefreshParams & MintParams,
 ): Promise<Transaction> {
     const tx = new Transaction();
     await addOracleRefresh(tx, params);
-    finishPoolSyncWithExpiry(tx, params);
     addMint(tx, params);
     return tx;
 }
 
 export async function refreshOracleAndRedeemTx(
-    params: OracleRefreshParams & ExpiryPoolSyncParams & RedeemParams,
+    params: OracleRefreshParams & RedeemParams,
 ): Promise<Transaction> {
     const tx = new Transaction();
     await addOracleRefresh(tx, params);
-    finishPoolSyncWithExpiry(tx, params);
     addRedeem(tx, params);
     return tx;
 }

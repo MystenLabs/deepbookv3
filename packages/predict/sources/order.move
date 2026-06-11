@@ -3,141 +3,92 @@
 
 /// Immutable contract terms encoded in a Predict order ID.
 ///
-/// An `Order` represents the contract sold to a user: a range, entry
-/// probability, quantity, fixed-point leverage multiplier, and original open
-/// time. Leverage changes the contract's deterministic floor schedule; 1x is the
-/// special case where the floor is zero and the behavior looks like a plain range
-/// payout. The packed ID is the single source of truth at protocol boundaries.
-/// Its field ordering also acts as liquidation-check priority for active
-/// leveraged IDs, while concrete strike grids and floor-index timing are
-/// interpreted by `StrikeExposure`.
+/// An `Order` represents the durable contract terms needed after mint: range
+/// boundary indexes, quantity, normalized floor shares, original open time, and
+/// expiry-local sequence. Mint-only inputs such as entry probability, leverage,
+/// contribution, and fee policy intentionally live outside this module. The
+/// packed ID is the single source of truth at protocol boundaries, while concrete
+/// strike grids and floor-index timing are interpreted by `StrikeExposure`.
 module deepbook_predict::order;
 
-use deepbook::math as deepbook_math;
-use deepbook_predict::{constants, math};
+use deepbook_predict::constants;
 
 const EInvalidOrderId: u64 = 0;
 const EInvalidOpenedAt: u64 = 1;
 const EInvalidBoundaryIndex: u64 = 2;
-const EInvalidLeverage: u64 = 3;
+const EInvalidFloorShares: u64 = 3;
 const EInvalidBoundaryRange: u64 = 4;
 const EInvalidQuantity: u64 = 5;
 const EInvalidSequence: u64 = 6;
-const EInvalidEntryProbability: u64 = 7;
-const EInvalidLeverageTier: u64 = 8;
 
-const INVERSE_QUANTITY_LOTS_OFFSET: u8 = 200;
-const LEVERAGE_RANK_OFFSET: u8 = 168;
-const OPENED_AT_OFFSET: u8 = 120;
-const LOWER_BOUNDARY_INDEX_OFFSET: u8 = 96;
-const HIGHER_BOUNDARY_INDEX_OFFSET: u8 = 72;
-const ENTRY_PROBABILITY_OFFSET: u8 = 40;
+const QUANTITY_LOTS_OFFSET: u8 = 200;
+const FLOOR_SHARES_OFFSET: u8 = 136;
+const OPENED_AT_OFFSET: u8 = 88;
+const LOWER_BOUNDARY_INDEX_OFFSET: u8 = 64;
+const HIGHER_BOUNDARY_INDEX_OFFSET: u8 = 40;
 const ORDER_ID_BITS: u8 = 232;
 
 const U24_MASK: u256 = (1u256 << 24) - 1;
 const U32_MASK: u256 = (1u256 << 32) - 1;
 const U40_MASK: u256 = (1u256 << 40) - 1;
 const U48_MASK: u256 = (1u256 << 48) - 1;
-
-const LEVERAGE_ONE_X: u64 = 1_000_000_000;
-const LEVERAGE_ONE_AND_HALF_X: u64 = 1_500_000_000;
-const LEVERAGE_TWO_X: u64 = 2_000_000_000;
-const LEVERAGE_TWO_AND_HALF_X: u64 = 2_500_000_000;
-const LEVERAGE_THREE_X: u64 = 3_000_000_000;
+const U64_MASK: u256 = (1u256 << 64) - 1;
 
 /// Validated typed view over one packed Predict order ID.
 public struct Order has copy, drop {
     id: u256,
 }
 
-// === Public Functions ===
-
-/// Return the 1e9-scaled leverage multiplier for a 1x position.
-public fun leverage_one_x(): u64 {
-    LEVERAGE_ONE_X
-}
-
-/// Return the 1e9-scaled leverage multiplier for a 1.5x position.
-public fun leverage_one_and_half_x(): u64 {
-    LEVERAGE_ONE_AND_HALF_X
-}
-
-/// Return the 1e9-scaled leverage multiplier for a 2x position.
-public fun leverage_two_x(): u64 {
-    LEVERAGE_TWO_X
-}
-
-/// Return the 1e9-scaled leverage multiplier for a 2.5x position.
-public fun leverage_two_and_half_x(): u64 {
-    LEVERAGE_TWO_AND_HALF_X
-}
-
-/// Return the 1e9-scaled leverage multiplier for a 3x position.
-public fun leverage_three_x(): u64 {
-    LEVERAGE_THREE_X
-}
+// === Public-Package Functions ===
 
 /// Validate a packed order ID and return it as an `Order` view.
-public fun from_order_id(order_id: u256): Order {
+public(package) fun from_order_id(order_id: u256): Order {
     let order = Order { id: order_id };
     order.assert_valid();
     order
 }
 
 /// Return the canonical packed order ID.
-public fun id(order: &Order): u256 {
+public(package) fun id(order: &Order): u256 {
     order.id
 }
 
 /// Return the timestamp in milliseconds when this position was originally opened.
-public fun opened_at_ms(order: &Order): u64 {
+public(package) fun opened_at_ms(order: &Order): u64 {
     decode_u48(order.id, OPENED_AT_OFFSET)
 }
 
 /// Return the lower strike boundary index encoded in this order.
-public fun lower_boundary_index(order: &Order): u64 {
+public(package) fun lower_boundary_index(order: &Order): u64 {
     decode_u24(order.id, LOWER_BOUNDARY_INDEX_OFFSET)
 }
 
 /// Return the higher strike boundary index encoded in this order.
-public fun higher_boundary_index(order: &Order): u64 {
+public(package) fun higher_boundary_index(order: &Order): u64 {
     decode_u24(order.id, HIGHER_BOUNDARY_INDEX_OFFSET)
 }
 
-/// Return the 1e9-scaled leverage multiplier encoded in this order.
-public fun leverage(order: &Order): u64 {
-    leverage_from_rank(decode_u32(order.id, LEVERAGE_RANK_OFFSET))
-}
-
-/// Return the 1e9-scaled raw range probability encoded at order entry.
-public fun entry_probability(order: &Order): u64 {
-    decode_u32(order.id, ENTRY_PROBABILITY_OFFSET)
-}
-
 /// Return the encoded quantity in position lots.
-public fun quantity_lots(order: &Order): u64 {
-    U32_MASK as u64 - decode_u32(order.id, INVERSE_QUANTITY_LOTS_OFFSET)
+public(package) fun quantity_lots(order: &Order): u64 {
+    decode_quantity_lots(order.id)
 }
 
 /// Return the immutable quantity encoded in this order.
-public fun quantity(order: &Order): u64 {
+public(package) fun quantity(order: &Order): u64 {
     order.quantity_lots() * constants::position_lot_size!()
 }
 
 /// Return the expiry-local sequence encoded in this order.
-public fun sequence(order: &Order): u64 {
+public(package) fun sequence(order: &Order): u64 {
     (order.id & U40_MASK) as u64
 }
-
-// === Public-Package Functions ===
 
 /// Construct an order ID from already-normalized strike boundary indices.
 public(package) fun new_from_boundary_indices(
     opened_at_ms: u64,
     lower_boundary_index: u64,
     higher_boundary_index: u64,
-    leverage: u64,
-    entry_probability: u64,
+    floor_shares: u64,
     quantity: u64,
     sequence: u64,
 ): Order {
@@ -145,22 +96,25 @@ public(package) fun new_from_boundary_indices(
         opened_at_ms,
         lower_boundary_index,
         higher_boundary_index,
-        leverage,
-        entry_probability,
+        floor_shares,
         quantity_lots_from_quantity(quantity),
         sequence,
     )
 }
 
 /// Construct a lower-quantity order that inherits the original floor coverage invariant.
-public(package) fun replacement(old_order: &Order, quantity: u64, sequence: u64): Order {
+public(package) fun replacement(
+    old_order: &Order,
+    quantity: u64,
+    floor_shares: u64,
+    sequence: u64,
+): Order {
     assert!(quantity < old_order.quantity(), EInvalidQuantity);
     new_from_boundary_indices(
         old_order.opened_at_ms(),
         old_order.lower_boundary_index(),
         old_order.higher_boundary_index(),
-        old_order.leverage(),
-        old_order.entry_probability(),
+        floor_shares,
         quantity,
         sequence,
     )
@@ -174,56 +128,39 @@ public(package) fun assert_valid_quantity(quantity: u64) {
 }
 
 public(package) fun is_leveraged(order: &Order): bool {
-    order.leverage() != LEVERAGE_ONE_X
+    order.floor_shares() > 0
 }
 
-/// Return user contribution, rounded up so effective leverage never exceeds the multiplier.
-public(package) fun user_contribution(order: &Order): u64 {
-    user_contribution_from_exposure_value(order.entry_exposure_value(), order.leverage())
-}
-
-/// Return floor seed amount implied by this order's leverage.
-public(package) fun floor_seed_amount(order: &Order): u64 {
-    let exposure_value = order.entry_exposure_value();
-    exposure_value - user_contribution_from_exposure_value(exposure_value, order.leverage())
-}
-
-/// Assert the mint-time leverage tier allowed for an entry probability.
-public(package) fun assert_mint_leverage_tier(entry_probability: u64, leverage: u64) {
-    assert_valid_leverage(leverage);
-    if (entry_probability < constants::leverage_one_x_only_price_threshold!()) {
-        assert!(leverage == LEVERAGE_ONE_X, EInvalidLeverageTier);
-    } else if (entry_probability < constants::leverage_two_x_max_price_threshold!()) {
-        assert!(leverage <= LEVERAGE_TWO_X, EInvalidLeverageTier);
-    };
+/// Return the normalized floor shares encoded in this order.
+public(package) fun floor_shares(order: &Order): u64 {
+    decode_floor_shares(order.id)
 }
 
 fun new(
     opened_at_ms: u64,
     lower_boundary_index: u64,
     higher_boundary_index: u64,
-    leverage: u64,
-    entry_probability: u64,
+    floor_shares: u64,
     quantity_lots: u64,
     sequence: u64,
 ): Order {
     assert!(opened_at_ms <= U48_MASK as u64, EInvalidOpenedAt);
     assert!(lower_boundary_index <= U24_MASK as u64, EInvalidBoundaryIndex);
     assert!(higher_boundary_index <= U24_MASK as u64, EInvalidBoundaryIndex);
-    assert!(entry_probability <= constants::float_scaling!(), EInvalidEntryProbability);
     assert!(quantity_lots > 0 && quantity_lots <= U32_MASK as u64, EInvalidQuantity);
     assert!(sequence <= U40_MASK as u64, EInvalidSequence);
-    assert_valid_order_shape(lower_boundary_index, higher_boundary_index, leverage);
+    let quantity = quantity_lots * constants::position_lot_size!();
+    assert!(floor_shares <= quantity, EInvalidFloorShares);
+    assert_valid_order_shape(lower_boundary_index, higher_boundary_index, floor_shares > 0);
 
-    let leverage_rank = leverage_rank(leverage);
-    let inverse_quantity_lots = U32_MASK as u64 - quantity_lots;
+    let quantity_lots_key = encode_quantity_lots_key(quantity_lots);
+    let floor_shares_key = encode_floor_shares_key(floor_shares);
     let id =
-        ((inverse_quantity_lots as u256) << INVERSE_QUANTITY_LOTS_OFFSET)
-        | ((leverage_rank as u256) << LEVERAGE_RANK_OFFSET)
+        (quantity_lots_key << QUANTITY_LOTS_OFFSET)
+        | (floor_shares_key << FLOOR_SHARES_OFFSET)
         | ((opened_at_ms as u256) << OPENED_AT_OFFSET)
         | ((lower_boundary_index as u256) << LOWER_BOUNDARY_INDEX_OFFSET)
         | ((higher_boundary_index as u256) << HIGHER_BOUNDARY_INDEX_OFFSET)
-        | ((entry_probability as u256) << ENTRY_PROBABILITY_OFFSET)
         | (sequence as u256);
 
     Order { id }
@@ -239,8 +176,20 @@ fun decode_u32(id: u256, offset: u8): u64 {
     ((id >> offset) & U32_MASK) as u64
 }
 
+fun decode_quantity_lots(id: u256): u64 {
+    (U32_MASK as u64) - decode_u32(id, QUANTITY_LOTS_OFFSET)
+}
+
 fun decode_u48(id: u256, offset: u8): u64 {
     ((id >> offset) & U48_MASK) as u64
+}
+
+fun decode_u64(id: u256, offset: u8): u64 {
+    ((id >> offset) & U64_MASK) as u64
+}
+
+fun decode_floor_shares(id: u256): u64 {
+    (U64_MASK as u64) - decode_u64(id, FLOOR_SHARES_OFFSET)
 }
 
 fun quantity_lots_from_quantity(quantity: u64): u64 {
@@ -248,72 +197,31 @@ fun quantity_lots_from_quantity(quantity: u64): u64 {
     quantity / constants::position_lot_size!()
 }
 
+fun encode_quantity_lots_key(quantity_lots: u64): u256 {
+    U32_MASK - (quantity_lots as u256)
+}
+
+fun encode_floor_shares_key(floor_shares: u64): u256 {
+    U64_MASK - (floor_shares as u256)
+}
+
 fun assert_valid(order: &Order) {
     let quantity_lots = order.quantity_lots();
     assert!(order.id >> ORDER_ID_BITS == 0, EInvalidOrderId);
-    assert!(order.entry_probability() <= constants::float_scaling!(), EInvalidEntryProbability);
     assert!(quantity_lots > 0, EInvalidQuantity);
+    assert!(order.floor_shares() <= order.quantity(), EInvalidFloorShares);
     assert_valid_order_shape(
         order.lower_boundary_index(),
         order.higher_boundary_index(),
-        order.leverage(),
+        order.is_leveraged(),
     );
 }
 
-fun user_contribution_from_exposure_value(exposure_value: u64, leverage: u64): u64 {
-    assert_valid_leverage(leverage);
-    math::mul_div_round_up(exposure_value, constants::float_scaling!(), leverage)
-}
-
-fun entry_exposure_value(order: &Order): u64 {
-    deepbook_math::mul(order.entry_probability(), order.quantity())
-}
-
-fun assert_valid_leverage(leverage: u64) {
-    assert!(
-        leverage == LEVERAGE_ONE_X
-            || leverage == LEVERAGE_ONE_AND_HALF_X
-            || leverage == LEVERAGE_TWO_X
-            || leverage == LEVERAGE_TWO_AND_HALF_X
-            || leverage == LEVERAGE_THREE_X,
-        EInvalidLeverage,
-    );
-}
-
-fun leverage_rank(leverage: u64): u64 {
-    if (leverage == LEVERAGE_THREE_X) {
-        0
-    } else if (leverage == LEVERAGE_TWO_AND_HALF_X) {
-        1
-    } else if (leverage == LEVERAGE_TWO_X) {
-        2
-    } else if (leverage == LEVERAGE_ONE_AND_HALF_X) {
-        3
-    } else if (leverage == LEVERAGE_ONE_X) {
-        4
-    } else {
-        abort EInvalidLeverage
-    }
-}
-
-fun leverage_from_rank(rank: u64): u64 {
-    if (rank == 0) {
-        LEVERAGE_THREE_X
-    } else if (rank == 1) {
-        LEVERAGE_TWO_AND_HALF_X
-    } else if (rank == 2) {
-        LEVERAGE_TWO_X
-    } else if (rank == 3) {
-        LEVERAGE_ONE_AND_HALF_X
-    } else if (rank == 4) {
-        LEVERAGE_ONE_X
-    } else {
-        abort EInvalidLeverage
-    }
-}
-
-fun assert_valid_order_shape(lower_boundary_index: u64, higher_boundary_index: u64, leverage: u64) {
-    assert_valid_leverage(leverage);
+fun assert_valid_order_shape(
+    lower_boundary_index: u64,
+    higher_boundary_index: u64,
+    is_leveraged: bool,
+) {
     let max_boundary_index = max_encoded_boundary_index();
     assert!(lower_boundary_index <= max_boundary_index, EInvalidBoundaryIndex);
     assert!(higher_boundary_index <= max_boundary_index, EInvalidBoundaryIndex);
@@ -322,7 +230,7 @@ fun assert_valid_order_shape(lower_boundary_index: u64, higher_boundary_index: u
         !(lower_boundary_index == 0 && higher_boundary_index == max_boundary_index),
         EInvalidBoundaryRange,
     );
-    if (leverage == LEVERAGE_ONE_X) return;
+    if (!is_leveraged) return;
 
     assert!(
         lower_boundary_index == 0 || higher_boundary_index == max_boundary_index,

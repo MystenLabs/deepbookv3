@@ -39,6 +39,7 @@
         "expiry_fee_max_multiplier": "2000000000",
         "leverage_floor_window_ms": "31536000000",
         "max_expiry_floor_premium": "200000000",
-        "liquidation_ltv": "850000000"
+        "liquidation_ltv": "850000000",
+        "backing_buffer_lambda": "250000000"
     }
 }

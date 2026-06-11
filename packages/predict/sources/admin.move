@@ -24,11 +24,3 @@ public fun id(cap: &AdminCap): ID {
 public(package) fun new(ctx: &mut TxContext): AdminCap {
     AdminCap { id: object::new(ctx) }
 }
-
-// === Test-Only Functions ===
-
-#[test_only]
-/// Create an admin cap for tests.
-public fun create_admin_cap_for_testing(ctx: &mut TxContext): AdminCap {
-    new(ctx)
-}

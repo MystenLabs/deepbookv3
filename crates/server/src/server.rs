@@ -20,7 +20,7 @@ use deepbook_schema::models::{
 };
 use deepbook_schema::*;
 use diesel::dsl::count_star;
-use diesel::dsl::{max, min};
+use diesel::sql_types::BigInt;
 use diesel::{ExpressionMethods, QueryDsl};
 use governor::{Quota, RateLimiter};
 use secrecy::{ExposeSecret, Secret};
@@ -59,6 +59,18 @@ use sui_types::{
     TypeTag,
 };
 use tokio::join;
+
+diesel::define_sql_function! {
+    #[aggregate]
+    #[sql_name = "MAX"]
+    fn sql_max(expr: BigInt) -> diesel::sql_types::Nullable<BigInt>;
+}
+
+diesel::define_sql_function! {
+    #[aggregate]
+    #[sql_name = "MIN"]
+    fn sql_min(expr: BigInt) -> diesel::sql_types::Nullable<BigInt>;
+}
 
 /// Default lookback window for the /orders endpoint when no start_time is provided (7 days in ms).
 const DEFAULT_ORDERS_LOOKBACK_MS: i64 = 7 * 24 * 60 * 60 * 1000;
@@ -1015,8 +1027,8 @@ async fn high_low_prices_24h(
         .group_by(schema::order_fills::pool_id)
         .select((
             schema::order_fills::pool_id,
-            max(schema::order_fills::price),
-            min(schema::order_fills::price),
+            sql_max(schema::order_fills::price),
+            sql_min(schema::order_fills::price),
         ));
     let results: Vec<(String, Option<i64>, Option<i64>)> = state.reader.results(query).await?;
 

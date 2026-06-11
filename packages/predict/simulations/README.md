@@ -79,7 +79,7 @@ interface.
 -   `tools/analyze_liquidation_priority_encodings.py`: standalone research tool,
     not called by `run.sh`. It evaluates static order-id priority layouts against
     kept long-run data; the current protocol layout is quantity first, then
-    leverage, then stable encoded order terms with sequence last.
+    floor shares, then stable encoded order terms with sequence last.
 -   `src/sim.ts`: localnet setup and generated CSV replay engine.
 -   `src/runtime.ts`: Sui transaction builders and execution helpers.
 -   `src/localPyth.ts`: local Wormhole/Pyth key and signed update helpers used
@@ -100,11 +100,13 @@ interface.
 
 1. Generates fresh localnet genesis.
 2. Starts localnet.
-3. Publishes DeepBook, DUSDC, upstream Wormhole, upstream Pyth Lazer, and
-   Predict.
+3. Publishes DeepBook, DUSDC, Predict Math, upstream Wormhole, upstream Pyth
+   Lazer, and Predict.
 4. Configures a local Wormhole guardian and Pyth Lazer signer, creates the
-   vault, then seeds the `PythSource` with the first Block Scholes spot and
-   creates the expiry market in one PTB so creation sees a fresh Pyth spot.
+   vault, applies the expiry-fee template config, then seeds the `PythSource`
+   with the first Block Scholes spot and creates the expiry market in one PTB
+   so creation sees a fresh Pyth spot. A setup-only PLP sync then funds the
+   expiry to the protocol cash floor before scenario rows start.
 5. Generates `data/generated/normal_scenario.csv` and copies it into the run
    artifacts.
 6. Runs Python over the normal scenario to create `python_data.json`.

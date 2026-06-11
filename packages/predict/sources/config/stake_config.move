@@ -8,12 +8,12 @@
 /// half to full over `lower_benefit_power..upper_benefit_power`, capped at full
 /// above. That ratio scales the fixed `constants::max_fee_discount` for fees and
 /// applies directly as the rebate share (the rebate's size is already governed
-/// by the per-expiry `trading_loss_rebate_rate` in `fee_config`, so staking
+/// by the per-expiry `trading_loss_rebate_rate` in `expiry_cash_config`, so staking
 /// carries no rebate-specific cap).
 module deepbook_predict::stake_config;
 
-use deepbook::math;
 use deepbook_predict::{config_constants, constants};
+use predict_math::math;
 
 public struct StakeConfig has store {
     /// Active stake at the curve kink (half of max benefits), in raw DEEP units.
@@ -76,18 +76,17 @@ public(package) fun set_benefit_powers(config: &mut StakeConfig, lower: u64, upp
 /// capped at 1 above `upper`. Relies on the `upper > 2 * lower` invariant (so
 /// `lower > 0` and `upper - lower > 0`).
 fun benefit_ratio(config: &StakeConfig, active_stake: u64): u64 {
-    let full = constants::float_scaling!();
+    let full = math::float_scaling!();
     if (active_stake >= config.upper_benefit_power) return full;
     let half = full / 2;
     if (active_stake <= config.lower_benefit_power) {
-        math::mul(half, math::div(active_stake, config.lower_benefit_power))
+        let lower_fraction = math::div(active_stake, config.lower_benefit_power);
+        math::mul(half, lower_fraction)
     } else {
-        half + math::mul(
-            half,
-            math::div(
-                active_stake - config.lower_benefit_power,
-                config.upper_benefit_power - config.lower_benefit_power,
-            ),
-        )
+        let upper_fraction = math::div(
+            active_stake - config.lower_benefit_power,
+            config.upper_benefit_power - config.lower_benefit_power,
+        );
+        half + math::mul(half, upper_fraction)
     }
 }

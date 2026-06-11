@@ -78,8 +78,10 @@ public struct PredictManager has key {
     /// the ID from this set.
     allow_listed: VecSet<ID>,
     builder_code_id: Option<ID>,
-    /// Open order positions scoped by expiry market.
-    positions: Table<PositionKey, bool>,
+    /// Open order positions scoped by expiry market. The value is the position's
+    /// root order ID (the original mint's `order_id`), carried forward unchanged
+    /// across partial-close replacements so an economic position has one handle.
+    positions: Table<PositionKey, u256>,
     /// Per-expiry aggregate trading cash flows and open position count.
     expiry_summaries: Table<ID, ExpiryTradingSummary>,
     /// DEEP staked and active for trading benefits, in raw units. Custody lives
@@ -131,7 +133,6 @@ public struct PredictWithdrawCap has key, store {
 /// deposit / withdraw through the manager's inner BalanceManager caps.
 public struct PredictTradeProof has drop {
     predict_manager_id: ID,
-    trader: address,
 }
 
 // === Public Functions ===
@@ -149,6 +150,11 @@ public fun id(self: &PredictManager): ID {
 /// Return the BalanceManager owner for this PredictManager.
 public fun owner(self: &PredictManager): address {
     self.balance_manager.owner()
+}
+
+/// Return the inner BalanceManager object ID that holds this manager's DUSDC.
+public fun balance_manager_id(self: &PredictManager): ID {
+    self.balance_manager.id()
 }
 
 /// Return whether this manager has an open position for an order in one expiry market.
@@ -253,7 +259,7 @@ public fun revoke_cap(self: &mut PredictManager, cap_id: &ID, ctx: &TxContext) {
 /// Generate a `PredictTradeProof` as the manager owner. No equivocation risk.
 public fun generate_proof_as_owner(self: &PredictManager, ctx: &TxContext): PredictTradeProof {
     self.assert_owner(ctx);
-    PredictTradeProof { predict_manager_id: self.id(), trader: ctx.sender() }
+    PredictTradeProof { predict_manager_id: self.id() }
 }
 
 /// Generate a `PredictTradeProof` using a `PredictTradeCap`. Cap is an owned object
@@ -261,10 +267,9 @@ public fun generate_proof_as_owner(self: &PredictManager, ctx: &TxContext): Pred
 public fun generate_proof_as_trader(
     self: &PredictManager,
     trade_cap: &PredictTradeCap,
-    ctx: &TxContext,
 ): PredictTradeProof {
     self.validate_trader(trade_cap);
-    PredictTradeProof { predict_manager_id: self.id(), trader: ctx.sender() }
+    PredictTradeProof { predict_manager_id: self.id() }
 }
 
 /// Abort unless the proof was generated for this manager.
@@ -333,7 +338,11 @@ public(package) fun new(registry_uid: &mut UID, ctx: &mut TxContext): PredictMan
         inactive_stake: 0,
         stake_epoch: ctx.epoch(),
     };
-    account_events::emit_predict_manager_created(manager.id(), manager.owner());
+    account_events::emit_predict_manager_created(
+        manager.id(),
+        manager.balance_manager_id(),
+        manager.owner(),
+    );
     manager
 }
 
@@ -388,13 +397,22 @@ public(package) fun new_self_owned(
         stake_epoch: ctx.epoch(),
     };
     let manager_id = manager.id();
-    account_events::emit_predict_manager_created(manager_id, manager.owner());
+    account_events::emit_predict_manager_created(
+        manager_id,
+        manager.balance_manager_id(),
+        manager.owner(),
+    );
 
     let predict_trade_cap = manager.mint_trade_cap_internal(manager_id, ctx);
     let predict_deposit_cap = manager.mint_deposit_cap_internal(manager_id, ctx);
     let predict_withdraw_cap = manager.mint_withdraw_cap_internal(manager_id, ctx);
 
     (manager, predict_deposit_cap, predict_withdraw_cap, predict_trade_cap)
+}
+
+/// Abort unless the transaction sender owns this manager.
+public(package) fun assert_owner(self: &PredictManager, ctx: &TxContext) {
+    assert!(ctx.sender() == self.balance_manager.owner(), ENotOwner);
 }
 
 /// Deposit protocol payouts without requiring any authorization. Used for
@@ -429,29 +447,34 @@ public(package) fun withdraw_with_proof(
     self.balance_manager.withdraw_with_cap(&self.withdraw_cap, amount, ctx)
 }
 
-/// Add an order position.
-public(package) fun add_position(self: &mut PredictManager, expiry_market_id: ID, order_id: u256) {
+/// Add an order position keyed to its root order ID. At mint the root equals the
+/// order's own ID; a partial-close replacement passes the parent's root forward.
+public(package) fun add_position(
+    self: &mut PredictManager,
+    expiry_market_id: ID,
+    order_id: u256,
+    position_root_id: u256,
+) {
     let key = position_key(expiry_market_id, order_id);
     assert!(!self.positions.contains(key), EPositionAlreadyExists);
-    self.ensure_expiry_summary(expiry_market_id);
-    self.positions.add(key, true);
-    let summary = &mut self.expiry_summaries[expiry_market_id];
+    self.positions.add(key, position_root_id);
+    let summary = self.summary_mut(expiry_market_id);
     summary.open_position_count = summary.open_position_count + 1;
 }
 
-/// Remove an order position.
+/// Remove an order position and return its root order ID for event attribution.
 public(package) fun remove_position(
     self: &mut PredictManager,
     expiry_market_id: ID,
     order_id: u256,
-) {
+): u256 {
     let key = position_key(expiry_market_id, order_id);
     assert!(self.positions.contains(key), EInsufficientPosition);
-    self.positions.remove(key);
-    self.ensure_expiry_summary(expiry_market_id);
-    let summary = &mut self.expiry_summaries[expiry_market_id];
+    let position_root_id = self.positions.remove(key);
+    let summary = self.summary_mut(expiry_market_id);
     assert!(summary.open_position_count > 0, EInsufficientPosition);
     summary.open_position_count = summary.open_position_count - 1;
+    position_root_id
 }
 
 /// Record DUSDC paid for positions in an expiry market, excluding fees.
@@ -461,8 +484,7 @@ public(package) fun record_gross_paid_to_expiry(
     amount: u64,
 ) {
     if (amount == 0) return;
-    self.ensure_expiry_summary(expiry_market_id);
-    let summary = &mut self.expiry_summaries[expiry_market_id];
+    let summary = self.summary_mut(expiry_market_id);
     summary.gross_paid_to_expiry = summary.gross_paid_to_expiry + amount;
 }
 
@@ -473,8 +495,7 @@ public(package) fun record_gross_received_from_expiry(
     amount: u64,
 ) {
     if (amount == 0) return;
-    self.ensure_expiry_summary(expiry_market_id);
-    let summary = &mut self.expiry_summaries[expiry_market_id];
+    let summary = self.summary_mut(expiry_market_id);
     summary.gross_received_from_expiry = summary.gross_received_from_expiry + amount;
 }
 
@@ -485,8 +506,7 @@ public(package) fun record_trading_fee_paid(
     amount: u64,
 ) {
     if (amount == 0) return;
-    self.ensure_expiry_summary(expiry_market_id);
-    let summary = &mut self.expiry_summaries[expiry_market_id];
+    let summary = self.summary_mut(expiry_market_id);
     summary.trading_fees_paid = summary.trading_fees_paid + amount;
 }
 
@@ -507,11 +527,7 @@ public(package) fun resolve_expiry_summary(
         gross_paid_to_expiry,
         gross_received_from_expiry,
     } = self.expiry_summaries.remove(expiry_market_id);
-    let gross_profit = if (gross_received_from_expiry > gross_paid_to_expiry) {
-        gross_received_from_expiry - gross_paid_to_expiry
-    } else {
-        0
-    };
+    let gross_profit = gross_received_from_expiry.saturating_sub(gross_paid_to_expiry);
     (trading_fees_paid, gross_profit)
 }
 
@@ -537,14 +553,9 @@ public(package) fun remove_all_stake(self: &mut PredictManager): u64 {
     total
 }
 
-/// Abort unless the transaction sender owns this manager.
-public(package) fun assert_owner(self: &PredictManager, ctx: &TxContext) {
-    assert!(ctx.sender() == self.balance_manager.owner(), ENotOwner);
-}
-
 // === Private Functions ===
 
-fun ensure_expiry_summary(self: &mut PredictManager, expiry_market_id: ID) {
+fun summary_mut(self: &mut PredictManager, expiry_market_id: ID): &mut ExpiryTradingSummary {
     if (!self.expiry_summaries.contains(expiry_market_id)) {
         let summary = ExpiryTradingSummary {
             open_position_count: 0,
@@ -553,7 +564,8 @@ fun ensure_expiry_summary(self: &mut PredictManager, expiry_market_id: ID) {
             gross_received_from_expiry: 0,
         };
         self.expiry_summaries.add(expiry_market_id, summary);
-    }
+    };
+    &mut self.expiry_summaries[expiry_market_id]
 }
 
 fun position_key(expiry_market_id: ID, order_id: u256): PositionKey {
