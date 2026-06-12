@@ -750,6 +750,113 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    order_state (expiry_market_id, order_id) {
+        expiry_market_id -> Text,
+        order_id -> Text,
+        predict_manager_id -> Nullable<Text>,
+        position_root_id -> Nullable<Text>,
+        owner -> Nullable<Text>,
+        status -> Text,
+        replacement_order_id -> Nullable<Text>,
+        opened_at_ms -> Int8,
+        lower_boundary_index -> Int8,
+        higher_boundary_index -> Int8,
+        floor_shares -> Numeric,
+        quantity -> Numeric,
+        sequence -> Int8,
+        lower_strike -> Nullable<Numeric>,
+        higher_strike -> Nullable<Numeric>,
+        leverage -> Nullable<Int8>,
+        entry_probability -> Nullable<Int8>,
+        net_premium -> Nullable<Numeric>,
+        updated_at_ms -> Int8,
+        checkpoint -> Int8,
+        tx_index -> Int8,
+        event_index -> Int8,
+    }
+}
+
+diesel::table! {
+    market_activity_1h (expiry_market_id, bucket_ms) {
+        expiry_market_id -> Text,
+        bucket_ms -> Int8,
+        mint_count -> Int8,
+        mint_quantity -> Numeric,
+        mint_premium -> Numeric,
+        mint_fees -> Numeric,
+        unique_minters -> Int8,
+        live_redeem_count -> Int8,
+        live_redeem_quantity -> Numeric,
+        live_redeem_amount -> Numeric,
+        live_redeem_fees -> Numeric,
+        settled_redeem_count -> Int8,
+        settled_redeem_quantity -> Numeric,
+        settled_redeem_payout -> Numeric,
+    }
+}
+
+diesel::table! {
+    vault_flows_1h (pool_vault_id, bucket_ms) {
+        pool_vault_id -> Text,
+        bucket_ms -> Int8,
+        supply_count -> Int8,
+        supply_amount -> Numeric,
+        shares_minted -> Numeric,
+        withdraw_count -> Int8,
+        withdraw_amount -> Numeric,
+        shares_burned -> Numeric,
+        withdraw_fees -> Numeric,
+        total_supply_after -> Numeric,
+        idle_balance_after -> Numeric,
+    }
+}
+
+diesel::table! {
+    liquidation_stats_1h (expiry_market_id, bucket_ms) {
+        expiry_market_id -> Text,
+        bucket_ms -> Int8,
+        liquidated_count -> Int8,
+        liquidated_quantity -> Numeric,
+        gross_value -> Numeric,
+        floor_amount -> Numeric,
+        surplus -> Numeric,
+        gap -> Numeric,
+    }
+}
+
+diesel::table! {
+    oracle_prices_1m (market_oracle_id, bucket_ms) {
+        market_oracle_id -> Text,
+        bucket_ms -> Int8,
+        open -> Numeric,
+        high -> Numeric,
+        low -> Numeric,
+        close -> Numeric,
+        forward -> Numeric,
+        basis -> Numeric,
+        update_count -> Int8,
+    }
+}
+
+diesel::table! {
+    position_cashflow (expiry_market_id, position_root_id) {
+        expiry_market_id -> Text,
+        position_root_id -> Text,
+        predict_manager_id -> Text,
+        owner -> Text,
+        minted_quantity -> Numeric,
+        net_premium -> Numeric,
+        mint_fees -> Numeric,
+        live_redeem_amount -> Numeric,
+        live_redeem_fees -> Numeric,
+        live_quantity_closed -> Numeric,
+        settled_payout -> Numeric,
+        settled_quantity_closed -> Numeric,
+        liquidated_quantity_closed -> Numeric,
+    }
+}
+
 diesel::allow_tables_to_appear_in_same_query!(
     block_scholes_prices_updated,
     block_scholes_svi_updated,
@@ -767,14 +874,19 @@ diesel::allow_tables_to_appear_in_same_query!(
     expiry_profit_materialized,
     fee_config_updated,
     liquidated_order_redeemed,
+    liquidation_stats_1h,
     live_order_redeemed,
+    market_activity_1h,
     market_config_snapshot,
     market_created,
     market_oracle_config_updated,
     market_oracle_settled,
     market_oracle_template_config_updated,
+    oracle_prices_1m,
     order_liquidated,
     order_minted,
+    order_state,
+    position_cashflow,
     predict_deposit_cap_minted,
     predict_manager_created,
     predict_trade_cap_minted,
@@ -788,6 +900,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     supply_executed,
     trading_loss_rebate_claimed,
     trading_paused_updated,
+    vault_flows_1h,
     watermarks,
     withdraw_executed,
 );

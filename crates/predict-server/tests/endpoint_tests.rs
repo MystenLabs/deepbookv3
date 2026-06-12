@@ -45,3 +45,53 @@ fn manager_staking_merges_stake_and_unstake() {
     // interleaved in strict (checkpoint_timestamp_ms, tx_index, event_index) DESC order, each
     // carrying its "kind" ("deep_staked" / "deep_unstaked").
 }
+
+#[test]
+#[ignore = "TODO(testnet-deploy): assert composed market state against TempDb (needs Postgres)"]
+fn market_state_composes_latest_rows() {
+    // TODO(testnet-deploy): insert market_created + two market_config_snapshot rows (different
+    // triples) + mint_paused + oracle rows; GET /markets/:id/state -> "config" is the
+    // newest-by-triple snapshot, oracle components resolved through market_created.market_oracle_id,
+    // unknown id -> all components null.
+}
+
+#[test]
+#[ignore = "TODO(testnet-deploy): assert vault state picks newest *_after across tables (needs Postgres)"]
+fn vault_state_current_uses_newest_triple_across_tables() {
+    // TODO(testnet-deploy): insert supply_executed (older) + expiry_cash_rebalanced (newer) for one
+    // vault; GET /vaults/:id/state -> current.idle_balance_after comes from the rebalance row,
+    // current.total_supply_after from the supply row (only supply/withdraw carry it).
+}
+
+#[test]
+#[ignore = "TODO(testnet-deploy): assert positions endpoint root join against TempDb (needs Postgres)"]
+fn manager_positions_filters_status_and_joins_root() {
+    // TODO(testnet-deploy): insert order_state rows: root (status replaced, entry facts) +
+    // replacement (status open, entry facts NULL, position_root_id = root). GET
+    // /managers/:id/positions -> only open rows by default, replacement row carries "root" with the
+    // root's entry facts; ?status=replaced returns the root row with "root": null.
+}
+
+#[test]
+#[ignore = "TODO(testnet-deploy): assert open-interest sums over open rows only (needs Postgres)"]
+fn market_open_interest_sums_open_rows_only() {
+    // TODO(testnet-deploy): insert open + closed + liquidated order_state rows for one market; GET
+    // /markets/:id/open-interest -> count/quantity/floor_shares cover only status='open' rows,
+    // NUMERIC sums serialized as strings, empty market -> zeros.
+}
+
+#[test]
+#[ignore = "TODO(testnet-deploy): assert MV bucket feeds window/order/limit (needs Postgres)"]
+fn mv_bucket_feeds_window_and_limit() {
+    // TODO(testnet-deploy): refresh market_activity_1h / vault_flows_1h / liquidation_stats_1h /
+    // oracle_prices_1m over seeded raw rows; GET each feed -> buckets bounded by
+    // ?start_time/?end_time, newest bucket first, default limit 50 / cap 500, each row carrying its
+    // MV "kind".
+}
+
+#[test]
+#[ignore = "TODO(testnet-deploy): assert /config returns latest of each config table (needs Postgres)"]
+fn protocol_config_returns_latest_of_each_table() {
+    // TODO(testnet-deploy): insert two pricing_config_updated rows (different triples); GET /config
+    // -> "pricing" is the newer row, unseeded config kinds are null.
+}

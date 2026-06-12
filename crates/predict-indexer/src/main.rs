@@ -24,6 +24,7 @@ use predict_indexer::handlers::market_oracle_settled_handler::MarketOracleSettle
 use predict_indexer::handlers::market_oracle_template_config_updated_handler::MarketOracleTemplateConfigUpdatedHandler;
 use predict_indexer::handlers::order_liquidated_handler::OrderLiquidatedHandler;
 use predict_indexer::handlers::order_minted_handler::OrderMintedHandler;
+use predict_indexer::handlers::order_state_handler::OrderStateHandler;
 use predict_indexer::handlers::predict_deposit_cap_minted_handler::PredictDepositCapMintedHandler;
 use predict_indexer::handlers::predict_manager_created_handler::PredictManagerCreatedHandler;
 use predict_indexer::handlers::predict_trade_cap_minted_handler::PredictTradeCapMintedHandler;
@@ -38,6 +39,9 @@ use predict_indexer::handlers::supply_executed_handler::SupplyExecutedHandler;
 use predict_indexer::handlers::trading_loss_rebate_claimed_handler::TradingLossRebateClaimedHandler;
 use predict_indexer::handlers::trading_paused_updated_handler::TradingPausedUpdatedHandler;
 use predict_indexer::handlers::withdraw_executed_handler::WithdrawExecutedHandler;
+use predict_indexer::materialized_view_refresh::{
+    materialized_view_refresh_service, MaterializedViewRefreshMetrics,
+};
 use predict_indexer::PredictEnv;
 use predict_schema::MIGRATIONS;
 use prometheus::Registry;
@@ -80,6 +84,9 @@ struct Args {
     /// Packages to index events for (can specify multiple).
     #[clap(long, value_enum, default_values = ["predict"])]
     packages: Vec<Package>,
+    /// Interval between materialized-view refreshes; 0 disables the refresh task.
+    #[clap(env, long, default_value_t = 60)]
+    mv_refresh_interval_secs: u64,
 }
 
 #[tokio::main]
@@ -96,6 +103,7 @@ async fn main() -> Result<(), anyhow::Error> {
         database_url,
         env,
         packages,
+        mv_refresh_interval_secs,
     } = Args::parse();
 
     let ingestion_args = IngestionClientArgs {
@@ -122,6 +130,7 @@ async fn main() -> Result<(), anyhow::Error> {
         store.clone(),
     )))?;
 
+    let mv_store = store.clone();
     let mut indexer = Indexer::new(
         store,
         indexer_args,
@@ -156,6 +165,9 @@ async fn main() -> Result<(), anyhow::Error> {
                     .await?;
                 indexer
                     .concurrent_pipeline(OrderLiquidatedHandler::new(env), Default::default())
+                    .await?;
+                indexer
+                    .concurrent_pipeline(OrderStateHandler::new(env), Default::default())
                     .await?;
                 indexer
                     .concurrent_pipeline(PredictManagerCreatedHandler::new(env), Default::default())
@@ -296,9 +308,16 @@ async fn main() -> Result<(), anyhow::Error> {
         }
     }
 
+    let mv_metrics = MaterializedViewRefreshMetrics::new(&registry);
+    let s_mv_refresh =
+        materialized_view_refresh_service(mv_store, mv_metrics, mv_refresh_interval_secs)?;
+
     let s_indexer = indexer.run().await?;
     let s_metrics = metrics.run().await?;
-    let service = s_indexer.attach(s_metrics);
+    let mut service = s_indexer.attach(s_metrics);
+    if let Some(s_mv) = s_mv_refresh {
+        service = service.attach(s_mv);
+    }
 
     service.main().await?;
     Ok(())

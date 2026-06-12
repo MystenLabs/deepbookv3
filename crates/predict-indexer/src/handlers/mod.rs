@@ -26,6 +26,7 @@ pub mod market_oracle_settled_handler;
 pub mod market_oracle_template_config_updated_handler;
 pub mod order_liquidated_handler;
 pub mod order_minted_handler;
+pub mod order_state_handler;
 pub mod predict_deposit_cap_minted_handler;
 pub mod predict_manager_created_handler;
 pub mod predict_trade_cap_minted_handler;
