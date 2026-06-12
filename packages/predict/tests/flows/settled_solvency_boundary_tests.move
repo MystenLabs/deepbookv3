@@ -24,7 +24,7 @@ const MINT_MIN_FEE: u64 = 5_000_000;
 /// clamps to exactly 0 (|d2| ≈ 315σ, far past the Φ clamp at 8σ).
 /// A 1x order fronts its full premium: floor(0.5 * 1e9) = 500_000_000.
 const MINT_PRINCIPAL: u64 = 500_000_000;
-/// mint_deposit - principal - fee = 1e9 - 5e8 - 5e6.
+/// mint_deposit - net_premium - fee = 1e9 - 5e8 - 5e6.
 const POST_MINT_BALANCE: u64 = 495_000_000;
 /// Half the minted quantity (a whole number of 10_000-unit lots).
 const HALF_CLOSE: u64 = 500_000_000;

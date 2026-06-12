@@ -16,7 +16,7 @@ public struct EwmaConfig has store {
     /// Standard deviations above the smoothed mean required before a penalty applies.
     z_score_threshold: u64,
     /// Per-unit fee added to a penalized trade's trading fee.
-    additional_fee: u64,
+    penalty_rate: u64,
     /// Master switch; no penalty applies while false.
     enabled: bool,
 }
@@ -31,8 +31,8 @@ public(package) fun z_score_threshold(config: &EwmaConfig): u64 {
     config.z_score_threshold
 }
 
-public(package) fun additional_fee(config: &EwmaConfig): u64 {
-    config.additional_fee
+public(package) fun penalty_rate(config: &EwmaConfig): u64 {
+    config.penalty_rate
 }
 
 public(package) fun enabled(config: &EwmaConfig): bool {
@@ -43,7 +43,7 @@ public(package) fun new(): EwmaConfig {
     EwmaConfig {
         alpha: config_constants::default_ewma_alpha!(),
         z_score_threshold: config_constants::default_ewma_z_score_threshold!(),
-        additional_fee: config_constants::default_ewma_additional_fee!(),
+        penalty_rate: config_constants::default_ewma_penalty_rate!(),
         enabled: false,
     }
 }
@@ -52,14 +52,14 @@ public(package) fun set_params(
     config: &mut EwmaConfig,
     alpha: u64,
     z_score_threshold: u64,
-    additional_fee: u64,
+    penalty_rate: u64,
 ) {
     config_constants::assert_ewma_alpha(alpha);
     config_constants::assert_ewma_z_score_threshold(z_score_threshold);
-    config_constants::assert_ewma_additional_fee(additional_fee);
+    config_constants::assert_ewma_penalty_rate(penalty_rate);
     config.alpha = alpha;
     config.z_score_threshold = z_score_threshold;
-    config.additional_fee = additional_fee;
+    config.penalty_rate = penalty_rate;
 }
 
 public(package) fun set_enabled(config: &mut EwmaConfig, enabled: bool) {

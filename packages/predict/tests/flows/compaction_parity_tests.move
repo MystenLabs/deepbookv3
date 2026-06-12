@@ -45,7 +45,7 @@ const EXTRA_IDLE: u64 = 250_000_000_000;
 const MANAGER_DEPOSIT: u64 = 4_000_000_000;
 const LEVERAGE_TWO_X: u64 = 2_000_000_000;
 /// ATM digital p = Φ(0) = 0.5 exactly for both the UP and the complement DOWN
-/// range; 1x contribution = floor(0.5 * 1e9); 2x = floor(exposure / 2).
+/// range; 1x net_premium = floor(0.5 * 1e9); 2x = floor(entry_value / 2).
 const ONE_X_CONTRIBUTION: u64 = 500_000_000;
 const TWO_X_CONTRIBUTION: u64 = 250_000_000;
 /// Per-trade fee floors at min_fee (fixture base_fee = 1; default

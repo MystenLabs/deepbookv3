@@ -23,7 +23,7 @@ pub fn map(ev: &Ev, meta: &PredictEventMeta) -> Row {
         leverage: ev.leverage as i64,
         entry_probability: ev.entry_probability as i64,
         quantity: BigDecimal::from(ev.quantity),
-        contribution: BigDecimal::from(ev.contribution),
+        net_premium: BigDecimal::from(ev.net_premium),
         trading_fee: BigDecimal::from(ev.trading_fee),
         builder_fee: BigDecimal::from(ev.builder_fee),
         penalty_fee: BigDecimal::from(ev.penalty_fee),

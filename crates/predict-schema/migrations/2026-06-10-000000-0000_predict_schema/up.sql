@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS order_minted (
     leverage                 BIGINT    NOT NULL,
     entry_probability        BIGINT    NOT NULL,
     quantity                 NUMERIC   NOT NULL,
-    contribution             NUMERIC   NOT NULL,
+    net_premium              NUMERIC   NOT NULL,
     trading_fee              NUMERIC   NOT NULL,
     builder_fee              NUMERIC   NOT NULL,
     penalty_fee              NUMERIC   NOT NULL,
@@ -335,7 +335,7 @@ CREATE TABLE IF NOT EXISTS ewma_config_updated (
     protocol_config_id               TEXT      NOT NULL,
     alpha                            BIGINT    NOT NULL,
     z_score_threshold                BIGINT    NOT NULL,
-    additional_fee                   NUMERIC   NOT NULL,
+    penalty_rate                     NUMERIC   NOT NULL,
     enabled                          BOOLEAN   NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_ewma_config_updated_config_ts ON ewma_config_updated(protocol_config_id, checkpoint_timestamp_ms);

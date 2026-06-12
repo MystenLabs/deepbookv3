@@ -696,7 +696,7 @@ fun mint_internal(
         clock,
     );
 
-    let (minted_order, entry_probability, user_contribution) = market
+    let (minted_order, entry_probability, net_premium) = market
         .strike_exposure
         .allocate_mint_order(
             config.pricing_config(),
@@ -718,7 +718,7 @@ fun mint_internal(
         manager,
         proof,
         &minted_order,
-        user_contribution,
+        net_premium,
         fee_amount,
         penalty_amount,
         ctx,
@@ -731,7 +731,7 @@ fun mint_internal(
         higher_strike,
         leverage,
         entry_probability,
-        user_contribution,
+        net_premium,
         fee_amount,
         builder_fee_amount,
         penalty_amount,
@@ -839,7 +839,7 @@ fun redeem_settled_internal(
 
 /// Settle a mint payment and return the builder fee paid.
 ///
-/// The EWMA penalty is withdrawn alongside the contribution and fees, but rides
+/// The EWMA penalty is withdrawn alongside the net premium and fees, but rides
 /// into expiry cash as surplus: it is not part of the rebate fee basis,
 /// earns no builder cut, and is excluded from the user's recorded gross paid.
 fun settle_mint_payment(
@@ -847,7 +847,7 @@ fun settle_mint_payment(
     manager: &mut PredictManager,
     proof: &PredictTradeProof,
     order: &Order,
-    user_contribution: u64,
+    net_premium: u64,
     fee_amount: u64,
     penalty_amount: u64,
     ctx: &mut TxContext,
@@ -855,7 +855,7 @@ fun settle_mint_payment(
     let quantity = order.quantity();
     let builder_code_id = manager.builder_code_id();
     let builder_fee_amount = builder_fee_amount(&builder_code_id, fee_amount, quantity);
-    let withdraw_amount = user_contribution + fee_amount + builder_fee_amount + penalty_amount;
+    let withdraw_amount = net_premium + fee_amount + builder_fee_amount + penalty_amount;
 
     manager.add_position(market.id(), order.id(), order.id());
     let mut payment = manager.withdraw_with_proof(proof, withdraw_amount, ctx).into_balance();
@@ -863,9 +863,9 @@ fun settle_mint_payment(
     send_builder_fee(builder_code_id, builder_fee_payment);
     let fee_payment = payment.split(fee_amount);
     market.collect_trade_fee(manager, fee_payment);
-    // Remaining balance is the contribution plus the penalty surplus.
+    // Remaining balance is the net premium plus the penalty surplus.
     market.cash.receive(payment);
-    manager.record_gross_paid_to_expiry(market.id(), user_contribution);
+    manager.record_gross_paid_to_expiry(market.id(), net_premium);
 
     market.assert_cash_backing();
     builder_fee_amount

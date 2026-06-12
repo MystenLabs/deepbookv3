@@ -18,8 +18,8 @@ const MINT_MIN_FEE: u64 = 5_000_000;
 ///   The order is `[min_strike, +inf)` and the live forward == min_strike, so its
 ///   entry probability is the at-the-money digital Φ(0) = 0.5 (the SVI wing rounds
 ///   to zero, leaving d2 = 0). A 1x order fronts its full premium, so
-///   principal = floor(0.5 * mint_quantity) = 500_000_000, and the fee floors at
-///   min_fee = 5_000_000. balance = mint_deposit - principal - fee
+///   net_premium = floor(0.5 * mint_quantity) = 500_000_000, and the fee floors at
+///   min_fee = 5_000_000. balance = mint_deposit - net_premium - fee
 ///           = 1_000_000_000 - 500_000_000 - 5_000_000 = 495_000_000.
 const POST_MINT_BALANCE: u64 = 495_000_000;
 /// In the money: strictly above the order's lower strike (`min_strike` = 100e9).

@@ -134,7 +134,7 @@ fun two_expiry_sync_conserves_nav_and_counts_each_flow_once() {
     assert_eq!(sent_a, cash_floor);
     assert_eq!(received_a, 0);
 
-    // --- Sync #2: A's surplus over the floor (principal + fee) sweeps back to
+    // --- Sync #2: A's surplus over the floor (net_premium + fee) sweeps back to
     // idle, counted exactly once in `received`; B is untouched. The returned
     // pool value conserves: deposits + trader inflow − liability mark − rebate
     // reserve − pending protocol share.

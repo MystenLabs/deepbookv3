@@ -33,11 +33,11 @@ The `Registry` is the protocol's index and governance anchor. It enforces one `P
 
 DUSDC is the protocol's settlement currency and has 6 decimals. Custody is partitioned across three layers, each owned by the module responsible for it:
 
-- **Per-trader funds** live inside each `PredictManager`'s inner `BalanceManager` (a DeepBook core object). Deposits, withdrawals, contributions, fees, and payouts all flow through this balance.
+- **Per-trader funds** live inside each `PredictManager`'s inner `BalanceManager` (a DeepBook core object). Deposits, withdrawals, net premiums, fees, and payouts all flow through this balance.
 - **Per-expiry working cash** lives in each `ExpiryMarket`'s embedded `ExpiryCash`. It must always cover the expiry's payout liability plus the unresolved rebate reserve; the market re-asserts this backing invariant after every cash movement.
 - **Pool capital** lives in `PoolVault`: `idle_balance` (LP-owned DUSDC available for withdrawals and expiry funding) and `protocol_reserve_balance` (protocol-owned profit, excluded from PLP redemption). The vault also custodies all staked DEEP and the LP-owned in-kind incentive balances (SUI, DEEP).
 
-Money flows in one shape: `PoolVault.idle_balance` funds an expiry's `ExpiryCash` during sync rebalancing; traders' contributions and fees flow from a `PredictManager` into `ExpiryCash`; payouts and rebates flow from `ExpiryCash` back into a `PredictManager`; surplus and settled cash flow from `ExpiryCash` back to `PoolVault.idle_balance`. Builder fees are the one outflow that leaves this mesh entirely (see below).
+Money flows in one shape: `PoolVault.idle_balance` funds an expiry's `ExpiryCash` during sync rebalancing; traders' net premiums and fees flow from a `PredictManager` into `ExpiryCash`; payouts and rebates flow from `ExpiryCash` back into a `PredictManager`; surplus and settled cash flow from `ExpiryCash` back to `PoolVault.idle_balance`. Builder fees are the one outflow that leaves this mesh entirely (see below).
 
 ## PredictManager and its capabilities
 
@@ -62,7 +62,7 @@ The inner `BalanceManager`'s own `DepositCap` and `WithdrawCap` are held inside 
 
 `PredictTradeProof` is a hot-potato proof (`has drop`, no `key`/`store`, so it cannot persist past the transaction). The manager owner generates one with `generate_proof_as_owner`, or a `PredictTradeCap` holder generates one with `generate_proof_as_trader`. It records the manager ID.
 
-The proof is used by `mint` (which borrows it) and consumed by the live branch of `redeem` (which takes it by value). It does two things at once: it authorizes the trade for that manager (`validate_proof` aborts unless the proof's manager ID matches), and it authorizes routing the DUSDC withdraw (mint contribution + fees) and deposit (live payout) through the manager's inner caps. Because mint fees are withdrawn via the proof, the proof is required even for owner-initiated mints. `redeem` takes the proof by value; the live branch consumes it, while the settled and already-liquidated branches drop it (the proof has `drop`). `redeem_settled` takes no proof at all — settling a resolved order credits the order's own manager and any caller may run it, so it is permissionless; it aborts if asked to close a still-live order.
+The proof is used by `mint` (which borrows it) and consumed by the live branch of `redeem` (which takes it by value). It does two things at once: it authorizes the trade for that manager (`validate_proof` aborts unless the proof's manager ID matches), and it authorizes routing the DUSDC withdraw (mint net premium + fees) and deposit (live payout) through the manager's inner caps. Because mint fees are withdrawn via the proof, the proof is required even for owner-initiated mints. `redeem` takes the proof by value; the live branch consumes it, while the settled and already-liquidated branches drop it (the proof has `drop`). `redeem_settled` takes no proof at all — settling a resolved order credits the order's own manager and any caller may run it, so it is permissionless; it aborts if asked to close a still-live order.
 
 ## Governance and attribution capabilities
 

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="720" height="420" viewBox="0 0 720 420" role="img" aria-labelledby="ft-title ft-desc" font-family="Inter, system-ui, -apple-system, Segoe UI, sans-serif">
   <title id="ft-title">Floor probability over the one-year window</title>
-  <desc id="ft-desc">Inside the final one-year floor window, the floor probability rises on a squared phase from the floor seed to the terminal floor at expiry. Most of the accrual happens late in the window.</desc>
+  <desc id="ft-desc">Inside the final one-year floor window, the floor probability rises on a squared phase from the initial floor to the terminal floor at expiry. Most of the accrual happens late in the window.</desc>
 
   <rect width="720" height="420" fill="#ffffff"/>
 
@@ -19,7 +19,7 @@
   <circle cx="640" cy="100" r="4" fill="#0f766e"/>
 
   <g font-size="11" font-weight="600" text-anchor="end">
-    <text x="72" y="324" fill="#475569">floor seed</text>
+    <text x="72" y="324" fill="#475569">initial floor</text>
     <text x="72" y="104" fill="#0f766e">terminal floor</text>
   </g>
 

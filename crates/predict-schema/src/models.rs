@@ -37,7 +37,7 @@ pub struct OrderMinted {
     pub leverage: i64,
     pub entry_probability: i64,
     pub quantity: BigDecimal,
-    pub contribution: BigDecimal,
+    pub net_premium: BigDecimal,
     pub trading_fee: BigDecimal,
     pub builder_fee: BigDecimal,
     pub penalty_fee: BigDecimal,
@@ -338,7 +338,7 @@ pub struct EwmaConfigUpdated {
     pub protocol_config_id: String,
     pub alpha: i64,
     pub z_score_threshold: i64,
-    pub additional_fee: BigDecimal,
+    pub penalty_rate: BigDecimal,
     pub enabled: bool,
 }
 

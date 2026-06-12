@@ -1,19 +1,19 @@
 # Leverage and the floor
 
-Predict models leverage as a transformation of the contract being traded, not as a prediction contract paired with a separate debt ledger. Leverage subtracts a deterministic, time-varying *floor* from the same range payoff. A 1x order is the special case where that floor is zero.
+Predict models leverage as a transformation of the contract being traded, not as a contract paired with a separate debt ledger. A leveraged order is a vanilla range digital plus two modifications: the pool finances part of the premium, and the holder sells the pool a knock-out. The financing is embedded in the payoff as a deterministic, time-varying *floor* subtracted from the same range payoff; the knock-out extinguishes the contract if its value decays to the floor-derived knock-out level. A 1x order is the special case where the floor is zero and no knock-out exists.
 
-This document explains the 1x payoff, the leveraged payoff with its floor, why a floor is the right model for leverage, how the floor index ramps as expiry approaches, how mint admission is gated, how the floor applies at live redeem, and how settlement pays out. For when and how an under-collateralized order is removed, see [liquidation](./liquidation.md); for the objects that hold the cash and positions, see [architecture](../design/architecture.md).
+This document explains the 1x payoff, the leveraged payoff with its floor, why a floor is the right model for leverage, what the structure is in standard options terms, how the floor index ramps as expiry approaches, how mint admission is gated, how the floor applies at live redeem, and how settlement pays out. For when and how an under-collateralized order is removed, see [liquidation](./liquidation.md); for the objects that hold the cash and positions, see [architecture](../design/architecture.md).
 
 ## The 1x range payoff
 
-A Predict order is a claim on whether the oracle's settlement price lands inside a strike range `(lower, higher]`. A 1x order pays like a plain range contract:
+A Predict order is a European cash-or-nothing binary option on whether the oracle's settlement price lands inside a strike range `(lower, higher]` — a range digital, equivalent to a digital call spread over the two boundary strikes. A 1x order pays like the plain digital:
 
 ```text
 live_value   = quantity × probability(range)
 settled_value = quantity   if settlement is inside the range, else 0
 ```
 
-`quantity` is denominated in 6-decimal DUSDC quote units and is a multiple of the lot size. `probability(range)` is the live range probability quoted from the pricing curve (see [pricing and oracles](./pricing-and-oracles.md)), expressed in Predict's 1e9 fixed-point scale where `1_000_000_000` is probability 1. At settlement the range probability collapses to 0 or 1, so the contract is worth either the full `quantity` or nothing.
+`quantity` is the contract's notional — the digital's fixed cash payout — denominated in 6-decimal DUSDC quote units and a multiple of the lot size. `probability(range)` is the live range probability quoted from the pricing curve (see [pricing and oracles](./pricing-and-oracles.md)), expressed in Predict's 1e9 fixed-point scale where `1_000_000_000` is probability 1. For an undiscounted digital, the premium per unit notional and the risk-neutral probability of the event are the same number, so Predict quotes and stores the probability directly. At settlement the range probability collapses to 0 or 1, so the contract is worth either the full `quantity` or nothing.
 
 ![Contract value versus probability](../assets/leverage-contract-value.svg)
 
@@ -31,21 +31,33 @@ The contract is easiest to reason about in probability terms, but the implementa
 
 ## Why a floor models leverage
 
-Leverage lets a holder take larger exposure for a smaller upfront contribution. Rather than recording the missing contribution as external debt against the holder, Predict embeds it into the contract as a floor.
+Leverage lets a holder take larger exposure for a smaller upfront payment. Rather than recording the unpaid premium as external debt against the holder, Predict embeds it into the contract as a floor.
 
 At mint, the protocol computes:
 
 ```text
-exposure_value    = entry_probability × quantity
-user_contribution = exposure_value / leverage
-floor_seed_amount = exposure_value − user_contribution
+entry_value     = entry_probability × quantity
+net_premium     = entry_value / leverage
+financed_amount = entry_value − net_premium
 ```
 
-The holder pays `user_contribution` (plus fees) and owns the contract's upside above the floor. The `floor_seed_amount` is the part of the contract value the holder did *not* pay for — the implied financing the contract carries — and the floor is what consumes that first slice of value over the life of the contract.
+The holder pays `net_premium` (plus fees) and owns the contract's upside above the floor. `financed_amount` is the slice of the full premium (`entry_value`) the pool funds at mint. It is not a discount — it is a loan embedded in the contract, and the floor is the accreting balance of that loan, repaid out of the contract's own value before the holder receives anything.
 
-![Floor seed and user contribution as wedges of the contract](../assets/leverage-wedge.svg)
+![Financed amount and net premium as wedges of the contract](../assets/leverage-wedge.svg)
 
 This is *limited-recourse* financing: the floor can only ever consume that one order's own value or payout, capped at it. There is no margin call against the holder's other assets and no shared debt pool. A leveraged order that falls below its floor is simply worth zero to its holder; it never produces a negative balance the protocol must chase. Trading fees and builder fees are transaction costs paid at the trade boundary, not part of the contract floor, and do not enter the floor invariants (see [fees and rebates](./fees-and-rebates.md)).
+
+## The structure in options terms
+
+A leveraged order decomposes into three standard pieces:
+
+1. **A vanilla range digital** of notional `quantity` — the same contract a 1x order holds.
+2. **Embedded premium financing.** The pool funds `financed_amount` of the full premium. The balance accretes along the floor index (the same role a borrow index plays in a money market) and is repaid out of the contract's own value at close, settlement, or knock-out — never from the holder's other assets.
+3. **A sold knock-out.** The holder writes the pool a knock-out: the contract is extinguished, with zero rebate, when its gross value falls to the knock-out level `floor_amount / liquidation_ltv` (see [liquidation](./liquidation.md)).
+
+Together these make a leveraged position a **down-and-out digital with an accreting barrier** — the same structure as a turbo warrant or knock-out certificate, with the floor playing the financing level and the liquidation threshold playing the knock-out barrier, applied to a digital rather than a delta-one underlying. By knock-out/knock-in parity (`vanilla = knock-out + knock-in`), holding the knock-out version means the holder has given up exactly the paths where the contract dips through the barrier and later recovers.
+
+Two precision points. First, the upfront discount is the financing, not the price of the surrendered knock-in: the holder pays `full premium / leverage` mechanically, and the financed remainder is owed back with accrual. The knock-out is what makes that loan safe — limited-recourse — for the pool, and the residual value forfeited at knock-out is the pool's compensation for gap risk. Second, the holder's claim `max(0, quantity × probability − floor)` is a call on the digital package struck at the accreting financing balance — the classic levered-equity-as-call identity. Live closes pay exactly that intrinsic value; the knock-out extinguishes the claim while it is still slightly in the money, which is the LTV buffer the pool keeps.
 
 ## The floor index and floor shares
 
@@ -64,12 +76,12 @@ The window length is the protocol constant `leverage_floor_window_ms` (one 365-d
 Because every order in an expiry uses the same index curve but opens at a different time, the protocol normalizes each order's floor into **floor shares**, anchored to the index at its open time:
 
 ```text
-floor_shares  = floor_seed_amount / floor_index(opened_at)
+floor_shares  = financed_amount / floor_index(opened_at)
 floor_at(t)   = floor_shares × floor_index(t)
 terminal_floor = floor_shares × terminal_floor_index
 ```
 
-`floor_shares` is the order's stable, time-independent floor measure. Multiplying it by the index at any later time gives that order's floor amount then; multiplying by the terminal index gives the floor it owes at settlement. Orders carry different `floor_shares` because they differ in quantity, entry probability, leverage, and open time, but they all evaluate against one curve. This is the same role a borrow index plays — the financing cost compounds deterministically over time — except the value is part of the contract's payoff function rather than a separate borrow position.
+`floor_shares` is the order's stable, time-independent floor measure — a scaled debt balance, in money-market terms. Multiplying it by the index at any later time gives that order's floor amount then; multiplying by the terminal index gives the floor it owes at settlement. Orders carry different `floor_shares` because they differ in quantity, entry probability, leverage, and open time, but they all evaluate against one curve. This is the same role a borrow index plays — the financing cost compounds deterministically over time — except the value is part of the contract's payoff function rather than a separate borrow position.
 
 ## Order terms
 
@@ -83,7 +95,7 @@ terminal_floor = floor_shares × terminal_floor_index
 | lower / higher boundary index | grid indices for the strike range `(lower, higher]` |
 | sequence | expiry-local tiebreaker assigned at mint |
 
-`is_leveraged()` is exactly `floor_shares > 0`: leverage is detectable from the stored floor alone. Mint-only inputs — entry probability, the chosen leverage multiplier, the user contribution, and fee policy — are **not** stored in the order. They are inputs to mint admission and to deriving `floor_shares`, but they do not survive in the packed ID. This keeps mint-admission policy out of structural order validation, so a future change to leverage tiers or price thresholds can never retroactively invalidate an already-packed order.
+`is_leveraged()` is exactly `floor_shares > 0`: leverage is detectable from the stored floor alone. Mint-only inputs — entry probability, the chosen leverage multiplier, the net premium, and fee policy — are **not** stored in the order. They are inputs to mint admission and to deriving `floor_shares`, but they do not survive in the packed ID. This keeps mint-admission policy out of structural order validation, so a future change to leverage tiers or price thresholds can never retroactively invalidate an already-packed order.
 
 `StrikeExposure` interprets an `Order` against one expiry's strike grid and floor-index schedule to derive the decoded strike bounds, the current floor amount, the terminal floor, the terminal payout, and the conservative max-live backing payout. The split keeps packed order identity at the boundary while internal flows operate on validated values.
 
@@ -106,11 +118,11 @@ These thresholds are protocol constants; see [configuration](../design/configura
 ### The entry-value gate
 
 ```text
-user_contribution = exposure_value / leverage  ≥  min_order_principal
-exposure_value > floor_seed_amount / liquidation_ltv   (when floor_seed_amount > 0)
+net_premium = entry_value / leverage  ≥  min_net_premium
+entry_value > financed_amount / liquidation_ltv   (when financed_amount > 0)
 ```
 
-The contribution must clear a minimum principal so dust orders are rejected. The entry-value gate rejects any leveraged order whose entry value would already sit at or below the expiry's snapshotted liquidation threshold — that is, an order that would be immediately liquidatable the moment it was minted. `liquidation_ltv` is the expiry's snapshotted floor-to-value ratio (see [liquidation](./liquidation.md) and [configuration](../design/configuration.md)).
+The net premium must clear a minimum so dust orders are rejected. The entry-value gate rejects any leveraged order whose entry value would already sit at or below the expiry's snapshotted liquidation threshold — that is, an order that would be immediately liquidatable the moment it was minted. `liquidation_ltv` is the expiry's snapshotted floor-to-value ratio (see [liquidation](./liquidation.md) and [configuration](../design/configuration.md)).
 
 ### The terminal-floor gate
 
@@ -149,7 +161,7 @@ The order's full mint-time terms are removed from the live indexes first, then t
 
 ## Settlement
 
-At settlement the range probability is binary, so the payout is deterministic from the order's stored floor shares and the expiry's terminal index:
+Settlement is cash settlement: the digital's outcome is binary, so the payout is deterministic from the order's stored floor shares and the expiry's terminal index:
 
 ```text
 losing order:  payout = 0
@@ -196,7 +208,7 @@ Quantity-first (rather than leverage-first) ordering was chosen because off-chai
 - Model leverage as part of the contract payoff (a deterministic floor), not as an external debt overlay. 1x is the zero-floor case of the same payoff.
 - Keep contract floors limited-recourse: a floor offsets only its own order's value or payout, capped at it.
 - Store only atomic terms that cannot be cheaply derived (quantity, floor shares, open time, strike indices, sequence); derive everything else at the leaf that needs it.
-- Keep mint-only policy (entry probability, leverage, contribution) out of the packed order and out of structural validation, so policy changes never invalidate existing orders.
+- Keep mint-only policy (entry probability, leverage, net premium) out of the packed order and out of structural validation, so policy changes never invalidate existing orders.
 - Use the packed `order_id` only at entry, exit, and storage boundaries; use the typed `Order` internally.
 - Keep settlement payout exact and live backing conservative. Do not let terminal-floor math drive live backing, because before expiry the live floor is smaller and terminal payout understates live liability.
 - Use aggregate NAV floor subtraction only under the precondition that every active leveraged order is above its current floor; rely on the health flow to maintain it.

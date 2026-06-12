@@ -31,7 +31,7 @@ const EInvalidOracleTickSize: u64 = 24;
 const EInvalidWithdrawFeeAlpha: u64 = 25;
 const EInvalidEwmaAlpha: u64 = 26;
 const EInvalidEwmaZScoreThreshold: u64 = 27;
-const EInvalidEwmaAdditionalFee: u64 = 28;
+const EInvalidEwmaPenaltyRate: u64 = 28;
 const EInvalidBackingBufferLambda: u64 = 29;
 
 // === Expiry Funding and Liquidation ===
@@ -262,14 +262,14 @@ public(package) fun assert_ewma_z_score_threshold(value: u64) {
 
 /// Per-unit fee added to a penalized trade, in FLOAT_SCALING (10 bps by default,
 /// capped at 20 bps to bound how punitive the surcharge can be made).
-public(package) macro fun default_ewma_additional_fee(): u64 { 1_000_000 }
-public(package) macro fun min_ewma_additional_fee(): u64 { 0 }
-public(package) macro fun max_ewma_additional_fee(): u64 { 2_000_000 }
+public(package) macro fun default_ewma_penalty_rate(): u64 { 1_000_000 }
+public(package) macro fun min_ewma_penalty_rate(): u64 { 0 }
+public(package) macro fun max_ewma_penalty_rate(): u64 { 2_000_000 }
 
-public(package) fun assert_ewma_additional_fee(value: u64) {
+public(package) fun assert_ewma_penalty_rate(value: u64) {
     assert!(
-        value >= min_ewma_additional_fee!() && value <= max_ewma_additional_fee!(),
-        EInvalidEwmaAdditionalFee,
+        value >= min_ewma_penalty_rate!() && value <= max_ewma_penalty_rate!(),
+        EInvalidEwmaPenaltyRate,
     );
 }
 

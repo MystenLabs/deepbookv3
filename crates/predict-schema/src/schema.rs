@@ -21,7 +21,7 @@ diesel::table! {
         leverage -> Int8,
         entry_probability -> Int8,
         quantity -> Numeric,
-        contribution -> Numeric,
+        net_premium -> Numeric,
         trading_fee -> Numeric,
         builder_fee -> Numeric,
         penalty_fee -> Numeric,
@@ -352,7 +352,7 @@ diesel::table! {
         protocol_config_id -> Text,
         alpha -> Int8,
         z_score_threshold -> Int8,
-        additional_fee -> Numeric,
+        penalty_rate -> Numeric,
         enabled -> Bool,
     }
 }

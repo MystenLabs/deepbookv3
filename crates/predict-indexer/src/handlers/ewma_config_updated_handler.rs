@@ -18,7 +18,7 @@ pub fn map(ev: &Ev, meta: &PredictEventMeta) -> Row {
         alpha: ev.alpha as i64,
         // 1e9-scaled threshold, bounded.
         z_score_threshold: ev.z_score_threshold as i64,
-        additional_fee: BigDecimal::from(ev.additional_fee),
+        penalty_rate: BigDecimal::from(ev.penalty_rate),
         enabled: ev.enabled,
     }
 }

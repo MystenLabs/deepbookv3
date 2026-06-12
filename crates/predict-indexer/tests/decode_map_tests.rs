@@ -110,7 +110,7 @@ fn market_oracle_template_config_updated_map() {
 #[test]
 #[ignore = "TODO(testnet-deploy): assert map() output (fixture-free; fill in when revisiting tests)"]
 fn ewma_config_updated_map() {
-    // TODO(testnet-deploy): build a decode struct + PredictEventMeta::for_test(...), call map(), assert the Row fields (config id -> canonical 0x, alpha/z_score BIGINT, additional_fee NUMERIC, enabled BOOLEAN, tx_index/event_index).
+    // TODO(testnet-deploy): build a decode struct + PredictEventMeta::for_test(...), call map(), assert the Row fields (config id -> canonical 0x, alpha/z_score BIGINT, penalty_rate NUMERIC, enabled BOOLEAN, tx_index/event_index).
 }
 
 #[test]

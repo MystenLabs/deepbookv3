@@ -1,6 +1,6 @@
 # Pricing and oracles
 
-Predict prices binary range contracts off two independent oracle inputs and turns them into the live probabilities and valuation curves that drive minting, redemption, and net asset value (NAV). This document describes those inputs, how a range probability is derived from them, how the `pricing` module builds a one-sided UP-price curve for live NAV, how freshness bounds are enforced, and how a market reaches terminal settlement.
+Predict prices its range digitals (binary options) off two independent oracle inputs and turns them into the live probabilities and valuation curves that drive minting, redemption, and net asset value (NAV). This document describes those inputs, how a range probability is derived from them, how the `pricing` module builds a one-sided UP-price curve for live NAV, how freshness bounds are enforced, and how a market reaches terminal settlement.
 
 ## Two oracle inputs
 
@@ -48,18 +48,18 @@ Write authorization is by `MarketOracleCap`: an oracle stores a set of authorize
 
 ## From SVI to a range probability
 
-A Predict range contract pays out if the asset's settlement price lands inside a strike interval. Its fair value is therefore the probability of that event, read off the distribution that the SVI surface encodes.
+A Predict range contract pays out if the asset's settlement price lands inside a strike interval. Its fair value is therefore the probability of that event, read off the distribution that the SVI surface encodes — the defining identity of an undiscounted digital, whose price per unit notional equals the risk-neutral probability of its payout event.
 
 The derivation, conceptually:
 
 1. **Forward and surface.** Take the live forward `F` and the live `SVIParams`.
 2. **Total variance at a strike.** For a strike `K`, compute log-moneyness `k = ln(K / F)`, then evaluate the SVI total-variance function `w(k)`. The implementation uses the raw-SVI form `w(k) = a + b·(rho·(k − m) + sqrt((k − m)² + sigma²))`, with the wing term `rho·(k − m) + sqrt((k − m)² + sigma²)` asserted non-negative before it is scaled by `b`. This expresses the smile as variance: how much dispersion is priced at that moneyness.
-3. **One-sided (UP) tail probability.** Convert `(k, w)` into the option-pricing distance `d2 = −((k + w/2) / sqrt(w))` and take the standard normal CDF `N(d2)`. This is the probability the settlement price ends **at or above** `K` — the price of a one-sided "UP" claim struck at `K`.
+3. **One-sided (UP) tail probability.** Convert `(k, w)` into the option-pricing distance `d2 = −((k + w/2) / sqrt(w))` and take the standard normal CDF `N(d2)`. This is the probability the settlement price ends **at or above** `K` — the price of a one-sided "UP" claim struck at `K`, i.e. a cash-or-nothing digital call.
 4. **Range probability by differencing.** Because the UP price is monotonically non-increasing in strike, the probability of landing in the half-open interval `(lower, higher]` is
 
        range_price = up_price(lower) − up_price(higher)
 
-   This is the value of a contract that pays out only inside the range, expressed as a 1e9-scaled probability.
+   This is the value of a contract that pays out only inside the range — a digital call spread — expressed as a 1e9-scaled probability.
 
 The endpoints carry sentinel handling so open-ended ranges work without special-casing the caller: a strike equal to `neg_inf` (the value `0`) has UP price `1.0` (the whole distribution is above it), and a strike equal to `pos_inf` (`u64::MAX`) has UP price `0`. A one-sided contract is the difference against the appropriate sentinel.
 

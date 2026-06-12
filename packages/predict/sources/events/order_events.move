@@ -27,8 +27,8 @@ public struct OrderMinted has copy, drop, store {
     /// 1e9-scaled range probability quoted at entry.
     entry_probability: u64,
     quantity: u64,
-    /// User cash contributed into LP backing, in DUSDC base units.
-    contribution: u64,
+    /// Net premium the user paid into LP backing, in DUSDC base units.
+    net_premium: u64,
     trading_fee: u64,
     builder_fee: u64,
     /// EWMA gas-price congestion surcharge retained by the pool, in DUSDC base units.
@@ -109,7 +109,7 @@ public(package) fun emit_order_minted(
     higher_strike: u64,
     leverage: u64,
     entry_probability: u64,
-    contribution: u64,
+    net_premium: u64,
     trading_fee: u64,
     builder_fee: u64,
     penalty_fee: u64,
@@ -125,7 +125,7 @@ public(package) fun emit_order_minted(
         leverage,
         entry_probability,
         quantity: order.quantity(),
-        contribution,
+        net_premium,
         trading_fee,
         builder_fee,
         penalty_fee,
