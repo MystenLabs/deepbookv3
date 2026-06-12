@@ -44,6 +44,8 @@ Alongside the surface, `MarketOracle` stores a Block Scholes `spot` and `forward
 
 The surface and the spot/forward pair are updated through two separate write paths, each carrying its own `source_timestamp_ms` (the operator's observation time) and stamping its own `update_timestamp_ms` (on-chain landing). SVI updates and price updates therefore age independently, and each has its own freshness threshold. Updating SVI does not refresh the price timestamp, and vice versa — keeping each staleness check honest. As with Pyth, each freshness check uses the conservative `min(source, update)` timestamp.
 
+Both write paths are batch-safe by design: a push against a settled market (or, for SVI, any non-active market) and a push whose `source_timestamp_ms` does not advance the stored one are clean no-ops rather than aborts, so one transaction can update many expiries without a settlement or ordering race on a single market reverting the whole batch. Malformed payloads — zero spot or forward, future-dated timestamps, out-of-bounds SVI — still abort.
+
 Write authorization is by `MarketOracleWriterCap`: an oracle stores a set of authorized writer-cap IDs — seeded at market creation from the cap IDs the creator supplies, possibly empty — and any update must present a cap in that set. Writer caps are minted under the protocol `AdminCap` and grant nothing until an oracle registers their ID; admin can register or unregister them per oracle, and a cap holder can remove its own authorization. The writer cap carries no market-lifecycle or settlement authority. The per-oracle settlement-freshness threshold is tunable through an admin-gated path on the oracle itself, distinct from the global template config.
 
 ## From SVI to a range probability

@@ -25,11 +25,8 @@ use sui::{clock::Clock, random::{Self, Random, RandomGenerator}, vec_set::{Self,
 
 const EInvalidMarketOracleWriterCap: u64 = 0;
 const EMarketNotActive: u64 = 1;
-const EMarketSettled: u64 = 2;
 const EZeroSpot: u64 = 6;
 const EZeroForward: u64 = 7;
-const EStalePriceSourceUpdate: u64 = 8;
-const EStaleSVISourceUpdate: u64 = 9;
 const EWrongPythSource: u64 = 10;
 const EFuturePriceSourceUpdate: u64 = 11;
 const EFutureSVISourceUpdate: u64 = 12;
@@ -215,11 +212,14 @@ public fun block_scholes_svi_update_timestamp_ms(market: &MarketOracle): u64 {
 
 /// Update authorized Block Scholes spot/forward data.
 ///
-/// Aborts during valuation or after settlement. While within the final
-/// `settlement_sample_window_ms` before expiry, this records the accepted Block
-/// Scholes spot into its settlement sample buffer. After expiry, this latches the
-/// first fresh post-expiry Block Scholes price observed by this oracle. Terminal
-/// settlement is performed separately by `settle_with_randomness`.
+/// Aborts during valuation. A settled market or a non-advancing source
+/// timestamp is a clean no-op so multi-expiry writer PTBs never revert on a
+/// settlement or ordering race; malformed payloads still abort. While within
+/// the final `settlement_sample_window_ms` before expiry, this records the
+/// accepted Block Scholes spot into its settlement sample buffer. After
+/// expiry, this latches the first fresh post-expiry Block Scholes price
+/// observed by this oracle. Terminal settlement is performed separately by
+/// `settle_with_randomness`.
 public fun update_block_scholes_prices(
     market: &mut MarketOracle,
     config: &ProtocolConfig,
@@ -233,15 +233,16 @@ public fun update_block_scholes_prices(
     market.assert_authorized_writer_cap(cap);
     config.assert_not_valuation_in_progress();
 
-    let status = market.status(clock);
-    assert!(status != STATUS_SETTLED, EMarketSettled);
+    // Batch-race no-ops: skip when there is nothing valid to write.
+    if (market.is_settled()) return;
+    if (block_scholes_source_timestamp_ms <= market.block_scholes_price_source_timestamp_ms) return;
 
-    let basis = market.validate_block_scholes_price_update(
-        block_scholes_spot,
-        block_scholes_forward,
-        block_scholes_source_timestamp_ms,
-        clock,
-    );
+    // Malformed payloads abort: these mean a broken writer, not a race.
+    assert!(block_scholes_spot > 0, EZeroSpot);
+    assert!(block_scholes_forward > 0, EZeroForward);
+    assert!(block_scholes_source_timestamp_ms <= clock.timestamp_ms(), EFuturePriceSourceUpdate);
+
+    let basis = math::div(block_scholes_forward, block_scholes_spot);
     market.apply_block_scholes_prices(
         block_scholes_spot,
         block_scholes_forward,
@@ -289,7 +290,10 @@ public fun record_pyth_settlement_observation(
 
 /// Update live SVI data from an authorized Block Scholes writer.
 ///
-/// SVI is live-market-only and must advance the source timestamp.
+/// SVI is live-market-only: a non-active market (expired or settled) or a
+/// non-advancing source timestamp is a clean no-op so multi-expiry writer
+/// PTBs never revert on an expiry or ordering race; malformed payloads still
+/// abort.
 public fun update_svi(
     market: &mut MarketOracle,
     config: &ProtocolConfig,
@@ -301,13 +305,15 @@ public fun update_svi(
     market.assert_version_allowed();
     market.assert_authorized_writer_cap(cap);
     config.assert_not_valuation_in_progress();
-    market.assert_active(clock);
-    assert!(
-        source_timestamp_ms > market.block_scholes_svi_source_timestamp_ms,
-        EStaleSVISourceUpdate,
-    );
+
+    // Batch-race no-ops: skip when there is nothing valid to write.
+    if (market.status(clock) != STATUS_ACTIVE) return;
+    if (source_timestamp_ms <= market.block_scholes_svi_source_timestamp_ms) return;
+
+    // Malformed payloads abort: these mean a broken writer, not a race.
     assert!(source_timestamp_ms <= clock.timestamp_ms(), EFutureSVISourceUpdate);
     assert_valid_svi(&svi);
+
     market.apply_block_scholes_svi(svi, source_timestamp_ms, clock);
 }
 
@@ -562,24 +568,6 @@ fun apply_block_scholes_svi(
         source_timestamp_ms,
         update_timestamp_ms,
     );
-}
-
-fun validate_block_scholes_price_update(
-    market: &MarketOracle,
-    spot: u64,
-    forward: u64,
-    source_timestamp_ms: u64,
-    clock: &Clock,
-): u64 {
-    assert!(spot > 0, EZeroSpot);
-    assert!(forward > 0, EZeroForward);
-    assert!(
-        source_timestamp_ms > market.block_scholes_price_source_timestamp_ms,
-        EStalePriceSourceUpdate,
-    );
-    assert!(source_timestamp_ms <= clock.timestamp_ms(), EFuturePriceSourceUpdate);
-
-    math::div(forward, spot)
 }
 
 fun emit_config_updated(market: &MarketOracle) {
