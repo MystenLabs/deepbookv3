@@ -366,7 +366,7 @@ function normalizeOrderMinted(event: any, row: ScenarioRow): Record<string, unkn
         leverage: decimal(json.leverage),
         entry_probability: decimal(json.entry_probability),
         quantity: decimal(json.quantity),
-        contribution: decimal(json.contribution),
+        contribution: decimal(json.net_premium),
         trading_fee: decimal(json.trading_fee),
         builder_fee: decimal(json.builder_fee),
         penalty_fee: decimal(json.penalty_fee),
