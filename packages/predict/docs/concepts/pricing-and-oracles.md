@@ -9,7 +9,7 @@ Predict separates the *spot* of the underlying asset from the *shape of the impl
 | Input | Provider | On-chain object | What it carries |
 | --- | --- | --- | --- |
 | Spot price | Pyth Lazer | `PythSource` | A single 1e9-normalized spot for one Lazer feed, with both a publisher timestamp and an on-chain landing timestamp |
-| Volatility surface + forward basis | Block Scholes (an operator holding a `MarketOracleCap`) | `MarketOracle` | SVI volatility-smile parameters, a Block Scholes spot/forward pair, and their timestamps |
+| Volatility surface + forward basis | Block Scholes (an operator holding a `MarketOracleWriterCap`) | `MarketOracle` | SVI volatility-smile parameters, a Block Scholes spot/forward pair, and their timestamps |
 
 Each input lives in its own shared object and is updated by its own transaction. The `pricing` module is a stateless read layer: it resolves both objects on demand, validates them, and computes prices. It never mutates oracle, pool, expiry, or position state.
 
@@ -44,7 +44,7 @@ Alongside the surface, `MarketOracle` stores a Block Scholes `spot` and `forward
 
 The surface and the spot/forward pair are updated through two separate write paths, each carrying its own `source_timestamp_ms` (the operator's observation time) and stamping its own `update_timestamp_ms` (on-chain landing). SVI updates and price updates therefore age independently, and each has its own freshness threshold. Updating SVI does not refresh the price timestamp, and vice versa — keeping each staleness check honest. As with Pyth, each freshness check uses the conservative `min(source, update)` timestamp.
 
-Write authorization is by `MarketOracleCap`: an oracle stores a set of authorized cap IDs, and any update must present a cap in that set. Caps are minted under the protocol `AdminCap`, can be registered or unregistered per oracle, and a cap holder can remove its own authorization. The per-oracle settlement-freshness threshold is tunable through an admin-gated path on the oracle itself, distinct from the global template config.
+Write authorization is by `MarketOracleWriterCap`: an oracle stores a set of authorized writer-cap IDs — seeded at market creation from the cap IDs the creator supplies, possibly empty — and any update must present a cap in that set. Writer caps are minted under the protocol `AdminCap` and grant nothing until an oracle registers their ID; admin can register or unregister them per oracle, and a cap holder can remove its own authorization. The writer cap carries no market-lifecycle or settlement authority. The per-oracle settlement-freshness threshold is tunable through an admin-gated path on the oracle itself, distinct from the global template config.
 
 ## From SVI to a range probability
 
@@ -144,9 +144,9 @@ stateDiagram-v2
 
 ### Recording the terminal settlement price
 
-Pre-expiry Pyth settlement samples are recorded permissionlessly during the final sampling window whenever the bound Pyth source is fresh. Pre-expiry Block Scholes settlement samples are cap-gated because Block Scholes data is operator supplied. Block Scholes price pushes record the accepted Block Scholes spot when they are inside the sampling window.
+Pre-expiry Pyth settlement samples are recorded permissionlessly during the final sampling window whenever the bound Pyth source is fresh. Pre-expiry Block Scholes settlement samples are writer-cap-gated because Block Scholes data is operator supplied. Block Scholes price pushes record the accepted Block Scholes spot when they are inside the sampling window.
 
-After expiry, the oracle latches first-observed fresh post-expiry fallback prices instead of reading live oracle fields during final selection. Permissionless Pyth observation or settlement can latch the Pyth fallback; cap-gated Block Scholes price pushes latch the Block Scholes fallback.
+After expiry, the oracle latches first-observed fresh post-expiry fallback prices instead of reading live oracle fields during final selection. Permissionless Pyth observation or settlement can latch the Pyth fallback; writer-cap-gated Block Scholes price pushes latch the Block Scholes fallback.
 
 Settlement is triggered permissionlessly via `settle_with_randomness`. It is a first-writer-wins terminal transition: once recorded it never changes.
 

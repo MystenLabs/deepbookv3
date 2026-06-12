@@ -11,7 +11,7 @@
 /// sync or manager setup. It is the legitimate home of `set_state_for_testing`
 /// for tests that don't need a funded expiry market.
 ///
-/// The fixture exposes the `MarketOracleCap` so error-path tests can call the
+/// The fixture exposes the `MarketOracleWriterCap` so error-path tests can call the
 /// guarded oracle setters (`update_block_scholes_prices`, `update_svi`) directly
 /// with adversarial inputs to trigger `EZeroSpot`/`EZeroForward`/stale/future/
 /// deviation aborts. `ProtocolConfig`/`Registry` are taken per-transaction (never
@@ -22,7 +22,9 @@ module deepbook_predict::oracle_fixture;
 use deepbook_predict::{
     admin::AdminCap,
     constants,
-    market_oracle::{Self, MarketOracle, MarketOracleCap, SVIParams},
+    market_lifecycle_cap::MarketLifecycleCap,
+    market_oracle::{Self, MarketOracle, SVIParams},
+    market_oracle_writer_cap::{Self, MarketOracleWriterCap},
     plp::{Self, PLP, PoolVault},
     protocol_config::ProtocolConfig,
     pyth_source::{Self, PythSource},
@@ -43,7 +45,8 @@ use sui::{
 public struct OracleFixture {
     scenario: Scenario,
     admin_cap: AdminCap,
-    cap: MarketOracleCap,
+    cap: MarketOracleWriterCap,
+    lifecycle_cap: MarketLifecycleCap,
     clock: Clock,
     pyth_id: ID,
     oracle_id: ID,
@@ -73,7 +76,7 @@ public fun setup_oracle(spot: u64, tick: u64, expiry: u64): OracleFixture {
         scenario.ctx(),
     );
     return_shared(registry);
-    let cap = market_oracle::create_cap(&admin_cap, scenario.ctx());
+    let cap = market_oracle_writer_cap::create(&admin_cap, scenario.ctx());
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(test_constants::now_ms());
 
@@ -96,12 +99,14 @@ public fun setup_oracle(spot: u64, tick: u64, expiry: u64): OracleFixture {
         &clock,
         scenario.ctx(),
     );
+    let lifecycle_cap = vault.mint_lifecycle_cap(&admin_cap, scenario.ctx());
     let (expiry_id, oracle_id) = registry::create_expiry_market(
         &mut registry,
         &mut vault,
         &mut config,
         &pyth,
-        &cap,
+        &lifecycle_cap,
+        vector[cap.id()],
         expiry,
         &clock,
         scenario.ctx(),
@@ -113,7 +118,17 @@ public fun setup_oracle(spot: u64, tick: u64, expiry: u64): OracleFixture {
 
     scenario.next_tx(test_constants::admin());
 
-    OracleFixture { scenario, admin_cap, cap, clock, pyth_id, oracle_id, expiry_id, initial_plp }
+    OracleFixture {
+        scenario,
+        admin_cap,
+        cap,
+        lifecycle_cap,
+        clock,
+        pyth_id,
+        oracle_id,
+        expiry_id,
+        initial_plp,
+    }
 }
 
 /// `setup_oracle` with the default creation spot / tick and the default (far)
@@ -208,7 +223,11 @@ public fun set_pyth(
 
 /// The authorized cap, so error-path tests can drive the guarded oracle setters
 /// directly with adversarial inputs.
-public fun cap(self: &OracleFixture): &MarketOracleCap { &self.cap }
+public fun cap(self: &OracleFixture): &MarketOracleWriterCap { &self.cap }
+
+/// The allow-listed lifecycle cap, for tests driving the lifecycle-gated flows
+/// (`create_expiry_market` / `plp::compact_storage`) directly.
+public fun lifecycle_cap(self: &OracleFixture): &MarketLifecycleCap { &self.lifecycle_cap }
 
 public fun clock(self: &OracleFixture): &Clock { &self.clock }
 
@@ -231,6 +250,7 @@ public fun finish(self: OracleFixture) {
         scenario,
         admin_cap,
         cap,
+        lifecycle_cap,
         clock,
         pyth_id: _,
         oracle_id: _,
@@ -238,7 +258,8 @@ public fun finish(self: OracleFixture) {
         initial_plp,
     } = self;
     destroy(initial_plp);
-    market_oracle::destroy_cap(cap);
+    cap.destroy();
+    lifecycle_cap.destroy();
     destroy(admin_cap);
     clock.destroy_for_testing();
     scenario.end();

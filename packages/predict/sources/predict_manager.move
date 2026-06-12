@@ -21,7 +21,14 @@ use deepbook::{
     balance_manager::{Self, BalanceManager, DepositCap, WithdrawCap, TradeCap},
     registry::Registry as DeepbookRegistry
 };
-use deepbook_predict::{account_events, builder_code::{Self, BuilderCode}, constants};
+use deepbook_predict::{
+    account_events,
+    builder_code::{Self, BuilderCode},
+    constants,
+    predict_deposit_cap::{Self, PredictDepositCap},
+    predict_trade_cap::{Self, PredictTradeCap},
+    predict_withdraw_cap::{Self, PredictWithdrawCap}
+};
 use dusdc::dusdc::DUSDC;
 use sui::{coin::Coin, derived_object, table::{Self, Table}, vec_set::{Self, VecSet}};
 
@@ -104,28 +111,6 @@ public struct ExpiryTradingSummary has store {
     gross_paid_to_expiry: u64,
     /// DUSDC payout before redeem trading and builder fees are deducted.
     gross_received_from_expiry: u64,
-}
-
-/// Owners of a `PredictTradeCap` can generate a `PredictTradeProof` to mint/redeem
-/// positions on this manager. Risk of equivocation since `PredictTradeCap` is
-/// an owned object — high-frequency callers should trade as the manager owner.
-public struct PredictTradeCap has key, store {
-    id: UID,
-    predict_manager_id: ID,
-}
-
-/// `PredictDepositCap` is used to deposit funds into a PredictManager by a
-/// non-owner.
-public struct PredictDepositCap has key, store {
-    id: UID,
-    predict_manager_id: ID,
-}
-
-/// `PredictWithdrawCap` is used to withdraw funds from a PredictManager by a
-/// non-owner.
-public struct PredictWithdrawCap has key, store {
-    id: UID,
-    predict_manager_id: ID,
 }
 
 /// Manager owner and `PredictTradeCap` holders can generate a `PredictTradeProof`.
@@ -597,11 +582,10 @@ fun mint_trade_cap_internal(
     ctx: &mut TxContext,
 ): PredictTradeCap {
     self.assert_caps_capacity();
-    let id = object::new(ctx);
-    let cap_id = id.to_inner();
-    self.allow_listed.insert(cap_id);
-    account_events::emit_predict_trade_cap_minted(manager_id, cap_id);
-    PredictTradeCap { id, predict_manager_id: manager_id }
+    let cap = predict_trade_cap::new(manager_id, ctx);
+    self.allow_listed.insert(cap.id());
+    account_events::emit_predict_trade_cap_minted(manager_id, cap.id());
+    cap
 }
 
 fun mint_deposit_cap_internal(
@@ -610,11 +594,10 @@ fun mint_deposit_cap_internal(
     ctx: &mut TxContext,
 ): PredictDepositCap {
     self.assert_caps_capacity();
-    let id = object::new(ctx);
-    let cap_id = id.to_inner();
-    self.allow_listed.insert(cap_id);
-    account_events::emit_predict_deposit_cap_minted(manager_id, cap_id);
-    PredictDepositCap { id, predict_manager_id: manager_id }
+    let cap = predict_deposit_cap::new(manager_id, ctx);
+    self.allow_listed.insert(cap.id());
+    account_events::emit_predict_deposit_cap_minted(manager_id, cap.id());
+    cap
 }
 
 fun mint_withdraw_cap_internal(
@@ -623,9 +606,8 @@ fun mint_withdraw_cap_internal(
     ctx: &mut TxContext,
 ): PredictWithdrawCap {
     self.assert_caps_capacity();
-    let id = object::new(ctx);
-    let cap_id = id.to_inner();
-    self.allow_listed.insert(cap_id);
-    account_events::emit_predict_withdraw_cap_minted(manager_id, cap_id);
-    PredictWithdrawCap { id, predict_manager_id: manager_id }
+    let cap = predict_withdraw_cap::new(manager_id, ctx);
+    self.allow_listed.insert(cap.id());
+    account_events::emit_predict_withdraw_cap_minted(manager_id, cap.id());
+    cap
 }

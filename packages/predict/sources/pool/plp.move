@@ -14,8 +14,9 @@ module deepbook_predict::plp;
 use deepbook_predict::{
     admin::AdminCap,
     constants,
-    expiry_market::ExpiryMarket,
+    expiry_market::{Self, ExpiryMarket},
     incentive::{Self, IncentiveState},
+    market_lifecycle_cap::{Self, MarketLifecycleCap},
     market_oracle::MarketOracle,
     pool_accounting::{Self, Ledger},
     predict_manager::PredictManager,
@@ -46,6 +47,7 @@ const EZeroShares: u64 = 7;
 const EZeroPoolValue: u64 = 8;
 const EPackageVersionDisabled: u64 = 9;
 const ENoPlpHolders: u64 = 10;
+const ELifecycleCapNotValid: u64 = 11;
 
 /// One-time witness type for Predict LP token registration.
 public struct PLP has drop {}
@@ -71,6 +73,10 @@ public struct PoolVault has key {
     incentive_deep: IncentiveState<DEEP>,
     /// Mirror of `ProtocolConfig.allowed_versions`; synced permissionlessly.
     allowed_versions: VecSet<u64>,
+    /// IDs of `MarketLifecycleCap` objects currently authorized for
+    /// market lifecycle entries (market creation and compaction). Admin mints
+    /// into this set and revokes from it.
+    allowed_lifecycle_caps: VecSet<ID>,
 }
 
 /// Transaction-local pool sync hot potato.
@@ -299,6 +305,23 @@ public fun claim_trading_loss_rebate(
     };
 }
 
+/// Compact a settled expiry market via a valid `MarketLifecycleCap`.
+///
+/// Lives here because the lifecycle-cap allowlist is `PoolVault` state and
+/// `expiry_market` cannot depend on `plp`. Version/valuation/oracle-binding
+/// gates stay in `expiry_market::compact_storage`, which owns the mutated
+/// state.
+public fun compact_storage(
+    market: &mut ExpiryMarket,
+    vault: &PoolVault,
+    config: &ProtocolConfig,
+    market_oracle: &MarketOracle,
+    lifecycle_cap: &MarketLifecycleCap,
+) {
+    vault.assert_valid_lifecycle_cap(lifecycle_cap);
+    expiry_market::compact_storage(market, config, market_oracle);
+}
+
 /// Supply DUSDC into the pool vault against a complete full-pool sync.
 ///
 /// Values both incentive assets from their fresh feeds, finishes the sync to get
@@ -456,6 +479,31 @@ public fun set_max_expiry_funding(
     );
 }
 
+/// Mint a new `MarketLifecycleCap`. Admin-only.
+public fun mint_lifecycle_cap(
+    vault: &mut PoolVault,
+    _admin_cap: &AdminCap,
+    ctx: &mut TxContext,
+): MarketLifecycleCap {
+    vault.assert_version_allowed();
+    let cap = market_lifecycle_cap::new(ctx);
+    vault.allowed_lifecycle_caps.insert(cap.id());
+    cap
+}
+
+/// Revoke a previously minted `MarketLifecycleCap` by ID. Admin-only.
+/// Deliberately not version-gated (like pause-cap revocation): revocation is
+/// harm-reducing and must stay available even when per-object version mirrors
+/// transiently disagree with the gates on this cap's lifecycle entries.
+public fun revoke_lifecycle_cap(
+    vault: &mut PoolVault,
+    _admin_cap: &AdminCap,
+    lifecycle_cap_id: ID,
+) {
+    assert!(vault.allowed_lifecycle_caps.contains(&lifecycle_cap_id), ELifecycleCapNotValid);
+    vault.allowed_lifecycle_caps.remove(&lifecycle_cap_id);
+}
+
 // === Public-Package Functions ===
 
 /// Create an empty pool vault from the PLP treasury cap.
@@ -469,6 +517,7 @@ public(package) fun new(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): Po
         incentive_sui: incentive::empty(),
         incentive_deep: incentive::empty(),
         allowed_versions: vec_set::singleton(constants::current_version!()),
+        allowed_lifecycle_caps: vec_set::empty(),
     }
 }
 
@@ -494,6 +543,13 @@ public(package) fun withdraw_fee(
     let band_fee = math::mul(total_fee_pool, fee_fraction);
     let nav_fee_cap = math::mul(alpha, gross_payout);
     band_fee.min(nav_fee_cap)
+}
+
+/// Abort unless the supplied lifecycle cap was minted by admin and not
+/// revoked. Called by `registry::create_expiry_market`; `plp` checks it
+/// directly in `compact_storage`.
+public(package) fun assert_valid_lifecycle_cap(vault: &PoolVault, cap: &MarketLifecycleCap) {
+    assert!(vault.allowed_lifecycle_caps.contains(&cap.id()), ELifecycleCapNotValid);
 }
 
 /// Overwrite this vault's mirrored `allowed_versions`. The only authorized

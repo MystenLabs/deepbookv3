@@ -23,7 +23,7 @@ module deepbook_predict::registry_guard_tests;
 use deepbook_predict::{
     constants,
     flow_test_helpers,
-    market_oracle,
+    market_oracle_writer_cap,
     plp::{Self, PoolVault},
     protocol_config::ProtocolConfig,
     pyth_source::{Self, PythSource},
@@ -75,7 +75,7 @@ fun create_expiry_market_with_wrong_pyth_source_object_aborts() {
         reg.allowed_versions(),
         scenario.ctx(),
     );
-    let oracle_cap = market_oracle::create_cap(&admin_cap, scenario.ctx());
+    let oracle_cap = market_oracle_writer_cap::create(&admin_cap, scenario.ctx());
     let clock = clock::create_for_testing(scenario.ctx());
     let registry_id = reg.id();
     return_shared(reg);
@@ -85,12 +85,14 @@ fun create_expiry_market_with_wrong_pyth_source_object_aborts() {
     let mut vault = scenario.take_shared<PoolVault>();
     let mut config = scenario.take_shared<ProtocolConfig>();
     let rogue_pyth = scenario.take_shared_by_id<PythSource>(rogue_pyth_id);
+    let lifecycle_cap = vault.mint_lifecycle_cap(&admin_cap, scenario.ctx());
     let (_expiry_id, _oracle_id) = registry::create_expiry_market(
         &mut reg,
         &mut vault,
         &mut config,
         &rogue_pyth,
-        &oracle_cap,
+        &lifecycle_cap,
+        vector[oracle_cap.id()],
         test_constants::default_expiry_ms(),
         &clock,
         scenario.ctx(),

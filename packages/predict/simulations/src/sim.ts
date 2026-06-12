@@ -36,6 +36,7 @@ import {
     execute,
     executeAndWait,
     finalizeDusdcCurrencyRegistrationTx,
+    mintLifecycleCapTx,
     refreshOracleAndMintTx,
     refreshOracleAndRedeemTx,
     seedPythSourceAndCreateExpiryMarketTx,
@@ -782,10 +783,17 @@ async function setupSimulation(
 
     result = await executeAndWait(createMarketOracleCapTx(address), "create_oracle_cap");
     const oracleCapChange = result.objectChanges.find(
-        (change: any) => change.type === "created" && change.objectType.includes("MarketOracleCap"),
+        (change: any) => change.type === "created" && change.objectType.includes("MarketOracleWriterCap"),
     );
     const oracleCapId: string = oracleCapChange.objectId;
     console.log(`[${ts()}]   OracleCap: ${oracleCapId}`);
+
+    result = await executeAndWait(mintLifecycleCapTx(address), "mint_lifecycle_cap");
+    const lifecycleCapChange = result.objectChanges.find(
+        (change: any) => change.type === "created" && change.objectType.includes("MarketLifecycleCap"),
+    );
+    const lifecycleCapId: string = lifecycleCapChange.objectId;
+    console.log(`[${ts()}]   LifecycleCap: ${lifecycleCapId}`);
 
     result = await executeAndWait(
         createPythSourceTx(1, ORACLE_TICK_SIZE),
@@ -819,7 +827,8 @@ async function setupSimulation(
             poolVaultId,
             protocolConfigId,
             pythSourceId,
-            oracleCapId,
+            lifecycleCapId,
+            writerCapId: oracleCapId,
             expiry: EXPIRY_MS,
             spot: initialPythSpot,
         }),

@@ -111,11 +111,22 @@ Then call as `self.id.exists_(key)`, `self.id.add(key, value)`, `self.id.borrow(
 - Single-value bounds live in `config_constants::assert_*`; relational checks that depend on multiple fields live in the owning config setter.
 - Do not store generic `config_id` fields inside config structs or events; object identity is enough when identity matters.
 - Do not add singleton creation flags for objects created during package init.
-- Per-market oracle bounds can be tunable by `MarketOracleCap`; this is an intentional per-oracle operator control, not a generic admin config path.
+- Per-market oracle data writes (Block Scholes prices and SVI) are gated by `MarketOracleWriterCap` registration on that oracle; this is an intentional per-oracle operator control, not a generic admin config path.
 - Public visibility is an API commitment, not secrecy; on-chain state is still observable.
 - Keep admin-tunable config structs readable inside the package by default.
 - Expose public getters only for values needed by external Move composition, PTB construction, or clear user-facing protocol state.
 - Keep config constructors, setters, bounds checks, and template/snapshot wiring `public(package)`.
+
+### Capabilities
+
+- Every capability lives in its own module under `sources/capabilities/`, named after the cap. The cap module owns only what the cap itself owns: the struct, a `public(package) new` constructor, a public `destroy`, and `id()`/field getters. Allowlists, the asserts that consume them, and mint/revoke entrypoints that touch other state stay in the state-owning module and call the cap module's package constructor.
+- Two birth forms, two verbs. `mint_*` creates and allowlists atomically and is hosted by the allowlist-owning module (`registry::mint_pause_cap`, `plp::mint_lifecycle_cap`, `predict_manager::mint_*_cap`); the cap is born authorized. `create` is a born-inert constructor in the cap module itself (`market_oracle_writer_cap::create`) and is only legal when creation touches no other state; authority arrives later via registration.
+- Authorization-state placement is constraint-driven, not stylistic: the allowlist must live in a module below every gating call site in the dependency order, because struct fields are module-private and Move forbids import cycles. This is why the market-lifecycle allowlist lives on `PoolVault` (`plp`) rather than `Registry` — `registry` imports `plp`, and `plp` imports `expiry_market`, so both `create_expiry_market` and `plp::compact_storage` can reach it. Within that constraint there are two shapes: a protocol-wide allowlist on a singleton for cross-cutting ops (`PauseCap`, `MarketLifecycleCap`), and a per-instance set on the guarded object for instance-scoped authority (`MarketOracleWriterCap` per oracle, manager caps per `PredictManager`). Pick by intended blast radius.
+- Vocabulary: `revoke_*` removes existence-level authority from a birth allowlist; `register_*`/`unregister_*` manage per-instance membership for born-inert caps; `self_unregister_*` is the holder's possession-proved detach.
+- Authorize by ID, prove by possession. Registration and seeding APIs take `ID`s because a transaction cannot reference another address's owned objects — multi-party provisioning must be by ID (e.g. `create_expiry_market`'s `writer_cap_ids`). Object IDs are unforgeable and never reused, so seeding a wrong ID is permanently inert, never exploitable. Possession (`&Cap`) is reserved for self-actions (proof generation, self-unregister).
+- `destroy` never deregisters. A stale allowlist entry left by a destroyed cap is harmless by ID-uniqueness and can be swept later via `revoke_*`/`unregister_*` by copied ID (pinned by `destroy_lifecycle_cap_does_not_revoke`). Every transferable cap gets a public `destroy`; `AdminCap` deliberately has none.
+- Version-gating: mint is version-gated (granting authority under a version freeze is the risky direction); existence-level revocation never is — it is harm-reducing and must stay available even when per-object version mirrors transiently disagree (`revoke_pause_cap`, `revoke_lifecycle_cap`). Per-instance `unregister_*` may keep the guarded object's own version gate: the cap's acts and its removal read the same mirror on the same object, so they freeze atomically and no disagreement window exists. Born-inert `create` is stateless and ungated — authority is only granted through version-gated registration. Kill-switch caps (`PauseCap`) additionally bypass the mint gate so emergencies work under a version freeze.
+- Cap allowlist changes emit no events today (only the manager-cap mints emit `*CapMinted`). Indexing writer/lifecycle cap sets would require adding events first — a deliberate omission, not an oversight.
 
 ### API Shape
 

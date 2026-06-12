@@ -470,6 +470,26 @@ fun owner_can_mint_and_revoke_caps() {
     scenario.end();
 }
 
+#[test]
+fun minted_caps_can_be_destroyed() {
+    let (mut scenario, registry_id) = setup();
+    let mut manager = create_alice_manager(&mut scenario, registry_id);
+
+    let trade_cap = manager.mint_trade_cap(scenario.ctx());
+    let deposit_cap = manager.mint_deposit_cap(scenario.ctx());
+    let withdraw_cap = manager.mint_withdraw_cap(scenario.ctx());
+    assert_eq!(trade_cap.predict_manager_id(), manager.id());
+    assert_eq!(deposit_cap.predict_manager_id(), manager.id());
+    assert_eq!(withdraw_cap.predict_manager_id(), manager.id());
+
+    trade_cap.destroy();
+    deposit_cap.destroy();
+    withdraw_cap.destroy();
+
+    destroy(manager);
+    scenario.end();
+}
+
 #[test, expected_failure(abort_code = predict_manager::ENotOwner)]
 fun non_owner_cannot_mint_trade_cap() {
     let (mut scenario, registry_id) = setup();

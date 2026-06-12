@@ -12,6 +12,7 @@ use deepbook_predict::{
     admin,
     constants,
     market_oracle::{Self, MarketOracle, SVIParams},
+    market_oracle_writer_cap,
     oracle_fixture::{Self, OracleFixture},
     protocol_config::ProtocolConfig,
     pyth_source::PythSource,
@@ -58,11 +59,11 @@ const OTHER_PYTH_FEED_ID: u32 = 2;
 
 const EUnexpectedSuccess: u64 = 999;
 
-#[test, expected_failure(abort_code = market_oracle::EInvalidMarketOracleCap)]
+#[test, expected_failure(abort_code = market_oracle::EInvalidMarketOracleWriterCap)]
 fun update_svi_with_unregistered_cap_aborts() {
     let (mut fx, _pyth, mut oracle, config) = setup();
     let admin_cap = admin::new(fx.scenario_mut().ctx());
-    let unregistered_cap = market_oracle::create_cap(&admin_cap, fx.scenario_mut().ctx());
+    let unregistered_cap = market_oracle_writer_cap::create(&admin_cap, fx.scenario_mut().ctx());
     oracle.update_svi(
         &config,
         &unregistered_cap,

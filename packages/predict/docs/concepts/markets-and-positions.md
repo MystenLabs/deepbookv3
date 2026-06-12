@@ -18,11 +18,11 @@ The `Registry` enforces two uniqueness invariants so markets never overlap or du
 
 `create_expiry_market` performs the full setup atomically:
 
-1. **Validate inputs before mutating.** The running package version must be allowed, global trading must be enabled, and the expiry must be strictly in the future (`expiry > clock.timestamp_ms()`). The supplied `PythSource` must match the feed's registered config (same feed ID, same source object).
+1. **Validate inputs before mutating.** The caller must present a `MarketLifecycleCap` on the pool's allowlist, the running package version must be allowed, global trading must be enabled, and the expiry must be strictly in the future (`expiry > clock.timestamp_ms()`). The supplied `PythSource` must match the feed's registered config (same feed ID, same source object).
 2. **Require a fresh spot.** The current Pyth spot must pass the freshness check; a market cannot be born around a stale price.
 3. **Build the strike grid** centered on the current tick-floored spot, using the feed's configured tick size (see [Strike grid geometry](#strike-grid-geometry)).
 4. **Choose a preallocation budget.** The number of dense grid ticks to preallocate is chosen from the time remaining to expiry — shorter-dated markets preallocate fewer ticks. This is a gas/storage tradeoff that does not affect contract terms.
-5. **Create and share both objects.** The `MarketOracle` and `ExpiryMarket` are constructed (the `ExpiryMarket` snapshots its strike-exposure and cash config from `ProtocolConfig` at this moment), registered with the pool vault as an active expiry, and indexed by expiry in the registry.
+5. **Create and share both objects.** The `MarketOracle` and `ExpiryMarket` are constructed (the `ExpiryMarket` snapshots its strike-exposure and cash config from `ProtocolConfig` at this moment, and the `MarketOracle` seeds its authorized writer-cap set from the cap IDs supplied at creation), registered with the pool vault as an active expiry, and indexed by expiry in the registry.
 
 The new `ExpiryMarket` starts with **zero DUSDC cash**. Pool capital enters only later, through PLP rebalancing (see [../overview.md](../overview.md)). On success the protocol emits `MarketCreated` (and a config-snapshot event) carrying the expiry market, oracle, pool vault, Pyth source, feed ID, expiry, and the grid's `min_strike`/`tick_size`/`max_strike`.
 
@@ -30,7 +30,7 @@ The new `ExpiryMarket` starts with **zero DUSDC cash**. Pool capital enters only
 flowchart TD
   A["Admin: create_pyth_source(feed_id, tick_size)"] --> B["Registry: PythFeedConfig stored, PythSource shared (unique per feed)"]
   B --> C["create_expiry_market(pyth, expiry, ...)"]
-  C --> D{"checks: version allowed, trading on,<br/>expiry in future, fresh spot,<br/>expiry not already created"}
+  C --> D{"checks: lifecycle cap allowlisted,<br/>version allowed, trading on,<br/>expiry in future, fresh spot,<br/>expiry not already created"}
   D -->|pass| E["StrikeGrid::new_centered(spot, tick_size)"]
   E --> F["share MarketOracle + ExpiryMarket"]
   F --> G["PoolVault.register_expiry_market (active expiry)"]
@@ -127,7 +127,7 @@ While the market is active, leveraged positions are subject to liquidation. `liq
 
 ### Compaction
 
-`compact_storage` is the final, privileged cleanup for a settled market (gated by the `MarketOracleCap` because index destruction returns storage rebates). It caches the terminal settled liability, then destroys the dense live exposure indexes. After compaction the expiry retains only the cash needed to back the remaining settled payout and rebate liability; free LP cash returns to the pool through PLP rebalancing, which also unregisters the expiry from the pool's active set. The pool tracks expiry lifecycle on its side — an expiry is **registered** (added to `active_expiry_markets`) when the market is created, **deactivated** (removed from the active set) when its settled cash is released, and effectively **compacted** once its dense state is destroyed.
+`compact_storage` is the final, privileged cleanup for a settled market (its public entrypoint lives on the pool, `plp::compact_storage`, gated by a `MarketLifecycleCap` on the pool's allowlist because index destruction returns storage rebates). It caches the terminal settled liability, then destroys the dense live exposure indexes. After compaction the expiry retains only the cash needed to back the remaining settled payout and rebate liability; free LP cash returns to the pool through PLP rebalancing, which also unregisters the expiry from the pool's active set. The pool tracks expiry lifecycle on its side — an expiry is **registered** (added to `active_expiry_markets`) when the market is created, **deactivated** (removed from the active set) when its settled cash is released, and effectively **compacted** once its dense state is destroyed.
 
 ```mermaid
 stateDiagram-v2

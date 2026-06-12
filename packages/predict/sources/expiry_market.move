@@ -16,7 +16,7 @@ use deepbook_predict::{
     ewma::{Self, EwmaState},
     ewma_config::EwmaConfig,
     expiry_cash::{Self, ExpiryCash},
-    market_oracle::{MarketOracle, MarketOracleCap},
+    market_oracle::MarketOracle,
     order::{Self, Order},
     order_events,
     predict_manager::{PredictManager, PredictTradeProof},
@@ -295,25 +295,6 @@ public fun liquidate_order(
         .liquidate_live_order(config.pricing_config(), market_oracle, pyth, &order, clock)
 }
 
-/// Cache terminal liability if needed, then destroy live exposure indexes.
-///
-/// This is cap-gated because index destruction returns storage rebates. Settled
-/// pool cash remains in the expiry until PLP rebalancing receives it.
-public fun compact_storage(
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    market_oracle: &MarketOracle,
-    cap: &MarketOracleCap,
-) {
-    market.assert_version_allowed();
-    config.assert_not_valuation_in_progress();
-    market.assert_market_oracle(market_oracle);
-    market_oracle.assert_authorized_cap(cap);
-    market.materialize_settled_liability(market_oracle);
-    market.strike_exposure.destroy_live_indexes();
-    market.assert_cash_backing();
-}
-
 // === Public-Package Functions ===
 
 /// Assert that a market oracle belongs to this expiry market.
@@ -520,6 +501,25 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
     let released_cash = market.cash.release_surplus(amount, payout_liability);
     market.assert_cash_backing();
     released_cash
+}
+
+/// Cache terminal liability if needed, then destroy live exposure indexes.
+///
+/// Lifecycle-cap gating lives in `plp::compact_storage` (the allowlist is
+/// `PoolVault` state and `expiry_market` cannot import `plp`). Index
+/// destruction returns storage rebates. Settled pool cash remains in the
+/// expiry until PLP rebalancing receives it.
+public(package) fun compact_storage(
+    market: &mut ExpiryMarket,
+    config: &ProtocolConfig,
+    market_oracle: &MarketOracle,
+) {
+    market.assert_version_allowed();
+    config.assert_not_valuation_in_progress();
+    market.assert_market_oracle(market_oracle);
+    market.materialize_settled_liability(market_oracle);
+    market.strike_exposure.destroy_live_indexes();
+    market.assert_cash_backing();
 }
 
 // === Private Functions ===

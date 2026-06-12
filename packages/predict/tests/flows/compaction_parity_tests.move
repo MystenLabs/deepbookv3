@@ -169,7 +169,7 @@ fun settled_redeems_are_bit_equal_with_and_without_compaction() {
 
     // --- DIVERGENCE: compact path B only. Compaction is pure index
     // destruction — no cash moves, no liability change.
-    fx.compact_storage(&config, &mut market_b, &oracle_b);
+    fx.compact_storage(&config, &vault, &mut market_b, &oracle_b);
     assert_eq!(market_b.payout_liability(), TERMINAL_LIABILITY_PER_MARKET);
     assert_eq!(market_b.cash_balance(), escrow_cash);
 

@@ -29,15 +29,15 @@ The pool (`PoolVault`) is the counterparty. Liquidity providers deposit DUSDC an
 | `PredictManager` | Per-trader DUSDC custody + positions, staking mirror, builder attribution | owned or shared |
 | `BuilderCode` | Accrues and claims builder fees for order-flow routers | derived shared |
 
-Capabilities are owned objects: `AdminCap` (global policy), `MarketOracleCap` (Block Scholes writer / settlement), `PauseCap` (one-way emergency brake), and the per-manager `PredictTradeCap` / `PredictDepositCap` / `PredictWithdrawCap`. Detail in [architecture](./design/architecture.md).
+Capabilities are owned objects: `AdminCap` (global policy), `MarketOracleWriterCap` (per-oracle Block Scholes writer), `MarketLifecycleCap` (market creation and post-settlement compaction), `PauseCap` (one-way emergency brake), and the per-manager `PredictTradeCap` / `PredictDepositCap` / `PredictWithdrawCap`. Detail in [architecture](./design/architecture.md).
 
 ## Market and position lifecycle
 
-An admin registers a feed and creates one `ExpiryMarket` + `MarketOracle` per expiry. The market opens with zero cash; pool capital enters only later through PLP rebalancing. A position moves through mint, optional live redeem, settlement, and a terminal redeem or liquidation. Each transition emits one order-domain event.
+An admin registers a feed, and a lifecycle-cap holder creates one `ExpiryMarket` + `MarketOracle` per expiry. The market opens with zero cash; pool capital enters only later through PLP rebalancing. A position moves through mint, optional live redeem, settlement, and a terminal redeem or liquidation. Each transition emits one order-domain event.
 
 ```mermaid
 stateDiagram-v2
-  [*] --> MarketCreated: admin creates ExpiryMarket + MarketOracle
+  [*] --> MarketCreated: lifecycle-cap holder creates ExpiryMarket + MarketOracle
   MarketCreated --> Live: mint (OrderMinted)
   Live --> Live: partial live redeem<br/>(cancel + replace, LiveOrderRedeemed)
   Live --> [*]: full live redeem (LiveOrderRedeemed)
