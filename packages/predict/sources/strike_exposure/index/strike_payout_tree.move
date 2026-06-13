@@ -29,6 +29,9 @@ public struct StrikePayoutTree has store {
 
 /// Atomic payout terms used for boundary deltas and subtree totals.
 public struct PayoutTerms has copy, drop, store {
+    /// Aggregate order quantity over the prefix; additive storage for a future
+    /// NAV walk. Nothing reads it yet.
+    quantity: u64,
     terminal_payout: u64,
     live_backing_payout: u64,
 }
@@ -79,7 +82,7 @@ public(package) fun new(ctx: &mut TxContext): StrikePayoutTree {
     StrikePayoutTree {
         root: option::none(),
         nodes: table::new(ctx),
-        base: payout_terms(0, 0),
+        base: payout_terms(0, 0, 0),
     }
 }
 
@@ -89,10 +92,17 @@ public(package) fun insert_range(
     grid: &StrikeGrid,
     lower: u64,
     higher: u64,
+    quantity: u64,
     terminal_payout: u64,
     live_backing_payout: u64,
 ) {
-    tree.apply_range(grid, lower, higher, payout_terms(terminal_payout, live_backing_payout), true);
+    tree.apply_range(
+        grid,
+        lower,
+        higher,
+        payout_terms(quantity, terminal_payout, live_backing_payout),
+        true,
+    );
 }
 
 /// Remove interval payout terms for `(lower, higher]`.
@@ -101,6 +111,7 @@ public(package) fun remove_range(
     grid: &StrikeGrid,
     lower: u64,
     higher: u64,
+    quantity: u64,
     terminal_payout: u64,
     live_backing_payout: u64,
 ) {
@@ -108,7 +119,7 @@ public(package) fun remove_range(
         grid,
         lower,
         higher,
-        payout_terms(terminal_payout, live_backing_payout),
+        payout_terms(quantity, terminal_payout, live_backing_payout),
         false,
     );
 }
@@ -122,7 +133,10 @@ fun apply_range(
     add: bool,
 ) {
     grid.assert_range_boundaries(lower, higher);
-    if (terms.terminal_payout == 0 && terms.live_backing_payout == 0) return;
+    // Index any order with nonzero quantity even when both payout terms are 0
+    // (e.g. a fully-floored leveraged order with terminal_payout == 0), so the
+    // future NAV walk never silently skips it.
+    if (terms.quantity == 0 && terms.terminal_payout == 0 && terms.live_backing_payout == 0) return;
     assert!(terms.terminal_payout <= terms.live_backing_payout, EInvalidPayoutTerms);
 
     if (lower == constants::neg_inf!()) {
@@ -218,9 +232,9 @@ fun apply_at(
 
 fun new_leaf(strike: u64, terms: PayoutTerms, is_start: bool): PayoutNode {
     let (start, end) = if (is_start) {
-        (terms, payout_terms(0, 0))
+        (terms, payout_terms(0, 0, 0))
     } else {
-        (payout_terms(0, 0), terms)
+        (payout_terms(0, 0, 0), terms)
     };
 
     PayoutNode {
@@ -314,8 +328,8 @@ fun boundary_summary(start: PayoutTerms, end: PayoutTerms): PayoutSummary {
 
 fun zero_summary(): PayoutSummary {
     PayoutSummary {
-        total_start: payout_terms(0, 0),
-        total_end: payout_terms(0, 0),
+        total_start: payout_terms(0, 0, 0),
+        total_end: payout_terms(0, 0, 0),
         max_live_backing_prefix_gain: 0,
     }
 }
@@ -340,27 +354,31 @@ fun positive_live_delta(start: u64, end: u64, gain: u64): u64 {
 
 fun add_terms(left: PayoutTerms, right: PayoutTerms): PayoutTerms {
     payout_terms(
+        left.quantity + right.quantity,
         left.terminal_payout + right.terminal_payout,
         left.live_backing_payout + right.live_backing_payout,
     )
 }
 
-fun payout_terms(terminal_payout: u64, live_backing_payout: u64): PayoutTerms {
-    PayoutTerms { terminal_payout, live_backing_payout }
+fun payout_terms(quantity: u64, terminal_payout: u64, live_backing_payout: u64): PayoutTerms {
+    PayoutTerms { quantity, terminal_payout, live_backing_payout }
 }
 
 fun apply_terms_delta(value: &mut PayoutTerms, delta: PayoutTerms, add: bool) {
     if (add) {
+        value.quantity = value.quantity + delta.quantity;
         value.terminal_payout = value.terminal_payout + delta.terminal_payout;
         value.live_backing_payout = value.live_backing_payout + delta.live_backing_payout;
     } else {
         assert_terms_available(*value, delta);
+        value.quantity = value.quantity - delta.quantity;
         value.terminal_payout = value.terminal_payout - delta.terminal_payout;
         value.live_backing_payout = value.live_backing_payout - delta.live_backing_payout;
     };
 }
 
 fun assert_terms_available(available: PayoutTerms, required: PayoutTerms) {
+    assert!(available.quantity >= required.quantity, EInsufficientPayoutTerms);
     assert!(available.terminal_payout >= required.terminal_payout, EInsufficientPayoutTerms);
     assert!(
         available.live_backing_payout >= required.live_backing_payout,

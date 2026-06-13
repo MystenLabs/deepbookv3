@@ -225,7 +225,13 @@ public(package) fun allocate_mint_order(
     exposure.next_order_sequence = sequence + 1;
 
     exposure.liquidation.insert_order(&allocated_order);
-    exposure.insert_live_index_quantity(lower, higher, terminal_payout, live_backing_payout);
+    exposure.insert_live_index_quantity(
+        lower,
+        higher,
+        quantity,
+        terminal_payout,
+        live_backing_payout,
+    );
 
     (allocated_order, entry_probability, net_premium)
 }
@@ -380,12 +386,13 @@ fun insert_live_index_quantity(
     exposure: &mut StrikeExposure,
     lower: u64,
     higher: u64,
+    quantity: u64,
     terminal_payout: u64,
     live_backing_payout: u64,
 ) {
     let grid = exposure.grid;
     let live = &mut exposure.live;
-    live.payout.insert_range(&grid, lower, higher, terminal_payout, live_backing_payout);
+    live.payout.insert_range(&grid, lower, higher, quantity, terminal_payout, live_backing_payout);
     live.live_backing_liability = live.live_backing_liability + live_backing_payout;
 }
 
@@ -440,7 +447,9 @@ fun remove_live_index_quantity(
     let grid = exposure.grid;
     {
         let live = &mut exposure.live;
-        live.payout.remove_range(&grid, lower, higher, terminal_payout, live_backing_payout);
+        live
+            .payout
+            .remove_range(&grid, lower, higher, quantity, terminal_payout, live_backing_payout);
         live.live_backing_liability = live.live_backing_liability - live_backing_payout;
     };
 }
@@ -464,7 +473,13 @@ fun reinsert_live_index_quantity(
             quantity,
             floor_shares,
         );
-    exposure.insert_live_index_quantity(lower, higher, terminal_payout, live_backing_payout);
+    exposure.insert_live_index_quantity(
+        lower,
+        higher,
+        quantity,
+        terminal_payout,
+        live_backing_payout,
+    );
 }
 
 /// Convert raw order boundaries into boundary indexes for this grid.
