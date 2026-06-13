@@ -82,6 +82,20 @@ These are the context files to consult. Path-scoped files are normally loaded by
 - If you change Predict pricing, pool/vault accounting, oracle math, or public protocol flows, rerun the full Predict suite:
   - `sui move test --path packages/predict --gas-limit 100000000000`
 
+## Predict Async-NAV/LP Rework — Current Directives (temporary; remove when the rework lands)
+
+The Predict pool / NAV / LP layer is mid-rebuild. Living state: the `predict-async-nav-redesign` memory + `.redesign/ASYNC_NAV_REDESIGN.md` (the uncommitted authority). Until the core on-chain work is in a good place, these **OVERRIDE the general norms above for rework tasks**:
+
+- **Every agent task = DIRECT SOURCE smart-contract changes only.** No test writing/updating inside a task (this overrides "add or update unit tests in the package you touched"). Verify agent work with `sui move build --path packages/predict --warnings-are-errors`, not the test suite.
+- **Test rewiring/updates are batched at the END**, once all core SC designs are in — one consolidated pass, not per-task.
+- **On-chain only — NO indexer / server / off-chain rewiring yet** (the `predict-{schema,indexer,server}` crates + event/feed wiring land after the on-chain design settles).
+- Write all handoff prompts to follow the three rules above.
+
+**Settled design decisions (do not re-litigate — from the `wb0ts5lgb` audit):**
+- **The daily flush is a PRIVILEGED, cron-driven action** — callable by the operator `AdminCap` and the market-deployer cap (`MarketLifecycleCap`), **NOT permissionless**. This closes the NAV-manipulation gate (audit L8) without a manipulation-resistant mark and without lock-gating oracle writes.
+- **Gas budget (L7), pending-settlement liveness (L6), and rebate reclaim (L9) are handled OFF-CHAIN** (the cron retries; the operator throttles market deploys near the flush window). NO on-chain per-market order cap and NO on-chain pending-settlement path — assume ≤10 markets' exact NAV + the 100-request drain fit one tx, and validate by test.
+- **Supply-mark exact-vs-conservative (L10)** is deferred to a holistic simplification/refactor pass after the core SC changes land.
+
 ## Code Review Norms
 
 - When the user asks for a review, read `.claude/rules/code-review.md` before producing findings and review the relevant diff in a code-review stance.
