@@ -24,8 +24,7 @@ use deepbook_predict::{
     pricing_config::PricingConfig,
     protocol_config::ProtocolConfig,
     pyth_source::PythSource,
-    strike_exposure::{Self, StrikeExposure},
-    strike_grid::StrikeGrid
+    strike_exposure::{Self, StrikeExposure}
 };
 use dusdc::dusdc::DUSDC;
 use predict_math::math;
@@ -337,15 +336,21 @@ public(package) fun pause_mint(market: &mut ExpiryMarket) {
 
 /// Create and share a zero-cash expiry market for one market oracle.
 ///
-/// The market snapshots the Pyth feed ID, initializes strike exposure state, and
-/// starts with zero expiry cash.
+/// The market builds its strike grid from the live spot and feed tick size,
+/// snapshots the per-market config, and starts with zero expiry cash. The
+/// `MarketCreated` event is emitted here rather than in `registry`: the grid
+/// geometry it reports lives inside the market once built, and the registry
+/// holds no reference after `share_object`.
 public(package) fun create_and_share(
     config: &ProtocolConfig,
     allowed_versions: VecSet<u64>,
     market_oracle_id: ID,
+    pool_vault_id: ID,
+    pyth_source_id: ID,
     pyth_lazer_feed_id: u32,
     expiry: u64,
-    grid: StrikeGrid,
+    spot: u64,
+    tick_size: u64,
     ctx: &mut TxContext,
 ): ID {
     let id = object::new(ctx);
@@ -367,7 +372,8 @@ public(package) fun create_and_share(
         strike_exposure: strike_exposure::new(
             expiry_market_id,
             expiry,
-            grid,
+            spot,
+            tick_size,
             strike_exposure_config,
             ctx,
         ),
@@ -375,6 +381,17 @@ public(package) fun create_and_share(
         mint_paused: false,
         allowed_versions,
     };
+    config_events::emit_market_created(
+        expiry_market_id,
+        market_oracle_id,
+        pool_vault_id,
+        pyth_source_id,
+        pyth_lazer_feed_id,
+        expiry,
+        market.min_strike(),
+        market.tick_size(),
+        market.max_strike(),
+    );
     transfer::share_object(market);
     expiry_market_id
 }

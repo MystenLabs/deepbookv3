@@ -10,8 +10,7 @@ use deepbook_predict::{
     market_oracle_config::MarketOracleConfig,
     pricing_config::PricingConfig,
     stake_config::StakeConfig,
-    strike_exposure_config::StrikeExposureConfig,
-    strike_grid::StrikeGrid
+    strike_exposure_config::StrikeExposureConfig
 };
 use sui::event;
 
@@ -215,7 +214,9 @@ public(package) fun emit_market_created(
     pyth_source_id: ID,
     pyth_lazer_feed_id: u32,
     expiry: u64,
-    grid: &StrikeGrid,
+    min_strike: u64,
+    tick_size: u64,
+    max_strike: u64,
 ) {
     event::emit(MarketCreated {
         expiry_market_id,
@@ -224,9 +225,9 @@ public(package) fun emit_market_created(
         pyth_source_id,
         pyth_lazer_feed_id,
         expiry,
-        min_strike: grid.min_strike(),
-        tick_size: grid.tick_size(),
-        max_strike: grid.max_strike(),
+        min_strike,
+        tick_size,
+        max_strike,
     });
 }
 

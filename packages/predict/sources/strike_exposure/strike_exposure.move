@@ -20,7 +20,7 @@ use deepbook_predict::{
     pricing_config::PricingConfig,
     pyth_source::PythSource,
     strike_exposure_config::StrikeExposureConfig,
-    strike_grid::StrikeGrid,
+    strike_grid::{Self, StrikeGrid},
     strike_payout_tree::{Self, StrikePayoutTree}
 };
 use predict_math::math;
@@ -134,14 +134,15 @@ public(package) fun is_liquidated_order(exposure: &StrikeExposure, order: &Order
 public(package) fun new(
     expiry_market_id: ID,
     expiry_ms: u64,
-    grid: StrikeGrid,
+    spot: u64,
+    tick_size: u64,
     config: StrikeExposureConfig,
     ctx: &mut TxContext,
 ): StrikeExposure {
     StrikeExposure {
         expiry_market_id,
         expiry_ms,
-        grid,
+        grid: strike_grid::new_centered(spot, tick_size),
         config,
         next_order_sequence: 0,
         settled_payout_liability: 0,

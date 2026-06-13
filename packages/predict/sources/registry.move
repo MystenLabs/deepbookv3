@@ -14,7 +14,6 @@ use deepbook_predict::{
     admin::{Self, AdminCap},
     builder_code,
     config_constants,
-    config_events,
     constants,
     expiry_market::{Self, ExpiryMarket},
     market_lifecycle_cap::{Self, MarketLifecycleCap},
@@ -27,8 +26,7 @@ use deepbook_predict::{
     predict_withdraw_cap::PredictWithdrawCap,
     pricing,
     protocol_config::{Self, ProtocolConfig},
-    pyth_source::{Self, PythSource},
-    strike_grid
+    pyth_source::{Self, PythSource}
 };
 use sui::{clock::Clock, table::{Self, Table}, vec_set::{Self, VecSet}};
 
@@ -297,7 +295,6 @@ public fun create_expiry_market(
     assert!(pyth_config.pyth_source_id == pyth.id(), EFeedIdMismatch);
     let tick_size = pyth_config.tick_size;
     pricing::assert_pyth_spot_fresh(config.pricing_config(), pyth, clock);
-    let grid = strike_grid::new_centered(pyth.spot(), tick_size);
     assert!(!registry.expiry_market_ids.contains(expiry), EExpiryMarketAlreadyCreated);
     let allowed_versions = registry.allowed_versions;
     let market_oracle_id = market_oracle::create_and_share(
@@ -312,22 +309,15 @@ public fun create_expiry_market(
         config,
         allowed_versions,
         market_oracle_id,
-        pyth_lazer_feed_id,
-        expiry,
-        grid,
-        ctx,
-    );
-    registry.expiry_market_ids.add(expiry, expiry_market_id);
-
-    config_events::emit_market_created(
-        expiry_market_id,
-        market_oracle_id,
         pool_vault.id(),
         pyth.id(),
         pyth_lazer_feed_id,
         expiry,
-        &grid,
+        pyth.spot(),
+        tick_size,
+        ctx,
     );
+    registry.expiry_market_ids.add(expiry, expiry_market_id);
 
     (expiry_market_id, market_oracle_id)
 }
