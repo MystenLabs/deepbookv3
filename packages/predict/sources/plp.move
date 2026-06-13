@@ -10,7 +10,14 @@
 /// DEEP staking is an unrelated trading feature and stays.
 module deepbook_predict::plp;
 
-use deepbook_predict::{constants, predict_manager::PredictManager, vault_events};
+use deepbook_predict::{
+    constants,
+    expiry_market::ExpiryMarket,
+    pool_accounting::{Self, Ledger},
+    predict_manager::PredictManager,
+    vault_events
+};
+use predict_math::math;
 use sui::{
     balance::{Self, Balance},
     coin::{Coin, TreasuryCap},
@@ -32,6 +39,8 @@ public struct PoolVault has key {
     staked_deep: Balance<DEEP>,
     /// Treasury cap for the inert PLP share token (kept for the LP rebuild).
     treasury_cap: TreasuryCap<PLP>,
+    /// Idle DUSDC custody, registered expiries, and per-expiry cash-flow rows.
+    expiry_accounting: Ledger,
     /// Mirror of `ProtocolConfig.allowed_versions`; synced permissionlessly.
     allowed_versions: VecSet<u64>,
 }
@@ -109,6 +118,40 @@ public fun unstake_deep(
     vault.staked_deep.split(amount).into_coin(ctx)
 }
 
+/// Move cash between pool idle liquidity and one expiry market toward its target.
+///
+/// Permissionless and standalone: anyone may call it at any cadence. It performs
+/// both initial funding of a freshly registered (unfunded) market and ongoing
+/// rebalancing. Below target, it tops the market up from idle (bounded by idle
+/// liquidity and the net-funding cap); above the sweep band, it returns the
+/// surplus over target to idle. Mint asserts backing but never pulls pool cash,
+/// so this is what makes a market mintable. The market must already be
+/// registered to this vault (`registry::create_expiry_market`).
+public fun rebalance_expiry_cash(vault: &mut PoolVault, market: &mut ExpiryMarket) {
+    vault.assert_version_allowed();
+    market.assert_version_allowed();
+    let expiry_market_id = market.id();
+    vault.expiry_accounting.assert_registered_expiry(expiry_market_id);
+    let (cash_balance, target_cash, sweep_threshold_cash) = expiry_rebalance_cash_terms(market);
+
+    if (cash_balance < target_cash) {
+        let requested_top_up = target_cash - cash_balance;
+        let funding_room = vault
+            .expiry_accounting
+            .available_expiry_funding(expiry_market_id, constants::expiry_max_funding!());
+        let top_up = requested_top_up.min(vault.expiry_accounting.idle_balance()).min(funding_room);
+        if (top_up > 0) {
+            let cash = vault
+                .expiry_accounting
+                .send_expiry_cash(expiry_market_id, constants::expiry_max_funding!(), top_up);
+            market.receive_pool_cash(cash);
+        };
+    } else if (cash_balance > sweep_threshold_cash) {
+        let returned_cash = market.release_pool_cash(cash_balance - target_cash);
+        vault.expiry_accounting.receive_expiry_cash(expiry_market_id, returned_cash);
+    };
+}
+
 // === Public-Package Functions ===
 
 /// Create an empty pool vault from the PLP treasury cap.
@@ -117,6 +160,7 @@ public(package) fun new(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): Po
         id: object::new(ctx),
         staked_deep: balance::zero(),
         treasury_cap,
+        expiry_accounting: pool_accounting::new(ctx),
         allowed_versions: vec_set::singleton(constants::current_version!()),
     }
 }
@@ -136,6 +180,14 @@ public(package) fun set_allowed_versions(vault: &mut PoolVault, allowed_versions
     vault.allowed_versions = allowed_versions;
 }
 
+/// Register a freshly created expiry market with the pool as an accounting row.
+/// No cash moves: the market is not mintable until `rebalance_expiry_cash` funds
+/// it. Called by `registry::create_expiry_market`.
+public(package) fun register_expiry(vault: &mut PoolVault, expiry_market_id: ID) {
+    vault.assert_version_allowed();
+    vault.expiry_accounting.register_expiry(expiry_market_id);
+}
+
 // === Private Functions ===
 
 /// Abort if the running package version is not allowed for this vault.
@@ -144,6 +196,22 @@ fun assert_version_allowed(vault: &PoolVault) {
         vault.allowed_versions.contains(&constants::current_version!()),
         EPackageVersionDisabled,
     );
+}
+
+/// Current cash, the target cash to hold, and the upper sweep band for one expiry.
+///
+/// `required_cash` is payout liability plus rebate reserve; `target_cash` adds one
+/// buffer above it and `sweep_threshold_cash` adds two, both floored at
+/// `expiry_cash_floor`. Below target the pool tops up to target; above the sweep
+/// band it returns the excess over target.
+fun expiry_rebalance_cash_terms(market: &ExpiryMarket): (u64, u64, u64) {
+    let required_cash = market.payout_liability() + market.rebate_reserve();
+    let target_buffer = math::mul(required_cash, constants::expiry_rebalance_pct!());
+    let target_cash = (required_cash + target_buffer).max(constants::expiry_cash_floor!());
+    let sweep_threshold_cash = (required_cash + target_buffer + target_buffer).max(
+        constants::expiry_cash_floor!(),
+    );
+    (market.cash_balance(), target_cash, sweep_threshold_cash)
 }
 
 // === Test-Only Functions ===

@@ -358,6 +358,25 @@ public(package) fun pause_mint(market: &mut ExpiryMarket) {
     config_events::emit_expiry_market_mint_paused_updated(market.id(), true);
 }
 
+/// Receive pool-provided cash without interpreting pool allocation policy.
+public(package) fun receive_pool_cash(market: &mut ExpiryMarket, cash: Balance<DUSDC>) {
+    market.assert_version_allowed();
+    market.cash.receive(cash);
+    market.assert_cash_backing();
+}
+
+/// Release pool cash while preserving expiry-local payout and rebate backing.
+public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
+    market.assert_version_allowed();
+    if (amount == 0) {
+        return balance::zero()
+    };
+    let payout_liability = market.payout_liability();
+    let released_cash = market.cash.release_surplus(amount, payout_liability);
+    market.assert_cash_backing();
+    released_cash
+}
+
 /// Create and share a zero-cash expiry market for one market oracle.
 ///
 /// The market builds its strike grid from the live spot and feed tick size,

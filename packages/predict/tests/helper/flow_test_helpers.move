@@ -177,12 +177,12 @@ fun setup_funded_live_market(
 public fun create_expiry(self: &mut Fixture, expiry: u64): (ID, ID) {
     self.scenario.next_tx(test_constants::admin());
     let pyth = self.scenario.take_shared_by_id<PythSource>(self.pyth_id);
-    let vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
+    let mut vault = self.scenario.take_shared_by_id<PoolVault>(self.vault_id);
     let mut registry = self.scenario.take_shared<Registry>();
     let config = self.scenario.take_shared<ProtocolConfig>();
     let (expiry_id, oracle_id) = registry::create_expiry_market(
         &mut registry,
-        &vault,
+        &mut vault,
         &config,
         &pyth,
         &self.lifecycle_cap,

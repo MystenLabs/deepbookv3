@@ -79,13 +79,13 @@ public fun setup_oracle(spot: u64, tick: u64, expiry: u64): OracleFixture {
     let mut pyth = scenario.take_shared_by_id<PythSource>(pyth_id);
     let live_ts = test_constants::live_source_timestamp_ms();
     pyth.set_state_for_testing(spot, live_ts, live_ts);
-    let vault = scenario.take_shared<PoolVault>();
+    let mut vault = scenario.take_shared<PoolVault>();
     let mut registry = scenario.take_shared<Registry>();
     let config = scenario.take_shared<ProtocolConfig>();
     let lifecycle_cap = registry::mint_lifecycle_cap(&mut registry, &admin_cap, scenario.ctx());
     let (expiry_id, oracle_id) = registry::create_expiry_market(
         &mut registry,
-        &vault,
+        &mut vault,
         &config,
         &pyth,
         &lifecycle_cap,

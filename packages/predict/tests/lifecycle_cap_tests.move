@@ -199,12 +199,12 @@ fun create_second_market(
     let mut clock = clock::create_for_testing(scenario.ctx());
     clock.set_for_testing(test_constants::now_ms());
     let mut registry = scenario.take_shared<Registry>();
-    let vault = scenario.take_shared<PoolVault>();
+    let mut vault = scenario.take_shared<PoolVault>();
     let config = scenario.take_shared<ProtocolConfig>();
     let pyth = scenario.take_shared_by_id<PythSource>(pyth_id);
     let (expiry_id, oracle_id) = registry::create_expiry_market(
         &mut registry,
-        &vault,
+        &mut vault,
         &config,
         &pyth,
         lifecycle_cap,

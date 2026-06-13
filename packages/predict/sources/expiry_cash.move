@@ -66,6 +66,17 @@ public(package) fun receive(cash: &mut ExpiryCash, funds: Balance<DUSDC>) {
     cash.cash_balance.join(funds);
 }
 
+/// Release caller-approved surplus while preserving payout and rebate backing.
+public(package) fun release_surplus(
+    cash: &mut ExpiryCash,
+    amount: u64,
+    payout_liability: u64,
+): Balance<DUSDC> {
+    if (amount == 0) return balance::zero();
+    assert!(cash.balance() >= cash.required_cash(payout_liability) + amount, EInsufficientCash);
+    cash.cash_balance.split(amount)
+}
+
 /// Pay an already-authorized payout, rebate claim, or cash release.
 ///
 /// The caller owns the surrounding liability or rebate-basis transition and the

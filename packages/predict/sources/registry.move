@@ -273,10 +273,12 @@ public fun create_pyth_source(
 /// Create the MarketOracle and ExpiryMarket objects for one future expiry.
 ///
 /// The registry enforces one market per expiry and validates the registered
-/// Pyth source. The market is created with zero cash.
+/// Pyth source. The market is created with zero cash and registered with the
+/// pool vault as an accounting row only; it is not mintable until
+/// `plp::rebalance_expiry_cash` funds it.
 public fun create_expiry_market(
     registry: &mut Registry,
-    pool_vault: &PoolVault,
+    pool_vault: &mut PoolVault,
     config: &ProtocolConfig,
     pyth: &PythSource,
     lifecycle_cap: &MarketLifecycleCap,
@@ -317,6 +319,7 @@ public fun create_expiry_market(
         tick_size,
         ctx,
     );
+    pool_vault.register_expiry(expiry_market_id);
     registry.expiry_market_ids.add(expiry, expiry_market_id);
 
     (expiry_market_id, market_oracle_id)
