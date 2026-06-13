@@ -3,9 +3,9 @@
 
 /// Protocol-wide configuration and flow gates for Predict.
 ///
-/// This shared object owns the admin-tunable config structs and the trading
-/// pause gate. Flow modules decide which gates apply before they mutate expiry,
-/// oracle, pool, or manager state.
+/// This shared object owns the admin-tunable config structs, the trading pause
+/// gate, and the transaction-local full-pool valuation lock. Flow modules decide
+/// which gates apply before they mutate expiry, oracle, pool, or manager state.
 module deepbook_predict::protocol_config;
 
 use deepbook_predict::{
@@ -21,11 +21,16 @@ use deepbook_predict::{
 };
 
 const ETradingPaused: u64 = 0;
+const EValuationInProgress: u64 = 1;
+const EValuationNotInProgress: u64 = 2;
 
 /// Shared protocol policy and config state.
 public struct ProtocolConfig has key {
     id: UID,
     pricing_config: PricingConfig,
+    /// Merged protocol + insurance reserve share of materialized terminal profit,
+    /// in FLOAT_SCALING. The complement accrues to LPs.
+    protocol_reserve_profit_share: u64,
     /// Total liquidation candidates checked before mint and redeem flows.
     trade_liquidation_budget: u64,
     market_oracle_template_config: MarketOracleConfig,
@@ -35,6 +40,9 @@ public struct ProtocolConfig has key {
     ewma_config: EwmaConfig,
     /// Blocks new risk creation while true.
     trading_paused: bool,
+    /// Transaction-local lock held while a full-pool valuation is assembled, so no
+    /// NAV-changing op can interleave between per-market value steps in the PTB.
+    valuation_in_progress: bool,
 }
 
 // === Public Functions ===
@@ -266,6 +274,10 @@ public(package) fun pricing_config(config: &ProtocolConfig): &PricingConfig {
     &config.pricing_config
 }
 
+public(package) fun protocol_reserve_profit_share(config: &ProtocolConfig): u64 {
+    config.protocol_reserve_profit_share
+}
+
 public(package) fun trade_liquidation_budget(config: &ProtocolConfig): u64 {
     config.trade_liquidation_budget
 }
@@ -299,6 +311,16 @@ public(package) fun assert_trading_allowed(config: &ProtocolConfig) {
     config.assert_not_trading_paused();
 }
 
+/// Abort unless a valuation lock is currently active.
+public(package) fun assert_valuation_in_progress(config: &ProtocolConfig) {
+    assert!(config.valuation_in_progress, EValuationNotInProgress);
+}
+
+/// Abort unless no valuation lock is currently active.
+public(package) fun assert_not_valuation_in_progress(config: &ProtocolConfig) {
+    assert!(!config.valuation_in_progress, EValuationInProgress);
+}
+
 /// Create and share the protocol-wide configuration object.
 public(package) fun create_and_share(ctx: &mut TxContext): ID {
     let config = new(ctx);
@@ -311,6 +333,28 @@ public(package) fun create_and_share(ctx: &mut TxContext): ID {
 /// `PauseCap` holders going through the registry; cannot be used to unpause.
 public(package) fun pause_trading(config: &mut ProtocolConfig) {
     config.set_trading_paused_internal(true);
+}
+
+/// Set the protocol reserve profit share used when materializing aggregate
+/// expiry profit. Validated against its config-constants envelope.
+public(package) fun set_protocol_reserve_profit_share(
+    config: &mut ProtocolConfig,
+    protocol_reserve_profit_share: u64,
+) {
+    config_constants::assert_protocol_reserve_profit_share(protocol_reserve_profit_share);
+    config.protocol_reserve_profit_share = protocol_reserve_profit_share;
+}
+
+/// Begin a transaction-local full-pool valuation lock.
+public(package) fun begin_valuation(config: &mut ProtocolConfig) {
+    config.assert_not_valuation_in_progress();
+    config.valuation_in_progress = true;
+}
+
+/// End a transaction-local full-pool valuation lock.
+public(package) fun end_valuation(config: &mut ProtocolConfig) {
+    config.assert_valuation_in_progress();
+    config.valuation_in_progress = false;
 }
 
 fun set_trading_paused_internal(config: &mut ProtocolConfig, paused: bool) {
@@ -327,6 +371,7 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
     ProtocolConfig {
         id: object::new(ctx),
         pricing_config: pricing_config::new(),
+        protocol_reserve_profit_share: config_constants::default_protocol_reserve_profit_share!(),
         trade_liquidation_budget: config_constants::default_trade_liquidation_budget!(),
         market_oracle_template_config: market_oracle_config::new(),
         expiry_cash_template_config: expiry_cash_config::new(),
@@ -334,6 +379,7 @@ fun new(ctx: &mut TxContext): ProtocolConfig {
         stake_config: stake_config::new(),
         ewma_config: ewma_config::new(),
         trading_paused: false,
+        valuation_in_progress: false,
     }
 }
 

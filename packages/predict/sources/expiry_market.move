@@ -201,6 +201,7 @@ public fun mint(
     market.assert_version_allowed();
     assert!(!market.mint_paused, EMintPaused);
     config.assert_trading_allowed();
+    config.assert_not_valuation_in_progress();
     market.mint_internal(
         manager,
         proof,
@@ -290,6 +291,7 @@ public fun liquidate(
     clock: &Clock,
 ): u64 {
     market.assert_version_allowed();
+    config.assert_not_valuation_in_progress();
     market.run_liquidation_pass(
         config.pricing_config(),
         market_oracle,
@@ -309,6 +311,7 @@ public fun liquidate_order(
     clock: &Clock,
 ): bool {
     market.assert_version_allowed();
+    config.assert_not_valuation_in_progress();
     market.assert_market_oracle(market_oracle);
     market.assert_pyth_feed(pyth);
     market_oracle.assert_active(clock);
@@ -375,6 +378,22 @@ public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): B
     let released_cash = market.cash.release_surplus(amount, payout_liability);
     market.assert_cash_backing();
     released_cash
+}
+
+/// Materialize this expiry's settled payout liability and release every unit of
+/// cash above it back to the pool. Used by the settled-market sweep, which then
+/// deactivates the expiry and materializes its profit.
+public(package) fun release_settled_pool_cash(
+    market: &mut ExpiryMarket,
+    market_oracle: &MarketOracle,
+): Balance<DUSDC> {
+    market.assert_version_allowed();
+    let settled_liability = market.materialize_settled_liability(market_oracle);
+    let reserved_cash = market.cash.required_cash(settled_liability);
+    market.cash.assert_backing(settled_liability);
+
+    let returned_cash_amount = market.cash.balance() - reserved_cash;
+    market.release_pool_cash(returned_cash_amount)
 }
 
 /// Create and share a zero-cash expiry market for one market oracle.
@@ -504,6 +523,7 @@ fun redeem_internal(
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
     market.assert_version_allowed();
+    config.assert_not_valuation_in_progress();
     market.assert_market_oracle(market_oracle);
     let redeemed_order = order::from_order_id(order_id);
     if (market.try_redeem_if_liquidated(manager, &redeemed_order, close_quantity))

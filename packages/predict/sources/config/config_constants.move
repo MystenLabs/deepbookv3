@@ -14,6 +14,7 @@ const EInvalidMaxAskPrice: u64 = 3;
 const EInvalidPythSpotFreshnessMs: u64 = 4;
 const EInvalidBlockScholesPricesFreshnessMs: u64 = 5;
 const EInvalidBlockScholesSVIFreshnessMs: u64 = 6;
+const EInvalidProtocolReserveProfitShare: u64 = 7;
 const EInvalidSettlementFreshnessMs: u64 = 8;
 const EInvalidTradingLossRebateRate: u64 = 14;
 const EInvalidTerminalFloorIndex: u64 = 15;
@@ -29,6 +30,24 @@ const EInvalidEwmaAlpha: u64 = 26;
 const EInvalidEwmaZScoreThreshold: u64 = 27;
 const EInvalidEwmaPenaltyRate: u64 = 28;
 const EInvalidBackingBufferLambda: u64 = 29;
+
+// === Fees ===
+
+/// Merged protocol + insurance reserve share of materialized terminal profit, in
+/// FLOAT_SCALING. The complement accrues to LPs.
+public(package) macro fun default_protocol_reserve_profit_share(): u64 { 400_000_000 }
+public(package) macro fun min_protocol_reserve_profit_share(): u64 { 0 }
+public(package) macro fun max_protocol_reserve_profit_share(): u64 {
+    predict_math::math::float_scaling!()
+}
+
+public(package) fun assert_protocol_reserve_profit_share(value: u64) {
+    assert!(
+        value >= min_protocol_reserve_profit_share!()
+            && value <= max_protocol_reserve_profit_share!(),
+        EInvalidProtocolReserveProfitShare,
+    );
+}
 
 // === Trade Liquidation ===
 
