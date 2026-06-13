@@ -4,14 +4,18 @@
 /// Priority-sorted liquidation index for active leveraged Predict orders.
 ///
 /// The active index stores order IDs in ascending order. `Order` encodes its
-/// liquidation priority in the high bits, so the front of this index contains
-/// the orders that should be checked first. This module does not own pricing,
-/// contract floor math, NAV, payout backing, cash, or manager positions.
-/// Liquidated tombstones persist until the holder redeems the worthless order
-/// and clears their manager position.
+/// liquidation priority in the high bits, so the front of this index contains the
+/// orders that should be checked first. Beyond serving liquidation candidates, the
+/// book owns exactly one valuation read: `correction_value` walks its active
+/// leveraged set to value the NAV floor-correction term — the only place this
+/// module touches pricing/grid/floor math, and it does so through a caller-supplied
+/// `Pricer`, never owning the pricing model itself. It does not own payout backing,
+/// cash, or manager positions. Liquidated tombstones persist until the holder
+/// redeems the worthless order and clears their manager position.
 module deepbook_predict::liquidation_book;
 
-use deepbook_predict::{constants, order::Order};
+use deepbook_predict::{constants, order::{Self, Order}, pricing::Pricer, strike_grid::StrikeGrid};
+use predict_math::math;
 use sui::table::{Self, Table};
 
 const EActiveOrderAlreadyExists: u64 = 0;
@@ -63,6 +67,38 @@ public(package) fun contains_active_order(book: &LiquidationBook, order: &Order)
     let page = &book.pages[book.page_ids[page_ix]];
     let offset = lower_bound(&page.order_ids, order_id);
     offset < page.order_ids.length() && page.order_ids[offset] == order_id
+}
+
+/// Sum the NAV floor-correction term over the active leveraged book:
+/// `Σ min(qty·range_price(lower, higher), floor_shares·index_now)`.
+///
+/// The active index already holds exactly the leveraged orders (1x mints are
+/// no-ops, liquidated orders are tombstoned out), so this scan needs no extra
+/// filtering. Each active order is one-sided, so `range_price` costs one heavy
+/// eval. The `min` is the order's limited-recourse floor: an underwater order's
+/// range value is capped at its floor and nets to zero against the linear term, so
+/// NAV needs no liquidation pass. All terms are non-negative — a plain `u64` sum.
+/// The caller (which owns the model) supplies the live `pricer`, the expiry `grid`
+/// for boundary-index decoding, and the current floor `index_now`.
+public(package) fun correction_value(
+    book: &LiquidationBook,
+    pricer: &Pricer,
+    grid: &StrikeGrid,
+    index_now: u64,
+): u64 {
+    let mut correction = 0;
+    let mut cursor = book.first_cursor();
+    while (cursor.is_some()) {
+        let scan = cursor.destroy_some();
+        let order = order::from_order_id(book.order_id_at(scan));
+        let lower = grid.boundary_at_index(order.lower_boundary_index());
+        let higher = grid.boundary_at_index(order.higher_boundary_index());
+        let range_value = math::mul(pricer.range_price(lower, higher), order.quantity());
+        let floor_value = math::mul(order.floor_shares(), index_now);
+        correction = correction + range_value.min(floor_value);
+        cursor = book.next_cursor(scan);
+    };
+    correction
 }
 
 public(package) fun new(ctx: &mut TxContext): LiquidationBook {

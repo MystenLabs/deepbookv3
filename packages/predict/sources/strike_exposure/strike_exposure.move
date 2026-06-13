@@ -12,6 +12,7 @@
 module deepbook_predict::strike_exposure;
 
 use deepbook_predict::{
+    constants,
     liquidation_book::{Self, LiquidationBook},
     market_oracle::MarketOracle,
     order::{Self, Order},
@@ -68,6 +69,34 @@ public(package) fun payout_liability(exposure: &StrikeExposure): u64 {
         let gap = live.live_backing_liability - max_live;
         max_live + math::mul(exposure.config.backing_buffer_lambda(), gap)
     }
+}
+
+/// Value this book's exact live liability for one live price snapshot:
+/// `linear - correction`, where `linear = Σ_orders qty·P` is the full payout-tree
+/// walk and `correction = Σ_leveraged min(qty·P, floor_shares·index_now)` is the
+/// scan over the active leveraged set. The per-order floor cap makes an underwater
+/// leveraged order net to zero, so no liquidation pass is needed. `correction <=
+/// linear` for any mint-admitted book (each leveraged order's `min` is capped at
+/// its own linear contribution, which the boundary aggregation only raises), so the
+/// saturating_sub is a no-op there; it floors the bounded valuation ulp dust the
+/// linear walk can carry — or that an enabled interpolation tolerance can introduce
+/// — rather than aborting. A pure read returning the liability fact; the caller
+/// owns the NAV/cash clamp.
+public(package) fun exact_live_liability(
+    exposure: &StrikeExposure,
+    pricer: &Pricer,
+    clock: &Clock,
+): u64 {
+    let index_now = exposure.config.floor_index_at_ms(exposure.expiry_ms, clock.timestamp_ms());
+    // Linear term: the full payout-tree walk. Interpolation is gated by the
+    // upgrade-required `nav_interpolation_price_tolerance` (0 = fully exact).
+    let linear = exposure
+        .live
+        .payout
+        .walk_linear(pricer, constants::nav_interpolation_price_tolerance!());
+    // Correction term: the floor-capped scan over this book's active leveraged set.
+    let correction = exposure.liquidation.correction_value(pricer, &exposure.grid, index_now);
+    linear.saturating_sub(correction)
 }
 
 /// Return the terminal floor index snapshotted for this exposure book.

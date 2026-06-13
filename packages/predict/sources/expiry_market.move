@@ -139,6 +139,30 @@ public fun payout_liability(market: &ExpiryMarket): u64 {
     market.strike_exposure.payout_liability()
 }
 
+/// Return this expiry market's exact live NAV: free cash minus the exact
+/// per-order live liability, floored at zero. Creating the live pricer asserts the
+/// market is active with fresh oracle/Pyth data, so this is structurally the live
+/// primitive — a settled or stale market aborts here, and an empty or order-free
+/// live market returns free cash (zero liability).
+///
+/// A pure read with no backing assert: backing is owned by the payout-tree reserve
+/// and proven on every trade, and the `max(0, ·)` cash floor marks a degenerate
+/// (underwater) market at 0 — the correct per-market limited-recourse value, never
+/// negative. `assert_market_oracle` binds this market to its oracle; the pricer
+/// then binds oracle↔Pyth and gates liveness/freshness.
+public fun current_nav(
+    market: &ExpiryMarket,
+    config: &ProtocolConfig,
+    market_oracle: &MarketOracle,
+    pyth: &PythSource,
+    clock: &Clock,
+): u64 {
+    market.assert_market_oracle(market_oracle);
+    let pricer = pricing::pricer(config.pricing_config(), market_oracle, pyth, clock);
+    let liability = market.strike_exposure.exact_live_liability(&pricer, clock);
+    market.cash.free_cash().saturating_sub(liability)
+}
+
 /// Return whether minting is currently paused on this expiry market.
 public fun mint_paused(market: &ExpiryMarket): bool {
     market.mint_paused

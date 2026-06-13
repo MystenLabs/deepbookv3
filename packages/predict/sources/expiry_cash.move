@@ -43,6 +43,14 @@ public(package) fun rebate_reserve(cash: &ExpiryCash): u64 {
     cash.config.rebate_reserve_for_fee_basis(cash.unresolved_trading_fees_paid)
 }
 
+/// Return cash free of the unresolved rebate reserve — the balance NAV may value
+/// against. `saturating_sub` is defensive: every trade enforces
+/// `cash >= payout_liability + rebate_reserve` (`assert_backing`), so a quiescent
+/// market always has `cash >= rebate_reserve` and the floor never binds.
+public(package) fun free_cash(cash: &ExpiryCash): u64 {
+    cash.balance().saturating_sub(cash.rebate_reserve())
+}
+
 /// Return payout plus unresolved rebate reserve cash required to keep the expiry backed.
 public(package) fun required_cash(cash: &ExpiryCash, payout_liability: u64): u64 {
     payout_liability + cash.rebate_reserve()

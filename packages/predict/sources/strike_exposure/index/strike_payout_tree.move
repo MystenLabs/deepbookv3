@@ -14,7 +14,8 @@
 /// tree's max-live term is the floor anchor of that enforced reserve.
 module deepbook_predict::strike_payout_tree;
 
-use deepbook_predict::{constants, strike_grid::StrikeGrid};
+use deepbook_predict::{constants, pricing::Pricer, strike_grid::StrikeGrid};
+use predict_math::math;
 use sui::{bcs, hash::blake2b256, table::{Self, Table}};
 
 const EInsufficientPayoutTerms: u64 = 0;
@@ -29,8 +30,8 @@ public struct StrikePayoutTree has store {
 
 /// Atomic payout terms used for boundary deltas and subtree totals.
 public struct PayoutTerms has copy, drop, store {
-    /// Aggregate order quantity over the prefix; additive storage for a future
-    /// NAV walk. Nothing reads it yet.
+    /// Aggregate order quantity over the prefix. Read by the NAV linear walk
+    /// (`walk_linear`), which prices each boundary's start/end quantity.
     quantity: u64,
     terminal_payout: u64,
     live_backing_payout: u64,
@@ -41,6 +42,14 @@ public struct PayoutSummary has copy, drop, store {
     total_start: PayoutTerms,
     total_end: PayoutTerms,
     max_live_backing_prefix_gain: u64,
+    /// Exact strike span of this subtree (BST invariant: leftmost / rightmost
+    /// node key). `up_price` is monotone decreasing in strike, so
+    /// `[up_price(max_strike), up_price(min_strike)]` bounds every node price in
+    /// the subtree — the basis for `walk_linear`'s bounded interpolation. Set in
+    /// `new_leaf` / `resummarize`; the `combine_summaries` / `zero_summary`
+    /// outputs leave these `0` (the owning node overwrites them).
+    min_strike: u64,
+    max_strike: u64,
 }
 
 /// Treap node keyed by finite boundary strike.
@@ -75,6 +84,32 @@ public(package) fun settled_payout_liability(tree: &StrikePayoutTree, settlement
         tree.base,
     );
     terms.terminal_payout
+}
+
+/// Value the NAV linear term — `Σ_orders qty·P(strike)` — by walking the whole
+/// tree and pricing each distinct boundary once through `pricer`.
+///
+/// The start and end sides accumulate as two non-negative totals: a node's net
+/// `local_start - local_end` quantity is signed, so a single running `u64` would
+/// underflow mid-walk. They combine once at the top:
+/// `base.quantity + start_total - end_total`. `tree.base` is the `P(-inf) = 1`
+/// anchor for `(-inf, h]` ranges (its quantity enters at face value); `+inf` ends
+/// are never stored (`P = 0`).
+///
+/// `tolerance == 0` is the fully exact walk (interpolation off, zero extra
+/// pricing). `tolerance > 0` enables bounded subtree interpolation for the linear
+/// term only — see `walk_linear_subtree`; the per-order floor (correction) term is
+/// always priced exactly elsewhere.
+public(package) fun walk_linear(tree: &StrikePayoutTree, pricer: &Pricer, tolerance: u64): u64 {
+    let (start_total, end_total) = walk_linear_subtree(&tree.nodes, tree.root, pricer, tolerance);
+    // For any mint-admitted book the start side dominates the end side by a wide
+    // margin: each order's min net premium forces P(lower) well above P(higher), so
+    // its start contribution exceeds its end contribution by >> the per-boundary
+    // rounding. saturating_sub floors the residual valuation ulp dust (<= ~1 ulp per
+    // shared higher boundary) that thin partial-close survivors clustered in a flat
+    // price region could otherwise drive negative — §8.4 dust, re-floored by the
+    // caller — instead of aborting the read.
+    (tree.base.quantity + start_total).saturating_sub(end_total)
 }
 
 /// Create an empty sparse payout tree.
@@ -248,13 +283,16 @@ fun new_leaf(strike: u64, terms: PayoutTerms, is_start: bool): PayoutNode {
         (payout_terms(0, 0, 0), terms)
     };
 
+    let mut summary = boundary_summary(start, end);
+    summary.min_strike = strike;
+    summary.max_strike = strike;
     PayoutNode {
         priority: strike_priority(strike),
         left: option::none(),
         right: option::none(),
         local_start: start,
         local_end: end,
-        summary: boundary_summary(start, end),
+        summary,
     }
 }
 
@@ -312,11 +350,73 @@ fun settlement_prefix_terms(
     settlement_prefix_terms(nodes, node.right, settlement, running)
 }
 
+/// Accumulate `(start_total, end_total)` over a subtree for `walk_linear`: each
+/// node adds `P(strike)·local_start.quantity` to the start side and
+/// `P(strike)·local_end.quantity` to the end side. Visits every node and recurses
+/// both children — a node is priced at its own strike, so a subtree summary cannot
+/// stand in for pricing each boundary (the summary aggregates quantity, not
+/// quantity·price). Integer addition is associative, so traversal order is
+/// irrelevant.
+///
+/// Two collapses keep the eval count down:
+/// - skip-zero-delta: when `local_start.quantity == local_end.quantity` the two
+///   sides contribute the same `P·q` and cancel in `walk_linear`'s top-level
+///   subtraction, so the `up_price` eval is skipped (exact; also drops the
+///   fully-redeemed boundaries the treap never GCs).
+/// - bounded interpolation, only when `tolerance > 0`: if the subtree's exact
+///   price span (`up_price(min_strike) - up_price(max_strike)`, monotone so
+///   non-negative) is within `tolerance`, the whole subtree is priced at the
+///   midpoint and collapsed via its quantity totals, bounding the error by
+///   `tolerance·subtree_quantity`. A failing gate spends 2 extreme evals at that
+///   node before recursing into both children, so a fully-failing interpolated
+///   walk costs up to ~2x the node count in extra evals; exact mode (`tolerance ==
+///   0`, the production default) skips the gate and prices nothing extra.
+fun walk_linear_subtree(
+    nodes: &Table<u64, PayoutNode>,
+    root: Option<u64>,
+    pricer: &Pricer,
+    tolerance: u64,
+): (u64, u64) {
+    if (root.is_none()) return (0, 0);
+    let strike = *root.borrow();
+    let node = nodes[strike];
+
+    if (tolerance > 0) {
+        let high_price = pricer.up_price(node.summary.min_strike);
+        let low_price = pricer.up_price(node.summary.max_strike);
+        // saturating_sub tolerates a sub-ulp price inversion at adjacent strikes
+        // (a collapse there is exact anyway) instead of aborting the read.
+        if (high_price.saturating_sub(low_price) <= tolerance) {
+            let avg_price = (high_price + low_price) / 2;
+            return (
+                math::mul(avg_price, node.summary.total_start.quantity),
+                math::mul(avg_price, node.summary.total_end.quantity),
+            )
+        };
+    };
+
+    let mut start_total = 0;
+    let mut end_total = 0;
+    if (node.local_start.quantity != node.local_end.quantity) {
+        let price = pricer.up_price(strike);
+        start_total = math::mul(price, node.local_start.quantity);
+        end_total = math::mul(price, node.local_end.quantity);
+    };
+
+    let (left_start, left_end) = walk_linear_subtree(nodes, node.left, pricer, tolerance);
+    let (right_start, right_end) = walk_linear_subtree(nodes, node.right, pricer, tolerance);
+    (start_total + left_start + right_start, end_total + left_end + right_end)
+}
+
 fun resummarize(nodes: &mut Table<u64, PayoutNode>, strike: u64, mut node: PayoutNode) {
     let left = subtree_summary(nodes, node.left);
     let right = subtree_summary(nodes, node.right);
     let boundary = boundary_summary(node.local_start, node.local_end);
-    node.summary = combine_summaries(combine_summaries(left, boundary), right);
+    let mut summary = combine_summaries(combine_summaries(left, boundary), right);
+    // BST span: the subtree's min/max strike is the leftmost/rightmost node key.
+    summary.min_strike = if (node.left.is_some()) left.min_strike else strike;
+    summary.max_strike = if (node.right.is_some()) right.max_strike else strike;
+    node.summary = summary;
     *nodes.borrow_mut(strike) = node;
 }
 
@@ -334,6 +434,9 @@ fun boundary_summary(start: PayoutTerms, end: PayoutTerms): PayoutSummary {
             end.live_backing_payout,
             0,
         ),
+        // The boundary alone carries no strike span; the owning node sets it.
+        min_strike: 0,
+        max_strike: 0,
     }
 }
 
@@ -342,6 +445,8 @@ fun zero_summary(): PayoutSummary {
         total_start: payout_terms(0, 0, 0),
         total_end: payout_terms(0, 0, 0),
         max_live_backing_prefix_gain: 0,
+        min_strike: 0,
+        max_strike: 0,
     }
 }
 
@@ -356,6 +461,9 @@ fun combine_summaries(left: PayoutSummary, right: PayoutSummary): PayoutSummary 
         total_start: add_terms(left.total_start, right.total_start),
         total_end: add_terms(left.total_end, right.total_end),
         max_live_backing_prefix_gain: left.max_live_backing_prefix_gain.max(right_gain_after_left),
+        // Strike span depends on which children exist; set by the owning node.
+        min_strike: 0,
+        max_strike: 0,
     }
 }
 
