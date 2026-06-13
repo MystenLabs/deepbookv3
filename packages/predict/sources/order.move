@@ -222,7 +222,7 @@ fun assert_valid_order_shape(
     higher_boundary_index: u64,
     is_leveraged: bool,
 ) {
-    let max_boundary_index = max_encoded_boundary_index();
+    let max_boundary_index = constants::max_boundary_index!();
     assert!(lower_boundary_index <= max_boundary_index, EInvalidBoundaryIndex);
     assert!(higher_boundary_index <= max_boundary_index, EInvalidBoundaryIndex);
     assert!(lower_boundary_index < higher_boundary_index, EInvalidBoundaryRange);
@@ -236,13 +236,4 @@ fun assert_valid_order_shape(
         lower_boundary_index == 0 || higher_boundary_index == max_boundary_index,
         EInvalidBoundaryRange,
     );
-}
-
-/// Highest boundary index the packed order ID can encode for any expiry grid.
-///
-/// `Order` does not map indexes to concrete strikes; `StrikeGrid` owns runtime
-/// boundary mapping for each expiry. This bound only validates that the packed
-/// u24 field is within the fixed protocol-wide boundary-index domain.
-fun max_encoded_boundary_index(): u64 {
-    constants::oracle_strike_grid_ticks!() + 2
 }

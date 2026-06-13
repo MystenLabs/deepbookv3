@@ -15,12 +15,13 @@ const EOracleTickSizeTooSmallForSpot: u64 = 2;
 const EInvalidOracleSpot: u64 = 3;
 const EOracleTickSizeTooLargeForSpot: u64 = 4;
 
-/// Validated strike grid for one expiry.
+/// Validated strike grid for one expiry. Geometry beyond the origin and tick
+/// width is fixed protocol-wide (`constants::oracle_strike_grid_ticks!()`), so
+/// `max_strike`, the strike count, and the boundary-index domain are derived
+/// rather than stored.
 public struct StrikeGrid has copy, drop, store {
     min_strike: u64,
     tick_size: u64,
-    max_strike: u64,
-    total_strikes: u64,
 }
 
 /// Create a fixed-width oracle grid centered on tick-floored spot.
@@ -37,14 +38,8 @@ public(package) fun new_centered(spot: u64, tick_size: u64): StrikeGrid {
     let min_strike = (spot_ticks - center_ticks) * tick_size;
     assert!(min_strike > 0, EInvalidStrikeGrid);
     assert!(min_strike % tick_size == 0, EInvalidStrikeGrid);
-    let max_strike = min_strike + tick_size * ticks;
 
-    StrikeGrid {
-        min_strike,
-        tick_size,
-        max_strike,
-        total_strikes: ticks + 1,
-    }
+    StrikeGrid { min_strike, tick_size }
 }
 
 fun assert_tick_size(tick_size: u64) {
@@ -61,7 +56,7 @@ public(package) fun tick_size(grid: &StrikeGrid): u64 {
 }
 
 public(package) fun max_strike(grid: &StrikeGrid): u64 {
-    grid.max_strike
+    grid.min_strike + grid.tick_size * constants::oracle_strike_grid_ticks!()
 }
 
 /// Assert that `(lower, higher]` is a valid non-empty range on this grid.
@@ -80,7 +75,7 @@ public(package) fun boundary_index(grid: &StrikeGrid, boundary: u64): u64 {
     if (boundary == constants::neg_inf!()) {
         0
     } else if (boundary == constants::pos_inf!()) {
-        grid.total_strikes + 1
+        constants::max_boundary_index!()
     } else {
         grid.finite_strike_index(boundary) + 1
     }
@@ -90,7 +85,7 @@ public(package) fun boundary_index(grid: &StrikeGrid, boundary: u64): u64 {
 public(package) fun boundary_at_index(grid: &StrikeGrid, boundary_index: u64): u64 {
     if (boundary_index == 0) {
         constants::neg_inf!()
-    } else if (boundary_index == grid.total_strikes + 1) {
+    } else if (boundary_index == constants::max_boundary_index!()) {
         constants::pos_inf!()
     } else {
         grid.finite_strike_at_index(boundary_index - 1)
@@ -99,7 +94,7 @@ public(package) fun boundary_at_index(grid: &StrikeGrid, boundary_index: u64): u
 
 /// Assert that `strike` is finite, in-bounds, and grid-aligned.
 fun assert_finite_boundary(grid: &StrikeGrid, strike: u64) {
-    assert!(strike >= grid.min_strike && strike <= grid.max_strike, EInvalidStrikeGrid);
+    assert!(strike >= grid.min_strike && strike <= grid.max_strike(), EInvalidStrikeGrid);
     assert!((strike - grid.min_strike) % grid.tick_size == 0, EInvalidStrikeGrid);
 }
 
@@ -111,6 +106,6 @@ fun finite_strike_index(grid: &StrikeGrid, strike: u64): u64 {
 
 /// Return the finite strike at `index` on this grid.
 fun finite_strike_at_index(grid: &StrikeGrid, index: u64): u64 {
-    assert!(index < grid.total_strikes, EInvalidStrikeGrid);
+    assert!(index <= constants::oracle_strike_grid_ticks!(), EInvalidStrikeGrid);
     grid.min_strike + index * grid.tick_size
 }

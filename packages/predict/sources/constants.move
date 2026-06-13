@@ -87,6 +87,12 @@ public(package) macro fun svi_sigma_max(): u64 { 100_000_000_000 }
 /// Fixed number of strike ticks each oracle must cover.
 public macro fun oracle_strike_grid_ticks(): u64 { 100_000 }
 
+/// Highest boundary index in the shared order-ID / strike-grid boundary domain.
+/// Index 0 is the −inf sentinel, 1..=ticks+1 are the finite strikes, and ticks+2
+/// is the +inf sentinel. Read by both `order` (packed-ID encoding bound) and
+/// `strike_grid` (the +inf boundary index).
+public(package) macro fun max_boundary_index(): u64 { oracle_strike_grid_ticks!() + 2 }
+
 /// Granularity unit for oracle tick sizes; every tick_size must be a multiple of this value.
 public macro fun oracle_tick_size_unit(): u64 { 10_000 }
 
