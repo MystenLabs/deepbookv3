@@ -46,6 +46,9 @@ How the protocol is built:
   what capital, the capability and authorization model, and version gating.
 - **[Configuration](./design/configuration.md)** — what is tunable, the
   defaults, how config is snapshotted per expiry, and who can change it.
+- **[Tick range encoding](./design/tick-range-encoding.md)** — proposed packed
+  absolute-tick range representation for public APIs, order IDs, and exposure
+  indexes.
 - **[Invariants](./design/invariants.md)** — a precise, scannable reference of
   the conditions the protocol always maintains (solvency, floor, NAV,
   settlement, liquidation, rounding).
