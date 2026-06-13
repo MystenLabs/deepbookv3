@@ -23,9 +23,7 @@ public macro fun current_version(): u64 { 1 }
 /// form into the package's 1e9-scaled `u64`.
 public(package) macro fun float_scaling_decimals(): u64 { 9 }
 
-/// Decimals of the DUSDC settlement asset. `pyth_source::value_in_dusdc` converts
-/// USD values into this scale so they sum directly with the pool's
-/// DUSDC-denominated value.
+/// Decimals of the DUSDC settlement asset (the pool's denomination).
 public macro fun dusdc_decimals(): u8 { 6 }
 
 // === Position Sizing ===

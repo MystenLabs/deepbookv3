@@ -14,7 +14,6 @@ use dusdc::dusdc::DUSDC;
 use sui::balance::{Self, Balance};
 
 const EInsufficientCash: u64 = 0;
-const EUnresolvedTradingFeesUnderflow: u64 = 1;
 
 /// Cash and unresolved rebate basis for one expiry market.
 public struct ExpiryCash has store {
@@ -59,17 +58,6 @@ public(package) fun receive(cash: &mut ExpiryCash, funds: Balance<DUSDC>) {
     cash.cash_balance.join(funds);
 }
 
-/// Release caller-approved surplus while preserving payout and rebate backing.
-public(package) fun release_surplus(
-    cash: &mut ExpiryCash,
-    amount: u64,
-    payout_liability: u64,
-): Balance<DUSDC> {
-    if (amount == 0) return balance::zero();
-    assert!(cash.balance() >= cash.required_cash(payout_liability) + amount, EInsufficientCash);
-    cash.cash_balance.split(amount)
-}
-
 /// Pay an already-authorized payout, rebate claim, or cash release.
 ///
 /// The caller owns the surrounding liability or rebate-basis transition and the
@@ -87,17 +75,4 @@ public(package) fun collect_trade_fee(cash: &mut ExpiryCash, fee: Balance<DUSDC>
         cash.unresolved_trading_fees_paid = cash.unresolved_trading_fees_paid + fee_amount;
     };
     fee_amount
-}
-
-/// Decrement resolved fee basis and return the rebate reserve implied by that basis.
-public(package) fun resolve_rebate_reserve_for_fee_basis(
-    cash: &mut ExpiryCash,
-    trading_fees_paid: u64,
-): u64 {
-    assert!(
-        cash.unresolved_trading_fees_paid >= trading_fees_paid,
-        EUnresolvedTradingFeesUnderflow,
-    );
-    cash.unresolved_trading_fees_paid = cash.unresolved_trading_fees_paid - trading_fees_paid;
-    cash.config.rebate_reserve_for_fee_basis(trading_fees_paid)
 }

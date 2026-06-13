@@ -90,13 +90,6 @@ fun assert_live_oracle_fresh(config: &PricingConfig, market: &MarketOracle, cloc
     assert!(block_scholes_svi_is_fresh(config, market, clock), EBlockScholesSVIStale);
 }
 
-/// Return the raw range probability from two UP tail prices.
-fun range_price(lower_up_price: u64, higher_up_price: u64): u64 {
-    // A thin / far-OTM range has ~0 true probability; a fixed-point 1-ulp
-    // inversion should price 0, not abort a legitimate mint/redeem/valuation.
-    lower_up_price.saturating_sub(higher_up_price)
-}
-
 fun block_scholes_price_is_fresh(
     config: &PricingConfig,
     market: &MarketOracle,
@@ -132,7 +125,9 @@ fun compute_range_price(svi: &SVIParams, forward: u64, lower: u64, higher: u64):
 
     let lower_up_price = compute_up_price(svi, forward, lower);
     let higher_up_price = compute_up_price(svi, forward, higher);
-    range_price(lower_up_price, higher_up_price)
+    // A thin / far-OTM range has ~0 true probability; a fixed-point 1-ulp
+    // inversion should price 0, not abort a legitimate mint/redeem.
+    lower_up_price.saturating_sub(higher_up_price)
 }
 
 /// Compute the fair UP tail price for `strike`.

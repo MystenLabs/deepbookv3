@@ -4,13 +4,12 @@
 /// Raw Pyth Lazer spot source state.
 ///
 /// This module is intentionally limited to source ingestion, timestamp
-/// bookkeeping, and reading its raw spot (including a plain units conversion of
-/// that spot via `value_in_dusdc`). It does not decide whether Pyth is
+/// bookkeeping, and reading its raw spot. It does not decide whether Pyth is
 /// authoritative, derive a forward, apply circuit breakers, or settle a market;
 /// callers own feed binding and freshness (see `pricing::assert_pyth_spot_fresh`).
 module deepbook_predict::pyth_source;
 
-use deepbook_predict::{constants, oracle_events, protocol_config::ProtocolConfig};
+use deepbook_predict::{constants, oracle_events};
 use predict_math::math;
 use pyth_lazer::{i16::I16 as LazerI16, i64::I64 as LazerI64, update::Update as LazerUpdate};
 use std::option::Option;
@@ -71,12 +70,7 @@ public fun allowed_versions(source: &PythSource): VecSet<u64> {
 ///
 /// Rejects stale/future source timestamps, and stores both the publisher
 /// timestamp and on-chain landing timestamp.
-public fun update_from_lazer(
-    source: &mut PythSource,
-    _config: &ProtocolConfig,
-    update: LazerUpdate,
-    clock: &Clock,
-) {
+public fun update_from_lazer(source: &mut PythSource, update: LazerUpdate, clock: &Clock) {
     source.assert_version_allowed();
     let (spot, source_timestamp_us) = extract_spot(&update, source.feed_id);
     let source_timestamp_ms = us_to_ms_ceil(source_timestamp_us);
@@ -103,23 +97,6 @@ public fun update_from_lazer(
 /// Return the timestamp that pricing can use for freshness checks.
 public(package) fun freshness_timestamp_ms(source: &PythSource): u64 {
     source.source_timestamp_ms.min(source.update_timestamp_ms)
-}
-
-/// DUSDC-denominated value (DUSDC decimals) of `amount` raw units of an asset
-/// with `asset_decimals`, priced at this source's normalized 1e9-scaled spot,
-/// rounding up:
-///   ceil(amount * spot / 10^(asset_decimals + float_scaling_decimals - dusdc_decimals))
-/// Aborts on a zero spot (a zero oracle price cannot value the asset). Feed
-/// binding and freshness are the caller's responsibility (assert `feed_id()` and
-/// `pricing::assert_pyth_spot_fresh`), exactly as the market pricing path does.
-public(package) fun value_in_dusdc(source: &PythSource, amount: u64, asset_decimals: u8): u64 {
-    let spot = source.spot;
-    assert!(spot > 0, EZeroSpot);
-    // asset_decimals + 9 - 6 >= 3 for any decimals, so no underflow.
-    let exponent =
-        (asset_decimals as u64) + constants::float_scaling_decimals!() - (constants::dusdc_decimals!() as u64);
-    // Valid asset-decimals/price inputs keep the DUSDC value within u64; the VM abort is the out-of-domain backstop.
-    ceil_div((amount as u128) * (spot as u128), pow10(exponent)) as u64
 }
 
 /// Overwrite this source's mirrored `allowed_versions`. The only authorized
@@ -163,14 +140,6 @@ fun assert_version_allowed(source: &PythSource) {
 fun us_to_ms_ceil(timestamp_us: u64): u64 {
     let ms = timestamp_us / 1000;
     if (timestamp_us % 1000 == 0) ms else ms + 1
-}
-
-fun pow10(exponent: u64): u128 {
-    10u128.pow(exponent as u8)
-}
-
-fun ceil_div(numerator: u128, denominator: u128): u128 {
-    (numerator + denominator - 1) / denominator
 }
 
 // === Lazer decode (folded in from the former lazer_helper module) ===

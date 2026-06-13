@@ -64,10 +64,6 @@ public(package) fun max_strike(grid: &StrikeGrid): u64 {
     grid.max_strike
 }
 
-public(package) fun total_strikes(grid: &StrikeGrid): u64 {
-    grid.total_strikes
-}
-
 /// Assert that `(lower, higher]` is a valid non-empty range on this grid.
 public(package) fun assert_range_boundaries(grid: &StrikeGrid, lower: u64, higher: u64) {
     assert!(lower < higher, EInvalidStrikeGrid);
@@ -108,7 +104,7 @@ fun assert_finite_boundary(grid: &StrikeGrid, strike: u64) {
 }
 
 /// Return the grid index for a finite strike.
-public(package) fun finite_strike_index(grid: &StrikeGrid, strike: u64): u64 {
+fun finite_strike_index(grid: &StrikeGrid, strike: u64): u64 {
     grid.assert_finite_boundary(strike);
     (strike - grid.min_strike) / grid.tick_size
 }

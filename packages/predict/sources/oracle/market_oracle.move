@@ -221,7 +221,6 @@ public fun block_scholes_svi_update_timestamp_ms(market: &MarketOracle): u64 {
 /// Terminal settlement is performed separately by `settle_with_randomness`.
 public fun update_block_scholes_prices(
     market: &mut MarketOracle,
-    _config: &ProtocolConfig,
     cap: &MarketOracleWriterCap,
     block_scholes_spot: u64,
     block_scholes_forward: u64,
@@ -267,7 +266,6 @@ public fun update_block_scholes_prices(
 /// post-expiry Pyth price observed by this market oracle.
 public fun record_pyth_settlement_observation(
     market: &mut MarketOracle,
-    _config: &ProtocolConfig,
     pyth: &PythSource,
     clock: &Clock,
 ) {
@@ -293,7 +291,6 @@ public fun record_pyth_settlement_observation(
 /// abort.
 public fun update_svi(
     market: &mut MarketOracle,
-    _config: &ProtocolConfig,
     cap: &MarketOracleWriterCap,
     svi: SVIParams,
     source_timestamp_ms: u64,
@@ -316,7 +313,6 @@ public fun update_svi(
 /// Set the live settlement freshness threshold for this oracle.
 public fun set_settlement_freshness_ms(
     market: &mut MarketOracle,
-    _config: &ProtocolConfig,
     _admin_cap: &AdminCap,
     value: u64,
 ) {
