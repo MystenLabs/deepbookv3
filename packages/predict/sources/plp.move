@@ -16,9 +16,11 @@
 module deepbook_predict::plp;
 
 use deepbook_predict::{
+    admin::AdminCap,
     constants,
     expiry_market::ExpiryMarket,
     lp_request_queue::{Self, RequestQueue},
+    market_lifecycle_cap::MarketLifecycleCap,
     market_oracle::MarketOracle,
     pool_accounting::{Self, Ledger},
     predict_manager::PredictManager,
@@ -164,20 +166,42 @@ public fun profit_basis_credits(vault: &PoolVault): u64 {
     vault.expiry_accounting.profit_basis_credits()
 }
 
-/// Start a full-pool live NAV valuation for this vault.
+/// Begin a full-pool flush (NAV valuation + LP queue drain) as the protocol
+/// operator (`AdminCap`).
 ///
-/// Engages the protocol valuation lock — so no NAV-changing op can interleave
-/// between value steps — and snapshots the active expiry set that every
-/// `value_expiry` step must cover. Returns the valuation hot potato.
-public fun start_pool_valuation(config: &mut ProtocolConfig, vault: &PoolVault): PoolValuation {
-    vault.assert_version_allowed();
-    config.begin_valuation();
-    PoolValuation {
-        pool_vault_id: vault.id(),
-        expected_expiry_markets: *vault.expiry_accounting.active_expiry_markets(),
-        valued_expiry_markets: vector[],
-        total_nav: 0,
-    }
+/// The flush is cron-driven, not permissionless (audit L8): only the operator
+/// `AdminCap` here, or a market deployer via `start_pool_valuation_as_deployer`, may
+/// start one. Engages the protocol valuation lock — so no NAV-changing op can
+/// interleave between value steps — and snapshots the active expiry set every
+/// `value_expiry` must cover. The hot potato can only be created here, so gating the
+/// start gates the whole flush.
+public fun start_pool_valuation(
+    config: &mut ProtocolConfig,
+    vault: &PoolVault,
+    _admin_cap: &AdminCap,
+): PoolValuation {
+    start_pool_valuation_internal(config, vault)
+}
+
+/// Begin a full-pool flush as a market deployer (`MarketLifecycleCap`). This is a
+/// PRIVILEGED start, not a permissionless one: the flush prices the pool NAV off the
+/// live oracle and `finish_flush` drains the LP queues at that mark, and Pyth updates
+/// (`update_from_lazer`) are permissionless — so a flush-capable cap-holder who
+/// manipulates the live oracle in a preceding tx, then flushes, could fill their own
+/// queued supply/withdraw request at a mark they chose (the keeper's "refresh to true
+/// price before flushing" mitigation only protects the honest-keeper flush). The start
+/// is therefore gated on trust: every flush-capable cap-holder — the operator
+/// `AdminCap` (via `start_pool_valuation`) and the market-deployer `MarketLifecycleCap`
+/// (here), both tightly held — is relied on NOT to manipulate the live oracle. `plp`
+/// cannot registry-validate the lifecycle cap here anyway (import cycle: `registry`
+/// depends on `plp::PoolVault`), and registry validation would only reject a *revoked*
+/// cap, not an active malicious holder — so trust, not allowlisting, is the control.
+public fun start_pool_valuation_as_deployer(
+    config: &mut ProtocolConfig,
+    vault: &PoolVault,
+    _lifecycle_cap: &MarketLifecycleCap,
+): PoolValuation {
+    start_pool_valuation_internal(config, vault)
 }
 
 /// Run the per-market cash flow for one snapshotted market, then fold its NAV into
@@ -478,10 +502,20 @@ public(package) fun rebalance_expiry_cash_inner(
                 .expiry_accounting
                 .send_expiry_cash(expiry_market_id, constants::expiry_max_funding!(), top_up);
             market.receive_pool_cash(cash);
+            vault.emit_expiry_cash_rebalanced(market, expiry_market_id, top_up, true, target_cash);
         };
     } else if (cash_balance > sweep_threshold_cash) {
         let returned_cash = market.release_pool_cash(cash_balance - target_cash);
-        vault.expiry_accounting.receive_expiry_cash(expiry_market_id, returned_cash);
+        let returned_cash_amount = vault
+            .expiry_accounting
+            .receive_expiry_cash(expiry_market_id, returned_cash);
+        vault.emit_expiry_cash_rebalanced(
+            market,
+            expiry_market_id,
+            returned_cash_amount,
+            false,
+            target_cash,
+        );
     };
 }
 
@@ -636,6 +670,46 @@ fun emit_expiry_cash_received(
         sent_to_expiry_after,
         received_from_expiry_after,
     );
+}
+
+/// Emit an `ExpiryCashRebalanced` for a live top-up (`to_expiry = true`) or
+/// surplus-sweep (`to_expiry = false`), reading the post-move expiry cash, idle, and
+/// cumulative flow watermarks.
+fun emit_expiry_cash_rebalanced(
+    vault: &PoolVault,
+    market: &ExpiryMarket,
+    expiry_market_id: ID,
+    amount: u64,
+    to_expiry: bool,
+    target_cash: u64,
+) {
+    let (sent_to_expiry_after, received_from_expiry_after) = vault
+        .expiry_accounting
+        .expiry_flow_amounts(expiry_market_id);
+    vault_events::emit_expiry_cash_rebalanced(
+        vault.id(),
+        expiry_market_id,
+        amount,
+        to_expiry,
+        target_cash,
+        market.cash_balance(),
+        vault.expiry_accounting.idle_balance(),
+        sent_to_expiry_after,
+        received_from_expiry_after,
+    );
+}
+
+/// Engage the valuation lock and snapshot the active expiry set. Shared by both
+/// cap-gated flush entrypoints.
+fun start_pool_valuation_internal(config: &mut ProtocolConfig, vault: &PoolVault): PoolValuation {
+    vault.assert_version_allowed();
+    config.begin_valuation();
+    PoolValuation {
+        pool_vault_id: vault.id(),
+        expected_expiry_markets: *vault.expiry_accounting.active_expiry_markets(),
+        valued_expiry_markets: vector[],
+        total_nav: 0,
+    }
 }
 
 /// Abort unless this valuation belongs to `vault`.

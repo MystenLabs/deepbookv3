@@ -20,6 +20,20 @@ public struct ExpiryCashReceived has copy, drop, store {
     received_from_expiry_after: u64,
 }
 
+/// Emitted when an active expiry's cash is rebalanced toward target: a top-up from
+/// idle (`to_expiry = true`) or a surplus-sweep back to idle (`to_expiry = false`).
+public struct ExpiryCashRebalanced has copy, drop, store {
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    amount: u64,
+    to_expiry: bool,
+    target_cash: u64,
+    expiry_cash_after: u64,
+    idle_balance_after: u64,
+    sent_to_expiry_after: u64,
+    received_from_expiry_after: u64,
+}
+
 /// Emitted when a terminal expiry's profit is materialized: the LP cut stays in
 /// idle and the protocol cut is moved into the protocol reserve.
 public struct ExpiryProfitMaterialized has copy, drop, store {
@@ -166,6 +180,30 @@ public(package) fun emit_expiry_cash_received(
         expiry_market_id,
         settlement_price,
         amount,
+        idle_balance_after,
+        sent_to_expiry_after,
+        received_from_expiry_after,
+    });
+}
+
+public(package) fun emit_expiry_cash_rebalanced(
+    pool_vault_id: ID,
+    expiry_market_id: ID,
+    amount: u64,
+    to_expiry: bool,
+    target_cash: u64,
+    expiry_cash_after: u64,
+    idle_balance_after: u64,
+    sent_to_expiry_after: u64,
+    received_from_expiry_after: u64,
+) {
+    event::emit(ExpiryCashRebalanced {
+        pool_vault_id,
+        expiry_market_id,
+        amount,
+        to_expiry,
+        target_cash,
+        expiry_cash_after,
         idle_balance_after,
         sent_to_expiry_after,
         received_from_expiry_after,

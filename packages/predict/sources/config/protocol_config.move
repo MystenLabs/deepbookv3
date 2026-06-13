@@ -336,11 +336,13 @@ public(package) fun pause_trading(config: &mut ProtocolConfig) {
 }
 
 /// Set the protocol reserve profit share used when materializing aggregate
-/// expiry profit. Validated against its config-constants envelope.
-public(package) fun set_protocol_reserve_profit_share(
+/// expiry profit. Admin-gated; validated against its config-constants envelope.
+public fun set_protocol_reserve_profit_share(
     config: &mut ProtocolConfig,
+    _admin_cap: &AdminCap,
     protocol_reserve_profit_share: u64,
 ) {
+    config.assert_not_valuation_in_progress();
     config_constants::assert_protocol_reserve_profit_share(protocol_reserve_profit_share);
     config.protocol_reserve_profit_share = protocol_reserve_profit_share;
 }
