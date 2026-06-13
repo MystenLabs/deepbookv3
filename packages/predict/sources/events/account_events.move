@@ -30,6 +30,13 @@ public struct BuilderCodeSet has copy, drop, store {
     builder_code_id: Option<ID>,
 }
 
+/// Emitted when a builder code owner claims accumulated builder fees.
+public struct BuilderFeesClaimed has copy, drop, store {
+    builder_code_id: ID,
+    owner: address,
+    amount: u64,
+}
+
 /// Emitted when a `PredictTradeCap` is minted.
 public struct PredictTradeCapMinted has copy, drop, store {
     predict_manager_id: ID,
@@ -83,6 +90,14 @@ public(package) fun emit_builder_code_set(
         predict_manager_id,
         owner,
         builder_code_id,
+    });
+}
+
+public(package) fun emit_builder_fees_claimed(builder_code_id: ID, owner: address, amount: u64) {
+    event::emit(BuilderFeesClaimed {
+        builder_code_id,
+        owner,
+        amount,
     });
 }
 
