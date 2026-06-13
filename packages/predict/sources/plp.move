@@ -5,8 +5,9 @@
 ///
 /// PoolVault owns the PLP treasury cap and the pooled DEEP staked by managers.
 /// The PLP token is inert: synchronous supply/withdraw, full-pool NAV sync,
-/// expiry cash accounting, profit, and incentives have been pruned pending the
-/// async LP redesign. DEEP staking is an unrelated trading feature and stays.
+/// expiry cash accounting, and profit have been pruned pending the async LP
+/// redesign; incentives were pruned and move to a separate staking contract.
+/// DEEP staking is an unrelated trading feature and stays.
 module deepbook_predict::plp;
 
 use deepbook_predict::{constants, predict_manager::PredictManager, vault_events};

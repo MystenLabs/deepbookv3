@@ -95,7 +95,8 @@ fun live_quote_with_fresh_prices_but_stale_svi_aborts() {
 fun assert_pyth_spot_fresh_with_stale_source_aborts() {
     // Live quotes never abort on a stale Pyth source (they fall back to the
     // Block Scholes forward); the abort surface for EPythSpotStale is
-    // `assert_pyth_spot_fresh`, which registry/incentive flows call directly.
+    // `assert_pyth_spot_fresh`, which the market-creation flow (registry) calls
+    // directly.
     let (fx, mut pyth, _oracle, config) = setup_live();
     // Freshness uses min(source, update); push a source timestamp one ms past
     // the Pyth window while the on-chain update stamp stays current.
