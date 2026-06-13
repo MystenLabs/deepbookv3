@@ -4,7 +4,7 @@
 /// Stored oracle freshness config for Predict quotes.
 ///
 /// ProtocolConfig owns this mutable policy. Pricing reads it when resolving
-/// live probabilities for mint, redeem, and valuation flows.
+/// live probabilities for mint and redeem flows.
 module deepbook_predict::pricing_config;
 
 use deepbook_predict::config_constants;

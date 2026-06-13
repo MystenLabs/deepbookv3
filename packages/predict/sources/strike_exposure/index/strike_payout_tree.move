@@ -113,17 +113,6 @@ public(package) fun remove_range(
     );
 }
 
-/// Destroy all sparse payout storage without reading settlement liability.
-public(package) fun destroy(tree: StrikePayoutTree) {
-    let StrikePayoutTree {
-        root,
-        mut nodes,
-        base: _,
-    } = tree;
-    destroy_nodes(&mut nodes, root);
-    nodes.destroy_empty();
-}
-
 fun apply_range(
     tree: &mut StrikePayoutTree,
     grid: &StrikeGrid,
@@ -358,14 +347,6 @@ fun add_terms(left: PayoutTerms, right: PayoutTerms): PayoutTerms {
 
 fun payout_terms(terminal_payout: u64, live_backing_payout: u64): PayoutTerms {
     PayoutTerms { terminal_payout, live_backing_payout }
-}
-
-fun destroy_nodes(nodes: &mut Table<u64, PayoutNode>, root: Option<u64>) {
-    if (root.is_none()) return;
-    let strike = *root.borrow();
-    let node = nodes.remove(strike);
-    destroy_nodes(nodes, node.left);
-    destroy_nodes(nodes, node.right);
 }
 
 fun apply_terms_delta(value: &mut PayoutTerms, delta: PayoutTerms, add: bool) {

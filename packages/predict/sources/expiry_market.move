@@ -316,7 +316,7 @@ public(package) fun set_allowed_versions(market: &mut ExpiryMarket, allowed_vers
 /// Create and share a zero-cash expiry market for one market oracle.
 ///
 /// The market snapshots the Pyth feed ID, initializes strike exposure state, and
-/// starts with zero expiry cash. Pool funding only enters through PLP rebalancing.
+/// starts with zero expiry cash.
 public(package) fun create_and_share(
     config: &ProtocolConfig,
     allowed_versions: VecSet<u64>,

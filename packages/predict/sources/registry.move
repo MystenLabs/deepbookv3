@@ -239,9 +239,8 @@ public fun create_pyth_source(
 
 /// Create the MarketOracle and ExpiryMarket objects for one future expiry.
 ///
-/// The registry enforces one market per expiry, validates the registered Pyth
-/// source, and registers the expiry as active. Pool funding happens later through
-/// PLP rebalancing.
+/// The registry enforces one market per expiry and validates the registered
+/// Pyth source. The market is created with zero cash.
 public fun create_expiry_market(
     registry: &mut Registry,
     pool_vault: &mut PoolVault,
