@@ -189,7 +189,26 @@ Removing the centered grid means market creation no longer needs a fresh spot
 just to build strike geometry. `create_expiry_market` should still validate the
 Pyth source binding and snapshot the feed's registered `tick_size`, but fresh
 spot can move to the flows that actually price risk: mint, live redeem,
-liquidation, and NAV reads.
+liquidation, and NAV reads. This also removes the current creation-time coupling
+between `Registry`, `ExpiryMarket`, and `StrikeExposure` where `pyth.spot()` is
+threaded through only so `StrikeGrid::new_centered` can derive `min_strike`.
+
+Market creation should keep taking the `PythSource` reference for source-object
+binding and for `MarketOracle` ownership, but it should not require that the
+source has a fresh spot or any initialized price state. A new market can be
+created with no live quote; it simply cannot admit risk until the normal live
+pricing freshness gates pass.
+
+The concrete creation changes are:
+
+- Drop `pricing::assert_pyth_spot_fresh` from `registry::create_expiry_market`.
+- Drop the `spot` argument from `expiry_market::create_and_share` and
+  `strike_exposure::new`.
+- Store the snapped `tick_size` directly on the exposure book or on a small
+  tick-range codec object; do not store `min_strike` or `max_strike`.
+- Keep `MarketOracle::create_and_share` as an oracle-binding constructor. It
+  already starts Block Scholes live price state at zero, so removing grid
+  construction does not require seeding oracle prices at creation.
 
 `Registry` remains the owner of per-feed `tick_size`. A tick-size update affects
 future expiry markets only; already-created markets keep the tick size they
@@ -201,15 +220,25 @@ max_finite_strike = (POS_INF_TICK - 1) * tick_size
 
 Feed configuration must choose a tick size that gives enough price precision
 while keeping expected market strikes inside the 24-bit tick domain.
+Validation should also prevent raw-strike multiplication overflow:
+
+```text
+tick_size <= u64::MAX / (POS_INF_TICK - 1)
+```
+
+This is a pure config bound; normal market tick sizes should be far below it.
 
 ## Events and SDKs
 
-Events may continue to emit raw `lower_strike` and `higher_strike` for indexer
-and UI convenience, because the market can derive them from `range_key` and
-`tick_size`. The order ID plus market tick size is still sufficient to recover
-the canonical tick range. If indexers need exact tick fields without decoding the
-order ID, events can add `range_key` later, but it is not required for protocol
-correctness.
+Events should expose the canonical tick range directly where a position is first
+created. `OrderMinted` should emit `range_key` alongside any raw
+`lower_strike`/`higher_strike` fields retained for indexer and UI convenience.
+Later order events can continue to rely on `order_id`: the range key is embedded
+in the order ID, and replacement order IDs preserve the same range key.
+
+`MarketCreated` should no longer emit `min_strike` or `max_strike`. Those values
+are artifacts of centered grid geometry. It should keep emitting `tick_size`, so
+indexers and SDKs can derive raw strikes from tick ranges.
 
 SDKs become the right place for user-facing routing:
 
@@ -221,6 +250,50 @@ SDKs become the right place for user-facing routing:
 
 On-chain helpers should still exist for PTB builders and composability, so
 integrators do not have to hand-roll bit shifts in Move.
+
+## Code cleanup surface
+
+Eliminating `StrikeGrid` should remove the remaining grid-relative code rather
+than wrapping it in a differently named object.
+
+Source cleanup:
+
+- Remove `strike_exposure/strike_grid.move`.
+- Replace `constants::oracle_strike_grid_ticks` and
+  `constants::max_boundary_index` with tick-domain constants or helpers in the
+  new range/tick codec. Keep `oracle_tick_size_unit`, `neg_inf`, and `pos_inf`
+  only if they remain useful as raw price sentinels.
+- Rename `Order` constructors and accessors from boundary-index language to
+  range/tick language. `new_from_boundary_indices`,
+  `lower_boundary_index`, and `higher_boundary_index` should become
+  range-key or lower/higher-tick helpers.
+- Remove `StrikeExposure.grid`, `StrikeExposure.min_strike`, and
+  `StrikeExposure.max_strike`. `StrikeExposure.tick_size` can remain as the
+  market's raw-price conversion parameter.
+- Replace `StrikeExposure.boundary_indices` and `order_boundaries` with
+  tick-range validation and raw conversion helpers.
+- Remove `StrikePayoutTree`'s dependency on `StrikeGrid`; insertion and removal
+  should take ticks or a validated range key. Rename subtree summary fields from
+  `min_strike`/`max_strike` to `min_tick`/`max_tick`.
+- Remove `LiquidationBook`'s dependency on `StrikeGrid`; it should decode ticks
+  from the order ID and receive `tick_size` only when it must price raw strikes.
+- Remove `ExpiryMarket.min_strike` and `ExpiryMarket.max_strike`. Keep
+  `tick_size` if public readers need it for SDK/indexer derivation.
+- Update `config_events::MarketCreated` to emit `tick_size` without centered
+  grid bounds.
+
+Test and tooling cleanup:
+
+- Delete `strike_grid_tests` and replace them with range-key codec tests.
+- Update order tests from boundary-index bounds to tick-domain/range-key bounds.
+- Remove fixture constraints that require `spot / tick_size` to fall inside the
+  `new_centered` window.
+- Update pricing reference generation to snap strikes by absolute ticks from
+  zero rather than by `min_strike`/`max_strike`.
+- Rename helper constants like `min_strike()` where they now mean "default ATM
+  finite boundary" rather than "grid minimum".
+- Update stale docs that still mention dense NAV storage, grid preallocation,
+  compaction, or market-local strike bounds.
 
 ## Pricing tail behavior
 
