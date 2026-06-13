@@ -50,6 +50,20 @@ public(package) macro fun expiry_rebalance_pct(): u64 { 100_000_000 }
 /// admin config, dissolved here into a single upgrade-required risk cap.
 public(package) macro fun expiry_max_funding(): u64 { 250_000_000_000 }
 
+// === Async LP Requests ===
+// Minimums and the per-flush cap are upgrade-required for now. A per-vault
+// admin-tunable minimum is a deferred follow-up (see config rules in move.md).
+
+/// Minimum DUSDC a single supply request must escrow: 10 DUSDC (6-decimal units).
+public(package) macro fun min_supply_request(): u64 { 10_000_000 }
+
+/// Minimum PLP a single withdraw request must escrow: 1 PLP (6-decimal units).
+public(package) macro fun min_withdraw_request(): u64 { 1_000_000 }
+
+/// Max LP requests (supplies + withdrawals, including cancelled-hole skips) a single
+/// flush advances its drain cursor over. Bounds per-flush gas; the rest carry.
+public(package) macro fun max_requests_per_flush(): u64 { 100 }
+
 // === Leverage ===
 
 /// Window before expiry over which the leverage floor index rises.

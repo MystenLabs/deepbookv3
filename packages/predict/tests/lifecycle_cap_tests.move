@@ -89,9 +89,10 @@ fun update_prices_with_unseeded_writer_cap_aborts() {
     // The fixture market's writer set was seeded with only the fixture cap at
     // creation; a second admin-created cap is not authorized.
     let unseeded_cap = market_oracle_writer_cap::create(&admin_cap, fx.scenario_mut().ctx());
-    let (_pyth, mut oracle, _config) = fx.take_oracle();
+    let (_pyth, mut oracle, config) = fx.take_oracle();
     oracle.update_block_scholes_prices(
         &unseeded_cap,
+        &config,
         test_constants::default_live_price(),
         test_constants::default_live_price(),
         test_constants::live_source_timestamp_ms(),
@@ -123,11 +124,12 @@ fun empty_writer_set_update_aborts() {
     let (_expiry_id, oracle_id) = create_second_market(&mut fx, &lifecycle_cap, vector[]);
 
     let mut oracle = fx.scenario_mut().take_shared_by_id<MarketOracle>(oracle_id);
-    let _config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let config = fx.scenario_mut().take_shared<ProtocolConfig>();
     // The writer set is empty: even an admin-created cap cannot write until
     // the admin registers it on this oracle.
     oracle.update_block_scholes_prices(
         &writer_cap,
+        &config,
         test_constants::default_live_price(),
         test_constants::default_live_price(),
         test_constants::live_source_timestamp_ms(),
@@ -149,6 +151,7 @@ fun empty_writer_set_then_admin_registers() {
     oracle.register_writer_cap(&admin_cap, writer_cap.id());
     oracle.update_block_scholes_prices(
         &writer_cap,
+        &config,
         test_constants::default_live_price(),
         ONE_PCT_ABOVE_LIVE_PRICE,
         test_constants::live_source_timestamp_ms(),

@@ -75,6 +75,7 @@ fun live_quote_with_fresh_prices_but_stale_svi_aborts() {
     fx.set_clock_for_testing(svi_stale_now);
     oracle.update_block_scholes_prices(
         fx.cap(),
+        &config,
         test_constants::default_live_price(),
         test_constants::default_live_price(),
         svi_stale_now,

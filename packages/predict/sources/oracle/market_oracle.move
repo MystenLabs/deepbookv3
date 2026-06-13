@@ -218,10 +218,13 @@ public fun block_scholes_svi_update_timestamp_ms(market: &MarketOracle): u64 {
 /// `settlement_sample_window_ms` before expiry, this records the accepted Block
 /// Scholes spot into its settlement sample buffer. After expiry, this latches
 /// the first fresh post-expiry Block Scholes price observed by this oracle.
-/// Terminal settlement is performed separately by `settle_with_randomness`.
+/// Terminal settlement is performed separately by `settle_with_randomness`. Blocked
+/// while a full-pool valuation is in progress, so the flush prices every market at
+/// one frozen oracle snapshot.
 public fun update_block_scholes_prices(
     market: &mut MarketOracle,
     cap: &MarketOracleWriterCap,
+    config: &ProtocolConfig,
     block_scholes_spot: u64,
     block_scholes_forward: u64,
     block_scholes_source_timestamp_ms: u64,
@@ -229,6 +232,7 @@ public fun update_block_scholes_prices(
 ) {
     market.assert_version_allowed();
     market.assert_authorized_writer_cap(cap);
+    config.assert_not_valuation_in_progress();
 
     // Batch-race no-ops: skip when there is nothing valid to write.
     if (market.is_settled()) return;
@@ -288,16 +292,19 @@ public fun record_pyth_settlement_observation(
 /// SVI is live-market-only: a non-active market (expired or settled) or a
 /// non-advancing source timestamp is a clean no-op so multi-expiry writer
 /// PTBs never revert on an expiry or ordering race; malformed payloads still
-/// abort.
+/// abort. Blocked while a full-pool valuation is in progress, so the flush prices
+/// every market at one frozen oracle snapshot.
 public fun update_svi(
     market: &mut MarketOracle,
     cap: &MarketOracleWriterCap,
+    config: &ProtocolConfig,
     svi: SVIParams,
     source_timestamp_ms: u64,
     clock: &Clock,
 ) {
     market.assert_version_allowed();
     market.assert_authorized_writer_cap(cap);
+    config.assert_not_valuation_in_progress();
 
     // Batch-race no-ops: skip when there is nothing valid to write.
     if (market.status(clock) != STATUS_ACTIVE) return;

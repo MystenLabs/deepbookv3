@@ -296,7 +296,7 @@ public fun seed_market_cash(self: &mut Fixture, market: &mut ExpiryMarket, amoun
 /// `live_price` is used as both spot and forward (basis = 1.0).
 public fun prepare_live_oracle(
     self: &Fixture,
-    _config: &ProtocolConfig,
+    config: &ProtocolConfig,
     oracle: &mut MarketOracle,
     pyth: &mut PythSource,
     live_price: u64,
@@ -305,6 +305,7 @@ public fun prepare_live_oracle(
     pyth.set_state_for_testing(live_price, live_ts, live_ts);
     oracle.update_block_scholes_prices(
         &self.cap,
+        config,
         live_price,
         live_price,
         live_ts,
@@ -317,12 +318,12 @@ public fun prepare_live_oracle(
         i64::from_u64(test_constants::default_svi_m()),
         constants::svi_sigma_min!(),
     );
-    oracle.update_svi(&self.cap, svi, live_ts, &self.clock);
+    oracle.update_svi(&self.cap, config, svi, live_ts, &self.clock);
 }
 
 public fun prepare_live_oracle_at(
     self: &Fixture,
-    _config: &ProtocolConfig,
+    config: &ProtocolConfig,
     oracle: &mut MarketOracle,
     pyth: &mut PythSource,
     live_price: u64,
@@ -331,6 +332,7 @@ public fun prepare_live_oracle_at(
     pyth.set_state_for_testing(live_price, source_timestamp_ms, source_timestamp_ms);
     oracle.update_block_scholes_prices(
         &self.cap,
+        config,
         live_price,
         live_price,
         source_timestamp_ms,
@@ -343,7 +345,7 @@ public fun prepare_live_oracle_at(
         i64::from_u64(test_constants::default_svi_m()),
         constants::svi_sigma_min!(),
     );
-    oracle.update_svi(&self.cap, svi, source_timestamp_ms, &self.clock);
+    oracle.update_svi(&self.cap, config, svi, source_timestamp_ms, &self.clock);
 }
 
 public fun set_pyth_price_for_testing(
@@ -568,7 +570,7 @@ public fun set_clock_for_testing(self: &mut Fixture, timestamp_ms: u64) {
 
 public fun update_block_scholes_prices_for_testing(
     self: &Fixture,
-    _config: &ProtocolConfig,
+    config: &ProtocolConfig,
     oracle: &mut MarketOracle,
     spot: u64,
     forward: u64,
@@ -576,6 +578,7 @@ public fun update_block_scholes_prices_for_testing(
 ) {
     oracle.update_block_scholes_prices(
         &self.cap,
+        config,
         spot,
         forward,
         source_timestamp_ms,

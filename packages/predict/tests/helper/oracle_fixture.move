@@ -145,7 +145,7 @@ public fun return_oracle(pyth: PythSource, oracle: MarketOracle, config: Protoco
 /// forward (basis = 1.0).
 public fun prepare_live_oracle(
     self: &OracleFixture,
-    _config: &ProtocolConfig,
+    config: &ProtocolConfig,
     oracle: &mut MarketOracle,
     pyth: &mut PythSource,
     live_price: u64,
@@ -154,6 +154,7 @@ public fun prepare_live_oracle(
     pyth.set_state_for_testing(live_price, live_ts, live_ts);
     oracle.update_block_scholes_prices(
         &self.cap,
+        config,
         live_price,
         live_price,
         live_ts,
@@ -166,7 +167,7 @@ public fun prepare_live_oracle(
         i64::from_u64(test_constants::default_svi_m()),
         constants::svi_sigma_min!(),
     );
-    oracle.update_svi(&self.cap, svi, live_ts, &self.clock);
+    oracle.update_svi(&self.cap, config, svi, live_ts, &self.clock);
 }
 
 /// Seed fresh live Block Scholes prices + arbitrary SVI through the production cap
@@ -176,7 +177,7 @@ public fun prepare_live_oracle(
 /// on the fixture creation spot, so callers pass real strikes valid for that grid.
 public fun prepare_real_oracle(
     self: &OracleFixture,
-    _config: &ProtocolConfig,
+    config: &ProtocolConfig,
     oracle: &mut MarketOracle,
     pyth: &mut PythSource,
     spot: u64,
@@ -185,8 +186,8 @@ public fun prepare_real_oracle(
 ) {
     let live_ts = test_constants::live_source_timestamp_ms();
     pyth.set_state_for_testing(spot, live_ts, live_ts);
-    oracle.update_block_scholes_prices(&self.cap, spot, forward, live_ts, &self.clock);
-    oracle.update_svi(&self.cap, svi, live_ts, &self.clock);
+    oracle.update_block_scholes_prices(&self.cap, config, spot, forward, live_ts, &self.clock);
+    oracle.update_svi(&self.cap, config, svi, live_ts, &self.clock);
 }
 
 /// Overwrite the Pyth spot directly (for staleness and pricing-source tests),

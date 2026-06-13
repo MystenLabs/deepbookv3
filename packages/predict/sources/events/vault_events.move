@@ -1,8 +1,8 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Pool-vault DEEP-staking, full-pool valuation, and expiry cash/profit events
-/// for Predict.
+/// Pool-vault events for Predict: DEEP staking, full-pool valuation, expiry
+/// cash/profit, and the async LP supply/withdraw request → flush lifecycle.
 module deepbook_predict::vault_events;
 
 use sui::event;
@@ -63,6 +63,91 @@ public struct DeepUnstaked has copy, drop, store {
     pool_vault_id: ID,
     predict_manager_id: ID,
     amount: u64,
+}
+
+/// Emitted when an LP queues a supply request: `amount` DUSDC is escrowed and a fill
+/// (or refund) will be delivered to `recipient` (the manager's address) at the next
+/// flush. `index` is the queue handle used to cancel.
+public struct SupplyRequested has copy, drop, store {
+    pool_vault_id: ID,
+    predict_manager_id: ID,
+    recipient: address,
+    index: u64,
+    amount: u64,
+}
+
+/// Emitted when an LP queues a withdraw request: `amount` PLP shares are escrowed and
+/// DUSDC (or a PLP refund) will be delivered to `recipient` at the next flush.
+public struct WithdrawRequested has copy, drop, store {
+    pool_vault_id: ID,
+    predict_manager_id: ID,
+    recipient: address,
+    index: u64,
+    amount: u64,
+}
+
+/// Emitted when an LP cancels a still-pending request before it is flushed: the
+/// escrow (`amount` of DUSDC if `is_supply`, else PLP) is refunded straight into the
+/// requesting manager.
+public struct RequestCancelled has copy, drop, store {
+    pool_vault_id: ID,
+    predict_manager_id: ID,
+    recipient: address,
+    index: u64,
+    amount: u64,
+    is_supply: bool,
+}
+
+/// Emitted when a supply request fills: `dusdc_amount` joined pool idle and
+/// `shares_minted` PLP were delivered to `recipient`.
+public struct SupplyFilled has copy, drop, store {
+    pool_vault_id: ID,
+    recipient: address,
+    index: u64,
+    dusdc_amount: u64,
+    shares_minted: u64,
+}
+
+/// Emitted when a withdraw request fills: `shares_burned` PLP were burned and
+/// `dusdc_amount` was delivered to `recipient` from pool idle.
+public struct WithdrawFilled has copy, drop, store {
+    pool_vault_id: ID,
+    recipient: address,
+    index: u64,
+    shares_burned: u64,
+    dusdc_amount: u64,
+}
+
+/// Emitted when a supply request prices to zero shares (dust at the flush mark, or a
+/// wiped pool) and its escrowed `dusdc_amount` is returned to `recipient` instead.
+public struct SupplyRefunded has copy, drop, store {
+    pool_vault_id: ID,
+    recipient: address,
+    index: u64,
+    dusdc_amount: u64,
+}
+
+/// Emitted when a withdraw request prices to zero DUSDC (dust at the flush mark, or a
+/// wiped pool) and its escrowed `plp_amount` is returned to `recipient` instead.
+public struct WithdrawRefunded has copy, drop, store {
+    pool_vault_id: ID,
+    recipient: address,
+    index: u64,
+    plp_amount: u64,
+}
+
+/// Emitted once per flush after both queues drain: the frozen mark every fill was
+/// priced at (`pool_value` over `total_supply`), how many of each kind filled, and
+/// the total cursor advances spent against the per-flush cap.
+public struct FlushExecuted has copy, drop, store {
+    pool_vault_id: ID,
+    epoch: u64,
+    pool_value: u64,
+    total_supply: u64,
+    supplies_filled: u64,
+    withdrawals_filled: u64,
+    requests_processed: u64,
+    idle_balance_after: u64,
 }
 
 // === Public-Package Functions ===
@@ -144,5 +229,137 @@ public(package) fun emit_deep_unstaked(pool_vault_id: ID, predict_manager_id: ID
         pool_vault_id,
         predict_manager_id,
         amount,
+    });
+}
+
+public(package) fun emit_supply_requested(
+    pool_vault_id: ID,
+    predict_manager_id: ID,
+    recipient: address,
+    index: u64,
+    amount: u64,
+) {
+    event::emit(SupplyRequested {
+        pool_vault_id,
+        predict_manager_id,
+        recipient,
+        index,
+        amount,
+    });
+}
+
+public(package) fun emit_withdraw_requested(
+    pool_vault_id: ID,
+    predict_manager_id: ID,
+    recipient: address,
+    index: u64,
+    amount: u64,
+) {
+    event::emit(WithdrawRequested {
+        pool_vault_id,
+        predict_manager_id,
+        recipient,
+        index,
+        amount,
+    });
+}
+
+public(package) fun emit_request_cancelled(
+    pool_vault_id: ID,
+    predict_manager_id: ID,
+    recipient: address,
+    index: u64,
+    amount: u64,
+    is_supply: bool,
+) {
+    event::emit(RequestCancelled {
+        pool_vault_id,
+        predict_manager_id,
+        recipient,
+        index,
+        amount,
+        is_supply,
+    });
+}
+
+public(package) fun emit_supply_filled(
+    pool_vault_id: ID,
+    recipient: address,
+    index: u64,
+    dusdc_amount: u64,
+    shares_minted: u64,
+) {
+    event::emit(SupplyFilled {
+        pool_vault_id,
+        recipient,
+        index,
+        dusdc_amount,
+        shares_minted,
+    });
+}
+
+public(package) fun emit_withdraw_filled(
+    pool_vault_id: ID,
+    recipient: address,
+    index: u64,
+    shares_burned: u64,
+    dusdc_amount: u64,
+) {
+    event::emit(WithdrawFilled {
+        pool_vault_id,
+        recipient,
+        index,
+        shares_burned,
+        dusdc_amount,
+    });
+}
+
+public(package) fun emit_supply_refunded(
+    pool_vault_id: ID,
+    recipient: address,
+    index: u64,
+    dusdc_amount: u64,
+) {
+    event::emit(SupplyRefunded {
+        pool_vault_id,
+        recipient,
+        index,
+        dusdc_amount,
+    });
+}
+
+public(package) fun emit_withdraw_refunded(
+    pool_vault_id: ID,
+    recipient: address,
+    index: u64,
+    plp_amount: u64,
+) {
+    event::emit(WithdrawRefunded {
+        pool_vault_id,
+        recipient,
+        index,
+        plp_amount,
+    });
+}
+
+public(package) fun emit_flush_executed(
+    pool_vault_id: ID,
+    epoch: u64,
+    pool_value: u64,
+    total_supply: u64,
+    supplies_filled: u64,
+    withdrawals_filled: u64,
+    requests_processed: u64,
+    idle_balance_after: u64,
+) {
+    event::emit(FlushExecuted {
+        pool_vault_id,
+        epoch,
+        pool_value,
+        total_supply,
+        supplies_filled,
+        withdrawals_filled,
+        requests_processed,
+        idle_balance_after,
     });
 }

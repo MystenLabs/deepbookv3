@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /// Flow coverage for the pool NAV hot potato (`plp::start_pool_valuation` /
-/// `value_expiry` / `finish_pool_valuation`) and its unified per-market cash
+/// `value_expiry` / `finish_flush`) and its unified per-market cash
 /// flush. Tests build production-valid markets through the real creation + funding
 /// path, then assert: the aggregated pool NAV equals an INDEPENDENT reference
 /// (idle + Σ current_nav, with a zero profit-basis exclusion — unit-tests rule 1),
@@ -64,7 +64,7 @@ fun multi_market_pool_nav_is_idle_plus_sum_of_navs() {
     let mut val = plp::start_pool_valuation(&mut config, &vault);
     val.value_expiry(&mut vault, &mut m1, &config, &oc1, &pyth, fx.clock());
     val.value_expiry(&mut vault, &mut m2, &config, &oc2, &pyth, fx.clock());
-    let pool_nav = val.finish_pool_valuation(&vault, &mut config);
+    let pool_nav = val.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
 
     // Independent reference: each market's NAV is read DIRECTLY (not via the
     // potato) and summed by hand, then priced by the separately unit-tested
@@ -117,7 +117,7 @@ fun empty_funded_markets_pool_nav_equals_total_idle() {
     let mut val = plp::start_pool_valuation(&mut config, &vault);
     val.value_expiry(&mut vault, &mut m1, &config, &oc1, &pyth, fx.clock());
     val.value_expiry(&mut vault, &mut m2, &config, &oc2, &pyth, fx.clock());
-    let pool_nav = val.finish_pool_valuation(&vault, &mut config);
+    let pool_nav = val.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
 
     // Each funded empty market holds exactly the cash floor as NAV (no liability),
     // so the entire pool NAV is the total idle originally seeded (cash conserved).
@@ -145,11 +145,11 @@ fun empty_pool_valuation_returns_idle() {
 
     fx.scenario_mut().next_tx(test_constants::admin());
     let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
-    let vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
+    let mut vault = fx.scenario_mut().take_shared_by_id<PoolVault>(fx.vault_id());
 
     // No active markets: start then finish with no value steps returns idle.
     let val = plp::start_pool_valuation(&mut config, &vault);
-    let pool_nav = val.finish_pool_valuation(&vault, &mut config);
+    let pool_nav = val.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
     assert_eq!(pool_nav, idle_seed);
 
     return_shared(config);
@@ -178,7 +178,7 @@ fun finish_aborts_when_a_snapshotted_market_is_unvalued() {
     let mut val = plp::start_pool_valuation(&mut config, &vault);
     val.value_expiry(&mut vault, &mut m1, &config, &oc1, &pyth, fx.clock());
     // Snapshot held two markets; only one was valued.
-    let _ = val.finish_pool_valuation(&vault, &mut config);
+    let _ = val.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
 
     abort 999
 }
@@ -271,6 +271,31 @@ fun rebalance_during_valuation_aborts() {
     abort 999
 }
 
+#[test, expected_failure(abort_code = protocol_config::EValuationInProgress)]
+fun oracle_price_update_during_valuation_aborts() {
+    // Part 5: oracle writes are blocked under the valuation lock so the flush prices
+    // every market at one frozen oracle snapshot. (The SVI and Pyth update gates are
+    // the identical one-line assert; Pyth's `update_from_lazer` has no Move test
+    // constructor for `LazerUpdate`, so this covers the market-oracle write path.)
+    let mut fx = helpers::setup_market_default();
+    let (_e, o) = fx.create_expiry(test_constants::default_expiry_ms());
+
+    fx.scenario_mut().next_tx(test_constants::admin());
+    let mut config = fx.scenario_mut().take_shared<ProtocolConfig>();
+    let mut oracle = fx.scenario_mut().take_shared_by_id<MarketOracle>(o);
+
+    config.begin_valuation();
+    fx.update_block_scholes_prices_for_testing(
+        &config,
+        &mut oracle,
+        test_constants::default_live_price(),
+        test_constants::default_live_price(),
+        test_constants::live_source_timestamp_ms(),
+    );
+
+    abort 999
+}
+
 #[test]
 fun valuation_flow_releases_lock_and_mint_succeeds() {
     let mut fx = helpers::setup_market_default();
@@ -287,7 +312,7 @@ fun valuation_flow_releases_lock_and_mint_succeeds() {
 
     let mut val = plp::start_pool_valuation(&mut config, &vault);
     val.value_expiry(&mut vault, &mut market, &config, &oracle, &pyth, fx.clock());
-    let pool_nav = val.finish_pool_valuation(&vault, &mut config);
+    let pool_nav = val.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
     assert_eq!(
         pool_nav,
         constants::expiry_cash_floor!() + (IDLE_SEED - constants::expiry_cash_floor!()),
@@ -329,8 +354,8 @@ fun finish_with_wrong_vault_aborts() {
     let val = plp::start_pool_valuation(&mut config, &vault);
     // A second, unrelated vault: finishing against it must fail the binding check.
     let cap = coin::create_treasury_cap_for_testing<PLP>(fx.scenario_mut().ctx());
-    let wrong_vault = plp::new(cap, fx.scenario_mut().ctx());
-    let _ = val.finish_pool_valuation(&wrong_vault, &mut config);
+    let mut wrong_vault = plp::new(cap, fx.scenario_mut().ctx());
+    let _ = val.finish_flush(&mut wrong_vault, &mut config, fx.scenario_mut().ctx());
 
     abort 999
 }
@@ -351,7 +376,7 @@ fun settled_market_is_swept_materialized_and_contributes_zero() {
 
     let mut val = plp::start_pool_valuation(&mut config, &vault);
     val.value_expiry(&mut vault, &mut market, &config, &oracle, &pyth, fx.clock());
-    let pool_nav = val.finish_pool_valuation(&vault, &mut config);
+    let pool_nav = val.finish_flush(&mut vault, &mut config, fx.scenario_mut().ctx());
 
     // The 1_000_000 of pure profit splits 40/60: protocol cut to the reserve, LP
     // cut left in idle. The market's cash is fully swept and it deactivates.

@@ -9,7 +9,7 @@
 /// callers own feed binding and freshness (see `pricing::assert_pyth_spot_fresh`).
 module deepbook_predict::pyth_source;
 
-use deepbook_predict::{constants, oracle_events};
+use deepbook_predict::{constants, oracle_events, protocol_config::ProtocolConfig};
 use predict_math::math;
 use pyth_lazer::{i16::I16 as LazerI16, i64::I64 as LazerI64, update::Update as LazerUpdate};
 use std::option::Option;
@@ -69,9 +69,16 @@ public fun allowed_versions(source: &PythSource): VecSet<u64> {
 /// Decode and store a verified Pyth Lazer spot update.
 ///
 /// Rejects stale/future source timestamps, and stores both the publisher
-/// timestamp and on-chain landing timestamp.
-public fun update_from_lazer(source: &mut PythSource, update: LazerUpdate, clock: &Clock) {
+/// timestamp and on-chain landing timestamp. Blocked while a full-pool valuation is
+/// in progress, so the flush prices every market at one frozen oracle snapshot.
+public fun update_from_lazer(
+    source: &mut PythSource,
+    config: &ProtocolConfig,
+    update: LazerUpdate,
+    clock: &Clock,
+) {
     source.assert_version_allowed();
+    config.assert_not_valuation_in_progress();
     let (spot, source_timestamp_us) = extract_spot(&update, source.feed_id);
     let source_timestamp_ms = us_to_ms_ceil(source_timestamp_us);
     let update_timestamp_ms = clock.timestamp_ms();

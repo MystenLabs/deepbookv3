@@ -4,17 +4,21 @@
 /// PLP token and pool vault.
 ///
 /// PoolVault owns the PLP treasury cap, the pooled DEEP staked by managers, idle
-/// DUSDC, the protocol reserve, and per-expiry cash accounting. It coordinates the
-/// full-pool NAV valuation (a hot-potato aggregation over every active market) and
-/// the unified per-market cash flow (initial funding, live rebalance/sweep, and
-/// settled-market sweep with terminal profit materialization). Synchronous PLP
-/// supply/withdraw remain pruned pending the async LP redesign; incentives moved to
-/// a separate staking contract. DEEP staking is an unrelated trading feature.
+/// DUSDC, the protocol reserve, per-expiry cash accounting, and the async LP
+/// supply/withdraw queues. It coordinates the full-pool NAV valuation (a hot-potato
+/// aggregation over every active market) and the unified per-market cash flow
+/// (initial funding, live rebalance/sweep, and settled-market sweep with terminal
+/// profit materialization). LPs queue supply/withdraw requests routed through a
+/// PredictManager; the daily flush (`finish_flush`) drains them at the frozen pool
+/// NAV, minting/burning PLP and delivering fills to each manager via the balance
+/// accumulator. Incentives moved to a separate staking contract; DEEP staking is an
+/// unrelated trading feature.
 module deepbook_predict::plp;
 
 use deepbook_predict::{
     constants,
     expiry_market::ExpiryMarket,
+    lp_request_queue::{Self, RequestQueue},
     market_oracle::MarketOracle,
     pool_accounting::{Self, Ledger},
     predict_manager::PredictManager,
@@ -37,6 +41,10 @@ const EExpiryMarketNotActive: u64 = 0;
 const EExpiryMarketAlreadyValued: u64 = 1;
 const EWrongPoolVault: u64 = 2;
 const EMissingExpiryValuation: u64 = 3;
+const EBelowMinSupplyRequest: u64 = 4;
+const EBelowMinWithdrawRequest: u64 = 5;
+const ENotRequestOwner: u64 = 6;
+const EBootstrapNavNotEmpty: u64 = 7;
 const EPackageVersionDisabled: u64 = 9;
 
 /// One-time witness type for Predict LP token registration.
@@ -51,10 +59,15 @@ public struct PoolVault has key {
     /// Pooled DEEP staked by all managers for trading benefits. Per-manager
     /// active/inactive amounts are mirrored on each `PredictManager`.
     staked_deep: Balance<DEEP>,
-    /// Treasury cap for the inert PLP share token (kept for the LP rebuild).
+    /// Treasury cap for the PLP share token: minted on supply fills, burned on
+    /// withdraw fills during the flush.
     treasury_cap: TreasuryCap<PLP>,
     /// Idle DUSDC custody, registered expiries, and per-expiry cash-flow rows.
     expiry_accounting: Ledger,
+    /// Queued LP supply requests, each escrowing DUSDC until the next flush.
+    supply_queue: RequestQueue<DUSDC>,
+    /// Queued LP withdraw requests, each escrowing PLP until the next flush.
+    withdraw_queue: RequestQueue<PLP>,
     /// Mirror of `ProtocolConfig.allowed_versions`; synced permissionlessly.
     allowed_versions: VecSet<u64>,
 }
@@ -63,9 +76,9 @@ public struct PoolVault has key {
 ///
 /// `start_pool_valuation` snapshots the active expiry set; each `value_expiry`
 /// runs the per-market cash flush then folds that market's NAV into `total_nav`
-/// exactly once (a swept settled market contributes 0); `finish_pool_valuation`
-/// proves every snapshotted market was valued and returns the LP-attributable
-/// pool NAV. Has no abilities, so it must be consumed by the finisher.
+/// exactly once (a swept settled market contributes 0); `finish_flush` proves every
+/// snapshotted market was valued, returns the LP-attributable pool NAV, and drains
+/// the LP queues against it. Has no abilities, so it must be consumed by the finisher.
 public struct PoolValuation {
     pool_vault_id: ID,
     /// Active expiry markets snapshotted at start; every one must be valued.
@@ -119,6 +132,21 @@ public fun idle_balance(vault: &PoolVault): u64 {
 /// Return protocol-owned DUSDC excluded from PLP redemption.
 public fun protocol_reserve_balance(vault: &PoolVault): u64 {
     vault.protocol_reserve_balance.value()
+}
+
+/// Return the total PLP share supply outstanding.
+public fun plp_total_supply(vault: &PoolVault): u64 {
+    vault.treasury_cap.total_supply()
+}
+
+/// Return the count of pending (un-drained) LP supply requests.
+public fun supply_requests_pending(vault: &PoolVault): u64 {
+    vault.supply_queue.pending()
+}
+
+/// Return the count of pending (un-drained) LP withdraw requests.
+public fun withdraw_requests_pending(vault: &PoolVault): u64 {
+    vault.withdraw_queue.pending()
 }
 
 /// Return the expiry markets still contributing active pool valuation/risk.
@@ -180,14 +208,18 @@ public fun value_expiry(
     valuation.total_nav = valuation.total_nav + nav;
 }
 
-/// Finish a full-pool valuation: prove every snapshotted market was valued exactly
-/// once, release the lock, consume the potato, and return the LP-attributable
-/// pool-wide DUSDC NAV (idle + Σ active NAV, net of the pending-protocol-profit
-/// exclusion priced from the aggregate profit basis).
-public fun finish_pool_valuation(
+/// Finish a full-pool valuation and run the LP flush: prove every snapshotted market
+/// was valued exactly once, price the pool NAV, then drain the supply/withdraw queues
+/// at that frozen mark (mint PLP for supplies, burn PLP and pay DUSDC for
+/// withdrawals, refund degenerate requests), release the valuation lock, consume the
+/// potato, and return the LP-attributable pool-wide DUSDC NAV (idle + Σ active NAV,
+/// net of the pending-protocol-profit exclusion priced from the aggregate profit
+/// basis).
+public fun finish_flush(
     valuation: PoolValuation,
-    vault: &PoolVault,
+    vault: &mut PoolVault,
     config: &mut ProtocolConfig,
+    ctx: &mut TxContext,
 ): u64 {
     vault.assert_version_allowed();
     config.assert_valuation_in_progress();
@@ -197,7 +229,7 @@ public fun finish_pool_valuation(
         &valuation.valued_expiry_markets,
     );
     let PoolValuation { total_nav, valued_expiry_markets, .. } = valuation;
-    config.end_valuation();
+
     let idle = vault.expiry_accounting.idle_balance();
     let pool_nav = lp_pool_value(
         idle,
@@ -212,6 +244,26 @@ public fun finish_pool_valuation(
         idle,
         total_nav,
         valued_expiry_markets.length(),
+    );
+
+    // Snapshot the share price once (frozen pair), drain both queues against it, then
+    // release the valuation lock at the very end.
+    let total_supply = vault.treasury_cap.total_supply();
+    let (supplies_filled, withdrawals_filled, requests_processed) = vault.drain_lp_requests(
+        pool_nav,
+        total_supply,
+        ctx,
+    );
+    config.end_valuation();
+    vault_events::emit_flush_executed(
+        vault.id(),
+        ctx.epoch(),
+        pool_nav,
+        total_supply,
+        supplies_filled,
+        withdrawals_filled,
+        requests_processed,
+        vault.expiry_accounting.idle_balance(),
     );
     pool_nav
 }
@@ -274,6 +326,74 @@ public fun rebalance_expiry_cash(
     vault.rebalance_expiry_cash_inner(market, config, market_oracle);
 }
 
+/// Queue a supply request: escrow `payment` DUSDC and record the requesting manager
+/// as the fill recipient. Routed through `manager` so a composing vault's own
+/// manager — not the tx signer — receives the minted PLP at the next flush. Returns
+/// the queue index, the handle used to cancel before the flush.
+public fun request_supply(
+    vault: &mut PoolVault,
+    manager: &PredictManager,
+    payment: Coin<DUSDC>,
+): u64 {
+    vault.assert_version_allowed();
+    assert!(payment.value() >= constants::min_supply_request!(), EBelowMinSupplyRequest);
+    let recipient = manager.id().to_address();
+    let amount = payment.value();
+    let index = vault.supply_queue.enqueue(recipient, payment.into_balance());
+    vault_events::emit_supply_requested(vault.id(), manager.id(), recipient, index, amount);
+    index
+}
+
+/// Queue a withdraw request: escrow `lp` PLP shares and record the requesting manager
+/// as the fill recipient. Returns the queue index used to cancel before the flush.
+public fun request_withdraw(vault: &mut PoolVault, manager: &PredictManager, lp: Coin<PLP>): u64 {
+    vault.assert_version_allowed();
+    assert!(lp.value() >= constants::min_withdraw_request!(), EBelowMinWithdrawRequest);
+    let recipient = manager.id().to_address();
+    let amount = lp.value();
+    let index = vault.withdraw_queue.enqueue(recipient, lp.into_balance());
+    vault_events::emit_withdraw_requested(vault.id(), manager.id(), recipient, index, amount);
+    index
+}
+
+/// Cancel a still-pending supply request, refunding its escrowed DUSDC straight into
+/// the requesting manager. The caller must own `manager`, and `manager` must be the
+/// request's recorded recipient.
+public fun cancel_supply_request(
+    vault: &mut PoolVault,
+    manager: &mut PredictManager,
+    index: u64,
+    ctx: &mut TxContext,
+) {
+    vault.assert_version_allowed();
+    let recipient = manager.id().to_address();
+    assert!(vault.supply_queue.borrow(index).recipient() == recipient, ENotRequestOwner);
+    manager.assert_owner(ctx);
+    let refund = vault.supply_queue.remove(index);
+    let amount = refund.value();
+    manager.deposit_funds(refund, ctx);
+    vault_events::emit_request_cancelled(vault.id(), manager.id(), recipient, index, amount, true);
+}
+
+/// Cancel a still-pending withdraw request, refunding its escrowed PLP straight into
+/// the requesting manager. The caller must own `manager`, and `manager` must be the
+/// request's recorded recipient.
+public fun cancel_withdraw_request(
+    vault: &mut PoolVault,
+    manager: &mut PredictManager,
+    index: u64,
+    ctx: &mut TxContext,
+) {
+    vault.assert_version_allowed();
+    let recipient = manager.id().to_address();
+    assert!(vault.withdraw_queue.borrow(index).recipient() == recipient, ENotRequestOwner);
+    manager.assert_owner(ctx);
+    let refund = vault.withdraw_queue.remove(index);
+    let amount = refund.value();
+    manager.deposit_funds(refund, ctx);
+    vault_events::emit_request_cancelled(vault.id(), manager.id(), recipient, index, amount, false);
+}
+
 // === Public-Package Functions ===
 
 /// Create an empty pool vault from the PLP treasury cap.
@@ -284,6 +404,8 @@ public(package) fun new(treasury_cap: TreasuryCap<PLP>, ctx: &mut TxContext): Po
         staked_deep: balance::zero(),
         treasury_cap,
         expiry_accounting: pool_accounting::new(ctx),
+        supply_queue: lp_request_queue::new(ctx),
+        withdraw_queue: lp_request_queue::new(ctx),
         allowed_versions: vec_set::singleton(constants::current_version!()),
     }
 }
@@ -309,6 +431,16 @@ public(package) fun set_allowed_versions(vault: &mut PoolVault, allowed_versions
 public(package) fun register_expiry(vault: &mut PoolVault, expiry_market_id: ID) {
     vault.assert_version_allowed();
     vault.expiry_accounting.register_expiry(expiry_market_id);
+}
+
+/// Borrow the supply queue (DUSDC escrow). Package-internal for cursor/escrow reads.
+public(package) fun supply_queue(vault: &PoolVault): &RequestQueue<DUSDC> {
+    &vault.supply_queue
+}
+
+/// Borrow the withdraw queue (PLP escrow). Package-internal for cursor/escrow reads.
+public(package) fun withdraw_queue(vault: &PoolVault): &RequestQueue<PLP> {
+    &vault.withdraw_queue
 }
 
 /// Lock-free per-market cash flow shared by the public entrypoint and the
@@ -379,6 +511,33 @@ public(package) fun lp_pool_value(
     // floor it at 0, which also prevents the subtraction from underflowing and
     // bricking all PLP supply/withdraw.
     gross_pool_value.saturating_sub(exclusion)
+}
+
+/// PLP minted for `amount` DUSDC at the frozen flush mark. Bootstrap (no shares yet)
+/// mints 1:1 and requires an empty pool NAV — otherwise the mark is ill-defined and a
+/// supplier would be mispriced. Otherwise `amount * total_supply / pool_value`,
+/// rounded down. A wiped pool (value 0 with shares outstanding) yields 0, which the
+/// caller refunds.
+public(package) fun supply_shares(amount: u64, total_supply: u64, pool_value: u64): u64 {
+    if (total_supply == 0) {
+        assert!(pool_value == 0, EBootstrapNavNotEmpty);
+        amount
+    } else if (pool_value == 0) {
+        0
+    } else {
+        math::mul_div_down(amount, total_supply, pool_value)
+    }
+}
+
+/// DUSDC owed for `shares` PLP at the frozen flush mark: `shares * pool_value /
+/// total_supply`, rounded down. Zero supply yields 0 (no shares can exist to redeem);
+/// a dust redemption that rounds to 0 is refunded its PLP by the caller.
+public(package) fun withdraw_dusdc(shares: u64, total_supply: u64, pool_value: u64): u64 {
+    if (total_supply == 0) {
+        0
+    } else {
+        math::mul_div_down(shares, pool_value, total_supply)
+    }
 }
 
 // === Private Functions ===
@@ -499,6 +658,84 @@ fun assert_expiry_ready_to_value(valuation: &PoolValuation, expiry_market_id: ID
 fun assert_all_expected_valued(expected: &vector<ID>, valued: &vector<ID>) {
     assert!(valued.length() == expected.length(), EMissingExpiryValuation);
     expected.do_ref!(|id| assert!(valued.contains(id), EMissingExpiryValuation));
+}
+
+/// Drain both LP queues at the frozen flush mark (`pool_value` over `total_supply`),
+/// supplies first then withdrawals, advancing the head cursor over at most
+/// `max_requests_per_flush` entries total (fills, refunds, and cancelled-hole skips
+/// all count; the rest carry to the next flush).
+///
+/// Each supply mints PLP and joins its escrowed DUSDC into idle (replenishing the
+/// cash withdrawals then draw from); a dust supply that prices to zero shares is
+/// refunded its DUSDC instead. Withdrawals are FIFO-until-dry: the first whose payout
+/// exceeds idle stops the pass, leaving it and the rest to reprice next flush; a dust
+/// withdraw that prices to zero DUSDC is refunded its PLP. Per-request degeneracies
+/// take the refund path, never aborting the whole flush. Returns (supplies filled,
+/// withdrawals filled, cursor advances spent).
+fun drain_lp_requests(
+    vault: &mut PoolVault,
+    pool_value: u64,
+    total_supply: u64,
+    ctx: &mut TxContext,
+): (u64, u64, u64) {
+    let max = constants::max_requests_per_flush!();
+    let mut processed = 0;
+    let mut supplies_filled = 0;
+    let mut withdrawals_filled = 0;
+
+    while (processed < max && !vault.supply_queue.is_empty()) {
+        let index = vault.supply_queue.head();
+        if (vault.supply_queue.contains(index)) {
+            let request = *vault.supply_queue.borrow(index);
+            let recipient = request.recipient();
+            let amount = request.amount();
+            let shares = supply_shares(amount, total_supply, pool_value);
+            if (shares == 0) {
+                let refund = vault.supply_queue.remove(index);
+                balance::send_funds(refund, recipient);
+                vault_events::emit_supply_refunded(vault.id(), recipient, index, amount);
+            } else {
+                let escrowed = vault.supply_queue.remove(index);
+                vault.expiry_accounting.receive_idle(escrowed);
+                let shares_minted = vault.treasury_cap.mint_balance(shares);
+                balance::send_funds(shares_minted, recipient);
+                vault_events::emit_supply_filled(vault.id(), recipient, index, amount, shares);
+                supplies_filled = supplies_filled + 1;
+            };
+        };
+        vault.supply_queue.advance_head();
+        processed = processed + 1;
+    };
+
+    while (processed < max && !vault.withdraw_queue.is_empty()) {
+        let index = vault.withdraw_queue.head();
+        if (vault.withdraw_queue.contains(index)) {
+            let request = *vault.withdraw_queue.borrow(index);
+            let recipient = request.recipient();
+            let shares = request.amount();
+            let payout = withdraw_dusdc(shares, total_supply, pool_value);
+            if (payout == 0) {
+                let refund = vault.withdraw_queue.remove(index);
+                balance::send_funds(refund, recipient);
+                vault_events::emit_withdraw_refunded(vault.id(), recipient, index, shares);
+            } else if (vault.expiry_accounting.idle_balance() < payout) {
+                // FIFO-until-dry: idle can't cover the head request, so stop and carry
+                // this and every later withdrawal to reprice next flush.
+                break
+            } else {
+                let escrowed_plp = vault.withdraw_queue.remove(index);
+                let payout_cash = vault.expiry_accounting.withdraw_idle(payout);
+                vault.treasury_cap.burn(escrowed_plp.into_coin(ctx));
+                balance::send_funds(payout_cash, recipient);
+                vault_events::emit_withdraw_filled(vault.id(), recipient, index, shares, payout);
+                withdrawals_filled = withdrawals_filled + 1;
+            };
+        };
+        vault.withdraw_queue.advance_head();
+        processed = processed + 1;
+    };
+
+    (supplies_filled, withdrawals_filled, processed)
 }
 
 // === Test-Only Functions ===

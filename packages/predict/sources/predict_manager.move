@@ -30,7 +30,14 @@ use deepbook_predict::{
     predict_withdraw_cap::{Self, PredictWithdrawCap}
 };
 use dusdc::dusdc::DUSDC;
-use sui::{coin::Coin, derived_object, table::{Self, Table}, vec_set::{Self, VecSet}};
+use sui::{
+    accumulator::AccumulatorRoot,
+    balance::{Self, Balance},
+    coin::Coin,
+    derived_object,
+    table::{Self, Table},
+    vec_set::{Self, VecSet}
+};
 
 const EInsufficientPosition: u64 = 0;
 const ENotOwner: u64 = 1;
@@ -170,6 +177,20 @@ public fun balance(self: &PredictManager): u64 {
     self.balance_manager.balance<DUSDC>()
 }
 
+/// Return this manager's internal custody balance of `T`. Generalizes `balance()`
+/// to the multi-coin (DUSDC + PLP) custody the async-LP flow gives the manager;
+/// excludes funds the flush delivered to the accumulator but not yet settled in.
+public fun internal_balance<T>(self: &PredictManager): u64 {
+    self.balance_manager.balance<T>()
+}
+
+/// Return this manager's total claimable `T`: internal custody plus funds the
+/// async-LP flush delivered to this manager's accumulator address and not yet
+/// settled in. Read-only — settling happens lazily inside the capital ops below.
+public fun settled_balance<T>(self: &PredictManager, root: &AccumulatorRoot): u64 {
+    self.balance_manager.balance<T>() + balance::settled_funds_value<T>(root, self.id.to_address())
+}
+
 /// Return the manager's active staked DEEP (the amount that earns benefits).
 public fun active_stake(self: &PredictManager): u64 {
     self.active_stake
@@ -296,6 +317,35 @@ public fun withdraw_with_cap(
     self.balance_manager.withdraw_with_cap(&self.withdraw_cap, amount, ctx)
 }
 
+/// Withdraw `amount` of `T` as the manager owner, first settling any funds the
+/// async-LP flush delivered to this manager's accumulator. Lets the owner pull out
+/// flush-delivered PLP or DUSDC to fund the next request.
+public fun withdraw_settled<T>(
+    self: &mut PredictManager,
+    root: &AccumulatorRoot,
+    amount: u64,
+    ctx: &mut TxContext,
+): Coin<T> {
+    self.assert_owner(ctx);
+    self.settle<T>(root, ctx);
+    self.balance_manager.withdraw_with_cap(&self.withdraw_cap, amount, ctx)
+}
+
+/// Withdraw `amount` of `T` with a `PredictWithdrawCap`, first settling delivered
+/// funds. The path a self-owned (composing-vault) manager uses, since its
+/// owner-direct path is permanently unreachable.
+public fun withdraw_settled_with_cap<T>(
+    self: &mut PredictManager,
+    cap: &PredictWithdrawCap,
+    root: &AccumulatorRoot,
+    amount: u64,
+    ctx: &mut TxContext,
+): Coin<T> {
+    self.validate_withdrawer(cap);
+    self.settle<T>(root, ctx);
+    self.balance_manager.withdraw_with_cap(&self.withdraw_cap, amount, ctx)
+}
+
 // === Public-Package Functions ===
 
 /// Create a sender-owned PredictManager. The sender is the BalanceManager
@@ -408,6 +458,17 @@ public(package) fun deposit_permissionless(
     ctx: &TxContext,
 ) {
     self.balance_manager.deposit_with_cap(&self.deposit_cap, coin, ctx);
+}
+
+/// Deposit a typed balance straight into internal custody — no authorization, no
+/// accumulator round-trip. `plp` uses this to refund a cancelled LP request
+/// directly into the manager that owns it; cancel already proved manager ownership.
+public(package) fun deposit_funds<T>(
+    self: &mut PredictManager,
+    funds: Balance<T>,
+    ctx: &mut TxContext,
+) {
+    self.balance_manager.deposit_with_cap(&self.deposit_cap, funds.into_coin(ctx), ctx);
 }
 
 /// Deposit DUSDC into the manager using a validated `PredictTradeProof`.
@@ -539,6 +600,19 @@ public(package) fun remove_all_stake(self: &mut PredictManager): u64 {
 }
 
 // === Private Functions ===
+
+/// Absorb any `T` the async-LP flush delivered to this manager's accumulator
+/// address into internal custody. Lazy like `update_stake`: a zero settled balance
+/// is a clean no-op. The capital ops call it first so a withdraw never misses funds
+/// the flush already delivered.
+fun settle<T>(self: &mut PredictManager, root: &AccumulatorRoot, ctx: &mut TxContext) {
+    let amount = balance::settled_funds_value<T>(root, self.id.to_address());
+    if (amount == 0) return;
+    let withdrawal = balance::withdraw_funds_from_object<T>(&mut self.id, amount);
+    self
+        .balance_manager
+        .deposit_with_cap(&self.deposit_cap, balance::redeem_funds(withdrawal).into_coin(ctx), ctx);
+}
 
 fun summary_mut(self: &mut PredictManager, expiry_market_id: ID): &mut ExpiryTradingSummary {
     if (!self.expiry_summaries.contains(expiry_market_id)) {

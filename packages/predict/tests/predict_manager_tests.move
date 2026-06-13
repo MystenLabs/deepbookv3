@@ -1,6 +1,16 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+/// Unit coverage for `PredictManager`: DUSDC custody, caps/proofs, position and
+/// expiry-summary bookkeeping, and the lazy stake roll.
+///
+/// The typed + accumulator-settling capital API (`settled_balance`,
+/// `withdraw_settled` / `withdraw_settled_with_cap`, and the private `settle`) is
+/// source-only here: it needs a `sui::accumulator::AccumulatorRoot`, which a Move
+/// unit test cannot obtain (private `create`, `@0x0`-only). The root-free typed
+/// `deposit_funds` and `internal_balance<T>` are exercised by the `plp` cancel tests.
+/// TODO(test-accumulator-root): add a supply -> flush -> send_funds -> settle ->
+/// settled_balance round-trip once a test root seam exists.
 #[test_only]
 module deepbook_predict::predict_manager_tests;
 
