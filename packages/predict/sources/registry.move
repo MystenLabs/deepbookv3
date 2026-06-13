@@ -30,17 +30,7 @@ use deepbook_predict::{
     pyth_source::{Self, PythSource},
     strike_grid
 };
-use std::type_name::{Self, TypeName};
-use sui::{
-    clock::Clock,
-    coin::Coin,
-    coin_registry::Currency,
-    sui::SUI,
-    table::{Self, Table},
-    vec_map::{Self, VecMap},
-    vec_set::{Self, VecSet}
-};
-use token::deep::DEEP;
+use sui::{clock::Clock, table::{Self, Table}, vec_set::{Self, VecSet}};
 
 const EFeedIdMismatch: u64 = 0;
 const EPythSourceAlreadyCreated: u64 = 1;
@@ -52,7 +42,6 @@ const EVersionAlreadyEnabled: u64 = 6;
 const EVersionNotEnabled: u64 = 7;
 const ECannotDisableLastVersion: u64 = 8;
 const EPythFeedNotRegistered: u64 = 9;
-const EIncentiveAssetNotConfigured: u64 = 10;
 
 /// Registry-owned config for one Pyth Lazer feed.
 public struct PythFeedConfig has copy, drop, store {
@@ -62,22 +51,11 @@ public struct PythFeedConfig has copy, drop, store {
     tick_size: u64,
 }
 
-/// Oracle binding for one admin-approved non-DUSDC incentive asset: the Lazer
-/// feed that prices it and its coin decimals (from `Currency<T>` metadata).
-public struct IncentiveAsset has copy, drop, store {
-    decimals: u8,
-    feed_id: u32,
-}
-
 /// Shared registry for source and expiry uniqueness.
 public struct Registry has key {
     id: UID,
     /// Pyth Lazer feed ID -> source object and oracle-grid config.
     pyth_feed_configs: Table<u32, PythFeedConfig>,
-    /// Coin type -> Lazer feed binding for admin-deposited incentive assets.
-    /// The single home for oracle bindings: trading feeds (`pyth_feed_configs`)
-    /// and incentive assets live here together.
-    incentive_assets: VecMap<TypeName, IncentiveAsset>,
     /// Created expiry markets keyed by expiry timestamp.
     expiry_market_ids: Table<u64, ID>,
     /// IDs of `PauseCap` objects currently authorized to use pause-only entries.
@@ -259,73 +237,6 @@ public fun create_pyth_source(
     pyth_source_id
 }
 
-// === Incentive Assets (admin) ===
-
-/// Bind non-DUSDC incentive asset `T` to the Lazer `feed_id` that prices it.
-/// Decimals are read from `Currency<T>`. The feed must already have a
-/// registered Pyth config, so trading and incentive oracles share one registry.
-public fun set_incentive_asset<T>(
-    registry: &mut Registry,
-    _admin_cap: &AdminCap,
-    currency: &Currency<T>,
-    feed_id: u32,
-) {
-    registry.assert_version_allowed();
-    assert!(registry.pyth_feed_configs.contains(feed_id), EPythFeedNotRegistered);
-    let key = type_name::with_defining_ids<T>();
-    let asset = IncentiveAsset { decimals: currency.decimals(), feed_id };
-    if (registry.incentive_assets.contains(&key)) {
-        registry.incentive_assets.remove(&key);
-    };
-    registry.incentive_assets.insert(key, asset);
-}
-
-/// Whether `T` is a configured incentive asset.
-public fun has_incentive_asset<T>(registry: &Registry): bool {
-    registry.incentive_assets.contains(&type_name::with_defining_ids<T>())
-}
-
-/// Deposit SUI into the pool as an LP-owned incentive (a donation: no PLP minted).
-/// It vests linearly over `duration_ms`; the vested value accrues to existing
-/// holders pro-rata and the asset accrues to them in-kind on withdrawal. SUI must
-/// be a configured incentive asset; the pool must already have PLP holders
-/// (checked in `plp`).
-public fun deposit_sui_incentive(
-    registry: &Registry,
-    vault: &mut PoolVault,
-    _admin_cap: &AdminCap,
-    deposit: Coin<SUI>,
-    duration_ms: u64,
-    clock: &Clock,
-) {
-    registry.assert_version_allowed();
-    let (decimals, feed_id) = registry.incentive_asset<SUI>();
-    vault.receive_sui_incentive(deposit, decimals, feed_id, duration_ms, clock);
-}
-
-/// Deposit DEEP into the pool as an LP-owned incentive. See `deposit_sui_incentive`.
-public fun deposit_deep_incentive(
-    registry: &Registry,
-    vault: &mut PoolVault,
-    _admin_cap: &AdminCap,
-    deposit: Coin<DEEP>,
-    duration_ms: u64,
-    clock: &Clock,
-) {
-    registry.assert_version_allowed();
-    let (decimals, feed_id) = registry.incentive_asset<DEEP>();
-    vault.receive_deep_incentive(deposit, decimals, feed_id, duration_ms, clock);
-}
-
-/// Read the configured `(decimals, feed_id)` binding for `T`. Aborts if `T` is
-/// not a configured incentive asset.
-fun incentive_asset<T>(registry: &Registry): (u8, u32) {
-    let key = type_name::with_defining_ids<T>();
-    assert!(registry.incentive_assets.contains(&key), EIncentiveAssetNotConfigured);
-    let asset = &registry.incentive_assets[&key];
-    (asset.decimals, asset.feed_id)
-}
-
 /// Create the MarketOracle and ExpiryMarket objects for one future expiry.
 ///
 /// The registry enforces one market per expiry, validates the registered Pyth
@@ -353,7 +264,6 @@ public fun create_expiry_market(
     let tick_size = pyth_config.tick_size;
     pricing::assert_pyth_spot_fresh(config.pricing_config(), pyth, clock);
     let grid = strike_grid::new_centered(pyth.spot(), tick_size);
-    let preallocated_ticks = expiry_preallocated_ticks(expiry, clock.timestamp_ms());
     assert!(!registry.expiry_market_ids.contains(expiry), EExpiryMarketAlreadyCreated);
     let allowed_versions = registry.allowed_versions;
     let market_oracle_id = market_oracle::create_and_share(
@@ -371,10 +281,9 @@ public fun create_expiry_market(
         pyth_lazer_feed_id,
         expiry,
         grid,
-        preallocated_ticks,
         ctx,
     );
-    pool_vault.register_expiry_market(config, expiry_market_id);
+    config.register_expiry_runtime_config(expiry_market_id);
     registry.expiry_market_ids.add(expiry, expiry_market_id);
 
     config_events::emit_market_created(
@@ -449,7 +358,6 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
         Registry {
             id: object::new(ctx),
             pyth_feed_configs: table::new(ctx),
-            incentive_assets: vec_map::empty(),
             expiry_market_ids: table::new(ctx),
             allowed_pause_caps: vec_set::empty(),
             allowed_versions: vec_set::singleton(constants::current_version!()),
@@ -461,17 +369,6 @@ fun new_registry_and_admin_cap(ctx: &mut TxContext): (Registry, AdminCap) {
 /// Abort unless the supplied `PauseCap` was minted by admin and not revoked.
 fun assert_valid_pause_cap(registry: &Registry, pause_cap: &PauseCap) {
     assert!(registry.allowed_pause_caps.contains(&pause_cap.id()), EPauseCapNotValid);
-}
-
-fun expiry_preallocated_ticks(expiry: u64, now_ms: u64): u64 {
-    let time_to_expiry = expiry - now_ms;
-    if (time_to_expiry <= constants::short_expiry_preallocation_window_ms!()) {
-        constants::short_expiry_preallocated_ticks!()
-    } else if (time_to_expiry <= constants::medium_expiry_preallocation_window_ms!()) {
-        constants::medium_expiry_preallocated_ticks!()
-    } else {
-        constants::default_expiry_preallocated_ticks!()
-    }
 }
 
 /// Remove a version from the allowed set, enforcing the non-empty invariant.

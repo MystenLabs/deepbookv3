@@ -4,13 +4,12 @@
 /// Per-expiry Predict market.
 ///
 /// An ExpiryMarket is the hot shared object for one expiry. It owns trade
-/// execution, strike exposure state, an embedded expiry-cash custody component,
-/// pool NAV production, and storage cleanup state. Pool-wide PLP accounting and
-/// profit accounting remain outside this module.
+/// execution, strike exposure state, and an embedded expiry-cash custody
+/// component. Pool-wide PLP accounting and profit accounting remain outside
+/// this module.
 module deepbook_predict::expiry_market;
 
 use deepbook_predict::{
-    claim_events,
     config_events,
     constants,
     ewma::{Self, EwmaState},
@@ -33,7 +32,6 @@ use sui::{balance::{Self, Balance}, clock::Clock, vec_set::VecSet};
 
 const EWrongMarketOracle: u64 = 0;
 const EWrongPythSource: u64 = 1;
-const EValuationExceedsCash: u64 = 2;
 const EPackageVersionDisabled: u64 = 3;
 const EMintPaused: u64 = 4;
 const EFullCloseRequired: u64 = 5;
@@ -264,7 +262,6 @@ public fun liquidate(
     clock: &Clock,
 ): u64 {
     market.assert_version_allowed();
-    config.assert_not_valuation_in_progress();
     market.run_liquidation_pass(
         config.pricing_config(),
         market_oracle,
@@ -284,7 +281,6 @@ public fun liquidate_order(
     clock: &Clock,
 ): bool {
     market.assert_version_allowed();
-    config.assert_not_valuation_in_progress();
     market.assert_market_oracle(market_oracle);
     market.assert_pyth_feed(pyth);
     market_oracle.assert_active(clock);
@@ -328,7 +324,6 @@ public(package) fun create_and_share(
     pyth_lazer_feed_id: u32,
     expiry: u64,
     grid: StrikeGrid,
-    preallocated_ticks: u64,
     ctx: &mut TxContext,
 ): ID {
     let id = object::new(ctx);
@@ -351,7 +346,6 @@ public(package) fun create_and_share(
             expiry_market_id,
             expiry,
             grid,
-            preallocated_ticks,
             strike_exposure_config,
             ctx,
         ),
@@ -360,166 +354,6 @@ public(package) fun create_and_share(
     };
     transfer::share_object(market);
     expiry_market_id
-}
-
-/// Return current pool-owned valuation facts after asserting aggregate backing.
-///
-/// Returns `(free_cash, total_range, total_floor_amount)`, where `free_cash` is
-/// expiry cash net of the rebate reserve. PLP owns the downstream limited-
-/// recourse liability policy that turns these facts into an active NAV mark.
-public(package) fun pool_nav(
-    market: &ExpiryMarket,
-    config: &ProtocolConfig,
-    market_oracle: &MarketOracle,
-    pyth: &PythSource,
-    clock: &Clock,
-): (u64, u64, u64) {
-    market.assert_version_allowed();
-    config.assert_valuation_in_progress();
-    market.assert_market_oracle(market_oracle);
-    market.assert_pyth_feed(pyth);
-    market_oracle.assert_active(clock);
-    let (total_range, total_floor_amount) = market
-        .strike_exposure
-        .valuation_components(
-            config.pricing_config(),
-            market_oracle,
-            pyth,
-            clock,
-        );
-    let position_liability = total_range.saturating_sub(total_floor_amount);
-    let required_cash = market.cash.required_cash(position_liability);
-    let cash_balance = market.cash.balance();
-    assert!(cash_balance >= required_cash, EValuationExceedsCash);
-    (cash_balance - market.cash.rebate_reserve(), total_range, total_floor_amount)
-}
-
-/// Run one valuation liquidation pass and return exact survivor observations.
-///
-/// Returns `(verified_floor_amount, verified_range)`.
-public(package) fun run_valuation_liquidation_pass(
-    market: &mut ExpiryMarket,
-    pricing_config: &PricingConfig,
-    market_oracle: &MarketOracle,
-    pyth: &PythSource,
-    budget: u64,
-    clock: &Clock,
-): (u64, u64) {
-    market.assert_version_allowed();
-    market.assert_market_oracle(market_oracle);
-    market.assert_pyth_feed(pyth);
-    market_oracle.assert_active(clock);
-    market
-        .strike_exposure
-        .liquidate_live_orders_for_valuation(
-            pricing_config,
-            market_oracle,
-            pyth,
-            budget,
-            clock,
-        )
-}
-
-/// Resolve one manager's trading-loss rebate and return unclaimed rebate reserve.
-public(package) fun claim_trading_loss_rebate(
-    market: &mut ExpiryMarket,
-    manager: &mut PredictManager,
-    config: &ProtocolConfig,
-    market_oracle: &MarketOracle,
-    ctx: &mut TxContext,
-): Balance<DUSDC> {
-    market.assert_version_allowed();
-    market.materialize_settled_liability(market_oracle);
-
-    let (trading_fees_paid, gross_profit) = manager.resolve_expiry_summary(market.id());
-    if (trading_fees_paid == 0 && gross_profit == 0) {
-        return balance::zero()
-    };
-
-    let resolved_rebate_reserve = market
-        .cash
-        .resolve_rebate_reserve_for_fee_basis(trading_fees_paid);
-    let eligible_rebate = resolved_rebate_reserve.saturating_sub(gross_profit);
-
-    // Active staking decides the manager's share of the eligible rebate.
-    manager.update_stake(ctx);
-    let rebate_amount = config
-        .stake_config()
-        .rebate_amount(eligible_rebate, manager.active_stake());
-
-    if (rebate_amount > 0) {
-        let payout = market.pay_authorized_cash(rebate_amount);
-        manager.deposit_permissionless(payout.into_coin(ctx), ctx);
-    };
-    // Cannot underflow (R1): rebate_amount = mul(eligible_rebate, benefit_ratio)
-    // with benefit_ratio <= 1e9 and round-down mul, so rebate_amount <=
-    // eligible_rebate <= resolved_rebate_reserve. The user outflow (rebate_amount)
-    // rounds down; the residual returns to the pool.
-    let residual_rebate_reserve = resolved_rebate_reserve - rebate_amount;
-    let residual_rebate_cash = market.pay_authorized_cash(residual_rebate_reserve);
-    market.assert_cash_backing();
-
-    claim_events::emit_trading_loss_rebate_claimed(
-        market.id(),
-        manager.id(),
-        trading_fees_paid,
-        gross_profit,
-        eligible_rebate,
-        rebate_amount,
-    );
-    residual_rebate_cash
-}
-
-/// Release settled pool cash above terminal payout liability and rebate reserve.
-public(package) fun release_settled_pool_cash(
-    market: &mut ExpiryMarket,
-    market_oracle: &MarketOracle,
-): Balance<DUSDC> {
-    market.assert_version_allowed();
-    let settled_liability = market.materialize_settled_liability(market_oracle);
-    let reserved_cash = market.cash.required_cash(settled_liability);
-    market.cash.assert_backing(settled_liability);
-
-    let returned_cash_amount = market.cash.balance() - reserved_cash;
-    market.release_pool_cash(returned_cash_amount)
-}
-
-/// Receive pool-provided cash without interpreting pool allocation policy.
-public(package) fun receive_pool_cash(market: &mut ExpiryMarket, cash: Balance<DUSDC>) {
-    market.assert_version_allowed();
-    market.cash.receive(cash);
-    market.assert_cash_backing();
-}
-
-/// Release pool cash while preserving expiry-local payout and rebate backing.
-public(package) fun release_pool_cash(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
-    market.assert_version_allowed();
-    if (amount == 0) {
-        return balance::zero()
-    };
-    let payout_liability = market.payout_liability();
-    let released_cash = market.cash.release_surplus(amount, payout_liability);
-    market.assert_cash_backing();
-    released_cash
-}
-
-/// Cache terminal liability if needed, then destroy live exposure indexes.
-///
-/// Lifecycle-cap gating lives in `plp::compact_storage` (the allowlist is
-/// `PoolVault` state and `expiry_market` cannot import `plp`). Index
-/// destruction returns storage rebates. Settled pool cash remains in the
-/// expiry until PLP rebalancing receives it.
-public(package) fun compact_storage(
-    market: &mut ExpiryMarket,
-    config: &ProtocolConfig,
-    market_oracle: &MarketOracle,
-) {
-    market.assert_version_allowed();
-    config.assert_not_valuation_in_progress();
-    market.assert_market_oracle(market_oracle);
-    market.materialize_settled_liability(market_oracle);
-    market.strike_exposure.destroy_live_indexes();
-    market.assert_cash_backing();
 }
 
 // === Private Functions ===
@@ -587,7 +421,6 @@ fun redeem_internal(
     ctx: &mut TxContext,
 ): (u256, Option<u256>) {
     market.assert_version_allowed();
-    config.assert_not_valuation_in_progress();
     market.assert_market_oracle(market_oracle);
     let redeemed_order = order::from_order_id(order_id);
     if (market.try_redeem_if_liquidated(manager, &redeemed_order, close_quantity))

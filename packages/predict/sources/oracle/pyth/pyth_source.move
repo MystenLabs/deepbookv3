@@ -69,16 +69,15 @@ public fun allowed_versions(source: &PythSource): VecSet<u64> {
 
 /// Decode and store a verified Pyth Lazer spot update.
 ///
-/// Aborts during valuation, rejects stale/future source timestamps, and stores
-/// both the publisher timestamp and on-chain landing timestamp.
+/// Rejects stale/future source timestamps, and stores both the publisher
+/// timestamp and on-chain landing timestamp.
 public fun update_from_lazer(
     source: &mut PythSource,
-    config: &ProtocolConfig,
+    _config: &ProtocolConfig,
     update: LazerUpdate,
     clock: &Clock,
 ) {
     source.assert_version_allowed();
-    config.assert_not_valuation_in_progress();
     let (spot, source_timestamp_us) = extract_spot(&update, source.feed_id);
     let source_timestamp_ms = us_to_ms_ceil(source_timestamp_us);
     let update_timestamp_ms = clock.timestamp_ms();
@@ -247,8 +246,8 @@ fun scale_up(magnitude: u64, shift: u64): u64 {
 // === Test-Only Functions ===
 
 // `new_for_testing` removed: tests create the real source via
-// `registry::create_pyth_source` before `supply`, so no zero-valued placeholder
-// PythSource is needed.
+// `registry::create_pyth_source`, so no zero-valued placeholder PythSource is
+// needed.
 
 /// Drive spot and timestamps directly without going through `update_from_lazer`
 /// (which needs a `pyth_lazer::Update` that has no Move-side test constructor).

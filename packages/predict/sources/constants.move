@@ -24,8 +24,8 @@ public macro fun current_version(): u64 { 1 }
 public(package) macro fun float_scaling_decimals(): u64 { 9 }
 
 /// Decimals of the DUSDC settlement asset. `pyth_source::value_in_dusdc` converts
-/// the USD value of admin-deposited non-DUSDC incentive assets into this scale so
-/// it sums directly with the pool's DUSDC-denominated value.
+/// USD values into this scale so they sum directly with the pool's
+/// DUSDC-denominated value.
 public macro fun dusdc_decimals(): u8 { 6 }
 
 // === Position Sizing ===
@@ -35,25 +35,6 @@ public macro fun position_lot_size(): u64 { 10_000 }
 
 /// Minimum mint-time net premium, excluding trading and builder fees.
 public macro fun min_net_premium(): u64 { 1_000_000 }
-
-// === Pool Funding ===
-
-/// DUSDC cash floor targeted by pool rebalancing, in 6-decimal quote units.
-public(package) macro fun expiry_cash_floor(): u64 { 50_000_000_000 }
-
-/// Maximum active expiries that can require full-pool sync processing.
-public(package) macro fun max_active_expiry_markets(): u64 { 10 }
-
-/// Rebalancing band and target buffer fraction, in FLOAT_SCALING.
-public(package) macro fun expiry_rebalance_pct(): u64 { 100_000_000 }
-
-// === Incentive Streaming ===
-
-/// Maximum linear vesting window for an admin incentive deposit (365 days).
-/// A zero window is rejected separately (it would divide by zero in the release
-/// math); this ceiling stops an admin from locking a donation away from holders
-/// indefinitely.
-public(package) macro fun max_incentive_stream_ms(): u64 { 31_536_000_000 }
 
 // === Leverage ===
 
@@ -95,11 +76,6 @@ public macro fun max_builder_fee_rate(): u64 { 5_000_000 }
 /// Milliseconds in a 365-day year.
 public(package) macro fun ms_per_year(): u64 { 31_536_000_000 }
 
-// === Curve Builder ===
-
-/// Number of sample points for adaptive curve building.
-public(package) macro fun curve_samples(): u64 { 50 }
-
 // === SVI Oracle Bounds ===
 
 /// SVI `sigma` lower bound: 1e-3 in 1e9 fixed-point.
@@ -115,21 +91,6 @@ public macro fun oracle_strike_grid_ticks(): u64 { 100_000 }
 
 /// Granularity unit for oracle tick sizes; every tick_size must be a multiple of this value.
 public macro fun oracle_tick_size_unit(): u64 { 10_000 }
-
-/// Expiries within this window preallocate the smallest centered NAV matrix span.
-public(package) macro fun short_expiry_preallocation_window_ms(): u64 { 60 * 60 * 1000 }
-
-/// Expiries within this window preallocate the medium centered NAV matrix span.
-public(package) macro fun medium_expiry_preallocation_window_ms(): u64 { 60 * 60 * 24 * 1000 }
-
-/// Centered strike ticks preallocated for expiries within one hour.
-public(package) macro fun short_expiry_preallocated_ticks(): u64 { 10_000 }
-
-/// Centered strike ticks preallocated for expiries within one day.
-public(package) macro fun medium_expiry_preallocated_ticks(): u64 { 25_000 }
-
-/// Centered strike ticks preallocated for later expiries.
-public(package) macro fun default_expiry_preallocated_ticks(): u64 { 50_000 }
 
 /// Sentinel lower strike for ranges open to negative infinity.
 public macro fun neg_inf(): u64 { 0 }

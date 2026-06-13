@@ -4,17 +4,14 @@
 /// Expiry-local exposure book for one oracle grid.
 ///
 /// This module interprets `Order` terms against the expiry's strike grid and
-/// floor-index schedule. It owns two derived views of the same active contracts:
-/// payout liability for cash backing, and live position liability for LP
-/// valuation. It stores the parent market identity so market-scoped liquidation
-/// events can be emitted atomically with exposure removal. Expiry-market cash
-/// custody, rebate accounting, manager positions, and payout movement stay outside
-/// this module.
+/// floor-index schedule. It owns the payout-liability view of the active
+/// contracts used for cash backing. It stores the parent market identity so
+/// market-scoped liquidation events can be emitted atomically with exposure
+/// removal. Expiry-market cash custody, rebate accounting, manager positions,
+/// and payout movement stay outside this module.
 module deepbook_predict::strike_exposure;
 
-use deepbook::constants::max_u64;
 use deepbook_predict::{
-    constants,
     liquidation_book::{Self, LiquidationBook},
     market_oracle::MarketOracle,
     order::{Self, Order},
@@ -24,13 +21,11 @@ use deepbook_predict::{
     pyth_source::PythSource,
     strike_exposure_config::StrikeExposureConfig,
     strike_grid::StrikeGrid,
-    strike_nav_matrix::{Self, StrikeNavMatrix},
     strike_payout_tree::{Self, StrikePayoutTree}
 };
 use predict_math::math;
 use sui::clock::Clock;
 
-const ESettledLiabilityNotMaterialized: u64 = 0;
 const EInvalidCloseQuantity: u64 = 1;
 
 /// Exposure lifecycle state for one oracle grid.
@@ -51,16 +46,11 @@ public struct StrikeExposure has store {
     live: Option<LiveExposure>,
 }
 
-/// Live exposure indexes composed from dense NAV and sparse payout storage.
+/// Live exposure index: the sparse payout tree for cash backing.
 public struct LiveExposure has store {
-    nav: StrikeNavMatrix,
     payout: StrikePayoutTree,
     /// Sum of live backing payouts for active orders; prices the buffer above the max-point floor.
     live_backing_liability: u64,
-    /// Monotonic strike range used to bound pricing-curve construction.
-    /// Removes do not shrink this cache; a wider curve is safe but can cost more gas.
-    minted_min_strike: u64,
-    minted_max_strike: u64,
 }
 
 /// Return the buffered live reserve, or exact remaining settled payout liability once materialized.
@@ -115,39 +105,6 @@ public(package) fun max_strike(exposure: &StrikeExposure): u64 {
     exposure.grid.max_strike()
 }
 
-/// Evaluate live valuation components over the current minted strike range.
-public(package) fun valuation_components(
-    exposure: &StrikeExposure,
-    config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
-    clock: &Clock,
-): (u64, u64) {
-    let live = exposure.live.borrow();
-    let (minted_min_strike, minted_max_strike) = live.minted_strike_range();
-    if (minted_min_strike == 0 && minted_max_strike == 0) {
-        return (0, 0)
-    };
-
-    let (forward, svi) = pricing::live_inputs(config, market, pyth, clock);
-    let curve = pricing::build_curve(
-        &svi,
-        forward,
-        exposure.grid.tick_size(),
-        minted_min_strike,
-        minted_max_strike,
-    );
-    live
-        .nav
-        .live_value(
-            &exposure.grid,
-            &curve,
-            minted_min_strike,
-            minted_max_strike,
-            exposure.config.floor_index_at_ms(exposure.expiry_ms, clock.timestamp_ms()),
-        )
-}
-
 /// Return the raw per-trade fee for a live price and quantity.
 ///
 /// Fee collection is expiry-market payment accounting; exposure only owns the
@@ -178,7 +135,6 @@ public(package) fun new(
     expiry_market_id: ID,
     expiry_ms: u64,
     grid: StrikeGrid,
-    preallocated_ticks: u64,
     config: StrikeExposureConfig,
     ctx: &mut TxContext,
 ): StrikeExposure {
@@ -192,11 +148,8 @@ public(package) fun new(
         settled_liability_materialized: false,
         liquidation: liquidation_book::new(ctx),
         live: option::some(LiveExposure {
-            nav: strike_nav_matrix::new(&grid, preallocated_ticks, ctx),
             payout: strike_payout_tree::new(ctx),
             live_backing_liability: 0,
-            minted_min_strike: max_u64(),
-            minted_max_strike: 0,
         }),
     }
 }
@@ -280,14 +233,7 @@ public(package) fun allocate_mint_order(
     exposure.next_order_sequence = sequence + 1;
 
     exposure.liquidation.insert_order(&allocated_order);
-    exposure.insert_live_index_quantity(
-        lower,
-        higher,
-        quantity,
-        floor_shares,
-        terminal_payout,
-        live_backing_payout,
-    );
+    exposure.insert_live_index_quantity(lower, higher, terminal_payout, live_backing_payout);
 
     (allocated_order, entry_probability, net_premium)
 }
@@ -418,34 +364,10 @@ public(package) fun liquidate_live_orders(
     liquidated_count
 }
 
-/// Run one valuation liquidation pass and return exact survivor observations.
-///
-/// Returns `(verified_floor_amount, verified_range)`.
-public(package) fun liquidate_live_orders_for_valuation(
-    exposure: &mut StrikeExposure,
-    config: &PricingConfig,
-    market: &MarketOracle,
-    pyth: &PythSource,
-    budget: u64,
-    clock: &Clock,
-): (u64, u64) {
-    let (
-        _,
-        verified_floor_amount,
-        verified_range,
-    ) = exposure.liquidate_live_orders_with_verification(
-        config,
-        market,
-        pyth,
-        budget,
-        clock,
-    );
-    (verified_floor_amount, verified_range)
-}
-
 /// Cache terminal settled payout liability.
 ///
-/// Live indexes are kept until privileged compaction destroys them.
+/// The live payout tree is retained after caching (the settled-redeem path
+/// still removes from it order by order).
 public(package) fun materialize_settled_liability(
     exposure: &mut StrikeExposure,
     settlement: u64,
@@ -458,24 +380,6 @@ public(package) fun materialize_settled_liability(
     exposure.settled_payout_liability = settled_liability;
     exposure.settled_liability_materialized = true;
     settled_liability
-}
-
-/// Destroy live indexes after terminal liability has been cached.
-///
-/// Callers must keep this behind privileged compaction because destruction
-/// returns storage rebates.
-public(package) fun destroy_live_indexes(exposure: &mut StrikeExposure) {
-    assert!(exposure.settled_liability_materialized, ESettledLiabilityNotMaterialized);
-    let live = exposure.live.extract();
-    let LiveExposure {
-        nav,
-        payout,
-        live_backing_liability: _,
-        minted_min_strike: _,
-        minted_max_strike: _,
-    } = live;
-    nav.destroy();
-    payout.destroy();
 }
 
 fun liquidate_live_orders_with_verification(
@@ -527,17 +431,13 @@ fun insert_live_index_quantity(
     exposure: &mut StrikeExposure,
     lower: u64,
     higher: u64,
-    quantity: u64,
-    floor_shares: u64,
     terminal_payout: u64,
     live_backing_payout: u64,
 ) {
     let grid = exposure.grid;
     let live = exposure.live.borrow_mut();
     live.payout.insert_range(&grid, lower, higher, terminal_payout, live_backing_payout);
-    live.nav.insert_range(&grid, lower, higher, quantity, floor_shares);
     live.live_backing_liability = live.live_backing_liability + live_backing_payout;
-    live.track_minted_boundaries(lower, higher);
 }
 
 fun liquidate_order_if_under_floor(
@@ -601,7 +501,6 @@ fun remove_live_index_quantity(
     let grid = exposure.grid;
     {
         let live = exposure.live.borrow_mut();
-        live.nav.remove_range(&grid, lower, higher, quantity, floor_shares);
         live.payout.remove_range(&grid, lower, higher, terminal_payout, live_backing_payout);
         live.live_backing_liability = live.live_backing_liability - live_backing_payout;
     };
@@ -626,22 +525,7 @@ fun reinsert_live_index_quantity(
             quantity,
             floor_shares,
         );
-    exposure.insert_live_index_quantity(
-        lower,
-        higher,
-        quantity,
-        floor_shares,
-        terminal_payout,
-        live_backing_payout,
-    );
-}
-
-/// Return `(min_strike, max_strike)` bounds used for pricing-curve construction.
-fun minted_strike_range(live: &LiveExposure): (u64, u64) {
-    if (live.minted_min_strike > live.minted_max_strike) (0, 0) else (
-        live.minted_min_strike,
-        live.minted_max_strike,
-    )
+    exposure.insert_live_index_quantity(lower, higher, terminal_payout, live_backing_payout);
 }
 
 /// Convert raw order boundaries into boundary indexes for this grid.
@@ -656,17 +540,4 @@ fun order_boundaries(exposure: &StrikeExposure, order: &Order): (u64, u64) {
         exposure.grid.boundary_at_index(order.lower_boundary_index()),
         exposure.grid.boundary_at_index(order.higher_boundary_index()),
     )
-}
-
-/// Expand the valuation curve cache to cover newly touched finite strikes.
-fun track_minted_boundaries(live: &mut LiveExposure, lower: u64, higher: u64) {
-    if (lower != constants::neg_inf!()) {
-        live.minted_min_strike = live.minted_min_strike.min(lower);
-        live.minted_max_strike = live.minted_max_strike.max(lower);
-    };
-
-    if (higher != constants::pos_inf!()) {
-        live.minted_min_strike = live.minted_min_strike.min(higher);
-        live.minted_max_strike = live.minted_max_strike.max(higher);
-    };
 }

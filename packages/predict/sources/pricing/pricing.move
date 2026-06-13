@@ -1,12 +1,11 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-/// Pricing and valuation curves for Predict markets.
+/// Pricing for Predict markets.
 ///
 /// This module is the app-facing read layer for oracle data. It resolves
-/// market oracle and Pyth source state on demand, computes SVI prices, and
-/// builds aggregate valuation curves. It does not mutate oracle, pool, expiry,
-/// or position state.
+/// market oracle and Pyth source state on demand and computes SVI range
+/// prices. It does not mutate oracle, pool, expiry, or position state.
 module deepbook_predict::pricing;
 
 use deepbook_predict::{
@@ -22,27 +21,12 @@ const EZeroForward: u64 = 0;
 const ECannotBeNegative: u64 = 1;
 const EZeroVariance: u64 = 2;
 const EInvalidRange: u64 = 3;
-const EInvalidCurveRange: u64 = 4;
 const EBlockScholesPriceStale: u64 = 5;
 const EBlockScholesSVIStale: u64 = 6;
 const EInvalidStrikeRatio: u64 = 7;
 const EPythSpotStale: u64 = 8;
 
-/// Curve sample point with strike and one-sided UP price.
-public struct CurvePoint has copy, drop, store {
-    strike: u64,
-    up_price: u64,
-}
-
 // === Public-Package Functions ===
-
-public(package) fun strike(point: &CurvePoint): u64 {
-    point.strike
-}
-
-public(package) fun up_price(point: &CurvePoint): u64 {
-    point.up_price
-}
 
 /// Return the current raw probability for a live range.
 public(package) fun live_range_probability(
@@ -97,62 +81,6 @@ public(package) fun live_inputs(
     };
 
     (forward, market.block_scholes_svi())
-}
-
-/// Build an adaptive piecewise-linear UP-price curve over a caller-validated strike interval.
-public(package) fun build_curve(
-    svi: &SVIParams,
-    forward: u64,
-    tick_size: u64,
-    min_strike: u64,
-    max_strike: u64,
-): vector<CurvePoint> {
-    assert_curve_inputs(tick_size, min_strike, max_strike);
-
-    if (min_strike == max_strike) {
-        let price = compute_up_price(svi, forward, min_strike);
-        return vector[
-            CurvePoint {
-                strike: min_strike,
-                up_price: price,
-            },
-        ]
-    };
-
-    let price_lo = compute_up_price(svi, forward, min_strike);
-    let price_hi = compute_up_price(svi, forward, max_strike);
-    let mut points = vector[
-        CurvePoint {
-            strike: min_strike,
-            up_price: price_lo,
-        },
-        CurvePoint {
-            strike: max_strike,
-            up_price: price_hi,
-        },
-    ];
-
-    let curve_samples = constants::curve_samples!();
-    let mut cur_samples = 2;
-    while (cur_samples < curve_samples) {
-        let (found, idx) = find_gap(&points, tick_size);
-        if (!found) break;
-
-        let strike_lo = points[idx].strike;
-        let strike_hi = points[idx + 1].strike;
-        let mid_strike = snap_to_tick((strike_lo + strike_hi) / 2, min_strike, tick_size);
-        let price = compute_up_price(svi, forward, mid_strike);
-        insert_asc(
-            &mut points,
-            CurvePoint {
-                strike: mid_strike,
-                up_price: price,
-            },
-        );
-        cur_samples = cur_samples + 1;
-    };
-
-    points
 }
 
 // === Private Functions ===
@@ -257,53 +185,4 @@ fun compute_nd2(svi_params: &SVIParams, forward: u64, strike: u64): u64 {
     let d2 = d2.neg();
 
     math::normal_cdf(&d2)
-}
-
-fun assert_curve_inputs(tick_size: u64, min_strike: u64, max_strike: u64) {
-    assert!(tick_size > 0, EInvalidCurveRange);
-    assert!(min_strike <= max_strike, EInvalidCurveRange);
-}
-
-/// Insert a new curve point while preserving ascending strike order.
-fun insert_asc(points: &mut vector<CurvePoint>, new_point: CurvePoint) {
-    points.push_back(new_point);
-    let mut i = points.length() - 1;
-    while (i > 0) {
-        if (points[i - 1].strike <= points[i].strike) break;
-        points.swap(i - 1, i);
-        i = i - 1;
-    };
-}
-
-/// Pick the next adjacent gap to bisect based on endpoint UP-price difference.
-fun find_gap(points: &vector<CurvePoint>, tick_size: u64): (bool, u64) {
-    let len = points.length();
-    let mut best_idx = len;
-    let mut best_price_diff = 0;
-
-    let mut i = 0;
-    while (i + 1 < len) {
-        let lo = &points[i];
-        let hi = &points[i + 1];
-
-        if (hi.strike - lo.strike <= tick_size) {
-            i = i + 1;
-            continue
-        };
-
-        let price_diff = range_price(lo.up_price, hi.up_price);
-        if (price_diff > best_price_diff) {
-            best_idx = i;
-            best_price_diff = price_diff;
-        };
-
-        i = i + 1;
-    };
-
-    (best_idx != len, best_idx)
-}
-
-/// Round a strike down to the nearest tick boundary from the curve origin.
-fun snap_to_tick(strike: u64, origin: u64, tick_size: u64): u64 {
-    origin + (strike - origin) / tick_size * tick_size
 }
