@@ -3,7 +3,7 @@
 
 /// Market lifecycle capability. Authorizes market lifecycle operations —
 /// `registry::create_expiry_market` — without granting any oracle write
-/// authority. `PoolVault` owns the allowlist of valid lifecycle caps and the
+/// authority. `Registry` owns the allowlist of valid lifecycle caps and the
 /// admin mint/revoke entrypoints; this module owns only the cap object itself.
 module deepbook_predict::market_lifecycle_cap;
 

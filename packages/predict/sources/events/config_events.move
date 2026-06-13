@@ -64,7 +64,7 @@ public struct EwmaConfigUpdated has copy, drop, store {
 }
 
 /// Emitted when the DEEP-stake benefit config changes. These thresholds govern
-/// the per-trade fee discount and the trading-loss rebate share.
+/// the per-trade fee discount.
 public struct StakeConfigUpdated has copy, drop, store {
     protocol_config_id: ID,
     lower_benefit_power: u64,

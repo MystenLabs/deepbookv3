@@ -122,11 +122,10 @@ A `PauseCap` is a revocable emergency capability the admin mints into `Registry.
 | `AdminCap` (on `ProtocolConfig`) | All template values (future markets only), all live configs (`PricingConfig`, `EwmaConfig`, `StakeConfig`), `protocol_reserve_profit_share`, `withdraw_fee_alpha`, both liquidation budgets, global `trading_paused` |
 | `AdminCap` (on an `ExpiryMarket`) | Per-expiry `mint_paused` (set and unset) |
 | `AdminCap` (on a `MarketOracle`) | Live per-oracle settlement freshness; register/unregister oracle writer caps |
-| `AdminCap` (on a `PoolVault`) | Per-expiry `max_expiry_funding`; mint/revoke market-lifecycle caps on the vault allowlist |
-| `AdminCap` (on `Registry`) | Per-feed `tick_size` (future markets only), version enable/disable, PauseCap mint/revoke, Pyth-source creation, incentive-asset bindings, incentive deposits |
+| `AdminCap` (on `Registry`) | Per-feed `tick_size` (future markets only), version enable/disable, PauseCap mint/revoke, market-lifecycle-cap mint/revoke, Pyth-source creation, incentive-asset bindings, incentive deposits |
 | `PauseCap` (via `Registry`) | Disable a version, force global trading pause, force per-expiry mint pause — all one-way (engage only) |
 | `MarketOracleWriterCap` (per oracle) | Push Block Scholes spot/forward and SVI data on a `MarketOracle` that has registered its ID. This is an oracle writer/operator capability, not a config-tuning route — per-oracle config bounds are `AdminCap`-gated above |
-| `MarketLifecycleCap` (vault allowlist) | Create expiry markets and compact settled ones. A market-lifecycle capability with no oracle-write or config authority |
+| `MarketLifecycleCap` (Registry allowlist) | Create expiry markets. A market-lifecycle capability with no oracle-write or config authority |
 | Permissionless | `sync_*` version mirrors, and valuation and settlement-cleanup keeper flows (subject to the valuation lock, not the trading pause) |
 | Upgrade only | Everything in the `constants` module: scaling, lot size, minimum principal, leverage set and tiers, leverage floor window, oracle granularity/grid, and every `min_*`/`max_*` bound in `config_constants` |
 
