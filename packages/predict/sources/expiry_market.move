@@ -773,8 +773,8 @@ fun redeem_settled_internal(
 /// Settle a mint payment and return the builder fee paid.
 ///
 /// The EWMA penalty is withdrawn alongside the net premium and fees, but rides
-/// into expiry cash as surplus: it is not part of the rebate fee basis,
-/// earns no builder cut, and is excluded from the user's recorded gross paid.
+/// into expiry cash as surplus: it is not part of the rebate fee basis and
+/// earns no builder cut.
 fun settle_mint_payment(
     market: &mut ExpiryMarket,
     manager: &mut PredictManager,
@@ -798,7 +798,6 @@ fun settle_mint_payment(
     market.collect_trade_fee(manager, fee_payment);
     // Remaining balance is the net premium plus the penalty surplus.
     market.cash.receive(payment);
-    manager.record_gross_paid_to_expiry(market.id(), net_premium);
 
     market.assert_cash_backing();
     builder_fee_amount
@@ -829,7 +828,7 @@ fun settle_live_redeem_payment(
     );
     let penalty_amount = penalty_amount.min(redeem_amount - fee_amount - builder_fee_amount);
 
-    let mut payout = market.pay_authorized_cash(redeem_amount);
+    let mut payout = market.cash.pay_authorized(redeem_amount);
     let fee = payout.split(fee_amount);
     let builder_fee = payout.split(builder_fee_amount);
     market.collect_trade_fee(manager, fee);
@@ -838,7 +837,7 @@ fun settle_live_redeem_payment(
     market.cash.receive(payout.split(penalty_amount));
 
     market.assert_cash_backing();
-    deposit_live_payout(manager, proof, market, payout, redeem_amount, ctx);
+    deposit_live_payout(manager, proof, payout, ctx);
     (builder_fee_amount, penalty_amount)
 }
 
@@ -848,8 +847,8 @@ fun settle_settled_redeem_payment(
     payout_amount: u64,
     ctx: &mut TxContext,
 ) {
-    let payout = market.pay_authorized_cash(payout_amount);
-    deposit_permissionless_payout(manager, market, payout, ctx);
+    let payout = market.cash.pay_authorized(payout_amount);
+    deposit_permissionless_payout(manager, payout, ctx);
 
     market.assert_cash_backing();
 }
@@ -867,27 +866,18 @@ fun collect_trade_fee(
 fun deposit_live_payout(
     manager: &mut PredictManager,
     proof: &PredictTradeProof,
-    market: &ExpiryMarket,
     payout: Balance<DUSDC>,
-    gross_received_amount: u64,
     ctx: &mut TxContext,
 ) {
-    manager.record_gross_received_from_expiry(market.id(), gross_received_amount);
     manager.deposit_with_proof(proof, payout.into_coin(ctx), ctx);
 }
 
 fun deposit_permissionless_payout(
     manager: &mut PredictManager,
-    market: &ExpiryMarket,
     payout: Balance<DUSDC>,
     ctx: &mut TxContext,
 ) {
-    manager.record_gross_received_from_expiry(market.id(), payout.value());
     manager.deposit_permissionless(payout.into_coin(ctx), ctx);
-}
-
-fun pay_authorized_cash(market: &mut ExpiryMarket, amount: u64): Balance<DUSDC> {
-    market.cash.pay_authorized(amount)
 }
 
 fun send_builder_fee(builder_code_id: Option<ID>, fee: Balance<DUSDC>) {

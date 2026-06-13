@@ -136,8 +136,7 @@ public(package) fun deactivate_expiry_if_present(ledger: &mut Ledger, expiry_mar
     true
 }
 
-/// Join idle DUSDC. Idle is fundable only internally for now; the async LP
-/// supply flow (Track C) is the future external caller.
+/// Join idle DUSDC; the LP-supply flush drains filled supply requests here.
 public(package) fun receive_idle(ledger: &mut Ledger, cash: Balance<DUSDC>) {
     ledger.idle_balance.join(cash);
 }
